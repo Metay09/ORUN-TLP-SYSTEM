@@ -2,8 +2,11 @@
 #include <Adafruit_TinyUSB.h>
 
 #include "firmware_version.h"
+#include "radio_manager.h"
 
 namespace {
+
+orun_tlp::RadioManager radio_manager;
 
 void printBootBanner() {
   Serial.println(F("ORUN TLP"));
@@ -21,7 +24,10 @@ void printBootBanner() {
 void setup() {
   Serial.begin(115200);
   printBootBanner();
+  radio_manager.begin();
 }
 
 void loop() {
+  radio_manager.update();
+  delay(10);
 }
