@@ -45,6 +45,12 @@ pairing position and quality values from different epochs. A central 60-second
 M2 test interval selects the first qualifying fresh fix after the interval;
 cached coordinates are never sent simply because the interval elapsed.
 
+M3 retains this exact wire format and validity rules. Its acquisition scheduler
+replaces the M2 test cadence: the default is 15 minutes with a separate
+120-second acquisition timeout. A qualifying fresh fix is handed to the radio
+immediately when available; missed schedule points do not produce a backlog.
+See [M3](../docs/milestones/M3.md) for acquisition boundaries and power policy.
+
 PVT and DOP callbacks may arrive in either order. The manager keeps the latest
 candidate PVT and DOP separately and promotes a fix only after their `iTOW`
 values match. The promoted fix has a separate single-use buffer: it is consumed

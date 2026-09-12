@@ -3,6 +3,7 @@
 
 #include "firmware_version.h"
 #include "gnss_manager.h"
+#include "power_manager.h"
 #include "radio_manager.h"
 
 namespace {
@@ -37,5 +38,5 @@ void loop() {
   if (radio_manager.canSend() && gnss_manager.takeFreshFixForTransmission(&fix)) {
     radio_manager.sendPosition(fix);
   }
-  delay(10);
+  orun_tlp::PowerManager::idle();
 }
