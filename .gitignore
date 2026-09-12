@@ -1,0 +1,27 @@
+# PlatformIO build output and local configuration
+firmware/.pio/
+firmware/.pioenvs/
+firmware/.piolibdeps/
+firmware/.clangd/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# Operating system and temporary files
+.DS_Store
+Thumbs.db
+*.tmp
+*.log
+
+# Real local secrets (keep example/template files versioned)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
