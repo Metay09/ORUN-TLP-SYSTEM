@@ -24,6 +24,7 @@ constexpr uint32_t kTxTimeoutMs = 5000;
 // SF12 at BW125. Do not call Radio.EnforceLowDRopt() for this M1 profile.
 
 // M1 test cadence only; it is not a future tracker reporting policy.
+constexpr bool kTestBeaconEnabled = false;
 constexpr uint32_t kTestIntervalMs = 30000;
 constexpr uint32_t kInitialOffsetRangeMs = 5000;
 constexpr uint32_t kPerPacketJitterRangeMs = 1500;

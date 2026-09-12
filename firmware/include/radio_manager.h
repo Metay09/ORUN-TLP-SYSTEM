@@ -4,10 +4,14 @@
 
 namespace orun_tlp {
 
+struct GnssFix;
+
 class RadioManager {
  public:
   bool begin();
   void update();
+  bool canSend() const;
+  bool sendPosition(const GnssFix& fix);
   uint64_t deviceId() const;
 
  private:

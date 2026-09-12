@@ -4,6 +4,8 @@
 #include <SX126x-Arduino.h>
 
 #include "radio_config.h"
+#include "gnss_manager.h"
+#include "tlp_position_packet.h"
 #include "tlp_test_packet.h"
 
 namespace orun_tlp {
@@ -86,9 +88,37 @@ void RadioManager::update() {
     return;
   }
   const uint32_t now = millis();
-  if (!tx_in_progress_ && static_cast<int32_t>(now - next_tx_at_ms_) >= 0) {
+  if (radio_config::kTestBeaconEnabled && !tx_in_progress_ &&
+      static_cast<int32_t>(now - next_tx_at_ms_) >= 0) {
     sendTestPacket();
   }
+}
+
+bool RadioManager::canSend() const { return ready_ && !tx_in_progress_; }
+
+bool RadioManager::sendPosition(const GnssFix& fix) {
+  if (!canSend()) {
+    return false;
+  }
+
+  uint8_t payload[tlp::kPositionPacketSize]{};
+  const tlp::PositionPacket packet{
+      device_id_, sequence_number_++, fix.utc_epoch_seconds, fix.latitude_e7,
+      fix.longitude_e7, fix.altitude_mm, fix.hdop_x100, fix.satellites,
+      fix.flags};
+  if (!tlp::serializePositionPacket(packet, payload, sizeof(payload))) {
+    Serial.println(F("POSITION packet serialization failed"));
+    return false;
+  }
+
+  tx_in_progress_ = true;
+  Serial.printf("TX POSITION source=%016llX sequence=%lu lat=%ld lon=%ld sats=%u\n",
+                static_cast<unsigned long long>(packet.source_device_id),
+                static_cast<unsigned long>(packet.sequence_number),
+                static_cast<long>(packet.latitude_e7),
+                static_cast<long>(packet.longitude_e7), packet.satellites);
+  Radio.Send(payload, sizeof(payload));
+  return true;
 }
 
 uint64_t RadioManager::deviceId() const { return device_id_; }
@@ -149,6 +179,36 @@ void RadioManager::scheduleNextTransmission(uint32_t now) {
 
 void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
                                         int16_t rssi, int8_t snr) {
+  if (size < 2) {
+    Serial.printf("RX rejected: length=%u\n", size);
+    return;
+  }
+
+  if (payload[0] != tlp::kProtocolVersion) {
+    Serial.printf("RX rejected: unsupported version=%u\n", payload[0]);
+    return;
+  }
+
+  if (payload[1] == tlp::kPacketTypePosition) {
+    tlp::PositionPacket packet{};
+    if (!tlp::deserializePositionPacket(payload, size, &packet)) {
+      Serial.printf("RX POSITION rejected: length=%u or malformed flags\n", size);
+      return;
+    }
+    Serial.printf("RX POSITION source=%016llX sequence=%lu lat=%ld lon=%ld sats=%u RSSI=%d dBm SNR=%d dB\n",
+                  static_cast<unsigned long long>(packet.source_device_id),
+                  static_cast<unsigned long>(packet.sequence_number),
+                  static_cast<long>(packet.latitude_e7),
+                  static_cast<long>(packet.longitude_e7), packet.satellites,
+                  rssi, snr);
+    return;
+  }
+
+  if (payload[1] != tlp::kPacketTypeTest) {
+    Serial.printf("RX rejected: unsupported type=%u\n", payload[1]);
+    return;
+  }
+
   tlp::TestPacket packet{};
   if (!tlp::deserializeTestPacket(payload, size, &packet)) {
     Serial.printf("RX rejected: length=%u or unsupported version/type\n", size);
