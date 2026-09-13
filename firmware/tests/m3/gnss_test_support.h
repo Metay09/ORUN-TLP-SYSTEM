@@ -27,7 +27,11 @@ UBX_NAV_PVT_data_t pvt(uint32_t tow) {
 }
 
 void emitPvt(GnssManager& manager, UBX_NAV_PVT_data_t value) {
-  Fake::pending.push_back([value]() mutable { Fake::pvt(&value); });
+  // A single parsed PVT is both the current cache and the callback snapshot.
+  Fake::pending.push_back([value]() mutable {
+    Fake::current_pvt = value;
+    Fake::pvt(&value);
+  });
   manager.poll();
 }
 void emitDop(GnssManager& manager, uint32_t tow) {
@@ -43,6 +47,8 @@ uint32_t boot(GnssManager& manager, uint32_t start = 0) {
   Fake::present = Fake::configuration_ok = true;
   Fake::pending.clear();
   Fake::callback_valid = false;
+  Fake::current_pvt = {};
+  Fake::callback_pvt = {};
   Fake::read_ok = true;
   manager.begin();
   test_now += gnss_config::kPowerSettleMs;

@@ -37,6 +37,7 @@ class GnssManager {
     uint32_t stale_dop_rejected = 0;
     uint32_t invalid_utc_snapshots = 0;
     uint32_t detection_retries = 0;
+    uint32_t receiver_backlog_rejected = 0;
   };
 
   void begin();
@@ -82,6 +83,8 @@ class GnssManager {
   uint32_t boundary_epoch_ = 0;
   bool has_dop_boundary_epoch_ = false;
   uint32_t dop_boundary_epoch_ = 0;
+  uint32_t last_pvt_callback_at_ms_ = 0;
+  bool has_last_pvt_callback_time_ = false;
   uint32_t latest_hdop_itow_ = 0;
   uint16_t latest_hdop_x100_ = 0;
   bool has_latest_hdop_ = false;

@@ -91,14 +91,14 @@ void utcSnapshotAndWire() {
   emitPvt(manager, pvt(1000)); emitDop(manager, 1000);
   auto a = pvt(2000);
   a.valid.bits.validDate = a.valid.bits.validTime = true;
+  emitPvt(manager, a);
   auto b = a;
   b.iTOW = 3000; b.lat += 100; b.sec += 10;
-  // Actual 2.2.29 semantics: A is preserved for callback, current data becomes B.
-  Fake::parsePvt(a);
-  Fake::parsePvt(b);
+  // Mutate the library's current cache only after A's callback. The accepted
+  // candidate must keep A's UTC snapshot and coordinates.
+  Fake::current_pvt = b;
   Fake cache;
   assert(cache.getUnixEpoch(0) == 1700000010);
-  manager.poll();
   emitDop(manager, 2000);
   GnssFix fix{};
   assert(manager.takeFreshFixForTransmission(&fix));
@@ -239,11 +239,56 @@ void drainAndPartialDopBoundary() {
   assert(manager.takeFreshFixForTransmission(&fix));
 }
 
+void receiverBacklogIsNotFresh() {
+  {
+    GnssManager manager;
+    boot(manager);
+    emitPvt(manager, pvt(1000)); emitDop(manager, 1000); // Initial boundaries.
+
+    // Model one delayed I2C batch containing multiple PVT epochs. SparkFun
+    // preserves the first callback copy (2000) while current_pvt advances to
+    // the newest parsed epoch (3000). DOP is dispatched before PVT.
+    test_now += 1000;
+    Fake::pending.push_back([]() {
+      UBX_NAV_DOP_data_t value{2000, 123};
+      Fake::dop(&value);
+    });
+    Fake::parsePvt(pvt(2000));
+    Fake::parsePvt(pvt(3000));
+    manager.poll();
+    GnssFix fix{};
+    assert(!manager.takeFreshFixForTransmission(&fix));
+    assert(manager.diagnostics().receiver_backlog_rejected == 1);
+    assert(!manager.has_candidate_fix_ && !manager.has_latest_hdop_);
+
+    emitPvt(manager, pvt(4000)); emitDop(manager, 4000);
+    assert(manager.takeFreshFixForTransmission(&fix));
+  }
+
+  {
+    GnssManager manager;
+    boot(manager);
+    emitPvt(manager, pvt(1000)); emitDop(manager, 1000); // Initial boundaries.
+
+    // A lone buffered PVT can equal the mutable current cache, so cache
+    // comparison alone cannot expose its age. A callback silence at the exact
+    // freshness limit makes the first resumed epoch a resync boundary.
+    test_now += gnss_config::kFreshFixMaxAgeMs;
+    emitPvt(manager, pvt(2000)); emitDop(manager, 2000);
+    GnssFix fix{};
+    assert(!manager.takeFreshFixForTransmission(&fix));
+    assert(manager.diagnostics().receiver_backlog_rejected == 1);
+
+    emitPvt(manager, pvt(3000)); emitDop(manager, 3000);
+    assert(manager.takeFreshFixForTransmission(&fix));
+  }
+}
+
 int main() {
   ageIsNotRenewed(false); ageIsNotRenewed(true);
   sessionBoundary(false); sessionBoundary(true);
   utcSnapshotAndWire(); utcValidity(); repeatedStaleEpoch();
   detectionRetry(true); detectionRetry(false);
-  drainAndPartialDopBoundary();
-  puts("R3 capture/session, UTC snapshot/wire and detection checks: PASS");
+  drainAndPartialDopBoundary(); receiverBacklogIsNotFresh();
+  puts("R3 capture/session, UTC snapshot/wire, backlog and detection checks: PASS");
 }

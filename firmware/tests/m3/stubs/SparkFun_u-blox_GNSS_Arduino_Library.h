@@ -55,6 +55,8 @@ struct SFE_UBLOX_GNSS {
     current_pvt = value;
     if (!callback_valid) { callback_pvt = value; callback_valid = true; }
   }
+  // Models getTimeOfWeek(0) reading the newest parsed current PVT cache.
+  uint32_t getTimeOfWeek(uint16_t) { return current_pvt.iTOW; }
   // Models the inspected current-cache date path (all test dates valid).
   uint32_t getUnixEpoch(uint16_t) {
     uint32_t epoch = 0;

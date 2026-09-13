@@ -152,6 +152,8 @@ void GnssManager::startAcquisition(uint32_t now) {
   fresh_fix_ready_ = false;
   has_boundary_epoch_ = false;
   has_dop_boundary_epoch_ = false;
+  has_last_pvt_callback_time_ = false;
+  last_pvt_callback_at_ms_ = 0;
   waiting_for_drain_ = false;
   acquisition_started_at_ms_ = now;
   next_due_at_ms_ = monotonic::nextFuture(
@@ -286,6 +288,30 @@ void GnssManager::handlePvt(const UBX_NAV_PVT_data_t& pvt_data) {
     return;
   }
   const uint32_t received_at = monotonic::nowMs();
+
+  // SparkFun 2.2.29 keeps the first unconsumed callback copy while continuing
+  // to update packetUBXNAVPVT->data for every later PVT parsed in the same I2C
+  // batch. Immediately after checkUblox(), getTimeOfWeek(0) therefore exposes
+  // the newest parsed PVT iTOW without a new bus wait: processUBXpacket marks
+  // iTOW fresh before checkCallbacks() runs. A mismatch proves this callback is
+  // receiver/FIFO backlog. A >= freshness-limit callback silence is also
+  // treated as a resynchronization boundary, covering a lone stale buffered PVT
+  // whose cache iTOW cannot differ. Both cases conservatively discard one epoch.
+  const uint32_t newest_parsed_itow = gnss.getTimeOfWeek(0);
+  const bool callback_gap =
+      has_last_pvt_callback_time_ &&
+      monotonic::elapsed(received_at, last_pvt_callback_at_ms_,
+                         gnss_config::kFreshFixMaxAgeMs);
+  last_pvt_callback_at_ms_ = received_at;
+  has_last_pvt_callback_time_ = true;
+  if (callback_gap || newest_parsed_itow != pvt_data.iTOW) {
+    clearCandidates();
+    boundary_epoch_ = pvt_data.iTOW;
+    has_boundary_epoch_ = true;
+    ++diagnostics_.receiver_backlog_rejected;
+    return;
+  }
+
   // After draining, the first observed epoch is a boundary, never a fix to
   // transmit. Require an epoch change, even if the first PVT was invalid.
   // This also rejects a partial pre-acquisition packet completed after wake.
@@ -323,7 +349,7 @@ void GnssManager::handlePvt(const UBX_NAV_PVT_data_t& pvt_data) {
   candidate_fix_.flags = tlp::kPositionFlagValidFix;
   candidate_fix_.utc_epoch_seconds = 0;
   if (pvt_data.valid.bits.validDate && pvt_data.valid.bits.validTime) {
-    // Convert immediately from this immutable callback snapshot, never getters.
+    // Convert immediately from this immutable callback snapshot, never date/time getters.
     const UtcSnapshot utc{pvt_data.year, pvt_data.month, pvt_data.day,
                           pvt_data.hour, pvt_data.min, pvt_data.sec};
     if (utcToEpoch(utc, candidate_fix_.utc_epoch_seconds))
