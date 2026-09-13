@@ -1,5 +1,7 @@
 #include "watchdog_manager.h"
 
+#include <Arduino.h>
+
 #if defined(NRF52_SERIES)
 #include <nrf.h>
 #endif
@@ -10,11 +12,12 @@ WatchdogManager::BootInfo WatchdogManager::boot_info_{};
 
 void WatchdogManager::begin() {
 #if defined(NRF52_SERIES)
-  const uint32_t reason = NRF_POWER->RESETREAS;
+  // Adafruit nRF52 core init() snapshots RESETREAS into readResetReason() and
+  // then clears the hardware register before setup() runs. Read the saved core
+  // value here or watchdog-reset attribution would be lost.
+  const uint32_t reason = readResetReason();
   boot_info_.reset_reason = reason;
   boot_info_.watchdog_reset = (reason & POWER_RESETREAS_DOG_Msk) != 0;
-  // RESETREAS bits are cleared by writing one to each set bit.
-  NRF_POWER->RESETREAS = reason;
 
   // WDT cannot be stopped after TASKS_START until reset. Run it during normal
   // sleep so a wedged loop is still recovered; pause while a debugger halts CPU.
@@ -22,7 +25,8 @@ void WatchdogManager::begin() {
     NRF_WDT->CONFIG =
         (WDT_CONFIG_SLEEP_Run << WDT_CONFIG_SLEEP_Pos) |
         (WDT_CONFIG_HALT_Pause << WDT_CONFIG_HALT_Pos);
-    NRF_WDT->CRV = kTimeoutSeconds * 32768UL;
+    // Nordic timeout is (CRV + 1) / 32768 seconds.
+    NRF_WDT->CRV = kTimeoutSeconds * 32768UL - 1UL;
     NRF_WDT->RREN =
         (WDT_RREN_RR0_Enabled << WDT_RREN_RR0_Pos);
     NRF_WDT->TASKS_START = 1;

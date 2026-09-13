@@ -44,16 +44,33 @@ constexpr uint32_t kOrunWireEventTimeoutMs = 25;
 constexpr uint32_t kOrunWireMaxSpins = 2000000;
 constexpr uint32_t kOrunWireAbortMaxSpins = 200000;
 volatile bool orun_wire_timeout_flag = false;
+volatile bool orun_wire_reset_required_flag = false;
 
 void orunWireAbort(NRF_TWIM_Type* twim)
 {
   orun_wire_timeout_flag = true;
+
+  // Nordic TWIM cannot be STOPped while suspended. RESUME is harmless when
+  // already active and is required before STOP for a suspended transaction.
+  // Clear STOPPED first so an old event cannot masquerade as this abort.
+  twim->EVENTS_STOPPED = 0x0UL;
+  twim->TASKS_RESUME = 0x1UL;
   twim->TASKS_STOP = 0x1UL;
+
   const uint32_t started = millis();
   uint32_t spins = 0;
   while (!twim->EVENTS_STOPPED &&
          (uint32_t)(millis() - started) < 2 &&
          ++spins < kOrunWireAbortMaxSpins) {}
+
+  // STOPPED is the hardware proof that TWIM is stopped and EasyDMA has
+  // finished accessing RAM. If it never arrives, do NOT disable/re-enable the
+  // peripheral or hand pins to GPIO recovery. The application must reset the
+  // MCU instead of guessing that DMA is quiescent.
+  if (!twim->EVENTS_STOPPED) {
+    orun_wire_reset_required_flag = true;
+    return;
+  }
 
   const uint32_t errors = twim->ERRORSRC;
   twim->ERRORSRC = errors;
@@ -88,6 +105,13 @@ extern "C" bool orunWireTakeTimeoutFlag(void)
 {
   const bool value = orun_wire_timeout_flag;
   orun_wire_timeout_flag = false;
+  return value;
+}
+
+extern "C" bool orunWireTakeResetRequiredFlag(void)
+{
+  const bool value = orun_wire_reset_required_flag;
+  orun_wire_reset_required_flag = false;
   return value;
 }
 '''

@@ -54,6 +54,7 @@ patch_wire.ORIGINAL_GIT_BLOB_SHA = patch_wire.git_blob_sha(FIXTURE)
 patched = patch_wire.transform(FIXTURE)
 assert patched.startswith(patch_wire.MARKER)
 assert "orunWireTakeTimeoutFlag" in patched
+assert "orunWireTakeResetRequiredFlag" in patched
 assert "kOrunWireEventTimeoutMs = 25" in patched
 assert "kOrunWireMaxSpins" in patched
 for unbounded in (
@@ -68,10 +69,19 @@ for unbounded in (
 assert "return 0;" in patched
 assert "return 4;" in patched
 
+# Abort ordering is safety-critical: clear STOPPED, RESUME, STOP, then wait.
+clear_index = patched.index("twim->EVENTS_STOPPED = 0x0UL;")
+resume_index = patched.index("twim->TASKS_RESUME = 0x1UL;")
+stop_index = patched.index("twim->TASKS_STOP = 0x1UL;")
+unsafe_index = patched.index("if (!twim->EVENTS_STOPPED)")
+disable_index = patched.index("twim->ENABLE = (TWIM_ENABLE_ENABLE_Disabled")
+assert clear_index < resume_index < stop_index < unsafe_index < disable_index
+assert "orun_wire_reset_required_flag = true;" in patched
+
 try:
     patch_wire.transform(FIXTURE + "// changed\n")
     raise AssertionError("changed upstream source must fail closed")
 except RuntimeError:
     pass
 
-print("R4 pinned Wire timeout transform guards: PASS")
+print("R4 pinned Wire timeout/abort transform guards: PASS")

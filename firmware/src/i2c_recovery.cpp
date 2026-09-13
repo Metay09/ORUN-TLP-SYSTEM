@@ -3,7 +3,12 @@
 #include <Arduino.h>
 #include <Wire.h>
 
+#if defined(NRF52_SERIES)
+#include <nrf.h>
+#endif
+
 extern "C" bool orunWireTakeTimeoutFlag(void);
+extern "C" bool orunWireTakeResetRequiredFlag(void);
 
 namespace orun_tlp {
 namespace {
@@ -40,13 +45,26 @@ bool restartWire(bool bus_free) {
 
 I2cRecoveryResult I2cRecovery::serviceTimeout() {
   if (!orunWireTakeTimeoutFlag()) return I2cRecoveryResult::kNoTimeout;
+
+  // If the bounded core abort never observed STOPPED, EasyDMA quiescence is
+  // unproven. Do not disable TWIM again and do not hand SDA/SCL to GPIO. The
+  // only fail-closed production action is a full MCU reset.
+  if (orunWireTakeResetRequiredFlag()) {
+#if defined(NRF52_SERIES)
+    NVIC_SystemReset();
+    while (true) {}
+#else
+    return I2cRecoveryResult::kFailed;
+#endif
+  }
+
   return recoverBus() ? I2cRecoveryResult::kRecovered
                       : I2cRecoveryResult::kFailed;
 }
 
 bool I2cRecovery::recoverBus() {
-  // The patched core has already aborted and re-enabled TWIM. Detach it before
-  // bit-banging so only GPIO owns SDA/SCL during recovery.
+  // The patched core has already reached STOPPED and re-enabled TWIM. Detach it
+  // before bit-banging so only GPIO owns SDA/SCL during recovery.
   Wire.end();
   releaseLine(PIN_WIRE_SDA);
   releaseLine(PIN_WIRE_SCL);

@@ -10,6 +10,7 @@
 
 void resetBusFixture() {
   fake_wire_timeout_flag = false;
+  fake_wire_reset_required_flag = false;
   fake_scl_stuck_low = false;
   fake_sda_stuck_low = false;
   fake_sda_release_after_clocks = -1;
@@ -55,9 +56,28 @@ void boundedRecoveryPrimitive() {
 
   resetBusFixture();
   fake_wire_timeout_flag = true;
+  fake_sda_stuck_low = true;
+  assert(I2cRecovery::serviceTimeout() == I2cRecoveryResult::kFailed);
+  assert(fake_scl_clock_pulses == 9);
+  assert(Wire.end_calls == 1 && Wire.begin_calls == 1);
+
+  resetBusFixture();
+  fake_wire_timeout_flag = true;
   fake_scl_stuck_low = true;
   assert(I2cRecovery::serviceTimeout() == I2cRecoveryResult::kFailed);
   assert(Wire.end_calls == 1 && Wire.begin_calls == 1);
+}
+
+void unsafeTwimAbortNeverTouchesGpioRecovery() {
+  resetBusFixture();
+  fake_wire_timeout_flag = true;
+  fake_wire_reset_required_flag = true;
+  assert(I2cRecovery::serviceTimeout() == I2cRecoveryResult::kFailed);
+  // Host builds cannot reset the MCU, but they prove the unsafe-abort handoff
+  // does not call Wire.end(), clock GPIO, or restart the peripheral.
+  assert(Wire.end_calls == 0 && Wire.begin_calls == 0);
+  assert(fake_scl_clock_pulses == 0);
+  assert(!fake_wire_reset_required_flag);
 }
 
 void gnssTimeoutRestartsBehindFreshnessBoundary() {
@@ -127,6 +147,7 @@ void watchdogApiIsStable() {
 int main() {
   powerOwnershipIsCentralized();
   boundedRecoveryPrimitive();
+  unsafeTwimAbortNeverTouchesGpioRecovery();
   gnssTimeoutRestartsBehindFreshnessBoundary();
   recoveryFailureAndBudgetFailClosed();
   watchdogApiIsStable();

@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 inline bool fake_wire_timeout_flag = false;
+inline bool fake_wire_reset_required_flag = false;
 
 struct TwoWire {
   bool status_ok = true;
@@ -48,5 +49,11 @@ inline TwoWire Wire;
 extern "C" inline bool orunWireTakeTimeoutFlag(void) {
   const bool value = fake_wire_timeout_flag;
   fake_wire_timeout_flag = false;
+  return value;
+}
+
+extern "C" inline bool orunWireTakeResetRequiredFlag(void) {
+  const bool value = fake_wire_reset_required_flag;
+  fake_wire_reset_required_flag = false;
   return value;
 }

@@ -45,3 +45,8 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r4/test_patch_wire.py
 g++ "${flags[@]}" firmware/tests/r4/test_r4.cpp "${gnss_sources[@]}" \
   firmware/src/watchdog_manager.cpp -o "$test_dir/r4"
 "$test_dir/r4"
+g++ -DNRF52_SERIES -Ifirmware/tests/r4/stubs -Ifirmware/include \
+  -std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
+  firmware/tests/r4/test_watchdog_nrf.cpp firmware/src/watchdog_manager.cpp \
+  -o "$test_dir/r4_watchdog_nrf"
+"$test_dir/r4_watchdog_nrf"
