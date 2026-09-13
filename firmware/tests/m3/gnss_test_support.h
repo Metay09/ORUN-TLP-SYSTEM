@@ -5,6 +5,7 @@
 #include "gnss_config.h"
 #include "gnss_manager.h"
 #include "monotonic_time.h"
+#include "sensor_power_manager.h"
 #include "tlp_position_packet.h"
 
 using namespace orun_tlp;
@@ -53,10 +54,18 @@ uint32_t boot(GnssManager& manager, uint32_t start = 0) {
   Fake::itow_fresh = false;
   Fake::time_of_week_cache_misses = 0;
   Fake::read_ok = true;
+  fake_wire_timeout_flag = false;
+  fake_scl_stuck_low = false;
+  fake_sda_stuck_low = false;
+  fake_sda_release_after_clocks = -1;
+  fake_scl_clock_pulses = 0;
   Wire.status_ok = true;
   Wire.bytes_available = 0;
   Wire.register_pointer = 0;
   Wire.read_index = 0;
+  Wire.begin_calls = Wire.end_calls = Wire.set_clock_calls = 0;
+  Wire.last_clock_hz = 0;
+  SensorPowerManager::begin();
   manager.begin();
   test_now += gnss_config::kPowerSettleMs;
   manager.poll();

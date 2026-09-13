@@ -38,6 +38,9 @@ class GnssManager {
     uint32_t invalid_utc_snapshots = 0;
     uint32_t detection_retries = 0;
     uint32_t receiver_backlog_rejected = 0;
+    uint32_t i2c_timeouts = 0;
+    uint32_t i2c_recoveries = 0;
+    uint32_t i2c_recovery_failures = 0;
   };
 
   void begin();
@@ -62,6 +65,8 @@ class GnssManager {
   void prepareAcquisition();
   void startTransportResync(uint32_t now);
   void serviceTransportResync(uint32_t now);
+  bool handleI2cTimeout(uint32_t now);
+  void restartAfterI2cRecovery(uint32_t now);
   void enterLowPower(uint32_t now);
   void clearCandidates();
   void expireFreshFix(uint32_t now);
@@ -74,6 +79,7 @@ class GnssManager {
   bool waiting_for_drain_ = false;
   bool transport_resync_pending_ = false;
   uint8_t configuration_step_ = 0;
+  uint8_t i2c_recoveries_this_acquisition_ = 0;
   uint32_t state_changed_at_ms_ = 0;
   uint32_t drain_attempted_at_ms_ = 0;
   uint32_t transport_resync_attempted_at_ms_ = 0;

@@ -20,6 +20,9 @@ constexpr uint32_t kShortIntervalThresholdMs =
 constexpr uint8_t kNavigationFrequencyHz = 1;
 // Preserve 2.2.29's effective 100ms poll interval for 1Hz NAV configuration.
 constexpr uint8_t kI2cPollingWaitMs = 100;
+// Bound repeated in-acquisition bus recovery so a broken sensor cannot keep an
+// acquisition alive forever. Detection has its own three-attempt policy.
+constexpr uint8_t kMaxI2cRecoveriesPerAcquisition = 2;
 // M3 uses the official switched-slot power control. Avoid a power cycle when
 // acquisition finishes just before the next due point, even at long intervals.
 constexpr uint32_t kMinimumPowerOffMs = 2000;
@@ -43,5 +46,7 @@ static_assert(kAcquisitionTimeoutSeconds > 0 &&
               "Timeout must fit the monotonic half-range");
 static_assert(kShortIntervalThresholdSeconds <= 12 * 24 * 60 * 60,
               "Short interval threshold must fit the supported interval range");
+static_assert(kMaxI2cRecoveriesPerAcquisition > 0,
+              "At least one bounded I2C recovery is required");
 
 }  // namespace orun_tlp::gnss_config

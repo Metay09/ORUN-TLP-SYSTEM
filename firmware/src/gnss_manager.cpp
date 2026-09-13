@@ -5,7 +5,9 @@
 
 #include "gnss_config.h"
 #include "gnss_utc.h"
+#include "i2c_recovery.h"
 #include "monotonic_time.h"
+#include "sensor_power_manager.h"
 #include "tlp_position_packet.h"
 
 namespace orun_tlp {
@@ -58,8 +60,6 @@ bool receiverOutputQueueEmpty() {
 void GnssManager::begin() {
   *this = GnssManager{};
   active_gnss_manager = this;
-  pinMode(WB_IO2, OUTPUT);
-  digitalWrite(WB_IO2, LOW);
   state_ = State::kPowerOff;
   state_changed_at_ms_ = monotonic::nowMs();
 }
@@ -83,7 +83,7 @@ void GnssManager::poll() {
   switch (state_) {
     case State::kPowerOff:
       if (monotonic::elapsed(now, state_changed_at_ms_, gnss_config::kPowerSettleMs)) {
-        digitalWrite(WB_IO2, HIGH);
+        SensorPowerManager::acquire(SensorPowerOwner::kGnss);
         state_ = State::kPowerOnWait;
         state_changed_at_ms_ = now;
       }
@@ -98,13 +98,24 @@ void GnssManager::poll() {
     case State::kDetecting: {
       if (detection_attempts_++ != 0) ++diagnostics_.detection_retries;
       Wire.begin();
-      if (!gnss.begin(Wire, gnss_config::kI2cAddress,
-                      gnss_config::kConfigurationMaxWaitMs)) {
+      bool found = gnss.begin(Wire, gnss_config::kI2cAddress,
+                              gnss_config::kConfigurationMaxWaitMs);
+      const auto i2c_result = I2cRecovery::serviceTimeout();
+      if (i2c_result != I2cRecoveryResult::kNoTimeout) {
+        ++diagnostics_.i2c_timeouts;
+        found = false;
+        if (i2c_result == I2cRecoveryResult::kRecovered)
+          ++diagnostics_.i2c_recoveries;
+        else
+          ++diagnostics_.i2c_recovery_failures;
+      }
+      if (!found) {
         Serial.println(F("GNSS: not detected"));
         state_changed_at_ms_ = monotonic::nowMs();
         state_ = detection_attempts_ < gnss_config::kDetectionMaxAttempts
                      ? State::kDetectionBackoff : State::kNotPresent;
-        if (state_ == State::kNotPresent) digitalWrite(WB_IO2, LOW);
+        if (state_ == State::kNotPresent)
+          SensorPowerManager::release(SensorPowerOwner::kGnss);
         return;
       }
 
@@ -127,6 +138,7 @@ void GnssManager::poll() {
         return;
       }
       gnss.checkUblox();
+      if (handleI2cTimeout(now)) return;
       gnss.checkCallbacks();
       return;
 
@@ -134,6 +146,7 @@ void GnssManager::poll() {
       // Drain auto messages while tracking continuously, but do not promote
       // fixes outside an acquisition or allow the receiver FIFO to backlog.
       gnss.checkUblox();
+      if (handleI2cTimeout(now)) return;
       gnss.checkCallbacks();
       if (monotonic::reached(now, next_due_at_ms_)) {
         startAcquisition(monotonic::nowMs());
@@ -141,7 +154,7 @@ void GnssManager::poll() {
       return;
 
     case State::kSleeping:
-      // No GNSS bus traffic while the sensor supply is switched off.
+      // No GNSS bus traffic while the switched sensor rail is off for GNSS.
       if (monotonic::reached(now, next_due_at_ms_)) {
         startAcquisition(now);
       }
@@ -172,7 +185,7 @@ void GnssManager::clearCandidates() {
 void GnssManager::startAcquisition(uint32_t now) {
   ++session_generation_;
   if (state_ == State::kSleeping) {
-    digitalWrite(WB_IO2, HIGH);
+    SensorPowerManager::acquire(SensorPowerOwner::kGnss);
     state_changed_at_ms_ = now;
     waiting_for_power_ = true;
     needs_configuration_ = true;
@@ -186,6 +199,7 @@ void GnssManager::startAcquisition(uint32_t now) {
   transport_resync_pending_ = false;
   transport_resync_attempted_at_ms_ = 0;
   waiting_for_drain_ = false;
+  i2c_recoveries_this_acquisition_ = 0;
   acquisition_started_at_ms_ = now;
   next_due_at_ms_ = monotonic::nextFuture(
       now, next_due_at_ms_, gnss_config::kTrackingIntervalMs);
@@ -204,8 +218,8 @@ void GnssManager::prepareAcquisition() {
     waiting_for_power_ = false;
   }
   // At most one bounded library configuration operation per cooperative pass.
-  // The library may do several 250 ms transactions inside one operation; no
-  // operation waits for a fix. Radio IRQ/task processing remains enabled.
+  // The R4 Wire patch bounds each TWIM event wait; a timeout is recovered below
+  // and the current session is restarted behind the R3 freshness boundary.
   bool ok = true;
   switch (configuration_step_) {
     case 0:
@@ -234,9 +248,17 @@ void GnssManager::prepareAcquisition() {
       gnss.setI2CpollingWait(0);
       ok = gnss.checkUblox();
       gnss.setI2CpollingWait(gnss_config::kI2cPollingWaitMs);
+      if (handleI2cTimeout(now)) return;
       gnss.checkCallbacks();
       clearCandidates();
-      if (!ok || !receiverOutputQueueEmpty()) {
+      if (!ok) {
+        waiting_for_drain_ = true;
+        drain_attempted_at_ms_ = monotonic::nowMs();
+        return;
+      }
+      const bool queue_empty = receiverOutputQueueEmpty();
+      if (handleI2cTimeout(monotonic::nowMs())) return;
+      if (!queue_empty) {
         waiting_for_drain_ = true;
         drain_attempted_at_ms_ = monotonic::nowMs();
         return;
@@ -251,6 +273,8 @@ void GnssManager::prepareAcquisition() {
       return;
     }
   }
+
+  if (handleI2cTimeout(monotonic::nowMs())) return;
   if (!ok) {
     ++diagnostics_.configuration_failures;
     needs_configuration_ = true;
@@ -284,22 +308,82 @@ void GnssManager::serviceTransportResync(uint32_t now) {
   gnss.setI2CpollingWait(0);
   const bool read_ok = gnss.checkUblox();
   gnss.setI2CpollingWait(gnss_config::kI2cPollingWaitMs);
-  // Callbacks produced by a failed or successful drain are deliberately
-  // dispatched while transport_resync_pending_ is still true, so handlers drop
-  // them instead of assigning a new freshness timestamp.
+  if (handleI2cTimeout(now)) return;
+  // Callbacks produced by a successful drain are deliberately dispatched while
+  // transport_resync_pending_ is still true, so handlers drop them instead of
+  // assigning a new freshness timestamp.
   gnss.checkCallbacks();
   clearCandidates();
 
   // SparkFun returns false both for zero queued bytes and transport failures.
-  // Recovery therefore requires a successful data read plus an independent
-  // successful status transaction proving that no bytes remain queued.
-  if (!read_ok || !receiverOutputQueueEmpty()) return;
+  if (!read_ok) return;
+  const bool queue_empty = receiverOutputQueueEmpty();
+  if (handleI2cTimeout(monotonic::nowMs())) return;
+  if (!queue_empty) return;
 
   transport_resync_pending_ = false;
   has_boundary_epoch_ = false;
   has_dop_boundary_epoch_ = false;
   last_pvt_callback_at_ms_ = monotonic::nowMs();
   has_last_pvt_callback_time_ = true;
+}
+
+bool GnssManager::handleI2cTimeout(uint32_t now) {
+  const auto result = I2cRecovery::serviceTimeout();
+  if (result == I2cRecoveryResult::kNoTimeout) return false;
+
+  ++diagnostics_.i2c_timeouts;
+  needs_configuration_ = true;
+  clearCandidates();
+  fresh_fix_ready_ = false;
+  transport_resync_pending_ = false;
+  has_last_pvt_callback_time_ = false;
+
+  if (result == I2cRecoveryResult::kFailed) {
+    ++diagnostics_.i2c_recovery_failures;
+    state_ = State::kFailure;
+    Serial.println(F("GNSS I2C recovery failed"));
+    return true;
+  }
+
+  ++diagnostics_.i2c_recoveries;
+  restartAfterI2cRecovery(now);
+  return true;
+}
+
+void GnssManager::restartAfterI2cRecovery(uint32_t now) {
+  // Idle is outside an acquisition. A bus fault there starts one bounded
+  // recovery acquisition immediately so the receiver is reconfigured/drained.
+  if (state_ == State::kIdle) {
+    acquisition_started_at_ms_ = now;
+    i2c_recoveries_this_acquisition_ = 0;
+    ++diagnostics_.acquisition_attempts;
+  }
+
+  if (i2c_recoveries_this_acquisition_ >=
+      gnss_config::kMaxI2cRecoveriesPerAcquisition) {
+    ++diagnostics_.i2c_recovery_failures;
+    state_ = State::kFailure;
+    Serial.println(F("GNSS I2C recovery budget exhausted"));
+    return;
+  }
+  ++i2c_recoveries_this_acquisition_;
+
+  ++session_generation_;
+  clearCandidates();
+  fresh_fix_ready_ = false;
+  has_boundary_epoch_ = false;
+  has_dop_boundary_epoch_ = false;
+  has_last_pvt_callback_time_ = false;
+  last_pvt_callback_at_ms_ = 0;
+  transport_resync_pending_ = false;
+  transport_resync_attempted_at_ms_ = 0;
+  waiting_for_drain_ = false;
+  waiting_for_power_ = false;
+  configuration_step_ = 0;
+  needs_configuration_ = true;
+  state_ = State::kStarting;
+  Serial.println(F("GNSS I2C recovered; acquisition resync"));
 }
 
 void GnssManager::enterLowPower(uint32_t now) {
@@ -309,19 +393,19 @@ void GnssManager::enterLowPower(uint32_t now) {
   next_due_at_ms_ = monotonic::nextFuture(
       now, next_due_at_ms_, gnss_config::kTrackingIntervalMs);
   const uint32_t remaining_ms = next_due_at_ms_ - now;
-  if (gnss_config::keepTracking(gnss_config::kTrackingIntervalMs, remaining_ms)) {
+  if (!needs_configuration_ &&
+      gnss_config::keepTracking(gnss_config::kTrackingIntervalMs, remaining_ms)) {
     state_ = State::kIdle;
     Serial.println(F("GNSS idle (continuous tracking)"));
     return;
   }
 
-  // RAK12500 official I2C example uses WB_IO2 LOW/HIGH for slot power.
-  // The published schematic marks RTC crystal X4 NC, so timed software backup
-  // and hot-start retention are not assumed. See M3's hardware evidence.
-  digitalWrite(WB_IO2, LOW);
+  // WB_IO2 owns the RAK19007 switched 3V3_S rail. Use central ownership so a
+  // future additional 3V3_S consumer is not silently powered down by GNSS.
+  SensorPowerManager::release(SensorPowerOwner::kGnss);
   needs_configuration_ = true;
   state_ = State::kSleeping;
-  Serial.println(F("GNSS low power (WB_IO2 off)"));
+  Serial.println(F("GNSS low power (3V3_S release)"));
 }
 
 void GnssManager::expireFreshFix(uint32_t now) {

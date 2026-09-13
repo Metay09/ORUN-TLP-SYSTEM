@@ -8,6 +8,8 @@
 #include "radio_manager.h"
 #include "position_flow.h"
 #include "monotonic_time.h"
+#include "sensor_power_manager.h"
+#include "watchdog_manager.h"
 
 namespace {
 
@@ -85,6 +87,10 @@ void printBootBanner() {
   Serial.print(F(__DATE__));
   Serial.print(F(" "));
   Serial.println(F(__TIME__));
+  const auto& reset = orun_tlp::WatchdogManager::bootInfo();
+  Serial.printf("RESET reason=0x%08lx watchdog=%s\n",
+                static_cast<unsigned long>(reset.reset_reason),
+                reset.watchdog_reset ? "yes" : "no");
   Serial.println(F("M0 BOOT OK"));
 }
 
@@ -92,7 +98,11 @@ void printBootBanner() {
 
 void setup() {
   Serial.begin(115200);
+  // Start the hardware watchdog before peripheral initialization. It is the
+  // final recovery layer if bounded driver recovery itself cannot make progress.
+  orun_tlp::WatchdogManager::begin();
   printBootBanner();
+  orun_tlp::SensorPowerManager::begin();
   radio_manager.begin(history);
   radio_manager.setRole(role_controller.role());
   if (history.begin(radio_manager.deviceId())) {
@@ -136,5 +146,8 @@ void loop() {
       Serial.println(F("STORAGE position dropped; no live TX"));
   }
   radio_manager.update(tracker_role && !positions.pending());
+  // Feed only after the cooperative loop has completed all service work. A
+  // blocked I2C/flash/radio path therefore cannot hide behind an unrelated task.
+  orun_tlp::WatchdogManager::feed();
   orun_tlp::PowerManager::idle();
 }
