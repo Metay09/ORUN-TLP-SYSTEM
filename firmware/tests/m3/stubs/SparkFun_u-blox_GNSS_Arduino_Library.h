@@ -51,12 +51,21 @@ struct SFE_UBLOX_GNSS {
   // 2.2.29 keeps the first unconsumed callback copy while data keeps changing.
   inline static UBX_NAV_PVT_data_t current_pvt{}, callback_pvt{};
   inline static bool callback_valid = false;
+  inline static bool itow_fresh = false;
+  inline static unsigned time_of_week_cache_misses = 0;
   static void parsePvt(const UBX_NAV_PVT_data_t& value) {
     current_pvt = value;
+    itow_fresh = true;
     if (!callback_valid) { callback_pvt = value; callback_valid = true; }
   }
-  // Models getTimeOfWeek(0) reading the newest parsed current PVT cache.
-  uint32_t getTimeOfWeek(uint16_t) { return current_pvt.iTOW; }
+  // Models getTimeOfWeek(0) reading the newest parsed current PVT cache. A
+  // cache miss is counted so R3 tests can prove the backlog guard used the
+  // fresh parse result rather than relying on a getter-triggered refresh.
+  uint32_t getTimeOfWeek(uint16_t) {
+    if (!itow_fresh) ++time_of_week_cache_misses;
+    itow_fresh = false;
+    return current_pvt.iTOW;
+  }
   // Models the inspected current-cache date path (all test dates valid).
   uint32_t getUnixEpoch(uint16_t) {
     uint32_t epoch = 0;

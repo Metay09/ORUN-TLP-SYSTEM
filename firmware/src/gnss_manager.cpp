@@ -18,6 +18,7 @@ constexpr int32_t kMinLatitudeE7 = -900000000;
 constexpr int32_t kMaxLatitudeE7 = 900000000;
 constexpr int32_t kMinLongitudeE7 = -1800000000;
 constexpr int32_t kMaxLongitudeE7 = 1800000000;
+constexpr uint8_t kUbloxBytesAvailableRegister = 0xFD;
 
 bool isNavigationFix(uint8_t fix_type) {
   return fix_type == 2 || fix_type == 3 || fix_type == 4;
@@ -28,6 +29,28 @@ bool is3dFix(uint8_t fix_type) { return fix_type == 3 || fix_type == 4; }
 bool coordinatesAreInRange(int32_t latitude_e7, int32_t longitude_e7) {
   return latitude_e7 >= kMinLatitudeE7 && latitude_e7 <= kMaxLatitudeE7 &&
          longitude_e7 >= kMinLongitudeE7 && longitude_e7 <= kMaxLongitudeE7;
+}
+
+// Mirror SparkFun 2.2.29's 0xFD/0xFE bytes-available status transaction.
+// This proves the receiver output queue is empty; it does not consume stream data.
+bool receiverOutputQueueEmpty() {
+  Wire.beginTransmission(gnss_config::kI2cAddress);
+  if (Wire.write(kUbloxBytesAvailableRegister) != 1) {
+    Wire.endTransmission(true);
+    return false;
+  }
+  if (Wire.endTransmission(false) != 0) return false;
+  const uint8_t returned = Wire.requestFrom(
+      static_cast<uint8_t>(gnss_config::kI2cAddress), static_cast<uint8_t>(2));
+  if (returned != 2) return false;
+  const int msb = Wire.read();
+  const int lsb = Wire.read();
+  if (msb < 0 || lsb < 0) return false;
+  uint16_t bytes_available =
+      (static_cast<uint16_t>(msb) << 8) | static_cast<uint16_t>(lsb);
+  // SparkFun masks this undocumented high-bit anomaly before using the count.
+  bytes_available &= 0x7FFFu;
+  return bytes_available == 0;
 }
 
 }  // namespace
@@ -49,6 +72,8 @@ void GnssManager::poll() {
                          gnss_config::kAcquisitionTimeoutMs)) {
     clearCandidates();
     fresh_fix_ready_ = false;
+    transport_resync_pending_ = false;
+    has_last_pvt_callback_time_ = false;
     ++diagnostics_.acquisition_timeouts;
     needs_configuration_ = true;  // Reapply volatile config next time (e.g. reset).
     state_ = State::kTimeout;
@@ -97,6 +122,10 @@ void GnssManager::poll() {
       return;
 
     case State::kAcquiring:
+      if (transport_resync_pending_) {
+        serviceTransportResync(now);
+        return;
+      }
       gnss.checkUblox();
       gnss.checkCallbacks();
       return;
@@ -154,6 +183,8 @@ void GnssManager::startAcquisition(uint32_t now) {
   has_dop_boundary_epoch_ = false;
   has_last_pvt_callback_time_ = false;
   last_pvt_callback_at_ms_ = 0;
+  transport_resync_pending_ = false;
+  transport_resync_attempted_at_ms_ = 0;
   waiting_for_drain_ = false;
   acquisition_started_at_ms_ = now;
   next_due_at_ms_ = monotonic::nextFuture(
@@ -193,22 +224,19 @@ void GnssManager::prepareAcquisition() {
     case 4:
       ok = gnss.setAutoDOPcallbackPtr(onDop, gnss_config::kConfigurationMaxWaitMs);
       break;
-    default:
-      // Consume pending library callbacks and receiver output while acceptance
-      // is gated by STARTING. Do not mutate library parser/cache internals:
-      // flushPVT/flushDOP only clear getter flags, not pending callback copies.
-      // checkUblox may otherwise skip the bus because of its polling gate.
-      // Require a successful read of the available byte batch. False (empty
-      // or transport error) keeps STARTING gated until data or the timeout.
+    default: {
+      // Consume pending callbacks and receiver output while acceptance is gated
+      // by STARTING. A successful SparkFun read is not by itself proof of an
+      // empty output queue, so R3.2 also checks 0xFD/0xFE before ACQUIRING.
+      const uint32_t now = monotonic::nowMs();
       if (waiting_for_drain_ && !monotonic::elapsed(
-              monotonic::nowMs(), drain_attempted_at_ms_,
-              gnss_config::kI2cPollingWaitMs)) return;
+              now, drain_attempted_at_ms_, gnss_config::kI2cPollingWaitMs)) return;
       gnss.setI2CpollingWait(0);
       ok = gnss.checkUblox();
       gnss.setI2CpollingWait(gnss_config::kI2cPollingWaitMs);
       gnss.checkCallbacks();
       clearCandidates();
-      if (!ok) {
+      if (!ok || !receiverOutputQueueEmpty()) {
         waiting_for_drain_ = true;
         drain_attempted_at_ms_ = monotonic::nowMs();
         return;
@@ -216,7 +244,12 @@ void GnssManager::prepareAcquisition() {
       waiting_for_drain_ = false;
       needs_configuration_ = false;
       state_ = State::kAcquiring;
+      // Anchor service freshness at the proven-empty transport boundary so a
+      // delayed first PVT also re-enters resync instead of looking young.
+      last_pvt_callback_at_ms_ = monotonic::nowMs();
+      has_last_pvt_callback_time_ = true;
       return;
+    }
   }
   if (!ok) {
     ++diagnostics_.configuration_failures;
@@ -229,8 +262,50 @@ void GnssManager::prepareAcquisition() {
   ++configuration_step_;
 }
 
+void GnssManager::startTransportResync(uint32_t now) {
+  transport_resync_pending_ = true;
+  transport_resync_attempted_at_ms_ = now;
+  clearCandidates();
+  fresh_fix_ready_ = false;
+  // After drain we require new PVT and DOP boundaries. This also protects
+  // against a partial UBX frame retained in SparkFun's byte parser.
+  has_boundary_epoch_ = false;
+  has_dop_boundary_epoch_ = false;
+  has_last_pvt_callback_time_ = false;
+  last_pvt_callback_at_ms_ = 0;
+  ++diagnostics_.receiver_backlog_rejected;
+}
+
+void GnssManager::serviceTransportResync(uint32_t now) {
+  if (!monotonic::elapsed(now, transport_resync_attempted_at_ms_,
+                          gnss_config::kI2cPollingWaitMs)) return;
+  transport_resync_attempted_at_ms_ = now;
+
+  gnss.setI2CpollingWait(0);
+  const bool read_ok = gnss.checkUblox();
+  gnss.setI2CpollingWait(gnss_config::kI2cPollingWaitMs);
+  // Callbacks produced by a failed or successful drain are deliberately
+  // dispatched while transport_resync_pending_ is still true, so handlers drop
+  // them instead of assigning a new freshness timestamp.
+  gnss.checkCallbacks();
+  clearCandidates();
+
+  // SparkFun returns false both for zero queued bytes and transport failures.
+  // Recovery therefore requires a successful data read plus an independent
+  // successful status transaction proving that no bytes remain queued.
+  if (!read_ok || !receiverOutputQueueEmpty()) return;
+
+  transport_resync_pending_ = false;
+  has_boundary_epoch_ = false;
+  has_dop_boundary_epoch_ = false;
+  last_pvt_callback_at_ms_ = monotonic::nowMs();
+  has_last_pvt_callback_time_ = true;
+}
+
 void GnssManager::enterLowPower(uint32_t now) {
   clearCandidates();
+  transport_resync_pending_ = false;
+  has_last_pvt_callback_time_ = false;
   next_due_at_ms_ = monotonic::nextFuture(
       now, next_due_at_ms_, gnss_config::kTrackingIntervalMs);
   const uint32_t remaining_ms = next_due_at_ms_ - now;
@@ -284,37 +359,32 @@ void GnssManager::onDop(UBX_NAV_DOP_data_t* dop_data) {
 }
 
 void GnssManager::handlePvt(const UBX_NAV_PVT_data_t& pvt_data) {
-  if (state_ != State::kAcquiring) {
-    return;
-  }
+  if (state_ != State::kAcquiring || transport_resync_pending_) return;
   const uint32_t received_at = monotonic::nowMs();
 
+  // A retained duplicate cannot renew the original candidate age. Returning
+  // before backlog detection is safe: the old candidate timestamp remains old,
+  // and a later different stale epoch still triggers the long-gap resync.
+  if (has_candidate_fix_ && candidate_fix_itow_ == pvt_data.iTOW) return;
+
   // SparkFun 2.2.29 keeps the first unconsumed callback copy while continuing
-  // to update packetUBXNAVPVT->data for every later PVT parsed in the same I2C
-  // batch. Immediately after checkUblox(), getTimeOfWeek(0) therefore exposes
-  // the newest parsed PVT iTOW without a new bus wait: processUBXpacket marks
-  // iTOW fresh before checkCallbacks() runs. A mismatch proves this callback is
-  // receiver/FIFO backlog. A >= freshness-limit callback silence is also
-  // treated as a resynchronization boundary, covering a lone stale buffered PVT
-  // whose cache iTOW cannot differ. Both cases conservatively discard one epoch.
+  // to update packetUBXNAVPVT->data for later PVTs parsed in the same I2C read.
+  // With iTOW marked fresh by processUBXpacket(), getTimeOfWeek(0) is a cache
+  // read here. A mismatch proves this callback is not the newest parsed PVT.
   const uint32_t newest_parsed_itow = gnss.getTimeOfWeek(0);
   const bool callback_gap =
       has_last_pvt_callback_time_ &&
       monotonic::elapsed(received_at, last_pvt_callback_at_ms_,
                          gnss_config::kFreshFixMaxAgeMs);
-  last_pvt_callback_at_ms_ = received_at;
-  has_last_pvt_callback_time_ = true;
   if (callback_gap || newest_parsed_itow != pvt_data.iTOW) {
-    clearCandidates();
-    boundary_epoch_ = pvt_data.iTOW;
-    has_boundary_epoch_ = true;
-    ++diagnostics_.receiver_backlog_rejected;
+    startTransportResync(received_at);
     return;
   }
+  last_pvt_callback_at_ms_ = received_at;
+  has_last_pvt_callback_time_ = true;
 
-  // After draining, the first observed epoch is a boundary, never a fix to
-  // transmit. Require an epoch change, even if the first PVT was invalid.
-  // This also rejects a partial pre-acquisition packet completed after wake.
+  // After a proven drain, the first observed epoch is a boundary, never a fix
+  // to transmit. Require an epoch change even if the first PVT was invalid.
   if (!has_boundary_epoch_) {
     boundary_epoch_ = pvt_data.iTOW;
     has_boundary_epoch_ = true;
@@ -330,8 +400,6 @@ void GnssManager::handlePvt(const UBX_NAV_PVT_data_t& pvt_data) {
     has_candidate_fix_ = false;
     return;
   }
-  // Repeated delivery of a valid candidate must not renew its age.
-  if (has_candidate_fix_ && candidate_fix_itow_ == pvt_data.iTOW) return;
 
   // iTOW is not monotonic across GPS week rollover. Once another PVT epoch is
   // observed, an equal iTOW from a future week must remain eligible.
@@ -367,9 +435,7 @@ void GnssManager::handlePvt(const UBX_NAV_PVT_data_t& pvt_data) {
 }
 
 void GnssManager::handleDop(const UBX_NAV_DOP_data_t& dop_data) {
-  if (state_ != State::kAcquiring) {
-    return;
-  }
+  if (state_ != State::kAcquiring || transport_resync_pending_) return;
   const uint32_t received_at = monotonic::nowMs();
   // A drain can end partway through either UBX message type. Reject the
   // first DOP epoch too, even if its counterpart PVT was already observed.
@@ -389,7 +455,7 @@ void GnssManager::handleDop(const UBX_NAV_DOP_data_t& dop_data) {
 
 void GnssManager::considerPositionFix() {
   const uint32_t now = monotonic::nowMs();
-  if (state_ != State::kAcquiring ||
+  if (state_ != State::kAcquiring || transport_resync_pending_ ||
       monotonic::elapsed(now, acquisition_started_at_ms_, gnss_config::kAcquisitionTimeoutMs) ||
       !has_candidate_fix_ || !has_latest_hdop_ ||
       pvt_generation_ != session_generation_ || dop_generation_ != session_generation_ ||

@@ -1,11 +1,43 @@
-// White-box fault injection only for an otherwise unreachable retained-session
-// candidate. All matching/UTC/state decisions execute production GnssManager.
+// White-box fault injection only for otherwise unreachable retained-session and
+// transport-resync state. Matching/UTC/freshness decisions use production code.
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 #define private public
 #include "gnss_manager.h"
 #undef private
 #include "../m3/gnss_test_support.h"
 #include "node_role.h"
+
+void queuePvtDop(uint32_t tow) {
+  Fake::pending.push_back([tow]() {
+    UBX_NAV_DOP_data_t value{tow, 123};
+    Fake::dop(&value);
+  });
+  Fake::parsePvt(pvt(tow));
+}
+
+void completeTransportResync(GnssManager& manager, uint32_t drain_tow) {
+  assert(manager.transport_resync_pending_);
+  test_now += gnss_config::kI2cPollingWaitMs;
+  Fake::read_ok = true;
+  Wire.status_ok = true;
+  Wire.bytes_available = 0;
+  queuePvtDop(drain_tow);
+  manager.poll();
+  assert(!manager.transport_resync_pending_);
+  assert(!manager.has_candidate_fix_ && !manager.has_latest_hdop_);
+  assert(!manager.has_boundary_epoch_ && !manager.has_dop_boundary_epoch_);
+}
+
+void acceptAfterResync(GnssManager& manager, uint32_t boundary_tow,
+                       uint32_t fix_tow) {
+  GnssFix fix{};
+  emitPvt(manager, pvt(boundary_tow));
+  emitDop(manager, boundary_tow);
+  assert(!manager.takeFreshFixForTransmission(&fix));
+  emitPvt(manager, pvt(fix_tow));
+  emitDop(manager, fix_tow);
+  assert(manager.takeFreshFixForTransmission(&fix));
+}
 
 void ageIsNotRenewed(bool dop_first) {
   GnssManager manager;
@@ -164,8 +196,13 @@ void repeatedStaleEpoch() {
     else { emitPvt(manager, pvt(0)); emitDop(manager, 0); }
     GnssFix fix{};
     assert(!manager.takeFreshFixForTransmission(&fix));
-    emitPvt(manager, pvt(1000)); emitDop(manager, 1000);
-    assert(manager.takeFreshFixForTransmission(&fix));
+    if (manager.transport_resync_pending_) {
+      completeTransportResync(manager, 1000);
+      acceptAfterResync(manager, 2000, 3000);
+    } else {
+      emitPvt(manager, pvt(1000)); emitDop(manager, 1000);
+      assert(manager.takeFreshFixForTransmission(&fix));
+    }
   }
 }
 
@@ -175,6 +212,8 @@ void detectionRetry(bool eventually_present) {
   test_now = UINT32_MAX - 4000;
   Fake::pending.clear(); Fake::callback_valid = false;
   Fake::present = false; Fake::configuration_ok = true;
+  Fake::read_ok = true;
+  Wire.status_ok = true; Wire.bytes_available = 0;
   const unsigned calls = Fake::detection_calls;
   manager.begin();
   test_now += 1000; manager.poll();
@@ -223,6 +262,8 @@ void drainAndPartialDopBoundary() {
   assert(Fake::polling_wait == gnss_config::kI2cPollingWaitMs);
   assert(!manager.has_candidate_fix_);
   Fake::read_ok = true;
+  Wire.status_ok = true;
+  Wire.bytes_available = 0;
   const auto reads = Fake::reads;
   for (unsigned n = 0; n < 100; ++n) manager.poll();
   assert(Fake::reads == reads && manager.state() == State::kStarting);
@@ -245,9 +286,7 @@ void receiverBacklogIsNotFresh() {
     boot(manager);
     emitPvt(manager, pvt(1000)); emitDop(manager, 1000); // Initial boundaries.
 
-    // Model one delayed I2C batch containing multiple PVT epochs. SparkFun
-    // preserves the first callback copy (2000) while current_pvt advances to
-    // the newest parsed epoch (3000). DOP is dispatched before PVT.
+    // Complete delayed batch: retained callback=2000, mutable current cache=3000.
     test_now += 1000;
     Fake::pending.push_back([]() {
       UBX_NAV_DOP_data_t value{2000, 123};
@@ -255,14 +294,16 @@ void receiverBacklogIsNotFresh() {
     });
     Fake::parsePvt(pvt(2000));
     Fake::parsePvt(pvt(3000));
+    const auto misses = Fake::time_of_week_cache_misses;
     manager.poll();
     GnssFix fix{};
     assert(!manager.takeFreshFixForTransmission(&fix));
+    assert(manager.transport_resync_pending_);
     assert(manager.diagnostics().receiver_backlog_rejected == 1);
-    assert(!manager.has_candidate_fix_ && !manager.has_latest_hdop_);
+    assert(Fake::time_of_week_cache_misses == misses);
 
-    emitPvt(manager, pvt(4000)); emitDop(manager, 4000);
-    assert(manager.takeFreshFixForTransmission(&fix));
+    completeTransportResync(manager, 4000);
+    acceptAfterResync(manager, 5000, 6000);
   }
 
   {
@@ -270,17 +311,93 @@ void receiverBacklogIsNotFresh() {
     boot(manager);
     emitPvt(manager, pvt(1000)); emitDop(manager, 1000); // Initial boundaries.
 
-    // A lone buffered PVT can equal the mutable current cache, so cache
-    // comparison alone cannot expose its age. A callback silence at the exact
-    // freshness limit makes the first resumed epoch a resync boundary.
+    // A lone buffered PVT can equal current cache. Exact 5000 ms silence must
+    // enter persistent resync instead of merely rejecting one callback.
     test_now += gnss_config::kFreshFixMaxAgeMs;
-    emitPvt(manager, pvt(2000)); emitDop(manager, 2000);
+    queuePvtDop(2000);
+    manager.poll();
     GnssFix fix{};
     assert(!manager.takeFreshFixForTransmission(&fix));
+    assert(manager.transport_resync_pending_);
     assert(manager.diagnostics().receiver_backlog_rejected == 1);
 
-    emitPvt(manager, pvt(3000)); emitDop(manager, 3000);
+    completeTransportResync(manager, 3000);
+    acceptAfterResync(manager, 4000, 5000);
+  }
+}
+
+void partialReadBacklogStaysGated() {
+  GnssManager manager;
+  boot(manager);
+  emitPvt(manager, pvt(1000)); emitDop(manager, 1000); // Initial boundaries.
+
+  // Independent-review counterexample: 8 s service outage, then two old pairs
+  // are exposed by consecutive failed/partial reads only 100 ms apart.
+  test_now += 8000;
+  Fake::read_ok = false;
+  Wire.bytes_available = 64;
+  queuePvtDop(2000);
+  manager.poll();
+  GnssFix fix{};
+  assert(!manager.takeFreshFixForTransmission(&fix));
+  assert(manager.transport_resync_pending_);
+  assert(!manager.has_last_pvt_callback_time_);
+
+  test_now += gnss_config::kI2cPollingWaitMs;
+  Fake::read_ok = false;
+  Wire.bytes_available = 32;
+  queuePvtDop(3000);
+  manager.poll();
+  assert(manager.transport_resync_pending_);
+  assert(!manager.takeFreshFixForTransmission(&fix));
+  assert(!manager.has_candidate_fix_ && !manager.has_latest_hdop_);
+
+  // False is ambiguous in SparkFun: even a zero status must not complete
+  // resync after a failed read.
+  test_now += gnss_config::kI2cPollingWaitMs;
+  Fake::read_ok = false;
+  Wire.bytes_available = 0;
+  manager.poll();
+  assert(manager.transport_resync_pending_);
+
+  // A successful forced drain plus independently proven empty output queue can
+  // end resync. All callbacks from this drain are still discarded.
+  test_now += gnss_config::kI2cPollingWaitMs;
+  Fake::read_ok = true;
+  Wire.status_ok = true;
+  Wire.bytes_available = 0;
+  queuePvtDop(4000);
+  manager.poll();
+  assert(!manager.transport_resync_pending_);
+  assert(!manager.takeFreshFixForTransmission(&fix));
+
+  // First post-resync PVT and DOP are boundaries. Only the next epoch is live.
+  acceptAfterResync(manager, 5000, 6000);
+}
+
+void callbackGapThresholds() {
+  {
+    GnssManager manager;
+    boot(manager);
+    emitPvt(manager, pvt(1000)); emitDop(manager, 1000);
+    test_now += gnss_config::kFreshFixMaxAgeMs - 1;
+    queuePvtDop(2000);
+    manager.poll();
+    GnssFix fix{};
+    assert(!manager.transport_resync_pending_);
     assert(manager.takeFreshFixForTransmission(&fix));
+  }
+
+  {
+    GnssManager manager;
+    boot(manager, UINT32_MAX - 3000);
+    emitPvt(manager, pvt(1000)); emitDop(manager, 1000);
+    test_now += gnss_config::kFreshFixMaxAgeMs;
+    queuePvtDop(2000);
+    manager.poll();
+    GnssFix fix{};
+    assert(manager.transport_resync_pending_);
+    assert(!manager.takeFreshFixForTransmission(&fix));
   }
 }
 
@@ -290,5 +407,6 @@ int main() {
   utcSnapshotAndWire(); utcValidity(); repeatedStaleEpoch();
   detectionRetry(true); detectionRetry(false);
   drainAndPartialDopBoundary(); receiverBacklogIsNotFresh();
-  puts("R3 capture/session, UTC snapshot/wire, backlog and detection checks: PASS");
+  partialReadBacklogStaysGated(); callbackGapThresholds();
+  puts("R3 capture/session, UTC snapshot/wire, drain-resync and detection checks: PASS");
 }

@@ -60,6 +60,8 @@ class GnssManager {
   void considerPositionFix();
   void startAcquisition(uint32_t now);
   void prepareAcquisition();
+  void startTransportResync(uint32_t now);
+  void serviceTransportResync(uint32_t now);
   void enterLowPower(uint32_t now);
   void clearCandidates();
   void expireFreshFix(uint32_t now);
@@ -70,9 +72,11 @@ class GnssManager {
   bool needs_configuration_ = true;
   bool waiting_for_power_ = false;
   bool waiting_for_drain_ = false;
+  bool transport_resync_pending_ = false;
   uint8_t configuration_step_ = 0;
   uint32_t state_changed_at_ms_ = 0;
   uint32_t drain_attempted_at_ms_ = 0;
+  uint32_t transport_resync_attempted_at_ms_ = 0;
   uint32_t acquisition_started_at_ms_ = 0;
   uint32_t next_due_at_ms_ = 0;
   uint32_t session_generation_ = 0;
