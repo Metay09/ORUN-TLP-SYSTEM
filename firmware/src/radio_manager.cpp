@@ -6,6 +6,7 @@
 #include "radio_config.h"
 #include "gnss_manager.h"
 #include "tlp_position_packet.h"
+#include "tlp_relay_forward_packet.h"
 #include "tlp_test_packet.h"
 
 namespace orun_tlp {
@@ -39,6 +40,7 @@ bool RadioManager::begin(SequenceSource& sequences) {
   uint8_t board_id[8]{};
   BoardGetUniqueId(board_id);
   device_id_ = boardUniqueIdToUint64(board_id);
+  network_.begin(device_id_, NodeRole::kBase);
 
   if (lora_rak4630_init() != 0) {
     Serial.println(F("LoRa initialization failed"));
@@ -89,10 +91,18 @@ void RadioManager::update(bool allow_test_beacon) {
     return;
   }
   const uint32_t now = millis();
+  if (network_.role() == NodeRole::kRelay && !tx_in_progress_) {
+    sendDueRelay(now);
+  }
   if (allow_test_beacon && radio_config::kTestBeaconEnabled && !tx_in_progress_ &&
       static_cast<int32_t>(now - next_tx_at_ms_) >= 0) {
     sendTestPacket();
   }
+}
+
+void RadioManager::setRole(NodeRole role) {
+  network_.setRole(role);
+  if (ready_ && !tx_in_progress_) Radio.Rx(0);
 }
 
 bool RadioManager::canSend() const { return ready_ && !tx_in_progress_; }
@@ -120,6 +130,7 @@ bool RadioManager::sendPositionPacket(const uint8_t* payload) {
   uint8_t tx_payload[tlp::kPositionPacketSize];
   memcpy(tx_payload, payload, sizeof(tx_payload));
   tx_in_progress_ = true;
+  tx_kind_ = TxKind::kPosition;
   ++tx_attempts_;
   Serial.printf("TX POSITION source=%016llX sequence=%lu lat=%ld lon=%ld sats=%u\n",
                 static_cast<unsigned long long>(packet.source_device_id),
@@ -135,6 +146,11 @@ uint64_t RadioManager::deviceId() const { return device_id_; }
 void RadioManager::onTxDone() {
   if (active_radio_manager != nullptr) {
     // Local TX completion only. No HistoryStore/delivery mutation here.
+    if (active_radio_manager->tx_kind_ == TxKind::kRelay) {
+      active_radio_manager->network_.onForwardTxResult(true);
+      Serial.println(F("RELAY TX done; RX resumed"));
+    }
+    active_radio_manager->tx_kind_ = TxKind::kNone;
     active_radio_manager->tx_in_progress_ = false;
     active_radio_manager->scheduleNextTransmission(millis());
   }
@@ -144,6 +160,11 @@ void RadioManager::onTxDone() {
 void RadioManager::onTxTimeout() {
   Serial.println(F("TX timeout"));
   if (active_radio_manager != nullptr) {
+    if (active_radio_manager->tx_kind_ == TxKind::kRelay) {
+      active_radio_manager->network_.onForwardTxResult(false);
+      Serial.println(F("RELAY TX timeout; RX resumed"));
+    }
+    active_radio_manager->tx_kind_ = TxKind::kNone;
     ++active_radio_manager->tx_timeouts_;
     active_radio_manager->tx_in_progress_ = false;
     active_radio_manager->scheduleNextTransmission(millis());
@@ -180,10 +201,39 @@ void RadioManager::sendTestPacket() {
   }
 
   tx_in_progress_ = true;
+  tx_kind_ = TxKind::kTest;
   ++tx_attempts_;
   Serial.printf("TX source=%016llX sequence=%lu type=TEST\n",
                 static_cast<unsigned long long>(packet.source_device_id),
                 static_cast<unsigned long>(packet.sequence_number));
+  Radio.Send(payload, sizeof(payload));
+}
+
+void RadioManager::sendDueRelay(uint32_t now) {
+  tlp::RelayForwardPacket envelope{};
+  if (!network_.takeDueForward(now, &envelope)) return;
+  uint8_t payload[tlp::kRelayForwardPacketSize]{};
+  if (!tlp::serializeRelayForwardPacket(envelope, payload, sizeof(payload))) {
+    network_.onForwardTxResult(false);
+    ++local_tx_failures_;
+    Serial.println(F("RELAY TX encode failed"));
+    return;
+  }
+  tlp::PositionPacket original{};
+  if (!tlp::deserializePositionPacket(envelope.original_packet,
+                                      envelope.original_length, &original)) {
+    network_.onForwardTxResult(false);
+    ++local_tx_failures_;
+    Serial.println(F("RELAY TX inner validation failed"));
+    return;
+  }
+  tx_in_progress_ = true;
+  tx_kind_ = TxKind::kRelay;
+  ++tx_attempts_;
+  network_.onForwardTxStarted();
+  Serial.printf("RELAY TX source=%016llX seq=%lu\n",
+                static_cast<unsigned long long>(original.source_device_id),
+                static_cast<unsigned long>(original.sequence_number));
   Radio.Send(payload, sizeof(payload));
 }
 
@@ -195,45 +245,68 @@ void RadioManager::scheduleNextTransmission(uint32_t now) {
 
 void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
                                         int16_t rssi, int8_t snr) {
-  if (size < 2) {
-    Serial.printf("RX rejected: length=%u\n", size);
-    return;
-  }
-
-  if (payload[0] != tlp::kProtocolVersion) {
-    Serial.printf("RX rejected: unsupported version=%u\n", payload[0]);
-    return;
-  }
-
-  if (payload[1] == tlp::kPacketTypePosition) {
-    tlp::PositionPacket packet{};
-    if (!tlp::deserializePositionPacket(payload, size, &packet)) {
-      Serial.printf("RX POSITION rejected: length=%u or malformed flags\n", size);
+  if (size >= 2 && payload[0] == tlp::kProtocolVersion &&
+      payload[1] == tlp::kPacketTypeTest) {
+    tlp::TestPacket packet{};
+    if (!tlp::deserializeTestPacket(payload, size, &packet)) {
+      Serial.printf("RX TEST rejected length=%u\n", size);
       return;
     }
-    Serial.printf("RX POSITION source=%016llX sequence=%lu lat=%ld lon=%ld sats=%u RSSI=%d dBm SNR=%d dB\n",
+    Serial.printf("RX source=%016llX sequence=%lu type=TEST RSSI=%d dBm SNR=%d dB\n",
                   static_cast<unsigned long long>(packet.source_device_id),
-                  static_cast<unsigned long>(packet.sequence_number),
-                  static_cast<long>(packet.latitude_e7),
-                  static_cast<long>(packet.longitude_e7), packet.satellites,
-                  rssi, snr);
+                  static_cast<unsigned long>(packet.sequence_number), rssi, snr);
     return;
   }
 
-  if (payload[1] != tlp::kPacketTypeTest) {
-    Serial.printf("RX rejected: unsupported type=%u\n", payload[1]);
-    return;
+  const NetworkEvent event = network_.receive(payload, size, rssi, snr, millis());
+  const auto source = static_cast<unsigned long long>(event.position.source_device_id);
+  const auto sequence = static_cast<unsigned long>(event.position.sequence_number);
+  switch (event.kind) {
+    case NetworkEventKind::kRelayQueued:
+      Serial.printf("RELAY RX source=%016llX seq=%lu rssi=%d snr=%d\n",
+                    source, sequence, rssi, snr);
+      Serial.printf("RELAY QUEUE source=%016llX seq=%lu delay=%lums\n",
+                    source, sequence,
+                    static_cast<unsigned long>(event.relay_delay_ms));
+      break;
+    case NetworkEventKind::kRelayDuplicate:
+      Serial.printf("RELAY DUP source=%016llX seq=%lu\n", source, sequence);
+      break;
+    case NetworkEventKind::kRelayQueueDrop:
+      Serial.printf("RELAY DROP queue-full source=%016llX seq=%lu\n",
+                    source, sequence);
+      break;
+    case NetworkEventKind::kRelayNestedRejected:
+      Serial.println(F("RELAY rejected relayed packet"));
+      break;
+    case NetworkEventKind::kBaseNew:
+    case NetworkEventKind::kBaseDuplicate: {
+      const char* freshness = event.kind == NetworkEventKind::kBaseNew ? "NEW" : "DUP";
+      if (event.path == NetworkPath::kDirect) {
+        Serial.printf("BASE RX %s source=%016llX seq=%lu path=DIRECT rssi=%d snr=%d\n",
+                      freshness, source, sequence, event.link_rssi_dbm,
+                      event.link_snr_db);
+      } else {
+        Serial.printf("BASE RX %s source=%016llX seq=%lu path=RELAY relay=%016llX ingress_rssi=%d ingress_snr=%d rssi=%d snr=%d\n",
+                      freshness, source, sequence,
+                      static_cast<unsigned long long>(event.relay_device_id),
+                      event.ingress_rssi_dbm, event.ingress_snr_db,
+                      event.link_rssi_dbm, event.link_snr_db);
+      }
+      break;
+    }
+    case NetworkEventKind::kIgnoredPosition:
+      Serial.printf("RX POSITION source=%016llX seq=%lu ignored role=%s\n",
+                    source, sequence, roleName(network_.role()));
+      break;
+    case NetworkEventKind::kMalformed:
+      Serial.printf("RX rejected type=%u length=%u role=%s\n",
+                    size >= 2 ? payload[1] : 0, size,
+                    roleName(network_.role()));
+      break;
+    case NetworkEventKind::kNone:
+      break;
   }
-
-  tlp::TestPacket packet{};
-  if (!tlp::deserializeTestPacket(payload, size, &packet)) {
-    Serial.printf("RX rejected: length=%u or unsupported version/type\n", size);
-    return;
-  }
-
-  Serial.printf("RX source=%016llX sequence=%lu type=TEST RSSI=%d dBm SNR=%d dB\n",
-                static_cast<unsigned long long>(packet.source_device_id),
-                static_cast<unsigned long>(packet.sequence_number), rssi, snr);
 }
 
 }  // namespace orun_tlp

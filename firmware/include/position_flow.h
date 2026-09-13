@@ -9,7 +9,7 @@ class PositionFlow {
   PositionFlow(HistoryStore& store, RadioManager& radio) : store_(store), radio_(radio) {}
   bool canAcceptFix() const { return !appending_ && (!store_.ready() || store_.canAppend()); }
   bool acceptFix(const GnssFix& fix, uint32_t now);
-  Event update(uint32_t now);
+  Event update(uint32_t now, bool allow_live_tx = true);
   bool pending() const { return appending_ || live_pending_; }
   uint32_t storageDrops() const { return storage_drops_; }
  private:

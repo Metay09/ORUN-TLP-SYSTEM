@@ -12,13 +12,17 @@ bool PositionFlow::acceptFix(const GnssFix& fix, uint32_t now) {
   }
   accepted_at_ = now; appending_ = true; return true;
 }
-PositionFlow::Event PositionFlow::update(uint32_t now) {
+PositionFlow::Event PositionFlow::update(uint32_t now, bool allow_live_tx) {
   Event event = Event::kNone;
   bool stored;
   if (appending_ && store_.takeAppendResult(stored)) {
     appending_ = false;
     if (!stored) { ++storage_drops_; return Event::kStorageFailure; }
     live_pending_ = true; event = Event::kStored;
+  }
+  if (!allow_live_tx) {
+    live_pending_ = false;
+    return event;
   }
   if (live_pending_) {
     if (monotonic::elapsed(now, accepted_at_, gnss_config::kFreshFixMaxAgeMs)) {

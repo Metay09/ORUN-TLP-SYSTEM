@@ -10,3 +10,8 @@ g++ "${flags[@]}" firmware/tests/m4/test_m4.cpp firmware/src/history_store.cpp \
   firmware/src/journal_format.cpp firmware/src/position_flow.cpp \
   firmware/src/tlp_position_packet.cpp -o "$test_dir/m4"
 "$test_dir/m4"
+g++ "${flags[@]}" firmware/tests/m5/test_m5.cpp \
+  firmware/src/network_service.cpp firmware/src/node_role.cpp \
+  firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
+  -o "$test_dir/m5"
+"$test_dir/m5"

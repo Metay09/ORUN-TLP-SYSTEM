@@ -37,6 +37,10 @@ class GnssManager {
   void poll();
   bool takeFreshFixForTransmission(GnssFix* fix);
   bool detected() const;
+  bool detectionComplete() const {
+    return state_ != State::kPowerOff && state_ != State::kPowerOnWait &&
+           state_ != State::kDetecting;
+  }
   State state() const { return state_; }
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
