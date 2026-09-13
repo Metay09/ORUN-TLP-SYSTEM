@@ -38,4 +38,3 @@ extern const Radio_s Radio;
 
 int lora_rak4630_init();
 void BoardGetUniqueId(uint8_t* id);
-

@@ -55,4 +55,3 @@ inline BaseType_t xQueueReceive(QueueHandle_t queue, void* item, TickType_t) {
   --queue->count;
   return pdPASS;
 }
-
