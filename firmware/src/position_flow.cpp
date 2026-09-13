@@ -29,8 +29,9 @@ PositionFlow::Event PositionFlow::update(uint32_t now, bool allow_live_tx) {
       live_pending_ = false; return Event::kLiveExpired; // Record remains backlog.
     }
     if (radio_.canSend()) {
-      (void)radio_.sendPositionPacket(packet_);
-      live_pending_ = false; // One live attempt. TX_DONE is not delivery.
+      // Driver gate contention is a defer, not an attempted transmission.
+      if (radio_.sendPositionPacket(packet_))
+        live_pending_ = false; // TX_DONE is not delivery.
     }
   }
   return event;

@@ -281,6 +281,7 @@ void pageRotationUsesOneErase() {
 
 FaultFlash* tx_flash = nullptr;
 bool radio_available = true;
+bool radio_gate_contended = false;
 unsigned sends = 0;
 
 bool RadioManager::begin(SequenceSource& source) {
@@ -301,6 +302,7 @@ bool RadioManager::encodePosition(const GnssFix& fix, uint8_t* output,
                                       tlp::kPositionPacketSize);
 }
 bool RadioManager::sendPositionPacket(const uint8_t* bytes) {
+  if (radio_gate_contended) return false;
   HistoryStore disk(*tx_flash);
   start(disk);
   HistoryStore::Record record;
@@ -308,6 +310,26 @@ bool RadioManager::sendPositionPacket(const uint8_t* bytes) {
   assert(memcmp(bytes, record.packet, sizeof(record.packet)) == 0);
   ++sends;
   return true;
+}
+
+void livePacketSurvivesRadioGateDefer() {
+  FaultFlash flash;
+  tx_flash = &flash;
+  sends = 0;
+  HistoryStore store(flash);
+  start(store);
+  RadioManager radio;
+  assert(radio.begin(store));
+  PositionFlow flow(store, radio);
+  const GnssFix fix{0, 410000000, 290000000, 10, 100, 8, 5};
+  assert(flow.acceptFix(fix, 0));
+  settle(store);
+  radio_gate_contended = true;
+  assert(flow.update(1) == PositionFlow::Event::kStored);
+  assert(flow.pending() && sends == 0 && store.backlogCount() == 1);
+  radio_gate_contended = false;
+  flow.update(2);
+  assert(!flow.pending() && sends == 1 && store.deliveredThrough() == 0);
 }
 
 void storeFirstAndPageTransitionFailureCompletes() {
@@ -612,6 +634,7 @@ int main() {
   circularWrapAndPageTransitionCuts();
   pageRotationUsesOneErase();
   storeFirstAndPageTransitionFailureCompletes();
+  livePacketSurvivesRadioGateDefer();
   everyPageTransitionFailureCompletesPositionFlow();
   cursorDelivery();
   puts("M4 storage repair regression checks: PASS");

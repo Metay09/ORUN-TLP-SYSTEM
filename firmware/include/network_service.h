@@ -62,6 +62,8 @@ uint32_t deterministicRelayDelay(uint64_t source_device_id,
 
 class NetworkService {
  public:
+  // Intentionally unsynchronized: RadioManager's application/loop owner is
+  // the only caller. Radio callbacks hand off immutable events first.
   void begin(uint64_t local_device_id, NodeRole role);
   void setRole(NodeRole role);
   NodeRole role() const { return role_; }

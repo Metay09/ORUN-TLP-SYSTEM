@@ -22,3 +22,12 @@ g++ "${flags[@]}" firmware/tests/m5/test_m5.cpp \
   firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
   -o "$test_dir/m5"
 "$test_dir/m5"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r2/test_patch_radio.py "$test_dir/driver_bridge.cpp"
+g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
+  "$test_dir/driver_bridge.cpp" \
+  firmware/src/radio_manager.cpp firmware/src/network_service.cpp \
+  firmware/src/radio_driver_gate.cpp \
+  firmware/src/node_role.cpp firmware/src/tlp_test_packet.cpp \
+  firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
+  -o "$test_dir/r2"
+"$test_dir/r2"
