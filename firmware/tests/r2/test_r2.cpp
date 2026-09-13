@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <Arduino.h>
 #include <SX126x-Arduino.h>
 #include <semphr.h>
 #include "driver_patch_model.h"
@@ -108,6 +109,7 @@ class TestSequence : public SequenceSource {
 };
 
 void resetFakeRadio() {
+  Serial.output.clear();
   callbacks = nullptr;
   radio_state = RF_IDLE;
   rx_calls = 0;
@@ -431,6 +433,77 @@ void liveTxAdmissionAge() {
   assert(send_calls == 1);
 }
 
+void portableDeviceIdDiagnostics() {
+  TestSequence sequences;
+  RadioManager manager;
+  beginAs(manager, sequences, NodeRole::kBase);
+  // Expected strings are independent of the production split/printf logic.
+  const struct { uint64_t id; const char* hex; } cases[] = {
+      {0, "0000000000000000"},
+      {0x00000000FFFFFFFFULL, "00000000FFFFFFFF"},
+      {0xFFFFFFFF00000000ULL, "FFFFFFFF00000000"},
+      {0x09A462BD4B275BA5ULL, "09A462BD4B275BA5"},
+      {UINT64_MAX, "FFFFFFFFFFFFFFFF"}};
+  for (const auto& value : cases) {
+    uint8_t bytes[tlp::kTestPacketSize];
+    assert(tlp::serializeTestPacket({value.id, UINT32_MAX, 123}, bytes, sizeof(bytes)));
+    Serial.output.clear();
+    rxDone(bytes, sizeof(bytes), -123, -17);
+    manager.update(false);
+    assert(Serial.output == std::string("RX source=") + value.hex +
+           " sequence=4294967295 type=TEST RSSI=-123 dBm SNR=-17 dB\n");
+  }
+
+  beginAs(manager, sequences, NodeRole::kTracker);
+  sendLocalPosition(manager, UINT32_MAX);
+  assert(Serial.output.find("TX POSITION source=0102030405060708 sequence=4294967295 lat=410000000 lon=290000000 sats=9\n") != std::string::npos);
+
+  constexpr uint64_t source = 0x89ABCDEF01234567ULL;
+  uint8_t bytes[tlp::kPositionPacketSize];
+  makePosition(source, 40, bytes);
+  beginAs(manager, sequences, NodeRole::kRelay);
+  rxDone(bytes, sizeof(bytes), -101, -8);
+  manager.update(false);
+  rxDone(bytes, sizeof(bytes), -101, -8);
+  manager.update(false);
+  assert(Serial.output.find("RELAY RX source=89ABCDEF01234567 seq=40 rssi=-101 snr=-8\n") != std::string::npos);
+  assert(Serial.output.find("RELAY QUEUE source=89ABCDEF01234567 seq=40 delay=") != std::string::npos);
+  assert(Serial.output.find("RELAY DUP source=89ABCDEF01234567 seq=40\n") != std::string::npos);
+  for (uint32_t seq = 41; seq <= 44; ++seq) {
+    makePosition(source, seq, bytes);
+    rxDone(bytes, sizeof(bytes), -101, -8);
+    manager.update(false);
+  }
+  assert(Serial.output.find("RELAY DROP queue-full source=89ABCDEF01234567 seq=44\n") != std::string::npos);
+  test_now = relay_config::kMaximumDelayMs;
+  manager.update(false);
+  assert(Serial.output.find("RELAY TX source=89ABCDEF01234567 seq=40\n") != std::string::npos);
+
+  beginAs(manager, sequences, NodeRole::kBase);
+  makePosition(source, 40, bytes);
+  rxDone(bytes, sizeof(bytes), -82, 6);
+  manager.update(false);
+  rxDone(bytes, sizeof(bytes), -83, 5);
+  manager.update(false);
+  assert(Serial.output.find("BASE RX NEW source=89ABCDEF01234567 seq=40 path=DIRECT rssi=-82 snr=6\n") != std::string::npos);
+  assert(Serial.output.find("BASE RX DUP source=89ABCDEF01234567 seq=40 path=DIRECT rssi=-83 snr=5\n") != std::string::npos);
+  tlp::RelayForwardPacket envelope{};
+  envelope.relay_device_id = 0xFEDCBA9876543210ULL;
+  envelope.ingress_rssi_dbm = -110;
+  envelope.ingress_snr_db = -9;
+  makePosition(source, 41, envelope.original_packet);
+  uint8_t forwarded[tlp::kRelayForwardPacketSize];
+  assert(tlp::serializeRelayForwardPacket(envelope, forwarded, sizeof(forwarded)));
+  rxDone(forwarded, sizeof(forwarded), -82, 6);
+  manager.update(false);
+  assert(Serial.output.find("BASE RX NEW source=89ABCDEF01234567 seq=41 path=RELAY relay=FEDCBA9876543210 ingress_rssi=-110 ingress_snr=-9 rssi=-82 snr=6\n") != std::string::npos);
+
+  beginAs(manager, sequences, NodeRole::kTracker);
+  rxDone(bytes, sizeof(bytes), -82, 6);
+  manager.update(false);
+  assert(Serial.output.find("RX POSITION source=89ABCDEF01234567 seq=40 ignored role=TRACKER\n") != std::string::npos);
+}
+
 }  // namespace
 
 namespace orun_tlp::monotonic {
@@ -472,6 +545,7 @@ void BoardGetUniqueId(uint8_t* id) {
 }
 
 int main() {
+  portableDeviceIdDiagnostics();
   liveTxAdmissionAge();
   callbackOwnershipPayloadCopyAndOverflow();
   txDoneAndTimeoutRecovery();

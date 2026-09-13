@@ -221,8 +221,10 @@ bool RadioManager::sendPositionPacket(const uint8_t* payload, const uint32_t* ca
   ++tx_attempts_;
   Radio.Send(tx_payload, sizeof(tx_payload));
   tx_started_ms_ = monotonic::nowMs(); // Match upstream timer start after Send.
-  Serial.printf("TX POSITION source=%016llX sequence=%lu lat=%ld lon=%ld sats=%u\n",
-                static_cast<unsigned long long>(packet.source_device_id),
+  // nano printf has no long-long conversion; each ID half is a 32-bit value.
+  Serial.printf("TX POSITION source=%08lX%08lX sequence=%lu lat=%ld lon=%ld sats=%u\n",
+                static_cast<unsigned long>(uint32_t(packet.source_device_id >> 32)),
+                static_cast<unsigned long>(uint32_t(packet.source_device_id)),
                 static_cast<unsigned long>(packet.sequence_number),
                 static_cast<long>(packet.latitude_e7),
                 static_cast<long>(packet.longitude_e7), packet.satellites);
@@ -446,8 +448,9 @@ void RadioManager::sendTestPacket() {
   tx_role_epoch_ = role_epoch_;
   rx_restore_state_ = RxRestoreState::kNone;
   ++tx_attempts_;
-  Serial.printf("TX source=%016llX sequence=%lu type=TEST\n",
-                static_cast<unsigned long long>(packet.source_device_id),
+  Serial.printf("TX source=%08lX%08lX sequence=%lu type=TEST\n",
+                static_cast<unsigned long>(uint32_t(packet.source_device_id >> 32)),
+                static_cast<unsigned long>(uint32_t(packet.source_device_id)),
                 static_cast<unsigned long>(packet.sequence_number));
   Radio.Send(payload, sizeof(payload));
   tx_started_ms_ = monotonic::nowMs();
@@ -477,8 +480,9 @@ void RadioManager::sendDueRelay(uint32_t now) {
   rx_restore_state_ = RxRestoreState::kNone;
   ++tx_attempts_;
   network_.onForwardTxStarted();
-  Serial.printf("RELAY TX source=%016llX seq=%lu\n",
-                static_cast<unsigned long long>(original.source_device_id),
+  Serial.printf("RELAY TX source=%08lX%08lX seq=%lu\n",
+                static_cast<unsigned long>(uint32_t(original.source_device_id >> 32)),
+                static_cast<unsigned long>(uint32_t(original.source_device_id)),
                 static_cast<unsigned long>(original.sequence_number));
   Radio.Send(payload, sizeof(payload));
   tx_started_ms_ = monotonic::nowMs();
@@ -499,30 +503,34 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
       Serial.printf("RX TEST rejected length=%u\n", size);
       return;
     }
-    Serial.printf("RX source=%016llX sequence=%lu type=TEST RSSI=%d dBm SNR=%d dB\n",
-                  static_cast<unsigned long long>(packet.source_device_id),
-                  static_cast<unsigned long>(packet.sequence_number), rssi, snr);
+    Serial.printf("RX source=%08lX%08lX sequence=%lu type=TEST RSSI=%d dBm SNR=%d dB\n",
+                  static_cast<unsigned long>(uint32_t(packet.source_device_id >> 32)),
+                  static_cast<unsigned long>(uint32_t(packet.source_device_id)),
+                  static_cast<unsigned long>(packet.sequence_number),
+                  static_cast<int>(rssi), static_cast<int>(snr));
     return;
   }
 
   const NetworkEvent event =
       network_.receive(payload, size, rssi, snr, monotonic::nowMs());
-  const auto source = static_cast<unsigned long long>(event.position.source_device_id);
+  const auto source_high = static_cast<unsigned long>(uint32_t(event.position.source_device_id >> 32));
+  const auto source_low = static_cast<unsigned long>(uint32_t(event.position.source_device_id));
   const auto sequence = static_cast<unsigned long>(event.position.sequence_number);
   switch (event.kind) {
     case NetworkEventKind::kRelayQueued:
-      Serial.printf("RELAY RX source=%016llX seq=%lu rssi=%d snr=%d\n",
-                    source, sequence, rssi, snr);
-      Serial.printf("RELAY QUEUE source=%016llX seq=%lu delay=%lums\n",
-                    source, sequence,
+      Serial.printf("RELAY RX source=%08lX%08lX seq=%lu rssi=%d snr=%d\n",
+                    source_high, source_low, sequence,
+                    static_cast<int>(rssi), static_cast<int>(snr));
+      Serial.printf("RELAY QUEUE source=%08lX%08lX seq=%lu delay=%lums\n",
+                    source_high, source_low, sequence,
                     static_cast<unsigned long>(event.relay_delay_ms));
       break;
     case NetworkEventKind::kRelayDuplicate:
-      Serial.printf("RELAY DUP source=%016llX seq=%lu\n", source, sequence);
+      Serial.printf("RELAY DUP source=%08lX%08lX seq=%lu\n", source_high, source_low, sequence);
       break;
     case NetworkEventKind::kRelayQueueDrop:
-      Serial.printf("RELAY DROP queue-full source=%016llX seq=%lu\n",
-                    source, sequence);
+      Serial.printf("RELAY DROP queue-full source=%08lX%08lX seq=%lu\n",
+                    source_high, source_low, sequence);
       break;
     case NetworkEventKind::kRelayNestedRejected:
       Serial.println(F("RELAY rejected relayed packet"));
@@ -531,21 +539,25 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
     case NetworkEventKind::kBaseDuplicate: {
       const char* freshness = event.kind == NetworkEventKind::kBaseNew ? "NEW" : "DUP";
       if (event.path == NetworkPath::kDirect) {
-        Serial.printf("BASE RX %s source=%016llX seq=%lu path=DIRECT rssi=%d snr=%d\n",
-                      freshness, source, sequence, event.link_rssi_dbm,
-                      event.link_snr_db);
+        Serial.printf("BASE RX %s source=%08lX%08lX seq=%lu path=DIRECT rssi=%d snr=%d\n",
+                      freshness, source_high, source_low, sequence,
+                      static_cast<int>(event.link_rssi_dbm),
+                      static_cast<int>(event.link_snr_db));
       } else {
-        Serial.printf("BASE RX %s source=%016llX seq=%lu path=RELAY relay=%016llX ingress_rssi=%d ingress_snr=%d rssi=%d snr=%d\n",
-                      freshness, source, sequence,
-                      static_cast<unsigned long long>(event.relay_device_id),
-                      event.ingress_rssi_dbm, event.ingress_snr_db,
-                      event.link_rssi_dbm, event.link_snr_db);
+        Serial.printf("BASE RX %s source=%08lX%08lX seq=%lu path=RELAY relay=%08lX%08lX ingress_rssi=%d ingress_snr=%d rssi=%d snr=%d\n",
+                      freshness, source_high, source_low, sequence,
+                      static_cast<unsigned long>(uint32_t(event.relay_device_id >> 32)),
+                      static_cast<unsigned long>(uint32_t(event.relay_device_id)),
+                      static_cast<int>(event.ingress_rssi_dbm),
+                      static_cast<int>(event.ingress_snr_db),
+                      static_cast<int>(event.link_rssi_dbm),
+                      static_cast<int>(event.link_snr_db));
       }
       break;
     }
     case NetworkEventKind::kIgnoredPosition:
-      Serial.printf("RX POSITION source=%016llX seq=%lu ignored role=%s\n",
-                    source, sequence, roleName(network_.role()));
+      Serial.printf("RX POSITION source=%08lX%08lX seq=%lu ignored role=%s\n",
+                    source_high, source_low, sequence, roleName(network_.role()));
       break;
     case NetworkEventKind::kMalformed:
       Serial.printf("RX rejected type=%u length=%u role=%s\n",
