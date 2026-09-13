@@ -362,9 +362,20 @@ void GnssManager::handlePvt(const UBX_NAV_PVT_data_t& pvt_data) {
   if (state_ != State::kAcquiring || transport_resync_pending_) return;
   const uint32_t received_at = monotonic::nowMs();
 
-  // A retained duplicate cannot renew the original candidate age. Returning
-  // before backlog detection is safe: the old candidate timestamp remains old,
-  // and a later different stale epoch still triggers the long-gap resync.
+  // A >= freshness-limit gap is itself a transport backlog witness, even when
+  // the callback repeats the retained candidate iTOW. Check it before duplicate
+  // suppression so a stale duplicate cannot postpone resynchronization.
+  const bool callback_gap =
+      has_last_pvt_callback_time_ &&
+      monotonic::elapsed(received_at, last_pvt_callback_at_ms_,
+                         gnss_config::kFreshFixMaxAgeMs);
+  if (callback_gap) {
+    startTransportResync(received_at);
+    return;
+  }
+
+  // A retained duplicate inside the trusted freshness window cannot renew the
+  // original candidate age. Avoid touching the mutable getter in this case.
   if (has_candidate_fix_ && candidate_fix_itow_ == pvt_data.iTOW) return;
 
   // SparkFun 2.2.29 keeps the first unconsumed callback copy while continuing
@@ -372,11 +383,7 @@ void GnssManager::handlePvt(const UBX_NAV_PVT_data_t& pvt_data) {
   // With iTOW marked fresh by processUBXpacket(), getTimeOfWeek(0) is a cache
   // read here. A mismatch proves this callback is not the newest parsed PVT.
   const uint32_t newest_parsed_itow = gnss.getTimeOfWeek(0);
-  const bool callback_gap =
-      has_last_pvt_callback_time_ &&
-      monotonic::elapsed(received_at, last_pvt_callback_at_ms_,
-                         gnss_config::kFreshFixMaxAgeMs);
-  if (callback_gap || newest_parsed_itow != pvt_data.iTOW) {
+  if (newest_parsed_itow != pvt_data.iTOW) {
     startTransportResync(received_at);
     return;
   }
