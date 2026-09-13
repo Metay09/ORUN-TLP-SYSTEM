@@ -6,7 +6,7 @@
 
 namespace orun_tlp::journal_format {
 constexpr uint32_t kPageMagic = 0x4F524A34;  // ORJ4
-constexpr uint8_t kVersion = 2;
+constexpr uint8_t kVersion = 3; // High word encodes the zero-based ticket.
 constexpr uint32_t kCommit = 0;
 constexpr uint32_t kStaticHeaderSize = 64;
 constexpr uint32_t kSequenceSlotSize = 16;

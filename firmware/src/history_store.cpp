@@ -15,6 +15,8 @@ bool bitSet(const uint8_t* p, unsigned n) { return p[n / 8] & (1U << (n % 8)); }
 bool HistoryStore::begin(uint64_t device) {
   ready_ = false; job_ = Job::kNone; diagnostics_ = {}; device_id_ = device;
   sequence_end_ = next_ticket_ = newest_generation_ = 0; active_page_ = -1; state_ = {};
+  append_after_new_page_ = state_after_new_page_ = false;
+  append_result_ready_ = append_success_ = false;
   if (!flash_.begin() || !recover()) return false;
   ready_ = true;
   if (active_page_ < 0) return startNewPage(false);
@@ -24,12 +26,12 @@ bool HistoryStore::begin(uint64_t device) {
 }
 
 bool HistoryStore::recover() {
-  bool nonblank = false, journal_hint = false;
+  bool old_format = false;
   for (unsigned p=0;p<kPageCount;++p) {
     pages_[p] = {};
     uint8_t header[kStaticHeaderSize];
     if (!flash_.read(pageOffset(p),header,sizeof(header))) return false;
-    nonblank |= !erased(header,sizeof(header)); journal_hint |= looksLikeJournalHeader(header);
+    old_format |= get32(header) == kPageMagic && header[4] == 2;
     uint64_t gen = 0;
     if (!decodePage(header,device_id_,gen)) {
       if (!erased(header,sizeof(header)) && looksLikeJournalHeader(header)) ++diagnostics_.recovery_corruptions;
@@ -63,9 +65,12 @@ bool HistoryStore::recover() {
       previous = r.identity; pages_[p].valid[s/8] |= 1U << (s%8); ++pages_[p].records_valid;
     }
   }
-  if (active_page_ < 0 && nonblank && !journal_hint) return false; // never erase foreign data
-  // A torn first ORJ4 header cannot contain a committed record. Treat it as a
-  // clean journal and replace just that page; all other valid pages survived.
+  // Never interpret development v2 identities as v3. A v2-only partition
+  // requires an explicit development reset; no automatic migration or erase.
+  if (active_page_ < 0 && old_format) return false;
+  // This partition is exclusively ORUN-owned. With no valid page, including
+  // bit-partial first magic/CRC/commit, begin() reinitializes page zero only.
+  // If any v3 page survived, keep its history and recover normally instead.
   return true;
 }
 
@@ -80,9 +85,9 @@ uint32_t HistoryStore::backlogCount() const { uint32_t n=0;for(unsigned p=0;p<kP
 bool HistoryStore::nextSequence(uint32_t& sequence,uint64_t& identity) { if(!canAppend())return false; sequence=uint32_t(next_ticket_); identity=++next_ticket_; return true; }
 bool HistoryStore::append(const uint8_t* packet,uint64_t identity) {
   Record latest{};
-  if(!canAppend()||!packet||identity>next_ticket_||!validPacket(packet,identity,device_id_)||(newest(latest)&&identity<=latest.identity)){++diagnostics_.append_failures;return false;}
+  if(!appendIdle()||!packet||identity>next_ticket_||!validPacket(packet,identity,device_id_)||(newest(latest)&&identity<=latest.identity)){++diagnostics_.append_failures;return false;}
   pending_record_.identity=identity;memcpy(pending_record_.packet,packet,sizeof(pending_record_.packet));
-  if(pages_[active_page_].records_used>=kRecordsPerPage){append_after_new_page_=true;return startNewPage(true);}
+  if(pages_[active_page_].records_used>=kRecordsPerPage){append_after_new_page_=true;if(startNewPage(true))return true;append_after_new_page_=false;++diagnostics_.append_failures;return false;}
   target_page_=active_page_;target_slot_=pages_[active_page_].records_used;uint8_t b[kRecordSize];encodeRecord(pending_record_,b);startBlob(recordOffset(target_page_,target_slot_),b,sizeof(b));job_=Job::kAppend;phase_=Phase::kBlob;return true;
 }
 bool HistoryStore::takeAppendResult(bool& ok){if(!append_result_ready_)return false;ok=append_success_;append_result_ready_=false;return true;}
@@ -108,17 +113,18 @@ bool HistoryStore::startState(State next) {
   uint8_t b[kStateSlotSize];encodeState(next,b);startBlob(stateOffset(target_page_,target_state_slot_),b,sizeof(b));job_=Job::kState;phase_=Phase::kBlob;return true;
 }
 void HistoryStore::startBlob(uint32_t off,const uint8_t* b,uint32_t n){memcpy(blob_,b,n);blob_offset_=off;blob_size_=n;}
-bool HistoryStore::writeBlob(){if(!flash_.program(blob_offset_,blob_,blob_size_-4)||!flash_.program(blob_offset_+blob_size_-4,blob_+blob_size_-4,4)){fail(job_==Job::kAppend);return false;}uint8_t verify[kPageHeaderSize];if(!flash_.read(blob_offset_,verify,blob_size_)||memcmp(verify,blob_,blob_size_)){fail(job_==Job::kAppend);return false;}return true;}
-void HistoryStore::fail(bool append_failure){if(append_failure){++diagnostics_.append_failures;append_result_ready_=true;append_success_=false;}else ++diagnostics_.metadata_failures;job_=Job::kNone;ready_=false;}
+bool HistoryStore::writeBlob(){const bool append_failure=job_==Job::kAppend||append_after_new_page_;if(!flash_.program(blob_offset_,blob_,blob_size_-4)||!flash_.program(blob_offset_+blob_size_-4,blob_+blob_size_-4,4)){fail(append_failure);return false;}uint8_t verify[kPageHeaderSize];if(!flash_.read(blob_offset_,verify,blob_size_)||memcmp(verify,blob_,blob_size_)){fail(append_failure);return false;}return true;}
+void HistoryStore::fail(bool append_failure){if(append_failure){++diagnostics_.append_failures;append_result_ready_=true;append_success_=false;}else ++diagnostics_.metadata_failures;append_after_new_page_=false;state_after_new_page_=false;job_=Job::kNone;ready_=false;}
 void HistoryStore::finishBlob(){
-  if(job_==Job::kNewPage){pages_[target_page_]={};pages_[target_page_].generation=target_generation_;newest_generation_=target_generation_;active_page_=target_page_;job_=Job::kNone;if(!startReservation())fail(false);return;}
-  if(job_==Job::kReserve){++pages_[target_page_].sequence_used;sequence_end_=pending_sequence_end_;job_=Job::kNone;if(state_after_new_page_){state_after_new_page_=false;if(!startState(pending_state_))fail(false);return;}if(append_after_new_page_){append_after_new_page_=false;if(!append(pending_record_.packet,pending_record_.identity))fail(true);}return;}
+  if(job_==Job::kNewPage){pages_[target_page_]={};pages_[target_page_].generation=target_generation_;newest_generation_=target_generation_;active_page_=target_page_;job_=Job::kNone;if(!startReservation())fail(append_after_new_page_);return;}
+  if(job_==Job::kReserve){++pages_[target_page_].sequence_used;sequence_end_=pending_sequence_end_;job_=Job::kNone;if(state_after_new_page_){state_after_new_page_=false;if(!startState(pending_state_))fail(false);return;}if(append_after_new_page_){append_after_new_page_=false;if(!append(pending_record_.packet,pending_record_.identity)){append_result_ready_=true;append_success_=false;ready_=false;}}return;}
   if(job_==Job::kState){++pages_[target_page_].state_used;state_=pending_state_;job_=Job::kNone;return;}
   pages_[target_page_].records_used=target_slot_+1;pages_[target_page_].valid[target_slot_/8]|=1U<<(target_slot_%8);++pages_[target_page_].records_valid;++diagnostics_.appended;job_=Job::kNone;append_result_ready_=true;append_success_=true;
 }
 void HistoryStore::poll(){
-  if(!ready_||job_==Job::kNone)return;
-  if(phase_==Phase::kErase){const uint32_t old=pages_[target_page_].records_valid;if(!flash_.erasePage(target_page_)){fail(false);return;}diagnostics_.overwritten+=old;phase_=Phase::kHeader;uint8_t b[kStaticHeaderSize];encodePage(target_generation_,device_id_,b);startBlob(pageOffset(target_page_),b,sizeof(b));return;}
+  if(!ready_)return;
+  if(job_==Job::kNone){if(!append_result_ready_&&next_ticket_==sequence_end_&&!startReservation())fail(false);return;}
+  if(phase_==Phase::kErase){const uint32_t old=pages_[target_page_].records_valid;if(!flash_.erasePage(target_page_)){fail(append_after_new_page_);return;}diagnostics_.overwritten+=old;phase_=Phase::kHeader;uint8_t b[kStaticHeaderSize];encodePage(target_generation_,device_id_,b);startBlob(pageOffset(target_page_),b,sizeof(b));return;}
   if (!writeBlob()) return;
   finishBlob();
 }

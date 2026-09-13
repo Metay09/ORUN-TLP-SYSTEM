@@ -29,6 +29,11 @@ def check_exclusive_owner(source, target, env):
     symbols = subprocess.check_output([str(nm), str(target[0])], text=True)
     if re.search(r"\bInternalFS$", symbols, re.MULTILINE):
         raise RuntimeError("M4 journal and InternalFS cannot own the same flash pages")
+    if re.search(r"\bflash_nrf5x_(write|flush)$", symbols, re.MULTILINE):
+        raise RuntimeError("M4 append-only backend must not link the erase/rewrite cache")
+    for primitive in ("sd_flash_write", "sd_flash_page_erase"):
+        if not re.search(rf"\b{primitive}$", symbols, re.MULTILINE):
+            raise RuntimeError(f"M4 backend is missing Nordic primitive {primitive}")
 
 
 env.AddPostAction("$BUILD_DIR/${PROGNAME}.elf", check_exclusive_owner)

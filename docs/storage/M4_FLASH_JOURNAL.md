@@ -1,40 +1,42 @@
-# M4 flash journal (format 2)
+# M4 flash journal (format 3, storage finalization R1.1)
 
 ## Partition ownership
 
 `nrf52840_s140_v6.ld` ends application flash at `0xED000`. The installed
-Adafruit `InternalFileSystem.cpp` defines its InternalFS region as seven
-4,096-byte pages beginning at that exact address. Therefore
-`0xED000..0xF4000` (end exclusive) is the **core InternalFS partition**.
+Adafruit core reserves seven 4,096-byte InternalFS pages from `0xED000` through
+`0xF4000` (end exclusive). ORUN TLP owns this partition exclusively while the
+journal backend is linked. InternalFS/LittleFS must not be mounted over it.
 
-ORUN TLP currently owns that partition exclusively as its persistent journal.
-It is not unallocated application flash. This firmware must not mount
-InternalFS/LittleFS or another Bluefruit filesystem user at the same time. The
-build checks the installed linker/core boundaries and rejects a linked
-`InternalFS` symbol. Runtime checks also validate linker end, FICR page geometry
-and bootloader boundary. If InternalFS is required later, the storage backend
-must first be explicitly repartitioned and migrated; sharing this region is not
-supported. Firmware, SoftDevice and bootloader space are never written.
+The build and runtime checks preserve the application, SoftDevice and
+bootloader boundaries. A future filesystem or DFU design must repartition and
+migrate storage explicitly before using these pages.
 
-## Core flash API and SoftDevice
+## Append-only nRF52 backend
 
-`NrfHistoryFlash` uses the installed core's supported `flash_nrf5x_read`,
-`flash_nrf5x_write`, `flash_nrf5x_flush`, and `flash_nrf5x_erase` primitives.
-It does not manipulate NVMC registers directly and does not reject writes when
-SoftDevice is enabled.
+`NrfHistoryFlash` uses Nordic's supported `sd_flash_write` and
+`sd_flash_page_erase` APIs. It does not access NVMC registers directly. Program
+operations are four-byte aligned, require erased destination bytes, and only
+perform `1 -> 0` transitions. Writes cannot cross a physical page boundary.
+Only SoftDevice-disabled storage is supported: the Nordic API completes
+synchronously, and every operation result and physical readback is checked.
+The backend checks SoftDevice state at initialization and before every program
+and erase. Enabled SoftDevice or a failed state query returns failure before
+issuing an operation. There is no asynchronous source buffer, semaphore,
+completion callback or timeout path. M0-M5 has one main-loop storage owner and
+never enables SoftDevice; concurrent enable/disable is not supported.
 
-The audited core's `flash_nrf5x.c` invokes `sd_flash_write` and
-`sd_flash_page_erase`. When SoftDevice is enabled it waits for the registered
-`NRF_EVT_FLASH_OPERATION_SUCCESS`/error callback with its semaphore; when it
-is disabled, the same calls complete synchronously. `program()` writes into the
-core page cache, immediately calls `flash_nrf5x_flush()`, then reads back.
-Thus a successful backend call is not merely a cache update. The core cache
-flush rewrites a physical 4 KiB page, so an operation may block longer than the
-small logical record. The journal has a durable commit boundary and never
-claims measured timing or radio/IRQ isolation.
+**SoftDevice-enabled persistent storage integration is an M7 prerequisite.**
+M7 must design Bluefruit event routing and InternalFS partition ownership
+together: standard `Bluefruit.begin()` calls `bond_init()` and mounts InternalFS.
+Merely enabling Bluefruit is therefore incompatible with this exclusive raw
+journal. Enabled-mode failure propagates through HistoryStore/PositionFlow and
+suppresses POSITION TX without automatic reboot or infinite retry.
 
-The SoftDevice-on compilation path is linked in the firmware build. BLE/actual
-SoftDevice flash behavior has not been physically tested and remains pending.
+The Adafruit `flash_nrf5x` page cache is deliberately absent from the linked
+image. Its flush path erases and rewrites a whole 4 KiB page for a small update
+and does not return its lower-level erase/program status. That behavior cannot
+provide journal append durability. The build rejects that cache path and
+verifies that both Nordic primitives are linked.
 
 ## Layout and capacity
 
@@ -47,17 +49,15 @@ All seven pages are self-describing; no global metadata page is reserved.
 | Page header area | 352 bytes |
 | Compact POSITION record | 36 bytes |
 | Records/page | 104 |
-| Usable records | 728 |
-| 15-minute positions/day | 96 |
-| Maximum retention | 728 / 96 = **7.5833 days** |
+| Maximum records | 728 |
+| Maximum retention at 15 minutes | 7.5833 days |
 
-The first 64 header bytes contain `ORJ4`, format version 2, nonzero generation,
-device ID, CRC-32 and final commit. The following 128 bytes contain eight
-16-byte sequence-reservation slots. The following 128 bytes contain four
-32-byte delivery/replay-state slots; the final 32 header bytes are reserved and
-zero. A page is usable only after its static header commit validates.
+The first 64 header bytes contain magic `ORJ4`, local storage format version 3, nonzero page
+generation, device ID, CRC-32 and final commit. Eight 16-byte append-only
+sequence-reservation slots follow. Four 32-byte delivery/replay-state slots
+follow those; the final 32 header bytes remain erased (`0xFF`).
 
-Each 36-byte record is explicit big-endian serialization, never a C++ struct:
+Each record is explicit big-endian serialization:
 
 | Offset | Bytes | Value |
 | ---: | ---: | --- |
@@ -69,69 +69,106 @@ Each 36-byte record is explicit big-endian serialization, never a C++ struct:
 | 20 | 2 | HDOP ×100 |
 | 22 | 1 | Satellites |
 | 23 | 1 | Flags |
-| 24 | 4 | High 32 bits of journal identity |
+| 24 | 4 | High 32 bits of zero-based ticket `identity - 1` |
 | 28 | 4 | CRC-32 of bytes 0..27 |
 | 32 | 4 | Final commit word (`0`) |
 
-Protocol version, packet type and Device ID are fixed page/device context and
-are reconstructed for replay. The original sequence plus high identity word
-preserves both wire semantics and ordering across `uint32_t` wrap. A host test
-reconstructs the full 34-byte POSITION packet and compares it byte-for-byte to
-the original. The 34-byte M2 wire protocol is unchanged.
+Protocol version, packet type and device ID are reconstructed from page/device
+context. Storing the high half of `identity - 1` makes identity reconstruction
+exact at the `0xFFFFFFFF -> 0` wire-sequence boundary. Format 3 identifies this
+corrected meaning explicitly; M2 POSITION wire bytes and protocol version are
+unchanged. Old development v2 pages are never decoded as v3. If no valid v3
+page exists and an ORJ4/v2 header is present, initialization fails without erase
+or migration. Such a development board requires an explicit reset of ONLY the
+ORUN partition before use; this firmware does not perform that reset. With
+valid v3 pages present, v2/invalid pages are ignored and reclaimed only by the
+normal circular lifecycle. There is no field data migration framework.
 
-Current hardware/core partition capacity achieves at least seven days, but not
-fourteen: 14 days require 1,344 records, while this safe partition contains
-728. Fourteen-day retention needs a separately reviewed storage/layout or
-hardware change; M4 does not consume firmware or bootloader space to claim it.
-
-## Commit, recovery and circular behavior
+## Commit and power-loss semantics
 
 CRC is CRC-32/ISO-HDLC (reflected polynomial `0xEDB88320`, init/final XOR
-`0xFFFFFFFF`; `123456789` = `0xCBF43926`). A body/CRC is flushed and read back
-before its final four-byte commit is flushed and read back. Torn headers,
-records, reservation slots and state slots fail validation and are skipped.
+`0xFFFFFFFF`; `123456789` gives `0xCBF43926`). A blob's body and CRC are
+programmed and read back before its final four-byte commit is programmed. The
+complete blob is then read back. Both stages are append-only word programs.
 
-Boot scans only this 28 KiB partition, finds valid page generations, record
-ordering and valid reservations, and rebuilds RAM indexes. A torn compact body
-or commit is rejected. However, the audited core cache flush physically
-erase/rewrites its whole current 4 KiB page: a power cut during that flush can
-also invalidate prior records in that active page. Other self-describing pages
-remain independently recoverable. During circular wrap, the next physical page
-is erased and receives its self-describing header; a power cut can lose that old
-page but leaves the other six valid pages recoverable. A torn replacement header
-is not treated as a valid page.
+A cut during a new record body or commit can discard that new record. It does
+not erase or rewrite earlier committed records on the page. Torn headers,
+records, reservations and state slots fail their CRC/commit checks and are
+skipped during recovery.
 
-Virgin erased storage starts an empty journal automatically. For first
-initialization, only an ORJ4 header may be partially programmed before any
-record can exist. On reboot, erased storage or a recognizable torn ORJ4 prefix
-is treated as empty and page initialization restarts automatically. Foreign
-non-journal bytes are refused rather than erased. No ordinary initial power loss
-requires manual maintenance.
+During circular rotation, exactly the reclaimed physical page is erased once.
+A cut during that erase can destroy the old contents of that reclaimed page;
+the other six self-describing pages and their committed sequence reservations
+remain recoverable. A cut during the new header or reservation leaves the old
+active page intact. If no valid v3 page and no recognizable old v2 header exist,
+the exclusive ORUN partition is treated as empty and page zero is reinitialized.
+This includes bit-partial magic words, torn header CRC and torn header commit;
+manual maintenance is not required after an interrupted first initialization.
+If any valid v3 page survives, its records/reservations are preserved and no
+blanket reset is performed. This policy assumes exclusive ORUN ownership, not
+arbitrary foreign filesystem preservation. Loss of all valid headers through
+unrelated corruption is outside the power-loss guarantee and can reset identity.
 
-## Sequence, delivery and flow
+## Sequence and flow
 
-TEST and POSITION share `SequenceSource`. Every valid page has append-only
-256-ticket reservations. Boot starts after the largest committed reservation
-and commits a new block before exposing another ticket, so unused values are
-intentionally skipped after reset/power loss rather than reused. Reservations
-are in self-describing pages, not a single global metadata page. The persisted
-identity high word avoids ordering ambiguity through wire-sequence wrap.
+TEST and POSITION share `SequenceSource`. Reservations contain 256 tickets.
+Boot starts after the largest committed reservation and commits another block
+before exposing a ticket, intentionally skipping unused tickets after reset.
+When a running block is exhausted, `HistoryStore::poll()` commits the next
+reservation automatically. Allocation requires an available reserved ticket;
+append eligibility instead accepts an already allocated identity even when the
+block has just been exhausted. Thus the final ticket can be committed as a
+POSITION, and the next block's first ticket is unavailable until reservation
+commit. A torn reservation therefore
+cannot cause a previously exposed wire sequence to be reused.
 
-`PositionFlow` is strictly store-first: fresh valid fix → M2 encode → journal
-commit/readback → one live TX attempt. Commit failure suppresses normal POSITION
-TX. TX_DONE is only local transmitter completion: it does not delete records or
-advance delivered state. There is no BASE confirmation, ACK protocol, automatic
-backlog replay or inferred delivery in M4. The persisted cursor APIs remain a
-future transport seam and are never invoked by TX_DONE.
+`PositionFlow` remains store-first. A fresh fix is encoded, committed and read
+back before one live TX attempt. Failure of page erase, page header,
+reservation, record body, record commit or readback produces a terminal append
+failure. `PositionFlow` leaves its pending state and does not transmit.
 
-## Validation limits
+`TX_DONE` remains local transmitter completion, never BASE delivery. No current
+caller advances delivered state from TX_DONE. Automatic backlog replay and BASE
+confirmation remain future work.
 
-Host tests cover erased boot, every first-init program-cut boundary, torn page
-header/erase, torn compact record, compact semantic reconstruction, corruption,
-page wrap, circular overwrite, reboot recovery, reservation interruption,
-sequence wrap encoding, cursor persistence and no delivery mutation after live
-TX. The memory backend cannot reproduce analog partial full-page cache-flush
-behavior; that physical fault case remains pending validation.
-Physical validation remains required for power removal/brownout, actual flash
-timing/endurance/current, SoftDevice/BLE operation, and LoRa/GNSS behavior while
-the core flash primitive is active.
+## Flash operations and wear model
+
+A normal record append performs two program operations (body/CRC and commit)
+and zero page erases. Header, sequence reservation and replay-state updates use
+the same two append-only program operations. A record-driven rotation performs
+one page erase and six program operations: header pair, reservation pair and
+record pair.
+
+A physical page is reclaimed once per 7 × 104 = 728 normal records. At a
+15-minute interval this is once per 7.583 days per physical page. Applying the
+nRF52840 specification's 10,000-cycle value gives a nominal record-driven
+arithmetic budget of about 75,833 days (207 years) per page. This is not a
+physical endurance guarantee. Metadata-driven early rotations, temperature,
+voltage, retention, manufacturing variation and actual workload still require
+validation.
+
+## Host and hardware validation
+
+The host backend enforces page-granular erase, erased bits equal to one,
+four-byte program alignment and `1 -> 0` programming. Fault injection covers
+partial erase and partial body/commit programming. Tests cover virgin storage,
+multiple same-page appends, exact erase/program counts, all record commit cut
+points, page erase/header/reservation failures, header/reservation/record
+readback failures, old-record survival, sequence non-reuse, circular wrap, CRC
+corruption, identity boundaries, reservation exhaustion and PositionFlow
+terminal failure. R1.1 additionally covers 255 TEST-style allocations followed
+by last-ticket POSITION commit/reboot, next-reservation cuts, allocation →
+append → reboot at all four uint32 boundary identities, bit-partial first
+magic/CRC/commit, valid-page preservation and explicit v2 refusal.
+
+A separate Linux host executable compiles the actual `nrf_history_flash.cpp`
+against mocked Nordic APIs and memory-mapped test flash. It checks alignment,
+page/partition bounds, status/readback failures, disabled-mode operations and
+enabled-mode refusal before any API call, including terminal PositionFlow
+failure. This models the supported synchronous contract; it does not validate
+asynchronous SoftDevice integration or analog flash behavior.
+
+Physical RAK4630 validation remains required for real power removal and
+brownout at every operation stage, enabled-mode fail-safe refusal,
+flash timing/current/endurance, repeated long-run rotation, firmware update
+retention and concurrent LoRa/GNSS behavior.

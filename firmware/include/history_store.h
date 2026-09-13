@@ -10,10 +10,11 @@ class HistoryStore : public SequenceSource {
   struct Diagnostics { uint32_t appended=0, append_failures=0, recovery_corruptions=0, overwritten=0, metadata_failures=0; };
   explicit HistoryStore(FlashBackend& backend) : flash_(backend) {}
   bool begin(uint64_t device_id);
-  void poll();  // One complete core-backed journal primitive per call.
+  void poll();  // One synchronous journal step per call.
   bool ready() const { return ready_; }
   bool busy() const { return job_ != Job::kNone; }
-  bool canAppend() const { return ready_ && !busy() && !append_result_ready_ && next_ticket_ < sequence_end_; }
+  // Eligibility for a NEW fix/ticket; append() accepts an already issued ticket.
+  bool canAppend() const { return appendIdle() && next_ticket_ < sequence_end_; }
   bool nextSequence(uint32_t& sequence, uint64_t& identity) override;
   bool append(const uint8_t* packet, uint64_t identity);
   bool takeAppendResult(bool& success);
@@ -34,6 +35,7 @@ class HistoryStore : public SequenceSource {
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
  private:
+  bool appendIdle() const { return ready_ && !busy() && !append_result_ready_; }
   enum class Job { kNone, kNewPage, kReserve, kState, kAppend };
   enum class Phase { kErase, kHeader, kBlob };
   struct Page {
