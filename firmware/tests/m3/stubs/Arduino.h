@@ -1,5 +1,7 @@
 #pragma once
 #include <stdint.h>
+#include <stdio.h>
+#include <string>
 
 #define F(value) value
 constexpr int OUTPUT = 1, INPUT_PULLUP = 2, HIGH = 1, LOW = 0;
@@ -52,7 +54,18 @@ inline int digitalRead(int pin) {
 inline void delayMicroseconds(uint32_t us) { fake_delay_us += us; }
 
 struct TestSerial {
-  void println(const char*) {}
-  template <typename... Args> void printf(const char*, Args...) {}
+  std::string output;
+  void begin(unsigned) {}
+  int available() const { return 0; }
+  int read() { return -1; }
+  void print(const char* value) { output += value; }
+  void println(const char* value) { print(value); output += '\n'; }
+  template <typename... Args> void printf(const char* format, Args... args) {
+    char buffer[512];
+    snprintf(buffer, sizeof(buffer), format, args...);
+    output += buffer;
+  }
 };
 inline TestSerial Serial;
+inline unsigned fake_idle_calls = 0;
+inline void delay(uint32_t) { ++fake_idle_calls; }

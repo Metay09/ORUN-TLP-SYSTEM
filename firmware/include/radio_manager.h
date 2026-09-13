@@ -20,6 +20,8 @@ class RadioManager {
  public:
   // Application API is loop-owner-only, including diagnostics/accessors.
   // Dependency callbacks publish handoff state while holding the driver gate.
+  // Boot initialization captures deviceId and binds local encoding's sequence
+  // source even on false; the return value reports radio readiness only.
   bool begin(SequenceSource& sequences);
   void update(bool allow_test_beacon = true);
   void setRole(NodeRole role); // Request; installed by update after quiescence.

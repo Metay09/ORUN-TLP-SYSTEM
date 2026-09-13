@@ -41,6 +41,19 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
   firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
   -o "$test_dir/r2"
 "$test_dir/r2"
+g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
+  -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
+  -Wl,--defsym,__flash_arduino_end=0xED000 \
+  firmware/tests/startup/test_startup.cpp "${gnss_sources[@]}" \
+  firmware/src/radio_manager.cpp firmware/src/radio_driver_gate.cpp \
+  firmware/src/network_service.cpp firmware/src/node_role.cpp \
+  firmware/src/tlp_test_packet.cpp firmware/src/tlp_position_packet.cpp \
+  firmware/src/tlp_relay_forward_packet.cpp firmware/src/history_store.cpp \
+  firmware/src/journal_format.cpp firmware/src/nrf_history_flash.cpp \
+  firmware/src/position_flow.cpp -o "$test_dir/startup"
+for scenario in mutex gate queue lora success; do
+  "$test_dir/startup" "$scenario"
+done
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r4/test_patch_wire.py
 g++ "${flags[@]}" firmware/tests/r4/test_r4.cpp "${gnss_sources[@]}" \
   firmware/src/watchdog_manager.cpp -o "$test_dir/r4"

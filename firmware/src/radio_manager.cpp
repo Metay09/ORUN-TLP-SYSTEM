@@ -65,6 +65,12 @@ uint32_t deterministicJitter(uint64_t device_id, uint32_t sequence_number,
 }  // namespace
 
 bool RadioManager::begin(SequenceSource& sequences) {
+  // nRF52 BoardGetUniqueId reads factory registers, independent of the radio.
+  // Recovery and local POSITION encoding must work even if radio startup fails.
+  uint8_t board_id[8]{};
+  BoardGetUniqueId(board_id);
+  device_id_ = boardUniqueIdToUint64(board_id);
+  sequences_ = &sequences;
   if (!radio_driver::initialize()) return false;
   radio_driver::Guard gate;
   if (!gate) return false;
@@ -74,10 +80,6 @@ bool RadioManager::begin(SequenceSource& sequences) {
   tx_generation_ = armed_tx_generation_ = pending_tx_generation_ = 0;
   role_transition_pending_ = false;
   accept_rx_events_ = true;
-  sequences_ = &sequences;
-  uint8_t board_id[8]{};
-  BoardGetUniqueId(board_id);
-  device_id_ = boardUniqueIdToUint64(board_id);
   network_.begin(device_id_, NodeRole::kBase);
   event_diagnostics_ = {};
   role_epoch_ = 0;

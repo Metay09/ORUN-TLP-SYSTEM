@@ -14,11 +14,13 @@ struct StaticQueue_t {
 };
 
 using QueueHandle_t = StaticQueue_t*;
+inline bool fake_queue_create_failure = false;
 
 inline QueueHandle_t xQueueCreateStatic(UBaseType_t capacity,
                                         UBaseType_t item_size,
                                         uint8_t* storage,
                                         StaticQueue_t* queue) {
+  if (fake_queue_create_failure) return nullptr;
   if (capacity == 0 || item_size == 0 || storage == nullptr || queue == nullptr)
     return nullptr;
   *queue = {};

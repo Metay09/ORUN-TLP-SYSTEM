@@ -103,7 +103,9 @@ void setup() {
   orun_tlp::WatchdogManager::begin();
   printBootBanner();
   orun_tlp::SensorPowerManager::begin();
-  radio_manager.begin(history);
+  if (!radio_manager.begin(history)) {
+    Serial.println(F("RADIO unavailable; TX/RX disabled; local services continue"));
+  }
   radio_manager.setRole(role_controller.role());
   if (history.begin(radio_manager.deviceId())) {
     Serial.printf("STORAGE recovered records=%lu capacity=%lu corrupt=%lu pending=%lu\n",
