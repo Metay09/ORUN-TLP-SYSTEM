@@ -51,6 +51,14 @@ replaces the M2 test cadence: the default is 15 minutes with a separate
 immediately when available; missed schedule points do not produce a backlog.
 See [M3](../docs/milestones/M3.md) for acquisition boundaries and power policy.
 
+M4 keeps these bytes and GNSS rules unchanged, but commits their semantic
+fields to local history before attempting live TX. Replay deterministically
+reconstructs the same 34-byte packet with its original sequence. Storage
+failure suppresses that live TX; no stale fix is substituted. TEST and POSITION
+share persistent sequence-block reservations, so gaps across reset are
+intentional. TX_DONE does not confirm BASE receipt. See the
+[M4 journal format](../docs/storage/M4_FLASH_JOURNAL.md).
+
 PVT and DOP callbacks may arrive in either order. The manager keeps the latest
 candidate PVT and DOP separately and promotes a fix only after their `iTOW`
 values match. The promoted fix has a separate single-use buffer: it is consumed

@@ -34,7 +34,8 @@ uint32_t deterministicJitter(uint64_t device_id, uint32_t sequence_number,
 
 }  // namespace
 
-bool RadioManager::begin() {
+bool RadioManager::begin(SequenceSource& sequences) {
+  sequences_ = &sequences;
   uint8_t board_id[8]{};
   BoardGetUniqueId(board_id);
   device_id_ = boardUniqueIdToUint64(board_id);
@@ -83,12 +84,12 @@ bool RadioManager::begin() {
   return true;
 }
 
-void RadioManager::update() {
+void RadioManager::update(bool allow_test_beacon) {
   if (!ready_) {
     return;
   }
   const uint32_t now = millis();
-  if (radio_config::kTestBeaconEnabled && !tx_in_progress_ &&
+  if (allow_test_beacon && radio_config::kTestBeaconEnabled && !tx_in_progress_ &&
       static_cast<int32_t>(now - next_tx_at_ms_) >= 0) {
     sendTestPacket();
   }
@@ -96,28 +97,36 @@ void RadioManager::update() {
 
 bool RadioManager::canSend() const { return ready_ && !tx_in_progress_; }
 
-bool RadioManager::sendPosition(const GnssFix& fix) {
-  if (!canSend()) {
-    return false;
-  }
-
-  uint8_t payload[tlp::kPositionPacketSize]{};
+bool RadioManager::encodePosition(const GnssFix& fix, uint8_t* payload, uint64_t& identity) {
+  uint32_t sequence;
+  if (!payload || !sequences_ || !sequences_->nextSequence(sequence, identity)) return false;
+  sequence_number_ = sequence + 1;
   const tlp::PositionPacket packet{
-      device_id_, sequence_number_++, fix.utc_epoch_seconds, fix.latitude_e7,
+      device_id_, sequence, fix.utc_epoch_seconds, fix.latitude_e7,
       fix.longitude_e7, fix.altitude_mm, fix.hdop_x100, fix.satellites,
       fix.flags};
-  if (!tlp::serializePositionPacket(packet, payload, sizeof(payload))) {
-    Serial.println(F("POSITION packet serialization failed"));
+  return tlp::serializePositionPacket(packet, payload, tlp::kPositionPacketSize);
+}
+
+bool RadioManager::sendPositionPacket(const uint8_t* payload) {
+  tlp::PositionPacket packet{};
+  if (!canSend() || !tlp::deserializePositionPacket(payload, tlp::kPositionPacketSize, &packet) ||
+      packet.source_device_id != device_id_) {
+    ++local_tx_failures_;
     return false;
   }
-
+  // The caller supplies the immutable stored packet, including its sequence.
+  // SX126x-Arduino copies these bytes synchronously into its FIFO in Send().
+  uint8_t tx_payload[tlp::kPositionPacketSize];
+  memcpy(tx_payload, payload, sizeof(tx_payload));
   tx_in_progress_ = true;
+  ++tx_attempts_;
   Serial.printf("TX POSITION source=%016llX sequence=%lu lat=%ld lon=%ld sats=%u\n",
                 static_cast<unsigned long long>(packet.source_device_id),
                 static_cast<unsigned long>(packet.sequence_number),
                 static_cast<long>(packet.latitude_e7),
                 static_cast<long>(packet.longitude_e7), packet.satellites);
-  Radio.Send(payload, sizeof(payload));
+  Radio.Send(tx_payload, sizeof(tx_payload));
   return true;
 }
 
@@ -125,6 +134,7 @@ uint64_t RadioManager::deviceId() const { return device_id_; }
 
 void RadioManager::onTxDone() {
   if (active_radio_manager != nullptr) {
+    // Local TX completion only. No HistoryStore/delivery mutation here.
     active_radio_manager->tx_in_progress_ = false;
     active_radio_manager->scheduleNextTransmission(millis());
   }
@@ -134,6 +144,7 @@ void RadioManager::onTxDone() {
 void RadioManager::onTxTimeout() {
   Serial.println(F("TX timeout"));
   if (active_radio_manager != nullptr) {
+    ++active_radio_manager->tx_timeouts_;
     active_radio_manager->tx_in_progress_ = false;
     active_radio_manager->scheduleNextTransmission(millis());
   }
@@ -157,7 +168,11 @@ void RadioManager::onRxError() {
 
 void RadioManager::sendTestPacket() {
   uint8_t payload[tlp::kTestPacketSize]{};
-  const tlp::TestPacket packet{device_id_, sequence_number_++, millis()};
+  uint32_t sequence;
+  uint64_t identity;
+  if (!sequences_ || !sequences_->nextSequence(sequence, identity)) return;
+  sequence_number_ = sequence + 1;
+  const tlp::TestPacket packet{device_id_, sequence, millis()};
   if (!tlp::serializeTestPacket(packet, payload, sizeof(payload))) {
     Serial.println(F("TEST packet serialization failed"));
     scheduleNextTransmission(millis());
@@ -165,6 +180,7 @@ void RadioManager::sendTestPacket() {
   }
 
   tx_in_progress_ = true;
+  ++tx_attempts_;
   Serial.printf("TX source=%016llX sequence=%lu type=TEST\n",
                 static_cast<unsigned long long>(packet.source_device_id),
                 static_cast<unsigned long>(packet.sequence_number));
