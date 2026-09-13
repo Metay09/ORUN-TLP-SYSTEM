@@ -56,7 +56,7 @@ bool RadioManager::encodePosition(const GnssFix& fix, uint8_t* out, uint64_t& id
                             fix.altitude_mm, fix.hdop_x100, fix.satellites, fix.flags};
   return tlp::serializePositionPacket(p, out, tlp::kPositionPacketSize);
 }
-bool RadioManager::sendPositionPacket(const uint8_t*) { ++sends; return true; }
+bool RadioManager::sendPositionPacket(const uint8_t*, const uint32_t*) { ++sends; return true; }
 
 int main() {
   void* region = mmap(reinterpret_cast<void*>(kBaseAddress), kRegionSize,

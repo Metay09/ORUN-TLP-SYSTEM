@@ -1,16 +1,18 @@
 #include "position_flow.h"
+#include "gnss_manager.h"
 #include "gnss_config.h"
 #include "monotonic_time.h"
 
 namespace orun_tlp {
 bool PositionFlow::acceptFix(const GnssFix& fix, uint32_t now) {
-  if (!canAcceptFix()) return false;
+  if (!canAcceptFix() || monotonic::elapsed(
+          now, fix.captured_at_ms, gnss_config::kFreshFixMaxAgeMs)) return false;
   live_pending_ = false;  // New live data replaces an older unsent live candidate.
   if (!store_.ready() || !radio_.encodePosition(fix, packet_, identity_) ||
       !store_.append(packet_, identity_)) {
     ++storage_drops_; return false; // Strict store-first: never bypass persistence.
   }
-  accepted_at_ = now; appending_ = true; return true;
+  captured_at_ms_ = fix.captured_at_ms; appending_ = true; return true;
 }
 PositionFlow::Event PositionFlow::update(uint32_t now, bool allow_live_tx) {
   Event event = Event::kNone;
@@ -25,12 +27,12 @@ PositionFlow::Event PositionFlow::update(uint32_t now, bool allow_live_tx) {
     return event;
   }
   if (live_pending_) {
-    if (monotonic::elapsed(now, accepted_at_, gnss_config::kFreshFixMaxAgeMs)) {
+    if (monotonic::elapsed(now, captured_at_ms_, gnss_config::kFreshFixMaxAgeMs)) {
       live_pending_ = false; return Event::kLiveExpired; // Record remains backlog.
     }
     if (radio_.canSend()) {
       // Driver gate contention is a defer, not an attempted transmission.
-      if (radio_.sendPositionPacket(packet_))
+      if (radio_.sendPositionPacket(packet_, &captured_at_ms_))
         live_pending_ = false; // TX_DONE is not delivery.
     }
   }

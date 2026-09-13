@@ -27,7 +27,8 @@ class RadioManager {
   bool canSend() const;
   bool isTransmitting() const { return tx_in_progress_; }
   bool encodePosition(const GnssFix& fix, uint8_t* payload, uint64_t& identity);
-  bool sendPositionPacket(const uint8_t* payload);
+  // A live capture timestamp adds a final freshness gate; backlog omits it.
+  bool sendPositionPacket(const uint8_t* payload, const uint32_t* captured_at_ms = nullptr);
   uint64_t deviceId() const;
   uint32_t txAttempts() const { return tx_attempts_; }
   uint32_t txTimeouts() const { return tx_timeouts_; }

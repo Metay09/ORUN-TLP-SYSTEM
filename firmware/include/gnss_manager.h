@@ -14,12 +14,14 @@ struct GnssFix {
   uint16_t hdop_x100;
   uint8_t satellites;
   uint8_t flags;
+  // Local callback capture time only; never serialized or persisted.
+  uint32_t captured_at_ms = 0;
 };
 
 class GnssManager {
  public:
   enum class State : uint8_t {
-    kNotPresent, kPowerOff, kPowerOnWait, kDetecting, kIdle, kStarting,
+    kNotPresent, kDetectionBackoff, kPowerOff, kPowerOnWait, kDetecting, kIdle, kStarting,
     kAcquiring, kFixAvailable, kTimeout, kFailure, kSleeping
   };
 
@@ -31,6 +33,10 @@ class GnssManager {
     uint32_t configuration_failures = 0;
     uint32_t expired_unsent_fixes = 0;
     uint32_t last_ttff_ms = 0;
+    uint32_t stale_pvt_rejected = 0;
+    uint32_t stale_dop_rejected = 0;
+    uint32_t invalid_utc_snapshots = 0;
+    uint32_t detection_retries = 0;
   };
 
   void begin();
@@ -38,7 +44,8 @@ class GnssManager {
   bool takeFreshFixForTransmission(GnssFix* fix);
   bool detected() const;
   bool detectionComplete() const {
-    return state_ != State::kPowerOff && state_ != State::kPowerOnWait &&
+    return state_ != State::kDetectionBackoff && state_ != State::kPowerOff &&
+           state_ != State::kPowerOnWait &&
            state_ != State::kDetecting;
   }
   State state() const { return state_; }
@@ -61,13 +68,20 @@ class GnssManager {
   bool detected_ = false;
   bool needs_configuration_ = true;
   bool waiting_for_power_ = false;
+  bool waiting_for_drain_ = false;
   uint8_t configuration_step_ = 0;
   uint32_t state_changed_at_ms_ = 0;
+  uint32_t drain_attempted_at_ms_ = 0;
   uint32_t acquisition_started_at_ms_ = 0;
   uint32_t next_due_at_ms_ = 0;
-  uint32_t fresh_fix_at_ms_ = 0;
+  uint32_t session_generation_ = 0;
+  uint32_t pvt_generation_ = 0, dop_generation_ = 0;
+  uint32_t dop_received_at_ms_ = 0;
+  uint8_t detection_attempts_ = 0;
   bool has_boundary_epoch_ = false;
   uint32_t boundary_epoch_ = 0;
+  bool has_dop_boundary_epoch_ = false;
+  uint32_t dop_boundary_epoch_ = 0;
   uint32_t latest_hdop_itow_ = 0;
   uint16_t latest_hdop_x100_ = 0;
   bool has_latest_hdop_ = false;

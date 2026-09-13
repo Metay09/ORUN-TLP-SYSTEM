@@ -1,4 +1,5 @@
 #include "radio_manager.h"
+#include "gnss_config.h"
 
 #include <Arduino.h>
 #include <FreeRTOS.h>
@@ -194,7 +195,7 @@ bool RadioManager::encodePosition(const GnssFix& fix, uint8_t* payload, uint64_t
   return tlp::serializePositionPacket(packet, payload, tlp::kPositionPacketSize);
 }
 
-bool RadioManager::sendPositionPacket(const uint8_t* payload) {
+bool RadioManager::sendPositionPacket(const uint8_t* payload, const uint32_t* captured_at_ms) {
   radio_driver::Guard gate;
   if (!gate) return false;
   tlp::PositionPacket packet{};
@@ -207,18 +208,22 @@ bool RadioManager::sendPositionPacket(const uint8_t* payload) {
   // SX126x-Arduino copies these bytes synchronously into its FIFO in Send().
   uint8_t tx_payload[tlp::kPositionPacketSize];
   memcpy(tx_payload, payload, sizeof(tx_payload));
+  // Final live admission check under the driver gate. No blocking log between
+  // this check and Send; stored/backlog packets deliberately omit this gate.
+  if (captured_at_ms && monotonic::elapsed(monotonic::nowMs(), *captured_at_ms,
+                                          gnss_config::kFreshFixMaxAgeMs)) return false;
   startTxOperation();
   tx_kind_ = TxKind::kPosition;
   tx_role_epoch_ = role_epoch_;
   rx_restore_state_ = RxRestoreState::kNone;
   ++tx_attempts_;
+  Radio.Send(tx_payload, sizeof(tx_payload));
+  tx_started_ms_ = monotonic::nowMs(); // Match upstream timer start after Send.
   Serial.printf("TX POSITION source=%016llX sequence=%lu lat=%ld lon=%ld sats=%u\n",
                 static_cast<unsigned long long>(packet.source_device_id),
                 static_cast<unsigned long>(packet.sequence_number),
                 static_cast<long>(packet.latitude_e7),
                 static_cast<long>(packet.longitude_e7), packet.satellites);
-  Radio.Send(tx_payload, sizeof(tx_payload));
-  tx_started_ms_ = monotonic::nowMs(); // Match upstream timer start after Send.
   return true;
 }
 

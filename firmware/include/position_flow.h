@@ -17,7 +17,7 @@ class PositionFlow {
   RadioManager& radio_;
   uint8_t packet_[tlp::kPositionPacketSize]{};
   uint64_t identity_ = 0;
-  uint32_t accepted_at_ = 0, storage_drops_ = 0;
+  uint32_t captured_at_ms_ = 0, storage_drops_ = 0;
   bool appending_ = false, live_pending_ = false;
 };
 }  // namespace orun_tlp

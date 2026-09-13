@@ -7,6 +7,7 @@
 #include "gnss_manager.h"
 #include "history_store.h"
 #include "position_flow.h"
+#include "gnss_config.h"
 
 using namespace orun_tlp;
 using namespace orun_tlp::journal_format;
@@ -301,7 +302,7 @@ bool RadioManager::encodePosition(const GnssFix& fix, uint8_t* output,
   return tlp::serializePositionPacket(packet, output,
                                       tlp::kPositionPacketSize);
 }
-bool RadioManager::sendPositionPacket(const uint8_t* bytes) {
+bool RadioManager::sendPositionPacket(const uint8_t* bytes, const uint32_t*) {
   if (radio_gate_contended) return false;
   HistoryStore disk(*tx_flash);
   start(disk);
@@ -310,6 +311,48 @@ bool RadioManager::sendPositionPacket(const uint8_t* bytes) {
   assert(memcmp(bytes, record.packet, sizeof(record.packet)) == 0);
   ++sends;
   return true;
+}
+
+void captureAgeSurvivesStorageAndRadioWait() {
+  for (bool delayed_commit : {false, true}) {
+    FaultFlash flash;
+    tx_flash = &flash;
+    sends = 0;
+    radio_available = false;
+    HistoryStore store(flash);
+    start(store);
+    RadioManager radio;
+    assert(radio.begin(store));
+    PositionFlow flow(store, radio);
+    GnssFix fix{1700000000, 410000000, 290000000, 10, 100, 8, 7};
+    fix.captured_at_ms = UINT32_MAX - 3000;
+    const auto accepted_at = fix.captured_at_ms + 4000;
+    assert(flow.acceptFix(fix, accepted_at));
+    assert(store.count() == 0 && sends == 0); // Still store-before-TX.
+    if (!delayed_commit) {
+      settle(store);
+      assert(flow.update(accepted_at + 1) == PositionFlow::Event::kStored);
+      assert(flow.pending());
+      assert(flow.update(fix.captured_at_ms + 4999) == PositionFlow::Event::kNone);
+    } else {
+      assert(flow.update(fix.captured_at_ms + 5000) == PositionFlow::Event::kNone);
+      assert(flow.pending()); // Finish append even if age expired during storage.
+      settle(store);
+    }
+    radio_available = true;
+    assert(flow.update(fix.captured_at_ms + 5000) == PositionFlow::Event::kLiveExpired);
+    assert(sends == 0 && !flow.pending());
+    assert(store.count() == 1 && store.backlogCount() == 1 && store.deliveredThrough() == 0);
+    HistoryStore rebooted(flash);
+    start(rebooted);
+    HistoryStore::Record record;
+    assert(rebooted.newest(record));
+    tlp::PositionPacket decoded{};
+    assert(tlp::deserializePositionPacket(record.packet, sizeof(record.packet), &decoded));
+    assert(decoded.gnss_utc_epoch_seconds == fix.utc_epoch_seconds);
+    assert(decoded.latitude_e7 == fix.latitude_e7 && decoded.flags == fix.flags);
+    assert(!flow.acceptFix(fix, fix.captured_at_ms + 5000));
+  }
 }
 
 void livePacketSurvivesRadioGateDefer() {
@@ -622,6 +665,7 @@ void bitPartialFirstHeaderAndVersionPolicy() {
 }
 
 int main() {
+  captureAgeSurvivesStorageAndRadioWait();
   lastTicketPositionAndReservationCuts();
   allocatedIdentityWrapRecovery();
   bitPartialFirstHeaderAndVersionPolicy();

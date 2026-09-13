@@ -4,6 +4,7 @@
 #include <Wire.h>
 
 #include "gnss_config.h"
+#include "gnss_utc.h"
 #include "monotonic_time.h"
 #include "tlp_position_packet.h"
 
@@ -32,6 +33,7 @@ bool coordinatesAreInRange(int32_t latitude_e7, int32_t longitude_e7) {
 }  // namespace
 
 void GnssManager::begin() {
+  *this = GnssManager{};
   active_gnss_manager = this;
   pinMode(WB_IO2, OUTPUT);
   digitalWrite(WB_IO2, LOW);
@@ -69,11 +71,15 @@ void GnssManager::poll() {
       return;
 
     case State::kDetecting: {
+      if (detection_attempts_++ != 0) ++diagnostics_.detection_retries;
       Wire.begin();
       if (!gnss.begin(Wire, gnss_config::kI2cAddress,
                       gnss_config::kConfigurationMaxWaitMs)) {
         Serial.println(F("GNSS: not detected"));
-        state_ = State::kNotPresent;
+        state_changed_at_ms_ = monotonic::nowMs();
+        state_ = detection_attempts_ < gnss_config::kDetectionMaxAttempts
+                     ? State::kDetectionBackoff : State::kNotPresent;
+        if (state_ == State::kNotPresent) digitalWrite(WB_IO2, LOW);
         return;
       }
 
@@ -118,6 +124,12 @@ void GnssManager::poll() {
       enterLowPower(now);
       return;
 
+    case State::kDetectionBackoff:
+      if (monotonic::elapsed(now, state_changed_at_ms_,
+                            gnss_config::kDetectionRetryBackoffMs * detection_attempts_))
+        state_ = State::kDetecting;
+      return;
+
     case State::kNotPresent:
       return;
   }
@@ -129,6 +141,7 @@ void GnssManager::clearCandidates() {
 }
 
 void GnssManager::startAcquisition(uint32_t now) {
+  ++session_generation_;
   if (state_ == State::kSleeping) {
     digitalWrite(WB_IO2, HIGH);
     state_changed_at_ms_ = now;
@@ -138,6 +151,8 @@ void GnssManager::startAcquisition(uint32_t now) {
   clearCandidates();
   fresh_fix_ready_ = false;
   has_boundary_epoch_ = false;
+  has_dop_boundary_epoch_ = false;
+  waiting_for_drain_ = false;
   acquisition_started_at_ms_ = now;
   next_due_at_ms_ = monotonic::nextFuture(
       now, next_due_at_ms_, gnss_config::kTrackingIntervalMs);
@@ -180,9 +195,23 @@ void GnssManager::prepareAcquisition() {
       // Consume pending library callbacks and receiver output while acceptance
       // is gated by STARTING. Do not mutate library parser/cache internals:
       // flushPVT/flushDOP only clear getter flags, not pending callback copies.
-      gnss.checkUblox();
+      // checkUblox may otherwise skip the bus because of its polling gate.
+      // Require a successful read of the available byte batch. False (empty
+      // or transport error) keeps STARTING gated until data or the timeout.
+      if (waiting_for_drain_ && !monotonic::elapsed(
+              monotonic::nowMs(), drain_attempted_at_ms_,
+              gnss_config::kI2cPollingWaitMs)) return;
+      gnss.setI2CpollingWait(0);
+      ok = gnss.checkUblox();
+      gnss.setI2CpollingWait(gnss_config::kI2cPollingWaitMs);
       gnss.checkCallbacks();
       clearCandidates();
+      if (!ok) {
+        waiting_for_drain_ = true;
+        drain_attempted_at_ms_ = monotonic::nowMs();
+        return;
+      }
+      waiting_for_drain_ = false;
       needs_configuration_ = false;
       state_ = State::kAcquiring;
       return;
@@ -220,7 +249,7 @@ void GnssManager::enterLowPower(uint32_t now) {
 
 void GnssManager::expireFreshFix(uint32_t now) {
   if (fresh_fix_ready_ && monotonic::elapsed(
-          now, fresh_fix_at_ms_, gnss_config::kFreshFixMaxAgeMs)) {
+          now, fresh_fix_.captured_at_ms, gnss_config::kFreshFixMaxAgeMs)) {
     fresh_fix_ready_ = false;
     ++diagnostics_.expired_unsent_fixes;
     Serial.println(F("GNSS unsent fix expired"));
@@ -256,7 +285,7 @@ void GnssManager::handlePvt(const UBX_NAV_PVT_data_t& pvt_data) {
   if (state_ != State::kAcquiring) {
     return;
   }
-  has_candidate_fix_ = false;
+  const uint32_t received_at = monotonic::nowMs();
   // After draining, the first observed epoch is a boundary, never a fix to
   // transmit. Require an epoch change, even if the first PVT was invalid.
   // This also rejects a partial pre-acquisition packet completed after wake.
@@ -267,12 +296,16 @@ void GnssManager::handlePvt(const UBX_NAV_PVT_data_t& pvt_data) {
   if (!pvt_data.flags.bits.gnssFixOK || !isNavigationFix(pvt_data.fixType) ||
       pvt_data.flags3.bits.invalidLlh ||
       !coordinatesAreInRange(pvt_data.lat, pvt_data.lon)) {
+    has_candidate_fix_ = false;
     ++diagnostics_.invalid_fixes;
     return;
   }
   if (pvt_data.iTOW == boundary_epoch_) {
+    has_candidate_fix_ = false;
     return;
   }
+  // Repeated delivery of a valid candidate must not renew its age.
+  if (has_candidate_fix_ && candidate_fix_itow_ == pvt_data.iTOW) return;
 
   // iTOW is not monotonic across GPS week rollover. Once another PVT epoch is
   // observed, an equal iTOW from a future week must remain eligible.
@@ -281,6 +314,8 @@ void GnssManager::handlePvt(const UBX_NAV_PVT_data_t& pvt_data) {
     has_last_promoted_fix_itow_ = false;
   }
 
+  candidate_fix_.captured_at_ms = received_at;
+  pvt_generation_ = session_generation_;
   candidate_fix_.latitude_e7 = pvt_data.lat;
   candidate_fix_.longitude_e7 = pvt_data.lon;
   candidate_fix_.altitude_mm = pvt_data.height;
@@ -288,8 +323,13 @@ void GnssManager::handlePvt(const UBX_NAV_PVT_data_t& pvt_data) {
   candidate_fix_.flags = tlp::kPositionFlagValidFix;
   candidate_fix_.utc_epoch_seconds = 0;
   if (pvt_data.valid.bits.validDate && pvt_data.valid.bits.validTime) {
-    candidate_fix_.flags |= tlp::kPositionFlagValidUtcTime;
-    candidate_fix_.utc_epoch_seconds = gnss.getUnixEpoch(0);
+    // Convert immediately from this immutable callback snapshot, never getters.
+    const UtcSnapshot utc{pvt_data.year, pvt_data.month, pvt_data.day,
+                          pvt_data.hour, pvt_data.min, pvt_data.sec};
+    if (utcToEpoch(utc, candidate_fix_.utc_epoch_seconds))
+      candidate_fix_.flags |= tlp::kPositionFlagValidUtcTime;
+    else
+      ++diagnostics_.invalid_utc_snapshots;
   }
   if (is3dFix(pvt_data.fixType)) {
     candidate_fix_.flags |= tlp::kPositionFlag3dFix;
@@ -304,6 +344,17 @@ void GnssManager::handleDop(const UBX_NAV_DOP_data_t& dop_data) {
   if (state_ != State::kAcquiring) {
     return;
   }
+  const uint32_t received_at = monotonic::nowMs();
+  // A drain can end partway through either UBX message type. Reject the
+  // first DOP epoch too, even if its counterpart PVT was already observed.
+  if (!has_dop_boundary_epoch_) {
+    dop_boundary_epoch_ = dop_data.iTOW;
+    has_dop_boundary_epoch_ = true;
+  }
+  if (dop_data.iTOW == dop_boundary_epoch_) return;
+  if (has_latest_hdop_ && latest_hdop_itow_ == dop_data.iTOW) return;
+  dop_received_at_ms_ = received_at;
+  dop_generation_ = session_generation_;
   latest_hdop_itow_ = dop_data.iTOW;
   latest_hdop_x100_ = dop_data.hDOP;
   has_latest_hdop_ = true;
@@ -315,9 +366,21 @@ void GnssManager::considerPositionFix() {
   if (state_ != State::kAcquiring ||
       monotonic::elapsed(now, acquisition_started_at_ms_, gnss_config::kAcquisitionTimeoutMs) ||
       !has_candidate_fix_ || !has_latest_hdop_ ||
+      pvt_generation_ != session_generation_ || dop_generation_ != session_generation_ ||
       candidate_fix_itow_ != latest_hdop_itow_ || fresh_fix_ready_ ||
       (has_last_promoted_fix_itow_ &&
        candidate_fix_itow_ == last_promoted_fix_itow_)) {
+    return;
+  }
+
+  const bool stale_pvt = monotonic::elapsed(
+      now, candidate_fix_.captured_at_ms, gnss_config::kFreshFixMaxAgeMs);
+  const bool stale_dop = monotonic::elapsed(
+      now, dop_received_at_ms_, gnss_config::kFreshFixMaxAgeMs);
+  if (stale_pvt || stale_dop) {
+    if (stale_pvt) ++diagnostics_.stale_pvt_rejected;
+    if (stale_dop) ++diagnostics_.stale_dop_rejected;
+    // Retain epoch/time so a duplicate callback cannot renew this candidate.
     return;
   }
 
@@ -327,7 +390,6 @@ void GnssManager::considerPositionFix() {
   fresh_fix_ready_ = true;
   last_promoted_fix_itow_ = fresh_fix_itow_;
   has_last_promoted_fix_itow_ = true;
-  fresh_fix_at_ms_ = now;
   diagnostics_.last_ttff_ms = now - acquisition_started_at_ms_;
   ++diagnostics_.successful_fresh_fixes;
   state_ = State::kFixAvailable;

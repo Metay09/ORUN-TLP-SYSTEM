@@ -1,56 +1,4 @@
-#include <assert.h>
-#include <stdio.h>
-#include "Arduino.h"
-#include "gnss_config.h"
-#include "gnss_manager.h"
-#include "monotonic_time.h"
-#include "tlp_position_packet.h"
-
-using namespace orun_tlp;
-using State = GnssManager::State;
-using Fake = SFE_UBLOX_GNSS;
-uint32_t test_now = 0;
-uint32_t orun_tlp::monotonic::nowMs() { return test_now; }
-
-UBX_NAV_PVT_data_t pvt(uint32_t tow) {
-  UBX_NAV_PVT_data_t value{};
-  value.iTOW = tow;
-  value.flags.bits.gnssFixOK = true;
-  value.fixType = 3;
-  value.lat = 410000000;
-  value.lon = 290000000;
-  value.numSV = 8;
-  return value;
-}
-
-void emitPvt(GnssManager& manager, UBX_NAV_PVT_data_t value) {
-  Fake::pending.push_back([value]() mutable { Fake::pvt(&value); });
-  manager.poll();
-}
-void emitDop(GnssManager& manager, uint32_t tow) {
-  Fake::pending.push_back([tow]() { UBX_NAV_DOP_data_t value{tow, 123}; Fake::dop(&value); });
-  manager.poll();
-}
-void prepare(GnssManager& manager) {
-  for (unsigned i = 0; i < 7 && manager.state() == State::kStarting; ++i) manager.poll();
-  assert(manager.state() == State::kAcquiring);
-}
-uint32_t boot(GnssManager& manager, uint32_t start = 0) {
-  test_now = start;
-  Fake::present = Fake::configuration_ok = true;
-  Fake::pending.clear();
-  manager.begin();
-  test_now += gnss_config::kPowerSettleMs;
-  manager.poll();
-  test_now += gnss_config::kPowerSettleMs;
-  manager.poll();
-  manager.poll();
-  assert(manager.detected() && manager.state() == State::kStarting);
-  assert(manager.diagnostics().acquisition_attempts == 1);
-  const uint32_t anchor = test_now;
-  prepare(manager);
-  return anchor;
-}
+#include "gnss_test_support.h"
 
 void testFixes(bool dop_first) {
   GnssManager manager;
@@ -140,7 +88,7 @@ void testTimeoutAndRecovery() {
   prepare(manager);
   emitDop(manager, 3500);  // Must not pair with the timed-out candidate.
   assert(!manager.takeFreshFixForTransmission(&fix));
-  emitPvt(manager, pvt(604799000));
+  emitPvt(manager, pvt(604799000)); emitDop(manager, 604799000);
   emitDop(manager, 0);
   emitPvt(manager, pvt(0));
   assert(manager.takeFreshFixForTransmission(&fix));
@@ -169,7 +117,7 @@ void testMissedSlotsAndFailures() {
   manager.poll();
   test_now += gnss_config::kPowerSettleMs;
   prepare(manager);
-  emitPvt(manager, pvt(1)); emitPvt(manager, pvt(2)); emitDop(manager, 2);
+  emitPvt(manager, pvt(1)); emitDop(manager, 1); emitPvt(manager, pvt(2)); emitDop(manager, 2);
   test_now += gnss_config::kFreshFixMaxAgeMs;
   GnssFix fix{};
   assert(!manager.takeFreshFixForTransmission(&fix));
@@ -181,7 +129,7 @@ void testMissedSlotsAndFailures() {
   test_now += 1000; absent.poll();
   Fake::present = false;
   absent.poll();
-  assert(!absent.detected() && absent.state() == State::kNotPresent);
+  assert(!absent.detected() && absent.state() == State::kDetectionBackoff);
 }
 
 void testTimeAndPolicy() {

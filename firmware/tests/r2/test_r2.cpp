@@ -7,6 +7,7 @@
 #include "driver_patch_model.h"
 #include "radio_driver_gate.h"
 #include "radio_config.h"
+#include "gnss_config.h"
 
 #include "network_service.h"
 #include "radio_manager.h"
@@ -415,6 +416,21 @@ void cancelledRoleRequestRetainsActiveForward() {
   assert(radio_state == RF_RX_RUNNING);
 }
 
+void liveTxAdmissionAge() {
+  TestSequence sequences;
+  RadioManager manager;
+  beginAs(manager, sequences, NodeRole::kTracker);
+  uint8_t bytes[tlp::kPositionPacketSize];
+  makePosition(kLocalDevice, 1, bytes);
+  const uint32_t captured_at = UINT32_MAX - 3000;
+  test_now = captured_at + gnss_config::kFreshFixMaxAgeMs;
+  assert(!manager.sendPositionPacket(bytes, &captured_at));
+  assert(send_calls == 0 && manager.canSend());
+  --test_now;
+  assert(manager.sendPositionPacket(bytes, &captured_at));
+  assert(send_calls == 1);
+}
+
 }  // namespace
 
 namespace orun_tlp::monotonic {
@@ -456,6 +472,7 @@ void BoardGetUniqueId(uint8_t* id) {
 }
 
 int main() {
+  liveTxAdmissionAge();
   callbackOwnershipPayloadCopyAndOverflow();
   txDoneAndTimeoutRecovery();
   duplicateMalformedAndBoundaries();

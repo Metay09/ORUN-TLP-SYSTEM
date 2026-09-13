@@ -68,9 +68,22 @@ again until another PVT epoch is observed; this is an equality check only, not
 a monotonic `iTOW` comparison. This avoids treating the GPS-week-wrapping iTOW
 as an ever-increasing counter.
 
-UTC epoch is produced by the SparkFun library's `getUnixEpoch()` implementation
-only when NAV-PVT reports both UTC date and time valid. It is otherwise zero
-and flag bit 1 is clear.
+R3 produces UTC from the same NAV-PVT callback snapshot as the coordinates,
+without SparkFun cache getters. Both `validDate` and `validTime` must be set,
+and the calendar must be valid and representable as uint32 Unix seconds.
+Otherwise epoch is zero and flag bit 1 is clear; valid coordinates remain
+usable. `fullyResolved` is not newly required. u-blox `sec=60` is normalized
+into the following minute, retaining the previous integer-second convention.
+No packet fields, flag assignments or protocol version change.
+
+R3 additionally requires same-session PVT/DOP candidates, each less than
+5000 ms old on the M3 monotonic clock. Matching does not reset age. The PVT
+capture timestamp remains local through store-before-TX and live admission;
+at 5000 ms the live candidate expires. A committed record remains historical
+backlog with its original packet bytes and delivery state. The wire has no
+new age or live/history indicator. See the
+[R3 audit](../docs/audits/R3_GNSS_FRESHNESS_FIX.md) for session draining,
+epoch boundaries, conversion and validation.
 
 `altitude_mm` is NAV-PVT `height`: signed millimetres above the WGS84 ellipsoid
 (`hMSL`, the mean-sea-level alternative, is not used). NAV-DOP `hDOP` is already

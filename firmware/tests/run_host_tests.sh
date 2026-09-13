@@ -4,8 +4,16 @@ cd "$(dirname "$0")/../.."
 test_dir=$(mktemp -d /tmp/orun-host-tests.XXXXXX)
 flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined
        -Ifirmware/tests/m3/stubs -Ifirmware/include)
-g++ "${flags[@]}" firmware/tests/m3/test_m3.cpp firmware/src/gnss_manager.cpp -o "$test_dir/m3"
+g++ "${flags[@]}" firmware/tests/m3/test_m3.cpp firmware/src/gnss_manager.cpp \
+  firmware/src/gnss_utc.cpp -o "$test_dir/m3"
 "$test_dir/m3"
+g++ "${flags[@]}" firmware/tests/r3/test_delayed_pair.cpp firmware/src/gnss_manager.cpp \
+  firmware/src/gnss_utc.cpp -o "$test_dir/r3_delayed"
+"$test_dir/r3_delayed"
+g++ "${flags[@]}" firmware/tests/r3/test_r3.cpp firmware/src/gnss_manager.cpp \
+  firmware/src/gnss_utc.cpp firmware/src/tlp_position_packet.cpp \
+  firmware/src/node_role.cpp -o "$test_dir/r3"
+"$test_dir/r3"
 g++ "${flags[@]}" firmware/tests/m4/test_m4.cpp firmware/src/history_store.cpp \
   firmware/src/journal_format.cpp firmware/src/position_flow.cpp \
   firmware/src/tlp_position_packet.cpp -o "$test_dir/m4"
