@@ -467,6 +467,9 @@ void GnssManager::handlePvt(const UBX_NAV_PVT_data_t& pvt_data) {
   // With iTOW marked fresh by processUBXpacket(), getTimeOfWeek(0) is a cache
   // read here. A mismatch proves this callback is not the newest parsed PVT.
   const uint32_t newest_parsed_itow = gnss.getTimeOfWeek(0);
+  // The inspected 2.2.29 path is cache-only here, but keep the freshness path
+  // fail-closed if a future invariant break makes the getter touch Wire.
+  if (handleI2cTimeout(monotonic::nowMs())) return;
   if (newest_parsed_itow != pvt_data.iTOW) {
     startTransportResync(received_at);
     return;

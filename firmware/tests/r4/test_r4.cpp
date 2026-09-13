@@ -80,6 +80,30 @@ void unsafeTwimAbortNeverTouchesGpioRecovery() {
   assert(!fake_wire_reset_required_flag);
 }
 
+void callbackGetterTimeoutFailsClosedImmediately() {
+  GnssManager manager;
+  boot(manager);
+  resetBusFixture();
+
+  auto value = pvt(2000);
+  Fake::current_pvt = value;
+  Fake::itow_fresh = false;  // Force the defensive cache-miss path in the stub.
+  Fake::time_of_week_timeout_on_cache_miss = true;
+  const uint32_t generation = manager.session_generation_;
+
+  manager.handlePvt(value);
+
+  Fake::time_of_week_timeout_on_cache_miss = false;
+  assert(Fake::time_of_week_cache_misses == 1);
+  assert(manager.state() == State::kStarting);
+  assert(manager.session_generation_ != generation);
+  assert(manager.diagnostics().i2c_timeouts == 1);
+  assert(manager.diagnostics().i2c_recoveries == 1);
+  assert(!manager.has_candidate_fix_ && !manager.has_latest_hdop_);
+  GnssFix fix{};
+  assert(!manager.takeFreshFixForTransmission(&fix));
+}
+
 void gnssTimeoutRestartsBehindFreshnessBoundary() {
   GnssManager manager;
   boot(manager);
@@ -148,8 +172,9 @@ int main() {
   powerOwnershipIsCentralized();
   boundedRecoveryPrimitive();
   unsafeTwimAbortNeverTouchesGpioRecovery();
+  callbackGetterTimeoutFailsClosedImmediately();
   gnssTimeoutRestartsBehindFreshnessBoundary();
   recoveryFailureAndBudgetFailClosed();
   watchdogApiIsStable();
-  puts("R4 bounded I2C recovery, power ownership and watchdog API checks: PASS");
+  puts("R4 bounded I2C recovery, callback fail-closed, power ownership and watchdog API checks: PASS");
 }

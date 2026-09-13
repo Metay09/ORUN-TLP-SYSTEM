@@ -53,6 +53,7 @@ struct SFE_UBLOX_GNSS {
   inline static bool callback_valid = false;
   inline static bool itow_fresh = false;
   inline static unsigned time_of_week_cache_misses = 0;
+  inline static bool time_of_week_timeout_on_cache_miss = false;
   static void parsePvt(const UBX_NAV_PVT_data_t& value) {
     current_pvt = value;
     itow_fresh = true;
@@ -62,7 +63,10 @@ struct SFE_UBLOX_GNSS {
   // cache miss is counted so R3 tests can prove the backlog guard used the
   // fresh parse result rather than relying on a getter-triggered refresh.
   uint32_t getTimeOfWeek(uint16_t) {
-    if (!itow_fresh) ++time_of_week_cache_misses;
+    if (!itow_fresh) {
+      ++time_of_week_cache_misses;
+      if (time_of_week_timeout_on_cache_miss) fake_wire_timeout_flag = true;
+    }
     itow_fresh = false;
     return current_pvt.iTOW;
   }
