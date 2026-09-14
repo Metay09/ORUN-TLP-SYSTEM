@@ -2,9 +2,16 @@
 
 ## Project
 
-ORUN TLP is an open-source livestock tracking, geofencing, activity monitoring
-and field-search system based on RAKWireless WisBlock hardware and private
-LoRa P2P communication.
+ORUN TLP is an open-source low-power field network for tracking, sensing,
+events and, in later milestones, control and short human messaging over
+private LoRa P2P. Livestock tracking, geofencing, activity monitoring and
+field search are the first serious application and remain the current priority.
+
+RAKWireless WisBlock is the owned, first-class REFERENCE PLATFORM. Hardware
+portability is a design constraint, not a request to implement other boards.
+Keep one firmware codebase, small explicit boundaries and the existing
+Arduino/PlatformIO environment. Do not add speculative HALs or drivers for
+hardware we do not own.
 
 Initial real system:
 
@@ -58,12 +65,22 @@ Do NOT create separate tracker, relay and base firmware projects.
 
 Node behavior must be selected through configuration, profiles and services.
 
-Main profiles:
+Current legacy role names are TRACKER, RELAY and BASE; MOBILE / SEARCH is
+planned application behavior. Preserve current runtime behavior until an
+explicit migration task authorizes changes.
 
-- TRACKER
-- RELAY
-- BASE
-- MOBILE / SEARCH
+Keep device identity, hardware platform, network forwarding responsibility,
+application/profile, capabilities, enabled services, location source/ownership,
+power policy and transport separate. User identity is not device identity.
+Profiles are overridable default bundles, not protocol or hardware restrictions.
+A gateway bridge and a LoRa relay are independent responsibilities that may
+coexist on one device. Animal tracker presets never forward other trackers.
+
+Do not extend the legacy role enum for every new application. Future explicit
+configuration must take precedence over hardware-based AUTO suggestions.
+Role-named power and planned BLE policies below describe application defaults
+and availability commitments, not hardware-capability restrictions. BLE remains
+an M7 implementation task; do not enable it before its storage prerequisites.
 
 Hardware capabilities should be automatically detected at boot when practical.
 
@@ -72,7 +89,17 @@ Examples:
 - RAK12500 GNSS present / absent
 - RAK1904 accelerometer present / absent
 
-Profiles must not artificially disable detected hardware.
+Profiles must not hide or falsify detected capabilities. Enabled services and
+power policies may explicitly leave detected hardware inactive; for example,
+a GNSS-equipped relay may use PHONE location with GNSS OFF. Role alone must
+not determine hardware presence or active location source.
+
+Location is separate from GNSS. Only the configured active source (or an explicit
+AUTO ownership policy) may update the active location. Invalid/empty phone data,
+disconnect, permission loss or source OFF must not erase the last valid point.
+Use explicit validity, source, time/freshness and authorized CLEAR semantics;
+never use 0,0 as a missing-location sentinel. Persisted last-known values must
+not be presented as live after reboot or reconnection.
 
 ---
 
@@ -557,4 +584,27 @@ Document important dependencies and why they are required.
 
 Protocol changes must update protocol documentation.
 
-Architecture changes must
+Architecture changes must update the relevant architecture documents and
+record compatibility, wire, persistence and hardware-validation impacts.
+
+See `docs/architecture/ORUN_SYSTEM_ARCHITECTURE_V1.md`,
+`docs/architecture/ORUN_ARCHITECTURE_GAP_ANALYSIS.md` and
+`docs/architecture/ORUN_PROTOCOL_EVOLUTION_PLAN.md` for the proposed target
+boundaries and staged migration. Future recommendations do not authorize
+implementation or override the current task's milestone scope.
+
+Preserve M0-M5 and R1-R4 guarantees, startup identity safety and portable
+64-bit device-ID logging. Do not rewrite working subsystems for architectural
+purity. Do not change legacy wire bytes without an explicit compatibility plan.
+TX_DONE is not delivery, command execution or confirmed physical state.
+
+Configuration, durable state, history, security material and transient queues
+need explicit owners and reset/retention policies. The current history region
+0xED000..0xF4000 is exclusively owned; never assume nearby flash is free.
+Before BLE/DFU, resolve SoftDevice flash completion and InternalFS/bond storage
+ownership without removing existing safety guards.
+
+Security, command/actuator safety, messaging, additional hardware and backend
+work remain gated future milestones. Do not invent cryptography, infer confirmed
+actuator state from a transmitted command, or let chat/backlog starve critical
+and live traffic. Local field operation must not unnecessarily depend on a server.
