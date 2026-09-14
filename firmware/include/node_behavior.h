@@ -6,9 +6,16 @@ namespace orun_tlp {
 // is represented as an independent enablement value so future configuration can
 // control it without changing application/profile responsibilities.
 struct LegacyRoleBehavior {
-  bool relay_forwarding_enabled = false;
-  bool publish_gnss_position = false;
-  bool receive_application_position = false;
+  constexpr LegacyRoleBehavior(bool relay_forwarding_enabled_value = false,
+                               bool publish_gnss_position_value = false,
+                               bool receive_application_position_value = false)
+      : relay_forwarding_enabled(relay_forwarding_enabled_value),
+        publish_gnss_position(publish_gnss_position_value),
+        receive_application_position(receive_application_position_value) {}
+
+  bool relay_forwarding_enabled;
+  bool publish_gnss_position;
+  bool receive_application_position;
 };
 
 constexpr bool operator==(LegacyRoleBehavior lhs, LegacyRoleBehavior rhs) {

@@ -14,16 +14,16 @@ const char* roleName(NodeRole role);
 // Freeze today's legacy role semantics without turning NodeRole into the future
 // configuration model. In particular, relay forwarding is an independent
 // behavior value rather than a permanent node classification.
-constexpr LegacyRoleBehavior legacyRoleBehavior(NodeRole role) {
+inline LegacyRoleBehavior legacyRoleBehavior(NodeRole role) {
   switch (role) {
     case NodeRole::kTracker:
-      return {false, true, false};
+      return LegacyRoleBehavior(false, true, false);
     case NodeRole::kRelay:
-      return {true, false, false};
+      return LegacyRoleBehavior(true, false, false);
     case NodeRole::kBase:
-      return {false, false, true};
+      return LegacyRoleBehavior(false, false, true);
   }
-  return {false, false, true};
+  return LegacyRoleBehavior(false, false, true);
 }
 
 enum class RoleCommand : uint8_t {

@@ -6,6 +6,8 @@ flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined
        -Ifirmware/tests/m3/stubs -Ifirmware/include)
 portable_flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror
                 -fsanitize=address,undefined -Ifirmware/include)
+b3_flags=(-std=gnu++11 -O1 -g -Wall -Wextra -Werror
+          -fsanitize=address,undefined -Ifirmware/include)
 gnss_sources=(firmware/src/gnss_manager.cpp firmware/src/gnss_utc.cpp
               firmware/src/i2c_recovery.cpp firmware/src/sensor_power_manager.cpp)
 
@@ -19,7 +21,7 @@ g++ "${portable_flags[@]}" firmware/tests/b2/test_b2.cpp \
   -o "$test_dir/b2"
 "$test_dir/b2"
 
-g++ "${portable_flags[@]}" firmware/tests/b3/test_b3.cpp \
+g++ "${b3_flags[@]}" firmware/tests/b3/test_b3.cpp \
   firmware/src/node_role.cpp -o "$test_dir/b3"
 "$test_dir/b3"
 
