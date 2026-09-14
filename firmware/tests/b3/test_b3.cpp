@@ -7,17 +7,17 @@ using namespace orun_tlp;
 
 int main() {
   const auto tracker = legacyRoleBehavior(NodeRole::kTracker);
-  assert(tracker.forwarding == ForwardingResponsibility::kEndNode);
+  assert(!tracker.relay_forwarding_enabled);
   assert(tracker.publish_gnss_position);
   assert(!tracker.receive_application_position);
 
   const auto relay = legacyRoleBehavior(NodeRole::kRelay);
-  assert(relay.forwarding == ForwardingResponsibility::kRelay);
+  assert(relay.relay_forwarding_enabled);
   assert(!relay.publish_gnss_position);
   assert(!relay.receive_application_position);
 
   const auto base = legacyRoleBehavior(NodeRole::kBase);
-  assert(base.forwarding == ForwardingResponsibility::kEndNode);
+  assert(!base.relay_forwarding_enabled);
   assert(!base.publish_gnss_position);
   assert(base.receive_application_position);
 

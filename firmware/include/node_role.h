@@ -11,19 +11,19 @@ enum class NodeRole : uint8_t { kTracker, kRelay, kBase };
 
 const char* roleName(NodeRole role);
 
-// Freeze today's legacy role semantics without turning the role enum into the
-// future configuration model. New code can reason about forwarding and current
-// POSITION services independently while legacy commands remain unchanged.
+// Freeze today's legacy role semantics without turning NodeRole into the future
+// configuration model. In particular, relay forwarding is an independent
+// behavior value rather than a permanent node classification.
 constexpr LegacyRoleBehavior legacyRoleBehavior(NodeRole role) {
   switch (role) {
     case NodeRole::kTracker:
-      return {ForwardingResponsibility::kEndNode, true, false};
+      return {false, true, false};
     case NodeRole::kRelay:
-      return {ForwardingResponsibility::kRelay, false, false};
+      return {true, false, false};
     case NodeRole::kBase:
-      return {ForwardingResponsibility::kEndNode, false, true};
+      return {false, false, true};
   }
-  return {ForwardingResponsibility::kEndNode, false, true};
+  return {false, false, true};
 }
 
 enum class RoleCommand : uint8_t {

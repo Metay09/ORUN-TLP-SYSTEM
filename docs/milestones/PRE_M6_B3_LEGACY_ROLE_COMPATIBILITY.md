@@ -14,32 +14,51 @@ GNSS→POSITION→BASE evidence remain the behavioral reference.
 B3 takes the smallest pre-M6 step toward architecture gaps G01 and G02:
 
 1. make the current TRACKER/RELAY/BASE shorthand project explicitly onto
-   independent forwarding and current POSITION-service behavior;
-2. keep AUTO GNSS detection as a legacy bootstrap heuristic only;
-3. route the production tracker POSITION admission decision through that
+   independent current behavior values;
+2. represent relay forwarding as an independent enablement value rather than a
+   permanent node classification;
+3. keep AUTO GNSS detection as a legacy bootstrap heuristic only;
+4. route the production tracker POSITION admission decision through that
    compatibility mapping instead of branching directly on the role enum.
 
-B3 does **not** replace the legacy role enum, add persistent configuration,
-change USB commands, add profiles/capability discovery, introduce BLE/PHONE
-location, or rewrite RadioManager/NetworkService role-transition state machines.
-Those remain separate bounded changes.
+B3 does **not** replace the legacy role enum, expose a user-configurable relay
+switch yet, add persistent configuration, change USB commands, add profiles or
+capability discovery, introduce BLE/PHONE location, implement multi-hop, or
+rewrite RadioManager/NetworkService role-transition state machines. Those remain
+separate bounded changes.
 
 ## Frozen compatibility mapping
 
-| Legacy role | Forwarding responsibility | Publish own GNSS POSITION | Receive application POSITION |
+| Legacy role | Relay forwarding enabled | Publish own GNSS POSITION | Receive application POSITION |
 | --- | --- | --- | --- |
-| TRACKER | END_NODE | yes | no |
-| RELAY | RELAY | no | no |
-| BASE | END_NODE | no | yes |
+| TRACKER | no | yes | no |
+| RELAY | yes | no | no |
+| BASE | no | no | yes |
 
-`ForwardingResponsibility` is deliberately small: only `END_NODE` and `RELAY`
-exist because those are the responsibilities already implemented and physically
-relevant today. Gateway bridging, profile, capability, location source and power
-policy are not inferred from this value.
+`relay_forwarding_enabled` is deliberately a boolean behavior axis. It does not
+mean that a node's application/profile is RELAY. Future validated configuration
+may enable relay forwarding on a node that also runs tracking, telemetry,
+sensing or actuation services, or disable forwarding on a node whose preset
+normally enables it.
 
-`LegacyRoleBehavior` is a compatibility projection, not a persisted config
-schema. It exists to stop new code from treating `NodeRole` as the permanent
-owner of unrelated concepts.
+This is only a compatibility projection of today's behavior. B3 does not yet
+provide that runtime configuration surface; it prevents the current legacy enum
+from becoming the permanent architecture.
+
+Gateway bridging, profile, capability, location source, GNSS power and system
+power policy remain independent concepts and are not inferred from this value.
+
+## Network evolution boundary
+
+Current TLP v1 remains exactly as implemented and validated: POSITION is direct
+or carried by the existing one-hop RELAY_FORWARD envelope, and nested relay
+envelopes remain rejected. B3 does not change any wire byte or RF behavior.
+
+The product architecture must not treat that v1 one-hop rule as a permanent
+future limitation. A future network-envelope specification may support bounded
+multi-hop forwarding with duplicate suppression and explicit forwarding policy.
+That work requires separate protocol, airtime, security, mixed-fleet and field
+validation and is intentionally outside B3.
 
 ## AUTO compatibility
 
@@ -50,16 +69,16 @@ owner of unrelated concepts.
 - an explicit USB override disables AUTO until reboot.
 
 This is preserved only because it is existing behavior. It must not become the
-future rule that hardware presence determines application/profile or forwarding
-responsibility. A later validated configuration boundary will take precedence
-over this unprovisioned bootstrap behavior.
+future rule that hardware presence determines application/profile or relay
+forwarding. A later validated configuration boundary will take precedence over
+this unprovisioned bootstrap behavior.
 
 ## Production effect
 
-`main.cpp` now obtains `LegacyRoleBehavior` and uses
-`publish_gnss_position` for the same gate that previously tested
-`role == TRACKER` directly. The mapping makes the dependency explicit while
-keeping the boolean result identical for every existing role.
+`main.cpp` obtains `LegacyRoleBehavior` and uses `publish_gnss_position` for the
+same gate that previously tested `role == TRACKER` directly. The mapping makes
+the dependency explicit while keeping the boolean result identical for every
+existing role.
 
 Radio role-transition quiescence, relay/base handling, GNSS polling/detection,
 storage, sequence allocation, wire bytes, RF parameters and power/recovery state
@@ -70,9 +89,9 @@ machines are untouched.
 `firmware/tests/b3/test_b3.cpp` compiles with the portable host flags and no
 Arduino/SparkFun/Nordic/SX126x stubs. It freezes:
 
-- TRACKER -> END_NODE + publish + no application receive;
-- RELAY -> RELAY + no publish + no application receive;
-- BASE -> END_NODE + no publish + application receive;
+- TRACKER -> relay forwarding off + publish + no application receive;
+- RELAY -> relay forwarding on + no publish + no application receive;
+- BASE -> relay forwarding off + no publish + application receive;
 - the existing AUTO and explicit-override behavior.
 
 The existing M5/R2/startup suites continue to own actual relay/base radio role
@@ -81,7 +100,7 @@ semantics and role-transition safety.
 ## Compatibility impact
 
 - TLP v1 wire bytes: none;
-- POSITION size/codec: none;
+- POSITION/RELAY_FORWARD codec and one-hop runtime policy: none;
 - device identity: none;
 - sequence/ticket behavior: none;
 - journal/storage layout: none;
@@ -101,7 +120,7 @@ From the repository root on Debian:
 (cd firmware && pio run -e rak4630)
 ```
 
-The new B3 portable test must report:
+The B3 portable test must report:
 
 ```text
 B3 legacy role compatibility mapping: PASS
@@ -113,8 +132,13 @@ gates remain applicable to the stacked branch before merge.
 
 ## Next bounded work
 
-After B3 validation, the next architecture step should use this compatibility
-mapping to establish the typed configuration/command boundary without allocating
-persistent flash yet. Durable configuration remains blocked on the separately
-verified partition/ownership work described by G07/G08. Do not use history pages
-as an ad-hoc config database.
+After B3 validation, the next architecture step should establish the typed
+configuration/command boundary so relay forwarding can eventually become an
+explicit user-controlled setting without coupling it to application profile.
+Persistent config still waits for verified partition/ownership work described by
+G07/G08; do not use history pages as an ad-hoc config database.
+
+Do not implement multi-hop in that configuration change. Multi-hop belongs to a
+separate reviewed network/protocol milestone after its forwarding envelope,
+dedupe identity, hop/flood policy, airtime budget, security model and mixed-fleet
+behavior are specified.
