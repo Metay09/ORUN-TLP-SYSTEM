@@ -19,6 +19,10 @@ g++ "${portable_flags[@]}" firmware/tests/b2/test_b2.cpp \
   -o "$test_dir/b2"
 "$test_dir/b2"
 
+g++ "${portable_flags[@]}" firmware/tests/b3/test_b3.cpp \
+  firmware/src/node_role.cpp -o "$test_dir/b3"
+"$test_dir/b3"
+
 g++ "${flags[@]}" firmware/tests/m3/test_m3.cpp "${gnss_sources[@]}" \
   -o "$test_dir/m3"
 "$test_dir/m3"

@@ -136,8 +136,8 @@ void loop() {
     automatic_role_resolved = true;
     applyRole(role_controller.role(), "AUTO");
   }
-  const bool tracker_role =
-      role_controller.role() == orun_tlp::NodeRole::kTracker;
+  const auto behavior = orun_tlp::legacyRoleBehavior(role_controller.role());
+  const bool tracker_role = behavior.publish_gnss_position;
   // Leave local TX undisturbed; otherwise service one small flash operation.
   if (!radio_manager.isTransmitting()) history.poll();
   const auto event = positions.update(orun_tlp::monotonic::nowMs(), tracker_role);
