@@ -9,6 +9,10 @@ not be merged independently if B2 is not accepted.
 The frozen M0–M5/R1–R4 behavior, B1A compatibility fixtures and B1B physical
 GNSS→POSITION→BASE evidence remain the behavioral reference.
 
+Current concept/ownership invariants are also recorded in
+`docs/architecture/ORUN_CURRENT_ARCHITECTURE_RULES.md` so legacy role behavior is
+not mistaken for the target product model.
+
 ## Scope
 
 B3 takes the smallest pre-M6 step toward architecture gaps G01 and G02:
@@ -40,6 +44,11 @@ mean that a node's application/profile is RELAY. Future validated configuration
 may enable relay forwarding on a node that also runs tracking, telemetry,
 sensing or actuation services, or disable forwarding on a node whose preset
 normally enables it.
+
+**Invariant:** relay forwarding must not disable application services. A node may
+originate its own sensor/position/event traffic and independently forward other
+eligible nodes' traffic. The animal-tracker preset will default forwarding OFF
+for battery/airtime reasons; that default is not a permanent type restriction.
 
 This is only a compatibility projection of today's behavior. B3 does not yet
 provide that runtime configuration surface; it prevents the current legacy enum
@@ -86,8 +95,9 @@ machines are untouched.
 
 ## Tests
 
-`firmware/tests/b3/test_b3.cpp` compiles with the portable host flags and no
-Arduino/SparkFun/Nordic/SX126x stubs. It freezes:
+`firmware/tests/b3/test_b3.cpp` compiles under `gnu++11` with warnings-as-errors
+and sanitizers in the host runner, matching the language level that exposed the
+RAK4630 toolchain regression. It freezes:
 
 - TRACKER -> relay forwarding off + publish + no application receive;
 - RELAY -> relay forwarding on + no publish + no application receive;
@@ -111,30 +121,43 @@ semantics and role-transition safety.
 
 No physical-hardware behavior change is intended by B3 itself.
 
-## Required validation
+## Validation evidence
 
-From the repository root on Debian:
+Code-bearing branch head validated by the owner:
 
-```bash
-./firmware/tests/run_host_tests.sh
-(cd firmware && pio run -e rak4630)
-```
+`a9d7bde7afcce2d7a34912c6fc4cdfcbf1788986`
 
-The B3 portable test must report:
+- `./firmware/tests/run_host_tests.sh`: PASS for B1A, B2, B3, M3, R3, M4,
+  M5, R2.1, identity fixtures, R2, startup scenarios and R4 guards;
+- `pio run -e rak4630`: SUCCESS;
+- build usage: RAM 13,852 / 248,832 bytes (5.6%), flash 139,576 / 815,104
+  bytes (17.1%);
+- DFU upload: SUCCESS to a RAK4631;
+- runtime USB path: `ROLE?` returned `ROLE BASE mode=AUTO` for that boot, and
+  `ROLE TRACKER` returned `ROLE TRACKER source=USB-OVERRIDE`.
 
-```text
-B3 legacy role compatibility mapping: PASS
-```
+The monitor was attached after boot, so the corresponding `GNSS: detected` or
+`GNSS: not detected` boot line was not captured. `ROLE BASE mode=AUTO` must not
+be interpreted as an indoor satellite-fix failure: current AUTO is driven by
+GNSS hardware detection, not by open-sky fix acquisition.
 
-A new dedicated physical test is not required for B3 because it changes no RF,
-GNSS, storage or hardware-driver behavior. The still-open B2 final physical/audit
-gates remain applicable to the stacked branch before merge.
+B1B previously demonstrated the real open-sky GNSS -> POSITION -> Base DIRECT
+chain and remains the physical reference. The exact B2+B3 code-bearing commit
+has not yet repeated that physical chain. Host/build/upload evidence is not a
+replacement for that regression or for the pending independent final audit.
+
+This documentation-only follow-up does not change firmware bytes and therefore
+does not require another PlatformIO build by itself.
 
 ## Next bounded work
 
-After B3 validation, the next architecture step should establish the typed
-configuration/command boundary so relay forwarding can eventually become an
-explicit user-controlled setting without coupling it to application profile.
+After the stacked B2+B3 final audit/merge gate, the next architecture step is a
+typed configuration/command boundary so relay forwarding can eventually become
+an explicit user-controlled setting without coupling it to application profile.
+The same boundary should establish capability presence as independent from
+service enablement; GNSS is the first existing hardware case, not permission to
+build a speculative general sensor framework.
+
 Persistent config still waits for verified partition/ownership work described by
 G07/G08; do not use history pages as an ad-hoc config database.
 
