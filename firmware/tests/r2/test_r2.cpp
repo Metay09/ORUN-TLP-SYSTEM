@@ -22,6 +22,8 @@ using namespace orun_tlp;
 namespace {
 
 constexpr uint64_t kLocalDevice = 0x0102030405060708ULL;
+constexpr uint8_t kLocalBoardBytes[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+const uint8_t* board_id_fixture = kLocalBoardBytes;
 RadioEvents_t* callbacks = nullptr;
 RadioState_t radio_state = RF_IDLE;
 uint32_t rx_calls = 0;
@@ -433,6 +435,35 @@ void liveTxAdmissionAge() {
   assert(send_calls == 1);
 }
 
+void legacyRakIdentityFixtures() {
+  // Literal BoardGetUniqueId output, independently matched to observed RAK IDs.
+  // The pinned nRF driver emits big-endian ID2 then big-endian ID1. This test
+  // substitutes that hardware read only; begin() runs the REAL production
+  // boardUniqueIdToUint64 transform. No host factory-register reads are claimed.
+  const struct { uint8_t board_bytes[8]; uint64_t id; const char* hex; } cases[] = {
+      {{0x09, 0xA4, 0x62, 0xBD, 0x4B, 0x27, 0x5B, 0xA5},
+       0x09A462BD4B275BA5ULL, "09A462BD4B275BA5"},
+      {{0x0E, 0x8A, 0xDE, 0x7E, 0x71, 0x53, 0x1A, 0xA3},
+       0x0E8ADE7E71531AA3ULL, "0E8ADE7E71531AA3"}};
+  for (const auto& value : cases) {
+    board_id_fixture = value.board_bytes;
+    TestSequence sequences;
+    RadioManager manager;
+    beginAs(manager, sequences, NodeRole::kTracker);
+    assert(manager.deviceId() == value.id);
+    uint8_t position[tlp::kPositionPacketSize];
+    makePosition(manager.deviceId(), 0x10203040, position);
+    Serial.output.clear();
+    assert(manager.sendPositionPacket(position));
+    assert(Serial.output == std::string("TX POSITION source=") + value.hex +
+           " sequence=270544960 lat=410000000 lon=290000000 sats=9\n");
+    terminal(false);
+    manager.update(false);
+  }
+  board_id_fixture = kLocalBoardBytes;
+  puts("B1A RAK A/B identity conversion and serial fixtures: PASS");
+}
+
 void portableDeviceIdDiagnostics() {
   TestSequence sequences;
   RadioManager manager;
@@ -540,11 +571,11 @@ void SX126xClearIrqStatus(unsigned irq) {
 int lora_rak4630_init() { return 0; }
 
 void BoardGetUniqueId(uint8_t* id) {
-  for (uint8_t index = 0; index < 8; ++index)
-    id[index] = static_cast<uint8_t>(kLocalDevice >> (56 - 8 * index));
+  memcpy(id, board_id_fixture, 8);
 }
 
 int main() {
+  legacyRakIdentityFixtures();
   portableDeviceIdDiagnostics();
   liveTxAdmissionAge();
   callbackOwnershipPayloadCopyAndOverflow();

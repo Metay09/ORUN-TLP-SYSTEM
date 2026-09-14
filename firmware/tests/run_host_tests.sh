@@ -7,6 +7,11 @@ flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined
 gnss_sources=(firmware/src/gnss_manager.cpp firmware/src/gnss_utc.cpp
               firmware/src/i2c_recovery.cpp firmware/src/sensor_power_manager.cpp)
 
+g++ "${flags[@]}" firmware/tests/compatibility/test_legacy_packets.cpp \
+  firmware/src/tlp_test_packet.cpp firmware/src/tlp_position_packet.cpp \
+  firmware/src/tlp_relay_forward_packet.cpp -o "$test_dir/legacy_packets"
+"$test_dir/legacy_packets"
+
 g++ "${flags[@]}" firmware/tests/m3/test_m3.cpp "${gnss_sources[@]}" \
   -o "$test_dir/m3"
 "$test_dir/m3"
