@@ -7,10 +7,12 @@
 #include <queue.h>
 #include <task.h>
 
-#include "gnss_manager.h"
+#include "gnss_fix.h"
+#include "legacy_position_mapping.h"
 #include "monotonic_time.h"
 #include "radio_config.h"
 #include "radio_driver_gate.h"
+#include "rak_device_identity.h"
 #include "tlp_position_packet.h"
 #include "tlp_relay_forward_packet.h"
 #include "tlp_test_packet.h"
@@ -44,14 +46,6 @@ QueueHandle_t rx_event_queue = nullptr;
 static_assert(tlp::kRelayForwardPacketSize <= kRadioReceiveLimit,
               "largest TLP packet must fit radio event storage");
 
-uint64_t boardUniqueIdToUint64(const uint8_t* board_id) {
-  uint64_t device_id = 0;
-  for (uint8_t index = 0; index < 8; ++index) {
-    device_id = (device_id << 8) | board_id[index];
-  }
-  return device_id;
-}
-
 uint32_t deterministicJitter(uint64_t device_id, uint32_t sequence_number,
                              uint32_t range) {
   uint32_t value = static_cast<uint32_t>(device_id) ^
@@ -65,12 +59,12 @@ uint32_t deterministicJitter(uint64_t device_id, uint32_t sequence_number,
 }  // namespace
 
 bool RadioManager::begin(SequenceSource& sequences) {
-  // nRF52 BoardGetUniqueId reads factory registers, independent of the radio.
-  // Recovery and local POSITION encoding must work even if radio startup fails.
-  uint8_t board_id[8]{};
-  BoardGetUniqueId(board_id);
-  device_id_ = boardUniqueIdToUint64(board_id);
   sequences_ = &sequences;
+  // Production injects identity from the composition root before any radio
+  // startup can fail. Keep this provider fallback for legacy host seams which
+  // instantiate RadioManager directly; the byte-order rule lives outside radio.
+  if (!identity_configured_)
+    setDeviceIdentity(RakDeviceIdentityProvider{}.read());
   if (!radio_driver::initialize()) return false;
   radio_driver::Guard gate;
   if (!gate) return false;
@@ -186,15 +180,14 @@ bool RadioManager::canSend() const {
          rx_restore_state_ == RxRestoreState::kNone;
 }
 
-bool RadioManager::encodePosition(const GnssFix& fix, uint8_t* payload, uint64_t& identity) {
+bool RadioManager::encodePosition(const GnssFix& fix, uint8_t* payload,
+                                  uint64_t& identity) {
   uint32_t sequence;
-  if (!payload || !sequences_ || !sequences_->nextSequence(sequence, identity)) return false;
+  if (!payload || !sequences_ ||
+      !sequences_->nextSequence(sequence, identity)) return false;
   sequence_number_ = sequence + 1;
-  const tlp::PositionPacket packet{
-      device_id_, sequence, fix.utc_epoch_seconds, fix.latitude_e7,
-      fix.longitude_e7, fix.altitude_mm, fix.hdop_x100, fix.satellites,
-      fix.flags};
-  return tlp::serializePositionPacket(packet, payload, tlp::kPositionPacketSize);
+  return encodeLegacyPosition(fix, DeviceIdentity::fromLegacyUint64(device_id_),
+                              sequence, payload, tlp::kPositionPacketSize);
 }
 
 bool RadioManager::sendPositionPacket(const uint8_t* payload, const uint32_t* captured_at_ms) {

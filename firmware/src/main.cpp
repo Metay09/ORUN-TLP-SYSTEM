@@ -8,6 +8,7 @@
 #include "radio_manager.h"
 #include "position_flow.h"
 #include "monotonic_time.h"
+#include "rak_device_identity.h"
 #include "sensor_power_manager.h"
 #include "watchdog_manager.h"
 
@@ -103,11 +104,19 @@ void setup() {
   orun_tlp::WatchdogManager::begin();
   printBootBanner();
   orun_tlp::SensorPowerManager::begin();
+
+  // Identity is a board capability, not a radio side effect. Resolve it before
+  // radio startup so storage recovery and packet mapping survive radio failure.
+  const orun_tlp::DeviceIdentity device_identity =
+      orun_tlp::RakDeviceIdentityProvider{}.read();
+  radio_manager.setDeviceIdentity(device_identity);
+  positions.setDeviceIdentity(device_identity);
+
   if (!radio_manager.begin(history)) {
     Serial.println(F("RADIO unavailable; TX/RX disabled; local services continue"));
   }
   radio_manager.setRole(role_controller.role());
-  if (history.begin(radio_manager.deviceId())) {
+  if (history.begin(device_identity.legacyUint64())) {
     Serial.printf("STORAGE recovered records=%lu capacity=%lu corrupt=%lu pending=%lu\n",
                   static_cast<unsigned long>(history.count()),
                   static_cast<unsigned long>(history.capacity()),
