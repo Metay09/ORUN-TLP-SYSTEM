@@ -35,6 +35,12 @@ class RadioManager {
   void update(bool allow_test_beacon = true);
   void setRole(NodeRole role); // Request; installed by update after quiescence.
   NodeRole role() const { return network_.role(); }
+  // B4 independent forwarding control. Applies synchronously only when the
+  // radio owner can quiesce safely; false means the loop owner should retry.
+  bool setRelayForwardingEnabled(bool enabled);
+  bool relayForwardingEnabled() const {
+    return network_.relayForwardingEnabled();
+  }
   bool canSend() const;
   bool isTransmitting() const { return tx_in_progress_; }
   // Compatibility shim for existing host seams. Production PositionFlow maps
