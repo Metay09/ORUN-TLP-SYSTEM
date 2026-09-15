@@ -50,6 +50,13 @@ int main() {
   assert(validateRequestedConfig(RequestedConfig(false, true,
       RequestedLocationSource::kNone)) == ConfigValidation::kOk);
 
+  const RequestedLocationSource unknown_source =
+      static_cast<RequestedLocationSource>(2);
+  assert(validateRequestedConfig(RequestedConfig(false, true, unknown_source)) ==
+         ConfigValidation::kInvalidLocationSource);
+  assert(validateRequestedConfig(RequestedConfig(true, true, unknown_source)) ==
+         ConfigValidation::kInvalidLocationSource);
+
   const RequestedConfig tracking_and_relay(
       true, true, RequestedLocationSource::kGnss);
   const RequestedConfig before = tracking_and_relay;
@@ -111,6 +118,24 @@ int main() {
   const RequestedConfig invalid(true, true, RequestedLocationSource::kNone);
   effective = resolveRequestedConfig(
       invalid,
+      gnss(true, CapabilityPresence::kPresent, CapabilityHealth::kOk));
+  assertStatus(effective.tracking, ServiceState::kBlocked,
+               ServiceReason::kInvalidConfiguration);
+  assertStatus(effective.relay_forwarding, ServiceState::kBlocked,
+               ServiceReason::kInvalidConfiguration);
+
+  const RequestedConfig unknown_source_relay(false, true, unknown_source);
+  effective = resolveRequestedConfig(
+      unknown_source_relay,
+      gnss(true, CapabilityPresence::kPresent, CapabilityHealth::kOk));
+  assertStatus(effective.tracking, ServiceState::kBlocked,
+               ServiceReason::kInvalidConfiguration);
+  assertStatus(effective.relay_forwarding, ServiceState::kBlocked,
+               ServiceReason::kInvalidConfiguration);
+
+  const RequestedConfig unknown_source_tracking(true, true, unknown_source);
+  effective = resolveRequestedConfig(
+      unknown_source_tracking,
       gnss(true, CapabilityPresence::kPresent, CapabilityHealth::kOk));
   assertStatus(effective.tracking, ServiceState::kBlocked,
                ServiceReason::kInvalidConfiguration);
