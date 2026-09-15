@@ -1,6 +1,6 @@
 # PRE-M6A Branch Review
 
-Status: **FIXES APPLIED; REVALIDATION PENDING**.
+Status: **SOFTWARE REVALIDATED; PHYSICAL CHECK PENDING**.
 
 Baseline: `main@859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 Branch: `feat/m6a-accelerometer-foundation`.
@@ -49,15 +49,24 @@ Fix:
 - persistent failure ends as PRESENT + FAULT and never exposes the captured sample as consumable;
 - diagnostics count each failed shutdown attempt.
 
-## Validation status
+## Revalidation evidence
 
-Before these audit fixes, the owner had already demonstrated full host PASS, RAK4630 build SUCCESS and DFU programming SUCCESS for the preceding M6A image. Those results do **not** validate the new R1/R2 fixes.
+Owner-run validation after both audit fixes:
 
-Required next validation for the current branch:
+- complete `./firmware/tests/run_host_tests.sh`: **PASS**;
+- M6A bounded RAK1904 detection/sample checks: **PASS**;
+- all retained B1A/B2/B3/B4, M3/M4/M5, R2/R3/R4 and startup regressions: **PASS**;
+- `pio run -e rak4630`: **SUCCESS**;
+- R4 bounded Wire transform verified/applied;
+- R2.1 SX126x driver-gate transform verified/applied;
+- RAM: **13,932 / 248,832 bytes (5.6%)**;
+- flash: **141,928 / 815,104 bytes (17.4%)**.
 
-1. complete host regression suite;
-2. RAK4630 production build and RAM/flash comparison;
-3. focused physical RAK1904 `WHO_AM_I` + real XYZ + confirmed power-down observation when the operator is next at the hardware;
-4. independent final audit before merge.
+Relative to the final B4 image (`13,852` RAM / `140,184` flash), the current audit-hardened M6A code adds **80 bytes RAM** and **1,744 bytes flash**. The audit fixes therefore preserve the same RAM footprint as the pre-audit cooperative image and add only **64 bytes flash**.
 
-No physical RAK1904 PASS is claimed by this review.
+## Remaining closure gates
+
+1. focused physical RAK1904 `WHO_AM_I` + real fresh XYZ + confirmed post-sample power-down behavior when the operator is next at the hardware;
+2. independent final Astra audit before merge.
+
+The DFU image currently on Tracker B predates M6A-R1/R2. Host/build success does **not** make RAK1904 physically validated, and no cattle activity-accuracy claim is made here.
