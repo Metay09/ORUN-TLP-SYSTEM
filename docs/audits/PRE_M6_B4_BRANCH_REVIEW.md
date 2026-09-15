@@ -4,7 +4,7 @@ Date: 2026-09-15
 Branch: `refactor/pre-m6-b4-config-capability-boundary`
 Review baseline: `28d254d1f40710fcedd64deab9ce6c216c8d8992`
 Code reviewed through: `3186c96d54f0f84243296a776a0f1ffa5ed4c526`
-Status: **branch/code/architecture review complete; owner host + RAK build revalidation and later independent Astra audit remain**.
+Status: **branch/code/architecture review complete; owner host + RAK build revalidation complete; later independent Astra audit remains**.
 
 ## Scope
 
@@ -127,8 +127,8 @@ B4 does not expose that configuration surface yet.
 | GNSS acquisition/freshness state machine | unchanged |
 | GNSS power ownership | unchanged |
 | USB ROLE syntax/AUTO heuristic | unchanged |
-| RAM | no prior B4 increase; must be rechecked after final build |
-| Flash | prior B4 build 140,168 bytes; must be re-measured after B4-R1 fix |
+| RAM | 13,852 / 248,832 bytes = 5.6% after B4-R1 revalidation |
+| Flash | 140,200 / 815,104 bytes = 17.2% after B4-R1 revalidation |
 | Security | no new remote/security surface |
 
 No compatibility fixture or golden packet vector was weakened or changed.
@@ -151,24 +151,60 @@ The later B4-R1 fix changes only behavior for semantically invalid RequestedConf
 candidates. Current production RequestedConfig is derived only from the three
 valid frozen legacy projections, so the fix is not reachable in today's hardware
 path. A repeat physical GNSS/RF test is therefore not required solely for B4-R1;
-host and RAK build revalidation are required. This statement must be revisited
-when a mutable configuration source can produce/reject real candidates.
+host and RAK build revalidation were required and are now complete. This statement
+must be revisited when a mutable configuration source can produce/reject real
+candidates.
 
 The physical test does not prove flash power-cut recovery, long-range RF, current
 consumption, multi-hop, relay coexistence, or independently configured
 TRACKER+relay hardware behavior.
 
+## Post-review revalidation
+
+The owner reran validation on branch head
+`4cf2828f9338355bcd38c92a62621689b3e46975`, which contains B4-R1, its regression
+test and documentation updates.
+
+Full `./firmware/tests/run_host_tests.sh`: **PASS**. The run covered:
+
+- B1A legacy packet golden/malformed checks;
+- B2 portable identity and legacy POSITION mapping;
+- B3 legacy role compatibility mapping;
+- B4 requested/capability/effective config model;
+- B4 independent NetworkService relay forwarding seam;
+- M3, R3, M4, M5 regressions;
+- R2/R2.1 ownership and dependency-patch guards;
+- B4 RadioManager independent relay behavior apply;
+- B1A RAK A/B identity conversion and serial fixtures;
+- production startup identity/history/loop scenarios: mutex, gate, queue, lora,
+  success;
+- R4 Wire/I2C/power/watchdog guards and nRF watchdog checks.
+
+`pio run -e rak4630`: **SUCCESS** on Nordic nRF52 11.0.0 / GCC ARM 7.2.1.
+The build re-applied and verified the pinned R4 Wire and R2.1 SX126x transforms.
+Final measured image size:
+
+- RAM: `13,852 / 248,832` bytes = **5.6%**;
+- Flash: `140,200 / 815,104` bytes = **17.2%**.
+
+Compared with the pre-review B4 build (`140,168` bytes), B4-R1 adds 32 bytes of
+flash and no RAM. No new project warning was shown in the supplied build output.
+
+Because the only post-hardware code change is the invalid-candidate fail-closed
+path and all current legacy projections are valid, no repeat physical GNSS/RF run
+is required solely for B4-R1.
+
 ## Review verdict and remaining gate
 
 **No P0/Critical blocker found.** One pre-merge semantic defect was found and
-fixed (B4-R1). The branch remains inside the authorized B4 scope and does not
-justify a state-machine rewrite, protocol change, persistent config, BLE, new HAL,
-new hardware support or multi-hop work.
+fixed (B4-R1), and the complete host suite plus RAK4630 build pass after that fix.
+The branch remains inside the authorized B4 scope and does not justify a
+state-machine rewrite, protocol change, persistent config, BLE, new HAL, new
+hardware support or multi-hop work.
 
 Required before B4 closure/merge:
 
-1. rerun the full host suite on the post-review code head;
-2. rerun `pio run -e rak4630` and record RAM/flash/warnings;
-3. update the B4 milestone with the post-review validation result;
-4. run the planned independent Astra audit later;
-5. fix any Astra findings and repeat affected validation before merge.
+1. update the B4 milestone with this post-review validation result;
+2. run the planned independent Astra audit;
+3. fix any Astra findings and repeat only the validation affected by those
+   findings before merge.
