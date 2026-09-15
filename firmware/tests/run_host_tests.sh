@@ -62,9 +62,21 @@ g++ "${flags[@]}" firmware/tests/m5/test_m5.cpp \
   -o "$test_dir/m5"
 "$test_dir/m5"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r2/test_patch_radio.py "$test_dir/driver_bridge.cpp"
+
+g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp \
+  "$test_dir/driver_bridge.cpp" \
+  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/network_service.cpp firmware/src/radio_driver_gate.cpp \
+  firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
+  firmware/src/node_role.cpp firmware/src/tlp_test_packet.cpp \
+  firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
+  -o "$test_dir/b4_radio"
+"$test_dir/b4_radio"
+
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
   "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/network_service.cpp \
+  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/network_service.cpp \
   firmware/src/radio_driver_gate.cpp firmware/src/rak_device_identity.cpp \
   firmware/src/legacy_position_mapping.cpp \
   firmware/src/node_role.cpp firmware/src/tlp_test_packet.cpp \
@@ -75,7 +87,8 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
   firmware/tests/startup/test_startup.cpp "${gnss_sources[@]}" \
-  firmware/src/radio_manager.cpp firmware/src/radio_driver_gate.cpp \
+  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_driver_gate.cpp \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
   firmware/src/network_service.cpp firmware/src/node_role.cpp \
   firmware/src/tlp_test_packet.cpp firmware/src/tlp_position_packet.cpp \
