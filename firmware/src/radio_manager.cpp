@@ -155,7 +155,7 @@ void RadioManager::update(bool allow_test_beacon) {
   if (!serviceRxRestore()) return;
 
   const uint32_t now = monotonic::nowMs();
-  if (network_.role() == NodeRole::kRelay && !tx_in_progress_) {
+  if (network_.relayForwardingEnabled() && !tx_in_progress_) {
     sendDueRelay(now);
   }
   if (allow_test_beacon && radio_config::kTestBeaconEnabled && !tx_in_progress_ &&
