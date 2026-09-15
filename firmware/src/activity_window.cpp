@@ -7,9 +7,14 @@ namespace {
 
 static_assert(activity_config::kWindowSampleCount > 1,
               "activity window requires at least two samples");
+static_assert(activity_config::kMinimumInterSampleGapMs > 0,
+              "activity timing minimum gap must be positive");
+static_assert(activity_config::kMinimumInterSampleGapMs <=
+                  activity_config::kExpectedSamplePeriodMs,
+              "activity timing minimum gap must allow the expected period");
 static_assert(activity_config::kMaximumInterSampleGapMs >=
                   activity_config::kExpectedSamplePeriodMs,
-              "activity timing gap must allow the expected sample period");
+              "activity timing maximum gap must allow the expected period");
 
 uint64_t squareSigned(int32_t value) {
   const int64_t widened = static_cast<int64_t>(value);
@@ -67,7 +72,7 @@ bool ActivityWindow::addSample(const AccelerometerSample& sample) {
     first_captured_at_ms_ = sample.captured_at_ms;
   } else {
     const uint32_t delta_ms = sample.captured_at_ms - last_captured_at_ms_;
-    if (delta_ms == 0 ||
+    if (delta_ms < activity_config::kMinimumInterSampleGapMs ||
         delta_ms > activity_config::kMaximumInterSampleGapMs) {
       ++timing_discontinuities_;
     }
