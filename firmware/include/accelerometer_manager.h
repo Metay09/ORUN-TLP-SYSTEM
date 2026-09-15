@@ -61,6 +61,7 @@ class AccelerometerManager {
   bool faulted_ = false;
   bool saw_transport_timeout_ = false;
   bool probe_sample_ready_ = false;
+  bool discard_next_sample_ = false;
   uint8_t detection_attempts_ = 0;
   uint8_t configuration_step_ = 0;
   uint32_t next_action_at_ms_ = 0;
