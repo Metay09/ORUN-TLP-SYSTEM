@@ -1,7 +1,7 @@
 # ORUN Current Architecture Rules
 
 Status: **CURRENT pre-M6 owner-approved architecture rules**.
-Last reviewed against code: `a9d7bde7afcce2d7a34912c6fc4cdfcbf1788986`.
+Last reviewed against code: `79715c9e1e3440823016b278e828cc1b38d6bc3d`.
 Last architecture review update: 2026-09-15.
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
@@ -93,7 +93,7 @@ without repeating RF traffic, relay without gateway service, or do both.
 
 ## 4. Current legacy compatibility remains frozen
 
-The current B3 compatibility projection intentionally preserves M5 behavior:
+The current compatibility projection intentionally preserves M5 behavior:
 
 | Legacy role | Relay forwarding | Publish own GNSS POSITION | Receive app POSITION |
 | --- | --- | --- | --- |
@@ -113,17 +113,25 @@ That heuristic is temporary compatibility behavior. Hardware presence must not
 become the future owner of application profile or relay responsibility. Explicit
 validated configuration will take precedence once implemented.
 
-B3 is only a partial seam today. `LegacyRoleBehavior::relay_forwarding_enabled`
-and `receive_application_position` exist as compatibility projections, but the
-production network path still branches on `NodeRole` inside `NetworkService`.
-Before a user-visible relay toggle is introduced, forwarding runtime ownership
-must move from the raw role enum to resolved/effective behavior while preserving
-all M5 queue/dedupe/timing semantics.
+B4 has moved actual relay-forwarding service ownership away from the raw role
+enum. `NetworkService` owns an explicit `relay_forwarding_enabled` runtime state,
+and relay admission, nested-relay rejection and due-forward extraction use that
+state. `RadioManager` schedules relay TX from the explicit state and provides a
+bounded apply path that preserves the existing driver-gate, callback, TX and
+receive-epoch invariants.
 
-`receive_application_position` is not yet approved as a general user-facing
-configuration field. It currently describes legacy BASE compatibility behavior.
-Future collector/gateway/subscriber semantics may need a different model, so do
-not prematurely freeze this boolean into the public configuration schema.
+Legacy `setRole()` still installs the historical forwarding default so existing
+TRACKER/RELAY/BASE behavior is unchanged. This is a compatibility adapter, not a
+return to role-owned forwarding. `main.cpp` now resolves the legacy requested
+defaults through the B4 RequestedConfig/CapabilitySnapshot/EffectiveConfig path
+and applies the resolved relay state through RadioManager. No user-facing relay
+toggle or durable configuration exists yet.
+
+`receive_application_position` remains legacy BASE compatibility behavior and is
+still role-based inside the network path. It is not yet approved as a general
+user-facing configuration field. Future collector/gateway/subscriber semantics
+may need a different model, so do not prematurely freeze this boolean into the
+public configuration schema.
 
 ## 5. Capability model and product visibility
 
@@ -154,7 +162,6 @@ FAULT
 UNAVAILABLE
 ```
 
-Exact enum names may change during B4; the semantic distinction must not.
 `PRESENT + FAULT` is not `ABSENT`. Rail-off, transient I2C failure, a recovery
 attempt, or an unprobed device must not silently make hardware disappear.
 
@@ -184,12 +191,18 @@ a fault rather than making it vanish.
 Capability does not imply service enablement. A GNSS module may be present while
 GNSS tracking is disabled or a different location source owns the active point.
 
+The current B4 composition root marks the RAK product image as supporting GNSS,
+uses bounded `GnssManager` detection to distinguish UNKNOWN/PRESENT/ABSENT, and
+does not use that capability snapshot as the owner of role, profile or GNSS power.
+Acquisition-specific GNSS failures remain owned by the existing GNSS state
+machine; they do not make installed hardware disappear.
+
 ## 6. Requested configuration, effective state and commands
 
-B4 must establish this small boundary without building a large framework:
+B4 establishes this small boundary without building a large framework:
 
 ```text
-Profile defaults
+Profile/default source
       ↓
 RequestedConfig
       ↓
@@ -212,9 +225,8 @@ GNSS presence = ABSENT
 ```
 
 is a valid persistent/product intent if the fields themselves are semantically
-valid. Its effective runtime result is tracking disabled/blocked with a reason
-such as `NO_LOCATION_SOURCE`; it is not an excuse to rewrite requested tracking
-OFF.
+valid. Its effective runtime result is tracking disabled/blocked with a reason;
+it is not an excuse to rewrite requested tracking OFF.
 
 Reject candidate configuration when the configuration itself is invalid, such as
 an out-of-range interval or an unsafe cross-field combination. Distinguish that
@@ -224,6 +236,13 @@ health is unavailable.
 One-shot commands are different from configuration intent. A future actuation
 command targeting an unavailable actuator must be rejected with an explicit
 result; it must not be retained as "requested=true until hardware appears".
+
+The current B4 production composition still derives RequestedConfig from the
+frozen legacy role projection. This is intentionally only a migration source.
+Tracking effective state gates PositionFlow/fix admission; relay effective state
+is applied through the safe RadioManager forwarding boundary. A later validated
+configuration surface may replace the legacy source without changing those
+service ownership boundaries.
 
 B4 is runtime-only. Do not allocate flash or claim durable configuration until
 the verified partition/ownership work is complete.
@@ -247,13 +266,18 @@ satellite/HDOP/time semantics. PHONE/MANUAL/fixed location must not be forced in
 `GnssFix`. Do not add a generic Location abstraction until a real second source
 needs it.
 
+B4 does not change GNSS power ownership. `GnssManager::poll()` and the existing
+sensor-rail state machine continue independently of application tracking service
+resolution. Do not infer GNSS power from role or tracking enablement without a
+separate reviewed power-policy change.
+
 ## 8. Network evolution and scale boundary
 
 Current TLP v1 behavior is frozen:
 
 - POSITION is the existing 34-byte v1 packet;
 - RELAY_FORWARD is the existing 49-byte v1 one-hop wrapper;
-- current RELAY rejects nested relay envelopes;
+- current forwarding rejects nested relay envelopes;
 - current dedupe/queue limits remain as tested;
 - TLP v1 bytes and golden compatibility fixtures must not be weakened.
 
@@ -327,7 +351,7 @@ result/feedback semantics. Do not invent cryptography.
 | Location | source arbitration, validity, freshness, last-known state | u-blox parser internals, network role |
 | Network | forwarding, dedupe, route/hop policy | sensor payload interpretation |
 | Protocol codec | exact bytes and strict validation | radio ownership, business decisions |
-| Radio transport | TX/RX ownership and callbacks | sensor/application semantics |
+| Radio transport | TX/RX ownership and callbacks; safely apply resolved forwarding state | sensor/application semantics, requested-config policy |
 | Persistence | explicit region/format/retention owners | unallocated adjacent flash |
 | Power policy/coordinator | explicit availability/energy policy and observable degradation | hidden rewriting of role/capability/user intent |
 | `main.cpp` | composition root and cooperative orchestration | permanent accumulation of business rules |
@@ -368,19 +392,25 @@ CONDITIONS** and did not identify a P0/Critical architectural blocker. Accepted
 pre-M6 refinements from that review are recorded here and summarized in
 `docs/audits/PRE_M6_EXTERNAL_ARCHITECTURE_REVIEW.md`.
 
-## 13. B4 bounded scope
+## 13. B4 bounded scope and current state
 
-B4 should implement only the minimum configuration/capability seam needed before
-M6:
+B4 implements only the minimum configuration/capability seam needed before M6:
 
 - typed requested runtime configuration;
 - pure whole-candidate validation;
-- profile/default application semantics;
 - capability support/presence/health snapshot;
 - requested -> effective resolution with explicit reason;
-- legacy AUTO precedence rules;
-- forwarding runtime ownership seam needed before a future user-facing relay
-  toggle.
+- legacy AUTO/USB compatibility source;
+- independent forwarding runtime ownership;
+- safe forwarding-state application through RadioManager;
+- composition-root wiring from the compatibility request source into tracking
+  and relay effective behavior.
+
+Current B4 does **not** provide a user-facing independent relay toggle or durable
+requested configuration. The architecture can represent TRACKER + relay ON and
+the radio/network seams are host-tested for that combination, but production
+requested intent still comes from the frozen legacy compatibility mapping until a
+later explicit configuration surface is authorized.
 
 B4 must **not** implement:
 
@@ -393,6 +423,10 @@ B4 must **not** implement:
 - security protocol;
 - backend/mobile;
 - actuation/commands.
+
+See `docs/milestones/PRE_M6_B4_CONFIG_CAPABILITY_BOUNDARY.md` for validation state
+and the remaining closure steps. Build/host evidence must not be generalized into
+unperformed B4 hardware validation.
 
 ## 14. Documentation maintenance rule
 
