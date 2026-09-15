@@ -68,10 +68,18 @@ RequestedConfig requestedConfigFromLegacyBehavior(LegacyRoleBehavior behavior) {
 
 EffectiveConfig resolveRequestedConfig(const RequestedConfig& requested,
                                        const CapabilitySnapshot& capabilities) {
-  ServiceStatus tracking = resolveGnssTracking(requested, capabilities.gnss);
-  if (validateRequestedConfig(requested) != ConfigValidation::kOk)
-    tracking = blockedStatus(ServiceReason::kInvalidConfiguration);
+  // Invalid candidates are atomic: a future configuration owner must reject
+  // them before replacing authoritative requested state. If an invalid value
+  // reaches the pure resolver defensively, fail closed instead of partially
+  // applying otherwise-valid services from the same candidate.
+  if (validateRequestedConfig(requested) != ConfigValidation::kOk) {
+    const ServiceStatus invalid =
+        blockedStatus(ServiceReason::kInvalidConfiguration);
+    return EffectiveConfig(invalid, invalid);
+  }
 
+  const ServiceStatus tracking =
+      resolveGnssTracking(requested, capabilities.gnss);
   const ServiceStatus relay = requested.relay_forwarding_enabled
                                   ? enabledStatus()
                                   : disabledStatus();
