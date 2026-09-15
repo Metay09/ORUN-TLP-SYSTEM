@@ -160,38 +160,53 @@ and ASan/UBSan coverage through the normal host suite.
 
 ## Validation status
 
-Owner-run evidence through commit `108724e4fc5ec385c20182b7bbc6104cc5cc9d96`:
+Owner-run evidence for the current Phase 1–3 implementation (code-bearing
+composition commit `79715c9e1e3440823016b278e828cc1b38d6bc3d`, with startup host
+link closure at `6d568c4f0924c6db12b459ea59c9b648a72cd6be`):
 
 - full `./firmware/tests/run_host_tests.sh`: PASS;
 - B4 pure config model: PASS;
 - independent NetworkService relay forwarding seam: PASS;
 - RadioManager independent relay behavior apply: PASS;
-- existing B1A/B2/B3/M3/R3/M4/M5/R2/R4/startup regressions: PASS;
-- `pio run -e rak4630`: SUCCESS;
+- production startup identity/history/loop scenarios with the Phase 3
+  composition path: PASS;
+- existing B1A/B2/B3/M3/R3/M4/M5/R2/R4 regressions: PASS;
+- host builds retain `-Wall -Wextra -Werror` plus ASan/UBSan on the normal
+  covered targets;
+- `pio run -e rak4630`: SUCCESS on Nordic nRF52 platform 11.0.0 / GCC 7.2.1;
 - RAM: 13,852 / 248,832 bytes = 5.6%;
-- Flash: 139,528 / 815,104 bytes = 17.1%;
-- observed build warnings remain inside pinned SX126x-Arduino third-party sources.
+- Flash: 140,168 / 815,104 bytes = 17.2%;
+- the shown incremental Phase 3 build produced no B4-source warning; prior clean
+  builds still contain only the known pinned SX126x-Arduino third-party warnings.
 
-The Phase 3 `main.cpp` composition-root wiring was added after that evidence and
-must still run the full host suite and RAK4630 build before it is claimed PASS.
+The Phase 3 build increases flash by 640 bytes versus the preceding B4 runtime
+seam build (139,528 -> 140,168 bytes) and does not increase RAM.
 
-No physical validation is claimed for B4 yet. Phase 1 had no runtime effect, but
-Phase 2/3 do alter runtime ownership/application paths even though legacy behavior
-is intended to remain identical. Physical regression need will be decided after
-host/build closure and final review; prior B2/B3 GNSS->POSITION->Base evidence is
-not automatically re-labeled as B4 hardware validation.
+No physical validation is claimed for B4 yet. Phase 2/3 alter runtime
+ownership/application gating even though the legacy role-visible behavior is
+intended to remain identical. Prior B2/B3 GNSS->POSITION->Base evidence is not
+re-labeled as B4 hardware validation.
+
+The smallest useful B4 physical regression is a mixed-fleet-compatible direct
+path check: run the current B4 image on the tracker while leaving the previously
+validated Base image unchanged, confirm AUTO/override resolves TRACKER after GNSS
+detection, obtain a real fresh GNSS fix, and verify the unchanged Base receives
+the normal DIRECT POSITION. This exercises capability resolution -> effective
+tracking -> store-before-send -> frozen TLP v1 -> old Base reception without
+requiring a new user-facing relay toggle.
+
+A separate relay-path hardware check may be added if final review finds it
+necessary; the host suite already exercises the independent TRACKER+relay runtime
+seam and legacy M5 relay behavior, but host evidence is not physical RF evidence.
 
 ## Remaining bounded work
 
 Before B4 closure:
 
-1. validate the composition-root wiring with the full host suite;
-2. rebuild RAK4630 and review RAM/flash/warnings;
-3. review branch diff and affected architecture documentation;
-4. decide the smallest physical regression needed for the runtime ownership
-   change;
-5. run independent Astra audit later, as requested by the owner;
-6. fix any findings and repeat affected validation before merge.
+1. run the smallest current-image physical regression described above;
+2. review the complete branch diff and affected architecture documentation;
+3. run independent Astra audit later, as requested by the owner;
+4. fix any findings and repeat affected validation before merge.
 
 B4 still must **not** add durable config, BLE, a generic capability registry,
 multi-hop, a new protocol, backend/mobile work or speculative hardware support.
