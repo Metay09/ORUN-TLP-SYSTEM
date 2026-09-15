@@ -44,6 +44,7 @@ class AccelerometerManager {
     kDetectionBackoff,
     kConfiguring,
     kProbeWait,
+    kReadingSample,
     kPoweringDown,
     kDone,
   };
