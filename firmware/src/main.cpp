@@ -9,6 +9,7 @@
 #include "position_flow.h"
 #include "monotonic_time.h"
 #include "rak_device_identity.h"
+#include "runtime_config.h"
 #include "sensor_power_manager.h"
 #include "watchdog_manager.h"
 
@@ -80,6 +81,42 @@ void pollRoleCommands() {
   }
 }
 
+orun_tlp::CapabilitySnapshot currentCapabilitySnapshot() {
+  // Firmware support and physical presence are separate facts. The current
+  // RAK product image supports GNSS, while bounded detection owns whether the
+  // module is presently known to exist. Do not infer role/profile from this.
+  orun_tlp::CapabilityState gnss(
+      true, orun_tlp::CapabilityPresence::kUnknown,
+      orun_tlp::CapabilityHealth::kUnavailable);
+  if (gnss_manager.detectionComplete()) {
+    if (gnss_manager.detected()) {
+      gnss.presence = orun_tlp::CapabilityPresence::kPresent;
+      // Detection proves the device is responsive enough to enter the existing
+      // GNSS state machine. Acquisition-specific failures remain owned there;
+      // they do not make installed hardware disappear.
+      gnss.health = orun_tlp::CapabilityHealth::kOk;
+    } else {
+      gnss.presence = orun_tlp::CapabilityPresence::kAbsent;
+      gnss.health = orun_tlp::CapabilityHealth::kUnavailable;
+    }
+  }
+  return orun_tlp::CapabilitySnapshot(gnss);
+}
+
+bool serviceRuns(const orun_tlp::ServiceStatus& status) {
+  return status.state == orun_tlp::ServiceState::kEnabled ||
+         status.state == orun_tlp::ServiceState::kDegraded;
+}
+
+orun_tlp::EffectiveConfig resolveRuntimeConfig() {
+  // B4 still uses the frozen legacy role projection as the requested defaults.
+  // A later validated config surface can replace this source without returning
+  // runtime ownership to NodeRole.
+  const auto requested = orun_tlp::requestedConfigFromLegacyBehavior(
+      orun_tlp::legacyRoleBehavior(role_controller.role()));
+  return orun_tlp::resolveRequestedConfig(requested, currentCapabilitySnapshot());
+}
+
 void printBootBanner() {
   Serial.println(F("ORUN TLP"));
   Serial.print(F("firmware version "));
@@ -128,6 +165,8 @@ void setup() {
 }
 
 void loop() {
+  // GNSS detection/power remains owned by GnssManager. B4 service resolution
+  // must not silently turn role, location source and GNSS power into one knob.
   gnss_manager.poll();
   pollRoleCommands();
   if (!automatic_role_resolved && role_controller.automatic() &&
@@ -136,11 +175,18 @@ void loop() {
     automatic_role_resolved = true;
     applyRole(role_controller.role(), "AUTO");
   }
-  const auto behavior = orun_tlp::legacyRoleBehavior(role_controller.role());
-  const bool tracker_role = behavior.publish_gnss_position;
+
+  const auto effective = resolveRuntimeConfig();
+  const bool tracking_enabled = serviceRuns(effective.tracking);
+  const bool relay_forwarding_enabled = serviceRuns(effective.relay_forwarding);
+  // Applying relay behavior may defer while a TX or legacy role transition is
+  // active. The loop retries the same resolved intent without aborting work.
+  radio_manager.setRelayForwardingEnabled(relay_forwarding_enabled);
+
   // Leave local TX undisturbed; otherwise service one small flash operation.
   if (!radio_manager.isTransmitting()) history.poll();
-  const auto event = positions.update(orun_tlp::monotonic::nowMs(), tracker_role);
+  const auto event =
+      positions.update(orun_tlp::monotonic::nowMs(), tracking_enabled);
   if (event == orun_tlp::PositionFlow::Event::kStorageFailure)
     Serial.println(F("STORAGE append failed; no live TX"));
   else if (event == orun_tlp::PositionFlow::Event::kStored)
@@ -151,12 +197,12 @@ void loop() {
   else if (event == orun_tlp::PositionFlow::Event::kLiveExpired)
     Serial.println(F("POSITION live expired; retained in history"));
   orun_tlp::GnssFix fix{};
-  if (tracker_role && positions.canAcceptFix() &&
+  if (tracking_enabled && positions.canAcceptFix() &&
       gnss_manager.takeFreshFixForTransmission(&fix)) {
     if (!positions.acceptFix(fix, orun_tlp::monotonic::nowMs()))
       Serial.println(F("STORAGE position dropped; no live TX"));
   }
-  radio_manager.update(tracker_role && !positions.pending());
+  radio_manager.update(tracking_enabled && !positions.pending());
   // Feed only after the cooperative loop has completed all service work. A
   // blocked I2C/flash/radio path therefore cannot hide behind an unrelated task.
   orun_tlp::WatchdogManager::feed();
