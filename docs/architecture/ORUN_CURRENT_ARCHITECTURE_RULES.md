@@ -1,7 +1,7 @@
 # ORUN Current Architecture Rules
 
 Status: **CURRENT pre-M6 owner-approved architecture rules**.
-Last reviewed against code: `79715c9e1e3440823016b278e828cc1b38d6bc3d`.
+Last reviewed against code: `3186c96d54f0f84243296a776a0f1ffa5ed4c526`.
 Last architecture review update: 2026-09-15.
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
@@ -133,6 +133,12 @@ user-facing configuration field. Future collector/gateway/subscriber semantics
 may need a different model, so do not prematurely freeze this boolean into the
 public configuration schema.
 
+Current B4 does not define legacy BASE application receive and relay forwarding
+as a dual-use mode. If an internal BASE instance is forced to enable forwarding,
+forwarding takes precedence in `NetworkService::receive()`. Do not expose a
+BASE/collector + relay combination until collector/gateway/subscriber semantics
+are explicitly designed and tested.
+
 ## 5. Capability model and product visibility
 
 Keep these facts separate:
@@ -195,7 +201,10 @@ The current B4 composition root marks the RAK product image as supporting GNSS,
 uses bounded `GnssManager` detection to distinguish UNKNOWN/PRESENT/ABSENT, and
 does not use that capability snapshot as the owner of role, profile or GNSS power.
 Acquisition-specific GNSS failures remain owned by the existing GNSS state
-machine; they do not make installed hardware disappear.
+machine; they do not make installed hardware disappear. The present composition
+therefore provides only a coarse GNSS health projection: detected hardware is
+reported as `PRESENT + OK`; acquisition timeout/recovery is not yet aggregated
+into the B4 capability health field.
 
 ## 6. Requested configuration, effective state and commands
 
@@ -231,7 +240,10 @@ it is not an excuse to rewrite requested tracking OFF.
 Reject candidate configuration when the configuration itself is invalid, such as
 an out-of-range interval or an unsafe cross-field combination. Distinguish that
 from a valid intent that cannot currently be satisfied because capability or
-health is unavailable.
+health is unavailable. The B4 pure resolver defensively fail-closes all effective
+services if an invalid candidate reaches it; a future authoritative configuration
+owner must still reject that candidate before replacing the previous requested
+state.
 
 One-shot commands are different from configuration intent. A future actuation
 command targeting an unavailable actuator must be rejected with an explicit
@@ -412,6 +424,12 @@ the radio/network seams are host-tested for that combination, but production
 requested intent still comes from the frozen legacy compatibility mapping until a
 later explicit configuration surface is authorized.
 
+The complete B4 branch review found one pre-merge semantic mismatch: an invalid
+RequestedConfig could partially enable relay while blocking invalid tracking.
+That was corrected before merge review so invalid candidates now fail closed as a
+whole. The detailed review and accepted bounded limitations are recorded in
+`docs/audits/PRE_M6_B4_BRANCH_REVIEW.md`.
+
 B4 must **not** implement:
 
 - durable config persistence;
@@ -424,23 +442,14 @@ B4 must **not** implement:
 - backend/mobile;
 - actuation/commands.
 
-See `docs/milestones/PRE_M6_B4_CONFIG_CAPABILITY_BOUNDARY.md` for validation state
-and the remaining closure steps. Build/host evidence must not be generalized into
-unperformed B4 hardware validation.
+B4 mixed-fleet direct hardware regression is physically observed: the B4 tracker
+image on `0E8ADE7E71531AA3` produced a normal direct POSITION that the unchanged
+legacy Base `09A462BD4B275BA5` received as sequence 4096. This closes only the
+GNSS -> store-before-send -> frozen TLP v1 -> direct Base compatibility path for
+the tested image. It does not prove relay coexistence, independently configured
+TRACKER+relay hardware behavior, flash power-cut recovery, long-range RF, current
+consumption or any future multi-hop behavior.
 
-## 14. Documentation maintenance rule
-
-For every meaningful change, review the affected architecture, protocol,
-ownership, milestone and compatibility documents. Update only documents whose
-truth changed; do not create documentation churn for unrelated edits.
-
-Before merge, the change report must explicitly state:
-
-- code/runtime impact;
-- architecture/ownership impact;
-- TLP wire compatibility impact;
-- persistence/flash impact;
-- RF/airtime and power impact;
-- documentation updated;
-- host/build/sanitizer status;
-- physical hardware status and what remains untested.
+See `docs/milestones/PRE_M6_B4_CONFIG_CAPABILITY_BOUNDARY.md` for exact validation
+state and remaining closure steps. Host/build evidence and the direct physical
+PASS must not be generalized into unperformed hardware validation.
