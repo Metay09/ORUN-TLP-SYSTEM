@@ -14,9 +14,9 @@ This milestone does not authorize durable configuration, BLE, a generic sensor
 registry, a new location data model, multi-hop, TLP v2, backend/mobile work or
 security/command implementation.
 
-## Phase 1 implemented
+## Phase 1 — pure requested/capability/effective model
 
-The first B4 slice adds a portable C++11-compatible pure model:
+B4 adds a portable C++11-compatible pure model:
 
 - `RequestedConfig`
   - tracking requested on/off;
@@ -34,9 +34,9 @@ The first B4 slice adds a portable C++11-compatible pure model:
 - compatibility mapping from `LegacyRoleBehavior` into requested tracking/relay
   intent without promoting `receive_application_position` into public config.
 
-The model deliberately preserves requested intent when a capability cannot
-currently satisfy it. Example: tracking requested with GNSS absent resolves to a
-blocked effective tracking state; it does not rewrite tracking requested OFF.
+The model preserves requested intent when a capability cannot currently satisfy
+it. Example: tracking requested with GNSS absent resolves to a blocked effective
+tracking state; it does not rewrite tracking requested OFF.
 
 ## Current compatibility mapping into B4
 
@@ -50,31 +50,82 @@ This table is a migration/compatibility adapter only. BASE application reception
 remains legacy behavior and is intentionally not frozen into the new public
 configuration schema.
 
-## Runtime impact of Phase 1
+## Phase 2 — independent forwarding runtime ownership
 
-None yet. Production `main.cpp`, `RadioManager` and `NetworkService` still execute
-the existing B2/B3 runtime paths. In particular, actual relay forwarding remains
-owned by the installed legacy `NodeRole` inside `NetworkService` until the next
-bounded B4 slice moves that ownership to resolved/effective behavior while
-preserving M5 queue, dedupe, timing and role-transition safety.
+`NetworkService` now owns an explicit `relay_forwarding_enabled` runtime state.
+Forwarding admission, nested-relay rejection, due-forward extraction and relay
+diagnostics use that state instead of treating `NodeRole::kRelay` as the service
+itself.
 
-This separation is intentional: first freeze the pure semantics with host tests,
-then perform the behavior-preserving production wiring as a separately reviewable
-change.
+Legacy `setRole()` still installs the historical default so TRACKER/RELAY/BASE
+behavior remains byte/runtime compatible. BASE application reception remains
+role-based compatibility behavior and is not promoted into public configuration.
+
+`RadioManager` schedules relay TX from the explicit forwarding state rather than
+`network_.role() == RELAY`.
+
+A bounded `RadioManager::setRelayForwardingEnabled()` apply path preserves radio
+ownership and transition invariants:
+
+- no behavior change is applied during an in-flight TX;
+- the driver gate remains the single radio owner;
+- pending dependency work is consumed before transition;
+- already-handed-off RX is drained under the old behavior;
+- radio IRQ state is quiesced before the new behavior is installed;
+- the receive epoch is advanced so delayed old callbacks cannot be reinterpreted;
+- RX is restored afterward;
+- callers can retry a deferred apply on a later cooperative loop pass.
+
+This makes TRACKER + relay forwarding ON representable and host-testable without
+introducing a user-facing toggle or persistence.
+
+## Phase 3 — composition-root wiring
+
+`main.cpp` now derives a small GNSS `CapabilitySnapshot` from the existing bounded
+GNSS detection result and resolves the frozen legacy requested defaults through:
+
+```text
+legacy compatibility defaults
+        -> RequestedConfig
+        -> CapabilitySnapshot
+        -> resolveRequestedConfig()
+        -> EffectiveConfig
+        -> PositionFlow / RadioManager
+```
+
+Important boundaries remain explicit:
+
+- firmware support and physical GNSS presence are separate facts;
+- `UNKNOWN` remains distinct from `ABSENT` until bounded detection completes;
+- GNSS manager detection/acquisition/power ownership is unchanged;
+- tracking effective state gates PositionFlow/fix admission;
+- relay effective state is applied through the safe RadioManager behavior path;
+- legacy role still owns the compatibility-only BASE receive behavior;
+- USB `ROLE` commands and AUTO bootstrap remain unchanged compatibility surfaces.
+
+The composition source is still the legacy role projection. There is no new
+user-visible config surface yet. A later validated configuration source can
+replace those requested defaults without returning runtime ownership to
+`NodeRole`.
 
 ## Compatibility impact
 
-Phase 1 changes no:
+B4 changes no:
 
-- TLP v1 bytes or packet sizes;
+- TLP v1 packet bytes or packet sizes;
 - POSITION/RELAY_FORWARD encoding;
-- RF parameters or airtime;
+- one-hop/nested-relay policy;
+- RF frequency, bandwidth, spreading factor, coding rate or TX power;
+- relay queue size, dedupe keys or deterministic delay formula;
 - GNSS acquisition/freshness state machine;
-- storage/journal layout;
+- GNSS power state machine;
+- storage/journal layout or flash ownership;
 - device identity or sequence semantics;
-- flash ownership;
-- power/sleep behavior;
-- USB ROLE command behavior.
+- USB ROLE command syntax or AUTO heuristic.
+
+Relay forwarding ownership changes internally, but legacy observable role
+behavior remains the same until a future explicit configuration surface is
+authorized.
 
 ## Tests added
 
@@ -90,31 +141,57 @@ Phase 1 changes no:
 - relay resolution remains independent when tracking is blocked;
 - invalid tracking configuration is blocked explicitly.
 
-The B4 test is added to `firmware/tests/run_host_tests.sh` under `gnu++11`,
-matching the current RAK4630 compiler language constraint that previously exposed
-a B3 compatibility issue.
+`firmware/tests/b4/test_b4_network.cpp` freezes independent NetworkService relay
+forwarding behavior, including TRACKER + forwarding ON without changing the role.
+
+`firmware/tests/b4/test_b4_radio.cpp` exercises the real RadioManager/R2 fake-radio
+boundary and verifies:
+
+- TRACKER + relay forwarding ON queues and transmits RELAY_FORWARD;
+- disabling forwarding cannot abort/reinterpret an in-flight relay TX;
+- disable applies after TX completion;
+- new packets are no longer admitted for forwarding after disable;
+- cumulative relay diagnostics remain cumulative rather than masquerading as
+  instantaneous queue depth.
+
+The B4 pure model remains compiled under `gnu++11`, matching the current RAK4630
+compiler language constraint. Radio/network tests retain host warnings as errors
+and ASan/UBSan coverage through the normal host suite.
 
 ## Validation status
 
-Not yet claimed for this B4 branch. Required before calling Phase 1 PASS:
+Owner-run evidence through commit `108724e4fc5ec385c20182b7bbc6104cc5cc9d96`:
 
-1. full `./firmware/tests/run_host_tests.sh`;
-2. `pio run -e rak4630` because new firmware translation units are compiled into
-   the production image even though they are not yet wired into behavior;
-3. review compiler warnings and branch diff.
+- full `./firmware/tests/run_host_tests.sh`: PASS;
+- B4 pure config model: PASS;
+- independent NetworkService relay forwarding seam: PASS;
+- RadioManager independent relay behavior apply: PASS;
+- existing B1A/B2/B3/M3/R3/M4/M5/R2/R4/startup regressions: PASS;
+- `pio run -e rak4630`: SUCCESS;
+- RAM: 13,852 / 248,832 bytes = 5.6%;
+- Flash: 139,528 / 815,104 bytes = 17.1%;
+- observed build warnings remain inside pinned SX126x-Arduino third-party sources.
 
-No physical hardware test is required for Phase 1 alone because it has no runtime
-wiring. A later B4 slice that changes actual forwarding/config behavior must be
-assessed separately for physical regression needs.
+The Phase 3 `main.cpp` composition-root wiring was added after that evidence and
+must still run the full host suite and RAK4630 build before it is claimed PASS.
 
-## Next bounded slice
+No physical validation is claimed for B4 yet. Phase 1 had no runtime effect, but
+Phase 2/3 do alter runtime ownership/application paths even though legacy behavior
+is intended to remain identical. Physical regression need will be decided after
+host/build closure and final review; prior B2/B3 GNSS->POSITION->Base evidence is
+not automatically re-labeled as B4 hardware validation.
 
-After Phase 1 host/build PASS, move actual relay forwarding ownership away from
-raw `NodeRole` toward explicit resolved/effective network behavior without:
+## Remaining bounded work
 
-- exposing a user-facing relay toggle yet;
-- changing TLP v1;
-- changing one-hop behavior;
-- changing relay queue/dedupe/timing;
-- changing BASE legacy receive semantics;
-- rewriting the existing radio role-transition state machine.
+Before B4 closure:
+
+1. validate the composition-root wiring with the full host suite;
+2. rebuild RAK4630 and review RAM/flash/warnings;
+3. review branch diff and affected architecture documentation;
+4. decide the smallest physical regression needed for the runtime ownership
+   change;
+5. run independent Astra audit later, as requested by the owner;
+6. fix any findings and repeat affected validation before merge.
+
+B4 still must **not** add durable config, BLE, a generic capability registry,
+multi-hop, a new protocol, backend/mobile work or speculative hardware support.
