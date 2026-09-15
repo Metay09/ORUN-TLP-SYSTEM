@@ -142,12 +142,20 @@ be interpreted as an indoor satellite-fix failure: current AUTO is driven by
 GNSS hardware detection, not by open-sky fix acquisition.
 
 B1B previously demonstrated the real open-sky GNSS -> POSITION -> Base DIRECT
-chain and remains the physical reference. The exact B2+B3 code-bearing commit
-has not yet repeated that physical chain. Host/build/upload evidence is not a
-replacement for that regression or for the pending independent final audit.
+chain and remains the physical reference. The owner/operator has now confirmed
+that the requested B2+B3 physical sanity regression was also completed on the
+B2+B3 firmware: Tracker obtained a real GNSS fix, transmitted POSITION and Base
+received the packet. Since the current PositionFlow is store-before-send and
+suppresses live TX after append failure, that successful packet path also covers
+the normal store-first admission path for this sanity check.
 
-This documentation-only follow-up does not change firmware bytes and therefore
-does not require another PlatformIO build by itself.
+This closes the short B2+B3 GNSS -> storage -> POSITION -> Base DIRECT regression
+gate. It does not claim flash power-cut recovery, long-range RF, relay-path,
+current-consumption or unrelated hardware behavior. The independent final audit
+and merge review remain open.
+
+The documentation-only follow-ups after `a9d7bde...` do not change firmware bytes
+and therefore do not require another PlatformIO build by themselves.
 
 ## Next bounded work
 
