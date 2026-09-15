@@ -47,7 +47,11 @@ uint32_t sd_flash_page_erase(uint32_t page) {
   return NRF_SUCCESS;
 }
 
-bool RadioManager::begin(SequenceSource& source) { sequences_ = &source; return true; }
+bool RadioManager::begin(SequenceSource& source) {
+  sequences_ = &source;
+  device_id_ = 1;
+  return true;
+}
 bool RadioManager::canSend() const { return true; }
 bool RadioManager::encodePosition(const GnssFix& fix, uint8_t* out, uint64_t& id) {
   uint32_t seq;

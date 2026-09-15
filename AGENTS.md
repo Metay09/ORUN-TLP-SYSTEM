@@ -71,10 +71,17 @@ explicit migration task authorizes changes.
 
 Keep device identity, hardware platform, network forwarding responsibility,
 application/profile, capabilities, enabled services, location source/ownership,
-power policy and transport separate. User identity is not device identity.
-Profiles are overridable default bundles, not protocol or hardware restrictions.
-A gateway bridge and a LoRa relay are independent responsibilities that may
-coexist on one device. Animal tracker presets never forward other trackers.
+GNSS power, system power policy and transport separate. User identity is not
+device identity. Profiles are overridable default bundles, not protocol or
+hardware restrictions. A gateway bridge and LoRa relay forwarding are independent
+responsibilities that may coexist on one device.
+
+Relay forwarding is an independent enablement axis. Enabling relay forwarding
+must not disable tracking, telemetry, sensing or actuation services on the same
+node. The animal-tracker preset defaults relay forwarding OFF for battery and
+airtime reasons, but this is a preset default, not a permanent architecture
+restriction. Preserve the current legacy TRACKER/RELAY/BASE behavior until an
+explicit configuration migration authorizes runtime changes.
 
 Do not extend the legacy role enum for every new application. Future explicit
 configuration must take precedence over hardware-based AUTO suggestions.
@@ -89,10 +96,21 @@ Examples:
 - RAK12500 GNSS present / absent
 - RAK1904 accelerometer present / absent
 
+Firmware support, physical presence and service enablement are different facts.
+For optional digital hardware, bounded probing should verify the device identity
+or protocol response when practical rather than infer a sensor from an address
+alone. Hardware that cannot identify itself, such as a generic analog input or
+dry contact, may require an explicit configured assignment.
+
+Normal product UI should show capabilities that are currently present/assigned
+and hide capabilities that are absent, so a universal firmware image does not
+create irrelevant controls. Diagnostics may retain bounded detection/failure
+information without making an absent sensor appear present.
+
 Profiles must not hide or falsify detected capabilities. Enabled services and
 power policies may explicitly leave detected hardware inactive; for example,
-a GNSS-equipped relay may use PHONE location with GNSS OFF. Role alone must
-not determine hardware presence or active location source.
+a GNSS-equipped relay-capable node may use PHONE location with GNSS OFF. Role
+alone must not determine hardware presence or active location source.
 
 Location is separate from GNSS. Only the configured active source (or an explicit
 AUTO ownership policy) may update the active location. Invalid/empty phone data,
@@ -109,22 +127,33 @@ Use private LoRa P2P.
 
 DO NOT introduce LoRaWAN unless explicitly requested later.
 
-Topology:
+Current validated TLP v1 topology includes:
 
 TRACKER -> BASE
 
 TRACKER -> RELAY -> BASE
 
-Maximum relay hop count:
+Current TLP v1 relay forwarding is exactly one RF relay hop and rejects nested
+RELAY_FORWARD envelopes. Preserve this byte/runtime compatibility.
 
-1
+The one-hop v1 rule is NOT a permanent product-architecture limit. A future
+reviewed network/protocol milestone may introduce controlled, bounded multi-hop
+forwarding with stable message identity, duplicate suppression, explicit hop/flood
+policy, airtime admission, security and mixed-fleet rules. Do not implement
+unbounded flooding or silently reinterpret TLP v1.
 
-Trackers NEVER relay packets belonging to other trackers.
+Current legacy TRACKER behavior does not relay other nodes' packets. Future
+explicit configuration may allow a tracking/telemetry/sensing/actuation node to
+also relay while continuing to originate its own application data.
 
-BASE, RELAY and MOBILE prioritize radio availability over energy saving.
+When relay forwarding is enabled, radio availability is a service commitment:
+RX remains available continuously between local transmissions. Do not silently
+disable user-enabled relay forwarding because of a hidden energy heuristic; an
+incompatible future power policy must be explicit and observable.
 
-Animal TRACKER nodes prioritize battery life while maintaining reliable
-communication.
+BASE, relay-enabled and MOBILE nodes prioritize radio availability over energy
+saving. Animal tracker presets prioritize battery life and therefore default
+relay forwarding OFF while maintaining reliable communication.
 
 Initial RF candidate:
 
@@ -366,10 +395,11 @@ BASE:
 - LoRa RX continuous
 - prioritize availability
 
-RELAY:
+RELAY forwarding enabled:
 
-- LoRa RX continuous
-- prioritize availability
+- LoRa RX continuous between local transmissions
+- prioritize forwarding availability
+- user-enabled forwarding must not be silently disabled by hidden power policy
 
 MOBILE SEARCH:
 
@@ -377,11 +407,12 @@ MOBILE SEARCH:
 - maximum useful search performance
 - battery saving not a priority
 
-TRACKER:
+ANIMAL_TRACKER preset:
 
+- relay forwarding OFF by default
 - low-power MCU operation
 - configurable GNSS policy
-- short RX windows where appropriate
+- short RX windows where appropriate when relay forwarding is OFF
 - accelerometer low-power operation
 - staged low-battery protection
 
@@ -483,9 +514,11 @@ For every task:
 5. Run relevant builds and tests.
 6. Fix build/test failures before declaring success.
 7. Review git diff and git status.
-8. Report exactly what changed.
-9. Report exactly what was tested.
-10. Clearly identify anything that still requires physical hardware testing.
+8. Review architecture/protocol/ownership/milestone documentation for staleness;
+   update only the documents actually affected by the change.
+9. Report exactly what changed.
+10. Report exactly what was tested.
+11. Clearly identify anything that still requires physical hardware testing.
 
 For firmware work always run the appropriate PlatformIO build.
 
@@ -587,11 +620,18 @@ Protocol changes must update protocol documentation.
 Architecture changes must update the relevant architecture documents and
 record compatibility, wire, persistence and hardware-validation impacts.
 
+`docs/architecture/ORUN_CURRENT_ARCHITECTURE_RULES.md` records the current
+pre-M6 concept/ownership invariants and explicitly distinguishes current legacy
+runtime from target configuration semantics. Review it for every architecture,
+configuration, capability, forwarding, location, power or service change.
+
 See `docs/architecture/ORUN_SYSTEM_ARCHITECTURE_V1.md`,
 `docs/architecture/ORUN_ARCHITECTURE_GAP_ANALYSIS.md` and
-`docs/architecture/ORUN_PROTOCOL_EVOLUTION_PLAN.md` for the proposed target
-boundaries and staged migration. Future recommendations do not authorize
-implementation or override the current task's milestone scope.
+`docs/architecture/ORUN_PROTOCOL_EVOLUTION_PLAN.md` for the broader proposed
+target boundaries and staged migration. Where older proposed text conflicts with
+a newer owner-approved rule in `AGENTS.md` or
+`ORUN_CURRENT_ARCHITECTURE_RULES.md`, update the older document in the same
+bounded change before merge rather than leaving a silent contradiction.
 
 Preserve M0-M5 and R1-R4 guarantees, startup identity safety and portable
 64-bit device-ID logging. Do not rewrite working subsystems for architectural

@@ -41,6 +41,8 @@ uint32_t deterministicRelayDelay(uint64_t source_device_id,
 void NetworkService::begin(uint64_t local_device_id, NodeRole role) {
   local_device_id_ = local_device_id;
   role_ = role;
+  relay_forwarding_enabled_ =
+      legacyRoleBehavior(role).relay_forwarding_enabled;
   relay_dedupe_.clear();
   base_dedupe_.clear();
   clearQueue();
@@ -52,8 +54,22 @@ void NetworkService::begin(uint64_t local_device_id, NodeRole role) {
 void NetworkService::setRole(NodeRole role) {
   if (role == role_) return;
   role_ = role;
+  relay_forwarding_enabled_ =
+      legacyRoleBehavior(role).relay_forwarding_enabled;
   relay_dedupe_.clear();
   base_dedupe_.clear();
+  clearQueue();
+  forward_active_ = false;
+}
+
+void NetworkService::setRelayForwardingEnabled(bool enabled) {
+  if (enabled == relay_forwarding_enabled_) return;
+  relay_forwarding_enabled_ = enabled;
+  resetRelayState();
+}
+
+void NetworkService::resetRelayState() {
+  relay_dedupe_.clear();
   clearQueue();
   forward_active_ = false;
 }
@@ -64,7 +80,8 @@ void NetworkService::clearQueue() {
 }
 
 NetworkEvent NetworkService::malformedEvent(bool relay_envelope) {
-  if (role_ == NodeRole::kRelay) ++relay_diagnostics_.malformed_rejected;
+  if (relay_forwarding_enabled_)
+    ++relay_diagnostics_.malformed_rejected;
   if (role_ == NodeRole::kBase && relay_envelope)
     ++base_diagnostics_.malformed_relay_envelopes;
   NetworkEvent event{};
@@ -104,7 +121,7 @@ NetworkEvent NetworkService::receive(const uint8_t* payload, size_t size,
     event.link_rssi_dbm = rssi_dbm;
     event.link_snr_db = snr_db;
 
-    if (role_ == NodeRole::kRelay) {
+    if (relay_forwarding_enabled_) {
       ++relay_diagnostics_.valid_packets_received;
       const PacketKey key = keyFor(position);
       if (relay_dedupe_.contains(key)) {
@@ -147,7 +164,7 @@ NetworkEvent NetworkService::receive(const uint8_t* payload, size_t size,
     tlp::PositionPacket position{};
     const auto status = tlp::deserializeRelayForwardPacket(
         payload, size, &envelope, &position);
-    if (role_ == NodeRole::kRelay) {
+    if (relay_forwarding_enabled_) {
       if (status == tlp::RelayDecodeStatus::kOk ||
           status == tlp::RelayDecodeStatus::kNestedRelay) {
         ++relay_diagnostics_.nested_rejected;
@@ -189,7 +206,7 @@ NetworkEvent NetworkService::receive(const uint8_t* payload, size_t size,
 
 bool NetworkService::takeDueForward(uint32_t now_ms,
                                     tlp::RelayForwardPacket* packet) {
-  if (packet == nullptr || role_ != NodeRole::kRelay || forward_active_)
+  if (packet == nullptr || !relay_forwarding_enabled_ || forward_active_)
     return false;
   for (auto& entry : queue_) {
     if (!entry.valid || !monotonic::reached(now_ms, entry.due_ms)) continue;

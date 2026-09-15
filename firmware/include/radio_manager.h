@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "device_identity.h"
 #include "network_service.h"
 #include "sequence_source.h"
 
@@ -20,14 +21,30 @@ class RadioManager {
  public:
   // Application API is loop-owner-only, including diagnostics/accessors.
   // Dependency callbacks publish handoff state while holding the driver gate.
-  // Boot initialization captures deviceId and binds local encoding's sequence
-  // source even on false; the return value reports radio readiness only.
+  // Production composition injects identity before begin(); begin retains a
+  // RAK-provider fallback for legacy host seams. SequenceSource remains bound
+  // here because the disabled M1 TEST-beacon compatibility path still uses it.
   bool begin(SequenceSource& sequences);
+  void setDeviceIdentity(DeviceIdentity identity) {
+    device_id_ = identity.legacyUint64();
+    identity_configured_ = true;
+  }
+  DeviceIdentity deviceIdentity() const {
+    return DeviceIdentity::fromLegacyUint64(device_id_);
+  }
   void update(bool allow_test_beacon = true);
   void setRole(NodeRole role); // Request; installed by update after quiescence.
   NodeRole role() const { return network_.role(); }
+  // B4 independent forwarding control. Applies synchronously only when the
+  // radio owner can quiesce safely; false means the loop owner should retry.
+  bool setRelayForwardingEnabled(bool enabled);
+  bool relayForwardingEnabled() const {
+    return network_.relayForwardingEnabled();
+  }
   bool canSend() const;
   bool isTransmitting() const { return tx_in_progress_; }
+  // Compatibility shim for existing host seams. Production PositionFlow maps
+  // GNSS values through legacy_position_mapping before transport.
   bool encodePosition(const GnssFix& fix, uint8_t* payload, uint64_t& identity);
   // A live capture timestamp adds a final freshness gate; backlog omits it.
   bool sendPositionPacket(const uint8_t* payload, const uint32_t* captured_at_ms = nullptr);
@@ -80,6 +97,7 @@ class RadioManager {
   SequenceSource* sequences_ = nullptr;
   uint32_t sequence_number_ = 0;
   uint32_t next_tx_at_ms_ = 0;
+  bool identity_configured_ = false;
   bool ready_ = false;
   bool tx_in_progress_ = false;
   TxKind tx_kind_ = TxKind::kNone;
