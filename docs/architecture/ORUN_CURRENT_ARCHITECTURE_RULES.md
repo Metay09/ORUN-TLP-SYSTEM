@@ -348,14 +348,20 @@ has owner-run evidence for:
 - runtime USB command path responding to `ROLE?` and `ROLE TRACKER` override.
 
 Earlier B1B owner-operated hardware evidence demonstrated real open-sky GNSS on
-Tracker B and DIRECT POSITION reception by Base A. That prior hardware evidence
-is the regression reference; it is not automatically proof that every later
-commit has repeated the same physical chain.
+Tracker B and DIRECT POSITION reception by Base A.
 
-The exact B2+B3 commit still requires its final independent audit/merge gate and,
-when hardware access permits, a short regression of the previously proven
-GNSS -> storage -> POSITION -> Base DIRECT path. Do not label host/build/upload
-as that physical RF/GNSS PASS.
+The owner/operator has now confirmed that the requested B2+B3 physical sanity
+regression was also performed on the B2/B3 firmware: Tracker acquired a real GNSS
+fix, produced/transmitted POSITION, and Base received the packet. Because the
+current PositionFlow is store-before-send and suppresses live TX after append
+failure, that successful packet path also exercises the normal store-first
+admission path. This is not a substitute for separate flash power-cut/readback,
+long-range RF, relay-path or current-consumption validation.
+
+The short GNSS -> storage -> POSITION -> Base DIRECT regression gate is therefore
+closed for B2/B3. The remaining closure gate is the independent final audit and
+merge review. Host/build/upload evidence must still never be generalized into
+unperformed hardware tests.
 
 The 2026-09-15 independent architecture research review returned **GREEN WITH
 CONDITIONS** and did not identify a P0/Critical architectural blocker. Accepted
