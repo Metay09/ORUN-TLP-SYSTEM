@@ -172,6 +172,12 @@ void AccelerometerManager::scheduleDetectionRetry(uint32_t now) {
   ++diagnostics_.detection_retries;
 }
 
+void AccelerometerManager::startPowerDown(Event event) {
+  pending_finish_event_ = event;
+  power_down_attempts_ = 0;
+  state_ = State::kPoweringDown;
+}
+
 AccelerometerManager::Event AccelerometerManager::finishAbsent() {
   detection_complete_ = true;
   detected_ = false;
@@ -254,8 +260,7 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
     accountBusResult(result, diagnostics_, saw_transport_timeout_);
     if (result != BusResult::kOk) {
       ++diagnostics_.configuration_failures;
-      pending_finish_event_ = Event::kFault;
-      state_ = State::kPoweringDown;
+      startPowerDown(Event::kFault);
       return Event::kNone;
     }
 
@@ -276,8 +281,7 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
     accountBusResult(result, diagnostics_, saw_transport_timeout_);
     if (result != BusResult::kOk) {
       ++diagnostics_.sample_failures;
-      pending_finish_event_ = Event::kFault;
-      state_ = State::kPoweringDown;
+      startPowerDown(Event::kFault);
       return Event::kNone;
     }
 
@@ -285,8 +289,7 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
       if (monotonic::elapsed(now, probe_started_at_ms_,
                              accelerometer_config::kProbeTimeoutMs)) {
         ++diagnostics_.sample_failures;
-        pending_finish_event_ = Event::kFault;
-        state_ = State::kPoweringDown;
+        startPowerDown(Event::kFault);
         return Event::kNone;
       }
       next_action_at_ms_ = now + accelerometer_config::kProbeSamplePeriodMs;
@@ -303,8 +306,7 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
     accountBusResult(result, diagnostics_, saw_transport_timeout_);
     if (result != BusResult::kOk) {
       ++diagnostics_.sample_failures;
-      pending_finish_event_ = Event::kFault;
-      state_ = State::kPoweringDown;
+      startPowerDown(Event::kFault);
       return Event::kNone;
     }
 
@@ -324,14 +326,17 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
         highResolution2gToMg(bytes[2], bytes[3]),
         highResolution2gToMg(bytes[4], bytes[5]));
     ++diagnostics_.probe_samples;
-    pending_finish_event_ = Event::kPresent;
-    state_ = State::kPoweringDown;
+    startPowerDown(Event::kPresent);
     return Event::kNone;
   }
 
   if (state_ == State::kPoweringDown) {
-    if (!powerDownSensor(diagnostics_, saw_transport_timeout_))
+    ++power_down_attempts_;
+    if (!powerDownSensor(diagnostics_, saw_transport_timeout_)) {
+      if (power_down_attempts_ < accelerometer_config::kPowerDownMaxAttempts)
+        return Event::kNone;
       return finishFault();
+    }
     if (pending_finish_event_ == Event::kPresent)
       return finishPresent();
     return finishFault();
