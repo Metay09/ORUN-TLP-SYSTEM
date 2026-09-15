@@ -42,7 +42,9 @@ class AccelerometerManager {
   enum class State : uint8_t {
     kDetecting,
     kDetectionBackoff,
+    kConfiguring,
     kProbeWait,
+    kPoweringDown,
     kDone,
   };
 
@@ -52,12 +54,14 @@ class AccelerometerManager {
   Event finishPresent();
 
   State state_ = State::kDetecting;
+  Event pending_finish_event_ = Event::kNone;
   bool detection_complete_ = false;
   bool detected_ = false;
   bool faulted_ = false;
   bool saw_transport_timeout_ = false;
   bool probe_sample_ready_ = false;
   uint8_t detection_attempts_ = 0;
+  uint8_t configuration_step_ = 0;
   uint32_t next_action_at_ms_ = 0;
   uint32_t probe_started_at_ms_ = 0;
   AccelerometerSample probe_sample_{};
