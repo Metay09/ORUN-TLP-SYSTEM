@@ -63,6 +63,7 @@ struct RequestedConfig {
 enum class ConfigValidation : uint8_t {
   kOk,
   kTrackingRequiresLocationSource,
+  kInvalidLocationSource,
 };
 
 enum class ServiceState : uint8_t {
