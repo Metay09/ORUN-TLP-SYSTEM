@@ -182,18 +182,34 @@ link closure at `6d568c4f0924c6db12b459ea59c9b648a72cd6be`):
 The Phase 3 build increases flash by 640 bytes versus the preceding B4 runtime
 seam build (139,528 -> 140,168 bytes) and does not increase RAM.
 
-No physical validation is claimed for B4 yet. Phase 2/3 alter runtime
-ownership/application gating even though the legacy role-visible behavior is
-intended to remain identical. Prior B2/B3 GNSS->POSITION->Base evidence is not
-re-labeled as B4 hardware validation.
+### Physical mixed-fleet direct regression — PASS
 
-The smallest useful B4 physical regression is a mixed-fleet-compatible direct
-path check: run the current B4 image on the tracker while leaving the previously
-validated Base image unchanged, confirm AUTO/override resolves TRACKER after GNSS
-detection, obtain a real fresh GNSS fix, and verify the unchanged Base receives
-the normal DIRECT POSITION. This exercises capability resolution -> effective
-tracking -> store-before-send -> frozen TLP v1 -> old Base reception without
-requiring a new user-facing relay toggle.
+The owner physically validated the smallest B4 mixed-fleet regression with the
+current B4 image on the tracker and the previously validated Base image left
+unchanged:
+
+- Tracker B identity: `0E8ADE7E71531AA3`;
+- Base A identity: `09A462BD4B275BA5`;
+- current B4 image uploaded to Tracker B through the RAK4630 `nrfutil` DFU path:
+  PASS (`Device programmed.`);
+- Tracker B runtime query after boot: `ROLE TRACKER mode=AUTO`;
+- GNSS acquisition/low-power state machine remained active on hardware; an indoor
+  acquisition timed out and released the switched 3V3 sensor rail as designed;
+- Tracker B was then powered outdoors under open sky while Base A remained indoors
+  connected to the PC;
+- unchanged Base A received a new direct POSITION from Tracker B:
+  `BASE RX NEW source=0E8ADE7E71531AA3 seq=4096 path=DIRECT rssi=-71 snr=9`.
+
+Because the current tracker path only originates POSITION from admitted fresh GNSS
+fixes and PositionFlow preserves store-before-send ordering, this physical result
+exercises the B4 capability/effective-tracking composition through the normal
+GNSS -> PositionFlow -> frozen TLP v1 -> RF -> legacy Base direct-receive path.
+It also demonstrates the intended mixed-fleet compatibility for this direct path.
+
+This PASS does **not** prove flash power-cut recovery/readback, long-range RF,
+current consumption, multi-hop, relay coexistence, or an independently configured
+TRACKER+relay hardware path. The latter remains host-tested only because B4 does
+not yet expose a user-facing independent relay toggle.
 
 A separate relay-path hardware check may be added if final review finds it
 necessary; the host suite already exercises the independent TRACKER+relay runtime
@@ -203,10 +219,9 @@ seam and legacy M5 relay behavior, but host evidence is not physical RF evidence
 
 Before B4 closure:
 
-1. run the smallest current-image physical regression described above;
-2. review the complete branch diff and affected architecture documentation;
-3. run independent Astra audit later, as requested by the owner;
-4. fix any findings and repeat affected validation before merge.
+1. review the complete branch diff and affected architecture documentation;
+2. run independent Astra audit later, as requested by the owner;
+3. fix any findings and repeat affected validation before merge.
 
 B4 still must **not** add durable config, BLE, a generic capability registry,
 multi-hop, a new protocol, backend/mobile work or speculative hardware support.
