@@ -38,6 +38,11 @@ The model preserves requested intent when a capability cannot currently satisfy
 it. Example: tracking requested with GNSS absent resolves to a blocked effective
 tracking state; it does not rewrite tracking requested OFF.
 
+Invalid requested candidates are atomic. A future configuration owner must reject
+an invalid candidate before replacing the prior requested state. The pure resolver
+also fail-closes all effective services if an invalid candidate reaches it, so an
+invalid cross-field combination cannot partially enable another service.
+
 ## Current compatibility mapping into B4
 
 | Legacy role | Tracking requested | Relay forwarding requested | Location source |
@@ -79,6 +84,13 @@ ownership and transition invariants:
 This makes TRACKER + relay forwarding ON representable and host-testable without
 introducing a user-facing toggle or persistence.
 
+A current compatibility limitation is intentionally retained: legacy BASE
+application reception and relay forwarding are not yet a defined dual-use mode.
+If an internal BASE instance is forced to relay-forward, forwarding takes
+precedence in `NetworkService::receive()`. B4 therefore does not authorize a
+user-facing BASE/collector + relay combination; future collector/gateway/subscriber
+semantics must define that coexistence explicitly before exposure.
+
 ## Phase 3 — composition-root wiring
 
 `main.cpp` now derives a small GNSS `CapabilitySnapshot` from the existing bounded
@@ -107,6 +119,12 @@ The composition source is still the legacy role projection. There is no new
 user-visible config surface yet. A later validated configuration source can
 replace those requested defaults without returning runtime ownership to
 `NodeRole`.
+
+The current composition health projection is deliberately coarse: bounded GNSS
+detection supplies UNKNOWN/PRESENT/ABSENT, while a detected device is currently
+reported as `PRESENT + OK`. Acquisition timeout/recovery remains owned by the
+existing GnssManager state machine and is not yet projected as a full product
+health status. B4 must not be described as complete runtime health aggregation.
 
 ## Compatibility impact
 
@@ -138,8 +156,10 @@ authorized.
 - unsupported/absent/fault/unavailable reasons remain distinct;
 - requested intent is not mutated by resolution;
 - tracking and relay can both be requested/effective simultaneously;
-- relay resolution remains independent when tracking is blocked;
-- invalid tracking configuration is blocked explicitly.
+- relay resolution remains independent when tracking is capability-blocked;
+- a valid relay-only request remains valid;
+- an invalid whole candidate fail-closes both tracking and relay instead of
+  partially applying one field.
 
 `firmware/tests/b4/test_b4_network.cpp` freezes independent NetworkService relay
 forwarding behavior, including TRACKER + forwarding ON without changing the role.
@@ -158,11 +178,34 @@ The B4 pure model remains compiled under `gnu++11`, matching the current RAK4630
 compiler language constraint. Radio/network tests retain host warnings as errors
 and ASan/UBSan coverage through the normal host suite.
 
+## Complete branch review
+
+The complete B4 diff from baseline
+`28d254d1f40710fcedd64deab9ce6c216c8d8992` was reviewed through code head
+`3186c96d54f0f84243296a776a0f1ffa5ed4c526`.
+
+The review found one pre-merge semantic defect: an invalid RequestedConfig could
+previously block tracking while still enabling relay forwarding. That contradicted
+whole-candidate validation. It was fixed in:
+
+- `489386ec8efc074191d7ac052de104b351d9996d` — fail-closed invalid-candidate
+  resolution;
+- `3186c96d54f0f84243296a776a0f1ffa5ed4c526` — regression coverage.
+
+No P0/Critical blocker was found. Accepted bounded limitations and the detailed
+compatibility/ownership review are recorded in
+`docs/audits/PRE_M6_B4_BRANCH_REVIEW.md`.
+
+Because those two post-review commits change source/test code after the earlier
+host/build evidence below, the full host suite and RAK build must be rerun before
+B4 is called revalidated.
+
 ## Validation status
 
-Owner-run evidence for the current Phase 1–3 implementation (code-bearing
-composition commit `79715c9e1e3440823016b278e828cc1b38d6bc3d`, with startup host
-link closure at `6d568c4f0924c6db12b459ea59c9b648a72cd6be`):
+Owner-run evidence for the Phase 1–3 implementation before the final branch-review
+fix (code-bearing composition commit
+`79715c9e1e3440823016b278e828cc1b38d6bc3d`, with startup host link closure at
+`6d568c4f0924c6db12b459ea59c9b648a72cd6be`):
 
 - full `./firmware/tests/run_host_tests.sh`: PASS;
 - B4 pure config model: PASS;
@@ -179,18 +222,21 @@ link closure at `6d568c4f0924c6db12b459ea59c9b648a72cd6be`):
 - the shown incremental Phase 3 build produced no B4-source warning; prior clean
   builds still contain only the known pinned SX126x-Arduino third-party warnings.
 
-The Phase 3 build increases flash by 640 bytes versus the preceding B4 runtime
-seam build (139,528 -> 140,168 bytes) and does not increase RAM.
+The Phase 3 build increased flash by 640 bytes versus the preceding B4 runtime
+seam build (139,528 -> 140,168 bytes) and did not increase RAM. These size values
+must be re-measured after the final B4-R1 fix; they are not yet claimed for the
+post-review code head.
 
 ### Physical mixed-fleet direct regression — PASS
 
 The owner physically validated the smallest B4 mixed-fleet regression with the
-current B4 image on the tracker and the previously validated Base image left
-unchanged:
+B4 composition image on the tracker and the previously validated Base image left
+unchanged. This physical run occurred before the later pure invalid-candidate
+B4-R1 fix:
 
 - Tracker B identity: `0E8ADE7E71531AA3`;
 - Base A identity: `09A462BD4B275BA5`;
-- current B4 image uploaded to Tracker B through the RAK4630 `nrfutil` DFU path:
+- B4 image uploaded to Tracker B through the RAK4630 `nrfutil` DFU path:
   PASS (`Device programmed.`);
 - Tracker B runtime query after boot: `ROLE TRACKER mode=AUTO`;
 - GNSS acquisition/low-power state machine remained active on hardware; an indoor
@@ -206,22 +252,30 @@ exercises the B4 capability/effective-tracking composition through the normal
 GNSS -> PositionFlow -> frozen TLP v1 -> RF -> legacy Base direct-receive path.
 It also demonstrates the intended mixed-fleet compatibility for this direct path.
 
+The B4-R1 fix affects only semantically invalid RequestedConfig candidates. The
+current production RequestedConfig source is the frozen legacy mapping, whose
+TRACKER/RELAY/BASE projections are all valid, so B4-R1 is not reachable in the
+current hardware path. A repeat GNSS/RF hardware run is therefore not required
+solely for that fix; host and RAK build revalidation are required. This decision
+must be revisited when a mutable configuration source is introduced.
+
 This PASS does **not** prove flash power-cut recovery/readback, long-range RF,
 current consumption, multi-hop, relay coexistence, or an independently configured
 TRACKER+relay hardware path. The latter remains host-tested only because B4 does
 not yet expose a user-facing independent relay toggle.
 
-A separate relay-path hardware check may be added if final review finds it
-necessary; the host suite already exercises the independent TRACKER+relay runtime
-seam and legacy M5 relay behavior, but host evidence is not physical RF evidence.
+A separate relay-path hardware check is not required for B4 closure solely from
+this review; the host suite exercises the independent TRACKER+relay runtime seam
+and legacy M5 relay behavior. Host evidence is still not physical RF evidence.
 
 ## Remaining bounded work
 
 Before B4 closure:
 
-1. review the complete branch diff and affected architecture documentation;
-2. run independent Astra audit later, as requested by the owner;
-3. fix any findings and repeat affected validation before merge.
+1. rerun the full host suite after the B4-R1 review fix;
+2. rerun `pio run -e rak4630` and record final RAM/flash/warnings;
+3. run independent Astra audit later, as requested by the owner;
+4. fix any Astra findings and repeat affected validation before merge.
 
 B4 still must **not** add durable config, BLE, a generic capability registry,
 multi-hop, a new protocol, backend/mobile work or speculative hardware support.
