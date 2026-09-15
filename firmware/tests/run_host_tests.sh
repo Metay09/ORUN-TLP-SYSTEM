@@ -41,6 +41,10 @@ g++ -Ifirmware/tests/m6/stubs "${flags[@]}" \
   -o "$test_dir/m6_accelerometer"
 "$test_dir/m6_accelerometer"
 
+g++ "${b3_flags[@]}" firmware/tests/m6/test_m6_activity.cpp \
+  firmware/src/activity_window.cpp -o "$test_dir/m6_activity"
+"$test_dir/m6_activity"
+
 g++ "${flags[@]}" firmware/tests/m3/test_m3.cpp "${gnss_sources[@]}" \
   -o "$test_dir/m3"
 "$test_dir/m3"
