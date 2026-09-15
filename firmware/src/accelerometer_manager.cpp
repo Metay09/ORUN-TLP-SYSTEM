@@ -28,6 +28,28 @@ constexpr uint8_t kStatusXyzDataAvailable = 0x08;
 constexpr uint8_t kCtrl1TenHzXyz = 0x27;   // 10 Hz, normal/HR path, XYZ enabled.
 constexpr uint8_t kCtrl4BduHighResolution2g = 0x88;  // BDU + HR, +/-2 g.
 
+struct RegisterWrite {
+  uint8_t reg;
+  uint8_t value;
+};
+
+const RegisterWrite kProbeRegisterWrites[] = {
+    {kTempCfg, 0x00},
+    {kCtrl2, 0x00},
+    {kCtrl3, 0x00},
+    {kCtrl5, 0x00},
+    {kCtrl6, 0x00},
+    {kFifoCtrl, 0x00},
+    {kInt1Cfg, 0x00},
+    {kClickCfg, 0x00},
+    {kCtrl4, kCtrl4BduHighResolution2g},
+    {kCtrl1, kCtrl1TenHzXyz},
+};
+constexpr size_t kProbeRegisterWriteCount =
+    sizeof(kProbeRegisterWrites) / sizeof(kProbeRegisterWrites[0]);
+static_assert(kProbeRegisterWriteCount <= UINT8_MAX,
+              "M6A configuration step index must fit uint8_t");
+
 // LIS3DH high-resolution +/-2 g output is signed 12-bit, left-justified in the
 // 16-bit OUT registers. Sensitivity is 1 mg/digit, so divide the assembled
 // signed value by 16. Valid high-resolution samples have zero low four bits.
@@ -120,38 +142,6 @@ void accountBusResult(BusResult result,
     ++diagnostics.i2c_recovery_failures;
 }
 
-bool configureProbeSensor(AccelerometerManager::Diagnostics& diagnostics,
-                          bool& saw_transport_timeout) {
-  // Establish a known state before the one-shot probe. CTRL1 is written last so
-  // data collection starts only after stale filters/FIFO/interrupt routing are
-  // cleared. This does not claim the final M6 activity/FIFO policy.
-  const struct RegisterWrite {
-    uint8_t reg;
-    uint8_t value;
-  } writes[] = {
-      {kTempCfg, 0x00},
-      {kCtrl2, 0x00},
-      {kCtrl3, 0x00},
-      {kCtrl5, 0x00},
-      {kCtrl6, 0x00},
-      {kFifoCtrl, 0x00},
-      {kInt1Cfg, 0x00},
-      {kClickCfg, 0x00},
-      {kCtrl4, kCtrl4BduHighResolution2g},
-      {kCtrl1, kCtrl1TenHzXyz},
-  };
-
-  for (size_t i = 0; i < sizeof(writes) / sizeof(writes[0]); ++i) {
-    const BusResult result = writeRegister(writes[i].reg, writes[i].value);
-    accountBusResult(result, diagnostics, saw_transport_timeout);
-    if (result != BusResult::kOk) {
-      ++diagnostics.configuration_failures;
-      return false;
-    }
-  }
-  return true;
-}
-
 bool powerDownSensor(AccelerometerManager::Diagnostics& diagnostics,
                      bool& saw_transport_timeout) {
   const BusResult result = writeRegister(kCtrl1, 0x00);
@@ -180,6 +170,8 @@ AccelerometerManager::Event AccelerometerManager::finishAbsent() {
   detection_complete_ = true;
   detected_ = false;
   faulted_ = false;
+  probe_sample_ready_ = false;
+  pending_finish_event_ = Event::kNone;
   state_ = State::kDone;
   return Event::kAbsent;
 }
@@ -187,6 +179,8 @@ AccelerometerManager::Event AccelerometerManager::finishAbsent() {
 AccelerometerManager::Event AccelerometerManager::finishFault() {
   detection_complete_ = true;
   faulted_ = true;
+  probe_sample_ready_ = false;
+  pending_finish_event_ = Event::kNone;
   state_ = State::kDone;
   return Event::kFault;
 }
@@ -195,6 +189,8 @@ AccelerometerManager::Event AccelerometerManager::finishPresent() {
   detection_complete_ = true;
   detected_ = true;
   faulted_ = false;
+  probe_sample_ready_ = true;
+  pending_finish_event_ = Event::kNone;
   state_ = State::kDone;
   return Event::kPresent;
 }
@@ -236,16 +232,32 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
 
     // Positive WHO_AM_I proves the accelerometer is physically present. From
     // this point on, a transport/config/sample failure is health failure, not
-    // evidence that the installed device disappeared.
+    // evidence that the installed device disappeared. Configuration is serviced
+    // one register per cooperative pass so M6A does not monopolize the shared
+    // I2C/owner loop behind a sequence of individually bounded Wire waits.
     detected_ = true;
-    if (!configureProbeSensor(diagnostics_, saw_transport_timeout_)) {
-      powerDownSensor(diagnostics_, saw_transport_timeout_);
-      return finishFault();
+    configuration_step_ = 0;
+    state_ = State::kConfiguring;
+    return Event::kNone;
+  }
+
+  if (state_ == State::kConfiguring) {
+    const RegisterWrite& write = kProbeRegisterWrites[configuration_step_];
+    const BusResult result = writeRegister(write.reg, write.value);
+    accountBusResult(result, diagnostics_, saw_transport_timeout_);
+    if (result != BusResult::kOk) {
+      ++diagnostics_.configuration_failures;
+      pending_finish_event_ = Event::kFault;
+      state_ = State::kPoweringDown;
+      return Event::kNone;
     }
 
-    probe_started_at_ms_ = now;
-    next_action_at_ms_ = now + accelerometer_config::kProbeSamplePeriodMs;
-    state_ = State::kProbeWait;
+    ++configuration_step_;
+    if (configuration_step_ == kProbeRegisterWriteCount) {
+      probe_started_at_ms_ = now;
+      next_action_at_ms_ = now + accelerometer_config::kProbeSamplePeriodMs;
+      state_ = State::kProbeWait;
+    }
     return Event::kNone;
   }
 
@@ -253,44 +265,58 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
     if (!monotonic::reached(now, next_action_at_ms_)) return Event::kNone;
 
     uint8_t status = 0;
-    BusResult result = readRegister(kStatus, &status);
+    const BusResult result = readRegister(kStatus, &status);
     accountBusResult(result, diagnostics_, saw_transport_timeout_);
     if (result != BusResult::kOk) {
       ++diagnostics_.sample_failures;
-      powerDownSensor(diagnostics_, saw_transport_timeout_);
-      return finishFault();
+      pending_finish_event_ = Event::kFault;
+      state_ = State::kPoweringDown;
+      return Event::kNone;
     }
 
     if ((status & kStatusXyzDataAvailable) == 0) {
       if (monotonic::elapsed(now, probe_started_at_ms_,
                              accelerometer_config::kProbeTimeoutMs)) {
         ++diagnostics_.sample_failures;
-        powerDownSensor(diagnostics_, saw_transport_timeout_);
-        return finishFault();
+        pending_finish_event_ = Event::kFault;
+        state_ = State::kPoweringDown;
+        return Event::kNone;
       }
       next_action_at_ms_ = now + accelerometer_config::kProbeSamplePeriodMs;
       return Event::kNone;
     }
 
+    state_ = State::kReadingSample;
+    return Event::kNone;
+  }
+
+  if (state_ == State::kReadingSample) {
     uint8_t bytes[6]{};
-    result = readAxes(bytes, sizeof(bytes));
+    const BusResult result = readAxes(bytes, sizeof(bytes));
     accountBusResult(result, diagnostics_, saw_transport_timeout_);
     if (result != BusResult::kOk) {
       ++diagnostics_.sample_failures;
-      powerDownSensor(diagnostics_, saw_transport_timeout_);
-      return finishFault();
+      pending_finish_event_ = Event::kFault;
+      state_ = State::kPoweringDown;
+      return Event::kNone;
     }
 
     probe_sample_ = AccelerometerSample(
         now, highResolution2gToMg(bytes[0], bytes[1]),
         highResolution2gToMg(bytes[2], bytes[3]),
         highResolution2gToMg(bytes[4], bytes[5]));
-    probe_sample_ready_ = true;
     ++diagnostics_.probe_samples;
+    pending_finish_event_ = Event::kPresent;
+    state_ = State::kPoweringDown;
+    return Event::kNone;
+  }
 
+  if (state_ == State::kPoweringDown) {
     if (!powerDownSensor(diagnostics_, saw_transport_timeout_))
       return finishFault();
-    return finishPresent();
+    if (pending_finish_event_ == Event::kPresent)
+      return finishPresent();
+    return finishFault();
   }
 
   return Event::kNone;
