@@ -29,6 +29,12 @@ g++ "${b3_flags[@]}" firmware/tests/b4/test_b4.cpp \
   firmware/src/runtime_config.cpp -o "$test_dir/b4"
 "$test_dir/b4"
 
+g++ "${flags[@]}" firmware/tests/b4/test_b4_network.cpp \
+  firmware/src/network_service.cpp firmware/src/node_role.cpp \
+  firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
+  -o "$test_dir/b4_network"
+"$test_dir/b4_network"
+
 g++ "${flags[@]}" firmware/tests/m3/test_m3.cpp "${gnss_sources[@]}" \
   -o "$test_dir/m3"
 "$test_dir/m3"
