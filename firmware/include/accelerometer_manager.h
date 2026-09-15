@@ -50,6 +50,7 @@ class AccelerometerManager {
   };
 
   void scheduleDetectionRetry(uint32_t now);
+  void startPowerDown(Event event);
   Event finishAbsent();
   Event finishFault();
   Event finishPresent();
@@ -64,6 +65,7 @@ class AccelerometerManager {
   bool discard_next_sample_ = false;
   uint8_t detection_attempts_ = 0;
   uint8_t configuration_step_ = 0;
+  uint8_t power_down_attempts_ = 0;
   uint32_t next_action_at_ms_ = 0;
   uint32_t probe_started_at_ms_ = 0;
   AccelerometerSample probe_sample_{};
