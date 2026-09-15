@@ -1,15 +1,13 @@
-// Reuse the already-validated R2 fake-radio harness so B4 exercises the real
-// RadioManager ownership path instead of a second, weaker mock. R2's source
-// defines `int main()` without an explicit return, which is valid only for the
-// language-defined main function. Renaming it for embedding turns it into an
-// ordinary int function, so suppress only that artificial warning here. The R2
-// suite is still compiled independently with full -Werror in run_host_tests.sh.
+#if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wreturn-type"
+#endif
 #define main r2_embedded_regression_main
 #include "../r2/test_r2.cpp"
 #undef main
+#if defined(__GNUC__)
 #pragma GCC diagnostic pop
+#endif
 
 int main() {
   RadioManager manager;
@@ -51,8 +49,13 @@ int main() {
   makePosition(0xB400000000000002ULL, 2, packet);
   rxDone(packet, sizeof(packet), -96, 5);
   manager.update(false);
+  // Relay diagnostics are lifetime counters, not live queue depth. Disabling
+  // forwarding clears pending queue state but must not erase prior evidence.
+  // The disabled packet therefore leaves both cumulative counters unchanged.
   assert(manager.relayDiagnostics().valid_packets_received == 1);
-  assert(manager.relayDiagnostics().queued == 0);
+  assert(manager.relayDiagnostics().queued == 1);
+  assert(manager.relayDiagnostics().forwards_completed == 1);
+  assert(send_calls == 1);
 
   puts("B4 RadioManager independent relay behavior apply: PASS");
 }
