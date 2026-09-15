@@ -33,7 +33,13 @@ struct RegisterWrite {
   uint8_t value;
 };
 
+// CTRL1=0 is deliberately first. RAK1904 VDD remains powered across MCU resets,
+// so a reboot/DFU must not assume the LIS3DH already sits in our previous state.
+// Configure the remaining registers while powered down and write the requested
+// ODR last. The first data-ready sample is discarded separately below because
+// LIS3DH output registers retain their last sample in power-down mode.
 const RegisterWrite kProbeRegisterWrites[] = {
+    {kCtrl1, 0x00},
     {kTempCfg, 0x00},
     {kCtrl2, 0x00},
     {kCtrl3, 0x00},
@@ -236,6 +242,7 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
     // one register per cooperative pass so M6A does not monopolize the shared
     // I2C/owner loop behind a sequence of individually bounded Wire waits.
     detected_ = true;
+    discard_next_sample_ = true;
     configuration_step_ = 0;
     state_ = State::kConfiguring;
     return Event::kNone;
@@ -298,6 +305,17 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
       ++diagnostics_.sample_failures;
       pending_finish_event_ = Event::kFault;
       state_ = State::kPoweringDown;
+      return Event::kNone;
+    }
+
+    if (discard_next_sample_) {
+      // LIS3DH retains the previous output registers in power-down mode. Reading
+      // and discarding the first ready set prevents a pre-reset/pre-DFU sample
+      // from being reported as a fresh M6A observation. Wait for the next ODR
+      // period before accepting a sample from the newly configured session.
+      discard_next_sample_ = false;
+      next_action_at_ms_ = now + accelerometer_config::kProbeSamplePeriodMs;
+      state_ = State::kProbeWait;
       return Event::kNone;
     }
 
