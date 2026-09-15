@@ -196,36 +196,40 @@ No P0/Critical blocker was found. Accepted bounded limitations and the detailed
 compatibility/ownership review are recorded in
 `docs/audits/PRE_M6_B4_BRANCH_REVIEW.md`.
 
-Because those two post-review commits change source/test code after the earlier
-host/build evidence below, the full host suite and RAK build must be rerun before
-B4 is called revalidated.
+The post-review source/test change was then revalidated by the owner on branch
+head `4cf2828f9338355bcd38c92a62621689b3e46975`.
 
 ## Validation status
 
-Owner-run evidence for the Phase 1–3 implementation before the final branch-review
-fix (code-bearing composition commit
-`79715c9e1e3440823016b278e828cc1b38d6bc3d`, with startup host link closure at
-`6d568c4f0924c6db12b459ea59c9b648a72cd6be`):
+### Final owner host/build revalidation — PASS
 
-- full `./firmware/tests/run_host_tests.sh`: PASS;
-- B4 pure config model: PASS;
-- independent NetworkService relay forwarding seam: PASS;
-- RadioManager independent relay behavior apply: PASS;
-- production startup identity/history/loop scenarios with the Phase 3
-  composition path: PASS;
-- existing B1A/B2/B3/M3/R3/M4/M5/R2/R4 regressions: PASS;
-- host builds retain `-Wall -Wextra -Werror` plus ASan/UBSan on the normal
-  covered targets;
-- `pio run -e rak4630`: SUCCESS on Nordic nRF52 platform 11.0.0 / GCC 7.2.1;
-- RAM: 13,852 / 248,832 bytes = 5.6%;
-- Flash: 140,168 / 815,104 bytes = 17.2%;
-- the shown incremental Phase 3 build produced no B4-source warning; prior clean
-  builds still contain only the known pinned SX126x-Arduino third-party warnings.
+Full `./firmware/tests/run_host_tests.sh`: **PASS** after B4-R1. The run included:
 
-The Phase 3 build increased flash by 640 bytes versus the preceding B4 runtime
-seam build (139,528 -> 140,168 bytes) and did not increase RAM. These size values
-must be re-measured after the final B4-R1 fix; they are not yet claimed for the
-post-review code head.
+- B1A legacy packet golden/malformed checks;
+- B2 portable identity and legacy POSITION mapping;
+- B3 legacy role compatibility mapping;
+- B4 requested/capability/effective config model;
+- B4 independent NetworkService relay forwarding seam;
+- M3/R3/M4/M5 regressions;
+- R2/R2.1 radio ownership and patch guards;
+- B4 RadioManager independent relay behavior apply;
+- B1A RAK identity conversion and serial fixtures;
+- production startup identity/history/loop scenarios: mutex, gate, queue, lora,
+  success;
+- R4 bounded Wire/I2C/power/watchdog checks.
+
+`pio run -e rak4630`: **SUCCESS** on Nordic nRF52 platform 11.0.0 / GCC 7.2.1.
+The build verified/applied the pinned R4 Adafruit nRF52 Wire patch and R2.1
+SX126x 2.0.32 driver-gate patch.
+
+Final measured image size after B4-R1:
+
+- RAM: `13,852 / 248,832` bytes = **5.6%**;
+- Flash: `140,200 / 815,104` bytes = **17.2%**.
+
+The final review fix therefore adds 32 bytes of flash versus the prior B4 build
+(`140,168 -> 140,200`) and adds no RAM. No new project warning was present in the
+owner-supplied final build output.
 
 ### Physical mixed-fleet direct regression — PASS
 
@@ -255,8 +259,8 @@ It also demonstrates the intended mixed-fleet compatibility for this direct path
 The B4-R1 fix affects only semantically invalid RequestedConfig candidates. The
 current production RequestedConfig source is the frozen legacy mapping, whose
 TRACKER/RELAY/BASE projections are all valid, so B4-R1 is not reachable in the
-current hardware path. A repeat GNSS/RF hardware run is therefore not required
-solely for that fix; host and RAK build revalidation are required. This decision
+current hardware path. The required post-fix host/build revalidation is now PASS;
+a repeat GNSS/RF hardware run is not required solely for that fix. This decision
 must be revisited when a mutable configuration source is introduced.
 
 This PASS does **not** prove flash power-cut recovery/readback, long-range RF,
@@ -272,10 +276,10 @@ and legacy M5 relay behavior. Host evidence is still not physical RF evidence.
 
 Before B4 closure:
 
-1. rerun the full host suite after the B4-R1 review fix;
-2. rerun `pio run -e rak4630` and record final RAM/flash/warnings;
-3. run independent Astra audit later, as requested by the owner;
-4. fix any Astra findings and repeat affected validation before merge.
+1. run the independent Astra audit;
+2. fix any Astra findings on this branch;
+3. repeat only the host/build/hardware validation affected by those fixes;
+4. merge after the final audit gate is clean.
 
 B4 still must **not** add durable config, BLE, a generic capability registry,
 multi-hop, a new protocol, backend/mobile work or speculative hardware support.
