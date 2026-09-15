@@ -52,6 +52,14 @@ ServiceStatus resolveGnssTracking(const RequestedConfig& requested,
 }  // namespace
 
 ConfigValidation validateRequestedConfig(const RequestedConfig& config) {
+  switch (config.location_source) {
+    case RequestedLocationSource::kNone:
+    case RequestedLocationSource::kGnss:
+      break;
+    default:
+      return ConfigValidation::kInvalidLocationSource;
+  }
+
   if (config.tracking_enabled &&
       config.location_source == RequestedLocationSource::kNone) {
     return ConfigValidation::kTrackingRequiresLocationSource;
