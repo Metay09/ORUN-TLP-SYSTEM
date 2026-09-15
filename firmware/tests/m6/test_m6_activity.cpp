@@ -116,6 +116,25 @@ void timingGapMarksWindowUnreliableWithoutDroppingSamples() {
   assert(features.mean_magnitude_squared_mg2 == 1000000U);
 }
 
+void tooFastTimingMarksWindowUnreliable() {
+  ActivityWindow window;
+  for (uint16_t i = 0; i < activity_config::kWindowSampleCount; ++i) {
+    uint32_t captured_at = static_cast<uint32_t>(i) * 100U;
+    // Shift all samples from index 11 onward so exactly one adjacent interval
+    // becomes 25 ms; subsequent intervals return to the nominal 100 ms.
+    if (i >= 11) captured_at -= 75U;
+    assert(window.addSample(
+        AccelerometerSample(captured_at, 0, 0, 1000)));
+  }
+
+  const ActivityWindowFeatures features = window.features();
+  assert(features.complete);
+  assert(!features.timing_continuous);
+  assert(features.timing_discontinuities == 1);
+  assert(features.sample_count == activity_config::kWindowSampleCount);
+  assert(features.duration_ms == 4825U);
+}
+
 void timestampsRemainValidAcrossMillisRollover() {
   ActivityWindow window;
   const uint32_t start = UINT32_MAX - 200U;
@@ -178,6 +197,7 @@ int main() {
   magnitudeFeatureDoesNotDependOnBoardAxis();
   alternatingMotionProducesVarianceAndDelta();
   timingGapMarksWindowUnreliableWithoutDroppingSamples();
+  tooFastTimingMarksWindowUnreliable();
   timestampsRemainValidAcrossMillisRollover();
   extremeInputUsesWideAccumulators();
   takingCompletedWindowResetsOwnershipCleanly();
