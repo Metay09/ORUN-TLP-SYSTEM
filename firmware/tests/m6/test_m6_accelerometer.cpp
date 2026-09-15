@@ -14,6 +14,8 @@ using namespace orun_tlp;
 
 namespace {
 
+constexpr unsigned kProbeConfigurationWrites = 10;
+
 void resetHarness() {
   Serial.output.clear();
   fake_wire_timeout_flag = false;
@@ -62,6 +64,17 @@ bool sawWrite(uint8_t reg, uint8_t value) {
       return true;
   }
   return false;
+}
+
+uint32_t runConfigurationOneWritePerPoll(AccelerometerManager& manager,
+                                         uint32_t first_poll_ms) {
+  uint32_t now = first_poll_ms;
+  for (unsigned i = 0; i < kProbeConfigurationWrites; ++i, ++now) {
+    const unsigned writes_before = fake_accelerometer_write_count;
+    assert(manager.poll(now) == AccelerometerManager::Event::kNone);
+    assert(fake_accelerometer_write_count == writes_before + 1);
+  }
+  return now - 1;
 }
 
 void absentDetectionIsBounded() {
@@ -137,24 +150,64 @@ void successfulProbeUsesFixedUnitsAndPowersDown() {
   assert(manager.poll(10) == AccelerometerManager::Event::kNone);
   assert(manager.detected());
   assert(!manager.detectionComplete());
+  assert(fake_accelerometer_write_count == 0);
+
+  const uint32_t configured_at = runConfigurationOneWritePerPoll(manager, 11);
+  assert(configured_at == 20);
+  assert(fake_accelerometer_write_count == kProbeConfigurationWrites);
   assert(sawWrite(0x23, 0x88));  // BDU + high resolution, +/-2g.
   assert(sawWrite(0x20, 0x27));  // 10 Hz, XYZ enabled, not low-power mode.
 
-  assert(manager.poll(109) == AccelerometerManager::Event::kNone);
-  assert(manager.poll(110) == AccelerometerManager::Event::kPresent);
+  const uint32_t sample_due =
+      configured_at + accelerometer_config::kProbeSamplePeriodMs;
+  assert(manager.poll(sample_due - 1) == AccelerometerManager::Event::kNone);
+  assert(manager.poll(sample_due) == AccelerometerManager::Event::kNone);
+  // Status and six-axis-byte reads are deliberately separate cooperative passes.
+  assert(manager.poll(sample_due + 1) == AccelerometerManager::Event::kNone);
+  // Power-down is also its own pass; only then is PRESENT published.
+  assert(manager.poll(sample_due + 2) == AccelerometerManager::Event::kPresent);
+
   assert(manager.detectionComplete());
   assert(manager.detected());
   assert(!manager.faulted());
   assert(manager.diagnostics().probe_samples == 1);
   assert(fake_accelerometer_registers[0x20] == 0x00);  // Probe powers down.
+  assert(fake_accelerometer_write_count == kProbeConfigurationWrites + 1);
 
   AccelerometerSample sample{};
   assert(manager.takeProbeSample(&sample));
-  assert(sample.captured_at_ms == 110);
+  assert(sample.captured_at_ms == sample_due + 1);
   assert(sample.x_mg == 100);
   assert(sample.y_mg == -250);
   assert(sample.z_mg == 1000);
   assert(!manager.takeProbeSample(&sample));
+}
+
+void configurationFailureDefersCleanup() {
+  resetHarness();
+  makePresentSensor();
+  fake_accelerometer_fail_write_register = 0x22;  // CTRL3.
+
+  AccelerometerManager manager;
+  manager.begin(0);
+  assert(manager.poll(0) == AccelerometerManager::Event::kNone);
+  assert(manager.detected());
+
+  assert(manager.poll(1) == AccelerometerManager::Event::kNone);  // TEMP_CFG.
+  assert(manager.poll(2) == AccelerometerManager::Event::kNone);  // CTRL2.
+  // The failing CTRL3 write does not perform cleanup in the same cooperative pass.
+  const unsigned writes_before_failure = fake_accelerometer_write_count;
+  assert(manager.poll(3) == AccelerometerManager::Event::kNone);
+  assert(fake_accelerometer_write_count == writes_before_failure);
+  assert(manager.diagnostics().configuration_failures == 1);
+  assert(!manager.detectionComplete());
+
+  fake_accelerometer_fail_write_register = -1;
+  assert(manager.poll(4) == AccelerometerManager::Event::kFault);
+  assert(manager.detectionComplete());
+  assert(manager.detected());
+  assert(manager.faulted());
+  assert(fake_accelerometer_registers[0x20] == 0x00);
 }
 
 void presentDeviceFaultDoesNotDisappear() {
@@ -166,12 +219,19 @@ void presentDeviceFaultDoesNotDisappear() {
   AccelerometerManager manager;
   manager.begin(0);
   assert(manager.poll(0) == AccelerometerManager::Event::kNone);
-  assert(manager.poll(100) == AccelerometerManager::Event::kFault);
+  const uint32_t configured_at = runConfigurationOneWritePerPoll(manager, 1);
+  const uint32_t sample_due =
+      configured_at + accelerometer_config::kProbeSamplePeriodMs;
+  assert(manager.poll(sample_due) == AccelerometerManager::Event::kNone);
+  assert(manager.poll(sample_due + 1) == AccelerometerManager::Event::kNone);
+  assert(manager.poll(sample_due + 2) == AccelerometerManager::Event::kFault);
   assert(manager.detectionComplete());
   assert(manager.detected());
   assert(manager.faulted());
   assert(manager.diagnostics().sample_failures == 1);
   assert(fake_accelerometer_registers[0x20] == 0x00);
+  AccelerometerSample sample{};
+  assert(!manager.takeProbeSample(&sample));
 }
 
 void recoveredSampleTimeoutIsPresentFault() {
@@ -182,8 +242,12 @@ void recoveredSampleTimeoutIsPresentFault() {
   AccelerometerManager manager;
   manager.begin(0);
   assert(manager.poll(0) == AccelerometerManager::Event::kNone);
+  const uint32_t configured_at = runConfigurationOneWritePerPoll(manager, 1);
+  const uint32_t sample_due =
+      configured_at + accelerometer_config::kProbeSamplePeriodMs;
   fake_wire_timeout_flag = true;
-  assert(manager.poll(100) == AccelerometerManager::Event::kFault);
+  assert(manager.poll(sample_due) == AccelerometerManager::Event::kNone);
+  assert(manager.poll(sample_due + 1) == AccelerometerManager::Event::kFault);
   assert(manager.detected());
   assert(manager.faulted());
   assert(manager.diagnostics().i2c_timeouts == 1);
@@ -224,6 +288,7 @@ int main() {
   wrongIdentityIsAbsent();
   unresolvedTransportTimeoutDoesNotBecomeAbsent();
   successfulProbeUsesFixedUnitsAndPowersDown();
+  configurationFailureDefersCleanup();
   presentDeviceFaultDoesNotDisappear();
   recoveredSampleTimeoutIsPresentFault();
   retryDeadlineIsRolloverSafe();
