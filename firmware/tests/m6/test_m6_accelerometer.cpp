@@ -14,7 +14,7 @@ using namespace orun_tlp;
 
 namespace {
 
-constexpr unsigned kProbeConfigurationWrites = 10;
+constexpr unsigned kProbeConfigurationWrites = 11;
 
 void resetHarness() {
   Serial.output.clear();
@@ -137,10 +137,13 @@ void unresolvedTransportTimeoutDoesNotBecomeAbsent() {
   assert(manager.diagnostics().i2c_recoveries == 3);
 }
 
-void successfulProbeUsesFixedUnitsAndPowersDown() {
+void successfulProbeDiscardsRetainedSampleAndPowersDown() {
   resetHarness();
   makePresentSensor();
   fake_accelerometer_registers[0x27] = 0x08;  // ZYXDA.
+
+  // Model values retained from a previous MCU session. LIS3DH keeps output
+  // registers in power-down, so M6A must never publish these as a fresh sample.
   setRawAxis(0x28, 100);
   setRawAxis(0x2A, -250);
   setRawAxis(0x2C, 1000);
@@ -153,19 +156,37 @@ void successfulProbeUsesFixedUnitsAndPowersDown() {
   assert(fake_accelerometer_write_count == 0);
 
   const uint32_t configured_at = runConfigurationOneWritePerPoll(manager, 11);
-  assert(configured_at == 20);
+  assert(configured_at == 21);
   assert(fake_accelerometer_write_count == kProbeConfigurationWrites);
+  assert(fake_accelerometer_write_regs[0] == 0x20);
+  assert(fake_accelerometer_write_values[0] == 0x00);  // Power down first.
+  assert(fake_accelerometer_write_regs[kProbeConfigurationWrites - 1] == 0x20);
+  assert(fake_accelerometer_write_values[kProbeConfigurationWrites - 1] == 0x27);
   assert(sawWrite(0x23, 0x88));  // BDU + high resolution, +/-2g.
-  assert(sawWrite(0x20, 0x27));  // 10 Hz, XYZ enabled, not low-power mode.
 
-  const uint32_t sample_due =
+  const uint32_t first_sample_due =
       configured_at + accelerometer_config::kProbeSamplePeriodMs;
-  assert(manager.poll(sample_due - 1) == AccelerometerManager::Event::kNone);
-  assert(manager.poll(sample_due) == AccelerometerManager::Event::kNone);
-  // Status and six-axis-byte reads are deliberately separate cooperative passes.
-  assert(manager.poll(sample_due + 1) == AccelerometerManager::Event::kNone);
-  // Power-down is also its own pass; only then is PRESENT published.
-  assert(manager.poll(sample_due + 2) == AccelerometerManager::Event::kPresent);
+  assert(manager.poll(first_sample_due - 1) ==
+         AccelerometerManager::Event::kNone);
+  assert(manager.poll(first_sample_due) == AccelerometerManager::Event::kNone);
+  // First output read is deliberately discarded as possibly retained/stale.
+  assert(manager.poll(first_sample_due + 1) ==
+         AccelerometerManager::Event::kNone);
+
+  // The next ODR sample is the first one M6A is allowed to publish.
+  setRawAxis(0x28, 200);
+  setRawAxis(0x2A, -300);
+  setRawAxis(0x2C, 900);
+  const uint32_t fresh_sample_due =
+      first_sample_due + 1 + accelerometer_config::kProbeSamplePeriodMs;
+  assert(manager.poll(fresh_sample_due - 1) ==
+         AccelerometerManager::Event::kNone);
+  assert(manager.poll(fresh_sample_due) == AccelerometerManager::Event::kNone);
+  assert(manager.poll(fresh_sample_due + 1) ==
+         AccelerometerManager::Event::kNone);
+  // Power-down is its own pass; only then is PRESENT published.
+  assert(manager.poll(fresh_sample_due + 2) ==
+         AccelerometerManager::Event::kPresent);
 
   assert(manager.detectionComplete());
   assert(manager.detected());
@@ -176,10 +197,10 @@ void successfulProbeUsesFixedUnitsAndPowersDown() {
 
   AccelerometerSample sample{};
   assert(manager.takeProbeSample(&sample));
-  assert(sample.captured_at_ms == sample_due + 1);
-  assert(sample.x_mg == 100);
-  assert(sample.y_mg == -250);
-  assert(sample.z_mg == 1000);
+  assert(sample.captured_at_ms == fresh_sample_due + 1);
+  assert(sample.x_mg == 200);
+  assert(sample.y_mg == -300);
+  assert(sample.z_mg == 900);
   assert(!manager.takeProbeSample(&sample));
 }
 
@@ -193,17 +214,18 @@ void configurationFailureDefersCleanup() {
   assert(manager.poll(0) == AccelerometerManager::Event::kNone);
   assert(manager.detected());
 
-  assert(manager.poll(1) == AccelerometerManager::Event::kNone);  // TEMP_CFG.
-  assert(manager.poll(2) == AccelerometerManager::Event::kNone);  // CTRL2.
+  assert(manager.poll(1) == AccelerometerManager::Event::kNone);  // CTRL1=0.
+  assert(manager.poll(2) == AccelerometerManager::Event::kNone);  // TEMP_CFG.
+  assert(manager.poll(3) == AccelerometerManager::Event::kNone);  // CTRL2.
   // The failing CTRL3 write does not perform cleanup in the same cooperative pass.
   const unsigned writes_before_failure = fake_accelerometer_write_count;
-  assert(manager.poll(3) == AccelerometerManager::Event::kNone);
+  assert(manager.poll(4) == AccelerometerManager::Event::kNone);
   assert(fake_accelerometer_write_count == writes_before_failure);
   assert(manager.diagnostics().configuration_failures == 1);
   assert(!manager.detectionComplete());
 
   fake_accelerometer_fail_write_register = -1;
-  assert(manager.poll(4) == AccelerometerManager::Event::kFault);
+  assert(manager.poll(5) == AccelerometerManager::Event::kFault);
   assert(manager.detectionComplete());
   assert(manager.detected());
   assert(manager.faulted());
@@ -254,6 +276,38 @@ void recoveredSampleTimeoutIsPresentFault() {
   assert(manager.diagnostics().i2c_recoveries == 1);
 }
 
+void finalPowerDownFailureDoesNotPublishSample() {
+  resetHarness();
+  makePresentSensor();
+  fake_accelerometer_registers[0x27] = 0x08;
+  setRawAxis(0x28, 10);
+  setRawAxis(0x2A, 20);
+  setRawAxis(0x2C, 1000);
+
+  AccelerometerManager manager;
+  manager.begin(0);
+  assert(manager.poll(0) == AccelerometerManager::Event::kNone);
+  const uint32_t configured_at = runConfigurationOneWritePerPoll(manager, 1);
+  const uint32_t first_due =
+      configured_at + accelerometer_config::kProbeSamplePeriodMs;
+  assert(manager.poll(first_due) == AccelerometerManager::Event::kNone);
+  assert(manager.poll(first_due + 1) == AccelerometerManager::Event::kNone);
+
+  const uint32_t fresh_due =
+      first_due + 1 + accelerometer_config::kProbeSamplePeriodMs;
+  assert(manager.poll(fresh_due) == AccelerometerManager::Event::kNone);
+  assert(manager.poll(fresh_due + 1) == AccelerometerManager::Event::kNone);
+  assert(manager.diagnostics().probe_samples == 1);
+
+  fake_accelerometer_fail_write_register = 0x20;
+  assert(manager.poll(fresh_due + 2) == AccelerometerManager::Event::kFault);
+  assert(manager.detected());
+  assert(manager.faulted());
+  assert(manager.diagnostics().power_down_failures == 1);
+  AccelerometerSample sample{};
+  assert(!manager.takeProbeSample(&sample));
+}
+
 void retryDeadlineIsRolloverSafe() {
   resetHarness();
   const uint32_t start = UINT32_MAX - 100U;
@@ -287,10 +341,11 @@ int main() {
   absentDetectionIsBounded();
   wrongIdentityIsAbsent();
   unresolvedTransportTimeoutDoesNotBecomeAbsent();
-  successfulProbeUsesFixedUnitsAndPowersDown();
+  successfulProbeDiscardsRetainedSampleAndPowersDown();
   configurationFailureDefersCleanup();
   presentDeviceFaultDoesNotDisappear();
   recoveredSampleTimeoutIsPresentFault();
+  finalPowerDownFailureDoesNotPublishSample();
   retryDeadlineIsRolloverSafe();
   capabilityCanRepresentPresentFaultSeparately();
   puts("M6A bounded RAK1904 detection/sample checks: PASS");
