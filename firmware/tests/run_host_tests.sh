@@ -25,6 +25,10 @@ g++ "${b3_flags[@]}" firmware/tests/b3/test_b3.cpp \
   firmware/src/node_role.cpp -o "$test_dir/b3"
 "$test_dir/b3"
 
+g++ "${b3_flags[@]}" firmware/tests/b4/test_b4.cpp \
+  firmware/src/runtime_config.cpp -o "$test_dir/b4"
+"$test_dir/b4"
+
 g++ "${flags[@]}" firmware/tests/m3/test_m3.cpp "${gnss_sources[@]}" \
   -o "$test_dir/m3"
 "$test_dir/m3"
