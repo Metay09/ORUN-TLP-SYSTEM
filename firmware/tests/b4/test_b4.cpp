@@ -47,6 +47,8 @@ int main() {
       RequestedLocationSource::kGnss)) == ConfigValidation::kOk);
   assert(validateRequestedConfig(RequestedConfig(false, false,
       RequestedLocationSource::kGnss)) == ConfigValidation::kOk);
+  assert(validateRequestedConfig(RequestedConfig(false, true,
+      RequestedLocationSource::kNone)) == ConfigValidation::kOk);
 
   const RequestedConfig tracking_and_relay(
       true, true, RequestedLocationSource::kGnss);
@@ -112,8 +114,8 @@ int main() {
       gnss(true, CapabilityPresence::kPresent, CapabilityHealth::kOk));
   assertStatus(effective.tracking, ServiceState::kBlocked,
                ServiceReason::kInvalidConfiguration);
-  assertStatus(effective.relay_forwarding, ServiceState::kEnabled,
-               ServiceReason::kNone);
+  assertStatus(effective.relay_forwarding, ServiceState::kBlocked,
+               ServiceReason::kInvalidConfiguration);
 
   const RequestedConfig disabled(false, false,
                                  RequestedLocationSource::kNone);
