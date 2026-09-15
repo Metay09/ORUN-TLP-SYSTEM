@@ -12,6 +12,11 @@ namespace activity_config {
 // classifier is integrated into production runtime.
 constexpr uint16_t kWindowSampleCount = 50;  // 5 s at the current 10 Hz target.
 constexpr uint32_t kExpectedSamplePeriodMs = 100;
+// Timing quality is deliberately bounded on both sides. A too-fast stream can
+// otherwise fill a nominal five-second feature window in milliseconds and still
+// look "continuous" to a later classifier. These are implementation sanity
+// bounds, not animal-behavior thresholds.
+constexpr uint32_t kMinimumInterSampleGapMs = kExpectedSamplePeriodMs / 2;
 constexpr uint32_t kMaximumInterSampleGapMs = 300;
 
 }  // namespace activity_config
