@@ -77,6 +77,19 @@ uint32_t runConfigurationOneWritePerPoll(AccelerometerManager& manager,
   return now - 1;
 }
 
+uint32_t runThroughAcceptedSample(AccelerometerManager& manager,
+                                  uint32_t configured_at) {
+  const uint32_t first_due =
+      configured_at + accelerometer_config::kProbeSamplePeriodMs;
+  assert(manager.poll(first_due) == AccelerometerManager::Event::kNone);
+  assert(manager.poll(first_due + 1) == AccelerometerManager::Event::kNone);
+  const uint32_t fresh_due =
+      first_due + 1 + accelerometer_config::kProbeSamplePeriodMs;
+  assert(manager.poll(fresh_due) == AccelerometerManager::Event::kNone);
+  assert(manager.poll(fresh_due + 1) == AccelerometerManager::Event::kNone);
+  return fresh_due + 1;
+}
+
 void absentDetectionIsBounded() {
   resetHarness();
   AccelerometerManager manager;
@@ -276,7 +289,7 @@ void recoveredSampleTimeoutIsPresentFault() {
   assert(manager.diagnostics().i2c_recoveries == 1);
 }
 
-void finalPowerDownFailureDoesNotPublishSample() {
+void transientPowerDownFailureRetriesThenPublishes() {
   resetHarness();
   makePresentSensor();
   fake_accelerometer_registers[0x27] = 0x08;
@@ -288,22 +301,51 @@ void finalPowerDownFailureDoesNotPublishSample() {
   manager.begin(0);
   assert(manager.poll(0) == AccelerometerManager::Event::kNone);
   const uint32_t configured_at = runConfigurationOneWritePerPoll(manager, 1);
-  const uint32_t first_due =
-      configured_at + accelerometer_config::kProbeSamplePeriodMs;
-  assert(manager.poll(first_due) == AccelerometerManager::Event::kNone);
-  assert(manager.poll(first_due + 1) == AccelerometerManager::Event::kNone);
-
-  const uint32_t fresh_due =
-      first_due + 1 + accelerometer_config::kProbeSamplePeriodMs;
-  assert(manager.poll(fresh_due) == AccelerometerManager::Event::kNone);
-  assert(manager.poll(fresh_due + 1) == AccelerometerManager::Event::kNone);
+  const uint32_t accepted_at = runThroughAcceptedSample(manager, configured_at);
   assert(manager.diagnostics().probe_samples == 1);
 
   fake_accelerometer_fail_write_register = 0x20;
-  assert(manager.poll(fresh_due + 2) == AccelerometerManager::Event::kFault);
+  assert(manager.poll(accepted_at + 1) == AccelerometerManager::Event::kNone);
+  assert(!manager.detectionComplete());
+  assert(manager.diagnostics().power_down_failures == 1);
+
+  fake_accelerometer_fail_write_register = -1;
+  assert(manager.poll(accepted_at + 2) == AccelerometerManager::Event::kPresent);
+  assert(manager.detectionComplete());
+  assert(manager.detected());
+  assert(!manager.faulted());
+  AccelerometerSample sample{};
+  assert(manager.takeProbeSample(&sample));
+}
+
+void persistentPowerDownFailureDoesNotPublishSample() {
+  resetHarness();
+  makePresentSensor();
+  fake_accelerometer_registers[0x27] = 0x08;
+  setRawAxis(0x28, 10);
+  setRawAxis(0x2A, 20);
+  setRawAxis(0x2C, 1000);
+
+  AccelerometerManager manager;
+  manager.begin(0);
+  assert(manager.poll(0) == AccelerometerManager::Event::kNone);
+  const uint32_t configured_at = runConfigurationOneWritePerPoll(manager, 1);
+  const uint32_t accepted_at = runThroughAcceptedSample(manager, configured_at);
+  assert(manager.diagnostics().probe_samples == 1);
+
+  fake_accelerometer_fail_write_register = 0x20;
+  for (uint8_t attempt = 1;
+       attempt <= accelerometer_config::kPowerDownMaxAttempts; ++attempt) {
+    const auto event = manager.poll(accepted_at + attempt);
+    if (attempt < accelerometer_config::kPowerDownMaxAttempts)
+      assert(event == AccelerometerManager::Event::kNone);
+    else
+      assert(event == AccelerometerManager::Event::kFault);
+  }
   assert(manager.detected());
   assert(manager.faulted());
-  assert(manager.diagnostics().power_down_failures == 1);
+  assert(manager.diagnostics().power_down_failures ==
+         accelerometer_config::kPowerDownMaxAttempts);
   AccelerometerSample sample{};
   assert(!manager.takeProbeSample(&sample));
 }
@@ -345,7 +387,8 @@ int main() {
   configurationFailureDefersCleanup();
   presentDeviceFaultDoesNotDisappear();
   recoveredSampleTimeoutIsPresentFault();
-  finalPowerDownFailureDoesNotPublishSample();
+  transientPowerDownFailureRetriesThenPublishes();
+  persistentPowerDownFailureDoesNotPublishSample();
   retryDeadlineIsRolloverSafe();
   capabilityCanRepresentPresentFaultSeparately();
   puts("M6A bounded RAK1904 detection/sample checks: PASS");
