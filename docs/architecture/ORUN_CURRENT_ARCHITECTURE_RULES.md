@@ -2,6 +2,7 @@
 
 Status: **CURRENT pre-M6 owner-approved architecture rules**.
 Last reviewed against code: `a9d7bde7afcce2d7a34912c6fc4cdfcbf1788986`.
+Last architecture review update: 2026-09-15.
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
@@ -23,7 +24,8 @@ Also keep separate:
 - relay forwarding responsibility;
 - gateway bridging;
 - application services such as tracking, telemetry, sensing and actuation;
-- hardware presence;
+- hardware support and physical presence;
+- hardware health;
 - requested configuration;
 - effective runtime state;
 - system power policy.
@@ -31,11 +33,17 @@ Also keep separate:
 A profile is only a versioned preset/default bundle. It is not a permanent
 hardware restriction or topology identity.
 
-## 2. One firmware, configuration decides behavior
+## 2. One product firmware codebase; configuration decides behavior
 
 ORUN uses one firmware codebase on the current RAK4630/RAK4631 reference
 platform. We do not build separate tracker, relay, gateway or sensor firmware
 projects.
+
+"One firmware" means one product firmware codebase and one set of application,
+configuration and protocol semantics. It does not require one identical binary
+for every future MCU/board. If a real second platform is introduced later,
+board-specific build artifacts are acceptable while the product semantics remain
+shared and portable boundaries remain small.
 
 A future provisioned device is composed from independent settings such as:
 
@@ -73,8 +81,12 @@ exists.
 
 When relay forwarding is enabled, continuous LoRa RX between local transmissions
 is an availability commitment. Because SX1262 is half-duplex, RX pauses during
-TX and resumes afterwards. Future power policy must not silently switch a
-user-enabled relay off; incompatibility must be rejected or made observable.
+TX and resumes afterwards.
+
+Power policy must not silently rewrite user intent. A future explicit policy may
+permit observable degradation, for example suspending best-effort relay service at
+critical battery. A required-availability policy must not be silently overridden.
+Any policy-authorized change of effective service must expose a reason/state.
 
 Gateway bridging is separate from LoRa relay forwarding. A gateway can bridge
 without repeating RF traffic, relay without gateway service, or do both.
@@ -101,16 +113,50 @@ That heuristic is temporary compatibility behavior. Hardware presence must not
 become the future owner of application profile or relay responsibility. Explicit
 validated configuration will take precedence once implemented.
 
+B3 is only a partial seam today. `LegacyRoleBehavior::relay_forwarding_enabled`
+and `receive_application_position` exist as compatibility projections, but the
+production network path still branches on `NodeRole` inside `NetworkService`.
+Before a user-visible relay toggle is introduced, forwarding runtime ownership
+must move from the raw role enum to resolved/effective behavior while preserving
+all M5 queue/dedupe/timing semantics.
+
+`receive_application_position` is not yet approved as a general user-facing
+configuration field. It currently describes legacy BASE compatibility behavior.
+Future collector/gateway/subscriber semantics may need a different model, so do
+not prematurely freeze this boolean into the public configuration schema.
+
 ## 5. Capability model and product visibility
 
 Keep these facts separate:
 
 ```text
 firmware supports a hardware family
-!= hardware is physically present/assigned
+!= hardware presence state
+!= hardware health
 != service is requested
 != service is effectively running
 ```
+
+Minimum presence state for optional hardware:
+
+```text
+UNKNOWN   not yet proven present or absent
+PRESENT   positively identified/assigned
+ABSENT    bounded detection completed with absence result
+```
+
+Minimum health is separate from presence, with values such as:
+
+```text
+OK
+DEGRADED
+FAULT
+UNAVAILABLE
+```
+
+Exact enum names may change during B4; the semantic distinction must not.
+`PRESENT + FAULT` is not `ABSENT`. Rail-off, transient I2C failure, a recovery
+attempt, or an unprobed device must not silently make hardware disappear.
 
 Optional digital hardware should be detected with a bounded probe that validates
 an identifying/product/protocol response when practical. An I2C address alone is
@@ -122,21 +168,67 @@ A generic analog input, dry contact or other self-describing-impossible sensor
 cannot tell the MCU what physical quantity it represents. Its channel therefore
 requires an explicit configured assignment when that feature is implemented.
 
-Normal user-facing UI rule:
+Normal product UI rule:
 
 ```text
-currently present/assigned capability -> show it
-currently absent capability           -> hide it
+ABSENT capability             -> hide normal controls
+PRESENT + healthy             -> show normally
+PRESENT + fault/degraded      -> show with degraded/fault state
+UNKNOWN / UNPROBED            -> do not claim ABSENT
 ```
 
-This keeps a universal firmware image from filling the UI with sensors that do
-not exist on that device. Bounded diagnostics may record detection state and
-failures without inventing presence in normal product UI.
+This keeps a universal firmware image from filling the UI with hardware that does
+not exist while still making a disconnected/failing installed sensor visible as
+a fault rather than making it vanish.
 
 Capability does not imply service enablement. A GNSS module may be present while
 GNSS tracking is disabled or a different location source owns the active point.
 
-## 6. Location and GNSS remain separate
+## 6. Requested configuration, effective state and commands
+
+B4 must establish this small boundary without building a large framework:
+
+```text
+Profile defaults
+      ↓
+RequestedConfig
+      ↓
+validate(candidate)
+      ↓
+CapabilitySnapshot (support + presence + health)
+      ↓
+resolve()
+      ↓
+Effective service state (enabled/blocked/degraded + reason)
+```
+
+Requested intent must not be erased because hardware is temporarily unavailable.
+For example:
+
+```text
+tracking requested = ON
+location source = GNSS
+GNSS presence = ABSENT
+```
+
+is a valid persistent/product intent if the fields themselves are semantically
+valid. Its effective runtime result is tracking disabled/blocked with a reason
+such as `NO_LOCATION_SOURCE`; it is not an excuse to rewrite requested tracking
+OFF.
+
+Reject candidate configuration when the configuration itself is invalid, such as
+an out-of-range interval or an unsafe cross-field combination. Distinguish that
+from a valid intent that cannot currently be satisfied because capability or
+health is unavailable.
+
+One-shot commands are different from configuration intent. A future actuation
+command targeting an unavailable actuator must be rejected with an explicit
+result; it must not be retained as "requested=true until hardware appears".
+
+B4 is runtime-only. Do not allocate flash or claim durable configuration until
+the verified partition/ownership work is complete.
+
+## 7. Location and GNSS remain separate
 
 GNSS is one hardware/source implementation. Location is the higher-level data
 and ownership concept.
@@ -148,11 +240,14 @@ and ownership concept.
 - `0,0` is a valid coordinate, never a missing-value sentinel.
 - Recovered/persisted data is not automatically live/fresh.
 
-B2 already moved the portable GNSS value to `GnssFix` and the frozen legacy
-POSITION mapping to a pure boundary. Future location-source work must preserve
-legacy v1 bytes and GNSS freshness semantics.
+B2 moved the portable GNSS value to `GnssFix` and the frozen legacy POSITION
+mapping to a pure boundary. `GnssFix` is a **portable GNSS observation**, not the
+future generic Location model; it intentionally still carries GNSS-specific
+satellite/HDOP/time semantics. PHONE/MANUAL/fixed location must not be forced into
+`GnssFix`. Do not add a generic Location abstraction until a real second source
+needs it.
 
-## 7. Network evolution boundary
+## 8. Network evolution and scale boundary
 
 Current TLP v1 behavior is frozen:
 
@@ -170,27 +265,77 @@ admission, security/authentication, mixed-fleet behavior, reset/cache behavior
 and field tests. Do not introduce unlimited flooding or an accidental mesh by
 simply forwarding relay envelopes again.
 
-## 8. Ownership map
+Do not model 1000 nodes as one flat single-channel/SF11 flood domain. Future
+large-fleet work must model airtime and collision capacity explicitly and may
+need multiple RF domains, gateways/backhaul, powered relay infrastructure,
+channel/SF planning and controlled route/flood policy. This is a future network
+milestone, not B4/M6 work.
+
+## 9. Persistence, history and delivery truth
+
+Important tracker records remain store-before-send. History, configuration,
+security material, BLE bonds/DFU state and transient queues have different
+ownership/reset/retention semantics and must not be collapsed into one untyped
+store.
+
+The current history region remains exclusively `0xED000..0xF4000`. The current
+journal holds 728 compact position records, approximately 7.58 days at a 15-minute
+report interval. The project goal of approximately 1–2 weeks is a **target**, not
+a claim about current capacity.
+
+Do not enable durable config before the flash/bootloader/SoftDevice/InternalFS/
+bond/DFU ownership plan is verified. Do not remove the current SoftDevice flash
+safety guard merely to make BLE writes succeed.
+
+`TX_DONE` is local radio completion. It is not delivery, receiver custody,
+authenticated contact, command execution, or confirmed physical state. Historical
+replay/delivery cursors must not be advanced from TX completion without a defined
+receipt semantic.
+
+## 10. M6 LOST/security boundary
+
+Local activity and local geofence development may proceed in M6 using accepted
+fresh location and local rules.
+
+A trustworthy network-contact-based LOST rule is different. Do not claim:
+
+```text
+OUTSIDE + no network contact for N hours -> trustworthy LOST
+```
+
+until "network contact" is backed by an appropriate authenticated receipt/contact
+semantic. Existing v1 has no authentication/ACK contract and TX completion is not
+contact evidence. Local OUTSIDE/NEAR state can exist before trustworthy remote
+contact/delivery semantics.
+
+Private person location, remote configuration, messaging and actuation remain
+security-gated future work requiring authentication, authorization, anti-replay,
+confidentiality where applicable, expiry/idempotency for commands and explicit
+result/feedback semantics. Do not invent cryptography.
+
+## 11. Ownership map
 
 | Concern | Owner / allowed knowledge | Must not own/infer |
 | --- | --- | --- |
 | Device identity | identity provider + portable `DeviceIdentity` | radio readiness, user identity, profile |
 | Hardware detection | board/sensor adapters + capability boundary | application role/profile |
-| Configuration | validated config owner | driver probing, transport-specific policy |
-| Profiles | defaults applied into config | immutable device classification |
+| Capability state | capability snapshot: support/presence/health | requested user intent |
+| Configuration | requested candidate + validation | driver probing, transport-specific policy |
+| Resolution/effective state | combine validated request + capability/policy into status/reason | mutate requested intent silently |
+| Profiles | defaults applied into requested config | immutable device classification |
 | Application services | tracking/telemetry/activity/geofence/etc. | physical driver details, network topology inference |
 | Location | source arbitration, validity, freshness, last-known state | u-blox parser internals, network role |
 | Network | forwarding, dedupe, route/hop policy | sensor payload interpretation |
 | Protocol codec | exact bytes and strict validation | radio ownership, business decisions |
 | Radio transport | TX/RX ownership and callbacks | sensor/application semantics |
 | Persistence | explicit region/format/retention owners | unallocated adjacent flash |
-| Power coordinator | resource/availability policy | hidden rewriting of role/capability/user intent |
+| Power policy/coordinator | explicit availability/energy policy and observable degradation | hidden rewriting of role/capability/user intent |
 | `main.cpp` | composition root and cooperative orchestration | permanent accumulation of business rules |
 
 Introduce a new abstraction only when a real dependency needs isolation. Do not
 build a speculative generic HAL/event bus/plugin framework.
 
-## 9. Current B2/B3 validation boundary
+## 12. Current B2/B3 validation boundary
 
 Code-bearing commit `a9d7bde7afcce2d7a34912c6fc4cdfcbf1788986`
 has owner-run evidence for:
@@ -212,7 +357,38 @@ when hardware access permits, a short regression of the previously proven
 GNSS -> storage -> POSITION -> Base DIRECT path. Do not label host/build/upload
 as that physical RF/GNSS PASS.
 
-## 10. Documentation maintenance rule
+The 2026-09-15 independent architecture research review returned **GREEN WITH
+CONDITIONS** and did not identify a P0/Critical architectural blocker. Accepted
+pre-M6 refinements from that review are recorded here and summarized in
+`docs/audits/PRE_M6_EXTERNAL_ARCHITECTURE_REVIEW.md`.
+
+## 13. B4 bounded scope
+
+B4 should implement only the minimum configuration/capability seam needed before
+M6:
+
+- typed requested runtime configuration;
+- pure whole-candidate validation;
+- profile/default application semantics;
+- capability support/presence/health snapshot;
+- requested -> effective resolution with explicit reason;
+- legacy AUTO precedence rules;
+- forwarding runtime ownership seam needed before a future user-facing relay
+  toggle.
+
+B4 must **not** implement:
+
+- durable config persistence;
+- BLE;
+- generic sensor registry/plugin framework;
+- generic Location model without a second source;
+- multi-hop/routing tables;
+- TLP v2;
+- security protocol;
+- backend/mobile;
+- actuation/commands.
+
+## 14. Documentation maintenance rule
 
 For every meaningful change, review the affected architecture, protocol,
 ownership, milestone and compatibility documents. Update only documents whose
