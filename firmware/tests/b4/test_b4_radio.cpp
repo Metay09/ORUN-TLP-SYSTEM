@@ -1,6 +1,15 @@
+// Reuse the already-validated R2 fake-radio harness so B4 exercises the real
+// RadioManager ownership path instead of a second, weaker mock. R2's source
+// defines `int main()` without an explicit return, which is valid only for the
+// language-defined main function. Renaming it for embedding turns it into an
+// ordinary int function, so suppress only that artificial warning here. The R2
+// suite is still compiled independently with full -Werror in run_host_tests.sh.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wreturn-type"
 #define main r2_embedded_regression_main
 #include "../r2/test_r2.cpp"
 #undef main
+#pragma GCC diagnostic pop
 
 int main() {
   RadioManager manager;
