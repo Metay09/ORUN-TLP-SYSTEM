@@ -67,6 +67,13 @@ class NetworkService {
   void begin(uint64_t local_device_id, NodeRole role);
   void setRole(NodeRole role);
   NodeRole role() const { return role_; }
+
+  // B4 seam: forwarding is an independent network behavior, not a permanent
+  // device type. Legacy role transitions still install their historical
+  // default until the resolved runtime config is wired through RadioManager.
+  void setRelayForwardingEnabled(bool enabled);
+  bool relayForwardingEnabled() const { return relay_forwarding_enabled_; }
+
   NetworkEvent receive(const uint8_t* payload, size_t size, int16_t rssi_dbm,
                        int8_t snr_db, uint32_t now_ms);
   bool takeDueForward(uint32_t now_ms, tlp::RelayForwardPacket* packet);
@@ -89,9 +96,11 @@ class NetworkService {
   bool enqueue(const uint8_t* packet, int16_t rssi_dbm, int8_t snr_db,
                uint32_t due_ms);
   void clearQueue();
+  void resetRelayState();
 
   uint64_t local_device_id_ = 0;
   NodeRole role_ = NodeRole::kBase;
+  bool relay_forwarding_enabled_ = false;
   PacketDedupeCache<relay_config::kRelayDedupeSize> relay_dedupe_{};
   PacketDedupeCache<relay_config::kBaseDedupeSize> base_dedupe_{};
   QueueEntry queue_[relay_config::kForwardQueueSize]{};
