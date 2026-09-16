@@ -1,7 +1,7 @@
 # ORUN Current Architecture Rules
 
 Status: **CURRENT through M6B3 explicit diagnostic capture; prior M6A audit/physical gate PASS; M6B3 focused operator physical gate PASS; overall M6 IN PROGRESS**.
-Last reviewed against code: M6B3 working tree on `main@8c8248b5d125914dccff49ae54072a15021a6136` (prior M6A audited head `332cf0e1b307735348a97c3cbd15f916d04a21a0`).
+Last reviewed against code: `main@7c5d2aff632759722a35e4023dd69c90966d773f` (M6B3 merged; prior M6A audited head `332cf0e1b307735348a97c3cbd15f916d04a21a0`).
 Last architecture review update: 2026-09-16.
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
