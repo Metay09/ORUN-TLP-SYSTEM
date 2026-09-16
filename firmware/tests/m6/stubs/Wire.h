@@ -12,6 +12,7 @@ inline uint8_t fake_accelerometer_registers[256]{};
 inline uint8_t fake_accelerometer_write_regs[64]{};
 inline uint8_t fake_accelerometer_write_values[64]{};
 inline unsigned fake_accelerometer_write_count = 0;
+inline unsigned fake_accelerometer_axis_read_count = 0;
 
 struct TwoWire {
   uint8_t address = 0;
@@ -64,6 +65,7 @@ struct TwoWire {
     read_index = 0;
     read_count = 0;
     if (value != 0x18 || !fake_accelerometer_present) return 0;
+    if (quantity == 6) ++fake_accelerometer_axis_read_count;
     if (fake_accelerometer_short_axis_read && quantity == 6) {
       read_count = 5;
       return 5;
