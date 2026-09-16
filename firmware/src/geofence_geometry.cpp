@@ -16,10 +16,15 @@ bool samePoint(const GeoPointE7& a, const GeoPointE7& b) {
 }
 
 bool coordinateInRange(const GeoPointE7& point) {
-  return point.latitude_e7 >= kMinimumLatitudeE7 &&
-         point.latitude_e7 <= kMaximumLatitudeE7 &&
-         point.longitude_e7 >= kMinimumLongitudeE7 &&
-         point.longitude_e7 <= kMaximumLongitudeE7;
+  // M6C1 is deliberately local planar geometry, not spherical/global geometry.
+  // Exact poles and the +/-180-degree longitude seam have multiple equivalent
+  // longitude representations that this planar model cannot classify
+  // consistently. Reject those singular boundaries explicitly instead of
+  // accepting a legal geographic coordinate into an unsupported geometry domain.
+  return point.latitude_e7 > kMinimumLatitudeE7 &&
+         point.latitude_e7 < kMaximumLatitudeE7 &&
+         point.longitude_e7 > kMinimumLongitudeE7 &&
+         point.longitude_e7 < kMaximumLongitudeE7;
 }
 
 uint16_t effectiveVertexCount(const GeofencePolygonView& polygon) {
