@@ -1,21 +1,21 @@
 # PRE-M6 Stack Audit Package
 
-Status: **ASTRA INITIAL AUDIT COMPLETE; P2 FIXES APPLIED; INDEPENDENT RE-AUDIT + PHYSICAL M6A GATE PENDING**.
+Status: **ASTRA INITIAL AUDIT + RE-AUDIT COMPLETE; ALL FOUR P2 FINDINGS CLOSED; PHYSICAL M6A GATE PENDING**.
 
 Audit baseline: `main@859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 Initially audited candidate: `docs/m6-premerge-sync@8273e2434d0339a1335a9f1f4e4488825819c7bf`.
-Current fix branch: `fix/m6-audit-findings`.
-Detailed finding/fix record: `docs/audits/PRE_M6_STACK_AUDIT_RESOLUTION.md`.
+Corrected/re-audited candidate: `fix/m6-audit-findings@613cdf1ab583d4957e15ac0a90c6785cfbff641b`.
+Detailed finding/fix/re-audit record: `docs/audits/PRE_M6_STACK_AUDIT_RESOLUTION.md`.
 
 ## Purpose
 
-This package defines the exact scope and evidence an independent reviewer should
-assess before the current M6 stack is merged. It is intentionally explicit about
-what is runtime-integrated, what is host-only, and what remains physically
-unverified.
+This package records the exact scope and evidence independently reviewed before
+the current M6 stack may proceed to its remaining physical gate. It is intentionally
+explicit about what is runtime-integrated, what is host-only, and what remains
+physically unverified.
 
-The reviewer should treat repository code/tests/golden fixtures and the current
-architecture rules as canonical. Historical discussions must not override the
+The reviewer treated repository code/tests/golden fixtures and the current
+architecture rules as canonical. Historical discussions did not override the
 repository.
 
 ## Stack checkpoints
@@ -42,13 +42,13 @@ M6C2 permitted-area union closure
 initial Astra-audited docs/code candidate
   8273e2434d0339a1335a9f1f4e4488825819c7bf
 
-post-audit fix code head
-  5eb63ac1b92560dd7435cc975eefac83bb7cd290
+corrected/re-audited candidate
+  613cdf1ab583d4957e15ac0a90c6785cfbff641b
 ```
 
-## Initial Astra audit result
+## Independent audit result
 
-The independent audit found no P0/P1 issue. Four P2 findings were reproduced:
+The initial Astra audit found no P0/P1 issue and reproduced four P2 findings:
 
 - `M6A-01`: high-resolution sample acceptance before LIS3DH `7/ODR` settling;
 - `M6A-02`: terminal shutdown-fault path could leave an always-powered sensor at
@@ -57,10 +57,10 @@ The independent audit found no P0/P1 issue. Four P2 findings were reproduced:
 - `M6C-01`: exact pole/longitude-seam coordinate singularities were accepted by
   the local planar geometry model.
 
-All four have been addressed on `fix/m6-audit-findings`. See
-`PRE_M6_STACK_AUDIT_RESOLUTION.md` for the exact fixes, tests and owner-run
-post-fix evidence. These fixes must be independently re-audited before the
-physical M6A gate is attempted.
+All four were corrected on `fix/m6-audit-findings` and then independently
+re-audited. Astra closed all four findings and found **no new P0/P1/P2 blocker**.
+The software/audit gate is therefore closed for the corrected candidate; physical
+RAK1904 behavior remains **NOT PROVEN** until the focused hardware check runs.
 
 ## Runtime versus host-only boundary
 
@@ -71,12 +71,12 @@ Only M6A changes production composition:
 - `AccelerometerManager` is started from `main.cpp`;
 - RAK1904/LIS3DH bounded detection is part of boot/runtime polling;
 - accelerometer support/presence/health is projected into `CapabilitySnapshot`;
-- one bounded probe sample may be printed to USB diagnostics;
+- one bounded settled/fresh probe sample may be printed to USB diagnostics;
 - sensor shutdown is part of the bounded probe path;
 - after immediate shutdown failures, sparse fault cleanup retains ownership until
   a later cooperative shutdown succeeds.
 
-M6A must not alter role/profile ownership, GNSS power ownership, tracking
+M6A does not alter role/profile ownership, GNSS power ownership, tracking
 semantics, relay forwarding, TLP bytes, storage format or RF behavior.
 
 ### Host-only / not runtime-integrated
@@ -89,18 +89,18 @@ The following compile in the production source tree but are not referenced by
 - `geofence_geometry.*`;
 - `geofence_area_set.*`.
 
-They must therefore be reviewed as portable deterministic primitives, not as
-proof of production activity/geofence behavior.
+They remain portable deterministic primitives, not proof of production
+activity/geofence behavior.
 
-## M6A re-audit focus
+## M6A audit closure
 
-The independent reviewer should specifically verify the post-audit changes:
+Independent review and re-audit confirmed:
 
 1. `CTRL_REG1=0x27` remains the final enable write;
 2. no DRDY/status/axis read occurs before the rollover-safe `7/ODR` HR settling
    deadline;
-3. the retained first ready XYZ set is still discarded after settling and a later
-   ODR sample is the only probe sample exposed;
+3. the retained first ready XYZ set is discarded after settling and a later ODR
+   sample is the only probe sample exposed;
 4. `ACT_THS` is explicitly cleared while powered down;
 5. normal sample timeout starts after mandatory HR settling rather than expiring
    during the settle window;
@@ -109,55 +109,55 @@ The independent reviewer should specifically verify the post-audit changes:
 7. faulted cleanup retries are sparse/cooperative and can power down the sensor if
    the bus later recovers without silently changing capability health back to OK;
 8. a permanently bad bus does not create a tight retry loop;
-9. UNKNOWN/PRESENT/ABSENT semantics still do not conflate transport failure with
-   hardware absence;
-10. RAK1904 VDD ownership still does not touch GNSS `WB_IO2/3V3_S`;
-11. R4 bounded Wire/recovery and watchdog assumptions remain intact;
-12. capability presence does not imply activity service enablement.
+9. production `main.cpp` continues to poll the manager after `detectionComplete`,
+   so sparse cleanup ownership remains live;
+10. UNKNOWN/PRESENT/ABSENT semantics do not conflate transport failure with
+    hardware absence;
+11. RAK1904 VDD ownership does not touch GNSS `WB_IO2/3V3_S`;
+12. R4 bounded Wire/recovery and watchdog assumptions remain intact;
+13. capability presence does not imply activity service enablement.
 
-## M6B review focus
+## M6B audit closure
 
-M6B1/M6B2 intentionally stop before animal classification.
+M6B1/M6B2 intentionally stop before animal classification. Independent review
+found no arithmetic/UB or eligibility correctness defect in the current bounded
+software-only implementation:
 
-Review that:
-
-- the 50-sample fixed-memory feature window has no dynamic allocation/raw-window
-  buffer;
-- accumulator widths remain safe over the full `int16_t` sample domain;
-- timing continuity is rollover-safe and treats intervals outside 50..300 ms as
-  unreliable without silently dropping samples;
+- fixed-memory 50-sample feature window, no dynamic allocation/raw-window buffer;
+- accumulator/intermediate widths safe over the tested full `int16_t` domain;
+- rollover-safe timing, with intervals outside 50..300 ms marked unreliable;
 - eligibility fails closed for incomplete, inconsistent or impossible-duration
   feature objects;
-- activity magnitude/variance/delta values do not leak into the eligibility gate;
-- no RESTING/GRAZING/WALKING threshold or animal-accuracy claim is frozen from
-  synthetic tests;
+- motion magnitude/variance/delta values do not participate in the quality gate;
+- no RESTING/GRAZING/WALKING threshold or animal-accuracy claim is frozen;
 - no RF/storage/power/runtime behavior is introduced by M6B1/M6B2.
 
-## M6C re-audit focus
+## M6C audit closure
 
-Review that:
+Independent review and re-audit confirmed:
 
 - polygon validation is deterministic and fail-closed;
-- cross-product and translated shoelace arithmetic stay within signed-64-bit
+- cross-product and translated shoelace arithmetic remain inside signed-64-bit
   bounds for the documented 10-degree/64-effective-vertex domain;
 - exact `latitude = +/-90` and `longitude = +/-180` are rejected as unsupported
   local-planar singularities rather than approximated;
 - coordinates immediately inside those singular limits remain accepted subject to
-  the existing span and polygon-validity rules;
+  existing span and polygon-validity rules;
 - invalid singular query coordinates return `kInvalidPoint`, not `kOutside`;
 - explicit closing vertices preserve the 64-effective-vertex contract;
 - self-intersection/degenerate/invalid-coordinate cases are rejected;
 - INSIDE/BOUNDARY/OUTSIDE geometry works for concave and both winding directions;
 - area-set composition validates the complete configured set before accepting an
   early containment result;
+- M6C2 propagates singular/invalid polygon rejection through full-set validation;
 - INSIDE outranks BOUNDARY independent of polygon order;
-- no arbitrary durable/product area-count limit is silently frozen;
+- no arbitrary durable/product area-count limit is frozen;
 - geometry does not own GNSS freshness/source arbitration;
 - no NEAR_FENCE, hysteresis, repeated-fix, FREE_GRAZE or LOST behavior is claimed.
 
 ## Compatibility and architecture invariants
 
-The review must confirm the stack does not change:
+Independent diff/re-audit confirmed no relevant change to:
 
 ```text
 TLP v1 packet bytes/sizes
@@ -172,7 +172,7 @@ GNSS 3V3_S/WB_IO2 ownership
 legacy USB ROLE syntax / AUTO bootstrap behavior
 ```
 
-Also verify these separations remain true:
+The following separations remain required and preserved:
 
 ```text
 Role != Location Source != GNSS Power != Capability
@@ -204,7 +204,20 @@ On `fix/m6-audit-findings` after the four P2 fixes:
 - no new ORUN compiler warning observed; known warnings remain inside pinned
   third-party SX126x sources.
 
-This is software evidence only. It does not close the physical RAK1904 gate.
+## Independent re-audit validation evidence
+
+Astra independently reran on corrected candidate
+`613cdf1ab583d4957e15ac0a90c6785cfbff641b`:
+
+- full host suite: **PASS**;
+- `pio run -e rak4630`: **SUCCESS**;
+- RAM / flash: **13,932 B / 142,184 B**;
+- additional ASan/UBSan adversarial probes covering settling/deadline/register
+  effects, sparse cleanup recovery/rollover and M6C2 domain propagation: **PASS**;
+- all four prior P2 findings: **CLOSED**;
+- new P0/P1/P2 blocker: **none found**.
+
+These are software results only. They do not close the physical RAK1904 gate.
 
 ## Physical evidence and explicit non-evidence
 
@@ -227,44 +240,19 @@ geofence field behavior:                          NOT RUNTIME-INTEGRATED
 trusted LOST/contact:                             NOT IMPLEMENTED
 ```
 
-The independent reviewer must not promote host/build evidence into any of those
-physical/product claims.
+Host/build/re-audit evidence must not be promoted into any of those physical or
+product claims.
 
-## Required re-audit output
+## Remaining merge gate
 
-Report findings by severity and exact file/symbol. Distinguish:
+The independent software/audit gate is closed. The current stack is still not
+merge-ready until the focused physical M6A validation is completed on the latest
+corrected image:
 
-- unresolved correctness/safety defects that block physical test/merge;
-- regressions introduced by the four fixes;
-- test coverage gaps;
-- architecture/ownership contradictions;
-- documentation inaccuracies;
-- future-only recommendations that should **not** expand this milestone.
-
-For every real finding, state whether it affects:
-
-```text
-wire compatibility
-mixed-fleet behavior
-RF airtime/capacity
-RAM/flash
-power/sleep
-I2C/concurrency/ownership
-persistence/power-cut integrity
-security
-physical validation scope
-```
-
-Do not propose speculative generic HALs, registries, event buses, new protocol
-families or unrelated future features merely to make the code more abstract.
-
-## Merge gates after re-audit
-
-The current stack is not merge-ready until both are true:
-
-1. independent Astra re-audit confirms the P2 fixes or any new real findings are
-   corrected and revalidated;
-2. focused physical M6A validation is completed on the latest corrected image.
-
-If the re-audit finds a code issue affecting the physical M6A path, fix it first
-and run the physical check only on the corrected image.
+1. upload the corrected candidate to Tracker B when hardware is available;
+2. capture positive RAK1904 identification and a real settled/fresh XYZ probe;
+3. confirm the normal post-sample shutdown path completes on hardware;
+4. record the exact evidence without generalizing it to continuous sampling,
+   current consumption, animal classification, geofence field behavior or trusted
+   LOST/contact;
+5. merge only after this physical gate is recorded PASS.
