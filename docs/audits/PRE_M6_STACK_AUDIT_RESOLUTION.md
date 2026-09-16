@@ -1,29 +1,28 @@
 # PRE-M6 Stack Audit Resolution
 
-Status: **ASTRA P2 FINDINGS FIXED IN SOFTWARE; OWNER HOST/RAK BUILD PASS; INDEPENDENT RE-AUDIT + PHYSICAL M6A GATE PENDING**.
+Status: **ASTRA P2 FINDINGS CLOSED; OWNER + INDEPENDENT SOFTWARE REVALIDATION PASS; PHYSICAL M6A GATE PENDING**.
 
 Audit baseline: `main@859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
-Audited candidate: `docs/m6-premerge-sync@8273e2434d0339a1335a9f1f4e4488825819c7bf`.
-Fix branch: `fix/m6-audit-findings`.
-Code-fix head before this resolution note: `5eb63ac1b92560dd7435cc975eefac83bb7cd290`.
+Initially audited candidate: `docs/m6-premerge-sync@8273e2434d0339a1335a9f1f4e4488825819c7bf`.
+Corrected/re-audited candidate: `fix/m6-audit-findings@613cdf1ab583d4957e15ac0a90c6785cfbff641b`.
 
 ## Independent Astra result
 
-The independent audit found no P0/P1 issue, but identified four P2 findings that had to be corrected before the physical M6A gate or merge:
+The initial independent audit found no P0/P1 issue, but identified four P2 findings that had to be corrected before the physical M6A gate or merge:
 
 1. `M6A-01` — LIS3DH high-resolution output could be accepted before the documented `7/ODR` turn-on interval had elapsed.
 2. `M6A-02` — after the immediate three-attempt shutdown budget was exhausted, the manager entered a terminal state and could leave an always-powered LIS3DH sampling at 10 Hz even if the I2C bus later recovered.
 3. `M6A-03` — retained nonzero `ACT_THS` was not cleared, so autonomous activity/inactivity mode from an earlier MCU/image session could survive into the M6A probe configuration.
 4. `M6C-01` — the planar field-geometry domain admitted exact pole/longitude-seam coordinates (`latitude = +/-90`, `longitude = +/-180`) where equivalent physical points can have multiple coordinate representations and therefore inconsistent planar classification.
 
-The audit independently reran the full host suite and RAK4630 build and reproduced the findings with adversarial probes. It explicitly kept physical RAK1904 behavior as **NOT PROVEN**.
+The initial audit independently reran the full host suite and RAK4630 build and reproduced the findings with adversarial probes. It explicitly kept physical RAK1904 behavior as **NOT PROVEN**.
 
 ## Fixes
 
 ### M6A-01 — explicit high-resolution settling
 
 - `CTRL_REG1=0x27` remains the final configuration write.
-- A rollover-safe `kHighResolutionSettleMs = 7 * kProbeSamplePeriodMs` gate now starts from the successful ODR-enable write.
+- A rollover-safe `kHighResolutionSettleMs = 7 * kProbeSamplePeriodMs` gate starts from the successful ODR-enable write.
 - No DRDY/status or axis read is allowed before this gate expires.
 - The retained first ready XYZ set is still discarded after settling.
 - A later ODR period is then required before the accepted probe sample.
@@ -46,7 +45,7 @@ This is an internal LIS3DH cleanup policy only. It does not touch GNSS `WB_IO2/3
 
 - `ACT_THS (0x3E)` is explicitly written to zero while the device is powered down.
 - `CTRL_REG1=0` remains first and 10 Hz enable remains last.
-- The configuration write count is kept bounded; FIFO enable is already explicitly cleared through `CTRL_REG5`, so a redundant `FIFO_CTRL` reset was removed rather than increasing the number of cooperative passes.
+- FIFO use remains disabled through explicit `CTRL_REG5.FIFO_EN=0`; removing a redundant `FIFO_CTRL` reset does not enable retained FIFO state.
 
 ### M6C-01 — fail closed at planar singularities
 
@@ -77,7 +76,8 @@ M6C tests now freeze:
 - exact +/-180-degree longitude rejection;
 - exact +/-90-degree latitude rejection;
 - singular query coordinates return invalid rather than outside;
-- near-limit local polygons immediately inside the accepted coordinate domain remain valid.
+- near-limit local polygons immediately inside the accepted coordinate domain remain valid;
+- M6C2 propagates the stricter invalid-domain result across the full permitted-area set.
 
 ## Owner-run post-fix validation
 
@@ -98,6 +98,38 @@ On `fix/m6-audit-findings` after all four fixes:
 
 Compared with the previously audited M6C2 image (`141,928` flash), the runtime audit fixes add **256 bytes flash** and no measured RAM increase.
 
+## Independent Astra re-audit closure
+
+Astra independently re-audited `8273e2434d0339a1335a9f1f4e4488825819c7bf..613cdf1ab583d4957e15ac0a90c6785cfbff641b` and reported:
+
+```text
+M6A-01 -> CLOSED
+M6A-02 -> CLOSED
+M6A-03 -> CLOSED
+M6C-01 -> CLOSED
+new P0/P1/P2 blocker -> none found
+```
+
+The re-audit independently reran:
+
+- full host suite: **PASS**;
+- `pio run -e rak4630`: **SUCCESS**;
+- RAM/flash: **13,932 B / 142,184 B**;
+- additional ASan/UBSan adversarial probes: **PASS**.
+
+The independent re-audit specifically confirmed:
+
+- 700 ms HR settling starts after final ODR enable and does not consume the later 500 ms sample timeout;
+- DRDY/output is not inspected during settling;
+- the retained first XYZ set remains discarded and a later ODR phase is required for the accepted sample;
+- production `main.cpp` continues to call `AccelerometerManager::poll()` after `detectionComplete=true`, so sparse fault cleanup remains live;
+- no cleanup I2C transaction occurs before the 60-second deadline, one shutdown operation occurs at the deadline, repeated failure re-arms another sparse deadline, and later bus recovery powers the sensor down while capability remains FAULT;
+- `ACT_THS=0` is applied while powered down and retained FIFO mode cannot become active because `CTRL_REG5.FIFO_EN=0` remains explicit;
+- exact pole/seam geometry coordinates fail closed, immediately interior coordinates remain supported, and M6C2 propagates invalid-domain polygons through full-set validation;
+- TLP codecs/golden fixtures, NetworkService, RadioManager, PositionFlow, HistoryStore/journal, GNSS state machine, identity/sequence, legacy role mapping and RF PHY/config remain unchanged.
+
+Astra found no code finding that blocks proceeding to the physical M6A test on the corrected candidate. This re-audit is software evidence only and does **not** constitute physical RAK1904 validation.
+
 ## Compatibility/system impact
 
 ```text
@@ -117,12 +149,14 @@ Security/contact semantics:   unchanged
 
 M6B1/M6B2 remain software-only and unchanged by these fixes. M6C1 domain acceptance is narrower only at exact global coordinate singularities; M6C2 inherits that fail-closed geometry contract.
 
-## Remaining gates
+## Remaining gate
 
-1. **Independent Astra re-audit** of the four minimal fixes and their new tests.
-2. If the re-audit finds no physical-path blocker, upload the latest corrected image to Tracker B when hardware is available.
-3. Perform focused physical M6A validation: positive WHO_AM_I path, real settled/fresh XYZ, and successful post-sample shutdown behavior.
-4. Record the physical evidence without promoting it to continuous sampling, current-consumption, activity-classification or geofence-field validation.
-5. Merge only after both re-audit closure and the physical M6A gate are complete.
+The independent software/audit gate is closed for the corrected candidate. The only remaining merge gate for this stack is the focused physical M6A validation on the **latest corrected image**:
 
-No physical PASS is claimed by this document.
+1. upload the corrected image to Tracker B when hardware is available;
+2. capture boot/reset evidence for positive RAK1904 identification;
+3. confirm a real settled/fresh XYZ probe sample is reported;
+4. confirm the normal post-sample shutdown path completes on hardware;
+5. record the exact physical evidence without promoting it to continuous sampling, current-consumption, animal-classification, geofence-field or trusted-LOST validation.
+
+Merge remains blocked until that physical gate is recorded as PASS. No physical PASS is claimed by this document.
