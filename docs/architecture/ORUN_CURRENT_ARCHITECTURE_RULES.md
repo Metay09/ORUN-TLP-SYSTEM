@@ -1,8 +1,8 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT pre-M6 owner-approved architecture rules**.
-Last reviewed against code: `3186c96d54f0f84243296a776a0f1ffa5ed4c526`.
-Last architecture review update: 2026-09-15.
+Status: **CURRENT through the M6 software stack; final independent audit and focused operator M6A physical gate PASS; overall M6 IN PROGRESS**.
+Last reviewed against code: `332cf0e1b307735348a97c3cbd15f916d04a21a0`.
+Last architecture review update: 2026-09-16.
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
@@ -122,7 +122,7 @@ receive-epoch invariants.
 
 Legacy `setRole()` still installs the historical forwarding default so existing
 TRACKER/RELAY/BASE behavior is unchanged. This is a compatibility adapter, not a
-return to role-owned forwarding. `main.cpp` now resolves the legacy requested
+return to role-owned forwarding. `main.cpp` resolves the legacy requested
 defaults through the B4 RequestedConfig/CapabilitySnapshot/EffectiveConfig path
 and applies the resolved relay state through RadioManager. No user-facing relay
 toggle or durable configuration exists yet.
@@ -196,15 +196,29 @@ a fault rather than making it vanish.
 
 Capability does not imply service enablement. A GNSS module may be present while
 GNSS tracking is disabled or a different location source owns the active point.
+Likewise, a RAK1904 accelerometer may be PRESENT while no activity service is
+requested or effectively running.
 
-The current B4 composition root marks the RAK product image as supporting GNSS,
-uses bounded `GnssManager` detection to distinguish UNKNOWN/PRESENT/ABSENT, and
-does not use that capability snapshot as the owner of role, profile or GNSS power.
-Acquisition-specific GNSS failures remain owned by the existing GNSS state
-machine; they do not make installed hardware disappear. The present composition
-therefore provides only a coarse GNSS health projection: detected hardware is
-reported as `PRESENT + OK`; acquisition timeout/recovery is not yet aggregated
-into the B4 capability health field.
+The current M6A composition root marks the RAK product image as supporting both
+GNSS and the owned RAK1904/LIS3DH path. `GnssManager` keeps the existing bounded
+GNSS UNKNOWN/PRESENT/ABSENT detection semantics. `AccelerometerManager` adds an
+independent bounded LIS3DH identity/configuration/sample seam: positive
+`WHO_AM_I=0x33` establishes PRESENT ownership; clean bounded no/wrong-device
+results become ABSENT; a transport/recovery fault before positive identity stays
+UNKNOWN + FAULT; a failure after positive identity remains PRESENT + FAULT.
+Neither capability may infer role, profile or service enablement.
+
+GNSS acquisition-specific failures remain owned by the existing GNSS state
+machine and do not make installed hardware disappear. Its current capability
+projection therefore remains intentionally coarse: detected hardware is reported
+as `PRESENT + OK`; acquisition timeout/recovery is not yet aggregated into the
+capability health field.
+
+The accelerometer currently performs only a bounded boot/probe path in production
+composition. It is not a continuous 10 Hz runtime activity service. M6B1/M6B2
+activity feature/quality helpers are compiled in the source tree but are not
+called by `main.cpp`, so accelerometer presence must not be presented as activity
+classification availability.
 
 ## 6. Requested configuration, effective state and commands
 
@@ -249,15 +263,16 @@ One-shot commands are different from configuration intent. A future actuation
 command targeting an unavailable actuator must be rejected with an explicit
 result; it must not be retained as "requested=true until hardware appears".
 
-The current B4 production composition still derives RequestedConfig from the
-frozen legacy role projection. This is intentionally only a migration source.
-Tracking effective state gates PositionFlow/fix admission; relay effective state
-is applied through the safe RadioManager forwarding boundary. A later validated
-configuration surface may replace the legacy source without changing those
-service ownership boundaries.
+The current production composition still derives RequestedConfig from the frozen
+legacy role projection. This is intentionally only a migration source. Tracking
+effective state gates PositionFlow/fix admission; relay effective state is
+applied through the safe RadioManager forwarding boundary. M6A adds accelerometer
+capability observation only; there is still no requested/effective activity or
+geofence service field. A later validated configuration surface may replace the
+legacy source without changing those ownership boundaries.
 
-B4 is runtime-only. Do not allocate flash or claim durable configuration until
-the verified partition/ownership work is complete.
+B4/M6 current configuration remains runtime-only. Do not allocate flash or claim
+durable configuration until the verified partition/ownership work is complete.
 
 ## 7. Location and GNSS remain separate
 
@@ -278,10 +293,17 @@ satellite/HDOP/time semantics. PHONE/MANUAL/fixed location must not be forced in
 `GnssFix`. Do not add a generic Location abstraction until a real second source
 needs it.
 
-B4 does not change GNSS power ownership. `GnssManager::poll()` and the existing
+B4/M6A do not change GNSS power ownership. `GnssManager::poll()` and the existing
 sensor-rail state machine continue independently of application tracking service
 resolution. Do not infer GNSS power from role or tracking enablement without a
 separate reviewed power-policy change.
+
+M6C1/M6C2 intentionally stop below this ownership boundary. Their `GeoPointE7`
+value is geometry input only; the geofence geometry/area-set modules do not own
+GNSS freshness, HDOP acceptance, source arbitration or last-known state. Future
+runtime integration must hand the geofence service an already accepted fresh
+position from the correct location/tracking owner rather than letting geometry
+reach into `GnssManager` internals.
 
 ## 8. Network evolution and scale boundary
 
@@ -323,6 +345,11 @@ Do not enable durable config before the flash/bootloader/SoftDevice/InternalFS/
 bond/DFU ownership plan is verified. Do not remove the current SoftDevice flash
 safety guard merely to make BLE writes succeed.
 
+M6 activity/geofence helpers allocate no durable state and do not reuse the
+position journal. Future activity history, polygon configuration, FREE_GRAZE
+state or critical events require explicit storage owners and power-cut semantics
+before persistence is enabled.
+
 `TX_DONE` is local radio completion. It is not delivery, receiver custody,
 authenticated contact, command execution, or confirmed physical state. Historical
 replay/delivery cursors must not be advanced from TX completion without a defined
@@ -332,6 +359,12 @@ receipt semantic.
 
 Local activity and local geofence development may proceed in M6 using accepted
 fresh location and local rules.
+
+The current software stack has only deterministic activity feature/quality
+helpers and geofence geometry/permitted-area composition. It does **not** yet
+implement production activity classification, NEAR_FENCE distance, GNSS quality
+policy, repeated-fix confirmation, hysteresis, FREE_GRAZE or local operational
+state. Host-only geometry PASS must not be described as field geofence PASS.
 
 A trustworthy network-contact-based LOST rule is different. Do not claim:
 
@@ -355,10 +388,13 @@ result/feedback semantics. Do not invent cryptography.
 | --- | --- | --- |
 | Device identity | identity provider + portable `DeviceIdentity` | radio readiness, user identity, profile |
 | Hardware detection | board/sensor adapters + capability boundary | application role/profile |
+| Accelerometer manager | LIS3DH identity/config/sample + bounded shutdown | activity enablement/classification, role, GNSS power |
 | Capability state | capability snapshot: support/presence/health | requested user intent |
 | Configuration | requested candidate + validation | driver probing, transport-specific policy |
 | Resolution/effective state | combine validated request + capability/policy into status/reason | mutate requested intent silently |
 | Profiles | defaults applied into requested config | immutable device classification |
+| Activity window/quality | deterministic local features + eligibility | sensor I/O, cattle accuracy claims, RF/storage policy |
+| Geofence geometry/area-set | polygon validity, point relation, permitted union | GNSS freshness/source, NEAR/hysteresis/FREE_GRAZE/LOST |
 | Application services | tracking/telemetry/activity/geofence/etc. | physical driver details, network topology inference |
 | Location | source arbitration, validity, freshness, last-known state | u-blox parser internals, network role |
 | Network | forwarding, dedupe, route/hop policy | sensor payload interpretation |
@@ -386,22 +422,21 @@ has owner-run evidence for:
 Earlier B1B owner-operated hardware evidence demonstrated real open-sky GNSS on
 Tracker B and DIRECT POSITION reception by Base A.
 
-The owner/operator has now confirmed that the requested B2+B3 physical sanity
-regression was also performed on the B2/B3 firmware: Tracker acquired a real GNSS
-fix, produced/transmitted POSITION, and Base received the packet. Because the
-current PositionFlow is store-before-send and suppresses live TX after append
-failure, that successful packet path also exercises the normal store-first
-admission path. This is not a substitute for separate flash power-cut/readback,
-long-range RF, relay-path or current-consumption validation.
+The owner/operator confirmed the requested B2+B3 physical sanity regression on
+the B2/B3 firmware: Tracker acquired a real GNSS fix, produced/transmitted
+POSITION, and Base received the packet. Because PositionFlow is store-before-send
+and suppresses live TX after append failure, that successful packet path also
+exercises the normal store-first admission path. This is not a substitute for
+separate flash power-cut/readback, long-range RF, relay-path or current-consumption
+validation.
 
 The short GNSS -> storage -> POSITION -> Base DIRECT regression gate is therefore
-closed for B2/B3. The remaining closure gate is the independent final audit and
-merge review. Host/build/upload evidence must still never be generalized into
+closed for B2/B3. Host/build/upload evidence must still never be generalized into
 unperformed hardware tests.
 
 The 2026-09-15 independent architecture research review returned **GREEN WITH
 CONDITIONS** and did not identify a P0/Critical architectural blocker. Accepted
-pre-M6 refinements from that review are recorded here and summarized in
+pre-M6 refinements from that review are recorded in
 `docs/audits/PRE_M6_EXTERNAL_ARCHITECTURE_REVIEW.md`.
 
 ## 13. B4 bounded scope and current state
@@ -424,11 +459,12 @@ the radio/network seams are host-tested for that combination, but production
 requested intent still comes from the frozen legacy compatibility mapping until a
 later explicit configuration surface is authorized.
 
-The complete B4 branch review found one pre-merge semantic mismatch: an invalid
+The B4 branch review found one pre-merge semantic mismatch: an invalid
 RequestedConfig could partially enable relay while blocking invalid tracking.
-That was corrected before merge review so invalid candidates now fail closed as a
-whole. The detailed review and accepted bounded limitations are recorded in
-`docs/audits/PRE_M6_B4_BRANCH_REVIEW.md`.
+That was corrected so invalid candidates fail closed as a whole. The later Astra
+review also found undefined `RequestedLocationSource` enum values were outside
+the validation domain; that was corrected and covered by regression tests before
+the B2/B3/B4 stack was merged.
 
 B4 must **not** implement:
 
@@ -451,5 +487,72 @@ TRACKER+relay hardware behavior, flash power-cut recovery, long-range RF, curren
 consumption or any future multi-hop behavior.
 
 See `docs/milestones/PRE_M6_B4_CONFIG_CAPABILITY_BOUNDARY.md` for exact validation
-state and remaining closure steps. Host/build evidence and the direct physical
-PASS must not be generalized into unperformed hardware validation.
+state. Host/build evidence and the direct physical PASS must not be generalized
+into unperformed hardware validation.
+
+## 14. Current M6 implementation boundary
+
+The current stacked M6 software state through M6C2 is intentionally asymmetric:
+only M6A changes production runtime composition; M6B1/M6B2/M6C1/M6C2 are portable
+helpers compiled in the production source tree but not referenced by `main.cpp`.
+
+### Runtime-integrated now
+
+- `AccelerometerManager` performs bounded RAK1904/LIS3DH boot detection,
+  cooperative configuration, retained-sample discard, one fresh probe sample and
+  bounded post-sample shutdown.
+- `CapabilitySnapshot` includes independent accelerometer support/presence/health
+  alongside GNSS.
+- This capability observation does not create an activity requested/effective
+  service and does not affect Role, tracking, relay forwarding or GNSS power.
+
+M6A software and final independent Astra audit are PASS on
+`332cf0e1b307735348a97c3cbd15f916d04a21a0`: **13,948 / 248,832 bytes RAM (5.6%)**
+and **142,456 / 815,104 bytes flash (17.5%)**. The diagnostic delta versus
+`613cdf1` adds **16 bytes RAM / 272 bytes flash**. `ACCEL?` only reports the latched
+boot result; it does not probe, wake, reconfigure or re-enter the manager, and
+changes no TLP v1, RF, storage, GNSS, identity, sequence, role compatibility or
+power ownership semantics.
+
+The focused operator M6A physical gate is **PASS / CLOSED** on that exact image:
+upload to Tracker B, ABSENT with no module, positive RAK1904 identity and normal
+settled/fresh XYZ with the module in SENSOR C, and automatic PRESENT on a separate
+reset without `ACCEL?`. Only this narrow focused probe path is physically proven.
+`ACCEL PRESENT` supports the normal shutdown-write path because the current
+manager emits `kPresent` only after successful post-sample `powerDownSensor`
+completion. This is not a current-consumption measurement and does not prove
+physical I2C fault-cleanup/recovery. This is operator evidence, not independent
+Astra hardware validation. Exact serial observations and the PASS/non-evidence
+matrix are recorded in `docs/milestones/M6.md` and
+`docs/audits/PRE_M6_STACK_AUDIT_RESOLUTION.md`.
+
+### Host-only / not production-integrated now
+
+- M6B1 fixed-memory activity window/features;
+- M6B2 activity feature eligibility/quality gate;
+- M6C1 simple-polygon geometry;
+- M6C2 multiple permitted-area union composition.
+
+Each of those slices has owner-run full host regression PASS and RAK4630 build
+SUCCESS on the stacked branch. Their code is linker-removed from the current
+production image because it is not referenced by `main.cpp`; therefore the
+measured linked image remains equal to the M6A audit-hardened composition.
+
+No current M6 code claims:
+
+- continuous production accelerometer sampling;
+- RESTING/GRAZING/WALKING classification;
+- cattle behavior accuracy;
+- GNSS-to-geofence runtime wiring;
+- NEAR_FENCE distance, hysteresis or repeated-fix policy;
+- FREE_GRAZE;
+- geofence persistence;
+- critical RF event/ACK delivery;
+- trustworthy network-contact LOST.
+
+The final independent audit and focused operator M6A physical gate are closed.
+Remaining work for this unchanged candidate is documentation review and pre-merge
+preparation, not another M6A hardware test. Overall M6 remains IN PROGRESS; no
+continuous sampling, animal classification/accuracy, geofence field behavior or
+trusted LOST/contact is validated by this closure. Any later change to
+runtime/I2C/power behavior requires relevant revalidation before merge.

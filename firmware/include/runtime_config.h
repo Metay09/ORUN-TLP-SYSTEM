@@ -35,10 +35,13 @@ struct CapabilityState {
 };
 
 struct CapabilitySnapshot {
-  constexpr CapabilitySnapshot(CapabilityState gnss_value = CapabilityState())
-      : gnss(gnss_value) {}
+  constexpr CapabilitySnapshot(
+      CapabilityState gnss_value = CapabilityState(),
+      CapabilityState accelerometer_value = CapabilityState())
+      : gnss(gnss_value), accelerometer(accelerometer_value) {}
 
   CapabilityState gnss;
+  CapabilityState accelerometer;
 };
 
 enum class RequestedLocationSource : uint8_t {

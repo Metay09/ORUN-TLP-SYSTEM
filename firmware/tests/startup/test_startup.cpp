@@ -170,6 +170,26 @@ int main(int argc, char** argv) {
     assert(send_calls == 0);
   }
   assert(watchdog_feeds == 19 && fake_idle_calls == 19);
+
+  // The USB diagnostic must be queryable after the early boot window is gone.
+  // While the bounded probe is incomplete it reports PENDING, not ABSENT.
+  Serial.output.clear();
+  Serial.queueInput("ACCEL?\n");
+  pollRoleCommands();
+  assert(Serial.output == "ACCEL PENDING\n");
+
+  // The startup Wire stub has no LIS3DH response. Advance exactly to the third
+  // bounded detection attempt, latch the real manager event, then prove the same
+  // query returns the retained result without re-probing hardware.
+  test_now = 2250;
+  handleAccelerometerEvent(accelerometer_manager.poll(test_now));
+  assert(accelerometer_manager.detectionComplete());
+  assert(!accelerometer_manager.detected());
+  Serial.output.clear();
+  Serial.queueInput("ACCEL?\n");
+  pollRoleCommands();
+  assert(Serial.output == "ACCEL ABSENT\n");
+
   assert(munmap(region, kRegionSize) == 0);
   printf("Production startup identity/history/loop (%s): PASS\n", argv[1]);
 }

@@ -55,9 +55,17 @@ inline void delayMicroseconds(uint32_t us) { fake_delay_us += us; }
 
 struct TestSerial {
   std::string output;
+  std::string input;
+  size_t input_index = 0;
   void begin(unsigned) {}
-  int available() const { return 0; }
-  int read() { return -1; }
+  int available() const { return input_index < input.size(); }
+  int read() {
+    if (input_index >= input.size()) return -1;
+    return static_cast<unsigned char>(input[input_index++]);
+  }
+  void queueInput(const char* value) {
+    if (value != nullptr) input += value;
+  }
   void print(const char* value) { output += value; }
   void println(const char* value) { print(value); output += '\n'; }
   template <typename... Args> void printf(const char* format, Args... args) {

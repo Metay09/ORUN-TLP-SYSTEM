@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Adafruit_TinyUSB.h>
 
+#include "accelerometer_manager.h"
 #include "firmware_version.h"
 #include "gnss_manager.h"
 #include "node_role.h"
@@ -17,6 +18,7 @@ namespace {
 
 orun_tlp::RadioManager radio_manager;
 orun_tlp::GnssManager gnss_manager;
+orun_tlp::AccelerometerManager accelerometer_manager;
 orun_tlp::NrfHistoryFlash history_flash;
 orun_tlp::HistoryStore history(history_flash);
 orun_tlp::PositionFlow positions(history, radio_manager);
@@ -26,20 +28,73 @@ char role_command[24]{};
 uint8_t role_command_length = 0;
 bool role_command_overflow = false;
 
+enum class AccelerometerDiagnosticState : uint8_t {
+  kPending,
+  kPresent,
+  kAbsent,
+  kFault,
+};
+
+AccelerometerDiagnosticState accelerometer_diagnostic_state =
+    AccelerometerDiagnosticState::kPending;
+orun_tlp::AccelerometerSample accelerometer_diagnostic_sample{};
+bool accelerometer_diagnostic_sample_valid = false;
+
 void applyRole(orun_tlp::NodeRole role, const char* source) {
   radio_manager.setRole(role);
   Serial.printf("ROLE %s source=%s\n", orun_tlp::roleName(role), source);
 }
 
+bool isAccelerometerQuery() {
+  static const char kQuery[] = "ACCEL?";
+  constexpr uint8_t kQueryLength = sizeof(kQuery) - 1;
+  if (role_command_length != kQueryLength) return false;
+  for (uint8_t i = 0; i < kQueryLength; ++i) {
+    if (role_command[i] != kQuery[i]) return false;
+  }
+  return true;
+}
+
+void printAccelerometerDiagnostic() {
+  if (accelerometer_diagnostic_state == AccelerometerDiagnosticState::kPending) {
+    Serial.println(F("ACCEL PENDING"));
+    return;
+  }
+  if (accelerometer_diagnostic_state == AccelerometerDiagnosticState::kPresent) {
+    if (accelerometer_diagnostic_sample_valid) {
+      Serial.printf("ACCEL PRESENT x_mg=%d y_mg=%d z_mg=%d\n",
+                    static_cast<int>(accelerometer_diagnostic_sample.x_mg),
+                    static_cast<int>(accelerometer_diagnostic_sample.y_mg),
+                    static_cast<int>(accelerometer_diagnostic_sample.z_mg));
+    } else {
+      Serial.println(F("ACCEL PRESENT"));
+    }
+    return;
+  }
+  if (accelerometer_diagnostic_state == AccelerometerDiagnosticState::kAbsent) {
+    Serial.println(F("ACCEL ABSENT"));
+    return;
+  }
+  Serial.printf("ACCEL FAULT presence=%s\n",
+                accelerometer_manager.detected() ? "PRESENT" : "UNKNOWN");
+}
+
 void handleRoleCommand() {
-  const auto command = orun_tlp::parseRoleCommand(role_command,
-                                                   role_command_length);
-  role_command_length = 0;
   if (role_command_overflow) {
+    role_command_length = 0;
     role_command_overflow = false;
     Serial.println(F("ROLE command rejected: too long"));
     return;
   }
+  if (isAccelerometerQuery()) {
+    role_command_length = 0;
+    printAccelerometerDiagnostic();
+    return;
+  }
+
+  const auto command = orun_tlp::parseRoleCommand(role_command,
+                                                   role_command_length);
+  role_command_length = 0;
   if (command == orun_tlp::RoleCommand::kQuery) {
     Serial.printf("ROLE %s mode=%s\n", orun_tlp::roleName(role_controller.role()),
                   role_controller.automatic() ? "AUTO" : "OVERRIDE");
@@ -83,8 +138,9 @@ void pollRoleCommands() {
 
 orun_tlp::CapabilitySnapshot currentCapabilitySnapshot() {
   // Firmware support and physical presence are separate facts. The current
-  // RAK product image supports GNSS, while bounded detection owns whether the
-  // module is presently known to exist. Do not infer role/profile from this.
+  // RAK product image supports GNSS and the owned RAK1904/LIS3DH path, while
+  // bounded detection owns whether optional hardware is presently known to
+  // exist. Neither capability is allowed to infer role/profile.
   orun_tlp::CapabilityState gnss(
       true, orun_tlp::CapabilityPresence::kUnknown,
       orun_tlp::CapabilityHealth::kUnavailable);
@@ -100,7 +156,28 @@ orun_tlp::CapabilitySnapshot currentCapabilitySnapshot() {
       gnss.health = orun_tlp::CapabilityHealth::kUnavailable;
     }
   }
-  return orun_tlp::CapabilitySnapshot(gnss);
+
+  orun_tlp::CapabilityState accelerometer(
+      true, orun_tlp::CapabilityPresence::kUnknown,
+      orun_tlp::CapabilityHealth::kUnavailable);
+  if (accelerometer_manager.detectionComplete()) {
+    if (accelerometer_manager.detected()) {
+      accelerometer.presence = orun_tlp::CapabilityPresence::kPresent;
+      accelerometer.health = accelerometer_manager.faulted()
+                                 ? orun_tlp::CapabilityHealth::kFault
+                                 : orun_tlp::CapabilityHealth::kOk;
+    } else if (accelerometer_manager.faulted()) {
+      // A transport/recovery failure before positive WHO_AM_I is not proof that
+      // the physical module is absent.
+      accelerometer.presence = orun_tlp::CapabilityPresence::kUnknown;
+      accelerometer.health = orun_tlp::CapabilityHealth::kFault;
+    } else {
+      accelerometer.presence = orun_tlp::CapabilityPresence::kAbsent;
+      accelerometer.health = orun_tlp::CapabilityHealth::kUnavailable;
+    }
+  }
+
+  return orun_tlp::CapabilitySnapshot(gnss, accelerometer);
 }
 
 bool serviceRuns(const orun_tlp::ServiceStatus& status) {
@@ -111,10 +188,38 @@ bool serviceRuns(const orun_tlp::ServiceStatus& status) {
 orun_tlp::EffectiveConfig resolveRuntimeConfig() {
   // B4 still uses the frozen legacy role projection as the requested defaults.
   // A later validated config surface can replace this source without returning
-  // runtime ownership to NodeRole.
+  // runtime ownership to NodeRole. M6A adds only hardware capability discovery;
+  // it does not invent an activity requested-config field yet.
   const auto requested = orun_tlp::requestedConfigFromLegacyBehavior(
       orun_tlp::legacyRoleBehavior(role_controller.role()));
   return orun_tlp::resolveRequestedConfig(requested, currentCapabilitySnapshot());
+}
+
+void handleAccelerometerEvent(orun_tlp::AccelerometerManager::Event event) {
+  if (event == orun_tlp::AccelerometerManager::Event::kPresent) {
+    accelerometer_diagnostic_state = AccelerometerDiagnosticState::kPresent;
+    orun_tlp::AccelerometerSample sample{};
+    if (accelerometer_manager.takeProbeSample(&sample)) {
+      accelerometer_diagnostic_sample = sample;
+      accelerometer_diagnostic_sample_valid = true;
+      Serial.printf("ACCEL PRESENT x_mg=%d y_mg=%d z_mg=%d\n",
+                    static_cast<int>(sample.x_mg),
+                    static_cast<int>(sample.y_mg),
+                    static_cast<int>(sample.z_mg));
+    } else {
+      accelerometer_diagnostic_sample_valid = false;
+      Serial.println(F("ACCEL PRESENT"));
+    }
+  } else if (event == orun_tlp::AccelerometerManager::Event::kAbsent) {
+    accelerometer_diagnostic_state = AccelerometerDiagnosticState::kAbsent;
+    accelerometer_diagnostic_sample_valid = false;
+    Serial.println(F("ACCEL ABSENT"));
+  } else if (event == orun_tlp::AccelerometerManager::Event::kFault) {
+    accelerometer_diagnostic_state = AccelerometerDiagnosticState::kFault;
+    accelerometer_diagnostic_sample_valid = false;
+    Serial.printf("ACCEL FAULT presence=%s\n",
+                  accelerometer_manager.detected() ? "PRESENT" : "UNKNOWN");
+  }
 }
 
 void printBootBanner() {
@@ -161,13 +266,17 @@ void setup() {
                   static_cast<unsigned long>(history.backlogCount()));
   } else Serial.println(F("STORAGE unavailable; POSITION TX disabled"));
   gnss_manager.begin();
+  accelerometer_manager.begin(orun_tlp::monotonic::nowMs());
   Serial.println(F("ROLE AUTO pending (GNSS=>TRACKER, no GNSS=>BASE)"));
 }
 
 void loop() {
-  // GNSS detection/power remains owned by GnssManager. B4 service resolution
-  // must not silently turn role, location source and GNSS power into one knob.
+  // GNSS detection/power remains owned by GnssManager. Service resolution must
+  // not silently turn role, location source, GNSS power or accelerometer
+  // presence into one knob.
   gnss_manager.poll();
+  handleAccelerometerEvent(
+      accelerometer_manager.poll(orun_tlp::monotonic::nowMs()));
   pollRoleCommands();
   if (!automatic_role_resolved && role_controller.automatic() &&
       gnss_manager.detectionComplete()) {
