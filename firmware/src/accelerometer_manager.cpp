@@ -20,9 +20,9 @@ constexpr uint8_t kCtrl5 = 0x24;
 constexpr uint8_t kCtrl6 = 0x25;
 constexpr uint8_t kStatus = 0x27;
 constexpr uint8_t kOutXL = 0x28;
-constexpr uint8_t kFifoCtrl = 0x2E;
 constexpr uint8_t kInt1Cfg = 0x30;
 constexpr uint8_t kClickCfg = 0x38;
+constexpr uint8_t kActThs = 0x3E;
 
 constexpr uint8_t kStatusXyzDataAvailable = 0x08;
 constexpr uint8_t kCtrl1TenHzXyz = 0x27;   // 10 Hz, normal/HR path, XYZ enabled.
@@ -36,8 +36,11 @@ struct RegisterWrite {
 // CTRL1=0 is deliberately first. RAK1904 VDD remains powered across MCU resets,
 // so a reboot/DFU must not assume the LIS3DH already sits in our previous state.
 // Configure the remaining registers while powered down and write the requested
-// ODR last. The first data-ready sample is discarded separately below because
-// LIS3DH output registers retain their last sample in power-down mode.
+// ODR last. Clear ACT_THS explicitly because a retained non-zero value enables
+// LIS3DH autonomous activity/inactivity mode and can force 10 Hz low-power state.
+// FIFO_CTRL itself need not be reset while CTRL5 FIFO_EN is explicitly cleared.
+// The first data-ready sample is discarded separately below because LIS3DH output
+// registers retain their last sample in power-down mode.
 const RegisterWrite kProbeRegisterWrites[] = {
     {kCtrl1, 0x00},
     {kTempCfg, 0x00},
@@ -45,9 +48,9 @@ const RegisterWrite kProbeRegisterWrites[] = {
     {kCtrl3, 0x00},
     {kCtrl5, 0x00},
     {kCtrl6, 0x00},
-    {kFifoCtrl, 0x00},
     {kInt1Cfg, 0x00},
     {kClickCfg, 0x00},
+    {kActThs, 0x00},
     {kCtrl4, kCtrl4BduHighResolution2g},
     {kCtrl1, kCtrl1TenHzXyz},
 };
@@ -178,6 +181,21 @@ void AccelerometerManager::startPowerDown(Event event) {
   state_ = State::kPoweringDown;
 }
 
+AccelerometerManager::Event AccelerometerManager::enterFaultCleanup(uint32_t now) {
+  // The immediate shutdown budget is exhausted, so publish the capability fault
+  // now and suppress any captured sample. Do not abandon a positively identified
+  // sensor in active mode forever: retain a sparse one-operation cleanup state.
+  // The capability stays faulted even if a later cleanup succeeds; a reboot is
+  // required to re-probe health rather than silently converting FAULT to OK.
+  detection_complete_ = true;
+  faulted_ = true;
+  probe_sample_ready_ = false;
+  pending_finish_event_ = Event::kNone;
+  next_action_at_ms_ = now + accelerometer_config::kFaultCleanupRetryBackoffMs;
+  state_ = State::kFaultCleanup;
+  return Event::kFault;
+}
+
 AccelerometerManager::Event AccelerometerManager::finishAbsent() {
   detection_complete_ = true;
   detected_ = false;
@@ -266,10 +284,20 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
 
     ++configuration_step_;
     if (configuration_step_ == kProbeRegisterWriteCount) {
-      probe_started_at_ms_ = now;
-      next_action_at_ms_ = now + accelerometer_config::kProbeSamplePeriodMs;
-      state_ = State::kProbeWait;
+      // CTRL_REG1=10 Hz is the final configuration write. LIS3DH high-resolution
+      // output requires 7/ODR turn-on time; do not inspect DRDY or output data
+      // until that interval has elapsed, even if retained status is already set.
+      next_action_at_ms_ = now + accelerometer_config::kHighResolutionSettleMs;
+      state_ = State::kHighResolutionSettling;
     }
+    return Event::kNone;
+  }
+
+  if (state_ == State::kHighResolutionSettling) {
+    if (!monotonic::reached(now, next_action_at_ms_)) return Event::kNone;
+    probe_started_at_ms_ = now;
+    next_action_at_ms_ = now;
+    state_ = State::kProbeWait;
     return Event::kNone;
   }
 
@@ -313,9 +341,10 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
     if (discard_next_sample_) {
       // LIS3DH retains the previous output registers in power-down mode. Reading
       // and discarding the first ready set prevents a pre-reset/pre-DFU sample
-      // from being reported as a fresh M6A observation. Wait for the next ODR
-      // period before accepting a sample from the newly configured session.
+      // from being reported as a fresh M6A observation. After HR settling, wait
+      // one additional ODR period and give that fresh phase its own timeout budget.
       discard_next_sample_ = false;
+      probe_started_at_ms_ = now;
       next_action_at_ms_ = now + accelerometer_config::kProbeSamplePeriodMs;
       state_ = State::kProbeWait;
       return Event::kNone;
@@ -335,11 +364,21 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
     if (!powerDownSensor(diagnostics_, saw_transport_timeout_)) {
       if (power_down_attempts_ < accelerometer_config::kPowerDownMaxAttempts)
         return Event::kNone;
-      return finishFault();
+      return enterFaultCleanup(now);
     }
     if (pending_finish_event_ == Event::kPresent)
       return finishPresent();
     return finishFault();
+  }
+
+  if (state_ == State::kFaultCleanup) {
+    if (!monotonic::reached(now, next_action_at_ms_)) return Event::kNone;
+    if (powerDownSensor(diagnostics_, saw_transport_timeout_)) {
+      state_ = State::kDone;
+      return Event::kNone;
+    }
+    next_action_at_ms_ = now + accelerometer_config::kFaultCleanupRetryBackoffMs;
+    return Event::kNone;
   }
 
   return Event::kNone;
