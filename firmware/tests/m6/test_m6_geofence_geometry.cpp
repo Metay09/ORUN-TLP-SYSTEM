@@ -71,7 +71,13 @@ void malformedPolygonsFailClosed() {
   assert(validateGeofencePolygon(view(two, 2)) ==
          GeofencePolygonValidation::kTooFewVertices);
 
-  GeoPointE7 too_many[geofence_config::kMaximumPolygonVertices + 1];
+  // kMaximumPolygonVertices is an effective-vertex limit. A raw count of
+  // max+1 can still be valid only when the last point explicitly closes the
+  // polygon by repeating the first. Make this oversized fixture deterministic
+  // and non-closing; leaving the stack array uninitialized made the test itself
+  // undefined and could accidentally look explicitly closed.
+  GeoPointE7 too_many[geofence_config::kMaximumPolygonVertices + 1] = {};
+  too_many[geofence_config::kMaximumPolygonVertices] = GeoPointE7(1, 1);
   assert(validateGeofencePolygon(
              view(too_many, geofence_config::kMaximumPolygonVertices + 1)) ==
          GeofencePolygonValidation::kTooManyVertices);
