@@ -49,6 +49,10 @@ g++ "${b3_flags[@]}" firmware/tests/m6/test_m6_activity_quality.cpp \
   firmware/src/activity_quality.cpp -o "$test_dir/m6_activity_quality"
 "$test_dir/m6_activity_quality"
 
+g++ "${b3_flags[@]}" firmware/tests/m6/test_m6_geofence_geometry.cpp \
+  firmware/src/geofence_geometry.cpp -o "$test_dir/m6_geofence_geometry"
+"$test_dir/m6_geofence_geometry"
+
 g++ "${flags[@]}" firmware/tests/m3/test_m3.cpp "${gnss_sources[@]}" \
   -o "$test_dir/m3"
 "$test_dir/m3"
