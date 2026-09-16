@@ -1,18 +1,18 @@
 # PRE-M6 Stack Audit Package
 
-Status: **ASTRA INITIAL AUDIT + RE-AUDIT COMPLETE; ALL FOUR P2 FINDINGS CLOSED; PHYSICAL M6A GATE PENDING**.
+Status: **ASTRA INITIAL / RE-AUDIT / FINAL DIAGNOSTIC AUDIT COMPLETE; ALL FOUR P2 FINDINGS CLOSED; FOCUSED OPERATOR M6A PHYSICAL GATE PASS**.
 
 Audit baseline: `main@859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 Initially audited candidate: `docs/m6-premerge-sync@8273e2434d0339a1335a9f1f4e4488825819c7bf`.
 Corrected/re-audited candidate: `fix/m6-audit-findings@613cdf1ab583d4957e15ac0a90c6785cfbff641b`.
+Final audited diagnostic candidate: `fix/m6-audit-findings@332cf0e1b307735348a97c3cbd15f916d04a21a0`.
 Detailed finding/fix/re-audit record: `docs/audits/PRE_M6_STACK_AUDIT_RESOLUTION.md`.
 
 ## Purpose
 
-This package records the exact scope and evidence independently reviewed before
-the current M6 stack may proceed to its remaining physical gate. It is intentionally
-explicit about what is runtime-integrated, what is host-only, and what remains
-physically unverified.
+This package records the independent software audits and the separately supplied
+operator evidence closing the focused M6A physical gate. It distinguishes what is
+runtime-integrated, what is host-only, and what remains physically unverified.
 
 The reviewer treated repository code/tests/golden fixtures and the current
 architecture rules as canonical. Historical discussions did not override the
@@ -44,6 +44,9 @@ initial Astra-audited docs/code candidate
 
 corrected/re-audited candidate
   613cdf1ab583d4957e15ac0a90c6785cfbff641b
+
+final audited diagnostic candidate
+  332cf0e1b307735348a97c3cbd15f916d04a21a0
 ```
 
 ## Independent audit result
@@ -59,8 +62,8 @@ The initial Astra audit found no P0/P1 issue and reproduced four P2 findings:
 
 All four were corrected on `fix/m6-audit-findings` and then independently
 re-audited. Astra closed all four findings and found **no new P0/P1/P2 blocker**.
-The software/audit gate is therefore closed for the corrected candidate; physical
-RAK1904 behavior remains **NOT PROVEN** until the focused hardware check runs.
+The final diagnostic audit also passed; the focused operator physical gate is
+**PASS / CLOSED** on the final candidate. Exact evidence and limits appear below.
 
 ## Runtime versus host-only boundary
 
@@ -186,7 +189,7 @@ OUTSIDE != LOST
 
 ## Owner-run post-fix validation evidence
 
-On `fix/m6-audit-findings` after the four P2 fixes:
+Historical evidence at `613cdf1`, after the four P2 fixes and before `ACCEL?`:
 
 - complete `./firmware/tests/run_host_tests.sh`: **PASS**;
 - host profiles include `-Wall -Wextra -Werror` and ASan/UBSan;
@@ -199,8 +202,8 @@ On `fix/m6-audit-findings` after the four P2 fixes:
 - `pio run -e rak4630`: **SUCCESS** with GCC ARM 7.2.1;
 - R4 bounded Wire transform verified/applied;
 - R2.1 SX126x driver-gate transform verified/applied;
-- current linked image: **13,932 / 248,832 bytes RAM (5.6%)**;
-- current linked image: **142,184 / 815,104 bytes flash (17.4%)**;
+- historical `613cdf1` linked image: **13,932 / 248,832 bytes RAM (5.6%)**;
+- historical `613cdf1` linked image: **142,184 / 815,104 bytes flash (17.4%)**;
 - no new ORUN compiler warning observed; known warnings remain inside pinned
   third-party SX126x sources.
 
@@ -217,42 +220,90 @@ Astra independently reran on corrected candidate
 - all four prior P2 findings: **CLOSED**;
 - new P0/P1/P2 blocker: **none found**.
 
-These are software results only. They do not close the physical RAK1904 gate.
+These historical re-audit results are software evidence only. The focused
+physical gate is closed by the separate operator evidence recorded below.
+
+## Final diagnostic-delta Astra audit
+
+Astra independently audited exactly `613cdf1ab583d4957e15ac0a90c6785cfbff641b..332cf0e1b307735348a97c3cbd15f916d04a21a0`.
+
+- new P0: **none found**;
+- new P1: **none found**;
+- new P2: **none found**;
+- full host suite: **PASS**;
+- supplemental ASan/UBSan production-code probes: **PASS**;
+- clean `pio run -e rak4630`: **SUCCESS**;
+- current linked RAM: **13,948 / 248,832 bytes (5.6%)**;
+- current linked flash: **142,456 / 815,104 bytes (17.5%)**;
+- delta versus `613cdf1`: **+16 bytes RAM, +272 bytes flash**;
+- only three known third-party warnings: `USING RAK4630` and two SimpleTimer
+  signedness warnings; **no ORUN compiler warnings**.
+
+`ACCEL?` is diagnostic-only and reports the latched boot result without probing,
+waking, reconfiguring or re-entering the accelerometer manager. Automatic event
+reporting, sample lifetime, serial buffering and legacy ROLE compatibility were
+confirmed. No TLP v1, RF, storage, GNSS, identity, sequence, role compatibility or
+power-ownership behavior change was found. The delta is clear for physical-evidence
+documentation and merge preparation. These are independent software results,
+not independent Astra hardware validation.
 
 ## Physical evidence and explicit non-evidence
 
-Historical evidence exists for an earlier pre-audit cooperative M6A image being
-programmed to Tracker B. That does **not** close current M6A because the physical
-image predates the later audit findings and fixes.
+The operator reported the following on Tracker B running the exact current
+image `332cf0e1b307735348a97c3cbd15f916d04a21a0`. This is **operator physical
+evidence**, not independently reproduced Astra hardware validation.
 
-Current physical status:
+1. Before RAK1904 was installed:
 
-```text
-latest corrected M6A upload:                     PENDING
-RAK1904 positive WHO_AM_I path on corrected image:PENDING
-settled/fresh XYZ on corrected image:             PENDING
-post-sample shutdown on corrected image:          PENDING
-sparse fault-cleanup recovery on hardware:        NOT PROVEN
-continuous activity sampling:                     NOT IMPLEMENTED
-current-consumption measurement:                  NOT PERFORMED
-animal behavior accuracy:                         NOT VALIDATED
-geofence field behavior:                          NOT RUNTIME-INTEGRATED
-trusted LOST/contact:                             NOT IMPLEMENTED
-```
+   ```text
+   ACCEL ABSENT
+   ```
 
-Host/build/re-audit evidence must not be promoted into any of those physical or
-product claims.
+2. With RAK1904 installed in SENSOR C:
 
-## Remaining merge gate
+   ```text
+   ACCEL PRESENT x_mg=-182 y_mg=189 z_mg=-916
+   ```
 
-The independent software/audit gate is closed. The current stack is still not
-merge-ready until the focused physical M6A validation is completed on the latest
-corrected image:
+3. On a separate hardware reset with the monitor running and **without sending
+   `ACCEL?`**:
 
-1. upload the corrected candidate to Tracker B when hardware is available;
-2. capture positive RAK1904 identification and a real settled/fresh XYZ probe;
-3. confirm the normal post-sample shutdown path completes on hardware;
-4. record the exact evidence without generalizing it to continuous sampling,
-   current consumption, animal classification, geofence field behavior or trusted
-   LOST/contact;
-5. merge only after this physical gate is recorded PASS.
+   ```text
+   ACCEL PRESENT x_mg=-186 y_mg=226 z_mg=-914
+   GNSS: detected
+   GNSS ACQUIRE start
+   ROLE TRACKER source=AUTO
+   ```
+
+The third observation proves automatic PRESENT emission does not depend on
+`ACCEL?`. `ACCEL PRESENT` supports the normal shutdown-write path because the
+current manager emits `kPresent` only after successful post-sample
+`powerDownSensor` completion. It is **not a current-consumption measurement** and
+**does not prove fault-cleanup recovery on hardware**.
+
+| Focused check / limitation | Status |
+| --- | --- |
+| Current corrected image upload to Tracker B | **PASS — operator evidence** |
+| RAK1904 positive physical identity path | **PASS — operator evidence** |
+| Normal settled/fresh XYZ probe path | **PASS — operator evidence** |
+| Normal post-sample shutdown-write path | **PASS — PRESENT emission after successful shutdown write** |
+| ABSENT path with module not installed | **PASS — operator evidence** |
+| Automatic PRESENT without `ACCEL?` | **PASS — separate reset observation** |
+| Independent Astra hardware validation | **NOT PERFORMED** |
+| Physical I2C fault-cleanup/recovery | **NOT PROVEN** |
+| Current-consumption measurement | **NOT PERFORMED** |
+| Continuous production activity sampling | **NOT IMPLEMENTED** |
+| Cattle behavior classification/accuracy | **NOT IMPLEMENTED / NOT VALIDATED** |
+| Geofence field behavior | **NOT RUNTIME-INTEGRATED / NOT VALIDATED** |
+| Trusted LOST/contact semantics | **NOT IMPLEMENTED** |
+
+The narrow focused M6A physical gate is **PASS / CLOSED**. This does not complete
+overall M6 or promote M6B/M6C/M6D to production runtime.
+
+## Documentation and pre-merge preparation
+
+The final independent software audit and focused operator M6A physical gate are
+closed for `332cf0e1b307735348a97c3cbd15f916d04a21a0`. Remaining work is review of
+this documentation synchronization and pre-merge preparation; another M6A
+hardware test is not a remaining gate for this unchanged candidate. Overall M6
+remains **IN PROGRESS**. No merge is performed or authorized by this record.

@@ -1,7 +1,7 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through the M6 software stack; M6A physical hardware closure remains pending**.
-Last reviewed against code: `4858db8e19318ba7cf007fd94d2765b3f9084c0b`.
+Status: **CURRENT through the M6 software stack; final independent audit and focused operator M6A physical gate PASS; overall M6 IN PROGRESS**.
+Last reviewed against code: `332cf0e1b307735348a97c3cbd15f916d04a21a0`.
 Last architecture review update: 2026-09-16.
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
@@ -506,10 +506,25 @@ helpers compiled in the production source tree but not referenced by `main.cpp`.
 - This capability observation does not create an activity requested/effective
   service and does not affect Role, tracking, relay forwarding or GNSS power.
 
-M6A software revalidation is PASS at **13,932 bytes RAM / 141,928 bytes flash**,
-but the latest audit-hardened image has not yet been uploaded/physically checked
-against the owned RAK1904. The older DFU evidence predates the retained-sample and
-bounded-shutdown audit fixes.
+M6A software and final independent Astra audit are PASS on
+`332cf0e1b307735348a97c3cbd15f916d04a21a0`: **13,948 / 248,832 bytes RAM (5.6%)**
+and **142,456 / 815,104 bytes flash (17.5%)**. The diagnostic delta versus
+`613cdf1` adds **16 bytes RAM / 272 bytes flash**. `ACCEL?` only reports the latched
+boot result; it does not probe, wake, reconfigure or re-enter the manager, and
+changes no TLP v1, RF, storage, GNSS, identity, sequence, role compatibility or
+power ownership semantics.
+
+The focused operator M6A physical gate is **PASS / CLOSED** on that exact image:
+upload to Tracker B, ABSENT with no module, positive RAK1904 identity and normal
+settled/fresh XYZ with the module in SENSOR C, and automatic PRESENT on a separate
+reset without `ACCEL?`. Only this narrow focused probe path is physically proven.
+`ACCEL PRESENT` supports the normal shutdown-write path because the current
+manager emits `kPresent` only after successful post-sample `powerDownSensor`
+completion. This is not a current-consumption measurement and does not prove
+physical I2C fault-cleanup/recovery. This is operator evidence, not independent
+Astra hardware validation. Exact serial observations and the PASS/non-evidence
+matrix are recorded in `docs/milestones/M6.md` and
+`docs/audits/PRE_M6_STACK_AUDIT_RESOLUTION.md`.
 
 ### Host-only / not production-integrated now
 
@@ -535,7 +550,9 @@ No current M6 code claims:
 - critical RF event/ACK delivery;
 - trustworthy network-contact LOST.
 
-Before merge of the current M6 stack, the remaining mandatory gates are the
-focused physical M6A check on the latest image and an independent final Astra
-audit. Any finding that changes runtime/I2C/power behavior requires relevant
-revalidation before merge.
+The final independent audit and focused operator M6A physical gate are closed.
+Remaining work for this unchanged candidate is documentation review and pre-merge
+preparation, not another M6A hardware test. Overall M6 remains IN PROGRESS; no
+continuous sampling, animal classification/accuracy, geofence field behavior or
+trusted LOST/contact is validated by this closure. Any later change to
+runtime/I2C/power behavior requires relevant revalidation before merge.

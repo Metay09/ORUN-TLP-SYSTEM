@@ -1,10 +1,12 @@
 # PRE-M6 Stack Audit Resolution
 
-Status: **ASTRA P2 FINDINGS CLOSED; OWNER + INDEPENDENT SOFTWARE REVALIDATION PASS; PHYSICAL M6A GATE PENDING**.
+Status: **ASTRA P2 FINDINGS CLOSED; FINAL INDEPENDENT SOFTWARE AUDIT PASS; FOCUSED OPERATOR M6A PHYSICAL GATE PASS / CLOSED**.
 
 Audit baseline: `main@859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 Initially audited candidate: `docs/m6-premerge-sync@8273e2434d0339a1335a9f1f4e4488825819c7bf`.
 Corrected/re-audited candidate: `fix/m6-audit-findings@613cdf1ab583d4957e15ac0a90c6785cfbff641b`.
+
+Final audited diagnostic candidate: `fix/m6-audit-findings@332cf0e1b307735348a97c3cbd15f916d04a21a0`.
 
 ## Independent Astra result
 
@@ -81,7 +83,7 @@ M6C tests now freeze:
 
 ## Owner-run post-fix validation
 
-On `fix/m6-audit-findings` after all four fixes:
+Historical evidence at `613cdf1`, after all four fixes and before `ACCEL?`:
 
 - complete `./firmware/tests/run_host_tests.sh`: **PASS**;
 - `M6A bounded RAK1904 detection/sample checks: PASS`;
@@ -128,7 +130,33 @@ The independent re-audit specifically confirmed:
 - exact pole/seam geometry coordinates fail closed, immediately interior coordinates remain supported, and M6C2 propagates invalid-domain polygons through full-set validation;
 - TLP codecs/golden fixtures, NetworkService, RadioManager, PositionFlow, HistoryStore/journal, GNSS state machine, identity/sequence, legacy role mapping and RF PHY/config remain unchanged.
 
-Astra found no code finding that blocks proceeding to the physical M6A test on the corrected candidate. This re-audit is software evidence only and does **not** constitute physical RAK1904 validation.
+At `613cdf1`, Astra found no code finding blocking the focused physical M6A test.
+That re-audit is software evidence only and does **not** constitute physical
+RAK1904 validation; the later operator evidence is recorded separately below.
+
+## Final diagnostic-delta Astra audit
+
+Astra independently audited exactly `613cdf1ab583d4957e15ac0a90c6785cfbff641b..332cf0e1b307735348a97c3cbd15f916d04a21a0`.
+
+- new P0: **none found**;
+- new P1: **none found**;
+- new P2: **none found**;
+- full host suite: **PASS**;
+- supplemental ASan/UBSan production-code probes: **PASS**;
+- clean `pio run -e rak4630`: **SUCCESS**;
+- current linked RAM: **13,948 / 248,832 bytes (5.6%)**;
+- current linked flash: **142,456 / 815,104 bytes (17.5%)**;
+- delta versus `613cdf1`: **+16 bytes RAM, +272 bytes flash**;
+- only three known third-party warnings: `USING RAK4630` and two SimpleTimer
+  signedness warnings; **no ORUN compiler warnings**.
+
+`ACCEL?` is diagnostic-only and reports the latched boot result without probing,
+waking, reconfiguring or re-entering the accelerometer manager. Automatic event
+reporting, sample lifetime, serial buffering and legacy ROLE compatibility were
+confirmed. No TLP v1, RF, storage, GNSS, identity, sequence, role compatibility or
+power-ownership behavior change was found. The delta is clear for physical-evidence
+documentation and merge preparation. These are independent software results,
+not independent Astra hardware validation.
 
 ## Compatibility/system impact
 
@@ -149,14 +177,63 @@ Security/contact semantics:   unchanged
 
 M6B1/M6B2 remain software-only and unchanged by these fixes. M6C1 domain acceptance is narrower only at exact global coordinate singularities; M6C2 inherits that fail-closed geometry contract.
 
-## Remaining gate
+## Focused operator physical gate — CLOSED
 
-The independent software/audit gate is closed for the corrected candidate. The only remaining merge gate for this stack is the focused physical M6A validation on the **latest corrected image**:
+The operator reported the following on Tracker B running the exact current
+image `332cf0e1b307735348a97c3cbd15f916d04a21a0`. This is **operator physical
+evidence**, not independently reproduced Astra hardware validation.
 
-1. upload the corrected image to Tracker B when hardware is available;
-2. capture boot/reset evidence for positive RAK1904 identification;
-3. confirm a real settled/fresh XYZ probe sample is reported;
-4. confirm the normal post-sample shutdown path completes on hardware;
-5. record the exact physical evidence without promoting it to continuous sampling, current-consumption, animal-classification, geofence-field or trusted-LOST validation.
+1. Before RAK1904 was installed:
 
-Merge remains blocked until that physical gate is recorded as PASS. No physical PASS is claimed by this document.
+   ```text
+   ACCEL ABSENT
+   ```
+
+2. With RAK1904 installed in SENSOR C:
+
+   ```text
+   ACCEL PRESENT x_mg=-182 y_mg=189 z_mg=-916
+   ```
+
+3. On a separate hardware reset with the monitor running and **without sending
+   `ACCEL?`**:
+
+   ```text
+   ACCEL PRESENT x_mg=-186 y_mg=226 z_mg=-914
+   GNSS: detected
+   GNSS ACQUIRE start
+   ROLE TRACKER source=AUTO
+   ```
+
+The third observation proves automatic PRESENT emission does not depend on
+`ACCEL?`. `ACCEL PRESENT` supports the normal shutdown-write path because the
+current manager emits `kPresent` only after successful post-sample
+`powerDownSensor` completion. It is **not a current-consumption measurement** and
+**does not prove fault-cleanup recovery on hardware**.
+
+| Focused check / limitation | Status |
+| --- | --- |
+| Current corrected image upload to Tracker B | **PASS — operator evidence** |
+| RAK1904 positive physical identity path | **PASS — operator evidence** |
+| Normal settled/fresh XYZ probe path | **PASS — operator evidence** |
+| Normal post-sample shutdown-write path | **PASS — PRESENT emission after successful shutdown write** |
+| ABSENT path with module not installed | **PASS — operator evidence** |
+| Automatic PRESENT without `ACCEL?` | **PASS — separate reset observation** |
+| Independent Astra hardware validation | **NOT PERFORMED** |
+| Physical I2C fault-cleanup/recovery | **NOT PROVEN** |
+| Current-consumption measurement | **NOT PERFORMED** |
+| Continuous production activity sampling | **NOT IMPLEMENTED** |
+| Cattle behavior classification/accuracy | **NOT IMPLEMENTED / NOT VALIDATED** |
+| Geofence field behavior | **NOT RUNTIME-INTEGRATED / NOT VALIDATED** |
+| Trusted LOST/contact semantics | **NOT IMPLEMENTED** |
+
+The narrow focused M6A physical gate is **PASS / CLOSED**. This does not complete
+overall M6 or promote M6B/M6C/M6D to production runtime.
+
+## Documentation and pre-merge preparation
+
+The final independent software audit and focused operator M6A physical gate are
+closed for `332cf0e1b307735348a97c3cbd15f916d04a21a0`. Remaining work is review of
+this documentation synchronization and pre-merge preparation; another M6A
+hardware test is not a remaining gate for this unchanged candidate. Overall M6
+remains **IN PROGRESS**. No merge is performed or authorized by this record.
