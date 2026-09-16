@@ -53,6 +53,10 @@ g++ "${b3_flags[@]}" firmware/tests/m6/test_m6_geofence_geometry.cpp \
   firmware/src/geofence_geometry.cpp -o "$test_dir/m6_geofence_geometry"
 "$test_dir/m6_geofence_geometry"
 
+g++ "${b3_flags[@]}" firmware/tests/m6/test_m6_geofence_domain.cpp \
+  firmware/src/geofence_geometry.cpp -o "$test_dir/m6_geofence_domain"
+"$test_dir/m6_geofence_domain"
+
 g++ "${b3_flags[@]}" firmware/tests/m6/test_m6_geofence_area_set.cpp \
   firmware/src/geofence_area_set.cpp firmware/src/geofence_geometry.cpp \
   -o "$test_dir/m6_geofence_area_set"
