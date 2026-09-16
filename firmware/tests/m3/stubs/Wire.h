@@ -10,6 +10,7 @@ struct TwoWire {
   uint16_t bytes_available = 0;
   uint8_t register_pointer = 0;
   uint8_t read_index = 0;
+  unsigned transaction_calls = 0;
   unsigned begin_calls = 0;
   unsigned end_calls = 0;
   unsigned set_clock_calls = 0;
@@ -21,7 +22,7 @@ struct TwoWire {
     ++set_clock_calls;
     last_clock_hz = hz;
   }
-  void beginTransmission(uint8_t) {}
+  void beginTransmission(uint8_t) { ++transaction_calls; }
   size_t write(uint8_t value) {
     register_pointer = value;
     return 1;
