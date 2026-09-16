@@ -1,10 +1,11 @@
 # PRE-M6 Stack Audit Package
 
-Status: **READY FOR INDEPENDENT ASTRA REVIEW; PHYSICAL M6A GATE STILL OPEN**.
+Status: **ASTRA INITIAL AUDIT COMPLETE; P2 FIXES APPLIED; INDEPENDENT RE-AUDIT + PHYSICAL M6A GATE PENDING**.
 
 Audit baseline: `main@859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
-Candidate software stack: `feat/m6c2-geofence-area-set@4858db8e19318ba7cf007fd94d2765b3f9084c0b`.
-Documentation sync branch: `docs/m6-premerge-sync`.
+Initially audited candidate: `docs/m6-premerge-sync@8273e2434d0339a1335a9f1f4e4488825819c7bf`.
+Current fix branch: `fix/m6-audit-findings`.
+Detailed finding/fix record: `docs/audits/PRE_M6_STACK_AUDIT_RESOLUTION.md`.
 
 ## Purpose
 
@@ -37,7 +38,29 @@ M6C1 geofence geometry closure
 
 M6C2 permitted-area union closure
   4858db8e19318ba7cf007fd94d2765b3f9084c0b
+
+initial Astra-audited docs/code candidate
+  8273e2434d0339a1335a9f1f4e4488825819c7bf
+
+post-audit fix code head
+  5eb63ac1b92560dd7435cc975eefac83bb7cd290
 ```
+
+## Initial Astra audit result
+
+The independent audit found no P0/P1 issue. Four P2 findings were reproduced:
+
+- `M6A-01`: high-resolution sample acceptance before LIS3DH `7/ODR` settling;
+- `M6A-02`: terminal shutdown-fault path could leave an always-powered sensor at
+  10 Hz after later bus recovery;
+- `M6A-03`: retained nonzero `ACT_THS` was not cleared;
+- `M6C-01`: exact pole/longitude-seam coordinate singularities were accepted by
+  the local planar geometry model.
+
+All four have been addressed on `fix/m6-audit-findings`. See
+`PRE_M6_STACK_AUDIT_RESOLUTION.md` for the exact fixes, tests and owner-run
+post-fix evidence. These fixes must be independently re-audited before the
+physical M6A gate is attempted.
 
 ## Runtime versus host-only boundary
 
@@ -49,7 +72,9 @@ Only M6A changes production composition:
 - RAK1904/LIS3DH bounded detection is part of boot/runtime polling;
 - accelerometer support/presence/health is projected into `CapabilitySnapshot`;
 - one bounded probe sample may be printed to USB diagnostics;
-- sensor shutdown is part of the bounded probe path.
+- sensor shutdown is part of the bounded probe path;
+- after immediate shutdown failures, sparse fault cleanup retains ownership until
+  a later cooperative shutdown succeeds.
 
 M6A must not alter role/profile ownership, GNSS power ownership, tracking
 semantics, relay forwarding, TLP bytes, storage format or RF behavior.
@@ -67,27 +92,28 @@ The following compile in the production source tree but are not referenced by
 They must therefore be reviewed as portable deterministic primitives, not as
 proof of production activity/geofence behavior.
 
-## M6A review focus
+## M6A re-audit focus
 
-Detailed software findings and fixes are in
-`docs/audits/PRE_M6A_BRANCH_REVIEW.md`.
+The independent reviewer should specifically verify the post-audit changes:
 
-The independent reviewer should specifically verify:
-
-1. retained LIS3DH output cannot be relabeled fresh after reset/DFU;
-2. `CTRL_REG1=0` is established before configuration and 10 Hz enable occurs
-   last;
-3. the first ready XYZ set is discarded and a later ODR sample is the only probe
-   sample exposed;
-4. shutdown retries are bounded and cooperative;
-5. persistent shutdown failure becomes PRESENT + FAULT and does not expose the
-   sample;
-6. UNKNOWN/PRESENT/ABSENT and health semantics do not conflate transport failure
-   with hardware absence;
-7. RAK1904 VDD ownership does not touch GNSS `WB_IO2/3V3_S`;
-8. R4 bounded Wire/recovery and watchdog assumptions remain intact;
-9. production loop latency/ownership remains cooperative and bounded;
-10. capability presence does not imply activity service enablement.
+1. `CTRL_REG1=0x27` remains the final enable write;
+2. no DRDY/status/axis read occurs before the rollover-safe `7/ODR` HR settling
+   deadline;
+3. the retained first ready XYZ set is still discarded after settling and a later
+   ODR sample is the only probe sample exposed;
+4. `ACT_THS` is explicitly cleared while powered down;
+5. normal sample timeout starts after mandatory HR settling rather than expiring
+   during the settle window;
+6. three immediate shutdown failures publish PRESENT + FAULT and suppress the
+   captured sample;
+7. faulted cleanup retries are sparse/cooperative and can power down the sensor if
+   the bus later recovers without silently changing capability health back to OK;
+8. a permanently bad bus does not create a tight retry loop;
+9. UNKNOWN/PRESENT/ABSENT semantics still do not conflate transport failure with
+   hardware absence;
+10. RAK1904 VDD ownership still does not touch GNSS `WB_IO2/3V3_S`;
+11. R4 bounded Wire/recovery and watchdog assumptions remain intact;
+12. capability presence does not imply activity service enablement.
 
 ## M6B review focus
 
@@ -107,13 +133,18 @@ Review that:
   synthetic tests;
 - no RF/storage/power/runtime behavior is introduced by M6B1/M6B2.
 
-## M6C review focus
+## M6C re-audit focus
 
 Review that:
 
 - polygon validation is deterministic and fail-closed;
 - cross-product and translated shoelace arithmetic stay within signed-64-bit
   bounds for the documented 10-degree/64-effective-vertex domain;
+- exact `latitude = +/-90` and `longitude = +/-180` are rejected as unsupported
+  local-planar singularities rather than approximated;
+- coordinates immediately inside those singular limits remain accepted subject to
+  the existing span and polygon-validity rules;
+- invalid singular query coordinates return `kInvalidPoint`, not `kOutside`;
 - explicit closing vertices preserve the 64-effective-vertex contract;
 - self-intersection/degenerate/invalid-coordinate cases are rejected;
 - INSIDE/BOUNDARY/OUTSIDE geometry works for concave and both winding directions;
@@ -153,38 +184,42 @@ TX_DONE != network contact
 OUTSIDE != LOST
 ```
 
-## Owner-run validation evidence
+## Owner-run post-fix validation evidence
 
-Latest relevant owner-run evidence through M6C2:
+On `fix/m6-audit-findings` after the four P2 fixes:
 
-- full `./firmware/tests/run_host_tests.sh`: **PASS** after each final slice/fix;
+- complete `./firmware/tests/run_host_tests.sh`: **PASS**;
 - host profiles include `-Wall -Wextra -Werror` and ASan/UBSan;
-- M6 portable B/C helpers are compiled under the repository's `gnu++11` host
-  profile matching the old RAK compiler language baseline;
-- `pio run -e rak4630`: **SUCCESS** after M6A, M6B1, M6B2, M6C1 and M6C2 closures;
+- `M6A bounded RAK1904 detection/sample checks: PASS`;
+- `M6C bounded geofence polygon geometry checks: PASS`;
+- `M6C unsupported global-domain rejection checks: PASS`;
+- `M6C permitted geofence area-set checks: PASS`;
+- all retained B1A/B2/B3/B4, M3/M4/M5, R2/R3/R4 and startup regressions:
+  **PASS**;
+- `pio run -e rak4630`: **SUCCESS** with GCC ARM 7.2.1;
 - R4 bounded Wire transform verified/applied;
 - R2.1 SX126x driver-gate transform verified/applied;
 - current linked image: **13,932 / 248,832 bytes RAM (5.6%)**;
-- current linked image: **141,928 / 815,104 bytes flash (17.4%)**;
+- current linked image: **142,184 / 815,104 bytes flash (17.4%)**;
 - no new ORUN compiler warning observed; known warnings remain inside pinned
   third-party SX126x sources.
 
-The unchanged linked image across M6B/M6C is expected because those helpers are
-not referenced by production runtime and are removed by the linker.
+This is software evidence only. It does not close the physical RAK1904 gate.
 
 ## Physical evidence and explicit non-evidence
 
-Historical evidence exists for the earlier pre-audit cooperative M6A image being
-programmed to Tracker B. That does **not** close current M6A because the installed
-image predates M6A-R1/R2.
+Historical evidence exists for an earlier pre-audit cooperative M6A image being
+programmed to Tracker B. That does **not** close current M6A because the physical
+image predates the later audit findings and fixes.
 
 Current physical status:
 
 ```text
-latest audit-hardened M6A upload:                 PENDING
-RAK1904 positive WHO_AM_I path on latest image:   PENDING
-real fresh XYZ sample on latest image:            PENDING
-post-sample shutdown call path on latest image:   PENDING
+latest corrected M6A upload:                     PENDING
+RAK1904 positive WHO_AM_I path on corrected image:PENDING
+settled/fresh XYZ on corrected image:             PENDING
+post-sample shutdown on corrected image:          PENDING
+sparse fault-cleanup recovery on hardware:        NOT PROVEN
 continuous activity sampling:                     NOT IMPLEMENTED
 current-consumption measurement:                  NOT PERFORMED
 animal behavior accuracy:                         NOT VALIDATED
@@ -195,11 +230,12 @@ trusted LOST/contact:                             NOT IMPLEMENTED
 The independent reviewer must not promote host/build evidence into any of those
 physical/product claims.
 
-## Required audit output
+## Required re-audit output
 
 Report findings by severity and exact file/symbol. Distinguish:
 
-- correctness/safety defects that block merge;
+- unresolved correctness/safety defects that block physical test/merge;
+- regressions introduced by the four fixes;
 - test coverage gaps;
 - architecture/ownership contradictions;
 - documentation inaccuracies;
@@ -222,12 +258,13 @@ physical validation scope
 Do not propose speculative generic HALs, registries, event buses, new protocol
 families or unrelated future features merely to make the code more abstract.
 
-## Merge gates after audit
+## Merge gates after re-audit
 
 The current stack is not merge-ready until both are true:
 
-1. independent Astra audit findings are resolved and relevant tests/builds rerun;
-2. focused physical M6A validation is completed on the latest audit-hardened image.
+1. independent Astra re-audit confirms the P2 fixes or any new real findings are
+   corrected and revalidated;
+2. focused physical M6A validation is completed on the latest corrected image.
 
-If Astra finds a code issue affecting the physical M6A path, fix it first and run
-the physical check only on the corrected image.
+If the re-audit finds a code issue affecting the physical M6A path, fix it first
+and run the physical check only on the corrected image.
