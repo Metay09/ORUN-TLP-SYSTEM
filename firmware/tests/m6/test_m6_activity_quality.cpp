@@ -10,6 +10,9 @@ namespace {
 ActivityWindowFeatures usableFeatures() {
   ActivityWindowFeatures features;
   features.sample_count = activity_config::kWindowSampleCount;
+  features.duration_ms =
+      static_cast<uint32_t>(activity_config::kWindowSampleCount - 1U) *
+      activity_config::kExpectedSamplePeriodMs;
   features.complete = true;
   features.timing_continuous = true;
   features.timing_discontinuities = 0;
@@ -65,6 +68,34 @@ void contradictoryTimingFieldsFailClosed() {
   assert(false_continuous.reason == ActivityWindowEligibility::kTimingInvalid);
 }
 
+void impossibleAggregateDurationFailsClosed() {
+  const uint32_t interval_count =
+      static_cast<uint32_t>(activity_config::kWindowSampleCount - 1U);
+  const uint32_t minimum_duration =
+      interval_count * activity_config::kMinimumInterSampleGapMs;
+  const uint32_t maximum_duration =
+      interval_count * activity_config::kMaximumInterSampleGapMs;
+
+  ActivityWindowFeatures features = usableFeatures();
+  features.duration_ms = minimum_duration - 1U;
+  ActivityWindowAssessment assessment = assessActivityWindow(features);
+  assert(!assessment.usable);
+  assert(assessment.reason == ActivityWindowEligibility::kTimingInvalid);
+
+  features = usableFeatures();
+  features.duration_ms = maximum_duration + 1U;
+  assessment = assessActivityWindow(features);
+  assert(!assessment.usable);
+  assert(assessment.reason == ActivityWindowEligibility::kTimingInvalid);
+
+  features = usableFeatures();
+  features.duration_ms = minimum_duration;
+  assert(assessActivityWindow(features).usable);
+
+  features.duration_ms = maximum_duration;
+  assert(assessActivityWindow(features).usable);
+}
+
 void motionValuesDoNotAffectEligibility() {
   ActivityWindowFeatures features = usableFeatures();
   features.axis_variance_sum_mg2 = 0;
@@ -86,6 +117,7 @@ int main() {
   sampleCountMismatchFailsClosed();
   timingDiscontinuityIsRejected();
   contradictoryTimingFieldsFailClosed();
+  impossibleAggregateDurationFailsClosed();
   motionValuesDoNotAffectEligibility();
   puts("M6B activity feature eligibility checks: PASS");
 }
