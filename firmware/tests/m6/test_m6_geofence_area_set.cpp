@@ -75,6 +75,24 @@ void insideOutranksBoundaryForOverlappingPermittedUnion() {
   assert(assessment.area_index == 0);
 }
 
+void laterInsideOutranksEarlierBoundary() {
+  const GeoPointE7 boundary_first[] = {
+      GeoPointE7(0, 0), GeoPointE7(0, 1000),
+      GeoPointE7(1000, 1000), GeoPointE7(1000, 0)};
+  const GeoPointE7 containing_second[] = {
+      GeoPointE7(-500, -500), GeoPointE7(-500, 1500),
+      GeoPointE7(500, 1500), GeoPointE7(500, -500)};
+  const GeofencePolygonView areas[] = {
+      polygon(boundary_first, 4), polygon(containing_second, 4)};
+
+  // The point is encountered as BOUNDARY in area 0 before it is found INSIDE
+  // area 1. Union semantics must defer the boundary result and return INSIDE.
+  const PermittedAreaAssessment assessment = assessPermittedGeofenceAreas(
+      GeofenceAreaSetView(areas, 2), GeoPointE7(0, 500));
+  assert(assessment.relation == PermittedAreaRelation::kInside);
+  assert(assessment.area_index == 1);
+}
+
 void outsideAllAreasRemainsOutside() {
   const GeoPointE7 first_vertices[] = {
       GeoPointE7(0, 0), GeoPointE7(0, 1000),
@@ -140,6 +158,7 @@ int main() {
   pointInsideSecondPermittedAreaIsInsideUnion();
   boundaryIsReportedWhenNoAreaContainsPoint();
   insideOutranksBoundaryForOverlappingPermittedUnion();
+  laterInsideOutranksEarlierBoundary();
   outsideAllAreasRemainsOutside();
   malformedLaterAreaInvalidatesWholeSetBeforeContainment();
   invalidPointIsDistinctFromOutside();
