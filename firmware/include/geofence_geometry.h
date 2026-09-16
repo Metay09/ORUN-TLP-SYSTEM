@@ -9,7 +9,9 @@ namespace geofence_config {
 // all orientation/area arithmetic provably inside signed 64-bit while remaining
 // far larger than the intended livestock geofence scale. Antimeridian/global
 // polygons are a separate future requirement, not something to approximate
-// silently.
+// silently. Exact +/-180-degree longitude and +/-90-degree latitude singular
+// boundaries are therefore outside this local planar geometry domain even though
+// they are legal geographic coordinates.
 constexpr uint16_t kMaximumPolygonVertices = 64;
 constexpr int32_t kMaximumPolygonSpanE7 = 100000000;  // 10 degrees.
 
@@ -59,7 +61,9 @@ GeofencePolygonValidation validateGeofencePolygon(
     const GeofencePolygonView& polygon);
 
 // Pure geometry only. This does not own GNSS quality/freshness, hysteresis,
-// FREE_GRAZE, service enablement or OUTSIDE/LOST operational policy.
+// FREE_GRAZE, service enablement or OUTSIDE/LOST operational policy. Query points
+// at the exact global seam/poles are rejected as kInvalidPoint because M6C1 does
+// not implement spherical-equivalence handling.
 GeofencePointRelation classifyPointInGeofencePolygon(
     const GeofencePolygonView& polygon, const GeoPointE7& point);
 
