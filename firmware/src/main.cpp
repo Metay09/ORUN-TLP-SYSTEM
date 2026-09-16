@@ -28,20 +28,73 @@ char role_command[24]{};
 uint8_t role_command_length = 0;
 bool role_command_overflow = false;
 
+enum class AccelerometerDiagnosticState : uint8_t {
+  kPending,
+  kPresent,
+  kAbsent,
+  kFault,
+};
+
+AccelerometerDiagnosticState accelerometer_diagnostic_state =
+    AccelerometerDiagnosticState::kPending;
+orun_tlp::AccelerometerSample accelerometer_diagnostic_sample{};
+bool accelerometer_diagnostic_sample_valid = false;
+
 void applyRole(orun_tlp::NodeRole role, const char* source) {
   radio_manager.setRole(role);
   Serial.printf("ROLE %s source=%s\n", orun_tlp::roleName(role), source);
 }
 
+bool isAccelerometerQuery() {
+  static const char kQuery[] = "ACCEL?";
+  constexpr uint8_t kQueryLength = sizeof(kQuery) - 1;
+  if (role_command_length != kQueryLength) return false;
+  for (uint8_t i = 0; i < kQueryLength; ++i) {
+    if (role_command[i] != kQuery[i]) return false;
+  }
+  return true;
+}
+
+void printAccelerometerDiagnostic() {
+  if (accelerometer_diagnostic_state == AccelerometerDiagnosticState::kPending) {
+    Serial.println(F("ACCEL PENDING"));
+    return;
+  }
+  if (accelerometer_diagnostic_state == AccelerometerDiagnosticState::kPresent) {
+    if (accelerometer_diagnostic_sample_valid) {
+      Serial.printf("ACCEL PRESENT x_mg=%d y_mg=%d z_mg=%d\n",
+                    static_cast<int>(accelerometer_diagnostic_sample.x_mg),
+                    static_cast<int>(accelerometer_diagnostic_sample.y_mg),
+                    static_cast<int>(accelerometer_diagnostic_sample.z_mg));
+    } else {
+      Serial.println(F("ACCEL PRESENT"));
+    }
+    return;
+  }
+  if (accelerometer_diagnostic_state == AccelerometerDiagnosticState::kAbsent) {
+    Serial.println(F("ACCEL ABSENT"));
+    return;
+  }
+  Serial.printf("ACCEL FAULT presence=%s\n",
+                accelerometer_manager.detected() ? "PRESENT" : "UNKNOWN");
+}
+
 void handleRoleCommand() {
-  const auto command = orun_tlp::parseRoleCommand(role_command,
-                                                   role_command_length);
-  role_command_length = 0;
   if (role_command_overflow) {
+    role_command_length = 0;
     role_command_overflow = false;
     Serial.println(F("ROLE command rejected: too long"));
     return;
   }
+  if (isAccelerometerQuery()) {
+    role_command_length = 0;
+    printAccelerometerDiagnostic();
+    return;
+  }
+
+  const auto command = orun_tlp::parseRoleCommand(role_command,
+                                                   role_command_length);
+  role_command_length = 0;
   if (command == orun_tlp::RoleCommand::kQuery) {
     Serial.printf("ROLE %s mode=%s\n", orun_tlp::roleName(role_controller.role()),
                   role_controller.automatic() ? "AUTO" : "OVERRIDE");
@@ -144,18 +197,26 @@ orun_tlp::EffectiveConfig resolveRuntimeConfig() {
 
 void handleAccelerometerEvent(orun_tlp::AccelerometerManager::Event event) {
   if (event == orun_tlp::AccelerometerManager::Event::kPresent) {
+    accelerometer_diagnostic_state = AccelerometerDiagnosticState::kPresent;
     orun_tlp::AccelerometerSample sample{};
     if (accelerometer_manager.takeProbeSample(&sample)) {
+      accelerometer_diagnostic_sample = sample;
+      accelerometer_diagnostic_sample_valid = true;
       Serial.printf("ACCEL PRESENT x_mg=%d y_mg=%d z_mg=%d\n",
                     static_cast<int>(sample.x_mg),
                     static_cast<int>(sample.y_mg),
                     static_cast<int>(sample.z_mg));
     } else {
+      accelerometer_diagnostic_sample_valid = false;
       Serial.println(F("ACCEL PRESENT"));
     }
   } else if (event == orun_tlp::AccelerometerManager::Event::kAbsent) {
+    accelerometer_diagnostic_state = AccelerometerDiagnosticState::kAbsent;
+    accelerometer_diagnostic_sample_valid = false;
     Serial.println(F("ACCEL ABSENT"));
   } else if (event == orun_tlp::AccelerometerManager::Event::kFault) {
+    accelerometer_diagnostic_state = AccelerometerDiagnosticState::kFault;
+    accelerometer_diagnostic_sample_valid = false;
     Serial.printf("ACCEL FAULT presence=%s\n",
                   accelerometer_manager.detected() ? "PRESENT" : "UNKNOWN");
   }
