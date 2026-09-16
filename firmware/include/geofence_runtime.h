@@ -38,6 +38,12 @@ enum class GeofenceObservationResult : uint8_t {
 // hysteresis, NEAR_FENCE, FREE_GRAZE, LOST, RF events or alarms.
 class GeofenceRuntime {
  public:
+  GeofenceRuntime() = default;
+  GeofenceRuntime(const GeofenceRuntime&) = delete;
+  GeofenceRuntime& operator=(const GeofenceRuntime&) = delete;
+  GeofenceRuntime(GeofenceRuntime&&) = delete;
+  GeofenceRuntime& operator=(GeofenceRuntime&&) = delete;
+
   // Candidate replacement is all-or-nothing: invalid/oversized candidates are
   // rejected without changing the previously applied runtime configuration or
   // its last valid assessment.

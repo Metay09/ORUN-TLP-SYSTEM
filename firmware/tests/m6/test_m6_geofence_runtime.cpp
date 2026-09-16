@@ -1,12 +1,22 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <type_traits>
 
 #include "geofence_runtime.h"
 
 using namespace orun_tlp;
 
 namespace {
+
+static_assert(!std::is_copy_constructible<GeofenceRuntime>::value,
+              "GeofenceRuntime owns self-referential views and must not copy");
+static_assert(!std::is_copy_assignable<GeofenceRuntime>::value,
+              "GeofenceRuntime owns self-referential views and must not assign");
+static_assert(!std::is_move_constructible<GeofenceRuntime>::value,
+              "GeofenceRuntime owns self-referential views and must not move");
+static_assert(!std::is_move_assignable<GeofenceRuntime>::value,
+              "GeofenceRuntime owns self-referential views and must not move-assign");
 
 GeofencePolygonView polygon(const GeoPointE7* vertices, uint16_t count) {
   return GeofencePolygonView(vertices, count);
