@@ -1,13 +1,15 @@
 # PRE-M6A Branch Review
 
-Status: **SOFTWARE REVALIDATED; PHYSICAL CHECK PENDING**.
+Status: **POST-ASTRA SOFTWARE REVALIDATED; INDEPENDENT RE-AUDIT + PHYSICAL CHECK PENDING**.
 
 Baseline: `main@859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
-Branch: `feat/m6a-accelerometer-foundation`.
+Original branch: `feat/m6a-accelerometer-foundation`.
+Current correction branch: `fix/m6-audit-findings`.
+Stack audit resolution: `docs/audits/PRE_M6_STACK_AUDIT_RESOLUTION.md`.
 
 ## Scope
 
-This review covers the M6A RAK1904/LIS3DH foundation only: capability presence/health projection, bounded I2C detection/configuration/sample behavior, cooperative-loop ownership, low-power cleanup and regression coverage. It does not validate cattle activity classification, geofence behavior, new RF payloads or physical RAK1904 operation.
+This review covers the M6A RAK1904/LIS3DH foundation only: capability presence/health projection, bounded I2C detection/configuration/sample behavior, cooperative-loop ownership, low-power cleanup and regression coverage. It does not validate cattle activity classification, geofence runtime behavior, new RF payloads or physical RAK1904 operation.
 
 ## Invariants checked
 
@@ -20,53 +22,94 @@ This review covers the M6A RAK1904/LIS3DH foundation only: capability presence/h
 - M6A does not allocate flash or add persistence ownership.
 - No raw XYZ data is transmitted.
 
-## Finding M6A-R1 — retained LIS3DH output could be reported as fresh
+## Earlier finding M6A-R1 — retained LIS3DH output could be reported as fresh
 
 Severity: **P2 / correctness**.
 
-RAK1904 is supplied from WisBlock VDD, so the LIS3DH can remain powered across an MCU reset/DFU. LIS3DH power-down preserves configuration and the most recent output registers. The earlier M6A sequence did not first force `CTRL_REG1=0`, and it accepted the first data-ready output after enabling 10 Hz. A retained pre-reset sample could therefore be exposed with a new `captured_at_ms` and incorrectly look fresh.
+RAK1904 is supplied from WisBlock VDD, so LIS3DH can remain powered across MCU reset/DFU. The original sequence could relabel retained output as fresh.
 
-Fix:
+Fix retained in current code:
 
-- force `CTRL_REG1=0` as the first cooperative configuration write;
-- configure remaining registers while powered down;
-- start 10 Hz by writing `CTRL_REG1=0x27` last;
-- read and discard the first data-ready XYZ set;
-- wait one further ODR period before accepting the probe sample;
-- regression test uses different retained and fresh values and asserts only the fresh set is published.
+- `CTRL_REG1=0` first;
+- configure while powered down;
+- enable 10 Hz last;
+- discard the first ready XYZ set;
+- accept only a later newly generated sample.
 
-## Finding M6A-R2 — one failed shutdown could leave the sensor running
+## Earlier finding M6A-R2 — one failed shutdown could leave sensor running
 
 Severity: **P2 / power + recovery**.
 
-The earlier cleanup attempted `CTRL_REG1=0` once. A transient NACK/recovered bus timeout at that exact point would mark the capability faulted but could leave the always-powered LIS3DH sampling at 10 Hz until reboot, which is the wrong fail-safe direction for a battery tracker.
+The original cleanup tried `CTRL_REG1=0` once. This was first hardened to three immediate cooperative attempts.
 
-Fix:
+The later independent Astra audit found that terminating after those three failures still abandoned cleanup ownership. That superseding issue is `M6A-02` below.
 
-- sensor shutdown remains one I2C operation per cooperative loop pass;
-- shutdown is retried up to `kPowerDownMaxAttempts = 3`;
-- a transient first failure can recover and still publish PRESENT only after a confirmed shutdown;
-- persistent failure ends as PRESENT + FAULT and never exposes the captured sample as consumable;
-- diagnostics count each failed shutdown attempt.
+## Independent Astra finding M6A-01 — high-resolution settle time missing
 
-## Revalidation evidence
+Severity: **P2 / correctness**.
 
-Owner-run validation after both audit fixes:
+The pre-fix flow accepted a later ODR sample long before the LIS3DH documented high-resolution `7/ODR` turn-on interval had elapsed. At 10 Hz this is 700 ms.
+
+Current fix:
+
+- `kHighResolutionSettleMs = 7 * kProbeSamplePeriodMs`;
+- settle timing begins only after successful final `CTRL_REG1=0x27` write;
+- no DRDY/status/axis read before the rollover-safe settle deadline;
+- retained first ready XYZ set is still discarded after settling;
+- one later ODR period is required before the accepted sample;
+- sample timeout budget starts after mandatory settling.
+
+## Independent Astra finding M6A-02 — cleanup abandoned after immediate retry budget
+
+Severity: **P2 / power + recovery**.
+
+Three failed shutdown writes previously produced PRESENT + FAULT but entered a terminal state. If the shared bus later recovered, the always-powered LIS3DH could remain at 10 Hz until reboot.
+
+Current fix:
+
+- three immediate shutdown attempts remain bounded and cooperative;
+- after exhaustion, capability becomes PRESENT + FAULT and the captured sample is suppressed;
+- manager retains a sparse fault-cleanup state;
+- one `CTRL_REG1=0` write is retried after a 60-second backoff;
+- a permanently bad bus therefore causes sparse bounded work rather than a tight loop;
+- successful later cleanup powers the sensor down but does not silently change health back to OK; reboot/re-probe is required.
+
+## Independent Astra finding M6A-03 — retained ACT_THS not cleared
+
+Severity: **P2 / retained sensor-state correctness**.
+
+A nonzero `ACT_THS` retained across MCU/image changes can enable LIS3DH autonomous activity/inactivity mode and interfere with the intended HR probe state.
+
+Current fix:
+
+- `ACT_THS (0x3E)` is explicitly cleared while powered down;
+- `CTRL_REG1=0` remains the first configuration write;
+- 10 Hz enable remains the final write;
+- redundant FIFO control reset was removed because FIFO enable is already explicitly cleared by `CTRL_REG5`, preserving the bounded configuration-pass count.
+
+## Current owner-run revalidation evidence
+
+After all Astra fixes on `fix/m6-audit-findings`:
 
 - complete `./firmware/tests/run_host_tests.sh`: **PASS**;
 - M6A bounded RAK1904 detection/sample checks: **PASS**;
+- HR-settle-before-read regression: **PASS**;
+- retained `ACT_THS` cleanup regression: **PASS**;
+- three-failure -> FAULT -> later sparse shutdown recovery regression: **PASS**;
+- HR settling rollover regression: **PASS**;
 - all retained B1A/B2/B3/B4, M3/M4/M5, R2/R3/R4 and startup regressions: **PASS**;
-- `pio run -e rak4630`: **SUCCESS**;
+- `pio run -e rak4630`: **SUCCESS** with GCC ARM 7.2.1;
 - R4 bounded Wire transform verified/applied;
 - R2.1 SX126x driver-gate transform verified/applied;
 - RAM: **13,932 / 248,832 bytes (5.6%)**;
-- flash: **141,928 / 815,104 bytes (17.4%)**.
+- flash: **142,184 / 815,104 bytes (17.4%)**;
+- only the already-known pinned SX126x third-party warnings were shown.
 
-Relative to the final B4 image (`13,852` RAM / `140,184` flash), the current audit-hardened M6A code adds **80 bytes RAM** and **1,744 bytes flash**. The audit fixes therefore preserve the same RAM footprint as the pre-audit cooperative image and add only **64 bytes flash**.
+Compared with the initial Astra-audited image (`141,928` flash), the four stack fixes add **256 bytes flash** and no measured RAM increase.
 
 ## Remaining closure gates
 
-1. focused physical RAK1904 `WHO_AM_I` + real fresh XYZ + confirmed post-sample power-down behavior when the operator is next at the hardware;
-2. independent final Astra audit before merge.
+1. independent Astra re-audit of the four minimal fixes and tests;
+2. focused physical RAK1904 validation on the latest corrected image only after re-audit: positive WHO_AM_I path, settled/fresh XYZ and successful post-sample shutdown behavior.
 
-The DFU image currently on Tracker B predates M6A-R1/R2. Host/build success does **not** make RAK1904 physically validated, and no cattle activity-accuracy claim is made here.
+The previously programmed Tracker B image predates these final corrections. Host/build success does **not** make RAK1904 physically validated, and no cattle activity-accuracy or current-consumption claim is made here.
