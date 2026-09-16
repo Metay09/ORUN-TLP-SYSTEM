@@ -43,14 +43,17 @@ class AccelerometerManager {
     kDetecting,
     kDetectionBackoff,
     kConfiguring,
+    kHighResolutionSettling,
     kProbeWait,
     kReadingSample,
     kPoweringDown,
+    kFaultCleanup,
     kDone,
   };
 
   void scheduleDetectionRetry(uint32_t now);
   void startPowerDown(Event event);
+  Event enterFaultCleanup(uint32_t now);
   Event finishAbsent();
   Event finishFault();
   Event finishPresent();
