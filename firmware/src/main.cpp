@@ -2,6 +2,7 @@
 #include <Adafruit_TinyUSB.h>
 
 #include "accelerometer_manager.h"
+#include "activity_capture.h"
 #include "firmware_version.h"
 #include "gnss_manager.h"
 #include "node_role.h"
@@ -19,6 +20,7 @@ namespace {
 orun_tlp::RadioManager radio_manager;
 orun_tlp::GnssManager gnss_manager;
 orun_tlp::AccelerometerManager accelerometer_manager;
+orun_tlp::ActivityCapture activity_capture(accelerometer_manager);
 orun_tlp::NrfHistoryFlash history_flash;
 orun_tlp::HistoryStore history(history_flash);
 orun_tlp::PositionFlow positions(history, radio_manager);
@@ -79,6 +81,62 @@ void printAccelerometerDiagnostic() {
                 accelerometer_manager.detected() ? "PRESENT" : "UNKNOWN");
 }
 
+bool isActivityCommand(const char* text, uint8_t length) {
+  if (role_command_length != length) return false;
+  for (uint8_t i = 0; i < length; ++i)
+    if (role_command[i] != text[i]) return false;
+  return true;
+}
+
+void printActivityDiagnostic() {
+  using State = orun_tlp::ActivityCapture::State;
+  const auto state = activity_capture.state();
+  const auto* features = activity_capture.result();
+  if (features != nullptr) {
+    Serial.printf("ACTIVITY %s samples=%u duration_ms=%lu discontinuities=%u "
+                  "usable=%s mean_x_mg=%ld mean_y_mg=%ld mean_z_mg=%ld "
+                  "axis_variance_sum_mg2=%lu mean_magnitude_squared_mg2=%lu "
+                  "mean_abs_delta_mg=%lu\n",
+                  state == State::kReady ? "READY" : "INVALID",
+                  static_cast<unsigned>(features->sample_count),
+                  static_cast<unsigned long>(features->duration_ms),
+                  static_cast<unsigned>(features->timing_discontinuities),
+                  activity_capture.assessment().usable ? "yes" : "no",
+                  static_cast<long>(features->mean_x_mg),
+                  static_cast<long>(features->mean_y_mg),
+                  static_cast<long>(features->mean_z_mg),
+                  static_cast<unsigned long>(features->axis_variance_sum_mg2),
+                  static_cast<unsigned long>(features->mean_magnitude_squared_mg2),
+                  static_cast<unsigned long>(features->mean_abs_delta_mg));
+  } else if (state == State::kFault || accelerometer_manager.faulted()) {
+    Serial.println(F("ACTIVITY UNAVAILABLE accel=FAULT"));
+  } else if (!accelerometer_manager.detectionComplete()) {
+    Serial.println(F("ACTIVITY UNAVAILABLE accel=PENDING"));
+  } else if (!accelerometer_manager.detected()) {
+    Serial.println(F("ACTIVITY UNAVAILABLE accel=ABSENT"));
+  } else if (state == State::kCapturing) {
+    Serial.printf("ACTIVITY CAPTURING samples=%u\n",
+                  static_cast<unsigned>(activity_capture.sampleCount()));
+  } else if (state == State::kStopping) {
+    Serial.println(F("ACTIVITY STOPPING"));
+  } else {
+    Serial.println(F("ACTIVITY IDLE"));
+  }
+}
+
+void startActivityCapture() {
+  using Result = orun_tlp::ActivityCapture::StartResult;
+  const auto result = activity_capture.start();
+  if (result == Result::kStarted) {
+    printActivityDiagnostic();
+    return;
+  }
+  const char* reason = result == Result::kPending ? "PENDING" :
+                       result == Result::kAbsent ? "ABSENT" :
+                       result == Result::kFault ? "FAULT" : "BUSY";
+  Serial.printf("ACTIVITY START rejected: %s\n", reason);
+}
+
 void handleRoleCommand() {
   if (role_command_overflow) {
     role_command_length = 0;
@@ -89,6 +147,17 @@ void handleRoleCommand() {
   if (isAccelerometerQuery()) {
     role_command_length = 0;
     printAccelerometerDiagnostic();
+    return;
+  }
+
+  if (isActivityCommand("ACTIVITY?", 9)) {
+    role_command_length = 0;
+    printActivityDiagnostic();
+    return;
+  }
+  if (isActivityCommand("ACTIVITY START", 14)) {
+    role_command_length = 0;
+    startActivityCapture();
     return;
   }
 
@@ -277,6 +346,7 @@ void loop() {
   gnss_manager.poll();
   handleAccelerometerEvent(
       accelerometer_manager.poll(orun_tlp::monotonic::nowMs()));
+  activity_capture.poll();
   pollRoleCommands();
   if (!automatic_role_resolved && role_controller.automatic() &&
       gnss_manager.detectionComplete()) {

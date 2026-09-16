@@ -35,6 +35,16 @@ class AccelerometerManager {
   bool detected() const { return detected_; }
   bool faulted() const { return faulted_; }
 
+  // Explicit diagnostic/session owner only; never starts from role/presence.
+  bool startRuntimeSession();
+  bool takeRuntimeSample(AccelerometerSample* sample);
+  void stopRuntimeSession();
+  bool runtimeSessionActive() const { return runtime_active_; }
+  bool runtimeShutdownConfirmed() const {
+    return detection_complete_ && detected_ && !faulted_ &&
+           !runtime_active_ && state_ == State::kDone;
+  }
+
   bool takeProbeSample(AccelerometerSample* sample);
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
@@ -65,6 +75,9 @@ class AccelerometerManager {
   bool faulted_ = false;
   bool saw_transport_timeout_ = false;
   bool probe_sample_ready_ = false;
+  bool runtime_active_ = false;
+  bool runtime_sample_ready_ = false;
+  AccelerometerSample runtime_sample_{};
   bool discard_next_sample_ = false;
   uint8_t detection_attempts_ = 0;
   uint8_t configuration_step_ = 0;

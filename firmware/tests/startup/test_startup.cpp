@@ -178,6 +178,12 @@ int main(int argc, char** argv) {
   pollRoleCommands();
   assert(Serial.output == "ACCEL PENDING\n");
 
+  Serial.output.clear();
+  Serial.queueInput("ACTIVITY START\nACTIVITY?\n");
+  while (Serial.available()) pollRoleCommands();
+  assert(Serial.output == "ACTIVITY START rejected: PENDING\n"
+                          "ACTIVITY UNAVAILABLE accel=PENDING\n");
+
   // The startup Wire stub has no LIS3DH response. Advance exactly to the third
   // bounded detection attempt, latch the real manager event, then prove the same
   // query returns the retained result without re-probing hardware.
@@ -189,6 +195,38 @@ int main(int argc, char** argv) {
   Serial.queueInput("ACCEL?\n");
   pollRoleCommands();
   assert(Serial.output == "ACCEL ABSENT\n");
+
+  // Additive M6B3 parser checks use the actual main.cpp serial surface. Queries
+  // and rejected starts must not transact on Wire or alter role/config.
+  const auto wire_calls = Wire.transaction_calls;
+  const auto prior_role = role_controller.role();
+  Serial.output.clear();
+  Serial.queueInput("ACTIVITY STA");
+  pollRoleCommands();
+  assert(Serial.output.empty());
+  Serial.queueInput("RT\r\nACTIVITY?\rACTIVITY?\n");
+  while (Serial.available()) pollRoleCommands();
+  assert(Serial.output == "ACTIVITY START rejected: ABSENT\n"
+                          "ACTIVITY UNAVAILABLE accel=ABSENT\n"
+                          "ACTIVITY UNAVAILABLE accel=ABSENT\n");
+  assert(activity_capture.state() == ActivityCapture::State::kIdle);
+  assert(role_controller.role() == prior_role);
+  assert(Wire.transaction_calls == wire_calls);
+  Serial.output.clear();
+  Serial.queueInput("ACTIVITY STARTxxxxxxxxxxxxxxxxxxxxxxxx\nACTIVITY STARTX\nACCEL?\n");
+  while (Serial.available()) pollRoleCommands();
+  assert(Serial.output == "ROLE command rejected: too long\n"
+                          "ROLE command rejected\nACCEL ABSENT\n");
+  assert(Wire.transaction_calls == wire_calls);
+  Serial.output.clear();
+  Serial.queueInput("ROLE RELAY\rROLE?\nROLE BASE\r\nROLE TRACKER\nROLE?\n");
+  while (Serial.available()) pollRoleCommands();
+  assert(Serial.output == "ROLE RELAY source=USB-OVERRIDE\n"
+                          "ROLE RELAY mode=OVERRIDE\n"
+                          "ROLE BASE source=USB-OVERRIDE\n"
+                          "ROLE TRACKER source=USB-OVERRIDE\n"
+                          "ROLE TRACKER mode=OVERRIDE\n");
+  assert(Wire.transaction_calls == wire_calls);
 
   assert(munmap(region, kRegionSize) == 0);
   printf("Production startup identity/history/loop (%s): PASS\n", argv[1]);

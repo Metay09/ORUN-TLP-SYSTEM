@@ -1,7 +1,7 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through the M6 software stack; final independent audit and focused operator M6A physical gate PASS; overall M6 IN PROGRESS**.
-Last reviewed against code: `332cf0e1b307735348a97c3cbd15f916d04a21a0`.
+Status: **CURRENT through M6B3 explicit diagnostic capture; prior M6A audit/physical gate PASS; M6B3 focused operator physical gate PASS; overall M6 IN PROGRESS**.
+Last reviewed against code: M6B3 working tree on `main@8c8248b5d125914dccff49ae54072a15021a6136` (prior M6A audited head `332cf0e1b307735348a97c3cbd15f916d04a21a0`).
 Last architecture review update: 2026-09-16.
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
@@ -214,11 +214,10 @@ projection therefore remains intentionally coarse: detected hardware is reported
 as `PRESENT + OK`; acquisition timeout/recovery is not yet aggregated into the
 capability health field.
 
-The accelerometer currently performs only a bounded boot/probe path in production
-composition. It is not a continuous 10 Hz runtime activity service. M6B1/M6B2
-activity feature/quality helpers are compiled in the source tree but are not
-called by `main.cpp`, so accelerometer presence must not be presented as activity
-classification availability.
+The accelerometer performs the bounded boot/probe path and, only on explicit
+`ACTIVITY START`, one bounded 50-sample diagnostic capture. M6B3 uses M6B1/M6B2
+feature/quality helpers but is not an automatically enabled activity service.
+Accelerometer presence must not imply activity enablement or classification.
 
 ## 6. Requested configuration, effective state and commands
 
@@ -360,11 +359,12 @@ receipt semantic.
 Local activity and local geofence development may proceed in M6 using accepted
 fresh location and local rules.
 
-The current software stack has only deterministic activity feature/quality
-helpers and geofence geometry/permitted-area composition. It does **not** yet
-implement production activity classification, NEAR_FENCE distance, GNSS quality
-policy, repeated-fix confirmation, hysteresis, FREE_GRAZE or local operational
-state. Host-only geometry PASS must not be described as field geofence PASS.
+The current software stack has bounded explicit M6B3 diagnostic activity
+capture plus deterministic activity feature/quality helpers and geofence
+geometry/permitted-area composition. It does **not** yet implement an automatically
+enabled production activity service or production activity classification,
+NEAR_FENCE distance, GNSS quality policy, repeated-fix confirmation, hysteresis,
+FREE_GRAZE or local operational state. Host-only geometry PASS must not be described as field geofence PASS.
 
 A trustworthy network-contact-based LOST rule is different. Do not claim:
 
@@ -492,9 +492,8 @@ into unperformed hardware validation.
 
 ## 14. Current M6 implementation boundary
 
-The current stacked M6 software state through M6C2 is intentionally asymmetric:
-only M6A changes production runtime composition; M6B1/M6B2/M6C1/M6C2 are portable
-helpers compiled in the production source tree but not referenced by `main.cpp`.
+M6A and M6B3 are runtime-integrated. M6B3 explicitly connects the portable
+M6B1/M6B2 helpers for one manual diagnostic capture. M6C1/M6C2 remain host-only.
 
 ### Runtime-integrated now
 
@@ -506,7 +505,7 @@ helpers compiled in the production source tree but not referenced by `main.cpp`.
 - This capability observation does not create an activity requested/effective
   service and does not affect Role, tracking, relay forwarding or GNSS power.
 
-M6A software and final independent Astra audit are PASS on
+Historical M6A software and final independent Astra audit are PASS on
 `332cf0e1b307735348a97c3cbd15f916d04a21a0`: **13,948 / 248,832 bytes RAM (5.6%)**
 and **142,456 / 815,104 bytes flash (17.5%)**. The diagnostic delta versus
 `613cdf1` adds **16 bytes RAM / 272 bytes flash**. `ACCEL?` only reports the latched
@@ -526,17 +525,41 @@ Astra hardware validation. Exact serial observations and the PASS/non-evidence
 matrix are recorded in `docs/milestones/M6.md` and
 `docs/audits/PRE_M6_STACK_AUDIT_RESOLUTION.md`.
 
+### M6B3 explicit diagnostic capture
+
+`AccelerometerManager` remains the sole LIS3DH I2C/configuration/sample owner.
+A runtime session reuses M6A's power-down-first configuration, 700 ms HR settling,
+retained-sample discard and shutdown/fault cleanup. One pending sample is handed
+to `ActivityCapture` without overwrite. The coordinator collects exactly 50,
+assesses features with `assessActivityWindow()`, and exposes READY/INVALID only
+after successful shutdown. Sensor faults suppress the result and retain
+`PRESENT + FAULT`, including after sparse cleanup recovery. `ACTIVITY?` is query-only.
+
+There is no boot/periodic auto-start, RequestedConfig activity field, role-based
+enablement, classification, RF activity telemetry or persistent activity history.
+This does not freeze a production duty cycle, FIFO or interrupt policy. Separate
+operator evidence on the exact M6B3 image closes the focused bounded diagnostic
+capture physical gate: boot regression, 50-sample usable features, latched query,
+BUSY rejection without losing capture, restart with new features and sensorless
+ABSENT rejection. READY supports the implemented confirmed shutdown-write path;
+it is not a current measurement or physical fault-cleanup validation. This is not
+independent hardware validation. See `docs/milestones/M6B3.md` for exact records.
+
+Observed duration was 5790 ms across 49 intervals: about 118 ms / 8.5 Hz effective
+average, within the existing timing-quality contract (zero discontinuities).
+Nominal 10 Hz / approximately 5 seconds remains an implementation seed, not an
+exact physical sampling claim. Field data and feature sensitivity to sample-rate
+variation must inform future classifier thresholds/models. No timing policy changes.
+
 ### Host-only / not production-integrated now
 
-- M6B1 fixed-memory activity window/features;
-- M6B2 activity feature eligibility/quality gate;
 - M6C1 simple-polygon geometry;
 - M6C2 multiple permitted-area union composition.
 
 Each of those slices has owner-run full host regression PASS and RAK4630 build
-SUCCESS on the stacked branch. Their code is linker-removed from the current
-production image because it is not referenced by `main.cpp`; therefore the
-measured linked image remains equal to the M6A audit-hardened composition.
+SUCCESS on the stacked branch. The geofence helpers remain linker-removed
+because they are not referenced by runtime. M6B3 now links the activity helpers;
+its footprint is recorded separately in `docs/milestones/M6B3.md`.
 
 No current M6 code claims:
 
@@ -550,9 +573,11 @@ No current M6 code claims:
 - critical RF event/ACK delivery;
 - trustworthy network-contact LOST.
 
-The final independent audit and focused operator M6A physical gate are closed.
-Remaining work for this unchanged candidate is documentation review and pre-merge
-preparation, not another M6A hardware test. Overall M6 remains IN PROGRESS; no
+The prior final independent audit and focused operator M6A physical gate are
+closed for the recorded M6A image. Separate current-image operator evidence now
+closes the M6B3 bounded diagnostic physical gate. Automatic activity enablement,
+classification, M6C runtime and M6D remain outside this closure.
+Overall M6 remains IN PROGRESS; no
 continuous sampling, animal classification/accuracy, geofence field behavior or
 trusted LOST/contact is validated by this closure. Any later change to
 runtime/I2C/power behavior requires relevant revalidation before merge.

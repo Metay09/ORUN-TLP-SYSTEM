@@ -176,6 +176,11 @@ void AccelerometerManager::scheduleDetectionRetry(uint32_t now) {
 }
 
 void AccelerometerManager::startPowerDown(Event event) {
+  if (runtime_active_) {
+    runtime_sample_ready_ = false;
+    // Fault visibility is immediate; shutdown continues cooperatively.
+    if (event == Event::kFault) faulted_ = true;
+  }
   pending_finish_event_ = event;
   power_down_attempts_ = 0;
   state_ = State::kPoweringDown;
@@ -189,6 +194,8 @@ AccelerometerManager::Event AccelerometerManager::enterFaultCleanup(uint32_t now
   // required to re-probe health rather than silently converting FAULT to OK.
   detection_complete_ = true;
   faulted_ = true;
+  runtime_active_ = false;
+  runtime_sample_ready_ = false;
   probe_sample_ready_ = false;
   pending_finish_event_ = Event::kNone;
   next_action_at_ms_ = now + accelerometer_config::kFaultCleanupRetryBackoffMs;
@@ -209,6 +216,8 @@ AccelerometerManager::Event AccelerometerManager::finishAbsent() {
 AccelerometerManager::Event AccelerometerManager::finishFault() {
   detection_complete_ = true;
   faulted_ = true;
+  runtime_active_ = false;
+  runtime_sample_ready_ = false;
   probe_sample_ready_ = false;
   pending_finish_event_ = Event::kNone;
   state_ = State::kDone;
@@ -304,6 +313,16 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
   if (state_ == State::kProbeWait) {
     if (!monotonic::reached(now, next_action_at_ms_)) return Event::kNone;
 
+    // Backpressure never overwrites a sample. An abandoned handoff fails closed
+    // after the normal sample timeout instead of leaving the sensor on forever.
+    if (runtime_active_ && runtime_sample_ready_) {
+      if (monotonic::elapsed(now, probe_started_at_ms_,
+                             accelerometer_config::kProbeTimeoutMs)) {
+        ++diagnostics_.sample_failures;
+        startPowerDown(Event::kFault);
+      }
+      return Event::kNone;
+    }
     uint8_t status = 0;
     const BusResult result = readRegister(kStatus, &status);
     accountBusResult(result, diagnostics_, saw_transport_timeout_);
@@ -350,10 +369,19 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
       return Event::kNone;
     }
 
-    probe_sample_ = AccelerometerSample(
+    const AccelerometerSample sample(
         now, highResolution2gToMg(bytes[0], bytes[1]),
         highResolution2gToMg(bytes[2], bytes[3]),
         highResolution2gToMg(bytes[4], bytes[5]));
+    if (runtime_active_) {
+      runtime_sample_ = sample;
+      runtime_sample_ready_ = true;
+      probe_started_at_ms_ = now;
+      next_action_at_ms_ = now + accelerometer_config::kProbeSamplePeriodMs;
+      state_ = State::kProbeWait;
+      return Event::kNone;
+    }
+    probe_sample_ = sample;
     ++diagnostics_.probe_samples;
     startPowerDown(Event::kPresent);
     return Event::kNone;
@@ -365,6 +393,11 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
       if (power_down_attempts_ < accelerometer_config::kPowerDownMaxAttempts)
         return Event::kNone;
       return enterFaultCleanup(now);
+    }
+    if (runtime_active_ && pending_finish_event_ == Event::kNone) {
+      runtime_active_ = false;
+      state_ = State::kDone;
+      return Event::kNone;
     }
     if (pending_finish_event_ == Event::kPresent)
       return finishPresent();
@@ -382,6 +415,30 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
   }
 
   return Event::kNone;
+}
+
+bool AccelerometerManager::startRuntimeSession() {
+  if (!runtimeShutdownConfirmed()) return false;
+  runtime_active_ = true;
+  runtime_sample_ready_ = false;
+  discard_next_sample_ = true;
+  configuration_step_ = 0;
+  state_ = State::kConfiguring;
+  return true;
+}
+
+bool AccelerometerManager::takeRuntimeSample(AccelerometerSample* sample) {
+  if (sample == nullptr || !runtime_sample_ready_ || faulted_) return false;
+  *sample = runtime_sample_;
+  runtime_sample_ready_ = false;
+  return true;
+}
+
+void AccelerometerManager::stopRuntimeSession() {
+  // Repeated stop must not restart the three-attempt shutdown budget or mask a
+  // pending fault. Fault cleanup always retains its original owner.
+  if (runtime_active_ && state_ != State::kPoweringDown)
+    startPowerDown(Event::kNone);
 }
 
 bool AccelerometerManager::takeProbeSample(AccelerometerSample* sample) {
