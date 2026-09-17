@@ -10,7 +10,11 @@ constexpr uint32_t kPowerSettleMs = 1000;
 constexpr uint8_t kI2cAddress = 0x42;
 constexpr uint16_t kConfigurationMaxWaitMs = 250;
 // Central M3 settings; no persistence or provisioning yet.
-constexpr uint32_t kTrackingIntervalSeconds = 15 * 60;
+// Development default (product-owner decision, M6P1 closure): 3 minutes
+// while the project is in active development/test. This is a compile-time
+// default change, not runtime/application configurability; see
+// docs/milestones/M6P1.md for scope, rationale and physical evidence.
+constexpr uint32_t kTrackingIntervalSeconds = 3 * 60;
 constexpr uint32_t kAcquisitionTimeoutSeconds = 120;
 constexpr uint32_t kShortIntervalThresholdSeconds = 60;
 constexpr uint32_t kTrackingIntervalMs = kTrackingIntervalSeconds * 1000UL;

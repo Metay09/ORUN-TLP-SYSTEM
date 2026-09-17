@@ -3,11 +3,31 @@
 #include <stdint.h>
 #include "device_identity.h"
 #include "network_service.h"
+#include "radio_listen_policy.h"
 #include "sequence_source.h"
 
 namespace orun_tlp {
 
 struct GnssFix;
+
+enum class RadioListenState : uint8_t {
+  kRxContinuous,
+  kRxWindowOpen,
+  kAsleep,
+};
+
+const char* radioListenStateName(RadioListenState state);
+
+struct RadioListenDiagnostics {
+  RadioListenPolicy listen_policy = RadioListenPolicy::kContinuous;
+  RadioListenState listen_state = RadioListenState::kRxContinuous;
+  uint32_t windows_opened = 0;
+  uint32_t sleep_entries = 0;
+  uint32_t wakes_for_tx = 0;
+  uint32_t rx_events_in_window = 0;
+  uint32_t stale_restores_while_asleep = 0;
+  uint32_t estimated_rx_ms = 0;
+};
 
 struct RadioEventDiagnostics {
   uint32_t rx_queue_drops = 0;
@@ -53,6 +73,7 @@ class RadioManager {
   uint32_t txTimeouts() const { return tx_timeouts_; }
   uint32_t localTxFailures() const { return local_tx_failures_; }
   RadioEventDiagnostics eventDiagnostics() const;
+  RadioListenDiagnostics listenDiagnostics() const;
   const RelayDiagnostics& relayDiagnostics() const {
     return network_.relayDiagnostics();
   }
@@ -81,8 +102,15 @@ class RadioManager {
   void postRxError();
   void processCallbackEvents();
   void processReceivedEvents();
-  bool serviceRxRestore();
+  bool serviceRxRestore(uint32_t now);
+  bool serviceWindowDeadline(uint32_t now);
   void requestRxRestore();
+  RadioListenPolicy desiredListenPolicy() const;
+  void reconcileListenPolicy(uint32_t now);
+  void openListenWindow(uint32_t now);
+  void markRxStarted(uint32_t now);
+  void markRxStopped(uint32_t now);
+  void foldRxAccounting(uint32_t now);
   void startTxOperation(); // Driver gate held; clears old hardware IRQ work.
   void applyPendingRole(); // Driver gate held; previous TX terminal.
   void sendTestPacket();
@@ -102,6 +130,12 @@ class RadioManager {
   bool tx_in_progress_ = false;
   TxKind tx_kind_ = TxKind::kNone;
   RxRestoreState rx_restore_state_ = RxRestoreState::kNone;
+  RadioListenPolicy listen_policy_ = RadioListenPolicy::kContinuous;
+  RadioListenState listen_state_ = RadioListenState::kRxContinuous;
+  uint32_t listen_window_deadline_ms_ = 0;
+  bool rx_accounting_active_ = false;
+  uint32_t rx_accounting_started_ms_ = 0;
+  RadioListenDiagnostics listen_diagnostics_{};
   uint32_t role_epoch_ = 0;
   uint32_t tx_role_epoch_ = 0;
   uint32_t tx_generation_ = 0;

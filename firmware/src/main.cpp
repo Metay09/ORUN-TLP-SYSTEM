@@ -137,6 +137,20 @@ void startActivityCapture() {
   Serial.printf("ACTIVITY START rejected: %s\n", reason);
 }
 
+void printRadioDiagnostic() {
+  const auto diagnostics = radio_manager.listenDiagnostics();
+  Serial.printf("RADIO policy=%s state=%s windows=%lu sleeps=%lu wakes=%lu "
+                "rx_in_window=%lu stale=%lu rx_ms_est=%lu\n",
+                orun_tlp::radioListenPolicyName(diagnostics.listen_policy),
+                orun_tlp::radioListenStateName(diagnostics.listen_state),
+                static_cast<unsigned long>(diagnostics.windows_opened),
+                static_cast<unsigned long>(diagnostics.sleep_entries),
+                static_cast<unsigned long>(diagnostics.wakes_for_tx),
+                static_cast<unsigned long>(diagnostics.rx_events_in_window),
+                static_cast<unsigned long>(diagnostics.stale_restores_while_asleep),
+                static_cast<unsigned long>(diagnostics.estimated_rx_ms));
+}
+
 void handleRoleCommand() {
   if (role_command_overflow) {
     role_command_length = 0;
@@ -150,6 +164,11 @@ void handleRoleCommand() {
     return;
   }
 
+  if (isActivityCommand("RADIO?", 6)) {
+    role_command_length = 0;
+    printRadioDiagnostic();
+    return;
+  }
   if (isActivityCommand("ACTIVITY?", 9)) {
     role_command_length = 0;
     printActivityDiagnostic();

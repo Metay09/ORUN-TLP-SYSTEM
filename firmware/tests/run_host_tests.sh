@@ -35,6 +35,10 @@ g++ "${flags[@]}" firmware/tests/b4/test_b4_network.cpp \
   -o "$test_dir/b4_network"
 "$test_dir/b4_network"
 
+g++ "${portable_flags[@]}" firmware/tests/m6/test_m6p1_radio_policy.cpp \
+  firmware/src/radio_listen_policy.cpp -o "$test_dir/m6p1_radio_policy"
+"$test_dir/m6p1_radio_policy"
+
 g++ -Ifirmware/tests/m6/stubs "${flags[@]}" \
   firmware/tests/m6/test_m6_accelerometer.cpp \
   firmware/src/accelerometer_manager.cpp firmware/src/i2c_recovery.cpp \
@@ -105,6 +109,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r2/test_patch_radio.py "$test_d
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp \
   "$test_dir/driver_bridge.cpp" \
   firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_listen_policy.cpp \
   firmware/src/network_service.cpp firmware/src/radio_driver_gate.cpp \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
   firmware/src/node_role.cpp firmware/src/tlp_test_packet.cpp \
@@ -112,10 +117,21 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp 
   -o "$test_dir/b4_radio"
 "$test_dir/b4_radio"
 
+g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
+  firmware/tests/m6/test_m6p1_radio.cpp "$test_dir/driver_bridge.cpp" \
+  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_listen_policy.cpp \
+  firmware/src/network_service.cpp firmware/src/radio_driver_gate.cpp \
+  firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
+  firmware/src/node_role.cpp firmware/src/tlp_test_packet.cpp \
+  firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
+  -o "$test_dir/m6p1_radio"
+"$test_dir/m6p1_radio"
+
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
   "$test_dir/driver_bridge.cpp" \
   firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
-  firmware/src/network_service.cpp \
+  firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
   firmware/src/radio_driver_gate.cpp firmware/src/rak_device_identity.cpp \
   firmware/src/legacy_position_mapping.cpp \
   firmware/src/node_role.cpp firmware/src/tlp_test_packet.cpp \
@@ -130,7 +146,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/activity_quality.cpp \
   firmware/src/accelerometer_manager.cpp \
   firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
-  firmware/src/radio_driver_gate.cpp \
+  firmware/src/radio_listen_policy.cpp firmware/src/radio_driver_gate.cpp \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
   firmware/src/network_service.cpp firmware/src/node_role.cpp \
   firmware/src/runtime_config.cpp \

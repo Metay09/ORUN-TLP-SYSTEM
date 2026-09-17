@@ -46,6 +46,17 @@ QueueHandle_t rx_event_queue = nullptr;
 static_assert(tlp::kRelayForwardPacketSize <= kRadioReceiveLimit,
               "largest TLP packet must fit radio event storage");
 
+void saturatingIncrement(uint32_t& value) {
+  if (value != UINT32_MAX) ++value;
+}
+
+void saturatingAdd(uint32_t& value, uint32_t amount) {
+  if (UINT32_MAX - value < amount)
+    value = UINT32_MAX;
+  else
+    value += amount;
+}
+
 uint32_t deterministicJitter(uint64_t device_id, uint32_t sequence_number,
                              uint32_t range) {
   uint32_t value = static_cast<uint32_t>(device_id) ^
@@ -57,6 +68,18 @@ uint32_t deterministicJitter(uint64_t device_id, uint32_t sequence_number,
 }
 
 }  // namespace
+
+const char* radioListenStateName(RadioListenState state) {
+  switch (state) {
+    case RadioListenState::kRxContinuous:
+      return "CONTINUOUS";
+    case RadioListenState::kRxWindowOpen:
+      return "WINDOW";
+    case RadioListenState::kAsleep:
+      return "ASLEEP";
+  }
+  return "UNKNOWN";
+}
 
 bool RadioManager::begin(SequenceSource& sequences) {
   sequences_ = &sequences;
@@ -76,6 +99,12 @@ bool RadioManager::begin(SequenceSource& sequences) {
   accept_rx_events_ = true;
   network_.begin(device_id_, NodeRole::kBase);
   event_diagnostics_ = {};
+  listen_policy_ = RadioListenPolicy::kContinuous;
+  listen_state_ = RadioListenState::kRxContinuous;
+  listen_window_deadline_ms_ = 0;
+  rx_accounting_active_ = false;
+  rx_accounting_started_ms_ = 0;
+  listen_diagnostics_ = {};
   role_epoch_ = 0;
   tx_role_epoch_ = 0;
   pending_tx_result_ = TxResult::kNone;
@@ -121,7 +150,9 @@ bool RadioManager::begin(SequenceSource& sequences) {
 
   active_radio_manager = this;
   Radio.Rx(0);
-  next_tx_at_ms_ = monotonic::nowMs() +
+  const uint32_t now = monotonic::nowMs();
+  markRxStarted(now);
+  next_tx_at_ms_ = now +
                    deterministicJitter(device_id_, 0,
                                        radio_config::kInitialOffsetRangeMs);
   Serial.printf("RF: %lu Hz TX=%d dBm SF%u BW=%u kHz CR=%u/%u preamble=%u sync=0x%04X\n",
@@ -143,18 +174,27 @@ void RadioManager::update(bool allow_test_beacon) {
   if (!gate) return; // No driver read or result consumption before cleanup exit.
   // Drain pending DIO work before deciding that a software deadline won.
   orunRadioDispatchLocked();
+  uint32_t now = monotonic::nowMs();
+  foldRxAccounting(now);
   if (tx_in_progress_ && pending_tx_result_ == TxResult::kNone &&
-      monotonic::elapsed(monotonic::nowMs(), tx_started_ms_, radio_config::kTxTimeoutMs))
+      monotonic::elapsed(now, tx_started_ms_, radio_config::kTxTimeoutMs))
     orunRadioTimeoutLocked();
   processCallbackEvents();
+  now = monotonic::nowMs();
+  reconcileListenPolicy(now);
   if (role_transition_pending_ && !tx_in_progress_) {
     applyPendingRole();
     return;
   }
+  // Queue capacity is exactly kRxEventQueueCapacity and callbacks cannot run
+  // while this owner holds the driver gate, so this bounded pass fully drains
+  // all handed-off RX work before a possible sleep transition below.
   processReceivedEvents();
-  if (!serviceRxRestore()) return;
+  now = monotonic::nowMs();
+  reconcileListenPolicy(now);
+  if (!serviceRxRestore(now)) return;
+  if (!serviceWindowDeadline(now)) return;
 
-  const uint32_t now = monotonic::nowMs();
   if (network_.relayForwardingEnabled() && !tx_in_progress_) {
     sendDueRelay(now);
   }
@@ -258,6 +298,17 @@ RadioEventDiagnostics RadioManager::eventDiagnostics() const {
   return snapshot;
 }
 
+RadioListenDiagnostics RadioManager::listenDiagnostics() const {
+  RadioListenDiagnostics snapshot = listen_diagnostics_;
+  snapshot.listen_policy = listen_policy_;
+  snapshot.listen_state = listen_state_;
+  if (rx_accounting_active_) {
+    saturatingAdd(snapshot.estimated_rx_ms,
+                  monotonic::nowMs() - rx_accounting_started_ms_);
+  }
+  return snapshot;
+}
+
 void RadioManager::enqueueRxEvent(const uint8_t* payload, uint16_t size,
                                   int16_t rssi, int8_t snr) {
   taskENTER_CRITICAL();
@@ -346,10 +397,22 @@ void RadioManager::processCallbackEvents() {
       // Local TX completion is not application delivery confirmation.
       tx_kind_ = TxKind::kNone;
       tx_in_progress_ = false;
-      scheduleNextTransmission(monotonic::nowMs());
+      const uint32_t now = monotonic::nowMs();
+      scheduleNextTransmission(now);
+      const RadioListenPolicy desired = desiredListenPolicy();
+      listen_policy_ = desired;
+      if (desired == RadioListenPolicy::kWindowed) {
+        openListenWindow(now);
+      } else {
+        listen_state_ = RadioListenState::kRxContinuous;
+        listen_window_deadline_ms_ = 0;
+        requestRxRestore();
+      }
     } else {
       ++event_diagnostics_.stale_tx_results;
     }
+    // Preserve the pre-M6P1 defensive restore after any consumed terminal
+    // result; an asleep windowed node ignores and counts it.
     requestRxRestore();
   }
 
@@ -369,36 +432,139 @@ void RadioManager::processReceivedEvents() {
       ++event_diagnostics_.stale_rx_events;
       continue;
     }
+    if (listen_policy_ == RadioListenPolicy::kWindowed &&
+        listen_state_ == RadioListenState::kRxWindowOpen) {
+      saturatingIncrement(listen_diagnostics_.rx_events_in_window);
+    }
     handleReceivedPacket(event.payload, event.size, event.rssi, event.snr);
     requestRxRestore();
   }
 }
 
 void RadioManager::requestRxRestore() {
+  if (listen_policy_ == RadioListenPolicy::kWindowed &&
+      listen_state_ == RadioListenState::kAsleep) {
+    saturatingIncrement(listen_diagnostics_.stale_restores_while_asleep);
+    return;
+  }
   rx_restore_state_ = RxRestoreState::kRequired;
 }
 
-bool RadioManager::serviceRxRestore() {
+RadioListenPolicy RadioManager::desiredListenPolicy() const {
+  const LegacyRoleBehavior behavior = legacyRoleBehavior(network_.role());
+  return resolveRadioListenPolicy(network_.relayForwardingEnabled(),
+                                  behavior.receive_application_position,
+                                  role_transition_pending_);
+}
+
+void RadioManager::reconcileListenPolicy(uint32_t now) {
+  const RadioListenPolicy desired = desiredListenPolicy();
+  if (desired == RadioListenPolicy::kContinuous) {
+    if (listen_policy_ != desired ||
+        listen_state_ != RadioListenState::kRxContinuous) {
+      listen_policy_ = desired;
+      listen_state_ = RadioListenState::kRxContinuous;
+      listen_window_deadline_ms_ = 0;
+      requestRxRestore();
+    }
+    return;
+  }
+
+  if (listen_policy_ != desired ||
+      listen_state_ == RadioListenState::kRxContinuous) {
+    listen_policy_ = desired;
+    openListenWindow(now);
+  }
+}
+
+void RadioManager::openListenWindow(uint32_t now) {
+  listen_state_ = RadioListenState::kRxWindowOpen;
+  listen_window_deadline_ms_ = now + radio_config::kWindowedRxAfterTxMs;
+  saturatingIncrement(listen_diagnostics_.windows_opened);
+  requestRxRestore();
+}
+
+void RadioManager::markRxStarted(uint32_t now) {
+  if (rx_accounting_active_) return;
+  rx_accounting_active_ = true;
+  rx_accounting_started_ms_ = now;
+}
+
+void RadioManager::foldRxAccounting(uint32_t now) {
+  if (!rx_accounting_active_) return;
+  saturatingAdd(listen_diagnostics_.estimated_rx_ms,
+                now - rx_accounting_started_ms_);
+  rx_accounting_started_ms_ = now;
+}
+
+void RadioManager::markRxStopped(uint32_t now) {
+  if (!rx_accounting_active_) return;
+  saturatingAdd(listen_diagnostics_.estimated_rx_ms,
+                now - rx_accounting_started_ms_);
+  rx_accounting_active_ = false;
+}
+
+bool RadioManager::serviceRxRestore(uint32_t now) {
   if (tx_in_progress_) return false;
   if (rx_restore_state_ == RxRestoreState::kNone) return true;
+
+  if (listen_policy_ == RadioListenPolicy::kWindowed) {
+    if (listen_state_ == RadioListenState::kAsleep) {
+      saturatingIncrement(listen_diagnostics_.stale_restores_while_asleep);
+      rx_restore_state_ = RxRestoreState::kNone;
+      return true;
+    }
+    if (listen_state_ == RadioListenState::kRxWindowOpen &&
+        monotonic::reached(now, listen_window_deadline_ms_)) {
+      rx_restore_state_ = RxRestoreState::kNone;
+      return true;
+    }
+  }
 
   // Caller holds the gate across dispatch, result consumption and recovery.
   const RadioState_t state = Radio.GetStatus();
   if (state == RF_TX_RUNNING || state == RF_CAD) return false;
   if (state == RF_RX_RUNNING) {
+    markRxStarted(now);
     rx_restore_state_ = RxRestoreState::kNone;
     return true;
   }
+  markRxStopped(now);
   orunRadioQuiesceLocked();
   Radio.Rx(0);
+  markRxStarted(now);
   rx_restore_state_ = RxRestoreState::kNone;
+  return false;
+}
+
+bool RadioManager::serviceWindowDeadline(uint32_t now) {
+  if (listen_policy_ != RadioListenPolicy::kWindowed ||
+      listen_state_ != RadioListenState::kRxWindowOpen ||
+      tx_in_progress_ || role_transition_pending_ ||
+      !monotonic::reached(now, listen_window_deadline_ms_)) {
+    return true;
+  }
+
+  markRxStopped(now);
+  orunRadioQuiesceLocked();
+  Radio.Sleep();
+  listen_state_ = RadioListenState::kAsleep;
+  listen_window_deadline_ms_ = 0;
+  rx_restore_state_ = RxRestoreState::kNone;
+  saturatingIncrement(listen_diagnostics_.sleep_entries);
   return false;
 }
 
 void RadioManager::startTxOperation() {
   // No previous TX can be active here. Stop RX and clear pending hardware
   // IRQs before changing the callback identity; a waiting LORA dispatch then
-  // observes only empty registers or the newly armed operation.
+  // observes only empty registers or the newly armed operation. SX126x-Arduino
+  // uses warm-start sleep and its checked command path wakes the radio here.
+  if (listen_policy_ == RadioListenPolicy::kWindowed &&
+      listen_state_ == RadioListenState::kAsleep) {
+    saturatingIncrement(listen_diagnostics_.wakes_for_tx);
+  }
+  markRxStopped(monotonic::nowMs());
   orunRadioQuiesceLocked();
   if (++tx_generation_ == 0) ++tx_generation_;
   armed_tx_generation_ = tx_generation_;
@@ -409,6 +575,8 @@ void RadioManager::startTxOperation() {
 void RadioManager::applyPendingRole() {
   // Callbacks were rejected at request time. Gate excludes even a dispatch
   // paused before its application callback; quiesce removes not-yet-read IRQs.
+  const uint32_t now = monotonic::nowMs();
+  markRxStopped(now);
   orunRadioQuiesceLocked();
   processReceivedEvents();
   network_.setRole(requested_role_);
@@ -417,7 +585,17 @@ void RadioManager::applyPendingRole() {
   radio_driver::setGeneration(0);
   role_transition_pending_ = false;
   rx_restore_state_ = RxRestoreState::kNone;
-  Radio.Rx(0);
+
+  listen_policy_ = desiredListenPolicy();
+  if (listen_policy_ == RadioListenPolicy::kContinuous) {
+    listen_state_ = RadioListenState::kRxContinuous;
+    listen_window_deadline_ms_ = 0;
+    requestRxRestore();
+  } else {
+    openListenWindow(now);
+  }
+  serviceRxRestore(now);
+
   taskENTER_CRITICAL();
   accept_rx_events_ = true;
   taskEXIT_CRITICAL();
