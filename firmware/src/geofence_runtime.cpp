@@ -70,7 +70,7 @@ GeofenceRuntimeConfigResult GeofenceRuntime::configure(
   configured_ = true;
   has_assessment_ = false;
   assessment_ = PermittedAreaAssessment();
-  assessed_fix_captured_at_ms_ = 0;
+  assessed_observation_captured_at_ms_ = 0;
   return GeofenceRuntimeConfigResult::kApplied;
 }
 
@@ -80,16 +80,15 @@ void GeofenceRuntime::clear() {
   configured_ = false;
   has_assessment_ = false;
   assessment_ = PermittedAreaAssessment();
-  assessed_fix_captured_at_ms_ = 0;
+  assessed_observation_captured_at_ms_ = 0;
 }
 
-GeofenceObservationResult GeofenceRuntime::observeAcceptedFix(
-    const GnssFix& fix) {
+GeofenceObservationResult GeofenceRuntime::observeAcceptedPosition(
+    const GeoPointE7& point, uint32_t captured_at_ms) {
   if (!configured_) return GeofenceObservationResult::kNotConfigured;
 
   const PermittedAreaAssessment next = assessPermittedGeofenceAreas(
-      GeofenceAreaSetView(areas_, area_count_),
-      GeoPointE7(fix.latitude_e7, fix.longitude_e7));
+      GeofenceAreaSetView(areas_, area_count_), point);
   if (next.relation == PermittedAreaRelation::kInvalidPoint) {
     return GeofenceObservationResult::kInvalidPoint;
   }
@@ -99,7 +98,7 @@ GeofenceObservationResult GeofenceRuntime::observeAcceptedFix(
   }
 
   assessment_ = next;
-  assessed_fix_captured_at_ms_ = fix.captured_at_ms;
+  assessed_observation_captured_at_ms_ = captured_at_ms;
   has_assessment_ = true;
   return GeofenceObservationResult::kAccepted;
 }
