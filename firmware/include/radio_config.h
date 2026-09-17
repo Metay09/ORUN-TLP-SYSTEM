@@ -20,6 +20,13 @@ constexpr bool kIqInverted = false;
 constexpr uint16_t kPrivateSyncWord = 0x1424;
 constexpr uint32_t kTxTimeoutMs = 5000;
 
+// M6P1: bounded post-TX listen window for nodes without an availability
+// commitment. Not tuned; reserved for future ACK/downlink. Volatile constant,
+// not persisted configuration.
+constexpr uint32_t kWindowedRxAfterTxMs = 3000;
+static_assert(kWindowedRxAfterTxMs < 0x80000000UL,
+              "windowed RX deadline must fit monotonic half-range");
+
 // SX126x-Arduino automatically enables Low Data Rate Optimization for SF11 or
 // SF12 at BW125. Do not call Radio.EnforceLowDRopt() for this M1 profile.
 
