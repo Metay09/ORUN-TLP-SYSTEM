@@ -35,6 +35,23 @@ struct GeofencePolygonView {
   uint16_t vertex_count;
 };
 
+// Structural count shared by geometry validation/classification and bounded
+// runtime ownership. An optional explicit final vertex equal to the first is a
+// closing duplicate and therefore does not consume an effective-vertex slot.
+// Null/empty views have zero effective vertices.
+inline uint16_t effectiveGeofenceVertexCount(
+    const GeofencePolygonView& polygon) {
+  if (polygon.vertices == nullptr || polygon.vertex_count == 0) return 0;
+  if (polygon.vertex_count > 1 &&
+      polygon.vertices[0].latitude_e7 ==
+          polygon.vertices[polygon.vertex_count - 1].latitude_e7 &&
+      polygon.vertices[0].longitude_e7 ==
+          polygon.vertices[polygon.vertex_count - 1].longitude_e7) {
+    return static_cast<uint16_t>(polygon.vertex_count - 1);
+  }
+  return polygon.vertex_count;
+}
+
 enum class GeofencePolygonValidation : uint8_t {
   kOk,
   kNullVertices,
