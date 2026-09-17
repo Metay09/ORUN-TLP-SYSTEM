@@ -22,13 +22,12 @@ GeofencePolygonView polygon(const GeoPointE7* vertices, uint16_t count) {
   return GeofencePolygonView(vertices, count);
 }
 
-GnssFix fixAt(int32_t latitude_e7, int32_t longitude_e7,
-              uint32_t captured_at_ms) {
-  GnssFix fix{};
-  fix.latitude_e7 = latitude_e7;
-  fix.longitude_e7 = longitude_e7;
-  fix.captured_at_ms = captured_at_ms;
-  return fix;
+GeofenceObservationResult observeAt(GeofenceRuntime& runtime,
+                                    int32_t latitude_e7,
+                                    int32_t longitude_e7,
+                                    uint32_t captured_at_ms) {
+  return runtime.observeAcceptedPosition(
+      GeoPointE7(latitude_e7, longitude_e7), captured_at_ms);
 }
 
 void makeMaximumClosedPolygon(GeoPointE7 (&vertices)[65]) {
@@ -45,7 +44,7 @@ void unconfiguredRuntimeDoesNotInventState() {
   GeofenceRuntime runtime;
   assert(!runtime.configured());
   assert(!runtime.hasAssessment());
-  assert(runtime.observeAcceptedFix(fixAt(0, 0, 10)) ==
+  assert(observeAt(runtime, 0, 0, 10) ==
          GeofenceObservationResult::kNotConfigured);
   assert(!runtime.hasAssessment());
 }
@@ -67,18 +66,18 @@ void boundedOwnedCopyAndUnionAssessment() {
   // Runtime owns its copy: caller lifetime/mutation cannot alter active geometry.
   first[0] = GeoPointE7(700000000, 700000000);
 
-  assert(runtime.observeAcceptedFix(fixAt(5500, 5500, 100)) ==
+  assert(observeAt(runtime, 5500, 5500, 100) ==
          GeofenceObservationResult::kAccepted);
   assert(runtime.assessment().relation == PermittedAreaRelation::kInside);
   assert(runtime.assessment().area_index == 1);
-  assert(runtime.assessedFixCapturedAtMs() == 100);
+  assert(runtime.assessedObservationCapturedAtMs() == 100);
 
-  assert(runtime.observeAcceptedFix(fixAt(0, 500, 200)) ==
+  assert(observeAt(runtime, 0, 500, 200) ==
          GeofenceObservationResult::kAccepted);
   assert(runtime.assessment().relation == PermittedAreaRelation::kBoundary);
   assert(runtime.assessment().area_index == 0);
 
-  assert(runtime.observeAcceptedFix(fixAt(3000, 3000, 300)) ==
+  assert(observeAt(runtime, 3000, 3000, 300) ==
          GeofenceObservationResult::kAccepted);
   assert(runtime.assessment().relation == PermittedAreaRelation::kOutside);
   assert(runtime.assessment().area_index == kNoGeofenceAreaIndex);
@@ -95,7 +94,7 @@ void explicitClosingVertexUsesEffectiveVertexBudget() {
   assert(runtime.configure(GeofenceAreaSetView(areas, 1)) ==
          GeofenceRuntimeConfigResult::kApplied);
   assert(runtime.totalVertexCount() == 64);
-  assert(runtime.observeAcceptedFix(fixAt(8, 8, 1234)) ==
+  assert(observeAt(runtime, 8, 8, 1234) ==
          GeofenceObservationResult::kAccepted);
   assert(runtime.assessment().relation == PermittedAreaRelation::kInside);
 }
@@ -108,16 +107,16 @@ void invalidObservationDoesNotEraseLastValidAssessment() {
   GeofenceRuntime runtime;
   assert(runtime.configure(GeofenceAreaSetView(areas, 1)) ==
          GeofenceRuntimeConfigResult::kApplied);
-  assert(runtime.observeAcceptedFix(fixAt(500, 500, 77)) ==
+  assert(observeAt(runtime, 500, 500, 77) ==
          GeofenceObservationResult::kAccepted);
   const PermittedAreaAssessment before = runtime.assessment();
 
-  assert(runtime.observeAcceptedFix(fixAt(900000000, 0, 88)) ==
+  assert(observeAt(runtime, 900000000, 0, 88) ==
          GeofenceObservationResult::kInvalidPoint);
   assert(runtime.hasAssessment());
   assert(runtime.assessment().relation == before.relation);
   assert(runtime.assessment().area_index == before.area_index);
-  assert(runtime.assessedFixCapturedAtMs() == 77);
+  assert(runtime.assessedObservationCapturedAtMs() == 77);
 }
 
 void rejectedReplacementPreservesKnownGoodConfigAndResult() {
@@ -128,7 +127,7 @@ void rejectedReplacementPreservesKnownGoodConfigAndResult() {
   GeofenceRuntime runtime;
   assert(runtime.configure(GeofenceAreaSetView(valid_areas, 1)) ==
          GeofenceRuntimeConfigResult::kApplied);
-  assert(runtime.observeAcceptedFix(fixAt(500, 500, 9)) ==
+  assert(observeAt(runtime, 500, 500, 9) ==
          GeofenceObservationResult::kAccepted);
 
   const GeoPointE7 malformed[] = {
@@ -141,7 +140,7 @@ void rejectedReplacementPreservesKnownGoodConfigAndResult() {
   assert(runtime.totalVertexCount() == 4);
   assert(runtime.hasAssessment());
   assert(runtime.assessment().relation == PermittedAreaRelation::kInside);
-  assert(runtime.assessedFixCapturedAtMs() == 9);
+  assert(runtime.assessedObservationCapturedAtMs() == 9);
 }
 
 void resourceBoundsRejectWithoutMutatingActiveConfig() {
@@ -152,6 +151,8 @@ void resourceBoundsRejectWithoutMutatingActiveConfig() {
   GeofenceRuntime runtime;
   assert(runtime.configure(GeofenceAreaSetView(one, 1)) ==
          GeofenceRuntimeConfigResult::kApplied);
+  assert(observeAt(runtime, 500, 500, 55) ==
+         GeofenceObservationResult::kAccepted);
 
   GeofencePolygonView too_many_areas[
       geofence_runtime_config::kMaximumAreas + 1]{};
@@ -159,6 +160,9 @@ void resourceBoundsRejectWithoutMutatingActiveConfig() {
              too_many_areas, geofence_runtime_config::kMaximumAreas + 1)) ==
          GeofenceRuntimeConfigResult::kTooManyAreas);
   assert(runtime.areaCount() == 1 && runtime.totalVertexCount() == 4);
+  assert(runtime.hasAssessment());
+  assert(runtime.assessment().relation == PermittedAreaRelation::kInside);
+  assert(runtime.assessedObservationCapturedAtMs() == 55);
 
   GeoPointE7 maximum_closed[65]{};
   makeMaximumClosedPolygon(maximum_closed);
@@ -167,6 +171,9 @@ void resourceBoundsRejectWithoutMutatingActiveConfig() {
   assert(runtime.configure(GeofenceAreaSetView(oversized_total, 2)) ==
          GeofenceRuntimeConfigResult::kTooManyVertices);
   assert(runtime.areaCount() == 1 && runtime.totalVertexCount() == 4);
+  assert(runtime.hasAssessment());
+  assert(runtime.assessment().relation == PermittedAreaRelation::kInside);
+  assert(runtime.assessedObservationCapturedAtMs() == 55);
 
   GeoPointE7 too_many_unique[65]{};
   for (uint16_t i = 0; i < 65; ++i) {
@@ -176,6 +183,9 @@ void resourceBoundsRejectWithoutMutatingActiveConfig() {
   assert(runtime.configure(GeofenceAreaSetView(polygon_too_large, 1)) ==
          GeofenceRuntimeConfigResult::kTooManyVertices);
   assert(runtime.areaCount() == 1 && runtime.totalVertexCount() == 4);
+  assert(runtime.hasAssessment());
+  assert(runtime.assessment().relation == PermittedAreaRelation::kInside);
+  assert(runtime.assessedObservationCapturedAtMs() == 55);
 }
 
 void successfulReplacementAndExplicitClearResetAssessment() {
@@ -186,7 +196,7 @@ void successfulReplacementAndExplicitClearResetAssessment() {
   GeofenceRuntime runtime;
   assert(runtime.configure(GeofenceAreaSetView(first_area, 1)) ==
          GeofenceRuntimeConfigResult::kApplied);
-  assert(runtime.observeAcceptedFix(fixAt(500, 500, UINT32_MAX - 3)) ==
+  assert(observeAt(runtime, 500, 500, UINT32_MAX - 3) ==
          GeofenceObservationResult::kAccepted);
   assert(runtime.hasAssessment());
 
@@ -197,16 +207,16 @@ void successfulReplacementAndExplicitClearResetAssessment() {
   assert(runtime.configure(GeofenceAreaSetView(second_area, 1)) ==
          GeofenceRuntimeConfigResult::kApplied);
   assert(!runtime.hasAssessment());
-  assert(runtime.observeAcceptedFix(fixAt(5500, 5500, 2)) ==
+  assert(observeAt(runtime, 5500, 5500, 2) ==
          GeofenceObservationResult::kAccepted);
-  assert(runtime.assessedFixCapturedAtMs() == 2);
+  assert(runtime.assessedObservationCapturedAtMs() == 2);
 
   runtime.clear();
   assert(!runtime.configured());
   assert(runtime.areaCount() == 0);
   assert(runtime.totalVertexCount() == 0);
   assert(!runtime.hasAssessment());
-  assert(runtime.observeAcceptedFix(fixAt(5500, 5500, 3)) ==
+  assert(observeAt(runtime, 5500, 5500, 3) ==
          GeofenceObservationResult::kNotConfigured);
 }
 
