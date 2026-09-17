@@ -514,27 +514,31 @@ implied here).
 
 ## 15. Required decisions before M7 implementation
 
-1. **Partition plan**: an explicit, reviewed flash layout decision for BLE
-   bonds, durable config and (eventually) security material — none of which
-   may use `InternalFS` over `0xED000..0xF4000` while the raw journal is
-   linked (§9), and none of which may be designed by silently shrinking the
-   application region or taking a history page without the separate reviewed
-   layout milestone `ORUN_SYSTEM_ARCHITECTURE_V1.md` §9 already calls for.
-2. **Asynchronous flash backend design**: event-routing ownership between
-   Bluefruit's SoftDevice event pump and `HistoryStore`, an owned stable
-   source-buffer lifetime contract, and a defined "operation pending" state
-   for `HistoryStore`/`PositionFlow` while SoftDevice is enabled (§7, §8).
-   Today's synchronous backend must keep failing closed under enabled
-   SoftDevice until this exists — do not remove that guard to make BLE writes
-   succeed (`AGENTS.md`, `ORUN_CURRENT_ARCHITECTURE_RULES.md` §9).
-3. **Bond storage backend choice**: whether to reuse `InternalFS` in a
-   separately allocated region, or a different mechanism entirely — either
-   way, it must not be the history region, and must not silently link
-   `InternalFS` into an image that also links the raw journal backend
-   (already build-enforced, §4).
-4. **Physical bootloader/DFU verification** (§11): confirm on real hardware
-   what the shipped bootloader actually supports before any BLE DFU design
-   assumes dual-bank recovery or rollback.
+Items 1–3 below are now **design-decided** by
+`docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md` (not yet implemented — see
+that document's §16 implementation slices). Item 4 remains open and requires
+physical hardware, not a design decision.
+
+1. **Partition plan** — **DECIDED**: six new pages (`0x0E7000..0x0ED000`)
+   carved from application headroom, strictly below history, for security+
+   anti-replay (2 pages), config (2 pages) and relocated bonds (2 pages).
+   None uses `InternalFS` over `0xED000..0xF4000` (§9 unchanged); none takes
+   a history page. See the ADR §5–§7.
+2. **Asynchronous flash backend design** — **DECIDED at contract level**: a
+   single `FlashMutationGate`-style owner, bounded priority admission queue,
+   per-store staging-buffer ownership, and an explicit "storage must
+   complete before TX" invariant carried forward unchanged. See the ADR §9–§10.
+   Not implemented; today's synchronous backend must keep failing closed
+   under enabled SoftDevice until it is (`AGENTS.md`,
+   `ORUN_CURRENT_ARCHITECTURE_RULES.md` §9).
+3. **Bond storage backend choice** — **DECIDED**: relocate `InternalFS` via
+   a targeted core patch (same idiom as `patch_wire.py`/`patch_radio.py`),
+   not a from-scratch bond format and not a shared filesystem with config.
+   See the ADR §8.
+4. **Physical bootloader/DFU verification** (§11) — **still UNRESOLVED**:
+   confirm on real hardware what the shipped bootloader actually supports
+   before any BLE DFU design assumes dual-bank recovery or rollback. Not
+   addressed by the ADR (decision gate F).
 
 ## 16. Required decisions before authenticated ACK/store-forward
 
@@ -560,7 +564,7 @@ Each answer is evidence-based per the sections above, not a judgment call.
 | B | Can `InternalFS` be used alongside history today? | **VERIFIED NO** | `InternalFileSystem::begin()` erases and reformats the entire region on a failed LittleFS mount, which the raw journal's non-LittleFS layout would always trigger (§9). The build itself refuses to link both (§4). |
 | C | Can the current `NrfHistoryFlash` backend be used when SoftDevice is enabled? | **VERIFIED NO** | `synchronousFlashAvailable()` fails closed whenever SoftDevice is enabled; every mutating call is refused (§7, §8). This is a safe failure (POSITION TX suppressed), not silent corruption, but tracking storage stops functioning until an async backend exists. |
 | D | Is there an assigned, safe persistent owner for BLE bonds/config/security material today? | **VERIFIED NO** | §10: every row is `BLOCKED` or `UNALLOCATED`; none has a flash region, and the one implementation that exists upstream (`bond_init()`) would destroy history if invoked unmodified (§9). |
-| E | What storage/concurrency decisions are required before M7 BLE runtime starts? | **UNRESOLVED — see §15** | Partition plan, asynchronous flash backend design, and bond-storage backend choice are all undecided. None are implemented by this audit. |
+| E | What storage/concurrency decisions are required before M7 BLE runtime starts? | **RESOLVED (design-level) by `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md`** | The ADR decides the exact partition plan (6 new pages carved from application headroom below history), the bond backend (relocated `InternalFS` via a core patch, same idiom as `patch_wire.py`/`patch_radio.py`), the config/security backend (raw A/B pages, not LittleFS), the async SoftDevice flash contract shape, and concurrency/reset policy — none of it implemented yet; see the ADR's §16 implementation slices and §18 decision status. |
 | F | What bootloader/flash facts must still be physically verified before BLE DFU starts? | **UNRESOLVED — see §11, §14** | Actual bootloader dual-bank capability, interrupted-DFU recovery, and image validation/rollback behavior are not provable from any source present in this repository or the installed toolchain; the currently-configured `--singlebank` serial upload flag is a client-side choice, not a bootloader capability proof. |
 | G | What durable-state invariants are required before authenticated ACK/store-forward is connected? | **UNRESOLVED — see §12, §16** | Security key/counter ownership, a trustworthy delivery-confirmation semantic, and a retention/overwrite policy that actually consults `delivered_through` are all undesigned. The storage-layer guard against regressing `delivered_through` already exists (`markDeliveredThrough`'s `id < state_.delivered_through` check), but nothing decides which caller may legitimately advance it. |
 

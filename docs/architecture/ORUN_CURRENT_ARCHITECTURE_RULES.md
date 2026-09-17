@@ -350,7 +350,11 @@ safety guard merely to make BLE writes succeed. See
 `docs/architecture/ORUN_STORAGE_FLASH_OWNERSHIP.md` for the verified nRF52840
 flash ownership map, the exact `InternalFS`-erases-history mechanism, the
 SoftDevice-enabled blocker, and the required pre-M7/pre-store-forward decision
-gates.
+gates. `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md` decides (design-level,
+not yet implemented) the exact future partition plan: `0x0E7000..0x0E9000`
+security/anti-replay, `0x0E9000..0x0EB000` durable config, `0x0EB000..0x0ED000`
+relocated BLE bonds, all strictly below the unchanged history region and none
+of them InternalFS-over-history.
 
 M6 activity/geofence helpers allocate no durable state and do not reuse the
 position journal. Future activity history, polygon configuration, FREE_GRAZE
