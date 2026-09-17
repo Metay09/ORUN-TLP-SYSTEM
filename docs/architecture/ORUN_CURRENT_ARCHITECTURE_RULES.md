@@ -335,14 +335,22 @@ security material, BLE bonds/DFU state and transient queues have different
 ownership/reset/retention semantics and must not be collapsed into one untyped
 store.
 
-The current history region remains exclusively `0xED000..0xF4000`. The current
-journal holds 728 compact position records, approximately 7.58 days at a 15-minute
-report interval. The project goal of approximately 1–2 weeks is a **target**, not
-a claim about current capacity.
+The current history region remains exclusively `0xED000..0xF4000`. The journal
+holds 728 compact position records: approximately 7.58 days at the 15-minute
+interval used through the M6P1 milestone report, but only approximately 1.52
+days (~36.4 hours) at the current `main` development default of 3 minutes
+(`firmware/include/gnss_config.h`, `kTrackingIntervalSeconds = 3 * 60`; see
+`docs/architecture/ORUN_STORAGE_FLASH_OWNERSHIP.md` §13 for the arithmetic).
+The project goal of approximately 1–2 weeks is a **target**, not a claim about
+current capacity at either interval.
 
 Do not enable durable config before the flash/bootloader/SoftDevice/InternalFS/
 bond/DFU ownership plan is verified. Do not remove the current SoftDevice flash
-safety guard merely to make BLE writes succeed.
+safety guard merely to make BLE writes succeed. See
+`docs/architecture/ORUN_STORAGE_FLASH_OWNERSHIP.md` for the verified nRF52840
+flash ownership map, the exact `InternalFS`-erases-history mechanism, the
+SoftDevice-enabled blocker, and the required pre-M7/pre-store-forward decision
+gates.
 
 M6 activity/geofence helpers allocate no durable state and do not reuse the
 position journal. Future activity history, polygon configuration, FREE_GRAZE
