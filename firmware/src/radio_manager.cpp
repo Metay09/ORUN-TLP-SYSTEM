@@ -5,7 +5,6 @@
 #include <FreeRTOS.h>
 #include <SX126x-Arduino.h>
 #include <queue.h>
-#include <string.h>
 #include <task.h>
 
 #include "gnss_fix.h"
@@ -168,18 +167,18 @@ bool RadioManager::begin(SequenceSource& sequences) {
 }
 
 void RadioManager::update(bool allow_test_beacon) {
-  if (!ready_) return;
-
+  if (!ready_) {
+    return;
+  }
   radio_driver::Guard gate;
   if (!gate) return; // No driver read or result consumption before cleanup exit.
-
   // Drain pending DIO work before deciding that a software deadline won.
   orunRadioDispatchLocked();
   uint32_t now = monotonic::nowMs();
+  foldRxAccounting(now);
   if (tx_in_progress_ && pending_tx_result_ == TxResult::kNone &&
       monotonic::elapsed(now, tx_started_ms_, radio_config::kTxTimeoutMs))
     orunRadioTimeoutLocked();
-
   processCallbackEvents();
   now = monotonic::nowMs();
   reconcileListenPolicy(now);
@@ -187,7 +186,6 @@ void RadioManager::update(bool allow_test_beacon) {
     applyPendingRole();
     return;
   }
-
   // Queue capacity is exactly kRxEventQueueCapacity and callbacks cannot run
   // while this owner holds the driver gate, so this bounded pass fully drains
   // all handed-off RX work before a possible sleep transition below.
@@ -232,13 +230,11 @@ bool RadioManager::encodePosition(const GnssFix& fix, uint8_t* payload,
                               sequence, payload, tlp::kPositionPacketSize);
 }
 
-bool RadioManager::sendPositionPacket(const uint8_t* payload,
-                                      const uint32_t* captured_at_ms) {
+bool RadioManager::sendPositionPacket(const uint8_t* payload, const uint32_t* captured_at_ms) {
   radio_driver::Guard gate;
   if (!gate) return false;
   tlp::PositionPacket packet{};
-  if (!canSend() ||
-      !tlp::deserializePositionPacket(payload, tlp::kPositionPacketSize, &packet) ||
+  if (!canSend() || !tlp::deserializePositionPacket(payload, tlp::kPositionPacketSize, &packet) ||
       packet.source_device_id != device_id_) {
     ++local_tx_failures_;
     return false;
@@ -250,8 +246,7 @@ bool RadioManager::sendPositionPacket(const uint8_t* payload,
   // Final live admission check under the driver gate. No blocking log between
   // this check and Send; stored/backlog packets deliberately omit this gate.
   if (captured_at_ms && monotonic::elapsed(monotonic::nowMs(), *captured_at_ms,
-                                          gnss_config::kFreshFixMaxAgeMs))
-    return false;
+                                          gnss_config::kFreshFixMaxAgeMs)) return false;
   startTxOperation();
   tx_kind_ = TxKind::kPosition;
   tx_role_epoch_ = role_epoch_;
@@ -416,6 +411,9 @@ void RadioManager::processCallbackEvents() {
     } else {
       ++event_diagnostics_.stale_tx_results;
     }
+    // Preserve the pre-M6P1 defensive restore after any consumed terminal
+    // result; an asleep windowed node ignores and counts it.
+    requestRxRestore();
   }
 
   if (rx_timeouts != 0) requestRxRestore();
@@ -489,6 +487,13 @@ void RadioManager::openListenWindow(uint32_t now) {
 void RadioManager::markRxStarted(uint32_t now) {
   if (rx_accounting_active_) return;
   rx_accounting_active_ = true;
+  rx_accounting_started_ms_ = now;
+}
+
+void RadioManager::foldRxAccounting(uint32_t now) {
+  if (!rx_accounting_active_) return;
+  saturatingAdd(listen_diagnostics_.estimated_rx_ms,
+                now - rx_accounting_started_ms_);
   rx_accounting_started_ms_ = now;
 }
 
@@ -679,12 +684,9 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
 
   const NetworkEvent event =
       network_.receive(payload, size, rssi, snr, monotonic::nowMs());
-  const auto source_high =
-      static_cast<unsigned long>(uint32_t(event.position.source_device_id >> 32));
-  const auto source_low =
-      static_cast<unsigned long>(uint32_t(event.position.source_device_id));
-  const auto sequence =
-      static_cast<unsigned long>(event.position.sequence_number);
+  const auto source_high = static_cast<unsigned long>(uint32_t(event.position.source_device_id >> 32));
+  const auto source_low = static_cast<unsigned long>(uint32_t(event.position.source_device_id));
+  const auto sequence = static_cast<unsigned long>(event.position.sequence_number);
   switch (event.kind) {
     case NetworkEventKind::kRelayQueued:
       Serial.printf("RELAY RX source=%08lX%08lX seq=%lu rssi=%d snr=%d\n",
@@ -695,8 +697,7 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
                     static_cast<unsigned long>(event.relay_delay_ms));
       break;
     case NetworkEventKind::kRelayDuplicate:
-      Serial.printf("RELAY DUP source=%08lX%08lX seq=%lu\n", source_high,
-                    source_low, sequence);
+      Serial.printf("RELAY DUP source=%08lX%08lX seq=%lu\n", source_high, source_low, sequence);
       break;
     case NetworkEventKind::kRelayQueueDrop:
       Serial.printf("RELAY DROP queue-full source=%08lX%08lX seq=%lu\n",
@@ -707,8 +708,7 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
       break;
     case NetworkEventKind::kBaseNew:
     case NetworkEventKind::kBaseDuplicate: {
-      const char* freshness =
-          event.kind == NetworkEventKind::kBaseNew ? "NEW" : "DUP";
+      const char* freshness = event.kind == NetworkEventKind::kBaseNew ? "NEW" : "DUP";
       if (event.path == NetworkPath::kDirect) {
         Serial.printf("BASE RX %s source=%08lX%08lX seq=%lu path=DIRECT rssi=%d snr=%d\n",
                       freshness, source_high, source_low, sequence,
@@ -728,8 +728,7 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
     }
     case NetworkEventKind::kIgnoredPosition:
       Serial.printf("RX POSITION source=%08lX%08lX seq=%lu ignored role=%s\n",
-                    source_high, source_low, sequence,
-                    roleName(network_.role()));
+                    source_high, source_low, sequence, roleName(network_.role()));
       break;
     case NetworkEventKind::kMalformed:
       Serial.printf("RX rejected type=%u length=%u role=%s\n",

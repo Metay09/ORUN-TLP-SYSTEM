@@ -287,6 +287,19 @@ void rxEstimateTracksWindowTime() {
   assert(diagnostics.listen_state == RadioListenState::kAsleep);
 }
 
+void rxEstimateSaturatesAcrossLongContinuousRun() {
+  RadioManager manager;
+  TestSequence sequences;
+  beginAs(manager, sequences, NodeRole::kBase);
+  constexpr uint32_t kStepMs = 1UL << 30;
+  test_now += kStepMs; manager.update(false);
+  test_now += kStepMs; manager.update(false);
+  assert(manager.listenDiagnostics().estimated_rx_ms == 2UL * kStepMs);
+  for (int i = 0; i < 3; ++i) { test_now += kStepMs; manager.update(false); }
+  assert(manager.listenDiagnostics().estimated_rx_ms == UINT32_MAX);
+  assert(radio_state == RF_RX_RUNNING && sleep_calls == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -301,6 +314,7 @@ int main() {
   continuousRolesNeverUseListenSleep();
   deadlineWorksAcrossMonotonicWrap();
   rxEstimateTracksWindowTime();
+  rxEstimateSaturatesAcrossLongContinuousRun();
 
   puts("M6P1 RadioManager listen window checks: PASS");
 }

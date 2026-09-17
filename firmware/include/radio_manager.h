@@ -67,8 +67,7 @@ class RadioManager {
   // GNSS values through legacy_position_mapping before transport.
   bool encodePosition(const GnssFix& fix, uint8_t* payload, uint64_t& identity);
   // A live capture timestamp adds a final freshness gate; backlog omits it.
-  bool sendPositionPacket(const uint8_t* payload,
-                          const uint32_t* captured_at_ms = nullptr);
+  bool sendPositionPacket(const uint8_t* payload, const uint32_t* captured_at_ms = nullptr);
   uint64_t deviceId() const;
   uint32_t txAttempts() const { return tx_attempts_; }
   uint32_t txTimeouts() const { return tx_timeouts_; }
@@ -111,6 +110,7 @@ class RadioManager {
   void openListenWindow(uint32_t now);
   void markRxStarted(uint32_t now);
   void markRxStopped(uint32_t now);
+  void foldRxAccounting(uint32_t now);
   void startTxOperation(); // Driver gate held; clears old hardware IRQ work.
   void applyPendingRole(); // Driver gate held; previous TX terminal.
   void sendTestPacket();
