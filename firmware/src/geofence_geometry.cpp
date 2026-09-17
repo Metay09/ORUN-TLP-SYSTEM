@@ -28,13 +28,7 @@ bool coordinateInRange(const GeoPointE7& point) {
 }
 
 uint16_t effectiveVertexCount(const GeofencePolygonView& polygon) {
-  if (polygon.vertices == nullptr || polygon.vertex_count == 0) return 0;
-  if (polygon.vertex_count > 1 &&
-      samePoint(polygon.vertices[0],
-                polygon.vertices[polygon.vertex_count - 1])) {
-    return static_cast<uint16_t>(polygon.vertex_count - 1);
-  }
-  return polygon.vertex_count;
+  return effectiveGeofenceVertexCount(polygon);
 }
 
 // x is longitude and y is latitude. All validated polygon/query deltas used by
