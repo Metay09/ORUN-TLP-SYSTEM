@@ -1,23 +1,6 @@
 #include "geofence_runtime.h"
 
 namespace orun_tlp {
-namespace {
-
-bool samePoint(const GeoPointE7& a, const GeoPointE7& b) {
-  return a.latitude_e7 == b.latitude_e7 &&
-         a.longitude_e7 == b.longitude_e7;
-}
-
-uint16_t canonicalVertexCount(const GeofencePolygonView& polygon) {
-  if (polygon.vertex_count > 1 &&
-      samePoint(polygon.vertices[0],
-                polygon.vertices[polygon.vertex_count - 1])) {
-    return static_cast<uint16_t>(polygon.vertex_count - 1);
-  }
-  return polygon.vertex_count;
-}
-
-}  // namespace
 
 GeofenceRuntimeConfigResult GeofenceRuntime::configure(
     const GeofenceAreaSetView& candidate) {
@@ -42,7 +25,7 @@ GeofenceRuntimeConfigResult GeofenceRuntime::configure(
       return GeofenceRuntimeConfigResult::kInvalidAreaSet;
     }
 
-    const uint16_t stored_vertices = canonicalVertexCount(area);
+    const uint16_t stored_vertices = effectiveGeofenceVertexCount(area);
     if (stored_vertices >
         geofence_runtime_config::kMaximumTotalVertices - total_vertices) {
       return GeofenceRuntimeConfigResult::kTooManyVertices;
@@ -53,7 +36,7 @@ GeofenceRuntimeConfigResult GeofenceRuntime::configure(
   uint16_t vertex_offset = 0;
   for (uint16_t i = 0; i < candidate.area_count; ++i) {
     const GeofencePolygonView& source = candidate.areas[i];
-    const uint16_t stored_vertices = canonicalVertexCount(source);
+    const uint16_t stored_vertices = effectiveGeofenceVertexCount(source);
     const uint16_t start = vertex_offset;
     for (uint16_t vertex = 0; vertex < stored_vertices; ++vertex) {
       vertices_[vertex_offset++] = source.vertices[vertex];
