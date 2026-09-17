@@ -3,7 +3,6 @@
 #include <stdint.h>
 
 #include "geofence_area_set.h"
-#include "gnss_fix.h"
 
 namespace orun_tlp {
 
@@ -54,13 +53,18 @@ class GeofenceRuntime {
   uint8_t areaCount() const { return area_count_; }
   uint16_t totalVertexCount() const { return total_vertex_count_; }
 
-  // The caller must supply a fix already accepted by the location/tracking
-  // owner. M6C3 does not create a competing freshness, HDOP or source policy.
-  GeofenceObservationResult observeAcceptedFix(const GnssFix& fix);
+  // The caller supplies a coordinate and capture time already accepted by the
+  // current location/tracking owner. This keeps geofence runtime independent of
+  // GNSS-specific value types and does not create a competing freshness, quality
+  // or location-source policy.
+  GeofenceObservationResult observeAcceptedPosition(
+      const GeoPointE7& point, uint32_t captured_at_ms);
 
   bool hasAssessment() const { return has_assessment_; }
   const PermittedAreaAssessment& assessment() const { return assessment_; }
-  uint32_t assessedFixCapturedAtMs() const { return assessed_fix_captured_at_ms_; }
+  uint32_t assessedObservationCapturedAtMs() const {
+    return assessed_observation_captured_at_ms_;
+  }
 
  private:
   GeoPointE7 vertices_[geofence_runtime_config::kMaximumTotalVertices]{};
@@ -70,7 +74,7 @@ class GeofenceRuntime {
   bool configured_ = false;
   bool has_assessment_ = false;
   PermittedAreaAssessment assessment_{};
-  uint32_t assessed_fix_captured_at_ms_ = 0;
+  uint32_t assessed_observation_captured_at_ms_ = 0;
 };
 
 }  // namespace orun_tlp
