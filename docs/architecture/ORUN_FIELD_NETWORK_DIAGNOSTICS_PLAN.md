@@ -235,12 +235,14 @@ unbounded Serial text stream.
 Tracker policy remains:
 
 - BLE normally off;
-- explicit maintenance/admission window approximately 10 minutes;
-- if no authenticated maintenance operation starts, BLE closes;
-- connection alone is not enough to keep it open;
-- an authenticated maintenance operation may keep the session available through bounded
-  completion;
-- a future stalled-session watchdog is required.
+- when BLE is opened, the no-client timeout is approximately 10 minutes;
+- if no BLE client is connected when that timeout expires, BLE closes;
+- while a client is connected, the no-client timeout does not close BLE;
+- when the client disconnects, a fresh approximately 10-minute no-client timeout starts;
+- if no client reconnects before that timeout expires, BLE closes;
+- repeated disconnects do not create permanent availability unless a real client reconnects;
+- a future stalled-session watchdog is required for a client that remains connected but
+  makes no meaningful progress.
 
 Gateway/mobile-gateway profiles may keep BLE available when their availability/power
 contract allows it.

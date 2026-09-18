@@ -674,10 +674,13 @@ Diagnostics should have one bounded transport-neutral Health/Diagnostics owner. 
 USB Serial already exposes useful reset/storage/radio/activity/RSSI/SNR/path/error
 evidence. Future BLE should expose structured status snapshots, counters and a small
 recent-event view through the same owner rather than mirror an unlimited Serial stream.
-Tracker BLE remains normally OFF with the approximately 10-minute maintenance admission
-policy and authenticated-operation extension; gateway profiles may keep BLE available
-when their power/availability contract permits it. Diagnostic data may be sensitive, so
-BLE connection/bonding alone must not imply authorization.
+Tracker BLE remains normally OFF. Whenever BLE is open and no client is connected, an
+approximately 10-minute no-client timeout applies; expiry closes BLE. A connected client
+suspends that no-client timeout. On disconnect, a fresh approximately 10-minute no-client
+timeout starts; if nobody reconnects, BLE closes. A separate stalled-session watchdog is
+still required for a client that stays connected without making progress. Gateway profiles
+may keep BLE available when their power/availability contract permits it. Diagnostic data
+may be sensitive, so BLE connection/bonding alone must not imply authorization.
 
 Normal application UI should show useful health/coverage outcomes; detailed user/account
 permissions remain backend-owned, and the app should hide unauthorized controls. Device
