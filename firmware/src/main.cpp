@@ -35,12 +35,14 @@ orun_tlp::HistoryStore history(storage_flash_gate);
 orun_tlp::ConfigStore config_store(storage_flash_gate.configPort());
 // M7P6B: recovery-only composition. SecurityStore never auto-provisions a
 // credential in production firmware -- begin() only recovers whatever
-// already exists (or reports kUnprovisioned on blank flash), and poll()
-// never has a job to advance without an internal commitCredential()/
-// reservation call this runtime never makes. This proves the real
-// instantiated object's RAM/flash footprint and that recovery never
-// disturbs TLP v1/RF/GNSS/role behavior, without implementing any
-// cryptography, secure envelope, command path or BLE.
+// already exists (or reports kUnprovisioned on blank flash). A recovered
+// PROVISIONED store deliberately starts one fresh TX reservation at boot so
+// the next secure counter skips all possibly-used counters from the prior
+// reserved block; poll() advances that bounded recovery reservation.
+// Current production has no provisioning path, so blank devices remain
+// UNPROVISIONED and perform no security writes. This proves the real
+// instantiated object's RAM/flash footprint and preserves TLP v1/RF/GNSS/
+// role behavior without implementing crypto, secure envelope, commands or BLE.
 orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort(),
                                        storage_flash_gate.securityMaintPort());
 orun_tlp::PositionFlow positions(history, radio_manager);
