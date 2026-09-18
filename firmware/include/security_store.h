@@ -114,7 +114,14 @@ class SecurityStore {
 
  private:
   enum class Job { kNone, kNewPage, kEraseOld, kReserve };
-  enum class Phase { kErasePage, kWriteHeader, kWriteCredential, kWriteReserve, kEraseOldPage };
+  enum class Phase {
+    kErasePage,
+    kWriteHeader,
+    kWriteCredential,
+    kWriteReserve,
+    kActivatePage,
+    kEraseOldPage
+  };
   enum class BlobStep { kBody, kCommit, kVerify };
 
   struct PageMeta {
@@ -130,6 +137,8 @@ class SecurityStore {
   void maybeAutoReserve();
   void startBlob(uint32_t offset, const uint8_t* bytes, uint32_t size);
   FlashOpResult writeBlob();
+  FlashOpResult writeBlobBodyOnly();
+  FlashOpResult writePageActivation();
   void fail();
   void completeNewPage();
   void completeEraseOld(bool success);
