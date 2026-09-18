@@ -137,6 +137,8 @@ def main():
     assert mod.bluefruit_patch_ok(patched_blue)
     assert "orun_flash_gate_set_bluefruit_soc_owner(true)" in patched_blue
     assert "orun_flash_gate_soc_event_cb(soc_evt)" in patched_blue
+    assert patched_blue.index("orun_flash_gate_soc_event_cb(soc_evt)") < \
+        patched_blue.index("flash_nrf5x_event_cb(soc_evt)")
 
     # Exact-pin and exact-fragment fail-closed behavior.
     expect_raises(mod.transform_flash, FLASH_FIXTURE + "\n// drift")
