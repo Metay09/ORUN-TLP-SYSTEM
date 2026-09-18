@@ -614,11 +614,11 @@ follows this repository's existing `M<n>P<n>`/lettered-slice convention
   backend code). Host tests and `pio run -e rak4630` pass unchanged; the new
   ceiling was verified to actually fire via a deliberate, uncommitted
   oversized local build.
-- **M7P3 — SoftDevice-compatible async history flash backend.** Implement
-  `FlashMutationGate` (§9) and the asynchronous `NrfHistoryFlash`-equivalent
-  backend for `HistoryStore` only, proving the contract against the existing
-  journal format before any new partition depends on it. Must not change
-  `journal_format`'s on-flash layout.
+- **M7P3 — SoftDevice-compatible async history flash backend. DONE**, see
+  `docs/milestones/M7P3.md`. Implemented `FlashMutationGate` (§9) for
+  `HistoryStore` only; `journal_format`'s on-flash layout is unchanged.
+  Software/host-test validated only — SoftDevice is not enabled by shipped
+  firmware in this slice, so the async path is not yet physically validated.
 - **M7P4 — BLE bond storage in its allocated partition.** Write and audit
   `patch_internalfs.py` (§8) relocating `LFS_FLASH_ADDR`/`LFS_FLASH_TOTAL_SIZE`
   to `0x0EB000`/`0x2000`, pinned against the exact upstream blob hash

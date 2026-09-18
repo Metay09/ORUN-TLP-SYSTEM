@@ -17,6 +17,7 @@ bool HistoryStore::begin(uint64_t device) {
   sequence_end_ = next_ticket_ = newest_generation_ = 0; active_page_ = -1; state_ = {};
   append_after_new_page_ = state_after_new_page_ = false;
   append_result_ready_ = append_success_ = false;
+  blob_step_ = BlobStep::kBody; flash_op_awaiting_completion_ = false;
   if (!flash_.begin() || !recover()) return false;
   ready_ = true;
   if (active_page_ < 0) return startNewPage(false);
@@ -112,9 +113,36 @@ bool HistoryStore::startState(State next) {
   next.generation=state_.generation+1;pending_state_=next;target_page_=active_page_;target_state_slot_=pages_[active_page_].state_used;
   uint8_t b[kStateSlotSize];encodeState(next,b);startBlob(stateOffset(target_page_,target_state_slot_),b,sizeof(b));job_=Job::kState;phase_=Phase::kBlob;return true;
 }
-void HistoryStore::startBlob(uint32_t off,const uint8_t* b,uint32_t n){memcpy(blob_,b,n);blob_offset_=off;blob_size_=n;}
-bool HistoryStore::writeBlob(){const bool append_failure=job_==Job::kAppend||append_after_new_page_;if(!flash_.program(blob_offset_,blob_,blob_size_-4)||!flash_.program(blob_offset_+blob_size_-4,blob_+blob_size_-4,4)){fail(append_failure);return false;}uint8_t verify[kPageHeaderSize];if(!flash_.read(blob_offset_,verify,blob_size_)||memcmp(verify,blob_,blob_size_)){fail(append_failure);return false;}return true;}
-void HistoryStore::fail(bool append_failure){if(append_failure){++diagnostics_.append_failures;append_result_ready_=true;append_success_=false;}else ++diagnostics_.metadata_failures;append_after_new_page_=false;state_after_new_page_=false;job_=Job::kNone;ready_=false;}
+void HistoryStore::startBlob(uint32_t off,const uint8_t* b,uint32_t n){memcpy(blob_,b,n);blob_offset_=off;blob_size_=n;blob_step_=BlobStep::kBody;flash_op_awaiting_completion_=false;}
+// M7P3: body/CRC then a separate final commit word, exactly as before -- the
+// power-cut invariant is unchanged. The only difference from the pre-M7P3
+// version is that each physical program() may now return kPending (only
+// possible with SoftDevice enabled, never in today's shipped M0-M7P3
+// runtime); this resumes the same step on the next poll() via
+// pollPending() instead of restarting or skipping ahead. kVerify's read is
+// always synchronous, so it is never affected by kPending.
+FlashOpResult HistoryStore::writeBlob(){
+  const bool append_failure=job_==Job::kAppend||append_after_new_page_;
+  if(blob_step_==BlobStep::kBody){
+    const FlashOpResult r=flash_op_awaiting_completion_?flash_.pollPending():flash_.program(blob_offset_,blob_,blob_size_-4);
+    if(r==FlashOpResult::kPending){flash_op_awaiting_completion_=true;return FlashOpResult::kPending;}
+    flash_op_awaiting_completion_=false;
+    if(r==FlashOpResult::kFailed){fail(append_failure);return FlashOpResult::kFailed;}
+    blob_step_=BlobStep::kCommit;
+  }
+  if(blob_step_==BlobStep::kCommit){
+    const FlashOpResult r=flash_op_awaiting_completion_?flash_.pollPending():flash_.program(blob_offset_+blob_size_-4,blob_+blob_size_-4,4);
+    if(r==FlashOpResult::kPending){flash_op_awaiting_completion_=true;return FlashOpResult::kPending;}
+    flash_op_awaiting_completion_=false;
+    if(r==FlashOpResult::kFailed){fail(append_failure);return FlashOpResult::kFailed;}
+    blob_step_=BlobStep::kVerify;
+  }
+  uint8_t verify[kPageHeaderSize];
+  if(!flash_.read(blob_offset_,verify,blob_size_)||memcmp(verify,blob_,blob_size_)){blob_step_=BlobStep::kBody;fail(append_failure);return FlashOpResult::kFailed;}
+  blob_step_=BlobStep::kBody;
+  return FlashOpResult::kDone;
+}
+void HistoryStore::fail(bool append_failure){if(append_failure){++diagnostics_.append_failures;append_result_ready_=true;append_success_=false;}else ++diagnostics_.metadata_failures;append_after_new_page_=false;state_after_new_page_=false;blob_step_=BlobStep::kBody;flash_op_awaiting_completion_=false;job_=Job::kNone;ready_=false;}
 void HistoryStore::finishBlob(){
   if(job_==Job::kNewPage){pages_[target_page_]={};pages_[target_page_].generation=target_generation_;newest_generation_=target_generation_;active_page_=target_page_;job_=Job::kNone;if(!startReservation())fail(append_after_new_page_);return;}
   if(job_==Job::kReserve){++pages_[target_page_].sequence_used;sequence_end_=pending_sequence_end_;job_=Job::kNone;if(state_after_new_page_){state_after_new_page_=false;if(!startState(pending_state_))fail(false);return;}if(append_after_new_page_){append_after_new_page_=false;if(!append(pending_record_.packet,pending_record_.identity)){append_result_ready_=true;append_success_=false;ready_=false;}}return;}
@@ -124,8 +152,16 @@ void HistoryStore::finishBlob(){
 void HistoryStore::poll(){
   if(!ready_)return;
   if(job_==Job::kNone){if(!append_result_ready_&&next_ticket_==sequence_end_&&!startReservation())fail(false);return;}
-  if(phase_==Phase::kErase){const uint32_t old=pages_[target_page_].records_valid;if(!flash_.erasePage(target_page_)){fail(append_after_new_page_);return;}diagnostics_.overwritten+=old;phase_=Phase::kHeader;uint8_t b[kStaticHeaderSize];encodePage(target_generation_,device_id_,b);startBlob(pageOffset(target_page_),b,sizeof(b));return;}
-  if (!writeBlob()) return;
+  if(phase_==Phase::kErase){
+    const FlashOpResult r=flash_op_awaiting_completion_?flash_.pollPending():flash_.erasePage(target_page_);
+    if(r==FlashOpResult::kPending){flash_op_awaiting_completion_=true;return;}
+    flash_op_awaiting_completion_=false;
+    if(r==FlashOpResult::kFailed){fail(append_after_new_page_);return;}
+    const uint32_t old=pages_[target_page_].records_valid;diagnostics_.overwritten+=old;phase_=Phase::kHeader;
+    uint8_t b[kStaticHeaderSize];encodePage(target_generation_,device_id_,b);startBlob(pageOffset(target_page_),b,sizeof(b));
+    return;
+  }
+  if(writeBlob()!=FlashOpResult::kDone)return;
   finishBlob();
 }
 }  // namespace orun_tlp

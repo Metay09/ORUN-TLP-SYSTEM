@@ -43,6 +43,10 @@ uint32_t sd_flash_page_erase(uint32_t page) {
   memset(reinterpret_cast<void*>(uintptr_t(page) * kPageSize), 0xFF, kPageSize);
   return NRF_SUCCESS;
 }
+// SoftDevice is always reported disabled above, so FlashMutationGate's
+// pumpEvents()/pollPending() never reach sd_evt_get() here; this satisfies
+// the link only. A dedicated M7P3 test exercises real event draining.
+uint32_t sd_evt_get(uint32_t*) { return NRF_ERROR_NOT_FOUND; }
 
 void BoardGetUniqueId(uint8_t* id) {
   ++board_reads;

@@ -4,6 +4,7 @@
 #include "accelerometer_manager.h"
 #include "activity_capture.h"
 #include "firmware_version.h"
+#include "flash_mutation_gate.h"
 #include "gnss_manager.h"
 #include "node_role.h"
 #include "power_manager.h"
@@ -21,7 +22,11 @@ orun_tlp::RadioManager radio_manager;
 orun_tlp::GnssManager gnss_manager;
 orun_tlp::AccelerometerManager accelerometer_manager;
 orun_tlp::ActivityCapture activity_capture(accelerometer_manager);
-orun_tlp::NrfHistoryFlash history_flash;
+// M7P3: FlashMutationGate wraps NrfHistoryFlash unchanged for the
+// SoftDevice-disabled path (still the only path exercised by shipped
+// firmware); its asynchronous path is not enabled by anything in this
+// runtime (BLE is not started).
+orun_tlp::FlashMutationGate history_flash;
 orun_tlp::HistoryStore history(history_flash);
 orun_tlp::PositionFlow positions(history, radio_manager);
 orun_tlp::RoleController role_controller;
@@ -381,6 +386,9 @@ void loop() {
   // active. The loop retries the same resolved intent without aborting work.
   radio_manager.setRelayForwardingEnabled(relay_forwarding_enabled);
 
+  // Drain any SoftDevice flash completion events; a no-op today since
+  // SoftDevice is never enabled by this runtime (M7P3 does not start BLE).
+  history_flash.pumpEvents();
   // Leave local TX undisturbed; otherwise service one small flash operation.
   if (!radio_manager.isTransmitting()) history.poll();
   const auto event =

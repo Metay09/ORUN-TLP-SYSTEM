@@ -40,38 +40,40 @@ class FaultFlash : public FlashBackend {
     return true;
   }
 
-  bool program(uint32_t offset, const void* data, size_t size) override {
+  // Models synchronous NOR operations; never returns kPending. A dedicated
+  // M7P3 test exercises kPending/HistoryStore interaction separately.
+  FlashOpResult program(uint32_t offset, const void* data, size_t size) override {
     ++program_operations;
     if (data == nullptr || size == 0 || (offset & 3U) != 0 ||
         (size & 3U) != 0 || offset > bytes.size() ||
-        size > bytes.size() - offset) return false;
+        size > bytes.size() - offset) return FlashOpResult::kFailed;
     const auto* source = static_cast<const uint8_t*>(data);
     for (size_t index = 0; index < size; ++index) {
-      if ((bytes[offset + index] & source[index]) != source[index]) return false;
-      if (program_budget == 0) return false;
+      if ((bytes[offset + index] & source[index]) != source[index]) return FlashOpResult::kFailed;
+      if (program_budget == 0) return FlashOpResult::kFailed;
       for (int bit = 7; bit >= 0; --bit) {
         const uint8_t mask = uint8_t(1U << bit);
         if ((bytes[offset + index] & mask) && !(source[index] & mask)) {
-          if (program_bit_budget == 0) return false;
+          if (program_bit_budget == 0) return FlashOpResult::kFailed;
           bytes[offset + index] &= uint8_t(~mask);
           if (program_bit_budget > 0) --program_bit_budget;
         }
       }
       if (program_budget > 0) --program_budget;
     }
-    return true;
+    return FlashOpResult::kDone;
   }
 
-  bool erasePage(uint32_t page) override {
+  FlashOpResult erasePage(uint32_t page) override {
     ++erase_operations;
-    if (page >= kPageCount) return false;
+    if (page >= kPageCount) return FlashOpResult::kFailed;
     const size_t first = size_t(page) * kPageSize;
     for (size_t index = 0; index < kPageSize; ++index) {
-      if (erase_budget == 0) return false;
+      if (erase_budget == 0) return FlashOpResult::kFailed;
       bytes[first + index] = 0xFF;
       if (erase_budget > 0) --erase_budget;
     }
-    return true;
+    return FlashOpResult::kDone;
   }
 };
 
@@ -579,8 +581,8 @@ void allocatedIdentityWrapRecovery() {
   uint8_t header[kStaticHeaderSize], reservation[kSequenceSlotSize];
   encodePage(1, kDevice, header);
   encodeSequenceEnd(0xFFFFFF00ULL, reservation);
-  assert(flash.program(0, header, sizeof(header)));
-  assert(flash.program(kStaticHeaderSize, reservation, sizeof(reservation)));
+  assert(flash.program(0, header, sizeof(header)) == FlashOpResult::kDone);
+  assert(flash.program(kStaticHeaderSize, reservation, sizeof(reservation)) == FlashOpResult::kDone);
   HistoryStore store(flash);
   start(store); // Allocates from 0xFFFFFF00 after reserving to 0x100000000.
   uint32_t sequence;
@@ -612,7 +614,7 @@ void bitPartialFirstHeaderAndVersionPolicy() {
   for (int cut = 0; cut <= 64; ++cut) {
     FaultFlash flash;
     flash.program_bit_budget = cut;
-    assert(!flash.program(0, header, sizeof(header)));
+    assert(flash.program(0, header, sizeof(header)) == FlashOpResult::kFailed);
     if (cut == 1) assert(flash.bytes[0] == 0x7F);
     flash.program_bit_budget = -1;
     HistoryStore recovered(flash);
@@ -622,9 +624,9 @@ void bitPartialFirstHeaderAndVersionPolicy() {
   // CRC and commit tears, including bit-partial words after a valid magic.
   for (unsigned offset : {56U, 60U}) {
     FaultFlash flash;
-    assert(flash.program(0, header, offset));
+    assert(flash.program(0, header, offset) == FlashOpResult::kDone);
     flash.program_bit_budget = 1;
-    assert(!flash.program(offset, header + offset, 4));
+    assert(flash.program(offset, header + offset, 4) == FlashOpResult::kFailed);
     flash.program_bit_budget = -1;
     HistoryStore recovered(flash);
     start(recovered);
@@ -636,7 +638,7 @@ void bitPartialFirstHeaderAndVersionPolicy() {
   const auto record = allocate(original);
   append(original, record);
   flash.program_bit_budget = 1;
-  assert(!flash.program(kPageSize, header, sizeof(header)));
+  assert(flash.program(kPageSize, header, sizeof(header)) == FlashOpResult::kFailed);
   flash.program_bit_budget = -1;
   const auto erases = flash.erase_operations;
   HistoryStore recovered(flash);
@@ -648,7 +650,7 @@ void bitPartialFirstHeaderAndVersionPolicy() {
   FaultFlash old;
   header[4] = 2;
   put32(header + 56, crc32(header, 56));
-  assert(old.program(0, header, sizeof(header)));
+  assert(old.program(0, header, sizeof(header)) == FlashOpResult::kDone);
   uint64_t generation;
   assert(!decodePage(header, kDevice, generation));
   const auto before = old.bytes;
@@ -657,7 +659,7 @@ void bitPartialFirstHeaderAndVersionPolicy() {
   unsupported.poll();
   assert(old.bytes == before && old.erase_operations == 0);
   // Old-format debris must not cause the valid v3 history to be reset.
-  assert(flash.program(2 * kPageSize, header, sizeof(header)));
+  assert(flash.program(2 * kPageSize, header, sizeof(header)) == FlashOpResult::kDone);
   HistoryStore mixed(flash);
   start(mixed);
   assert(mixed.lookup(record.identity, output));
