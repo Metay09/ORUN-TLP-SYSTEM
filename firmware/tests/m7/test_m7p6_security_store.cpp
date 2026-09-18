@@ -168,12 +168,12 @@ int main() {
     assert(counter == kTxReservationBlockSize);
   }
 
-  // 5. Torn credential write, every stage: recovery must never adopt a
-  // partially-written first provisioning.
-  {
-    // 5a. Torn during page header (body landed, commit word never reached).
+  // 5. Torn first provisioning at every durable program stage. The page
+  // header commit is the FINAL activation write, so no earlier partial state
+  // may be adopted as a provisioned credential.
+  for (int fail_call = 1; fail_call <= 4; ++fail_call) {
     FakeFlash flash;
-    flash.fail_at_program_call = 2;  // header body succeeds (call 1); header commit fails (call 2).
+    flash.fail_at_program_call = fail_call;
     SecurityStore store(flash, flash);
     assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     uint8_t id[kCredentialIdSize], k_root[kKRootSize];
@@ -183,44 +183,6 @@ int main() {
     settle(store);
     bool success = true;
     assert(store.takeCommitResult(success) && !success);
-
-    FakeFlash snapshot;
-    snapshot.bytes = flash.bytes;
-    SecurityStore recovered(snapshot, snapshot);
-    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
-    assert(recovered.state() == SecurityState::kUnprovisioned);
-  }
-  {
-    // 5b. Header fully committed, credential body/commit never reached.
-    FakeFlash flash;
-    flash.fail_at_program_call = 3;  // header body+commit succeed; credential body fails.
-    SecurityStore store(flash, flash);
-    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
-    uint8_t id[kCredentialIdSize], k_root[kKRootSize];
-    fillId(id, 1);
-    fillKRoot(k_root, 1);
-    assert(store.commitCredential(id, 1, k_root));
-    settle(store);
-
-    FakeFlash snapshot;
-    snapshot.bytes = flash.bytes;
-    SecurityStore recovered(snapshot, snapshot);
-    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
-    assert(recovered.state() == SecurityState::kUnprovisioned);
-  }
-  {
-    // 5c. Header + credential body landed, credential commit word never
-    // reached: still must not be adopted (commit word is what makes a
-    // record trusted, never the body alone).
-    FakeFlash flash;
-    flash.fail_at_program_call = 4;  // credential commit fails.
-    SecurityStore store(flash, flash);
-    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
-    uint8_t id[kCredentialIdSize], k_root[kKRootSize];
-    fillId(id, 1);
-    fillKRoot(k_root, 1);
-    assert(store.commitCredential(id, 1, k_root));
-    settle(store);
 
     FakeFlash snapshot;
     snapshot.bytes = flash.bytes;
@@ -378,8 +340,9 @@ int main() {
     PageHeader torn_header{2, kDeviceA};
     uint8_t header_bytes[kPageHeaderSize];
     encodePageHeader(torn_header, header_bytes);
+    memset(header_bytes + kPageHeaderSize - sizeof(uint32_t), 0xFF, sizeof(uint32_t));
     memcpy(flash.bytes.data() + kPageSize, header_bytes, sizeof(header_bytes));
-    // Leave the credential slot on page 1 erased (torn mid-compaction).
+    // Header body exists but page activation + credential never completed.
 
     SecurityStore recovered(flash, flash);
     assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
@@ -388,6 +351,29 @@ int main() {
     fillId(expected, 7);
     assert(recovered.currentCredentialId(id));
     assert(memcmp(id, expected, kCredentialIdSize) == 0);
+  }
+
+  // 10b. Once a newer page activation word is committed, invalid
+  // credential state beneath it is ambiguous post-commit corruption and must
+  // fail closed rather than falling back to an older generation.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 71));
+
+    PageHeader newer{2, kDeviceA};
+    uint8_t header[kPageHeaderSize];
+    encodePageHeader(newer, header);
+    memcpy(flash.bytes.data() + kPageSize, header, sizeof(header));
+    // Leave page-1 credential erased despite an activated header.
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kFault);
+    uint64_t counter = 0;
+    uint32_t epoch = 0;
+    assert(!recovered.reserveNextTxCounter(counter, epoch));
   }
 
   // 11. Compaction end-to-end: exhausting one page's TX_RESERVE capacity
@@ -451,17 +437,19 @@ int main() {
       while (!store.reserveNextTxCounter(counter, epoch)) store.poll();
     }
     // The very next reservation attempt must compact. Fail the compaction's
-    // page erase outright.
+    // page erase outright and stop at that exact crash/failure point.
     flash.fail_at_erase_call = static_cast<int>(flash.erase_calls) + 1;
-    uint64_t counter = 0;
-    uint32_t epoch = 0;
+    store.poll();  // starts the auto-reservation/compaction job.
     unsigned guard = 0;
-    while (!store.reserveNextTxCounter(counter, epoch) && guard < 2000) { store.poll(); ++guard; }
-    // Compaction failed; the store must not silently fabricate a counter.
+    while (store.diagnostics().reservation_failures == 0 && guard < 2000) {
+      store.poll();
+      ++guard;
+    }
+    assert(guard < 2000);
     assert(store.diagnostics().reservation_failures >= 1);
-    assert(store.state() == SecurityState::kProvisioned);  // old page still authoritative.
+    assert(store.state() == SecurityState::kProvisioned);
 
-    // A fresh recovery over these bytes still finds the old, valid page.
+    // A fresh recovery over these exact bytes still finds the old, valid page.
     SecurityStore recovered(flash, flash);
     assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(recovered.state() == SecurityState::kProvisioned);
@@ -486,24 +474,26 @@ int main() {
     }
 
     // Compaction program order is:
-    // header body, header commit, seed-reserve body, seed-reserve commit,
-    // credential body, credential commit. Fail credential body (+5).
-    flash.fail_at_program_call = static_cast<int>(flash.program_calls) + 5;
-    uint64_t counter = 0;
-    uint32_t epoch = 0;
+    // header body, seed-reserve body+commit, credential body+commit,
+    // PAGE ACTIVATION last. Fail exactly that final activation write (+6).
+    flash.fail_at_program_call = static_cast<int>(flash.program_calls) + 6;
+    store.poll();  // starts compaction.
     unsigned guard = 0;
-    while (!store.reserveNextTxCounter(counter, epoch) && guard < 2000) {
+    while (store.diagnostics().reservation_failures == 0 && guard < 2000) {
       store.poll();
       ++guard;
     }
+    assert(guard < 2000);
     assert(store.diagnostics().reservation_failures >= 1);
 
     SecurityStore recovered(flash, flash);
     assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(recovered.state() == SecurityState::kProvisioned);
     settle(recovered);
+    uint64_t counter = 0;
+    uint32_t epoch = 0;
     assert(recovered.reserveNextTxCounter(counter, epoch));
-    assert(counter >= counters_before_compaction);
+    assert(counter == counters_before_compaction);
   }
 
   // 13. Integer overflow/wrap refusal: a durable bound already at the
