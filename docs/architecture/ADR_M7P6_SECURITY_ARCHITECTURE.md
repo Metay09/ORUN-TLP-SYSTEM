@@ -311,6 +311,8 @@ The following direction is approved:
 
 - first credentials require explicit provisioning;
 - security reset is distinct from normal config reset;
+- security credential reset/re-provision is a physical-service-authorized operation in
+  the first design; do not add an ordinary remote credential-reset path;
 - normal config reset must not erase security credentials/counters;
 - re-provisioning creates a new `credential_id`;
 - keys must never appear in ordinary logs or config dumps;
