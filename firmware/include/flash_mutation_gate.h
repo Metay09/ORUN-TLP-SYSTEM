@@ -45,14 +45,23 @@ namespace orun_tlp {
 // establishment) outranks everything, and SEC_MAINT (page erase, compaction
 // preparation of a page carrying an unchanged credential forward) is
 // outranked by everything, so routine security housekeeping can never starve
-// live History or Config. The five-way admission order is therefore
+// live History or Config. The admission order is therefore
 // SEC_CRITICAL > History > Config > SEC_MAINT, generalized in
 // higherPriorityWaiting() below instead of the old two-owner special case;
-// History still outranks Config exactly as before (no behavior change for
-// either existing client). Bond/InternalFS remains unqueued here and still
-// bypasses this gate entirely (M7P4/M7P7).
+// History still outranks Config exactly as before.
+//
+// M7P7A closes the remaining BLE-storage concurrency hole without enabling
+// BLE: stock InternalFS keeps its LittleFS/cache format, but a pinned
+// framework patch acquires the same physical-flash arbiter used by this gate
+// before every Nordic flash mutation. Once Bluefruit owns the global SoC
+// event queue, its patched SoC task forwards flash completion events into a
+// bounded bridge consumed by pumpEvents(), instead of this gate racing
+// Bluefruit with a second sd_evt_get() consumer. Advertising, pairing UX,
+// provisioning and DFU remain later slices.
 class FlashMutationGate : public FlashBackend {
  public:
+  ~FlashMutationGate();
+
   // Lower value == admitted first when the physical slot is free and more
   // than one client has a staged, not-yet-admitted request. History and
   // Config always submit at their own fixed priority; Security's priority is
@@ -78,12 +87,10 @@ class FlashMutationGate : public FlashBackend {
   FlashOpResult pollPending() override;
   const Diagnostics& diagnostics() const { return history_diagnostics_; }
 
-  // Drains NRF_EVT_FLASH_OPERATION_SUCCESS/ERROR (and discards any other
-  // pending SoC event) from the SoftDevice event queue via the raw sd_evt_get
-  // SVC, for BOTH clients -- the single global queue has exactly one drain
-  // point now, routed to whichever client currently owns the in-flight
-  // operation. Must be called once per cooperative loop pass. A no-op
-  // whenever SoftDevice is disabled -- in shipped firmware today, always.
+  // Before Bluefruit starts, drains SoftDevice SoC events directly via
+  // sd_evt_get(), preserving the M7P3-M7P6 path. Once the patched Bluefruit
+  // SoC task declares itself the queue owner, this method consumes only the
+  // forwarded flash-event bridge and never drains sd_evt_get() itself.
   void pumpEvents();
 
   // ---- Config client (M7P5): symmetrical API, own region, own
@@ -227,6 +234,7 @@ class FlashMutationGate : public FlashBackend {
   FlashOpResult attemptSubmit(Owner owner);
   FlashOpResult submitOrRetry(Owner owner);
   void releaseSlot(Owner owner);
+  void handleFlashEvent(uint32_t evt_id);
 
   bool beginConfig();
   bool readConfig(uint32_t offset, void* data, size_t size) const;
