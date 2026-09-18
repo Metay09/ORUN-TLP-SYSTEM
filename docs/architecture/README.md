@@ -1,8 +1,8 @@
 # ORUN Architecture Documentation Index
 
 Status: **CURRENT documentation governance index**.
-Last reviewed against M6 software stack: `4858db8e19318ba7cf007fd94d2765b3f9084c0b`.
-Canonical pre-M6 main baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
+Last reviewed against `main@679f145ab7576eef3216613a826e05f8ad40876f` (M7P5 merged; M7P6 security and field-network/serviceability additions are design-only).
+Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 
 This directory contains current owner-approved rules plus historical/proposed
 architecture audits. They are not equal sources of truth. This index tells a new
