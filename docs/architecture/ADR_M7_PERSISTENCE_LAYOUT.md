@@ -607,12 +607,13 @@ Ordered; each is independently reviewable and should get its own PR. Naming
 follows this repository's existing `M<n>P<n>`/lettered-slice convention
 (e.g. `M6P1`, `M6B1`–`M6B3`):
 
-- **M7P2 — Layout/build-guard implementation.** Extend
-  `check_storage_layout.py` with the soft application-size ceiling check
-  (§6) and the three new reserved-region constants (as inert, unused
-  `constexpr` values — no backend code). Host tests + `pio run -e rak4630`
-  must pass unchanged; verify via `nm`/`size` that the new ceiling is
-  enforced by intentionally exceeding it in a throwaway local test build.
+- **M7P2 — Layout/build-guard implementation. DONE**, see
+  `docs/milestones/M7P2.md`. Extended `check_storage_layout.py` with the
+  soft application-size ceiling check (§6) and added the six new
+  reserved-region constants (as inert, unused `constexpr` values — no
+  backend code). Host tests and `pio run -e rak4630` pass unchanged; the new
+  ceiling was verified to actually fire via a deliberate, uncommitted
+  oversized local build.
 - **M7P3 — SoftDevice-compatible async history flash backend.** Implement
   `FlashMutationGate` (§9) and the asynchronous `NrfHistoryFlash`-equivalent
   backend for `HistoryStore` only, proving the contract against the existing

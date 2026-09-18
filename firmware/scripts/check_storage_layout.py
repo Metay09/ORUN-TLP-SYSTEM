@@ -36,4 +36,93 @@ def check_exclusive_owner(source, target, env):
             raise RuntimeError(f"M4 backend is missing Nordic primitive {primitive}")
 
 
+# M7P2 (docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md): six pages directly
+# below history (0x0E7000..0x0ED000) are policy-reserved for the M7P1-decided
+# future security/config/BLE-bond partitions. No runtime owner exists for
+# them yet; this guard only enforces that the *linked application* never
+# occupies that range, so a future implementation slice can allocate it
+# without discovering the application has silently grown into it first.
+#
+# This is a build-time policy guard, not a linker MEMORY-region change: the
+# stock, audited nrf52840_s140_v6.ld above still physically permits linking
+# all the way to 0x0ED000. Patching the linker itself was deliberately
+# deferred (see docs/milestones/M7P2.md) to avoid a third vendor core patch
+# before any of the three new partitions has an actual implementation to
+# protect. Removing or bypassing this script would remove this protection;
+# it is not a hardware-enforced reservation.
+STORAGE_CONFIG_H = Path(env.subst("$PROJECT_DIR")) / "include" / "storage_config.h"
+
+
+def _application_policy_ceiling(storage_config_text):
+    """Single source of truth: parse the M7P2 ceiling directly out of
+    storage_config.h instead of duplicating the literal in this script.
+
+    kApplicationPolicyEndAddress is itself defined equal to
+    kFutureSecurityRegionStart, and a static_assert in that header enforces
+    that equality at compile time, so reading the literal-bearing symbol
+    here is equivalent to reading the alias without needing a C++ constant
+    evaluator in a build script.
+    """
+    match = re.search(
+        r"constexpr\s+uint32_t\s+kFutureSecurityRegionStart\s*=\s*(0[xX][0-9A-Fa-f]+)\s*;",
+        storage_config_text,
+    )
+    if not match:
+        raise RuntimeError(
+            "M7P2 application ceiling constant kFutureSecurityRegionStart "
+            "not found in storage_config.h; audit the layout before building"
+        )
+    return int(match.group(1), 16)
+
+
+def _highest_flash_load_end(objdump_section_headers):
+    """Pure helper (no PlatformIO/env dependency): given `arm-none-eabi-
+    objdump -h` text, return the highest (LMA + size) among sections that
+    are actually part of the output image (the LOAD flag).
+
+    This deliberately uses each section's *load* address (LMA), never its
+    *virtual* run address (VMA): .data runs from RAM at its VMA but its
+    initial contents are stored in flash at its LMA, so its LMA is real
+    flash consumption. RAM-only sections such as .bss/.heap are ALLOC but
+    not LOAD/CONTENTS -- they consume no flash bytes at all, even though
+    the linker still prints a placeholder LMA for them -- so filtering on
+    the LOAD flag (not merely "has a nonzero LMA") is required, not
+    optional, to avoid over- or under-counting flash usage.
+    """
+    highest_end = 0
+    lines = objdump_section_headers.splitlines()
+    header_re = re.compile(
+        r"^\s*\d+\s+(\S+)\s+([0-9A-Fa-f]+)\s+([0-9A-Fa-f]+)\s+"
+        r"([0-9A-Fa-f]+)\s+([0-9A-Fa-f]+)\s+\S+\s*$"
+    )
+    for index, line in enumerate(lines):
+        match = header_re.match(line)
+        if not match:
+            continue
+        size = int(match.group(2), 16)
+        lma = int(match.group(4), 16)
+        flags_line = lines[index + 1] if index + 1 < len(lines) else ""
+        flags = {flag.strip() for flag in flags_line.split(",")}
+        if "LOAD" not in flags:
+            continue
+        highest_end = max(highest_end, lma + size)
+    return highest_end
+
+
+def check_application_ceiling(source, target, env):
+    ceiling = _application_policy_ceiling(STORAGE_CONFIG_H.read_text())
+    objdump = Path(env.PioPlatform().get_package_dir("toolchain-gccarmnoneeabi")) / "bin/arm-none-eabi-objdump"
+    headers = subprocess.check_output([str(objdump), "-h", str(target[0])], text=True)
+    highest_end = _highest_flash_load_end(headers)
+    if highest_end > ceiling:
+        raise RuntimeError(
+            "M7P2 application flash ceiling exceeded: configured ceiling is "
+            f"0x{ceiling:06X}, highest occupied flash byte end is "
+            f"0x{highest_end:06X} (exceeds by {highest_end - ceiling} "
+            "bytes). This range is policy-reserved for the M7P1 security/"
+            "config/bond layout (docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md)."
+        )
+
+
 env.AddPostAction("$BUILD_DIR/${PROGNAME}.elf", check_exclusive_owner)
+env.AddPostAction("$BUILD_DIR/${PROGNAME}.elf", check_application_ceiling)
