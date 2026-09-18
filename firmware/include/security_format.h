@@ -6,7 +6,11 @@
 // (docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md §5-§7,
 // docs/milestones/M7P6B.md). A sibling of journal_format.h/config_format.h:
 // explicit magic, schema version, generation, DeviceIdentity binding, CRC32
-// and a final 4-byte commit word programmed separately last, reusing
+// and 4-byte commit words. Record commit words are programmed after their
+// bodies; the PAGE HEADER commit word is additionally the A/B page-activation
+// marker and SecurityStore programs it last only after the full new-page
+// snapshot is durable. This lets recovery distinguish an interrupted page
+// build from an authoritative committed page. The format reuses
 // journal_format's already-tested byte-order/CRC32/erased-check primitives
 // directly instead of duplicating them. No shared state or physical pages
 // with HistoryStore or ConfigStore.
@@ -20,9 +24,9 @@
 //
 // Exactly one CREDENTIAL slot per page is deliberate, not a size accident:
 // credential changes are rare (re-provisioning only) and always happen
-// together with a fresh page (SecurityStore::provision() always compacts
-// onto a brand-new page carrying the new credential plus a freshly reserved
-// TX block), so recovery never needs to scan multiple CREDENTIAL candidates
+// together with a fresh page (SecurityStore::commitCredential() and page
+// compaction always build a brand-new inactive page before activating it), so
+// recovery never needs to scan multiple CREDENTIAL candidates
 // per page -- slot 0 is the only one that can ever exist.
 namespace orun_tlp::security_format {
 
@@ -42,7 +46,10 @@ constexpr size_t kCredentialIdSize = 16;
 constexpr size_t kKRootSize = 32;
 
 // ---- Page header: magic(4) + version+reserved(4) + generation(8) +
-// device_identity(8) + crc32(4) + commit(4). ----
+// device_identity(8) + crc32(4) + activation_commit(4). ----
+// The final word is kept erased while a new page is being assembled and is
+// programmed to kCommit only after credential + seed reservation snapshot
+// (when applicable) is durable/read-verified.
 constexpr uint32_t kPageHeaderSize = 32;
 
 // ---- CREDENTIAL record: credential_id(16) + key_epoch(4) +
