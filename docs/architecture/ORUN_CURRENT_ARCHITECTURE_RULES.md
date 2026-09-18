@@ -356,16 +356,17 @@ Do not remove the current SoftDevice flash safety guard merely to make BLE
 writes succeed. See `docs/architecture/ORUN_STORAGE_FLASH_OWNERSHIP.md` for
 the verified nRF52840 flash ownership map, the exact `InternalFS`-erases-history
 mechanism, the SoftDevice-enabled blocker, and the required pre-M7/pre-store-forward
-decision gates. `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md` decides the
-partition plan: `0x0E7000..0x0E9000` security/anti-replay (still unimplemented,
-M7P6), `0x0E9000..0x0EB000` durable config (`ConfigStore`, M7P5
-implementation head `b2850a680ca91427f1ff18b3661c385ff522223e`, PR #15; see
-`docs/milestones/M7P5.md`), `0x0EB000..0x0ED000`
-relocated BLE bonds (implemented M7P4, merged), all strictly below the
-unchanged history region and none of them InternalFS-over-history.
-BLE/SoftDevice remain OFF in shipped firmware; M7P5's async config-write
-path is software/host-test validated only, matching M7P3's history async
-path.
+decision gates. `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md` decides the partition plan:
+`0x0E7000..0x0E9000` SecurityStore (M7P6B implementation head
+`6d3009d42d9fb36026be5379171d8994a71dbaf6`; see `docs/milestones/M7P6B.md`),
+`0x0E9000..0x0EB000` ConfigStore (M7P5), and
+`0x0EB000..0x0ED000` relocated BLE bonds/InternalFS (M7P4), all strictly below
+the unchanged HistoryStore region. SecurityStore owns credential + TX nonce-safety
+state only and uses activation-last A/B recovery; ambiguous committed nonce state
+fails protected TX closed. BLE/SoftDevice remain OFF in shipped firmware. History,
+Config and Security async gate paths are software/host-test validated; real
+SoftDevice-enabled flash remains physically unvalidated, and bond/InternalFS still
+bypasses FlashMutationGate until later BLE integration.
 
 M6 activity/geofence helpers allocate no durable state and do not reuse the
 position journal. Future activity history, polygon configuration, FREE_GRAZE
@@ -606,43 +607,52 @@ trusted LOST/contact is validated by this closure. Any later change to
 runtime/I2C/power behavior requires relevant revalidation before merge.
 
 
-## 15. M7P6 owner-approved security direction
+## 15. M7P6 security direction and current durable implementation
 
 The authoritative design record is
-`docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md`. This section is the
-short current-rules summary; it does not authorize secure wire bytes by itself.
+`docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md`; implementation evidence is
+`docs/milestones/M7P6B.md`.
 
-- Current `DeviceIdentity` is a stable public lookup/compatibility identity, not an
+- `DeviceIdentity` remains a stable public lookup/compatibility identity, not an
   authenticator.
-- M7P6 direction is one independent random root credential per device, with a durable
-  random `credential_id`, key epoch and separate TX nonce/counter reservation state.
-- Do not use a fleet/group authentication key. Compromise of one node must not grant
-  fleet authority.
-- A normal relay/gateway is an opaque transport/custody participant: it may receive,
-  dedupe, store and forward eligible ciphertext and reception metadata, but it does not
+- M7P6B implements one independent credential lifetime per device:
+  128-bit random `credential_id`, `key_epoch`, 256-bit `K_root`, plus separate
+  TX nonce/counter reservation state.
+- No fleet/group authentication authority key is used.
+- SecurityStore owns only credential + TX nonce-safety state. User IDs, owner IDs,
+  phones and detailed permission tables remain backend/app concerns.
+- TX security counter state is completely separate from TLP v1 sequence/history tickets.
+  Reservation block size is 256 and the durable value is an absolute exclusive bound.
+- After reboot, unused counters from the previous reserved block are skipped; a fresh
+  durable reservation is required before another protected TX counter may be returned.
+- SecurityStore uses two raw 4 KiB A/B pages at `0x0E7000..0x0E9000`. The page-header
+  commit word is the final page activation marker after the complete credential/counter
+  snapshot is durable.
+- Unsupported future format, ambiguous committed corruption, invalid non-erased
+  reservation records and impossible append gaps fail protected security state closed
+  rather than falling back to a lower nonce bound.
+- Re-provisioning creates a new security lifetime; current `credential_id` or current
+  root reuse is refused when resetting the TX counter.
+- Flash admission is `SEC_CRITICAL > History > Config > SEC_MAINT`, with bounded
+  anti-starvation aging. Bond/InternalFS is not yet part of that gate.
+- A normal relay/gateway remains an opaque transport/custody participant and does not
   gain tracker root keys or trusted ACK/contact authority merely by being a gateway.
-- SecurityStore owns only security credential + TX nonce-safety state initially. User
-  IDs, owner IDs, phone lists and detailed permission tables remain backend/app concerns.
 - RX replay HWM, command IDs/results and device-side authorization/delegation are later
-  secure-downlink/command-layer state; they are intentionally not cancelled, but they
-  are not M7P6 SecurityStore v1 fields.
-- Anti-replay/nonce TX state is a separate namespace from TLP v1 sequence/history tickets.
-  The direction is durable block reservation (initial seed 256) plus append-style small
-  records and bounded A/B compaction, not ConfigStore-style page erase on every reserve.
-- TLP v1 bytes remain frozen and unauthenticated. Future trusted traffic uses an explicit
-  new secure envelope/version; do not silently reinterpret v1.
-- Standards-based crypto only. The current secure-envelope direction is HKDF-SHA256 plus
-  a compact standard AEAD (AES-128-CCM-8 is the leading candidate), but exact wire,
-  nonce, labels and tag encoding are frozen later after library/airtime/hardware review.
-- The exact provisioning ceremony is still open. Normal config reset must not erase
-  security credentials; re-provisioning creates a new credential lifetime.
-- Real RAK4630/RAK4631 bootloader signature/rollback behavior and preservation of the new
-  lower persistence partitions across every DFU path remain UNKNOWN until physically
-  verified. Do not convert tooling assumptions into physical claims.
+  secure-downlink/command-layer state, not SecurityStore v1 fields.
+- TLP v1 bytes remain frozen and unauthenticated. Future trusted traffic must use an
+  explicit secure envelope/version; M7P6B adds no secure RF bytes.
+- Standards-based crypto only. HKDF-SHA256 + compact standard AEAD remains the current
+  later-envelope direction, but exact library, nonce/AAD/header/tag bytes are not frozen.
+- No production provisioning transport exists. Blank devices remain UNPROVISIONED and
+  current TLP v1 operation continues.
+- Real RAK4630/RAK4631 bootloader authenticity/rollback behavior, partition preservation
+  across actual DFU/update paths, electrical power-cut and SoftDevice-enabled async
+  security flash remain physically unverified.
 
-The intended milestone split is M7P6A design -> M7P6B SecurityStore/TX nonce durability ->
+Milestone sequence remains: M7P6A design -> M7P6B durable foundation ->
 later secure envelope -> later authenticated commands/authorization. BLE commissioning
-and BLE diagnostic transport remain later M7P7/M7P8 work.
+and diagnostic transport remain later BLE work; do not confuse BLE bonding with
+application authorization.
 
 ## 16. Shared RF domain, coverage learning and diagnostics direction
 
