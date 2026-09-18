@@ -194,8 +194,12 @@ BLUEFRUIT_OWNER_NEW = """  // M7P7A: from this point Bluefruit's SoC task is the
 
 BLUEFRUIT_FLASH_EVENT_OLD = """              if ( flash_nrf5x_event_cb ) flash_nrf5x_event_cb(soc_evt);
 """
-BLUEFRUIT_FLASH_EVENT_NEW = """              if ( flash_nrf5x_event_cb ) flash_nrf5x_event_cb(soc_evt);
+BLUEFRUIT_FLASH_EVENT_NEW = """              // Route to ORUN before waking InternalFS. If InternalFS owns
+              // this event, its semaphore callback may unblock another task
+              // which releases the owner token immediately; ORUN must inspect
+              // the owner while it still unambiguously identifies this event.
               if ( orun_flash_gate_soc_event_cb ) orun_flash_gate_soc_event_cb(soc_evt);
+              if ( flash_nrf5x_event_cb ) flash_nrf5x_event_cb(soc_evt);
 """
 
 
