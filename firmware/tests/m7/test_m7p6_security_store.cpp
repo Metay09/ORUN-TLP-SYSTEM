@@ -254,6 +254,47 @@ int main() {
     assert(!recovered.reserveNextTxCounter(counter, epoch));
   }
 
+  // 7b. A committed page whose header magic is damaged is ambiguous
+  // authoritative state and must fail closed rather than looking blank.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 51));
+    flash.bytes[0] ^= 0x01;  // damage magic; activation word remains committed.
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kFault);
+    uint64_t counter = 0;
+    uint32_t epoch = 0;
+    assert(!recovered.reserveNextTxCounter(counter, epoch));
+  }
+
+  // 7c. Append-only TX_RESERVE records may never contain an erased gap
+  // followed by a later record; such a gap could hide a higher durable bound.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 52));
+
+    uint8_t id[kCredentialIdSize];
+    fillId(id, 52);
+    TxReserve later{};
+    memcpy(later.credential_id, id, kCredentialIdSize);
+    later.key_epoch = 1;
+    later.tx_reserved_bound = kTxReservationBlockSize * 3;
+    uint8_t bytes[kTxReserveRecordSize];
+    encodeTxReserve(later, bytes);
+    // slot 0 exists from provisioning; leave slot 1 erased and inject slot 2.
+    memcpy(flash.bytes.data() + txReserveRecordOffset(2), bytes, sizeof(bytes));
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kFault);
+  }
+
   // 8. DeviceIdentity mismatch: a structurally valid credential bound to a
   // different device recovers as kForeign, never adopted, no counters, and
   // commitCredential() is refused outright (no destructive rewrite).
@@ -455,11 +496,10 @@ int main() {
     assert(recovered.state() == SecurityState::kProvisioned);
   }
 
-  // 12b. Critical compaction crash point: after the new page header and
-  // carried-forward seed TX_RESERVE are durable but before the credential
-  // commits, recovery must still select the old page. This specifically
-  // prevents a higher-generation page from becoming authoritative with a
-  // zero/lower TX bound.
+  // 12b. Critical compaction crash point: the new page's complete snapshot
+  // (header body + carried-forward TX_RESERVE + credential) is durable, but
+  // the FINAL page-activation word fails. Recovery must still select the old
+  // page, proving activation-last prevents higher-generation rollback.
   {
     FakeFlash flash;
     SecurityStore store(flash, flash);
