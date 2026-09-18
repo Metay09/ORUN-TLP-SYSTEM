@@ -1,8 +1,8 @@
 # ORUN Architecture Documentation Index
 
 Status: **CURRENT documentation governance index**.
-Last reviewed against M6 software stack: `4858db8e19318ba7cf007fd94d2765b3f9084c0b`.
-Canonical pre-M6 main baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
+Last reviewed against `main@679f145ab7576eef3216613a826e05f8ad40876f` (M7P5 merged; M7P6 security and field-network/serviceability additions are design-only).
+Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 
 This directory contains current owner-approved rules plus historical/proposed
 architecture audits. They are not equal sources of truth. This index tells a new
@@ -16,9 +16,12 @@ For current architecture decisions, use this order:
 1. repository `AGENTS.md` — project-wide development, compatibility and validation rules;
 2. `ORUN_CURRENT_ARCHITECTURE_RULES.md` — current owner-approved concept,
    ownership and current/runtime-vs-future boundaries;
-3. current code, tests, golden/compatibility fixtures and milestone/audit reports
+3. focused owner-approved design records for the area being changed, currently including
+   `ADR_M7P6_SECURITY_ARCHITECTURE.md` and
+   `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`;
+4. current code, tests, golden/compatibility fixtures and milestone/audit reports
    describing the exact commit being changed;
-4. `ORUN_SYSTEM_ARCHITECTURE_V1.md`, `ORUN_ARCHITECTURE_GAP_ANALYSIS.md` and
+5. `ORUN_SYSTEM_ARCHITECTURE_V1.md`, `ORUN_ARCHITECTURE_GAP_ANALYSIS.md` and
    `ORUN_PROTOCOL_EVOLUTION_PLAN.md` — historical/proposed analysis that remains
    useful unless superseded by newer rules above.
 

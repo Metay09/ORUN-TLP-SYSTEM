@@ -1,8 +1,8 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through M6B3 explicit diagnostic capture; prior M6A audit/physical gate PASS; M6B3 focused operator physical gate PASS; overall M6 IN PROGRESS**.
-Last reviewed against M7P5 implementation head `b2850a680ca91427f1ff18b3661c385ff522223e` (PR #15), based on `main@8b44d9b9a96bcf7eea6dc494b807b62b43a7ea12` (M7P4 relocated bond storage). M6-era boundaries remain unchanged since the M6B3 review at `7c5d2aff632759722a35e4023dd69c90966d773f`; prior M6A audited head `332cf0e1b307735348a97c3cbd15f916d04a21a0`.
-Last architecture review update: 2026-09-18 (§6/§9 updated for M7P5's narrow durable-config exception and independently audited implementation head `b2850a680ca91427f1ff18b3661c385ff522223e`).
+Status: **CURRENT through M7P5 persistence implementation; M7P6A security and field-network/serviceability directions documented only; prior M6A/M6B3 focused physical gates PASS; overall M6 IN PROGRESS**.
+Last reviewed against `main@679f145ab7576eef3216613a826e05f8ad40876f` (M7P5 merged). M6-era physical/runtime boundaries remain unchanged since their recorded milestone evidence.
+Last architecture review update: 2026-09-18 (§15/§16 record owner-approved M7P6 security, shared RF-domain, coverage-learning and diagnostics direction; these are design-only and do not claim new runtime validation).
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
@@ -604,3 +604,81 @@ Overall M6 remains IN PROGRESS; no
 continuous sampling, animal classification/accuracy, geofence field behavior or
 trusted LOST/contact is validated by this closure. Any later change to
 runtime/I2C/power behavior requires relevant revalidation before merge.
+
+
+## 15. M7P6 owner-approved security direction
+
+The authoritative design record is
+`docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md`. This section is the
+short current-rules summary; it does not authorize secure wire bytes by itself.
+
+- Current `DeviceIdentity` is a stable public lookup/compatibility identity, not an
+  authenticator.
+- M7P6 direction is one independent random root credential per device, with a durable
+  random `credential_id`, key epoch and separate TX nonce/counter reservation state.
+- Do not use a fleet/group authentication key. Compromise of one node must not grant
+  fleet authority.
+- A normal relay/gateway is an opaque transport/custody participant: it may receive,
+  dedupe, store and forward eligible ciphertext and reception metadata, but it does not
+  gain tracker root keys or trusted ACK/contact authority merely by being a gateway.
+- SecurityStore owns only security credential + TX nonce-safety state initially. User
+  IDs, owner IDs, phone lists and detailed permission tables remain backend/app concerns.
+- RX replay HWM, command IDs/results and device-side authorization/delegation are later
+  secure-downlink/command-layer state; they are intentionally not cancelled, but they
+  are not M7P6 SecurityStore v1 fields.
+- Anti-replay/nonce TX state is a separate namespace from TLP v1 sequence/history tickets.
+  The direction is durable block reservation (initial seed 256) plus append-style small
+  records and bounded A/B compaction, not ConfigStore-style page erase on every reserve.
+- TLP v1 bytes remain frozen and unauthenticated. Future trusted traffic uses an explicit
+  new secure envelope/version; do not silently reinterpret v1.
+- Standards-based crypto only. The current secure-envelope direction is HKDF-SHA256 plus
+  a compact standard AEAD (AES-128-CCM-8 is the leading candidate), but exact wire,
+  nonce, labels and tag encoding are frozen later after library/airtime/hardware review.
+- The exact provisioning ceremony is still open. Normal config reset must not erase
+  security credentials; re-provisioning creates a new credential lifetime.
+- Real RAK4630/RAK4631 bootloader signature/rollback behavior and preservation of the new
+  lower persistence partitions across every DFU path remain UNKNOWN until physically
+  verified. Do not convert tooling assumptions into physical claims.
+
+The intended milestone split is M7P6A design -> M7P6B SecurityStore/TX nonce durability ->
+later secure envelope -> later authenticated commands/authorization. BLE commissioning
+and BLE diagnostic transport remain later M7P7/M7P8 work.
+
+## 16. Shared RF domain, coverage learning and diagnostics direction
+
+The authoritative product/design record is
+`docs/architecture/ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
+
+RF channel/domain is not customer/project identity. Infrastructure placed in one pasture
+or customer area should be able to help another eligible ORUN node in RF range when the
+shared RF plan and forwarding policy permit it. Customer/project separation belongs to
+security/backend ownership, not to a permanently dedicated channel.
+
+The long-term planning model may use overlapping RF cells/spatial reuse: not every node
+must hear every other node, but do not deliberately create connectivity dead zones merely
+to raise capacity. Channel/domain splits are a measured capacity/interference tool, not
+today's default scaling mechanism. A future multi-channel concentrator-class gateway is
+an infrastructure option only when real load requires it; do not add speculative channel
+hopping, SX130x HALs or per-customer RF allocation now. Current frozen TLP v1 still
+supports exactly one relay hop and rejects nested RELAY_FORWARD.
+
+Coverage learning remains a product requirement. Backend/app should eventually combine
+accepted device position/time with actual reception observations (receiving gateway/relay,
+DIRECT vs RELAY path, RSSI, SNR, time and RF configuration) to build empirical coverage
+maps and improve relay/gateway placement. RSSI/SNR are not metres, and absence of an
+observation is not proof of no coverage; unknown/insufficient-data must remain distinct
+from repeatedly observed weak/dead areas. Do not turn tracker flash into a long-term
+coverage database.
+
+Diagnostics should have one bounded transport-neutral Health/Diagnostics owner. Current
+USB Serial already exposes useful reset/storage/radio/activity/RSSI/SNR/path/error
+evidence. Future BLE should expose structured status snapshots, counters and a small
+recent-event view through the same owner rather than mirror an unlimited Serial stream.
+Tracker BLE remains normally OFF with the approximately 10-minute maintenance admission
+policy and authenticated-operation extension; gateway profiles may keep BLE available
+when their power/availability contract permits it. Diagnostic data may be sensitive, so
+BLE connection/bonding alone must not imply authorization.
+
+Normal application UI should show useful health/coverage outcomes; detailed user/account
+permissions remain backend-owned, and the app should hide unauthorized controls. Device
+firmware still independently verifies cryptographic authority for protected operations.
