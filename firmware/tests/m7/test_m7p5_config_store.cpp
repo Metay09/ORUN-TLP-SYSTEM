@@ -319,5 +319,121 @@ int main() {
     assert(store.config().tracking_interval_seconds == 1001);
   }
 
+  // 14. Ownership: an unread prior save result must not be silently
+  // overwritten by a second async save. requestSave() fails closed while
+  // save A's result is unread, so a later takeSaveResult() can never be
+  // mistaken for the wrong save.
+  {
+    PendingFlash flash;
+    ConfigStore store(flash);
+    assert(store.begin());
+    bool success = false;
+    assert(saveAndSettle(store, Config{111, 1}, success) && success);
+
+    // Save A completes and settles, but its result is deliberately left
+    // unread (no takeSaveResult() call).
+    assert(store.requestSave(Config{222, 2}));
+    settle(store);
+    assert(!store.busy());
+    assert(store.diagnostics().blocked_pending_result == 0);
+    // The commit itself already applied internally (config()/generation
+    // advance regardless of whether the caller ever reads the result) --
+    // only the *result notification* is what must not be conflated.
+    assert(store.config().tracking_interval_seconds == 222);
+
+    // Save B must be refused outright while save A's result sits unread:
+    // it must not start, and it must not disturb the config A already
+    // committed.
+    assert(!store.requestSave(Config{333, 3}));
+    assert(!store.busy());
+    assert(store.diagnostics().blocked_pending_result == 1);
+    assert(store.config().tracking_interval_seconds == 222);  // still A's
+
+    // Consuming A's result unblocks the store. B can now be requested, and
+    // B's own result is unambiguously B's, not a stale A leftover.
+    bool a_success = false;
+    assert(store.takeSaveResult(a_success) && a_success);
+    assert(!store.takeSaveResult(a_success));  // A's result is consumed exactly once
+    assert(saveAndSettle(store, Config{333, 3}, success) && success);
+    assert(store.config().tracking_interval_seconds == 333);
+  }
+
+  // 15. The synchronous unchanged-config no-op path is explicitly exempt
+  // from the unread-result gate: it never arms save_result_ready_, so it
+  // must still succeed even while a prior async save's result sits unread.
+  {
+    PendingFlash flash;
+    ConfigStore store(flash);
+    assert(store.begin());
+    bool success = false;
+    assert(saveAndSettle(store, Config{444, 4}, success) && success);
+
+    assert(store.requestSave(Config{555, 5}));  // async save, result left unread
+    settle(store);
+    assert(!store.busy());
+
+    // Re-requesting the exact value just committed is a synchronous no-op
+    // and must succeed despite the unread async result above.
+    assert(store.requestSave(Config{555, 5}));
+    assert(!store.busy());
+    assert(store.diagnostics().skipped_unchanged == 1);
+    assert(store.diagnostics().blocked_pending_result == 0);
+
+    // A genuinely different candidate is still correctly blocked.
+    assert(!store.requestSave(Config{666, 6}));
+    assert(store.diagnostics().blocked_pending_result == 1);
+
+    bool leftover = false;
+    assert(store.takeSaveResult(leftover) && leftover);
+  }
+
+  // 16. Recovery must reject a structurally-sealed record (valid
+  // magic/version/length/generation/CRC/commit) whose payload is
+  // semantically out of range, exactly as requestSave() would reject the
+  // same candidate outright. 16a: no other valid page exists -> defaults.
+  // 16b: a lower-generation but valid page exists -> that page wins over
+  // the higher-generation but invalid one.
+  {
+    // 16a.
+    PendingFlash flash;
+    uint8_t bytes[kRecordSize];
+    const uint32_t kOutOfRange = 12u * 24u * 60u * 60u + 1u;  // > kMaxTrackingIntervalSeconds
+    encode(Config{kOutOfRange, 123}, 1, bytes);  // structurally valid: magic/version/len/gen/CRC/commit all correct
+    memcpy(flash.bytes.data(), bytes, sizeof(bytes));
+    // Page 1 left erased -- no other candidate page exists.
+
+    ConfigStore store(flash);
+    assert(store.begin());
+    assert(store.ready());
+    assert(store.config().tracking_interval_seconds == 180);  // falls back to defaults
+    assert(store.config().battery_capacity_mah == 0);
+    assert(store.diagnostics().recovery_corruptions >= 1);
+  }
+  {
+    // 16b: page 0 holds a valid, previously-committed save (generation 1);
+    // page 1 is directly poked with a structurally sealed but semantically
+    // invalid record at a HIGHER generation (2) -- simulating a record
+    // written by a firmware with a wider bound, now read back by this
+    // firmware's stricter one. Recovery must reject page 1 despite its
+    // higher generation and keep page 0's valid, lower-generation config.
+    PendingFlash flash;
+    ConfigStore store(flash);
+    assert(store.begin());
+    bool success = false;
+    assert(saveAndSettle(store, Config{777, 70}, success) && success);
+    assert(store.config().tracking_interval_seconds == 777);  // committed to page 0
+
+    const uint32_t kOutOfRange = 12u * 24u * 60u * 60u + 1u;
+    uint8_t bytes[kRecordSize];
+    encode(Config{kOutOfRange, 999}, 2, bytes);
+    memcpy(flash.bytes.data() + kPageSize, bytes, sizeof(bytes));
+
+    ConfigStore recovered(flash);
+    assert(recovered.begin());
+    assert(recovered.config().tracking_interval_seconds == 777);  // page 0 wins
+    assert(recovered.config().battery_capacity_mah == 70);
+    assert(recovered.diagnostics().recovery_corruptions >= 1);
+  }
+
   puts("M7P5 ConfigStore checks: PASS");
 }

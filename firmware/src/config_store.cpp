@@ -75,6 +75,17 @@ bool ConfigStore::requestSave(const config_format::Config& candidate) {
     ++diagnostics_.skipped_unchanged;
     return true;
   }
+  // Fail closed rather than let a second async save silently overwrite the
+  // first's still-unread result: without this, busy()==false the instant a
+  // save finishes (poll() clears job_ in finishSave()/fail()), so a caller
+  // could requestSave() again before ever calling takeSaveResult(), and a
+  // later takeSaveResult() would then return the SECOND save's outcome to a
+  // caller who believes it is still waiting on the first. Consuming the
+  // prior result is the only way to unblock this.
+  if (save_result_ready_) {
+    ++diagnostics_.blocked_pending_result;
+    return false;
+  }
   return startSave(candidate);
 }
 

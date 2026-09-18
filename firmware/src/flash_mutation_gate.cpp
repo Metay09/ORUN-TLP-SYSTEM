@@ -25,6 +25,13 @@ using namespace storage_config;
 // fixed attempt count -- a slow poll cadence would exhaust a fixed count
 // before genuinely giving up, where the timeout scales with real elapsed
 // time regardless of how often pollPending() happens to be called.
+//
+// This budget is scoped to Slot::admitted, i.e. to time actually spent
+// holding the shared physical in-flight slot -- not to time a request spent
+// staged and queued behind the other client's own operation (which the
+// M7P5 dual-client admission queue can now make arbitrarily long, bounded
+// only by the other client's own admission+operation time, itself bounded
+// by this same constant). See submitOrRetry()'s admission block.
 constexpr uint32_t kOperationTimeoutMs = 4000;
 
 bool inBoundsHistory(uint32_t offset, size_t size) {
@@ -61,6 +68,7 @@ bool FlashMutationGate::timedOut(uint32_t now, uint32_t started_ms) const {
 void FlashMutationGate::releaseSlot(Owner owner) {
   Slot& mine = slot(owner);
   mine.kind = Kind::kNone;
+  mine.admitted = false;
   mine.submission_accepted = false;
   mine.event_ready = false;
   mine.staging_size = 0;
@@ -97,7 +105,9 @@ FlashOpResult FlashMutationGate::program(uint32_t offset, const void* data, size
   history_slot_.staging_size = size;
   history_slot_.kind = Kind::kProgram;
   history_slot_.target = kBaseAddress + offset;
-  history_slot_.started_ms = monotonic::nowMs();
+  // started_ms is set on admission (submitOrRetry), not here -- this request
+  // may still have to wait behind the other client's in-flight operation.
+  history_slot_.admitted = false;
   history_slot_.submission_accepted = false;
   history_slot_.event_ready = false;
   return submitOrRetry(Owner::kHistory);
@@ -113,7 +123,7 @@ FlashOpResult FlashMutationGate::erasePage(uint32_t page) {
 
   history_slot_.kind = Kind::kErase;
   history_slot_.target = kBaseAddress / kPageSize + page;
-  history_slot_.started_ms = monotonic::nowMs();
+  history_slot_.admitted = false;
   history_slot_.submission_accepted = false;
   history_slot_.event_ready = false;
   return submitOrRetry(Owner::kHistory);
@@ -156,7 +166,9 @@ FlashOpResult FlashMutationGate::programConfig(uint32_t offset, const void* data
   config_slot_.staging_size = size;
   config_slot_.kind = Kind::kProgram;
   config_slot_.target = kFutureConfigRegionStart + offset;
-  config_slot_.started_ms = monotonic::nowMs();
+  // started_ms is set on admission (submitOrRetry), not here -- this request
+  // may still have to wait behind the other client's in-flight operation.
+  config_slot_.admitted = false;
   config_slot_.submission_accepted = false;
   config_slot_.event_ready = false;
   return submitOrRetry(Owner::kConfig);
@@ -172,7 +184,7 @@ FlashOpResult FlashMutationGate::erasePageConfig(uint32_t page) {
 
   config_slot_.kind = Kind::kErase;
   config_slot_.target = kFutureConfigRegionStart / kPageSize + page;
-  config_slot_.started_ms = monotonic::nowMs();
+  config_slot_.admitted = false;
   config_slot_.submission_accepted = false;
   config_slot_.event_ready = false;
   return submitOrRetry(Owner::kConfig);
@@ -207,6 +219,17 @@ FlashOpResult FlashMutationGate::submitOrRetry(Owner owner) {
   if (in_flight_owner_ != owner) return FlashOpResult::kPending;  // Queued behind the other owner.
 
   Slot& mine = slot(owner);
+  if (!mine.admitted) {
+    // The bounded physical-operation timeout below must measure time this
+    // request actually spent holding the in-flight slot, never time it
+    // spent merely staged/queued behind the other client's own operation.
+    // A request that waited >kOperationTimeoutMs in the admission queue and
+    // is only now admitted still gets a full, fresh budget starting now --
+    // otherwise it could be failed closed on the very tick sd_flash_* is
+    // first attempted, before it ever had a real chance to complete.
+    mine.admitted = true;
+    mine.started_ms = monotonic::nowMs();
+  }
   if (!mine.submission_accepted) return attemptSubmit(owner);
   if (mine.event_ready) {
     const bool ok = mine.event_success;

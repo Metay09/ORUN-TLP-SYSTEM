@@ -210,6 +210,134 @@ int main() {
     assert(gate.diagnostics().completions_success == 1);
   }
 
+  // Queued-timeout fix: a request that waits *longer than*
+  // kOperationTimeoutMs (4000ms) while merely staged behind the other
+  // client's in-flight operation must not be timed out for that queued
+  // wait -- the physical-operation timeout clock must start only once the
+  // request is actually admitted (obtains the shared in-flight slot and
+  // begins real sd_flash_* submission), not when it was first staged.
+  {
+    reset();
+    fake_now_ms = 0;
+    FlashMutationGate gate;
+    assert(gate.begin());
+    assert(gate.configPort().begin());
+    sd_enabled = true;
+    memset(history_region, 0xFF, kRegionSize);
+    memset(config_region, 0xFF, kConfigRegionSize);
+
+    alignas(4) uint8_t history_data[4] = {5, 5, 5, 5};
+    alignas(4) uint8_t config_data[4] = {6, 6, 6, 6};
+
+    // History is admitted immediately (nothing else in flight yet) and its
+    // physical operation genuinely starts.
+    assert(gate.program(0, history_data, 4) == FlashOpResult::kPending);
+    assert(write_calls == 1);
+
+    // Config stages a request while History still owns the physical slot:
+    // Config is queued, not admitted.
+    assert(gate.configPort().program(0, config_data, 4) == FlashOpResult::kPending);
+    assert(write_calls == 1);  // Config never even attempted a submit yet.
+
+    // Time passes well beyond kOperationTimeoutMs (4000ms) while Config is
+    // merely queued. This alone must never time out Config -- its
+    // physical-operation clock has not started.
+    fake_now_ms += 5000;
+    assert(gate.configPort().pollPending() == FlashOpResult::kPending);
+    assert(write_calls == 1);  // still queued behind History
+    assert(gate.configDiagnostics().timeouts == 0);
+
+    // History's own operation completes normally.
+    event_queue.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
+    gate.pumpEvents();
+    assert(gate.pollPending() == FlashOpResult::kDone);
+    assert(memcmp(history_region, history_data, 4) == 0);
+    assert(gate.diagnostics().timeouts == 0);
+    assert(gate.diagnostics().spurious_events == 0);
+
+    // The physical slot is now free: Config is admitted and must get a
+    // FRESH kOperationTimeoutMs budget starting now, not an
+    // already-expired one measured from when it was merely staged.
+    assert(gate.configPort().pollPending() == FlashOpResult::kPending);  // submits now
+    assert(write_calls == 2);
+    assert(gate.configDiagnostics().timeouts == 0);  // no false timeout on admission
+
+    // Advance close to, but under, a fresh 4s budget measured from
+    // admission -- must still be pending, never falsely timed out.
+    fake_now_ms += 3999;
+    assert(gate.configPort().pollPending() == FlashOpResult::kPending);
+    assert(gate.configDiagnostics().timeouts == 0);
+
+    // Config's operation completes successfully -- proving the request that
+    // waited past the timeout while queued still completes once genuinely
+    // admitted, with no overlapping ownership and no misattributed event.
+    event_queue.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
+    gate.pumpEvents();
+    assert(gate.configPort().pollPending() == FlashOpResult::kDone);
+    assert(memcmp(config_region, config_data, 4) == 0);
+    assert(gate.configDiagnostics().completions_success == 1);
+    assert(gate.configDiagnostics().timeouts == 0);
+    assert(gate.configDiagnostics().spurious_events == 0);
+    assert(gate.diagnostics().spurious_events == 0);
+  }
+
+  // Symmetric case: History queued behind Config's in-flight operation for
+  // longer than kOperationTimeoutMs, then admitted -- the fix is not
+  // History-specific; both Slots share the same admission-gated clock.
+  {
+    reset();
+    fake_now_ms = 0;
+    FlashMutationGate gate;
+    assert(gate.begin());
+    assert(gate.configPort().begin());
+    sd_enabled = true;
+    memset(history_region, 0xFF, kRegionSize);
+    memset(config_region, 0xFF, kConfigRegionSize);
+
+    alignas(4) uint8_t config_data[4] = {7, 7, 7, 7};
+    alignas(4) uint8_t history_data[4] = {8, 8, 8, 8};
+
+    // Config is admitted immediately (nothing else in flight yet).
+    assert(gate.configPort().program(0, config_data, 4) == FlashOpResult::kPending);
+    assert(write_calls == 1);
+
+    // History stages a request while Config owns the physical slot: History
+    // cannot preempt an already-accepted physical operation, so it queues
+    // despite normally outranking Config on a free slot.
+    assert(gate.program(0, history_data, 4) == FlashOpResult::kPending);
+    assert(write_calls == 1);
+
+    fake_now_ms += 5000;  // History waits well past kOperationTimeoutMs while merely queued.
+    assert(gate.pollPending() == FlashOpResult::kPending);
+    assert(write_calls == 1);
+    assert(gate.diagnostics().timeouts == 0);
+
+    event_queue.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
+    gate.pumpEvents();
+    assert(gate.configPort().pollPending() == FlashOpResult::kDone);
+    assert(memcmp(config_region, config_data, 4) == 0);
+    assert(gate.configDiagnostics().timeouts == 0);
+    assert(gate.configDiagnostics().spurious_events == 0);
+
+    // History is now admitted and must get a fresh 4s budget.
+    assert(gate.pollPending() == FlashOpResult::kPending);  // submits now
+    assert(write_calls == 2);
+    assert(gate.diagnostics().timeouts == 0);
+
+    fake_now_ms += 3999;
+    assert(gate.pollPending() == FlashOpResult::kPending);
+    assert(gate.diagnostics().timeouts == 0);
+
+    event_queue.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
+    gate.pumpEvents();
+    assert(gate.pollPending() == FlashOpResult::kDone);
+    assert(memcmp(history_region, history_data, 4) == 0);
+    assert(gate.diagnostics().completions_success == 1);
+    assert(gate.diagnostics().timeouts == 0);
+    assert(gate.diagnostics().spurious_events == 0);
+    assert(gate.configDiagnostics().spurious_events == 0);
+  }
+
   assert(munmap(history_region, kRegionSize) == 0);
   assert(munmap(config_region, kConfigRegionSize) == 0);
   puts("M7P5 FlashMutationGate dual-client checks: PASS");

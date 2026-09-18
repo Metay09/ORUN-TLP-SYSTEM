@@ -98,7 +98,13 @@ class FlashMutationGate : public FlashBackend {
   struct Slot {
     Kind kind = Kind::kNone;
     uint32_t target = 0;  // program: absolute flash address; erase: absolute page index.
+    // Base of the physical-operation timeout deadline. Meaningful only once
+    // `admitted` is true -- a request may sit staged/queued behind the
+    // other client for an unbounded time (bounded only by that other
+    // client's own admission+operation budget), and that queued wait must
+    // never count against this request's own timeout.
     uint32_t started_ms = 0;
+    bool admitted = false;  // true once this request has actually obtained the physical in-flight slot.
     bool submission_accepted = false;  // sd_flash_* itself returned NRF_SUCCESS.
     bool event_ready = false;          // pumpEvents() recorded a matching completion.
     bool event_success = false;

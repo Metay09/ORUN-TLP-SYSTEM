@@ -1,8 +1,8 @@
 # ORUN Current Architecture Rules
 
 Status: **CURRENT through M6B3 explicit diagnostic capture; prior M6A audit/physical gate PASS; M6B3 focused operator physical gate PASS; overall M6 IN PROGRESS**.
-Last reviewed against code: `main@8b44d9b9a96bcf7eea6dc494b807b62b43a7ea12` (M7P5 durable config store merged; M6-era boundaries unchanged since the M6B3 review at `7c5d2aff632759722a35e4023dd69c90966d773f`; prior M6A audited head `332cf0e1b307735348a97c3cbd15f916d04a21a0`).
-Last architecture review update: 2026-09-18 (§6/§9 updated for M7P5's narrow durable-config exception).
+Last reviewed against code: `main@8b44d9b9a96bcf7eea6dc494b807b62b43a7ea12` (M7P4 relocated bond storage merged; this is the M7P5 baseline commit, not an M7P5-merged head). M7P5's durable config store is implemented on branch `feat/m7p5-durable-config-store` (PR #15, open) on top of that baseline, addressing its independent-audit review findings; not yet merged to `main`, so this SHA does not itself contain M7P5. M6-era boundaries unchanged since the M6B3 review at `7c5d2aff632759722a35e4023dd69c90966d773f`; prior M6A audited head `332cf0e1b307735348a97c3cbd15f916d04a21a0`.
+Last architecture review update: 2026-09-18 (§6/§9 updated for M7P5's narrow durable-config exception, described against the open PR #15, not a merged head).
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
@@ -358,12 +358,14 @@ the verified nRF52840 flash ownership map, the exact `InternalFS`-erases-history
 mechanism, the SoftDevice-enabled blocker, and the required pre-M7/pre-store-forward
 decision gates. `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md` decides the
 partition plan: `0x0E7000..0x0E9000` security/anti-replay (still unimplemented,
-M7P6), `0x0E9000..0x0EB000` durable config (`ConfigStore`, implemented M7P5,
-see `docs/milestones/M7P5.md`), `0x0EB000..0x0ED000` relocated BLE bonds
-(implemented M7P4), all strictly below the unchanged history region and none
-of them InternalFS-over-history. BLE/SoftDevice remain OFF in shipped
-firmware; M7P5's async config-write path is software/host-test validated
-only, matching M7P3's history async path.
+M7P6), `0x0E9000..0x0EB000` durable config (`ConfigStore`, implemented on the
+M7P5 branch/PR #15, addressing its independent-audit review findings, not
+yet merged to `main` -- see `docs/milestones/M7P5.md`), `0x0EB000..0x0ED000`
+relocated BLE bonds (implemented M7P4, merged), all strictly below the
+unchanged history region and none of them InternalFS-over-history.
+BLE/SoftDevice remain OFF in shipped firmware; M7P5's async config-write
+path is software/host-test validated only, matching M7P3's history async
+path.
 
 M6 activity/geofence helpers allocate no durable state and do not reuse the
 position journal. Future activity history, polygon configuration, FREE_GRAZE

@@ -21,6 +21,10 @@ class ConfigStore {
     uint32_t recovery_corruptions = 0;
     uint32_t rejected_candidates = 0;
     uint32_t skipped_unchanged = 0;
+    // requestSave() refused to start a new async save because a prior save's
+    // result was still sitting unread in save_result_ready_. Not a flash
+    // failure or invalid input -- purely an ownership/sequencing rejection.
+    uint32_t blocked_pending_result = 0;
   };
 
   explicit ConfigStore(FlashBackend& backend) : flash_(backend) {}
@@ -39,10 +43,17 @@ class ConfigStore {
 
   // Validates the whole candidate; rejects (no flash write, no state
   // change) an out-of-range interval. A candidate that is byte/semantically
-  // identical to the currently committed config is accepted as a no-op
-  // (no erase/write). Otherwise starts an async save; poll() advances it
-  // and takeSaveResult() reports completion. Returns false immediately if
-  // rejected outright (invalid candidate, or a save is already in progress).
+  // identical to the currently committed config is accepted as a
+  // synchronous no-op (no erase/write) -- this path is explicitly exempt
+  // from the unread-result rule below, since it never arms save_result_ready_
+  // and so can never collide with one. Otherwise starts an async save;
+  // poll() advances it and takeSaveResult() reports completion exactly
+  // once. Returns false immediately if rejected outright: invalid
+  // candidate, a save already in progress (busy()), or -- fail-closed
+  // ownership rule -- a previous async save's result has not yet been
+  // consumed via takeSaveResult(). This guarantees a caller can never read
+  // save B's outcome while believing it belongs to save A: the store will
+  // not even start save B until save A's result has been taken.
   bool requestSave(const config_format::Config& candidate);
   bool takeSaveResult(bool& success);
   // "Config reset": explicitly re-saves the default config. Affects only
