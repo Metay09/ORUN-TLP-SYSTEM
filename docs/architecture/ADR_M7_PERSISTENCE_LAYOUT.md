@@ -628,9 +628,22 @@ follows this repository's existing `M<n>P<n>`/lettered-slice convention
   `FlashMutationGate` (calls `sd_flash_write`/`sd_flash_page_erase` and
   consumes SoftDevice events independently) — an explicit, unresolved M7P7
   prerequisite, not papered over here.
-- **M7P5 — Durable config store.** Define the actual config schema (now,
-  not speculatively) and implement `ConfigStore` in
-  `0x0E9000..0x0EB000` using the A/B commit-word-last pattern from §7/§12.
+- **M7P5 — Durable config store. DONE**, see `docs/milestones/M7P5.md`.
+  Defined a narrow, owner-approved v1 config schema (`tracking_interval_seconds`,
+  `battery_capacity_mah`) and implemented `ConfigStore` in
+  `0x0E9000..0x0EB000` using the A/B commit-word-last pattern from §7/§12, a
+  sibling of `journal_format`/`HistoryStore` (reuses its byte-encoding
+  primitives, not its storage ownership or physical pages). Generalized
+  `FlashMutationGate` to serve History and Config as a bounded, prioritized
+  two-client seam (§9/§10) without weakening any M7P3 history semantics or
+  implementing speculative Security/Bond clients. `tracking_interval_seconds`
+  is now the authoritative runtime GNSS schedule interval
+  (`GnssManager::setTrackingIntervalMs`); the compile-time 180s default is
+  unchanged and remains what blank/corrupt/invalid config falls back to.
+  `battery_capacity_mah` is persisted only; no power-policy use yet.
+  Software/host-test validated only — SoftDevice is not enabled by shipped
+  firmware in this slice, so ConfigStore's async path is not yet physically
+  validated, matching M7P3's own physical-validation status.
 - **M7P6 — Security material + anti-replay store.** Implement
   `SecurityStore` in `0x0E7000..0x0E9000`, with an explicit, reviewed
   cryptography/key-provisioning design as its own prerequisite (not
@@ -679,7 +692,7 @@ design-only ADR:
 | Concurrency priority order (§10) | **DECIDED** |
 | Reset/factory-reset policy per class (§11) | **DECIDED** |
 | Application-ceiling enforcement mechanism (soft guard now, hard linker patch later) | **DECIDED** |
-| Exact config schema | **NOT DECIDED** — deferred to M7P5, by design (§4B) |
+| Exact config schema | **DECIDED at M7P5** — narrow v1 schema (`tracking_interval_seconds`, `battery_capacity_mah`), see `docs/milestones/M7P5.md` |
 | Cryptography/key scheme | **NOT DECIDED** — explicitly out of scope (§15) |
 | Physical bootloader DFU capability (gate F) | **UNRESOLVED** — requires hardware, not decidable here |
 | Authenticated ACK/store-forward protocol (gate G) | **UNRESOLVED** — gated on M7P6, not designed here |

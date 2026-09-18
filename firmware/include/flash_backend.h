@@ -40,4 +40,28 @@ class NrfHistoryFlash : public FlashBackend {
  private:
   bool ready_ = false;
 };
+
+// M7P5: the same synchronous-only Nordic primitive contract as
+// NrfHistoryFlash, addressed at the M7P1-decided durable-config partition
+// (storage_config::kFutureConfigRegionStart, 2 pages) instead of history's.
+// A sibling backend, not a generalization of NrfHistoryFlash: no shared
+// code or state (own bounds, own address arithmetic, own class). Its
+// begin() does reuse NrfHistoryFlash's exact `__flash_arduino_end ==
+// kBaseAddress` literal check -- that fact describes the vendor linker
+// script's fixed FLASH region end (always kBaseAddress on this board,
+// regardless of application size), not something specific to history, so
+// it is the correct check for any partition below history, not a
+// history-only invariant to avoid reusing. See nrf_config_flash.cpp's
+// begin() for the full explanation. Never returns kPending;
+// FlashMutationGate owns this instance for config's SoftDevice-disabled
+// path exactly as it owns NrfHistoryFlash for history's.
+class NrfConfigFlash : public FlashBackend {
+ public:
+  bool begin() override;
+  bool read(uint32_t offset, void* data, size_t size) const override;
+  FlashOpResult program(uint32_t offset, const void* data, size_t size) override;
+  FlashOpResult erasePage(uint32_t page) override;
+ private:
+  bool ready_ = false;
+};
 }  // namespace orun_tlp

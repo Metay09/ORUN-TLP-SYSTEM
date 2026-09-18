@@ -95,6 +95,13 @@ int main(int argc, char** argv) {
       PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
   assert(region == reinterpret_cast<void*>(kBaseAddress));
   memset(region, 0xFF, kRegionSize);
+  // M7P5: setup() also begins ConfigStore, backed by NrfConfigFlash over the
+  // M7P1-decided config partition -- map it too, exactly like history above.
+  constexpr uint32_t kConfigRegionSize = kFutureConfigRegionEnd - kFutureConfigRegionStart;
+  void* config_region = mmap(reinterpret_cast<void*>(kFutureConfigRegionStart), kConfigRegionSize,
+      PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+  assert(config_region == reinterpret_cast<void*>(kFutureConfigRegionStart));
+  memset(config_region, 0xFF, kConfigRegionSize);
 
   // Seed page 0 through the real journal/backend, including a committed fix.
   NrfHistoryFlash seed_flash;
@@ -233,5 +240,6 @@ int main(int argc, char** argv) {
   assert(Wire.transaction_calls == wire_calls);
 
   assert(munmap(region, kRegionSize) == 0);
+  assert(munmap(config_region, kConfigRegionSize) == 0);
   printf("Production startup identity/history/loop (%s): PASS\n", argv[1]);
 }

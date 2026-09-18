@@ -1,8 +1,8 @@
 # ORUN Current Architecture Rules
 
 Status: **CURRENT through M6B3 explicit diagnostic capture; prior M6A audit/physical gate PASS; M6B3 focused operator physical gate PASS; overall M6 IN PROGRESS**.
-Last reviewed against code: `main@7c5d2aff632759722a35e4023dd69c90966d773f` (M6B3 merged; prior M6A audited head `332cf0e1b307735348a97c3cbd15f916d04a21a0`).
-Last architecture review update: 2026-09-16.
+Last reviewed against code: `main@8b44d9b9a96bcf7eea6dc494b807b62b43a7ea12` (M7P5 durable config store merged; M6-era boundaries unchanged since the M6B3 review at `7c5d2aff632759722a35e4023dd69c90966d773f`; prior M6A audited head `332cf0e1b307735348a97c3cbd15f916d04a21a0`).
+Last architecture review update: 2026-09-18 (§6/§9 updated for M7P5's narrow durable-config exception).
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
@@ -270,8 +270,16 @@ capability observation only; there is still no requested/effective activity or
 geofence service field. A later validated configuration surface may replace the
 legacy source without changing those ownership boundaries.
 
-B4/M6 current configuration remains runtime-only. Do not allocate flash or claim
-durable configuration until the verified partition/ownership work is complete.
+B4/M6's `RequestedConfig`/`CapabilitySnapshot`/`EffectiveConfig` model (tracking
+enablement, relay forwarding, location source) remains runtime-only; do not
+extend it into durable storage without its own reviewed migration. M7P5 added
+one narrow, separately-scoped durable exception: `ConfigStore`
+(`firmware/include/config_store.h`, `0x0E9000..0x0EB000`) persists exactly
+`tracking_interval_seconds` and `battery_capacity_mah`. It does not persist or
+migrate `tracking_enabled`, relay forwarding, role, location source, profile,
+or capability, and does not replace or feed B4's requested/effective
+resolution pipeline — `tracking_interval_seconds` only overrides the GNSS
+schedule interval (`GnssManager::setTrackingIntervalMs`), nothing else.
 
 ## 7. Location and GNSS remain separate
 
@@ -344,17 +352,18 @@ days (~36.4 hours) at the current `main` development default of 3 minutes
 The project goal of approximately 1–2 weeks is a **target**, not a claim about
 current capacity at either interval.
 
-Do not enable durable config before the flash/bootloader/SoftDevice/InternalFS/
-bond/DFU ownership plan is verified. Do not remove the current SoftDevice flash
-safety guard merely to make BLE writes succeed. See
-`docs/architecture/ORUN_STORAGE_FLASH_OWNERSHIP.md` for the verified nRF52840
-flash ownership map, the exact `InternalFS`-erases-history mechanism, the
-SoftDevice-enabled blocker, and the required pre-M7/pre-store-forward decision
-gates. `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md` decides (design-level,
-not yet implemented) the exact future partition plan: `0x0E7000..0x0E9000`
-security/anti-replay, `0x0E9000..0x0EB000` durable config, `0x0EB000..0x0ED000`
-relocated BLE bonds, all strictly below the unchanged history region and none
-of them InternalFS-over-history.
+Do not remove the current SoftDevice flash safety guard merely to make BLE
+writes succeed. See `docs/architecture/ORUN_STORAGE_FLASH_OWNERSHIP.md` for
+the verified nRF52840 flash ownership map, the exact `InternalFS`-erases-history
+mechanism, the SoftDevice-enabled blocker, and the required pre-M7/pre-store-forward
+decision gates. `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md` decides the
+partition plan: `0x0E7000..0x0E9000` security/anti-replay (still unimplemented,
+M7P6), `0x0E9000..0x0EB000` durable config (`ConfigStore`, implemented M7P5,
+see `docs/milestones/M7P5.md`), `0x0EB000..0x0ED000` relocated BLE bonds
+(implemented M7P4), all strictly below the unchanged history region and none
+of them InternalFS-over-history. BLE/SoftDevice remain OFF in shipped
+firmware; M7P5's async config-write path is software/host-test validated
+only, matching M7P3's history async path.
 
 M6 activity/geofence helpers allocate no durable state and do not reuse the
 position journal. Future activity history, polygon configuration, FREE_GRAZE

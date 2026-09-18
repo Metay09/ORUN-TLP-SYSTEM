@@ -3,6 +3,7 @@
 
 #include "accelerometer_manager.h"
 #include "activity_capture.h"
+#include "config_store.h"
 #include "firmware_version.h"
 #include "flash_mutation_gate.h"
 #include "gnss_manager.h"
@@ -25,9 +26,12 @@ orun_tlp::ActivityCapture activity_capture(accelerometer_manager);
 // M7P3: FlashMutationGate wraps NrfHistoryFlash unchanged for the
 // SoftDevice-disabled path (still the only path exercised by shipped
 // firmware); its asynchronous path is not enabled by anything in this
-// runtime (BLE is not started).
-orun_tlp::FlashMutationGate history_flash;
-orun_tlp::HistoryStore history(history_flash);
+// runtime (BLE is not started). M7P5 generalized it to also serve
+// ConfigStore through configPort() (docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md
+// §9/§10); the history-facing API/behavior used below is unchanged.
+orun_tlp::FlashMutationGate storage_flash_gate;
+orun_tlp::HistoryStore history(storage_flash_gate);
+orun_tlp::ConfigStore config_store(storage_flash_gate.configPort());
 orun_tlp::PositionFlow positions(history, radio_manager);
 orun_tlp::RoleController role_controller;
 bool automatic_role_resolved = false;
@@ -358,7 +362,16 @@ void setup() {
                   static_cast<unsigned long>(history.diagnostics().recovery_corruptions),
                   static_cast<unsigned long>(history.backlogCount()));
   } else Serial.println(F("STORAGE unavailable; POSITION TX disabled"));
+  // M7P5: recover durable config before GNSS starts, so the very first
+  // acquisition schedule already reflects it. config_store.config() reads
+  // the safe 180s/unspecified-battery default on blank flash, a corrupt
+  // page, or a begin() failure -- see ConfigStore::begin()'s contract.
+  if (!config_store.begin()) {
+    Serial.println(F("CONFIG unavailable; defaults in effect"));
+  }
   gnss_manager.begin();
+  gnss_manager.setTrackingIntervalMs(
+      config_store.config().tracking_interval_seconds * 1000UL);
   accelerometer_manager.begin(orun_tlp::monotonic::nowMs());
   Serial.println(F("ROLE AUTO pending (GNSS=>TRACKER, no GNSS=>BASE)"));
 }
@@ -388,9 +401,19 @@ void loop() {
 
   // Drain any SoftDevice flash completion events; a no-op today since
   // SoftDevice is never enabled by this runtime (M7P3 does not start BLE).
-  history_flash.pumpEvents();
+  // One shared drain for both History and Config (M7P5) clients.
+  storage_flash_gate.pumpEvents();
   // Leave local TX undisturbed; otherwise service one small flash operation.
-  if (!radio_manager.isTransmitting()) history.poll();
+  // config_store.poll() shares the same TX guard as history.poll() -- a
+  // synchronous flash program/erase call must not run while TX is active,
+  // for config the same as for history. History polls first: live
+  // store-before-send outranks config writes
+  // (docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md §10), and the shared
+  // gate's own admission also enforces this regardless of call order.
+  if (!radio_manager.isTransmitting()) {
+    history.poll();
+    config_store.poll();
+  }
   const auto event =
       positions.update(orun_tlp::monotonic::nowMs(), tracking_enabled);
   if (event == orun_tlp::PositionFlow::Event::kStorageFailure)

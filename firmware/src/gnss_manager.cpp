@@ -202,7 +202,7 @@ void GnssManager::startAcquisition(uint32_t now) {
   i2c_recoveries_this_acquisition_ = 0;
   acquisition_started_at_ms_ = now;
   next_due_at_ms_ = monotonic::nextFuture(
-      now, next_due_at_ms_, gnss_config::kTrackingIntervalMs);
+      now, next_due_at_ms_, tracking_interval_ms_);
   configuration_step_ = needs_configuration_ ? 0 : 5;
   state_ = State::kStarting;
   ++diagnostics_.acquisition_attempts;
@@ -391,10 +391,10 @@ void GnssManager::enterLowPower(uint32_t now) {
   transport_resync_pending_ = false;
   has_last_pvt_callback_time_ = false;
   next_due_at_ms_ = monotonic::nextFuture(
-      now, next_due_at_ms_, gnss_config::kTrackingIntervalMs);
+      now, next_due_at_ms_, tracking_interval_ms_);
   const uint32_t remaining_ms = next_due_at_ms_ - now;
   if (!needs_configuration_ &&
-      gnss_config::keepTracking(gnss_config::kTrackingIntervalMs, remaining_ms)) {
+      gnss_config::keepTracking(tracking_interval_ms_, remaining_ms)) {
     state_ = State::kIdle;
     Serial.println(F("GNSS idle (continuous tracking)"));
     return;

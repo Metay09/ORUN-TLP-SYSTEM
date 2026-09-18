@@ -20,11 +20,14 @@ static_assert(kPageHeaderSize + kRecordsPerPage * kRecordSize == kPageSize, "pag
 
 // M7P1 (docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md) decided this future
 // partition policy layout, carved from currently-unused application flash,
-// strictly below the unchanged history region above. M7P2 adds these as
-// inert layout constants and a build-time application ceiling guard only:
-// there is no runtime owner, backend, or format for any of these regions
-// yet. Do not treat these as an active partition until a later slice
-// (M7P4/M7P5/M7P6 per the ADR) implements one.
+// strictly below the unchanged history region above. M7P2 added these as
+// inert layout constants and a build-time application ceiling guard.
+// M7P4 gave the bond region a real owner (relocated InternalFS). M7P5 gave
+// the config region a real owner (ConfigStore, firmware/include/config_store.h).
+// The security/anti-replay region still has no runtime owner, backend, or
+// format -- do not treat it as an active partition until M7P6 implements one.
+// The "kFuture*" names are kept even after a region gains an owner, matching
+// M7P4's own precedent, to avoid unrelated renames/churn.
 constexpr uint32_t kFutureSecurityRegionPages = 2;
 constexpr uint32_t kFutureConfigRegionPages = 2;
 constexpr uint32_t kFutureBondRegionPages = 2;
