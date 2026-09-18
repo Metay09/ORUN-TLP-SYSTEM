@@ -1,6 +1,6 @@
 # M7P6B — SecurityStore + TX Nonce Persistence
 
-Status: **IMPLEMENTED — software/host/build validated; PR open, not merged.**
+Status: **IMPLEMENTED — software/host/build validated; PR #18 open, not merged.**
 
 Baseline: `main@003a891a2b6e66c267e68cee2e704860f97bed69`
 
