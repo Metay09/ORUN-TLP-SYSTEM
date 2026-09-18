@@ -30,6 +30,20 @@ Primary priorities:
 5. Recoverability after failures.
 6. Configurability without reflashing firmware.
 
+### Owner-approved architecture decision documents
+
+For security, provisioning, anti-replay, secure-envelope, user/backend authorization
+or command work, read
+`docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md` before designing or coding.
+
+For RF-domain/channel planning, shared relay/gateway infrastructure, field coverage
+learning, USB/BLE diagnostics or future serviceability UI, read
+`docs/architecture/ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
+
+These documents record owner-approved **design direction**, not proof that the planned
+runtime/backend/BLE behavior is already implemented. Preserve the current implementation
+and physical-evidence boundary unless the active milestone explicitly changes it.
+
 ---
 
 ## Hardware
