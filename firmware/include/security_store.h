@@ -16,7 +16,9 @@ enum class SecurityState : uint8_t {
                    // TX counters.
   kUnsupported,    // recognized magic, unrecognized/newer schema version.
                    // Never destructively "repaired".
-  kFault,          // underlying flash backend itself is not usable.
+  kFault,          // underlying flash backend is unusable, or committed
+                   // security state is ambiguous/corrupt such that continuing
+                   // could roll nonce state backward. Protected TX fails closed.
 };
 
 // M7P6B: durable security credential + TX nonce-reservation foundation in
@@ -59,8 +61,11 @@ class SecurityStore {
   // create production secrets automatically. A structurally valid page bound
   // to a DIFFERENT device_identity recovers as kForeign. A recognized-magic
   // page with an unrecognized/newer version recovers as kUnsupported.
-  // Returns false only if the underlying flash backend itself is not ready;
-  // state() reports kFault in that case.
+  // Returns false only if the underlying flash backend itself cannot be
+  // initialized/read. Structurally ambiguous committed security state can
+  // recover as kFault with begin()==true so the composition root can report
+  // the condition while legacy TLP v1 remains unaffected; protected TX still
+  // fails closed.
   bool begin(DeviceIdentity device_identity);
   void poll();  // One synchronous security step per call; safe every loop tick.
   bool busy() const { return job_ != Job::kNone; }
@@ -83,7 +88,10 @@ class SecurityStore {
   // firmware never auto-generates or auto-provisions a credential. Commits a
   // brand-new credential lifetime (first provisioning from kUnprovisioned, or
   // re-provisioning from kProvisioned -- both always mint a fresh page, never
-  // an in-place overwrite). Refused (returns false, no flash write) from
+  // an in-place overwrite). Re-provisioning must use a new credential_id and
+  // a root different from the currently active root; otherwise it is refused
+  // so resetting the TX counter to zero cannot reuse the current key/lifetime.
+  // Refused (returns false, no flash write) from
   // kForeign/kUnsupported/kFault -- this store never silently adopts or
   // "repairs" those states -- or while busy(), or while a previous commit's
   // result is unread.
