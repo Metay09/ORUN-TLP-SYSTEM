@@ -265,9 +265,9 @@ int main() {
     assert(counter == kTxReservationBlockSize);
   }
 
-  // 7. Corrupted newest TX_RESERVE record (CRC flipped) with an earlier
-  // valid record present: recovery uses the earlier still-valid bound, never
-  // crashes, and never fabricates a value from the corrupt record.
+  // 7. Corrupted non-erased TX_RESERVE on the authoritative page must
+  // fail closed. Falling back to an earlier/lower bound could reissue
+  // counters that were already durably reserved and used before corruption.
   {
     FakeFlash flash;
     SecurityStore store(flash, flash);
@@ -278,21 +278,18 @@ int main() {
       uint32_t epoch = 0;
       assert(store.reserveNextTxCounter(counter, epoch));
     }
-    store.poll();  // kick off the auto-triggered reservation (job_ starts kNone).
-    settle(store);  // let the automatic second reservation fully land.
-    // Corrupt the second TX_RESERVE record (slot 1) in place.
+    store.poll();
+    settle(store);  // second reservation fully lands.
     const uint32_t offset = txReserveRecordOffset(1);
-    flash.bytes[offset + 20] ^= 0xFF;
+    flash.bytes[offset + 20] ^= 0xFF;  // corrupt its bound/CRC relationship.
 
     SecurityStore recovered(flash, flash);
     assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
-    assert(recovered.state() == SecurityState::kProvisioned);
+    assert(recovered.state() == SecurityState::kFault);
     assert(recovered.diagnostics().recovery_corruptions >= 1);
-    settle(recovered);
     uint64_t counter = 0;
     uint32_t epoch = 0;
-    assert(recovered.reserveNextTxCounter(counter, epoch));
-    assert(counter == kTxReservationBlockSize);  // slot 0's bound (256), not the corrupt slot 1's (512).
+    assert(!recovered.reserveNextTxCounter(counter, epoch));
   }
 
   // 8. DeviceIdentity mismatch: a structurally valid credential bound to a
@@ -344,6 +341,29 @@ int main() {
     fillKRoot(k_root, 9);
     assert(!store.commitCredential(id, 1, k_root));
     assert(flash.bytes[4] == kVersion + 1);  // untouched.
+  }
+
+  // 9b. Unsupported/newer page alongside an older valid v1 page is
+  // still a global fail-closed downgrade boundary. Older firmware cannot
+  // know whether the newer-format page advanced key/counter state.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 61));  // valid v1 page 0.
+
+    PageHeader newer{2, kDeviceA};
+    uint8_t header[kPageHeaderSize];
+    encodePageHeader(newer, header);
+    header[4] = kVersion + 1;
+    memcpy(flash.bytes.data() + kPageSize, header, sizeof(header));
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kUnsupported);
+    uint64_t counter = 0;
+    uint32_t epoch = 0;
+    assert(!recovered.reserveNextTxCounter(counter, epoch));
   }
 
   // 10. Valid older page survives a damaged newer page (interrupted
@@ -447,6 +467,45 @@ int main() {
     assert(recovered.state() == SecurityState::kProvisioned);
   }
 
+  // 12b. Critical compaction crash point: after the new page header and
+  // carried-forward seed TX_RESERVE are durable but before the credential
+  // commits, recovery must still select the old page. This specifically
+  // prevents a higher-generation page from becoming authoritative with a
+  // zero/lower TX bound.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 62));
+    const uint64_t counters_before_compaction =
+        (kTxReserveSlotsPerPage - 1) * kTxReservationBlockSize;
+    for (uint64_t i = 0; i < counters_before_compaction; ++i) {
+      uint64_t counter = 0;
+      uint32_t epoch = 0;
+      while (!store.reserveNextTxCounter(counter, epoch)) store.poll();
+    }
+
+    // Compaction program order is:
+    // header body, header commit, seed-reserve body, seed-reserve commit,
+    // credential body, credential commit. Fail credential body (+5).
+    flash.fail_at_program_call = static_cast<int>(flash.program_calls) + 5;
+    uint64_t counter = 0;
+    uint32_t epoch = 0;
+    unsigned guard = 0;
+    while (!store.reserveNextTxCounter(counter, epoch) && guard < 2000) {
+      store.poll();
+      ++guard;
+    }
+    assert(store.diagnostics().reservation_failures >= 1);
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kProvisioned);
+    settle(recovered);
+    assert(recovered.reserveNextTxCounter(counter, epoch));
+    assert(counter >= counters_before_compaction);
+  }
+
   // 13. Integer overflow/wrap refusal: a durable bound already at the
   // largest representable reservation-block multiple must fail closed
   // rather than wrap, and must not roll back or silently reissue counters.
@@ -484,6 +543,31 @@ int main() {
     assert(!recovered.exhausted());
     assert(recovered.reserveNextTxCounter(counter, epoch));
     assert(counter == 0);
+  }
+
+  // 13b. Re-provisioning cannot reset the TX counter while reusing
+  // the currently active credential lifetime or current root.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 63));
+
+    uint8_t same_id[kCredentialIdSize], same_root[kKRootSize];
+    fillId(same_id, 63);
+    fillKRoot(same_root, 63);
+    assert(!store.commitCredential(same_id, 2, same_root));
+
+    uint8_t new_id[kCredentialIdSize];
+    fillId(new_id, 64);
+    assert(!store.commitCredential(new_id, 2, same_root));
+
+    uint8_t new_root[kKRootSize];
+    fillKRoot(new_root, 64);
+    assert(store.commitCredential(new_id, 2, new_root));
+    settle(store);
+    bool success = false;
+    assert(store.takeCommitResult(success) && success);
   }
 
   // 14. Ownership: an unread prior commit result must not be silently
