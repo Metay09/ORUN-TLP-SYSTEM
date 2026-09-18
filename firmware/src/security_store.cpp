@@ -83,6 +83,18 @@ bool SecurityStore::recover() {
     classified[page].credential = candidate;
   }
 
+  // A recognized-but-unsupported security page is a downgrade boundary,
+  // not ordinary corruption. Even if the other page is a valid v1 page, an
+  // older firmware cannot know whether the unsupported page advanced the
+  // credential/counter state. Using the older page could therefore roll
+  // nonce state backward. Fail closed for the whole store.
+  if (any_unsupported) {
+    state_ = SecurityState::kUnsupported;
+    active_page_ = -1;
+    newest_generation_ = 0;
+    return true;
+  }
+
   int winner = -1;
   uint64_t best_generation = 0;
   for (unsigned page = 0; page < kPageCount; ++page) {
@@ -118,8 +130,15 @@ bool SecurityStore::recover() {
     if (!decodeTxReserve(bytes, reserve) ||
         !credentialIdEqual(reserve.credential_id, credential_.credential_id) ||
         reserve.key_epoch != credential_.key_epoch) {
+      // This is the authoritative credential page. Skipping a non-erased
+      // but invalid reservation and continuing from an earlier/lower bound
+      // could reissue counters that had already been durably reserved and
+      // used before the corruption. Security durability fails closed here:
+      // keep legacy TLP v1 alive at the composition root, but never expose
+      // protected TX counters from ambiguous security state.
       ++diagnostics_.recovery_corruptions;
-      continue;
+      state_ = SecurityState::kFault;
+      return true;
     }
     if (reserve.tx_reserved_bound > tx_reserved_bound_) tx_reserved_bound_ = reserve.tx_reserved_bound;
   }
@@ -147,6 +166,16 @@ bool SecurityStore::commitCredential(const uint8_t (&credential_id)[kCredentialI
   candidate.key_epoch = key_epoch;
   candidate.device_identity = device_identity_.legacyUint64();
   memcpy(candidate.k_root, k_root, kKRootSize);
+  if (state_ == SecurityState::kProvisioned &&
+      (credentialIdEqual(candidate.credential_id, credential_.credential_id) ||
+       memcmp(candidate.k_root, credential_.k_root, kKRootSize) == 0)) {
+    // Re-provisioning is a new security lifetime. Reusing the current
+    // credential_id or current root while resetting the TX counter to zero
+    // would make nonce/key reuse possible. Historical-root reuse remains a
+    // provisioning-layer responsibility because this store intentionally
+    // retains only the current credential.
+    return false;
+  }
   reserve_after_new_page_ = false;
   return startNewPage(/*critical=*/true, /*seed_reserve=*/false, candidate);
 }
@@ -383,14 +412,14 @@ void SecurityStore::poll() {
   if (writeBlob() != FlashOpResult::kDone) return;
 
   if (phase_ == Phase::kWriteHeader) {
-    phase_ = Phase::kWriteCredential;
-    uint8_t bytes[kCredentialRecordSize];
-    encodeCredential(pending_credential_, bytes);
-    startBlob(credentialOffset(target_page_), bytes, sizeof(bytes));
-    return;
-  }
-  if (phase_ == Phase::kWriteCredential) {
     if (seed_reserve_) {
+      // Compaction snapshot ordering is security-critical: the new page's
+      // credential is its effective activation record for recovery. Carry
+      // the already-durable TX high-water mark first, then commit the
+      // credential last. A reset at any earlier point therefore leaves the
+      // new page incomplete and the old page authoritative; recovery can
+      // never select a higher-generation credential page that lost its
+      // counter bound.
       phase_ = Phase::kWriteReserve;
       TxReserve reserve{};
       memcpy(reserve.credential_id, pending_credential_.credential_id, kCredentialIdSize);
@@ -401,12 +430,25 @@ void SecurityStore::poll() {
       startBlob(reserveOffset(target_page_, 0), bytes, sizeof(bytes));
       return;
     }
+    phase_ = Phase::kWriteCredential;
+    uint8_t bytes[kCredentialRecordSize];
+    encodeCredential(pending_credential_, bytes);
+    startBlob(credentialOffset(target_page_), bytes, sizeof(bytes));
+    return;
+  }
+  if (phase_ == Phase::kWriteCredential) {
     completeNewPage();
     return;
   }
   if (phase_ == Phase::kWriteReserve) {
-    if (job_ == Job::kNewPage) completeNewPage();
-    else completeReserve();
+    if (job_ == Job::kNewPage) {
+      phase_ = Phase::kWriteCredential;
+      uint8_t bytes[kCredentialRecordSize];
+      encodeCredential(pending_credential_, bytes);
+      startBlob(credentialOffset(target_page_), bytes, sizeof(bytes));
+      return;
+    }
+    completeReserve();
     return;
   }
 }
