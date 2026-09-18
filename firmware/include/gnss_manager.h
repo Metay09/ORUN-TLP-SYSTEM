@@ -4,6 +4,7 @@
 
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 
+#include "gnss_config.h"
 #include "gnss_fix.h"
 
 namespace orun_tlp {
@@ -35,6 +36,20 @@ class GnssManager {
 
   void begin();
   void poll();
+  // M7P5: overrides the compile-time gnss_config::kTrackingIntervalMs
+  // default for the normal periodic schedule. Must be called after begin()
+  // (begin() resets it back to the compile-time default via *this =
+  // GnssManager{}) and before the caller relies on the new cadence. A value
+  // of 0 is ignored (keeps whatever interval was already in effect) --
+  // blank/corrupt/invalid durable config must never zero the schedule.
+  // Changing this mid-acquisition never disturbs the in-progress acquisition
+  // or its timeout; it only changes where the NEXT due point (computed in
+  // startAcquisition()/enterLowPower()) lands, so it cannot create an
+  // overlapping acquisition.
+  void setTrackingIntervalMs(uint32_t interval_ms) {
+    if (interval_ms > 0) tracking_interval_ms_ = interval_ms;
+  }
+  uint32_t trackingIntervalMs() const { return tracking_interval_ms_; }
   bool takeFreshFixForTransmission(GnssFix* fix);
   bool detected() const;
   bool detectionComplete() const {
@@ -62,6 +77,7 @@ class GnssManager {
   void expireFreshFix(uint32_t now);
 
   State state_ = State::kNotPresent;
+  uint32_t tracking_interval_ms_ = gnss_config::kTrackingIntervalMs;
   Diagnostics diagnostics_{};
   bool detected_ = false;
   bool needs_configuration_ = true;

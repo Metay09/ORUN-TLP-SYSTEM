@@ -15,6 +15,12 @@ constexpr uint16_t kConfigurationMaxWaitMs = 250;
 // default change, not runtime/application configurability; see
 // docs/milestones/M6P1.md for scope, rationale and physical evidence.
 constexpr uint32_t kTrackingIntervalSeconds = 3 * 60;
+// M7P5: durable config may override kTrackingIntervalSeconds at runtime
+// (GnssManager::setTrackingIntervalMs). This bound is the same safety limit
+// already enforced by the static_assert below; ConfigStore reuses it to
+// validate a candidate interval before ever persisting or applying it, so
+// there is exactly one source of truth for the supported range.
+constexpr uint32_t kMaxTrackingIntervalSeconds = 12 * 24 * 60 * 60;
 constexpr uint32_t kAcquisitionTimeoutSeconds = 120;
 constexpr uint32_t kShortIntervalThresholdSeconds = 60;
 constexpr uint32_t kTrackingIntervalMs = kTrackingIntervalSeconds * 1000UL;
@@ -43,7 +49,7 @@ constexpr bool keepTracking(uint32_t interval_ms, uint32_t remaining_ms) {
 }
 
 static_assert(kTrackingIntervalSeconds > 0 &&
-              kTrackingIntervalSeconds <= 12 * 24 * 60 * 60,
+              kTrackingIntervalSeconds <= kMaxTrackingIntervalSeconds,
               "Interval must be positive and within M3's 12-day supported range");
 static_assert(kAcquisitionTimeoutSeconds > 0 &&
               kAcquisitionTimeoutSeconds < 0x80000000UL / 1000,

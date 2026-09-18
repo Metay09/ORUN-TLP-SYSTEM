@@ -25,20 +25,35 @@ using namespace storage_config;
 // fixed attempt count -- a slow poll cadence would exhaust a fixed count
 // before genuinely giving up, where the timeout scales with real elapsed
 // time regardless of how often pollPending() happens to be called.
+//
+// This budget is scoped to Slot::admitted, i.e. to time actually spent
+// holding the shared physical in-flight slot -- not to time a request spent
+// staged and queued behind the other client's own operation (which the
+// M7P5 dual-client admission queue can now make arbitrarily long, bounded
+// only by the other client's own admission+operation time, itself bounded
+// by this same constant). See submitOrRetry()'s admission block.
 constexpr uint32_t kOperationTimeoutMs = 4000;
 
-bool inBounds(uint32_t offset, size_t size) {
+bool inBoundsHistory(uint32_t offset, size_t size) {
   return offset <= kRegionSize && size <= kRegionSize - offset;
+}
+constexpr uint32_t kConfigRegionSize = kFutureConfigRegionEnd - kFutureConfigRegionStart;
+bool inBoundsConfig(uint32_t offset, size_t size) {
+  return offset <= kConfigRegionSize && size <= kConfigRegionSize - offset;
 }
 }  // namespace
 
+// ---------------------------------------------------------------------
+// History client: unchanged M7P3 FlashBackend surface and behavior.
+// ---------------------------------------------------------------------
+
 bool FlashMutationGate::begin() {
-  ready_ = sync_backend_.begin();
-  return ready_;
+  ready_history_ = sync_history_.begin();
+  return ready_history_;
 }
 
 bool FlashMutationGate::read(uint32_t offset, void* data, size_t size) const {
-  return sync_backend_.read(offset, data, size);
+  return sync_history_.read(offset, data, size);
 }
 
 bool FlashMutationGate::softDeviceEnabled() const {
@@ -46,89 +61,220 @@ bool FlashMutationGate::softDeviceEnabled() const {
   return sd_softdevice_is_enabled(&enabled) == NRF_SUCCESS && enabled != 0;
 }
 
-bool FlashMutationGate::timedOut(uint32_t now) const {
-  return monotonic::elapsed(now, in_flight_started_ms_, kOperationTimeoutMs);
+bool FlashMutationGate::timedOut(uint32_t now, uint32_t started_ms) const {
+  return monotonic::elapsed(now, started_ms, kOperationTimeoutMs);
 }
 
-void FlashMutationGate::resetInFlight() {
-  in_flight_kind_ = Kind::kNone;
-  submission_accepted_ = false;
-  event_ready_ = false;
-  staging_size_ = 0;
+void FlashMutationGate::releaseSlot(Owner owner) {
+  Slot& mine = slot(owner);
+  mine.kind = Kind::kNone;
+  mine.admitted = false;
+  mine.submission_accepted = false;
+  mine.event_ready = false;
+  mine.staging_size = 0;
+  if (in_flight_owner_ == owner) in_flight_owner_ = Owner::kNone;
 }
 
 FlashOpResult FlashMutationGate::program(uint32_t offset, const void* data, size_t size) {
-  if (!ready_) return FlashOpResult::kFailed;
-  ++diagnostics_.submits;
+  if (!ready_history_) return FlashOpResult::kFailed;
+  ++history_diagnostics_.submits;
   // Deliberately re-checks SoftDevice state here even though
-  // sync_backend_.program() performs its own independent
+  // sync_history_.program() performs its own independent
   // synchronousFlashAvailable() check when this delegates to it: two
   // independent guards checking the same fact is intentional defense in
   // depth, not redundancy to remove -- NrfHistoryFlash's own guard must stay
   // intact unweakened (see its class comment), and this gate's guard is what
   // decides which of the two entirely different code paths (sync delegate
   // vs. raw async SVCs) to take in the first place.
-  if (!softDeviceEnabled()) return sync_backend_.program(offset, data, size);
+  if (!softDeviceEnabled()) return sync_history_.program(offset, data, size);
 
   // Async path: validate exactly as the synchronous backend does (same
   // storage_config bounds, alignment, and erased-destination precondition),
   // then stage an owned copy before issuing the request -- the source
   // buffer's lifetime is not guaranteed by the caller past this call.
-  if (in_flight_kind_ != Kind::kNone) return FlashOpResult::kFailed;
-  if (!data || !size || !inBounds(offset, size) || (offset & 3U) != 0 ||
-      (size & 3U) != 0 || size > sizeof(staging_) ||
+  if (history_slot_.kind != Kind::kNone) return FlashOpResult::kFailed;
+  if (!data || !size || !inBoundsHistory(offset, size) || (offset & 3U) != 0 ||
+      (size & 3U) != 0 || size > sizeof(history_staging_) ||
       size > kPageSize - offset % kPageSize)
     return FlashOpResult::kFailed;
   const auto* destination = reinterpret_cast<const uint8_t*>(kBaseAddress + offset);
   for (size_t index = 0; index < size; ++index)
     if (destination[index] != 0xFF) return FlashOpResult::kFailed;
 
-  memcpy(staging_, data, size);
-  staging_size_ = size;
-  in_flight_kind_ = Kind::kProgram;
-  in_flight_target_ = kBaseAddress + offset;
-  in_flight_started_ms_ = monotonic::nowMs();
-  submission_accepted_ = false;
-  event_ready_ = false;
-  return attemptSubmit();
+  memcpy(history_staging_, data, size);
+  history_slot_.staging_size = size;
+  history_slot_.kind = Kind::kProgram;
+  history_slot_.target = kBaseAddress + offset;
+  // started_ms is set on admission (submitOrRetry), not here -- this request
+  // may still have to wait behind the other client's in-flight operation.
+  history_slot_.admitted = false;
+  history_slot_.submission_accepted = false;
+  history_slot_.event_ready = false;
+  return submitOrRetry(Owner::kHistory);
 }
 
 FlashOpResult FlashMutationGate::erasePage(uint32_t page) {
-  if (!ready_) return FlashOpResult::kFailed;
-  ++diagnostics_.submits;
-  if (!softDeviceEnabled()) return sync_backend_.erasePage(page);
+  if (!ready_history_) return FlashOpResult::kFailed;
+  ++history_diagnostics_.submits;
+  if (!softDeviceEnabled()) return sync_history_.erasePage(page);
 
-  if (in_flight_kind_ != Kind::kNone) return FlashOpResult::kFailed;
+  if (history_slot_.kind != Kind::kNone) return FlashOpResult::kFailed;
   if (page >= kPageCount) return FlashOpResult::kFailed;
 
-  in_flight_kind_ = Kind::kErase;
-  in_flight_target_ = kBaseAddress / kPageSize + page;
-  in_flight_started_ms_ = monotonic::nowMs();
-  submission_accepted_ = false;
-  event_ready_ = false;
-  return attemptSubmit();
+  history_slot_.kind = Kind::kErase;
+  history_slot_.target = kBaseAddress / kPageSize + page;
+  history_slot_.admitted = false;
+  history_slot_.submission_accepted = false;
+  history_slot_.event_ready = false;
+  return submitOrRetry(Owner::kHistory);
 }
 
-FlashOpResult FlashMutationGate::attemptSubmit() {
+FlashOpResult FlashMutationGate::pollPending() {
+  if (history_slot_.kind == Kind::kNone) return FlashOpResult::kFailed;
+  return submitOrRetry(Owner::kHistory);
+}
+
+// ---------------------------------------------------------------------
+// Config client (M7P5): symmetrical API, own region, own diagnostics.
+// ---------------------------------------------------------------------
+
+bool FlashMutationGate::beginConfig() {
+  ready_config_ = sync_config_.begin();
+  return ready_config_;
+}
+
+bool FlashMutationGate::readConfig(uint32_t offset, void* data, size_t size) const {
+  return sync_config_.read(offset, data, size);
+}
+
+FlashOpResult FlashMutationGate::programConfig(uint32_t offset, const void* data, size_t size) {
+  if (!ready_config_) return FlashOpResult::kFailed;
+  ++config_diagnostics_.submits;
+  if (!softDeviceEnabled()) return sync_config_.program(offset, data, size);
+
+  if (config_slot_.kind != Kind::kNone) return FlashOpResult::kFailed;
+  if (!data || !size || !inBoundsConfig(offset, size) || (offset & 3U) != 0 ||
+      (size & 3U) != 0 || size > sizeof(config_staging_) ||
+      size > kPageSize - offset % kPageSize)
+    return FlashOpResult::kFailed;
+  const auto* destination =
+      reinterpret_cast<const uint8_t*>(kFutureConfigRegionStart + offset);
+  for (size_t index = 0; index < size; ++index)
+    if (destination[index] != 0xFF) return FlashOpResult::kFailed;
+
+  memcpy(config_staging_, data, size);
+  config_slot_.staging_size = size;
+  config_slot_.kind = Kind::kProgram;
+  config_slot_.target = kFutureConfigRegionStart + offset;
+  // started_ms is set on admission (submitOrRetry), not here -- this request
+  // may still have to wait behind the other client's in-flight operation.
+  config_slot_.admitted = false;
+  config_slot_.submission_accepted = false;
+  config_slot_.event_ready = false;
+  return submitOrRetry(Owner::kConfig);
+}
+
+FlashOpResult FlashMutationGate::erasePageConfig(uint32_t page) {
+  if (!ready_config_) return FlashOpResult::kFailed;
+  ++config_diagnostics_.submits;
+  if (!softDeviceEnabled()) return sync_config_.erasePage(page);
+
+  if (config_slot_.kind != Kind::kNone) return FlashOpResult::kFailed;
+  if (page >= kFutureConfigRegionPages) return FlashOpResult::kFailed;
+
+  config_slot_.kind = Kind::kErase;
+  config_slot_.target = kFutureConfigRegionStart / kPageSize + page;
+  config_slot_.admitted = false;
+  config_slot_.submission_accepted = false;
+  config_slot_.event_ready = false;
+  return submitOrRetry(Owner::kConfig);
+}
+
+FlashOpResult FlashMutationGate::pollPendingConfig() {
+  if (config_slot_.kind == Kind::kNone) return FlashOpResult::kFailed;
+  return submitOrRetry(Owner::kConfig);
+}
+
+// ---------------------------------------------------------------------
+// Shared admission, submission, and event routing.
+// ---------------------------------------------------------------------
+
+// Bounded, no-heap admission: the physical in-flight slot is free, or
+// already owned by `owner` (a retry), or owned by the other client (this
+// call stays queued). Priority (ADR §10: history outranks config writes)
+// is enforced here, independent of which client happens to call first: if
+// the slot is free but the higher-priority client (history) currently has
+// a request staged and not yet admitted, config is held back so history is
+// admitted next, not whichever client asked first. A client that already
+// owns the physical slot cannot be preempted -- the Nordic SVCs have no
+// cancel -- so this governs admission order only, never interruption of an
+// already-accepted operation.
+FlashOpResult FlashMutationGate::submitOrRetry(Owner owner) {
+  if (in_flight_owner_ == Owner::kNone) {
+    if (owner == Owner::kConfig && history_slot_.kind != Kind::kNone) {
+      return FlashOpResult::kPending;  // History has priority admission.
+    }
+    in_flight_owner_ = last_owner_ = owner;
+  }
+  if (in_flight_owner_ != owner) return FlashOpResult::kPending;  // Queued behind the other owner.
+
+  Slot& mine = slot(owner);
+  if (!mine.admitted) {
+    // The bounded physical-operation timeout below must measure time this
+    // request actually spent holding the in-flight slot, never time it
+    // spent merely staged/queued behind the other client's own operation.
+    // A request that waited >kOperationTimeoutMs in the admission queue and
+    // is only now admitted still gets a full, fresh budget starting now --
+    // otherwise it could be failed closed on the very tick sd_flash_* is
+    // first attempted, before it ever had a real chance to complete.
+    mine.admitted = true;
+    mine.started_ms = monotonic::nowMs();
+  }
+  if (!mine.submission_accepted) return attemptSubmit(owner);
+  if (mine.event_ready) {
+    const bool ok = mine.event_success;
+    releaseSlot(owner);
+    if (ok) {
+      ++diag(owner).completions_success;
+      return FlashOpResult::kDone;
+    }
+    ++diag(owner).completions_error;
+    return FlashOpResult::kFailed;
+  }
+  if (timedOut(monotonic::nowMs(), mine.started_ms)) {
+    // A lost/missing completion event must not wedge the device: fail this
+    // request closed at the application level. This is not a claim that the
+    // physical write/erase did or did not happen -- the flash backend never
+    // asserts durability from a timeout, only from a confirmed SUCCESS
+    // event or, when SoftDevice is disabled, an immediate verified readback.
+    releaseSlot(owner);
+    ++diag(owner).timeouts;
+    return FlashOpResult::kFailed;
+  }
+  return FlashOpResult::kPending;
+}
+
+FlashOpResult FlashMutationGate::attemptSubmit(Owner owner) {
+  Slot& mine = slot(owner);
   uint32_t result = NRF_ERROR_INTERNAL;
-  if (in_flight_kind_ == Kind::kProgram) {
-    result = sd_flash_write(reinterpret_cast<uint32_t*>(in_flight_target_),
-                            reinterpret_cast<const uint32_t*>(staging_),
-                            staging_size_ / sizeof(uint32_t));
-  } else if (in_flight_kind_ == Kind::kErase) {
-    result = sd_flash_page_erase(in_flight_target_);
+  if (mine.kind == Kind::kProgram) {
+    result = sd_flash_write(reinterpret_cast<uint32_t*>(mine.target),
+                            reinterpret_cast<const uint32_t*>(staging(owner)),
+                            mine.staging_size / sizeof(uint32_t));
+  } else if (mine.kind == Kind::kErase) {
+    result = sd_flash_page_erase(mine.target);
   }
 
   if (result == NRF_SUCCESS) {
-    submission_accepted_ = true;
-    ++diagnostics_.async_accepted;
+    mine.submission_accepted = true;
+    ++diag(owner).async_accepted;
     return FlashOpResult::kPending;
   }
   if (result == NRF_ERROR_BUSY) {
-    ++diagnostics_.busy_retries;
-    if (timedOut(monotonic::nowMs())) {
-      resetInFlight();
-      ++diagnostics_.timeouts;
+    ++diag(owner).busy_retries;
+    if (timedOut(monotonic::nowMs(), mine.started_ms)) {
+      releaseSlot(owner);
+      ++diag(owner).timeouts;
       return FlashOpResult::kFailed;
     }
     return FlashOpResult::kPending;  // Retry submission from pollPending().
@@ -136,34 +282,8 @@ FlashOpResult FlashMutationGate::attemptSubmit() {
   // Permanent rejection (invalid address/length, forbidden region, or an
   // internal SoftDevice error opening the session): fail closed now rather
   // than retrying a request the SoftDevice has already refused to start.
-  resetInFlight();
+  releaseSlot(owner);
   return FlashOpResult::kFailed;
-}
-
-FlashOpResult FlashMutationGate::pollPending() {
-  if (in_flight_kind_ == Kind::kNone) return FlashOpResult::kFailed;
-  if (!submission_accepted_) return attemptSubmit();
-  if (event_ready_) {
-    const bool ok = event_success_;
-    resetInFlight();
-    if (ok) {
-      ++diagnostics_.completions_success;
-      return FlashOpResult::kDone;
-    }
-    ++diagnostics_.completions_error;
-    return FlashOpResult::kFailed;
-  }
-  if (timedOut(monotonic::nowMs())) {
-    // A lost/missing completion event must not wedge the device: fail this
-    // request closed at the application level. This is not a claim that the
-    // physical write/erase did or did not happen -- the flash backend never
-    // asserts durability from a timeout, only from a confirmed SUCCESS
-    // event or, when SoftDevice is disabled, an immediate verified readback.
-    resetInFlight();
-    ++diagnostics_.timeouts;
-    return FlashOpResult::kFailed;
-  }
-  return FlashOpResult::kPending;
 }
 
 void FlashMutationGate::pumpEvents() {
@@ -177,17 +297,29 @@ void FlashMutationGate::pumpEvents() {
       // otherwise not acted on by this slice.
       continue;
     }
-    if (in_flight_kind_ == Kind::kNone || !submission_accepted_ || event_ready_) {
-      // No matching in-flight request, or a second flash event arrived
-      // before pollPending() consumed the first (the SoftDevice API
-      // documents exactly one event per command, so this should not
-      // happen) -- discard rather than completing the wrong request or
-      // double-calling completion.
-      ++diagnostics_.spurious_events;
+    if (in_flight_owner_ == Owner::kNone) {
+      // No client currently owns the physical slot at all: attribute this
+      // to whichever client most recently did (its own just-completed or
+      // just-released operation is the most plausible source of a stray
+      // late event), rather than always crediting history by default.
+      ++diag(last_owner_).spurious_events;
       continue;
     }
-    event_ready_ = true;
-    event_success_ = (evt_id == NRF_EVT_FLASH_OPERATION_SUCCESS);
+    Slot& mine = slot(in_flight_owner_);
+    if (!mine.submission_accepted || mine.event_ready) {
+      // The owning client hasn't actually had its submission accepted yet
+      // (still BUSY-retrying), or a second flash event arrived before
+      // pollPending() consumed the first (the SoftDevice API documents
+      // exactly one event per command, so this should not happen) --
+      // discard rather than completing the wrong request or double-calling
+      // completion. Routed to the current owner's own counter: only that
+      // owner could plausibly have caused a spurious event right now, since
+      // it is the only client with a physical slot.
+      ++diag(in_flight_owner_).spurious_events;
+      continue;
+    }
+    mine.event_ready = true;
+    mine.event_success = (evt_id == NRF_EVT_FLASH_OPERATION_SUCCESS);
   }
 }
 
