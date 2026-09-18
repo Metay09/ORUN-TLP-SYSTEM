@@ -237,7 +237,11 @@ Tracker policy remains:
 - BLE normally off;
 - explicit maintenance/admission window approximately 10 minutes;
 - if no authenticated maintenance operation starts, BLE closes;
-- connection alone is not enough to keep it open;
+- after an authenticated BLE connection has been established, an unexpected disconnect
+  re-opens a fresh approximately 10-minute reconnect/admission window;
+- repeated disconnects must not make BLE permanently available; each reconnect window is
+  independently bounded and the stalled-session watchdog still applies;
+- connection alone is not enough to keep it open indefinitely;
 - an authenticated maintenance operation may keep the session available through bounded
   completion;
 - a future stalled-session watchdog is required.
