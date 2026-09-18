@@ -14,6 +14,7 @@
 #include "monotonic_time.h"
 #include "rak_device_identity.h"
 #include "runtime_config.h"
+#include "security_store.h"
 #include "sensor_power_manager.h"
 #include "watchdog_manager.h"
 
@@ -32,6 +33,16 @@ orun_tlp::ActivityCapture activity_capture(accelerometer_manager);
 orun_tlp::FlashMutationGate storage_flash_gate;
 orun_tlp::HistoryStore history(storage_flash_gate);
 orun_tlp::ConfigStore config_store(storage_flash_gate.configPort());
+// M7P6B: recovery-only composition. SecurityStore never auto-provisions a
+// credential in production firmware -- begin() only recovers whatever
+// already exists (or reports kUnprovisioned on blank flash), and poll()
+// never has a job to advance without an internal commitCredential()/
+// reservation call this runtime never makes. This proves the real
+// instantiated object's RAM/flash footprint and that recovery never
+// disturbs TLP v1/RF/GNSS/role behavior, without implementing any
+// cryptography, secure envelope, command path or BLE.
+orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort(),
+                                       storage_flash_gate.securityMaintPort());
 orun_tlp::PositionFlow positions(history, radio_manager);
 orun_tlp::RoleController role_controller;
 bool automatic_role_resolved = false;
@@ -369,6 +380,21 @@ void setup() {
   if (!config_store.begin()) {
     Serial.println(F("CONFIG unavailable; defaults in effect"));
   }
+  // M7P6B: recovery only -- never provisions a credential. See the
+  // composition-root comment on security_store above.
+  if (!security_store.begin(device_identity)) {
+    Serial.println(F("SECURITY unavailable"));
+  } else {
+    const char* state = "UNKNOWN";
+    switch (security_store.state()) {
+      case orun_tlp::SecurityState::kUnprovisioned: state = "UNPROVISIONED"; break;
+      case orun_tlp::SecurityState::kProvisioned: state = "PROVISIONED"; break;
+      case orun_tlp::SecurityState::kForeign: state = "FOREIGN"; break;
+      case orun_tlp::SecurityState::kUnsupported: state = "UNSUPPORTED"; break;
+      case orun_tlp::SecurityState::kFault: state = "FAULT"; break;
+    }
+    Serial.printf("SECURITY state=%s\n", state);
+  }
   gnss_manager.begin();
   gnss_manager.setTrackingIntervalMs(
       config_store.config().tracking_interval_seconds * 1000UL);
@@ -413,6 +439,7 @@ void loop() {
   if (!radio_manager.isTransmitting()) {
     history.poll();
     config_store.poll();
+    security_store.poll();
   }
   const auto event =
       positions.update(orun_tlp::monotonic::nowMs(), tracking_enabled);

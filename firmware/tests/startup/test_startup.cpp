@@ -102,6 +102,13 @@ int main(int argc, char** argv) {
       PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
   assert(config_region == reinterpret_cast<void*>(kFutureConfigRegionStart));
   memset(config_region, 0xFF, kConfigRegionSize);
+  // M7P6B: setup() also begins SecurityStore (recovery only), backed by
+  // NrfSecurityFlash over the M7P1-decided security partition -- map it too.
+  constexpr uint32_t kSecurityRegionSize = kFutureSecurityRegionEnd - kFutureSecurityRegionStart;
+  void* security_region = mmap(reinterpret_cast<void*>(kFutureSecurityRegionStart), kSecurityRegionSize,
+      PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+  assert(security_region == reinterpret_cast<void*>(kFutureSecurityRegionStart));
+  memset(security_region, 0xFF, kSecurityRegionSize);
 
   // Seed page 0 through the real journal/backend, including a committed fix.
   NrfHistoryFlash seed_flash;
