@@ -675,9 +675,12 @@ USB Serial already exposes useful reset/storage/radio/activity/RSSI/SNR/path/err
 evidence. Future BLE should expose structured status snapshots, counters and a small
 recent-event view through the same owner rather than mirror an unlimited Serial stream.
 Tracker BLE remains normally OFF with the approximately 10-minute maintenance admission
-policy and authenticated-operation extension; gateway profiles may keep BLE available
-when their power/availability contract permits it. Diagnostic data may be sensitive, so
-BLE connection/bonding alone must not imply authorization.
+policy and authenticated-operation extension. After an authenticated connection has been
+established, an unexpected disconnect opens a fresh bounded approximately 10-minute
+reconnect window; repeated disconnects must not turn this into permanent BLE availability.
+Gateway profiles may keep BLE available when their power/availability contract permits it.
+Diagnostic data may be sensitive, so BLE connection/bonding alone must not imply
+authorization.
 
 Normal application UI should show useful health/coverage outcomes; detailed user/account
 permissions remain backend-owned, and the app should hide unauthorized controls. Device
