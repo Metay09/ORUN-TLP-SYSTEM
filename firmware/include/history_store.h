@@ -38,6 +38,11 @@ class HistoryStore : public SequenceSource {
   bool appendIdle() const { return ready_ && !busy() && !append_result_ready_; }
   enum class Job { kNone, kNewPage, kReserve, kState, kAppend };
   enum class Phase { kErase, kHeader, kBlob };
+  // M7P3: writeBlob() sub-steps, so a kPending flash result (SoftDevice
+  // enabled) can be resumed on a later poll() pass instead of restarting the
+  // blob write. Body-then-commit-word-last order is unchanged; kVerify is a
+  // plain synchronous read, never asynchronous.
+  enum class BlobStep { kBody, kCommit, kVerify };
   struct Page {
     uint64_t generation=0;
     uint8_t valid[13]{};
@@ -50,7 +55,7 @@ class HistoryStore : public SequenceSource {
   bool startReservation();
   bool startState(journal_format::State next);
   void startBlob(uint32_t offset, const uint8_t* bytes, uint32_t size);
-  bool writeBlob();
+  FlashOpResult writeBlob();
   void finishBlob();
   void fail(bool append_failure);
   FlashBackend& flash_;
@@ -69,5 +74,11 @@ class HistoryStore : public SequenceSource {
   journal_format::State pending_state_{};
   uint8_t blob_[storage_config::kPageHeaderSize]{};
   uint32_t blob_offset_=0, blob_size_=0;
+  BlobStep blob_step_=BlobStep::kBody;
+  // Shared by the erase branch and writeBlob(): at most one physical flash
+  // primitive is ever in flight through this store at a time, so one flag
+  // unambiguously means "the most recent program()/erasePage() call
+  // returned kPending; call pollPending() next, do not resubmit."
+  bool flash_op_awaiting_completion_=false;
 };
 }  // namespace orun_tlp

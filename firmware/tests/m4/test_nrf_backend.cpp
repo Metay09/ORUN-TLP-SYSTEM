@@ -70,35 +70,35 @@ int main() {
   NrfHistoryFlash flash;
   assert(flash.begin());
   alignas(4) uint8_t source[9] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
-  assert(flash.program(0, source + 1, 8)); // Unaligned caller -> aligned Nordic source.
+  assert(flash.program(0, source + 1, 8) == FlashOpResult::kDone); // Unaligned caller -> aligned Nordic source.
   assert(programs == 1 && erases == 0);
   assert(memcmp(region, source + 1, 8) == 0);
-  assert(!flash.program(0, source, 4)); // Already programmed destination.
-  assert(!flash.program(1, source, 4));
-  assert(!flash.program(8, source, 3));
-  assert(!flash.program(kPageSize - 4, source, 8));
-  assert(!flash.program(kRegionSize - 4, source, 8));
-  assert(!flash.erasePage(kPageCount));
+  assert(flash.program(0, source, 4) == FlashOpResult::kFailed); // Already programmed destination.
+  assert(flash.program(1, source, 4) == FlashOpResult::kFailed);
+  assert(flash.program(8, source, 3) == FlashOpResult::kFailed);
+  assert(flash.program(kPageSize - 4, source, 8) == FlashOpResult::kFailed);
+  assert(flash.program(kRegionSize - 4, source, 8) == FlashOpResult::kFailed);
+  assert(flash.erasePage(kPageCount) == FlashOpResult::kFailed);
   assert(programs == 1 && erases == 0);
 
   enabled = true;
-  assert(!flash.program(8, source, 4));
-  assert(!flash.erasePage(0));
+  assert(flash.program(8, source, 4) == FlashOpResult::kFailed);
+  assert(flash.erasePage(0) == FlashOpResult::kFailed);
   NrfHistoryFlash unsupported;
   assert(!unsupported.begin());
   assert(programs == 1 && erases == 0);
   enabled = false;
   query_error = true;
-  assert(!flash.program(8, source, 4) && !flash.erasePage(0));
+  assert(flash.program(8, source, 4) == FlashOpResult::kFailed && flash.erasePage(0) == FlashOpResult::kFailed);
   assert(programs == 1 && erases == 0);
   query_error = false;
   api_result = NRF_ERROR_BUSY;
-  assert(!flash.program(8, source, 4) && !flash.erasePage(0));
+  assert(flash.program(8, source, 4) == FlashOpResult::kFailed && flash.erasePage(0) == FlashOpResult::kFailed);
   api_result = NRF_SUCCESS;
   mismatch = true;
-  assert(!flash.program(8, source, 4) && !flash.erasePage(0));
+  assert(flash.program(8, source, 4) == FlashOpResult::kFailed && flash.erasePage(0) == FlashOpResult::kFailed);
   mismatch = false;
-  assert(flash.erasePage(0));
+  assert(flash.erasePage(0) == FlashOpResult::kDone);
 
   HistoryStore store(flash);
   assert(store.begin(1));

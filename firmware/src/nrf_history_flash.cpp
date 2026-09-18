@@ -35,29 +35,30 @@ bool NrfHistoryFlash::read(uint32_t offset, void* data, size_t size) const {
   memcpy(data, reinterpret_cast<const void*>(kBaseAddress + offset), size);
   return true;
 }
-bool NrfHistoryFlash::program(uint32_t offset, const void* data, size_t size) {
+FlashOpResult NrfHistoryFlash::program(uint32_t offset, const void* data, size_t size) {
   if(!ready_ || !data || !size || !inBounds(offset,size) ||
      (offset & 3U) != 0 || (size & 3U) != 0 || size > kPageHeaderSize ||
-     size > kPageSize - offset % kPageSize) return false;
-  if (!synchronousFlashAvailable()) return false;
+     size > kPageSize - offset % kPageSize) return FlashOpResult::kFailed;
+  if (!synchronousFlashAvailable()) return FlashOpResult::kFailed;
   const auto* destination = reinterpret_cast<const uint8_t*>(kBaseAddress + offset);
   for (size_t index = 0; index < size; ++index)
-    if (destination[index] != 0xFF) return false;
+    if (destination[index] != 0xFF) return FlashOpResult::kFailed;
   alignas(4) uint32_t words[kPageHeaderSize / sizeof(uint32_t)];
   memcpy(words, data, size);
   // Disabled SoftDevice: NRF_SUCCESS means physically completed, no event.
   if (sd_flash_write(reinterpret_cast<uint32_t*>(kBaseAddress + offset), words,
-                     size / sizeof(uint32_t)) != NRF_SUCCESS) return false;
-  return memcmp(destination, data, size) == 0;
+                     size / sizeof(uint32_t)) != NRF_SUCCESS) return FlashOpResult::kFailed;
+  return memcmp(destination, data, size) == 0 ? FlashOpResult::kDone : FlashOpResult::kFailed;
 }
-bool NrfHistoryFlash::erasePage(uint32_t page) {
-  if (!ready_ || page >= kPageCount || !synchronousFlashAvailable()) return false;
+FlashOpResult NrfHistoryFlash::erasePage(uint32_t page) {
+  if (!ready_ || page >= kPageCount || !synchronousFlashAvailable())
+    return FlashOpResult::kFailed;
   if (sd_flash_page_erase(kBaseAddress / kPageSize + page) != NRF_SUCCESS)
-    return false;
+    return FlashOpResult::kFailed;
   const auto* words = reinterpret_cast<const uint32_t*>(
       kBaseAddress + page * kPageSize);
   for (uint32_t index = 0; index < kPageSize / sizeof(uint32_t); ++index)
-    if (words[index] != UINT32_MAX) return false;
-  return true;
+    if (words[index] != UINT32_MAX) return FlashOpResult::kFailed;
+  return FlashOpResult::kDone;
 }
 }  // namespace orun_tlp

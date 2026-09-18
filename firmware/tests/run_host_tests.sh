@@ -99,6 +99,16 @@ g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   firmware/src/position_flow.cpp firmware/src/legacy_position_mapping.cpp \
   firmware/src/tlp_position_packet.cpp -o "$test_dir/nrf_backend"
 "$test_dir/nrf_backend"
+g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
+  -Wl,--defsym,__flash_arduino_end=0xED000 \
+  firmware/tests/m7/test_m7p3_flash_gate.cpp firmware/src/flash_mutation_gate.cpp \
+  firmware/src/nrf_history_flash.cpp -o "$test_dir/m7p3_flash_gate"
+"$test_dir/m7p3_flash_gate"
+g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p3_history_async.cpp \
+  firmware/src/history_store.cpp firmware/src/journal_format.cpp \
+  firmware/src/position_flow.cpp firmware/src/legacy_position_mapping.cpp \
+  firmware/src/tlp_position_packet.cpp -o "$test_dir/m7p3_history_async"
+"$test_dir/m7p3_history_async"
 g++ "${flags[@]}" firmware/tests/m5/test_m5.cpp \
   firmware/src/network_service.cpp firmware/src/node_role.cpp \
   firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
@@ -153,6 +163,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/tlp_test_packet.cpp firmware/src/tlp_position_packet.cpp \
   firmware/src/tlp_relay_forward_packet.cpp firmware/src/history_store.cpp \
   firmware/src/journal_format.cpp firmware/src/nrf_history_flash.cpp \
+  firmware/src/flash_mutation_gate.cpp \
   firmware/src/position_flow.cpp -o "$test_dir/startup"
 for scenario in mutex gate queue lora success; do
   "$test_dir/startup" "$scenario"
