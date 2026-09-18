@@ -52,6 +52,216 @@ char role_command[24]{};
 uint8_t role_command_length = 0;
 bool role_command_overflow = false;
 
+
+#ifdef ORUN_M7P6B_PHYSICAL_TEST
+enum class M7P6BPhysicalPhase : uint8_t {
+  kIdle,
+  kWaitFirstReservation,
+  kWaitRecoveryReservation,
+  kErasePage0Start,
+  kErasePage0Wait,
+  kErasePage1Start,
+  kErasePage1Wait,
+  kDone,
+  kFailed,
+};
+
+M7P6BPhysicalPhase m7p6b_phase = M7P6BPhysicalPhase::kIdle;
+
+const uint8_t kM7P6BTestCredentialId[orun_tlp::security_format::kCredentialIdSize] = {
+    0x4D, 0x37, 0x50, 0x36, 0x42, 0x2D, 0x50, 0x48,
+    0x59, 0x53, 0x2D, 0x54, 0x45, 0x53, 0x54, 0x31};
+const uint8_t kM7P6BTestRoot[orun_tlp::security_format::kKRootSize] = {
+    0xC0, 0x01, 0xC0, 0x02, 0xC0, 0x03, 0xC0, 0x04,
+    0xC0, 0x05, 0xC0, 0x06, 0xC0, 0x07, 0xC0, 0x08,
+    0xC0, 0x09, 0xC0, 0x0A, 0xC0, 0x0B, 0xC0, 0x0C,
+    0xC0, 0x0D, 0xC0, 0x0E, 0xC0, 0x0F, 0xC0, 0x10};
+
+const char* securityStateName(orun_tlp::SecurityState state) {
+  switch (state) {
+    case orun_tlp::SecurityState::kUnprovisioned: return "UNPROVISIONED";
+    case orun_tlp::SecurityState::kProvisioned: return "PROVISIONED";
+    case orun_tlp::SecurityState::kForeign: return "FOREIGN";
+    case orun_tlp::SecurityState::kUnsupported: return "UNSUPPORTED";
+    case orun_tlp::SecurityState::kFault: return "FAULT";
+  }
+  return "UNKNOWN";
+}
+
+void physicalFail(const char* reason) {
+  Serial.printf("M7P6B PHYS FAIL reason=%s\n", reason);
+  Serial.flush();
+  m7p6b_phase = M7P6BPhysicalPhase::kFailed;
+}
+
+bool physicalCredentialMatches() {
+  uint8_t credential_id[orun_tlp::security_format::kCredentialIdSize]{};
+  return security_store.currentCredentialId(credential_id) &&
+      memcmp(credential_id, kM7P6BTestCredentialId, sizeof(credential_id)) == 0 &&
+      security_store.currentKeyEpoch() == 1;
+}
+
+void m7p6bPhysicalSetup() {
+  Serial.begin(115200);
+  const uint32_t wait_started = millis();
+  while (!Serial && millis() - wait_started < 10000UL) delay(10);
+  delay(250);
+  Serial.println(F("M7P6B PHYS HARNESS START"));
+  Serial.println(F("M7P6B PHYS credential=SYNTHETIC_TEST_ONLY"));
+
+  const orun_tlp::DeviceIdentity identity =
+      orun_tlp::RakDeviceIdentityProvider{}.read();
+  Serial.printf("M7P6B PHYS device_id=%016llX\n",
+                static_cast<unsigned long long>(identity.legacyUint64()));
+
+  if (!security_store.begin(identity)) {
+    physicalFail("SECURITY_BACKEND_BEGIN");
+    return;
+  }
+
+  Serial.printf("M7P6B PHYS recovered_state=%s\n",
+                securityStateName(security_store.state()));
+
+  if (security_store.state() == orun_tlp::SecurityState::kUnprovisioned) {
+    uint8_t credential_id[orun_tlp::security_format::kCredentialIdSize];
+    uint8_t root[orun_tlp::security_format::kKRootSize];
+    memcpy(credential_id, kM7P6BTestCredentialId, sizeof(credential_id));
+    memcpy(root, kM7P6BTestRoot, sizeof(root));
+    if (!security_store.commitCredential(credential_id, 1, root)) {
+      physicalFail("TEST_CREDENTIAL_COMMIT_START");
+      return;
+    }
+    Serial.println(F("M7P6B PHYS stage1=PROVISIONING"));
+    m7p6b_phase = M7P6BPhysicalPhase::kWaitFirstReservation;
+    return;
+  }
+
+  if (security_store.state() != orun_tlp::SecurityState::kProvisioned) {
+    physicalFail("PREEXISTING_SECURITY_STATE_NOT_SAFE_TO_TOUCH");
+    return;
+  }
+  if (!physicalCredentialMatches()) {
+    physicalFail("PREEXISTING_NONTEST_CREDENTIAL_ABORT");
+    return;
+  }
+
+  Serial.println(F("M7P6B PHYS stage2=RECOVERY_TEST_CREDENTIAL_MATCH"));
+  m7p6b_phase = M7P6BPhysicalPhase::kWaitRecoveryReservation;
+}
+
+void startCleanupPage(unsigned page) {
+  const orun_tlp::FlashOpResult result =
+      storage_flash_gate.securityMaintPort().erasePage(page);
+  if (result == orun_tlp::FlashOpResult::kDone) {
+    m7p6b_phase = page == 0 ? M7P6BPhysicalPhase::kErasePage1Start
+                            : M7P6BPhysicalPhase::kDone;
+  } else if (result == orun_tlp::FlashOpResult::kPending) {
+    m7p6b_phase = page == 0 ? M7P6BPhysicalPhase::kErasePage0Wait
+                            : M7P6BPhysicalPhase::kErasePage1Wait;
+  } else {
+    physicalFail(page == 0 ? "CLEANUP_ERASE_PAGE0" : "CLEANUP_ERASE_PAGE1");
+  }
+}
+
+bool securityRegionErased() {
+  uint8_t bytes[32];
+  constexpr uint32_t kSize =
+      orun_tlp::storage_config::kFutureSecurityRegionEnd -
+      orun_tlp::storage_config::kFutureSecurityRegionStart;
+  for (uint32_t offset = 0; offset < kSize; offset += sizeof(bytes)) {
+    if (!storage_flash_gate.securityMaintPort().read(offset, bytes, sizeof(bytes)))
+      return false;
+    for (size_t i = 0; i < sizeof(bytes); ++i)
+      if (bytes[i] != 0xFF) return false;
+  }
+  return true;
+}
+
+void m7p6bPhysicalLoop() {
+  storage_flash_gate.pumpEvents();
+  security_store.poll();
+
+  if (m7p6b_phase == M7P6BPhysicalPhase::kWaitFirstReservation) {
+    if (security_store.busy()) return;
+    bool committed = false;
+    if (!security_store.takeCommitResult(committed) || !committed) {
+      physicalFail("TEST_CREDENTIAL_COMMIT_RESULT");
+      return;
+    }
+    uint64_t counter = UINT64_MAX;
+    uint32_t epoch = 0;
+    if (!security_store.reserveNextTxCounter(counter, epoch) ||
+        counter != 0 || epoch != 1) {
+      physicalFail("FIRST_COUNTER_NOT_ZERO");
+      return;
+    }
+    Serial.printf("M7P6B PHYS STAGE1 PASS counter=%llu epoch=%lu\n",
+                  static_cast<unsigned long long>(counter),
+                  static_cast<unsigned long>(epoch));
+    Serial.println(F("M7P6B PHYS software_reset=NOW"));
+    Serial.flush();
+    delay(1500);
+    NVIC_SystemReset();
+    return;
+  }
+
+  if (m7p6b_phase == M7P6BPhysicalPhase::kWaitRecoveryReservation) {
+    if (security_store.busy()) return;
+    uint64_t counter = 0;
+    uint32_t epoch = 0;
+    if (!security_store.reserveNextTxCounter(counter, epoch) ||
+        counter < orun_tlp::security_format::kTxReservationBlockSize ||
+        (counter % orun_tlp::security_format::kTxReservationBlockSize) != 0 ||
+        epoch != 1) {
+      physicalFail("RECOVERY_COUNTER_NOT_SAFE");
+      return;
+    }
+    Serial.printf("M7P6B PHYS STAGE2 PASS recovered_counter=%llu epoch=%lu\n",
+                  static_cast<unsigned long long>(counter),
+                  static_cast<unsigned long>(epoch));
+    Serial.println(F("M7P6B PHYS cleanup=START"));
+    m7p6b_phase = M7P6BPhysicalPhase::kErasePage0Start;
+  }
+
+  if (m7p6b_phase == M7P6BPhysicalPhase::kErasePage0Start) {
+    startCleanupPage(0);
+    return;
+  }
+  if (m7p6b_phase == M7P6BPhysicalPhase::kErasePage0Wait) {
+    const auto result = storage_flash_gate.securityMaintPort().pollPending();
+    if (result == orun_tlp::FlashOpResult::kPending) return;
+    if (result == orun_tlp::FlashOpResult::kFailed) {
+      physicalFail("CLEANUP_ERASE_PAGE0_PENDING");
+      return;
+    }
+    m7p6b_phase = M7P6BPhysicalPhase::kErasePage1Start;
+  }
+  if (m7p6b_phase == M7P6BPhysicalPhase::kErasePage1Start) {
+    startCleanupPage(1);
+    return;
+  }
+  if (m7p6b_phase == M7P6BPhysicalPhase::kErasePage1Wait) {
+    const auto result = storage_flash_gate.securityMaintPort().pollPending();
+    if (result == orun_tlp::FlashOpResult::kPending) return;
+    if (result == orun_tlp::FlashOpResult::kFailed) {
+      physicalFail("CLEANUP_ERASE_PAGE1_PENDING");
+      return;
+    }
+    m7p6b_phase = M7P6BPhysicalPhase::kDone;
+  }
+  if (m7p6b_phase == M7P6BPhysicalPhase::kDone) {
+    if (!securityRegionErased()) {
+      physicalFail("CLEANUP_READBACK_NOT_ERASED");
+      return;
+    }
+    Serial.println(F("M7P6B PHYS CLEANUP PASS security_region=ERASED"));
+    Serial.println(F("M7P6B PHYS COMPLETE"));
+    Serial.flush();
+    m7p6b_phase = M7P6BPhysicalPhase::kIdle;
+  }
+}
+#endif  // ORUN_M7P6B_PHYSICAL_TEST
+
 enum class AccelerometerDiagnosticState : uint8_t {
   kPending,
   kPresent,
@@ -350,6 +560,10 @@ void printBootBanner() {
 }  // namespace
 
 void setup() {
+#ifdef ORUN_M7P6B_PHYSICAL_TEST
+  m7p6bPhysicalSetup();
+  return;
+#endif
   Serial.begin(115200);
   // Start the hardware watchdog before peripheral initialization. It is the
   // final recovery layer if bounded driver recovery itself cannot make progress.
@@ -405,6 +619,11 @@ void setup() {
 }
 
 void loop() {
+#ifdef ORUN_M7P6B_PHYSICAL_TEST
+  m7p6bPhysicalLoop();
+  delay(1);
+  return;
+#endif
   // GNSS detection/power remains owned by GnssManager. Service resolution must
   // not silently turn role, location source, GNSS power or accelerometer
   // presence into one knob.
