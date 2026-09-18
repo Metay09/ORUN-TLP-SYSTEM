@@ -16,9 +16,12 @@ For current architecture decisions, use this order:
 1. repository `AGENTS.md` — project-wide development, compatibility and validation rules;
 2. `ORUN_CURRENT_ARCHITECTURE_RULES.md` — current owner-approved concept,
    ownership and current/runtime-vs-future boundaries;
-3. current code, tests, golden/compatibility fixtures and milestone/audit reports
+3. focused owner-approved design records for the area being changed, currently including
+   `ADR_M7P6_SECURITY_ARCHITECTURE.md` and
+   `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`;
+4. current code, tests, golden/compatibility fixtures and milestone/audit reports
    describing the exact commit being changed;
-4. `ORUN_SYSTEM_ARCHITECTURE_V1.md`, `ORUN_ARCHITECTURE_GAP_ANALYSIS.md` and
+5. `ORUN_SYSTEM_ARCHITECTURE_V1.md`, `ORUN_ARCHITECTURE_GAP_ANALYSIS.md` and
    `ORUN_PROTOCOL_EVOLUTION_PLAN.md` — historical/proposed analysis that remains
    useful unless superseded by newer rules above.
 
