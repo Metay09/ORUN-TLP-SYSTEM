@@ -1,6 +1,6 @@
 # M7P6B — SecurityStore + TX Nonce Persistence
 
-Status: **IMPLEMENTED — software/host/build validated; PR #18 open, not merged.**
+Status: **IMPLEMENTED — software/host/build validated; limited real-hardware persistence/reboot validation PASS; PR #18 open, not merged.**
 
 Baseline: `main@003a891a2b6e66c267e68cee2e704860f97bed69`
 
@@ -380,19 +380,74 @@ guards.
 
 ## 11. Physical-validation boundary
 
-Not physically validated by M7P6B:
+### Real RAK4631 persistence/reboot evidence — PASS
 
-- real SecurityStore writes on RAK4630 flash;
-- electrical power-cut during credential/reservation/compaction stages;
+A dedicated temporary physical-test image, isolated from the production PR
+(`test/m7p6b-physical-sentinel@3078bb88befa0e6d6fc79f4f9ec39da0f94dcb5f`),
+was uploaded over USB/serial DFU to the connected RAK4631.
+
+The harness used a fixed **synthetic test-only credential**, never a production
+credential, and exercised the real `NrfSecurityFlash` backend with SoftDevice
+disabled:
+
+1. boot recovered `UNPROVISIONED`;
+2. synthetic credential was committed to real nRF52840 internal flash;
+3. first 256-counter reservation completed with readback;
+4. the harness internally required first counter == 0 and epoch == 1 before
+   emitting `STAGE1 PASS`;
+5. `NVIC_SystemReset()` performed a real MCU software reset;
+6. second boot recovered `PROVISIONED` and matched the synthetic credential;
+7. reboot recovery auto-reserved the next block; the harness required the
+   returned counter to be >= 256, exactly divisible by 256, and epoch == 1
+   before emitting `STAGE2 PASS`;
+8. both SecurityStore pages were erased;
+9. full security-region readback confirmed every byte erased before
+   `CLEANUP PASS security_region=ERASED`.
+
+Observed serial evidence:
+
+```text
+M7P6B PHYS recovered_state=UNPROVISIONED
+M7P6B PHYS STAGE1 PASS
+M7P6B PHYS software_reset=NOW
+...
+M7P6B PHYS recovered_state=PROVISIONED
+M7P6B PHYS stage2=RECOVERY_TEST_CREDENTIAL_MATCH
+M7P6B PHYS STAGE2 PASS
+M7P6B PHYS CLEANUP PASS security_region=ERASED
+M7P6B PHYS COMPLETE
+```
+
+The Adafruit/TinyUSB `Serial.printf` implementation used by this temporary
+harness did not render the C `ll` length modifier correctly, so the printed
+64-bit DeviceIdentity/counter text appeared as literal `lX`/`lu`. This is
+a **diagnostic formatting defect in the temporary harness only**. The PASS
+conditions above compare the actual integer values in firmware before printing,
+so the malformed text does not weaken the persistence/reboot result.
+
+Therefore the following are now physically validated on one real RAK4631:
+
+- SecurityStore synchronous internal-flash write/readback;
+- credential persistence across MCU software reset;
+- reboot skip-ahead / no reuse of the partially used reservation block;
+- cleanup erase + erased-region readback.
+
+Still **not physically validated**:
+
+- electrical power-cut/brownout during credential/reservation/compaction stages;
 - SoftDevice-enabled asynchronous security flash completion;
-- preservation of Security/Config/Bond regions across actual serial/DFU paths;
+- preservation of Security/Config/Bond regions across every actual update/DFU
+  path (this test used serial DFU to install the harness but did not place
+  sentinels in all lower persistence partitions before an update);
 - real bootloader signature/rollback/bank behavior;
 - physical secret extraction resistance;
 - production credential provisioning.
 
 No production credential was provisioned.
 
-Host fault injection and build PASS are not physical PASS.
+Host fault injection/build evidence and the limited hardware evidence above must
+remain reported separately; this does not constitute electrical power-cut or
+SoftDevice/BLE validation.
 
 ## 12. Explicitly deferred
 
