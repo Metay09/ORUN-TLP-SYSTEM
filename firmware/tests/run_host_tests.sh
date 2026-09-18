@@ -169,6 +169,7 @@ for scenario in mutex gate queue lora success; do
   "$test_dir/startup" "$scenario"
 done
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r4/test_patch_wire.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p4_patch_internalfs.py
 g++ "${flags[@]}" firmware/tests/r4/test_r4.cpp "${gnss_sources[@]}" \
   firmware/src/watchdog_manager.cpp -o "$test_dir/r4"
 "$test_dir/r4"

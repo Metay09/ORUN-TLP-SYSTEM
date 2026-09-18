@@ -1,5 +1,6 @@
 """Fail the build if the audited core reservation/ownership has changed."""
 from pathlib import Path
+import importlib.util
 import re
 import subprocess
 
@@ -10,13 +11,52 @@ linker = env.BoardConfig().get("build.arduino.ldscript")
 if linker != "nrf52840_s140_v6.ld":
     raise RuntimeError("M4 requires a storage-layout audit for this linker")
 ld = re.sub(r"\s+", "", (core / "cores/nRF5/linker" / linker).read_text())
-fs = (core / "libraries/InternalFileSytem/src/InternalFileSystem.cpp").read_text()
 flash = (core / "libraries/InternalFileSytem/src/flash/flash_nrf5x.c").read_text()
 flash_h = (core / "libraries/InternalFileSytem/src/flash/flash_nrf5x.h").read_text()
+
+
+def _load_patch_internalfs():
+    """Load patch_internalfs.py's pure helpers/constants as a plain module
+    (no SConscript/Import machinery -- importlib gives it a fresh globals()
+    that does not contain "Import", so its own `if "Import" in globals()`
+    guard at module scope stays false and apply() is never invoked here).
+    Single source of truth for what "correctly M7P4-relocated" means, and
+    for the target/backup paths, shared with the post-link ownership check
+    below instead of duplicated.
+    """
+    path = Path(env.subst("$PROJECT_DIR")) / "scripts" / "patch_internalfs.py"
+    spec = importlib.util.spec_from_file_location("patch_internalfs", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_patch_internalfs = _load_patch_internalfs()
+_internalfs_target, _internalfs_backup = _patch_internalfs.target_and_backup_paths(core)
+fs = _internalfs_target.read_text()
+
+# M7P4: the pre-build audit above normally expects the exact stock
+# InternalFileSystem.cpp (this pre: script runs before patch_internalfs.py's
+# post: application, per PlatformIO's own extra_scripts ordering -- verified
+# against platformio's builder/main.py, which runs GetExtraScripts("pre")
+# before GetExtraScripts("post")). The one recognized exception is a valid
+# M7P4-relocated file left over from an interrupted prior build: the same
+# marker/backup verification patch_internalfs.py itself uses, so this script
+# does not duplicate or weaken that logic, only reuses it read-only.
+_fs_is_stock = bool(re.search(r"#define\s+LFS_FLASH_ADDR\s+0xED000", fs)) and bool(
+    re.search(r"#define\s+LFS_FLASH_TOTAL_SIZE\s+\(7\*FLASH_NRF52_PAGE_SIZE\)", fs)
+)
+_fs_is_valid_leftover_relocation = False
+if not _fs_is_stock and _patch_internalfs.relocation_ok(fs):
+    _fs_is_valid_leftover_relocation = (
+        _internalfs_backup.exists()
+        and _patch_internalfs.git_blob_sha(_internalfs_backup.read_text())
+        == _patch_internalfs.ORIGINAL_GIT_BLOB_SHA
+    )
+
 required = [
     "FLASH(rx):ORIGIN=0x26000,LENGTH=0xED000-0x26000" in ld,
-    re.search(r"#define\s+LFS_FLASH_ADDR\s+0xED000", fs),
-    re.search(r"#define\s+LFS_FLASH_TOTAL_SIZE\s+\(7\*FLASH_NRF52_PAGE_SIZE\)", fs),
+    _fs_is_stock or _fs_is_valid_leftover_relocation,
     re.search(r"#define\s+FLASH_NRF52_PAGE_SIZE\s+4096", flash_h),
     re.search(r"#define\s+BOOTLOADER_ADDR\s+0xF4000", flash),
 ]
@@ -27,9 +67,25 @@ if not all(required):
 def check_exclusive_owner(source, target, env):
     nm = Path(env.PioPlatform().get_package_dir("toolchain-gccarmnoneeabi")) / "bin/arm-none-eabi-nm"
     symbols = subprocess.check_output([str(nm), str(target[0])], text=True)
-    if re.search(r"\bInternalFS$", symbols, re.MULTILINE):
-        raise RuntimeError("M4 journal and InternalFS cannot own the same flash pages")
-    if re.search(r"\bflash_nrf5x_(write|flush)$", symbols, re.MULTILINE):
+    internalfs_linked = bool(re.search(r"\bInternalFS$", symbols, re.MULTILINE))
+    if internalfs_linked:
+        # M7P4: a linked InternalFS is no longer an unconditional failure --
+        # only a stock or otherwise-unrecognized InternalFS would own the
+        # same flash pages as the ORUN history journal. Re-read the actual
+        # on-disk vendor source now (patch_internalfs.py's post: application
+        # already ran in this same process; its atexit restore has not).
+        current = _internalfs_target.read_text() if _internalfs_target.exists() else ""
+        if not _patch_internalfs.relocation_ok(current):
+            raise RuntimeError(
+                "M7P4 ownership violation: InternalFS is linked but its "
+                "source does not show the exact M7P4 relocation (base "
+                "0x0EB000, 2 pages / 0x2000 bytes). A stock or unrecognized "
+                "InternalFS would own the same flash pages as the ORUN "
+                "history journal (0xED000..0xF4000)."
+            )
+    if re.search(r"\bflash_nrf5x_(write|flush)$", symbols, re.MULTILINE) and not internalfs_linked:
+        # Only InternalFS's own driver plausibly links these; their presence
+        # without InternalFS itself linked is anomalous and still rejected.
         raise RuntimeError("M4 append-only backend must not link the erase/rewrite cache")
     for primitive in ("sd_flash_write", "sd_flash_page_erase"):
         if not re.search(rf"\b{primitive}$", symbols, re.MULTILINE):
