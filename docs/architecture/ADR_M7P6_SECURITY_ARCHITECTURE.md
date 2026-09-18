@@ -1,10 +1,20 @@
 # ADR: M7P6 Security Architecture Direction
 
-Status: **OWNER-APPROVED DESIGN DIRECTION — documentation only; no secure RF envelope,
-SecurityStore runtime, provisioning transport, BLE runtime, command path or protocol-byte
-change is authorized by this ADR alone.**
+Status: **OWNER-APPROVED SECURITY DIRECTION. M7P6A is the design record; M7P6B
+SecurityStore + TX nonce persistence is now implemented and software/build validated.
+No secure RF envelope, provisioning transport, BLE runtime, command path or TLP v1
+protocol-byte change is authorized by this ADR alone.**
 
-Baseline: `main@679f145ab7576eef3216613a826e05f8ad40876f` (M7P5 merged).
+Baseline for M7P6A design: `main@679f145ab7576eef3216613a826e05f8ad40876f`
+(M7P5 merged).
+
+M7P6B implementation baseline:
+`main@003a891a2b6e66c267e68cee2e704860f97bed69`.
+
+M7P6B final implementation SHA before docs-only closeout:
+`6d3009d42d9fb36026be5379171d8994a71dbaf6`.
+See `docs/milestones/M7P6B.md` for the exact on-flash format, fault-injection,
+wear arithmetic and validation evidence.
 
 This ADR records the owner-approved synthesis reached after an independent security
 architecture review. It exists so future Claude/Astra/Codex sessions do not have to
@@ -96,9 +106,11 @@ security reset/re-provision
 new credential_id=B, K_root=K2, epoch=1
 ```
 
-The exact encoded width is intentionally not frozen by this design-only ADR; it must be
-large enough to make accidental reuse negligible and will be frozen with the reviewed
-SecurityStore format.
+M7P6B freezes `credential_id` at **128 random bits (16 bytes)**. Re-provisioning
+must create a new credential lifetime. The store also refuses immediate reuse of the
+currently active `credential_id` or currently active `K_root` when resetting the TX
+counter to zero; preventing reuse of older historical roots remains a provisioning-layer
+responsibility.
 
 ### 3.2 No fleet/group authority key
 
@@ -150,7 +162,7 @@ Do not design around the idea that nonce reuse is "less bad" for one AEAD than a
 The M7P6 partition remains exactly `0x0E7000..0x0E9000`, physically separate from
 ConfigStore, BLE bonds and History.
 
-SecurityStore v1 should persist only state needed by the security foundation now:
+SecurityStore v1 now persists only state needed by the security foundation:
 
 ```text
 CREDENTIAL
@@ -201,9 +213,11 @@ wait for durable completion/readback
 only then use counters from that reserved range
 ```
 
-Initial reservation block seed: **256 counters**, subject to M7P6B implementation review
-and tests. This mirrors a useful existing reservation concept without sharing its
-namespace or storage.
+M7P6B freezes the initial reservation block at **256 counters** with an absolute
+**exclusive** durable bound. This mirrors a useful existing reservation concept without
+sharing its namespace or storage. A reboot skips to the last durable bound and reserves a
+fresh block before any new protected TX counter may be returned. Counter exhaustion fails
+closed; no rollover protocol is invented here.
 
 After reset, unused reserved counters may be skipped. Wasting counters is acceptable;
 reusing a nonce under the same key is not.
@@ -224,8 +238,17 @@ direction is:
 - recovery is reconstructed only from committed flash content;
 - suspicious/torn state fails conservatively and must not permit counter rollback.
 
-The exact slot/header byte layout is an M7P6B implementation decision and must receive
-fault-injection review before merge.
+M7P6B freezes the exact v1 layout: 32-byte page header, one 68-byte CREDENTIAL slot and
+111 36-byte TX_RESERVE slots per 4 KiB page. Record bodies/CRC are committed before their
+record commit words. The **page-header commit word is additionally the A/B page activation
+marker and is programmed last only after the complete new-page snapshot is durable**.
+Therefore an interrupted compaction cannot make a higher-generation page authoritative
+without its carried-forward nonce high-water mark.
+
+Recovery is deliberately conservative: unsupported future-format pages block downgrade;
+non-erased invalid reservation state, committed header corruption and impossible
+append-log gaps fail protected security state closed rather than falling back to a lower
+counter bound. See `docs/milestones/M7P6B.md` for the audited recovery rules.
 
 ### 7.1 FlashMutationGate priority refinement
 
@@ -363,18 +386,22 @@ Documentation only:
 - TLP v1 migration boundary;
 - explicit bootloader/DFU unknowns.
 
-### M7P6B — SecurityStore + TX nonce persistence
+### M7P6B — SecurityStore + TX nonce persistence — IMPLEMENTED
 
-Implement only the durable foundation:
+The durable foundation is implemented at
+`6d3009d42d9fb36026be5379171d8994a71dbaf6`:
 
-- SecurityStore recovery;
-- credential binding/state;
-- append-style TX reservation;
-- power-cut/fault semantics;
-- bounded FlashMutationGate integration;
-- tests/build/physical gates required by the implementation.
+- SecurityStore recovery/state;
+- DeviceIdentity-bound credential lifetime;
+- 128-bit credential_id + 256-bit K_root durable representation;
+- append-style 256-counter TX reservation;
+- activation-last A/B compaction and fail-closed recovery;
+- bounded FlashMutationGate integration with
+  `SEC_CRITICAL > History > Config > SEC_MAINT`;
+- host fault-injection/property tests and RAK4630 build validation.
 
-It does **not** introduce secure RF packets.
+It does **not** introduce secure RF packets. Real SoftDevice-enabled async security flash,
+electrical power-cut and production credential provisioning remain physically unvalidated.
 
 ### Later secure-envelope milestone
 
@@ -405,7 +432,6 @@ without confusing BLE bonds with application authorization.
 
 This ADR does not mean any of the following is implemented or physically proven:
 
-- SecurityStore runtime;
 - production key generation/provisioning;
 - AES-CCM/HKDF in the packet path;
 - authenticated ACK/contact;

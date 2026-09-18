@@ -41,6 +41,10 @@ constexpr uint32_t kConfigRegionSize = kFutureConfigRegionEnd - kFutureConfigReg
 bool inBoundsConfig(uint32_t offset, size_t size) {
   return offset <= kConfigRegionSize && size <= kConfigRegionSize - offset;
 }
+constexpr uint32_t kSecurityRegionSize = kFutureSecurityRegionEnd - kFutureSecurityRegionStart;
+bool inBoundsSecurity(uint32_t offset, size_t size) {
+  return offset <= kSecurityRegionSize && size <= kSecurityRegionSize - offset;
+}
 }  // namespace
 
 // ---------------------------------------------------------------------
@@ -105,6 +109,8 @@ FlashOpResult FlashMutationGate::program(uint32_t offset, const void* data, size
   history_slot_.staging_size = size;
   history_slot_.kind = Kind::kProgram;
   history_slot_.target = kBaseAddress + offset;
+  history_slot_.priority = Priority::kHistory;
+  history_slot_.staged_since_ms = monotonic::nowMs();
   // started_ms is set on admission (submitOrRetry), not here -- this request
   // may still have to wait behind the other client's in-flight operation.
   history_slot_.admitted = false;
@@ -123,6 +129,8 @@ FlashOpResult FlashMutationGate::erasePage(uint32_t page) {
 
   history_slot_.kind = Kind::kErase;
   history_slot_.target = kBaseAddress / kPageSize + page;
+  history_slot_.priority = Priority::kHistory;
+  history_slot_.staged_since_ms = monotonic::nowMs();
   history_slot_.admitted = false;
   history_slot_.submission_accepted = false;
   history_slot_.event_ready = false;
@@ -166,6 +174,8 @@ FlashOpResult FlashMutationGate::programConfig(uint32_t offset, const void* data
   config_slot_.staging_size = size;
   config_slot_.kind = Kind::kProgram;
   config_slot_.target = kFutureConfigRegionStart + offset;
+  config_slot_.priority = Priority::kConfig;
+  config_slot_.staged_since_ms = monotonic::nowMs();
   // started_ms is set on admission (submitOrRetry), not here -- this request
   // may still have to wait behind the other client's in-flight operation.
   config_slot_.admitted = false;
@@ -184,6 +194,8 @@ FlashOpResult FlashMutationGate::erasePageConfig(uint32_t page) {
 
   config_slot_.kind = Kind::kErase;
   config_slot_.target = kFutureConfigRegionStart / kPageSize + page;
+  config_slot_.priority = Priority::kConfig;
+  config_slot_.staged_since_ms = monotonic::nowMs();
   config_slot_.admitted = false;
   config_slot_.submission_accepted = false;
   config_slot_.event_ready = false;
@@ -196,24 +208,120 @@ FlashOpResult FlashMutationGate::pollPendingConfig() {
 }
 
 // ---------------------------------------------------------------------
+// Security client (M7P6B): symmetrical API, own region, own diagnostics,
+// two priority-tagged entry points (SecurityCriticalPort/SecurityMaintPort)
+// sharing one physical slot -- SecurityStore only ever has one request
+// outstanding at a time regardless of which port it used.
+// ---------------------------------------------------------------------
+
+bool FlashMutationGate::beginSecurity() {
+  ready_security_ = sync_security_.begin();
+  return ready_security_;
+}
+
+bool FlashMutationGate::readSecurity(uint32_t offset, void* data, size_t size) const {
+  return sync_security_.read(offset, data, size);
+}
+
+FlashOpResult FlashMutationGate::programSecurity(uint32_t offset, const void* data, size_t size,
+                                                 Priority priority) {
+  if (!ready_security_) return FlashOpResult::kFailed;
+  ++security_diagnostics_.submits;
+  if (!softDeviceEnabled()) return sync_security_.program(offset, data, size);
+
+  if (security_slot_.kind != Kind::kNone) return FlashOpResult::kFailed;
+  if (!data || !size || !inBoundsSecurity(offset, size) || (offset & 3U) != 0 ||
+      (size & 3U) != 0 || size > sizeof(security_staging_) ||
+      size > kPageSize - offset % kPageSize)
+    return FlashOpResult::kFailed;
+  const auto* destination =
+      reinterpret_cast<const uint8_t*>(kFutureSecurityRegionStart + offset);
+  for (size_t index = 0; index < size; ++index)
+    if (destination[index] != 0xFF) return FlashOpResult::kFailed;
+
+  memcpy(security_staging_, data, size);
+  security_slot_.staging_size = size;
+  security_slot_.kind = Kind::kProgram;
+  security_slot_.target = kFutureSecurityRegionStart + offset;
+  security_slot_.priority = priority;
+  security_slot_.staged_since_ms = monotonic::nowMs();
+  security_slot_.admitted = false;
+  security_slot_.submission_accepted = false;
+  security_slot_.event_ready = false;
+  return submitOrRetry(Owner::kSecurity);
+}
+
+FlashOpResult FlashMutationGate::erasePageSecurity(uint32_t page, Priority priority) {
+  if (!ready_security_) return FlashOpResult::kFailed;
+  ++security_diagnostics_.submits;
+  if (!softDeviceEnabled()) return sync_security_.erasePage(page);
+
+  if (security_slot_.kind != Kind::kNone) return FlashOpResult::kFailed;
+  if (page >= kFutureSecurityRegionPages) return FlashOpResult::kFailed;
+
+  security_slot_.kind = Kind::kErase;
+  security_slot_.target = kFutureSecurityRegionStart / kPageSize + page;
+  security_slot_.priority = priority;
+  security_slot_.staged_since_ms = monotonic::nowMs();
+  security_slot_.admitted = false;
+  security_slot_.submission_accepted = false;
+  security_slot_.event_ready = false;
+  return submitOrRetry(Owner::kSecurity);
+}
+
+FlashOpResult FlashMutationGate::pollPendingSecurity() {
+  if (security_slot_.kind == Kind::kNone) return FlashOpResult::kFailed;
+  return submitOrRetry(Owner::kSecurity);
+}
+
+// ---------------------------------------------------------------------
 // Shared admission, submission, and event routing.
 // ---------------------------------------------------------------------
 
+// A request staged (kind != kNone, not yet admitted) for longer than
+// kOperationTimeoutMs is treated as top priority regardless of its real
+// class -- see the declaration comment (flash_mutation_gate.h) for why this
+// bounded aging exists: without it, SEC_MAINT (or any lower class) could be
+// starved indefinitely by sustained higher-priority traffic that always has
+// something staged the instant the physical slot frees up.
+FlashMutationGate::Priority FlashMutationGate::effectivePriority(const Slot& slot) const {
+  if (slot.kind != Kind::kNone && !slot.admitted &&
+      monotonic::elapsed(monotonic::nowMs(), slot.staged_since_ms, kOperationTimeoutMs)) {
+    return Priority::kSecCritical;
+  }
+  return slot.priority;
+}
+
+bool FlashMutationGate::higherPriorityWaiting(Owner owner) const {
+  const Slot* mine = owner == Owner::kHistory ? &history_slot_
+                    : owner == Owner::kConfig  ? &config_slot_
+                                                : &security_slot_;
+  const Priority mine_priority = effectivePriority(*mine);
+  const Slot* others[] = {&history_slot_, &config_slot_, &security_slot_};
+  const Owner owners[] = {Owner::kHistory, Owner::kConfig, Owner::kSecurity};
+  for (unsigned index = 0; index < 3; ++index) {
+    if (owners[index] == owner) continue;
+    const Slot& other = *others[index];
+    if (other.kind != Kind::kNone && !other.admitted &&
+        effectivePriority(other) < mine_priority)
+      return true;
+  }
+  return false;
+}
+
 // Bounded, no-heap admission: the physical in-flight slot is free, or
-// already owned by `owner` (a retry), or owned by the other client (this
-// call stays queued). Priority (ADR §10: history outranks config writes)
-// is enforced here, independent of which client happens to call first: if
-// the slot is free but the higher-priority client (history) currently has
-// a request staged and not yet admitted, config is held back so history is
-// admitted next, not whichever client asked first. A client that already
-// owns the physical slot cannot be preempted -- the Nordic SVCs have no
-// cancel -- so this governs admission order only, never interruption of an
-// already-accepted operation.
+// already owned by `owner` (a retry), or owned by another client (this call
+// stays queued). Priority (ADR §7.1/§10: SEC_CRITICAL > History > Config >
+// SEC_MAINT) is enforced here, independent of which client happens to call
+// first: if the slot is free but a higher-priority client currently has a
+// request staged and not yet admitted, this owner is held back so that
+// client is admitted next, not whichever client asked first. A client that
+// already owns the physical slot cannot be preempted -- the Nordic SVCs
+// have no cancel -- so this governs admission order only, never
+// interruption of an already-accepted operation.
 FlashOpResult FlashMutationGate::submitOrRetry(Owner owner) {
   if (in_flight_owner_ == Owner::kNone) {
-    if (owner == Owner::kConfig && history_slot_.kind != Kind::kNone) {
-      return FlashOpResult::kPending;  // History has priority admission.
-    }
+    if (higherPriorityWaiting(owner)) return FlashOpResult::kPending;
     in_flight_owner_ = last_owner_ = owner;
   }
   if (in_flight_owner_ != owner) return FlashOpResult::kPending;  // Queued behind the other owner.

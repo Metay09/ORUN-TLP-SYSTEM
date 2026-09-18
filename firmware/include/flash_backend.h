@@ -64,4 +64,20 @@ class NrfConfigFlash : public FlashBackend {
  private:
   bool ready_ = false;
 };
+
+// M7P6B: the same synchronous-only Nordic primitive contract as
+// NrfHistoryFlash/NrfConfigFlash, addressed at the M7P1-decided durable
+// security partition (storage_config::kFutureSecurityRegionStart, 2 pages).
+// A sibling backend: no shared code or state. Never returns kPending;
+// FlashMutationGate owns this instance for security's SoftDevice-disabled
+// path exactly as it owns the other two Nrf*Flash instances.
+class NrfSecurityFlash : public FlashBackend {
+ public:
+  bool begin() override;
+  bool read(uint32_t offset, void* data, size_t size) const override;
+  FlashOpResult program(uint32_t offset, const void* data, size_t size) override;
+  FlashOpResult erasePage(uint32_t page) override;
+ private:
+  bool ready_ = false;
+};
 }  // namespace orun_tlp
