@@ -34,6 +34,53 @@ using namespace storage_config;
 // by this same constant). See submitOrRetry()'s admission block.
 constexpr uint32_t kOperationTimeoutMs = 4000;
 
+// M7P7A cross-task physical-flash bridge. The cooperative ORUN gate and
+// Adafruit InternalFS may run from different FreeRTOS tasks once BLE starts.
+// Keep only two machine-word atomics here: one owner token and one forwarded
+// gate-event mailbox. FlashMutationGate object state itself remains owned by
+// the normal cooperative loop.
+enum class SharedFlashOwner : uint32_t {
+  kNone = 0,
+  kGate = 1,
+  kInternalFs = 2,
+};
+
+volatile uint32_t g_shared_flash_owner =
+    static_cast<uint32_t>(SharedFlashOwner::kNone);
+volatile uint32_t g_bluefruit_soc_event_owner = 0;
+volatile uint32_t g_gate_flash_event = 0;  // 0 none, 1 success, 2 error.
+
+uint32_t loadSharedOwner() {
+  return __atomic_load_n(&g_shared_flash_owner, __ATOMIC_ACQUIRE);
+}
+
+bool sharedOwnerIs(SharedFlashOwner owner) {
+  return loadSharedOwner() == static_cast<uint32_t>(owner);
+}
+
+bool tryAcquireSharedFlash(SharedFlashOwner owner) {
+  uint32_t expected = static_cast<uint32_t>(SharedFlashOwner::kNone);
+  return __atomic_compare_exchange_n(
+      &g_shared_flash_owner, &expected, static_cast<uint32_t>(owner), false,
+      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+
+void releaseSharedFlash(SharedFlashOwner owner) {
+  uint32_t expected = static_cast<uint32_t>(owner);
+  (void)__atomic_compare_exchange_n(
+      &g_shared_flash_owner, &expected,
+      static_cast<uint32_t>(SharedFlashOwner::kNone), false,
+      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+
+bool bluefruitOwnsSocEvents() {
+  return __atomic_load_n(&g_bluefruit_soc_event_owner, __ATOMIC_ACQUIRE) != 0;
+}
+
+uint32_t takeBridgedGateEvent() {
+  return __atomic_exchange_n(&g_gate_flash_event, 0U, __ATOMIC_ACQ_REL);
+}
+
 bool inBoundsHistory(uint32_t offset, size_t size) {
   return offset <= kRegionSize && size <= kRegionSize - offset;
 }
@@ -47,9 +94,54 @@ bool inBoundsSecurity(uint32_t offset, size_t size) {
 }
 }  // namespace
 
+}  // namespace orun_tlp
+
+// Weak references to these C-linkage hooks are injected into the pinned
+// Adafruit framework by M7P7A. Keeping the strong implementation here makes
+// FlashMutationGate the application owner of arbitration without teaching the
+// vendor C/C++ sources about ORUN types.
+extern "C" bool orun_flash_internalfs_try_acquire(void) {
+  return orun_tlp::tryAcquireSharedFlash(
+      orun_tlp::SharedFlashOwner::kInternalFs);
+}
+
+extern "C" void orun_flash_internalfs_release(void) {
+  orun_tlp::releaseSharedFlash(orun_tlp::SharedFlashOwner::kInternalFs);
+}
+
+extern "C" bool orun_flash_internalfs_owns(void) {
+  return orun_tlp::sharedOwnerIs(orun_tlp::SharedFlashOwner::kInternalFs);
+}
+
+extern "C" void orun_flash_gate_soc_event_cb(uint32_t event) {
+  if (!orun_tlp::sharedOwnerIs(orun_tlp::SharedFlashOwner::kGate)) return;
+
+  uint32_t encoded = 0;
+  if (event == NRF_EVT_FLASH_OPERATION_SUCCESS) encoded = 1;
+  else if (event == NRF_EVT_FLASH_OPERATION_ERROR) encoded = 2;
+  if (encoded != 0) {
+    __atomic_store_n(&orun_tlp::g_gate_flash_event, encoded, __ATOMIC_RELEASE);
+  }
+}
+
+extern "C" void orun_flash_gate_set_bluefruit_soc_owner(bool active) {
+  __atomic_store_n(&orun_tlp::g_bluefruit_soc_event_owner,
+                   active ? 1U : 0U, __ATOMIC_RELEASE);
+}
+
+namespace orun_tlp {
+
 // ---------------------------------------------------------------------
 // History client: unchanged M7P3 FlashBackend surface and behavior.
 // ---------------------------------------------------------------------
+
+FlashMutationGate::~FlashMutationGate() {
+  // The product has one process-lifetime gate. Cleanup mainly isolates scoped
+  // host-test instances so one interrupted scenario cannot poison the next.
+  releaseSharedFlash(SharedFlashOwner::kGate);
+  __atomic_store_n(&g_gate_flash_event, 0U, __ATOMIC_RELEASE);
+  __atomic_store_n(&g_bluefruit_soc_event_owner, 0U, __ATOMIC_RELEASE);
+}
 
 bool FlashMutationGate::begin() {
   ready_history_ = sync_history_.begin();
@@ -77,6 +169,9 @@ void FlashMutationGate::releaseSlot(Owner owner) {
   mine.event_ready = false;
   mine.staging_size = 0;
   if (in_flight_owner_ == owner) in_flight_owner_ = Owner::kNone;
+  // Keep the global token across SoftDevice BUSY retries, but never beyond
+  // completion/failure of this admitted ORUN request.
+  releaseSharedFlash(SharedFlashOwner::kGate);
 }
 
 FlashOpResult FlashMutationGate::program(uint32_t offset, const void* data, size_t size) {
@@ -364,6 +459,22 @@ FlashOpResult FlashMutationGate::submitOrRetry(Owner owner) {
 
 FlashOpResult FlashMutationGate::attemptSubmit(Owner owner) {
   Slot& mine = slot(owner);
+
+  // If InternalFS owns Nordic flash, stay pending. Once an admitted ORUN
+  // request acquires the token it retains it across NRF_ERROR_BUSY retries;
+  // this prevents a bond write from interleaving between retries of a
+  // security/history/config operation.
+  if (!sharedOwnerIs(SharedFlashOwner::kGate) &&
+      !tryAcquireSharedFlash(SharedFlashOwner::kGate)) {
+    ++diag(owner).busy_retries;
+    if (timedOut(monotonic::nowMs(), mine.started_ms)) {
+      releaseSlot(owner);
+      ++diag(owner).timeouts;
+      return FlashOpResult::kFailed;
+    }
+    return FlashOpResult::kPending;
+  }
+
   uint32_t result = NRF_ERROR_INTERNAL;
   if (mine.kind == Kind::kProgram) {
     result = sd_flash_write(reinterpret_cast<uint32_t*>(mine.target),
@@ -385,49 +496,55 @@ FlashOpResult FlashMutationGate::attemptSubmit(Owner owner) {
       ++diag(owner).timeouts;
       return FlashOpResult::kFailed;
     }
-    return FlashOpResult::kPending;  // Retry submission from pollPending().
+    return FlashOpResult::kPending;
   }
-  // Permanent rejection (invalid address/length, forbidden region, or an
-  // internal SoftDevice error opening the session): fail closed now rather
-  // than retrying a request the SoftDevice has already refused to start.
+
+  // Permanent rejection: fail closed and release both the ORUN admission
+  // slot and the shared physical-flash token.
   releaseSlot(owner);
   return FlashOpResult::kFailed;
 }
 
+void FlashMutationGate::handleFlashEvent(uint32_t evt_id) {
+  if (evt_id != NRF_EVT_FLASH_OPERATION_SUCCESS &&
+      evt_id != NRF_EVT_FLASH_OPERATION_ERROR)
+    return;
+
+  if (in_flight_owner_ == Owner::kNone) {
+    ++diag(last_owner_).spurious_events;
+    return;
+  }
+
+  Slot& mine = slot(in_flight_owner_);
+  if (!mine.submission_accepted || mine.event_ready) {
+    ++diag(in_flight_owner_).spurious_events;
+    return;
+  }
+
+  mine.event_ready = true;
+  mine.event_success = (evt_id == NRF_EVT_FLASH_OPERATION_SUCCESS);
+}
+
 void FlashMutationGate::pumpEvents() {
   if (!softDeviceEnabled()) return;
+
+  if (bluefruitOwnsSocEvents()) {
+    // Bluefruit is now the sole sd_evt_get() consumer. Its pinned SoC-task
+    // patch forwards only the gate-owned flash completion into this one-word
+    // mailbox. InternalFS completions are filtered by the shared owner token.
+    const uint32_t bridged = takeBridgedGateEvent();
+    if (bridged == 1U) handleFlashEvent(NRF_EVT_FLASH_OPERATION_SUCCESS);
+    else if (bridged == 2U) handleFlashEvent(NRF_EVT_FLASH_OPERATION_ERROR);
+    return;
+  }
+
+  // Pre-BLE behavior: this gate remains the sole SoC queue drainer.
   uint32_t evt_id = 0;
   while (sd_evt_get(&evt_id) == NRF_SUCCESS) {
     if (evt_id != NRF_EVT_FLASH_OPERATION_SUCCESS &&
-        evt_id != NRF_EVT_FLASH_OPERATION_ERROR) {
-      // Not a flash event (e.g. HFCLKSTARTED, POWER_*, RADIO_* timeslot,
-      // USB_*): drained so the SoftDevice event queue never backs up, but
-      // otherwise not acted on by this slice.
+        evt_id != NRF_EVT_FLASH_OPERATION_ERROR)
       continue;
-    }
-    if (in_flight_owner_ == Owner::kNone) {
-      // No client currently owns the physical slot at all: attribute this
-      // to whichever client most recently did (its own just-completed or
-      // just-released operation is the most plausible source of a stray
-      // late event), rather than always crediting history by default.
-      ++diag(last_owner_).spurious_events;
-      continue;
-    }
-    Slot& mine = slot(in_flight_owner_);
-    if (!mine.submission_accepted || mine.event_ready) {
-      // The owning client hasn't actually had its submission accepted yet
-      // (still BUSY-retrying), or a second flash event arrived before
-      // pollPending() consumed the first (the SoftDevice API documents
-      // exactly one event per command, so this should not happen) --
-      // discard rather than completing the wrong request or double-calling
-      // completion. Routed to the current owner's own counter: only that
-      // owner could plausibly have caused a spurious event right now, since
-      // it is the only client with a physical slot.
-      ++diag(in_flight_owner_).spurious_events;
-      continue;
-    }
-    mine.event_ready = true;
-    mine.event_success = (evt_id == NRF_EVT_FLASH_OPERATION_SUCCESS);
+    handleFlashEvent(evt_id);
   }
 }
 
