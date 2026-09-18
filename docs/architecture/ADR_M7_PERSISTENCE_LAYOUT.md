@@ -619,10 +619,15 @@ follows this repository's existing `M<n>P<n>`/lettered-slice convention
   `HistoryStore` only; `journal_format`'s on-flash layout is unchanged.
   Software/host-test validated only — SoftDevice is not enabled by shipped
   firmware in this slice, so the async path is not yet physically validated.
-- **M7P4 — BLE bond storage in its allocated partition.** Write and audit
-  `patch_internalfs.py` (§8) relocating `LFS_FLASH_ADDR`/`LFS_FLASH_TOTAL_SIZE`
-  to `0x0EB000`/`0x2000`, pinned against the exact upstream blob hash
-  recorded in §8. No Bluefruit/bonding.cpp logic changes.
+- **M7P4 — BLE bond storage in its allocated partition. DONE**, see
+  `docs/milestones/M7P4.md`. Wrote and applied `patch_internalfs.py` (§8),
+  relocating `LFS_FLASH_ADDR`/`LFS_FLASH_TOTAL_SIZE` to `0x0EB000`/`0x2000`,
+  pinned against the exact upstream blob hash recorded in §8 (re-verified,
+  unchanged). No Bluefruit/bonding.cpp logic changes; BLE is not enabled.
+  Confirmed by source inspection: relocated `InternalFS` still bypasses
+  `FlashMutationGate` (calls `sd_flash_write`/`sd_flash_page_erase` and
+  consumes SoftDevice events independently) — an explicit, unresolved M7P7
+  prerequisite, not papered over here.
 - **M7P5 — Durable config store.** Define the actual config schema (now,
   not speculatively) and implement `ConfigStore` in
   `0x0E9000..0x0EB000` using the A/B commit-word-last pattern from §7/§12.

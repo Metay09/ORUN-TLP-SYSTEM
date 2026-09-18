@@ -4,6 +4,11 @@ firmware/.pioenvs/
 firmware/.piolibdeps/
 firmware/.clangd/
 
+# Python bytecode cache (M7P4: check_storage_layout.py imports
+# patch_internalfs.py via importlib during every real PlatformIO build)
+__pycache__/
+*.pyc
+
 # IDE and editor files
 .vscode/
 .idea/
