@@ -259,8 +259,12 @@ bool SecurityStore::startNewPage(bool critical, bool seed_reserve, const Credent
       (active_page_ >= 0 && pages_[active_page_].generation != 0) ? active_page_ : -1;
   pending_credential_ = credential;
   seed_reserve_ = seed_reserve;
+  new_page_snapshot_critical_ = critical;
   pending_tx_bound_ = tx_reserved_bound_;  // carried forward as-is for compaction only.
-  active_port_ = critical ? &critical_ : &maint_;
+  // Page erase/pre-maintenance is always SEC_MAINT. Only after the fresh
+  // page is erased do brand-new credential snapshot writes switch to
+  // SEC_CRITICAL; compaction snapshots remain SEC_MAINT throughout.
+  active_port_ = &maint_;
   job_ = Job::kNewPage;
   phase_ = Phase::kErasePage;
   blob_step_ = BlobStep::kBody;
@@ -409,6 +413,7 @@ void SecurityStore::fail() {
   blob_step_ = BlobStep::kBody;
   flash_op_awaiting_completion_ = false;
   reserve_after_new_page_ = false;
+  new_page_snapshot_critical_ = false;
   // Deliberately does NOT touch credential_/tx_reserved_bound_/tx_next_/
   // active_page_/state_: every failure path here targeted the currently
   // INACTIVE page or an append slot beyond the already-committed state, so
@@ -501,6 +506,7 @@ void SecurityStore::poll() {
     if (result == FlashOpResult::kPending) { flash_op_awaiting_completion_ = true; return; }
     flash_op_awaiting_completion_ = false;
     if (result == FlashOpResult::kFailed) { fail(); return; }
+    active_port_ = new_page_snapshot_critical_ ? &critical_ : &maint_;
     phase_ = Phase::kWriteHeader;
     PageHeader header{target_generation_, device_identity_.legacyUint64()};
     uint8_t bytes[kPageHeaderSize];
