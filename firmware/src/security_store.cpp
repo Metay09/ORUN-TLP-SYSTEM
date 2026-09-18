@@ -61,8 +61,21 @@ bool SecurityStore::recover() {
   for (unsigned page = 0; page < kPageCount; ++page) {
     uint8_t header_bytes[kPageHeaderSize];
     if (!critical_.read(headerOffset(page), header_bytes, sizeof(header_bytes))) return false;
+    const bool header_erased =
+        journal_format::erased(header_bytes, sizeof(header_bytes));
+    if (header_erased) continue;  // genuinely blank page.
     uint8_t version = 0;
-    if (!headerMagicPresent(header_bytes, &version)) continue;  // blank page.
+    if (!headerMagicPresent(header_bytes, &version)) {
+      const bool activation_erased = journal_format::erased(
+          header_bytes + kPageHeaderSize - sizeof(uint32_t), sizeof(uint32_t));
+      ++diagnostics_.recovery_corruptions;
+      if (!activation_erased) {
+        // Non-erased activation with damaged/unrecognized magic is ambiguous
+        // committed state. Never fall back to an older security generation.
+        any_committed_corruption = true;
+      }
+      continue;
+    }
     PageHeader header{};
     if (!decodePageHeader(header_bytes, header)) {
       if (version != kVersion) {
@@ -149,7 +162,23 @@ bool SecurityStore::recover() {
   for (unsigned slot = 0; slot < kTxReserveSlotsPerPage; ++slot) {
     uint8_t bytes[kTxReserveRecordSize];
     if (!critical_.read(reserveOffset(winner, slot), bytes, sizeof(bytes))) return false;
-    if (journal_format::erased(bytes, sizeof(bytes))) break;
+    if (journal_format::erased(bytes, sizeof(bytes))) {
+      // Append-only records cannot legitimately resume after an erased gap.
+      // Check the tail so an erased/corrupted earlier reservation cannot hide
+      // a later higher bound and make recovery roll counters backward.
+      for (unsigned later = slot + 1; later < kTxReserveSlotsPerPage; ++later) {
+        uint8_t later_bytes[kTxReserveRecordSize];
+        if (!critical_.read(reserveOffset(winner, later), later_bytes,
+                            sizeof(later_bytes)))
+          return false;
+        if (!journal_format::erased(later_bytes, sizeof(later_bytes))) {
+          ++diagnostics_.recovery_corruptions;
+          state_ = SecurityState::kFault;
+          return true;
+        }
+      }
+      break;
+    }
     pages_[winner].tx_reserve_used = slot + 1;
     TxReserve reserve{};
     if (!decodeTxReserve(bytes, reserve) ||
@@ -357,9 +386,15 @@ FlashOpResult SecurityStore::writePageActivation() {
     fail();
     return FlashOpResult::kFailed;
   }
-  uint8_t verify[sizeof(uint32_t)];
-  if (!port.read(offset, verify, sizeof(verify)) ||
-      memcmp(verify, blob_, sizeof(verify)) != 0) {
+  uint8_t verify[kPageHeaderSize];
+  if (!port.read(headerOffset(target_page_), verify, sizeof(verify))) {
+    fail();
+    return FlashOpResult::kFailed;
+  }
+  PageHeader decoded{};
+  if (!decodePageHeader(verify, decoded) ||
+      decoded.generation != target_generation_ ||
+      decoded.device_identity != device_identity_.legacyUint64()) {
     fail();
     return FlashOpResult::kFailed;
   }
