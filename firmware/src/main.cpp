@@ -103,8 +103,12 @@ bool physicalCredentialMatches() {
 
 void m7p6bPhysicalSetup() {
   Serial.begin(115200);
-  const uint32_t wait_started = millis();
-  while (!Serial && millis() - wait_started < 10000UL) delay(10);
+  // Manual physical-evidence harness: never run the destructive test sequence
+  // without an attached USB Serial observer. This also makes the automatic
+  // NVIC reset deterministic for remote testing: after USB re-enumeration the
+  // second boot waits here until the monitor is reopened, so recovery evidence
+  // cannot disappear during a short CDC disconnect.
+  while (!Serial) delay(10);
   delay(250);
   Serial.println(F("M7P6B PHYS HARNESS START"));
   Serial.println(F("M7P6B PHYS credential=SYNTHETIC_TEST_ONLY"));
