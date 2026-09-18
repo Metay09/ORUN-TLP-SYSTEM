@@ -56,6 +56,7 @@ bool SecurityStore::recover() {
   };
   PageClass classified[kPageCount]{};
   bool any_unsupported = false;
+  bool any_committed_corruption = false;
 
   for (unsigned page = 0; page < kPageCount; ++page) {
     uint8_t header_bytes[kPageHeaderSize];
@@ -64,8 +65,22 @@ bool SecurityStore::recover() {
     if (!headerMagicPresent(header_bytes, &version)) continue;  // blank page.
     PageHeader header{};
     if (!decodePageHeader(header_bytes, header)) {
-      if (version != kVersion) any_unsupported = true;
-      else ++diagnostics_.recovery_corruptions;
+      if (version != kVersion) {
+        any_unsupported = true;
+      } else if (journal_format::erased(
+                     header_bytes + kPageHeaderSize - sizeof(uint32_t),
+                     sizeof(uint32_t))) {
+        // Header body exists but the page activation/commit word never
+        // landed. This is an interrupted NEW-PAGE transaction, not an
+        // authoritative page; the older committed page may remain usable.
+        ++diagnostics_.recovery_corruptions;
+      } else {
+        // Current-format page claims activation (or has a non-erased damaged
+        // activation word) but fails structural/CRC validation. Falling back
+        // to an older page could roll security state backward.
+        ++diagnostics_.recovery_corruptions;
+        any_committed_corruption = true;
+      }
       continue;
     }
     pages_[page].generation = header.generation;
@@ -74,7 +89,11 @@ bool SecurityStore::recover() {
     Credential candidate{};
     if (!decodeCredential(cred_bytes, candidate) ||
         candidate.device_identity != header.device_identity) {
+      // A valid page header is now the LAST activation write. Therefore an
+      // invalid credential beneath it is post-commit corruption/ambiguity,
+      // never an in-progress page build. Protected state must fail closed.
       ++diagnostics_.recovery_corruptions;
+      any_committed_corruption = true;
       continue;
     }
     classified[page].valid = true;
@@ -90,6 +109,12 @@ bool SecurityStore::recover() {
   // nonce state backward. Fail closed for the whole store.
   if (any_unsupported) {
     state_ = SecurityState::kUnsupported;
+    active_page_ = -1;
+    newest_generation_ = 0;
+    return true;
+  }
+  if (any_committed_corruption) {
+    state_ = SecurityState::kFault;
     active_page_ = -1;
     newest_generation_ = 0;
     return true;
@@ -291,6 +316,56 @@ FlashOpResult SecurityStore::writeBlob() {
   return FlashOpResult::kDone;
 }
 
+FlashOpResult SecurityStore::writeBlobBodyOnly() {
+  FlashBackend& port = *active_port_;
+  const uint32_t body_size = blob_size_ - sizeof(uint32_t);
+  const FlashOpResult result = flash_op_awaiting_completion_
+      ? port.pollPending()
+      : port.program(blob_offset_, blob_, body_size);
+  if (result == FlashOpResult::kPending) {
+    flash_op_awaiting_completion_ = true;
+    return FlashOpResult::kPending;
+  }
+  flash_op_awaiting_completion_ = false;
+  if (result == FlashOpResult::kFailed) {
+    fail();
+    return FlashOpResult::kFailed;
+  }
+  uint8_t verify[kCredentialRecordSize];
+  if (!port.read(blob_offset_, verify, body_size) ||
+      memcmp(verify, blob_, body_size) != 0) {
+    fail();
+    return FlashOpResult::kFailed;
+  }
+  return FlashOpResult::kDone;
+}
+
+FlashOpResult SecurityStore::writePageActivation() {
+  FlashBackend& port = *active_port_;
+  memset(blob_, 0, sizeof(uint32_t));  // security_format::kCommit == 0.
+  const uint32_t offset =
+      headerOffset(target_page_) + kPageHeaderSize - sizeof(uint32_t);
+  const FlashOpResult result = flash_op_awaiting_completion_
+      ? port.pollPending()
+      : port.program(offset, blob_, sizeof(uint32_t));
+  if (result == FlashOpResult::kPending) {
+    flash_op_awaiting_completion_ = true;
+    return FlashOpResult::kPending;
+  }
+  flash_op_awaiting_completion_ = false;
+  if (result == FlashOpResult::kFailed) {
+    fail();
+    return FlashOpResult::kFailed;
+  }
+  uint8_t verify[sizeof(uint32_t)];
+  if (!port.read(offset, verify, sizeof(verify)) ||
+      memcmp(verify, blob_, sizeof(verify)) != 0) {
+    fail();
+    return FlashOpResult::kFailed;
+  }
+  return FlashOpResult::kDone;
+}
+
 void SecurityStore::fail() {
   const Job failing_job = job_;
   const bool was_seed_reserve = seed_reserve_;
@@ -409,17 +484,12 @@ void SecurityStore::poll() {
     return;
   }
 
-  if (writeBlob() != FlashOpResult::kDone) return;
-
   if (phase_ == Phase::kWriteHeader) {
+    // The page-header commit word is the A/B activation marker and MUST be
+    // the final write of a new-page transaction. Write/verify only the
+    // header body now, leaving its commit word erased.
+    if (writeBlobBodyOnly() != FlashOpResult::kDone) return;
     if (seed_reserve_) {
-      // Compaction snapshot ordering is security-critical: the new page's
-      // credential is its effective activation record for recovery. Carry
-      // the already-durable TX high-water mark first, then commit the
-      // credential last. A reset at any earlier point therefore leaves the
-      // new page incomplete and the old page authoritative; recovery can
-      // never select a higher-generation credential page that lost its
-      // counter bound.
       phase_ = Phase::kWriteReserve;
       TxReserve reserve{};
       memcpy(reserve.credential_id, pending_credential_.credential_id, kCredentialIdSize);
@@ -436,8 +506,18 @@ void SecurityStore::poll() {
     startBlob(credentialOffset(target_page_), bytes, sizeof(bytes));
     return;
   }
-  if (phase_ == Phase::kWriteCredential) {
+
+  if (phase_ == Phase::kActivatePage) {
+    if (writePageActivation() != FlashOpResult::kDone) return;
     completeNewPage();
+    return;
+  }
+
+  if (writeBlob() != FlashOpResult::kDone) return;
+
+  if (phase_ == Phase::kWriteCredential) {
+    phase_ = Phase::kActivatePage;
+    flash_op_awaiting_completion_ = false;
     return;
   }
   if (phase_ == Phase::kWriteReserve) {
