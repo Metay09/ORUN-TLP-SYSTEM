@@ -1,8 +1,8 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through M7P5 persistence implementation; M7P6A security and field-network/serviceability directions documented only; prior M6A/M6B3 focused physical gates PASS; overall M6 IN PROGRESS**.
-Last reviewed against `main@679f145ab7576eef3216613a826e05f8ad40876f` (M7P5 merged). M6-era physical/runtime boundaries remain unchanged since their recorded milestone evidence.
-Last architecture review update: 2026-09-18 (§15/§16 record owner-approved M7P6 security, shared RF-domain, coverage-learning and diagnostics direction; these are design-only and do not claim new runtime validation).
+Status: **CURRENT through M7P6B SecurityStore/TX nonce persistence implementation; M7P6A security direction remains authoritative for later secure-envelope/provisioning work; field-network/serviceability runtime remains planned; prior M6A/M6B3 focused physical gates PASS; overall M6 IN PROGRESS**.
+Last reviewed against `main@8e6f2bde9b0281c1e219c6ec3df13b5f463fe7a5` (M7P6B merged). M6-era physical/runtime boundaries remain unchanged since their recorded milestone evidence.
+Last architecture review update: 2026-09-19 (§15 records the owner-approved M7P6 security direction with M7P6B persistence now implemented and limited RAK4631 persistence/reboot evidence PASS; secure-envelope/provisioning work remains later. §16 shared RF-domain, coverage-learning and diagnostics direction remains design-only).
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 

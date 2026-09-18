@@ -1,7 +1,7 @@
 # ORUN Architecture Documentation Index
 
 Status: **CURRENT documentation governance index**.
-Last reviewed against `main@679f145ab7576eef3216613a826e05f8ad40876f` (M7P5 merged; M7P6 security and field-network/serviceability additions are design-only).
+Last reviewed against `main@8e6f2bde9b0281c1e219c6ec3df13b5f463fe7a5` (M7P6B merged). M7P6B SecurityStore/TX nonce persistence is implemented; the secure RF envelope, provisioning transport and field-network/serviceability runtime remain later work.
 Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 
 This directory contains current owner-approved rules plus historical/proposed
