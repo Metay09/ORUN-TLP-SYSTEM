@@ -16,6 +16,14 @@ Baseline: `main@c97682677e357929258db08bae96594839d919a5` (storage/flash
 ownership audit, PR #10, merged).
 Branch: `design/m7p1-persistence-layout`.
 
+**Implementation status through M7P6B:** the original M7P1 text below remains the
+historical decision record. M7P2 implemented the application ceiling guard, M7P3 the
+History async gate, M7P4 bond relocation, M7P5 ConfigStore, and M7P6B now implements
+SecurityStore in `0x0E7000..0x0E9000`. SecurityStore's final implementation SHA before
+docs-only closeout is `6d3009d42d9fb36026be5379171d8994a71dbaf6`; see
+`docs/milestones/M7P6B.md`. BLE/SoftDevice runtime remains off, and relocated
+InternalFS/bonds still do not participate in FlashMutationGate.
+
 ## 1. Context
 
 `ORUN_STORAGE_FLASH_OWNERSHIP.md` established, from source, that:
@@ -328,16 +336,16 @@ in active use.
 | Address start | `0x0E7000` | `0x0E9000` | `0x0EB000` |
 | Address end (exclusive) | `0x0E9000` | `0x0EB000` | `0x0ED000` |
 | Page count | 2 | 2 | 2 |
-| Owner (future component) | new `SecurityStore` (name indicative, decided at implementation) | new `ConfigStore` (name indicative) | relocated `InternalFS` (stock Adafruit type, patched address) |
-| Format/backend | Raw, versioned A/B, journal-family commit-word-last pattern (new sibling of `journal_format`, not shared code/state with history) | Same raw A/B pattern as security | LittleFS via `Adafruit_LittleFS`/`InternalFileSystem` (unchanged library code, patched `LFS_FLASH_ADDR`/`LFS_FLASH_TOTAL_SIZE`) |
-| Erase owner | New `SecurityStore` only, through the shared `FlashMutationGate` (§9) | New `ConfigStore` only, through the same gate | `Adafruit_LittleFS`/`flash_nrf5x`, through the same gate |
+| Owner | `SecurityStore` (M7P6B) | `ConfigStore` (M7P5) | relocated `InternalFS` (M7P4) |
+| Format/backend | Raw v1 A/B: 32-byte header + 68-byte credential + 111×36-byte TX_RESERVE; page activation commit is written last | Raw A/B ConfigStore format | LittleFS via `Adafruit_LittleFS`/`InternalFileSystem` (patched address/size) |
+| Erase owner | `SecurityStore`; security mutations use shared `FlashMutationGate` | `ConfigStore`; uses shared gate | `Adafruit_LittleFS`/`flash_nrf5x`; **still bypasses FlashMutationGate until later BLE integration** |
 | Reset semantics | See §11 — never erased by ordinary config reset or BLE unpair | See §11 — reset-to-defaults only, never touches security or bonds | See §11 — BLE unpair/re-provision only, never touches config or security |
 | Security class | Highest (keys, anti-replay) | Low–moderate | Moderate (peer key material) |
 | SoftDevice interaction | Requires the async contract (§9) before any write once BLE is enabled | Same | Same (bonds cannot be written meaningfully without SoftDevice enabled in the first place) |
 
-History's address (`0x0ED000..0x0F4000`) does not change. No field in this
-table is a runtime implementation; it is the target for the implementation
-slices in §16.
+History's address (`0x0ED000..0x0F4000`) does not change. The table now records
+implementation status through M7P6B; it does not imply that BLE/SoftDevice runtime,
+bond-gate integration, DFU preservation or secure RF traffic is complete.
 
 ## 8. Bond backend decision
 
@@ -474,41 +482,37 @@ This ADR defines the **contract** a future asynchronous backend must satisfy
 
 ## 10. Concurrency / priority
 
-A small **bounded** admission queue (fixed-capacity array, no heap — the
-same style as `NetworkService`'s existing 4-entry relay queue), holding at
-most one entry per request class plus the one in-flight operation, with a
-fixed priority order for admission when more than one class has a pending
-request:
+M7P6B implements one bounded physical Nordic flash mutation owner for History,
+Config and Security. Security has two priority-tagged views over one owner slot.
 
-1. **Critical security durability** (key rotation/provisioning commit,
-   anti-replay counter advance) — highest priority; these are rare but must
-   never be starved, since a stalled anti-replay commit blocks whatever
-   protected operation depends on it.
-2. **Live store-before-send history append** (position/critical event) —
-   must not be starved by lower classes, extending the existing principle
-   "live data must not wait behind a large historical backlog" (`AGENTS.md`)
-   from RF airtime into flash admission.
-3. **Config writes** — user/BLE-initiated, infrequent.
-4. **Bond writes** — BLE pairing-time only; delaying a bond commit by one
-   arbitration slot delays completing a pairing ceremony slightly, not a
-   safety-relevant outcome.
+Current admission order is:
 
-This is a small explicit priority list, not a generic weighted-fairness
-scheduler — consistent with "bounded queue / single operation ownership" and
-against building speculative scheduling infrastructure this product does not
-yet need.
+1. **SEC_CRITICAL** — TX nonce reservation and new credential snapshot writes that
+   block protected security progress.
+2. **Live History** — store-before-send append.
+3. **Config** — infrequent durable configuration writes.
+4. **SEC_MAINT** — security page erase/compaction housekeeping.
 
-**Power-cut/reset pending-operation semantics**: a power cut mid-operation
-leaves the physical flash in whatever state the hardware left it in (no
-different from today's synchronous model — NOR programming is still NOR
-programming). The only *new* risk from asynchrony is that in-RAM queue state
-(which request was pending, which store submitted it) is lost on reset. This
-is handled by requiring, as an explicit contract element, that **every
-store's boot-time recovery must reconstruct valid state purely from
-committed flash content**, exactly like `HistoryStore::recover()` already
-does — never from a surviving RAM-resident queue or "was pending" flag. No
-store may assume a request survived reset merely because it was submitted
-before the cut.
+Page erase/preparation remains SEC_MAINT even for a new credential; only the subsequent
+credential snapshot writes become SEC_CRITICAL after a fresh page exists.
+
+A request queued longer than the existing 4-second physical-operation budget receives
+temporary top admission priority to prevent indefinite starvation. Aging affects admission
+only; an already accepted Nordic operation cannot be preempted. The physical-operation
+timeout itself starts on admission, not queue entry.
+
+The gate remains bounded: one request slot per owner, one physical operation in flight,
+fixed staging buffers, no heap, and one SoftDevice event drain.
+
+**Important remaining gap:** relocated bond/InternalFS writes still bypass this gate.
+M7P7 must reconcile Bluefruit/InternalFS flash mutation and SoftDevice event ownership
+before BLE runtime is enabled.
+
+**Power-cut/reset pending-operation semantics:** RAM queue state is never authoritative.
+History, Config and Security recover only committed flash. M7P6B strengthens this for
+SecurityStore by making the page-header commit word the final A/B page activation marker;
+an interrupted new-page build leaves the older committed page authoritative, while
+ambiguous committed security state fails protected TX closed.
 
 ## 11. Reset/factory-reset semantics
 
@@ -644,10 +648,14 @@ follows this repository's existing `M<n>P<n>`/lettered-slice convention
   Software/host-test validated only — SoftDevice is not enabled by shipped
   firmware in this slice, so ConfigStore's async path is not yet physically
   validated, matching M7P3's own physical-validation status.
-- **M7P6 — Security material + anti-replay store.** Implement
-  `SecurityStore` in `0x0E7000..0x0E9000`, with an explicit, reviewed
-  cryptography/key-provisioning design as its own prerequisite (not
-  authorized by this ADR) before any real key material is written.
+- **M7P6A — Security architecture. DONE**, see
+  `docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md`.
+- **M7P6B — SecurityStore + TX nonce persistence. DONE (software/build validated)**,
+  see `docs/milestones/M7P6B.md`. Implements SecurityStore in
+  `0x0E7000..0x0E9000`, append-only 256-counter reservations, activation-last A/B
+  compaction and Security FlashMutationGate ownership. It does not generate/provision
+  production keys and does not add secure RF bytes. Real SoftDevice-enabled async
+  security flash and electrical power-cut remain physical-validation gaps.
 - **M7P7 — BLE runtime/admission window.** Enable `Bluefruit.begin()` in
   production, gated on M7P3 (async flash) and M7P4 (relocated bonds) both
   being merged and validated; define the BLE advertising/connection
