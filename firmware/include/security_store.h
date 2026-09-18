@@ -169,6 +169,7 @@ class SecurityStore {
   uint32_t target_page_ = 0, target_slot_ = 0;
   uint64_t target_generation_ = 0;
   bool seed_reserve_ = false;
+  bool new_page_snapshot_critical_ = false;
   bool reserve_after_new_page_ = false;
   security_format::Credential pending_credential_{};
   uint64_t pending_tx_bound_ = 0;
