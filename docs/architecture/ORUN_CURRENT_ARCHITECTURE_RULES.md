@@ -363,13 +363,29 @@ decision gates. `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md` decides the par
 `0x0EB000..0x0ED000` relocated BLE bonds/InternalFS (M7P4), all strictly below
 the unchanged HistoryStore region. SecurityStore owns credential + TX nonce-safety
 state only and uses activation-last A/B recovery; ambiguous committed nonce state
-fails protected TX closed. BLE/SoftDevice remain OFF in shipped firmware. History,
+fails protected TX closed. BLE/SoftDevice remain OFF in `main` (shipped firmware
+through M7P7A); PR #22 (draft, not merged) enables the M7P7B minimal runtime on its
+branch (see below). History,
 Config and Security async gate paths are software/host-test validated. M7P7A
 (`main@e012a76b01f21b9575840d25a5a26ad78721021d`) adds one shared physical-flash
 owner between the ORUN gate and relocated bond/InternalFS storage, plus Bluefruit
-SoC-event ownership/forwarding, with host and real compile/link evidence. Actual
-SoftDevice-enabled BLE runtime, bond persistence and concurrent physical flash
-behavior remain physically unvalidated.
+SoC-event ownership/forwarding, with host and real compile/link evidence. On `main`
+this remains host/build evidence only.
+
+**PR #22 branch (M7P7B, not merged; `docs/milestones/M7P7B.md`):** first real
+SoftDevice-enabled production BLE runtime with the minimal tracker admission policy
+(~10-min no-client window, connected suspends it, disconnect grants one fresh
+window, one client). It adds no ORUN application GATT service, pairing/ownership,
+provisioning or authorization; stock Bluefruit pairing/bonding stays reachable and
+is **not** ORUN authorization. Physical evidence on one RAK4631 with a phone
+(nRF Connect): real advertising, phone scan/connect, connected past the deadline,
+disconnect → loop-owned advertising restart → fresh window → reconnect (recorded on
+an earlier audit-fix build; re-test pending on the current build), no-client window
+close and clean cold boot. Still open: stock bond creation/persistence through
+relocated InternalFS, LoRa TX/RX coexistence with BLE, History/Config/Security flash
+mutation concurrency under BLE, current/power measurement; GNSS coexistence is
+blocked on the test unit (`GNSS: not detected`). Secure envelope, provisioning,
+application GATT, DFU and LoRa `OPEN_BLE` remain later work.
 
 M6 activity/geofence helpers allocate no durable state and do not reuse the
 position journal. Future activity history, polygon configuration, FREE_GRAZE

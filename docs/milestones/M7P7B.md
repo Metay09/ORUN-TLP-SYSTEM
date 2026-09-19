@@ -1,6 +1,6 @@
 # M7P7B — First real BLE runtime + tracker admission policy
 
-Status: **IMPLEMENTED ON BRANCH (draft PR #22) — host suite PASS; production RAK4630 build PASS; M7P7A guards re-verified intact; review finding (§8.1) and independent-audit lifecycle findings (§8.3) fixed. PHYSICAL VALIDATION IS PARTIAL: on the current audit-fix head `9673f49`, phone scan/connect, connected-past-deadline, disconnect→loop-restart→fresh-window→reconnect, no-client close and a clean power-cycle boot are PASS (§9); LoRa coexistence, GNSS coexistence (blocked on this unit), flash-mutation concurrency and power measurement remain PENDING; bond relocation is N/A. Do not merge. Do not claim full physical BLE PASS.**
+Status: **IMPLEMENTED ON BRANCH (draft PR #22, NOT merged) — host suite PASS; production RAK4630 build PASS; M7P7A guards re-verified intact; review finding (§8.1), independent-audit lifecycle findings (§8.3) and the lossy disconnect-event handoff (§8.5, direct Bluefruit event callback) fixed on host/build. PHYSICAL VALIDATION IS PARTIAL: evidence on audit-fix head `9673f49` (§9.1) covers boot advertising, phone scan/connect, connected past the deadline, no-client close and a clean cold boot; the post-disconnect lifecycle MUST be re-run on the §8.5 build (§9.0). Stock-bond / relocated-`InternalFS` physical path is PENDING (a merge gate unless waived), as are LoRa coexistence, flash-mutation concurrency and power measurement; GNSS coexistence is blocked on this unit. Do not merge. Do not claim full physical BLE PASS.**
 
 Baseline: `main@fb3a098c5bfc8b3488ba61a5ee28b57d8c5b0765`
 (M7P7A merged plus post-merge architecture checkpoint).
@@ -76,20 +76,22 @@ a genuine cross-task read — but it is the officially supported one: Bluefruit
 exposes both a polled API and an optional callback API side by side for
 exactly this use, and the polled form is what every reference sketch uses.
 The polled read remains the path for a connection that stays active. It cannot
-see a connection that starts and ends between two polls; §8.3 adds a minimal
+see a connection that starts and ends between two polls; §8.3/§8.5 add a minimal
 disconnect-event handoff for that.
 
-### 2.3 User callbacks run on a separate FreeRTOS task; `monotonic::nowMs()` must not
+### 2.3 Bluefruit callbacks run off the loop task; `monotonic::nowMs()` must not
 
 `cores/nRF5/utility/AdaCallback.c` shows `setConnectCallback`/
-`setDisconnectCallback`-style user callbacks are queued and executed on a
-dedicated `adafruit_callback_task`, not the Arduino loop task and not an ISR.
+`setDisconnectCallback`-style Periph callbacks are queued (heap-allocated,
+droppable) and executed on a dedicated `adafruit_callback_task`; the global
+`Bluefruit.setEventCallback()` callback instead runs directly on Bluefruit's BLE
+event task (§8.5). Neither is the Arduino loop task, and neither is an ISR.
 `monotonic_time.h`'s own doc comment is explicit: `nowMs()` is *"Loop task
 only; not an ISR or cross-task clock."* Calling it from a Bluefruit callback
-task would violate that contract. The original design avoided the question by not using callbacks. §8.3 does
-register a disconnect callback, but it is only a counter increment inside
-`taskENTER_CRITICAL()`; `BleAdmissionPolicy` and `monotonic::nowMs()` are still
-driven exclusively from `loop()`/`setup()`.
+context would violate that contract. The original design avoided the question by
+not using callbacks. §8.5 registers the direct global event callback, but it is
+only a counter increment inside `taskENTER_CRITICAL()`; `BleAdmissionPolicy` and
+`monotonic::nowMs()` are still driven exclusively from `loop()`/`setup()`.
 
 ### 2.4 `BLEAdvertising::restartOnDisconnect` — original reliance (SUPERSEDED, see §8.3)
 
@@ -143,8 +145,12 @@ and a `kStartAdvertising` action was added.)
   SoftDevice is already enabled when they run, and `Bluefruit.begin()` is what
   enables SoftDevice for the rest of the boot. On success: sets a compact
   identity-derived name (`ORUN-XXXXXXXX`, low 32 bits of the existing legacy
-  device ID — already transmitted in the clear in every TLP v1 POSITION
-  packet, so this adds no new exposure), disables the stock connection LED
+  device ID, which is already sent in the clear in every TLP v1 POSITION
+  packet). No new secret or credential is disclosed, but BLE advertising is a
+  **new** surface: the identifier is now discoverable and correlatable by any
+  nearby commodity BLE scanner (as `ORUN-4B275BA5` was by a phone). This is not
+  a privacy redesign; it is recorded so the exposure is not understated),
+  disables the stock connection LED
   (§2.5), sets `restartOnDisconnect(false)` (§8.3; originally `true`, §2.4), starts
   advertising with no library-owned timeout, and calls
   `ble_admission.begin(now)`. `ble_ready` guards every later Bluefruit call
@@ -209,14 +215,22 @@ What still exists at framework level (pinned Adafruit nRF52 1.7.0, verified in
   `loadBondKey`/`removeBondKey`, `BLEConnection::secured`). Stock defaults are
   Just Works (`bond=1`, `mitm=0`, `io_caps=NONE`, LESC supported), i.e.
   unauthenticated pairing; M7P7B does not change them.
-- Consequently a peer *can* initiate stock pairing/bonding. M7P7B neither
-  prevents nor uses it. Bond keys, if ever stored, go to `InternalFS` relocated
-  by the M7P4 patch (§9, row 10: not exercised).
+- The path is reachable in this runtime: `Bluefruit.begin()` →
+  `Security.begin()`, and `Bluefruit.begin()` → `bond_init()` →
+  `InternalFS.begin()` (`bluefruit.cpp`, `utility/bonding.cpp`). A peer *can*
+  initiate stock pairing/bonding, and a successful bond can write keys/CCCD
+  state to the `InternalFS` relocated by the M7P4 patch, through the M7P7A
+  shared physical-flash ownership. M7P7B neither prevents nor uses it. That
+  path physically exercises the relocated bond partition, M7P7A flash ownership
+  and Bluefruit/`InternalFS` SoftDevice-event interaction, and it is **not yet
+  exercised on hardware** (§9, row 10: PENDING).
+- No ORUN pairing/provisioning UX is implemented.
 - **A bare BLE connection, and a framework bond, are not ORUN application
   authorization** and must not be described or relied on as such. Any future
   ORUN authorization/ownership model is a separate milestone.
-- Physical validation did not exercise bonding: nRF Connect showed
-  `CONNECTED` / `NOT BONDED` throughout.
+- Physical validation did not create a bond: nRF Connect showed
+  `CONNECTED` / `NOT BONDED` throughout. This is "not yet tested", not "not
+  applicable" (§9, row 10; §11).
 
 ## 6. M7P7A invariant re-verification
 
@@ -373,6 +387,11 @@ and BLE availability is no longer falsely claimed.
 
 ### 8.3 Independent audit findings (pinned Adafruit nRF52 1.7.0) — fixed
 
+> **Callback path superseded by §8.5.** §8.3 originally registered
+> `Periph.setDisconnectCallback()` (an `ada_callback` path). Production now
+> uses `Bluefruit.setEventCallback()`; where the text below says otherwise, §8.5
+> is authoritative.
+
 An independent audit of `65893e2` found three related correctness issues. All
 three were re-verified against the pinned source in
 `framework-arduinoadafruitnrf52` (`BLEAdvertising.cpp`, `bluefruit.cpp`,
@@ -422,8 +441,9 @@ owner of post-disconnect `Advertising.start(0)` and can see and retry failures.
     throttled to `kRetryIntervalMs`, only while the window is open; retries
     never extend the window (expiry → `kClose`, not another start).
   - All deadlines use `monotonic::reached()` (wrap-safe).
-- `main.cpp`: `restartOnDisconnect(false)`; `Periph.setDisconnectCallback()`
-  registered; the loop samples `{event counter, Advertising.isRunning(),
+- `main.cpp`: `restartOnDisconnect(false)`; a disconnect handoff callback
+  registered (§8.3: `Periph.setDisconnectCallback()`; **now**
+  `Bluefruit.setEventCallback(onBleEvent)`, §8.5); the loop samples `{event counter, Advertising.isRunning(),
   Periph.connected()}` (advertising before connection, since the framework
   clears `_running` only after the connection object exists) and:
   - `kClose`: `Advertising.stop()`, then trusts *observed* state, not the
@@ -440,23 +460,26 @@ owner of post-disconnect `Advertising.start(0)` and can see and retry failures.
 
 **Concurrency ownership**
 
-- Pinned 1.7.0 runs the disconnect callback through `ada_callback()` on the
-  dedicated FreeRTOS "Callback" task (not an ISR, not `loop()`).
-- `onBleDisconnect()` only does `taskENTER_CRITICAL(); ++ble_disconnect_events;
-  taskEXIT_CRITICAL();` — the same primitive `radio_manager.cpp` uses for its
+- Pinned 1.7.0 runs the *Periph* disconnect callback through `ada_callback()`
+  on the dedicated FreeRTOS "Callback" task; that path was replaced (§8.5). The
+  current `onBleEvent()` runs on the BLE event task (not an ISR, not `loop()`).
+- `onBleEvent()` on `BLE_GAP_EVT_DISCONNECTED` only does
+  `taskENTER_CRITICAL(); ++ble_disconnect_events; taskEXIT_CRITICAL();` — the same primitive `radio_manager.cpp` uses for its
   cross-task counters. It calls no `monotonic::nowMs()`, `BleAdmissionPolicy`,
   Serial, flash, radio or Bluefruit/SoftDevice API.
 - `loop()` is the only consumer (snapshot under the same critical section) and
   the sole owner of policy, clock, Serial and every Bluefruit start/stop call.
-  `ble_disconnect_events_seen` and the restart-log flag are loop-only. A
-  counter (not a flag) is used so back-to-back disconnects are not collapsed
-  before the loop observes them.
+  `ble_disconnect_events_seen` and the restart-log flag are loop-only. The
+  handoff is a bounded integer counter, but `loop()` reduces
+  `counter != seen` to **one** logical `disconnect_event` per tick: several
+  disconnects observed since the previous tick are *not* individually
+  preserved. That is sufficient for the admission semantics, which only need one
+  fresh window measured from the latest observation.
 - A late event for a session already handled by polling only refreshes the
   fresh window by the callback latency; an event arriving while a *new* session
   is connected does not disconnect it.
-- Residual, not solved here: `ada_callback_invoke()` drops the event on heap
-  exhaustion (`rtos_malloc` failure). A fully-missed short session coinciding
-  with that would not grant a fresh window.
+- The residual recorded here originally (`ada_callback_invoke()` dropping the
+  event on heap exhaustion) no longer applies to the disconnect path: §8.5.
 
 **Tests added / changed**
 
@@ -472,8 +495,9 @@ owner of post-disconnect `Advertising.start(0)` and can see and retry failures.
   close/start retry, connected-across-rollover and event-across-rollover.
 - `tests/startup/stubs/bluefruit.h`: models `stop()` failure (unchanged
   `_running`), failed `start()` leaving `_running`, a `stop()` racing a
-  connection, `restartOnDisconnect(false)`, and `ada_callback`-style deferred
-  disconnect-callback delivery. `tests/r2/stubs/FreeRTOS.h`: counts
+  connection, `restartOnDisconnect(false)`, and (§8.3) `ada_callback`-style
+  deferred Periph disconnect-callback delivery — extended in §8.5 with the direct
+  global event callback. `tests/r2/stubs/FreeRTOS.h`: counts
   `taskENTER_CRITICAL()` calls.
 - `test_startup.cpp` (`success`, `advfail`, `blefail` all still run): asserts
   `restartOnDisconnect` off and the callback registered; callback isolation (one
@@ -503,11 +527,11 @@ owner of post-disconnect `Advertising.start(0)` and can see and retry failures.
   the no-ORUN-application-GATT/authorization/provisioning boundary (§5) are untouched (no diff in those
   sources; their host tests pass).
 
-### 8.4 Current resource figures and linked-ELF evidence (head `9673f49`)
+### 8.4 Resource figures and linked-ELF evidence
 
-Current production build (`pio run -d firmware -e rak4630`, rebuilt from the
-exact current head; this is also the image that was physically uploaded and
-exercised in §9):
+Production build at the **§8.5 (current)** head — see §8.5 for the current
+figures. Figures below are for audit-fix head `9673f49`, the image that was
+physically uploaded and exercised in §9.1 (**historical for the current build**):
 
 - RAM: **22,084 B / 248,832 B (8.9%)**
 - Flash: **225,452 B / 815,104 B (27.7%)**
@@ -515,7 +539,7 @@ exercised in §9):
 
 Delta vs. `main@fb3a098` (M7P7A merged baseline: RAM 15,460 B / Flash 159,024 B):
 
-| | Baseline | M7P7B (current, `9673f49`) | Delta |
+| | Baseline | M7P7B (`9673f49`, historical) | Delta |
 | --- | --- | --- | --- |
 | RAM | 15,460 B (6.2%) | 22,084 B (8.9%) | **+6,624 B** |
 | Flash | 159,024 B (19.5%) | 225,452 B (27.7%) | **+66,428 B** |
@@ -541,8 +565,8 @@ defaults):
   attributed to optional services.
 - **Linked and verified present:** the `Bluefruit` (`AdafruitBluefruit`) and
   `InternalFS` objects (`B`); `AdafruitBluefruit::begin`/`setName`/
-  `autoConnLed`; GAP/GATT core: `BLEPeriph` (incl. `begin`, `connected`,
-  `setDisconnectCallback`), `BLEAdvertising` (`start`/`stop`/`isRunning`/
+  `autoConnLed`; GAP/GATT core: `BLEPeriph` (incl. `begin`, `connected`; at `9673f49` also
+  `setDisconnectCallback`, no longer linked after §8.5), `BLEAdvertising` (`start`/`stop`/`isRunning`/
   `restartOnDisconnect`/`_eventHandler`), `BLEAdvertisingData::addFlags`/
   `addName`, `BLEGatt`, `BLEConnection`, `BLEUuid`, `BLECharacteristic`,
   `BLEClientService`/`BLEClientCharacteristic`; central-side core classes
@@ -557,21 +581,152 @@ defaults):
   difference above; it is **not decomposed** per component here, and no
   per-component size is claimed.
 
+### 8.5 Direct Bluefruit event handoff (blocking audit fix) — current head
+
+**Finding.** After §8.3 the disconnect notification still travelled through
+`Periph.setDisconnectCallback()`, i.e. Bluefruit's `ada_callback()` queue.
+`AdaCallback.c` allocates each callback with `rtos_malloc()`, so
+`ada_callback_invoke()` can fail and drop the event, and delivery can also be
+delayed on the "Callback" task. A short connect+disconnect that fits entirely
+between two loop polls depends solely on that event; if it is dropped or
+arrives after the old deadline was already confirmed closed, the required fresh
+post-disconnect ~10-minute window is lost.
+
+**Change (production).**
+
+- Old: `Bluefruit.Periph.setDisconnectCallback(onBleDisconnect)` (through
+  `ada_callback`, heap-allocated, droppable, runs on the "Callback" task).
+- New: `Bluefruit.setEventCallback(onBleEvent)`. `onBleEvent(ble_evt_t*)` reads
+  only `evt->header.evt_id`; on `BLE_GAP_EVT_DISCONNECTED` it does
+  `taskENTER_CRITICAL(); ++ble_disconnect_events; taskEXIT_CRITICAL();`, and
+  returns immediately for every other event. It calls no `monotonic::nowMs()`,
+  `BleAdmissionPolicy`, Serial, flash, radio or Bluefruit API. `loop()` remains
+  the sole owner of time, policy, advertising start/stop, logging, flash, radio
+  and application state. `restartOnDisconnect(false)` is unchanged.
+- Related, same seam: in the loop's `kClose` branch the disconnect counter is
+  read *after* the connection state, and the close is left unconfirmed if a
+  disconnect event is pending. This covers a whole connect+disconnect completing
+  between `Advertising.stop()` and the loop's state reads (neither read would
+  show the client although a real disconnect is owed a fresh window). The next
+  tick consumes the event, cancels the close and restarts advertising.
+- The counter wording was corrected (§8.3): it is a bounded integer counter that
+  `loop()` reduces to one logical event per tick; multiple disconnects are not
+  individually preserved.
+
+**Order-of-events evidence (pinned Adafruit nRF52 1.7.0,
+`libraries/Bluefruit52Lib/src/bluefruit.cpp`, `AdafruitBluefruit::_ble_handler`).**
+For a disconnect, in this order, all on the BLE event task
+(`adafruit_ble_task` → `sd_ble_evt_get` → `_ble_handler`):
+
+1. `conn->_eventHandler(evt)` (line 789) — `BLEConnection.cpp` marks
+   `_connected = false` on `BLE_GAP_EVT_DISCONNECTED`; `Security._eventHandler`.
+2. The `BLE_GAP_EVT_DISCONNECTED` case (lines 837–856): connection LED, the
+   `Periph._disconnect_cb` `ada_callback(...)` dispatch (unused by ORUN now),
+   then `delete _connection[conn_hdl]; _connection[conn_hdl] = NULL`.
+3. `Advertising._eventHandler(evt)` (line 882) — the framework's own restart is a
+   no-op because production sets `restartOnDisconnect(false)`.
+4. `_conn_hdl` reset, `Periph._eventHandler`, `Central._eventHandler`,
+   `Discovery`/`Gatt` handlers.
+5. **`if (_event_cb) _event_cb(evt);` (line 934) — last.**
+
+So the global callback runs after Bluefruit's own disconnect state handling for
+that event, directly (no `ada_callback`, no heap allocation), and
+`Periph.connected()` no longer counts the connection when it fires. It is
+invoked for every BLE event, hence the strict `evt_id` filter. Central role is
+not started (`central_count = 0`), so a `BLE_GAP_EVT_DISCONNECTED` here is a
+peripheral-role disconnect. `Bluefruit.setEventCallback` has no other user in
+the framework or ORUN sources.
+
+**Tests.** `tests/startup/stubs/bluefruit.h` now distinguishes
+`Periph.setDisconnectCallback()` (queued, droppable, deferred) from
+`Bluefruit.setEventCallback()` (direct, synchronous, invoked last for
+connect/disconnect, with an `event_delivery` knob). `test_startup.cpp`:
+
+- asserts production registers `onBleEvent` and leaves
+  `Periph.disconnect_cb == nullptr`, with no Periph callback ever queued;
+- a short connect+disconnect entirely between two loop polls, at the edge of the
+  old deadline, still grants a full fresh window through the direct callback
+  (BLE stays open past the *original* deadline, closes only after the fresh one);
+- callback isolation: `onBleEvent` on disconnect changes only the counter (one
+  balanced critical section; no log, clock, policy, advertising or flash/radio
+  effect); connect/other event ids change nothing and take no critical section;
+- new scenario `noevent` (negative control, added to `run_host_tests.sh`): the
+  same short cycle with delivery disabled loses the window and BLE closes at the
+  original deadline — the opposite of the main flow;
+- a connect+disconnect completing between `stop()` and the loop's reads at the
+  deadline leaves the close unconfirmed, then restarts advertising with a fresh
+  window;
+- all previous lifecycle coverage is unchanged (boot window, connected
+  suspends, disconnect fresh window, no-client close, stop-failure and
+  start-failure retry, close/connect race, UINT32 wrap in the policy test,
+  initial advertising failure, `Bluefruit.begin()` failure).
+
+Mutation-checked (host suite fails in each case): removing the
+`setEventCallback` registration; disabling event delivery in the stub; using the
+Periph disconnect callback instead; dropping the pending-event guard on close
+confirmation.
+
+**Build/host evidence.**
+
+- `bash firmware/tests/run_host_tests.sh`: **PASS** (exit 0; 8 startup scenarios
+  `mutex gate queue lora success advfail blefail noevent`).
+- `pio run -d firmware -e rak4630`: **PASS** — RAM **22,084 B / 248,832 B
+  (8.9%)**, Flash **225,484 B / 815,104 B (27.7%)**; `check_exclusive_owner` and
+  `check_application_ceiling` PASS.
+- Delta vs. `main@fb3a098` (RAM 15,460 B / Flash 159,024 B): RAM **+6,624 B**,
+  Flash **+66,460 B**. Relative to `9673f49` (225,452 B): +0 B RAM, +32 B Flash.
+- `pio run -d firmware -e rak4630_m7p7a_compile`: **PASS, unchanged** — RAM
+  16,128 B, Flash 127,468 B.
+- ELF (`arm-none-eabi-nm -C`): `AdafruitBluefruit::setEventCallback` and
+  `onBleEvent(ble_evt_t*)` are linked; `BLEPeriph::setDisconnectCallback` is no
+  longer linked. The optional-service result of §8.4 is unchanged (zero
+  `BLEDfu`/`BLEUart`/`BLEHid*`/`BLEMidi`/`EddyStone`/`BLEBas`/`BLEHrm`/`BLECts`/
+  `BLEAncs`/`BLEBeacon`/`BLEDis` symbols). `ada_callback_*` remains linked as
+  framework code but is not on the ORUN disconnect path.
+- No change to TLP v1 bytes/golden fixtures, RF, GNSS, storage layout/partitions,
+  M7P7A flash/event ownership, timeout constants, single-client configuration
+  or role/capability semantics.
+
+**Physical invalidation.** This change alters only how the disconnect event is
+acquired. Evidence from `9673f49` for boot advertising, phone scan, initial
+connection, connected past the deadline, no-client close and clean cold boot
+remains useful; the post-disconnect lifecycle (§9.0) must be re-run on this
+build.
+
 ## 9. Physical-validation evidence
 
 **Host/build PASS is not physical PASS.** Everything in §9.1 was collected on
-one real RAK4631 running the **current audit-fix head `9673f49`** (production
-build RAM 22,084 B / Flash 225,452 B, §8.4), with a Samsung phone running
-Nordic nRF Connect for Mobile as the BLE scanner/client, plus the unit's USB
-serial log. §9.2 is the older `65893e2` evidence and is kept only as history.
+one real RAK4631 running the **audit-fix head `9673f49`** (production build RAM
+22,084 B / Flash 225,452 B, §8.4), with a Samsung phone running Nordic nRF
+Connect for Mobile as the BLE scanner/client, plus the unit's USB serial log.
+That is **not** the current build: §8.5 replaced the disconnect-event path, so
+the post-disconnect lifecycle must be re-run (§9.0). §9.2 is the older `65893e2`
+evidence and is kept only as history.
 
 Legend: PASS = observed on hardware; PENDING = not yet performed (not a
 failure); BLOCKED = cannot be performed on this physical unit as configured
-(not PASS, not N/A for the product); N/A = not exercised by this slice.
+(not PASS, not N/A for the product); N/A = genuinely not applicable to this slice (a reachable-but-untested path is PENDING, never N/A).
 
 **Full physical validation is NOT complete.**
 
-### 9.1 Current head `9673f49`
+### 9.0 Physical retest required on the §8.5 build (not yet performed)
+
+Upload the current production image, then, with the phone and the USB serial
+log:
+
+1. phone connects; 2. phone disconnects; 3. advertising returns; 4. `BLE?` shows
+`ready=yes advertising=yes connected=0 policy=open initial_start=ok`;
+5. reconnect within the fresh window; 6. `BLE?` shows
+`ready=yes advertising=no connected=1 policy=open initial_start=ok`.
+
+If practical, also one deliberately quick connect/disconnect cycle, confirming
+advertising and the fresh window remain available. That would **not** by itself
+prove the "entirely between two loop polls" timing (the poll phase cannot be
+controlled from the phone); that case stays host-tested only unless the test
+genuinely demonstrates the timing condition.
+Results are recorded here only after they are observed.
+
+### 9.1 Audit-fix head `9673f49` (predates §8.5)
 
 | # | Item | Status | Evidence / reason |
 | --- | --- | --- | --- |
@@ -580,25 +735,22 @@ failure); BLOCKED = cannot be performed on this physical unit as configured
 | 2 | Real RF scanner sees the peripheral | **PASS** | Samsung phone, nRF Connect for Mobile, saw `ORUN-4B275BA5`, address `C5:DD:01:85:C9:4B`. The stock Samsung Bluetooth-settings screen did not list it; that is expected for a bare BLE peripheral and is not a firmware failure. |
 | 2b | Phone connects | **PASS** | nRF Connect connected: `CONNECTED`, `NOT BONDED`. Only standard services visible: Generic Access `0x1800`, Generic Attribute `0x1801`. No ORUN-specific application GATT service present (§5). Simultaneous serial: `BLE ready=yes advertising=no connected=1 policy=open initial_start=ok`. |
 | 3 | Connected client survives the original ~10-min no-client deadline | **PASS** | The phone stayed connected well beyond ~10 minutes and was not closed by the admission timeout. No exact duration is claimed beyond "well beyond 10 minutes". |
-| 4 | Disconnect → loop-owned restart → advertising restored | **PASS** | After phone disconnect, `ORUN-4B275BA5` reappeared advertising in nRF Connect. This exercises the §8.3 change from framework auto-restart to loop-owned start/retry. |
-| 4b | Fresh post-disconnect admission window | **PASS** | The device was connectable again in a renewed ~10-min window (see row 6). |
+| 4 | Disconnect → loop-owned restart → advertising restored | **PASS on `9673f49`; RETEST REQUIRED on §8.5 build** | After phone disconnect, `ORUN-4B275BA5` reappeared advertising in nRF Connect. This exercises the §8.3 change from framework auto-restart to loop-owned start/retry. |
+| 4b | Fresh post-disconnect admission window | **PASS on `9673f49`; RETEST REQUIRED on §8.5 build** | The device was connectable again in a renewed ~10-min window (see row 6). |
 | 5 | BLE closes after a full window with no client | **PASS** | Serial: `BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok`, then `BLE closed; no client connected within window`, then `BLE ready=yes advertising=no connected=0 policy=closed initial_start=ok`. |
-| 6 | Reconnect during the renewed window | **PASS** | Phone reconnected within the renewed window; serial again `BLE ready=yes advertising=no connected=1 policy=open initial_start=ok`. |
+| 6 | Reconnect during the renewed window | **PASS on `9673f49`; RETEST REQUIRED on §8.5 build** | Phone reconnected within the renewed window; serial again `BLE ready=yes advertising=no connected=1 policy=open initial_start=ok`. |
 | 7a | LoRa TX/RX coexistence with SoftDevice active | **PENDING** | Second LoRa node not available/powered during validation. |
 | 7b | GNSS coexistence | **BLOCKED (this unit)** | Unit reports `GNSS: not detected`. Not PASS; not N/A for the product. Needs a GNSS-equipped unit. |
 | 8 | Flash mutation (History/Config/Security) concurrency with BLE active | **PENDING** | No safe runtime mutation source available in this setup. |
-| 9 | Very short connect+disconnect entirely between loop polls | **PENDING (host-tested only)** | Covered by policy/startup host tests; not physically exercised. |
+| 9 | Very short connect+disconnect entirely between loop polls | **PENDING (host-tested only)** | Covered by policy/startup host tests, including the direct-event path (§8.5); not physically exercised. |
 | 9b | `Advertising.start()`/`stop()` failure and retry | **PENDING (host-modelled only)** | No practical physical trigger was used. |
-| 10 | Relocated `InternalFS`/bond behavior | **N/A (not exercised)** | The phone remained `NOT BONDED`; no bond was created or read back. |
+| 10 | Stock bond creation/persistence via relocated `InternalFS` (M7P4) under M7P7A shared flash ownership | **PENDING — physically reachable stock bonding/`InternalFS` path not yet exercised** | Reachable: `Bluefruit.begin()` → `Security.begin()`/`bond_init()` → `InternalFS.begin()`; Just Works defaults let a peer initiate bonding (§5). The phone stayed `NOT BONDED`, so no bond was created, persisted, reloaded after reboot or removed. Not PASS, not N/A. A framework bond is **not** ORUN authorization and no ORUN pairing/provisioning UX exists. Merge gate unless the owner explicitly waives it (§11). |
 | 11 | Current/power measurement (advertising / connected / closed) | **PENDING** | Not measured. |
 
-Bounded residual risk (documented, **not** observed on hardware): the
-disconnect notification reaches the loop through Bluefruit's `ada_callback`
-handoff (§8.3), and `ada_callback_invoke()` can drop the callback if its heap
-allocation fails. A connect+disconnect that is *entirely missed by polling*
-**and** whose callback is dropped would not grant a fresh window. Connections
-seen by polling are unaffected. This was not triggered in any physical test and
-is not claimed as a failure.
+Former residual risk (`ada_callback_invoke()` heap-allocation drop of the Periph
+disconnect callback, §8.3) is **removed for the disconnect path** by §8.5: the
+event now arrives through Bluefruit's direct global event callback with no
+`ada_callback`/heap allocation. Nothing about it was observed on hardware.
 
 ### 9.2 Historical evidence on `65893e2` (superseded by §9.1)
 
@@ -618,9 +770,10 @@ Retained for history only; it is not evidence for the current build.
   current firmware (§9.1). No FAIL is recorded against the firmware.
 - Post-re-upload `BLE?` recovery (not a clean power-cycle) — superseded by row 1b.
 
-Summary (current head): rows 1, 1b, 2, 2b, 3, 4, 4b, 5, 6 are PASS on one unit
-with one phone/client type; 7a, 8, 9, 9b, 11 are PENDING; 7b is BLOCKED on this
-unit; 10 is N/A. Do not merge on the basis of this evidence alone (§11).
+Summary: on `9673f49`, rows 1, 1b, 2, 2b, 3, 4, 4b, 5, 6 are PASS on one unit
+with one phone/client type; rows 4, 4b and 6 must be re-run on the §8.5 build
+(§9.0). Rows 7a, 8, 9, 9b, 10, 11 are PENDING; 7b is BLOCKED on this unit. No
+row is N/A. Do not merge on the basis of this evidence alone (§11).
 
 ## 10. Explicit non-claims / deferred work
 
@@ -653,7 +806,13 @@ item is waived is an owner decision, not made here.
 
 **Required physical gates (still open):**
 
-- LoRa TX/RX coexistence with SoftDevice active (row 7a) — needs a second
+- Post-disconnect lifecycle retest on the §8.5 build (§9.0): disconnect →
+  advertising returns → fresh window → reconnect.
+- Real stock bond creation and persistence/reboot through relocated `InternalFS`
+  (row 10; `M7P7A.md` §8 "real bond creation and persistence in relocated
+  InternalFS"). Physically reachable, not yet exercised; a merge gate unless the
+  owner explicitly waives it. Not ORUN authorization.
+- LoRa TX/RX coexistence with SoftDevice/BLE active (row 7a) — needs a second
   powered LoRa node.
 - Flash-mutation (History/Config/Security) concurrency while BLE is active
   (row 8; `M7P7A.md` §8) — needs a safe runtime mutation source.
@@ -671,12 +830,9 @@ item is waived is an owner decision, not made here.
 
 - Very short connect+disconnect between loop polls (row 9), and
   `Advertising.start()`/`stop()` failure/retry (row 9b).
-- The `ada_callback` drop residual (§9.1) — bounded, unobserved risk.
 
 **Deferred / out of scope for M7P7B:**
 
-- Bond creation/persistence and relocated-`InternalFS` bond behavior (row 10;
-  bonding not exercised).
 - ORUN authorization, ownership, provisioning, PIN, application GATT services,
-  LoRa `OPEN_BLE`, DFU/M7P8, multi-client BLE, role-aware BLE policy,
-  stalled-session watchdog (§10).
+  LoRa `OPEN_BLE`, DFU/M7P8, secure envelope, multi-client BLE, role-aware BLE
+  policy, stalled-session watchdog (§10).

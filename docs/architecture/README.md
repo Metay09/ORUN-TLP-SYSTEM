@@ -1,7 +1,7 @@
 # ORUN Architecture Documentation Index
 
 Status: **CURRENT documentation governance index**.
-Last reviewed against `main@e012a76b01f21b9575840d25a5a26ad78721021d` (M7P7A merged). M7P6B SecurityStore/TX nonce persistence and the M7P7A BLE flash/SoftDevice event-ownership prerequisite are implemented; BLE runtime/admission, secure RF envelope, provisioning transport and field-network/serviceability runtime remain later work.
+Last reviewed against `main@e012a76b01f21b9575840d25a5a26ad78721021d` (M7P7A merged). M7P6B SecurityStore/TX nonce persistence and the M7P7A BLE flash/SoftDevice event-ownership prerequisite are implemented; On `main` (M7P7A) BLE runtime/admission is **not** enabled. **PR #22 (draft, `feat/m7p7b-ble-runtime-admission`, NOT merged)** implements the M7P7B minimal tracker BLE runtime/admission (`docs/milestones/M7P7B.md`); physical evidence on that branch so far: real advertising, phone connection, connected past the ~10-min deadline, disconnect → loop-owned restart → fresh window → reconnect (on an earlier audit-fix build; re-test pending on the current build), no-client close and a clean cold boot. Still open there: real stock bond persistence via relocated InternalFS, LoRa coexistence, flash-mutation concurrency under BLE, power measurement; GNSS coexistence is blocked on the test unit. Secure RF envelope, provisioning transport, ORUN application GATT, DFU and field-network/serviceability runtime remain later work.
 Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 
 This directory contains current owner-approved rules plus historical/proposed

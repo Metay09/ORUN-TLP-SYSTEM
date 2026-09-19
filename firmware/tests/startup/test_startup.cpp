@@ -91,7 +91,12 @@ int main(int argc, char** argv) {
   // Advertising.start() returning false / Bluefruit.begin() returning false.
   const bool ble_advertising_fails = mode == "advfail";
   const bool ble_runtime_fails = mode == "blefail";
-  const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails;
+  // "noevent" is a negative control: same healthy boot, but Bluefruit's global
+  // event callback never fires, proving the short-cycle assertions below fail
+  // without the direct event handoff.
+  const bool no_event_control = mode == "noevent";
+  const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails ||
+                       no_event_control;
   // Each scenario runs in a new process, like a cold boot (static driver gate).
   assert(success || mode == "mutex" || mode == "gate" || mode == "queue" ||
          mode == "lora");
@@ -287,11 +292,14 @@ int main(int argc, char** argv) {
                           "ROLE command rejected\n" + expected_ble);
 
   // Production explicitly owns restart: the framework's own (result-ignoring)
-  // restart-on-disconnect must be off whenever BLE runtime is up, and the
-  // disconnect handoff callback registered.
+  // restart-on-disconnect must be off whenever BLE runtime is up. The
+  // disconnect handoff must use Bluefruit's direct global event callback, NOT
+  // Periph's ada_callback-routed (heap-allocating, droppable) disconnect
+  // callback.
   if (!ble_runtime_fails) {
     assert(!Bluefruit.Advertising.restart_on_disconnect);
-    assert(Bluefruit.Periph.disconnect_cb == &onBleDisconnect);
+    assert(Bluefruit.event_cb == &onBleEvent);
+    assert(Bluefruit.Periph.disconnect_cb == nullptr);
   }
 
   auto bleQuery = [&]() {
@@ -333,14 +341,30 @@ int main(int argc, char** argv) {
     assert(!ble_admission.isOpen());
   }
 
-  if (ble_ok) {
+  if (no_event_control) {
+    // Negative control: identical short connect+disconnect as the main flow
+    // below, but the event never reaches onBleEvent(). The fresh window is
+    // then NOT granted and the original deadline closes BLE. (The main flow
+    // asserts the opposite, so it fails if registration/delivery is lost.)
+    Bluefruit.event_delivery = false;
+    tick(kWindow - 5000);
+    Bluefruit.simulateConnect();
+    Bluefruit.simulateDisconnect();  // Entirely between two loop polls.
+    assert(Bluefruit.event_cb_calls == 0 && ble_disconnect_events == 0);
+    tick(1000);
+    assert(has(tick(6000), "BLE closed; no client connected within window\n"));
+  }
+
+  if (ble_ok && !no_event_control) {
     // --- Callback isolation (constraint: no loop-only work off-task). ------
     {
       const unsigned enters = critical_entries;
       const uint32_t clock_before = test_now;
       const uint32_t events_before = ble_disconnect_events;
       Serial.output.clear();
-      onBleDisconnect(0, 0x13);
+      ble_evt_t disconnect_evt{};
+      disconnect_evt.header.evt_id = BLE_GAP_EVT_DISCONNECTED;
+      onBleEvent(&disconnect_evt);
       // Exactly one critical section, balanced, one counter increment, and
       // nothing else observable: no log, no policy change, no Bluefruit call.
       assert(critical_entries == enters + 1 && critical_depth == 0);
@@ -349,6 +373,16 @@ int main(int argc, char** argv) {
       assert(ble_admission.isOpen() && !ble_admission.isConnected());
       assert(Bluefruit.Advertising.start_calls == 1 && Bluefruit.Advertising.stop_calls == 0);
       assert(test_now == clock_before);
+      // Any other event id (connect, conn-param update, ...) is ignored
+      // entirely: no critical section, no counter change.
+      for (uint16_t id : {BLE_GAP_EVT_CONNECTED, uint16_t{0x12}, uint16_t{0x50}}) {
+        ble_evt_t other{};
+        other.header.evt_id = id;
+        onBleEvent(&other);
+      }
+      assert(critical_entries == enters + 1 && critical_depth == 0);
+      assert(ble_disconnect_events == events_before + 1);
+      assert(Serial.output.empty() && test_now == clock_before);
       // Loop consumes it as one (harmless, still-open) event; nothing else.
       const std::string out = tick(0);
       assert(out.empty());
@@ -365,10 +399,10 @@ int main(int argc, char** argv) {
     assert(Bluefruit.Advertising.start_calls == 1 && Bluefruit.Advertising.stop_calls == 0);
 
     // --- Disconnect: framework does NOT restart (restartOnDisconnect(false));
-    // callback runs on the other task; loop restarts and grants a window. ---
+    // the direct event callback counts it; loop restarts and grants a window.
     Bluefruit.simulateDisconnect();
+    assert(Bluefruit.Periph.pending_disconnect_cbs == 0);  // no Periph/ada path
     assert(!Bluefruit.Advertising.isRunning());  // no split ownership
-    Bluefruit.deliverPendingCallbacks();
     assert(has(tick(0), "BLE advertising restarted\n"));
     assert(Bluefruit.Advertising.start_calls == 2);
     assert(bleQuery() ==
@@ -380,7 +414,6 @@ int main(int argc, char** argv) {
     Bluefruit.simulateConnect();
     tick(1000);
     Bluefruit.simulateDisconnect();
-    Bluefruit.deliverPendingCallbacks();
     Bluefruit.Advertising.start_result = false;
     unsigned starts_before = Bluefruit.Advertising.start_calls;
     assert(has(tick(0), "BLE advertising restart failed; retrying\n"));
@@ -410,7 +443,10 @@ int main(int argc, char** argv) {
     Bluefruit.simulateConnect();
     Bluefruit.simulateDisconnect();  // Same framework tick: no poll saw it.
     Bluefruit.Advertising.running = false;  // Model restart owner: loop only.
-    Bluefruit.deliverPendingCallbacks();
+    // Delivered through the direct global event callback (no Periph/ada_callback
+    // path exists): the counter moved without any loop tick or deferred task.
+    assert(Bluefruit.event_cb_calls >= 1 && Bluefruit.Periph.pending_disconnect_cbs == 0);
+    assert(ble_disconnect_events != ble_disconnect_events_seen);
     assert(Bluefruit.Periph.connected() == 0);
     assert(has(tick(1000), "BLE advertising restarted\n"));
     // Past the ORIGINAL deadline: without the event this would have closed.
@@ -441,7 +477,23 @@ int main(int argc, char** argv) {
     assert(Bluefruit.Advertising.start_calls == starts_before);
     // Real disconnect afterwards: restart + fresh window.
     Bluefruit.simulateDisconnect();
-    Bluefruit.deliverPendingCallbacks();
+    assert(has(tick(0), "BLE advertising restarted\n"));
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok\n");
+    assert(!has(tick(kWindow - 1), "BLE closed"));
+
+    // --- A whole connect+disconnect completing between stop() and the loop's
+    // state reads at the deadline: neither read shows the client, but the real
+    // disconnect (counted by the event callback) is owed a fresh window. ------
+    Bluefruit.Advertising.stop_race = [] {
+      Bluefruit.simulateConnect();
+      Bluefruit.simulateDisconnect();
+    };
+    assert(!has(tick(1), "BLE closed"));  // close NOT confirmed
+    Bluefruit.Advertising.stop_race = nullptr;
+    assert(Bluefruit.Periph.connected() == 0 && !Bluefruit.Advertising.isRunning());
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=no connected=0 policy=closing initial_start=ok\n");
     assert(has(tick(0), "BLE advertising restarted\n"));
     assert(bleQuery() ==
            "BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok\n");
@@ -468,13 +520,20 @@ int main(int argc, char** argv) {
     // Stays closed: no more stop/start attempts, no reopen from events.
     const unsigned stops_done = Bluefruit.Advertising.stop_calls;
     const unsigned starts_done = Bluefruit.Advertising.start_calls;
-    onBleDisconnect(0, 0x13);
+    {
+      ble_evt_t late{};
+      late.header.evt_id = BLE_GAP_EVT_DISCONNECTED;
+      onBleEvent(&late);
+    }
     assert(tick(kWindow).empty());
     assert(Bluefruit.Advertising.stop_calls == stops_done);
     assert(Bluefruit.Advertising.start_calls == starts_done);
     assert(bleQuery() ==
            "BLE ready=yes advertising=no connected=0 policy=closed initial_start=ok\n");
     assert(critical_depth == 0);
+    // The Periph/ada_callback path was never used by production.
+    assert(Bluefruit.Periph.disconnect_cb == nullptr &&
+           Bluefruit.Periph.pending_disconnect_cbs == 0);
   }
 
   assert(munmap(region, kRegionSize) == 0);

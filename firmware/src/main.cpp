@@ -67,21 +67,30 @@ bool ble_ready = false;
 // "runtime up but advertising never started" from "advertising running".
 enum class BleInitialStart : uint8_t { kNotAttempted, kOk, kFail };
 BleInitialStart ble_initial_start = BleInitialStart::kNotAttempted;
-// Cross-task disconnect handoff (audit finding 1). Adafruit nRF52 1.7.0 runs
-// Periph's disconnect callback on its own "Callback" FreeRTOS task
-// (ada_callback), never on loop(). That callback does exactly one thing:
-// increment this counter inside taskENTER/EXIT_CRITICAL -- the same
-// primitive radio_manager.cpp uses for its cross-task counters. loop() is the
-// only reader/consumer and owns every policy, clock, Serial and Bluefruit
-// action; ble_disconnect_events_seen is loop-task-only.
+// Cross-task disconnect handoff (audit finding 1). Adafruit nRF52 1.7.0 calls
+// the Bluefruit global event callback (Bluefruit.setEventCallback) directly
+// from its BLE event task at the end of AdafruitBluefruit::_ble_handler(),
+// after Bluefruit has already updated its own connection state for the event
+// and with no ada_callback()/heap allocation on that path (Periph's
+// setDisconnectCallback goes through ada_callback and can be dropped or
+// delayed, so it is deliberately NOT used). The callback does exactly one
+// thing on BLE_GAP_EVT_DISCONNECTED: increment this counter inside
+// taskENTER/EXIT_CRITICAL -- the same primitive radio_manager.cpp uses for its
+// cross-task counters. loop() is the only reader/consumer and owns every
+// policy, clock, Serial and Bluefruit action; ble_disconnect_events_seen is
+// loop-task-only. loop() reduces "counter != seen" to ONE logical disconnect
+// event per tick (enough: any number of disconnects observed since the last
+// tick grants a single fresh window measured from that tick).
 volatile uint32_t ble_disconnect_events = 0;
 uint32_t ble_disconnect_events_seen = 0;
 // Loop-task-only: suppresses per-retry log spam while restart keeps failing.
 bool ble_restart_failing = false;
 
-// Bluefruit "Callback"-task context. MUST NOT call monotonic::nowMs(),
-// BleAdmissionPolicy, Serial, flash, radio or Bluefruit/SoftDevice APIs.
-void onBleDisconnect(uint16_t, uint8_t) {
+// Bluefruit BLE-event-task context (not loop(), not an ISR). Inspects only
+// the event id. MUST NOT call monotonic::nowMs(), BleAdmissionPolicy, Serial,
+// flash, radio or Bluefruit/SoftDevice APIs.
+void onBleEvent(ble_evt_t* evt) {
+  if (evt->header.evt_id != BLE_GAP_EVT_DISCONNECTED) return;
   taskENTER_CRITICAL();
   ++ble_disconnect_events;
   taskEXIT_CRITICAL();
@@ -467,8 +476,9 @@ void setup() {
   // Bluefruit.begin() is what enables SoftDevice for the rest of this boot
   // (docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md §9: the sync/async
   // backend mode is fixed for the lifetime of one boot, not hot-swapped).
-  // No advertising/pairing/provisioning GATT service is added; a bare,
-  // named, connectable peripheral is sufficient to prove the M7P7B runtime.
+  // No ORUN-specific application GATT, pairing/ownership, provisioning or
+  // authorization service is added; a bare, named, connectable peripheral is
+  // sufficient to prove the M7P7B runtime.
   ble_ready = Bluefruit.begin();
   if (ble_ready) {
     char name[16];
@@ -499,8 +509,8 @@ void setup() {
     // advertises (audit finding 3). Disable it: loop() owns every
     // post-disconnect Advertising.start(0), checks the result and retries.
     Bluefruit.Advertising.restartOnDisconnect(false);
-    // Minimal event handoff only; see onBleDisconnect() above.
-    Bluefruit.Periph.setDisconnectCallback(onBleDisconnect);
+    // Minimal event handoff only; see onBleEvent() above.
+    Bluefruit.setEventCallback(onBleEvent);
     // No library-owned timeout (0): BleAdmissionPolicy owns the only close
     // deadline that matters, driven from loop() below.
     const bool advertising_started = Bluefruit.Advertising.start(0);
@@ -545,8 +555,8 @@ void loop() {
   // M7P7B: drive the pure admission policy from the loop task only. Two
   // sources feed it: the polled Bluefruit state (keeps working for a
   // connection that stays up) and the disconnect event counter handed off by
-  // onBleDisconnect() (catches a connect+disconnect that fit entirely
-  // between two polls). BLE has its own physical radio (nRF52840 2.4GHz),
+  // onBleEvent() (catches a connect+disconnect that fit entirely between two
+  // polls). BLE has its own physical radio (nRF52840 2.4GHz),
   // independent of the SX1262 LoRa radio_manager guards below, so this does
   // not need the TX guard.
   if (ble_ready) {
@@ -571,7 +581,16 @@ void loop() {
         Bluefruit.Advertising.stop();
         const bool still_running = Bluefruit.Advertising.isRunning();
         const bool connected_now = Bluefruit.Periph.connected() > 0;
-        if (!still_running && !connected_now) {
+        // A whole connect+disconnect can complete between stop() and the two
+        // reads above; then neither read shows the client but a real
+        // disconnect is owed a fresh window. Read the counter AFTER the
+        // connection state and leave the close unconfirmed: the next tick
+        // consumes the event, cancels the close and restarts advertising.
+        taskENTER_CRITICAL();
+        const bool disconnect_pending =
+            ble_disconnect_events != ble_disconnect_events_seen;
+        taskEXIT_CRITICAL();
+        if (!still_running && !connected_now && !disconnect_pending) {
           ble_admission.confirmClosed();
           Serial.println(F("BLE closed; no client connected within window"));
         }
