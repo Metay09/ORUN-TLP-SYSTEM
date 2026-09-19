@@ -1,8 +1,10 @@
 #include <Arduino.h>
 #include <Adafruit_TinyUSB.h>
+#include <bluefruit.h>
 
 #include "accelerometer_manager.h"
 #include "activity_capture.h"
+#include "ble_admission_policy.h"
 #include "config_store.h"
 #include "firmware_version.h"
 #include "flash_mutation_gate.h"
@@ -51,6 +53,15 @@ bool automatic_role_resolved = false;
 char role_command[24]{};
 uint8_t role_command_length = 0;
 bool role_command_overflow = false;
+
+// M7P7B: BLE runtime/admission. BleAdmissionPolicy is the pure, host-tested
+// tracker no-client-timeout decision (docs/architecture/
+// ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md §10); this composition root is the
+// only place that touches Bluefruit itself. ble_ready is false until
+// Bluefruit.begin() succeeds, guarding every later Bluefruit call the same
+// way radio_manager's own begin() result already guards radio use below.
+orun_tlp::BleAdmissionPolicy ble_admission;
+bool ble_ready = false;
 
 enum class AccelerometerDiagnosticState : uint8_t {
   kPending,
@@ -402,6 +413,44 @@ void setup() {
       config_store.config().tracking_interval_seconds * 1000UL);
   accelerometer_manager.begin(orun_tlp::monotonic::nowMs());
   Serial.println(F("ROLE AUTO pending (GNSS=>TRACKER, no GNSS=>BASE)"));
+
+  // M7P7B: BLE starts last, strictly after History/Config/Security have
+  // finished their SoftDevice-disabled synchronous recovery above --
+  // NrfHistoryFlash::begin() (and the Config/Security equivalents) fail
+  // closed if SoftDevice is already enabled when they run, and
+  // Bluefruit.begin() is what enables SoftDevice for the rest of this boot
+  // (docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md §9: the sync/async
+  // backend mode is fixed for the lifetime of one boot, not hot-swapped).
+  // No advertising/pairing/provisioning GATT service is added; a bare,
+  // named, connectable peripheral is sufficient to prove the M7P7B runtime.
+  ble_ready = Bluefruit.begin();
+  if (ble_ready) {
+    char name[16];
+    snprintf(name, sizeof(name), "ORUN-%08lX",
+             static_cast<unsigned long>(device_identity.legacyUint64() & 0xFFFFFFFFUL));
+    Bluefruit.setName(name);
+    // Stock Bluefruit blinks LED_BLUE on a FreeRTOS timer for the entire
+    // advertising/connected duration (default _led_conn=true,
+    // bluefruit.cpp's _startConnLed()/bluefruit_blinky_cb). That is an
+    // avoidable, continuous GPIO toggle this milestone would otherwise
+    // introduce on every boot's ~10-minute window; ANIMAL_TRACKER power
+    // policy (AGENTS.md) has no use for a connection-status LED, so disable
+    // it rather than measure-and-accept it.
+    Bluefruit.autoConnLed(false);
+    // Default true; set explicitly so a future framework version's default
+    // cannot silently change this milestone's audited admission behavior
+    // (docs/milestones/M7P7B.md): a disconnect must reopen exactly one fresh
+    // BleAdmissionPolicy window, which relies on Bluefruit itself resuming
+    // advertising immediately on disconnect.
+    Bluefruit.Advertising.restartOnDisconnect(true);
+    // No library-owned timeout (0): BleAdmissionPolicy owns the only close
+    // deadline that matters, driven from loop() below.
+    Bluefruit.Advertising.start(0);
+    ble_admission.begin(orun_tlp::monotonic::nowMs());
+    Serial.printf("BLE available name=%s\n", name);
+  } else {
+    Serial.println(F("BLE unavailable"));
+  }
 }
 
 void loop() {
@@ -427,9 +476,27 @@ void loop() {
   // active. The loop retries the same resolved intent without aborting work.
   radio_manager.setRelayForwardingEnabled(relay_forwarding_enabled);
 
-  // Drain any SoftDevice flash completion events; a no-op today since
-  // SoftDevice is never enabled by this runtime (M7P3 does not start BLE).
-  // One shared drain for both History and Config (M7P5) clients.
+  // M7P7B: drive the pure no-client-timeout policy from Bluefruit's own
+  // connection count. Bluefruit.Periph.connected() is a plain polled read,
+  // the same pattern every stock Adafruit Bluefruit example uses from
+  // loop() -- see docs/milestones/M7P7B.md for why this needs no additional
+  // cross-task synchronization of its own. BLE has its own physical radio
+  // (nRF52840 2.4GHz), independent of the SX1262 LoRa radio_manager guards
+  // below, so this does not need the TX guard.
+  if (ble_ready) {
+    const bool ble_connected = Bluefruit.Periph.connected() > 0;
+    if (ble_admission.update(ble_connected, orun_tlp::monotonic::nowMs()) ==
+        orun_tlp::BleAdmissionAction::kClose) {
+      Bluefruit.Advertising.stop();
+      Serial.println(F("BLE closed; no client connected within window"));
+    }
+  }
+
+  // Drain any SoftDevice flash completion events. Before BLE starts this is
+  // a no-op (SoftDevice disabled); once Bluefruit.begin() succeeds above,
+  // this consumes the M7P7A-forwarded gate-owned completion mailbox instead
+  // of racing Bluefruit's own sd_evt_get() consumption. One shared drain for
+  // History, Config (M7P5) and Security (M7P6B) clients.
   storage_flash_gate.pumpEvents();
   // Leave local TX undisturbed; otherwise service one small flash operation.
   // config_store.poll() shares the same TX guard as history.poll() -- a
