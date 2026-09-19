@@ -65,7 +65,11 @@ uint32_t sd_evt_get(uint32_t* out) {
 
 static void resetHarness() {
   fake_now_ms = 0;
-  sd_enabled = true;
+  // Production boot recovers stores before Bluefruit enables SoftDevice.
+  // NrfHistoryFlash::begin() intentionally fails closed if SoftDevice is
+  // already active, so each focused scenario enables the fake SoftDevice
+  // only after gate.begin() succeeds.
+  sd_enabled = false;
   event_queue.clear();
   write_calls = erase_calls = evt_calls = 0;
   orun_flash_gate_set_bluefruit_soc_owner(false);
@@ -86,6 +90,7 @@ int main() {
     resetHarness();
     FlashMutationGate gate;
     assert(gate.begin());
+    sd_enabled = true;
     assert(orun_flash_internalfs_try_acquire());
     assert(orun_flash_internalfs_owns());
 
@@ -111,6 +116,7 @@ int main() {
     memset(history_region, 0xFF, kRegionSize);
     FlashMutationGate gate;
     assert(gate.begin());
+    sd_enabled = true;
     orun_flash_gate_set_bluefruit_soc_owner(true);
 
     alignas(4) uint8_t data[4] = {5, 6, 7, 8};
@@ -140,6 +146,7 @@ int main() {
     memset(history_region, 0xFF, kRegionSize);
     FlashMutationGate gate;
     assert(gate.begin());
+    sd_enabled = true;
     orun_flash_gate_set_bluefruit_soc_owner(true);
 
     assert(orun_flash_internalfs_try_acquire());
