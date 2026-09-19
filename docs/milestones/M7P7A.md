@@ -1,6 +1,6 @@
 # M7P7A — BLE flash arbitration + SoftDevice SoC event ownership
 
-Status: **IMPLEMENTED ON BRANCH — host/build validation pending; BLE runtime remains OFF.**
+Status: **IMPLEMENTED ON BRANCH — full host suite PASS; production RAK4630 build PASS; isolated BLE compile-link smoke pending; BLE runtime remains OFF.**
 
 Baseline: `main@9585590b64b2df7a827b89fac99470fccc526d78`
 (M7P6B merged plus post-merge architecture checkpoint).
@@ -133,8 +133,21 @@ Focused host coverage:
 - pinned framework transforms fail closed on source drift;
 - two-file patch apply/restore returns vendor sources byte-for-byte.
 
-Validation evidence is intentionally left pending until run from the canonical
-Debian checkout.
+Validation evidence from the canonical Debian checkout:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p7a_patch_ble_flash.py`: **PASS**; installed framework pins matched.
+- `bash firmware/tests/run_host_tests.sh`: **PASS** end-to-end, including M7P7A flash/event arbitration and all legacy/persistence/startup regressions.
+- `pio run -d firmware -e rak4630`: **PASS**.
+  - RAM: **15,436 B / 248,832 B (6.2%)**
+  - Flash: **159,296 B / 815,104 B (19.5%)**
+  - M7P4 relocation patch: applied/verified.
+  - M7P7A arbitration/event-bridge patch: applied/verified.
+  - exclusive-owner and application-ceiling post-link guards completed without error.
+  - compiler warnings shown in this build are from the pinned SX126x-Arduino dependency, not newly-added ORUN source.
+
+Compared with the M7P6B production build (15,420 B RAM / 158,128 B flash), this slice adds **16 B RAM** and **1,168 B flash** to the shipped composition.
+
+Important validation boundary: because BLE remains OFF in the production environment, Bluefruit/InternalFS are not pulled into that linked image. Therefore the production build proves the ORUN-side bridge and patch/build guards but does **not** by itself compile the transformed Bluefruit/InternalFS code. An isolated `rak4630_m7p7a_compile` build target is included specifically to close that compile/link evidence gap before merge.
 
 ## 8. Physical-validation boundary
 
