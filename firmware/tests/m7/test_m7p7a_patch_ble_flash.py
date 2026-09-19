@@ -59,6 +59,11 @@ static bool fal_sub_program(uint32_t dst, void const * src, uint32_t len) {
 }
 '''
 
+# Keep the transformed vendor fragments byte-for-byte faithful to upstream
+# indentation where patch_ble_flash.py intentionally uses exact replace_once()
+# matching. This makes fixture drift fail for the same reason real framework
+# drift would fail, instead of failing merely because the reduced fixture
+# reformatted an audited line.
 BLUEFRUIT_FIXTURE = r'''extern "C"
 {
 void flash_nrf5x_event_cb (uint32_t event) ATTR_WEAK;
@@ -81,7 +86,7 @@ void adafruit_soc_task(void* arg)
     case NRF_EVT_FLASH_OPERATION_SUCCESS:
     case NRF_EVT_FLASH_OPERATION_ERROR:
       LOG_LV1("SOC", "NRF_EVT_FLASH_OPERATION_%s", soc_evt == NRF_EVT_FLASH_OPERATION_SUCCESS ? "SUCCESS" : "ERROR");
-      if ( flash_nrf5x_event_cb ) flash_nrf5x_event_cb(soc_evt);
+              if ( flash_nrf5x_event_cb ) flash_nrf5x_event_cb(soc_evt);
     break;
   }
 }
