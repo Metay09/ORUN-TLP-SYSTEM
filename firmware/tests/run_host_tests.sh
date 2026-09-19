@@ -209,7 +209,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/security_store.cpp firmware/src/security_format.cpp \
   firmware/src/position_flow.cpp firmware/src/ble_admission_policy.cpp \
   -o "$test_dir/startup"
-for scenario in mutex gate queue lora success; do
+for scenario in mutex gate queue lora success advfail blefail; do
   "$test_dir/startup" "$scenario"
 done
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r4/test_patch_wire.py

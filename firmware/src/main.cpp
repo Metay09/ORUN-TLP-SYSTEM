@@ -62,6 +62,11 @@ bool role_command_overflow = false;
 // way radio_manager's own begin() result already guards radio use below.
 orun_tlp::BleAdmissionPolicy ble_admission;
 bool ble_ready = false;
+// Result of the one boot-time Bluefruit.Advertising.start(0) call, kept apart
+// from ble_ready (SoftDevice/Bluefruit runtime readiness) so BLE? can tell
+// "runtime up but advertising never started" from "advertising running".
+enum class BleInitialStart : uint8_t { kNotAttempted, kOk, kFail };
+BleInitialStart ble_initial_start = BleInitialStart::kNotAttempted;
 
 enum class AccelerometerDiagnosticState : uint8_t {
   kPending,
@@ -184,6 +189,20 @@ void printRadioDiagnostic() {
                 static_cast<unsigned long>(diagnostics.estimated_rx_ms));
 }
 
+void printBleDiagnostic() {
+  const char* initial_start = "not-attempted";
+  if (ble_initial_start == BleInitialStart::kOk) initial_start = "ok";
+  else if (ble_initial_start == BleInitialStart::kFail) initial_start = "fail";
+  // Bluefruit state is only read once Bluefruit.begin() has succeeded.
+  const bool advertising = ble_ready && Bluefruit.Advertising.isRunning();
+  const unsigned connected =
+      ble_ready ? static_cast<unsigned>(Bluefruit.Periph.connected()) : 0U;
+  Serial.printf("BLE ready=%s advertising=%s connected=%u policy=%s "
+                "initial_start=%s\n",
+                ble_ready ? "yes" : "no", advertising ? "yes" : "no", connected,
+                ble_admission.isOpen() ? "open" : "closed", initial_start);
+}
+
 void handleRoleCommand() {
   if (role_command_overflow) {
     role_command_length = 0;
@@ -200,6 +219,11 @@ void handleRoleCommand() {
   if (isActivityCommand("RADIO?", 6)) {
     role_command_length = 0;
     printRadioDiagnostic();
+    return;
+  }
+  if (isActivityCommand("BLE?", 4)) {
+    role_command_length = 0;
+    printBleDiagnostic();
     return;
   }
   if (isActivityCommand("ACTIVITY?", 9)) {
@@ -455,9 +479,17 @@ void setup() {
     Bluefruit.Advertising.restartOnDisconnect(true);
     // No library-owned timeout (0): BleAdmissionPolicy owns the only close
     // deadline that matters, driven from loop() below.
-    Bluefruit.Advertising.start(0);
-    ble_admission.begin(orun_tlp::monotonic::nowMs());
-    Serial.printf("BLE available name=%s\n", name);
+    const bool advertising_started = Bluefruit.Advertising.start(0);
+    ble_initial_start =
+        advertising_started ? BleInitialStart::kOk : BleInitialStart::kFail;
+    if (advertising_started) {
+      ble_admission.begin(orun_tlp::monotonic::nowMs());
+      Serial.printf("BLE available name=%s\n", name);
+    } else {
+      // Runtime is up but nothing is advertising: never open the admission
+      // window or claim availability. Query with BLE? for the full state.
+      Serial.println(F("BLE advertising start failed"));
+    }
   } else {
     Serial.println(F("BLE unavailable"));
   }

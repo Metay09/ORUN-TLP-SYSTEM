@@ -1,6 +1,6 @@
 # M7P7B — First real BLE runtime + tracker admission policy
 
-Status: **IMPLEMENTED ON BRANCH — full host suite PASS; production RAK4630 build PASS with real production Bluefruit/InternalFS linkage (first time); M7P7A guards re-verified intact; a real review-found advertising-payload bug (§8.1) is fixed and re-verified; NO PHYSICAL VALIDATION YET. Do not merge. Do not claim physical BLE PASS.**
+Status: **IMPLEMENTED ON BRANCH — host suite PASS; production RAK4630 build PASS; M7P7A guards re-verified intact; review-found advertising-payload bug (§8.1) fixed; PHYSICAL VALIDATION PARTIAL (§9: Debian PC/BlueZ only; several items PENDING). Full physical validation is NOT complete. Do not merge. Do not claim full physical BLE PASS.**
 
 Baseline: `main@fb3a098c5bfc8b3488ba61a5ee28b57d8c5b0765`
 (M7P7A merged plus post-merge architecture checkpoint).
@@ -220,13 +220,16 @@ a `constexpr` inline function):
 6. Reconnect during the renewed (post-disconnect) window works, and correctly
    suspends that window's own deadline in turn.
 
-`firmware/tests/startup/stubs/bluefruit.h` — new minimal host stub (`Bluefruit`
-global with `begin()`/`setName()`/`autoConnLed()`/`Advertising.{start,stop,
-restartOnDisconnect}()`/`Periph.connected()`), needed because
-`firmware/tests/startup/test_startup.cpp` compiles the real `main.cpp` directly
-against host stub headers. The stub is inert (fixed return values); it asserts
-nothing about BLE state, since `test_startup.cpp`'s own scope is radio/gate/
-GNSS/PositionFlow/journal boot behavior, unrelated to BLE. `run_host_tests.sh`'s
+`firmware/tests/startup/stubs/bluefruit.h` — minimal host stub of the Bluefruit
+surface `main.cpp` calls. After the diagnostic change (§8.2) it is no longer
+inert: `Advertising.start_result`/`running`/`start_calls` model
+`BLEAdvertising::start()`/`isRunning()`, `Periph.connected_count` models
+`BLEPeriph::connected()`, and `begin_result` models `Bluefruit.begin()`.
+`firmware/tests/startup/test_startup.cpp` gained two scenarios, `advfail`
+(advertising start fails) and `blefail` (`Bluefruit.begin()` fails), and now
+asserts the BLE boot path, the `BLE?` output, connected-client behavior (window
+never closes) and disconnect → fresh window → close. `run_host_tests.sh` runs
+7 startup scenarios (`mutex gate queue lora success advfail blefail`) and its
 startup-test source list gained `firmware/src/ble_admission_policy.cpp`.
 
 ## 8. Validation evidence
@@ -297,6 +300,28 @@ Canonical Debian checkout, this exact (post-fix) diff:
     compile-smoke evidence.
 - `rak4630_m7p7a_compile`: **PASS, unchanged** (§6).
 
+### 8.2 BLE diagnostic + boot-path hardening (added for physical validation)
+
+Diagnostic/observability only; no new BLE runtime behavior, no GATT, no policy
+change.
+
+- New serial command `BLE?` prints one line:
+  `BLE ready=<yes|no> advertising=<yes|no> connected=<n> policy=<open|closed> initial_start=<ok|fail|not-attempted>`.
+  `ready` = `Bluefruit.begin()` succeeded; `advertising` =
+  `Bluefruit.Advertising.isRunning()`; `connected` = `Bluefruit.Periph.connected()`;
+  `policy` = `BleAdmissionPolicy::isOpen()`; `initial_start` = result of the one
+  boot-time `Advertising.start(0)`.
+- The boot-time `Advertising.start(0)` result is now checked. On failure the
+  admission window is not opened, `BLE available` is not printed and
+  `BLE advertising start failed` is printed instead (previously the result was
+  ignored and availability claimed unconditionally).
+- Host: full `firmware/tests/run_host_tests.sh` **PASS** (exit 0), including all
+  7 startup scenarios and the M7P7B policy test.
+- `pio run -d firmware -e rak4630`: **PASS** — RAM 22,068 B / 248,832 B (8.9%),
+  Flash 225,004 B / 815,104 B (27.6%).
+- `pio run -d firmware -e rak4630_m7p7a_compile`: **PASS, unchanged** — RAM
+  16,128 B, Flash 127,468 B.
+
 ### Delta vs. `main@fb3a098` (M7P7A merged baseline: RAM 15,460 B / Flash 159,024 B)
 
 | | Baseline | M7P7B | Delta |
@@ -312,42 +337,36 @@ slice's `main.cpp` uses them — no ORUN-side GATT service was added). Both
 deltas remain comfortably within budget (8.9% of RAM, 27.5% of total flash /
 28.4% of the M7P2 application policy ceiling).
 
-## 9. Physical-validation boundary
+## 9. Physical-validation evidence
 
-**Host/build PASS is not physical PASS.** No physical behavior is claimed by
-this branch. The following require a real RAK4631 and are explicitly not
-performed here, in the order the task requested — one step at a time for the
-owner/operator, not invented or assumed:
+**Host/build PASS is not physical PASS.** Physical evidence below was collected
+on one real RAK4631 with a **Debian PC (BlueZ) as the only BLE client/scanner**.
+Legend: PASS = observed on hardware; PARTIAL = some evidence, not sufficient
+for PASS; PENDING = not yet performed/inconclusive (not a failure); N/A = not
+exercised by this slice.
 
-1. Real RAK4631 boots with BLE; USB Serial confirms `BLE available name=...`.
-2. A phone's BLE scanner (e.g. nRF Connect) sees and can connect to the
-   advertised name.
-3. Connected state survives past the original ~10-minute no-client deadline
-   (i.e. BLE does not disconnect/close merely because the original window
-   would have expired).
-4. Disconnect starts a fresh ~10-minute window (BLE remains connectable
-   immediately after disconnect, not closed).
-5. BLE closes (no longer visible/connectable) after a full ~10-minute window
-   with no client.
-6. Reconnect during a renewed (post-disconnect) window succeeds.
-7. LoRa TX/RX, GNSS acquisition and tracking continue correctly with
-   SoftDevice active (no regression from the M0–M7P7A physically-validated
-   behavior).
-8. History/Config/Security flash activity does not deadlock or corrupt with
-   BLE active — ideally exercised concurrently with an active BLE connection
-   and ongoing store-before-send traffic.
-9. Reset/reboot recovery with BLE having been active in the prior boot.
-10. Relocated `InternalFS`/bond behavior if bonding is actually exercised
-    (this slice does not add pairing/bonding UX, but stock BLE bonding may
-    still be reachable via a generic BLE client depending on Security
-    settings — worth an explicit physical check).
-11. Current/power measurement: advertising-only, connected, and closed
-    states, to determine whether the audited (§2.1) "no SoftDevice disable"
-    behavior is an acceptable power posture for ANIMAL_TRACKER, or whether a
-    later milestone must revisit it.
+**Full physical validation is NOT complete.**
 
-None of these are claimed PASS by this document. Do not merge until they are
-reviewed with real evidence.
+| # | Item | Status | Evidence / reason |
+| --- | --- | --- | --- |
+| 1 | Real RAK4631 boots with BLE and advertises | **PASS** | Unit physically observed advertising as `ORUN-4B275BA5`. Same-boot `BLE?` returned `BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok` while a BlueZ RF scan simultaneously saw `ORUN-4B275BA5` (firmware state and RF observation agree). |
+| 2 | External scanner sees and can connect | **PASS (Debian PC/BlueZ only)** | A real PC/BlueZ BLE connection succeeded. |
+| 2b | Phone scanner/connect (e.g. nRF Connect) | **PENDING** | Only the Debian PC/BlueZ was physically tested; no phone test done. |
+| 3 | Connected state survives past original ~10-min no-client deadline | **PASS** | Connected client stayed connected beyond the original ~10-minute deadline. |
+| 4 | Disconnect restores advertising / fresh admission window | **PASS** | After disconnect, advertising and a fresh admission window were restored. |
+| 5 | BLE closes after a full window with no client | **PASS** | Later no-client fresh window closed normally: `BLE closed; no client connected within window`, then `BLE ready=yes advertising=no connected=0 policy=closed initial_start=ok`. |
+| 6 | Reconnect during renewed window succeeds | **PENDING (not FAIL)** | BlueZ repeatedly produced transient `[NEW]`/`[DEL]` device behavior and `le-connection-abort-by-local` / `Device not available`, while firmware simultaneously reported `advertising=yes`, `connected=0`, `policy=open`. Root cause not determined (BlueZ device-cache/scan-state behavior is a candidate, unproven). **A second connection is NOT claimed PASS.** Retry with another client (phone) or after clearing the BlueZ device cache. |
+| 7a | LoRa TX/RX coexistence with SoftDevice active | **PENDING** | Second node was not powered. |
+| 7b | GNSS coexistence | **PENDING** | This physical unit reported `GNSS: not detected`. |
+| 8 | Flash mutation (History/Config/Security) concurrency with BLE active | **PENDING** | No safe runtime mutation source available in this setup. |
+| 9 | Reset/reboot recovery with BLE active in prior boot | **PARTIAL** | After firmware re-upload (DFU/reload), `BLE?` returned `BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok`. This is **not** a clean power-cycle/reset PASS. |
+| 10 | Relocated `InternalFS`/bond behavior | **N/A** | Bonding was not exercised. |
+| 11 | Current/power measurement (advertising / connected / closed) | **PENDING** | Not measured. |
+
+Summary: items 1, 2 (PC/BlueZ), 3, 4, 5 are PASS on one unit with one client
+type; 6, 2b, 7a, 7b, 8, 11 remain PENDING; 9 is PARTIAL; 10 is N/A. Do not
+merge on the basis of this evidence alone; PENDING items must be reviewed with
+real evidence first.
 
 ## 10. Explicit non-claims / deferred work
 

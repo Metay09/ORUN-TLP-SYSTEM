@@ -87,7 +87,11 @@ void settle(HistoryStore& store) {
 int main(int argc, char** argv) {
   assert(argc == 2);
   const std::string mode = argv[1];
-  const bool success = mode == "success";
+  // "advfail"/"blefail" keep the radio healthy and instead fail BLE:
+  // Advertising.start() returning false / Bluefruit.begin() returning false.
+  const bool ble_advertising_fails = mode == "advfail";
+  const bool ble_runtime_fails = mode == "blefail";
+  const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails;
   // Each scenario runs in a new process, like a cold boot (static driver gate).
   assert(success || mode == "mutex" || mode == "gate" || mode == "queue" ||
          mode == "lora");
@@ -131,6 +135,8 @@ int main(int argc, char** argv) {
   fake_mutex_take_failure = mode == "gate";
   fake_queue_create_failure = mode == "queue";
   lora_result = mode == "lora" ? -1 : 0;
+  Bluefruit.Advertising.start_result = !ble_advertising_fails;
+  Bluefruit.begin_result = !ble_runtime_fails;
   setup();
   assert(board_reads == 1 && radio_manager.deviceId() == kHardwareId);
   assert(watchdog_starts == 1);
@@ -138,6 +144,20 @@ int main(int argc, char** argv) {
   assert(history.diagnostics().recovery_corruptions == 0);
   assert(erases == 0 && programs == 0);
   assert(memcmp(region, before.data(), before.size()) == 0);
+  // BLE boot path: ready reflects Bluefruit.begin(); "available"/admission
+  // only follow a successful Advertising.start(0), which is called exactly
+  // once and only after begin() succeeded.
+  const bool ble_ok = !ble_advertising_fails && !ble_runtime_fails;
+  assert(ble_ready == !ble_runtime_fails);
+  assert(Bluefruit.Advertising.start_calls == (ble_runtime_fails ? 0U : 1U));
+  assert(ble_admission.isOpen() == ble_ok);
+  assert((Serial.output.find("BLE available name=ORUN-") != std::string::npos) == ble_ok);
+  assert((Serial.output.find("BLE advertising start failed\n") != std::string::npos) ==
+         ble_advertising_fails);
+  assert((Serial.output.find("BLE unavailable\n") != std::string::npos) == ble_runtime_fails);
+  assert(ble_initial_start ==
+         (ble_runtime_fails ? BleInitialStart::kNotAttempted
+          : ble_advertising_fails ? BleInitialStart::kFail : BleInitialStart::kOk));
   const bool diagnostic = Serial.output.find("RADIO unavailable; TX/RX disabled; local services continue") != std::string::npos;
   assert(diagnostic == !success); // Executes main's handling of begin(false).
   assert(radio_manager.canSend() == success);
@@ -245,6 +265,48 @@ int main(int argc, char** argv) {
                           "ROLE TRACKER source=USB-OVERRIDE\n"
                           "ROLE TRACKER mode=OVERRIDE\n");
   assert(Wire.transaction_calls == wire_calls);
+
+  // BLE? reports runtime readiness, advertising state, connection count,
+  // admission policy and the boot-time start result as separate facts.
+  const char* expected_ble =
+      ble_runtime_fails
+          ? "BLE ready=no advertising=no connected=0 policy=closed initial_start=not-attempted\n"
+      : ble_advertising_fails
+          ? "BLE ready=yes advertising=no connected=0 policy=closed initial_start=fail\n"
+          : "BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok\n";
+  Serial.output.clear();
+  Serial.queueInput("BLE?\n");
+  pollRoleCommands();
+  assert(Serial.output == expected_ble);
+  // Query is repeatable and leaves no residual command bytes behind.
+  Serial.output.clear();
+  Serial.queueInput("BLE?\rBLE\nBLE??\nBLE?\n");
+  while (Serial.available()) pollRoleCommands();
+  assert(Serial.output == std::string(expected_ble) +
+                          "ROLE command rejected\n"
+                          "ROLE command rejected\n" + expected_ble);
+
+  if (ble_ok) {
+    // Connected client: reported, and the no-client window never closes.
+    Bluefruit.Periph.connected_count = 1;
+    test_now += ble_admission_config::kNoClientTimeoutMs + 1000;
+    loop();
+    Serial.output.clear();
+    Serial.queueInput("BLE?\n");
+    pollRoleCommands();
+    assert(Serial.output ==
+           "BLE ready=yes advertising=yes connected=1 policy=open initial_start=ok\n");
+    // Disconnect opens one fresh window; its expiry stops advertising.
+    Bluefruit.Periph.connected_count = 0;
+    loop();
+    test_now += ble_admission_config::kNoClientTimeoutMs + 1000;
+    loop();
+    Serial.output.clear();
+    Serial.queueInput("BLE?\n");
+    pollRoleCommands();
+    assert(Serial.output ==
+           "BLE ready=yes advertising=no connected=0 policy=closed initial_start=ok\n");
+  }
 
   assert(munmap(region, kRegionSize) == 0);
   assert(munmap(config_region, kConfigRegionSize) == 0);

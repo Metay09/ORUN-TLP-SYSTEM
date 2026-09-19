@@ -1,16 +1,25 @@
 #pragma once
 // Host stub: only the minimal Bluefruit surface main.cpp actually calls.
-// This startup/integration test exercises radio/gate/GNSS/PositionFlow/
-// journal boot behavior against host stubs; it does not assert anything
-// about BLE state. The actual BLE admission policy is host-tested directly,
-// with no Bluefruit dependency, by
+// The startup/integration test drives main.cpp's BLE boot path and BLE?
+// diagnostic against this stub: start_result/running model
+// BLEAdvertising::start()/isRunning() (Adafruit nRF52 1.7.0), and
+// connected_count models BLEPeriph::connected(). The pure admission policy
+// is also host-tested directly, with no Bluefruit dependency, by
 // firmware/tests/m7/test_m7p7b_ble_admission_policy.cpp -- see
 // docs/milestones/M7P7B.md.
 #include <stdint.h>
 
 struct BleAdvertisingStub {
-  bool start(uint16_t = 0) { return true; }
-  bool stop() { return true; }
+  bool start_result = true;  // Test knob: what start() reports.
+  bool running = false;
+  unsigned start_calls = 0;
+  bool start(uint16_t = 0) {
+    ++start_calls;
+    running = start_result;
+    return start_result;
+  }
+  bool isRunning() const { return running; }
+  bool stop() { running = false; return true; }
   void restartOnDisconnect(bool) {}
   bool addFlags(uint8_t) { return true; }
   bool addName() { return true; }
@@ -21,13 +30,15 @@ struct BleAdvertisingStub {
 constexpr uint8_t BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE = 0x06;
 
 struct BlePeriphStub {
-  uint8_t connected() { return 0; }
+  uint8_t connected_count = 0;  // Test knob.
+  uint8_t connected() { return connected_count; }
 };
 
 struct AdafruitBluefruitStub {
   BleAdvertisingStub Advertising;
   BlePeriphStub Periph;
-  bool begin(uint8_t = 1, uint8_t = 0) { return true; }
+  bool begin_result = true;  // Test knob: what begin() reports.
+  bool begin(uint8_t = 1, uint8_t = 0) { return begin_result; }
   void setName(const char*) {}
   void autoConnLed(bool) {}
 };
