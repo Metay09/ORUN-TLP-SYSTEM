@@ -143,6 +143,12 @@ g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   firmware/src/nrf_history_flash.cpp firmware/src/nrf_config_flash.cpp \
   firmware/src/nrf_security_flash.cpp -o "$test_dir/m7p6_flash_gate"
 "$test_dir/m7p6_flash_gate"
+g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
+  -Wl,--defsym,__flash_arduino_end=0xED000 \
+  firmware/tests/m7/test_m7p7a_flash_gate.cpp firmware/src/flash_mutation_gate.cpp \
+  firmware/src/nrf_history_flash.cpp firmware/src/nrf_config_flash.cpp \
+  firmware/src/nrf_security_flash.cpp -o "$test_dir/m7p7a_flash_gate"
+"$test_dir/m7p7a_flash_gate"
 g++ "${flags[@]}" firmware/tests/m5/test_m5.cpp \
   firmware/src/network_service.cpp firmware/src/node_role.cpp \
   firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
@@ -207,6 +213,7 @@ for scenario in mutex gate queue lora success; do
 done
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r4/test_patch_wire.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p4_patch_internalfs.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p7a_patch_ble_flash.py
 g++ "${flags[@]}" firmware/tests/r4/test_r4.cpp "${gnss_sources[@]}" \
   firmware/src/watchdog_manager.cpp -o "$test_dir/r4"
 "$test_dir/r4"

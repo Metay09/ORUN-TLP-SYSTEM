@@ -45,14 +45,45 @@ namespace orun_tlp {
 // establishment) outranks everything, and SEC_MAINT (page erase, compaction
 // preparation of a page carrying an unchanged credential forward) is
 // outranked by everything, so routine security housekeeping can never starve
-// live History or Config. The five-way admission order is therefore
+// live History or Config. The admission order is therefore
 // SEC_CRITICAL > History > Config > SEC_MAINT, generalized in
 // higherPriorityWaiting() below instead of the old two-owner special case;
-// History still outranks Config exactly as before (no behavior change for
-// either existing client). Bond/InternalFS remains unqueued here and still
-// bypasses this gate entirely (M7P4/M7P7).
+// History still outranks Config exactly as before.
+//
+// M7P7A closes the remaining BLE-storage concurrency hole without enabling
+// BLE: stock InternalFS keeps its LittleFS/cache format, but a pinned
+// framework patch acquires the same physical-flash arbiter used by this gate
+// before every Nordic flash mutation. Once Bluefruit owns the global SoC
+// event queue, its patched SoC task forwards flash completion events into a
+// bounded bridge consumed by pumpEvents(), instead of this gate racing
+// Bluefruit with a second sd_evt_get() consumer. Advertising, pairing UX,
+// provisioning and DFU remain later slices.
+//
+// M7P7A ownership-transfer invariant: once SoftDevice has *accepted* a
+// physical flash operation for a client (Slot::submission_accepted), the
+// shared token must never be released on a bare application-level timeout --
+// only a definitive NRF_EVT_FLASH_OPERATION_SUCCESS/ERROR event may release
+// it. Releasing early would let InternalFS begin its own sd_flash_* call
+// while ORUN's earlier operation is still genuinely in flight; the stale
+// completion event that eventually arrives would then be misattributed (by
+// the patched flash_nrf5x_event_cb(), which filters only by *current* shared
+// owner, not by which physical request it actually belongs to) to
+// InternalFS's new, unrelated, still-incomplete operation. A timed-out
+// admitted request whose operation was already accepted is instead
+// quarantined (Slot::quarantined): the caller is told kFailed so the
+// application never wedges, but the shared token, in_flight_owner_ and the
+// slot's kind/target stay exactly as they are until handleFlashEvent()
+// observes the real completion and reconciles it (see quarantineSlot()).
+// This also requires two independent timeout clocks, not one: how long an
+// admitted request waits to ACQUIRE the token in the first place
+// (kTokenWaitTimeoutMs) is a different question from how long it waits, once
+// it actually owns the token, for its own submission/completion
+// (kOperationTimeoutMs) -- see flash_mutation_gate.cpp for exactly what each
+// one does and does not guarantee.
 class FlashMutationGate : public FlashBackend {
  public:
+  ~FlashMutationGate();
+
   // Lower value == admitted first when the physical slot is free and more
   // than one client has a staged, not-yet-admitted request. History and
   // Config always submit at their own fixed priority; Security's priority is
@@ -68,6 +99,13 @@ class FlashMutationGate : public FlashBackend {
     uint32_t completions_error = 0;
     uint32_t timeouts = 0;
     uint32_t spurious_events = 0;
+    // A definitive completion event reconciled for a request that had
+    // already been quarantined (timed out after SoftDevice accepted it, but
+    // before a completion event arrived). Deliberately NOT counted in
+    // completions_success/completions_error: the caller already observed
+    // kFailed from the timeout and must not see a second, contradictory
+    // outcome for the same logical request.
+    uint32_t late_completions = 0;
   };
 
   // ---- History client: unchanged M7P3 FlashBackend API/behavior. ----
@@ -78,12 +116,10 @@ class FlashMutationGate : public FlashBackend {
   FlashOpResult pollPending() override;
   const Diagnostics& diagnostics() const { return history_diagnostics_; }
 
-  // Drains NRF_EVT_FLASH_OPERATION_SUCCESS/ERROR (and discards any other
-  // pending SoC event) from the SoftDevice event queue via the raw sd_evt_get
-  // SVC, for BOTH clients -- the single global queue has exactly one drain
-  // point now, routed to whichever client currently owns the in-flight
-  // operation. Must be called once per cooperative loop pass. A no-op
-  // whenever SoftDevice is disabled -- in shipped firmware today, always.
+  // Before Bluefruit starts, drains SoftDevice SoC events directly via
+  // sd_evt_get(), preserving the M7P3-M7P6 path. Once the patched Bluefruit
+  // SoC task declares itself the queue owner, this method consumes only the
+  // forwarded flash-event bridge and never drains sd_evt_get() itself.
   void pumpEvents();
 
   // ---- Config client (M7P5): symmetrical API, own region, own
@@ -182,9 +218,23 @@ class FlashMutationGate : public FlashBackend {
     // post-admission physical-operation timeout.
     uint32_t staged_since_ms = 0;
     bool admitted = false;  // true once this request has actually obtained the physical in-flight slot.
+    // True once this request has acquired the shared physical-flash token
+    // (SharedFlashOwner::kGate) at least once. Set exactly once per
+    // admission, the tick the token is acquired -- see attemptSubmit(). Used
+    // only to know when to reset `started_ms` from "time since admission"
+    // (bounded by kTokenWaitTimeoutMs while waiting for the token) to "time
+    // since token acquisition" (bounded by kOperationTimeoutMs thereafter).
+    bool token_acquired = false;
     bool submission_accepted = false;  // sd_flash_* itself returned NRF_SUCCESS.
     bool event_ready = false;          // pumpEvents() recorded a matching completion.
     bool event_success = false;
+    // True once an admitted, already-accepted (submission_accepted) request
+    // times out waiting for its completion event. The shared token is
+    // deliberately NOT released while this is true -- see the class-level
+    // "M7P7A ownership-transfer invariant" comment above and
+    // quarantineSlot(). Only handleFlashEvent() observing the real,
+    // definitive completion clears it (via releaseSlot()).
+    bool quarantined = false;
     uint32_t staging_size = 0;
   };
 
@@ -227,6 +277,12 @@ class FlashMutationGate : public FlashBackend {
   FlashOpResult attemptSubmit(Owner owner);
   FlashOpResult submitOrRetry(Owner owner);
   void releaseSlot(Owner owner);
+  // Marks an already-accepted (submission_accepted), timed-out request as
+  // quarantined. Deliberately does NOT touch the shared token,
+  // in_flight_owner_, or any other slot field -- see the class-level
+  // "M7P7A ownership-transfer invariant" comment.
+  void quarantineSlot(Owner owner);
+  void handleFlashEvent(uint32_t evt_id);
 
   bool beginConfig();
   bool readConfig(uint32_t offset, void* data, size_t size) const;

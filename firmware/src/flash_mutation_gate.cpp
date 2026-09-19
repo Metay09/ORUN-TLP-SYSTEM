@@ -34,6 +34,92 @@ using namespace storage_config;
 // by this same constant). See submitOrRetry()'s admission block.
 constexpr uint32_t kOperationTimeoutMs = 4000;
 
+// M7P7A: independent from kOperationTimeoutMs above. Bounds only how long an
+// admitted request waits to ACQUIRE the shared physical-flash token in the
+// first place -- before this request has ever had a chance to call
+// sd_flash_write/sd_flash_page_erase itself. Reusing kOperationTimeoutMs
+// (4000ms) for this wait was the review-found defect: a queued ORUN request
+// could fail closed before it ever had one opportunity to submit anything to
+// SoftDevice, purely because it shared a clock with the unrelated
+// post-acquisition phase below.
+//
+// patch_ble_flash.py's own ORUN_FLASH_ARBITER_WAIT_MS (4500ms) bounds the
+// mirror-image wait -- how long InternalFS's patched driver waits to ACQUIRE
+// this same token while ORUN owns it. The two constants are each one side's
+// own "how long will I wait to acquire" policy; they do not bound the same
+// phase from opposite directions, and one is not a correctness precondition
+// for the other. In particular, ORUN_FLASH_ARBITER_WAIT_MS does NOT bound how
+// long InternalFS then HOLDS the token after it acquires it: once its
+// sd_flash_write/sd_flash_page_erase call is accepted, the stock (unpatched)
+// wait_for_async_flash_op_completion() blocks on xSemaphoreTake(_sem,
+// portMAX_DELAY) -- an unbounded wait for the real completion event, with no
+// software timeout of its own. So "kTokenWaitTimeoutMs > ORUN_FLASH_ARBITER_
+// WAIT_MS" is not, and was never meant to be, a proof that ORUN is guaranteed
+// to obtain the token within kTokenWaitTimeoutMs.
+//
+// kTokenWaitTimeoutMs is instead ORUN's own explicit, independent bounded
+// liveness policy: if InternalFS still owns the token when this fires (for
+// any reason -- still waiting to acquire it, or already holding it and
+// waiting on its own completion event), this admitted request fails closed.
+// This is always safe from an ownership-ambiguity standpoint: nothing was
+// ever submitted to SoftDevice by ORUN in this branch (submission_accepted is
+// still false), so releasing/not-touching the token here can never race a
+// still-outstanding ORUN operation the way an accepted-operation timeout
+// could (see the class-level "M7P7A ownership-transfer invariant" comment in
+// flash_mutation_gate.h, and quarantineSlot() below) -- it only ever means
+// "InternalFS still owns it; I am done waiting." A permanently stuck
+// InternalFS/SoftDevice path (the portMAX_DELAY case truly never completing)
+// is a real liveness gap this constant does not solve; it is a physical BLE
+// runtime concern for later validation, not an ownership-safety one.
+constexpr uint32_t kTokenWaitTimeoutMs = 6000;
+
+// M7P7A cross-task physical-flash bridge. The cooperative ORUN gate and
+// Adafruit InternalFS may run from different FreeRTOS tasks once BLE starts.
+// Keep only two machine-word atomics here: one owner token and one forwarded
+// gate-event mailbox. FlashMutationGate object state itself remains owned by
+// the normal cooperative loop.
+enum class SharedFlashOwner : uint32_t {
+  kNone = 0,
+  kGate = 1,
+  kInternalFs = 2,
+};
+
+volatile uint32_t g_shared_flash_owner =
+    static_cast<uint32_t>(SharedFlashOwner::kNone);
+volatile uint32_t g_bluefruit_soc_event_owner = 0;
+volatile uint32_t g_gate_flash_event = 0;  // 0 none, 1 success, 2 error.
+
+uint32_t loadSharedOwner() {
+  return __atomic_load_n(&g_shared_flash_owner, __ATOMIC_ACQUIRE);
+}
+
+bool sharedOwnerIs(SharedFlashOwner owner) {
+  return loadSharedOwner() == static_cast<uint32_t>(owner);
+}
+
+bool tryAcquireSharedFlash(SharedFlashOwner owner) {
+  uint32_t expected = static_cast<uint32_t>(SharedFlashOwner::kNone);
+  return __atomic_compare_exchange_n(
+      &g_shared_flash_owner, &expected, static_cast<uint32_t>(owner), false,
+      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+
+void releaseSharedFlash(SharedFlashOwner owner) {
+  uint32_t expected = static_cast<uint32_t>(owner);
+  (void)__atomic_compare_exchange_n(
+      &g_shared_flash_owner, &expected,
+      static_cast<uint32_t>(SharedFlashOwner::kNone), false,
+      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+
+bool bluefruitOwnsSocEvents() {
+  return __atomic_load_n(&g_bluefruit_soc_event_owner, __ATOMIC_ACQUIRE) != 0;
+}
+
+uint32_t takeBridgedGateEvent() {
+  return __atomic_exchange_n(&g_gate_flash_event, 0U, __ATOMIC_ACQ_REL);
+}
+
 bool inBoundsHistory(uint32_t offset, size_t size) {
   return offset <= kRegionSize && size <= kRegionSize - offset;
 }
@@ -47,9 +133,54 @@ bool inBoundsSecurity(uint32_t offset, size_t size) {
 }
 }  // namespace
 
+}  // namespace orun_tlp
+
+// Weak references to these C-linkage hooks are injected into the pinned
+// Adafruit framework by M7P7A. Keeping the strong implementation here makes
+// FlashMutationGate the application owner of arbitration without teaching the
+// vendor C/C++ sources about ORUN types.
+extern "C" bool orun_flash_internalfs_try_acquire(void) {
+  return orun_tlp::tryAcquireSharedFlash(
+      orun_tlp::SharedFlashOwner::kInternalFs);
+}
+
+extern "C" void orun_flash_internalfs_release(void) {
+  orun_tlp::releaseSharedFlash(orun_tlp::SharedFlashOwner::kInternalFs);
+}
+
+extern "C" bool orun_flash_internalfs_owns(void) {
+  return orun_tlp::sharedOwnerIs(orun_tlp::SharedFlashOwner::kInternalFs);
+}
+
+extern "C" void orun_flash_gate_soc_event_cb(uint32_t event) {
+  if (!orun_tlp::sharedOwnerIs(orun_tlp::SharedFlashOwner::kGate)) return;
+
+  uint32_t encoded = 0;
+  if (event == NRF_EVT_FLASH_OPERATION_SUCCESS) encoded = 1;
+  else if (event == NRF_EVT_FLASH_OPERATION_ERROR) encoded = 2;
+  if (encoded != 0) {
+    __atomic_store_n(&orun_tlp::g_gate_flash_event, encoded, __ATOMIC_RELEASE);
+  }
+}
+
+extern "C" void orun_flash_gate_set_bluefruit_soc_owner(bool active) {
+  __atomic_store_n(&orun_tlp::g_bluefruit_soc_event_owner,
+                   active ? 1U : 0U, __ATOMIC_RELEASE);
+}
+
+namespace orun_tlp {
+
 // ---------------------------------------------------------------------
 // History client: unchanged M7P3 FlashBackend surface and behavior.
 // ---------------------------------------------------------------------
+
+FlashMutationGate::~FlashMutationGate() {
+  // The product has one process-lifetime gate. Cleanup mainly isolates scoped
+  // host-test instances so one interrupted scenario cannot poison the next.
+  releaseSharedFlash(SharedFlashOwner::kGate);
+  __atomic_store_n(&g_gate_flash_event, 0U, __ATOMIC_RELEASE);
+  __atomic_store_n(&g_bluefruit_soc_event_owner, 0U, __ATOMIC_RELEASE);
+}
 
 bool FlashMutationGate::begin() {
   ready_history_ = sync_history_.begin();
@@ -73,10 +204,26 @@ void FlashMutationGate::releaseSlot(Owner owner) {
   Slot& mine = slot(owner);
   mine.kind = Kind::kNone;
   mine.admitted = false;
+  mine.token_acquired = false;
   mine.submission_accepted = false;
   mine.event_ready = false;
+  mine.quarantined = false;
   mine.staging_size = 0;
   if (in_flight_owner_ == owner) in_flight_owner_ = Owner::kNone;
+  // Keep the global token across SoftDevice BUSY retries, but never beyond
+  // completion/failure of this admitted ORUN request.
+  releaseSharedFlash(SharedFlashOwner::kGate);
+}
+
+void FlashMutationGate::quarantineSlot(Owner owner) {
+  // Deliberately the ONLY field touched: kind/target/admitted/
+  // submission_accepted, in_flight_owner_ and the shared kGate token all
+  // stay exactly as they are. A genuinely late handleFlashEvent() must still
+  // find in_flight_owner_ == owner to reconcile this exact request, and a
+  // new call from `owner` must see kind != kNone and be rejected until that
+  // reconciliation happens -- see the class-level "M7P7A ownership-transfer
+  // invariant" comment in flash_mutation_gate.h.
+  slot(owner).quarantined = true;
 }
 
 FlashOpResult FlashMutationGate::program(uint32_t offset, const void* data, size_t size) {
@@ -114,8 +261,10 @@ FlashOpResult FlashMutationGate::program(uint32_t offset, const void* data, size
   // started_ms is set on admission (submitOrRetry), not here -- this request
   // may still have to wait behind the other client's in-flight operation.
   history_slot_.admitted = false;
+  history_slot_.token_acquired = false;
   history_slot_.submission_accepted = false;
   history_slot_.event_ready = false;
+  history_slot_.quarantined = false;
   return submitOrRetry(Owner::kHistory);
 }
 
@@ -132,8 +281,10 @@ FlashOpResult FlashMutationGate::erasePage(uint32_t page) {
   history_slot_.priority = Priority::kHistory;
   history_slot_.staged_since_ms = monotonic::nowMs();
   history_slot_.admitted = false;
+  history_slot_.token_acquired = false;
   history_slot_.submission_accepted = false;
   history_slot_.event_ready = false;
+  history_slot_.quarantined = false;
   return submitOrRetry(Owner::kHistory);
 }
 
@@ -179,8 +330,10 @@ FlashOpResult FlashMutationGate::programConfig(uint32_t offset, const void* data
   // started_ms is set on admission (submitOrRetry), not here -- this request
   // may still have to wait behind the other client's in-flight operation.
   config_slot_.admitted = false;
+  config_slot_.token_acquired = false;
   config_slot_.submission_accepted = false;
   config_slot_.event_ready = false;
+  config_slot_.quarantined = false;
   return submitOrRetry(Owner::kConfig);
 }
 
@@ -197,8 +350,10 @@ FlashOpResult FlashMutationGate::erasePageConfig(uint32_t page) {
   config_slot_.priority = Priority::kConfig;
   config_slot_.staged_since_ms = monotonic::nowMs();
   config_slot_.admitted = false;
+  config_slot_.token_acquired = false;
   config_slot_.submission_accepted = false;
   config_slot_.event_ready = false;
+  config_slot_.quarantined = false;
   return submitOrRetry(Owner::kConfig);
 }
 
@@ -246,8 +401,10 @@ FlashOpResult FlashMutationGate::programSecurity(uint32_t offset, const void* da
   security_slot_.priority = priority;
   security_slot_.staged_since_ms = monotonic::nowMs();
   security_slot_.admitted = false;
+  security_slot_.token_acquired = false;
   security_slot_.submission_accepted = false;
   security_slot_.event_ready = false;
+  security_slot_.quarantined = false;
   return submitOrRetry(Owner::kSecurity);
 }
 
@@ -264,8 +421,10 @@ FlashOpResult FlashMutationGate::erasePageSecurity(uint32_t page, Priority prior
   security_slot_.priority = priority;
   security_slot_.staged_since_ms = monotonic::nowMs();
   security_slot_.admitted = false;
+  security_slot_.token_acquired = false;
   security_slot_.submission_accepted = false;
   security_slot_.event_ready = false;
+  security_slot_.quarantined = false;
   return submitOrRetry(Owner::kSecurity);
 }
 
@@ -350,12 +509,16 @@ FlashOpResult FlashMutationGate::submitOrRetry(Owner owner) {
     return FlashOpResult::kFailed;
   }
   if (timedOut(monotonic::nowMs(), mine.started_ms)) {
-    // A lost/missing completion event must not wedge the device: fail this
-    // request closed at the application level. This is not a claim that the
-    // physical write/erase did or did not happen -- the flash backend never
-    // asserts durability from a timeout, only from a confirmed SUCCESS
-    // event or, when SoftDevice is disabled, an immediate verified readback.
-    releaseSlot(owner);
+    // SoftDevice already accepted this operation (submission_accepted,
+    // checked above) but no completion event has arrived. This must NOT
+    // release the shared token -- see the class-level "M7P7A
+    // ownership-transfer invariant" comment in flash_mutation_gate.h and
+    // quarantineSlot(). The application still gets a bounded kFailed so it
+    // never wedges; this is not a claim that the physical write/erase did or
+    // did not happen -- the flash backend never asserts durability from a
+    // timeout, only from a confirmed SUCCESS event or, when SoftDevice is
+    // disabled, an immediate verified readback.
+    quarantineSlot(owner);
     ++diag(owner).timeouts;
     return FlashOpResult::kFailed;
   }
@@ -364,6 +527,43 @@ FlashOpResult FlashMutationGate::submitOrRetry(Owner owner) {
 
 FlashOpResult FlashMutationGate::attemptSubmit(Owner owner) {
   Slot& mine = slot(owner);
+
+  // Phase 1: wait for the shared physical-flash token, currently held by
+  // InternalFS. Bounded by kTokenWaitTimeoutMs, deliberately NOT
+  // kOperationTimeoutMs -- see kTokenWaitTimeoutMs's declaration comment.
+  // Once an admitted ORUN request acquires the token it retains it across
+  // NRF_ERROR_BUSY retries; this prevents a bond write from interleaving
+  // between retries of a security/history/config operation.
+  if (!sharedOwnerIs(SharedFlashOwner::kGate) &&
+      !tryAcquireSharedFlash(SharedFlashOwner::kGate)) {
+    ++diag(owner).busy_retries;
+    if (monotonic::elapsed(monotonic::nowMs(), mine.started_ms, kTokenWaitTimeoutMs)) {
+      // This branch only runs while InternalFS (not this gate) owns the
+      // token, so releaseSlot()'s releaseSharedFlash(kGate) call below is a
+      // harmless no-op here (its compare-exchange expects the current owner
+      // to already be kGate) -- it resets this request's own local admission
+      // bookkeeping without touching InternalFS's actual ownership. Nothing
+      // was ever submitted to SoftDevice for this request, so failing closed
+      // here can never create ownership ambiguity, no matter why InternalFS
+      // still owned the token (see kTokenWaitTimeoutMs's declaration
+      // comment).
+      releaseSlot(owner);
+      ++diag(owner).timeouts;
+      return FlashOpResult::kFailed;
+    }
+    return FlashOpResult::kPending;
+  }
+
+  // Token acquired -- either just now, or retained from an earlier retry of
+  // this same admitted request. Give the post-acquisition phase (SD BUSY
+  // retries on the submission call itself, then submitOrRetry()'s wait for
+  // the completion event) its own fresh kOperationTimeoutMs budget,
+  // independent of how long phase 1 above took.
+  if (!mine.token_acquired) {
+    mine.token_acquired = true;
+    mine.started_ms = monotonic::nowMs();
+  }
+
   uint32_t result = NRF_ERROR_INTERNAL;
   if (mine.kind == Kind::kProgram) {
     result = sd_flash_write(reinterpret_cast<uint32_t*>(mine.target),
@@ -385,49 +585,74 @@ FlashOpResult FlashMutationGate::attemptSubmit(Owner owner) {
       ++diag(owner).timeouts;
       return FlashOpResult::kFailed;
     }
-    return FlashOpResult::kPending;  // Retry submission from pollPending().
+    return FlashOpResult::kPending;
   }
-  // Permanent rejection (invalid address/length, forbidden region, or an
-  // internal SoftDevice error opening the session): fail closed now rather
-  // than retrying a request the SoftDevice has already refused to start.
+
+  // Permanent rejection: fail closed and release both the ORUN admission
+  // slot and the shared physical-flash token.
   releaseSlot(owner);
   return FlashOpResult::kFailed;
 }
 
+void FlashMutationGate::handleFlashEvent(uint32_t evt_id) {
+  if (evt_id != NRF_EVT_FLASH_OPERATION_SUCCESS &&
+      evt_id != NRF_EVT_FLASH_OPERATION_ERROR)
+    return;
+
+  if (in_flight_owner_ == Owner::kNone) {
+    ++diag(last_owner_).spurious_events;
+    return;
+  }
+
+  Slot& mine = slot(in_flight_owner_);
+  if (!mine.submission_accepted) {
+    ++diag(in_flight_owner_).spurious_events;
+    return;
+  }
+
+  if (mine.quarantined) {
+    // A definitive completion for a request whose application-level caller
+    // already timed out (submitOrRetry() already returned kFailed). Only
+    // now -- never on a bare timeout -- is it safe to release the shared
+    // token: see the class-level "M7P7A ownership-transfer invariant"
+    // comment in flash_mutation_gate.h. Deliberately does not set
+    // event_ready/event_success or count completions_success/error: the
+    // caller already observed one outcome (kFailed) for this logical
+    // request and must not see a second, contradictory one.
+    ++diag(in_flight_owner_).late_completions;
+    releaseSlot(in_flight_owner_);
+    return;
+  }
+
+  if (mine.event_ready) {
+    ++diag(in_flight_owner_).spurious_events;
+    return;
+  }
+
+  mine.event_ready = true;
+  mine.event_success = (evt_id == NRF_EVT_FLASH_OPERATION_SUCCESS);
+}
+
 void FlashMutationGate::pumpEvents() {
   if (!softDeviceEnabled()) return;
+
+  if (bluefruitOwnsSocEvents()) {
+    // Bluefruit is now the sole sd_evt_get() consumer. Its pinned SoC-task
+    // patch forwards only the gate-owned flash completion into this one-word
+    // mailbox. InternalFS completions are filtered by the shared owner token.
+    const uint32_t bridged = takeBridgedGateEvent();
+    if (bridged == 1U) handleFlashEvent(NRF_EVT_FLASH_OPERATION_SUCCESS);
+    else if (bridged == 2U) handleFlashEvent(NRF_EVT_FLASH_OPERATION_ERROR);
+    return;
+  }
+
+  // Pre-BLE behavior: this gate remains the sole SoC queue drainer.
   uint32_t evt_id = 0;
   while (sd_evt_get(&evt_id) == NRF_SUCCESS) {
     if (evt_id != NRF_EVT_FLASH_OPERATION_SUCCESS &&
-        evt_id != NRF_EVT_FLASH_OPERATION_ERROR) {
-      // Not a flash event (e.g. HFCLKSTARTED, POWER_*, RADIO_* timeslot,
-      // USB_*): drained so the SoftDevice event queue never backs up, but
-      // otherwise not acted on by this slice.
+        evt_id != NRF_EVT_FLASH_OPERATION_ERROR)
       continue;
-    }
-    if (in_flight_owner_ == Owner::kNone) {
-      // No client currently owns the physical slot at all: attribute this
-      // to whichever client most recently did (its own just-completed or
-      // just-released operation is the most plausible source of a stray
-      // late event), rather than always crediting history by default.
-      ++diag(last_owner_).spurious_events;
-      continue;
-    }
-    Slot& mine = slot(in_flight_owner_);
-    if (!mine.submission_accepted || mine.event_ready) {
-      // The owning client hasn't actually had its submission accepted yet
-      // (still BUSY-retrying), or a second flash event arrived before
-      // pollPending() consumed the first (the SoftDevice API documents
-      // exactly one event per command, so this should not happen) --
-      // discard rather than completing the wrong request or double-calling
-      // completion. Routed to the current owner's own counter: only that
-      // owner could plausibly have caused a spurious event right now, since
-      // it is the only client with a physical slot.
-      ++diag(in_flight_owner_).spurious_events;
-      continue;
-    }
-    mine.event_ready = true;
-    mine.event_success = (evt_id == NRF_EVT_FLASH_OPERATION_SUCCESS);
+    handleFlashEvent(evt_id);
   }
 }
 

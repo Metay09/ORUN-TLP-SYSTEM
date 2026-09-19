@@ -35,6 +35,18 @@ _patch_internalfs = _load_patch_internalfs()
 _internalfs_target, _internalfs_backup = _patch_internalfs.target_and_backup_paths(core)
 fs = _internalfs_target.read_text()
 
+
+def _load_patch_ble_flash():
+    path = Path(env.subst("$PROJECT_DIR")) / "scripts" / "patch_ble_flash.py"
+    spec = importlib.util.spec_from_file_location("patch_ble_flash", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_patch_ble_flash = _load_patch_ble_flash()
+_ble_patch_paths = _patch_ble_flash.target_paths(core)
+
 # M7P4: the pre-build audit above normally expects the exact stock
 # InternalFileSystem.cpp (this pre: script runs before patch_internalfs.py's
 # post: application, per PlatformIO's own extra_scripts ordering -- verified
@@ -68,12 +80,9 @@ def check_exclusive_owner(source, target, env):
     nm = Path(env.PioPlatform().get_package_dir("toolchain-gccarmnoneeabi")) / "bin/arm-none-eabi-nm"
     symbols = subprocess.check_output([str(nm), str(target[0])], text=True)
     internalfs_linked = bool(re.search(r"\bInternalFS$", symbols, re.MULTILINE))
+    bluefruit_linked = bool(re.search(r"\bBluefruit$", symbols, re.MULTILINE))
     if internalfs_linked:
-        # M7P4: a linked InternalFS is no longer an unconditional failure --
-        # only a stock or otherwise-unrecognized InternalFS would own the
-        # same flash pages as the ORUN history journal. Re-read the actual
-        # on-disk vendor source now (patch_internalfs.py's post: application
-        # already ran in this same process; its atexit restore has not).
+        # M7P4: linked InternalFS must still use only its relocated bond pages.
         current = _internalfs_target.read_text() if _internalfs_target.exists() else ""
         if not _patch_internalfs.relocation_ok(current):
             raise RuntimeError(
@@ -82,6 +91,30 @@ def check_exclusive_owner(source, target, env):
                 "0x0EB000, 2 pages / 0x2000 bytes). A stock or unrecognized "
                 "InternalFS would own the same flash pages as the ORUN "
                 "history journal (0xED000..0xF4000)."
+            )
+
+        # M7P7A: relocation alone is insufficient once BLE is live. The
+        # InternalFS low-level driver must also participate in ORUN's shared
+        # physical-flash arbitration contract.
+        flash_target, _ = _ble_patch_paths["flash"]
+        flash_current = flash_target.read_text() if flash_target.exists() else ""
+        if not _patch_ble_flash.flash_patch_ok(flash_current):
+            raise RuntimeError(
+                "M7P7A concurrency violation: InternalFS is linked without "
+                "the audited shared-flash arbitration/event filter patch."
+            )
+
+    if bluefruit_linked:
+        # Bluefruit becomes the sole global sd_evt_get() consumer; require
+        # the audited forwarding hook so FlashMutationGate never races it.
+        bluefruit_target, _ = _ble_patch_paths["bluefruit"]
+        bluefruit_current = (
+            bluefruit_target.read_text() if bluefruit_target.exists() else ""
+        )
+        if not _patch_ble_flash.bluefruit_patch_ok(bluefruit_current):
+            raise RuntimeError(
+                "M7P7A event-ownership violation: Bluefruit is linked without "
+                "the audited SoC flash-event bridge patch."
             )
     if re.search(r"\bflash_nrf5x_(write|flush)$", symbols, re.MULTILINE) and not internalfs_linked:
         # Only InternalFS's own driver plausibly links these; their presence
