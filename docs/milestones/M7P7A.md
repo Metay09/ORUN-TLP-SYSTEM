@@ -1,6 +1,6 @@
 # M7P7A — BLE flash arbitration + SoftDevice SoC event ownership
 
-Status: **IMPLEMENTED ON BRANCH — full host suite PASS; production RAK4630 build PASS; isolated BLE compile-link smoke PASS with linked-symbol evidence; BLE runtime remains OFF.**
+Status: **IMPLEMENTED ON BRANCH — full host suite PASS; production RAK4630 build PASS; isolated BLE compile-link smoke PASS with linked-symbol evidence; a real ownership-transfer invariant violation found by independent review (§4.1) is fixed and covered by new host tests; BLE runtime remains OFF. PR kept draft.**
 
 Baseline: `main@9585590b64b2df7a827b89fac99470fccc526d78`
 (M7P6B merged plus post-merge architecture checkpoint).
@@ -79,6 +79,118 @@ and return before its own physical flash operation completed.
 Outside ORUN the hooks are weak; absent a strong ORUN bridge, vendor behavior
 remains stock.
 
+## 4.1 Ownership-transfer invariant and independent timeout budgets (post-review fix)
+
+An independent code-review pass on this branch found a real M7P7A blocker in
+`FlashMutationGate` itself (`firmware/src/flash_mutation_gate.cpp`), not in the
+vendor patch: the original bounded application-level timeout
+(`kOperationTimeoutMs`, 4000ms) released the shared physical-flash token
+(`releaseSlot()` → `releaseSharedFlash(SharedFlashOwner::kGate)`) on **any**
+timeout, including one that fired *after* SoftDevice had already accepted an
+`sd_flash_write`/`sd_flash_page_erase` call for that request
+(`Slot::submission_accepted == true`) but before its completion event arrived.
+
+**Exact failure mode audited:** if that early release happened, InternalFS
+could immediately `orun_flash_internalfs_try_acquire()` the freed token and
+begin its own Nordic flash call while ORUN's earlier operation was still
+genuinely in flight. The stale completion event for ORUN's abandoned
+operation, once it finally arrived, would be forwarded by the pinned
+`bluefruit.cpp` SoC task to *both* `orun_flash_gate_soc_event_cb()` (a no-op,
+since it checks *current* shared-owner identity and the owner had already
+changed to InternalFS) and the patched `flash_nrf5x_event_cb()` — which
+signals InternalFS's semaphore filtered only by *current* owner, not by which
+physical request the event actually belongs to. If that stale signal arrived
+before InternalFS's own subsequent `sd_flash_write`/`sd_flash_page_erase` call
+had itself completed, `wait_for_async_flash_op_completion()`'s semaphore take
+would consume the stale give and return immediately — letting a bond write
+report success before its own physical Nordic operation actually finished.
+
+**A second, related defect** (the review's original finding): the same
+`kOperationTimeoutMs` (4000ms) budget, measured from admission, was also used
+while an admitted request was merely *waiting for InternalFS to release the
+token* — a phase that can legitimately take close to InternalFS's own bounded
+wait (`patch_ble_flash.py`'s `ORUN_FLASH_ARBITER_WAIT_MS`, 4500ms). Since
+4000 < 4500, a queued ORUN request could be failed closed before it ever had
+one opportunity to call `sd_flash_write`/`sd_flash_page_erase` at all.
+
+**Required invariant (now enforced):** once SoftDevice has accepted a physical
+flash operation for a client, the shared token must not be transferred to
+InternalFS until that exact operation has a definitive completion event, or
+the request enters a fail-closed/quarantined state that cannot misattribute a
+late event.
+
+**Fix — two independent timeout clocks, not a constant bump:**
+
+- `kTokenWaitTimeoutMs` (6000ms, new): bounds only how long an admitted
+  request waits for InternalFS to release the shared token, comfortably above
+  `ORUN_FLASH_ARBITER_WAIT_MS` (4500ms). If this fires, nothing was ever
+  submitted to SoftDevice, so it remains safe to release the token exactly as
+  before (`attemptSubmit()`'s phase-1 branch).
+- `kOperationTimeoutMs` (4000ms, unchanged value, **redefined start point**):
+  now reset the instant the token is actually acquired
+  (`Slot::token_acquired`), not at admission — giving the post-acquisition
+  phase (SD `BUSY` retries on the submission call itself, then waiting for the
+  completion event) its own fresh budget, independent of how long phase 1
+  took. This is the same 4-second physical-operation figure the ADR already
+  documents elsewhere (SEC_CRITICAL aging, etc.); it was not increased.
+- If this second timeout fires with `submission_accepted == false` (still
+  retrying `BUSY` on the submission call itself), nothing was submitted, so
+  `releaseSlot()` still applies unchanged (no quarantine).
+- If it fires with `submission_accepted == true` and no completion event yet,
+  the slot is **quarantined** (`Slot::quarantined`, new;
+  `FlashMutationGate::quarantineSlot()`): the caller is told `kFailed` so the
+  application never wedges, but `kind`/`target`/`admitted`/
+  `submission_accepted`, `in_flight_owner_` and the shared `kGate` token are
+  left exactly as they are. A new submission from the same owner is rejected
+  (`kind != kNone`) until the quarantine resolves; other owners simply stay
+  queued, exactly as they already do behind any in-flight operation.
+- `FlashMutationGate::handleFlashEvent()` reconciles a quarantined slot when
+  the real, definitive completion finally arrives: it releases the token via
+  the normal `releaseSlot()` path and records a new diagnostic counter,
+  `Diagnostics::late_completions`, instead of `completions_success`/
+  `completions_error` — the caller already observed one outcome (`kFailed`)
+  for that logical request and must not see a second, contradictory one.
+
+No change to `patch_ble_flash.py`'s vendor transform, `ORUN_FLASH_ARBITER_WAIT_MS`
+(4500ms, unchanged), or the SoC-event forwarding/ordering in §3 — the fix is
+entirely inside `FlashMutationGate`'s own state machine, the only place that
+was violating the invariant. This does not weaken any existing guard, change
+production behavior for the SoftDevice-disabled path (unaffected; the sync
+backends are untouched), or enable BLE runtime.
+
+Host coverage added directly for this fix (`firmware/tests/m7/test_m7p7a_flash_gate.cpp`,
+scenarios 4-8):
+
+1. InternalFS holds the token past the old 4000ms budget (up to 4200ms): the
+   queued ORUN request must not falsely time out before getting a submission
+   opportunity, and must still submit once InternalFS releases. A second case
+   confirms the new `kTokenWaitTimeoutMs` (6000ms) is itself still bounded --
+   InternalFS holding forever does eventually fail closed, cleanly, with no
+   quarantine (nothing was ever submitted).
+2. SoftDevice accepts the write (`submission_accepted`), then the completion
+   is delayed past `kOperationTimeoutMs`: the caller is failed closed, but
+   `orun_flash_internalfs_try_acquire()` must keep failing and
+   `orun_flash_internalfs_owns()` must stay false -- InternalFS cannot acquire
+   ownership while the physical completion is unresolved. A same-owner
+   resubmission attempt is also rejected, not silently allowed to start a
+   second physical operation.
+3. The late completion, once delivered, is reconciled as this exact quarantined
+   request's own event: `late_completions` increments; `completions_success`/
+   `completions_error` do not (never double-counted; never misattributed).
+4. After reconciliation, both InternalFS and a fresh ORUN request can acquire
+   the token again and complete normally.
+5. A submission that never gets past `NRF_ERROR_BUSY` (never accepted at all)
+   still times out on the unchanged `kOperationTimeoutMs` budget and releases
+   the token cleanly -- confirming the pre-acceptance path is intentionally
+   exempt from quarantine.
+
+A pre-existing M7P3 host test (`test_m7p3_flash_gate.cpp`) asserted the *old*
+(incorrect) behavior -- that an accepted-but-unconfirmed operation's late event
+became `spurious_events` and the slot was immediately reusable after a bare
+timeout. That assertion was updated to require `late_completions` and to
+confirm the slot stays rejected (`kFailed` on resubmission) until the real
+event is reconciled, matching the corrected invariant.
+
 ## 5. Framework pinning and build guards
 
 New pinned patch:
@@ -131,21 +243,34 @@ Focused host coverage:
 - Bluefruit-forwarded gate completion finishes the correct request;
 - an InternalFS-owned completion cannot become a stale gate completion;
 - pinned framework transforms fail closed on source drift;
-- two-file patch apply/restore returns vendor sources byte-for-byte.
+- two-file patch apply/restore returns vendor sources byte-for-byte;
+- (§4.1 post-review fix) InternalFS holding the token past the old shared
+  budget does not falsely time out a queued ORUN request, and the wider
+  token-wait budget is itself still bounded;
+- (§4.1) an accepted-but-unconfirmed ORUN operation quarantines the shared
+  token on timeout instead of releasing it, and InternalFS cannot acquire
+  ownership while that operation's completion is unresolved;
+- (§4.1) a late completion for a quarantined request is reconciled as ORUN's
+  own event (`late_completions`), never double-counted as a fresh success/
+  error and never left for InternalFS to consume;
+- (§4.1) reconciliation makes the token available again for both InternalFS
+  and a fresh ORUN request;
+- (§4.1) a submission that never clears SoftDevice `BUSY` (never accepted)
+  still times out and releases the token cleanly, without quarantine.
 
-Validation evidence from the canonical Debian checkout:
+Validation evidence from the canonical Debian checkout (re-run after the §4.1 fix):
 
 - `PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p7a_patch_ble_flash.py`: **PASS**; installed framework pins matched.
-- `bash firmware/tests/run_host_tests.sh`: **PASS** end-to-end, including M7P7A flash/event arbitration and all legacy/persistence/startup regressions.
+- `bash firmware/tests/run_host_tests.sh`: **PASS** end-to-end (53/53), including M7P7A flash/event arbitration (8 scenarios), the updated M7P3 async-contract quarantine assertion, and all other legacy/persistence/startup regressions.
 - `pio run -d firmware -e rak4630`: **PASS**.
-  - RAM: **15,436 B / 248,832 B (6.2%)**
-  - Flash: **159,296 B / 815,104 B (19.5%)**
+  - RAM: **15,460 B / 248,832 B (6.2%)**
+  - Flash: **159,024 B / 815,104 B (19.5%)**
   - M7P4 relocation patch: applied/verified.
   - M7P7A arbitration/event-bridge patch: applied/verified.
   - exclusive-owner and application-ceiling post-link guards completed without error.
   - compiler warnings shown in this build are from the pinned SX126x-Arduino dependency, not newly-added ORUN source.
 
-Compared with the M7P6B production build (15,420 B RAM / 158,128 B flash), this slice adds **16 B RAM** and **1,168 B flash** to the shipped composition.
+Compared with the pre-§4.1-fix build on this same branch (15,436 B RAM / 159,296 B flash), the quarantine/two-clock fix to `FlashMutationGate` (production-linked on every build, SoftDevice-enabled or not) changes production composition by **+24 B RAM / -272 B flash** -- the two new `Slot` booleans (`token_acquired`, `quarantined`) and the `late_completions` counter cost a little RAM; the flash delta is compiler code-layout variance from the restructured branches, not a new feature surface. Compared with the M7P6B production build (15,420 B RAM / 158,128 B flash), this slice as a whole now adds **40 B RAM** and **896 B flash** to the shipped composition.
 
 Important validation boundary: because BLE remains OFF in the production environment, Bluefruit/InternalFS are not pulled into that linked image. Therefore the production build proves the ORUN-side bridge and patch/build guards but does **not** by itself compile the transformed Bluefruit/InternalFS code. An isolated `rak4630_m7p7a_compile` build target is included specifically to close that compile/link evidence gap before merge.
 
@@ -212,18 +337,22 @@ paths) under `--gc-sections`. This is a change to a build-only, non-shipped test
 touch `env:rak4630`, does not call `Bluefruit.begin()` from any code path reachable in production, and
 does not enable BLE runtime anywhere.
 
-**Verified post-fix (canonical Debian checkout):**
+**Verified post-fix (canonical Debian checkout; re-run after the §4.1 `FlashMutationGate` fix,
+which also relinks into this target since `flash_mutation_gate.cpp` is one of its sources):**
 
 ```text
 pio run -d firmware -e rak4630_m7p7a_compile
-RAM:   16,104 / 248,832 bytes (6.5%)
-Flash: 127,916 / 815,104 bytes (15.7%)
+RAM:   16,128 / 248,832 bytes (6.5%)
+Flash: 127,468 / 815,104 bytes (15.6%)
 SUCCESS
 ```
 
 Flash usage in this env rose from 58,384 B (address-of only, nothing actually linked) to
-127,916 B once `begin()` forced real linkage — itself corroborating evidence that a materially
-larger amount of Bluefruit/InternalFS code is now present in the image.
+over 127,000 B once `begin()` forced real linkage — itself corroborating evidence that a
+materially larger amount of Bluefruit/InternalFS code is now present in the image. The small
+RAM/flash shift versus the first post-fix measurement (16,104 B / 127,916 B) matches the §4.1
+`FlashMutationGate` delta already reported in §7's production evidence, not a change to this
+target's own configuration.
 
 `check_exclusive_owner` and `check_application_ceiling` both ran as post-link actions and completed
 without raising — i.e. the M7P4/M7P7A patch-presence checks for `InternalFS linked` and
@@ -271,5 +400,20 @@ work:
 - connect/disconnect/reconnect behavior;
 - BLE authorization/provisioning;
 - DFU preservation and bootloader authenticity/rollback behavior.
+
+**Known limitation carried forward from §4.1, matching an already-acknowledged
+ADR gap** (`ADR_M7_PERSISTENCE_LAYOUT.md` §9: "a bounded timeout fallback for
+an event that never arrives (SoftDevice fault) is a required design element
+for the implementation slice that builds this gate... not decided here"):
+quarantine has no secondary timeout of its own. If a completion event were
+permanently lost (a genuine SoftDevice fault, not the normal case this slice
+targets), the quarantined client's slot stays held until a reset, rather than
+being recovered automatically. This is the intentionally conservative,
+fail-closed side of the required invariant -- correctness (never misattribute
+a late event) over liveness in that specific fault case -- and is explicitly
+not resolved by this fix. It remains physically unverified, like the rest of
+this section, and is not a regression: the pre-fix code had no correct
+recovery for this case either, since it required a leaked completion race
+that could itself corrupt data (§4.1).
 
 Host/build PASS will not be reported as physical BLE PASS.
