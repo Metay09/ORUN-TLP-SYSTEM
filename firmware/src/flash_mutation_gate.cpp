@@ -35,18 +35,42 @@ using namespace storage_config;
 constexpr uint32_t kOperationTimeoutMs = 4000;
 
 // M7P7A: independent from kOperationTimeoutMs above. Bounds only how long an
-// admitted request waits for InternalFS to release the shared physical-flash
-// token in the first place -- before this request has ever had a chance to
-// call sd_flash_write/sd_flash_page_erase itself. Must stay comfortably
-// above patch_ble_flash.py's own ORUN_FLASH_ARBITER_WAIT_MS (4500ms,
-// InternalFS's own bounded wait for this exact token): reusing
-// kOperationTimeoutMs (4000ms, less than 4500) here let InternalFS still be
-// legitimately mid-wait on its own budget after ORUN's admitted request had
-// already been failed closed, even though that request had not yet had one
-// opportunity to submit anything to SoftDevice. This is a distinct phase and
-// budget, not a bump to kOperationTimeoutMs, which continues to bound only
-// time already spent holding the token (attemptSubmit()'s post-acquisition
-// BUSY retries and submitOrRetry()'s wait for the completion event).
+// admitted request waits to ACQUIRE the shared physical-flash token in the
+// first place -- before this request has ever had a chance to call
+// sd_flash_write/sd_flash_page_erase itself. Reusing kOperationTimeoutMs
+// (4000ms) for this wait was the review-found defect: a queued ORUN request
+// could fail closed before it ever had one opportunity to submit anything to
+// SoftDevice, purely because it shared a clock with the unrelated
+// post-acquisition phase below.
+//
+// patch_ble_flash.py's own ORUN_FLASH_ARBITER_WAIT_MS (4500ms) bounds the
+// mirror-image wait -- how long InternalFS's patched driver waits to ACQUIRE
+// this same token while ORUN owns it. The two constants are each one side's
+// own "how long will I wait to acquire" policy; they do not bound the same
+// phase from opposite directions, and one is not a correctness precondition
+// for the other. In particular, ORUN_FLASH_ARBITER_WAIT_MS does NOT bound how
+// long InternalFS then HOLDS the token after it acquires it: once its
+// sd_flash_write/sd_flash_page_erase call is accepted, the stock (unpatched)
+// wait_for_async_flash_op_completion() blocks on xSemaphoreTake(_sem,
+// portMAX_DELAY) -- an unbounded wait for the real completion event, with no
+// software timeout of its own. So "kTokenWaitTimeoutMs > ORUN_FLASH_ARBITER_
+// WAIT_MS" is not, and was never meant to be, a proof that ORUN is guaranteed
+// to obtain the token within kTokenWaitTimeoutMs.
+//
+// kTokenWaitTimeoutMs is instead ORUN's own explicit, independent bounded
+// liveness policy: if InternalFS still owns the token when this fires (for
+// any reason -- still waiting to acquire it, or already holding it and
+// waiting on its own completion event), this admitted request fails closed.
+// This is always safe from an ownership-ambiguity standpoint: nothing was
+// ever submitted to SoftDevice by ORUN in this branch (submission_accepted is
+// still false), so releasing/not-touching the token here can never race a
+// still-outstanding ORUN operation the way an accepted-operation timeout
+// could (see the class-level "M7P7A ownership-transfer invariant" comment in
+// flash_mutation_gate.h, and quarantineSlot() below) -- it only ever means
+// "InternalFS still owns it; I am done waiting." A permanently stuck
+// InternalFS/SoftDevice path (the portMAX_DELAY case truly never completing)
+// is a real liveness gap this constant does not solve; it is a physical BLE
+// runtime concern for later validation, not an ownership-safety one.
 constexpr uint32_t kTokenWaitTimeoutMs = 6000;
 
 // M7P7A cross-task physical-flash bridge. The cooperative ORUN gate and
@@ -514,8 +538,15 @@ FlashOpResult FlashMutationGate::attemptSubmit(Owner owner) {
       !tryAcquireSharedFlash(SharedFlashOwner::kGate)) {
     ++diag(owner).busy_retries;
     if (monotonic::elapsed(monotonic::nowMs(), mine.started_ms, kTokenWaitTimeoutMs)) {
-      // Nothing was ever submitted to SoftDevice for this request -- safe to
-      // hand the token back exactly as before (no quarantine needed).
+      // This branch only runs while InternalFS (not this gate) owns the
+      // token, so releaseSlot()'s releaseSharedFlash(kGate) call below is a
+      // harmless no-op here (its compare-exchange expects the current owner
+      // to already be kGate) -- it resets this request's own local admission
+      // bookkeeping without touching InternalFS's actual ownership. Nothing
+      // was ever submitted to SoftDevice for this request, so failing closed
+      // here can never create ownership ambiguity, no matter why InternalFS
+      // still owned the token (see kTokenWaitTimeoutMs's declaration
+      // comment).
       releaseSlot(owner);
       ++diag(owner).timeouts;
       return FlashOpResult::kFailed;

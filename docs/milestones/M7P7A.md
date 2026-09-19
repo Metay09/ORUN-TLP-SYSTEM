@@ -107,11 +107,16 @@ report success before its own physical Nordic operation actually finished.
 
 **A second, related defect** (the review's original finding): the same
 `kOperationTimeoutMs` (4000ms) budget, measured from admission, was also used
-while an admitted request was merely *waiting for InternalFS to release the
-token* — a phase that can legitimately take close to InternalFS's own bounded
-wait (`patch_ble_flash.py`'s `ORUN_FLASH_ARBITER_WAIT_MS`, 4500ms). Since
-4000 < 4500, a queued ORUN request could be failed closed before it ever had
-one opportunity to call `sd_flash_write`/`sd_flash_page_erase` at all.
+while an admitted request was merely *waiting to acquire* the shared token
+from InternalFS — a phase entirely separate from, and unrelated in direction
+to, `patch_ble_flash.py`'s `ORUN_FLASH_ARBITER_WAIT_MS` (4500ms), which bounds
+the mirror-image wait: how long InternalFS's patched driver waits to *acquire*
+this same token while ORUN owns it. Reusing one shared 4000ms clock for both
+"wait to acquire" and "time since acquired" meant a queued ORUN request could
+be failed closed before it ever had one opportunity to call
+`sd_flash_write`/`sd_flash_page_erase` at all — the fix is to give that phase
+its own independent budget, not to compare it against InternalFS's unrelated
+4500ms figure (see the corrected note under "Fix" below).
 
 **Required invariant (now enforced):** once SoftDevice has accepted a physical
 flash operation for a client, the shared token must not be transferred to
@@ -122,10 +127,32 @@ late event.
 **Fix — two independent timeout clocks, not a constant bump:**
 
 - `kTokenWaitTimeoutMs` (6000ms, new): bounds only how long an admitted
-  request waits for InternalFS to release the shared token, comfortably above
-  `ORUN_FLASH_ARBITER_WAIT_MS` (4500ms). If this fires, nothing was ever
-  submitted to SoftDevice, so it remains safe to release the token exactly as
-  before (`attemptSubmit()`'s phase-1 branch).
+  request waits to *acquire* the shared token while InternalFS owns it. This
+  is an independent, explicit ORUN-side bounded-liveness policy, **not** a
+  safety relationship with InternalFS's own `ORUN_FLASH_ARBITER_WAIT_MS`
+  (4500ms). The two constants each bound one side's own "wait to acquire"
+  phase in opposite directions; they do not bound the same phase, and
+  `kTokenWaitTimeoutMs > ORUN_FLASH_ARBITER_WAIT_MS` is not, and was never
+  meant to be, a proof that ORUN is guaranteed to obtain the token before this
+  fires. In particular, `ORUN_FLASH_ARBITER_WAIT_MS` does not bound how long
+  InternalFS then *holds* the token after acquiring it: once its own
+  `sd_flash_write`/`sd_flash_page_erase` call is accepted, the stock
+  (unpatched) `wait_for_async_flash_op_completion()` blocks on
+  `xSemaphoreTake(_sem, portMAX_DELAY)` — an unbounded wait for the real
+  completion event, with no software timeout of its own. If this timeout
+  fires, the ORUN request fails closed **without releasing InternalFS's
+  token** — `attemptSubmit()`'s phase-1 branch only runs while InternalFS
+  owns the token, so ORUN's own `releaseSlot()` call there is a harmless
+  no-op on the shared owner (its compare-exchange expects the current owner
+  to already be `kGate`, which it is not). Nothing was ever submitted to
+  SoftDevice by ORUN in this branch (`submission_accepted` is still false),
+  so this can never create ownership ambiguity, regardless of *why*
+  InternalFS still owned it. A
+  permanently stuck InternalFS/SoftDevice path (the `portMAX_DELAY` case truly
+  never completing) is a real liveness gap this constant does not solve; it
+  remains a physical BLE runtime concern for later validation (see §8), not an
+  ownership-safety one, and the accepted-operation quarantine invariant above
+  is unaffected by it either way.
 - `kOperationTimeoutMs` (4000ms, unchanged value, **redefined start point**):
   now reset the instant the token is actually acquired
   (`Slot::token_acquired`), not at admission — giving the post-acquisition
@@ -415,5 +442,18 @@ not resolved by this fix. It remains physically unverified, like the rest of
 this section, and is not a regression: the pre-fix code had no correct
 recovery for this case either, since it required a leaked completion race
 that could itself corrupt data (§4.1).
+
+A distinct, InternalFS-side liveness gap exists independently of ORUN's
+quarantine: the stock (unpatched) `wait_for_async_flash_op_completion()`
+blocks on `xSemaphoreTake(_sem, portMAX_DELAY)` with no software timeout of
+its own, so if InternalFS's own accepted SoftDevice operation never
+completes, InternalFS holds the shared token forever too. `kTokenWaitTimeoutMs`
+(§4.1) does not and cannot fix this -- it only bounds how long *ORUN* waits to
+acquire the token, and an ORUN request timing out there fails closed without
+touching InternalFS's ownership at all (§4.1). Recovering from either stuck
+case is the same class of problem: a genuine SoftDevice fault that this
+prerequisite slice does not attempt to solve, and that real BLE runtime
+validation (physical reset/watchdog behavior under an actual stuck flash
+operation) must characterize later, not this host/build-only evidence.
 
 Host/build PASS will not be reported as physical BLE PASS.

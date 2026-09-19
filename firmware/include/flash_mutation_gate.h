@@ -75,11 +75,11 @@ namespace orun_tlp {
 // slot's kind/target stay exactly as they are until handleFlashEvent()
 // observes the real completion and reconciles it (see quarantineSlot()).
 // This also requires two independent timeout clocks, not one: how long an
-// admitted request waits for InternalFS to release the token in the first
-// place (kTokenWaitTimeoutMs, comfortably longer than patch_ble_flash.py's
-// own ORUN_FLASH_ARBITER_WAIT_MS) is a different question from how long it
-// waits, once it actually owns the token, for its own submission/completion
-// (kOperationTimeoutMs) -- see flash_mutation_gate.cpp.
+// admitted request waits to ACQUIRE the token in the first place
+// (kTokenWaitTimeoutMs) is a different question from how long it waits, once
+// it actually owns the token, for its own submission/completion
+// (kOperationTimeoutMs) -- see flash_mutation_gate.cpp for exactly what each
+// one does and does not guarantee.
 class FlashMutationGate : public FlashBackend {
  public:
   ~FlashMutationGate();
