@@ -234,8 +234,12 @@ int main() {
   }
 
   // Timeout: a lost/missing completion event must not wedge the device
-  // forever. After the bounded timeout, the request fails closed and the
-  // gate becomes reusable again for a fresh request.
+  // forever, but SoftDevice already accepted this write, so the bounded
+  // timeout must quarantine, not abandon, it (M7P7A ownership-transfer
+  // invariant -- see flash_mutation_gate.h): the caller is failed closed,
+  // but the slot stays held until the real completion is observed, and only
+  // that reconciliation -- never a bare timeout -- makes the gate reusable
+  // again.
   {
     reset();
     FlashMutationGate gate;
@@ -247,11 +251,18 @@ int main() {
     fake_now_ms += 10000;  // well past the bounded timeout
     assert(gate.pollPending() == FlashOpResult::kFailed);
     assert(gate.diagnostics().timeouts == 1);
-    // Reusable afterward, and a stray late event for the abandoned request
-    // does not retroactively complete anything.
+    // Still quarantined: a new request from the same client is rejected,
+    // not silently queued behind an ambiguous physical operation.
+    assert(gate.program(772, data, 4) == FlashOpResult::kFailed);
+    // The late event, once it finally arrives, is reconciled as this exact
+    // request's own completion -- never spurious, never a second, silent
+    // success the already-failed caller never asked for.
     event_queue.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
     gate.pumpEvents();
-    assert(gate.diagnostics().spurious_events == 1);
+    assert(gate.diagnostics().late_completions == 1);
+    assert(gate.diagnostics().spurious_events == 0);
+    assert(gate.diagnostics().completions_success == 0);
+    // Reconciled: the gate is reusable again for a fresh request.
     assert(gate.program(772, data, 4) == FlashOpResult::kPending);
     event_queue.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
     gate.pumpEvents();
