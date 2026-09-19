@@ -287,18 +287,26 @@ int main(int argc, char** argv) {
                           "ROLE command rejected\n" + expected_ble);
 
   if (ble_ok) {
-    // Connected client: reported, and the no-client window never closes.
-    Bluefruit.Periph.connected_count = 1;
+    // Connected client: the framework stops advertising on connect; the
+    // policy window stays open and never closes while connected.
+    Bluefruit.simulateConnect();
     test_now += ble_admission_config::kNoClientTimeoutMs + 1000;
     loop();
     Serial.output.clear();
     Serial.queueInput("BLE?\n");
     pollRoleCommands();
     assert(Serial.output ==
-           "BLE ready=yes advertising=yes connected=1 policy=open initial_start=ok\n");
-    // Disconnect opens one fresh window; its expiry stops advertising.
-    Bluefruit.Periph.connected_count = 0;
+           "BLE ready=yes advertising=no connected=1 policy=open initial_start=ok\n");
+    // Disconnect: the framework auto-restarts advertising and the policy
+    // opens one fresh window.
+    Bluefruit.simulateDisconnect();
     loop();
+    Serial.output.clear();
+    Serial.queueInput("BLE?\n");
+    pollRoleCommands();
+    assert(Serial.output ==
+           "BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok\n");
+    // Fresh window's expiry stops advertising and closes the policy.
     test_now += ble_admission_config::kNoClientTimeoutMs + 1000;
     loop();
     Serial.output.clear();

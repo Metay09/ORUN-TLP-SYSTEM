@@ -302,8 +302,11 @@ Canonical Debian checkout, this exact (post-fix) diff:
 
 ### 8.2 BLE diagnostic + boot-path hardening (added for physical validation)
 
-Diagnostic/observability only; no new BLE runtime behavior, no GATT, no policy
-change.
+Adds a diagnostic and hardens one failure path. Normal successful BLE policy
+and runtime behavior are unchanged (no GATT, no policy change, no callbacks).
+The only behavior change is on failure: if the boot-time
+`Bluefruit.Advertising.start(0)` returns false, admission is no longer opened
+and BLE availability is no longer falsely claimed.
 
 - New serial command `BLE?` prints one line:
   `BLE ready=<yes|no> advertising=<yes|no> connected=<n> policy=<open|closed> initial_start=<ok|fail|not-attempted>`.
@@ -315,6 +318,14 @@ change.
   admission window is not opened, `BLE available` is not printed and
   `BLE advertising start failed` is printed instead (previously the result was
   ignored and availability claimed unconditionally).
+- Host stub fidelity (Adafruit nRF52 1.7.0 `BLEAdvertising::_eventHandler`): a
+  connection sets `_running=false`; a disconnect auto-restarts advertising when
+  `restartOnDisconnect` is enabled. The startup test models this, so a
+  connected peripheral reports
+  `BLE ready=yes advertising=no connected=1 policy=open initial_start=ok`, the
+  immediate post-disconnect state is
+  `advertising=yes connected=0 policy=open`, and the fresh window's expiry ends
+  at `advertising=no ... policy=closed`.
 - Host: full `firmware/tests/run_host_tests.sh` **PASS** (exit 0), including all
   7 startup scenarios and the M7P7B policy test.
 - `pio run -d firmware -e rak4630`: **PASS** — RAM 22,068 B / 248,832 B (8.9%),
@@ -324,18 +335,21 @@ change.
 
 ### Delta vs. `main@fb3a098` (M7P7A merged baseline: RAM 15,460 B / Flash 159,024 B)
 
-| | Baseline | M7P7B | Delta |
+Current numbers (after §8.2; §8.1's 22,060 B / 224,588 B are historical, taken
+at the review-fix point):
+
+| | Baseline | M7P7B (current) | Delta |
 | --- | --- | --- | --- |
-| RAM | 15,460 B (6.2%) | 22,060 B (8.9%) | **+6,600 B** |
-| Flash | 159,024 B (19.5%) | 224,588 B (27.6%) | **+65,564 B** |
+| RAM | 15,460 B (6.2%) | 22,068 B (8.9%) | **+6,608 B** |
+| Flash | 159,024 B (19.5%) | 225,004 B (27.6%) | **+65,980 B** |
 
 This is the cost of linking the real Bluefruit52Lib/InternalFileSytem/GATT/GAP
 stack for the first time in a shipped image (BLEDfu, BLEDis, BLEUart, BLEHid*,
 BLEMidi, EddyStone and other Bluefruit52Lib service classes are part of the
 library's own default composition and get linked regardless of whether this
 slice's `main.cpp` uses them — no ORUN-side GATT service was added). Both
-deltas remain comfortably within budget (8.9% of RAM, 27.5% of total flash /
-28.4% of the M7P2 application policy ceiling).
+deltas remain comfortably within budget (8.9% of RAM, 27.6% of total flash /
+28.5% of the M7P2 application policy ceiling of 790,528 B).
 
 ## 9. Physical-validation evidence
 
