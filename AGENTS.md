@@ -385,10 +385,13 @@ Animal TRACKER still uses sensible battery protection.
 TRACKER:
 
 - BLE starts after boot
-- boot BLE window is 15 minutes
-- if a BLE connection exists when timeout expires, keep BLE active
-- if no connection exists, disable BLE
+- while BLE is open and no client is connected, the no-client timeout is approximately 10 minutes
+- if no client connects before that timeout expires, disable BLE
+- while a client is connected, the no-client timeout does not close BLE
+- after disconnect, start a fresh approximately 10-minute no-client timeout
+- repeated disconnects do not make BLE permanently available
 - BLE may later be enabled remotely over LoRa
+- BLE/local device access must not require a live Internet connection as a transport prerequisite
 - BLE should normally remain off during field operation
 
 BASE and MOBILE may keep BLE continuously active.

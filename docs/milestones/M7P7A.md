@@ -1,11 +1,15 @@
 # M7P7A — BLE flash arbitration + SoftDevice SoC event ownership
 
-Status: **IMPLEMENTED ON BRANCH — full host suite PASS; production RAK4630 build PASS; isolated BLE compile-link smoke PASS with linked-symbol evidence; a real ownership-transfer invariant violation found by independent review (§4.1) is fixed and covered by new host tests; BLE runtime remains OFF. PR kept draft.**
+Status: **MERGED TO MAIN — full host suite PASS; production RAK4630 build PASS; isolated BLE compile-link smoke PASS with linked-symbol evidence; the review-found ownership-transfer invariant violation (§4.1) is fixed and covered by host tests; BLE runtime remains OFF and no physical BLE PASS is claimed.**
 
 Baseline: `main@9585590b64b2df7a827b89fac99470fccc526d78`
 (M7P6B merged plus post-merge architecture checkpoint).
 
 Branch: `feat/m7p7a-ble-flash-arbitration`
+
+PR: `#20`
+
+Merged to `main` at: `e012a76b01f21b9575840d25a5a26ad78721021d`
 
 ## 1. Purpose
 

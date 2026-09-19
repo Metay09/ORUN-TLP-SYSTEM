@@ -364,9 +364,12 @@ decision gates. `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md` decides the par
 the unchanged HistoryStore region. SecurityStore owns credential + TX nonce-safety
 state only and uses activation-last A/B recovery; ambiguous committed nonce state
 fails protected TX closed. BLE/SoftDevice remain OFF in shipped firmware. History,
-Config and Security async gate paths are software/host-test validated; real
-SoftDevice-enabled flash remains physically unvalidated, and bond/InternalFS still
-bypasses FlashMutationGate until later BLE integration.
+Config and Security async gate paths are software/host-test validated. M7P7A
+(`main@e012a76b01f21b9575840d25a5a26ad78721021d`) adds one shared physical-flash
+owner between the ORUN gate and relocated bond/InternalFS storage, plus Bluefruit
+SoC-event ownership/forwarding, with host and real compile/link evidence. Actual
+SoftDevice-enabled BLE runtime, bond persistence and concurrent physical flash
+behavior remain physically unvalidated.
 
 M6 activity/geofence helpers allocate no durable state and do not reuse the
 position journal. Future activity history, polygon configuration, FREE_GRAZE

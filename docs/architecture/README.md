@@ -1,7 +1,7 @@
 # ORUN Architecture Documentation Index
 
 Status: **CURRENT documentation governance index**.
-Last reviewed against `main@8e6f2bde9b0281c1e219c6ec3df13b5f463fe7a5` (M7P6B merged). M7P6B SecurityStore/TX nonce persistence is implemented; the secure RF envelope, provisioning transport and field-network/serviceability runtime remain later work.
+Last reviewed against `main@e012a76b01f21b9575840d25a5a26ad78721021d` (M7P7A merged). M7P6B SecurityStore/TX nonce persistence and the M7P7A BLE flash/SoftDevice event-ownership prerequisite are implemented; BLE runtime/admission, secure RF envelope, provisioning transport and field-network/serviceability runtime remain later work.
 Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 
 This directory contains current owner-approved rules plus historical/proposed
