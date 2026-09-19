@@ -1,6 +1,6 @@
 # M7P7B — First real BLE runtime + tracker admission policy
 
-Status: **IMPLEMENTED ON BRANCH — host suite PASS; production RAK4630 build PASS; M7P7A guards re-verified intact; review-found advertising-payload bug (§8.1) fixed; independent-audit lifecycle findings (§8.3) fixed on host/build — physical rows 3–6 and 9 must be REPEATED on the new build (§9); PHYSICAL VALIDATION PARTIAL (§9: Debian PC/BlueZ only; several items PENDING). Full physical validation is NOT complete. Do not merge. Do not claim full physical BLE PASS.**
+Status: **IMPLEMENTED ON BRANCH (draft PR #22) — host suite PASS; production RAK4630 build PASS; M7P7A guards re-verified intact; review finding (§8.1) and independent-audit lifecycle findings (§8.3) fixed. PHYSICAL VALIDATION IS PARTIAL: on the current audit-fix head `9673f49`, phone scan/connect, connected-past-deadline, disconnect→loop-restart→fresh-window→reconnect, no-client close and a clean power-cycle boot are PASS (§9); LoRa coexistence, GNSS coexistence (blocked on this unit), flash-mutation concurrency and power measurement remain PENDING; bond relocation is N/A. Do not merge. Do not claim full physical BLE PASS.**
 
 Baseline: `main@fb3a098c5bfc8b3488ba61a5ee28b57d8c5b0765`
 (M7P7A merged plus post-merge architecture checkpoint).
@@ -149,8 +149,10 @@ and a `kStartAdvertising` action was added.)
   advertising with no library-owned timeout, and calls
   `ble_admission.begin(now)`. `ble_ready` guards every later Bluefruit call
   the same way `radio_manager.begin()`'s result already guards radio use.
-  No GATT service is added — a bare, named, connectable peripheral is
-  sufficient to prove connect/disconnect lifecycle.
+  No ORUN-specific application GATT service is added — a bare, named,
+  connectable peripheral is sufficient to prove connect/disconnect lifecycle.
+  (The standard Generic Access `0x1800` and Generic Attribute `0x1801`
+  services are still present; see §5.)
 - `loop()`: if `ble_ready`, samples connection/advertising/disconnect-event
   state and feeds it into `ble_admission.update(input, now)`; acts on
   `kClose`/`kStartAdvertising` as described in §8.3. No TX guard needed — BLE (nRF52840 2.4GHz)
@@ -178,18 +180,43 @@ advertises after boot, is connectable for ~10 minutes at a time absent a
 client, and SoftDevice is now genuinely enabled in production (not just
 host/build-only as in M7P7A).
 
-## 5. Security boundary (unchanged, verified against the diff)
+## 5. Security boundary (verified against the diff and the pinned framework)
 
-- No BLE PIN/auth/application-token protocol invented.
-- No GATT service exposing config/history/security data.
-- No bond/phone-list persistence added to `SecurityStore` or anywhere else —
-  `security_store.begin()` composition is untouched by this diff.
+What M7P7B adds, and does not add:
+
+- **No ORUN-specific application GATT service** is added. No config, history,
+  security, provisioning or diagnostics data is exposed over GATT.
+- The standard **Generic Access (`0x1800`) and Generic Attribute (`0x1801`)**
+  services are present (SoftDevice/Bluefruit stock). They were physically
+  observed in nRF Connect on `9673f49` (§9, row 2b) and are the only services
+  that were visible.
+- No ORUN pairing/ownership/authorization design: no PIN, no application
+  authentication, no first-phone ownership, no provisioning, no secure GATT
+  data, no application-token protocol. M7P7B does **not** define ORUN
+  ownership or authorization.
+- No bond/phone-list persistence was added to `SecurityStore` or anywhere else
+  — `security_store.begin()` composition is untouched by this diff.
 - No `K_root` export path.
-- No LoRa `OPEN_BLE` command implemented — BLE availability is boot-driven
-  only in this slice, matching the task's explicit exclusion.
-- BLE bond/connection is not treated as, or conflated with, application
-  authorization anywhere in this diff (there is no authorization surface yet
-  for it to be conflated with — no GATT service exists to protect).
+- No LoRa `OPEN_BLE` command — BLE availability is boot-driven only in this
+  slice.
+
+What still exists at framework level (pinned Adafruit nRF52 1.7.0, verified in
+`bluefruit.cpp`/`BLESecurity.cpp` and in the linked ELF, §8.4):
+
+- `Bluefruit.begin()` calls `Security.begin()`, so the stock
+  Bluefruit/SoftDevice pairing/bonding machinery is initialised and linked
+  (`BLESecurity::_eventHandler`, `BLEConnection::bonded`/`saveBondKey`/
+  `loadBondKey`/`removeBondKey`, `BLEConnection::secured`). Stock defaults are
+  Just Works (`bond=1`, `mitm=0`, `io_caps=NONE`, LESC supported), i.e.
+  unauthenticated pairing; M7P7B does not change them.
+- Consequently a peer *can* initiate stock pairing/bonding. M7P7B neither
+  prevents nor uses it. Bond keys, if ever stored, go to `InternalFS` relocated
+  by the M7P4 patch (§9, row 10: not exercised).
+- **A bare BLE connection, and a framework bond, are not ORUN application
+  authorization** and must not be described or relied on as such. Any future
+  ORUN authorization/ownership model is a separate milestone.
+- Physical validation did not exercise bonding: nRF Connect showed
+  `CONNECTED` / `NOT BONDED` throughout.
 
 ## 6. M7P7A invariant re-verification
 
@@ -281,7 +308,7 @@ full host suite re-run **54/54 PASS**; production build re-run **PASS**
 (RAM unchanged at 22,060 B, Flash +192 B to 224,588 B — the two new calls'
 own code size). No other findings from this review.
 
-Canonical Debian checkout, this exact (post-fix) diff:
+Canonical Debian checkout, this exact (post-fix) diff — **historical figures at the §8.1 review-fix point, superseded by §8.3/§8.4; not current**:
 
 - `g++` direct compile/run of `test_m7p7b_ble_admission_policy.cpp`: **PASS**
   (ASan/UBSan, `-Wall -Wextra -Werror`, zero warnings).
@@ -311,7 +338,7 @@ Canonical Debian checkout, this exact (post-fix) diff:
     compile-smoke evidence.
 - `rak4630_m7p7a_compile`: **PASS, unchanged** (§6).
 
-### 8.2 BLE diagnostic + boot-path hardening (added for physical validation)
+### 8.2 BLE diagnostic + boot-path hardening (added for physical validation) — historical
 
 Adds a diagnostic and hardens one failure path. (Written before §8.3; the
 "no callbacks" and framework-restart statements here are superseded by §8.3.)
@@ -339,7 +366,7 @@ and BLE availability is no longer falsely claimed.
   at `advertising=no ... policy=closed`.
 - Host: full `firmware/tests/run_host_tests.sh` **PASS** (exit 0), including all
   7 startup scenarios and the M7P7B policy test.
-- `pio run -d firmware -e rak4630`: **PASS** — RAM 22,068 B / 248,832 B (8.9%),
+- `pio run -d firmware -e rak4630`: **PASS** — *(historical, at the §8.2 point; superseded by §8.3)* RAM 22,068 B / 248,832 B (8.9%),
   Flash 225,004 B / 815,104 B (27.6%).
 - `pio run -d firmware -e rak4630_m7p7a_compile`: **PASS, unchanged** — RAM
   16,128 B, Flash 127,468 B.
@@ -473,74 +500,127 @@ owner of post-disconnect `Advertising.start(0)` and can see and retry failures.
   16,128 B, Flash 127,468 B.
 - TLP v1 bytes/golden fixtures, RF, GNSS, storage formats/partitions, M7P7A
   flash/event ownership, role/capability separation, the one-client limit and
-  the no-GATT/security/provisioning boundary are untouched (no diff in those
+  the no-ORUN-application-GATT/authorization/provisioning boundary (§5) are untouched (no diff in those
   sources; their host tests pass).
 
-### Delta vs. `main@fb3a098` (M7P7A merged baseline: RAM 15,460 B / Flash 159,024 B)
+### 8.4 Current resource figures and linked-ELF evidence (head `9673f49`)
 
-Numbers after §8.2 (§8.3 above is current: RAM 22,084 B, Flash 225,452 B; §8.1's
-22,060 B / 224,588 B are historical, taken at the review-fix point):
+Current production build (`pio run -d firmware -e rak4630`, rebuilt from the
+exact current head; this is also the image that was physically uploaded and
+exercised in §9):
 
-| | Baseline | M7P7B (current) | Delta |
+- RAM: **22,084 B / 248,832 B (8.9%)**
+- Flash: **225,452 B / 815,104 B (27.7%)**
+- `arm-none-eabi-size firmware.elf`: text 223,296 / data 2,156 / bss 233,364.
+
+Delta vs. `main@fb3a098` (M7P7A merged baseline: RAM 15,460 B / Flash 159,024 B):
+
+| | Baseline | M7P7B (current, `9673f49`) | Delta |
 | --- | --- | --- | --- |
-| RAM | 15,460 B (6.2%) | 22,068 B (8.9%) | **+6,608 B** |
-| Flash | 159,024 B (19.5%) | 225,004 B (27.6%) | **+65,980 B** |
+| RAM | 15,460 B (6.2%) | 22,084 B (8.9%) | **+6,624 B** |
+| Flash | 159,024 B (19.5%) | 225,452 B (27.7%) | **+66,428 B** |
 
-This is the cost of linking the real Bluefruit52Lib/InternalFileSytem/GATT/GAP
-stack for the first time in a shipped image (BLEDfu, BLEDis, BLEUart, BLEHid*,
-BLEMidi, EddyStone and other Bluefruit52Lib service classes are part of the
-library's own default composition and get linked regardless of whether this
-slice's `main.cpp` uses them — no ORUN-side GATT service was added). Both
-deltas remain comfortably within budget (8.9% of RAM, 27.6% of total flash /
-28.5% of the M7P2 application policy ceiling of 790,528 B).
+`rak4630_m7p7a_compile` is unchanged: RAM 16,128 B / Flash 127,468 B.
+
+Historical intermediate values, superseded and not current: 22,060 B / 224,588 B
+(§8.1 review-fix point) and 22,068 B / 225,004 B (§8.2 diagnostic point,
++6,608 B / +65,980 B vs. baseline).
+
+**What the linked production ELF actually contains** (`arm-none-eabi-nm -C
+firmware.elf`, defined symbols; nothing below is inferred from library
+defaults):
+
+- **Optional Bluefruit service classes are NOT linked.** Zero symbols of any
+  kind match `BLEDfu`, `BLEUart`, `BLEHid*`, `BLEMidi`, `EddyStone`, `BLEBas`,
+  `BLEHrm`, `BLECts`, `BLEAncs`, `BLEBeacon`, or `BLEDis` (device-information
+  service; the only `BLEDis*` substring hits are `BLEDiscovery`), nor any
+  `BLEClient*` optional client-service class (`BLEClientUart/Dis/Bas/Cts/
+  HidAdafruit`), nor any non-client `BLEService` symbol. An earlier revision of
+  this document claimed these were linked merely because Bluefruit is enabled;
+  that was incorrect and is withdrawn. The flash delta must therefore **not** be
+  attributed to optional services.
+- **Linked and verified present:** the `Bluefruit` (`AdafruitBluefruit`) and
+  `InternalFS` objects (`B`); `AdafruitBluefruit::begin`/`setName`/
+  `autoConnLed`; GAP/GATT core: `BLEPeriph` (incl. `begin`, `connected`,
+  `setDisconnectCallback`), `BLEAdvertising` (`start`/`stop`/`isRunning`/
+  `restartOnDisconnect`/`_eventHandler`), `BLEAdvertisingData::addFlags`/
+  `addName`, `BLEGatt`, `BLEConnection`, `BLEUuid`, `BLECharacteristic`,
+  `BLEClientService`/`BLEClientCharacteristic`; central-side core classes
+  `BLECentral`, `BLEScanner`, `BLEDiscovery` (linked; `Bluefruit.begin()` in
+  `main.cpp` uses the default `central_count = 0`, so the Central role is not
+  started); `BLESecurity` (`begin`, `_eventHandler`, `_encrypt`,
+  `resolveAddress`) and the bonding helpers `BLEConnection::bonded`/
+  `saveBondKey`/`loadBondKey`/`removeBondKey`/`saveCccd`/`secured`;
+  `Adafruit_LittleFS`/`InternalFileSystem`/`Adafruit_LittleFS_Namespace::File`;
+  the M7P7A `orun_flash_*` hooks and `flash_nrf5x_*` (§8.1).
+- This is a *presence* list only. The flash/RAM delta is the measured
+  difference above; it is **not decomposed** per component here, and no
+  per-component size is claimed.
 
 ## 9. Physical-validation evidence
 
-**Host/build PASS is not physical PASS.** Physical evidence below was collected
-on one real RAK4631 with a **Debian PC (BlueZ) as the only BLE client/scanner**.
-**Build note (§8.3):** rows 1–9 below were collected on the pre-audit firmware
-(`65893e2`), where advertising restart after disconnect was framework-owned and
-lifecycle was polled only. §8.3 changed that runtime path (loop-owned restart,
-disconnect-event handoff, close confirmation). The table entries are left as
-recorded, but rows 3, 4, 5, 6 and 9 do **not** cover the new build and must be
-repeated (list after the summary). Rows 1 and 2 exercise unchanged code but
-should be re-confirmed in the same session.
+**Host/build PASS is not physical PASS.** Everything in §9.1 was collected on
+one real RAK4631 running the **current audit-fix head `9673f49`** (production
+build RAM 22,084 B / Flash 225,452 B, §8.4), with a Samsung phone running
+Nordic nRF Connect for Mobile as the BLE scanner/client, plus the unit's USB
+serial log. §9.2 is the older `65893e2` evidence and is kept only as history.
 
-Legend: PASS = observed on hardware; PARTIAL = some evidence, not sufficient
-for PASS; PENDING = not yet performed/inconclusive (not a failure); N/A = not
-exercised by this slice.
+Legend: PASS = observed on hardware; PENDING = not yet performed (not a
+failure); BLOCKED = cannot be performed on this physical unit as configured
+(not PASS, not N/A for the product); N/A = not exercised by this slice.
 
 **Full physical validation is NOT complete.**
 
+### 9.1 Current head `9673f49`
+
 | # | Item | Status | Evidence / reason |
 | --- | --- | --- | --- |
-| 1 | Real RAK4631 boots with BLE and advertises | **PASS** | Unit physically observed advertising as `ORUN-4B275BA5`. Same-boot `BLE?` returned `BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok` while a BlueZ RF scan simultaneously saw `ORUN-4B275BA5` (firmware state and RF observation agree). |
-| 2 | External scanner sees and can connect | **PASS (Debian PC/BlueZ only)** | A real PC/BlueZ BLE connection succeeded. |
-| 2b | Phone scanner/connect (e.g. nRF Connect) | **PENDING** | Only the Debian PC/BlueZ was physically tested; no phone test done. |
-| 3 | Connected state survives past original ~10-min no-client deadline | **PASS** | Connected client stayed connected beyond the original ~10-minute deadline. |
-| 4 | Disconnect restores advertising / fresh admission window | **PASS** | After disconnect, advertising and a fresh admission window were restored. |
-| 5 | BLE closes after a full window with no client | **PASS** | Later no-client fresh window closed normally: `BLE closed; no client connected within window`, then `BLE ready=yes advertising=no connected=0 policy=closed initial_start=ok`. |
-| 6 | Reconnect during renewed window succeeds | **PENDING (not FAIL)** | BlueZ repeatedly produced transient `[NEW]`/`[DEL]` device behavior and `le-connection-abort-by-local` / `Device not available`, while firmware simultaneously reported `advertising=yes`, `connected=0`, `policy=open`. Root cause not determined (BlueZ device-cache/scan-state behavior is a candidate, unproven). **A second connection is NOT claimed PASS.** Retry with another client (phone) or after clearing the BlueZ device cache. |
-| 7a | LoRa TX/RX coexistence with SoftDevice active | **PENDING** | Second node was not powered. |
-| 7b | GNSS coexistence | **PENDING** | This physical unit reported `GNSS: not detected`. |
+| 1 | Real RAK4631 boots with BLE and advertises | **PASS** | Serial after boot: `ROLE BASE source=AUTO`, then `BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok`. |
+| 1b | Clean full power-cycle / cold boot recovery | **PASS (scoped)** | Unit fully powered off, left off ~5 s, powered on. Serial: `GNSS: not detected`, `ROLE BASE source=AUTO`, `BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok`; phone operation (rows 2–4) was healthy afterwards. This proves a real power-off/power-on followed by healthy BLE advertising and phone operation. It does **not** prove that the previous boot was actively BLE-connected when power was removed; no such claim is made. |
+| 2 | Real RF scanner sees the peripheral | **PASS** | Samsung phone, nRF Connect for Mobile, saw `ORUN-4B275BA5`, address `C5:DD:01:85:C9:4B`. The stock Samsung Bluetooth-settings screen did not list it; that is expected for a bare BLE peripheral and is not a firmware failure. |
+| 2b | Phone connects | **PASS** | nRF Connect connected: `CONNECTED`, `NOT BONDED`. Only standard services visible: Generic Access `0x1800`, Generic Attribute `0x1801`. No ORUN-specific application GATT service present (§5). Simultaneous serial: `BLE ready=yes advertising=no connected=1 policy=open initial_start=ok`. |
+| 3 | Connected client survives the original ~10-min no-client deadline | **PASS** | The phone stayed connected well beyond ~10 minutes and was not closed by the admission timeout. No exact duration is claimed beyond "well beyond 10 minutes". |
+| 4 | Disconnect → loop-owned restart → advertising restored | **PASS** | After phone disconnect, `ORUN-4B275BA5` reappeared advertising in nRF Connect. This exercises the §8.3 change from framework auto-restart to loop-owned start/retry. |
+| 4b | Fresh post-disconnect admission window | **PASS** | The device was connectable again in a renewed ~10-min window (see row 6). |
+| 5 | BLE closes after a full window with no client | **PASS** | Serial: `BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok`, then `BLE closed; no client connected within window`, then `BLE ready=yes advertising=no connected=0 policy=closed initial_start=ok`. |
+| 6 | Reconnect during the renewed window | **PASS** | Phone reconnected within the renewed window; serial again `BLE ready=yes advertising=no connected=1 policy=open initial_start=ok`. |
+| 7a | LoRa TX/RX coexistence with SoftDevice active | **PENDING** | Second LoRa node not available/powered during validation. |
+| 7b | GNSS coexistence | **BLOCKED (this unit)** | Unit reports `GNSS: not detected`. Not PASS; not N/A for the product. Needs a GNSS-equipped unit. |
 | 8 | Flash mutation (History/Config/Security) concurrency with BLE active | **PENDING** | No safe runtime mutation source available in this setup. |
-| 9 | Reset/reboot recovery with BLE active in prior boot | **PARTIAL** | After firmware re-upload (DFU/reload), `BLE?` returned `BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok`. This is **not** a clean power-cycle/reset PASS. |
-| 10 | Relocated `InternalFS`/bond behavior | **N/A** | Bonding was not exercised. |
+| 9 | Very short connect+disconnect entirely between loop polls | **PENDING (host-tested only)** | Covered by policy/startup host tests; not physically exercised. |
+| 9b | `Advertising.start()`/`stop()` failure and retry | **PENDING (host-modelled only)** | No practical physical trigger was used. |
+| 10 | Relocated `InternalFS`/bond behavior | **N/A (not exercised)** | The phone remained `NOT BONDED`; no bond was created or read back. |
 | 11 | Current/power measurement (advertising / connected / closed) | **PENDING** | Not measured. |
 
-Physical checks to repeat on the §8.3 build: (a) disconnect → advertising
-resumes via the *loop* restart (`BLE advertising restarted` in the log,
-`BLE?` shows `advertising=yes policy=open`); (b) a very short connect/disconnect
-still yields a fresh full window; (c) connected past the original deadline stays
-open (row 3); (d) a no-client window still ends with `BLE closed; ...` and
-`advertising=no policy=closed` (row 5); (e) reconnect in the renewed window
-(row 6, still PENDING); (f) reset/reboot recovery (row 9). Stop/start failure
-paths are host-modelled only and have no practical physical trigger.
+Bounded residual risk (documented, **not** observed on hardware): the
+disconnect notification reaches the loop through Bluefruit's `ada_callback`
+handoff (§8.3), and `ada_callback_invoke()` can drop the callback if its heap
+allocation fails. A connect+disconnect that is *entirely missed by polling*
+**and** whose callback is dropped would not grant a fresh window. Connections
+seen by polling are unaffected. This was not triggered in any physical test and
+is not claimed as a failure.
 
-Summary (as recorded on `65893e2`): items 1, 2 (PC/BlueZ), 3, 4, 5 are PASS on one unit with one client
-type; 6, 2b, 7a, 7b, 8, 11 remain PENDING; 9 is PARTIAL; 10 is N/A. Do not
-merge on the basis of this evidence alone; PENDING items must be reviewed with
-real evidence first.
+### 9.2 Historical evidence on `65893e2` (superseded by §9.1)
+
+Collected with a Debian PC (BlueZ) as the only client, on the pre-audit
+firmware where advertising restart after disconnect was framework-owned.
+Retained for history only; it is not evidence for the current build.
+
+- PC/BlueZ: advertising as `ORUN-4B275BA5` (matching same-boot `BLE?`), a
+  connection succeeded, connected state outlived the ~10-min deadline,
+  advertising/fresh window restored after disconnect, no-client window closed
+  normally.
+- Reconnect via BlueZ showed transient `[NEW]`/`[DEL]`, `Device not available`
+  and `le-connection-abort-by-local` while firmware simultaneously reported
+  `advertising=yes connected=0 policy=open`. This is recorded as an
+  **inconclusive tooling/client (BlueZ) issue, not a firmware FAIL**: BlueZ
+  later saw the device, and the phone scanned, connected and reconnected on the
+  current firmware (§9.1). No FAIL is recorded against the firmware.
+- Post-re-upload `BLE?` recovery (not a clean power-cycle) — superseded by row 1b.
+
+Summary (current head): rows 1, 1b, 2, 2b, 3, 4, 4b, 5, 6 are PASS on one unit
+with one phone/client type; 7a, 8, 9, 9b, 11 are PENDING; 7b is BLOCKED on this
+unit; 10 is N/A. Do not merge on the basis of this evidence alone (§11).
 
 ## 10. Explicit non-claims / deferred work
 
@@ -549,7 +629,7 @@ Recorded, not hidden:
 - LoRa `OPEN_BLE` command — requires the secure downlink/authenticated command
   path, which does not exist yet. Deferred, not implemented, not stubbed with
   an unauthenticated shortcut.
-- Any BLE GATT service (provisioning, config, diagnostics, DFU).
+- Any ORUN-specific application GATT service (provisioning, config, diagnostics, DFU).
 - Multi-client BLE.
 - Role-differentiated BLE availability (BASE/MOBILE "continuous" per
   `AGENTS.md`) — this slice applies the same tracker admission policy to every
@@ -557,5 +637,46 @@ Recorded, not hidden:
 - A stalled-session watchdog for a connected client making no progress
   (`ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md` §10 already flags this as a
   distinct future requirement, not part of this slice).
-- Bonding/pairing UX, first-phone ownership, or any authorization model tied
-  to BLE connection/bonding.
+- Bonding/pairing UX, first-phone ownership, PIN/passkey, or any authorization
+  model tied to BLE connection/bonding. Stock framework pairing/bonding
+  capability remains available (§5) but is neither designed, exercised nor
+  treated as ORUN authorization here.
+
+## 11. Remaining merge gates (PR #22 stays draft; do not merge)
+
+`AGENTS.md` requires that anything still needing physical hardware testing be
+identified and that compilation success is not physical proof; it does not
+enumerate M7P7B-specific merge gates. The classification below derives from
+this milestone's own validation checklist and the physical items
+`docs/milestones/M7P7A.md` §8 carried forward to M7P7 runtime work. Whether any
+item is waived is an owner decision, not made here.
+
+**Required physical gates (still open):**
+
+- LoRa TX/RX coexistence with SoftDevice active (row 7a) — needs a second
+  powered LoRa node.
+- Flash-mutation (History/Config/Security) concurrency while BLE is active
+  (row 8; `M7P7A.md` §8) — needs a safe runtime mutation source.
+- Current/power measurement in advertising / connected / closed states
+  (row 11) — SoftDevice stays resident after `Bluefruit.begin()` (§2.1), so
+  power cost is not established by host/build evidence.
+
+**Blocked on current hardware:**
+
+- GNSS coexistence (row 7b) — this unit reports `GNSS: not detected`. Neither
+  PASS nor N/A for the product; needs a GNSS-equipped unit or an explicit owner
+  waiver.
+
+**Host-only (no practical physical trigger; owner may accept as such):**
+
+- Very short connect+disconnect between loop polls (row 9), and
+  `Advertising.start()`/`stop()` failure/retry (row 9b).
+- The `ada_callback` drop residual (§9.1) — bounded, unobserved risk.
+
+**Deferred / out of scope for M7P7B:**
+
+- Bond creation/persistence and relocated-`InternalFS` bond behavior (row 10;
+  bonding not exercised).
+- ORUN authorization, ownership, provisioning, PIN, application GATT services,
+  LoRa `OPEN_BLE`, DFU/M7P8, multi-client BLE, role-aware BLE policy,
+  stalled-session watchdog (§10).
