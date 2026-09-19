@@ -1,6 +1,6 @@
 # M7P7B — First real BLE runtime + tracker admission policy
 
-Status: **IMPLEMENTED ON BRANCH — host suite PASS; production RAK4630 build PASS; M7P7A guards re-verified intact; review-found advertising-payload bug (§8.1) fixed; PHYSICAL VALIDATION PARTIAL (§9: Debian PC/BlueZ only; several items PENDING). Full physical validation is NOT complete. Do not merge. Do not claim full physical BLE PASS.**
+Status: **IMPLEMENTED ON BRANCH — host suite PASS; production RAK4630 build PASS; M7P7A guards re-verified intact; review-found advertising-payload bug (§8.1) fixed; independent-audit lifecycle findings (§8.3) fixed on host/build — physical rows 3–6 and 9 must be REPEATED on the new build (§9); PHYSICAL VALIDATION PARTIAL (§9: Debian PC/BlueZ only; several items PENDING). Full physical validation is NOT complete. Do not merge. Do not claim full physical BLE PASS.**
 
 Baseline: `main@fb3a098c5bfc8b3488ba61a5ee28b57d8c5b0765`
 (M7P7A merged plus post-merge architecture checkpoint).
@@ -61,6 +61,10 @@ magnitude in each state (advertising / connected / closed) is a **physical
 measurement requirement**, listed in §8 below — host/build evidence cannot
 establish it.
 
+> **Superseded in part by §8.3.** §§2.2–2.4 and 3.1–3.2 record the original
+> design. The independent audit showed that polling alone and framework-owned
+> restart are insufficient; §8.3 is authoritative where they differ.
+
 ### 2.2 `Bluefruit.Periph.connected()` is the framework's own supported polled-read API
 
 Every stock Adafruit Bluefruit example polls `Bluefruit.connected()`/
@@ -71,9 +75,9 @@ the Arduino `loop()` task (the SoftDevice/SoC event pump; see §2.3), so this is
 a genuine cross-task read — but it is the officially supported one: Bluefruit
 exposes both a polled API and an optional callback API side by side for
 exactly this use, and the polled form is what every reference sketch uses.
-M7P7B relies on this designed usage rather than inventing new synchronization,
-and does **not** register `setConnectCallback`/`setDisconnectCallback` at all
-— see §3.
+The polled read remains the path for a connection that stays active. It cannot
+see a connection that starts and ends between two polls; §8.3 adds a minimal
+disconnect-event handoff for that.
 
 ### 2.3 User callbacks run on a separate FreeRTOS task; `monotonic::nowMs()` must not
 
@@ -82,21 +86,20 @@ and does **not** register `setConnectCallback`/`setDisconnectCallback` at all
 dedicated `adafruit_callback_task`, not the Arduino loop task and not an ISR.
 `monotonic_time.h`'s own doc comment is explicit: `nowMs()` is *"Loop task
 only; not an ISR or cross-task clock."* Calling it from a Bluefruit callback
-task would violate that contract. M7P7B's design (§3) avoids the question
-entirely by not using connect/disconnect callbacks: the only new state
-(`BleAdmissionPolicy`) is driven exclusively from the main loop, polling
-`Bluefruit.Periph.connected()` each tick, with `monotonic::nowMs()` called only
-from `loop()`/`setup()` as already required everywhere else in this codebase.
+task would violate that contract. The original design avoided the question by not using callbacks. §8.3 does
+register a disconnect callback, but it is only a counter increment inside
+`taskENTER_CRITICAL()`; `BleAdmissionPolicy` and `monotonic::nowMs()` are still
+driven exclusively from `loop()`/`setup()`.
 
-### 2.4 `BLEAdvertising::restartOnDisconnect` already does what "fresh window on disconnect" needs
+### 2.4 `BLEAdvertising::restartOnDisconnect` — original reliance (SUPERSEDED, see §8.3)
 
 `BLEAdvertising` defaults `_start_if_disconnect = true`: on
 `BLE_GAP_EVT_DISCONNECTED`, if nothing else is connected, it calls
 `start(_stop_timeout)` again automatically, from the SoC task, before the main
-loop even ticks. M7P7B relies on this stock behavior (`start(0)`, no
-library-owned timeout) instead of reimplementing it, and lets
-`BleAdmissionPolicy::update()` open the actual bounded close-deadline on its
-next tick once it observes the connected→disconnected edge.
+loop even ticks. M7P7B originally relied on this stock behavior (`start(0)`, no
+library-owned timeout). The audit found that call ignores `start()`'s result
+(finding 3), so production now sets `restartOnDisconnect(false)` and the loop
+owns the restart (§8.3).
 
 ### 2.5 Stock LED behavior is an avoidable power cost this slice would otherwise introduce
 
@@ -126,6 +129,10 @@ update(connected: true -> false)   -> edge: close_at = now + 10min (fresh window
 after close                        -> update() always returns kNone; does not reopen itself
 ```
 
+(Original model; the current state machine is in §8.3: `update()` now takes a
+`BleAdmissionInput`, `kClose` is a repeated *request* until `confirmClosed()`,
+and a `kStartAdvertising` action was added.)
+
 `kNoClientTimeoutMs = 10 * 60 * 1000` (`ble_admission_config`).
 
 ### 3.2 `main.cpp` glue — the only place that touches `Bluefruit`
@@ -138,15 +145,15 @@ after close                        -> update() always returns kNone; does not re
   identity-derived name (`ORUN-XXXXXXXX`, low 32 bits of the existing legacy
   device ID — already transmitted in the clear in every TLP v1 POSITION
   packet, so this adds no new exposure), disables the stock connection LED
-  (§2.5), sets `restartOnDisconnect(true)` explicitly (§2.4), starts
+  (§2.5), sets `restartOnDisconnect(false)` (§8.3; originally `true`, §2.4), starts
   advertising with no library-owned timeout, and calls
   `ble_admission.begin(now)`. `ble_ready` guards every later Bluefruit call
   the same way `radio_manager.begin()`'s result already guards radio use.
   No GATT service is added — a bare, named, connectable peripheral is
   sufficient to prove connect/disconnect lifecycle.
-- `loop()`: if `ble_ready`, reads `Bluefruit.Periph.connected() > 0` and feeds
-  it into `ble_admission.update(connected, now)`; on `kClose`, calls
-  `Bluefruit.Advertising.stop()`. No TX guard needed — BLE (nRF52840 2.4GHz)
+- `loop()`: if `ble_ready`, samples connection/advertising/disconnect-event
+  state and feeds it into `ble_admission.update(input, now)`; acts on
+  `kClose`/`kStartAdvertising` as described in §8.3. No TX guard needed — BLE (nRF52840 2.4GHz)
   and LoRa (SX1262) are physically independent radios.
 - `storage_flash_gate.pumpEvents()` is unchanged in `main.cpp` — the M7P7A
   bridge (Bluefruit declaring itself sole `sd_evt_get()` consumer, forwarding
@@ -219,6 +226,10 @@ a `constexpr` inline function):
    reconnects — repeated cycles never accumulate into permanent availability.
 6. Reconnect during the renewed (post-disconnect) window works, and correctly
    suspends that window's own deadline in turn.
+
+Cases 1–6 keep their original scenarios; after §8.3 their `kClose` assertions
+also check the policy is *closing* (then `confirmClosed()` → closed) instead of
+closed. Cases 7–15 and the extended startup scenarios are listed in §8.3.
 
 `firmware/tests/startup/stubs/bluefruit.h` — minimal host stub of the Bluefruit
 surface `main.cpp` calls. After the diagnostic change (§8.2) it is no longer
@@ -302,17 +313,17 @@ Canonical Debian checkout, this exact (post-fix) diff:
 
 ### 8.2 BLE diagnostic + boot-path hardening (added for physical validation)
 
-Adds a diagnostic and hardens one failure path. Normal successful BLE policy
-and runtime behavior are unchanged (no GATT, no policy change, no callbacks).
+Adds a diagnostic and hardens one failure path. (Written before §8.3; the
+"no callbacks" and framework-restart statements here are superseded by §8.3.)
 The only behavior change is on failure: if the boot-time
 `Bluefruit.Advertising.start(0)` returns false, admission is no longer opened
 and BLE availability is no longer falsely claimed.
 
 - New serial command `BLE?` prints one line:
-  `BLE ready=<yes|no> advertising=<yes|no> connected=<n> policy=<open|closed> initial_start=<ok|fail|not-attempted>`.
+  `BLE ready=<yes|no> advertising=<yes|no> connected=<n> policy=<open|closing|closed> initial_start=<ok|fail|not-attempted>`.
   `ready` = `Bluefruit.begin()` succeeded; `advertising` =
   `Bluefruit.Advertising.isRunning()`; `connected` = `Bluefruit.Periph.connected()`;
-  `policy` = `BleAdmissionPolicy::isOpen()`; `initial_start` = result of the one
+  `policy` = admission state (`open`, or after §8.3 also `closing`, or `closed`); `initial_start` = result of the one
   boot-time `Advertising.start(0)`.
 - The boot-time `Advertising.start(0)` result is now checked. On failure the
   admission window is not opened, `BLE available` is not printed and
@@ -333,10 +344,142 @@ and BLE availability is no longer falsely claimed.
 - `pio run -d firmware -e rak4630_m7p7a_compile`: **PASS, unchanged** — RAM
   16,128 B, Flash 127,468 B.
 
+### 8.3 Independent audit findings (pinned Adafruit nRF52 1.7.0) — fixed
+
+An independent audit of `65893e2` found three related correctness issues. All
+three were re-verified against the pinned source in
+`framework-arduinoadafruitnrf52` (`BLEAdvertising.cpp`, `bluefruit.cpp`,
+`cores/nRF5/utility/AdaCallback.c`) before coding.
+
+**Root causes**
+
+1. *Missed short connect/disconnect.* Lifecycle was derived only by polling
+   `Periph.connected()`. A client that connected and disconnected between two
+   `loop()` polls was never seen as connected, so the connected→disconnected
+   edge never happened and no fresh ~10-minute window was granted, although
+   Bluefruit itself saw the real disconnect and resumed advertising. This
+   violated the core product contract.
+2. *One-shot `stop()` failure.* The policy became closed when it emitted
+   `kClose`, and `main.cpp` ignored `Advertising.stop()`'s result. Pinned
+   `BLEAdvertising::stop()` returns before touching `_running` when
+   `sd_ble_gap_adv_stop()` fails (e.g. a connection racing the stop), so the
+   policy could read "closed" while advertising kept running, with no retry.
+3. *Invisible auto-restart failure.* Pinned `BLEAdvertising::_eventHandler()`
+   handles `BLE_GAP_EVT_DISCONNECTED` with
+   `if (!_running && _start_if_disconnect) start(_stop_timeout);` and discards
+   the result, so the policy could be open while nothing advertised. (The same
+   ignored-result pattern exists in the framework's fast→slow
+   `ADV_SET_TERMINATED` path, `_start(_slow_interval, 0)`; the loop's
+   open-but-not-advertising reconciliation below covers it too.)
+
+**Design choice verified in source:** `restartOnDisconnect(false)` sets
+`_start_if_disconnect = false`, which makes the only automatic restart in
+`_eventHandler()` a no-op. Production now sets it, so the loop is the single
+owner of post-disconnect `Advertising.start(0)` and can see and retry failures.
+
+**Implementation**
+
+- `BleAdmissionPolicy` (`ble_admission_policy.{h,cpp}`): states `kClosed`
+  (default, also "never begun") / `kOpen` / `kClosing`.
+  `update(BleAdmissionInput{connected, disconnect_event, advertising_running}, now)`
+  returns `kNone`, `kClose` or `kStartAdvertising`.
+  - A `disconnect_event` (real disconnect since the last tick) grants a fresh
+    window and cancels a pending close, whether or not polling ever saw the
+    connection.
+  - The polled connected→disconnected edge still grants a fresh window; while
+    connected the timeout never closes.
+  - Deadline → `kClosing` + `kClose`, repeated every `kRetryIntervalMs` (1 s)
+    until `confirmClosed()`. `confirmClosed()` is ignored unless closing. Once
+    closed it never reopens.
+  - Open + not connected + advertising not running → `kStartAdvertising`,
+    throttled to `kRetryIntervalMs`, only while the window is open; retries
+    never extend the window (expiry → `kClose`, not another start).
+  - All deadlines use `monotonic::reached()` (wrap-safe).
+- `main.cpp`: `restartOnDisconnect(false)`; `Periph.setDisconnectCallback()`
+  registered; the loop samples `{event counter, Advertising.isRunning(),
+  Periph.connected()}` (advertising before connection, since the framework
+  clears `_running` only after the connection object exists) and:
+  - `kClose`: `Advertising.stop()`, then trusts *observed* state, not the
+    return value — `confirmClosed()` and `BLE closed; ...` only if advertising
+    is not running **and** nobody is connected; otherwise the request repeats.
+  - `kStartAdvertising`: skipped if a client is connected; checks
+    `Advertising.start(0)`; logs `BLE advertising restarted` on success and
+    `BLE advertising restart failed; retrying` once per failure streak.
+  - Boot-time `Advertising.start(0)` failure is unchanged: no `begin()`, so the
+    policy stays closed (fail-closed), no window, no "BLE available".
+- `BLE?` semantics unchanged (`advertising` = `isRunning()`, `connected` =
+  `Periph.connected()`, `initial_start` = boot start only); `policy` gained the
+  truthful intermediate value `closing`.
+
+**Concurrency ownership**
+
+- Pinned 1.7.0 runs the disconnect callback through `ada_callback()` on the
+  dedicated FreeRTOS "Callback" task (not an ISR, not `loop()`).
+- `onBleDisconnect()` only does `taskENTER_CRITICAL(); ++ble_disconnect_events;
+  taskEXIT_CRITICAL();` — the same primitive `radio_manager.cpp` uses for its
+  cross-task counters. It calls no `monotonic::nowMs()`, `BleAdmissionPolicy`,
+  Serial, flash, radio or Bluefruit/SoftDevice API.
+- `loop()` is the only consumer (snapshot under the same critical section) and
+  the sole owner of policy, clock, Serial and every Bluefruit start/stop call.
+  `ble_disconnect_events_seen` and the restart-log flag are loop-only. A
+  counter (not a flag) is used so back-to-back disconnects are not collapsed
+  before the loop observes them.
+- A late event for a session already handled by polling only refreshes the
+  fresh window by the callback latency; an event arriving while a *new* session
+  is connected does not disconnect it.
+- Residual, not solved here: `ada_callback_invoke()` drops the event on heap
+  exhaustion (`rtos_malloc` failure). A fully-missed short session coinciding
+  with that would not grant a fresh window.
+
+**Tests added / changed**
+
+- `test_m7p7b_ble_admission_policy.cpp`: original cases kept (adapted to
+  closing → confirm); new cases 7–15: fully-missed short connection + real
+  disconnect event grants a fresh window (with a no-event control); event+edge
+  for the same disconnect and a stale event while reconnected; `kClose` is a
+  repeated, throttled request until `confirmClosed()`; stays closed after
+  confirmation; stray `confirmClosed()` is a no-op; a connection racing a
+  pending close (polled and event-only) keeps the session admitted and grants a
+  fresh window after the real disconnect; start retry throttled, bounded, never
+  extends the window; never-begun policy stays closed; UINT32 wrap for windows,
+  close/start retry, connected-across-rollover and event-across-rollover.
+- `tests/startup/stubs/bluefruit.h`: models `stop()` failure (unchanged
+  `_running`), failed `start()` leaving `_running`, a `stop()` racing a
+  connection, `restartOnDisconnect(false)`, and `ada_callback`-style deferred
+  disconnect-callback delivery. `tests/r2/stubs/FreeRTOS.h`: counts
+  `taskENTER_CRITICAL()` calls.
+- `test_startup.cpp` (`success`, `advfail`, `blefail` all still run): asserts
+  `restartOnDisconnect` off and the callback registered; callback isolation (one
+  balanced critical section, one counter increment, no log/clock/policy/
+  Bluefruit effect); connect never closes; post-disconnect start success;
+  post-disconnect start failure → truthful `advertising=no policy=open`, no busy
+  retry, later retry success; a short connect+disconnect missed by polling still
+  grants a fresh window; a connection racing close keeps the session (no false
+  `BLE closed`, `policy=closing` then `open`); final expiry with `stop()` failing
+  then succeeding (no false log before physical close; `advertising=no
+  policy=closed` only after); closed stays closed; fail-closed boot
+  (`advfail`/`blefail`) stays inert for many loop ticks.
+- Mutation-checked: dropping the event handoff, confirming close
+  unconditionally, and re-enabling framework restart each make the startup test
+  fail.
+
+**Build/host evidence (this fix)**
+
+- `bash firmware/tests/run_host_tests.sh`: **PASS** (exit 0).
+- `pio run -d firmware -e rak4630`: **PASS** — RAM 22,084 B / 248,832 B (8.9%),
+  Flash 225,452 B / 815,104 B (27.7%) (was 22,068 B / 225,004 B: +16 B RAM,
+  +448 B Flash).
+- `pio run -d firmware -e rak4630_m7p7a_compile`: **PASS, unchanged** — RAM
+  16,128 B, Flash 127,468 B.
+- TLP v1 bytes/golden fixtures, RF, GNSS, storage formats/partitions, M7P7A
+  flash/event ownership, role/capability separation, the one-client limit and
+  the no-GATT/security/provisioning boundary are untouched (no diff in those
+  sources; their host tests pass).
+
 ### Delta vs. `main@fb3a098` (M7P7A merged baseline: RAM 15,460 B / Flash 159,024 B)
 
-Current numbers (after §8.2; §8.1's 22,060 B / 224,588 B are historical, taken
-at the review-fix point):
+Numbers after §8.2 (§8.3 above is current: RAM 22,084 B, Flash 225,452 B; §8.1's
+22,060 B / 224,588 B are historical, taken at the review-fix point):
 
 | | Baseline | M7P7B (current) | Delta |
 | --- | --- | --- | --- |
@@ -355,6 +498,14 @@ deltas remain comfortably within budget (8.9% of RAM, 27.6% of total flash /
 
 **Host/build PASS is not physical PASS.** Physical evidence below was collected
 on one real RAK4631 with a **Debian PC (BlueZ) as the only BLE client/scanner**.
+**Build note (§8.3):** rows 1–9 below were collected on the pre-audit firmware
+(`65893e2`), where advertising restart after disconnect was framework-owned and
+lifecycle was polled only. §8.3 changed that runtime path (loop-owned restart,
+disconnect-event handoff, close confirmation). The table entries are left as
+recorded, but rows 3, 4, 5, 6 and 9 do **not** cover the new build and must be
+repeated (list after the summary). Rows 1 and 2 exercise unchanged code but
+should be re-confirmed in the same session.
+
 Legend: PASS = observed on hardware; PARTIAL = some evidence, not sufficient
 for PASS; PENDING = not yet performed/inconclusive (not a failure); N/A = not
 exercised by this slice.
@@ -377,7 +528,16 @@ exercised by this slice.
 | 10 | Relocated `InternalFS`/bond behavior | **N/A** | Bonding was not exercised. |
 | 11 | Current/power measurement (advertising / connected / closed) | **PENDING** | Not measured. |
 
-Summary: items 1, 2 (PC/BlueZ), 3, 4, 5 are PASS on one unit with one client
+Physical checks to repeat on the §8.3 build: (a) disconnect → advertising
+resumes via the *loop* restart (`BLE advertising restarted` in the log,
+`BLE?` shows `advertising=yes policy=open`); (b) a very short connect/disconnect
+still yields a fresh full window; (c) connected past the original deadline stays
+open (row 3); (d) a no-client window still ends with `BLE closed; ...` and
+`advertising=no policy=closed` (row 5); (e) reconnect in the renewed window
+(row 6, still PENDING); (f) reset/reboot recovery (row 9). Stop/start failure
+paths are host-modelled only and have no practical physical trigger.
+
+Summary (as recorded on `65893e2`): items 1, 2 (PC/BlueZ), 3, 4, 5 are PASS on one unit with one client
 type; 6, 2b, 7a, 7b, 8, 11 remain PENDING; 9 is PARTIAL; 10 is N/A. Do not
 merge on the basis of this evidence alone; PENDING items must be reviewed with
 real evidence first.
