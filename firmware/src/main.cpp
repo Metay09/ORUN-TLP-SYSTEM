@@ -429,6 +429,16 @@ void setup() {
     snprintf(name, sizeof(name), "ORUN-%08lX",
              static_cast<unsigned long>(device_identity.legacyUint64() & 0xFFFFFFFFUL));
     Bluefruit.setName(name);
+    // setName() only sets the GAP Device Name attribute, readable after a
+    // client connects -- it does not, by itself, put anything into the
+    // advertising PDU. Every stock Bluefruit peripheral example calls both
+    // of these before Advertising.start(); without them the broadcast
+    // payload has zero AD structures, so a scanner sees an anonymous
+    // device instead of the name set above. addFlags() marks this as a
+    // standard LE-only general-discoverable peripheral; addName() copies
+    // the name actually into the advertising data.
+    Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+    Bluefruit.Advertising.addName();
     // Stock Bluefruit blinks LED_BLUE on a FreeRTOS timer for the entire
     // advertising/connected duration (default _led_conn=true,
     // bluefruit.cpp's _startConnLed()/bluefruit_blinky_cb). That is an

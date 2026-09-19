@@ -1,6 +1,6 @@
 # M7P7B — First real BLE runtime + tracker admission policy
 
-Status: **IMPLEMENTED ON BRANCH — full host suite PASS; production RAK4630 build PASS with real production Bluefruit/InternalFS linkage (first time); M7P7A guards re-verified intact; NO PHYSICAL VALIDATION YET. Do not merge. Do not claim physical BLE PASS.**
+Status: **IMPLEMENTED ON BRANCH — full host suite PASS; production RAK4630 build PASS with real production Bluefruit/InternalFS linkage (first time); M7P7A guards re-verified intact; a real review-found advertising-payload bug (§8.1) is fixed and re-verified; NO PHYSICAL VALIDATION YET. Do not merge. Do not claim physical BLE PASS.**
 
 Baseline: `main@fb3a098c5bfc8b3488ba61a5ee28b57d8c5b0765`
 (M7P7A merged plus post-merge architecture checkpoint).
@@ -231,7 +231,43 @@ startup-test source list gained `firmware/src/ble_admission_policy.cpp`.
 
 ## 8. Validation evidence
 
-Canonical Debian checkout, this exact diff:
+### 8.1 Independent review finding — fixed
+
+A `/code-review medium` pass (after implementation + host/build PASS, per this
+milestone's own review discipline) found one real bug, verified directly
+against the pinned, installed Bluefruit52Lib source before fixing:
+`setup()` called `Bluefruit.setName(name)` but never called
+`Bluefruit.Advertising.addFlags(...)`/`Bluefruit.Advertising.addName()`
+before `Advertising.start(0)`.
+
+`AdafruitBluefruit::setName()` only writes the GAP Device Name
+*characteristic* via `sd_ble_gap_device_name_set()` — readable only **after**
+a client connects. It does not touch the advertising PDU at all.
+`BLEAdvertisingData::addName()` is the only call that actually copies the
+name into the broadcast payload, and `begin()` does not call it implicitly.
+Every stock Adafruit peripheral example (`adv_advanced.ino`,
+`blehid_camerashutter.ino`, etc.) calls both `addFlags()` and `addName()`
+explicitly before `Advertising.start()`; the diff omitted both, so the
+advertising packet would have shipped with **zero AD structures** — a phone
+scanner would have seen an anonymous device (bare MAC, no name, not marked
+general-discoverable), directly failing this milestone's own physical
+validation item 2 (§9) and making the logged `BLE available name=...` line
+not actually scan-visible. This could not be caught by the host test suite,
+since the host `Bluefruit` stub is inert and does not model advertising
+payload contents.
+
+**Fix:** added `Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE)`
+and `Bluefruit.Advertising.addName()` in `setup()`, between `setName()` and
+`Advertising.start(0)`, matching stock example usage exactly. Added
+`addFlags()`/`addName()` to the host stub
+(`firmware/tests/startup/stubs/bluefruit.h`) so `test_startup.cpp` keeps
+compiling. Re-verified: `arm-none-eabi-nm` on the rebuilt production `.elf`
+now shows `BLEAdvertisingData::addFlags`/`::addName` linked (`T`, defined);
+full host suite re-run **54/54 PASS**; production build re-run **PASS**
+(RAM unchanged at 22,060 B, Flash +192 B to 224,588 B — the two new calls'
+own code size). No other findings from this review.
+
+Canonical Debian checkout, this exact (post-fix) diff:
 
 - `g++` direct compile/run of `test_m7p7b_ble_admission_policy.cpp`: **PASS**
   (ASan/UBSan, `-Wall -Wextra -Werror`, zero warnings).
@@ -245,16 +281,17 @@ Canonical Debian checkout, this exact diff:
   warnings from `main.cpp` or `ble_admission_policy.cpp`.
 - `pio run -d firmware -e rak4630`: **PASS**.
   - RAM: **22,060 B / 248,832 B (8.9%)**
-  - Flash: **224,396 B / 815,104 B (27.5%)**
+  - Flash: **224,588 B / 815,104 B (27.6%)**
   - `check_exclusive_owner`: **PASS** — for the first time in a shipped build,
     its `Bluefruit linked` / `InternalFS linked` branches actually ran (not
     dormant) and confirmed the M7P7A patches are present.
-  - `check_application_ceiling`: **PASS** (224,396 B is well under the M7P2
+  - `check_application_ceiling`: **PASS** (224,588 B is well under the M7P2
     policy ceiling of 790,528 B for the `0x026000..0x0E7000` application
     region).
   - `arm-none-eabi-nm` on the linked production `.elf` confirms `Bluefruit`
     (`B`, defined), `InternalFS` (`B`, defined), `AdafruitBluefruit::begin`
-    and `::autoConnLed` (`T`, defined), all five M7P7A `orun_flash_*` strong
+    and `::autoConnLed` (`T`, defined), `BLEAdvertisingData::addFlags`/
+    `::addName` (`T`, defined, §8.1), all five M7P7A `orun_flash_*` strong
     hooks (`T`, defined), and `flash_nrf5x_erase`/`_write`/`_event_cb`
     (`T`, defined) — this is genuine production linkage, not merely
     compile-smoke evidence.
@@ -265,7 +302,7 @@ Canonical Debian checkout, this exact diff:
 | | Baseline | M7P7B | Delta |
 | --- | --- | --- | --- |
 | RAM | 15,460 B (6.2%) | 22,060 B (8.9%) | **+6,600 B** |
-| Flash | 159,024 B (19.5%) | 224,396 B (27.5%) | **+65,372 B** |
+| Flash | 159,024 B (19.5%) | 224,588 B (27.6%) | **+65,564 B** |
 
 This is the cost of linking the real Bluefruit52Lib/InternalFileSytem/GATT/GAP
 stack for the first time in a shipped image (BLEDfu, BLEDis, BLEUart, BLEHid*,

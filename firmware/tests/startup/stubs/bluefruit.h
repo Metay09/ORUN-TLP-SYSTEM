@@ -12,7 +12,13 @@ struct BleAdvertisingStub {
   bool start(uint16_t = 0) { return true; }
   bool stop() { return true; }
   void restartOnDisconnect(bool) {}
+  bool addFlags(uint8_t) { return true; }
+  bool addName() { return true; }
 };
+
+// Real value from the pinned SoftDevice's ble_gap.h; only used as an opaque
+// argument to the stub above.
+constexpr uint8_t BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE = 0x06;
 
 struct BlePeriphStub {
   uint8_t connected() { return 0; }
