@@ -198,6 +198,25 @@ for valid decrypt, whether recovered plaintext matches, the raw return code for
 the one-bit tag tamper, and the expected CC310 MAC-invalid code. No production
 code or security decision changes until that result is understood.
 
+
+The detailed rerun showed:
+
+- valid decrypt return: `0x00000000` (**CRYS_OK**);
+- recovered plaintext: **MATCH**;
+- one-bit tag tamper return: `0x00F50000`;
+- expected dedicated CCM MAC-invalid return: `0x00F0150F`;
+- therefore the data path decrypts correctly, and corrupted authentication data
+  is rejected with a nonzero error, but the one-shot `CRYS_AESCCM` API in the
+  pinned CC310 library reports the generic `CRYS_FATAL_ERROR`
+  (`0x00F50000`) rather than the dedicated MAC-invalid code.
+
+That generic result is not accepted as the final integration contract. The probe
+is switched to the explicit `CC_AESCCM_Init` +
+`CRYS_AESCCM_BlockAdata` + `CRYS_AESCCM_Finish` path used by Nordic's CC310
+AEAD backend. The next hardware run requires the dedicated MAC-invalid result and
+then a fresh valid decrypt after the tamper attempt, proving the failed
+authentication does not poison subsequent crypto use.
+
 ## 8. Validation sequence
 
 Before this slice can close:
