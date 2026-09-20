@@ -1,6 +1,6 @@
 # M7P6E — CryptoCell + Bluefruit/SoftDevice coexistence proof
 
-Status: **SOFTWARE/HOST/BUILD VALIDATION PASS; OWNER HARDWARE COEXISTENCE VALIDATION PENDING.**
+Status: **SOFTWARE/HOST/BUILD VALIDATION PASS; OWNER HARDWARE BOOT KAT PASS; BLE LESC-OVERLAP COEXISTENCE VALIDATION PENDING.**
 
 Baseline: `main@00a96811c73cd5f9609f6869eb2c4a055013842b`
 (PR #29 merged after M7P6D).
@@ -290,7 +290,37 @@ the exact candidate outputs recorded in §3:
 This software/build evidence does **not** establish Bluefruit/CC310 hardware
 coexistence. The physical LESC-overlap gate in §9 remains pending.
 
-## 11. Compatibility / system impact
+## 11. Initial hardware evidence
+
+Owner uploaded `rak4630_m7p6e_crypto_ble_probe` successfully to the RAK4630-class
+test unit through `/dev/ttyACM0`.
+
+After boot, the test-only `CRYPTO?` command reported:
+
+```text
+M7P6E STATUS boot_kat=PASS stress=IDLE iterations=0 lesc_events=0 auth_events=0 sec_update_events=0 ble_connected=0
+```
+
+This closes only the **hardware boot/readiness KAT** gate: the exact candidate
+HKDF/AES-CCM KAT passed after Bluefruit/SoftDevice initialization on the real
+device. It does not yet prove concurrent LESC/ORUN CryptoCell coexistence.
+
+During the same probe-image session the unit also received a real direct TLP v1
+packet:
+
+```text
+BASE RX NEW source=0E8ADE7E71531AA3 seq=11940 path=DIRECT rssi=-77 snr=9
+```
+
+That is scoped evidence that the full-graph probe image retained working direct
+LoRa RX while the BLE runtime/SoftDevice was active. It is not a new range,
+capacity or secure-RF claim.
+
+The remaining M7P6E physical blocker is the connected fresh-pairing stress that
+must observe `BLE_GAP_EVT_LESC_DHKEY_REQUEST` during repeated ORUN KATs and
+finish with zero disconnects.
+
+## 12. Compatibility / system impact
 
 Normal production `rak4630` behavior is intentionally unchanged:
 
