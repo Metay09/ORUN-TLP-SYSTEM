@@ -2,7 +2,7 @@
 
 Status: **CURRENT through `main@46d7a933f63d42d84fb386035be1c03af1d0c3c4`: M7P7B production BLE runtime is merged; M7P6C/D/E security primitive/pre-wire/coexistence evidence is merged, with fresh-pairing LESC/CC310 coexistence still owner-waived/not-PASS; secure-envelope/provisioning/application-GATT runtime remains later; prior M6A/M6B3 focused physical gates PASS; overall M6 IN PROGRESS**.
 Last reviewed against `main@46d7a933f63d42d84fb386035be1c03af1d0c3c4`.
-Last architecture review update: 2026-09-21 (§17 records the owner-approved BLE application boundary plus future MESSAGE routing/delivery and optional user-location direction; it is design-only and does not authorize GATT, provisioning, MESSAGE or Android runtime).
+Last architecture review update: 2026-09-21 (§17 records the BLE application boundary and points later Entity Registry/MESSAGE/user-location decisions to the separate application-direction record; both are design-only and authorize no runtime by themselves).
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
