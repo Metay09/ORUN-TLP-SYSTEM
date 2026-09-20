@@ -167,6 +167,22 @@ Owner upload on 2026-09-20:
 - upload success is not the crypto KAT result. The serial result still must be
   captured from the running probe before HKDF/AES-CCM can be called PASS.
 
+
+First serial capture after upload produced no probe line while the USB CDC device
+disconnected/re-enumerated around reset. This is not treated as crypto PASS or
+FAIL because the original probe emitted its result only once shortly after boot;
+that line could be lost before the host monitor reattached.
+
+The test-only probe is therefore hardened to:
+
+- wait up to 15 s for USB CDC attachment before starting diagnostics;
+- print explicit BOOT / crypto-init / HKDF / CCM stage markers;
+- flush each stage marker before entering the next crypto call;
+- repeat the final result every 3 s while a serial monitor is attached.
+
+This changes only observability of the test image. It does not alter the crypto
+vectors, production firmware or any RF/protocol behavior.
+
 ## 8. Validation sequence
 
 Before this slice can close:
