@@ -320,6 +320,19 @@ The remaining M7P6E physical blocker is the connected fresh-pairing stress that
 must observe `BLE_GAP_EVT_LESC_DHKEY_REQUEST` during repeated ORUN KATs and
 finish with zero disconnects.
 
+A subsequent connection check on the same hardware reported:
+
+```text
+M7P6E STATUS boot_kat=PASS stress=IDLE iterations=0 lesc_events=0 auth_events=0 sec_update_events=1 ble_connected=1
+```
+
+This is valid physical evidence that BLE remained connected while the probe
+runtime was active, but it is **not** the required fresh-pairing coexistence
+evidence. The phone UI also showed the peer as BONDED, and the event pattern
+(`sec_update_events=1`, `lesc_events=0`, `auth_events=0`) is consistent
+with reuse of an existing bond/security context rather than a new LESC pairing.
+The final stress must therefore be run from a genuinely fresh pairing context.
+
 ## 12. Compatibility / system impact
 
 Normal production `rak4630` behavior is intentionally unchanged:
