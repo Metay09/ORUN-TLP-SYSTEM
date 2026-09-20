@@ -127,7 +127,23 @@ The ADR's AES-128-CCM + HKDF-SHA256 direction remains a **candidate** until this
 exact target probe passes. Even after it passes, ORUN wire bytes still require a
 separate reviewed specification gate.
 
-## 7. Validation sequence
+## 7. First build finding and fix
+
+The owner's first `rak4630_m7p6c_crypto_probe` build failed before compiling
+the crypto proof itself. The synthetic target inherited production
+`SX126x-Arduino` and SparkFun GNSS dependencies, which unnecessarily pulled
+`Wire` into the graph. ORUN's existing pinned Wire patch includes
+`Adafruit_TinyUSB.h`; in this unrelated dependency graph PlatformIO did not
+propagate the TinyUSB include path to Wire, producing:
+
+`Wire_nRF52.cpp:33:10: fatal error: Adafruit_TinyUSB.h: No such file or directory`
+
+This is a test-target composition failure, not evidence that HKDF/AES-CCM or
+CryptoCell failed. The target is now isolated from production radio/GNSS
+libraries and production patch scripts, matching the existing M7P7A synthetic
+build-target discipline. Production `rak4630` composition is unchanged.
+
+## 8. Validation sequence
 
 Before this slice can close:
 
@@ -146,7 +162,7 @@ specific standards vectors. It does **not** prove the future ORUN secure
 envelope, key lifecycle, provisioning, replay policy, RF interoperability or
 battery impact.
 
-## 8. Next gate after M7P6C
+## 9. Next gate after M7P6C
 
 Only after this primitive proof passes should the project freeze the first ORUN
 secure-envelope specification. That later slice must explicitly decide:
