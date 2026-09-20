@@ -693,7 +693,7 @@ connection, connected past the deadline, no-client close and clean cold boot
 remains useful; the post-disconnect lifecycle (§9.0) must be re-run on this
 build.
 
-### 8.6 Temporary flash-concurrency probe (test-only; physical run NOT yet performed)
+### 8.6 Temporary flash-concurrency probe (test-only; physical run PASS)
 
 Row 8 of §9 (real History/Config/Security flash mutation while BLE is active)
 needs a real mutation source; production has none. A **temporary, test-only**
@@ -750,13 +750,21 @@ probe was added for it. It is not a production feature.
   stage=<temp-save|temp-verify|restore-request|restore-save|restore-verify|
   timeout|ble|async-evidence> ...` (a restore failure also prints current and
   original config values).
-- **Physical procedure (the one remaining action).** Build/upload
-  `pio run -d firmware -e rak4630_m7p7b_flash_probe -t upload`; connect exactly
-  one BLE client (phone) and confirm `BLE?` shows `advertising=no connected=1`;
-  send `FLASH PROBE` over USB serial; record the START and PASS/FAIL lines;
-  afterwards re-flash the production `rak4630` image. Row 8 stays **PENDING**
-  until that log exists; it covers ConfigStore→gate→SoftDevice only, not
-  History or Security concurrency.
+- **Physical result — PASS for the shared ConfigStore async path.** On real
+  RAK4631 hardware at branch head `378ba6a7`, the probe image was uploaded,
+  one Samsung/nRF Connect peripheral connection was held
+  (`BLE ready=yes advertising=no connected=1 policy=open initial_start=ok`),
+  and `FLASH PROBE` produced:
+  `FLASH PROBE START orig_interval=180 orig_mah=0 temp_mah=1 ble_connected=1 disconnect_snapshot=0 async_accepted=0 stale_result=none`;
+  then
+  `FLASH PROBE PASS temp_verified=yes restore_verified=yes ble_connected=yes ble_disconnects=0 async_accepted_delta=6 completions_success_delta=6 errors_delta=0 timeouts_delta=0 late_delta=0`.
+  This physically exercises ConfigStore→gate→SoftDevice completion forwarding
+  while BLE remains connected: both saves completed (6/6 accepted operations),
+  the temporary value was verified, the exact original config was restored,
+  and no BLE disconnect/error/timeout/late completion occurred. It does **not**
+  separately prove HistoryStore or SecurityStore client-specific mutation paths.
+  After the run, the normal production `rak4630` image from the same branch was
+  re-flashed successfully (`Device programmed`, `rak4630 SUCCESS`).
 - **Known limits.** Host tests cover the state machine only. A `restore-verify`
   failure is a defensive check that the real ConfigStore cannot produce (its
   `finishSave()` sets `config_` from the saved candidate), so it is not
@@ -766,62 +774,83 @@ probe was added for it. It is not a production feature.
 
 ## 9. Physical-validation evidence
 
-**Host/build PASS is not physical PASS.** Everything in §9.1 was collected on
-one real RAK4631 running the **audit-fix head `9673f49`** (production build RAM
-22,084 B / Flash 225,452 B, §8.4), with a Samsung phone running Nordic nRF
-Connect for Mobile as the BLE scanner/client, plus the unit's USB serial log.
-That is **not** the current build: §8.5 replaced the disconnect-event path, so
-the post-disconnect lifecycle must be re-run (§9.0). §9.2 is the older `65893e2`
-evidence and is kept only as history.
+**Host/build PASS is not physical PASS.** Current production-path lifecycle,
+LoRa coexistence and stock-bond evidence below was collected on one real RAK4631
+running `9b7379e` (the §8.5 direct-event implementation) with a Samsung phone
+running Nordic nRF Connect for Mobile and USB serial. Commit `378ba6a7` adds
+only the macro-guarded test probe/test/docs; its normal `rak4630` production
+build remains 22,084 B RAM / 225,484 B Flash and does not contain the probe.
+The flash-concurrency probe itself was physically run from the dedicated
+`rak4630_m7p7b_flash_probe` image at `378ba6a7`, then the production
+`rak4630` image was restored successfully.
 
 Legend: PASS = observed on hardware; PENDING = not yet performed (not a
 failure); BLOCKED = cannot be performed on this physical unit as configured
-(not PASS, not N/A for the product); N/A = genuinely not applicable to this slice (a reachable-but-untested path is PENDING, never N/A).
+(not PASS, not N/A for the product); N/A = genuinely not applicable to this
+slice (a reachable-but-untested path is PENDING, never N/A).
 
-**Full physical validation is NOT complete.**
+**Full physical validation is not complete:** quantitative current/power is not
+measured; GNSS coexistence is blocked on this unit; the deliberately
+between-loop-polls lifecycle timing and injected advertising start/stop failures
+remain host-only.
 
-### 9.0 Physical retest required on the §8.5 build (not yet performed)
+### 9.0 Current production-path evidence
 
-Upload the current production image, then, with the phone and the USB serial
-log:
+- **Direct event lifecycle — PASS.** On `9b7379e`, phone connect gave
+  `advertising=no connected=1`; disconnect produced
+  `BLE advertising restarted`, then `advertising=yes connected=0 policy=open`;
+  reconnect within that fresh window returned
+  `advertising=no connected=1 policy=open`. This re-proves the lifecycle after
+  the §8.5 event-path change. The exact "entirely between two loop polls" phase
+  remains host-tested only.
+- **BLE/SoftDevice + real LoRa coexistence — PASS (scoped).** With the BLE
+  runtime active, real direct LoRa POSITION reception was observed
+  (`BASE RX NEW`). While a BLE client was connected, the unit was switched to
+  RELAY and real `RELAY RX → RELAY QUEUE → RELAY TX → RELAY TX done` cycles
+  were observed, including sequence 11531; additional relay cycles were also
+  observed during the same session. `TX done` proves local SX1262 transmission
+  completion only; it is **not** proof that a BASE or final recipient received
+  the relayed packet.
+- **Stock framework bond persistence — PASS (scoped).** nRF Connect created a
+  stock Bluefruit/SoftDevice bond; after a full power-off (~5 s) and reboot the
+  phone still showed `BONDED`, and reconnect succeeded without a new pairing
+  prompt. This is practical evidence that the relocated InternalFS bond path
+  persists/reloads across reboot. It is not a raw-flash byte audit and a stock
+  BLE bond is **not** ORUN ownership or authorization.
+- **BLE + real ConfigStore flash mutation — PASS (shared-path scope).** The
+  §8.6 probe at `378ba6a7` completed 6/6 async flash operations with the phone
+  remaining connected, verified the temporary config and exact restoration, and
+  reported zero disconnects/errors/timeouts/late completions. This physically
+  proves the ConfigStore→FlashMutationGate→SoftDevice event bridge under active
+  BLE; HistoryStore and SecurityStore client-specific mutation paths were not
+  separately exercised on hardware.
+- **Production restore — PASS.** After the probe, the normal
+  `pio run -d firmware -e rak4630 -t upload` completed with
+  `Device programmed` / `rak4630 SUCCESS`.
 
-1. phone connects; 2. phone disconnects; 3. advertising returns; 4. `BLE?` shows
-`ready=yes advertising=yes connected=0 policy=open initial_start=ok`;
-5. reconnect within the fresh window; 6. `BLE?` shows
-`ready=yes advertising=no connected=1 policy=open initial_start=ok`.
-
-If practical, also one deliberately quick connect/disconnect cycle, confirming
-advertising and the fresh window remain available. That would **not** by itself
-prove the "entirely between two loop polls" timing (the poll phase cannot be
-controlled from the phone); that case stays host-tested only unless the test
-genuinely demonstrates the timing condition.
-Results are recorded here only after they are observed.
-
-### 9.1 Audit-fix head `9673f49` (predates §8.5)
+### 9.1 Consolidated physical checklist
 
 | # | Item | Status | Evidence / reason |
 | --- | --- | --- | --- |
-| 1 | Real RAK4631 boots with BLE and advertises | **PASS** | Serial after boot: `ROLE BASE source=AUTO`, then `BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok`. |
-| 1b | Clean full power-cycle / cold boot recovery | **PASS (scoped)** | Unit fully powered off, left off ~5 s, powered on. Serial: `GNSS: not detected`, `ROLE BASE source=AUTO`, `BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok`; phone operation (rows 2–4) was healthy afterwards. This proves a real power-off/power-on followed by healthy BLE advertising and phone operation. It does **not** prove that the previous boot was actively BLE-connected when power was removed; no such claim is made. |
-| 2 | Real RF scanner sees the peripheral | **PASS** | Samsung phone, nRF Connect for Mobile, saw `ORUN-4B275BA5`, address `C5:DD:01:85:C9:4B`. The stock Samsung Bluetooth-settings screen did not list it; that is expected for a bare BLE peripheral and is not a firmware failure. |
-| 2b | Phone connects | **PASS** | nRF Connect connected: `CONNECTED`, `NOT BONDED`. Only standard services visible: Generic Access `0x1800`, Generic Attribute `0x1801`. No ORUN-specific application GATT service present (§5). Simultaneous serial: `BLE ready=yes advertising=no connected=1 policy=open initial_start=ok`. |
-| 3 | Connected client survives the original ~10-min no-client deadline | **PASS** | The phone stayed connected well beyond ~10 minutes and was not closed by the admission timeout. No exact duration is claimed beyond "well beyond 10 minutes". |
-| 4 | Disconnect → loop-owned restart → advertising restored | **PASS on `9673f49`; RETEST REQUIRED on §8.5 build** | After phone disconnect, `ORUN-4B275BA5` reappeared advertising in nRF Connect. This exercises the §8.3 change from framework auto-restart to loop-owned start/retry. |
-| 4b | Fresh post-disconnect admission window | **PASS on `9673f49`; RETEST REQUIRED on §8.5 build** | The device was connectable again in a renewed ~10-min window (see row 6). |
-| 5 | BLE closes after a full window with no client | **PASS** | Serial: `BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok`, then `BLE closed; no client connected within window`, then `BLE ready=yes advertising=no connected=0 policy=closed initial_start=ok`. |
-| 6 | Reconnect during the renewed window | **PASS on `9673f49`; RETEST REQUIRED on §8.5 build** | Phone reconnected within the renewed window; serial again `BLE ready=yes advertising=no connected=1 policy=open initial_start=ok`. |
-| 7a | LoRa TX/RX coexistence with SoftDevice active | **PENDING** | Second LoRa node not available/powered during validation. |
-| 7b | GNSS coexistence | **BLOCKED (this unit)** | Unit reports `GNSS: not detected`. Not PASS; not N/A for the product. Needs a GNSS-equipped unit. |
-| 8 | Flash mutation (History/Config/Security) concurrency with BLE active | **PENDING** | No production mutation source. A test-only ConfigStore probe exists (§8.6, `rak4630_m7p7b_flash_probe`) but has **not** been run on hardware; even a PASS covers ConfigStore→gate→SoftDevice only. |
-| 9 | Very short connect+disconnect entirely between loop polls | **PENDING (host-tested only)** | Covered by policy/startup host tests, including the direct-event path (§8.5); not physically exercised. |
-| 9b | `Advertising.start()`/`stop()` failure and retry | **PENDING (host-modelled only)** | No practical physical trigger was used. |
-| 10 | Stock bond creation/persistence via relocated `InternalFS` (M7P4) under M7P7A shared flash ownership | **PENDING — physically reachable stock bonding/`InternalFS` path not yet exercised** | Reachable: `Bluefruit.begin()` → `Security.begin()`/`bond_init()` → `InternalFS.begin()`; Just Works defaults let a peer initiate bonding (§5). The phone stayed `NOT BONDED`, so no bond was created, persisted, reloaded after reboot or removed. Not PASS, not N/A. A framework bond is **not** ORUN authorization and no ORUN pairing/provisioning UX exists. Merge gate unless the owner explicitly waives it (§11). |
-| 11 | Current/power measurement (advertising / connected / closed) | **PENDING** | Not measured. |
+| 1 | Real RAK4631 boots with BLE and advertises | **PASS** | Real boot advertising and `BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok` observed; current production code path is unchanged by the probe commit. |
+| 1b | Clean full power-cycle / cold boot recovery | **PASS (scoped)** | Full power-off/power-on followed by healthy BLE operation was observed. This does not claim the device was connected at the instant power was removed. |
+| 2 | Real RF scanner sees the peripheral | **PASS** | Samsung/nRF Connect saw `ORUN-4B275BA5`, address `C5:DD:01:85:C9:4B`. |
+| 2b | Phone connects | **PASS** | Serial: `BLE ready=yes advertising=no connected=1 policy=open initial_start=ok`; only standard GATT `0x1800`/`0x1801`, no ORUN application GATT. |
+| 3 | Connected client survives the original ~10-min no-client deadline | **PASS (earlier production-path evidence)** | Phone remained connected well beyond ~10 minutes. No exact duration beyond that is claimed. |
+| 4 | Disconnect → loop-owned restart → advertising restored | **PASS on §8.5 path** | Current direct-event build logged `BLE advertising restarted` and then `advertising=yes connected=0 policy=open`. |
+| 4b | Fresh post-disconnect admission window | **PASS on §8.5 path** | Reconnect succeeded during the renewed window. |
+| 5 | BLE closes after a full window with no client | **PASS** | Current logs include `BLE closed; no client connected within window`. |
+| 6 | Reconnect during the renewed window | **PASS on §8.5 path** | Reconnect gave `advertising=no connected=1 policy=open`. |
+| 7a | LoRa TX/RX coexistence with SoftDevice/BLE active | **PASS (scoped)** | Direct RX was observed with BLE runtime active; with a BLE client connected, real RELAY RX/QUEUE/TX/TX_DONE was observed. Local TX completion is not end-to-end delivery. |
+| 7b | GNSS coexistence | **BLOCKED (this unit)** | Unit reports `GNSS: not detected`. Needs a GNSS-equipped unit or explicit owner waiver; not PASS/N/A. |
+| 8 | Flash mutation concurrency with BLE active | **PASS for ConfigStore/shared gate path; History/Security not separately exercised** | §8.6 physical probe: temp+restore verified, BLE stayed connected, 6 accepted / 6 successful async completions, 0 errors/timeouts/late completions/disconnects. |
+| 9 | Very short connect+disconnect entirely between loop polls | **PENDING (host-tested only)** | Direct-event policy/startup tests cover this timing; phone testing cannot prove the loop phase. |
+| 9b | `Advertising.start()`/`stop()` failure and retry | **PENDING (host-modelled only)** | No practical physical fault injection used. |
+| 10 | Stock bond creation/persistence via relocated `InternalFS` | **PASS (scoped)** | Bond created, full power-cycle performed, phone remained BONDED and reconnected without a new pairing prompt. Framework bond ≠ ORUN authorization. |
+| 11 | Current/power measurement (advertising / connected / closed) | **PENDING** | Quantitative current was not measured. A power-bank endurance observation is not a calibrated current measurement. |
 
-Former residual risk (`ada_callback_invoke()` heap-allocation drop of the Periph
-disconnect callback, §8.3) is **removed for the disconnect path** by §8.5: the
-event now arrives through Bluefruit's direct global event callback with no
-`ada_callback`/heap allocation. Nothing about it was observed on hardware.
+No checklist row is N/A. The remaining physical unknowns are explicit rather
+than converted into software/build claims.
 
 ### 9.2 Historical evidence on `65893e2` (superseded by §9.1)
 
@@ -862,34 +891,36 @@ Recorded, not hidden:
   (`ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md` §10 already flags this as a
   distinct future requirement, not part of this slice).
 - Bonding/pairing UX, first-phone ownership, PIN/passkey, or any authorization
-  model tied to BLE connection/bonding. Stock framework pairing/bonding
-  capability remains available (§5) but is neither designed, exercised nor
-  treated as ORUN authorization here.
+  model tied to BLE connection/bonding. Stock framework pairing/bonding was
+  exercised only to validate persistence/reload (§9); it is neither an ORUN
+  ownership/authorization mechanism nor a designed product provisioning UX.
 
 ## 11. Remaining merge gates (PR #22 stays draft; do not merge)
 
 `AGENTS.md` requires that anything still needing physical hardware testing be
-identified and that compilation success is not physical proof; it does not
-enumerate M7P7B-specific merge gates. The classification below derives from
-this milestone's own validation checklist and the physical items
-`docs/milestones/M7P7A.md` §8 carried forward to M7P7 runtime work. Whether any
-item is waived is an owner decision, not made here.
+identified and that compilation success is not physical proof. The current
+classification below reflects the now-collected hardware evidence; any waiver
+remains an owner decision.
 
-**Required physical gates (still open):**
+**Physical gates closed by current evidence:**
 
-- Post-disconnect lifecycle retest on the §8.5 build (§9.0): disconnect →
-  advertising returns → fresh window → reconnect.
-- Real stock bond creation and persistence/reboot through relocated `InternalFS`
-  (row 10; `M7P7A.md` §8 "real bond creation and persistence in relocated
-  InternalFS"). Physically reachable, not yet exercised; a merge gate unless the
-  owner explicitly waives it. Not ORUN authorization.
-- LoRa TX/RX coexistence with SoftDevice/BLE active (row 7a) — needs a second
-  powered LoRa node.
-- Flash-mutation (History/Config/Security) concurrency while BLE is active
-  (row 8; `M7P7A.md` §8) — needs a safe runtime mutation source.
-- Current/power measurement in advertising / connected / closed states
-  (row 11) — SoftDevice stays resident after `Bluefruit.begin()` (§2.1), so
-  power cost is not established by host/build evidence.
+- §8.5 post-disconnect lifecycle: disconnect → loop-owned advertising restart →
+  fresh window → reconnect — **PASS**.
+- Real stock bond creation plus reboot persistence/reconnect through relocated
+  InternalFS — **PASS (scoped)**; this is not ORUN authorization.
+- Real LoRa coexistence with active BLE: direct RX plus BLE-connected relay
+  RX/QUEUE/TX/TX_DONE — **PASS (scoped)**; TX_DONE is local completion only.
+- Real ORUN flash mutation through the shared ConfigStore →
+  FlashMutationGate → SoftDevice completion path while BLE remains connected —
+  **PASS** (§8.6). HistoryStore/SecurityStore client-specific mutation paths are
+  not separately claimed as physically exercised.
+
+**Required physical gate still open:**
+
+- Quantitative current/power measurement in advertising / connected / closed
+  states (row 11). SoftDevice stays resident after `Bluefruit.begin()` (§2.1),
+  so a power-bank LED/endurance observation is not a calibrated current
+  measurement.
 
 **Blocked on current hardware:**
 
@@ -897,13 +928,17 @@ item is waived is an owner decision, not made here.
   PASS nor N/A for the product; needs a GNSS-equipped unit or an explicit owner
   waiver.
 
-**Host-only (no practical physical trigger; owner may accept as such):**
+**Host-only (no practical physical trigger used; owner may accept as such):**
 
-- Very short connect+disconnect between loop polls (row 9), and
-  `Advertising.start()`/`stop()` failure/retry (row 9b).
+- Very short connect+disconnect entirely between loop polls (row 9).
+- `Advertising.start()`/`stop()` failure/retry (row 9b).
 
 **Deferred / out of scope for M7P7B:**
 
 - ORUN authorization, ownership, provisioning, PIN, application GATT services,
   LoRa `OPEN_BLE`, DFU/M7P8, secure envelope, multi-client BLE, role-aware BLE
   policy, stalled-session watchdog (§10).
+
+PR #22 remains **draft / not merged** until the remaining power/GNSS disposition
+and final independent audit are explicitly reviewed.
+
