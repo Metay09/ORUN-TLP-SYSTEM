@@ -84,10 +84,22 @@ CRYSError_t runAesCcm(SaSiAesEncryptMode_t mode,
   uint8_t finish_tag_size = tag_size;
   result = CRYS_AESCCM_Finish(&context, input, input_size, output,
                               mac_buffer, &finish_tag_size);
+  if (result == CRYS_OK && finish_tag_size != tag_size) {
+    return CRYS_AESCCM_ILLEGAL_PARAMETER_SIZE_ERROR;
+  }
   if (result == CRYS_OK && mode == SASI_AES_ENCRYPT) {
     memcpy(tag, mac_buffer, tag_size);
   }
   return result;
+}
+
+bool isExpectedAuthReject(CRYSError_t result) {
+  // Dedicated MAC-invalid is the intended API result. The exact pinned
+  // nrf_cc310_0.9.13-no-interrupts binary has also been physically observed
+  // returning CRYS_FATAL_ERROR for a wrong CCM tag. Keep that compatibility
+  // exception narrow: arbitrary nonzero errors are never accepted here.
+  return result == CRYS_AESCCM_CCM_MAC_INVALID_ERROR ||
+         result == CRYS_FATAL_ERROR;
 }
 
 bool testAesCcmEncrypt() {
@@ -132,6 +144,10 @@ struct CcmDecryptTamperResult {
   bool tamper_rejected = false;
   CRYSError_t recovery_result = 0;
   bool recovery_plaintext_matches = false;
+  bool negative_matrix_pass = false;
+  uint16_t negative_matrix_cases = 0;
+  bool forged_stress_pass = false;
+  uint16_t forged_stress_iterations = 0;
 };
 
 CcmDecryptTamperResult testAesCcmDecryptAndTamper() {
@@ -170,34 +186,122 @@ CcmDecryptTamperResult testAesCcmDecryptAndTamper() {
   out.plaintext_matches =
       equalBytes(plaintext, kExpectedPlaintext, sizeof(plaintext));
 
-  // Authentication failure must be fail-closed. Do not inspect or accept the
-  // plaintext output from this call; only the error result is meaningful.
+  auto decryptWithTag = [&](const uint8_t* tag_bytes,
+                            bool* plaintext_matches) -> CRYSError_t {
+    uint8_t local_tag[sizeof(kExpectedTag)]{};
+    memcpy(local_tag, tag_bytes, sizeof(local_tag));
+    uint8_t local_plaintext[sizeof(ciphertext)]{};
+    const CRYSError_t result = runAesCcm(
+        SASI_AES_DECRYPT, key, nonce, sizeof(nonce), aad, sizeof(aad),
+        ciphertext, sizeof(ciphertext), local_plaintext, local_tag,
+        sizeof(local_tag));
+    if (plaintext_matches != nullptr) {
+      *plaintext_matches =
+          result == CRYS_OK &&
+          equalBytes(local_plaintext, kExpectedPlaintext,
+                     sizeof(local_plaintext));
+    }
+    return result;
+  };
+
+  auto validDecryptPasses = [&]() -> bool {
+    bool match = false;
+    return decryptWithTag(kExpectedTag, &match) == CRYS_OK && match;
+  };
+
+  // First negative result remains individually visible in serial diagnostics.
+  // Never inspect or accept plaintext from a failed authenticated decrypt.
   uint8_t bad_tag[sizeof(kExpectedTag)]{};
   memcpy(bad_tag, kExpectedTag, sizeof(kExpectedTag));
   bad_tag[0] ^= 0x01U;
-  memset(plaintext, 0, sizeof(plaintext));
-  out.tamper_result = runAesCcm(
-      SASI_AES_DECRYPT, key, nonce, sizeof(nonce), aad, sizeof(aad),
-      ciphertext, sizeof(ciphertext), plaintext, bad_tag, sizeof(bad_tag));
-  // The pinned nrf_cc310_0.9.13-no-interrupts binary returns
-  // CRYS_FATAL_ERROR for this authenticated-decrypt tag mismatch even through
-  // the explicit Init/BlockAdata/Finish path. Treat only the documented
-  // dedicated MAC-invalid code or this physically observed pinned-library
-  // compatibility code as an expected authentication rejection. All other
-  // results remain failures, and a fresh valid decrypt below must still pass.
-  out.tamper_rejected =
-      out.tamper_result == CRYS_AESCCM_CCM_MAC_INVALID_ERROR ||
-      out.tamper_result == CRYS_FATAL_ERROR;
+  out.tamper_result = decryptWithTag(bad_tag, nullptr);
+  out.tamper_rejected = isExpectedAuthReject(out.tamper_result);
 
-  // A failed authentication attempt must not poison the crypto engine. Re-run
-  // the valid vector from a fresh context and require normal success again.
+  // A failed authentication attempt must not poison the crypto engine.
   memcpy(tag, kExpectedTag, sizeof(kExpectedTag));
   memset(plaintext, 0, sizeof(plaintext));
   out.recovery_result = runAesCcm(
       SASI_AES_DECRYPT, key, nonce, sizeof(nonce), aad, sizeof(aad),
       ciphertext, sizeof(ciphertext), plaintext, tag, sizeof(tag));
   out.recovery_plaintext_matches =
+      out.recovery_result == CRYS_OK &&
       equalBytes(plaintext, kExpectedPlaintext, sizeof(plaintext));
+
+  // Expanded fail-closed matrix requested by independent review. Each
+  // well-formed authenticated-input mutation must be rejected, and after
+  // restoring the vector a fresh valid decrypt must still pass.
+  bool matrix_ok = true;
+  uint16_t matrix_cases = 0;
+
+  for (uint8_t i = 0; i < sizeof(kExpectedTag); ++i) {
+    memcpy(bad_tag, kExpectedTag, sizeof(kExpectedTag));
+    bad_tag[i] ^= 0x01U;
+    ++matrix_cases;
+    if (!isExpectedAuthReject(decryptWithTag(bad_tag, nullptr)) ||
+        !validDecryptPasses()) {
+      matrix_ok = false;
+      break;
+    }
+  }
+
+  auto checkMutatedCurrentInputs = [&]() -> bool {
+    ++matrix_cases;
+    return isExpectedAuthReject(decryptWithTag(kExpectedTag, nullptr));
+  };
+
+  if (matrix_ok) {
+    ciphertext[0] ^= 0x01U;
+    const bool rejected = checkMutatedCurrentInputs();
+    ciphertext[0] ^= 0x01U;
+    matrix_ok = rejected && validDecryptPasses();
+  }
+  if (matrix_ok) {
+    ciphertext[sizeof(ciphertext) - 1] ^= 0x01U;
+    const bool rejected = checkMutatedCurrentInputs();
+    ciphertext[sizeof(ciphertext) - 1] ^= 0x01U;
+    matrix_ok = rejected && validDecryptPasses();
+  }
+  if (matrix_ok) {
+    aad[0] ^= 0x01U;
+    const bool rejected = checkMutatedCurrentInputs();
+    aad[0] ^= 0x01U;
+    matrix_ok = rejected && validDecryptPasses();
+  }
+  if (matrix_ok) {
+    nonce[sizeof(nonce) - 1] ^= 0x01U;
+    const bool rejected = checkMutatedCurrentInputs();
+    nonce[sizeof(nonce) - 1] ^= 0x01U;
+    matrix_ok = rejected && validDecryptPasses();
+  }
+  if (matrix_ok) {
+    key[0] ^= 0x01U;
+    const bool rejected = checkMutatedCurrentInputs();
+    key[0] ^= 0x01U;
+    matrix_ok = rejected && validDecryptPasses();
+  }
+
+  out.negative_matrix_pass = matrix_ok && matrix_cases == 13U;
+  out.negative_matrix_cases = matrix_cases;
+
+  // RF attackers can repeat forgeries. Exercise the pinned negative path
+  // repeatedly and require a valid authenticated decrypt immediately after
+  // every rejection. No failed-call plaintext is consumed.
+  constexpr uint16_t kForgedStressIterations = 1000;
+  bool stress_ok = out.negative_matrix_pass;
+  uint16_t completed = 0;
+  memcpy(bad_tag, kExpectedTag, sizeof(kExpectedTag));
+  bad_tag[0] ^= 0x01U;
+  for (; stress_ok && completed < kForgedStressIterations; ++completed) {
+    if (!isExpectedAuthReject(decryptWithTag(bad_tag, nullptr)) ||
+        !validDecryptPasses()) {
+      stress_ok = false;
+      break;
+    }
+  }
+  out.forged_stress_pass =
+      stress_ok && completed == kForgedStressIterations;
+  out.forged_stress_iterations = completed;
+
   return out;
 }
 
@@ -215,6 +319,10 @@ CRYSError_t probe_ccm_tamper_result = 0;
 bool probe_ccm_tamper_rejected = false;
 CRYSError_t probe_ccm_recovery_result = 0;
 bool probe_ccm_recovery_plaintext_matches = false;
+bool probe_negative_matrix_pass = false;
+uint16_t probe_negative_matrix_cases = 0;
+bool probe_forged_stress_pass = false;
+uint16_t probe_forged_stress_iterations = 0;
 uint32_t last_report_ms = 0;
 
 void reportResult() {
@@ -275,10 +383,15 @@ void setup() {
   probe_ccm_recovery_result = ccm_decrypt.recovery_result;
   probe_ccm_recovery_plaintext_matches =
       ccm_decrypt.recovery_plaintext_matches;
+  probe_negative_matrix_pass = ccm_decrypt.negative_matrix_pass;
+  probe_negative_matrix_cases = ccm_decrypt.negative_matrix_cases;
+  probe_forged_stress_pass = ccm_decrypt.forged_stress_pass;
+  probe_forged_stress_iterations = ccm_decrypt.forged_stress_iterations;
   probe_ccm_decrypt_tamper =
       probe_ccm_valid_result == CRYS_OK && probe_ccm_plaintext_matches &&
       probe_ccm_tamper_rejected && probe_ccm_recovery_result == CRYS_OK &&
-      probe_ccm_recovery_plaintext_matches;
+      probe_ccm_recovery_plaintext_matches && probe_negative_matrix_pass &&
+      probe_forged_stress_pass;
   Serial.printf(
       "M7P6C CCM DECRYPT valid_rc=0x%08lX plaintext=%s "
       "tamper_rc=0x%08lX expected_mac_invalid=0x%08lX "
@@ -292,6 +405,12 @@ void setup() {
       probe_ccm_tamper_rejected ? "YES" : "NO",
       static_cast<unsigned long>(probe_ccm_recovery_result),
       probe_ccm_recovery_plaintext_matches ? "MATCH" : "MISMATCH");
+  Serial.printf("M7P6C NEGATIVE MATRIX %s cases=%u/13\n",
+                probe_negative_matrix_pass ? "PASS" : "FAIL",
+                static_cast<unsigned>(probe_negative_matrix_cases));
+  Serial.printf("M7P6C FORGED STRESS %s iterations=%u/1000\n",
+                probe_forged_stress_pass ? "PASS" : "FAIL",
+                static_cast<unsigned>(probe_forged_stress_iterations));
   Serial.printf("M7P6C CCM DECRYPT/TAMPER %s\n",
                 probe_ccm_decrypt_tamper ? "PASS" : "FAIL");
   Serial.flush();
