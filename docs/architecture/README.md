@@ -4,6 +4,19 @@ Status: **CURRENT documentation governance index**.
 Last reviewed against `main@3b7eb0e6ae0275e6bf3e95f9c19f55c108cec87a` (M7P7B merged via PR #22). M7P6B SecurityStore/TX nonce persistence, M7P7A BLE flash/SoftDevice event ownership and M7P7B minimal tracker BLE runtime/admission are now implemented on `main`. M7P7B physical evidence covers real advertising/phone connection, connected past the ~10-min deadline, the direct-event disconnect → loop-owned restart → fresh window → reconnect lifecycle, no-client close, clean cold boot, stock bond creation + power-cycle persistence/reconnect, BLE coexistence with real LoRa RX and BLE-connected RELAY RX/QUEUE/TX/TX_DONE, and a real ConfigStore→FlashMutationGate→SoftDevice async flash probe while BLE remained connected (6/6 completions, no errors/timeouts/late completions/disconnects, exact restore). The flash probe does not separately prove HistoryStore/SecurityStore client-specific mutation paths; TX_DONE is not end-to-end delivery. Owner disposition remains explicit: quantitative current/power is **DEFERRED, not PASS**, because no measurement equipment is available; GNSS coexistence remains **BLOCKED on the tested unit** (`GNSS: not detected`) and was waived only as an M7P7B merge blocker, with later GNSS-equipped physical validation still required. Between-poll short-session timing and advertising start/stop fault injection remain host-only. Secure RF envelope, provisioning transport, ORUN application GATT, DFU and field-network/serviceability runtime remain later work.
 Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 
+
+In-flight security prerequisite on `feat/m7p6c-cryptocell-proof`: M7P6C is a
+test-only RAK4630 CryptoCell primitive proof, not a secure-RF implementation.
+The initial RFC5869 HKDF-SHA256 / RFC3610 AES-128-CCM hardware KAT passed on
+owner hardware. Independent review then expanded the required negative matrix
+and repeated-forgery stress coverage, which remains physically pending on this
+branch. The pinned CC310 binary reports `CRYS_FATAL_ERROR` for the observed
+wrong-tag decrypt path; this is a narrow compatibility observation, not a
+general production authentication-error classification. Production
+CryptoCell/Bluefruit ownership and SoftDevice concurrency remain unresolved
+gates for the later secure-envelope milestone. See
+`docs/milestones/M7P6C.md`.
+
 This directory contains current owner-approved rules plus historical/proposed
 architecture audits. They are not equal sources of truth. This index tells a new
 engineer which document governs current work without relying on conversation
