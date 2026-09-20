@@ -437,7 +437,8 @@ designed:
 
 - trusted endpoint directions are `D2A` and `A2D`, not legacy Role names;
 - traffic keys use HKDF-SHA256 with `K_root` as IKM, `credential_id` as salt,
-  and exact purpose/direction/epoch/device-identity context;
+  and exact purpose/direction/epoch context; the KDF intentionally does not
+  freeze the future on-air identity namespace;
 - the AES-CCM nonce is 13 bytes:
   `key_epoch_be32 || direction_u8 || tx_counter_be64`;
 - D2A and A2D counters are independently owned by their actual cryptographic
