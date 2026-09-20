@@ -2,11 +2,16 @@
 #include <stdio.h>
 
 #include "node_role.h"
+#include "radio_config.h"
 #include "radio_listen_policy.h"
 
 using namespace orun_tlp;
 
 int main() {
+  // Owner-selected M6P2 development default. This exact-value check prevents
+  // an accidental timing regression while the downlink contract is designed.
+  assert(radio_config::kWindowedRxAfterTxMs == 10000);
+
   const auto tracker = legacyRoleBehavior(NodeRole::kTracker);
   const auto relay = legacyRoleBehavior(NodeRole::kRelay);
   const auto base = legacyRoleBehavior(NodeRole::kBase);

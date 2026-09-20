@@ -20,10 +20,12 @@ constexpr bool kIqInverted = false;
 constexpr uint16_t kPrivateSyncWord = 0x1424;
 constexpr uint32_t kTxTimeoutMs = 5000;
 
-// M6P1: bounded post-TX listen window for nodes without an availability
-// commitment. Not tuned; reserved for future ACK/downlink. Volatile constant,
-// not persisted configuration.
-constexpr uint32_t kWindowedRxAfterTxMs = 3000;
+// M6P2: owner-selected bounded post-TX listen window for nodes without an
+// availability commitment. 10 s is the current development default to leave
+// rendezvous headroom for the existing relayed-uplink timing and future
+// downlink work. It is not a validated final-product power budget or a promise
+// that any future response format will fit. Volatile constant, not persisted.
+constexpr uint32_t kWindowedRxAfterTxMs = 10000;
 static_assert(kWindowedRxAfterTxMs < 0x80000000UL,
               "windowed RX deadline must fit monotonic half-range");
 

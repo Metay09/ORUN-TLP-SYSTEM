@@ -205,7 +205,13 @@ void noSleepWhileTxOrTransitionPending() {
 
   sendLocalPosition(manager, 4);
   manager.setRole(NodeRole::kBase);
-  test_now = radio_config::kWindowedRxAfterTxMs;
+  // Stay strictly before the independent TX software timeout. M6P1's former
+  // 3 s listen window happened to be shorter than kTxTimeoutMs (5 s), but the
+  // M6P2 10 s window is longer. Advancing to the listen-window duration while
+  // TX is active would correctly trigger TX timeout and would no longer test
+  // the intended "active TX does not sleep" invariant.
+  assert(radio_config::kTxTimeoutMs > 0);
+  test_now = radio_config::kTxTimeoutMs - 1;
   manager.update(false);
   assert(manager.isTransmitting());
   assert(manager.role() == NodeRole::kTracker);
