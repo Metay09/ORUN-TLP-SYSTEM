@@ -280,7 +280,64 @@ diagnostic access requires the reviewed application security/authorization path.
 
 BLE runtime/admission remains M7P7 scope; this document does not enable it.
 
-## 11. App/backend serviceability
+## 11. Offline local field access
+
+Owner-approved product requirement:
+
+> Internet loss must not prevent an authorized user who is physically at the
+> field/site from viewing the latest locally available ORUN device locations.
+
+The target local path is transport-flexible:
+
+```text
+TRACKER / RELAY
+      ↓ LoRa
+ORUN gateway
+      ↓ BLE or local wired/USB transport
+authorized phone / local client
+```
+
+Internet/cloud backhaul is therefore not a prerequisite for **on-site local
+visibility**. A compatible ORUN gateway should be able to expose its locally
+available/cached accepted observations to an authorized local client over BLE
+or a wired local transport when that transport is implemented.
+
+Important boundaries:
+
+- "any gateway" means any compatible ORUN gateway that actually holds or can
+  locally reach the requested observations; a gateway cannot display data it
+  never received merely because it has the gateway capability;
+- if the product later requires a single arbitrary gateway to show the complete
+  multi-gateway farm view while the internet is down, that requires an explicit
+  local gateway-to-gateway synchronization/bridging design. Do not assume it
+  exists today;
+- local access does not make the gateway the device's cryptographic authority.
+  The normal gateway remains opaque custody/transport by default;
+- BLE connection/bonding alone is not authorization. Sensitive location data
+  requires the reviewed application security/authorization path;
+- the local client may receive protected/ciphertext observations through the
+  gateway and perform authorized endpoint processing according to the secure
+  architecture; do not give every gateway tracker root keys merely to support
+  offline viewing;
+- offline map tiles are a separate mobile-app concern. Position coordinates can
+  be available locally even when an internet map provider is unavailable;
+- gateway cache/store-forward retention, local API/GATT schema, USB framing and
+  complete-farm synchronization are later implementation decisions and are not
+  claimed as implemented here.
+
+Expected product behavior:
+
+| Situation | Expected location visibility |
+| --- | --- |
+| On site, internet available | Local and/or cloud path may be used |
+| On site, internet unavailable, compatible gateway reachable | Latest locally available locations remain viewable through authorized BLE/wired access |
+| Off site, field internet unavailable | No new remote observations can reach the user through the cloud |
+| Backhaul returns | Buffered/store-forward observations synchronize according to the later delivery policy |
+
+This requirement is independent of legacy Role naming:
+`gateway bridge capability != security authority != user identity`.
+
+## 12. App/backend serviceability
 
 Normal users should see useful product outcomes, not raw engineering logs.
 
@@ -304,7 +361,7 @@ features the logged-in user is not authorized to use. Device firmware must still
 the cryptographic authority of protected operations; UI hiding is not the security
 boundary.
 
-## 12. Ownership summary
+## 13. Ownership summary
 
 ```text
 Tracker/device
@@ -329,7 +386,7 @@ App
 - BLE/USB/backend bridge as implemented
 ```
 
-## 13. Explicit non-claims
+## 14. Explicit non-claims
 
 This plan does not claim:
 
