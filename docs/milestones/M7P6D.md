@@ -382,7 +382,8 @@ versioning, ORUN-specific vectors and CryptoCell readiness/error handling.
 No build or physical test is claimed for M7P6D because this slice changes only
 documentation.
 
-Before code consumes this candidate contract, remaining gates are:
+Before **production secure-envelope runtime** consumes this candidate contract,
+remaining gates are:
 
 - independent ORUN-specific host vectors for the candidate KDF + CCM inputs;
 - matching RAK4630/RAK4631 KAT for those exact bytes;
@@ -392,7 +393,9 @@ Before code consumes this candidate contract, remaining gates are:
 - authority/backend A2D reserve-ahead crash/restore tests when that component
   exists.
 
-After those gates, the next code-bearing slice should be the **CryptoCell +
-Bluefruit/SoftDevice coexistence proof**, followed by the smallest required
-device-side replay-persistence slice. Full v2 wire bytes should not be
-implemented until those gates are closed.
+The immediate next code-bearing slice should be the focused **CryptoCell +
+Bluefruit/SoftDevice coexistence proof**, and it should reuse the exact candidate
+ORUN KDF/nonce/CCM bytes so that its host vectors and RAK KAT close the first
+three gates together rather than creating another synthetic format. The smallest
+required device-side replay-persistence slice follows. Full v2 wire bytes should
+not be implemented until those gates are closed.
