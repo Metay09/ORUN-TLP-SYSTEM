@@ -1,7 +1,10 @@
 # ORUN Downlink Rendezvous Timing Plan
 
-Status: **OWNER-APPROVED TIMING DIRECTION. M6P2 implements only the 10-second
-TRACKER post-TX RX development default; no downlink/ACK wire format is implemented.**
+Status: **DESIGN NOTE. The owner-approved decision in M6P2 is the 10-second
+TRACKER bounded-RX development default. Reverse-path, relay-selection and
+gateway-coordination material below is proposed design direction only; no
+downlink/ACK wire format or return-path runtime is implemented or owner-approved
+by this milestone.**
 
 Baseline: `main@868b622cd07e3fe018b9f612ebc4455819a53e4f` (PR #24 merged).
 
@@ -72,11 +75,12 @@ before the TRACKER window closes, ignoring small owner-loop/IRQ latency. That is
 useful rendezvous headroom, not a guarantee that the future protected response
 path will fit.
 
-## 4. Future return-path direction
+## 4. Candidate future return-path direction
 
-For a future authenticated response, use an **ephemeral selected reverse path**
-for that message attempt rather than asking every relay to perform a fast
-downlink retransmission.
+A candidate for a future authenticated response is an **ephemeral selected
+reverse path** for that message attempt rather than asking every relay to perform
+a fast downlink retransmission. This section is a design proposal, not a frozen
+runtime contract.
 
 ### Direct ingress
 
@@ -101,9 +105,10 @@ R1 has just demonstrated both relevant uplink legs for that attempt:
 TRACKER->R1 and R1->GATEWAY. The reverse path is still not guaranteed to be
 symmetric, so failure/retry policy remains necessary later.
 
-Only the selected relay forwards that specific downlink attempt. Other relays do
-not all race to forward the same fast response. This avoids converting a
-latency-sensitive return path into four overlapping transmissions.
+Under this candidate design, only the selected relay would forward that specific
+downlink attempt. Other relays would not all race to forward the same fast
+response. This would avoid converting a latency-sensitive return path into four
+overlapping transmissions.
 
 This is **not** a permanent route table, primary-relay assignment, role change or
 ownership relationship. It is per-message infrastructure path selection.
