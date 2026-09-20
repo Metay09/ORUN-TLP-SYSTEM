@@ -92,66 +92,29 @@ For the first commissioning design:
 
 M7P7C does **not** choose or invent the final bootstrap cryptographic ceremony. QR/claim-secret, USB possession, BLE OOB, backend registration, key wrapping/escrow and additional-phone delegation require the focused provisioning implementation review. No production credential write path is authorized by this document alone.
 
-## 6. Future MESSAGE requirements preserved by this boundary
+That provisioning review must also decide authority-key custody, backup/recovery
+and disaster-recovery semantics **before production credentials are written**.
+This does not mean the backend is automatically required to store raw
+`K_root`: the current security ADR deliberately leaves backend registration,
+key wrapping/escrow and authority placement unfrozen. Whatever design is chosen
+must preserve the per-device compromise boundary and avoid a single fleet/group
+authority key.
 
-MESSAGE is a separate application service, not a BLE feature and not a LoRa packet type by itself.
+The M7P6E fresh-pairing LESC/CC310 coexistence stress remains owner-waived/not-
+PASS. Because commissioning is a fresh-pairing-sensitive path, its reviewed
+closure (or an explicitly safe serialization/backend strategy) is a merge gate
+for production commissioning, not for this documentation-only M7P7C slice.
 
-A stable logical `message_id` survives transport changes/retries. Internet, BLE, LoRa and gateway custody are possible transports for the same logical message.
+## 6. Application/entity/messaging decisions are separate from this BLE slice
 
-Owner-approved delivery policy for the future product:
+M7P7C does not own the future MESSAGE routing policy, Entity Registry schema,
+person-location privacy or map UX. Those owner-approved product/application
+directions are recorded separately in
+`docs/architecture/ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`.
 
-1. when the recipient ORUN app has a current authenticated backend reachability/session indication, use the Internet delivery path and do **not** send the same message over LoRa in parallel;
-2. when recipient Internet delivery is unavailable and a current ORUN/LoRa path exists, use the gateway/LoRa path;
-3. when neither path exists, retain the message under bounded store-and-forward policy until a route appears or the message expires;
-4. a later fallback/retry keeps the same `message_id` so duplicates can be suppressed;
-5. `TX_DONE`, backend custody or gateway custody are not `DELIVERED`;
-6. `DELIVERED` requires an authenticated recipient-endpoint acceptance/receipt;
-7. MESSAGE v1 does not require a read receipt.
-
-Internet reachability is not inferred from a Wi-Fi/mobile-data icon. It is based on an authenticated ORUN app/backend session, check-in or bounded lease whose exact mobile implementation remains M8 work.
-
-Private MESSAGE content retains end-to-end protection. Gateway/relay infrastructure is transport/custody by default and must not become the message-decryption or user-authorization authority merely because it carries the traffic.
-
-LoRa MESSAGE traffic must be bounded and lower priority than safety-critical/live operational traffic so chat backlog cannot starve alarms, critical command results or current tracking.
-
-## 7. Optional user location sharing
-
-Future person/user location is opt-in application data and is separate from device identity and from a tracker hardware/location-source decision.
-
-When a user enables sharing:
-
-- freshness/age is explicit;
-- stale last-known data is never presented as live;
-- authorization determines who may see it;
-- disabling sharing stops new live updates under the later retention/privacy policy.
-
-The application may render animals, people, vehicles, gateways, actuators/valves and sensors on the same map. That map entity/category is UI/application metadata; it must not be encoded as or inferred from the legacy firmware Role enum.
-
-The normal map remains concise. Route/history, actuator operation history and sensor time-series belong to entity detail views rather than permanent map overlays. Exact Android UI is M8 scope.
-
-### 7.1 Entity ownership / real-world binding
-
-The device is not the canonical owner of what real-world thing it represents.
-
-Future product ownership is:
-
-```text
-Device
-  = technical identity, capabilities, enabled services, health and observations
-
-Entity Registry
-  = real-world binding, display name, category, permissions and UI metadata
-```
-
-The backend is the canonical owner of the Entity Registry. Authorized phones/gateways keep a bounded offline cache so local maps remain meaningful without Internet.
-
-Examples of entity categories include ANIMAL, PERSON, VEHICLE, GATEWAY, ACTUATOR/VALVE and SENSOR. These categories are application/UI metadata and must not be encoded into the legacy firmware Role enum.
-
-A physical ORUN device may be rebound to a different real-world entity over its lifetime. That binding must therefore be versioned/time-aware so historical observations remain attributed to the entity that owned the device at the observation time.
-
-A device should report technical facts it truly owns (for example, actuation capability or a temperature sensor capability), but should not repeatedly transmit UI metadata such as "cow", display name or emoji over LoRa.
-
-Person/user location remains user/application data and does not require a dedicated ORUN hardware device.
+The BLE consequence is narrow: future MESSAGE/entity/config/command traffic may
+use BLE as a transport, but BLE connection/bonding does not become the
+application owner, recipient identity, Entity Registry or authorization source.
 
 ## 8. What the first implementation slice must prove
 
