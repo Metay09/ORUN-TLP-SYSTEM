@@ -220,25 +220,32 @@ messages first.
 
 ### M7P6D pre-wire security contract
 
-The focused M7P6D design record now narrows the security choices before a v2
-layout is allocated:
+The focused M7P6D design record now narrows the security choices into an
+independently reviewed **candidate contract** before a v2 layout is allocated:
 
 - directions are cryptographic endpoint directions (`D2A`, `A2D`), not
   TRACKER/RELAY/BASE roles;
 - D2A and A2D traffic keys are independently derived with HKDF-SHA256;
 - the candidate AES-CCM construction uses a 13-byte nonce consisting of
-  key epoch, direction and the sender's durable 64-bit security counter;
+  key epoch, direction and the sender's durable 64-bit security counter; the
+  first wire proposal should prefer carrying the full counter rather than add
+  unauthenticated multi-candidate reconstruction work;
 - gateway/relay forwarding does not own keys, counters or replay acceptance;
-- replay state changes only after successful AEAD authentication;
+- replay state changes only after successful AEAD authentication, and retired
+  key epochs do not become acceptable again merely because replay state changes;
 - device A2D starts with strict durable monotonic admission, while the backend
   may use a bounded D2A sliding window for legitimate multi-path reordering;
 - the exact current Bluefruit/CC310 coexistence behavior must be physically
   proven before production secure-envelope code uses CC310 in the normal
   packet path.
 
-These rules do not allocate any wire field. The eventual v2 header must expose
-or unambiguously supply the authenticated context necessary to reconstruct the
-selected key and nonce. See `docs/milestones/M7P6D.md`.
+These rules do not allocate any wire field and are not implementation-frozen
+until the exact ORUN-specific host/RAK vectors and CC310/Bluefruit coexistence
+gate pass. The eventual v2 header must expose or unambiguously supply the
+authenticated context necessary to reconstruct the selected key and nonce, and
+any visible identity used for routing/dispatch must be authenticated in AAD and
+checked against the trusted credential binding. See
+`docs/milestones/M7P6D.md`.
 
 ## 8. Validation and release checklist
 
