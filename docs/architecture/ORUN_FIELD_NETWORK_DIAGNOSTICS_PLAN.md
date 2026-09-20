@@ -280,7 +280,79 @@ diagnostic access requires the reviewed application security/authorization path.
 
 BLE runtime/admission remains M7P7 scope; this document does not enable it.
 
-## 11. App/backend serviceability
+## 11. Offline local service access
+
+Owner-approved product requirement:
+
+> Internet loss must not prevent an authorized user who is physically at the
+> field/site from using the ORUN services that are designed for local operation:
+> at minimum locally available device/location state, and later authenticated
+> messaging plus authorized key/access/control operations when those application
+> families are implemented.
+
+The target local path is transport-flexible:
+
+```text
+TRACKER / RELAY
+      ↓ LoRa
+ORUN gateway
+      ↓ BLE or local wired/USB transport
+authorized phone / local client
+```
+
+Internet/cloud backhaul is therefore not a prerequisite for **on-site local
+operation**. A compatible ORUN gateway should be able to bridge locally available
+ORUN traffic/state to an authorized local client over BLE or a wired local
+transport when that transport is implemented. The local path is a transport path,
+not a reason to collapse application security into the gateway.
+
+Important boundaries:
+
+- "any gateway" means any compatible ORUN gateway that actually holds or can
+  locally reach the requested observations; a gateway cannot display data it
+  never received merely because it has the gateway capability;
+- if the product later requires a single arbitrary gateway to show the complete
+  multi-gateway farm view while the internet is down, that requires an explicit
+  local gateway-to-gateway synchronization/bridging design. Do not assume it
+  exists today;
+- local access does not make the gateway the device's cryptographic authority.
+  The normal gateway remains opaque custody/transport by default;
+- BLE connection/bonding alone is not authorization. Sensitive location,
+  messages and protected operations require the reviewed application
+  security/authorization path;
+- the local client may receive protected/ciphertext traffic through the gateway
+  and perform authorized endpoint processing according to the secure architecture;
+  do not give every gateway tracker root keys merely to support offline use;
+- MESSAGE remains an end-to-end application concern: local/offline transport must
+  preserve sender/recipient identity, confidentiality where required, stable
+  message identity, bounded TTL/store-forward and delivery semantics. A gateway
+  need not decrypt private message content merely to carry it;
+- key/access/control operations are higher-risk COMMAND/actuation semantics.
+  Local/offline operation must still require cryptographic authorization,
+  anti-replay, freshness/expiry, command idempotency and explicit result/physical
+  state semantics. Internet loss must never turn a stale or duplicate protected
+  command into an executable one, and the gateway must not become the authority
+  that grants access merely because it is locally reachable;
+- offline map tiles are a separate mobile-app concern. Position coordinates can
+  be available locally even when an internet map provider is unavailable;
+- gateway cache/store-forward retention, local API/GATT schema, USB framing,
+  message mailbox semantics, key/access command schema and complete-site
+  synchronization are later implementation decisions and are not claimed as
+  implemented here.
+
+Expected product behavior:
+
+| Situation | Expected local behavior |
+| --- | --- |
+| On site, internet available | Local and/or cloud path may be used |
+| On site, internet unavailable, compatible gateway reachable | Latest locally available locations remain viewable; implemented offline-capable MESSAGE and authorized key/access/control flows continue over the local transport |
+| Off site, field internet unavailable | No new remote observations/messages/commands can traverse the unavailable cloud backhaul |
+| Backhaul returns | Buffered/store-forward observations/messages synchronize according to their later delivery policy; commands/results keep their own expiry/idempotency semantics |
+
+This requirement is independent of legacy Role naming:
+`gateway bridge capability != security authority != user identity`.
+
+## 12. App/backend serviceability
 
 Normal users should see useful product outcomes, not raw engineering logs.
 
@@ -304,7 +376,7 @@ features the logged-in user is not authorized to use. Device firmware must still
 the cryptographic authority of protected operations; UI hiding is not the security
 boundary.
 
-## 12. Ownership summary
+## 13. Ownership summary
 
 ```text
 Tracker/device
@@ -329,7 +401,7 @@ App
 - BLE/USB/backend bridge as implemented
 ```
 
-## 13. Explicit non-claims
+## 14. Explicit non-claims
 
 This plan does not claim:
 
