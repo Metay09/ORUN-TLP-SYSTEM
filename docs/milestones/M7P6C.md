@@ -317,6 +317,16 @@ The review's LOW documentation/ownership findings are also accepted:
 - production CryptoCell serialization/coexistence with Bluefruit/SoftDevice
   remains a later secure-envelope gate. This isolated probe does not prove it.
 
+Expanded-audit probe rebuild/upload on owner hardware (2026-09-20):
+
+- `pio run -d firmware -e rak4630_m7p6c_crypto_probe -t upload`: **SUCCESS**;
+- RAM: **9,028 / 248,832 bytes (3.6%)**;
+- Flash: **75,616 / 815,104 bytes (9.3%)**;
+- `nrfutil` programmed `/dev/ttyACM0` successfully;
+- the existing `99-platformio-udev.rules` warning did not block DFU;
+- expanded hardware serial results (13-case negative matrix + 1000 forged/valid
+  stress) are still pending.
+
 The reviewer independently reported the normal host suite (including
 golden/compatibility tests) at rc=0 and a normal `rak4630` build at
 22,084 B RAM / 225,500 B flash. These are reviewer-reported software results,
