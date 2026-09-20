@@ -1,8 +1,8 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through M7P6B SecurityStore/TX nonce persistence implementation; M7P6A security direction remains authoritative for later secure-envelope/provisioning work; field-network/serviceability runtime remains planned; prior M6A/M6B3 focused physical gates PASS; overall M6 IN PROGRESS**.
-Last reviewed against `main@8e6f2bde9b0281c1e219c6ec3df13b5f463fe7a5` (M7P6B merged). M6-era physical/runtime boundaries remain unchanged since their recorded milestone evidence.
-Last architecture review update: 2026-09-19 (§15 records the owner-approved M7P6 security direction with M7P6B persistence now implemented and limited RAK4631 persistence/reboot evidence PASS; secure-envelope/provisioning work remains later. §16 shared RF-domain, coverage-learning and diagnostics direction remains design-only).
+Status: **CURRENT through `main@46d7a933f63d42d84fb386035be1c03af1d0c3c4`: M7P7B production BLE runtime is merged; M7P6C/D/E security primitive/pre-wire/coexistence evidence is merged, with fresh-pairing LESC/CC310 coexistence still owner-waived/not-PASS; secure-envelope/provisioning/application-GATT runtime remains later; prior M6A/M6B3 focused physical gates PASS; overall M6 IN PROGRESS**.
+Last reviewed against `main@46d7a933f63d42d84fb386035be1c03af1d0c3c4`.
+Last architecture review update: 2026-09-21 (§17 records the owner-approved BLE application boundary plus future MESSAGE routing/delivery and optional user-location direction; it is design-only and does not authorize GATT, provisioning, MESSAGE or Android runtime).
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
@@ -739,3 +739,48 @@ actually holds or can locally reach the requested traffic/state; complete-site v
 through one arbitrary gateway while offline would require an explicit local cross-gateway
 synchronization design and is not implemented today. See
 `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
+
+## 17. BLE application boundary, MESSAGE routing and optional user location
+
+M7P7B makes BLE transport available; it does not make a connected or bonded phone an
+authorized ORUN application client. Future application GATT must remain a transport
+adapter into the existing application/configuration/command owners rather than becoming
+a second business-logic or configuration system. BLE callbacks may only perform bounded
+handoff; flash, crypto, radio transitions and application execution remain owned by
+reviewed loop/task code. See `docs/milestones/M7P7C.md`.
+
+The exact commissioning ceremony is still a focused later implementation decision.
+Connection, stock BLE bonding, device credential, user identity and application
+authorization remain separate. No generic `K_root` readback or transport-triggered
+credential export is authorized.
+
+Future MESSAGE is transport-independent application traffic. A stable logical
+`message_id` survives retry/fallback across Internet, BLE, gateway custody and LoRa.
+The owner-approved delivery preference is:
+
+1. if the recipient ORUN app has a current authenticated backend reachability/session
+   indication, deliver through the Internet path and do not transmit the same message
+   over LoRa in parallel;
+2. otherwise, if a current ORUN/LoRa path exists, use gateway/LoRa delivery;
+3. otherwise retain the message under bounded store-and-forward policy until a path
+   appears or TTL/expiry ends it.
+
+Internet reachability is based on an authenticated ORUN app/backend session, check-in or
+bounded lease, not on a phone Wi-Fi/mobile-data icon. The exact Android presence mechanism
+is later M8 work.
+
+`TX_DONE`, backend custody and gateway custody are not delivery. MESSAGE reaches
+`DELIVERED` only after authenticated acceptance/receipt by the recipient endpoint.
+MESSAGE v1 does not require a read receipt. Private message content keeps end-to-end
+protection; gateway/relay infrastructure remains opaque transport/custody by default.
+LoRa messaging must remain bounded and must not starve safety-critical events, critical
+command results or current tracking.
+
+Optional person/user location sharing is opt-in application data. It is separate from
+device identity and from a tracker hardware/location-source decision. Freshness/age and
+authorization are explicit; stale last-known location must not be presented as live.
+Future Android may show people, animals, vehicles, gateways, actuators/valves and sensors
+on one map, but that map entity/category is UI/application metadata and must not be encoded
+as the legacy firmware Role enum. Route/history, actuator-operation history and sensor
+time-series belong to detail views rather than permanent map clutter.
+
