@@ -113,6 +113,67 @@ void dedupeAndQueue() {
   assert(!cache.contains({1, 1}) && cache.contains({1, 2}));
 }
 
+void relayDuplicateInvariant() {
+  const uint64_t source = 0x0102030405060708ULL;
+  const uint32_t sequence = 77;
+  const uint64_t relay_id = 0x1111222233334444ULL;
+  const uint64_t peer_relay_id = 0x9999AAAABBBBCCCCULL;
+
+  uint8_t direct[tlp::kPositionPacketSize];
+  makePosition(source, sequence, direct);
+
+  NetworkService relay;
+  relay.begin(relay_id, NodeRole::kRelay);
+  const auto queued = relay.receive(direct, sizeof(direct), -101, 3, 1000);
+  assert(queued.kind == NetworkEventKind::kRelayQueued);
+  assert(relay.queuedCount() == 1);
+
+  // Hearing another relay's copy of the same original packet must not enqueue
+  // relay-of-relay traffic and must not cancel this relay's already scheduled
+  // independent forward attempt.
+  tlp::RelayForwardPacket peer{};
+  peer.relay_device_id = peer_relay_id;
+  peer.ingress_rssi_dbm = -99;
+  peer.ingress_snr_db = 2;
+  memcpy(peer.original_packet, direct, sizeof(direct));
+  uint8_t peer_bytes[tlp::kRelayForwardPacketSize];
+  assert(tlp::serializeRelayForwardPacket(peer, peer_bytes, sizeof(peer_bytes)));
+  assert(relay.receive(peer_bytes, sizeof(peer_bytes), -92, 6, 1001).kind ==
+         NetworkEventKind::kRelayNestedRejected);
+  assert(relay.queuedCount() == 1);
+
+  tlp::RelayForwardPacket outgoing{};
+  const uint32_t due = 1000 + queued.relay_delay_ms;
+  assert(relay.takeDueForward(due, &outgoing));
+  tlp::PositionPacket forwarded_position{};
+  tlp::RelayForwardPacket decoded{};
+  uint8_t outgoing_bytes[tlp::kRelayForwardPacketSize];
+  assert(tlp::serializeRelayForwardPacket(outgoing, outgoing_bytes,
+                                          sizeof(outgoing_bytes)));
+  assert(tlp::deserializeRelayForwardPacket(outgoing_bytes,
+                                             sizeof(outgoing_bytes),
+                                             &decoded,
+                                             &forwarded_position) ==
+         tlp::RelayDecodeStatus::kOk);
+  assert(forwarded_position.source_device_id == source);
+  assert(forwarded_position.sequence_number == sequence);
+  relay.onForwardTxStarted();
+  relay.onForwardTxResult(true);
+  assert(relay.queuedCount() == 0);
+
+  // A later direct repeat of a packet this relay already admitted/forwarded is
+  // suppressed while its exact source+sequence key remains in the bounded
+  // dedupe cache.
+  assert(relay.receive(direct, sizeof(direct), -100, 4, due + 1).kind ==
+         NetworkEventKind::kRelayDuplicate);
+  assert(relay.queuedCount() == 0);
+
+  // A later copy from a peer relay is also never re-enqueued for forwarding.
+  assert(relay.receive(peer_bytes, sizeof(peer_bytes), -93, 5, due + 2).kind ==
+         NetworkEventKind::kRelayNestedRejected);
+  assert(relay.queuedCount() == 0);
+}
+
 void basePathSemantics(bool relay_first) {
   uint8_t direct[tlp::kPositionPacketSize];
   makePosition(0x1234, 99, direct);
@@ -188,6 +249,7 @@ void timingRoleNestedAndAirtime() {
 int main() {
   envelopeCodecAndValidation();
   dedupeAndQueue();
+  relayDuplicateInvariant();
   basePathSemantics(false);
   basePathSemantics(true);
   timingRoleNestedAndAirtime();
