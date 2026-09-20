@@ -55,20 +55,21 @@ info =
     ASCII("ORUN-TLP-V2-AEAD")       // exactly 16 bytes, no NUL terminator
     || direction_u8                 // D2A=0x01, A2D=0x02
     || key_epoch_be32
-    || device_identity_be64
 
-OKM length = 16 bytes
-K_traffic  = HKDF-SHA256(IKM, salt, info, 16)
+PRK        = HKDF-Extract(SHA-256, salt=credential_id, IKM=K_root)
+K_traffic  = HKDF-Expand(SHA-256, PRK, info, 16 bytes)
 ```
 
 Consequences:
 
 - D2A and A2D never use the same traffic key.
 - A key epoch change changes the traffic key.
-- The public DeviceIdentity is cryptographically bound to the derivation context
-  without being treated as authentication evidence by itself.
 - A new random `credential_id` creates a separate derivation context even if a
   provisioning defect were ever to reuse other metadata.
+- DeviceIdentity is deliberately **not** embedded in the KDF label. The public
+  identity still belongs in the later authenticated envelope/AAD, but keeping it
+  out of this KDF avoids prematurely freezing the future v2 on-air identity
+  namespace to the current legacy uint64 representation.
 - No fleet/group authority key is introduced.
 - No telemetry/command/message sub-key tree is invented yet. Additional purpose
   separation requires an actual later use case and a new explicit label.
@@ -76,6 +77,15 @@ Consequences:
 The exact ORUN-specific derivation above requires an independent host vector and
 a RAK4630 KAT before production secure-envelope use. M7P6C proved the primitive,
 not these exact ORUN bytes.
+
+### Standards basis
+
+This contract follows RFC 5869's extract-then-expand construction: the random
+public `credential_id` is a non-secret salt and the exact `info` bytes provide
+protocol/purpose/direction/epoch context. It also follows the AEAD nonce
+uniqueness requirement: distinct encryption invocations under one fixed key must
+not reuse a nonce. AES-CCM itself remains the NIST SP 800-38C mode already
+exercised by M7P6C.
 
 ## 4. AES-CCM nonce contract
 
