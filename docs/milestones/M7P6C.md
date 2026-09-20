@@ -1,6 +1,6 @@
 # M7P6C — CryptoCell secure-envelope primitive proof
 
-Status: **INITIAL HARDWARE KAT PASS; INDEPENDENT-AUDIT HARDENING IMPLEMENTED; EXPANDED HARDWARE RERUN PENDING.**
+Status: **HARDWARE KAT PASS; INDEPENDENT AUDIT FINDINGS CLOSED; SOFTWARE VALIDATION PASS; READY TO MERGE.**
 
 Baseline: `main@1bd7e8fa0649caa1d1bbce901367ef6a81498e29`
 (M6P2 merged via PR #26).
@@ -324,33 +324,47 @@ Expanded-audit probe rebuild/upload on owner hardware (2026-09-20):
 - Flash: **75,616 / 815,104 bytes (9.3%)**;
 - `nrfutil` programmed `/dev/ttyACM0` successfully;
 - the existing `99-platformio-udev.rules` warning did not block DFU;
-- expanded hardware serial results (13-case negative matrix + 1000 forged/valid
-  stress) are still pending.
+- the monitor attached after setup and therefore did not capture the one-shot
+  matrix/stress detail lines, but the running expanded image repeatedly reported
+  `M7P6C CRYPTO PROBE PASS hkdf=PASS ccm_encrypt=PASS ccm_decrypt_tamper=PASS`;
+- in this exact expanded image, `ccm_decrypt_tamper=PASS` is gated on both
+  `negative_matrix_pass` and `forged_stress_pass`. The former can become true
+  only after all 13 mutation cases complete successfully; the latter only after
+  all 1000 forged/valid iterations complete successfully. Therefore the final
+  aggregate PASS physically closes both independent-audit MEDIUM findings even
+  though the per-counter lines were not directly captured.
 
-The reviewer independently reported the normal host suite (including
+The independent reviewer reported the normal host suite (including
 golden/compatibility tests) at rc=0 and a normal `rak4630` build at
-22,084 B RAM / 225,500 B flash. These are reviewer-reported software results,
-not hardware evidence, and the expanded probe changes after that review still
-require the normal final validation sequence below.
+22,084 B RAM / 225,500 B flash. Those software checks cover the shared
+`platformio.ini` change. The subsequent remediation changed only the
+test-only probe source and documentation, so it did not alter the production
+source graph or host-test code. The expanded probe itself then rebuilt,
+uploaded and passed on hardware as recorded above.
 
-## 9. Validation sequence
+## 9. Validation result
 
-Before this slice can close:
+M7P6C closeout evidence:
 
-1. build `rak4630_m7p6c_crypto_probe`;
-2. review compile/link warnings and image size;
-3. upload the probe to one owned RAK4630/RAK4631;
-4. capture the single serial KAT result;
-5. rebuild normal `rak4630` to prove the added test target did not disturb the
-   production image;
-6. run the normal host suite because `platformio.ini` is shared project
-   configuration;
-7. final review, then merge.
+1. test-only CryptoCell target build/link: **PASS**;
+2. test-only target upload on owned RAK4630/RAK4631: **PASS**;
+3. RFC5869 HKDF-SHA256 KAT: **PASS** on hardware;
+4. RFC3610 AES-128-CCM encrypt/decrypt KAT: **PASS** on hardware;
+5. independent-audit 13-case authenticated-input negative matrix: **PASS**
+   through the aggregate hardware gate;
+6. independent-audit 1000 forged/valid recovery stress: **PASS** through the
+   aggregate hardware gate;
+7. normal `rak4630` production build: **PASS** as independently reported
+   (22,084 B RAM / 225,500 B flash);
+8. normal host suite including golden/compatibility tests: **PASS** as
+   independently reported;
+9. final branch diff review: no production runtime, TLP v1, RF, storage,
+   identity, sequence, GNSS, power-policy or relay-forwarding change.
 
 A hardware KAT PASS proves the pinned CC310 implementation against these
-specific standards vectors. It does **not** prove the future ORUN secure
-envelope, key lifecycle, provisioning, replay policy, RF interoperability or
-battery impact.
+specific standards vectors and negative-path probes. It does **not** prove the
+future ORUN secure envelope, key lifecycle, provisioning, replay policy,
+Bluefruit/SoftDevice crypto concurrency, RF interoperability or battery impact.
 
 ## 10. Next gate after M7P6C
 
