@@ -1,6 +1,6 @@
 # M7P6C — CryptoCell secure-envelope primitive proof
 
-Status: **FINAL ACCEPTANCE IMAGE BUILD/UPLOAD PASS; FINAL SERIAL KAT RESULT PENDING.**
+Status: **HARDWARE CRYPTO KAT PASS; PRODUCTION REBUILD / HOST SUITE / FINAL REVIEW PENDING.**
 
 Baseline: `main@1bd7e8fa0649caa1d1bbce901367ef6a81498e29`
 (M6P2 merged via PR #26).
@@ -254,6 +254,25 @@ Owner rebuilt and uploaded the final acceptance image on 2026-09-20:
 - the existing PlatformIO `99-platformio-udev.rules` warning did not block
   DFU;
 - final serial KAT output is still pending, so M7P6C is not yet marked PASS.
+
+
+Final owner hardware KAT on 2026-09-20:
+
+- crypto init: **PASS**;
+- RFC5869 HKDF-SHA256 vector: **PASS**;
+- RFC3610 AES-128-CCM encrypt vector: **PASS**;
+- valid authenticated decrypt: `CRYS_OK`, plaintext **MATCH**;
+- one-bit tag tamper: rejected with the pinned-library compatibility result
+  `CRYS_FATAL_ERROR (0x00F50000)`;
+- tamper rejection criterion: **PASS** under the narrow pinned-library rule;
+- immediate post-tamper valid decrypt: `CRYS_OK`, plaintext **MATCH**;
+- final serial result:
+  `M7P6C CRYPTO PROBE PASS hkdf=PASS ccm_encrypt=PASS ccm_decrypt_tamper=PASS`.
+
+This is physical evidence for the exact pinned RAK4630/RAK4631 CryptoCell
+primitive path and these published vectors. It does not validate an ORUN secure
+RF envelope, production key ownership, replay handling, provisioning,
+BLE/CryptoCell concurrency, RF interoperability or battery behavior.
 
 ## 8. Validation sequence
 
