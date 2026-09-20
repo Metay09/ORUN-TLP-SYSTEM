@@ -430,15 +430,44 @@ global nRFCrypto/CC310 facility; the isolated M7P6C image does not prove
 concurrent production use, and production ORUN code must not copy the probe's
 `nRFCrypto.end()` cleanup pattern.
 
-### Later secure-envelope milestone
+### M7P6D — secure-envelope pre-wire security contract — IN REVIEW
 
-Freeze and implement:
+M7P6D freezes the minimum security-domain semantics needed before wire bytes are
+designed:
 
-- AEAD/KDF library and vectors;
-- secure envelope bytes/AAD/nonce encoding;
-- authenticated uplink/downlink;
+- trusted endpoint directions are `D2A` and `A2D`, not legacy Role names;
+- traffic keys use HKDF-SHA256 with `K_root` as IKM, `credential_id` as salt,
+  and exact purpose/direction/epoch/device-identity context;
+- the AES-CCM nonce is 13 bytes:
+  `key_epoch_be32 || direction_u8 || tx_counter_be64`;
+- D2A and A2D counters are independently owned by their actual cryptographic
+  senders; gateways do not mint security counters;
+- replay state is updated only after successful authentication and must never be
+  advanced by unauthenticated input;
+- device A2D replay starts with a strict durable high-water-mark contract,
+  committed before protected application dispatch;
+- backend D2A reception may use a bounded sliding replay window to tolerate
+  legitimate multi-path reordering and duplicates;
+- Bluefruit/framework owns the currently shared CC310 lifecycle in production;
+  ORUN production code must not call `nRFCrypto.end()`, and normal-path CC310
+  use remains blocked on a focused Bluefruit/SoftDevice coexistence proof.
+
+M7P6D is documentation-only. It does not modify SecurityStore persistence,
+allocate v2 bytes or authorize secure-RF runtime. See
+`docs/milestones/M7P6D.md` for exact byte-domain definitions and deferred
+items.
+
+### Later secure-envelope implementation milestone
+
+After M7P6D review and the required CryptoCell/Bluefruit coexistence proof,
+freeze and implement:
+
+- complete secure envelope bytes/AAD encoding;
+- authenticated uplink/downlink packet path;
 - backend/app verifier;
-- mixed-fleet rules.
+- mixed-fleet rules;
+- practical MTU/airtime budget;
+- device-side replay persistence required by protected A2D traffic.
 
 ### Later command/authorization milestone
 
