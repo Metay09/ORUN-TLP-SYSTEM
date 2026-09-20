@@ -1,6 +1,6 @@
 # M7P6E — CryptoCell + Bluefruit/SoftDevice coexistence proof
 
-Status: **IMPLEMENTED TEST-ONLY PROBE; SOFTWARE/BUILD AND OWNER HARDWARE VALIDATION PENDING.**
+Status: **SOFTWARE/HOST/BUILD VALIDATION PASS; OWNER HARDWARE COEXISTENCE VALIDATION PENDING.**
 
 Baseline: `main@00a96811c73cd5f9609f6869eb2c4a055013842b`
 (PR #29 merged after M7P6D).
@@ -256,7 +256,41 @@ stress. Do not weaken the gate to AUTH_STATUS alone.
 After owner hardware evidence, run independent security/code review before
 merge.
 
-## 10. Compatibility / system impact
+## 10. Software/build evidence
+
+Owner-run validation on the M7P6E branch:
+
+- full `firmware/tests/run_host_tests.sh`: **PASS**;
+  the new M7P6E byte-contract check is silent on success but is included under
+  `set -e`, so the complete suite reaching its final PASS lines means it
+  completed successfully;
+- normal production `pio run -e rak4630`: **PASS**;
+- production resources remain exactly at the prior M6P2/M7P6C baseline:
+  - RAM: 22,084 / 248,832 bytes = 8.9%;
+  - Flash: 225,500 / 815,104 bytes = 27.7%;
+- M7P6E full-graph probe build: **PASS**;
+  - RAM: 22,132 / 248,832 bytes = 8.9%;
+  - Flash: 238,292 / 815,104 bytes = 29.2%;
+- probe-only delta versus production:
+  - RAM: +48 bytes;
+  - Flash: +12,792 bytes.
+
+The visible SX126x `#warning USING RAK4630` and SimpleTimer signed/unsigned
+warnings are existing third-party-library warnings, not new M7P6E warnings.
+
+Independent local reference regeneration using Python `cryptography` reproduced
+the exact candidate outputs recorded in §3:
+
+- D2A key `b4db25a99bade834d006c0992d6dbe1a`;
+- A2D key `dea76f45a7abc04233848335b16a3ee1`;
+- nonce `01020304011122334455667788`;
+- ciphertext `60ff0ec3e211ae143ca6c115c150bd6f05da47e416856b`;
+- tag `bd9b12044081697b`.
+
+This software/build evidence does **not** establish Bluefruit/CC310 hardware
+coexistence. The physical LESC-overlap gate in §9 remains pending.
+
+## 11. Compatibility / system impact
 
 Normal production `rak4630` behavior is intentionally unchanged:
 
