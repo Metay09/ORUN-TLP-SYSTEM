@@ -1,6 +1,6 @@
 # M7P6E — CryptoCell + Bluefruit/SoftDevice coexistence proof
 
-Status: **SOFTWARE/HOST/BUILD VALIDATION PASS; OWNER HARDWARE BOOT KAT PASS; BLE LESC-OVERLAP COEXISTENCE VALIDATION PENDING.**
+Status: **SOFTWARE/HOST/BUILD VALIDATION PASS; OWNER HARDWARE BOOT KAT + BLE-CONNECTED COEXISTENCE EVIDENCE PASS; FRESH-PAIRING LESC-OVERLAP TEST OWNER-WAIVED (NOT PASS).**
 
 Baseline: `main@00a96811c73cd5f9609f6869eb2c4a055013842b`
 (PR #29 merged after M7P6D).
@@ -316,9 +316,20 @@ That is scoped evidence that the full-graph probe image retained working direct
 LoRa RX while the BLE runtime/SoftDevice was active. It is not a new range,
 capacity or secure-RF claim.
 
-The remaining M7P6E physical blocker is the connected fresh-pairing stress that
-must observe `BLE_GAP_EVT_LESC_DHKEY_REQUEST` during repeated ORUN KATs and
-finish with zero disconnects.
+The stronger fresh-pairing LESC-overlap stress would require observing
+`BLE_GAP_EVT_LESC_DHKEY_REQUEST` during repeated ORUN KATs with zero
+disconnects. The owner explicitly chose not to disturb the existing working bond
+state further. This test is therefore **OWNER-WAIVED, NOT PASS**.
+
+The accepted physical evidence boundary for this milestone is:
+- boot/readiness KAT passed on real RAK hardware after Bluefruit/SoftDevice init;
+- BLE connected successfully in the full probe runtime;
+- a security update event was observed on the bonded connection;
+- direct LoRa RX continued in the same full-graph probe image.
+
+This does **not** prove arbitrary CC310 concurrency or a fresh LESC DH-key
+operation overlapping an ORUN KAT. That residual risk remains documented for any
+future production secure-envelope activation.
 
 A subsequent connection check on the same hardware reported:
 
