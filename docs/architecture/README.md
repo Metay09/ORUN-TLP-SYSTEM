@@ -7,10 +7,11 @@ Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcc
 
 In-flight security prerequisite on `feat/m7p6c-cryptocell-proof`: M7P6C is a
 test-only RAK4630 CryptoCell primitive proof, not a secure-RF implementation.
-The initial RFC5869 HKDF-SHA256 / RFC3610 AES-128-CCM hardware KAT passed on
-owner hardware. Independent review then expanded the required negative matrix
-and repeated-forgery stress coverage, which remains physically pending on this
-branch. The pinned CC310 binary reports `CRYS_FATAL_ERROR` for the observed
+The RFC5869 HKDF-SHA256 / RFC3610 AES-128-CCM hardware KAT passed on owner
+hardware. Independent review expanded the negative matrix and repeated-forgery
+stress coverage; the expanded image also passed its aggregate hardware gate,
+which requires all 13 mutation cases and all 1000 forged/valid recovery
+iterations to succeed. The pinned CC310 binary reports `CRYS_FATAL_ERROR` for the observed
 wrong-tag decrypt path; this is a narrow compatibility observation, not a
 general production authentication-error classification. Production
 CryptoCell/Bluefruit ownership and SoftDevice concurrency remain unresolved
