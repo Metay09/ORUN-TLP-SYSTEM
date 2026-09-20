@@ -18,6 +18,13 @@ CryptoCell/Bluefruit ownership and SoftDevice concurrency remain unresolved
 gates for the later secure-envelope milestone. See
 `docs/milestones/M7P6C.md`.
 
+In-flight security design on `docs/m7p6d-security-prewire-contract`: M7P6D is a
+documentation-only pre-wire contract for direction-separated HKDF traffic keys,
+13-byte AES-CCM nonce construction, replay ownership/power-cut semantics and the
+Bluefruit/CryptoCell lifecycle boundary. It does not allocate v2 bytes or change
+production runtime. Independent security review remains required before treating
+the contract as implementation-ready. See `docs/milestones/M7P6D.md`.
+
 This directory contains current owner-approved rules plus historical/proposed
 architecture audits. They are not equal sources of truth. This index tells a new
 engineer which document governs current work without relying on conversation
