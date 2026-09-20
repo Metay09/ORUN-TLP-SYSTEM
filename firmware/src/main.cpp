@@ -9,6 +9,9 @@
 #ifdef ORUN_M7P7B_FLASH_PROBE
 #include "m7p7b_flash_probe.h"
 #endif
+#ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
+#include "m7p6e_crypto_ble_probe.h"
+#endif
 #include "firmware_version.h"
 #include "flash_mutation_gate.h"
 #include "gnss_manager.h"
@@ -89,10 +92,50 @@ uint32_t ble_disconnect_events_seen = 0;
 // Loop-task-only: suppresses per-retry log spam while restart keeps failing.
 bool ble_restart_failing = false;
 
+#ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
+// M7P6E TEST-ONLY coexistence evidence. The counters are written only by the
+// Bluefruit BLE event task and sampled by loop() under the same critical
+// section discipline as the disconnect handoff above. No crypto runs in the
+// callback.
+volatile uint32_t m7p6e_lesc_dhkey_events = 0;
+volatile uint32_t m7p6e_auth_status_events = 0;
+volatile uint32_t m7p6e_sec_update_events = 0;
+bool m7p6e_boot_kat_pass = false;
+
+struct M7P6ECryptoStressState {
+  bool active = false;
+  bool lesc_overlap_seen = false;
+  uint16_t iterations = 0;
+  uint16_t lesc_seen_iteration = 0;
+  uint32_t next_iteration_ms = 0;
+  uint32_t max_kat_us = 0;
+  uint32_t lesc_start = 0;
+  uint32_t auth_start = 0;
+  uint32_t sec_update_start = 0;
+  uint32_t disconnect_start = 0;
+};
+
+M7P6ECryptoStressState m7p6e_crypto_stress;
+#endif
+
 // Bluefruit BLE-event-task context (not loop(), not an ISR). Inspects only
 // the event id. MUST NOT call monotonic::nowMs(), BleAdmissionPolicy, Serial,
 // flash, radio or Bluefruit/SoftDevice APIs.
 void onBleEvent(ble_evt_t* evt) {
+#ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
+  if (evt->header.evt_id == BLE_GAP_EVT_LESC_DHKEY_REQUEST ||
+      evt->header.evt_id == BLE_GAP_EVT_AUTH_STATUS ||
+      evt->header.evt_id == BLE_GAP_EVT_CONN_SEC_UPDATE) {
+    taskENTER_CRITICAL();
+    if (evt->header.evt_id == BLE_GAP_EVT_LESC_DHKEY_REQUEST)
+      ++m7p6e_lesc_dhkey_events;
+    else if (evt->header.evt_id == BLE_GAP_EVT_AUTH_STATUS)
+      ++m7p6e_auth_status_events;
+    else
+      ++m7p6e_sec_update_events;
+    taskEXIT_CRITICAL();
+  }
+#endif
   if (evt->header.evt_id != BLE_GAP_EVT_DISCONNECTED) return;
   taskENTER_CRITICAL();
   ++ble_disconnect_events;
@@ -237,6 +280,194 @@ void printBleDiagnostic() {
                 initial_start);
 }
 
+#ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
+struct M7P6EBleSecurityCounters {
+  uint32_t lesc = 0;
+  uint32_t auth = 0;
+  uint32_t sec_update = 0;
+  uint32_t disconnects = 0;
+};
+
+M7P6EBleSecurityCounters readM7P6EBleSecurityCounters() {
+  M7P6EBleSecurityCounters out;
+  taskENTER_CRITICAL();
+  out.lesc = m7p6e_lesc_dhkey_events;
+  out.auth = m7p6e_auth_status_events;
+  out.sec_update = m7p6e_sec_update_events;
+  out.disconnects = ble_disconnect_events;
+  taskEXIT_CRITICAL();
+  return out;
+}
+
+void printM7P6EKat(const char* prefix,
+                   const orun_tlp::m7p6e_test::KatResult& r) {
+  Serial.printf(
+      "%s %s hkdf_d2a=%s hkdf_a2d=%s dir_sep=%s nonce=%s "
+      "ccm_encrypt=%s ccm_decrypt=%s tamper=%s recovery=%s "
+      "tamper_rc=0x%08lX\n",
+      prefix, r.pass ? "PASS" : "FAIL",
+      r.hkdf_d2a ? "PASS" : "FAIL",
+      r.hkdf_a2d ? "PASS" : "FAIL",
+      r.direction_separated ? "PASS" : "FAIL",
+      r.nonce_layout ? "PASS" : "FAIL",
+      r.ccm_encrypt ? "PASS" : "FAIL",
+      r.ccm_decrypt ? "PASS" : "FAIL",
+      r.tamper_rejected ? "PASS" : "FAIL",
+      r.recovery ? "PASS" : "FAIL",
+      static_cast<unsigned long>(r.tamper_result));
+}
+
+void printM7P6ECryptoStatus() {
+  const M7P6EBleSecurityCounters counters = readM7P6EBleSecurityCounters();
+  Serial.printf(
+      "M7P6E STATUS boot_kat=%s stress=%s iterations=%u "
+      "lesc_events=%lu auth_events=%lu sec_update_events=%lu "
+      "ble_connected=%u\n",
+      m7p6e_boot_kat_pass ? "PASS" : "FAIL",
+      m7p6e_crypto_stress.active ? "ACTIVE" : "IDLE",
+      static_cast<unsigned>(m7p6e_crypto_stress.iterations),
+      static_cast<unsigned long>(counters.lesc),
+      static_cast<unsigned long>(counters.auth),
+      static_cast<unsigned long>(counters.sec_update),
+      ble_ready ? static_cast<unsigned>(Bluefruit.Periph.connected()) : 0U);
+}
+
+void runM7P6ECryptoProbe() {
+  if (!ble_ready) {
+    Serial.println(F("M7P6E KAT REJECT reason=ble-not-ready"));
+    return;
+  }
+  const auto result = orun_tlp::m7p6e_test::runCandidateKat();
+  printM7P6EKat("M7P6E KAT", result);
+}
+
+void startM7P6ECryptoStress() {
+  if (!ble_ready) {
+    Serial.println(F("M7P6E COEX REJECT reason=ble-not-ready"));
+    return;
+  }
+  if (!m7p6e_boot_kat_pass) {
+    Serial.println(F("M7P6E COEX REJECT reason=boot-kat-failed"));
+    return;
+  }
+  if (m7p6e_crypto_stress.active) {
+    Serial.println(F("M7P6E COEX REJECT reason=already-active"));
+    return;
+  }
+  const unsigned connected =
+      static_cast<unsigned>(Bluefruit.Periph.connected());
+  if (connected != 1U) {
+    Serial.printf("M7P6E COEX REJECT reason=ble-clients-%u expected=1\n",
+                  connected);
+    return;
+  }
+
+  const M7P6EBleSecurityCounters counters = readM7P6EBleSecurityCounters();
+  m7p6e_crypto_stress = M7P6ECryptoStressState{};
+  m7p6e_crypto_stress.active = true;
+  m7p6e_crypto_stress.next_iteration_ms = orun_tlp::monotonic::nowMs();
+  m7p6e_crypto_stress.lesc_start = counters.lesc;
+  m7p6e_crypto_stress.auth_start = counters.auth;
+  m7p6e_crypto_stress.sec_update_start = counters.sec_update;
+  m7p6e_crypto_stress.disconnect_start = counters.disconnects;
+  Serial.println(
+      F("M7P6E COEX START iterations_max=3000 spacing_ms=20 "
+        "action=trigger-BLE-bond-now"));
+}
+
+void pollM7P6ECryptoStress() {
+  if (!m7p6e_crypto_stress.active) return;
+
+  const M7P6EBleSecurityCounters counters = readM7P6EBleSecurityCounters();
+  const unsigned connected =
+      ble_ready ? static_cast<unsigned>(Bluefruit.Periph.connected()) : 0U;
+  if (connected != 1U ||
+      counters.disconnects != m7p6e_crypto_stress.disconnect_start) {
+    m7p6e_crypto_stress.active = false;
+    Serial.printf(
+        "M7P6E COEX FAIL reason=ble-lost iterations=%u connected=%u "
+        "disconnect_delta=%lu\n",
+        static_cast<unsigned>(m7p6e_crypto_stress.iterations), connected,
+        static_cast<unsigned long>(
+            counters.disconnects - m7p6e_crypto_stress.disconnect_start));
+    return;
+  }
+
+  if (!m7p6e_crypto_stress.lesc_overlap_seen &&
+      counters.lesc != m7p6e_crypto_stress.lesc_start) {
+    m7p6e_crypto_stress.lesc_overlap_seen = true;
+    m7p6e_crypto_stress.lesc_seen_iteration =
+        m7p6e_crypto_stress.iterations;
+    Serial.printf("M7P6E LESC OVERLAP observed iteration=%u\n",
+                  static_cast<unsigned>(
+                      m7p6e_crypto_stress.lesc_seen_iteration));
+  }
+
+  const uint32_t now = orun_tlp::monotonic::nowMs();
+  if (!orun_tlp::monotonic::reached(
+          now, m7p6e_crypto_stress.next_iteration_ms)) {
+    return;
+  }
+  m7p6e_crypto_stress.next_iteration_ms = now + 20U;
+
+  const uint32_t started_us = micros();
+  const auto result = orun_tlp::m7p6e_test::runCandidateKat();
+  const uint32_t elapsed_us = static_cast<uint32_t>(micros() - started_us);
+  if (elapsed_us > m7p6e_crypto_stress.max_kat_us)
+    m7p6e_crypto_stress.max_kat_us = elapsed_us;
+
+  ++m7p6e_crypto_stress.iterations;
+  if (!result.pass) {
+    m7p6e_crypto_stress.active = false;
+    printM7P6EKat("M7P6E COEX KAT", result);
+    Serial.printf("M7P6E COEX FAIL reason=kat iteration=%u\n",
+                  static_cast<unsigned>(m7p6e_crypto_stress.iterations));
+    return;
+  }
+
+  constexpr uint16_t kPostLescIterations = 100U;
+  if (m7p6e_crypto_stress.lesc_overlap_seen &&
+      static_cast<uint16_t>(
+          m7p6e_crypto_stress.iterations -
+          m7p6e_crypto_stress.lesc_seen_iteration) >= kPostLescIterations) {
+    m7p6e_crypto_stress.active = false;
+    const M7P6EBleSecurityCounters final_counters =
+        readM7P6EBleSecurityCounters();
+    Serial.printf(
+        "M7P6E COEX PASS iterations=%u lesc_delta=%lu auth_delta=%lu "
+        "sec_update_delta=%lu disconnect_delta=%lu max_kat_us=%lu "
+        "ble_connected=1\n",
+        static_cast<unsigned>(m7p6e_crypto_stress.iterations),
+        static_cast<unsigned long>(
+            final_counters.lesc - m7p6e_crypto_stress.lesc_start),
+        static_cast<unsigned long>(
+            final_counters.auth - m7p6e_crypto_stress.auth_start),
+        static_cast<unsigned long>(
+            final_counters.sec_update -
+            m7p6e_crypto_stress.sec_update_start),
+        static_cast<unsigned long>(
+            final_counters.disconnects -
+            m7p6e_crypto_stress.disconnect_start),
+        static_cast<unsigned long>(m7p6e_crypto_stress.max_kat_us));
+    return;
+  }
+
+  constexpr uint16_t kMaxIterations = 3000U;
+  if (m7p6e_crypto_stress.iterations >= kMaxIterations) {
+    m7p6e_crypto_stress.active = false;
+    Serial.printf(
+        "M7P6E COEX FAIL reason=no-lesc-overlap iterations=%u "
+        "auth_delta=%lu sec_update_delta=%lu max_kat_us=%lu\n",
+        static_cast<unsigned>(m7p6e_crypto_stress.iterations),
+        static_cast<unsigned long>(
+            counters.auth - m7p6e_crypto_stress.auth_start),
+        static_cast<unsigned long>(
+            counters.sec_update - m7p6e_crypto_stress.sec_update_start),
+        static_cast<unsigned long>(m7p6e_crypto_stress.max_kat_us));
+  }
+}
+#endif
+
 #ifdef ORUN_M7P7B_FLASH_PROBE
 // M7P7B TEMPORARY test-only physical probe (see m7p7b_flash_probe.h). Exists
 // only in the rak4630_m7p7b_flash_probe env; never in production.
@@ -354,6 +585,23 @@ void handleRoleCommand() {
     printBleDiagnostic();
     return;
   }
+#ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
+  if (isActivityCommand("CRYPTO?", 7)) {
+    role_command_length = 0;
+    printM7P6ECryptoStatus();
+    return;
+  }
+  if (isActivityCommand("CRYPTO PROBE", 12)) {
+    role_command_length = 0;
+    runM7P6ECryptoProbe();
+    return;
+  }
+  if (isActivityCommand("CRYPTO STRESS", 13)) {
+    role_command_length = 0;
+    startM7P6ECryptoStress();
+    return;
+  }
+#endif
 #ifdef ORUN_M7P7B_FLASH_PROBE
   if (isActivityCommand("FLASH PROBE", 11)) {
     role_command_length = 0;
@@ -584,6 +832,17 @@ void setup() {
   // authorization service is added; a bare, named, connectable peripheral is
   // sufficient to prove the M7P7B runtime.
   ble_ready = Bluefruit.begin();
+#ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
+  if (ble_ready) {
+    // Bluefruit.begin() has already enabled SoftDevice and initialized the
+    // shared nRFCrypto/CC310 facility. Do not call nRFCrypto.begin()/end()
+    // from the ORUN probe. The KAT itself is the readiness canary required by
+    // M7P6D; a true Bluefruit return alone is not sufficient evidence.
+    const auto boot_kat = orun_tlp::m7p6e_test::runCandidateKat();
+    m7p6e_boot_kat_pass = boot_kat.pass;
+    printM7P6EKat("M7P6E BOOT KAT", boot_kat);
+  }
+#endif
   if (ble_ready) {
     char name[16];
     snprintf(name, sizeof(name), "ORUN-%08lX",
@@ -642,6 +901,9 @@ void loop() {
       accelerometer_manager.poll(orun_tlp::monotonic::nowMs()));
   activity_capture.poll();
   pollRoleCommands();
+#ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
+  pollM7P6ECryptoStress();
+#endif
   if (!automatic_role_resolved && role_controller.automatic() &&
       gnss_manager.detectionComplete()) {
     role_controller.updateAutomatic(true, gnss_manager.detected());
