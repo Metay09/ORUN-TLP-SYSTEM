@@ -363,16 +363,16 @@ decision gates. `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md` decides the par
 `0x0EB000..0x0ED000` relocated BLE bonds/InternalFS (M7P4), all strictly below
 the unchanged HistoryStore region. SecurityStore owns credential + TX nonce-safety
 state only and uses activation-last A/B recovery; ambiguous committed nonce state
-fails protected TX closed. BLE/SoftDevice remain OFF in `main` (shipped firmware
-through M7P7A); PR #22 (draft, not merged) enables the M7P7B minimal runtime on its
-branch (see below). History,
-Config and Security async gate paths are software/host-test validated. M7P7A
-(`main@e012a76b01f21b9575840d25a5a26ad78721021d`) adds one shared physical-flash
-owner between the ORUN gate and relocated bond/InternalFS storage, plus Bluefruit
-SoC-event ownership/forwarding, with host and real compile/link evidence. On `main`
-this remains host/build evidence only.
+fails protected TX closed. M7P7B is now merged on `main` at
+`3b7eb0e6ae0275e6bf3e95f9c19f55c108cec87a` (PR #22): the production runtime
+calls `Bluefruit.begin()` and keeps the M7P7A shared flash/event ownership model.
+History, Config and Security async gate paths remain software/host-test validated;
+the shared ConfigStore→FlashMutationGate→SoftDevice path additionally has real
+hardware evidence under an active BLE connection (see below). M7P7A's single
+physical-flash owner between the ORUN gate and relocated bond/InternalFS storage
+remains the governing ownership boundary.
 
-**PR #22 branch (M7P7B, not merged; `docs/milestones/M7P7B.md`):** first real
+**M7P7B on main (merged via PR #22; `docs/milestones/M7P7B.md`):** first real
 SoftDevice-enabled production BLE runtime with the minimal tracker admission policy
 (~10-min no-client window, connected suspends it, disconnect grants one fresh
 window, one client). It adds no ORUN application GATT service, ORUN pairing/ownership,
