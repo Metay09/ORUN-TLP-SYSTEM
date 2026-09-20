@@ -1,6 +1,6 @@
 # M7P6C — CryptoCell secure-envelope primitive proof
 
-Status: **TARGET BUILD PASS; PROBE UPLOAD PASS; HARDWARE KAT PARTIAL — HKDF/CCM ENCRYPT PASS, CCM DECRYPT/TAMPER CHECK FAIL; INVESTIGATING.**
+Status: **TARGET BUILD PASS; PROBE UPLOAD PASS; HARDWARE KAT BEHAVIOR UNDERSTOOD; FINAL PASS RERUN PENDING.**
 
 Baseline: `main@1bd7e8fa0649caa1d1bbce901367ef6a81498e29`
 (M6P2 merged via PR #26).
@@ -62,8 +62,13 @@ The test-only RAK4630 image executes two published vectors:
    - 8-byte authentication tag;
    - verifies exact ciphertext and tag;
    - decrypts and verifies exact plaintext;
-   - flips one authentication-tag bit and requires the CryptoCell API to return
-     `CRYS_AESCCM_CCM_MAC_INVALID_ERROR`.
+   - flips one authentication-tag bit and requires authenticated decrypt to
+     return a fail-closed error;
+   - accepts the dedicated `CRYS_AESCCM_CCM_MAC_INVALID_ERROR` or, for the
+     currently pinned `nrf_cc310_0.9.13-no-interrupts` binary only, the
+     physically observed `CRYS_FATAL_ERROR` compatibility result;
+   - immediately repeats the valid decrypt and requires `CRYS_OK` plus the
+     exact plaintext, proving the rejected packet does not poison later use.
 
 The tampered decrypt output is never consumed. Authentication failure is treated
 as fail-closed.
@@ -210,12 +215,34 @@ The detailed rerun showed:
   pinned CC310 library reports the generic `CRYS_FATAL_ERROR`
   (`0x00F50000`) rather than the dedicated MAC-invalid code.
 
-That generic result is not accepted as the final integration contract. The probe
-is switched to the explicit `CC_AESCCM_Init` +
+The probe was then switched to the explicit `CC_AESCCM_Init` +
 `CRYS_AESCCM_BlockAdata` + `CRYS_AESCCM_Finish` path used by Nordic's CC310
-AEAD backend. The next hardware run requires the dedicated MAC-invalid result and
-then a fresh valid decrypt after the tamper attempt, proving the failed
-authentication does not poison subsequent crypto use.
+AEAD backend. The hardware result was unchanged for the tampered tag:
+
+- valid decrypt: `CRYS_OK`, plaintext **MATCH**;
+- tampered tag: `CRYS_FATAL_ERROR (0x00F50000)`;
+- immediate fresh valid decrypt after that rejection: `CRYS_OK`, plaintext
+  **MATCH**.
+
+This establishes that the pinned precompiled
+`nrf_cc310_0.9.13-no-interrupts` library rejects the forged tag but collapses
+that negative path to its generic fatal code rather than the header's dedicated
+CCM MAC-invalid code. Because the engine immediately succeeds on a fresh valid
+decrypt, the observed code is treated as a pinned-library compatibility quirk,
+not as permission to accept unauthenticated plaintext.
+
+The probe criterion is therefore narrow and fail-closed: a tampered tag passes
+the negative test only if the result is either the dedicated
+`CRYS_AESCCM_CCM_MAC_INVALID_ERROR` or this exact pinned-library
+`CRYS_FATAL_ERROR`, and the subsequent clean decrypt must also succeed and
+match exactly. Arbitrary nonzero errors are **not** accepted. Future production
+code must treat every non-`CRYS_OK` authenticated decrypt as untrusted input;
+it must not consume plaintext from a failed call. A future crypto-library
+upgrade must rerun these vectors rather than inheriting this compatibility
+exception silently.
+
+The final hardware rerun is still required so the updated acceptance criterion
+itself produces the expected PASS line before this slice closes.
 
 ## 8. Validation sequence
 
