@@ -1,9 +1,14 @@
 #include <Arduino.h>
 #include <Adafruit_TinyUSB.h>
+#include <bluefruit.h>
 
 #include "accelerometer_manager.h"
 #include "activity_capture.h"
+#include "ble_admission_policy.h"
 #include "config_store.h"
+#ifdef ORUN_M7P7B_FLASH_PROBE
+#include "m7p7b_flash_probe.h"
+#endif
 #include "firmware_version.h"
 #include "flash_mutation_gate.h"
 #include "gnss_manager.h"
@@ -51,6 +56,48 @@ bool automatic_role_resolved = false;
 char role_command[24]{};
 uint8_t role_command_length = 0;
 bool role_command_overflow = false;
+
+// M7P7B: BLE runtime/admission. BleAdmissionPolicy is the pure, host-tested
+// tracker no-client-timeout decision (docs/architecture/
+// ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md §10); this composition root is the
+// only place that touches Bluefruit itself. ble_ready is false until
+// Bluefruit.begin() succeeds, guarding every later Bluefruit call the same
+// way radio_manager's own begin() result already guards radio use below.
+orun_tlp::BleAdmissionPolicy ble_admission;
+bool ble_ready = false;
+// Result of the one boot-time Bluefruit.Advertising.start(0) call, kept apart
+// from ble_ready (SoftDevice/Bluefruit runtime readiness) so BLE? can tell
+// "runtime up but advertising never started" from "advertising running".
+enum class BleInitialStart : uint8_t { kNotAttempted, kOk, kFail };
+BleInitialStart ble_initial_start = BleInitialStart::kNotAttempted;
+// Cross-task disconnect handoff (audit finding 1). Adafruit nRF52 1.7.0 calls
+// the Bluefruit global event callback (Bluefruit.setEventCallback) directly
+// from its BLE event task at the end of AdafruitBluefruit::_ble_handler(),
+// after Bluefruit has already updated its own connection state for the event
+// and with no ada_callback()/heap allocation on that path (Periph's
+// setDisconnectCallback goes through ada_callback and can be dropped or
+// delayed, so it is deliberately NOT used). The callback does exactly one
+// thing on BLE_GAP_EVT_DISCONNECTED: increment this counter inside
+// taskENTER/EXIT_CRITICAL -- the same primitive radio_manager.cpp uses for its
+// cross-task counters. loop() is the only reader/consumer and owns every
+// policy, clock, Serial and Bluefruit action; ble_disconnect_events_seen is
+// loop-task-only. loop() reduces "counter != seen" to ONE logical disconnect
+// event per tick (enough: any number of disconnects observed since the last
+// tick grants a single fresh window measured from that tick).
+volatile uint32_t ble_disconnect_events = 0;
+uint32_t ble_disconnect_events_seen = 0;
+// Loop-task-only: suppresses per-retry log spam while restart keeps failing.
+bool ble_restart_failing = false;
+
+// Bluefruit BLE-event-task context (not loop(), not an ISR). Inspects only
+// the event id. MUST NOT call monotonic::nowMs(), BleAdmissionPolicy, Serial,
+// flash, radio or Bluefruit/SoftDevice APIs.
+void onBleEvent(ble_evt_t* evt) {
+  if (evt->header.evt_id != BLE_GAP_EVT_DISCONNECTED) return;
+  taskENTER_CRITICAL();
+  ++ble_disconnect_events;
+  taskEXIT_CRITICAL();
+}
 
 enum class AccelerometerDiagnosticState : uint8_t {
   kPending,
@@ -173,6 +220,117 @@ void printRadioDiagnostic() {
                 static_cast<unsigned long>(diagnostics.estimated_rx_ms));
 }
 
+void printBleDiagnostic() {
+  const char* initial_start = "not-attempted";
+  if (ble_initial_start == BleInitialStart::kOk) initial_start = "ok";
+  else if (ble_initial_start == BleInitialStart::kFail) initial_start = "fail";
+  // Bluefruit state is only read once Bluefruit.begin() has succeeded.
+  const bool advertising = ble_ready && Bluefruit.Advertising.isRunning();
+  const unsigned connected =
+      ble_ready ? static_cast<unsigned>(Bluefruit.Periph.connected()) : 0U;
+  Serial.printf("BLE ready=%s advertising=%s connected=%u policy=%s "
+                "initial_start=%s\n",
+                ble_ready ? "yes" : "no", advertising ? "yes" : "no", connected,
+                ble_admission.isOpen()      ? "open"
+                : ble_admission.isClosing() ? "closing"
+                                            : "closed",
+                initial_start);
+}
+
+#ifdef ORUN_M7P7B_FLASH_PROBE
+// M7P7B TEMPORARY test-only physical probe (see m7p7b_flash_probe.h). Exists
+// only in the rak4630_m7p7b_flash_probe env; never in production.
+orun_tlp::ConfigFlashProbe flash_probe;
+
+orun_tlp::ConfigFlashProbe::Inputs flashProbeInputs() {
+  orun_tlp::ConfigFlashProbe::Inputs in;
+  in.now_ms = orun_tlp::monotonic::nowMs();
+  in.ble_connected = ble_ready ? Bluefruit.Periph.connected() : 0;
+  taskENTER_CRITICAL();
+  in.ble_disconnect_events = ble_disconnect_events;
+  taskEXIT_CRITICAL();
+  const auto& d = storage_flash_gate.configDiagnostics();
+  in.async.async_accepted = d.async_accepted;
+  in.async.completions_success = d.completions_success;
+  in.async.completions_error = d.completions_error;
+  in.async.timeouts = d.timeouts;
+  in.async.late_completions = d.late_completions;
+  return in;
+}
+
+void startFlashProbe() {
+  using Probe = orun_tlp::ConfigFlashProbe;
+  const Probe::Inputs in = flashProbeInputs();
+  const auto result = flash_probe.start(config_store, ble_ready, in);
+  const char* reason = nullptr;
+  switch (result) {
+    case Probe::StartResult::kStarted:
+      Serial.printf(
+          "FLASH PROBE START orig_interval=%lu orig_mah=%lu temp_mah=%lu "
+          "ble_connected=1 disconnect_snapshot=%lu async_accepted=%lu "
+          "stale_result=%s\n",
+          static_cast<unsigned long>(
+              flash_probe.report().original.tracking_interval_seconds),
+          static_cast<unsigned long>(flash_probe.report().original.battery_capacity_mah),
+          static_cast<unsigned long>(flash_probe.temporaryConfig().battery_capacity_mah),
+          static_cast<unsigned long>(in.ble_disconnect_events),
+          static_cast<unsigned long>(in.async.async_accepted),
+          flash_probe.staleResultDrained() ? "drained" : "none");
+      return;
+    case Probe::StartResult::kNotIdle: reason = "not-idle"; break;
+    case Probe::StartResult::kConfigNotReady: reason = "config-not-ready-or-busy"; break;
+    case Probe::StartResult::kBleNotReady: reason = "ble-not-ready"; break;
+    case Probe::StartResult::kBleClientCount: reason = "ble-clients-not-1"; break;
+    case Probe::StartResult::kTempRejected: reason = "temp-save-rejected"; break;
+  }
+  Serial.printf("FLASH PROBE REJECT reason=%s ble_connected=%u config unchanged\n",
+                reason, static_cast<unsigned>(in.ble_connected));
+}
+
+void printFlashProbeReport() {
+  using Probe = orun_tlp::ConfigFlashProbe;
+  const Probe::Report& r = flash_probe.report();
+  const auto ul = [](uint32_t v) { return static_cast<unsigned long>(v); };
+  if (r.pass) {
+    Serial.printf(
+        "FLASH PROBE PASS temp_verified=yes restore_verified=yes ble_connected=yes "
+        "ble_disconnects=%lu async_accepted_delta=%lu completions_success_delta=%lu "
+        "errors_delta=%lu timeouts_delta=%lu late_delta=%lu\n",
+        ul(r.ble_disconnects), ul(r.accepted_delta), ul(r.success_delta),
+        ul(r.errors_delta), ul(r.timeouts_delta), ul(r.late_delta));
+    return;
+  }
+  const char* stage = "unknown";
+  switch (r.failure) {
+    case Probe::Failure::kTempSave: stage = "temp-save"; break;
+    case Probe::Failure::kTempVerify: stage = "temp-verify"; break;
+    case Probe::Failure::kRestoreRequest: stage = "restore-request"; break;
+    case Probe::Failure::kRestoreSave: stage = "restore-save"; break;
+    case Probe::Failure::kRestoreVerify: stage = "restore-verify"; break;
+    case Probe::Failure::kTimeout: stage = "timeout"; break;
+    case Probe::Failure::kBleLost: stage = "ble"; break;
+    case Probe::Failure::kAsyncEvidence: stage = "async-evidence"; break;
+    case Probe::Failure::kNone: break;
+  }
+  Serial.printf(
+      "FLASH PROBE FAIL%s stage=%s temp_verified=%s restore_verified=%s "
+      "ble_connected=%s ble_disconnects=%lu async_accepted_delta=%lu "
+      "completions_success_delta=%lu errors_delta=%lu timeouts_delta=%lu "
+      "late_delta=%lu\n",
+      r.restore_failure ? " restore" : "", stage, r.temp_verified ? "yes" : "no",
+      r.restore_verified ? "yes" : "no", r.ble_connected ? "yes" : "no",
+      ul(r.ble_disconnects), ul(r.accepted_delta), ul(r.success_delta),
+      ul(r.errors_delta), ul(r.timeouts_delta), ul(r.late_delta));
+  if (r.restore_failure) {
+    Serial.printf(
+        "FLASH PROBE FAIL restore config: current_interval=%lu current_mah=%lu "
+        "original_interval=%lu original_mah=%lu\n",
+        ul(r.current.tracking_interval_seconds), ul(r.current.battery_capacity_mah),
+        ul(r.original.tracking_interval_seconds), ul(r.original.battery_capacity_mah));
+  }
+}
+#endif
+
 void handleRoleCommand() {
   if (role_command_overflow) {
     role_command_length = 0;
@@ -191,6 +349,18 @@ void handleRoleCommand() {
     printRadioDiagnostic();
     return;
   }
+  if (isActivityCommand("BLE?", 4)) {
+    role_command_length = 0;
+    printBleDiagnostic();
+    return;
+  }
+#ifdef ORUN_M7P7B_FLASH_PROBE
+  if (isActivityCommand("FLASH PROBE", 11)) {
+    role_command_length = 0;
+    startFlashProbe();
+    return;
+  }
+#endif
   if (isActivityCommand("ACTIVITY?", 9)) {
     role_command_length = 0;
     printActivityDiagnostic();
@@ -402,6 +572,65 @@ void setup() {
       config_store.config().tracking_interval_seconds * 1000UL);
   accelerometer_manager.begin(orun_tlp::monotonic::nowMs());
   Serial.println(F("ROLE AUTO pending (GNSS=>TRACKER, no GNSS=>BASE)"));
+
+  // M7P7B: BLE starts last, strictly after History/Config/Security have
+  // finished their SoftDevice-disabled synchronous recovery above --
+  // NrfHistoryFlash::begin() (and the Config/Security equivalents) fail
+  // closed if SoftDevice is already enabled when they run, and
+  // Bluefruit.begin() is what enables SoftDevice for the rest of this boot
+  // (docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md §9: the sync/async
+  // backend mode is fixed for the lifetime of one boot, not hot-swapped).
+  // No ORUN-specific application GATT, pairing/ownership, provisioning or
+  // authorization service is added; a bare, named, connectable peripheral is
+  // sufficient to prove the M7P7B runtime.
+  ble_ready = Bluefruit.begin();
+  if (ble_ready) {
+    char name[16];
+    snprintf(name, sizeof(name), "ORUN-%08lX",
+             static_cast<unsigned long>(device_identity.legacyUint64() & 0xFFFFFFFFUL));
+    Bluefruit.setName(name);
+    // setName() only sets the GAP Device Name attribute, readable after a
+    // client connects -- it does not, by itself, put anything into the
+    // advertising PDU. Every stock Bluefruit peripheral example calls both
+    // of these before Advertising.start(); without them the broadcast
+    // payload has zero AD structures, so a scanner sees an anonymous
+    // device instead of the name set above. addFlags() marks this as a
+    // standard LE-only general-discoverable peripheral; addName() copies
+    // the name actually into the advertising data.
+    Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+    Bluefruit.Advertising.addName();
+    // Stock Bluefruit blinks LED_BLUE on a FreeRTOS timer for the entire
+    // advertising/connected duration (default _led_conn=true,
+    // bluefruit.cpp's _startConnLed()/bluefruit_blinky_cb). That is an
+    // avoidable, continuous GPIO toggle this milestone would otherwise
+    // introduce on every boot's ~10-minute window; ANIMAL_TRACKER power
+    // policy (AGENTS.md) has no use for a connection-status LED, so disable
+    // it rather than measure-and-accept it.
+    Bluefruit.autoConnLed(false);
+    // Pinned 1.7.0 BLEAdvertising::_eventHandler() restarts advertising on
+    // disconnect with start(_stop_timeout) and silently ignores its result,
+    // so a failed restart would leave the policy open while nothing
+    // advertises (audit finding 3). Disable it: loop() owns every
+    // post-disconnect Advertising.start(0), checks the result and retries.
+    Bluefruit.Advertising.restartOnDisconnect(false);
+    // Minimal event handoff only; see onBleEvent() above.
+    Bluefruit.setEventCallback(onBleEvent);
+    // No library-owned timeout (0): BleAdmissionPolicy owns the only close
+    // deadline that matters, driven from loop() below.
+    const bool advertising_started = Bluefruit.Advertising.start(0);
+    ble_initial_start =
+        advertising_started ? BleInitialStart::kOk : BleInitialStart::kFail;
+    if (advertising_started) {
+      ble_admission.begin(orun_tlp::monotonic::nowMs());
+      Serial.printf("BLE available name=%s\n", name);
+    } else {
+      // Runtime is up but nothing is advertising: never open the admission
+      // window or claim availability. Query with BLE? for the full state.
+      Serial.println(F("BLE advertising start failed"));
+    }
+  } else {
+    Serial.println(F("BLE unavailable"));
+  }
 }
 
 void loop() {
@@ -427,9 +656,73 @@ void loop() {
   // active. The loop retries the same resolved intent without aborting work.
   radio_manager.setRelayForwardingEnabled(relay_forwarding_enabled);
 
-  // Drain any SoftDevice flash completion events; a no-op today since
-  // SoftDevice is never enabled by this runtime (M7P3 does not start BLE).
-  // One shared drain for both History and Config (M7P5) clients.
+  // M7P7B: drive the pure admission policy from the loop task only. Two
+  // sources feed it: the polled Bluefruit state (keeps working for a
+  // connection that stays up) and the disconnect event counter handed off by
+  // onBleEvent() (catches a connect+disconnect that fit entirely between two
+  // polls). BLE has its own physical radio (nRF52840 2.4GHz),
+  // independent of the SX1262 LoRa radio_manager guards below, so this does
+  // not need the TX guard.
+  if (ble_ready) {
+    taskENTER_CRITICAL();
+    const uint32_t disconnect_events = ble_disconnect_events;
+    taskEXIT_CRITICAL();
+    orun_tlp::BleAdmissionInput input;
+    input.disconnect_event = disconnect_events != ble_disconnect_events_seen;
+    ble_disconnect_events_seen = disconnect_events;
+    // Advertising is sampled before the connection: the framework clears
+    // _running only after the connection object exists, so "not running"
+    // read here can never pair with a stale "not connected".
+    input.advertising_running = Bluefruit.Advertising.isRunning();
+    input.connected = Bluefruit.Periph.connected() > 0;
+    switch (ble_admission.update(input, orun_tlp::monotonic::nowMs())) {
+      case orun_tlp::BleAdmissionAction::kClose: {
+        // The deadline only REQUESTS close. stop() can fail (pinned 1.7.0
+        // leaves _running unchanged when sd_ble_gap_adv_stop() fails, e.g.
+        // a connection racing the stop), so trust observed state, not the
+        // return value: confirm only when advertising is really not running
+        // and nobody is connected; otherwise the policy repeats the request.
+        Bluefruit.Advertising.stop();
+        const bool still_running = Bluefruit.Advertising.isRunning();
+        const bool connected_now = Bluefruit.Periph.connected() > 0;
+        // A whole connect+disconnect can complete between stop() and the two
+        // reads above; then neither read shows the client but a real
+        // disconnect is owed a fresh window. Read the counter AFTER the
+        // connection state and leave the close unconfirmed: the next tick
+        // consumes the event, cancels the close and restarts advertising.
+        taskENTER_CRITICAL();
+        const bool disconnect_pending =
+            ble_disconnect_events != ble_disconnect_events_seen;
+        taskEXIT_CRITICAL();
+        if (!still_running && !connected_now && !disconnect_pending) {
+          ble_admission.confirmClosed();
+          Serial.println(F("BLE closed; no client connected within window"));
+        }
+        break;
+      }
+      case orun_tlp::BleAdmissionAction::kStartAdvertising: {
+        // Post-disconnect (or failed-earlier) restart. Never start while a
+        // client is connected.
+        if (Bluefruit.Periph.connected() > 0) break;
+        if (Bluefruit.Advertising.start(0)) {
+          ble_restart_failing = false;
+          Serial.println(F("BLE advertising restarted"));
+        } else if (!ble_restart_failing) {
+          ble_restart_failing = true;
+          Serial.println(F("BLE advertising restart failed; retrying"));
+        }
+        break;
+      }
+      case orun_tlp::BleAdmissionAction::kNone:
+        break;
+    }
+  }
+
+  // Drain any SoftDevice flash completion events. Before BLE starts this is
+  // a no-op (SoftDevice disabled); once Bluefruit.begin() succeeds above,
+  // this consumes the M7P7A-forwarded gate-owned completion mailbox instead
+  // of racing Bluefruit's own sd_evt_get() consumption. One shared drain for
+  // History, Config (M7P5) and Security (M7P6B) clients.
   storage_flash_gate.pumpEvents();
   // Leave local TX undisturbed; otherwise service one small flash operation.
   // config_store.poll() shares the same TX guard as history.poll() -- a
@@ -443,6 +736,17 @@ void loop() {
     config_store.poll();
     security_store.poll();
   }
+#ifdef ORUN_M7P7B_FLASH_PROBE
+  // Stepped after config_store.poll() so a just-finished save is consumed on
+  // the same tick. Idle/done: no sampling, no critical section, no output.
+  if (flash_probe.state() != orun_tlp::ConfigFlashProbe::State::kIdle &&
+      flash_probe.state() != orun_tlp::ConfigFlashProbe::State::kDone) {
+    if (flash_probe.poll(config_store, flashProbeInputs())) {
+      printFlashProbeReport();
+      flash_probe.reset();
+    }
+  }
+#endif
   const auto event =
       positions.update(orun_tlp::monotonic::nowMs(), tracking_enabled);
   if (event == orun_tlp::PositionFlow::Event::kStorageFailure)

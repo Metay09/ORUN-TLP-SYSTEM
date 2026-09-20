@@ -363,13 +363,40 @@ decision gates. `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md` decides the par
 `0x0EB000..0x0ED000` relocated BLE bonds/InternalFS (M7P4), all strictly below
 the unchanged HistoryStore region. SecurityStore owns credential + TX nonce-safety
 state only and uses activation-last A/B recovery; ambiguous committed nonce state
-fails protected TX closed. BLE/SoftDevice remain OFF in shipped firmware. History,
+fails protected TX closed. BLE/SoftDevice remain OFF in `main` (shipped firmware
+through M7P7A); PR #22 (draft, not merged) enables the M7P7B minimal runtime on its
+branch (see below). History,
 Config and Security async gate paths are software/host-test validated. M7P7A
 (`main@e012a76b01f21b9575840d25a5a26ad78721021d`) adds one shared physical-flash
 owner between the ORUN gate and relocated bond/InternalFS storage, plus Bluefruit
-SoC-event ownership/forwarding, with host and real compile/link evidence. Actual
-SoftDevice-enabled BLE runtime, bond persistence and concurrent physical flash
-behavior remain physically unvalidated.
+SoC-event ownership/forwarding, with host and real compile/link evidence. On `main`
+this remains host/build evidence only.
+
+**PR #22 branch (M7P7B, not merged; `docs/milestones/M7P7B.md`):** first real
+SoftDevice-enabled production BLE runtime with the minimal tracker admission policy
+(~10-min no-client window, connected suspends it, disconnect grants one fresh
+window, one client). It adds no ORUN application GATT service, ORUN pairing/ownership,
+provisioning or authorization; stock Bluefruit pairing/bonding is reachable and a
+framework bond is **not** ORUN authorization. Physical evidence on one RAK4631 with
+a Samsung/nRF Connect client now covers: real advertising/scan/connect; connected
+past the no-client deadline; the §8.5 direct-event disconnect → loop-owned restart
+→ fresh window → reconnect lifecycle; no-client close and clean cold boot; stock
+bond creation plus power-cycle persistence/reconnect; BLE coexistence with real
+LoRa direct RX and BLE-connected RELAY RX/QUEUE/TX/TX_DONE; and a real
+ConfigStore→FlashMutationGate→SoftDevice async flash mutation while BLE stayed
+connected (6/6 accepted completions, zero errors/timeouts/late completions/
+disconnects, temporary config verified and exact original restored). That flash
+probe physically validates the shared ConfigStore/gate/event-bridge path but does
+not separately claim HistoryStore or SecurityStore client-specific mutation; LoRa
+`TX_DONE` remains local radio completion, not delivery. Quantitative current/power remains unmeasured and is explicitly
+**deferred, not PASS**, because no measurement equipment is available; the owner
+accepts that gap as non-blocking for M7P7B. GNSS coexistence remains **blocked on
+this unit** (`GNSS: not detected`) and is owner-waived as a blocker for this
+milestone merge only; later physical verification on a GNSS-equipped unit is
+still required. The deliberately between-loop-polls lifecycle timing and
+advertising start/stop failure injection remain host-only and are not physical
+PASS. Secure envelope, provisioning, application GATT, DFU and LoRa `OPEN_BLE`
+remain later work.
 
 M6 activity/geofence helpers allocate no durable state and do not reuse the
 position journal. Future activity history, polygon configuration, FREE_GRAZE

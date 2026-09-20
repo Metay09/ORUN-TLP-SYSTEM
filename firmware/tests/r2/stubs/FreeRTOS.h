@@ -13,7 +13,8 @@ constexpr BaseType_t pdTRUE = 1;
 constexpr TickType_t portMAX_DELAY = UINT32_MAX;
 inline unsigned fake_task = 1;
 inline unsigned critical_depth = 0;
+inline unsigned critical_entries = 0;  // Total taskENTER_CRITICAL() calls.
 #define configASSERT(value) assert(value)
 
-#define taskENTER_CRITICAL() (++critical_depth)
+#define taskENTER_CRITICAL() (++critical_depth, ++critical_entries)
 #define taskEXIT_CRITICAL() do { assert(critical_depth); --critical_depth; } while (0)

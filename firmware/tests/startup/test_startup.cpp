@@ -87,7 +87,16 @@ void settle(HistoryStore& store) {
 int main(int argc, char** argv) {
   assert(argc == 2);
   const std::string mode = argv[1];
-  const bool success = mode == "success";
+  // "advfail"/"blefail" keep the radio healthy and instead fail BLE:
+  // Advertising.start() returning false / Bluefruit.begin() returning false.
+  const bool ble_advertising_fails = mode == "advfail";
+  const bool ble_runtime_fails = mode == "blefail";
+  // "noevent" is a negative control: same healthy boot, but Bluefruit's global
+  // event callback never fires, proving the short-cycle assertions below fail
+  // without the direct event handoff.
+  const bool no_event_control = mode == "noevent";
+  const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails ||
+                       no_event_control;
   // Each scenario runs in a new process, like a cold boot (static driver gate).
   assert(success || mode == "mutex" || mode == "gate" || mode == "queue" ||
          mode == "lora");
@@ -131,6 +140,8 @@ int main(int argc, char** argv) {
   fake_mutex_take_failure = mode == "gate";
   fake_queue_create_failure = mode == "queue";
   lora_result = mode == "lora" ? -1 : 0;
+  Bluefruit.Advertising.start_result = !ble_advertising_fails;
+  Bluefruit.begin_result = !ble_runtime_fails;
   setup();
   assert(board_reads == 1 && radio_manager.deviceId() == kHardwareId);
   assert(watchdog_starts == 1);
@@ -138,6 +149,20 @@ int main(int argc, char** argv) {
   assert(history.diagnostics().recovery_corruptions == 0);
   assert(erases == 0 && programs == 0);
   assert(memcmp(region, before.data(), before.size()) == 0);
+  // BLE boot path: ready reflects Bluefruit.begin(); "available"/admission
+  // only follow a successful Advertising.start(0), which is called exactly
+  // once and only after begin() succeeded.
+  const bool ble_ok = !ble_advertising_fails && !ble_runtime_fails;
+  assert(ble_ready == !ble_runtime_fails);
+  assert(Bluefruit.Advertising.start_calls == (ble_runtime_fails ? 0U : 1U));
+  assert(ble_admission.isOpen() == ble_ok);
+  assert((Serial.output.find("BLE available name=ORUN-") != std::string::npos) == ble_ok);
+  assert((Serial.output.find("BLE advertising start failed\n") != std::string::npos) ==
+         ble_advertising_fails);
+  assert((Serial.output.find("BLE unavailable\n") != std::string::npos) == ble_runtime_fails);
+  assert(ble_initial_start ==
+         (ble_runtime_fails ? BleInitialStart::kNotAttempted
+          : ble_advertising_fails ? BleInitialStart::kFail : BleInitialStart::kOk));
   const bool diagnostic = Serial.output.find("RADIO unavailable; TX/RX disabled; local services continue") != std::string::npos;
   assert(diagnostic == !success); // Executes main's handling of begin(false).
   assert(radio_manager.canSend() == success);
@@ -245,6 +270,271 @@ int main(int argc, char** argv) {
                           "ROLE TRACKER source=USB-OVERRIDE\n"
                           "ROLE TRACKER mode=OVERRIDE\n");
   assert(Wire.transaction_calls == wire_calls);
+
+  // BLE? reports runtime readiness, advertising state, connection count,
+  // admission policy and the boot-time start result as separate facts.
+  const char* expected_ble =
+      ble_runtime_fails
+          ? "BLE ready=no advertising=no connected=0 policy=closed initial_start=not-attempted\n"
+      : ble_advertising_fails
+          ? "BLE ready=yes advertising=no connected=0 policy=closed initial_start=fail\n"
+          : "BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok\n";
+  Serial.output.clear();
+  Serial.queueInput("BLE?\n");
+  pollRoleCommands();
+  assert(Serial.output == expected_ble);
+  // Query is repeatable and leaves no residual command bytes behind.
+  Serial.output.clear();
+  Serial.queueInput("BLE?\rBLE\nBLE??\nBLE?\n");
+  while (Serial.available()) pollRoleCommands();
+  assert(Serial.output == std::string(expected_ble) +
+                          "ROLE command rejected\n"
+                          "ROLE command rejected\n" + expected_ble);
+
+  // Production explicitly owns restart: the framework's own (result-ignoring)
+  // restart-on-disconnect must be off whenever BLE runtime is up. The
+  // disconnect handoff must use Bluefruit's direct global event callback, NOT
+  // Periph's ada_callback-routed (heap-allocating, droppable) disconnect
+  // callback.
+  if (!ble_runtime_fails) {
+    assert(!Bluefruit.Advertising.restart_on_disconnect);
+    assert(Bluefruit.event_cb == &onBleEvent);
+    assert(Bluefruit.Periph.disconnect_cb == nullptr);
+  }
+
+  auto bleQuery = [&]() {
+    Serial.output.clear();
+    Serial.queueInput("BLE?\n");
+    pollRoleCommands();
+    return Serial.output;
+  };
+  auto tick = [&](uint32_t advance_ms) {
+    test_now += advance_ms;
+    Serial.output.clear();
+    loop();
+    // Only BLE lines: other subsystems log on large clock jumps.
+    std::string ble_lines;
+    for (size_t pos = 0; pos < Serial.output.size();) {
+      size_t end = Serial.output.find('\n', pos);
+      end = end == std::string::npos ? Serial.output.size() : end + 1;
+      if (Serial.output.compare(pos, 4, "BLE ") == 0) ble_lines += Serial.output.substr(pos, end - pos);
+      pos = end;
+    }
+    return ble_lines;
+  };
+  auto has = [](const std::string& text, const char* needle) {
+    return text.find(needle) != std::string::npos;
+  };
+  const uint32_t kWindow = ble_admission_config::kNoClientTimeoutMs;
+  const uint32_t kRetry = ble_admission_config::kRetryIntervalMs;
+
+  if (!ble_ok) {
+    // Fail-closed boot: many loop ticks later still no admission window, no
+    // start attempt beyond the boot one, no close, no false "available".
+    const unsigned starts = Bluefruit.Advertising.start_calls;
+    for (int i = 0; i < 5; ++i) {
+      const std::string out = tick(kWindow);
+      assert(out.empty());
+    }
+    assert(Bluefruit.Advertising.start_calls == starts);
+    assert(Bluefruit.Advertising.stop_calls == 0);
+    assert(!ble_admission.isOpen());
+  }
+
+  if (no_event_control) {
+    // Negative control: identical short connect+disconnect as the main flow
+    // below, but the event never reaches onBleEvent(). The fresh window is
+    // then NOT granted and the original deadline closes BLE. (The main flow
+    // asserts the opposite, so it fails if registration/delivery is lost.)
+    Bluefruit.event_delivery = false;
+    tick(kWindow - 5000);
+    Bluefruit.simulateConnect();
+    Bluefruit.simulateDisconnect();  // Entirely between two loop polls.
+    assert(Bluefruit.event_cb_calls == 0 && ble_disconnect_events == 0);
+    tick(1000);
+    assert(has(tick(6000), "BLE closed; no client connected within window\n"));
+  }
+
+  if (ble_ok && !no_event_control) {
+    // --- Callback isolation (constraint: no loop-only work off-task). ------
+    {
+      const unsigned enters = critical_entries;
+      const uint32_t clock_before = test_now;
+      const uint32_t events_before = ble_disconnect_events;
+      Serial.output.clear();
+      ble_evt_t disconnect_evt{};
+      disconnect_evt.header.evt_id = BLE_GAP_EVT_DISCONNECTED;
+      onBleEvent(&disconnect_evt);
+      // Exactly one critical section, balanced, one counter increment, and
+      // nothing else observable: no log, no policy change, no Bluefruit call.
+      assert(critical_entries == enters + 1 && critical_depth == 0);
+      assert(ble_disconnect_events == events_before + 1);
+      assert(Serial.output.empty());
+      assert(ble_admission.isOpen() && !ble_admission.isConnected());
+      assert(Bluefruit.Advertising.start_calls == 1 && Bluefruit.Advertising.stop_calls == 0);
+      assert(test_now == clock_before);
+      // Any other event id (connect, conn-param update, ...) is ignored
+      // entirely: no critical section, no counter change.
+      for (uint16_t id : {BLE_GAP_EVT_CONNECTED, uint16_t{0x12}, uint16_t{0x50}}) {
+        ble_evt_t other{};
+        other.header.evt_id = id;
+        onBleEvent(&other);
+      }
+      assert(critical_entries == enters + 1 && critical_depth == 0);
+      assert(ble_disconnect_events == events_before + 1);
+      assert(Serial.output.empty() && test_now == clock_before);
+      // Loop consumes it as one (harmless, still-open) event; nothing else.
+      const std::string out = tick(0);
+      assert(out.empty());
+      assert(ble_disconnect_events_seen == ble_disconnect_events);
+      assert(tick(0).empty());
+    }
+
+    // --- Connected client: framework stops advertising on connect; policy
+    // stays open, never closes while connected, never tries to restart. -----
+    Bluefruit.simulateConnect();
+    assert(tick(kWindow + 1000).empty());
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=no connected=1 policy=open initial_start=ok\n");
+    assert(Bluefruit.Advertising.start_calls == 1 && Bluefruit.Advertising.stop_calls == 0);
+
+    // --- Disconnect: framework does NOT restart (restartOnDisconnect(false));
+    // the direct event callback counts it; loop restarts and grants a window.
+    Bluefruit.simulateDisconnect();
+    assert(Bluefruit.Periph.pending_disconnect_cbs == 0);  // no Periph/ada path
+    assert(!Bluefruit.Advertising.isRunning());  // no split ownership
+    assert(has(tick(0), "BLE advertising restarted\n"));
+    assert(Bluefruit.Advertising.start_calls == 2);
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok\n");
+    // Polled-edge + event for the same disconnect: no second start.
+    assert(tick(1).empty() && Bluefruit.Advertising.start_calls == 2);
+
+    // --- Post-disconnect start FAILS, then a later retry succeeds. ---------
+    Bluefruit.simulateConnect();
+    tick(1000);
+    Bluefruit.simulateDisconnect();
+    Bluefruit.Advertising.start_result = false;
+    unsigned starts_before = Bluefruit.Advertising.start_calls;
+    assert(has(tick(0), "BLE advertising restart failed; retrying\n"));
+    assert(Bluefruit.Advertising.start_calls == starts_before + 1);
+    // Truthful state: not advertising, policy still open (window not over).
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=no connected=0 policy=open initial_start=ok\n");
+    // No busy-spin: ticks inside the retry interval do not call start().
+    assert(tick(0).empty() && tick(kRetry - 1).empty());
+    assert(Bluefruit.Advertising.start_calls == starts_before + 1);
+    // Retry due, still failing: one more attempt, no log spam.
+    assert(tick(1).empty());
+    assert(Bluefruit.Advertising.start_calls == starts_before + 2);
+    // Later retry succeeds.
+    Bluefruit.Advertising.start_result = true;
+    assert(tick(kRetry).empty() == false);  // "restarted" logged
+    assert(Bluefruit.Advertising.start_calls == starts_before + 3);
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok\n");
+
+    // --- Short connect+disconnect FULLY missed by polling. ------------------
+    // Old window's deadline is about to pass; the missed session's real
+    // disconnect must grant a fresh window anyway.
+    tick(kWindow - 5000);
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok\n");
+    Bluefruit.simulateConnect();
+    Bluefruit.simulateDisconnect();  // Same framework tick: no poll saw it.
+    Bluefruit.Advertising.running = false;  // Model restart owner: loop only.
+    // Delivered through the direct global event callback (no Periph/ada_callback
+    // path exists): the counter moved without any loop tick or deferred task.
+    assert(Bluefruit.event_cb_calls >= 1 && Bluefruit.Periph.pending_disconnect_cbs == 0);
+    assert(ble_disconnect_events != ble_disconnect_events_seen);
+    assert(Bluefruit.Periph.connected() == 0);
+    assert(has(tick(1000), "BLE advertising restarted\n"));
+    // Past the ORIGINAL deadline: without the event this would have closed.
+    assert(!has(tick(6000), "BLE closed"));
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok\n");
+
+    // --- Connection racing the close: client wins, session stays admitted. --
+    tick(kWindow - 6000 - 1);  // just before the fresh window ends
+    assert(!has(tick(0), "BLE closed"));
+    static bool raced;
+    raced = false;
+    Bluefruit.Advertising.stop_race = [] { Bluefruit.simulateConnect(); raced = true; };
+    starts_before = Bluefruit.Advertising.start_calls;
+    assert(!has(tick(1), "BLE closed"));  // stop() failed: no false log
+    assert(raced);
+    Bluefruit.Advertising.stop_race = nullptr;
+    // Physical truth right after the race, policy not closed, not restarted.
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=no connected=1 policy=closing initial_start=ok\n");
+    assert(!has(tick(0), "BLE closed"));
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=no connected=1 policy=open initial_start=ok\n");
+    // Far past any window while connected: no close, no stop, no start.
+    const unsigned stops = Bluefruit.Advertising.stop_calls;
+    assert(!has(tick(kWindow * 3), "BLE closed"));
+    assert(Bluefruit.Advertising.stop_calls == stops);
+    assert(Bluefruit.Advertising.start_calls == starts_before);
+    // Real disconnect afterwards: restart + fresh window.
+    Bluefruit.simulateDisconnect();
+    assert(has(tick(0), "BLE advertising restarted\n"));
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok\n");
+    assert(!has(tick(kWindow - 1), "BLE closed"));
+
+    // --- A whole connect+disconnect completing between stop() and the loop's
+    // state reads at the deadline: neither read shows the client, but the real
+    // disconnect (counted by the event callback) is owed a fresh window. ------
+    Bluefruit.Advertising.stop_race = [] {
+      Bluefruit.simulateConnect();
+      Bluefruit.simulateDisconnect();
+    };
+    assert(!has(tick(1), "BLE closed"));  // close NOT confirmed
+    Bluefruit.Advertising.stop_race = nullptr;
+    assert(Bluefruit.Periph.connected() == 0 && !Bluefruit.Advertising.isRunning());
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=no connected=0 policy=closing initial_start=ok\n");
+    assert(has(tick(0), "BLE advertising restarted\n"));
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok\n");
+    assert(!has(tick(kWindow - 1), "BLE closed"));
+
+    // --- Final expiry, stop() failing first, then succeeding. ---------------
+    Bluefruit.Advertising.stop_result = false;
+    const unsigned stop_base = Bluefruit.Advertising.stop_calls;
+    assert(!has(tick(1), "BLE closed"));  // requested, NOT confirmed
+    assert(Bluefruit.Advertising.stop_calls == stop_base + 1);
+    // Truthful: still advertising, policy closing (not closed).
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=yes connected=0 policy=closing initial_start=ok\n");
+    // Throttled retry, never busy-spins, never logs a false close.
+    assert(!has(tick(0), "BLE closed") && !has(tick(kRetry - 1), "BLE closed"));
+    assert(Bluefruit.Advertising.stop_calls == stop_base + 1);
+    assert(!has(tick(1), "BLE closed"));
+    assert(Bluefruit.Advertising.stop_calls == stop_base + 2);
+    // stop() finally works: physical close confirmed, only now logged.
+    Bluefruit.Advertising.stop_result = true;
+    assert(has(tick(kRetry), "BLE closed; no client connected within window\n"));
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=no connected=0 policy=closed initial_start=ok\n");
+    // Stays closed: no more stop/start attempts, no reopen from events.
+    const unsigned stops_done = Bluefruit.Advertising.stop_calls;
+    const unsigned starts_done = Bluefruit.Advertising.start_calls;
+    {
+      ble_evt_t late{};
+      late.header.evt_id = BLE_GAP_EVT_DISCONNECTED;
+      onBleEvent(&late);
+    }
+    assert(tick(kWindow).empty());
+    assert(Bluefruit.Advertising.stop_calls == stops_done);
+    assert(Bluefruit.Advertising.start_calls == starts_done);
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=no connected=0 policy=closed initial_start=ok\n");
+    assert(critical_depth == 0);
+    // The Periph/ada_callback path was never used by production.
+    assert(Bluefruit.Periph.disconnect_cb == nullptr &&
+           Bluefruit.Periph.pending_disconnect_cbs == 0);
+  }
 
   assert(munmap(region, kRegionSize) == 0);
   assert(munmap(config_region, kConfigRegionSize) == 0);
