@@ -1,6 +1,6 @@
 # M7P6C — CryptoCell secure-envelope primitive proof
 
-Status: **TARGET BUILD PASS; PROBE UPLOAD PASS; HARDWARE KAT BEHAVIOR UNDERSTOOD; FINAL PASS RERUN PENDING.**
+Status: **FINAL ACCEPTANCE IMAGE BUILD/UPLOAD PASS; FINAL SERIAL KAT RESULT PENDING.**
 
 Baseline: `main@1bd7e8fa0649caa1d1bbce901367ef6a81498e29`
 (M6P2 merged via PR #26).
@@ -243,6 +243,17 @@ exception silently.
 
 The final hardware rerun is still required so the updated acceptance criterion
 itself produces the expected PASS line before this slice closes.
+
+
+Owner rebuilt and uploaded the final acceptance image on 2026-09-20:
+
+- build/link: **SUCCESS**;
+- upload: **SUCCESS**, `Device programmed.`;
+- RAM: **9,024 / 248,832 bytes (3.6%)**;
+- Flash: **72,016 / 815,104 bytes (8.8%)**;
+- the existing PlatformIO `99-platformio-udev.rules` warning did not block
+  DFU;
+- final serial KAT output is still pending, so M7P6C is not yet marked PASS.
 
 ## 8. Validation sequence
 
