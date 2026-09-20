@@ -148,8 +148,11 @@ However M7P6 storage work must **not** prematurely freeze:
 - AAD layout;
 - final AEAD/tag choice.
 
-Those are frozen only in the later secure-envelope milestone after pinned-library,
-known-answer, airtime and hardware validation.
+M7P6D may narrow these into a reviewed **candidate contract**, but they are not
+implementation-frozen until the exact ORUN-specific host vectors, RAK hardware
+KAT and required CryptoCell/Bluefruit coexistence validation pass. The eventual
+secure-envelope wire milestone freezes the on-air bytes/AAD and records the
+validated contract it consumes.
 
 Regardless of AEAD choice, ORUN's invariant is simple:
 
@@ -430,10 +433,10 @@ global nRFCrypto/CC310 facility; the isolated M7P6C image does not prove
 concurrent production use, and production ORUN code must not copy the probe's
 `nRFCrypto.end()` cleanup pattern.
 
-### M7P6D — secure-envelope pre-wire security contract — IN REVIEW
+### M7P6D — secure-envelope pre-wire security contract — INDEPENDENTLY REVIEWED CANDIDATE
 
-M7P6D freezes the minimum security-domain semantics needed before wire bytes are
-designed:
+M7P6D records the minimum candidate security-domain semantics needed before wire
+bytes are designed:
 
 - trusted endpoint directions are `D2A` and `A2D`, not legacy Role names;
 - traffic keys use HKDF-SHA256 with `K_root` as IKM, `credential_id` as salt,
@@ -442,16 +445,21 @@ designed:
 - the AES-CCM nonce is 13 bytes:
   `key_epoch_be32 || direction_u8 || tx_counter_be64`;
 - D2A and A2D counters are independently owned by their actual cryptographic
-  senders; gateways do not mint security counters;
+  senders; gateways do not mint security counters; each A2D credential/epoch
+  has one active authority sender and its reserve-ahead durable counter may
+  never roll backward across crash, failover or backup restore;
 - replay state is updated only after successful authentication and must never be
-  advanced by unauthenticated input;
+  advanced by unauthenticated input; only the current accepted epoch is valid
+  unless a future explicit rotation/grace protocol authorizes otherwise;
 - device A2D replay starts with a strict durable high-water-mark contract,
   committed before protected application dispatch;
 - backend D2A reception may use a bounded sliding replay window to tolerate
   legitimate multi-path reordering and duplicates;
-- Bluefruit/framework owns the currently shared CC310 lifecycle in production;
-  ORUN production code must not call `nRFCrypto.end()`, and normal-path CC310
-  use remains blocked on a focused Bluefruit/SoftDevice coexistence proof.
+- Bluefruit/framework shares the global CC310 lifecycle in production; ORUN
+  production code must not call `nRFCrypto.end()`, must not trust
+  `nRFCrypto.begin()` alone as readiness evidence, and normal-path CC310 use
+  remains blocked on a focused Bluefruit/SoftDevice coexistence proof plus an
+  exact known-answer readiness canary.
 
 M7P6D is documentation-only. It does not modify SecurityStore persistence,
 allocate v2 bytes or authorize secure-RF runtime. See
