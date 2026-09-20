@@ -218,6 +218,11 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p7a_patch_ble_flash.p
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7b_ble_admission_policy.cpp \
   firmware/src/ble_admission_policy.cpp -o "$test_dir/m7p7b_ble_admission_policy"
 "$test_dir/m7p7b_ble_admission_policy"
+g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7b_flash_probe.cpp \
+  firmware/src/config_store.cpp firmware/src/config_format.cpp \
+  firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/m7p7b_flash_probe"
+"$test_dir/m7p7b_flash_probe"
 g++ "${flags[@]}" firmware/tests/r4/test_r4.cpp "${gnss_sources[@]}" \
   firmware/src/watchdog_manager.cpp -o "$test_dir/r4"
 "$test_dir/r4"

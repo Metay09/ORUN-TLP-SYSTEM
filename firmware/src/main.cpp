@@ -6,6 +6,9 @@
 #include "activity_capture.h"
 #include "ble_admission_policy.h"
 #include "config_store.h"
+#ifdef ORUN_M7P7B_FLASH_PROBE
+#include "m7p7b_flash_probe.h"
+#endif
 #include "firmware_version.h"
 #include "flash_mutation_gate.h"
 #include "gnss_manager.h"
@@ -234,6 +237,100 @@ void printBleDiagnostic() {
                 initial_start);
 }
 
+#ifdef ORUN_M7P7B_FLASH_PROBE
+// M7P7B TEMPORARY test-only physical probe (see m7p7b_flash_probe.h). Exists
+// only in the rak4630_m7p7b_flash_probe env; never in production.
+orun_tlp::ConfigFlashProbe flash_probe;
+
+orun_tlp::ConfigFlashProbe::Inputs flashProbeInputs() {
+  orun_tlp::ConfigFlashProbe::Inputs in;
+  in.now_ms = orun_tlp::monotonic::nowMs();
+  in.ble_connected = ble_ready ? Bluefruit.Periph.connected() : 0;
+  taskENTER_CRITICAL();
+  in.ble_disconnect_events = ble_disconnect_events;
+  taskEXIT_CRITICAL();
+  const auto& d = storage_flash_gate.configDiagnostics();
+  in.async.async_accepted = d.async_accepted;
+  in.async.completions_success = d.completions_success;
+  in.async.completions_error = d.completions_error;
+  in.async.timeouts = d.timeouts;
+  in.async.late_completions = d.late_completions;
+  return in;
+}
+
+void startFlashProbe() {
+  using Probe = orun_tlp::ConfigFlashProbe;
+  const Probe::Inputs in = flashProbeInputs();
+  const auto result = flash_probe.start(config_store, ble_ready, in);
+  const char* reason = nullptr;
+  switch (result) {
+    case Probe::StartResult::kStarted:
+      Serial.printf(
+          "FLASH PROBE START orig_interval=%lu orig_mah=%lu temp_mah=%lu "
+          "ble_connected=1 disconnect_snapshot=%lu async_accepted=%lu "
+          "stale_result=%s\n",
+          static_cast<unsigned long>(
+              flash_probe.report().original.tracking_interval_seconds),
+          static_cast<unsigned long>(flash_probe.report().original.battery_capacity_mah),
+          static_cast<unsigned long>(flash_probe.temporaryConfig().battery_capacity_mah),
+          static_cast<unsigned long>(in.ble_disconnect_events),
+          static_cast<unsigned long>(in.async.async_accepted),
+          flash_probe.staleResultDrained() ? "drained" : "none");
+      return;
+    case Probe::StartResult::kNotIdle: reason = "not-idle"; break;
+    case Probe::StartResult::kConfigNotReady: reason = "config-not-ready-or-busy"; break;
+    case Probe::StartResult::kBleNotReady: reason = "ble-not-ready"; break;
+    case Probe::StartResult::kBleClientCount: reason = "ble-clients-not-1"; break;
+    case Probe::StartResult::kTempRejected: reason = "temp-save-rejected"; break;
+  }
+  Serial.printf("FLASH PROBE REJECT reason=%s ble_connected=%u config unchanged\n",
+                reason, static_cast<unsigned>(in.ble_connected));
+}
+
+void printFlashProbeReport() {
+  using Probe = orun_tlp::ConfigFlashProbe;
+  const Probe::Report& r = flash_probe.report();
+  const auto ul = [](uint32_t v) { return static_cast<unsigned long>(v); };
+  if (r.pass) {
+    Serial.printf(
+        "FLASH PROBE PASS temp_verified=yes restore_verified=yes ble_connected=yes "
+        "ble_disconnects=%lu async_accepted_delta=%lu completions_success_delta=%lu "
+        "errors_delta=%lu timeouts_delta=%lu late_delta=%lu\n",
+        ul(r.ble_disconnects), ul(r.accepted_delta), ul(r.success_delta),
+        ul(r.errors_delta), ul(r.timeouts_delta), ul(r.late_delta));
+    return;
+  }
+  const char* stage = "unknown";
+  switch (r.failure) {
+    case Probe::Failure::kTempSave: stage = "temp-save"; break;
+    case Probe::Failure::kTempVerify: stage = "temp-verify"; break;
+    case Probe::Failure::kRestoreRequest: stage = "restore-request"; break;
+    case Probe::Failure::kRestoreSave: stage = "restore-save"; break;
+    case Probe::Failure::kRestoreVerify: stage = "restore-verify"; break;
+    case Probe::Failure::kTimeout: stage = "timeout"; break;
+    case Probe::Failure::kBleLost: stage = "ble"; break;
+    case Probe::Failure::kAsyncEvidence: stage = "async-evidence"; break;
+    case Probe::Failure::kNone: break;
+  }
+  Serial.printf(
+      "FLASH PROBE FAIL%s stage=%s temp_verified=%s restore_verified=%s "
+      "ble_connected=%s ble_disconnects=%lu async_accepted_delta=%lu "
+      "completions_success_delta=%lu errors_delta=%lu timeouts_delta=%lu "
+      "late_delta=%lu\n",
+      r.restore_failure ? " restore" : "", stage, r.temp_verified ? "yes" : "no",
+      r.restore_verified ? "yes" : "no", r.ble_connected ? "yes" : "no",
+      ul(r.ble_disconnects), ul(r.accepted_delta), ul(r.success_delta),
+      ul(r.errors_delta), ul(r.timeouts_delta), ul(r.late_delta));
+  if (r.restore_failure) {
+    Serial.printf(
+        "FLASH PROBE FAIL restore config: current_interval=%lu current_mah=%lu "
+        "original_interval=%lu original_mah=%lu\n",
+        ul(r.current.tracking_interval_seconds), ul(r.current.battery_capacity_mah),
+        ul(r.original.tracking_interval_seconds), ul(r.original.battery_capacity_mah));
+  }
+}
+#endif
+
 void handleRoleCommand() {
   if (role_command_overflow) {
     role_command_length = 0;
@@ -257,6 +354,13 @@ void handleRoleCommand() {
     printBleDiagnostic();
     return;
   }
+#ifdef ORUN_M7P7B_FLASH_PROBE
+  if (isActivityCommand("FLASH PROBE", 11)) {
+    role_command_length = 0;
+    startFlashProbe();
+    return;
+  }
+#endif
   if (isActivityCommand("ACTIVITY?", 9)) {
     role_command_length = 0;
     printActivityDiagnostic();
@@ -632,6 +736,17 @@ void loop() {
     config_store.poll();
     security_store.poll();
   }
+#ifdef ORUN_M7P7B_FLASH_PROBE
+  // Stepped after config_store.poll() so a just-finished save is consumed on
+  // the same tick. Idle/done: no sampling, no critical section, no output.
+  if (flash_probe.state() != orun_tlp::ConfigFlashProbe::State::kIdle &&
+      flash_probe.state() != orun_tlp::ConfigFlashProbe::State::kDone) {
+    if (flash_probe.poll(config_store, flashProbeInputs())) {
+      printFlashProbeReport();
+      flash_probe.reset();
+    }
+  }
+#endif
   const auto event =
       positions.update(orun_tlp::monotonic::nowMs(), tracking_enabled);
   if (event == orun_tlp::PositionFlow::Event::kStorageFailure)

@@ -693,6 +693,77 @@ connection, connected past the deadline, no-client close and clean cold boot
 remains useful; the post-disconnect lifecycle (§9.0) must be re-run on this
 build.
 
+### 8.6 Temporary flash-concurrency probe (test-only; physical run NOT yet performed)
+
+Row 8 of §9 (real History/Config/Security flash mutation while BLE is active)
+needs a real mutation source; production has none. A **temporary, test-only**
+probe was added for it. It is not a production feature.
+
+- **Containment.** Only PlatformIO env `rak4630_m7p7b_flash_probe` (extends
+  `rak4630`, adds `-D ORUN_M7P7B_FLASH_PROBE=1`) compiles the `FLASH PROBE`
+  serial command and its output. The production `rak4630` ELF contains zero
+  `FLASH PROBE` strings and zero probe symbols; the probe ELF contains both.
+  Production RAM/Flash are unchanged by this work (22,084 B / 225,484 B; text
+  223,328 B, identical to before).
+- **Path exercised.** Real `ConfigStore` (`requestSave`/`poll`/`takeSaveResult`)
+  → `FlashMutationGate` config port → `sd_flash_page_erase`/`sd_flash_write` and
+  the Bluefruit-forwarded completion events (M7P7A bridge), driven by the normal
+  loop (`pumpEvents()` then `config_store.poll()`). The probe calls no `sd_flash_*`,
+  touches no History/Security/InternalFS/bond partition, adds no flash owner,
+  mutex or event consumer, uses no `delay()`/blocking/heap, and `onBleEvent()` is
+  unchanged. ConfigStore's own write path already reads back and compares each
+  saved record before `finishSave()`; the probe relies on that.
+- **Field used.** `battery_capacity_mah` (bit 0 toggled). Verified: it is
+  consumed by nothing but ConfigStore/ConfigFormat (no runtime power, GNSS, radio
+  or tracking behavior reads it; `main.cpp` reads only
+  `tracking_interval_seconds`). It always differs from the original and is fully
+  reversible. On-flash format, generation ping-pong and partition are unchanged
+  (the run advances the generation by 2 and leaves the original values in effect).
+- **Command.** `FLASH PROBE` (11 bytes; fits the existing 24-byte command
+  buffer, which already rejects overlong input). Refused with `FLASH PROBE
+  REJECT reason=...` and no config change unless: probe idle, ConfigStore ready
+  and not busy, BLE runtime ready, and exactly one peripheral connection. A stale
+  unread ConfigStore result (nothing in this firmware consumes them) is
+  dropped at start so it cannot be mistaken for the probe's.
+- **State machine** (`firmware/include/m7p7b_flash_probe.h`, stepped once per
+  loop tick after `config_store.poll()`; host-tested in
+  `tests/m7/test_m7p7b_flash_probe.cpp`):
+  `IDLE` → snapshot original config, `ble_disconnect_events`, gate config
+  diagnostics; `requestSave(temp)` → `TEMP_SAVING` → result must be SUCCESS and
+  `config()==temp` → `requestSave(original)` → `RESTORING` → result must be
+  SUCCESS and `config()==original` → evaluate → `DONE` (then re-armed to `IDLE`).
+  Once the temp config commits, restoring is mandatory whatever BLE does. If the
+  temp save fails, ConfigStore's last-good is kept and no cleanup write is
+  invented. Overall bound 60 s (ConfigStore worst case is 6 gate operations, each
+  bounded by the gate's 4 s budget).
+- **PASS requires all of:** temp and restore verified; `Periph.connected()==1`
+  at the end and `ble_disconnect_events` unchanged since start; gate config
+  deltas `async_accepted > 0`, `completions_success == async_accepted`,
+  `completions_error == timeouts == late_completions == 0`. Expected count with
+  the current code is 6 (two saves × erase + body program + commit program; the
+  count is reported, not hard-required). A BLE disconnect fails the coexistence
+  result but never prevents the restore.
+- **Output** (no per-tick spam): one `FLASH PROBE START ...`, then one of
+  `FLASH PROBE PASS temp_verified=yes restore_verified=yes ble_connected=yes
+  ble_disconnects=0 async_accepted_delta=N completions_success_delta=N
+  errors_delta=0 timeouts_delta=0 late_delta=0` or `FLASH PROBE FAIL[ restore]
+  stage=<temp-save|temp-verify|restore-request|restore-save|restore-verify|
+  timeout|ble|async-evidence> ...` (a restore failure also prints current and
+  original config values).
+- **Physical procedure (the one remaining action).** Build/upload
+  `pio run -d firmware -e rak4630_m7p7b_flash_probe -t upload`; connect exactly
+  one BLE client (phone) and confirm `BLE?` shows `advertising=no connected=1`;
+  send `FLASH PROBE` over USB serial; record the START and PASS/FAIL lines;
+  afterwards re-flash the production `rak4630` image. Row 8 stays **PENDING**
+  until that log exists; it covers ConfigStore→gate→SoftDevice only, not
+  History or Security concurrency.
+- **Known limits.** Host tests cover the state machine only. A `restore-verify`
+  failure is a defensive check that the real ConfigStore cannot produce (its
+  `finishSave()` sets `config_` from the saved candidate), so it is not
+  host-reachable. If the 60 s bound ever fired while a save was still in flight,
+  the report prints the then-current config and flags a restore failure when it
+  differs from the original.
+
 ## 9. Physical-validation evidence
 
 **Host/build PASS is not physical PASS.** Everything in §9.1 was collected on
@@ -741,7 +812,7 @@ Results are recorded here only after they are observed.
 | 6 | Reconnect during the renewed window | **PASS on `9673f49`; RETEST REQUIRED on §8.5 build** | Phone reconnected within the renewed window; serial again `BLE ready=yes advertising=no connected=1 policy=open initial_start=ok`. |
 | 7a | LoRa TX/RX coexistence with SoftDevice active | **PENDING** | Second LoRa node not available/powered during validation. |
 | 7b | GNSS coexistence | **BLOCKED (this unit)** | Unit reports `GNSS: not detected`. Not PASS; not N/A for the product. Needs a GNSS-equipped unit. |
-| 8 | Flash mutation (History/Config/Security) concurrency with BLE active | **PENDING** | No safe runtime mutation source available in this setup. |
+| 8 | Flash mutation (History/Config/Security) concurrency with BLE active | **PENDING** | No production mutation source. A test-only ConfigStore probe exists (§8.6, `rak4630_m7p7b_flash_probe`) but has **not** been run on hardware; even a PASS covers ConfigStore→gate→SoftDevice only. |
 | 9 | Very short connect+disconnect entirely between loop polls | **PENDING (host-tested only)** | Covered by policy/startup host tests, including the direct-event path (§8.5); not physically exercised. |
 | 9b | `Advertising.start()`/`stop()` failure and retry | **PENDING (host-modelled only)** | No practical physical trigger was used. |
 | 10 | Stock bond creation/persistence via relocated `InternalFS` (M7P4) under M7P7A shared flash ownership | **PENDING — physically reachable stock bonding/`InternalFS` path not yet exercised** | Reachable: `Bluefruit.begin()` → `Security.begin()`/`bond_init()` → `InternalFS.begin()`; Just Works defaults let a peer initiate bonding (§5). The phone stayed `NOT BONDED`, so no bond was created, persisted, reloaded after reboot or removed. Not PASS, not N/A. A framework bond is **not** ORUN authorization and no ORUN pairing/provisioning UX exists. Merge gate unless the owner explicitly waives it (§11). |
