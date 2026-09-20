@@ -120,15 +120,18 @@ application owner, recipient identity, Entity Registry or authorization source.
 
 Before protected application GATT writes are enabled, the implementation milestone must:
 
-1. define exact GATT UUIDs/framing and bounded MTU/fragmentation behavior;
-2. classify which bootstrap fields, if any, are safe before application authorization;
-3. define the commissioning/authentication ceremony rather than relying on stock Just Works bonding;
-4. ensure GATT callbacks only hand off bounded work to the ORUN owner loop/task;
-5. route config operations to the existing configuration owner rather than direct flash writes;
-6. keep SecurityStore root material non-readable through generic APIs;
-7. host-test malformed length/state/disconnect/replay-like duplicate request handling;
-8. build the unchanged RAK4630 production graph and measure RAM/flash delta;
-9. physically verify GATT lifecycle with a phone only after the above contract exists.
+1. define a small transport-neutral bounded request/result seam before freezing BLE-specific business semantics; USB/host injection may be used to test that seam without making USB a second application owner;
+2. define exact GATT UUIDs/framing and bounded MTU/fragmentation behavior on top of that seam;
+3. classify which bootstrap fields, if any, are safe before application authorization;
+4. define the commissioning/authentication ceremony rather than relying on stock Just Works bonding;
+5. ensure GATT callbacks only hand off bounded work to the ORUN owner loop/task;
+6. bound per-connection request/fragment queues, define overflow/rate-limit behavior and discard incomplete fragments on disconnect;
+7. route config operations to the existing configuration owner rather than direct flash writes;
+8. keep SecurityStore root material non-readable through generic APIs;
+9. host-test malformed length/state/disconnect/duplicate/flood handling;
+10. test whether unauthenticated/Just Works pairing can exhaust the finite bond store or otherwise deny later legitimate commissioning, and ensure application authorization does not depend on bond-table presence alone;
+11. build the unchanged RAK4630 production graph and measure RAM/flash delta;
+12. physically verify GATT lifecycle with a phone only after the above contract exists.
 
 Protected secure-RF/message/command traffic remains separately gated on the reviewed secure-envelope implementation and its open CC310/Bluefruit coexistence/concurrency requirement.
 
