@@ -740,56 +740,25 @@ through one arbitrary gateway while offline would require an explicit local cros
 synchronization design and is not implemented today. See
 `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
 
-## 17. BLE application boundary, MESSAGE routing and optional user location
+## 17. BLE application boundary and later application direction
 
-M7P7B makes BLE transport available; it does not make a connected or bonded phone an
-authorized ORUN application client. Future application GATT must remain a transport
-adapter into the existing application/configuration/command owners rather than becoming
-a second business-logic or configuration system. BLE callbacks may only perform bounded
-handoff; flash, crypto, radio transitions and application execution remain owned by
-reviewed loop/task code. See `docs/milestones/M7P7C.md`.
+M7P7B makes BLE transport available; it does not make a connected or bonded phone
+an authorized ORUN application client. Future application GATT remains a transport
+adapter into existing application/configuration/command owners rather than a second
+business-logic or configuration system. BLE callbacks perform bounded handoff;
+flash, crypto, radio transitions and application execution remain owned by reviewed
+loop/task code. See `docs/milestones/M7P7C.md`.
 
-The exact commissioning ceremony is still a focused later implementation decision.
+The exact commissioning ceremony remains a later focused implementation decision.
 Connection, stock BLE bonding, device credential, user identity and application
 authorization remain separate. No generic `K_root` readback or transport-triggered
-credential export is authorized.
+credential export is authorized. Production provisioning must also define authority
+key custody/recovery and close the fresh-pairing CC310/Bluefruit coexistence gate;
+this does not pre-decide that a backend stores raw `K_root`.
 
-Future MESSAGE is transport-independent application traffic. A stable logical
-`message_id` survives retry/fallback across Internet, BLE, gateway custody and LoRa.
-The owner-approved delivery preference is:
-
-1. if the recipient ORUN app has a current authenticated backend reachability/session
-   indication, deliver through the Internet path and do not transmit the same message
-   over LoRa in parallel;
-2. otherwise, if a current ORUN/LoRa path exists, use gateway/LoRa delivery;
-3. otherwise retain the message under bounded store-and-forward policy until a path
-   appears or TTL/expiry ends it.
-
-Internet reachability is based on an authenticated ORUN app/backend session, check-in or
-bounded lease, not on a phone Wi-Fi/mobile-data icon. The exact Android presence mechanism
-is later M8 work.
-
-`TX_DONE`, backend custody and gateway custody are not delivery. MESSAGE reaches
-`DELIVERED` only after authenticated acceptance/receipt by the recipient endpoint.
-MESSAGE v1 does not require a read receipt. Private message content keeps end-to-end
-protection; gateway/relay infrastructure remains opaque transport/custody by default.
-LoRa messaging must remain bounded and must not starve safety-critical events, critical
-command results or current tracking.
-
-Optional person/user location sharing is opt-in application data. It is separate from
-device identity and from a tracker hardware/location-source decision. Freshness/age and
-authorization are explicit; stale last-known location must not be presented as live.
-Future Android may show people, animals, vehicles, gateways, actuators/valves and sensors
-on one map, but that map entity/category is UI/application metadata and must not be encoded
-as the legacy firmware Role enum. Route/history, actuator-operation history and sensor
-time-series belong to detail views rather than permanent map clutter.
-
-The canonical real-world entity binding belongs to a backend/application **Entity Registry**,
-not to device firmware. Device firmware owns technical identity, capabilities, enabled
-services, health and observations; the Entity Registry owns display name, category,
-real-world subject binding, permissions and UI metadata. Authorized phones/gateways may
-cache that registry for offline local operation. Device-to-entity bindings must be
-time-aware/versioned so moving one physical tracker from one animal/object to another does
-not rewrite historical attribution. UI metadata such as "cow", display name or emoji must
-not be repeated in LoRa packets merely for presentation.
+Future Entity Registry, optional person-location, shared-map and MESSAGE
+routing/delivery/offline-sync decisions are application architecture rather than BLE
+milestone invariants. Their current owner-approved direction is recorded in
+`ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`. That record is documentation-only and
+does not claim backend, Android, MESSAGE, secure-RF or offline-sync runtime exists.
 
