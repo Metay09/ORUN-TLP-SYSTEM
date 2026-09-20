@@ -725,3 +725,13 @@ may be sensitive, so BLE connection/bonding alone must not imply authorization.
 Normal application UI should show useful health/coverage outcomes; detailed user/account
 permissions remain backend-owned, and the app should hide unauthorized controls. Device
 firmware still independently verifies cryptographic authority for protected operations.
+
+Internet backhaul is not a prerequisite for on-site location visibility. When an
+authorized user is physically at the site, a compatible ORUN gateway should eventually
+serve its locally available/cached accepted location observations over an implemented
+local transport such as BLE or wired/USB, without requiring cloud reachability. This does
+not make the gateway a security authority or give it tracker root keys. "Any gateway"
+means any compatible gateway that actually holds or can locally reach the requested
+observations; complete-farm visibility through one arbitrary gateway while offline would
+require an explicit local cross-gateway synchronization design and is not implemented
+today. See `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
