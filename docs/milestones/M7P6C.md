@@ -1,6 +1,6 @@
 # M7P6C — CryptoCell secure-envelope primitive proof
 
-Status: **HARDWARE CRYPTO KAT PASS; PRODUCTION REBUILD / HOST SUITE / FINAL REVIEW PENDING.**
+Status: **INITIAL HARDWARE KAT PASS; INDEPENDENT-AUDIT HARDENING IMPLEMENTED; EXPANDED HARDWARE RERUN PENDING.**
 
 Baseline: `main@1bd7e8fa0649caa1d1bbce901367ef6a81498e29`
 (M6P2 merged via PR #26).
@@ -241,8 +241,10 @@ it must not consume plaintext from a failed call. A future crypto-library
 upgrade must rerun these vectors rather than inheriting this compatibility
 exception silently.
 
-The final hardware rerun is still required so the updated acceptance criterion
-itself produces the expected PASS line before this slice closes.
+That initial narrow hardware KAT produced PASS, but the independent review
+subsequently expanded the required negative matrix and repeated-forgery stress
+coverage. Therefore the earlier PASS remains valid evidence for the exact
+vectors it exercised, but it is no longer sufficient by itself to close M7P6C.
 
 
 Owner rebuilt and uploaded the final acceptance image on 2026-09-20:
@@ -274,7 +276,54 @@ primitive path and these published vectors. It does not validate an ORUN secure
 RF envelope, production key ownership, replay handling, provisioning,
 BLE/CryptoCell concurrency, RF interoperability or battery behavior.
 
-## 8. Validation sequence
+## 8. Independent audit disposition
+
+An independent review supplied by the owner found no BLOCKER/HIGH issue, but
+identified two MEDIUM test-coverage gaps that are accepted for this milestone:
+
+1. the negative authenticated-decrypt proof mutated only one bit of tag byte 0;
+2. only one forged decrypt followed by one clean recovery had been exercised.
+
+The probe now closes both without changing production firmware:
+
+- all 8 authentication-tag bytes are bit-flipped individually;
+- ciphertext first byte and last byte are mutated separately;
+- one AAD byte, the final nonce byte and one AES key byte are mutated;
+- every one of those 13 well-formed mutations must return only the dedicated
+  CCM MAC-invalid code or the exact pinned-library `CRYS_FATAL_ERROR`
+  compatibility result;
+- after every matrix rejection, a restored valid vector must immediately
+  return `CRYS_OK` and exact plaintext;
+- a further 1000 forged/valid alternating loop exercises repeated hostile
+  input and requires every forged call to reject and every following valid
+  call to recover exactly;
+- successful `CRYS_AESCCM_Finish` must report the same tag size requested at
+  initialization.
+
+The review's LOW documentation/ownership findings are also accepted:
+
+- `CRYS_FATAL_ERROR` is **not** a general authentication-failure code for
+  future production logic; its compatibility treatment is limited to the
+  physically observed pinned `nrf_cc310_0.9.13-no-interrupts`
+  authenticated-decrypt path;
+- a future production wrapper must distinguish successful authentication,
+  authentication rejection and crypto-engine/argument failure rather than
+  spreading the raw compatibility exception through application code;
+- plaintext from any non-`CRYS_OK` authenticated decrypt must never be
+  consumed and should be cleared at the production wrapper boundary;
+- the isolated probe's `nRFCrypto.end()` is test-image cleanup only and must
+  not be copied into production ownership because Bluefruit also initializes
+  the global CryptoCell library;
+- production CryptoCell serialization/coexistence with Bluefruit/SoftDevice
+  remains a later secure-envelope gate. This isolated probe does not prove it.
+
+The reviewer independently reported the normal host suite (including
+golden/compatibility tests) at rc=0 and a normal `rak4630` build at
+22,084 B RAM / 225,500 B flash. These are reviewer-reported software results,
+not hardware evidence, and the expanded probe changes after that review still
+require the normal final validation sequence below.
+
+## 9. Validation sequence
 
 Before this slice can close:
 
@@ -293,7 +342,7 @@ specific standards vectors. It does **not** prove the future ORUN secure
 envelope, key lifecycle, provisioning, replay policy, RF interoperability or
 battery impact.
 
-## 9. Next gate after M7P6C
+## 10. Next gate after M7P6C
 
 Only after this primitive proof passes should the project freeze the first ORUN
 secure-envelope specification. That later slice must explicitly decide:
