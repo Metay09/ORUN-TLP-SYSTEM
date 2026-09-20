@@ -1,6 +1,6 @@
 # M7P6D — Secure-envelope pre-wire security contract
 
-Status: **DRAFT FOR OWNER / INDEPENDENT SECURITY REVIEW. NO PRODUCTION RUNTIME OR WIRE CHANGE.**
+Status: **INDEPENDENTLY REVIEWED CANDIDATE CONTRACT; REVIEW CORRECTIONS APPLIED. NO PRODUCTION RUNTIME OR WIRE CHANGE.**
 
 Baseline: `main@dca843856cd99ce129758c64379b0e0356617834` (M7P6C merged via PR #27).
 
@@ -12,8 +12,10 @@ M7P6C proved the pinned RAK4630/RAK4631 CryptoCell path for RFC5869
 HKDF-SHA256 and RFC3610 AES-128-CCM, including the bounded negative-input and
 recovery probes recorded in `docs/milestones/M7P6C.md`.
 
-M7P6D is the next design gate. It freezes only the security ownership rules
-needed before secure-envelope wire bytes are designed:
+M7P6D is the next design gate. It records a **candidate contract** for the
+security ownership rules needed before secure-envelope wire bytes are designed.
+These exact KDF/nonce choices are not implementation-frozen until their ORUN-specific
+host vectors, RAK KAT and Bluefruit/SoftDevice coexistence gate pass:
 
 1. traffic-key direction separation;
 2. nonce construction and TX-counter ownership;
@@ -45,7 +47,7 @@ custody/forwarding infrastructure.
 
 ## 3. Traffic-key derivation contract
 
-M7P6D freezes the following KDF shape for the first secure-envelope generation:
+M7P6D records the following candidate KDF shape for the first secure-envelope generation:
 
 ```text
 IKM  = K_root                       // 32 bytes
@@ -70,13 +72,25 @@ Consequences:
   identity still belongs in the later authenticated envelope/AAD, but keeping it
   out of this KDF avoids prematurely freezing the future v2 on-air identity
   namespace to the current legacy uint64 representation.
+- A receiver must resolve the security credential from an already trusted
+  credential/device association, not trust an unauthenticated on-air identity
+  claim. Any future on-air origin/destination identity that affects routing,
+  dispatch or authorization must be authenticated as AAD and checked against
+  the credential binding after AEAD success.
 - No fleet/group authority key is introduced.
 - No telemetry/command/message sub-key tree is invented yet. Additional purpose
   separation requires an actual later use case and a new explicit label.
+- The KDF label is a compatibility identifier. Changing AEAD algorithm, traffic
+  key length, authentication-tag length, nonce construction or another
+  cryptographically material usage contract requires a new registered label;
+  a later implementation must keep one explicit label registry rather than
+  invent labels at call sites.
 
 The exact ORUN-specific derivation above requires an independent host vector and
-a RAK4630 KAT before production secure-envelope use. M7P6C proved the primitive,
-not these exact ORUN bytes.
+a RAK4630 KAT before production secure-envelope use. The same pre-wire vector
+set must also cover the chosen ORUN CCM nonce/AAD construction and representative
+payload lengths, including a zero-length protected payload if that form is
+allowed. M7P6C proved the primitives, not these exact ORUN bytes.
 
 ### Standards basis
 
@@ -89,7 +103,7 @@ exercised by M7P6C.
 
 ## 4. AES-CCM nonce contract
 
-For the current AES-128-CCM direction, M7P6D freezes a **13-byte nonce**:
+For the current AES-128-CCM direction, M7P6D records the following candidate **13-byte nonce**:
 
 ```text
 nonce[0..3]   = key_epoch_be32
@@ -117,18 +131,38 @@ Counter rules:
   counter source;
 - A2D needs a separate durable authority-side per-device counter; a gateway must
   not invent, rewrite or reserve it;
+- for each `(credential_id, key_epoch, A2D)` security context there is exactly
+  **one active cryptographic sender/authority owner**. A standby backend or
+  site-local endpoint that possesses the same root may not independently issue
+  A2D counters;
+- the authority-side A2D counter must use reserve-ahead durability before any
+  protected frame is encrypted: persist an absolute future bound, wait for
+  durable completion, verify it by readback, and only then issue counters below
+  that bound. Recovery skips unused reserved counters and must never resume
+  below the highest durable bound;
+- backend/database restore, failover or other rollback must not roll the A2D
+  counter backward. If the highest safe bound is uncertain, protected A2D
+  transmission fails closed until a new credential lifetime/root is established;
+- a security counter is allocated at final encryption/TX admission, not when a
+  logical application/history item merely enters a queue;
 - a counter issued and then abandoned because encryption/send fails is burned,
   never returned to the pool;
 - a retransmission of one already-created secure frame may retransmit the exact
   same bytes; it must not re-encrypt changed AAD/payload under the old
   counter/nonce;
-- any changed authenticated content requires a fresh TX counter;
+- any changed authenticated content requires a fresh TX counter. A logical
+  History/application record that is encrypted again after its prior secure
+  frame is discarded therefore receives a fresh counter;
 - rollover is forbidden. Counter exhaustion fails closed.
 
 The later wire specification must carry or unambiguously supply
 `key_epoch` and `tx_counter` so the receiver can reconstruct the nonce. It
 must not derive a nonce from legacy TLP v1 sequence numbers, boot time, wall
-clock, RSSI/SNR or relay metadata.
+clock, RSSI/SNR or relay metadata. The first wire proposal should prefer the
+full 64-bit counter. Any truncation/reconstruction scheme needs a separate
+review, may derive at most one nonce candidate per received frame from already
+authenticated replay state, and must not let unauthenticated traffic fan out
+into multiple AEAD attempts.
 
 ## 5. Replay contract
 
@@ -152,11 +186,19 @@ bounded structural parse
 Rules:
 
 - unauthenticated input never advances replay state;
-- replay state is scoped by credential lifetime, key epoch and direction;
+- replay state is scoped by credential lifetime, current accepted key epoch and
+  direction, but changing epoch must never make a retired epoch acceptable again;
 - a failed AEAD result never exposes plaintext to the application;
 - a replayed authenticated frame is not application-delivered again;
 - RF/path observations may still record that a duplicate copy was heard, without
-  treating it as a new trusted application event.
+  treating it as a new trusted application event;
+- the receiver accepts only its current key epoch unless a later explicitly
+  designed rotation/grace protocol says otherwise. Retired epochs remain retired
+  and their replay state is never reset in a way that makes old authenticated
+  frames acceptable again;
+- incrementing `key_epoch` while retaining the same `K_root` provides traffic
+  key/nonce domain rotation, **not compromise recovery**. Compromise recovery
+  requires a new secret credential lifetime.
 
 ### 5.2 D2A receiver: trusted authority/backend
 
@@ -180,16 +222,27 @@ Within that window:
 The first device-side downlink contract is intentionally simpler:
 
 - one trusted authority serializes distinct protected downlinks per device;
+- while one distinct A2D frame is outstanding, the authority does not advance to
+  a later distinct frame for that device. Byte-identical transport
+  retransmissions of the outstanding frame are allowed. After an attempt is
+  abandoned/expired, a new logical retry uses a fresh security counter; a later
+  command layer reuses the same `command_id` so application idempotency is
+  independent of transport replay;
 - the device accepts only a counter strictly greater than its durable A2D replay
   high-water mark;
 - duplicate/older counters are rejected after authentication;
 - the accepted high-water mark must be durably committed **before** a protected
-  application action is dispatched;
+  application action is dispatched. The persistence slice must use explicit
+  commit-last/readback-verified power-cut semantics; ambiguous recovery must
+  never lower the HWM and instead disables protected A2D reception fail-closed;
 - if durable replay-state update fails, the protected downlink fails closed.
 
 This trades tolerance for arbitrary downlink reordering for simple,
-power-cut-safe device behavior. The authority can retry with a fresh secure
-frame/counter when appropriate.
+power-cut-safe device behavior. It also means replay protection alone provides
+**no freshness guarantee**: an authenticated frame that was delayed and never
+previously accepted can still be valid later. Trusted ACK/contact and command
+families therefore need their own expiry/freshness or challenge semantics in
+their later application milestone.
 
 A power cut after replay-state commit but before application execution can leave
 an authenticated command accepted but not executed. That is **not** solved by
@@ -198,7 +251,12 @@ result/idempotency semantics and explicit accepted/executed/failed states.
 
 M7P6D does not implement the device A2D replay record. SecurityStore v1 has no
 RX replay field; adding it requires a separately reviewed persistence-format
-slice rather than silently consuming ConfigStore/History/BLE-bond storage.
+slice rather than silently consuming ConfigStore/History/BLE-bond storage. That
+slice must include M7P6B-style power-cut fault injection and a flash-wear/admission
+budget for authenticated A2D commits. Unauthenticated traffic must never cause
+flash wear. Service procedures must also treat restoration of an older raw
+security-partition image as security rollback requiring re-provisioning rather
+than silently resuming protected traffic.
 
 ## 6. CryptoCell / Bluefruit ownership contract
 
@@ -207,10 +265,15 @@ framework, Bluefruit security initializes the global `nRFCrypto`/CC310
 facility. M7P6C intentionally ran in an isolated image and therefore did not
 prove shared production use.
 
-M7P6D freezes these ownership rules:
+M7P6D records these candidate ownership rules:
 
 1. **Global lifecycle is platform/composition-owned.**
-   Production secure-envelope code must not call `nRFCrypto.end()`.
+   Production secure-envelope code must not call `nRFCrypto.end()`. The pinned
+   Adafruit `nRFCrypto.begin()` sets its internal begun flag before all
+   initialization succeeds, so secure-feature readiness must not be inferred
+   solely from a later `begin()==true`. Before secure RF is enabled, the
+   composition root must perform one controlled initialization/readiness check
+   and a small known-answer canary; failure keeps protected features disabled.
 2. **No crypto from ISR/radio/BLE callbacks.**
    ORUN AEAD/KDF work is requested from callbacks only by bounded data/event
    handoff and executes from the cooperative/main execution owner.
@@ -218,7 +281,9 @@ M7P6D freezes these ownership rules:
    Do not introduce parallel ORUN AES/HKDF jobs.
 4. **Bluefruit remains an independent framework user of CC310.**
    An ORUN-only mutex does not prove serialization with Bluefruit's internal
-   LESC/security operations.
+   LESC/security operations. Adafruit's random provider also has shared global
+   state; future ORUN RNG/provisioning use must be included in the same ownership
+   review rather than assumed independent.
 5. **Production secure RF is blocked on a coexistence proof.**
    Before ORUN uses CC310 in its normal packet path, a focused RAK4630 test must
    exercise the selected ORUN AES-CCM/HKDF path with Bluefruit/SoftDevice active,
@@ -228,7 +293,10 @@ M7P6D freezes these ownership rules:
    or a different reviewed crypto backend.
 
 M7P6C's test-only `nRFCrypto.begin()/end()` lifecycle is not a production
-template.
+template. The production backend must also satisfy the pinned CC310 DMA/input
+requirements: validate lengths/pointers/overlap before the hardware call and
+copy flash-resident nonce/AAD/KDF-info constants into suitable RAM buffers when
+the API requires DMA-capable memory.
 
 ## 7. Error classification contract
 
@@ -250,11 +318,16 @@ EngineFailure
 ```
 
 The M7P6C `CRYS_FATAL_ERROR` compatibility behavior may be handled only inside
-that pinned backend and only for the proven authenticated-decrypt path. A
-`CRYS_FATAL_ERROR` from initialization, KDF, encryption, argument validation or
-another operation is not an authentication rejection.
+that exact pinned backend and only for the proven Finish/decrypt path **after**
+the wrapper has validated lengths, pointers, buffer overlap and other local
+preconditions. A `CRYS_FATAL_ERROR` from initialization, KDF, encryption,
+argument validation or another operation is an `EngineFailure`, not an
+authentication rejection. A version-pinned startup/CI canary must confirm the
+known bad-tag result class and immediate valid-decrypt recovery before protected
+traffic is enabled.
 
-Any non-success authenticated decrypt result produces no consumable plaintext.
+Any non-success authenticated decrypt result produces no consumable plaintext;
+the production wrapper clears its output buffer before returning failure.
 
 ## 8. What remains deliberately unfrozen
 
@@ -297,18 +370,29 @@ No physical behavior is claimed by this documentation slice.
 
 ## 10. Validation / review gate
 
-Before M7P6D can be treated as the basis for code:
+Independent review found no BLOCKER and identified one HIGH plus two MEDIUM
+pre-wire documentation gaps. This revision closes them by defining
+authority-side reserve-ahead/rollback safety and single-sender ownership,
+downgrading exact KDF/nonce wording to a candidate contract, and defining
+current/retired epoch acceptance. It also incorporates the review's bounded
+clarifications for identity/AAD binding, replay persistence, freshness,
+serialization, counter allocation timing, counter truncation, KDF label
+versioning, ORUN-specific vectors and CryptoCell readiness/error handling.
 
-- independent security review of KDF input/domain separation;
-- independent review of nonce uniqueness across credential/epoch/direction/reset;
-- replay/power-cut review, especially commit-before-dispatch semantics;
-- review of opaque-gateway compatibility;
-- review of Bluefruit/CC310 shared-lifecycle assumptions against the pinned
-  framework;
-- verify that no statement accidentally upgrades a gateway into key authority;
-- verify that no TLP v1 or current persistence behavior is reinterpreted.
+No build or physical test is claimed for M7P6D because this slice changes only
+documentation.
 
-After approval, the next code-bearing slice should be the **CryptoCell +
+Before code consumes this candidate contract, remaining gates are:
+
+- independent ORUN-specific host vectors for the candidate KDF + CCM inputs;
+- matching RAK4630/RAK4631 KAT for those exact bytes;
+- focused Bluefruit/SoftDevice/CC310 coexistence hardware proof;
+- separately reviewed A2D replay-persistence implementation with power-cut
+  fault injection and wear analysis;
+- authority/backend A2D reserve-ahead crash/restore tests when that component
+  exists.
+
+After those gates, the next code-bearing slice should be the **CryptoCell +
 Bluefruit/SoftDevice coexistence proof**, followed by the smallest required
 device-side replay-persistence slice. Full v2 wire bytes should not be
 implemented until those gates are closed.
