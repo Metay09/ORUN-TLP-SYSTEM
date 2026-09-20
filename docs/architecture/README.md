@@ -37,11 +37,17 @@ evidence passed. The stronger fresh-pairing LESC stress was owner-waived and is
 remains open. See `docs/milestones/M7P6E.md`.
 
 In-flight M7P7C application-boundary design on `docs/m7p7c-ble-application-contract`:
-`docs/milestones/M7P7C.md` records the design-only BLE application/commissioning
-boundary plus owner-approved future MESSAGE routing/delivery and optional user-location
-constraints. It adds no GATT service, provisioning path, secure-RF bytes, MESSAGE runtime
+`docs/milestones/M7P7C.md` records only the design-level BLE application/commissioning
+boundary. It adds no GATT service, provisioning path, secure-RF bytes, MESSAGE runtime
 or Android/backend code. Exact GATT framing and the commissioning ceremony remain later
 implementation gates.
+
+Owner-approved later application direction is recorded separately in
+`ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`: Entity Registry ownership/offline conflict
+principles, person-location privacy, concise shared-map semantics, MESSAGE recipient/
+DELIVERED semantics, Internet-first/LoRa-fallback/store-forward direction, presence
+semantics and LoRa MESSAGE prerequisites. It is documentation-only and must not be read
+as evidence that those runtimes exist.
 
 This directory contains current owner-approved rules plus historical/proposed
 architecture audits. They are not equal sources of truth. This index tells a new
@@ -167,6 +173,13 @@ failure model and staged-gate reasoning. Older wording that treats END_NODE/RELA
 as a permanent mutually exclusive product type is superseded by independent relay
 forwarding enablement. Animal tracker relay-OFF is a default, not a permanent
 architecture prohibition.
+
+Its application/UI wording is also superseded where the newer application-direction
+record differs: MESSAGE v1 no longer requests a human read receipt; map
+animal/person/vehicle category/icon is Entity Registry metadata rather than a firmware
+identity; and real-world assignment history follows the current Entity Registry/binding
+direction. Keep the historical file unchanged rather than rewriting it to look as if it
+originally made those later decisions.
 
 Likewise, one-hop is frozen **for TLP v1**, not as a permanent future product
 limit. No multi-hop design is currently approved.
