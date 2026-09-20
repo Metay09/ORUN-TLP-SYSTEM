@@ -129,6 +129,30 @@ The application may render animals, people, vehicles, gateways, actuators/valves
 
 The normal map remains concise. Route/history, actuator operation history and sensor time-series belong to entity detail views rather than permanent map overlays. Exact Android UI is M8 scope.
 
+### 7.1 Entity ownership / real-world binding
+
+The device is not the canonical owner of what real-world thing it represents.
+
+Future product ownership is:
+
+```text
+Device
+  = technical identity, capabilities, enabled services, health and observations
+
+Entity Registry
+  = real-world binding, display name, category, permissions and UI metadata
+```
+
+The backend is the canonical owner of the Entity Registry. Authorized phones/gateways keep a bounded offline cache so local maps remain meaningful without Internet.
+
+Examples of entity categories include ANIMAL, PERSON, VEHICLE, GATEWAY, ACTUATOR/VALVE and SENSOR. These categories are application/UI metadata and must not be encoded into the legacy firmware Role enum.
+
+A physical ORUN device may be rebound to a different real-world entity over its lifetime. That binding must therefore be versioned/time-aware so historical observations remain attributed to the entity that owned the device at the observation time.
+
+A device should report technical facts it truly owns (for example, actuation capability or a temperature sensor capability), but should not repeatedly transmit UI metadata such as "cow", display name or emoji over LoRa.
+
+Person/user location remains user/application data and does not require a dedicated ORUN hardware device.
+
 ## 8. What the first implementation slice must prove
 
 Before protected application GATT writes are enabled, the implementation milestone must:
