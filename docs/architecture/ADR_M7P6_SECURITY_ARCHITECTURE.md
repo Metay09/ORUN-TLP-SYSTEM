@@ -403,7 +403,7 @@ The durable foundation is implemented at
 It does **not** introduce secure RF packets. Real SoftDevice-enabled async security flash,
 electrical power-cut and production credential provisioning remain physically unvalidated.
 
-### M7P6C — pinned CryptoCell primitive proof — IN REVIEW
+### M7P6C — pinned CryptoCell primitive proof — VALIDATED
 
 This bounded test-only slice validates the candidate HKDF-SHA256 and
 AES-128-CCM primitives against published vectors on the RAK4630/RAK4631
@@ -419,9 +419,10 @@ production code to classify arbitrary `CRYS_FATAL_ERROR` as authentication
 failure.
 
 Independent review required broader negative-input and repeated-forgery
-hardware coverage before closing the slice; that expanded rerun remains
-pending. The probe is isolated and does not change TLP v1 or production packet
-paths.
+coverage before closing the slice. The expanded hardware image passed its
+aggregate gate, which requires all 13 authenticated-input mutation cases and
+all 1000 forged/valid recovery iterations to complete successfully. The probe
+remains isolated and does not change TLP v1 or production packet paths.
 
 A later production secure-envelope implementation must also resolve shared
 CryptoCell ownership with Bluefruit/SoftDevice. Bluefruit initializes the same
