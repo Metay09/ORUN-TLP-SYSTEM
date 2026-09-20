@@ -784,3 +784,12 @@ on one map, but that map entity/category is UI/application metadata and must not
 as the legacy firmware Role enum. Route/history, actuator-operation history and sensor
 time-series belong to detail views rather than permanent map clutter.
 
+The canonical real-world entity binding belongs to a backend/application **Entity Registry**,
+not to device firmware. Device firmware owns technical identity, capabilities, enabled
+services, health and observations; the Entity Registry owns display name, category,
+real-world subject binding, permissions and UI metadata. Authorized phones/gateways may
+cache that registry for offline local operation. Device-to-entity bindings must be
+time-aware/versioned so moving one physical tracker from one animal/object to another does
+not rewrite historical attribution. UI metadata such as "cow", display name or emoji must
+not be repeated in LoRa packets merely for presentation.
+
