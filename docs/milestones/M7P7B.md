@@ -789,10 +789,13 @@ failure); BLOCKED = cannot be performed on this physical unit as configured
 (not PASS, not N/A for the product); N/A = genuinely not applicable to this
 slice (a reachable-but-untested path is PENDING, never N/A).
 
-**Full physical validation is not complete:** quantitative current/power is not
-measured; GNSS coexistence is blocked on this unit; the deliberately
-between-loop-polls lifecycle timing and injected advertising start/stop failures
-remain host-only.
+**M7P7B merge evidence is complete with explicit owner dispositions, not with
+universal physical PASS.** Quantitative current/power remains unmeasured and is
+deferred because no measurement equipment is available. GNSS coexistence remains
+blocked on this unit (`GNSS: not detected`) and is owner-waived for this
+milestone merge only; it must be re-verified later on a GNSS-equipped unit.
+The deliberately between-loop-polls lifecycle timing and injected advertising
+start/stop failures remain host-only and are accepted as such for M7P7B.
 
 ### 9.0 Current production-path evidence
 
@@ -842,12 +845,12 @@ remain host-only.
 | 5 | BLE closes after a full window with no client | **PASS** | Current logs include `BLE closed; no client connected within window`. |
 | 6 | Reconnect during the renewed window | **PASS on §8.5 path** | Reconnect gave `advertising=no connected=1 policy=open`. |
 | 7a | LoRa TX/RX coexistence with SoftDevice/BLE active | **PASS (scoped)** | Direct RX was observed with BLE runtime active; with a BLE client connected, real RELAY RX/QUEUE/TX/TX_DONE was observed. Local TX completion is not end-to-end delivery. |
-| 7b | GNSS coexistence | **BLOCKED (this unit)** | Unit reports `GNSS: not detected`. Needs a GNSS-equipped unit or explicit owner waiver; not PASS/N/A. |
+| 7b | GNSS coexistence | **BLOCKED (this unit); OWNER-WAIVED FOR M7P7B MERGE** | Unit reports `GNSS: not detected`. Not PASS/N/A. Physical re-validation remains required on a GNSS-equipped unit; this missing evidence no longer blocks this milestone merge by explicit owner decision. |
 | 8 | Flash mutation concurrency with BLE active | **PASS for ConfigStore/shared gate path; History/Security not separately exercised** | §8.6 physical probe: temp+restore verified, BLE stayed connected, 6 accepted / 6 successful async completions, 0 errors/timeouts/late completions/disconnects. |
-| 9 | Very short connect+disconnect entirely between loop polls | **PENDING (host-tested only)** | Direct-event policy/startup tests cover this timing; phone testing cannot prove the loop phase. |
-| 9b | `Advertising.start()`/`stop()` failure and retry | **PENDING (host-modelled only)** | No practical physical fault injection used. |
+| 9 | Very short connect+disconnect entirely between loop polls | **HOST-ONLY ACCEPTED FOR M7P7B** | Direct-event policy/startup tests cover this timing; phone testing cannot prove the loop phase. Not physical PASS. |
+| 9b | `Advertising.start()`/`stop()` failure and retry | **HOST-ONLY ACCEPTED FOR M7P7B** | No practical physical fault injection used; retry/race behavior is host-modelled and mutation-tested. Not physical PASS. |
 | 10 | Stock bond creation/persistence via relocated `InternalFS` | **PASS (scoped)** | Bond created, full power-cycle performed, phone remained BONDED and reconnected without a new pairing prompt. Framework bond ≠ ORUN authorization. |
-| 11 | Current/power measurement (advertising / connected / closed) | **PENDING** | Quantitative current was not measured. A power-bank endurance observation is not a calibrated current measurement. |
+| 11 | Current/power measurement (advertising / connected / closed) | **DEFERRED — OWNER ACCEPTED NON-BLOCKER** | No current-measurement equipment is available. Quantitative current is not measured; the power-bank endurance observation is not a calibrated current measurement and is not recorded as PASS. |
 
 No checklist row is N/A. The remaining physical unknowns are explicit rather
 than converted into software/build claims.
@@ -895,14 +898,14 @@ Recorded, not hidden:
   exercised only to validate persistence/reload (§9); it is neither an ORUN
   ownership/authorization mechanism nor a designed product provisioning UX.
 
-## 11. Remaining merge gates (PR #22 stays draft; do not merge)
+## 11. Merge disposition
 
 `AGENTS.md` requires that anything still needing physical hardware testing be
-identified and that compilation success is not physical proof. The current
-classification below reflects the now-collected hardware evidence; any waiver
-remains an owner decision.
+identified and that compilation/build success not be presented as physical proof.
+This section records the explicit owner disposition for the remaining evidence
+gaps; it does not convert any deferred or blocked item into PASS.
 
-**Physical gates closed by current evidence:**
+**Physical gates closed by real evidence:**
 
 - §8.5 post-disconnect lifecycle: disconnect → loop-owned advertising restart →
   fresh window → reconnect — **PASS**.
@@ -915,23 +918,20 @@ remains an owner decision.
   **PASS** (§8.6). HistoryStore/SecurityStore client-specific mutation paths are
   not separately claimed as physically exercised.
 
-**Required physical gate still open:**
+**Explicit owner dispositions for evidence that cannot currently be produced:**
 
-- Quantitative current/power measurement in advertising / connected / closed
-  states (row 11). SoftDevice stays resident after `Bluefruit.begin()` (§2.1),
-  so a power-bank LED/endurance observation is not a calibrated current
-  measurement.
-
-**Blocked on current hardware:**
-
-- GNSS coexistence (row 7b) — this unit reports `GNSS: not detected`. Neither
-  PASS nor N/A for the product; needs a GNSS-equipped unit or an explicit owner
-  waiver.
-
-**Host-only (no practical physical trigger used; owner may accept as such):**
-
-- Very short connect+disconnect entirely between loop polls (row 9).
-- `Advertising.start()`/`stop()` failure/retry (row 9b).
+- Quantitative current/power measurement is **DEFERRED** because no measurement
+  equipment is available. It is **not PASS**, but it is accepted as a
+  non-blocker for M7P7B. Future power work must still measure advertising,
+  connected and post-close states on hardware.
+- GNSS coexistence remains **BLOCKED on this unit** because it reports
+  `GNSS: not detected`. The owner explicitly waives this as an M7P7B merge
+  blocker only. It remains an open physical-validation obligation for a
+  GNSS-equipped unit and must not be described as PASS or N/A.
+- Very short connect+disconnect entirely between loop polls and injected
+  `Advertising.start()`/`stop()` failure/retry remain **host-only**. Their
+  current deterministic/mutation-tested host coverage is accepted for this
+  milestone; no physical PASS is claimed.
 
 **Deferred / out of scope for M7P7B:**
 
@@ -939,6 +939,7 @@ remains an owner decision.
   LoRa `OPEN_BLE`, DFU/M7P8, secure envelope, multi-client BLE, role-aware BLE
   policy, stalled-session watchdog (§10).
 
-PR #22 remains **draft / not merged** until the remaining power/GNSS disposition
-and final independent audit are explicitly reviewed.
+The final static audit at `69bfd005` found no new blocking firmware correctness
+defect. The subsequent owner-disposition commit is documentation-only. With the
+power and GNSS decisions above, **no known M7P7B-specific merge blocker remains**.
 

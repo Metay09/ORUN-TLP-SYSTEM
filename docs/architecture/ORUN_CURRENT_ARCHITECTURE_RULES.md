@@ -388,11 +388,15 @@ connected (6/6 accepted completions, zero errors/timeouts/late completions/
 disconnects, temporary config verified and exact original restored). That flash
 probe physically validates the shared ConfigStore/gate/event-bridge path but does
 not separately claim HistoryStore or SecurityStore client-specific mutation; LoRa
-`TX_DONE` remains local radio completion, not delivery. Quantitative current/power
-is still unmeasured; GNSS coexistence is blocked on the test unit
-(`GNSS: not detected`); the deliberately between-loop-polls lifecycle timing and
-advertising start/stop failure injection remain host-only. Secure envelope,
-provisioning, application GATT, DFU and LoRa `OPEN_BLE` remain later work.
+`TX_DONE` remains local radio completion, not delivery. Quantitative current/power remains unmeasured and is explicitly
+**deferred, not PASS**, because no measurement equipment is available; the owner
+accepts that gap as non-blocking for M7P7B. GNSS coexistence remains **blocked on
+this unit** (`GNSS: not detected`) and is owner-waived as a blocker for this
+milestone merge only; later physical verification on a GNSS-equipped unit is
+still required. The deliberately between-loop-polls lifecycle timing and
+advertising start/stop failure injection remain host-only and are not physical
+PASS. Secure envelope, provisioning, application GATT, DFU and LoRa `OPEN_BLE`
+remain later work.
 
 M6 activity/geofence helpers allocate no durable state and do not reuse the
 position journal. Future activity history, polygon configuration, FREE_GRAZE
