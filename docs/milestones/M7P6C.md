@@ -1,6 +1,6 @@
 # M7P6C — CryptoCell secure-envelope primitive proof
 
-Status: **IMPLEMENTATION PREPARED; TARGET BUILD / HARDWARE KAT PENDING.**
+Status: **TARGET BUILD PASS; HARDWARE KAT PENDING.**
 
 Baseline: `main@1bd7e8fa0649caa1d1bbce901367ef6a81498e29`
 (M6P2 merged via PR #26).
@@ -142,6 +142,18 @@ This is a test-target composition failure, not evidence that HKDF/AES-CCM or
 CryptoCell failed. The target is now isolated from production radio/GNSS
 libraries and production patch scripts, matching the existing M7P7A synthetic
 build-target discipline. Production `rak4630` composition is unchanged.
+
+
+Owner rerun after the isolation fix on 2026-09-20:
+
+- `pio run -d firmware -e rak4630_m7p6c_crypto_probe`: **SUCCESS**;
+- dependency graph reduced to framework-bundled Adafruit TinyUSB +
+  Adafruit nRFCrypto for this synthetic target;
+- RAM: **9,012 / 248,832 bytes (3.6%)**;
+- Flash: **70,360 / 815,104 bytes (8.6%)**;
+- no new compiler warning was visible in the supplied successful build output;
+- this proves compile/link availability only. The HKDF/AES-CCM known-answer
+  functions have not yet executed on hardware.
 
 ## 8. Validation sequence
 
