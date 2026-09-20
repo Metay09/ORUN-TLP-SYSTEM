@@ -15,13 +15,19 @@ left one production blocker explicit: Bluefruit already initializes and uses the
 same global `nRFCrypto` / CC310 facility, including LESC pairing work from a
 different FreeRTOS task.
 
-M7P6E is the smallest code-bearing slice that answers:
+M7P6E is the smallest code-bearing slice designed to probe:
 
-> Can the exact candidate ORUN HKDF/AES-CCM operation run repeatedly in the
-> real production source graph while SoftDevice/Bluefruit is active, including
-> an observed LESC pairing event, without crypto failure or BLE disconnect?
+> Can the exact candidate ORUN HKDF/AES-CCM operation run in the real production
+> source graph after SoftDevice/Bluefruit initialization, and can a bounded
+> stress later exercise that path across a fresh LESC pairing interval?
 
-This is still a **test-only proof**. It does not put cryptography into the
+The implemented probe supports both questions, but the owner-approved physical
+evidence for this slice closes only the first plus a bonded BLE-connected
+coexistence check. The fresh-pairing LESC stress was owner-waived and is **not
+PASS**. Therefore M7P6E does not close the M7P6D production secure-envelope
+coexistence gate.
+
+This is still a **test-only probe**. It does not put cryptography into the
 production LoRa packet path.
 
 ## 2. Scope and non-goals
@@ -191,18 +197,19 @@ starts a bounded loop-task stress:
 - BLE must remain connected;
 - any KAT failure fails immediately;
 - a LESC DH-key event must be observed after stress starts;
-- after the first overlapping LESC event, 100 further successful KAT iterations
-  are required;
+- after the first LESC event observed during the stress interval, 100 further
+  successful KAT iterations are required;
 - final PASS reports LESC/auth/security-update deltas, disconnect delta and the
   maximum measured KAT duration.
 
 This is intentionally stronger than merely running crypto while advertising: it
 requires evidence that the Bluefruit security path reached its LESC DH-key work
-during the active repeated ORUN crypto period.
+during the bounded interval in which repeated ORUN KATs were being scheduled.
 
-It is **not** a proof of arbitrary future parallel CryptoCell use. It proves
-only this pinned framework/library, this task structure and this bounded test
-pattern.
+The counter-based observation does **not** prove instruction-level temporal
+overlap between one specific Bluefruit CC310 call and one specific ORUN CC310
+call. Even if this stress is later run successfully, it is evidence for the
+pinned framework/task pattern, not a proof of arbitrary CryptoCell thread-safety.
 
 ## 7. Commands — test environment only
 
@@ -229,7 +236,7 @@ production source/dependency/patch graph and only adds:
 
 The default environment remains `rak4630`.
 
-## 9. Required validation sequence
+## 9. Validation plan and owner disposition
 
 Software:
 
@@ -250,11 +257,18 @@ Hardware:
 7. require final `M7P6E COEX PASS ... disconnect_delta=0 ble_connected=1`.
 
 If the peer silently reuses an existing bond and no LESC event occurs, the run
-is **not** a coexistence PASS; establish a fresh pairing context and repeat the
-stress. Do not weaken the gate to AUTH_STATUS alone.
+is **not** a fresh-pairing coexistence PASS. Do not weaken the gate to
+AUTH_STATUS alone.
 
-After owner hardware evidence, run independent security/code review before
-merge.
+For this slice the owner explicitly waived steps 4-7 to avoid disturbing the
+working bond state. That waiver permits this test-only probe to merge, but does
+not satisfy the M7P6D prerequisite for production secure-envelope activation.
+A future secure-envelope milestone must either run a reviewed coexistence test
+that closes this risk or introduce a reviewed serialization/backend strategy.
+
+No Astra/external independent review was available for the final M7P6E head.
+A separate final static audit was performed after the owner waiver; its
+documentation findings are recorded in §12.
 
 ## 10. Software/build evidence
 
@@ -287,8 +301,9 @@ the exact candidate outputs recorded in §3:
 - ciphertext `60ff0ec3e211ae143ca6c115c150bd6f05da47e416856b`;
 - tag `bd9b12044081697b`.
 
-This software/build evidence does **not** establish Bluefruit/CC310 hardware
-coexistence. The physical LESC-overlap gate in §9 remains pending.
+This software/build evidence does **not** establish fresh-pairing
+Bluefruit/CC310 coexistence. That stronger gate was owner-waived for M7P6E and
+remains open before production secure-envelope activation.
 
 ## 11. Initial hardware evidence
 
@@ -342,9 +357,30 @@ runtime was active, but it is **not** the required fresh-pairing coexistence
 evidence. The phone UI also showed the peer as BONDED, and the event pattern
 (`sec_update_events=1`, `lesc_events=0`, `auth_events=0`) is consistent
 with reuse of an existing bond/security context rather than a new LESC pairing.
-The final stress must therefore be run from a genuinely fresh pairing context.
+Accordingly this bonded reconnect is not evidence for a fresh LESC pairing
+path.
 
-## 12. Compatibility / system impact
+## 12. Final static audit
+
+A final second-pass static audit of PR #30 found no production-runtime blocker.
+The important findings were claim/evidence mismatches rather than runtime
+defects:
+
+1. the milestone still described fresh LESC overlap as a completed/required
+   outcome after the owner had waived that physical test;
+2. the stress wording used "overlap" too strongly even though the implementation
+   observes a LESC event counter during a repeated-KAT interval, not
+   instruction-level simultaneous CC310 execution;
+3. several later sections still said the final fresh-pairing stress "must" run,
+   contradicting the recorded owner waiver.
+
+These documentation claims were corrected without changing runtime or test code.
+The residual concurrency risk is intentionally **open** and blocks treating the
+M7P6D candidate as production secure-envelope-ready.
+
+No independent Astra/external reviewer result is claimed for M7P6E.
+
+## 13. Compatibility / system impact
 
 Normal production `rak4630` behavior is intentionally unchanged:
 
@@ -359,4 +395,6 @@ Normal production `rak4630` behavior is intentionally unchanged:
 - no production secure packet path;
 - no production CryptoCell call added.
 
-No physical result is claimed until the owner runs the recorded hardware gate.
+The recorded hardware results are limited to boot/readiness KAT, bonded BLE
+connection/security-update evidence and simultaneous full-graph LoRa RX. No
+fresh-LESC/ORUN CryptoCell concurrency PASS is claimed.
