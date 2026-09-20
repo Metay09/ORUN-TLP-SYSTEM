@@ -19,8 +19,32 @@ backend ownership/project differs.
 At the same time, scaling work must follow measured need. ORUN is not implementing a
 300-device scheduler today just because the architecture should not block future growth.
 
-Current practical development scale remains small (roughly 3–30 devices). Larger numbers
-are a future capacity/field-validation concern.
+Current physical development fixture may remain the proven small
+`1 TRACKER + 1 RELAY + 1 BASE` setup, but the owner-approved **nominal field
+planning reference** is approximately:
+
+```text
+15 TRACKER
+4 relay-forwarding infrastructure nodes
+2 gateway bridges
++ optional 1 MOBILE / roaming gateway for search or temporary coverage
+```
+
+This is a design/capacity reference, not a currently field-validated fleet size,
+not a fixed product limit, and not a requirement that every node hear every
+relay/gateway. Practical development scale remains roughly 3–30 devices; larger
+numbers are a future capacity/field-validation concern.
+
+For the current TLP v1 relay model, path redundancy is intentional. If several
+relays hear the same direct TRACKER POSITION, each may keep one independently
+scheduled forward attempt. A RELAY_FORWARD heard from a peer relay is never
+forwarded again and does not cancel an already scheduled local copy. Repeated
+direct copies of the same `(source_device_id, sequence_number)` are suppressed
+within the relay's bounded dedupe horizon. Multiple gateways may therefore
+observe the same original packet through different paths. Future gateway/backend
+bridging must collapse those duplicate application deliveries while preserving
+the distinct RF/path observations; that cross-gateway bridge behavior is not
+claimed as implemented today.
 
 ## 2. RF domain is not customer/project identity
 
