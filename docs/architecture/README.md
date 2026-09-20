@@ -28,12 +28,13 @@ candidate is still not implementation-frozen until ORUN-specific host/RAK
 vectors, Bluefruit/SoftDevice/CC310 coexistence proof and the later persistence
 gates pass. See `docs/milestones/M7P6D.md`.
 
-In-flight security proof on `feat/m7p6e-cryptocell-bluefruit-coexistence`: M7P6E is a
-test-only full-production-graph CryptoCell + Bluefruit/SoftDevice coexistence
-probe. It reuses the M7P6D candidate KDF/nonce contract with fixed public KAT
-material, adds no production secure-RF path, and requires a real LESC DH-key
-event while repeated ORUN HKDF/AES-CCM KATs are active before physical PASS can
-be claimed. See `docs/milestones/M7P6E.md`.
+In-flight security probe on `feat/m7p6e-cryptocell-bluefruit-coexistence`:
+M7P6E uses the full production source graph with fixed public M7P6D candidate
+KDF/nonce KAT material and adds no production secure-RF path. Host/build,
+hardware boot KAT, bonded BLE connection/security update and direct LoRa RX
+evidence passed. The stronger fresh-pairing LESC stress was owner-waived and is
+**not PASS**; therefore the M7P6D production secure-envelope coexistence gate
+remains open. See `docs/milestones/M7P6E.md`.
 
 This directory contains current owner-approved rules plus historical/proposed
 architecture audits. They are not equal sources of truth. This index tells a new
