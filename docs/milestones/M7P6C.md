@@ -1,6 +1,6 @@
 # M7P6C — CryptoCell secure-envelope primitive proof
 
-Status: **TARGET BUILD PASS; PROBE UPLOAD PASS; HARDWARE KAT PENDING.**
+Status: **TARGET BUILD PASS; PROBE UPLOAD PASS; HARDWARE KAT PARTIAL — HKDF/CCM ENCRYPT PASS, CCM DECRYPT/TAMPER CHECK FAIL; INVESTIGATING.**
 
 Baseline: `main@1bd7e8fa0649caa1d1bbce901367ef6a81498e29`
 (M6P2 merged via PR #26).
@@ -182,6 +182,21 @@ The test-only probe is therefore hardened to:
 
 This changes only observability of the test image. It does not alter the crypto
 vectors, production firmware or any RF/protocol behavior.
+
+
+The reconnect-safe hardware run then produced:
+
+- crypto init: **PASS**;
+- RFC5869 HKDF-SHA256 vector: **PASS**;
+- RFC3610 AES-128-CCM encrypt vector: **PASS**;
+- combined valid-decrypt + tampered-tag rejection check: **FAIL**.
+
+This is a real probe failure and is not waived. It is not yet evidence of a
+CryptoCell implementation defect because the combined check did not expose which
+sub-condition failed. The test-only image now records the raw CC310 return code
+for valid decrypt, whether recovered plaintext matches, the raw return code for
+the one-bit tag tamper, and the expected CC310 MAC-invalid code. No production
+code or security decision changes until that result is understood.
 
 ## 8. Validation sequence
 
