@@ -1,6 +1,6 @@
 # M7P6C — CryptoCell secure-envelope primitive proof
 
-Status: **TARGET BUILD PASS; HARDWARE KAT PENDING.**
+Status: **TARGET BUILD PASS; PROBE UPLOAD PASS; HARDWARE KAT PENDING.**
 
 Baseline: `main@1bd7e8fa0649caa1d1bbce901367ef6a81498e29`
 (M6P2 merged via PR #26).
@@ -154,6 +154,18 @@ Owner rerun after the isolation fix on 2026-09-20:
 - no new compiler warning was visible in the supplied successful build output;
 - this proves compile/link availability only. The HKDF/AES-CCM known-answer
   functions have not yet executed on hardware.
+
+
+Owner upload on 2026-09-20:
+
+- `pio run -d firmware -e rak4630_m7p6c_crypto_probe -t upload`: **SUCCESS**;
+- `nrfutil` auto-detected `/dev/ttyACM0`, activated the test-only image and
+  reported `Device programmed.`;
+- image size remained **9,012 B RAM / 70,360 B flash**;
+- the PlatformIO `99-platformio-udev.rules` message is a host setup warning;
+  it did not prevent this DFU;
+- upload success is not the crypto KAT result. The serial result still must be
+  captured from the running probe before HKDF/AES-CCM can be called PASS.
 
 ## 8. Validation sequence
 
