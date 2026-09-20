@@ -145,26 +145,79 @@ bool testAesCcmDecryptAndTamper() {
 
 }  // namespace
 
+namespace {
+bool probe_done = false;
+bool probe_pass = false;
+bool probe_hkdf = false;
+bool probe_ccm_encrypt = false;
+bool probe_ccm_decrypt_tamper = false;
+uint32_t last_report_ms = 0;
+
+void reportResult() {
+  Serial.printf("M7P6C CRYPTO PROBE %s hkdf=%s ccm_encrypt=%s ccm_decrypt_tamper=%s\n",
+                probe_pass ? "PASS" : "FAIL",
+                probe_hkdf ? "PASS" : "FAIL",
+                probe_ccm_encrypt ? "PASS" : "FAIL",
+                probe_ccm_decrypt_tamper ? "PASS" : "FAIL");
+  Serial.flush();
+  last_report_ms = millis();
+}
+}  // namespace
+
 void setup() {
   Serial.begin(115200);
-  delay(1500);
+
+  // USB CDC can enumerate more slowly than setup() executes after a reset.
+  // Wait a bounded interval for the monitor so one-shot diagnostics are not
+  // lost before /dev/ttyACM0 reconnects. The loop also reprints the final
+  // result periodically, so reconnect timing cannot hide the KAT outcome.
+  const uint32_t serial_wait_started_ms = millis();
+  while (!Serial && (millis() - serial_wait_started_ms) < 15000U) delay(10);
+
+  Serial.println(F("M7P6C PROBE BOOT"));
+  Serial.println(F("M7P6C CRYPTO INIT START"));
+  Serial.flush();
+  delay(50);
 
   if (!nRFCrypto.begin()) {
-    Serial.println(F("M7P6C CRYPTO PROBE FAIL init"));
+    Serial.println(F("M7P6C CRYPTO INIT FAIL"));
+    Serial.flush();
+    probe_done = true;
     return;
   }
 
-  const bool hkdf = testHkdfSha256();
-  const bool ccm_encrypt = testAesCcmEncrypt();
-  const bool ccm_decrypt_tamper = testAesCcmDecryptAndTamper();
+  Serial.println(F("M7P6C CRYPTO INIT PASS"));
+  Serial.flush();
 
-  Serial.printf("M7P6C CRYPTO PROBE %s hkdf=%s ccm_encrypt=%s ccm_decrypt_tamper=%s\n",
-                (hkdf && ccm_encrypt && ccm_decrypt_tamper) ? "PASS" : "FAIL",
-                hkdf ? "PASS" : "FAIL",
-                ccm_encrypt ? "PASS" : "FAIL",
-                ccm_decrypt_tamper ? "PASS" : "FAIL");
+  Serial.println(F("M7P6C HKDF START"));
+  Serial.flush();
+  probe_hkdf = testHkdfSha256();
+  Serial.printf("M7P6C HKDF %s\n", probe_hkdf ? "PASS" : "FAIL");
+  Serial.flush();
+
+  Serial.println(F("M7P6C CCM ENCRYPT START"));
+  Serial.flush();
+  probe_ccm_encrypt = testAesCcmEncrypt();
+  Serial.printf("M7P6C CCM ENCRYPT %s\n", probe_ccm_encrypt ? "PASS" : "FAIL");
+  Serial.flush();
+
+  Serial.println(F("M7P6C CCM DECRYPT/TAMPER START"));
+  Serial.flush();
+  probe_ccm_decrypt_tamper = testAesCcmDecryptAndTamper();
+  Serial.printf("M7P6C CCM DECRYPT/TAMPER %s\n",
+                probe_ccm_decrypt_tamper ? "PASS" : "FAIL");
+  Serial.flush();
+
+  probe_pass = probe_hkdf && probe_ccm_encrypt && probe_ccm_decrypt_tamper;
+  probe_done = true;
+  reportResult();
 
   nRFCrypto.end();
 }
 
-void loop() {}
+void loop() {
+  if (probe_done && Serial && (millis() - last_report_ms) >= 3000U) {
+    reportResult();
+  }
+  delay(20);
+}
