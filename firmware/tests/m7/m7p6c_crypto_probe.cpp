@@ -57,6 +57,39 @@ bool testHkdfSha256() {
   return result == CRYS_OK && equalBytes(okm, kExpectedOkm, sizeof(okm));
 }
 
+CRYSError_t runAesCcm(SaSiAesEncryptMode_t mode,
+                         CRYS_AESCCM_Key_t key,
+                         uint8_t* nonce, uint8_t nonce_size,
+                         uint8_t* aad, uint32_t aad_size,
+                         uint8_t* input, uint32_t input_size,
+                         uint8_t* output,
+                         uint8_t* tag, uint8_t tag_size) {
+  CRYS_AESCCM_UserContext_t context{};
+  CRYSError_t result = CC_AESCCM_Init(
+      &context, mode, key, CRYS_AES_Key128BitSize, aad_size, input_size,
+      nonce, nonce_size, tag_size, CRYS_AESCCM_MODE_CCM);
+  if (result != CRYS_OK) return result;
+
+  if (aad_size > 0) {
+    result = CRYS_AESCCM_BlockAdata(&context, aad, aad_size);
+    if (result != CRYS_OK) return result;
+  }
+
+  // CC310 requires the full 16-byte MAC work buffer. For decrypt, seed its
+  // first tag_size bytes with the received tag before Finish(), matching the
+  // Nordic SDK CC310 backend integration pattern.
+  CRYS_AESCCM_Mac_Res_t mac_buffer{};
+  if (mode == SASI_AES_DECRYPT) memcpy(mac_buffer, tag, tag_size);
+
+  uint8_t finish_tag_size = tag_size;
+  result = CRYS_AESCCM_Finish(&context, input, input_size, output,
+                              mac_buffer, &finish_tag_size);
+  if (result == CRYS_OK && mode == SASI_AES_ENCRYPT) {
+    memcpy(tag, mac_buffer, tag_size);
+  }
+  return result;
+}
+
 bool testAesCcmEncrypt() {
   CRYS_AESCCM_Key_t key{};
   for (uint8_t i = 0; i < 16; ++i) key[i] = static_cast<uint8_t>(0xC0U + i);
@@ -82,11 +115,10 @@ bool testAesCcmEncrypt() {
   };
 
   uint8_t ciphertext[sizeof(plaintext)]{};
-  CRYS_AESCCM_Mac_Res_t tag{};
-  const CRYSError_t result = CRYS_AESCCM(
-      SASI_AES_ENCRYPT, key, CRYS_AES_Key128BitSize, nonce, sizeof(nonce), aad,
-      sizeof(aad), plaintext, sizeof(plaintext), ciphertext,
-      sizeof(kExpectedTag), tag);
+  uint8_t tag[sizeof(kExpectedTag)]{};
+  const CRYSError_t result = runAesCcm(
+      SASI_AES_ENCRYPT, key, nonce, sizeof(nonce), aad, sizeof(aad),
+      plaintext, sizeof(plaintext), ciphertext, tag, sizeof(tag));
 
   return result == CRYS_OK &&
          equalBytes(ciphertext, kExpectedCiphertext, sizeof(ciphertext)) &&
@@ -98,6 +130,8 @@ struct CcmDecryptTamperResult {
   bool plaintext_matches = false;
   CRYSError_t tamper_result = 0;
   bool tamper_rejected = false;
+  CRYSError_t recovery_result = 0;
+  bool recovery_plaintext_matches = false;
 };
 
 CcmDecryptTamperResult testAesCcmDecryptAndTamper() {
@@ -127,28 +161,36 @@ CcmDecryptTamperResult testAesCcmDecryptAndTamper() {
       0x17, 0xE8, 0xD1, 0x2C, 0xFD, 0xF9, 0x26, 0xE0,
   };
 
-  CRYS_AESCCM_Mac_Res_t tag{};
+  uint8_t tag[sizeof(kExpectedTag)]{};
   memcpy(tag, kExpectedTag, sizeof(kExpectedTag));
   uint8_t plaintext[sizeof(ciphertext)]{};
-  out.valid_result = CRYS_AESCCM(
-      SASI_AES_DECRYPT, key, CRYS_AES_Key128BitSize, nonce, sizeof(nonce), aad,
-      sizeof(aad), ciphertext, sizeof(ciphertext), plaintext,
-      sizeof(kExpectedTag), tag);
+  out.valid_result = runAesCcm(
+      SASI_AES_DECRYPT, key, nonce, sizeof(nonce), aad, sizeof(aad),
+      ciphertext, sizeof(ciphertext), plaintext, tag, sizeof(tag));
   out.plaintext_matches =
       equalBytes(plaintext, kExpectedPlaintext, sizeof(plaintext));
 
   // Authentication failure must be fail-closed. Do not inspect or accept the
   // plaintext output from this call; only the error result is meaningful.
-  CRYS_AESCCM_Mac_Res_t bad_tag{};
+  uint8_t bad_tag[sizeof(kExpectedTag)]{};
   memcpy(bad_tag, kExpectedTag, sizeof(kExpectedTag));
   bad_tag[0] ^= 0x01U;
   memset(plaintext, 0, sizeof(plaintext));
-  out.tamper_result = CRYS_AESCCM(
-      SASI_AES_DECRYPT, key, CRYS_AES_Key128BitSize, nonce, sizeof(nonce), aad,
-      sizeof(aad), ciphertext, sizeof(ciphertext), plaintext,
-      sizeof(kExpectedTag), bad_tag);
+  out.tamper_result = runAesCcm(
+      SASI_AES_DECRYPT, key, nonce, sizeof(nonce), aad, sizeof(aad),
+      ciphertext, sizeof(ciphertext), plaintext, bad_tag, sizeof(bad_tag));
   out.tamper_rejected =
       out.tamper_result == CRYS_AESCCM_CCM_MAC_INVALID_ERROR;
+
+  // A failed authentication attempt must not poison the crypto engine. Re-run
+  // the valid vector from a fresh context and require normal success again.
+  memcpy(tag, kExpectedTag, sizeof(kExpectedTag));
+  memset(plaintext, 0, sizeof(plaintext));
+  out.recovery_result = runAesCcm(
+      SASI_AES_DECRYPT, key, nonce, sizeof(nonce), aad, sizeof(aad),
+      ciphertext, sizeof(ciphertext), plaintext, tag, sizeof(tag));
+  out.recovery_plaintext_matches =
+      equalBytes(plaintext, kExpectedPlaintext, sizeof(plaintext));
   return out;
 }
 
@@ -164,6 +206,8 @@ CRYSError_t probe_ccm_valid_result = 0;
 bool probe_ccm_plaintext_matches = false;
 CRYSError_t probe_ccm_tamper_result = 0;
 bool probe_ccm_tamper_rejected = false;
+CRYSError_t probe_ccm_recovery_result = 0;
+bool probe_ccm_recovery_plaintext_matches = false;
 uint32_t last_report_ms = 0;
 
 void reportResult() {
@@ -221,17 +265,24 @@ void setup() {
   probe_ccm_plaintext_matches = ccm_decrypt.plaintext_matches;
   probe_ccm_tamper_result = ccm_decrypt.tamper_result;
   probe_ccm_tamper_rejected = ccm_decrypt.tamper_rejected;
+  probe_ccm_recovery_result = ccm_decrypt.recovery_result;
+  probe_ccm_recovery_plaintext_matches =
+      ccm_decrypt.recovery_plaintext_matches;
   probe_ccm_decrypt_tamper =
       probe_ccm_valid_result == CRYS_OK && probe_ccm_plaintext_matches &&
-      probe_ccm_tamper_rejected;
+      probe_ccm_tamper_rejected && probe_ccm_recovery_result == CRYS_OK &&
+      probe_ccm_recovery_plaintext_matches;
   Serial.printf(
       "M7P6C CCM DECRYPT valid_rc=0x%08lX plaintext=%s "
-      "tamper_rc=0x%08lX expected_tamper_rc=0x%08lX tamper_rejected=%s\n",
+      "tamper_rc=0x%08lX expected_tamper_rc=0x%08lX tamper_rejected=%s "
+      "recovery_rc=0x%08lX recovery_plaintext=%s\n",
       static_cast<unsigned long>(probe_ccm_valid_result),
       probe_ccm_plaintext_matches ? "MATCH" : "MISMATCH",
       static_cast<unsigned long>(probe_ccm_tamper_result),
       static_cast<unsigned long>(CRYS_AESCCM_CCM_MAC_INVALID_ERROR),
-      probe_ccm_tamper_rejected ? "YES" : "NO");
+      probe_ccm_tamper_rejected ? "YES" : "NO",
+      static_cast<unsigned long>(probe_ccm_recovery_result),
+      probe_ccm_recovery_plaintext_matches ? "MATCH" : "MISMATCH");
   Serial.printf("M7P6C CCM DECRYPT/TAMPER %s\n",
                 probe_ccm_decrypt_tamper ? "PASS" : "FAIL");
   Serial.flush();
