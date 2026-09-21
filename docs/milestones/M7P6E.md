@@ -198,8 +198,9 @@ starts a bounded loop-task stress:
 - any KAT failure fails immediately;
 - a LESC DH-key event must be observed after stress starts;
 - `BLE_GAP_EVT_AUTH_STATUS` must report `BLE_GAP_SEC_STATUS_SUCCESS`,
-  report LESC for that completed authentication, and the stock bond-requesting
-  Bluefruit flow must report that a bond resulted;
+  report LESC for that completed authentication, and SoftDevice must report
+  that the procedure resulted in a bond (this bit alone is not bond-persistence
+  evidence);
 - a post-start `BLE_GAP_EVT_CONN_SEC_UPDATE` must report an encrypted
   Security Mode 1 link (level >= 2);
 - any post-start authentication failure or disconnect fails the run;
@@ -270,7 +271,7 @@ insufficient: pairing must complete successfully, produce the expected stock
 bond, and reach an encrypted link before the post-pairing KAT window can close
 PASS.
 
-For this slice the owner explicitly waived steps 4-7 to avoid disturbing the
+For this slice the owner explicitly waived steps 4-8 to avoid disturbing the
 working bond state. That waiver permits this test-only probe to merge, but does
 not satisfy the M7P6D prerequisite for production secure-envelope activation.
 A future secure-envelope milestone must either run a reviewed coexistence test
@@ -400,8 +401,9 @@ procedure itself completed successfully.
 The hardening on `fix/m7p6e-pairing-evidence` changes only the probe path:
 
 - AUTH_STATUS success/failure is counted separately;
-- successful AUTH_STATUS must also report LESC and that the stock
-  bond-requesting flow produced a bond;
+- successful AUTH_STATUS must also report LESC and SoftDevice's
+  procedure-resulted-in-a-bond bit; this does not independently prove durable
+  bond persistence;
 - CONN_SEC_UPDATE must show encrypted Security Mode 1 (level >= 2);
 - authentication failure and disconnect fail closed;
 - the 100-iteration tail starts only after the complete pairing evidence is
