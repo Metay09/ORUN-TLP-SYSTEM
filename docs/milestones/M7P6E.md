@@ -197,8 +197,9 @@ starts a bounded loop-task stress:
 - BLE must remain connected;
 - any KAT failure fails immediately;
 - a LESC DH-key event must be observed after stress starts;
-- `BLE_GAP_EVT_AUTH_STATUS` must report `BLE_GAP_SEC_STATUS_SUCCESS`
-  and the stock bond-requesting Bluefruit flow must report that a bond resulted;
+- `BLE_GAP_EVT_AUTH_STATUS` must report `BLE_GAP_SEC_STATUS_SUCCESS`,
+  report LESC for that completed authentication, and the stock bond-requesting
+  Bluefruit flow must report that a bond resulted;
 - a post-start `BLE_GAP_EVT_CONN_SEC_UPDATE` must report an encrypted
   Security Mode 1 link (level >= 2);
 - any post-start authentication failure or disconnect fails the run;
@@ -259,8 +260,8 @@ Hardware:
 4. start `CRYPTO STRESS`;
 5. initiate a fresh BLE bond/pairing while the stress is active;
 6. require `M7P6E LESC OVERLAP observed`;
-7. require `M7P6E PAIRING COMPLETE ...` with non-zero successful/bonded
-   authentication and encrypted-security-update deltas;
+7. require `M7P6E PAIRING COMPLETE ...` with non-zero successful,
+   LESC+bonded authentication and encrypted-security-update deltas;
 8. require final `M7P6E COEX PASS ... auth_failure_delta=0 disconnect_delta=0 ble_connected=1`.
 
 If the peer silently reuses an existing bond and no LESC event occurs, the run
@@ -399,8 +400,8 @@ procedure itself completed successfully.
 The hardening on `fix/m7p6e-pairing-evidence` changes only the probe path:
 
 - AUTH_STATUS success/failure is counted separately;
-- successful AUTH_STATUS must also report that the stock bond-requesting flow
-  produced a bond;
+- successful AUTH_STATUS must also report LESC and that the stock
+  bond-requesting flow produced a bond;
 - CONN_SEC_UPDATE must show encrypted Security Mode 1 (level >= 2);
 - authentication failure and disconnect fail closed;
 - the 100-iteration tail starts only after the complete pairing evidence is
