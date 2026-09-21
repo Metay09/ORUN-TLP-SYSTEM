@@ -1,6 +1,6 @@
 # M7P7E — Application requester / response ownership
 
-Status: **EXTERNAL REVIEW PASS WITH FIXES — fixes applied; post-fix host/build revalidation required. NO BLE APPLICATION GATT, PROVISIONING OR PROTECTED WRITE PATH.**
+Status: **EXTERNAL REVIEW PASS WITH FIXES — fixes applied; post-fix host revalidation PASS, production build revalidation still required. NO BLE APPLICATION GATT, PROVISIONING OR PROTECTED WRITE PATH.**
 
 Baseline: `main@2cfb68b29458d3815f55f8df39d45faac64b2de6` (PR #32 / M7P7D merged).
 Branch: `feat/m7p7e-requester-ownership`.
@@ -163,9 +163,17 @@ Independent review result:
 - LOW edge-case test gaps: strengthened in unit and production-loop startup tests;
 - disposition: `docs/audits/M7P7E_EXTERNAL_REVIEW_DISPOSITION.md`.
 
+Post-review owner revalidation on exact branch head
+`35f6cefe3d293d1309e3f9d203303a418c3da120`:
+
+- full `firmware/tests/run_host_tests.sh`: **PASS**;
+- all production startup scenarios: **PASS**;
+- warnings-as-errors + ASan/UBSan host runner completed through the final R4 checks;
+- the strengthened M7P7E requester, invalid-requester and startup-composition
+  coverage therefore passed on the corrected code.
+
 Still required:
 
-- rerun the full host/sanitizer suite on the post-review code;
 - rerun the production RAK4630 build and record final RAM/flash/guard evidence.
 
 No physical hardware test is required for M7P7E itself because it adds no BLE
