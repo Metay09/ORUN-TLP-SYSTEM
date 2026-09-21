@@ -38,6 +38,10 @@ class ConfigStore {
   bool begin();
   void poll();  // One synchronous config step per call; safe to call every loop tick.
   bool ready() const { return ready_; }
+  // True only when recovery found a valid committed config page. ready()
+  // means the backend/store initialized; it does NOT imply a committed record
+  // existed because blank/corrupt flash intentionally falls back to defaults.
+  bool hasCommittedRecord() const { return active_page_ >= 0; }
   bool busy() const { return job_ != Job::kNone; }
   const config_format::Config& config() const { return config_; }
 
