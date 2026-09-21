@@ -46,8 +46,9 @@ inline bool pairingEvidenceComplete(const PairingEvidenceCounters& start,
 
   // A LESC DH-key request alone is not successful pairing. Require the same
   // bounded evidence window to contain successful LESC authentication that
-  // produced the stock-requested bond, plus an encrypted Mode-1 security
-  // update. Bluefruit's first-pairing event order may report the security
+  // SoftDevice says resulted in a bond, plus an encrypted Mode-1 security
+  // update. This is pairing-completion evidence, not an independent proof that
+  // InternalFS durably persisted the bond. Bluefruit's first-pairing event order may report the security
   // update before AUTH_STATUS, so completion intentionally requires both facts
   // without imposing the wrong order.
   return counterAdvanced(start.lesc, current.lesc) &&
