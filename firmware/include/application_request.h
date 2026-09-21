@@ -43,6 +43,7 @@ enum class ApplicationResponseCode : uint8_t {
 enum class ApplicationSubmitResult : uint8_t {
   kAccepted = 0,
   kBusy = 1,
+  kRejected = 2,
 };
 
 struct ApplicationRequest {
