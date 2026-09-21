@@ -1,6 +1,6 @@
 # M7P7D — Transport-neutral application request seam
 
-Status: **PASS WITH FIXES APPLIED — external review findings addressed; post-fix host + RAK4630 revalidation pending. NO BLE APPLICATION GATT OR PROTECTED WRITE PATH.**
+Status: **SOFTWARE PASS — external review fixes applied; post-fix host/sanitizer + RAK4630 production build PASS. NO BLE APPLICATION GATT OR PROTECTED WRITE PATH.**
 
 Baseline: `main@6774e7425a3776987ddaaff749c01d5cb20474c1` (PR #31 / M7P7C design gate merged).
 Branch: `feat/m7p7d-app-request-seam`.
@@ -147,8 +147,28 @@ Disposition is recorded in
 The external findings caused code/test changes (config provenance semantics,
 real-loop startup coverage, BUSY correlation cleanup), so the earlier build
 numbers are retained as exact historical evidence for `c2232d6` and are **not**
-silently promoted to the current post-fix head. A fresh host suite + production
-RAK4630 build is required before merge.
+silently promoted to the post-fix code.
+
+Post-fix owner revalidation on exact head
+`967b7fcd4d21e5b95b5cce63bd68ea20615c1594`:
+
+- full host suite: **PASS**;
+- ASan/UBSan + warnings-as-errors host runner: **PASS**;
+- all production startup scenarios: **PASS**;
+- RAK4630 production build: **PASS**;
+- RAM: **22,116 / 248,832 bytes = 8.9%**;
+- Flash: **226,212 / 815,104 bytes = 27.8%**;
+- storage-ceiling / exclusive-owner build guards: **PASS**;
+- no upload or physical hardware test was performed or required for this slice.
+
+Size delta versus the immediately preceding production image
+(22,084 RAM / 225,500 Flash):
+
+- RAM: **+32 bytes**;
+- Flash: **+712 bytes**.
+
+The review fixes themselves changed the pre-fix M7P7D image by 0 RAM and +64
+Flash bytes (226,148 -> 226,212).
 
 Physical hardware is not required merely to prove this read-only USB seam: no BLE
 GATT, RF, persistence format, power policy or hardware-driver behavior changed.
