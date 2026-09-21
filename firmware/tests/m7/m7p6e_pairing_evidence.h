@@ -14,6 +14,7 @@ struct PairingEvidenceCounters {
   uint32_t auth_success = 0;
   uint32_t auth_failure = 0;
   uint32_t auth_bonded_success = 0;
+  uint32_t auth_lesc_bonded_success = 0;
   uint32_t sec_update = 0;
   uint32_t encrypted_update = 0;
   uint32_t disconnects = 0;
@@ -43,13 +44,16 @@ inline bool pairingEvidenceComplete(const PairingEvidenceCounters& start,
     return false;
   }
 
-  // A LESC DH-key request alone is not successful pairing. Require the stock
-  // bond-requesting Bluefruit flow to report successful authentication that
-  // produced a bond, followed by an encrypted Mode-1 security update.
+  // A LESC DH-key request alone is not successful pairing. Require the same
+  // bounded evidence window to contain successful LESC authentication that
+  // produced the stock-requested bond, plus an encrypted Mode-1 security
+  // update. Bluefruit's first-pairing event order may report the security
+  // update before AUTH_STATUS, so completion intentionally requires both facts
+  // without imposing the wrong order.
   return counterAdvanced(start.lesc, current.lesc) &&
          counterAdvanced(start.auth_success, current.auth_success) &&
-         counterAdvanced(start.auth_bonded_success,
-                         current.auth_bonded_success) &&
+         counterAdvanced(start.auth_lesc_bonded_success,
+                         current.auth_lesc_bonded_success) &&
          counterAdvanced(start.encrypted_update, current.encrypted_update);
 }
 
