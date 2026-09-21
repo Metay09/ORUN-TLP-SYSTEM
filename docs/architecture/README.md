@@ -1,7 +1,7 @@
 # ORUN Architecture Documentation Index
 
 Status: **CURRENT documentation governance index**.
-Last reviewed against `main@46d7a933f63d42d84fb386035be1c03af1d0c3c4` (M7P6E merged via PR #30; M7P7B production BLE runtime remains on main). M7P6B SecurityStore/TX nonce persistence, M7P7A BLE flash/SoftDevice event ownership, M7P7B minimal tracker BLE runtime/admission and the M7P6C/D/E security proof/pre-wire/coexistence work are now merged. M7P6E physically proved the boot/readiness candidate KAT after Bluefruit/SoftDevice init plus bonded BLE-connected/direct-LoRa coexistence, but its fresh-pairing LESC stress was owner-waived and is **not PASS**; production secure-envelope activation therefore still requires a reviewed coexistence/serialization closure. M7P7B quantitative current remains DEFERRED and GNSS coexistence remains unproven on the tested no-GNSS unit. ORUN application GATT, provisioning, DFU, secure RF, MESSAGE runtime and field-network/serviceability runtime remain later work.
+Last reviewed against `main@6774e7425a3776987ddaaff749c01d5cb20474c1` (PR #31 / M7P7C design gate merged; M7P7B production BLE runtime remains on main). M7P6B SecurityStore/TX nonce persistence, M7P7A BLE flash/SoftDevice event ownership, M7P7B minimal tracker BLE runtime/admission, M7P6C/D/E security proof/pre-wire/coexistence work and the M7P7C BLE/application-boundary design record are merged. M7P6E physically proved the boot/readiness candidate KAT after Bluefruit/SoftDevice init plus bonded BLE-connected/direct-LoRa coexistence, but its fresh-pairing LESC stress was owner-waived and is **not PASS**; production secure-envelope/commissioning activation therefore still requires a reviewed coexistence/serialization closure. M7P7B quantitative current remains DEFERRED and GNSS coexistence remains unproven on the tested no-GNSS unit. ORUN application GATT, provisioning, DFU, secure RF, MESSAGE runtime and field-network/serviceability runtime remain later work.
 Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 
 
@@ -36,11 +36,17 @@ evidence passed. The stronger fresh-pairing LESC stress was owner-waived and is
 **not PASS**; therefore the M7P6D production secure-envelope coexistence gate
 remains open. See `docs/milestones/M7P6E.md`.
 
-In-flight M7P7C application-boundary design on `docs/m7p7c-ble-application-contract`:
+Merged M7P7C application-boundary design:
 `docs/milestones/M7P7C.md` records only the design-level BLE application/commissioning
 boundary. It adds no GATT service, provisioning path, secure-RF bytes, MESSAGE runtime
 or Android/backend code. Exact GATT framing and the commissioning ceremony remain later
 implementation gates.
+
+In-flight M7P7D implementation on `feat/m7p7d-app-request-seam`:
+`docs/milestones/M7P7D.md` adds the first fixed-memory, loop-owned,
+transport-neutral application request/result seam and a read-only USB `APP CONFIG?`
+adapter. It does not add protected writes, BLE application GATT, provisioning,
+authorization, MESSAGE, commands or new wire bytes.
 
 Owner-approved later application direction is recorded separately in
 `ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`: Entity Registry ownership/offline conflict
