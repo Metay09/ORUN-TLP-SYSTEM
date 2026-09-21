@@ -42,14 +42,24 @@ struct ApplicationRequest {
 };
 
 struct ApplicationResponse {
-  uint32_t request_id = 0;
-  ApplicationResponseCode code = ApplicationResponseCode::kUnsupported;
+  constexpr ApplicationResponse(
+      uint32_t request_id_value = 0,
+      ApplicationResponseCode code_value = ApplicationResponseCode::kUnsupported,
+      bool config_store_ready_value = false,
+      config_format::Config config_value = config_format::Config())
+      : request_id(request_id_value),
+        code(code_value),
+        config_store_ready(config_store_ready_value),
+        config(config_value) {}
+
+  uint32_t request_id;
+  ApplicationResponseCode code;
 
   // Meaningful for kGetConfig/kOk. ConfigStore deliberately reports its safe
   // fallback even when persistence is unavailable; config_store_ready keeps
   // callers from misrepresenting that fallback as a recovered durable value.
-  bool config_store_ready = false;
-  config_format::Config config{};
+  bool config_store_ready;
+  config_format::Config config;
 };
 
 // One response slot is intentional backpressure: a transport must consume the
@@ -58,7 +68,7 @@ struct ApplicationResponse {
 class ApplicationRequestService {
  public:
   explicit ApplicationRequestService(ConfigStore& config_store)
-      : config_store_(config_store) {}
+      : config_store_(config_store), response_ready_(false), response_() {}
 
   ApplicationSubmitResult submit(const ApplicationRequest& request);
   bool takeResponse(ApplicationResponse& response);
@@ -66,8 +76,8 @@ class ApplicationRequestService {
 
  private:
   ConfigStore& config_store_;
-  bool response_ready_ = false;
-  ApplicationResponse response_{};
+  bool response_ready_;
+  ApplicationResponse response_;
 };
 
 }  // namespace orun_tlp
