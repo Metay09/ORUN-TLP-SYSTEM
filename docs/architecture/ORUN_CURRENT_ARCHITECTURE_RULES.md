@@ -1,8 +1,8 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through `main@2cfb68b29458d3815f55f8df39d45faac64b2de6`: M7P7D transport-neutral application request seam is merged; M7P7B/C BLE runtime/application-boundary work and M7P6C/D/E security proof/pre-wire/coexistence work remain governing prerequisites. The corrected M7P6E fresh-pairing rerun is still an open physical gate; secure-envelope/provisioning/application-GATT runtime remains later.**
-Last reviewed against `main@2cfb68b29458d3815f55f8df39d45faac64b2de6`.
-Last architecture review update: 2026-09-21 (§17 records the BLE application boundary, merged M7P7D seam and in-flight M7P7E requester-ownership refinement).
+Status: **CURRENT through `main@cb1e181f88ed8d8362f6d4d2f97b96734474c954`: M7P7E requester/response ownership is merged on top of the M7P7D transport-neutral seam; M7P7B/C BLE runtime/application-boundary work and M7P6C/D/E security proof/pre-wire/coexistence work remain governing prerequisites. The corrected M7P6E fresh-pairing rerun is still an open physical gate; secure-envelope/provisioning/application-GATT runtime remains later.**
+Last reviewed against code checkpoint `main@cb1e181f88ed8d8362f6d4d2f97b96734474c954` (PR #34 / M7P7E merged; later main commits are documentation-only closeout).
+Last architecture review update: 2026-09-21 (§17 records the BLE application boundary and merged M7P7D/M7P7E request ownership seam).
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
@@ -768,11 +768,15 @@ loop-owned, transport-neutral application request/result seam with a read-only U
 not define BLE wire bytes, expose protected writes, or change authorization/security
 semantics. See `docs/milestones/M7P7D.md`.
 
-M7P7E refines that internal seam before a second adapter exists. Accepted
-application work is tagged with an explicit requester; a pending result is
-consumable or discardable only by that requester, while the single global slot
-continues to provide bounded BUSY backpressure. Numeric request IDs are local to
-the requester namespace. This is internal ownership only: it adds no BLE GATT,
-wire format, authorization, provisioning, storage or RF behavior. See
+M7P7E (PR #34, merged at
+`main@cb1e181f88ed8d8362f6d4d2f97b96734474c954`) refines that internal seam
+before a second adapter exists. Accepted application work is tagged with an
+explicit local requester; unsupported requester values fail closed before they
+can own the global response slot. A pending result is consumable or discardable
+only by its requester, while the single global slot continues to provide bounded
+BUSY backpressure. Numeric request IDs are local to the requester namespace.
+Requester provenance is not user identity, authorization, BLE connection
+identity or a wire field. This remains internal ownership only: it adds no BLE
+GATT, wire format, authorization, provisioning, storage or RF behavior. See
 `docs/milestones/M7P7E.md`.
 
