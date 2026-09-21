@@ -567,9 +567,10 @@ software/build validation:
 - both builds completed the application-ceiling and exclusive-owner link guards.
 
 This revalidation proves the §12.2 change compiles and preserves the production
-resource baseline. The branch still requires one scoped fresh-pairing hardware
-rerun on this corrected code before the earlier §10.2 physical PASS can be
-treated as revalidated for the current head.
+resource baseline. At that checkpoint the branch still required one scoped
+fresh-pairing hardware rerun on corrected code. That remaining requirement was
+later satisfied on the current-main-integrated code-bearing head recorded in
+§12.5.
 
 ### 12.4 Serial DFU upload diagnostic on corrected probe
 
@@ -625,6 +626,95 @@ a button reset during this remote session.
 Future upload evidence must treat `Device programmed.` (or equivalent tool
 success) as the positive completion signal. PlatformIO's outer `[SUCCESS]`
 line is not sufficient when the inner nrfutil transfer reports an error.
+
+### 12.5 Current-main integration + corrected-probe physical rerun — 2026-09-22
+
+Before the rerun, the follow-up branch was fast-forwarded to its remote head and
+then merged with the then-current `main@699a74ea66cf3d22d9f1644fbf0f786f0092bd56`
+without rebasing or rewriting history. The exact code-bearing merge head tested
+on hardware was:
+
+```text
+fb1b9408ae3c49cd3f6c26002a6d583aa18bb592
+```
+
+The merge left only the intended M7P6E follow-up surface relative to current
+main: the milestone document, test-only `main.cpp` probe path, pairing-evidence
+helper/tests, and host-runner registration.
+
+Canonical validation on that exact merged head:
+
+- full `firmware/tests/run_host_tests.sh`: **PASS** through the final R4
+  watchdog checks;
+- normal production `pio run -d firmware -e rak4630`: **PASS**;
+  - RAM: **22,124 / 248,832 bytes = 8.9%**;
+  - Flash: **226,292 / 815,104 bytes = 27.8%**;
+  - application-ceiling and exclusive-owner link guards: **PASS**;
+- corrected full-graph
+  `pio run -d firmware -e rak4630_m7p6e_crypto_ble_probe`: **PASS**;
+  - RAM: **22,212 / 248,832 bytes = 8.9%**;
+  - Flash: **240,460 / 815,104 bytes = 29.5%**;
+  - application-ceiling and exclusive-owner link guards: **PASS**;
+- probe-only delta versus that current production image:
+  - RAM: **+88 bytes**;
+  - Flash: **+14,168 bytes**.
+
+The production resource increase relative to the earlier §12.3 checkpoint comes
+from later production work already present on current main (including M7P7E);
+the M7P6E probe macro remains off in the normal production environment.
+
+The earlier intermittent serial-DFU issue remained unresolved, so this rerun did
+not treat another serial-DFU attempt as a prerequisite. A single physical reset
+returned the board from the CDC-only `239a:002a` state to the normal UF2
+bootloader `239a:0029`. The mounted bootloader identified itself as:
+
+```text
+Model: WisBlock RAK4631 Board
+Board-ID: WisBlock-RAK4631-Board
+SoftDevice: S140 6.1.1
+```
+
+The current probe `firmware.hex` from the exact build above was converted to a
+fresh UF2 with the installed Adafruit `uf2conv.py` and nRF52840 family ID
+`0xADA52840`; the stale older `firmware.uf2` artifact was deliberately not
+used. After copying the fresh UF2 to the RAK4631 bootloader volume, the board
+re-enumerated in application mode as `239a:8029`.
+
+The device-side precondition check then reported:
+
+```text
+M7P6E STATUS boot_kat=PASS stress=IDLE iterations=0 lesc_events=0 auth_events=0 auth_success=0 auth_failure=0 bonded_success=0 lesc_bonded_success=0 sec_update_events=0 encrypted_updates=0 ble_connected=1
+```
+
+With exactly one phone connected and initially **not bonded**, the stress was
+started and a fresh bond was initiated while the bounded stress interval was
+active. The corrected evidence gate reported:
+
+```text
+M7P6E COEX START iterations_max=3000 spacing_ms=20 action=trigger-BLE-bond-now
+M7P6E LESC OVERLAP observed iteration=1465
+M7P6E PAIRING COMPLETE iteration=1604 auth_success_delta=1 bonded_success_delta=1 lesc_bonded_success_delta=1 encrypted_update_delta=1
+M7P6E COEX PASS iterations=1704 lesc_delta=1 auth_delta=1 auth_success_delta=1 bonded_success_delta=1 lesc_bonded_success_delta=1 auth_failure_delta=0 sec_update_delta=1 encrypted_update_delta=1 disconnect_delta=0 max_kat_us=94727 ble_connected=1
+```
+
+This satisfies the remaining corrected-code fresh-pairing rerun requirement:
+the pinned Bluefruit/SoftDevice path reached LESC work during repeated candidate
+KAT scheduling, completed successful LESC+bonded authentication, reached an
+encrypted link, observed zero authentication failures/disconnects, remained
+connected, and completed the required post-pairing KAT tail.
+
+The observed `max_kat_us=94727` (~94.7 ms) is retained only as the maximum
+seen in this run. It is not a characterized worst-case bound and its cause is
+not established as CC310 contention.
+
+The successful UF2 recovery/upload path does **not** close the separate
+intermittent serial-DFU investigation. Likewise this physical PASS remains
+scoped to the tested RAK4631 / pinned framework / probe path; it does not prove
+arbitrary CryptoCell thread-safety, all BLE peers, durable bond persistence,
+ORUN application authorization, or production secure-envelope readiness.
+
+A final independent review of the branch after this evidence update remains the
+last merge-process gate.
 
 ## 13. Compatibility / system impact
 
