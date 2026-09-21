@@ -221,6 +221,12 @@ void startUsbApplicationConfigQuery() {
     Serial.println(F("APP BUSY"));
     return;
   }
+  if (result == orun_tlp::ApplicationSubmitResult::kRejected) {
+    // The production USB adapter always supplies kUsb locally, so this means
+    // an internal invariant was violated rather than peer input being bad.
+    Serial.println(F("APP REJECTED"));
+    return;
+  }
   ++next_usb_application_request_id;
   if (next_usb_application_request_id == 0) next_usb_application_request_id = 1;
 }
