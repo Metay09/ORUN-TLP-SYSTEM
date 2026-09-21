@@ -1,6 +1,6 @@
 # M7P7E — Application requester / response ownership
 
-Status: **EXTERNAL REVIEW PASS WITH FIXES — fixes applied; post-fix host revalidation PASS, production build revalidation still required. NO BLE APPLICATION GATT, PROVISIONING OR PROTECTED WRITE PATH.**
+Status: **MERGE-READY — external review PASS WITH FIXES, accepted fixes applied, post-fix host/build revalidation PASS. NO BLE APPLICATION GATT, PROVISIONING OR PROTECTED WRITE PATH.**
 
 Baseline: `main@2cfb68b29458d3815f55f8df39d45faac64b2de6` (PR #32 / M7P7D merged).
 Branch: `feat/m7p7e-requester-ownership`.
@@ -172,9 +172,22 @@ Post-review owner revalidation on exact branch head
 - the strengthened M7P7E requester, invalid-requester and startup-composition
   coverage therefore passed on the corrected code.
 
-Still required:
+Post-review production build revalidation after docs-only head
+`d3cdd7321aba52d18cf361902c9603d0a2707e94` (firmware code unchanged from
+the corrected code head):
 
-- rerun the production RAK4630 build and record final RAM/flash/guard evidence.
+- `pio run -d firmware -e rak4630`: **PASS**;
+- RAM: **22,124 / 248,832 bytes = 8.9%**;
+- Flash: **226,292 / 815,104 bytes = 27.8%**;
+- delta versus merged M7P7D production baseline
+  (22,116 RAM / 226,212 Flash): **+8 B RAM / +80 B Flash**;
+- delta versus the pre-review M7P7E build
+  (22,124 RAM / 226,244 Flash): **0 B RAM / +48 B Flash**;
+- `check_exclusive_owner` completed without aborting the build;
+- `check_application_ceiling` completed without aborting the build;
+- final production build result: **SUCCESS**.
+
+All M7P7E merge gates are now closed.
 
 No physical hardware test is required for M7P7E itself because it adds no BLE
 application runtime, driver behavior, persistence mutation or RF behavior.
