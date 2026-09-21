@@ -147,5 +147,16 @@ The external reviewer reported:
 All code/document findings F1–F5 and the cheap F6 gaps are addressed on the same
 branch. F2/F7 remain explicit next-adapter gates, not current defects.
 
-**Post-fix host + RAK4630 build revalidation is still required before final PASS
-and merge.**
+Post-fix owner revalidation on exact head
+`967b7fcd4d21e5b95b5cce63bd68ea20615c1594`:
+
+- full host suite: PASS;
+- ASan/UBSan + warnings-as-errors: PASS;
+- all production startup scenarios: PASS;
+- RAK4630 production build: PASS;
+- RAM 22,116 / 248,832;
+- Flash 226,212 / 815,104;
+- no physical test performed or claimed.
+
+**Final disposition: PASS.** The external review found no remaining merge blocker
+after the accepted fixes and exact post-fix software/build revalidation.
