@@ -1,9 +1,10 @@
 # M7P7E — Application requester / response ownership
 
-Status: **MERGE-READY — external review PASS WITH FIXES, accepted fixes applied, post-fix host/build revalidation PASS. NO BLE APPLICATION GATT, PROVISIONING OR PROTECTED WRITE PATH.**
+Status: **MERGED — PR #34 merged to main at `cb1e181f88ed8d8362f6d4d2f97b96734474c954`; external review PASS WITH FIXES, accepted fixes applied, post-fix host/build revalidation PASS. NO BLE APPLICATION GATT, PROVISIONING OR PROTECTED WRITE PATH.**
 
 Baseline: `main@2cfb68b29458d3815f55f8df39d45faac64b2de6` (PR #32 / M7P7D merged).
 Branch: `feat/m7p7e-requester-ownership`.
+Merge: PR #34 -> `main@cb1e181f88ed8d8362f6d4d2f97b96734474c954`.
 
 ## 1. Why this slice exists
 
