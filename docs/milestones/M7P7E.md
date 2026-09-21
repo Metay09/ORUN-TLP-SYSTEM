@@ -1,6 +1,6 @@
 # M7P7E — Application requester / response ownership
 
-Status: **SOFTWARE/BUILD PASS — independent review still required. NO BLE APPLICATION GATT, PROVISIONING OR PROTECTED WRITE PATH.**
+Status: **EXTERNAL REVIEW PASS WITH FIXES — fixes applied; post-fix host/build revalidation required. NO BLE APPLICATION GATT, PROVISIONING OR PROTECTED WRITE PATH.**
 
 Baseline: `main@2cfb68b29458d3815f55f8df39d45faac64b2de6` (PR #32 / M7P7D merged).
 Branch: `feat/m7p7e-requester-ownership`.
@@ -153,10 +153,20 @@ Completed:
 - application-ceiling and exclusive-owner build guards;
 - bounded diff review for protocol/RF/storage/BLE-runtime side effects.
 
+Independent review result:
+
+- verdict: **PASS WITH FIXES**;
+- no BLOCKER/HIGH/MEDIUM findings;
+- LOW invalid-requester slot orphaning: fixed fail-closed;
+- LOW future BLE reconnect/stale-response lifecycle: accepted as a mandatory
+  adapter-slice gate, not solved by speculative service-level session machinery;
+- LOW edge-case test gaps: strengthened in unit and production-loop startup tests;
+- disposition: `docs/audits/M7P7E_EXTERNAL_REVIEW_DISPOSITION.md`.
+
 Still required:
 
-- independent final review of the requester/response ownership contract;
-- disposition any substantive review finding and rerun affected validation.
+- rerun the full host/sanitizer suite on the post-review code;
+- rerun the production RAK4630 build and record final RAM/flash/guard evidence.
 
 No physical hardware test is required for M7P7E itself because it adds no BLE
 application runtime, driver behavior, persistence mutation or RF behavior.
@@ -166,8 +176,26 @@ and must not be reclassified as closed by this milestone.
 
 ## 8. Next gate
 
-After M7P7E software validation/review, the next BLE application slice may define
-the exact bounded GATT transport contract and commissioning/authentication design.
-It must preserve callback -> bounded handoff -> loop-owned application dispatch,
-and it must not expose protected writes merely because a client is connected or
-bonded.
+After M7P7E post-fix revalidation/merge, the next BLE application slice may
+define the exact bounded GATT transport contract and commissioning/authentication
+design. It must preserve callback -> bounded handoff -> loop-owned application
+dispatch, and it must not expose protected writes merely because a client is
+connected or bonded.
+
+Because `ApplicationRequester::kBle` names the adapter rather than one BLE
+connection, that slice must also close transport-session hygiene without turning
+connection state into identity/authorization:
+
+- disconnect cleanup for the old connection must complete before a replacement
+  connection can submit application work;
+- stale cross-connection delivery must be prevented with bounded adapter-local
+  correlation state (for example non-resetting request ids and/or a local
+  session discriminator);
+- the adapter must take a completed application response promptly into its own
+  bounded output buffer rather than hold the global application slot until the
+  remote client chooses to read;
+- disconnect/reconnect, delayed cleanup, stale response and non-reading/flood
+  cases require host coverage.
+
+No service-level multi-session framework is added in M7P7E because no BLE
+application adapter exists yet.
