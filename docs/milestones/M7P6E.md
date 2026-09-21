@@ -601,6 +601,27 @@ is one confirmed interference mode, but another bootloader/USB/host timing
 failure mode still exists and must not be attributed to firmware or to the host
 without further evidence.
 
+A subsequent direct recovery attempt removed another variable: the packaged
+`adafruit-nrfutil.py` was invoked explicitly with the PlatformIO Python
+interpreter, the already-enumerated `/dev/ttyACM0`, 115200 baud,
+single-bank mode and **no touch/reset request**. The tool opened the port,
+parsed the 240364-byte application image, sent the DFU start packet, and again
+received no acknowledgement:
+
+```text
+Opened serial port /dev/ttyACM0
+Starting DFU upgrade of type 4, ... application size: 240364
+Sending DFU start packet
+Timed out waiting for acknowledgement from device.
+No data received on serial port. Not able to proceed.
+```
+
+At that point `lsusb` showed `239a:002a Adafruit WisBlock RAK4631`, while
+`lsblk` showed no RAK4631/UF2 mass-storage volume. The VID/PID observation is
+recorded only as USB-enumeration evidence; it is **not** treated as proof that
+the serial-DFU protocol is active. The board was not physically accessible for
+a button reset during this remote session.
+
 Future upload evidence must treat `Device programmed.` (or equivalent tool
 success) as the positive completion signal. PlatformIO's outer `[SUCCESS]`
 line is not sufficient when the inner nrfutil transfer reports an error.
