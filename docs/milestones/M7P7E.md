@@ -1,6 +1,6 @@
 # M7P7E — Application requester / response ownership
 
-Status: **HOST/SANITIZER PASS — production RAK4630 build still required. NO BLE APPLICATION GATT, PROVISIONING OR PROTECTED WRITE PATH.**
+Status: **SOFTWARE/BUILD PASS — independent review still required. NO BLE APPLICATION GATT, PROVISIONING OR PROTECTED WRITE PATH.**
 
 Baseline: `main@2cfb68b29458d3815f55f8df39d45faac64b2de6` (PR #32 / M7P7D merged).
 Branch: `feat/m7p7e-requester-ownership`.
@@ -119,9 +119,24 @@ Owner-run validation on exact branch head
 - all production startup scenarios reported PASS;
 - no hardware test or upload was performed for this slice.
 
-Production RAK4630 build/resource validation is still required.
+Owner-run production build after the docs-only host-evidence commit
+`5a4b4146b15944a7846b54f1de2665affc7f4717` (firmware code unchanged from
+the tested code-bearing head):
 
-## 6. Validation required before merge
+- `pio run -d firmware -e rak4630`: **PASS**;
+- RAM: **22,124 / 248,832 bytes = 8.9%**;
+- Flash: **226,244 / 815,104 bytes = 27.8%**;
+- delta versus merged M7P7D production baseline
+  (22,116 RAM / 226,212 Flash): **+8 B RAM / +32 B Flash**;
+- `check_exclusive_owner` completed without aborting the build;
+- `check_application_ceiling` completed without aborting the build;
+- no physical upload/test was performed.
+
+The +8 B RAM / +32 B Flash delta is consistent with the requester tag and
+owner-qualified response/discard seam; there is no new queue, heap allocation,
+persistent record or transport runtime.
+
+## 7. Validation required before merge
 
 1. full `firmware/tests/run_host_tests.sh` under the existing warnings-as-errors
    plus ASan/UBSan runner;
@@ -138,7 +153,7 @@ application runtime, driver behavior, persistence mutation or RF behavior.
 The separate PR #33 M7P6E corrected fresh-pairing hardware rerun remains open
 and must not be reclassified as closed by this milestone.
 
-## 7. Next gate
+## 8. Next gate
 
 After M7P7E software validation/review, the next BLE application slice may define
 the exact bounded GATT transport contract and commissioning/authentication design.
