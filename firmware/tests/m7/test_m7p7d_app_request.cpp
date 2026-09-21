@@ -82,7 +82,8 @@ int main() {
     const ApplicationResponse response = take(service);
     assert(response.request_id == 7);
     assert(response.code == ApplicationResponseCode::kOk);
-    assert(response.config_store_ready);
+    assert(response.config_backend_ready);
+    assert(!response.config_has_committed_record);
     assert(response.config.tracking_interval_seconds == 180);
     assert(response.config.battery_capacity_mah == 0);
     assert(flash.program_calls == 0);
@@ -104,7 +105,8 @@ int main() {
     const ApplicationResponse response = take(service);
     assert(response.request_id == 42);
     assert(response.code == ApplicationResponseCode::kOk);
-    assert(response.config_store_ready);
+    assert(response.config_backend_ready);
+    assert(response.config_has_committed_record);
     assert(response.config.tracking_interval_seconds == 247);
     assert(response.config.battery_capacity_mah == 9000);
     assert(flash.program_calls == 0);
@@ -150,7 +152,8 @@ int main() {
     const ApplicationResponse response = take(service);
     assert(response.request_id == 200);
     assert(response.code == ApplicationResponseCode::kUnsupported);
-    assert(!response.config_store_ready);
+    assert(!response.config_backend_ready);
+    assert(!response.config_has_committed_record);
     assert(flash.program_calls == 0);
     assert(flash.erase_calls == 0);
   }
@@ -169,7 +172,35 @@ int main() {
            ApplicationSubmitResult::kAccepted);
     const ApplicationResponse response = take(service);
     assert(response.code == ApplicationResponseCode::kOk);
-    assert(!response.config_store_ready);
+    assert(!response.config_backend_ready);
+    assert(!response.config_has_committed_record);
+    assert(response.config.tracking_interval_seconds == 180);
+    assert(response.config.battery_capacity_mah == 0);
+    assert(flash.program_calls == 0);
+    assert(flash.erase_calls == 0);
+  }
+
+  // 6. A corrupt committed-looking page initializes the backend/store but is
+  // not reported as a recovered durable record. This is distinct from case 5:
+  // backend_ready=true, source remains default.
+  {
+    ReadOnlyFlash flash;
+    flash.seedConfig(config_format::Config{600, 4000}, 1);
+    flash.bytes[20] ^= 0xFF;  // break payload/CRC
+    ConfigStore store(flash);
+    assert(store.begin());
+    assert(store.ready());
+    assert(!store.hasCommittedRecord());
+    assert(store.diagnostics().recovery_corruptions == 1);
+    ApplicationRequestService service(store);
+
+    assert(service.submit(
+               ApplicationRequest{400, ApplicationRequestKind::kGetConfig}) ==
+           ApplicationSubmitResult::kAccepted);
+    const ApplicationResponse response = take(service);
+    assert(response.code == ApplicationResponseCode::kOk);
+    assert(response.config_backend_ready);
+    assert(!response.config_has_committed_record);
     assert(response.config.tracking_interval_seconds == 180);
     assert(response.config.battery_capacity_mah == 0);
     assert(flash.program_calls == 0);
