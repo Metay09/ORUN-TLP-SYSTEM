@@ -571,6 +571,32 @@ resource baseline. The branch still requires one scoped fresh-pairing hardware
 rerun on this corrected code before the earlier §10.2 physical PASS can be
 treated as revalidated for the current head.
 
+### 12.4 Serial DFU upload diagnostic on corrected probe
+
+The first post-fix `nrfutil` upload attempts failed after the 1200-bps touch
+with a timeout / closed-port error even though PlatformIO printed a final
+`[SUCCESS]`. During diagnosis, a separate `pio device monitor` process was
+observed repeatedly reconnecting to `/dev/ttyACM0`. After that monitor was
+stopped and `fuser -v /dev/ttyACM0` showed no owner, the same normal
+PlatformIO upload path was retried without any manual reset:
+
+```text
+Forcing reset using 1200bps open/close on port /dev/ttyACM0
+Waiting for the new upload port...
+Uploading .../firmware.zip
+Upgrading target on /dev/ttyACM0 ...
+Activating new firmware
+Device programmed.
+```
+
+The corrected probe therefore **did upload successfully through the normal
+serial DFU path**. This is strong evidence that the earlier failures were a
+host-side serial-port ownership/reconnect race rather than a firmware,
+bootloader-layout or M7P6E crypto-probe regression. One successful retry does
+not characterize all Linux/udev timing behavior, so future upload tooling should
+still treat `Device programmed.` (or equivalent tool success) as the positive
+completion signal rather than PlatformIO's outer `[SUCCESS]` line alone.
+
 ## 13. Compatibility / system impact
 
 Normal production `rak4630` behavior is intentionally unchanged:
