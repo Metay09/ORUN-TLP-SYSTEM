@@ -1,8 +1,8 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through `main@6774e7425a3776987ddaaff749c01d5cb20474c1`: M7P7B production BLE runtime and the M7P7C application-boundary design gate are merged; M7P6C/D/E security primitive/pre-wire/coexistence evidence is merged, with fresh-pairing LESC/CC310 coexistence still owner-waived/not-PASS; secure-envelope/provisioning/application-GATT runtime remains later; prior M6A/M6B3 focused physical gates PASS; overall M6 IN PROGRESS**.
-Last reviewed against `main@6774e7425a3776987ddaaff749c01d5cb20474c1`.
-Last architecture review update: 2026-09-21 (§17 records the BLE application boundary and points later Entity Registry/MESSAGE/user-location decisions to the separate application-direction record; both are design-only and authorize no runtime by themselves).
+Status: **CURRENT through `main@2cfb68b29458d3815f55f8df39d45faac64b2de6`: M7P7D transport-neutral application request seam is merged; M7P7B/C BLE runtime/application-boundary work and M7P6C/D/E security proof/pre-wire/coexistence work remain governing prerequisites. The corrected M7P6E fresh-pairing rerun is still an open physical gate; secure-envelope/provisioning/application-GATT runtime remains later.**
+Last reviewed against `main@2cfb68b29458d3815f55f8df39d45faac64b2de6`.
+Last architecture review update: 2026-09-21 (§17 records the BLE application boundary, merged M7P7D seam and in-flight M7P7E requester-ownership refinement).
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
@@ -767,4 +767,12 @@ loop-owned, transport-neutral application request/result seam with a read-only U
 `APP CONFIG?` adapter that reads through the existing ConfigStore owner. It does
 not define BLE wire bytes, expose protected writes, or change authorization/security
 semantics. See `docs/milestones/M7P7D.md`.
+
+M7P7E refines that internal seam before a second adapter exists. Accepted
+application work is tagged with an explicit requester; a pending result is
+consumable or discardable only by that requester, while the single global slot
+continues to provide bounded BUSY backpressure. Numeric request IDs are local to
+the requester namespace. This is internal ownership only: it adds no BLE GATT,
+wire format, authorization, provisioning, storage or RF behavior. See
+`docs/milestones/M7P7E.md`.
 
