@@ -306,6 +306,26 @@ int main(int argc, char** argv) {
   assert(result_pos != std::string::npos && busy_pos < result_pos);
   assert(programs == app_query_programs && erases == app_query_erases);
 
+  // M7P7E composition: a future BLE-owned response must not be consumed by
+  // the production USB drain. While that result is pending, APP CONFIG? is
+  // BUSY and does not consume a USB request id; owner-only cleanup restores
+  // the bounded slot.
+  assert(application_requests.submit(orun_tlp::ApplicationRequest{
+             orun_tlp::ApplicationRequester::kBle, 900,
+             orun_tlp::ApplicationRequestKind::kGetConfig}) ==
+         orun_tlp::ApplicationSubmitResult::kAccepted);
+  const uint32_t usb_id_before_ble_pending = next_usb_application_request_id;
+  Serial.output.clear();
+  Serial.queueInput("APP CONFIG?\n");
+  loop();
+  assert(Serial.output.find("APP BUSY\n") != std::string::npos);
+  assert(application_requests.responsePending());
+  assert(next_usb_application_request_id == usb_id_before_ble_pending);
+  assert(application_requests.discardResponse(
+      orun_tlp::ApplicationRequester::kBle));
+  assert(!application_requests.responsePending());
+  assert(programs == app_query_programs && erases == app_query_erases);
+
   // Parser negatives remain ordinary rejected role/diagnostic commands and do
   // not accidentally alias the application query.
   Serial.output.clear();
