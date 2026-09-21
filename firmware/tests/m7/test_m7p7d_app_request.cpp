@@ -1,6 +1,7 @@
-// M7P7D: typed application request seam. Uses the production ConfigStore with
-// a read-only fake flash so the test proves the seam reads the existing owner
-// without creating a second config store or mutating persistence.
+// M7P7D/M7P7E: typed application request seam and requester ownership. Uses
+// the production ConfigStore with a read-only fake flash so the test proves
+// the seam reads the existing owner without creating a second config store or
+// mutating persistence.
 #include <assert.h>
 #include <string.h>
 
@@ -58,9 +59,12 @@ class ReadOnlyFlash : public FlashBackend {
   }
 };
 
-ApplicationResponse take(ApplicationRequestService& service) {
+ApplicationResponse take(
+    ApplicationRequestService& service,
+    ApplicationRequester requester = ApplicationRequester::kUsb) {
   ApplicationResponse response;
-  assert(service.takeResponse(response));
+  assert(service.takeResponse(requester, response));
+  assert(response.requester == requester);
   assert(!service.responsePending());
   return response;
 }
@@ -77,7 +81,8 @@ int main() {
     ApplicationRequestService service(store);
 
     assert(service.submit(
-               ApplicationRequest{7, ApplicationRequestKind::kGetConfig}) ==
+               ApplicationRequest{ApplicationRequester::kUsb, 7,
+                                  ApplicationRequestKind::kGetConfig}) ==
            ApplicationSubmitResult::kAccepted);
     const ApplicationResponse response = take(service);
     assert(response.request_id == 7);
@@ -100,7 +105,8 @@ int main() {
     ApplicationRequestService service(store);
 
     assert(service.submit(
-               ApplicationRequest{42, ApplicationRequestKind::kGetConfig}) ==
+               ApplicationRequest{ApplicationRequester::kUsb, 42,
+                                  ApplicationRequestKind::kGetConfig}) ==
            ApplicationSubmitResult::kAccepted);
     const ApplicationResponse response = take(service);
     assert(response.request_id == 42);
@@ -122,18 +128,21 @@ int main() {
     ApplicationRequestService service(store);
 
     assert(service.submit(
-               ApplicationRequest{100, ApplicationRequestKind::kGetConfig}) ==
+               ApplicationRequest{ApplicationRequester::kUsb, 100,
+                                  ApplicationRequestKind::kGetConfig}) ==
            ApplicationSubmitResult::kAccepted);
     assert(service.responsePending());
     assert(service.submit(
-               ApplicationRequest{101, ApplicationRequestKind::kGetConfig}) ==
+               ApplicationRequest{ApplicationRequester::kUsb, 101,
+                                  ApplicationRequestKind::kGetConfig}) ==
            ApplicationSubmitResult::kBusy);
 
     const ApplicationResponse first = take(service);
     assert(first.request_id == 100);
 
     assert(service.submit(
-               ApplicationRequest{101, ApplicationRequestKind::kGetConfig}) ==
+               ApplicationRequest{ApplicationRequester::kUsb, 101,
+                                  ApplicationRequestKind::kGetConfig}) ==
            ApplicationSubmitResult::kAccepted);
     const ApplicationResponse second = take(service);
     assert(second.request_id == 101);
@@ -147,7 +156,7 @@ int main() {
     ApplicationRequestService service(store);
 
     const auto unknown = static_cast<ApplicationRequestKind>(0xFE);
-    assert(service.submit(ApplicationRequest{200, unknown}) ==
+    assert(service.submit(ApplicationRequest{ApplicationRequester::kUsb, 200, unknown}) ==
            ApplicationSubmitResult::kAccepted);
     const ApplicationResponse response = take(service);
     assert(response.request_id == 200);
@@ -168,7 +177,8 @@ int main() {
     ApplicationRequestService service(store);
 
     assert(service.submit(
-               ApplicationRequest{300, ApplicationRequestKind::kGetConfig}) ==
+               ApplicationRequest{ApplicationRequester::kUsb, 300,
+                                  ApplicationRequestKind::kGetConfig}) ==
            ApplicationSubmitResult::kAccepted);
     const ApplicationResponse response = take(service);
     assert(response.code == ApplicationResponseCode::kOk);
@@ -195,7 +205,8 @@ int main() {
     ApplicationRequestService service(store);
 
     assert(service.submit(
-               ApplicationRequest{400, ApplicationRequestKind::kGetConfig}) ==
+               ApplicationRequest{ApplicationRequester::kUsb, 400,
+                                  ApplicationRequestKind::kGetConfig}) ==
            ApplicationSubmitResult::kAccepted);
     const ApplicationResponse response = take(service);
     assert(response.code == ApplicationResponseCode::kOk);
@@ -205,6 +216,47 @@ int main() {
     assert(response.config.battery_capacity_mah == 0);
     assert(flash.program_calls == 0);
     assert(flash.erase_calls == 0);
+  }
+
+  // 7. Requester ownership is enforced independently of numeric request IDs.
+  // A USB consumer cannot steal or clear a BLE-owned response; the global
+  // one-slot backpressure also remains in force until the rightful requester
+  // consumes that result.
+  {
+    ReadOnlyFlash flash;
+    ConfigStore store(flash);
+    assert(store.begin());
+    ApplicationRequestService service(store);
+
+    assert(service.submit(ApplicationRequest{
+               ApplicationRequester::kBle, 500,
+               ApplicationRequestKind::kGetConfig}) ==
+           ApplicationSubmitResult::kAccepted);
+
+    ApplicationResponse wrong_consumer;
+    assert(!service.takeResponse(ApplicationRequester::kUsb, wrong_consumer));
+    assert(service.responsePending());
+
+    assert(service.submit(ApplicationRequest{
+               ApplicationRequester::kUsb, 500,
+               ApplicationRequestKind::kGetConfig}) ==
+           ApplicationSubmitResult::kBusy);
+
+    const ApplicationResponse response =
+        take(service, ApplicationRequester::kBle);
+    assert(response.requester == ApplicationRequester::kBle);
+    assert(response.request_id == 500);
+    assert(response.code == ApplicationResponseCode::kOk);
+
+    // The same numeric request_id is valid in another requester's namespace
+    // once the prior response has been consumed.
+    assert(service.submit(ApplicationRequest{
+               ApplicationRequester::kUsb, 500,
+               ApplicationRequestKind::kGetConfig}) ==
+           ApplicationSubmitResult::kAccepted);
+    const ApplicationResponse usb_response = take(service);
+    assert(usb_response.requester == ApplicationRequester::kUsb);
+    assert(usb_response.request_id == 500);
   }
 
   return 0;
