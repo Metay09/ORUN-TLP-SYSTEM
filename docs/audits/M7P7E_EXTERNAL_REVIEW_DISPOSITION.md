@@ -117,13 +117,17 @@ Pre-fix independent production build matched owner evidence exactly:
 ## 6. Post-fix gate
 
 Because LOW-1 changed production code and LOW-3 changed host/startup tests, the
-pre-fix validation cannot be promoted to the final code head.
+pre-fix validation was not promoted to the corrected code.
 
-Before merge, rerun:
+Post-fix owner revalidation closed the gate:
 
-1. full `firmware/tests/run_host_tests.sh`;
-2. production `pio run -d firmware -e rak4630`;
-3. record final RAM/Flash and confirm application-ceiling/exclusive-owner guards.
+1. full `firmware/tests/run_host_tests.sh`: **PASS** on corrected head
+   `35f6cefe3d293d1309e3f9d203303a418c3da120`;
+2. production `pio run -d firmware -e rak4630`: **PASS** after the later
+   docs-only head;
+3. final resources: **22,124 B RAM / 226,292 B Flash**;
+4. application-ceiling and exclusive-owner guards completed without aborting
+   the build.
 
 No physical hardware test is required for M7P7E itself. The separate PR #33 /
 M7P6E corrected fresh-pairing physical rerun remains open and is not closed or
