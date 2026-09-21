@@ -545,6 +545,32 @@ Therefore the branch is **not merge-ready** until the canonical host/build
 validation and the scoped fresh-pairing hardware run are repeated on the new
 code head. No production runtime behavior changed.
 
+### 12.3 Post-fix software/build revalidation — head `e408b0b0135e62a5dc2dd5b70f2d825dfc369863`
+
+After the §12.2 PASS-snapshot correction, the owner fast-forwarded the branch to
+`e408b0b0135e62a5dc2dd5b70f2d825dfc369863` and repeated the canonical
+software/build validation:
+
+- full `bash firmware/tests/run_host_tests.sh`: **PASS** through the final R4
+  watchdog checks; this includes the M7P6E crypto-contract and pairing-evidence
+  host tests under the canonical sanitizer/warnings-as-errors runner;
+- normal production `pio run -d firmware -e rak4630`: **PASS**;
+  - RAM: **22,116 / 248,832 bytes = 8.9%**;
+  - Flash: **226,212 / 815,104 bytes = 27.8%**;
+  - exactly unchanged from the merged M7P7D production baseline;
+- hardened full-graph probe
+  `pio run -d firmware -e rak4630_m7p6e_crypto_ble_probe`: **PASS**;
+  - RAM: **22,212 / 248,832 bytes = 8.9%**;
+  - Flash: **240,364 / 815,104 bytes = 29.5%**;
+  - versus the pre-§12.2 hardened probe build, RAM is unchanged and Flash is
+    **112 bytes smaller**;
+- both builds completed the application-ceiling and exclusive-owner link guards.
+
+This revalidation proves the §12.2 change compiles and preserves the production
+resource baseline. The branch still requires one scoped fresh-pairing hardware
+rerun on this corrected code before the earlier §10.2 physical PASS can be
+treated as revalidated for the current head.
+
 ## 13. Compatibility / system impact
 
 Normal production `rak4630` behavior is intentionally unchanged:
