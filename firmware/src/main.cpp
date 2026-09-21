@@ -129,9 +129,11 @@ struct M7P6ECryptoStressState {
 M7P6ECryptoStressState m7p6e_crypto_stress;
 #endif
 
-// Bluefruit BLE-event-task context (not loop(), not an ISR). Inspects only
-// the event id. MUST NOT call monotonic::nowMs(), BleAdmissionPolicy, Serial,
-// flash, radio or Bluefruit/SoftDevice APIs.
+// Bluefruit BLE-event-task context (not loop(), not an ISR). Production
+// handling only inspects the disconnect event id. The M7P6E test-only probe
+// additionally reads immutable security-event fields and increments bounded
+// counters. This callback MUST NOT call monotonic::nowMs(), BleAdmissionPolicy,
+// Serial, flash, radio or Bluefruit/SoftDevice APIs.
 void onBleEvent(ble_evt_t* evt) {
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
   if (evt->header.evt_id == BLE_GAP_EVT_LESC_DHKEY_REQUEST ||
