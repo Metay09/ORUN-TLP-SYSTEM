@@ -45,20 +45,24 @@ struct ApplicationResponse {
   constexpr ApplicationResponse(
       uint32_t request_id_value = 0,
       ApplicationResponseCode code_value = ApplicationResponseCode::kUnsupported,
-      bool config_store_ready_value = false,
+      bool config_backend_ready_value = false,
+      bool config_has_committed_record_value = false,
       config_format::Config config_value = config_format::Config())
       : request_id(request_id_value),
         code(code_value),
-        config_store_ready(config_store_ready_value),
+        config_backend_ready(config_backend_ready_value),
+        config_has_committed_record(config_has_committed_record_value),
         config(config_value) {}
 
   uint32_t request_id;
   ApplicationResponseCode code;
 
-  // Meaningful for kGetConfig/kOk. ConfigStore deliberately reports its safe
-  // fallback even when persistence is unavailable; config_store_ready keeps
-  // callers from misrepresenting that fallback as a recovered durable value.
-  bool config_store_ready;
+  // Meaningful for kGetConfig/kOk. ready() only means ConfigStore/backend
+  // initialization succeeded; blank or corrupt flash can still legitimately
+  // fall back to defaults. config_has_committed_record distinguishes a
+  // recovered durable record from that default/fallback source.
+  bool config_backend_ready;
+  bool config_has_committed_record;
   config_format::Config config;
 };
 
