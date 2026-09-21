@@ -4,6 +4,7 @@
 
 #include "accelerometer_manager.h"
 #include "activity_capture.h"
+#include "application_request.h"
 #include "ble_admission_policy.h"
 #include "config_store.h"
 #ifdef ORUN_M7P7B_FLASH_PROBE
@@ -41,6 +42,11 @@ orun_tlp::ActivityCapture activity_capture(accelerometer_manager);
 orun_tlp::FlashMutationGate storage_flash_gate;
 orun_tlp::HistoryStore history(storage_flash_gate);
 orun_tlp::ConfigStore config_store(storage_flash_gate.configPort());
+// M7P7D: one typed, transport-neutral application request owner. Production
+// USB exposes only the safe read-only CONFIG? diagnostic in this slice;
+// BLE GATT, protected writes and provisioning remain later work.
+orun_tlp::ApplicationRequestService application_requests(config_store);
+uint32_t next_usb_application_request_id = 1;
 // M7P6B: recovery-only composition. SecurityStore never auto-provisions a
 // credential in production firmware -- begin() only recovers whatever
 // already exists (or reports kUnprovisioned on blank flash). A recovered
@@ -198,6 +204,39 @@ bool isActivityCommand(const char* text, uint8_t length) {
   for (uint8_t i = 0; i < length; ++i)
     if (role_command[i] != text[i]) return false;
   return true;
+}
+
+void startUsbApplicationConfigQuery() {
+  const orun_tlp::ApplicationRequest request(
+      next_usb_application_request_id,
+      orun_tlp::ApplicationRequestKind::kGetConfig);
+  const auto result = application_requests.submit(request);
+  if (result == orun_tlp::ApplicationSubmitResult::kBusy) {
+    Serial.printf("APP BUSY id=%lu\n",
+                  static_cast<unsigned long>(next_usb_application_request_id));
+    return;
+  }
+  ++next_usb_application_request_id;
+  if (next_usb_application_request_id == 0) next_usb_application_request_id = 1;
+}
+
+void drainApplicationResponse() {
+  orun_tlp::ApplicationResponse response;
+  if (!application_requests.takeResponse(response)) return;
+
+  if (response.code != orun_tlp::ApplicationResponseCode::kOk) {
+    Serial.printf("APP RESULT id=%lu code=UNSUPPORTED\n",
+                  static_cast<unsigned long>(response.request_id));
+    return;
+  }
+
+  Serial.printf(
+      "APP RESULT id=%lu code=OK config_ready=%s "
+      "tracking_interval_seconds=%lu battery_capacity_mah=%lu\n",
+      static_cast<unsigned long>(response.request_id),
+      response.config_store_ready ? "yes" : "no",
+      static_cast<unsigned long>(response.config.tracking_interval_seconds),
+      static_cast<unsigned long>(response.config.battery_capacity_mah));
 }
 
 void printActivityDiagnostic() {
@@ -585,6 +624,11 @@ void handleRoleCommand() {
     printBleDiagnostic();
     return;
   }
+  if (isActivityCommand("APP CONFIG?", 11)) {
+    role_command_length = 0;
+    startUsbApplicationConfigQuery();
+    return;
+  }
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
   if (isActivityCommand("CRYPTO?", 7)) {
     role_command_length = 0;
@@ -901,6 +945,10 @@ void loop() {
       accelerometer_manager.poll(orun_tlp::monotonic::nowMs()));
   activity_capture.poll();
   pollRoleCommands();
+  // M7P7D: transport input and application result consumption are separate
+  // loop-owned steps. A future BLE callback may only enqueue/copy bounded
+  // transport input; it must not execute application work itself.
+  drainApplicationResponse();
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
   pollM7P6ECryptoStress();
 #endif
