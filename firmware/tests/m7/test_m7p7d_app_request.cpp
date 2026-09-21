@@ -259,5 +259,31 @@ int main() {
     assert(usb_response.request_id == 500);
   }
 
+  // 8. Only the owning requester may abandon a pending response. This is the
+  // bounded disconnect/recovery path a later BLE adapter can use without
+  // allowing another transport to erase someone else's result.
+  {
+    ReadOnlyFlash flash;
+    ConfigStore store(flash);
+    assert(store.begin());
+    ApplicationRequestService service(store);
+
+    assert(service.submit(ApplicationRequest{
+               ApplicationRequester::kBle, 600,
+               ApplicationRequestKind::kGetConfig}) ==
+           ApplicationSubmitResult::kAccepted);
+    assert(!service.discardResponse(ApplicationRequester::kUsb));
+    assert(service.responsePending());
+    assert(service.discardResponse(ApplicationRequester::kBle));
+    assert(!service.responsePending());
+
+    assert(service.submit(ApplicationRequest{
+               ApplicationRequester::kUsb, 601,
+               ApplicationRequestKind::kGetConfig}) ==
+           ApplicationSubmitResult::kAccepted);
+    const ApplicationResponse response = take(service);
+    assert(response.request_id == 601);
+  }
+
   return 0;
 }
