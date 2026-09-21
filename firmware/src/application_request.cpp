@@ -14,7 +14,9 @@ ApplicationSubmitResult ApplicationRequestService::submit(
   switch (request.kind) {
     case ApplicationRequestKind::kGetConfig:
       response_.code = ApplicationResponseCode::kOk;
-      response_.config_store_ready = config_store_.ready();
+      response_.config_backend_ready = config_store_.ready();
+      response_.config_has_committed_record =
+          config_store_.hasCommittedRecord();
       response_.config = config_store_.config();
       break;
     default:
