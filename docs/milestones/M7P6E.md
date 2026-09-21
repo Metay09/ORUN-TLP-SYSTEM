@@ -590,12 +590,20 @@ Device programmed.
 ```
 
 The corrected probe therefore **did upload successfully through the normal
-serial DFU path**. This is strong evidence that the earlier failures were a
-host-side serial-port ownership/reconnect race rather than a firmware,
-bootloader-layout or M7P6E crypto-probe regression. One successful retry does
-not characterize all Linux/udev timing behavior, so future upload tooling should
-still treat `Device programmed.` (or equivalent tool success) as the positive
-completion signal rather than PlatformIO's outer `[SUCCESS]` line alone.
+serial DFU path** after the stale monitor was removed. That run proved the image
+and the normal serial-DFU path can succeed, but it did **not** establish the
+stale monitor as the sole/root cause. A later retry was started with
+`fuser -v /dev/ttyACM0` showing no owner; that retry entered the normal
+1200-bps-touch/DFU flow and began transferring, then timed out waiting for an
+acknowledgement and printed `No data received on serial port`. Therefore the
+serial-DFU failure is currently **intermittent and unresolved**. Port ownership
+is one confirmed interference mode, but another bootloader/USB/host timing
+failure mode still exists and must not be attributed to firmware or to the host
+without further evidence.
+
+Future upload evidence must treat `Device programmed.` (or equivalent tool
+success) as the positive completion signal. PlatformIO's outer `[SUCCESS]`
+line is not sufficient when the inner nrfutil transfer reports an error.
 
 ## 13. Compatibility / system impact
 
