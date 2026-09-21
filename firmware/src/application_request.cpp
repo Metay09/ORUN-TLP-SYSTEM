@@ -8,7 +8,7 @@ ApplicationSubmitResult ApplicationRequestService::submit(
     const ApplicationRequest& request) {
   if (response_ready_) return ApplicationSubmitResult::kBusy;
 
-  response_ = {};
+  response_ = ApplicationResponse();
   response_.request_id = request.request_id;
 
   switch (request.kind) {
@@ -32,7 +32,7 @@ bool ApplicationRequestService::takeResponse(ApplicationResponse& response) {
   if (!response_ready_) return false;
   response = response_;
   response_ready_ = false;
-  response_ = {};
+  response_ = ApplicationResponse();
   return true;
 }
 
