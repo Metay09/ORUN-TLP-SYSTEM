@@ -42,7 +42,7 @@ enum class ApplicationSubmitResult : uint8_t {
 
 struct ApplicationRequest {
   constexpr ApplicationRequest(
-      ApplicationRequester requester_value = ApplicationRequester::kUsb,
+      ApplicationRequester requester_value,
       uint32_t request_id_value = 0,
       ApplicationRequestKind kind_value = ApplicationRequestKind::kGetConfig)
       : requester(requester_value),
@@ -85,7 +85,9 @@ struct ApplicationResponse {
 // One response slot is intentional backpressure: a transport must consume the
 // prior result before submitting more work. This keeps memory fixed. M7P7E
 // makes response ownership explicit: a mismatched requester cannot consume or
-// clear the pending response.
+// clear the pending response. The rightful requester may explicitly discard
+// its response (for example after a transport disconnect) so one abandoned
+// result cannot wedge the global bounded slot forever.
 class ApplicationRequestService {
  public:
   explicit ApplicationRequestService(ConfigStore& config_store)
@@ -93,6 +95,7 @@ class ApplicationRequestService {
 
   ApplicationSubmitResult submit(const ApplicationRequest& request);
   bool takeResponse(ApplicationRequester requester, ApplicationResponse& response);
+  bool discardResponse(ApplicationRequester requester);
   bool responsePending() const { return response_ready_; }
 
  private:
