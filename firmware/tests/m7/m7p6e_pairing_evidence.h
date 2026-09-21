@@ -1,0 +1,57 @@
+#pragma once
+
+#include <stdint.h>
+
+namespace orun_tlp {
+namespace m7p6e_test {
+
+// Test-only evidence counters for the M7P6E fresh-pairing coexistence probe.
+// These counters are sampled across the Bluefruit event-task -> loop-task
+// boundary; they are not production authorization state.
+struct PairingEvidenceCounters {
+  uint32_t lesc = 0;
+  uint32_t auth = 0;
+  uint32_t auth_success = 0;
+  uint32_t auth_failure = 0;
+  uint32_t auth_bonded_success = 0;
+  uint32_t sec_update = 0;
+  uint32_t encrypted_update = 0;
+  uint32_t disconnects = 0;
+};
+
+inline bool counterAdvanced(uint32_t start, uint32_t current) {
+  // Equality, rather than ordering/subtraction, keeps the observation valid
+  // across uint32_t wrap. A full 2^32-event lap between two bounded samples is
+  // outside the probe's possible runtime.
+  return current != start;
+}
+
+inline bool pairingEvidenceRejected(const PairingEvidenceCounters& start,
+                                    const PairingEvidenceCounters& current) {
+  return counterAdvanced(start.auth_failure, current.auth_failure);
+}
+
+inline bool pairingEvidenceDisconnected(const PairingEvidenceCounters& start,
+                                        const PairingEvidenceCounters& current) {
+  return counterAdvanced(start.disconnects, current.disconnects);
+}
+
+inline bool pairingEvidenceComplete(const PairingEvidenceCounters& start,
+                                    const PairingEvidenceCounters& current) {
+  if (pairingEvidenceRejected(start, current) ||
+      pairingEvidenceDisconnected(start, current)) {
+    return false;
+  }
+
+  // A LESC DH-key request alone is not successful pairing. Require the stock
+  // bond-requesting Bluefruit flow to report successful authentication that
+  // produced a bond, followed by an encrypted Mode-1 security update.
+  return counterAdvanced(start.lesc, current.lesc) &&
+         counterAdvanced(start.auth_success, current.auth_success) &&
+         counterAdvanced(start.auth_bonded_success,
+                         current.auth_bonded_success) &&
+         counterAdvanced(start.encrypted_update, current.encrypted_update);
+}
+
+}  // namespace m7p6e_test
+}  // namespace orun_tlp
