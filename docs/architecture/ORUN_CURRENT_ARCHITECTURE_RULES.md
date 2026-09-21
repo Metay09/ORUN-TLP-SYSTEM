@@ -1,8 +1,8 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through `main@6774e7425a3776987ddaaff749c01d5cb20474c1`: M7P7B production BLE runtime and the M7P7C application-boundary design gate are merged; M7P6C/D/E security primitive/pre-wire/coexistence evidence is merged, with fresh-pairing LESC/CC310 coexistence still owner-waived/not-PASS; secure-envelope/provisioning/application-GATT runtime remains later; prior M6A/M6B3 focused physical gates PASS; overall M6 IN PROGRESS**.
-Last reviewed against `main@6774e7425a3776987ddaaff749c01d5cb20474c1`.
-Last architecture review update: 2026-09-21 (§17 records the BLE application boundary and points later Entity Registry/MESSAGE/user-location decisions to the separate application-direction record; both are design-only and authorize no runtime by themselves).
+Status: **CURRENT through `main@cb1e181f88ed8d8362f6d4d2f97b96734474c954`: M7P7E requester/response ownership is merged on top of the M7P7D transport-neutral seam; M7P7B/C BLE runtime/application-boundary work and M7P6C/D/E security proof/pre-wire/coexistence work remain governing prerequisites. The corrected M7P6E fresh-pairing rerun is still an open physical gate; secure-envelope/provisioning/application-GATT runtime remains later.**
+Last reviewed against code checkpoint `main@cb1e181f88ed8d8362f6d4d2f97b96734474c954` (PR #34 / M7P7E merged; later main commits are documentation-only closeout).
+Last architecture review update: 2026-09-21 (§17 records the BLE application boundary and merged M7P7D/M7P7E request ownership seam).
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
@@ -729,16 +729,31 @@ firmware still independently verifies cryptographic authority for protected oper
 Internet backhaul is not a prerequisite for on-site local ORUN operation. When an
 authorized user is physically at the site, a compatible ORUN gateway should eventually
 bridge locally available/cached accepted location state and later offline-capable MESSAGE
-plus authorized key/access/control traffic over an implemented local transport such as
-BLE or wired/USB, without requiring cloud reachability. Service security remains
-application-specific: private messages keep end-to-end protection, and key/access/control
-operations still require authentication, authorization, anti-replay, freshness/expiry,
-idempotency and explicit result semantics. This does not make the gateway a security
-authority or give it tracker root keys. "Any gateway" means any compatible gateway that
-actually holds or can locally reach the requested traffic/state; complete-site visibility
-through one arbitrary gateway while offline would require an explicit local cross-gateway
-synchronization design and is not implemented today. See
-`ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
+plus authorized configuration/key/access/control traffic over an implemented local
+transport such as BLE or wired/USB, without requiring cloud reachability.
+
+Owner-approved product direction includes **targeted remote configuration through a
+gateway**. The gateway is a transport/bridge, not the configuration owner or security
+authority: it must not invent authority, rewrite target intent, or directly mutate a
+tracker's durable configuration. The target device must authenticate and authorize the
+operation, enforce anti-replay plus freshness/expiry and idempotency, validate the
+candidate configuration, and apply accepted changes through the same application/config
+owner used by direct local transports (currently the ApplicationRequestService/ConfigStore
+boundary). Gateway receipt, RF TX completion and target receipt are not configuration
+success; UI/backend may report success only from an explicit target-device result that the
+requested change was accepted/applied. A local offline path such as
+phone -> BLE -> gateway -> LoRa -> target device must remain possible without Internet.
+
+Service security remains application-specific: private messages keep end-to-end
+protection, and configuration/key/access/control operations still require authentication,
+authorization, anti-replay, freshness/expiry, idempotency and explicit result semantics.
+This does not make the gateway a security authority or give it tracker root keys. Current
+TLP v1 bytes remain frozen; future trusted remote configuration/command traffic requires
+an explicitly versioned secure application envelope rather than reinterpretation of TLP
+v1. "Any gateway" means any compatible gateway that actually holds or can locally reach
+the requested traffic/state; complete-site visibility through one arbitrary gateway while
+offline would require an explicit local cross-gateway synchronization design and is not
+implemented today. See `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
 
 ## 17. BLE application boundary and later application direction
 
@@ -767,4 +782,16 @@ loop-owned, transport-neutral application request/result seam with a read-only U
 `APP CONFIG?` adapter that reads through the existing ConfigStore owner. It does
 not define BLE wire bytes, expose protected writes, or change authorization/security
 semantics. See `docs/milestones/M7P7D.md`.
+
+M7P7E (PR #34, merged at
+`main@cb1e181f88ed8d8362f6d4d2f97b96734474c954`) refines that internal seam
+before a second adapter exists. Accepted application work is tagged with an
+explicit local requester; unsupported requester values fail closed before they
+can own the global response slot. A pending result is consumable or discardable
+only by its requester, while the single global slot continues to provide bounded
+BUSY backpressure. Numeric request IDs are local to the requester namespace.
+Requester provenance is not user identity, authorization, BLE connection
+identity or a wire field. This remains internal ownership only: it adds no BLE
+GATT, wire format, authorization, provisioning, storage or RF behavior. See
+`docs/milestones/M7P7E.md`.
 

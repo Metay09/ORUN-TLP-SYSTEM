@@ -43,9 +43,11 @@ orun_tlp::ActivityCapture activity_capture(accelerometer_manager);
 orun_tlp::FlashMutationGate storage_flash_gate;
 orun_tlp::HistoryStore history(storage_flash_gate);
 orun_tlp::ConfigStore config_store(storage_flash_gate.configPort());
-// M7P7D: one typed, transport-neutral application request owner. Production
-// USB exposes only the safe read-only CONFIG? diagnostic in this slice;
-// BLE GATT, protected writes and provisioning remain later work.
+// M7P7D/M7P7E: one typed, transport-neutral application request owner.
+// Production USB exposes only the safe read-only CONFIG? diagnostic. M7P7E
+// makes the requester explicit so a later BLE adapter cannot consume USB
+// responses (or vice versa). BLE GATT, protected writes and provisioning
+// remain later work.
 orun_tlp::ApplicationRequestService application_requests(config_store);
 uint32_t next_usb_application_request_id = 1;
 // M7P6B: recovery-only composition. SecurityStore never auto-provisions a
@@ -231,6 +233,7 @@ bool isActivityCommand(const char* text, uint8_t length) {
 
 void startUsbApplicationConfigQuery() {
   const orun_tlp::ApplicationRequest request(
+      orun_tlp::ApplicationRequester::kUsb,
       next_usb_application_request_id,
       orun_tlp::ApplicationRequestKind::kGetConfig);
   const auto result = application_requests.submit(request);
@@ -241,13 +244,21 @@ void startUsbApplicationConfigQuery() {
     Serial.println(F("APP BUSY"));
     return;
   }
+  if (result == orun_tlp::ApplicationSubmitResult::kRejected) {
+    // The production USB adapter always supplies kUsb locally, so this means
+    // an internal invariant was violated rather than peer input being bad.
+    Serial.println(F("APP REJECTED"));
+    return;
+  }
   ++next_usb_application_request_id;
   if (next_usb_application_request_id == 0) next_usb_application_request_id = 1;
 }
 
 void drainApplicationResponse() {
   orun_tlp::ApplicationResponse response;
-  if (!application_requests.takeResponse(response)) return;
+  if (!application_requests.takeResponse(
+          orun_tlp::ApplicationRequester::kUsb, response))
+    return;
 
   if (response.code != orun_tlp::ApplicationResponseCode::kOk) {
     Serial.printf("APP RESULT id=%lu code=UNSUPPORTED\n",

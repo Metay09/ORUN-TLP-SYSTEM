@@ -6,9 +6,14 @@ namespace orun_tlp {
 
 ApplicationSubmitResult ApplicationRequestService::submit(
     const ApplicationRequest& request) {
+  if (request.requester != ApplicationRequester::kUsb &&
+      request.requester != ApplicationRequester::kBle) {
+    return ApplicationSubmitResult::kRejected;
+  }
   if (response_ready_) return ApplicationSubmitResult::kBusy;
 
   response_ = ApplicationResponse();
+  response_.requester = request.requester;
   response_.request_id = request.request_id;
 
   switch (request.kind) {
@@ -30,9 +35,17 @@ ApplicationSubmitResult ApplicationRequestService::submit(
   return ApplicationSubmitResult::kAccepted;
 }
 
-bool ApplicationRequestService::takeResponse(ApplicationResponse& response) {
-  if (!response_ready_) return false;
+bool ApplicationRequestService::takeResponse(
+    ApplicationRequester requester, ApplicationResponse& response) {
+  if (!response_ready_ || response_.requester != requester) return false;
   response = response_;
+  response_ready_ = false;
+  response_ = ApplicationResponse();
+  return true;
+}
+
+bool ApplicationRequestService::discardResponse(ApplicationRequester requester) {
+  if (!response_ready_ || response_.requester != requester) return false;
   response_ready_ = false;
   response_ = ApplicationResponse();
   return true;
