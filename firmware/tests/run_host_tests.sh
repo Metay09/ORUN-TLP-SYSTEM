@@ -210,6 +210,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
   firmware/src/flash_mutation_gate.cpp \
   firmware/src/config_store.cpp firmware/src/config_format.cpp \
+  firmware/src/application_request.cpp \
   firmware/src/security_store.cpp firmware/src/security_format.cpp \
   firmware/src/position_flow.cpp firmware/src/ble_admission_policy.cpp \
   -o "$test_dir/startup"
@@ -227,6 +228,11 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7b_flash_probe.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m7p7b_flash_probe"
 "$test_dir/m7p7b_flash_probe"
+g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7d_app_request.cpp \
+  firmware/src/application_request.cpp firmware/src/config_store.cpp \
+  firmware/src/config_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp -o "$test_dir/m7p7d_app_request"
+"$test_dir/m7p7d_app_request"
 g++ "${flags[@]}" firmware/tests/r4/test_r4.cpp "${gnss_sources[@]}" \
   firmware/src/watchdog_manager.cpp -o "$test_dir/r4"
 "$test_dir/r4"
