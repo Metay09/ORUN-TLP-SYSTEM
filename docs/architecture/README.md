@@ -48,6 +48,10 @@ transport-neutral application request/result seam and a read-only USB `APP CONFI
 adapter. It does not add protected writes, BLE application GATT, provisioning,
 authorization, MESSAGE, commands or new wire bytes.
 
+M7P7D external independent review returned **PASS WITH FIXES**. The accepted
+findings/fixes and remaining post-fix revalidation gate are recorded in
+`docs/audits/M7P7D_EXTERNAL_REVIEW_DISPOSITION.md`.
+
 Owner-approved later application direction is recorded separately in
 `ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`: Entity Registry ownership/offline conflict
 principles, person-location privacy, concise shared-map semantics, MESSAGE recipient/
