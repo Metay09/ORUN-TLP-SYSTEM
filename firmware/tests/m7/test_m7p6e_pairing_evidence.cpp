@@ -22,6 +22,11 @@ int main() {
   ++now.auth_bonded_success;
   assert(!pairingEvidenceComplete(start, now));
 
+  // A successful bond that was not itself reported as LESC is not enough even
+  // if a DH-key event was seen earlier in the window.
+  ++now.auth_lesc_bonded_success;
+  assert(!pairingEvidenceComplete(start, now));
+
   // A fresh encrypted Mode-1 security update closes the pairing evidence.
   ++now.sec_update;
   ++now.encrypted_update;
@@ -56,6 +61,7 @@ int main() {
   wrap_start.auth = UINT32_MAX;
   wrap_start.auth_success = UINT32_MAX;
   wrap_start.auth_bonded_success = UINT32_MAX;
+  wrap_start.auth_lesc_bonded_success = UINT32_MAX;
   wrap_start.sec_update = UINT32_MAX;
   wrap_start.encrypted_update = UINT32_MAX;
   wrap_start.auth_failure = 7;
@@ -66,6 +72,7 @@ int main() {
   wrap_now.auth = 0;
   wrap_now.auth_success = 0;
   wrap_now.auth_bonded_success = 0;
+  wrap_now.auth_lesc_bonded_success = 0;
   wrap_now.sec_update = 0;
   wrap_now.encrypted_update = 0;
   assert(pairingEvidenceComplete(wrap_start, wrap_now));
