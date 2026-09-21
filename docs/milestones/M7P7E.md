@@ -1,0 +1,133 @@
+# M7P7E — Application requester / response ownership
+
+Status: **IMPLEMENTATION IN PROGRESS — software validation still required. NO BLE APPLICATION GATT, PROVISIONING OR PROTECTED WRITE PATH.**
+
+Baseline: `main@2cfb68b29458d3815f55f8df39d45faac64b2de6` (PR #32 / M7P7D merged).
+Branch: `feat/m7p7e-requester-ownership`.
+
+## 1. Why this slice exists
+
+M7P7D deliberately used one bounded application response slot and only one
+adapter (USB). Its own remaining-gates section requires explicit requester /
+adapter response ownership before a second application transport exists;
+otherwise USB could consume a BLE result, BLE could consume a USB result, or a
+disconnected adapter could leave the global slot permanently busy.
+
+M7P7E closes only that ownership seam. It does **not** add the second adapter.
+
+This slice is intentionally independent of the currently open M7P6E corrected
+fresh-pairing physical rerun. No BLE security event, CryptoCell operation,
+pairing, bond mutation or hardware upload is required to validate this code.
+
+## 2. Scope
+
+M7P7E adds:
+
+- explicit typed `ApplicationRequester` identities for the existing USB adapter
+  and the future BLE adapter;
+- requester identity carried from accepted request to response;
+- requester-qualified response consumption;
+- fail-closed cross-requester behavior: a requester cannot consume or clear
+  another requester's pending result;
+- requester-owned response discard so a later disconnected transport can abandon
+  its own result without wedging the global bounded slot;
+- host coverage for same numeric request IDs in different requester namespaces,
+  cross-requester take rejection, global BUSY backpressure and owner-only discard.
+
+The existing USB `APP CONFIG?` behavior and log shape remain unchanged.
+
+## 3. Ownership semantics
+
+The service still owns exactly one result slot.
+
+```text
+USB adapter --------------------+
+                                |
+future BLE adapter -------------+--> ApplicationRequestService
+                                      |
+                                      +--> existing ConfigStore
+```
+
+A request is identified by the pair:
+
+```text
+(requester, request_id)
+```
+
+`request_id` is therefore local to an adapter/requester namespace. Numeric IDs
+may repeat between USB and BLE without becoming the same logical request.
+
+The single global slot remains intentional bounded backpressure. If any accepted
+response is unread, every subsequent submit returns `BUSY`, regardless of
+requester. No heap, generic event bus or unbounded per-transport queue is added.
+
+Only the requester that owns the pending response may:
+
+- take it; or
+- discard it.
+
+A mismatched take/discard leaves the pending response untouched.
+
+The discard API is a lifecycle/recovery primitive, not an authorization bypass.
+A later BLE adapter is expected to invoke it from loop-owned disconnect cleanup,
+not directly from a Bluefruit callback.
+
+## 4. Security boundary
+
+M7P7E does not change the M7P7C/M7P7D security boundary:
+
+- BLE connection != BLE bond != ORUN application authorization;
+- no credential provisioning path is added;
+- no `K_root` readback exists;
+- no protected configuration write is added;
+- no secure RF envelope or command path is added.
+
+The future BLE GATT/commissioning slice must still define exact framing/UUIDs,
+bounded MTU behavior, callback handoff, rate limiting, commissioning/authentication
+ceremony, authority-key custody/recovery and Just Works/bond-store denial-of-service
+behavior before protected writes are exposed.
+
+## 5. Compatibility / system impact
+
+```text
+TLP v1 bytes/sizes:             unchanged
+RF PHY/airtime/forwarding:     unchanged
+HistoryStore bytes:            unchanged
+ConfigStore bytes:             unchanged
+SecurityStore bytes:           unchanged
+BLE runtime/admission:         unchanged
+BLE application GATT:          not implemented
+provisioning/authorization:    not implemented
+durable config write over APP: not implemented
+USB APP CONFIG? text shape:    unchanged
+MESSAGE/commands:              not implemented
+Android/backend:               not implemented
+```
+
+The change is an internal C++ ownership contract only. It creates no new durable
+state and performs no flash, radio, BLE or CryptoCell operation.
+
+## 6. Validation required before merge
+
+1. full `firmware/tests/run_host_tests.sh` under the existing warnings-as-errors
+   plus ASan/UBSan runner;
+2. all startup composition scenarios PASS;
+3. production `pio run -d firmware -e rak4630` PASS;
+4. record RAM/flash and compare with the M7P7D production baseline
+   (22,116 B RAM / 226,212 B Flash);
+5. storage-ceiling / exclusive-owner guards remain PASS;
+6. review diff for accidental BLE/RF/storage/protocol changes.
+
+No physical hardware test is required for M7P7E itself because it adds no BLE
+application runtime, driver behavior, persistence mutation or RF behavior.
+
+The separate PR #33 M7P6E corrected fresh-pairing hardware rerun remains open
+and must not be reclassified as closed by this milestone.
+
+## 7. Next gate
+
+After M7P7E software validation/review, the next BLE application slice may define
+the exact bounded GATT transport contract and commissioning/authentication design.
+It must preserve callback -> bounded handoff -> loop-owned application dispatch,
+and it must not expose protected writes merely because a client is connected or
+bonded.
