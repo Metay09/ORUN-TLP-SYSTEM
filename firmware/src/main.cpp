@@ -109,6 +109,7 @@ volatile uint32_t m7p6e_auth_status_events = 0;
 volatile uint32_t m7p6e_auth_success_events = 0;
 volatile uint32_t m7p6e_auth_failure_events = 0;
 volatile uint32_t m7p6e_auth_bonded_success_events = 0;
+volatile uint32_t m7p6e_auth_lesc_bonded_success_events = 0;
 volatile uint32_t m7p6e_sec_update_events = 0;
 volatile uint32_t m7p6e_encrypted_sec_update_events = 0;
 bool m7p6e_boot_kat_pass = false;
@@ -144,7 +145,10 @@ void onBleEvent(ble_evt_t* evt) {
       const auto& auth = evt->evt.gap_evt.params.auth_status;
       if (auth.auth_status == BLE_GAP_SEC_STATUS_SUCCESS) {
         ++m7p6e_auth_success_events;
-        if (auth.bonded) ++m7p6e_auth_bonded_success_events;
+        if (auth.bonded) {
+          ++m7p6e_auth_bonded_success_events;
+          if (auth.lesc) ++m7p6e_auth_lesc_bonded_success_events;
+        }
       } else {
         ++m7p6e_auth_failure_events;
       }
@@ -352,6 +356,7 @@ M7P6EBleSecurityCounters readM7P6EBleSecurityCounters() {
   out.auth_success = m7p6e_auth_success_events;
   out.auth_failure = m7p6e_auth_failure_events;
   out.auth_bonded_success = m7p6e_auth_bonded_success_events;
+  out.auth_lesc_bonded_success = m7p6e_auth_lesc_bonded_success_events;
   out.sec_update = m7p6e_sec_update_events;
   out.encrypted_update = m7p6e_encrypted_sec_update_events;
   out.disconnects = ble_disconnect_events;
@@ -382,7 +387,8 @@ void printM7P6ECryptoStatus() {
   Serial.printf(
       "M7P6E STATUS boot_kat=%s stress=%s iterations=%u "
       "lesc_events=%lu auth_events=%lu auth_success=%lu auth_failure=%lu "
-      "bonded_success=%lu sec_update_events=%lu encrypted_updates=%lu "
+      "bonded_success=%lu lesc_bonded_success=%lu "
+      "sec_update_events=%lu encrypted_updates=%lu "
       "ble_connected=%u\n",
       m7p6e_boot_kat_pass ? "PASS" : "FAIL",
       m7p6e_crypto_stress.active ? "ACTIVE" : "IDLE",
@@ -392,6 +398,7 @@ void printM7P6ECryptoStatus() {
       static_cast<unsigned long>(counters.auth_success),
       static_cast<unsigned long>(counters.auth_failure),
       static_cast<unsigned long>(counters.auth_bonded_success),
+      static_cast<unsigned long>(counters.auth_lesc_bonded_success),
       static_cast<unsigned long>(counters.sec_update),
       static_cast<unsigned long>(counters.encrypted_update),
       ble_ready ? static_cast<unsigned>(Bluefruit.Periph.connected()) : 0U);
@@ -535,13 +542,17 @@ void pollM7P6ECryptoStress() {
         m7p6e_crypto_stress.iterations;
     Serial.printf(
         "M7P6E PAIRING COMPLETE iteration=%u auth_success_delta=%lu "
-        "bonded_success_delta=%lu encrypted_update_delta=%lu\n",
+        "bonded_success_delta=%lu lesc_bonded_success_delta=%lu "
+        "encrypted_update_delta=%lu\n",
         static_cast<unsigned>(
             m7p6e_crypto_stress.pairing_complete_iteration),
         static_cast<unsigned long>(
             counters.auth_success - start.auth_success),
         static_cast<unsigned long>(
             counters.auth_bonded_success - start.auth_bonded_success),
+        static_cast<unsigned long>(
+            counters.auth_lesc_bonded_success -
+            start.auth_lesc_bonded_success),
         static_cast<unsigned long>(
             counters.encrypted_update - start.encrypted_update));
   }
@@ -558,7 +569,8 @@ void pollM7P6ECryptoStress() {
     Serial.printf(
         "M7P6E COEX PASS iterations=%u lesc_delta=%lu auth_delta=%lu "
         "auth_success_delta=%lu bonded_success_delta=%lu "
-        "auth_failure_delta=%lu sec_update_delta=%lu "
+        "lesc_bonded_success_delta=%lu auth_failure_delta=%lu "
+        "sec_update_delta=%lu "
         "encrypted_update_delta=%lu disconnect_delta=%lu max_kat_us=%lu "
         "ble_connected=1\n",
         static_cast<unsigned>(m7p6e_crypto_stress.iterations),
@@ -569,6 +581,9 @@ void pollM7P6ECryptoStress() {
         static_cast<unsigned long>(
             final_counters.auth_bonded_success -
             start.auth_bonded_success),
+        static_cast<unsigned long>(
+            final_counters.auth_lesc_bonded_success -
+            start.auth_lesc_bonded_success),
         static_cast<unsigned long>(
             final_counters.auth_failure - start.auth_failure),
         static_cast<unsigned long>(
@@ -593,7 +608,8 @@ void pollM7P6ECryptoStress() {
     Serial.printf(
         "M7P6E COEX FAIL reason=%s iterations=%u lesc_delta=%lu "
         "auth_delta=%lu auth_success_delta=%lu bonded_success_delta=%lu "
-        "auth_failure_delta=%lu sec_update_delta=%lu "
+        "lesc_bonded_success_delta=%lu auth_failure_delta=%lu "
+        "sec_update_delta=%lu "
         "encrypted_update_delta=%lu max_kat_us=%lu\n",
         reason,
         static_cast<unsigned>(m7p6e_crypto_stress.iterations),
@@ -603,6 +619,9 @@ void pollM7P6ECryptoStress() {
             counters.auth_success - start.auth_success),
         static_cast<unsigned long>(
             counters.auth_bonded_success - start.auth_bonded_success),
+        static_cast<unsigned long>(
+            counters.auth_lesc_bonded_success -
+            start.auth_lesc_bonded_success),
         static_cast<unsigned long>(
             counters.auth_failure - start.auth_failure),
         static_cast<unsigned long>(
