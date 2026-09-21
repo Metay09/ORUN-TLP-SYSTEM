@@ -1,6 +1,6 @@
 # M7P7D — Transport-neutral application request seam
 
-Status: **IN PROGRESS — SOFTWARE IMPLEMENTATION; NO BLE APPLICATION GATT OR PROTECTED WRITE PATH.**
+Status: **SOFTWARE PASS — host/sanitizer + RAK4630 production build PASS; static review PASS; external independent review pending. NO BLE APPLICATION GATT OR PROTECTED WRITE PATH.**
 
 Baseline: `main@6774e7425a3776987ddaaff749c01d5cb20474c1` (PR #31 / M7P7C design gate merged).
 Branch: `feat/m7p7d-app-request-seam`.
@@ -118,26 +118,43 @@ Android/backend:               not implemented
 RAM impact is one small service object, one response record and one USB request
 counter. No new durable allocation is introduced.
 
-## 7. Validation plan
+## 7. Validation evidence
 
-Required before merge:
+Owner Debian validation on 2026-09-21:
 
-1. full host suite with ASan/UBSan and warnings-as-errors;
-2. focused M7P7D unit test proving:
-   - defaults are read from real ConfigStore;
-   - recovered non-default values pass through unchanged;
-   - unread response causes BUSY rather than overwrite;
-   - unknown request fails closed;
-   - ConfigStore begin failure remains distinguishable from durable recovery;
-   - no flash program/erase occurs for GET;
-3. startup host test proving the actual USB parser routes through the seam and
-   preserves role/radio/flash state;
-4. RAK4630 production build and RAM/flash delta;
-5. static/independent review of the branch.
+1. **Full host suite: PASS**
+   - ASan/UBSan and warnings-as-errors host runner completed;
+   - all existing compatibility, RF, storage, BLE/persistence and startup
+     regression checks remained PASS;
+   - focused M7P7D test was built/executed by the host runner;
+   - startup composition scenarios (mutex/gate/queue/lora/success/advfail/
+     blefail/noevent) all remained PASS with the M7P7D service linked.
+2. **RAK4630 production build: PASS**
+   - RAM: 22,116 / 248,832 bytes = 8.9%;
+   - Flash: 226,148 / 815,104 bytes = 27.7%;
+   - production storage-ceiling and exclusive-owner link checks passed.
+3. **Size delta versus the immediately preceding production image**
+   (`main@6774e742...` is docs-only relative to the previously measured
+   production binary):
+   - RAM: +32 bytes (22,084 -> 22,116);
+   - Flash: +648 bytes (225,500 -> 226,148).
+4. **Static review: PASS with no runtime blocker.**
+   - `GET_CONFIG` has no flash/radio/security side effect;
+   - unread response cannot be overwritten;
+   - current USB adapter executes from the existing loop-owned parser;
+   - no BLE callback/application task ownership is introduced;
+   - no wire/storage format changes are introduced.
 
-Physical hardware is not required merely to prove this read-only USB seam unless
-software/build review exposes a device-specific uncertainty. No BLE GATT behavior
-is changed in this slice.
+The PlatformIO build still emits pre-existing warnings from the pinned
+SX126x-Arduino dependency (RAK4630 preprocessor warning and signed/unsigned
+warnings in its RAK11300 SimpleTimer source). No new ORUN-source warning was
+identified in this validation.
+
+External independent review remains pending before merge.
+
+Physical hardware is not required merely to prove this read-only USB seam: no BLE
+GATT, RF, persistence format, power policy or hardware-driver behavior changed.
+No physical PASS is claimed for M7P7D.
 
 ## 8. Remaining gates
 
