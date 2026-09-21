@@ -212,8 +212,10 @@ void startUsbApplicationConfigQuery() {
       orun_tlp::ApplicationRequestKind::kGetConfig);
   const auto result = application_requests.submit(request);
   if (result == orun_tlp::ApplicationSubmitResult::kBusy) {
-    Serial.printf("APP BUSY id=%lu\n",
-                  static_cast<unsigned long>(next_usb_application_request_id));
+    // Rejected requests do not receive a correlation id. Reusing the same
+    // numeric id later for an accepted request would otherwise make logs
+    // ambiguous ("BUSY id=N" followed by "RESULT id=N").
+    Serial.println(F("APP BUSY"));
     return;
   }
   ++next_usb_application_request_id;
@@ -230,11 +232,13 @@ void drainApplicationResponse() {
     return;
   }
 
+  const char* config_source =
+      response.config_has_committed_record ? "stored" : "default";
   Serial.printf(
-      "APP RESULT id=%lu code=OK config_ready=%s "
+      "APP RESULT id=%lu code=OK config_backend_ready=%s source=%s "
       "tracking_interval_seconds=%lu battery_capacity_mah=%lu\n",
       static_cast<unsigned long>(response.request_id),
-      response.config_store_ready ? "yes" : "no",
+      response.config_backend_ready ? "yes" : "no", config_source,
       static_cast<unsigned long>(response.config.tracking_interval_seconds),
       static_cast<unsigned long>(response.config.battery_capacity_mah));
 }
