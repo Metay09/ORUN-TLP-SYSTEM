@@ -272,33 +272,62 @@ int main(int argc, char** argv) {
   assert(Wire.transaction_calls == wire_calls);
 
   // M7P7D: USB is only an adapter into the typed application request seam.
-  // CONFIG? is intentionally read-only and must not touch flash/radio/role.
+  // APP CONFIG? is intentionally read-only and must not touch flash/radio/role.
+  // Drive the REAL production loop here: deleting drainApplicationResponse()
+  // from loop() must make this test fail rather than letting a manual drain
+  // create a false-positive composition test.
   const unsigned app_query_programs = programs;
   const unsigned app_query_erases = erases;
   Serial.output.clear();
   Serial.queueInput("APP CONFIG?\n");
-  pollRoleCommands();
-  assert(Serial.output.empty());  // request accepted; result is drained separately.
-  drainApplicationResponse();
-  assert(Serial.output ==
-         "APP RESULT id=1 code=OK config_ready=yes "
-         "tracking_interval_seconds=180 battery_capacity_mah=0\n");
+  loop();
+  assert(!application_requests.responsePending());
+  assert(Serial.output.find(
+             "APP RESULT id=1 code=OK config_backend_ready=yes source=default "
+             "tracking_interval_seconds=180 battery_capacity_mah=0\n") !=
+         std::string::npos);
   assert(programs == app_query_programs && erases == app_query_erases);
   assert(role_controller.role() == prior_role);
   assert(Wire.transaction_calls == wire_calls);
 
-  // The one-result slot provides bounded backpressure. A second command that
-  // arrives before the first result is consumed is rejected as BUSY and cannot
-  // overwrite request/result ownership.
+  // The one-result slot provides bounded backpressure. Two commands fit inside
+  // the production parser's per-loop byte budget: first is accepted, second is
+  // BUSY, then loop() drains only the accepted result. Rejected work receives
+  // no correlation id.
   Serial.output.clear();
   Serial.queueInput("APP CONFIG?\nAPP CONFIG?\n");
+  loop();
+  assert(!application_requests.responsePending());
+  const size_t busy_pos = Serial.output.find("APP BUSY\n");
+  const size_t result_pos = Serial.output.find(
+      "APP RESULT id=2 code=OK config_backend_ready=yes source=default "
+      "tracking_interval_seconds=180 battery_capacity_mah=0\n");
+  assert(busy_pos != std::string::npos);
+  assert(result_pos != std::string::npos && busy_pos < result_pos);
+  assert(programs == app_query_programs && erases == app_query_erases);
+
+  // Parser negatives remain ordinary rejected role/diagnostic commands and do
+  // not accidentally alias the application query.
+  Serial.output.clear();
+  Serial.queueInput("APP CONFIG\nAPP CONFIG??\napp config?\n");
   while (Serial.available()) pollRoleCommands();
-  assert(Serial.output == "APP BUSY id=3\n");
-  drainApplicationResponse();
-  assert(Serial.output ==
-         "APP BUSY id=3\n"
-         "APP RESULT id=2 code=OK config_ready=yes "
-         "tracking_interval_seconds=180 battery_capacity_mah=0\n");
+  assert(Serial.output == "ROLE command rejected\n"
+                          "ROLE command rejected\n"
+                          "ROLE command rejected\n");
+  assert(!application_requests.responsePending());
+
+  // Local diagnostic request-id wrap skips zero and stays a correlation aid
+  // only; it is not a protocol/security/message identity.
+  next_usb_application_request_id = UINT32_MAX;
+  Serial.output.clear();
+  Serial.queueInput("APP CONFIG?\n");
+  loop();
+  assert(!application_requests.responsePending());
+  assert(next_usb_application_request_id == 1);
+  assert(Serial.output.find(
+             "APP RESULT id=4294967295 code=OK config_backend_ready=yes "
+             "source=default tracking_interval_seconds=180 "
+             "battery_capacity_mah=0\n") != std::string::npos);
   assert(programs == app_query_programs && erases == app_query_erases);
 
   // BLE? reports runtime readiness, advertising state, connection count,
