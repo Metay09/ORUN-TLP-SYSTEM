@@ -49,6 +49,9 @@ DELIVERED semantics, Internet-first/LoRa-fallback/store-forward direction, prese
 semantics and LoRa MESSAGE prerequisites. It is documentation-only and must not be read
 as evidence that those runtimes exist.
 
+The owner-provided independent review and ORUN disposition are recorded in
+`docs/audits/M7P7C_INDEPENDENT_ARCH_REVIEW_DISPOSITION.md`.
+
 This directory contains current owner-approved rules plus historical/proposed
 architecture audits. They are not equal sources of truth. This index tells a new
 engineer which document governs current work without relying on conversation
