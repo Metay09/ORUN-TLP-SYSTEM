@@ -1,6 +1,6 @@
 # M7P7E — Application requester / response ownership
 
-Status: **IMPLEMENTATION IN PROGRESS — software validation still required. NO BLE APPLICATION GATT, PROVISIONING OR PROTECTED WRITE PATH.**
+Status: **HOST/SANITIZER PASS — production RAK4630 build still required. NO BLE APPLICATION GATT, PROVISIONING OR PROTECTED WRITE PATH.**
 
 Baseline: `main@2cfb68b29458d3815f55f8df39d45faac64b2de6` (PR #32 / M7P7D merged).
 Branch: `feat/m7p7e-requester-ownership`.
@@ -106,6 +106,20 @@ Android/backend:               not implemented
 
 The change is an internal C++ ownership contract only. It creates no new durable
 state and performs no flash, radio, BLE or CryptoCell operation.
+
+## 6. Validation evidence
+
+Owner-run validation on exact branch head
+`b4b13759942a890526b77167ed1b1c30f94d802a`:
+
+- full `firmware/tests/run_host_tests.sh`: **PASS**;
+- the runner reached its final R4 checks, so the silent M7P7D/M7P7E application
+  request test completed successfully under the runner's existing
+  warnings-as-errors + ASan/UBSan configuration;
+- all production startup scenarios reported PASS;
+- no hardware test or upload was performed for this slice.
+
+Production RAK4630 build/resource validation is still required.
 
 ## 6. Validation required before merge
 
