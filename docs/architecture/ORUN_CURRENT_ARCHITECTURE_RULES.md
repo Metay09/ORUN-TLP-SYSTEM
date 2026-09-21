@@ -1,8 +1,8 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through M7P6B SecurityStore/TX nonce persistence implementation; M7P6A security direction remains authoritative for later secure-envelope/provisioning work; field-network/serviceability runtime remains planned; prior M6A/M6B3 focused physical gates PASS; overall M6 IN PROGRESS**.
-Last reviewed against `main@8e6f2bde9b0281c1e219c6ec3df13b5f463fe7a5` (M7P6B merged). M6-era physical/runtime boundaries remain unchanged since their recorded milestone evidence.
-Last architecture review update: 2026-09-19 (§15 records the owner-approved M7P6 security direction with M7P6B persistence now implemented and limited RAK4631 persistence/reboot evidence PASS; secure-envelope/provisioning work remains later. §16 shared RF-domain, coverage-learning and diagnostics direction remains design-only).
+Status: **CURRENT through `main@46d7a933f63d42d84fb386035be1c03af1d0c3c4`: M7P7B production BLE runtime is merged; M7P6C/D/E security primitive/pre-wire/coexistence evidence is merged, with fresh-pairing LESC/CC310 coexistence still owner-waived/not-PASS; secure-envelope/provisioning/application-GATT runtime remains later; prior M6A/M6B3 focused physical gates PASS; overall M6 IN PROGRESS**.
+Last reviewed against `main@46d7a933f63d42d84fb386035be1c03af1d0c3c4`.
+Last architecture review update: 2026-09-21 (§17 records the BLE application boundary and points later Entity Registry/MESSAGE/user-location decisions to the separate application-direction record; both are design-only and authorize no runtime by themselves).
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
@@ -739,3 +739,26 @@ actually holds or can locally reach the requested traffic/state; complete-site v
 through one arbitrary gateway while offline would require an explicit local cross-gateway
 synchronization design and is not implemented today. See
 `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
+
+## 17. BLE application boundary and later application direction
+
+M7P7B makes BLE transport available; it does not make a connected or bonded phone
+an authorized ORUN application client. Future application GATT remains a transport
+adapter into existing application/configuration/command owners rather than a second
+business-logic or configuration system. BLE callbacks perform bounded handoff;
+flash, crypto, radio transitions and application execution remain owned by reviewed
+loop/task code. See `docs/milestones/M7P7C.md`.
+
+The exact commissioning ceremony remains a later focused implementation decision.
+Connection, stock BLE bonding, device credential, user identity and application
+authorization remain separate. No generic `K_root` readback or transport-triggered
+credential export is authorized. Production provisioning must also define authority
+key custody/recovery and close the fresh-pairing CC310/Bluefruit coexistence gate;
+this does not pre-decide that a backend stores raw `K_root`.
+
+Future Entity Registry, optional person-location, shared-map and MESSAGE
+routing/delivery/offline-sync decisions are application architecture rather than BLE
+milestone invariants. Their current owner-approved direction is recorded in
+`ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`. That record is documentation-only and
+does not claim backend, Android, MESSAGE, secure-RF or offline-sync runtime exists.
+

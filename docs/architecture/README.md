@@ -1,11 +1,11 @@
 # ORUN Architecture Documentation Index
 
 Status: **CURRENT documentation governance index**.
-Last reviewed against `main@3b7eb0e6ae0275e6bf3e95f9c19f55c108cec87a` (M7P7B merged via PR #22). M7P6B SecurityStore/TX nonce persistence, M7P7A BLE flash/SoftDevice event ownership and M7P7B minimal tracker BLE runtime/admission are now implemented on `main`. M7P7B physical evidence covers real advertising/phone connection, connected past the ~10-min deadline, the direct-event disconnect → loop-owned restart → fresh window → reconnect lifecycle, no-client close, clean cold boot, stock bond creation + power-cycle persistence/reconnect, BLE coexistence with real LoRa RX and BLE-connected RELAY RX/QUEUE/TX/TX_DONE, and a real ConfigStore→FlashMutationGate→SoftDevice async flash probe while BLE remained connected (6/6 completions, no errors/timeouts/late completions/disconnects, exact restore). The flash probe does not separately prove HistoryStore/SecurityStore client-specific mutation paths; TX_DONE is not end-to-end delivery. Owner disposition remains explicit: quantitative current/power is **DEFERRED, not PASS**, because no measurement equipment is available; GNSS coexistence remains **BLOCKED on the tested unit** (`GNSS: not detected`) and was waived only as an M7P7B merge blocker, with later GNSS-equipped physical validation still required. Between-poll short-session timing and advertising start/stop fault injection remain host-only. Secure RF envelope, provisioning transport, ORUN application GATT, DFU and field-network/serviceability runtime remain later work.
+Last reviewed against `main@46d7a933f63d42d84fb386035be1c03af1d0c3c4` (M7P6E merged via PR #30; M7P7B production BLE runtime remains on main). M7P6B SecurityStore/TX nonce persistence, M7P7A BLE flash/SoftDevice event ownership, M7P7B minimal tracker BLE runtime/admission and the M7P6C/D/E security proof/pre-wire/coexistence work are now merged. M7P6E physically proved the boot/readiness candidate KAT after Bluefruit/SoftDevice init plus bonded BLE-connected/direct-LoRa coexistence, but its fresh-pairing LESC stress was owner-waived and is **not PASS**; production secure-envelope activation therefore still requires a reviewed coexistence/serialization closure. M7P7B quantitative current remains DEFERRED and GNSS coexistence remains unproven on the tested no-GNSS unit. ORUN application GATT, provisioning, DFU, secure RF, MESSAGE runtime and field-network/serviceability runtime remain later work.
 Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 
 
-In-flight security prerequisite on `feat/m7p6c-cryptocell-proof`: M7P6C is a
+Merged security primitive evidence (M7P6C): M7P6C is a
 test-only RAK4630 CryptoCell primitive proof, not a secure-RF implementation.
 The RFC5869 HKDF-SHA256 / RFC3610 AES-128-CCM hardware KAT passed on owner
 hardware. Independent review expanded the negative matrix and repeated-forgery
@@ -18,7 +18,7 @@ CryptoCell/Bluefruit ownership and SoftDevice concurrency remain unresolved
 gates for the later secure-envelope milestone. See
 `docs/milestones/M7P6C.md`.
 
-In-flight security design on `docs/m7p6d-security-prewire-contract`: M7P6D is a
+Merged security pre-wire candidate (M7P6D): M7P6D is a
 documentation-only pre-wire **candidate contract** for direction-separated HKDF
 traffic keys, 13-byte AES-CCM nonce construction, replay ownership/power-cut
 semantics and the Bluefruit/CryptoCell lifecycle boundary. Independent security
@@ -28,13 +28,29 @@ candidate is still not implementation-frozen until ORUN-specific host/RAK
 vectors, Bluefruit/SoftDevice/CC310 coexistence proof and the later persistence
 gates pass. See `docs/milestones/M7P6D.md`.
 
-In-flight security probe on `feat/m7p6e-cryptocell-bluefruit-coexistence`:
+Merged test-only security coexistence probe (M7P6E):
 M7P6E uses the full production source graph with fixed public M7P6D candidate
 KDF/nonce KAT material and adds no production secure-RF path. Host/build,
 hardware boot KAT, bonded BLE connection/security update and direct LoRa RX
 evidence passed. The stronger fresh-pairing LESC stress was owner-waived and is
 **not PASS**; therefore the M7P6D production secure-envelope coexistence gate
 remains open. See `docs/milestones/M7P6E.md`.
+
+In-flight M7P7C application-boundary design on `docs/m7p7c-ble-application-contract`:
+`docs/milestones/M7P7C.md` records only the design-level BLE application/commissioning
+boundary. It adds no GATT service, provisioning path, secure-RF bytes, MESSAGE runtime
+or Android/backend code. Exact GATT framing and the commissioning ceremony remain later
+implementation gates.
+
+Owner-approved later application direction is recorded separately in
+`ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`: Entity Registry ownership/offline conflict
+principles, person-location privacy, concise shared-map semantics, MESSAGE recipient/
+DELIVERED semantics, Internet-first/LoRa-fallback/store-forward direction, presence
+semantics and LoRa MESSAGE prerequisites. It is documentation-only and must not be read
+as evidence that those runtimes exist.
+
+The owner-provided independent review and ORUN disposition are recorded in
+`docs/audits/M7P7C_INDEPENDENT_ARCH_REVIEW_DISPOSITION.md`.
 
 This directory contains current owner-approved rules plus historical/proposed
 architecture audits. They are not equal sources of truth. This index tells a new
@@ -160,6 +176,13 @@ failure model and staged-gate reasoning. Older wording that treats END_NODE/RELA
 as a permanent mutually exclusive product type is superseded by independent relay
 forwarding enablement. Animal tracker relay-OFF is a default, not a permanent
 architecture prohibition.
+
+Its application/UI wording is also superseded where the newer application-direction
+record differs: MESSAGE v1 no longer requests a human read receipt; map
+animal/person/vehicle category/icon is Entity Registry metadata rather than a firmware
+identity; and real-world assignment history follows the current Entity Registry/binding
+direction. Keep the historical file unchanged rather than rewriting it to look as if it
+originally made those later decisions.
 
 Likewise, one-hop is frozen **for TLP v1**, not as a permanent future product
 limit. No multi-hop design is currently approved.
