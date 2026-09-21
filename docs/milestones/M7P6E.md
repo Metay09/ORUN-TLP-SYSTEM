@@ -344,9 +344,18 @@ signed/unsigned warnings are from the existing third-party SX126x-Arduino
 sources. The host suite still compiles ORUN-owned host-test targets with
 warnings-as-errors plus ASan/UBSan.
 
-No hardware upload or fresh-pairing run is claimed by this subsection. The
-fresh-pairing LESC/CC310 gate remains **OWNER-WAIVED / NOT PASS** until the
-hardened probe is physically exercised.
+Hardware upload and hardened boot/readiness were subsequently exercised on the
+owner's RAK4630-class test unit. The device reported:
+
+```text
+M7P6E STATUS boot_kat=PASS stress=IDLE iterations=0 lesc_events=0 auth_events=0 auth_success=0 auth_failure=0 bonded_success=0 lesc_bonded_success=0 sec_update_events=0 encrypted_updates=0 ble_connected=0
+```
+
+This is scoped physical evidence that the hardened probe image booted and the
+candidate KAT still passed after Bluefruit/SoftDevice initialization. It is **not**
+fresh-pairing coexistence evidence; no fresh pairing or stress run had started at
+this point. The fresh-pairing LESC/CC310 gate remains **OWNER-WAIVED / NOT PASS**
+until that procedure is physically exercised.
 
 ## 11. Initial hardware evidence
 
