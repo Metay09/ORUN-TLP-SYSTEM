@@ -316,6 +316,38 @@ This software/build evidence does **not** establish fresh-pairing
 Bluefruit/CC310 coexistence. That stronger gate was owner-waived for M7P6E and
 remains open before production secure-envelope activation.
 
+### 10.1 Post-merge pairing-evidence hardening validation — code head `98c8486c9b1f089f706d7ed24566f5e3164e28c5`
+
+Owner-run Debian validation of the hardened **test-only** pairing evidence gate:
+
+- full `firmware/tests/run_host_tests.sh`: **PASS**;
+  the new `test_m7p6e_pairing_evidence.cpp` check is intentionally silent on
+  success and is included under the runner's `set -e`;
+- normal production `pio run -d firmware -e rak4630`: **PASS**;
+  - RAM: **22,116 / 248,832 bytes = 8.9%**;
+  - Flash: **226,212 / 815,104 bytes = 27.8%**;
+  - exactly unchanged from the merged M7P7D production image, so this
+    test-only hardening adds **0 B production RAM / 0 B production Flash**;
+- hardened full-graph probe
+  `pio run -d firmware -e rak4630_m7p6e_crypto_ble_probe`: **PASS**;
+  - RAM: **22,212 / 248,832 bytes = 8.9%**;
+  - Flash: **240,476 / 815,104 bytes = 29.5%**;
+- hardened probe-only delta versus the current production image:
+  - RAM: **+96 bytes**;
+  - Flash: **+14,264 bytes**;
+- delta versus the earlier M7P6E probe image recorded above:
+  - RAM: **+80 bytes**;
+  - Flash: **+2,184 bytes**.
+
+The visible SX126x `#warning USING RAK4630` and SimpleTimer
+signed/unsigned warnings are from the existing third-party SX126x-Arduino
+sources. The host suite still compiles ORUN-owned host-test targets with
+warnings-as-errors plus ASan/UBSan.
+
+No hardware upload or fresh-pairing run is claimed by this subsection. The
+fresh-pairing LESC/CC310 gate remains **OWNER-WAIVED / NOT PASS** until the
+hardened probe is physically exercised.
+
 ## 11. Initial hardware evidence
 
 Owner uploaded `rak4630_m7p6e_crypto_ble_probe` successfully to the RAK4630-class
