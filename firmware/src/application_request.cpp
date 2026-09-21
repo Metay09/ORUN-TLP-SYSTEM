@@ -9,6 +9,7 @@ ApplicationSubmitResult ApplicationRequestService::submit(
   if (response_ready_) return ApplicationSubmitResult::kBusy;
 
   response_ = ApplicationResponse();
+  response_.requester = request.requester;
   response_.request_id = request.request_id;
 
   switch (request.kind) {
@@ -30,8 +31,9 @@ ApplicationSubmitResult ApplicationRequestService::submit(
   return ApplicationSubmitResult::kAccepted;
 }
 
-bool ApplicationRequestService::takeResponse(ApplicationResponse& response) {
-  if (!response_ready_) return false;
+bool ApplicationRequestService::takeResponse(
+    ApplicationRequester requester, ApplicationResponse& response) {
+  if (!response_ready_ || response_.requester != requester) return false;
   response = response_;
   response_ready_ = false;
   response_ = ApplicationResponse();
