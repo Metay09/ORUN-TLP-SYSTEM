@@ -197,10 +197,15 @@ starts a bounded loop-task stress:
 - BLE must remain connected;
 - any KAT failure fails immediately;
 - a LESC DH-key event must be observed after stress starts;
-- after the first LESC event observed during the stress interval, 100 further
-  successful KAT iterations are required;
-- final PASS reports LESC/auth/security-update deltas, disconnect delta and the
-  maximum measured KAT duration.
+- `BLE_GAP_EVT_AUTH_STATUS` must report `BLE_GAP_SEC_STATUS_SUCCESS`
+  and the stock bond-requesting Bluefruit flow must report that a bond resulted;
+- a post-start `BLE_GAP_EVT_CONN_SEC_UPDATE` must report an encrypted
+  Security Mode 1 link (level >= 2);
+- any post-start authentication failure or disconnect fails the run;
+- only after all pairing-completion evidence above is present are 100 further
+  successful KAT iterations required;
+- final PASS reports LESC/auth/bond/encrypted-security-update deltas,
+  disconnect delta and the maximum measured KAT duration.
 
 This is intentionally stronger than merely running crypto while advertising: it
 requires evidence that the Bluefruit security path reached its LESC DH-key work
@@ -254,11 +259,15 @@ Hardware:
 4. start `CRYPTO STRESS`;
 5. initiate a fresh BLE bond/pairing while the stress is active;
 6. require `M7P6E LESC OVERLAP observed`;
-7. require final `M7P6E COEX PASS ... disconnect_delta=0 ble_connected=1`.
+7. require `M7P6E PAIRING COMPLETE ...` with non-zero successful/bonded
+   authentication and encrypted-security-update deltas;
+8. require final `M7P6E COEX PASS ... auth_failure_delta=0 disconnect_delta=0 ble_connected=1`.
 
 If the peer silently reuses an existing bond and no LESC event occurs, the run
-is **not** a fresh-pairing coexistence PASS. Do not weaken the gate to
-AUTH_STATUS alone.
+is **not** a fresh-pairing coexistence PASS. An AUTH_STATUS event alone is also
+insufficient: pairing must complete successfully, produce the expected stock
+bond, and reach an encrypted link before the post-pairing KAT window can close
+PASS.
 
 For this slice the owner explicitly waived steps 4-7 to avoid disturbing the
 working bond state. That waiver permits this test-only probe to merge, but does
@@ -379,6 +388,31 @@ The residual concurrency risk is intentionally **open** and blocks treating the
 M7P6D candidate as production secure-envelope-ready.
 
 No independent Astra/external reviewer result is claimed for M7P6E.
+
+### 12.1 Post-merge pairing-evidence hardening — 2026-09-21
+
+A later review found one false-positive path in the **test-only** stress logic:
+the original implementation could print `M7P6E COEX PASS` after observing a
+LESC DH-key event plus the post-LESC KAT window without proving that the pairing
+procedure itself completed successfully.
+
+The hardening on `fix/m7p6e-pairing-evidence` changes only the probe path:
+
+- AUTH_STATUS success/failure is counted separately;
+- successful AUTH_STATUS must also report that the stock bond-requesting flow
+  produced a bond;
+- CONN_SEC_UPDATE must show encrypted Security Mode 1 (level >= 2);
+- authentication failure and disconnect fail closed;
+- the 100-iteration tail starts only after the complete pairing evidence is
+  observed;
+- BLE security events are re-sampled after each KAT so an event arriving during
+  CC310 work is not missed at the terminal iteration;
+- pure host coverage locks incomplete, rejected, disconnected, bonded-reconnect
+  and uint32 counter-wrap cases.
+
+This hardening does **not** change the owner waiver into PASS. Until the fresh
+pairing procedure is actually run on hardware, fresh-pairing LESC/CC310
+coexistence remains **OWNER-WAIVED / NOT PASS**.
 
 ## 13. Compatibility / system impact
 
