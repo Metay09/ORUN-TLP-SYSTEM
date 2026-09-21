@@ -271,6 +271,36 @@ int main(int argc, char** argv) {
                           "ROLE TRACKER mode=OVERRIDE\n");
   assert(Wire.transaction_calls == wire_calls);
 
+  // M7P7D: USB is only an adapter into the typed application request seam.
+  // CONFIG? is intentionally read-only and must not touch flash/radio/role.
+  const unsigned app_query_programs = programs;
+  const unsigned app_query_erases = erases;
+  Serial.output.clear();
+  Serial.queueInput("APP CONFIG?\n");
+  pollRoleCommands();
+  assert(Serial.output.empty());  // request accepted; result is drained separately.
+  drainApplicationResponse();
+  assert(Serial.output ==
+         "APP RESULT id=1 code=OK config_ready=yes "
+         "tracking_interval_seconds=180 battery_capacity_mah=0\n");
+  assert(programs == app_query_programs && erases == app_query_erases);
+  assert(role_controller.role() == prior_role);
+  assert(Wire.transaction_calls == wire_calls);
+
+  // The one-result slot provides bounded backpressure. A second command that
+  // arrives before the first result is consumed is rejected as BUSY and cannot
+  // overwrite request/result ownership.
+  Serial.output.clear();
+  Serial.queueInput("APP CONFIG?\nAPP CONFIG?\n");
+  while (Serial.available()) pollRoleCommands();
+  assert(Serial.output == "APP BUSY id=3\n");
+  drainApplicationResponse();
+  assert(Serial.output ==
+         "APP BUSY id=3\n"
+         "APP RESULT id=2 code=OK config_ready=yes "
+         "tracking_interval_seconds=180 battery_capacity_mah=0\n");
+  assert(programs == app_query_programs && erases == app_query_erases);
+
   // BLE? reports runtime readiness, advertising state, connection count,
   // admission policy and the boot-time start result as separate facts.
   const char* expected_ble =
