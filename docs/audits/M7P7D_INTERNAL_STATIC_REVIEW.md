@@ -4,7 +4,7 @@ Date: 2026-09-21
 Baseline: `main@6774e7425a3776987ddaaff749c01d5cb20474c1`
 Branch: `feat/m7p7d-app-request-seam`
 
-Status: **PASS — no code-blocking finding. External independent review still pending.**
+Status: **SUPERSEDED IN PART BY EXTERNAL REVIEW — original internal review missed the ready-vs-committed provenance distinction. See M7P7D_EXTERNAL_REVIEW_DISPOSITION.md.**
 
 This review is an internal repository/static review. It is not Astra evidence,
 not a hardware test and not a substitute for the owner-requested independent
@@ -40,9 +40,10 @@ One response slot is fixed-memory backpressure. An unread result makes the next
 submission return `BUSY`; no overwrite, heap queue or unbounded accumulation
 exists.
 
-The BUSY attempt does not consume the local USB correlation ID. That is acceptable
-for this diagnostic surface: the ID identifies the next request that can actually
-be accepted, not an application MESSAGE/security identity.
+The original implementation printed the would-be ID on BUSY and then reused that
+ID for the next accepted request. External review correctly identified the log
+ambiguity. The branch now emits `APP BUSY` without assigning a correlation ID
+to rejected work.
 
 ### 3. Storage / power-cut / flash ownership
 
@@ -76,12 +77,16 @@ authorization design.
 
 ### 6. ConfigStore readiness semantics
 
-PASS.
+**CORRECTED BY EXTERNAL REVIEW.**
 
-When `ConfigStore::begin()` fails, its documented safe defaults remain readable,
-but M7P7D separately returns `config_store_ready=false`. A client therefore has
-enough information not to misrepresent fallback defaults as durable recovered
-state.
+This internal review originally treated `ConfigStore::ready()` as sufficient
+provenance. That was incomplete: blank/corrupt config pages can intentionally
+produce safe defaults with `ready()==true`.
+
+The external review caught this. The branch now exposes
+`hasCommittedRecord()` separately and the application response reports backend
+readiness plus committed-record provenance. See
+`M7P7D_EXTERNAL_REVIEW_DISPOSITION.md`.
 
 ### 7. Future async operations
 
@@ -122,5 +127,6 @@ reported build output.
 
 No blocker found.
 
-Remaining merge gate: external independent review of PR #32. No physical test is
-requested for this slice unless that review finds a hardware-specific concern.
+External independent review completed with PASS WITH FIXES and is dispositioned
+in `M7P7D_EXTERNAL_REVIEW_DISPOSITION.md`. Post-fix host + production RAK4630
+revalidation remains the merge gate. No physical test is requested for this slice.
