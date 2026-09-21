@@ -1,6 +1,6 @@
 # M7P7D — Transport-neutral application request seam
 
-Status: **SOFTWARE PASS — host/sanitizer + RAK4630 production build PASS; static review PASS; external independent review pending. NO BLE APPLICATION GATT OR PROTECTED WRITE PATH.**
+Status: **PASS WITH FIXES APPLIED — external review findings addressed; post-fix host + RAK4630 revalidation pending. NO BLE APPLICATION GATT OR PROTECTED WRITE PATH.**
 
 Baseline: `main@6774e7425a3776987ddaaff749c01d5cb20474c1` (PR #31 / M7P7C design gate merged).
 Branch: `feat/m7p7d-app-request-seam`.
@@ -24,9 +24,9 @@ M7P7D adds:
 - a fixed-memory, loop-owned `ApplicationRequestService`;
 - a typed `GET_CONFIG` request and typed response;
 - one response slot with explicit BUSY backpressure;
-- read-through to the existing `ConfigStore` owner, including a separate
-  `config_store_ready` fact so safe fallback defaults are not misreported as
-  recovered durable configuration;
+- read-through to the existing `ConfigStore` owner, with separate
+  backend-readiness and committed-record provenance so blank/corrupt/default
+  fallback state is not misreported as a recovered durable record;
 - a read-only USB diagnostic adapter: `APP CONFIG?`;
 - host coverage for the production request service and startup/USB composition.
 
@@ -72,12 +72,18 @@ side effect.
 For `GET_CONFIG`:
 
 - response data comes directly from `ConfigStore::config()`;
-- `config_store_ready=true` means the durable owner initialized successfully;
-- if ConfigStore initialization failed, its existing documented safe fallback is
-  still returned but `config_store_ready=false`.
+- `config_backend_ready=true` means ConfigStore/backend initialization
+  succeeded; it does **not** imply a committed record was recovered;
+- `config_has_committed_record=true` means recovery found an actual valid
+  committed page;
+- blank or corrupt/unrecognized config flash may therefore report
+  `config_backend_ready=true`, `config_has_committed_record=false` and the
+  safe defaults;
+- backend initialization failure reports both facts false and still exposes the
+  existing documented safe fallback.
 
-This distinction prevents UI/diagnostics from presenting a fallback value as a
-durably recovered setting.
+The USB adapter presents this as `source=stored|default`, avoiding the false
+equivalence between "store initialized" and "durable setting existed".
 
 ## 5. USB surface
 
@@ -90,7 +96,7 @@ APP CONFIG?
 Expected shape:
 
 ```text
-APP RESULT id=<n> code=OK config_ready=yes|no
+APP RESULT id=<n> code=OK config_backend_ready=yes|no source=stored|default
 tracking_interval_seconds=<seconds> battery_capacity_mah=<mAh>
 ```
 
@@ -120,37 +126,29 @@ counter. No new durable allocation is introduced.
 
 ## 7. Validation evidence
 
-Owner Debian validation on 2026-09-21:
+Pre-fix owner validation was performed on `c2232d6` on 2026-09-21:
 
-1. **Full host suite: PASS**
-   - ASan/UBSan and warnings-as-errors host runner completed;
-   - all existing compatibility, RF, storage, BLE/persistence and startup
-     regression checks remained PASS;
-   - focused M7P7D test was built/executed by the host runner;
-   - startup composition scenarios (mutex/gate/queue/lora/success/advfail/
-     blefail/noevent) all remained PASS with the M7P7D service linked.
-2. **RAK4630 production build: PASS**
-   - RAM: 22,116 / 248,832 bytes = 8.9%;
-   - Flash: 226,148 / 815,104 bytes = 27.7%;
-   - production storage-ceiling and exclusive-owner link checks passed.
-3. **Size delta versus the immediately preceding production image**
-   (`main@6774e742...` is docs-only relative to the previously measured
-   production binary):
-   - RAM: +32 bytes (22,084 -> 22,116);
-   - Flash: +648 bytes (225,500 -> 226,148).
-4. **Static review: PASS with no runtime blocker.**
-   - `GET_CONFIG` has no flash/radio/security side effect;
-   - unread response cannot be overwritten;
-   - current USB adapter executes from the existing loop-owned parser;
-   - no BLE callback/application task ownership is introduced;
-   - no wire/storage format changes are introduced.
+1. full host suite PASS with ASan/UBSan and warnings-as-errors;
+2. all startup composition scenarios PASS;
+3. production RAK4630 build PASS;
+4. RAM 22,116 / 248,832 bytes = 8.9%;
+5. Flash 226,148 / 815,104 bytes = 27.7%;
+6. storage-ceiling and exclusive-owner link guards PASS.
 
-The PlatformIO build still emits pre-existing warnings from the pinned
-SX126x-Arduino dependency (RAK4630 preprocessor warning and signed/unsigned
-warnings in its RAK11300 SimpleTimer source). No new ORUN-source warning was
-identified in this validation.
+The external independent reviewer then independently reported:
+- full host suite PASS from a scratchpad copy;
+- focused M7P7D GNU++11 + sanitizer PASS;
+- pinned ARM GCC 7.2.1 GNU++11 compile PASS;
+- final result **PASS WITH FIXES**.
 
-External independent review remains pending before merge.
+Disposition is recorded in
+`docs/audits/M7P7D_EXTERNAL_REVIEW_DISPOSITION.md`.
+
+The external findings caused code/test changes (config provenance semantics,
+real-loop startup coverage, BUSY correlation cleanup), so the earlier build
+numbers are retained as exact historical evidence for `c2232d6` and are **not**
+silently promoted to the current post-fix head. A fresh host suite + production
+RAK4630 build is required before merge.
 
 Physical hardware is not required merely to prove this read-only USB seam: no BLE
 GATT, RF, persistence format, power policy or hardware-driver behavior changed.
@@ -164,6 +162,11 @@ The next focused work must still define:
 
 - commissioning/authentication ceremony;
 - exact application GATT framing/UUIDs and bounded fragment/queue behavior;
+- before a second application transport adapter exists, add explicit
+  requester/adapter response ownership (or adapter-specific bounded slots) so
+  USB cannot consume a BLE result and vice versa;
+- preserve callback -> bounded handoff -> loop-owned dispatch; no BLE callback
+  may directly execute `ApplicationRequestService`;
 - bond-store/Just Works denial-of-service behavior;
 - authority-key custody/recovery;
 - closure of the fresh-pairing LESC/CC310 coexistence/serialization gate.
