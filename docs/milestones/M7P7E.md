@@ -57,6 +57,12 @@ A request is identified by the pair:
 `request_id` is therefore local to an adapter/requester namespace. Numeric IDs
 may repeat between USB and BLE without becoming the same logical request.
 
+`ApplicationRequester` is **local adapter provenance**, not a user/account identity,
+authentication principal, BLE connection identity or wire field. A transport adapter
+must assign its own constant requester value locally. Future peer-controlled BLE/USB/
+LoRa bytes must never be allowed to select `kUsb`/`kBle`; doing so would defeat the
+ownership boundary.
+
 The single global slot remains intentional bounded backpressure. If any accepted
 response is unread, every subsequent submit returns `BUSY`, regardless of
 requester. No heap, generic event bus or unbounded per-transport queue is added.
