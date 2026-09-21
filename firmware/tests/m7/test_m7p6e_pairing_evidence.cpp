@@ -20,16 +20,15 @@ int main() {
   assert(!pairingEvidenceComplete(start, now));
 
   ++now.auth_bonded_success;
-  assert(!pairingEvidenceComplete(start, now));
 
-  // A successful bond that was not itself reported as LESC is not enough even
-  // if a DH-key event was seen earlier in the window.
-  ++now.auth_lesc_bonded_success;
-  assert(!pairingEvidenceComplete(start, now));
-
-  // A fresh encrypted Mode-1 security update closes the pairing evidence.
+  // Even with encryption, a successful bond that was not itself reported as
+  // LESC is not enough if a DH-key event happened earlier in the window.
   ++now.sec_update;
   ++now.encrypted_update;
+  assert(!pairingEvidenceComplete(start, now));
+
+  // The completed authentication itself must be LESC + bonded.
+  ++now.auth_lesc_bonded_success;
   assert(pairingEvidenceComplete(start, now));
   assert(!pairingEvidenceRejected(start, now));
   assert(!pairingEvidenceDisconnected(start, now));
