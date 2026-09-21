@@ -40,4 +40,11 @@ bool ApplicationRequestService::takeResponse(
   return true;
 }
 
+bool ApplicationRequestService::discardResponse(ApplicationRequester requester) {
+  if (!response_ready_ || response_.requester != requester) return false;
+  response_ready_ = false;
+  response_ = ApplicationResponse();
+  return true;
+}
+
 }  // namespace orun_tlp
