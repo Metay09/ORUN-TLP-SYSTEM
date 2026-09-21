@@ -565,9 +565,11 @@ void pollM7P6ECryptoStress() {
           m7p6e_crypto_stress.iterations -
           m7p6e_crypto_stress.pairing_complete_iteration) >=
           kPostPairingIterations) {
+    // Use the post-KAT snapshot that was just checked for disconnect/auth
+    // failure above. Re-reading here could capture a failure/disconnect that
+    // arrived after the check yet still print PASS with non-zero failure
+    // deltas, which would make the evidence self-contradictory.
     m7p6e_crypto_stress.active = false;
-    const M7P6EBleSecurityCounters final_counters =
-        readM7P6EBleSecurityCounters();
     Serial.printf(
         "M7P6E COEX PASS iterations=%u lesc_delta=%lu auth_delta=%lu "
         "auth_success_delta=%lu bonded_success_delta=%lu "
@@ -576,24 +578,24 @@ void pollM7P6ECryptoStress() {
         "encrypted_update_delta=%lu disconnect_delta=%lu max_kat_us=%lu "
         "ble_connected=1\n",
         static_cast<unsigned>(m7p6e_crypto_stress.iterations),
-        static_cast<unsigned long>(final_counters.lesc - start.lesc),
-        static_cast<unsigned long>(final_counters.auth - start.auth),
+        static_cast<unsigned long>(counters.lesc - start.lesc),
+        static_cast<unsigned long>(counters.auth - start.auth),
         static_cast<unsigned long>(
-            final_counters.auth_success - start.auth_success),
+            counters.auth_success - start.auth_success),
         static_cast<unsigned long>(
-            final_counters.auth_bonded_success -
+            counters.auth_bonded_success -
             start.auth_bonded_success),
         static_cast<unsigned long>(
-            final_counters.auth_lesc_bonded_success -
+            counters.auth_lesc_bonded_success -
             start.auth_lesc_bonded_success),
         static_cast<unsigned long>(
-            final_counters.auth_failure - start.auth_failure),
+            counters.auth_failure - start.auth_failure),
         static_cast<unsigned long>(
-            final_counters.sec_update - start.sec_update),
+            counters.sec_update - start.sec_update),
         static_cast<unsigned long>(
-            final_counters.encrypted_update - start.encrypted_update),
+            counters.encrypted_update - start.encrypted_update),
         static_cast<unsigned long>(
-            final_counters.disconnects - start.disconnects),
+            counters.disconnects - start.disconnects),
         static_cast<unsigned long>(m7p6e_crypto_stress.max_kat_us));
     return;
   }
