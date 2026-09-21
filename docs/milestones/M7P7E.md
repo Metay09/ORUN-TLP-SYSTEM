@@ -136,16 +136,21 @@ The +8 B RAM / +32 B Flash delta is consistent with the requester tag and
 owner-qualified response/discard seam; there is no new queue, heap allocation,
 persistent record or transport runtime.
 
-## 7. Validation required before merge
+## 7. Remaining merge gates
 
-1. full `firmware/tests/run_host_tests.sh` under the existing warnings-as-errors
-   plus ASan/UBSan runner;
-2. all startup composition scenarios PASS;
-3. production `pio run -d firmware -e rak4630` PASS;
-4. record RAM/flash and compare with the M7P7D production baseline
-   (22,116 B RAM / 226,212 B Flash);
-5. storage-ceiling / exclusive-owner guards remain PASS;
-6. review diff for accidental BLE/RF/storage/protocol changes.
+Completed:
+
+- full host/sanitizer/warnings-as-errors regression;
+- production startup scenarios;
+- production RAK4630 build;
+- RAM/flash comparison;
+- application-ceiling and exclusive-owner build guards;
+- bounded diff review for protocol/RF/storage/BLE-runtime side effects.
+
+Still required:
+
+- independent final review of the requester/response ownership contract;
+- disposition any substantive review finding and rerun affected validation.
 
 No physical hardware test is required for M7P7E itself because it adds no BLE
 application runtime, driver behavior, persistence mutation or RF behavior.
