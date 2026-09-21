@@ -54,8 +54,11 @@ revalidation are recorded in
 In-flight M7P7E on `feat/m7p7e-requester-ownership` adds only explicit
 requester/response ownership to that seam before a second transport adapter
 exists: requester-qualified take/discard, one bounded global response slot and
-request-ID namespaces per adapter. It adds no BLE GATT, wire format,
-provisioning, authorization, storage or RF behavior. See
+request-ID namespaces per adapter. Independent review returned **PASS WITH
+FIXES** with no BLOCKER/HIGH/MEDIUM findings; the accepted fixes and post-fix
+revalidation gate are recorded in
+`docs/audits/M7P7E_EXTERNAL_REVIEW_DISPOSITION.md`. It adds no BLE GATT, wire
+format, provisioning, authorization, storage or RF behavior. See
 `docs/milestones/M7P7E.md`.
 
 Owner-approved later application direction is recorded separately in
