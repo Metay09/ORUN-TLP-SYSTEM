@@ -729,16 +729,31 @@ firmware still independently verifies cryptographic authority for protected oper
 Internet backhaul is not a prerequisite for on-site local ORUN operation. When an
 authorized user is physically at the site, a compatible ORUN gateway should eventually
 bridge locally available/cached accepted location state and later offline-capable MESSAGE
-plus authorized key/access/control traffic over an implemented local transport such as
-BLE or wired/USB, without requiring cloud reachability. Service security remains
-application-specific: private messages keep end-to-end protection, and key/access/control
-operations still require authentication, authorization, anti-replay, freshness/expiry,
-idempotency and explicit result semantics. This does not make the gateway a security
-authority or give it tracker root keys. "Any gateway" means any compatible gateway that
-actually holds or can locally reach the requested traffic/state; complete-site visibility
-through one arbitrary gateway while offline would require an explicit local cross-gateway
-synchronization design and is not implemented today. See
-`ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
+plus authorized configuration/key/access/control traffic over an implemented local
+transport such as BLE or wired/USB, without requiring cloud reachability.
+
+Owner-approved product direction includes **targeted remote configuration through a
+gateway**. The gateway is a transport/bridge, not the configuration owner or security
+authority: it must not invent authority, rewrite target intent, or directly mutate a
+tracker's durable configuration. The target device must authenticate and authorize the
+operation, enforce anti-replay plus freshness/expiry and idempotency, validate the
+candidate configuration, and apply accepted changes through the same application/config
+owner used by direct local transports (currently the ApplicationRequestService/ConfigStore
+boundary). Gateway receipt, RF TX completion and target receipt are not configuration
+success; UI/backend may report success only from an explicit target-device result that the
+requested change was accepted/applied. A local offline path such as
+phone -> BLE -> gateway -> LoRa -> target device must remain possible without Internet.
+
+Service security remains application-specific: private messages keep end-to-end
+protection, and configuration/key/access/control operations still require authentication,
+authorization, anti-replay, freshness/expiry, idempotency and explicit result semantics.
+This does not make the gateway a security authority or give it tracker root keys. Current
+TLP v1 bytes remain frozen; future trusted remote configuration/command traffic requires
+an explicitly versioned secure application envelope rather than reinterpretation of TLP
+v1. "Any gateway" means any compatible gateway that actually holds or can locally reach
+the requested traffic/state; complete-site visibility through one arbitrary gateway while
+offline would require an explicit local cross-gateway synchronization design and is not
+implemented today. See `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
 
 ## 17. BLE application boundary and later application direction
 
