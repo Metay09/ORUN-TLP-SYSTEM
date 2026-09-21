@@ -18,6 +18,11 @@ class ConfigStore;
 // allowed to exist. A response may be consumed only by the requester that
 // submitted the accepted request; another adapter cannot steal or clear it.
 //
+// ApplicationRequester is LOCAL adapter provenance, not user identity,
+// authorization, connection identity or a future wire field. Each adapter must
+// assign its own constant requester value; peer-controlled bytes must never be
+// allowed to choose kUsb/kBle.
+//
 // The seam still exposes only one safe, read-only operation. Protected config
 // mutation, provisioning, MESSAGE and command/control requests remain later
 // work behind their reviewed authorization/security gates.
