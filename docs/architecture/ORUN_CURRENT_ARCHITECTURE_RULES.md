@@ -1,7 +1,7 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through `main@46d7a933f63d42d84fb386035be1c03af1d0c3c4`: M7P7B production BLE runtime is merged; M7P6C/D/E security primitive/pre-wire/coexistence evidence is merged, with fresh-pairing LESC/CC310 coexistence still owner-waived/not-PASS; secure-envelope/provisioning/application-GATT runtime remains later; prior M6A/M6B3 focused physical gates PASS; overall M6 IN PROGRESS**.
-Last reviewed against `main@46d7a933f63d42d84fb386035be1c03af1d0c3c4`.
+Status: **CURRENT through `main@6774e7425a3776987ddaaff749c01d5cb20474c1`: M7P7B production BLE runtime and the M7P7C application-boundary design gate are merged; M7P6C/D/E security primitive/pre-wire/coexistence evidence is merged, with fresh-pairing LESC/CC310 coexistence still owner-waived/not-PASS; secure-envelope/provisioning/application-GATT runtime remains later; prior M6A/M6B3 focused physical gates PASS; overall M6 IN PROGRESS**.
+Last reviewed against `main@6774e7425a3776987ddaaff749c01d5cb20474c1`.
 Last architecture review update: 2026-09-21 (§17 records the BLE application boundary and points later Entity Registry/MESSAGE/user-location decisions to the separate application-direction record; both are design-only and authorize no runtime by themselves).
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
@@ -761,4 +761,10 @@ routing/delivery/offline-sync decisions are application architecture rather than
 milestone invariants. Their current owner-approved direction is recorded in
 `ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`. That record is documentation-only and
 does not claim backend, Android, MESSAGE, secure-RF or offline-sync runtime exists.
+
+M7P7D is the first implementation step under this boundary: a fixed-memory,
+loop-owned, transport-neutral application request/result seam with a read-only USB
+`APP CONFIG?` adapter that reads through the existing ConfigStore owner. It does
+not define BLE wire bytes, expose protected writes, or change authorization/security
+semantics. See `docs/milestones/M7P7D.md`.
 
