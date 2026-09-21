@@ -525,6 +525,26 @@ hardware execution recorded in §10.2 did: the fresh-pairing LESC/CC310
 coexistence gate is now **PASS for the scoped pinned path**, while the broader
 production secure-envelope readiness questions remain separate.
 
+### 12.2 Static review after hardened hardware run
+
+A subsequent static review found one narrow false-positive/report-consistency
+race in the **test-only** final PASS path. After the post-KAT snapshot had
+already been checked for authentication failure/disconnect, the code read the
+event counters a second time only for the PASS log. A failure/disconnect
+arriving between those two snapshots could therefore be included in the printed
+deltas while the code still emitted `M7P6E COEX PASS`.
+
+Commit `84585ae843586cafbbb1ee7067845e378118122e` removes that second counter
+read and reports the exact post-KAT snapshot that was already validated before
+the PASS decision. This keeps the evidence line internally consistent with the
+decision boundary and remains compiled only in the M7P6E probe image.
+
+The physical PASS in §10.2 was obtained on code-bearing head
+`98c8486c9b1f089f706d7ed24566f5e3164e28c5`, before this correction.
+Therefore the branch is **not merge-ready** until the canonical host/build
+validation and the scoped fresh-pairing hardware run are repeated on the new
+code head. No production runtime behavior changed.
+
 ## 13. Compatibility / system impact
 
 Normal production `rak4630` behavior is intentionally unchanged:
