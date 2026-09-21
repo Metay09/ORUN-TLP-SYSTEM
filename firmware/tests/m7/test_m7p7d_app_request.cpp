@@ -254,19 +254,28 @@ int main() {
                ApplicationRequester::kUsb, 500,
                ApplicationRequestKind::kGetConfig}) ==
            ApplicationSubmitResult::kAccepted);
+    ApplicationResponse wrong_ble_consumer;
+    assert(!service.takeResponse(ApplicationRequester::kBle,
+                                 wrong_ble_consumer));
+    assert(!service.discardResponse(ApplicationRequester::kBle));
+    assert(service.responsePending());
     const ApplicationResponse usb_response = take(service);
     assert(usb_response.requester == ApplicationRequester::kUsb);
     assert(usb_response.request_id == 500);
   }
 
-  // 8. Only the owning requester may abandon a pending response. This is the
-  // bounded disconnect/recovery path a later BLE adapter can use without
-  // allowing another transport to erase someone else's result.
+  // 8. Only the owning requester may abandon a pending response. Empty-slot
+  // take/discard are harmless; a wrong requester cannot erase a result, and
+  // the rightful requester can still consume the intact response afterwards.
   {
     ReadOnlyFlash flash;
     ConfigStore store(flash);
     assert(store.begin());
     ApplicationRequestService service(store);
+
+    ApplicationResponse empty;
+    assert(!service.takeResponse(ApplicationRequester::kUsb, empty));
+    assert(!service.discardResponse(ApplicationRequester::kUsb));
 
     assert(service.submit(ApplicationRequest{
                ApplicationRequester::kBle, 600,
@@ -274,15 +283,53 @@ int main() {
            ApplicationSubmitResult::kAccepted);
     assert(!service.discardResponse(ApplicationRequester::kUsb));
     assert(service.responsePending());
+    const ApplicationResponse preserved =
+        take(service, ApplicationRequester::kBle);
+    assert(preserved.request_id == 600);
+    assert(preserved.code == ApplicationResponseCode::kOk);
+
+    assert(service.submit(ApplicationRequest{
+               ApplicationRequester::kBle, 601,
+               ApplicationRequestKind::kGetConfig}) ==
+           ApplicationSubmitResult::kAccepted);
     assert(service.discardResponse(ApplicationRequester::kBle));
     assert(!service.responsePending());
 
     assert(service.submit(ApplicationRequest{
-               ApplicationRequester::kUsb, 601,
+               ApplicationRequester::kUsb, 602,
                ApplicationRequestKind::kGetConfig}) ==
            ApplicationSubmitResult::kAccepted);
     const ApplicationResponse response = take(service);
-    assert(response.request_id == 601);
+    assert(response.request_id == 602);
+  }
+
+  // 9. Requester provenance fails closed. Unknown enum values must never own a
+  // response slot that the supported adapters cannot later take or discard.
+  {
+    ReadOnlyFlash flash;
+    ConfigStore store(flash);
+    assert(store.begin());
+    ApplicationRequestService service(store);
+
+    const auto requester_zero = static_cast<ApplicationRequester>(0);
+    const auto requester_ff = static_cast<ApplicationRequester>(0xFF);
+    assert(service.submit(ApplicationRequest{
+               requester_zero, 700, ApplicationRequestKind::kGetConfig}) ==
+           ApplicationSubmitResult::kRejected);
+    assert(!service.responsePending());
+    assert(service.submit(ApplicationRequest{
+               requester_ff, 701, ApplicationRequestKind::kGetConfig}) ==
+           ApplicationSubmitResult::kRejected);
+    assert(!service.responsePending());
+
+    assert(service.submit(ApplicationRequest{
+               ApplicationRequester::kUsb, 702,
+               ApplicationRequestKind::kGetConfig}) ==
+           ApplicationSubmitResult::kAccepted);
+    const ApplicationResponse response = take(service);
+    assert(response.request_id == 702);
+    assert(flash.program_calls == 0);
+    assert(flash.erase_calls == 0);
   }
 
   return 0;
