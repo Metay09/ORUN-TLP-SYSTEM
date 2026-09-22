@@ -12,6 +12,7 @@
 #endif
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
 #include "m7p6e_crypto_ble_probe.h"
+#include "m7p6e_pairing_evidence.h"
 #endif
 #include "firmware_version.h"
 #include "flash_mutation_gate.h"
@@ -107,40 +108,62 @@ bool ble_restart_failing = false;
 // callback.
 volatile uint32_t m7p6e_lesc_dhkey_events = 0;
 volatile uint32_t m7p6e_auth_status_events = 0;
+volatile uint32_t m7p6e_auth_success_events = 0;
+volatile uint32_t m7p6e_auth_failure_events = 0;
+volatile uint32_t m7p6e_auth_bonded_success_events = 0;
+volatile uint32_t m7p6e_auth_lesc_bonded_success_events = 0;
 volatile uint32_t m7p6e_sec_update_events = 0;
+volatile uint32_t m7p6e_encrypted_sec_update_events = 0;
 bool m7p6e_boot_kat_pass = false;
 
 struct M7P6ECryptoStressState {
   bool active = false;
   bool lesc_overlap_seen = false;
+  bool pairing_complete_seen = false;
   uint16_t iterations = 0;
   uint16_t lesc_seen_iteration = 0;
+  uint16_t pairing_complete_iteration = 0;
   uint32_t next_iteration_ms = 0;
   uint32_t max_kat_us = 0;
-  uint32_t lesc_start = 0;
-  uint32_t auth_start = 0;
-  uint32_t sec_update_start = 0;
-  uint32_t disconnect_start = 0;
+  orun_tlp::m7p6e_test::PairingEvidenceCounters evidence_start{};
 };
 
 M7P6ECryptoStressState m7p6e_crypto_stress;
 #endif
 
-// Bluefruit BLE-event-task context (not loop(), not an ISR). Inspects only
-// the event id. MUST NOT call monotonic::nowMs(), BleAdmissionPolicy, Serial,
-// flash, radio or Bluefruit/SoftDevice APIs.
+// Bluefruit BLE-event-task context (not loop(), not an ISR). Production
+// handling only inspects the disconnect event id. The M7P6E test-only probe
+// additionally reads immutable security-event fields and increments bounded
+// counters. This callback MUST NOT call monotonic::nowMs(), BleAdmissionPolicy,
+// Serial, flash, radio or Bluefruit/SoftDevice APIs.
 void onBleEvent(ble_evt_t* evt) {
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
   if (evt->header.evt_id == BLE_GAP_EVT_LESC_DHKEY_REQUEST ||
       evt->header.evt_id == BLE_GAP_EVT_AUTH_STATUS ||
       evt->header.evt_id == BLE_GAP_EVT_CONN_SEC_UPDATE) {
     taskENTER_CRITICAL();
-    if (evt->header.evt_id == BLE_GAP_EVT_LESC_DHKEY_REQUEST)
+    if (evt->header.evt_id == BLE_GAP_EVT_LESC_DHKEY_REQUEST) {
       ++m7p6e_lesc_dhkey_events;
-    else if (evt->header.evt_id == BLE_GAP_EVT_AUTH_STATUS)
+    } else if (evt->header.evt_id == BLE_GAP_EVT_AUTH_STATUS) {
       ++m7p6e_auth_status_events;
-    else
+      const auto& auth = evt->evt.gap_evt.params.auth_status;
+      if (auth.auth_status == BLE_GAP_SEC_STATUS_SUCCESS) {
+        ++m7p6e_auth_success_events;
+        if (auth.bonded) {
+          ++m7p6e_auth_bonded_success_events;
+          if (auth.lesc) ++m7p6e_auth_lesc_bonded_success_events;
+        }
+      } else {
+        ++m7p6e_auth_failure_events;
+      }
+    } else {
       ++m7p6e_sec_update_events;
+      const auto& mode =
+          evt->evt.gap_evt.params.conn_sec_update.conn_sec.sec_mode;
+      if (mode.sm == 1U && mode.lv >= 2U) {
+        ++m7p6e_encrypted_sec_update_events;
+      }
+    }
     taskEXIT_CRITICAL();
   }
 #endif
@@ -335,19 +358,20 @@ void printBleDiagnostic() {
 }
 
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
-struct M7P6EBleSecurityCounters {
-  uint32_t lesc = 0;
-  uint32_t auth = 0;
-  uint32_t sec_update = 0;
-  uint32_t disconnects = 0;
-};
+using M7P6EBleSecurityCounters =
+    orun_tlp::m7p6e_test::PairingEvidenceCounters;
 
 M7P6EBleSecurityCounters readM7P6EBleSecurityCounters() {
   M7P6EBleSecurityCounters out;
   taskENTER_CRITICAL();
   out.lesc = m7p6e_lesc_dhkey_events;
   out.auth = m7p6e_auth_status_events;
+  out.auth_success = m7p6e_auth_success_events;
+  out.auth_failure = m7p6e_auth_failure_events;
+  out.auth_bonded_success = m7p6e_auth_bonded_success_events;
+  out.auth_lesc_bonded_success = m7p6e_auth_lesc_bonded_success_events;
   out.sec_update = m7p6e_sec_update_events;
+  out.encrypted_update = m7p6e_encrypted_sec_update_events;
   out.disconnects = ble_disconnect_events;
   taskEXIT_CRITICAL();
   return out;
@@ -375,14 +399,21 @@ void printM7P6ECryptoStatus() {
   const M7P6EBleSecurityCounters counters = readM7P6EBleSecurityCounters();
   Serial.printf(
       "M7P6E STATUS boot_kat=%s stress=%s iterations=%u "
-      "lesc_events=%lu auth_events=%lu sec_update_events=%lu "
+      "lesc_events=%lu auth_events=%lu auth_success=%lu auth_failure=%lu "
+      "bonded_success=%lu lesc_bonded_success=%lu "
+      "sec_update_events=%lu encrypted_updates=%lu "
       "ble_connected=%u\n",
       m7p6e_boot_kat_pass ? "PASS" : "FAIL",
       m7p6e_crypto_stress.active ? "ACTIVE" : "IDLE",
       static_cast<unsigned>(m7p6e_crypto_stress.iterations),
       static_cast<unsigned long>(counters.lesc),
       static_cast<unsigned long>(counters.auth),
+      static_cast<unsigned long>(counters.auth_success),
+      static_cast<unsigned long>(counters.auth_failure),
+      static_cast<unsigned long>(counters.auth_bonded_success),
+      static_cast<unsigned long>(counters.auth_lesc_bonded_success),
       static_cast<unsigned long>(counters.sec_update),
+      static_cast<unsigned long>(counters.encrypted_update),
       ble_ready ? static_cast<unsigned>(Bluefruit.Periph.connected()) : 0U);
 }
 
@@ -420,10 +451,7 @@ void startM7P6ECryptoStress() {
   m7p6e_crypto_stress = M7P6ECryptoStressState{};
   m7p6e_crypto_stress.active = true;
   m7p6e_crypto_stress.next_iteration_ms = orun_tlp::monotonic::nowMs();
-  m7p6e_crypto_stress.lesc_start = counters.lesc;
-  m7p6e_crypto_stress.auth_start = counters.auth;
-  m7p6e_crypto_stress.sec_update_start = counters.sec_update;
-  m7p6e_crypto_stress.disconnect_start = counters.disconnects;
+  m7p6e_crypto_stress.evidence_start = counters;
   Serial.println(
       F("M7P6E COEX START iterations_max=3000 spacing_ms=20 "
         "action=trigger-BLE-bond-now"));
@@ -432,29 +460,32 @@ void startM7P6ECryptoStress() {
 void pollM7P6ECryptoStress() {
   if (!m7p6e_crypto_stress.active) return;
 
-  const M7P6EBleSecurityCounters counters = readM7P6EBleSecurityCounters();
-  const unsigned connected =
+  const M7P6EBleSecurityCounters& start =
+      m7p6e_crypto_stress.evidence_start;
+  M7P6EBleSecurityCounters counters = readM7P6EBleSecurityCounters();
+  unsigned connected =
       ble_ready ? static_cast<unsigned>(Bluefruit.Periph.connected()) : 0U;
+
   if (connected != 1U ||
-      counters.disconnects != m7p6e_crypto_stress.disconnect_start) {
+      orun_tlp::m7p6e_test::pairingEvidenceDisconnected(start, counters)) {
     m7p6e_crypto_stress.active = false;
     Serial.printf(
         "M7P6E COEX FAIL reason=ble-lost iterations=%u connected=%u "
         "disconnect_delta=%lu\n",
         static_cast<unsigned>(m7p6e_crypto_stress.iterations), connected,
-        static_cast<unsigned long>(
-            counters.disconnects - m7p6e_crypto_stress.disconnect_start));
+        static_cast<unsigned long>(counters.disconnects - start.disconnects));
     return;
   }
 
-  if (!m7p6e_crypto_stress.lesc_overlap_seen &&
-      counters.lesc != m7p6e_crypto_stress.lesc_start) {
-    m7p6e_crypto_stress.lesc_overlap_seen = true;
-    m7p6e_crypto_stress.lesc_seen_iteration =
-        m7p6e_crypto_stress.iterations;
-    Serial.printf("M7P6E LESC OVERLAP observed iteration=%u\n",
-                  static_cast<unsigned>(
-                      m7p6e_crypto_stress.lesc_seen_iteration));
+  if (orun_tlp::m7p6e_test::pairingEvidenceRejected(start, counters)) {
+    m7p6e_crypto_stress.active = false;
+    Serial.printf(
+        "M7P6E COEX FAIL reason=pairing-auth iterations=%u "
+        "auth_failure_delta=%lu ble_connected=1\n",
+        static_cast<unsigned>(m7p6e_crypto_stress.iterations),
+        static_cast<unsigned long>(
+            counters.auth_failure - start.auth_failure));
+    return;
   }
 
   const uint32_t now = orun_tlp::monotonic::nowMs();
@@ -479,29 +510,103 @@ void pollM7P6ECryptoStress() {
     return;
   }
 
-  constexpr uint16_t kPostLescIterations = 100U;
-  if (m7p6e_crypto_stress.lesc_overlap_seen &&
-      static_cast<uint16_t>(
-          m7p6e_crypto_stress.iterations -
-          m7p6e_crypto_stress.lesc_seen_iteration) >= kPostLescIterations) {
+  // Re-sample after the KAT because BLE security events may arrive while CC310
+  // work is running. This prevents a last-iteration pairing event from being
+  // missed and, more importantly, catches a rejection/disconnect that occurred
+  // during the KAT before any PASS decision is made.
+  counters = readM7P6EBleSecurityCounters();
+  connected =
+      ble_ready ? static_cast<unsigned>(Bluefruit.Periph.connected()) : 0U;
+  if (connected != 1U ||
+      orun_tlp::m7p6e_test::pairingEvidenceDisconnected(start, counters)) {
     m7p6e_crypto_stress.active = false;
-    const M7P6EBleSecurityCounters final_counters =
-        readM7P6EBleSecurityCounters();
     Serial.printf(
-        "M7P6E COEX PASS iterations=%u lesc_delta=%lu auth_delta=%lu "
-        "sec_update_delta=%lu disconnect_delta=%lu max_kat_us=%lu "
-        "ble_connected=1\n",
+        "M7P6E COEX FAIL reason=ble-lost iterations=%u connected=%u "
+        "disconnect_delta=%lu\n",
+        static_cast<unsigned>(m7p6e_crypto_stress.iterations), connected,
+        static_cast<unsigned long>(counters.disconnects - start.disconnects));
+    return;
+  }
+  if (orun_tlp::m7p6e_test::pairingEvidenceRejected(start, counters)) {
+    m7p6e_crypto_stress.active = false;
+    Serial.printf(
+        "M7P6E COEX FAIL reason=pairing-auth iterations=%u "
+        "auth_failure_delta=%lu ble_connected=1\n",
         static_cast<unsigned>(m7p6e_crypto_stress.iterations),
         static_cast<unsigned long>(
-            final_counters.lesc - m7p6e_crypto_stress.lesc_start),
+            counters.auth_failure - start.auth_failure));
+    return;
+  }
+
+  if (!m7p6e_crypto_stress.lesc_overlap_seen &&
+      orun_tlp::m7p6e_test::counterAdvanced(start.lesc, counters.lesc)) {
+    m7p6e_crypto_stress.lesc_overlap_seen = true;
+    m7p6e_crypto_stress.lesc_seen_iteration =
+        m7p6e_crypto_stress.iterations;
+    Serial.printf("M7P6E LESC OVERLAP observed iteration=%u\n",
+                  static_cast<unsigned>(
+                      m7p6e_crypto_stress.lesc_seen_iteration));
+  }
+
+  if (!m7p6e_crypto_stress.pairing_complete_seen &&
+      orun_tlp::m7p6e_test::pairingEvidenceComplete(start, counters)) {
+    m7p6e_crypto_stress.pairing_complete_seen = true;
+    m7p6e_crypto_stress.pairing_complete_iteration =
+        m7p6e_crypto_stress.iterations;
+    Serial.printf(
+        "M7P6E PAIRING COMPLETE iteration=%u auth_success_delta=%lu "
+        "bonded_success_delta=%lu lesc_bonded_success_delta=%lu "
+        "encrypted_update_delta=%lu\n",
+        static_cast<unsigned>(
+            m7p6e_crypto_stress.pairing_complete_iteration),
         static_cast<unsigned long>(
-            final_counters.auth - m7p6e_crypto_stress.auth_start),
+            counters.auth_success - start.auth_success),
         static_cast<unsigned long>(
-            final_counters.sec_update -
-            m7p6e_crypto_stress.sec_update_start),
+            counters.auth_bonded_success - start.auth_bonded_success),
         static_cast<unsigned long>(
-            final_counters.disconnects -
-            m7p6e_crypto_stress.disconnect_start),
+            counters.auth_lesc_bonded_success -
+            start.auth_lesc_bonded_success),
+        static_cast<unsigned long>(
+            counters.encrypted_update - start.encrypted_update));
+  }
+
+  constexpr uint16_t kPostPairingIterations = 100U;
+  if (m7p6e_crypto_stress.pairing_complete_seen &&
+      static_cast<uint16_t>(
+          m7p6e_crypto_stress.iterations -
+          m7p6e_crypto_stress.pairing_complete_iteration) >=
+          kPostPairingIterations) {
+    // Use the post-KAT snapshot that was just checked for disconnect/auth
+    // failure above. Re-reading here could capture a failure/disconnect that
+    // arrived after the check yet still print PASS with non-zero failure
+    // deltas, which would make the evidence self-contradictory.
+    m7p6e_crypto_stress.active = false;
+    Serial.printf(
+        "M7P6E COEX PASS iterations=%u lesc_delta=%lu auth_delta=%lu "
+        "auth_success_delta=%lu bonded_success_delta=%lu "
+        "lesc_bonded_success_delta=%lu auth_failure_delta=%lu "
+        "sec_update_delta=%lu "
+        "encrypted_update_delta=%lu disconnect_delta=%lu max_kat_us=%lu "
+        "ble_connected=1\n",
+        static_cast<unsigned>(m7p6e_crypto_stress.iterations),
+        static_cast<unsigned long>(counters.lesc - start.lesc),
+        static_cast<unsigned long>(counters.auth - start.auth),
+        static_cast<unsigned long>(
+            counters.auth_success - start.auth_success),
+        static_cast<unsigned long>(
+            counters.auth_bonded_success -
+            start.auth_bonded_success),
+        static_cast<unsigned long>(
+            counters.auth_lesc_bonded_success -
+            start.auth_lesc_bonded_success),
+        static_cast<unsigned long>(
+            counters.auth_failure - start.auth_failure),
+        static_cast<unsigned long>(
+            counters.sec_update - start.sec_update),
+        static_cast<unsigned long>(
+            counters.encrypted_update - start.encrypted_update),
+        static_cast<unsigned long>(
+            counters.disconnects - start.disconnects),
         static_cast<unsigned long>(m7p6e_crypto_stress.max_kat_us));
     return;
   }
@@ -509,14 +614,35 @@ void pollM7P6ECryptoStress() {
   constexpr uint16_t kMaxIterations = 3000U;
   if (m7p6e_crypto_stress.iterations >= kMaxIterations) {
     m7p6e_crypto_stress.active = false;
+    const char* reason =
+        !m7p6e_crypto_stress.lesc_overlap_seen
+            ? "no-lesc-overlap"
+            : !m7p6e_crypto_stress.pairing_complete_seen
+                  ? "pairing-not-complete"
+                  : "post-pairing-window-incomplete";
     Serial.printf(
-        "M7P6E COEX FAIL reason=no-lesc-overlap iterations=%u "
-        "auth_delta=%lu sec_update_delta=%lu max_kat_us=%lu\n",
+        "M7P6E COEX FAIL reason=%s iterations=%u lesc_delta=%lu "
+        "auth_delta=%lu auth_success_delta=%lu bonded_success_delta=%lu "
+        "lesc_bonded_success_delta=%lu auth_failure_delta=%lu "
+        "sec_update_delta=%lu "
+        "encrypted_update_delta=%lu max_kat_us=%lu\n",
+        reason,
         static_cast<unsigned>(m7p6e_crypto_stress.iterations),
+        static_cast<unsigned long>(counters.lesc - start.lesc),
+        static_cast<unsigned long>(counters.auth - start.auth),
         static_cast<unsigned long>(
-            counters.auth - m7p6e_crypto_stress.auth_start),
+            counters.auth_success - start.auth_success),
         static_cast<unsigned long>(
-            counters.sec_update - m7p6e_crypto_stress.sec_update_start),
+            counters.auth_bonded_success - start.auth_bonded_success),
+        static_cast<unsigned long>(
+            counters.auth_lesc_bonded_success -
+            start.auth_lesc_bonded_success),
+        static_cast<unsigned long>(
+            counters.auth_failure - start.auth_failure),
+        static_cast<unsigned long>(
+            counters.sec_update - start.sec_update),
+        static_cast<unsigned long>(
+            counters.encrypted_update - start.encrypted_update),
         static_cast<unsigned long>(m7p6e_crypto_stress.max_kat_us));
   }
 }

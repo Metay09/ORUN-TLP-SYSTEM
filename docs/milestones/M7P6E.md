@@ -1,11 +1,15 @@
 # M7P6E — CryptoCell + Bluefruit/SoftDevice coexistence proof
 
-Status: **SOFTWARE/HOST/BUILD VALIDATION PASS; OWNER HARDWARE BOOT KAT + BLE-CONNECTED COEXISTENCE EVIDENCE PASS; FRESH-PAIRING LESC-OVERLAP TEST OWNER-WAIVED (NOT PASS).**
+Status: **SOFTWARE/HOST/BUILD VALIDATION PASS; HARDENED FRESH-PAIRING LESC/CC310 COEXISTENCE HARDWARE PASS (SCOPED); PRODUCTION SECURE ENVELOPE STILL NOT ACTIVATED.**
 
-Baseline: `main@00a96811c73cd5f9609f6869eb2c4a055013842b`
+Original M7P6E baseline: `main@00a96811c73cd5f9609f6869eb2c4a055013842b`
 (PR #29 merged after M7P6D).
 
-Branch: `feat/m7p6e-cryptocell-bluefruit-coexistence`.
+Follow-up hardening PR #33 base at final audit:
+`main@699a74ea66cf3d22d9f1644fbf0f786f0092bd56`.
+
+Original implementation branch: `feat/m7p6e-cryptocell-bluefruit-coexistence`.
+Current follow-up branch: `fix/m7p6e-pairing-evidence`.
 
 ## 1. Purpose
 
@@ -21,11 +25,15 @@ M7P6E is the smallest code-bearing slice designed to probe:
 > source graph after SoftDevice/Bluefruit initialization, and can a bounded
 > stress later exercise that path across a fresh LESC pairing interval?
 
-The implemented probe supports both questions, but the owner-approved physical
-evidence for this slice closes only the first plus a bonded BLE-connected
-coexistence check. The fresh-pairing LESC stress was owner-waived and is **not
-PASS**. Therefore M7P6E does not close the M7P6D production secure-envelope
-coexistence gate.
+The original M7P6E merge closed only the first question plus a bonded
+BLE-connected coexistence check; fresh-pairing LESC stress was owner-waived at
+that time. The later hardened probe on
+`fix/m7p6e-pairing-evidence` was physically exercised with a fresh BlueZ
+pairing while repeated candidate KATs were active and produced the complete
+LESC/auth/bond/encrypted-link evidence plus the post-pairing KAT tail required
+by §6. That later run closes the **specific pinned-path coexistence gate** that
+M7P6D left open. It does not prove arbitrary CC310 thread-safety and does not,
+by itself, make the production secure-envelope design ready for activation.
 
 This is still a **test-only probe**. It does not put cryptography into the
 production LoRa packet path.
@@ -180,8 +188,9 @@ Bluefruit event callback:
 - `BLE_GAP_EVT_AUTH_STATUS`;
 - `BLE_GAP_EVT_CONN_SEC_UPDATE`.
 
-The callback only increments counters under a critical section. It does not run
-crypto, Serial, clocks, storage or policy.
+The callback reads only the relevant Nordic event payload fields and increments
+bounded counters under a critical section. It does not run crypto, Serial,
+clocks, storage or policy.
 
 With exactly one BLE client connected, serial command:
 
@@ -197,10 +206,17 @@ starts a bounded loop-task stress:
 - BLE must remain connected;
 - any KAT failure fails immediately;
 - a LESC DH-key event must be observed after stress starts;
-- after the first LESC event observed during the stress interval, 100 further
-  successful KAT iterations are required;
-- final PASS reports LESC/auth/security-update deltas, disconnect delta and the
-  maximum measured KAT duration.
+- `BLE_GAP_EVT_AUTH_STATUS` must report `BLE_GAP_SEC_STATUS_SUCCESS`,
+  report LESC for that completed authentication, and SoftDevice must report
+  that the procedure resulted in a bond (this bit alone is not bond-persistence
+  evidence);
+- a post-start `BLE_GAP_EVT_CONN_SEC_UPDATE` must report an encrypted
+  Security Mode 1 link (level >= 2);
+- any post-start authentication failure or disconnect fails the run;
+- only after all pairing-completion evidence above is present are 100 further
+  successful KAT iterations required;
+- final PASS reports LESC/auth/bond/encrypted-security-update deltas,
+  disconnect delta and the maximum measured KAT duration.
 
 This is intentionally stronger than merely running crypto while advertising: it
 requires evidence that the Bluefruit security path reached its LESC DH-key work
@@ -254,17 +270,23 @@ Hardware:
 4. start `CRYPTO STRESS`;
 5. initiate a fresh BLE bond/pairing while the stress is active;
 6. require `M7P6E LESC OVERLAP observed`;
-7. require final `M7P6E COEX PASS ... disconnect_delta=0 ble_connected=1`.
+7. require `M7P6E PAIRING COMPLETE ...` with non-zero successful,
+   LESC+bonded authentication and encrypted-security-update deltas;
+8. require final `M7P6E COEX PASS ... auth_failure_delta=0 disconnect_delta=0 ble_connected=1`.
 
 If the peer silently reuses an existing bond and no LESC event occurs, the run
-is **not** a fresh-pairing coexistence PASS. Do not weaken the gate to
-AUTH_STATUS alone.
+is **not** a fresh-pairing coexistence PASS. An AUTH_STATUS event alone is also
+insufficient: pairing must complete successfully, produce the expected stock
+bond, and reach an encrypted link before the post-pairing KAT window can close
+PASS.
 
-For this slice the owner explicitly waived steps 4-7 to avoid disturbing the
-working bond state. That waiver permits this test-only probe to merge, but does
-not satisfy the M7P6D prerequisite for production secure-envelope activation.
-A future secure-envelope milestone must either run a reviewed coexistence test
-that closes this risk or introduce a reviewed serialization/backend strategy.
+For the original M7P6E merge the owner explicitly waived steps 4-8 to avoid
+disturbing the working bond state. That historical waiver is retained here as
+part of the milestone record, but it is **superseded for this specific gate** by
+the hardened fresh-pairing hardware run recorded in §10.2. The result is scoped
+to the pinned RAK4630-class hardware/framework/probe path; a later production
+secure-envelope milestone must still review scheduling, timeout and ownership
+assumptions before enabling protected traffic.
 
 No Astra/external independent review was available for the final M7P6E head.
 A separate final static audit was performed after the owner waiver; its
@@ -301,9 +323,113 @@ the exact candidate outputs recorded in §3:
 - ciphertext `60ff0ec3e211ae143ca6c115c150bd6f05da47e416856b`;
 - tag `bd9b12044081697b`.
 
-This software/build evidence does **not** establish fresh-pairing
-Bluefruit/CC310 coexistence. That stronger gate was owner-waived for M7P6E and
-remains open before production secure-envelope activation.
+At the time of the original software/build validation this evidence did **not**
+establish fresh-pairing Bluefruit/CC310 coexistence, and that stronger gate was
+owner-waived. The later hardened hardware run in §10.2 supersedes that historical
+disposition for the specific pinned coexistence path.
+
+### 10.1 Post-merge pairing-evidence hardening validation — code head `98c8486c9b1f089f706d7ed24566f5e3164e28c5`
+
+Owner-run Debian validation of the hardened **test-only** pairing evidence gate:
+
+- full `firmware/tests/run_host_tests.sh`: **PASS**;
+  the new `test_m7p6e_pairing_evidence.cpp` check is intentionally silent on
+  success and is included under the runner's `set -e`;
+- normal production `pio run -d firmware -e rak4630`: **PASS**;
+  - RAM: **22,116 / 248,832 bytes = 8.9%**;
+  - Flash: **226,212 / 815,104 bytes = 27.8%**;
+  - exactly unchanged from the merged M7P7D production image, so this
+    test-only hardening adds **0 B production RAM / 0 B production Flash**;
+- hardened full-graph probe
+  `pio run -d firmware -e rak4630_m7p6e_crypto_ble_probe`: **PASS**;
+  - RAM: **22,212 / 248,832 bytes = 8.9%**;
+  - Flash: **240,476 / 815,104 bytes = 29.5%**;
+- hardened probe-only delta versus the current production image:
+  - RAM: **+96 bytes**;
+  - Flash: **+14,264 bytes**;
+- delta versus the earlier M7P6E probe image recorded above:
+  - RAM: **+80 bytes**;
+  - Flash: **+2,184 bytes**.
+
+The visible SX126x `#warning USING RAK4630` and SimpleTimer
+signed/unsigned warnings are from the existing third-party SX126x-Arduino
+sources. The host suite still compiles ORUN-owned host-test targets with
+warnings-as-errors plus ASan/UBSan.
+
+Hardware upload and hardened boot/readiness were subsequently exercised on the
+owner's RAK4630-class test unit. The device reported:
+
+```text
+M7P6E STATUS boot_kat=PASS stress=IDLE iterations=0 lesc_events=0 auth_events=0 auth_success=0 auth_failure=0 bonded_success=0 lesc_bonded_success=0 sec_update_events=0 encrypted_updates=0 ble_connected=0
+```
+
+This is scoped physical evidence that the hardened probe image booted and the
+candidate KAT still passed after Bluefruit/SoftDevice initialization. It is **not**
+fresh-pairing coexistence evidence by itself; no fresh pairing or stress run had
+started at this point. The later §10.2 run supplies the missing fresh-pairing
+evidence.
+
+### 10.2 Hardened fresh-pairing hardware evidence — 2026-09-21
+
+> Historical pre-§12.2 run. This PASS predates the final PASS-snapshot
+> correction and is retained for traceability; the authoritative corrected-code
+> hardware evidence is §12.5.
+
+The hardened probe code exercised on hardware is the code-bearing head
+`98c8486c9b1f089f706d7ed24566f5e3164e28c5`. The later branch commits through
+`a1a19c36209162ff1af1b4f5d1591e7874ccaa0c` changed only this milestone
+document, so they do not change the probe binary under test.
+
+The RAK4630-class test unit booted the hardened probe with
+`boot_kat=PASS`. A Debian BlueZ peer was observed as unpaired/unbonded before
+the first pairing attempt. The first stress interval intentionally remains
+recorded because it demonstrates the gate failing closed when the pairing was
+triggered too late:
+
+```text
+M7P6E COEX FAIL reason=no-lesc-overlap iterations=3000 lesc_delta=0 auth_delta=0 auth_success_delta=0 bonded_success_delta=0 lesc_bonded_success_delta=0 auth_failure_delta=0 sec_update_delta=0 encrypted_update_delta=0 max_kat_us=1954
+```
+
+The pairing completed only after that interval and the status counters then
+showed one LESC event, one successful authentication, one LESC+bonded success
+and one encrypted security update. This late pairing was correctly **not**
+promoted to PASS.
+
+After removing the BlueZ peer locally, rediscovering it, reconnecting, and
+starting a new stress interval, a fresh pairing was initiated while the stress
+was active. BlueZ reported `Bonded: yes`, `Paired: yes` and
+`Pairing successful`. The device-side evidence gate reported:
+
+```text
+M7P6E LESC OVERLAP observed iteration=1320
+M7P6E PAIRING COMPLETE iteration=1350 auth_success_delta=1 bonded_success_delta=1 lesc_bonded_success_delta=1 encrypted_update_delta=1
+M7P6E COEX PASS iterations=1450 lesc_delta=1 auth_delta=1 auth_success_delta=1 bonded_success_delta=1 lesc_bonded_success_delta=1 auth_failure_delta=0 sec_update_delta=1 encrypted_update_delta=1 disconnect_delta=0 max_kat_us=98632 ble_connected=1
+```
+
+A duplicate `CRYPTO STRESS` command during that same active run produced
+`M7P6E COEX REJECT reason=already-active`; the probe returns immediately on
+that path and does not reset or alter the already-running stress state, so this
+does not invalidate the subsequent PASS.
+
+This is **physical PASS for the scoped fresh-pairing coexistence gate**:
+the pinned Bluefruit/SoftDevice security path reached LESC work, completed
+successful LESC+bonded authentication, reached an encrypted Security Mode 1
+link, remained connected with zero authentication failures/disconnects, and
+then completed the required 100 additional candidate KAT iterations.
+
+The observed `max_kat_us=98632` is also retained as a timing finding. In the
+earlier no-pairing stress run the maximum was `1954 us`; during the successful
+fresh-pairing run one KAT reached about **98.6 ms**. The run remained correct and
+connected, so this is not a coexistence failure. It is **not** a characterized
+worst-case bound and its cause is not proven to be CC310 contention. Future
+production secure-envelope scheduling must therefore not assume the candidate
+crypto operation always completes in ~2 ms; RF deadlines, timeout policy,
+power transitions and ownership/serialization must tolerate or explicitly
+bound such security-event latency.
+
+This result does **not** prove arbitrary CryptoCell concurrency, all BLE peers,
+durable bond persistence, ORUN application authorization, or production secure
+packet readiness. BLE bond remains distinct from ORUN authorization.
 
 ## 11. Initial hardware evidence
 
@@ -331,20 +457,21 @@ That is scoped evidence that the full-graph probe image retained working direct
 LoRa RX while the BLE runtime/SoftDevice was active. It is not a new range,
 capacity or secure-RF claim.
 
-The stronger fresh-pairing LESC-overlap stress would require observing
-`BLE_GAP_EVT_LESC_DHKEY_REQUEST` during repeated ORUN KATs with zero
-disconnects. The owner explicitly chose not to disturb the existing working bond
-state further. This test is therefore **OWNER-WAIVED, NOT PASS**.
+At this initial-evidence stage, the stronger fresh-pairing LESC-overlap stress
+had not been run and was owner-waived. That statement is historical: the later
+hardened run in §10.2 physically exercised the fresh pairing and closed the
+specific pinned-path coexistence gate.
 
-The accepted physical evidence boundary for this milestone is:
+The initial accepted physical evidence boundary was:
 - boot/readiness KAT passed on real RAK hardware after Bluefruit/SoftDevice init;
 - BLE connected successfully in the full probe runtime;
 - a security update event was observed on the bonded connection;
 - direct LoRa RX continued in the same full-graph probe image.
 
-This does **not** prove arbitrary CC310 concurrency or a fresh LESC DH-key
-operation overlapping an ORUN KAT. That residual risk remains documented for any
-future production secure-envelope activation.
+Section §10.2 later adds the missing fresh-pairing evidence. Even with that
+addition, the milestone still does **not** prove arbitrary CC310 concurrency or
+a universal timing bound; those broader scheduling/ownership risks remain
+relevant to any future production secure-envelope activation.
 
 A subsequent connection check on the same hardware reported:
 
@@ -380,6 +507,259 @@ M7P6D candidate as production secure-envelope-ready.
 
 No independent Astra/external reviewer result is claimed for M7P6E.
 
+### 12.1 Post-merge pairing-evidence hardening — 2026-09-21
+
+A later review found one false-positive path in the **test-only** stress logic:
+the original implementation could print `M7P6E COEX PASS` after observing a
+LESC DH-key event plus the post-LESC KAT window without proving that the pairing
+procedure itself completed successfully.
+
+The hardening on `fix/m7p6e-pairing-evidence` changes only the probe path:
+
+- AUTH_STATUS success/failure is counted separately;
+- successful AUTH_STATUS must also report LESC and SoftDevice's
+  procedure-resulted-in-a-bond bit; this does not independently prove durable
+  bond persistence;
+- CONN_SEC_UPDATE must show encrypted Security Mode 1 (level >= 2);
+- authentication failure and disconnect fail closed;
+- the 100-iteration tail starts only after the complete pairing evidence is
+  observed;
+- BLE security events are re-sampled after each KAT so an event arriving during
+  CC310 work is not missed at the terminal iteration;
+- pure host coverage locks incomplete, rejected, disconnected, bonded-reconnect
+  and uint32 counter-wrap cases.
+
+The hardening alone did **not** change the owner waiver into PASS. The subsequent
+hardware execution recorded in §10.2 did: the fresh-pairing LESC/CC310
+coexistence gate is now **PASS for the scoped pinned path**, while the broader
+production secure-envelope readiness questions remain separate.
+
+### 12.2 Static review after hardened hardware run
+
+A subsequent static review found one narrow false-positive/report-consistency
+race in the **test-only** final PASS path. After the post-KAT snapshot had
+already been checked for authentication failure/disconnect, the code read the
+event counters a second time only for the PASS log. A failure/disconnect
+arriving between those two snapshots could therefore be included in the printed
+deltas while the code still emitted `M7P6E COEX PASS`.
+
+Commit `84585ae843586cafbbb1ee7067845e378118122e` removes that second counter
+read and reports the exact post-KAT snapshot that was already validated before
+the PASS decision. This keeps the evidence line internally consistent with the
+decision boundary and remains compiled only in the M7P6E probe image.
+
+The physical PASS in §10.2 was obtained on code-bearing head
+`98c8486c9b1f089f706d7ed24566f5e3164e28c5`, before this correction.
+At that historical checkpoint the branch was **not merge-ready** until the
+canonical host/build validation and scoped fresh-pairing hardware run were
+repeated on corrected code. That requirement is resolved by the authoritative
+rerun in §12.5. No production runtime behavior changed.
+
+### 12.3 Post-fix software/build revalidation — head `e408b0b0135e62a5dc2dd5b70f2d825dfc369863`
+
+After the §12.2 PASS-snapshot correction, the owner fast-forwarded the branch to
+`e408b0b0135e62a5dc2dd5b70f2d825dfc369863` and repeated the canonical
+software/build validation:
+
+- full `bash firmware/tests/run_host_tests.sh`: **PASS** through the final R4
+  watchdog checks; this includes the M7P6E crypto-contract and pairing-evidence
+  host tests under the canonical sanitizer/warnings-as-errors runner;
+- normal production `pio run -d firmware -e rak4630`: **PASS**;
+  - RAM: **22,116 / 248,832 bytes = 8.9%**;
+  - Flash: **226,212 / 815,104 bytes = 27.8%**;
+  - exactly unchanged from the merged M7P7D production baseline;
+- hardened full-graph probe
+  `pio run -d firmware -e rak4630_m7p6e_crypto_ble_probe`: **PASS**;
+  - RAM: **22,212 / 248,832 bytes = 8.9%**;
+  - Flash: **240,364 / 815,104 bytes = 29.5%**;
+  - versus the pre-§12.2 hardened probe build, RAM is unchanged and Flash is
+    **112 bytes smaller**;
+- both builds completed the application-ceiling and exclusive-owner link guards.
+
+This revalidation proves the §12.2 change compiles and preserves the production
+resource baseline. At that checkpoint the branch still required one scoped
+fresh-pairing hardware rerun on corrected code. That remaining requirement was
+later satisfied on the current-main-integrated code-bearing head recorded in
+§12.5.
+
+### 12.4 Serial DFU upload diagnostic on corrected probe
+
+The first post-fix `nrfutil` upload attempts failed after the 1200-bps touch
+with a timeout / closed-port error even though PlatformIO printed a final
+`[SUCCESS]`. During diagnosis, a separate `pio device monitor` process was
+observed repeatedly reconnecting to `/dev/ttyACM0`. After that monitor was
+stopped and `fuser -v /dev/ttyACM0` showed no owner, the same normal
+PlatformIO upload path was retried without any manual reset:
+
+```text
+Forcing reset using 1200bps open/close on port /dev/ttyACM0
+Waiting for the new upload port...
+Uploading .../firmware.zip
+Upgrading target on /dev/ttyACM0 ...
+Activating new firmware
+Device programmed.
+```
+
+The corrected probe therefore **did upload successfully through the normal
+serial DFU path** after the stale monitor was removed. That run proved the image
+and the normal serial-DFU path can succeed, but it did **not** establish the
+stale monitor as the sole/root cause. A later retry was started with
+`fuser -v /dev/ttyACM0` showing no owner; that retry entered the normal
+1200-bps-touch/DFU flow and began transferring, then timed out waiting for an
+acknowledgement and printed `No data received on serial port`. Therefore the
+serial-DFU failure is currently **intermittent and unresolved**. Port ownership
+is one confirmed interference mode, but another bootloader/USB/host timing
+failure mode still exists and must not be attributed to firmware or to the host
+without further evidence.
+
+A subsequent direct recovery attempt removed another variable: the packaged
+`adafruit-nrfutil.py` was invoked explicitly with the PlatformIO Python
+interpreter, the already-enumerated `/dev/ttyACM0`, 115200 baud,
+single-bank mode and **no touch/reset request**. The tool opened the port,
+parsed the 240364-byte application image, sent the DFU start packet, and again
+received no acknowledgement:
+
+```text
+Opened serial port /dev/ttyACM0
+Starting DFU upgrade of type 4, ... application size: 240364
+Sending DFU start packet
+Timed out waiting for acknowledgement from device.
+No data received on serial port. Not able to proceed.
+```
+
+At that point `lsusb` showed `239a:002a Adafruit WisBlock RAK4631`, while
+`lsblk` showed no RAK4631/UF2 mass-storage volume. The VID/PID observation is
+recorded only as USB-enumeration evidence; it is **not** treated as proof that
+the serial-DFU protocol is active. The board was not physically accessible for
+a button reset during this remote session.
+
+Future upload evidence must treat `Device programmed.` (or equivalent tool
+success) as the positive completion signal. PlatformIO's outer `[SUCCESS]`
+line is not sufficient when the inner nrfutil transfer reports an error.
+
+### 12.5 Current-main integration + corrected-probe physical rerun — 2026-09-22
+
+Before the rerun, the follow-up branch was fast-forwarded to its remote head and
+then merged with the then-current `main@699a74ea66cf3d22d9f1644fbf0f786f0092bd56`
+without rebasing or rewriting history. The exact code-bearing merge head tested
+on hardware was:
+
+```text
+fb1b9408ae3c49cd3f6c26002a6d583aa18bb592
+```
+
+The merge left only the intended M7P6E follow-up surface relative to current
+main: the milestone document, test-only `main.cpp` probe path, pairing-evidence
+helper/tests, and host-runner registration.
+
+Canonical validation on that exact merged head:
+
+- full `firmware/tests/run_host_tests.sh`: **PASS** through the final R4
+  watchdog checks;
+- normal production `pio run -d firmware -e rak4630`: **PASS**;
+  - RAM: **22,124 / 248,832 bytes = 8.9%**;
+  - Flash: **226,292 / 815,104 bytes = 27.8%**;
+  - application-ceiling and exclusive-owner link guards: **PASS**;
+- corrected full-graph
+  `pio run -d firmware -e rak4630_m7p6e_crypto_ble_probe`: **PASS**;
+  - RAM: **22,212 / 248,832 bytes = 8.9%**;
+  - Flash: **240,460 / 815,104 bytes = 29.5%**;
+  - application-ceiling and exclusive-owner link guards: **PASS**;
+- probe-only delta versus that current production image:
+  - RAM: **+88 bytes**;
+  - Flash: **+14,168 bytes**.
+
+The production resource increase relative to the earlier §12.3 checkpoint comes
+from later production work already present on current main (including M7P7E);
+the M7P6E probe macro remains off in the normal production environment.
+
+The earlier intermittent serial-DFU issue remained unresolved, so this rerun did
+not treat another serial-DFU attempt as a prerequisite. A single physical reset
+returned the board from the CDC-only `239a:002a` state to the normal UF2
+bootloader `239a:0029`. The mounted bootloader identified itself as:
+
+```text
+Model: WisBlock RAK4631 Board
+Board-ID: WisBlock-RAK4631-Board
+SoftDevice: S140 6.1.1
+```
+
+The current probe `firmware.hex` from the exact build above was converted to a
+fresh UF2 with the installed Adafruit `uf2conv.py` and nRF52840 family ID
+`0xADA52840`; the stale older `firmware.uf2` artifact was deliberately not
+used. After copying the fresh UF2 to the RAK4631 bootloader volume, the board
+re-enumerated in application mode as `239a:8029`.
+
+The device-side precondition check then reported:
+
+```text
+M7P6E STATUS boot_kat=PASS stress=IDLE iterations=0 lesc_events=0 auth_events=0 auth_success=0 auth_failure=0 bonded_success=0 lesc_bonded_success=0 sec_update_events=0 encrypted_updates=0 ble_connected=1
+```
+
+With exactly one phone connected, the phone UI was recorded as **CONNECTED +
+NOT BONDED** immediately before the stress. The stress was then started and a
+fresh bond was initiated while the bounded stress interval was active; the UI
+subsequently showed **CONNECTED + BONDED**. The corrected evidence gate
+reported:
+
+```text
+M7P6E COEX START iterations_max=3000 spacing_ms=20 action=trigger-BLE-bond-now
+M7P6E LESC OVERLAP observed iteration=1465
+M7P6E PAIRING COMPLETE iteration=1604 auth_success_delta=1 bonded_success_delta=1 lesc_bonded_success_delta=1 encrypted_update_delta=1
+M7P6E COEX PASS iterations=1704 lesc_delta=1 auth_delta=1 auth_success_delta=1 bonded_success_delta=1 lesc_bonded_success_delta=1 auth_failure_delta=0 sec_update_delta=1 encrypted_update_delta=1 disconnect_delta=0 max_kat_us=94727 ble_connected=1
+```
+
+This satisfies the remaining corrected-code fresh-pairing rerun requirement:
+the pinned Bluefruit/SoftDevice path reached LESC work during repeated candidate
+KAT scheduling, completed successful LESC+bonded authentication, reached an
+encrypted link, observed zero authentication failures/disconnects, remained
+connected, and completed the required post-pairing KAT tail.
+
+The observed `max_kat_us=94727` (~94.7 ms) is retained only as the maximum
+seen in this run. It is not a characterized worst-case bound and its cause is
+not established as CC310 contention.
+
+The successful UF2 recovery/upload path does **not** close the separate
+intermittent serial-DFU investigation. Likewise this physical PASS remains
+scoped to the tested RAK4631 / pinned framework / probe path; it does not prove
+arbitrary CryptoCell thread-safety, all BLE peers, durable bond persistence,
+ORUN application authorization, or production secure-envelope readiness.
+
+A final independent review of the branch after this evidence update remains the
+last merge-process gate.
+
+### 12.6 Final independent audit disposition — 2026-09-22
+
+Independent final audit of PR #33 at `fdb3efac...` returned **PASS WITH
+FIXES** with no BLOCKER/HIGH finding and no production-runtime defect.
+
+Accepted minimal fixes in this follow-up:
+- host coverage now independently rejects complete-looking evidence with no
+  post-start LESC event;
+- host coverage now rejects a plain security update when no encrypted update
+  advanced;
+- a non-zero start snapshot with unchanged current counters is explicitly stale
+  and incomplete;
+- auth-failure and disconnect wrap transitions are covered;
+- `counterAdvanced()` documents why any inequality is intentional in this
+  bounded monotonic-counter probe;
+- historical/pre-correction evidence and current follow-up baseline/branch
+  wording are disambiguated;
+- the callback description now matches the bounded payload-field reads actually
+  performed.
+
+The audit also noted that the whole `pollM7P6ECryptoStress()` sequencing is not
+factored into a pure host-testable decision function. Current code review found
+the ordering correct: rejection/disconnect is checked on the post-KAT snapshot,
+the PASS line prints that same validated snapshot, and there is no second
+unvalidated counter read. This remains an explicit **test-evidence coverage
+limitation**, not a known runtime defect. We intentionally do not refactor the
+working probe state machine solely to increase abstraction; any future change to
+that terminal sequencing requires renewed focused review/test evidence.
+
+Architecture index/rules are updated in the same PR so the corrected scoped
+fresh-pairing PASS no longer conflicts with canonical current documentation.
+
 ## 13. Compatibility / system impact
 
 Normal production `rak4630` behavior is intentionally unchanged:
@@ -395,6 +775,8 @@ Normal production `rak4630` behavior is intentionally unchanged:
 - no production secure packet path;
 - no production CryptoCell call added.
 
-The recorded hardware results are limited to boot/readiness KAT, bonded BLE
-connection/security-update evidence and simultaneous full-graph LoRa RX. No
-fresh-LESC/ORUN CryptoCell concurrency PASS is claimed.
+The recorded hardware results now include the hardened fresh-pairing
+LESC/auth/bond/encrypted-link coexistence PASS in §10.2 in addition to the
+earlier boot/readiness, bonded-connection and full-graph LoRa RX evidence.
+This remains a scoped pinned-path result, not a claim of arbitrary CryptoCell
+thread-safety or a production secure-envelope readiness verdict.

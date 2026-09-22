@@ -1,7 +1,7 @@
 # ORUN Architecture Documentation Index
 
 Status: **CURRENT documentation governance index**.
-Last reviewed against code checkpoint `main@cb1e181f88ed8d8362f6d4d2f97b96734474c954` (PR #34 / M7P7E requester ownership merged; later main commits are documentation-only closeout; M7P7B/C remain the governing BLE runtime/application-boundary prerequisites). M7P6B SecurityStore/TX nonce persistence, M7P7A BLE flash/SoftDevice event ownership, M7P7B minimal tracker BLE runtime/admission, M7P6C/D/E security proof/pre-wire/coexistence work and the M7P7C BLE/application-boundary design record are merged. M7P6E physically proved the boot/readiness candidate KAT after Bluefruit/SoftDevice init plus bonded BLE-connected/direct-LoRa coexistence, but its fresh-pairing LESC stress was owner-waived and is **not PASS**; production secure-envelope/commissioning activation therefore still requires a reviewed coexistence/serialization closure. M7P7B quantitative current remains DEFERRED and GNSS coexistence remains unproven on the tested no-GNSS unit. ORUN application GATT, provisioning, DFU, secure RF, MESSAGE runtime and field-network/serviceability runtime remain later work.
+Last reviewed against `main@699a74ea66cf3d22d9f1644fbf0f786f0092bd56` plus the M7P6E follow-up evidence on PR #33 (code-bearing hardware-tested head `fb1b9408ae3c49cd3f6c26002a6d583aa18bb592`). M7P7E requester ownership is merged and M7P7B/C remain the governing BLE runtime/application-boundary prerequisites. M7P6B SecurityStore/TX nonce persistence, M7P7A BLE flash/SoftDevice event ownership, M7P7B minimal tracker BLE runtime/admission, and the M7P6C/D/E security proof/pre-wire/coexistence foundation remain current. The corrected M7P6E test-only fresh-pairing LESC/CC310 gate is **physically PASS for the scoped pinned RAK4631/framework/probe path**; this does not prove arbitrary CryptoCell thread-safety or activate production secure-envelope/commissioning behavior, which still requires reviewed scheduling/ownership and authorization design. M7P7B quantitative current remains DEFERRED and GNSS coexistence remains unproven on the tested no-GNSS unit. ORUN application GATT, provisioning, secure RF, MESSAGE runtime and field-network/serviceability runtime remain later work; the separate intermittent serial-DFU issue is not closed by the successful UF2 recovery path.
 Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 
 
@@ -32,9 +32,11 @@ Merged test-only security coexistence probe (M7P6E):
 M7P6E uses the full production source graph with fixed public M7P6D candidate
 KDF/nonce KAT material and adds no production secure-RF path. Host/build,
 hardware boot KAT, bonded BLE connection/security update and direct LoRa RX
-evidence passed. The stronger fresh-pairing LESC stress was owner-waived and is
-**not PASS**; therefore the M7P6D production secure-envelope coexistence gate
-remains open. See `docs/milestones/M7P6E.md`.
+evidence passed. The stronger fresh-pairing LESC stress was historically
+owner-waived, then hardened; the corrected-code rerun is now **PASS for the
+scoped pinned RAK4631/framework/probe path**. This closes that specific
+coexistence evidence gate, not arbitrary CryptoCell thread-safety or production
+secure-envelope readiness. See `docs/milestones/M7P6E.md`.
 
 Merged M7P7C application-boundary design:
 `docs/milestones/M7P7C.md` records only the design-level BLE application/commissioning
