@@ -2,10 +2,14 @@
 
 Status: **SOFTWARE/HOST/BUILD VALIDATION PASS; HARDENED FRESH-PAIRING LESC/CC310 COEXISTENCE HARDWARE PASS (SCOPED); PRODUCTION SECURE ENVELOPE STILL NOT ACTIVATED.**
 
-Baseline: `main@00a96811c73cd5f9609f6869eb2c4a055013842b`
+Original M7P6E baseline: `main@00a96811c73cd5f9609f6869eb2c4a055013842b`
 (PR #29 merged after M7P6D).
 
-Branch: `feat/m7p6e-cryptocell-bluefruit-coexistence`.
+Follow-up hardening PR #33 base at final audit:
+`main@699a74ea66cf3d22d9f1644fbf0f786f0092bd56`.
+
+Original implementation branch: `feat/m7p6e-cryptocell-bluefruit-coexistence`.
+Current follow-up branch: `fix/m7p6e-pairing-evidence`.
 
 ## 1. Purpose
 
@@ -184,8 +188,9 @@ Bluefruit event callback:
 - `BLE_GAP_EVT_AUTH_STATUS`;
 - `BLE_GAP_EVT_CONN_SEC_UPDATE`.
 
-The callback only increments counters under a critical section. It does not run
-crypto, Serial, clocks, storage or policy.
+The callback reads only the relevant Nordic event payload fields and increments
+bounded counters under a critical section. It does not run crypto, Serial,
+clocks, storage or policy.
 
 With exactly one BLE client connected, serial command:
 
@@ -366,6 +371,10 @@ evidence.
 
 ### 10.2 Hardened fresh-pairing hardware evidence — 2026-09-21
 
+> Historical pre-§12.2 run. This PASS predates the final PASS-snapshot
+> correction and is retained for traceability; the authoritative corrected-code
+> hardware evidence is §12.5.
+
 The hardened probe code exercised on hardware is the code-bearing head
 `98c8486c9b1f089f706d7ed24566f5e3164e28c5`. The later branch commits through
 `a1a19c36209162ff1af1b4f5d1591e7874ccaa0c` changed only this milestone
@@ -541,9 +550,10 @@ decision boundary and remains compiled only in the M7P6E probe image.
 
 The physical PASS in §10.2 was obtained on code-bearing head
 `98c8486c9b1f089f706d7ed24566f5e3164e28c5`, before this correction.
-Therefore the branch is **not merge-ready** until the canonical host/build
-validation and the scoped fresh-pairing hardware run are repeated on the new
-code head. No production runtime behavior changed.
+At that historical checkpoint the branch was **not merge-ready** until the
+canonical host/build validation and scoped fresh-pairing hardware run were
+repeated on corrected code. That requirement is resolved by the authoritative
+rerun in §12.5. No production runtime behavior changed.
 
 ### 12.3 Post-fix software/build revalidation — head `e408b0b0135e62a5dc2dd5b70f2d825dfc369863`
 
@@ -686,9 +696,11 @@ The device-side precondition check then reported:
 M7P6E STATUS boot_kat=PASS stress=IDLE iterations=0 lesc_events=0 auth_events=0 auth_success=0 auth_failure=0 bonded_success=0 lesc_bonded_success=0 sec_update_events=0 encrypted_updates=0 ble_connected=1
 ```
 
-With exactly one phone connected and initially **not bonded**, the stress was
-started and a fresh bond was initiated while the bounded stress interval was
-active. The corrected evidence gate reported:
+With exactly one phone connected, the phone UI was recorded as **CONNECTED +
+NOT BONDED** immediately before the stress. The stress was then started and a
+fresh bond was initiated while the bounded stress interval was active; the UI
+subsequently showed **CONNECTED + BONDED**. The corrected evidence gate
+reported:
 
 ```text
 M7P6E COEX START iterations_max=3000 spacing_ms=20 action=trigger-BLE-bond-now
@@ -715,6 +727,38 @@ ORUN application authorization, or production secure-envelope readiness.
 
 A final independent review of the branch after this evidence update remains the
 last merge-process gate.
+
+### 12.6 Final independent audit disposition — 2026-09-22
+
+Independent final audit of PR #33 at `fdb3efac...` returned **PASS WITH
+FIXES** with no BLOCKER/HIGH finding and no production-runtime defect.
+
+Accepted minimal fixes in this follow-up:
+- host coverage now independently rejects complete-looking evidence with no
+  post-start LESC event;
+- host coverage now rejects a plain security update when no encrypted update
+  advanced;
+- a non-zero start snapshot with unchanged current counters is explicitly stale
+  and incomplete;
+- auth-failure and disconnect wrap transitions are covered;
+- `counterAdvanced()` documents why any inequality is intentional in this
+  bounded monotonic-counter probe;
+- historical/pre-correction evidence and current follow-up baseline/branch
+  wording are disambiguated;
+- the callback description now matches the bounded payload-field reads actually
+  performed.
+
+The audit also noted that the whole `pollM7P6ECryptoStress()` sequencing is not
+factored into a pure host-testable decision function. Current code review found
+the ordering correct: rejection/disconnect is checked on the post-KAT snapshot,
+the PASS line prints that same validated snapshot, and there is no second
+unvalidated counter read. This remains an explicit **test-evidence coverage
+limitation**, not a known runtime defect. We intentionally do not refactor the
+working probe state machine solely to increase abstraction; any future change to
+that terminal sequencing requires renewed focused review/test evidence.
+
+Architecture index/rules are updated in the same PR so the corrected scoped
+fresh-pairing PASS no longer conflicts with canonical current documentation.
 
 ## 13. Compatibility / system impact
 

@@ -22,8 +22,11 @@ struct PairingEvidenceCounters {
 
 inline bool counterAdvanced(uint32_t start, uint32_t current) {
   // Equality, rather than ordering/subtraction, keeps the observation valid
-  // across uint32_t wrap. A full 2^32-event lap between two bounded samples is
-  // outside the probe's possible runtime.
+  // across uint32_t wrap. Any inequality therefore counts as "advanced",
+  // including a numerically smaller current value after wrap. Counter reset
+  // while a stress state survives would also look advanced, but a device reset
+  // restarts this test-only probe state as well. A full 2^32-event lap between
+  // two bounded samples is outside the probe's possible runtime.
   return current != start;
 }
 
@@ -48,8 +51,9 @@ inline bool pairingEvidenceComplete(const PairingEvidenceCounters& start,
   // bounded evidence window to contain successful LESC authentication that
   // SoftDevice says resulted in a bond, plus an encrypted Mode-1 security
   // update. This is pairing-completion evidence, not an independent proof that
-  // InternalFS durably persisted the bond. Bluefruit's first-pairing event order may report the security
-  // update before AUTH_STATUS, so completion intentionally requires both facts
+  // InternalFS durably persisted the bond. Bluefruit's first-pairing event
+  // order may report the security update before AUTH_STATUS, so completion
+  // intentionally requires both facts
   // without imposing the wrong order.
   return counterAdvanced(start.lesc, current.lesc) &&
          counterAdvanced(start.auth_success, current.auth_success) &&

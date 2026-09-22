@@ -1,7 +1,7 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through `main@cb1e181f88ed8d8362f6d4d2f97b96734474c954`: M7P7E requester/response ownership is merged on top of the M7P7D transport-neutral seam; M7P7B/C BLE runtime/application-boundary work and M7P6C/D/E security proof/pre-wire/coexistence work remain governing prerequisites. The corrected M7P6E fresh-pairing rerun is still an open physical gate; secure-envelope/provisioning/application-GATT runtime remains later.**
-Last reviewed against code checkpoint `main@cb1e181f88ed8d8362f6d4d2f97b96734474c954` (PR #34 / M7P7E merged; later main commits are documentation-only closeout).
+Status: **CURRENT against `main@699a74ea66cf3d22d9f1644fbf0f786f0092bd56` plus PR #33 follow-up evidence: M7P7E requester/response ownership remains merged on top of the M7P7D transport-neutral seam; M7P7B/C BLE runtime/application-boundary work and M7P6C/D/E security proof/pre-wire/coexistence work remain governing prerequisites. The corrected M7P6E fresh-pairing rerun is physically PASS for the scoped pinned RAK4631/framework/probe path; secure-envelope/provisioning/application-GATT runtime remains later and this result is not a claim of arbitrary CryptoCell thread-safety.**
+Last reviewed against code checkpoint `main@699a74ea66cf3d22d9f1644fbf0f786f0092bd56` plus PR #33 code-bearing hardware-tested head `fb1b9408ae3c49cd3f6c26002a6d583aa18bb592`.
 Last architecture review update: 2026-09-21 (§17 records the BLE application boundary and merged M7P7D/M7P7E request ownership seam).
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
@@ -767,9 +767,11 @@ loop/task code. See `docs/milestones/M7P7C.md`.
 The exact commissioning ceremony remains a later focused implementation decision.
 Connection, stock BLE bonding, device credential, user identity and application
 authorization remain separate. No generic `K_root` readback or transport-triggered
-credential export is authorized. Production provisioning must also define authority
-key custody/recovery and close the fresh-pairing CC310/Bluefruit coexistence gate;
-this does not pre-decide that a backend stores raw `K_root`.
+credential export is authorized. Production provisioning must also define authority key custody/recovery and
+respect the scheduling/ownership implications exposed by the scoped
+fresh-pairing CC310/Bluefruit coexistence PASS. That scoped test closes the
+pinned-path evidence gate only; it does not establish arbitrary CryptoCell
+thread-safety or pre-decide that a backend stores raw `K_root`.
 
 Future Entity Registry, optional person-location, shared-map and MESSAGE
 routing/delivery/offline-sync decisions are application architecture rather than BLE

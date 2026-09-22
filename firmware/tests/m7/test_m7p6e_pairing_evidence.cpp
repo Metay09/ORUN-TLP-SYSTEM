@@ -33,6 +33,38 @@ int main() {
   assert(!pairingEvidenceRejected(start, now));
   assert(!pairingEvidenceDisconnected(start, now));
 
+  // Each positive requirement is independently necessary. These focused
+  // negatives prevent a future helper simplification from silently weakening
+  // the evidence contract.
+  PairingEvidenceCounters no_lesc = start;
+  ++no_lesc.auth;
+  ++no_lesc.auth_success;
+  ++no_lesc.auth_bonded_success;
+  ++no_lesc.auth_lesc_bonded_success;
+  ++no_lesc.sec_update;
+  ++no_lesc.encrypted_update;
+  assert(!pairingEvidenceComplete(start, no_lesc));
+
+  PairingEvidenceCounters no_encrypted_update = start;
+  ++no_encrypted_update.lesc;
+  ++no_encrypted_update.auth;
+  ++no_encrypted_update.auth_success;
+  ++no_encrypted_update.auth_bonded_success;
+  ++no_encrypted_update.auth_lesc_bonded_success;
+  ++no_encrypted_update.sec_update;
+  assert(!pairingEvidenceComplete(start, no_encrypted_update));
+
+  PairingEvidenceCounters stale_start{};
+  stale_start.lesc = 11;
+  stale_start.auth = 12;
+  stale_start.auth_success = 13;
+  stale_start.auth_bonded_success = 14;
+  stale_start.auth_lesc_bonded_success = 15;
+  stale_start.sec_update = 16;
+  stale_start.encrypted_update = 17;
+  PairingEvidenceCounters stale_now = stale_start;
+  assert(!pairingEvidenceComplete(stale_start, stale_now));
+
   // A rejected pairing must never be promotable to PASS even if other
   // counters also moved.
   PairingEvidenceCounters rejected = now;
@@ -75,6 +107,22 @@ int main() {
   wrap_now.sec_update = 0;
   wrap_now.encrypted_update = 0;
   assert(pairingEvidenceComplete(wrap_start, wrap_now));
+
+  PairingEvidenceCounters rejected_wrap_start{};
+  rejected_wrap_start.auth_failure = UINT32_MAX;
+  PairingEvidenceCounters rejected_wrap_now = rejected_wrap_start;
+  rejected_wrap_now.auth_failure = 0;
+  assert(pairingEvidenceRejected(rejected_wrap_start, rejected_wrap_now));
+  assert(!pairingEvidenceComplete(rejected_wrap_start, rejected_wrap_now));
+
+  PairingEvidenceCounters disconnected_wrap_start{};
+  disconnected_wrap_start.disconnects = UINT32_MAX;
+  PairingEvidenceCounters disconnected_wrap_now = disconnected_wrap_start;
+  disconnected_wrap_now.disconnects = 0;
+  assert(pairingEvidenceDisconnected(disconnected_wrap_start,
+                                     disconnected_wrap_now));
+  assert(!pairingEvidenceComplete(disconnected_wrap_start,
+                                  disconnected_wrap_now));
 
   return 0;
 }
