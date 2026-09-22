@@ -1,6 +1,6 @@
 # M7P7F Independent Follow-up Review Disposition
 
-Status: **FIXES APPLIED — OWNER REVALIDATION PENDING**
+Status: **PASS WITH FIXES — OWNER REVALIDATION PASS**
 
 Reviewed head: `afd2e9232b404dcde40b4600fb2ec14f37a793f6`
 
@@ -54,7 +54,25 @@ active session and an exact generation match.
 ## Validation state
 
 The earlier host/PlatformIO PASS and zero linked RAM/flash delta belong to the
-pre-review head `afd2e923...`. Because the fixes change transport code and
-tests, fresh owner-run focused/full host validation and the production
-`rak4630` PlatformIO build are required before merge. No post-fix PASS is
-claimed by this document yet.
+pre-review head `afd2e923...`.
+
+Post-fix owner revalidation on exact code-bearing head
+`3ebb1b97f7e86bfbf502219619d90425a5f9686f`:
+
+- full `bash firmware/tests/run_host_tests.sh`: **PASS** through the final R4
+  watchdog checks; the M7P7F test therefore passed under warnings-as-errors +
+  ASan/UBSan;
+- all 8 production startup scenarios: **PASS**;
+- `pio run -d firmware -e rak4630`: **PASS** using the pinned GCC ARM 7.2.1
+  toolchain;
+- RAM: **22,124 / 248,832 bytes (8.9%)**;
+- Flash: **226,292 / 815,104 bytes (27.8%)**;
+- production delta versus merged M7P7E baseline: **+0 B RAM / +0 B Flash**;
+- `check_exclusive_owner`: **PASS**;
+- `check_application_ceiling`: **PASS**.
+
+No physical BLE test was performed or claimed. M7P7F remains pre-wire, so phone
+discovery/write/indication behavior belongs to M7P7G.
+
+Final review disposition: **PASS WITH FIXES**. No open BLOCKER/HIGH/MEDIUM/LOW
+finding remains from this review.

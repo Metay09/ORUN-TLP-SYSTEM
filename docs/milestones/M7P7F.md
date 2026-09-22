@@ -1,6 +1,8 @@
 # M7P7F — BLE application transport contract + bounded session state
 
-Status: **SOFTWARE PASS — host/sanitizer suite and RAK4630 production build PASS,
+Status: **SOFTWARE PASS WITH REVIEW FIXES — independent follow-up findings closed;
+post-fix full host/sanitizer/warnings-as-errors suite and RAK4630 production build
+PASS on code-bearing head `3ebb1b97f7e86bfbf502219619d90425a5f9686f`,
 zero RAM/flash delta (unreferenced by production composition). NO BLUEFRUIT
 GATT SERVICE/CHARACTERISTIC, NO PROTECTED WRITE PATH, NO PHYSICAL BLE TEST.**
 
@@ -406,9 +408,24 @@ Pre-audit owner-run validation on exact head `afd2e9232b404dcde40b4600fb2ec14f37
 
 These PASS results apply to the pre-audit head `afd2e923...`. The independent
 follow-up review below found session-provenance/ingress backpressure gaps and
-changed code/tests to close them. The corrected head therefore requires fresh
-owner-run focused/full host tests and the production PlatformIO build before
-merge; the pre-audit PASS is not promoted to the corrected code.
+changed code/tests to close them.
+
+Post-fix owner revalidation on exact code-bearing head
+`3ebb1b97f7e86bfbf502219619d90425a5f9686f`:
+
+- full `bash firmware/tests/run_host_tests.sh`: **PASS** through the final R4
+  watchdog checks; therefore the M7P7F focused test completed successfully
+  under the runner's existing `-Wall -Wextra -Werror` + ASan/UBSan flags;
+- all 8 production startup scenarios: **PASS**;
+- `pio run -d firmware -e rak4630`: **PASS** with pinned GCC ARM 7.2.1;
+- RAM: **22,124 / 248,832 bytes = 8.9%**;
+- Flash: **226,292 / 815,104 bytes = 27.8%**;
+- delta versus the merged M7P7E production baseline: **+0 B RAM / +0 B Flash**;
+- `check_exclusive_owner`: **PASS**;
+- `check_application_ceiling`: **PASS**;
+- no physical hardware test was performed or required because this slice still
+  adds no Bluefruit GATT runtime, advertising/admission change or BLE-triggered
+  production application execution.
 
 ## 13. Self-audit (section 18 of the task)
 
@@ -475,7 +492,9 @@ Fixes on the same branch:
 - focused host coverage now includes delayed old-session frame/peek/confirm/
   disconnect behavior and the partial-request pre-staging case.
 
-**Post-fix owner revalidation is still pending** and must complete before merge.
+**Post-fix owner revalidation: PASS.** The two MEDIUM and one LOW findings are
+closed on the validated code-bearing head
+`3ebb1b97f7e86bfbf502219619d90425a5f9686f`.
 
 ## 15. What remains for M7P7G
 
