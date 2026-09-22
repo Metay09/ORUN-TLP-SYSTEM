@@ -23,15 +23,22 @@ int main() {
   assert(h.connectionHandle() == 7);
   assert(h.sessionGeneration() == 11);
 
-  // Exactly one fixed-size ingress event can be queued; newer work does not
-  // overwrite the earlier callback event.
+  // A complete four-fragment M7P7F request burst fits even if Bluefruit
+  // delivers ATT write callbacks faster than the cooperative loop consumes
+  // them. The fifth queued frame is rejected and FIFO order is preserved.
   uint8_t frame_a[20];
   for (uint8_t i = 0; i < sizeof(frame_a); ++i) frame_a[i] = i;
-  assert(h.enqueueIngress(7, frame_a, sizeof(frame_a)));
   uint8_t frame_b[8] = {1,2,3,4,5,6,7,8};
-  assert(!h.enqueueIngress(7, frame_b, sizeof(frame_b)));
-  assert(!h.enqueueIngress(8, frame_b, sizeof(frame_b)));
-  assert(!h.enqueueIngress(7, frame_b, 21));
+  uint8_t frame_c[8] = {9,10,11,12,13,14,15,16};
+  uint8_t frame_d[8] = {17,18,19,20,21,22,23,24};
+  uint8_t frame_e[8] = {25,26,27,28,29,30,31,32};
+  assert(h.enqueueIngress(7, frame_a, sizeof(frame_a)));
+  assert(h.enqueueIngress(7, frame_b, sizeof(frame_b)));
+  assert(h.enqueueIngress(7, frame_c, sizeof(frame_c)));
+  assert(h.enqueueIngress(7, frame_d, sizeof(frame_d)));
+  assert(!h.enqueueIngress(7, frame_e, sizeof(frame_e)));
+  assert(!h.enqueueIngress(8, frame_e, sizeof(frame_e)));
+  assert(!h.enqueueIngress(7, frame_e, 21));
 
   BleApplicationIngressEvent in;
   assert(h.takeIngress(in));
@@ -39,6 +46,12 @@ int main() {
   assert(in.connection_handle == 7);
   assert(in.frame_len == sizeof(frame_a));
   assert(memcmp(in.frame, frame_a, sizeof(frame_a)) == 0);
+  assert(h.takeIngress(in));
+  assert(memcmp(in.frame, frame_b, sizeof(frame_b)) == 0);
+  assert(h.takeIngress(in));
+  assert(memcmp(in.frame, frame_c, sizeof(frame_c)) == 0);
+  assert(h.takeIngress(in));
+  assert(memcmp(in.frame, frame_d, sizeof(frame_d)) == 0);
   assert(!h.takeIngress(in));
 
   // Zero-length malformed wire writes are still bounded events; the transport
@@ -64,6 +77,10 @@ int main() {
   h.setIngressAllowed(7, 11, true);
   assert(h.ingressAllowed());
   assert(h.enqueueConfirmation(7, 0x1234));
+  // Exact HVC provisionally reopens callback admission so a peer may issue
+  // the next ATT write immediately after confirming the indication.
+  assert(h.ingressAllowed());
+  assert(h.enqueueIngress(7, frame_b, sizeof(frame_b)));
   assert(!h.enqueueConfirmation(7, 0x1234));
   assert(!h.enqueueConfirmation(8, 0x1234));
 
@@ -73,6 +90,8 @@ int main() {
   assert(confirm.connection_handle == 7);
   assert(confirm.value_handle == 0x1234);
   assert(!h.takeConfirmation(confirm));
+  assert(h.takeIngress(in));
+  assert(in.frame_len == sizeof(frame_b));
 
   // Replacement session invalidates queued old-session ingress and HVC.
   assert(h.enqueueIngress(7, frame_b, sizeof(frame_b)));

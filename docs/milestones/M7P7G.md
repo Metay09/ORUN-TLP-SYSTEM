@@ -33,7 +33,7 @@ Implemented:
 - the exact M7P7F 128-bit service/request/response UUIDs;
 - request characteristic: **WRITE with response only**, max 20 bytes;
 - response characteristic: **INDICATE only**, max 20 bytes;
-- one fixed 20-byte callback->loop ingress mailbox;
+- one fixed four-entry callback->loop ingress FIFO (each frame <=20 bytes);
 - callback-visible session generation and stop-and-wait gate;
 - HVC confirmation handoff;
 - loop-owned application dispatch and session cleanup;
@@ -85,9 +85,11 @@ application/session decisions remain in `loop()`.
 
 ## 5. Stop-and-wait across the real callback boundary
 
-A one-frame mailbox alone is insufficient: a request written while response A
-is awaiting HVC could otherwise sit in the callback mailbox and become valid
-after A is confirmed.
+A mailbox without an explicit stop-and-wait gate is insufficient: a request
+written while response A is awaiting HVC could otherwise sit in the callback
+queue and become valid after A is confirmed. The FIFO capacity is exactly four
+frames, matching one maximum-size M7P7F logical request, so valid fragmented
+WRITE-with-response bursts do not depend on cooperative-loop scheduling.
 
 M7P7G mirrors M7P7F's stop-and-wait state into
 `BleApplicationHandoff::ingress_allowed_`:
@@ -96,8 +98,11 @@ M7P7G mirrors M7P7F's stop-and-wait state into
 - as soon as the loop-owned transport has an outbound response -> ingress
   closes and any queued next request is cleared;
 - while response/CCCD/HVC is pending -> callback rejects new request frames;
-- only after final HVC drives `confirmOutboundFrame()` and the outbound
-  response is gone -> ingress reopens.
+- when the exact response HVC arrives, callback admission reopens provisionally
+  so a peer that immediately writes after confirmation is not spuriously
+  dropped; the HVC and frames are only queued, not executed;
+- loop consumes HVC before ingress, calls `confirmOutboundFrame()`, and closes/
+  clears the FIFO again if no matching confirmed response exists.
 
 This preserves the semantic timing of M7P7F at the physical BLE boundary.
 
@@ -153,7 +158,7 @@ No background timer is introduced.
 
 - zero generation rejected;
 - exact connection/session stamping;
-- one-frame bounded mailbox / no overwrite;
+- four-frame bounded FIFO / no overwrite / FIFO ordering;
 - max-frame bound;
 - wrong connection rejection;
 - zero-length malformed frame handoff to transport owner;

@@ -24,6 +24,13 @@ struct BleApplicationConfirmationEvent {
   uint16_t value_handle = 0xFFFFU;
 };
 
+namespace ble_app_handoff_config {
+// One full M7P7F logical request can arrive as four ATT write-with-response
+// fragments before the cooperative loop runs. Bound the callback queue to that
+// exact protocol maximum so valid fragmentation does not depend on loop timing.
+constexpr uint8_t kIngressQueueCapacity = ble_app_transport::kMaxFragments;
+}  // namespace ble_app_handoff_config
+
 class BleApplicationHandoff {
  public:
   // Activating a new session invalidates every queued event from the previous
@@ -40,8 +47,9 @@ class BleApplicationHandoff {
   void setIngressAllowed(uint16_t connection_handle, uint32_t generation,
                          bool allowed);
 
-  // Callback/task producer. One frame maximum; when occupied, the newer frame
-  // is rejected rather than overwriting the earlier event.
+  // Callback/task producer. FIFO capacity equals the M7P7F four-fragment
+  // logical-message maximum. A fifth queued frame is rejected rather than
+  // overwriting earlier events.
   bool enqueueIngress(uint16_t connection_handle, const uint8_t* frame,
                       uint16_t frame_len);
 
@@ -68,8 +76,10 @@ class BleApplicationHandoff {
   uint16_t connection_handle_ = 0xFFFFU;
   uint32_t session_generation_ = 0;
 
-  bool ingress_pending_ = false;
-  BleApplicationIngressEvent ingress_{};
+  BleApplicationIngressEvent
+      ingress_queue_[ble_app_handoff_config::kIngressQueueCapacity]{};
+  uint8_t ingress_head_ = 0;
+  uint8_t ingress_count_ = 0;
 
   bool confirmation_pending_ = false;
   BleApplicationConfirmationEvent confirmation_{};

@@ -5,8 +5,10 @@
 namespace orun_tlp {
 
 void BleApplicationHandoff::clearMailboxes() {
-  ingress_pending_ = false;
-  ingress_ = BleApplicationIngressEvent();
+  for (uint8_t i = 0; i < ble_app_handoff_config::kIngressQueueCapacity; ++i)
+    ingress_queue_[i] = BleApplicationIngressEvent();
+  ingress_head_ = 0;
+  ingress_count_ = 0;
   confirmation_pending_ = false;
   confirmation_ = BleApplicationConfirmationEvent();
 }
@@ -49,10 +51,12 @@ void BleApplicationHandoff::setIngressAllowed(uint16_t connection_handle,
     return;
   ingress_allowed_ = allowed;
   if (!allowed) {
-    // A frame written while stop-and-wait is closed must never be retained
+    // Frames written while stop-and-wait is closed must never be retained
     // for later execution after the indication is confirmed.
-    ingress_pending_ = false;
-    ingress_ = BleApplicationIngressEvent();
+    for (uint8_t i = 0; i < ble_app_handoff_config::kIngressQueueCapacity; ++i)
+      ingress_queue_[i] = BleApplicationIngressEvent();
+    ingress_head_ = 0;
+    ingress_count_ = 0;
   }
 }
 
@@ -62,22 +66,31 @@ bool BleApplicationHandoff::enqueueIngress(uint16_t connection_handle,
   if (!session_active_ || !ingress_allowed_ ||
       connection_handle != connection_handle_ ||
       frame_len > ble_app_transport::kMaxFrameSize ||
-      (frame_len > 0 && frame == nullptr) || ingress_pending_)
+      (frame_len > 0 && frame == nullptr) ||
+      ingress_count_ >= ble_app_handoff_config::kIngressQueueCapacity)
     return false;
 
-  ingress_.session_generation = session_generation_;
-  ingress_.connection_handle = connection_handle;
-  ingress_.frame_len = static_cast<uint8_t>(frame_len);
-  if (frame_len > 0) memcpy(ingress_.frame, frame, frame_len);
-  ingress_pending_ = true;
+  const uint8_t tail = static_cast<uint8_t>(
+      (ingress_head_ + ingress_count_) %
+      ble_app_handoff_config::kIngressQueueCapacity);
+  BleApplicationIngressEvent& slot = ingress_queue_[tail];
+  slot = BleApplicationIngressEvent();
+  slot.session_generation = session_generation_;
+  slot.connection_handle = connection_handle;
+  slot.frame_len = static_cast<uint8_t>(frame_len);
+  if (frame_len > 0) memcpy(slot.frame, frame, frame_len);
+  ++ingress_count_;
   return true;
 }
 
 bool BleApplicationHandoff::takeIngress(BleApplicationIngressEvent& out) {
-  if (!ingress_pending_) return false;
-  out = ingress_;
-  ingress_pending_ = false;
-  ingress_ = BleApplicationIngressEvent();
+  if (ingress_count_ == 0) return false;
+  out = ingress_queue_[ingress_head_];
+  ingress_queue_[ingress_head_] = BleApplicationIngressEvent();
+  ingress_head_ = static_cast<uint8_t>(
+      (ingress_head_ + 1U) % ble_app_handoff_config::kIngressQueueCapacity);
+  --ingress_count_;
+  if (ingress_count_ == 0) ingress_head_ = 0;
   return true;
 }
 
@@ -91,6 +104,13 @@ bool BleApplicationHandoff::enqueueConfirmation(uint16_t connection_handle,
   confirmation_.connection_handle = connection_handle;
   confirmation_.value_handle = value_handle;
   confirmation_pending_ = true;
+
+  // Wire confirmation has already happened. Provisionally accept post-HVC
+  // request frames into the bounded FIFO even before loop() consumes this
+  // confirmation. loop() always consumes HVC before ingress and will close/
+  // clear the FIFO again if the confirmation does not match its in-flight
+  // response, so no unconfirmed request can execute.
+  ingress_allowed_ = true;
   return true;
 }
 
