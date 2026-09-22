@@ -122,7 +122,7 @@ bool ble_application_gatt_ready = false;
 // Loop-owned session/indication state. The callback-visible copy lives only in
 // BleApplicationHandoff and is updated under the critical section.
 bool ble_application_session_active = false;
-uint16_t ble_application_connection_handle = BLE_GATT_HANDLE_INVALID;
+uint16_t ble_application_connection_handle = BLE_CONN_HANDLE_INVALID;
 uint32_t ble_application_session_generation = 0;
 bool ble_application_indication_in_flight = false;
 constexpr uint32_t kBleApplicationIndicationRetryMs = 25;
@@ -286,7 +286,7 @@ void endBleApplicationSession() {
 
   ble_application_transport.endSession(ble_application_session_generation);
   ble_application_session_active = false;
-  ble_application_connection_handle = BLE_GATT_HANDLE_INVALID;
+  ble_application_connection_handle = BLE_CONN_HANDLE_INVALID;
   ble_application_session_generation = 0;
   ble_application_indication_in_flight = false;
   ble_application_next_indication_attempt_ms = 0;
@@ -294,7 +294,7 @@ void endBleApplicationSession() {
 
 void beginBleApplicationSession(uint16_t connection_handle) {
   if (!ble_application_gatt_ready ||
-      connection_handle == BLE_GATT_HANDLE_INVALID)
+      connection_handle == BLE_CONN_HANDLE_INVALID)
     return;
 
   const uint32_t generation = ble_application_transport.beginSession();
@@ -1368,7 +1368,7 @@ void loop() {
     input.advertising_running = Bluefruit.Advertising.isRunning();
     input.connected = Bluefruit.Periph.connected() > 0;
     const uint16_t connection_handle =
-        input.connected ? Bluefruit.connHandle() : BLE_GATT_HANDLE_INVALID;
+        input.connected ? Bluefruit.connHandle() : BLE_CONN_HANDLE_INVALID;
     const uint32_t ble_now = orun_tlp::monotonic::nowMs();
 
     // M7P7G cleanup/transport work must happen before admission can restart
