@@ -797,3 +797,17 @@ identity or a wire field. This remains internal ownership only: it adds no BLE
 GATT, wire format, authorization, provisioning, storage or RF behavior. See
 `docs/milestones/M7P7E.md`.
 
+M7P7F (branch `feat/m7p7f-ble-app-transport-contract`, not yet merged) freezes
+the exact bounded GATT transport contract that M7P7E's "next gate" section
+anticipated: three 128-bit UUIDs, an 8-byte header / 20-byte-frame /
+48-byte-logical-payload / 4-fragment wire rule, `GET_CONFIG` request/response
+and `ERROR` byte layouts, and a portable, Bluefruit-free
+`BleApplicationTransport` that implements the session-hygiene requirements
+above (generation-gated `endSession()`, prompt release of the global
+`ApplicationRequestService` slot, stop-and-wait backpressure, a bounded
+2-second fragment-reassembly timeout). It adds no Bluefruit
+`BLEService`/`BLECharacteristic`, no change to BLE admission/advertising/bond
+behavior, and is not referenced by production `main.cpp` composition. See
+`docs/milestones/M7P7F.md`. Wiring this contract to real Bluefruit
+callbacks/indications and physical phone validation remain M7P7G.
+
