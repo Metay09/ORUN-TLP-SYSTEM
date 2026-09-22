@@ -97,13 +97,13 @@ uint8_t buildGetConfigRequestFrame(uint8_t* out, uint16_t correlation_id) {
 
 void receiveCurrent(BleApplicationTransport& transport, const uint8_t* frame,
                     uint8_t frame_len, uint32_t now) {
-  receiveCurrent(transport, transport.currentSessionGeneration(), frame,
+  transport.onFrameReceived(transport.currentSessionGeneration(), frame,
                             frame_len, now);
 }
 
 bool peekCurrent(const BleApplicationTransport& transport, uint8_t* frame_out,
                  uint8_t& frame_len) {
-  return peekCurrent(transport, transport.currentSessionGeneration(),
+  return transport.peekOutboundFrame(transport.currentSessionGeneration(),
                                      frame_out, frame_len);
 }
 
