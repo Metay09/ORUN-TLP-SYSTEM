@@ -89,20 +89,18 @@ bool ble_ready = false;
 // "runtime up but advertising never started" from "advertising running".
 enum class BleInitialStart : uint8_t { kNotAttempted, kOk, kFail };
 BleInitialStart ble_initial_start = BleInitialStart::kNotAttempted;
-// Cross-task disconnect handoff (audit finding 1). Adafruit nRF52 1.7.0 calls
-// the Bluefruit global event callback (Bluefruit.setEventCallback) directly
-// from its BLE event task at the end of AdafruitBluefruit::_ble_handler(),
-// after Bluefruit has already updated its own connection state for the event
-// and with no ada_callback()/heap allocation on that path (Periph's
-// setDisconnectCallback goes through ada_callback and can be dropped or
-// delayed, so it is deliberately NOT used). The callback does exactly one
-// thing on BLE_GAP_EVT_DISCONNECTED: increment this counter inside
-// taskENTER/EXIT_CRITICAL -- the same primitive radio_manager.cpp uses for its
-// cross-task counters. loop() is the only reader/consumer and owns every
-// policy, clock, Serial and Bluefruit action; ble_disconnect_events_seen is
-// loop-task-only. loop() reduces "counter != seen" to ONE logical disconnect
-// event per tick (enough: any number of disconnects observed since the last
-// tick grants a single fresh window measured from that tick).
+// Cross-task BLE event handoff. Adafruit nRF52 1.7.0 calls the Bluefruit
+// global event callback (Bluefruit.setEventCallback) directly from its BLE
+// event task at the end of AdafruitBluefruit::_ble_handler(), after framework
+// connection/GATT state has been updated and with no ada_callback()/heap
+// allocation on that path. Production hands off only bounded facts under the
+// same taskENTER/EXIT_CRITICAL primitive radio_manager.cpp uses: the existing
+// disconnect counter plus M7P7G's single ORUN HVC event. loop() remains the
+// sole owner of admission policy, clocks, Serial, application work and
+// Bluefruit/SoftDevice actions. Periph's setDisconnectCallback still is not
+// used because that path goes through ada_callback and can be dropped/delayed.
+// ble_disconnect_events_seen is loop-task-only; "counter != seen" reduces any
+// disconnects since the prior tick to one fresh-window event.
 volatile uint32_t ble_disconnect_events = 0;
 uint32_t ble_disconnect_events_seen = 0;
 // Loop-task-only: suppresses per-retry log spam while restart keeps failing.
