@@ -64,6 +64,26 @@ findings; accepted fixes and final revalidation are recorded in
 format, provisioning, authorization, storage or RF behavior. See
 `docs/milestones/M7P7E.md`.
 
+M7P7F BLE application transport contract (branch
+`feat/m7p7f-ble-app-transport-contract`,
+baseline `main@f833a6d56de17b902bc26061a3791086a14f1cf4`) freezes the first
+ORUN application transport wire contract -- three 128-bit UUIDs, an 8-byte
+header / 20-byte-frame / 48-byte-logical-payload / 4-fragment framing rule,
+`GET_CONFIG` request/response and `ERROR` byte layouts -- and adds a
+Bluefruit-free, loop-owned `BleApplicationTransport` bounded
+reassembly/session/backpressure component. Independent follow-up review found
+two MEDIUM session/backpressure gaps plus one LOW wrap/active-state gap; all
+were fixed, and post-fix owner revalidation on code-bearing head
+`3ebb1b97f7e86bfbf502219619d90425a5f9686f` passed the full host
+warnings-as-errors + ASan/UBSan suite, all 8 startup scenarios and the production
+RAK4630 build. It adds no Bluefruit `BLEService`/`BLECharacteristic`, does
+not change advertising/admission/bond behavior, and is not referenced anywhere
+in production `main.cpp` composition; the corrected build remains exactly
+22,124 B RAM / 226,292 B Flash, a **0 B / 0 B** delta versus merged M7P7E.
+See
+`docs/milestones/M7P7F.md`; exact GATT wiring, indication delivery and
+physical phone validation remain M7P7G.
+
 Owner-approved later application direction is recorded separately in
 `ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`: Entity Registry ownership/offline conflict
 principles, person-location privacy, concise shared-map semantics, MESSAGE recipient/

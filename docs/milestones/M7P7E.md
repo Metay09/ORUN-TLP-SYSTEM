@@ -221,3 +221,11 @@ connection state into identity/authorization:
 
 No service-level multi-session framework is added in M7P7E because no BLE
 application adapter exists yet.
+
+> Addressed by `docs/milestones/M7P7F.md` (branch
+> `feat/m7p7f-ble-app-transport-contract`): the exact bounded GATT transport
+> contract and the `BleApplicationTransport` session-hygiene component
+> (generation-gated disconnect cleanup, prompt release of the global
+> response slot, stop-and-wait backpressure, bounded fragment-reassembly
+> timeout). M7P7F remains pre-wire -- no Bluefruit GATT runtime is added by
+> it; that is M7P7G.
