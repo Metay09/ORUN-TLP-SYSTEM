@@ -803,9 +803,10 @@ anticipated: three 128-bit UUIDs, an 8-byte header / 20-byte-frame /
 48-byte-logical-payload / 4-fragment wire rule, `GET_CONFIG` request/response
 and `ERROR` byte layouts, and a portable, Bluefruit-free
 `BleApplicationTransport` that implements the session-hygiene requirements
-above (generation-gated `endSession()`, prompt release of the global
-`ApplicationRequestService` slot, stop-and-wait backpressure, a bounded
-2-second fragment-reassembly timeout). It adds no Bluefruit
+above (generation-gated frame/peek/confirm/disconnect handling, explicit
+active-session state, prompt release of the global `ApplicationRequestService`
+slot, ingress-level stop-and-wait backpressure, and a bounded 2-second
+fragment-reassembly timeout). It adds no Bluefruit
 `BLEService`/`BLECharacteristic`, no change to BLE admission/advertising/bond
 behavior, and is not referenced by production `main.cpp` composition. See
 `docs/milestones/M7P7F.md`. Wiring this contract to real Bluefruit

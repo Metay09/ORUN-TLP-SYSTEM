@@ -222,17 +222,20 @@ state.
 
 ### Session hygiene
 
-- `beginSession()` returns a new `session_generation_` and defensively
-  clears any leftover inbound/outbound state and discards a `kBle`-owned
+- `beginSession()` returns a new non-zero `session_generation_` (wrap
+  skips zero), marks the session active, and defensively clears any leftover
+  inbound/outbound state and discards a `kBle`-owned
   global response (`ApplicationRequestService::discardResponse` is a no-op
   unless the pending response actually belongs to `kBle`, so a USB-owned
   response is never touched).
-- `endSession(session_generation)` is a **no-op unless the generation
-  matches the currently active session** — a delayed/duplicate disconnect
-  callback for an already-replaced session can never clear the replacement
-  session's state. When it does match, it clears partial inbound
-  reassembly, clears the unsent outbound response, and discards a
-  `kBle`-owned global response.
+- `endSession(session_generation)` is a **no-op unless the session is active
+  and the generation matches**. Inbound frame delivery, outbound peek and
+  indication confirmation are generation-gated by the same rule. A delayed
+  frame/confirmation/disconnect from an already-replaced session therefore
+  cannot observe, advance or clear the replacement session's state. A matching
+  disconnect clears partial inbound reassembly, clears the unsent outbound
+  response, discards a `kBle`-owned global response, and marks the session
+  inactive.
 - Connection-handle/session state is transport correlation only; it is not
   user identity or authorization. The generation is local bookkeeping, never
   sent on the wire.
@@ -247,9 +250,9 @@ Only one outbound logical result buffer exists. A BLE client must not begin
 a new application request while a prior response awaits indication
 confirmation:
 
-- if `outbound_.pending` is true, `dispatchInbound()` silently drops a newly
-  completed inbound request before ever calling
-  `ApplicationRequestService::submit()` — no second reply is generated
+- if `outbound_.pending` is true, ingress is rejected **before reassembly
+  starts**. No partial next request can be staged while the prior response
+  awaits confirmation, and no second application submit/reply is generated
   (there is no second slot to hold one);
 - once the global slot is free and a request is accepted,
   `BleApplicationTransport` takes the result into its own bounded buffer
@@ -312,20 +315,20 @@ result, which remains intact and USB-readable afterward.
 7-8. BLE takes its response into the local buffer promptly (global slot
 free again immediately); USB can subsequently use the shared slot while the
 BLE response still awaits indication.
-9. a non-reading BLE client cannot overwrite its own pending response with
-a second request.
+9. a non-reading BLE client cannot overwrite its own pending response or
+pre-stage a partial next request before the current indication is confirmed.
 10-11. indication retry returns byte-identical frames until confirmed;
 the response is removed only once its (here, only) fragment is confirmed.
 12-13. disconnect clears the outbound response; a subsequent reconnect
 starts with nothing pending.
-14. a delayed disconnect for an already-replaced session cannot clear the
-replacement session's response.
+14. delayed old-session frame delivery, outbound peek, indication
+confirmation and disconnect cannot observe/advance/clear the replacement
+session's response.
 15-16. the same peer `uint16` correlation id repeating in a different
 session is safe (echoed correctly per-session); the local `uint32` request
 id keeps advancing across reconnect rather than resetting to 1.
-17. request-id wraparound skips zero, tested as a pure function
-(`ble_app_transport::advanceRequestId`) rather than by submitting 2^32
-requests.
+17. request-id and session-generation wraparound both skip zero, tested as
+pure helpers rather than by executing 2^32 operations.
 18. a disconnect mid-fragment-reassembly leaves no lingering inbound state.
 19. the malformed/flood matrix in section 8 above.
 
@@ -367,7 +370,7 @@ main.cpp:                       unchanged (BleApplicationTransport is not
 
 ## 12. Validation evidence
 
-Owner-run validation on this branch:
+Pre-audit owner-run validation on exact head `afd2e9232b404dcde40b4600fb2ec14f37a793f6`:
 
 1. Focused host test:
    `g++ -std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined
@@ -400,6 +403,12 @@ Owner-run validation on this branch:
    no Bluefruit GATT runtime, no advertising/admission change and no
    BLE-triggered application execution; there is nothing new to observe on
    a phone yet.
+
+These PASS results apply to the pre-audit head `afd2e923...`. The independent
+follow-up review below found session-provenance/ingress backpressure gaps and
+changed code/tests to close them. The corrected head therefore requires fresh
+owner-run focused/full host tests and the production PlatformIO build before
+merge; the pre-audit PASS is not promoted to the corrected code.
 
 ## 13. Self-audit (section 18 of the task)
 
@@ -440,7 +449,35 @@ Owner-run validation on this branch:
   implemented as transport correlation only; the only exposed operation is
   the section 6 pre-authorization allowlist, itself unchanged from M7P7D/E.
 
-## 14. What remains for M7P7G
+## 14. Independent follow-up audit and fixes
+
+Independent review of `afd2e9232b404dcde40b4600fb2ec14f37a793f6` found:
+
+- **MEDIUM:** only `endSession()` was generation-gated; delayed old-session
+  ingress or indication-confirm events could otherwise affect a replacement
+  session once M7P7G queues callback-derived events.
+- **MEDIUM:** stop-and-wait was enforced only after complete reassembly in
+  `dispatchInbound()`, allowing a peer to pre-stage a partial next request
+  while the previous response still awaited confirmation.
+- **LOW:** `session_generation_` could wrap through zero and there was no
+  explicit active-session state.
+
+Fixes on the same branch:
+
+- generation is now required for inbound frame delivery, outbound peek and
+  indication confirmation as well as disconnect cleanup;
+- stale/inactive generations are pure no-ops before any current-session state
+  is touched;
+- stop-and-wait is enforced at ingress while an outbound response is pending,
+  preventing partial-request pre-staging;
+- session generations skip zero and an explicit bounded `session_active_`
+  bit closes inactive-session event handling;
+- focused host coverage now includes delayed old-session frame/peek/confirm/
+  disconnect behavior and the partial-request pre-staging case.
+
+**Post-fix owner revalidation is still pending** and must complete before merge.
+
+## 15. What remains for M7P7G
 
 M7P7F does not make BLE application runtime physically available. The next
 slice must wire this tested contract to Bluefruit:

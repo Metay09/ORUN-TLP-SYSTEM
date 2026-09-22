@@ -71,11 +71,14 @@ ORUN application transport wire contract -- three 128-bit UUIDs, an 8-byte
 header / 20-byte-frame / 48-byte-logical-payload / 4-fragment framing rule,
 `GET_CONFIG` request/response and `ERROR` byte layouts -- and adds a
 Bluefruit-free, loop-owned `BleApplicationTransport` bounded
-reassembly/session/backpressure component, host-tested against the real
-`ApplicationRequestService`/`ConfigStore`. It adds no Bluefruit
+reassembly/session/backpressure component. The pre-audit head was host-tested
+against the real `ApplicationRequestService`/`ConfigStore`; the independent
+follow-up audit added generation-gated event handling and ingress-level
+stop-and-wait fixes that require fresh owner revalidation before merge. It adds no Bluefruit
 `BLEService`/`BLECharacteristic`, does not change advertising/admission/bond
 behavior, and is not referenced anywhere in production `main.cpp`
-composition (confirmed zero RAM/flash delta). See
+composition (pre-audit build confirmed zero RAM/flash delta; corrected-head
+build revalidation is pending). See
 `docs/milestones/M7P7F.md`; exact GATT wiring, indication delivery and
 physical phone validation remain M7P7G.
 

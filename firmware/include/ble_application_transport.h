@@ -84,6 +84,13 @@ constexpr uint32_t advanceRequestId(uint32_t current) {
   return (current + 1) == 0 ? 1 : (current + 1);
 }
 
+// Session generations use the same non-zero monotonic discipline, but remain
+// a separate namespace from application request ids. Keeping this helper
+// separate prevents the two concepts from being accidentally conflated.
+constexpr uint32_t advanceSessionGeneration(uint32_t current) {
+  return (current + 1) == 0 ? 1 : (current + 1);
+}
+
 }  // namespace ble_app_transport
 
 // Bounded, fixed-memory BLE application session/transport state. Exactly one
@@ -109,6 +116,7 @@ class BleApplicationTransport {
   // endSession() later -- a delayed/duplicate disconnect for an old,
   // already-replaced session can then never affect the new one. The
   // generation is local-only bookkeeping; it is never sent on the wire.
+  // Zero is reserved; wrap skips back to 1.
   uint32_t beginSession();
 
   // Call once per observed BLE disconnect, passing the generation captured
@@ -124,14 +132,17 @@ class BleApplicationTransport {
   // ---- Inbound ----
 
   // Feed one raw transport frame (already MTU/length-bounded by the future
-  // caller's read, but validated fully here regardless). now: loop-owned
+  // caller's read, but validated fully here regardless). The caller must pass
+  // the generation captured for the connection that produced this frame; a
+  // delayed frame from an older session is a no-op. now: loop-owned
   // monotonic ms, used only for fragment-timeout bookkeeping. Malformed,
   // out-of-order, duplicate or otherwise invalid frames fail closed: no
   // application/storage/radio side effect occurs, and any in-progress
   // partial reassembly is conservatively cleared. A well-formed new START
   // always invalidates/clears a different in-progress partial message
   // before starting the new one, per docs/milestones/M7P7F.md section 4.
-  void onFrameReceived(const uint8_t* frame, uint8_t frame_len, uint32_t now);
+  void onFrameReceived(uint32_t session_generation, const uint8_t* frame,
+                       uint8_t frame_len, uint32_t now);
 
   // Loop-owned: call every tick to advance the bounded fragment-reassembly
   // timeout. No background timer/thread is used.
@@ -152,14 +163,17 @@ class BleApplicationTransport {
   // >= kMaxFrameSize bytes) and reports its length. Pure peek: repeatable,
   // does not advance state, so a failed/unconfirmed indication can be
   // retried with the identical frame. Returns false if no outbound frame is
-  // pending.
-  bool peekOutboundFrame(uint8_t* frame_out, uint8_t& frame_len) const;
+  // pending. A stale/inactive session generation cannot observe a newer
+  // session's response.
+  bool peekOutboundFrame(uint32_t session_generation, uint8_t* frame_out,
+                         uint8_t& frame_len) const;
 
   // Caller observed successful indication/confirmation of the frame last
   // returned by peekOutboundFrame(). Advances the outbound fragment cursor;
   // clears the whole logical response only once its final fragment has been
-  // confirmed. A no-op if no outbound frame is pending.
-  void confirmOutboundFrame();
+  // confirmed. A stale/inactive session generation is a no-op, so a delayed
+  // indication confirmation can never advance/clear a replacement session.
+  void confirmOutboundFrame(uint32_t session_generation);
 
  private:
   struct InboundReassembly {
@@ -203,6 +217,7 @@ class BleApplicationTransport {
   // and skipped on wraparound.
   uint32_t next_local_request_id_ = 1;
   uint32_t session_generation_ = 0;
+  bool session_active_ = false;
 };
 
 }  // namespace orun_tlp

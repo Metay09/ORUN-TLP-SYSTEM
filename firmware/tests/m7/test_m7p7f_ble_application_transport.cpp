@@ -95,6 +95,22 @@ uint8_t buildGetConfigRequestFrame(uint8_t* out, uint16_t correlation_id) {
                      nullptr, 0);
 }
 
+void receiveCurrent(BleApplicationTransport& transport, const uint8_t* frame,
+                    uint8_t frame_len, uint32_t now) {
+  receiveCurrent(transport, transport.currentSessionGeneration(), frame,
+                            frame_len, now);
+}
+
+bool peekCurrent(const BleApplicationTransport& transport, uint8_t* frame_out,
+                 uint8_t& frame_len) {
+  return peekCurrent(transport, transport.currentSessionGeneration(),
+                                     frame_out, frame_len);
+}
+
+void confirmCurrent(BleApplicationTransport& transport) {
+  transport.confirmOutboundFrame(transport.currentSessionGeneration());
+}
+
 }  // namespace
 
 int main() {
@@ -113,12 +129,12 @@ int main() {
     uint8_t frame[bat::kMaxFrameSize];
     const uint8_t frame_len = buildGetConfigRequestFrame(frame, 0x1234);
     assert(frame_len == 8);
-    transport.onFrameReceived(frame, frame_len, 1000);
+    receiveCurrent(transport, frame, frame_len, 1000);
 
     assert(transport.outboundFramePending());
     uint8_t out[bat::kMaxFrameSize];
     uint8_t out_len = 0;
-    assert(transport.peekOutboundFrame(out, out_len));
+    assert(peekCurrent(transport, out, out_len));
     assert(out_len == 18);  // 8-byte header + 10-byte GET_CONFIG response.
     assert(out[0] == 0x01);  // transport version.
     assert(out[1] == 0x81);  // GET_CONFIG response.
@@ -147,11 +163,11 @@ int main() {
 
     uint8_t frame[bat::kMaxFrameSize];
     const uint8_t frame_len = buildGetConfigRequestFrame(frame, 7);
-    transport.onFrameReceived(frame, frame_len, 0);
+    receiveCurrent(transport, frame, frame_len, 0);
 
     uint8_t out[bat::kMaxFrameSize];
     uint8_t out_len = 0;
-    assert(transport.peekOutboundFrame(out, out_len));
+    assert(peekCurrent(transport, out, out_len));
     assert(out_len == 18);
     assert(out[9] ==
            (bat::kConfigFlagBackendReady | bat::kConfigFlagHasCommittedRecord));
@@ -173,12 +189,12 @@ int main() {
     const uint8_t frame_len =
         buildFrame(frame, bat::kTransportVersion, 0x02,
                    bat::kFlagStart | bat::kFlagEnd, 0, 55, 0, nullptr, 0);
-    transport.onFrameReceived(frame, frame_len, 0);
+    receiveCurrent(transport, frame, frame_len, 0);
 
     assert(!service.responsePending());  // never reached the application seam.
     uint8_t out[bat::kMaxFrameSize];
     uint8_t out_len = 0;
-    assert(transport.peekOutboundFrame(out, out_len));
+    assert(peekCurrent(transport, out, out_len));
     assert(out_len == 10);  // 8-byte header + 2-byte ERROR payload.
     assert(out[1] == 0xFF);
     assert(readLE16(out + 4) == 55);
@@ -209,11 +225,11 @@ int main() {
 
     uint8_t frame[bat::kMaxFrameSize];
     const uint8_t frame_len = buildGetConfigRequestFrame(frame, 321);
-    transport.onFrameReceived(frame, frame_len, 0);
+    receiveCurrent(transport, frame, frame_len, 0);
 
     uint8_t out[bat::kMaxFrameSize];
     uint8_t out_len = 0;
-    assert(transport.peekOutboundFrame(out, out_len));
+    assert(peekCurrent(transport, out, out_len));
     assert(out_len == 10);
     assert(out[1] == 0xFF);
     assert(out[8] == static_cast<uint8_t>(bat::ErrorCode::kBusy));
@@ -238,7 +254,7 @@ int main() {
 
     uint8_t frame[bat::kMaxFrameSize];
     const uint8_t frame_len = buildGetConfigRequestFrame(frame, 1);
-    transport.onFrameReceived(frame, frame_len, 0);
+    receiveCurrent(transport, frame, frame_len, 0);
 
     assert(transport.outboundFramePending());
     assert(!service.responsePending());  // released immediately.
@@ -255,7 +271,9 @@ int main() {
   }
 
   // 9. A non-reading BLE client cannot overwrite its own pending outbound
-  // response with a second request (stop-and-wait backpressure).
+  // response, nor pre-stage a partial next request while stop-and-wait is
+  // active. After the first response is confirmed, a continuation from the
+  // rejected request has no START context and cannot execute.
   {
     ReadOnlyFlash flash;
     ConfigStore store(flash);
@@ -265,21 +283,52 @@ int main() {
     transport.beginSession();
 
     uint8_t frame_a[bat::kMaxFrameSize];
-    transport.onFrameReceived(frame_a, buildGetConfigRequestFrame(frame_a, 10),
-                               0);
+    receiveCurrent(transport, frame_a, buildGetConfigRequestFrame(frame_a, 10),
+                   0);
     assert(transport.outboundFramePending());
 
-    uint8_t frame_b[bat::kMaxFrameSize];
-    transport.onFrameReceived(frame_b, buildGetConfigRequestFrame(frame_b, 20),
-                               100);
+    const uint32_t next_id_before_rejected = transport.debugNextLocalRequestId();
 
-    // Still the first (unread) response; the global slot was never touched
-    // by the rejected second request.
+    // Deliberately send a START-only zero-length GET_CONFIG while response #1
+    // is still pending. The ingress gate must reject it before reassembly.
+    uint8_t partial_b[bat::kMaxFrameSize];
+    const uint8_t partial_b_len = buildFrame(
+        partial_b, bat::kTransportVersion,
+        static_cast<uint8_t>(bat::MessageType::kGetConfigRequest),
+        bat::kFlagStart, 0, 20, 0, nullptr, 0);
+    receiveCurrent(transport, partial_b, partial_b_len, 100);
+    assert(!transport.inboundReassemblyActive());
+    assert(transport.debugNextLocalRequestId() == next_id_before_rejected);
+
+    // Still the first response.
     assert(!service.responsePending());
     uint8_t out[bat::kMaxFrameSize];
     uint8_t out_len = 0;
-    assert(transport.peekOutboundFrame(out, out_len));
+    assert(peekCurrent(transport, out, out_len));
     assert(readLE16(out + 4) == 10);
+
+    confirmCurrent(transport);
+    assert(!transport.outboundFramePending());
+
+    // A continuation from the rejected request cannot be resurrected after
+    // confirmation because no partial request was retained.
+    uint8_t stale_cont[bat::kMaxFrameSize];
+    const uint8_t stale_cont_len = buildFrame(
+        stale_cont, bat::kTransportVersion,
+        static_cast<uint8_t>(bat::MessageType::kGetConfigRequest),
+        bat::kFlagEnd, 1, 20, 0, nullptr, 0);
+    receiveCurrent(transport, stale_cont, stale_cont_len, 101);
+    assert(!transport.inboundReassemblyActive());
+    assert(!transport.outboundFramePending());
+    assert(transport.debugNextLocalRequestId() == next_id_before_rejected);
+
+    // A fresh request after confirmation still works normally.
+    uint8_t frame_c[bat::kMaxFrameSize];
+    receiveCurrent(transport, frame_c, buildGetConfigRequestFrame(frame_c, 30),
+                   102);
+    assert(transport.outboundFramePending());
+    assert(peekCurrent(transport, out, out_len));
+    assert(readLE16(out + 4) == 30);
   }
 
   // 10 & 11. Indication retry returns the identical frame until confirmed;
@@ -294,23 +343,23 @@ int main() {
     transport.beginSession();
 
     uint8_t frame[bat::kMaxFrameSize];
-    transport.onFrameReceived(frame, buildGetConfigRequestFrame(frame, 1), 0);
+    receiveCurrent(transport, frame, buildGetConfigRequestFrame(frame, 1), 0);
 
     uint8_t first[bat::kMaxFrameSize];
     uint8_t first_len = 0;
-    assert(transport.peekOutboundFrame(first, first_len));
+    assert(peekCurrent(transport, first, first_len));
     uint8_t second[bat::kMaxFrameSize];
     uint8_t second_len = 0;
-    assert(transport.peekOutboundFrame(second, second_len));
+    assert(peekCurrent(transport, second, second_len));
     assert(first_len == second_len);
     assert(memcmp(first, second, first_len) == 0);
     assert(transport.outboundFramePending());  // still pending, unconfirmed.
 
-    transport.confirmOutboundFrame();
+    confirmCurrent(transport);
     assert(!transport.outboundFramePending());
     uint8_t after[bat::kMaxFrameSize];
     uint8_t after_len = 0;
-    assert(!transport.peekOutboundFrame(after, after_len));
+    assert(!peekCurrent(transport, after, after_len));
   }
 
   // 12 & 13. Disconnect clears the outbound response; a subsequent
@@ -325,7 +374,7 @@ int main() {
     const uint32_t gen1 = transport.beginSession();
 
     uint8_t frame[bat::kMaxFrameSize];
-    transport.onFrameReceived(frame, buildGetConfigRequestFrame(frame, 1), 0);
+    receiveCurrent(transport, frame, buildGetConfigRequestFrame(frame, 1), 0);
     assert(transport.outboundFramePending());
 
     transport.endSession(gen1);
@@ -336,11 +385,12 @@ int main() {
     assert(!transport.outboundFramePending());
     uint8_t out[bat::kMaxFrameSize];
     uint8_t out_len = 0;
-    assert(!transport.peekOutboundFrame(out, out_len));
+    assert(!peekCurrent(transport, out, out_len));
   }
 
-  // 14. A delayed disconnect for an already-replaced session must never
-  // clear the replacement session's response.
+  // 14. Every queued session-derived event is generation-gated. A delayed
+  // old-session frame, outbound peek, indication confirmation or disconnect
+  // must never observe, advance or clear the replacement session's response.
   {
     ReadOnlyFlash flash;
     ConfigStore store(flash);
@@ -350,30 +400,51 @@ int main() {
 
     const uint32_t gen1 = transport.beginSession();
     uint8_t old_frame[bat::kMaxFrameSize];
-    transport.onFrameReceived(old_frame,
-                               buildGetConfigRequestFrame(old_frame, 111), 0);
+    receiveCurrent(transport, old_frame,
+                   buildGetConfigRequestFrame(old_frame, 111), 0);
     assert(transport.outboundFramePending());
 
-    // A new connection is accepted before the old session's disconnect
-    // cleanup has arrived (defensively clears the stale session 1 state).
+    // A new connection replaces session 1 and defensively clears its state.
     const uint32_t gen2 = transport.beginSession();
     assert(gen2 != gen1);
+    assert(gen2 != 0);
     assert(!transport.outboundFramePending());
 
     uint8_t new_frame[bat::kMaxFrameSize];
-    transport.onFrameReceived(new_frame,
-                               buildGetConfigRequestFrame(new_frame, 222), 50);
+    receiveCurrent(transport, new_frame,
+                   buildGetConfigRequestFrame(new_frame, 222), 50);
+    assert(transport.outboundFramePending());
+    const uint32_t next_id_before_stale = transport.debugNextLocalRequestId();
+
+    // A frame queued by session 1 arrives late. It must be a pure no-op and
+    // must not replace/clear session 2's response or consume a request id.
+    uint8_t stale_frame[bat::kMaxFrameSize];
+    const uint8_t stale_len = buildGetConfigRequestFrame(stale_frame, 333);
+    transport.onFrameReceived(gen1, stale_frame, stale_len, 60);
+    assert(transport.debugNextLocalRequestId() == next_id_before_stale);
+
+    // Session 1 cannot even peek session 2's response.
+    uint8_t stale_out[bat::kMaxFrameSize];
+    uint8_t stale_out_len = 0;
+    assert(!transport.peekOutboundFrame(gen1, stale_out, stale_out_len));
+
+    // A delayed indication confirmation from session 1 cannot advance/clear
+    // session 2's outbound state.
+    transport.confirmOutboundFrame(gen1);
     assert(transport.outboundFramePending());
 
-    // The stale, delayed disconnect for session 1 finally arrives.
+    // The stale disconnect is likewise harmless.
     transport.endSession(gen1);
-
-    // Session 2's response must be untouched.
     assert(transport.outboundFramePending());
+
     uint8_t out[bat::kMaxFrameSize];
     uint8_t out_len = 0;
-    assert(transport.peekOutboundFrame(out, out_len));
+    assert(transport.peekOutboundFrame(gen2, out, out_len));
     assert(readLE16(out + 4) == 222);
+
+    // The rightful session can confirm and clear its own response.
+    transport.confirmOutboundFrame(gen2);
+    assert(!transport.outboundFramePending());
   }
 
   // 15 & 16. The same peer uint16 correlation id repeating in a different
@@ -389,30 +460,34 @@ int main() {
 
     transport.beginSession();
     uint8_t frame1[bat::kMaxFrameSize];
-    transport.onFrameReceived(frame1, buildGetConfigRequestFrame(frame1, 999),
+    receiveCurrent(transport, frame1, buildGetConfigRequestFrame(frame1, 999),
                                0);
     const uint32_t id_after_session1 = transport.debugNextLocalRequestId();
     assert(id_after_session1 > 1);
-    transport.confirmOutboundFrame();
+    confirmCurrent(transport);
 
     transport.beginSession();  // reconnect
     uint8_t frame2[bat::kMaxFrameSize];
-    transport.onFrameReceived(frame2, buildGetConfigRequestFrame(frame2, 999),
+    receiveCurrent(transport, frame2, buildGetConfigRequestFrame(frame2, 999),
                                0);
     assert(transport.debugNextLocalRequestId() == id_after_session1 + 1);
 
     uint8_t out[bat::kMaxFrameSize];
     uint8_t out_len = 0;
-    assert(transport.peekOutboundFrame(out, out_len));
+    assert(peekCurrent(transport, out, out_len));
     assert(readLE16(out + 4) == 999);  // peer correlation id echoed correctly.
   }
 
-  // 17. Request-id wraparound skips zero (tested as a pure function so the
-  // test does not need to submit 2^32 requests).
+  // 17. Request-id and session-generation wraparound both skip zero. They
+  // remain separate local namespaces even though they share the same
+  // non-zero monotonic arithmetic.
   {
     assert(bat::advanceRequestId(0xFFFFFFFFUL) == 1);
     assert(bat::advanceRequestId(5) == 6);
     assert(bat::advanceRequestId(0xFFFFFFFEUL) == 0xFFFFFFFFUL);
+    assert(bat::advanceSessionGeneration(0) == 1);
+    assert(bat::advanceSessionGeneration(0xFFFFFFFFUL) == 1);
+    assert(bat::advanceSessionGeneration(0xFFFFFFFEUL) == 0xFFFFFFFFUL);
   }
 
   // 18. A disconnect while a fragment is only partially reassembled leaves
@@ -432,7 +507,7 @@ int main() {
     const uint8_t frame_len =
         buildFrame(frame, bat::kTransportVersion, 0x02, bat::kFlagStart, 0, 1,
                    24, chunk, sizeof(chunk));
-    transport.onFrameReceived(frame, frame_len, 0);
+    receiveCurrent(transport, frame, frame_len, 0);
     assert(transport.inboundReassemblyActive());
 
     transport.endSession(gen);
@@ -459,7 +534,7 @@ int main() {
     // a. frame shorter than 8 bytes.
     {
       uint8_t frame[7]{1, 1, 3, 0, 0, 0, 0};
-      transport.onFrameReceived(frame, sizeof(frame), 0);
+      receiveCurrent(transport, frame, sizeof(frame), 0);
       assert(!transport.inboundReassemblyActive());
     }
     // b. frame longer than 20 bytes.
@@ -467,7 +542,7 @@ int main() {
       uint8_t frame[21]{};
       frame[0] = bat::kTransportVersion;
       frame[2] = bat::kFlagStart | bat::kFlagEnd;
-      transport.onFrameReceived(frame, sizeof(frame), 0);
+      receiveCurrent(transport, frame, sizeof(frame), 0);
       assert(!transport.inboundReassemblyActive());
       assert(!transport.outboundFramePending());
     }
@@ -477,7 +552,7 @@ int main() {
       const uint8_t len =
           buildFrame(frame, 0x02, 0x01, bat::kFlagStart | bat::kFlagEnd, 0, 1,
                      0, nullptr, 0);
-      transport.onFrameReceived(frame, len, 0);
+      receiveCurrent(transport, frame, len, 0);
       assert(!transport.outboundFramePending());
     }
     // d. unknown flag bits.
@@ -485,7 +560,7 @@ int main() {
       uint8_t frame[bat::kMaxFrameSize];
       const uint8_t len = buildFrame(frame, bat::kTransportVersion, 0x01,
                                       0x04, 0, 1, 0, nullptr, 0);
-      transport.onFrameReceived(frame, len, 0);
+      receiveCurrent(transport, frame, len, 0);
       assert(!transport.inboundReassemblyActive());
     }
     // e. logical length > 48.
@@ -494,7 +569,7 @@ int main() {
       const uint8_t len = buildFrame(frame, bat::kTransportVersion, 0x02,
                                       bat::kFlagStart, 0, 1, 49, chunk12,
                                       sizeof(chunk12));
-      transport.onFrameReceived(frame, len, 0);
+      receiveCurrent(transport, frame, len, 0);
       assert(!transport.inboundReassemblyActive());
     }
     // f. fragment payload exceeding declared total.
@@ -503,7 +578,7 @@ int main() {
       const uint8_t len = buildFrame(frame, bat::kTransportVersion, 0x02,
                                       bat::kFlagStart, 0, 1, 5, chunk12,
                                       sizeof(chunk12));
-      transport.onFrameReceived(frame, len, 0);
+      receiveCurrent(transport, frame, len, 0);
       assert(!transport.inboundReassemblyActive());
     }
     // g. missing START (bare continuation).
@@ -511,7 +586,7 @@ int main() {
       uint8_t frame[bat::kMaxFrameSize];
       const uint8_t len = buildFrame(frame, bat::kTransportVersion, 0x02, 0,
                                       1, 1, 24, chunk12, sizeof(chunk12));
-      transport.onFrameReceived(frame, len, 0);
+      receiveCurrent(transport, frame, len, 0);
       assert(!transport.inboundReassemblyActive());
     }
     // h. START with non-zero fragment index.
@@ -520,14 +595,14 @@ int main() {
       const uint8_t len =
           buildFrame(frame, bat::kTransportVersion, 0x02, bat::kFlagStart, 1,
                      1, 24, chunk12, sizeof(chunk12));
-      transport.onFrameReceived(frame, len, 0);
+      receiveCurrent(transport, frame, len, 0);
       assert(!transport.inboundReassemblyActive());
     }
     // i. unexpected new START during a partial message clears the old one
     // and processes the new one on its own terms.
     {
       uint8_t partial[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           partial,
           buildFrame(partial, bat::kTransportVersion, 0x02, bat::kFlagStart, 0,
                      1, 24, chunk12, sizeof(chunk12)),
@@ -535,27 +610,27 @@ int main() {
       assert(transport.inboundReassemblyActive());
 
       uint8_t fresh[bat::kMaxFrameSize];
-      transport.onFrameReceived(fresh, buildGetConfigRequestFrame(fresh, 42),
+      receiveCurrent(transport, fresh, buildGetConfigRequestFrame(fresh, 42),
                                  10);
       assert(!transport.inboundReassemblyActive());
       assert(transport.outboundFramePending());
       uint8_t out[bat::kMaxFrameSize];
       uint8_t out_len = 0;
-      assert(transport.peekOutboundFrame(out, out_len));
+      assert(peekCurrent(transport, out, out_len));
       assert(readLE16(out + 4) == 42);  // the NEW request's correlation id.
-      transport.confirmOutboundFrame();
+      confirmCurrent(transport);
     }
     // j. duplicate fragment.
     {
       uint8_t start[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           start,
           buildFrame(start, bat::kTransportVersion, 0x02, bat::kFlagStart, 0,
                      2, 24, chunk12, sizeof(chunk12)),
           0);
       assert(transport.inboundReassemblyActive());
       uint8_t dup[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           dup, buildFrame(dup, bat::kTransportVersion, 0x02, 0, 0, 2, 24,
                            chunk12, sizeof(chunk12)),
           0);
@@ -564,14 +639,14 @@ int main() {
     // k. skipped fragment (needs 3 fragments for total_length=36).
     {
       uint8_t start[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           start,
           buildFrame(start, bat::kTransportVersion, 0x02, bat::kFlagStart, 0,
                      3, 36, chunk12, sizeof(chunk12)),
           0);
       assert(transport.inboundReassemblyActive());
       uint8_t skip[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           skip, buildFrame(skip, bat::kTransportVersion, 0x02, 0, 2, 3, 36,
                             chunk12, sizeof(chunk12)),
           0);
@@ -580,13 +655,13 @@ int main() {
     // l. correlation-id change mid-message.
     {
       uint8_t start[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           start,
           buildFrame(start, bat::kTransportVersion, 0x02, bat::kFlagStart, 0,
                      4, 24, chunk12, sizeof(chunk12)),
           0);
       uint8_t cont[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           cont, buildFrame(cont, bat::kTransportVersion, 0x02, 0, 1, 5, 24,
                             chunk12, sizeof(chunk12)),
           0);
@@ -595,13 +670,13 @@ int main() {
     // m. message-type change mid-message.
     {
       uint8_t start[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           start,
           buildFrame(start, bat::kTransportVersion, 0x02, bat::kFlagStart, 0,
                      6, 24, chunk12, sizeof(chunk12)),
           0);
       uint8_t cont[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           cont, buildFrame(cont, bat::kTransportVersion, 0x03, 0, 1, 6, 24,
                             chunk12, sizeof(chunk12)),
           0);
@@ -610,13 +685,13 @@ int main() {
     // n. total-length change mid-message.
     {
       uint8_t start[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           start,
           buildFrame(start, bat::kTransportVersion, 0x02, bat::kFlagStart, 0,
                      7, 24, chunk12, sizeof(chunk12)),
           0);
       uint8_t cont[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           cont, buildFrame(cont, bat::kTransportVersion, 0x02, 0, 1, 7, 30,
                             chunk12, sizeof(chunk12)),
           0);
@@ -626,7 +701,7 @@ int main() {
     // be 18, not the declared 24).
     {
       uint8_t start[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           start,
           buildFrame(start, bat::kTransportVersion, 0x02, bat::kFlagStart, 0,
                      8, 24, chunk12, sizeof(chunk12)),
@@ -634,7 +709,7 @@ int main() {
       uint8_t six[6];
       memset(six, 0x22, sizeof(six));
       uint8_t cont[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           cont, buildFrame(cont, bat::kTransportVersion, 0x02, bat::kFlagEnd,
                             1, 8, 24, six, sizeof(six)),
           0);
@@ -646,7 +721,7 @@ int main() {
     // timer -- loop-owned poll()).
     {
       uint8_t start[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           start,
           buildFrame(start, bat::kTransportVersion, 0x02, bat::kFlagStart, 0,
                      9, 12, chunk12, sizeof(chunk12)),
@@ -665,20 +740,20 @@ int main() {
       uint8_t piece[4];
       memset(piece, 0x33, sizeof(piece));
       uint8_t start[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           start, buildFrame(start, bat::kTransportVersion, 0x02,
                              bat::kFlagStart, 0, 10, 20, piece, sizeof(piece)),
           0);
       for (uint8_t idx = 1; idx <= 3; ++idx) {
         uint8_t cont[bat::kMaxFrameSize];
-        transport.onFrameReceived(
+        receiveCurrent(transport, 
             cont, buildFrame(cont, bat::kTransportVersion, 0x02, 0, idx, 10,
                               20, piece, sizeof(piece)),
             0);
         assert(transport.inboundReassemblyActive());
       }
       uint8_t fifth[bat::kMaxFrameSize];
-      transport.onFrameReceived(
+      receiveCurrent(transport, 
           fifth, buildFrame(fifth, bat::kTransportVersion, 0x02, 0, 4, 10, 20,
                              piece, sizeof(piece)),
           0);
@@ -693,7 +768,7 @@ int main() {
           frame, bat::kTransportVersion,
           static_cast<uint8_t>(bat::MessageType::kGetConfigRequest),
           bat::kFlagStart | bat::kFlagEnd, 0, 11, 1, one, sizeof(one));
-      transport.onFrameReceived(frame, len, 0);
+      receiveCurrent(transport, frame, len, 0);
       assert(!service.responsePending());
       assert(!transport.outboundFramePending());
     }
@@ -705,18 +780,18 @@ int main() {
       uint8_t garbage[bat::kMaxFrameSize];
       memset(garbage, static_cast<uint8_t>(i), sizeof(garbage));
       garbage[0] = 0x09;  // always a wrong version.
-      transport.onFrameReceived(garbage, bat::kMaxFrameSize, 0);
+      receiveCurrent(transport, garbage, bat::kMaxFrameSize, 0);
     }
     assert(!transport.inboundReassemblyActive());
     assert(!transport.outboundFramePending());
 
     uint8_t final_frame[bat::kMaxFrameSize];
-    transport.onFrameReceived(
+    receiveCurrent(transport, 
         final_frame, buildGetConfigRequestFrame(final_frame, 4242), 0);
     assert(transport.outboundFramePending());
     uint8_t out[bat::kMaxFrameSize];
     uint8_t out_len = 0;
-    assert(transport.peekOutboundFrame(out, out_len));
+    assert(peekCurrent(transport, out, out_len));
     assert(out[1] == 0x81);
     assert(readLE16(out + 4) == 4242);
 

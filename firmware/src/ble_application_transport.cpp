@@ -48,17 +48,20 @@ uint32_t BleApplicationTransport::beginSession() {
   // pending response actually belongs to kBle, so a USB-owned response is
   // never touched.
   service_.discardResponse(ApplicationRequester::kBle);
-  ++session_generation_;
+  session_generation_ =
+      ble_app_transport::advanceSessionGeneration(session_generation_);
+  session_active_ = true;
   return session_generation_;
 }
 
 void BleApplicationTransport::endSession(uint32_t session_generation) {
   // A stale/delayed disconnect for a session that has already been replaced
   // by a newer beginSession() must never clear the replacement session.
-  if (session_generation != session_generation_) return;
+  if (!session_active_ || session_generation != session_generation_) return;
   clearInbound();
   outbound_ = OutboundResponse();
   service_.discardResponse(ApplicationRequester::kBle);
+  session_active_ = false;
 }
 
 void BleApplicationTransport::clearInbound() { inbound_ = InboundReassembly(); }
@@ -77,9 +80,22 @@ void BleApplicationTransport::beginInbound(uint8_t version,
   inbound_.last_fragment_at_ms = now;
 }
 
-void BleApplicationTransport::onFrameReceived(const uint8_t* frame,
+void BleApplicationTransport::onFrameReceived(uint32_t session_generation,
+                                               const uint8_t* frame,
                                                uint8_t frame_len,
                                                uint32_t now) {
+  // Event provenance is checked before touching any current-session state.
+  // A queued frame from a disconnected/replaced session must be a pure no-op.
+  if (!session_active_ || session_generation != session_generation_) return;
+
+  // Stop-and-wait begins at ingress, not only after reassembly. While a prior
+  // response awaits indication confirmation, the peer cannot pre-stage a
+  // partial next request and complete it immediately after confirmation.
+  if (outbound_.pending) {
+    clearInbound();
+    return;
+  }
+
   // Any validation failure below fails closed: no application/storage side
   // effect, and any in-progress partial reassembly is conservatively
   // cleared rather than left in a possibly-inconsistent state.
@@ -307,9 +323,12 @@ uint32_t BleApplicationTransport::nextLocalRequestId() {
   return id;
 }
 
-bool BleApplicationTransport::peekOutboundFrame(uint8_t* frame_out,
+bool BleApplicationTransport::peekOutboundFrame(uint32_t session_generation,
+                                                 uint8_t* frame_out,
                                                  uint8_t& frame_len) const {
-  if (!outbound_.pending || frame_out == nullptr) return false;
+  if (!session_active_ || session_generation != session_generation_ ||
+      !outbound_.pending || frame_out == nullptr)
+    return false;
 
   const uint16_t offset = static_cast<uint16_t>(outbound_.next_fragment_index *
                                                   kMaxPayloadPerFrame);
@@ -334,8 +353,11 @@ bool BleApplicationTransport::peekOutboundFrame(uint8_t* frame_out,
   return true;
 }
 
-void BleApplicationTransport::confirmOutboundFrame() {
-  if (!outbound_.pending) return;
+void BleApplicationTransport::confirmOutboundFrame(
+    uint32_t session_generation) {
+  if (!session_active_ || session_generation != session_generation_ ||
+      !outbound_.pending)
+    return;
 
   const uint16_t offset = static_cast<uint16_t>(outbound_.next_fragment_index *
                                                   kMaxPayloadPerFrame);
