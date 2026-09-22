@@ -23,7 +23,18 @@ assert "CHR_PROPS_WRITE_WO_RESP" not in src
 assert "ble_application_response_characteristic.indicate(" not in src
 
 start = src.index("void onBleApplicationWrite(")
-end = src.index("\nvoid onBleEvent(", start)
+brace = src.index("{", start)
+depth = 0
+end = None
+for index in range(brace, len(src)):
+    if src[index] == "{":
+        depth += 1
+    elif src[index] == "}":
+        depth -= 1
+        if depth == 0:
+            end = index + 1
+            break
+assert end is not None, "unterminated onBleApplicationWrite() body"
 callback = src[start:end]
 for forbidden in (
     "Serial",
