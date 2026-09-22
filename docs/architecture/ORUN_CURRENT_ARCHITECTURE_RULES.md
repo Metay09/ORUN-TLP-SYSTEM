@@ -797,7 +797,7 @@ identity or a wire field. This remains internal ownership only: it adds no BLE
 GATT, wire format, authorization, provisioning, storage or RF behavior. See
 `docs/milestones/M7P7E.md`.
 
-M7P7F (branch `feat/m7p7f-ble-app-transport-contract`, not yet merged) freezes
+M7P7F (PR #35, merged at `main@9522e391a532f21ef76ee092889d591cb1c2cf78`) freezes
 the exact bounded GATT transport contract that M7P7E's "next gate" section
 anticipated: three 128-bit UUIDs, an 8-byte header / 20-byte-frame /
 48-byte-logical-payload / 4-fragment wire rule, `GET_CONFIG` request/response

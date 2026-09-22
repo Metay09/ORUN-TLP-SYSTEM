@@ -441,8 +441,8 @@ Post-fix owner revalidation on exact code-bearing head
   `submit()` returns `kAccepted`, and both `beginSession()`/`endSession()`
   defensively call `discardResponse(kBle)` (host tests 7-9, 12).
 - Can a non-reading BLE client overwrite a pending response? **No** — stop-
-  and-wait backpressure in `dispatchInbound()` drops new requests while
-  `outbound_.pending` is true, before ever touching the global service
+  and-wait backpressure at `onFrameReceived()` ingress rejects new requests
+  while `outbound_.pending` is true, before reassembly/application dispatch
   (host test 9).
 - Can BLE clear a USB response? **No** — `discardResponse(kBle)` is a no-op
   unless the pending response's requester is `kBle` (enforced inside
