@@ -154,6 +154,20 @@ int main(int argc, char** argv) {
   // once and only after begin() succeeded.
   const bool ble_ok = !ble_advertising_fails && !ble_runtime_fails;
   assert(ble_ready == !ble_runtime_fails);
+  // M7P7G: the application GATT service is created only after a successful
+  // Bluefruit runtime start, with the frozen request/response properties and
+  // 20-byte ATT-frame ceiling. This is composition evidence, not physical BLE.
+  assert(ble_application_gatt_ready == !ble_runtime_fails);
+  if (!ble_runtime_fails) {
+    assert(ble_application_request_characteristic.properties == CHR_PROPS_WRITE);
+    assert(ble_application_request_characteristic.max_len ==
+           orun_tlp::ble_app_transport::kMaxFrameSize);
+    assert(ble_application_response_characteristic.properties ==
+           CHR_PROPS_INDICATE);
+    assert(ble_application_response_characteristic.max_len ==
+           orun_tlp::ble_app_transport::kMaxFrameSize);
+    assert(ble_application_response_value_handle != BLE_GATT_HANDLE_INVALID);
+  }
   assert(Bluefruit.Advertising.start_calls == (ble_runtime_fails ? 0U : 1U));
   assert(ble_admission.isOpen() == ble_ok);
   assert((Serial.output.find("BLE available name=ORUN-") != std::string::npos) == ble_ok);
