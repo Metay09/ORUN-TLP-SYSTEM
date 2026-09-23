@@ -24,6 +24,14 @@ struct BleApplicationConfirmationEvent {
   uint16_t value_handle = 0xFFFFU;
 };
 
+// BLE_GATTS_EVT_TIMEOUT is terminal for ATT protocol progress on that
+// connection. The BLE event task stamps only the current session/connection;
+// loop() owns teardown and the physical disconnect request.
+struct BleApplicationGattTimeoutEvent {
+  uint32_t session_generation = 0;
+  uint16_t connection_handle = 0xFFFFU;
+};
+
 namespace ble_app_handoff_config {
 // One full M7P7F logical request can arrive as four ATT write-with-response
 // fragments before the cooperative loop runs. Bound the callback queue to that
@@ -63,12 +71,22 @@ class BleApplicationHandoff {
   // Loop consumer.
   bool takeConfirmation(BleApplicationConfirmationEvent& out);
 
+  // Callback/task producer for a protocol-source BLE_GATTS_EVT_TIMEOUT.
+  // This is terminal for the current ATT session: callback ingress closes and
+  // already-queued ingress/HVC facts are discarded immediately, while loop()
+  // remains the sole owner of transport teardown and Bluefruit.disconnect().
+  bool enqueueGattTimeout(uint16_t connection_handle);
+
+  // Loop consumer.
+  bool takeGattTimeout(BleApplicationGattTimeoutEvent& out);
+
   bool sessionActive() const { return session_active_; }
   bool ingressAllowed() const { return ingress_allowed_; }
   uint16_t connectionHandle() const { return connection_handle_; }
   uint32_t sessionGeneration() const { return session_generation_; }
 
  private:
+  void clearIngressQueue();
   void clearMailboxes();
 
   bool session_active_ = false;
@@ -83,6 +101,9 @@ class BleApplicationHandoff {
 
   bool confirmation_pending_ = false;
   BleApplicationConfirmationEvent confirmation_{};
+
+  bool gatt_timeout_pending_ = false;
+  BleApplicationGattTimeoutEvent gatt_timeout_{};
 };
 
 }  // namespace orun_tlp

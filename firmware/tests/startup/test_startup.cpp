@@ -503,6 +503,45 @@ int main(int argc, char** argv) {
     // Polled-edge + event for the same disconnect: no second start.
     assert(tick(1).empty() && Bluefruit.Advertising.start_calls == 2);
 
+    // --- GATTS protocol timeout: callback only hands off the terminal fact;
+    // loop tears down the app session and retries physical disconnect without
+    // ever reopening a fresh session on the dead ATT link. ------------------
+    Bluefruit.simulateConnect();
+    tick(0);  // admits the application session
+    assert(ble_application_session_active);
+    assert(ble_application_handoff.sessionActive());
+    const unsigned timeout_enters = critical_entries;
+    const unsigned disconnect_calls_before = Bluefruit.disconnect_calls;
+    const uint32_t timeout_clock_before = test_now;
+    Bluefruit.disconnect_result = false;
+    Serial.output.clear();
+    Bluefruit.simulateGattTimeout();
+    assert(critical_entries == timeout_enters + 1 && critical_depth == 0);
+    assert(Serial.output.empty());
+    assert(test_now == timeout_clock_before);
+    assert(Bluefruit.disconnect_calls == disconnect_calls_before);
+    assert(!ble_application_handoff.ingressAllowed());
+
+    assert(has(tick(0), "BLE GATT protocol timeout; disconnecting\n"));
+    assert(!ble_application_session_active);
+    assert(ble_application_disconnect_pending);
+    assert(Bluefruit.Periph.connected() == 1);
+    assert(Bluefruit.disconnect_calls == disconnect_calls_before + 1);
+
+    // Failed disconnect request must not busy-spin or recreate an ORUN
+    // application session on the timed-out ATT connection.
+    assert(tick(kBleApplicationDisconnectRetryMs - 1).empty());
+    assert(Bluefruit.disconnect_calls == disconnect_calls_before + 1);
+    assert(!ble_application_session_active);
+    Bluefruit.disconnect_result = true;
+    assert(tick(1).empty());
+    assert(Bluefruit.disconnect_calls == disconnect_calls_before + 2);
+    assert(Bluefruit.Periph.connected() == 0);
+    assert(ble_application_disconnect_pending);  // edge consumed next tick
+    assert(has(tick(0), "BLE advertising restarted\n"));
+    assert(!ble_application_disconnect_pending);
+    assert(!ble_application_session_active);
+
     // --- Post-disconnect start FAILS, then a later retry succeeds. ---------
     Bluefruit.simulateConnect();
     tick(1000);

@@ -5,6 +5,7 @@
 #include "ble_application_handoff.h"
 
 using orun_tlp::BleApplicationConfirmationEvent;
+using orun_tlp::BleApplicationGattTimeoutEvent;
 using orun_tlp::BleApplicationHandoff;
 using orun_tlp::BleApplicationIngressEvent;
 
@@ -104,9 +105,27 @@ int main() {
   assert(!h.takeConfirmation(confirm));
   assert(!h.enqueueIngress(7, frame_b, sizeof(frame_b)));
 
-  // Exact disconnect cleanup closes admission and clears all queued work.
+  // A protocol-source GATTS timeout is terminal for the active session's ATT
+  // progress: callback admission closes immediately and queued ingress/HVC
+  // facts are discarded before loop-owned teardown/disconnect recovery.
   assert(h.enqueueIngress(9, frame_b, sizeof(frame_b)));
   assert(h.enqueueConfirmation(9, 0x3333));
+  assert(!h.enqueueGattTimeout(8));
+  assert(h.enqueueGattTimeout(9));
+  assert(!h.ingressAllowed());
+  assert(!h.takeIngress(in));
+  assert(!h.takeConfirmation(confirm));
+  assert(!h.enqueueIngress(9, frame_b, sizeof(frame_b)));
+  assert(!h.enqueueConfirmation(9, 0x3333));
+  assert(!h.enqueueGattTimeout(9));
+
+  BleApplicationGattTimeoutEvent timeout;
+  assert(h.takeGattTimeout(timeout));
+  assert(timeout.session_generation == 12);
+  assert(timeout.connection_handle == 9);
+  assert(!h.takeGattTimeout(timeout));
+
+  // Exact disconnect cleanup closes admission and clears all queued work.
   h.deactivateSession(9, 12);
   assert(!h.sessionActive());
   assert(!h.ingressAllowed());
@@ -118,6 +137,13 @@ int main() {
   assert(h.enqueueIngress(9, frame_b, sizeof(frame_b)));
   assert(h.takeIngress(in));
   assert(in.session_generation == 13);
+
+  // A replacement session also clears an unconsumed old timeout fact.
+  assert(h.enqueueGattTimeout(9));
+  h.activateSession(10, 14);
+  assert(!h.takeGattTimeout(timeout));
+  assert(h.ingressAllowed());
+  assert(h.enqueueIngress(10, frame_b, sizeof(frame_b)));
 
   return 0;
 }

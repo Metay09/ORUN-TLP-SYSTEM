@@ -95,8 +95,9 @@ BleInitialStart ble_initial_start = BleInitialStart::kNotAttempted;
 // connection/GATT state has been updated and with no ada_callback()/heap
 // allocation on that path. Production hands off only bounded facts under the
 // same taskENTER/EXIT_CRITICAL primitive radio_manager.cpp uses: the existing
-// disconnect counter plus M7P7G's single ORUN HVC event. loop() remains the
-// sole owner of admission policy, clocks, Serial, application work and
+// disconnect counter plus M7P7G's ORUN HVC and terminal GATTS-timeout facts.
+// loop() remains the sole owner of admission policy, clocks, Serial,
+// application work and
 // Bluefruit/SoftDevice actions. Periph's setDisconnectCallback still is not
 // used because that path goes through ada_callback and can be dropped/delayed.
 // ble_disconnect_events_seen is loop-task-only; "counter != seen" reduces any
@@ -127,6 +128,16 @@ uint32_t ble_application_session_generation = 0;
 bool ble_application_indication_in_flight = false;
 constexpr uint32_t kBleApplicationIndicationRetryMs = 25;
 uint32_t ble_application_next_indication_attempt_ms = 0;
+
+// A protocol-source BLE_GATTS_EVT_TIMEOUT leaves ATT progress unusable on the
+// connection. Recovery is loop-owned: tear down the ORUN application session,
+// then request a physical disconnect and retry it at bounded spacing until the
+// real disconnect edge is observed. This is terminal-error recovery, NOT an
+// inactivity/session-duration policy.
+constexpr uint32_t kBleApplicationDisconnectRetryMs = 1000;
+bool ble_application_disconnect_pending = false;
+uint16_t ble_application_disconnect_handle = BLE_CONN_HANDLE_INVALID;
+uint32_t ble_application_next_disconnect_attempt_ms = 0;
 
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
 // M7P6E TEST-ONLY coexistence evidence. The counters are written only by the
@@ -171,8 +182,9 @@ void onBleApplicationWrite(uint16_t conn_handle, BLECharacteristic* chr,
 }
 
 // Bluefruit BLE-event-task context (not loop(), not an ISR). Production
-// handling now hands off only two bounded facts: disconnect count and HVC
-// confirmation for the ORUN response value handle. The M7P6E test-only probe
+// handling hands off only bounded facts: disconnect count, HVC confirmation
+// for the ORUN response value handle, and protocol-source GATTS timeout. The
+// M7P6E test-only probe
 // additionally reads immutable security-event fields and increments bounded
 // counters. This callback MUST NOT call monotonic::nowMs(), BleAdmissionPolicy,
 // Serial, flash, radio or Bluefruit/SoftDevice APIs.
@@ -214,6 +226,15 @@ void onBleEvent(ble_evt_t* evt) {
     (void)ble_application_handoff.enqueueConfirmation(
         evt->evt.gatts_evt.conn_handle,
         evt->evt.gatts_evt.params.hvc.handle);
+    taskEXIT_CRITICAL();
+  }
+
+  if (evt->header.evt_id == BLE_GATTS_EVT_TIMEOUT &&
+      evt->evt.gatts_evt.params.timeout.src ==
+          BLE_GATT_TIMEOUT_SRC_PROTOCOL) {
+    taskENTER_CRITICAL();
+    (void)ble_application_handoff.enqueueGattTimeout(
+        evt->evt.gatts_evt.conn_handle);
     taskEXIT_CRITICAL();
   }
 
@@ -322,9 +343,41 @@ bool trySendBleApplicationIndication(uint16_t connection_handle,
   return result == NRF_SUCCESS && packet_len == frame_len;
 }
 
+bool serviceBleApplicationDisconnectRecovery(
+    bool connected, uint16_t connection_handle, bool disconnect_event,
+    uint32_t now) {
+  if (!ble_application_disconnect_pending) return false;
+
+  // A real disconnect (including one followed by a very fast replacement
+  // connection between loop polls) completes recovery. The normal session
+  // logic below may then admit the current physical connection.
+  if (disconnect_event || !connected ||
+      connection_handle != ble_application_disconnect_handle) {
+    ble_application_disconnect_pending = false;
+    ble_application_disconnect_handle = BLE_CONN_HANDLE_INVALID;
+    ble_application_next_disconnect_attempt_ms = 0;
+    return false;
+  }
+
+  // Do not create a fresh ORUN application session on an ATT-terminal link.
+  // Retry the physical disconnect at bounded spacing if the framework rejects
+  // or loses the first request.
+  if (orun_tlp::monotonic::reached(
+          now, ble_application_next_disconnect_attempt_ms)) {
+    (void)Bluefruit.disconnect(ble_application_disconnect_handle);
+    ble_application_next_disconnect_attempt_ms =
+        now + kBleApplicationDisconnectRetryMs;
+  }
+  return true;
+}
+
 void pollBleApplicationRuntime(bool connected, uint16_t connection_handle,
                                bool disconnect_event, uint32_t now) {
   if (!ble_application_gatt_ready) return;
+
+  if (serviceBleApplicationDisconnectRecovery(
+          connected, connection_handle, disconnect_event, now))
+    return;
 
   // Disconnect cleanup happens before BleAdmissionPolicy can restart
   // advertising. A replacement session therefore cannot inherit callback
@@ -339,6 +392,27 @@ void pollBleApplicationRuntime(bool connected, uint16_t connection_handle,
     beginBleApplicationSession(connection_handle);
   }
   if (!ble_application_session_active) return;
+
+  // GATTS protocol timeout is terminal for ATT progress. Consume it before
+  // HVC or ingress so no queued application work can survive the fault.
+  orun_tlp::BleApplicationGattTimeoutEvent gatt_timeout;
+  bool have_gatt_timeout = false;
+  taskENTER_CRITICAL();
+  have_gatt_timeout = ble_application_handoff.takeGattTimeout(gatt_timeout);
+  taskEXIT_CRITICAL();
+  if (have_gatt_timeout &&
+      gatt_timeout.session_generation == ble_application_session_generation &&
+      gatt_timeout.connection_handle == ble_application_connection_handle) {
+    const uint16_t timed_out_handle = ble_application_connection_handle;
+    endBleApplicationSession();
+    ble_application_disconnect_pending = true;
+    ble_application_disconnect_handle = timed_out_handle;
+    ble_application_next_disconnect_attempt_ms = now;
+    Serial.println(F("BLE GATT protocol timeout; disconnecting"));
+    (void)serviceBleApplicationDisconnectRecovery(
+        connected, connection_handle, false, now);
+    return;
+  }
 
   // Enforce the M7P7F fragment timeout before consuming a newly queued
   // continuation on this tick, so loop ordering cannot revive a stale partial.

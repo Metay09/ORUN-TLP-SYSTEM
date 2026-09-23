@@ -4,13 +4,19 @@
 
 namespace orun_tlp {
 
-void BleApplicationHandoff::clearMailboxes() {
+void BleApplicationHandoff::clearIngressQueue() {
   for (uint8_t i = 0; i < ble_app_handoff_config::kIngressQueueCapacity; ++i)
     ingress_queue_[i] = BleApplicationIngressEvent();
   ingress_head_ = 0;
   ingress_count_ = 0;
+}
+
+void BleApplicationHandoff::clearMailboxes() {
+  clearIngressQueue();
   confirmation_pending_ = false;
   confirmation_ = BleApplicationConfirmationEvent();
+  gatt_timeout_pending_ = false;
+  gatt_timeout_ = BleApplicationGattTimeoutEvent();
 }
 
 void BleApplicationHandoff::activateSession(uint16_t connection_handle,
@@ -49,21 +55,22 @@ void BleApplicationHandoff::setIngressAllowed(uint16_t connection_handle,
   if (!session_active_ || connection_handle != connection_handle_ ||
       generation != session_generation_)
     return;
+  // A protocol timeout is terminal until loop() tears the session down.
+  // Never allow a late HVC/control update to reopen callback admission.
+  if (gatt_timeout_pending_ && allowed) return;
+
   ingress_allowed_ = allowed;
   if (!allowed) {
     // Frames written while stop-and-wait is closed must never be retained
     // for later execution after the indication is confirmed.
-    for (uint8_t i = 0; i < ble_app_handoff_config::kIngressQueueCapacity; ++i)
-      ingress_queue_[i] = BleApplicationIngressEvent();
-    ingress_head_ = 0;
-    ingress_count_ = 0;
+    clearIngressQueue();
   }
 }
 
 bool BleApplicationHandoff::enqueueIngress(uint16_t connection_handle,
                                            const uint8_t* frame,
                                            uint16_t frame_len) {
-  if (!session_active_ || !ingress_allowed_ ||
+  if (!session_active_ || !ingress_allowed_ || gatt_timeout_pending_ ||
       connection_handle != connection_handle_ ||
       frame_len > ble_app_transport::kMaxFrameSize ||
       (frame_len > 0 && frame == nullptr) ||
@@ -97,7 +104,7 @@ bool BleApplicationHandoff::takeIngress(BleApplicationIngressEvent& out) {
 bool BleApplicationHandoff::enqueueConfirmation(uint16_t connection_handle,
                                                 uint16_t value_handle) {
   if (!session_active_ || connection_handle != connection_handle_ ||
-      confirmation_pending_)
+      confirmation_pending_ || gatt_timeout_pending_)
     return false;
 
   confirmation_.session_generation = session_generation_;
@@ -120,6 +127,34 @@ bool BleApplicationHandoff::takeConfirmation(
   out = confirmation_;
   confirmation_pending_ = false;
   confirmation_ = BleApplicationConfirmationEvent();
+  return true;
+}
+
+bool BleApplicationHandoff::enqueueGattTimeout(uint16_t connection_handle) {
+  if (!session_active_ || connection_handle != connection_handle_ ||
+      gatt_timeout_pending_)
+    return false;
+
+  // ATT protocol timeout makes further application progress invalid on this
+  // connection. Close callback admission immediately and discard facts that
+  // must not execute after loop-owned recovery begins.
+  ingress_allowed_ = false;
+  clearIngressQueue();
+  confirmation_pending_ = false;
+  confirmation_ = BleApplicationConfirmationEvent();
+
+  gatt_timeout_.session_generation = session_generation_;
+  gatt_timeout_.connection_handle = connection_handle;
+  gatt_timeout_pending_ = true;
+  return true;
+}
+
+bool BleApplicationHandoff::takeGattTimeout(
+    BleApplicationGattTimeoutEvent& out) {
+  if (!gatt_timeout_pending_) return false;
+  out = gatt_timeout_;
+  gatt_timeout_pending_ = false;
+  gatt_timeout_ = BleApplicationGattTimeoutEvent();
   return true;
 }
 

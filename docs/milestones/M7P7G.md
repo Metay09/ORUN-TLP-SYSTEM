@@ -1,6 +1,6 @@
 # M7P7G — Real Bluefruit ORUN application GATT wiring
 
-Status: **SOFTWARE + PHYSICAL VALIDATION PASS — INDEPENDENT AUDIT PENDING**
+Status: **TIMEOUT-RECOVERY FIX CANDIDATE — HOST/BUILD/FOCUSED REGRESSION + INDEPENDENT AUDIT PENDING**
 
 Baseline: `main@9522e391a532f21ef76ee092889d591cb1c2cf78`
 (M7P7F / PR #35 merged).
@@ -36,6 +36,7 @@ Implemented:
 - one fixed four-entry callback->loop ingress FIFO (each frame <=20 bytes);
 - callback-visible session generation and stop-and-wait gate;
 - HVC confirmation handoff;
+- protocol-source `BLE_GATTS_EVT_TIMEOUT` terminal recovery handoff;
 - loop-owned application dispatch and session cleanup;
 - disconnect cleanup before any admission-policy re-advertise;
 - non-blocking indication submission through `sd_ble_gatts_hvx()`.
@@ -80,8 +81,11 @@ It does **not** call:
 - Bluefruit or SoftDevice APIs.
 
 The existing global `onBleEvent()` additionally copies an HVC confirmation
-only when its attribute handle equals the ORUN response value handle. All
-application/session decisions remain in `loop()`.
+only when its attribute handle equals the ORUN response value handle. It also
+copies a protocol-source `BLE_GATTS_EVT_TIMEOUT` as a terminal connection fact.
+It never disconnects or performs recovery inside the BLE event task. All
+application/session decisions and Bluefruit disconnect requests remain in
+`loop()`.
 
 ## 5. Stop-and-wait across the real callback boundary
 
@@ -143,7 +147,37 @@ On disconnect/mismatch the loop:
 
 Therefore an old frame/HVC cannot seed or clear a replacement session.
 
-## 8. Fragment timeout ordering
+
+## 8. GATTS protocol-timeout recovery
+
+Independent review identified a terminal recovery gap in the non-blocking
+indication path. Pinned Bluefruit 1.7.0 consumes `BLE_GATTS_EVT_TIMEOUT` by
+releasing its own blocking-indication semaphore state but does not disconnect
+the connection. ORUN does not use that blocking helper; without an explicit
+path, `ble_application_indication_in_flight` and stop-and-wait state could
+remain wedged indefinitely.
+
+The candidate fix handles only
+`BLE_GATT_TIMEOUT_SRC_PROTOCOL` and deliberately does **not** add an
+inactivity/session-duration timeout:
+
+1. BLE event task stamps the exact active session/connection into the fixed
+   handoff and immediately closes callback ingress;
+2. queued ingress/HVC facts are discarded because ATT progress is terminal;
+3. loop consumes the timeout before HVC or request ingress;
+4. loop tears down the ORUN application session;
+5. loop requests `Bluefruit.disconnect(conn_handle)`;
+6. if the disconnect request fails or the edge is delayed, the request is
+   retried no faster than once per second and a fresh ORUN application session
+   is not created on the timed-out link;
+7. once a real disconnect edge is observed, the existing admission policy owns
+   the fresh no-client advertising window.
+
+This is protocol-failure recovery, not a connected-client idle watchdog. The
+owner-approved policy remains: a healthy connected client is not disconnected
+merely because it has been idle for some duration.
+
+## 9. Fragment timeout ordering
 
 Each loop tick calls `BleApplicationTransport::poll(now)` before consuming a
 queued ingress continuation. This makes the existing 2000 ms partial-frame
@@ -152,7 +186,7 @@ first loop tick after expiry.
 
 No background timer is introduced.
 
-## 9. Tests added
+## 10. Tests added
 
 `test_m7p7g_ble_application_handoff.cpp` covers:
 
@@ -165,8 +199,15 @@ No background timer is introduced.
 - stop-and-wait ingress closure clears pre-staged work;
 - stale generation controls are no-ops;
 - bounded HVC mailbox;
-- replacement session clears old ingress/HVC;
+- terminal GATTS-timeout mailbox closes ingress and discards queued ingress/HVC;
+- wrong-connection timeout rejection and exact session stamping;
+- replacement session clears old ingress/HVC/timeout facts;
 - exact disconnect cleanup and reconnect reuse.
+
+The production startup stub additionally exercises the loop-owned GATTS-timeout
+recovery path, including a failed first physical disconnect request, bounded
+retry spacing, no fresh application session on the terminal ATT link, real
+disconnect observation and normal advertising restart.
 
 `test_m7p7g_source_contract.py` guards production composition:
 
@@ -178,7 +219,7 @@ No background timer is introduced.
 - write callback contains no Serial/Bluefruit/SoftDevice/application/config/
   radio/clock work.
 
-## 10. Compatibility/system impact
+## 11. Compatibility/system impact
 
 ```text
 TLP v1 bytes/sizes:             unchanged
@@ -198,7 +239,7 @@ The GATT service is not added to the advertising payload, so existing
 advertising name/flags and packet size remain unchanged. The phone discovers
 the service after connection.
 
-## 11. Validation evidence
+## 12. Validation evidence
 
 Validated code-bearing head:
 `6db1a19047b53e49c63e9605661855e9e6113a72`.
@@ -247,8 +288,23 @@ Physical RAK4631 + Android nRF Connect:
     this test. This is the physical stop-and-wait/non-reader evidence collected
     for this slice.
 
+The physical evidence above belongs to the previously validated code-bearing
+head `6db1a19047b53e49c63e9605661855e9e6113a72`. The later
+GATTS-timeout-recovery change does not alter the already-observed normal GATT
+wire bytes or admission policy, but its new code-bearing head must be
+revalidated before merge.
+
+Required revalidation for the timeout-recovery candidate:
+
+1. full host suite, including startup timeout-recovery model and source guards;
+2. production RAK4630 PlatformIO build and size record;
+3. focused hardware regression of normal connect -> GET_CONFIG -> HVC ->
+   disconnect/re-advertise behavior;
+4. direct physical injection of a genuine 30 s ATT protocol timeout is desirable
+   if a practical phone/test-client method exists, but must not be falsely
+   claimed if the client automatically confirms indications;
+5. independent audit and any resulting fix/retest cycle.
+
 Physical validation does not imply broader provisioning, authorization,
 config-write, messaging, RF or backend behavior; those remain outside M7P7G
 scope.
-
-Remaining before merge: independent audit and any resulting fix/retest cycle.

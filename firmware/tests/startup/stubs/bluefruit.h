@@ -20,6 +20,8 @@ constexpr uint8_t CHR_PROPS_INDICATE = 0x20;
 constexpr uint16_t BLE_GAP_EVT_CONNECTED = 0x10;
 constexpr uint16_t BLE_GAP_EVT_DISCONNECTED = 0x11;
 constexpr uint16_t BLE_GATTS_EVT_HVC = 0x55;
+constexpr uint16_t BLE_GATTS_EVT_TIMEOUT = 0x56;
+constexpr uint8_t BLE_GATT_TIMEOUT_SRC_PROTOCOL = 0x00;
 
 struct ble_evt_t {
   struct {
@@ -35,6 +37,9 @@ struct ble_evt_t {
         struct {
           uint16_t handle = BLE_GATT_HANDLE_INVALID;
         } hvc;
+        struct {
+          uint8_t src = 0xFF;
+        } timeout;
       } params;
     } gatts_evt;
   } evt;
@@ -195,6 +200,8 @@ struct AdafruitBluefruitStub {
   bool event_delivery = true;
   unsigned event_cb_calls = 0;
   uint16_t active_conn_handle = BLE_CONN_HANDLE_INVALID;
+  bool disconnect_result = true;
+  unsigned disconnect_calls = 0;
 
   void setEventCallback(void (*fp)(ble_evt_t*)) { event_cb = fp; }
   bool begin(uint8_t = 1, uint8_t = 0) { return begin_result; }
@@ -202,15 +209,26 @@ struct AdafruitBluefruitStub {
   void autoConnLed(bool) {}
   uint16_t connHandle() const { return active_conn_handle; }
 
+  bool disconnect(uint16_t conn_handle) {
+    ++disconnect_calls;
+    if (!disconnect_result || conn_handle != active_conn_handle ||
+        Periph.connected_count == 0)
+      return false;
+    simulateDisconnect();
+    return true;
+  }
+
   void dispatchEvent(uint16_t evt_id,
                      uint16_t event_conn_handle = BLE_CONN_HANDLE_INVALID,
-                     uint16_t hvc_handle = BLE_GATT_HANDLE_INVALID) {
+                     uint16_t hvc_handle = BLE_GATT_HANDLE_INVALID,
+                     uint8_t timeout_src = 0xFF) {
     if (event_cb == nullptr || !event_delivery) return;
     ble_evt_t evt{};
     evt.header.evt_id = evt_id;
     evt.evt.common_evt.conn_handle = event_conn_handle;
     evt.evt.gatts_evt.conn_handle = event_conn_handle;
     evt.evt.gatts_evt.params.hvc.handle = hvc_handle;
+    evt.evt.gatts_evt.params.timeout.src = timeout_src;
     ++event_cb_calls;
     event_cb(&evt);
   }
@@ -235,6 +253,11 @@ struct AdafruitBluefruitStub {
 
   void simulateHvc(uint16_t value_handle) {
     dispatchEvent(BLE_GATTS_EVT_HVC, active_conn_handle, value_handle);
+  }
+
+  void simulateGattTimeout() {
+    dispatchEvent(BLE_GATTS_EVT_TIMEOUT, active_conn_handle,
+                  BLE_GATT_HANDLE_INVALID, BLE_GATT_TIMEOUT_SRC_PROTOCOL);
   }
 
   void deliverPendingCallbacks() {
