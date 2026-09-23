@@ -3,7 +3,11 @@
 constexpr uint32_t NRF_SUCCESS = 0;
 constexpr uint32_t NRF_ERROR_INTERNAL = 3;
 constexpr uint32_t NRF_ERROR_NOT_FOUND = 5;
+constexpr uint32_t NRF_ERROR_INVALID_STATE = 8;
+constexpr uint32_t NRF_ERROR_DATA_SIZE = 12;
+constexpr uint32_t NRF_ERROR_TIMEOUT = 13;
 constexpr uint32_t NRF_ERROR_BUSY = 17;
+constexpr uint32_t NRF_ERROR_RESOURCES = 19;
 // Matches the installed S140 6.1.1 NRF_SOC_EVTS enum ordering exactly
 // (nrf_soc.h): HFCLKSTARTED=0, POWER_FAILURE_WARNING=1, then these two.
 constexpr uint32_t NRF_EVT_FLASH_OPERATION_SUCCESS = 2;
