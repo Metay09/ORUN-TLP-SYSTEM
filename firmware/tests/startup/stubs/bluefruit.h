@@ -6,18 +6,17 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <nrf_soc.h>
+
 using SecureMode_t = uint8_t;
 constexpr SecureMode_t SECMODE_NO_ACCESS = 0;
 constexpr SecureMode_t SECMODE_OPEN = 1;
 
-constexpr uint32_t ERROR_NONE = 0;
-constexpr uint32_t NRF_SUCCESS = 0;
-constexpr uint32_t NRF_ERROR_INVALID_STATE = 1;
-constexpr uint32_t NRF_ERROR_BUSY = 2;
-constexpr uint32_t NRF_ERROR_RESOURCES = 3;
-constexpr uint32_t NRF_ERROR_TIMEOUT = 4;
-constexpr uint32_t NRF_ERROR_DATA_SIZE = 5;
-constexpr uint32_t BLE_ERROR_GATTS_SYS_ATTR_MISSING = 6;
+// Keep Nordic global error-code ownership in the shared nrf_soc host stub.
+// Values there mirror pinned S140 6.1.1 nrf_error.h. GATTS-specific errors
+// live in the BLE stub because nrf_soc.h does not own the BLE error ranges.
+constexpr uint32_t ERROR_NONE = NRF_SUCCESS;
+constexpr uint32_t BLE_ERROR_GATTS_SYS_ATTR_MISSING = 0x3401;
 constexpr uint16_t BLE_GATT_HANDLE_INVALID = 0x0000;
 constexpr uint16_t BLE_CONN_HANDLE_INVALID = 0xFFFF;
 constexpr uint8_t BLE_GATT_HVX_INDICATION = 0x02;
