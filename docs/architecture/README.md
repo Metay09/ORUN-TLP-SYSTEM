@@ -14,8 +14,12 @@ retryable submission failures and routes terminal returns through the same
 bounded loop-owned disconnect recovery. Owner-run host/startup/source-guard
 revalidation plus the production RAK4630 build are PASS on branch head
 `740f291d3013e63264373f25bcb740dd33097219` (22,672 B RAM / 234,440 B
-flash). Focused current-head hardware regression and final independent audit
-remain pending. Provisioning, authorization, secure RF/TLP v2 commands, MESSAGE runtime
+flash). Focused current-head hardware regression is also **PASS** on one real
+RAK4631 + Android nRF Connect: advertising/bond retention, exact service and
+characteristic properties, GET_CONFIG, same-session HVC progression,
+disconnect/re-advertise, reconnect and a fresh application session all
+completed normally. The final independent audit remains pending; no genuine
+ATT-timeout physical injection is claimed. Provisioning, authorization, secure RF/TLP v2 commands, MESSAGE runtime
 and field-network/serviceability runtime remain later work. M7P7B quantitative
 current remains DEFERRED and GNSS coexistence remains unproven on the tested
 no-GNSS unit; the separate intermittent serial-DFU issue is not closed by the
