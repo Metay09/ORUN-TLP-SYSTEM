@@ -27,8 +27,11 @@ M7P6E plus the corrected fresh-pairing follow-up have since closed the
 candidate ORUN host-vector, matching RAK KAT and scoped
 Bluefruit/SoftDevice/CC310 coexistence gates. The remaining mandatory
 device-side pre-wire foundation is durable fail-closed A2D replay-HWM
-persistence; final v2 header/AAD/MTU bytes and provisioning authority/key
-custody are still deliberately unfrozen. It does not allocate v2 bytes or
+persistence. M7P6D now records the candidate implementation contract: an
+explicit SecurityStore format-v2 migration, a shared typed security-state log,
+and reserve-ahead A2D replay persistence with an initial 8-counter block-size
+candidate. Final v2 header/AAD/MTU bytes and provisioning authority/key custody
+are still deliberately unfrozen. It does not allocate v2 bytes or
 change production runtime. See `docs/milestones/M7P6D.md`.
 
 Merged test-only security coexistence probe (M7P6E):

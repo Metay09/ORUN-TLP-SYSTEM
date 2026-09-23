@@ -415,3 +415,251 @@ exists and before protected A2D traffic is called production-ready.
 Provisioning/commissioning remains a separate prerequisite for using real
 production credentials; its authority-key custody and ownership ceremony must be
 reviewed before exposing a production credential-write transport.
+
+## 11. Next device-side persistence slice candidate — A2D replay reserve/HWM
+
+This section records the smallest implementation contract implied by §5.3 after
+the M7P6E host/RAK/coexistence gates closed. It is **not** a v2 wire allocation
+and does not authorize production protected downlink yet.
+
+### 11.1 Ownership and non-goals
+
+The replay state belongs to `SecurityStore`, not ConfigStore, HistoryStore,
+BLE bond storage, Role or the future application command layer.
+
+The persistence-only slice must not add:
+
+- a TLP v2 header or packet/application ID;
+- AES-CCM into the production RF path;
+- provisioning/commissioning;
+- a command/config/message operation;
+- application dispatch from unauthenticated input;
+- a new flash partition.
+
+The existing two-page SecurityStore partition remains the exclusive owner:
+
+```text
+0x0E7000..0x0E8000  security page A
+0x0E8000..0x0E9000  security page B
+```
+
+### 11.2 Why SecurityStore schema v1 cannot be extended in place
+
+The v1 page is exactly full:
+
+```text
+32 B page header
+68 B credential
+111 * 36 B TX_RESERVE
+----------------------
+4096 B
+```
+
+There is no erased slot that can safely become replay state without changing
+the on-flash schema. A2D replay persistence therefore requires an explicit
+SecurityStore **format v2**. It must not reinterpret a v1 TX_RESERVE byte or
+consume Config/History/Bond pages.
+
+### 11.3 Candidate v2 state-record layout
+
+Keep the existing 32-byte page header shape and 68-byte credential shape, but
+bump the page format version to 2 and replace the TX-only tail with one bounded
+typed append log.
+
+Candidate 40-byte `SECURITY_STATE` record:
+
+```text
+offset  size  field
+0       16    credential_id
+16      4     key_epoch
+20      1     kind
+21      3     reserved = 0
+24      8     value
+32      4     CRC32
+36      4     commit word = 0
+```
+
+The only authorized kinds in this slice are:
+
+```text
+1 = TX_RESERVE_EXCLUSIVE_BOUND
+2 = A2D_REPLAY_EXCLUSIVE_BOUND
+```
+
+No generic plugin/state registry is implied.
+
+With the existing header/credential sizes:
+
+```text
+floor((4096 - 32 - 68) / 40) = 99 state slots
+36 bytes remain reserved/erased at the page tail
+```
+
+A shared typed log avoids an arbitrary fixed TX/RX partition: whichever security
+state actually advances consumes the next slot. Compaction carries forward at
+most the latest TX bound and latest A2D replay bound before page activation.
+
+Recovery rules remain fail-closed:
+
+- records are append-only; an erased gap followed by non-erased state is FAULT;
+- CRC/commit/reserved-byte failure on authoritative committed state is FAULT;
+- record credential_id and key_epoch must match the authoritative credential;
+- unknown record kind in format v2 is FAULT; adding a new security-state semantic
+  requires an explicit schema/version review;
+- each bound is monotonic for its kind and may never roll backward.
+
+### 11.4 A2D replay reserve semantics
+
+Use an **exclusive durable replay bound**, analogous in shape but not meaning to
+the TX reservation bound.
+
+Candidate block size for the first implementation review:
+
+```text
+A2D replay reservation block = 8 counters
+```
+
+If the durable A2D bound is `B`, a reboot conservatively treats all counters
+`< B` as already consumed for replay purposes. During the current boot,
+SecurityStore may retain the exact last accepted counter in RAM and accept newer
+authenticated counters still below `B` without another flash mutation.
+
+For an already-authenticated A2D counter `c`:
+
+1. if `c <= runtime_hwm`, reject as duplicate/old with **no flash write**;
+2. if `runtime_hwm < c < durable_bound`, advance only the RAM HWM and allow
+   the persistence owner to report replay admission complete;
+3. if `c >= durable_bound`, compute the smallest block-aligned exclusive bound
+   greater than `c`, append/commit/read-verify that bound, then advance the
+   RAM HWM and report replay admission complete;
+4. application dispatch is forbidden until step 3 has completed successfully
+   when a durable advance was required;
+5. any persistence ambiguity/failure rejects the protected A2D operation
+   fail-closed.
+
+On reboot, unused counters below the durable bound are deliberately burned. With
+the candidate block size 8, at most seven not-yet-accepted counter values are
+lost per replay-reservation boundary/reboot. This is an availability tradeoff,
+not a security rollback.
+
+Counter/bound overflow fails closed. The persistence contract does not invent a
+counter-wrap or epoch-grace protocol.
+
+### 11.5 Compaction snapshot ordering
+
+A format-v2 compaction must preserve the M7P6B activation-last invariant:
+
+1. erase inactive destination page;
+2. write/verify page-header body with activation erased;
+3. write/commit latest TX reserve state when present;
+4. write/commit latest A2D replay reserve state when present;
+5. write/commit credential;
+6. program/read-verify page activation **last**;
+7. only then switch RAM authority;
+8. old-page cleanup remains maintenance work.
+
+A power cut before activation leaves the previous page authoritative. A power
+cut after activation is safe only because both security bounds and the
+credential snapshot were already durable.
+
+The implementation should retain one deterministic append-slot headroom before
+starting compaction, as M7P6B already does.
+
+### 11.6 v1 -> v2 migration contract
+
+Do not erase or reset a valid v1 credential merely because the schema changes.
+
+A new firmware that recovers an authoritative, device-bound v1 page may migrate
+it only by the same A/B transaction discipline:
+
+1. recover the v1 credential and highest durable TX bound without changing them;
+2. build format v2 on the inactive page with generation + 1;
+3. carry the TX bound into a v2 TX state record when non-zero;
+4. create **no** A2D replay record yet (no protected A2D frame has been accepted);
+5. write the credential;
+6. activate the v2 page last;
+7. erase the old v1 page only after v2 activation.
+
+Cut before v2 activation -> v1 remains authoritative.
+Cut after v2 activation -> v2 is authoritative.
+
+Existing older firmware already treats a recognized newer security format as
+UNSUPPORTED globally, so downgrade after a committed v2 page fails closed
+instead of falling back to stale v1 security state.
+
+FOREIGN, UNSUPPORTED or FAULT state must never auto-migrate.
+
+### 11.7 Wear/capacity budget
+
+A v2 page has 99 shared state slots. In steady state, carrying both current
+bounds plus one deterministic headroom leaves about 96 advancing state records
+before compaction.
+
+The candidate A2D block size 8 is intentionally smaller than the TX block 256:
+reboot should not strand hundreds of authority counters merely to save flash.
+
+Illustrative worst-case arithmetic, **not a hardware-life guarantee**:
+
+- 3-minute development cadence = 480 report opportunities/day;
+- one protected D2A TX per report consumes about 1.875 TX-reserve records/day;
+- an authenticated A2D downlink on every report consumes at most 60
+  replay-reserve records/day at block size 8;
+- combined worst-case ≈61.9 advancing state records/day;
+- ≈96 / 61.9 = 1.55 days between compactions;
+- ≈235 compactions/page/year, or ≈2,350 erase cycles/page over ten years,
+  before pathological reset/additional-traffic effects.
+
+At a 15-minute report cadence the same deliberately pessimistic
+one-downlink-per-report model is far lower. Actual field traffic is expected to
+be lower still because ordinary telemetry does not require an A2D response per
+packet.
+
+This arithmetic is sufficient to justify reserve-ahead over per-message flash
+writes, but the exact block size remains a **candidate** until independent
+security/storage review. Physical endurance claims still require the actual
+silicon specification and representative field measurements.
+
+### 11.8 API/dispatch boundary for the later implementation
+
+The persistence slice should expose only a bounded internal replay-admission
+operation/result. It must have no production RF caller yet.
+
+The later secure receive path must preserve this ordering:
+
+```text
+bounded parse
+-> credential/key selection
+-> AEAD authenticate/decrypt
+-> SecurityStore A2D replay admission
+-> durable replay advance if required
+-> application dispatch
+```
+
+Therefore unauthenticated traffic cannot cause SecurityStore flash mutation.
+A later command layer still needs independent `command_id`/result/idempotency
+state; replay persistence does not solve power loss between replay commit and
+command execution.
+
+### 11.9 Required validation for the persistence slice
+
+Before this foundation can be called closed:
+
+- exact v1 and v2 format golden/malformed tests;
+- v1 -> v2 migration tests at every activation cut point;
+- TX bound preservation across migration;
+- A2D duplicate/old/new admission tests;
+- no-flash path for authenticated counters already inside the durable reserve;
+- reserve-bound crossing and large counter jump;
+- counter/bound overflow fail-closed;
+- torn body, torn commit, failed readback and append-gap recovery;
+- compaction with TX-only, A2D-only and both bounds;
+- reset property test proving no counter accepted after reboot is below the
+  conservative durable replay bound;
+- FOREIGN/UNSUPPORTED/FAULT never migrate;
+- FlashMutationGate priority/timeout regression;
+- full host warnings-as-errors + ASan/UBSan;
+- normal RAK4630 production build and size comparison.
+
+A real hardware persistence/reboot sentinel is desirable after software review,
+but this design section makes no new physical claim.
+
