@@ -85,14 +85,31 @@ int main() {
   assert(!h.enqueueConfirmation(7, 0x1234));
   assert(!h.enqueueConfirmation(8, 0x1234));
 
-  BleApplicationConfirmationEvent confirm;
+  // Regression: loop may have sampled the old outbound-pending state just
+  // before callback HVC + immediate next WRITE. That stale close must not
+  // erase a post-HVC request while the confirmation fact is still pending.
+  h.setIngressAllowed(7, 11, false);
+  assert(h.ingressAllowed());
   assert(h.takeConfirmation(confirm));
   assert(confirm.session_generation == 11);
   assert(confirm.connection_handle == 7);
   assert(confirm.value_handle == 0x1234);
   assert(!h.takeConfirmation(confirm));
+  h.setIngressAllowed(7, 11, true);
   assert(h.takeIngress(in));
   assert(in.frame_len == sizeof(frame_b));
+
+  // Negative side: once the confirmation has been consumed, a close decision
+  // is authoritative again and must clear queued ingress. This models a stale
+  // or otherwise non-matching HVC that loop did not accept for its in-flight
+  // response.
+  assert(h.enqueueIngress(7, frame_b, sizeof(frame_b)));
+  h.setIngressAllowed(7, 11, false);
+  assert(!h.ingressAllowed());
+  assert(!h.takeIngress(in));
+  assert(!h.enqueueIngress(7, frame_b, sizeof(frame_b)));
+
+  h.setIngressAllowed(7, 11, true);
 
   // Replacement session invalidates queued old-session ingress and HVC.
   assert(h.enqueueIngress(7, frame_b, sizeof(frame_b)));
