@@ -1,4 +1,5 @@
 name: Temporary M7P7G HVX validation
+# trigger: second push after workflow registration
 
 on:
   push:
