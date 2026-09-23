@@ -42,6 +42,7 @@ int main() {
   assert(!h.enqueueIngress(7, frame_e, 21));
 
   BleApplicationIngressEvent in;
+  BleApplicationConfirmationEvent confirm;
   assert(h.takeIngress(in));
   assert(in.session_generation == 11);
   assert(in.connection_handle == 7);
