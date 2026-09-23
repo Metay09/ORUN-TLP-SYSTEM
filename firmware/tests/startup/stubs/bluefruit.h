@@ -11,6 +11,13 @@ constexpr SecureMode_t SECMODE_NO_ACCESS = 0;
 constexpr SecureMode_t SECMODE_OPEN = 1;
 
 constexpr uint32_t ERROR_NONE = 0;
+constexpr uint32_t NRF_SUCCESS = 0;
+constexpr uint32_t NRF_ERROR_INVALID_STATE = 1;
+constexpr uint32_t NRF_ERROR_BUSY = 2;
+constexpr uint32_t NRF_ERROR_RESOURCES = 3;
+constexpr uint32_t NRF_ERROR_TIMEOUT = 4;
+constexpr uint32_t NRF_ERROR_DATA_SIZE = 5;
+constexpr uint32_t BLE_ERROR_GATTS_SYS_ATTR_MISSING = 6;
 constexpr uint16_t BLE_GATT_HANDLE_INVALID = 0x0000;
 constexpr uint16_t BLE_CONN_HANDLE_INVALID = 0xFFFF;
 constexpr uint8_t BLE_GATT_HVX_INDICATION = 0x02;
@@ -122,7 +129,7 @@ class BLECharacteristic {
 };
 
 struct BleHvxStub {
-  uint32_t result = 0;
+  uint32_t result = NRF_SUCCESS;
   unsigned calls = 0;
   uint16_t conn_handle = BLE_CONN_HANDLE_INVALID;
   uint16_t value_handle = BLE_GATT_HANDLE_INVALID;

@@ -330,8 +330,15 @@ void beginBleApplicationSession(uint16_t connection_handle) {
   taskEXIT_CRITICAL();
 }
 
-bool trySendBleApplicationIndication(uint16_t connection_handle,
-                                     const uint8_t* frame, uint8_t frame_len) {
+enum class BleApplicationIndicationSubmitResult : uint8_t {
+  kSubmitted,
+  kRetryable,
+  kTerminal,
+};
+
+BleApplicationIndicationSubmitResult trySendBleApplicationIndication(
+    uint16_t connection_handle, const uint8_t* frame, uint8_t frame_len,
+    uint32_t& error_code) {
   uint16_t packet_len = frame_len;
   ble_gatts_hvx_params_t params{};
   params.handle = ble_application_response_value_handle;
@@ -339,8 +346,39 @@ bool trySendBleApplicationIndication(uint16_t connection_handle,
   params.offset = 0;
   params.p_len = &packet_len;
   params.p_data = const_cast<uint8_t*>(frame);
-  const uint32_t result = sd_ble_gatts_hvx(connection_handle, &params);
-  return result == NRF_SUCCESS && packet_len == frame_len;
+  error_code = sd_ble_gatts_hvx(connection_handle, &params);
+
+  if (error_code == NRF_SUCCESS) {
+    if (packet_len == frame_len)
+      return BleApplicationIndicationSubmitResult::kSubmitted;
+    // A successful call must consume the complete bounded frame. Treat an
+    // impossible partial-success result as a local terminal invariant failure
+    // rather than retrying changed/ambiguous state forever.
+    error_code = NRF_ERROR_DATA_SIZE;
+    return BleApplicationIndicationSubmitResult::kTerminal;
+  }
+
+  // Pinned S140 6.1.1 documents these as conditions that may clear without
+  // rebuilding the connection: another indication/procedure is busy, CCCD or
+  // ATT-MTU state changed between the precheck and SVC, system attributes are
+  // still being restored, or transient TX resources are unavailable.
+  switch (error_code) {
+    case NRF_ERROR_BUSY:
+    case NRF_ERROR_INVALID_STATE:
+    case BLE_ERROR_GATTS_SYS_ATTR_MISSING:
+    case NRF_ERROR_RESOURCES:
+      return BleApplicationIndicationSubmitResult::kRetryable;
+    case NRF_ERROR_TIMEOUT:
+      // S140 explicitly requires re-establishing the connection after this
+      // result. Do not leave stop-and-wait wedged in a 25 ms retry loop.
+      return BleApplicationIndicationSubmitResult::kTerminal;
+    default:
+      // Invalid handle/parameter/data/security/attribute errors cannot be
+      // repaired by blindly retrying the same frame. Fail this application
+      // session closed and recover the physical link through the same bounded
+      // disconnect owner used for protocol timeout events.
+      return BleApplicationIndicationSubmitResult::kTerminal;
+  }
 }
 
 bool serviceBleApplicationDisconnectRecovery(
@@ -473,12 +511,31 @@ void pollBleApplicationRuntime(bool connected, uint16_t connection_handle,
   // Do NOT call BLECharacteristic::indicate(): pinned Bluefruit 1.7.0 blocks
   // there waiting for HVC. Non-blocking HVX keeps the cooperative loop alive;
   // onBleEvent() hands the later HVC back for confirmOutboundFrame().
-  if (trySendBleApplicationIndication(ble_application_connection_handle, frame,
-                                      frame_len)) {
+  uint32_t indication_error = NRF_SUCCESS;
+  const BleApplicationIndicationSubmitResult submit_result =
+      trySendBleApplicationIndication(ble_application_connection_handle, frame,
+                                      frame_len, indication_error);
+  if (submit_result == BleApplicationIndicationSubmitResult::kSubmitted) {
     ble_application_indication_in_flight = true;
-  } else {
+  } else if (submit_result ==
+             BleApplicationIndicationSubmitResult::kRetryable) {
     ble_application_next_indication_attempt_ms =
         now + kBleApplicationIndicationRetryMs;
+  } else {
+    // A terminal SVC return is equivalent to terminal ATT progress for this
+    // ORUN application session. In particular, S140 documents
+    // NRF_ERROR_TIMEOUT as requiring connection re-establishment. Tear down
+    // application state first, then let the existing bounded loop-owned
+    // disconnect recovery own the physical link.
+    const uint16_t failed_handle = ble_application_connection_handle;
+    endBleApplicationSession();
+    ble_application_disconnect_pending = true;
+    ble_application_disconnect_handle = failed_handle;
+    ble_application_next_disconnect_attempt_ms = now;
+    Serial.printf("BLE indication submit terminal error=0x%08lX; disconnecting\n",
+                  static_cast<unsigned long>(indication_error));
+    (void)serviceBleApplicationDisconnectRecovery(
+        connected, connection_handle, false, now);
   }
 }
 

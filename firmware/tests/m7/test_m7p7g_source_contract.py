@@ -11,6 +11,8 @@ required = [
     'ble_application_request_characteristic.setWriteCallback(',
     'onBleApplicationWrite, false);',
     'sd_ble_gatts_hvx',
+    'NRF_ERROR_TIMEOUT',
+    'BleApplicationIndicationSubmitResult::kTerminal',
     'BLE_GATTS_EVT_HVC',
     'BLE_GATTS_EVT_TIMEOUT',
     'BLE_GATT_TIMEOUT_SRC_PROTOCOL',
@@ -97,6 +99,9 @@ assert runtime_end is not None, "unterminated pollBleApplicationRuntime() body"
 runtime = src[runtime_start:runtime_end]
 assert "takeGattTimeout" in runtime
 assert "endBleApplicationSession();" in runtime
+assert "BLE indication submit terminal error=" in runtime
+assert "BleApplicationIndicationSubmitResult::kRetryable" in runtime
+assert "BleApplicationIndicationSubmitResult::kTerminal" in runtime
 
 recovery_start = src.index("bool serviceBleApplicationDisconnectRecovery(")
 recovery_brace = src.index("{", recovery_start)

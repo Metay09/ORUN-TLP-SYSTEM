@@ -491,6 +491,55 @@ int main(int argc, char** argv) {
            "BLE ready=yes advertising=no connected=1 policy=open initial_start=ok\n");
     assert(Bluefruit.Advertising.start_calls == 1 && Bluefruit.Advertising.stop_calls == 0);
 
+    // --- Real production GATT path: WRITE -> loop dispatch -> non-blocking
+    // HVX -> exact HVC. This closes the previous host gap where startup only
+    // asserted GATT object composition without exercising indication state.
+    ble_application_response_characteristic.indicate_enabled = true;
+    const uint8_t get_config_1[] = {
+        0x01, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00};
+    const unsigned hvx_before = BluefruitHvx.calls;
+    BluefruitHvx.result = NRF_SUCCESS;
+    ble_application_request_characteristic.simulateWrite(
+        Bluefruit.connHandle(), get_config_1, sizeof(get_config_1));
+    assert(tick(0).empty());
+    assert(BluefruitHvx.calls == hvx_before + 1);
+    assert(BluefruitHvx.conn_handle == Bluefruit.connHandle());
+    assert(BluefruitHvx.value_handle == ble_application_response_value_handle);
+    assert(BluefruitHvx.type == BLE_GATT_HVX_INDICATION);
+    assert(BluefruitHvx.len == 18);
+    assert(BluefruitHvx.data[0] == 0x01 && BluefruitHvx.data[1] == 0x81);
+    assert(BluefruitHvx.data[4] == 0x01 && BluefruitHvx.data[5] == 0x00);
+    assert(ble_application_indication_in_flight);
+    assert(ble_application_transport.outboundFramePending());
+    Bluefruit.simulateHvc(ble_application_response_value_handle);
+    assert(tick(0).empty());
+    assert(!ble_application_indication_in_flight);
+    assert(!ble_application_transport.outboundFramePending());
+
+    // A documented transient HVX return is retried at bounded spacing with
+    // the same pending response, without disconnecting or reopening ingress.
+    const uint8_t get_config_2[] = {
+        0x01, 0x01, 0x03, 0x00, 0x02, 0x00, 0x00, 0x00};
+    BluefruitHvx.result = NRF_ERROR_BUSY;
+    const unsigned transient_hvx_before = BluefruitHvx.calls;
+    ble_application_request_characteristic.simulateWrite(
+        Bluefruit.connHandle(), get_config_2, sizeof(get_config_2));
+    assert(tick(0).empty());
+    assert(BluefruitHvx.calls == transient_hvx_before + 1);
+    assert(!ble_application_indication_in_flight);
+    assert(ble_application_transport.outboundFramePending());
+    assert(!ble_application_handoff.ingressAllowed());
+    assert(!ble_application_disconnect_pending);
+    assert(tick(kBleApplicationIndicationRetryMs - 1).empty());
+    assert(BluefruitHvx.calls == transient_hvx_before + 1);
+    BluefruitHvx.result = NRF_SUCCESS;
+    assert(tick(1).empty());
+    assert(BluefruitHvx.calls == transient_hvx_before + 2);
+    assert(ble_application_indication_in_flight);
+    Bluefruit.simulateHvc(ble_application_response_value_handle);
+    assert(tick(0).empty());
+    assert(!ble_application_transport.outboundFramePending());
+
     // --- Disconnect: framework does NOT restart (restartOnDisconnect(false));
     // the direct event callback counts it; loop restarts and grants a window.
     Bluefruit.simulateDisconnect();
@@ -502,6 +551,42 @@ int main(int argc, char** argv) {
            "BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok\n");
     // Polled-edge + event for the same disconnect: no second start.
     assert(tick(1).empty() && Bluefruit.Advertising.start_calls == 2);
+
+    // --- Terminal HVX SVC return: S140 can report a protocol timeout
+    // directly from sd_ble_gatts_hvx(). That return must take the same
+    // terminal cleanup/disconnect path even if no timeout event handoff is
+    // available to rescue the session.
+    Bluefruit.simulateConnect();
+    tick(0);
+    assert(ble_application_session_active);
+    ble_application_response_characteristic.indicate_enabled = true;
+    const uint8_t get_config_3[] = {
+        0x01, 0x01, 0x03, 0x00, 0x03, 0x00, 0x00, 0x00};
+    BluefruitHvx.result = NRF_ERROR_TIMEOUT;
+    Bluefruit.disconnect_result = false;
+    const unsigned terminal_disconnect_calls = Bluefruit.disconnect_calls;
+    ble_application_request_characteristic.simulateWrite(
+        Bluefruit.connHandle(), get_config_3, sizeof(get_config_3));
+    assert(has(tick(0), "BLE indication submit terminal error="));
+    assert(!ble_application_session_active);
+    assert(!ble_application_handoff.sessionActive());
+    assert(!ble_application_transport.outboundFramePending());
+    assert(ble_application_disconnect_pending);
+    assert(Bluefruit.Periph.connected() == 1);
+    assert(Bluefruit.disconnect_calls == terminal_disconnect_calls + 1);
+    // Existing 1 s recovery cadence applies; terminal submission failure must
+    // not create a fast retry loop or a fresh app session on the dead link.
+    assert(tick(kBleApplicationDisconnectRetryMs - 1).empty());
+    assert(Bluefruit.disconnect_calls == terminal_disconnect_calls + 1);
+    assert(!ble_application_session_active);
+    Bluefruit.disconnect_result = true;
+    BluefruitHvx.result = NRF_SUCCESS;
+    assert(tick(1).empty());
+    assert(Bluefruit.disconnect_calls == terminal_disconnect_calls + 2);
+    assert(Bluefruit.Periph.connected() == 0);
+    assert(ble_application_disconnect_pending);
+    assert(has(tick(0), "BLE advertising restarted\n"));
+    assert(!ble_application_disconnect_pending);
 
     // --- GATTS protocol timeout: callback only hands off the terminal fact;
     // loop tears down the app session and retries physical disconnect without
