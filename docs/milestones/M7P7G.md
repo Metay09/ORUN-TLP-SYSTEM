@@ -1,6 +1,6 @@
 # M7P7G — Real Bluefruit ORUN application GATT wiring
 
-Status: **LATEST SOFTWARE/BUILD + FOCUSED HARDWARE REGRESSION PASS — INDEPENDENT AUDIT PENDING**
+Status: **INDEPENDENT AUDIT PASS WITH FIXES — POST-AUDIT HOST/BUILD REVALIDATION PENDING**
 
 Baseline: `main@9522e391a532f21ef76ee092889d591cb1c2cf78`
 (M7P7F / PR #35 merged).
@@ -273,6 +273,19 @@ The GATT service is not added to the advertising payload, so existing
 advertising name/flags and packet size remain unchanged. The phone discovers
 the service after connection.
 
+The flash partition/layout is also unchanged, but M7P7G's new response CCCD
+creates one additional framework-owned persistence trigger on an already
+secured/bonded link. Pinned Bluefruit 1.7.0 handles a CCCD write by calling
+`BLEConnection::saveCccd()`, which queues `bond_save_cccd()` through
+`ada_callback` and may update the relocated bond/InternalFS sys-attribute
+record when its bytes changed. This stays under the existing M7P7A/Bluefruit
+bond-flash ownership path; the ORUN GET_CONFIG application request itself
+remains read-only and performs no ConfigStore/HistoryStore/SecurityStore flash
+mutation. M7P7G adds no CCCD-toggle rate limiter, so a bonded peer repeatedly
+changing CCCD state can cause additional bond/InternalFS wear. That is an
+explicit framework/storage-security consideration, not a layout overlap or an
+ORUN application-write permission.
+
 ## 12. Validation evidence
 
 Validated code-bearing head:
@@ -423,3 +436,50 @@ Remaining before merge:
 Physical validation does not imply broader provisioning, authorization,
 config-write, messaging, RF or backend behavior; those remain outside M7P7G
 scope.
+
+## 13. Independent final audit disposition
+
+Owner-supplied independent final review targeted
+`fcf187d9f97fc54bfff73a08116db5fc07154700` and returned
+**PASS WITH FIXES** with **no BLOCKER, HIGH or MEDIUM findings**.
+
+Accepted merge-before-fix findings:
+
+- **F-01 LOW — post-HVC ingress race:** a loop-side stale stop-and-wait close
+  could clear a valid WRITE that arrived immediately after callback HVC but
+  before loop consumed the queued confirmation. Production fix
+  `9ac6333bd578b0721d298f7e4846bf636e8724bf` preserves the provisional
+  post-HVC ingress window while the matching confirmation fact is still
+  pending. Regression test
+  `9e59a00e1fc8b4cbc755a59021363f504c20b8f0` reproduces the exact ordering
+  and verifies the queued post-HVC request survives; once the confirmation is
+  consumed, an authoritative close again clears queued ingress.
+- **F-02 LOW — bonded CCCD persistence side effect:** accepted as a
+  documentation/storage-wear finding and recorded in §11 and architecture
+  rules. No runtime ownership/layout fix is required.
+- **F-04 LOW — stale evidence wording:** accepted and corrected in the
+  architecture index so the focused current-head hardware PASS is not
+  described as pending.
+
+Deferred/non-blocking:
+
+- **F-03 LOW — broader HVX classification regression matrix:** current
+  production classification was independently checked against pinned S140
+  6.1.1 and no production defect was found. Existing startup tests exercise
+  representative retryable `NRF_ERROR_BUSY` and terminal
+  `NRF_ERROR_TIMEOUT` runtime paths. Additional table coverage for
+  `NRF_ERROR_INVALID_STATE`, `BLE_ERROR_GATTS_SYS_ATTR_MISSING`,
+  `NRF_ERROR_RESOURCES`, default terminal codes and impossible partial
+  success remains useful but is not a merge blocker for this slice.
+
+The review notes concerning ATT-level acknowledgement of application-rejected
+WRITEs, response-value read permission, Bluefruit prepared-write allocation,
+persistent retryable HVX states and Bluefruit connection-object concurrency are
+retained as scope/platform observations, not M7P7G merge defects.
+
+Because F-01 changes production handoff behavior, the full host
+warnings-as-errors + ASan/UBSan/startup/source-guard suite and the production
+RAK4630 build must be rerun on the post-fix head before merge. The independent
+review did not require a physical BLE rerun for F-01 because GATT properties,
+SoftDevice calls and wire bytes are unchanged; an optional 01/02/reconnect/03
+smoke test may still be collected if desired.
