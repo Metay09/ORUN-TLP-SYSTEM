@@ -1,0 +1,26 @@
+name: Temporary M7P7G HVX validation
+
+on:
+  push:
+    branches:
+      - test/m7p7g-hvx-validation
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run host suite
+        run: ./firmware/tests/run_host_tests.sh
+
+  rak4630:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+      - name: Build production RAK4630
+        run: pio run -d firmware -e rak4630
