@@ -1,6 +1,6 @@
 # M7P7G — Real Bluefruit ORUN application GATT wiring
 
-Status: **LATEST SOFTWARE/BUILD REVALIDATION PASS — FOCUSED HARDWARE REGRESSION + INDEPENDENT AUDIT PENDING**
+Status: **LATEST SOFTWARE/BUILD + FOCUSED HARDWARE REGRESSION PASS — INDEPENDENT AUDIT PENDING**
 
 Baseline: `main@9522e391a532f21ef76ee092889d591cb1c2cf78`
 (M7P7F / PR #35 merged).
@@ -375,17 +375,50 @@ S140 6.1.1 values, and the guard verifies classification in
 `trySendBleApplicationIndication()` while verifying terminal cleanup/disconnect
 behavior in the runtime owner.
 
-No physical claim exists for `740f291...`. The focused current-head hardware
-regression is explicitly **DEFERRED / NOT YET RUN**, not failed.
+Focused owner-run hardware regression was then completed on one real
+RAK4631 with Android nRF Connect using branch head
+`d54b2bb5abaa3a25ae1f48b36385dc856c54303d`. The only commits after the
+revalidated code-bearing head `740f291d3013e63264373f25bcb740dd33097219`
+were documentation-only, so the uploaded firmware image contained the same
+production code and linked size as the software/build-validated head.
+
+Observed physical evidence:
+
+1. production nRFutil/USB DFU upload: **SUCCESS** / `Device programmed.`;
+2. post-upload advertising observed as `ORUN-4B275BA5`; existing bond
+   remained valid;
+3. connect succeeded and the exact ORUN application service
+   `0088f2c3-cc13-4b5d-b025-f7fcb7c71af2` was discovered;
+4. request characteristic
+   `fbf521f6-ce25-4e6a-af6c-c76303803ee3` exposed **WRITE**;
+5. response characteristic
+   `c0ba4044-1242-447b-9f79-e97aa0065ad3` exposed **INDICATE** with CCCD
+   `0x2902`; indications were enabled;
+6. GET_CONFIG request
+   `01-01-03-00-01-00-00-00` produced exact 18-byte response
+   `01-81-03-00-01-00-0A-00-00-03-B4-00-00-00-00-00-00-00`;
+7. a second same-session request with correlation `02 00` produced the
+   matching `02 00` response, providing focused physical HVC/stop-and-wait
+   progression evidence;
+8. explicit client disconnect caused the device to reappear advertising while
+   remaining bonded;
+9. reconnect succeeded, and a fresh request with correlation `03 00`
+   produced the matching `03 00` response, proving
+   disconnect -> re-advertise -> reconnect -> fresh application-session
+   recovery on the current production code.
+
+This current-head focused regression does **not** physically inject the direct
+`sd_ble_gatts_hvx() == NRF_ERROR_TIMEOUT` path or a genuine
+`BLE_GATTS_EVT_TIMEOUT`. The available Android client automatically confirms
+normal indications, so no timeout PASS is claimed. Those terminal paths remain
+software-covered by the validated startup/host fault injection.
 
 Remaining before merge:
 
-1. focused hardware regression of normal connect -> GET_CONFIG -> HVC ->
-   disconnect/re-advertise behavior on the exact revalidated head;
-2. direct physical injection of a genuine ATT protocol timeout is desirable if
-   a practical test client can withhold HVC, but must not be claimed if the
-   available phone client automatically confirms indications;
-3. independent audit and any resulting fix/retest cycle.
+1. independent audit and any resulting fix/retest cycle;
+2. direct physical injection of a genuine ATT protocol timeout remains optional
+   additional evidence if a practical client/harness can withhold HVC; it is
+   not required to claim the normal focused BLE regression above.
 
 Physical validation does not imply broader provisioning, authorization,
 config-write, messaging, RF or backend behavior; those remain outside M7P7G
