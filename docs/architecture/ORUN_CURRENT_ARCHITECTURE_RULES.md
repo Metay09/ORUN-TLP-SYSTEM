@@ -714,13 +714,26 @@ Diagnostics should have one bounded transport-neutral Health/Diagnostics owner. 
 USB Serial already exposes useful reset/storage/radio/activity/RSSI/SNR/path/error
 evidence. Future BLE should expose structured status snapshots, counters and a small
 recent-event view through the same owner rather than mirror an unlimited Serial stream.
-Tracker BLE remains normally OFF. Whenever BLE is open and no client is connected, an
-approximately 10-minute no-client timeout applies; expiry closes BLE. A connected client
-suspends that no-client timeout. On disconnect, a fresh approximately 10-minute no-client
-timeout starts; if nobody reconnects, BLE closes. A separate stalled-session watchdog is
-still required for a client that stays connected without making progress. Gateway profiles
-may keep BLE available when their power/availability contract permits it. Diagnostic data
-may be sensitive, so BLE connection/bonding alone must not imply authorization.
+
+Owner-approved BLE availability direction is now explicit:
+
+- ANIMAL TRACKER and a pure RELAY use the bounded no-client policy: approximately
+  10 minutes while disconnected, no inactivity-based disconnect while a real client
+  remains connected, and a fresh approximately 10-minute window after disconnect;
+- gateway-bridge and MOBILE/SEARCH availability commitments keep BLE continuously
+  available while that service/profile is active;
+- legacy `NodeRole::kBase` alone does **not** imply gateway bridge or always-on BLE;
+- TRACKER/RELAY BLE may later be reopened through an authenticated/authorized TLP v2
+  OPEN_BLE-style command; no unauthenticated TLP v1 shortcut is authorized;
+- a protocol/GATT terminal failure may still force recovery/disconnect; that is
+  distinct from an idle-session timeout;
+- a connected-but-idle watchdog is not a current requirement and should only be
+  introduced if measured power/availability/abuse evidence justifies it.
+
+Current runtime still uses the M7P7B bounded policy uniformly until a dedicated
+profile/service-owned availability slice implements the gateway/mobile distinction.
+Diagnostic data may be sensitive, so BLE connection/bonding alone must not imply
+authorization.
 
 Normal application UI should show useful health/coverage outcomes; detailed user/account
 permissions remain backend-owned, and the app should hide unauthorized controls. Device
@@ -811,4 +824,62 @@ fragment-reassembly timeout). It adds no Bluefruit
 behavior, and is not referenced by production `main.cpp` composition. See
 `docs/milestones/M7P7F.md`. Wiring this contract to real Bluefruit
 callbacks/indications and physical phone validation remain M7P7G.
+
+## 18. RF configuration semantics and radio-platform portability
+
+The authoritative focused record is
+`docs/architecture/ADR_RF_CONFIGURATION_PORTABILITY.md`.
+
+The current RAK4630/RAK4631 + SX1262 stack remains the first-class reference
+implementation. Portability is a constraint on ownership and data semantics, not a
+request to build a generic HAL before a real second platform exists.
+
+Persistent/public RF configuration must carry portable physical/LoRa meaning
+(`tx_power_dbm`, Hz, SF, semantic coding rate, etc.), not SX126x-Arduino
+enum/index/register encodings. The current SX1262 power range, the current driver's
+255-byte receive ceiling and raw private-sync representation are implementation
+capability/encoding facts, not universal ORUN protocol limits.
+
+Keep these distinct:
+
+```text
+requested RF config
+current radio capability
+regional/install policy
+effective RF config
+actually applied radio state
+```
+
+The first TX-power persistence slice keeps 14 dBm as the behavior-preserving
+default. Out-of-capability/out-of-policy candidates are rejected without replacing
+the last working config. Boot recovery and all later USB/BLE/TLP-v2 changes must
+converge on one safe RadioManager application path; do not create separate boot
+and runtime RF programming logic.
+
+RX modem compatibility, RX availability/power policy and any radio-specific
+receiver-gain mode remain separate concerns.
+
+Current concrete SX126x/nRF52 boundaries (`RadioManager`, `patch_radio.py`,
+`radio_driver_gate`) are allowed to remain concrete. When an actual second radio
+or board is selected, extract only the demonstrated driver/board seam required to
+preserve ownership, quiescence, normalized RSSI/SNR, capability reporting and
+semantic RF-config translation.
+
+## 19. TLP v1 development baseline and v2 cutover
+
+Owner state as of 2026-09-23: **there is no deployed/customer ORUN fleet**.
+
+TLP v1 remains the physically useful development/regression baseline and its current
+golden fixtures must not be weakened to make new code pass. This does not create a
+product obligation to carry v1 forever.
+
+The planned secure/multi-service network evolution should move to an explicit TLP v2.
+When v2 is implemented and validated, all owned development devices may be upgraded as
+one cohort and v1 TX/RX may be retired by owner decision. Long-lived dual-stack or
+mixed-fleet compatibility is required only if a real deployed/interoperability need
+exists at cutover time.
+
+Do not spend new feature work adding unauthenticated v1 command families merely to
+avoid starting v2. OPEN_BLE, protected remote configuration, COMMAND/RESULT, trusted
+EVENT/LOST and MESSAGE belong on the reviewed secure v2 path.
 

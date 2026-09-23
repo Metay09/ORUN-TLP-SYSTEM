@@ -107,8 +107,9 @@ For current architecture decisions, use this order:
 2. `ORUN_CURRENT_ARCHITECTURE_RULES.md` — current owner-approved concept,
    ownership and current/runtime-vs-future boundaries;
 3. focused owner-approved design records for the area being changed, currently including
-   `ADR_M7P6_SECURITY_ARCHITECTURE.md` and
-   `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`;
+   `ADR_M7P6_SECURITY_ARCHITECTURE.md`,
+   `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md` and
+   `ADR_RF_CONFIGURATION_PORTABILITY.md`;
 4. current code, tests, golden/compatibility fixtures and milestone/audit reports
    describing the exact commit being changed;
 5. `ORUN_SYSTEM_ARCHITECTURE_V1.md`, `ORUN_ARCHITECTURE_GAP_ANALYSIS.md` and
@@ -130,6 +131,8 @@ Also keep separate:
 - relay forwarding and gateway bridging;
 - hardware support/presence/health and application service enablement;
 - requested configuration and effective runtime state;
+- requested RF semantics, current-radio capability/regional policy and effective/applied RF state;
+- portable RF meaning (dBm/Hz/SF/BW/coding semantics) and current SX126x driver encodings;
 - location freshness/source ownership and GNSS driver/power state;
 - application state and RF delivery/contact truth;
 - persistence owners and transient queues.
@@ -248,10 +251,19 @@ role-owned forwarding or hardware-presence-owned application identity.
 
 Status: **historical protocol recommendation, not a current wire specification**.
 
-Its frozen v1 facts remain applicable. No M6 software slice changes TEST,
-POSITION or RELAY_FORWARD wire bytes. Any future packet family, ACK/contact or
-multi-hop envelope requires an explicit new protocol milestone and mixed-fleet /
-security review.
+Its frozen v1 facts remain applicable to the current development baseline. No
+current slice may silently reinterpret TEST, POSITION or RELAY_FORWARD bytes.
+
+**Owner supersession (2026-09-23):** there is no deployed/customer ORUN fleet.
+The historical plan's conservative long-lived v1/v2 dual-stack migration sequence
+is therefore not a current product requirement. Keep v1 fixtures/regressions until
+the explicit v2 cutover, but once v2 is implemented and validated the owner may
+upgrade all development hardware together and retire v1 TX/RX without carrying
+legacy support into the first production fleet. Add dual-stack/mixed-fleet support
+only if an actual interoperability need exists when cutover occurs.
+
+Any future packet family, ACK/contact or multi-hop envelope still requires an
+explicit protocol/security milestone.
 
 ## 5. Documentation maintenance rule
 
