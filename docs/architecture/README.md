@@ -8,12 +8,14 @@ Android/nRF Connect physical PASS on earlier code head
 `6db1a19047b53e49c63e9605661855e9e6113a72`. The event-based terminal
 GATTS-timeout fix was later software/build revalidated on `ab2977a...`.
 A follow-up audit then found that S140 may also return a terminal
-`NRF_ERROR_TIMEOUT` directly from `sd_ble_gatts_hvx()`; current code-bearing
-candidate `af82b2cfda8cd2fcd162666c9d4d2fda1e796e49` classifies terminal
-versus retryable submission failures and routes terminal returns through the
-same bounded loop-owned disconnect recovery. That newer candidate still needs
-host/build revalidation, focused hardware regression and final independent
-audit. Provisioning, authorization, secure RF/TLP v2 commands, MESSAGE runtime
+`NRF_ERROR_TIMEOUT` directly from `sd_ble_gatts_hvx()`; production source
+fix `af82b2cfda8cd2fcd162666c9d4d2fda1e796e49` classifies terminal versus
+retryable submission failures and routes terminal returns through the same
+bounded loop-owned disconnect recovery. Owner-run host/startup/source-guard
+revalidation plus the production RAK4630 build are PASS on branch head
+`740f291d3013e63264373f25bcb740dd33097219` (22,672 B RAM / 234,440 B
+flash). Focused current-head hardware regression and final independent audit
+remain pending. Provisioning, authorization, secure RF/TLP v2 commands, MESSAGE runtime
 and field-network/serviceability runtime remain later work. M7P7B quantitative
 current remains DEFERRED and GNSS coexistence remains unproven on the tested
 no-GNSS unit; the separate intermittent serial-DFU issue is not closed by the
@@ -109,12 +111,15 @@ The first follow-up review found the missing event-driven
 `BLE_GATTS_EVT_TIMEOUT` recovery and that fix was software/build revalidated
 on `ab2977a...`. A second software audit found that direct
 `sd_ble_gatts_hvx()` terminal returns were still collapsed into the transient
-25 ms retry path. Candidate `af82b2cfda8cd2fcd162666c9d4d2fda1e796e49`
-now treats `NRF_ERROR_TIMEOUT` and other non-retryable submission failures as
-terminal, tears down the ORUN app session and uses the same bounded loop-owned
-physical-disconnect recovery. The latest candidate is not yet software/build or
-hardware revalidated; exact evidence and remaining gates are in
-`docs/milestones/M7P7G.md`.
+25 ms retry path. Production source fix
+`af82b2cfda8cd2fcd162666c9d4d2fda1e796e49` now treats
+`NRF_ERROR_TIMEOUT` and other non-retryable submission failures as terminal,
+tears down the ORUN app session and uses the same bounded loop-owned
+physical-disconnect recovery. Final owner-run host/startup/source-guard
+revalidation and the production RAK4630 build are PASS on
+`740f291d3013e63264373f25bcb740dd33097219`; no physical claim is carried
+forward from the older hardware-validated head. Exact evidence and remaining
+focused-hardware/audit gates are in `docs/milestones/M7P7G.md`.
 
 Owner-approved later application direction is recorded separately in
 `ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`: Entity Registry ownership/offline conflict
