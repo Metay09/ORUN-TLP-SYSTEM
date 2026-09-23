@@ -847,9 +847,12 @@ This remains explicitly distinct from an idle client timeout. Owner-run
 host/startup/source-guard revalidation and the production RAK4630 build are
 **PASS** on branch head
 `740f291d3013e63264373f25bcb740dd33097219`; the current image is
-22,672 B RAM / 234,440 B flash. Focused current-head hardware regression and
-final independent audit remain pending; no newer physical PASS is claimed.
-Exact evidence is in `docs/milestones/M7P7G.md`.
+22,672 B RAM / 234,440 B flash. Focused current-head hardware regression is
+also **PASS** on one real RAK4631 + Android nRF Connect for normal
+GET_CONFIG/HVC, disconnect/re-advertise and reconnect/fresh-session behavior.
+A genuine ATT timeout was not physically injected and is not claimed. Final
+independent audit remains pending. Exact evidence is in
+`docs/milestones/M7P7G.md`.
 
 ## 18. RF configuration semantics and radio-platform portability
 
