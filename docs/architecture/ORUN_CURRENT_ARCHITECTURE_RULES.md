@@ -828,18 +828,26 @@ fragment-reassembly timeout). It adds no Bluefruit
 behavior, and is not referenced by production `main.cpp` composition. See
 `docs/milestones/M7P7F.md`.
 
-M7P7G (active branch `feat/m7p7g-ble-app-gatt`) wires that exact contract into
-real Bluefruit WRITE + INDICATE characteristics. The normal GET_CONFIG/HVC,
-disconnect/reconnect, stale-fragment and disabled-indication stop-and-wait paths
-have focused physical Android/nRF Connect PASS on code head
-`6db1a19047b53e49c63e9605661855e9e6113a72`. After independent review exposed a
-missing terminal GATTS protocol-timeout recovery, the branch added a bounded
-callback->loop timeout fact, immediate ingress closure, loop-owned app-session
-teardown and bounded-retry `Bluefruit.disconnect()`. This recovery is explicitly
-not a connected-client inactivity timeout. Full host/sanitizer/warnings/startup
-coverage and production RAK4630 build pass on the timeout-recovery branch; focused
-hardware regression of the new head and final independent audit remain pending.
-Exact evidence is in `docs/milestones/M7P7G.md`.
+M7P7G (active branch `feat/m7p7g-ble-app-gatt`) wires that exact
+contract into real Bluefruit WRITE + INDICATE characteristics. The normal
+GET_CONFIG/HVC, disconnect/reconnect, stale-fragment and disabled-indication
+stop-and-wait paths have focused physical Android/nRF Connect PASS on code head
+`6db1a19047b53e49c63e9605661855e9e6113a72`. Independent review then
+exposed a missing terminal GATTS protocol-timeout recovery; the event-based
+fix was software-revalidated through host/sanitizer/warnings/startup coverage
+and the production RAK4630 build on `ab2977a63c6f7945935a06ae93d2895dd64938cb`.
+
+A later software audit found a narrower follow-up gap: pinned S140 6.1.1 can
+return `NRF_ERROR_TIMEOUT` directly from `sd_ble_gatts_hvx()`, while the
+adapter previously retried every failed submission at 25 ms. Current
+code-bearing candidate `af82b2cfda8cd2fcd162666c9d4d2fda1e796e49`
+separates retryable HVX submission states from terminal returns and routes
+terminal returns through the same loop-owned application teardown + bounded
+physical-disconnect recovery. This remains explicitly distinct from an idle
+client timeout. The newer candidate has **not yet inherited** the prior
+software/build or physical PASS evidence; host/build revalidation, focused
+hardware regression and final independent audit remain pending. Exact evidence
+is in `docs/milestones/M7P7G.md`.
 
 ## 18. RF configuration semantics and radio-platform portability
 

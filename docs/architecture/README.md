@@ -1,7 +1,23 @@
 # ORUN Architecture Documentation Index
 
 Status: **CURRENT documentation governance index**.
-Last reviewed against merged main through M7P7F (`main@9522e391a532f21ef76ee092889d591cb1c2cf78`) plus the active M7P7G branch checkpoint. M7P7G now wires the frozen M7P7F contract to real Bluefruit GATT for read-only `GET_CONFIG`; its earlier code-bearing head `6db1a19047b53e49c63e9605661855e9e6113a72` has focused Android/nRF Connect physical PASS. Independent review then found a missing terminal `BLE_GATTS_EVT_TIMEOUT` recovery path; the fix is implemented and software-revalidated on the current branch, while the focused physical regression of that timeout-recovery head and the final independent audit remain pending. Provisioning, authorization, secure RF/TLP v2 commands, MESSAGE runtime and field-network/serviceability runtime remain later work. M7P7B quantitative current remains DEFERRED and GNSS coexistence remains unproven on the tested no-GNSS unit; the separate intermittent serial-DFU issue is not closed by the successful UF2 recovery path.
+Last reviewed against merged main through M7P7F
+(`main@9522e391a532f21ef76ee092889d591cb1c2cf78`) plus the active M7P7G
+branch checkpoint. M7P7G's normal read-only GET_CONFIG GATT path has focused
+Android/nRF Connect physical PASS on earlier code head
+`6db1a19047b53e49c63e9605661855e9e6113a72`. The event-based terminal
+GATTS-timeout fix was later software/build revalidated on `ab2977a...`.
+A follow-up audit then found that S140 may also return a terminal
+`NRF_ERROR_TIMEOUT` directly from `sd_ble_gatts_hvx()`; current code-bearing
+candidate `af82b2cfda8cd2fcd162666c9d4d2fda1e796e49` classifies terminal
+versus retryable submission failures and routes terminal returns through the
+same bounded loop-owned disconnect recovery. That newer candidate still needs
+host/build revalidation, focused hardware regression and final independent
+audit. Provisioning, authorization, secure RF/TLP v2 commands, MESSAGE runtime
+and field-network/serviceability runtime remain later work. M7P7B quantitative
+current remains DEFERRED and GNSS coexistence remains unproven on the tested
+no-GNSS unit; the separate intermittent serial-DFU issue is not closed by the
+successful UF2 recovery path.
 Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 
 
@@ -85,18 +101,20 @@ See
 physical phone validation remain M7P7G.
 
 Active M7P7G application-GATT integration (branch
-`feat/m7p7g-ble-app-gatt`) now performs the exact M7P7F request/response contract
+`feat/m7p7g-ble-app-gatt`) performs the exact M7P7F request/response contract
 through real Bluefruit WRITE + INDICATE characteristics and the shared
 `ApplicationRequestService`. The normal path has focused physical Android/nRF
 Connect evidence on code head `6db1a19047b53e49c63e9605661855e9e6113a72`.
-A later independent review correctly identified that the non-blocking indication
-path could wedge after a protocol-source `BLE_GATTS_EVT_TIMEOUT`; the branch now
-hands that terminal fact to loop-owned recovery, tears down the ORUN app session
-and requests a bounded-retry physical disconnect without adding a connected-client
-inactivity timeout. Full host/sanitizer/warnings/startup coverage and the RAK4630
-production build pass on the timeout-recovery branch; exact evidence and remaining
-focused-hardware/audit gates are in `docs/milestones/M7P7G.md`.
-
+The first follow-up review found the missing event-driven
+`BLE_GATTS_EVT_TIMEOUT` recovery and that fix was software/build revalidated
+on `ab2977a...`. A second software audit found that direct
+`sd_ble_gatts_hvx()` terminal returns were still collapsed into the transient
+25 ms retry path. Candidate `af82b2cfda8cd2fcd162666c9d4d2fda1e796e49`
+now treats `NRF_ERROR_TIMEOUT` and other non-retryable submission failures as
+terminal, tears down the ORUN app session and uses the same bounded loop-owned
+physical-disconnect recovery. The latest candidate is not yet software/build or
+hardware revalidated; exact evidence and remaining gates are in
+`docs/milestones/M7P7G.md`.
 
 Owner-approved later application direction is recorded separately in
 `ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`: Entity Registry ownership/offline conflict

@@ -1,6 +1,6 @@
 # M7P7G — Real Bluefruit ORUN application GATT wiring
 
-Status: **TIMEOUT-RECOVERY SOFTWARE REVALIDATION PASS — FOCUSED HARDWARE REGRESSION + INDEPENDENT AUDIT PENDING**
+Status: **HVX TERMINAL-RETURN FIX CANDIDATE — HOST/BUILD REVALIDATION + FOCUSED HARDWARE REGRESSION + INDEPENDENT AUDIT PENDING**
 
 Baseline: `main@9522e391a532f21ef76ee092889d591cb1c2cf78`
 (M7P7F / PR #35 merged).
@@ -177,6 +177,33 @@ This is protocol-failure recovery, not a connected-client idle watchdog. The
 owner-approved policy remains: a healthy connected client is not disconnected
 merely because it has been idle for some duration.
 
+### 8.1 Direct HVX terminal-return recovery
+
+A follow-up software audit found a second terminal-progress gap after the
+event-based timeout recovery was added. Pinned S140 6.1.1 documents that
+`sd_ble_gatts_hvx()` itself may return `NRF_ERROR_TIMEOUT`, meaning no new
+GATT procedure can proceed until the connection is re-established. The previous
+adapter collapsed every non-success HVX return into the same 25 ms retry path.
+If a terminal return were observed without the timeout-event handoff rescuing
+the session first, ORUN could keep the outbound response pending and ingress
+closed indefinitely.
+
+Code-bearing candidate `af82b2cfda8cd2fcd162666c9d4d2fda1e796e49`
+therefore classifies direct HVX submission results:
+
+- `NRF_SUCCESS` with the complete frame consumed -> submitted / await HVC;
+- documented transient states (`NRF_ERROR_BUSY`, `NRF_ERROR_INVALID_STATE`,
+  `BLE_ERROR_GATTS_SYS_ATTR_MISSING`, `NRF_ERROR_RESOURCES`) -> retain the
+  identical frame and retry no faster than the existing 25 ms spacing;
+- `NRF_ERROR_TIMEOUT`, impossible partial-success, and other non-retryable
+  submission errors -> terminal application-session cleanup followed by the
+  same loop-owned, one-second-spaced physical disconnect recovery used by the
+  protocol-timeout event path.
+
+No SoftDevice/Bluefruit call is moved into callback context. This change does
+not add an idle/session-duration timeout and does not alter M7P7F wire bytes,
+GATT properties, TLP v1, RF, storage or authorization semantics.
+
 ## 9. Fragment timeout ordering
 
 Each loop tick calls `BleApplicationTransport::poll(now)` before consuming a
@@ -204,10 +231,14 @@ No background timer is introduced.
 - replacement session clears old ingress/HVC/timeout facts;
 - exact disconnect cleanup and reconnect reuse.
 
-The production startup stub additionally exercises the loop-owned GATTS-timeout
-recovery path, including a failed first physical disconnect request, bounded
-retry spacing, no fresh application session on the terminal ATT link, real
-disconnect observation and normal advertising restart.
+The production startup stub additionally exercises the real loop-owned
+GET_CONFIG -> non-blocking HVX -> HVC path, a documented transient
+`NRF_ERROR_BUSY` submission with 25 ms retry spacing, direct
+`NRF_ERROR_TIMEOUT` terminal-return cleanup/disconnect recovery, and the
+event-driven GATTS-timeout recovery path. Both terminal paths cover a failed
+first physical disconnect request, bounded one-second retry spacing, no fresh
+application session on the terminal ATT link, real disconnect observation and
+normal advertising restart.
 
 `test_m7p7g_source_contract.py` guards production composition:
 
@@ -307,17 +338,27 @@ Timeout-recovery software revalidation was completed on
    **+548 B RAM / +7,972 B flash**.
 
 No new physical claim is made for the timeout-recovery head. The owner did not
-have the device available during this revalidation session, so the focused
+have the device available during that revalidation session, so the focused
 hardware regression is explicitly **DEFERRED / NOT YET RUN**, not failed.
+
+The follow-up HVX terminal-return fix at
+`af82b2cfda8cd2fcd162666c9d4d2fda1e796e49` is a newer code-bearing
+candidate. The PASS results above belong to `ab2977a...` and must not be
+carried forward to this candidate until the normal host/startup/source-guard
+suite and production RAK4630 build are rerun. No physical claim exists for
+`af82b2cf...`.
 
 Remaining before merge:
 
-1. focused hardware regression of normal connect -> GET_CONFIG -> HVC ->
-   disconnect/re-advertise behavior on the current head;
-2. direct physical injection of a genuine ATT protocol timeout is desirable if
+1. full host warnings-as-errors + ASan/UBSan/startup/source-guard revalidation
+   on the latest code-bearing head, followed by the production RAK4630 build
+   and size record;
+2. focused hardware regression of normal connect -> GET_CONFIG -> HVC ->
+   disconnect/re-advertise behavior on that exact revalidated head;
+3. direct physical injection of a genuine ATT protocol timeout is desirable if
    a practical test client can withhold HVC, but must not be claimed if the
    available phone client automatically confirms indications;
-3. independent audit and any resulting fix/retest cycle.
+4. independent audit and any resulting fix/retest cycle.
 
 Physical validation does not imply broader provisioning, authorization,
 config-write, messaging, RF or backend behavior; those remain outside M7P7G
