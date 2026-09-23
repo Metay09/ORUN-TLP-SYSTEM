@@ -1,6 +1,6 @@
 # M7P7G — Real Bluefruit ORUN application GATT wiring
 
-Status: **IMPLEMENTED CANDIDATE — HOST/BUILD/PHYSICAL VALIDATION PENDING**
+Status: **SOFTWARE + PHYSICAL VALIDATION PASS — INDEPENDENT AUDIT PENDING**
 
 Baseline: `main@9522e391a532f21ef76ee092889d591cb1c2cf78`
 (M7P7F / PR #35 merged).
@@ -198,28 +198,57 @@ The GATT service is not added to the advertising payload, so existing
 advertising name/flags and packet size remain unchanged. The phone discovers
 the service after connection.
 
-## 11. Required validation before merge
+## 11. Validation evidence
+
+Validated code-bearing head:
+`6db1a19047b53e49c63e9605661855e9e6113a72`.
 
 Software:
 
-1. focused M7P7G handoff test with `-Wall -Wextra -Werror` + ASan/UBSan;
-2. M7P7G source ownership/property guard;
-3. full host suite;
-4. production `pio run -d firmware -e rak4630`;
-5. record RAM/flash delta versus M7P7F (22,124 B / 226,292 B);
-6. independent audit and any fix/retest cycle.
+1. full host suite: **PASS**, including all existing regression/startup cases;
+2. M7P7G handoff test: **PASS** under the host suite's
+   `-Wall -Wextra -Werror` + ASan/UBSan portable flags;
+3. M7P7G source ownership/property guard: **PASS**;
+4. production `pio run -d firmware -e rak4630`: **SUCCESS**;
+5. linked production size: **22,648 B RAM / 233,320 B flash**;
+6. delta versus M7P7F reference (22,124 B / 226,292 B):
+   **+524 B RAM / +7,028 B flash**;
+7. production upload through nRFutil/USB DFU: **SUCCESS** (`Device programmed.`).
 
-Physical RAK4631 + phone:
+Physical RAK4631 + Android nRF Connect:
 
-1. flash production candidate and verify normal boot/admission behavior;
-2. nRF Connect sees existing `ORUN-XXXXXXXX` name;
-3. after connect, discover exact ORUN service + request/response UUIDs;
-4. enable indications on response characteristic;
-5. WRITE WITH RESPONSE an 8-byte GET_CONFIG frame;
-6. receive and decode exact 18-byte GET_CONFIG indication;
-7. disconnect/reconnect and repeat with no stale response;
-8. partial-fragment then disconnect/reconnect leaves no stale partial;
-9. non-reader/unconfirmed-response behavior does not execute a second request;
-10. confirm existing post-disconnect advertising restart/admission still works.
+1. post-upload boot/advertising observed as `ORUN-4B275BA5`; existing bond
+   remained valid;
+2. after service refresh, exact ORUN application service
+   `0088f2c3-cc13-4b5d-b025-f7fcb7c71af2` discovered;
+3. exact request characteristic
+   `fbf521f6-ce25-4e6a-af6c-c76303803ee3` discovered with **WRITE** only;
+4. exact response characteristic
+   `c0ba4044-1242-447b-9f79-e97aa0065ad3` discovered with **INDICATE** and
+   CCCD `0x2902`;
+5. enabling indications succeeded;
+6. GET_CONFIG request
+   `01-01-03-00-01-00-00-00` produced exact 18-byte response
+   `01-81-03-00-01-00-0A-00-00-03-B4-00-00-00-00-00-00-00`;
+   decoded result: status OK, backend-ready + committed flags,
+   tracking interval 180 s, battery capacity 0 mAh;
+7. same-session HVC/stop-and-wait progression verified by a second request
+   with correlation `02 00`, which returned correlation `02 00`;
+8. disconnect caused the device to reappear advertising, then reconnect
+   succeeded and correlation `03 00` completed normally;
+9. a START-only partial with correlation `04 00` generated no response;
+   after disconnect/reconnect, an END-only continuation for the old
+   correlation generated no response, while fresh correlation `05 00`
+   completed normally;
+10. with indications disabled, correlation `06 00` produced no indication;
+    correlation `07 00` was then written while the first response remained
+    pending. Re-enabling indications surfaced the pending correlation
+    `06 00` response; no correlation `07 00` response was observed during
+    this test. This is the physical stop-and-wait/non-reader evidence collected
+    for this slice.
 
-Do not claim physical PASS until those observations are actually collected.
+Physical validation does not imply broader provisioning, authorization,
+config-write, messaging, RF or backend behavior; those remain outside M7P7G
+scope.
+
+Remaining before merge: independent audit and any resulting fix/retest cycle.
