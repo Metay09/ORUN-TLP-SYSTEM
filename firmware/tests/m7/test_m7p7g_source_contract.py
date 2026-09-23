@@ -12,6 +12,7 @@ required = [
     'onBleApplicationWrite, false);',
     'sd_ble_gatts_hvx',
     'BLE_GATTS_EVT_HVC',
+    'evt->evt.gatts_evt.conn_handle',
 ]
 for token in required:
     assert token in src, f"missing M7P7G source contract token: {token}"
