@@ -127,9 +127,12 @@ M7P7G instead:
 5. receives `BLE_GATTS_EVT_HVC` through the bounded callback handoff;
 6. only then calls `confirmOutboundFrame(session_generation)`.
 
-Failed HVX submission never advances the transport cursor and is retried with
-the identical frame after a bounded 25 ms minimum retry spacing. No Serial spam
-is emitted on retry.
+HVX submission never advances the transport cursor unless the indication is
+successfully queued and later confirmed by HVC. Documented transient submission
+states retain the identical frame and retry after the bounded 25 ms minimum
+spacing. Terminal submission failures do **not** retry indefinitely: they tear
+down the ORUN application session and enter the bounded physical-disconnect
+recovery described in §8.1. No Serial spam is emitted for transient retries.
 
 ## 7. Session/disconnect ordering
 
