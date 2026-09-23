@@ -382,8 +382,7 @@ versioning, ORUN-specific vectors and CryptoCell readiness/error handling.
 No build or physical test is claimed for M7P6D because this slice changes only
 documentation.
 
-Before **production secure-envelope runtime** consumes this candidate contract,
-remaining gates are:
+The original gate list for production secure-envelope runtime was:
 
 - independent ORUN-specific host vectors for the candidate KDF + CCM inputs;
 - matching RAK4630/RAK4631 KAT for those exact bytes;
@@ -393,9 +392,26 @@ remaining gates are:
 - authority/backend A2D reserve-ahead crash/restore tests when that component
   exists.
 
-The immediate next code-bearing slice should be the focused **CryptoCell +
-Bluefruit/SoftDevice coexistence proof**, and it should reuse the exact candidate
-ORUN KDF/nonce/CCM bytes so that its host vectors and RAK KAT close the first
-three gates together rather than creating another synthetic format. The smallest
-required device-side replay-persistence slice follows. Full v2 wire bytes should
-not be implemented until those gates are closed.
+**2026-09-23 gate update:** M7P6E and its corrected fresh-pairing follow-up close
+the first three gates for the exact pinned candidate path. The candidate D2A/A2D
+KDF keys, 13-byte nonce and probe CCM result were independently regenerated on
+the host, matched on RAK hardware, and the scoped Bluefruit/SoftDevice/CC310
+fresh-pairing coexistence run passed. This does not freeze the final v2 header or
+AAD and is not a claim of arbitrary CC310 thread-safety.
+
+The immediate next device-side security foundation is therefore the smallest
+reviewed **A2D replay high-water-mark persistence** slice. It must commit the
+authenticated receive HWM durably before protected application dispatch, use
+power-cut-safe fail-closed recovery, budget flash wear/admission, and ensure
+unauthenticated traffic cannot cause flash mutation. It must not allocate final
+v2 wire bytes merely to test persistence.
+
+After that persistence gate is closed, the secure-envelope wire milestone may
+freeze the complete v2 header/AAD/MTU and production codec/crypto boundary using
+the already-proven KDF/nonce candidate. Authority/backend A2D reserve-ahead
+crash/restore testing becomes mandatory when that cryptographic sender component
+exists and before protected A2D traffic is called production-ready.
+
+Provisioning/commissioning remains a separate prerequisite for using real
+production credentials; its authority-key custody and ownership ceremony must be
+reviewed before exposing a production credential-write transport.
