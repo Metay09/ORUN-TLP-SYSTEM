@@ -44,11 +44,17 @@ Merged security pre-wire candidate (M7P6D): M7P6D is a
 documentation-only pre-wire **candidate contract** for direction-separated HKDF
 traffic keys, 13-byte AES-CCM nonce construction, replay ownership/power-cut
 semantics and the Bluefruit/CryptoCell lifecycle boundary. Independent security
-review found no BLOCKER and its HIGH/MEDIUM documentation findings are resolved
-on the branch. It does not allocate v2 bytes or change production runtime. The
-candidate is still not implementation-frozen until ORUN-specific host/RAK
-vectors, Bluefruit/SoftDevice/CC310 coexistence proof and the later persistence
-gates pass. See `docs/milestones/M7P6D.md`.
+review found no BLOCKER and its HIGH/MEDIUM documentation findings are resolved.
+M7P6E plus the corrected fresh-pairing follow-up have since closed the
+candidate ORUN host-vector, matching RAK KAT and scoped
+Bluefruit/SoftDevice/CC310 coexistence gates. The remaining mandatory
+device-side pre-wire foundation is durable fail-closed A2D replay-HWM
+persistence. M7P6D now records the candidate implementation contract: an
+explicit SecurityStore format-v2 migration, a shared typed security-state log,
+and reserve-ahead A2D replay persistence with an initial 8-counter block-size
+candidate. Final v2 header/AAD/MTU bytes and provisioning authority/key custody
+are still deliberately unfrozen. It does not allocate v2 bytes or
+change production runtime. See `docs/milestones/M7P6D.md`.
 
 Merged test-only security coexistence probe (M7P6E):
 M7P6E uses the full production source graph with fixed public M7P6D candidate
