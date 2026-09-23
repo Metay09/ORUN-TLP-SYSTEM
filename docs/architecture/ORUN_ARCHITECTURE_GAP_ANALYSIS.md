@@ -8,6 +8,79 @@ Target rationale and cross-cutting contracts are in
 Evidence paths are relative to the repository root. Symbol names identify the
 reviewed code without relying on line numbers that will shift in later work.
 
+## 2026-09-23 coverage update
+
+This section updates implementation coverage without rewriting the historical
+G01-G24 finding bodies below. Those finding bodies remain the audit record for
+`main@aa3bbf810a37034d9a3d9066ede4bf579646adfe` on 2026-09-14.
+
+Coverage was reviewed against merged `main@9522e391a532f21ef76ee092889d591cb1c2cf78`
+(M7P7F / PR #35) plus the active, **not-yet-merged**
+`feat/m7p7g-ble-app-gatt@253e7ea927b24f1f5cb01e50f45304d1cd5323b6`.
+An active-branch result is not merged product behavior and must not be cited as
+`main` evidence. Physical evidence also remains tied to the exact code-bearing
+head recorded by each milestone.
+
+Status meanings:
+
+- **CLOSED:** the original gap's scoped architectural defect is removed in the
+  current merged design/production path; later product extensions may still exist.
+- **FOUNDATION CLOSED:** the dangerous ownership/architecture gap is closed, but
+  the complete user-facing feature intentionally remains later work.
+- **PARTIAL:** meaningful implementation exists, but a required product/runtime
+  portion of the original target remains open.
+- **OPEN:** the required foundation/runtime does not yet exist and gates dependent
+  work.
+- **DEFERRED:** intentionally not required until its recorded dependency/use case.
+
+| Gap | 2026-09-23 status | Current coverage / remaining boundary |
+| --- | --- | --- |
+| G01 Role conflates application and forwarding | **FOUNDATION CLOSED** | B3/B4 separate relay forwarding from legacy role and allow tracking + relay to be represented. Production requested intent still comes from the legacy compatibility projection until a reviewed persistent configuration surface replaces it. |
+| G02 AUTO infers responsibility from GNSS | **FOUNDATION CLOSED** | AUTO is preserved only as the unprovisioned legacy bootstrap. Requested/capability/effective state is separated, but explicit persisted provisioning/config precedence is not yet production-owned. |
+| G03 POSITION encoder coupled to GnssFix and radio | **CLOSED** | B2 introduced portable `GnssFix`, independent `DeviceIdentity` and pure legacy POSITION mapping. Production PositionFlow no longer depends on RadioManager for POSITION construction. |
+| G04 SparkFun dependency in public GNSS header | **FOUNDATION CLOSED** | Portable consumers can use `gnss_fix.h` without SparkFun. The concrete u-blox implementation remains inside GnssManager; broader driver extraction is intentionally deferred until a real second platform requires it. |
+| G05 Identity owned by radio initialization | **CLOSED** | Production resolves RAK DeviceIdentity before radio startup and injects it into radio/history/position ownership. Existing legacy IDs remain byte-stable. |
+| G06 Flash contract mixes platform declaration and geometry | **DEFERRED** | Current RAK flash ownership is explicit and guarded. Further board-contract cleanup is due only when a real second platform demonstrates the need. |
+| G07 New persistence and BLE need a verified partition plan | **FOUNDATION CLOSED** | M7P1-P7 allocate and enforce separate SecurityStore, ConfigStore, relocated bond/InternalFS and HistoryStore ownership with SoftDevice-aware flash arbitration. DFU preservation/rollback and broader physical power-cut evidence remain open. |
+| G08 No general configuration persistence | **PARTIAL** | M7P5 ConfigStore durably owns `tracking_interval_seconds` and `battery_capacity_mah`. General profile/service/relay/location/RF/geofence configuration migration and revisioned whole-candidate persistence remain later work. |
+| G09 No transport-independent command/config boundary | **PARTIAL** | M7P7D/E provide a fixed-memory ApplicationRequestService/requester boundary; USB and M7P7G BLE both adapt into it for read-only GET_CONFIG. Authenticated issuer context and protected writes/commands remain security-gated. |
+| G10 Location source ownership and durable last-known missing | **PARTIAL** | GNSS is separated from generic Location semantics and M6C3 accepts source-neutral accepted positions. PHONE/MANUAL ownership, active-source generation, persistent last-valid point and product freshness state remain unimplemented. |
+| G11 NODE_LOCATION and movement suspicion absent | **DEFERRED** | Still future work, to follow explicit location-source and protocol evolution decisions. |
+| G12 EVENT transport and authenticated contact absent | **OPEN** | No authenticated EVENT/receipt/contact runtime exists. This still blocks trustworthy network-contact LOST and critical-event delivery claims. |
+| G13 Compact heterogeneous telemetry absent | **DEFERRED** | No generic telemetry family is needed until the first non-position telemetry service is implemented. |
+| G14 Relay envelope and network events are POSITION-specific | **PARTIAL** | TLP v1 remains intentionally frozen for development compatibility. Current architecture now directs new protected multi-service traffic to an explicit secure TLP v2 path; the generic authenticated runtime envelope is not yet implemented. |
+| G15 Command execution and actuator safety not modeled in code | **DEFERRED** | No actuation product path is authorized before security, idempotency, expiry, result and physical fail-safe gates. |
+| G16 Human messaging, user identity and mailbox absent | **DEFERRED** | Entity/MESSAGE ownership and routing direction are documented, but no MESSAGE runtime/backend/app mailbox exists. |
+| G17 No shared traffic admission/QoS policy | **PARTIAL** | Existing position/relay paths are bounded and tracker RX availability has been made explicit, but no common multi-class airtime scheduler exists for events/backlog/messages/commands. |
+| G18 Security and replay lifecycle missing | **PARTIAL — BLOCKING DEPENDENTS** | SecurityStore, TX nonce persistence, CryptoCell KATs, secure-envelope pre-wire design and scoped CryptoCell/Bluefruit coexistence evidence exist. Production commissioning, secure TLP v2 envelope, RX replay state, application authorization and key/authority lifecycle are still open. |
+| G19 Hardware adaptation still concentrated in managers | **DEFERRED** | RAK4630/RAK4631 remains the owned reference platform. No speculative HAL is justified before a second real platform exists. |
+| G20 GNSS power modes and shared sensor resources need evidence | **PARTIAL** | Sensor rail ownership, bounded recovery, accelerometer integration and tracker post-TX RX window behavior are implemented. Quantitative system current, GNSS backup/power-save evidence and full energy policy remain unmeasured/unimplemented. |
+| G21 History retention and delivery are bounded foundations | **PARTIAL** | Store-before-send history and delivery/replay ownership seams exist. Authenticated receipts, custody semantics and automatic live-first backlog replay remain absent. |
+| G22 Backend/UI/gateway semantics not implemented | **DEFERRED / OPEN FOR M8** | Offline/local gateway, Entity Registry, truthful freshness and app/backend semantics are documented only; no production Android/backend/gateway bridge exists. |
+| G23 Test/version/DFU contracts need incremental expansion | **PARTIAL** | Golden compatibility, startup/fault tests, sanitizer/warnings gates, storage guards and multiple focused hardware gates are substantially stronger. Product DFU preservation, rollback/authenticity and schema migration evidence remain open. |
+| G24 Physical validation incomplete | **PARTIAL — ONGOING** | Focused physical evidence now exists for direct GNSS→POSITION, accelerometer diagnostics, tracker RX-window behavior, BLE lifecycle/bond/LoRa coexistence and normal M7P7G GATT on its recorded head. Quantitative power, long-range/scale RF, enclosure/mechanics, destructive power-cut matrices and several latest-head regressions remain open. |
+| G25 Battery/energy observability and power-health policy | **OPEN — BEFORE FIELD PILOT** | Battery capacity can be stored, but production battery voltage/SOC/charge/solar state, low/critical thresholds, user-visible power health and measured runtime budget are not implemented. See the new finding below. |
+
+### Coverage conclusions
+
+1. G03 and G05 are closed at their original architectural scope.
+2. G01/G02/G04/G07 have their dangerous foundation gaps closed without claiming
+   that the final product feature set is complete.
+3. G12 and the remaining G18 secure-runtime work are the principal blockers for
+   trusted EVENT/LOST, remote configuration, OPEN_BLE, COMMAND/RESULT, private
+   location and MESSAGE.
+4. G08/G09/G10/G17/G21 are intentionally partial foundations and should be
+   extended only when their next real product consumer arrives.
+5. G06/G11/G13/G15/G16/G19/G22 remain intentionally deferred rather than
+   accidental omissions.
+6. G24 is not a one-time task: every hardware-sensitive milestone keeps its own
+   exact physical evidence boundary.
+7. G25 is newly registered because energy/battery behavior was present in the
+   system architecture but had no explicit gap-register owner. It does not block
+   M7P7G closure or the secure-envelope foundation, but it must close to an
+   appropriate field-pilot level before claiming deployable animal-tracker
+   battery health or endurance.
+
 ## Priority and timing
 
 - **P0:** current unsafe behavior or blocker requiring immediate correction to
@@ -413,11 +486,29 @@ future capability described in the target.
 | Tests | Pending full chain, stuck SDA/SCL, deliberate watchdog stall, flash cuts, electrical rail, current, field range and enclosure. |
 | Recommended milestone | Immediately required evidence tracking; relevant hardware gates before declaring M6 integration/field readiness. |
 
+### G25 — Battery / energy observability and power-health policy (P2; new 2026-09-23 finding)
+
+| Field | Assessment |
+| --- | --- |
+| Current state | `battery_capacity_mah` is a durable ConfigStore field but is informational only. Production has no authoritative battery voltage/SOC/charge-state/solar observation service, no low/critical battery policy, no user-visible energy-health contract and no measured end-to-end runtime budget. M7P7B quantitative BLE current remains explicitly deferred. |
+| Risk | A field tracker can become energy-degraded or fail without the product distinguishing low battery, charging failure, abnormal consumption, radio/GNSS availability tradeoffs or an actually dead/offline device. Capacity configured in mAh can also be mistaken for measured state if the UI boundary is not explicit. |
+| Target state | A bounded power-health owner separates configured capacity from measured voltage/SOC/charge/external-power/solar observations, exposes validity/age/health, and feeds explicit low/critical power policy without silently rewriting requested services. Runtime/endurance claims are based on hardware measurements under representative GNSS/RF/BLE/storage workloads. |
+| Smallest change | First verify the actual owned RAK battery/charge measurement path and available signals; add only the minimal normalized observation/diagnostic seam required by that hardware. Do not invent coulomb counting or solar telemetry unsupported by the board. Policy thresholds and adaptive behavior come only after measurement evidence. |
+| Dependencies | Current power/resource ownership; Health/Diagnostics direction; representative enclosure/battery/solar hardware; G17 if energy policy changes RF/backlog admission. Protected remote power-policy changes additionally depend on G18. |
+| Compatibility impact | No TLP v1 reinterpretation. Existing tracking/RF/GNSS behavior remains unchanged until an explicit reviewed power-policy milestone authorizes degradation or scheduling changes. |
+| Wire impact | None for local observation first. Any later battery telemetry/event bytes require an explicitly versioned telemetry/event contract rather than overloading POSITION. |
+| Storage impact | No new persistence is required for the first live health observation. Durable energy history/threshold configuration requires an explicit schema/retention owner and must not be mixed into HistoryStore by convenience. |
+| Tests | Sensor/ADC validity and scaling, absent/unsupported measurement path, stale/unknown state, threshold hysteresis if later introduced, charging/external-power transitions, reset behavior, and physical current/runtime measurements across representative tracker states. |
+| Recommended milestone | Record now; implement/measure before a field pilot or any product claim about battery percentage, remaining runtime, low-battery alarm reliability or solar autonomy. It does not block M7P7G or the secure TLP v2 foundation. |
+
 ## Priority roll-up
 
-P0: none confirmed. P1: G01–G05, G07–G10, G12, G14, G17–G18, G20,
-G23–G24. P2: G06, G11, G13, G15, G19, G21. P3: G16, G22.
-These are timing gates, not instructions to implement every P1 immediately.
+Historical 2026-09-14 roll-up: P0: none confirmed. P1: G01–G05, G07–G10,
+G12, G14, G17–G18, G20, G23–G24. P2: G06, G11, G13, G15, G19, G21.
+P3: G16, G22. G25 was identified by the 2026-09-23 coverage review and is P2,
+with a before-field-pilot timing gate. These are timing gates, not instructions
+to implement every P1/P2 immediately; use the coverage table above for current
+closure state.
 
 Expected minimum areas A–Q are explicitly mapped in finding headings: A/G01,
 B/G02, C/G03, D/G04, E/G05, F/G06, G/G14, H/G08, I/G09, J/G10,
