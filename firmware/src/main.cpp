@@ -212,7 +212,7 @@ void onBleEvent(ble_evt_t* evt) {
           ble_application_response_value_handle) {
     taskENTER_CRITICAL();
     (void)ble_application_handoff.enqueueConfirmation(
-        evt->evt.common_evt.conn_handle,
+        evt->evt.gatts_evt.conn_handle,
         evt->evt.gatts_evt.params.hvc.handle);
     taskEXIT_CRITICAL();
   }
