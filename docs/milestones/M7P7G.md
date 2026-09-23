@@ -1,6 +1,6 @@
 # M7P7G — Real Bluefruit ORUN application GATT wiring
 
-Status: **INDEPENDENT AUDIT PASS WITH FIXES — POST-AUDIT HOST/BUILD REVALIDATION PENDING**
+Status: **INDEPENDENT AUDIT PASS WITH FIXES — POST-AUDIT HOST/BUILD REVALIDATION PASS**
 
 Baseline: `main@9522e391a532f21ef76ee092889d591cb1c2cf78`
 (M7P7F / PR #35 merged).
@@ -479,7 +479,25 @@ retained as scope/platform observations, not M7P7G merge defects.
 
 Because F-01 changes production handoff behavior, the full host
 warnings-as-errors + ASan/UBSan/startup/source-guard suite and the production
-RAK4630 build must be rerun on the post-fix head before merge. The independent
-review did not require a physical BLE rerun for F-01 because GATT properties,
-SoftDevice calls and wire bytes are unchanged; an optional 01/02/reconnect/03
-smoke test may still be collected if desired.
+RAK4630 build were rerun after the accepted fix/test cycle and are **PASS** on
+post-audit head `e510a96f3d541ca113d4cfd297fa869ffdcb27c2`:
+
+- full `./firmware/tests/run_host_tests.sh`: **PASS**;
+- all eight production startup scenarios: **PASS**;
+- M7P7G source ownership/property/timeout guard: **PASS**;
+- warnings-as-errors + ASan/UBSan coverage in the normal host suite: **PASS**;
+- `pio run -d firmware -e rak4630`: **SUCCESS**;
+- linked image: **22,672 B RAM / 234,456 B flash**
+  (**9.1% / 28.8%**).
+
+Relative to the pre-audit software/build head `740f291...`, RAM is unchanged
+and flash is **+16 B**, consistent with the narrowly scoped handoff fix. No TLP
+v1, RF, storage-format, GATT-property, SoftDevice-call or authorization change
+was introduced by F-01.
+
+The independent review did not require a physical BLE rerun for F-01 because
+GATT properties, SoftDevice calls and wire bytes are unchanged and the repaired
+race is deterministically host-tested. The earlier focused physical
+GET_CONFIG/HVC/disconnect/reconnect evidence therefore remains valid for the
+unchanged physical interface. An optional 01/02/reconnect/03 smoke test may
+still be collected if desired, but is not a merge gate.
