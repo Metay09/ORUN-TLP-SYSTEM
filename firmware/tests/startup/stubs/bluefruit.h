@@ -30,6 +30,7 @@ struct ble_evt_t {
       uint16_t conn_handle = BLE_CONN_HANDLE_INVALID;
     } common_evt;
     struct {
+      uint16_t conn_handle = BLE_CONN_HANDLE_INVALID;
       struct {
         struct {
           uint16_t handle = BLE_GATT_HANDLE_INVALID;
@@ -208,6 +209,7 @@ struct AdafruitBluefruitStub {
     ble_evt_t evt{};
     evt.header.evt_id = evt_id;
     evt.evt.common_evt.conn_handle = event_conn_handle;
+    evt.evt.gatts_evt.conn_handle = event_conn_handle;
     evt.evt.gatts_evt.params.hvc.handle = hvc_handle;
     ++event_cb_calls;
     event_cb(&evt);
