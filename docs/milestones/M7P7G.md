@@ -1,6 +1,6 @@
 # M7P7G — Real Bluefruit ORUN application GATT wiring
 
-Status: **TIMEOUT-RECOVERY FIX CANDIDATE — HOST/BUILD/FOCUSED REGRESSION + INDEPENDENT AUDIT PENDING**
+Status: **TIMEOUT-RECOVERY SOFTWARE REVALIDATION PASS — FOCUSED HARDWARE REGRESSION + INDEPENDENT AUDIT PENDING**
 
 Baseline: `main@9522e391a532f21ef76ee092889d591cb1c2cf78`
 (M7P7F / PR #35 merged).
@@ -289,21 +289,35 @@ Physical RAK4631 + Android nRF Connect:
     for this slice.
 
 The physical evidence above belongs to the previously validated code-bearing
-head `6db1a19047b53e49c63e9605661855e9e6113a72`. The later
-GATTS-timeout-recovery change does not alter the already-observed normal GATT
-wire bytes or admission policy, but its new code-bearing head must be
-revalidated before merge.
+head `6db1a19047b53e49c63e9605661855e9e6113a72`.
 
-Required revalidation for the timeout-recovery candidate:
+Timeout-recovery software revalidation was completed on
+`ab2977a63c6f7945935a06ae93d2895dd64938cb`:
 
-1. full host suite, including startup timeout-recovery model and source guards;
-2. production RAK4630 PlatformIO build and size record;
-3. focused hardware regression of normal connect -> GET_CONFIG -> HVC ->
-   disconnect/re-advertise behavior;
-4. direct physical injection of a genuine 30 s ATT protocol timeout is desirable
-   if a practical phone/test-client method exists, but must not be falsely
-   claimed if the client automatically confirms indications;
-5. independent audit and any resulting fix/retest cycle.
+1. full `./firmware/tests/run_host_tests.sh`: **PASS**;
+2. all production startup scenarios: **PASS**;
+3. M7P7G timeout source/ownership guard: **PASS**;
+4. host warnings-as-errors + ASan/UBSan coverage in the normal suite: **PASS**;
+5. `pio run -d firmware -e rak4630`: **SUCCESS**;
+6. linked production size: **22,672 B RAM / 234,264 B flash**
+   (**9.1% / 28.7%**);
+7. delta versus the prior physically validated M7P7G code head
+   (22,648 B / 233,320 B): **+24 B RAM / +944 B flash**;
+8. delta versus M7P7F reference (22,124 B / 226,292 B):
+   **+548 B RAM / +7,972 B flash**.
+
+No new physical claim is made for the timeout-recovery head. The owner did not
+have the device available during this revalidation session, so the focused
+hardware regression is explicitly **DEFERRED / NOT YET RUN**, not failed.
+
+Remaining before merge:
+
+1. focused hardware regression of normal connect -> GET_CONFIG -> HVC ->
+   disconnect/re-advertise behavior on the current head;
+2. direct physical injection of a genuine ATT protocol timeout is desirable if
+   a practical test client can withhold HVC, but must not be claimed if the
+   available phone client automatically confirms indications;
+3. independent audit and any resulting fix/retest cycle.
 
 Physical validation does not imply broader provisioning, authorization,
 config-write, messaging, RF or backend behavior; those remain outside M7P7G
