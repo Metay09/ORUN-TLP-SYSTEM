@@ -395,8 +395,9 @@ this unit** (`GNSS: not detected`) and is owner-waived as a blocker for this
 milestone merge only; later physical verification on a GNSS-equipped unit is
 still required. The deliberately between-loop-polls lifecycle timing and
 advertising start/stop failure injection remain host-only and are not physical
-PASS. Secure envelope, provisioning, application GATT, DFU and LoRa `OPEN_BLE`
-remain later work.
+PASS. At the M7P7B checkpoint, secure envelope, provisioning, application GATT,
+DFU and LoRa `OPEN_BLE` were later work. M7P7G now implements only the narrow
+read-only application GATT slice; the other items remain later work.
 
 M6 activity/geofence helpers allocate no durable state and do not reuse the
 position journal. Future activity history, polygon configuration, FREE_GRAZE
@@ -771,11 +772,14 @@ implemented today. See `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
 ## 17. BLE application boundary and later application direction
 
 M7P7B makes BLE transport available; it does not make a connected or bonded phone
-an authorized ORUN application client. Future application GATT remains a transport
-adapter into existing application/configuration/command owners rather than a second
-business-logic or configuration system. BLE callbacks perform bounded handoff;
-flash, crypto, radio transitions and application execution remain owned by reviewed
-loop/task code. See `docs/milestones/M7P7C.md`.
+an authorized ORUN application client. M7P7G now implements the first real ORUN
+application GATT adapter for the already-frozen, pre-authorization read-only
+`GET_CONFIG` contract. This does not change the ownership rule: GATT remains a
+transport adapter into existing application/configuration owners rather than a
+second business-logic or configuration system. BLE callbacks perform bounded
+handoff; flash, crypto, radio transitions and application execution remain owned
+by reviewed loop/task code. See `docs/milestones/M7P7C.md` and
+`docs/milestones/M7P7G.md`.
 
 The exact commissioning ceremony remains a later focused implementation decision.
 Connection, stock BLE bonding, device credential, user identity and application
@@ -822,8 +826,20 @@ slot, ingress-level stop-and-wait backpressure, and a bounded 2-second
 fragment-reassembly timeout). It adds no Bluefruit
 `BLEService`/`BLECharacteristic`, no change to BLE admission/advertising/bond
 behavior, and is not referenced by production `main.cpp` composition. See
-`docs/milestones/M7P7F.md`. Wiring this contract to real Bluefruit
-callbacks/indications and physical phone validation remain M7P7G.
+`docs/milestones/M7P7F.md`.
+
+M7P7G (active branch `feat/m7p7g-ble-app-gatt`) wires that exact contract into
+real Bluefruit WRITE + INDICATE characteristics. The normal GET_CONFIG/HVC,
+disconnect/reconnect, stale-fragment and disabled-indication stop-and-wait paths
+have focused physical Android/nRF Connect PASS on code head
+`6db1a19047b53e49c63e9605661855e9e6113a72`. After independent review exposed a
+missing terminal GATTS protocol-timeout recovery, the branch added a bounded
+callback->loop timeout fact, immediate ingress closure, loop-owned app-session
+teardown and bounded-retry `Bluefruit.disconnect()`. This recovery is explicitly
+not a connected-client inactivity timeout. Full host/sanitizer/warnings/startup
+coverage and production RAK4630 build pass on the timeout-recovery branch; focused
+hardware regression of the new head and final independent audit remain pending.
+Exact evidence is in `docs/milestones/M7P7G.md`.
 
 ## 18. RF configuration semantics and radio-platform portability
 

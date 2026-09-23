@@ -1,7 +1,7 @@
 # ORUN Architecture Documentation Index
 
 Status: **CURRENT documentation governance index**.
-Last reviewed against `main@699a74ea66cf3d22d9f1644fbf0f786f0092bd56` plus the M7P6E follow-up evidence on PR #33 (code-bearing hardware-tested head `fb1b9408ae3c49cd3f6c26002a6d583aa18bb592`). M7P7E requester ownership is merged and M7P7B/C remain the governing BLE runtime/application-boundary prerequisites. M7P6B SecurityStore/TX nonce persistence, M7P7A BLE flash/SoftDevice event ownership, M7P7B minimal tracker BLE runtime/admission, and the M7P6C/D/E security proof/pre-wire/coexistence foundation remain current. The corrected M7P6E test-only fresh-pairing LESC/CC310 gate is **physically PASS for the scoped pinned RAK4631/framework/probe path**; this does not prove arbitrary CryptoCell thread-safety or activate production secure-envelope/commissioning behavior, which still requires reviewed scheduling/ownership and authorization design. M7P7B quantitative current remains DEFERRED and GNSS coexistence remains unproven on the tested no-GNSS unit. ORUN application GATT, provisioning, secure RF, MESSAGE runtime and field-network/serviceability runtime remain later work; the separate intermittent serial-DFU issue is not closed by the successful UF2 recovery path.
+Last reviewed against merged main through M7P7F (`main@9522e391a532f21ef76ee092889d591cb1c2cf78`) plus the active M7P7G branch checkpoint. M7P7G now wires the frozen M7P7F contract to real Bluefruit GATT for read-only `GET_CONFIG`; its earlier code-bearing head `6db1a19047b53e49c63e9605661855e9e6113a72` has focused Android/nRF Connect physical PASS. Independent review then found a missing terminal `BLE_GATTS_EVT_TIMEOUT` recovery path; the fix is implemented and software-revalidated on the current branch, while the focused physical regression of that timeout-recovery head and the final independent audit remain pending. Provisioning, authorization, secure RF/TLP v2 commands, MESSAGE runtime and field-network/serviceability runtime remain later work. M7P7B quantitative current remains DEFERRED and GNSS coexistence remains unproven on the tested no-GNSS unit; the separate intermittent serial-DFU issue is not closed by the successful UF2 recovery path.
 Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 
 
@@ -83,6 +83,20 @@ in production `main.cpp` composition; the corrected build remains exactly
 See
 `docs/milestones/M7P7F.md`; exact GATT wiring, indication delivery and
 physical phone validation remain M7P7G.
+
+Active M7P7G application-GATT integration (branch
+`feat/m7p7g-ble-app-gatt`) now performs the exact M7P7F request/response contract
+through real Bluefruit WRITE + INDICATE characteristics and the shared
+`ApplicationRequestService`. The normal path has focused physical Android/nRF
+Connect evidence on code head `6db1a19047b53e49c63e9605661855e9e6113a72`.
+A later independent review correctly identified that the non-blocking indication
+path could wedge after a protocol-source `BLE_GATTS_EVT_TIMEOUT`; the branch now
+hands that terminal fact to loop-owned recovery, tears down the ORUN app session
+and requests a bounded-retry physical disconnect without adding a connected-client
+inactivity timeout. Full host/sanitizer/warnings/startup coverage and the RAK4630
+production build pass on the timeout-recovery branch; exact evidence and remaining
+focused-hardware/audit gates are in `docs/milestones/M7P7G.md`.
+
 
 Owner-approved later application direction is recorded separately in
 `ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`: Entity Registry ownership/offline conflict
