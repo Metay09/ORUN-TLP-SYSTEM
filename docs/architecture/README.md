@@ -18,7 +18,7 @@ flash). Focused current-head hardware regression is also **PASS** on one real
 RAK4631 + Android nRF Connect: advertising/bond retention, exact service and
 characteristic properties, GET_CONFIG, same-session HVC progression,
 disconnect/re-advertise, reconnect and a fresh application session all
-completed normally. The final independent audit remains pending; no genuine
+completed normally. The independent final audit returned **PASS WITH FIXES** with no BLOCKER/HIGH/MEDIUM findings. The accepted LOW post-HVC race fix is now on the branch and requires final host/build revalidation; no genuine
 ATT-timeout physical injection is claimed. Provisioning, authorization, secure RF/TLP v2 commands, MESSAGE runtime
 and field-network/serviceability runtime remain later work. M7P7B quantitative
 current remains DEFERRED and GNSS coexistence remains unproven on the tested
@@ -121,9 +121,13 @@ on `ab2977a...`. A second software audit found that direct
 tears down the ORUN app session and uses the same bounded loop-owned
 physical-disconnect recovery. Final owner-run host/startup/source-guard
 revalidation and the production RAK4630 build are PASS on
-`740f291d3013e63264373f25bcb740dd33097219`; no physical claim is carried
-forward from the older hardware-validated head. Exact evidence and remaining
-focused-hardware/audit gates are in `docs/milestones/M7P7G.md`.
+`740f291d3013e63264373f25bcb740dd33097219`. Focused current-head hardware
+regression is also PASS on the same production code for normal GET_CONFIG/HVC,
+disconnect/re-advertise and reconnect/fresh-session behavior. The independent
+final audit returned **PASS WITH FIXES** with no BLOCKER/HIGH/MEDIUM findings;
+its accepted LOW post-HVC race fix is now applied and awaits final host/build
+revalidation. No physical ATT-timeout injection is claimed. Exact evidence and
+disposition are in `docs/milestones/M7P7G.md`.
 
 Owner-approved later application direction is recorded separately in
 `ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`: Entity Registry ownership/offline conflict
