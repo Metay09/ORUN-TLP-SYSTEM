@@ -829,7 +829,17 @@ behavior, and is not referenced by production `main.cpp` composition. See
 `docs/milestones/M7P7F.md`.
 
 M7P7G (active branch `feat/m7p7g-ble-app-gatt`) wires that exact
-contract into real Bluefruit WRITE + INDICATE characteristics. The normal
+contract into real Bluefruit WRITE + INDICATE characteristics. The response
+CCCD does not change the flash map, but on a secured/bonded link pinned
+Bluefruit 1.7.0 may persist changed CCCD/system-attribute bytes through
+`saveCccd()` -> `bond_save_cccd()` -> `ada_callback` -> relocated
+bond/InternalFS. That framework-owned write remains under the existing
+M7P7A/Bluefruit bond-flash owner; GET_CONFIG itself is still read-only and
+does not grant an unauthenticated ORUN application path to mutate
+ConfigStore/HistoryStore/SecurityStore. Repeated bonded CCCD toggles can add
+bond/InternalFS wear; M7P7G adds no dedicated toggle-rate limiter.
+
+ The normal
 GET_CONFIG/HVC, disconnect/reconnect, stale-fragment and disabled-indication
 stop-and-wait paths have focused physical Android/nRF Connect PASS on code head
 `6db1a19047b53e49c63e9605661855e9e6113a72`. Independent review then
@@ -850,8 +860,10 @@ host/startup/source-guard revalidation and the production RAK4630 build are
 22,672 B RAM / 234,440 B flash. Focused current-head hardware regression is
 also **PASS** on one real RAK4631 + Android nRF Connect for normal
 GET_CONFIG/HVC, disconnect/re-advertise and reconnect/fresh-session behavior.
-A genuine ATT timeout was not physically injected and is not claimed. Final
-independent audit remains pending. Exact evidence is in
+A genuine ATT timeout was not physically injected and is not claimed. The
+independent final audit returned **PASS WITH FIXES** with no BLOCKER/HIGH/MEDIUM
+findings. Its accepted LOW post-HVC ingress-race fix is applied on the branch
+and final host/build revalidation is pending. Exact evidence is in
 `docs/milestones/M7P7G.md`.
 
 ## 18. RF configuration semantics and radio-platform portability
