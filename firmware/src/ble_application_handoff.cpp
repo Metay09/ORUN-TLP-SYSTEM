@@ -59,6 +59,15 @@ void BleApplicationHandoff::setIngressAllowed(uint16_t connection_handle,
   // Never allow a late HVC/control update to reopen callback admission.
   if (gatt_timeout_pending_ && allowed) return;
 
+  // HVC has already happened on the wire when confirmation_pending_ is set.
+  // enqueueConfirmation() provisionally reopens callback admission so an
+  // immediate post-HVC WRITE can enter the bounded FIFO before loop() consumes
+  // the confirmation. A stale loop decision based on the still-pending
+  // outbound response must not close/clear that newly valid post-HVC request.
+  // Once loop() takes the confirmation, confirmation_pending_ becomes false;
+  // then its exact HVC match/mismatch decision may close+clear normally.
+  if (!allowed && confirmation_pending_) return;
+
   ingress_allowed_ = allowed;
   if (!allowed) {
     // Frames written while stop-and-wait is closed must never be retained
