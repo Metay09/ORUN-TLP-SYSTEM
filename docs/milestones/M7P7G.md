@@ -1,6 +1,6 @@
 # M7P7G — Real Bluefruit ORUN application GATT wiring
 
-Status: **HVX TERMINAL-RETURN FIX CANDIDATE — HOST/BUILD REVALIDATION + FOCUSED HARDWARE REGRESSION + INDEPENDENT AUDIT PENDING**
+Status: **LATEST SOFTWARE/BUILD REVALIDATION PASS — FOCUSED HARDWARE REGRESSION + INDEPENDENT AUDIT PENDING**
 
 Baseline: `main@9522e391a532f21ef76ee092889d591cb1c2cf78`
 (M7P7F / PR #35 merged).
@@ -341,24 +341,48 @@ No new physical claim is made for the timeout-recovery head. The owner did not
 have the device available during that revalidation session, so the focused
 hardware regression is explicitly **DEFERRED / NOT YET RUN**, not failed.
 
-The follow-up HVX terminal-return fix at
-`af82b2cfda8cd2fcd162666c9d4d2fda1e796e49` is a newer code-bearing
-candidate. The PASS results above belong to `ab2977a...` and must not be
-carried forward to this candidate until the normal host/startup/source-guard
-suite and production RAK4630 build are rerun. No physical claim exists for
-`af82b2cf...`.
+The follow-up HVX terminal-return fix entered production source at
+`af82b2cfda8cd2fcd162666c9d4d2fda1e796e49`. Follow-up commits corrected
+only host-test stubs/guards and preserved their executable bit. Owner-run
+software/build revalidation completed on branch head
+`740f291d3013e63264373f25bcb740dd33097219`:
+
+1. full `./firmware/tests/run_host_tests.sh`: **PASS**;
+2. all production startup scenarios: **PASS**;
+3. M7P7G source ownership/property/timeout guard: **PASS**;
+4. host warnings-as-errors + ASan/UBSan coverage in the normal suite: **PASS**;
+5. real production GET_CONFIG -> non-blocking HVX -> HVC host path: **PASS**;
+6. documented transient `NRF_ERROR_BUSY` bounded retry path: **PASS**;
+7. direct `NRF_ERROR_TIMEOUT` terminal cleanup + bounded disconnect recovery:
+   **PASS**;
+8. `pio run -d firmware -e rak4630`: **SUCCESS**;
+9. linked production size: **22,672 B RAM / 234,440 B flash**
+   (**9.1% / 28.8%**);
+10. delta versus the prior physically validated M7P7G head
+    (22,648 B / 233,320 B): **+24 B RAM / +1,120 B flash**;
+11. delta versus M7P7F reference (22,124 B / 226,292 B):
+    **+548 B RAM / +8,148 B flash**.
+
+The first owner rerun exposed two **test-infrastructure** defects, not production
+runtime regressions: duplicate/mismatched Nordic error constants in the Bluefruit
+stub and an over-specific source guard that required the literal `kTerminal`
+token inside `pollBleApplicationRuntime()`. Those test defects were corrected
+before the final PASS above. The shared host Nordic constants now match pinned
+S140 6.1.1 values, and the guard verifies classification in
+`trySendBleApplicationIndication()` while verifying terminal cleanup/disconnect
+behavior in the runtime owner.
+
+No physical claim exists for `740f291...`. The focused current-head hardware
+regression is explicitly **DEFERRED / NOT YET RUN**, not failed.
 
 Remaining before merge:
 
-1. full host warnings-as-errors + ASan/UBSan/startup/source-guard revalidation
-   on the latest code-bearing head, followed by the production RAK4630 build
-   and size record;
-2. focused hardware regression of normal connect -> GET_CONFIG -> HVC ->
-   disconnect/re-advertise behavior on that exact revalidated head;
-3. direct physical injection of a genuine ATT protocol timeout is desirable if
+1. focused hardware regression of normal connect -> GET_CONFIG -> HVC ->
+   disconnect/re-advertise behavior on the exact revalidated head;
+2. direct physical injection of a genuine ATT protocol timeout is desirable if
    a practical test client can withhold HVC, but must not be claimed if the
    available phone client automatically confirms indications;
-4. independent audit and any resulting fix/retest cycle.
+3. independent audit and any resulting fix/retest cycle.
 
 Physical validation does not imply broader provisioning, authorization,
 config-write, messaging, RF or backend behavior; those remain outside M7P7G
