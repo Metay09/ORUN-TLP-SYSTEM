@@ -83,6 +83,24 @@ for forbidden in (
         f"BLE event callback must stay bounded handoff-only; found {forbidden}"
     )
 
+submit_start = src.index("BleApplicationIndicationSubmitResult trySendBleApplicationIndication(")
+submit_brace = src.index("{", submit_start)
+depth = 0
+submit_end = None
+for index in range(submit_brace, len(src)):
+    if src[index] == "{":
+        depth += 1
+    elif src[index] == "}":
+        depth -= 1
+        if depth == 0:
+            submit_end = index + 1
+            break
+assert submit_end is not None, "unterminated trySendBleApplicationIndication() body"
+submit = src[submit_start:submit_end]
+assert "NRF_ERROR_TIMEOUT" in submit
+assert "BleApplicationIndicationSubmitResult::kRetryable" in submit
+assert "BleApplicationIndicationSubmitResult::kTerminal" in submit
+
 runtime_start = src.index("void pollBleApplicationRuntime(")
 runtime_brace = src.index("{", runtime_start)
 depth = 0
@@ -101,7 +119,8 @@ assert "takeGattTimeout" in runtime
 assert "endBleApplicationSession();" in runtime
 assert "BLE indication submit terminal error=" in runtime
 assert "BleApplicationIndicationSubmitResult::kRetryable" in runtime
-assert "BleApplicationIndicationSubmitResult::kTerminal" in runtime
+assert "ble_application_disconnect_pending = true;" in runtime
+assert "serviceBleApplicationDisconnectRecovery(" in runtime
 
 recovery_start = src.index("bool serviceBleApplicationDisconnectRecovery(")
 recovery_brace = src.index("{", recovery_start)
