@@ -839,15 +839,17 @@ and the production RAK4630 build on `ab2977a63c6f7945935a06ae93d2895dd64938cb`.
 
 A later software audit found a narrower follow-up gap: pinned S140 6.1.1 can
 return `NRF_ERROR_TIMEOUT` directly from `sd_ble_gatts_hvx()`, while the
-adapter previously retried every failed submission at 25 ms. Current
-code-bearing candidate `af82b2cfda8cd2fcd162666c9d4d2fda1e796e49`
-separates retryable HVX submission states from terminal returns and routes
-terminal returns through the same loop-owned application teardown + bounded
-physical-disconnect recovery. This remains explicitly distinct from an idle
-client timeout. The newer candidate has **not yet inherited** the prior
-software/build or physical PASS evidence; host/build revalidation, focused
-hardware regression and final independent audit remain pending. Exact evidence
-is in `docs/milestones/M7P7G.md`.
+adapter previously retried every failed submission at 25 ms. Production source fix
+`af82b2cfda8cd2fcd162666c9d4d2fda1e796e49` separates retryable HVX
+submission states from terminal returns and routes terminal returns through the
+same loop-owned application teardown + bounded physical-disconnect recovery.
+This remains explicitly distinct from an idle client timeout. Owner-run
+host/startup/source-guard revalidation and the production RAK4630 build are
+**PASS** on branch head
+`740f291d3013e63264373f25bcb740dd33097219`; the current image is
+22,672 B RAM / 234,440 B flash. Focused current-head hardware regression and
+final independent audit remain pending; no newer physical PASS is claimed.
+Exact evidence is in `docs/milestones/M7P7G.md`.
 
 ## 18. RF configuration semantics and radio-platform portability
 
