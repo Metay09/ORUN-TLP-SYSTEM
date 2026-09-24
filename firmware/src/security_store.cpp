@@ -172,10 +172,21 @@ bool SecurityStore::recover() {
   int winner = -1;
   uint64_t best_generation = 0;
   for (unsigned page = 0; page < kPageCount; ++page) {
-    if (classified[page].valid &&
-        classified[page].generation > best_generation) {
+    if (!classified[page].valid) continue;
+    if (classified[page].generation > best_generation) {
       best_generation = classified[page].generation;
       winner = static_cast<int>(page);
+    } else if (classified[page].generation == best_generation &&
+               best_generation != 0) {
+      // A legitimate A/B transaction always advances generation. Two
+      // committed pages with the same highest generation are ambiguous
+      // authority and could carry different security bounds; never pick one
+      // by page index and risk rollback.
+      ++diagnostics_.recovery_corruptions;
+      state_ = SecurityState::kFault;
+      active_page_ = -1;
+      newest_generation_ = 0;
+      return true;
     }
   }
 
@@ -471,17 +482,25 @@ bool SecurityStore::startReservation() {
   }
 
   const uint8_t version = pages_[active_page_].version;
-  const uint32_t capacity =
-      version == kVersionV1 ? kV1TxReserveSlotsPerPage
-                            : kSecurityStateSlotsPerPage;
-  if (version != kVersionV1 && version != kVersionV2) return false;
-
-  if (pages_[active_page_].state_used + 1 >= capacity) {
+  if (version == kVersionV1) {
+    // v1 is read/migration-only in this firmware. Never extend the legacy log
+    // after booting code that understands v2. If the automatic migration
+    // failed earlier this boot, protected TX remains unavailable rather than
+    // silently creating fresh v1 state.
+    if (migration_attempted_) return false;
+    migration_attempted_ = true;
     reserve_after_new_page_ = true;
-    if (version == kVersionV1) {
-      migration_attempted_ = true;
-      return startNewPage(NewPagePurpose::kMigration, credential_);
+    if (!startNewPage(NewPagePurpose::kMigration, credential_)) {
+      reserve_after_new_page_ = false;
+      return false;
     }
+    return true;
+  }
+  if (version != kVersionV2) return false;
+
+  if (pages_[active_page_].state_used + 1 >=
+      kSecurityStateSlotsPerPage) {
+    reserve_after_new_page_ = true;
     return startNewPage(NewPagePurpose::kCompaction, credential_);
   }
 
@@ -492,28 +511,16 @@ bool SecurityStore::startReservation() {
   job_ = Job::kReserve;
   phase_ = Phase::kWriteReserve;
 
-  if (version == kVersionV1) {
-    TxReserve reserve{};
-    memcpy(reserve.credential_id, credential_.credential_id,
-           kCredentialIdSize);
-    reserve.key_epoch = credential_.key_epoch;
-    reserve.tx_reserved_bound = pending_tx_bound_;
-    uint8_t bytes[kTxReserveRecordSize];
-    encodeTxReserve(reserve, bytes);
-    startBlob(v1ReserveOffset(target_page_, target_slot_), bytes,
-              sizeof(bytes));
-  } else {
-    SecurityStateRecord state{};
-    memcpy(state.credential_id, credential_.credential_id,
-           kCredentialIdSize);
-    state.key_epoch = credential_.key_epoch;
-    state.kind = SecurityStateKind::kTxReserveExclusiveBound;
-    state.value = pending_tx_bound_;
-    uint8_t bytes[kSecurityStateRecordSize];
-    encodeSecurityState(state, bytes);
-    startBlob(v2StateOffset(target_page_, target_slot_), bytes,
-              sizeof(bytes));
-  }
+  SecurityStateRecord state{};
+  memcpy(state.credential_id, credential_.credential_id,
+         kCredentialIdSize);
+  state.key_epoch = credential_.key_epoch;
+  state.kind = SecurityStateKind::kTxReserveExclusiveBound;
+  state.value = pending_tx_bound_;
+  uint8_t bytes[kSecurityStateRecordSize];
+  encodeSecurityState(state, bytes);
+  startBlob(v2StateOffset(target_page_, target_slot_), bytes,
+            sizeof(bytes));
   return true;
 }
 
@@ -867,9 +874,14 @@ void SecurityStore::maybeAutoReserve() {
       exhausted_)
     return;
 
-  if (migration_needed_ && !migration_attempted_) {
-    migration_attempted_ = true;
-    if (startNewPage(NewPagePurpose::kMigration, credential_)) return;
+  if (migration_needed_) {
+    if (!migration_attempted_) {
+      migration_attempted_ = true;
+      (void)startNewPage(NewPagePurpose::kMigration, credential_);
+    }
+    // Never fall through to a legacy v1 TX append when migration is still
+    // required or failed this boot.
+    return;
   }
 
   if (tx_next_ == tx_reserved_bound_) (void)startReservation();
