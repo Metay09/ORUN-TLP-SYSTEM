@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **HOST + SANITIZER + RAK4630 BUILD PASS — INDEPENDENT AUDIT PENDING**
+Status: **INDEPENDENT AUDIT FOUND FIXES — H1/M1/M2/M4 CODE FIXES APPLIED; M3 RESIDUAL DOCUMENTED; REVALIDATION PENDING**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -230,7 +230,78 @@ sufficient:
 A real-hardware flash/reboot sentinel will be decided after independent audit.
 No physical persistence or power-cut claim is made by the host/build results.
 
-## 9. Merge gate
+## 9. Independent audit disposition
+
+Independent security/storage audit against code-bearing head
+`605c6a67e4f8bac61023dac91ae0498bb2441046` found no BLOCKER and no demonstrated
+TX nonce reuse or A2D replay re-acceptance, but reported one HIGH, four MEDIUM and
+five LOW findings.
+
+Post-audit changes on this branch:
+
+- **H1 fixed:** a non-empty append slot whose entire commit word remains erased is
+  classified as uncommitted torn state and burned rather than turning the whole
+  credential lifetime into FAULT. A partially programmed/non-erased invalid commit
+  remains FAULT. Tests now inject real partial body writes and full-body/erased-commit
+  cases instead of naming a clean no-write failure "torn".
+- **M1 fixed:** replay admission now requires the authenticated frame's
+  `credential_id` and `key_epoch` together with the counter. A retry after
+  credential rotation is rejected against the new active lifetime.
+- **M2 fixed:** the test flash now enforces production's erased-destination
+  precondition. After a failed/ambiguous append, SecurityStore inspects the target
+  and consumes a dirty or unreadable slot before retrying; same-boot A2D continuation
+  is explicitly tested.
+- **M3 accepted as a bounded fail-closed availability residual:** if power is lost
+  during old-page erase after the new page is already active, a partially erased
+  old committed header may be indistinguishable from corruption. Recovery remains
+  FAULT rather than risk rollback. A true partial-erase host test now records this
+  behavior. This residual requires a physical RAK4631 power-cut sentinel before
+  final closure; it is not described as physically validated.
+- **M4 fixed at the SecurityStore boundary:** any failure while page activation is
+  ambiguous forces SecurityStore to `FAULT` for the rest of the boot, so RAM can
+  never continue issuing protected TX under stale authority if a late activation
+  physically lands. A new integration test uses the real SecurityStore and real
+  FlashMutationGate timeout/quarantine/late-completion state machines together and
+  verifies reboot selects the physically activated higher generation.
+- **L1 fixed:** a failed automatic v1 migration cannot be opportunistically restarted
+  by the A2D path in the same boot.
+- **L2 documented:** every successful recovery of a provisioned credential burns the
+  prior TX reserve headroom and therefore requires one fresh TX reserve before protected
+  TX can resume. Repeated resets/brownouts consume shared-log slots and increase wear;
+  this is the nonce-safety tradeoff, not free behavior.
+- **L3 deferred/non-blocking:** the current A/B flow may erase a page that is already
+  blank. Avoiding that erase safely across reboot needs explicit proof the entire page,
+  not merely its header, is erased. No speculative page-state optimization is added in
+  this security fix slice.
+- **L4 documented:** a valid authenticated authority that deliberately jumps counters
+  by at least one replay block can force one replay-state append per accepted frame.
+  Unauthenticated traffic still cannot write flash. Sender-rate/counter-jump governance
+  belongs to the future authenticated authority/envelope implementation.
+- **L5 architecture rule fixed:** the security ADR now explicitly forbids deliberate
+  reuse of retired `credential_id` or `K_root`; historical uniqueness is a future
+  provisioning/authority responsibility because SecurityStore retains only the active
+  credential.
+
+The pre-audit PASS/build evidence above is historical evidence for
+`605c6a67...`. Because production security code and tests changed after audit, it must
+not be reused as final validation for the current head. Full host/sanitizer and RAK4630
+build must be rerun after these fixes, followed by audit reconciliation.
+
+### Wear notes added by audit
+
+The original §11.7 illustrative wear arithmetic did not include reset storms or all
+authenticated counter-jump patterns. For the current implementation:
+
+- each provisioned reboot burns unused TX counters and appends a fresh TX reserve;
+- a reset/brownout loop can therefore accelerate shared-log consumption and compaction;
+- a large but valid authenticated A2D counter jump may consume one append immediately;
+- current compaction still performs conservative erase preparation even when a page may
+  already be blank.
+
+These are availability/endurance considerations. They do not weaken the replay/nonce
+ordering requirement. Physical endurance remains unclaimed.
+
+## 10. Merge gate
 
 Do not merge until the validation matrix above is reconciled against actual
 test output and independent review.
