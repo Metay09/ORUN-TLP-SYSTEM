@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **IMPLEMENTATION CANDIDATE — HOST/BUILD/AUDIT VALIDATION PENDING**
+Status: **HOST + SANITIZER + RAK4630 BUILD PASS — INDEPENDENT AUDIT PENDING**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -182,7 +182,28 @@ No new task, heap allocation, timer or background worker is introduced.
 
 ## 8. Validation matrix
 
-Implementation is **not validated yet**. Before merge this branch must prove:
+Software/build validation on `605c6a67e4f8bac61023dac91ae0498bb2441046`:
+
+- full `./firmware/tests/run_host_tests.sh`: **PASS**;
+- `-Wall -Wextra -Werror`: **PASS**;
+- ASan + UBSan: **PASS**;
+- M7P6F v1/v2 format golden/malformed checks: **PASS**;
+- M7P6F SecurityStore v2/migration/replay checks: **PASS**;
+- legacy/regression host suites including RF, BLE, persistence, startup and
+  watchdog guards: **PASS**;
+- `pio run -d firmware -e rak4630`: **SUCCESS**;
+- RAM: **22,752 / 248,832 B = 9.1%**;
+- Flash: **237,848 / 815,104 B = 29.2%**.
+
+Relative to the final M7P7G production build
+(22,672 B RAM / 234,456 B flash), M7P6F adds **80 B RAM** and
+**3,392 B flash**. Security partition geometry remains unchanged.
+
+The following implementation checks are now evidenced by the passing host
+suite; independent audit still must verify that the tests and invariants are
+sufficient:
+
+
 
 - v1 and v2 header/record golden + malformed codec behavior;
 - exact 99-slot/36-byte-tail v2 packing;
@@ -202,12 +223,12 @@ Implementation is **not validated yet**. Before merge this branch must prove:
 - append gaps, unknown kinds, bound rollback and reserved-tail corruption;
 - TX-only, A2D-only and combined v2 compaction;
 - existing TX nonce non-reuse property and FlashMutationGate priority tests;
-- full host suite including warnings-as-errors + ASan/UBSan;
-- production `rak4630` build and linked RAM/flash size comparison;
-- independent security/storage audit and resulting fix/retest cycle.
+- full host suite including warnings-as-errors + ASan/UBSan — **PASS**;
+- production `rak4630` build and linked RAM/flash size comparison — **PASS**;
+- independent security/storage audit and resulting fix/retest cycle — **PENDING**.
 
-A real-hardware flash/reboot sentinel should be decided after software/build
-validation and independent audit. No physical persistence claim is made here.
+A real-hardware flash/reboot sentinel will be decided after independent audit.
+No physical persistence or power-cut claim is made by the host/build results.
 
 ## 9. Merge gate
 
