@@ -1,10 +1,11 @@
 # M7P7G — Real Bluefruit ORUN application GATT wiring
 
-Status: **INDEPENDENT AUDIT PASS WITH FIXES — POST-AUDIT HOST/BUILD REVALIDATION PASS**
+Status: **MERGED — PR #39 / main@26bdbead377621554c37b22596de294f9ab83579; INDEPENDENT AUDIT PASS WITH FIXES; POST-AUDIT HOST/BUILD PASS; FOCUSED PHYSICAL BLE PASS**
 
 Baseline: `main@9522e391a532f21ef76ee092889d591cb1c2cf78`
 (M7P7F / PR #35 merged).
-Branch: `feat/m7p7g-ble-app-gatt`.
+Merged via PR #39 at `main@26bdbead377621554c37b22596de294f9ab83579`.
+Historical development branch: `feat/m7p7g-ble-app-gatt`.
 
 ## 1. Goal
 
