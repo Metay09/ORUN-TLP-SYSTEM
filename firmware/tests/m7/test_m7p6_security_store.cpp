@@ -26,8 +26,13 @@ class FakeFlash : public FlashBackend {
  public:
   std::array<uint8_t, kRegionSize> bytes{};
   bool fail_begin = false;
-  int fail_at_program_call = -1;  // 1-indexed; that call returns kFailed.
+  int fail_at_program_call = -1;  // clean failure; writes no byte.
+  int partial_program_at_call = -1;  // writes prefix then reports failure.
+  size_t partial_program_bytes = 0;
+  int program_then_fail_at_call = -1;  // full mutation, ambiguous failure.
   int fail_at_erase_call = -1;
+  int partial_erase_at_call = -1;
+  size_t partial_erase_bytes = 0;
   mutable int fail_at_read_call = -1;
   uint32_t program_calls = 0, erase_calls = 0;
   mutable uint32_t read_calls = 0;
@@ -47,21 +52,48 @@ class FakeFlash : public FlashBackend {
 
   FlashOpResult program(uint32_t offset, const void* data, size_t size) override {
     ++program_calls;
-    if (static_cast<int>(program_calls) == fail_at_program_call) return FlashOpResult::kFailed;
-    if (data == nullptr || size == 0 || (offset & 3U) != 0 || (size & 3U) != 0 ||
-        offset > bytes.size() || size > bytes.size() - offset)
+    if (data == nullptr || size == 0 || (offset & 3U) != 0 ||
+        (size & 3U) != 0 || offset > bytes.size() ||
+        size > bytes.size() - offset)
       return FlashOpResult::kFailed;
-    const auto* source = static_cast<const uint8_t*>(data);
+
+    // Match production NrfSecurityFlash/FlashMutationGate: any non-erased
+    // destination byte rejects a fresh program request. The old AND model
+    // accidentally allowed retries over dirty/torn slots.
     for (size_t index = 0; index < size; ++index)
-      if ((bytes[offset + index] & source[index]) != source[index]) return FlashOpResult::kFailed;
-    for (size_t index = 0; index < size; ++index) bytes[offset + index] &= source[index];
+      if (bytes[offset + index] != 0xFF) return FlashOpResult::kFailed;
+
+    const auto* source = static_cast<const uint8_t*>(data);
+    if (static_cast<int>(program_calls) == fail_at_program_call)
+      return FlashOpResult::kFailed;
+
+    if (static_cast<int>(program_calls) == partial_program_at_call) {
+      const size_t count =
+          partial_program_bytes < size ? partial_program_bytes : size;
+      for (size_t index = 0; index < count; ++index)
+        bytes[offset + index] &= source[index];
+      return FlashOpResult::kFailed;
+    }
+
+    for (size_t index = 0; index < size; ++index)
+      bytes[offset + index] &= source[index];
+    if (static_cast<int>(program_calls) == program_then_fail_at_call)
+      return FlashOpResult::kFailed;
     return FlashOpResult::kDone;
   }
 
   FlashOpResult erasePage(uint32_t page) override {
     ++erase_calls;
-    if (static_cast<int>(erase_calls) == fail_at_erase_call) return FlashOpResult::kFailed;
-    if (page >= storage_config::kFutureSecurityRegionPages) return FlashOpResult::kFailed;
+    if (page >= storage_config::kFutureSecurityRegionPages)
+      return FlashOpResult::kFailed;
+    if (static_cast<int>(erase_calls) == fail_at_erase_call)
+      return FlashOpResult::kFailed;
+    if (static_cast<int>(erase_calls) == partial_erase_at_call) {
+      const size_t count =
+          partial_erase_bytes < kPageSize ? partial_erase_bytes : kPageSize;
+      memset(bytes.data() + size_t(page) * kPageSize, 0xFF, count);
+      return FlashOpResult::kFailed;
+    }
     memset(bytes.data() + size_t(page) * kPageSize, 0xFF, kPageSize);
     return FlashOpResult::kDone;
   }
@@ -90,6 +122,13 @@ bool commitAndSettle(SecurityStore& store, uint8_t seed) {
   settle(store);
   bool success = false;
   return store.takeCommitResult(success) && success;
+}
+
+bool submitA2d(SecurityStore& store, uint8_t credential_seed,
+               uint64_t counter, uint32_t key_epoch = 1) {
+  uint8_t id[kCredentialIdSize];
+  fillId(id, credential_seed);
+  return store.submitAuthenticatedA2dCounter(id, key_epoch, counter);
 }
 
 void writeCredentialBytes(FakeFlash& flash, unsigned page, uint8_t seed,
@@ -785,7 +824,7 @@ int main() {
     assert(commitAndSettle(store, 72));
 
     const uint32_t writes_before = flash.program_calls;
-    assert(store.submitAuthenticatedA2dCounter(0));
+    assert(submitA2d(store, 72, 0));
     assert(store.busy());
     settle(store);
     bool accepted = false;
@@ -793,20 +832,20 @@ int main() {
     const uint32_t writes_after_reserve = flash.program_calls;
     assert(writes_after_reserve == writes_before + 2);  // body + commit.
 
-    assert(store.submitAuthenticatedA2dCounter(1));
+    assert(submitA2d(store, 72, 1));
     assert(store.takeA2dReplayResult(accepted) && accepted);
     assert(flash.program_calls == writes_after_reserve);
 
-    assert(store.submitAuthenticatedA2dCounter(1));
+    assert(submitA2d(store, 72, 1));
     assert(store.takeA2dReplayResult(accepted) && !accepted);
     assert(flash.program_calls == writes_after_reserve);
 
-    assert(store.submitAuthenticatedA2dCounter(7));
+    assert(submitA2d(store, 72, 7));
     assert(store.takeA2dReplayResult(accepted) && accepted);
     assert(flash.program_calls == writes_after_reserve);
 
     // Crossing the durable exclusive bound reserves the next block first.
-    assert(store.submitAuthenticatedA2dCounter(8));
+    assert(submitA2d(store, 72, 8));
     settle(store);
     assert(store.takeA2dReplayResult(accepted) && accepted);
     assert(flash.program_calls == writes_after_reserve + 2);
@@ -820,7 +859,7 @@ int main() {
     assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(commitAndSettle(store, 80));
 
-    assert(store.submitAuthenticatedA2dCounter(0));
+    assert(submitA2d(store, 72, 0));
     settle(store);
 
     uint8_t id[kCredentialIdSize], root[kKRootSize];
@@ -845,7 +884,7 @@ int main() {
     assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(commitAndSettle(store, 73));
 
-    assert(store.submitAuthenticatedA2dCounter(123));
+    assert(submitA2d(store, 73, 123));
     settle(store);
     bool accepted = false;
     assert(store.takeA2dReplayResult(accepted) && accepted);
@@ -855,11 +894,11 @@ int main() {
     settle(recovered);
 
     const uint32_t writes_before = flash.program_calls;
-    assert(recovered.submitAuthenticatedA2dCounter(127));
+    assert(submitA2d(recovered, 73, 127));
     assert(recovered.takeA2dReplayResult(accepted) && !accepted);
     assert(flash.program_calls == writes_before);
 
-    assert(recovered.submitAuthenticatedA2dCounter(128));
+    assert(submitA2d(recovered, 73, 128));
     settle(recovered);
     assert(recovered.takeA2dReplayResult(accepted) && accepted);
   }
@@ -873,7 +912,7 @@ int main() {
     assert(commitAndSettle(store, 74));
 
     flash.fail_at_program_call = static_cast<int>(flash.program_calls) + 1;
-    assert(store.submitAuthenticatedA2dCounter(0));
+    assert(submitA2d(store, 72, 0));
     settle(store);
     bool accepted = true;
     assert(store.takeA2dReplayResult(accepted) && !accepted);
@@ -884,7 +923,7 @@ int main() {
     SecurityStore recovered(snapshot, snapshot);
     assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     settle(recovered);
-    assert(recovered.submitAuthenticatedA2dCounter(0));
+    assert(submitA2d(recovered, 74, 0));
     settle(recovered);
     assert(recovered.takeA2dReplayResult(accepted) && accepted);
   }
@@ -897,7 +936,7 @@ int main() {
     assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(commitAndSettle(store, 82));
 
-    assert(store.submitAuthenticatedA2dCounter(0));
+    assert(submitA2d(store, 72, 0));
     flash.fail_at_read_call = static_cast<int>(flash.read_calls) + 1;
     settle(store);
     bool accepted = true;
@@ -914,7 +953,7 @@ int main() {
     settle(recovered);
     // The record may in fact have reached flash before verification failed.
     // Recovery must then burn it conservatively rather than re-admit it.
-    assert(recovered.submitAuthenticatedA2dCounter(0));
+    assert(submitA2d(recovered, 82, 0));
     assert(recovered.takeA2dReplayResult(accepted) && !accepted);
   }
 
@@ -929,7 +968,7 @@ int main() {
     const uint64_t max_bound =
         (UINT64_MAX / kA2dReplayReservationBlockSize) *
         kA2dReplayReservationBlockSize;
-    assert(store.submitAuthenticatedA2dCounter(max_bound));
+    assert(submitA2d(store, 75, max_bound));
     bool accepted = true;
     assert(store.takeA2dReplayResult(accepted) && !accepted);
     assert(flash.program_calls == writes_before);
@@ -1071,12 +1110,12 @@ int main() {
 
       bool accepted = true;
       if (durable_bound != 0) {
-        assert(store.submitAuthenticatedA2dCounter(durable_bound - 1));
+        assert(submitA2d(store, 84, durable_bound - 1));
         assert(store.takeA2dReplayResult(accepted) && !accepted);
       }
 
       next = durable_bound + (life % 5);
-      assert(store.submitAuthenticatedA2dCounter(next));
+      assert(submitA2d(store, 84, next));
       if (store.busy()) settle(store);
       assert(store.takeA2dReplayResult(accepted) && accepted);
       durable_bound =
