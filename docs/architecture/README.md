@@ -1,9 +1,8 @@
 # ORUN Architecture Documentation Index
 
 Status: **CURRENT documentation governance index**.
-Last reviewed against merged main through M7P7F
-(`main@9522e391a532f21ef76ee092889d591cb1c2cf78`) plus the active M7P7G
-branch checkpoint. M7P7G's normal read-only GET_CONFIG GATT path has focused
+Last reviewed against merged main through M7P7G
+(PR #39, `main@26bdbead377621554c37b22596de294f9ab83579`). M7P7G's normal read-only GET_CONFIG GATT path has focused
 Android/nRF Connect physical PASS on earlier code head
 `6db1a19047b53e49c63e9605661855e9e6113a72`. The event-based terminal
 GATTS-timeout fix was later software/build revalidated on `ab2977a...`.
@@ -112,8 +111,8 @@ See
 `docs/milestones/M7P7F.md`; exact GATT wiring, indication delivery and
 physical phone validation remain M7P7G.
 
-Active M7P7G application-GATT integration (branch
-`feat/m7p7g-ble-app-gatt`) performs the exact M7P7F request/response contract
+Merged M7P7G application-GATT integration (PR #39,
+`main@26bdbead377621554c37b22596de294f9ab83579`) performs the exact M7P7F request/response contract
 through real Bluefruit WRITE + INDICATE characteristics and the shared
 `ApplicationRequestService`. The normal path has focused physical Android/nRF
 Connect evidence on code head `6db1a19047b53e49c63e9605661855e9e6113a72`.
