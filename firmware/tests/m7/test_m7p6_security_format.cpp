@@ -45,6 +45,28 @@ int main() {
     assert(!decodePageHeader(bytes, decoded));
   }
 
+  // Exact v1/v2 page-header golden bytes. These pin version, byte order,
+  // offsets, CRC and activation word; migration compatibility must never rely
+  // on native struct layout.
+  {
+    static const uint8_t kV1Golden[kPageHeaderSize] = {
+        0x4F,0x52,0x53,0x31,0x01,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x07,
+        0x0E,0x8A,0xDE,0x7E,0x71,0x53,0x1A,0xA3,
+        0x82,0xA6,0x8A,0xCC,0x00,0x00,0x00,0x00};
+    static const uint8_t kV2Golden[kPageHeaderSize] = {
+        0x4F,0x52,0x53,0x31,0x02,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x07,
+        0x0E,0x8A,0xDE,0x7E,0x71,0x53,0x1A,0xA3,
+        0x2D,0x0F,0xC7,0x06,0x00,0x00,0x00,0x00};
+    uint8_t bytes[kPageHeaderSize];
+    const PageHeader header{7, 0x0E8ADE7E71531AA3ULL};
+    encodePageHeaderVersion(header, kVersionV1, bytes);
+    assert(memcmp(bytes, kV1Golden, sizeof(bytes)) == 0);
+    encodePageHeader(header, bytes);
+    assert(memcmp(bytes, kV2Golden, sizeof(bytes)) == 0);
+  }
+
   // Erased flash is not a valid header, and headerMagicPresent() correctly
   // reports "nothing here" rather than "unsupported".
   {
@@ -234,6 +256,39 @@ int main() {
     assert(decoded.kind == SecurityStateKind::kA2dReplayExclusiveBound);
     assert(decoded.value == original.value);
   }
+  // Exact v2 state-record golden bytes for both authorized kinds.
+  {
+    static const uint8_t kTxGolden[kSecurityStateRecordSize] = {
+        0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,
+        0x1D,0x1E,0x1F,0x20,0x21,0x22,0x23,0x24,
+        0x00,0x00,0x00,0x04,0x01,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x05,0x00,
+        0xDF,0x9B,0x2D,0x88,0x00,0x00,0x00,0x00};
+    static const uint8_t kA2dGolden[kSecurityStateRecordSize] = {
+        0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,
+        0x1E,0x1F,0x20,0x21,0x22,0x23,0x24,0x25,
+        0x00,0x00,0x00,0x09,0x02,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x38,
+        0x3D,0x6B,0xA6,0xF5,0x00,0x00,0x00,0x00};
+
+    SecurityStateRecord state{};
+    uint8_t bytes[kSecurityStateRecordSize];
+    fillId(state.credential_id, 21);
+    state.key_epoch = 4;
+    state.kind = SecurityStateKind::kTxReserveExclusiveBound;
+    state.value = kTxReservationBlockSize * 5;
+    encodeSecurityState(state, bytes);
+    assert(memcmp(bytes, kTxGolden, sizeof(bytes)) == 0);
+
+    state = SecurityStateRecord{};
+    fillId(state.credential_id, 22);
+    state.key_epoch = 9;
+    state.kind = SecurityStateKind::kA2dReplayExclusiveBound;
+    state.value = kA2dReplayReservationBlockSize * 7;
+    encodeSecurityState(state, bytes);
+    assert(memcmp(bytes, kA2dGolden, sizeof(bytes)) == 0);
+  }
+
   // Unknown kind, nonzero reserved bytes, impossible alignment, CRC damage and
   // erased/torn commit state all fail closed.
   {
