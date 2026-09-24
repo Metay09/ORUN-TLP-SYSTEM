@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **INDEPENDENT AUDIT FOUND FIXES — H1/M1/M2/M4 CODE FIXES APPLIED; M3 RESIDUAL DOCUMENTED; REVALIDATION PENDING**
+Status: **POST-AUDIT HOST + SANITIZER REVALIDATION PASS — RAK4630 REBUILD + AUDIT RECONCILIATION PENDING**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -283,9 +283,23 @@ Post-audit changes on this branch:
   credential.
 
 The pre-audit PASS/build evidence above is historical evidence for
-`605c6a67...`. Because production security code and tests changed after audit, it must
-not be reused as final validation for the current head. Full host/sanitizer and RAK4630
-build must be rerun after these fixes, followed by audit reconciliation.
+`605c6a67...` and is not reused as final validation for the post-audit code.
+
+Post-audit software revalidation on
+`eda1f7e499bec074a17c2f28558bbe0ea4f54aba`:
+
+- full `./firmware/tests/run_host_tests.sh`: **PASS**;
+- warnings-as-errors path: **PASS**;
+- ASan + UBSan path: **PASS**;
+- M7P6F v1/v2 format checks: **PASS**;
+- M7P6F SecurityStore v2/migration/replay checks: **PASS**;
+- new real SecurityStore + FlashMutationGate timeout/quarantine integration:
+  **PASS**;
+- all previously covered RF/BLE/persistence/startup/watchdog regression suites:
+  **PASS**.
+
+RAK4630 production rebuild remains pending for the current post-audit head, followed by
+independent audit reconciliation.
 
 ### Wear notes added by audit
 
