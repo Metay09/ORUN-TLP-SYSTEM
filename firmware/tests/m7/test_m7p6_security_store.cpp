@@ -11,6 +11,7 @@
 #include <array>
 #include <set>
 
+#include "journal_format.h"
 #include "security_store.h"
 #include "storage_config.h"
 
@@ -125,6 +126,17 @@ void writeLegacyV1Page(FakeFlash& flash, unsigned page, uint64_t generation,
                txReserveRecordOffset(slot),
            bytes, sizeof(bytes));
   }
+}
+
+void writeV2PageBase(FakeFlash& flash, unsigned page,
+                     uint64_t generation, uint8_t seed,
+                     uint64_t device = kDeviceA) {
+  PageHeader header{generation, device};
+  uint8_t header_bytes[kPageHeaderSize];
+  encodePageHeader(header, header_bytes);
+  memcpy(flash.bytes.data() + size_t(page) * kPageSize, header_bytes,
+         sizeof(header_bytes));
+  writeCredentialBytes(flash, page, seed, device);
 }
 
 void writeV2State(FakeFlash& flash, unsigned page, unsigned slot,
@@ -701,6 +713,205 @@ int main() {
     uint32_t epoch = 0;
     assert(recovered.reserveNextTxCounter(counter, epoch));
     assert(counter == counters_before_compaction);
+  }
+
+  // 12c. A2D replay admission: first authenticated counter requires one
+  // durable reserve; newer counters inside that exclusive bound are RAM-only,
+  // while duplicate/old counters reject without any flash mutation.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 72));
+
+    const uint32_t writes_before = flash.program_calls;
+    assert(store.submitAuthenticatedA2dCounter(0));
+    assert(store.busy());
+    settle(store);
+    bool accepted = false;
+    assert(store.takeA2dReplayResult(accepted) && accepted);
+    const uint32_t writes_after_reserve = flash.program_calls;
+    assert(writes_after_reserve == writes_before + 2);  // body + commit.
+
+    assert(store.submitAuthenticatedA2dCounter(1));
+    assert(store.takeA2dReplayResult(accepted) && accepted);
+    assert(flash.program_calls == writes_after_reserve);
+
+    assert(store.submitAuthenticatedA2dCounter(1));
+    assert(store.takeA2dReplayResult(accepted) && !accepted);
+    assert(flash.program_calls == writes_after_reserve);
+
+    assert(store.submitAuthenticatedA2dCounter(7));
+    assert(store.takeA2dReplayResult(accepted) && accepted);
+    assert(flash.program_calls == writes_after_reserve);
+
+    // Crossing the durable exclusive bound reserves the next block first.
+    assert(store.submitAuthenticatedA2dCounter(8));
+    settle(store);
+    assert(store.takeA2dReplayResult(accepted) && accepted);
+    assert(flash.program_calls == writes_after_reserve + 2);
+  }
+
+  // 12d. Large authenticated counter jumps reserve the smallest block-aligned
+  // exclusive bound greater than the counter, then reboot burns all values
+  // below that durable bound.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 73));
+
+    assert(store.submitAuthenticatedA2dCounter(123));
+    settle(store);
+    bool accepted = false;
+    assert(store.takeA2dReplayResult(accepted) && accepted);
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    settle(recovered);
+
+    const uint32_t writes_before = flash.program_calls;
+    assert(recovered.submitAuthenticatedA2dCounter(127));
+    assert(recovered.takeA2dReplayResult(accepted) && !accepted);
+    assert(flash.program_calls == writes_before);
+
+    assert(recovered.submitAuthenticatedA2dCounter(128));
+    settle(recovered);
+    assert(recovered.takeA2dReplayResult(accepted) && accepted);
+  }
+
+  // 12e. A2D reserve body failure never advances runtime replay admission and
+  // reports a rejected result. Recovery sees only the prior durable bound.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 74));
+
+    flash.fail_at_program_call = static_cast<int>(flash.program_calls) + 1;
+    assert(store.submitAuthenticatedA2dCounter(0));
+    settle(store);
+    bool accepted = true;
+    assert(store.takeA2dReplayResult(accepted) && !accepted);
+    assert(store.diagnostics().a2d_reservation_failures == 1);
+
+    FakeFlash snapshot;
+    snapshot.bytes = flash.bytes;
+    SecurityStore recovered(snapshot, snapshot);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    settle(recovered);
+    assert(recovered.submitAuthenticatedA2dCounter(0));
+    settle(recovered);
+    assert(recovered.takeA2dReplayResult(accepted) && accepted);
+  }
+
+  // 12f. A2D bound overflow cannot create an exclusive aligned bound and
+  // therefore rejects fail-closed without flash mutation.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 75));
+    const uint32_t writes_before = flash.program_calls;
+    const uint64_t max_bound =
+        (UINT64_MAX / kA2dReplayReservationBlockSize) *
+        kA2dReplayReservationBlockSize;
+    assert(store.submitAuthenticatedA2dCounter(max_bound));
+    bool accepted = true;
+    assert(store.takeA2dReplayResult(accepted) && !accepted);
+    assert(flash.program_calls == writes_before);
+    assert(store.diagnostics().a2d_exhausted_events == 1);
+  }
+
+  // 12g. Shared-log compaction carries an A2D-only snapshot before page
+  // activation. The later automatic TX reserve is appended after activation.
+  {
+    FakeFlash flash;
+    writeV2PageBase(flash, 0, 1, 76);
+    for (unsigned slot = 0; slot < kSecurityStateSlotsPerPage - 1; ++slot) {
+      writeV2State(flash, 0, slot, 76,
+                   SecurityStateKind::kA2dReplayExclusiveBound,
+                   uint64_t(slot + 1) * kA2dReplayReservationBlockSize);
+    }
+
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    settle(store);
+    assert(store.diagnostics().compactions == 1);
+
+    SecurityStateRecord first{}, second{};
+    assert(decodeSecurityState(
+        flash.bytes.data() + kPageSize + securityStateRecordOffset(0),
+        first));
+    assert(first.kind ==
+           SecurityStateKind::kA2dReplayExclusiveBound);
+    assert(first.value ==
+           uint64_t(kSecurityStateSlotsPerPage - 1) *
+               kA2dReplayReservationBlockSize);
+    assert(decodeSecurityState(
+        flash.bytes.data() + kPageSize + securityStateRecordOffset(1),
+        second));
+    assert(second.kind == SecurityStateKind::kTxReserveExclusiveBound);
+  }
+
+  // 12h. Shared-log compaction carrying both state families writes TX then A2D
+  // before activation, and only afterwards appends the next TX reservation.
+  {
+    FakeFlash flash;
+    writeV2PageBase(flash, 0, 1, 77);
+    writeV2State(flash, 0, 0, 77,
+                 SecurityStateKind::kA2dReplayExclusiveBound,
+                 kA2dReplayReservationBlockSize * 2);
+    for (unsigned slot = 1; slot < kSecurityStateSlotsPerPage - 1; ++slot) {
+      writeV2State(flash, 0, slot, 77,
+                   SecurityStateKind::kTxReserveExclusiveBound,
+                   uint64_t(slot) * kTxReservationBlockSize);
+    }
+
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    settle(store);
+    assert(store.diagnostics().compactions == 1);
+
+    SecurityStateRecord tx{}, replay{}, next_tx{};
+    assert(decodeSecurityState(
+        flash.bytes.data() + kPageSize + securityStateRecordOffset(0), tx));
+    assert(tx.kind == SecurityStateKind::kTxReserveExclusiveBound);
+    assert(decodeSecurityState(
+        flash.bytes.data() + kPageSize + securityStateRecordOffset(1),
+        replay));
+    assert(replay.kind ==
+           SecurityStateKind::kA2dReplayExclusiveBound);
+    assert(replay.value == kA2dReplayReservationBlockSize * 2);
+    assert(decodeSecurityState(
+        flash.bytes.data() + kPageSize + securityStateRecordOffset(2),
+        next_tx));
+    assert(next_tx.kind == SecurityStateKind::kTxReserveExclusiveBound);
+    assert(next_tx.value == tx.value + kTxReservationBlockSize);
+  }
+
+  // 12i. v2 recovery rejects a decreasing bound and any programmed reserved
+  // tail byte rather than silently rolling state backward or interpreting a
+  // future schema extension.
+  {
+    FakeFlash rollback;
+    writeV2PageBase(rollback, 0, 1, 78);
+    writeV2State(rollback, 0, 0, 78,
+                 SecurityStateKind::kTxReserveExclusiveBound,
+                 kTxReservationBlockSize * 2);
+    writeV2State(rollback, 0, 1, 78,
+                 SecurityStateKind::kTxReserveExclusiveBound,
+                 kTxReservationBlockSize);
+    SecurityStore bad_order(rollback, rollback);
+    assert(bad_order.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(bad_order.state() == SecurityState::kFault);
+
+    FakeFlash tail;
+    writeV2PageBase(tail, 0, 1, 79);
+    tail.bytes[securityStateRecordOffset(kSecurityStateSlotsPerPage)] = 0;
+    SecurityStore bad_tail(tail, tail);
+    assert(bad_tail.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(bad_tail.state() == SecurityState::kFault);
   }
 
   // 13. Integer overflow/wrap refusal: a durable bound already at the
