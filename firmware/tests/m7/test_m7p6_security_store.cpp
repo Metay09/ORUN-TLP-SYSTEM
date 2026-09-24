@@ -304,9 +304,9 @@ int main() {
     assert(recovered.state() == SecurityState::kUnprovisioned);
   }
 
-  // 6. Torn TX reservation write: a second reservation torn mid-write must not
-  // roll the durable bound backward or lose the first block's high-water
-  // mark, and no counter from the torn block is ever available.
+  // 6. Real torn TX body: program only a prefix of the next record body.
+  // The untouched commit word proves the record was never authoritative, so
+  // recovery burns the slot rather than bricking the credential lifetime.
   {
     FakeFlash flash;
     SecurityStore store(flash, flash);
@@ -317,27 +317,69 @@ int main() {
       uint32_t epoch = 0;
       assert(store.reserveNextTxCounter(counter, epoch));
     }
-    // Block exhausted: the next poll() should begin reserving block 2.
-    // Fail the very next program() call (the reservation's body write).
-    flash.fail_at_program_call = static_cast<int>(flash.program_calls) + 1;
-    store.poll();  // kick off the auto-triggered reservation (job_ starts kNone).
+
+    store.poll();
+    flash.partial_program_at_call =
+        static_cast<int>(flash.program_calls) + 1;
+    flash.partial_program_bytes = 8;
     settle(store);
-    uint64_t counter = 0;
-    uint32_t epoch = 0;
-    assert(!store.reserveNextTxCounter(counter, epoch));  // torn: no durable block 2.
     assert(store.diagnostics().reservation_failures >= 1);
 
-    FakeFlash snapshot;
-    snapshot.bytes = flash.bytes;
-    SecurityStore recovered(snapshot, snapshot);
+    SecurityStore recovered(flash, flash);
     assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(recovered.state() == SecurityState::kProvisioned);
+    assert(recovered.diagnostics().recovery_burned_slots >= 1);
     settle(recovered);
+    uint64_t counter = 0;
+    uint32_t epoch = 0;
     assert(recovered.reserveNextTxCounter(counter, epoch));
-    // Recovery must never issue anything below the already-consumed range,
-    // and never anything from the torn attempt at 512 before a fresh durable
-    // commit -- the safe next value is exactly the old durable bound (256).
     assert(counter == kTxReservationBlockSize);
+  }
+
+  // 6b. A complete body whose commit word never landed is still uncommitted.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 41));
+    for (uint64_t i = 0; i < kTxReservationBlockSize; ++i) {
+      uint64_t counter = 0;
+      uint32_t epoch = 0;
+      assert(store.reserveNextTxCounter(counter, epoch));
+    }
+    store.poll();
+    flash.partial_program_at_call =
+        static_cast<int>(flash.program_calls) + 1;
+    flash.partial_program_bytes =
+        kSecurityStateRecordSize - sizeof(uint32_t);
+    settle(store);
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kProvisioned);
+    assert(recovered.diagnostics().recovery_burned_slots >= 1);
+  }
+
+  // 6c. A partially programmed commit is ambiguous and remains fail-closed.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 42));
+    for (uint64_t i = 0; i < kTxReservationBlockSize; ++i) {
+      uint64_t counter = 0;
+      uint32_t epoch = 0;
+      assert(store.reserveNextTxCounter(counter, epoch));
+    }
+    store.poll();
+    flash.partial_program_at_call =
+        static_cast<int>(flash.program_calls) + 2;
+    flash.partial_program_bytes = 2;
+    settle(store);
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kFault);
   }
 
   // 7. Corrupted non-erased v2 TX state on the authoritative page must
@@ -400,6 +442,22 @@ int main() {
     SecurityStore recovered(flash, flash);
     assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(recovered.state() == SecurityState::kFault);
+  }
+
+  // 7c2. Legacy v1 also burns a non-empty record whose commit stayed erased.
+  {
+    FakeFlash flash;
+    writeLegacyV1Page(flash, 0, 1, 87, kTxReservationBlockSize);
+    const uint32_t torn = txReserveRecordOffset(1);
+    for (unsigned i = 0; i < 8; ++i)
+      flash.bytes[torn + i] = static_cast<uint8_t>(0x30 + i);
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kProvisioned);
+    assert(recovered.diagnostics().recovery_burned_slots >= 1);
+    settle(recovered);
+    assert(recovered.diagnostics().migrations == 1);
   }
 
   // 7d. Authoritative device-bound v1 migrates to v2 on the inactive page.
@@ -495,6 +553,9 @@ int main() {
     uint64_t counter = 0;
     uint32_t epoch = 0;
     assert(!store.reserveNextTxCounter(counter, epoch));
+    assert(!submitA2d(store, 85, 0));
+    for (unsigned i = 0; i < 16; ++i) store.poll();
+    assert(flash.program_calls == programs_after_failure);
     assert(journal_format::erased(
         flash.bytes.data() + txReserveRecordOffset(1),
         kTxReserveRecordSize));
@@ -527,6 +588,32 @@ int main() {
     assert(recovered.state() == SecurityState::kProvisioned);
     // Higher-generation v2 does not trigger another migration.
     assert(recovered.diagnostics().migrations == 0);
+  }
+
+  // 7f2. Residual availability limit: a power cut during old-page cleanup
+  // can leave a partially erased committed header. With no durable retire
+  // marker, recovery cannot safely prove it is stale and therefore faults.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 88));
+
+    uint8_t id[kCredentialIdSize], root[kKRootSize];
+    fillId(id, 89);
+    fillKRoot(root, 89);
+    flash.partial_erase_at_call =
+        static_cast<int>(flash.erase_calls) + 2;
+    flash.partial_erase_bytes = 16;
+    assert(store.commitCredential(id, 2, root));
+    settle(store);
+    bool success = false;
+    assert(store.takeCommitResult(success) && success);
+    assert(store.diagnostics().old_page_erase_failures == 1);
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kFault);
   }
 
   // 7g. FOREIGN and corrupt v1 pages are never auto-migrated or rewritten.
@@ -695,6 +782,40 @@ int main() {
     assert(!recovered.reserveNextTxCounter(counter, epoch));
   }
 
+  // 10c. If activation physically lands but the backend reports failure,
+  // protected service stops for the boot instead of continuing under stale
+  // RAM authority. Reboot recovers the generation that actually reached flash.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 90));
+
+    uint8_t id[kCredentialIdSize], root[kKRootSize];
+    fillId(id, 91);
+    fillKRoot(root, 91);
+    flash.program_then_fail_at_call =
+        static_cast<int>(flash.program_calls) + 4;
+    assert(store.commitCredential(id, 2, root));
+    settle(store);
+    bool success = true;
+    assert(store.takeCommitResult(success) && !success);
+    assert(store.state() == SecurityState::kFault);
+    assert(store.diagnostics().activation_ambiguities == 1);
+
+    uint64_t counter = 0;
+    uint32_t epoch = 0;
+    assert(!store.reserveNextTxCounter(counter, epoch));
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kProvisioned);
+    uint8_t recovered_id[kCredentialIdSize];
+    assert(recovered.currentCredentialId(recovered_id));
+    assert(memcmp(recovered_id, id, kCredentialIdSize) == 0);
+    assert(recovered.currentKeyEpoch() == 2);
+  }
+
   // 11. Compaction end-to-end: exhausting one page's SECURITY_STATE capacity
   // forces a real compaction onto the other page before the active page
   // could ever be discovered completely full. The credential and durable TX
@@ -859,7 +980,7 @@ int main() {
     assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(commitAndSettle(store, 80));
 
-    assert(submitA2d(store, 72, 0));
+    assert(submitA2d(store, 80, 0));
     settle(store);
 
     uint8_t id[kCredentialIdSize], root[kKRootSize];
@@ -873,6 +994,31 @@ int main() {
     settle(store);
     bool committed = false;
     assert(store.takeCommitResult(committed) && committed);
+  }
+
+  // 12c3. Credential/epoch binding closes retry-after-rotation TOCTOU.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 92));
+
+    uint8_t next_id[kCredentialIdSize], next_root[kKRootSize];
+    fillId(next_id, 93);
+    fillKRoot(next_root, 93);
+    assert(store.commitCredential(next_id, 2, next_root));
+    assert(!submitA2d(store, 92, 5, 1));
+    settle(store);
+    bool committed = false;
+    assert(store.takeCommitResult(committed) && committed);
+
+    assert(submitA2d(store, 92, 5, 1));
+    bool accepted = true;
+    assert(store.takeA2dReplayResult(accepted) && !accepted);
+
+    assert(submitA2d(store, 93, 5, 2));
+    settle(store);
+    assert(store.takeA2dReplayResult(accepted) && accepted);
   }
 
   // 12d. Large authenticated counter jumps reserve the smallest block-aligned
@@ -912,7 +1058,7 @@ int main() {
     assert(commitAndSettle(store, 74));
 
     flash.fail_at_program_call = static_cast<int>(flash.program_calls) + 1;
-    assert(submitA2d(store, 72, 0));
+    assert(submitA2d(store, 74, 0));
     settle(store);
     bool accepted = true;
     assert(store.takeA2dReplayResult(accepted) && !accepted);
@@ -936,12 +1082,21 @@ int main() {
     assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(commitAndSettle(store, 82));
 
-    assert(submitA2d(store, 72, 0));
+    assert(submitA2d(store, 82, 0));
     flash.fail_at_read_call = static_cast<int>(flash.read_calls) + 1;
     settle(store);
     bool accepted = true;
     assert(store.takeA2dReplayResult(accepted) && !accepted);
     assert(store.diagnostics().a2d_reservation_failures == 1);
+
+    // Same-boot continuation must skip the dirty slot under the strict
+    // production-like erased-destination rule.
+    assert(submitA2d(store, 82, 1));
+    settle(store);
+    assert(store.takeA2dReplayResult(accepted) && accepted);
+    assert(submitA2d(store, 82, 9));
+    settle(store);
+    assert(store.takeA2dReplayResult(accepted) && accepted);
 
     // Snapshot the durable bytes. Even if the record body/commit reached
     // flash, fresh recovery independently validates what is authoritative.
@@ -1239,9 +1394,7 @@ int main() {
         assert(all_counters.insert(counter).second);
       }
       if (life % 3 == 0) {
-        // Simulate a crash mid-reservation: let the store start (but not
-        // finish) advancing to the next block, snapshot flash, and let the
-        // NEXT life's begin()/recover() deal with whatever landed.
+        // Inject a real torn append, not merely one synchronous poll step.
         uint64_t counter = 0;
         uint32_t epoch = 0;
         unsigned guard = 0;
@@ -1250,7 +1403,13 @@ int main() {
           ++guard;
           if (guard > 5000) break;
         }
-        store.poll();  // one partial step into the next reservation/compaction.
+        store.poll();  // create the next reservation/compaction job.
+        flash.partial_program_at_call =
+            static_cast<int>(flash.program_calls) + 1;
+        flash.partial_program_bytes = 8;
+        store.poll();  // torn body; crash snapshot follows immediately.
+        flash.partial_program_at_call = -1;
+        flash.partial_program_bytes = 0;
       }
       // flash.bytes IS the durable state; the next loop iteration's fresh
       // SecurityStore recovers directly from whatever is there now.
