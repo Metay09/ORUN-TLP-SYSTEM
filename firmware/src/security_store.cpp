@@ -47,15 +47,22 @@ bool SecurityStore::begin(DeviceIdentity device_identity) {
   tx_reserved_bound_ = 0;
   tx_next_ = 0;
   a2d_replay_bound_ = 0;
+  a2d_runtime_hwm_ = 0;
+  a2d_runtime_hwm_valid_ = false;
   exhausted_ = false;
   migration_needed_ = false;
   migration_attempted_ = false;
   reserve_after_new_page_ = false;
+  replay_after_new_page_ = false;
   pending_tx_bound_ = 0;
   pending_a2d_bound_ = 0;
+  pending_replay_counter_ = 0;
+  pending_replay_bound_ = 0;
   erase_old_page_ = -1;
   commit_result_ready_ = false;
   commit_success_ = false;
+  a2d_result_ready_ = false;
+  a2d_result_accepted_ = false;
   state_ = SecurityState::kFault;
 
   // critical_/maint_ are priority-tagged views of the same physical security
@@ -301,9 +308,16 @@ bool SecurityStore::recover() {
     }
   }
 
-  // Reboot never reuses unused TX counters; exact A2D runtime HWM admission is
-  // a later slice, so only the durable A2D bound is recovered here.
+  // Reboot never reuses unused TX counters. For replay, every counter below
+  // the durable exclusive bound is conservatively burned across reset.
   tx_next_ = tx_reserved_bound_;
+  if (a2d_replay_bound_ != 0) {
+    a2d_runtime_hwm_ = a2d_replay_bound_ - 1;
+    a2d_runtime_hwm_valid_ = true;
+  } else {
+    a2d_runtime_hwm_ = 0;
+    a2d_runtime_hwm_valid_ = false;
+  }
   return true;
 }
 
@@ -356,6 +370,51 @@ bool SecurityStore::reserveNextTxCounter(uint64_t& counter,
   counter = tx_next_++;
   key_epoch = credential_.key_epoch;
   ++diagnostics_.tx_counters_issued;
+  return true;
+}
+
+bool SecurityStore::submitAuthenticatedA2dCounter(uint64_t counter) {
+  if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
+      a2d_result_ready_)
+    return false;
+
+  if (a2d_runtime_hwm_valid_ && counter <= a2d_runtime_hwm_) {
+    a2d_result_ready_ = true;
+    a2d_result_accepted_ = false;
+    ++diagnostics_.a2d_rejections;
+    return true;
+  }
+
+  if (counter < a2d_replay_bound_) {
+    a2d_runtime_hwm_ = counter;
+    a2d_runtime_hwm_valid_ = true;
+    a2d_result_ready_ = true;
+    a2d_result_accepted_ = true;
+    ++diagnostics_.a2d_admissions;
+    return true;
+  }
+
+  const uint64_t max_bound =
+      (UINT64_MAX / kA2dReplayReservationBlockSize) *
+      kA2dReplayReservationBlockSize;
+  if (counter >= max_bound) {
+    a2d_result_ready_ = true;
+    a2d_result_accepted_ = false;
+    ++diagnostics_.a2d_rejections;
+    ++diagnostics_.a2d_exhausted_events;
+    return true;
+  }
+
+  const uint64_t bound =
+      (counter / kA2dReplayReservationBlockSize + 1) *
+      kA2dReplayReservationBlockSize;
+  return startA2dReplayReservation(counter, bound);
+}
+
+bool SecurityStore::takeA2dReplayResult(bool& accepted) {
+  if (!a2d_result_ready_) return false;
+  accepted = a2d_result_accepted_;
+  a2d_result_ready_ = false;
   return true;
 }
 
@@ -454,6 +513,56 @@ bool SecurityStore::startReservation() {
     startBlob(v2StateOffset(target_page_, target_slot_), bytes,
               sizeof(bytes));
   }
+  return true;
+}
+
+bool SecurityStore::startA2dReplayReservation(uint64_t counter,
+                                                uint64_t bound) {
+  if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
+      active_page_ < 0 || a2d_result_ready_)
+    return false;
+
+  pending_replay_counter_ = counter;
+  pending_replay_bound_ = bound;
+
+  const uint8_t version = pages_[active_page_].version;
+  if (version == kVersionV1) {
+    replay_after_new_page_ = true;
+    migration_attempted_ = true;
+    if (!startNewPage(NewPagePurpose::kMigration, credential_)) {
+      replay_after_new_page_ = false;
+      return false;
+    }
+    return true;
+  }
+  if (version != kVersionV2) return false;
+
+  if (pages_[active_page_].state_used + 1 >=
+      kSecurityStateSlotsPerPage) {
+    replay_after_new_page_ = true;
+    if (!startNewPage(NewPagePurpose::kCompaction, credential_)) {
+      replay_after_new_page_ = false;
+      return false;
+    }
+    return true;
+  }
+
+  SecurityStateRecord state{};
+  memcpy(state.credential_id, credential_.credential_id,
+         kCredentialIdSize);
+  state.key_epoch = credential_.key_epoch;
+  state.kind = SecurityStateKind::kA2dReplayExclusiveBound;
+  state.value = bound;
+  uint8_t bytes[kSecurityStateRecordSize];
+  encodeSecurityState(state, bytes);
+
+  active_port_ = &critical_;
+  target_page_ = static_cast<uint32_t>(active_page_);
+  target_slot_ = pages_[active_page_].state_used;
+  job_ = Job::kA2dReplayReserve;
+  phase_ = Phase::kWriteReserve;
+  startBlob(v2StateOffset(target_page_, target_slot_), bytes,
+            sizeof(bytes));
   return true;
 }
 
@@ -613,18 +722,24 @@ void SecurityStore::fail() {
   const Job failing_job = job_;
   const NewPagePurpose failing_purpose = new_page_purpose_;
   const bool was_reserve_after_new_page = reserve_after_new_page_;
+  const bool was_replay_after_new_page = replay_after_new_page_;
 
   job_ = Job::kNone;
   phase_ = Phase::kErasePage;
   blob_step_ = BlobStep::kBody;
   flash_op_awaiting_completion_ = false;
   reserve_after_new_page_ = false;
+  replay_after_new_page_ = false;
 
   // Existing active page/state remains authoritative because every new-page
   // failure happens before activation or every append failure targets only the
   // next erased slot.
   if (failing_job == Job::kReserve) {
     ++diagnostics_.reservation_failures;
+  } else if (failing_job == Job::kA2dReplayReserve) {
+    ++diagnostics_.a2d_reservation_failures;
+    a2d_result_ready_ = true;
+    a2d_result_accepted_ = false;
   } else if (failing_job == Job::kNewPage) {
     if (failing_purpose == NewPagePurpose::kCredentialCommit) {
       commit_result_ready_ = true;
@@ -634,8 +749,19 @@ void SecurityStore::fail() {
       ++diagnostics_.migration_failures;
       if (was_reserve_after_new_page)
         ++diagnostics_.reservation_failures;
+      if (was_replay_after_new_page) {
+        ++diagnostics_.a2d_reservation_failures;
+        a2d_result_ready_ = true;
+        a2d_result_accepted_ = false;
+      }
     } else {
-      ++diagnostics_.reservation_failures;
+      if (was_replay_after_new_page) {
+        ++diagnostics_.a2d_reservation_failures;
+        a2d_result_ready_ = true;
+        a2d_result_accepted_ = false;
+      } else {
+        ++diagnostics_.reservation_failures;
+      }
     }
   }
 }
@@ -657,6 +783,10 @@ void SecurityStore::completeNewPage() {
     tx_reserved_bound_ = 0;
     tx_next_ = 0;
     a2d_replay_bound_ = 0;
+    a2d_runtime_hwm_ = 0;
+    a2d_runtime_hwm_valid_ = false;
+    a2d_result_ready_ = false;
+    a2d_result_accepted_ = false;
     exhausted_ = false;
     migration_needed_ = false;
     migration_attempted_ = false;
@@ -680,6 +810,12 @@ void SecurityStore::completeNewPage() {
     startReservation();
     return;
   }
+  if (replay_after_new_page_) {
+    replay_after_new_page_ = false;
+    startA2dReplayReservation(pending_replay_counter_,
+                              pending_replay_bound_);
+    return;
+  }
   maybeAutoReserve();
 }
 
@@ -697,6 +833,12 @@ void SecurityStore::completeEraseOld(bool success) {
     startReservation();
     return;
   }
+  if (replay_after_new_page_) {
+    replay_after_new_page_ = false;
+    startA2dReplayReservation(pending_replay_counter_,
+                              pending_replay_bound_);
+    return;
+  }
   maybeAutoReserve();
 }
 
@@ -705,6 +847,18 @@ void SecurityStore::completeReserve() {
   tx_reserved_bound_ = pending_tx_bound_;
   job_ = Job::kNone;
   ++diagnostics_.reservations;
+}
+
+void SecurityStore::completeA2dReplayReserve() {
+  pages_[target_page_].state_used = target_slot_ + 1;
+  a2d_replay_bound_ = pending_replay_bound_;
+  a2d_runtime_hwm_ = pending_replay_counter_;
+  a2d_runtime_hwm_valid_ = true;
+  job_ = Job::kNone;
+  a2d_result_ready_ = true;
+  a2d_result_accepted_ = true;
+  ++diagnostics_.a2d_reservations;
+  ++diagnostics_.a2d_admissions;
 }
 
 void SecurityStore::maybeAutoReserve() {
@@ -818,7 +972,11 @@ void SecurityStore::poll() {
   }
 
   if (phase_ == Phase::kWriteReserve) {
-    completeReserve();
+    if (job_ == Job::kA2dReplayReserve) {
+      completeA2dReplayReserve();
+    } else {
+      completeReserve();
+    }
     return;
   }
 }
