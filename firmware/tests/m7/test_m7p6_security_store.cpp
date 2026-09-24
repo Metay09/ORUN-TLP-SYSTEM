@@ -28,13 +28,19 @@ class FakeFlash : public FlashBackend {
   bool fail_begin = false;
   int fail_at_program_call = -1;  // 1-indexed; that call returns kFailed.
   int fail_at_erase_call = -1;
+  mutable int fail_at_read_call = -1;
   uint32_t program_calls = 0, erase_calls = 0;
+  mutable uint32_t read_calls = 0;
 
   FakeFlash() { bytes.fill(0xFF); }
   bool begin() override { return !fail_begin; }
 
   bool read(uint32_t offset, void* data, size_t size) const override {
-    if (data == nullptr || offset > bytes.size() || size > bytes.size() - offset) return false;
+    ++read_calls;
+    if (static_cast<int>(read_calls) == fail_at_read_call) return false;
+    if (data == nullptr || offset > bytes.size() ||
+        size > bytes.size() - offset)
+      return false;
     memcpy(data, bytes.data() + offset, size);
     return true;
   }
@@ -752,6 +758,30 @@ int main() {
     assert(flash.program_calls == writes_after_reserve + 2);
   }
 
+  // 12c2. An unread replay result belongs to the current credential lifetime.
+  // Re-provisioning must refuse until the caller consumes that result.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 80));
+
+    assert(store.submitAuthenticatedA2dCounter(0));
+    settle(store);
+
+    uint8_t id[kCredentialIdSize], root[kKRootSize];
+    fillId(id, 81);
+    fillKRoot(root, 81);
+    assert(!store.commitCredential(id, 2, root));
+
+    bool accepted = false;
+    assert(store.takeA2dReplayResult(accepted) && accepted);
+    assert(store.commitCredential(id, 2, root));
+    settle(store);
+    bool committed = false;
+    assert(store.takeCommitResult(committed) && committed);
+  }
+
   // 12d. Large authenticated counter jumps reserve the smallest block-aligned
   // exclusive bound greater than the counter, then reboot burns all values
   // below that durable bound.
@@ -803,6 +833,30 @@ int main() {
     assert(recovered.submitAuthenticatedA2dCounter(0));
     settle(recovered);
     assert(recovered.takeA2dReplayResult(accepted) && accepted);
+  }
+
+  // 12e2. A successful flash program is not enough: failed readback/verify
+  // rejects the replay operation and never advances the runtime HWM.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 82));
+
+    assert(store.submitAuthenticatedA2dCounter(0));
+    flash.fail_at_read_call = static_cast<int>(flash.read_calls) + 1;
+    settle(store);
+    bool accepted = true;
+    assert(store.takeA2dReplayResult(accepted) && !accepted);
+    assert(store.diagnostics().a2d_reservation_failures == 1);
+
+    // Snapshot the durable bytes. Even if the record body/commit reached
+    // flash, fresh recovery independently validates what is authoritative.
+    FakeFlash snapshot;
+    snapshot.bytes = flash.bytes;
+    SecurityStore recovered(snapshot, snapshot);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kProvisioned);
   }
 
   // 12f. A2D bound overflow cannot create an exclusive aligned bound and
@@ -912,6 +966,64 @@ int main() {
     SecurityStore bad_tail(tail, tail);
     assert(bad_tail.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(bad_tail.state() == SecurityState::kFault);
+  }
+
+  // 12j. A CRC-valid but unknown v2 state kind is still a hard recovery
+  // fault. This proves semantic kind rejection, not merely CRC corruption.
+  {
+    FakeFlash flash;
+    writeV2PageBase(flash, 0, 1, 83);
+    SecurityStateRecord record{};
+    fillId(record.credential_id, 83);
+    record.key_epoch = 1;
+    record.kind = SecurityStateKind::kTxReserveExclusiveBound;
+    record.value = kTxReservationBlockSize;
+    uint8_t bytes[kSecurityStateRecordSize];
+    encodeSecurityState(record, bytes);
+    bytes[20] = 0x7F;  // unknown kind
+    journal_format::put32(bytes + 32, journal_format::crc32(bytes, 32));
+    journal_format::put32(bytes + 36, kCommit);
+    memcpy(flash.bytes.data() + securityStateRecordOffset(0), bytes,
+           sizeof(bytes));
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kFault);
+  }
+
+  // 12k. Reset property: after every reboot, all counters below the last
+  // durable exclusive replay bound are conservatively rejected. Progress
+  // resumes only at or above that bound, so reboot can burn counters but
+  // never re-accept an older authenticated counter.
+  {
+    FakeFlash flash;
+    {
+      SecurityStore initial(flash, flash);
+      assert(initial.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+      assert(commitAndSettle(initial, 84));
+    }
+
+    uint64_t next = 0;
+    uint64_t durable_bound = 0;
+    for (unsigned life = 0; life < 24; ++life) {
+      SecurityStore store(flash, flash);
+      assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+      settle(store);
+
+      bool accepted = true;
+      if (durable_bound != 0) {
+        assert(store.submitAuthenticatedA2dCounter(durable_bound - 1));
+        assert(store.takeA2dReplayResult(accepted) && !accepted);
+      }
+
+      next = durable_bound + (life % 5);
+      assert(store.submitAuthenticatedA2dCounter(next));
+      if (store.busy()) settle(store);
+      assert(store.takeA2dReplayResult(accepted) && accepted);
+      durable_bound =
+          (next / kA2dReplayReservationBlockSize + 1) *
+          kA2dReplayReservationBlockSize;
+    }
   }
 
   // 13. Integer overflow/wrap refusal: a durable bound already at the
