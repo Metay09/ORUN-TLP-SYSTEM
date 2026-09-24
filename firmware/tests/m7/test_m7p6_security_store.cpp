@@ -911,6 +911,11 @@ int main() {
     SecurityStore recovered(snapshot, snapshot);
     assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(recovered.state() == SecurityState::kProvisioned);
+    settle(recovered);
+    // The record may in fact have reached flash before verification failed.
+    // Recovery must then burn it conservatively rather than re-admit it.
+    assert(recovered.submitAuthenticatedA2dCounter(0));
+    assert(recovered.takeA2dReplayResult(accepted) && !accepted);
   }
 
   // 12f. A2D bound overflow cannot create an exclusive aligned bound and
