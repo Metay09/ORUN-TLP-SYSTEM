@@ -383,13 +383,22 @@ int main() {
     assert(version == kVersionV2);
     assert(journal_format::erased(flash.bytes.data(), kPageSize));
 
-    SecurityStateRecord carried{};
+    SecurityStateRecord carried{}, next{};
     assert(decodeSecurityState(
         flash.bytes.data() + kPageSize + securityStateRecordOffset(0),
         carried));
     assert(carried.kind ==
            SecurityStateKind::kTxReserveExclusiveBound);
     assert(carried.value == kTxReservationBlockSize * 2);
+    // Migration itself creates no replay state. The only later append caused
+    // by begin()/settle() is the fresh TX reservation needed after reboot.
+    assert(decodeSecurityState(
+        flash.bytes.data() + kPageSize + securityStateRecordOffset(1),
+        next));
+    assert(next.kind == SecurityStateKind::kTxReserveExclusiveBound);
+    assert(journal_format::erased(
+        flash.bytes.data() + kPageSize + securityStateRecordOffset(2),
+        kSecurityStateRecordSize));
 
     uint64_t counter = 0;
     uint32_t epoch = 0;
@@ -425,6 +434,31 @@ int main() {
     uint8_t version = 0;
     assert(headerMagicPresent(snapshot.bytes.data(), &version));
     assert(version == kVersionV1);
+  }
+
+  // 7e2. If automatic migration fails, this firmware does not fall back to
+  // appending fresh v1 TX records. Protected TX stays closed for the boot
+  // rather than extending a legacy schema after v2-aware code is running.
+  {
+    FakeFlash flash;
+    writeLegacyV1Page(flash, 0, 1, 85, kTxReservationBlockSize);
+    flash.fail_at_program_call = 1;  // migration header body
+
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    settle(store);
+    assert(store.diagnostics().migration_failures == 1);
+    const uint32_t programs_after_failure = flash.program_calls;
+
+    for (unsigned i = 0; i < 16; ++i) store.poll();
+    assert(flash.program_calls == programs_after_failure);
+
+    uint64_t counter = 0;
+    uint32_t epoch = 0;
+    assert(!store.reserveNextTxCounter(counter, epoch));
+    assert(journal_format::erased(
+        flash.bytes.data() + txReserveRecordOffset(1),
+        kTxReserveRecordSize));
   }
 
   // 7f. Once v2 activation lands, failure to erase the superseded v1 page is
@@ -552,6 +586,26 @@ int main() {
     uint64_t counter = 0;
     uint32_t epoch = 0;
     assert(!recovered.reserveNextTxCounter(counter, epoch));
+  }
+
+  // 9c. Two committed pages with the same highest generation are ambiguous
+  // authority. Never choose by page index because their bounds/credentials
+  // could differ.
+  {
+    FakeFlash flash;
+    writeV2PageBase(flash, 0, 4, 86);
+    writeV2PageBase(flash, 1, 4, 86);
+    writeV2State(flash, 0, 0, 86,
+                 SecurityStateKind::kTxReserveExclusiveBound,
+                 kTxReservationBlockSize);
+    writeV2State(flash, 1, 0, 86,
+                 SecurityStateKind::kTxReserveExclusiveBound,
+                 kTxReservationBlockSize * 2);
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kFault);
+    assert(recovered.diagnostics().recovery_corruptions >= 1);
   }
 
   // 10. Valid older page survives a damaged newer page (interrupted
