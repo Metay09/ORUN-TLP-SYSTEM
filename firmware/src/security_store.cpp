@@ -233,11 +233,25 @@ bool SecurityStore::recover() {
       }
 
       pages_[winner].state_used = slot + 1;
+      if (journal_format::erased(
+              bytes + kTxReserveRecordSize - sizeof(uint32_t),
+              sizeof(uint32_t))) {
+        // Power loss may leave a partially programmed record body while the
+        // commit word is still untouched. No security decision can have
+        // depended on such a record. Burn the slot and continue; later slots
+        // remain legal because this firmware also burns a dirty failed append
+        // before retrying at the next slot.
+        ++diagnostics_.recovery_burned_slots;
+        continue;
+      }
+
       TxReserve reserve{};
       if (!decodeTxReserve(bytes, reserve) ||
           !credentialIdEqual(reserve.credential_id,
                              credential_.credential_id) ||
           reserve.key_epoch != credential_.key_epoch) {
+        // A non-erased/nonzero commit that does not decode is ambiguous: it
+        // could be corruption of a record that was once authoritative.
         ++diagnostics_.recovery_corruptions;
         state_ = SecurityState::kFault;
         return true;
@@ -272,6 +286,13 @@ bool SecurityStore::recover() {
       }
 
       pages_[winner].state_used = slot + 1;
+      if (journal_format::erased(
+              bytes + kSecurityStateRecordSize - sizeof(uint32_t),
+              sizeof(uint32_t))) {
+        ++diagnostics_.recovery_burned_slots;
+        continue;
+      }
+
       SecurityStateRecord record{};
       if (!decodeSecurityState(bytes, record) ||
           !credentialIdEqual(record.credential_id,
@@ -385,10 +406,24 @@ bool SecurityStore::reserveNextTxCounter(uint64_t& counter,
   return true;
 }
 
-bool SecurityStore::submitAuthenticatedA2dCounter(uint64_t counter) {
+bool SecurityStore::submitAuthenticatedA2dCounter(
+    const uint8_t (&credential_id)[kCredentialIdSize], uint32_t key_epoch,
+    uint64_t counter) {
   if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
       a2d_result_ready_)
     return false;
+
+  // The authenticated frame's security lifetime is part of the replay
+  // decision. A caller that authenticated under credential A, got kBusy, and
+  // retries after credential B becomes active must not be able to submit only
+  // the bare counter and accidentally dispatch A under B's reset replay HWM.
+  if (!credentialIdEqual(credential_id, credential_.credential_id) ||
+      key_epoch != credential_.key_epoch) {
+    a2d_result_ready_ = true;
+    a2d_result_accepted_ = false;
+    ++diagnostics_.a2d_rejections;
+    return true;
+  }
 
   if (a2d_runtime_hwm_valid_ && counter <= a2d_runtime_hwm_) {
     a2d_result_ready_ = true;
@@ -535,6 +570,10 @@ bool SecurityStore::startA2dReplayReservation(uint64_t counter,
 
   const uint8_t version = pages_[active_page_].version;
   if (version == kVersionV1) {
+    // v1 is migration-only. Once an automatic migration attempt failed this
+    // boot, neither TX nor A2D is allowed to restart it opportunistically;
+    // protected service remains closed until reboot/recovery.
+    if (migration_attempted_) return false;
     replay_after_new_page_ = true;
     migration_attempted_ = true;
     if (!startNewPage(NewPagePurpose::kMigration, credential_)) {
@@ -731,6 +770,26 @@ void SecurityStore::fail() {
   const NewPagePurpose failing_purpose = new_page_purpose_;
   const bool was_reserve_after_new_page = reserve_after_new_page_;
   const bool was_replay_after_new_page = replay_after_new_page_;
+  const bool activation_ambiguous =
+      failing_job == Job::kNewPage && phase_ == Phase::kActivatePage;
+
+  // A failed append may have programmed some or all of its target before the
+  // backend reported failure (brownout, failed readback, async timeout). The
+  // production backend refuses every future program to a non-erased target,
+  // so never retry such a slot in-place. If readback itself is unavailable,
+  // conservatively burn the slot in RAM.
+  if (failing_job == Job::kReserve ||
+      failing_job == Job::kA2dReplayReserve) {
+    uint8_t bytes[kSecurityStateRecordSize];
+    const bool readable =
+        critical_.read(v2StateOffset(target_page_, target_slot_), bytes,
+                       sizeof(bytes));
+    if (!readable || !journal_format::erased(bytes, sizeof(bytes))) {
+      const uint32_t used = target_slot_ + 1;
+      if (pages_[target_page_].state_used < used)
+        pages_[target_page_].state_used = used;
+    }
+  }
 
   job_ = Job::kNone;
   phase_ = Phase::kErasePage;
@@ -771,6 +830,16 @@ void SecurityStore::fail() {
         ++diagnostics_.reservation_failures;
       }
     }
+  }
+
+  if (activation_ambiguous) {
+    // FlashMutationGate may return kFailed after SoftDevice accepted the page
+    // activation but before the definitive completion event arrived. The
+    // activation can therefore still land after this call. Continuing under
+    // the old credential/bounds in RAM would diverge from reboot authority.
+    // Stop all protected service until reboot performs authoritative recovery.
+    state_ = SecurityState::kFault;
+    ++diagnostics_.activation_ambiguities;
   }
 }
 
