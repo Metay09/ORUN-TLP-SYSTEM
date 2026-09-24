@@ -23,6 +23,7 @@ class SecurityStore {
  public:
   struct Diagnostics {
     uint32_t recovery_corruptions = 0;
+    uint32_t recovery_burned_slots = 0;
     uint32_t commits = 0;
     uint32_t commit_failures = 0;
     uint32_t reservations = 0;
@@ -38,6 +39,7 @@ class SecurityStore {
     uint32_t a2d_reservations = 0;
     uint32_t a2d_reservation_failures = 0;
     uint32_t a2d_exhausted_events = 0;
+    uint32_t activation_ambiguities = 0;
   };
 
   SecurityStore(FlashBackend& critical_flash, FlashBackend& maint_flash)
@@ -70,7 +72,9 @@ class SecurityStore {
   // yields accepted/rejected either immediately (duplicate or already inside
   // the durable reserve) or after poll() durably commits a required reserve.
   // Application dispatch is forbidden until accepted==true is retrieved.
-  bool submitAuthenticatedA2dCounter(uint64_t counter);
+  bool submitAuthenticatedA2dCounter(
+      const uint8_t (&credential_id)[security_format::kCredentialIdSize],
+      uint32_t key_epoch, uint64_t counter);
   bool takeA2dReplayResult(bool& accepted);
 
   const Diagnostics& diagnostics() const { return diagnostics_; }
