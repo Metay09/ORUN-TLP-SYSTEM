@@ -624,6 +624,16 @@ writes, but the exact block size remains a **candidate** until independent
 security/storage review. Physical endurance claims still require the actual
 silicon specification and representative field measurements.
 
+**Post-implementation audit correction:** this illustrative arithmetic omits three
+real wear contributors that must be included in later endurance budgeting:
+(1) every reboot of a provisioned device burns the prior TX reserve headroom and
+requires one fresh TX-reserve append before protected TX resumes; (2) the current
+conservative A/B implementation may erase an already-blank destination page; and
+(3) a valid authenticated authority can force one A2D state append per accepted
+frame by making counter jumps of at least one replay block. These are not replay
+safety defects, but reset storms and pathological authenticated traffic can increase
+erase cadence materially.
+
 ### 11.8 API/dispatch boundary for the later implementation
 
 The persistence slice should expose only a bounded internal replay-admission
