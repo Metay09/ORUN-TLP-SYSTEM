@@ -862,8 +862,10 @@ also **PASS** on one real RAK4631 + Android nRF Connect for normal
 GET_CONFIG/HVC, disconnect/re-advertise and reconnect/fresh-session behavior.
 A genuine ATT timeout was not physically injected and is not claimed. The
 independent final audit returned **PASS WITH FIXES** with no BLOCKER/HIGH/MEDIUM
-findings. Its accepted LOW post-HVC ingress-race fix is applied on the branch
-and final host/build revalidation is pending. Exact evidence is in
+findings. Its accepted LOW post-HVC ingress-race fix is applied on the branch;
+post-audit full host/sanitizer/startup/source-guard plus RAK4630 production
+build revalidation is **PASS** on `e510a96f3d541ca113d4cfd297fa869ffdcb27c2`
+(22,672 B RAM / 234,456 B flash). Exact evidence is in
 `docs/milestones/M7P7G.md`.
 
 ## 18. RF configuration semantics and radio-platform portability
