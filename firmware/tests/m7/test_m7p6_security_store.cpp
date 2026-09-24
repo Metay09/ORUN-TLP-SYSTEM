@@ -84,6 +84,62 @@ bool commitAndSettle(SecurityStore& store, uint8_t seed) {
   bool success = false;
   return store.takeCommitResult(success) && success;
 }
+
+void writeCredentialBytes(FakeFlash& flash, unsigned page, uint8_t seed,
+                          uint64_t device = kDeviceA) {
+  Credential credential{};
+  fillId(credential.credential_id, seed);
+  credential.key_epoch = 1;
+  credential.device_identity = device;
+  fillKRoot(credential.k_root, seed);
+  uint8_t bytes[kCredentialRecordSize];
+  encodeCredential(credential, bytes);
+  memcpy(flash.bytes.data() + size_t(page) * kPageSize +
+             credentialRecordOffset(),
+         bytes, sizeof(bytes));
+}
+
+void writeLegacyV1Page(FakeFlash& flash, unsigned page, uint64_t generation,
+                       uint8_t seed, uint64_t tx_bound,
+                       uint64_t device = kDeviceA) {
+  PageHeader header{generation, device};
+  uint8_t header_bytes[kPageHeaderSize];
+  encodePageHeaderVersion(header, kVersionV1, header_bytes);
+  memcpy(flash.bytes.data() + size_t(page) * kPageSize, header_bytes,
+         sizeof(header_bytes));
+  writeCredentialBytes(flash, page, seed, device);
+
+  uint8_t id[kCredentialIdSize];
+  fillId(id, seed);
+  unsigned slot = 0;
+  for (uint64_t bound = kTxReservationBlockSize;
+       bound <= tx_bound && slot < kV1TxReserveSlotsPerPage;
+       bound += kTxReservationBlockSize, ++slot) {
+    TxReserve reserve{};
+    memcpy(reserve.credential_id, id, kCredentialIdSize);
+    reserve.key_epoch = 1;
+    reserve.tx_reserved_bound = bound;
+    uint8_t bytes[kTxReserveRecordSize];
+    encodeTxReserve(reserve, bytes);
+    memcpy(flash.bytes.data() + size_t(page) * kPageSize +
+               txReserveRecordOffset(slot),
+           bytes, sizeof(bytes));
+  }
+}
+
+void writeV2State(FakeFlash& flash, unsigned page, unsigned slot,
+                  uint8_t seed, SecurityStateKind kind, uint64_t value) {
+  SecurityStateRecord record{};
+  fillId(record.credential_id, seed);
+  record.key_epoch = 1;
+  record.kind = kind;
+  record.value = value;
+  uint8_t bytes[kSecurityStateRecordSize];
+  encodeSecurityState(record, bytes);
+  memcpy(flash.bytes.data() + size_t(page) * kPageSize +
+             securityStateRecordOffset(slot),
+         bytes, sizeof(bytes));
+}
 }  // namespace
 
 int main() {
@@ -242,8 +298,8 @@ int main() {
     }
     store.poll();
     settle(store);  // second reservation fully lands.
-    const uint32_t offset = txReserveRecordOffset(1);
-    flash.bytes[offset + 20] ^= 0xFF;  // corrupt its bound/CRC relationship.
+    const uint32_t offset = securityStateRecordOffset(1);
+    flash.bytes[offset + 24] ^= 0xFF;  // corrupt its bound/CRC relationship.
 
     SecurityStore recovered(flash, flash);
     assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
@@ -279,16 +335,10 @@ int main() {
     assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(commitAndSettle(store, 52));
 
-    uint8_t id[kCredentialIdSize];
-    fillId(id, 52);
-    TxReserve later{};
-    memcpy(later.credential_id, id, kCredentialIdSize);
-    later.key_epoch = 1;
-    later.tx_reserved_bound = kTxReservationBlockSize * 3;
-    uint8_t bytes[kTxReserveRecordSize];
-    encodeTxReserve(later, bytes);
     // slot 0 exists from provisioning; leave slot 1 erased and inject slot 2.
-    memcpy(flash.bytes.data() + txReserveRecordOffset(2), bytes, sizeof(bytes));
+    writeV2State(flash, 0, 2, 52,
+                 SecurityStateKind::kTxReserveExclusiveBound,
+                 kTxReservationBlockSize * 3);
 
     SecurityStore recovered(flash, flash);
     assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
@@ -353,7 +403,7 @@ int main() {
     FakeFlash flash;
     SecurityStore store(flash, flash);
     assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
-    assert(commitAndSettle(store, 61));  // valid v1 page 0.
+    assert(commitAndSettle(store, 61));  // valid current v2 page 0.
 
     PageHeader newer{2, kDeviceA};
     uint8_t header[kPageHeaderSize];
@@ -417,7 +467,7 @@ int main() {
     assert(!recovered.reserveNextTxCounter(counter, epoch));
   }
 
-  // 11. Compaction end-to-end: exhausting one page's TX_RESERVE capacity
+  // 11. Compaction end-to-end: exhausting one page's SECURITY_STATE capacity
   // forces a real compaction onto the other page before the active page
   // could ever be discovered completely full. The credential and durable TX
   // position survive; the old page is erased; no counter is ever repeated
@@ -428,10 +478,10 @@ int main() {
     assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(commitAndSettle(store, 8));
     std::set<uint64_t> seen;
-    // One page holds kTxReserveSlotsPerPage TX_RESERVE records; each block
+    // One page holds kSecurityStateSlotsPerPage TX_RESERVE records; each block
     // is kTxReservationBlockSize counters. Consume enough blocks to force at
     // least one compaction (headroom is reserved at slotsPerPage-1).
-    const uint64_t total = (kTxReserveSlotsPerPage + 2) * kTxReservationBlockSize;
+    const uint64_t total = (kSecurityStateSlotsPerPage + 2) * kTxReservationBlockSize;
     for (uint64_t i = 0; i < total; ++i) {
       uint64_t counter = 0;
       uint32_t epoch = 0;
@@ -466,12 +516,12 @@ int main() {
     SecurityStore store(flash, flash);
     assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(commitAndSettle(store, 9));
-    // Provisioning already wrote TX_RESERVE slot 0; consume exactly enough
-    // full blocks to bring the active page to kTxReserveSlotsPerPage - 1
+    // Provisioning already wrote SECURITY_STATE TX slot 0; consume exactly enough
+    // full blocks to bring the active page to kSecurityStateSlotsPerPage - 1
     // used slots -- one short of the headroom threshold that forces
     // compaction on the NEXT reservation attempt.
     const uint64_t counters_before_compaction =
-        (kTxReserveSlotsPerPage - 1) * kTxReservationBlockSize;
+        (kSecurityStateSlotsPerPage - 1) * kTxReservationBlockSize;
     for (uint64_t i = 0; i < counters_before_compaction; ++i) {
       uint64_t counter = 0;
       uint32_t epoch = 0;
@@ -497,7 +547,7 @@ int main() {
   }
 
   // 12b. Critical compaction crash point: the new page's complete snapshot
-  // (header body + carried-forward TX_RESERVE + credential) is durable, but
+  // (header body + carried-forward TX state + credential) is durable, but
   // the FINAL page-activation word fails. Recovery must still select the old
   // page, proving activation-last prevents higher-generation rollback.
   {
@@ -506,7 +556,7 @@ int main() {
     assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(commitAndSettle(store, 62));
     const uint64_t counters_before_compaction =
-        (kTxReserveSlotsPerPage - 1) * kTxReservationBlockSize;
+        (kSecurityStateSlotsPerPage - 1) * kTxReservationBlockSize;
     for (uint64_t i = 0; i < counters_before_compaction; ++i) {
       uint64_t counter = 0;
       uint32_t epoch = 0;
@@ -548,15 +598,8 @@ int main() {
     assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(commitAndSettle(store, 10));
     const uint64_t huge_bound = (UINT64_MAX / kTxReservationBlockSize) * kTxReservationBlockSize;
-    uint8_t id[kCredentialIdSize];
-    fillId(id, 10);
-    TxReserve reserve{};
-    memcpy(reserve.credential_id, id, kCredentialIdSize);
-    reserve.key_epoch = 1;
-    reserve.tx_reserved_bound = huge_bound;
-    uint8_t bytes[kTxReserveRecordSize];
-    encodeTxReserve(reserve, bytes);
-    memcpy(flash.bytes.data() + txReserveRecordOffset(1), bytes, sizeof(bytes));
+    writeV2State(flash, 0, 1, 10,
+                 SecurityStateKind::kTxReserveExclusiveBound, huge_bound);
 
     SecurityStore recovered(flash, flash);
     assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
