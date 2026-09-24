@@ -33,6 +33,11 @@ class SecurityStore {
     uint32_t old_page_erase_failures = 0;
     uint32_t tx_counters_issued = 0;
     uint32_t exhausted_events = 0;
+    uint32_t a2d_admissions = 0;
+    uint32_t a2d_rejections = 0;
+    uint32_t a2d_reservations = 0;
+    uint32_t a2d_reservation_failures = 0;
+    uint32_t a2d_exhausted_events = 0;
   };
 
   SecurityStore(FlashBackend& critical_flash, FlashBackend& maint_flash)
@@ -57,10 +62,27 @@ class SecurityStore {
 
   bool reserveNextTxCounter(uint64_t& counter, uint32_t& key_epoch);
 
+  // INTERNAL AUTHENTICATED-RECEIVE BOUNDARY ONLY. No production RF/BLE caller
+  // is introduced by M7P6F. The caller must invoke this only after AEAD
+  // authentication/decryption for the active credential. Returns false only
+  // when no admission operation could be accepted (store unavailable/busy or
+  // an earlier result is unread). When it returns true, takeA2dReplayResult()
+  // yields accepted/rejected either immediately (duplicate or already inside
+  // the durable reserve) or after poll() durably commits a required reserve.
+  // Application dispatch is forbidden until accepted==true is retrieved.
+  bool submitAuthenticatedA2dCounter(uint64_t counter);
+  bool takeA2dReplayResult(bool& accepted);
+
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
  private:
-  enum class Job { kNone, kNewPage, kEraseOld, kReserve };
+  enum class Job {
+    kNone,
+    kNewPage,
+    kEraseOld,
+    kReserve,
+    kA2dReplayReserve
+  };
   enum class NewPagePurpose {
     kCredentialCommit,
     kCompaction,
@@ -89,6 +111,7 @@ class SecurityStore {
                     const security_format::Credential& credential);
   bool startEraseOld();
   bool startReservation();
+  bool startA2dReplayReservation(uint64_t counter, uint64_t bound);
   void maybeAutoReserve();
   void startBlob(uint32_t offset, const uint8_t* bytes, uint32_t size);
   void startSnapshotTxState();
@@ -101,6 +124,7 @@ class SecurityStore {
   void completeNewPage();
   void completeEraseOld(bool success);
   void completeReserve();
+  void completeA2dReplayReserve();
 
   FlashBackend& critical_;
   FlashBackend& maint_;
@@ -117,6 +141,8 @@ class SecurityStore {
   uint64_t tx_reserved_bound_ = 0;
   uint64_t tx_next_ = 0;
   uint64_t a2d_replay_bound_ = 0;
+  uint64_t a2d_runtime_hwm_ = 0;
+  bool a2d_runtime_hwm_valid_ = false;
   bool exhausted_ = false;
   bool migration_needed_ = false;
   bool migration_attempted_ = false;
@@ -132,13 +158,18 @@ class SecurityStore {
   uint32_t target_slot_ = 0;
   uint64_t target_generation_ = 0;
   bool reserve_after_new_page_ = false;
+  bool replay_after_new_page_ = false;
   security_format::Credential pending_credential_{};
   uint64_t pending_tx_bound_ = 0;
   uint64_t pending_a2d_bound_ = 0;
+  uint64_t pending_replay_counter_ = 0;
+  uint64_t pending_replay_bound_ = 0;
   int erase_old_page_ = -1;
 
   bool commit_result_ready_ = false;
   bool commit_success_ = false;
+  bool a2d_result_ready_ = false;
+  bool a2d_result_accepted_ = false;
 
   uint8_t blob_[security_format::kCredentialRecordSize]{};
   uint32_t blob_offset_ = 0;
