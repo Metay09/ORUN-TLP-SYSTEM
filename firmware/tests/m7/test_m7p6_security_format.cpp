@@ -29,6 +29,22 @@ int main() {
     assert(decoded.generation == 42);
     assert(decoded.device_identity == 0x0E8ADE7E71531AA3ULL);
   }
+  // Explicit v1 compatibility: new firmware must decode the old page header
+  // only through the versioned migration path; the current decoder remains v2.
+  {
+    uint8_t bytes[kPageHeaderSize];
+    PageHeader original{7, 0x0E8ADE7E71531AA3ULL};
+    encodePageHeaderVersion(original, kVersionV1, bytes);
+    uint8_t version = 0;
+    assert(headerMagicPresent(bytes, &version));
+    assert(version == kVersionV1);
+    PageHeader decoded{};
+    assert(decodePageHeaderVersion(bytes, kVersionV1, decoded));
+    assert(decoded.generation == 7);
+    assert(decoded.device_identity == original.device_identity);
+    assert(!decodePageHeader(bytes, decoded));
+  }
+
   // Erased flash is not a valid header, and headerMagicPresent() correctly
   // reports "nothing here" rather than "unsupported".
   {
@@ -188,13 +204,96 @@ int main() {
     assert(!decodeTxReserve(bytes, decoded));
   }
 
+  // ---- v2 SECURITY_STATE record ----
+  {
+    uint8_t bytes[kSecurityStateRecordSize];
+    SecurityStateRecord original{};
+    fillId(original.credential_id, 21);
+    original.key_epoch = 4;
+    original.kind = SecurityStateKind::kTxReserveExclusiveBound;
+    original.value = kTxReservationBlockSize * 5;
+    encodeSecurityState(original, bytes);
+    SecurityStateRecord decoded{};
+    assert(decodeSecurityState(bytes, decoded));
+    assert(memcmp(decoded.credential_id, original.credential_id,
+                  kCredentialIdSize) == 0);
+    assert(decoded.key_epoch == 4);
+    assert(decoded.kind == SecurityStateKind::kTxReserveExclusiveBound);
+    assert(decoded.value == original.value);
+  }
+  {
+    uint8_t bytes[kSecurityStateRecordSize];
+    SecurityStateRecord original{};
+    fillId(original.credential_id, 22);
+    original.key_epoch = 9;
+    original.kind = SecurityStateKind::kA2dReplayExclusiveBound;
+    original.value = kA2dReplayReservationBlockSize * 7;
+    encodeSecurityState(original, bytes);
+    SecurityStateRecord decoded{};
+    assert(decodeSecurityState(bytes, decoded));
+    assert(decoded.kind == SecurityStateKind::kA2dReplayExclusiveBound);
+    assert(decoded.value == original.value);
+  }
+  // Unknown kind, nonzero reserved bytes, impossible alignment, CRC damage and
+  // erased/torn commit state all fail closed.
+  {
+    uint8_t bytes[kSecurityStateRecordSize];
+    SecurityStateRecord original{};
+    fillId(original.credential_id, 23);
+    original.key_epoch = 1;
+    original.kind = SecurityStateKind::kTxReserveExclusiveBound;
+    original.value = kTxReservationBlockSize;
+    encodeSecurityState(original, bytes);
+
+    uint8_t mutated[kSecurityStateRecordSize];
+    memcpy(mutated, bytes, sizeof(mutated));
+    mutated[20] = 0x7F;
+    SecurityStateRecord decoded{};
+    assert(!decodeSecurityState(mutated, decoded));
+
+    memcpy(mutated, bytes, sizeof(mutated));
+    mutated[21] = 1;
+    assert(!decodeSecurityState(mutated, decoded));
+
+    SecurityStateRecord bad = original;
+    bad.value = kTxReservationBlockSize + 1;
+    encodeSecurityState(bad, mutated);
+    assert(!decodeSecurityState(mutated, decoded));
+
+    bad = original;
+    bad.kind = SecurityStateKind::kA2dReplayExclusiveBound;
+    bad.value = kA2dReplayReservationBlockSize + 1;
+    encodeSecurityState(bad, mutated);
+    assert(!decodeSecurityState(mutated, decoded));
+
+    memcpy(mutated, bytes, sizeof(mutated));
+    mutated[24] ^= 0x01;
+    assert(!decodeSecurityState(mutated, decoded));
+
+    memcpy(mutated, bytes, sizeof(mutated));
+    memset(mutated + 36, 0xFF, 4);
+    assert(!decodeSecurityState(mutated, decoded));
+
+    memset(mutated, 0xFF, sizeof(mutated));
+    assert(!decodeSecurityState(mutated, decoded));
+  }
+
   // ---- Page packing sanity ----
   {
     assert(pageHeaderOffset() == 0);
     assert(credentialRecordOffset() == kPageHeaderSize);
-    assert(txReserveRecordOffset(0) == kPageHeaderSize + kCredentialRecordSize);
-    assert(txReserveRecordOffset(kTxReserveSlotsPerPage - 1) + kTxReserveRecordSize == 4096);
+    assert(txReserveRecordOffset(0) ==
+           kPageHeaderSize + kCredentialRecordSize);
+    assert(txReserveRecordOffset(kV1TxReserveSlotsPerPage - 1) +
+               kTxReserveRecordSize ==
+           4096);
+    assert(securityStateRecordOffset(0) ==
+           kPageHeaderSize + kCredentialRecordSize);
+    assert(securityStateRecordOffset(kSecurityStateSlotsPerPage - 1) +
+               kSecurityStateRecordSize ==
+           4096 - kSecurityStateTailBytes);
+    assert(kSecurityStateTailBytes == 36);
   }
 
-  puts("M7P6B security_format encode/decode checks: PASS");
+  puts("M7P6F security_format v1/v2 encode/decode checks: PASS");
 }
