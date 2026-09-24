@@ -18,7 +18,7 @@ flash). Focused current-head hardware regression is also **PASS** on one real
 RAK4631 + Android nRF Connect: advertising/bond retention, exact service and
 characteristic properties, GET_CONFIG, same-session HVC progression,
 disconnect/re-advertise, reconnect and a fresh application session all
-completed normally. The independent final audit returned **PASS WITH FIXES** with no BLOCKER/HIGH/MEDIUM findings. The accepted LOW post-HVC race fix is now on the branch and requires final host/build revalidation; no genuine
+completed normally. The independent final audit returned **PASS WITH FIXES** with no BLOCKER/HIGH/MEDIUM findings. The accepted LOW post-HVC race fix is applied, and post-audit full host/sanitizer/startup/source-guard plus RAK4630 production build revalidation are **PASS** on `e510a96f3d541ca113d4cfd297fa869ffdcb27c2` (22,672 B RAM / 234,456 B flash). No genuine
 ATT-timeout physical injection is claimed. Provisioning, authorization, secure RF/TLP v2 commands, MESSAGE runtime
 and field-network/serviceability runtime remain later work. M7P7B quantitative
 current remains DEFERRED and GNSS coexistence remains unproven on the tested
@@ -131,8 +131,9 @@ revalidation and the production RAK4630 build are PASS on
 regression is also PASS on the same production code for normal GET_CONFIG/HVC,
 disconnect/re-advertise and reconnect/fresh-session behavior. The independent
 final audit returned **PASS WITH FIXES** with no BLOCKER/HIGH/MEDIUM findings;
-its accepted LOW post-HVC race fix is now applied and awaits final host/build
-revalidation. No physical ATT-timeout injection is claimed. Exact evidence and
+its accepted LOW post-HVC race fix is applied and post-audit full host/build
+revalidation is **PASS** on `e510a96f3d541ca113d4cfd297fa869ffdcb27c2`
+(22,672 B RAM / 234,456 B flash). No physical ATT-timeout injection is claimed. Exact evidence and
 disposition are in `docs/milestones/M7P7G.md`.
 
 Owner-approved later application direction is recorded separately in
