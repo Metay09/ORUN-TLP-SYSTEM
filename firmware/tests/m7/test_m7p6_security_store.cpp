@@ -1,4 +1,4 @@
-// M7P6B: SecurityStore against the actual production class. A portable fake
+// M7P6F: SecurityStore v2 + v1 migration against the actual production class. A portable fake
 // FlashBackend (no Nordic headers) models the 2-page security partition,
 // entirely synchronous -- FlashMutationGate's async/pending admission
 // behavior for the security client is covered separately in
@@ -247,7 +247,7 @@ int main() {
     assert(recovered.state() == SecurityState::kUnprovisioned);
   }
 
-  // 6. Torn TX_RESERVE write: a second reservation torn mid-write must not
+  // 6. Torn TX reservation write: a second reservation torn mid-write must not
   // roll the durable bound backward or lose the first block's high-water
   // mark, and no counter from the torn block is ever available.
   {
@@ -283,7 +283,7 @@ int main() {
     assert(counter == kTxReservationBlockSize);
   }
 
-  // 7. Corrupted non-erased TX_RESERVE on the authoritative page must
+  // 7. Corrupted non-erased v2 TX state on the authoritative page must
   // fail closed. Falling back to an earlier/lower bound could reissue
   // counters that were already durably reserved and used before corruption.
   {
@@ -327,7 +327,7 @@ int main() {
     assert(!recovered.reserveNextTxCounter(counter, epoch));
   }
 
-  // 7c. Append-only TX_RESERVE records may never contain an erased gap
+  // 7c. Append-only SECURITY_STATE records may never contain an erased gap
   // followed by a later record; such a gap could hide a higher durable bound.
   {
     FakeFlash flash;
@@ -343,6 +343,123 @@ int main() {
     SecurityStore recovered(flash, flash);
     assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(recovered.state() == SecurityState::kFault);
+  }
+
+  // 7d. Authoritative device-bound v1 migrates to v2 on the inactive page.
+  // The credential and highest durable TX bound are preserved exactly; reboot
+  // burns unused v1 headroom and the first post-migration counter begins at
+  // the old durable bound.
+  {
+    FakeFlash flash;
+    writeLegacyV1Page(flash, 0, 1, 53,
+                      kTxReservationBlockSize * 2);
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(store.state() == SecurityState::kProvisioned);
+    assert(store.busy());
+    settle(store);
+    assert(store.diagnostics().migrations == 1);
+
+    uint8_t version = 0;
+    assert(headerMagicPresent(flash.bytes.data() + kPageSize, &version));
+    assert(version == kVersionV2);
+    assert(journal_format::erased(flash.bytes.data(), kPageSize));
+
+    SecurityStateRecord carried{};
+    assert(decodeSecurityState(
+        flash.bytes.data() + kPageSize + securityStateRecordOffset(0),
+        carried));
+    assert(carried.kind ==
+           SecurityStateKind::kTxReserveExclusiveBound);
+    assert(carried.value == kTxReservationBlockSize * 2);
+
+    uint64_t counter = 0;
+    uint32_t epoch = 0;
+    assert(store.reserveNextTxCounter(counter, epoch));
+    assert(counter == kTxReservationBlockSize * 2);
+    assert(epoch == 1);
+  }
+
+  // 7e. Migration activation-last cut matrix. Program writes are:
+  // header body, TX-state body+commit, credential body+commit, activation.
+  // Failure at any of those six writes leaves the committed v1 page
+  // authoritative and recoverable.
+  for (int fail_call = 1; fail_call <= 6; ++fail_call) {
+    FakeFlash flash;
+    writeLegacyV1Page(flash, 0, 1, 54, kTxReservationBlockSize);
+    flash.fail_at_program_call = fail_call;
+
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    settle(store);
+    assert(store.diagnostics().migration_failures == 1);
+
+    FakeFlash snapshot;
+    snapshot.bytes = flash.bytes;
+    SecurityStore recovered(snapshot, snapshot);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kProvisioned);
+    uint8_t id[kCredentialIdSize], expected[kCredentialIdSize];
+    fillId(expected, 54);
+    assert(recovered.currentCredentialId(id));
+    assert(memcmp(id, expected, kCredentialIdSize) == 0);
+
+    uint8_t version = 0;
+    assert(headerMagicPresent(snapshot.bytes.data(), &version));
+    assert(version == kVersionV1);
+  }
+
+  // 7f. Once v2 activation lands, failure to erase the superseded v1 page is
+  // non-authoritative maintenance failure. A fresh recovery must choose the
+  // higher-generation v2 page and never fall back to v1.
+  {
+    FakeFlash flash;
+    writeLegacyV1Page(flash, 0, 1, 55, kTxReservationBlockSize);
+    flash.fail_at_erase_call = 2;  // inactive-page erase succeeds; old erase fails.
+
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    settle(store);
+    assert(store.diagnostics().migrations == 1);
+    assert(store.diagnostics().old_page_erase_failures == 1);
+
+    uint8_t old_version = 0, new_version = 0;
+    assert(headerMagicPresent(flash.bytes.data(), &old_version));
+    assert(headerMagicPresent(flash.bytes.data() + kPageSize, &new_version));
+    assert(old_version == kVersionV1);
+    assert(new_version == kVersionV2);
+
+    FakeFlash snapshot;
+    snapshot.bytes = flash.bytes;
+    SecurityStore recovered(snapshot, snapshot);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kProvisioned);
+    // Higher-generation v2 does not trigger another migration.
+    assert(recovered.diagnostics().migrations == 0);
+  }
+
+  // 7g. FOREIGN and corrupt v1 pages are never auto-migrated or rewritten.
+  {
+    FakeFlash foreign_flash;
+    writeLegacyV1Page(foreign_flash, 0, 1, 56,
+                      kTxReservationBlockSize, kDeviceA);
+    SecurityStore foreign(foreign_flash, foreign_flash);
+    assert(foreign.begin(DeviceIdentity::fromLegacyUint64(kDeviceB)));
+    assert(foreign.state() == SecurityState::kForeign);
+    assert(!foreign.busy());
+    assert(foreign_flash.program_calls == 0);
+    assert(foreign_flash.erase_calls == 0);
+
+    FakeFlash fault_flash;
+    writeLegacyV1Page(fault_flash, 0, 1, 57,
+                      kTxReservationBlockSize);
+    fault_flash.bytes[txReserveRecordOffset(0) + 20] ^= 0x01;
+    SecurityStore fault(fault_flash, fault_flash);
+    assert(fault.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(fault.state() == SecurityState::kFault);
+    assert(!fault.busy());
+    assert(fault_flash.program_calls == 0);
+    assert(fault_flash.erase_calls == 0);
   }
 
   // 8. DeviceIdentity mismatch: a structurally valid credential bound to a
@@ -396,7 +513,7 @@ int main() {
     assert(flash.bytes[4] == kVersion + 1);  // untouched.
   }
 
-  // 9b. Unsupported/newer page alongside an older valid v1 page is
+  // 9b. Unsupported/newer page alongside an older valid current page is
   // still a global fail-closed downgrade boundary. Older firmware cannot
   // know whether the newer-format page advanced key/counter state.
   {
@@ -720,5 +837,5 @@ int main() {
     assert(all_counters.size() >= 60);
   }
 
-  puts("M7P6B SecurityStore checks: PASS");
+  puts("M7P6F SecurityStore v2/migration checks: PASS");
 }
