@@ -1,8 +1,8 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT against `main@699a74ea66cf3d22d9f1644fbf0f786f0092bd56` plus PR #33 follow-up evidence: M7P7E requester/response ownership remains merged on top of the M7P7D transport-neutral seam; M7P7B/C BLE runtime/application-boundary work and M7P6C/D/E security proof/pre-wire/coexistence work remain governing prerequisites. The corrected M7P6E fresh-pairing rerun is physically PASS for the scoped pinned RAK4631/framework/probe path; secure-envelope/provisioning/application-GATT runtime remains later and this result is not a claim of arbitrary CryptoCell thread-safety.**
-Last reviewed against code checkpoint `main@699a74ea66cf3d22d9f1644fbf0f786f0092bd56` plus PR #33 code-bearing hardware-tested head `fb1b9408ae3c49cd3f6c26002a6d583aa18bb592`.
-Last architecture review update: 2026-09-21 (§17 records the BLE application boundary and merged M7P7D/M7P7E request ownership seam).
+Status: **CURRENT through M7P7G merge (PR #39, `main@26bdbead377621554c37b22596de294f9ab83579`). The first real ORUN application GATT adapter now exists for the pre-authorization read-only GET_CONFIG contract; provisioning, application authorization, protected config writes, secure TLP v2, MESSAGE/commands and private-location services remain later gates. M7P6C/D/E security primitive/pre-wire/coexistence constraints remain governing prerequisites for those protected paths.**
+Last reviewed against code checkpoint `main@26bdbead377621554c37b22596de294f9ab83579`.
+Last architecture review update: 2026-09-24 (§17 records merged M7P7G, focused physical BLE evidence, independent audit disposition and post-audit host/build PASS).
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
@@ -828,7 +828,7 @@ fragment-reassembly timeout). It adds no Bluefruit
 behavior, and is not referenced by production `main.cpp` composition. See
 `docs/milestones/M7P7F.md`.
 
-M7P7G (active branch `feat/m7p7g-ble-app-gatt`) wires that exact
+M7P7G (PR #39, merged at `main@26bdbead377621554c37b22596de294f9ab83579`) wires that exact
 contract into real Bluefruit WRITE + INDICATE characteristics. The response
 CCCD does not change the flash map, but on a secured/bonded link pinned
 Bluefruit 1.7.0 may persist changed CCCD/system-attribute bytes through
@@ -839,7 +839,7 @@ does not grant an unauthenticated ORUN application path to mutate
 ConfigStore/HistoryStore/SecurityStore. Repeated bonded CCCD toggles can add
 bond/InternalFS wear; M7P7G adds no dedicated toggle-rate limiter.
 
- The normal
+The normal
 GET_CONFIG/HVC, disconnect/reconnect, stale-fragment and disabled-indication
 stop-and-wait paths have focused physical Android/nRF Connect PASS on code head
 `6db1a19047b53e49c63e9605661855e9e6113a72`. Independent review then
@@ -862,7 +862,7 @@ also **PASS** on one real RAK4631 + Android nRF Connect for normal
 GET_CONFIG/HVC, disconnect/re-advertise and reconnect/fresh-session behavior.
 A genuine ATT timeout was not physically injected and is not claimed. The
 independent final audit returned **PASS WITH FIXES** with no BLOCKER/HIGH/MEDIUM
-findings. Its accepted LOW post-HVC ingress-race fix is applied on the branch;
+findings. Its accepted LOW post-HVC ingress-race fix is merged;
 post-audit full host/sanitizer/startup/source-guard plus RAK4630 production
 build revalidation is **PASS** on `e510a96f3d541ca113d4cfd297fa869ffdcb27c2`
 (22,672 B RAM / 234,456 B flash). Exact evidence is in
