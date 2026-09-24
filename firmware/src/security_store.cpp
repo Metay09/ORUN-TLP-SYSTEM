@@ -239,14 +239,12 @@ bool SecurityStore::recover() {
     // migration. FOREIGN/UNSUPPORTED/FAULT returned above and never get here.
     migration_needed_ = true;
   } else {
-    bool gap_seen = false;
     for (unsigned slot = 0; slot < kSecurityStateSlotsPerPage; ++slot) {
       uint8_t bytes[kSecurityStateRecordSize];
       if (!critical_.read(v2StateOffset(winner, slot), bytes,
                           sizeof(bytes)))
         return false;
       if (journal_format::erased(bytes, sizeof(bytes))) {
-        gap_seen = true;
         for (unsigned later = slot + 1; later < kSecurityStateSlotsPerPage;
              ++later) {
           uint8_t later_bytes[kSecurityStateRecordSize];
@@ -301,7 +299,6 @@ bool SecurityStore::recover() {
     if (!critical_.read(v2TailOffset(winner), tail, sizeof(tail)))
       return false;
     if (!journal_format::erased(tail, sizeof(tail))) {
-      (void)gap_seen;
       ++diagnostics_.recovery_corruptions;
       state_ = SecurityState::kFault;
       return true;
@@ -335,7 +332,11 @@ bool SecurityStore::commitCredential(
   if (state_ != SecurityState::kUnprovisioned &&
       state_ != SecurityState::kProvisioned)
     return false;
-  if (commit_result_ready_) return false;
+  // Result ownership crosses credential lifetimes: do not let a credential
+  // replacement silently invalidate an unread replay decision from the
+  // current credential, just as an unread prior commit result blocks another
+  // credential commit.
+  if (commit_result_ready_ || a2d_result_ready_) return false;
 
   Credential candidate{};
   memcpy(candidate.credential_id, credential_id, kCredentialIdSize);
