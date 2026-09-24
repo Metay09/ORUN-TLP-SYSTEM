@@ -137,6 +137,15 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p6_security_store.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m7p6_security_store"
 "$test_dir/m7p6_security_store"
+g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
+  -Wl,--defsym,__flash_arduino_end=0xED000 \
+  firmware/tests/m7/test_m7p6f_security_gate_integration.cpp \
+  firmware/src/security_store.cpp firmware/src/security_format.cpp \
+  firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
+  firmware/src/flash_mutation_gate.cpp firmware/src/nrf_history_flash.cpp \
+  firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
+  -o "$test_dir/m7p6f_security_gate_integration"
+"$test_dir/m7p6f_security_gate_integration"
 g++ -Ifirmware/tests/m7 "${portable_flags[@]}" \
   firmware/tests/m7/test_m7p6e_crypto_contract.cpp \
   -o "$test_dir/m7p6e_crypto_contract"
