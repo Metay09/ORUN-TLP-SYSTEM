@@ -256,20 +256,30 @@ their own reason.
 Future BLE serviceability should expose structured diagnostics, not simply mirror an
 unbounded Serial text stream.
 
-Tracker policy remains:
+Owner-approved BLE availability direction:
 
-- BLE normally off;
-- when BLE is opened, the no-client timeout is approximately 10 minutes;
-- if no BLE client is connected when that timeout expires, BLE closes;
-- while a client is connected, the no-client timeout does not close BLE;
-- when the client disconnects, a fresh approximately 10-minute no-client timeout starts;
-- if no client reconnects before that timeout expires, BLE closes;
-- repeated disconnects do not create permanent availability unless a real client reconnects;
-- a future stalled-session watchdog is required for a client that remains connected but
-  makes no meaningful progress.
+- ANIMAL TRACKER and a pure RELAY that is not also serving a gateway/mobile-search
+  availability commitment use the bounded no-client policy;
+- when BLE is opened on those nodes, the no-client timeout is approximately 10 minutes;
+- if no client connects before expiry, BLE closes;
+- while a real client remains connected, there is **no inactivity-based disconnect**
+  in the current product policy;
+- after disconnect, a fresh approximately 10-minute no-client window starts;
+- repeated disconnects do not create permanent availability;
+- gateway-bridge and MOBILE/SEARCH service/profile commitments keep BLE continuously
+  available while active;
+- legacy BASE role is not the owner of this policy and must not be treated as
+  synonymous with gateway bridge;
+- a connected-but-idle watchdog is not currently required; revisit only if measured
+  power/availability/abuse evidence justifies it;
+- protocol/GATT terminal failures may still force recovery/disconnect and are not
+  equivalent to an idle timeout;
+- TRACKER/RELAY BLE may later be reopened remotely only through a reviewed
+  authenticated/authorized command path (target direction: TLP v2 OPEN_BLE-style
+  command), never through an unauthenticated TLP v1 shortcut.
 
-Gateway/mobile-gateway profiles may keep BLE available when their availability/power
-contract allows it.
+Current M7P7 runtime still applies the bounded policy uniformly until an explicit
+profile/service-owned availability migration implements the gateway/mobile distinction.
 
 BLE transport must not own subsystem state. The same diagnostic facts should be readable
 over USB or BLE without duplicating business logic.

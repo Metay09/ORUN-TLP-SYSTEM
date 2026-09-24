@@ -1,7 +1,29 @@
 # ORUN Architecture Documentation Index
 
 Status: **CURRENT documentation governance index**.
-Last reviewed against `main@699a74ea66cf3d22d9f1644fbf0f786f0092bd56` plus the M7P6E follow-up evidence on PR #33 (code-bearing hardware-tested head `fb1b9408ae3c49cd3f6c26002a6d583aa18bb592`). M7P7E requester ownership is merged and M7P7B/C remain the governing BLE runtime/application-boundary prerequisites. M7P6B SecurityStore/TX nonce persistence, M7P7A BLE flash/SoftDevice event ownership, M7P7B minimal tracker BLE runtime/admission, and the M7P6C/D/E security proof/pre-wire/coexistence foundation remain current. The corrected M7P6E test-only fresh-pairing LESC/CC310 gate is **physically PASS for the scoped pinned RAK4631/framework/probe path**; this does not prove arbitrary CryptoCell thread-safety or activate production secure-envelope/commissioning behavior, which still requires reviewed scheduling/ownership and authorization design. M7P7B quantitative current remains DEFERRED and GNSS coexistence remains unproven on the tested no-GNSS unit. ORUN application GATT, provisioning, secure RF, MESSAGE runtime and field-network/serviceability runtime remain later work; the separate intermittent serial-DFU issue is not closed by the successful UF2 recovery path.
+Last reviewed against merged main through M7P7F
+(`main@9522e391a532f21ef76ee092889d591cb1c2cf78`) plus the active M7P7G
+branch checkpoint. M7P7G's normal read-only GET_CONFIG GATT path has focused
+Android/nRF Connect physical PASS on earlier code head
+`6db1a19047b53e49c63e9605661855e9e6113a72`. The event-based terminal
+GATTS-timeout fix was later software/build revalidated on `ab2977a...`.
+A follow-up audit then found that S140 may also return a terminal
+`NRF_ERROR_TIMEOUT` directly from `sd_ble_gatts_hvx()`; production source
+fix `af82b2cfda8cd2fcd162666c9d4d2fda1e796e49` classifies terminal versus
+retryable submission failures and routes terminal returns through the same
+bounded loop-owned disconnect recovery. Owner-run host/startup/source-guard
+revalidation plus the production RAK4630 build are PASS on branch head
+`740f291d3013e63264373f25bcb740dd33097219` (22,672 B RAM / 234,440 B
+flash). Focused current-head hardware regression is also **PASS** on one real
+RAK4631 + Android nRF Connect: advertising/bond retention, exact service and
+characteristic properties, GET_CONFIG, same-session HVC progression,
+disconnect/re-advertise, reconnect and a fresh application session all
+completed normally. The independent final audit returned **PASS WITH FIXES** with no BLOCKER/HIGH/MEDIUM findings. The accepted LOW post-HVC race fix is applied, and post-audit full host/sanitizer/startup/source-guard plus RAK4630 production build revalidation are **PASS** on `e510a96f3d541ca113d4cfd297fa869ffdcb27c2` (22,672 B RAM / 234,456 B flash). No genuine
+ATT-timeout physical injection is claimed. Provisioning, authorization, secure RF/TLP v2 commands, MESSAGE runtime
+and field-network/serviceability runtime remain later work. M7P7B quantitative
+current remains DEFERRED and GNSS coexistence remains unproven on the tested
+no-GNSS unit; the separate intermittent serial-DFU issue is not closed by the
+successful UF2 recovery path.
 Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
 
 
@@ -90,6 +112,30 @@ See
 `docs/milestones/M7P7F.md`; exact GATT wiring, indication delivery and
 physical phone validation remain M7P7G.
 
+Active M7P7G application-GATT integration (branch
+`feat/m7p7g-ble-app-gatt`) performs the exact M7P7F request/response contract
+through real Bluefruit WRITE + INDICATE characteristics and the shared
+`ApplicationRequestService`. The normal path has focused physical Android/nRF
+Connect evidence on code head `6db1a19047b53e49c63e9605661855e9e6113a72`.
+The first follow-up review found the missing event-driven
+`BLE_GATTS_EVT_TIMEOUT` recovery and that fix was software/build revalidated
+on `ab2977a...`. A second software audit found that direct
+`sd_ble_gatts_hvx()` terminal returns were still collapsed into the transient
+25 ms retry path. Production source fix
+`af82b2cfda8cd2fcd162666c9d4d2fda1e796e49` now treats
+`NRF_ERROR_TIMEOUT` and other non-retryable submission failures as terminal,
+tears down the ORUN app session and uses the same bounded loop-owned
+physical-disconnect recovery. Final owner-run host/startup/source-guard
+revalidation and the production RAK4630 build are PASS on
+`740f291d3013e63264373f25bcb740dd33097219`. Focused current-head hardware
+regression is also PASS on the same production code for normal GET_CONFIG/HVC,
+disconnect/re-advertise and reconnect/fresh-session behavior. The independent
+final audit returned **PASS WITH FIXES** with no BLOCKER/HIGH/MEDIUM findings;
+its accepted LOW post-HVC race fix is applied and post-audit full host/build
+revalidation is **PASS** on `e510a96f3d541ca113d4cfd297fa869ffdcb27c2`
+(22,672 B RAM / 234,456 B flash). No physical ATT-timeout injection is claimed. Exact evidence and
+disposition are in `docs/milestones/M7P7G.md`.
+
 Owner-approved later application direction is recorded separately in
 `ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`: Entity Registry ownership/offline conflict
 principles, person-location privacy, concise shared-map semantics, MESSAGE recipient/
@@ -113,8 +159,9 @@ For current architecture decisions, use this order:
 2. `ORUN_CURRENT_ARCHITECTURE_RULES.md` — current owner-approved concept,
    ownership and current/runtime-vs-future boundaries;
 3. focused owner-approved design records for the area being changed, currently including
-   `ADR_M7P6_SECURITY_ARCHITECTURE.md` and
-   `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`;
+   `ADR_M7P6_SECURITY_ARCHITECTURE.md`,
+   `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md` and
+   `ADR_RF_CONFIGURATION_PORTABILITY.md`;
 4. current code, tests, golden/compatibility fixtures and milestone/audit reports
    describing the exact commit being changed;
 5. `ORUN_SYSTEM_ARCHITECTURE_V1.md`, `ORUN_ARCHITECTURE_GAP_ANALYSIS.md` and
@@ -136,6 +183,8 @@ Also keep separate:
 - relay forwarding and gateway bridging;
 - hardware support/presence/health and application service enablement;
 - requested configuration and effective runtime state;
+- requested RF semantics, current-radio capability/regional policy and effective/applied RF state;
+- portable RF meaning (dBm/Hz/SF/BW/coding semantics) and current SX126x driver encodings;
 - location freshness/source ownership and GNSS driver/power state;
 - application state and RF delivery/contact truth;
 - persistence owners and transient queues.
@@ -254,10 +303,19 @@ role-owned forwarding or hardware-presence-owned application identity.
 
 Status: **historical protocol recommendation, not a current wire specification**.
 
-Its frozen v1 facts remain applicable. No M6 software slice changes TEST,
-POSITION or RELAY_FORWARD wire bytes. Any future packet family, ACK/contact or
-multi-hop envelope requires an explicit new protocol milestone and mixed-fleet /
-security review.
+Its frozen v1 facts remain applicable to the current development baseline. No
+current slice may silently reinterpret TEST, POSITION or RELAY_FORWARD bytes.
+
+**Owner supersession (2026-09-23):** there is no deployed/customer ORUN fleet.
+The historical plan's conservative long-lived v1/v2 dual-stack migration sequence
+is therefore not a current product requirement. Keep v1 fixtures/regressions until
+the explicit v2 cutover, but once v2 is implemented and validated the owner may
+upgrade all development hardware together and retire v1 TX/RX without carrying
+legacy support into the first production fleet. Add dual-stack/mixed-fleet support
+only if an actual interoperability need exists when cutover occurs.
+
+Any future packet family, ACK/contact or multi-hop envelope still requires an
+explicit protocol/security milestone.
 
 ## 5. Documentation maintenance rule
 

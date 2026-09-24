@@ -6,6 +6,8 @@
 #include "activity_capture.h"
 #include "application_request.h"
 #include "ble_admission_policy.h"
+#include "ble_application_handoff.h"
+#include "ble_application_transport.h"
 #include "config_store.h"
 #ifdef ORUN_M7P7B_FLASH_PROBE
 #include "m7p7b_flash_probe.h"
@@ -44,11 +46,16 @@ orun_tlp::FlashMutationGate storage_flash_gate;
 orun_tlp::HistoryStore history(storage_flash_gate);
 orun_tlp::ConfigStore config_store(storage_flash_gate.configPort());
 // M7P7D/M7P7E: one typed, transport-neutral application request owner.
-// Production USB exposes only the safe read-only CONFIG? diagnostic. M7P7E
-// makes the requester explicit so a later BLE adapter cannot consume USB
-// responses (or vice versa). BLE GATT, protected writes and provisioning
-// remain later work.
+// USB and BLE now share this same owner; requester provenance prevents either
+// adapter from consuming the other's response. M7P7G exposes only M7P7F's
+// pre-authorization read-only GET_CONFIG contract -- protected writes and
+// provisioning remain later work.
 orun_tlp::ApplicationRequestService application_requests(config_store);
+orun_tlp::BleApplicationTransport ble_application_transport(application_requests);
+// Cross-task state is kept in one fixed-memory mailbox owner. Production wraps
+// every callback/loop access in taskENTER/EXIT_CRITICAL; the transport itself
+// remains loop-owned and is never invoked by a BLE callback.
+orun_tlp::BleApplicationHandoff ble_application_handoff;
 uint32_t next_usb_application_request_id = 1;
 // M7P6B: recovery-only composition. SecurityStore never auto-provisions a
 // credential in production firmware -- begin() only recovers whatever
@@ -82,24 +89,55 @@ bool ble_ready = false;
 // "runtime up but advertising never started" from "advertising running".
 enum class BleInitialStart : uint8_t { kNotAttempted, kOk, kFail };
 BleInitialStart ble_initial_start = BleInitialStart::kNotAttempted;
-// Cross-task disconnect handoff (audit finding 1). Adafruit nRF52 1.7.0 calls
-// the Bluefruit global event callback (Bluefruit.setEventCallback) directly
-// from its BLE event task at the end of AdafruitBluefruit::_ble_handler(),
-// after Bluefruit has already updated its own connection state for the event
-// and with no ada_callback()/heap allocation on that path (Periph's
-// setDisconnectCallback goes through ada_callback and can be dropped or
-// delayed, so it is deliberately NOT used). The callback does exactly one
-// thing on BLE_GAP_EVT_DISCONNECTED: increment this counter inside
-// taskENTER/EXIT_CRITICAL -- the same primitive radio_manager.cpp uses for its
-// cross-task counters. loop() is the only reader/consumer and owns every
-// policy, clock, Serial and Bluefruit action; ble_disconnect_events_seen is
-// loop-task-only. loop() reduces "counter != seen" to ONE logical disconnect
-// event per tick (enough: any number of disconnects observed since the last
-// tick grants a single fresh window measured from that tick).
+// Cross-task BLE event handoff. Adafruit nRF52 1.7.0 calls the Bluefruit
+// global event callback (Bluefruit.setEventCallback) directly from its BLE
+// event task at the end of AdafruitBluefruit::_ble_handler(), after framework
+// connection/GATT state has been updated and with no ada_callback()/heap
+// allocation on that path. Production hands off only bounded facts under the
+// same taskENTER/EXIT_CRITICAL primitive radio_manager.cpp uses: the existing
+// disconnect counter plus M7P7G's ORUN HVC and terminal GATTS-timeout facts.
+// loop() remains the sole owner of admission policy, clocks, Serial,
+// application work and
+// Bluefruit/SoftDevice actions. Periph's setDisconnectCallback still is not
+// used because that path goes through ada_callback and can be dropped/delayed.
+// ble_disconnect_events_seen is loop-task-only; "counter != seen" reduces any
+// disconnects since the prior tick to one fresh-window event.
 volatile uint32_t ble_disconnect_events = 0;
 uint32_t ble_disconnect_events_seen = 0;
 // Loop-task-only: suppresses per-retry log spam while restart keeps failing.
 bool ble_restart_failing = false;
+
+// M7P7G: real ORUN application GATT wiring. UUID identity and wire bytes are
+// frozen by M7P7F; these Bluefruit objects are only the physical adapter.
+// Bluefruit's uint8_t[16] UUID constructor expects little-endian bytes, so
+// setup reverses the canonical RFC4122-order constants into persistent arrays.
+BLEService ble_application_service;
+BLECharacteristic ble_application_request_characteristic;
+BLECharacteristic ble_application_response_characteristic;
+uint8_t ble_application_service_uuid_bluefruit[16]{};
+uint8_t ble_application_request_uuid_bluefruit[16]{};
+uint8_t ble_application_response_uuid_bluefruit[16]{};
+uint16_t ble_application_response_value_handle = BLE_GATT_HANDLE_INVALID;
+bool ble_application_gatt_ready = false;
+
+// Loop-owned session/indication state. The callback-visible copy lives only in
+// BleApplicationHandoff and is updated under the critical section.
+bool ble_application_session_active = false;
+uint16_t ble_application_connection_handle = BLE_CONN_HANDLE_INVALID;
+uint32_t ble_application_session_generation = 0;
+bool ble_application_indication_in_flight = false;
+constexpr uint32_t kBleApplicationIndicationRetryMs = 25;
+uint32_t ble_application_next_indication_attempt_ms = 0;
+
+// A protocol-source BLE_GATTS_EVT_TIMEOUT leaves ATT progress unusable on the
+// connection. Recovery is loop-owned: tear down the ORUN application session,
+// then request a physical disconnect and retry it at bounded spacing until the
+// real disconnect edge is observed. This is terminal-error recovery, NOT an
+// inactivity/session-duration policy.
+constexpr uint32_t kBleApplicationDisconnectRetryMs = 1000;
+bool ble_application_disconnect_pending = false;
+uint16_t ble_application_disconnect_handle = BLE_CONN_HANDLE_INVALID;
+uint32_t ble_application_next_disconnect_attempt_ms = 0;
 
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
 // M7P6E TEST-ONLY coexistence evidence. The counters are written only by the
@@ -131,8 +169,22 @@ struct M7P6ECryptoStressState {
 M7P6ECryptoStressState m7p6e_crypto_stress;
 #endif
 
+// Bluefruit characteristic write callback runs in the BLE event task because
+// useAdaCallback=false is deliberate. It performs one bounded <=20-byte copy
+// under the existing critical-section discipline and nothing else: no clock,
+// Serial, Bluefruit/SoftDevice call, application/config/flash/radio work.
+void onBleApplicationWrite(uint16_t conn_handle, BLECharacteristic* chr,
+                           uint8_t* data, uint16_t len) {
+  (void)chr;
+  taskENTER_CRITICAL();
+  (void)ble_application_handoff.enqueueIngress(conn_handle, data, len);
+  taskEXIT_CRITICAL();
+}
+
 // Bluefruit BLE-event-task context (not loop(), not an ISR). Production
-// handling only inspects the disconnect event id. The M7P6E test-only probe
+// handling hands off only bounded facts: disconnect count, HVC confirmation
+// for the ORUN response value handle, and protocol-source GATTS timeout. The
+// M7P6E test-only probe
 // additionally reads immutable security-event fields and increments bounded
 // counters. This callback MUST NOT call monotonic::nowMs(), BleAdmissionPolicy,
 // Serial, flash, radio or Bluefruit/SoftDevice APIs.
@@ -167,10 +219,324 @@ void onBleEvent(ble_evt_t* evt) {
     taskEXIT_CRITICAL();
   }
 #endif
-  if (evt->header.evt_id != BLE_GAP_EVT_DISCONNECTED) return;
+  if (evt->header.evt_id == BLE_GATTS_EVT_HVC &&
+      evt->evt.gatts_evt.params.hvc.handle ==
+          ble_application_response_value_handle) {
+    taskENTER_CRITICAL();
+    (void)ble_application_handoff.enqueueConfirmation(
+        evt->evt.gatts_evt.conn_handle,
+        evt->evt.gatts_evt.params.hvc.handle);
+    taskEXIT_CRITICAL();
+  }
+
+  if (evt->header.evt_id == BLE_GATTS_EVT_TIMEOUT &&
+      evt->evt.gatts_evt.params.timeout.src ==
+          BLE_GATT_TIMEOUT_SRC_PROTOCOL) {
+    taskENTER_CRITICAL();
+    (void)ble_application_handoff.enqueueGattTimeout(
+        evt->evt.gatts_evt.conn_handle);
+    taskEXIT_CRITICAL();
+  }
+
+  if (evt->header.evt_id == BLE_GAP_EVT_DISCONNECTED) {
+    taskENTER_CRITICAL();
+    ++ble_disconnect_events;
+    taskEXIT_CRITICAL();
+  }
+}
+
+void reverseBleUuid128(const uint8_t source[16], uint8_t destination[16]) {
+  for (uint8_t i = 0; i < 16; ++i) destination[i] = source[15U - i];
+}
+
+bool beginBleApplicationGatt() {
+  using namespace orun_tlp::ble_app_transport;
+
+  reverseBleUuid128(kServiceUuid128, ble_application_service_uuid_bluefruit);
+  reverseBleUuid128(kRequestCharacteristicUuid128,
+                    ble_application_request_uuid_bluefruit);
+  reverseBleUuid128(kResponseCharacteristicUuid128,
+                    ble_application_response_uuid_bluefruit);
+
+  ble_application_service.setUuid(
+      BLEUuid(ble_application_service_uuid_bluefruit));
+  if (ble_application_service.begin() != ERROR_NONE) return false;
+
+  ble_application_request_characteristic.setUuid(
+      BLEUuid(ble_application_request_uuid_bluefruit));
+  ble_application_request_characteristic.setProperties(CHR_PROPS_WRITE);
+  ble_application_request_characteristic.setPermission(SECMODE_NO_ACCESS,
+                                                       SECMODE_OPEN);
+  ble_application_request_characteristic.setMaxLen(kMaxFrameSize);
+  // Direct BLE-task callback, deliberately bypassing ada_callback heap/queue.
+  ble_application_request_characteristic.setWriteCallback(
+      onBleApplicationWrite, false);
+  if (ble_application_request_characteristic.begin() != ERROR_NONE) return false;
+
+  ble_application_response_characteristic.setUuid(
+      BLEUuid(ble_application_response_uuid_bluefruit));
+  ble_application_response_characteristic.setProperties(CHR_PROPS_INDICATE);
+  ble_application_response_characteristic.setPermission(SECMODE_OPEN,
+                                                        SECMODE_NO_ACCESS);
+  ble_application_response_characteristic.setMaxLen(kMaxFrameSize);
+  if (ble_application_response_characteristic.begin() != ERROR_NONE) return false;
+
+  ble_application_response_value_handle =
+      ble_application_response_characteristic.handles().value_handle;
+  return ble_application_response_value_handle != BLE_GATT_HANDLE_INVALID;
+}
+
+void setBleApplicationIngressAllowed(bool allowed) {
+  if (!ble_application_session_active) return;
   taskENTER_CRITICAL();
-  ++ble_disconnect_events;
+  ble_application_handoff.setIngressAllowed(
+      ble_application_connection_handle, ble_application_session_generation,
+      allowed);
   taskEXIT_CRITICAL();
+}
+
+void endBleApplicationSession() {
+  if (!ble_application_session_active) return;
+
+  // Close callback admission first, then clear the loop-owned transport. This
+  // ordering prevents a late callback from seeding work during teardown.
+  taskENTER_CRITICAL();
+  ble_application_handoff.deactivateSession(
+      ble_application_connection_handle, ble_application_session_generation);
+  taskEXIT_CRITICAL();
+
+  ble_application_transport.endSession(ble_application_session_generation);
+  ble_application_session_active = false;
+  ble_application_connection_handle = BLE_CONN_HANDLE_INVALID;
+  ble_application_session_generation = 0;
+  ble_application_indication_in_flight = false;
+  ble_application_next_indication_attempt_ms = 0;
+}
+
+void beginBleApplicationSession(uint16_t connection_handle) {
+  if (!ble_application_gatt_ready ||
+      connection_handle == BLE_CONN_HANDLE_INVALID)
+    return;
+
+  const uint32_t generation = ble_application_transport.beginSession();
+  ble_application_session_active = true;
+  ble_application_connection_handle = connection_handle;
+  ble_application_session_generation = generation;
+  ble_application_indication_in_flight = false;
+  ble_application_next_indication_attempt_ms = 0;
+
+  taskENTER_CRITICAL();
+  ble_application_handoff.activateSession(connection_handle, generation);
+  taskEXIT_CRITICAL();
+}
+
+enum class BleApplicationIndicationSubmitResult : uint8_t {
+  kSubmitted,
+  kRetryable,
+  kTerminal,
+};
+
+BleApplicationIndicationSubmitResult trySendBleApplicationIndication(
+    uint16_t connection_handle, const uint8_t* frame, uint8_t frame_len,
+    uint32_t& error_code) {
+  uint16_t packet_len = frame_len;
+  ble_gatts_hvx_params_t params{};
+  params.handle = ble_application_response_value_handle;
+  params.type = BLE_GATT_HVX_INDICATION;
+  params.offset = 0;
+  params.p_len = &packet_len;
+  params.p_data = const_cast<uint8_t*>(frame);
+  error_code = sd_ble_gatts_hvx(connection_handle, &params);
+
+  if (error_code == NRF_SUCCESS) {
+    if (packet_len == frame_len)
+      return BleApplicationIndicationSubmitResult::kSubmitted;
+    // A successful call must consume the complete bounded frame. Treat an
+    // impossible partial-success result as a local terminal invariant failure
+    // rather than retrying changed/ambiguous state forever.
+    error_code = NRF_ERROR_DATA_SIZE;
+    return BleApplicationIndicationSubmitResult::kTerminal;
+  }
+
+  // Pinned S140 6.1.1 documents these as conditions that may clear without
+  // rebuilding the connection: another indication/procedure is busy, CCCD or
+  // ATT-MTU state changed between the precheck and SVC, system attributes are
+  // still being restored, or transient TX resources are unavailable.
+  switch (error_code) {
+    case NRF_ERROR_BUSY:
+    case NRF_ERROR_INVALID_STATE:
+    case BLE_ERROR_GATTS_SYS_ATTR_MISSING:
+    case NRF_ERROR_RESOURCES:
+      return BleApplicationIndicationSubmitResult::kRetryable;
+    case NRF_ERROR_TIMEOUT:
+      // S140 explicitly requires re-establishing the connection after this
+      // result. Do not leave stop-and-wait wedged in a 25 ms retry loop.
+      return BleApplicationIndicationSubmitResult::kTerminal;
+    default:
+      // Invalid handle/parameter/data/security/attribute errors cannot be
+      // repaired by blindly retrying the same frame. Fail this application
+      // session closed and recover the physical link through the same bounded
+      // disconnect owner used for protocol timeout events.
+      return BleApplicationIndicationSubmitResult::kTerminal;
+  }
+}
+
+bool serviceBleApplicationDisconnectRecovery(
+    bool connected, uint16_t connection_handle, bool disconnect_event,
+    uint32_t now) {
+  if (!ble_application_disconnect_pending) return false;
+
+  // A real disconnect (including one followed by a very fast replacement
+  // connection between loop polls) completes recovery. The normal session
+  // logic below may then admit the current physical connection.
+  if (disconnect_event || !connected ||
+      connection_handle != ble_application_disconnect_handle) {
+    ble_application_disconnect_pending = false;
+    ble_application_disconnect_handle = BLE_CONN_HANDLE_INVALID;
+    ble_application_next_disconnect_attempt_ms = 0;
+    return false;
+  }
+
+  // Do not create a fresh ORUN application session on an ATT-terminal link.
+  // Retry the physical disconnect at bounded spacing if the framework rejects
+  // or loses the first request.
+  if (orun_tlp::monotonic::reached(
+          now, ble_application_next_disconnect_attempt_ms)) {
+    (void)Bluefruit.disconnect(ble_application_disconnect_handle);
+    ble_application_next_disconnect_attempt_ms =
+        now + kBleApplicationDisconnectRetryMs;
+  }
+  return true;
+}
+
+void pollBleApplicationRuntime(bool connected, uint16_t connection_handle,
+                               bool disconnect_event, uint32_t now) {
+  if (!ble_application_gatt_ready) return;
+
+  if (serviceBleApplicationDisconnectRecovery(
+          connected, connection_handle, disconnect_event, now))
+    return;
+
+  // Disconnect cleanup happens before BleAdmissionPolicy can restart
+  // advertising. A replacement session therefore cannot inherit callback
+  // mailbox, transport reassembly or outbound-indication state.
+  if (ble_application_session_active &&
+      (disconnect_event || !connected ||
+       connection_handle != ble_application_connection_handle)) {
+    endBleApplicationSession();
+  }
+
+  if (connected && !ble_application_session_active) {
+    beginBleApplicationSession(connection_handle);
+  }
+  if (!ble_application_session_active) return;
+
+  // GATTS protocol timeout is terminal for ATT progress. Consume it before
+  // HVC or ingress so no queued application work can survive the fault.
+  orun_tlp::BleApplicationGattTimeoutEvent gatt_timeout;
+  bool have_gatt_timeout = false;
+  taskENTER_CRITICAL();
+  have_gatt_timeout = ble_application_handoff.takeGattTimeout(gatt_timeout);
+  taskEXIT_CRITICAL();
+  if (have_gatt_timeout &&
+      gatt_timeout.session_generation == ble_application_session_generation &&
+      gatt_timeout.connection_handle == ble_application_connection_handle) {
+    const uint16_t timed_out_handle = ble_application_connection_handle;
+    endBleApplicationSession();
+    ble_application_disconnect_pending = true;
+    ble_application_disconnect_handle = timed_out_handle;
+    ble_application_next_disconnect_attempt_ms = now;
+    Serial.println(F("BLE GATT protocol timeout; disconnecting"));
+    (void)serviceBleApplicationDisconnectRecovery(
+        connected, connection_handle, false, now);
+    return;
+  }
+
+  // Enforce the M7P7F fragment timeout before consuming a newly queued
+  // continuation on this tick, so loop ordering cannot revive a stale partial.
+  ble_application_transport.poll(now);
+
+  orun_tlp::BleApplicationConfirmationEvent confirmation;
+  bool have_confirmation = false;
+  taskENTER_CRITICAL();
+  have_confirmation =
+      ble_application_handoff.takeConfirmation(confirmation);
+  taskEXIT_CRITICAL();
+  if (have_confirmation && ble_application_indication_in_flight &&
+      confirmation.session_generation == ble_application_session_generation &&
+      confirmation.connection_handle == ble_application_connection_handle &&
+      confirmation.value_handle == ble_application_response_value_handle) {
+    ble_application_transport.confirmOutboundFrame(
+        ble_application_session_generation);
+    ble_application_indication_in_flight = false;
+  }
+
+  // Reopen callback ingress only after a prior response is fully confirmed.
+  setBleApplicationIngressAllowed(
+      !ble_application_transport.outboundFramePending());
+
+  orun_tlp::BleApplicationIngressEvent ingress;
+  bool have_ingress = false;
+  taskENTER_CRITICAL();
+  have_ingress = ble_application_handoff.takeIngress(ingress);
+  taskEXIT_CRITICAL();
+  if (have_ingress) {
+    ble_application_transport.onFrameReceived(
+        ingress.session_generation, ingress.frame, ingress.frame_len, now);
+    setBleApplicationIngressAllowed(
+        !ble_application_transport.outboundFramePending());
+  }
+
+  if (!ble_application_transport.outboundFramePending()) return;
+
+  // Stop-and-wait is closed in callback context for the entire time the
+  // response is pending, including the period before the client enables CCCD.
+  setBleApplicationIngressAllowed(false);
+  if (ble_application_indication_in_flight) return;
+
+  if (!ble_application_response_characteristic.indicateEnabled(
+          ble_application_connection_handle))
+    return;
+
+  if (!orun_tlp::monotonic::reached(
+          now, ble_application_next_indication_attempt_ms))
+    return;
+
+  uint8_t frame[orun_tlp::ble_app_transport::kMaxFrameSize]{};
+  uint8_t frame_len = 0;
+  if (!ble_application_transport.peekOutboundFrame(
+          ble_application_session_generation, frame, frame_len))
+    return;
+
+  // Do NOT call BLECharacteristic::indicate(): pinned Bluefruit 1.7.0 blocks
+  // there waiting for HVC. Non-blocking HVX keeps the cooperative loop alive;
+  // onBleEvent() hands the later HVC back for confirmOutboundFrame().
+  uint32_t indication_error = NRF_SUCCESS;
+  const BleApplicationIndicationSubmitResult submit_result =
+      trySendBleApplicationIndication(ble_application_connection_handle, frame,
+                                      frame_len, indication_error);
+  if (submit_result == BleApplicationIndicationSubmitResult::kSubmitted) {
+    ble_application_indication_in_flight = true;
+  } else if (submit_result ==
+             BleApplicationIndicationSubmitResult::kRetryable) {
+    ble_application_next_indication_attempt_ms =
+        now + kBleApplicationIndicationRetryMs;
+  } else {
+    // A terminal SVC return is equivalent to terminal ATT progress for this
+    // ORUN application session. In particular, S140 documents
+    // NRF_ERROR_TIMEOUT as requiring connection re-establishment. Tear down
+    // application state first, then let the existing bounded loop-owned
+    // disconnect recovery own the physical link.
+    const uint16_t failed_handle = ble_application_connection_handle;
+    endBleApplicationSession();
+    ble_application_disconnect_pending = true;
+    ble_application_disconnect_handle = failed_handle;
+    ble_application_next_disconnect_attempt_ms = now;
+    Serial.printf("BLE indication submit terminal error=0x%08lX; disconnecting\n",
+                  static_cast<unsigned long>(indication_error));
+    (void)serviceBleApplicationDisconnectRecovery(
+        connected, connection_handle, false, now);
+  }
 }
 
 enum class AccelerometerDiagnosticState : uint8_t {
@@ -1013,9 +1379,9 @@ void setup() {
   // Bluefruit.begin() is what enables SoftDevice for the rest of this boot
   // (docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md §9: the sync/async
   // backend mode is fixed for the lifetime of one boot, not hot-swapped).
-  // No ORUN-specific application GATT, pairing/ownership, provisioning or
-  // authorization service is added; a bare, named, connectable peripheral is
-  // sufficient to prove the M7P7B runtime.
+  // M7P7G keeps the same storage-before-SoftDevice ordering, then adds the
+  // M7P7F read-only ORUN application GATT service after Bluefruit.begin().
+  // This does not add commissioning/authorization/protected writes.
   ble_ready = Bluefruit.begin();
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
   if (ble_ready) {
@@ -1033,6 +1399,13 @@ void setup() {
     snprintf(name, sizeof(name), "ORUN-%08lX",
              static_cast<unsigned long>(device_identity.legacyUint64() & 0xFFFFFFFFUL));
     Bluefruit.setName(name);
+
+    ble_application_gatt_ready = beginBleApplicationGatt();
+    if (ble_application_gatt_ready)
+      Serial.println(F("BLE APP GATT ready"));
+    else
+      Serial.println(F("BLE APP GATT unavailable"));
+
     // setName() only sets the GAP Device Name attribute, readable after a
     // client connects -- it does not, by itself, put anything into the
     // advertising PDU. Every stock Bluefruit peripheral example calls both
@@ -1120,13 +1493,22 @@ void loop() {
     taskEXIT_CRITICAL();
     orun_tlp::BleAdmissionInput input;
     input.disconnect_event = disconnect_events != ble_disconnect_events_seen;
-    ble_disconnect_events_seen = disconnect_events;
     // Advertising is sampled before the connection: the framework clears
     // _running only after the connection object exists, so "not running"
     // read here can never pair with a stale "not connected".
     input.advertising_running = Bluefruit.Advertising.isRunning();
     input.connected = Bluefruit.Periph.connected() > 0;
-    switch (ble_admission.update(input, orun_tlp::monotonic::nowMs())) {
+    const uint16_t connection_handle =
+        input.connected ? Bluefruit.connHandle() : BLE_CONN_HANDLE_INVALID;
+    const uint32_t ble_now = orun_tlp::monotonic::nowMs();
+
+    // M7P7G cleanup/transport work must happen before admission can restart
+    // advertising after a disconnect.
+    pollBleApplicationRuntime(input.connected, connection_handle,
+                              input.disconnect_event, ble_now);
+    ble_disconnect_events_seen = disconnect_events;
+
+    switch (ble_admission.update(input, ble_now)) {
       case orun_tlp::BleAdmissionAction::kClose: {
         // The deadline only REQUESTS close. stop() can fail (pinned 1.7.0
         // leaves _running unchanged when sd_ble_gap_adv_stop() fails, e.g.

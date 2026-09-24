@@ -215,6 +215,8 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/flash_mutation_gate.cpp \
   firmware/src/config_store.cpp firmware/src/config_format.cpp \
   firmware/src/application_request.cpp \
+  firmware/src/ble_application_transport.cpp \
+  firmware/src/ble_application_handoff.cpp \
   firmware/src/security_store.cpp firmware/src/security_format.cpp \
   firmware/src/position_flow.cpp firmware/src/ble_admission_policy.cpp \
   -o "$test_dir/startup"
@@ -243,6 +245,10 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7f_ble_application_transpor
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m7p7f_ble_application_transport"
 "$test_dir/m7p7f_ble_application_transport"
+g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7g_ble_application_handoff.cpp \
+  firmware/src/ble_application_handoff.cpp -o "$test_dir/m7p7g_ble_application_handoff"
+"$test_dir/m7p7g_ble_application_handoff"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p7g_source_contract.py
 g++ "${flags[@]}" firmware/tests/r4/test_r4.cpp "${gnss_sources[@]}" \
   firmware/src/watchdog_manager.cpp -o "$test_dir/r4"
 "$test_dir/r4"

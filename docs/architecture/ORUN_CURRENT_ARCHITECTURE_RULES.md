@@ -395,8 +395,9 @@ this unit** (`GNSS: not detected`) and is owner-waived as a blocker for this
 milestone merge only; later physical verification on a GNSS-equipped unit is
 still required. The deliberately between-loop-polls lifecycle timing and
 advertising start/stop failure injection remain host-only and are not physical
-PASS. Secure envelope, provisioning, application GATT, DFU and LoRa `OPEN_BLE`
-remain later work.
+PASS. At the M7P7B checkpoint, secure envelope, provisioning, application GATT,
+DFU and LoRa `OPEN_BLE` were later work. M7P7G now implements only the narrow
+read-only application GATT slice; the other items remain later work.
 
 M6 activity/geofence helpers allocate no durable state and do not reuse the
 position journal. Future activity history, polygon configuration, FREE_GRAZE
@@ -714,13 +715,26 @@ Diagnostics should have one bounded transport-neutral Health/Diagnostics owner. 
 USB Serial already exposes useful reset/storage/radio/activity/RSSI/SNR/path/error
 evidence. Future BLE should expose structured status snapshots, counters and a small
 recent-event view through the same owner rather than mirror an unlimited Serial stream.
-Tracker BLE remains normally OFF. Whenever BLE is open and no client is connected, an
-approximately 10-minute no-client timeout applies; expiry closes BLE. A connected client
-suspends that no-client timeout. On disconnect, a fresh approximately 10-minute no-client
-timeout starts; if nobody reconnects, BLE closes. A separate stalled-session watchdog is
-still required for a client that stays connected without making progress. Gateway profiles
-may keep BLE available when their power/availability contract permits it. Diagnostic data
-may be sensitive, so BLE connection/bonding alone must not imply authorization.
+
+Owner-approved BLE availability direction is now explicit:
+
+- ANIMAL TRACKER and a pure RELAY use the bounded no-client policy: approximately
+  10 minutes while disconnected, no inactivity-based disconnect while a real client
+  remains connected, and a fresh approximately 10-minute window after disconnect;
+- gateway-bridge and MOBILE/SEARCH availability commitments keep BLE continuously
+  available while that service/profile is active;
+- legacy `NodeRole::kBase` alone does **not** imply gateway bridge or always-on BLE;
+- TRACKER/RELAY BLE may later be reopened through an authenticated/authorized TLP v2
+  OPEN_BLE-style command; no unauthenticated TLP v1 shortcut is authorized;
+- a protocol/GATT terminal failure may still force recovery/disconnect; that is
+  distinct from an idle-session timeout;
+- a connected-but-idle watchdog is not a current requirement and should only be
+  introduced if measured power/availability/abuse evidence justifies it.
+
+Current runtime still uses the M7P7B bounded policy uniformly until a dedicated
+profile/service-owned availability slice implements the gateway/mobile distinction.
+Diagnostic data may be sensitive, so BLE connection/bonding alone must not imply
+authorization.
 
 Normal application UI should show useful health/coverage outcomes; detailed user/account
 permissions remain backend-owned, and the app should hide unauthorized controls. Device
@@ -758,11 +772,14 @@ implemented today. See `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
 ## 17. BLE application boundary and later application direction
 
 M7P7B makes BLE transport available; it does not make a connected or bonded phone
-an authorized ORUN application client. Future application GATT remains a transport
-adapter into existing application/configuration/command owners rather than a second
-business-logic or configuration system. BLE callbacks perform bounded handoff;
-flash, crypto, radio transitions and application execution remain owned by reviewed
-loop/task code. See `docs/milestones/M7P7C.md`.
+an authorized ORUN application client. M7P7G now implements the first real ORUN
+application GATT adapter for the already-frozen, pre-authorization read-only
+`GET_CONFIG` contract. This does not change the ownership rule: GATT remains a
+transport adapter into existing application/configuration owners rather than a
+second business-logic or configuration system. BLE callbacks perform bounded
+handoff; flash, crypto, radio transitions and application execution remain owned
+by reviewed loop/task code. See `docs/milestones/M7P7C.md` and
+`docs/milestones/M7P7G.md`.
 
 The exact commissioning ceremony remains a later focused implementation decision.
 Connection, stock BLE bonding, device credential, user identity and application
@@ -797,7 +814,7 @@ identity or a wire field. This remains internal ownership only: it adds no BLE
 GATT, wire format, authorization, provisioning, storage or RF behavior. See
 `docs/milestones/M7P7E.md`.
 
-M7P7F (branch `feat/m7p7f-ble-app-transport-contract`, not yet merged) freezes
+M7P7F (PR #35, merged at `main@9522e391a532f21ef76ee092889d591cb1c2cf78`) freezes
 the exact bounded GATT transport contract that M7P7E's "next gate" section
 anticipated: three 128-bit UUIDs, an 8-byte header / 20-byte-frame /
 48-byte-logical-payload / 4-fragment wire rule, `GET_CONFIG` request/response
@@ -809,6 +826,103 @@ slot, ingress-level stop-and-wait backpressure, and a bounded 2-second
 fragment-reassembly timeout). It adds no Bluefruit
 `BLEService`/`BLECharacteristic`, no change to BLE admission/advertising/bond
 behavior, and is not referenced by production `main.cpp` composition. See
-`docs/milestones/M7P7F.md`. Wiring this contract to real Bluefruit
-callbacks/indications and physical phone validation remain M7P7G.
+`docs/milestones/M7P7F.md`.
+
+M7P7G (active branch `feat/m7p7g-ble-app-gatt`) wires that exact
+contract into real Bluefruit WRITE + INDICATE characteristics. The response
+CCCD does not change the flash map, but on a secured/bonded link pinned
+Bluefruit 1.7.0 may persist changed CCCD/system-attribute bytes through
+`saveCccd()` -> `bond_save_cccd()` -> `ada_callback` -> relocated
+bond/InternalFS. That framework-owned write remains under the existing
+M7P7A/Bluefruit bond-flash owner; GET_CONFIG itself is still read-only and
+does not grant an unauthenticated ORUN application path to mutate
+ConfigStore/HistoryStore/SecurityStore. Repeated bonded CCCD toggles can add
+bond/InternalFS wear; M7P7G adds no dedicated toggle-rate limiter.
+
+ The normal
+GET_CONFIG/HVC, disconnect/reconnect, stale-fragment and disabled-indication
+stop-and-wait paths have focused physical Android/nRF Connect PASS on code head
+`6db1a19047b53e49c63e9605661855e9e6113a72`. Independent review then
+exposed a missing terminal GATTS protocol-timeout recovery; the event-based
+fix was software-revalidated through host/sanitizer/warnings/startup coverage
+and the production RAK4630 build on `ab2977a63c6f7945935a06ae93d2895dd64938cb`.
+
+A later software audit found a narrower follow-up gap: pinned S140 6.1.1 can
+return `NRF_ERROR_TIMEOUT` directly from `sd_ble_gatts_hvx()`, while the
+adapter previously retried every failed submission at 25 ms. Production source fix
+`af82b2cfda8cd2fcd162666c9d4d2fda1e796e49` separates retryable HVX
+submission states from terminal returns and routes terminal returns through the
+same loop-owned application teardown + bounded physical-disconnect recovery.
+This remains explicitly distinct from an idle client timeout. Owner-run
+host/startup/source-guard revalidation and the production RAK4630 build are
+**PASS** on branch head
+`740f291d3013e63264373f25bcb740dd33097219`; the current image is
+22,672 B RAM / 234,440 B flash. Focused current-head hardware regression is
+also **PASS** on one real RAK4631 + Android nRF Connect for normal
+GET_CONFIG/HVC, disconnect/re-advertise and reconnect/fresh-session behavior.
+A genuine ATT timeout was not physically injected and is not claimed. The
+independent final audit returned **PASS WITH FIXES** with no BLOCKER/HIGH/MEDIUM
+findings. Its accepted LOW post-HVC ingress-race fix is applied on the branch;
+post-audit full host/sanitizer/startup/source-guard plus RAK4630 production
+build revalidation is **PASS** on `e510a96f3d541ca113d4cfd297fa869ffdcb27c2`
+(22,672 B RAM / 234,456 B flash). Exact evidence is in
+`docs/milestones/M7P7G.md`.
+
+## 18. RF configuration semantics and radio-platform portability
+
+The authoritative focused record is
+`docs/architecture/ADR_RF_CONFIGURATION_PORTABILITY.md`.
+
+The current RAK4630/RAK4631 + SX1262 stack remains the first-class reference
+implementation. Portability is a constraint on ownership and data semantics, not a
+request to build a generic HAL before a real second platform exists.
+
+Persistent/public RF configuration must carry portable physical/LoRa meaning
+(`tx_power_dbm`, Hz, SF, semantic coding rate, etc.), not SX126x-Arduino
+enum/index/register encodings. The current SX1262 power range, the current driver's
+255-byte receive ceiling and raw private-sync representation are implementation
+capability/encoding facts, not universal ORUN protocol limits.
+
+Keep these distinct:
+
+```text
+requested RF config
+current radio capability
+regional/install policy
+effective RF config
+actually applied radio state
+```
+
+The first TX-power persistence slice keeps 14 dBm as the behavior-preserving
+default. Out-of-capability/out-of-policy candidates are rejected without replacing
+the last working config. Boot recovery and all later USB/BLE/TLP-v2 changes must
+converge on one safe RadioManager application path; do not create separate boot
+and runtime RF programming logic.
+
+RX modem compatibility, RX availability/power policy and any radio-specific
+receiver-gain mode remain separate concerns.
+
+Current concrete SX126x/nRF52 boundaries (`RadioManager`, `patch_radio.py`,
+`radio_driver_gate`) are allowed to remain concrete. When an actual second radio
+or board is selected, extract only the demonstrated driver/board seam required to
+preserve ownership, quiescence, normalized RSSI/SNR, capability reporting and
+semantic RF-config translation.
+
+## 19. TLP v1 development baseline and v2 cutover
+
+Owner state as of 2026-09-23: **there is no deployed/customer ORUN fleet**.
+
+TLP v1 remains the physically useful development/regression baseline and its current
+golden fixtures must not be weakened to make new code pass. This does not create a
+product obligation to carry v1 forever.
+
+The planned secure/multi-service network evolution should move to an explicit TLP v2.
+When v2 is implemented and validated, all owned development devices may be upgraded as
+one cohort and v1 TX/RX may be retired by owner decision. Long-lived dual-stack or
+mixed-fleet compatibility is required only if a real deployed/interoperability need
+exists at cutover time.
+
+Do not spend new feature work adding unauthenticated v1 command families merely to
+avoid starting v2. OPEN_BLE, protected remote configuration, COMMAND/RESULT, trusted
+EVENT/LOST and MESSAGE belong on the reviewed secure v2 path.
 

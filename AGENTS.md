@@ -40,6 +40,10 @@ For RF-domain/channel planning, shared relay/gateway infrastructure, field cover
 learning, USB/BLE diagnostics or future serviceability UI, read
 `docs/architecture/ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
 
+For configurable RF semantics, SX1262/reference-platform boundaries and future
+radio/board portability, read
+`docs/architecture/ADR_RF_CONFIGURATION_PORTABILITY.md`.
+
 These documents record owner-approved **design direction**, not proof that the planned
 runtime/backend/BLE behavior is already implemented. Preserve the current implementation
 and physical-evidence boundary unless the active milestone explicitly changes it.
@@ -178,6 +182,22 @@ Initial RF candidate:
 
 RF parameters MUST remain configurable.
 
+The current RAK4630/RAK4631 + SX1262 path is the reference radio implementation,
+not the permanent definition of ORUN RF configuration. Persistent/public RF fields
+must use semantic values such as dBm, Hz, LoRa SF and semantic coding rate; never
+persist or send SX126x-Arduino enum/index/register encodings. Current SX1262 limits
+are platform capability facts, not universal ORUN limits. Keep requested RF intent,
+hardware capability, regional/install policy and effective/applied runtime state
+separate.
+
+Boot recovery, USB/BLE changes and future authenticated TLP v2 remote RF changes
+must converge on one safe RadioManager application path. Preserve the existing
+single-owner/driver-gate/quiescence/RX-restore invariants. Do not add a speculative
+generic radio HAL or unused second-platform driver before real second hardware exists;
+extract the demonstrated driver seam when that hardware is actually selected.
+
+See `docs/architecture/ADR_RF_CONFIGURATION_PORTABILITY.md`.
+
 Do not silently hard-code regulatory assumptions.
 
 ---
@@ -191,6 +211,14 @@ LoRa packets must use a compact binary protocol.
 Do NOT use JSON over LoRa.
 
 Every packet must be versioned.
+
+As of 2026-09-23 there is no deployed/customer ORUN fleet. TLP v1 is therefore a
+development compatibility baseline, not a permanent production legacy obligation.
+Keep its current golden/compatibility behavior intact until an explicit v2 cutover
+milestone, but do not require long-lived dual-stack product support merely for a
+fleet that does not exist. When v2 is ready and validated, the owner may migrate all
+development hardware together. Add mixed-fleet/dual-stack support only if a real
+deployment/interoperability requirement exists at that time.
 
 Plan for fields such as:
 
@@ -382,19 +410,30 @@ Animal TRACKER still uses sensible battery protection.
 
 ## BLE
 
-TRACKER:
+ANIMAL TRACKER and a pure RELAY that is not also a gateway/mobile-search node use
+the bounded local-availability policy:
 
 - BLE starts after boot
 - while BLE is open and no client is connected, the no-client timeout is approximately 10 minutes
 - if no client connects before that timeout expires, disable BLE
-- while a client is connected, the no-client timeout does not close BLE
+- while a client is connected, **do not disconnect it merely because an inactivity timer elapsed**
 - after disconnect, start a fresh approximately 10-minute no-client timeout
 - repeated disconnects do not make BLE permanently available
-- BLE may later be enabled remotely over LoRa
 - BLE/local device access must not require a live Internet connection as a transport prerequisite
-- BLE should normally remain off during field operation
+- TRACKER BLE should normally remain off during unattended field operation
 
-BASE and MOBILE may keep BLE continuously active.
+A **gateway-bridge availability commitment** and MOBILE/SEARCH keep BLE continuously
+available while that service/profile is active. Do not implement this as
+`NodeRole::kBase => BLE always on`: legacy BASE is not the same thing as gateway
+bridge capability/profile.
+
+TRACKER and RELAY BLE may later be reopened remotely over LoRa through an
+authenticated/authorized TLP v2 command such as OPEN_BLE. Do not add an
+unauthenticated TLP v1 OPEN_BLE shortcut. A protocol/GATT terminal failure may
+still require recovery/disconnect; that is not an inactivity timeout policy.
+
+A connected-but-idle watchdog is **not a current product requirement**. Revisit it
+only if measured power/availability/abuse evidence justifies one.
 
 USB, BLE and LoRa configuration should ultimately use the same
 ConfigManager/CommandManager logic.
