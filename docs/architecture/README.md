@@ -135,6 +135,16 @@ revalidation is **PASS** on `e510a96f3d541ca113d4cfd297fa869ffdcb27c2`
 (22,672 B RAM / 234,456 B flash). No physical ATT-timeout injection is claimed. Exact evidence and
 disposition are in `docs/milestones/M7P7G.md`.
 
+Owner-approved gateway command-authority / offline store-forward direction is
+recorded separately in
+`ORUN_GATEWAY_COMMAND_AUTHORITY_DIRECTION.md`. It separates user authorization
+(backend-owned and portable across gateways) from gateway enrollment, requires an
+already-enrolled gateway to be able to create a self-contained protected command
+that opaque relays may retain until a sleepy tracker wakes, and explicitly records
+that factory reset destroys gateway ORUN enrollment. It does **not** freeze secure
+wire bytes, key derivation, SecurityStore schema or replay-slot sizing; those remain
+later reviewed implementation gates.
+
 Owner-approved later application direction is recorded separately in
 `ORUN_APP_ENTITY_MESSAGING_DIRECTION.md`: Entity Registry ownership/offline conflict
 principles, person-location privacy, concise shared-map semantics, MESSAGE recipient/
@@ -159,8 +169,9 @@ For current architecture decisions, use this order:
    ownership and current/runtime-vs-future boundaries;
 3. focused owner-approved design records for the area being changed, currently including
    `ADR_M7P6_SECURITY_ARCHITECTURE.md`,
-   `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md` and
-   `ADR_RF_CONFIGURATION_PORTABILITY.md`;
+   `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`,
+   `ADR_RF_CONFIGURATION_PORTABILITY.md` and
+   `ORUN_GATEWAY_COMMAND_AUTHORITY_DIRECTION.md`;
 4. current code, tests, golden/compatibility fixtures and milestone/audit reports
    describing the exact commit being changed;
 5. `ORUN_SYSTEM_ARCHITECTURE_V1.md`, `ORUN_ARCHITECTURE_GAP_ANALYSIS.md` and
