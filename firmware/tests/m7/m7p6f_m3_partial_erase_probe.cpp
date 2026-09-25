@@ -43,7 +43,7 @@ constexpr uint64_t kOldTxBound = 256;
 constexpr uint64_t kOldA2dBound = 8;
 constexpr uint64_t kNewTxBound = 512;
 constexpr uint64_t kNewA2dBound = 16;
-constexpr uint64_t kPostPartialMarkerTxBound = 768;
+constexpr uint64_t kPostPartialMarkerTxBound = 1024;
 
 const uint8_t kCredentialId[kCredentialIdSize] = {
     0x4D, 0x37, 0x50, 0x36, 0x46, 0x2D, 0x4D, 0x33,
@@ -351,7 +351,7 @@ void preparePartialEraseAndReset(NrfSecurityFlash& flash) {
   }
 
   Serial.println(
-      F("M7P6F M3 INTERRUPT armed marker_tx=768 wdt_ms~1; starting old-page erase"));
+      F("M7P6F M3 INTERRUPT armed marker_tx=1024 wdt_ms~1; starting old-page erase"));
   Serial.flush();
   delay(100);
 
