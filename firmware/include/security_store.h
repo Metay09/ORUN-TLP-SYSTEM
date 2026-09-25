@@ -40,6 +40,8 @@ class SecurityStore {
     uint32_t a2d_reservation_failures = 0;
     uint32_t a2d_exhausted_events = 0;
     uint32_t activation_ambiguities = 0;
+    uint32_t append_inspection_failures = 0;
+    uint32_t mutation_failure_lockouts = 0;
   };
 
   SecurityStore(FlashBackend& critical_flash, FlashBackend& maint_flash)
@@ -150,6 +152,7 @@ class SecurityStore {
   bool exhausted_ = false;
   bool migration_needed_ = false;
   bool migration_attempted_ = false;
+  uint8_t consecutive_mutation_failures_ = 0;
 
   Job job_ = Job::kNone;
   NewPagePurpose new_page_purpose_ = NewPagePurpose::kCredentialCommit;
