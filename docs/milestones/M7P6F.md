@@ -478,7 +478,22 @@ A2D replay re-acceptance is a failure.
 
 This sentinel provides real nRF52840 flash partial-erase/reboot evidence. It
 does **not** by itself claim that an external electrical brownout or power yank
-has been reproduced. Probe build and physical execution are still pending.
+has been reproduced.
+
+First physical probe attempt (2026-09-25) was **INCONCLUSIVE, not a recovery
+failure**. The test image uploaded and ran on a real RAK4631, but the sparse
+stale-page fixture had only about 180 programmed bytes clustered at the start
+of the page. NVMC partial-erase durations 5/10/20/30/40 ms changed all 180
+programmed bytes to erased state (`non_ff_bytes=0`) on every attempt, so the
+probe never produced the required mixed partial-page image and correctly
+reported `FAIL no_mixed_partial_state_observed`. Production SecurityStore
+recovery was therefore never exercised against the target physical condition.
+
+The probe fixture is revised to fill all 99 v2 state slots on the stale page
+with valid, nondecreasing repeated TX/A2D bounds, distributing programmed bits
+across nearly the complete 4 KiB page without increasing stale-page authority.
+The duration sweep is also tightened to 1/2/3/4/5/10/20 ms. Build and physical
+rerun of this revised test-only image remain pending.
 
 ### Wear notes added by audit
 
