@@ -222,18 +222,14 @@ bool waitNvmcReady() {
     while (true) delay(1000);
   }
 
-  NRF_WDT->CONFIG =
-      (WDT_CONFIG_SLEEP_Run << WDT_CONFIG_SLEEP_Pos) |
-      (WDT_CONFIG_HALT_Run << WDT_CONFIG_HALT_Pos);
-  NRF_WDT->CRV = kWatchdogTicks - 1U;
-  NRF_WDT->RREN = (WDT_RREN_RR0_Enabled << WDT_RREN_RR0_Pos);
-  NRF_WDT->TASKS_START = 1;
-
+  // Put NVMC into erase mode before starting the short watchdog. After
+  // TASKS_START there must be no wait/Serial/flash helper between watchdog
+  // arming and ERASEPAGE, otherwise a DOG reset would not prove that erase
+  // itself had begun.
   if (!waitNvmcReady()) {
     setReport("M7P6F M3 SENTINEL FAIL nvmc_not_ready");
     while (true) delay(1000);
   }
-
   NRF_NVMC->CONFIG =
       (NVMC_CONFIG_WEN_Een << NVMC_CONFIG_WEN_Pos);
   if (!waitNvmcReady()) {
@@ -241,10 +237,17 @@ bool waitNvmcReady() {
     while (true) delay(1000);
   }
 
+  NRF_WDT->CONFIG =
+      (WDT_CONFIG_SLEEP_Run << WDT_CONFIG_SLEEP_Pos) |
+      (WDT_CONFIG_HALT_Run << WDT_CONFIG_HALT_Pos);
+  NRF_WDT->CRV = kWatchdogTicks - 1U;
+  NRF_WDT->RREN = (WDT_RREN_RR0_Enabled << WDT_RREN_RR0_Pos);
+  NRF_WDT->TASKS_START = 1;
+
   // The next instruction fetch from flash cannot execute until ERASEPAGE
   // finishes. Therefore:
-  // - DOG reset => hardware watchdog fired while CPU was stalled in erase;
-  // - SREQ reset => erase returned before watchdog, so interruption is unproven.
+  // - DOG without SREQ => watchdog reset occurred before erase returned;
+  // - SREQ => erase returned first and the fallback software reset executed.
   NRF_NVMC->ERASEPAGE = kFutureSecurityRegionStart;
   NVIC_SystemReset();
 
@@ -354,7 +357,7 @@ void setup() {
   const uint32_t wait_started = millis();
   while (!Serial && (millis() - wait_started) < 15000U) delay(10);
 
-  Serial.println(F("M7P6F M3 PARTIAL-ERASE SENTINEL BOOT"));
+  Serial.println(F("M7P6F M3 INTERRUPTED-ERASE SENTINEL BOOT"));
   Serial.println(F("TEST-ONLY: destructively owns ONLY SecurityStore 0xE7000..0xE9000"));
   Serial.flush();
 
@@ -377,7 +380,11 @@ void setup() {
                   static_cast<unsigned long>(reset_reason));
     Serial.flush();
 
-    if ((reset_reason & POWER_RESETREAS_DOG_Msk) == 0U) {
+    const bool watchdog_reset =
+        (reset_reason & POWER_RESETREAS_DOG_Msk) != 0U;
+    const bool software_reset =
+        (reset_reason & POWER_RESETREAS_SREQ_Msk) != 0U;
+    if (!watchdog_reset || software_reset) {
       char line[160];
       snprintf(line, sizeof(line),
                "M7P6F M3 SENTINEL FAIL interruption_not_proven reset_reason=0x%08lX",
