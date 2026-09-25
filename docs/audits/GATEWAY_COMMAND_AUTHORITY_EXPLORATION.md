@@ -6,6 +6,15 @@ runtime davranışı veya ADR değişikliği onaylamaz. Mevcut kurallar
 (`AGENTS.md`, `ORUN_CURRENT_ARCHITECTURE_RULES.md`,
 `ADR_M7P6_SECURITY_ARCHITECTURE.md`) geçerliliğini korur.
 
+**Owner follow-up (2026-09-25):** Bu keşif raporunun `H = A + D0` önerisindeki
+"offline gateway-originated command yalnız canlı RX penceresinde" fedakârlığı
+**owner tarafından kabul edilmedi**. Güncel owner-approved ürün/mimari yönü
+`docs/architecture/ORUN_GATEWAY_COMMAND_AUTHORITY_DIRECTION.md` kaydındadır.
+Özellikle offline, önceden enrolled gateway komutu opaque relay üzerinde
+store-forward edilip sleepy tracker uyanana kadar bekleyebilmelidir. Kabul edilen
+availability fedakârlığı, ilk/yeni/re-enrollment sırasında Internet/backend
+gerekebilmesidir.
+
 Analiz tabanı: `feat/m7p6f-securitystore-v2-replay-state@3e7dc2d` (2026-09-24).
 Okunan kaynaklar: AGENTS.md, architecture/README, CURRENT_ARCHITECTURE_RULES §15–17,
 ADR_M7P6, M7P6D, M7P6F, DOWNLINK_RENDEZVOUS_PLAN, FIELD_NETWORK_DIAGNOSTICS §11,
