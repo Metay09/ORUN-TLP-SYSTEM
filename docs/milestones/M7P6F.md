@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **POST-AUDIT HOST + SANITIZER REVALIDATION PASS — RAK4630 REBUILD + AUDIT RECONCILIATION PENDING**
+Status: **POST-AUDIT HOST + SANITIZER + RAK4630 BUILD PASS — INDEPENDENT AUDIT RECONCILIATION + M3 PHYSICAL SENTINEL PENDING**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -298,8 +298,18 @@ Post-audit software revalidation on
 - all previously covered RF/BLE/persistence/startup/watchdog regression suites:
   **PASS**.
 
-RAK4630 production rebuild remains pending for the current post-audit head, followed by
-independent audit reconciliation.
+RAK4630 production rebuild on branch head
+`3e7dc2d3ecaa9524730b2b7bd8d54201de7fe01e` (2026-09-25):
+
+- `pio run -d firmware -e rak4630`: **SUCCESS**;
+- RAM: **22,760 / 248,832 B = 9.1%**;
+- Flash: **238,264 / 815,104 B = 29.2%**;
+- delta versus final merged M7P7G production image
+  (22,672 B RAM / 234,456 B flash): **+88 B RAM / +3,808 B flash**.
+
+This build confirms compile/link/size only. It is not physical persistence,
+power-cut, replay or flash-endurance evidence. Independent audit reconciliation
+and the M3 real-hardware partial-erase/power-cut sentinel remain pending.
 
 ### Wear notes added by audit
 
