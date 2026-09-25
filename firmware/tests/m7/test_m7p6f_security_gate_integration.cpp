@@ -183,6 +183,15 @@ int main() {
     assert(store.currentCredentialId(recovered_a_id));
     assert(memcmp(recovered_a_id, a_id, kCredentialIdSize) == 0);
 
+    // The timed-out body never committed a new TX bound. Reboot must burn
+    // the prior reserved headroom and resume at or above the next block,
+    // never reissue a counter from the pre-timeout lifetime.
+    uint64_t recovered_tx = 0;
+    uint32_t recovered_epoch = 0;
+    assert(store.reserveNextTxCounter(recovered_tx, recovered_epoch));
+    assert(recovered_tx >= kTxReservationBlockSize);
+    assert(recovered_epoch == 1);
+
     sd_enabled = true;
     bool committed = false;
     assert(store.commitCredential(b_id, 2, b_root));
