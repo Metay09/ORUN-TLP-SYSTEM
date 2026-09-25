@@ -26,6 +26,13 @@ class FlashBackend {
   // than silently reporting a phantom completion for a call that was never
   // actually pending.
   virtual FlashOpResult pollPending() { return FlashOpResult::kFailed; }
+
+  // True only when an asynchronous physical mutation was accepted by the
+  // platform but the caller has already timed out and the backend is still
+  // waiting for the definitive hardware completion needed to reconcile
+  // ownership. Synchronous backends and ordinary failures return false.
+  // Callers must not treat this as a successful write.
+  virtual bool hasUnreconciledMutation() const { return false; }
 };
 class NrfHistoryFlash : public FlashBackend {
  public:
