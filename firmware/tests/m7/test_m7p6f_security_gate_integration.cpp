@@ -139,7 +139,7 @@ int main() {
   assert(store.diagnostics().reservation_failures == 1);
 
   completeAsync(gate);  // late body SUCCESS only reconciles quarantine.
-  assert(gate.securityDiagnostics().late_completions == 2);
+  assert(gate.securityDiagnostics().late_completions == 1);
 
   // Retry uses the next slot. Complete body then commit normally.
   store.poll();  // create retry reservation job.
@@ -203,7 +203,7 @@ int main() {
   // Definitive late SUCCESS only reconciles the quarantined physical owner.
   // It must not resurrect the old RAM authority.
   completeAsync(gate);
-  assert(gate.securityDiagnostics().late_completions == 1);
+  assert(gate.securityDiagnostics().late_completions == 2);
   assert(store.state() == SecurityState::kFault);
 
   // Simulated reboot: SoftDevice is disabled before store recovery. The
