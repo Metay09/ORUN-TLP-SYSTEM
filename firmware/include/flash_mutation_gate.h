@@ -166,6 +166,9 @@ class FlashMutationGate : public FlashBackend {
       return gate_.erasePageSecurity(page, Priority::kSecCritical);
     }
     FlashOpResult pollPending() override { return gate_.pollPendingSecurity(); }
+    bool hasUnreconciledMutation() const override {
+      return gate_.securityMutationUnreconciled();
+    }
 
    private:
     FlashMutationGate& gate_;
@@ -184,6 +187,9 @@ class FlashMutationGate : public FlashBackend {
       return gate_.erasePageSecurity(page, Priority::kSecMaint);
     }
     FlashOpResult pollPending() override { return gate_.pollPendingSecurity(); }
+    bool hasUnreconciledMutation() const override {
+      return gate_.securityMutationUnreconciled();
+    }
 
    private:
     FlashMutationGate& gate_;
@@ -191,6 +197,15 @@ class FlashMutationGate : public FlashBackend {
   FlashBackend& securityCriticalPort() { return security_critical_port_; }
   FlashBackend& securityMaintPort() { return security_maint_port_; }
   const Diagnostics& securityDiagnostics() const { return security_diagnostics_; }
+
+  // An accepted SoftDevice security mutation timed out at the application
+  // boundary and still owns the physical flash token while awaiting its
+  // definitive late SUCCESS/ERROR event. SecurityStore uses this only to
+  // distinguish that severe ownership ambiguity from an ordinary clean
+  // mutation failure; it never treats the mutation as successful.
+  bool securityMutationUnreconciled() const {
+    return security_slot_.quarantined;
+  }
 
  private:
   friend class ConfigPort;
