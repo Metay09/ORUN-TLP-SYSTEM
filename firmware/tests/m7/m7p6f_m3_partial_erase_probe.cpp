@@ -312,12 +312,16 @@ void evaluateRecovery(NrfSecurityFlash& flash) {
       replay_submitted && store.takeA2dReplayResult(replay_accepted);
   const bool replay_ok = replay_result && !replay_accepted;
 
-  char line[192];
+  const uint32_t tx_hi = static_cast<uint32_t>(tx >> 32U);
+  const uint32_t tx_lo = static_cast<uint32_t>(tx & 0xFFFFFFFFULL);
+  char line[224];
   snprintf(line, sizeof(line),
-           "M7P6F M3 SENTINEL %s outcome=PROVISIONED tx=%llu epoch=%lu "
+           "M7P6F M3 SENTINEL %s outcome=PROVISIONED "
+           "tx_hi=%lu tx_lo=%lu epoch=%lu "
            "tx_nonrollback=%s a2d_old_reject=%s",
            (tx_ok && replay_ok) ? "PASS" : "FAIL",
-           static_cast<unsigned long long>(tx),
+           static_cast<unsigned long>(tx_hi),
+           static_cast<unsigned long>(tx_lo),
            static_cast<unsigned long>(epoch), tx_ok ? "yes" : "no",
            replay_ok ? "yes" : "no");
   setReport(line);
