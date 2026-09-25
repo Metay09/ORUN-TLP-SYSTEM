@@ -427,6 +427,30 @@ int main() {
     assert(flash.erase_calls == erases_before);
   }
 
+  // 6d2. If the active page is already at the compaction threshold, a
+  // persistent new-page write failure may erase the inactive page only a
+  // bounded number of times before the boot-scoped mutation breaker closes
+  // protected service. This is the direct regression for the audit's erase
+  // storm finding.
+  {
+    FakeFlash flash;
+    writeV2PageBase(flash, 0, 1, 46);
+    for (unsigned slot = 0; slot < kSecurityStateSlotsPerPage - 1; ++slot) {
+      writeV2State(flash, 0, slot, 46,
+                   SecurityStateKind::kTxReserveExclusiveBound,
+                   uint64_t(slot + 1) * kTxReservationBlockSize);
+    }
+    flash.program_then_fail_always = true;
+
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    for (unsigned pass = 0; pass < 10000; ++pass) store.poll();
+
+    assert(store.state() == SecurityState::kFault);
+    assert(store.diagnostics().mutation_failure_lockouts == 1);
+    assert(flash.erase_calls == 3);
+  }
+
   // 6e. If fail() cannot inspect an append target, it must not guess that
   // the slot is dirty and advance state_used: that could create an erased gap
   // followed by a committed record. Close protected service for this boot;
