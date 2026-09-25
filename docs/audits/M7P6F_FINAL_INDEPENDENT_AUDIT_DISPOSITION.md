@@ -116,6 +116,16 @@ Chosen product policy is deliberately conservative and explicit:
   revives SecurityStore authority in the same boot;
 - reboot performs authoritative recovery from durable bytes.
 
+One bounded exception is intentional: a timeout while erasing the already
+superseded old page runs through `completeEraseOld(false)`, not `fail()`.
+The newly activated page is already authoritative, so the store may remain
+PROVISIONED if the late erase completion reconciles before any later security
+mutation is requested. If another security mutation is attempted while that
+erase is still quarantined, the gate rejects it without a physical write and
+SecurityStore then enters FAULT through the same unreconciled-mutation guard.
+This is an availability distinction only; it cannot restore old authority or
+lower a durable TX/A2D bound.
+
 This avoids both the original erase storm and the misleading "three failures"
 semantics for one quarantined physical request.
 
