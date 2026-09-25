@@ -30,6 +30,8 @@ class FakeFlash : public FlashBackend {
   int partial_program_at_call = -1;  // writes prefix then reports failure.
   size_t partial_program_bytes = 0;
   int program_then_fail_at_call = -1;  // full mutation, ambiguous failure.
+  bool program_then_fail_always = false;
+  int corrupt_program_at_call = -1;  // mutates body, reports success.
   int fail_at_erase_call = -1;
   int partial_erase_at_call = -1;
   size_t partial_erase_bytes = 0;
@@ -77,7 +79,25 @@ class FakeFlash : public FlashBackend {
 
     for (size_t index = 0; index < size; ++index)
       bytes[offset + index] &= source[index];
-    if (static_cast<int>(program_calls) == program_then_fail_at_call)
+
+    if (static_cast<int>(program_calls) == corrupt_program_at_call) {
+      // Model an asynchronous backend reporting completion even though the
+      // programmed body differs from the requested bytes. Flash can only
+      // transition 1->0, so clear one additional source bit that should have
+      // remained 1.
+      for (size_t index = 0; index < size; ++index) {
+        const uint8_t set_bits = source[index];
+        if (set_bits == 0) continue;
+        const uint8_t bit =
+            static_cast<uint8_t>(set_bits & static_cast<uint8_t>(-set_bits));
+        bytes[offset + index] &= static_cast<uint8_t>(~bit);
+        break;
+      }
+      return FlashOpResult::kDone;
+    }
+
+    if (program_then_fail_always ||
+        static_cast<int>(program_calls) == program_then_fail_at_call)
       return FlashOpResult::kFailed;
     return FlashOpResult::kDone;
   }
@@ -380,6 +400,107 @@ int main() {
     SecurityStore recovered(flash, flash);
     assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
     assert(recovered.state() == SecurityState::kFault);
+  }
+
+  // 6d. Persistent ambiguous append failures are bounded per boot. A
+  // marginal flash path that physically dirties every requested record and
+  // then reports failure must not consume the log and enter an unbounded
+  // compaction/erase loop.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 43));
+    for (uint64_t i = 0; i < kTxReservationBlockSize; ++i) {
+      uint64_t counter = 0;
+      uint32_t epoch = 0;
+      assert(store.reserveNextTxCounter(counter, epoch));
+    }
+
+    const uint32_t erases_before = flash.erase_calls;
+    flash.program_then_fail_always = true;
+    for (unsigned pass = 0; pass < 10000; ++pass) store.poll();
+
+    assert(store.state() == SecurityState::kFault);
+    assert(store.diagnostics().mutation_failure_lockouts == 1);
+    assert(store.diagnostics().reservation_failures >= 3);
+    assert(flash.erase_calls == erases_before);
+  }
+
+  // 6e. If fail() cannot inspect an append target, it must not guess that
+  // the slot is dirty and advance state_used: that could create an erased gap
+  // followed by a committed record. Close protected service for this boot;
+  // a clean reboot can recover the still-erased slot.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 44));
+    for (uint64_t i = 0; i < kTxReservationBlockSize; ++i) {
+      uint64_t counter = 0;
+      uint32_t epoch = 0;
+      assert(store.reserveNextTxCounter(counter, epoch));
+    }
+
+    store.poll();  // create the next TX reservation job.
+    flash.fail_at_program_call =
+        static_cast<int>(flash.program_calls) + 1;
+    flash.fail_at_read_call =
+        static_cast<int>(flash.read_calls) + 1;
+    store.poll();
+
+    assert(store.state() == SecurityState::kFault);
+    assert(store.diagnostics().append_inspection_failures == 1);
+    assert(store.diagnostics().mutation_failure_lockouts == 1);
+
+    flash.fail_at_program_call = -1;
+    flash.fail_at_read_call = -1;
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kProvisioned);
+    settle(recovered);
+  }
+
+  // 6f. A record body is read-verified before its commit word is written.
+  // This models the async FlashMutationGate case where Nordic completion is
+  // reported but the bytes are not what SecurityStore requested. The corrupt
+  // body remains uncommitted/burnable rather than becoming a committed CRC
+  // failure that bricks reboot recovery.
+  {
+    FakeFlash flash;
+    SecurityStore store(flash, flash);
+    assert(store.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(commitAndSettle(store, 45));
+    for (uint64_t i = 0; i < kTxReservationBlockSize; ++i) {
+      uint64_t counter = 0;
+      uint32_t epoch = 0;
+      assert(store.reserveNextTxCounter(counter, epoch));
+    }
+
+    store.poll();  // create the next TX reservation job.
+    flash.corrupt_program_at_call =
+        static_cast<int>(flash.program_calls) + 1;
+    store.poll();
+
+    assert(store.state() == SecurityState::kProvisioned);
+    assert(store.diagnostics().reservation_failures == 1);
+    const uint32_t failed_slot = securityStateRecordOffset(1);
+    for (unsigned i = 0; i < sizeof(uint32_t); ++i)
+      assert(flash.bytes[failed_slot + kSecurityStateRecordSize -
+                         sizeof(uint32_t) + i] == 0xFF);
+
+    // Isolated failure remains recoverable in the same boot at the next slot.
+    store.poll();
+    settle(store);
+    uint64_t counter = 0;
+    uint32_t epoch = 0;
+    assert(store.reserveNextTxCounter(counter, epoch));
+    assert(counter == kTxReservationBlockSize);
+
+    SecurityStore recovered(flash, flash);
+    assert(recovered.begin(DeviceIdentity::fromLegacyUint64(kDeviceA)));
+    assert(recovered.state() == SecurityState::kProvisioned);
+    assert(recovered.diagnostics().recovery_burned_slots >= 1);
   }
 
   // 7. Corrupted non-erased v2 TX state on the authoritative page must
