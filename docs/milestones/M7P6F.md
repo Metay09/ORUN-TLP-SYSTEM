@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **FINAL TARGETED RECONCILIATION + TX-REBOOT ASSERT HOST PASS — M3 PHYSICAL INTERRUPTED-ERASE SENTINEL REVISED; REBUILD/PHYSICAL RERUN PENDING**
+Status: **FINAL TARGETED RECONCILIATION + TX-REBOOT ASSERT HOST PASS — M3 PHYSICAL INTERRUPTED-ERASE SENTINEL PASS**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -452,7 +452,7 @@ on `3a3a3ca4302062877d19d14dd128c20db3404e04` (2026-09-25):
 - all printed compatibility/RF/BLE/persistence/startup/watchdog regressions:
   **PASS**.
 
-### M3 physical partial-erase sentinel
+### M3 physical interrupted-erase sentinel
 
 A dedicated TEST-ONLY target,
 `rak4630_m7p6f_m3_partial_erase_probe`, is added after software/audit closure.
@@ -545,17 +545,42 @@ the pinned embedded printf implementation's `%llu` handling
 (`tx=lu epoch=768 ...`), so those shifted display fields are not used as
 evidence.
 
-Before final M3 closure, the test-only harness is hardened in two ways:
+Before final M3 closure, the test-only harness was hardened in two ways:
 the 64-bit TX value is printed as explicit high/low 32-bit fields, and a
 critical section masks USB/RTOS callbacks between the ~1 ms WDT start and the
 `ERASEPAGE` write so a scheduling delay cannot create a DOG reset before
-erase starts. Because the successful pre-hardening run leaves its 768 marker
+erase starts. Because the successful pre-hardening run left its 768 marker
 durable in the SecurityStore partition, the hardened rerun uses a distinct
 1024 marker. That prevents the freshly flashed test image from mistaking the
 previous run's marker for its own interrupted-erase phase; the RUN path erases
-and restages both test pages before writing the new marker. Production firmware
-remains unchanged. One clean rebuild and physical rerun of this hardened
-sentinel are pending.
+and restages both test pages before writing the new marker.
+
+The hardened sentinel rebuilt cleanly on 2026-09-26:
+RAM 8,984 B / 3.6%, flash 69,248 B / 8.5%, with exclusive-owner and
+application-ceiling guards PASS. Direct bootloader DFU reported
+`Device programmed.`. On the real RAK4631, the operator observed repeated
+`READY send RUN`, explicitly started the test, then observed:
+
+```text
+M7P6F M3 INTERRUPT armed marker_tx=1024 wdt_ms~1; starting old-page erase
+Disconnected ...
+Reconnecting ... Connected!
+M7P6F M3 INTERRUPTED-ERASE SENTINEL BOOT
+M7P6F M3 phase=recovery-after-interrupted-erase reset_reason=0x00000002
+M7P6F M3 SENTINEL PASS outcome=PROVISIONED tx_hi=0 tx_lo=1024 epoch=1 tx_nonrollback=yes a2d_old_reject=yes
+```
+
+This is the accepted M3 physical result. The DOG reset reason proves the
+hardware watchdog reset occurred on the deliberately armed erase path, the
+higher-generation credential remained authoritative after reboot, the next TX
+counter was exactly the durable 1024 marker in epoch 1, and the old A2D replay
+counter was rejected. No rollback or replay re-acceptance was observed.
+Accepted hardened-run outcome rate: PROVISIONED 1/1, FAULT/UNSUPPORTED 0/1.
+
+M3 is therefore physically closed for the deterministic real
+reset-during-NVMC-erase sentinel on the tested RAK4631. This is **not** an
+external electrical brownout/power-yank test and does not claim flash-endurance
+validation. Production firmware remained unchanged by all sentinel hardening.
 
 ### Wear notes added by audit
 
@@ -573,8 +598,12 @@ ordering requirement. Physical endurance remains unclaimed.
 
 ## 10. Merge gate
 
-Do not merge until the validation matrix above is reconciled against actual
-test output and independent review.
+The M7P6F production-code validation/audit cycle is complete and the remaining
+M3 physical interrupted-erase sentinel now passes on real RAK4631 hardware.
+The sentinel commits after the last production build touch only TEST-ONLY probe
+code and documentation; production firmware remains the binary described by
+the recorded production build evidence above.
 
-In particular, host PASS is not a physical-flash endurance/power-cut PASS, and
-build SUCCESS is not evidence for actual persistence behavior on RAK4631.
+Do not reinterpret this result as flash-endurance validation or as an external
+electrical brownout/power-yank test. Those remain separate physical evidence
+classes.
