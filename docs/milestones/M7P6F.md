@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **SECOND RECONCILIATION FIX HOST/SANITIZER PASS — RAK4630 REBUILD + M3 PHYSICAL SENTINEL PENDING**
+Status: **SECOND RECONCILIATION FIX HOST/SANITIZER + RAK4630 BUILD PASS — FINAL TARGETED RECONCILIATION + M3 PHYSICAL SENTINEL PENDING**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -407,8 +407,19 @@ Second-reconciliation-fix host revalidation on
   `-fsanitize=address,undefined`, so warnings-as-errors + ASan/UBSan also
   passed for those paths.
 
-A fresh RAK4630 production build is still required for this code head before
-the physical sentinel.
+Fresh RAK4630 production build after the second-reconciliation fix on
+`a29db9f150ef0b3fddee7697ad30fe3d3359c029` (2026-09-25):
+
+- `pio run -d firmware -e rak4630`: **SUCCESS**;
+- RAM: **22,768 / 248,832 B = 9.1%**;
+- Flash: **238,512 / 815,104 B = 29.3%**;
+- delta versus the prior post-fix build at 22,768 B RAM / 238,248 B flash:
+  **0 B RAM / +264 B flash**;
+- exclusive-owner and application-ceiling guards passed;
+- pinned R4/R2.1/M7P4/M7P7A framework/driver patches were verified/applied.
+
+This is compile/link/size evidence only; it is not physical persistence,
+brownout, partial-erase or flash-endurance evidence.
 
 ### Wear notes added by audit
 
