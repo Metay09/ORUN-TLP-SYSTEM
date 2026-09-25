@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **SECOND RECONCILIATION FIX HOST/SANITIZER + RAK4630 BUILD PASS — FINAL TARGETED RECONCILIATION + M3 PHYSICAL SENTINEL PENDING**
+Status: **FINAL TARGETED RECONCILIATION PASS — REQUIRED TX-REBOOT ASSERT ADDED; HOST RETEST + M3 PHYSICAL SENTINEL PENDING**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -420,6 +420,29 @@ Fresh RAK4630 production build after the second-reconciliation fix on
 
 This is compile/link/size evidence only; it is not physical persistence,
 brownout, partial-erase or flash-endurance evidence.
+
+Final targeted reconciliation on the unchanged production code returned
+**PASS**. It confirmed the async-timeout FAULT policy, no synthetic retries
+during quarantine, late-completion ownership-only behavior, the ordinary
+three-failure wear breaker, and no TX/A2D rollback path. Two non-blocking items
+were noted:
+
+- superseded old-page erase timeout is intentionally different: because the
+  higher-generation page is already authoritative, `kEraseOldPage` failure
+  records maintenance failure rather than immediately faulting the store. If
+  late completion reconciles before another security mutation, PROVISIONED may
+  continue safely. If another mutation is attempted while the erase is still
+  quarantined, that attempt performs no physical write and the unreconciled
+  guard faults SecurityStore;
+- the real-gate reboot scenario did not explicitly assert post-timeout TX
+  counter continuity. The required regression assertion is now added: after
+  reboot, the next TX counter must be at or above one full reservation block
+  and remain in epoch 1, proving pre-timeout counters are not reissued.
+
+Because this last commit changes only a host-test assertion and documentation,
+the prior RAK4630 production build still describes the unchanged firmware
+binary. A fresh host suite is required to validate the new assertion before the
+physical sentinel.
 
 ### Wear notes added by audit
 
