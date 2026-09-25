@@ -41,6 +41,7 @@ class SecurityStore {
     uint32_t a2d_exhausted_events = 0;
     uint32_t activation_ambiguities = 0;
     uint32_t append_inspection_failures = 0;
+    uint32_t unreconciled_mutation_faults = 0;
     uint32_t mutation_failure_lockouts = 0;
   };
 
