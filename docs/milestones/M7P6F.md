@@ -549,8 +549,13 @@ Before final M3 closure, the test-only harness is hardened in two ways:
 the 64-bit TX value is printed as explicit high/low 32-bit fields, and a
 critical section masks USB/RTOS callbacks between the ~1 ms WDT start and the
 `ERASEPAGE` write so a scheduling delay cannot create a DOG reset before
-erase starts. Production firmware remains unchanged. One clean rebuild and
-physical rerun of this hardened sentinel are pending.
+erase starts. Because the successful pre-hardening run leaves its 768 marker
+durable in the SecurityStore partition, the hardened rerun uses a distinct
+1024 marker. That prevents the freshly flashed test image from mistaking the
+previous run's marker for its own interrupted-erase phase; the RUN path erases
+and restages both test pages before writing the new marker. Production firmware
+remains unchanged. One clean rebuild and physical rerun of this hardened
+sentinel are pending.
 
 ### Wear notes added by audit
 
