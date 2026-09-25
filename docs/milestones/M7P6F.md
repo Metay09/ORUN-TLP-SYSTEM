@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **POST-AUDIT HOST + SANITIZER + RAK4630 BUILD PASS — INDEPENDENT AUDIT RECONCILIATION + M3 PHYSICAL SENTINEL PENDING**
+Status: **FINAL AUDIT FIXES APPLIED — HOST/SANITIZER/RAK4630 REVALIDATION + M3 PHYSICAL SENTINEL PENDING**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -248,15 +248,19 @@ Post-audit changes on this branch:
   `credential_id` and `key_epoch` together with the counter. A retry after
   credential rotation is rejected against the new active lifetime.
 - **M2 fixed:** the test flash now enforces production's erased-destination
-  precondition. After a failed/ambiguous append, SecurityStore inspects the target
-  and consumes a dirty or unreadable slot before retrying; same-boot A2D continuation
-  is explicitly tested.
+  precondition. After a failed/ambiguous append, SecurityStore inspects the target:
+  a readable dirty slot is consumed before retrying, while an unreadable target now
+  closes protected service for the boot rather than guessing and creating a durable
+  erased-gap ambiguity. Same-boot continuation after an isolated readable dirty slot
+  remains explicitly tested.
 - **M3 accepted as a bounded fail-closed availability residual:** if power is lost
   during old-page erase after the new page is already active, a partially erased
-  old committed header may be indistinguishable from corruption. Recovery remains
-  FAULT rather than risk rollback. A true partial-erase host test now records this
-  behavior. This residual requires a physical RAK4631 power-cut sentinel before
-  final closure; it is not described as physically validated.
+  old committed header may be indistinguishable from corruption or, when the erased
+  bits alter the version byte into a future value, from an unsupported schema.
+  Recovery therefore remains fail-closed as either FAULT or UNSUPPORTED rather than
+  risk rollback. A true partial-erase host test records the bounded behavior. This
+  residual requires a physical RAK4631 power-cut sentinel before final closure; it
+  is not described as physically validated.
 - **M4 fixed at the SecurityStore boundary:** any failure while page activation is
   ambiguous forces SecurityStore to `FAULT` for the rest of the boot, so RAM can
   never continue issuing protected TX under stale authority if a late activation
@@ -308,8 +312,43 @@ RAK4630 production rebuild on branch head
   (22,672 B RAM / 234,456 B flash): **+88 B RAM / +3,808 B flash**.
 
 This build confirms compile/link/size only. It is not physical persistence,
-power-cut, replay or flash-endurance evidence. Independent audit reconciliation
-and the M3 real-hardware partial-erase/power-cut sentinel remain pending.
+power-cut, replay or flash-endurance evidence.
+
+### Final independent reconciliation audit on `7539653`
+
+The final independent audit returned **PASS WITH FIXES**: no BLOCKER/HIGH,
+no demonstrated TX nonce reuse, and no demonstrated A2D double acceptance.
+It confirmed H1/M1/M2/M4/L1 and the documented L5 boundary, while identifying
+one new MEDIUM availability/endurance defect and three LOW hardening gaps:
+
+- **N1 MEDIUM — fixed in branch, revalidation pending:** persistent
+  "physically dirtied target + failure/verify mismatch" could consume append
+  slots, enter compaction and repeatedly erase pages on every poll. SecurityStore
+  now has a boot-scoped circuit breaker: after three consecutive security
+  mutation failures it enters FAULT until reboot. Any successful reserve,
+  replay reserve or new-page activation resets the failure streak. Regression
+  coverage includes both dirty append repetition and a page already at the
+  compaction threshold, bounding repeated erase attempts to three.
+- **N2 LOW — fixed in branch, revalidation pending:** if `fail()` cannot read
+  the append target, it no longer advances `state_used`. It enters FAULT for
+  the boot so it cannot create an erased slot followed by a later committed
+  record. Fresh reboot recovery decides from durable bytes.
+- **N3 LOW — documentation/physical acceptance clarified:** partial erase may
+  recover as either FAULT or UNSUPPORTED. Both are accepted fail-closed outcomes
+  for the sentinel. An older generation PROVISIONED result or a lower recovered
+  TX/A2D bound is never acceptable.
+- **N4 LOW — fixed in branch, revalidation pending:** every record body is now
+  read-verified before its commit word is programmed, including the asynchronous
+  FlashMutationGate path. A mismatched body therefore remains uncommitted and
+  burnable instead of becoming a committed CRC failure.
+- The real SecurityStore + FlashMutationGate integration test is extended with
+  an append-body timeout/late-SUCCESS case before the existing page-activation
+  ambiguity case. It verifies dirty-slot burn, quarantine reconciliation and
+  next-slot continuation under the real production state machines.
+
+The pre-fix host/build results above remain historical evidence only for their
+recorded code heads. The final-audit fixes require a fresh host/sanitizer run and
+RAK4630 production build before the physical sentinel.
 
 ### Wear notes added by audit
 
