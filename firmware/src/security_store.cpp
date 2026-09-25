@@ -9,6 +9,7 @@ namespace orun_tlp {
 using namespace security_format;
 namespace {
 constexpr unsigned kPageCount = storage_config::kFutureSecurityRegionPages;
+constexpr uint8_t kMaxConsecutiveMutationFailures = 3;
 static_assert(kPageCount == 2, "A/B ping-pong assumes exactly two pages");
 
 uint32_t pageOffset(unsigned page) {
@@ -52,6 +53,7 @@ bool SecurityStore::begin(DeviceIdentity device_identity) {
   exhausted_ = false;
   migration_needed_ = false;
   migration_attempted_ = false;
+  consecutive_mutation_failures_ = 0;
   reserve_after_new_page_ = false;
   replay_after_new_page_ = false;
   pending_tx_bound_ = 0;
@@ -672,6 +674,19 @@ FlashOpResult SecurityStore::writeBlob() {
       fail();
       return FlashOpResult::kFailed;
     }
+
+    // FlashMutationGate's asynchronous SUCCESS means the Nordic operation
+    // completed, but unlike NrfSecurityFlash's synchronous path it does not
+    // itself compare the programmed bytes. Verify the record body before
+    // programming the commit word so a bad body can never be made
+    // authoritative merely because the later commit write succeeds.
+    uint8_t body_verify[kCredentialRecordSize];
+    const uint32_t body_size = blob_size_ - sizeof(uint32_t);
+    if (!port.read(blob_offset_, body_verify, body_size) ||
+        memcmp(body_verify, blob_, body_size) != 0) {
+      fail();
+      return FlashOpResult::kFailed;
+    }
     blob_step_ = BlobStep::kCommit;
   }
 
@@ -772,19 +787,29 @@ void SecurityStore::fail() {
   const bool was_replay_after_new_page = replay_after_new_page_;
   const bool activation_ambiguous =
       failing_job == Job::kNewPage && phase_ == Phase::kActivatePage;
+  const bool mutation_failure =
+      failing_job == Job::kReserve ||
+      failing_job == Job::kA2dReplayReserve ||
+      failing_job == Job::kNewPage;
+  bool append_inspection_failed = false;
 
   // A failed append may have programmed some or all of its target before the
   // backend reported failure (brownout, failed readback, async timeout). The
   // production backend refuses every future program to a non-erased target,
-  // so never retry such a slot in-place. If readback itself is unavailable,
-  // conservatively burn the slot in RAM.
+  // so never retry such a slot in-place. If the target cannot be inspected,
+  // do NOT guess that it is dirty and skip it: doing so could create an
+  // erased gap followed by a later committed record, which recovery must
+  // reject. Close protected service for this boot instead.
   if (failing_job == Job::kReserve ||
       failing_job == Job::kA2dReplayReserve) {
     uint8_t bytes[kSecurityStateRecordSize];
     const bool readable =
         critical_.read(v2StateOffset(target_page_, target_slot_), bytes,
                        sizeof(bytes));
-    if (!readable || !journal_format::erased(bytes, sizeof(bytes))) {
+    if (!readable) {
+      append_inspection_failed = true;
+      ++diagnostics_.append_inspection_failures;
+    } else if (!journal_format::erased(bytes, sizeof(bytes))) {
       const uint32_t used = target_slot_ + 1;
       if (pages_[target_page_].state_used < used)
         pages_[target_page_].state_used = used;
@@ -840,10 +865,36 @@ void SecurityStore::fail() {
     // Stop all protected service until reboot performs authoritative recovery.
     state_ = SecurityState::kFault;
     ++diagnostics_.activation_ambiguities;
+    return;
+  }
+
+  if (append_inspection_failed) {
+    // We cannot prove whether this append target remained erased. Skipping an
+    // unreadable slot risks creating a persistent log gap; retrying it risks
+    // programming over dirty flash. Fail closed for this boot and let reboot
+    // recovery inspect the durable bytes from a clean state.
+    state_ = SecurityState::kFault;
+    ++diagnostics_.mutation_failure_lockouts;
+    return;
+  }
+
+  if (mutation_failure) {
+    if (consecutive_mutation_failures_ < UINT8_MAX)
+      ++consecutive_mutation_failures_;
+    if (consecutive_mutation_failures_ >=
+        kMaxConsecutiveMutationFailures) {
+      // Persistent marginal flash/brownout can otherwise consume dirty slots,
+      // enter compaction, and erase the A/B pages indefinitely on every poll.
+      // A small boot-scoped circuit breaker preserves same-boot recovery from
+      // isolated ambiguous writes while bounding wear under a persistent fault.
+      state_ = SecurityState::kFault;
+      ++diagnostics_.mutation_failure_lockouts;
+    }
   }
 }
 
 void SecurityStore::completeNewPage() {
+  consecutive_mutation_failures_ = 0;
   pages_[target_page_].generation = target_generation_;
   pages_[target_page_].version = kVersionV2;
   pages_[target_page_].state_used =
@@ -920,6 +971,7 @@ void SecurityStore::completeEraseOld(bool success) {
 }
 
 void SecurityStore::completeReserve() {
+  consecutive_mutation_failures_ = 0;
   pages_[target_page_].state_used = target_slot_ + 1;
   tx_reserved_bound_ = pending_tx_bound_;
   job_ = Job::kNone;
@@ -927,6 +979,7 @@ void SecurityStore::completeReserve() {
 }
 
 void SecurityStore::completeA2dReplayReserve() {
+  consecutive_mutation_failures_ = 0;
   pages_[target_page_].state_used = target_slot_ + 1;
   a2d_replay_bound_ = pending_replay_bound_;
   a2d_runtime_hwm_ = pending_replay_counter_;
