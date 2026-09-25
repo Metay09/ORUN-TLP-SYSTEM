@@ -43,7 +43,7 @@ constexpr uint64_t kNewTxBound = 512;
 constexpr uint64_t kNewA2dBound = 16;
 constexpr uint64_t kPostPartialMarkerTxBound = 768;
 
-constexpr uint8_t kPartialDurationsMs[] = {5, 10, 20, 30, 40};
+constexpr uint8_t kPartialDurationsMs[] = {1, 2, 3, 4, 5, 10, 20};
 
 const uint8_t kCredentialId[kCredentialIdSize] = {
     0x4D, 0x37, 0x50, 0x36, 0x46, 0x2D, 0x4D, 0x33,
@@ -112,7 +112,8 @@ SecurityStateRecord makeState(SecurityStateKind kind, uint64_t value) {
 }
 
 bool stageValidPage(FlashBackend& flash, unsigned page, uint64_t generation,
-                    uint64_t tx_bound, uint64_t a2d_bound) {
+                    uint64_t tx_bound, uint64_t a2d_bound,
+                    bool dense_old_page = false) {
   if (page >= kFutureSecurityRegionPages) return false;
   const uint32_t base = pageBase(page);
 
@@ -145,6 +146,31 @@ bool stageValidPage(FlashBackend& flash, unsigned page, uint64_t generation,
   if (!programCommitted(flash, base + securityStateRecordOffset(1),
                         state_bytes, sizeof(state_bytes)))
     return false;
+
+  if (dense_old_page) {
+    // A real NVMC partial erase may progress through the page while our normal
+    // compact snapshot programs only the first ~180 bytes. With the sparse
+    // image, even a short partial erase can erase every programmed byte and
+    // become observationally indistinguishable from a full-page erase.
+    //
+    // Fill the stale page with additional *valid* v2 state records spanning
+    // the whole append area so a partial erase has programmed evidence across
+    // nearly the entire 4 KiB page. Equal per-kind bounds are legal recovery
+    // input (only decreases are rollback/corruption), so this keeps the stale
+    // page structurally valid without raising its authority above the newer
+    // page.
+    for (unsigned slot = 2; slot < kSecurityStateSlotsPerPage; ++slot) {
+      const bool tx_slot = (slot & 1U) == 0U;
+      SecurityStateRecord filler = makeState(
+          tx_slot ? SecurityStateKind::kTxReserveExclusiveBound
+                  : SecurityStateKind::kA2dReplayExclusiveBound,
+          tx_slot ? tx_bound : a2d_bound);
+      encodeSecurityState(filler, state_bytes);
+      if (!programCommitted(flash, base + securityStateRecordOffset(slot),
+                            state_bytes, sizeof(state_bytes)))
+        return false;
+    }
+  }
 
   return programExact(
       flash, base + pageHeaderOffset() + security_format::kPageHeaderSize - sizeof(uint32_t),
@@ -301,7 +327,7 @@ void preparePartialEraseAndReset(NrfSecurityFlash& flash) {
       setReport("M7P6F M3 SENTINEL FAIL setup_erase");
       return;
     }
-    if (!stageValidPage(flash, 0, 1, kOldTxBound, kOldA2dBound) ||
+    if (!stageValidPage(flash, 0, 1, kOldTxBound, kOldA2dBound, true) ||
         !stageValidPage(flash, 1, 2, kNewTxBound, kNewA2dBound)) {
       setReport("M7P6F M3 SENTINEL FAIL setup_stage");
       return;
