@@ -58,7 +58,12 @@ const uint8_t kRoot[kKRootSize] = {
 };
 
 bool done = false;
+bool run_started = false;
 uint32_t last_report_ms = 0;
+uint32_t last_ready_report_ms = 0;
+char command_buffer[16]{};
+uint8_t command_length = 0;
+NrfSecurityFlash sentinel_flash;
 char final_report[192] = "M7P6F M3 SENTINEL NOT RUN";
 
 void setReport(const char* text) {
@@ -394,29 +399,76 @@ void setup() {
     return;
   }
 
-  NrfSecurityFlash flash;
-  if (!flash.begin()) {
+  if (!sentinel_flash.begin()) {
     setReport("M7P6F M3 SENTINEL FAIL security_flash_begin");
     return;
   }
 
-  if (postPartialMarkerPresent(flash)) {
+  // A committed marker means the prior run already produced a real mixed
+  // stale-page image and reset. Recovery must be automatic on this boot so
+  // the production SecurityStore path is tested before any fresh fixture is
+  // constructed. The final result is repeated in loop(), so a USB monitor
+  // may reconnect after the reset without losing evidence.
+  if (postPartialMarkerPresent(sentinel_flash)) {
     Serial.println(F("M7P6F M3 phase=recovery-after-partial"));
     Serial.flush();
-    evaluateRecovery(flash);
+    evaluateRecovery(sentinel_flash);
     return;
   }
 
-  Serial.println(F("M7P6F M3 phase=prepare-real-partial-erase"));
+  // Do not auto-start destructive flash work immediately after DFU. The prior
+  // revision could finish/soft-reset before a host monitor attached, making
+  // physical evidence unnecessarily hard to observe. Require an explicit
+  // operator RUN command on a blank/no-marker boot instead.
+  Serial.println(F("M7P6F M3 READY send RUN"));
   Serial.flush();
-  preparePartialEraseAndReset(flash);
+  last_ready_report_ms = millis();
 }
 
 void loop() {
-  if (done && Serial && (millis() - last_report_ms) >= 3000U) {
-    Serial.println(final_report);
-    Serial.flush();
-    last_report_ms = millis();
+  if (done) {
+    if (Serial && (millis() - last_report_ms) >= 3000U) {
+      Serial.println(final_report);
+      Serial.flush();
+      last_report_ms = millis();
+    }
+    delay(20);
+    return;
   }
+
+  if (!run_started) {
+    if (Serial && (millis() - last_ready_report_ms) >= 3000U) {
+      Serial.println(F("M7P6F M3 READY send RUN"));
+      Serial.flush();
+      last_ready_report_ms = millis();
+    }
+
+    while (Serial.available() > 0) {
+      const char ch = static_cast<char>(Serial.read());
+      if (ch == '\r') continue;
+      if (ch == '\n') {
+        command_buffer[command_length] = '\0';
+        if (strcmp(command_buffer, "RUN") == 0) {
+          run_started = true;
+          Serial.println(F("M7P6F M3 RUN accepted"));
+          Serial.flush();
+          preparePartialEraseAndReset(sentinel_flash);
+        } else if (command_length != 0) {
+          Serial.println(F("M7P6F M3 command rejected; send RUN"));
+          Serial.flush();
+        }
+        command_length = 0;
+        break;
+      }
+      if (command_length + 1U < sizeof(command_buffer)) {
+        command_buffer[command_length++] = ch;
+      } else {
+        command_length = 0;
+        Serial.println(F("M7P6F M3 command too long; send RUN"));
+        Serial.flush();
+      }
+    }
+  }
+
   delay(20);
 }
