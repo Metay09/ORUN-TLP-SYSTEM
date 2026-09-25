@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **FINAL AUDIT FIXES APPLIED — HOST/SANITIZER/RAK4630 REVALIDATION + M3 PHYSICAL SENTINEL PENDING**
+Status: **FINAL AUDIT FIXES HOST/SANITIZER PASS — RAK4630 REBUILD + FIX RECONCILIATION + M3 PHYSICAL SENTINEL PENDING**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -347,8 +347,23 @@ one new MEDIUM availability/endurance defect and three LOW hardening gaps:
   next-slot continuation under the real production state machines.
 
 The pre-fix host/build results above remain historical evidence only for their
-recorded code heads. The final-audit fixes require a fresh host/sanitizer run and
-RAK4630 production build before the physical sentinel.
+recorded code heads.
+
+Final-audit-fix host revalidation on branch head
+`3a64cd6e82dd24d0656939b5d8c2fa3258f05f03` (2026-09-25):
+
+- `./firmware/tests/run_host_tests.sh`: **PASS**;
+- M7P6F SecurityStore v2/migration checks: **PASS**;
+- M7P6F SecurityStore/FlashMutationGate timeout integration: **PASS**;
+- all printed compatibility/RF/BLE/persistence/startup/watchdog regressions:
+  **PASS**;
+- the host script compiles its C++ suites with `-Wall -Wextra -Werror` and
+  `-fsanitize=address,undefined`; the completed run therefore also supplies
+  warnings-as-errors + ASan/UBSan revalidation for those compiled host paths.
+
+A fresh RAK4630 production build is still required for this post-fix head.
+The M3 physical sentinel remains pending and must run only after software/build
+revalidation is complete.
 
 ### Wear notes added by audit
 
