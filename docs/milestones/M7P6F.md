@@ -492,8 +492,23 @@ recovery was therefore never exercised against the target physical condition.
 The probe fixture is revised to fill all 99 v2 state slots on the stale page
 with valid, nondecreasing repeated TX/A2D bounds, distributing programmed bits
 across nearly the complete 4 KiB page without increasing stale-page authority.
-The duration sweep is also tightened to 1/2/3/4/5/10/20 ms. Build and physical
-rerun of this revised test-only image remain pending.
+The duration sweep is also tightened to 1/2/3/4/5/10/20 ms.
+
+The revised image built successfully (RAM 8,940 B / 3.6%, flash 69,072 B /
+8.5%) and its DFU ZIP passed `unzip -t`. Direct bootloader DFU reported
+`Device programmed.`, but serial observation after activation was blank.
+That run is also **INCONCLUSIVE**: no sentinel PASS/FAIL line was observed, so
+it is not evidence about SecurityStore recovery.
+
+The test harness itself had an observability flaw: a fresh/no-marker boot
+started destructive flash work immediately after DFU and could soft-reset
+before a monitor was attached. The sentinel is therefore changed to remain
+idle and repeat `M7P6F M3 READY send RUN` until an operator explicitly sends
+`RUN`. A reboot carrying the durable post-partial marker still enters
+production SecurityStore recovery automatically and repeats the final result,
+so recovery evidence cannot be lost merely because USB CDC reconnects after
+the reset. Production firmware is unchanged. The serial-armed probe build and
+physical rerun are pending.
 
 ### Wear notes added by audit
 
