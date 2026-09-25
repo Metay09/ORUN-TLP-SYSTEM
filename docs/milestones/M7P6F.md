@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **FINAL AUDIT FIXES HOST/SANITIZER + RAK4630 BUILD PASS — FIX RECONCILIATION + M3 PHYSICAL SENTINEL PENDING**
+Status: **SECOND RECONCILIATION FIX APPLIED — HOST/SANITIZER + RAK4630 REVALIDATION + M3 PHYSICAL SENTINEL PENDING**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -323,12 +323,15 @@ one new MEDIUM availability/endurance defect and three LOW hardening gaps:
 
 - **N1 MEDIUM — fixed in branch, revalidation pending:** persistent
   "physically dirtied target + failure/verify mismatch" could consume append
-  slots, enter compaction and repeatedly erase pages on every poll. SecurityStore
-  now has a boot-scoped circuit breaker: after three consecutive security
-  mutation failures it enters FAULT until reboot. Any successful reserve,
-  replay reserve or new-page activation resets the failure streak. Regression
-  coverage includes both dirty append repetition and a page already at the
-  compaction threshold, bounding repeated erase attempts to three.
+  slots, enter compaction and repeatedly erase pages on every poll.
+  SecurityStore has a boot-scoped three-failure circuit breaker for ordinary
+  mutation failures. A later independent reconciliation found that one accepted
+  SoftDevice operation timing out while FlashMutationGate retained quarantined
+  ownership could be miscounted as several failures by subsequent loop polls.
+  That case is now explicit: an unreconciled accepted async mutation causes
+  immediate FAULT-until-reboot; late completion only releases the physical
+  gate and cannot revive same-boot security authority. Persistent ordinary
+  failures remain bounded by the three-failure breaker.
 - **N2 LOW — fixed in branch, revalidation pending:** if `fail()` cannot read
   the append target, it no longer advances `state_used`. It enters FAULT for
   the boot so it cannot create an erased slot followed by a later committed
@@ -341,10 +344,13 @@ one new MEDIUM availability/endurance defect and three LOW hardening gaps:
   read-verified before its commit word is programmed, including the asynchronous
   FlashMutationGate path. A mismatched body therefore remains uncommitted and
   burnable instead of becoming a committed CRC failure.
-- The real SecurityStore + FlashMutationGate integration test is extended with
-  an append-body timeout/late-SUCCESS case before the existing page-activation
-  ambiguity case. It verifies dirty-slot burn, quarantine reconciliation and
-  next-slot continuation under the real production state machines.
+- The real SecurityStore + FlashMutationGate integration test includes an
+  append-body timeout/late-SUCCESS case before the existing page-activation
+  ambiguity case. It now verifies the chosen fail-closed policy: timeout of an
+  accepted quarantined mutation immediately faults SecurityStore, at least five
+  subsequent normal loop polls cause no extra mutation/failure activity, late
+  SUCCESS releases gate ownership without reviving the store, and reboot
+  recovers authoritatively from the uncommitted dirty slot.
 
 The pre-fix host/build results above remain historical evidence only for their
 recorded code heads.
@@ -372,9 +378,22 @@ Fresh RAK4630 production rebuild on branch head
 - application-ceiling and exclusive-owner guards passed during the build;
 - all pinned R4/R2.1/M7P4/M7P7A dependency patches were verified/applied.
 
-This remains compile/link/size evidence only; it is not physical persistence,
-brownout, partial-erase or flash-endurance evidence. Independent fix
-reconciliation and the M3 physical sentinel remain pending.
+This build is historical evidence for `4a1fb7b`; code changed after
+the second independent reconciliation and therefore requires a fresh host/
+sanitizer run and RAK4630 build before physical testing.
+
+Second independent reconciliation at `8a3c470` returned **PASS WITH FIXES**.
+It confirmed N1 wear bounding, N2 and N4, but found one MEDIUM availability
+issue: one accepted SoftDevice timeout could be counted as several failures
+while the physical request remained quarantined. The selected policy is
+fail-closed rather than a timed retry heuristic. FlashBackend now exposes only
+the concrete "unreconciled accepted mutation" fact; FlashMutationGate security
+ports report their quarantine state, and SecurityStore enters FAULT immediately
+for that condition. Ordinary failures still use the three-failure breaker.
+The integration test now inserts five ordinary `store.poll()` calls before
+late completion and requires no synthetic failure/write/erase activity.
+
+The M3 physical sentinel remains pending.
 
 ### Wear notes added by audit
 
