@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **SECOND RECONCILIATION FIX APPLIED — HOST/SANITIZER + RAK4630 REVALIDATION + M3 PHYSICAL SENTINEL PENDING**
+Status: **SECOND RECONCILIATION FIX HOST/SANITIZER PASS — RAK4630 REBUILD + M3 PHYSICAL SENTINEL PENDING**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -394,6 +394,21 @@ The integration test now inserts five ordinary `store.poll()` calls before
 late completion and requires no synthetic failure/write/erase activity.
 
 The M3 physical sentinel remains pending.
+
+Second-reconciliation-fix host revalidation on
+`5e97f6f0c75a1005ca3dcf90ec7f011bfde4a467` (2026-09-25):
+
+- `./firmware/tests/run_host_tests.sh`: **PASS**;
+- M7P6F SecurityStore v2/migration checks: **PASS**;
+- M7P6F SecurityStore/FlashMutationGate timeout integration: **PASS**;
+- all printed compatibility/RF/BLE/persistence/startup/watchdog regressions:
+  **PASS**;
+- the script's compiled host paths use `-Wall -Wextra -Werror` and
+  `-fsanitize=address,undefined`, so warnings-as-errors + ASan/UBSan also
+  passed for those paths.
+
+A fresh RAK4630 production build is still required for this code head before
+the physical sentinel.
 
 ### Wear notes added by audit
 
