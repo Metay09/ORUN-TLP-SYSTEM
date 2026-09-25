@@ -32,11 +32,14 @@ compaction, then retry erase/new-page work on every poll. The reviewer observed
 
 Disposition: **FIXED ON BRANCH; REVALIDATION PENDING.**
 
-SecurityStore now keeps a boot-scoped consecutive security-mutation failure
-budget. Three consecutive reserve/replay/new-page mutation failures enter
-`SecurityState::kFault` until reboot. Any successful reserve, replay reserve or
-new-page activation resets the streak. This preserves same-boot recovery from
-isolated dirty writes while bounding persistent-fault wear.
+SecurityStore keeps a boot-scoped consecutive security-mutation failure
+budget for ordinary clean/verify failures. Three consecutive
+reserve/replay/new-page mutation failures enter `SecurityState::kFault` until
+reboot, and any successful reserve, replay reserve or new-page activation resets
+that streak. An accepted SoftDevice mutation that times out while
+FlashMutationGate still quarantines the physical request is a stricter case:
+it now causes immediate FAULT-until-reboot rather than being retried while the
+gate still owns the flash token.
 
 Regression coverage includes:
 - repeated dirty append failures;
@@ -83,9 +86,38 @@ Disposition: **FIXED ON BRANCH; REVALIDATION PENDING.**
 commit word. A body mismatch therefore leaves the commit erased and the record
 burnable.
 
-The real SecurityStore + FlashMutationGate integration test is also extended
-with an append-body timeout / late-success scenario before the existing page
-activation ambiguity scenario.
+The real SecurityStore + FlashMutationGate integration test covers an
+append-body timeout / late-success scenario before the existing page-activation
+ambiguity scenario. Under the explicit timeout policy, an unreconciled accepted
+mutation faults SecurityStore for the boot; repeated normal loop polls while the
+gate remains quarantined must not manufacture extra failures or flash writes,
+and a late SUCCESS may release physical ownership but must not revive same-boot
+SecurityStore authority.
+
+### N1-R — MEDIUM — quarantined async timeout looked like repeated failures
+
+A second independent reconciliation at `8a3c470` found that the first N1
+circuit breaker could be tripped by one real SoftDevice timeout: while the
+accepted operation remained quarantined, normal loop polls attempted a fresh
+reserve, the gate rejected it without a new physical mutation, and those
+logical rejections were counted as additional mutation failures.
+
+Disposition: **FIXED ON BRANCH; REVALIDATION PENDING.**
+
+Chosen product policy is deliberately conservative and explicit:
+
+- an ordinary clean/verify mutation failure may use the three-failure
+  boot-scoped breaker;
+- an async mutation that was physically accepted but times out with
+  unreconciled gate ownership causes immediate SecurityStore FAULT until reboot;
+- repeated loop polls cannot add synthetic failures or new writes after that
+  FAULT;
+- a late SUCCESS/ERROR only reconciles FlashMutationGate ownership; it never
+  revives SecurityStore authority in the same boot;
+- reboot performs authoritative recovery from durable bytes.
+
+This avoids both the original erase storm and the misleading "three failures"
+semantics for one quarantined physical request.
 
 ## Remaining evidence gates
 
