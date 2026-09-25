@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **FINAL AUDIT FIXES HOST/SANITIZER PASS — RAK4630 REBUILD + FIX RECONCILIATION + M3 PHYSICAL SENTINEL PENDING**
+Status: **FINAL AUDIT FIXES HOST/SANITIZER + RAK4630 BUILD PASS — FIX RECONCILIATION + M3 PHYSICAL SENTINEL PENDING**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -361,9 +361,20 @@ Final-audit-fix host revalidation on branch head
   `-fsanitize=address,undefined`; the completed run therefore also supplies
   warnings-as-errors + ASan/UBSan revalidation for those compiled host paths.
 
-A fresh RAK4630 production build is still required for this post-fix head.
-The M3 physical sentinel remains pending and must run only after software/build
-revalidation is complete.
+Fresh RAK4630 production rebuild on branch head
+`4a1fb7b36b51e4d0ca420a08bd7bd208bb7f14da` (2026-09-25):
+
+- `pio run -d firmware -e rak4630`: **SUCCESS**;
+- RAM: **22,768 / 248,832 B = 9.1%**;
+- Flash: **238,248 / 815,104 B = 29.2%**;
+- versus the pre-final-audit-fix build recorded at
+  22,760 B RAM / 238,264 B flash: **+8 B RAM / -16 B flash**;
+- application-ceiling and exclusive-owner guards passed during the build;
+- all pinned R4/R2.1/M7P4/M7P7A dependency patches were verified/applied.
+
+This remains compile/link/size evidence only; it is not physical persistence,
+brownout, partial-erase or flash-endurance evidence. Independent fix
+reconciliation and the M3 physical sentinel remain pending.
 
 ### Wear notes added by audit
 
