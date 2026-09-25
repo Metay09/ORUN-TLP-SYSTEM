@@ -111,9 +111,53 @@ int main() {
   assert(store.takeCommitResult(committed) && committed);
   assert(store.state() == SecurityState::kProvisioned);
 
-  // Runtime BLE/SoftDevice is now active. Begin credential B and drive every
-  // async operation through definitive success until PAGE ACTIVATION.
+  // Runtime BLE/SoftDevice is now active.
   sd_enabled = true;
+
+  // First exercise an ordinary TX-reservation append whose BODY write is
+  // physically accepted by SoftDevice but whose completion is withheld until
+  // FlashMutationGate times out. SecurityStore must burn the dirty slot,
+  // reject use of that reservation, survive the late SUCCESS, and continue at
+  // the next slot without reprogramming the dirty target.
+  for (uint64_t expected = 0; expected < kTxReservationBlockSize; ++expected) {
+    uint64_t tx = 0;
+    uint32_t epoch = 0;
+    assert(store.reserveNextTxCounter(tx, epoch));
+    assert(tx == expected);
+    assert(epoch == 1);
+  }
+
+  store.poll();  // create the next reservation job.
+  const unsigned writes_before_torn_append = write_calls;
+  store.poll();  // submit body: fake SVC mutates, completion withheld.
+  assert(write_calls == writes_before_torn_append + 1);
+
+  fake_now_ms += 4001;
+  store.poll();  // gate timeout -> dirty slot burned, reservation rejected.
+  assert(gate.securityDiagnostics().timeouts == 1);
+  assert(store.state() == SecurityState::kProvisioned);
+  assert(store.diagnostics().reservation_failures == 1);
+
+  completeAsync(gate);  // late body SUCCESS only reconciles quarantine.
+  assert(gate.securityDiagnostics().late_completions == 2);
+
+  // Retry uses the next slot. Complete body then commit normally.
+  store.poll();  // create retry reservation job.
+  store.poll();  // submit body.
+  completeAsync(gate);
+  store.poll();  // body completion + verification; submit commit.
+  completeAsync(gate);
+  store.poll();  // commit completion + final verification.
+  assert(!store.busy());
+
+  uint64_t resumed_tx = 0;
+  uint32_t resumed_epoch = 0;
+  assert(store.reserveNextTxCounter(resumed_tx, resumed_epoch));
+  assert(resumed_tx == kTxReservationBlockSize);
+  assert(resumed_epoch == 1);
+
+  // Now begin credential B and drive every async operation through definitive
+  // success until PAGE ACTIVATION.
   uint8_t b_id[kCredentialIdSize], b_root[kKRootSize];
   fillId(b_id, 2);
   fillRoot(b_root, 2);
@@ -145,9 +189,9 @@ int main() {
   store.poll();
   assert(write_calls == writes_before_activation + 1);
 
-  fake_now_ms = 4001;
+  fake_now_ms += 4001;
   store.poll();
-  assert(gate.securityDiagnostics().timeouts == 1);
+  assert(gate.securityDiagnostics().timeouts == 2);
   assert(store.state() == SecurityState::kFault);
   assert(store.diagnostics().activation_ambiguities == 1);
   assert(store.takeCommitResult(committed) && !committed);
