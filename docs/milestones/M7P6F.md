@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **FINAL TARGETED RECONCILIATION + TX-REBOOT ASSERT HOST PASS — M3 PHYSICAL SENTINEL TARGET ADDED; PROBE BUILD/PHYSICAL RUN PENDING**
+Status: **FINAL TARGETED RECONCILIATION + TX-REBOOT ASSERT HOST PASS — M3 PHYSICAL INTERRUPTED-ERASE SENTINEL REVISED; REBUILD/PHYSICAL RERUN PENDING**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -502,13 +502,39 @@ it is not evidence about SecurityStore recovery.
 
 The test harness itself had an observability flaw: a fresh/no-marker boot
 started destructive flash work immediately after DFU and could soft-reset
-before a monitor was attached. The sentinel is therefore changed to remain
+before a monitor was attached. The sentinel was therefore changed to remain
 idle and repeat `M7P6F M3 READY send RUN` until an operator explicitly sends
-`RUN`. A reboot carrying the durable post-partial marker still enters
-production SecurityStore recovery automatically and repeats the final result,
-so recovery evidence cannot be lost merely because USB CDC reconnects after
-the reset. Production firmware is unchanged. The serial-armed probe build and
-physical rerun are pending.
+`RUN`. Production firmware remained unchanged.
+
+The serial-armed revision built cleanly on 2026-09-26:
+RAM 8,984 B / 3.6%, flash 69,440 B / 8.5%, exclusive-owner/application-ceiling
+guards PASS. Direct bootloader DFU reported `Device programmed.`, the real
+RAK4631 emitted the repeated READY banner, and the operator explicitly started
+the run. Physical output for 1/2/3/4/5/10/20 ms partial-erase operations was
+identical: `changed_bytes=4060 non_ff_bytes=0 illegal_1_to_0_bytes=0`.
+Therefore every programmed byte in the dense stale page read back erased even
+at 1 ms, and the old spatial-mix criterion again reported
+`FAIL no_mixed_partial`.
+
+That result is **INCONCLUSIVE for M3 recovery, not a SecurityStore failure**.
+The probe assumption was wrong: the nRF52840 specification defines bits after
+an incomplete partial erase as *undefined*; it does not require a spatial mix
+of erased and unerased bytes. Requiring `non_ff_bytes > 0` therefore cannot
+serve as a hardware-independent proof that erase was interrupted.
+
+The physical method is revised again to target the actual M3 failure mode more
+directly. After both valid generations and the monotonic TX marker are durable,
+the test-only image puts NVMC into erase mode, arms the hardware WDT for about
+1 ms, and immediately starts a real full-page `ERASEPAGE` of the superseded
+old page. nRF52840 execution from flash stalls during erase while hardware
+peripherals continue running. If the WDT resets the MCU before the erase-return
+instruction can execute, the next boot must contain DOG without SREQ in the
+saved reset reason; only then does the sentinel invoke production
+`SecurityStore` recovery. If erase returns first, the immediate software
+reset produces SREQ and the run is rejected as unproven. This is real
+reset-during-NVMC-erase evidence, but still not an external electrical
+brownout/power-yank test. The revised test-only image now requires rebuild and
+physical rerun.
 
 ### Wear notes added by audit
 
