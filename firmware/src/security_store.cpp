@@ -791,6 +791,8 @@ void SecurityStore::fail() {
       failing_job == Job::kReserve ||
       failing_job == Job::kA2dReplayReserve ||
       failing_job == Job::kNewPage;
+  const bool unreconciled_async_mutation =
+      active_port_ != nullptr && active_port_->hasUnreconciledMutation();
   bool append_inspection_failed = false;
 
   // A failed append may have programmed some or all of its target before the
@@ -875,6 +877,21 @@ void SecurityStore::fail() {
     // recovery inspect the durable bytes from a clean state.
     state_ = SecurityState::kFault;
     ++diagnostics_.mutation_failure_lockouts;
+    return;
+  }
+
+  if (unreconciled_async_mutation) {
+    // The SoftDevice accepted a physical mutation, the application-level
+    // timeout fired, and FlashMutationGate is deliberately retaining the
+    // shared flash token until a definitive late completion reconciles that
+    // exact request. Retrying while the gate is quarantined would manufacture
+    // extra logical "failures" without issuing any new physical mutation and
+    // could trip the wear breaker after a single real timeout. Treat this
+    // severe ownership ambiguity explicitly: protected security service is
+    // closed until reboot. A late SUCCESS/ERROR may release the physical gate
+    // but must never revive SecurityStore authority in the same boot.
+    state_ = SecurityState::kFault;
+    ++diagnostics_.unreconciled_mutation_faults;
     return;
   }
 
