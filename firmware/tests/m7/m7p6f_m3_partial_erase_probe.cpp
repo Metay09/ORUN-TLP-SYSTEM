@@ -116,12 +116,12 @@ bool stageValidPage(FlashBackend& flash, unsigned page, uint64_t generation,
   if (page >= kFutureSecurityRegionPages) return false;
   const uint32_t base = pageBase(page);
 
-  uint8_t header[kPageHeaderSize];
+  uint8_t header[security_format::kPageHeaderSize];
   encodePageHeader(PageHeader(generation, kSentinelIdentity), header);
   // Activation word is deliberately withheld until every snapshot record is
   // committed, matching production's activation-last invariant.
   if (!programExact(flash, base + pageHeaderOffset(), header,
-                    kPageHeaderSize - sizeof(uint32_t)))
+                    security_format::kPageHeaderSize - sizeof(uint32_t)))
     return false;
 
   uint8_t credential_bytes[kCredentialRecordSize];
@@ -147,8 +147,8 @@ bool stageValidPage(FlashBackend& flash, unsigned page, uint64_t generation,
     return false;
 
   return programExact(
-      flash, base + pageHeaderOffset() + kPageHeaderSize - sizeof(uint32_t),
-      header + kPageHeaderSize - sizeof(uint32_t), sizeof(uint32_t));
+      flash, base + pageHeaderOffset() + security_format::kPageHeaderSize - sizeof(uint32_t),
+      header + security_format::kPageHeaderSize - sizeof(uint32_t), sizeof(uint32_t));
 }
 
 bool writePostPartialMarker(FlashBackend& flash) {
