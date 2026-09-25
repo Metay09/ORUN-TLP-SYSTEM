@@ -1,4 +1,4 @@
-// M7P6F M3 TEST-ONLY physical partial-erase sentinel.
+// M7P6F M3 TEST-ONLY physical interrupted-erase sentinel.
 //
 // Destructive scope: ONLY the two-page SecurityStore partition
 // 0x0E7000..0x0E9000. Never flash this image to a deployed/provisioned unit.
@@ -6,16 +6,18 @@
 // Purpose:
 // 1. Build the exact durable shape that exists after a higher-generation v2
 //    page has been activated but before its superseded old page is erased.
-// 2. Use the nRF52840 NVMC's real ERASEPAGEPARTIAL operation on the stale page
-//    until a genuinely mixed (changed but not fully erased) physical page is
-//    observed.
-// 3. Append one valid higher TX bound to the intact new page as a reboot-phase
-//    marker, reset, then run the production SecurityStore recovery code.
+// 2. Commit a monotonic marker to the intact new page, arm the nRF52840
+//    hardware watchdog for ~1 ms, then start a real full-page NVMC erase of
+//    the stale page. Flash execution stalls the CPU while peripherals keep
+//    running, so a DOG reset proves reset occurred before the erase-return
+//    instruction could execute. If erase returns first, software reset is
+//    requested immediately and the next boot rejects the run as unproven.
+// 3. On a proven DOG reboot, run the production SecurityStore recovery code.
 // 4. Accept only higher-generation PROVISIONED with non-rollback TX/A2D
 //    evidence, or fail-closed FAULT/UNSUPPORTED.
 //
-// This is deterministic real-flash partial-erase evidence. It is NOT a claim
-// that an external brownout/power yank itself has been electrically tested.
+// This is deterministic real-flash reset-during-erase evidence. It is NOT a
+// claim that an external electrical brownout or power yank was reproduced.
 #include <Arduino.h>
 #include <Adafruit_TinyUSB.h>
 #include <nrf.h>
@@ -42,8 +44,6 @@ constexpr uint64_t kOldA2dBound = 8;
 constexpr uint64_t kNewTxBound = 512;
 constexpr uint64_t kNewA2dBound = 16;
 constexpr uint64_t kPostPartialMarkerTxBound = 768;
-
-constexpr uint8_t kPartialDurationsMs[] = {1, 2, 3, 4, 5, 10, 20};
 
 const uint8_t kCredentialId[kCredentialIdSize] = {
     0x4D, 0x37, 0x50, 0x36, 0x46, 0x2D, 0x4D, 0x33,
@@ -213,45 +213,42 @@ bool waitNvmcReady() {
   return false;
 }
 
-bool partialEraseSecurityPage0(uint32_t duration_ms) {
-  if (!softDeviceDisabled() || duration_ms == 0 || duration_ms >= 85U)
-    return false;
-  if (!waitNvmcReady()) return false;
+[[noreturn]] void startWatchdogInterruptedErase() {
+  // ~0.98 ms: timeout = (CRV + 1) / 32768 s.
+  constexpr uint32_t kWatchdogTicks = 32;
+
+  if (NRF_WDT->RUNSTATUS != 0) {
+    setReport("M7P6F M3 SENTINEL FAIL watchdog_already_running");
+    while (true) delay(1000);
+  }
+
+  NRF_WDT->CONFIG =
+      (WDT_CONFIG_SLEEP_Run << WDT_CONFIG_SLEEP_Pos) |
+      (WDT_CONFIG_HALT_Run << WDT_CONFIG_HALT_Pos);
+  NRF_WDT->CRV = kWatchdogTicks - 1U;
+  NRF_WDT->RREN = (WDT_RREN_RR0_Enabled << WDT_RREN_RR0_Pos);
+  NRF_WDT->TASKS_START = 1;
+
+  if (!waitNvmcReady()) {
+    setReport("M7P6F M3 SENTINEL FAIL nvmc_not_ready");
+    while (true) delay(1000);
+  }
 
   NRF_NVMC->CONFIG =
       (NVMC_CONFIG_WEN_Een << NVMC_CONFIG_WEN_Pos);
-  if (!waitNvmcReady()) return false;
-
-  NRF_NVMC->ERASEPAGEPARTIALCFG = duration_ms;
-  NRF_NVMC->ERASEPAGEPARTIAL = kFutureSecurityRegionStart;
-  if (!waitNvmcReady()) return false;
-
-  NRF_NVMC->CONFIG =
-      (NVMC_CONFIG_WEN_Ren << NVMC_CONFIG_WEN_Pos);
-  return waitNvmcReady();
-}
-
-struct PartialEvidence {
-  uint32_t changed_bytes = 0;
-  uint32_t non_ff_bytes = 0;
-  uint32_t illegal_one_to_zero_bytes = 0;
-};
-
-PartialEvidence comparePage(const uint8_t* before) {
-  PartialEvidence out;
-  const volatile uint8_t* after =
-      reinterpret_cast<const volatile uint8_t*>(kFutureSecurityRegionStart);
-  for (uint32_t i = 0; i < kPageSize; ++i) {
-    const uint8_t old_value = before[i];
-    const uint8_t new_value = after[i];
-    if (new_value != old_value) ++out.changed_bytes;
-    if (new_value != 0xFFU) ++out.non_ff_bytes;
-    // Erase may only move programmed zero bits toward one. A new zero where
-    // the staged page had a one is not a plausible erase transition.
-    if ((static_cast<uint8_t>(new_value & old_value)) != old_value)
-      ++out.illegal_one_to_zero_bytes;
+  if (!waitNvmcReady()) {
+    setReport("M7P6F M3 SENTINEL FAIL nvmc_erase_enable");
+    while (true) delay(1000);
   }
-  return out;
+
+  // The next instruction fetch from flash cannot execute until ERASEPAGE
+  // finishes. Therefore:
+  // - DOG reset => hardware watchdog fired while CPU was stalled in erase;
+  // - SREQ reset => erase returned before watchdog, so interruption is unproven.
+  NRF_NVMC->ERASEPAGE = kFutureSecurityRegionStart;
+  NVIC_SystemReset();
+
+  while (true) {}
 }
 
 bool settle(SecurityStore& store) {
@@ -324,64 +321,31 @@ void evaluateRecovery(NrfSecurityFlash& flash) {
 }
 
 void preparePartialEraseAndReset(NrfSecurityFlash& flash) {
-  alignas(4) uint8_t before[kPageSize];
-
-  for (uint8_t duration_ms : kPartialDurationsMs) {
-    if (flash.erasePage(0) != FlashOpResult::kDone ||
-        flash.erasePage(1) != FlashOpResult::kDone) {
-      setReport("M7P6F M3 SENTINEL FAIL setup_erase");
-      return;
-    }
-    if (!stageValidPage(flash, 0, 1, kOldTxBound, kOldA2dBound, true) ||
-        !stageValidPage(flash, 1, 2, kNewTxBound, kNewA2dBound)) {
-      setReport("M7P6F M3 SENTINEL FAIL setup_stage");
-      return;
-    }
-
-    if (!flash.read(0, before, sizeof(before))) {
-      setReport("M7P6F M3 SENTINEL FAIL snapshot_read");
-      return;
-    }
-
-    if (!partialEraseSecurityPage0(duration_ms)) {
-      setReport("M7P6F M3 SENTINEL FAIL nvmc_partial_erase");
-      return;
-    }
-
-    const PartialEvidence evidence = comparePage(before);
-    Serial.printf(
-        "M7P6F M3 PARTIAL duration_ms=%u changed_bytes=%lu "
-        "non_ff_bytes=%lu illegal_1_to_0_bytes=%lu\n",
-        static_cast<unsigned>(duration_ms),
-        static_cast<unsigned long>(evidence.changed_bytes),
-        static_cast<unsigned long>(evidence.non_ff_bytes),
-        static_cast<unsigned long>(evidence.illegal_one_to_zero_bytes));
-    Serial.flush();
-
-    const bool physically_mixed =
-        evidence.changed_bytes > 0 && evidence.non_ff_bytes > 0 &&
-        evidence.illegal_one_to_zero_bytes == 0;
-    if (!physically_mixed) continue;
-
-    if (!writePostPartialMarker(flash)) {
-      setReport("M7P6F M3 SENTINEL FAIL marker_write");
-      return;
-    }
-
-    Serial.printf(
-        "M7P6F M3 PHYSICAL PARTIAL PASS duration_ms=%u "
-        "changed_bytes=%lu non_ff_bytes=%lu; rebooting for production recovery\n",
-        static_cast<unsigned>(duration_ms),
-        static_cast<unsigned long>(evidence.changed_bytes),
-        static_cast<unsigned long>(evidence.non_ff_bytes));
-    Serial.flush();
-    delay(250);
-    NVIC_SystemReset();
-    while (true) {}
+  if (flash.erasePage(0) != FlashOpResult::kDone ||
+      flash.erasePage(1) != FlashOpResult::kDone) {
+    setReport("M7P6F M3 SENTINEL FAIL setup_erase");
+    return;
   }
 
-  setReport("M7P6F M3 SENTINEL FAIL no_mixed_partial_state_observed");
+  if (!stageValidPage(flash, 0, 1, kOldTxBound, kOldA2dBound, true) ||
+      !stageValidPage(flash, 1, 2, kNewTxBound, kNewA2dBound)) {
+    setReport("M7P6F M3 SENTINEL FAIL setup_stage");
+    return;
+  }
+
+  if (!writePostPartialMarker(flash) || !postPartialMarkerPresent(flash)) {
+    setReport("M7P6F M3 SENTINEL FAIL marker_write_verify");
+    return;
+  }
+
+  Serial.println(
+      F("M7P6F M3 INTERRUPT armed marker_tx=768 wdt_ms~1; starting old-page erase"));
+  Serial.flush();
+  delay(100);
+
+  startWatchdogInterruptedErase();
 }
+
 
 }  // namespace
 
@@ -404,22 +368,31 @@ void setup() {
     return;
   }
 
-  // A committed marker means the prior run already produced a real mixed
-  // stale-page image and reset. Recovery must be automatic on this boot so
-  // the production SecurityStore path is tested before any fresh fixture is
-  // constructed. The final result is repeated in loop(), so a USB monitor
-  // may reconnect after the reset without losing evidence.
+  // A committed marker means the prior run armed the destructive old-page
+  // erase. Require the saved reset reason to prove the watchdog, not the
+  // software fallback immediately after ERASEPAGE, caused the reboot.
   if (postPartialMarkerPresent(sentinel_flash)) {
-    Serial.println(F("M7P6F M3 phase=recovery-after-partial"));
+    const uint32_t reset_reason = readResetReason();
+    Serial.printf("M7P6F M3 phase=recovery-after-interrupted-erase reset_reason=0x%08lX\n",
+                  static_cast<unsigned long>(reset_reason));
     Serial.flush();
+
+    if ((reset_reason & POWER_RESETREAS_DOG_Msk) == 0U) {
+      char line[160];
+      snprintf(line, sizeof(line),
+               "M7P6F M3 SENTINEL FAIL interruption_not_proven reset_reason=0x%08lX",
+               static_cast<unsigned long>(reset_reason));
+      setReport(line);
+      return;
+    }
+
     evaluateRecovery(sentinel_flash);
     return;
   }
 
-  // Do not auto-start destructive flash work immediately after DFU. The prior
-  // revision could finish/soft-reset before a host monitor attached, making
-  // physical evidence unnecessarily hard to observe. Require an explicit
-  // operator RUN command on a blank/no-marker boot instead.
+  // Do not auto-start destructive flash work immediately after DFU. Require
+  // an explicit operator RUN command on a blank/no-marker boot so the monitor
+  // is attached before the watchdog-interrupted erase begins.
   Serial.println(F("M7P6F M3 READY send RUN"));
   Serial.flush();
   last_ready_report_ms = millis();
