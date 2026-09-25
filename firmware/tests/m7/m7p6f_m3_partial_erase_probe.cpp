@@ -237,6 +237,11 @@ bool waitNvmcReady() {
     while (true) delay(1000);
   }
 
+  // Prevent a USB/RTOS callback from consuming the short watchdog window
+  // between WDT start and ERASEPAGE. No critical-section exit is needed
+  // because this TEST-ONLY path intentionally ends in reset.
+  taskENTER_CRITICAL();
+
   NRF_WDT->CONFIG =
       (WDT_CONFIG_SLEEP_Run << WDT_CONFIG_SLEEP_Pos) |
       (WDT_CONFIG_HALT_Run << WDT_CONFIG_HALT_Pos);
@@ -245,7 +250,7 @@ bool waitNvmcReady() {
   NRF_WDT->TASKS_START = 1;
 
   // The next instruction fetch from flash cannot execute until ERASEPAGE
-  // finishes. Therefore:
+  // finishes. Therefore, with callbacks/scheduling masked:
   // - DOG without SREQ => watchdog reset occurred before erase returned;
   // - SREQ => erase returned first and the fallback software reset executed.
   NRF_NVMC->ERASEPAGE = kFutureSecurityRegionStart;
