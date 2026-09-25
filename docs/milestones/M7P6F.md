@@ -582,6 +582,24 @@ reset-during-NVMC-erase sentinel on the tested RAK4631. This is **not** an
 external electrical brownout/power-yank test and does not claim flash-endurance
 validation. Production firmware remained unchanged by all sentinel hardening.
 
+
+After M3 closure, a TEST-ONLY post-sentinel cleanup helper was built and
+physically run on the same development RAK4631 before restoring production
+firmware. The helper requires an explicit serial `CLEAN` command, owns only
+SecurityStore `0x0E7000..0x0E9000`, erases both pages through
+`NrfSecurityFlash`, and read-verifies every byte in the 8 KiB region as
+`0xFF`. Its build passed with RAM 8,916 B / 3.6% and flash 54,744 B / 6.7%,
+including exclusive-owner/application-ceiling guards. Physical output was:
+
+```text
+M7P6F SECURITY CLEAN accepted
+M7P6F SECURITY CLEAN PASS pages=2 all_ff=yes
+```
+
+This cleanup is operational test-fixture hygiene, not additional SecurityStore
+runtime evidence. It deliberately does not touch ConfigStore, History,
+BLE/InternalFS bonds, bootloader/settings or other flash partitions.
+
 ### Wear notes added by audit
 
 The original §11.7 illustrative wear arithmetic did not include reset storms or all
