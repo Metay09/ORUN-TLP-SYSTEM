@@ -533,8 +533,24 @@ saved reset reason; only then does the sentinel invoke production
 `SecurityStore` recovery. If erase returns first, the immediate software
 reset produces SREQ and the run is rejected as unproven. This is real
 reset-during-NVMC-erase evidence, but still not an external electrical
-brownout/power-yank test. The revised test-only image now requires rebuild and
-physical rerun.
+brownout/power-yank test.
+
+Physical run on 2026-09-26 reached that path on a real RAK4631:
+the monitor observed the intentional USB disconnect/reconnect, reboot reported
+`reset_reason=0x00000002`, and the sentinel's acceptance logic returned
+`PASS outcome=PROVISIONED`. That PASS is computed only when the recovered TX
+counter is at or above the durable 768 marker in epoch 1 and the old A2D
+counter is rejected. The human-readable detail line itself was malformed by
+the pinned embedded printf implementation's `%llu` handling
+(`tx=lu epoch=768 ...`), so those shifted display fields are not used as
+evidence.
+
+Before final M3 closure, the test-only harness is hardened in two ways:
+the 64-bit TX value is printed as explicit high/low 32-bit fields, and a
+critical section masks USB/RTOS callbacks between the ~1 ms WDT start and the
+`ERASEPAGE` write so a scheduling delay cannot create a DOG reset before
+erase starts. Production firmware remains unchanged. One clean rebuild and
+physical rerun of this hardened sentinel are pending.
 
 ### Wear notes added by audit
 
