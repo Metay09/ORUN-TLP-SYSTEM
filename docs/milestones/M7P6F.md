@@ -1,6 +1,6 @@
 # M7P6F — SecurityStore v2 + durable A2D replay persistence
 
-Status: **FINAL TARGETED RECONCILIATION PASS — REQUIRED TX-REBOOT ASSERT ADDED; HOST RETEST + M3 PHYSICAL SENTINEL PENDING**
+Status: **FINAL TARGETED RECONCILIATION + TX-REBOOT ASSERT HOST PASS — M3 PHYSICAL SENTINEL TARGET ADDED; PROBE BUILD/PHYSICAL RUN PENDING**
 
 Baseline: `main@d1a9720e2f2a80274e379c032cd1cc9a94b25800`
 (M7P7G merged and architecture closeout current).
@@ -439,10 +439,46 @@ were noted:
   reboot, the next TX counter must be at or above one full reservation block
   and remain in epoch 1, proving pre-timeout counters are not reissued.
 
-Because this last commit changes only a host-test assertion and documentation,
-the prior RAK4630 production build still describes the unchanged firmware
-binary. A fresh host suite is required to validate the new assertion before the
-physical sentinel.
+Because the TX continuity change touched only a host-test assertion and
+documentation, the prior RAK4630 production build still describes the unchanged
+production firmware binary.
+
+Final host revalidation after adding the explicit reboot TX-continuity assertion
+on `3a3a3ca4302062877d19d14dd128c20db3404e04` (2026-09-25):
+
+- full `./firmware/tests/run_host_tests.sh`: **PASS**;
+- M7P6F SecurityStore v2/migration checks: **PASS**;
+- M7P6F SecurityStore/FlashMutationGate timeout integration: **PASS**;
+- all printed compatibility/RF/BLE/persistence/startup/watchdog regressions:
+  **PASS**.
+
+### M3 physical partial-erase sentinel
+
+A dedicated TEST-ONLY target,
+`rak4630_m7p6f_m3_partial_erase_probe`, is added after software/audit closure.
+It is intentionally isolated from the production `rak4630` image and
+destructively owns only the two-page SecurityStore partition
+`0x0E7000..0x0E9000` on the selected test device.
+
+The probe uses the nRF52840's hardware `ERASEPAGEPARTIAL` primitive to create
+a physically mixed superseded-page image after a fully committed,
+higher-generation page already exists. It requires observed byte changes while
+the stale page remains nonblank, writes a valid monotonic TX-state marker only
+to the intact higher-generation page, resets, and then runs the production
+SecurityStore synchronous recovery code.
+
+Acceptance is exactly:
+
+- higher-generation PROVISIONED with TX counter not below the marker bound and
+  an old A2D counter rejected; or
+- fail-closed FAULT / UNSUPPORTED.
+
+UNPROVISIONED, FOREIGN, an older/lower-bound PROVISIONED result, TX rollback or
+A2D replay re-acceptance is a failure.
+
+This sentinel provides real nRF52840 flash partial-erase/reboot evidence. It
+does **not** by itself claim that an external electrical brownout or power yank
+has been reproduced. Probe build and physical execution are still pending.
 
 ### Wear notes added by audit
 
