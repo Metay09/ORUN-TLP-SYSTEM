@@ -21,6 +21,14 @@ namespace {
 constexpr uint32_t kPageSize = storage_config::kPageSize;
 constexpr uint32_t kRegionSize = kPageSize * storage_config::kFutureConfigRegionPages;
 
+class ProbeIncarnationSource : public ConfigIncarnationSource {
+ public:
+  bool generate(uint64_t& incarnation) override {
+    incarnation = 0xA1A2A3A4A5A6A7A8ULL;
+    return true;
+  }
+};
+
 class AsyncFlash : public FlashBackend {
  public:
   std::array<uint8_t, kRegionSize> bytes{};
@@ -79,7 +87,8 @@ class AsyncFlash : public FlashBackend {
 
 struct Rig {
   AsyncFlash flash;
-  ConfigStore store{flash};
+  ProbeIncarnationSource rng;
+  ConfigStore store{flash, &rng};
   Probe probe;
   uint32_t now = 1000;
   uint8_t ble_connected = 1;
@@ -87,12 +96,19 @@ struct Rig {
   bool ble_ready = true;
 
   Rig() {
+    // Production establishes the fresh v2 baseline before Bluefruit enables
+    // SoftDevice, so model that one boot-time step synchronously. The probe
+    // itself then exercises the async path exactly as before.
+    flash.pending_steps = 0;
     assert(store.begin());
+    flash.pending_steps = 1;
+
     bool ok = false;
     assert(store.requestSave(config_format::Config(600, 1234)));
     settle();
     assert(store.takeSaveResult(ok) && ok);
-    flash.accepted = flash.successes = flash.errors = flash.ops = flash.raw_writes = 0;
+    flash.accepted = flash.successes = flash.errors = flash.ops =
+        flash.raw_writes = 0;
   }
   void settle() { for (int i = 0; i < 200 && store.busy(); ++i) store.poll(); }
 
