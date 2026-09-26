@@ -154,6 +154,16 @@ clarification preserves the already-observed application meaning
 `source=default|stored`: persistence metadata created only to establish an
 internal token namespace is not presented as a user/operator stored override.
 
+Two recovery nuances do not change the wire layout:
+
+- bit1=0 does **not** guarantee the returned numeric config equals compile-time
+  defaults; a verified staged/partial fallback can carry non-default semantic
+  values while remaining non-committed application provenance;
+- bit0=0 with bit1=1 is possible after a reconciliation read failure when the
+  last known committed semantic override is retained in RAM but the current
+  backend observation is unavailable. Such a response is diagnostic/fallback
+  state and must not be treated as a fresh authoritative storage read.
+
 No config-write, provisioning, command or MESSAGE opcode exists. Malformed
 transport frames never generate an application response (no
 error-amplification path for arbitrary garbage) — only a syntactically
