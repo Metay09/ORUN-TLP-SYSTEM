@@ -45,6 +45,58 @@ need to remain RF-adjacent to the tracker after an opaque relay has custody.
 
 The tracker must never need to know whether Internet exists.
 
+
+### 1.1 Engineering scale target
+
+ORUN is not currently targeting a flat 1000-tracker RF domain.
+
+For design, validation and capacity work, use:
+
+- 10 devices as a basic field-network baseline;
+- approximately 30-50 devices as a meaningful medium-load case;
+- approximately 100 devices per RF domain as the current upper engineering
+  stress target, not a guaranteed product promise;
+- 1000 devices only as a future architecture sanity question: if that need ever
+  becomes real, scale by explicit RF/domain/gateway partitioning rather than
+  assuming one SF11 channel can carry a flat 1000-node network.
+
+The purpose of the upper target is to expose hidden O(N), airtime, queue,
+persistence and recovery defects early, not to optimize the current product for
+a deployment that is not planned.
+
+At the current validated SF11/BW125 reference profile, capacity must be judged
+from measured airtime and event cadence rather than node count alone. Alarm and
+command traffic are sparse/priority traffic; periodic tracking cadence must
+remain adaptive enough that a 100-device installation does not saturate one RF
+domain before retries, relay forwarding and critical events are added.
+
+### 1.2 Product completeness and hardware portability boundary
+
+The secure-command slice is only one branch of the product. Protocol and
+ownership decisions made here must not block the later product families:
+
+- tracking and last-known/fresh location;
+- telemetry and device health;
+- sensor/activity observations;
+- geofence/LOST/critical alarms;
+- short user/device messaging;
+- authenticated commands and RESULT;
+- local history/store-forward;
+- map/history/application views;
+- BLE/local service and gateway/backend synchronization.
+
+These remain separate application/service responsibilities over shared identity,
+security, storage, power and transport foundations. Do not turn the command
+envelope into a universal application payload that every future feature must
+misuse.
+
+RAK4630/RAK4631 + SX1262 remains the owned reference implementation. Future
+hardware may use another MCU, radio, GNSS or sensor, so public protocol,
+persistent configuration and service semantics must use hardware-neutral units
+and concepts. However this does **not** authorize a speculative generic HAL,
+unused drivers or a board-framework rewrite. Extract a demonstrated hardware
+seam only when a real second platform/module requires it.
+
 ## 2. Preserved invariants
 
 This candidate preserves:
@@ -276,9 +328,11 @@ origination fails closed and the gateway re-enrolls.
 
 Factory reset erases this authority store.
 
-For 1000 trackers, per-target delegation is expected to consume tens of
-kilobytes rather than RAM-only state. The future implementation must therefore
-budget flash explicitly; it must not attempt to keep all grant material in RAM.
+For an upper-stress deployment around 100 trackers, per-target delegation must
+still be budgeted explicitly rather than assumed free RAM state. If a future
+installation exceeds one RF domain, gateway authority storage and RF capacity
+must be sized per domain and with explicit backend/gateway partitioning rather
+than by assuming a flat single-channel fleet.
 
 ## 9. Tracker durable gateway replay state
 
@@ -638,18 +692,21 @@ airtime is approximately:
 | trackers | raw airtime/day | fraction of 24 h |
 | ---: | ---: | ---: |
 | 10 | 21.34 s | 0.0247% |
+| 30 | 64.02 s | 0.0741% |
+| 50 | 106.7 s | 0.123% |
 | 100 | 213.4 s | 0.247% |
-| 1000 | 2134 s / 35.6 min | 2.47% |
 
 This is command airtime only and does not include retries, contention, uplinks
 or RESULT frames.
 
 Commands are therefore a sparse control plane, not a polling mechanism.
 
-At one command every 3 minutes per tracker, 1000 trackers would be physically
-untenable on one SF11 channel. Existing 3-minute v1 POSITION traffic is already
-well beyond one-channel capacity at that scale; the v2 command path does not
-solve the broader RF-domain scaling problem.
+Commands are not designed as periodic polling. Even at approximately 100
+trackers, aggressive periodic traffic can dominate one SF11 channel long before
+command traffic does. The secure-command path therefore assumes sparse control
+traffic and does not solve the broader tracking-cadence/RF-domain capacity
+problem. If materially larger fleets are ever required, explicit domain/channel/
+gateway partitioning becomes a separate network-design problem.
 
 Regional duty-cycle/install policy remains separate and must be enforced by the
 RF policy layer rather than silently encoded into this protocol document.
@@ -676,7 +733,38 @@ The smallest staged sequence should be:
 Do not introduce generic actuation, MESSAGE, multi-hop or Android/backend product
 code inside the first codec/persistence slices.
 
-## 20. Review gates / unresolved decisions
+## 20. External design references — lessons, not dependencies
+
+Before wire freeze and during later implementation reviews, compare ORUN against
+mature/open systems for failure modes rather than copying any one architecture:
+
+- LoRaWAN Class A: useful precedent for sleepy-device uplink-triggered receive
+  opportunities, separate frame counters, bounded retries and security-state
+  discipline. ORUN does not adopt LoRaWAN/network-server dependency because
+  offline P2P gateway/relay store-forward is a product requirement.
+- Meshtastic: useful precedent for offline LoRa application families, stable
+  packet IDs, dedupe, bounded hop metadata, phone transport and position/
+  telemetry/messaging coexistence. ORUN must not copy group-key trust,
+  unauthenticated shared-channel authority or generic flooding for protected
+  commands.
+- Traccar / ThingsBoard-style backend models: useful precedent for separating
+  devices, positions, telemetry, alarms/events, commands/results, profiles and
+  maps/dashboard concerns. These concepts belong above the RF protocol rather
+  than being encoded as one monolithic device packet.
+- Zephyr's device/power model: useful architectural precedent for keeping
+  hardware driver ownership, subsystem policy and application intent separate.
+  ORUN keeps its current Arduino/PlatformIO RAK implementation and borrows only
+  the ownership principle until a real second hardware platform justifies a
+  new adapter seam.
+- Open animal-tracking projects and commercial collar systems: useful evidence
+  that GNSS/radio hardware, enclosure/antenna placement, measured battery life,
+  field range and local safety behavior require physical validation. Repository
+  or marketing claims are not substituted for ORUN field evidence.
+
+Every borrowed pattern must be translated through ORUN's own offline, power,
+security, mixed-transport and physical constraints.
+
+## 21. Review gates / unresolved decisions
 
 Independent review must challenge at least:
 
@@ -693,7 +781,7 @@ Independent review must challenge at least:
 - 40-byte inner header / 80-byte inner MTU;
 - one-hop wrapper/nested-wrapper behavior;
 - relay retention when it cannot authenticate RESULT itself;
-- 10/100/1000 airtime and queue pressure;
+- 10 / medium-load / approximately-100 airtime and queue pressure, plus evidence that the design does not hide an O(N) cliff;
 - malformed-frame CPU/flash DoS;
 - mixed v1/v2 fail-closed behavior.
 
