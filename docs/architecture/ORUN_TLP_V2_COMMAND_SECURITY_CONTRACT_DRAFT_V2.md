@@ -12,11 +12,14 @@ Audit sources:
 - `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_INDEPENDENT_AUDIT.md`
   (targeted old draft `3af79af8a52de779cedcfc05fc76c41e91fea5b5`);
 - `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_REAUDIT.md`
-  (targeted V2 content at `44ead40468e5f9a3374b9656fe48d77b06339212`).
+  (targeted V2 content at `44ead40468e5f9a3374b9656fe48d77b06339212`);
+- `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_FINAL_VERIFY.md`
+  (verified the post-re-audit corrections at `ea0ed42218d87e51c4edfc643c0ee3f832372922`).
 
-The re-audit returned **PASS WITH FIXES**: no BLOCKER/HIGH findings, with a
-small set of document/wire-boundary corrections required before owner approval
-or wire freeze.
+The re-audit returned **PASS WITH FIXES** with no BLOCKER/HIGH findings. The
+final focused verification then returned **PASS WITH MINOR DOC FIX**; those D1-D4
+documentation corrections are applied in this revision. The design remains not
+owner-approved and not wire-frozen.
 
 This revision incorporates the independent audit's implementation-blocking
 findings while preserving the product requirement:
@@ -203,10 +206,21 @@ A completely offline tracker that has not yet received the advance can still
 accept an old delegated grant until its quota is exhausted. This residual risk
 is explicit and finite in command count, not time.
 
-The exposure bound is the sum of the **remaining per-tracker grant quota** across
-trackers for which the revoked gateway still has active delegated material.
-Because quota is shared across all scopes in one grant, the bound is not
-multiplied again by scope count.
+The exposure bound must account for every grant generation that has already
+been issued to the compromised gateway but has not yet been made stale at the
+tracker.
+
+For one tracker, if the tracker currently knows generation `g`, the conservative
+bound is the sum of the remaining quota across all issued generations
+`generation >= g` that the gateway still possesses. A later generation does not
+erase the exposure of an earlier one until the tracker has durably advanced to
+the later generation and rejects the older generation.
+
+Fleet/site exposure is the sum of those per-tracker generation bounds across
+trackers for which the revoked gateway still has delegated material.
+
+Because quota is shared across all scopes in one grant generation, this bound is
+**not** multiplied again by scope count.
 
 The backend issues delegated material only for trackers/site ownership that the
 gateway is authorized to serve.
@@ -411,9 +425,21 @@ A transport timeout without authenticated RESULT is user-visible
 authenticated RESULT carrying that failure.
 
 For the first relay slice, the gateway delivery timeout must be strictly greater
-than the configured relay maximum retention + delivery-attempt window, so an old
-custodied frame cannot legitimately arrive after the gateway has minted the next
-distinct counter.
+than the configured relay maximum retention + delivery-attempt window **plus a
+documented safety margin for independent local clocks/scheduling jitter**, so an
+old custodied frame cannot legitimately arrive after the gateway has minted the
+next distinct counter.
+
+Gateway reboot must not shorten this uncertainty window. If an outstanding frame
+has no authenticated RESULT after reboot, the gateway restarts the full
+retention/delivery uncertainty interval (including the safety margin) before it
+may mint the next distinct counter. An uptime-relative deadline may therefore be
+extended by reboot, but must never be reconstructed in a way that expires
+earlier than the safe bound.
+
+The pending protected frame bytes remain the authoritative retransmission object
+during this interval; if they are unavailable/corrupt after reboot, the logical
+operation remains `UNCONFIRMED` until the safe uncertainty interval expires.
 
 ---
 
@@ -892,13 +918,18 @@ off size field
 12  2    ingress_rssi_dbm
 14  1    ingress_snr_db
 15  1    reserved = 0
-16  N    exact unchanged SECURE_APP
+16  N    exact unchanged DELEGATED_SECURE_APP
 ```
 
 Maximum with the current 96-byte inner frame: **112 bytes**.
 
 Rules:
 
+- the first relay slice allow-list accepts only inner
+  `DELEGATED_SECURE_APP` (version 0x02, type 0x01);
+- future compact BACKEND_A2D/DEVICE_D2A secure types are **not** implicitly
+  accepted by this wrapper; adding any new inner type requires an explicit
+  reviewed allow-list update;
 - nested relay wrappers reject;
 - relay metadata is untrusted path observation;
 - inner `relay_allowed` must be set;
@@ -1033,7 +1064,7 @@ Do not implement this as one milestone.
 
 1. independent re-audit of this V2 design;
 2. host-only delegated KDF/frame-key vectors;
-3. exact SECURE_APP codec golden/malformed tests;
+3. exact DELEGATED_SECURE_APP codec golden/malformed tests;
 4. RAK delegated KDF/AES-CCM/CSPRNG KAT/coexistence proof;
 5. SecurityStore v3 delegated replay design + fault tests;
 6. gateway authority-store design + crash/rollback tests;
@@ -1114,5 +1145,24 @@ findings. This revision applies the minimum requested corrections:
 
 COMMAND/RESULT plaintext remains provisional until the separate config-state-token
 slice closes the CAS-token width/ABA contract.
+
+### Final focused verification disposition
+
+The final focused verification returned **PASS WITH MINOR DOC FIX** and found no
+new BLOCKER/HIGH issue. This revision applies its D1-D4 corrections:
+
+- D1: reboot cannot shorten the gateway/relay uncertainty window; full interval
+  restarts after reboot and includes an explicit clock/jitter safety margin;
+- D2: revoked-gateway exposure sums remaining quota across every issued
+  generation that is not yet stale at each tracker, without multiplying by
+  scope count;
+- D3: remaining `SECURE_APP` naming is corrected to
+  `DELEGATED_SECURE_APP`;
+- D4: the first relay wrapper explicitly allow-lists only delegated type 0x01;
+  future compact secure types require a reviewed allow-list change.
+
+The delegated authority architecture and delegated secure-frame header are now
+ready to be presented for **owner approval as design direction**. That is not a
+wire freeze or implementation authorization.
 
 No firmware/runtime/build/physical PASS is claimed by this document.
