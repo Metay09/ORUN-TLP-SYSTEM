@@ -119,8 +119,10 @@ bool ConfigStore::begin() {
 }
 
 bool ConfigStore::recover() {
-  clearRecoveredRuntimeState();
-
+  // Classify both pages into locals first. Runtime reconciliation must never
+  // destroy the last known semantic config merely because one backend read
+  // fails halfway through recovery. Only after both reads succeed do we
+  // replace the published RAM recovery state below.
   RecoveredPage pages[kConfigPageCount]{};
   bool all_erased = true;
   bool any_legacy = false;
@@ -187,6 +189,10 @@ bool ConfigStore::recover() {
     ++diagnostics_.recovery_corruptions;
     any_supported_corrupt = true;
   }
+
+  // Both page reads/classifications completed. From this point recovery may
+  // atomically replace the published RAM interpretation.
+  clearRecoveredRuntimeState();
 
   if (all_erased) return true;
 
@@ -515,6 +521,10 @@ void ConfigStore::poll() {
     if (recovery_pending_) {
       recovery_pending_ = false;
       if (!recover()) {
+        // Preserve the last known semantic config for local availability, but
+        // never let a failed full recovery leave its cached token authoritative.
+        token_state_ = ConfigTokenState::kUncertain;
+        maintenance_reset_required_ = true;
         ready_ = false;
         return;
       }
