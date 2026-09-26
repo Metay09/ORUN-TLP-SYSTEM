@@ -561,6 +561,39 @@ the concurrency protection CAS exists to provide.
 A later backend policy may explicitly own authoritative desired-state
 reconciliation, but that is separate from the tracker contract.
 
+### 9.1 Late RESULT must not regress the backend cache
+
+An authenticated RESULT proves what the tracker reported for that command at
+RESULT creation time. It does not prove that the RESULT is the newest device
+observation at backend receipt time.
+
+Therefore a late older RESULT must not blindly overwrite a cache already advanced
+by a later accepted transition or state read.
+
+For an `APPLIED` transition created from expected token T and resulting token U,
+the backend/gateway cache update should itself use CAS-style logic:
+
+```text
+if cached token == T:
+    cached config/token := desired config / U
+else:
+    record the command RESULT
+    do not regress the global current-state cache
+    reconcile only if needed
+```
+
+For `ALREADY_SATISFIED`, the RESULT proves the complete desired config matched
+the tracker when the RESULT was created. A cache that is absent or still tied to
+the command's prior observation may adopt that config/token pair. A cache already
+known to have moved to a different later observation must not be blindly replaced.
+
+For `STALE_PRECONDITION`, a returned token alone is not enough to replace the
+cached config/token pair; obtain a correlated authenticated config/state
+observation before treating a new pair as current.
+
+This rule lives in backend/gateway orchestration and adds no tracker RF/storage
+work.
+
 ---
 
 ## 10. RF / power / storage budget
