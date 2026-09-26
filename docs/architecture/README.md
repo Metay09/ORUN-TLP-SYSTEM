@@ -60,6 +60,19 @@ in POSITION/telemetry/event frames. It remains documentation-only: ConfigStore
 schema/runtime and complete COMMAND/RESULT wire bytes are not changed by that
 direction.
 
+The proposed exact persistence follow-up is
+`ORUN_CONFIG_STORE_V2_TOKENIZED_LAYOUT.md`. Its focused independent audit
+returned **PASS WITH FIXES** with 0 BLOCKER / 2 HIGH. Final focused
+verification returned **PASS WITH MINOR DOC FIX** with 0 BLOCKER / 0 HIGH;
+H1/H2, M1-M4, L1-L5 and final R1-R3 corrections are applied. The durable audit
+record is
+`docs/audits/CONFIG_STORE_V2_TOKENIZED_LAYOUT_AUDIT_DISPOSITION.md`.
+The design keeps the sealed v2 record at 48 bytes inside the existing two-page
+partition, adds one page-local monotonic token-retire word, distinguishes local
+torn/corrupt evidence from genuine unsupported-newer schema, and defines staged
+migration/re-baseline without allocating a third flash page. It remains
+documentation-only and is not yet an implemented ConfigStore schema.
+
 
 Merged security primitive evidence (M7P6C): M7P6C is a
 test-only RAK4630 CryptoCell primitive proof, not a secure-RF implementation.

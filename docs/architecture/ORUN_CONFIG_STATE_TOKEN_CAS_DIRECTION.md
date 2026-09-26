@@ -1013,7 +1013,9 @@ It defines the minimum state-precondition contract those later slices must obey.
 Recommended order:
 
 1. focused final verification of the applied independent-audit corrections;
-2. ConfigStore tokenized-schema exact layout design;
+2. ConfigStore tokenized-schema exact layout design
+   (`ORUN_CONFIG_STORE_V2_TOKENIZED_LAYOUT.md`, separately reviewed before
+   implementation);
 3. host migration/recovery/fault tests;
 4. ConfigStore implementation with token validity state;
 5. application-owner read/write seam including bounded CONFIG_STATE_READ;
