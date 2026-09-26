@@ -625,3 +625,23 @@ the recorded production build evidence above.
 Do not reinterpret this result as flash-endurance validation or as an external
 electrical brownout/power-yank test. Those remain separate physical evidence
 classes.
+
+### Final post-main-reconciliation merge validation
+
+After merging current `main@ebcb7bf5d49ca5f6d7cb532354f8416a7a18f3ca`
+into the M7P6F branch and reconciling the gateway-command direction wording,
+final validation was rerun on
+`f46f7802ab09df609926becefcf9bce6d4c43e8c`:
+
+- full `./firmware/tests/run_host_tests.sh`: **PASS**;
+- that host script's `-Wall -Wextra -Werror` and ASan/UBSan paths: **PASS**;
+- production `pio run -d firmware -e rak4630`: **SUCCESS**;
+- RAM: **22,768 B / 248,832 B (9.1%)**;
+- flash: **238,512 B / 815,104 B (29.3%)**;
+- application-ceiling and exclusive-owner guards: **PASS**.
+
+The main reconciliation introduced only architecture/audit documentation, and
+the wording fix only clarifies that M7P6F's already-reviewed backend/A2D
+SecurityStore v2 persistence remains valid while gateway-specific
+replay/delegation persistence requires a separate reviewed slice. No new
+production runtime behavior was added after the physical M3 PASS.
