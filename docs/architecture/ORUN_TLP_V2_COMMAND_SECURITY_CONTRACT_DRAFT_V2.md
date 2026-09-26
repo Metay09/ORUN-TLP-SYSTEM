@@ -1,15 +1,22 @@
 # ORUN TLP v2 delegated command security contract — DRAFT V2
 
-Status: **POST-AUDIT REDESIGN CANDIDATE — NOT OWNER-APPROVED, NOT WIRE-FROZEN, NO PRODUCTION RUNTIME AUTHORIZED.**
+Status: **POST-REAUDIT CORRECTION CANDIDATE — independent re-audit returned PASS WITH FIXES; minimum document fixes are applied here. NOT OWNER-APPROVED, NOT WIRE-FROZEN, NO PRODUCTION RUNTIME AUTHORIZED.**
 
 Baseline: `main@e2a370510c595c5f4b88e94a1212fb95d848a273`.
 
 Supersedes the first draft at
 `docs/architecture/ORUN_TLP_V2_COMMAND_SECURITY_CONTRACT_DRAFT.md`.
 
-Audit source:
-`docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_INDEPENDENT_AUDIT.md`
-(targeted old draft `3af79af8a52de779cedcfc05fc76c41e91fea5b5`).
+Audit sources:
+
+- `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_INDEPENDENT_AUDIT.md`
+  (targeted old draft `3af79af8a52de779cedcfc05fc76c41e91fea5b5`);
+- `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_REAUDIT.md`
+  (targeted V2 content at `44ead40468e5f9a3374b9656fe48d77b06339212`).
+
+The re-audit returned **PASS WITH FIXES**: no BLOCKER/HIGH findings, with a
+small set of document/wire-boundary corrections required before owner approval
+or wire freeze.
 
 This revision incorporates the independent audit's implementation-blocking
 findings while preserving the product requirement:
@@ -176,12 +183,30 @@ GATEWAY_POLICY_FLOOR_ADVANCE
 
 It is allowed to be store-forwarded through opaque relays.
 
+Floor advancement is monotonic and idempotent:
+
+```text
+effective_floor = max(current_floor, received_floor)
+```
+
+A delayed lower/equal floor update is therefore a safe no-op.
+
 A tracker commits the higher floor before any delegated command under that floor
 is accepted.
+
+A remaining authorized gateway may also carry an explicitly scoped
+`POLICY_SYNC` semantic under the newer floor. It has no application side effect;
+its purpose is only to let the normal authenticated delegated receive path commit
+the newer security floor. No numeric opcode is frozen by this document.
 
 A completely offline tracker that has not yet received the advance can still
 accept an old delegated grant until its quota is exhausted. This residual risk
 is explicit and finite in command count, not time.
+
+The exposure bound is the sum of the **remaining per-tracker grant quota** across
+trackers for which the revoked gateway still has active delegated material.
+Because quota is shared across all scopes in one grant, the bound is not
+multiplied again by scope count.
 
 The backend issues delegated material only for trackers/site ownership that the
 gateway is authorized to serve.
@@ -246,10 +271,17 @@ with explicit wear and reboot-loss evidence.
 
 ## 6. Delegated key hierarchy
 
-The tracker credential PRK remains conceptually derived from `K_root` and
-`credential_id` as in M7P6D.
+The tracker credential PRK is exactly the M7P6D credential PRK:
 
-A delegated grant secret is candidate-derived with domain-separated HKDF inputs:
+```text
+PRK =
+    HKDF-Extract(
+        SHA-256,
+        salt = credential_id[16],
+        IKM = K_root[32])
+```
+
+A delegated grant secret is then candidate-derived by HKDF-Expand:
 
 ```text
 grant_info =
@@ -261,30 +293,36 @@ grant_info =
     || scope_id_u8
     || quota_code_u8
 
-K_grant = HKDF(..., grant_info, 32 bytes)
+K_grant =
+    HKDF-Expand(
+        SHA-256,
+        PRK,
+        grant_info,
+        32 bytes)
 ```
 
-The exact extract/expand bytes require independent vectors before implementation.
+The exact bytes require independent host vectors and matching RAK vectors before
+implementation.
 
 ### 6.1 Per-frame key diversification
 
 A delegated frame carries a fresh 96-bit random `frame_key_salt`.
 
-For each new cryptographic frame:
+`K_grant` is already a 32-byte pseudorandom HKDF output and is used as the PRK
+for one child expansion:
 
 ```text
-frame_prk =
-    HKDF-Extract(
-        SHA-256,
-        salt = frame_key_salt[12],
-        IKM = K_grant[32])
-
 frame_info =
     ASCII("ORUN-TLP-V2-GW-FRAME-v1")
     || direction_u8
+    || frame_key_salt[12]
 
 K_frame =
-    HKDF-Expand(SHA-256, frame_prk, frame_info, 16 bytes)
+    HKDF-Expand(
+        SHA-256,
+        K_grant,
+        frame_info,
+        16 bytes)
 ```
 
 AES-CCM then uses `K_frame`.
@@ -298,12 +336,25 @@ Purpose:
   CSPRNG salt produces a different AEAD key;
 - byte-identical retransmission retains the original salt/key/ciphertext.
 
-Production use is blocked until the selected gateway platform has a physically
-validated CSPRNG path.
+### 6.2 CSPRNG requirement
+
+The salt source is a security dependency, not ordinary best-effort randomness.
+
+Production delegated TX must use either:
+
+- a hardware TRNG directly; or
+- a DRBG that is freshly seeded/reseeded from hardware TRNG on every boot.
+
+A persistent software seed by itself is not an acceptable source because image
+clone/backup restore could duplicate the salt stream.
+
+If the RNG health/readiness check fails, delegated protected TX fails closed.
+The tracker-side RNG path used for delegated RESULTs must be included in the
+RAK/Bluefruit/CC310 coexistence evidence before production use.
 
 A raw storage clone can still create authority/availability problems and is a
-physical compromise class, but it must not silently create same-key/same-nonce
-reuse if new frames use fresh salts correctly.
+physical compromise class, but with the CSPRNG rule above it must not silently
+create same-key/same-nonce reuse merely because a sender counter was rolled back.
 
 ---
 
@@ -349,8 +400,20 @@ Not allowed:
 
 - counter N and N+1 simultaneously sent through independent paths.
 
-The next distinct counter is emitted only after the prior operation reaches the
-gateway's defined terminal retry/RESULT state.
+The next distinct counter is emitted only after one of these conditions:
+
+- an authenticated target RESULT closes the current attempt; or
+- the bounded custody/delivery deadline has expired everywhere that may still
+  transmit the current frame.
+
+A transport timeout without authenticated RESULT is user-visible
+`UNCONFIRMED`, never `FAILED`. A confirmed application failure requires an
+authenticated RESULT carrying that failure.
+
+For the first relay slice, the gateway delivery timeout must be strictly greater
+than the configured relay maximum retention + delivery-attempt window, so an old
+custodied frame cannot legitimately arrive after the gateway has minted the next
+distinct counter.
 
 ---
 
@@ -398,6 +461,22 @@ slot[4]:
     gateway_grant_generation
     replay durable bound/HWM
 ```
+
+Persistence invariants:
+
+- one slot tuple `(gateway_device_id, gateway_grant_generation, replay_bound)`
+  is one commit-last atomic record; generation and replay bound are never
+  committed independently;
+- a grant-generation increase that resets/changes replay interpretation becomes
+  authoritative only when that whole tuple is committed;
+- floor advancement becomes durable **before** lower-floor slots are eligible
+  for reclamation;
+- lower-floor physical records may remain present after floor commit but are
+  logically stale and ignored;
+- compaction/reclamation must preserve floor + surviving current-floor slots
+  under activation-last A/B semantics;
+- recovery finding a generation/floor/HWM combination that cannot have arisen
+  from one valid atomic transition enters FAULT.
 
 Recovery rejects/faults on:
 
@@ -452,7 +531,15 @@ backend signature
 ```
 
 The application proves possession of the corresponding private key using a
-fresh gateway challenge.
+fresh gateway challenge **bound to the requested logical command**, for example:
+
+```text
+signature_input =
+    challenge
+    || command_digest(target, opcode, args, command_id)
+```
+
+The exact digest/signature encoding remains part of the later user-auth slice.
 
 Requirements:
 
@@ -587,13 +674,19 @@ state before being enabled.
 
 ---
 
-## 14. Secure frame candidate V2
+## 14. Delegated secure frame candidate V2
 
-This is an exact **candidate for re-audit**, not wire freeze.
+This is an exact **delegated-command candidate for owner review**, not a
+universal TLP v2 application header and not wire freeze.
+
+To avoid turning command/security overhead into a tax on routine tracking and
+telemetry, this 56-byte header is **delegated-context only**. Future
+BACKEND_A2D / DEVICE_D2A telemetry/event/position traffic gets a separately
+reviewed compact secure type/layout.
 
 All integers are big-endian.
 
-### 14.1 SECURE_APP
+### 14.1 DELEGATED_SECURE_APP
 
 Header size: 56 bytes.
 
@@ -606,7 +699,7 @@ Total: 64..96 bytes.
 ```text
 off  size  field
 0    1     version = 0x02
-1    1     type = 0x01                 // SECURE_APP candidate
+1    1     type = 0x01                 // DELEGATED_SECURE_APP candidate
 2    1     security_context
 3    1     app_family
 4    1     path_flags
@@ -628,6 +721,12 @@ off  size  field
 
 AAD is exactly bytes 0..55.
 
+The current 64-bit `DeviceIdentity` field is treated as a portable ORUN product
+identity namespace, not an nRF52840 register encoding. Using it in the delegated
+KDF is a deliberate compatibility/namespace decision; a future hardware platform
+must project its identity into the same product identity semantics or introduce
+an explicit protocol-generation change.
+
 ### 14.2 Field rules
 
 `path_flags`:
@@ -641,8 +740,17 @@ AAD is exactly bytes 0..55.
 - bits2..5 = scope_id;
 - bits6..7 = 0.
 
-For non-delegated contexts, delegated-only fields must be zero according to that
-context's later frozen layout.
+This type accepts only delegated contexts. Non-delegated BACKEND_A2D and
+DEVICE_D2A traffic does not use this header.
+
+Additional bounds:
+
+- `security_counter >= 1`;
+- `key_epoch == 0xFFFFFFFF` is invalid/reserved;
+- `gateway_policy_floor == 0xFFFFFFFF` is invalid/reserved;
+- `gateway_grant_generation == 0` and `0xFFFFFFFF` are invalid/reserved;
+- each application family defines an exact minimum plaintext length;
+- current provisional COMMAND minimum is 16 bytes.
 
 Invalid/reserved values fail closed.
 
@@ -657,8 +765,8 @@ DELEGATED_D2GW -> RESULT
 
 Other combinations reject.
 
-Backend/device contexts get their own reviewed family matrix rather than being
-implicitly accepted.
+BACKEND_A2D / DEVICE_D2A use separately reviewed compact secure types and do not
+inherit this delegated frame layout.
 
 ---
 
@@ -747,6 +855,15 @@ Candidate limits for later implementation review:
 - bounded relay-local retention time;
 - one active custodian for one pending command.
 
+For the first implementation, custody selection is configuration-owned rather
+than role-owned:
+
+- at most one effective `command_custody_enabled` relay/gateway node is selected
+  for the relevant site/RF domain;
+- when that custodian owns the pending frame, the originating gateway does not
+  also direct-transmit the same frame into the same tracker RX opportunity;
+- multi-relay custody/slotting remains a later network slice.
+
 A relay reboot may lose pending RAM custody in this first slice. That is an
 availability limitation, not a security failure.
 
@@ -793,8 +910,9 @@ Rules:
 
 Multiple relays must not all transmit at the same tracker RX opportunity.
 
-Initial topology uses a single selected custodian. A later multi-relay design
-needs deterministic slot/backoff or explicit custody assignment.
+Initial topology uses the single configured custodian rule above. A later
+multi-relay design needs deterministic slot/backoff or explicit custody
+assignment.
 
 ---
 
@@ -830,8 +948,19 @@ optional relay/gateway forwarding of RESULT
 retries
 ```
 
+For the current maximum-sized candidate frames, calculated chain cost is roughly:
+
+- direct COMMAND + RESULT: **~3.94 s** raw airtime;
+- one-relay four-leg exchange: **~8.54 s** raw airtime;
+- two additional relay delivery attempts can raise one operation to roughly
+  **~13.1 s**.
+
+These are calculations, not measured RF results.
+
 At ~100 devices, sparse command traffic is feasible only when ordinary tracking,
-history, alarms and relay retransmissions are also budgeted.
+history, alarms and relay retransmissions are also budgeted. A site-wide command
+burst must be scheduled/spread; it must not be emitted as one simultaneous fleet
+push.
 
 No fleet-wide bulk command should be designed as a simultaneous broadcast burst.
 
@@ -866,6 +995,11 @@ The future gateway-platform review must establish:
 - factory reset;
 - CSPRNG quality;
 - whether hardware rollback resistance/secure element exists.
+
+Backend delegated-key derivation also depends on secure access to each tracker
+credential PRK (or an equivalent non-exportable derivation capability). HSM/
+backend custody is currently **UNKNOWN** and must be designed before production
+enrollment; raw `K_root` export is not an accepted shortcut.
 
 Current RAK4631 remains the firmware reference hardware, but production delegated
 gateway authority is not assumed to be safe merely because tracker firmware runs
@@ -961,5 +1095,24 @@ Before owner approval/wire freeze, independent review must specifically verify:
 - 96/112-byte airtime and ~10/~30-50/~100 load behavior;
 - future product families remain possible without turning this command frame
   into a monolithic universal payload.
+
+### Re-audit disposition
+
+The independent V2 re-audit returned **PASS WITH FIXES** with no BLOCKER/HIGH
+findings. This revision applies the minimum requested corrections:
+
+- N1: simplified frame-key derivation to HKDF-Expand from `K_grant`;
+- N2: 56-byte frame declared delegated-only, not universal telemetry framing;
+- N3: timeout is UNCONFIRMED and bounded against relay retention;
+- N4: atomic slot tuple/floor transition invariant recorded;
+- N5: TRNG/reseed/health fail-closed requirements recorded;
+- N6: single configured custody-enabled node for the first relay slice;
+- N7: floor update is monotonic `max()` and POLICY_SYNC semantics are explicit;
+- N8: user PoP binds challenge to command digest;
+- F23/F24: delegated-gateway exception/backend custody dependency are explicitly
+  tracked in architecture documentation.
+
+COMMAND/RESULT plaintext remains provisional until the separate config-state-token
+slice closes the CAS-token width/ABA contract.
 
 No firmware/runtime/build/physical PASS is claimed by this document.
