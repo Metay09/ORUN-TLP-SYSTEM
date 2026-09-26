@@ -205,11 +205,18 @@ bool ConfigStore::recover() {
     if (pages[page].tail_dirty) {
       ++diagnostics_.recovery_corruptions;
       any_supported_corrupt = true;
-      // Preserve one intact committed semantic record as a read-only
+      // Preserve structurally/semantically verified prefix data as read-only
       // fallback, but never let a dirty reserved tail retain token authority.
       if (evidence == config_format::PageEvidence::kV2Committed &&
           pages[page].semantic_valid) {
         committed_pages[committed_count++] = static_cast<int>(page);
+      } else if (pages[page].inspection.has_decoded_record &&
+                 pages[page].semantic_valid &&
+                 (evidence == config_format::PageEvidence::kV2Staged ||
+                  evidence == config_format::PageEvidence::kV2PartialCommit ||
+                  evidence ==
+                      config_format::PageEvidence::kV2CommittedRetired)) {
+        fallback_pages[fallback_count++] = static_cast<int>(page);
       }
       continue;
     }
@@ -397,7 +404,10 @@ bool ConfigStore::recover() {
       // A never-committed semantically invalid stage is equivalent to
       // uncommitted/torn evidence; it cannot supersede the committed page.
     } else if (!exactSuccessor(committed, other)) {
-      setMaintenanceFallback(committed, ConfigTokenState::kUncertain);
+      setMaintenanceFallback(
+          committed, ConfigTokenState::kUncertain,
+          committed.token.revision > 1 ||
+              !sameConfig(committed.config, defaultConfig()));
       return true;
     }
   } else if (!evidenceIsSafeUncommitted(other.evidence)) {
