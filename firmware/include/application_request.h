@@ -80,9 +80,10 @@ struct ApplicationResponse {
   ApplicationResponseCode code;
 
   // Meaningful for kGetConfig/kOk. ready() only means ConfigStore/backend
-  // initialization succeeded; blank or corrupt flash can still legitimately
-  // fall back to defaults. config_has_committed_record distinguishes a
-  // recovered durable record from that default/fallback source.
+  // initialization succeeded. config_has_committed_record preserves the
+  // frozen application provenance meaning: false for safe/default config,
+  // including ConfigStore v2's internal default token baseline; true only
+  // after a semantic config override has been durably committed.
   bool config_backend_ready;
   bool config_has_committed_record;
   config_format::Config config;
