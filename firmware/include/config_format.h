@@ -12,9 +12,10 @@
 // of duplicating them.
 //
 // ConfigStore v2 architecture later fixed an exact tokenized record and a
-// page-evidence classifier. The legacy v1 constants/functions below remain
-// byte-for-byte unchanged so the current production ConfigStore can continue
-// using v1 until the separate reviewed runtime-cutover slice switches owners.
+// page-evidence classifier. PR #46 switches normal ConfigStore runtime writes
+// to v2. The legacy v1 constants/functions below remain byte-for-byte frozen
+// for compatibility fixtures and read-only legacy-development detection; they
+// are not a normal runtime write format after the cutover.
 namespace orun_tlp::config_format {
 
 constexpr uint32_t kMagic = 0x4F524331;  // "ORC1"
