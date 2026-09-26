@@ -84,6 +84,20 @@ class ConfigStore {
   // semantic change. An unchanged config is a no-op only when recovery has an
   // unambiguous semantic state.
   bool requestSave(const config_format::Config& candidate);
+
+  // Returns one logical result for the submitted save attempt.
+  //
+  // success=true means ConfigStore durably verified and published the new
+  // config/token before returning the result.
+  //
+  // success=false means only "this attempt was not confirmed successful".
+  // It MUST NOT be interpreted as "the candidate definitely did not commit".
+  // A commit-word write may have reached flash before a timeout/readback
+  // failure was observed. ConfigStore then marks token authority UNCERTAIN and
+  // performs/awaits full two-page reconciliation. Callers that need an
+  // application-level outcome must re-read coherent state after reconciliation.
+  // Protected CAS/COMMAND RESULT must expose this as OUTCOME_UNKNOWN /
+  // UNCONFIRMED rather than a false FAILED result until that later slice exists.
   bool takeSaveResult(bool& success);
 
   // Normal semantic reset. This is NOT the destructive development partition
