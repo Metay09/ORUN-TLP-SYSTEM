@@ -138,7 +138,8 @@ Rules:
 - v2 baseline begins at generation 1;
 - each successful v2 semantic save increments it by one;
 - it never wraps;
-- two valid v2 records are ordered by this field;
+- two committed-valid v2 records are ordered by this field only when their
+  relationship also satisfies the partition-level A/B transition invariants;
 - v1 and v2 physical generations are **never compared across schema versions**.
 
 A v1 -> v2 migration starts a new v2 physical-generation namespace at 1.
@@ -528,7 +529,9 @@ exists. The device therefore retains its current legacy redundancy/config and
 does not spend flash wear merely to discover that a new incarnation cannot be
 created.
 
-The v2 token is not application-valid before step 8.
+The v2 token is not application-valid merely because step 8 programmed the
+commit word. It becomes VALID only after step 9 verifies the committed record
+and step 10 publishes the recovered transaction state.
 
 ### 8.4 One legacy-valid page + one erased page
 
