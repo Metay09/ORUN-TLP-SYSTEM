@@ -674,8 +674,16 @@ else:
 
 For `ALREADY_SATISFIED`, the RESULT proves the complete desired config matched
 the tracker when the RESULT was created. A cache that is absent or still tied to
-the command's prior observation may adopt that config/token pair. A cache already
-known to have moved to a different later observation must not be blindly replaced.
+the command's prior observation may adopt that config/token pair **only when the
+RESULT says the token is VALID**. If `token_valid = 0`, semantic equality may be
+reported but no recovered/uncertain token becomes cache-authoritative. A cache
+already known to have moved to a different later observation must not be blindly
+replaced.
+
+A previously empty cache may adopt a valid late RESULT and still be temporally
+stale relative to an even later tracker transition. That is acceptable for
+safety: the tracker CAS check remains authoritative and will reject a later stale
+mutation. Backend/gateway cache is never promoted to target authority.
 
 For `STALE_PRECONDITION`, a returned token alone is not enough to replace the
 cached config/token pair; obtain a correlated authenticated config/state
@@ -683,6 +691,42 @@ observation before treating a new pair as current.
 
 This rule lives in backend/gateway orchestration and adds no tracker RF/storage
 work.
+
+### 9.2 Bounded authenticated config/state read
+
+Stale-cache reconciliation must be realizable within the existing 32-byte
+protected-plaintext ceiling; it must not depend on an oversized RESULT.
+
+The later wire-contract slice must define a side-effect-free authenticated
+`CONFIG_STATE_READ` operation under the delegated config authority. It may be a
+read opcode carried by the COMMAND/RESULT application family, but it is not a
+desired-state mutation and does not need persistent command-id idempotency.
+
+For this read-only response, exact attempt correlation by authenticated
+`request_counter` is sufficient; the read-specific RESULT schema may omit the
+8-byte `command_id`. The required budget is therefore:
+
+```text
+control/schema/status/flags   <= 4 bytes
+request_counter                 8 bytes
+state_token                    12 bytes
+current M7P5 config             8 bytes
+---------------------------------------
+maximum                         32 bytes
+```
+
+The flags/control budget must include token-validity semantics. When token state
+is not VALID, returned token bytes are absent or explicitly non-authoritative
+according to the later exact schema.
+
+The config snapshot and token must be captured as one coherent application-state
+observation. The simplest first implementation returns `BUSY` if a config
+mutation is in progress rather than combining pre-commit config with
+post-commit token state.
+
+This read is required only for stale/unknown reconciliation. A normal online or
+offline current-cache config mutation still performs no read-before-write RF
+round trip.
 
 ---
 
@@ -743,6 +787,19 @@ Do not allocate a new flash partition merely for the token.
 The future schema must keep config + token atomic and retain the existing
 erase-before-write/commit-last power-cut family.
 
+The tokenized ConfigStore API must also make semantic mutation and token
+progression structurally inseparable. A caller must not be able to invoke a
+semantic `requestSave()`-equivalent that changes config while leaving revision
+unchanged or supplying an arbitrary revision. The normal mutation API owns the
+revision increment internally; reset, migration and re-baseline use explicit
+separate reviewed paths.
+
+Current test/probe writers, including flash probes that temporarily save a
+different config and later restore it, must use the token-aware mutation API once
+the tokenized schema exists or be disabled for that schema. Test-only code is not
+allowed to create an application state transition that bypasses token
+progression.
+
 ---
 
 ## 11. GET_CONFIG / application-state exposure
@@ -781,13 +838,40 @@ This slice resolves one previously-open question:
 
 The complete COMMAND/RESULT plaintext layouts remain unfrozen.
 
-This token decision does **not** authorize a larger delegated secure frame. The
-first config command/result contract must fit the existing 32-byte protected
-plaintext ceiling. With the current M7P5 config's two 32-bit semantic fields,
-the COMMAND candidate uses 24 fixed bytes plus 8 config bytes = 32 bytes. A
-compact RESULT can also fit within 32 bytes if the final schema/code/flags
-prefix remains bounded; the wire-freeze slice must prove the exact offsets and
-leave out optional detail rather than silently increasing the frame ceiling.
+This token decision does **not** authorize a larger delegated secure frame.
+
+The first config mutation COMMAND budget is exact at the design level:
+
+```text
+schema/opcode/args_len/flags     4 bytes
+command_id                        8 bytes
+expected_state_token             12 bytes
+current M7P5 complete config      8 bytes
+-----------------------------------------
+total                            32 bytes
+```
+
+The first config mutation RESULT budget with a valid token is:
+
+```text
+schema/result_code/flags          3 bytes
+command_id                        8 bytes
+request_counter                   8 bytes
+current/resulting_state_token    12 bytes
+-----------------------------------------
+subtotal                         31 bytes
+remaining optional detail         1 byte
+```
+
+Therefore the first schema has at most **1 byte** of optional detail when a valid
+token is present. It must not grow a variable diagnostic payload inside this
+family. `BUSY`, token-invalid and other compact results may use the final
+versioned schema's validity/status bits, but they do not authorize a larger
+frame.
+
+Any future semantic config expansion beyond the current 8 bytes requires a new
+versioned representation/family or another explicitly reviewed packing decision;
+it must not silently overflow this first 32-byte contract.
 
 The first RESULT should not echo the full config merely to avoid a later
 conflict-path read; preserving the 32-byte ceiling and sparse RF use is preferred.
@@ -818,6 +902,7 @@ Required result semantics include at least:
 
 - `APPLIED`;
 - `ALREADY_SATISFIED`;
+- `BUSY`;
 - `STALE_PRECONDITION`;
 - token unavailable/uncertain;
 - invalid candidate/policy rejection;
@@ -826,6 +911,12 @@ Required result semantics include at least:
 
 Only an authenticated tracker RESULT may establish user-visible application
 outcome.
+
+For mutation RESULTs, any state token reported as usable must be the token
+captured under that transaction's mutation ownership. `BUSY` must not advance
+the cache. `ALREADY_SATISFIED` may carry the current token only when token state
+is VALID; otherwise the RESULT marks token validity false and the token is
+non-authoritative/omitted.
 
 ---
 
