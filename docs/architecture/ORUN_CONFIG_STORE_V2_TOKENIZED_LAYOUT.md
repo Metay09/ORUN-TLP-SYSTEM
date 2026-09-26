@@ -1376,74 +1376,138 @@ contract already approved in the CAS direction.
 
 ## 18. Required host tests for implementation
 
-The implementation slice must add or adapt tests for at least:
+The implementation slice must add or adapt host/fault tests for at least the
+following families.
 
-### v2 codec
+### v2 codec / page metadata
 
-1. exact 48-byte golden encoding;
+1. exact 48-byte golden record encoding;
 2. big-endian fields;
 3. CRC covers bytes 0..39;
 4. commit offset exactly 44;
-5. reserved-byte rejection;
-6. zero incarnation rejection;
-7. zero revision rejection;
-8. wrong payload length rejection;
-9. unsupported version rejection;
-10. partial/nonzero-non-FF commit rejection.
+5. retire-word offset exactly 48;
+6. sealed record size remains 48 while page-local reserved footprint is 52;
+7. reserved-byte rejection;
+8. zero incarnation rejection;
+9. zero revision rejection;
+10. wrong payload length rejection;
+11. unsupported ORC1 version classified as UNSUPPORTED_NEWER;
+12. partial/nonzero-non-FF commit rejected as active;
+13. any non-FF retire word invalidates token authority;
+14. exact v1 bytes remain readable without fixture changes.
+
+### physical classifier / torn-operation model
+
+15. fully erased page;
+16. v1 commit FF with incomplete body -> non-authoritative torn/uncommitted;
+17. v2 commit FF with incomplete body -> V2_UNCOMMITTED_OR_TORN;
+18. exact verified v2 staged record -> V2_STAGED_VALID;
+19. programmed-prefix + all-FF tail is not UNSUPPORTED_NEWER;
+20. damaged/non-ORC1 local bytes -> SUPPORTED_CORRUPT;
+21. ORC1/version unknown -> UNSUPPORTED_NEWER;
+22. partial commit word -> SUPPORTED_CORRUPT/UNCERTAIN;
+23. partial retire word -> retired/UNCERTAIN;
+24. fault injection at every 4-byte body-program boundary;
+25. interrupted erase patterns do not become future-schema evidence.
 
 ### normal v2 save/recovery
 
-11. blank -> defaults + token baseline;
-12. semantic save increments generation and revision exactly once;
-13. unchanged config -> no write/no token change even when token state is
-    UNAVAILABLE/UNCERTAIN;
-14. changed config with UNAVAILABLE/UNCERTAIN token state cannot bypass
-    baseline/re-baseline;
-15. A -> B -> A -> distinct token revisions;
-16. body-stage power cut -> old committed state survives;
-17. post-commit/pre-result reboot -> new state recovers;
-18. revision exhaustion fails closed;
-19. storage-generation exhaustion fails closed.
+26. blank -> defaults with token initially UNAVAILABLE;
+27. successful baseline -> generation 1 / revision 1 / VALID;
+28. semantic save increments generation and revision exactly once;
+29. unchanged UNAMBIGUOUS config -> no write/no token change even when token
+    state is UNAVAILABLE/UNCERTAIN;
+30. FALLBACK_ONLY/AMBIGUOUS state cannot claim ALREADY_SATISFIED from defaults;
+31. changed config with UNAVAILABLE/UNCERTAIN cannot bypass re-baseline;
+32. A -> B -> A produces distinct token revisions;
+33. body-stage power cut with clean commit-FF residue preserves old VALID token;
+34. inactive-page erase interruption preserves semantic config but makes token
+    UNCERTAIN when contradictory supported corruption remains;
+35. post-commit/pre-RAM-publication reboot recovers successor only with exact
+    generation/incarnation/revision lineage;
+36. revision exhaustion fails closed;
+37. storage-generation exhaustion fails closed;
+38. committed+staged VALID path requires G+1, same incarnation, revision+1;
+39. staged different incarnation never leaves old committed token VALID;
+40. committed-valid pair requires adjacent generation, same incarnation and
+    adjacent revision;
+41. equal/non-adjacent/impossible-lineage committed pairs -> UNCERTAIN.
 
-### legacy migration
+### legacy migration / H1 recovery
 
-20. one valid v1 + erased target -> v2;
-21. two valid v1 pages -> higher legacy config preserved;
-22. v2 generation begins at 1 independent of v1 generation;
-23. token never VALID before last legacy page retirement;
-24. power cut before staged write completion;
-25. power cut after staged verification;
-26. power cut during legacy erase;
-27. power cut after legacy erase before commit;
-28. downgrade -> legacy write -> upgrade never resurrects old token;
-29. higher-generation committed-invalid v1 + lower valid v1 -> UNCERTAIN;
-30. unknown/unsupported page + valid v1 -> no automatic migration;
-31. CSPRNG failure before migration does not erase a valid legacy page;
-32. mixed valid v1+v2 never reuses v2 token;
-33. mixed same-config v1+v2 recovery creates fresh incarnation;
-34. mixed different-config v1+v2 remains UNCERTAIN;
-35. unsupported schema is not overwritten.
+42. one valid v1 + erased target -> v2;
+43. two valid v1 pages -> higher legacy config preserved;
+44. v2 generation begins at 1 independent of v1 generation;
+45. CSPRNG failure occurs before destructive migration erase;
+46. token never VALID before final legacy retirement + v2 commit verification;
+47. power cut during first target erase at every modeled word boundary;
+48. power cut during staged body write at every 4-byte boundary;
+49. valid v1 + supported-corrupt residue may recover with diagnostics;
+50. higher-generation committed-invalid v1 + lower valid v1 uses reviewed safe
+    fallback and fresh incarnation, never the invalid record;
+51. equal-generation same-config v1 pair may fresh-migrate with diagnostics;
+52. equal-generation different-config v1 pair -> AMBIGUOUS/no auto rewrite;
+53. UNSUPPORTED_NEWER + valid v1 blocks automatic migration;
+54. power cut while final legacy source is erased leaves stage semantic copy
+    recoverable but never promotes staged token;
+55. one staged + erased page creates a fresh incarnation rather than promoting
+    staged incarnation;
+56. two same-config staged pages recover through a third/fresh incarnation using
+    the same two physical pages;
+57. two different-config staged pages -> AMBIGUOUS/no auto erase.
 
-### ambiguous recovery
+### retire-word / H2 re-baseline
 
-36. committed-invalid higher v2 + lower valid v2 -> token UNCERTAIN;
-37. equal-generation valid v2 pages -> UNCERTAIN;
-38. non-adjacent committed-valid v2 generations -> UNCERTAIN;
-39. committed G plus staged S remains VALID only for S == G+1;
-40. staged S <= G or S > G+1 -> UNCERTAIN;
-41. partial commit word -> UNCERTAIN;
-42. staged v2 never exposes token as VALID after reboot;
-43. interrupted fresh-baseline staged token is never promoted after reboot;
-44. non-erased no-valid-record -> UNCERTAIN;
-45. supported-schema re-baseline creates fresh incarnation;
-46. re-baseline diagnostics are observable.
+58. supported-corruption v2 re-baseline programs/verifies retire word before
+    contradictory page erase;
+59. power cut after retire mark but before contradictory erase -> old token stays
+    UNCERTAIN;
+60. power cut during contradictory erase -> retired survivor cannot regain VALID;
+61. power cut after fresh stage -> retired old committed token cannot regain VALID;
+62. power cut while erasing retired semantic source -> fresh stage semantics
+    survive but staged token is not promoted;
+63. commit/readback of fresh candidate is required before VALID publication;
+64. same-config impossible-lineage committed v2 pair fresh-rebaselines;
+65. different-config impossible-lineage pair -> AMBIGUOUS/no auto rewrite.
 
-### API ownership
+### mixed v1/v2
 
-47. normal caller cannot supply revision;
-48. semantic mutation cannot retain old revision;
-49. reset changes token only when semantic config changes;
-50. test/probe mutation cannot bypass token progression.
+66. mixed committed same-config v1+v2 never reuses v2 token;
+67. same-config mixed recovery erases v2 first while v1 remains semantic source;
+68. power cut during that v2 erase leaves v1 migration recoverable;
+69. mixed different-config v1+v2 -> AMBIGUOUS/no automatic choice;
+70. unsupported/corrupt mixed evidence follows decision table and never silently
+    resurrects an existing token.
+
+### API / ownership / asynchronous reconciliation
+
+71. normal caller cannot supply revision;
+72. semantic mutation cannot retain old revision;
+73. expected-token comparison and save admission cannot be interleaved by another
+    writer;
+74. reset uses same mutation ownership and advances token only for semantic change;
+75. test/probe mutation cannot bypass token progression;
+76. UNAVAILABLE/UNCERTAIN local write is explicit re-baseline, not normal save;
+77. local re-baseline CSPRNG failure does not durably change config;
+78. ConfigPort exposes backend unreconciled-mutation state;
+79. accepted async erase timeout -> no new config mutation until late event
+    reconciles and full partition recovery runs;
+80. accepted async body/commit timeout -> no stale RAM token is exposed as
+    cache-authoritative;
+81. late SUCCESS/ERROR never produces a second application success result;
+82. post-reconciliation full recovery determines actual flash state before new
+    admission.
+
+### retry/wear bounds
+
+83. automatic recovery never immediately loops after CSPRNG/flash failure in the
+    same boot;
+84. destructive recovery waits for the implementation's reviewed stable-power
+    admission condition;
+85. normal unchanged config still causes zero erase/program operations;
+86. normal successful semantic save remains one page erase + body/CRC + commit;
+87. retire word is programmed at most once before its page is erased.
+
 
 ---
 
