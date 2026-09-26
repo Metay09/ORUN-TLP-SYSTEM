@@ -51,10 +51,15 @@ class ReadOnlyFlash : public FlashBackend {
   }
 
   void seedConfig(const config_format::Config& config,
-                  uint64_t generation = 1, unsigned page = 0) {
+                  uint64_t generation = 1,
+                  unsigned page = 0) {
     assert(page < storage_config::kFutureConfigRegionPages);
-    uint8_t record[config_format::kRecordSize]{};
-    config_format::encode(config, generation, record);
+    const config_format::V2Record v2(
+        generation, config,
+        config_format::StateToken(0x1122334455667788ULL,
+                                  static_cast<uint32_t>(generation)));
+    uint8_t record[config_format::kV2RecordSize]{};
+    config_format::encodeV2(v2, record);
     memcpy(bytes.data() + page * storage_config::kPageSize, record,
            sizeof(record));
   }
