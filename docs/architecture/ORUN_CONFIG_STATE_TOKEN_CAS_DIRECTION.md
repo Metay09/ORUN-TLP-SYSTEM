@@ -76,8 +76,8 @@ policy.
 The backend/application side should own:
 
 - user-visible desired state;
-- last authenticated device config snapshot;
-- last authenticated state token;
+- the last authenticated device config snapshot **paired with** the token from
+  the same accepted observation/result;
 - command creation/correlation;
 - retry policy;
 - queue/coalescing policy;
@@ -447,6 +447,10 @@ This is the rule that prevents recovery from creating an ABA vulnerability.
 ## 9. Backend/gateway cache behavior
 
 A cached token is an optimization, not authority.
+
+A cached config snapshot and token are one correlated pair. Backend/gateway must
+not combine a config snapshot from observation A with a token learned from
+observation B and then treat the pair as current.
 
 ### Online
 
