@@ -38,15 +38,13 @@ that those later runtimes exist.
 
 Current delegated-command design work is in
 `ORUN_TLP_V2_COMMAND_SECURITY_CONTRACT_DRAFT_V2.md`. The first draft is retained
-only as the independently audited historical target. The first audit is
-`docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_INDEPENDENT_AUDIT.md`; the
-focused V2 re-audit is
-`docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_REAUDIT.md` and returned
-**PASS WITH FIXES** with no BLOCKER/HIGH findings. The final focused check is
-`docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_FINAL_VERIFY.md` and returned
-**PASS WITH MINOR DOC FIX**; its D1-D4 corrections are now applied in the V2
-document. The delegated authority/header design is ready to be presented for
-owner approval as design direction, but remains not owner-approved and does not
+only as the independently audited historical target. The durable audit record is
+`docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_AUDIT_DISPOSITION.md`, which
+consolidates the initial FAIL/REDESIGN, V2 PASS WITH FIXES and final PASS WITH
+MINOR DOC FIX sequence plus the accepted D1-D4 corrections. Raw reviewer
+prompts/transcripts were removed after disposition to keep architecture sources
+clean. The delegated authority/header design is ready to be presented for owner
+approval as design direction, but remains not owner-approved and does not
 authorize production secure-RF runtime or freeze COMMAND/RESULT bytes.
 
 
