@@ -9,6 +9,7 @@
 #include "ble_application_handoff.h"
 #include "ble_application_transport.h"
 #include "config_store.h"
+#include "config_incarnation_source.h"
 #ifdef ORUN_M7P7B_FLASH_PROBE
 #include "m7p7b_flash_probe.h"
 #endif
@@ -44,7 +45,9 @@ orun_tlp::ActivityCapture activity_capture(accelerometer_manager);
 // §9/§10); the history-facing API/behavior used below is unchanged.
 orun_tlp::FlashMutationGate storage_flash_gate;
 orun_tlp::HistoryStore history(storage_flash_gate);
-orun_tlp::ConfigStore config_store(storage_flash_gate.configPort());
+orun_tlp::NrfConfigIncarnationSource config_incarnation_source;
+orun_tlp::ConfigStore config_store(storage_flash_gate.configPort(),
+                                   &config_incarnation_source);
 // M7P7D/M7P7E: one typed, transport-neutral application request owner.
 // USB and BLE now share this same owner; requester provenance prevents either
 // adapter from consuming the other's response. M7P7G exposes only M7P7F's
@@ -1350,6 +1353,10 @@ void setup() {
   // page, or a begin() failure -- see ConfigStore::begin()'s contract.
   if (!config_store.begin()) {
     Serial.println(F("CONFIG unavailable; defaults in effect"));
+  } else if (config_store.maintenanceResetRequired()) {
+    Serial.println(F("CONFIG maintenance/reset required; defaults in effect"));
+  } else if (config_store.tokenState() != orun_tlp::ConfigTokenState::kValid) {
+    Serial.println(F("CONFIG token unavailable; defaults in effect"));
   }
   // M7P6B: recovery only -- never provisions a credential. See the
   // composition-root comment on security_store above.
