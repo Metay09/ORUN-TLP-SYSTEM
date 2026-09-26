@@ -415,9 +415,32 @@ migration/baseline operation that:
 - creates a fresh non-zero incarnation;
 - starts `state_revision = 1`;
 - commits config + token state atomically under the new schema;
-- exposes the token as VALID only after that commit succeeds.
+- does not expose the token as VALID while an unproven committed legacy record
+  can coexist with the tokenized state.
 
-Until then, protected CAS writes remain unavailable.
+The tokenized storage slice must make migration coexistence distinguishable from
+a later token-unaware firmware write. A legacy physical generation number alone
+is **not** sufficient provenance because a downgraded legacy firmware can reuse
+that number. An implementation must either:
+
+- durably bind the exact migrated legacy source identity strongly enough to prove
+  that any coexisting legacy record is that migration source; or
+- complete power-cut-safe retirement of committed legacy records before exposing
+  the new token as VALID.
+
+If recovery sees a committed legacy record beside tokenized state and cannot
+prove that exact migration relationship, token state is UNCERTAIN and the old
+tokenized token is not accepted as VALID.
+
+Once a tokenized baseline has been established, downgrade to token-unaware
+firmware is not a supported state-preserving product operation. If such firmware
+writes config and a later upgrade sees mixed legacy/tokenized committed state,
+recovery must not silently select the old tokenized token. It enters UNCERTAIN or
+performs an explicitly reviewed migration/re-baseline that creates a fresh
+incarnation.
+
+Until migration/re-baseline is durably complete, protected CAS writes remain
+unavailable.
 
 A non-erased but invalid/corrupt/unsupported legacy partition must **not** be
 silently converted into a fresh valid tokenized default baseline. That condition
@@ -478,19 +501,37 @@ The question for CAS is:
 > Can the firmware prove that this config/token pair is still the latest
 > authoritative application state?
 
-Safe examples:
+The future tokenized decoder/recovery path must expose more than the current
+boolean `config_format::decode()` success/failure. At minimum it must be able to
+classify page evidence as follows:
+
+| observed page state | CAS interpretation |
+| --- | --- |
+| fully erased page | no record; safe |
+| commit word erased/unset | incomplete/uncommitted candidate; safe to ignore |
+| commit word set + supported schema + full structural/CRC/semantic validity | valid committed candidate |
+| commit word set + supported schema but structural/CRC/semantic invalidity | ambiguous; UNCERTAIN |
+| commit word set + unsupported/newer schema | UNCERTAIN; do not auto-overwrite |
+| non-erased partition with no valid committed record | UNCERTAIN |
+| lower valid committed state plus evidence of a different invalid committed state that may be newer | UNCERTAIN |
+| mixed committed legacy/tokenized state without proven migration provenance | UNCERTAIN |
+
+For two fully valid tokenized candidates, the reviewed physical-generation
+ordering rule selects the latest candidate. An invalid committed candidate is
+not silently skipped merely because an older valid page can still be decoded.
+
+Safe examples therefore include:
 
 - inactive page erased;
-- inactive candidate torn before activation/commit;
-- prior active committed record intact.
+- inactive candidate whose commit word was never set;
+- prior active committed record intact with no contradictory committed evidence.
 
-Ambiguous examples:
+Ambiguous examples include:
 
-- a structurally committed newer state is present but cannot be safely
-  interpreted;
-- committed-record corruption prevents proving which state was latest;
-- downgrade/recovery would otherwise select an older token-bearing state after
-  evidence of a later committed state.
+- a structurally committed state that cannot be safely interpreted;
+- committed-record corruption preventing proof of which state was latest;
+- an unsupported/newer committed schema;
+- downgrade/recovery evidence that could otherwise resurrect an older token.
 
 In ambiguous cases:
 
@@ -504,8 +545,29 @@ protected config mutation = fail closed
 
 A fresh incarnation is required before CAS mutation resumes.
 
+For ambiguous **supported-schema** corruption where the existing safe fallback
+policy has selected one supported semantic config, no unsupported schema is
+present, CSPRNG is healthy and there is no mixed legacy/tokenized downgrade
+evidence, a later implementation may perform a bounded local automatic
+re-baseline:
+
+1. keep the selected fallback semantic config;
+2. raise a persistent/diagnostic recovery indication;
+3. generate a fresh incarnation;
+4. durably commit one new coherent tokenized baseline;
+5. expose VALID only after that commit succeeds.
+
+This changes only config-state identity; every old expected token becomes stale.
+It is an availability/recovery mechanism, not proof that the pre-corruption
+semantic value was the newest value.
+
+Automatic rewrite is **not** allowed for unsupported/newer schema or unresolved
+mixed legacy/tokenized state. Those cases require firmware compatibility or an
+explicit reviewed maintenance/re-baseline path.
+
 This is the rule that prevents ordinary torn/corrupt recovery from creating an
-ABA vulnerability.
+ABA vulnerability while still giving supported-format corruption a bounded exit
+from UNCERTAIN.
 
 ### 8.1 Clean external snapshot rollback is not solved here
 
