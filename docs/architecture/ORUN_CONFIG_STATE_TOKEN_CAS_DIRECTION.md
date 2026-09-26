@@ -577,6 +577,14 @@ This slice resolves one previously-open question:
 
 The complete COMMAND/RESULT plaintext layouts remain unfrozen.
 
+This token decision does **not** authorize a larger delegated secure frame. The
+first config command/result contract must fit the existing 32-byte protected
+plaintext ceiling. With the current M7P5 config's two 32-bit semantic fields,
+the COMMAND candidate uses 24 fixed bytes plus 8 config bytes = 32 bytes. A
+compact RESULT can also fit within 32 bytes if the final schema/code/flags
+prefix remains bounded; the wire-freeze slice must prove the exact offsets and
+leave out optional detail rather than silently increasing the frame ceiling.
+
 The later wire-contract slice must provide at least:
 
 ### COMMAND concept
