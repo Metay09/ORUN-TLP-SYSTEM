@@ -30,7 +30,14 @@ uint32_t sd_softdevice_is_enabled(uint8_t* enabled) { *enabled = 0; return NRF_S
 uint32_t sd_flash_write(uint32_t* dst, const uint32_t* src, uint32_t count) {
   ++programs;
   const auto address = reinterpret_cast<uintptr_t>(dst);
-  assert(address >= kBaseAddress && address + count * 4 <= kBaseAddress + kRegionSize);
+  const auto end = address + count * 4;
+  const bool in_history =
+      address >= kBaseAddress && end <= kBaseAddress + kRegionSize;
+  const bool in_config =
+      address >= kFutureConfigRegionStart && end <= kFutureConfigRegionEnd;
+  const bool in_security =
+      address >= kFutureSecurityRegionStart && end <= kFutureSecurityRegionEnd;
+  assert(in_history || in_config || in_security);
   for (uint32_t i = 0; i < count; ++i) {
     assert(dst[i] == UINT32_MAX);
     dst[i] &= src[i];
@@ -39,7 +46,14 @@ uint32_t sd_flash_write(uint32_t* dst, const uint32_t* src, uint32_t count) {
 }
 uint32_t sd_flash_page_erase(uint32_t page) {
   ++erases;
-  assert(page >= kBaseAddress / kPageSize && page < (kBaseAddress + kRegionSize) / kPageSize);
+  const uint32_t address = page * kPageSize;
+  const bool in_history =
+      address >= kBaseAddress && address < kBaseAddress + kRegionSize;
+  const bool in_config =
+      address >= kFutureConfigRegionStart && address < kFutureConfigRegionEnd;
+  const bool in_security =
+      address >= kFutureSecurityRegionStart && address < kFutureSecurityRegionEnd;
+  assert(in_history || in_config || in_security);
   memset(reinterpret_cast<void*>(uintptr_t(page) * kPageSize), 0xFF, kPageSize);
   return NRF_SUCCESS;
 }
@@ -47,6 +61,13 @@ uint32_t sd_flash_page_erase(uint32_t page) {
 // pumpEvents()/pollPending() never reach sd_evt_get() here; this satisfies
 // the link only. A dedicated M7P3 test exercises real event draining.
 uint32_t sd_evt_get(uint32_t*) { return NRF_ERROR_NOT_FOUND; }
+
+bool orun_tlp::NrfConfigIncarnationSource::generate(uint64_t& incarnation) {
+  // Host startup composition stub: production implementation is target-only
+  // hardware RNG and is independently compiler/link checked by the RAK build.
+  incarnation = 0x0102030405060708ULL;
+  return true;
+}
 
 void BoardGetUniqueId(uint8_t* id) {
   ++board_reads;
@@ -147,7 +168,11 @@ int main(int argc, char** argv) {
   assert(watchdog_starts == 1);
   assert(history.ready() && history.count() == 1);
   assert(history.diagnostics().recovery_corruptions == 0);
-  assert(erases == 0 && programs == 0);
+  // Fresh blank ConfigStore establishes its internal v2 token baseline:
+  // 44-byte stage + 4-byte commit, no erase because both pages were blank.
+  assert(erases == 0 && programs == 2);
+  assert(config_store.tokenState() == ConfigTokenState::kValid);
+  assert(!config_store.hasCommittedRecord());  // application still "default"
   assert(memcmp(region, before.data(), before.size()) == 0);
   // BLE boot path: ready reflects Bluefruit.begin(); "available"/admission
   // only follow a successful Advertising.start(0), which is called exactly
@@ -191,7 +216,7 @@ int main(int argc, char** argv) {
   assert(watchdog_feeds == 16 && fake_idle_calls == 16);
   assert(gnss_manager.state() == GnssManager::State::kAcquiring);
   assert(role_controller.role() == NodeRole::kTracker);
-  assert(erases == 0 && programs == 2); // Reservation only; no new page/erase.
+  assert(erases == 0 && programs == 4); // +2 config baseline, +2 history reservation.
   assert(memcmp(region, before.data(), journal_format::kStaticHeaderSize) == 0);
   assert(memcmp(static_cast<uint8_t*>(region) + kPageHeaderSize,
                 before.data() + kPageHeaderSize, kRegionSize - kPageHeaderSize) == 0);
@@ -214,7 +239,7 @@ int main(int argc, char** argv) {
     loop(); // First epoch establishes the R3 boundary; second is fresh.
   }
   loop();
-  assert(history.count() == 2 && erases == 0 && programs == 4);
+  assert(history.count() == 2 && erases == 0 && programs == 6);
   assert(history.newest(recovered) && recovered.identity > original.identity);
   tlp::PositionPacket newest{};
   assert(tlp::deserializePositionPacket(recovered.packet, sizeof(recovered.packet), &newest));

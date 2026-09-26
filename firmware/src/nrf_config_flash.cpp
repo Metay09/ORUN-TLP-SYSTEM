@@ -23,10 +23,10 @@ namespace orun_tlp {
 using namespace storage_config;
 namespace {
 constexpr uint32_t kConfigRegionSize = kFutureConfigRegionEnd - kFutureConfigRegionStart;
-// Bounds the local staging buffer for program(); the largest blob
-// ConfigStore ever writes is config_format::kRecordSize (36 bytes today),
-// far under one page -- 64 is a generous, still-small fixed cap so this
-// file does not need to depend on config_format.h at all.
+// Bounds the local staging buffer for program(); ConfigStore v2's largest
+// single program operation is the 44-byte body+CRC stage (commit/retire are
+// separate 4-byte writes), still below this fixed 64-byte cap. Keep this
+// backend decoupled from config_format.h.
 constexpr size_t kMaxProgramSize = 64;
 bool inBounds(uint32_t offset, size_t size) {
   return offset <= kConfigRegionSize && size <= kConfigRegionSize - offset;

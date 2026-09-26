@@ -1,5 +1,7 @@
 #include "config_store.h"
+
 #include <string.h>
+
 #include "gnss_config.h"
 #include "journal_format.h"
 #include "storage_config.h"
@@ -13,89 +15,551 @@ config_format::Config defaultConfig() {
   return config_format::Config{gnss_config::kTrackingIntervalSeconds, 0};
 }
 
+bool sameConfig(const config_format::Config& a,
+                const config_format::Config& b) {
+  return a.tracking_interval_seconds == b.tracking_interval_seconds &&
+         a.battery_capacity_mah == b.battery_capacity_mah;
+}
+
 bool validCandidate(const config_format::Config& candidate) {
   return candidate.tracking_interval_seconds > 0 &&
-         candidate.tracking_interval_seconds <= gnss_config::kMaxTrackingIntervalSeconds;
+         candidate.tracking_interval_seconds <=
+             gnss_config::kMaxTrackingIntervalSeconds;
 }
+
+bool evidenceIsLegacy(config_format::PageEvidence evidence) {
+  return evidence == config_format::PageEvidence::kLegacyV1Committed ||
+         evidence ==
+             config_format::PageEvidence::kLegacyV1UncommittedOrTorn ||
+         evidence ==
+             config_format::PageEvidence::kLegacyV1CommittedCorrupt;
+}
+
+bool evidenceIsSafeUncommitted(config_format::PageEvidence evidence) {
+  return evidence == config_format::PageEvidence::kErased ||
+         evidence == config_format::PageEvidence::kV2UncommittedOrTorn;
+}
+
+bool exactSuccessor(const config_format::PageInspection& committed,
+                    const config_format::PageInspection& staged) {
+  return committed.generation != UINT64_MAX &&
+         committed.token.revision != UINT32_MAX &&
+         staged.generation == committed.generation + 1 &&
+         staged.token.incarnation == committed.token.incarnation &&
+         staged.token.revision == committed.token.revision + 1;
+}
+
+// ConfigStore v2 owns only a fixed 52-byte prefix in each 4096-byte page.
+// Everything after that prefix is currently unused and must remain erased.
+// Check it in a small fixed buffer so recovery never spends a 4 KiB stack
+// allocation merely to prove that a page is physically blank/current-schema.
+bool readPageTailErased(FlashBackend& flash, unsigned page,
+                        bool& tail_erased) {
+  constexpr size_t kChunkSize = 64;
+  uint8_t chunk[kChunkSize];
+  uint32_t within_page = config_format::kV2PagePrefixSize;
+  tail_erased = true;
+
+  while (within_page < storage_config::kPageSize) {
+    const uint32_t remaining = storage_config::kPageSize - within_page;
+    const size_t size =
+        remaining < kChunkSize ? static_cast<size_t>(remaining) : kChunkSize;
+    const uint32_t offset =
+        page * storage_config::kPageSize + within_page;
+    if (!flash.read(offset, chunk, size)) return false;
+    if (!journal_format::erased(chunk, size)) {
+      tail_erased = false;
+      return true;
+    }
+    within_page += static_cast<uint32_t>(size);
+  }
+  return true;
+}
+
 }  // namespace
+
+void ConfigStore::clearRecoveredRuntimeState() {
+  config_ = defaultConfig();
+  token_ = {};
+  token_state_ = ConfigTokenState::kUnavailable;
+  semantic_unambiguous_ = false;
+  maintenance_reset_required_ = false;
+  application_config_committed_ = false;
+  generation_ = 0;
+  active_page_ = -1;
+}
+
+void ConfigStore::setMaintenance(ConfigTokenState token_state) {
+  config_ = defaultConfig();
+  token_ = {};
+  token_state_ = token_state;
+  semantic_unambiguous_ = false;
+  maintenance_reset_required_ = true;
+  application_config_committed_ = false;
+  generation_ = 0;
+  active_page_ = -1;
+  ++diagnostics_.maintenance_lockouts;
+}
+
+void ConfigStore::setMaintenanceFallback(
+    const config_format::PageInspection& fallback,
+    ConfigTokenState token_state,
+    bool application_committed) {
+  config_ = fallback.config;
+  token_ = fallback.token;  // evidence only; stateToken() hides it unless VALID.
+  token_state_ = token_state;
+  semantic_unambiguous_ = true;
+  maintenance_reset_required_ = true;
+  application_config_committed_ = application_committed;
+  generation_ = fallback.generation;
+  active_page_ = -1;  // no cache-authoritative page while maintenance-locked
+  ++diagnostics_.maintenance_lockouts;
+}
 
 bool ConfigStore::begin() {
   ready_ = false;
   job_ = Job::kNone;
   diagnostics_ = {};
-  active_page_ = -1;
-  generation_ = 0;
   blob_step_ = BlobStep::kBody;
   flash_op_awaiting_completion_ = false;
-  save_result_ready_ = save_success_ = false;
-  // Set the safe fallback before recovery even attempts to touch flash, so
-  // a blank partition, a corrupt page, or a flash backend that fails begin()
-  // all leave config() reporting the same 180s default as pre-M7P5 main.
-  config_ = defaultConfig();
-  if (!flash_.begin() || !recover()) return false;
+  save_result_ready_ = false;
+  save_success_ = false;
+  mutation_unreconciled_ = false;
+  recovery_pending_ = false;
+  clearRecoveredRuntimeState();
+
+  if (!flash_.begin()) return false;
+  if (!recover()) return false;
+
+  // Blank partition is the only automatic fresh-baseline case in the current
+  // clean-cutover product. recover() leaves it as defaults/FALLBACK_ONLY.
+  if (!maintenance_reset_required_ && active_page_ < 0 &&
+      token_state_ == ConfigTokenState::kUnavailable) {
+    if (incarnation_source_ != nullptr &&
+        !establishFreshBaseline())
+      return false;
+  }
+
   ready_ = true;
   return true;
 }
 
 bool ConfigStore::recover() {
+  // Classify both pages into locals first. Runtime reconciliation must never
+  // destroy the last known semantic config merely because one backend read
+  // fails halfway through recovery. Only after both reads succeed do we
+  // replace the published RAM recovery state below.
+  RecoveredPage pages[kConfigPageCount]{};
+  bool all_erased = true;
+  bool any_legacy = false;
+  bool any_unsupported = false;
+  bool any_supported_corrupt = false;
+  unsigned committed_count = 0;
+  int committed_pages[kConfigPageCount] = {-1, -1};
+  unsigned fallback_count = 0;
+  int fallback_pages[kConfigPageCount] = {-1, -1};
+
   for (unsigned page = 0; page < kConfigPageCount; ++page) {
-    uint8_t bytes[config_format::kRecordSize];
-    if (!flash_.read(page * storage_config::kPageSize, bytes, sizeof(bytes))) return false;
-    uint64_t candidate_generation = 0;
-    config_format::Config candidate{};
-    if (!config_format::decode(bytes, candidate_generation, candidate)) {
-      if (!journal_format::erased(bytes, sizeof(bytes))) ++diagnostics_.recovery_corruptions;
+    uint8_t bytes[config_format::kV2PagePrefixSize];
+    if (!flash_.read(page * storage_config::kPageSize, bytes,
+                     sizeof(bytes)))
+      return false;
+
+    if (!config_format::inspectPagePrefix(
+            bytes, sizeof(bytes), pages[page].inspection))
+      return false;
+
+    // Prefix-erased is not enough to call a 4096-byte page blank. Likewise a
+    // current v1/v2 record with programmed bytes after the owned 52-byte
+    // prefix is not a normal current-schema page. Genuine future schemas are
+    // excluded because their discriminator is a downgrade boundary and older
+    // firmware must not interpret their page layout.
+    if (pages[page].inspection.evidence !=
+        config_format::PageEvidence::kUnsupportedNewer) {
+      bool tail_erased = false;
+      if (!readPageTailErased(flash_, page, tail_erased)) return false;
+      pages[page].tail_dirty = !tail_erased;
+    }
+
+    const auto evidence = pages[page].inspection.evidence;
+    if (evidence != config_format::PageEvidence::kErased ||
+        pages[page].tail_dirty)
+      all_erased = false;
+
+    if (evidenceIsLegacy(evidence)) {
+      any_legacy = true;
+      ++diagnostics_.legacy_pages_seen;
       continue;
     }
-    // A structurally sealed (correct magic/CRC/commit) record can still
-    // carry a semantically invalid field -- e.g. a lower kMaxTrackingIntervalSeconds
-    // in a later firmware than the one that wrote it. Never trust a
-    // recovered candidate any less strictly than requestSave() would have.
-    if (!validCandidate(candidate)) {
+
+    if (evidence == config_format::PageEvidence::kUnsupportedNewer) {
+      any_unsupported = true;
+      continue;
+    }
+
+    if (pages[page].inspection.has_decoded_record) {
+      pages[page].semantic_valid =
+          validCandidate(pages[page].inspection.config);
+    }
+
+    if (pages[page].tail_dirty) {
       ++diagnostics_.recovery_corruptions;
+      any_supported_corrupt = true;
+      // Preserve structurally/semantically verified prefix data as read-only
+      // fallback, but never let a dirty reserved tail retain token authority.
+      if (evidence == config_format::PageEvidence::kV2Committed &&
+          pages[page].semantic_valid) {
+        committed_pages[committed_count++] = static_cast<int>(page);
+      } else if (pages[page].inspection.has_decoded_record &&
+                 pages[page].semantic_valid &&
+                 (evidence == config_format::PageEvidence::kV2Staged ||
+                  evidence == config_format::PageEvidence::kV2PartialCommit ||
+                  evidence ==
+                      config_format::PageEvidence::kV2CommittedRetired)) {
+        fallback_pages[fallback_count++] = static_cast<int>(page);
+      }
       continue;
     }
-    if (candidate_generation > generation_) {
-      generation_ = candidate_generation;
-      active_page_ = static_cast<int>(page);
-      config_ = candidate;
+
+    if (evidence == config_format::PageEvidence::kV2Committed) {
+      if (!pages[page].semantic_valid) {
+        ++diagnostics_.recovery_corruptions;
+        any_supported_corrupt = true;
+        continue;
+      }
+      committed_pages[committed_count++] = static_cast<int>(page);
+      continue;
     }
+
+    if (evidence == config_format::PageEvidence::kV2Staged) {
+      // A verified stage is never promoted to token authority after reboot,
+      // but its semantic config is still an independently verified persistent
+      // copy and may be used as read-only fallback when no committed authority
+      // survives.
+      if (pages[page].semantic_valid)
+        fallback_pages[fallback_count++] = static_cast<int>(page);
+      else
+        ++diagnostics_.recovery_corruptions;
+      continue;
+    }
+
+    if (evidence == config_format::PageEvidence::kErased ||
+        evidence == config_format::PageEvidence::kV2UncommittedOrTorn)
+      continue;
+
+    if ((evidence == config_format::PageEvidence::kV2PartialCommit ||
+         evidence == config_format::PageEvidence::kV2CommittedRetired) &&
+        pages[page].semantic_valid) {
+      fallback_pages[fallback_count++] = static_cast<int>(page);
+    }
+
+    // Retired committed, partial commit, committed corruption and generic
+    // supported corruption all invalidate cache-authoritative token state in
+    // this first runtime slice. Re-baseline is deliberately deferred.
+    ++diagnostics_.recovery_corruptions;
+    any_supported_corrupt = true;
   }
+
+  // Both page reads/classifications completed. From this point recovery may
+  // atomically replace the published RAM interpretation.
+  clearRecoveredRuntimeState();
+
+  if (all_erased) return true;
+
+  // Clean-cutover boundary: never adopt or rewrite legacy development state.
+  if (any_legacy) {
+    setMaintenance(any_unsupported || any_supported_corrupt ||
+                           committed_count > 0
+                       ? ConfigTokenState::kUncertain
+                       : ConfigTokenState::kUnavailable);
+    return true;
+  }
+
+  if (any_unsupported) {
+    setMaintenance(ConfigTokenState::kUncertain);
+    return true;
+  }
+
+  if (any_supported_corrupt && committed_count == 2) {
+    const int a = committed_pages[0];
+    const int b = committed_pages[1];
+    const auto& pa = pages[a].inspection;
+    const auto& pb = pages[b].inspection;
+    const auto& hi = pb.generation > pa.generation ? pb : pa;
+    const auto& lo = pb.generation > pa.generation ? pa : pb;
+    const bool exact_lineage =
+        lo.generation != UINT64_MAX &&
+        hi.generation == lo.generation + 1 &&
+        hi.token.incarnation == lo.token.incarnation &&
+        lo.token.revision != UINT32_MAX &&
+        hi.token.revision == lo.token.revision + 1;
+
+    // Tail corruption invalidates token authority, but exact committed lineage
+    // still identifies which semantic config was durably newer. For impossible
+    // lineage we preserve only an agreed semantic value; disagreement remains
+    // ambiguous.
+    if (exact_lineage || sameConfig(pa.config, pb.config)) {
+      setMaintenanceFallback(
+          hi, ConfigTokenState::kUncertain,
+          hi.token.revision > 1 || !sameConfig(hi.config, defaultConfig()));
+    } else {
+      setMaintenance(ConfigTokenState::kUncertain);
+    }
+    return true;
+  }
+
+  if (committed_count == 0) {
+    // Staged/partial/retired records never regain token authority after
+    // reboot, but if every verified semantic fallback agrees, preserve that
+    // config for the user while maintenance/re-baseline remains required.
+    if (fallback_count > 0) {
+      const auto& first = pages[fallback_pages[0]].inspection;
+      bool same_semantics = true;
+      int best = fallback_pages[0];
+      for (unsigned i = 1; i < fallback_count; ++i) {
+        const int page = fallback_pages[i];
+        const auto& candidate = pages[page].inspection;
+        if (!sameConfig(first.config, candidate.config)) {
+          same_semantics = false;
+          break;
+        }
+        if (candidate.generation >
+            pages[best].inspection.generation)
+          best = page;
+      }
+      if (same_semantics) {
+        bool has_committed_provenance = false;
+        for (unsigned i = 0; i < fallback_count; ++i) {
+          if (pages[fallback_pages[i]].inspection.evidence ==
+              config_format::PageEvidence::kV2CommittedRetired) {
+            has_committed_provenance = true;
+            break;
+          }
+        }
+        const auto& fallback = pages[best].inspection;
+        setMaintenanceFallback(
+            fallback, ConfigTokenState::kUncertain,
+            has_committed_provenance &&
+                (fallback.token.revision > 1 ||
+                 !sameConfig(fallback.config, defaultConfig())));
+        return true;
+      }
+    }
+
+    // No recoverable semantic copy, or verified fallback copies disagree.
+    setMaintenance(any_supported_corrupt || fallback_count > 0
+                       ? ConfigTokenState::kUncertain
+                       : ConfigTokenState::kUnavailable);
+    return true;
+  }
+
+  if (committed_count == 2) {
+    const int a = committed_pages[0];
+    const int b = committed_pages[1];
+    const auto& pa = pages[a].inspection;
+    const auto& pb = pages[b].inspection;
+
+    int high = a;
+    int low = b;
+    if (pb.generation > pa.generation) {
+      high = b;
+      low = a;
+    }
+
+    const auto& hi = pages[high].inspection;
+    const auto& lo = pages[low].inspection;
+
+    if (lo.generation == UINT64_MAX ||
+        hi.generation != lo.generation + 1 ||
+        hi.token.incarnation != lo.token.incarnation ||
+        lo.token.revision == UINT32_MAX ||
+        hi.token.revision != lo.token.revision + 1) {
+      if (sameConfig(hi.config, lo.config))
+        setMaintenanceFallback(
+            hi, ConfigTokenState::kUncertain,
+            hi.token.revision > 1 || !sameConfig(hi.config, defaultConfig()));
+      else
+        setMaintenance(ConfigTokenState::kUncertain);
+      return true;
+    }
+
+    active_page_ = high;
+    generation_ = hi.generation;
+    config_ = hi.config;
+    token_ = hi.token;
+    application_config_committed_ =
+        hi.token.revision > 1 || !sameConfig(hi.config, defaultConfig());
+    token_state_ = ConfigTokenState::kValid;
+    semantic_unambiguous_ = true;
+    return true;
+  }
+
+  const int committed_page = committed_pages[0];
+  const int other_page = 1 - committed_page;
+  const auto& committed = pages[committed_page].inspection;
+  const auto& other = pages[other_page].inspection;
+
+  if (any_supported_corrupt) {
+    // The committed semantic copy is still useful to the device/user, but the
+    // contradictory inactive-page evidence makes its token unsafe for CAS.
+    setMaintenanceFallback(
+        committed, ConfigTokenState::kUncertain,
+        committed.token.revision > 1 ||
+            !sameConfig(committed.config, defaultConfig()));
+    return true;
+  }
+
+  if (other.evidence == config_format::PageEvidence::kV2Staged) {
+    if (!pages[other_page].semantic_valid) {
+      // A never-committed semantically invalid stage is equivalent to
+      // uncommitted/torn evidence; it cannot supersede the committed page.
+    } else if (!exactSuccessor(committed, other)) {
+      setMaintenanceFallback(
+          committed, ConfigTokenState::kUncertain,
+          committed.token.revision > 1 ||
+              !sameConfig(committed.config, defaultConfig()));
+      return true;
+    }
+  } else if (!evidenceIsSafeUncommitted(other.evidence)) {
+    setMaintenance(ConfigTokenState::kUncertain);
+    return true;
+  }
+
+  active_page_ = committed_page;
+  generation_ = committed.generation;
+  config_ = committed.config;
+  token_ = committed.token;
+  application_config_committed_ =
+      committed.token.revision > 1 ||
+      !sameConfig(committed.config, defaultConfig());
+  token_state_ = ConfigTokenState::kValid;
+  semantic_unambiguous_ = true;
+  return true;
+}
+
+bool ConfigStore::writeFreshBaseline(
+    const config_format::V2Record& record) {
+  uint8_t bytes[config_format::kV2RecordSize];
+  config_format::encodeV2(record, bytes);
+
+  const uint32_t offset = 0;
+  const FlashOpResult body =
+      flash_.program(offset, bytes, config_format::kV2BodyAndCrcSize);
+  if (body != FlashOpResult::kDone) return false;
+
+  uint8_t stage_verify[config_format::kV2BodyAndCrcSize];
+  if (!flash_.read(offset, stage_verify, sizeof(stage_verify)) ||
+      memcmp(stage_verify, bytes, sizeof(stage_verify)) != 0)
+    return false;
+
+  const FlashOpResult commit =
+      flash_.program(offset + config_format::kV2CommitOffset,
+                     bytes + config_format::kV2CommitOffset, 4);
+  if (commit != FlashOpResult::kDone) return false;
+
+  uint8_t verify[config_format::kV2RecordSize];
+  if (!flash_.read(offset, verify, sizeof(verify)) ||
+      memcmp(verify, bytes, sizeof(verify)) != 0)
+    return false;
+
+  return true;
+}
+
+bool ConfigStore::establishFreshBaseline() {
+  if (incarnation_source_ == nullptr) return true;
+
+  uint64_t incarnation = 0;
+  // CSPRNG failure is fail-closed for token establishment but not a backend
+  // initialization failure: safe defaults remain readable and mutation stays
+  // unavailable for this boot.
+  if (!incarnation_source_->generate(incarnation) || incarnation == 0)
+    return true;
+
+  const config_format::V2Record record(
+      1, defaultConfig(),
+      config_format::StateToken(incarnation, 1));
+
+  if (!writeFreshBaseline(record)) {
+    ++diagnostics_.baseline_failures;
+    if (flash_.hasUnreconciledMutation()) {
+      mutation_unreconciled_ = true;
+      token_state_ = ConfigTokenState::kUncertain;
+      ++diagnostics_.unreconciled_mutation_faults;
+      return true;
+    }
+    // A cleanly failed synchronous attempt may have left local staged/partial
+    // evidence. Reclassify it before reporting the store ready. If even the
+    // read-only recovery cannot complete, begin() must fail.
+    return recover();
+  }
+
+  active_page_ = 0;
+  generation_ = 1;
+  config_ = record.config;
+  token_ = record.token;
+  token_state_ = ConfigTokenState::kValid;
+  semantic_unambiguous_ = true;
+  maintenance_reset_required_ = false;
+  application_config_committed_ = false;
+  ++diagnostics_.baseline_commits;
   return true;
 }
 
 bool ConfigStore::requestSave(const config_format::Config& candidate) {
-  if (!ready_ || busy()) return false;
+  if (!ready_ || busy() || mutation_unreconciled_ || recovery_pending_)
+    return false;
+
   if (!validCandidate(candidate)) {
     ++diagnostics_.rejected_candidates;
     return false;
   }
-  if (candidate.tracking_interval_seconds == config_.tracking_interval_seconds &&
-      candidate.battery_capacity_mah == config_.battery_capacity_mah) {
+
+  if (sameConfig(candidate, config_)) {
+    if (!semantic_unambiguous_) return false;
     ++diagnostics_.skipped_unchanged;
     return true;
   }
-  // Fail closed rather than let a second async save silently overwrite the
-  // first's still-unread result: without this, busy()==false the instant a
-  // save finishes (poll() clears job_ in finishSave()/fail()), so a caller
-  // could requestSave() again before ever calling takeSaveResult(), and a
-  // later takeSaveResult() would then return the SECOND save's outcome to a
-  // caller who believes it is still waiting on the first. Consuming the
-  // prior result is the only way to unblock this.
+
+  if (maintenance_reset_required_ ||
+      token_state_ != ConfigTokenState::kValid ||
+      active_page_ < 0) {
+    ++diagnostics_.maintenance_lockouts;
+    return false;
+  }
+
   if (save_result_ready_) {
     ++diagnostics_.blocked_pending_result;
     return false;
   }
+
   return startSave(candidate);
 }
 
-bool ConfigStore::requestReset() { return requestSave(defaultConfig()); }
+bool ConfigStore::requestReset() {
+  // This is a normal semantic reset under the existing valid token namespace,
+  // not the explicit maintenance operation that erases/re-baselines an
+  // invalid/legacy partition. Never report success for that distinct action.
+  if (maintenance_reset_required_ ||
+      token_state_ != ConfigTokenState::kValid ||
+      active_page_ < 0)
+    return false;
+  return requestSave(defaultConfig());
+}
 
 bool ConfigStore::startSave(const config_format::Config& candidate) {
-  if (generation_ == UINT64_MAX) return false;  // exhausted; refuse rather than wrap.
-  target_page_ = active_page_ < 0 ? 0 : (1 - static_cast<unsigned>(active_page_));
+  if (generation_ == UINT64_MAX || token_.revision == UINT32_MAX)
+    return false;
+
+  target_page_ = 1U - static_cast<unsigned>(active_page_);
   pending_generation_ = generation_ + 1;
   pending_config_ = candidate;
+  pending_token_ =
+      config_format::StateToken(token_.incarnation, token_.revision + 1);
+
+  const config_format::V2Record record(
+      pending_generation_, pending_config_, pending_token_);
+  config_format::encodeV2(record, blob_);
+
   job_ = Job::kErase;
   blob_step_ = BlobStep::kBody;
   flash_op_awaiting_completion_ = false;
@@ -104,42 +568,61 @@ bool ConfigStore::startSave(const config_format::Config& candidate) {
 
 FlashOpResult ConfigStore::writeBlob() {
   const uint32_t offset = target_page_ * storage_config::kPageSize;
+
   if (blob_step_ == BlobStep::kBody) {
-    const FlashOpResult result = flash_op_awaiting_completion_
-        ? flash_.pollPending()
-        : flash_.program(offset, blob_, sizeof(blob_) - 4);
+    const FlashOpResult result =
+        flash_op_awaiting_completion_
+            ? flash_.pollPending()
+            : flash_.program(offset, blob_,
+                             config_format::kV2BodyAndCrcSize);
     if (result == FlashOpResult::kPending) {
       flash_op_awaiting_completion_ = true;
       return FlashOpResult::kPending;
     }
+
     flash_op_awaiting_completion_ = false;
     if (result == FlashOpResult::kFailed) {
       fail();
       return FlashOpResult::kFailed;
     }
+
+    uint8_t verify[config_format::kV2BodyAndCrcSize];
+    if (!flash_.read(offset, verify, sizeof(verify)) ||
+        memcmp(verify, blob_, sizeof(verify)) != 0) {
+      fail();
+      return FlashOpResult::kFailed;
+    }
+
     blob_step_ = BlobStep::kCommit;
   }
+
   if (blob_step_ == BlobStep::kCommit) {
-    const FlashOpResult result = flash_op_awaiting_completion_
-        ? flash_.pollPending()
-        : flash_.program(offset + sizeof(blob_) - 4, blob_ + sizeof(blob_) - 4, 4);
+    const FlashOpResult result =
+        flash_op_awaiting_completion_
+            ? flash_.pollPending()
+            : flash_.program(offset + config_format::kV2CommitOffset,
+                             blob_ + config_format::kV2CommitOffset, 4);
     if (result == FlashOpResult::kPending) {
       flash_op_awaiting_completion_ = true;
       return FlashOpResult::kPending;
     }
+
     flash_op_awaiting_completion_ = false;
     if (result == FlashOpResult::kFailed) {
       fail();
       return FlashOpResult::kFailed;
     }
+
     blob_step_ = BlobStep::kVerify;
   }
-  uint8_t verify[config_format::kRecordSize];
-  if (!flash_.read(offset, verify, sizeof(blob_)) || memcmp(verify, blob_, sizeof(blob_)) != 0) {
-    blob_step_ = BlobStep::kBody;
+
+  uint8_t verify[config_format::kV2RecordSize];
+  if (!flash_.read(offset, verify, sizeof(verify)) ||
+      memcmp(verify, blob_, sizeof(verify)) != 0) {
     fail();
     return FlashOpResult::kFailed;
   }
+
   blob_step_ = BlobStep::kBody;
   return FlashOpResult::kDone;
 }
@@ -151,17 +634,29 @@ void ConfigStore::fail() {
   job_ = Job::kNone;
   blob_step_ = BlobStep::kBody;
   flash_op_awaiting_completion_ = false;
-  // Deliberately does NOT clear ready_ or touch config_/active_page_/
-  // generation_: a save always targets the inactive page, so a failure here
-  // never wrote to the previously committed page. The last-good config
-  // remains active and readable, matching "an invalid candidate must not
-  // replace the previous valid config" for flash-level failures too.
+
+  // A failed target-page erase/program can leave local evidence that makes the
+  // formerly valid token unsafe to cache, even though the previous semantic
+  // config remains the best runtime fallback.
+  token_state_ = ConfigTokenState::kUncertain;
+  semantic_unambiguous_ = true;
+  recovery_pending_ = true;
+
+  if (flash_.hasUnreconciledMutation()) {
+    mutation_unreconciled_ = true;
+    ++diagnostics_.unreconciled_mutation_faults;
+  }
 }
 
 void ConfigStore::finishSave() {
   active_page_ = static_cast<int>(target_page_);
   generation_ = pending_generation_;
   config_ = pending_config_;
+  token_ = pending_token_;
+  token_state_ = ConfigTokenState::kValid;
+  semantic_unambiguous_ = true;
+  maintenance_reset_required_ = false;
+  application_config_committed_ = true;
   job_ = Job::kNone;
   ++diagnostics_.saves;
   save_result_ready_ = true;
@@ -169,24 +664,50 @@ void ConfigStore::finishSave() {
 }
 
 void ConfigStore::poll() {
-  if (!ready_ || job_ == Job::kNone) return;
+  if (!ready_) return;
+
+  if (mutation_unreconciled_) {
+    if (flash_.hasUnreconciledMutation()) return;
+    mutation_unreconciled_ = false;
+    recovery_pending_ = true;
+  }
+
+  if (job_ == Job::kNone) {
+    if (recovery_pending_) {
+      recovery_pending_ = false;
+      if (!recover()) {
+        // Preserve the last known semantic config for local availability, but
+        // never let a failed full recovery leave its cached token authoritative.
+        token_state_ = ConfigTokenState::kUncertain;
+        maintenance_reset_required_ = true;
+        ready_ = false;
+        return;
+      }
+      ++diagnostics_.recovery_reconciliations;
+    }
+    return;
+  }
+
   if (job_ == Job::kErase) {
-    const FlashOpResult result = flash_op_awaiting_completion_
-        ? flash_.pollPending()
-        : flash_.erasePage(target_page_);
+    const FlashOpResult result =
+        flash_op_awaiting_completion_
+            ? flash_.pollPending()
+            : flash_.erasePage(target_page_);
     if (result == FlashOpResult::kPending) {
       flash_op_awaiting_completion_ = true;
       return;
     }
+
     flash_op_awaiting_completion_ = false;
     if (result == FlashOpResult::kFailed) {
       fail();
       return;
     }
+
     job_ = Job::kWrite;
-    config_format::encode(pending_config_, pending_generation_, blob_);
     return;
   }
+
   if (writeBlob() != FlashOpResult::kDone) return;
   finishSave();
 }

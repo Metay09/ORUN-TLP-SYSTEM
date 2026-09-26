@@ -52,8 +52,12 @@ class ReadOnlyFlash : public FlashBackend {
                   uint64_t generation = 1,
                   unsigned page = 0) {
     assert(page < storage_config::kFutureConfigRegionPages);
-    uint8_t record[config_format::kRecordSize]{};
-    config_format::encode(config, generation, record);
+    const config_format::V2Record v2(
+        generation, config,
+        config_format::StateToken(0x1122334455667788ULL,
+                                  static_cast<uint32_t>(generation)));
+    uint8_t record[config_format::kV2RecordSize]{};
+    config_format::encodeV2(v2, record);
     memcpy(bytes.data() + page * storage_config::kPageSize, record,
            sizeof(record));
   }
@@ -72,10 +76,12 @@ ApplicationResponse take(
 }  // namespace
 
 int main() {
-  // 1. Blank durable config: the application seam returns ConfigStore's
-  // existing safe defaults and says the durable owner is ready.
+  // 1. A production-style internal v2 default/token baseline preserves the
+  // frozen application provenance: config is still reported as "default",
+  // not as a user-stored semantic override.
   {
     ReadOnlyFlash flash;
+    flash.seedConfig(config_format::Config{180, 0}, 1);
     ConfigStore store(flash);
     assert(store.begin());
     ApplicationRequestService service(store);

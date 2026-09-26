@@ -138,6 +138,9 @@ class FlashMutationGate : public FlashBackend {
     }
     FlashOpResult erasePage(uint32_t page) override { return gate_.erasePageConfig(page); }
     FlashOpResult pollPending() override { return gate_.pollPendingConfig(); }
+    bool hasUnreconciledMutation() const override {
+      return gate_.configMutationUnreconciled();
+    }
 
    private:
     FlashMutationGate& gate_;
@@ -203,6 +206,9 @@ class FlashMutationGate : public FlashBackend {
   // definitive late SUCCESS/ERROR event. SecurityStore uses this only to
   // distinguish that severe ownership ambiguity from an ordinary clean
   // mutation failure; it never treats the mutation as successful.
+  bool configMutationUnreconciled() const {
+    return config_slot_.quarantined;
+  }
   bool securityMutationUnreconciled() const {
     return security_slot_.quarantined;
   }
@@ -340,11 +346,10 @@ class FlashMutationGate : public FlashBackend {
   // buffer to remain unmodified until the completion event arrives when
   // SoftDevice is enabled, so this backend never keeps a pointer into
   // caller-owned memory across a kPending boundary. Sized for each client's
-  // own largest blob -- history's storage_config::kPageHeaderSize (the same
-  // bound HistoryStore itself uses for its own blob_ buffer), config's and
-  // security's small fixed caps (real maxes are config_format::kRecordSize,
-  // 36 bytes, and security_format::kCredentialRecordSize, 68 bytes; this
-  // file does not depend on either format header to stay decoupled).
+  // own largest single program operation -- history's
+  // storage_config::kPageHeaderSize, config v2's 44-byte body+CRC stage
+  // (commit/retire are separate 4-byte writes), and security's 68-byte
+  // credential record. This file stays decoupled from format headers.
   alignas(4) uint8_t history_staging_[storage_config::kPageHeaderSize]{};
   alignas(4) uint8_t config_staging_[64]{};
   alignas(4) uint8_t security_staging_[96]{};

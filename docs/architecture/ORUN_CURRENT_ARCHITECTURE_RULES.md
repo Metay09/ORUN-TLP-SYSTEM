@@ -292,12 +292,14 @@ schedule interval (`GnssManager::setTrackingIntervalMs`), nothing else.
 
 Protected desired-state config writes additionally follow
 `ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md`: the application precondition is an
-opaque 96-bit state token, not the current physical
-`ConfigStore::generation_`. Backend/gateway may cache and orchestrate state, but
-the tracker performs the final stale-precondition check. The token is carried
-only by config/state synchronization paths, not routine POSITION/telemetry/event
-traffic. This is design direction only; current ConfigStore schema/runtime and
-M7P7F GET_CONFIG bytes remain unchanged.
+opaque 96-bit state token, not the physical ConfigStore generation. PR #46's
+runtime-cutover branch implements the persistence-side token namespace and
+revision progression inside ConfigStore v2, but it does **not** expose the
+protected CAS mutation/read protocol yet. Backend/gateway orchestration,
+authenticated expected-token comparison and COMMAND/RESULT bytes remain later
+application/security slices. The token is still absent from routine
+POSITION/telemetry/event traffic, and the frozen M7P7F GET_CONFIG wire bytes are
+unchanged.
 
 ## 7. Location and GNSS remain separate
 
