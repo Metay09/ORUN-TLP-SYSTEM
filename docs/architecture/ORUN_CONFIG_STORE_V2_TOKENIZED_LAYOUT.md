@@ -578,15 +578,28 @@ Sequence:
 
 Failure before step 4:
 
-- old active committed v2 remains authoritative;
-- staged/incomplete candidate never advances token.
+- the previously active committed **semantic config** remains the operational
+  fallback;
+- an incomplete/staged candidate never advances the application token;
+- after reboot, token validity is decided by the page classifier rather than by
+  assuming every pre-commit failure was clean.
+
+A body write interrupted with an erased commit word can be safely ignored. A
+power cut during the inactive-page erase can instead leave
+`SUPPORTED_CORRUPT` evidence; in that case the old config remains usable but
+token state becomes UNCERTAIN and fresh-incarnation re-baseline may be required.
+
+This availability cost is intentional: a power-cut-damaged inactive page may
+invalidate cached remote tokens even though the semantic config survives.
 
 Failure after step 4 but before RAM publication:
 
-- reboot recovery sees the higher committed generation;
-- new config/token becomes authoritative.
+- reboot recovery sees the committed successor only when the complete
+  generation/incarnation/revision lineage verifies;
+- the new config/token then becomes authoritative.
 
-This preserves reset-safe application state.
+This preserves reset-safe application state without claiming that every failed
+physical erase leaves token identity unchanged.
 
 ---
 
@@ -1142,22 +1155,72 @@ committed-record/recovery diagnostics
 
 Config and token must come from one recovery/transaction observation.
 
-### 14.3 Mutation ownership
+### 14.3 Mutation ownership and conditional admission
 
 Only one semantic mutation/re-baseline/migration job may own ConfigStore at a
 time.
 
-Equality and token checks happen while this owner/slot is held at the
-application-owner layer.
+For protected CAS mutation, the following must be one serialized, non-yielding
+application-owner decision:
+
+```text
+acquire mutation slot
+-> read coherent config/token snapshot
+-> equality check
+-> token-validity / expected-token comparison
+-> admit the ConfigStore save job
+```
+
+No callback, transport adapter, reset path or probe may mutate config between the
+expected-token comparison and save admission.
+
+The implementation may enforce this with a conditional ConfigStore API or with a
+single application-owner critical/admission call; the exact C++ spelling is not
+frozen here.
 
 ### 14.4 Special paths
 
-Migration/re-baseline/reset use explicit paths.
+Migration/re-baseline/reset use explicit paths and acquire the same mutation
+ownership.
 
 Test/probe code cannot directly construct a changed semantic record with unchanged
 revision.
 
 Current test-only flash probes must use the token-aware API or be disabled for v2.
+
+### 14.5 Unreconciled asynchronous flash mutation
+
+The current FlashMutationGate can report a timeout to a caller after SoftDevice
+has already accepted a physical flash operation; the physical SUCCESS/ERROR event
+may arrive later.
+
+The v2 config path must expose the same ownership ambiguity signal already
+available to security storage:
+
+```text
+ConfigPort::hasUnreconciledMutation()
+```
+
+or an equivalent reviewed mechanism.
+
+If a config erase/program returns failure while the backend reports an
+unreconciled accepted mutation:
+
+- ConfigStore enters a mutation-unreconciled state;
+- no new semantic save/reset/migration/re-baseline is admitted;
+- the in-RAM token is not exposed as cache-authoritative VALID state;
+- a late completion is never interpreted as a second application success;
+- once the backend reports reconciliation, ConfigStore performs a **full
+  two-page recovery/classification** before accepting another mutation.
+
+A reboot may also perform that recovery. Continuing to write merely because the
+original logical request already returned failure is prohibited.
+
+### 14.6 Read snapshot during recovery ambiguity
+
+A state read may return the operational/fallback config and diagnostics while
+mutation reconciliation is pending, but it must mark token/recovery validity so
+callers cannot cache that pair as authoritative.
 
 ---
 
