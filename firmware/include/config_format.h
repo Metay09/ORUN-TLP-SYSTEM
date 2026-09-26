@@ -134,8 +134,10 @@ bool decode(const uint8_t* bytes, uint64_t& generation, Config& config);
 
 // ---- Tokenized v2 codec/classifier. ----
 // encodeV2() emits the complete 48-byte sealed record including commit=0.
-// Runtime ConfigStore migration will later program only bytes [0..43] first
-// and program bytes [44..47] separately after its activation preconditions.
+// The later v2 ConfigStore runtime cutover will program only bytes [0..43]
+// first and program bytes [44..47] separately after activation preconditions.
+// Current product scope uses a clean development partition reset, not automatic
+// v1 -> v2 semantic migration.
 void encodeV2(const V2Record& record, uint8_t* bytes);
 
 // decodeV2Body() validates bytes [0..43] independently of commit state.
