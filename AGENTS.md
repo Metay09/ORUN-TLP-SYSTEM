@@ -53,8 +53,8 @@ state-token/CAS semantics or COMMAND/RESULT precondition work, also read
 `docs/audits/CONFIG_STATE_TOKEN_CAS_AUDIT_DISPOSITION.md`. The CAS direction
 fixes the application config token at an opaque 96-bit value while keeping the
 complete COMMAND/RESULT wire layout and ConfigStore implementation unfrozen. Its
-focused independent audit returned PASS WITH FIXES with no BLOCKER/HIGH; the
-requested corrections are applied and final focused verification is pending.
+focused independent audit returned PASS WITH FIXES with no BLOCKER/HIGH. Final
+focused verification returned PASS WITH MINOR DOC FIX; R1 is applied.
 
 The delegated authority/header architecture and config CAS contract are
 owner-approved design direction. They are not a wire freeze or production-runtime
