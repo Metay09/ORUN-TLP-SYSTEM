@@ -36,6 +36,12 @@ EVENT/alarm, MESSAGE, COMMAND/RESULT, health/history/map), hardware-portability
 boundary and layered validation model. It is architecture direction, not evidence
 that those later runtimes exist.
 
+Current delegated-command design work is in
+`ORUN_TLP_V2_COMMAND_SECURITY_CONTRACT_DRAFT_V2.md`. The first draft is retained
+only as the independently audited historical target. The audit result is
+`docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_INDEPENDENT_AUDIT.md`. Neither
+draft authorizes production secure-RF runtime or freezes wire bytes.
+
 
 Merged security primitive evidence (M7P6C): M7P6C is a
 test-only RAK4630 CryptoCell primitive proof, not a secure-RF implementation.
