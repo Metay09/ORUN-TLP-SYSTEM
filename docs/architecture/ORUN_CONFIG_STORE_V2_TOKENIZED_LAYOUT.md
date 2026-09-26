@@ -495,6 +495,31 @@ A protected semantic change is never allowed while token state is not VALID.
 Equality/no-op under UNAVAILABLE/UNCERTAIN is allowed only for
 `semantic_state == UNAMBIGUOUS`. It is not used for FALLBACK_ONLY or AMBIGUOUS.
 
+### 4.1 Internal token baseline vs application config provenance
+
+The fresh v2 baseline on an erased development partition persists the default
+semantic config together with `generation=1`, a fresh incarnation and
+`revision=1`. That physical committed record exists to establish the token
+namespace; it does **not** mean the user/operator has stored a semantic config
+override.
+
+The already-frozen application/GET_CONFIG provenance therefore remains:
+
+```text
+fresh internal v2 default/token baseline
+    -> application source = default
+    -> existing "committed config override" flag = false
+
+first successful semantic config change
+    -> application source = stored
+    -> existing "committed config override" flag = true
+```
+
+A later semantic reset from a previously changed config back to defaults remains
+a committed semantic change and keeps application provenance as `stored`.
+This preserves existing USB/BLE GET_CONFIG meaning while allowing ConfigStore to
+have durable token metadata even on an otherwise-default device.
+
 ---
 
 ## 5. Normal v2 steady-state recovery
