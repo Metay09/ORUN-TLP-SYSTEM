@@ -134,8 +134,10 @@ GET_CONFIG response payload:
 
 ```text
 byte 0      application status (0x00 = OK)
-byte 1      flags: bit0 = config backend ready, bit1 = committed record
-            present; all other bits zero in v1
+byte 1      flags: bit0 = config backend ready,
+            bit1 = committed semantic config override present;
+            an internal ConfigStore v2 default/token baseline alone does not
+            set bit1; all other bits zero in transport v1
 bytes 2..5  tracking_interval_seconds, little-endian uint32
 bytes 6..9  battery_capacity_mah, little-endian uint32
 ```
@@ -146,6 +148,11 @@ ERROR response payload:
 byte 0  error code: 0x01 = UNSUPPORTED, 0x02 = BUSY
 byte 1  offending message type
 ```
+
+The ConfigStore v2 runtime cutover does not change any byte above. The bit1
+clarification preserves the already-observed application meaning
+`source=default|stored`: persistence metadata created only to establish an
+internal token namespace is not presented as a user/operator stored override.
 
 No config-write, provisioning, command or MESSAGE opcode exists. Malformed
 transport frames never generate an application response (no
