@@ -633,26 +633,20 @@ It uses an opaque application state precondition token.
 
 The current `ConfigStore::generation_` is **not that token**.
 
-The separately reviewed
+The independently audited
 `ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md` fixes the application config token
-at an opaque **96-bit / 12-byte** value with A->B->A non-reuse and explicit
-VALID/UNAVAILABLE/UNCERTAIN recovery semantics. The complete ConfigStore schema
-and COMMAND/RESULT wire layout remain separate later slices.
+direction at an opaque **96-bit / 12-byte** value with A->B->A non-reuse and
+explicit VALID/UNAVAILABLE/UNCERTAIN recovery semantics. Its audit returned
+PASS WITH FIXES with no BLOCKER/HIGH; requested fixes are applied and final
+focused verification remains pending. The complete ConfigStore schema and
+COMMAND/RESULT wire layout remain separate later slices.
 
-The implementation order is:
+For desired-state config, the normative application ordering is **CAS §6** in
+that document, including acquisition of the serialized mutation slot before the
+authoritative equality/token checks, explicit token-validity handling and BUSY.
+Do not duplicate a shortened pseudocode ordering here.
 
-```text
-if desired state already equals current durable state:
-    ALREADY_SATISFIED
-else if expected_state_token != current_state_token:
-    STALE_PRECONDITION
-else:
-    validate full candidate
-    durable ConfigStore save
-    APPLIED
-```
-
-This ordering supports RESULT-loss retry without another flash write.
+That ordering supports RESULT-loss retry without another flash write.
 
 ### 12.2 Delayed store-forward prohibited until separately designed
 
@@ -827,9 +821,10 @@ Flags/reserved bits must reject unknown critical values.
 
 ## 16. RESULT candidate
 
-RESULT must correlate both the logical command and the exact GW2D attempt.
+For **side-effecting mutation RESULTs**, RESULT must correlate both the logical
+command and the exact GW2D attempt.
 
-Candidate minimum:
+Candidate mutation minimum:
 
 ```text
 schema
@@ -844,9 +839,19 @@ bounded detail
 For config state mutation, the state-token width is fixed by
 `ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md` at **96 bits / 12 bytes**. Exact
 RESULT offsets and the complete plaintext layout remain unfrozen with COMMAND.
-The initial RESULT must fit the existing 32-byte protected-plaintext ceiling;
-this CAS decision does not authorize increasing the secure-frame maximum merely
-to carry a token.
+The initial mutation RESULT budget is 3 bytes control + 8-byte command_id +
+8-byte request_counter + 12-byte token = **31 bytes**, leaving at most one byte
+of optional detail when the token is valid. The first mutation family must fit
+the existing 32-byte protected-plaintext ceiling; this CAS decision does not
+authorize increasing the secure-frame maximum merely to carry a token.
+
+The stale-reconciliation exception is the side-effect-free authenticated
+`CONFIG_STATE_READ` defined by CAS §9.2. Its read-specific RESULT may omit
+`command_id` and correlate the exact attempt by authenticated
+`request_counter`, allowing up to 4 bytes control + 8-byte request_counter +
+12-byte token + 8-byte current config = **32 bytes**. This read exception does
+not weaken command_id requirements for side-effecting mutations and does not
+authorize a larger delegated frame.
 
 RESULT uses the same delegated grant context:
 
@@ -1153,10 +1158,12 @@ findings. This revision applies the minimum requested corrections:
 - F23/F24: delegated-gateway exception/backend custody dependency are explicitly
   tracked in architecture documentation.
 
-The config-state-token slice now closes the design-level CAS width/ABA contract
-at 96 bits with tracker-final stale checking. COMMAND/RESULT plaintext remains
-provisional until its separate exact wire-contract slice freezes offsets,
-result codes, bounds and golden fixtures.
+The config-state-token slice fixes the design direction at 96 bits with
+tracker-final stale checking. Its focused independent audit returned PASS WITH
+FIXES with no BLOCKER/HIGH; requested corrections are applied but final focused
+verification is still pending. COMMAND/RESULT plaintext remains provisional
+until its separate exact wire-contract slice freezes offsets, result codes,
+bounds and golden fixtures.
 
 ### Final focused verification disposition
 
