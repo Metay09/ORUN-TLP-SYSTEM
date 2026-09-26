@@ -194,7 +194,9 @@ int main() {
     ConfigStore store(flash, &rng);
     assert(store.begin());
     assert(store.ready());
-    assert(store.hasCommittedRecord());
+    // Internal token baseline is durable, but existing application provenance
+    // still reports "default" until a semantic config override is committed.
+    assert(!store.hasCommittedRecord());
     assert(!store.maintenanceResetRequired());
     assert(store.config().tracking_interval_seconds == 180);
     assert(store.config().battery_capacity_mah == 0);
@@ -252,11 +254,13 @@ int main() {
     assert(after.revision == before.revision + 1);
     assert(store.config().tracking_interval_seconds == 247);
     assert(store.config().battery_capacity_mah == 9000);
+    assert(store.hasCommittedRecord());
 
     ConfigStore recovered(flash);
     assert(recovered.begin());
     assert(recovered.config().tracking_interval_seconds == 247);
     assert(recovered.config().battery_capacity_mah == 9000);
+    assert(recovered.hasCommittedRecord());
     const StateToken reboot = validToken(recovered);
     assert(reboot.incarnation == after.incarnation);
     assert(reboot.revision == after.revision);
