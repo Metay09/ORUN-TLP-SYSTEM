@@ -14,6 +14,11 @@ minimum durable state needed to reject stale protected mutations safely.
 This document does **not** implement ConfigStore v2, change TLP v1, authorize a
 production secure-RF command path, or freeze complete COMMAND/RESULT byte layouts.
 
+The earlier delegated-command independent audit did not review this later CAS
+contract. Its PASS disposition must not be extended to this document by
+implication. This CAS direction requires its own focused independent review before
+implementation/wire-freeze closure.
+
 ---
 
 ## 1. Why this slice exists
