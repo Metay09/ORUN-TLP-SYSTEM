@@ -12,6 +12,7 @@
 #include <Adafruit_TinyUSB.h>
 #include <nrf_sdm.h>
 
+#include <stdio.h>
 #include <string.h>
 
 #include "config_format.h"
@@ -199,10 +200,11 @@ void cleanConfigPartition() {
 
   for (uint32_t page = 0; page < kFutureConfigRegionPages; ++page) {
     if (config_flash.erasePage(page) != FlashOpResult::kDone) {
-      snprintf(final_report, sizeof(final_report),
+      char report[128];
+      snprintf(report, sizeof(report),
                "CONFIG V2 CLEAN FAIL erase page=%lu; POWER-CYCLE BEFORE RETRY",
                static_cast<unsigned long>(page));
-      setTerminalReport(final_report);
+      setTerminalReport(report);
       return;
     }
   }
