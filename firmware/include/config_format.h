@@ -14,7 +14,7 @@
 // ConfigStore v2 architecture later fixed an exact tokenized record and a
 // page-evidence classifier. The legacy v1 constants/functions below remain
 // byte-for-byte unchanged so the current production ConfigStore can continue
-// using v1 until a separate reviewed runtime-migration slice switches owners.
+// using v1 until the separate reviewed runtime-cutover slice switches owners.
 namespace orun_tlp::config_format {
 
 constexpr uint32_t kMagic = 0x4F524331;  // "ORC1"
@@ -116,6 +116,8 @@ struct PageInspection {
         token() {}
 
   PageEvidence evidence;
+  // Structural decode only. This never means semantic validity, page
+  // authority, or token VALIDity; the ConfigStore recovery owner decides those.
   bool has_decoded_record;
   uint64_t generation;
   Config config;
@@ -150,6 +152,13 @@ bool decodeV2(const uint8_t* bytes, V2Record& record);
 // The ordering implements the reviewed forward-compatibility contract:
 // erased -> exact v1/v2 -> recognizable torn prefix -> unsupported-newer
 // discriminator -> supported local corruption.
+//
+// Any future deployable ORC1 schema that relies on this classifier contract must
+// keep bytes[5..7]==0, use the reserved multiple-of-four version namespace, and
+// ensure bytes[48..51] are non-FF in every valid non-torn record. Otherwise an
+// older v2 classifier may conservatively treat it as local torn/corrupt evidence
+// instead of UNSUPPORTED_NEWER. Version 0 is reserved/incompatible, not a
+// deployable future schema version.
 //
 // Returns false only for invalid arguments (nullptr or too-short input).
 // On true, inspection.evidence always contains a classification.
