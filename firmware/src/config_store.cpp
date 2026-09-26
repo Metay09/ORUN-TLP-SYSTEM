@@ -305,6 +305,8 @@ bool ConfigStore::establishFreshBaseline() {
       mutation_unreconciled_ = true;
       token_state_ = ConfigTokenState::kUncertain;
       ++diagnostics_.unreconciled_mutation_faults;
+    } else if (!recover()) {
+      ready_ = false;
     }
     return false;
   }
