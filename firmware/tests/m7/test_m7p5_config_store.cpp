@@ -44,6 +44,8 @@ class PendingFlash : public FlashBackend {
   bool mark_unreconciled_on_fail = false;
   bool unreconciled = false;
   int corrupt_after_program_call = -1;
+  int fail_full_record_read_after_program_call = -1;
+  mutable bool fail_full_record_read_once = false;
   uint32_t program_calls = 0, erase_calls = 0, poll_calls = 0;
 
   PendingFlash() { bytes.fill(0xFF); }
@@ -54,6 +56,11 @@ class PendingFlash : public FlashBackend {
     if (data == nullptr || offset > bytes.size() ||
         size > bytes.size() - offset)
       return false;
+    if (fail_full_record_read_once &&
+        size == config_format::kV2RecordSize) {
+      fail_full_record_read_once = false;
+      return false;
+    }
     memcpy(data, bytes.data() + offset, size);
     return true;
   }
@@ -78,6 +85,12 @@ class PendingFlash : public FlashBackend {
         static_cast<int>(call) == corrupt_after_program_call &&
         size > 0) {
       bytes[offset] ^= 0x01U;
+    }
+
+    if (fail_full_record_read_after_program_call >= 0 &&
+        static_cast<int>(call) ==
+            fail_full_record_read_after_program_call) {
+      fail_full_record_read_once = true;
     }
 
     return beginAsync();
@@ -683,7 +696,43 @@ int main() {
     assert(store.config().tracking_interval_seconds == 180);
   }
 
-  // 23. Ordinary failed mutation invalidates token until read-only recovery.
+  // 23. A logical FAILED result after the commit word reached flash is
+  // outcome-unknown, not proof that the mutation did not apply. Final readback
+  // fails once, then read-only reconciliation discovers the committed
+  // successor and makes the new config/token authoritative without emitting a
+  // second logical result.
+  {
+    PendingFlash flash;
+    DeterministicIncarnation rng;
+    ConfigStore store(flash, &rng);
+    assert(store.begin());
+    const StateToken before = validToken(store);
+
+    // Baseline program calls are 0/1. Normal save body is 2, commit is 3.
+    flash.fail_full_record_read_after_program_call = 3;
+    assert(store.requestSave(Config{600, 60}));
+    settle(store);
+
+    bool success = true;
+    assert(store.takeSaveResult(success) && !success);
+    assert(store.tokenState() == ConfigTokenState::kUncertain);
+    assert(store.config().tracking_interval_seconds == 180);
+
+    // The failed attempt scheduled full read-only reconciliation. Since the
+    // commit word is already durable, recovery must select the exact successor.
+    store.poll();
+    assert(store.tokenState() == ConfigTokenState::kValid);
+    assert(store.config().tracking_interval_seconds == 600);
+    assert(store.config().battery_capacity_mah == 60);
+    const StateToken after = validToken(store);
+    assert(after.incarnation == before.incarnation);
+    assert(after.revision == before.revision + 1);
+
+    bool extra = false;
+    assert(!store.takeSaveResult(extra));  // never synthesize second success
+  }
+
+  // 24. Ordinary failed mutation invalidates token until read-only recovery.
   // If recovery sees old committed + safely erased inactive page, VALID can
   // be restored without another flash write.
   {
@@ -707,7 +756,7 @@ int main() {
     assert(store.config().tracking_interval_seconds == 180);
   }
 
-  // 24. Accepted-but-unreconciled timeout blocks every new mutation until the
+  // 25. Accepted-but-unreconciled timeout blocks every new mutation until the
   // backend clears physical ambiguity; late reconciliation causes full
   // two-page recovery, not a second logical success.
   {
@@ -742,7 +791,7 @@ int main() {
     assert(!store.takeSaveResult(extra));  // no late second app result
   }
 
-  // 25. An unread async result blocks a different save but not an exact
+  // 26. An unread async result blocks a different save but not an exact
   // synchronous no-op against the already committed semantic state.
   {
     PendingFlash flash;
@@ -760,7 +809,7 @@ int main() {
     assert(saveAndSettle(store, Config{333, 3}, success) && success);
   }
 
-  // 26. Generation/revision exhaustion never wraps.
+  // 27. Generation/revision exhaustion never wraps.
   {
     PendingFlash flash;
     const uint64_t inc = 0x7777777777777777ULL;
@@ -780,7 +829,7 @@ int main() {
     assert(!store.requestSave(Config{101, 2}));
   }
 
-  // 27. Backend begin failure still leaves safe in-RAM defaults but reports
+  // 28. Backend begin failure still leaves safe in-RAM defaults but reports
   // store unavailable and performs no writes.
   {
     PendingFlash flash;
