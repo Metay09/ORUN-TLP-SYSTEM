@@ -194,7 +194,7 @@ The v2 implementation must separate:
 
 The current v1 boolean `config_format::decode()` result is not sufficient.
 
-### 3.1 Fixed forward-compatibility discriminator
+### 3.1 Fixed forward-compatibility discriminator and classification order
 
 The ConfigStore format family keeps the fixed magic:
 
@@ -204,24 +204,53 @@ ORC1 = 0x4F524331
 
 at offset 0 and the schema version at byte 4.
 
-Future ConfigStore schema versions must preserve this discriminator unless a
-separately reviewed migration changes the classifier contract first. This lets an
-older firmware distinguish a genuinely newer ORC1 schema from ordinary torn
-write/erase residue.
+A classifier must apply evidence tests in this order:
 
-`UNSUPPORTED_NEWER` therefore means:
+```text
+1. fully erased
+2. exact supported v1/v2 forms and their known commit offsets
+3. recognizable local torn-write / programmed-prefix + all-FF-tail evidence
+4. genuine UNSUPPORTED_NEWER discriminator
+5. remaining local damage -> SUPPORTED_CORRUPT
+```
+
+This ordering is normative. A page that already matches a supported torn-write
+pattern is never reclassified as a future schema merely because its partially
+programmed/erased version byte is numerically unfamiliar.
+
+Future ConfigStore schema versions must preserve:
 
 ```text
 magic == ORC1
-and
+bytes[5..7] == 0
+(version & 0x03) == 0
+```
+
+unless a separately reviewed classifier migration changes that contract first.
+Therefore the first future-version values are drawn from the reserved
+multiple-of-four namespace (for example 4, 8, 12...), not 3.
+
+This makes a half-erased v1/v2 version byte fail toward local corruption instead
+of masquerading as a future format: flash erase can change 0 bits to 1, so a
+residual v1 version keeps bit 0 set and a residual v2 version keeps bit 1 set.
+
+After the earlier supported/torn checks, `UNSUPPORTED_NEWER` requires all of:
+
+```text
+magic == ORC1
 version not in {1, 2, 0xFF}
+bytes[5..7] == 0
+(version & 0x03) == 0
 ```
 
 Such a page is never auto-overwritten by this implementation.
 
-A non-erased page with damaged/non-ORC1 magic is **not automatically called a
-future schema**. It is corruption/torn-erase evidence owned by the known
-ConfigStore region.
+`ORC1 + version == 0xFF` that does not match a recognized torn-prefix pattern is
+`SUPPORTED_CORRUPT`, not UNSUPPORTED_NEWER.
+
+A non-erased page with damaged/non-ORC1 magic is likewise **not automatically
+called a future schema**. It is local corruption/torn-erase evidence owned by the
+known ConfigStore region.
 
 ### 3.2 Required physical/evidence classes
 
@@ -296,13 +325,15 @@ to recognize that a page can be local torn-write/erase residue.
 
 A record-sized region that consists of a programmed prefix followed by an
 all-`0xFF` untouched tail is treated as non-authoritative torn local evidence,
-not as an unsupported future schema.
+not as an unsupported future schema. This torn-prefix test is evaluated **before**
+the future-version discriminator in §3.1.
 
-Other non-erased, non-ORC1 damage is `SUPPORTED_CORRUPT` for recovery-policy
-purposes because it lies inside this exclusively ConfigStore-owned two-page
-region. It may make token state UNCERTAIN, but it does not by itself prohibit the
-bounded supported-corruption re-baseline defined below when an unambiguous
-semantic fallback exists.
+Other non-erased damage, including `ORC1/version=0xFF` that does not match a
+recognized prefix shape, is `SUPPORTED_CORRUPT` for recovery-policy purposes
+unless it satisfies the complete `UNSUPPORTED_NEWER` discriminator. It may make
+token state UNCERTAIN, but it does not by itself prohibit the bounded
+supported-corruption re-baseline defined below when an unambiguous semantic
+fallback exists.
 
 ### 3.6 Partial commit/retire words
 
@@ -949,11 +980,13 @@ always blocks automatic rewrite.
 ## 11. Unsupported/newer schema
 
 Only the fixed-family discriminator defined in §3.1 creates
-`UNSUPPORTED_NEWER`:
+`UNSUPPORTED_NEWER`, and only **after** supported/torn-prefix classification:
 
 ```text
 magic == ORC1
 version not in {1, 2, 0xFF}
+bytes[5..7] == 0
+(version & 0x03) == 0
 ```
 
 That page is not automatically overwritten merely to regain CAS availability.
