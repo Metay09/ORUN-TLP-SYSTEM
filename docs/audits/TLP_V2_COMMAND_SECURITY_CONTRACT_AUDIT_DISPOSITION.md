@@ -1,12 +1,12 @@
 # TLP v2 Delegated Command Security — Audit Disposition
 
-Status: **CONSOLIDATED AUDIT DISPOSITION — DOCUMENTATION-ONLY.**
+Status: **CONSOLIDATED AUDIT DISPOSITION — OWNER-APPROVED DESIGN DIRECTION; DOCUMENTATION-ONLY.**
 
 Baseline main:
 `e2a370510c595c5f4b88e94a1212fb95d848a273`
 
 Current design:
-`docs/architecture/ORUN_TLP_V2_COMMAND_SECURITY_CONTRACT_DRAFT_V2.md`
+`docs/architecture/ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md`
 
 This file is the retained audit record for the delegated-command design. Raw
 review prompts and intermediate reviewer transcripts were intentionally removed
@@ -146,9 +146,9 @@ a separate later design.
 The first relay wrapper explicitly accepts only
 `DELEGATED_SECURE_APP` type 0x01.
 
-The delegated header/design direction may be presented for owner approval.
+The delegated authority/header direction is **owner-approved as design direction**.
 
-It is **not yet a wire freeze**.
+It is **not a wire freeze**.
 
 ## 4. Items intentionally still provisional
 
@@ -190,7 +190,7 @@ Audit disposition:
 **No known BLOCKER/HIGH remains in the delegated authority/header design after
 the recorded corrections.**
 
-This supports owner approval of the **architecture/design direction only**.
+The owner has approved the **architecture/design direction only**.
 
-It does not authorize production secure-RF implementation and does not freeze
+This does not authorize production secure-RF implementation and does not freeze
 COMMAND/RESULT application bytes.
