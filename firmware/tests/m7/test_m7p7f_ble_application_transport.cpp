@@ -120,9 +120,11 @@ void confirmCurrent(BleApplicationTransport& transport) {
 
 int main() {
   // 1 & 2. Single-frame GET_CONFIG round trip with exact little-endian wire
-  // bytes, against ConfigStore's blank-flash safe defaults.
+  // bytes against the production-style internal v2 default/token baseline.
+  // That baseline must remain application-visible as "default" (flag bit1=0).
   {
     ReadOnlyFlash flash;
+    flash.seedConfig(config_format::Config{180, 0}, 1);
     ConfigStore store(flash);
     assert(store.begin());
     ApplicationRequestService service(store);
