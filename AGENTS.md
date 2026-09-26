@@ -42,6 +42,11 @@ For security, provisioning, anti-replay, secure-envelope, user/backend authoriza
 or command work, read
 `docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md` before designing or coding.
 
+For the current delegated gateway-command design review, also read
+`docs/architecture/ORUN_TLP_V2_COMMAND_SECURITY_CONTRACT_DRAFT_V2.md` together
+with `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_INDEPENDENT_AUDIT.md`.
+The V2 document is a post-audit draft, not owner-approved wire/runtime authority.
+
 For RF-domain/channel planning, shared relay/gateway infrastructure, field coverage
 learning, USB/BLE diagnostics or future serviceability UI, read
 `docs/architecture/ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
