@@ -60,6 +60,13 @@ in POSITION/telemetry/event frames. It remains documentation-only: ConfigStore
 schema/runtime and complete COMMAND/RESULT wire bytes are not changed by that
 direction.
 
+The proposed exact persistence follow-up is
+`ORUN_CONFIG_STORE_V2_TOKENIZED_LAYOUT.md`. It is currently **review-required
+documentation-only design**, not an implemented schema. It proposes a 48-byte
+v2 ConfigStore record inside the existing two-page partition, staged
+body+CRC-before-commit migration, power-cut-safe legacy retirement and explicit
+v1/v2 recovery classification without allocating another flash page.
+
 
 Merged security primitive evidence (M7P6C): M7P6C is a
 test-only RAK4630 CryptoCell primitive proof, not a secure-RF implementation.
