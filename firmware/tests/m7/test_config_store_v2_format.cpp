@@ -1,8 +1,8 @@
 // ConfigStore v2 exact byte layout and low-level page-evidence classifier.
 //
 // This is deliberately a pure format/evidence test. The production ConfigStore
-// still uses legacy v1 in this slice; semantic candidate policy and v2 runtime
-// migration are tested/implemented in later slices.
+// still uses legacy v1 in this slice; semantic candidate policy and the clean
+// development reset -> fresh-v2 runtime cutover are tested/implemented later.
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
