@@ -821,40 +821,46 @@ page is **supported local corruption**, not `UNSUPPORTED_NEWER`.
 
 ### 9.2 Valid legacy + V2_STAGED_VALID
 
-The staged token is never made VALID.
+The staged token is never made VALID and the staged record is not a committed
+semantic authority.
 
-If staged semantic config equals the selected legacy config, either copy can
-preserve semantics while migration is restarted, but the staged incarnation is
-discarded.
+The valid committed v1 record remains the migration semantic source even if the
+staged semantic config differs. A different uncommitted stage does **not** by
+itself make semantic state AMBIGUOUS; it represents an uncommitted attempted
+transition and may be discarded.
 
-The simplest first path is:
+Recovery:
 
 1. keep the valid legacy page untouched;
 2. obtain a fresh incarnation;
 3. erase the staged target;
-4. write/verify a fresh staged v2 candidate;
+4. write/verify a fresh staged v2 candidate using the selected legacy config;
 5. continue normal legacy retirement.
 
-### 9.3 V2_STAGED_VALID + damaged former legacy source
+If the stage happened to contain the same config, the result is identical; its
+old staged incarnation is still discarded.
 
-A power cut while erasing the final legacy source can leave:
+### 9.3 Verified staged/partial-commit v2 + supported-corrupt other page
+
+A power cut while erasing the final semantic source or while finalizing a commit
+can leave:
 
 ```text
-V2_STAGED_VALID
+V2_STAGED_VALID or V2_PARTIAL_COMMIT
 +
-SUPPORTED_CORRUPT former legacy page
+SUPPORTED_CORRUPT other page
 ```
 
-The verified stage is now the only unambiguous semantic copy, but its token still
-must not be promoted.
+The verified v2 body is now the only unambiguous semantic copy, but its token
+still must not be promoted.
 
 Recovery uses its **semantic config only**:
 
-1. keep the verified staged page untouched;
+1. keep the verified staged/partial-commit page untouched;
 2. obtain a fresh incarnation before any erase;
 3. erase the damaged other page;
 4. write/verify a fresh staged v2 candidate to that page;
-5. erase the old staged page;
+5. erase the old staged/partial-commit page;
 6. verify erase;
 7. commit the fresh candidate;
 8. verify committed record;
@@ -1070,21 +1076,39 @@ UNAMBIGUOUS.
 
 When a committed v2 page A supplies the selected semantic fallback but token state
 is UNCERTAIN because page B contains supported contradictory evidence, the first
-implementation uses the page-local retire marker:
+implementation uses the page-local retire marker.
+
+The sequence is restart-safe and idempotent at its already-completed destructive
+steps:
 
 ```text
-1. obtain fresh nonzero incarnation before any erase
-2. program A.token_retire_word from FF to 0
-3. read back and verify A is retired
-4. only now erase contradictory page B
-5. verify B erased
-6. write/verify fresh-incarnation staged v2 baseline on B
-7. erase retired semantic-source page A
-8. verify A erased
-9. commit staged B
-10. verify committed B
-11. expose token_state = VALID
+1. obtain fresh nonzero incarnation before any new erase
+2. if A.token_retire_word == FF:
+      program it to 0
+      read back and verify A is retired
+   else:
+      do not program it again; treat A as already retired
+3. if B is not fully erased:
+      erase B
+      verify B erased
+   else:
+      do not erase it again
+4. write/verify fresh-incarnation staged v2 baseline on B
+5. erase retired semantic-source page A
+6. verify A erased
+7. commit staged B
+8. verify committed B
+9. expose token_state = VALID
 ```
+
+The backend must never attempt to re-program a non-FF retire word, because config
+flash programming accepts only erased destination bytes.
+
+If recovery sees a retired A plus an already verified stage/partial-commit on B,
+it does **not** resume by promoting B. It follows the recovery-decision table:
+the existing records preserve semantics only, a new incarnation is generated,
+and a fresh staged candidate is created on an erased page before any token can
+become VALID.
 
 If power fails after step 2, A can still supply config but its old token remains
 UNCERTAIN forever because the retire word is monotonic.
@@ -1143,12 +1167,17 @@ The first implementation uses this decision policy:
 | valid v1 source + erased/torn/supported-corrupt residue, no unsupported schema | selected valid v1 fallback | UNAMBIGUOUS | UNAVAILABLE/UNCERTAIN | fresh-incarnation migration allowed |
 | one non-retired committed-valid v2 + erased page | committed v2 config | UNAMBIGUOUS | VALID | none |
 | committed v2 + staged exact successor (same incarnation, revision +1) | committed v2 config | UNAMBIGUOUS | VALID | discard/erase stage on later cleanup |
-| retired committed v2 + erased/supported-corrupt other page | retired page config as semantic fallback | UNAMBIGUOUS | UNCERTAIN | retire-marked re-baseline allowed |
+| retired committed v2 + erased other page | retired page config as semantic fallback | UNAMBIGUOUS | UNCERTAIN | skip retire rewrite and erased-page erase; fresh-incarnation re-baseline |
+| retired committed v2 + supported-corrupt other page | retired page config as semantic fallback | UNAMBIGUOUS | UNCERTAIN | skip retire rewrite; erase corrupt page, then fresh-incarnation re-baseline |
+| retired committed v2 + same-config verified stage/partial-commit | common semantic config | UNAMBIGUOUS | UNCERTAIN | never promote existing stage; fresh-incarnation staged recovery |
 | non-retired valid v2 + supported-corrupt contradictory page | valid v2 config as selected fallback | UNAMBIGUOUS | UNCERTAIN | first retire valid token, then re-baseline |
+| one verified stage/partial-commit + erased page | staged body config | UNAMBIGUOUS | UNCERTAIN/UNAVAILABLE | §9.4 fresh-incarnation recovery; never promote existing token |
+| one verified stage/partial-commit + supported-corrupt page | staged body config | UNAMBIGUOUS | UNCERTAIN | §9.3 fresh-incarnation recovery |
 | impossible-lineage v2 records with same semantic config | common config | UNAMBIGUOUS | UNCERTAIN | fresh-incarnation re-baseline allowed |
 | two staged v2 records with same semantic config | common config | UNAMBIGUOUS | UNCERTAIN/UNAVAILABLE | fresh-incarnation staged recovery allowed |
+| valid v1 + any uncommitted v2 stage, including different config | valid v1 config | UNAMBIGUOUS | UNAVAILABLE/UNCERTAIN | discard stage after fresh CSPRNG; migrate selected v1 config |
 | mixed committed v1+v2 with same semantic config | common config; v1 retained as migration source | UNAMBIGUOUS | UNCERTAIN | erase v2 first, then fresh migration |
-| valid candidates with different semantic configs | safe runtime defaults only | AMBIGUOUS | UNCERTAIN | no automatic rewrite; maintenance selects config |
+| committed/otherwise authoritative valid candidates with different semantic configs | safe runtime defaults only | AMBIGUOUS | UNCERTAIN | no automatic rewrite; maintenance selects config |
 | only supported corruption, no recoverable semantic copy | defaults | FALLBACK_ONLY | UNCERTAIN/UNAVAILABLE | no equality no-op; maintenance or reviewed recovery |
 | any UNSUPPORTED_NEWER evidence | best safe runtime fallback only | AMBIGUOUS | UNCERTAIN | no automatic erase/re-baseline |
 
