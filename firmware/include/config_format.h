@@ -88,11 +88,15 @@ struct V2Record {
 // format/CRC/commit structure is coherent; ConfigStore must still apply the
 // semantic candidate policy (for example the tracking-interval bounds) before
 // mapping structural evidence to an application-authoritative config/token.
+//
+// Legacy-v1 evidence exists only so the v2 cutover can diagnose an old
+// development partition and require an explicit maintenance reset. It is not
+// an authorization to implement automatic v1 -> v2 migration.
 enum class PageEvidence : uint8_t {
   kErased = 0,
-  kV1Committed,
-  kV1UncommittedOrTorn,
-  kV1CommittedCorrupt,
+  kLegacyV1Committed,
+  kLegacyV1UncommittedOrTorn,
+  kLegacyV1CommittedCorrupt,
   kV2Staged,
   kV2UncommittedOrTorn,
   kV2PartialCommit,
