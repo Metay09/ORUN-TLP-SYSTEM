@@ -183,59 +183,128 @@ migration provenance.
 
 ---
 
-## 3. Record states
+## 3. Page classification
 
-The v2 implementation must separate **structural record state** from
-**application token validity**.
+The v2 implementation must separate:
+
+1. physical/page evidence;
+2. supported schema decoding;
+3. semantic config validity;
+4. application token validity.
+
+The current v1 boolean `config_format::decode()` result is not sufficient.
+
+### 3.1 Fixed forward-compatibility discriminator
+
+The ConfigStore format family keeps the fixed magic:
+
+```text
+ORC1 = 0x4F524331
+```
+
+at offset 0 and the schema version at byte 4.
+
+Future ConfigStore schema versions must preserve this discriminator unless a
+separately reviewed migration changes the classifier contract first. This lets an
+older firmware distinguish a genuinely newer ORC1 schema from ordinary torn
+write/erase residue.
+
+`UNSUPPORTED_NEWER` therefore means:
+
+```text
+magic == ORC1
+and
+version not in {1, 2, 0xFF}
+```
+
+Such a page is never auto-overwritten by this implementation.
+
+A non-erased page with damaged/non-ORC1 magic is **not automatically called a
+future schema**. It is corruption/torn-erase evidence owned by the known
+ConfigStore region.
+
+### 3.2 Required physical/evidence classes
 
 At minimum one page can classify as:
 
 ```text
 ERASED
+
 V1_COMMITTED_VALID
 V1_COMMITTED_INVALID
-V1_UNCOMMITTED
+V1_UNCOMMITTED_OR_TORN
+
 V2_STAGED_VALID
+V2_UNCOMMITTED_OR_TORN
 V2_COMMITTED_VALID
 V2_COMMITTED_INVALID
-SUPPORTED_PARTIAL
-UNSUPPORTED_OR_UNKNOWN
+V2_COMMITTED_RETIRED
+
+SUPPORTED_CORRUPT
+UNSUPPORTED_NEWER
 ```
 
-### 3.1 V2_STAGED_VALID
+The classifier may keep finer diagnostics, but it must not collapse
+`SUPPORTED_CORRUPT` into `UNSUPPORTED_NEWER`.
 
-A v2 record is **staged** when:
+### 3.3 Supported v1 evidence
 
-- supported v2 header fields are valid;
-- config semantics are valid;
-- incarnation/revision are valid;
-- CRC matches;
-- commit word remains exactly `0xFFFFFFFF`.
+For exact `ORC1/version=1`:
 
-A staged record is **never application-authoritative**.
+- commit word at v1 offset 32 == `0xFFFFFFFF`:
+  `V1_UNCOMMITTED_OR_TORN`; it is not authoritative even if CRC/body are
+  incomplete;
+- commit word == `0x00000000` and full v1 structure/CRC/semantics valid:
+  `V1_COMMITTED_VALID`;
+- commit word == `0x00000000` but structure/CRC/semantics invalid:
+  `V1_COMMITTED_INVALID`;
+- any other commit value:
+  `SUPPORTED_CORRUPT`.
 
-Its token must never be returned as VALID.
+v1 never has an application state token.
 
-A staged body exists because migration needs a durable copy of config/token bytes
-before the last legacy page can be erased.
+### 3.4 Supported v2 evidence
 
-For ordinary v2 saves, staging is simply the existing body+CRC-before-commit
-phase.
+For exact `ORC1/version=2`:
 
-### 3.2 V2_COMMITTED_VALID
+- commit word at v2 offset 44 == `0xFFFFFFFF` and the complete v2 body,
+  CRC, config and token fields verify:
+  `V2_STAGED_VALID`;
+- commit word == `0xFFFFFFFF` but the body is incomplete/invalid:
+  `V2_UNCOMMITTED_OR_TORN`;
+- commit word == `0x00000000`, record verifies and retire word is
+  `0xFFFFFFFF`: `V2_COMMITTED_VALID`;
+- commit word == `0x00000000`, record verifies and retire word is non-FF:
+  `V2_COMMITTED_RETIRED`;
+- commit word == `0x00000000` but record/config/token validation fails:
+  `V2_COMMITTED_INVALID`;
+- any other commit value:
+  `SUPPORTED_CORRUPT`.
 
-A v2 record is committed-valid only when:
+A staged record is never application-authoritative. Its token is never returned
+as VALID.
 
-- all v2 structural fields are valid;
-- semantic config is valid;
-- incarnation/revision are valid;
-- CRC matches;
-- commit word is exactly `0x00000000`.
+A retired committed record may remain the selected **semantic fallback copy**, but
+its token is permanently non-authoritative until that page is erased and a fresh
+incarnation is committed elsewhere.
 
-Even then, partition-level recovery may still mark the application token
-UNCERTAIN when contradictory evidence exists on the other page.
+### 3.5 Torn prefix / interrupted erase evidence
 
-### 3.3 Partial commit word
+Flash programming and page erase may be interrupted between physical word
+operations. The classifier must not require a complete valid magic/version merely
+to recognize that a page can be local torn-write/erase residue.
+
+A record-sized region that consists of a programmed prefix followed by an
+all-`0xFF` untouched tail is treated as non-authoritative torn local evidence,
+not as an unsupported future schema.
+
+Other non-erased, non-ORC1 damage is `SUPPORTED_CORRUPT` for recovery-policy
+purposes because it lies inside this exclusively ConfigStore-owned two-page
+region. It may make token state UNCERTAIN, but it does not by itself prohibit the
+bounded supported-corruption re-baseline defined below when an unambiguous
+semantic fallback exists.
+
+### 3.6 Partial commit/retire words
 
 A commit word that is neither:
 
@@ -245,9 +314,17 @@ nor
 0x00000000
 ```
 
-is ambiguous.
+is ambiguous and never active.
 
-It is never treated as staged or committed-valid.
+For `token_retire_word`, the safety rule is deliberately different:
+
+```text
+0xFFFFFFFF = not retired
+anything else = retired
+```
+
+because a partial retire write must fail toward **token invalidation**, never
+toward resurrection.
 
 ---
 
@@ -261,19 +338,30 @@ active_page
 generation
 ```
 
-It must also derive:
+It must also derive at least:
 
 ```text
 token_state =
     VALID
     UNAVAILABLE
     UNCERTAIN
+
+semantic_state =
+    UNAMBIGUOUS
+    AMBIGUOUS
 ```
 
 and enough diagnostics to explain why.
 
-The current v1 boolean `config_format::decode()` contract is not sufficient for
-the v2 recovery implementation.
+`semantic_state == UNAMBIGUOUS` means recovery has one semantic config value,
+or multiple usable copies that all encode the same complete semantic config.
+
+`semantic_state == AMBIGUOUS` means two otherwise usable candidates disagree
+and current flash evidence cannot prove which semantic value is authoritative.
+
+A protected semantic change is never allowed while token state is not VALID.
+Equality/no-op may be used under UNCERTAIN only when semantic state is
+UNAMBIGUOUS.
 
 ---
 
