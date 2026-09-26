@@ -44,8 +44,11 @@ or command work, read
 
 For the current delegated gateway-command design review, also read
 `docs/architecture/ORUN_TLP_V2_COMMAND_SECURITY_CONTRACT_DRAFT_V2.md` together
-with `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_INDEPENDENT_AUDIT.md`.
-The V2 document is a post-audit draft, not owner-approved wire/runtime authority.
+with both
+`docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_INDEPENDENT_AUDIT.md` and
+`docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_REAUDIT.md`.
+The re-audit returned PASS WITH FIXES and the requested document corrections are
+recorded in V2; the V2 document is still not owner-approved wire/runtime authority.
 
 For RF-domain/channel planning, shared relay/gateway infrastructure, field coverage
 learning, USB/BLE diagnostics or future serviceability UI, read
