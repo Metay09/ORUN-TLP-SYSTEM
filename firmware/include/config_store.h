@@ -100,6 +100,7 @@ class ConfigStore {
   struct RecoveredPage {
     config_format::PageInspection inspection;
     bool semantic_valid = false;
+    bool tail_dirty = false;
   };
 
   bool recover();
