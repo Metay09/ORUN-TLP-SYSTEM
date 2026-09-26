@@ -74,11 +74,15 @@ For `GET_CONFIG`:
 - response data comes directly from `ConfigStore::config()`;
 - `config_backend_ready=true` means ConfigStore/backend initialization
   succeeded; it does **not** imply a committed record was recovered;
-- `config_has_committed_record=true` means recovery found an actual valid
-  committed page;
-- blank or corrupt/unrecognized config flash may therefore report
-  `config_backend_ready=true`, `config_has_committed_record=false` and the
-  safe defaults;
+- `config_has_committed_record=true` means the application has durable
+  evidence of a committed **semantic config override**;
+- ConfigStore v2 may internally commit a default/token baseline solely to
+  establish token identity. That internal baseline does not change the
+  application provenance bit and still reports
+  `config_has_committed_record=false` / `source=default`;
+- blank, fallback-only or otherwise non-authoritative config state may therefore
+  report `config_backend_ready=true`,
+  `config_has_committed_record=false` and the safe/default semantic config;
 - backend initialization failure reports both facts false and still exposes the
   existing documented safe fallback.
 
