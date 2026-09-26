@@ -1,6 +1,6 @@
 # ORUN TLP v2 delegated command security contract — DRAFT
 
-Status: **DESIGN CANDIDATE — NOT OWNER-APPROVED, NOT WIRE-FROZEN, NO PRODUCTION RUNTIME AUTHORIZED.**
+Status: **SUPERSEDED DRAFT — independently audited at 3af79af; see ORUN_TLP_V2_COMMAND_SECURITY_CONTRACT_DRAFT_V2.md for the post-audit redesign. NOT OWNER-APPROVED, NOT WIRE-FROZEN.**
 
 Baseline: `main@e2a370510c595c5f4b88e94a1212fb95d848a273`.
 
