@@ -1234,17 +1234,23 @@ Keep explicit versioned parsing.
 Suggested logical split:
 
 ```text
-classify page
-  -> erased / supported-v1 / supported-v2 / unknown
+classify physical evidence
+  -> erased
+  -> supported-v1
+  -> supported-v2
+  -> supported-corrupt/torn
+  -> unsupported-newer ORC1 version
 
 decode supported v1
 decode supported v2 body
-evaluate commit state
-validate semantic config
+evaluate commit + retire state
+validate semantic config/token fields
 partition-level recovery decision
 ```
 
-Do not guess unknown schema layout.
+Do not guess an unsupported newer schema's layout, and do not label local
+torn-write/erase residue as a future schema merely because its magic/version is
+damaged.
 
 The existing v1 bytes remain readable exactly as currently encoded.
 
@@ -1277,8 +1283,12 @@ v2 record:
 Increase:
 
 ```text
-+12 B record bytes
++12 B v2 record bytes
++ 4 B reserved page-local token-retire word
 ```
+
+The sealed record is still exactly 48 bytes; the first 52 bytes of each 4096-byte
+page are reserved by the v2 ConfigStore layout.
 
 No partition expansion.
 
@@ -1296,17 +1306,41 @@ per successful semantic change.
 
 No write for unchanged config.
 
-### Migration wear
+### Migration / re-baseline wear
 
-One-time migration may require:
+One-time legacy migration may require:
 
 - erase old inactive legacy page;
 - one staged v2 body write;
 - erase last legacy source page;
 - one commit write.
 
-Interrupted migration can cost additional recovery erases/writes, but this is not
-periodic operation.
+A v2 supported-corruption re-baseline adds one 4-byte retire-word program before
+destroying contradictory evidence.
+
+The retire and commit words are each programmed at most once between page erases.
+The implementation must respect the reference nRF52 flash datasheet's same-word
+programming limit; it must never "toggle" or rewrite either marker in place.
+
+Interrupted migration/re-baseline can cost additional recovery erases/writes, but
+recovery must not spin on flash.
+
+### Brownout / repeated-boot wear bound
+
+Automatic destructive migration/re-baseline is not an early-boot retry loop.
+
+The implementation must:
+
+- wait until the normal platform/power policy considers destructive flash work
+  admissible;
+- allow at most one automatic destructive recovery transaction at a time;
+- after a flash/CSPRNG/reconciliation failure, remain
+  UNAVAILABLE/UNCERTAIN rather than immediately restarting in the same boot;
+- require a later stable retry opportunity or explicit maintenance.
+
+The implementation slice must define the concrete boot/power-stability gate using
+existing platform evidence; do not invent a new hardware dependency merely for
+this storage migration.
 
 ### RAM
 
@@ -1425,10 +1459,21 @@ can validate:
 
 - staged write -> power cut;
 - legacy retirement -> power cut;
+- token-retire-word program/readback;
 - commit-last recovery;
-- BLE/SoftDevice flash-gate coexistence if the runtime path uses it.
+- BLE/SoftDevice flash-gate coexistence and late-completion reconciliation if the
+  runtime path uses it.
 
-Do not report those as physically validated until performed on actual hardware.
+A weak/partially programmed flash word can be a physical phenomenon not fully
+modeled by host byte arrays. Recovery therefore treats any non-FF retire word as
+retired and any non-FF/non-zero commit word as ambiguous.
+
+The implementation must also respect the pinned nRF52840 documentation's
+same-word programming limit. No exact physical endurance/power-cut claim is made
+by this design document.
+
+Do not report those behaviors as physically validated until performed on actual
+hardware.
 
 ---
 
