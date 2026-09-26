@@ -1,7 +1,7 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through `main@e2a370510c595c5f4b88e94a1212fb95d848a273` (M7P6F merged via PR #41). The first real ORUN application GATT adapter remains the pre-authorization read-only GET_CONFIG path; M7P6F adds durable SecurityStore v2/backend-A2D replay persistence but no production secure-RF caller. Provisioning, application authorization, protected config writes, secure TLP v2, MESSAGE/commands and private-location services remain later gates.**
-Last reviewed against code checkpoint `main@e2a370510c595c5f4b88e94a1212fb95d848a273`.
+Status: **CURRENT through `main@fb1a47b549d18517078facc5d2d3437445277b65` (PR #42 architecture consolidation). The first real ORUN application GATT adapter remains the pre-authorization read-only GET_CONFIG path; M7P6F adds durable SecurityStore v2/backend-A2D replay persistence but no production secure-RF caller. Delegated-command and config state-token/CAS work remain architecture direction only; provisioning, application authorization, protected config writes, secure TLP v2, MESSAGE/commands and private-location services remain later implementation gates.**
+Last reviewed against code checkpoint `main@fb1a47b549d18517078facc5d2d3437445277b65`.
 Last architecture review update: 2026-09-26. High-level service decomposition,
 engineering-scale assumptions and hardware-portability direction are recorded in
 `ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md`. Owner-approved delegated gateway-command
@@ -289,6 +289,15 @@ migrate `tracking_enabled`, relay forwarding, role, location source, profile,
 or capability, and does not replace or feed B4's requested/effective
 resolution pipeline — `tracking_interval_seconds` only overrides the GNSS
 schedule interval (`GnssManager::setTrackingIntervalMs`), nothing else.
+
+Protected desired-state config writes additionally follow
+`ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md`: the application precondition is an
+opaque 96-bit state token, not the current physical
+`ConfigStore::generation_`. Backend/gateway may cache and orchestrate state, but
+the tracker performs the final stale-precondition check. The token is carried
+only by config/state synchronization paths, not routine POSITION/telemetry/event
+traffic. This is design direction only; current ConfigStore schema/runtime and
+M7P7F GET_CONFIG bytes remain unchanged.
 
 ## 7. Location and GNSS remain separate
 

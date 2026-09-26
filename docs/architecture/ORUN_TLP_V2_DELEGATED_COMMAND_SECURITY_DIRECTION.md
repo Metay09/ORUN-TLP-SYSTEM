@@ -631,25 +631,22 @@ First protected mutation candidate:
 
 It uses an opaque application state precondition token.
 
-The current `ConfigStore::generation_` is **not automatically that token**.
+The current `ConfigStore::generation_` is **not that token**.
 
-A separately reviewed config slice must provide a token with no unsafe ABA reuse
-across recovery/fallback.
+The independently audited
+`ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md` fixes the application config token
+direction at an opaque **96-bit / 12-byte** value with A->B->A non-reuse and
+explicit VALID/UNAVAILABLE/UNCERTAIN recovery semantics. Its audit returned
+PASS WITH FIXES with no BLOCKER/HIGH. Final focused verification returned
+PASS WITH MINOR DOC FIX; R1 is applied. The complete ConfigStore schema and
+COMMAND/RESULT wire layout remain separate later slices.
 
-The implementation order is:
+For desired-state config, the normative application ordering is **CAS §6** in
+that document, including acquisition of the serialized mutation slot before the
+authoritative equality/token checks, explicit token-validity handling and BUSY.
+Do not duplicate a shortened pseudocode ordering here.
 
-```text
-if desired state already equals current durable state:
-    ALREADY_SATISFIED
-else if expected_state_token != current_state_token:
-    STALE_PRECONDITION
-else:
-    validate full candidate
-    durable ConfigStore save
-    APPLIED
-```
-
-This ordering supports RESULT-loss retry without another flash write.
+That ordering supports RESULT-loss retry without another flash write.
 
 ### 12.2 Delayed store-forward prohibited until separately designed
 
@@ -772,7 +769,7 @@ Additional bounds:
 - `gateway_policy_floor == 0xFFFFFFFF` is invalid/reserved;
 - `gateway_grant_generation == 0` and `0xFFFFFFFF` are invalid/reserved;
 - each application family defines an exact minimum plaintext length;
-- current provisional COMMAND minimum is 16 bytes.
+- current config COMMAND candidate fixed portion is 24 bytes before args.
 
 Invalid/reserved values fail closed.
 
@@ -794,7 +791,10 @@ inherit this delegated frame layout.
 
 ## 15. COMMAND candidate
 
-Minimum plaintext length: 16 bytes.
+The config CAS slice resolves the precondition token width at 12 bytes. The
+complete plaintext layout remains provisional and is **not wire-frozen** here.
+
+Current candidate shape:
 
 ```text
 off size field
@@ -803,15 +803,17 @@ off size field
 2   1    args_len
 3   1    flags
 4   8    command_id
-12  4    expected_state_token_low32 / family-defined precondition field
-16  N    args
+12  12   expected_state_token
+24  N    args
 ```
 
-This table is not yet sufficient for final wire freeze because the config
-precondition token may need more than 32 bits.
-
-Therefore the COMMAND payload layout remains **provisional** until the config
-state-token slice resolves width/semantics.
+For the config desired-state family, the minimum fixed portion is therefore
+24 bytes before args. The currently persisted M7P5 config has exactly 8 bytes
+of semantic fields (`tracking_interval_seconds` + `battery_capacity_mah`), so
+that first desired-state payload can still fit the existing 32-byte protected
+plaintext ceiling without enlarging the 96-byte secure inner frame. A later
+COMMAND/RESULT wire-contract slice must still freeze exact opcode/args/result
+encoding, bounds and golden fixtures.
 
 Flags/reserved bits must reject unknown critical values.
 
@@ -819,9 +821,10 @@ Flags/reserved bits must reject unknown critical values.
 
 ## 16. RESULT candidate
 
-RESULT must correlate both the logical command and the exact GW2D attempt.
+For **side-effecting mutation RESULTs**, RESULT must correlate both the logical
+command and the exact GW2D attempt.
 
-Candidate minimum:
+Candidate mutation minimum:
 
 ```text
 schema
@@ -833,7 +836,22 @@ resulting_state_token
 bounded detail
 ```
 
-The exact state-token width is unfrozen with COMMAND.
+For config state mutation, the state-token width is fixed by
+`ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md` at **96 bits / 12 bytes**. Exact
+RESULT offsets and the complete plaintext layout remain unfrozen with COMMAND.
+The initial mutation RESULT budget is 3 bytes control + 8-byte command_id +
+8-byte request_counter + 12-byte token = **31 bytes**, leaving at most one byte
+of optional detail when the token is valid. The first mutation family must fit
+the existing 32-byte protected-plaintext ceiling; this CAS decision does not
+authorize increasing the secure-frame maximum merely to carry a token.
+
+The stale-reconciliation exception is the side-effect-free authenticated
+`CONFIG_STATE_READ` defined by CAS §9.2. Its read-specific RESULT may omit
+`command_id` and correlate the exact attempt by authenticated
+`request_counter`, allowing up to 4 bytes control + 8-byte request_counter +
+12-byte token + 8-byte current config = **32 bytes**. This read exception does
+not weaken command_id requirements for side-effecting mutations and does not
+authorize a larger delegated frame.
 
 RESULT uses the same delegated grant context:
 
@@ -1065,7 +1083,8 @@ Do not implement this as one milestone.
 5. SecurityStore v3 delegated replay design + fault tests;
 6. gateway authority-store design + crash/rollback tests;
 7. secure receive path to a read-only/no-side-effect test application;
-8. config state-token/CAS design;
+8. independently review the config state-token/CAS direction, then design its
+   exact tokenized ConfigStore schema and recovery tests;
 9. first protected desired-state config write;
 10. authenticated RESULT;
 11. RAM-only relay custody;
@@ -1139,8 +1158,12 @@ findings. This revision applies the minimum requested corrections:
 - F23/F24: delegated-gateway exception/backend custody dependency are explicitly
   tracked in architecture documentation.
 
-COMMAND/RESULT plaintext remains provisional until the separate config-state-token
-slice closes the CAS-token width/ABA contract.
+The config-state-token slice fixes the design direction at 96 bits with
+tracker-final stale checking. Its focused independent audit returned PASS WITH
+FIXES with no BLOCKER/HIGH. Final focused verification returned PASS WITH MINOR
+DOC FIX; R1 is applied. COMMAND/RESULT plaintext remains provisional until its
+separate exact wire-contract slice freezes offsets, result codes, bounds and
+golden fixtures.
 
 ### Final focused verification disposition
 

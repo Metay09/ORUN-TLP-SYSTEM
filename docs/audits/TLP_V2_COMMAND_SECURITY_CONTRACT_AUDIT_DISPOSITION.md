@@ -194,3 +194,20 @@ The owner has approved the **architecture/design direction only**.
 
 This does not authorize production secure-RF implementation and does not freeze
 COMMAND/RESULT application bytes.
+
+## 7. Post-disposition CAS follow-up
+
+After this delegated-command audit disposition, the separate documentation-only
+`docs/architecture/ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md` slice resolved the
+config application precondition direction at an opaque 96-bit state token with
+tracker-final stale checking.
+
+That later CAS contract was **not** part of the delegated-command audit targets
+recorded above, so the delegated audit PASS must not be retroactively extended
+to it.
+
+The CAS contract subsequently received its own focused independent audit at
+branch head `f1ec46c139a009fea0fefb0ef647cdfe45049c40`. That review returned
+**PASS WITH FIXES**, no BLOCKER/HIGH. Its separate durable disposition is
+`docs/audits/CONFIG_STATE_TOKEN_CAS_AUDIT_DISPOSITION.md`. Final focused
+verification returned **PASS WITH MINOR DOC FIX**; F1-F9 and R1 are applied.
