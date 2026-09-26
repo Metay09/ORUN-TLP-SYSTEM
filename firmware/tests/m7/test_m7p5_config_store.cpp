@@ -597,7 +597,31 @@ int main() {
     assert(validToken(store).revision == 2);
   }
 
-  // 20. Supported corruption, partial commit, retired commit or semantically
+  // 20. The narrow one-word ORC1-only torn-body window is intentionally
+  // fail-closed as supported corruption. The old committed semantic config
+  // remains readable, but token authority is UNCERTAIN until maintenance.
+  {
+    PendingFlash flash;
+    const uint64_t inc = 0x2323232323232323ULL;
+    flash.seedV2(0, V2Record(2, Config{505, 5}, StateToken{inc, 2}));
+
+    // Inactive page contains exactly the first ORC1 word; the rest is erased.
+    flash.bytes[kPageSize + 0] = 0x4F;
+    flash.bytes[kPageSize + 1] = 0x52;
+    flash.bytes[kPageSize + 2] = 0x43;
+    flash.bytes[kPageSize + 3] = 0x31;
+
+    ConfigStore store(flash);
+    assert(store.begin());
+    assert(store.maintenanceResetRequired());
+    assert(store.tokenState() == ConfigTokenState::kUncertain);
+    assert(store.config().tracking_interval_seconds == 505);
+    assert(store.hasCommittedRecord());
+    StateToken hidden;
+    assert(!store.stateToken(hidden));
+  }
+
+  // 21. Supported corruption, partial commit, retired commit or semantically
   // invalid committed evidence is fail-closed maintenance in this slice.
   {
     PendingFlash flash;
@@ -654,7 +678,7 @@ int main() {
     assert(store.diagnostics().recovery_corruptions >= 1);
   }
 
-  // 21. Async normal save: erase/body/commit may each pend; result cannot
+  // 22. Async normal save: erase/body/commit may each pend; result cannot
   // appear early and the final token advances exactly once.
   {
     PendingFlash flash;
@@ -677,7 +701,7 @@ int main() {
     assert(flash.poll_calls > 0);
   }
 
-  // 22. Body readback is verified BEFORE commit. Corrupting staged bytes
+  // 23. Body readback is verified BEFORE commit. Corrupting staged bytes
   // causes failure and never programs the commit word.
   {
     PendingFlash flash;
@@ -696,7 +720,7 @@ int main() {
     assert(store.config().tracking_interval_seconds == 180);
   }
 
-  // 23. A logical FAILED result after the commit word reached flash is
+  // 24. A logical FAILED result after the commit word reached flash is
   // outcome-unknown, not proof that the mutation did not apply. Final readback
   // fails once, then read-only reconciliation discovers the committed
   // successor and makes the new config/token authoritative without emitting a
@@ -732,7 +756,7 @@ int main() {
     assert(!store.takeSaveResult(extra));  // never synthesize second success
   }
 
-  // 24. Ordinary failed mutation invalidates token until read-only recovery.
+  // 25. Ordinary failed mutation invalidates token until read-only recovery.
   // If recovery sees old committed + safely erased inactive page, VALID can
   // be restored without another flash write.
   {
@@ -756,7 +780,7 @@ int main() {
     assert(store.config().tracking_interval_seconds == 180);
   }
 
-  // 25. Accepted-but-unreconciled timeout blocks every new mutation until the
+  // 26. Accepted-but-unreconciled timeout blocks every new mutation until the
   // backend clears physical ambiguity; late reconciliation causes full
   // two-page recovery, not a second logical success.
   {
@@ -791,7 +815,7 @@ int main() {
     assert(!store.takeSaveResult(extra));  // no late second app result
   }
 
-  // 26. An unread async result blocks a different save but not an exact
+  // 27. An unread async result blocks a different save but not an exact
   // synchronous no-op against the already committed semantic state.
   {
     PendingFlash flash;
@@ -809,7 +833,7 @@ int main() {
     assert(saveAndSettle(store, Config{333, 3}, success) && success);
   }
 
-  // 27. Generation/revision exhaustion never wraps.
+  // 28. Generation/revision exhaustion never wraps.
   {
     PendingFlash flash;
     const uint64_t inc = 0x7777777777777777ULL;
@@ -829,7 +853,7 @@ int main() {
     assert(!store.requestSave(Config{101, 2}));
   }
 
-  // 28. Backend begin failure still leaves safe in-RAM defaults but reports
+  // 29. Backend begin failure still leaves safe in-RAM defaults but reports
   // store unavailable and performs no writes.
   {
     PendingFlash flash;
