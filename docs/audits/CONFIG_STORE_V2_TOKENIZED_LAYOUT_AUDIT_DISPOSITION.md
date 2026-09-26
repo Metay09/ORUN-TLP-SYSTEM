@@ -1,6 +1,6 @@
 # ConfigStore v2 Tokenized Layout Audit Disposition
 
-Status: **FOCUSED INDEPENDENT AUDIT — PASS WITH FIXES; REQUESTED FIXES APPLIED; FINAL VERIFY PENDING — DOCUMENTATION-ONLY.**
+Status: **FOCUSED INDEPENDENT AUDIT — PASS WITH FIXES; FINAL VERIFY PASS WITH MINOR DOC FIX; R1-R3 APPLIED — DOCUMENTATION-ONLY.**
 
 Baseline:
 
@@ -299,6 +299,104 @@ The architecture document contains the normative detailed matrix.
 
 ---
 
+## 6. Final focused verification
+
+Final focused verification compared the original audited head:
+
+`6715929d1e615baaaa2ace0c472e0bc3b7b5daae`
+
+with the applied-fix head:
+
+`081a0bff1143b0900bc819599c340c9d27f7add9`
+
+and returned:
+
+**PASS WITH MINOR DOC FIX**
+
+with:
+
+- BLOCKER: 0
+- HIGH: 0
+- H1/H2: closed, subject only to final low/doc clarifications R1-R3;
+- M1-M4: closed;
+- L1-L5: closed;
+- 48-byte sealed record: accepted;
+- page-local token-retire word: accepted;
+- two ConfigStore pages: sufficient;
+- third page: not required;
+- stage -> retire -> commit family: accepted;
+- async flash reconciliation direction: accepted;
+- flash-wear direction: accepted.
+
+The final verification explicitly walked power-cut points and found no path that
+makes an old token VALID again.
+
+### R1 — torn version byte could still resemble a future schema
+
+**LOW / DOC — applied.**
+
+The classifier now has a normative precedence:
+
+```text
+erased
+-> exact supported v1/v2
+-> recognized torn/prefix evidence
+-> UNSUPPORTED_NEWER discriminator
+-> SUPPORTED_CORRUPT
+```
+
+A genuine future ORC1 schema additionally requires:
+
+```text
+bytes[5..7] == 0
+(version & 0x03) == 0
+```
+
+so half-erased v1/v2 version values such as 3/5/6/10 cannot masquerade as a
+future schema. Future schema versions must use the reserved multiple-of-four
+namespace unless a separately reviewed classifier migration changes this rule.
+
+`ORC1/version=0xFF` outside a recognized torn prefix is
+`SUPPORTED_CORRUPT`, not `UNSUPPORTED_NEWER`.
+
+### R2 — partial final commit could lose the only verified semantic config
+
+**LOW / DOC — applied.**
+
+The design adds `V2_PARTIAL_COMMIT`:
+
+- full v2 body/CRC/config/token fields verify;
+- commit word is neither erased nor fully committed;
+- token identity is never authoritative;
+- verified semantic config remains usable as a recovery safety copy.
+
+Recovery treats it like a staged semantic copy and creates a fresh incarnation
+before CAS resumes. This prevents a partial final commit from silently reverting
+the runtime semantic config to defaults.
+
+### R3 — recovery table gaps and retire-word retry trap
+
+**LOW / DOC — applied.**
+
+Recovery/re-baseline is now restart-safe:
+
+- an already non-FF retire word is never programmed again;
+- an already erased target page is not redundantly erased;
+- retired committed + stage/partial-commit has an explicit fresh-incarnation
+  recovery path;
+- stage/partial-commit + erased and + supported-corrupt states are explicit;
+- valid committed v1 remains the semantic source even when an uncommitted v2
+  stage contains a different config; the stage may be discarded because it was
+  never committed;
+- no recovery path promotes an old staged token.
+
+Regression tests for R1-R3 are added to the required host fault matrix.
+
+No further broad architecture audit is required before merge; only review of the
+final documentation diff is needed.
+
+---
+
 ## 6. Evidence boundary
 
 This disposition is documentation/architecture evidence only.
@@ -318,20 +416,15 @@ It does **not** claim:
 
 ---
 
-## 7. Remaining gate
+## 7. Closure
 
-All H1/H2, M1-M4 and L1-L5 requested corrections are applied on the PR #44 design
-branch after the audited `6715929...` head.
+The independent audit corrections H1/H2, M1-M4 and L1-L5 are applied.
 
-Before PR #44 leaves Draft, perform a focused final verification of the applied
-diff. That verification should confirm at minimum:
+Final focused verification returned **PASS WITH MINOR DOC FIX** with 0 BLOCKER /
+0 HIGH. The residual R1-R3 documentation fixes are also applied.
 
-- no old token can become VALID after contradictory evidence is erased;
-- ordinary torn erase/write residue is not misclassified as future schema;
-- retire word fails safe under partial programming;
-- mixed same-config v1+v2 erases v2 first;
-- different-config ambiguous states are never auto-chosen;
-- staged tokens are never promoted after reboot;
-- async config mutation ambiguity blocks new writes until full recovery;
-- no third ConfigStore page became necessary;
-- 48-byte record and two-page allocation remain unchanged.
+This closes the ConfigStore v2 **design/audit gate only**.
+
+Implementation must still produce the host/fault, compiler/sanitizer, RAK4630
+build and focused physical power-cut/SoftDevice evidence required by the
+architecture document. No runtime validation is inherited from this disposition.
