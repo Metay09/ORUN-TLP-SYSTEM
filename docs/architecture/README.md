@@ -2,8 +2,9 @@
 
 Status: **CURRENT documentation governance index**.
 Last governance review: 2026-09-26 against
-`main@e2a370510c595c5f4b88e94a1212fb95d848a273` (M7P6F merged via PR #41,
-with the owner-approved gateway-command authority direction also present).
+`main@fb1a47b549d18517078facc5d2d3437445277b65` (PR #42 architecture
+consolidation). The config state-token/CAS document added after that baseline is
+documentation-only and does not change the runtime evidence boundary below.
 The detailed M7P7G evidence below remains the current BLE application-GATT
 evidence boundary. M7P7G's normal read-only GET_CONFIG GATT path has focused
 Android/nRF Connect physical PASS on earlier code head
