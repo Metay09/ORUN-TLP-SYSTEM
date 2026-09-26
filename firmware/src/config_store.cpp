@@ -177,15 +177,12 @@ bool ConfigStore::recover() {
         config_format::PageEvidence::kUnsupportedNewer) {
       bool tail_erased = false;
       if (!readPageTailErased(flash_, page, tail_erased)) return false;
-      if (!tail_erased) {
-        pages[page].inspection = config_format::PageInspection();
-        pages[page].inspection.evidence =
-            config_format::PageEvidence::kSupportedCorrupt;
-      }
+      pages[page].tail_dirty = !tail_erased;
     }
 
     const auto evidence = pages[page].inspection.evidence;
-    if (evidence != config_format::PageEvidence::kErased)
+    if (evidence != config_format::PageEvidence::kErased ||
+        pages[page].tail_dirty)
       all_erased = false;
 
     if (evidenceIsLegacy(evidence)) {
@@ -202,6 +199,18 @@ bool ConfigStore::recover() {
     if (pages[page].inspection.has_decoded_record) {
       pages[page].semantic_valid =
           validCandidate(pages[page].inspection.config);
+    }
+
+    if (pages[page].tail_dirty) {
+      ++diagnostics_.recovery_corruptions;
+      any_supported_corrupt = true;
+      // Preserve one intact committed semantic record as a read-only
+      // fallback, but never let a dirty reserved tail retain token authority.
+      if (evidence == config_format::PageEvidence::kV2Committed &&
+          pages[page].semantic_valid) {
+        committed_pages[committed_count++] = static_cast<int>(page);
+      }
+      continue;
     }
 
     if (evidence == config_format::PageEvidence::kV2Committed) {
@@ -250,6 +259,21 @@ bool ConfigStore::recover() {
 
   if (any_unsupported) {
     setMaintenance(ConfigTokenState::kUncertain);
+    return true;
+  }
+
+  if (any_supported_corrupt && committed_count == 2) {
+    const int a = committed_pages[0];
+    const int b = committed_pages[1];
+    const auto& pa = pages[a].inspection;
+    const auto& pb = pages[b].inspection;
+    if (sameConfig(pa.config, pb.config)) {
+      const auto& fallback =
+          pb.generation > pa.generation ? pb : pa;
+      setMaintenanceFallback(fallback, ConfigTokenState::kUncertain);
+    } else {
+      setMaintenance(ConfigTokenState::kUncertain);
+    }
     return true;
   }
 
