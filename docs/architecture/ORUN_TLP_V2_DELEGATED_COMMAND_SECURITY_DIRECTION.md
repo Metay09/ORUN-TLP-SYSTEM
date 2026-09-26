@@ -775,7 +775,7 @@ Additional bounds:
 - `gateway_policy_floor == 0xFFFFFFFF` is invalid/reserved;
 - `gateway_grant_generation == 0` and `0xFFFFFFFF` are invalid/reserved;
 - each application family defines an exact minimum plaintext length;
-- current provisional COMMAND minimum is 16 bytes.
+- current config COMMAND candidate fixed portion is 24 bytes before args.
 
 Invalid/reserved values fail closed.
 
@@ -814,8 +814,12 @@ off size field
 ```
 
 For the config desired-state family, the minimum fixed portion is therefore
-24 bytes before args. A later COMMAND/RESULT wire-contract slice must still
-freeze exact opcode/args/result encoding, bounds and golden fixtures.
+24 bytes before args. The currently persisted M7P5 config has exactly 8 bytes
+of semantic fields (`tracking_interval_seconds` + `battery_capacity_mah`), so
+that first desired-state payload can still fit the existing 32-byte protected
+plaintext ceiling without enlarging the 96-byte secure inner frame. A later
+COMMAND/RESULT wire-contract slice must still freeze exact opcode/args/result
+encoding, bounds and golden fixtures.
 
 Flags/reserved bits must reject unknown critical values.
 
@@ -840,6 +844,9 @@ bounded detail
 For config state mutation, the state-token width is fixed by
 `ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md` at **96 bits / 12 bytes**. Exact
 RESULT offsets and the complete plaintext layout remain unfrozen with COMMAND.
+The initial RESULT must fit the existing 32-byte protected-plaintext ceiling;
+this CAS decision does not authorize increasing the secure-frame maximum merely
+to carry a token.
 
 RESULT uses the same delegated grant context:
 
