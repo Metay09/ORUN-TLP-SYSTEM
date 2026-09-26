@@ -741,8 +741,19 @@ Failure before step 4:
 - after reboot, token validity is decided by the page classifier rather than by
   assuming every pre-commit failure was clean.
 
-A body write interrupted with an erased commit word can be safely ignored. A
-power cut during the inactive-page erase can instead leave
+A body write interrupted with an erased commit word can normally be ignored
+when the prefix classifier recognizes the programmed-prefix/erased-tail shape.
+One narrow accepted availability exception exists: if only the first 32-bit
+`ORC1` magic word was programmed and every later classifier word stayed erased,
+that shape is classified as local `SUPPORTED_CORRUPT` rather than as a valid
+v2 torn-prefix. The previously committed semantic config may remain the fallback,
+but token state becomes UNCERTAIN and maintenance/re-baseline is required.
+
+This is an intentional fail-closed cost, not data-authority promotion. It avoids
+broadening torn-prefix recognition so far that genuine local corruption or
+future-schema evidence could be misclassified.
+
+A power cut during the inactive-page erase can likewise leave
 `SUPPORTED_CORRUPT` evidence; in that case the old config remains usable but
 token state becomes UNCERTAIN and fresh-incarnation re-baseline may be required.
 
@@ -751,12 +762,18 @@ invalidate cached remote tokens even though the semantic config survives.
 
 Failure after step 4 but before RAM publication:
 
-- reboot recovery sees the committed successor only when the complete
+- reboot/runtime recovery sees the committed successor only when the complete
   generation/incarnation/revision lineage verifies;
-- the new config/token then becomes authoritative.
+- the new config/token then becomes authoritative;
+- a logical `takeSaveResult(false)` observed before that reconciliation means
+  **UNCONFIRMED / OUTCOME_UNKNOWN**, not "definitely not applied";
+- no synthetic second success result is emitted after recovery; callers that
+  need application outcome must re-read coherent config/token state.
 
 This preserves reset-safe application state without claiming that every failed
-physical erase leaves token identity unchanged.
+physical erase leaves token identity unchanged. Before protected CAS/COMMAND
+mutation is enabled, its RESULT vocabulary must distinguish this unconfirmed
+physical outcome from a definitive application rejection/failure.
 
 ---
 
@@ -1326,6 +1343,45 @@ cache-authoritative config/token pair.
 USB/BLE/local config mutation while token state is UNAVAILABLE or UNCERTAIN is
 not a normal save.
 
+**Current PR #46 limitation:** firmware does not yet implement the destructive
+maintenance/re-baseline transaction described in §13.1-§13.4. Until that slice
+lands, a development device in legacy/corrupt/partial/retired/unsafe state must
+be returned to a fully erased ConfigStore partition by an explicit maintenance
+procedure before normal v2 mutation can resume.
+
+Development maintenance erase scope is exactly:
+
+```text
+ConfigStore page A: 0x0E9000..0x0E9FFF
+ConfigStore page B: 0x0EA000..0x0EAFFF
+ConfigStore region: 0x0E9000..0x0EAFFF
+```
+
+Procedure:
+
+1. stop normal firmware execution and use an SWD/debugger flash tool capable of
+   page erase;
+2. erase **only** the two ConfigStore pages beginning at `0x0E9000` and
+   `0x0EA000`;
+3. read back `0x0E9000..0x0EAFFF` and verify every byte is `0xFF`;
+4. reboot normally; fresh-baseline creation may then establish a new incarnation
+   and revision 1.
+
+Do **not** use a whole-chip erase merely to clear ConfigStore unless deliberately
+resetting every other persistence class too. In particular, maintenance must not
+touch:
+
+```text
+0x0E7000..0x0E8FFF  SecurityStore
+0x0EB000..0x0ECFFF  BLE bond/InternalFS
+0x0ED000..0x0F3FFF  HistoryStore
+```
+
+The in-firmware bounded re-baseline/maintenance path must be implemented and
+reviewed **before protected remote/local CAS mutation is enabled**, so production
+operation never depends on an SWD-only recovery procedure.
+
+
 If an authorized operator intentionally chooses a semantic config, that action is
 an explicit **re-baseline**:
 
@@ -1436,6 +1492,21 @@ original logical request already returned failure is prohibited.
 A state read may return the operational/fallback config and diagnostics while
 mutation reconciliation is pending, but it must mark token/recovery validity so
 callers cannot cache that pair as authoritative.
+
+If a full reconciliation read itself fails after ConfigStore previously had a
+known committed semantic override, PR #46 intentionally preserves that last
+semantic config/provenance in RAM while setting:
+
+```text
+ready = false
+token_state = UNCERTAIN
+maintenanceResetRequired = true
+```
+
+Therefore `ready=false` and application committed-provenance `true` may coexist.
+That combination means **"last known committed semantic config retained, current
+backend state not successfully re-observed"**. It is diagnostic/fallback state,
+not cache-authoritative storage proof, and no mutation is admitted.
 
 ---
 
