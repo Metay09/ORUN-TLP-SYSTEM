@@ -1589,6 +1589,33 @@ following families.
 86. normal successful semantic save remains one page erase + body/CRC + commit;
 87. retire word is programmed at most once before its page is erased.
 
+### final-verify R1-R3 regressions
+
+88. classifier precedence checks exact v1/v2 and recognized torn-prefix evidence
+    before UNSUPPORTED_NEWER;
+89. half-erased v1 version examples such as 0x03/0x05 are SUPPORTED_CORRUPT or
+    recognized torn evidence, never UNSUPPORTED_NEWER;
+90. half-erased v2 version examples such as 0x03/0x06/0x0A are
+    SUPPORTED_CORRUPT or recognized torn evidence, never UNSUPPORTED_NEWER;
+91. ORC1/version 0xFF outside a recognized torn-prefix pattern is
+    SUPPORTED_CORRUPT;
+92. a genuine future discriminator requires bytes[5..7] == 0 and
+    (version & 0x03) == 0; representative version 4 is UNSUPPORTED_NEWER only
+    after earlier torn-evidence checks;
+93. verified v2 body/CRC/config/token with partial commit word becomes
+    V2_PARTIAL_COMMIT: token non-authoritative, semantic config recoverable;
+94. V2_PARTIAL_COMMIT + erased page performs fresh-incarnation recovery without
+    reverting to defaults;
+95. retired committed + erased page does not attempt to program retire word
+    again and skips redundant erase;
+96. retired committed + same-config stage/partial-commit never promotes the
+    existing staged token and fresh-rebaselines;
+97. stage/partial-commit + supported-corrupt other page preserves the verified
+    semantic copy through fresh-incarnation recovery;
+98. valid committed v1 + different-config uncommitted v2 stage keeps v1 as the
+    committed semantic source and may discard the stage;
+99. recovery restart never submits a program operation to a non-FF retire word.
+
 
 ---
 
