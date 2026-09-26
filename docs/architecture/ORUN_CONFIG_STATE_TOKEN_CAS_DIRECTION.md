@@ -945,10 +945,31 @@ The implementation slice must include host fault/recovery tests covering at leas
 19. offline gateway path works without backend reachability;
 20. stale offline cache cannot silently overwrite newer tracker state;
 21. concurrent writers cannot both accept the same token before one commits;
-22. every semantic write source advances the same token state;
-23. valid legacy migration succeeds without changing semantic config;
-24. corrupt/non-erased legacy state does not auto-baseline as fresh;
-25. clean external snapshot rollback is documented as outside ConfigStore-only
+22. desired-state equality while another save owns the slot returns BUSY rather
+    than ALREADY_SATISFIED against pre-save state;
+23. every semantic write source advances the same token state;
+24. test/probe writers cannot bypass token progression;
+25. valid legacy migration succeeds without changing semantic config;
+26. power loss during legacy -> tokenized migration never exposes an unproven
+    mixed record set as VALID;
+27. token-aware -> token-unaware downgrade -> legacy write -> upgrade never
+    resurrects the old token;
+28. corrupt/non-erased legacy state does not auto-baseline as fresh;
+29. commit-word-erased torn candidate is distinguished from committed-invalid
+    evidence;
+30. higher/contradictory committed invalid evidence yields UNCERTAIN rather than
+    silently reviving a lower token;
+31. unsupported/newer schema is not auto-overwritten;
+32. supported-schema UNCERTAIN recovery can re-baseline only under the bounded
+    conditions in §8 and creates a fresh incarnation;
+33. ALREADY_SATISFIED with token state not VALID returns no cache-authoritative
+    token;
+34. BUSY cannot advance backend/gateway current-state cache;
+35. CONFIG_STATE_READ captures one coherent config/token pair and fits the
+    32-byte protected plaintext ceiling;
+36. mutation RESULT with a valid token fits the 31-byte fixed budget plus at
+    most one detail byte;
+37. clean external snapshot rollback is documented as outside ConfigStore-only
     detection rather than falsely reported as solved.
 
 Host PASS does not imply RAK physical PASS.
@@ -985,11 +1006,11 @@ It defines the minimum state-precondition contract those later slices must obey.
 
 Recommended order:
 
-1. independent review of this state-token/CAS direction;
+1. focused final verification of the applied independent-audit corrections;
 2. ConfigStore tokenized-schema exact layout design;
 3. host migration/recovery/fault tests;
 4. ConfigStore implementation with token validity state;
-5. application-owner read/write seam;
+5. application-owner read/write seam including bounded CONFIG_STATE_READ;
 6. production RAK build and storage-budget verification;
 7. focused physical reset/power-cut validation;
 8. only then freeze the first protected config COMMAND/RESULT plaintext bytes;
