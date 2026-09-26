@@ -157,6 +157,8 @@ bool ConfigStore::recover() {
   bool any_supported_corrupt = false;
   unsigned committed_count = 0;
   int committed_pages[kConfigPageCount] = {-1, -1};
+  unsigned fallback_count = 0;
+  int fallback_pages[kConfigPageCount] = {-1, -1};
 
   for (unsigned page = 0; page < kConfigPageCount; ++page) {
     uint8_t bytes[config_format::kV2PagePrefixSize];
@@ -224,9 +226,13 @@ bool ConfigStore::recover() {
     }
 
     if (evidence == config_format::PageEvidence::kV2Staged) {
-      // Structurally valid but semantically invalid stage was never active and
-      // is equivalent to uncommitted/torn evidence for authority purposes.
-      if (!pages[page].semantic_valid)
+      // A verified stage is never promoted to token authority after reboot,
+      // but its semantic config is still an independently verified persistent
+      // copy and may be used as read-only fallback when no committed authority
+      // survives.
+      if (pages[page].semantic_valid)
+        fallback_pages[fallback_count++] = static_cast<int>(page);
+      else
         ++diagnostics_.recovery_corruptions;
       continue;
     }
@@ -234,6 +240,12 @@ bool ConfigStore::recover() {
     if (evidence == config_format::PageEvidence::kErased ||
         evidence == config_format::PageEvidence::kV2UncommittedOrTorn)
       continue;
+
+    if ((evidence == config_format::PageEvidence::kV2PartialCommit ||
+         evidence == config_format::PageEvidence::kV2CommittedRetired) &&
+        pages[page].semantic_valid) {
+      fallback_pages[fallback_count++] = static_cast<int>(page);
+    }
 
     // Retired committed, partial commit, committed corruption and generic
     // supported corruption all invalidate cache-authoritative token state in
@@ -278,10 +290,33 @@ bool ConfigStore::recover() {
   }
 
   if (committed_count == 0) {
-    // Non-erased v2 evidence without a normal committed authority requires
-    // maintenance/re-baseline in a later slice. Do not promote a stage or
-    // partial commit after reboot.
-    setMaintenance(any_supported_corrupt
+    // Staged/partial/retired records never regain token authority after
+    // reboot, but if every verified semantic fallback agrees, preserve that
+    // config for the user while maintenance/re-baseline remains required.
+    if (fallback_count > 0) {
+      const auto& first = pages[fallback_pages[0]].inspection;
+      bool same_semantics = true;
+      int best = fallback_pages[0];
+      for (unsigned i = 1; i < fallback_count; ++i) {
+        const int page = fallback_pages[i];
+        const auto& candidate = pages[page].inspection;
+        if (!sameConfig(first.config, candidate.config)) {
+          same_semantics = false;
+          break;
+        }
+        if (candidate.generation >
+            pages[best].inspection.generation)
+          best = page;
+      }
+      if (same_semantics) {
+        setMaintenanceFallback(pages[best].inspection,
+                               ConfigTokenState::kUncertain);
+        return true;
+      }
+    }
+
+    // No recoverable semantic copy, or verified fallback copies disagree.
+    setMaintenance(any_supported_corrupt || fallback_count > 0
                        ? ConfigTokenState::kUncertain
                        : ConfigTokenState::kUnavailable);
     return true;
