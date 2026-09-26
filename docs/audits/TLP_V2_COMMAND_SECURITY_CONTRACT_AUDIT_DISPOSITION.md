@@ -194,3 +194,15 @@ The owner has approved the **architecture/design direction only**.
 
 This does not authorize production secure-RF implementation and does not freeze
 COMMAND/RESULT application bytes.
+
+## 7. Post-disposition CAS follow-up
+
+After this delegated-command audit disposition, the separate documentation-only
+`docs/architecture/ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md` slice resolved the
+config application precondition direction at an opaque 96-bit state token with
+tracker-final stale checking.
+
+That later CAS contract was **not** part of the audit targets recorded above.
+Nothing in this disposition should be read as an independent PASS for the CAS
+token width, recovery/ABA semantics or tokenized ConfigStore migration. Those
+items require their own focused review before implementation/wire freeze.
