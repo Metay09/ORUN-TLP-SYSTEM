@@ -131,14 +131,15 @@ int main() {
     assert(inspect(page).evidence == PageEvidence::kErased);
   }
 
-  // Legacy v1 committed bytes remain recognized with the current decoder.
+  // Legacy v1 committed bytes are recognized only so a future v2 cutover can
+  // diagnose/reset an old development partition. This is not migration support.
   {
     uint8_t page[kV2PagePrefixSize];
     memset(page, 0xFF, sizeof(page));
     encode(Config(247, 9000), 7, page);
 
     const PageInspection result = inspect(page);
-    assert(result.evidence == PageEvidence::kV1Committed);
+    assert(result.evidence == PageEvidence::kLegacyV1Committed);
     assert(result.has_decoded_record);
     assert(result.generation == 7);
     assertConfig(result.config, 247, 9000);
@@ -150,7 +151,7 @@ int main() {
     memset(page, 0xFF, sizeof(page));
     encode(Config(247, 9000), 7, page);
     memset(page + 32, 0xFF, 4);
-    assert(inspect(page).evidence == PageEvidence::kV1UncommittedOrTorn);
+    assert(inspect(page).evidence == PageEvidence::kLegacyV1UncommittedOrTorn);
   }
 
   // v1 committed structural corruption is kept distinct from an uncommitted
@@ -160,7 +161,7 @@ int main() {
     memset(page, 0xFF, sizeof(page));
     encode(Config(247, 9000), 7, page);
     page[20] ^= 0x01;
-    assert(inspect(page).evidence == PageEvidence::kV1CommittedCorrupt);
+    assert(inspect(page).evidence == PageEvidence::kLegacyV1CommittedCorrupt);
   }
 
   const V2Record v2(11, Config(300, 5000), StateToken(0x123456789ULL, 4));
