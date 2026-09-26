@@ -138,6 +138,9 @@ class FlashMutationGate : public FlashBackend {
     }
     FlashOpResult erasePage(uint32_t page) override { return gate_.erasePageConfig(page); }
     FlashOpResult pollPending() override { return gate_.pollPendingConfig(); }
+    bool hasUnreconciledMutation() const override {
+      return gate_.configMutationUnreconciled();
+    }
 
    private:
     FlashMutationGate& gate_;
@@ -203,6 +206,9 @@ class FlashMutationGate : public FlashBackend {
   // definitive late SUCCESS/ERROR event. SecurityStore uses this only to
   // distinguish that severe ownership ambiguity from an ordinary clean
   // mutation failure; it never treats the mutation as successful.
+  bool configMutationUnreconciled() const {
+    return config_slot_.quarantined;
+  }
   bool securityMutationUnreconciled() const {
     return security_slot_.quarantined;
   }
