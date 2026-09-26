@@ -261,30 +261,29 @@ The staged page never wins.
 
 Let committed generation be `G` and staged generation be `S`.
 
-The only normal explanations are:
+The only normal committed+staged explanation produced by the defined save
+algorithm is:
 
 ```text
-S < G       old/inactive page was being erased or contains stale staged bytes
-S == G + 1 interrupted next save before commit
+S == G + 1    interrupted next save before commit
 ```
 
-In those cases:
+In that case:
 
 ```text
 committed v2 remains authoritative
 token_state = VALID
 ```
 
-If:
+Any other relation, including:
 
 ```text
-S == G
+S <= G
 or
 S > G + 1
 ```
 
-the state cannot arise from one valid normal v2 transition and recovery returns
-UNCERTAIN.
+cannot arise from one valid normal v2 transition and recovery returns UNCERTAIN.
 
 The staged page never contributes an application-valid token.
 
@@ -453,17 +452,26 @@ This is a one-time persistence cost, not routine RF traffic.
 
 ### 8.1 Legacy recovery source
 
-If no tokenized v2 record is authoritative and one or two structurally/semantically
-valid v1 records exist, the migration source config is the valid v1 record with
-the highest v1 generation.
+Automatic legacy migration is allowed only when every non-erased page can be
+explained as:
 
-If two valid v1 records have equal generation but different bytes/config:
+- a structurally/semantically valid committed v1 record; or
+- a supported v1 body whose commit word remained erased/unset and is therefore
+  an uncommitted candidate.
 
-```text
-UNCERTAIN
-```
+A committed-invalid supported v1 record, a partial/ambiguous v1 commit word, or
+any unsupported/unknown page is contradictory evidence and makes token state
+UNCERTAIN. In particular, the current M7P5 behavior that can skip a
+higher-generation semantically-invalid committed record and use a lower valid
+record is **not** sufficient for tokenized migration.
 
-Do not choose by page index.
+When automatic migration is allowed and one or two valid committed v1 records
+exist, the migration source config is the valid v1 record with the highest v1
+generation.
+
+If two valid v1 records have equal generation, recovery does not choose by page
+index. Equal generation is not produced by the defined v1 A/B algorithm and is
+treated as UNCERTAIN, even if the semantic values happen to match.
 
 ### 8.2 Why v2 generation restarts at 1
 
@@ -492,8 +500,8 @@ Migration therefore proceeds:
 
 ```text
 1. identify highest-generation valid legacy source page L
-2. erase the other/lower legacy page T
-3. generate fresh nonzero incarnation
+2. generate fresh nonzero incarnation
+3. only after CSPRNG success, erase the other/lower legacy page T
 4. write v2 generation 1 / revision 1 staged record to T
 5. verify staged record while commit remains erased
 6. erase legacy source page L
@@ -502,6 +510,11 @@ Migration therefore proceeds:
 9. verify committed v2
 10. expose token_state = VALID
 ```
+
+CSPRNG failure occurs before any destructive erase whenever a valid legacy source
+exists. The device therefore retains its current legacy redundancy/config and
+does not spend flash wear merely to discover that a new incarnation cannot be
+created.
 
 The v2 token is not application-valid before step 8.
 
@@ -593,6 +606,12 @@ Therefore reboot recovery does not simply promote the old staged token.
 It uses the supported-schema re-baseline rule and creates a **fresh incarnation**
 before returning to VALID.
 
+The same rule applies to a fresh/blank-partition baseline interrupted after a
+valid staged v2 body was written but before its commit word was programmed: the
+staged semantic config may be reused, but that staged incarnation is never
+promoted after reboot. A fresh incarnation is generated for the recovered
+baseline.
+
 ### 9.5 After v2 commit verifies
 
 Migration is complete.
@@ -628,27 +647,27 @@ Recovery result begins as:
 token_state = UNCERTAIN
 ```
 
-For the first reviewed implementation, if the legacy record is valid, its
-semantic config is the preferred migration source because:
-
-- during correct initial migration it equals the copied config; and
-- after a token-unaware downgrade/write it represents the only state written by
-  that later legacy firmware.
-
-Recovery then:
-
-```text
-1. keeps the valid legacy semantic config as the migration source
-2. erases/discards the committed v2 page and its token identity
-3. returns to a legacy-only migration state
-4. generates a fresh incarnation
-5. performs the reviewed legacy -> v2 staged/retire/commit sequence
-```
-
 No existing tokenized token from the mixed state is reused.
 
-If legacy semantics are invalid/corrupt or the mixed state cannot be safely
-classified, do not auto-rewrite.
+The first implementation may auto-recover mixed committed v1+v2 only when the
+two records contain the **same complete semantic config**. In that case, whichever
+record was temporally newer, preserving that common semantic value cannot create
+a lost config update. Recovery discards the existing v2 token identity and
+creates a fresh incarnation through the reviewed migration/re-baseline path.
+
+If the valid v1 and valid v2 semantic configs differ, current flash evidence
+cannot prove which semantic state is newer:
+
+- the v1 record may be a later token-unaware downgrade write; or
+- the v2 record may represent a later state while the v1 page is stale residue
+  from an unsupported/older migration history.
+
+Therefore different-config mixed state remains UNCERTAIN and is **not**
+automatically rewritten. Explicit reviewed maintenance/re-baseline must select
+the semantic config before creating a fresh incarnation.
+
+If legacy semantics are invalid/corrupt or the mixed state cannot otherwise be
+safely classified, do not auto-rewrite.
 
 ---
 
@@ -931,29 +950,34 @@ The implementation slice must add or adapt tests for at least:
 25. power cut during legacy erase;
 26. power cut after legacy erase before commit;
 27. downgrade -> legacy write -> upgrade never resurrects old token;
-28. mixed valid v1+v2 never reuses v2 token;
-29. mixed recovery creates fresh incarnation;
-30. unsupported schema is not overwritten.
+28. higher-generation committed-invalid v1 + lower valid v1 -> UNCERTAIN;
+29. unknown/unsupported page + valid v1 -> no automatic migration;
+30. CSPRNG failure before migration does not erase a valid legacy page;
+31. mixed valid v1+v2 never reuses v2 token;
+32. mixed same-config v1+v2 recovery creates fresh incarnation;
+33. mixed different-config v1+v2 remains UNCERTAIN;
+34. unsupported schema is not overwritten.
 
 ### ambiguous recovery
 
-31. committed-invalid higher v2 + lower valid v2 -> token UNCERTAIN;
-32. equal-generation valid v2 pages -> UNCERTAIN;
-33. non-adjacent committed-valid v2 generations -> UNCERTAIN;
-34. committed G plus staged S only remains VALID for S < G or S == G+1;
-35. staged S == G or S > G+1 -> UNCERTAIN;
-36. partial commit word -> UNCERTAIN;
-37. staged v2 never exposes token as VALID after reboot;
-38. non-erased no-valid-record -> UNCERTAIN;
-39. supported-schema re-baseline creates fresh incarnation;
-40. re-baseline diagnostics are observable.
+35. committed-invalid higher v2 + lower valid v2 -> token UNCERTAIN;
+36. equal-generation valid v2 pages -> UNCERTAIN;
+37. non-adjacent committed-valid v2 generations -> UNCERTAIN;
+38. committed G plus staged S remains VALID only for S == G+1;
+39. staged S <= G or S > G+1 -> UNCERTAIN;
+40. partial commit word -> UNCERTAIN;
+41. staged v2 never exposes token as VALID after reboot;
+42. interrupted fresh-baseline staged token is never promoted after reboot;
+43. non-erased no-valid-record -> UNCERTAIN;
+44. supported-schema re-baseline creates fresh incarnation;
+45. re-baseline diagnostics are observable.
 
 ### API ownership
 
-41. normal caller cannot supply revision;
-42. semantic mutation cannot retain old revision;
-43. reset changes token only when semantic config changes;
-44. test/probe mutation cannot bypass token progression.
+46. normal caller cannot supply revision;
+47. semantic mutation cannot retain old revision;
+48. reset changes token only when semantic config changes;
+49. test/probe mutation cannot bypass token progression.
 
 ---
 
