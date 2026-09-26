@@ -637,8 +637,8 @@ The independently audited
 `ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md` fixes the application config token
 direction at an opaque **96-bit / 12-byte** value with A->B->A non-reuse and
 explicit VALID/UNAVAILABLE/UNCERTAIN recovery semantics. Its audit returned
-PASS WITH FIXES with no BLOCKER/HIGH; requested fixes are applied and final
-focused verification remains pending. The complete ConfigStore schema and
+PASS WITH FIXES with no BLOCKER/HIGH. Final focused verification returned
+PASS WITH MINOR DOC FIX; R1 is applied. The complete ConfigStore schema and
 COMMAND/RESULT wire layout remain separate later slices.
 
 For desired-state config, the normative application ordering is **CAS §6** in
@@ -1160,10 +1160,10 @@ findings. This revision applies the minimum requested corrections:
 
 The config-state-token slice fixes the design direction at 96 bits with
 tracker-final stale checking. Its focused independent audit returned PASS WITH
-FIXES with no BLOCKER/HIGH; requested corrections are applied but final focused
-verification is still pending. COMMAND/RESULT plaintext remains provisional
-until its separate exact wire-contract slice freezes offsets, result codes,
-bounds and golden fixtures.
+FIXES with no BLOCKER/HIGH. Final focused verification returned PASS WITH MINOR
+DOC FIX; R1 is applied. COMMAND/RESULT plaintext remains provisional until its
+separate exact wire-contract slice freezes offsets, result codes, bounds and
+golden fixtures.
 
 ### Final focused verification disposition
 
