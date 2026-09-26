@@ -56,13 +56,20 @@ complete COMMAND/RESULT wire layout and ConfigStore implementation unfrozen. Its
 focused independent audit returned PASS WITH FIXES with no BLOCKER/HIGH. Final
 focused verification returned PASS WITH MINOR DOC FIX; R1 is applied.
 
-For tokenized ConfigStore persistence, legacy migration, recovery classification,
-power-cut handling or config flash API changes, also read
+For tokenized ConfigStore persistence, recovery classification, power-cut
+handling or config flash API changes, also read
 `docs/architecture/ORUN_CONFIG_STORE_V2_TOKENIZED_LAYOUT.md` together with
 `docs/audits/CONFIG_STORE_V2_TOKENIZED_LAYOUT_AUDIT_DISPOSITION.md`. The
 independent layout audit returned PASS WITH FIXES. Final focused verification
 returned PASS WITH MINOR DOC FIX with 0 BLOCKER/HIGH; H1/H2, M1-M4, L1-L5 and
 R1-R3 corrections are applied.
+
+Current product scope has no deployed ConfigStore fleet. ConfigStore v1 contents
+on development devices are therefore **not** a backward-compatibility contract.
+The v2 runtime cutover is an explicit development ConfigStore erase followed by
+a fresh v2 baseline; do not implement automatic v1 -> v2 migration unless a
+future deployed-fleet requirement is separately approved. This does not weaken
+TLP v1 wire compatibility, which remains protected.
 
 The delegated authority/header architecture and config CAS contract are
 owner-approved design direction. They are not a wire freeze or production-runtime

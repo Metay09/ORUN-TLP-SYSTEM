@@ -114,6 +114,10 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p5_config_format.cpp \
   firmware/src/config_format.cpp firmware/src/journal_format.cpp \
   firmware/src/tlp_position_packet.cpp -o "$test_dir/m7p5_config_format"
 "$test_dir/m7p5_config_format"
+g++ "${portable_flags[@]}" firmware/tests/m7/test_config_store_v2_format.cpp \
+  firmware/src/config_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp -o "$test_dir/config_store_v2_format"
+"$test_dir/config_store_v2_format"
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p5_config_store.cpp \
   firmware/src/config_store.cpp firmware/src/config_format.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
