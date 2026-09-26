@@ -1,6 +1,6 @@
 # ORUN Config State-Token / CAS Direction
 
-Status: **OWNER-APPROVED DESIGN DIRECTION — DOCUMENTATION-ONLY — 2026-09-26.**
+Status: **OWNER-APPROVED DESIGN DIRECTION — INDEPENDENT AUDIT PASS WITH FIXES; FIXES APPLIED, FINAL VERIFY PENDING — DOCUMENTATION-ONLY — 2026-09-26.**
 
 Baseline: `main@fb1a47b549d18517078facc5d2d3437445277b65`.
 
@@ -16,8 +16,14 @@ production secure-RF command path, or freeze complete COMMAND/RESULT byte layout
 
 The earlier delegated-command independent audit did not review this later CAS
 contract. Its PASS disposition must not be extended to this document by
-implication. This CAS direction requires its own focused independent review before
-implementation/wire-freeze closure.
+implication.
+
+A focused independent CAS audit of branch head
+`f1ec46c139a009fea0fefb0ef647cdfe45049c40` returned **PASS WITH FIXES** with
+no BLOCKER/HIGH findings. The requested F1-F9 corrections are applied by the
+current branch. Final focused verification of those corrections remains required
+before merge/implementation/wire-freeze closure. The durable disposition is
+`docs/audits/CONFIG_STATE_TOKEN_CAS_AUDIT_DISPOSITION.md`.
 
 ---
 
@@ -152,13 +158,20 @@ No path may mutate durable semantic config while leaving the current state token
 unchanged, except the explicit unchanged-state no-op.
 
 CAS admission is serialized. The application/config owner acquires the single
-mutation slot **before** evaluating the authoritative token and holds ownership
-through durable completion/result. A second writer must receive bounded
-BUSY/retry behavior; it must not pre-check the same token and queue a competing
-write behind the first one.
+mutation slot **before any authoritative desired-state equality or token
+evaluation** and holds ownership through durable completion plus capture of the
+RESULT state fields. A second writer must receive bounded `BUSY`/retry behavior;
+it must not pre-check equality/token state and queue a competing write behind the
+first one.
+
+A save already in progress therefore prevents a second adapter from returning
+`ALREADY_SATISFIED` against the pre-save state. `BUSY` does not advance the
+config cache and must not carry a state token that callers may treat as the
+post-operation state.
 
 This prevents two independently valid adapters from both accepting the same
-precondition and then committing in sequence.
+precondition, and prevents an equality read from racing an already-admitted
+mutation.
 
 ---
 
@@ -290,40 +303,50 @@ evaluate in this order:
 1. authenticate/authorize protected command
 2. establish replay/freshness acceptance
 3. parse bounded desired state
-4. compare desired state with current durable semantic state
+4. acquire the single config mutation slot
+
+   unavailable:
+       BUSY
+       no ConfigStore write
+       no cache-authoritative state token
+
+5. while holding the slot, compare desired state with current durable semantic state
 
    equal:
        ALREADY_SATISFIED
        no ConfigStore write
        token unchanged
+       return current token only when token state == VALID
 
-5. require current token state == VALID
+6. require current token state == VALID
 
    not valid:
        STATE_UNCERTAIN / PRECONDITION_UNAVAILABLE
        no ConfigStore write
+       token_valid = 0; no usable token
 
-6. compare expected_state_token with current_state_token
+7. compare expected_state_token with current_state_token
 
    mismatch:
        STALE_PRECONDITION
        no ConfigStore write
 
-7. validate the complete candidate
+8. validate the complete candidate
 
    invalid:
        INVALID_ARGUMENT / policy result
        no ConfigStore write
 
-8. durably commit:
+9. durably commit:
        desired config
        same incarnation
        state_revision + 1
    as one application-visible atomic state transition
 
-9. only after durable success:
+10. only after durable success:
        APPLIED
-       return resulting_state_token
+       capture resulting_state_token from this transaction
+       release mutation ownership after RESULT state fields are captured
 ```
 
 This ordering is intentional.
@@ -353,6 +376,11 @@ The tracker now already contains the desired state.
 
 It returns `ALREADY_SATISFIED` without another flash write even though the old
 expected token no longer matches.
+
+This equality check is performed only while holding the mutation slot. If the
+token state is not VALID, the RESULT may still report
+`ALREADY_SATISFIED` for semantic equality but must report `token_valid = 0`
+and must not expose a recovered/uncertain token as cache-authoritative.
 
 This gives reset-safe desired-state idempotency without a persistent command-ID
 journal.
