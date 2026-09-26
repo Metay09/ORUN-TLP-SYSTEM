@@ -1,6 +1,6 @@
 # ORUN Config State-Token / CAS Direction
 
-Status: **OWNER-APPROVED DESIGN DIRECTION — INDEPENDENT AUDIT PASS WITH FIXES; FIXES APPLIED, FINAL VERIFY PENDING — DOCUMENTATION-ONLY — 2026-09-26.**
+Status: **OWNER-APPROVED DESIGN DIRECTION — INDEPENDENT AUDIT PASS WITH FIXES; FINAL VERIFY PASS WITH MINOR DOC FIX, R1 APPLIED — DOCUMENTATION-ONLY — 2026-09-26.**
 
 Baseline: `main@fb1a47b549d18517078facc5d2d3437445277b65`.
 
@@ -20,9 +20,11 @@ implication.
 
 A focused independent CAS audit of branch head
 `f1ec46c139a009fea0fefb0ef647cdfe45049c40` returned **PASS WITH FIXES** with
-no BLOCKER/HIGH findings. The requested F1-F9 corrections are applied by the
-current branch. Final focused verification of those corrections remains required
-before merge/implementation/wire-freeze closure. The durable disposition is
+no BLOCKER/HIGH findings. Final focused verification through
+`2141a6725662c14fe90a40102cfba36af7bc8602` returned
+**PASS WITH MINOR DOC FIX**, again with no BLOCKER/HIGH. The requested F1-F9
+corrections and final R1 migration clarification are applied by the current
+branch. The durable disposition is
 `docs/audits/CONFIG_STATE_TOKEN_CAS_AUDIT_DISPOSITION.md`.
 
 ---
@@ -418,19 +420,23 @@ migration/baseline operation that:
 - does not expose the token as VALID while an unproven committed legacy record
   can coexist with the tokenized state.
 
-The tokenized storage slice must make migration coexistence distinguishable from
-a later token-unaware firmware write. A legacy physical generation number alone
-is **not** sufficient provenance because a downgraded legacy firmware can reuse
-that number. An implementation must either:
+A legacy physical generation number or byte-for-byte legacy record identity is
+**not** sufficient migration provenance because the current deterministic legacy
+format can be reproduced by token-unaware firmware after downgrade.
 
-- durably bind the exact migrated legacy source identity strongly enough to prove
-  that any coexisting legacy record is that migration source; or
-- complete power-cut-safe retirement of committed legacy records before exposing
-  the new token as VALID.
+Therefore the **first tokenized implementation must use power-cut-safe retirement
+of committed legacy records before exposing the migrated tokenized baseline as
+VALID**. It must not rely on identifying a coexisting legacy record as the
+original migration source.
 
-If recovery sees a committed legacy record beside tokenized state and cannot
-prove that exact migration relationship, token state is UNCERTAIN and the old
-tokenized token is not accepted as VALID.
+Any committed legacy + tokenized mixed state must never make an existing
+tokenized token VALID. Recovery enters UNCERTAIN or performs an explicitly
+reviewed migration/re-baseline that creates a fresh incarnation.
+
+If power is lost during legacy retirement, the not-yet-exposed tokenized
+candidate is not treated as an established VALID identity. Recovery may repeat
+the reviewed migration with a fresh incarnation once the mixed state is handled
+safely.
 
 Once a tokenized baseline has been established, downgrade to token-unaware
 firmware is not a supported state-preserving product operation. If such firmware
