@@ -333,16 +333,14 @@ Do not silently revive the older token.
 
 ## 6. Normal v2 semantic save
 
-Precondition:
-
-```text
-token_state == VALID
-no other mutation owns the ConfigStore slot
-```
+No other mutation may own the ConfigStore slot while this decision is made.
 
 For candidate config C':
 
 ### 6.1 Semantic no-op
+
+Semantic equality is evaluated before requiring a valid token identity, matching
+the approved application CAS ordering.
 
 If:
 
@@ -350,16 +348,30 @@ If:
 C' == current durable semantic config
 ```
 
-then:
+then, regardless of whether token state is VALID, UNAVAILABLE or UNCERTAIN:
 
 - return synchronous no-op;
 - do not erase;
 - do not program;
 - do not advance storage generation;
 - do not advance state revision;
-- token unchanged.
+- token bytes/state remain unchanged.
+
+A higher layer may report ALREADY_SATISFIED, but it may expose a usable token only
+when token state is VALID.
 
 ### 6.2 Semantic change
+
+A real semantic change through the normal save path requires:
+
+```text
+token_state == VALID
+```
+
+If token state is UNAVAILABLE or UNCERTAIN, the changed candidate is not written
+through the normal save API. Establishment/recovery must first use the explicit
+baseline/migration/re-baseline path so that no semantic writer can bypass token
+identity.
 
 Given current:
 
@@ -932,52 +944,55 @@ The implementation slice must add or adapt tests for at least:
 
 11. blank -> defaults + token baseline;
 12. semantic save increments generation and revision exactly once;
-13. unchanged config -> no write/no token change;
-14. A -> B -> A -> distinct token revisions;
-15. body-stage power cut -> old committed state survives;
-16. post-commit/pre-result reboot -> new state recovers;
-17. revision exhaustion fails closed;
-18. storage-generation exhaustion fails closed.
+13. unchanged config -> no write/no token change even when token state is
+    UNAVAILABLE/UNCERTAIN;
+14. changed config with UNAVAILABLE/UNCERTAIN token state cannot bypass
+    baseline/re-baseline;
+15. A -> B -> A -> distinct token revisions;
+16. body-stage power cut -> old committed state survives;
+17. post-commit/pre-result reboot -> new state recovers;
+18. revision exhaustion fails closed;
+19. storage-generation exhaustion fails closed.
 
 ### legacy migration
 
-19. one valid v1 + erased target -> v2;
-20. two valid v1 pages -> higher legacy config preserved;
-21. v2 generation begins at 1 independent of v1 generation;
-22. token never VALID before last legacy page retirement;
-23. power cut before staged write completion;
-24. power cut after staged verification;
-25. power cut during legacy erase;
-26. power cut after legacy erase before commit;
-27. downgrade -> legacy write -> upgrade never resurrects old token;
-28. higher-generation committed-invalid v1 + lower valid v1 -> UNCERTAIN;
-29. unknown/unsupported page + valid v1 -> no automatic migration;
-30. CSPRNG failure before migration does not erase a valid legacy page;
-31. mixed valid v1+v2 never reuses v2 token;
-32. mixed same-config v1+v2 recovery creates fresh incarnation;
-33. mixed different-config v1+v2 remains UNCERTAIN;
-34. unsupported schema is not overwritten.
+20. one valid v1 + erased target -> v2;
+21. two valid v1 pages -> higher legacy config preserved;
+22. v2 generation begins at 1 independent of v1 generation;
+23. token never VALID before last legacy page retirement;
+24. power cut before staged write completion;
+25. power cut after staged verification;
+26. power cut during legacy erase;
+27. power cut after legacy erase before commit;
+28. downgrade -> legacy write -> upgrade never resurrects old token;
+29. higher-generation committed-invalid v1 + lower valid v1 -> UNCERTAIN;
+30. unknown/unsupported page + valid v1 -> no automatic migration;
+31. CSPRNG failure before migration does not erase a valid legacy page;
+32. mixed valid v1+v2 never reuses v2 token;
+33. mixed same-config v1+v2 recovery creates fresh incarnation;
+34. mixed different-config v1+v2 remains UNCERTAIN;
+35. unsupported schema is not overwritten.
 
 ### ambiguous recovery
 
-35. committed-invalid higher v2 + lower valid v2 -> token UNCERTAIN;
-36. equal-generation valid v2 pages -> UNCERTAIN;
-37. non-adjacent committed-valid v2 generations -> UNCERTAIN;
-38. committed G plus staged S remains VALID only for S == G+1;
-39. staged S <= G or S > G+1 -> UNCERTAIN;
-40. partial commit word -> UNCERTAIN;
-41. staged v2 never exposes token as VALID after reboot;
-42. interrupted fresh-baseline staged token is never promoted after reboot;
-43. non-erased no-valid-record -> UNCERTAIN;
-44. supported-schema re-baseline creates fresh incarnation;
-45. re-baseline diagnostics are observable.
+36. committed-invalid higher v2 + lower valid v2 -> token UNCERTAIN;
+37. equal-generation valid v2 pages -> UNCERTAIN;
+38. non-adjacent committed-valid v2 generations -> UNCERTAIN;
+39. committed G plus staged S remains VALID only for S == G+1;
+40. staged S <= G or S > G+1 -> UNCERTAIN;
+41. partial commit word -> UNCERTAIN;
+42. staged v2 never exposes token as VALID after reboot;
+43. interrupted fresh-baseline staged token is never promoted after reboot;
+44. non-erased no-valid-record -> UNCERTAIN;
+45. supported-schema re-baseline creates fresh incarnation;
+46. re-baseline diagnostics are observable.
 
 ### API ownership
 
-46. normal caller cannot supply revision;
-47. semantic mutation cannot retain old revision;
-48. reset changes token only when semantic config changes;
-49. test/probe mutation cannot bypass token progression.
+47. normal caller cannot supply revision;
+48. semantic mutation cannot retain old revision;
+49. reset changes token only when semantic config changes;
+50. test/probe mutation cannot bypass token progression.
 
 ---
 
