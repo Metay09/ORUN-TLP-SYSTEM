@@ -61,11 +61,16 @@ schema/runtime and complete COMMAND/RESULT wire bytes are not changed by that
 direction.
 
 The proposed exact persistence follow-up is
-`ORUN_CONFIG_STORE_V2_TOKENIZED_LAYOUT.md`. It is currently **review-required
-documentation-only design**, not an implemented schema. It proposes a 48-byte
-v2 ConfigStore record inside the existing two-page partition, staged
-body+CRC-before-commit migration, power-cut-safe legacy retirement and explicit
-v1/v2 recovery classification without allocating another flash page.
+`ORUN_CONFIG_STORE_V2_TOKENIZED_LAYOUT.md`. Its focused independent audit
+returned **PASS WITH FIXES** with 0 BLOCKER / 2 HIGH; H1/H2, M1-M4 and L1-L5
+corrections are applied and focused final verification remains pending. The
+durable audit record is
+`docs/audits/CONFIG_STORE_V2_TOKENIZED_LAYOUT_AUDIT_DISPOSITION.md`.
+The design keeps the sealed v2 record at 48 bytes inside the existing two-page
+partition, adds one page-local monotonic token-retire word, distinguishes local
+torn/corrupt evidence from genuine unsupported-newer schema, and defines staged
+migration/re-baseline without allocating a third flash page. It remains
+documentation-only and is not yet an implemented ConfigStore schema.
 
 
 Merged security primitive evidence (M7P6C): M7P6C is a
