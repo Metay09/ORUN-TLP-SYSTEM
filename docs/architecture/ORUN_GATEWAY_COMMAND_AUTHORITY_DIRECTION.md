@@ -418,5 +418,6 @@ The next security-command design must resolve, with tests and independent review
 - RF capacity at 10/100/1000 trackers;
 - physical sleepy-tracker + relay store-forward validation.
 
-No SecurityStore v2 or production-runtime change is authorized until those items
-are explicitly sliced and reviewed.
+This direction does not supersede the already-reviewed M7P6F SecurityStore v2
+backend/A2D persistence work. Any gateway-specific persistence or runtime change
+must be introduced as a separate reviewed slice after the items above are resolved.

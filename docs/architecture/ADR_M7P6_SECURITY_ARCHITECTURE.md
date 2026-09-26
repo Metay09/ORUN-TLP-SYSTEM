@@ -109,8 +109,15 @@ new credential_id=B, K_root=K2, epoch=1
 M7P6B freezes `credential_id` at **128 random bits (16 bytes)**. Re-provisioning
 must create a new credential lifetime. The store also refuses immediate reuse of the
 currently active `credential_id` or currently active `K_root` when resetting the TX
-counter to zero; preventing reuse of older historical roots remains a provisioning-layer
-responsibility.
+counter to zero.
+
+**Provisioning invariant:** a retired `credential_id` or `K_root` must never be
+reintroduced as a new credential lifetime for the same device. SecurityStore does not
+retain an unbounded history of old roots, so enforcement of historical uniqueness belongs
+to the future provisioning/authority owner. That owner must generate a fresh random root
+and credential ID, reject/avoid restoration of retired raw credential material, and treat
+backup/image rollback as a separate reviewed recovery procedure. Reusing an old root after
+its TX/A2D counters were reset would permit nonce reuse and replay re-acceptance.
 
 ### 3.2 No fleet/group authority key
 
@@ -340,7 +347,10 @@ The following direction is approved:
 - security credential reset/re-provision is a physical-service-authorized operation in
   the first design; do not add an ordinary remote credential-reset path;
 - normal config reset must not erase security credentials/counters;
-- re-provisioning creates a new `credential_id`;
+- re-provisioning creates a fresh `credential_id` **and fresh `K_root`**;
+- retired credential IDs/root keys are never deliberately reused; historical uniqueness
+  is a provisioning/authority responsibility because SecurityStore stores only the active
+  credential;
 - keys must never appear in ordinary logs or config dumps;
 - there must be no ordinary remote key read-back API.
 

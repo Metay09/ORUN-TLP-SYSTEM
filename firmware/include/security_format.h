@@ -2,107 +2,89 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// M7P6B: on-flash durable SecurityStore v1 record format
-// (docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md §5-§7,
-// docs/milestones/M7P6B.md). A sibling of journal_format.h/config_format.h:
-// explicit magic, schema version, generation, DeviceIdentity binding, CRC32
-// and 4-byte commit words. Record commit words are programmed after their
-// bodies; the PAGE HEADER commit word is additionally the A/B page-activation
-// marker and SecurityStore programs it last only after the full new-page
-// snapshot is durable. This lets recovery distinguish an interrupted page
-// build from an authoritative committed page. The format reuses
-// journal_format's already-tested byte-order/CRC32/erased-check primitives
-// directly instead of duplicating them. No shared state or physical pages
-// with HistoryStore or ConfigStore.
+// Durable SecurityStore record formats.
 //
-// Page layout (storage_config::kPageSize == 4096 bytes each, 2 pages A/B):
+// v1 (M7P6B) remains a read/migration compatibility format:
+//   32 B page header + 68 B credential + 111 * 36 B TX_RESERVE = 4096 B.
 //
-//   [0 .. kPageHeaderSize)                          page header
-//   [kPageHeaderSize .. +kCredentialRecordSize)      exactly one CREDENTIAL slot
-//   [.. end of page)                                 kTxReserveSlotsPerPage
-//                                                     TX_RESERVE slots
+// v2 (M7P6F) keeps the header/credential shapes but replaces the TX-only tail
+// with a 40-byte typed SECURITY_STATE append log. The only authorized state
+// kinds are TX reserve exclusive bound and A2D replay exclusive bound. No
+// generic state/plugin registry is introduced.
 //
-// Exactly one CREDENTIAL slot per page is deliberate, not a size accident:
-// credential changes are rare (re-provisioning only) and always happen
-// together with a fresh page (SecurityStore::commitCredential() and page
-// compaction always build a brand-new inactive page before activating it), so
-// recovery never needs to scan multiple CREDENTIAL candidates
-// per page -- slot 0 is the only one that can ever exist.
+// Page activation remains commit-last: the final page-header word is programmed
+// only after the complete new-page snapshot is durable/read-verified.
 namespace orun_tlp::security_format {
 
 constexpr uint32_t kMagic = 0x4F525331;  // "ORS1"
-constexpr uint8_t kVersion = 1;
+constexpr uint8_t kVersionV1 = 1;
+constexpr uint8_t kVersionV2 = 2;
+constexpr uint8_t kVersion = kVersionV2;  // current write format
 constexpr uint32_t kCommit = 0;
 
-// credential_id is a 128-bit random identifier (conventional UUID-class
-// width): large enough that accidental collision across any realistic
-// number of device re-provisioning events over the product's life is
-// negligible, without inventing a bespoke narrower encoding. See
-// docs/milestones/M7P6B.md for the exact justification.
 constexpr size_t kCredentialIdSize = 16;
-// K_root is exactly 256 random bits, stored raw (no at-rest
-// encryption/obfuscation is invented here -- physical extraction protection
-// is an explicitly unresolved product-security boundary, see the ADR).
 constexpr size_t kKRootSize = 32;
 
-// ---- Page header: magic(4) + version+reserved(4) + generation(8) +
-// device_identity(8) + crc32(4) + activation_commit(4). ----
-// The final word is kept erased while a new page is being assembled and is
-// programmed to kCommit only after credential + seed reservation snapshot
-// (when applicable) is durable/read-verified.
 constexpr uint32_t kPageHeaderSize = 32;
-
-// ---- CREDENTIAL record: credential_id(16) + key_epoch(4) +
-// device_identity(8) + k_root(32) + crc32(4) + commit(4). ----
 constexpr uint32_t kCredentialRecordSize = 68;
 
-// ---- TX_RESERVE record: credential_id(16) + key_epoch(4) +
-// tx_reserved_bound(8) + crc32(4) + commit(4). ----
+// Legacy v1 TX_RESERVE record:
+// credential_id(16) + key_epoch(4) + tx_reserved_bound(8) + crc32(4) +
+// commit(4).
 constexpr uint32_t kTxReserveRecordSize = 36;
-
-constexpr uint32_t kTxReserveSlotsPerPage =
+constexpr uint32_t kV1TxReserveSlotsPerPage =
     (4096 - kPageHeaderSize - kCredentialRecordSize) / kTxReserveRecordSize;
-
+// Compatibility alias for v1-only tests/helpers. New v2 code must use the
+// SECURITY_STATE constants below.
+constexpr uint32_t kTxReserveSlotsPerPage = kV1TxReserveSlotsPerPage;
 static_assert(kPageHeaderSize + kCredentialRecordSize +
-                      kTxReserveSlotsPerPage * kTxReserveRecordSize ==
+                      kV1TxReserveSlotsPerPage * kTxReserveRecordSize ==
                   4096,
-              "security page must pack exactly into one 4096-byte page");
+              "security v1 page must pack exactly into one 4096-byte page");
 
-// Initial TX counter reservation block size (ADR §6 seed value). A separate
-// namespace/constant from storage_config::kSequenceBlockSize -- the numeric
-// value happens to match today, but this is its own named constant with no
-// shared storage, state or code with HistoryStore's sequence reservation.
+// v2 SECURITY_STATE:
+// credential_id(16) + key_epoch(4) + kind(1) + reserved(3) + value(8) +
+// crc32(4) + commit(4).
+constexpr uint32_t kSecurityStateRecordSize = 40;
+constexpr uint32_t kSecurityStateSlotsPerPage =
+    (4096 - kPageHeaderSize - kCredentialRecordSize) / kSecurityStateRecordSize;
+constexpr uint32_t kSecurityStateTailBytes =
+    4096 - kPageHeaderSize - kCredentialRecordSize -
+    kSecurityStateSlotsPerPage * kSecurityStateRecordSize;
+static_assert(kSecurityStateSlotsPerPage == 99,
+              "security v2 must provide exactly 99 state slots");
+static_assert(kSecurityStateTailBytes == 36,
+              "security v2 must leave the reviewed 36-byte erased tail");
+
 constexpr uint64_t kTxReservationBlockSize = 256;
+constexpr uint64_t kA2dReplayReservationBlockSize = 8;
 
 uint32_t pageHeaderOffset();
 uint32_t credentialRecordOffset();
-uint32_t txReserveRecordOffset(unsigned slot);
+uint32_t txReserveRecordOffset(unsigned slot);       // v1 only
+uint32_t securityStateRecordOffset(unsigned slot);   // v2 only
 
 struct PageHeader {
-  // Explicit constructor (not default member initializers): the vendored
-  // RAK toolchain builds this firmware under gnu++11, where a struct with
-  // default member initializers is not an aggregate and brace-init like
-  // PageHeader{a, b} would not compile -- matches config_format::Config's
-  // own pattern.
-  constexpr PageHeader(uint64_t generation_value = 0, uint64_t device_identity_value = 0)
+  constexpr PageHeader(uint64_t generation_value = 0,
+                       uint64_t device_identity_value = 0)
       : generation(generation_value), device_identity(device_identity_value) {}
   uint64_t generation;
   uint64_t device_identity;
 };
 
-// bytes must point at kPageHeaderSize writable/readable bytes.
+// Current-format (v2) encoder/decoder used for all new writes.
 void encodePageHeader(const PageHeader& header, uint8_t* bytes);
-// Fails closed (false) on bad magic, nonzero reserved bytes, zero
-// generation, or a CRC/commit mismatch (torn or never-written header).
-// Does NOT itself distinguish version mismatch from other decode failure --
-// callers that must tell "not a header at all" apart from "a newer,
-// unsupported header version" should call headerVersion() first.
 bool decodePageHeader(const uint8_t* bytes, PageHeader& header);
-// Returns true and sets *version if bytes carry this format's magic at all
-// (any version), false if bytes do not look like a security page header
-// (wrong magic and not fully erased) or are fully erased/blank. Used to
-// distinguish UNSUPPORTED (recognized magic, unrecognized version) from
-// ordinary blank/corrupt bytes during recovery.
+
+// Explicit version helpers are used only for reviewed v1 recovery/migration and
+// malformed/golden tests. Supported values are kVersionV1 and kVersionV2.
+void encodePageHeaderVersion(const PageHeader& header, uint8_t version,
+                             uint8_t* bytes);
+bool decodePageHeaderVersion(const uint8_t* bytes, uint8_t expected_version,
+                             PageHeader& header);
+
+// Returns true and exposes the version whenever the ORS1 magic is present,
+// including an unsupported future version. Blank/wrong-magic bytes return false.
 bool headerMagicPresent(const uint8_t* bytes, uint8_t* version);
 
 struct Credential {
@@ -112,28 +94,37 @@ struct Credential {
   uint8_t k_root[kKRootSize]{};
 };
 
-// bytes must point at kCredentialRecordSize writable/readable bytes.
 void encodeCredential(const Credential& credential, uint8_t* bytes);
-// Fails closed on CRC/commit mismatch (torn/never-written record). Does not
-// itself validate device_identity binding -- callers compare the decoded
-// device_identity against the recovering DeviceIdentity themselves so a
-// mismatch can be reported as FOREIGN rather than silently discarded.
 bool decodeCredential(const uint8_t* bytes, Credential& credential);
 bool credentialIdEqual(const uint8_t (&a)[kCredentialIdSize],
-                        const uint8_t (&b)[kCredentialIdSize]);
+                       const uint8_t (&b)[kCredentialIdSize]);
 
+// Legacy v1-only record retained so new firmware can recover/migrate an
+// authoritative v1 page without reinterpreting any old byte.
 struct TxReserve {
   uint8_t credential_id[kCredentialIdSize]{};
   uint32_t key_epoch = 0;
   uint64_t tx_reserved_bound = 0;
 };
-
-// bytes must point at kTxReserveRecordSize writable/readable bytes.
 void encodeTxReserve(const TxReserve& reserve, uint8_t* bytes);
-// Fails closed on CRC/commit mismatch, or a bound that is zero or not a
-// multiple of kTxReservationBlockSize (a bound can only ever advance in
-// whole reservation blocks -- any other value is torn/corrupt, never a
-// legitimately smaller-but-valid bound).
 bool decodeTxReserve(const uint8_t* bytes, TxReserve& reserve);
+
+enum class SecurityStateKind : uint8_t {
+  kTxReserveExclusiveBound = 1,
+  kA2dReplayExclusiveBound = 2,
+};
+
+struct SecurityStateRecord {
+  uint8_t credential_id[kCredentialIdSize]{};
+  uint32_t key_epoch = 0;
+  SecurityStateKind kind = SecurityStateKind::kTxReserveExclusiveBound;
+  uint64_t value = 0;
+};
+
+// v2 only. decode fails closed on CRC/commit failure, nonzero reserved bytes,
+// unknown kind, zero value, or a value not aligned to that kind's reviewed
+// reservation block.
+void encodeSecurityState(const SecurityStateRecord& state, uint8_t* bytes);
+bool decodeSecurityState(const uint8_t* bytes, SecurityStateRecord& state);
 
 }  // namespace orun_tlp::security_format

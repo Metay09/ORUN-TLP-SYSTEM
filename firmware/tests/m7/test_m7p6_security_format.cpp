@@ -29,6 +29,44 @@ int main() {
     assert(decoded.generation == 42);
     assert(decoded.device_identity == 0x0E8ADE7E71531AA3ULL);
   }
+  // Explicit v1 compatibility: new firmware must decode the old page header
+  // only through the versioned migration path; the current decoder remains v2.
+  {
+    uint8_t bytes[kPageHeaderSize];
+    PageHeader original{7, 0x0E8ADE7E71531AA3ULL};
+    encodePageHeaderVersion(original, kVersionV1, bytes);
+    uint8_t version = 0;
+    assert(headerMagicPresent(bytes, &version));
+    assert(version == kVersionV1);
+    PageHeader decoded{};
+    assert(decodePageHeaderVersion(bytes, kVersionV1, decoded));
+    assert(decoded.generation == 7);
+    assert(decoded.device_identity == original.device_identity);
+    assert(!decodePageHeader(bytes, decoded));
+  }
+
+  // Exact v1/v2 page-header golden bytes. These pin version, byte order,
+  // offsets, CRC and activation word; migration compatibility must never rely
+  // on native struct layout.
+  {
+    static const uint8_t kV1Golden[kPageHeaderSize] = {
+        0x4F,0x52,0x53,0x31,0x01,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x07,
+        0x0E,0x8A,0xDE,0x7E,0x71,0x53,0x1A,0xA3,
+        0x82,0xA6,0x8A,0xCC,0x00,0x00,0x00,0x00};
+    static const uint8_t kV2Golden[kPageHeaderSize] = {
+        0x4F,0x52,0x53,0x31,0x02,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x07,
+        0x0E,0x8A,0xDE,0x7E,0x71,0x53,0x1A,0xA3,
+        0x2D,0x0F,0xC7,0x06,0x00,0x00,0x00,0x00};
+    uint8_t bytes[kPageHeaderSize];
+    const PageHeader header{7, 0x0E8ADE7E71531AA3ULL};
+    encodePageHeaderVersion(header, kVersionV1, bytes);
+    assert(memcmp(bytes, kV1Golden, sizeof(bytes)) == 0);
+    encodePageHeader(header, bytes);
+    assert(memcmp(bytes, kV2Golden, sizeof(bytes)) == 0);
+  }
+
   // Erased flash is not a valid header, and headerMagicPresent() correctly
   // reports "nothing here" rather than "unsupported".
   {
@@ -188,13 +226,129 @@ int main() {
     assert(!decodeTxReserve(bytes, decoded));
   }
 
+  // ---- v2 SECURITY_STATE record ----
+  {
+    uint8_t bytes[kSecurityStateRecordSize];
+    SecurityStateRecord original{};
+    fillId(original.credential_id, 21);
+    original.key_epoch = 4;
+    original.kind = SecurityStateKind::kTxReserveExclusiveBound;
+    original.value = kTxReservationBlockSize * 5;
+    encodeSecurityState(original, bytes);
+    SecurityStateRecord decoded{};
+    assert(decodeSecurityState(bytes, decoded));
+    assert(memcmp(decoded.credential_id, original.credential_id,
+                  kCredentialIdSize) == 0);
+    assert(decoded.key_epoch == 4);
+    assert(decoded.kind == SecurityStateKind::kTxReserveExclusiveBound);
+    assert(decoded.value == original.value);
+  }
+  {
+    uint8_t bytes[kSecurityStateRecordSize];
+    SecurityStateRecord original{};
+    fillId(original.credential_id, 22);
+    original.key_epoch = 9;
+    original.kind = SecurityStateKind::kA2dReplayExclusiveBound;
+    original.value = kA2dReplayReservationBlockSize * 7;
+    encodeSecurityState(original, bytes);
+    SecurityStateRecord decoded{};
+    assert(decodeSecurityState(bytes, decoded));
+    assert(decoded.kind == SecurityStateKind::kA2dReplayExclusiveBound);
+    assert(decoded.value == original.value);
+  }
+  // Exact v2 state-record golden bytes for both authorized kinds.
+  {
+    static const uint8_t kTxGolden[kSecurityStateRecordSize] = {
+        0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,
+        0x1D,0x1E,0x1F,0x20,0x21,0x22,0x23,0x24,
+        0x00,0x00,0x00,0x04,0x01,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x05,0x00,
+        0xDF,0x9B,0x2D,0x88,0x00,0x00,0x00,0x00};
+    static const uint8_t kA2dGolden[kSecurityStateRecordSize] = {
+        0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,
+        0x1E,0x1F,0x20,0x21,0x22,0x23,0x24,0x25,
+        0x00,0x00,0x00,0x09,0x02,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x38,
+        0x3D,0x6B,0xA6,0xF5,0x00,0x00,0x00,0x00};
+
+    SecurityStateRecord state{};
+    uint8_t bytes[kSecurityStateRecordSize];
+    fillId(state.credential_id, 21);
+    state.key_epoch = 4;
+    state.kind = SecurityStateKind::kTxReserveExclusiveBound;
+    state.value = kTxReservationBlockSize * 5;
+    encodeSecurityState(state, bytes);
+    assert(memcmp(bytes, kTxGolden, sizeof(bytes)) == 0);
+
+    state = SecurityStateRecord{};
+    fillId(state.credential_id, 22);
+    state.key_epoch = 9;
+    state.kind = SecurityStateKind::kA2dReplayExclusiveBound;
+    state.value = kA2dReplayReservationBlockSize * 7;
+    encodeSecurityState(state, bytes);
+    assert(memcmp(bytes, kA2dGolden, sizeof(bytes)) == 0);
+  }
+
+  // Unknown kind, nonzero reserved bytes, impossible alignment, CRC damage and
+  // erased/torn commit state all fail closed.
+  {
+    uint8_t bytes[kSecurityStateRecordSize];
+    SecurityStateRecord original{};
+    fillId(original.credential_id, 23);
+    original.key_epoch = 1;
+    original.kind = SecurityStateKind::kTxReserveExclusiveBound;
+    original.value = kTxReservationBlockSize;
+    encodeSecurityState(original, bytes);
+
+    uint8_t mutated[kSecurityStateRecordSize];
+    memcpy(mutated, bytes, sizeof(mutated));
+    mutated[20] = 0x7F;
+    SecurityStateRecord decoded{};
+    assert(!decodeSecurityState(mutated, decoded));
+
+    memcpy(mutated, bytes, sizeof(mutated));
+    mutated[21] = 1;
+    assert(!decodeSecurityState(mutated, decoded));
+
+    SecurityStateRecord bad = original;
+    bad.value = kTxReservationBlockSize + 1;
+    encodeSecurityState(bad, mutated);
+    assert(!decodeSecurityState(mutated, decoded));
+
+    bad = original;
+    bad.kind = SecurityStateKind::kA2dReplayExclusiveBound;
+    bad.value = kA2dReplayReservationBlockSize + 1;
+    encodeSecurityState(bad, mutated);
+    assert(!decodeSecurityState(mutated, decoded));
+
+    memcpy(mutated, bytes, sizeof(mutated));
+    mutated[24] ^= 0x01;
+    assert(!decodeSecurityState(mutated, decoded));
+
+    memcpy(mutated, bytes, sizeof(mutated));
+    memset(mutated + 36, 0xFF, 4);
+    assert(!decodeSecurityState(mutated, decoded));
+
+    memset(mutated, 0xFF, sizeof(mutated));
+    assert(!decodeSecurityState(mutated, decoded));
+  }
+
   // ---- Page packing sanity ----
   {
     assert(pageHeaderOffset() == 0);
     assert(credentialRecordOffset() == kPageHeaderSize);
-    assert(txReserveRecordOffset(0) == kPageHeaderSize + kCredentialRecordSize);
-    assert(txReserveRecordOffset(kTxReserveSlotsPerPage - 1) + kTxReserveRecordSize == 4096);
+    assert(txReserveRecordOffset(0) ==
+           kPageHeaderSize + kCredentialRecordSize);
+    assert(txReserveRecordOffset(kV1TxReserveSlotsPerPage - 1) +
+               kTxReserveRecordSize ==
+           4096);
+    assert(securityStateRecordOffset(0) ==
+           kPageHeaderSize + kCredentialRecordSize);
+    assert(securityStateRecordOffset(kSecurityStateSlotsPerPage - 1) +
+               kSecurityStateRecordSize ==
+           4096 - kSecurityStateTailBytes);
+    assert(kSecurityStateTailBytes == 36);
   }
 
-  puts("M7P6B security_format encode/decode checks: PASS");
+  puts("M7P6F security_format v1/v2 encode/decode checks: PASS");
 }
