@@ -297,6 +297,20 @@ evaluate in this order:
 
 This ordering is intentional.
 
+For the first protected ConfigStore family, `desired state` means the complete
+current ConfigStore semantic value, not a blind single-field patch. On the
+current M7P5 schema that is exactly:
+
+```text
+tracking_interval_seconds
+battery_capacity_mah
+```
+
+Encoding the complete 8-byte semantic state makes equality, retry and CAS
+behavior deterministic and fits the existing protected-plaintext budget. A later
+expanded config schema may define a new versioned desired-state representation;
+it must not silently reinterpret this first family.
+
 ### 6.1 Why equality comes before token mismatch
 
 Assume a command was applied successfully but its RESULT was lost.
@@ -472,6 +486,13 @@ tracker current token = U
 ```
 
 The sender must reconcile current state before replacing the expected token.
+A stale RESULT may carry the authenticated current token, but token alone does
+not tell the caller what semantic fields changed. If its config snapshot is not
+known current, it performs an explicit authenticated state read before deciding
+whether to retry.
+
+This conflict-path read is intentionally **not** required on the normal
+current-cache success path.
 
 The first implementation must **not** blindly convert a stale failure into
 "retry with whatever token the tracker just reported", because that would erase
@@ -584,6 +605,11 @@ the COMMAND candidate uses 24 fixed bytes plus 8 config bytes = 32 bytes. A
 compact RESULT can also fit within 32 bytes if the final schema/code/flags
 prefix remains bounded; the wire-freeze slice must prove the exact offsets and
 leave out optional detail rather than silently increasing the frame ceiling.
+
+The first RESULT should not echo the full config merely to avoid a later
+conflict-path read; preserving the 32-byte ceiling and sparse RF use is preferred.
+When reconciliation is actually needed, use the dedicated authenticated
+config/state read path.
 
 The later wire-contract slice must provide at least:
 
