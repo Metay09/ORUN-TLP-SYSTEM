@@ -87,13 +87,13 @@ void setV1Inspection(const uint8_t* bytes, PageInspection& inspection) {
   uint64_t generation = 0;
   Config config;
   if (decode(bytes, generation, config)) {
-    inspection.evidence = PageEvidence::kV1Committed;
+    inspection.evidence = PageEvidence::kLegacyV1Committed;
     inspection.has_decoded_record = true;
     inspection.generation = generation;
     inspection.config = config;
     return;
   }
-  inspection.evidence = PageEvidence::kV1CommittedCorrupt;
+  inspection.evidence = PageEvidence::kLegacyV1CommittedCorrupt;
 }
 
 void setV2DecodedInspection(const V2Record& record,
@@ -182,7 +182,7 @@ bool inspectPagePrefix(const uint8_t* bytes, size_t size,
   if (magic_matches && version == kVersion) {
     const uint32_t commit = jf::get32(bytes + kV1CommitOffset);
     if (commit == kErasedWord) {
-      inspection.evidence = PageEvidence::kV1UncommittedOrTorn;
+      inspection.evidence = PageEvidence::kLegacyV1UncommittedOrTorn;
       return true;
     }
     if (commit == kCommit) {
