@@ -38,6 +38,13 @@ validation architecture, read
 `docs/architecture/ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md` before designing a new
 service or cross-cutting subsystem.
 
+For geofence operational-state transitions, confirmation, adaptive tracking
+cadence and the current INSIDE/OUTSIDE product policy, read
+`docs/architecture/ORUN_GEOFENCE_OPERATIONAL_POLICY.md`. It is owner-approved
+design direction for later M6D implementation, not evidence that runtime/event
+transport is already implemented. It refines older conceptual NEAR_FENCE and
+fixed outside-cadence notes without changing the validated M6C geometry layer.
+
 For security, provisioning, anti-replay, secure-envelope, user/backend authorization
 or command work, read
 `docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md` before designing or coding.
@@ -366,9 +373,13 @@ Conceptual defaults are configurable, not hard-coded:
 - normal moving: approximately 15-30 minutes
 - stationary report: approximately 60 minutes
 - stationary maximum fresh-position age: 6 hours
-- near geofence: approximately 5 minutes
-- outside geofence: approximately 2-5 minutes
-- LOST trigger: OUTSIDE + approximately 3 hours without network contact
+- current M6D geofence cadence direction: configured base interval `B` while
+  INSIDE; confirmed OUTSIDE uses runtime effective interval `B / 3`
+- `NEAR_FENCE` has no current operational cadence/state; it is deferred unless
+  later field evidence justifies it
+- LOST trigger remains conceptually OUTSIDE + approximately 3 hours without
+  network contact, but trustworthy LOST is still gated on authenticated
+  receipt/contact semantics
 
 ---
 
@@ -408,14 +419,32 @@ Support polygon geofences.
 
 A tracker may have multiple simultaneously permitted polygon areas.
 
-States:
+Geometry relations remain:
 
 - INSIDE
-- NEAR_FENCE
+- BOUNDARY
 - OUTSIDE
 
-Use GNSS quality filtering, hysteresis and repeated valid fixes where useful to
-avoid false alarms.
+The current owner-approved M6D product-state baseline exposes only INSIDE and
+OUTSIDE. `NEAR_FENCE` is not part of the current operational policy; keep it as
+a possible future capability only if field evidence justifies it.
+
+A candidate transition between INSIDE and OUTSIDE uses a bounded three-observation
+confirmation episode: the candidate counts as observation 1, at most two more
+accepted fresh observations are requested, and a 2-of-3 majority decides the
+transition. Do not repeatedly reconfirm INSIDE->INSIDE or OUTSIDE->OUTSIDE.
+Confirmed OUTSIDE changes only the runtime effective tracking cadence to `B / 3`;
+it must not overwrite configured base interval `B` in ConfigStore.
+
+The local geofence owner emits the OUTSIDE event occurrence. Backend notification
+consumes that event; it must not add a second majority layer or independently
+manufacture the same tracker geofence alarm from ordinary POSITION packets.
+Current TLP v1 has no approved secure OUTSIDE-event packet, so remote event
+transport remains on the reviewed secure EVENT/v2 path. See
+`docs/architecture/ORUN_GEOFENCE_OPERATIONAL_POLICY.md`.
+
+Use accepted-location quality filtering and bounded confirmation to avoid false
+alarms. Do not weaken the existing GNSS no-overlap/stale-fix rules.
 
 FREE_GRAZE:
 

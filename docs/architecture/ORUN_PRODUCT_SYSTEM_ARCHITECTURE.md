@@ -305,6 +305,19 @@ Geofence evaluation remains local where safety/value requires offline behavior.
 
 It consumes accepted Location, not GNSS internals.
 
+The current focused M6D policy direction is defined by
+`ORUN_GEOFENCE_OPERATIONAL_POLICY.md`: the present product baseline exposes
+INSIDE/OUTSIDE operational state, confirms apparent state changes locally with
+bounded accepted observations, and derives OUTSIDE tracking cadence from the
+configured base interval rather than a fixed global number. `NEAR_FENCE`
+remains a possible future capability, not a current runtime requirement.
+
+The tracker-local OUTSIDE event is the source of the corresponding device
+geofence alarm occurrence. Backend notification consumes that event rather than
+re-deciding the same transition from ordinary POSITION packets. This does not
+prevent separate backend analytics; it preserves one owner for the device alarm
+truth.
+
 LOST is an application/network state machine, not a radio RSSI threshold.
 
 ### 5.7 Messaging

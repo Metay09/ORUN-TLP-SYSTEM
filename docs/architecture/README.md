@@ -37,6 +37,14 @@ EVENT/alarm, MESSAGE, COMMAND/RESULT, health/history/map), hardware-portability
 boundary and layered validation model. It is architecture direction, not evidence
 that those later runtimes exist.
 
+Owner-approved current geofence operational direction is recorded in
+`ORUN_GEOFENCE_OPERATIONAL_POLICY.md`. For later M6D implementation it refines
+older conceptual fixed NEAR/outside cadence notes: current product state is
+INSIDE/OUTSIDE, apparent state changes use bounded 2-of-3 accepted-observation
+confirmation, confirmed OUTSIDE derives runtime cadence `B / 3`, and
+`NEAR_FENCE` is deferred. It does not change M6C geometry evidence, TLP v1,
+secure EVENT transport requirements or the trustworthy-LOST/contact boundary.
+
 Owner-approved delegated-command security direction is recorded in
 `ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md`. The durable audit record is
 `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_AUDIT_DISPOSITION.md`, which
@@ -317,7 +325,9 @@ referenced by `main.cpp`:
 - multiple permitted-area union composition.
 
 They do not prove continuous activity sampling, cattle classification, runtime
-geofence state, NEAR_FENCE, hysteresis, FREE_GRAZE or LOST.
+geofence state, transition confirmation, adaptive `B / 3` cadence, FREE_GRAZE,
+OUTSIDE-event transport or LOST. `NEAR_FENCE` is not part of the current M6D
+baseline and remains only a deferred possible capability.
 
 Current measured linked image after M6C2 remains:
 
