@@ -42,9 +42,12 @@ only as the independently audited historical target. The first audit is
 `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_INDEPENDENT_AUDIT.md`; the
 focused V2 re-audit is
 `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_REAUDIT.md` and returned
-**PASS WITH FIXES** with no BLOCKER/HIGH findings. The V2 document now contains
-the requested document-level corrections, but remains not owner-approved and
-does not authorize production secure-RF runtime or freeze COMMAND/RESULT bytes.
+**PASS WITH FIXES** with no BLOCKER/HIGH findings. The final focused check is
+`docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_FINAL_VERIFY.md` and returned
+**PASS WITH MINOR DOC FIX**; its D1-D4 corrections are now applied in the V2
+document. The delegated authority/header design is ready to be presented for
+owner approval as design direction, but remains not owner-approved and does not
+authorize production secure-RF runtime or freeze COMMAND/RESULT bytes.
 
 
 Merged security primitive evidence (M7P6C): M7P6C is a
