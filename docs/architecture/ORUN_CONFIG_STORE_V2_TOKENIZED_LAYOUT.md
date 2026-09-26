@@ -629,26 +629,42 @@ This is a one-time persistence cost, not routine RF traffic.
 
 ### 8.1 Legacy recovery source
 
-Automatic legacy migration is allowed only when every non-erased page can be
-explained as:
+v1 has no application token, so local supported-format damage must not be
+mistaken for a future schema and permanently wedge migration.
 
-- a structurally/semantically valid committed v1 record; or
-- a supported v1 body whose commit word remained erased/unset and is therefore
-  an uncommitted candidate.
+Automatic legacy migration/re-baseline is allowed when:
 
-A committed-invalid supported v1 record, a partial/ambiguous v1 commit word, or
-any unsupported/unknown page is contradictory evidence and makes token state
-UNCERTAIN. In particular, the current M7P5 behavior that can skip a
-higher-generation semantically-invalid committed record and use a lower valid
-record is **not** sufficient for tokenized migration.
+- no page is `UNSUPPORTED_NEWER`;
+- at least one complete semantic config can be selected unambiguously from a
+  valid v1 record or a verified staged copy created by this migration family;
+- every other non-erased page is supported v1/v2 torn/corrupt evidence that
+  does not introduce a different valid semantic config.
 
-When automatic migration is allowed and one or two valid committed v1 records
-exist, the migration source config is the valid v1 record with the highest v1
-generation.
+For ordinary one/two-valid-v1 recovery, the semantic source is the valid v1
+record with the highest generation.
 
-If two valid v1 records have equal generation, recovery does not choose by page
-index. Equal generation is not produced by the defined v1 A/B algorithm and is
-treated as UNCERTAIN, even if the semantic values happen to match.
+A higher-generation `V1_COMMITTED_INVALID` does **not** become authoritative,
+but it also does not permanently block token establishment when a lower valid v1
+record supplies the only usable semantic config. This is the supported-corruption
+case already permitted by the CAS recovery contract:
+
+```text
+operational semantic config = selected valid v1 fallback
+token_state                 = UNAVAILABLE/UNCERTAIN until fresh v2 baseline commits
+diagnostic                   = recovery degradation recorded
+```
+
+The implementation may then migrate that selected fallback with a fresh
+incarnation.
+
+If two valid v1 records have equal generation:
+
+- same complete semantic config: semantic state is UNAMBIGUOUS; fresh-incarnation
+  migration is allowed with diagnostics;
+- different semantic config: semantic state is AMBIGUOUS; automatic migration is
+  prohibited and maintenance must select the semantic value.
+
+A genuine `UNSUPPORTED_NEWER` page always blocks automatic rewrite.
 
 ### 8.2 Why v2 generation restarts at 1
 
@@ -713,89 +729,127 @@ No third page and no second activation marker are required.
 
 ---
 
-## 9. Power cut during legacy migration
+## 9. Power cut during migration / staged recovery
 
-### 9.1 Before staged v2 body verifies
+The recovery invariant is:
 
-At least one valid legacy source remains.
+> Before every destructive erase, the selected semantic config has at least one
+> independently verified persistent copy that is not the page being erased.
 
-Recovery ignores incomplete target state and retries migration with a **fresh
-incarnation**.
+CSPRNG generation for the next incarnation also occurs **before** the next
+destructive erase. If CSPRNG fails, no erase is started.
 
-### 9.2 After staged v2 verifies, before legacy erase begins
+No staged token is ever promoted after reboot.
 
-Recovery sees:
+### 9.1 Interrupted target erase or target body write
 
-```text
-valid legacy
-+
-V2_STAGED_VALID
-```
+If a valid legacy source remains and the other page contains
+`V1_UNCOMMITTED_OR_TORN`, `V2_UNCOMMITTED_OR_TORN`, or
+`SUPPORTED_CORRUPT` caused by the attempted target erase/write, the valid
+legacy source remains the semantic authority for migration purposes.
+
+Recovery:
+
+1. records a degradation diagnostic;
+2. obtains a fresh incarnation;
+3. only after CSPRNG success erases the damaged target;
+4. restarts the staged v2 migration.
+
+This directly covers a power cut during the first target-page erase; the damaged
+page is **supported local corruption**, not `UNSUPPORTED_NEWER`.
+
+### 9.2 Valid legacy + V2_STAGED_VALID
 
 The staged token is never made VALID.
 
-The implementation may erase the staged target and restart migration from the
-valid legacy source with a fresh incarnation.
+If staged semantic config equals the selected legacy config, either copy can
+preserve semantics while migration is restarted, but the staged incarnation is
+discarded.
 
-### 9.3 During legacy-source erase
+The simplest first path is:
 
-Possible recovery:
+1. keep the valid legacy page untouched;
+2. obtain a fresh incarnation;
+3. erase the staged target;
+4. write/verify a fresh staged v2 candidate;
+5. continue normal legacy retirement.
+
+### 9.3 V2_STAGED_VALID + damaged former legacy source
+
+A power cut while erasing the final legacy source can leave:
 
 ```text
 V2_STAGED_VALID
 +
-non-erased/invalid former legacy page
+SUPPORTED_CORRUPT former legacy page
 ```
 
-This is not ordinary VALID recovery.
+The verified stage is now the only unambiguous semantic copy, but its token still
+must not be promoted.
 
-The staged token is never promoted.
+Recovery uses its **semantic config only**:
 
-The semantic config in the staged record may be used only as a recovery fallback
-under the reviewed UNCERTAIN/re-baseline policy; a new incarnation is required
-before protected CAS resumes.
+1. keep the verified staged page untouched;
+2. obtain a fresh incarnation before any erase;
+3. erase the damaged other page;
+4. write/verify a fresh staged v2 candidate to that page;
+5. erase the old staged page;
+6. verify erase;
+7. commit the fresh candidate;
+8. verify committed record;
+9. expose VALID.
 
-A bounded recovery sequence can:
+The new candidate uses a fresh incarnation. Its storage generation is chosen
+strictly above any trusted supported v2 generation observed in this recovery
+transaction; generation is ordering metadata, not proof of token continuity.
+
+### 9.4 One staged v2 + one erased page
+
+A staged token is never promoted after reboot, including a blank-partition
+baseline interrupted before commit.
+
+Recovery:
+
+1. use the staged record only as an unambiguous semantic copy;
+2. obtain a fresh incarnation;
+3. write a fresh staged baseline to the erased page;
+4. verify;
+5. erase the old staged page;
+6. commit/verify the fresh candidate;
+7. expose VALID.
+
+### 9.5 Two V2_STAGED_VALID pages
+
+Two staged records are never resolved by token/generation alone.
+
+If their complete semantic configs are equal:
 
 ```text
-1. preserve the staged semantic config as fallback
-2. erase the damaged other page
-3. generate fresh incarnation
-4. write a fresh staged v2 baseline to the erased page with a higher local
-   v2 generation than any intact staged v2 candidate
-5. verify
-6. erase the old staged page
-7. commit the fresh candidate
-8. expose VALID
+semantic_state = UNAMBIGUOUS
+token_state    = UNCERTAIN/UNAVAILABLE
 ```
 
-If recovery cannot establish the preconditions safely, remain UNCERTAIN and
-require explicit maintenance/re-baseline.
+Recovery obtains a **new** incarnation, keeps one staged page only as the
+semantic safety copy, erases the other, writes/verifies a fresh stage there,
+then erases the old stage and commits the fresh candidate.
 
-### 9.4 After legacy erase verifies, before v2 commit
+If their semantic configs differ:
 
-Only an uncommitted staged v2 record may remain.
+```text
+semantic_state = AMBIGUOUS
+token_state    = UNCERTAIN
+```
 
-After reboot, its token still must not be assumed previously unexposed, because a
-partially erased historical page can theoretically resemble an uncommitted
-candidate.
+No automatic erase/re-baseline occurs. Maintenance must select the semantic
+config.
 
-Therefore reboot recovery does not simply promote the old staged token.
+### 9.6 After committed v2 verification
 
-It uses the supported-schema re-baseline rule and creates a **fresh incarnation**
-before returning to VALID.
+Only after commit programming **and readback verification** succeeds may the new
+token be published VALID.
 
-The same rule applies to a fresh/blank-partition baseline interrupted after a
-valid staged v2 body was written but before its commit word was programmed: the
-staged semantic config may be reused, but that staged incarnation is never
-promoted after reboot. A fresh incarnation is generated for the recovered
-baseline.
-
-### 9.5 After v2 commit verifies
-
-Migration is complete.
-
-The tokenized record is authoritative and token state is VALID.
+Repeated power loss may cause the staged/recovery process to restart with another
+fresh incarnation, but it never promotes a previously staged token.
 
 ---
 
