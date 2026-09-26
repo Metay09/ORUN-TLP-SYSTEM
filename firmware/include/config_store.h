@@ -110,6 +110,8 @@ class ConfigStore {
   void fail();
   void finishSave();
   void setMaintenance(ConfigTokenState token_state);
+  void setMaintenanceFallback(const config_format::PageInspection& fallback,
+                              ConfigTokenState token_state);
   void clearRecoveredRuntimeState();
 
   FlashBackend& flash_;
