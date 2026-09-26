@@ -29,10 +29,20 @@ NrfConfigFlash config_flash;
 NrfConfigIncarnationSource incarnation_source;
 ConfigStore config_store(config_flash, &incarnation_source);
 
-bool cleaned = false;
+bool terminal = false;
 uint32_t last_terminal_report_ms = 0;
 char command_buffer[20]{};
 uint8_t command_length = 0;
+char final_report[128] = "CONFIG V2 QUAL NOT TERMINAL";
+
+void setTerminalReport(const char* text) {
+  strncpy(final_report, text, sizeof(final_report) - 1);
+  final_report[sizeof(final_report) - 1] = '\0';
+  Serial.println(final_report);
+  Serial.flush();
+  last_terminal_report_ms = millis();
+  terminal = true;
+}
 
 const char* evidenceName(config_format::PageEvidence evidence) {
   using E = config_format::PageEvidence;
@@ -179,35 +189,30 @@ void cleanConfigPartition() {
   Serial.flush();
 
   if (!softDeviceDisabled()) {
-    Serial.println(F("CONFIG V2 CLEAN FAIL softdevice_enabled"));
-    Serial.flush();
+    setTerminalReport("CONFIG V2 CLEAN FAIL softdevice_enabled; POWER-CYCLE BEFORE RETRY");
     return;
   }
   if (!config_flash.begin()) {
-    Serial.println(F("CONFIG V2 CLEAN FAIL config_flash_begin"));
-    Serial.flush();
+    setTerminalReport("CONFIG V2 CLEAN FAIL config_flash_begin; POWER-CYCLE BEFORE RETRY");
     return;
   }
 
   for (uint32_t page = 0; page < kFutureConfigRegionPages; ++page) {
     if (config_flash.erasePage(page) != FlashOpResult::kDone) {
-      Serial.printf("CONFIG V2 CLEAN FAIL erase page=%lu\n",
-                    static_cast<unsigned long>(page));
-      Serial.flush();
+      snprintf(final_report, sizeof(final_report),
+               "CONFIG V2 CLEAN FAIL erase page=%lu; POWER-CYCLE BEFORE RETRY",
+               static_cast<unsigned long>(page));
+      setTerminalReport(final_report);
       return;
     }
   }
 
   if (!regionErased()) {
-    Serial.println(F("CONFIG V2 CLEAN FAIL verify"));
-    Serial.flush();
+    setTerminalReport("CONFIG V2 CLEAN FAIL verify; POWER-CYCLE BEFORE RETRY");
     return;
   }
 
-  cleaned = true;
-  last_terminal_report_ms = millis();
-  Serial.println(F("CONFIG V2 CLEAN PASS pages=2 all_ff=yes; POWER-CYCLE NOW"));
-  Serial.flush();
+  setTerminalReport("CONFIG V2 CLEAN PASS pages=2 all_ff=yes; POWER-CYCLE NOW");
 }
 
 void handleCommand() {
@@ -250,9 +255,9 @@ void setup() {
 }
 
 void loop() {
-  if (cleaned) {
+  if (terminal) {
     if (Serial && (millis() - last_terminal_report_ms) >= 3000U) {
-      Serial.println(F("CONFIG V2 CLEAN PASS pages=2 all_ff=yes; POWER-CYCLE NOW"));
+      Serial.println(final_report);
       Serial.flush();
       last_terminal_report_ms = millis();
     }
