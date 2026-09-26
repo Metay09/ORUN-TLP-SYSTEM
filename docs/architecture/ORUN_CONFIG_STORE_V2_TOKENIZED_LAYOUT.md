@@ -1,6 +1,6 @@
 # ORUN ConfigStore v2 Tokenized Layout Direction
 
-Status: **PROPOSED DESIGN — DOCUMENTATION-ONLY — REVIEW REQUIRED — 2026-09-26.**
+Status: **PROPOSED DESIGN — INDEPENDENT AUDIT PASS WITH FIXES; H1/H2/M1-M4/L1-L5 CORRECTIONS IN PROGRESS — DOCUMENTATION-ONLY — 2026-09-26.**
 
 Baseline:
 
@@ -107,7 +107,41 @@ The CRC covers:
 
 Therefore config and token identity are one sealed record.
 
-### 2.1 Application state token
+### 2.1 Page-local token-retire word
+
+The v2 **record remains 48 bytes**. One additional page-local monotonic word is
+reserved immediately after it:
+
+```text
+page offset 48..51  token_retire_word
+```
+
+Values:
+
+```text
+0xFFFFFFFF  token identity not explicitly retired
+any other value  token identity retired / non-authoritative
+```
+
+The implementation programs `0x00000000` when intentionally retiring an
+otherwise committed v2 token before destructive re-baseline work. Recovery treats
+**any non-FF value** as retired so a partially programmed retire word fails safe.
+
+The retire word is deliberately outside the v2 record CRC. It must be writable
+from erased `0xFFFFFFFF` to a retired value without rewriting the committed
+record.
+
+Normal config saves never program this word. A target page is fully erased before
+a new v2 record is staged, so its retire word begins at `0xFFFFFFFF`.
+
+A retire operation is complete only after the 4-byte write has been read back and
+verified as non-FF. Contradictory evidence must not be erased before that
+verification succeeds.
+
+This adds one 4-byte page-local metadata location, not a third page, filesystem,
+second record activation marker or periodic flash write.
+
+### 2.2 Application state token
 
 The durable application token is:
 
@@ -129,7 +163,7 @@ Requirements:
 The on-flash byte order above does not freeze a later RF/BLE token serialization.
 Wire encoding remains owned by the later protocol slice.
 
-### 2.2 Physical storage generation
+### 2.3 Physical storage generation
 
 `storage_generation` remains A/B page ordering metadata only.
 
