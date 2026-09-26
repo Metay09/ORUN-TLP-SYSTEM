@@ -49,6 +49,33 @@ bool exactSuccessor(const config_format::PageInspection& committed,
          staged.token.revision == committed.token.revision + 1;
 }
 
+// ConfigStore v2 owns only a fixed 52-byte prefix in each 4096-byte page.
+// Everything after that prefix is currently unused and must remain erased.
+// Check it in a small fixed buffer so recovery never spends a 4 KiB stack
+// allocation merely to prove that a page is physically blank/current-schema.
+bool readPageTailErased(FlashBackend& flash, unsigned page,
+                        bool& tail_erased) {
+  constexpr size_t kChunkSize = 64;
+  uint8_t chunk[kChunkSize];
+  uint32_t within_page = config_format::kV2PagePrefixSize;
+  tail_erased = true;
+
+  while (within_page < storage_config::kPageSize) {
+    const uint32_t remaining = storage_config::kPageSize - within_page;
+    const size_t size =
+        remaining < kChunkSize ? static_cast<size_t>(remaining) : kChunkSize;
+    const uint32_t offset =
+        page * storage_config::kPageSize + within_page;
+    if (!flash.read(offset, chunk, size)) return false;
+    if (!journal_format::erased(chunk, size)) {
+      tail_erased = false;
+      return true;
+    }
+    within_page += static_cast<uint32_t>(size);
+  }
+  return true;
+}
+
 }  // namespace
 
 void ConfigStore::clearRecoveredRuntimeState() {
@@ -140,6 +167,22 @@ bool ConfigStore::recover() {
     if (!config_format::inspectPagePrefix(
             bytes, sizeof(bytes), pages[page].inspection))
       return false;
+
+    // Prefix-erased is not enough to call a 4096-byte page blank. Likewise a
+    // current v1/v2 record with programmed bytes after the owned 52-byte
+    // prefix is not a normal current-schema page. Genuine future schemas are
+    // excluded because their discriminator is a downgrade boundary and older
+    // firmware must not interpret their page layout.
+    if (pages[page].inspection.evidence !=
+        config_format::PageEvidence::kUnsupportedNewer) {
+      bool tail_erased = false;
+      if (!readPageTailErased(flash_, page, tail_erased)) return false;
+      if (!tail_erased) {
+        pages[page].inspection = config_format::PageInspection();
+        pages[page].inspection.evidence =
+            config_format::PageEvidence::kSupportedCorrupt;
+      }
+    }
 
     const auto evidence = pages[page].inspection.evidence;
     if (evidence != config_format::PageEvidence::kErased)
