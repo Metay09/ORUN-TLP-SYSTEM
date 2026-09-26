@@ -48,12 +48,17 @@ direction only; it does not authorize production secure-RF runtime or freeze
 COMMAND/RESULT bytes.
 
 Owner-approved config stale-write/CAS direction is recorded separately in
-`ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md`. It defines an opaque 96-bit config
-state token, backend/gateway-heavy orchestration with tracker-final precondition
-checking, A->B->A non-reuse, explicit VALID/UNAVAILABLE/UNCERTAIN recovery
-semantics, and no periodic token traffic in POSITION/telemetry/event frames.
-It remains documentation-only: ConfigStore schema/runtime and complete
-COMMAND/RESULT wire bytes are not changed by that direction.
+`ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md`. Its durable focused audit record is
+`docs/audits/CONFIG_STATE_TOKEN_CAS_AUDIT_DISPOSITION.md`. The independent
+audit returned **PASS WITH FIXES** with no BLOCKER/HIGH; F1-F9 corrections are
+applied on the design branch and final focused verification remains pending. The
+direction defines an opaque 96-bit config state token, backend/gateway-heavy
+orchestration with tracker-final precondition checking, A->B->A non-reuse,
+explicit VALID/UNAVAILABLE/UNCERTAIN recovery semantics, serialized mutation
+ownership, bounded 32-byte mutation/read contracts, and no periodic token traffic
+in POSITION/telemetry/event frames. It remains documentation-only: ConfigStore
+schema/runtime and complete COMMAND/RESULT wire bytes are not changed by that
+direction.
 
 
 Merged security primitive evidence (M7P6C): M7P6C is a
