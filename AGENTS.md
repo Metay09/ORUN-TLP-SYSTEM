@@ -42,16 +42,15 @@ For security, provisioning, anti-replay, secure-envelope, user/backend authoriza
 or command work, read
 `docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md` before designing or coding.
 
-For the current delegated gateway-command design review, also read
-`docs/architecture/ORUN_TLP_V2_COMMAND_SECURITY_CONTRACT_DRAFT_V2.md` together
+For delegated gateway-command security work, read
+`docs/architecture/ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md` together
 with
 `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_AUDIT_DISPOSITION.md`.
 
-The disposition consolidates the independent audit/re-audit/final verification
-chain. Raw reviewer prompts/transcripts are not architecture sources and were
-removed after their accepted findings were incorporated. The delegated
-authority/header design may now be presented for owner approval as design
-direction, but V2 is still not owner-approved wire/runtime authority.
+The delegated authority/header architecture is owner-approved design direction.
+It is not a wire freeze or production-runtime authorization. The disposition
+consolidates the independent audit/re-audit/final verification chain; raw
+reviewer prompts/transcripts and superseded drafts are not architecture sources.
 
 For RF-domain/channel planning, shared relay/gateway infrastructure, field coverage
 learning, USB/BLE diagnostics or future serviceability UI, read
