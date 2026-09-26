@@ -57,6 +57,7 @@ void ConfigStore::clearRecoveredRuntimeState() {
   token_state_ = ConfigTokenState::kUnavailable;
   semantic_unambiguous_ = false;
   maintenance_reset_required_ = false;
+  application_config_committed_ = false;
   generation_ = 0;
   active_page_ = -1;
 }
@@ -225,6 +226,8 @@ bool ConfigStore::recover() {
     generation_ = hi.generation;
     config_ = hi.config;
     token_ = hi.token;
+    application_config_committed_ =
+        hi.token.revision > 1 || !sameConfig(hi.config, defaultConfig());
     token_state_ = ConfigTokenState::kValid;
     semantic_unambiguous_ = true;
     return true;
@@ -255,6 +258,9 @@ bool ConfigStore::recover() {
   generation_ = committed.generation;
   config_ = committed.config;
   token_ = committed.token;
+  application_config_committed_ =
+      committed.token.revision > 1 ||
+      !sameConfig(committed.config, defaultConfig());
   token_state_ = ConfigTokenState::kValid;
   semantic_unambiguous_ = true;
   return true;
@@ -318,6 +324,7 @@ bool ConfigStore::establishFreshBaseline() {
   token_state_ = ConfigTokenState::kValid;
   semantic_unambiguous_ = true;
   maintenance_reset_required_ = false;
+  application_config_committed_ = false;
   ++diagnostics_.baseline_commits;
   return true;
 }
@@ -464,6 +471,7 @@ void ConfigStore::finishSave() {
   token_state_ = ConfigTokenState::kValid;
   semantic_unambiguous_ = true;
   maintenance_reset_required_ = false;
+  application_config_committed_ = true;
   job_ = Job::kNone;
   ++diagnostics_.saves;
   save_result_ready_ = true;
