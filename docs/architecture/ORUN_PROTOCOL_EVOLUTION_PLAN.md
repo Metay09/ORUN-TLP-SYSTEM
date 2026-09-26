@@ -230,7 +230,7 @@ independently reviewed **candidate contract** before a v2 layout is allocated:
   key epoch, direction and the sender's durable 64-bit security counter; the
   first wire proposal should prefer carrying the full counter rather than add
   unauthenticated multi-candidate reconstruction work;
-- gateway/relay forwarding does not own keys, counters or replay acceptance;
+- ordinary gateway/relay forwarding does not own tracker keys, counters or replay acceptance; an explicitly enrolled delegated command-capable gateway is a later reviewed exception that may own only per-tracker delegated grant material and its own sender counter, never tracker `K_root`; an ordinary relay remains opaque custody/transport;
 - replay state changes only after successful AEAD authentication, and retired
   key epochs do not become acceptable again merely because replay state changes;
 - device A2D starts with strict durable monotonic admission, while the backend
