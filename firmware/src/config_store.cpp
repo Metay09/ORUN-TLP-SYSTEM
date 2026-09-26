@@ -135,9 +135,9 @@ bool ConfigStore::begin() {
   // clean-cutover product. recover() leaves it as defaults/FALLBACK_ONLY.
   if (!maintenance_reset_required_ && active_page_ < 0 &&
       token_state_ == ConfigTokenState::kUnavailable) {
-    if (incarnation_source_ != nullptr) {
-      (void)establishFreshBaseline();
-    }
+    if (incarnation_source_ != nullptr &&
+        !establishFreshBaseline())
+      return false;
   }
 
   ready_ = true;
@@ -456,11 +456,14 @@ bool ConfigStore::writeFreshBaseline(
 }
 
 bool ConfigStore::establishFreshBaseline() {
-  if (incarnation_source_ == nullptr) return false;
+  if (incarnation_source_ == nullptr) return true;
 
   uint64_t incarnation = 0;
+  // CSPRNG failure is fail-closed for token establishment but not a backend
+  // initialization failure: safe defaults remain readable and mutation stays
+  // unavailable for this boot.
   if (!incarnation_source_->generate(incarnation) || incarnation == 0)
-    return false;
+    return true;
 
   const config_format::V2Record record(
       1, defaultConfig(),
@@ -472,10 +475,12 @@ bool ConfigStore::establishFreshBaseline() {
       mutation_unreconciled_ = true;
       token_state_ = ConfigTokenState::kUncertain;
       ++diagnostics_.unreconciled_mutation_faults;
-    } else if (!recover()) {
-      ready_ = false;
+      return true;
     }
-    return false;
+    // A cleanly failed synchronous attempt may have left local staged/partial
+    // evidence. Reclassify it before reporting the store ready. If even the
+    // read-only recovery cannot complete, begin() must fail.
+    return recover();
   }
 
   active_page_ = 0;
