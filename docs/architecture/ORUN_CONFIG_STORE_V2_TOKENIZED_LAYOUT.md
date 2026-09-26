@@ -13,9 +13,14 @@ Depends on:
 - `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md`
 
 This slice defines the exact **on-flash ConfigStore v2 record layout**, two-page
-A/B transition rules, legacy-v1 migration sequence, token-state recovery
-classification and implementation invariants required before firmware code is
-changed.
+A/B transition rules, token-state recovery classification and implementation
+invariants required before firmware code is changed.
+
+The repository currently has **no deployed field fleet whose ConfigStore v1
+contents must be preserved**. Therefore automatic v1 -> v2 migration is not a
+current product requirement. The previously reviewed legacy-migration sections
+remain as contingency analysis only; they are not authorized for implementation
+without a new explicit product need.
 
 It does **not** implement firmware, change TLP v1, change BLE GET_CONFIG, freeze
 COMMAND/RESULT application bytes or authorize production secure-RF runtime.
@@ -43,8 +48,11 @@ The v2 design must preserve the proven family of invariants:
 - power loss must never make config bytes and token bytes come from different
   application states;
 - unchanged semantic config causes no flash write;
-- token progression occurs only with a successful semantic config transition;
-- legacy/tokenized migration must not resurrect an old token.
+- token progression occurs only with a successful semantic config transition.
+
+ConfigStore v1 development data is **not** a backward-compatibility promise.
+TLP v1 wire compatibility remains a separate invariant and is unaffected by this
+storage cutover policy.
 
 The first tokenized schema still persists exactly:
 
@@ -54,6 +62,45 @@ battery_capacity_mah      : u32
 ```
 
 No unrelated requested/effective/profile/capability fields are added here.
+
+### 1.1 Development cutover policy
+
+Current product phase:
+
+```text
+deployed ConfigStore fleet = none
+development devices        = resettable
+```
+
+The first production-intent v2 runtime therefore uses a **clean cutover**:
+
+```text
+existing development ConfigStore v1 data
+-> explicit development/maintenance ConfigStore partition erase
+-> blank two-page ConfigStore
+-> fresh nonzero CSPRNG incarnation
+-> revision 1
+-> v2 baseline
+-> v2-only normal operation
+```
+
+Rules:
+
+- do not implement automatic v1 -> v2 semantic migration in the current product;
+- do not preserve development-only v1 config merely for historical convenience;
+- once the runtime cutover is complete, normal firmware writes only v2;
+- a later v2 runtime that encounters a committed v1 record does not auto-migrate
+  it: it reports a legacy-development-schema / maintenance-reset condition;
+- mixed committed v1+v2 is never auto-reconciled in the current product; it is a
+  maintenance/reset condition;
+- legacy v1 codec code may remain temporarily only while the current development
+  runtime still writes v1, then should be removed when no longer referenced;
+- if a real deployed-fleet migration requirement appears in the future, the
+  reviewed contingency analysis below may be reconsidered in a separate slice
+  rather than silently enabling it.
+
+This is intentionally different from TLP v1 compatibility. Protocol byte
+compatibility is still protected; development flash contents are not.
 
 ---
 
@@ -686,7 +733,17 @@ This is a one-time persistence cost, not routine RF traffic.
 
 ---
 
-## 8. Legacy v1 migration
+## 8. Legacy v1 migration — reviewed contingency, not current implementation
+
+**Non-normative for the current product phase.**
+
+Sections 8 through the legacy-specific parts of §10 document the previously
+reviewed migration design in case a future real deployed-fleet requirement makes
+migration necessary. They must not be implemented merely because the design
+exists.
+
+Current implementation behavior is §1.1: explicit development ConfigStore reset,
+then fresh v2 baseline.
 
 ### 8.1 Legacy recovery source
 
@@ -927,7 +984,14 @@ fresh incarnation, but it never promotes a previously staged token.
 
 ---
 
-## 10. Mixed committed legacy + committed v2
+## 10. Mixed committed legacy + committed v2 — contingency analysis
+
+**Current implementation rule:** do not auto-reconcile. Report maintenance/reset
+required and keep protected config mutation unavailable until the development
+ConfigStore partition is explicitly reset.
+
+The remainder of this section is retained only as reviewed contingency analysis
+for a future deployed-fleet requirement.
 
 Any partition containing both:
 
@@ -1514,7 +1578,12 @@ following families.
     adjacent revision;
 41. equal/non-adjacent/impossible-lineage committed pairs -> UNCERTAIN.
 
-### legacy migration / H1 recovery
+### legacy migration contingency — deferred, not required for current cutover
+
+The following previously reviewed migration tests are **not implementation gates
+for the current product phase** because automatic v1 -> v2 migration is not being
+implemented. Retain them as contingency requirements only if migration is later
+authorized.
 
 42. one valid v1 + erased target -> v2;
 43. two valid v1 pages -> higher legacy config preserved;
@@ -1551,7 +1620,16 @@ following families.
 64. same-config impossible-lineage committed v2 pair fresh-rebaselines;
 65. different-config impossible-lineage pair -> AMBIGUOUS/no auto rewrite.
 
-### mixed v1/v2
+### mixed v1/v2 contingency — current runtime must fail closed
+
+For the current clean-cutover product, the required behavior is simpler:
+
+- any committed v1 observed by a v2 runtime => maintenance/reset required;
+- any mixed committed v1+v2 => maintenance/reset required;
+- no automatic semantic selection or migration.
+
+The detailed cases below remain contingency tests only if migration is later
+authorized.
 
 66. mixed committed same-config v1+v2 never reuses v2 token;
 67. same-config mixed recovery erases v2 first while v1 remains semantic source;
