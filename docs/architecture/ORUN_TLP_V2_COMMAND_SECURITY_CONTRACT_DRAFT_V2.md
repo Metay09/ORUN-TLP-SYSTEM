@@ -7,14 +7,14 @@ Baseline: `main@e2a370510c595c5f4b88e94a1212fb95d848a273`.
 Supersedes the first draft at
 `docs/architecture/ORUN_TLP_V2_COMMAND_SECURITY_CONTRACT_DRAFT.md`.
 
-Audit sources:
+Audit disposition:
 
-- `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_INDEPENDENT_AUDIT.md`
-  (targeted old draft `3af79af8a52de779cedcfc05fc76c41e91fea5b5`);
-- `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_REAUDIT.md`
-  (targeted V2 content at `44ead40468e5f9a3374b9656fe48d77b06339212`);
-- `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_FINAL_VERIFY.md`
-  (verified the post-re-audit corrections at `ea0ed42218d87e51c4edfc643c0ee3f832372922`).
+`docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_AUDIT_DISPOSITION.md`
+
+That consolidated record preserves the first-audit, V2 re-audit and final
+focused-verification verdicts, target SHAs, accepted findings and evidence
+boundary. Raw reviewer prompts/transcripts were removed after disposition to
+avoid keeping conversation artifacts as long-term architecture sources.
 
 The re-audit returned **PASS WITH FIXES** with no BLOCKER/HIGH findings. The
 final focused verification then returned **PASS WITH MINOR DOC FIX**; those D1-D4
