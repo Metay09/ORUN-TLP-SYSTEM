@@ -1500,6 +1500,16 @@ Increase:
 The sealed record is still exactly 48 bytes; the first 52 bytes of each 4096-byte
 page are reserved by the v2 ConfigStore layout.
 
+For the current v2 runtime, bytes `52..4095` are unused and MUST remain erased
+(`0xFF`). Recovery verifies this without allocating a page-sized RAM buffer.
+An erased 52-byte prefix with programmed bytes later in the page is therefore
+**not a blank page**, and a valid v2 prefix with a dirty unused tail may provide
+semantic fallback only; its token is not cache-authoritative VALID.
+
+A future schema that needs bytes beyond offset 51 must use a reviewed future
+schema version/discriminator rather than silently extending v2 in place. This
+keeps old firmware from erasing or overwriting data it does not understand.
+
 No partition expansion.
 
 ### Normal semantic save wear
@@ -1602,6 +1612,10 @@ following families.
 4. commit offset exactly 44;
 5. retire-word offset exactly 48;
 6. sealed record size remains 48 while page-local reserved footprint is 52;
+6a. erased 52-byte prefix + programmed byte in page tail is not treated as a
+    blank partition and is never auto-baselined;
+6b. committed-valid v2 prefix + dirty unused page tail preserves semantic
+    fallback but token state is UNCERTAIN;
 7. reserved-byte rejection;
 8. zero incarnation rejection;
 9. zero revision rejection;
