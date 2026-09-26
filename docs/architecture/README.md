@@ -1,8 +1,11 @@
 # ORUN Architecture Documentation Index
 
 Status: **CURRENT documentation governance index**.
-Last reviewed against merged main through M7P7G
-(PR #39, `main@26bdbead377621554c37b22596de294f9ab83579`). M7P7G's normal read-only GET_CONFIG GATT path has focused
+Last governance review: 2026-09-26 against
+`main@e2a370510c595c5f4b88e94a1212fb95d848a273` (M7P6F merged via PR #41,
+with the owner-approved gateway-command authority direction also present).
+The detailed M7P7G evidence below remains the current BLE application-GATT
+evidence boundary. M7P7G's normal read-only GET_CONFIG GATT path has focused
 Android/nRF Connect physical PASS on earlier code head
 `6db1a19047b53e49c63e9605661855e9e6113a72`. The event-based terminal
 GATTS-timeout fix was later software/build revalidated on `ab2977a...`.
@@ -24,6 +27,14 @@ current remains DEFERRED and GNSS coexistence remains unproven on the tested
 no-GNSS unit; the separate intermittent serial-DFU issue is not closed by the
 successful UF2 recovery path.
 Historical pre-M6 architecture baseline: `859ca4af0abf9f533a54227b38d2b1a5ddcfcccb`.
+
+Owner-approved high-level product/system decomposition is now recorded in
+`ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md`. It defines the root/trunk/service ownership
+map, realistic ~10 / ~30-50 / ~100-device engineering scale levels, product
+capability families (tracking, telemetry, sensing/activity, geofence/LOST,
+EVENT/alarm, MESSAGE, COMMAND/RESULT, health/history/map), hardware-portability
+boundary and layered validation model. It is architecture direction, not evidence
+that those later runtimes exist.
 
 
 Merged security primitive evidence (M7P6C): M7P6C is a
@@ -167,14 +178,17 @@ For current architecture decisions, use this order:
 1. repository `AGENTS.md` — project-wide development, compatibility and validation rules;
 2. `ORUN_CURRENT_ARCHITECTURE_RULES.md` — current owner-approved concept,
    ownership and current/runtime-vs-future boundaries;
-3. focused owner-approved design records for the area being changed, currently including
+3. `ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md` — high-level product decomposition,
+   service ownership, engineering-scale assumptions, hardware portability and
+   validation architecture;
+4. focused owner-approved design records for the area being changed, currently including
    `ADR_M7P6_SECURITY_ARCHITECTURE.md`,
    `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`,
    `ADR_RF_CONFIGURATION_PORTABILITY.md` and
    `ORUN_GATEWAY_COMMAND_AUTHORITY_DIRECTION.md`;
-4. current code, tests, golden/compatibility fixtures and milestone/audit reports
+5. current code, tests, golden/compatibility fixtures and milestone/audit reports
    describing the exact commit being changed;
-5. `ORUN_SYSTEM_ARCHITECTURE_V1.md`, `ORUN_ARCHITECTURE_GAP_ANALYSIS.md` and
+6. `ORUN_SYSTEM_ARCHITECTURE_V1.md`, `ORUN_ARCHITECTURE_GAP_ANALYSIS.md` and
    `ORUN_PROTOCOL_EVOLUTION_PLAN.md` — historical/proposed analysis that remains
    useful unless superseded by newer rules above.
 
@@ -186,7 +200,7 @@ made explicit rather than silently editing history.
 
 Keep these concepts separate:
 
-`Role != Location Source != GNSS Power != Capability != Transport != Identity != Profile != User Identity`.
+`Role != Location Source != GNSS Power != Capability != Enabled Service != Transport != Device Identity != Profile != User Identity != Security Authority`.
 
 Also keep separate:
 
