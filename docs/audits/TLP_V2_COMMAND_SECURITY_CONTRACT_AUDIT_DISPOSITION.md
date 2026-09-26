@@ -202,7 +202,13 @@ After this delegated-command audit disposition, the separate documentation-only
 config application precondition direction at an opaque 96-bit state token with
 tracker-final stale checking.
 
-That later CAS contract was **not** part of the audit targets recorded above.
-Nothing in this disposition should be read as an independent PASS for the CAS
-token width, recovery/ABA semantics or tokenized ConfigStore migration. Those
-items require their own focused review before implementation/wire freeze.
+That later CAS contract was **not** part of the delegated-command audit targets
+recorded above, so the delegated audit PASS must not be retroactively extended
+to it.
+
+The CAS contract subsequently received its own focused independent audit at
+branch head `f1ec46c139a009fea0fefb0ef647cdfe45049c40`. That review returned
+**PASS WITH FIXES**, no BLOCKER/HIGH. Its separate durable disposition is
+`docs/audits/CONFIG_STATE_TOKEN_CAS_AUDIT_DISPOSITION.md`. The requested CAS
+corrections are applied on the design branch; final focused verification remains
+pending before merge/implementation/wire freeze.
