@@ -416,7 +416,67 @@ int main() {
     assert(!store.requestSave(Config{651, 43}));
   }
 
-  // 12. Committed v2 + exact staged successor: committed token remains VALID;
+  // 12. One verified stage + erased page preserves semantic config only.
+  // The staged token is never promoted after reboot and GET_CONFIG provenance
+  // remains "default/not committed".
+  {
+    PendingFlash flash;
+    const uint64_t inc = 0xABABABABABABABABULL;
+    uint8_t stage[kV2RecordSize];
+    encodeV2(V2Record(5, Config{610, 61}, StateToken{inc, 7}), stage);
+    memset(stage + kV2CommitOffset, 0xFF, 4);
+    memcpy(flash.bytes.data(), stage, sizeof(stage));
+
+    ConfigStore store(flash);
+    assert(store.begin());
+    assert(store.maintenanceResetRequired());
+    assert(store.tokenState() == ConfigTokenState::kUncertain);
+    assert(store.config().tracking_interval_seconds == 610);
+    assert(store.config().battery_capacity_mah == 61);
+    assert(!store.hasCommittedRecord());
+    StateToken hidden;
+    assert(!store.stateToken(hidden));
+  }
+
+  // 13. One verified partial-commit + erased page likewise preserves
+  // semantics but never claims token or committed-override authority.
+  {
+    PendingFlash flash;
+    const uint64_t inc = 0xCDCDCDCDCDCDCDCDULL;
+    flash.seedV2(0, V2Record(6, Config{620, 62}, StateToken{inc, 8}));
+    flash.bytes[kV2CommitOffset + 0] = 0x00;
+    flash.bytes[kV2CommitOffset + 1] = 0xFF;
+    flash.bytes[kV2CommitOffset + 2] = 0xFF;
+    flash.bytes[kV2CommitOffset + 3] = 0xFF;
+
+    ConfigStore store(flash);
+    assert(store.begin());
+    assert(store.maintenanceResetRequired());
+    assert(store.tokenState() == ConfigTokenState::kUncertain);
+    assert(store.config().tracking_interval_seconds == 620);
+    assert(!store.hasCommittedRecord());
+  }
+
+  // 14. A retired committed record can preserve both semantic config and the
+  // historical application fact that a committed override existed, but its
+  // old token can never become VALID again.
+  {
+    PendingFlash flash;
+    const uint64_t inc = 0xEFEFEFEFEFEFEFEFULL;
+    flash.seedV2(0, V2Record(7, Config{630, 63}, StateToken{inc, 9}),
+                 0xFFFFFFFEUL);
+
+    ConfigStore store(flash);
+    assert(store.begin());
+    assert(store.maintenanceResetRequired());
+    assert(store.tokenState() == ConfigTokenState::kUncertain);
+    assert(store.config().tracking_interval_seconds == 630);
+    assert(store.hasCommittedRecord());
+    StateToken hidden;
+    assert(!store.stateToken(hidden));
+  }
+
+  // 15. Committed v2 + exact staged successor: committed token remains VALID;
   // stage is never promoted after reboot.
   {
     PendingFlash flash;
@@ -435,7 +495,7 @@ int main() {
     assert(token.incarnation == inc && token.revision == 4);
   }
 
-  // 13. A staged candidate with impossible lineage invalidates token authority.
+  // 16. A staged candidate with impossible lineage invalidates token authority.
   {
     PendingFlash flash;
     const uint64_t inc = 0xAA55AA55AA55AA55ULL;
@@ -453,7 +513,7 @@ int main() {
     assert(!store.hasCommittedRecord());
   }
 
-  // 14. Two committed-valid pages require exact generation/revision lineage.
+  // 17. Two committed-valid pages require exact generation/revision lineage.
   {
     PendingFlash flash;
     const uint64_t inc = 0x1010101010101010ULL;
@@ -475,7 +535,7 @@ int main() {
     assert(store.tokenState() == ConfigTokenState::kUncertain);
   }
 
-  // 15. Exact uncommitted/torn body evidence beside a committed v2 page is
+  // 18. Exact uncommitted/torn body evidence beside a committed v2 page is
   // non-authoritative; the old committed token remains VALID.
   {
     PendingFlash flash;
@@ -492,7 +552,7 @@ int main() {
     assert(validToken(store).revision == 2);
   }
 
-  // 16. Supported corruption, partial commit, retired commit or semantically
+  // 19. Supported corruption, partial commit, retired commit or semantically
   // invalid committed evidence is fail-closed maintenance in this slice.
   {
     PendingFlash flash;
@@ -549,7 +609,7 @@ int main() {
     assert(store.diagnostics().recovery_corruptions >= 1);
   }
 
-  // 17. Async normal save: erase/body/commit may each pend; result cannot
+  // 20. Async normal save: erase/body/commit may each pend; result cannot
   // appear early and the final token advances exactly once.
   {
     PendingFlash flash;
@@ -572,7 +632,7 @@ int main() {
     assert(flash.poll_calls > 0);
   }
 
-  // 18. Body readback is verified BEFORE commit. Corrupting staged bytes
+  // 21. Body readback is verified BEFORE commit. Corrupting staged bytes
   // causes failure and never programs the commit word.
   {
     PendingFlash flash;
@@ -591,7 +651,7 @@ int main() {
     assert(store.config().tracking_interval_seconds == 180);
   }
 
-  // 19. Ordinary failed mutation invalidates token until read-only recovery.
+  // 22. Ordinary failed mutation invalidates token until read-only recovery.
   // If recovery sees old committed + safely erased inactive page, VALID can
   // be restored without another flash write.
   {
@@ -615,7 +675,7 @@ int main() {
     assert(store.config().tracking_interval_seconds == 180);
   }
 
-  // 20. Accepted-but-unreconciled timeout blocks every new mutation until the
+  // 23. Accepted-but-unreconciled timeout blocks every new mutation until the
   // backend clears physical ambiguity; late reconciliation causes full
   // two-page recovery, not a second logical success.
   {
@@ -650,7 +710,7 @@ int main() {
     assert(!store.takeSaveResult(extra));  // no late second app result
   }
 
-  // 21. An unread async result blocks a different save but not an exact
+  // 24. An unread async result blocks a different save but not an exact
   // synchronous no-op against the already committed semantic state.
   {
     PendingFlash flash;
@@ -668,7 +728,7 @@ int main() {
     assert(saveAndSettle(store, Config{333, 3}, success) && success);
   }
 
-  // 22. Generation/revision exhaustion never wraps.
+  // 25. Generation/revision exhaustion never wraps.
   {
     PendingFlash flash;
     const uint64_t inc = 0x7777777777777777ULL;
@@ -688,7 +748,7 @@ int main() {
     assert(!store.requestSave(Config{101, 2}));
   }
 
-  // 23. Backend begin failure still leaves safe in-RAM defaults but reports
+  // 26. Backend begin failure still leaves safe in-RAM defaults but reports
   // store unavailable and performs no writes.
   {
     PendingFlash flash;
