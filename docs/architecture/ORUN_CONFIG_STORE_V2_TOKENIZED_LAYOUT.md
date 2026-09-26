@@ -259,20 +259,50 @@ active_page  = v2 page
 
 The staged page never wins.
 
-Result:
+Let committed generation be `G` and staged generation be `S`.
+
+The only normal explanations are:
+
+```text
+S < G       old/inactive page was being erased or contains stale staged bytes
+S == G + 1 interrupted next save before commit
+```
+
+In those cases:
 
 ```text
 committed v2 remains authoritative
 token_state = VALID
 ```
 
-The staged page may be erased on the next mutation/recovery cleanup.
+If:
+
+```text
+S == G
+or
+S > G + 1
+```
+
+the state cannot arise from one valid normal v2 transition and recovery returns
+UNCERTAIN.
+
+The staged page never contributes an application-valid token.
 
 ### 5.3 Two committed-valid v2 pages with different generations
 
-Higher `storage_generation` wins.
+Under the A/B algorithm, two simultaneously committed-valid v2 pages must be
+adjacent generations.
 
-The lower page remains the previous committed state.
+For:
+
+```text
+G_high == G_low + 1
+```
+
+the higher generation wins and the lower page is the previous committed state.
+
+A larger gap cannot arise from the defined normal save/re-baseline transition and
+is treated as UNCERTAIN rather than blindly applying "highest wins".
 
 ### 5.4 Two committed-valid v2 pages with equal generation
 
@@ -605,8 +635,15 @@ semantic config is the preferred migration source because:
 - after a token-unaware downgrade/write it represents the only state written by
   that later legacy firmware.
 
-Recovery then creates a **fresh incarnation** and performs the reviewed migration
-sequence.
+Recovery then:
+
+```text
+1. keeps the valid legacy semantic config as the migration source
+2. erases/discards the committed v2 page and its token identity
+3. returns to a legacy-only migration state
+4. generates a fresh incarnation
+5. performs the reviewed legacy -> v2 staged/retire/commit sequence
+```
 
 No existing tokenized token from the mixed state is reused.
 
@@ -902,18 +939,21 @@ The implementation slice must add or adapt tests for at least:
 
 31. committed-invalid higher v2 + lower valid v2 -> token UNCERTAIN;
 32. equal-generation valid v2 pages -> UNCERTAIN;
-33. partial commit word -> UNCERTAIN;
-34. staged v2 never exposes token as VALID after reboot;
-35. non-erased no-valid-record -> UNCERTAIN;
-36. supported-schema re-baseline creates fresh incarnation;
-37. re-baseline diagnostics are observable.
+33. non-adjacent committed-valid v2 generations -> UNCERTAIN;
+34. committed G plus staged S only remains VALID for S < G or S == G+1;
+35. staged S == G or S > G+1 -> UNCERTAIN;
+36. partial commit word -> UNCERTAIN;
+37. staged v2 never exposes token as VALID after reboot;
+38. non-erased no-valid-record -> UNCERTAIN;
+39. supported-schema re-baseline creates fresh incarnation;
+40. re-baseline diagnostics are observable.
 
 ### API ownership
 
-38. normal caller cannot supply revision;
-39. semantic mutation cannot retain old revision;
-40. reset changes token only when semantic config changes;
-41. test/probe mutation cannot bypass token progression.
+41. normal caller cannot supply revision;
+42. semantic mutation cannot retain old revision;
+43. reset changes token only when semantic config changes;
+44. test/probe mutation cannot bypass token progression.
 
 ---
 
