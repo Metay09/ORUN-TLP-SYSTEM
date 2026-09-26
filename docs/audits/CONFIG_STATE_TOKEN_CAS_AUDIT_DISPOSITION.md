@@ -1,6 +1,6 @@
 # Config State-Token / CAS Audit Disposition
 
-Status: **FOCUSED INDEPENDENT AUDIT DISPOSITION — PASS WITH FIXES; REQUESTED FIXES APPLIED, FINAL VERIFY PENDING — DOCUMENTATION-ONLY.**
+Status: **FOCUSED INDEPENDENT AUDIT DISPOSITION — PASS WITH FIXES; FINAL VERIFY PASS WITH MINOR DOC FIX; R1 APPLIED — DOCUMENTATION-ONLY.**
 
 Audit target branch:
 
@@ -71,13 +71,17 @@ Applied direction:
 
 - token-unaware downgrade is not a supported state-preserving operation after a
   tokenized baseline exists;
-- committed legacy + tokenized coexistence is not accepted as VALID unless a
-  power-cut-safe exact migration relationship is proven;
-- legacy physical generation alone is insufficient provenance;
+- legacy physical generation and byte-for-byte legacy record identity are both
+  insufficient migration provenance because the deterministic legacy format can
+  be reproduced after downgrade;
+- the first tokenized implementation must power-cut-safely retire committed
+  legacy records before exposing a migrated tokenized baseline as VALID;
+- any committed legacy + tokenized mixed state never makes an existing tokenized
+  token VALID;
 - unresolved mixed legacy/tokenized state becomes UNCERTAIN or enters an
   explicitly reviewed fresh-incarnation migration/re-baseline path;
-- the later tokenized storage slice must make planned migration coexistence
-  distinguishable from a downgrade-era legacy write.
+- power loss during retirement may repeat migration with a fresh incarnation
+  because the not-yet-exposed tokenized identity was never established as VALID.
 
 Required implementation test includes downgrade -> legacy write -> upgrade.
 
@@ -260,12 +264,32 @@ the tokenized schema is active.
 
 ---
 
-## 4. Remaining review gate
+## 4. Final focused verification
 
-The F1-F9 corrections are applied on the design branch after the audited
-`f1ec46c...` head.
+Focused final verification of the applied F1-F9 corrections through
+`2141a6725662c14fe90a40102cfba36af7bc8602` returned:
 
-Before PR #43 is merged, focused final verification should confirm that:
+**PASS WITH MINOR DOC FIX**
+
+with:
+
+- BLOCKER: 0
+- HIGH: 0
+- F1-F4: closed, subject only to the R1 wording correction below;
+- F5-F9: closed;
+- 96-bit / 64+32 direction: accepted;
+- RF/storage-cost direction: accepted.
+
+The only residual was **R1 — LOW/DOC**: the prior F1 wording still allowed a
+migration-source identity option that the deterministic legacy format cannot make
+non-reproducible. That option is removed. The first tokenized implementation now
+must use power-cut-safe legacy retirement before exposing VALID, and mixed
+legacy/tokenized state never revalidates an existing tokenized token.
+
+R1 is applied in the current branch. No further broad audit round is required
+before merge; review of the final wording/diff is sufficient.
+
+Final verification confirmed:
 
 1. no requested finding remains open;
 2. mixed legacy/tokenized recovery cannot silently resurrect a token;
