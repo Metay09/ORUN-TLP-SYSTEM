@@ -348,20 +348,25 @@ token_state =
 
 semantic_state =
     UNAMBIGUOUS
+    FALLBACK_ONLY
     AMBIGUOUS
 ```
 
 and enough diagnostics to explain why.
 
-`semantic_state == UNAMBIGUOUS` means recovery has one semantic config value,
-or multiple usable copies that all encode the same complete semantic config.
+`UNAMBIGUOUS` means recovery policy has one complete semantic config value to
+preserve: either one usable supported copy or multiple copies that agree.
 
-`semantic_state == AMBIGUOUS` means two otherwise usable candidates disagree
-and current flash evidence cannot prove which semantic value is authoritative.
+`FALLBACK_ONLY` means no supported durable/staged copy can establish a semantic
+config; runtime may use the existing safe defaults, but those defaults are not
+presented as a recovered durable application state.
+
+`AMBIGUOUS` means usable/possible evidence can represent different semantic
+values and current flash cannot safely select one.
 
 A protected semantic change is never allowed while token state is not VALID.
-Equality/no-op may be used under UNCERTAIN only when semantic state is
-UNAMBIGUOUS.
+Equality/no-op under UNAVAILABLE/UNCERTAIN is allowed only for
+`semantic_state == UNAMBIGUOUS`. It is not used for FALLBACK_ONLY or AMBIGUOUS.
 
 ---
 
@@ -510,7 +515,7 @@ the approved application CAS ordering.
 If:
 
 ```text
-C' == current durable semantic config
+C' == the recovery-selected UNAMBIGUOUS semantic config
 ```
 
 then, regardless of whether token state is VALID, UNAVAILABLE or UNCERTAIN:
@@ -1060,6 +1065,51 @@ STALE_PRECONDITION.
 
 A genuine `UNSUPPORTED_NEWER` page or AMBIGUOUS semantic state cannot enter this
 automatic sequence.
+
+---
+
+### 13.4 Recovery decision table
+
+The first implementation uses this decision policy:
+
+| observed partition state | runtime config | semantic state | token state | automatic action |
+| --- | --- | --- | --- | --- |
+| both pages erased | defaults | FALLBACK_ONLY | UNAVAILABLE | establish fresh baseline when safe |
+| valid v1 source + erased/torn/supported-corrupt residue, no unsupported schema | selected valid v1 fallback | UNAMBIGUOUS | UNAVAILABLE/UNCERTAIN | fresh-incarnation migration allowed |
+| one non-retired committed-valid v2 + erased page | committed v2 config | UNAMBIGUOUS | VALID | none |
+| committed v2 + staged exact successor (same incarnation, revision +1) | committed v2 config | UNAMBIGUOUS | VALID | discard/erase stage on later cleanup |
+| retired committed v2 + erased/supported-corrupt other page | retired page config as semantic fallback | UNAMBIGUOUS | UNCERTAIN | retire-marked re-baseline allowed |
+| non-retired valid v2 + supported-corrupt contradictory page | valid v2 config as selected fallback | UNAMBIGUOUS | UNCERTAIN | first retire valid token, then re-baseline |
+| impossible-lineage v2 records with same semantic config | common config | UNAMBIGUOUS | UNCERTAIN | fresh-incarnation re-baseline allowed |
+| two staged v2 records with same semantic config | common config | UNAMBIGUOUS | UNCERTAIN/UNAVAILABLE | fresh-incarnation staged recovery allowed |
+| mixed committed v1+v2 with same semantic config | common config; v1 retained as migration source | UNAMBIGUOUS | UNCERTAIN | erase v2 first, then fresh migration |
+| valid candidates with different semantic configs | safe runtime defaults only | AMBIGUOUS | UNCERTAIN | no automatic rewrite; maintenance selects config |
+| only supported corruption, no recoverable semantic copy | defaults | FALLBACK_ONLY | UNCERTAIN/UNAVAILABLE | no equality no-op; maintenance or reviewed recovery |
+| any UNSUPPORTED_NEWER evidence | best safe runtime fallback only | AMBIGUOUS | UNCERTAIN | no automatic erase/re-baseline |
+
+The runtime fallback column is an availability policy, not a claim that the
+fallback was historically the newest persisted value.
+
+For AMBIGUOUS/FALLBACK_ONLY states, application state reads must expose the
+recovery condition; callers must not treat the runtime fallback as a
+cache-authoritative config/token pair.
+
+### 13.5 Local maintenance while token is invalid
+
+USB/BLE/local config mutation while token state is UNAVAILABLE or UNCERTAIN is
+not a normal save.
+
+If an authorized operator intentionally chooses a semantic config, that action is
+an explicit **re-baseline**:
+
+- the selected config becomes the semantic source;
+- a fresh CSPRNG incarnation is mandatory;
+- revision starts at 1;
+- retire/migration ordering for the observed partition state still applies;
+- failure to obtain CSPRNG means the semantic change is not durably written.
+
+This prevents a local transport from bypassing the same identity rules enforced
+for remote CAS.
 
 ---
 
