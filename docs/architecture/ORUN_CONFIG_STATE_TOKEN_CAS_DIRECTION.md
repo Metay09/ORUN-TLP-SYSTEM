@@ -66,7 +66,8 @@ The first protected desired-state config mutation must provide:
 7. no generic persistent command-ID journal on the tracker;
 8. bounded tracker RAM/flash/CPU cost;
 9. explicit fail-closed behavior under ambiguous rollback/corruption;
-10. one application/config owner for USB, BLE, LoRa and future backend adapters.
+10. one application/config owner for USB, BLE, LoRa and future backend adapters;
+11. one serialized config-mutation transaction at a time across every transport.
 
 The token is a **precondition identity**, not authentication. Authentication and
 authorization remain properties of the protected command envelope and application
@@ -133,6 +134,31 @@ APPLIED + resulting token
 ```
 
 This keeps the tracker authoritative without turning it into a backend.
+
+### 3.4 One mutation owner across every transport
+
+Every semantic durable config writer must use the same application/config owner
+and the same state-token transition rules.
+
+That includes future:
+
+- protected LoRa writes;
+- BLE writes;
+- USB/service writes;
+- local maintenance/config reset;
+- backend/gateway-originated writes after transport adaptation.
+
+No path may mutate durable semantic config while leaving the current state token
+unchanged, except the explicit unchanged-state no-op.
+
+CAS admission is serialized. The application/config owner acquires the single
+mutation slot **before** evaluating the authoritative token and holds ownership
+through durable completion/result. A second writer must receive bounded
+BUSY/retry behavior; it must not pre-check the same token and queue a competing
+write behind the first one.
+
+This prevents two independently valid adapters from both accepting the same
+precondition and then committing in sequence.
 
 ---
 
@@ -354,7 +380,8 @@ Value equality does not imply state identity.
 The first token-aware implementation must not pretend that an existing legacy
 record already has a CAS token.
 
-It must use a reviewed one-time migration/baseline operation that:
+A structurally valid supported legacy record may use a reviewed one-time
+migration/baseline operation that:
 
 - preserves the accepted config values;
 - creates a fresh non-zero incarnation;
@@ -363,6 +390,10 @@ It must use a reviewed one-time migration/baseline operation that:
 - exposes the token as VALID only after that commit succeeds.
 
 Until then, protected CAS writes remain unavailable.
+
+A non-erased but invalid/corrupt/unsupported legacy partition must **not** be
+silently converted into a fresh valid tokenized default baseline. That condition
+is UNCERTAIN until a reviewed maintenance/re-baseline action resolves it.
 
 ### 7.2 Fresh/erased config partition
 
@@ -445,7 +476,27 @@ protected config mutation = fail closed
 
 A fresh incarnation is required before CAS mutation resumes.
 
-This is the rule that prevents recovery from creating an ABA vulnerability.
+This is the rule that prevents ordinary torn/corrupt recovery from creating an
+ABA vulnerability.
+
+### 8.1 Clean external snapshot rollback is not solved here
+
+ConfigStore alone cannot detect a byte-for-byte restore/clone of an older,
+internally valid ConfigStore partition snapshot. Such a restore can resurrect an
+old config and its old token with no local corruption evidence.
+
+Therefore this CAS contract guarantees stale-write protection across normal
+application concurrency, reboot, torn writes and detectable/ambiguous ConfigStore
+recovery. It does **not** claim rollback resistance against an externally restored
+clean old flash snapshot.
+
+If production threat/recovery policy must resist that stronger rollback class, a
+later reviewed design needs an anchor outside the ConfigStore rollback domain,
+for example SecurityStore/hardware/backend-backed monotonic evidence. Do not add
+that cross-store write cost speculatively to the first CAS implementation.
+
+A firmware/DFU/backup process must not claim rollback-safe protected config if it
+can restore old ConfigStore bytes without such an anchor.
 
 ---
 
@@ -678,7 +729,13 @@ The implementation slice must include host fault/recovery tests covering at leas
 17. CSPRNG failure while new incarnation is required -> protected mutation unavailable;
 18. online current-cache path requires no read-before-write round trip;
 19. offline gateway path works without backend reachability;
-20. stale offline cache cannot silently overwrite newer tracker state.
+20. stale offline cache cannot silently overwrite newer tracker state;
+21. concurrent writers cannot both accept the same token before one commits;
+22. every semantic write source advances the same token state;
+23. valid legacy migration succeeds without changing semantic config;
+24. corrupt/non-erased legacy state does not auto-baseline as fresh;
+25. clean external snapshot rollback is documented as outside ConfigStore-only
+    detection rather than falsely reported as solved.
 
 Host PASS does not imply RAK physical PASS.
 
