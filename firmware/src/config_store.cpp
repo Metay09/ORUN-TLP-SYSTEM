@@ -285,13 +285,23 @@ bool ConfigStore::recover() {
     const int b = committed_pages[1];
     const auto& pa = pages[a].inspection;
     const auto& pb = pages[b].inspection;
-    if (sameConfig(pa.config, pb.config)) {
-      const auto& fallback =
-          pb.generation > pa.generation ? pb : pa;
+    const auto& hi = pb.generation > pa.generation ? pb : pa;
+    const auto& lo = pb.generation > pa.generation ? pa : pb;
+    const bool exact_lineage =
+        lo.generation != UINT64_MAX &&
+        hi.generation == lo.generation + 1 &&
+        hi.token.incarnation == lo.token.incarnation &&
+        lo.token.revision != UINT32_MAX &&
+        hi.token.revision == lo.token.revision + 1;
+
+    // Tail corruption invalidates token authority, but exact committed lineage
+    // still identifies which semantic config was durably newer. For impossible
+    // lineage we preserve only an agreed semantic value; disagreement remains
+    // ambiguous.
+    if (exact_lineage || sameConfig(pa.config, pb.config)) {
       setMaintenanceFallback(
-          fallback, ConfigTokenState::kUncertain,
-          fallback.token.revision > 1 ||
-              !sameConfig(fallback.config, defaultConfig()));
+          hi, ConfigTokenState::kUncertain,
+          hi.token.revision > 1 || !sameConfig(hi.config, defaultConfig()));
     } else {
       setMaintenance(ConfigTokenState::kUncertain);
     }
