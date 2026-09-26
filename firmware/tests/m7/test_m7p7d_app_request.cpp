@@ -76,10 +76,12 @@ ApplicationResponse take(
 }  // namespace
 
 int main() {
-  // 1. Blank durable config: the application seam returns ConfigStore's
-  // existing safe defaults and says the durable owner is ready.
+  // 1. A production-style internal v2 default/token baseline preserves the
+  // frozen application provenance: config is still reported as "default",
+  // not as a user-stored semantic override.
   {
     ReadOnlyFlash flash;
+    flash.seedConfig(config_format::Config{180, 0}, 1);
     ConfigStore store(flash);
     assert(store.begin());
     ApplicationRequestService service(store);
