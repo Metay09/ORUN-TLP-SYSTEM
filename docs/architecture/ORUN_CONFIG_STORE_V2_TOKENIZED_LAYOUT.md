@@ -367,9 +367,12 @@ UNAMBIGUOUS.
 
 ## 5. Normal v2 steady-state recovery
 
+The rules in this section apply only when no page carries a retire marker and no
+other contradictory evidence is present.
+
 ### 5.1 One committed-valid v2 + one erased page
 
-Result:
+If the committed page's retire word is `0xFFFFFFFF`:
 
 ```text
 config       = v2 config
@@ -378,57 +381,77 @@ token_state  = VALID
 active_page  = v2 page
 ```
 
+If the committed page is retired, the same config may remain an operational
+fallback but:
+
+```text
+token_state = UNCERTAIN
+```
+
+A retired token is never resurrected merely because the other page later became
+erased.
+
 ### 5.2 One committed-valid v2 + one valid staged v2
 
 The staged page never wins.
 
-Let committed generation be `G` and staged generation be `S`.
-
-The only normal committed+staged explanation produced by the defined save
-algorithm is:
+Let committed state be:
 
 ```text
-S == G + 1    interrupted next save before commit
+generation = G
+token      = I:R
 ```
 
-In that case:
+and staged state be:
+
+```text
+generation = S
+token      = J:Q
+```
+
+The only normal interrupted-next-save relation is:
+
+```text
+retire_word(committed) == 0xFFFFFFFF
+S == G + 1
+J == I
+Q == R + 1
+```
+
+Only in that case:
 
 ```text
 committed v2 remains authoritative
 token_state = VALID
 ```
 
-Any other relation, including:
+Any different incarnation, non-successor revision, retired committed page or
+other generation relationship is UNCERTAIN.
 
-```text
-S <= G
-or
-S > G + 1
-```
-
-cannot arise from one valid normal v2 transition and recovery returns UNCERTAIN.
-
-The staged page never contributes an application-valid token.
+This specifically prevents a fresh-incarnation re-baseline stage from making an
+older committed token VALID after contradictory evidence has been erased.
 
 ### 5.3 Two committed-valid v2 pages with different generations
 
-Under the A/B algorithm, two simultaneously committed-valid v2 pages must be
-adjacent generations.
-
-For:
+A normal completed semantic save leaves two non-retired committed pages whose
+storage/token progression is adjacent:
 
 ```text
 G_high == G_low + 1
+incarnation_high == incarnation_low
+revision_high == revision_low + 1
+retire_word(high) == retire_word(low) == 0xFFFFFFFF
 ```
 
-the higher generation wins and the lower page is the previous committed state.
+Only under all of those conditions does the higher generation win and the lower
+page represent the previous committed state.
 
-A larger gap cannot arise from the defined normal save/re-baseline transition and
-is treated as UNCERTAIN rather than blindly applying "highest wins".
+A generation gap, incarnation change, revision discontinuity or retire marker is
+not explained by the normal save path and makes token state UNCERTAIN.
 
 ### 5.4 Two committed-valid v2 pages with equal generation
 
-This cannot arise from one valid ConfigStore transition.
+Equal generation is not resolved by page index.
 
 Result:
 
@@ -436,21 +459,40 @@ Result:
 token_state = UNCERTAIN
 ```
 
-Do not break the tie by page index.
+If their complete semantic configs are identical, the semantic value is
+UNAMBIGUOUS and may be eligible for fresh-incarnation re-baseline. If the configs
+differ, semantic state is AMBIGUOUS and automatic re-baseline is prohibited.
 
-### 5.5 Valid v2 plus contradictory committed-invalid/unknown evidence
+### 5.5 Valid v2 plus contradictory supported-corrupt evidence
 
-A lower/other page that appears committed but cannot be safely interpreted may
-represent a later state whose bytes were damaged.
+A valid committed v2 record plus `V2_COMMITTED_INVALID`,
+`SUPPORTED_CORRUPT`, or other supported local corruption may represent loss of
+a later state.
+
+The valid record's semantic config may be used as the recovery fallback:
+
+```text
+semantic_state = UNAMBIGUOUS
+token_state    = UNCERTAIN
+```
+
+The old token is not accepted.
+
+This class is eligible for the bounded retire-marked fresh-incarnation
+re-baseline in §13.
+
+### 5.6 Any supported v2 plus UNSUPPORTED_NEWER
+
+A genuine `ORC1` unknown/newer schema is not automatically erased.
 
 Result:
 
 ```text
-selected fallback config may remain usable
 token_state = UNCERTAIN
+automatic re-baseline = prohibited
 ```
 
-Do not silently revive the older token.
+Firmware compatibility or explicit reviewed maintenance is required.
 
 ---
 
