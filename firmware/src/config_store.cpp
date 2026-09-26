@@ -520,7 +520,16 @@ bool ConfigStore::requestSave(const config_format::Config& candidate) {
   return startSave(candidate);
 }
 
-bool ConfigStore::requestReset() { return requestSave(defaultConfig()); }
+bool ConfigStore::requestReset() {
+  // This is a normal semantic reset under the existing valid token namespace,
+  // not the explicit maintenance operation that erases/re-baselines an
+  // invalid/legacy partition. Never report success for that distinct action.
+  if (maintenance_reset_required_ ||
+      token_state_ != ConfigTokenState::kValid ||
+      active_page_ < 0)
+    return false;
+  return requestSave(defaultConfig());
+}
 
 bool ConfigStore::startSave(const config_format::Config& candidate) {
   if (generation_ == UINT64_MAX || token_.revision == UINT32_MAX)
