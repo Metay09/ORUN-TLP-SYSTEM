@@ -223,7 +223,10 @@ Rules:
   relationship also satisfies the partition-level A/B transition invariants;
 - v1 and v2 physical generations are **never compared across schema versions**.
 
-A v1 -> v2 migration starts a new v2 physical-generation namespace at 1.
+**Contingency only:** if a future deployed-fleet requirement explicitly
+authorizes v1 -> v2 migration, that migration would start a new v2
+physical-generation namespace at 1. The current clean development cutover does
+not execute this migration path.
 
 This intentionally avoids treating legacy generation as application history or
 migration provenance.
@@ -271,11 +274,22 @@ Future ConfigStore schema versions must preserve:
 magic == ORC1
 bytes[5..7] == 0
 (version & 0x03) == 0
+page bytes[48..51] != 0xFFFFFFFF for every valid non-torn record
 ```
 
 unless a separately reviewed classifier migration changes that contract first.
-Therefore the first future-version values are drawn from the reserved
-multiple-of-four namespace (for example 4, 8, 12...), not 3.
+
+The final-word requirement is part of the forward-compatibility discriminator:
+the v2 classifier evaluates a programmed-prefix + erased-tail pattern before the
+future-version discriminator. Therefore a future valid record must not leave the
+classifier window's final word erased, or an older v2 firmware could
+conservatively classify it as local torn/corrupt evidence instead of
+UNSUPPORTED_NEWER.
+
+Deployable future-version values are drawn from the reserved multiple-of-four
+namespace (for example 4, 8, 12...), not 3. Version `0` is intentionally
+reserved as an incompatible/fail-closed sentinel and may also classify as
+UNSUPPORTED_NEWER; it is not a deployable future schema version.
 
 This makes a half-erased v1/v2 version byte fail toward local corruption instead
 of masquerading as a future format: flash erase can change 0 bits to 1, so a
@@ -299,27 +313,45 @@ A non-erased page with damaged/non-ORC1 magic is likewise **not automatically
 called a future schema**. It is local corruption/torn-erase evidence owned by the
 known ConfigStore region.
 
-### 3.2 Required physical/evidence classes
+### 3.2 Structural classifier vs semantic recovery classes
 
-At minimum one page can classify as:
+The codec/page classifier is deliberately **structural**. It does not own
+product-level config validity such as tracking-interval bounds.
+
+Its implementation-level evidence classes include:
 
 ```text
-ERASED
+kErased
 
-V1_COMMITTED_VALID
-V1_COMMITTED_INVALID
-V1_UNCOMMITTED_OR_TORN
+kLegacyV1Committed
+kLegacyV1UncommittedOrTorn
+kLegacyV1CommittedCorrupt
 
-V2_STAGED_VALID
-V2_UNCOMMITTED_OR_TORN
-V2_PARTIAL_COMMIT
-V2_COMMITTED_VALID
-V2_COMMITTED_INVALID
-V2_COMMITTED_RETIRED
+kV2Staged
+kV2UncommittedOrTorn
+kV2PartialCommit
+kV2Committed
+kV2CommittedRetired
+kV2CommittedCorrupt
 
-SUPPORTED_CORRUPT
-UNSUPPORTED_NEWER
+kSupportedCorrupt
+kUnsupportedNewer
 ```
+
+The later ConfigStore recovery owner applies semantic validation and maps
+structural evidence into the architecture-level recovery classes:
+
+| structural classifier result | if decoded config is semantically invalid |
+| --- | --- |
+| `kLegacyV1Committed` | `V1_COMMITTED_INVALID` |
+| `kV2Committed` / `kV2CommittedRetired` | `V2_COMMITTED_INVALID` |
+| `kV2Staged` | `V2_UNCOMMITTED_OR_TORN` |
+| `kV2PartialCommit` | `SUPPORTED_CORRUPT` |
+
+`has_decoded_record == true` means only that supported bytes were structurally
+decoded. It **never** means the page, config or token is authoritative. Token
+VALIDity is decided only by partition-level recovery/CAS policy after semantic
+validation.
 
 The classifier may keep finer diagnostics, but it must not collapse
 `SUPPORTED_CORRUPT` into `UNSUPPORTED_NEWER`.
@@ -331,10 +363,12 @@ For exact `ORC1/version=1`:
 - commit word at v1 offset 32 == `0xFFFFFFFF`:
   `V1_UNCOMMITTED_OR_TORN`; it is not authoritative even if CRC/body are
   incomplete;
-- commit word == `0x00000000` and full v1 structure/CRC/semantics valid:
-  `V1_COMMITTED_VALID`;
-- commit word == `0x00000000` but structure/CRC/semantics invalid:
+- commit word == `0x00000000` and full v1 structure/CRC valid:
+  structural classifier returns `kLegacyV1Committed`; the ConfigStore owner
+  later maps semantic validity to `V1_COMMITTED_VALID` or
   `V1_COMMITTED_INVALID`;
+- commit word == `0x00000000` but structure/CRC invalid:
+  structural classifier returns `kLegacyV1CommittedCorrupt`;
 - any other commit value:
   `SUPPORTED_CORRUPT`.
 
@@ -352,12 +386,15 @@ For exact `ORC1/version=2`:
 - commit word is neither `0xFFFFFFFF` nor `0x00000000`, while the complete
   v2 body/CRC/config/token fields verify:
   `V2_PARTIAL_COMMIT`;
-- commit word == `0x00000000`, record verifies and retire word is
-  `0xFFFFFFFF`: `V2_COMMITTED_VALID`;
-- commit word == `0x00000000`, record verifies and retire word is non-FF:
-  `V2_COMMITTED_RETIRED`;
-- commit word == `0x00000000` but record/config/token validation fails:
+- commit word == `0x00000000`, structural record verifies and retire word is
+  `0xFFFFFFFF`: classifier returns `kV2Committed`; the ConfigStore owner
+  later maps semantic validity to `V2_COMMITTED_VALID` or
   `V2_COMMITTED_INVALID`;
+- commit word == `0x00000000`, structural record verifies and retire word is
+  non-FF: classifier returns `kV2CommittedRetired`; semantic invalidity still
+  downgrades the architecture-level result to `V2_COMMITTED_INVALID`;
+- commit word == `0x00000000` but record/token structure or CRC validation
+  fails: classifier returns `kV2CommittedCorrupt`;
 - a partial commit with an invalid body/CRC/config/token, or any other supported
   malformed state:
   `SUPPORTED_CORRUPT`.
@@ -1223,12 +1260,14 @@ automatic sequence.
 
 ### 13.4 Recovery decision table
 
-The first implementation uses this decision policy:
+The current clean-cutover implementation uses this decision policy. Legacy-v1
+automatic migration rows from the earlier reviewed contingency are **not**
+current runtime actions:
 
 | observed partition state | runtime config | semantic state | token state | automatic action |
 | --- | --- | --- | --- | --- |
 | both pages erased | defaults | FALLBACK_ONLY | UNAVAILABLE | establish fresh baseline when safe |
-| valid v1 source + erased/torn/supported-corrupt residue, no unsupported schema | selected valid v1 fallback | UNAMBIGUOUS | UNAVAILABLE/UNCERTAIN | fresh-incarnation migration allowed |
+| any committed legacy v1 observed by v2 runtime | no automatic semantic adoption | FALLBACK_ONLY/maintenance | UNAVAILABLE/UNCERTAIN | **maintenance/reset required; no automatic rewrite** |
 | one non-retired committed-valid v2 + erased page | committed v2 config | UNAMBIGUOUS | VALID | none |
 | committed v2 + staged exact successor (same incarnation, revision +1) | committed v2 config | UNAMBIGUOUS | VALID | discard/erase stage on later cleanup |
 | retired committed v2 + erased other page | retired page config as semantic fallback | UNAMBIGUOUS | UNCERTAIN | skip retire rewrite and erased-page erase; fresh-incarnation re-baseline |
@@ -1239,8 +1278,8 @@ The first implementation uses this decision policy:
 | one verified stage/partial-commit + supported-corrupt page | staged body config | UNAMBIGUOUS | UNCERTAIN | §9.3 fresh-incarnation recovery |
 | impossible-lineage v2 records with same semantic config | common config | UNAMBIGUOUS | UNCERTAIN | fresh-incarnation re-baseline allowed |
 | two staged v2 records with same semantic config | common config | UNAMBIGUOUS | UNCERTAIN/UNAVAILABLE | fresh-incarnation staged recovery allowed |
-| valid v1 + any uncommitted v2 stage, including different config | valid v1 config | UNAMBIGUOUS | UNAVAILABLE/UNCERTAIN | discard stage after fresh CSPRNG; migrate selected v1 config |
-| mixed committed v1+v2 with same semantic config | common config; v1 retained as migration source | UNAMBIGUOUS | UNCERTAIN | erase v2 first, then fresh migration |
+| legacy v1 + any v2 staged/partial evidence | no automatic semantic adoption | FALLBACK_ONLY/maintenance | UNAVAILABLE/UNCERTAIN | **maintenance/reset required; no automatic rewrite** |
+| mixed committed v1+v2, regardless of semantic equality | no automatic semantic adoption | AMBIGUOUS/maintenance | UNCERTAIN | **maintenance/reset required; no automatic rewrite** |
 | committed/otherwise authoritative valid candidates with different semantic configs | safe runtime defaults only | AMBIGUOUS | UNCERTAIN | no automatic rewrite; maintenance selects config |
 | only supported corruption, no recoverable semantic copy | defaults | FALLBACK_ONLY | UNCERTAIN/UNAVAILABLE | no equality no-op; maintenance or reviewed recovery |
 | any UNSUPPORTED_NEWER evidence | best safe runtime fallback only | AMBIGUOUS | UNCERTAIN | no automatic erase/re-baseline |
@@ -1302,8 +1341,8 @@ Config and token must come from one recovery/transaction observation.
 
 ### 14.3 Mutation ownership and conditional admission
 
-Only one semantic mutation/re-baseline/migration job may own ConfigStore at a
-time.
+Only one semantic mutation/re-baseline job may own ConfigStore at a time.
+Legacy migration is not part of the current clean-cutover runtime.
 
 For protected CAS mutation, the following must be one serialized, non-yielding
 application-owner decision:
@@ -1325,8 +1364,9 @@ frozen here.
 
 ### 14.4 Special paths
 
-Migration/re-baseline/reset use explicit paths and acquire the same mutation
-ownership.
+Re-baseline/reset use explicit paths and acquire the same mutation ownership.
+A future legacy-migration path, if ever separately authorized, would also be
+required to use that ownership.
 
 Test/probe code cannot directly construct a changed semantic record with unchanged
 revision.
@@ -1451,7 +1491,11 @@ per successful semantic change.
 
 No write for unchanged config.
 
-### Migration / re-baseline wear
+### Re-baseline wear and legacy-migration contingency
+
+The current clean development cutover does not perform automatic v1 -> v2
+migration. The following wear estimate is contingency-only for a future
+separately authorized deployed-fleet migration.
 
 One-time legacy migration may require:
 
@@ -1472,7 +1516,8 @@ recovery must not spin on flash.
 
 ### Brownout / repeated-boot wear bound
 
-Automatic destructive migration/re-baseline is not an early-boot retry loop.
+Automatic destructive re-baseline is not an early-boot retry loop. A future
+legacy migration, if separately authorized, must obey the same bound.
 
 The implementation must:
 
@@ -1753,7 +1798,8 @@ Recommended order:
 ```text
 independent layout/recovery audit
 -> exact v2 codec host tests
--> recovery/migration fault tests
+-> v2 recovery/re-baseline fault tests
+-> legacy migration fault tests only if a future deployed-fleet migration is separately authorized
 -> ConfigStore v2 implementation
 -> application-owner snapshot/mutation seam
 -> full host/sanitizer/warnings suite
