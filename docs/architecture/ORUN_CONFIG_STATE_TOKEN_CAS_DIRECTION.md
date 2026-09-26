@@ -912,11 +912,19 @@ Required result semantics include at least:
 - `STALE_PRECONDITION`;
 - token unavailable/uncertain;
 - invalid candidate/policy rejection;
-- durable-storage failure;
-- transport timeout remains `UNCONFIRMED`, not false application failure.
+- definitive durable-storage rejection/failure when the store can prove the
+  candidate did not become authoritative;
+- transport timeout remains `UNCONFIRMED`, not false application failure;
+- **storage outcome unknown**: if ConfigStore reports an unconfirmed save
+  failure after the commit word may already have reached flash, protected
+  COMMAND/RESULT must not emit definitive `FAILED`. The operation remains
+  `UNCONFIRMED` / `OUTCOME_UNKNOWN` until full partition reconciliation
+  or an authenticated state read establishes durable semantic/token state.
 
 Only an authenticated tracker RESULT may establish user-visible application
-outcome.
+outcome. A later reconciliation that discovers the candidate committed updates
+device state but must not synthesize a second application RESULT for the
+original attempt.
 
 For mutation RESULTs, any state token reported as usable must be the token
 captured under that transaction's mutation ownership. `BUSY` must not advance
