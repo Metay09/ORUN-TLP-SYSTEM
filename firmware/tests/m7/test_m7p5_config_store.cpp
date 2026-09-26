@@ -534,7 +534,15 @@ int main() {
     assert(store.begin());
     assert(store.maintenanceResetRequired());
     assert(store.tokenState() == ConfigTokenState::kUncertain);
-    assert(!store.hasCommittedRecord());
+    // The impossible staged successor invalidates token authority only. The
+    // independently committed semantic override remains the user-visible
+    // stored config and must not be discarded.
+    assert(store.config().tracking_interval_seconds == 300);
+    assert(store.config().battery_capacity_mah == 10);
+    assert(store.hasCommittedRecord());
+    StateToken hidden;
+    assert(!store.stateToken(hidden));
+    assert(!store.requestSave(Config{301, 11}));
   }
 
   // 18. Two committed-valid pages require exact generation/revision lineage.
