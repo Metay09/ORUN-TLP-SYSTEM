@@ -4,8 +4,11 @@ Status: **CURRENT through `main@e2a370510c595c5f4b88e94a1212fb95d848a273` (M7P6F
 Last reviewed against code checkpoint `main@e2a370510c595c5f4b88e94a1212fb95d848a273`.
 Last architecture review update: 2026-09-26. High-level service decomposition,
 engineering-scale assumptions and hardware-portability direction are recorded in
-`ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md`; focused BLE/security evidence remains in
-the corresponding milestone/audit records.
+`ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md`. Owner-approved delegated gateway-command
+security direction is recorded in
+`ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md`; it remains design-only,
+not wire/runtime authorization. Focused BLE/security evidence remains in the
+corresponding milestone/audit records.
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
