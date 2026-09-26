@@ -36,16 +36,15 @@ EVENT/alarm, MESSAGE, COMMAND/RESULT, health/history/map), hardware-portability
 boundary and layered validation model. It is architecture direction, not evidence
 that those later runtimes exist.
 
-Current delegated-command design work is in
-`ORUN_TLP_V2_COMMAND_SECURITY_CONTRACT_DRAFT_V2.md`. The first draft is retained
-only as the independently audited historical target. The durable audit record is
+Owner-approved delegated-command security direction is recorded in
+`ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md`. The durable audit record is
 `docs/audits/TLP_V2_COMMAND_SECURITY_CONTRACT_AUDIT_DISPOSITION.md`, which
 consolidates the initial FAIL/REDESIGN, V2 PASS WITH FIXES and final PASS WITH
 MINOR DOC FIX sequence plus the accepted D1-D4 corrections. Raw reviewer
-prompts/transcripts were removed after disposition to keep architecture sources
-clean. The delegated authority/header design is ready to be presented for owner
-approval as design direction, but remains not owner-approved and does not
-authorize production secure-RF runtime or freeze COMMAND/RESULT bytes.
+prompts/transcripts and superseded draft files were removed after disposition to
+keep architecture sources clean. This is owner-approved architecture/design
+direction only; it does not authorize production secure-RF runtime or freeze
+COMMAND/RESULT bytes.
 
 
 Merged security primitive evidence (M7P6C): M7P6C is a
@@ -195,8 +194,9 @@ For current architecture decisions, use this order:
 4. focused owner-approved design records for the area being changed, currently including
    `ADR_M7P6_SECURITY_ARCHITECTURE.md`,
    `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`,
-   `ADR_RF_CONFIGURATION_PORTABILITY.md` and
-   `ORUN_GATEWAY_COMMAND_AUTHORITY_DIRECTION.md`;
+   `ADR_RF_CONFIGURATION_PORTABILITY.md`,
+   `ORUN_GATEWAY_COMMAND_AUTHORITY_DIRECTION.md` and
+   `ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md`;
 5. current code, tests, golden/compatibility fixtures and milestone/audit reports
    describing the exact commit being changed;
 6. `ORUN_SYSTEM_ARCHITECTURE_V1.md`, `ORUN_ARCHITECTURE_GAP_ANALYSIS.md` and
