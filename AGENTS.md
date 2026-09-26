@@ -32,6 +32,12 @@ Primary priorities:
 
 ### Owner-approved architecture decision documents
 
+For the high-level product/system decomposition, service ownership, realistic
+10/30-50/~100-device engineering scale target, hardware-portability boundary and
+validation architecture, read
+`docs/architecture/ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md` before designing a new
+service or cross-cutting subsystem.
+
 For security, provisioning, anti-replay, secure-envelope, user/backend authorization
 or command work, read
 `docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md` before designing or coding.
@@ -89,10 +95,14 @@ explicit migration task authorizes changes.
 
 Keep device identity, hardware platform, network forwarding responsibility,
 application/profile, capabilities, enabled services, location source/ownership,
-GNSS power, system power policy and transport separate. User identity is not
-device identity. Profiles are overridable default bundles, not protocol or
-hardware restrictions. A gateway bridge and LoRa relay forwarding are independent
-responsibilities that may coexist on one device.
+GNSS power, system power policy, transport, user identity and security authority
+separate. In particular:
+
+`Role != Location Source != GNSS Power != Capability != Enabled Service != Transport != Device Identity != Profile != User Identity != Security Authority`.
+
+Profiles are overridable default bundles, not protocol or hardware restrictions.
+A gateway bridge and LoRa relay forwarding are independent responsibilities that
+may coexist on one device.
 
 Relay forwarding is an independent enablement axis. Enabling relay forwarding
 must not disable tracking, telemetry, sensing or actuation services on the same
