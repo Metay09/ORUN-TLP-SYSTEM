@@ -1,6 +1,6 @@
 # ORUN ConfigStore v2 Tokenized Layout Direction
 
-Status: **DESIGN REVIEW COMPLETE — INDEPENDENT AUDIT PASS WITH FIXES; FINAL VERIFY PASS WITH MINOR DOC FIX; H1/H2, M1-M4, L1-L5 AND R1-R3 APPLIED — DOCUMENTATION-ONLY — 2026-09-26.**
+Status: **DESIGN REVIEW COMPLETE — INDEPENDENT AUDIT PASS WITH FIXES; FINAL VERIFY PASS WITH MINOR DOC FIX; H1/H2, M1-M4, L1-L5 AND R1-R3 APPLIED — FIRST RUNTIME CUTOVER SLICE IMPLEMENTED ON PR #46 BRANCH; SOFTWARE VALIDATION PENDING — 2026-09-26.**
 
 Baseline:
 
@@ -12,9 +12,11 @@ Depends on:
 - `docs/audits/CONFIG_STATE_TOKEN_CAS_AUDIT_DISPOSITION.md`
 - `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md`
 
-This slice defines the exact **on-flash ConfigStore v2 record layout**, two-page
-A/B transition rules, token-state recovery classification and implementation
-invariants required before firmware code is changed.
+This document defines the exact **on-flash ConfigStore v2 record layout**,
+two-page A/B transition rules, token-state recovery classification and
+implementation invariants. PR #46 is the first deliberately narrow firmware
+slice consuming that frozen design: blank-partition baseline establishment,
+v2-only normal saves/recovery and fail-closed maintenance handling.
 
 The repository currently has **no deployed field fleet whose ConfigStore v1
 contents must be preserved**. Therefore automatic v1 -> v2 migration is not a
@@ -22,8 +24,10 @@ current product requirement. The previously reviewed legacy-migration sections
 remain as contingency analysis only; they are not authorized for implementation
 without a new explicit product need.
 
-It does **not** implement firmware, change TLP v1, change BLE GET_CONFIG, freeze
-COMMAND/RESULT application bytes or authorize production secure-RF runtime.
+The design review itself did not authorize protected application mutations.
+PR #46 implements only the persistence/runtime-storage subset. It does **not**
+change TLP v1, change BLE GET_CONFIG bytes, freeze COMMAND/RESULT application
+bytes, add BLE/RF config mutation or authorize production secure-RF runtime.
 
 ---
 
@@ -93,8 +97,9 @@ Rules:
   it: it reports a legacy-development-schema / maintenance-reset condition;
 - mixed committed v1+v2 is never auto-reconciled in the current product; it is a
   maintenance/reset condition;
-- legacy v1 codec code may remain temporarily only while the current development
-  runtime still writes v1, then should be removed when no longer referenced;
+- runtime writes are v2-only in the PR #46 cutover slice; the frozen v1 codec
+  may remain read-only while it is still required for legacy-development
+  detection, compatibility fixtures or explicit maintenance tooling;
 - if a real deployed-fleet migration requirement appears in the future, the
   reviewed contingency analysis below may be reconsidered in a separate slice
   rather than silently enabling it.
