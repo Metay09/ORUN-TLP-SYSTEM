@@ -103,15 +103,14 @@ void ConfigStore::setMaintenance(ConfigTokenState token_state) {
 
 void ConfigStore::setMaintenanceFallback(
     const config_format::PageInspection& fallback,
-    ConfigTokenState token_state) {
+    ConfigTokenState token_state,
+    bool application_committed) {
   config_ = fallback.config;
   token_ = fallback.token;  // evidence only; stateToken() hides it unless VALID.
   token_state_ = token_state;
   semantic_unambiguous_ = true;
   maintenance_reset_required_ = true;
-  application_config_committed_ =
-      fallback.token.revision > 1 ||
-      !sameConfig(fallback.config, defaultConfig());
+  application_config_committed_ = application_committed;
   generation_ = fallback.generation;
   active_page_ = -1;  // no cache-authoritative page while maintenance-locked
   ++diagnostics_.maintenance_lockouts;
@@ -282,7 +281,10 @@ bool ConfigStore::recover() {
     if (sameConfig(pa.config, pb.config)) {
       const auto& fallback =
           pb.generation > pa.generation ? pb : pa;
-      setMaintenanceFallback(fallback, ConfigTokenState::kUncertain);
+      setMaintenanceFallback(
+          fallback, ConfigTokenState::kUncertain,
+          fallback.token.revision > 1 ||
+              !sameConfig(fallback.config, defaultConfig()));
     } else {
       setMaintenance(ConfigTokenState::kUncertain);
     }
@@ -309,8 +311,20 @@ bool ConfigStore::recover() {
           best = page;
       }
       if (same_semantics) {
-        setMaintenanceFallback(pages[best].inspection,
-                               ConfigTokenState::kUncertain);
+        bool has_committed_provenance = false;
+        for (unsigned i = 0; i < fallback_count; ++i) {
+          if (pages[fallback_pages[i]].inspection.evidence ==
+              config_format::PageEvidence::kV2CommittedRetired) {
+            has_committed_provenance = true;
+            break;
+          }
+        }
+        const auto& fallback = pages[best].inspection;
+        setMaintenanceFallback(
+            fallback, ConfigTokenState::kUncertain,
+            has_committed_provenance &&
+                (fallback.token.revision > 1 ||
+                 !sameConfig(fallback.config, defaultConfig())));
         return true;
       }
     }
@@ -344,7 +358,9 @@ bool ConfigStore::recover() {
         lo.token.revision == UINT32_MAX ||
         hi.token.revision != lo.token.revision + 1) {
       if (sameConfig(hi.config, lo.config))
-        setMaintenanceFallback(hi, ConfigTokenState::kUncertain);
+        setMaintenanceFallback(
+            hi, ConfigTokenState::kUncertain,
+            hi.token.revision > 1 || !sameConfig(hi.config, defaultConfig()));
       else
         setMaintenance(ConfigTokenState::kUncertain);
       return true;
@@ -369,7 +385,10 @@ bool ConfigStore::recover() {
   if (any_supported_corrupt) {
     // The committed semantic copy is still useful to the device/user, but the
     // contradictory inactive-page evidence makes its token unsafe for CAS.
-    setMaintenanceFallback(committed, ConfigTokenState::kUncertain);
+    setMaintenanceFallback(
+        committed, ConfigTokenState::kUncertain,
+        committed.token.revision > 1 ||
+            !sameConfig(committed.config, defaultConfig()));
     return true;
   }
 
