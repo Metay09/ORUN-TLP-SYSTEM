@@ -59,7 +59,11 @@ class ConfigStore {
   void poll();
 
   bool ready() const { return ready_; }
-  bool hasCommittedRecord() const { return active_page_ >= 0; }
+  // Backward-compatible application provenance used by existing GET_CONFIG:
+  // false for the internal fresh v2 default baseline, true once a semantic
+  // config change has been durably committed. This keeps the frozen
+  // "default vs stored" application meaning independent from token metadata.
+  bool hasCommittedRecord() const { return application_config_committed_; }
   bool busy() const { return job_ != Job::kNone; }
   const config_format::Config& config() const { return config_; }
 
@@ -116,6 +120,7 @@ class ConfigStore {
   ConfigTokenState token_state_ = ConfigTokenState::kUnavailable;
   bool semantic_unambiguous_ = false;
   bool maintenance_reset_required_ = false;
+  bool application_config_committed_ = false;
 
   uint64_t generation_ = 0;
   int active_page_ = -1;
