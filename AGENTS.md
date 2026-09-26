@@ -56,6 +56,13 @@ complete COMMAND/RESULT wire layout and ConfigStore implementation unfrozen. Its
 focused independent audit returned PASS WITH FIXES with no BLOCKER/HIGH. Final
 focused verification returned PASS WITH MINOR DOC FIX; R1 is applied.
 
+For tokenized ConfigStore persistence, legacy migration, recovery classification,
+power-cut handling or config flash API changes, also read
+`docs/architecture/ORUN_CONFIG_STORE_V2_TOKENIZED_LAYOUT.md` together with
+`docs/audits/CONFIG_STORE_V2_TOKENIZED_LAYOUT_AUDIT_DISPOSITION.md`. The
+independent layout audit returned PASS WITH FIXES; requested H1/H2, M1-M4 and
+L1-L5 corrections are applied, with final focused verification still pending.
+
 The delegated authority/header architecture and config CAS contract are
 owner-approved design direction. They are not a wire freeze or production-runtime
 authorization. Durable audit dispositions summarize the review chain; raw
