@@ -265,6 +265,7 @@ V1_UNCOMMITTED_OR_TORN
 
 V2_STAGED_VALID
 V2_UNCOMMITTED_OR_TORN
+V2_PARTIAL_COMMIT
 V2_COMMITTED_VALID
 V2_COMMITTED_INVALID
 V2_COMMITTED_RETIRED
@@ -301,21 +302,30 @@ For exact `ORC1/version=2`:
   `V2_STAGED_VALID`;
 - commit word == `0xFFFFFFFF` but the body is incomplete/invalid:
   `V2_UNCOMMITTED_OR_TORN`;
+- commit word is neither `0xFFFFFFFF` nor `0x00000000`, while the complete
+  v2 body/CRC/config/token fields verify:
+  `V2_PARTIAL_COMMIT`;
 - commit word == `0x00000000`, record verifies and retire word is
   `0xFFFFFFFF`: `V2_COMMITTED_VALID`;
 - commit word == `0x00000000`, record verifies and retire word is non-FF:
   `V2_COMMITTED_RETIRED`;
 - commit word == `0x00000000` but record/config/token validation fails:
   `V2_COMMITTED_INVALID`;
-- any other commit value:
+- a partial commit with an invalid body/CRC/config/token, or any other supported
+  malformed state:
   `SUPPORTED_CORRUPT`.
 
-A staged record is never application-authoritative. Its token is never returned
-as VALID.
+A staged or partial-commit record is never application-authoritative. Its token
+is never returned as VALID.
 
-A retired committed record may remain the selected **semantic fallback copy**, but
-its token is permanently non-authoritative until that page is erased and a fresh
-incarnation is committed elsewhere.
+A `V2_PARTIAL_COMMIT` record **may preserve its verified semantic config** as a
+recovery safety copy. It is treated like a staged semantic copy for recovery,
+but its token identity is permanently non-authoritative and a fresh incarnation
+is required before CAS resumes.
+
+A retired committed record may likewise remain the selected **semantic fallback
+copy**, but its token is permanently non-authoritative until that page is erased
+and a fresh incarnation is committed elsewhere.
 
 ### 3.5 Torn prefix / interrupted erase evidence
 
@@ -345,7 +355,9 @@ nor
 0x00000000
 ```
 
-is ambiguous and never active.
+is never active. When the complete v2 body/CRC/config/token fields still verify,
+it is `V2_PARTIAL_COMMIT` and may preserve semantic config only. Otherwise it
+is `SUPPORTED_CORRUPT`.
 
 For `token_retire_word`, the safety rule is deliberately different:
 
@@ -852,20 +864,27 @@ The new candidate uses a fresh incarnation. Its storage generation is chosen
 strictly above any trusted supported v2 generation observed in this recovery
 transaction; generation is ordering metadata, not proof of token continuity.
 
-### 9.4 One staged v2 + one erased page
+### 9.4 One staged/partial-commit v2 + one erased page
 
-A staged token is never promoted after reboot, including a blank-partition
-baseline interrupted before commit.
+A staged or partial-commit token is never promoted after reboot, including a
+blank-partition/migration/re-baseline interrupted during commit.
+
+When the v2 body/CRC/config/token fields verify, either
+`V2_STAGED_VALID` or `V2_PARTIAL_COMMIT` may preserve the semantic config.
 
 Recovery:
 
-1. use the staged record only as an unambiguous semantic copy;
+1. use that record only as an unambiguous semantic safety copy;
 2. obtain a fresh incarnation;
 3. write a fresh staged baseline to the erased page;
 4. verify;
-5. erase the old staged page;
+5. erase the old staged/partial-commit page;
 6. commit/verify the fresh candidate;
 7. expose VALID.
+
+This prevents a partially programmed final commit word from silently discarding
+the user's last verified semantic config while still refusing to trust the
+partially committed token.
 
 ### 9.5 Two V2_STAGED_VALID pages
 
