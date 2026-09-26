@@ -425,6 +425,28 @@ Final focused verification returned **PASS WITH MINOR DOC FIX** with 0 BLOCKER /
 
 This closes the ConfigStore v2 **design/audit gate only**.
 
+### Owner scope correction after audit
+
+ORUN currently has no deployed ConfigStore fleet whose v1 development data must
+survive a product upgrade. The owner therefore narrowed the current
+implementation target after this audit:
+
+```text
+development v1 ConfigStore
+-> explicit ConfigStore partition erase
+-> fresh v2 baseline
+-> v2-only normal writes
+```
+
+Automatic v1 -> v2 migration and automatic mixed v1/v2 reconciliation are **not**
+current implementation requirements. The audit's legacy-migration analysis is
+retained as contingency evidence only if a real deployed-fleet requirement is
+approved later.
+
+This scope correction simplifies the implementation and does not change the
+audited 48-byte v2 record, token-retire word, v2 A/B power-cut recovery, partial
+commit salvage, async mutation reconciliation or TLP v1 wire compatibility.
+
 Implementation must still produce the host/fault, compiler/sanitizer, RAK4630
 build and focused physical power-cut/SoftDevice evidence required by the
 architecture document. No runtime validation is inherited from this disposition.
