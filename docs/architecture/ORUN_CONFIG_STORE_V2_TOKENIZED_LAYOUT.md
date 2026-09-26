@@ -863,62 +863,97 @@ and
 V2_COMMITTED_VALID
 ```
 
-is never resolved by comparing physical generations.
-
-An existing v2 token is never made VALID merely because its v2 generation is
-higher.
-
-This state means one of:
-
-- interrupted/old migration implementation;
-- token-unaware downgrade/write;
-- unsupported manual flash history.
-
-Recovery result begins as:
+starts with:
 
 ```text
 token_state = UNCERTAIN
 ```
 
-No existing tokenized token from the mixed state is reused.
+Physical generations are never compared across schemas and no existing v2 token
+from the mixed state is reused.
 
-The first implementation may auto-recover mixed committed v1+v2 only when the
-two records contain the **same complete semantic config**. In that case, whichever
-record was temporally newer, preserving that common semantic value cannot create
-a lost config update. Recovery discards the existing v2 token identity and
-creates a fresh incarnation through the reviewed migration/re-baseline path.
+### 10.1 Same complete semantic config
 
-If the valid v1 and valid v2 semantic configs differ, current flash evidence
-cannot prove which semantic state is newer:
+If v1 and v2 encode the same complete semantic config, automatic recovery is
+allowed because semantic state is unambiguous.
 
-- the v1 record may be a later token-unaware downgrade write; or
-- the v2 record may represent a later state while the v1 page is stale residue
-  from an unsupported/older migration history.
+The **v2 page must be discarded first**. Erasing the v1 page first is forbidden:
+a power cut could leave the old committed v2 page alone and incorrectly make its
+old token VALID.
 
-Therefore different-config mixed state remains UNCERTAIN and is **not**
-automatically rewritten. Explicit reviewed maintenance/re-baseline must select
-the semantic config before creating a fresh incarnation.
+Sequence:
 
-If legacy semantics are invalid/corrupt or the mixed state cannot otherwise be
-safely classified, do not auto-rewrite.
+```text
+1. keep v1 page as the semantic source
+2. obtain fresh incarnation before erase
+3. erase the committed v2 page
+4. verify erase
+5. stage fresh v2 baseline on that erased page
+6. verify stage
+7. erase the v1 source page
+8. verify erase
+9. commit/verify the fresh v2 candidate
+10. expose VALID
+```
+
+This is the same two-page staged/retire/commit family as legacy migration; the old
+v2 token identity is destroyed before the last legacy semantic source is erased.
+
+### 10.2 Different semantic configs
+
+If valid v1 and valid v2 configs differ, current flash evidence cannot prove which
+semantic value is newer.
+
+Result:
+
+```text
+semantic_state = AMBIGUOUS
+token_state    = UNCERTAIN
+automatic rewrite = prohibited
+```
+
+Runtime may use only the separately defined conservative recovery fallback; it
+must not present either candidate as authoritative application state.
+
+Explicit authenticated/local maintenance must select the semantic config and then
+perform a fresh-incarnation re-baseline.
+
+### 10.3 Invalid/corrupt mixed evidence
+
+If no unambiguous semantic value can be selected, do not auto-rewrite.
+
+If one valid semantic copy remains and the other page is only supported local
+corruption, the supported-corruption rules may apply. `UNSUPPORTED_NEWER`
+always blocks automatic rewrite.
 
 ---
 
 ## 11. Unsupported/newer schema
 
-A non-erased config page that cannot be classified as supported v1 or v2 must not
-be overwritten automatically merely to regain CAS availability.
+Only the fixed-family discriminator defined in §3.1 creates
+`UNSUPPORTED_NEWER`:
+
+```text
+magic == ORC1
+version not in {1, 2, 0xFF}
+```
+
+That page is not automatically overwritten merely to regain CAS availability.
 
 Result:
 
 ```text
 token_state = UNCERTAIN
 protected config mutation unavailable
+automatic re-baseline prohibited
 ```
 
-This preserves downgrade/forward-compatibility safety.
+Non-ORC1 torn/corrupt bytes inside this ORUN-owned partition are instead
+`SUPPORTED_CORRUPT` evidence and follow the bounded supported-corruption rules.
 
-Firmware compatibility or explicit reviewed maintenance is required.
+This contract intentionally requires future ConfigStore schema versions to retain
+the fixed ORC1/version discriminator until a separately reviewed classifier
+migration says otherwise.
 
 ---
 
@@ -958,7 +993,54 @@ history.
 Re-baseline is not a normal `requestSave()`.
 
 It is a separate internal/recovery operation used only when the current config
-state identity cannot remain authoritative.
+state identity cannot remain authoritative and semantic state is
+UNAMBIGUOUS.
+
+### 13.1 v2 supported-corruption re-baseline
+
+When a committed v2 page A supplies the selected semantic fallback but token state
+is UNCERTAIN because page B contains supported contradictory evidence, the first
+implementation uses the page-local retire marker:
+
+```text
+1. obtain fresh nonzero incarnation before any erase
+2. program A.token_retire_word from FF to 0
+3. read back and verify A is retired
+4. only now erase contradictory page B
+5. verify B erased
+6. write/verify fresh-incarnation staged v2 baseline on B
+7. erase retired semantic-source page A
+8. verify A erased
+9. commit staged B
+10. verify committed B
+11. expose token_state = VALID
+```
+
+If power fails after step 2, A can still supply config but its old token remains
+UNCERTAIN forever because the retire word is monotonic.
+
+If power fails after B is erased, the surviving A still carries the retire word,
+so §5.1 cannot resurrect its old token.
+
+If power fails after the fresh stage is written, §5.2 also cannot revive A:
+A is retired and the fresh stage has a different incarnation.
+
+This closes the token-resurrection path without a third page.
+
+### 13.2 Two committed-valid but impossible-lineage v2 pages
+
+If two committed v2 pages violate normal generation/token lineage:
+
+- same complete semantic config: semantic state is UNAMBIGUOUS; choose one only
+  as the semantic safety copy, retire it first, then use the §13.1 sequence;
+- different semantic config: semantic state is AMBIGUOUS; no automatic
+  re-baseline.
+
+Choosing one same-config page as the physical safety copy does **not** assert that
+its token or temporal ordering is authoritative; all existing token identities
+are discarded.
+
+### 13.3 Result of successful re-baseline
 
 A successful re-baseline:
 
@@ -966,17 +1048,18 @@ A successful re-baseline:
 preserves the selected semantic config
 creates fresh nonzero incarnation
 sets revision = 1
-creates a fresh v2 storage generation namespace when migrating from v1,
-or a strictly newer v2 generation when recovering inside an existing v2
-namespace
-publishes VALID only after durable commit
+uses a storage generation strictly above trusted supported v2 generations when
+continuing inside a v2 namespace
+publishes VALID only after durable commit/readback
 ```
 
-Old application tokens then become stale.
+Old application tokens become stale.
 
-Re-baseline must be diagnosable.
+Re-baseline is diagnosable and is never a generic way to bypass
+STALE_PRECONDITION.
 
-It is not a generic way to bypass STALE_PRECONDITION.
+A genuine `UNSUPPORTED_NEWER` page or AMBIGUOUS semantic state cannot enter this
+automatic sequence.
 
 ---
 
