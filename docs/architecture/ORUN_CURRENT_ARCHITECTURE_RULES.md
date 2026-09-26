@@ -1,23 +1,32 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through M7P7G merge (PR #39, `main@26bdbead377621554c37b22596de294f9ab83579`). The first real ORUN application GATT adapter now exists for the pre-authorization read-only GET_CONFIG contract; provisioning, application authorization, protected config writes, secure TLP v2, MESSAGE/commands and private-location services remain later gates. M7P6C/D/E security primitive/pre-wire/coexistence constraints remain governing prerequisites for those protected paths.**
-Last reviewed against code checkpoint `main@26bdbead377621554c37b22596de294f9ab83579`.
-Last architecture review update: 2026-09-24 (§17 records merged M7P7G, focused physical BLE evidence, independent audit disposition and post-audit host/build PASS).
+Status: **CURRENT through `main@e2a370510c595c5f4b88e94a1212fb95d848a273` (M7P6F merged via PR #41). The first real ORUN application GATT adapter remains the pre-authorization read-only GET_CONFIG path; M7P6F adds durable SecurityStore v2/backend-A2D replay persistence but no production secure-RF caller. Provisioning, application authorization, protected config writes, secure TLP v2, MESSAGE/commands and private-location services remain later gates.**
+Last reviewed against code checkpoint `main@e2a370510c595c5f4b88e94a1212fb95d848a273`.
+Last architecture review update: 2026-09-26. High-level service decomposition,
+engineering-scale assumptions and hardware-portability direction are recorded in
+`ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md`. Owner-approved delegated gateway-command
+security direction is recorded in
+`ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md`; it remains design-only,
+not wire/runtime authorization. Focused BLE/security evidence remains in the
+corresponding milestone/audit records.
 Scope: concept boundaries and ownership; this file does not authorize new wire,
 storage, BLE, security, sensor-driver or multi-hop implementation by itself.
 
 This document exists so a new engineer can distinguish the behavior that is
 physically/currently implemented from the product architecture we are building
-toward. `AGENTS.md` remains the project instruction source. Older architecture
-documents remain useful design/audit records, but silent contradictions with
-these owner-approved rules must be removed when the affected area is changed.
+toward. `AGENTS.md` remains the project instruction source.
+`ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md` is the owner-approved high-level product
+map; this file remains the detailed current-vs-future ownership/invariant record.
+Older architecture documents remain useful design/audit records, but silent
+contradictions with these owner-approved rules must be removed when the affected
+area is changed.
 
 ## 1. Non-negotiable concept separation
 
 These are separate facts and must not be collapsed into one enum or inferred
 from one another:
 
-`Role != Location Source != GNSS Power != Capability != Transport != Identity != Profile != User Identity`.
+`Role != Location Source != GNSS Power != Capability != Enabled Service != Transport != Device Identity != Profile != User Identity != Security Authority`.
 
 Also keep separate:
 

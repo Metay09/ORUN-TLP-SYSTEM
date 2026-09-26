@@ -415,7 +415,7 @@ The next security-command design must resolve, with tests and independent review
 - gateway secure-storage ownership and backup/rollback behavior;
 - exact secure-envelope bytes, AAD and MTU/airtime budget;
 - mixed-firmware fail-closed behavior;
-- RF capacity at 10/100/1000 trackers;
+- RF capacity and queue behavior across realistic small/medium deployments up to approximately 100 trackers per RF domain; 1000 trackers is not a single-domain product target and, if ever needed, must be handled by explicit RF/domain partitioning rather than assumed flat-channel scaling;
 - physical sleepy-tracker + relay store-forward validation.
 
 This direction does not supersede the already-reviewed M7P6F SecurityStore v2
