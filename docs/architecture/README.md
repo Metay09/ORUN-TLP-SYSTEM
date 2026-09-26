@@ -70,8 +70,14 @@ record is
 The design keeps the sealed v2 record at 48 bytes inside the existing two-page
 partition, adds one page-local monotonic token-retire word, distinguishes local
 torn/corrupt evidence from genuine unsupported-newer schema, and defines staged
-migration/re-baseline without allocating a third flash page. It remains
-documentation-only and is not yet an implemented ConfigStore schema.
+v2 recovery/re-baseline without allocating a third flash page.
+
+Owner scope correction after design review: ORUN currently has no deployed
+ConfigStore fleet, so development ConfigStore v1 contents are not preserved by a
+production migration contract. Current v2 implementation direction is explicit
+development partition erase -> fresh v2 baseline -> v2-only writes. The reviewed
+v1 migration sections remain contingency analysis only. TLP v1 wire compatibility
+is unaffected.
 
 
 Merged security primitive evidence (M7P6C): M7P6C is a
