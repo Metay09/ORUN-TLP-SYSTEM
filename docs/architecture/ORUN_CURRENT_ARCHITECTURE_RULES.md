@@ -16,7 +16,9 @@ This document exists so a new engineer can distinguish the behavior that is
 physically/currently implemented from the product architecture we are building
 toward. `AGENTS.md` remains the project instruction source.
 `ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md` is the owner-approved high-level product
-map; this file remains the detailed current-vs-future ownership/invariant record.
+map; `ORUN_GEOFENCE_OPERATIONAL_POLICY.md` is the focused owner-approved M6D
+geofence operational direction; this file remains the detailed current-vs-future
+ownership/invariant record.
 Older architecture documents remain useful design/audit records, but silent
 contradictions with these owner-approved rules must be removed when the affected
 area is changed.
@@ -438,8 +440,15 @@ The current software stack has bounded explicit M6B3 diagnostic activity
 capture plus deterministic activity feature/quality helpers and geofence
 geometry/permitted-area composition. It does **not** yet implement an automatically
 enabled production activity service or production activity classification,
-NEAR_FENCE distance, GNSS quality policy, repeated-fix confirmation, hysteresis,
-FREE_GRAZE or local operational state. Host-only geometry PASS must not be described as field geofence PASS.
+GNSS-to-geofence production wiring, transition-confirmation runtime, FREE_GRAZE,
+OUTSIDE event transport or local operational state. Host-only geometry PASS must
+not be described as field geofence PASS.
+
+The later M6D design direction is now frozen separately in
+`ORUN_GEOFENCE_OPERATIONAL_POLICY.md`: current product state is INSIDE/OUTSIDE,
+state changes use bounded 2-of-3 accepted-observation confirmation, confirmed
+OUTSIDE derives runtime cadence `B / 3`, and `NEAR_FENCE` is explicitly deferred.
+This is architecture direction only, not current runtime evidence.
 
 A trustworthy network-contact-based LOST rule is different. Do not claim:
 
@@ -449,8 +458,9 @@ OUTSIDE + no network contact for N hours -> trustworthy LOST
 
 until "network contact" is backed by an appropriate authenticated receipt/contact
 semantic. Existing v1 has no authentication/ACK contract and TX completion is not
-contact evidence. Local OUTSIDE/NEAR state can exist before trustworthy remote
-contact/delivery semantics.
+contact evidence. Local OUTSIDE state can exist before trustworthy remote
+contact/delivery semantics. `NEAR_FENCE` remains an optional future capability,
+not part of the current M6D operational baseline.
 
 Private person location, remote configuration, messaging and actuation remain
 security-gated future work requiring authentication, authorization, anti-replay,
@@ -642,10 +652,11 @@ No current M6 code claims:
 - RESTING/GRAZING/WALKING classification;
 - cattle behavior accuracy;
 - GNSS-to-geofence runtime wiring;
-- NEAR_FENCE distance, hysteresis or repeated-fix policy;
+- the owner-approved bounded transition-confirmation runtime and `B / 3` cadence;
+- NEAR_FENCE runtime behavior (explicitly deferred, not current baseline);
 - FREE_GRAZE;
 - geofence persistence;
-- critical RF event/ACK delivery;
+- critical RF OUTSIDE-event/ACK delivery;
 - trustworthy network-contact LOST.
 
 The prior final independent audit and focused operator M6A physical gate are
