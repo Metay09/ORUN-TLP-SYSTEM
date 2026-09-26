@@ -81,10 +81,18 @@ For `GET_CONFIG`:
   application provenance bit and still reports
   `config_has_committed_record=false` / `source=default`;
 - blank, fallback-only or otherwise non-authoritative config state may therefore
-  report `config_backend_ready=true`,
-  `config_has_committed_record=false` and the safe/default semantic config;
+  report `config_backend_ready=true` and
+  `config_has_committed_record=false`; the semantic config is usually the
+  default, but a verified stage/partial-commit fallback may expose a
+  **non-default recovered semantic config while bit1 remains false** because
+  that evidence is not a committed application override;
 - backend initialization failure reports both facts false and still exposes the
-  existing documented safe fallback.
+  existing documented safe fallback;
+- a later reconciliation read failure can preserve the last known committed
+  semantic config/provenance while setting backend ready false. Thus
+  `config_backend_ready=false` with `config_has_committed_record=true` is a
+  valid diagnostic combination meaning "last known committed config retained,
+  current storage observation failed"; it is not an authoritative fresh read.
 
 The USB adapter presents this as `source=stored|default`, avoiding the false
 equivalence between "store initialized" and "durable setting existed".
