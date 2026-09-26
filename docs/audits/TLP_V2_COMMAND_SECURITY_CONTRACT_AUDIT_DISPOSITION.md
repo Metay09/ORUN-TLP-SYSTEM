@@ -209,6 +209,5 @@ to it.
 The CAS contract subsequently received its own focused independent audit at
 branch head `f1ec46c139a009fea0fefb0ef647cdfe45049c40`. That review returned
 **PASS WITH FIXES**, no BLOCKER/HIGH. Its separate durable disposition is
-`docs/audits/CONFIG_STATE_TOKEN_CAS_AUDIT_DISPOSITION.md`. The requested CAS
-corrections are applied on the design branch; final focused verification remains
-pending before merge/implementation/wire freeze.
+`docs/audits/CONFIG_STATE_TOKEN_CAS_AUDIT_DISPOSITION.md`. Final focused
+verification returned **PASS WITH MINOR DOC FIX**; F1-F9 and R1 are applied.
