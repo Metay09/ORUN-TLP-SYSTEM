@@ -74,13 +74,25 @@ For `GET_CONFIG`:
 - response data comes directly from `ConfigStore::config()`;
 - `config_backend_ready=true` means ConfigStore/backend initialization
   succeeded; it does **not** imply a committed record was recovered;
-- `config_has_committed_record=true` means recovery found an actual valid
-  committed page;
-- blank or corrupt/unrecognized config flash may therefore report
-  `config_backend_ready=true`, `config_has_committed_record=false` and the
-  safe defaults;
+- `config_has_committed_record=true` means the application has durable
+  evidence of a committed **semantic config override**;
+- ConfigStore v2 may internally commit a default/token baseline solely to
+  establish token identity. That internal baseline does not change the
+  application provenance bit and still reports
+  `config_has_committed_record=false` / `source=default`;
+- blank, fallback-only or otherwise non-authoritative config state may therefore
+  report `config_backend_ready=true` and
+  `config_has_committed_record=false`; the semantic config is usually the
+  default, but a verified stage/partial-commit fallback may expose a
+  **non-default recovered semantic config while bit1 remains false** because
+  that evidence is not a committed application override;
 - backend initialization failure reports both facts false and still exposes the
-  existing documented safe fallback.
+  existing documented safe fallback;
+- a later reconciliation read failure can preserve the last known committed
+  semantic config/provenance while setting backend ready false. Thus
+  `config_backend_ready=false` with `config_has_committed_record=true` is a
+  valid diagnostic combination meaning "last known committed config retained,
+  current storage observation failed"; it is not an authoritative fresh read.
 
 The USB adapter presents this as `source=stored|default`, avoiding the false
 equivalence between "store initialized" and "durable setting existed".

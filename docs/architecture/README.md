@@ -74,10 +74,13 @@ v2 recovery/re-baseline without allocating a third flash page.
 
 Owner scope correction after design review: ORUN currently has no deployed
 ConfigStore fleet, so development ConfigStore v1 contents are not preserved by a
-production migration contract. Current v2 implementation direction is explicit
-development partition erase -> fresh v2 baseline -> v2-only writes. The reviewed
-v1 migration sections remain contingency analysis only. TLP v1 wire compatibility
-is unaffected.
+production migration contract. PR #46 is the first runtime cutover slice:
+full-page-erased blank partition -> fresh CSPRNG-backed v2 baseline -> v2-only
+normal writes/recovery. Legacy/mixed/unsupported evidence is maintenance/reset
+only; automatic legacy migration and destructive re-baseline remain unimplemented.
+Persistence-side token state exists in that branch, but protected CAS
+application commands/reads remain later work. TLP v1 and the existing BLE
+GET_CONFIG wire bytes are unaffected.
 
 
 Merged security primitive evidence (M7P6C): M7P6C is a

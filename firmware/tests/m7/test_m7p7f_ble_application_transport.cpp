@@ -51,10 +51,15 @@ class ReadOnlyFlash : public FlashBackend {
   }
 
   void seedConfig(const config_format::Config& config,
-                  uint64_t generation = 1, unsigned page = 0) {
+                  uint64_t generation = 1,
+                  unsigned page = 0) {
     assert(page < storage_config::kFutureConfigRegionPages);
-    uint8_t record[config_format::kRecordSize]{};
-    config_format::encode(config, generation, record);
+    const config_format::V2Record v2(
+        generation, config,
+        config_format::StateToken(0x1122334455667788ULL,
+                                  static_cast<uint32_t>(generation)));
+    uint8_t record[config_format::kV2RecordSize]{};
+    config_format::encodeV2(v2, record);
     memcpy(bytes.data() + page * storage_config::kPageSize, record,
            sizeof(record));
   }
@@ -115,9 +120,11 @@ void confirmCurrent(BleApplicationTransport& transport) {
 
 int main() {
   // 1 & 2. Single-frame GET_CONFIG round trip with exact little-endian wire
-  // bytes, against ConfigStore's blank-flash safe defaults.
+  // bytes against the production-style internal v2 default/token baseline.
+  // That baseline must remain application-visible as "default" (flag bit1=0).
   {
     ReadOnlyFlash flash;
+    flash.seedConfig(config_format::Config{180, 0}, 1);
     ConfigStore store(flash);
     assert(store.begin());
     ApplicationRequestService service(store);

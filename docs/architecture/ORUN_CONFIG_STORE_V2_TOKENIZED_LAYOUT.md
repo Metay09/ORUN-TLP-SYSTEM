@@ -1,6 +1,6 @@
 # ORUN ConfigStore v2 Tokenized Layout Direction
 
-Status: **DESIGN REVIEW COMPLETE — INDEPENDENT AUDIT PASS WITH FIXES; FINAL VERIFY PASS WITH MINOR DOC FIX; H1/H2, M1-M4, L1-L5 AND R1-R3 APPLIED — DOCUMENTATION-ONLY — 2026-09-26.**
+Status: **DESIGN REVIEW COMPLETE — INDEPENDENT AUDIT PASS WITH FIXES; FINAL VERIFY PASS WITH MINOR DOC FIX; H1/H2, M1-M4, L1-L5 AND R1-R3 APPLIED — FIRST RUNTIME CUTOVER SLICE IMPLEMENTED ON PR #46 BRANCH; SOFTWARE VALIDATION PENDING — 2026-09-26.**
 
 Baseline:
 
@@ -12,9 +12,11 @@ Depends on:
 - `docs/audits/CONFIG_STATE_TOKEN_CAS_AUDIT_DISPOSITION.md`
 - `docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md`
 
-This slice defines the exact **on-flash ConfigStore v2 record layout**, two-page
-A/B transition rules, token-state recovery classification and implementation
-invariants required before firmware code is changed.
+This document defines the exact **on-flash ConfigStore v2 record layout**,
+two-page A/B transition rules, token-state recovery classification and
+implementation invariants. PR #46 is the first deliberately narrow firmware
+slice consuming that frozen design: blank-partition baseline establishment,
+v2-only normal saves/recovery and fail-closed maintenance handling.
 
 The repository currently has **no deployed field fleet whose ConfigStore v1
 contents must be preserved**. Therefore automatic v1 -> v2 migration is not a
@@ -22,8 +24,10 @@ current product requirement. The previously reviewed legacy-migration sections
 remain as contingency analysis only; they are not authorized for implementation
 without a new explicit product need.
 
-It does **not** implement firmware, change TLP v1, change BLE GET_CONFIG, freeze
-COMMAND/RESULT application bytes or authorize production secure-RF runtime.
+The design review itself did not authorize protected application mutations.
+PR #46 implements only the persistence/runtime-storage subset. It does **not**
+change TLP v1, change BLE GET_CONFIG bytes, freeze COMMAND/RESULT application
+bytes, add BLE/RF config mutation or authorize production secure-RF runtime.
 
 ---
 
@@ -93,8 +97,9 @@ Rules:
   it: it reports a legacy-development-schema / maintenance-reset condition;
 - mixed committed v1+v2 is never auto-reconciled in the current product; it is a
   maintenance/reset condition;
-- legacy v1 codec code may remain temporarily only while the current development
-  runtime still writes v1, then should be removed when no longer referenced;
+- runtime writes are v2-only in the PR #46 cutover slice; the frozen v1 codec
+  may remain read-only while it is still required for legacy-development
+  detection, compatibility fixtures or explicit maintenance tooling;
 - if a real deployed-fleet migration requirement appears in the future, the
   reviewed contingency analysis below may be reconsidered in a separate slice
   rather than silently enabling it.
@@ -495,6 +500,31 @@ A protected semantic change is never allowed while token state is not VALID.
 Equality/no-op under UNAVAILABLE/UNCERTAIN is allowed only for
 `semantic_state == UNAMBIGUOUS`. It is not used for FALLBACK_ONLY or AMBIGUOUS.
 
+### 4.1 Internal token baseline vs application config provenance
+
+The fresh v2 baseline on an erased development partition persists the default
+semantic config together with `generation=1`, a fresh incarnation and
+`revision=1`. That physical committed record exists to establish the token
+namespace; it does **not** mean the user/operator has stored a semantic config
+override.
+
+The already-frozen application/GET_CONFIG provenance therefore remains:
+
+```text
+fresh internal v2 default/token baseline
+    -> application source = default
+    -> existing "committed config override" flag = false
+
+first successful semantic config change
+    -> application source = stored
+    -> existing "committed config override" flag = true
+```
+
+A later semantic reset from a previously changed config back to defaults remains
+a committed semantic change and keeps application provenance as `stored`.
+This preserves existing USB/BLE GET_CONFIG meaning while allowing ConfigStore to
+have durable token metadata even on an otherwise-default device.
+
 ---
 
 ## 5. Normal v2 steady-state recovery
@@ -711,8 +741,19 @@ Failure before step 4:
 - after reboot, token validity is decided by the page classifier rather than by
   assuming every pre-commit failure was clean.
 
-A body write interrupted with an erased commit word can be safely ignored. A
-power cut during the inactive-page erase can instead leave
+A body write interrupted with an erased commit word can normally be ignored
+when the prefix classifier recognizes the programmed-prefix/erased-tail shape.
+One narrow accepted availability exception exists: if only the first 32-bit
+`ORC1` magic word was programmed and every later classifier word stayed erased,
+that shape is classified as local `SUPPORTED_CORRUPT` rather than as a valid
+v2 torn-prefix. The previously committed semantic config may remain the fallback,
+but token state becomes UNCERTAIN and maintenance/re-baseline is required.
+
+This is an intentional fail-closed cost, not data-authority promotion. It avoids
+broadening torn-prefix recognition so far that genuine local corruption or
+future-schema evidence could be misclassified.
+
+A power cut during the inactive-page erase can likewise leave
 `SUPPORTED_CORRUPT` evidence; in that case the old config remains usable but
 token state becomes UNCERTAIN and fresh-incarnation re-baseline may be required.
 
@@ -721,12 +762,18 @@ invalidate cached remote tokens even though the semantic config survives.
 
 Failure after step 4 but before RAM publication:
 
-- reboot recovery sees the committed successor only when the complete
+- reboot/runtime recovery sees the committed successor only when the complete
   generation/incarnation/revision lineage verifies;
-- the new config/token then becomes authoritative.
+- the new config/token then becomes authoritative;
+- a logical `takeSaveResult(false)` observed before that reconciliation means
+  **UNCONFIRMED / OUTCOME_UNKNOWN**, not "definitely not applied";
+- no synthetic second success result is emitted after recovery; callers that
+  need application outcome must re-read coherent config/token state.
 
 This preserves reset-safe application state without claiming that every failed
-physical erase leaves token identity unchanged.
+physical erase leaves token identity unchanged. Before protected CAS/COMMAND
+mutation is enabled, its RESULT vocabulary must distinguish this unconfirmed
+physical outcome from a definitive application rejection/failure.
 
 ---
 
@@ -1296,6 +1343,45 @@ cache-authoritative config/token pair.
 USB/BLE/local config mutation while token state is UNAVAILABLE or UNCERTAIN is
 not a normal save.
 
+**Current PR #46 limitation:** firmware does not yet implement the destructive
+maintenance/re-baseline transaction described in §13.1-§13.4. Until that slice
+lands, a development device in legacy/corrupt/partial/retired/unsafe state must
+be returned to a fully erased ConfigStore partition by an explicit maintenance
+procedure before normal v2 mutation can resume.
+
+Development maintenance erase scope is exactly:
+
+```text
+ConfigStore page A: 0x0E9000..0x0E9FFF
+ConfigStore page B: 0x0EA000..0x0EAFFF
+ConfigStore region: 0x0E9000..0x0EAFFF
+```
+
+Procedure:
+
+1. stop normal firmware execution and use an SWD/debugger flash tool capable of
+   page erase;
+2. erase **only** the two ConfigStore pages beginning at `0x0E9000` and
+   `0x0EA000`;
+3. read back `0x0E9000..0x0EAFFF` and verify every byte is `0xFF`;
+4. reboot normally; fresh-baseline creation may then establish a new incarnation
+   and revision 1.
+
+Do **not** use a whole-chip erase merely to clear ConfigStore unless deliberately
+resetting every other persistence class too. In particular, maintenance must not
+touch:
+
+```text
+0x0E7000..0x0E8FFF  SecurityStore
+0x0EB000..0x0ECFFF  BLE bond/InternalFS
+0x0ED000..0x0F3FFF  HistoryStore
+```
+
+The in-firmware bounded re-baseline/maintenance path must be implemented and
+reviewed **before protected remote/local CAS mutation is enabled**, so production
+operation never depends on an SWD-only recovery procedure.
+
+
 If an authorized operator intentionally chooses a semantic config, that action is
 an explicit **re-baseline**:
 
@@ -1407,6 +1493,21 @@ A state read may return the operational/fallback config and diagnostics while
 mutation reconciliation is pending, but it must mark token/recovery validity so
 callers cannot cache that pair as authoritative.
 
+If a full reconciliation read itself fails after ConfigStore previously had a
+known committed semantic override, PR #46 intentionally preserves that last
+semantic config/provenance in RAM while setting:
+
+```text
+ready = false
+token_state = UNCERTAIN
+maintenanceResetRequired = true
+```
+
+Therefore `ready=false` and application committed-provenance `true` may coexist.
+That combination means **"last known committed semantic config retained, current
+backend state not successfully re-observed"**. It is diagnostic/fallback state,
+not cache-authoritative storage proof, and no mutation is admitted.
+
 ---
 
 ## 15. Decoder/classifier requirements
@@ -1474,6 +1575,16 @@ Increase:
 
 The sealed record is still exactly 48 bytes; the first 52 bytes of each 4096-byte
 page are reserved by the v2 ConfigStore layout.
+
+For the current v2 runtime, bytes `52..4095` are unused and MUST remain erased
+(`0xFF`). Recovery verifies this without allocating a page-sized RAM buffer.
+An erased 52-byte prefix with programmed bytes later in the page is therefore
+**not a blank page**, and a valid v2 prefix with a dirty unused tail may provide
+semantic fallback only; its token is not cache-authoritative VALID.
+
+A future schema that needs bytes beyond offset 51 must use a reviewed future
+schema version/discriminator rather than silently extending v2 in place. This
+keeps old firmware from erasing or overwriting data it does not understand.
 
 No partition expansion.
 
@@ -1577,6 +1688,10 @@ following families.
 4. commit offset exactly 44;
 5. retire-word offset exactly 48;
 6. sealed record size remains 48 while page-local reserved footprint is 52;
+6a. erased 52-byte prefix + programmed byte in page tail is not treated as a
+    blank partition and is never auto-baselined;
+6b. committed-valid v2 prefix + dirty unused page tail preserves semantic
+    fallback but token state is UNCERTAIN;
 7. reserved-byte rejection;
 8. zero incarnation rejection;
 9. zero revision rejection;

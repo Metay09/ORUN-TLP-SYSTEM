@@ -338,6 +338,41 @@ int main() {
     assert(gate.configDiagnostics().spurious_events == 0);
   }
 
+  // Config accepted-operation timeout exposes unreconciled physical
+  // ownership until the definitive late SoftDevice completion event arrives.
+  // The late event reconciles ownership only; it never becomes a second
+  // application-level success.
+  {
+    reset();
+    fake_now_ms = 0;
+    FlashMutationGate gate;
+    assert(gate.begin());
+    assert(gate.configPort().begin());
+    sd_enabled = true;
+    memset(config_region, 0xFF, kConfigRegionSize);
+
+    alignas(4) uint8_t config_data[4] = {0xA1, 0xB2, 0xC3, 0xD4};
+    assert(gate.configPort().program(0, config_data, 4) ==
+           FlashOpResult::kPending);
+    assert(!gate.configPort().hasUnreconciledMutation());
+
+    fake_now_ms += 4001;
+    assert(gate.configPort().pollPending() == FlashOpResult::kFailed);
+    assert(gate.configPort().hasUnreconciledMutation());
+    assert(gate.configDiagnostics().timeouts == 1);
+
+    // While quarantined, the request still owns the physical slot.
+    assert(gate.configPort().program(4, config_data, 4) ==
+           FlashOpResult::kFailed);
+
+    event_queue.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
+    gate.pumpEvents();
+    assert(!gate.configPort().hasUnreconciledMutation());
+    assert(gate.configDiagnostics().late_completions == 1);
+    assert(gate.configDiagnostics().completions_success == 0);
+    assert(gate.configPort().pollPending() == FlashOpResult::kFailed);
+  }
+
   assert(munmap(history_region, kRegionSize) == 0);
   assert(munmap(config_region, kConfigRegionSize) == 0);
   puts("M7P5 FlashMutationGate dual-client checks: PASS");
