@@ -631,10 +631,13 @@ First protected mutation candidate:
 
 It uses an opaque application state precondition token.
 
-The current `ConfigStore::generation_` is **not automatically that token**.
+The current `ConfigStore::generation_` is **not that token**.
 
-A separately reviewed config slice must provide a token with no unsafe ABA reuse
-across recovery/fallback.
+The separately reviewed
+`ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md` fixes the application config token
+at an opaque **96-bit / 12-byte** value with A->B->A non-reuse and explicit
+VALID/UNAVAILABLE/UNCERTAIN recovery semantics. The complete ConfigStore schema
+and COMMAND/RESULT wire layout remain separate later slices.
 
 The implementation order is:
 
@@ -794,7 +797,10 @@ inherit this delegated frame layout.
 
 ## 15. COMMAND candidate
 
-Minimum plaintext length: 16 bytes.
+The config CAS slice resolves the precondition token width at 12 bytes. The
+complete plaintext layout remains provisional and is **not wire-frozen** here.
+
+Current candidate shape:
 
 ```text
 off size field
@@ -803,15 +809,13 @@ off size field
 2   1    args_len
 3   1    flags
 4   8    command_id
-12  4    expected_state_token_low32 / family-defined precondition field
-16  N    args
+12  12   expected_state_token
+24  N    args
 ```
 
-This table is not yet sufficient for final wire freeze because the config
-precondition token may need more than 32 bits.
-
-Therefore the COMMAND payload layout remains **provisional** until the config
-state-token slice resolves width/semantics.
+For the config desired-state family, the minimum fixed portion is therefore
+24 bytes before args. A later COMMAND/RESULT wire-contract slice must still
+freeze exact opcode/args/result encoding, bounds and golden fixtures.
 
 Flags/reserved bits must reject unknown critical values.
 
@@ -833,7 +837,9 @@ resulting_state_token
 bounded detail
 ```
 
-The exact state-token width is unfrozen with COMMAND.
+For config state mutation, the state-token width is fixed by
+`ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md` at **96 bits / 12 bytes**. Exact
+RESULT offsets and the complete plaintext layout remain unfrozen with COMMAND.
 
 RESULT uses the same delegated grant context:
 
@@ -1065,7 +1071,8 @@ Do not implement this as one milestone.
 5. SecurityStore v3 delegated replay design + fault tests;
 6. gateway authority-store design + crash/rollback tests;
 7. secure receive path to a read-only/no-side-effect test application;
-8. config state-token/CAS design;
+8. independently review the config state-token/CAS direction, then design its
+   exact tokenized ConfigStore schema and recovery tests;
 9. first protected desired-state config write;
 10. authenticated RESULT;
 11. RAM-only relay custody;
@@ -1139,8 +1146,10 @@ findings. This revision applies the minimum requested corrections:
 - F23/F24: delegated-gateway exception/backend custody dependency are explicitly
   tracked in architecture documentation.
 
-COMMAND/RESULT plaintext remains provisional until the separate config-state-token
-slice closes the CAS-token width/ABA contract.
+The config-state-token slice now closes the design-level CAS width/ABA contract
+at 96 bits with tracker-final stale checking. COMMAND/RESULT plaintext remains
+provisional until its separate exact wire-contract slice freezes offsets,
+result codes, bounds and golden fixtures.
 
 ### Final focused verification disposition
 
