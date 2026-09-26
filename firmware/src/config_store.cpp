@@ -68,8 +68,25 @@ void ConfigStore::setMaintenance(ConfigTokenState token_state) {
   token_state_ = token_state;
   semantic_unambiguous_ = false;
   maintenance_reset_required_ = true;
+  application_config_committed_ = false;
   generation_ = 0;
   active_page_ = -1;
+  ++diagnostics_.maintenance_lockouts;
+}
+
+void ConfigStore::setMaintenanceFallback(
+    const config_format::PageInspection& fallback,
+    ConfigTokenState token_state) {
+  config_ = fallback.config;
+  token_ = fallback.token;  // evidence only; stateToken() hides it unless VALID.
+  token_state_ = token_state;
+  semantic_unambiguous_ = true;
+  maintenance_reset_required_ = true;
+  application_config_committed_ =
+      fallback.token.revision > 1 ||
+      !sameConfig(fallback.config, defaultConfig());
+  generation_ = fallback.generation;
+  active_page_ = -1;  // no cache-authoritative page while maintenance-locked
   ++diagnostics_.maintenance_lockouts;
 }
 
@@ -218,7 +235,10 @@ bool ConfigStore::recover() {
         hi.token.incarnation != lo.token.incarnation ||
         lo.token.revision == UINT32_MAX ||
         hi.token.revision != lo.token.revision + 1) {
-      setMaintenance(ConfigTokenState::kUncertain);
+      if (sameConfig(hi.config, lo.config))
+        setMaintenanceFallback(hi, ConfigTokenState::kUncertain);
+      else
+        setMaintenance(ConfigTokenState::kUncertain);
       return true;
     }
 
@@ -239,14 +259,18 @@ bool ConfigStore::recover() {
   const auto& other = pages[other_page].inspection;
 
   if (any_supported_corrupt) {
-    setMaintenance(ConfigTokenState::kUncertain);
+    // The committed semantic copy is still useful to the device/user, but the
+    // contradictory inactive-page evidence makes its token unsafe for CAS.
+    setMaintenanceFallback(committed, ConfigTokenState::kUncertain);
     return true;
   }
 
   if (other.evidence == config_format::PageEvidence::kV2Staged) {
-    if (!pages[other_page].semantic_valid ||
-        !exactSuccessor(committed, other)) {
-      setMaintenance(ConfigTokenState::kUncertain);
+    if (!pages[other_page].semantic_valid) {
+      // A never-committed semantically invalid stage is equivalent to
+      // uncommitted/torn evidence; it cannot supersede the committed page.
+    } else if (!exactSuccessor(committed, other)) {
+      setMaintenanceFallback(committed, ConfigTokenState::kUncertain);
       return true;
     }
   } else if (!evidenceIsSafeUncommitted(other.evidence)) {
