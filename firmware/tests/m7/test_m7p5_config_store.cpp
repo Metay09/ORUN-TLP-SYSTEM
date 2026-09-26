@@ -363,6 +363,9 @@ int main() {
     assert(rng.calls == 0);
     assert(flash.program_calls == 0 && flash.erase_calls == 0);
     assert(!store.requestSave(Config{200, 1}));
+    // requestReset() is a normal semantic reset, not the explicit destructive
+    // maintenance erase/re-baseline operation.
+    assert(!store.requestReset());
   }
 
   // 9. Genuine unsupported-newer evidence is never overwritten.
@@ -436,6 +439,7 @@ int main() {
     assert(!store.hasCommittedRecord());
     StateToken hidden;
     assert(!store.stateToken(hidden));
+    assert(!store.requestReset());
   }
 
   // 13. One verified partial-commit + erased page likewise preserves
