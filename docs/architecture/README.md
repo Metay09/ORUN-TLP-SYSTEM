@@ -46,6 +46,14 @@ keep architecture sources clean. This is owner-approved architecture/design
 direction only; it does not authorize production secure-RF runtime or freeze
 COMMAND/RESULT bytes.
 
+Owner-approved config stale-write/CAS direction is recorded separately in
+`ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md`. It defines an opaque 96-bit config
+state token, backend/gateway-heavy orchestration with tracker-final precondition
+checking, A->B->A non-reuse, explicit VALID/UNAVAILABLE/UNCERTAIN recovery
+semantics, and no periodic token traffic in POSITION/telemetry/event frames.
+It remains documentation-only: ConfigStore schema/runtime and complete
+COMMAND/RESULT wire bytes are not changed by that direction.
+
 
 Merged security primitive evidence (M7P6C): M7P6C is a
 test-only RAK4630 CryptoCell primitive proof, not a secure-RF implementation.
@@ -195,8 +203,9 @@ For current architecture decisions, use this order:
    `ADR_M7P6_SECURITY_ARCHITECTURE.md`,
    `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`,
    `ADR_RF_CONFIGURATION_PORTABILITY.md`,
-   `ORUN_GATEWAY_COMMAND_AUTHORITY_DIRECTION.md` and
-   `ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md`;
+   `ORUN_GATEWAY_COMMAND_AUTHORITY_DIRECTION.md`,
+   `ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md` and
+   `ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md`;
 5. current code, tests, golden/compatibility fixtures and milestone/audit reports
    describing the exact commit being changed;
 6. `ORUN_SYSTEM_ARCHITECTURE_V1.md`, `ORUN_ARCHITECTURE_GAP_ANALYSIS.md` and
