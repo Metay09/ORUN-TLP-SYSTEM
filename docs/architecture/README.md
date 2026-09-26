@@ -50,8 +50,8 @@ COMMAND/RESULT bytes.
 Owner-approved config stale-write/CAS direction is recorded separately in
 `ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md`. Its durable focused audit record is
 `docs/audits/CONFIG_STATE_TOKEN_CAS_AUDIT_DISPOSITION.md`. The independent
-audit returned **PASS WITH FIXES** with no BLOCKER/HIGH; F1-F9 corrections are
-applied on the design branch and final focused verification remains pending. The
+audit returned **PASS WITH FIXES** with no BLOCKER/HIGH. Final focused
+verification returned **PASS WITH MINOR DOC FIX**; F1-F9 and R1 are applied. The
 direction defines an opaque 96-bit config state token, backend/gateway-heavy
 orchestration with tracker-final precondition checking, A->B->A non-reuse,
 explicit VALID/UNAVAILABLE/UNCERTAIN recovery semantics, serialized mutation
