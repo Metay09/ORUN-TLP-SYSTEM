@@ -76,6 +76,14 @@ class AsyncFlash : public FlashBackend {
  private:
   FlashOpResult begin_op() {
     ++ops;
+    if (pending_steps == 0) {
+      // Model the production pre-SoftDevice ConfigStore baseline path:
+      // NrfConfigFlash completes synchronously and no async completion event
+      // or accepted-op counter is involved.
+      ++successes;
+      return FlashOpResult::kDone;
+    }
+
     ++accepted;
     remaining_ = pending_steps;
     in_flight_ = true;
