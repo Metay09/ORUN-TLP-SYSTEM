@@ -469,6 +469,13 @@ int main() {
     assert(store.begin());
     assert(store.maintenanceResetRequired());
     assert(store.tokenState() == ConfigTokenState::kUncertain);
+    // Contradictory inactive-page evidence invalidates token authority, but
+    // must not hide the one intact committed semantic config from the user.
+    assert(store.config().tracking_interval_seconds == 500);
+    assert(store.config().battery_capacity_mah == 1);
+    StateToken hidden;
+    assert(!store.stateToken(hidden));
+    assert(!store.requestSave(Config{501, 2}));
   }
   {
     PendingFlash flash;
@@ -482,6 +489,10 @@ int main() {
     ConfigStore store(flash);
     assert(store.begin());
     assert(store.maintenanceResetRequired());
+    assert(store.tokenState() == ConfigTokenState::kUncertain);
+    assert(store.config().tracking_interval_seconds == 500);
+    StateToken hidden;
+    assert(!store.stateToken(hidden));
   }
   {
     PendingFlash flash;
