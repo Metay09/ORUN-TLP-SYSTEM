@@ -49,15 +49,17 @@ with
 
 For protected desired-state configuration, stale-write rejection, config
 state-token/CAS semantics or COMMAND/RESULT precondition work, also read
-`docs/architecture/ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md`. It fixes the
-application config token direction at an opaque 96-bit token while keeping the
-complete COMMAND/RESULT wire layout and ConfigStore implementation unfrozen.
+`docs/architecture/ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md` together with
+`docs/audits/CONFIG_STATE_TOKEN_CAS_AUDIT_DISPOSITION.md`. The CAS direction
+fixes the application config token at an opaque 96-bit value while keeping the
+complete COMMAND/RESULT wire layout and ConfigStore implementation unfrozen. Its
+focused independent audit returned PASS WITH FIXES with no BLOCKER/HIGH; the
+requested corrections are applied and final focused verification is pending.
 
 The delegated authority/header architecture and config CAS contract are
 owner-approved design direction. They are not a wire freeze or production-runtime
-authorization. The disposition consolidates the independent
-audit/re-audit/final verification chain; raw reviewer prompts/transcripts and
-superseded drafts are not architecture sources.
+authorization. Durable audit dispositions summarize the review chain; raw
+reviewer prompts/transcripts and superseded drafts are not architecture sources.
 
 For RF-domain/channel planning, shared relay/gateway infrastructure, field coverage
 learning, USB/BLE diagnostics or future serviceability UI, read
