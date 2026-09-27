@@ -125,6 +125,10 @@ bool GeofenceConfirmationCoordinator::expireConfirmation(uint32_t now_ms) {
     return false;
   }
 
+  return abortConfirmation();
+}
+
+bool GeofenceConfirmationCoordinator::abortConfirmation() {
   if (!operational_.abortConfirmation()) return false;
   clearEpisodeEvidence();
   return true;

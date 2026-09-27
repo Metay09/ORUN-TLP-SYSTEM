@@ -246,6 +246,10 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
   firmware/src/network_service.cpp firmware/src/node_role.cpp \
   firmware/src/runtime_config.cpp \
+  firmware/src/geofence_geometry.cpp firmware/src/geofence_area_set.cpp \
+  firmware/src/geofence_runtime.cpp firmware/src/geofence_operational_state.cpp \
+  firmware/src/geofence_runtime_policy.cpp \
+  firmware/src/geofence_confirmation_coordinator.cpp \
   firmware/src/tlp_test_packet.cpp firmware/src/tlp_position_packet.cpp \
   firmware/src/tlp_relay_forward_packet.cpp firmware/src/history_store.cpp \
   firmware/src/journal_format.cpp firmware/src/nrf_history_flash.cpp \

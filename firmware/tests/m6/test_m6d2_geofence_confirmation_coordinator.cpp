@@ -123,6 +123,19 @@ void exactDeadlineAbortsAndPreservesPriorAuthority() {
       1000 + geofence_confirmation_config::kConfirmationDeadlineMs + 1));
 }
 
+void acquisitionOwnerAbortPreservesAuthority() {
+  GeofenceConfirmationCoordinator c;
+  assert(c.configure(GeofenceAreaSetView(kAreas, 1)) ==
+         GeofenceRuntimeConfigResult::kApplied);
+  c.observeAcceptedLocation(inside(), 100, 100, 7);
+  c.observeAcceptedLocation(outsideA(), 1000, 100, 7);
+  assert(c.confirmationActive());
+  assert(c.abortConfirmation());
+  assert(!c.confirmationActive());
+  assert(c.cadenceMode() == GeofenceCadenceMode::kBase);
+  assert(!c.abortConfirmation());
+}
+
 void configReplacementAndClearInvalidateOldEvidence() {
   GeofenceConfirmationCoordinator c;
   assert(c.configure(GeofenceAreaSetView(kAreas, 1)) ==
@@ -153,6 +166,7 @@ int main() {
   falseOutsideCandidatePreservesInsideWithoutExtraRepresentative();
   initializedOutsideIsNotPhysicalOutsideEvent();
   exactDeadlineAbortsAndPreservesPriorAuthority();
+  acquisitionOwnerAbortPreservesAuthority();
   configReplacementAndClearInvalidateOldEvidence();
   puts("M6D2 geofence confirmation coordinator checks: PASS");
 }

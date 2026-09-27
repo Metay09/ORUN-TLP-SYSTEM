@@ -66,6 +66,11 @@ class GeofenceConfirmationCoordinator {
   // deadline. The previously confirmed state/cadence remains authoritative.
   bool expireConfirmation(uint32_t now_ms);
 
+  // Acquisition-owner failure/cancellation seam. Used when GnssManager cannot
+  // continue the same accepted-fix session (timeout, I2C recovery, or explicit
+  // continuation rejection). Prior confirmed authority/cadence is preserved.
+  bool abortConfirmation();
+
  private:
   void clearEpisodeEvidence();
   void addEpisodeEvidence(PermittedAreaRelation relation, uint16_t hdop_x100,
