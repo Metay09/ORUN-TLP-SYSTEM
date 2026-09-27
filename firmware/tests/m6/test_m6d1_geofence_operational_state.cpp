@@ -14,6 +14,17 @@ void expectState(const GeofenceOperationalStateMachine& machine,
   assert(actual == expected);
 }
 
+void establishOutside(GeofenceOperationalStateMachine& machine) {
+  assert(machine.observe(PermittedAreaRelation::kOutside) ==
+         GeofenceOperationalResult::kConfirmationStarted);
+  assert(machine.observe(PermittedAreaRelation::kOutside) ==
+         GeofenceOperationalResult::kConfirmationContinues);
+  assert(machine.observe(PermittedAreaRelation::kOutside) ==
+         GeofenceOperationalResult::kInitializedOutside);
+  expectState(machine, GeofenceOperationalState::kOutside);
+  assert(machine.cadenceMode() == GeofenceCadenceMode::kBaseDividedBy3);
+}
+
 void initialClassificationIsFailSafeForOutside() {
   GeofenceOperationalStateMachine machine;
   assert(!machine.hasConfirmedState());
@@ -39,7 +50,7 @@ void initialClassificationIsFailSafeForOutside() {
          GeofenceOperationalResult::kConfirmationContinues);
   assert(!machine.hasConfirmedState());  // Full 3 observations are intentional.
   assert(machine.observe(PermittedAreaRelation::kOutside) ==
-         GeofenceOperationalResult::kConfirmedOutside);
+         GeofenceOperationalResult::kInitializedOutside);
   expectState(machine, GeofenceOperationalState::kOutside);
   assert(machine.cadenceMode() == GeofenceCadenceMode::kBaseDividedBy3);
 }
@@ -62,7 +73,22 @@ void insideToOutsideRequiresFullThreeObservationMajority() {
 
   assert(machine.observe(PermittedAreaRelation::kOutside) ==
          GeofenceOperationalResult::kStableOutside);
-  assert(!machine.confirmationActive());  // No duplicate OUTSIDE event episode.
+  assert(!machine.confirmationActive());  // No duplicate transition occurrence.
+}
+
+void initializedOutsideIsDistinctFromInsideToOutsideTransition() {
+  GeofenceOperationalStateMachine machine;
+  establishOutside(machine);
+
+  machine.reset();
+  assert(machine.observe(PermittedAreaRelation::kInside) ==
+         GeofenceOperationalResult::kInitializedInside);
+  assert(machine.observe(PermittedAreaRelation::kOutside) ==
+         GeofenceOperationalResult::kConfirmationStarted);
+  assert(machine.observe(PermittedAreaRelation::kOutside) ==
+         GeofenceOperationalResult::kConfirmationContinues);
+  assert(machine.observe(PermittedAreaRelation::kInside) ==
+         GeofenceOperationalResult::kConfirmedOutside);
 }
 
 void falseOutsideCandidateIsRejected() {
@@ -109,15 +135,34 @@ void boundaryIsNeutralButBoundedInsideConfirmation() {
   expectState(machine, GeofenceOperationalState::kInside);
 }
 
-void outsideToInsideUsesSameBoundedMajority() {
+void boundaryIsNeutralInOutsideAndUnclassifiedEpisodes() {
   GeofenceOperationalStateMachine machine;
+  establishOutside(machine);
+
+  assert(machine.observe(PermittedAreaRelation::kInside) ==
+         GeofenceOperationalResult::kConfirmationStarted);
+  assert(machine.observe(PermittedAreaRelation::kBoundary) ==
+         GeofenceOperationalResult::kConfirmationContinues);
+  assert(machine.confirmationInsideVotes() == 1);
+  assert(machine.confirmationOutsideVotes() == 0);
+  assert(machine.observe(PermittedAreaRelation::kInside) ==
+         GeofenceOperationalResult::kConfirmedInside);
+  expectState(machine, GeofenceOperationalState::kInside);
+
+  machine.reset();
   assert(machine.observe(PermittedAreaRelation::kOutside) ==
          GeofenceOperationalResult::kConfirmationStarted);
-  assert(machine.observe(PermittedAreaRelation::kOutside) ==
+  assert(machine.observe(PermittedAreaRelation::kBoundary) ==
          GeofenceOperationalResult::kConfirmationContinues);
+  assert(machine.confirmationObservationCount() == 2);
   assert(machine.observe(PermittedAreaRelation::kOutside) ==
-         GeofenceOperationalResult::kConfirmedOutside);
+         GeofenceOperationalResult::kInitializedOutside);
   expectState(machine, GeofenceOperationalState::kOutside);
+}
+
+void outsideToInsideUsesSameBoundedMajority() {
+  GeofenceOperationalStateMachine machine;
+  establishOutside(machine);
 
   assert(machine.observe(PermittedAreaRelation::kInside) ==
          GeofenceOperationalResult::kConfirmationStarted);
@@ -150,7 +195,7 @@ void invalidObservationsDoNotConsumeEpisodeBudget() {
   expectState(machine, GeofenceOperationalState::kInside);
 }
 
-void timeoutAbortPreservesPreviousAuthority() {
+void timeoutAbortPreservesPreviousAuthorityAndCadence() {
   GeofenceOperationalStateMachine machine;
   assert(!machine.abortConfirmation());
 
@@ -161,9 +206,7 @@ void timeoutAbortPreservesPreviousAuthority() {
   assert(machine.abortConfirmation());
   assert(!machine.confirmationActive());
   expectState(machine, GeofenceOperationalState::kInside);
-
-  assert(machine.observe(PermittedAreaRelation::kInside) ==
-         GeofenceOperationalResult::kStableInside);
+  assert(machine.cadenceMode() == GeofenceCadenceMode::kBase);
 
   machine.reset();
   assert(machine.observe(PermittedAreaRelation::kOutside) ==
@@ -171,21 +214,35 @@ void timeoutAbortPreservesPreviousAuthority() {
   assert(machine.abortConfirmation());
   assert(!machine.hasConfirmedState());
   assert(machine.cadenceMode() == GeofenceCadenceMode::kBase);
+
+  establishOutside(machine);
+  assert(machine.observe(PermittedAreaRelation::kInside) ==
+         GeofenceOperationalResult::kConfirmationStarted);
+  assert(machine.abortConfirmation());
+  assert(!machine.confirmationActive());
+  expectState(machine, GeofenceOperationalState::kOutside);
+  assert(machine.cadenceMode() == GeofenceCadenceMode::kBaseDividedBy3);
 }
 
-void resetInvalidatesOldGeometryEvidence() {
+void resetInvalidatesOldGeometryEvidenceAndActiveEpisode() {
   GeofenceOperationalStateMachine machine;
-  assert(machine.observe(PermittedAreaRelation::kOutside) ==
-         GeofenceOperationalResult::kConfirmationStarted);
-  assert(machine.observe(PermittedAreaRelation::kOutside) ==
-         GeofenceOperationalResult::kConfirmationContinues);
-  assert(machine.observe(PermittedAreaRelation::kOutside) ==
-         GeofenceOperationalResult::kConfirmedOutside);
-  expectState(machine, GeofenceOperationalState::kOutside);
+  establishOutside(machine);
 
   machine.reset();
   assert(!machine.hasConfirmedState());
   assert(!machine.confirmationActive());
+  assert(machine.cadenceMode() == GeofenceCadenceMode::kBase);
+
+  assert(machine.observe(PermittedAreaRelation::kInside) ==
+         GeofenceOperationalResult::kInitializedInside);
+  assert(machine.observe(PermittedAreaRelation::kOutside) ==
+         GeofenceOperationalResult::kConfirmationStarted);
+  assert(machine.confirmationActive());
+
+  machine.reset();
+  assert(!machine.hasConfirmedState());
+  assert(!machine.confirmationActive());
+  assert(machine.confirmationObservationCount() == 0);
   assert(machine.cadenceMode() == GeofenceCadenceMode::kBase);
 
   assert(machine.observe(PermittedAreaRelation::kInside) ==
@@ -209,12 +266,14 @@ void unclassifiedOutsideEpisodeCanResolveInside() {
 int main() {
   initialClassificationIsFailSafeForOutside();
   insideToOutsideRequiresFullThreeObservationMajority();
+  initializedOutsideIsDistinctFromInsideToOutsideTransition();
   falseOutsideCandidateIsRejected();
   boundaryIsNeutralButBoundedInsideConfirmation();
+  boundaryIsNeutralInOutsideAndUnclassifiedEpisodes();
   outsideToInsideUsesSameBoundedMajority();
   invalidObservationsDoNotConsumeEpisodeBudget();
-  timeoutAbortPreservesPreviousAuthority();
-  resetInvalidatesOldGeometryEvidence();
+  timeoutAbortPreservesPreviousAuthorityAndCadence();
+  resetInvalidatesOldGeometryEvidenceAndActiveEpisode();
   unclassifiedOutsideEpisodeCanResolveInside();
   puts("M6D1 geofence operational-state checks: PASS");
 }
