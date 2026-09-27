@@ -1,6 +1,6 @@
 # ORUN Geofence Operational Policy
 
-Status: **OWNER-APPROVED DESIGN DIRECTION; NOT YET IMPLEMENTED — 2026-09-26**
+Status: **OWNER-APPROVED DESIGN DIRECTION; M6D1 PURE STATE OWNER IMPLEMENTED IN PR #51 BUT NOT PRODUCTION-RUNTIME INTEGRATED — 2026-09-27**
 
 This document defines the current M6D geofence operational-state baseline. It
 does not claim runtime integration, field validation, a new TLP packet, backend
@@ -180,7 +180,7 @@ belong to the later Event lifecycle design.
 
 POSITION and geofence event are different application facts.
 
-A confirmed transition to OUTSIDE produces:
+A true confirmed INSIDE -> OUTSIDE transition produces:
 
 1. the selected real POSITION through the normal store-before-send position
    path; and
@@ -263,6 +263,12 @@ After boot/reset:
 - a fresh accepted INSIDE observation establishes INSIDE;
 - a fresh accepted OUTSIDE observation starts the normal full three-observation
   confirmation before OUTSIDE may become authoritative.
+
+When that post-boot/config-replacement confirmation establishes OUTSIDE, M6D1
+reports **initialized OUTSIDE**, not a physical INSIDE -> OUTSIDE transition.
+The later Event lifecycle must decide how to reconcile an initialized OUTSIDE
+state with any pre-existing/open backend alarm; it must not infer a new physical
+crossing solely from reboot or configuration replacement.
 
 No geofence operational-state bytes are added to ConfigStore, HistoryStore or
 another flash owner in this slice. A later persistence proposal, if field/product
