@@ -55,14 +55,17 @@ keep architecture sources clean. This is owner-approved architecture/design
 direction only; it does not authorize production secure-RF runtime or freeze
 COMMAND/RESULT bytes.
 
-Owner-approved geofence configuration/distribution direction is recorded in
-`ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md`. It defines map-authored
-multi-polygon configuration, current 3..64-effective-vertex-per-polygon geometry
-compatibility without an arbitrary six-point UI cap, transport-neutral BLE/LoRa
-mutation ownership, explicit atomic REPLACE/CLEAR semantics, and DEVICE/GROUP/
-FLEET orchestration through per-device protected fan-out/results. It intentionally
-does not freeze storage allocation, geofence CAS-token scope or BLE/TLP v2 wire
-bytes.
+The current draft geofence configuration/distribution direction is recorded in
+`ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md`, with independent review history
+in `docs/audits/GEOFENCE_CONFIGURATION_DISTRIBUTION_AUDIT_DISPOSITION.md`.
+The initial audit returned PASS WITH FIXES (0 BLOCKER / 1 HIGH / 4 MEDIUM);
+required H1/M1-M4 corrections are applied and focused final verification remains
+pending. The direction defines map-authored multi-polygon configuration, current
+3..64-effective-vertex-per-polygon geometry compatibility without an arbitrary
+six-point UI cap, transport-neutral BLE/LoRa mutation ownership, explicit atomic
+REPLACE/CLEAR semantics, and DEVICE/GROUP/FLEET orchestration through per-device
+protected authority/results. It intentionally does not freeze storage allocation,
+geofence CAS-token scope or BLE/TLP v2 resource-transfer wire bytes.
 
 Owner-approved config stale-write/CAS direction is recorded separately in
 `ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md`. Its durable focused audit record is
