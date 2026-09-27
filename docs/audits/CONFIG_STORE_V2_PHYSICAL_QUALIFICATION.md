@@ -241,12 +241,69 @@ on the power-cut probe's own reporting path. The operator then issued the
 qualification helper's explicit ConfigStore-only `CLEAN`; the full 8 KiB
 region was read-verified erased again before proceeding.
 
+### Gate 3A — normal-save power cut after inactive-page erase
+
+Starting physical baseline before the cut:
+
+- incarnation `0xE70B5167C5F370E5`;
+- revision/generation `1/1`;
+- Page A = `V2_COMMITTED`;
+- Page B = `ERASED`;
+- config = interval 180 s, battery 0.
+
+Test-only target:
+`rak4630_config_v2_normal_save_powercut_probe`.
+
+Build evidence from
+`test/config-store-v2-physical-qualification@36f5dd2d4cbfbd5817b69e235b3a5670ffa7b81d`:
+
+- build: **SUCCESS**;
+- RAM: **8,996 / 248,832 B = 3.6%**;
+- Flash: **65,708 / 815,104 B = 8.1%**;
+- upload via nrfutil: **SUCCESS**.
+
+The operator issued `CUT_ERASE`. The probe submitted a real
+`ConfigStore::requestSave()` candidate changing battery capacity from 0 to 1,
+then delegated the real inactive-page erase to `NrfConfigFlash`. After the
+erase returned physically complete/read-verified, but before ConfigStore could
+program the new v2 body, it reported:
+
+```text
+CONFIG V2 NORMAL CUT_ERASE accepted candidate tracking_interval_seconds=180 battery_capacity_mah=1
+CONFIG V2 NORMAL CUT READY stage=after-erase-readback before-body; CUT POWER NOW
+```
+
+The operator removed physical power and then restored it with the same image.
+Production ConfigStore recovery reported:
+
+```text
+CONFIG V2 NORMAL BEGIN PASS
+CONFIG V2 NORMAL STORE ready=yes maintenance=no token_state=VALID
+  committed_override=no busy=no tracking_interval_seconds=180
+  battery_capacity_mah=0 saves=0 save_failures=0
+  baseline_commits=0 baseline_failures=0
+CONFIG V2 NORMAL TOKEN incarnation=0xE70B5167C5F370E5 revision=1
+CONFIG V2 NORMAL PAGE A evidence=V2_COMMITTED decoded=yes tail_erased=yes
+  generation=1 incarnation=0xE70B5167C5F370E5 revision=1
+  tracking_interval_seconds=180 battery_capacity_mah=0
+CONFIG V2 NORMAL PAGE B evidence=ERASED decoded=no tail_erased=yes
+```
+
+Therefore the normal-save **erase boundary is PHYSICAL PASS**:
+
+- the pre-existing committed semantic config survived the real power cut;
+- the candidate config was not falsely applied;
+- incarnation/revision/token authority remained exactly on the old committed
+  record;
+- recovery required no maintenance lockout or baseline rewrite;
+- the inactive page remained safely erased.
+
 ### Remaining audit obligations
 
-Still separate after Gate 2:
+Still separate after Gate 3A:
 
 - BLE-connected v2 ConfigStore flash probe plus lineage observation;
-- normal-save power cuts at erase/body/commit boundaries.
+- normal-save power cuts at body and commit boundaries.
 
 The original legacy-v1 development evidence was physically observed before the
 explicit Gate 1 CLEAN and is recorded above; it must not be described as
