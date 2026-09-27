@@ -463,6 +463,14 @@ Mismatch returns/records `UNAUTHORIZED_SCOPE` with no application side effect.
 The backend authority context may have a separately defined broader system
 scope, but that is explicit and not inferred from gateway transport.
 
+Large geofence-resource operations are **not yet entries in this registry**.
+Before remote geofence mutation is implemented, the reviewed registry must add
+explicit bindings for the resource-state/read operation and for REPLACE/CLEAR
+(or an equivalently reviewed operation set). CLEAR must be authorized by a scope
+that represents its removal of alarm-protection geometry; it must not inherit a
+read-only or unrelated generic scope merely because it is configuration. Numeric
+opcode/scope values remain unfrozen.
+
 ---
 
 ## 9. Tracker delegated replay persistence
@@ -648,6 +656,28 @@ Do not duplicate a shortened pseudocode ordering here.
 
 That ordering supports RESULT-loss retry without another flash write.
 
+A large geofence snapshot is **not part of this initial allowed family merely
+because it is desired state**. The current COMMAND candidate has a 32-byte
+protected-plaintext ceiling and a 24-byte fixed portion, leaving 8 bytes for
+ordinary args. Geofence bulk transfer requires a separately reviewed protected
+resource-transfer family with its own bounded fragmentation/content-integrity
+contract and explicit application precondition/CAS resource identity.
+
+That future geofence family becomes delayed-store-forward eligible only after
+all of the following are reviewed together:
+
+- opcode -> scope binding, including distinct authorization semantics for CLEAR;
+- authenticated resource-state/content-digest preflight so a large body is not
+  resent when already satisfied or stale;
+- fragment/retry counter ownership consistent with §7.3's single-outstanding
+  protected-frame rule;
+- device-side atomic candidate staging/commit;
+- authenticated RESULT/UNCONFIRMED semantics;
+- bounded custody/airtime behavior for sleepy trackers and relays.
+
+Until then, a gateway must not interpret this §12.1 small-config permission as
+authorization to queue/store-forward an ad-hoc multi-frame geofence blob.
+
 ### 12.2 Delayed store-forward prohibited until separately designed
 
 Do not permit arbitrary delayed execution yet for:
@@ -814,6 +844,12 @@ that first desired-state payload can still fit the existing 32-byte protected
 plaintext ceiling without enlarging the 96-byte secure inner frame. A later
 COMMAND/RESULT wire-contract slice must still freeze exact opcode/args/result
 encoding, bounds and golden fixtures.
+
+This arithmetic is also a hard warning against reusing ordinary COMMAND as a
+bulk-resource tunnel: a 64-vertex geofence contains 512 raw coordinate bytes
+before resource metadata. Geofence transfer must use the separately reviewed
+resource-transfer design described above rather than relaxing this COMMAND
+ceiling or minting one ordinary command per vertex.
 
 Flags/reserved bits must reject unknown critical values.
 
