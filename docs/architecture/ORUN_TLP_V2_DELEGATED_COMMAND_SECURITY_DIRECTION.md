@@ -471,6 +471,11 @@ that represents its removal of alarm-protection geometry; it must not inherit a
 read-only or unrelated generic scope merely because it is configuration. Numeric
 opcode/scope values remain unfrozen.
 
+The governing geofence resource/distribution direction is
+`ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md`; this delegated-command document
+only records the security/freshness constraints that the later resource-transfer
+family must satisfy.
+
 ---
 
 ## 9. Tracker delegated replay persistence
