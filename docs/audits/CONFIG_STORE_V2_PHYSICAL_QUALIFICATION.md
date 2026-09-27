@@ -494,6 +494,45 @@ lineage above. They do not imply unrelated GNSS, RF, power-consumption,
 HistoryStore, SecurityStore, DFU or end-to-end backend behavior was physically
 re-qualified by this ConfigStore exercise.
 
+### Post-qualification production restore
+
+After the physical qualification completed, the operator switched the Debian
+checkout back to canonical `main@fedda189ac772542086d402aa5fb749ae505883e`
+and rebuilt the normal production target:
+
+- `pio run -d firmware -e rak4630`: **SUCCESS**;
+- RAM: **22,848 / 248,832 B = 9.2%**;
+- Flash: **243,900 / 815,104 B = 29.9%**;
+- exclusive-owner and application-ceiling checks ran successfully;
+- only the already-known SX126x-Arduino vendor warnings were present.
+
+The production image was then uploaded with nrfutil:
+
+```text
+Device programmed.
+rak4630 SUCCESS
+```
+
+A subsequent production boot reported the already-known hardware state
+(`ACCEL ABSENT`, `GNSS: not detected`) and normal role/BLE startup:
+
+```text
+ROLE BASE source=AUTO
+BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok
+```
+
+Therefore the test-only qualification firmware was not left installed on the
+device. This restore is operational cleanup evidence only; it does not extend
+the ConfigStore physical-PASS scope to unrelated subsystems.
+
+### Final host regression
+
+After the physical run and evidence capture, the complete host suite was run on
+`test/config-store-v2-physical-qualification` and every listed regression
+target passed, including B1A-B4, M3-M7P7G, R2/R2.1, R3, R4, all production
+startup scenarios, ConfigStore v2 format/runtime tests and the M7P7B flash
+probe state machine.
+
 The original legacy-v1 development evidence was physically observed before the
 explicit Gate 1 CLEAN and is recorded above; it must not be described as
 untouched after that authorized maintenance erase.
