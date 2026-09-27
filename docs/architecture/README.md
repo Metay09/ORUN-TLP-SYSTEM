@@ -59,8 +59,10 @@ The current draft geofence configuration/distribution direction is recorded in
 `ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md`, with independent review history
 in `docs/audits/GEOFENCE_CONFIGURATION_DISTRIBUTION_AUDIT_DISPOSITION.md`.
 The initial audit returned PASS WITH FIXES (0 BLOCKER / 1 HIGH / 4 MEDIUM);
-required H1/M1-M4 corrections are applied and focused final verification remains
-pending. The direction defines map-authored multi-polygon configuration, current
+required H1/M1-M4 corrections were applied, and focused final verification
+returned PASS WITH MINOR DOC FIX with 0 BLOCKER / 0 HIGH / 0 MEDIUM. Final
+F-L1–F-L4 documentation corrections are applied. The direction defines
+map-authored multi-polygon configuration, current
 3..64-effective-vertex-per-polygon geometry compatibility without an arbitrary
 six-point UI cap, transport-neutral BLE/LoRa mutation ownership, explicit atomic
 REPLACE/CLEAR semantics, and DEVICE/GROUP/FLEET orchestration through per-device
