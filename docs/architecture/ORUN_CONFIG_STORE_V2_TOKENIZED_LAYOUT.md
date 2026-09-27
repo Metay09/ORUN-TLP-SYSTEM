@@ -1885,6 +1885,45 @@ by this design document.
 Do not report those behaviors as physically validated until performed on actual
 hardware.
 
+### 19.1 Runtime-slice physical evidence mapping — 2026-09-27
+
+The implemented PR #46 clean-cutover runtime has now received scoped hardware
+qualification. Canonical evidence:
+`docs/audits/CONFIG_STORE_V2_PHYSICAL_QUALIFICATION.md`.
+
+Map the §19 candidates as follows:
+
+- staged write -> power cut: **scoped PASS** at the deterministic
+  post-body-readback / pre-commit boundary; no in-flight NVMC program
+  interruption was attempted;
+- legacy retirement -> power cut: **N/A for the current runtime slice** because
+  automatic v1 -> v2 migration/retirement is not implemented;
+- token-retire-word program/readback: **N/A for the current runtime slice**
+  because production normal save/recovery does not program the retire word;
+- commit-last recovery: **scoped PASS** at the deterministic
+  post-commit-readback / pre-final-publication boundary;
+- BLE/SoftDevice flash-gate coexistence: **PASS without interruption** for six
+  accepted/successful async operations while BLE stayed connected;
+- late-completion reconciliation: **not physically exercised**; the hardware
+  coexistence run observed `late_delta=0`.
+
+Additional scope limits:
+
+- the normal-save post-erase test started with the inactive page already
+  `ERASED`; interruption while erasing a previously programmed inactive page
+  was not tested;
+- no mid-erase/mid-program weak-word or brown-out waveform was physically
+  characterized;
+- pre-CLEAN legacy pages were observed as committed legacy and were not
+  automatically adopted/migrated, but byte-for-byte unchanged legacy contents
+  were not independently dump-verified;
+- each deterministic cut point was exercised once on one RAK4631 unit.
+
+These scoped results do not remove the separate prerequisite for a bounded
+production maintenance/re-baseline path, nor the requirement that future
+protected mutation preserve `UNCONFIRMED / OUTCOME_UNKNOWN` when commit
+outcome cannot yet be proven.
+
 ---
 
 ## 20. Explicit non-goals

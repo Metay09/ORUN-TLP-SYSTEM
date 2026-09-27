@@ -81,6 +81,15 @@ legacy/mixed/unknown evidence. Do not implement automatic v1 -> v2 migration unl
 future deployed-fleet requirement is separately approved. This does not weaken
 TLP v1 wire compatibility, which remains protected.
 
+Scoped ConfigStore v2 hardware closure is recorded in
+`docs/audits/CONFIG_STORE_V2_PHYSICAL_QUALIFICATION.md`. Treat its PASS as
+boundary-specific evidence only: no mid-NVMC/brown-out qualification, no
+SoftDevice-async power-cut, no physical late-completion reconciliation, and no
+byte-for-byte legacy-preservation proof are claimed. The runtime cutover's
+production maintenance/re-baseline prerequisite and
+`UNCONFIRMED / OUTCOME_UNKNOWN` mutation contract remain mandatory before
+protected CAS mutation is enabled.
+
 The delegated authority/header architecture and config CAS contract are
 owner-approved design direction. They are not a wire freeze or production-runtime
 authorization. Durable audit dispositions summarize the review chain; raw

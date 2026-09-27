@@ -90,6 +90,16 @@ Persistence-side token state exists in that branch, but protected CAS
 application commands/reads remain later work. TLP v1 and the existing BLE
 GET_CONFIG wire bytes are unaffected.
 
+The scoped hardware closure for that runtime slice is recorded in
+`docs/audits/CONFIG_STORE_V2_PHYSICAL_QUALIFICATION.md` (2026-09-27). It
+physically covers fresh-baseline/cold-boot lineage, deterministic normal-save
+post-erase/post-body/post-commit boundaries, and BLE-connected SoftDevice async
+flash coexistence. It does **not** claim mid-NVMC/brown-out interruption,
+SoftDevice async power-cut, late-completion physical reconciliation, or
+byte-for-byte legacy preservation. The runtime-cutover audit's
+`OUTCOME_UNKNOWN` and production maintenance-path prerequisites remain active
+before protected CAS mutation.
+
 
 Merged security primitive evidence (M7P6C): M7P6C is a
 test-only RAK4630 CryptoCell primitive proof, not a secure-RF implementation.

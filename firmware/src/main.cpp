@@ -12,6 +12,7 @@
 #include "config_incarnation_source.h"
 #ifdef ORUN_M7P7B_FLASH_PROBE
 #include "m7p7b_flash_probe.h"
+#include "storage_config.h"
 #endif
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
 #include "m7p6e_crypto_ble_probe.h"
@@ -1022,6 +1023,84 @@ void pollM7P6ECryptoStress() {
 // only in the rak4630_m7p7b_flash_probe env; never in production.
 orun_tlp::ConfigFlashProbe flash_probe;
 
+const char* configFlashProbeEvidenceName(
+    orun_tlp::config_format::PageEvidence evidence) {
+  using E = orun_tlp::config_format::PageEvidence;
+  switch (evidence) {
+    case E::kErased: return "ERASED";
+    case E::kLegacyV1Committed: return "LEGACY_V1_COMMITTED";
+    case E::kLegacyV1UncommittedOrTorn: return "LEGACY_V1_TORN";
+    case E::kLegacyV1CommittedCorrupt: return "LEGACY_V1_CORRUPT";
+    case E::kV2Staged: return "V2_STAGED";
+    case E::kV2UncommittedOrTorn: return "V2_TORN";
+    case E::kV2PartialCommit: return "V2_PARTIAL_COMMIT";
+    case E::kV2Committed: return "V2_COMMITTED";
+    case E::kV2CommittedRetired: return "V2_COMMITTED_RETIRED";
+    case E::kV2CommittedCorrupt: return "V2_COMMITTED_CORRUPT";
+    case E::kSupportedCorrupt: return "SUPPORTED_CORRUPT";
+    case E::kUnsupportedNewer: return "UNSUPPORTED_NEWER";
+  }
+  return "UNKNOWN";
+}
+
+void printConfigFlashProbeU64(uint64_t value) {
+  Serial.printf("%08lX%08lX",
+                static_cast<unsigned long>(
+                    static_cast<uint32_t>(value >> 32)),
+                static_cast<unsigned long>(static_cast<uint32_t>(value)));
+}
+
+void printConfigFlashProbeLineage(const char* phase) {
+  orun_tlp::config_format::StateToken token;
+  Serial.printf("FLASH PROBE LINEAGE phase=%s token_state=%s",
+                phase,
+                config_store.stateToken(token) ? "VALID" : "UNAVAILABLE");
+  if (config_store.stateToken(token)) {
+    Serial.print(" incarnation=0x");
+    printConfigFlashProbeU64(token.incarnation);
+    Serial.printf(" revision=%lu",
+                  static_cast<unsigned long>(token.revision));
+  }
+  Serial.println();
+
+  for (uint32_t page = 0; page < 2U; ++page) {
+    uint8_t prefix[orun_tlp::config_format::kV2PagePrefixSize]{};
+    orun_tlp::config_format::PageInspection inspection;
+    const bool read_ok = storage_flash_gate.configPort().read(
+        page * orun_tlp::storage_config::kPageSize,
+        prefix, sizeof(prefix));
+    const bool inspect_ok =
+        read_ok &&
+        orun_tlp::config_format::inspectPagePrefix(
+            prefix, sizeof(prefix), inspection);
+    if (!inspect_ok) {
+      Serial.printf("FLASH PROBE LINEAGE phase=%s page=%c read=FAIL\n",
+                    phase, page == 0U ? 'A' : 'B');
+      continue;
+    }
+
+    Serial.printf("FLASH PROBE LINEAGE phase=%s page=%c evidence=%s decoded=%s",
+                  phase, page == 0U ? 'A' : 'B',
+                  configFlashProbeEvidenceName(inspection.evidence),
+                  inspection.has_decoded_record ? "yes" : "no");
+    if (inspection.has_decoded_record) {
+      Serial.print(" generation=0x");
+      printConfigFlashProbeU64(inspection.generation);
+      Serial.print(" incarnation=0x");
+      printConfigFlashProbeU64(inspection.token.incarnation);
+      Serial.printf(
+          " revision=%lu tracking_interval_seconds=%lu battery_capacity_mah=%lu",
+          static_cast<unsigned long>(inspection.token.revision),
+          static_cast<unsigned long>(
+              inspection.config.tracking_interval_seconds),
+          static_cast<unsigned long>(
+              inspection.config.battery_capacity_mah));
+    }
+    Serial.println();
+  }
+  Serial.flush();
+}
+
 orun_tlp::ConfigFlashProbe::Inputs flashProbeInputs() {
   orun_tlp::ConfigFlashProbe::Inputs in;
   in.now_ms = orun_tlp::monotonic::nowMs();
@@ -1056,6 +1135,7 @@ void startFlashProbe() {
           static_cast<unsigned long>(in.ble_disconnect_events),
           static_cast<unsigned long>(in.async.async_accepted),
           flash_probe.staleResultDrained() ? "drained" : "none");
+      printConfigFlashProbeLineage("start");
       return;
     case Probe::StartResult::kNotIdle: reason = "not-idle"; break;
     case Probe::StartResult::kConfigNotReady: reason = "config-not-ready-or-busy"; break;
@@ -1071,6 +1151,7 @@ void printFlashProbeReport() {
   using Probe = orun_tlp::ConfigFlashProbe;
   const Probe::Report& r = flash_probe.report();
   const auto ul = [](uint32_t v) { return static_cast<unsigned long>(v); };
+  printConfigFlashProbeLineage("final");
   if (r.pass) {
     Serial.printf(
         "FLASH PROBE PASS temp_verified=yes restore_verified=yes ble_connected=yes "
