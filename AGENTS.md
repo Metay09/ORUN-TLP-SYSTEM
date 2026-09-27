@@ -51,9 +51,10 @@ DEVICE/GROUP/FLEET distribution semantics, read
 `docs/architecture/ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md` together with
 `docs/audits/GEOFENCE_CONFIGURATION_DISTRIBUTION_AUDIT_DISPOSITION.md`.
 Its initial independent architecture audit returned PASS WITH FIXES
-(0 BLOCKER / 1 HIGH / 4 MEDIUM); the required H1/M1-M4 corrections are applied
-and focused final verification is still required before treating the direction
-as fully audited. Group/fleet selection is orchestration, not device Role;
+(0 BLOCKER / 1 HIGH / 4 MEDIUM); required H1/M1-M4 corrections were applied,
+and focused final verification returned PASS WITH MINOR DOC FIX with
+0 BLOCKER / 0 HIGH / 0 MEDIUM. The final F-L1–F-L4 documentation corrections
+are applied. Group/fleet selection is orchestration, not device Role;
 authority remains per-device. This is documentation-only and does not allocate
 flash, freeze wire bytes or authorize protected writes.
 
