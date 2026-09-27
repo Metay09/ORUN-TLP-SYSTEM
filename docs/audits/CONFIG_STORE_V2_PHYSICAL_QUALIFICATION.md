@@ -1,6 +1,6 @@
 # ConfigStore v2 Physical Qualification
 
-Status: **GATE 1 PHYSICAL PASS; REMAINING POWER-CUT / ASYNC QUALIFICATION OPEN — 2026-09-27**.
+Status: **GATE 1 + FRESH-BASELINE POWER-CUT PHYSICAL PASS; ASYNC / NORMAL-SAVE QUALIFICATION OPEN — 2026-09-27**.
 
 Baseline: `main@f6d4f0ca6654f1794fe4625195d6b4e77d2233dd` (PR #46 merged).
 
@@ -165,13 +165,72 @@ No claim is made here for electrical interruption during a write, SoftDevice
 async mutation, normal-save cut points or adjacent-partition preservation by
 independent dump.
 
+### Gate 2 — fresh-baseline power cut before commit
+
+Test-only target:
+`rak4630_config_v2_baseline_powercut_probe`.
+
+Build evidence from
+`test/config-store-v2-physical-qualification@b5728b98d92505e56c8f57a4aa8f0fac6b7e5cfd`:
+
+- build: **SUCCESS**;
+- RAM: **8,968 / 248,832 B = 3.6%**;
+- Flash: **62,896 / 815,104 B = 7.7%**.
+
+The ConfigStore partition was first erased/read-verified by the qualification
+helper. The power-cut probe then used the real ConfigStore +
+NrfConfigIncarnationSource + NrfConfigFlash path. Its backend wrapper delegated
+the real 44-byte body+CRC program and allowed ConfigStore's real stage readback
+to complete, then deliberately withheld the exact 4-byte commit program and
+reported:
+
+```text
+CONFIG V2 BASELINE CUT READY stage=after-body-readback before-commit; CUT POWER NOW
+```
+
+The operator removed physical power at that deterministic point.
+
+After physical power was restored with the same image, the production recovery
+path reported:
+
+```text
+CONFIG V2 CUT RECOVERY begin=PASS ready=yes maintenance=yes
+  token_state=UNCERTAIN committed_override=no
+  baseline_commits=0 baseline_failures=0
+  tracking_interval_seconds=180 battery_capacity_mah=0
+CONFIG V2 CUT AUTHORITATIVE TOKEN unavailable
+CONFIG V2 CUT PAGE A evidence=V2_STAGED decoded=yes tail_erased=yes
+  generation=1 incarnation=0x55A28DD0B94E1604 revision=1
+  tracking_interval_seconds=180 battery_capacity_mah=0
+CONFIG V2 CUT PAGE B evidence=ERASED decoded=no tail_erased=yes
+CONFIG V2 BASELINE CUT RECOVERY COMPLETE; DO NOT TREAT STAGED TOKEN AS AUTHORITATIVE
+```
+
+Therefore the fresh-baseline electrical interruption gate is **PHYSICAL PASS
+for the after-body-readback / before-commit cut point**:
+
+- a staged v2 record survives the real power cut as readable evidence;
+- it is not promoted to an authoritative token;
+- token authority is unavailable to callers;
+- runtime stays readable on safe semantics;
+- maintenance is required rather than silently re-baselining over staged
+  evidence;
+- the inactive page remains erased;
+- no new baseline commit occurs during recovery.
+
+This is not evidence for every possible electrical interruption instant inside
+the NVMC body or commit-word operation. The normal-save qualification below
+still requires explicit erase/body/commit boundary coverage.
+
 ### Remaining audit obligations
 
-Still separate after Gate 1:
+Still separate after Gate 2:
 
-- power cut during fresh baseline;
 - BLE-connected v2 ConfigStore flash probe plus lineage observation;
-- normal-save power cuts at erase/body/commit boundaries;
-- legacy-v1 development evidence remains untouched until explicit CLEAN.
+- normal-save power cuts at erase/body/commit boundaries.
+
+The original legacy-v1 development evidence was physically observed before the
+explicit Gate 1 CLEAN and is recorded above; it must not be described as
+untouched after that authorized maintenance erase.
 
 No host/build result may be reported as physical evidence.
