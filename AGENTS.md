@@ -48,10 +48,14 @@ fixed outside-cadence notes without changing the validated M6C geometry layer.
 For map-authored geofence configuration, BLE/LoRa transport-neutral mutation,
 multiple polygons, non-six-point geometry limits, atomic replacement/removal and
 DEVICE/GROUP/FLEET distribution semantics, read
-`docs/architecture/ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md`. Group/fleet
-selection is orchestration, not device Role; initial delivery fans out protected
-per-device mutations with per-device apply truth. This is documentation-only and
-does not allocate flash, freeze wire bytes or authorize protected writes.
+`docs/architecture/ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md` together with
+`docs/audits/GEOFENCE_CONFIGURATION_DISTRIBUTION_AUDIT_DISPOSITION.md`.
+Its initial independent architecture audit returned PASS WITH FIXES
+(0 BLOCKER / 1 HIGH / 4 MEDIUM); the required H1/M1-M4 corrections are applied
+and focused final verification is still required before treating the direction
+as fully audited. Group/fleet selection is orchestration, not device Role;
+authority remains per-device. This is documentation-only and does not allocate
+flash, freeze wire bytes or authorize protected writes.
 
 For security, provisioning, anti-replay, secure-envelope, user/backend authorization
 or command work, read
