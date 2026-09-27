@@ -222,6 +222,25 @@ This is not evidence for every possible electrical interruption instant inside
 the NVMC body or commit-word operation. The normal-save qualification below
 still requires explicit erase/body/commit boundary coverage.
 
+The staged result was then independently re-read with the separate
+`rak4630_config_v2_qual_probe` image after DFU/reset. It reported the same
+persistent state:
+
+```text
+CONFIG V2 STORE ready=yes maintenance=yes token_state=UNCERTAIN
+  committed_override=no baseline_commits=0 baseline_failures=0
+CONFIG V2 TOKEN unavailable
+CONFIG V2 PAGE A evidence=V2_STAGED decoded=yes tail_erased=yes
+  generation=1 incarnation=0x55A28DD0B94E1604 revision=1
+  tracking_interval_seconds=180 battery_capacity_mah=0
+CONFIG V2 PAGE B evidence=ERASED decoded=no tail_erased=yes
+```
+
+This cross-check confirms the observed recovery classification is not dependent
+on the power-cut probe's own reporting path. The operator then issued the
+qualification helper's explicit ConfigStore-only `CLEAN`; the full 8 KiB
+region was read-verified erased again before proceeding.
+
 ### Remaining audit obligations
 
 Still separate after Gate 2:
