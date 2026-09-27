@@ -195,7 +195,40 @@ event identity, duplicate safety, bounded retry/ACK/custody semantics and
 store-forward behavior appropriate to the threat model. Local `TX_DONE` is
 not delivery evidence.
 
-## 6. Reboot and persistence boundary
+## 6. Active-area-set replacement / clear boundary
+
+Operational INSIDE/OUTSIDE evidence is meaningful only for the exact active
+geofence resource against which it was observed.
+
+When an authorized production config owner atomically replaces the active area
+set:
+
+- cancel any in-progress transition-confirmation episode from the old set;
+- invalidate the old operational classification internally without inventing a
+  third user-visible geofence state;
+- emit no synthetic INSIDE/OUTSIDE transition event solely because the
+  configuration changed;
+- use configured base cadence `B` while the new set has not yet been
+  reclassified from fresh accepted Location evidence;
+- evaluate the next accepted fresh Location against the new set;
+- if the new evidence indicates OUTSIDE, use the normal bounded confirmation
+  episode before entering confirmed OUTSIDE and switching to `B / 3`.
+
+When an authorized CLEAR removes/disables the geofence resource:
+
+- cancel any in-progress confirmation episode;
+- stop geofence evaluation;
+- restore runtime cadence to configured base `B`;
+- emit no synthetic INSIDE/return event solely because the fence was removed.
+
+CLEAR is not FREE_GRAZE. FREE_GRAZE remains a separate operational policy.
+
+Production geometry/configuration ownership is defined separately in
+`ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md`. M6D host/physical development
+may use explicit test-only area-set fixtures; those fixtures are not production
+configuration.
+
+## 7. Reboot and persistence boundary
 
 `B` remains durable configuration.
 
@@ -207,7 +240,7 @@ itself is persisted across reboot. M6D must make that decision explicitly with
 power-cut/storage ownership semantics before adding durable state. Until then,
 do not smuggle operational state into ConfigStore or HistoryStore metadata.
 
-## 7. LOST remains separate
+## 8. LOST remains separate
 
 `OUTSIDE` does not imply `LOST`.
 
@@ -224,7 +257,7 @@ receipt/contact semantic.
 The local OUTSIDE state and its `B / 3` tracking cadence may exist before
 trustworthy LOST/contact is implemented.
 
-## 8. Implementation gate
+## 9. Implementation gate
 
 Before M6D production code is merged, the implementation slice must explicitly
 close:
