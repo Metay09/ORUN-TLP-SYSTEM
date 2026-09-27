@@ -90,6 +90,15 @@ g++ "${b3_flags[@]}" \
   -o "$test_dir/m6d2_geofence_runtime_policy"
 "$test_dir/m6d2_geofence_runtime_policy"
 
+g++ "${b3_flags[@]}" \
+  firmware/tests/m6/test_m6d2_geofence_confirmation_coordinator.cpp \
+  firmware/src/geofence_confirmation_coordinator.cpp \
+  firmware/src/geofence_runtime_policy.cpp firmware/src/geofence_runtime.cpp \
+  firmware/src/geofence_operational_state.cpp firmware/src/geofence_area_set.cpp \
+  firmware/src/geofence_geometry.cpp \
+  -o "$test_dir/m6d2_geofence_confirmation_coordinator"
+"$test_dir/m6d2_geofence_confirmation_coordinator"
+
 g++ "${flags[@]}" firmware/tests/m6/test_m6d2_gnss_continuation.cpp \
   "${gnss_sources[@]}" -o "$test_dir/m6d2_gnss_continuation"
 "$test_dir/m6d2_gnss_continuation"
