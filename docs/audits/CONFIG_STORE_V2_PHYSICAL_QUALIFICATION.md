@@ -1,10 +1,20 @@
 # ConfigStore v2 Physical Qualification
 
-Status: **REQUIRED CONFIGSTORE V2 PHYSICAL QUALIFICATION PASS — 2026-09-27**.
+Status: **REQUIRED CONFIGSTORE V2 PHYSICAL QUALIFICATION PASS (SCOPED) — 2026-09-27**.
 
-Baseline: `main@f6d4f0ca6654f1794fe4625195d6b4e77d2233dd` (PR #46 merged).
+Runtime-cutover baseline under test:
+`main@f6d4f0ca6654f1794fe4625195d6b4e77d2233dd` (PR #46 merged).
 
-Branch: `test/config-store-v2-physical-qualification`.
+Final integration base:
+`main@fedda189ac772542086d402aa5fb749ae505883e`. The intervening PR #47
+changes are documentation-only; the auditor independently confirmed no
+`firmware/` or `protocol/` change between these two main revisions.
+
+Physical-evidence branch:
+`test/config-store-v2-physical-qualification`.
+
+Final merge-integration branch / PR:
+`test/config-store-v2-physical-qualification-final` / PR #49.
 
 ## Purpose
 
@@ -20,7 +30,57 @@ The dedicated PlatformIO target
 - ConfigStore v2 codec/classifier;
 - `NrfConfigIncarnationSource`.
 
-SoftDevice remains disabled. The production `rak4630` environment is unchanged.
+SoftDevice remains disabled for the dedicated synchronous qualification/power-cut
+targets. Gate 4 separately uses the existing BLE-connected M7P7B probe and the
+real SoftDevice asynchronous flash path. The production `rak4630` environment
+is unchanged.
+
+## Evidence transcription convention
+
+The serial snippets in this document are **normalized transcriptions**, not
+byte-for-byte archived terminal logs, unless a block explicitly says otherwise.
+For readability, long single-line status output may be wrapped, 64-bit
+generations printed by firmware as fixed-width hexadecimal may be shown as the
+same numeric value without the leading `0x000...`, and summary-only blocks may
+omit diagnostic fields such as `decoded=yes`.
+
+The pre-CLEAN legacy block is explicitly a semantic summary of the observed
+classifier output, not a verbatim serial dump. Raw terminal capture files or
+hashes were not separately archived in the repository. The durable evidence is
+therefore the recorded values below plus the pinned source/build lineage and the
+independent final audit that compared those source revisions.
+
+## Power-cycle / interruption scope
+
+The power-cycle probes stop at **deterministic persistence boundaries between
+completed flash operations**:
+
+- after erase returned complete/read-verified, before body programming;
+- after body+CRC returned complete and ConfigStore readback matched, before the
+  commit-word program;
+- after the commit-word program returned complete/read-verified, before
+  ConfigStore final-record verification/publication.
+
+They do **not** test interruption in the middle of an NVMC erase/program
+operation, analog brown-out behavior, or partially powered flash rails.
+Gate 2/Gate 3 use synchronous `NrfConfigFlash` with SoftDevice disabled.
+Gate 4 proves BLE/SoftDevice asynchronous coexistence without a power cut; it
+does not physically exercise interruption during an in-flight SoftDevice flash
+operation or late-completion reconciliation.
+
+Gate 3A's inactive Page B was already classified `ERASED` before the tested
+save, so that run proves predecessor survival and safe recovery at the
+post-erase/pre-body boundary, but not interruption while erasing a previously
+programmed inactive page.
+
+The operator disconnected and restored the device's external USB/power path and
+the serial session observed disconnect/reboot behavior. The exact secondary
+power-source topology (for example whether a LiPo rail was attached) was not
+separately instrumented or recorded, so this evidence must not be described as
+a characterized rail-to-zero or brown-out test.
+
+All deterministic cut points in this record were exercised **once on one
+RAK4631 unit**. Repetition/endurance statistics are not claimed.
 
 ## Destructive scope
 
@@ -251,6 +311,11 @@ Starting physical baseline before the cut:
 - Page B = `ERASED`;
 - config = interval 180 s, battery 0.
 
+This baseline was created after the explicit ConfigStore-only `CLEAN` by the
+qualification-helper path. The exact DFU artifact hash used for that specific
+baseline-creation boot was not archived; no stronger artifact-identity claim is
+made.
+
 Test-only target:
 `rak4630_config_v2_normal_save_powercut_probe`.
 
@@ -289,9 +354,10 @@ CONFIG V2 NORMAL PAGE A evidence=V2_COMMITTED decoded=yes tail_erased=yes
 CONFIG V2 NORMAL PAGE B evidence=ERASED decoded=no tail_erased=yes
 ```
 
-Therefore the normal-save **erase boundary is PHYSICAL PASS**:
+Therefore the normal-save **erase boundary is PHYSICAL PASS for the
+tested post-erase/pre-body boundary**:
 
-- the pre-existing committed semantic config survived the real power cut;
+- the pre-existing committed semantic config survived the operator power-cycle;
 - the candidate config was not falsely applied;
 - incarnation/revision/token authority remained exactly on the old committed
   record;
@@ -472,27 +538,65 @@ Therefore the BLE-connected v2 async flash gate is **PHYSICAL PASS**:
 
 ### Qualification disposition
 
-The ConfigStore v2 physical obligations listed for this runtime cutover are now
-closed on the tested RAK4631 unit:
+The ConfigStore v2 runtime-cutover physical obligations are **closed only to the
+scoped evidence below** on the tested RAK4631 unit:
 
 - erased-device v2 baseline + cold-boot incarnation persistence — **PASS**;
-- fresh-baseline power cut after body readback / before commit — **PASS**;
-- normal-save power cut after inactive-page erase — **PASS**;
-- normal-save power cut after body+CRC readback / before commit — **PASS**;
-- normal-save power cut after commit readback / before final publication —
+- fresh-baseline post-body-readback / pre-commit power-cycle boundary —
+  **PASS**;
+- normal-save post-erase / pre-body boundary — **PASS**;
+- normal-save post-body-readback / pre-commit boundary — **PASS**;
+- normal-save post-commit-readback / pre-final-publication boundary —
   **PASS**;
 - BLE-connected v2 ConfigStore mutation through
-  FlashMutationGate/SoftDevice async flash plus lineage observation —
-  **PASS**.
+  FlashMutationGate/SoftDevice async flash plus lineage observation, without
+  interruption — **PASS**;
+- legacy-v1 clean-cutover behavior before explicit maintenance erase —
+  **PASS at classifier/behavior level**: both pages were still observed as
+  `LEGACY_V1_COMMITTED`, no token was adopted, and no automatic migration
+  occurred before explicit `CLEAN`. A byte-for-byte pre/post legacy dump was
+  not captured, so "unchanged bytes until CLEAN" is not claimed.
+
+The following §19/design candidates are **not physical PASS claims for this
+runtime slice**:
+
+- legacy-retirement power cut — **N/A** because current product scope uses a
+  clean development cutover and does not execute automatic legacy migration;
+- token-retire-word program/readback — **N/A** because the current runtime
+  cutover does not program the retire word;
+- SoftDevice async flash power cut — **not tested**;
+- late-completion reconciliation — **not physically exercised**; Gate 4
+  observed `late_delta=0`;
+- mid-NVMC erase/program interruption, weak-word behavior and characterized
+  brown-out — **not tested**.
+
+This qualification also does **not** close the runtime-cutover audit's remaining
+product prerequisites for future protected CAS mutation:
+
+- the bounded in-firmware maintenance/re-baseline path is still not a normal
+  production feature;
+- protected mutation/COMMAND RESULT must preserve the
+  `UNCONFIRMED / OUTCOME_UNKNOWN` contract when durable commit outcome cannot
+  yet be proven.
 
 The legacy-v1 state observed before the explicitly authorized ConfigStore
 `CLEAN` remains historical evidence only; it must not be described as still
 present after that erase.
 
-These results are scoped to the tested hardware and exact firmware/test
-lineage above. They do not imply unrelated GNSS, RF, power-consumption,
-HistoryStore, SecurityStore, DFU or end-to-end backend behavior was physically
-re-qualified by this ConfigStore exercise.
+Test-only diagnostic caveats retained after the audit:
+
+- the Gate 4 lineage helper collapses a failed `stateToken()` read to the label
+  `UNAVAILABLE`; the recorded PASS path observed only `VALID`;
+- that helper calls `stateToken()` twice and its failure-report path was not
+  the physical PASS path;
+- the normal-save cut probe is safe only for the known disposable 0/1 battery
+  test baseline used here; it is not a general reversible editor for arbitrary
+  production config values.
+
+These results are scoped to the tested hardware, one run per deterministic cut
+point, and the exact firmware/test lineage above. They do not imply unrelated
+GNSS, RF, power-consumption, HistoryStore, SecurityStore, DFU or end-to-end
+backend behavior was physically re-qualified by this ConfigStore exercise.
 
 ### Post-qualification production restore
 
