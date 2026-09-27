@@ -77,7 +77,7 @@ GeofenceOperationalStateMachine::finishConfirmation() {
     if (outside_votes >= geofence_operational_config::kTransitionVotesRequired) {
       has_confirmed_state_ = true;
       confirmed_state_ = GeofenceOperationalState::kOutside;
-      return GeofenceOperationalResult::kConfirmedOutside;
+      return GeofenceOperationalResult::kInitializedOutside;
     }
     if (inside_votes >= geofence_operational_config::kTransitionVotesRequired) {
       has_confirmed_state_ = true;
