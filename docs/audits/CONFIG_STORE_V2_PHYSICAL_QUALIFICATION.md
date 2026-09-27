@@ -1,6 +1,6 @@
 # ConfigStore v2 Physical Qualification
 
-Status: **GATE 1 + FRESH-BASELINE POWER-CUT PHYSICAL PASS; ASYNC / NORMAL-SAVE QUALIFICATION OPEN — 2026-09-27**.
+Status: **BASELINE + FRESH-BASELINE CUT + NORMAL-SAVE ERASE/BODY/COMMIT PHYSICAL PASS; BLE ASYNC QUALIFICATION OPEN — 2026-09-27**.
 
 Baseline: `main@f6d4f0ca6654f1794fe4625195d6b4e77d2233dd` (PR #46 merged).
 
@@ -341,12 +341,62 @@ Therefore the normal-save **body boundary is PHYSICAL PASS**:
 - recovery stays out of maintenance because the committed page plus exact
   staged successor is an expected recoverable state.
 
+### Gate 3C — normal-save power cut after commit readback
+
+Starting state after Gate 3B was a valid authoritative revision-1 Page A plus
+an exact staged revision-2 successor on Page B. The operator issued
+`CUT_COMMIT`. The normal save re-erased Page B, rewrote the same successor
+body, physically programmed the 4-byte commit word through `NrfConfigFlash`,
+and the backend read-verified that commit before returning. The wrapper stopped
+the call before ConfigStore could run its final full-record verify or
+`finishSave()`:
+
+```text
+CONFIG V2 NORMAL CUT_COMMIT accepted candidate tracking_interval_seconds=180 battery_capacity_mah=1
+CONFIG V2 NORMAL CUT READY stage=after-commit-readback before-final-verify; CUT POWER NOW
+```
+
+The operator removed and restored physical power. Production ConfigStore
+recovery reported:
+
+```text
+CONFIG V2 NORMAL BEGIN PASS
+CONFIG V2 NORMAL STORE ready=yes maintenance=no token_state=VALID
+  committed_override=yes busy=no tracking_interval_seconds=180
+  battery_capacity_mah=1 saves=0 save_failures=0
+  baseline_commits=0 baseline_failures=0
+CONFIG V2 NORMAL TOKEN incarnation=0xE70B5167C5F370E5 revision=2
+CONFIG V2 NORMAL PAGE A evidence=V2_COMMITTED decoded=yes tail_erased=yes
+  generation=1 incarnation=0xE70B5167C5F370E5 revision=1
+  tracking_interval_seconds=180 battery_capacity_mah=0
+CONFIG V2 NORMAL PAGE B evidence=V2_COMMITTED decoded=yes tail_erased=yes
+  generation=2 incarnation=0xE70B5167C5F370E5 revision=2
+  tracking_interval_seconds=180 battery_capacity_mah=1
+```
+
+Therefore the normal-save **commit boundary is PHYSICAL PASS**:
+
+- durable commit truth wins after reboot even though the interrupted runtime
+  never reached `finishSave()`;
+- recovery selects revision/generation 2 exactly once as authoritative;
+- incarnation remains unchanged;
+- the new semantic config (battery 1) is recovered as committed;
+- `committed_override=yes` correctly reflects the application mutation;
+- the old revision-1 committed page remains a coherent predecessor;
+- no maintenance lockout or synthetic re-baseline occurs;
+- `saves=0` on the rebooted process correctly shows that this boot did not
+  perform the save, rather than contradicting the recovered persistent result.
+
+This physically exercises the audit's normal-save erase/body/commit persistence
+boundaries. It also demonstrates the documented outcome-unknown principle:
+application-runtime publication can be interrupted after durable commit, while
+read-only reconciliation on reboot still discovers the applied successor.
+
 ### Remaining audit obligations
 
-Still separate after Gate 3B:
+After Gate 3C, the remaining physical obligation is:
 
-- BLE-connected v2 ConfigStore flash probe plus lineage observation;
-- normal-save power cut at the commit boundary.
+- BLE-connected v2 ConfigStore flash probe plus flash-lineage observation.
 
 The original legacy-v1 development evidence was physically observed before the
 explicit Gate 1 CLEAN and is recorded above; it must not be described as
