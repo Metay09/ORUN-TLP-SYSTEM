@@ -298,12 +298,55 @@ Therefore the normal-save **erase boundary is PHYSICAL PASS**:
 - recovery required no maintenance lockout or baseline rewrite;
 - the inactive page remained safely erased.
 
+### Gate 3B — normal-save power cut after body+CRC readback
+
+Starting from the same valid revision-1 lineage after Gate 3A, the operator
+issued `CUT_BODY`. The probe submitted the same real normal-save candidate
+(battery capacity 0 -> 1). The inactive page was erased, the full 44-byte
+body+CRC stage was physically programmed through `NrfConfigFlash`, and
+ConfigStore's own stage readback/memcmp completed. The wrapper then withheld the
+4-byte commit program and reported:
+
+```text
+CONFIG V2 NORMAL CUT_BODY accepted candidate tracking_interval_seconds=180 battery_capacity_mah=1
+CONFIG V2 NORMAL CUT READY stage=after-body-readback before-commit; CUT POWER NOW
+```
+
+The operator removed and restored physical power. Recovery reported:
+
+```text
+CONFIG V2 NORMAL BEGIN PASS
+CONFIG V2 NORMAL STORE ready=yes maintenance=no token_state=VALID
+  committed_override=no busy=no tracking_interval_seconds=180
+  battery_capacity_mah=0 saves=0 save_failures=0
+  baseline_commits=0 baseline_failures=0
+CONFIG V2 NORMAL TOKEN incarnation=0xE70B5167C5F370E5 revision=1
+CONFIG V2 NORMAL PAGE A evidence=V2_COMMITTED decoded=yes tail_erased=yes
+  generation=1 incarnation=0xE70B5167C5F370E5 revision=1
+  tracking_interval_seconds=180 battery_capacity_mah=0
+CONFIG V2 NORMAL PAGE B evidence=V2_STAGED decoded=yes tail_erased=yes
+  generation=2 incarnation=0xE70B5167C5F370E5 revision=2
+  tracking_interval_seconds=180 battery_capacity_mah=1
+```
+
+Therefore the normal-save **body boundary is PHYSICAL PASS**:
+
+- the old committed semantic config remains authoritative;
+- the staged successor is preserved as coherent evidence but is not promoted;
+- token authority remains exactly on incarnation
+  `0xE70B5167C5F370E5`, revision 1;
+- the uncommitted candidate does not become the visible application config;
+- exact successor lineage (generation/revision +1, same incarnation) survives
+  the real power cut;
+- recovery stays out of maintenance because the committed page plus exact
+  staged successor is an expected recoverable state.
+
 ### Remaining audit obligations
 
-Still separate after Gate 3A:
+Still separate after Gate 3B:
 
 - BLE-connected v2 ConfigStore flash probe plus lineage observation;
-- normal-save power cuts at body and commit boundaries.
+- normal-save power cut at the commit boundary.
 
 The original legacy-v1 development evidence was physically observed before the
 explicit Gate 1 CLEAN and is recorded above; it must not be described as
