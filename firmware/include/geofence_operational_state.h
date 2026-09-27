@@ -27,6 +27,7 @@ enum class GeofenceOperationalResult : uint8_t {
   kInvalidObservation,
   kBoundaryNoDecision,
   kInitializedInside,
+  kInitializedOutside,
   kStableInside,
   kStableOutside,
   kConfirmationStarted,
