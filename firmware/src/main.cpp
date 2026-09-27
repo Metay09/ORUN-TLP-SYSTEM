@@ -1433,8 +1433,13 @@ void processGeofenceAcceptedFix(const orun_tlp::GnssFix& fix) {
       fix.captured_at_ms, fix.hdop_x100, fix.satellites);
 
   if (update.geometry_result != orun_tlp::GeofenceObservationResult::kAccepted) {
-    // Geometry/config faults never become OUTSIDE. The active config owner will
-    // later expose richer diagnostics; runtime stays fail-closed here.
+    if (update.request_additional_observation) {
+      if (!gnss_manager.continueCurrentAcquisitionForAdditionalFix()) {
+        abortGeofenceConfirmation("GNSS_CONTINUATION_REJECTED");
+      }
+    } else if (geofence_confirmation.confirmationActive()) {
+      abortGeofenceConfirmation("GEOFENCE_GEOMETRY_FAULT");
+    }
     return;
   }
 

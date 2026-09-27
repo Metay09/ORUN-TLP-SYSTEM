@@ -65,15 +65,22 @@ GeofenceConfirmationCoordinator::observeAcceptedLocation(
   GeofenceConfirmationUpdate update;
   update.cadence_mode = operational_.cadenceMode();
 
+  const bool was_active = operational_.confirmationActive();
   const GeofenceObservationResult geometry_result =
       runtime_.observeAcceptedPosition(point, captured_at_ms);
   update.geometry_result = geometry_result;
   if (geometry_result != GeofenceObservationResult::kAccepted) {
+    // An unsupported/invalid point is not transition evidence and therefore
+    // does not consume one of the three slots. While an episode is already
+    // active, request another accepted observation within the same deadline.
+    // A config fault is different: continuing against suspect geometry would
+    // be unsafe, so the composition root will abort the episode.
+    update.request_additional_observation =
+        was_active && geometry_result == GeofenceObservationResult::kInvalidPoint;
     return update;
   }
 
   const PermittedAreaRelation relation = runtime_.assessment().relation;
-  const bool was_active = operational_.confirmationActive();
   const GeofenceCadenceMode cadence_before = operational_.cadenceMode();
   const uint8_t slot_before = evidence_count_;
 

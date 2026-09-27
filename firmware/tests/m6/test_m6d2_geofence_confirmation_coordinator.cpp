@@ -87,6 +87,27 @@ void falseOutsideCandidatePreservesInsideWithoutExtraRepresentative() {
   assert(c.cadenceMode() == GeofenceCadenceMode::kBase);
 }
 
+void invalidPointDoesNotConsumeEpisodeAndRequestsReplacement() {
+  GeofenceConfirmationCoordinator c;
+  assert(c.configure(GeofenceAreaSetView(kAreas, 1)) ==
+         GeofenceRuntimeConfigResult::kApplied);
+  c.observeAcceptedLocation(inside(), 100, 100, 7);
+  c.observeAcceptedLocation(outsideA(), 1000, 100, 7);
+  assert(c.confirmationActive());
+
+  const auto invalid =
+      c.observeAcceptedLocation(GeoPointE7(900000000, 0), 2000, 100, 7);
+  assert(invalid.geometry_result == GeofenceObservationResult::kInvalidPoint);
+  assert(invalid.request_additional_observation);
+  assert(!invalid.episode_evidence_accepted);
+  assert(c.confirmationActive());
+
+  const auto second = c.observeAcceptedLocation(outsideB(), 3000, 80, 8);
+  assert(second.operational_result ==
+         GeofenceOperationalResult::kConfirmationContinues);
+  assert(second.episode_slot == 1);
+}
+
 void initializedOutsideIsNotPhysicalOutsideEvent() {
   GeofenceConfirmationCoordinator c;
   assert(c.configure(GeofenceAreaSetView(kAreas, 1)) ==
@@ -164,6 +185,7 @@ int main() {
   stableInsideNeedsNoBurst();
   confirmedOutsideUsesThreeSlotsAndOneRealRepresentative();
   falseOutsideCandidatePreservesInsideWithoutExtraRepresentative();
+  invalidPointDoesNotConsumeEpisodeAndRequestsReplacement();
   initializedOutsideIsNotPhysicalOutsideEvent();
   exactDeadlineAbortsAndPreservesPriorAuthority();
   acquisitionOwnerAbortPreservesAuthority();
