@@ -225,7 +225,7 @@ No claim is made here for electrical interruption during a write, SoftDevice
 async mutation, normal-save cut points or adjacent-partition preservation by
 independent dump.
 
-### Gate 2 — fresh-baseline power cut before commit
+### Gate 2 — fresh-baseline power-cycle boundary before commit
 
 Test-only target:
 `rak4630_config_v2_baseline_powercut_probe`.
@@ -248,9 +248,9 @@ reported:
 CONFIG V2 BASELINE CUT READY stage=after-body-readback before-commit; CUT POWER NOW
 ```
 
-The operator removed physical power at that deterministic point.
+The operator disconnected the external power path at that deterministic point.
 
-After physical power was restored with the same image, the production recovery
+After the external power path was restored with the same image, the production recovery
 path reported:
 
 ```text
@@ -266,10 +266,10 @@ CONFIG V2 CUT PAGE B evidence=ERASED decoded=no tail_erased=yes
 CONFIG V2 BASELINE CUT RECOVERY COMPLETE; DO NOT TREAT STAGED TOKEN AS AUTHORITATIVE
 ```
 
-Therefore the fresh-baseline electrical interruption gate is **PHYSICAL PASS
+Therefore the fresh-baseline deterministic boundary power-cycle gate is **PHYSICAL PASS
 for the after-body-readback / before-commit cut point**:
 
-- a staged v2 record survives the real power cut as readable evidence;
+- a staged v2 record survives the operator-observed power-cycle as readable evidence;
 - it is not promoted to an authoritative token;
 - token authority is unavailable to callers;
 - runtime stays readable on safe semantics;
@@ -278,7 +278,7 @@ for the after-body-readback / before-commit cut point**:
 - the inactive page remains erased;
 - no new baseline commit occurs during recovery.
 
-This is not evidence for every possible electrical interruption instant inside
+This is not evidence for every possible interruption instant inside
 the NVMC body or commit-word operation. The normal-save qualification below
 still requires explicit erase/body/commit boundary coverage.
 
@@ -301,7 +301,7 @@ on the power-cut probe's own reporting path. The operator then issued the
 qualification helper's explicit ConfigStore-only `CLEAN`; the full 8 KiB
 region was read-verified erased again before proceeding.
 
-### Gate 3A — normal-save power cut after inactive-page erase
+### Gate 3A — normal-save power-cycle boundary after inactive-page erase
 
 Starting physical baseline before the cut:
 
@@ -338,7 +338,7 @@ CONFIG V2 NORMAL CUT_ERASE accepted candidate tracking_interval_seconds=180 batt
 CONFIG V2 NORMAL CUT READY stage=after-erase-readback before-body; CUT POWER NOW
 ```
 
-The operator removed physical power and then restored it with the same image.
+The operator disconnected and restored the external power path with the same image.
 Production ConfigStore recovery reported:
 
 ```text
@@ -364,7 +364,7 @@ tested post-erase/pre-body boundary**:
 - recovery required no maintenance lockout or baseline rewrite;
 - the inactive page remained safely erased.
 
-### Gate 3B — normal-save power cut after body+CRC readback
+### Gate 3B — normal-save power-cycle boundary after body+CRC readback
 
 Starting from the same valid revision-1 lineage after Gate 3A, the operator
 issued `CUT_BODY`. The probe submitted the same real normal-save candidate
@@ -378,7 +378,7 @@ CONFIG V2 NORMAL CUT_BODY accepted candidate tracking_interval_seconds=180 batte
 CONFIG V2 NORMAL CUT READY stage=after-body-readback before-commit; CUT POWER NOW
 ```
 
-The operator removed and restored physical power. Recovery reported:
+The operator disconnected and restored the external power path. Recovery reported:
 
 ```text
 CONFIG V2 NORMAL BEGIN PASS
@@ -403,11 +403,11 @@ Therefore the normal-save **body boundary is PHYSICAL PASS**:
   `0xE70B5167C5F370E5`, revision 1;
 - the uncommitted candidate does not become the visible application config;
 - exact successor lineage (generation/revision +1, same incarnation) survives
-  the real power cut;
+  the operator-observed power-cycle;
 - recovery stays out of maintenance because the committed page plus exact
   staged successor is an expected recoverable state.
 
-### Gate 3C — normal-save power cut after commit readback
+### Gate 3C — normal-save power-cycle boundary after commit readback
 
 Starting state after Gate 3B was a valid authoritative revision-1 Page A plus
 an exact staged revision-2 successor on Page B. The operator issued
@@ -422,7 +422,7 @@ CONFIG V2 NORMAL CUT_COMMIT accepted candidate tracking_interval_seconds=180 bat
 CONFIG V2 NORMAL CUT READY stage=after-commit-readback before-final-verify; CUT POWER NOW
 ```
 
-The operator removed and restored physical power. Production ConfigStore
+The operator disconnected and restored the external power path. Production ConfigStore
 recovery reported:
 
 ```text
