@@ -1,6 +1,6 @@
 # ConfigStore v2 Physical Qualification
 
-Status: **BASELINE + FRESH-BASELINE CUT + NORMAL-SAVE ERASE/BODY/COMMIT PHYSICAL PASS; BLE ASYNC QUALIFICATION OPEN — 2026-09-27**.
+Status: **REQUIRED CONFIGSTORE V2 PHYSICAL QUALIFICATION PASS — 2026-09-27**.
 
 Baseline: `main@f6d4f0ca6654f1794fe4625195d6b4e77d2233dd` (PR #46 merged).
 
@@ -392,11 +392,107 @@ boundaries. It also demonstrates the documented outcome-unknown principle:
 application-runtime publication can be interrupted after durable commit, while
 read-only reconciliation on reboot still discovers the applied successor.
 
-### Remaining audit obligations
+### Gate 4 — BLE-connected v2 async flash mutation + lineage
 
-After Gate 3C, the remaining physical obligation is:
+Test target:
+`rak4630_m7p7b_flash_probe` built from
+`test/config-store-v2-physical-qualification@ee4eb91ea768c1df08e851331e47f9f09b7dbccc`.
 
-- BLE-connected v2 ConfigStore flash probe plus flash-lineage observation.
+Build evidence:
+
+- build: **SUCCESS**;
+- RAM: **22,936 / 248,832 B = 9.2%**;
+- Flash: **248,108 / 815,104 B = 30.4%**;
+- M7P7A exclusive-owner and application-ceiling checks ran;
+- only the already-known SX126x-Arduino vendor warnings were emitted.
+
+The image was uploaded successfully through nrfutil. After reset, the device
+reported BLE ready and advertising. A real phone client connected and the
+firmware independently reported:
+
+```text
+BLE ready=yes advertising=no connected=1 policy=open initial_start=ok
+```
+
+The probe started from the exact persistent state left by Gate 3C:
+
+```text
+FLASH PROBE START orig_interval=180 orig_mah=1 temp_mah=0
+  ble_connected=1 disconnect_snapshot=0 async_accepted=0 stale_result=none
+FLASH PROBE LINEAGE phase=start token_state=VALID
+  incarnation=0xE70B5167C5F370E5 revision=2
+FLASH PROBE LINEAGE phase=start page=A evidence=V2_COMMITTED decoded=yes
+  generation=1 incarnation=0xE70B5167C5F370E5 revision=1
+  tracking_interval_seconds=180 battery_capacity_mah=0
+FLASH PROBE LINEAGE phase=start page=B evidence=V2_COMMITTED decoded=yes
+  generation=2 incarnation=0xE70B5167C5F370E5 revision=2
+  tracking_interval_seconds=180 battery_capacity_mah=1
+```
+
+While the BLE client remained connected, the test-only probe used the real
+public `ConfigStore::requestSave()/poll()` path through
+ConfigStore -> FlashMutationGate -> SoftDevice async flash operations to:
+
+1. save the temporary config (battery 1 -> 0);
+2. verify it;
+3. restore the exact original config (battery 0 -> 1);
+4. verify the restore.
+
+Final persistent evidence:
+
+```text
+FLASH PROBE LINEAGE phase=final token_state=VALID
+  incarnation=0xE70B5167C5F370E5 revision=4
+FLASH PROBE LINEAGE phase=final page=A evidence=V2_COMMITTED decoded=yes
+  generation=3 incarnation=0xE70B5167C5F370E5 revision=3
+  tracking_interval_seconds=180 battery_capacity_mah=0
+FLASH PROBE LINEAGE phase=final page=B evidence=V2_COMMITTED decoded=yes
+  generation=4 incarnation=0xE70B5167C5F370E5 revision=4
+  tracking_interval_seconds=180 battery_capacity_mah=1
+FLASH PROBE PASS temp_verified=yes restore_verified=yes ble_connected=yes
+  ble_disconnects=0 async_accepted_delta=6 completions_success_delta=6
+  errors_delta=0 timeouts_delta=0 late_delta=0
+```
+
+Therefore the BLE-connected v2 async flash gate is **PHYSICAL PASS**:
+
+- all six SoftDevice async flash operations were accepted and completed
+  successfully;
+- no flash error, timeout or late completion occurred;
+- the BLE client remained connected for the whole mutation/restore sequence;
+- no disconnect event occurred;
+- the same incarnation
+  `0xE70B5167C5F370E5` was preserved;
+- lineage advanced monotonically and exactly as expected from revision 2 /
+  generation 2 to revision 3 / generation 3 for the temporary save and then
+  revision 4 / generation 4 for the restore;
+- the final semantic config exactly matches the pre-probe config
+  (interval 180 s, battery 1);
+- both final pages are coherent committed predecessor/successor records.
+
+### Qualification disposition
+
+The ConfigStore v2 physical obligations listed for this runtime cutover are now
+closed on the tested RAK4631 unit:
+
+- erased-device v2 baseline + cold-boot incarnation persistence — **PASS**;
+- fresh-baseline power cut after body readback / before commit — **PASS**;
+- normal-save power cut after inactive-page erase — **PASS**;
+- normal-save power cut after body+CRC readback / before commit — **PASS**;
+- normal-save power cut after commit readback / before final publication —
+  **PASS**;
+- BLE-connected v2 ConfigStore mutation through
+  FlashMutationGate/SoftDevice async flash plus lineage observation —
+  **PASS**.
+
+The legacy-v1 state observed before the explicitly authorized ConfigStore
+`CLEAN` remains historical evidence only; it must not be described as still
+present after that erase.
+
+These results are scoped to the tested hardware and exact firmware/test
+lineage above. They do not imply unrelated GNSS, RF, power-consumption,
+HistoryStore, SecurityStore, DFU or end-to-end backend behavior was physically
+re-qualified by this ConfigStore exercise.
 
 The original legacy-v1 development evidence was physically observed before the
 explicit Gate 1 CLEAN and is recorded above; it must not be described as
