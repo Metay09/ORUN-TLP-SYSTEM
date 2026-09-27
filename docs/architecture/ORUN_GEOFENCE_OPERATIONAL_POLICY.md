@@ -223,6 +223,12 @@ When an authorized CLEAR removes/disables the geofence resource:
 
 CLEAR is not FREE_GRAZE. FREE_GRAZE remains a separate operational policy.
 
+If an authenticated REPLACE/CLEAR occurs while the backend has an open OUTSIDE
+alarm, config success must not masquerade as a physical return-to-INSIDE event.
+The later Event/backend lifecycle contract must define an authenticated
+"superseded/cleared by configuration change" resolution path so an old alarm does
+not remain permanently open merely because no synthetic INSIDE event is emitted.
+
 Production geometry/configuration ownership is defined separately in
 `ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md`. M6D host/physical development
 may use explicit test-only area-set fixtures; those fixtures are not production
