@@ -211,3 +211,36 @@ branch head `f1ec46c139a009fea0fefb0ef647cdfe45049c40`. That review returned
 **PASS WITH FIXES**, no BLOCKER/HIGH. Its separate durable disposition is
 `docs/audits/CONFIG_STATE_TOKEN_CAS_AUDIT_DISPOSITION.md`. Final focused
 verification returned **PASS WITH MINOR DOC FIX**; F1-F9 and R1 are applied.
+
+
+## 8. Post-disposition geofence resource-transfer follow-up
+
+PR #50 later adds **restrictive documentation-only constraints** for future
+geofence resource transfer. These edits were not part of the original delegated
+audit targets above and must not be described as if that earlier audit reviewed
+them.
+
+The governing later document is
+`docs/architecture/ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md`, with its own
+audit disposition at
+`docs/audits/GEOFENCE_CONFIGURATION_DISTRIBUTION_AUDIT_DISPOSITION.md`.
+
+The later restrictions do not loosen this delegated security design. They state
+that:
+
+- the current 32-byte protected desired-state COMMAND candidate is not a bulk
+  geofence transport;
+- large geofence transfer requires a separately reviewed protected
+  resource-transfer family;
+- that family must reconcile with §7.3 single-outstanding-frame,
+  sender-counter/replay-HWM and RESULT/UNCONFIRMED semantics;
+- geofence resource state/read, REPLACE and CLEAR require explicit future
+  opcode -> scope bindings;
+- CLEAR authorization must represent its alarm-protection impact;
+- current §12.1 small-config permission does not automatically make ad-hoc
+  multi-frame geofence blobs store-forward eligible.
+
+PR #50's focused verification reported 0 BLOCKER / 0 HIGH / 0 MEDIUM for these
+cross-document constraints after the required fixes. This addendum records the
+later dependency only; it does not retroactively expand the scope of the earlier
+delegated-command audit.

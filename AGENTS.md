@@ -45,6 +45,19 @@ design direction for later M6D implementation, not evidence that runtime/event
 transport is already implemented. It refines older conceptual NEAR_FENCE and
 fixed outside-cadence notes without changing the validated M6C geometry layer.
 
+For map-authored geofence configuration, BLE/LoRa transport-neutral mutation,
+multiple polygons, non-six-point geometry limits, atomic replacement/removal and
+DEVICE/GROUP/FLEET distribution semantics, read
+`docs/architecture/ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md` together with
+`docs/audits/GEOFENCE_CONFIGURATION_DISTRIBUTION_AUDIT_DISPOSITION.md`.
+Its initial independent architecture audit returned PASS WITH FIXES
+(0 BLOCKER / 1 HIGH / 4 MEDIUM); required H1/M1-M4 corrections were applied,
+and focused final verification returned PASS WITH MINOR DOC FIX with
+0 BLOCKER / 0 HIGH / 0 MEDIUM. The final F-L1–F-L4 documentation corrections
+are applied. Group/fleet selection is orchestration, not device Role;
+authority remains per-device. This is documentation-only and does not allocate
+flash, freeze wire bytes or authorize protected writes.
+
 For security, provisioning, anti-replay, secure-envelope, user/backend authorization
 or command work, read
 `docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md` before designing or coding.
