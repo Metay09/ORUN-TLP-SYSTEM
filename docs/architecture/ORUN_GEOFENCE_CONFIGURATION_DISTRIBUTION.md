@@ -1,6 +1,6 @@
 # ORUN Geofence Configuration and Distribution Direction
 
-Status: **OWNER-APPROVED DRAFT DIRECTION; INDEPENDENT AUDIT PASS WITH FIXES; H1/M1-M4 + RELEVANT LOW FIXES APPLIED, FINAL VERIFY PENDING — 2026-09-27**
+Status: **OWNER-APPROVED DESIGN DIRECTION; INDEPENDENT FINAL VERIFY PASS WITH MINOR DOC FIX; 0 BLOCKER / 0 HIGH / 0 MEDIUM; F-L1–F-L4 DOC FIXES APPLIED — 2026-09-27**
 
 This document defines how geofence configuration must eventually be created,
 transported, applied, removed and distributed without tying configuration
@@ -337,6 +337,12 @@ Whichever model is selected must preserve:
 - reset-safe idempotency;
 - serialized mutation ownership;
 - `UNCONFIRMED / OUTCOME_UNKNOWN` when durable outcome cannot yet be proven.
+
+If the future design chooses a **composite token/transaction** spanning
+ConfigStore and geofence persistence, the "single geofence semantic mutation
+slot" in §6 becomes part of the shared composite config-mutation authority. It
+must not remain an independent lock that could allow ConfigStore and geofence
+owners to accept conflicting halves of one composite precondition.
 
 The exact token scope is therefore an implementation-design gate, not frozen by
 this direction document.
@@ -702,7 +708,12 @@ Before production geofence configuration is enabled, separately close:
     BLE/LoRa staging, staging cancellation, reset and outcome-unknown;
 14. RAK4630 build/RAM/flash/ownership guards;
 15. focused physical BLE + LoRa transfer/reboot tests when those runtime paths
-    exist.
+    exist;
+16. Event/backend alarm-lifecycle semantics for authenticated REPLACE/CLEAR while
+    an OUTSIDE alarm is already open: config mutation must not synthesize an
+    INSIDE event, but the backend must have an explicit authenticated way to
+    mark the old alarm as superseded/cleared-by-configuration rather than
+    leaving a permanently open alarm.
 
 The development ordering is intentionally two-track:
 
