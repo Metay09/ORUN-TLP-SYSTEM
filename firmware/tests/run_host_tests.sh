@@ -78,6 +78,12 @@ g++ "${b3_flags[@]}" firmware/tests/m6/test_m6_geofence_runtime.cpp \
   firmware/src/geofence_geometry.cpp -o "$test_dir/m6_geofence_runtime"
 "$test_dir/m6_geofence_runtime"
 
+g++ "${b3_flags[@]}" \
+  firmware/tests/m6/test_m6d1_geofence_operational_state.cpp \
+  firmware/src/geofence_operational_state.cpp \
+  -o "$test_dir/m6d1_geofence_operational_state"
+"$test_dir/m6d1_geofence_operational_state"
+
 g++ "${flags[@]}" firmware/tests/m3/test_m3.cpp "${gnss_sources[@]}" \
   -o "$test_dir/m3"
 "$test_dir/m3"

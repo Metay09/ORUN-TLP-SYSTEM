@@ -1,6 +1,6 @@
 # ORUN Geofence Operational Policy
 
-Status: **OWNER-APPROVED DESIGN DIRECTION; NOT YET IMPLEMENTED — 2026-09-26**
+Status: **OWNER-APPROVED DESIGN DIRECTION; M6D1 PURE STATE OWNER IMPLEMENTED IN PR #51 BUT NOT PRODUCTION-RUNTIME INTEGRATED — 2026-09-27**
 
 This document defines the current M6D geofence operational-state baseline. It
 does not claim runtime integration, field validation, a new TLP packet, backend
@@ -79,9 +79,20 @@ OUTSIDE
 possible future product capability only if field evidence shows it is useful.
 
 The existing geometry layer may still return `BOUNDARY`. That is a geometry
-fact, not a third product state. Exact BOUNDARY-to-operational handling must be
-frozen in the M6D implementation before coding; BOUNDARY must never be silently
-reinterpreted as a confirmed OUTSIDE transition.
+fact, not a third product state.
+
+The first M6D implementation freezes BOUNDARY handling as follows:
+
+- BOUNDARY by itself never starts a state-transition confirmation episode;
+- during an already-started three-observation episode, BOUNDARY consumes one of
+  the bounded evidence slots but contributes neither an INSIDE nor OUTSIDE vote;
+- if three consumed evidence slots do not produce the required 2-of-3 transition
+  majority, the previous confirmed state remains authoritative;
+- while internally unclassified after boot/config replacement, BOUNDARY does
+  not establish a product state.
+
+This prevents an edge-hugging position sequence from creating either an
+unbounded confirmation burst or a false OUTSIDE transition.
 
 ## 4. Transition confirmation
 
@@ -169,7 +180,7 @@ belong to the later Event lifecycle design.
 
 POSITION and geofence event are different application facts.
 
-A confirmed transition to OUTSIDE produces:
+A true confirmed INSIDE -> OUTSIDE transition produces:
 
 1. the selected real POSITION through the normal store-before-send position
    path; and
@@ -241,10 +252,27 @@ configuration.
 `B / 3` is transient effective state and is not persisted as a replacement
 configuration value.
 
-This document does not yet freeze whether confirmed geofence operational state
-itself is persisted across reboot. M6D must make that decision explicitly with
-power-cut/storage ownership semantics before adding durable state. Until then,
-do not smuggle operational state into ConfigStore or HistoryStore metadata.
+The first M6D implementation does **not** persist confirmed geofence operational
+state across reboot.
+
+After boot/reset:
+
+- internal operational state starts unclassified;
+- runtime cadence policy is base `B`;
+- BOUNDARY does not establish a state;
+- a fresh accepted INSIDE observation establishes INSIDE;
+- a fresh accepted OUTSIDE observation starts the normal full three-observation
+  confirmation before OUTSIDE may become authoritative.
+
+When that post-boot/config-replacement confirmation establishes OUTSIDE, M6D1
+reports **initialized OUTSIDE**, not a physical INSIDE -> OUTSIDE transition.
+The later Event lifecycle must decide how to reconcile an initialized OUTSIDE
+state with any pre-existing/open backend alarm; it must not infer a new physical
+crossing solely from reboot or configuration replacement.
+
+No geofence operational-state bytes are added to ConfigStore, HistoryStore or
+another flash owner in this slice. A later persistence proposal, if field/product
+evidence justifies one, requires its own storage/power-cut review.
 
 ## 8. LOST remains separate
 
@@ -265,15 +293,14 @@ trustworthy LOST/contact is implemented.
 
 ## 9. Implementation gate
 
-Before M6D production code is merged, the implementation slice must explicitly
-close:
+Before M6D production runtime integration is merged, the remaining implementation
+slice must explicitly close:
 
-- BOUNDARY handling;
 - exact confirmation timing/deadline;
 - representative-fix tie-break;
 - runtime schedule re-anchoring when `B <-> B/3` changes;
-- behavior when confirmation acquisition times out;
-- reboot/operational-state persistence decision;
+- behavior when confirmation acquisition times out at the GNSS/acquisition owner
+  (the pure state machine already defines abort as no-transition/fail-safe);
 - OUTSIDE event identity and secure transport dependency;
 - host tests for every transition and no-overlap invariant;
 - RAK4630 build;
