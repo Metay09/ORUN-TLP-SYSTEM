@@ -5,7 +5,8 @@
 #include "geofence_area_set.h"
 #include "geofence_operational_state.h"
 
-namespace orun_tlp::geofence_runtime_policy {
+namespace orun_tlp {
+namespace geofence_runtime_policy {
 
 uint32_t effectiveTrackingIntervalMs(uint32_t base_interval_seconds,
                                      GeofenceCadenceMode mode);
@@ -32,4 +33,5 @@ bool selectRepresentative(const RepresentativeCandidate* candidates,
                           PermittedAreaRelation winning_relation,
                           uint8_t* observation_index);
 
-}  // namespace orun_tlp::geofence_runtime_policy
+}  // namespace geofence_runtime_policy
+}  // namespace orun_tlp
