@@ -218,3 +218,48 @@ PR #46 may leave Draft after:
 
 Physical persistence qualification remains open and must not be represented as
 completed by this merge.
+
+
+---
+
+## 2026-09-27 physical-qualification closure addendum
+
+The "physical validation remains open" language above is the historical
+disposition at PR #46 merge time. It is superseded for the implemented
+ConfigStore v2 runtime slice by
+`docs/audits/CONFIG_STORE_V2_PHYSICAL_QUALIFICATION.md`.
+
+Scoped hardware closure on one RAK4631 unit established:
+
+1. erased-device v2 baseline plus cold-boot incarnation persistence — PASS;
+2. fresh-baseline post-body-readback / pre-commit power-cycle boundary — PASS;
+3. BLE-connected v2 ConfigStore -> FlashMutationGate -> SoftDevice asynchronous
+   flash coexistence and lineage, without interruption — PASS;
+4. normal-save post-erase, post-body-readback and post-commit-readback
+   deterministic persistence boundaries — PASS;
+5. pre-CLEAN legacy development state remained classified as committed legacy,
+   was not adopted/migrated, and remained maintenance-locked until the explicit
+   ConfigStore-only CLEAN. Byte-for-byte unchanged legacy flash was not
+   independently dump-verified and is not claimed.
+
+The closure is intentionally narrower than a generic "power-fail qualified"
+claim. It did not interrupt an in-flight NVMC or SoftDevice flash operation,
+did not characterize brown-out/weak-word behavior, did not exercise a
+previously programmed inactive page during erase, and did not physically force
+a late SoftDevice completion (`late_delta=0` in the coexistence run).
+
+The design-only §19 legacy-retirement and retire-word candidates are N/A for the
+current clean-cutover runtime because automatic v1 migration/retirement is not
+implemented and the current runtime does not program the token-retire word.
+
+Two prerequisites from this audit remain in force before protected remote CAS
+mutation is enabled:
+
+- L2: provide a bounded production maintenance/re-baseline path rather than
+  relying on a test-only CLEAN image;
+- M1: preserve `UNCONFIRMED / OUTCOME_UNKNOWN` through the protected
+  mutation/COMMAND RESULT contract when durable commit outcome is uncertain.
+
+This addendum records physical closure only. It does not retroactively change
+what was known at PR #46 merge time or extend qualification to RF, GNSS,
+HistoryStore, SecurityStore, DFU, power consumption, or backend behavior.
