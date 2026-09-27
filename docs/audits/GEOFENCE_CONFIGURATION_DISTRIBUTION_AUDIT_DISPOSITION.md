@@ -1,6 +1,6 @@
 # Geofence Configuration / Distribution — Independent Audit Disposition
 
-Status: **INITIAL INDEPENDENT AUDIT PASS WITH FIXES; 0 BLOCKER / 1 HIGH / 4 MEDIUM / 6 LOW; REQUIRED H1/M1-M4 + RELEVANT LOW FIXES APPLIED; FINAL FOCUSED VERIFY PENDING — 2026-09-27**
+Status: **INDEPENDENT FINAL VERIFY PASS WITH MINOR DOC FIX; 0 BLOCKER / 0 HIGH / 0 MEDIUM; F-L1–F-L4 DOC FIXES APPLIED — 2026-09-27**
 
 PR: **#50 — Docs: define geofence configuration and fleet distribution direction**
 
@@ -229,3 +229,43 @@ No new physical test is required for these documentation corrections.
 A focused independent final verification should confirm H1 and M1-M4 are closed
 and that no new contradiction with M6, delegated-command security, CAS or
 current geometry semantics was introduced.
+
+
+---
+
+## Final focused verification — 2026-09-27
+
+Focused verification of post-fix head
+`b06e84d3deb33056a73666630f47484685d0896b` returned:
+
+**PASS WITH MINOR DOC FIX**
+
+- BLOCKER: 0
+- HIGH: 0
+- MEDIUM: 0
+- LOW: 4
+
+The verifier independently confirmed H1 and M1-M4 closed and confirmed that the
+post-audit changes were documentation-only with no `firmware/` or `protocol/`
+delta versus the PR base.
+
+The four LOW follow-ups are applied in the subsequent docs-only revision:
+
+- F-L1: status lines now record the successful focused verification instead of
+  "final verify pending";
+- F-L2: delegated-command geofence restrictions now cross-link the geofence
+  configuration direction, and the delegated-command audit disposition records
+  that this later restriction is a post-audit addendum rather than part of its
+  original reviewed head;
+- F-L3: if composite CAS is chosen, the geofence semantic mutation slot must join
+  the shared composite config-mutation authority rather than remain an
+  independent lock;
+- F-L4: Event/backend design must define authenticated closure/supersession of an
+  already-open OUTSIDE alarm after REPLACE/CLEAR, without synthesizing an
+  INSIDE event.
+
+These are documentation corrections only. They do not change production
+firmware/protocol behavior and require no new physical test.
+
+A final typo/consistency check of only these F-L1–F-L4 edits is appropriate
+before merge; no new architecture redesign is requested.
