@@ -553,8 +553,9 @@ bool FlashMutationGate::higherPriorityWaiting(Owner owner) const {
 
 // Bounded, no-heap admission: the physical in-flight slot is free, or
 // already owned by `owner` (a retry), or owned by another client (this call
-// stays queued). Priority (ADR §7.1/§10: SEC_CRITICAL > History > Config >
-// SEC_MAINT) is enforced here, independent of which client happens to call
+// stays queued). Priority (M6D3B: SEC_CRITICAL > History > Config >
+// Geofence > SEC_MAINT) is enforced here, independent of which client
+// happens to call
 // first: if the slot is free but a higher-priority client currently has a
 // request staged and not yet admitted, this owner is held back so that
 // client is admitted next, not whichever client asked first. A client that
