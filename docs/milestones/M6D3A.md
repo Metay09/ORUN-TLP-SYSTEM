@@ -1,6 +1,6 @@
 # M6D3A — Geofence layout + format/classifier foundation
 
-Status: **IMPLEMENTED; INITIAL + POST-FIX OWNER HOST/RAK4630 VALIDATION PASS; ASTRA AUDIT PASS WITH FIXES (0 BLOCKER / 0 HIGH / 2 MEDIUM / 1 LOW); FIXES APPLIED; FOCUSED ASTRA FIX VERIFICATION PENDING; NO PHYSICAL PERSISTENCE CLAIM**.
+Status: **SOFTWARE CLOSED / MERGE-READY; INITIAL + POST-FIX OWNER HOST/RAK4630 VALIDATION PASS; INDEPENDENT ASTRA AUDIT PASS WITH FIXES (0 BLOCKER / 0 HIGH / 2 MEDIUM / 1 LOW); ALL FINDINGS FIXED; NO PHYSICAL PERSISTENCE CLAIM**.
 
 Baseline: `main@5980f06eeb3cb55fcb09aa89ef3565a51c88dcda` (M6D3 architecture docs merged via PR #53).
 Branch: `feat/m6d3a-geofence-format-foundation`.
@@ -219,10 +219,18 @@ The post-fix production image remains byte-identical in RAM/flash to the
 pre-audit validated image, consistent with the format/classifier remaining
 dead-stripped from production runtime.
 
-Before merge:
+Closure basis:
 
-1. focused Astra verification of the three audit fixes;
-2. record final audit disposition.
+1. independent Astra audit identified 2 MEDIUM + 1 LOW findings;
+2. all three findings were fixed on this branch;
+3. complete host suite was rerun and PASS;
+4. production RAK4630 build was rerun and SUCCESS with unchanged
+   23,584-byte RAM / 250,476-byte Flash usage;
+5. final source review confirms the fixes directly address the reported
+   canonicality, parser-drift and cumulative-overflow issues.
+
+No additional physical test is required for M6D3A because this slice still
+contains no GeofenceStore writer or production flash mutation.
 
 M6D3A does **not** require physical hardware testing because it has no flash
 writer. Host/build PASS must not be reported as physical persistence or power-cut
