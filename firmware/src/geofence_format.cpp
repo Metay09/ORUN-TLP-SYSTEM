@@ -42,6 +42,11 @@ bool snapshotValid(const Snapshot& snapshot) {
     if (sum > kMaximumTotalVertices - count) return false;
     sum = static_cast<uint16_t>(sum + count);
     const GeofencePolygonView polygon(snapshot.vertices + offset, count);
+    // Durable v1 stores effective vertices only. The geometry layer accepts an
+    // optional explicit closing duplicate for input convenience, but accepting
+    // that duplicate here would create a second authoritative byte encoding for
+    // the same canonical polygon.
+    if (effectiveGeofenceVertexCount(polygon) != count) return false;
     if (validateGeofencePolygon(polygon) != GeofencePolygonValidation::kOk)
       return false;
     offset = static_cast<uint16_t>(offset + count);
