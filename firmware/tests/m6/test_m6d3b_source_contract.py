@@ -21,9 +21,23 @@ assert "class GeofenceStore" in store_h
 # owner. Comments intentionally name several forbidden owners to document the
 # boundary, so inspect C++ code after removing comments instead of doing a raw
 # substring scan.
-store_code = re.sub(r"/\\*.*?\\*/", "", store_h + "\n" + store_cpp,
-                    flags=re.DOTALL)
-store_code = re.sub(r"//.*?$", "", store_code, flags=re.MULTILINE)
+def strip_cpp_comments(text: str) -> str:
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    return re.sub(r"//.*?$", "", text, flags=re.MULTILINE)
+
+
+def contains_symbol(text: str, symbol: str) -> bool:
+    return re.search(rf"\b{re.escape(symbol)}\b", text) is not None
+
+
+# Guard the guard: comments must be ignored, while real C++ identifiers must
+# be detected. These assertions prevent an escaping typo from silently turning
+# the ownership contract into a no-op.
+assert not contains_symbol(strip_cpp_comments("/* PositionFlow */ int ok;"), "PositionFlow")
+assert not contains_symbol(strip_cpp_comments("int ok; // RadioManager"), "RadioManager")
+assert contains_symbol(strip_cpp_comments("PositionFlow* forbidden;"), "PositionFlow")
+
+store_code = strip_cpp_comments(store_h + "\n" + store_cpp)
 for forbidden in (
     "GnssManager",
     "PositionFlow",
@@ -31,7 +45,7 @@ for forbidden in (
     "GeofenceConfirmationCoordinator",
     "Bluefruit",
 ):
-    assert re.search(rf"\\b{re.escape(forbidden)}\\b", store_code) is None, forbidden
+    assert not contains_symbol(store_code, forbidden), forbidden
 
 # The physical preflight must remain structurally read-only: no backend with
 # mutator methods and no Nordic flash primitive may even be linked by its env.
