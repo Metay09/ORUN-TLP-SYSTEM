@@ -298,6 +298,55 @@ int main() {
     assert(gate.configPort().pollPending() == FlashOpResult::kDone);
   }
 
+  // 5b. An aged Geofence request must also outrank FRESH SEC_CRITICAL work.
+  // Mapping aged work merely to the same numeric priority is insufficient:
+  // caller order could otherwise let fresh critical requests win forever.
+  {
+    resetHarness();
+    FlashMutationGate gate;
+    assert(gate.begin());
+    assert(gate.geofencePort().begin());
+    assert(gate.securityCriticalPort().begin());
+    sd_enabled = true;
+    memset(history, 0xFF, kRegionSize);
+    memset(geofence, 0xFF, kGeofenceSize);
+    memset(security, 0xFF, kSecuritySize);
+
+    submit_results = {NRF_ERROR_BUSY};
+    alignas(4) uint8_t h[4] = {6, 6, 6, 6};
+    assert(gate.program(0, h, sizeof(h)) == FlashOpResult::kPending);
+
+    alignas(4) uint8_t g[4] = {7, 7, 7, 7};
+    assert(gate.geofencePort().program(0, g, sizeof(g)) ==
+           FlashOpResult::kPending);
+
+    fake_now_ms = 4001;
+    submit_results.clear();
+    assert(gate.pollPending() == FlashOpResult::kPending);
+    events.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
+    gate.pumpEvents();
+    assert(gate.pollPending() == FlashOpResult::kDone);
+
+    alignas(4) uint8_t critical[4] = {8, 8, 8, 8};
+    const unsigned before = write_calls;
+    assert(gate.securityCriticalPort().program(
+               0, critical, sizeof(critical)) == FlashOpResult::kPending);
+    assert(write_calls == before);  // aged Geofence outranks fresh critical.
+
+    assert(gate.geofencePort().pollPending() == FlashOpResult::kPending);
+    assert(write_calls == before + 1);
+    events.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
+    gate.pumpEvents();
+    assert(gate.geofencePort().pollPending() == FlashOpResult::kDone);
+
+    assert(gate.securityCriticalPort().pollPending() ==
+           FlashOpResult::kPending);
+    assert(write_calls == before + 2);
+    events.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
+    gate.pumpEvents();
+    assert(gate.securityCriticalPort().pollPending() == FlashOpResult::kDone);
+  }
+
   // 6. Accepted operation timeout quarantines Geofence exactly like the older
   // clients: application sees failure, physical token remains owned until the
   // definitive late completion event reconciles it.
