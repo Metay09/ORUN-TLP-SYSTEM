@@ -25,7 +25,7 @@ constexpr uint32_t kGeofenceRegionSize =
     kGeofenceRegionEnd - kGeofenceRegionStart;
 // M6D3A body+CRC is 560 bytes; keep a small fixed margin without depending on
 // geofence_format.h from this physical backend.
-constexpr size_t kMaxProgramSize = 576;
+constexpr size_t kMaxProgramSize = 560;
 
 bool inBounds(uint32_t offset, size_t size) {
   return offset <= kGeofenceRegionSize &&
