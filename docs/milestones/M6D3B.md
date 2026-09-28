@@ -447,6 +447,26 @@ This is physical evidence for the initial blank-partition -> committed CLEAR
 transaction only. A/B successor mutation, reboot persistence and power-cut
 recovery remain pending.
 
+## 9.6. Physical A/B successor mutation PASS
+
+From the physical CLEAR baseline, one test-only `REPLACE` mutation completed
+with `CONFIRMED`:
+
+- resource: `CONFIGURED`;
+- token state: `VALID`;
+- incarnation unchanged: `D93BBFF182C898DC`;
+- revision advanced exactly once: `1 -> 2`;
+- generation advanced exactly once: `1 -> 2`;
+- page A preserved the old `COMMITTED_CLEAR`;
+- page B became `COMMITTED_CONFIGURED`;
+- snapshot: one area / three effective vertices;
+- both reserved tails remained erased;
+- no failure or reconciliation occurred.
+
+This is physical evidence for one complete inactive-page successor commit.
+Reboot recovery, next rollover and electrical power-cut recovery remain
+pending.
+
 ## 10. Physical qualification safety gate
 
 M6D3B is the first geofence slice allowed to mutate physical flash.
