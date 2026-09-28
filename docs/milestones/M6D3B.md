@@ -1,10 +1,10 @@
 # M6D3B — Durable GeofenceStore + physical flash owner
 
-Status: **SOFTWARE VALIDATION PASS ON BRANCH; INDEPENDENT ASTRA AUDIT + FOCUSED PHYSICAL QUALIFICATION PENDING**.
+Status: **SOFTWARE + INDEPENDENT PRE-PHYSICAL AUDIT PASS; READ-ONLY PHYSICAL PREFLIGHT AUTHORIZED; DESTRUCTIVE QUALIFICATION / POWER-CUT / MERGE PENDING**.
 
 Baseline: `main@e566125afb9a08aaa5da8656d22d82e6a7580aed` (M6D3A merged via PR #54).
 Branch: `feat/m6d3b-geofence-store`.
-Current validated head: `f0d3a76d29c5bd5dd75691ffc2d63f4fed458361`.
+Current audited code-equivalent head: `bf1a753703c9a51381a0e0a31f631dba95a46c3d`.
 
 ## 1. Purpose
 
@@ -385,6 +385,31 @@ process-lifetime/static storage. The production image still has no
 No M6D3B image has yet been uploaded to hardware. Physical preflight,
 persistence, reboot and electrical power-cut evidence therefore remain
 **NOT RUN**.
+
+## 9.3. Focused independent re-audit PASS
+
+Focused Astra re-audit on exact head
+`bf1a753703c9a51381a0e0a31f631dba95a46c3d` returned **PASS**.
+
+It independently confirmed:
+
+- aged Geofence work outranks fresh SEC_CRITICAL after the aging threshold;
+- oldest staged request wins among aged work, with normal priority only as a
+  deterministic tie-breaker;
+- the frozen fresh-request order remains
+  `SEC_CRITICAL > History > Config > Geofence > SEC_MAINT`;
+- timeout/quarantine/late-completion ownership behavior is unchanged;
+- measured qualification stack usage remains below the 4-KiB loop-task stack;
+- production still has no GeofenceStore instance;
+- source-contract forbidden-owner matching is effective;
+- full host suite, production build, preflight build, qualification build and
+  `git diff --check` are clean.
+
+Durable audit disposition:
+`docs/audits/M6D3B_PRE_PHYSICAL_AUDIT_DISPOSITION.md`.
+
+The audit explicitly authorizes only the **read-only physical preflight**.
+Physical persistence, reboot persistence and power-cut behavior remain unproven.
 
 ## 10. Physical qualification safety gate
 
