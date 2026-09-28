@@ -1,6 +1,6 @@
 # M6D3A — Geofence layout + format/classifier foundation
 
-Status: **IMPLEMENTED; INITIAL OWNER HOST/RAK4630 VALIDATION PASS; ASTRA AUDIT PASS WITH FIXES (0 BLOCKER / 0 HIGH / 2 MEDIUM / 1 LOW); FIXES APPLIED; POST-FIX REVALIDATION PENDING; NO PHYSICAL PERSISTENCE CLAIM**.
+Status: **IMPLEMENTED; INITIAL + POST-FIX OWNER HOST/RAK4630 VALIDATION PASS; ASTRA AUDIT PASS WITH FIXES (0 BLOCKER / 0 HIGH / 2 MEDIUM / 1 LOW); FIXES APPLIED; FOCUSED ASTRA FIX VERIFICATION PENDING; NO PHYSICAL PERSISTENCE CLAIM**.
 
 Baseline: `main@5980f06eeb3cb55fcb09aa89ef3565a51c88dcda` (M6D3 architecture docs merged via PR #53).
 Branch: `feat/m6d3a-geofence-format-foundation`.
@@ -200,12 +200,29 @@ All three are fixed on the same branch:
   polygon and adds a second minimum-valid count of 3, forcing the real
   64-total-vertex guard.
 
+Post-fix owner validation on `9897d06b15616186ed447d6b725c2026f40517be`:
+
+```text
+./firmware/tests/run_host_tests.sh
+  M6D3A storage ceiling parser checks: PASS
+  M6D3A geofence format/classifier checks: PASS
+  complete host suite: PASS
+
+pio run -d firmware -e rak4630
+  application ceiling guard: PASS
+  RAM:   23,584 / 248,832 bytes = 9.5%
+  Flash: 250,476 / 815,104 bytes = 30.7%
+  result: SUCCESS
+```
+
+The post-fix production image remains byte-identical in RAM/flash to the
+pre-audit validated image, consistent with the format/classifier remaining
+dead-stripped from production runtime.
+
 Before merge:
 
-1. rerun the complete host suite;
-2. rerun the production RAK4630 build;
-3. focused Astra verification of the three audit fixes;
-4. record final audit disposition.
+1. focused Astra verification of the three audit fixes;
+2. record final audit disposition.
 
 M6D3A does **not** require physical hardware testing because it has no flash
 writer. Host/build PASS must not be reported as physical persistence or power-cut
