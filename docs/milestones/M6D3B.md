@@ -613,7 +613,7 @@ one exact staged successor with erased commit word
 
 The staged candidate must not become authoritative.
 
-This probe is **source-contract validated and warning-free RAK4630 build PASS; physical run is still pending**.
+This probe is **source-contract validated, warning-free RAK4630 build PASS, and physically executed at the intended pre-commit cut boundary with recovery PASS**.
 
 Validation evidence:
 
@@ -626,11 +626,13 @@ Validation evidence:
 
 ### Electrical power-cut evidence
 
-Host fault injection covers body/commit/erase/readback ambiguity, but does not
-prove real NVMC/SoftDevice electrical timing. After normal physical A/B
-qualification is clean, at least one focused real power-cut boundary probe must
-be performed before M6D3B is called physically closed. That probe is a separate
-operator step and must not be conflated with host PASS.
+Host fault injection covers body/commit/erase/readback ambiguity and remains
+software evidence only. The focused real power-cut probe was also executed on
+the qualified RAK4631 at the deterministic after-body-readback / before-commit
+boundary. After physical power removal and reboot, the prior committed CLEAR
+record remained VALID authority and the successor remained STAGED. This closes
+the intended M6D3B commit-last physical boundary; it is not an exhaustive claim
+for every possible intra-instruction electrical timing point.
 
 ## 11. Wear boundary
 
