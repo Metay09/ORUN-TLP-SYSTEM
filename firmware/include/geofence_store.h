@@ -138,7 +138,15 @@ class GeofenceStore {
   geofence_format::Snapshot pending_snapshot_{};
   geofence_format::StateToken pending_token_{};
   uint64_t pending_generation_ = 0;
+
+  // GeofenceStore runs on the 4-KiB Arduino loop task when physically
+  // qualified. Keep record-sized recovery/verification storage in the
+  // process-lifetime object instead of stacking several 560+ byte buffers
+  // through begin()->baseline/recovery call chains.
   uint8_t blob_[geofence_format::kRecordSize]{};
+  uint8_t scratch_[geofence_format::kRecordSize]{};
+  RecoveredPage recovery_pages_[storage_config::kGeofenceRegionPages]{};
+  geofence_format::PageInspection inspection_scratch_{};
 };
 
 }  // namespace orun_tlp
