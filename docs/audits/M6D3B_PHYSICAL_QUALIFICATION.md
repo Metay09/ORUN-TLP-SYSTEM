@@ -207,3 +207,39 @@ This still does **not** prove:
 - the next A/B rollover back to page A;
 - physical electrical power-cut recovery;
 - SoftDevice-enabled arbitration.
+
+
+## Stage 2D — physical A/B rollover back to page A
+
+Starting from the reboot-qualified CONFIGURED state on page B (generation 2 /
+revision 2), the operator issued exactly one `CLEAR` command.
+
+Observed serial evidence:
+
+```text
+M6D3B QUAL CLEAR result=CONFIRMED
+M6D3B QUAL STORE ready=yes busy=no maintenance=no resource=CLEAR token_state=VALID mutations=1 failures=0 reconciliations=0
+M6D3B QUAL TOKEN incarnation=0xD93BBFF182C898DC revision=3
+M6D3B QUAL SNAPSHOT state=CLEAR areas=0 vertices=0
+M6D3B QUAL PAGE A evidence=COMMITTED_CLEAR decoded=yes tail_ff=yes generation=0x0000000000000003 incarnation=0xD93BBFF182C898DC revision=3 state=CLEAR areas=0 vertices=0
+M6D3B QUAL PAGE B evidence=COMMITTED_CONFIGURED decoded=yes tail_ff=yes generation=0x0000000000000002 incarnation=0xD93BBFF182C898DC revision=2 state=CONFIGURED areas=1 vertices=3
+```
+
+Result: **PASS** for physical A/B rollover back to page A.
+
+This physically proves:
+
+- the previously inactive page A was erased/reused for the next successor;
+- generation advanced exactly `2 -> 3`;
+- revision advanced exactly `2 -> 3`;
+- the incarnation remained unchanged;
+- page A became the new committed CLEAR authority;
+- page B retained the previous committed CONFIGURED predecessor;
+- both reserved tails remained erased;
+- token authority remained VALID;
+- no mutation failure or recovery reconciliation was required.
+
+This closes the normal physical A/B alternation path for one complete
+CLEAR -> CONFIGURED -> CLEAR cycle.
+
+Still pending: focused physical electrical power-cut qualification.
