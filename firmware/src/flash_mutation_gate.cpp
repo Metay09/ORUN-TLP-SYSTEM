@@ -123,11 +123,19 @@ uint32_t takeBridgedGateEvent() {
 bool inBoundsHistory(uint32_t offset, size_t size) {
   return offset <= kRegionSize && size <= kRegionSize - offset;
 }
-constexpr uint32_t kConfigRegionSize = kFutureConfigRegionEnd - kFutureConfigRegionStart;
+constexpr uint32_t kConfigRegionSize =
+    kFutureConfigRegionEnd - kFutureConfigRegionStart;
 bool inBoundsConfig(uint32_t offset, size_t size) {
   return offset <= kConfigRegionSize && size <= kConfigRegionSize - offset;
 }
-constexpr uint32_t kSecurityRegionSize = kFutureSecurityRegionEnd - kFutureSecurityRegionStart;
+constexpr uint32_t kGeofenceRegionSize =
+    kGeofenceRegionEnd - kGeofenceRegionStart;
+bool inBoundsGeofence(uint32_t offset, size_t size) {
+  return offset <= kGeofenceRegionSize &&
+         size <= kGeofenceRegionSize - offset;
+}
+constexpr uint32_t kSecurityRegionSize =
+    kFutureSecurityRegionEnd - kFutureSecurityRegionStart;
 bool inBoundsSecurity(uint32_t offset, size_t size) {
   return offset <= kSecurityRegionSize && size <= kSecurityRegionSize - offset;
 }
@@ -363,6 +371,78 @@ FlashOpResult FlashMutationGate::pollPendingConfig() {
 }
 
 // ---------------------------------------------------------------------
+// Geofence client (M6D3B): dedicated region, fixed low-priority config work.
+// ---------------------------------------------------------------------
+
+bool FlashMutationGate::beginGeofence() {
+  ready_geofence_ = sync_geofence_.begin();
+  return ready_geofence_;
+}
+
+bool FlashMutationGate::readGeofence(uint32_t offset, void* data,
+                                     size_t size) const {
+  return sync_geofence_.read(offset, data, size);
+}
+
+FlashOpResult FlashMutationGate::programGeofence(uint32_t offset,
+                                                 const void* data,
+                                                 size_t size) {
+  if (!ready_geofence_) return FlashOpResult::kFailed;
+  ++geofence_diagnostics_.submits;
+  if (!softDeviceEnabled()) return sync_geofence_.program(offset, data, size);
+
+  if (geofence_slot_.kind != Kind::kNone) return FlashOpResult::kFailed;
+  if (!data || !size || !inBoundsGeofence(offset, size) ||
+      (offset & 3U) != 0 || (size & 3U) != 0 ||
+      size > sizeof(geofence_staging_) ||
+      size > kPageSize - offset % kPageSize)
+    return FlashOpResult::kFailed;
+
+  const auto* destination =
+      reinterpret_cast<const uint8_t*>(kGeofenceRegionStart + offset);
+  for (size_t index = 0; index < size; ++index)
+    if (destination[index] != 0xFF) return FlashOpResult::kFailed;
+
+  memcpy(geofence_staging_, data, size);
+  geofence_slot_.staging_size = size;
+  geofence_slot_.kind = Kind::kProgram;
+  geofence_slot_.target = kGeofenceRegionStart + offset;
+  geofence_slot_.priority = Priority::kGeofence;
+  geofence_slot_.staged_since_ms = monotonic::nowMs();
+  geofence_slot_.admitted = false;
+  geofence_slot_.token_acquired = false;
+  geofence_slot_.submission_accepted = false;
+  geofence_slot_.event_ready = false;
+  geofence_slot_.quarantined = false;
+  return submitOrRetry(Owner::kGeofence);
+}
+
+FlashOpResult FlashMutationGate::erasePageGeofence(uint32_t page) {
+  if (!ready_geofence_) return FlashOpResult::kFailed;
+  ++geofence_diagnostics_.submits;
+  if (!softDeviceEnabled()) return sync_geofence_.erasePage(page);
+
+  if (geofence_slot_.kind != Kind::kNone) return FlashOpResult::kFailed;
+  if (page >= kGeofenceRegionPages) return FlashOpResult::kFailed;
+
+  geofence_slot_.kind = Kind::kErase;
+  geofence_slot_.target = kGeofenceRegionStart / kPageSize + page;
+  geofence_slot_.priority = Priority::kGeofence;
+  geofence_slot_.staged_since_ms = monotonic::nowMs();
+  geofence_slot_.admitted = false;
+  geofence_slot_.token_acquired = false;
+  geofence_slot_.submission_accepted = false;
+  geofence_slot_.event_ready = false;
+  geofence_slot_.quarantined = false;
+  return submitOrRetry(Owner::kGeofence);
+}
+
+FlashOpResult FlashMutationGate::pollPendingGeofence() {
+  if (geofence_slot_.kind == Kind::kNone) return FlashOpResult::kFailed;
+  return submitOrRetry(Owner::kGeofence);
+}
+
+// ---------------------------------------------------------------------
 // Security client (M7P6B): symmetrical API, own region, own diagnostics,
 // two priority-tagged entry points (SecurityCriticalPort/SecurityMaintPort)
 // sharing one physical slot -- SecurityStore only ever has one request
@@ -452,13 +532,16 @@ FlashMutationGate::Priority FlashMutationGate::effectivePriority(const Slot& slo
 }
 
 bool FlashMutationGate::higherPriorityWaiting(Owner owner) const {
-  const Slot* mine = owner == Owner::kHistory ? &history_slot_
-                    : owner == Owner::kConfig  ? &config_slot_
-                                                : &security_slot_;
+  const Slot* mine = owner == Owner::kHistory  ? &history_slot_
+                    : owner == Owner::kConfig   ? &config_slot_
+                    : owner == Owner::kGeofence ? &geofence_slot_
+                                                 : &security_slot_;
   const Priority mine_priority = effectivePriority(*mine);
-  const Slot* others[] = {&history_slot_, &config_slot_, &security_slot_};
-  const Owner owners[] = {Owner::kHistory, Owner::kConfig, Owner::kSecurity};
-  for (unsigned index = 0; index < 3; ++index) {
+  const Slot* others[] = {
+      &history_slot_, &config_slot_, &geofence_slot_, &security_slot_};
+  const Owner owners[] = {
+      Owner::kHistory, Owner::kConfig, Owner::kGeofence, Owner::kSecurity};
+  for (unsigned index = 0; index < 4; ++index) {
     if (owners[index] == owner) continue;
     const Slot& other = *others[index];
     if (other.kind != Kind::kNone && !other.admitted &&
