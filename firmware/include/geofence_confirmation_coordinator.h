@@ -27,6 +27,7 @@ struct GeofenceConfirmationUpdate {
         episode_slot(0),
         representative_available(false),
         representative_slot(0),
+        confirmation_timed_out(false),
         outside_event_occurrence(false),
         cadence_changed(false),
         cadence_mode(GeofenceCadenceMode::kBase) {}
@@ -38,6 +39,9 @@ struct GeofenceConfirmationUpdate {
   uint8_t episode_slot;
   bool representative_available;
   uint8_t representative_slot;
+  // True when this observation arrived at/after the episode deadline and the
+  // prior authority was preserved without consuming the late observation.
+  bool confirmation_timed_out;
   // True only for a physical confirmed INSIDE -> OUTSIDE transition. Initial
   // discovery of OUTSIDE after boot/config replacement is deliberately false.
   bool outside_event_occurrence;
@@ -51,6 +55,11 @@ struct GeofenceConfirmationUpdate {
 // internals, persist geometry/state, send RF, or own acquisition power.
 class GeofenceConfirmationCoordinator {
  public:
+  // Geometry/state only. These methods deliberately do not own GnssManager,
+  // PositionFlow or cadence. A composition owner replacing/clearing a live
+  // area set must also cancel any outstanding GNSS continuation, discard
+  // episode/representative buffers, and restore the applied base cadence at a
+  // safe GNSS scheduling boundary.
   GeofenceRuntimeConfigResult configure(const GeofenceAreaSetView& candidate);
   void clear();
 

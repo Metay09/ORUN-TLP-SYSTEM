@@ -85,6 +85,16 @@ orun_tlp::GnssFix geofence_episode_fixes[
     orun_tlp::geofence_operational_config::kConfirmationObservationLimit]{};
 bool geofence_representative_pending = false;
 orun_tlp::GnssFix geofence_representative_fix{};
+// Applied-at-boot base cadence. Runtime config writes are not applied to GNSS
+// mid-session by M7P5, so geofence B/B/3 must derive from the same applied B
+// rather than a newer durable value which GNSS has not otherwise adopted.
+uint32_t active_tracking_base_interval_seconds =
+    orun_tlp::gnss_config::kTrackingIntervalSeconds;
+// Slot 0 is also the ordinary scheduled POSITION. If PositionFlow accepted it
+// once, a later representative selection of slot 0 must not allocate a second
+// sequence/history record for the same physical observation.
+bool geofence_slot0_normal_store_expected = false;
+bool geofence_slot0_normal_store_accepted = false;
 #ifdef ORUN_M6D2_GEOFENCE_PROBE
 // TEST-ONLY dynamic fixture. The first accepted GNSS fix becomes the centre of
 // a small local rectangle; no production image defines or persists this area.
@@ -1490,8 +1500,9 @@ bool configureM6D2ProbeAround(const orun_tlp::GnssFix& fix) {
       "base_s=%lu\n",
       static_cast<long>(fix.latitude_e7), static_cast<long>(fix.longitude_e7),
       static_cast<long>(kM6D2ProbeHalfSpanE7),
-      static_cast<unsigned long>(
-          config_store.config().tracking_interval_seconds));
+      static_cast<unsigned long>(active_tracking_base_interval_seconds));
+  Serial.println(F(
+      "M6D2 PROBE NOTE GNSS FIX ttff is total acquisition age, not inter-fix latency"));
   return true;
 }
 #endif
@@ -1502,6 +1513,8 @@ void clearGeofenceEpisodeFixes() {
        ++i) {
     geofence_episode_fixes[i] = orun_tlp::GnssFix{};
   }
+  geofence_slot0_normal_store_expected = false;
+  geofence_slot0_normal_store_accepted = false;
 }
 
 void abortGeofenceConfirmation(const char* reason) {
@@ -1515,17 +1528,27 @@ void applyGeofenceCadence(
     orun_tlp::GeofenceCadenceMode cadence_mode) {
   const uint32_t effective_interval_ms =
       orun_tlp::geofence_runtime_policy::effectiveTrackingIntervalMs(
-          config_store.config().tracking_interval_seconds, cadence_mode);
+          active_tracking_base_interval_seconds, cadence_mode);
   if (effective_interval_ms == 0 ||
       !gnss_manager.setTrackingIntervalMsAndReanchor(effective_interval_ms)) {
     // Do not overwrite durable B or guess a schedule. This should be reachable
     // only if composition ordering is broken because the fresh fix has already
     // been consumed but GnssManager must still be at kFixAvailable.
     Serial.println(F("GEOFENCE cadence re-anchor rejected"));
+  } else {
+#ifdef ORUN_M6D2_GEOFENCE_PROBE
+    Serial.printf("M6D2 PROBE CADENCE interval_ms=%lu gnss_policy=%s\n",
+                  static_cast<unsigned long>(effective_interval_ms),
+                  effective_interval_ms <=
+                          orun_tlp::gnss_config::kShortIntervalThresholdMs
+                      ? "KEEP_POWERED"
+                      : "POWER_CYCLE_ELIGIBLE");
+#endif
   }
 }
 
-void processGeofenceAcceptedFix(const orun_tlp::GnssFix& fix) {
+void processGeofenceAcceptedFix(const orun_tlp::GnssFix& fix,
+                                bool ordinary_position_will_follow) {
 #ifdef ORUN_M6D2_GEOFENCE_PROBE
   if (!geofence_confirmation.configured() && !configureM6D2ProbeAround(fix)) {
     return;
@@ -1558,6 +1581,13 @@ void processGeofenceAcceptedFix(const orun_tlp::GnssFix& fix) {
   }
 #endif
 
+  if (update.confirmation_timed_out) {
+    (void)gnss_manager.cancelAdditionalFixAcquisition();
+    clearGeofenceEpisodeFixes();
+    Serial.println(F("GEOFENCE confirmation timeout"));
+    return;
+  }
+
   if (update.geometry_result != orun_tlp::GeofenceObservationResult::kAccepted) {
     if (update.request_additional_observation) {
       if (!gnss_manager.continueCurrentAcquisitionForAdditionalFix()) {
@@ -1573,6 +1603,10 @@ void processGeofenceAcceptedFix(const orun_tlp::GnssFix& fix) {
       update.episode_slot <
           orun_tlp::geofence_operational_config::kConfirmationObservationLimit) {
     geofence_episode_fixes[update.episode_slot] = fix;
+    if (update.episode_slot == 0 && ordinary_position_will_follow) {
+      geofence_slot0_normal_store_expected = true;
+      geofence_slot0_normal_store_accepted = false;
+    }
   }
 
   if (update.cadence_changed) applyGeofenceCadence(update.cadence_mode);
@@ -1580,9 +1614,15 @@ void processGeofenceAcceptedFix(const orun_tlp::GnssFix& fix) {
   if (update.representative_available &&
       update.representative_slot <
           orun_tlp::geofence_operational_config::kConfirmationObservationLimit) {
-    geofence_representative_fix =
-        geofence_episode_fixes[update.representative_slot];
-    geofence_representative_pending = true;
+    // Slot 0 already entered the ordinary store-before-send path when it
+    // started the episode. Reusing that exact observation as representative
+    // must not create a second sequence/history/TX record.
+    if (!(update.representative_slot == 0 &&
+          geofence_slot0_normal_store_accepted)) {
+      geofence_representative_fix =
+          geofence_episode_fixes[update.representative_slot];
+      geofence_representative_pending = true;
+    }
   }
 
   if (update.outside_event_occurrence) {
@@ -1669,9 +1709,11 @@ void setup() {
     }
     Serial.printf("SECURITY state=%s\n", state);
   }
+  active_tracking_base_interval_seconds =
+      config_store.config().tracking_interval_seconds;
   gnss_manager.begin();
   gnss_manager.setTrackingIntervalMs(
-      config_store.config().tracking_interval_seconds * 1000UL);
+      active_tracking_base_interval_seconds * 1000UL);
   accelerometer_manager.begin(orun_tlp::monotonic::nowMs());
   Serial.println(F("ROLE AUTO pending (GNSS=>TRACKER, no GNSS=>BASE)"));
 
@@ -1789,6 +1831,14 @@ void loop() {
   const auto effective = resolveRuntimeConfig();
   const bool tracking_enabled = serviceRuns(effective.tracking);
   const bool relay_forwarding_enabled = serviceRuns(effective.relay_forwarding);
+  if (!tracking_enabled && geofence_representative_pending) {
+    // Do not retain a location indefinitely while the tracking service is
+    // intentionally disabled. It may already have been accepted as geofence
+    // evidence, but disabled tracking must not cause an hours-later history
+    // insertion when the service is re-enabled.
+    geofence_representative_pending = false;
+    Serial.println(F("GEOFENCE representative discarded; tracking disabled"));
+  }
   // Applying relay behavior may defer while a TX or legacy role transition is
   // active. The loop retries the same resolved intent without aborting work.
   radio_manager.setRelayForwardingEnabled(relay_forwarding_enabled);
@@ -1932,10 +1982,16 @@ void loop() {
   if (tracking_enabled &&
       (confirmation_fix_expected || positions.canAcceptFix()) &&
       gnss_manager.takeFreshFixForTransmission(&fix)) {
-    processGeofenceAcceptedFix(fix);
+    processGeofenceAcceptedFix(fix, !confirmation_fix_expected);
 
     if (!confirmation_fix_expected) {
-      if (!positions.acceptFix(fix, orun_tlp::monotonic::nowMs()))
+      const bool accepted =
+          positions.acceptFix(fix, orun_tlp::monotonic::nowMs());
+      if (geofence_slot0_normal_store_expected) {
+        geofence_slot0_normal_store_accepted = accepted;
+        geofence_slot0_normal_store_expected = false;
+      }
+      if (!accepted)
         Serial.println(F("STORAGE position dropped; no live TX"));
     }
   }

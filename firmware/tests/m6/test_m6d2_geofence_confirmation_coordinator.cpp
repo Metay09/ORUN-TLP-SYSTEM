@@ -144,6 +144,29 @@ void exactDeadlineAbortsAndPreservesPriorAuthority() {
       1000 + geofence_confirmation_config::kConfirmationDeadlineMs + 1));
 }
 
+void lateCapturedObservationCannotWinDeadlineRace() {
+  GeofenceConfirmationCoordinator c;
+  assert(c.configure(GeofenceAreaSetView(kAreas, 1)) ==
+         GeofenceRuntimeConfigResult::kApplied);
+  c.observeAcceptedLocation(inside(), 100, 100, 7);
+  c.observeAcceptedLocation(outsideA(), 1000, 100, 7);
+  c.observeAcceptedLocation(outsideB(), 2000, 90, 8);
+  assert(c.confirmationActive());
+
+  const auto late = c.observeAcceptedLocation(
+      outsideA(),
+      1000 + geofence_confirmation_config::kConfirmationDeadlineMs,
+      80, 9);
+  assert(late.geometry_result == GeofenceObservationResult::kAccepted);
+  assert(late.confirmation_timed_out);
+  assert(!late.representative_available);
+  assert(!late.outside_event_occurrence);
+  assert(!late.cadence_changed);
+  assert(!late.request_additional_observation);
+  assert(!c.confirmationActive());
+  assert(c.cadenceMode() == GeofenceCadenceMode::kBase);
+}
+
 void acquisitionOwnerAbortPreservesAuthority() {
   GeofenceConfirmationCoordinator c;
   assert(c.configure(GeofenceAreaSetView(kAreas, 1)) ==
@@ -188,6 +211,7 @@ int main() {
   invalidPointDoesNotConsumeEpisodeAndRequestsReplacement();
   initializedOutsideIsNotPhysicalOutsideEvent();
   exactDeadlineAbortsAndPreservesPriorAuthority();
+  lateCapturedObservationCannotWinDeadlineRace();
   acquisitionOwnerAbortPreservesAuthority();
   configReplacementAndClearInvalidateOldEvidence();
   puts("M6D2 geofence confirmation coordinator checks: PASS");

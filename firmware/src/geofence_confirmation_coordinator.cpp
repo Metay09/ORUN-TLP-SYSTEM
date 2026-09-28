@@ -69,6 +69,19 @@ GeofenceConfirmationCoordinator::observeAcceptedLocation(
   const GeofenceObservationResult geometry_result =
       runtime_.observeAcceptedPosition(point, captured_at_ms);
   update.geometry_result = geometry_result;
+
+  // The loop-level deadline check prevents ordinary late service, but a GNSS
+  // poll can itself cross the boundary before delivering a callback. Enforce
+  // the same deadline against the observation capture timestamp here, before
+  // the observation can consume evidence or decide a transition.
+  if (was_active && confirmation_deadline_active_ &&
+      monotonic::elapsed(captured_at_ms, confirmation_started_at_ms_,
+                         geofence_confirmation_config::kConfirmationDeadlineMs)) {
+    update.confirmation_timed_out = abortConfirmation();
+    update.cadence_mode = operational_.cadenceMode();
+    return update;
+  }
+
   if (geometry_result != GeofenceObservationResult::kAccepted) {
     // An unsupported/invalid point is not transition evidence and therefore
     // does not consume one of the three slots. While an episode is already
