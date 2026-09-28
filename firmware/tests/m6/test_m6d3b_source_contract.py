@@ -9,6 +9,7 @@ gate_h = (root / "include" / "flash_mutation_gate.h").read_text()
 store_h = (root / "include" / "geofence_store.h").read_text()
 store_cpp = (root / "src" / "geofence_store.cpp").read_text()
 preflight = (root / "tests" / "m6" / "m6d3b_geofence_preflight.cpp").read_text()
+powercut = (root / "tests" / "m6" / "m6d3b_geofence_powercut_probe.cpp").read_text()
 platformio = (root / "platformio.ini").read_text()
 
 assert '#include "geofence_store.h"' not in main
@@ -69,5 +70,22 @@ qual_env = platformio.split("[env:rak4630_m6d3b_geofence_qual]", 1)[1]
 assert "+<geofence_store.cpp>" in qual_env
 assert "+<nrf_geofence_flash.cpp>" in qual_env
 assert "pre:scripts/check_storage_layout.py" in qual_env
+
+powercut_env = platformio.split(
+    "[env:rak4630_m6d3b_geofence_powercut]", 1
+)[1]
+assert "+<geofence_store.cpp>" in powercut_env
+assert "+<nrf_geofence_flash.cpp>" in powercut_env
+assert "+<../tests/m6/m6d3b_geofence_powercut_probe.cpp>" in powercut_env
+assert "geofence_incarnation_source.cpp" not in powercut_env
+assert "pre:scripts/check_storage_layout.py" in powercut_env
+
+# Power-cut fixture is explicit-command only. Boot must recover existing state
+# without manufacturing a new incarnation or silently starting a mutation.
+assert 'GeofenceStore geofence_store(cut_backend, nullptr)' in powercut
+assert '"CUT_BODY"' in powercut
+assert 'cut_backend.arm();' in powercut
+assert 'CUT POWER NOW' in powercut
+assert 'requestReplace' in powercut and 'requestClear' in powercut
 
 print("M6D3B source ownership/activation contract: PASS")
