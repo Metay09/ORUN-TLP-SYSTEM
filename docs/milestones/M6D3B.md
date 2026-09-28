@@ -1,6 +1,6 @@
 # M6D3B — Durable GeofenceStore + physical flash owner
 
-Status: **SOFTWARE + INDEPENDENT AUDIT PASS; PHYSICAL PREFLIGHT + A/B WRITE/ROLLOVER + REBOOT PERSISTENCE + FOCUSED ELECTRICAL POWER-CUT PASS; FINAL DISPOSITION / MERGE PENDING**.
+Status: **PASS — SOFTWARE, INDEPENDENT AUDIT, PHYSICAL PREFLIGHT, A/B WRITE/ROLLOVER, REBOOT PERSISTENCE, FOCUSED ELECTRICAL POWER-CUT AND FINAL DISPOSITION COMPLETE; MERGE READY.**
 
 Baseline: `main@e566125afb9a08aaa5da8656d22d82e6a7580aed` (M6D3A merged via PR #54).
 Branch: `feat/m6d3b-geofence-store`.
@@ -662,6 +662,13 @@ M6D3B does not implement:
 
 TLP v1 bytes, RF parameters, History/Config/Security formats, BLE bond pages,
 R3 GNSS protections and M6D2 behavior remain unchanged.
+
+## 12.1. Final disposition
+
+Final merge disposition: **PASS — MERGE READY**.
+
+Canonical record:
+`docs/audits/M6D3B_FINAL_AUDIT_DISPOSITION.md`.
 
 ## 13. Validation/merge gates
 
