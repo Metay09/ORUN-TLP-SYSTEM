@@ -45,10 +45,11 @@ namespace orun_tlp {
 // establishment) outranks everything, and SEC_MAINT (page erase, compaction
 // preparation of a page carrying an unchanged credential forward) is
 // outranked by everything, so routine security housekeeping can never starve
-// live History or Config. The admission order is therefore
-// SEC_CRITICAL > History > Config > SEC_MAINT, generalized in
-// higherPriorityWaiting() below instead of the old two-owner special case;
-// History still outranks Config exactly as before.
+// live History or Config. M6D3B adds Geofence as a human/config-driven
+// persistence client below Config but above routine security maintenance. The
+// admission order is therefore SEC_CRITICAL > History > Config > Geofence >
+// SEC_MAINT, generalized in higherPriorityWaiting() below. Existing
+// Security/History/Config relative ordering is unchanged.
 //
 // M7P7A closes the remaining BLE-storage concurrency hole without enabling
 // BLE: stock InternalFS keeps its LittleFS/cache format, but a pinned
