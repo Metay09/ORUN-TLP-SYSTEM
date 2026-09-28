@@ -3,6 +3,7 @@
 #include "flash_backend.h"
 #include "geofence_format.h"
 #include "geofence_incarnation_source.h"
+#include "storage_config.h"
 
 namespace orun_tlp {
 
