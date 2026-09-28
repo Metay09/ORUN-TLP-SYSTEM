@@ -32,6 +32,14 @@ bool terminal = false;
 char terminal_report[128] = "M6D3B QUAL NOT TERMINAL";
 uint32_t last_terminal_report_ms = 0;
 
+// Qualification runs on the framework's 4-KiB loop task. Keep the large
+// diagnostic record/snapshot workspaces static; this image is single-threaded
+// and these buffers are never used concurrently.
+uint8_t page_bytes[geofence_format::kRecordSize]{};
+geofence_format::PageInspection page_inspection;
+geofence_format::StateToken status_token;
+geofence_format::Snapshot status_snapshot;
+
 const GeoPointE7 kFixtureVertices[] = {
     GeoPointE7(378000000, 280000000),
     GeoPointE7(378010000, 280000000),
@@ -115,34 +123,34 @@ bool tailErased(uint32_t page) {
 }
 
 void printPage(uint32_t page) {
-  uint8_t bytes[geofence_format::kRecordSize];
-  geofence_format::PageInspection inspection;
-  if (!geofence_flash.read(page * kPageSize, bytes, sizeof(bytes)) ||
-      !geofence_format::inspectPage(bytes, sizeof(bytes), inspection)) {
+  page_inspection = geofence_format::PageInspection();
+  if (!geofence_flash.read(page * kPageSize, page_bytes, sizeof(page_bytes)) ||
+      !geofence_format::inspectPage(page_bytes, sizeof(page_bytes),
+                                    page_inspection)) {
     Serial.printf("M6D3B QUAL PAGE %c read=FAIL\n", page == 0 ? 'A' : 'B');
     return;
   }
 
   Serial.printf("M6D3B QUAL PAGE %c evidence=%s decoded=%s tail_ff=%s",
                 page == 0 ? 'A' : 'B',
-                evidenceName(inspection.evidence),
-                inspection.has_decoded_record ? "yes" : "no",
+                evidenceName(page_inspection.evidence),
+                page_inspection.has_decoded_record ? "yes" : "no",
                 tailErased(page) ? "yes" : "no");
-  if (inspection.has_decoded_record) {
+  if (page_inspection.has_decoded_record) {
     Serial.print(F(" generation=0x"));
-    printU64Hex(inspection.record.generation);
+    printU64Hex(page_inspection.record.generation);
     Serial.print(F(" incarnation=0x"));
-    printU64Hex(inspection.record.token.incarnation);
+    printU64Hex(page_inspection.record.token.incarnation);
     Serial.printf(" revision=%lu state=%s areas=%u vertices=%u",
                   static_cast<unsigned long>(
-                      inspection.record.token.revision),
-                  inspection.record.snapshot.state ==
+                      page_inspection.record.token.revision),
+                  page_inspection.record.snapshot.state ==
                           geofence_format::ResourceState::kClear
                       ? "CLEAR" : "CONFIGURED",
                   static_cast<unsigned>(
-                      inspection.record.snapshot.area_count),
+                      page_inspection.record.snapshot.area_count),
                   static_cast<unsigned>(
-                      inspection.record.snapshot.total_vertex_count));
+                      page_inspection.record.snapshot.total_vertex_count));
   }
   Serial.println();
 }
@@ -162,23 +170,22 @@ void printStatus() {
       static_cast<unsigned long>(
           geofence_store.diagnostics().recovery_reconciliations));
 
-  geofence_format::StateToken token;
-  if (geofence_store.stateToken(token)) {
+  if (geofence_store.stateToken(status_token)) {
     Serial.print(F("M6D3B QUAL TOKEN incarnation=0x"));
-    printU64Hex(token.incarnation);
+    printU64Hex(status_token.incarnation);
     Serial.printf(" revision=%lu\n",
-                  static_cast<unsigned long>(token.revision));
+                  static_cast<unsigned long>(status_token.revision));
   } else {
     Serial.println(F("M6D3B QUAL TOKEN unavailable"));
   }
 
-  geofence_format::Snapshot snapshot;
-  if (geofence_store.currentSnapshot(snapshot)) {
+  if (geofence_store.currentSnapshot(status_snapshot)) {
     Serial.printf("M6D3B QUAL SNAPSHOT state=%s areas=%u vertices=%u\n",
-                  snapshot.state == geofence_format::ResourceState::kClear
+                  status_snapshot.state ==
+                          geofence_format::ResourceState::kClear
                       ? "CLEAR" : "CONFIGURED",
-                  static_cast<unsigned>(snapshot.area_count),
-                  static_cast<unsigned>(snapshot.total_vertex_count));
+                  static_cast<unsigned>(status_snapshot.area_count),
+                  static_cast<unsigned>(status_snapshot.total_vertex_count));
   }
 
   printPage(0);
