@@ -89,7 +89,13 @@ class FlashMutationGate : public FlashBackend {
   // Config always submit at their own fixed priority; Security's priority is
   // chosen per submission by which port (critical vs. maint) SecurityStore
   // used to make the call.
-  enum class Priority : uint8_t { kSecCritical = 0, kHistory = 1, kConfig = 2, kSecMaint = 3 };
+  enum class Priority : uint8_t {
+    kSecCritical = 0,
+    kHistory = 1,
+    kConfig = 2,
+    kGeofence = 3,
+    kSecMaint = 4
+  };
 
   struct Diagnostics {
     uint32_t submits = 0;
@@ -147,6 +153,35 @@ class FlashMutationGate : public FlashBackend {
   };
   FlashBackend& configPort() { return config_port_; }
   const Diagnostics& configDiagnostics() const { return config_diagnostics_; }
+
+  // ---- Geofence client (M6D3B): dedicated two-page resource owner. ----
+  class GeofencePort : public FlashBackend {
+   public:
+    explicit GeofencePort(FlashMutationGate& gate) : gate_(gate) {}
+    bool begin() override { return gate_.beginGeofence(); }
+    bool read(uint32_t offset, void* data, size_t size) const override {
+      return gate_.readGeofence(offset, data, size);
+    }
+    FlashOpResult program(uint32_t offset, const void* data, size_t size) override {
+      return gate_.programGeofence(offset, data, size);
+    }
+    FlashOpResult erasePage(uint32_t page) override {
+      return gate_.erasePageGeofence(page);
+    }
+    FlashOpResult pollPending() override {
+      return gate_.pollPendingGeofence();
+    }
+    bool hasUnreconciledMutation() const override {
+      return gate_.geofenceMutationUnreconciled();
+    }
+
+   private:
+    FlashMutationGate& gate_;
+  };
+  FlashBackend& geofencePort() { return geofence_port_; }
+  const Diagnostics& geofenceDiagnostics() const {
+    return geofence_diagnostics_;
+  }
 
   // ---- Security client (M7P6B): two FlashBackend views of the SAME
   // underlying security client/slot/staging buffer, differing only in which
@@ -212,12 +247,22 @@ class FlashMutationGate : public FlashBackend {
   bool securityMutationUnreconciled() const {
     return security_slot_.quarantined;
   }
+  bool geofenceMutationUnreconciled() const {
+    return geofence_slot_.quarantined;
+  }
 
  private:
   friend class ConfigPort;
+  friend class GeofencePort;
   friend class SecurityCriticalPort;
   friend class SecurityMaintPort;
-  enum class Owner : uint8_t { kNone, kHistory, kConfig, kSecurity };
+  enum class Owner : uint8_t {
+    kNone,
+    kHistory,
+    kConfig,
+    kGeofence,
+    kSecurity
+  };
   enum class Kind : uint8_t { kNone, kProgram, kErase };
 
   struct Slot {
@@ -276,24 +321,27 @@ class FlashMutationGate : public FlashBackend {
   Slot& slot(Owner owner) {
     if (owner == Owner::kHistory) return history_slot_;
     if (owner == Owner::kConfig) return config_slot_;
+    if (owner == Owner::kGeofence) return geofence_slot_;
     return security_slot_;
   }
   uint8_t* staging(Owner owner) {
     if (owner == Owner::kHistory) return history_staging_;
     if (owner == Owner::kConfig) return config_staging_;
+    if (owner == Owner::kGeofence) return geofence_staging_;
     return security_staging_;
   }
   Diagnostics& diag(Owner owner) {
     if (owner == Owner::kHistory) return history_diagnostics_;
     if (owner == Owner::kConfig) return config_diagnostics_;
+    if (owner == Owner::kGeofence) return geofence_diagnostics_;
     return security_diagnostics_;
   }
   // True if some OTHER owner has a staged, not-yet-admitted request whose
   // priority strictly outranks `owner`'s own staged request. Generalizes the
   // old two-owner "config waits behind a staged history request" special
-  // case to all three clients/five priority combinations (SEC_CRITICAL >
-  // History > Config > SEC_MAINT) without changing History/Config's own
-  // fixed relative order.
+  // case to all four clients. M6D3B freezes the order as SEC_CRITICAL >
+  // History > Config > Geofence > SEC_MAINT. Aging still bounds starvation
+  // for every staged lower-priority request.
   bool higherPriorityWaiting(Owner owner) const;
   FlashOpResult attemptSubmit(Owner owner);
   FlashOpResult submitOrRetry(Owner owner);
@@ -311,6 +359,12 @@ class FlashMutationGate : public FlashBackend {
   FlashOpResult erasePageConfig(uint32_t page);
   FlashOpResult pollPendingConfig();
 
+  bool beginGeofence();
+  bool readGeofence(uint32_t offset, void* data, size_t size) const;
+  FlashOpResult programGeofence(uint32_t offset, const void* data, size_t size);
+  FlashOpResult erasePageGeofence(uint32_t page);
+  FlashOpResult pollPendingGeofence();
+
   bool beginSecurity();
   bool readSecurity(uint32_t offset, void* data, size_t size) const;
   FlashOpResult programSecurity(uint32_t offset, const void* data, size_t size, Priority priority);
@@ -319,15 +373,19 @@ class FlashMutationGate : public FlashBackend {
 
   NrfHistoryFlash sync_history_;
   NrfConfigFlash sync_config_;
+  NrfGeofenceFlash sync_geofence_;
   NrfSecurityFlash sync_security_;
   bool ready_history_ = false;
   bool ready_config_ = false;
+  bool ready_geofence_ = false;
   bool ready_security_ = false;
   ConfigPort config_port_{*this};
+  GeofencePort geofence_port_{*this};
   SecurityCriticalPort security_critical_port_{*this};
   SecurityMaintPort security_maint_port_{*this};
   Diagnostics history_diagnostics_{};
   Diagnostics config_diagnostics_{};
+  Diagnostics geofence_diagnostics_{};
   Diagnostics security_diagnostics_{};
 
   // Shared: at most one physical Nordic flash mutation in flight at a time,
@@ -341,6 +399,7 @@ class FlashMutationGate : public FlashBackend {
   Owner last_owner_ = Owner::kHistory;
   Slot history_slot_{};
   Slot config_slot_{};
+  Slot geofence_slot_{};
   Slot security_slot_{};
   // Owned staging copies: Nordic's own documentation requires the source
   // buffer to remain unmodified until the completion event arrives when
@@ -352,6 +411,7 @@ class FlashMutationGate : public FlashBackend {
   // credential record. This file stays decoupled from format headers.
   alignas(4) uint8_t history_staging_[storage_config::kPageHeaderSize]{};
   alignas(4) uint8_t config_staging_[64]{};
+  alignas(4) uint8_t geofence_staging_[576]{};
   alignas(4) uint8_t security_staging_[96]{};
 };
 
