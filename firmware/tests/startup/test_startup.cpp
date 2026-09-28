@@ -272,9 +272,12 @@ int main(int argc, char** argv) {
 
     auto finishTx = [&]() {
       if (!radio_manager.isTransmitting()) return;
-      radio_driver::Guard gate;
-      assert(gate);
-      callbacks->TxDone();
+      {
+        radio_driver::Guard gate;
+        assert(gate);
+        callbacks->TxDone();
+      }
+      // Owner loop must run only after the callback-side gate is released.
       loop();
       assert(!radio_manager.isTransmitting());
     };
