@@ -1,6 +1,6 @@
 # M6D3B — Durable GeofenceStore + physical flash owner
 
-Status: **SOFTWARE + INDEPENDENT AUDIT PASS; READ-ONLY PHYSICAL PREFLIGHT PASS; DESTRUCTIVE A/B / REBOOT / POWER-CUT / MERGE PENDING**.
+Status: **SOFTWARE + INDEPENDENT AUDIT PASS; PHYSICAL PREFLIGHT + FIRST A/B WRITE + REBOOT PERSISTENCE PASS; NEXT ROLLOVER / POWER-CUT / MERGE PENDING**.
 
 Baseline: `main@e566125afb9a08aaa5da8656d22d82e6a7580aed` (M6D3A merged via PR #54).
 Branch: `feat/m6d3b-geofence-store`.
@@ -466,6 +466,25 @@ with `CONFIRMED`:
 This is physical evidence for one complete inactive-page successor commit.
 Reboot recovery, next rollover and electrical power-cut recovery remain
 pending.
+
+## 9.7. Physical reboot persistence PASS
+
+The qualification unit was identified as:
+
+`ID_SERIAL_SHORT=0E8ADE7E71531AA3` on `/dev/ttyACM1`.
+
+After reset, GeofenceStore recovered:
+
+- `resource=CONFIGURED`;
+- `token_state=VALID`;
+- incarnation unchanged: `D93BBFF182C898DC`;
+- revision `2`;
+- page A: committed CLEAR generation 1 / revision 1;
+- page B: committed CONFIGURED generation 2 / revision 2;
+- no reconciliation or maintenance state.
+
+This closes reboot persistence for the first successor transaction. The next
+A/B rollover and electrical power-cut qualification remain pending.
 
 ## 10. Physical qualification safety gate
 
