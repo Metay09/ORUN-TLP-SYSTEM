@@ -1416,6 +1416,35 @@ const char* m6d2ProbeRelationName(orun_tlp::PermittedAreaRelation relation) {
   return "UNKNOWN";
 }
 
+const char* m6d2ProbeOperationalName(
+    orun_tlp::GeofenceOperationalResult result) {
+  switch (result) {
+    case orun_tlp::GeofenceOperationalResult::kInvalidObservation:
+      return "INVALID_OBSERVATION";
+    case orun_tlp::GeofenceOperationalResult::kBoundaryNoDecision:
+      return "BOUNDARY_NO_DECISION";
+    case orun_tlp::GeofenceOperationalResult::kInitializedInside:
+      return "INITIALIZED_INSIDE";
+    case orun_tlp::GeofenceOperationalResult::kInitializedOutside:
+      return "INITIALIZED_OUTSIDE";
+    case orun_tlp::GeofenceOperationalResult::kStableInside:
+      return "STABLE_INSIDE";
+    case orun_tlp::GeofenceOperationalResult::kStableOutside:
+      return "STABLE_OUTSIDE";
+    case orun_tlp::GeofenceOperationalResult::kConfirmationStarted:
+      return "CONFIRMATION_STARTED";
+    case orun_tlp::GeofenceOperationalResult::kConfirmationContinues:
+      return "CONFIRMATION_CONTINUES";
+    case orun_tlp::GeofenceOperationalResult::kConfirmationRejected:
+      return "CONFIRMATION_REJECTED";
+    case orun_tlp::GeofenceOperationalResult::kConfirmedOutside:
+      return "CONFIRMED_OUTSIDE";
+    case orun_tlp::GeofenceOperationalResult::kConfirmedInside:
+      return "CONFIRMED_INSIDE";
+  }
+  return "UNKNOWN";
+}
+
 bool configureM6D2ProbeAround(const orun_tlp::GnssFix& fix) {
   if (m6d2_probe_configured) return true;
 
@@ -1510,29 +1539,15 @@ void processGeofenceAcceptedFix(const orun_tlp::GnssFix& fix) {
 
 #ifdef ORUN_M6D2_GEOFENCE_PROBE
   if (update.geometry_result == orun_tlp::GeofenceObservationResult::kAccepted) {
+    const orun_tlp::PermittedAreaAssessment probe_assessment =
+        orun_tlp::assessPermittedGeofenceAreas(
+            orun_tlp::GeofenceAreaSetView(m6d2_probe_areas, 1),
+            orun_tlp::GeoPointE7(fix.latitude_e7, fix.longitude_e7));
     Serial.printf(
-        "M6D2 PROBE OBS relation=%s op=%u slot=%u request_more=%s "
+        "M6D2 PROBE OBS relation=%s op=%s slot=%u request_more=%s "
         "cadence=%s lat=%ld lon=%ld hdop=%u.%02u sats=%u\n",
-        m6d2ProbeRelationName(
-            geofence_confirmation.configured()
-                ? (update.episode_evidence_accepted
-                       ? static_cast<orun_tlp::PermittedAreaRelation>(
-                             // coordinator already classified this exact point;
-                             // recompute only for human-readable probe output.
-                             orun_tlp::assessPermittedGeofenceAreas(
-                                 orun_tlp::GeofenceAreaSetView(
-                                     m6d2_probe_areas, 1),
-                                 orun_tlp::GeoPointE7(fix.latitude_e7,
-                                                      fix.longitude_e7))
-                                 .relation)
-                       : orun_tlp::assessPermittedGeofenceAreas(
-                             orun_tlp::GeofenceAreaSetView(
-                                 m6d2_probe_areas, 1),
-                             orun_tlp::GeoPointE7(fix.latitude_e7,
-                                                  fix.longitude_e7))
-                             .relation)
-                : orun_tlp::PermittedAreaRelation::kInvalidAreaSet),
-        static_cast<unsigned>(update.operational_result),
+        m6d2ProbeRelationName(probe_assessment.relation),
+        m6d2ProbeOperationalName(update.operational_result),
         static_cast<unsigned>(update.episode_slot),
         update.request_additional_observation ? "yes" : "no",
         update.cadence_mode == orun_tlp::GeofenceCadenceMode::kBase
