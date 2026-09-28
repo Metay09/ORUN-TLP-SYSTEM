@@ -1,10 +1,12 @@
 # M6D3B physical qualification
 
-Status: **IN PROGRESS — READ-ONLY PREFLIGHT PASS; DESTRUCTIVE A/B / REBOOT / POWER-CUT PENDING**.
+Status: **PASS — READ-ONLY PREFLIGHT, FRESH BASELINE, A/B MUTATION/ROLLOVER, REBOOT PERSISTENCE AND FOCUSED ELECTRICAL POWER-CUT QUALIFICATION COMPLETE.**
 
 Branch: `feat/m6d3b-geofence-store`.
 
-Audited code-equivalent head: `bf1a753703c9a51381a0e0a31f631dba95a46c3d`.
+Pre-physical audited production-code head: `bf1a753703c9a51381a0e0a31f631dba95a46c3d`.
+
+Physical power-cut probe executable code head: `79a8940259d2d6507223ddfa3d66abdc84fd2424`.
 
 Preflight execution branch head before upload:
 `cb25e1189de48ddd50b3c1a26c7ec09d709c0fa5`.
