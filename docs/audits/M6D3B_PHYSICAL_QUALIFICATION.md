@@ -81,3 +81,46 @@ M6D3B PREFLIGHT RESULT all_ff=yes action=QUALIFICATION_IMAGE_MAY_BE_USED
 This second boot strengthens only the read-only blank-partition evidence. It
 does not constitute persistence, write, reboot-persistence or power-cut
 qualification because the preflight image contains no mutation path.
+
+
+## Stage 2A — first destructive boot / fresh CLEAR baseline
+
+After the read-only preflight passed on the same development unit, the
+`rak4630_m6d3b_geofence_qual` image was uploaded.
+
+Observed serial evidence:
+
+```text
+M6D3B GEOFENCE QUAL BOOT
+TEST-ONLY DESTRUCTIVE: use ONLY after read-only PREFLIGHT all_ff=yes
+scope=0x0E5000..0x0E6FFF
+M6D3B QUAL BEGIN PASS
+M6D3B QUAL STORE ready=yes busy=no maintenance=no resource=CLEAR token_state=VALID mutations=0 failures=0 reconciliations=0
+M6D3B QUAL TOKEN incarnation=0xD93BBFF182C898DC revision=1
+M6D3B QUAL SNAPSHOT state=CLEAR areas=0 vertices=0
+M6D3B QUAL PAGE A evidence=COMMITTED_CLEAR decoded=yes tail_ff=yes generation=0x0000000000000001 incarnation=0xD93BBFF182C898DC revision=1 state=CLEAR areas=0 vertices=0
+M6D3B QUAL PAGE B evidence=ERASED decoded=no tail_ff=yes
+M6D3B QUAL READY commands=STATUS,REPLACE,CLEAR,CLEAN
+```
+
+Result: **PASS** for the first physical fresh-baseline transaction.
+
+This physically proves on this development unit:
+
+- the blank geofence partition can initialize;
+- a non-zero hardware-generated incarnation was obtained;
+- the first durable token is revision 1;
+- the baseline semantic state is CLEAR;
+- page A was committed and decoded as `COMMITTED_CLEAR`;
+- page A reserved tail remained erased;
+- page B remained erased;
+- GeofenceStore published VALID authority only after the committed record was
+  visible and verified.
+
+This still does **not** prove:
+
+- A/B successor mutation;
+- persistence across reboot;
+- return mutation back to CLEAR;
+- electrical power-cut recovery;
+- SoftDevice-enabled arbitration.
