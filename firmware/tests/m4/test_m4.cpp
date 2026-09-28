@@ -357,6 +357,41 @@ void captureAgeSurvivesStorageAndRadioWait() {
   }
 }
 
+void previouslyAcceptedStaleRepresentativeIsStoredButNotSentLive() {
+  FaultFlash flash;
+  tx_flash = &flash;
+  sends = 0;
+  radio_available = true;
+  HistoryStore store(flash);
+  start(store);
+  RadioManager radio;
+  assert(radio.begin(store));
+  PositionFlow flow(store, radio);
+
+  GnssFix fix{1700000000, 410000000, 290000000, 10, 100, 8, 7};
+  fix.captured_at_ms = 1000;
+  const uint32_t queued_at =
+      fix.captured_at_ms + gnss_config::kFreshFixMaxAgeMs + 1;
+
+  // Normal live acceptance still rejects the aged fix.
+  assert(!flow.acceptFix(fix, queued_at));
+  // M6D2's already-accepted evidence seam preserves the record in history.
+  assert(flow.acceptPreviouslyAcceptedFix(fix, queued_at));
+  settle(store);
+  assert(flow.update(queued_at + 1) == PositionFlow::Event::kLiveExpired);
+  assert(!flow.pending());
+  assert(sends == 0);
+  assert(store.count() == 1 && store.backlogCount() == 1);
+
+  HistoryStore::Record record;
+  assert(store.newest(record));
+  tlp::PositionPacket decoded{};
+  assert(tlp::deserializePositionPacket(record.packet, sizeof(record.packet),
+                                        &decoded));
+  assert(decoded.gnss_utc_epoch_seconds == fix.utc_epoch_seconds);
+  assert(decoded.latitude_e7 == fix.latitude_e7);
+}
+
 void livePacketSurvivesRadioGateDefer() {
   FaultFlash flash;
   tx_flash = &flash;
@@ -668,6 +703,7 @@ void bitPartialFirstHeaderAndVersionPolicy() {
 
 int main() {
   captureAgeSurvivesStorageAndRadioWait();
+  previouslyAcceptedStaleRepresentativeIsStoredButNotSentLive();
   lastTicketPositionAndReservationCuts();
   allocatedIdentityWrapRecovery();
   bitPartialFirstHeaderAndVersionPolicy();

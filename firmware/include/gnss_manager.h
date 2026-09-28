@@ -49,7 +49,24 @@ class GnssManager {
   void setTrackingIntervalMs(uint32_t interval_ms) {
     if (interval_ms > 0) tracking_interval_ms_ = interval_ms;
   }
+  // M6D2: apply a runtime-effective cadence change only after the current
+  // accepted fix has been consumed. The current acquisition is never restarted;
+  // its next due point is re-anchored exactly once when this cycle exits.
+  // This is deliberately separate from setTrackingIntervalMs(), whose M7P5
+  // fixed-grid semantics remain unchanged.
+  bool setTrackingIntervalMsAndReanchor(uint32_t interval_ms);
   uint32_t trackingIntervalMs() const { return tracking_interval_ms_; }
+
+  // M6D2: request exactly one additional fresh fix from the SAME acquisition
+  // session after the current accepted fix has been consumed. No new attempt,
+  // generation, power cycle or boundary epoch is created. The existing 120 s
+  // acquisition ceiling remains authoritative.
+  bool continueCurrentAcquisitionForAdditionalFix();
+  bool cancelAdditionalFixAcquisition();
+  bool additionalFixAcquisitionActive() const {
+    return additional_fix_acquisition_active_;
+  }
+
   bool takeFreshFixForTransmission(GnssFix* fix);
   bool detected() const;
   bool detectionComplete() const {
@@ -112,6 +129,8 @@ class GnssManager {
   bool fresh_fix_ready_ = false;
   uint32_t last_promoted_fix_itow_ = 0;
   bool has_last_promoted_fix_itow_ = false;
+  bool schedule_reanchor_pending_ = false;
+  bool additional_fix_acquisition_active_ = false;
 };
 
 }  // namespace orun_tlp

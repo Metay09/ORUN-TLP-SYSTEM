@@ -84,6 +84,25 @@ g++ "${b3_flags[@]}" \
   -o "$test_dir/m6d1_geofence_operational_state"
 "$test_dir/m6d1_geofence_operational_state"
 
+g++ "${b3_flags[@]}" \
+  firmware/tests/m6/test_m6d2_geofence_runtime_policy.cpp \
+  firmware/src/geofence_runtime_policy.cpp \
+  -o "$test_dir/m6d2_geofence_runtime_policy"
+"$test_dir/m6d2_geofence_runtime_policy"
+
+g++ "${b3_flags[@]}" \
+  firmware/tests/m6/test_m6d2_geofence_confirmation_coordinator.cpp \
+  firmware/src/geofence_confirmation_coordinator.cpp \
+  firmware/src/geofence_runtime_policy.cpp firmware/src/geofence_runtime.cpp \
+  firmware/src/geofence_operational_state.cpp firmware/src/geofence_area_set.cpp \
+  firmware/src/geofence_geometry.cpp \
+  -o "$test_dir/m6d2_geofence_confirmation_coordinator"
+"$test_dir/m6d2_geofence_confirmation_coordinator"
+
+g++ "${flags[@]}" firmware/tests/m6/test_m6d2_gnss_continuation.cpp \
+  "${gnss_sources[@]}" -o "$test_dir/m6d2_gnss_continuation"
+"$test_dir/m6d2_gnss_continuation"
+
 g++ "${flags[@]}" firmware/tests/m3/test_m3.cpp "${gnss_sources[@]}" \
   -o "$test_dir/m3"
 "$test_dir/m3"
@@ -227,6 +246,10 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
   firmware/src/network_service.cpp firmware/src/node_role.cpp \
   firmware/src/runtime_config.cpp \
+  firmware/src/geofence_geometry.cpp firmware/src/geofence_area_set.cpp \
+  firmware/src/geofence_runtime.cpp firmware/src/geofence_operational_state.cpp \
+  firmware/src/geofence_runtime_policy.cpp \
+  firmware/src/geofence_confirmation_coordinator.cpp \
   firmware/src/tlp_test_packet.cpp firmware/src/tlp_position_packet.cpp \
   firmware/src/tlp_relay_forward_packet.cpp firmware/src/history_store.cpp \
   firmware/src/journal_format.cpp firmware/src/nrf_history_flash.cpp \
@@ -239,7 +262,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/security_store.cpp firmware/src/security_format.cpp \
   firmware/src/position_flow.cpp firmware/src/ble_admission_policy.cpp \
   -o "$test_dir/startup"
-for scenario in mutex gate queue lora success advfail blefail noevent; do
+for scenario in mutex gate queue lora success advfail blefail noevent geofence; do
   "$test_dir/startup" "$scenario"
 done
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r4/test_patch_wire.py

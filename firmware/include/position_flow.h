@@ -16,10 +16,20 @@ class PositionFlow {
   void setDeviceIdentity(DeviceIdentity identity) { device_identity_ = identity; }
   bool canAcceptFix() const { return !appending_ && (!store_.ready() || store_.canAppend()); }
   bool acceptFix(const GnssFix& fix, uint32_t now);
+  // M6D2: the geofence coordinator may choose a fix which was already accepted
+  // as fresh Location evidence, then wait behind an existing History append.
+  // Preserve that accepted observation in history even if it ages past the
+  // live-freshness window while waiting. update() still applies the unchanged
+  // live-age gate before any RF transmission, so stale data is never presented
+  // as current.
+  bool acceptPreviouslyAcceptedFix(const GnssFix& fix, uint32_t now);
   Event update(uint32_t now, bool allow_live_tx = true);
   bool pending() const { return appending_ || live_pending_; }
   uint32_t storageDrops() const { return storage_drops_; }
  private:
+  bool acceptFixInternal(const GnssFix& fix, uint32_t now,
+                         bool require_current_freshness);
+
   HistoryStore& store_;
   RadioManager& radio_;
   DeviceIdentity device_identity_{};

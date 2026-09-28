@@ -1,10 +1,13 @@
 # ORUN Geofence Operational Policy
 
-Status: **OWNER-APPROVED DESIGN DIRECTION; M6D1 PURE STATE OWNER IMPLEMENTED IN PR #51 BUT NOT PRODUCTION-RUNTIME INTEGRATED — 2026-09-27**
+Status: **OWNER-APPROVED POLICY; M6D2 SOFTWARE RUNTIME COMPOSITION IMPLEMENTED, FINAL AUDIT + FOCUSED FIX VERIFICATION PASS, PRODUCTION AREA SET STILL UNCONFIGURED, PHYSICAL GNSS/GEOFENCE QUALIFICATION DEFERRED — 2026-09-28**
 
-This document defines the current M6D geofence operational-state baseline. It
-does not claim runtime integration, field validation, a new TLP packet, backend
-implementation or trustworthy LOST/contact semantics.
+This document defines the current M6D geofence operational-state baseline.
+M6D2 now provides the software composition from already accepted Location into
+geometry/state/confirmation/cadence, but the normal production image still has
+no authorized geofence area-set owner and therefore leaves that composition
+dormant. This document does not claim physical field validation, a new TLP
+packet, backend implementation or trustworthy LOST/contact semantics.
 
 It refines the earlier conceptual geofence defaults in `AGENTS.md` and M6
 planning. Historical M6C1/M6C2/M6C3 milestone evidence remains valid for what it

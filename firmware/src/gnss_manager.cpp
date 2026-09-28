@@ -64,6 +64,50 @@ void GnssManager::begin() {
   state_changed_at_ms_ = monotonic::nowMs();
 }
 
+bool GnssManager::setTrackingIntervalMsAndReanchor(uint32_t interval_ms) {
+  // Geofence cadence changes are applied only after the accepted fix that
+  // caused the state decision has been consumed. Refuse any call which could
+  // disturb an in-flight acquisition or silently discard a pending fix.
+  if (interval_ms == 0 || state_ != State::kFixAvailable ||
+      fresh_fix_ready_) {
+    return false;
+  }
+  tracking_interval_ms_ = interval_ms;
+  schedule_reanchor_pending_ = true;
+  return true;
+}
+
+bool GnssManager::continueCurrentAcquisitionForAdditionalFix() {
+  // The caller must consume the current fix first. Continuing here preserves
+  // the same receiver/session boundary and the original acquisition timeout;
+  // it does not increment acquisition_attempts or session_generation_.
+  if (state_ != State::kFixAvailable || fresh_fix_ready_ ||
+      needs_configuration_ || transport_resync_pending_ ||
+      additional_fix_acquisition_active_) {
+    return false;
+  }
+
+  clearCandidates();
+  additional_fix_acquisition_active_ = true;
+  state_ = State::kAcquiring;
+  return true;
+}
+
+bool GnssManager::cancelAdditionalFixAcquisition() {
+  if (!additional_fix_acquisition_active_ || state_ != State::kAcquiring) {
+    return false;
+  }
+
+  clearCandidates();
+  fresh_fix_ready_ = false;
+  transport_resync_pending_ = false;
+  additional_fix_acquisition_active_ = false;
+  // Reuse the normal successful-cycle exit path without inventing a timeout or
+  // failure. The next poll applies the existing low-power/continuous policy.
+  state_ = State::kFixAvailable;
+  return true;
+}
+
 void GnssManager::poll() {
   const uint32_t now = monotonic::nowMs();
   expireFreshFix(now);
@@ -74,6 +118,7 @@ void GnssManager::poll() {
     fresh_fix_ready_ = false;
     transport_resync_pending_ = false;
     has_last_pvt_callback_time_ = false;
+    additional_fix_acquisition_active_ = false;
     ++diagnostics_.acquisition_timeouts;
     needs_configuration_ = true;  // Reapply volatile config next time (e.g. reset).
     state_ = State::kTimeout;
@@ -200,6 +245,7 @@ void GnssManager::startAcquisition(uint32_t now) {
   transport_resync_attempted_at_ms_ = 0;
   waiting_for_drain_ = false;
   i2c_recoveries_this_acquisition_ = 0;
+  additional_fix_acquisition_active_ = false;
   acquisition_started_at_ms_ = now;
   next_due_at_ms_ = monotonic::nextFuture(
       now, next_due_at_ms_, tracking_interval_ms_);
@@ -338,6 +384,10 @@ bool GnssManager::handleI2cTimeout(uint32_t now) {
   fresh_fix_ready_ = false;
   transport_resync_pending_ = false;
   has_last_pvt_callback_time_ = false;
+  // A recovered bus starts a new GNSS session generation below. An M6D2
+  // confirmation must therefore abort rather than silently continue across
+  // that ownership/freshness boundary.
+  additional_fix_acquisition_active_ = false;
 
   if (result == I2cRecoveryResult::kFailed) {
     ++diagnostics_.i2c_recovery_failures;
@@ -380,6 +430,7 @@ void GnssManager::restartAfterI2cRecovery(uint32_t now) {
   transport_resync_attempted_at_ms_ = 0;
   waiting_for_drain_ = false;
   waiting_for_power_ = false;
+  additional_fix_acquisition_active_ = false;
   configuration_step_ = 0;
   needs_configuration_ = true;
   state_ = State::kStarting;
@@ -390,8 +441,17 @@ void GnssManager::enterLowPower(uint32_t now) {
   clearCandidates();
   transport_resync_pending_ = false;
   has_last_pvt_callback_time_ = false;
-  next_due_at_ms_ = monotonic::nextFuture(
-      now, next_due_at_ms_, tracking_interval_ms_);
+  additional_fix_acquisition_active_ = false;
+  if (schedule_reanchor_pending_) {
+    // Re-anchor from completion, never from an old due point. This avoids both
+    // an immediate catch-up burst and an unintended wait on the previous base
+    // cadence after a B <-> B/3 transition.
+    next_due_at_ms_ = now + tracking_interval_ms_;
+    schedule_reanchor_pending_ = false;
+  } else {
+    next_due_at_ms_ = monotonic::nextFuture(
+        now, next_due_at_ms_, tracking_interval_ms_);
+  }
   const uint32_t remaining_ms = next_due_at_ms_ - now;
   if (!needs_configuration_ &&
       gnss_config::keepTracking(tracking_interval_ms_, remaining_ms)) {
@@ -574,6 +634,9 @@ void GnssManager::considerPositionFix() {
   fresh_fix_ = candidate_fix_;
   fresh_fix_itow_ = candidate_fix_itow_;
   fresh_fix_ready_ = true;
+  // One requested additional fix has now been satisfied. A later second
+  // confirmation fix requires an explicit new continuation request.
+  additional_fix_acquisition_active_ = false;
   last_promoted_fix_itow_ = fresh_fix_itow_;
   has_last_promoted_fix_itow_ = true;
   diagnostics_.last_ttff_ms = now - acquisition_started_at_ms_;

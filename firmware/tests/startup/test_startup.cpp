@@ -116,8 +116,9 @@ int main(int argc, char** argv) {
   // event callback never fires, proving the short-cycle assertions below fail
   // without the direct event handoff.
   const bool no_event_control = mode == "noevent";
+  const bool geofence_scenario = mode == "geofence";
   const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails ||
-                       no_event_control;
+                       no_event_control || geofence_scenario;
   // Each scenario runs in a new process, like a cold boot (static driver gate).
   assert(success || mode == "mutex" || mode == "gate" || mode == "queue" ||
          mode == "lora");
@@ -164,6 +165,24 @@ int main(int argc, char** argv) {
   Bluefruit.Advertising.start_result = !ble_advertising_fails;
   Bluefruit.begin_result = !ble_runtime_fails;
   setup();
+
+  // M6D2 startup composition scenario: install an explicit host-only area set
+  // before the first accepted fix so the real loop establishes INSIDE through
+  // the same production coordinator seam. Production firmware still has no
+  // configured area-set owner.
+  static const GeoPointE7 geofence_vertices[] = {
+      GeoPointE7(409999000, 289999000),
+      GeoPointE7(409999000, 290001000),
+      GeoPointE7(410001000, 290001000),
+      GeoPointE7(410001000, 289999000)};
+  static const GeofencePolygonView geofence_areas[] = {
+      GeofencePolygonView(geofence_vertices, 4)};
+  if (geofence_scenario) {
+    assert(geofence_confirmation.configure(
+               GeofenceAreaSetView(geofence_areas, 1)) ==
+           GeofenceRuntimeConfigResult::kApplied);
+  }
+
   assert(board_reads == 1 && radio_manager.deviceId() == kHardwareId);
   assert(watchdog_starts == 1);
   assert(history.ready() && history.count() == 1);
@@ -246,6 +265,155 @@ int main(int argc, char** argv) {
   assert(newest.source_device_id == kHardwareId && newest.latitude_e7 == 410000001);
   assert(send_calls == (success ? 1U : 0U));
   assert(radio_manager.isTransmitting() == success);
+  if (geofence_scenario) {
+    assert(geofence_confirmation.cadenceMode() == GeofenceCadenceMode::kBase);
+    assert(!geofence_confirmation.confirmationActive());
+    assert(gnss_manager.trackingIntervalMs() == 180000);
+
+    auto finishTx = [&]() {
+      if (!radio_manager.isTransmitting()) return;
+      {
+        radio_driver::Guard gate;
+        assert(gate);
+        callbacks->TxDone();
+      }
+      // Owner loop must run only after the callback-side gate is released.
+      loop();
+      assert(!radio_manager.isTransmitting());
+    };
+
+    auto queueEpoch = [&](uint32_t tow, int32_t lat, int32_t lon,
+                          uint16_t hdop, uint8_t satellites) {
+      Fake::pending.push_back([=] {
+        UBX_NAV_PVT_data_t pvt{};
+        pvt.iTOW = tow;
+        pvt.flags.bits.gnssFixOK = true;
+        pvt.fixType = 3;
+        pvt.lat = lat;
+        pvt.lon = lon;
+        pvt.numSV = satellites;
+        Fake::current_pvt = pvt;
+        Fake::itow_fresh = true;
+        Fake::pvt(&pvt);
+        UBX_NAV_DOP_data_t dop{tow, hdop};
+        Fake::dop(&dop);
+      });
+    };
+
+    auto startNextAcquisition = [&]() {
+      const uint32_t attempts_before =
+          gnss_manager.diagnostics().acquisition_attempts;
+      test_now += gnss_manager.trackingIntervalMs();
+      loop();
+      for (unsigned i = 0;
+           i < 16 && gnss_manager.state() != GnssManager::State::kAcquiring;
+           ++i) {
+        test_now += i == 0 ? gnss_config::kPowerSettleMs : 10;
+        loop();
+      }
+      assert(gnss_manager.state() == GnssManager::State::kAcquiring);
+      assert(gnss_manager.diagnostics().acquisition_attempts ==
+             attempts_before + 1);
+      return gnss_manager.diagnostics().acquisition_attempts;
+    };
+
+    auto drainPosition = [&]() {
+      for (unsigned i = 0; i < 24; ++i) {
+        if (radio_manager.isTransmitting()) finishTx();
+        if (!positions.pending() && !radio_manager.isTransmitting()) return;
+        loop();
+      }
+      assert(!positions.pending() && !radio_manager.isTransmitting());
+    };
+
+    // Finish the normal INSIDE report before starting transition exercises.
+    finishTx();
+    drainPosition();
+
+    // Exact main-loop timeout path: the candidate is ordinary POSITION slot 0,
+    // continuation starts in the same acquisition, then the 10 s deadline
+    // aborts before any extra evidence is allowed to decide OUTSIDE.
+    startNextAcquisition();
+    queueEpoch(3000, 410010000, 290010000, 100, 8);  // session boundary
+    loop();
+    const uint32_t timeout_records_before = history.count();
+    queueEpoch(4000, 410010000, 290010000, 60, 10);  // OUTSIDE candidate
+    loop();
+    assert(geofence_confirmation.confirmationActive());
+    assert(gnss_manager.additionalFixAcquisitionActive());
+    const uint32_t attempts_during_timeout =
+        gnss_manager.diagnostics().acquisition_attempts;
+    test_now += geofence_confirmation_config::kConfirmationDeadlineMs;
+    loop();
+    assert(!geofence_confirmation.confirmationActive());
+    assert(!gnss_manager.additionalFixAcquisitionActive());
+    assert(geofence_confirmation.cadenceMode() == GeofenceCadenceMode::kBase);
+    assert(gnss_manager.trackingIntervalMs() == 180000);
+    assert(gnss_manager.diagnostics().acquisition_attempts ==
+           attempts_during_timeout);
+    assert(Serial.output.find("GEOFENCE confirmation timeout") !=
+           std::string::npos);
+    drainPosition();
+    assert(history.count() == timeout_records_before + 1);
+
+    // Successful transition. Slot 0 has the best OUTSIDE HDOP and was already
+    // accepted by the ordinary store-first path. Selecting it as the logical
+    // representative must NOT create a duplicate record/sequence/TX.
+    startNextAcquisition();
+    queueEpoch(5000, 410010000, 290010000, 100, 8);  // session boundary
+    loop();
+    const uint32_t records_before_transition = history.count();
+    const unsigned sends_before_transition = send_calls;
+    queueEpoch(6000, 410010000, 290010000, 50, 10);  // slot 0, best OUTSIDE
+    loop();
+    assert(geofence_confirmation.confirmationActive());
+    assert(geofence_slot0_normal_store_accepted);
+    const uint32_t confirmation_attempts =
+        gnss_manager.diagnostics().acquisition_attempts;
+
+    queueEpoch(7000, 410011000, 290011000, 90, 9);   // slot 1 OUTSIDE
+    loop();
+    assert(geofence_confirmation.confirmationActive());
+    assert(gnss_manager.diagnostics().acquisition_attempts ==
+           confirmation_attempts);
+
+    queueEpoch(8000, 410000001, 290000001, 20, 12); // slot 2 INSIDE
+    loop();
+    assert(!geofence_confirmation.confirmationActive());
+    assert(geofence_confirmation.cadenceMode() ==
+           GeofenceCadenceMode::kBaseDividedBy3);
+    assert(gnss_manager.trackingIntervalMs() == 60000);
+    assert(gnss_manager.diagnostics().acquisition_attempts ==
+           confirmation_attempts);
+    assert(!geofence_representative_pending);
+    assert(Serial.output.find(
+               "GEOFENCE OUTSIDE confirmed (local event occurrence)") !=
+           std::string::npos);
+
+    drainPosition();
+    assert(history.count() == records_before_transition + 1);
+    assert(send_calls == sends_before_transition + 1);
+
+    // Re-anchor is from confirmation completion. 60 s uses the existing
+    // keep-powered policy; no catch-up or acquisition may start at +59.999 s.
+    loop();
+    assert(gnss_manager.state() == GnssManager::State::kIdle);
+    const uint32_t attempts_after_confirmation =
+        gnss_manager.diagnostics().acquisition_attempts;
+    test_now += 59999;
+    loop();
+    assert(gnss_manager.diagnostics().acquisition_attempts ==
+           attempts_after_confirmation);
+    test_now += 1;
+    loop();
+    assert(gnss_manager.diagnostics().acquisition_attempts ==
+           attempts_after_confirmation + 1);
+
+    assert(munmap(region, kRegionSize) == 0);
+    assert(munmap(config_region, kConfigRegionSize) == 0);
+    printf("Production startup identity/history/loop (geofence): PASS\n");
+    return 0;
+  }
   if (!success) {
     assert(rx_calls == 0);
     assert(!radio_manager.sendPositionPacket(recovered.packet));
