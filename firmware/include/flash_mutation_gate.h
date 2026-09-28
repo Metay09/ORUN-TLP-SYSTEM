@@ -45,10 +45,11 @@ namespace orun_tlp {
 // establishment) outranks everything, and SEC_MAINT (page erase, compaction
 // preparation of a page carrying an unchanged credential forward) is
 // outranked by everything, so routine security housekeeping can never starve
-// live History or Config. The admission order is therefore
-// SEC_CRITICAL > History > Config > SEC_MAINT, generalized in
-// higherPriorityWaiting() below instead of the old two-owner special case;
-// History still outranks Config exactly as before.
+// live History or Config. M6D3B adds Geofence as a human/config-driven
+// persistence client below Config but above routine security maintenance. The
+// admission order is therefore SEC_CRITICAL > History > Config > Geofence >
+// SEC_MAINT, generalized in higherPriorityWaiting() below. Existing
+// Security/History/Config relative ordering is unchanged.
 //
 // M7P7A closes the remaining BLE-storage concurrency hole without enabling
 // BLE: stock InternalFS keeps its LittleFS/cache format, but a pinned
@@ -89,7 +90,13 @@ class FlashMutationGate : public FlashBackend {
   // Config always submit at their own fixed priority; Security's priority is
   // chosen per submission by which port (critical vs. maint) SecurityStore
   // used to make the call.
-  enum class Priority : uint8_t { kSecCritical = 0, kHistory = 1, kConfig = 2, kSecMaint = 3 };
+  enum class Priority : uint8_t {
+    kSecCritical = 0,
+    kHistory = 1,
+    kConfig = 2,
+    kGeofence = 3,
+    kSecMaint = 4
+  };
 
   struct Diagnostics {
     uint32_t submits = 0;
@@ -147,6 +154,35 @@ class FlashMutationGate : public FlashBackend {
   };
   FlashBackend& configPort() { return config_port_; }
   const Diagnostics& configDiagnostics() const { return config_diagnostics_; }
+
+  // ---- Geofence client (M6D3B): dedicated two-page resource owner. ----
+  class GeofencePort : public FlashBackend {
+   public:
+    explicit GeofencePort(FlashMutationGate& gate) : gate_(gate) {}
+    bool begin() override { return gate_.beginGeofence(); }
+    bool read(uint32_t offset, void* data, size_t size) const override {
+      return gate_.readGeofence(offset, data, size);
+    }
+    FlashOpResult program(uint32_t offset, const void* data, size_t size) override {
+      return gate_.programGeofence(offset, data, size);
+    }
+    FlashOpResult erasePage(uint32_t page) override {
+      return gate_.erasePageGeofence(page);
+    }
+    FlashOpResult pollPending() override {
+      return gate_.pollPendingGeofence();
+    }
+    bool hasUnreconciledMutation() const override {
+      return gate_.geofenceMutationUnreconciled();
+    }
+
+   private:
+    FlashMutationGate& gate_;
+  };
+  FlashBackend& geofencePort() { return geofence_port_; }
+  const Diagnostics& geofenceDiagnostics() const {
+    return geofence_diagnostics_;
+  }
 
   // ---- Security client (M7P6B): two FlashBackend views of the SAME
   // underlying security client/slot/staging buffer, differing only in which
@@ -212,12 +248,22 @@ class FlashMutationGate : public FlashBackend {
   bool securityMutationUnreconciled() const {
     return security_slot_.quarantined;
   }
+  bool geofenceMutationUnreconciled() const {
+    return geofence_slot_.quarantined;
+  }
 
  private:
   friend class ConfigPort;
+  friend class GeofencePort;
   friend class SecurityCriticalPort;
   friend class SecurityMaintPort;
-  enum class Owner : uint8_t { kNone, kHistory, kConfig, kSecurity };
+  enum class Owner : uint8_t {
+    kNone,
+    kHistory,
+    kConfig,
+    kGeofence,
+    kSecurity
+  };
   enum class Kind : uint8_t { kNone, kProgram, kErase };
 
   struct Slot {
@@ -262,38 +308,38 @@ class FlashMutationGate : public FlashBackend {
   bool softDeviceEnabled() const;
   bool timedOut(uint32_t now, uint32_t started_ms) const;
   // A request staged (not yet admitted) for longer than kOperationTimeoutMs
-  // -- the same bound already used for the post-admission physical-operation
-  // timeout, not a new invented constant -- is treated as top priority
-  // (kSecCritical) regardless of its real class. Without this, a lower
-  // priority class (SEC_MAINT above all) could be starved indefinitely by
-  // sustained higher-priority traffic that always has something staged the
-  // instant the physical slot frees up; this bounds that wait instead of
-  // requiring a generic fairness scheduler. Aging is per-request and
-  // resets the instant that request is released (admitted, completed or
-  // failed), so an aged-up request cannot itself cause more than roughly
-  // one operation's worth of extra latency for the classes it now outranks.
+  // enters an aged tier ABOVE all normal priorities. This is intentionally
+  // stronger than merely mapping it to kSecCritical: equal priority would
+  // still let a stream of freshly-polled SEC_CRITICAL requests win by caller
+  // order forever. Among aged requests the oldest staged request wins; normal
+  // priority is only the deterministic tie-breaker. Aging resets when the
+  // request is released.
+  bool aged(const Slot& slot, uint32_t now) const;
   Priority effectivePriority(const Slot& slot) const;
   Slot& slot(Owner owner) {
     if (owner == Owner::kHistory) return history_slot_;
     if (owner == Owner::kConfig) return config_slot_;
+    if (owner == Owner::kGeofence) return geofence_slot_;
     return security_slot_;
   }
   uint8_t* staging(Owner owner) {
     if (owner == Owner::kHistory) return history_staging_;
     if (owner == Owner::kConfig) return config_staging_;
+    if (owner == Owner::kGeofence) return geofence_staging_;
     return security_staging_;
   }
   Diagnostics& diag(Owner owner) {
     if (owner == Owner::kHistory) return history_diagnostics_;
     if (owner == Owner::kConfig) return config_diagnostics_;
+    if (owner == Owner::kGeofence) return geofence_diagnostics_;
     return security_diagnostics_;
   }
   // True if some OTHER owner has a staged, not-yet-admitted request whose
   // priority strictly outranks `owner`'s own staged request. Generalizes the
   // old two-owner "config waits behind a staged history request" special
-  // case to all three clients/five priority combinations (SEC_CRITICAL >
-  // History > Config > SEC_MAINT) without changing History/Config's own
-  // fixed relative order.
+  // case to all four clients. M6D3B freezes the order as SEC_CRITICAL >
+  // History > Config > Geofence > SEC_MAINT. Aging still bounds starvation
+  // for every staged lower-priority request.
   bool higherPriorityWaiting(Owner owner) const;
   FlashOpResult attemptSubmit(Owner owner);
   FlashOpResult submitOrRetry(Owner owner);
@@ -311,6 +357,12 @@ class FlashMutationGate : public FlashBackend {
   FlashOpResult erasePageConfig(uint32_t page);
   FlashOpResult pollPendingConfig();
 
+  bool beginGeofence();
+  bool readGeofence(uint32_t offset, void* data, size_t size) const;
+  FlashOpResult programGeofence(uint32_t offset, const void* data, size_t size);
+  FlashOpResult erasePageGeofence(uint32_t page);
+  FlashOpResult pollPendingGeofence();
+
   bool beginSecurity();
   bool readSecurity(uint32_t offset, void* data, size_t size) const;
   FlashOpResult programSecurity(uint32_t offset, const void* data, size_t size, Priority priority);
@@ -319,15 +371,19 @@ class FlashMutationGate : public FlashBackend {
 
   NrfHistoryFlash sync_history_;
   NrfConfigFlash sync_config_;
+  NrfGeofenceFlash sync_geofence_;
   NrfSecurityFlash sync_security_;
   bool ready_history_ = false;
   bool ready_config_ = false;
+  bool ready_geofence_ = false;
   bool ready_security_ = false;
   ConfigPort config_port_{*this};
+  GeofencePort geofence_port_{*this};
   SecurityCriticalPort security_critical_port_{*this};
   SecurityMaintPort security_maint_port_{*this};
   Diagnostics history_diagnostics_{};
   Diagnostics config_diagnostics_{};
+  Diagnostics geofence_diagnostics_{};
   Diagnostics security_diagnostics_{};
 
   // Shared: at most one physical Nordic flash mutation in flight at a time,
@@ -341,6 +397,7 @@ class FlashMutationGate : public FlashBackend {
   Owner last_owner_ = Owner::kHistory;
   Slot history_slot_{};
   Slot config_slot_{};
+  Slot geofence_slot_{};
   Slot security_slot_{};
   // Owned staging copies: Nordic's own documentation requires the source
   // buffer to remain unmodified until the completion event arrives when
@@ -352,6 +409,7 @@ class FlashMutationGate : public FlashBackend {
   // credential record. This file stays decoupled from format headers.
   alignas(4) uint8_t history_staging_[storage_config::kPageHeaderSize]{};
   alignas(4) uint8_t config_staging_[64]{};
+  alignas(4) uint8_t geofence_staging_[560]{};
   alignas(4) uint8_t security_staging_[96]{};
 };
 

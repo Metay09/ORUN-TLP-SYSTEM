@@ -76,10 +76,11 @@ uint32_t next_usb_application_request_id = 1;
 orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort(),
                                        storage_flash_gate.securityMaintPort());
 orun_tlp::PositionFlow positions(history, radio_manager);
-// M6D2 production composition seam. No production geofence resource owner exists
-// yet, so this remains unconfigured in the normal image and cannot change field
-// behavior by itself. The later authorized geofence config owner will call the
-// same coordinator configure()/clear() seam; no hard-coded production polygon.
+// M6D2 production composition seam. M6D3B defines a durable GeofenceStore
+// owner, but no production GeofenceStore instance/provider is wired here yet.
+// The coordinator therefore remains unconfigured in the normal image and cannot
+// change field behavior. M6D3C will connect only a committed read-only snapshot
+// through this seam; no hard-coded production polygon.
 orun_tlp::GeofenceConfirmationCoordinator geofence_confirmation;
 orun_tlp::GnssFix geofence_episode_fixes[
     orun_tlp::geofence_operational_config::kConfirmationObservationLimit]{};

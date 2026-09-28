@@ -123,11 +123,19 @@ uint32_t takeBridgedGateEvent() {
 bool inBoundsHistory(uint32_t offset, size_t size) {
   return offset <= kRegionSize && size <= kRegionSize - offset;
 }
-constexpr uint32_t kConfigRegionSize = kFutureConfigRegionEnd - kFutureConfigRegionStart;
+constexpr uint32_t kConfigRegionSize =
+    kFutureConfigRegionEnd - kFutureConfigRegionStart;
 bool inBoundsConfig(uint32_t offset, size_t size) {
   return offset <= kConfigRegionSize && size <= kConfigRegionSize - offset;
 }
-constexpr uint32_t kSecurityRegionSize = kFutureSecurityRegionEnd - kFutureSecurityRegionStart;
+constexpr uint32_t kGeofenceRegionSize =
+    kGeofenceRegionEnd - kGeofenceRegionStart;
+bool inBoundsGeofence(uint32_t offset, size_t size) {
+  return offset <= kGeofenceRegionSize &&
+         size <= kGeofenceRegionSize - offset;
+}
+constexpr uint32_t kSecurityRegionSize =
+    kFutureSecurityRegionEnd - kFutureSecurityRegionStart;
 bool inBoundsSecurity(uint32_t offset, size_t size) {
   return offset <= kSecurityRegionSize && size <= kSecurityRegionSize - offset;
 }
@@ -363,6 +371,78 @@ FlashOpResult FlashMutationGate::pollPendingConfig() {
 }
 
 // ---------------------------------------------------------------------
+// Geofence client (M6D3B): dedicated region, fixed low-priority config work.
+// ---------------------------------------------------------------------
+
+bool FlashMutationGate::beginGeofence() {
+  ready_geofence_ = sync_geofence_.begin();
+  return ready_geofence_;
+}
+
+bool FlashMutationGate::readGeofence(uint32_t offset, void* data,
+                                     size_t size) const {
+  return sync_geofence_.read(offset, data, size);
+}
+
+FlashOpResult FlashMutationGate::programGeofence(uint32_t offset,
+                                                 const void* data,
+                                                 size_t size) {
+  if (!ready_geofence_) return FlashOpResult::kFailed;
+  ++geofence_diagnostics_.submits;
+  if (!softDeviceEnabled()) return sync_geofence_.program(offset, data, size);
+
+  if (geofence_slot_.kind != Kind::kNone) return FlashOpResult::kFailed;
+  if (!data || !size || !inBoundsGeofence(offset, size) ||
+      (offset & 3U) != 0 || (size & 3U) != 0 ||
+      size > sizeof(geofence_staging_) ||
+      size > kPageSize - offset % kPageSize)
+    return FlashOpResult::kFailed;
+
+  const auto* destination =
+      reinterpret_cast<const uint8_t*>(kGeofenceRegionStart + offset);
+  for (size_t index = 0; index < size; ++index)
+    if (destination[index] != 0xFF) return FlashOpResult::kFailed;
+
+  memcpy(geofence_staging_, data, size);
+  geofence_slot_.staging_size = size;
+  geofence_slot_.kind = Kind::kProgram;
+  geofence_slot_.target = kGeofenceRegionStart + offset;
+  geofence_slot_.priority = Priority::kGeofence;
+  geofence_slot_.staged_since_ms = monotonic::nowMs();
+  geofence_slot_.admitted = false;
+  geofence_slot_.token_acquired = false;
+  geofence_slot_.submission_accepted = false;
+  geofence_slot_.event_ready = false;
+  geofence_slot_.quarantined = false;
+  return submitOrRetry(Owner::kGeofence);
+}
+
+FlashOpResult FlashMutationGate::erasePageGeofence(uint32_t page) {
+  if (!ready_geofence_) return FlashOpResult::kFailed;
+  ++geofence_diagnostics_.submits;
+  if (!softDeviceEnabled()) return sync_geofence_.erasePage(page);
+
+  if (geofence_slot_.kind != Kind::kNone) return FlashOpResult::kFailed;
+  if (page >= kGeofenceRegionPages) return FlashOpResult::kFailed;
+
+  geofence_slot_.kind = Kind::kErase;
+  geofence_slot_.target = kGeofenceRegionStart / kPageSize + page;
+  geofence_slot_.priority = Priority::kGeofence;
+  geofence_slot_.staged_since_ms = monotonic::nowMs();
+  geofence_slot_.admitted = false;
+  geofence_slot_.token_acquired = false;
+  geofence_slot_.submission_accepted = false;
+  geofence_slot_.event_ready = false;
+  geofence_slot_.quarantined = false;
+  return submitOrRetry(Owner::kGeofence);
+}
+
+FlashOpResult FlashMutationGate::pollPendingGeofence() {
+  if (geofence_slot_.kind == Kind::kNone) return FlashOpResult::kFailed;
+  return submitOrRetry(Owner::kGeofence);
+}
+
+// ---------------------------------------------------------------------
 // Security client (M7P6B): symmetrical API, own region, own diagnostics,
 // two priority-tagged entry points (SecurityCriticalPort/SecurityMaintPort)
 // sharing one physical slot -- SecurityStore only ever has one request
@@ -437,41 +517,61 @@ FlashOpResult FlashMutationGate::pollPendingSecurity() {
 // Shared admission, submission, and event routing.
 // ---------------------------------------------------------------------
 
-// A request staged (kind != kNone, not yet admitted) for longer than
-// kOperationTimeoutMs is treated as top priority regardless of its real
-// class -- see the declaration comment (flash_mutation_gate.h) for why this
-// bounded aging exists: without it, SEC_MAINT (or any lower class) could be
-// starved indefinitely by sustained higher-priority traffic that always has
-// something staged the instant the physical slot frees up.
-FlashMutationGate::Priority FlashMutationGate::effectivePriority(const Slot& slot) const {
-  if (slot.kind != Kind::kNone && !slot.admitted &&
-      monotonic::elapsed(monotonic::nowMs(), slot.staged_since_ms, kOperationTimeoutMs)) {
-    return Priority::kSecCritical;
-  }
+// A staged request first competes in the normal frozen class order. Once it
+// waits for kOperationTimeoutMs it enters an aged tier above every fresh
+// request, including fresh SEC_CRITICAL. Equal promotion to kSecCritical would
+// not be sufficient: caller/poll order could still starve the aged request.
+bool FlashMutationGate::aged(const Slot& slot, uint32_t now) const {
+  return slot.kind != Kind::kNone && !slot.admitted &&
+         monotonic::elapsed(now, slot.staged_since_ms, kOperationTimeoutMs);
+}
+
+FlashMutationGate::Priority FlashMutationGate::effectivePriority(
+    const Slot& slot) const {
   return slot.priority;
 }
 
 bool FlashMutationGate::higherPriorityWaiting(Owner owner) const {
-  const Slot* mine = owner == Owner::kHistory ? &history_slot_
-                    : owner == Owner::kConfig  ? &config_slot_
-                                                : &security_slot_;
+  const Slot* mine = owner == Owner::kHistory  ? &history_slot_
+                    : owner == Owner::kConfig   ? &config_slot_
+                    : owner == Owner::kGeofence ? &geofence_slot_
+                                                 : &security_slot_;
+  const Slot* others[] = {
+      &history_slot_, &config_slot_, &geofence_slot_, &security_slot_};
+  const Owner owners[] = {
+      Owner::kHistory, Owner::kConfig, Owner::kGeofence, Owner::kSecurity};
+  const uint32_t now = monotonic::nowMs();
+  const bool mine_aged = aged(*mine, now);
+  const uint32_t mine_wait = uint32_t(now - mine->staged_since_ms);
   const Priority mine_priority = effectivePriority(*mine);
-  const Slot* others[] = {&history_slot_, &config_slot_, &security_slot_};
-  const Owner owners[] = {Owner::kHistory, Owner::kConfig, Owner::kSecurity};
-  for (unsigned index = 0; index < 3; ++index) {
+
+  for (unsigned index = 0; index < 4; ++index) {
     if (owners[index] == owner) continue;
     const Slot& other = *others[index];
-    if (other.kind != Kind::kNone && !other.admitted &&
-        effectivePriority(other) < mine_priority)
-      return true;
+    if (other.kind == Kind::kNone || other.admitted) continue;
+
+    const bool other_aged = aged(other, now);
+    if (other_aged != mine_aged) {
+      if (other_aged) return true;
+      continue;
+    }
+
+    if (other_aged) {
+      const uint32_t other_wait = uint32_t(now - other.staged_since_ms);
+      if (other_wait > mine_wait) return true;
+      if (other_wait < mine_wait) continue;
+    }
+
+    if (effectivePriority(other) < mine_priority) return true;
   }
   return false;
 }
 
 // Bounded, no-heap admission: the physical in-flight slot is free, or
 // already owned by `owner` (a retry), or owned by another client (this call
-// stays queued). Priority (ADR §7.1/§10: SEC_CRITICAL > History > Config >
-// SEC_MAINT) is enforced here, independent of which client happens to call
+// stays queued). Priority (M6D3B: SEC_CRITICAL > History > Config >
+// Geofence > SEC_MAINT) is enforced here, independent of which client
+// happens to call
 // first: if the slot is free but a higher-priority client currently has a
 // request staged and not yet admitted, this owner is held back so that
 // client is admitted next, not whichever client asked first. A client that
