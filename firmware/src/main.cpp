@@ -1530,6 +1530,15 @@ void abortGeofenceConfirmation(const char* reason) {
   Serial.printf("GEOFENCE confirmation aborted reason=%s\n", reason);
 }
 
+const char* geofenceTokenStateName(orun_tlp::GeofenceTokenState state) {
+  switch (state) {
+    case orun_tlp::GeofenceTokenState::kUnavailable: return "UNAVAILABLE";
+    case orun_tlp::GeofenceTokenState::kValid: return "VALID";
+    case orun_tlp::GeofenceTokenState::kUncertain: return "UNCERTAIN";
+  }
+  return "UNKNOWN";
+}
+
 void applyGeofenceCadence(
     orun_tlp::GeofenceCadenceMode cadence_mode) {
   const uint32_t effective_interval_ms =
@@ -1719,16 +1728,10 @@ void setup() {
         Serial.printf("GEOFENCE runtime configured areas=%u vertices=%u token=%s\n",
                       static_cast<unsigned>(geofence_snapshot.area_count),
                       static_cast<unsigned>(geofence_snapshot.total_vertex_count),
-                      geofence_store.tokenState() ==
-                              orun_tlp::GeofenceTokenState::kValid
-                          ? "VALID"
-                          : "UNCERTAIN");
+                      geofenceTokenStateName(geofence_store.tokenState()));
       } else if (applied == orun_tlp::GeofenceRuntimeApplyResult::kCleared) {
         Serial.printf("GEOFENCE runtime clear token=%s\n",
-                      geofence_store.tokenState() ==
-                              orun_tlp::GeofenceTokenState::kValid
-                          ? "VALID"
-                          : "UNCERTAIN");
+                      geofenceTokenStateName(geofence_store.tokenState()));
       } else {
         Serial.println(F("GEOFENCE durable snapshot rejected; runtime unconfigured"));
       }
