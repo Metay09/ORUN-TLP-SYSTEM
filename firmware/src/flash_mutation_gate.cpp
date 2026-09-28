@@ -517,17 +517,17 @@ FlashOpResult FlashMutationGate::pollPendingSecurity() {
 // Shared admission, submission, and event routing.
 // ---------------------------------------------------------------------
 
-// A request staged (kind != kNone, not yet admitted) for longer than
-// kOperationTimeoutMs is treated as top priority regardless of its real
-// class -- see the declaration comment (flash_mutation_gate.h) for why this
-// bounded aging exists: without it, SEC_MAINT (or any lower class) could be
-// starved indefinitely by sustained higher-priority traffic that always has
-// something staged the instant the physical slot frees up.
-FlashMutationGate::Priority FlashMutationGate::effectivePriority(const Slot& slot) const {
-  if (slot.kind != Kind::kNone && !slot.admitted &&
-      monotonic::elapsed(monotonic::nowMs(), slot.staged_since_ms, kOperationTimeoutMs)) {
-    return Priority::kSecCritical;
-  }
+// A staged request first competes in the normal frozen class order. Once it
+// waits for kOperationTimeoutMs it enters an aged tier above every fresh
+// request, including fresh SEC_CRITICAL. Equal promotion to kSecCritical would
+// not be sufficient: caller/poll order could still starve the aged request.
+bool FlashMutationGate::aged(const Slot& slot, uint32_t now) const {
+  return slot.kind != Kind::kNone && !slot.admitted &&
+         monotonic::elapsed(now, slot.staged_since_ms, kOperationTimeoutMs);
+}
+
+FlashMutationGate::Priority FlashMutationGate::effectivePriority(
+    const Slot& slot) const {
   return slot.priority;
 }
 
@@ -536,17 +536,33 @@ bool FlashMutationGate::higherPriorityWaiting(Owner owner) const {
                     : owner == Owner::kConfig   ? &config_slot_
                     : owner == Owner::kGeofence ? &geofence_slot_
                                                  : &security_slot_;
-  const Priority mine_priority = effectivePriority(*mine);
   const Slot* others[] = {
       &history_slot_, &config_slot_, &geofence_slot_, &security_slot_};
   const Owner owners[] = {
       Owner::kHistory, Owner::kConfig, Owner::kGeofence, Owner::kSecurity};
+  const uint32_t now = monotonic::nowMs();
+  const bool mine_aged = aged(*mine, now);
+  const uint32_t mine_wait = uint32_t(now - mine->staged_since_ms);
+  const Priority mine_priority = effectivePriority(*mine);
+
   for (unsigned index = 0; index < 4; ++index) {
     if (owners[index] == owner) continue;
     const Slot& other = *others[index];
-    if (other.kind != Kind::kNone && !other.admitted &&
-        effectivePriority(other) < mine_priority)
-      return true;
+    if (other.kind == Kind::kNone || other.admitted) continue;
+
+    const bool other_aged = aged(other, now);
+    if (other_aged != mine_aged) {
+      if (other_aged) return true;
+      continue;
+    }
+
+    if (other_aged) {
+      const uint32_t other_wait = uint32_t(now - other.staged_since_ms);
+      if (other_wait > mine_wait) return true;
+      if (other_wait < mine_wait) continue;
+    }
+
+    if (effectivePriority(other) < mine_priority) return true;
   }
   return false;
 }
