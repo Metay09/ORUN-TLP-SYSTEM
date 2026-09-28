@@ -266,3 +266,27 @@ This confirms the power-cut probe did not manufacture a baseline or mutate the
 partition at boot. The authoritative state entering the electrical cut test is
 page A CLEAR generation/revision 3 with the prior page B CONFIGURED
 generation/revision 2.
+
+
+## Stage 3B — deterministic pre-commit electrical cut point reached
+
+From the verified CLEAR generation/revision 3 authority, the operator issued
+exactly one `CUT_BODY` command.
+
+Observed serial evidence:
+
+```text
+M6D3B POWERCUT CUT_BODY accepted candidate=CONFIGURED
+M6D3B POWERCUT READY stage=after-body-readback before-commit; CUT POWER NOW
+```
+
+The READY line repeated continuously.
+
+Result: **PASS** for reaching the intended deterministic cut boundary.
+
+At this boundary the test-only wrapper has allowed the real inactive-page erase,
+the real body+CRC program, the backend readback verification, and GeofenceStore's
+own body readback/memcmp to complete. The exact 4-byte commit program has not
+been delegated to the physical backend.
+
+Electrical power removal and post-reboot recovery evidence are still pending.
