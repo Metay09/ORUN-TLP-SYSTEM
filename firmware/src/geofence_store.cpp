@@ -234,7 +234,11 @@ bool GeofenceStore::recover() {
         high->token.revision == low->token.revision + 1;
 
     if (!exact_lineage || any_corrupt) {
-      if (sameSnapshot(high->snapshot, low->snapshot))
+      // Exact lineage still tells us which semantic snapshot is newer even
+      // when reserved-tail evidence invalidates CAS authority. Preserve that
+      // read-only semantic value while forcing token UNCERTAIN. Without exact
+      // lineage, only identical semantics are safe to preserve.
+      if (exact_lineage || sameSnapshot(high->snapshot, low->snapshot))
         setSemanticFallback(*high, GeofenceTokenState::kUncertain);
       else
         setUnavailableMaintenance(GeofenceTokenState::kUncertain);
