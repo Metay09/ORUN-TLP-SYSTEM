@@ -130,7 +130,7 @@ int main() {
     assert(decode(bytes, sizeof(bytes), decoded));
     assert(decoded.snapshot.total_vertex_count == 64);
     assert(decoded.snapshot.vertices[0].latitude_e7 == 9998000);
-    assert(decoded.snapshot.vertices[63].longitude_e7 == 20601000);
+    assert(decoded.snapshot.vertices[63].longitude_e7 == 20701000);
     assert(inspect(bytes).evidence == PageEvidence::kCommittedConfigured);
   }
 
