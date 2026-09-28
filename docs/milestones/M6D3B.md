@@ -562,6 +562,38 @@ CLEAN is terminal and requires power-cycle afterward.
 
 The test fixture is never a production fence and is never wired into M6D2.
 
+### Focused power-cut probe added
+
+A test-only target now exists:
+
+`rak4630_m6d3b_geofence_powercut`
+
+It is intentionally narrower than the normal qualification image:
+
+- boot/recovery is read-only;
+- it links the real GeofenceStore + NrfGeofenceFlash path;
+- it has no incarnation source and therefore cannot manufacture a fresh
+  baseline on a blank partition;
+- only explicit `CUT_BODY` arms a mutation;
+- it chooses the opposite semantic state so the request cannot become an
+  unchanged no-op;
+- it allows inactive-page erase + body/CRC program + GeofenceStore body
+  readback to complete;
+- it then withholds the exact 4-byte commit program and repeats
+  `CUT POWER NOW`.
+
+After real power removal and reboot, the expected production recovery is:
+
+```text
+one prior committed page remains authoritative and VALID
++
+one exact staged successor with erased commit word
+```
+
+The staged candidate must not become authoritative.
+
+This probe is **added but not yet build/host validated or physically run**.
+
 ### Electrical power-cut evidence
 
 Host fault injection covers body/commit/erase/readback ambiguity, but does not
