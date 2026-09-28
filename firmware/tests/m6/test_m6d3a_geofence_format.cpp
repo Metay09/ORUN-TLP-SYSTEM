@@ -45,6 +45,34 @@ Snapshot oneTriangle(bool explicit_close) {
   return snapshot;
 }
 
+Snapshot sixtyTwoVertexRectangle() {
+  GeoPointE7 vertices[62];
+  uint16_t count = 0;
+  const int32_t base_lat = 30000000;
+  const int32_t base_lon = 40000000;
+
+  // 16-by-15 grid rectangle perimeter => 2 * (16 + 15) = 62
+  // unique effective vertices, with each corner represented exactly once.
+  for (int32_t x = 0; x <= 16; ++x)
+    vertices[count++] = GeoPointE7(base_lat, base_lon + x * 1000);
+  for (int32_t y = 1; y <= 15; ++y)
+    vertices[count++] = GeoPointE7(base_lat + y * 1000, base_lon + 16000);
+  for (int32_t x = 15; x >= 0; --x)
+    vertices[count++] = GeoPointE7(base_lat + 15000, base_lon + x * 1000);
+  for (int32_t y = 14; y >= 1; --y)
+    vertices[count++] = GeoPointE7(base_lat + y * 1000, base_lon);
+
+  assert(count == 62);
+  const GeofencePolygonView polygon(vertices, count);
+  Snapshot snapshot;
+  assert(canonicalizeConfiguredAreaSet(GeofenceAreaSetView(&polygon, 1),
+                                       snapshot));
+  assert(snapshot.area_count == 1);
+  assert(snapshot.area_vertex_counts[0] == 62);
+  assert(snapshot.total_vertex_count == 62);
+  return snapshot;
+}
+
 Snapshot maximumSnapshot() {
   GeoPointE7 vertices[8][8];
   GeofencePolygonView areas[8];
@@ -148,6 +176,37 @@ int main() {
     assert(memcmp(a, b, sizeof(a)) == 0);
   }
 
+  // Manually constructed stored snapshots are not allowed to reintroduce the
+  // input-only explicit closing duplicate. Both encode and CRC-valid decode
+  // must reject that second authoritative representation.
+  {
+    Snapshot noncanonical = oneTriangle(false);
+    noncanonical.area_vertex_counts[0] = 4;
+    noncanonical.total_vertex_count = 4;
+    noncanonical.vertices[3] = noncanonical.vertices[0];
+
+    uint8_t rejected[kRecordSize];
+    memset(rejected, 0xA5, sizeof(rejected));
+    assert(!encode(makeRecord(noncanonical, 3, 99, 2),
+                   rejected, sizeof(rejected)));
+    for (uint32_t i = 0; i < kRecordSize; ++i) assert(rejected[i] == 0xA5);
+
+    uint8_t bytes[kRecordSize];
+    assert(encode(makeRecord(oneTriangle(false), 3, 99, 2),
+                  bytes, sizeof(bytes)));
+    bytes[kAreaVertexCountsOffset] = 4;
+    journal_format::put16(bytes + kTotalVertexCountOffset, 4);
+    memcpy(bytes + kVerticesOffset + 3U * 8U,
+           bytes + kVerticesOffset, 8U);
+    resealBody(bytes);
+
+    Record decoded;
+    assert(!decode(bytes, sizeof(bytes), decoded));
+    const PageInspection result = inspect(bytes);
+    assert(result.evidence == PageEvidence::kCommittedCorrupt);
+    assert(!result.has_decoded_record);
+  }
+
   // Physical generation is independent from semantic revision.
   {
     const Snapshot snapshot = oneTriangle(false);
@@ -248,13 +307,19 @@ int main() {
     resealBody(bytes);
     assert(!decode(bytes, sizeof(bytes), decoded));
 
-    memcpy(bytes, good, sizeof(bytes));
-    bytes[kAreaCountOffset] = 2;
-    bytes[kAreaVertexCountsOffset] = 64;
-    bytes[kAreaVertexCountsOffset + 1] = 64;
-    journal_format::put16(bytes + kTotalVertexCountOffset, 64);
-    resealBody(bytes);
-    assert(!decode(bytes, sizeof(bytes), decoded));
+    // Exercise the cumulative 64-total-vertex guard specifically: area 0 is
+    // a valid 62-vertex polygon, while a second minimum-valid count of 3 would
+    // exceed the remaining capacity before any second polygon view is formed.
+    Snapshot near_capacity = sixtyTwoVertexRectangle();
+    near_capacity.area_count = 2;
+    near_capacity.area_vertex_counts[1] = 3;
+    near_capacity.total_vertex_count = 64;
+    uint8_t overflow_output[kRecordSize];
+    memset(overflow_output, 0xA5, sizeof(overflow_output));
+    assert(!encode(makeRecord(near_capacity, 5, 66, 3),
+                   overflow_output, sizeof(overflow_output)));
+    for (uint32_t i = 0; i < kRecordSize; ++i)
+      assert(overflow_output[i] == 0xA5);
 
     memcpy(bytes, good, sizeof(bytes));
     journal_format::put32(bytes + kVerticesOffset, 900000000UL);
