@@ -214,6 +214,30 @@ int main() {
     resealBody(bytes);
     assert(!decode(bytes, sizeof(bytes), decoded));
 
+    // CONFIGURED with zero areas is never an alias for CLEAR.
+    memcpy(bytes, good, sizeof(bytes));
+    bytes[kAreaCountOffset] = 0;
+    journal_format::put16(bytes + kTotalVertexCountOffset, 0);
+    memset(bytes + kAreaVertexCountsOffset, 0, kMaximumAreas);
+    memset(bytes + kVerticesOffset, 0, kMaximumTotalVertices * 8U);
+    resealBody(bytes);
+    assert(!decode(bytes, sizeof(bytes), decoded));
+
+    // Unknown resource-state values fail closed.
+    memcpy(bytes, good, sizeof(bytes));
+    bytes[kStateOffset] = 2;
+    resealBody(bytes);
+    assert(!decode(bytes, sizeof(bytes), decoded));
+
+    // CLEAR cannot carry hidden polygon bytes even with a valid CRC.
+    memcpy(bytes, good, sizeof(bytes));
+    bytes[kStateOffset] = static_cast<uint8_t>(ResourceState::kClear);
+    bytes[kAreaCountOffset] = 0;
+    journal_format::put16(bytes + kTotalVertexCountOffset, 0);
+    memset(bytes + kAreaVertexCountsOffset, 0, kMaximumAreas);
+    resealBody(bytes);
+    assert(!decode(bytes, sizeof(bytes), decoded));
+
     memcpy(bytes, good, sizeof(bytes));
     journal_format::put16(bytes + kTotalVertexCountOffset, 65);
     resealBody(bytes);
