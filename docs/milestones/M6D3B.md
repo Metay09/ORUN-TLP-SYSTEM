@@ -592,7 +592,16 @@ one exact staged successor with erased commit word
 
 The staged candidate must not become authoritative.
 
-This probe is **added but not yet build/host validated or physically run**.
+This probe is **source-contract validated and warning-free RAK4630 build PASS; physical run is still pending**.
+
+Validation evidence:
+
+- `python3 tests/m6/test_m6d3b_source_contract.py`: PASS;
+- `pio run -e rak4630_m6d3b_geofence_powercut`: SUCCESS;
+- RAM: `14,452 / 248,832 B (5.8%)`;
+- Flash: `67,608 / 815,104 B (8.3%)`;
+- the initial sign-compare warning in the test-only command parser was fixed and
+  the target rebuilt without warnings.
 
 ### Electrical power-cut evidence
 
