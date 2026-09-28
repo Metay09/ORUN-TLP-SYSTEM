@@ -314,7 +314,7 @@ void loop() {
       continue;
     }
 
-    if (command_length + 1 < sizeof(command_buffer)) {
+    if (static_cast<size_t>(command_length) + 1U < sizeof(command_buffer)) {
       command_buffer[command_length++] = ch;
     } else {
       command_length = 0;
