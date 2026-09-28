@@ -1,6 +1,6 @@
 # M6D3A — Geofence layout + format/classifier foundation
 
-Status: **IMPLEMENTED; FULL HOST PASS; PRODUCTION RAK4630 BUILD PASS; INDEPENDENT ASTRA AUDIT PENDING; NO PHYSICAL PERSISTENCE CLAIM**.
+Status: **IMPLEMENTED; INITIAL OWNER HOST/RAK4630 VALIDATION PASS; ASTRA AUDIT PASS WITH FIXES (0 BLOCKER / 0 HIGH / 2 MEDIUM / 1 LOW); FIXES APPLIED; POST-FIX REVALIDATION PENDING; NO PHYSICAL PERSISTENCE CLAIM**.
 
 Baseline: `main@5980f06eeb3cb55fcb09aa89ef3565a51c88dcda` (M6D3 architecture docs merged via PR #53).
 Branch: `feat/m6d3a-geofence-format-foundation`.
@@ -175,11 +175,37 @@ production image. The new format/classifier code has no production runtime calle
 and is dead-stripped, as intended; the production-visible change is the stricter
 reserved-flash ceiling.
 
+Independent Astra audit at `87ae95f26da2a45173c8633996903ca70db7dfd6`
+returned **FIX THEN MERGE** with 0 BLOCKER / 0 HIGH / 2 MEDIUM / 1 LOW:
+
+- MEDIUM: manually constructed stored polygons could retain an explicit closing
+  duplicate and become authoritative despite the effective-vertices-only
+  contract;
+- MEDIUM: the raw-source layout regex could be fooled by stale declarations or
+  assertions inside comments;
+- LOW: the cumulative-vertex overflow fixture failed earlier on polygon geometry
+  and therefore did not actually exercise the cumulative guard.
+
+All three are fixed on the same branch:
+
+- stored snapshot validation now requires
+  `effectiveGeofenceVertexCount(polygon) == stored_count`;
+- direct encode and CRC-resealed decode/classifier tests reject stored closing
+  duplicates;
+- the layout parser strips C/C++ comments, requires unique active declarations
+  and required assertions, and rejects conditional layout definitions;
+- parser regressions cover stale commented constants, duplicate active
+  declarations, conditional/disabled evidence and commented assertions;
+- the cumulative-limit fixture now starts from a valid 62-effective-vertex
+  polygon and adds a second minimum-valid count of 3, forcing the real
+  64-total-vertex guard.
+
 Before merge:
 
-1. independent Astra audit of this code-bearing slice;
-2. fix any real findings and repeat affected validation;
-3. record final audit disposition.
+1. rerun the complete host suite;
+2. rerun the production RAK4630 build;
+3. focused Astra verification of the three audit fixes;
+4. record final audit disposition.
 
 M6D3A does **not** require physical hardware testing because it has no flash
 writer. Host/build PASS must not be reported as physical persistence or power-cut
