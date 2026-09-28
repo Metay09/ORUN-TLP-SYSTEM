@@ -1,6 +1,6 @@
 # M6D3B — Durable GeofenceStore + physical flash owner
 
-Status: **SOFTWARE + INDEPENDENT PRE-PHYSICAL AUDIT PASS; READ-ONLY PHYSICAL PREFLIGHT AUTHORIZED; DESTRUCTIVE QUALIFICATION / POWER-CUT / MERGE PENDING**.
+Status: **SOFTWARE + INDEPENDENT AUDIT PASS; READ-ONLY PHYSICAL PREFLIGHT PASS; DESTRUCTIVE A/B / REBOOT / POWER-CUT / MERGE PENDING**.
 
 Baseline: `main@e566125afb9a08aaa5da8656d22d82e6a7580aed` (M6D3A merged via PR #54).
 Branch: `feat/m6d3b-geofence-store`.
@@ -410,6 +410,25 @@ Durable audit disposition:
 
 The audit explicitly authorizes only the **read-only physical preflight**.
 Physical persistence, reboot persistence and power-cut behavior remain unproven.
+
+## 9.4. Physical read-only preflight PASS
+
+On the intended development RAK4631, the audited read-only preflight image
+reported both reserved geofence pages as physically blank:
+
+- page A: `ERASED`, `all_ff=yes`, `tail_ff=yes`, CRC32 `F154670A`;
+- page B: `ERASED`, `all_ff=yes`, `tail_ff=yes`, CRC32 `F154670A`;
+- overall: `QUALIFICATION_IMAGE_MAY_BE_USED`.
+
+The USB serial device reconnected and the second boot repeated the same result.
+No geofence flash mutation was possible in this image.
+
+Detailed physical record:
+`docs/audits/M6D3B_PHYSICAL_QUALIFICATION.md`.
+
+This authorizes the destructive qualification image on this exact development
+unit, but does not yet prove A/B persistence, reboot persistence or power-cut
+recovery.
 
 ## 10. Physical qualification safety gate
 
