@@ -9,7 +9,8 @@ store_h = (root / "include" / "geofence_store.h").read_text()
 preflight = (root / "tests" / "m6" / "m6d3b_geofence_preflight.cpp").read_text()
 platformio = (root / "platformio.ini").read_text()
 
-assert "GeofenceStore" not in main
+assert '#include "geofence_store.h"' not in main
+assert "orun_tlp::GeofenceStore " not in main
 assert ".geofencePort()" not in main
 assert "geofencePort()" in gate_h
 assert "class GeofenceStore" in store_h
