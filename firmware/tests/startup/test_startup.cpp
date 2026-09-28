@@ -37,7 +37,9 @@ uint32_t sd_flash_write(uint32_t* dst, const uint32_t* src, uint32_t count) {
       address >= kFutureConfigRegionStart && end <= kFutureConfigRegionEnd;
   const bool in_security =
       address >= kFutureSecurityRegionStart && end <= kFutureSecurityRegionEnd;
-  assert(in_history || in_config || in_security);
+  const bool in_geofence =
+      address >= kGeofenceRegionStart && end <= kGeofenceRegionEnd;
+  assert(in_history || in_config || in_security || in_geofence);
   for (uint32_t i = 0; i < count; ++i) {
     assert(dst[i] == UINT32_MAX);
     dst[i] &= src[i];
@@ -53,7 +55,9 @@ uint32_t sd_flash_page_erase(uint32_t page) {
       address >= kFutureConfigRegionStart && address < kFutureConfigRegionEnd;
   const bool in_security =
       address >= kFutureSecurityRegionStart && address < kFutureSecurityRegionEnd;
-  assert(in_history || in_config || in_security);
+  const bool in_geofence =
+      address >= kGeofenceRegionStart && address < kGeofenceRegionEnd;
+  assert(in_history || in_config || in_security || in_geofence);
   memset(reinterpret_cast<void*>(uintptr_t(page) * kPageSize), 0xFF, kPageSize);
   return NRF_SUCCESS;
 }
@@ -66,6 +70,13 @@ bool orun_tlp::NrfConfigIncarnationSource::generate(uint64_t& incarnation) {
   // Host startup composition stub: production implementation is target-only
   // hardware RNG and is independently compiler/link checked by the RAK build.
   incarnation = 0x0102030405060708ULL;
+  return true;
+}
+
+bool orun_tlp::NrfGeofenceIncarnationSource::generate(uint64_t& incarnation) {
+  // Same composition-only stub as Config: the real nRF RNG implementation is
+  // independently compiled/linked by the RAK4630 production build.
+  incarnation = 0x1020304050607080ULL;
   return true;
 }
 
@@ -117,8 +128,10 @@ int main(int argc, char** argv) {
   // without the direct event handoff.
   const bool no_event_control = mode == "noevent";
   const bool geofence_scenario = mode == "geofence";
+  const bool persisted_geofence_scenario = mode == "geofence_persisted";
   const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails ||
-                       no_event_control || geofence_scenario;
+                       no_event_control || geofence_scenario ||
+                       persisted_geofence_scenario;
   // Each scenario runs in a new process, like a cold boot (static driver gate).
   assert(success || mode == "mutex" || mode == "gate" || mode == "queue" ||
          mode == "lora");
@@ -140,6 +153,38 @@ int main(int argc, char** argv) {
       PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
   assert(security_region == reinterpret_cast<void*>(kFutureSecurityRegionStart));
   memset(security_region, 0xFF, kSecurityRegionSize);
+  // M6D3C: production now recovers GeofenceStore before BLE, so map its
+  // dedicated M6D3B partition for the real startup composition as well.
+  constexpr uint32_t kGeofenceRegionSize =
+      kGeofenceRegionEnd - kGeofenceRegionStart;
+  void* geofence_region = mmap(
+      reinterpret_cast<void*>(kGeofenceRegionStart), kGeofenceRegionSize,
+      PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+      -1, 0);
+  assert(geofence_region == reinterpret_cast<void*>(kGeofenceRegionStart));
+  memset(geofence_region, 0xFF, kGeofenceRegionSize);
+
+  // One scenario starts with a real committed durable CONFIGURED snapshot.
+  // All other scenarios leave the partition blank so setup() must establish
+  // the authoritative CLEAR baseline without configuring M6D2.
+  if (persisted_geofence_scenario) {
+    const GeoPointE7 persisted_vertices[] = {
+        GeoPointE7(409999000, 289999000),
+        GeoPointE7(409999000, 290001000),
+        GeoPointE7(410001000, 290001000),
+        GeoPointE7(410001000, 289999000)};
+    const GeofencePolygonView persisted_polygon(persisted_vertices, 4);
+    geofence_format::Snapshot snapshot;
+    assert(geofence_format::canonicalizeConfiguredAreaSet(
+        GeofenceAreaSetView(&persisted_polygon, 1), snapshot));
+    geofence_format::Record record;
+    record.generation = 7;
+    record.token = geofence_format::StateToken(0xA1A2A3A4A5A6A7A8ULL, 7);
+    record.snapshot = snapshot;
+    uint8_t encoded[geofence_format::kRecordSize]{};
+    assert(geofence_format::encode(record, encoded, sizeof(encoded)));
+    memcpy(geofence_region, encoded, sizeof(encoded));
+  }
 
   // Seed page 0 through the real journal/backend, including a committed fix.
   NrfHistoryFlash seed_flash;
@@ -166,10 +211,9 @@ int main(int argc, char** argv) {
   Bluefruit.begin_result = !ble_runtime_fails;
   setup();
 
-  // M6D2 startup composition scenario: install an explicit host-only area set
-  // before the first accepted fix so the real loop establishes INSIDE through
-  // the same production coordinator seam. Production firmware still has no
-  // configured area-set owner.
+  // M6D2 legacy startup composition scenario: install an explicit host-only
+  // area set before the first accepted fix. M6D3C's separate
+  // geofence_persisted scenario exercises the real durable production source.
   static const GeoPointE7 geofence_vertices[] = {
       GeoPointE7(409999000, 289999000),
       GeoPointE7(409999000, 290001000),
@@ -187,11 +231,29 @@ int main(int argc, char** argv) {
   assert(watchdog_starts == 1);
   assert(history.ready() && history.count() == 1);
   assert(history.diagnostics().recovery_corruptions == 0);
-  // Fresh blank ConfigStore establishes its internal v2 token baseline:
-  // 44-byte stage + 4-byte commit, no erase because both pages were blank.
-  assert(erases == 0 && programs == 2);
+  // Fresh blank ConfigStore establishes its internal v2 token baseline.
+  // Blank GeofenceStore also establishes its own CLEAR baseline; the persisted
+  // scenario instead recovers its pre-seeded CONFIGURED record without a write.
+  const unsigned expected_boot_programs =
+      persisted_geofence_scenario ? 2U : 4U;
+  assert(erases == 0 && programs == expected_boot_programs);
   assert(config_store.tokenState() == ConfigTokenState::kValid);
   assert(!config_store.hasCommittedRecord());  // application still "default"
+  assert(geofence_store.ready());
+  if (persisted_geofence_scenario) {
+    assert(geofence_store.resourceState() == GeofenceResourceState::kConfigured);
+    assert(geofence_store.tokenState() == GeofenceTokenState::kValid);
+    assert(geofence_confirmation.configured());
+    assert(Serial.output.find(
+               "GEOFENCE runtime configured areas=1 vertices=4 token=VALID\n") !=
+           std::string::npos);
+  } else {
+    assert(geofence_store.resourceState() == GeofenceResourceState::kClear);
+    assert(geofence_store.tokenState() == GeofenceTokenState::kValid);
+    if (!geofence_scenario) assert(!geofence_confirmation.configured());
+    assert(Serial.output.find("GEOFENCE runtime clear token=VALID\n") !=
+           std::string::npos);
+  }
   assert(memcmp(region, before.data(), before.size()) == 0);
   // BLE boot path: ready reflects Bluefruit.begin(); "available"/admission
   // only follow a successful Advertising.start(0), which is called exactly
@@ -235,7 +297,8 @@ int main(int argc, char** argv) {
   assert(watchdog_feeds == 16 && fake_idle_calls == 16);
   assert(gnss_manager.state() == GnssManager::State::kAcquiring);
   assert(role_controller.role() == NodeRole::kTracker);
-  assert(erases == 0 && programs == 4); // +2 config baseline, +2 history reservation.
+  assert(erases == 0 && programs == expected_boot_programs + 2U);
+  // +2 HistoryStore reservation after the boot baselines/recovery.
   assert(memcmp(region, before.data(), journal_format::kStaticHeaderSize) == 0);
   assert(memcmp(static_cast<uint8_t*>(region) + kPageHeaderSize,
                 before.data() + kPageHeaderSize, kRegionSize - kPageHeaderSize) == 0);
@@ -258,7 +321,8 @@ int main(int argc, char** argv) {
     loop(); // First epoch establishes the R3 boundary; second is fresh.
   }
   loop();
-  assert(history.count() == 2 && erases == 0 && programs == 6);
+  assert(history.count() == 2 && erases == 0 &&
+         programs == expected_boot_programs + 4U);
   assert(history.newest(recovered) && recovered.identity > original.identity);
   tlp::PositionPacket newest{};
   assert(tlp::deserializePositionPacket(recovered.packet, sizeof(recovered.packet), &newest));
