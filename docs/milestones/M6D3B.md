@@ -430,6 +430,23 @@ This authorizes the destructive qualification image on this exact development
 unit, but does not yet prove A/B persistence, reboot persistence or power-cut
 recovery.
 
+## 9.5. Physical fresh-baseline write PASS
+
+On the same development RAK4631 that passed read-only preflight, the
+destructive qualification image established the first real GeofenceStore
+baseline:
+
+- store: `ready=yes`, `resource=CLEAR`, `token_state=VALID`;
+- incarnation: non-zero hardware-generated `D93BBFF182C898DC`;
+- revision: `1`;
+- page A: `COMMITTED_CLEAR`, generation `1`, tail erased;
+- page B: `ERASED`;
+- no mutation failure or reconciliation was reported.
+
+This is physical evidence for the initial blank-partition -> committed CLEAR
+transaction only. A/B successor mutation, reboot persistence and power-cut
+recovery remain pending.
+
 ## 10. Physical qualification safety gate
 
 M6D3B is the first geofence slice allowed to mutate physical flash.
