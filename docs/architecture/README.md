@@ -38,12 +38,14 @@ boundary and layered validation model. It is architecture direction, not evidenc
 that those later runtimes exist.
 
 Owner-approved current geofence operational direction is recorded in
-`ORUN_GEOFENCE_OPERATIONAL_POLICY.md`. For later M6D implementation it refines
-older conceptual fixed NEAR/outside cadence notes: current product state is
-INSIDE/OUTSIDE, apparent state changes use bounded 2-of-3 accepted-observation
-confirmation, confirmed OUTSIDE derives runtime cadence `B / 3`, and
-`NEAR_FENCE` is deferred. It does not change M6C geometry evidence, TLP v1,
-secure EVENT transport requirements or the trustworthy-LOST/contact boundary.
+`ORUN_GEOFENCE_OPERATIONAL_POLICY.md`. M6D2 now implements the software
+composition from already accepted Location into the validated geometry/state
+owners, bounded 2-of-3 transition confirmation and runtime `B / 3` OUTSIDE
+cadence. The normal production image still leaves the coordinator unconfigured
+because no authorized durable geofence resource owner exists yet; focused
+physical GNSS/geofence qualification also remains deferred. `NEAR_FENCE` is
+still deferred, and none of this changes TLP v1, secure EVENT transport
+requirements or the trustworthy-LOST/contact boundary.
 
 Owner-approved delegated-command security direction is recorded in
 `ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md`. The durable audit record is
@@ -54,6 +56,17 @@ prompts/transcripts and superseded draft files were removed after disposition to
 keep architecture sources clean. This is owner-approved architecture/design
 direction only; it does not authorize production secure-RF runtime or freeze
 COMMAND/RESULT bytes.
+
+The M6D3 production geofence resource foundation is recorded in
+`docs/milestones/M6D3.md`, with durable focused-review disposition in
+`docs/audits/M6D3_GEOFENCE_RESOURCE_FOUNDATION_AUDIT_DISPOSITION.md`.
+The focused architecture audit accepted the 8-area/64-total-effective-vertex
+capacity, dedicated `0x0E5000..0x0E7000` two-page A/B reservation, separate
+96-bit geofence CAS namespace and whole-resource REPLACE/CLEAR model. The
+required build-ceiling/recovery/canonicalization corrections were applied, and
+focused verification returned **PASS WITH MINOR DOC FIX** with 0
+BLOCKER/HIGH/MEDIUM. The architecture contract is implementation-ready for
+M6D3A. No GeofenceStore writer or production runtime activation exists yet.
 
 The current draft geofence configuration/distribution direction is recorded in
 `ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md`, with independent review history

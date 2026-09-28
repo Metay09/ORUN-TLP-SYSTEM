@@ -666,17 +666,19 @@ runtime already exists.
 
 ## 15. Implementation gates and sequencing
 
-M6D's **local operational state machine is not blocked by M7/TLP v2**.
-
-It may be implemented and host-tested against a narrow read-only
-`ActiveAreaSetProvider`-style seam (exact class name unfrozen). Focused physical
-GNSS/geofence validation may use a compile-gated/test-only fixture area set that
-is never part of the production configuration source. The prohibition on a
-"fake hard-coded production fence" does **not** prohibit such explicit test
-fixtures.
+M6D2's **local operational runtime is implemented and merged and is not blocked
+by M7/TLP v2**. It currently consumes a bounded in-memory area set but the normal
+production image deliberately leaves that area set unconfigured. Focused
+physical GNSS/geofence validation may continue to use the existing
+compile-gated/test-only fixture that is never part of the production
+configuration source. The prohibition on a "fake hard-coded production fence"
+does **not** prohibit that explicit test fixture.
 
 What remains gated on the configuration/security work is the **production
 durable/user-mutable geofence source and remote/local protected mutation path**.
+The next foundation slice is recorded in `docs/milestones/M6D3.md`: it freezes
+the first production capacity, dedicated persistence range and independent
+geofence-resource CAS namespace before any BLE/LoRa writer exists.
 
 Before production geofence configuration is enabled, separately close:
 
@@ -719,17 +721,17 @@ The development ordering is intentionally two-track:
 
 ```text
 M6D local behavior:
-operational state-machine contract
--> provider seam
--> host tests
--> test-only fixture + focused GNSS/geofence physical validation
+operational state-machine contract            [DONE]
+-> bounded runtime composition + host tests   [DONE]
+-> test-only fixture                          [DONE]
+-> focused GNSS/geofence physical validation  [DEFERRED]
 
 Production configuration:
 resource contract
--> capacity/storage/CAS
--> secure BLE + protected LoRa resource transfer
+-> capacity/storage/CAS                       [NEXT: M6D3]
 -> atomic durable active geofence source
--> connect production provider to M6D
+-> connect production provider to M6D2
+-> secure BLE + protected LoRa resource transfer
 
 Then:
 secure OUTSIDE EVENT delivery
