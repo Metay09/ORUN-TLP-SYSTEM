@@ -87,4 +87,18 @@ class NrfSecurityFlash : public FlashBackend {
  private:
   bool ready_ = false;
 };
+
+// M6D3B: synchronous-only primitive for the dedicated geofence A/B region.
+// This is a sibling of the other Nrf*Flash backends, not a shared generic HAL.
+// FlashMutationGate owns it for the SoftDevice-disabled path and supplies the
+// asynchronous/arbitrated path once SoftDevice is active.
+class NrfGeofenceFlash : public FlashBackend {
+ public:
+  bool begin() override;
+  bool read(uint32_t offset, void* data, size_t size) const override;
+  FlashOpResult program(uint32_t offset, const void* data, size_t size) override;
+  FlashOpResult erasePage(uint32_t page) override;
+ private:
+  bool ready_ = false;
+};
 }  // namespace orun_tlp
