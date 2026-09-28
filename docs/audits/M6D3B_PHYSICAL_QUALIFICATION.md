@@ -163,3 +163,30 @@ This still does **not** prove:
 - subsequent A/B rollover back to page A;
 - physical electrical power-cut recovery;
 - SoftDevice-enabled arbitration.
+
+
+## Reboot observation — identity ambiguity, not yet counted as PASS
+
+After the Stage 2B CONFIGURED state was committed, two RAK devices were
+simultaneously connected to the Debian host and the operator pressed reset on
+both devices.
+
+The serial monitor reconnected and displayed the expected recovered state with
+the exact same durable token incarnation and revision:
+
+```text
+resource=CONFIGURED token_state=VALID
+incarnation=0xD93BBFF182C898DC revision=2
+PAGE A = COMMITTED_CLEAR generation=1 revision=1
+PAGE B = COMMITTED_CONFIGURED generation=2 revision=2
+```
+
+This is strongly consistent with successful reboot recovery on the programmed
+unit. However, because two USB ACM devices were present and both were reset,
+the USB tty mapping may have changed during reconnect. Therefore this
+observation is deliberately **not yet counted as formal reboot-persistence
+PASS**.
+
+The next action is to establish an unambiguous persistent USB identity/port for
+the qualification unit and repeat one reboot on only that unit. No additional
+GeofenceStore mutation should be performed before that disambiguation.
