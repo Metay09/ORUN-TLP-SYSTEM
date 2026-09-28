@@ -27,11 +27,19 @@ static_assert(kPageHeaderSize + kRecordsPerPage * kRecordSize == kPageSize, "pag
 // M7P6B gave the security region a real owner (SecurityStore,
 // firmware/include/security_store.h) -- durable credential/TX-nonce
 // persistence only; no cryptography, secure RF envelope or BLE runtime.
+// M6D3A reserves a two-page GeofenceStore region immediately below the
+// existing M7 chain. This slice reserves/protects the bytes only; it does not
+// add a GeofenceStore writer or runtime owner.
 // The "kFuture*" names are kept even after a region gains an owner, matching
 // M7P4's own precedent, to avoid unrelated renames/churn.
+constexpr uint32_t kGeofenceRegionPages = 2;
 constexpr uint32_t kFutureSecurityRegionPages = 2;
 constexpr uint32_t kFutureConfigRegionPages = 2;
 constexpr uint32_t kFutureBondRegionPages = 2;
+
+constexpr uint32_t kGeofenceRegionStart = 0x0E5000;
+constexpr uint32_t kGeofenceRegionEnd =
+    kGeofenceRegionStart + kGeofenceRegionPages * kPageSize;
 
 constexpr uint32_t kFutureSecurityRegionStart = 0x0E7000;
 constexpr uint32_t kFutureSecurityRegionEnd =
@@ -43,12 +51,16 @@ constexpr uint32_t kFutureBondRegionStart = kFutureConfigRegionEnd;
 constexpr uint32_t kFutureBondRegionEnd =
     kFutureBondRegionStart + kFutureBondRegionPages * kPageSize;
 
-// The M7P2 build guard (firmware/scripts/check_storage_layout.py) enforces
-// that no linked application byte reaches this address; it derives its own
-// ceiling literal from this exact symbol's value at build time (parsed from
-// this file), so there is one source of truth, not two.
-constexpr uint32_t kApplicationPolicyEndAddress = kFutureSecurityRegionStart;
+// The post-link guard in scripts/check_storage_layout.py enforces that no
+// linked application byte reaches the lowest reserved data region. M6D3A moves
+// that boundary from SecurityStore's 0x0E7000 down to GeofenceStore's 0x0E5000.
+// The parser validates this alias plus the contiguous geofence->security chain.
+constexpr uint32_t kApplicationPolicyEndAddress = kGeofenceRegionStart;
 
+static_assert(kGeofenceRegionStart % kPageSize == 0,
+              "geofence region must start page-aligned");
+static_assert(kGeofenceRegionEnd % kPageSize == 0,
+              "geofence region must end page-aligned");
 static_assert(kFutureSecurityRegionStart % kPageSize == 0,
               "security region must start page-aligned");
 static_assert(kFutureSecurityRegionEnd % kPageSize == 0,
@@ -58,6 +70,9 @@ static_assert(kFutureConfigRegionEnd % kPageSize == 0,
 static_assert(kFutureBondRegionEnd % kPageSize == 0,
               "bond region must end page-aligned");
 
+static_assert(kGeofenceRegionEnd - kGeofenceRegionStart ==
+                  kGeofenceRegionPages * kPageSize,
+              "geofence region must be exactly its declared page count");
 static_assert(kFutureSecurityRegionEnd - kFutureSecurityRegionStart ==
                   kFutureSecurityRegionPages * kPageSize,
               "security region must be exactly its declared page count");
@@ -68,11 +83,13 @@ static_assert(kFutureBondRegionEnd - kFutureBondRegionStart ==
                   kFutureBondRegionPages * kPageSize,
               "bond region must be exactly its declared page count");
 
-// Chained equalities make the four regions exactly contiguous and
-// non-overlapping by construction: application | security | config | bond |
-// history, with no gap and no overlap anywhere in that chain.
-static_assert(kApplicationPolicyEndAddress == kFutureSecurityRegionStart,
-              "application policy ceiling must equal security region start");
+// Chained equalities make the reserved regions exactly contiguous and
+// non-overlapping by construction: application | geofence | security | config
+// | bond | history, with no gap and no overlap anywhere in that chain.
+static_assert(kApplicationPolicyEndAddress == kGeofenceRegionStart,
+              "application policy ceiling must equal geofence region start");
+static_assert(kGeofenceRegionEnd == kFutureSecurityRegionStart,
+              "geofence region must directly abut security region");
 static_assert(kFutureSecurityRegionEnd == kFutureConfigRegionStart,
               "security region must directly abut config region");
 static_assert(kFutureConfigRegionEnd == kFutureBondRegionStart,
