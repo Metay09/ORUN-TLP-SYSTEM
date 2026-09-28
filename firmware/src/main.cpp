@@ -22,7 +22,10 @@
 #include "flash_mutation_gate.h"
 #include "gnss_manager.h"
 #include "geofence_confirmation_coordinator.h"
+#include "geofence_incarnation_source.h"
 #include "geofence_runtime_policy.h"
+#include "geofence_runtime_provider.h"
+#include "geofence_store.h"
 #include "node_role.h"
 #include "power_manager.h"
 #include "radio_manager.h"
@@ -51,6 +54,9 @@ orun_tlp::HistoryStore history(storage_flash_gate);
 orun_tlp::NrfConfigIncarnationSource config_incarnation_source;
 orun_tlp::ConfigStore config_store(storage_flash_gate.configPort(),
                                    &config_incarnation_source);
+orun_tlp::NrfGeofenceIncarnationSource geofence_incarnation_source;
+orun_tlp::GeofenceStore geofence_store(storage_flash_gate.geofencePort(),
+                                       &geofence_incarnation_source);
 // M7P7D/M7P7E: one typed, transport-neutral application request owner.
 // USB and BLE now share this same owner; requester provenance prevents either
 // adapter from consuming the other's response. M7P7G exposes only M7P7F's
@@ -76,11 +82,10 @@ uint32_t next_usb_application_request_id = 1;
 orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort(),
                                        storage_flash_gate.securityMaintPort());
 orun_tlp::PositionFlow positions(history, radio_manager);
-// M6D2 production composition seam. M6D3B defines a durable GeofenceStore
-// owner, but no production GeofenceStore instance/provider is wired here yet.
-// The coordinator therefore remains unconfigured in the normal image and cannot
-// change field behavior. M6D3C will connect only a committed read-only snapshot
-// through this seam; no hard-coded production polygon.
+// M6D3C production composition seam. GeofenceStore owns durable semantic
+// authority; the M6D2 coordinator owns runtime geometry/confirmation. Boot
+// applies only the already-recovered CLEAR/CONFIGURED semantic snapshot across
+// the narrow provider below. No BLE/LoRa writer is enabled by this slice.
 orun_tlp::GeofenceConfirmationCoordinator geofence_confirmation;
 orun_tlp::GnssFix geofence_episode_fixes[
     orun_tlp::geofence_operational_config::kConfirmationObservationLimit]{};
@@ -1695,6 +1700,41 @@ void setup() {
   } else if (config_store.tokenState() != orun_tlp::ConfigTokenState::kValid) {
     Serial.println(F("CONFIG token unavailable; defaults in effect"));
   }
+
+  // M6D3C: recover the dedicated geofence resource while SoftDevice is still
+  // disabled, then apply only its semantic snapshot to the existing M6D2
+  // runtime owner. Token validity is intentionally not used as a synonym for
+  // semantic readability: M6D3B may preserve CLEAR/CONFIGURED read-only
+  // semantics while mutation/CAS authority is UNCERTAIN.
+  if (!geofence_store.begin()) {
+    Serial.println(F("GEOFENCE durable store unavailable; runtime unconfigured"));
+  } else {
+    orun_tlp::geofence_format::Snapshot geofence_snapshot;
+    if (!geofence_store.currentSnapshot(geofence_snapshot)) {
+      Serial.println(F("GEOFENCE durable authority unavailable; runtime unconfigured"));
+    } else {
+      const auto applied = orun_tlp::applyGeofenceSnapshotToRuntime(
+          geofence_snapshot, geofence_confirmation);
+      if (applied == orun_tlp::GeofenceRuntimeApplyResult::kConfigured) {
+        Serial.printf("GEOFENCE runtime configured areas=%u vertices=%u token=%s\n",
+                      static_cast<unsigned>(geofence_snapshot.area_count),
+                      static_cast<unsigned>(geofence_snapshot.total_vertex_count),
+                      geofence_store.tokenState() ==
+                              orun_tlp::GeofenceTokenState::kValid
+                          ? "VALID"
+                          : "UNCERTAIN");
+      } else if (applied == orun_tlp::GeofenceRuntimeApplyResult::kCleared) {
+        Serial.printf("GEOFENCE runtime clear token=%s\n",
+                      geofence_store.tokenState() ==
+                              orun_tlp::GeofenceTokenState::kValid
+                          ? "VALID"
+                          : "UNCERTAIN");
+      } else {
+        Serial.println(F("GEOFENCE durable snapshot rejected; runtime unconfigured"));
+      }
+    }
+  }
+
   // M7P6B: recovery only -- never provisions a credential. See the
   // composition-root comment on security_store above.
   if (!security_store.begin(device_identity)) {
@@ -1718,9 +1758,9 @@ void setup() {
   accelerometer_manager.begin(orun_tlp::monotonic::nowMs());
   Serial.println(F("ROLE AUTO pending (GNSS=>TRACKER, no GNSS=>BASE)"));
 
-  // M7P7B: BLE starts last, strictly after History/Config/Security have
-  // finished their SoftDevice-disabled synchronous recovery above --
-  // NrfHistoryFlash::begin() (and the Config/Security equivalents) fail
+  // M7P7B: BLE starts last, strictly after History/Config/Geofence/Security
+  // have finished their SoftDevice-disabled synchronous recovery above --
+  // NrfHistoryFlash::begin() (and the Config/Geofence/Security equivalents) fail
   // closed if SoftDevice is already enabled when they run, and
   // Bluefruit.begin() is what enables SoftDevice for the rest of this boot
   // (docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md §9: the sync/async
@@ -1919,7 +1959,7 @@ void loop() {
   // a no-op (SoftDevice disabled); once Bluefruit.begin() succeeds above,
   // this consumes the M7P7A-forwarded gate-owned completion mailbox instead
   // of racing Bluefruit's own sd_evt_get() consumption. One shared drain for
-  // History, Config (M7P5) and Security (M7P6B) clients.
+  // History, Config (M7P5), Geofence (M6D3C) and Security (M7P6B) clients.
   storage_flash_gate.pumpEvents();
   // Leave local TX undisturbed; otherwise service one small flash operation.
   // config_store.poll() shares the same TX guard as history.poll() -- a
