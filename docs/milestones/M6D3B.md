@@ -4,7 +4,7 @@ Status: **SOFTWARE VALIDATION PASS ON BRANCH; INDEPENDENT ASTRA AUDIT + FOCUSED 
 
 Baseline: `main@e566125afb9a08aaa5da8656d22d82e6a7580aed` (M6D3A merged via PR #54).
 Branch: `feat/m6d3b-geofence-store`.
-Current validated head: `59145cbe9badabdaf58b38004562ca59964e117b`.
+Current validated head: `f0d3a76d29c5bd5dd75691ffc2d63f4fed458361`.
 
 ## 1. Purpose
 
@@ -232,10 +232,12 @@ Rationale:
 - geofence commits are larger and human/config driven;
 - routine security maintenance remains lowest normal class.
 
-Existing request-aging remains unchanged. A staged request older than the
-existing 4000-ms operation budget is temporarily promoted to the top effective
-priority, so Geofence and SEC_MAINT cannot starve forever under sustained higher
-priority traffic.
+A staged request older than the existing 4000-ms operation budget enters an
+aged tier above every fresh request, including fresh SEC_CRITICAL. Among aged
+requests, the oldest staged request wins; normal priority is only the
+deterministic tie-breaker. This closes the audit-proven starvation hole where
+mapping aged work merely to SEC_CRITICAL could still lose forever to freshly
+polled SEC_CRITICAL callers.
 
 An admitted physical mutation is never preempted.
 
@@ -305,6 +307,7 @@ post-link guards active. This is software/build evidence only.
 - Geofence > SEC_MAINT;
 - caller buffer copied into gate-owned 560-byte staging;
 - aged Geofence > fresh Config anti-starvation behavior;
+- aged Geofence > fresh SEC_CRITICAL anti-starvation regression;
 - accepted timeout -> quarantine -> late completion release.
 
 All older gate tests are still linked against the new sibling backend so the
@@ -346,6 +349,42 @@ No image has been uploaded to hardware in M6D3B yet. Therefore:
 - physical flash preflight: **NOT RUN**;
 - physical A/B persistence/reboot: **NOT RUN**;
 - physical power-cut qualification: **NOT RUN**.
+
+## 9.2. Post-audit fix validation at f0d3a76d
+
+The independent pre-physical audit returned PASS WITH FIXES and identified two
+merge/destructive-qualification blockers plus one source-contract test weakness:
+
+1. an aged Geofence request could still starve behind a continuous stream of
+   fresh SEC_CRITICAL requests because aging only promoted it to the same
+   numeric priority;
+2. the destructive qualification image could exceed the framework's 4-KiB
+   loop-task stack on the fresh-baseline path due to nested record-sized local
+   buffers;
+3. the forbidden-owner source-contract regex used an escaped boundary pattern
+   that could fail to match real forbidden symbols.
+
+All three were corrected on this branch.
+
+Post-fix evidence at `f0d3a76d29c5bd5dd75691ffc2d63f4fed458361`:
+
+- complete `./firmware/tests/run_host_tests.sh`: **PASS**;
+- `M6D3B source ownership/activation contract: PASS`;
+- `M6D3B GeofenceStore recovery/mutation checks: PASS`;
+- `M6D3B FlashMutationGate geofence client checks: PASS`;
+- production `rak4630`: **SUCCESS**, RAM **24,224 B**, Flash **252,748 B**;
+- read-only preflight: **SUCCESS**, RAM **8,740 B**, Flash **58,588 B**;
+- destructive qualification image: **SUCCESS**, RAM **14,588 B**, Flash
+  **68,596 B**.
+
+The qualification RAM increase is intentional: record-sized recovery,
+verification and diagnostic workspaces were moved off the 4-KiB task stack into
+process-lifetime/static storage. The production image still has no
+`GeofenceStore` instance, so production RAM remains unchanged at 24,224 B.
+
+No M6D3B image has yet been uploaded to hardware. Physical preflight,
+persistence, reboot and electrical power-cut evidence therefore remain
+**NOT RUN**.
 
 ## 10. Physical qualification safety gate
 
