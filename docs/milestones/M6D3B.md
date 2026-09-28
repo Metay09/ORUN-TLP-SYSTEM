@@ -1,10 +1,10 @@
 # M6D3B — Durable GeofenceStore + physical flash owner
 
-Status: **IMPLEMENTED ON BRANCH; HOST/RAK4630 VALIDATION + INDEPENDENT ASTRA AUDIT + FOCUSED PHYSICAL QUALIFICATION PENDING**.
+Status: **SOFTWARE VALIDATION PASS ON BRANCH; INDEPENDENT ASTRA AUDIT + FOCUSED PHYSICAL QUALIFICATION PENDING**.
 
 Baseline: `main@e566125afb9a08aaa5da8656d22d82e6a7580aed` (M6D3A merged via PR #54).
 Branch: `feat/m6d3b-geofence-store`.
-Current implementation head at initial milestone record: `f7161d208469ed930f435b566a4aa8bc68efc1c3`.
+Current validated head: `59145cbe9badabdaf58b38004562ca59964e117b`.
 
 ## 1. Purpose
 
@@ -263,7 +263,15 @@ No production `GeofenceStore` instance is wired in M6D3B. Therefore the
 store's snapshot/blob buffers should remain linker-dead-stripped from the normal
 image; only the gate-client footprint is expected to remain.
 
-Final RAM/Flash delta must be recorded from the RAK4630 production build.
+Validated production build at `59145cbe9badabdaf58b38004562ca59964e117b`:
+
+- RAM: **24,224 / 248,832 bytes = 9.7%**
+- Flash: **252,540 / 815,104 bytes = 31.0%**
+- M6D3A production baseline: 23,584 B RAM / 250,476 B Flash
+- M6D3B production delta: **+640 B RAM, +2,064 B Flash**
+
+The production build succeeded with the application-ceiling and exclusive-owner
+post-link guards active. This is software/build evidence only.
 
 ## 9. Host evidence added
 
@@ -312,6 +320,32 @@ existing History/Config/Security contracts must remain green.
 - read-only physical preflight contains no flash mutation API/primitive;
 - preflight PlatformIO target does not link GeofenceStore or NrfGeofenceFlash;
 - destructive qual target explicitly links both.
+
+## 9.1. Validation evidence at 59145cbe
+
+The complete host suite passed after fixing the source-contract test to strip
+comments before checking forbidden owner symbols. The earlier PositionFlow
+failure was a test false positive caused by the explanatory header comment
+"No GNSS, PositionFlow..." and did not represent a C++ dependency.
+
+Observed PASS lines include:
+
+- `M6D3B source ownership/activation contract: PASS`
+- `M6D3B GeofenceStore recovery/mutation checks: PASS`
+- `M6D3B FlashMutationGate geofence client checks: PASS`
+- all pre-existing B1A..B4, M3..M7, R2..R4 and production-startup scenarios.
+
+RAK4630 builds:
+
+- `rak4630`: SUCCESS; RAM 24,224 B; Flash 252,540 B.
+- `rak4630_m6d3b_geofence_preflight`: SUCCESS; RAM 8,740 B; Flash 58,588 B.
+- `rak4630_m6d3b_geofence_qual`: SUCCESS; RAM 10,664 B; Flash 68,660 B.
+
+No image has been uploaded to hardware in M6D3B yet. Therefore:
+
+- physical flash preflight: **NOT RUN**;
+- physical A/B persistence/reboot: **NOT RUN**;
+- physical power-cut qualification: **NOT RUN**.
 
 ## 10. Physical qualification safety gate
 
