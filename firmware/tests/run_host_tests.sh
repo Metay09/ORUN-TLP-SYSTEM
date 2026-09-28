@@ -90,6 +90,7 @@ g++ "${portable_flags[@]}" firmware/tests/m6/test_m6d3b_geofence_store.cpp \
   firmware/src/geofence_geometry.cpp firmware/src/journal_format.cpp \
   firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m6d3b_geofence_store"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m6/test_m6d3b_source_contract.py
 "$test_dir/m6d3b_geofence_store"
 "$test_dir/m6d3a_geofence_format"
 
