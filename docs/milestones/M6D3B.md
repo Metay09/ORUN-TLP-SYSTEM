@@ -1,6 +1,6 @@
 # M6D3B — Durable GeofenceStore + physical flash owner
 
-Status: **SOFTWARE + INDEPENDENT AUDIT PASS; PHYSICAL PREFLIGHT + FIRST A/B WRITE + REBOOT PERSISTENCE PASS; NEXT ROLLOVER / POWER-CUT / MERGE PENDING**.
+Status: **SOFTWARE + INDEPENDENT AUDIT PASS; PHYSICAL PREFLIGHT + A/B WRITE/ROLLOVER + REBOOT PERSISTENCE PASS; POWER-CUT / FINAL DISPOSITION / MERGE PENDING**.
 
 Baseline: `main@e566125afb9a08aaa5da8656d22d82e6a7580aed` (M6D3A merged via PR #54).
 Branch: `feat/m6d3b-geofence-store`.
@@ -485,6 +485,23 @@ After reset, GeofenceStore recovered:
 
 This closes reboot persistence for the first successor transaction. The next
 A/B rollover and electrical power-cut qualification remain pending.
+
+## 9.8. Physical A/B rollover PASS
+
+From CONFIGURED generation/revision 2 on page B, one `CLEAR` mutation
+completed with `CONFIRMED`:
+
+- resource: `CLEAR`;
+- token state: `VALID`;
+- incarnation unchanged: `D93BBFF182C898DC`;
+- revision: `2 -> 3`;
+- generation: `2 -> 3`;
+- page A became the new `COMMITTED_CLEAR` generation 3 / revision 3;
+- page B retained the previous `COMMITTED_CONFIGURED` generation 2 / revision 2;
+- no failure or reconciliation occurred.
+
+This closes one full normal physical A/B alternation cycle
+CLEAR -> CONFIGURED -> CLEAR.
 
 ## 10. Physical qualification safety gate
 
