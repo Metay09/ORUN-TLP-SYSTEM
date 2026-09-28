@@ -7,6 +7,7 @@ root = Path(__file__).resolve().parents[2]
 main = (root / "src" / "main.cpp").read_text()
 gate_h = (root / "include" / "flash_mutation_gate.h").read_text()
 store_h = (root / "include" / "geofence_store.h").read_text()
+store_cpp = (root / "src" / "geofence_store.cpp").read_text()
 preflight = (root / "tests" / "m6" / "m6d3b_geofence_preflight.cpp").read_text()
 platformio = (root / "platformio.ini").read_text()
 
@@ -20,7 +21,8 @@ assert "class GeofenceStore" in store_h
 # owner. Comments intentionally name several forbidden owners to document the
 # boundary, so inspect C++ code after removing comments instead of doing a raw
 # substring scan.
-store_code = re.sub(r"/\\*.*?\\*/", "", store_h, flags=re.DOTALL)
+store_code = re.sub(r"/\\*.*?\\*/", "", store_h + "\n" + store_cpp,
+                    flags=re.DOTALL)
 store_code = re.sub(r"//.*?$", "", store_code, flags=re.MULTILINE)
 for forbidden in (
     "GnssManager",
