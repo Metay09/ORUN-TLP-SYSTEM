@@ -1,10 +1,14 @@
 # M6D3A — Geofence layout + format/classifier foundation
 
-Status: **IMPLEMENTED ON BRANCH; OWNER HOST/RAK4630 VALIDATION PENDING; NO PHYSICAL PERSISTENCE CLAIM**.
+Status: **IMPLEMENTED; FULL HOST PASS; PRODUCTION RAK4630 BUILD PASS; INDEPENDENT ASTRA AUDIT PENDING; NO PHYSICAL PERSISTENCE CLAIM**.
 
 Baseline: `main@5980f06eeb3cb55fcb09aa89ef3565a51c88dcda` (M6D3 architecture docs merged via PR #53).
 Branch: `feat/m6d3a-geofence-format-foundation`.
-Implementation head before validation docs: `f31a3b2b54cdc8f34c2b5fa0290a3193c1c3dc2e`.
+Implementation/fix head validated by owner: `7a87e196076c37b807cb8181b3bd5a84aeadc060`.
+The first validation attempt correctly failed because the initial pure parser regex
+searched for literal `\\s` instead of whitespace; that parser bug was fixed
+without changing the storage contract. A test-fixture endpoint typo was also
+corrected before the successful validation rerun.
 
 ## Purpose
 
@@ -149,15 +153,33 @@ No changes are made to:
 Expected production behavior delta: **none**. The only production build effect
 is the stricter application flash ceiling; format code has no runtime caller.
 
-## Validation still required
+## Validation evidence
 
-Before audit/merge:
+Owner validation on `7a87e196076c37b807cb8181b3bd5a84aeadc060`:
 
-1. run `./firmware/tests/run_host_tests.sh`;
-2. run `pio run -d firmware -e rak4630` and confirm the post-link ceiling guard;
-3. record final RAM/flash;
-4. independent Astra audit of this code-bearing slice;
-5. fix any real findings and repeat affected validation.
+```text
+./firmware/tests/run_host_tests.sh
+  M6D3A storage ceiling parser checks: PASS
+  M6D3A geofence format/classifier checks: PASS
+  complete host suite: PASS
+
+pio run -d firmware -e rak4630
+  application ceiling guard: PASS at 0x0E5000
+  RAM:   23,584 / 248,832 bytes = 9.5%
+  Flash: 250,476 / 815,104 bytes = 30.7%
+  result: SUCCESS
+```
+
+The production RAM/flash figures are byte-identical to the merged M6D2
+production image. The new format/classifier code has no production runtime caller
+and is dead-stripped, as intended; the production-visible change is the stricter
+reserved-flash ceiling.
+
+Before merge:
+
+1. independent Astra audit of this code-bearing slice;
+2. fix any real findings and repeat affected validation;
+3. record final audit disposition.
 
 M6D3A does **not** require physical hardware testing because it has no flash
 writer. Host/build PASS must not be reported as physical persistence or power-cut
