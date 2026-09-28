@@ -243,3 +243,26 @@ This closes the normal physical A/B alternation path for one complete
 CLEAR -> CONFIGURED -> CLEAR cycle.
 
 Still pending: focused physical electrical power-cut qualification.
+
+
+## Stage 3A — power-cut probe pre-cut state verified
+
+The focused test-only power-cut image was uploaded to the previously qualified
+unit and boot/recovery was checked before arming any mutation.
+
+Observed state:
+
+```text
+M6D3B POWERCUT STORE ready=yes busy=no maintenance=no resource=CLEAR token_state=VALID mutations=0 failures=0 reconciliations=0
+M6D3B POWERCUT TOKEN incarnation=0xD93BBFF182C898DC revision=3
+M6D3B POWERCUT SNAPSHOT state=CLEAR areas=0 vertices=0
+M6D3B POWERCUT PAGE A evidence=COMMITTED_CLEAR decoded=yes tail_ff=yes generation=0x0000000000000003 incarnation=0xD93BBFF182C898DC revision=3 state=CLEAR areas=0 vertices=0
+M6D3B POWERCUT PAGE B evidence=COMMITTED_CONFIGURED decoded=yes tail_ff=yes generation=0x0000000000000002 incarnation=0xD93BBFF182C898DC revision=2 state=CONFIGURED areas=1 vertices=3
+```
+
+Result: **PASS** for the pre-cut read-only recovery state.
+
+This confirms the power-cut probe did not manufacture a baseline or mutate the
+partition at boot. The authoritative state entering the electrical cut test is
+page A CLEAR generation/revision 3 with the prior page B CONFIGURED
+generation/revision 2.
