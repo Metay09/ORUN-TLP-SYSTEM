@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """M6D3B scope contract: flash owner exists without product activation."""
 from pathlib import Path
+import re
 
 root = Path(__file__).resolve().parents[2]
 main = (root / "src" / "main.cpp").read_text()
@@ -15,7 +16,12 @@ assert ".geofencePort()" not in main
 assert "geofencePort()" in gate_h
 assert "class GeofenceStore" in store_h
 
-# M6D3B must not smuggle transport/runtime ownership into the persistence owner.
+# M6D3B must not smuggle transport/runtime ownership into the persistence
+# owner. Comments intentionally name several forbidden owners to document the
+# boundary, so inspect C++ code after removing comments instead of doing a raw
+# substring scan.
+store_code = re.sub(r"/\\*.*?\\*/", "", store_h, flags=re.DOTALL)
+store_code = re.sub(r"//.*?$", "", store_code, flags=re.MULTILINE)
 for forbidden in (
     "GnssManager",
     "PositionFlow",
@@ -23,7 +29,7 @@ for forbidden in (
     "GeofenceConfirmationCoordinator",
     "Bluefruit",
 ):
-    assert forbidden not in store_h, forbidden
+    assert re.search(rf"\\b{re.escape(forbidden)}\\b", store_code) is None, forbidden
 
 # The physical preflight must remain structurally read-only: no backend with
 # mutator methods and no Nordic flash primitive may even be linked by its env.
