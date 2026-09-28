@@ -84,6 +84,13 @@ g++ "${b3_flags[@]}" firmware/tests/m6/test_m6d3a_geofence_format.cpp \
   firmware/src/geofence_format.cpp firmware/src/geofence_geometry.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m6d3a_geofence_format"
+
+g++ "${portable_flags[@]}" firmware/tests/m6/test_m6d3b_geofence_store.cpp \
+  firmware/src/geofence_store.cpp firmware/src/geofence_format.cpp \
+  firmware/src/geofence_geometry.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/m6d3b_geofence_store"
+"$test_dir/m6d3b_geofence_store"
 "$test_dir/m6d3a_geofence_format"
 
 g++ "${b3_flags[@]}" \
@@ -181,6 +188,7 @@ g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   firmware/src/flash_mutation_gate.cpp firmware/src/nrf_history_flash.cpp \
   firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
+  firmware/src/nrf_geofence_flash.cpp \
   -o "$test_dir/m7p6f_security_gate_integration"
 "$test_dir/m7p6f_security_gate_integration"
 g++ -Ifirmware/tests/m7 "${portable_flags[@]}" \
@@ -196,6 +204,14 @@ g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   firmware/tests/m7/test_m7p6_flash_gate.cpp firmware/src/flash_mutation_gate.cpp \
   firmware/src/nrf_history_flash.cpp firmware/src/nrf_config_flash.cpp \
   firmware/src/nrf_security_flash.cpp -o "$test_dir/m7p6_flash_gate"
+
+g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
+  -Wl,--defsym,__flash_arduino_end=0xED000 \
+  firmware/tests/m6/test_m6d3b_flash_gate.cpp firmware/src/flash_mutation_gate.cpp \
+  firmware/src/nrf_history_flash.cpp firmware/src/nrf_config_flash.cpp \
+  firmware/src/nrf_security_flash.cpp firmware/src/nrf_geofence_flash.cpp \
+  -o "$test_dir/m6d3b_flash_gate"
+"$test_dir/m6d3b_flash_gate"
 "$test_dir/m7p6_flash_gate"
 g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
@@ -262,6 +278,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/tlp_relay_forward_packet.cpp firmware/src/history_store.cpp \
   firmware/src/journal_format.cpp firmware/src/nrf_history_flash.cpp \
   firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
+  firmware/src/nrf_geofence_flash.cpp \
   firmware/src/flash_mutation_gate.cpp \
   firmware/src/config_store.cpp firmware/src/config_format.cpp \
   firmware/src/application_request.cpp \
