@@ -514,12 +514,33 @@ SecurityStore by making the page-header commit word the final A/B page activatio
 an interrupted new-page build leaves the older committed page authoritative, while
 ambiguous committed security state fails protected TX closed.
 
+## Post-ADR supersession note — M6D3 geofence reservation
+
+M7P1 originally reserved six pages at `0x0E7000..0x0ED000` for Security,
+Config and BLE bonds. M6D3 later adds a separate proposed two-page GeofenceStore
+immediately below that layout:
+
+```text
+0x0E5000..0x0E7000  GeofenceStore (2 pages, proposed by M6D3)
+0x0E7000..0x0E9000  SecurityStore
+0x0E9000..0x0EB000  ConfigStore
+0x0EB000..0x0ED000  BLE bond InternalFS
+0x0ED000..0x0F4000  HistoryStore
+```
+
+Accordingly, once M6D3A implements the reservation,
+`kApplicationPolicyEndAddress` moves to `0x0E5000`. This supersession does
+not rewrite the historical M7P1 decision rationale; it extends the later
+canonical map. The build guard must derive the new lowest reserved boundary
+correctly rather than continuing to parse the historical SecurityStore start.
+
 ## 11. Reset/factory-reset semantics
 
 | Persistent class | Ordinary reboot | Config reset | BLE unpair | Factory reset | Secure decommission |
 | --- | --- | --- | --- | --- | --- |
 | History journal (`0x0ED000..0x0F4000`) | Preserved (existing behavior, unchanged) | **Preserved** — config reset must never touch history | Preserved | Explicit, separate action required (not implemented; no such command exists today per `ORUN_STORAGE_FLASH_OWNERSHIP.md` §10) | Explicit secure-erase action, separate from ordinary factory reset |
 | Durable config (`0x0E9000..0x0EB000`) | Preserved | **Reset to defaults** (this is what "config reset" means) | Preserved — unpairing a phone must not reset tracking/service configuration | Reset to defaults | Reset to defaults |
+| Geofence resource (`0x0E5000..0x0E7000`, M6D3 proposed owner) | Preserved | **Preserved** — ordinary ConfigStore reset does not alter the geofence | Preserved | Explicit geofence re-baseline to authoritative CLEAR under a fresh geofence incarnation | Later explicit product/security decommission policy; not implied by ordinary config reset |
 | Security material + anti-replay (`0x0E7000..0x0E9000`) | Preserved | **Preserved** — an ordinary config reset must never clear keys or roll back anti-replay counters | Preserved — unpairing one peer must not touch provisioned network/device keys | Requires an **explicit, separate secure-erase policy** (not designed here — a future security milestone's decision), never an implicit side effect of factory-resetting config | Explicit secure-erase target |
 | BLE bonds (`0x0EB000..0x0ED000`) | Preserved | Preserved — resetting config must not force every phone to re-pair | **Cleared** (this is what "BLE unpair" means — `bond_clear_prph`/`bond_clear_all` already exist in stock Bluefruit) | Cleared | Cleared |
 | Bootloader/settings (`0x0F4000..0x100000`) | N/A — not application-owned | N/A | N/A | N/A — **not in scope of any application-level reset**; this ADR does not define bootloader reset behavior | N/A |

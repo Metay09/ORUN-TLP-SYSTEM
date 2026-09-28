@@ -57,6 +57,17 @@ keep architecture sources clean. This is owner-approved architecture/design
 direction only; it does not authorize production secure-RF runtime or freeze
 COMMAND/RESULT bytes.
 
+The M6D3 production geofence resource foundation is recorded in
+`docs/milestones/M6D3.md`, with durable focused-review disposition in
+`docs/audits/M6D3_GEOFENCE_RESOURCE_FOUNDATION_AUDIT_DISPOSITION.md`.
+The focused architecture audit accepted the 8-area/64-total-effective-vertex
+capacity, dedicated `0x0E5000..0x0E7000` two-page A/B reservation, separate
+96-bit geofence CAS namespace and whole-resource REPLACE/CLEAR model, subject
+to one HIGH build-ceiling-guard correction plus bounded recovery/canonicalization
+documentation corrections. Those corrections are applied on the design branch;
+focused verification remains the final docs-merge gate. No GeofenceStore writer
+or production runtime activation exists yet.
+
 The current draft geofence configuration/distribution direction is recorded in
 `ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md`, with independent review history
 in `docs/audits/GEOFENCE_CONFIGURATION_DISTRIBUTION_AUDIT_DISPOSITION.md`.

@@ -1,8 +1,6 @@
 # ORUN Storage / Flash Ownership Audit
 
-Status: **AUDIT — no runtime/protocol change**. This document is a prerequisite
-gate for M7 BLE/DFU, future durable configuration/security material and
-authenticated store-forward. It does not authorize any of that work by itself.
+Status: **HISTORICAL OWNERSHIP AUDIT WITH LATER SUPERSESSION NOTES — no runtime/protocol change**. This document established the original M4/M7 flash facts. Later M7 owners and the M6D3 proposed geofence reservation extend the map; where this historical audit conflicts with current `storage_config.h` or the M6D3 milestone, the newer canonical owner/layout source wins.
 
 Audited main: `main@3002d060c79dec6cc0ed4bd6947c8cdf105a7b7c` (M6P1 closed;
 `kTrackingIntervalSeconds = 3 * 60` development default).
@@ -73,6 +71,26 @@ copied from an earlier document without re-verification.
 | `pio run -e rak4630` | SUCCESS, 0 warnings, RAM 14,156/248,832 (5.7%), Flash 147,144/815,104 (18.1%) | Re-run by this audit; unchanged from the M6P1 closure since this audit made no firmware change |
 | Independent ELF verification | `arm-none-eabi-nm .pio/build/rak4630/firmware.elf` shows `000ed000 T __flash_arduino_end` (exactly `0xED000`); no `InternalFS` symbol; no `flash_nrf5x_write`/`flash_nrf5x_flush` symbol; `sd_flash_write`/`sd_flash_page_erase` both present | Run directly by this audit against the built ELF, independent of `check_storage_layout.py`'s own equivalent check, as an additional cross-check |
 | `./firmware/tests/run_host_tests.sh` | **33/33 PASS**, exit 0, ASan/UBSan, `-Wall -Wextra -Werror`; includes `M4 storage repair regression checks: PASS` and `M4 production backend synchronous/SoftDevice guard checks: PASS` | Re-run by this audit; unchanged from the M6P1 closure since this audit made no firmware/test change |
+
+## Current-layout supersession note
+
+The original audit below predates the M7 Security/Config/Bond implementation and
+the M6D3 geofence-resource foundation. The later canonical top-of-application
+layout is:
+
+```text
+0x026000..0x0E5000  application policy range after M6D3A
+0x0E5000..0x0E7000  GeofenceStore reservation (M6D3 proposed; no writer yet)
+0x0E7000..0x0E9000  SecurityStore
+0x0E9000..0x0EB000  ConfigStore
+0x0EB000..0x0ED000  relocated BLE bond InternalFS
+0x0ED000..0x0F4000  HistoryStore
+0x0F4000..0x100000  bootloader/settings boundary classes
+```
+
+M6D3A must update the application-ceiling guard to `0x0E5000`; merely
+changing a C++ alias while the build script still parses
+`kFutureSecurityRegionStart == 0x0E7000` is explicitly insufficient.
 
 ## 3. nRF52840 flash ownership map (0x00000–0x100000)
 
