@@ -295,7 +295,30 @@ int main() {
     assert(store.tokenState() == GeofenceTokenState::kUncertain);
   }
 
-  // 7. Two committed incarnations are contradictory authority even if the
+  // 7. Two committed exact-lineage pages with dirty reserved tail preserve
+  // the newer semantic snapshot as read-only fallback while invalidating CAS.
+  {
+    FakeFlash flash;
+    geofence_format::Snapshot clear;
+    geofence_format::makeClearSnapshot(clear);
+    const auto configured = triangleSnapshot(7);
+    writeCommitted(flash, 0, 1, 90, 1, clear);
+    writeCommitted(flash, 1, 2, 90, 2, configured);
+    flash.bytes[kPageSize + geofence_format::kRecordSize + 12] = 0;
+
+    GeofenceStore store(flash);
+    assert(store.begin());
+    assert(store.resourceState() == GeofenceResourceState::kConfigured);
+    assert(store.tokenState() == GeofenceTokenState::kUncertain);
+    assert(store.maintenanceResetRequired());
+    geofence_format::Snapshot recovered;
+    assert(store.currentSnapshot(recovered));
+    assert(recovered.total_vertex_count == configured.total_vertex_count);
+    assert(recovered.vertices[0].latitude_e7 ==
+           configured.vertices[0].latitude_e7);
+  }
+
+  // 8. Two committed incarnations are contradictory authority even if the
   // semantic snapshot agrees.
   {
     FakeFlash flash;
@@ -309,7 +332,7 @@ int main() {
     assert(store.maintenanceResetRequired());
   }
 
-  // 8. Unsupported/newer evidence and dirty reserved tail are non-destructive.
+  // 9. Unsupported/newer evidence and dirty reserved tail are non-destructive.
   {
     FakeFlash flash;
     memset(flash.bytes.data(), 0, geofence_format::kRecordSize);
@@ -334,7 +357,7 @@ int main() {
     assert(store.maintenanceResetRequired());
   }
 
-  // 9. A commit write may physically land and still report failure. Logical
+  // 10. A commit write may physically land and still report failure. Logical
   // result remains false, then reconciliation may prove the new committed
   // successor and restore VALID authority.
   {
@@ -355,7 +378,7 @@ int main() {
     assert(store.diagnostics().recovery_reconciliations == 1);
   }
 
-  // 10. Accepted-but-unreconciled mutation blocks recovery until backend
+  // 11. Accepted-but-unreconciled mutation blocks recovery until backend
   // ownership is definitively reconciled.
   {
     FakeFlash flash;
@@ -378,7 +401,7 @@ int main() {
     assert(store.resourceState() == GeofenceResourceState::kConfigured);
   }
 
-  // 11. Partial target-page erase after a prior mutation never destroys the
+  // 12. Partial target-page erase after a prior mutation never destroys the
   // current active semantic snapshot, but contradictory inactive evidence
   // invalidates token authority.
   {
@@ -400,7 +423,7 @@ int main() {
     assert(store.tokenState() == GeofenceTokenState::kUncertain);
   }
 
-  // 12. Read failure during boot is a backend initialization failure, never a
+  // 13. Read failure during boot is a backend initialization failure, never a
   // fabricated CLEAR/CONFIGURED state.
   {
     FakeFlash flash;
