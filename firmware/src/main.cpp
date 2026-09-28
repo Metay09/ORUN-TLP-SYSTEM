@@ -85,6 +85,14 @@ orun_tlp::GnssFix geofence_episode_fixes[
     orun_tlp::geofence_operational_config::kConfirmationObservationLimit]{};
 bool geofence_representative_pending = false;
 orun_tlp::GnssFix geofence_representative_fix{};
+#ifdef ORUN_M6D2_GEOFENCE_PROBE
+// TEST-ONLY dynamic fixture. The first accepted GNSS fix becomes the centre of
+// a small local rectangle; no production image defines or persists this area.
+orun_tlp::GeoPointE7 m6d2_probe_vertices[4]{};
+orun_tlp::GeofencePolygonView m6d2_probe_areas[1]{};
+bool m6d2_probe_configured = false;
+constexpr int32_t kM6D2ProbeHalfSpanE7 = 2500;  // ~20-30 m at field latitudes.
+#endif
 orun_tlp::RoleController role_controller;
 bool automatic_role_resolved = false;
 char role_command[24]{};
@@ -1396,6 +1404,69 @@ void handleAccelerometerEvent(orun_tlp::AccelerometerManager::Event event) {
   }
 }
 
+#ifdef ORUN_M6D2_GEOFENCE_PROBE
+const char* m6d2ProbeRelationName(orun_tlp::PermittedAreaRelation relation) {
+  switch (relation) {
+    case orun_tlp::PermittedAreaRelation::kInside: return "INSIDE";
+    case orun_tlp::PermittedAreaRelation::kBoundary: return "BOUNDARY";
+    case orun_tlp::PermittedAreaRelation::kOutside: return "OUTSIDE";
+    case orun_tlp::PermittedAreaRelation::kInvalidAreaSet: return "INVALID_SET";
+    case orun_tlp::PermittedAreaRelation::kInvalidPoint: return "INVALID_POINT";
+  }
+  return "UNKNOWN";
+}
+
+bool configureM6D2ProbeAround(const orun_tlp::GnssFix& fix) {
+  if (m6d2_probe_configured) return true;
+
+  const int64_t min_lat =
+      static_cast<int64_t>(fix.latitude_e7) - kM6D2ProbeHalfSpanE7;
+  const int64_t max_lat =
+      static_cast<int64_t>(fix.latitude_e7) + kM6D2ProbeHalfSpanE7;
+  const int64_t min_lon =
+      static_cast<int64_t>(fix.longitude_e7) - kM6D2ProbeHalfSpanE7;
+  const int64_t max_lon =
+      static_cast<int64_t>(fix.longitude_e7) + kM6D2ProbeHalfSpanE7;
+  if (min_lat <= -900000000LL || max_lat >= 900000000LL ||
+      min_lon <= -1800000000LL || max_lon >= 1800000000LL) {
+    Serial.println(F("M6D2 PROBE fixture rejected near global singularity"));
+    return false;
+  }
+
+  m6d2_probe_vertices[0] =
+      orun_tlp::GeoPointE7(static_cast<int32_t>(min_lat),
+                           static_cast<int32_t>(min_lon));
+  m6d2_probe_vertices[1] =
+      orun_tlp::GeoPointE7(static_cast<int32_t>(min_lat),
+                           static_cast<int32_t>(max_lon));
+  m6d2_probe_vertices[2] =
+      orun_tlp::GeoPointE7(static_cast<int32_t>(max_lat),
+                           static_cast<int32_t>(max_lon));
+  m6d2_probe_vertices[3] =
+      orun_tlp::GeoPointE7(static_cast<int32_t>(max_lat),
+                           static_cast<int32_t>(min_lon));
+  m6d2_probe_areas[0] =
+      orun_tlp::GeofencePolygonView(m6d2_probe_vertices, 4);
+
+  if (geofence_confirmation.configure(
+          orun_tlp::GeofenceAreaSetView(m6d2_probe_areas, 1)) !=
+      orun_tlp::GeofenceRuntimeConfigResult::kApplied) {
+    Serial.println(F("M6D2 PROBE fixture configure failed"));
+    return false;
+  }
+
+  m6d2_probe_configured = true;
+  Serial.printf(
+      "M6D2 PROBE ARMED center_lat=%ld center_lon=%ld halfspan_e7=%ld "
+      "base_s=%lu\n",
+      static_cast<long>(fix.latitude_e7), static_cast<long>(fix.longitude_e7),
+      static_cast<long>(kM6D2ProbeHalfSpanE7),
+      static_cast<unsigned long>(
+          config_store.config().tracking_interval_seconds));
+  return true;
+}
+#endif
+
 void clearGeofenceEpisodeFixes() {
   for (uint8_t i = 0;
        i < orun_tlp::geofence_operational_config::kConfirmationObservationLimit;
@@ -1426,11 +1497,51 @@ void applyGeofenceCadence(
 }
 
 void processGeofenceAcceptedFix(const orun_tlp::GnssFix& fix) {
+#ifdef ORUN_M6D2_GEOFENCE_PROBE
+  if (!geofence_confirmation.configured() && !configureM6D2ProbeAround(fix)) {
+    return;
+  }
+#endif
   if (!geofence_confirmation.configured()) return;
 
   const auto update = geofence_confirmation.observeAcceptedLocation(
       orun_tlp::GeoPointE7(fix.latitude_e7, fix.longitude_e7),
       fix.captured_at_ms, fix.hdop_x100, fix.satellites);
+
+#ifdef ORUN_M6D2_GEOFENCE_PROBE
+  if (update.geometry_result == orun_tlp::GeofenceObservationResult::kAccepted) {
+    Serial.printf(
+        "M6D2 PROBE OBS relation=%s op=%u slot=%u request_more=%s "
+        "cadence=%s lat=%ld lon=%ld hdop=%u.%02u sats=%u\n",
+        m6d2ProbeRelationName(
+            geofence_confirmation.configured()
+                ? (update.episode_evidence_accepted
+                       ? static_cast<orun_tlp::PermittedAreaRelation>(
+                             // coordinator already classified this exact point;
+                             // recompute only for human-readable probe output.
+                             orun_tlp::assessPermittedGeofenceAreas(
+                                 orun_tlp::GeofenceAreaSetView(
+                                     m6d2_probe_areas, 1),
+                                 orun_tlp::GeoPointE7(fix.latitude_e7,
+                                                      fix.longitude_e7))
+                                 .relation)
+                       : orun_tlp::assessPermittedGeofenceAreas(
+                             orun_tlp::GeofenceAreaSetView(
+                                 m6d2_probe_areas, 1),
+                             orun_tlp::GeoPointE7(fix.latitude_e7,
+                                                  fix.longitude_e7))
+                             .relation)
+                : orun_tlp::PermittedAreaRelation::kInvalidAreaSet),
+        static_cast<unsigned>(update.operational_result),
+        static_cast<unsigned>(update.episode_slot),
+        update.request_additional_observation ? "yes" : "no",
+        update.cadence_mode == orun_tlp::GeofenceCadenceMode::kBase
+            ? "BASE"
+            : "BASE/3",
+        static_cast<long>(fix.latitude_e7), static_cast<long>(fix.longitude_e7),
+        fix.hdop_x100 / 100, fix.hdop_x100 % 100, fix.satellites);
+  }
+#endif
 
   if (update.geometry_result != orun_tlp::GeofenceObservationResult::kAccepted) {
     if (update.request_additional_observation) {
