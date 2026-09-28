@@ -290,3 +290,45 @@ own body readback/memcmp to complete. The exact 4-byte commit program has not
 been delegated to the physical backend.
 
 Electrical power removal and post-reboot recovery evidence are still pending.
+
+
+## Stage 3C — physical electrical power-cut recovery PASS
+
+At the deterministic boundary established in Stage 3B, physical power was
+removed from the qualification unit before the commit word was programmed.
+After reconnecting power, the same test image booted through the normal
+GeofenceStore recovery path.
+
+Observed serial evidence:
+
+```text
+M6D3B GEOFENCE POWER-CUT PROBE BOOT
+TEST-ONLY: boot is read-only; CUT_BODY mutates only the inactive geofence page
+CUT point: body+CRC physically verified, commit word intentionally withheld
+M6D3B POWERCUT BEGIN PASS
+M6D3B POWERCUT STORE ready=yes busy=no maintenance=no resource=CLEAR token_state=VALID mutations=0 failures=0 reconciliations=0
+M6D3B POWERCUT TOKEN incarnation=0xD93BBFF182C898DC revision=3
+M6D3B POWERCUT SNAPSHOT state=CLEAR areas=0 vertices=0
+M6D3B POWERCUT PAGE A evidence=COMMITTED_CLEAR decoded=yes tail_ff=yes generation=0x0000000000000003 incarnation=0xD93BBFF182C898DC revision=3 state=CLEAR areas=0 vertices=0
+M6D3B POWERCUT PAGE B evidence=STAGED decoded=yes tail_ff=yes generation=0x0000000000000004 incarnation=0xD93BBFF182C898DC revision=4 state=CONFIGURED areas=1 vertices=3
+M6D3B POWERCUT READY commands=STATUS,CUT_BODY
+```
+
+Result: **PASS** for the physical electrical cut at
+`after-body-readback / before-commit`.
+
+This physically proves on the qualification unit:
+
+- the prior committed CLEAR generation/revision 3 remains authoritative after
+  real loss of power;
+- the exact successor CONFIGURED generation/revision 4 remains only STAGED;
+- the staged successor is not promoted to authority;
+- the durable token remains VALID at revision 3;
+- the incarnation remains unchanged;
+- boot recovery performs no implicit baseline creation or auto-erase;
+- no maintenance lockout or recovery reconciliation is required for this exact
+  staged-successor case.
+
+This is evidence for one deliberate electrical cut boundary. It does not by
+itself claim that every possible nanosecond of an erase/program operation has
+been physically interrupted.
