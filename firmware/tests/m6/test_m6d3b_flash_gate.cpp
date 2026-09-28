@@ -251,7 +251,54 @@ int main() {
     assert(memcmp(geofence, expected, sizeof(expected)) == 0);
   }
 
-  // 5. Accepted operation timeout quarantines Geofence exactly like the older
+  // 5. Anti-starvation: an aged Geofence request promotes to top effective
+  // priority. A fresh Config request staged the instant History releases the
+  // slot must wait for the already-aged geofence mutation.
+  {
+    resetHarness();
+    FlashMutationGate gate;
+    assert(gate.begin());
+    assert(gate.configPort().begin());
+    assert(gate.geofencePort().begin());
+    sd_enabled = true;
+    memset(history, 0xFF, kRegionSize);
+    memset(config, 0xFF, kConfigSize);
+    memset(geofence, 0xFF, kGeofenceSize);
+
+    submit_results = {NRF_ERROR_BUSY};
+    alignas(4) uint8_t h[4] = {3, 3, 3, 3};
+    assert(gate.program(0, h, sizeof(h)) == FlashOpResult::kPending);
+
+    alignas(4) uint8_t g[4] = {4, 4, 4, 4};
+    assert(gate.geofencePort().program(0, g, sizeof(g)) ==
+           FlashOpResult::kPending);
+
+    fake_now_ms = 4001;
+    submit_results.clear();
+    assert(gate.pollPending() == FlashOpResult::kPending);
+    events.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
+    gate.pumpEvents();
+    assert(gate.pollPending() == FlashOpResult::kDone);
+
+    alignas(4) uint8_t c[4] = {5, 5, 5, 5};
+    const unsigned before = write_calls;
+    assert(gate.configPort().program(0, c, sizeof(c)) ==
+           FlashOpResult::kPending);
+    assert(write_calls == before);  // aged Geofence outranks fresh Config.
+
+    assert(gate.geofencePort().pollPending() == FlashOpResult::kPending);
+    assert(write_calls == before + 1);
+    events.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
+    gate.pumpEvents();
+    assert(gate.geofencePort().pollPending() == FlashOpResult::kDone);
+
+    assert(gate.configPort().pollPending() == FlashOpResult::kPending);
+    events.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
+    gate.pumpEvents();
+    assert(gate.configPort().pollPending() == FlashOpResult::kDone);
+  }
+
+  // 6. Accepted operation timeout quarantines Geofence exactly like the older
   // clients: application sees failure, physical token remains owned until the
   // definitive late completion event reconciles it.
   {
