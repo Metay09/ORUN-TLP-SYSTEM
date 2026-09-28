@@ -412,7 +412,7 @@ class FlashMutationGate : public FlashBackend {
   // credential record. This file stays decoupled from format headers.
   alignas(4) uint8_t history_staging_[storage_config::kPageHeaderSize]{};
   alignas(4) uint8_t config_staging_[64]{};
-  alignas(4) uint8_t geofence_staging_[576]{};
+  alignas(4) uint8_t geofence_staging_[560]{};
   alignas(4) uint8_t security_staging_[96]{};
 };
 
