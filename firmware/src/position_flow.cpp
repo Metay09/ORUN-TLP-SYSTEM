@@ -5,19 +5,39 @@
 #include "monotonic_time.h"
 
 namespace orun_tlp {
-bool PositionFlow::acceptFix(const GnssFix& fix, uint32_t now) {
-  if (!canAcceptFix() || monotonic::elapsed(
-          now, fix.captured_at_ms, gnss_config::kFreshFixMaxAgeMs)) return false;
+
+bool PositionFlow::acceptFixInternal(const GnssFix& fix, uint32_t now,
+                                     bool require_current_freshness) {
+  if (!canAcceptFix() ||
+      (require_current_freshness &&
+       monotonic::elapsed(now, fix.captured_at_ms,
+                          gnss_config::kFreshFixMaxAgeMs))) {
+    return false;
+  }
+
   live_pending_ = false;  // New live data replaces an older unsent live candidate.
   uint32_t sequence = 0;
   if (!store_.ready() || !store_.nextSequence(sequence, record_identity_) ||
       !encodeLegacyPosition(fix, device_identity_, sequence, packet_,
                             sizeof(packet_)) ||
       !store_.append(packet_, record_identity_)) {
-    ++storage_drops_; return false; // Strict store-first: never bypass persistence.
+    ++storage_drops_;
+    return false;  // Strict store-first: never bypass persistence.
   }
-  captured_at_ms_ = fix.captured_at_ms; appending_ = true; return true;
+  captured_at_ms_ = fix.captured_at_ms;
+  appending_ = true;
+  return true;
 }
+
+bool PositionFlow::acceptFix(const GnssFix& fix, uint32_t now) {
+  return acceptFixInternal(fix, now, true);
+}
+
+bool PositionFlow::acceptPreviouslyAcceptedFix(const GnssFix& fix,
+                                               uint32_t now) {
+  return acceptFixInternal(fix, now, false);
+}
+
 PositionFlow::Event PositionFlow::update(uint32_t now, bool allow_live_tx) {
   Event event = Event::kNone;
   bool stored;

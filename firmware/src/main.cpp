@@ -1783,15 +1783,15 @@ void loop() {
   // existing store-before-send owner can accept it; do not bypass HistoryStore.
   if (tracking_enabled && geofence_representative_pending &&
       positions.canAcceptFix()) {
-    if (positions.acceptFix(geofence_representative_fix,
-                            orun_tlp::monotonic::nowMs())) {
+    if (positions.acceptPreviouslyAcceptedFix(
+            geofence_representative_fix, orun_tlp::monotonic::nowMs())) {
       geofence_representative_pending = false;
-    } else if (orun_tlp::monotonic::elapsed(
-                   orun_tlp::monotonic::nowMs(),
-                   geofence_representative_fix.captured_at_ms,
-                   orun_tlp::gnss_config::kFreshFixMaxAgeMs)) {
+    } else {
+      // A real storage-admission failure is distinct from mere age. The
+      // already-accepted representative is allowed to be historical, but it
+      // must still never bypass HistoryStore.
       geofence_representative_pending = false;
-      Serial.println(F("GEOFENCE representative live position expired"));
+      Serial.println(F("GEOFENCE representative storage failed"));
     }
   }
 
