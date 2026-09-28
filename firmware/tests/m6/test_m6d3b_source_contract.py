@@ -12,9 +12,9 @@ preflight = (root / "tests" / "m6" / "m6d3b_geofence_preflight.cpp").read_text()
 powercut = (root / "tests" / "m6" / "m6d3b_geofence_powercut_probe.cpp").read_text()
 platformio = (root / "platformio.ini").read_text()
 
-assert '#include "geofence_store.h"' not in main
-assert "orun_tlp::GeofenceStore " not in main
-assert ".geofencePort()" not in main
+# M6D3C intentionally supersedes M6D3B's temporary "no production activation"
+# gate. Keep the M6D3B persistence-owner isolation checks below; M6D3C has its
+# own source contract for the new production composition.
 assert "geofencePort()" in gate_h
 assert "class GeofenceStore" in store_h
 
