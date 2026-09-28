@@ -1012,5 +1012,7 @@ int main(int argc, char** argv) {
 
   assert(munmap(region, kRegionSize) == 0);
   assert(munmap(config_region, kConfigRegionSize) == 0);
+  assert(munmap(security_region, kSecurityRegionSize) == 0);
+  assert(munmap(geofence_region, kGeofenceRegionSize) == 0);
   printf("Production startup identity/history/loop (%s): PASS\n", argv[1]);
 }
