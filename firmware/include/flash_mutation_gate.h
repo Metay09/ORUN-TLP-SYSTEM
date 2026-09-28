@@ -308,16 +308,13 @@ class FlashMutationGate : public FlashBackend {
   bool softDeviceEnabled() const;
   bool timedOut(uint32_t now, uint32_t started_ms) const;
   // A request staged (not yet admitted) for longer than kOperationTimeoutMs
-  // -- the same bound already used for the post-admission physical-operation
-  // timeout, not a new invented constant -- is treated as top priority
-  // (kSecCritical) regardless of its real class. Without this, a lower
-  // priority class (SEC_MAINT above all) could be starved indefinitely by
-  // sustained higher-priority traffic that always has something staged the
-  // instant the physical slot frees up; this bounds that wait instead of
-  // requiring a generic fairness scheduler. Aging is per-request and
-  // resets the instant that request is released (admitted, completed or
-  // failed), so an aged-up request cannot itself cause more than roughly
-  // one operation's worth of extra latency for the classes it now outranks.
+  // enters an aged tier ABOVE all normal priorities. This is intentionally
+  // stronger than merely mapping it to kSecCritical: equal priority would
+  // still let a stream of freshly-polled SEC_CRITICAL requests win by caller
+  // order forever. Among aged requests the oldest staged request wins; normal
+  // priority is only the deterministic tie-breaker. Aging resets when the
+  // request is released.
+  bool aged(const Slot& slot, uint32_t now) const;
   Priority effectivePriority(const Slot& slot) const;
   Slot& slot(Owner owner) {
     if (owner == Owner::kHistory) return history_slot_;
