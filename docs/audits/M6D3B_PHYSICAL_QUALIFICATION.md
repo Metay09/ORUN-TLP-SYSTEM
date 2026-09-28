@@ -124,3 +124,42 @@ This still does **not** prove:
 - return mutation back to CLEAR;
 - electrical power-cut recovery;
 - SoftDevice-enabled arbitration.
+
+
+## Stage 2B — physical A/B successor mutation
+
+From the physically qualified fresh CLEAR baseline, the operator issued exactly
+one `REPLACE` command using the test-only triangle fixture.
+
+Observed serial evidence:
+
+```text
+M6D3B QUAL REPLACE result=CONFIRMED
+M6D3B QUAL STORE ready=yes busy=no maintenance=no resource=CONFIGURED token_state=VALID mutations=1 failures=0 reconciliations=0
+M6D3B QUAL TOKEN incarnation=0xD93BBFF182C898DC revision=2
+M6D3B QUAL SNAPSHOT state=CONFIGURED areas=1 vertices=3
+M6D3B QUAL PAGE A evidence=COMMITTED_CLEAR decoded=yes tail_ff=yes generation=0x0000000000000001 incarnation=0xD93BBFF182C898DC revision=1 state=CLEAR areas=0 vertices=0
+M6D3B QUAL PAGE B evidence=COMMITTED_CONFIGURED decoded=yes tail_ff=yes generation=0x0000000000000002 incarnation=0xD93BBFF182C898DC revision=2 state=CONFIGURED areas=1 vertices=3
+```
+
+Result: **PASS** for the first physical A/B successor mutation.
+
+This physically proves on this development unit:
+
+- the inactive page B was used for the successor transaction;
+- page A's previously committed CLEAR baseline remained intact;
+- page B committed CONFIGURED generation 2 / revision 2;
+- the incarnation remained unchanged across the semantic mutation;
+- the complete configured snapshot contains one area / three effective
+  vertices;
+- both reserved tails remained erased;
+- GeofenceStore published CONFIGURED with VALID token only after the new
+  committed record was verified;
+- no mutation failure or reconciliation was reported.
+
+This still does **not** prove:
+
+- recovery of the newer page after reboot;
+- subsequent A/B rollover back to page A;
+- physical electrical power-cut recovery;
+- SoftDevice-enabled arbitration.
