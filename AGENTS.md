@@ -40,10 +40,13 @@ service or cross-cutting subsystem.
 
 For geofence operational-state transitions, confirmation, adaptive tracking
 cadence and the current INSIDE/OUTSIDE product policy, read
-`docs/architecture/ORUN_GEOFENCE_OPERATIONAL_POLICY.md`. It is owner-approved
-design direction for later M6D implementation, not evidence that runtime/event
-transport is already implemented. It refines older conceptual NEAR_FENCE and
-fixed outside-cadence notes without changing the validated M6C geometry layer.
+`docs/architecture/ORUN_GEOFENCE_OPERATIONAL_POLICY.md`. M6D2 software runtime
+composition is now implemented and merged, while the normal production image
+still has no authorized durable geofence area-set owner and focused physical
+GNSS/geofence qualification remains deferred. This is not evidence that secure
+EVENT transport, backend alarms or trustworthy LOST semantics exist. The policy
+refines older conceptual NEAR_FENCE and fixed outside-cadence notes without
+weakening the validated M6C geometry layer.
 
 For map-authored geofence configuration, BLE/LoRa transport-neutral mutation,
 multiple polygons, non-six-point geometry limits, atomic replacement/removal and

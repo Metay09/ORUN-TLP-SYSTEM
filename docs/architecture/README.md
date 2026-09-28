@@ -38,12 +38,14 @@ boundary and layered validation model. It is architecture direction, not evidenc
 that those later runtimes exist.
 
 Owner-approved current geofence operational direction is recorded in
-`ORUN_GEOFENCE_OPERATIONAL_POLICY.md`. For later M6D implementation it refines
-older conceptual fixed NEAR/outside cadence notes: current product state is
-INSIDE/OUTSIDE, apparent state changes use bounded 2-of-3 accepted-observation
-confirmation, confirmed OUTSIDE derives runtime cadence `B / 3`, and
-`NEAR_FENCE` is deferred. It does not change M6C geometry evidence, TLP v1,
-secure EVENT transport requirements or the trustworthy-LOST/contact boundary.
+`ORUN_GEOFENCE_OPERATIONAL_POLICY.md`. M6D2 now implements the software
+composition from already accepted Location into the validated geometry/state
+owners, bounded 2-of-3 transition confirmation and runtime `B / 3` OUTSIDE
+cadence. The normal production image still leaves the coordinator unconfigured
+because no authorized durable geofence resource owner exists yet; focused
+physical GNSS/geofence qualification also remains deferred. `NEAR_FENCE` is
+still deferred, and none of this changes TLP v1, secure EVENT transport
+requirements or the trustworthy-LOST/contact boundary.
 
 Owner-approved delegated-command security direction is recorded in
 `ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md`. The durable audit record is
