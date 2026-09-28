@@ -165,28 +165,45 @@ This still does **not** prove:
 - SoftDevice-enabled arbitration.
 
 
-## Reboot observation — identity ambiguity, not yet counted as PASS
+## Stage 2C — physical reboot persistence PASS
 
-After the Stage 2B CONFIGURED state was committed, two RAK devices were
-simultaneously connected to the Debian host and the operator pressed reset on
-both devices.
+After the Stage 2B CONFIGURED state was committed, the qualification unit was
+reset and the serial monitor reconnected to the same device.
 
-The serial monitor reconnected and displayed the expected recovered state with
-the exact same durable token incarnation and revision:
+Persistent USB identity was subsequently established as:
 
 ```text
-resource=CONFIGURED token_state=VALID
-incarnation=0xD93BBFF182C898DC revision=2
-PAGE A = COMMITTED_CLEAR generation=1 revision=1
-PAGE B = COMMITTED_CONFIGURED generation=2 revision=2
+/dev/ttyACM1
+ID_SERIAL_SHORT=0E8ADE7E71531AA3
 ```
 
-This is strongly consistent with successful reboot recovery on the programmed
-unit. However, because two USB ACM devices were present and both were reset,
-the USB tty mapping may have changed during reconnect. Therefore this
-observation is deliberately **not yet counted as formal reboot-persistence
-PASS**.
+The operator confirmed that this was the device used for the qualification
+upload and reboot.
 
-The next action is to establish an unambiguous persistent USB identity/port for
-the qualification unit and repeat one reboot on only that unit. No additional
-GeofenceStore mutation should be performed before that disambiguation.
+Observed recovery after reboot:
+
+```text
+M6D3B QUAL BEGIN PASS
+M6D3B QUAL STORE ready=yes busy=no maintenance=no resource=CONFIGURED token_state=VALID mutations=0 failures=0 reconciliations=0
+M6D3B QUAL TOKEN incarnation=0xD93BBFF182C898DC revision=2
+M6D3B QUAL SNAPSHOT state=CONFIGURED areas=1 vertices=3
+M6D3B QUAL PAGE A evidence=COMMITTED_CLEAR decoded=yes tail_ff=yes generation=0x0000000000000001 incarnation=0xD93BBFF182C898DC revision=1 state=CLEAR areas=0 vertices=0
+M6D3B QUAL PAGE B evidence=COMMITTED_CONFIGURED decoded=yes tail_ff=yes generation=0x0000000000000002 incarnation=0xD93BBFF182C898DC revision=2 state=CONFIGURED areas=1 vertices=3
+```
+
+Result: **PASS** for physical reboot persistence.
+
+This physically proves on the qualified development unit:
+
+- the newer CONFIGURED page B survives reset;
+- boot recovery selects generation 2 / revision 2 as authority;
+- the incarnation remains unchanged;
+- the old committed CLEAR page A remains intact;
+- token authority remains VALID;
+- no maintenance/reconciliation path was needed.
+
+This still does **not** prove:
+
+- the next A/B rollover back to page A;
+- physical electrical power-cut recovery;
+- SoftDevice-enabled arbitration.
