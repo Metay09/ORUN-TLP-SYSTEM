@@ -145,7 +145,7 @@ bool GeofenceStore::begin() {
 }
 
 bool GeofenceStore::recover() {
-  RecoveredPage pages[kPageCount]{};
+  RecoveredPage* pages = recovery_pages_;
   bool all_erased = true;
   bool any_unsupported = false;
   bool any_corrupt = false;
@@ -153,10 +153,11 @@ bool GeofenceStore::recover() {
   int committed_pages[kPageCount] = {-1, -1};
 
   for (unsigned page = 0; page < kPageCount; ++page) {
-    uint8_t bytes[geofence_format::kRecordSize];
-    if (!flash_.read(page * storage_config::kPageSize, bytes, sizeof(bytes)))
+    pages[page] = RecoveredPage{};
+    if (!flash_.read(page * storage_config::kPageSize, scratch_,
+                     sizeof(scratch_)))
       return false;
-    if (!geofence_format::inspectPage(bytes, sizeof(bytes),
+    if (!geofence_format::inspectPage(scratch_, sizeof(scratch_),
                                       pages[page].inspection))
       return false;
 
@@ -296,27 +297,25 @@ bool GeofenceStore::recover() {
 
 bool GeofenceStore::writeFreshBaseline(
     const geofence_format::Record& record) {
-  uint8_t bytes[geofence_format::kRecordSize];
-  if (!geofence_format::encode(record, bytes, sizeof(bytes))) return false;
+  if (!geofence_format::encode(record, blob_, sizeof(blob_))) return false;
 
   const uint32_t offset = 0;
+  constexpr size_t kBodyAndCrcSize = geofence_format::kCrcOffset + 4U;
   const FlashOpResult body =
-      flash_.program(offset, bytes, geofence_format::kCrcOffset + 4U);
+      flash_.program(offset, blob_, kBodyAndCrcSize);
   if (body != FlashOpResult::kDone) return false;
 
-  uint8_t stage_verify[geofence_format::kCrcOffset + 4U];
-  if (!flash_.read(offset, stage_verify, sizeof(stage_verify)) ||
-      memcmp(stage_verify, bytes, sizeof(stage_verify)) != 0)
+  if (!flash_.read(offset, scratch_, kBodyAndCrcSize) ||
+      memcmp(scratch_, blob_, kBodyAndCrcSize) != 0)
     return false;
 
   const FlashOpResult commit =
       flash_.program(offset + geofence_format::kCommitOffset,
-                     bytes + geofence_format::kCommitOffset, 4);
+                     blob_ + geofence_format::kCommitOffset, 4);
   if (commit != FlashOpResult::kDone) return false;
 
-  uint8_t verify[geofence_format::kRecordSize];
-  if (!flash_.read(offset, verify, sizeof(verify)) ||
-      memcmp(verify, bytes, sizeof(verify)) != 0)
+  if (!flash_.read(offset, scratch_, sizeof(scratch_)) ||
+      memcmp(scratch_, blob_, sizeof(scratch_)) != 0)
     return false;
   return true;
 }
@@ -328,12 +327,10 @@ bool GeofenceStore::establishFreshBaseline() {
   if (!incarnation_source_->generate(incarnation) || incarnation == 0)
     return true;
 
-  geofence_format::Snapshot clear;
-  geofence_format::makeClearSnapshot(clear);
   geofence_format::Record record;
   record.generation = 1;
   record.token = geofence_format::StateToken(incarnation, 1);
-  record.snapshot = clear;
+  geofence_format::makeClearSnapshot(record.snapshot);
 
   if (!writeFreshBaseline(record)) {
     ++diagnostics_.baseline_failures;
@@ -443,9 +440,8 @@ FlashOpResult GeofenceStore::writeBlob() {
       return FlashOpResult::kFailed;
     }
 
-    uint8_t verify[kBodyAndCrcSize];
-    if (!flash_.read(offset, verify, sizeof(verify)) ||
-        memcmp(verify, blob_, sizeof(verify)) != 0) {
+    if (!flash_.read(offset, scratch_, kBodyAndCrcSize) ||
+        memcmp(scratch_, blob_, kBodyAndCrcSize) != 0) {
       failMutation();
       return FlashOpResult::kFailed;
     }
@@ -471,21 +467,23 @@ FlashOpResult GeofenceStore::writeBlob() {
     blob_step_ = BlobStep::kVerify;
   }
 
-  uint8_t verify[geofence_format::kRecordSize];
-  if (!flash_.read(offset, verify, sizeof(verify)) ||
-      memcmp(verify, blob_, sizeof(verify)) != 0) {
+  if (!flash_.read(offset, scratch_, sizeof(scratch_)) ||
+      memcmp(scratch_, blob_, sizeof(scratch_)) != 0) {
     failMutation();
     return FlashOpResult::kFailed;
   }
 
-  geofence_format::PageInspection inspection;
-  if (!geofence_format::inspectPage(verify, sizeof(verify), inspection) ||
-      !geofence_format::isAuthoritativeCommitted(inspection.evidence) ||
-      !inspection.has_decoded_record ||
-      inspection.record.generation != pending_generation_ ||
-      inspection.record.token.incarnation != pending_token_.incarnation ||
-      inspection.record.token.revision != pending_token_.revision ||
-      !sameSnapshot(inspection.record.snapshot, pending_snapshot_)) {
+  inspection_scratch_ = geofence_format::PageInspection{};
+  if (!geofence_format::inspectPage(scratch_, sizeof(scratch_),
+                                    inspection_scratch_) ||
+      !geofence_format::isAuthoritativeCommitted(
+          inspection_scratch_.evidence) ||
+      !inspection_scratch_.has_decoded_record ||
+      inspection_scratch_.record.generation != pending_generation_ ||
+      inspection_scratch_.record.token.incarnation !=
+          pending_token_.incarnation ||
+      inspection_scratch_.record.token.revision != pending_token_.revision ||
+      !sameSnapshot(inspection_scratch_.record.snapshot, pending_snapshot_)) {
     failMutation();
     return FlashOpResult::kFailed;
   }
