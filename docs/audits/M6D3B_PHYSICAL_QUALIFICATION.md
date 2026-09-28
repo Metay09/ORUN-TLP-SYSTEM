@@ -64,3 +64,20 @@ path.
 
 Do not claim A/B, reboot or power-cut PASS until their separate evidence is
 recorded below.
+
+
+### Reconnect / second-boot confirmation
+
+The USB serial device disconnected and reconnected after the first observation.
+On reconnect the same read-only image booted again and independently reported
+the identical physical state:
+
+```text
+M6D3B PREFLIGHT PAGE A inspect=PASS evidence=ERASED all_ff=yes tail_ff=yes crc32=F154670A
+M6D3B PREFLIGHT PAGE B inspect=PASS evidence=ERASED all_ff=yes tail_ff=yes crc32=F154670A
+M6D3B PREFLIGHT RESULT all_ff=yes action=QUALIFICATION_IMAGE_MAY_BE_USED
+```
+
+This second boot strengthens only the read-only blank-partition evidence. It
+does not constitute persistence, write, reboot-persistence or power-cut
+qualification because the preflight image contains no mutation path.
