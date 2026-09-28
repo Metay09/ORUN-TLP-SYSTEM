@@ -1,6 +1,6 @@
 # M6D3B — Durable GeofenceStore + physical flash owner
 
-Status: **SOFTWARE + INDEPENDENT AUDIT PASS; PHYSICAL PREFLIGHT + A/B WRITE/ROLLOVER + REBOOT PERSISTENCE PASS; POWER-CUT / FINAL DISPOSITION / MERGE PENDING**.
+Status: **SOFTWARE + INDEPENDENT AUDIT PASS; PHYSICAL PREFLIGHT + A/B WRITE/ROLLOVER + REBOOT PERSISTENCE + FOCUSED ELECTRICAL POWER-CUT PASS; FINAL DISPOSITION / MERGE PENDING**.
 
 Baseline: `main@e566125afb9a08aaa5da8656d22d82e6a7580aed` (M6D3A merged via PR #54).
 Branch: `feat/m6d3b-geofence-store`.
@@ -502,6 +502,27 @@ completed with `CONFIRMED`:
 
 This closes one full normal physical A/B alternation cycle
 CLEAR -> CONFIGURED -> CLEAR.
+
+## 9.9. Focused physical electrical power-cut PASS
+
+A real power removal was performed after the inactive page had been erased,
+the successor body+CRC had been physically programmed/read-verified, and
+GeofenceStore had completed its body readback, but before the exact 4-byte
+commit write.
+
+After reboot:
+
+- page A remained `COMMITTED_CLEAR` generation/revision 3;
+- page B was `STAGED` generation/revision 4 CONFIGURED;
+- resource remained `CLEAR`;
+- token remained `VALID` at revision 3;
+- incarnation remained `D93BBFF182C898DC`;
+- staged successor was not promoted;
+- no baseline creation, maintenance lockout, or reconciliation occurred.
+
+This closes the intended commit-last physical power-cut boundary for M6D3B.
+It is not a claim that every possible intra-instruction electrical timing point
+was exhaustively interrupted.
 
 ## 10. Physical qualification safety gate
 
