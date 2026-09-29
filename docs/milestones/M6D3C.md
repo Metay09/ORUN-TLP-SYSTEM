@@ -1,6 +1,6 @@
 # M6D3C — Durable geofence snapshot -> M6D2 runtime provider
 
-Status: **IMPLEMENTATION COMPLETE; COMPLETE HOST / WARNINGS / ASAN / UBSAN PASS; PRODUCTION RAK4630 BUILD PASS; INDEPENDENT AUDIT / PHYSICAL RUNTIME ACTIVATION PENDING**.
+Status: **IMPLEMENTATION COMPLETE; INITIAL COMPLETE HOST + PRODUCTION RAK4630 BUILD PASS; POST-BUILD STACK-HARDENING RETEST / INDEPENDENT AUDIT / PHYSICAL RUNTIME ACTIVATION PENDING**.
 
 Baseline: `main@89d41e0f8f46978ff487cecbd99ce9d09ea5e2fa`.
 Branch: `feat/m6d3c-geofence-runtime-provider`.
@@ -194,6 +194,14 @@ The build log contains the existing pinned SX126x-Arduino dependency warnings
 no warning was emitted from M6D3C project sources.
 
 Application-ceiling and exclusive-owner post-link guards completed successfully.
+
+Post-build review then found one stack-margin hardening opportunity: the
+record-sized boot snapshot copy was a `setup()` local. M6D3B had already
+measured a tight-but-safe 4-KiB loop-task stack margin around
+`GeofenceStore::begin()`, so M6D3C moved this boot scratch to static storage
+rather than rely on compiler lifetime allocation. This is a RAM-placement
+hardening change, not a semantic behavior change. Host and production build
+must be repeated after that change before the build gate is considered final.
 
 This is build evidence only, not physical M6D3C runtime evidence.
 
