@@ -34,7 +34,7 @@ assert "geofence_store.requestClear" not in main
 
 # Token authority and semantic readability must remain separate. Production
 # logs token state but does not gate currentSnapshot/configure on VALID.
-snapshot_pos = main.index("geofence_store.currentSnapshot(geofence_snapshot)")
+snapshot_pos = main.index("geofence_store.currentSnapshot(geofence_boot_snapshot)")
 apply_pos = main.index("applyGeofenceSnapshotToRuntime")
 token_pos = main.index("geofence_store.tokenState()", apply_pos)
 assert snapshot_pos < apply_pos < token_pos
