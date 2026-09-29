@@ -57,6 +57,10 @@ orun_tlp::ConfigStore config_store(storage_flash_gate.configPort(),
 orun_tlp::NrfGeofenceIncarnationSource geofence_incarnation_source;
 orun_tlp::GeofenceStore geofence_store(storage_flash_gate.geofencePort(),
                                        &geofence_incarnation_source);
+// M6D3B's physical qualification measured tight-but-safe loop-task stack
+// margins around GeofenceStore::begin(). Keep the record-sized M6D3C boot copy
+// out of setup()'s stack frame; this scratch is used only during boot activation.
+orun_tlp::geofence_format::Snapshot geofence_boot_snapshot;
 // M7P7D/M7P7E: one typed, transport-neutral application request owner.
 // USB and BLE now share this same owner; requester provenance prevents either
 // adapter from consuming the other's response. M7P7G exposes only M7P7F's
@@ -1718,16 +1722,15 @@ void setup() {
   if (!geofence_store.begin()) {
     Serial.println(F("GEOFENCE durable store unavailable; runtime unconfigured"));
   } else {
-    orun_tlp::geofence_format::Snapshot geofence_snapshot;
-    if (!geofence_store.currentSnapshot(geofence_snapshot)) {
+    if (!geofence_store.currentSnapshot(geofence_boot_snapshot)) {
       Serial.println(F("GEOFENCE durable authority unavailable; runtime unconfigured"));
     } else {
       const auto applied = orun_tlp::applyGeofenceSnapshotToRuntime(
-          geofence_snapshot, geofence_confirmation);
+          geofence_boot_snapshot, geofence_confirmation);
       if (applied == orun_tlp::GeofenceRuntimeApplyResult::kConfigured) {
         Serial.printf("GEOFENCE runtime configured areas=%u vertices=%u token=%s\n",
-                      static_cast<unsigned>(geofence_snapshot.area_count),
-                      static_cast<unsigned>(geofence_snapshot.total_vertex_count),
+                      static_cast<unsigned>(geofence_boot_snapshot.area_count),
+                      static_cast<unsigned>(geofence_boot_snapshot.total_vertex_count),
                       geofenceTokenStateName(geofence_store.tokenState()));
       } else if (applied == orun_tlp::GeofenceRuntimeApplyResult::kCleared) {
         Serial.printf("GEOFENCE runtime clear token=%s\n",
