@@ -363,3 +363,29 @@ physically executed in this milestone.
 
 Do not claim physical M6D3C runtime activation until a dedicated physical
 observation is recorded.
+
+
+## 10. Product follow-up after M6D3C
+
+The physical M6D3C workflow exposed a product-level serviceability gap: once a
+device leaves the USB-connected bench, production runtime state such as GNSS and
+geofence status is not yet available through the phone-facing BLE application
+surface.
+
+This does not change M6D3C scope. After M6D3C is closed, prioritize a small
+read-only Device Service / Diagnostics slice before adding unrelated new RF or
+backend feature work.
+
+Required direction:
+
+- USB and BLE must converge on the same typed application/service owners;
+- BLE is intended for local setup, settings and service/diagnostics, not merely
+  GATT transport proof;
+- first expose bounded read-only device/location/GNSS/geofence/power/radio/
+  storage/health state where ownership is already defined;
+- do not stream raw Serial logs as the product API;
+- protected config/geofence mutation remains separately gated on reviewed
+  authentication, authorization, anti-replay and command/idempotency rules.
+
+This is a product completion requirement, not authorization to expand the
+current M6D3C runtime.
