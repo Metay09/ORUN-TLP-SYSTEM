@@ -1,6 +1,6 @@
 # M6D3C — Durable geofence snapshot -> M6D2 runtime provider
 
-Status: **IMPLEMENTATION COMPLETE; HOST/RAK VALIDATION PENDING**.
+Status: **IMPLEMENTATION COMPLETE; COMPLETE HOST / WARNINGS / ASAN / UBSAN PASS; RAK4630 BUILD + AUDIT PENDING**.
 
 Baseline: `main@89d41e0f8f46978ff487cecbd99ce9d09ea5e2fa`.
 Branch: `feat/m6d3c-geofence-runtime-provider`.
@@ -156,6 +156,23 @@ The host startup harness now maps the real geofence partition and covers:
 - pre-seeded committed CONFIGURED record -> setup recovery -> real production
   provider configures M6D2 before GNSS service;
 - existing startup/radio/BLE/history behavior remains exercised.
+
+## 7.1. Host validation evidence
+
+Complete `./tests/run_host_tests.sh` execution: **PASS**.
+
+New/affected evidence includes:
+
+- `M6D3C durable snapshot -> M6D2 runtime provider checks: PASS`;
+- `M6D3C durable geofence runtime activation contract: PASS`;
+- `Production startup identity/history/loop (geofence_persisted): PASS`;
+- existing M6D3B GeofenceStore / flash-gate suites remain PASS;
+- all pre-existing B1A..B4, M3..M7, R2..R4 and production startup scenarios
+  remain PASS.
+
+The host harness uses warnings-as-errors plus ASan/UBSan for the applicable
+targets. This is software evidence only; no M6D3C physical runtime activation
+has been claimed.
 
 ## 8. Validation gates
 
