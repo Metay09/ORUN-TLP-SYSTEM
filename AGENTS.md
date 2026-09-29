@@ -41,12 +41,15 @@ service or cross-cutting subsystem.
 For geofence operational-state transitions, confirmation, adaptive tracking
 cadence and the current INSIDE/OUTSIDE product policy, read
 `docs/architecture/ORUN_GEOFENCE_OPERATIONAL_POLICY.md`. M6D2 software runtime
-composition is now implemented and merged, while the normal production image
-still has no authorized durable geofence area-set owner and focused physical
-GNSS/geofence qualification remains deferred. This is not evidence that secure
-EVENT transport, backend alarms or trustworthy LOST semantics exist. The policy
-refines older conceptual NEAR_FENCE and fixed outside-cadence notes without
-weakening the validated M6C geometry layer.
+composition and M6D3B durable geofence persistence are implemented and merged.
+On the M6D3C integration branch, the normal production image additionally
+recovers the durable CLEAR/CONFIGURED snapshot at boot and supplies only that
+semantic snapshot to the existing M6D2 runtime owner. No production BLE/LoRa
+geofence writer, protected mutation path or secure EVENT transport is enabled
+by M6D3C, and focused physical M6D3C runtime activation remains pending. This
+is not evidence that backend alarms or trustworthy LOST semantics exist. The
+policy refines older conceptual NEAR_FENCE and fixed outside-cadence notes
+without weakening the validated M6C geometry layer.
 
 For map-authored geofence configuration, BLE/LoRa transport-neutral mutation,
 multiple polygons, non-six-point geometry limits, atomic replacement/removal and
