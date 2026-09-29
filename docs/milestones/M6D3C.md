@@ -180,11 +180,12 @@ has been claimed.
 
 Measured production image:
 
-- RAM: **28,224 / 248,832 B (11.3%)**;
+- RAM before stack-hardening: **28,224 / 248,832 B (11.3%)**;
+- RAM after moving the boot snapshot to static storage: **28,744 / 248,832 B (11.6%)**;
 - Flash: **260,008 / 815,104 B (31.9%)**.
 
 Relative to the M6D3B production baseline (24,224 B RAM / 252,748 B Flash),
-M6D3C adds **4,000 B RAM** and **7,260 B Flash**. The RAM increase is expected
+final M6D3C adds **4,520 B RAM** and **7,260 B Flash**. The RAM increase is expected
 because production now instantiates GeofenceStore's fixed recovery/verification
 workspaces and durable snapshot state rather than leaving that owner absent from
 the composition root.
@@ -200,8 +201,9 @@ record-sized boot snapshot copy was a `setup()` local. M6D3B had already
 measured a tight-but-safe 4-KiB loop-task stack margin around
 `GeofenceStore::begin()`, so M6D3C moved this boot scratch to static storage
 rather than rely on compiler lifetime allocation. This is a RAM-placement
-hardening change, not a semantic behavior change. Host and production build
-must be repeated after that change before the build gate is considered final.
+hardening change, not a semantic behavior change. The production RAK4630 build was repeated after that change and remained
+SUCCESS at 28,744 B RAM / 260,008 B Flash. The complete host suite must be
+repeated after the source-contract name fix before the host gate is final.
 
 This is build evidence only, not physical M6D3C runtime evidence.
 
