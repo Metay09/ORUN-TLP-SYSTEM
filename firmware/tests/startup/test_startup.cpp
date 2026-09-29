@@ -129,9 +129,10 @@ int main(int argc, char** argv) {
   const bool no_event_control = mode == "noevent";
   const bool geofence_scenario = mode == "geofence";
   const bool persisted_geofence_scenario = mode == "geofence_persisted";
+  const bool uncertain_geofence_scenario = mode == "geofence_uncertain";
   const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails ||
                        no_event_control || geofence_scenario ||
-                       persisted_geofence_scenario;
+                       persisted_geofence_scenario || uncertain_geofence_scenario;
   // Each scenario runs in a new process, like a cold boot (static driver gate).
   assert(success || mode == "mutex" || mode == "gate" || mode == "queue" ||
          mode == "lora");
@@ -164,10 +165,14 @@ int main(int argc, char** argv) {
   assert(geofence_region == reinterpret_cast<void*>(kGeofenceRegionStart));
   memset(geofence_region, 0xFF, kGeofenceRegionSize);
 
-  // One scenario starts with a real committed durable CONFIGURED snapshot.
+  // M6D3C startup scenarios:
+  // - geofence_persisted: one real committed CONFIGURED record with VALID token;
+  // - geofence_uncertain: the same authoritative CONFIGURED record plus a
+  //   committed-corrupt peer page. M6D3B intentionally preserves the readable
+  //   semantic snapshot but marks mutation/CAS authority UNCERTAIN.
   // All other scenarios leave the partition blank so setup() must establish
   // the authoritative CLEAR baseline without configuring M6D2.
-  if (persisted_geofence_scenario) {
+  if (persisted_geofence_scenario || uncertain_geofence_scenario) {
     const GeoPointE7 persisted_vertices[] = {
         GeoPointE7(409999000, 289999000),
         GeoPointE7(409999000, 290001000),
@@ -177,6 +182,7 @@ int main(int argc, char** argv) {
     geofence_format::Snapshot snapshot;
     assert(geofence_format::canonicalizeConfiguredAreaSet(
         GeofenceAreaSetView(&persisted_polygon, 1), snapshot));
+
     geofence_format::Record record;
     record.generation = 7;
     record.token = geofence_format::StateToken(0xA1A2A3A4A5A6A7A8ULL, 7);
@@ -184,6 +190,21 @@ int main(int argc, char** argv) {
     uint8_t encoded[geofence_format::kRecordSize]{};
     assert(geofence_format::encode(record, encoded, sizeof(encoded)));
     memcpy(geofence_region, encoded, sizeof(encoded));
+
+    if (uncertain_geofence_scenario) {
+      // Page B looks committed (commit word remains 0) but its body no longer
+      // passes CRC. This is exactly the recovery class where M6D3B preserves
+      // page A's semantic CONFIGURED snapshot read-only and sets token UNCERTAIN.
+      geofence_format::Record corrupt_peer = record;
+      corrupt_peer.generation = 8;
+      corrupt_peer.token.revision = 8;
+      uint8_t corrupt_encoded[geofence_format::kRecordSize]{};
+      assert(geofence_format::encode(
+          corrupt_peer, corrupt_encoded, sizeof(corrupt_encoded)));
+      corrupt_encoded[geofence_format::kCrcOffset] ^= 0x01U;
+      memcpy(static_cast<uint8_t*>(geofence_region) + kPageSize,
+             corrupt_encoded, sizeof(corrupt_encoded));
+    }
   }
 
   // Seed page 0 through the real journal/backend, including a committed fix.
@@ -232,10 +253,10 @@ int main(int argc, char** argv) {
   assert(history.ready() && history.count() == 1);
   assert(history.diagnostics().recovery_corruptions == 0);
   // Fresh blank ConfigStore establishes its internal v2 token baseline.
-  // Blank GeofenceStore also establishes its own CLEAR baseline; the persisted
-  // scenario instead recovers its pre-seeded CONFIGURED record without a write.
+  // Blank GeofenceStore also establishes its own CLEAR baseline; persisted and
+  // UNCERTAIN-fallback scenarios recover pre-seeded evidence without a write.
   const unsigned expected_boot_programs =
-      persisted_geofence_scenario ? 2U : 4U;
+      (persisted_geofence_scenario || uncertain_geofence_scenario) ? 2U : 4U;
   assert(erases == 0 && programs == expected_boot_programs);
   assert(config_store.tokenState() == ConfigTokenState::kValid);
   assert(!config_store.hasCommittedRecord());  // application still "default"
@@ -247,6 +268,16 @@ int main(int argc, char** argv) {
     assert(Serial.output.find(
                "GEOFENCE runtime configured areas=1 vertices=4 token=VALID\n") !=
            std::string::npos);
+  } else if (uncertain_geofence_scenario) {
+    assert(geofence_store.resourceState() == GeofenceResourceState::kConfigured);
+    assert(geofence_store.tokenState() == GeofenceTokenState::kUncertain);
+    assert(geofence_confirmation.configured());
+    assert(Serial.output.find(
+               "GEOFENCE runtime configured areas=1 vertices=4 token=UNCERTAIN\n") !=
+           std::string::npos);
+    // Recovery is read-only: neither baseline creation nor geofence mutation
+    // is allowed merely to "repair" uncertain evidence during production boot.
+    assert(programs == 2U);
   } else {
     assert(geofence_store.resourceState() == GeofenceResourceState::kClear);
     assert(geofence_store.tokenState() == GeofenceTokenState::kValid);
