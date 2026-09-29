@@ -1,6 +1,6 @@
 # M6D3C — Durable geofence snapshot -> M6D2 runtime provider
 
-Status: **IMPLEMENTATION COMPLETE; INITIAL COMPLETE HOST + PRODUCTION RAK4630 BUILD PASS; POST-BUILD STACK-HARDENING RETEST / INDEPENDENT AUDIT / PHYSICAL RUNTIME ACTIVATION PENDING**.
+Status: **IMPLEMENTATION COMPLETE; FINAL COMPLETE HOST + PRODUCTION RAK4630 BUILD PASS; INDEPENDENT ASTRA AUDIT / PHYSICAL RUNTIME ACTIVATION PENDING**.
 
 Baseline: `main@89d41e0f8f46978ff487cecbd99ce9d09ea5e2fa`.
 Branch: `feat/m6d3c-geofence-runtime-provider`.
@@ -206,6 +206,35 @@ SUCCESS at 28,744 B RAM / 260,008 B Flash. The complete host suite must be
 repeated after the source-contract name fix before the host gate is final.
 
 This is build evidence only, not physical M6D3C runtime evidence.
+
+## 7.3. Final post-hardening host evidence
+
+After moving the boot snapshot to static storage and repairing the source-contract
+guard to follow the renamed `geofence_boot_snapshot`, the complete host suite
+was repeated.
+
+Final complete `./tests/run_host_tests.sh`: **PASS**.
+
+Relevant final lines include:
+
+- `M6D3C durable snapshot -> M6D2 runtime provider checks: PASS`;
+- `M6D3C durable geofence runtime activation contract: PASS`;
+- `Production startup identity/history/loop (geofence_persisted): PASS`;
+- all prior production startup scenarios remain PASS;
+- all M6D3B GeofenceStore/FlashMutationGate regression suites remain PASS;
+- all existing B1A..B4, M3..M7 and R2..R4 suites remain PASS.
+
+Final validated branch head at this software gate:
+`bfc691dec8a7bb1b5bb447175f665c02c3639f66`.
+
+Production RAK4630 build after the stack-hardening change remains:
+
+- RAM: **28,744 / 248,832 B (11.6%)**;
+- Flash: **260,008 / 815,104 B (31.9%)**;
+- application-ceiling guard: **PASS**;
+- exclusive-owner guard: **PASS**.
+
+No physical M6D3C runtime activation is claimed yet.
 
 ## 8. Validation gates
 
