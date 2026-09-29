@@ -27,7 +27,7 @@ assert begin_pos < ble_pos
 
 # The runtime bridge consumes a recovered snapshot only. No production
 # geofence mutation API is activated in this slice.
-assert "geofence_store.currentSnapshot(geofence_snapshot)" in main
+assert "geofence_store.currentSnapshot(geofence_boot_snapshot)" in main
 assert "applyGeofenceSnapshotToRuntime" in main
 assert "geofence_store.requestReplace" not in main
 assert "geofence_store.requestClear" not in main
