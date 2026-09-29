@@ -1,6 +1,6 @@
 # M6D3C — Durable geofence snapshot -> M6D2 runtime provider
 
-Status: **IMPLEMENTATION COMPLETE; FINAL HOST + PRODUCTION RAK4630 BUILD PASS; INDEPENDENT ASTRA AUDIT PASS WITH LOW FOLLOW-UPS; POST-AUDIT RETEST / PHYSICAL RUNTIME ACTIVATION PENDING**.
+Status: **IMPLEMENTATION COMPLETE; FINAL HOST + PRODUCTION RAK4630 BUILD PASS; INDEPENDENT ASTRA AUDIT PASS; POST-AUDIT COMPLETE HOST RETEST PASS; PHYSICAL RUNTIME ACTIVATION PENDING**.
 
 Baseline: `main@89d41e0f8f46978ff487cecbd99ce9d09ea5e2fa`.
 Branch: `feat/m6d3c-geofence-runtime-provider`.
@@ -284,6 +284,33 @@ This is a known residual, not a semantic safety failure: the device does not
 invent a geofence or emit a false OUTSIDE event. The future authenticated
 geofence writer/maintenance slice must provide an explicit recovery path for
 this state.
+
+## 7.6. Post-audit retest
+
+After applying the accepted LOW audit follow-ups, the complete host suite was
+repeated at branch head `a1f9a5525512f33a1069d0f42507fc080290032c`: **PASS**.
+
+The final startup matrix now additionally includes:
+
+- `Production startup identity/history/loop (geofence_uncertain): PASS`.
+
+This proves the production composition continues to apply a readable
+CONFIGURED semantic snapshot to M6D2 even when the durable mutation/CAS token
+is UNCERTAIN, while leaving the recovery path read-only.
+
+No production firmware source changed after the independently audited runtime
+head; the post-audit delta is limited to host regression coverage,
+test-environment documentation and milestone documentation. Therefore the
+already-recorded post-stack-hardening RAK4630 production build evidence remains
+applicable:
+
+- RAM: **28,744 / 248,832 B (11.6%)**;
+- Flash: **260,008 / 815,104 B (31.9%)**;
+- application-ceiling guard: **PASS**;
+- exclusive-owner guard: **PASS**.
+
+The software/audit gate is now closed. Physical M6D3C runtime activation is the
+remaining pre-merge evidence.
 
 ## 8. Validation gates
 
