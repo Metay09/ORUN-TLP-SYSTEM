@@ -312,6 +312,25 @@ applicable:
 The software/audit gate is now closed. Physical M6D3C runtime activation is the
 remaining pre-merge evidence.
 
+## 7.6. Post-audit full host retest
+
+After accepting the audit's LOW L1 regression recommendation and documentation
+follow-ups, the complete host suite was repeated.
+
+Final post-audit `./tests/run_host_tests.sh`: **PASS**.
+
+The new production-composition regression also passes:
+
+- `Production startup identity/history/loop (geofence_uncertain): PASS`.
+
+This proves the intended M6D3B/M6D3C semantic split is regression-guarded:
+a readable CONFIGURED snapshot remains active in M6D2 even when mutation/CAS
+token authority is UNCERTAIN.
+
+No production runtime source changed after the previously successful RAK4630
+build, so the 28,744 B RAM / 260,008 B Flash production build evidence remains
+applicable.
+
 ## 8. Validation gates
 
 Required before merge:
