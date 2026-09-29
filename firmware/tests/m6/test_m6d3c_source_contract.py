@@ -14,6 +14,11 @@ assert main.count("orun_tlp::GeofenceStore geofence_store") == 1
 assert "storage_flash_gate.geofencePort()" in main
 assert main.count("orun_tlp::NrfGeofenceIncarnationSource geofence_incarnation_source") == 1
 
+# M6D3B physically qualified GeofenceStore::begin() against the 4-KiB loop
+# task. Do not reintroduce a record-sized setup() local around that call.
+assert main.count("orun_tlp::geofence_format::Snapshot geofence_boot_snapshot") == 1
+assert "currentSnapshot(geofence_boot_snapshot)" in main
+
 # Recovery and runtime activation must happen before Bluefruit enables
 # SoftDevice. This keeps the already-qualified synchronous boot path intact.
 begin_pos = main.index("geofence_store.begin()")
