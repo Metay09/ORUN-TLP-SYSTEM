@@ -118,6 +118,16 @@ For RF-domain/channel planning, shared relay/gateway infrastructure, field cover
 learning, USB/BLE diagnostics or future serviceability UI, read
 `docs/architecture/ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
 
+BLE product direction is broader than transport bring-up. The intended local
+product surface is phone-based setup, configuration and service/diagnostics,
+with USB and BLE converging on the same typed application/service owners rather
+than duplicating domain logic. Protected writes must still wait for reviewed
+authentication/authorization, anti-replay and idempotency where required, but
+safe bounded read-only status (for example device/location/GNSS/geofence/power/
+radio/storage/health) must not be deferred merely because protected mutation is
+not yet enabled. Do not treat a working GATT transport plus GET_CONFIG as the
+finished BLE product surface.
+
 For configurable RF semantics, SX1262/reference-platform boundaries and future
 radio/board portability, read
 `docs/architecture/ADR_RF_CONFIGURATION_PORTABILITY.md`.
