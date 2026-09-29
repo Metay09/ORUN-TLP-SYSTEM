@@ -1,6 +1,6 @@
 # M6D3C — Durable geofence snapshot -> M6D2 runtime provider
 
-Status: **IMPLEMENTATION COMPLETE; COMPLETE HOST / WARNINGS / ASAN / UBSAN PASS; RAK4630 BUILD + AUDIT PENDING**.
+Status: **IMPLEMENTATION COMPLETE; COMPLETE HOST / WARNINGS / ASAN / UBSAN PASS; PRODUCTION RAK4630 BUILD PASS; INDEPENDENT AUDIT / PHYSICAL RUNTIME ACTIVATION PENDING**.
 
 Baseline: `main@89d41e0f8f46978ff487cecbd99ce9d09ea5e2fa`.
 Branch: `feat/m6d3c-geofence-runtime-provider`.
@@ -173,6 +173,29 @@ New/affected evidence includes:
 The host harness uses warnings-as-errors plus ASan/UBSan for the applicable
 targets. This is software evidence only; no M6D3C physical runtime activation
 has been claimed.
+
+## 7.2. Production RAK4630 build evidence
+
+`pio run -e rak4630`: **SUCCESS**.
+
+Measured production image:
+
+- RAM: **28,224 / 248,832 B (11.3%)**;
+- Flash: **260,008 / 815,104 B (31.9%)**.
+
+Relative to the M6D3B production baseline (24,224 B RAM / 252,748 B Flash),
+M6D3C adds **4,000 B RAM** and **7,260 B Flash**. The RAM increase is expected
+because production now instantiates GeofenceStore's fixed recovery/verification
+workspaces and durable snapshot state rather than leaving that owner absent from
+the composition root.
+
+The build log contains the existing pinned SX126x-Arduino dependency warnings
+(`#warning USING RAK4630` and RAK11300 SimpleTimer signed/unsigned warnings);
+no warning was emitted from M6D3C project sources.
+
+Application-ceiling and exclusive-owner post-link guards completed successfully.
+
+This is build evidence only, not physical M6D3C runtime evidence.
 
 ## 8. Validation gates
 
