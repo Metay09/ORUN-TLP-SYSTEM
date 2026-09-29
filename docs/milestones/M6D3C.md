@@ -1,6 +1,6 @@
 # M6D3C — Durable geofence snapshot -> M6D2 runtime provider
 
-Status: **IMPLEMENTATION COMPLETE; FINAL COMPLETE HOST + PRODUCTION RAK4630 BUILD PASS; INDEPENDENT ASTRA AUDIT / PHYSICAL RUNTIME ACTIVATION PENDING**.
+Status: **IMPLEMENTATION COMPLETE; FINAL HOST + PRODUCTION RAK4630 BUILD PASS; INDEPENDENT ASTRA AUDIT PASS WITH LOW FOLLOW-UPS; POST-AUDIT RETEST / PHYSICAL RUNTIME ACTIVATION PENDING**.
 
 Baseline: `main@89d41e0f8f46978ff487cecbd99ce9d09ea5e2fa`.
 Branch: `feat/m6d3c-geofence-runtime-provider`.
@@ -235,6 +235,55 @@ Production RAK4630 build after the stack-hardening change remains:
 - exclusive-owner guard: **PASS**.
 
 No physical M6D3C runtime activation is claimed yet.
+
+## 7.4. Independent Astra audit
+
+Independent final audit at branch head
+`8b6342264e1d073be8fd6d010a42816928f9da8a`: **PASS**.
+
+Severity summary:
+
+- BLOCKER: 0
+- HIGH: 0
+- MEDIUM: 0
+- LOW: 3
+
+Accepted LOW follow-ups:
+
+1. add a real production-startup regression proving a readable CONFIGURED
+   snapshot remains active when GeofenceTokenState is UNCERTAIN;
+2. clarify that the legacy M6D2 physical probe now inherits durable M6D3C boot
+   activation and therefore requires a CLEAR durable resource to exercise its
+   temporary first-fix fixture;
+3. record the existing M6D3B fail-closed residual: a power cut while creating
+   the very first blank-partition CLEAR baseline can leave the resource
+   UNAVAILABLE, and production M6D3C intentionally has no maintenance/writer
+   recovery path yet.
+
+The audit independently re-ran the complete host suite and production RAK4630
+build and measured the same final footprint (28,744 B RAM / 260,008 B Flash).
+It also used `-fstack-usage` and measured the deepest first-baseline failure
+path at approximately 2.78 KiB of the 4-KiB loop-task stack, consistent with
+the prior M6D3B stack qualification.
+
+No production runtime bug or compatibility regression was found.
+
+## 7.5. Residual first-boot baseline recovery limit
+
+M6D3C production now calls `GeofenceStore::begin()` on every boot. On a truly
+blank geofence partition, M6D3B's frozen contract establishes an explicit
+committed CLEAR baseline rather than interpreting erased flash as CLEAR.
+
+If electrical power is lost during that **first baseline creation**, partially
+programmed/torn evidence can remain. M6D3B intentionally fails closed:
+the resource may become UNAVAILABLE/maintenance-required rather than guessing
+CLEAR. M6D3C does not add a production maintenance/reset writer, so such a unit
+cannot self-heal that evidence in this slice.
+
+This is a known residual, not a semantic safety failure: the device does not
+invent a geofence or emit a false OUTSIDE event. The future authenticated
+geofence writer/maintenance slice must provide an explicit recovery path for
+this state.
 
 ## 8. Validation gates
 
