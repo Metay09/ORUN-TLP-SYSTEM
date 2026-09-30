@@ -88,13 +88,13 @@ uint32_t HistoryStore::backlogCount() const { uint32_t n=0;for(unsigned p=0;p<kP
 bool HistoryStore::prepareAppend() {
   if (canAppend()) return true;
   if (!appendIdle() || next_ticket_ != sequence_end_) return false;
-  startReservation();
+  if (!startReservation()) fail(false);
   return false;
 }
 
 bool HistoryStore::nextSequence(uint32_t& sequence,uint64_t& identity) {
   if(!canAppend()){
-    if(appendIdle()&&next_ticket_==sequence_end_)startReservation();
+    if(appendIdle()&&next_ticket_==sequence_end_&&!startReservation())fail(false);
     return false;
   }
   sequence=uint32_t(next_ticket_);
