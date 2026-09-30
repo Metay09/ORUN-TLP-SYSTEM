@@ -262,6 +262,41 @@ void rebootWithoutTicketDemandPreservesHistory() {
   assert(demanded.count() == 601);
 }
 
+void positionFlowWaitsForLazyReservationWithoutDroppingFix() {
+  FaultFlash flash;
+  HistoryStore seeded(flash);
+  start(seeded);
+  append(seeded, allocate(seeded));
+
+  HistoryStore rebooted(flash);
+  recoverOnly(rebooted);
+  assert(!rebooted.canAppend());
+
+  tx_flash = &flash;
+  sends = 0;
+  radio_available = false;
+  HistoryStore& store = rebooted;
+  RadioManager radio;
+  assert(radio.begin(store));
+  PositionFlow flow(store, radio);
+  const GnssFix fix{0, 410000123, 290000456, 10, 100, 8, 5};
+
+  // Admission creates demand but does not consume/drop the fix while the
+  // reservation is still being committed.
+  assert(!flow.canAcceptFix());
+  assert(store.busy());
+  assert(flow.storageDrops() == 0);
+  settle(store);
+  assert(flow.canAcceptFix());
+  assert(flow.acceptFix(fix, 0));
+  settle(store);
+  assert(flow.update(1, false) == PositionFlow::Event::kStored);
+  assert(!flow.pending());
+  assert(flow.storageDrops() == 0);
+  assert(store.count() == 2);
+  radio_available = true;
+}
+
 void compactSemanticCorruptionAndIdentityBoundaries() {
   FaultFlash flash;
   HistoryStore store(flash);
@@ -783,6 +818,7 @@ int main() {
   recordPowerLossPreservesCommittedDataAndSequence();
   reservationPowerLossNeverReusesTickets();
   rebootWithoutTicketDemandPreservesHistory();
+  positionFlowWaitsForLazyReservationWithoutDroppingFix();
   compactSemanticCorruptionAndIdentityBoundaries();
   reservationExhaustionRenewsAutomatically();
   circularWrapAndPageTransitionCuts();
