@@ -709,10 +709,13 @@ void lastTicketPositionAndReservationCuts() {
     assert(recovered.lookup(256, last));
     assert(recovered.nextSequence(sequence, identity) && identity > 256);
   }
+  // Exhaustion creates demand immediately; on the synchronous NOR model one
+  // poll completes body + commit + verify for the new reservation. The ticket
+  // remains unavailable until that durable step has completed.
   assert(!store.nextSequence(sequence, identity));
-  store.poll(); // Begin next block, still not durable.
-  assert(!store.nextSequence(sequence, identity));
-  settle(store);
+  assert(store.busy());
+  store.poll();
+  assert(!store.busy());
   assert(flash.erase_operations == erases);
   assert(store.nextSequence(sequence, identity) && identity == 257);
   radio_available = true;
