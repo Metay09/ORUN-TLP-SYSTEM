@@ -14,7 +14,13 @@ class PositionFlow {
         radio_(radio),
         device_identity_(radio.deviceIdentity()) {}
   void setDeviceIdentity(DeviceIdentity identity) { device_identity_ = identity; }
-  bool canAcceptFix() const { return !appending_ && (!store_.ready() || store_.canAppend()); }
+  // A fresh fix is not consumed while HistoryStore is lazily reserving the
+  // first post-boot ticket block. Failed/unready storage keeps the existing
+  // fail-stop behavior: the attempted fix is consumed and rejected explicitly.
+  bool canAcceptFix() {
+    return !appending_ &&
+           (!store_.ready() || store_.prepareAppend());
+  }
   bool acceptFix(const GnssFix& fix, uint32_t now);
   // M6D2: the geofence coordinator may choose a fix which was already accepted
   // as fresh Location evidence, then wait behind an existing History append.
