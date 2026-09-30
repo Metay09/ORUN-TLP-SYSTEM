@@ -82,9 +82,21 @@ void settle(HistoryStore& store) {
   assert(!store.busy());
 }
 
-void start(HistoryStore& store) {
+void recoverOnly(HistoryStore& store) {
   assert(store.begin(kDevice));
   settle(store);
+  assert(store.ready());
+}
+
+void start(HistoryStore& store) {
+  recoverOnly(store);
+  if (!store.canAppend()) {
+    // Tests which need a ticket explicitly create demand. Production now does
+    // the same through PositionFlow::canAcceptFix(); reboot recovery alone
+    // must remain read-only.
+    assert(!store.prepareAppend());
+    settle(store);
+  }
   assert(store.ready() && store.canAppend());
 }
 
@@ -181,14 +193,73 @@ void reservationPowerLossNeverReusesTickets() {
   for (int cut = 0; cut <= int(kSequenceSlotSize); ++cut) {
     FaultFlash flash = baseline;
     HistoryStore rebooting(flash);
-    assert(rebooting.begin(kDevice));
+    recoverOnly(rebooting);
+    uint32_t sequence = 0;
+    uint64_t identity = 0;
     flash.program_budget = cut;
+    // Recovery itself is read-only. The first real ticket demand starts the
+    // reservation whose body/commit boundary is being cut here.
+    assert(!rebooting.nextSequence(sequence, identity));
     settle(rebooting);
     flash.program_budget = -1;
     HistoryStore final_store(flash);
     start(final_store);
     assert(allocate(final_store).identity > used.identity);
   }
+}
+
+void rebootWithoutTicketDemandPreservesHistory() {
+  FaultFlash flash;
+  HistoryStore seeded(flash);
+  start(seeded);
+  for (unsigned index = 0; index < 600; ++index)
+    append(seeded, allocate(seeded, 410000000 + int32_t(index)));
+
+  assert(seeded.count() == 600);
+  HistoryStore::Record oldest_before;
+  HistoryStore::Record newest_before;
+  assert(seeded.oldest(oldest_before));
+  assert(seeded.newest(newest_before));
+
+  const auto bytes_before = flash.bytes;
+  const uint32_t programs_before = flash.program_operations;
+  const uint32_t erases_before = flash.erase_operations;
+
+  // A brown-out/watchdog loop that never reaches a new position must perform
+  // recovery reads only. Repeated idle poll() calls are also forbidden from
+  // turning the reboot into a metadata reservation.
+  for (unsigned boot = 0; boot < 64; ++boot) {
+    HistoryStore recovered(flash);
+    recoverOnly(recovered);
+    assert(!recovered.canAppend());
+    assert(recovered.count() == 600);
+    HistoryStore::Record oldest_after;
+    HistoryStore::Record newest_after;
+    assert(recovered.oldest(oldest_after));
+    assert(recovered.newest(newest_after));
+    assert(oldest_after.identity == oldest_before.identity);
+    assert(newest_after.identity == newest_before.identity);
+    recovered.poll();
+    recovered.poll();
+    assert(!recovered.busy());
+    assert(flash.bytes == bytes_before);
+    assert(flash.program_operations == programs_before);
+    assert(flash.erase_operations == erases_before);
+  }
+
+  // Once there is real work, demand-driven reservation resumes the unchanged
+  // no-sequence-reuse contract before a ticket can be issued.
+  HistoryStore demanded(flash);
+  recoverOnly(demanded);
+  assert(!demanded.canAppend());
+  assert(!demanded.prepareAppend());
+  assert(demanded.busy());
+  settle(demanded);
+  assert(demanded.canAppend());
+  const auto next = allocate(demanded);
+  assert(next.identity > newest_before.identity);
+  append(demanded, next);
+  assert(demanded.count() == 601);
 }
 
 void compactSemanticCorruptionAndIdentityBoundaries() {
@@ -711,6 +782,7 @@ int main() {
   firstInitializationPowerLoss();
   recordPowerLossPreservesCommittedDataAndSequence();
   reservationPowerLossNeverReusesTickets();
+  rebootWithoutTicketDemandPreservesHistory();
   compactSemanticCorruptionAndIdentityBoundaries();
   reservationExhaustionRenewsAutomatically();
   circularWrapAndPageTransitionCuts();
