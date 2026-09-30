@@ -41,12 +41,14 @@ service or cross-cutting subsystem.
 For geofence operational-state transitions, confirmation, adaptive tracking
 cadence and the current INSIDE/OUTSIDE product policy, read
 `docs/architecture/ORUN_GEOFENCE_OPERATIONAL_POLICY.md`. M6D2 software runtime
-composition is now implemented and merged, while the normal production image
-still has no authorized durable geofence area-set owner and focused physical
-GNSS/geofence qualification remains deferred. This is not evidence that secure
-EVENT transport, backend alarms or trustworthy LOST semantics exist. The policy
-refines older conceptual NEAR_FENCE and fixed outside-cadence notes without
-weakening the validated M6C geometry layer.
+composition and M6D3B durable geofence persistence are implemented and merged.
+M6D3C physically qualified the normal production image recovering the durable
+CLEAR/CONFIGURED snapshot at boot and supplying only that semantic snapshot to
+the existing M6D2 runtime owner. No production BLE/LoRa geofence writer,
+protected mutation path or secure EVENT transport is enabled by M6D3C. This is
+not evidence that backend alarms or trustworthy LOST semantics exist. The
+policy refines older conceptual NEAR_FENCE and fixed outside-cadence notes
+without weakening the validated M6C geometry layer.
 
 For map-authored geofence configuration, BLE/LoRa transport-neutral mutation,
 multiple polygons, non-six-point geometry limits, atomic replacement/removal and
@@ -114,6 +116,16 @@ reviewer prompts/transcripts and superseded drafts are not architecture sources.
 For RF-domain/channel planning, shared relay/gateway infrastructure, field coverage
 learning, USB/BLE diagnostics or future serviceability UI, read
 `docs/architecture/ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
+
+BLE product direction is broader than transport bring-up. The intended local
+product surface is phone-based setup, configuration and service/diagnostics,
+with USB and BLE converging on the same typed application/service owners rather
+than duplicating domain logic. Protected writes must still wait for reviewed
+authentication/authorization, anti-replay and idempotency where required, but
+safe bounded read-only status (for example device/location/GNSS/geofence/power/
+radio/storage/health) must not be deferred merely because protected mutation is
+not yet enabled. Do not treat a working GATT transport plus GET_CONFIG as the
+finished BLE product surface.
 
 For configurable RF semantics, SX1262/reference-platform boundaries and future
 radio/board portability, read

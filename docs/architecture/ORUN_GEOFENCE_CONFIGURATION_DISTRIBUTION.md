@@ -674,11 +674,13 @@ compile-gated/test-only fixture that is never part of the production
 configuration source. The prohibition on a "fake hard-coded production fence"
 does **not** prohibit that explicit test fixture.
 
-What remains gated on the configuration/security work is the **production
-durable/user-mutable geofence source and remote/local protected mutation path**.
-The next foundation slice is recorded in `docs/milestones/M6D3.md`: it freezes
-the first production capacity, dedicated persistence range and independent
-geofence-resource CAS namespace before any BLE/LoRa writer exists.
+The durable geofence source itself is now implemented through M6D3B, and
+M6D3C supplies its recovered semantic snapshot to M6D2 at boot. What remains
+gated on configuration/security work is the **user-mutable remote/local
+protected mutation path**. No BLE/LoRa geofence writer is authorized by these
+storage/runtime slices. The original foundation contract remains recorded in
+`docs/milestones/M6D3.md`, including the production capacity, dedicated
+persistence range and independent geofence-resource CAS namespace.
 
 Before production geofence configuration is enabled, separately close:
 
@@ -727,11 +729,11 @@ operational state-machine contract            [DONE]
 -> focused GNSS/geofence physical validation  [DEFERRED]
 
 Production configuration:
-resource contract
--> capacity/storage/CAS                       [NEXT: M6D3]
--> atomic durable active geofence source
--> connect production provider to M6D2
--> secure BLE + protected LoRa resource transfer
+resource contract                             [DONE]
+-> capacity/storage/CAS                       [DONE: M6D3/M6D3A]
+-> atomic durable active geofence source      [DONE: M6D3B]
+-> connect production provider to M6D2        [DONE: M6D3C, PHYSICAL PASS]
+-> secure BLE + protected LoRa resource transfer [NOT IMPLEMENTED]
 
 Then:
 secure OUTSIDE EVENT delivery

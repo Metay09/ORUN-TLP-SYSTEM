@@ -91,6 +91,18 @@ g++ "${portable_flags[@]}" firmware/tests/m6/test_m6d3b_geofence_store.cpp \
   firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m6d3b_geofence_store"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m6/test_m6d3b_source_contract.py
+
+g++ "${b3_flags[@]}" firmware/tests/m6/test_m6d3c_geofence_runtime_provider.cpp \
+  firmware/src/geofence_runtime_provider.cpp \
+  firmware/src/geofence_confirmation_coordinator.cpp \
+  firmware/src/geofence_runtime_policy.cpp firmware/src/geofence_runtime.cpp \
+  firmware/src/geofence_operational_state.cpp firmware/src/geofence_area_set.cpp \
+  firmware/src/geofence_format.cpp firmware/src/geofence_geometry.cpp \
+  firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/m6d3c_geofence_runtime_provider"
+"$test_dir/m6d3c_geofence_runtime_provider"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m6/test_m6d3c_source_contract.py
+
 "$test_dir/m6d3b_geofence_store"
 "$test_dir/m6d3a_geofence_format"
 
@@ -275,6 +287,8 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/geofence_runtime.cpp firmware/src/geofence_operational_state.cpp \
   firmware/src/geofence_runtime_policy.cpp \
   firmware/src/geofence_confirmation_coordinator.cpp \
+  firmware/src/geofence_runtime_provider.cpp firmware/src/geofence_store.cpp \
+  firmware/src/geofence_format.cpp \
   firmware/src/tlp_test_packet.cpp firmware/src/tlp_position_packet.cpp \
   firmware/src/tlp_relay_forward_packet.cpp firmware/src/history_store.cpp \
   firmware/src/journal_format.cpp firmware/src/nrf_history_flash.cpp \
@@ -288,7 +302,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/security_store.cpp firmware/src/security_format.cpp \
   firmware/src/position_flow.cpp firmware/src/ble_admission_policy.cpp \
   -o "$test_dir/startup"
-for scenario in mutex gate queue lora success advfail blefail noevent geofence; do
+for scenario in mutex gate queue lora success advfail blefail noevent geofence geofence_persisted geofence_uncertain; do
   "$test_dir/startup" "$scenario"
 done
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r4/test_patch_wire.py
