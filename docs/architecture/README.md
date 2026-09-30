@@ -66,10 +66,11 @@ capacity, dedicated `0x0E5000..0x0E7000` two-page A/B reservation, separate
 required build-ceiling/recovery/canonicalization corrections were applied, and
 focused verification returned **PASS WITH MINOR DOC FIX** with 0
 BLOCKER/HIGH/MEDIUM. The architecture contract was implemented through M6D3A/M6D3B: the durable
-GeofenceStore and its A/B power-cut recovery path are merged. M6D3C is the
-narrow production integration that recovers the durable semantic snapshot at
-boot and supplies it to the existing M6D2 runtime owner. It still introduces no
-production BLE/LoRa geofence writer or protected mutation transport.
+GeofenceStore and its A/B power-cut recovery path are merged. M6D3C completes
+the narrow production integration that recovers the durable semantic snapshot
+at boot and supplies it to the existing M6D2 runtime owner; focused physical
+runtime activation is PASS. It still introduces no production BLE/LoRa geofence
+writer or protected mutation transport.
 
 The current draft geofence configuration/distribution direction is recorded in
 `ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md`, with independent review history
