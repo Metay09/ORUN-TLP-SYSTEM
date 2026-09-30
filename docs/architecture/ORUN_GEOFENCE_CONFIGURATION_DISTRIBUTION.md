@@ -732,7 +732,7 @@ Production configuration:
 resource contract                             [DONE]
 -> capacity/storage/CAS                       [DONE: M6D3/M6D3A]
 -> atomic durable active geofence source      [DONE: M6D3B]
--> connect production provider to M6D2        [M6D3C: SOFTWARE PASS, PHYSICAL PENDING]
+-> connect production provider to M6D2        [DONE: M6D3C, PHYSICAL PASS]
 -> secure BLE + protected LoRa resource transfer [NOT IMPLEMENTED]
 
 Then:
