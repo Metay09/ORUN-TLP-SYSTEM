@@ -1,6 +1,6 @@
 # M6D3C — Durable geofence snapshot -> M6D2 runtime provider
 
-Status: **IMPLEMENTATION COMPLETE; FINAL HOST + PRODUCTION RAK4630 BUILD PASS; INDEPENDENT ASTRA AUDIT PASS; POST-AUDIT COMPLETE HOST RETEST PASS; PHYSICAL RUNTIME ACTIVATION PENDING**.
+Status: **COMPLETE; FINAL HOST + PRODUCTION RAK4630 BUILD PASS; INDEPENDENT ASTRA AUDIT PASS; POST-AUDIT COMPLETE HOST RETEST PASS; PHYSICAL RUNTIME ACTIVATION PASS; MERGE READY**.
 
 Baseline: `main@89d41e0f8f46978ff487cecbd99ce9d09ea5e2fa`.
 Branch: `feat/m6d3c-geofence-runtime-provider`.
@@ -348,21 +348,63 @@ focused M6D3C host/source tests
 
 A build PASS is not physical proof.
 
-## 9. Physical evidence boundary
+## 9. Physical runtime qualification
 
-M6D3B already physically proved the durable store itself:
+M6D3B had already physically qualified the durable store itself: fresh
+baseline, A/B successor and rollover, reboot persistence, and the focused
+electrical cut before commit.
 
-- fresh baseline;
-- A/B successor and rollover;
-- reboot persistence;
-- focused electrical cut before commit.
+M6D3C production runtime activation was then physically exercised on development
+unit `ID_SERIAL_SHORT=0E8ADE7E71531AA3` with the previously-qualified durable
+CONFIGURED resource:
 
-M6D3C changes production composition: a recovered CONFIGURED snapshot now
-affects the actual local M6D2 runtime. That integration has not yet been
-physically executed in this milestone.
+- incarnation: `0xD93BBFF182C898DC`;
+- active revision/generation: `4 / 4`;
+- snapshot: `CONFIGURED`, one area, three effective vertices.
 
-Do not claim physical M6D3C runtime activation until a dedicated physical
-observation is recorded.
+Observed production behavior:
+
+- the first valid outdoor episode produced the required three accepted GNSS
+  observations before the coordinator settled its initial classification;
+- no synthetic `GEOFENCE OUTSIDE confirmed` transition was emitted during
+  that initial classification;
+- with the persisted CONFIGURED resource active, the runtime cadence changed
+  from base `B=180 s` to the existing M6D2 `B/3` cadence, observed as
+  approximately 60-second acquisition starts;
+- after a device reset, the same approximately 60-second cadence resumed,
+  providing behavioral evidence that the persisted CONFIGURED snapshot was
+  recovered and re-applied to the M6D2 runtime.
+
+The exact early-boot log
+`GEOFENCE runtime configured areas=... vertices=... token=...` was **not**
+physically observed because USB CDC disconnected/re-enumerated across reset.
+This milestone therefore does not claim that exact log line as observed
+evidence; the runtime behavior above is the physical activation evidence.
+
+A final read-only M6D3B qualification image was then flashed to verify that
+production had not mutated the durable geofence resource. Its STATUS output was:
+
+```text
+M6D3B QUAL STORE ready=yes busy=no maintenance=no resource=CONFIGURED token_state=VALID mutations=0 failures=0 reconciliations=0
+M6D3B QUAL TOKEN incarnation=0xD93BBFF182C898DC revision=4
+M6D3B QUAL SNAPSHOT state=CONFIGURED areas=1 vertices=3
+M6D3B QUAL PAGE A evidence=COMMITTED_CLEAR decoded=yes tail_ff=yes generation=0x0000000000000003 incarnation=0xD93BBFF182C898DC revision=3 state=CLEAR areas=0 vertices=0
+M6D3B QUAL PAGE B evidence=COMMITTED_CONFIGURED decoded=yes tail_ff=yes generation=0x0000000000000004 incarnation=0xD93BBFF182C898DC revision=4 state=CONFIGURED areas=1 vertices=3
+```
+
+This proves the production M6D3C path remained read-only with respect to
+GeofenceStore while consuming the durable semantic snapshot.
+
+After the qualification check, the normal production `rak4630` image was
+restored successfully:
+
+- RAM: **28,744 / 248,832 B (11.6%)**;
+- Flash: **260,008 / 815,104 B (31.9%)**;
+- upload: **SUCCESS**.
+
+Physical qualification scope is intentionally limited to this integration
+slice. It does not turn host/build evidence into RF, GNSS accuracy, power,
+security, BLE-write or backend qualification.
 
 
 ## 10. Product follow-up after M6D3C
