@@ -21,9 +21,11 @@ bool HistoryStore::begin(uint64_t device) {
   if (!flash_.begin() || !recover()) return false;
   ready_ = true;
   if (active_page_ < 0) return startNewPage(false);
-  // A reboot never reuses unused tickets. Persist the next block first.
+  // A reboot never reuses unused tickets, but recovery itself must stay
+  // read-only. Skip the previously reserved-but-unused range in RAM and wait
+  // until an application owner actually needs a new ticket block.
   next_ticket_ = sequence_end_;
-  return startReservation();
+  return true;
 }
 
 bool HistoryStore::recover() {
@@ -83,7 +85,22 @@ bool HistoryStore::lookup(uint64_t id,Record& out) const { return id && readAfte
 bool HistoryStore::getNextBacklog(Record& r) const { return readAfter(state_.replay_cursor>state_.delivered_through?state_.replay_cursor:state_.delivered_through,r); }
 uint32_t HistoryStore::backlogCount() const { uint32_t n=0;for(unsigned p=0;p<kPageCount;++p)for(unsigned s=0;s<kRecordsPerPage;++s)if(bitSet(pages_[p].valid,s)){Record r;if(readSlot(p,s,r)&&r.identity>state_.delivered_through)++n;}return n; }
 
-bool HistoryStore::nextSequence(uint32_t& sequence,uint64_t& identity) { if(!canAppend())return false; sequence=uint32_t(next_ticket_); identity=++next_ticket_; return true; }
+bool HistoryStore::prepareAppend() {
+  if (canAppend()) return true;
+  if (!appendIdle() || next_ticket_ != sequence_end_) return false;
+  startReservation();
+  return false;
+}
+
+bool HistoryStore::nextSequence(uint32_t& sequence,uint64_t& identity) {
+  if(!canAppend()){
+    if(appendIdle()&&next_ticket_==sequence_end_)startReservation();
+    return false;
+  }
+  sequence=uint32_t(next_ticket_);
+  identity=++next_ticket_;
+  return true;
+}
 bool HistoryStore::append(const uint8_t* packet,uint64_t identity) {
   Record latest{};
   if(!appendIdle()||!packet||identity>next_ticket_||!validPacket(packet,identity,device_id_)||(newest(latest)&&identity<=latest.identity)){++diagnostics_.append_failures;return false;}
@@ -151,7 +168,10 @@ void HistoryStore::finishBlob(){
 }
 void HistoryStore::poll(){
   if(!ready_)return;
-  if(job_==Job::kNone){if(!append_result_ready_&&next_ticket_==sequence_end_&&!startReservation())fail(false);return;}
+  // Idle recovery is intentionally read-only. Reservation is demand-driven by
+  // prepareAppend()/nextSequence(), so reboot loops with no new work cannot
+  // consume metadata slots or rotate/erase history pages.
+  if(job_==Job::kNone)return;
   if(phase_==Phase::kErase){
     const FlashOpResult r=flash_op_awaiting_completion_?flash_.pollPending():flash_.erasePage(target_page_);
     if(r==FlashOpResult::kPending){flash_op_awaiting_completion_=true;return;}
