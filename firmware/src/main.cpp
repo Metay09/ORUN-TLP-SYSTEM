@@ -2005,7 +2005,7 @@ void loop() {
   // its immediate logical POSITION. Queue exactly one representative until the
   // existing store-before-send owner can accept it; do not bypass HistoryStore.
   if (tracking_enabled && geofence_representative_pending &&
-      positions.canAcceptFix()) {
+      positions.prepareForFixStorage()) {
     if (positions.acceptPreviouslyAcceptedFix(
             geofence_representative_fix, orun_tlp::monotonic::nowMs())) {
       geofence_representative_pending = false;
@@ -2026,8 +2026,11 @@ void loop() {
   // normal fixes are consumed only when PositionFlow can accept them. During a
   // bounded confirmation episode, the two extra accepted fixes are local
   // evidence and must not be blocked by an unrelated in-flight History append.
-  if (tracking_enabled &&
-      (confirmation_fix_expected || positions.canAcceptFix()) &&
+  const bool normal_fix_storage_ready =
+      confirmation_fix_expected ||
+      (gnss_manager.state() == orun_tlp::GnssManager::State::kFixAvailable &&
+       positions.prepareForFixStorage());
+  if (tracking_enabled && normal_fix_storage_ready &&
       gnss_manager.takeFreshFixForTransmission(&fix)) {
     processGeofenceAcceptedFix(fix, !confirmation_fix_expected);
 
