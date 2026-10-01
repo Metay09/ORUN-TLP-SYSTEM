@@ -412,13 +412,24 @@ void positionFlowWaitsForLazyReservationWithoutDroppingFix() {
   PositionFlow flow(store, radio);
   const GnssFix fix{0, 410000123, 290000456, 10, 100, 8, 5};
 
-  // Admission creates demand but does not consume/drop the fix while the
-  // reservation is still being committed.
+  // Merely polling admission must not create flash work. Only an application
+  // owner which already knows a real fix is pending may demand a reservation.
+  const auto programs_before = flash.program_operations;
+  const auto erases_before = flash.erase_operations;
   assert(!flow.canAcceptFix());
-  assert(store.busy());
+  assert(!store.busy());
+  assert(flash.program_operations == programs_before);
+  assert(flash.erase_operations == erases_before);
   assert(flow.storageDrops() == 0);
+
+  // Once the real fix is known to be waiting, prepare storage without
+  // consuming the observation. The fix remains available while the
+  // reservation commits cooperatively.
+  assert(!flow.prepareForFixStorage());
+  assert(store.busy());
   settle(store);
   assert(flow.canAcceptFix());
+  assert(flow.prepareForFixStorage());
   assert(flow.acceptFix(fix, 0));
   settle(store);
   assert(flow.update(1, false) == PositionFlow::Event::kStored);
