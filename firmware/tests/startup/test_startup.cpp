@@ -328,11 +328,10 @@ int main(int argc, char** argv) {
   assert(watchdog_feeds == 16 && fake_idle_calls == 16);
   assert(gnss_manager.state() == GnssManager::State::kAcquiring);
   assert(role_controller.role() == NodeRole::kTracker);
-  assert(erases == 0 && programs == expected_boot_programs + 2U);
-  // +2 HistoryStore reservation after the boot baselines/recovery.
-  assert(memcmp(region, before.data(), journal_format::kStaticHeaderSize) == 0);
-  assert(memcmp(static_cast<uint8_t*>(region) + kPageHeaderSize,
-                before.data() + kPageHeaderSize, kRegionSize - kPageHeaderSize) == 0);
+  // Recovery plus ordinary runtime polling must remain read-only for History.
+  // No sequence reservation is allowed until a real fresh fix is pending.
+  assert(erases == 0 && programs == expected_boot_programs);
+  assert(memcmp(region, before.data(), before.size()) == 0);
   HistoryStore::Record recovered{};
   assert(history.lookup(original.identity, recovered));
   assert(memcmp(recovered.packet, original.packet, sizeof(original.packet)) == 0);
