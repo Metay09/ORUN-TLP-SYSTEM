@@ -2027,10 +2027,11 @@ void loop() {
   // bounded confirmation episode, the two extra accepted fixes are local
   // evidence and must not be blocked by an unrelated in-flight History append.
   const bool normal_fix_storage_ready =
-      confirmation_fix_expected ||
-      (gnss_manager.state() == orun_tlp::GnssManager::State::kFixAvailable &&
-       positions.prepareForFixStorage());
-  if (tracking_enabled && normal_fix_storage_ready &&
+      tracking_enabled &&
+      (confirmation_fix_expected ||
+       (gnss_manager.hasFreshFixForTransmission() &&
+        positions.prepareForFixStorage()));
+  if (normal_fix_storage_ready &&
       gnss_manager.takeFreshFixForTransmission(&fix)) {
     processGeofenceAcceptedFix(fix, !confirmation_fix_expected);
 
