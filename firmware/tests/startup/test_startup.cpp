@@ -350,6 +350,13 @@ int main(int argc, char** argv) {
     });
     loop(); // First epoch establishes the R3 boundary; second is fresh.
   }
+  // The fresh fix first creates real demand for a sequence reservation. The
+  // next loop durably completes that reservation and queues the store-first
+  // append; the record itself is not committed until the following loop.
+  loop();
+  assert(history.count() == 1 && erases == 0 &&
+         programs == expected_boot_programs + 2U);
+  assert(history.busy());
   loop();
   assert(history.count() == 2 && erases == 0 &&
          programs == expected_boot_programs + 4U);
