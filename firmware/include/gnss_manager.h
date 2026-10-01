@@ -68,6 +68,10 @@ class GnssManager {
   }
 
   bool takeFreshFixForTransmission(GnssFix* fix);
+  // Read-only application admission hint. poll() expires stale observations
+  // before the composition root uses this, while takeFreshFixForTransmission()
+  // still re-checks freshness at consumption time.
+  bool hasFreshFixForTransmission() const { return fresh_fix_ready_; }
   bool detected() const;
   bool detectionComplete() const {
     return state_ != State::kDetectionBackoff && state_ != State::kPowerOff &&
