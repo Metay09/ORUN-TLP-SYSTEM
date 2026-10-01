@@ -206,6 +206,15 @@ void GnssManager::poll() {
       return;
 
     case State::kFixAvailable:
+      // A promoted fix remains owned by the application until it is consumed
+      // or expires. Storage/flash backpressure may legitimately delay that
+      // consumption for several cooperative loop passes. Do not power down the
+      // receiver while fresh_fix_ready_ is still true: geofence may need to
+      // continue this exact acquisition after consuming the fix.
+      if (fresh_fix_ready_) return;
+      enterLowPower(now);
+      return;
+
     case State::kTimeout:
     case State::kFailure:
       enterLowPower(now);
