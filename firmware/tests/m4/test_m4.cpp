@@ -104,7 +104,14 @@ HistoryStore::Record allocate(HistoryStore& store,
                               int32_t latitude = 410000000) {
   uint32_t sequence = 0;
   HistoryStore::Record record;
-  assert(store.nextSequence(sequence, record.identity));
+  if (!store.nextSequence(sequence, record.identity)) {
+    // Demand-driven reservation may make the ticket available only after the
+    // cooperative store step completes. Tests that explicitly exercise
+    // exhaustion call nextSequence() directly and are unaffected by this helper.
+    assert(store.busy());
+    settle(store);
+    assert(store.nextSequence(sequence, record.identity));
+  }
   const tlp::PositionPacket packet{kDevice, sequence, 0, latitude, -290000000,
                                    -10, 123, 8, 5};
   assert(tlp::serializePositionPacket(packet, record.packet,
