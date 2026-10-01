@@ -520,7 +520,10 @@ int main(int argc, char** argv) {
     assert(!radio_manager.sendPositionPacket(recovered.packet));
     assert(send_calls == 0);
   }
-  assert(watchdog_feeds == 19 && fake_idle_calls == 19);
+  // 16 startup service loops + 2 GNSS epochs + 2 lazy History steps
+  // (reservation commit, then record commit). Every production loop must still
+  // feed the watchdog and enter the idle hook exactly once.
+  assert(watchdog_feeds == 20 && fake_idle_calls == 20);
 
   // The USB diagnostic must be queryable after the early boot window is gone.
   // While the bounded probe is incomplete it reports PENDING, not ABSENT.
