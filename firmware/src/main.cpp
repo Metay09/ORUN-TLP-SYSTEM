@@ -1856,9 +1856,17 @@ void loop() {
   // GNSS detection/power remains owned by GnssManager. Service resolution must
   // not silently turn role, location source, GNSS power or accelerometer
   // presence into one knob.
-  gnss_manager.poll();
-  handleAccelerometerEvent(
-      accelerometer_manager.poll(orun_tlp::monotonic::nowMs()));
+  // Physical RAK4631 qualification showed that a HistoryStore page erase
+  // accepted by SoftDevice can remain active across loop passes and overlap a
+  // Wire transaction, tripping the bounded 25 ms TWIM timeout and forcing an
+  // otherwise-unnecessary GNSS session resync. Quiesce the two loop-owned I2C
+  // clients from the moment HistoryStore enters its erase phase until that
+  // erase completes. Normal record programs are intentionally unaffected.
+  if (!history.erasePending()) {
+    gnss_manager.poll();
+    handleAccelerometerEvent(
+        accelerometer_manager.poll(orun_tlp::monotonic::nowMs()));
+  }
   activity_capture.poll();
   pollRoleCommands();
   // M7P7D: transport input and application result consumption are separate

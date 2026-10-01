@@ -77,6 +77,10 @@ bool HistoryStore::recover() {
   return true;
 }
 
+bool HistoryStore::erasePending() const {
+  return job_ == Job::kNewPage && phase_ == Phase::kErase;
+}
+
 uint32_t HistoryStore::count() const { uint32_t n=0; for(unsigned p=0;p<kPageCount;++p)n+=pages_[p].records_valid; return n; }
 bool HistoryStore::readSlot(unsigned p,unsigned s,Record& r) const { uint8_t b[kRecordSize]; return flash_.read(recordOffset(p,s),b,sizeof(b))&&decodeRecord(b,device_id_,r); }
 bool HistoryStore::readAfter(uint64_t id,Record& out) const { bool found=false; for(unsigned p=0;p<kPageCount;++p)for(unsigned s=0;s<kRecordsPerPage;++s)if(bitSet(pages_[p].valid,s)){Record r;if(readSlot(p,s,r)&&r.identity>id&&(!found||r.identity<out.identity)){out=r;found=true;}}return found; }

@@ -13,6 +13,10 @@ class HistoryStore : public SequenceSource {
   void poll();  // One synchronous journal step per call.
   bool ready() const { return ready_; }
   bool busy() const { return job_ != Job::kNone; }
+  // True from page-rotation decision through completion of the physical erase.
+  // The composition root uses this narrow signal to keep loop-owned I2C
+  // transactions from overlapping the nRF52/SoftDevice page erase window.
+  bool erasePending() const;
   // Pure readiness query. Recovery deliberately does not reserve a fresh
   // sequence block merely because the MCU rebooted.
   bool canAppend() const { return appendIdle() && next_ticket_ < sequence_end_; }

@@ -194,7 +194,46 @@ int main() {
     assert(recovered.lookup(next.identity, missing));
   }
 
-  // H: store-before-send -- PositionFlow must not allow TX while storage is
+  // H: page-erase exposure spans the whole async erase window. Production
+  // uses this signal to quiesce loop-owned I2C clients until SoftDevice reports
+  // erase completion; it must not remain asserted for header/reservation writes.
+  {
+    PendingFlash flash;
+    flash.pending_steps = 3;
+    HistoryStore store(flash);
+    assert(store.begin(kDevice));
+    settle(store);
+
+    for (unsigned index = 0; index < kRecordsPerPage; ++index) {
+      const auto record = allocate(store);
+      assert(store.append(record.packet, record.identity));
+      settle(store);
+      bool success = false;
+      assert(store.takeAppendResult(success) && success);
+    }
+    assert(!store.erasePending());
+
+    const auto rotating = allocate(store);
+    assert(store.append(rotating.packet, rotating.identity));
+    assert(store.erasePending());
+
+    store.poll();  // submit erase -> kPending
+    assert(store.erasePending());
+    store.poll();  // still pending
+    assert(store.erasePending());
+    store.poll();  // still pending
+    assert(store.erasePending());
+    store.poll();  // still pending (remaining reaches zero after this call)
+    assert(store.erasePending());
+    store.poll();  // erase resolves; phase advances to header
+    assert(!store.erasePending());
+
+    settle(store);
+    bool success = false;
+    assert(store.takeAppendResult(success) && success);
+  }
+
+  // I: store-before-send -- PositionFlow must not allow TX while storage is
   // pending (including across several async poll ticks), only after a
   // durably-completed append, and never after a storage failure.
   {
