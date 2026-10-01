@@ -16,6 +16,56 @@ void acquireAdditionalFix(GnssManager& manager, uint32_t tow) {
   assert(manager.state() == State::kFixAvailable);
 }
 
+void pendingFreshFixHoldsPowerThroughStorageBackpressure() {
+  GnssManager manager;
+  boot(manager);
+  acquireInitialFix(manager);
+  const uint32_t attempts = manager.diagnostics().acquisition_attempts;
+
+  assert(manager.hasFreshFixForTransmission());
+  assert(manager.state() == State::kFixAvailable);
+  assert(sensor_power == HIGH);
+
+  // Model one or more composition-loop passes spent reserving HistoryStore
+  // sequence space before PositionFlow can consume the fix.
+  manager.poll();
+  manager.poll();
+  assert(manager.hasFreshFixForTransmission());
+  assert(manager.state() == State::kFixAvailable);
+  assert(sensor_power == HIGH);
+  assert(manager.diagnostics().acquisition_attempts == attempts);
+
+  GnssFix fix{};
+  assert(manager.takeFreshFixForTransmission(&fix));
+  assert(!manager.hasFreshFixForTransmission());
+
+  // Geofence continuation must still be able to reuse this exact receiver
+  // session after the delayed application consumption.
+  assert(manager.continueCurrentAcquisitionForAdditionalFix());
+  assert(manager.state() == State::kAcquiring);
+  assert(manager.additionalFixAcquisitionActive());
+  assert(sensor_power == HIGH);
+  assert(manager.diagnostics().acquisition_attempts == attempts);
+}
+
+void unconsumedFreshFixExpiresAndStillAllowsLowPower() {
+  GnssManager manager;
+  boot(manager);
+  acquireInitialFix(manager);
+  const uint32_t expired_before =
+      manager.diagnostics().expired_unsent_fixes;
+
+  // Deferring low power must stay bounded by the existing freshness contract;
+  // a permanently blocked consumer must not keep GNSS powered indefinitely.
+  test_now += gnss_config::kFreshFixMaxAgeMs;
+  manager.poll();
+
+  assert(!manager.hasFreshFixForTransmission());
+  assert(manager.diagnostics().expired_unsent_fixes == expired_before + 1);
+  assert(manager.state() == State::kSleeping);
+  assert(sensor_power == LOW);
+}
+
 void twoAdditionalFixesStayInOneAcquisition() {
   GnssManager manager;
   boot(manager);
@@ -135,6 +185,8 @@ void baseCadenceReanchorSleepsUntilNewDeadline() {
 }  // namespace
 
 int main() {
+  pendingFreshFixHoldsPowerThroughStorageBackpressure();
+  unconsumedFreshFixExpiresAndStillAllowsLowPower();
   twoAdditionalFixesStayInOneAcquisition();
   cancellationExitsWithoutInventingTimeoutOrFailure();
   continuationNeverExtendsOriginalAcquisitionCeiling();
