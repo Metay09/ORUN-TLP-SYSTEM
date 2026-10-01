@@ -115,7 +115,14 @@ void settle(HistoryStore& store, unsigned max_passes = 200) {
 HistoryStore::Record allocate(HistoryStore& store) {
   uint32_t sequence = 0;
   HistoryStore::Record record;
-  assert(store.nextSequence(sequence, record.identity));
+  if (!store.nextSequence(sequence, record.identity)) {
+    // After recovery, ticket reservation is demand-driven. With an async
+    // backend the reservation may span several pollPending() ticks before a
+    // ticket is safe to issue; do not weaken that invariant for the test.
+    assert(store.busy());
+    settle(store);
+    assert(store.nextSequence(sequence, record.identity));
+  }
   const tlp::PositionPacket packet{kDevice, sequence, 0, 410000000, -290000000,
                                    -10, 123, 8, 5};
   assert(tlp::serializePositionPacket(packet, record.packet, sizeof(record.packet)));
