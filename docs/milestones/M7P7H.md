@@ -136,6 +136,48 @@ operation-admission table.
 This slice does not implement final user authorization. It must merely avoid
 hard-coding product operation allow-lists independently in USB and BLE adapters.
 
+### 7.1 M7P7H pre-authorization read classification
+
+M7P7F's original pre-authorization allowlist covered only GET_CONFIG. M7P7H
+intentionally broadens that **development/local diagnostic** allowlist for the
+four new read-only status families while final ORUN application authorization is
+still deferred.
+
+The following fields are accepted for M7P7H's currently open local BLE read path:
+
+- DEVICE: firmware/application-surface revision, 32-bit modulo monotonic uptime,
+  reset/watchdog reason, legacy role/mode, GNSS/accelerometer presence/health,
+  resolved tracking/relay state and actual relay-forwarding-applied bit;
+- TRACKING/GNSS: requested/applied/effective intervals, cadence, GNSS state and
+  bounded acquisition diagnostics, ConfigStore readiness/provenance;
+- GEOFENCE: resource/token **state summaries** (never token bytes), area/vertex
+  counts, runtime configured state, confirmed INSIDE/OUTSIDE/unknown state,
+  confirmation-active and cadence state;
+- STORAGE: bounded count/capacity/error counters, store readiness/maintenance,
+  and SecurityStore state/exhaustion summary.
+
+This is a deliberate prototype/serviceability exposure, **not** a statement
+that those fields are non-sensitive in a deployed fleet. In particular,
+confirmed geofence state, reset/uptime behavior and SecurityStore state can
+reveal operational information to a nearby client. Before field/customer
+deployment or any private-person/location use, the application access table must
+be reviewed and sensitive families/fields moved behind the appropriate
+authenticated/authorized encrypted context.
+
+Still excluded pre-auth:
+
+- coordinates or accepted/last-known Location;
+- geofence geometry;
+- raw config/geofence state-token bytes;
+- credentials/keys;
+- protected writes, MESSAGE and COMMAND/RESULT.
+
+M7P7H's BLE adapter currently reports every BLE request as `kBleOpen`.
+`kBleEncrypted` exists only as the insertion seam; actual Bluefruit link
+security is not yet sampled into `ApplicationAccessContext`. That is safe for
+this all-open read-only slice, but real link-security state must be wired before
+the first access rule distinguishes open from encrypted BLE.
+
 ## 8. Candidate implementation contract
 
 The current implementation candidate is on
@@ -195,7 +237,8 @@ Candidate response logical payloads:
 0      status
 1      application-surface revision
 2      legacy role observation
-3      flags: bit0 AUTO, bit1 watchdog-reset
+3      flags: bit0 AUTO, bit1 watchdog-reset,
+              bit2 actual relay-forwarding applied
 4      GNSS presence
 5      GNSS health
 6      accelerometer presence
@@ -204,7 +247,8 @@ Candidate response logical payloads:
 9      tracking reason
 10     relay-forwarding effective state
 11     relay-forwarding reason
-12..15 uptime_ms LE32
+12..15 uptime_ms_mod32 LE32 (monotonic milliseconds modulo 2^32;
+        wraps about every 49.7 days and is not wall-clock/lifetime uptime)
 16..19 reset_reason LE32
 20..35 firmware version, fixed 16-byte NUL-padded ASCII
 ```
@@ -230,6 +274,12 @@ Candidate response logical payloads:
 The actual GnssManager interval is exposed rather than re-deriving B/B3. A
 failed future cadence apply must therefore remain observable as an applied-state
 difference rather than being hidden by an expected-value calculation.
+
+DEVICE follows the same rule for relay forwarding: bytes 10..11 describe the
+resolved relay service intent/state/reason, while DEVICE byte 3 bit2 reports
+`RadioManager::relayForwardingEnabled()`, the behavior actually installed in
+the radio/network owner. A deferred/failed radio transition must therefore not
+be reported as applied merely because resolution requested ENABLED.
 
 ### GEOFENCE — 9 bytes
 
@@ -284,8 +334,22 @@ APP STORAGE?
 USB formatting is isolated in `usb_application_adapter.cpp`; existing
 engineering commands remain outside the product application surface.
 
-No validation result is claimed yet. Host/sanitizer/startup, RAK4630 build,
-independent audit and physical BLE qualification remain open gates.
+The independent final audit of the first implementation candidate returned
+**PASS WITH FIXES** (0 BLOCKER / 0 HIGH / 3 MEDIUM / 4 LOW). The accepted
+pre-physical corrections on the same branch include:
+
+- actual relay-forwarding-applied truth separated from resolved relay intent;
+- full logical BLE golden vectors for all four new families;
+- malformed nonzero-payload coverage for 0x02..0x05 and UNAVAILABLE error-wire
+  coverage;
+- value-level production owner->snapshot assertions in the startup harness;
+- explicit unpopulated-snapshot -> UNAVAILABLE behavior for future adapters;
+- explicit modulo-2^32 uptime semantics;
+- field-level pre-authorization classification and current BLE-open limitation;
+- stale M7P7F/current-architecture documentation cross-references.
+
+These fixes require owner revalidation before the earlier host/build PASS is
+promoted to the corrected head. Physical M7P7H qualification remains pending.
 
 ## 9. Acceptance criteria
 
