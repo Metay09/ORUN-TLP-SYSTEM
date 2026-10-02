@@ -277,14 +277,10 @@ void BleApplicationTransport::dispatchInbound() {
   }
 
   if (response.code != ApplicationResponseCode::kOk) {
-    ble_app_transport::ErrorCode error =
-        ble_app_transport::ErrorCode::kUnsupported;
-    if (response.code == ApplicationResponseCode::kAccessDenied) {
-      error = ble_app_transport::ErrorCode::kAccessDenied;
-    } else if (response.code == ApplicationResponseCode::kUnavailable) {
-      error = ble_app_transport::ErrorCode::kUnavailable;
-    }
-    buildErrorResponse(correlation_id, error, message_type);
+    buildErrorResponse(
+        correlation_id,
+        ble_app_transport::applicationErrorCode(response.code),
+        message_type);
     return;
   }
 
