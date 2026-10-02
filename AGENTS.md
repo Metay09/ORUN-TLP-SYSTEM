@@ -127,6 +127,17 @@ radio/storage/health) must not be deferred merely because protected mutation is
 not yet enabled. Do not treat a working GATT transport plus GET_CONFIG as the
 finished BLE product surface.
 
+For the canonical USB/BLE/future-LoRa application-operation boundary, product
+vs engineering command classification, access-context seam, read-vs-mutation
+ownership and the current transport capability matrix, read
+`docs/architecture/ORUN_APPLICATION_TRANSPORT_SURFACE.md`. The first planned
+implementation under that direction is
+`docs/milestones/M7P7H.md`: bounded read-only DEVICE, TRACKING/GNSS, GEOFENCE
+and STORAGE status over the existing USB + BLE application path. M7P7H does not
+implement GET_LOCATION, writers, a LoRa application adapter or security runtime.
+Future LoRa COMMAND/RESULT/store-forward must bind to the same target-side
+application/domain owners rather than reimplement config/geofence/status logic.
+
 For configurable RF semantics, SX1262/reference-platform boundaries and future
 radio/board portability, read
 `docs/architecture/ADR_RF_CONFIGURATION_PORTABILITY.md`.
