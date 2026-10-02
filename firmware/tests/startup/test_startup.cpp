@@ -334,9 +334,20 @@ int main(int argc, char** argv) {
 
   if (history_erase_i2c_scenario) {
     // M2 audit regression: exercise the actual production loop, not only
-    // HistoryStore::erasePending() in isolation. Arrange one almost-full active
-    // page synchronously, then enable the SoftDevice path so an accepted erase
-    // remains pending across multiple loop passes.
+    // HistoryStore::erasePending() in isolation. First drive the real GNSS
+    // state machine into kAcquiring so checkUblox() is an observable loop-owned
+    // client during the erase window. Then arrange one almost-full active page
+    // synchronously and enable the SoftDevice path so an accepted erase remains
+    // pending across multiple loop passes.
+    for (unsigned i = 0; i < 16; ++i) {
+      test_now += i < 2 ? gnss_config::kPowerSettleMs : 10;
+      loop();
+    }
+    assert(gnss_manager.state() == GnssManager::State::kAcquiring);
+    const unsigned active_gnss_reads = SFE_UBLOX_GNSS::reads;
+    loop();
+    assert(SFE_UBLOX_GNSS::reads > active_gnss_reads);
+
     auto allocateFixturePacket = [&](int32_t latitude_e7, uint8_t* bytes,
                                      uint64_t& identity) {
       if (!history.canAppend()) {
@@ -378,14 +389,18 @@ int main(int argc, char** argv) {
 
     accelerometer_manager.begin(test_now);
     unsigned wire_before = Wire.transaction_calls;
+    unsigned gnss_reads_before = SFE_UBLOX_GNSS::reads;
     loop();  // submits record body -> async pending
     assert(Wire.transaction_calls > wire_before);
+    assert(SFE_UBLOX_GNSS::reads > gnss_reads_before);
     assert(history.busy() && !history.erasePending());
 
     accelerometer_manager.begin(test_now);
     wire_before = Wire.transaction_calls;
-    loop();  // body is still pending: I2C must still run
+    gnss_reads_before = SFE_UBLOX_GNSS::reads;
+    loop();  // body is still pending: both loop-owned I2C clients must run
     assert(Wire.transaction_calls > wire_before);
+    assert(SFE_UBLOX_GNSS::reads > gnss_reads_before);
     assert(history.busy() && !history.erasePending());
 
     fake_soc_event = NRF_EVT_FLASH_OPERATION_SUCCESS;
@@ -414,30 +429,39 @@ int main(int argc, char** argv) {
 
     accelerometer_manager.begin(test_now);
     wire_before = Wire.transaction_calls;
+    gnss_reads_before = SFE_UBLOX_GNSS::reads;
     loop();  // submits erase -> kPending; both loop-owned I2C clients skipped
     assert(Wire.transaction_calls == wire_before);
+    assert(SFE_UBLOX_GNSS::reads == gnss_reads_before);
     assert(history.erasePending());
 
     accelerometer_manager.begin(test_now);
     wire_before = Wire.transaction_calls;
+    gnss_reads_before = SFE_UBLOX_GNSS::reads;
     loop();  // erase still pending without completion
     assert(Wire.transaction_calls == wire_before);
+    assert(SFE_UBLOX_GNSS::reads == gnss_reads_before);
     assert(history.erasePending());
 
     fake_soc_event = NRF_EVT_FLASH_OPERATION_SUCCESS;
     accelerometer_manager.begin(test_now);
     wire_before = Wire.transaction_calls;
+    gnss_reads_before = SFE_UBLOX_GNSS::reads;
     loop();  // completion is consumed, but this pass began inside erase window
     assert(Wire.transaction_calls == wire_before);
+    assert(SFE_UBLOX_GNSS::reads == gnss_reads_before);
     assert(!history.erasePending());
 
-    // The next pass must immediately resume I2C even though History is still
-    // busy with the new-page header program. This distinguishes erase-only
-    // quiescence from an accidental "all flash mutation" gate.
+    // The next pass must immediately resume both loop-owned I2C clients even
+    // though History is still busy with the new-page header program. This
+    // distinguishes erase-only quiescence from an accidental "all flash
+    // mutation" gate.
     accelerometer_manager.begin(test_now);
     wire_before = Wire.transaction_calls;
+    gnss_reads_before = SFE_UBLOX_GNSS::reads;
     loop();
     assert(Wire.transaction_calls > wire_before);
+    assert(SFE_UBLOX_GNSS::reads > gnss_reads_before);
     assert(history.busy() && !history.erasePending());
 
     assert(munmap(region, kRegionSize) == 0);
