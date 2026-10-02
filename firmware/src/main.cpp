@@ -644,7 +644,10 @@ bool isActivityCommand(const char* text, uint8_t length) {
   return true;
 }
 
+void refreshApplicationStatusSnapshot(uint32_t now_ms);
+
 void startUsbApplicationQuery(orun_tlp::ApplicationRequestKind kind) {
+  refreshApplicationStatusSnapshot(orun_tlp::monotonic::nowMs());
   const orun_tlp::ApplicationRequest request(
       orun_tlp::ApplicationRequester::kUsb,
       next_usb_application_request_id, kind);
@@ -2259,10 +2262,6 @@ void loop() {
         accelerometer_manager.poll(orun_tlp::monotonic::nowMs()));
   }
   activity_capture.poll();
-  // M7P7H: compose one bounded read snapshot before local USB application
-  // dispatch. This reads only O(1) owner state/counters; no flash scan or
-  // geofence geometry copy is performed.
-  refreshApplicationStatusSnapshot(loop_started_at_ms);
   pollRoleCommands();
   // M7P7D: transport input and application result consumption are separate
   // loop-owned steps. A future BLE callback may only enqueue/copy bounded
