@@ -65,22 +65,24 @@ ApplicationResponse submitTake(ApplicationRequestService& service,
 
 ApplicationStatusSnapshot sampleSnapshot() {
   ApplicationStatusSnapshot s{};
+  s.populated = 1;
 
-  s.device.uptime_ms = 123456;
+  s.device.uptime_ms_mod32 = 123456;
   s.device.reset_reason = 0xA5A50011UL;
   memcpy(s.device.firmware_version, "0.5.0-alpha", sizeof("0.5.0-alpha"));
   s.device.surface_revision = kApplicationSurfaceRevision;
   s.device.role = ApplicationRole::kTracker;
   s.device.role_automatic = 1;
   s.device.watchdog_reset = 0;
+  s.device.relay_forwarding_applied = 0;
   s.device.gnss_presence = ApplicationPresence::kPresent;
   s.device.gnss_health = ApplicationHealth::kOk;
   s.device.accelerometer_presence = ApplicationPresence::kPresent;
   s.device.accelerometer_health = ApplicationHealth::kDegraded;
   s.device.tracking_state = ApplicationServiceState::kEnabled;
   s.device.tracking_reason = ApplicationServiceReason::kNone;
-  s.device.relay_state = ApplicationServiceState::kDisabled;
-  s.device.relay_reason = ApplicationServiceReason::kNotRequested;
+  s.device.relay_state = ApplicationServiceState::kEnabled;
+  s.device.relay_reason = ApplicationServiceReason::kNone;
 
   s.tracking.requested_interval_seconds = 600;
   s.tracking.applied_base_interval_seconds = 180;
@@ -148,8 +150,11 @@ int main() {
         ApplicationRequestKind::kGetDeviceStatus,
         ApplicationAccessContext(ApplicationAccessChannel::kUsbLocal));
     assert(usb.code == ApplicationResponseCode::kOk);
-    assert(usb.payload.device.snapshot.uptime_ms == 123456);
+    assert(usb.payload.device.snapshot.uptime_ms_mod32 == 123456);
     assert(usb.payload.device.snapshot.role == ApplicationRole::kTracker);
+    assert(usb.payload.device.snapshot.relay_state ==
+           ApplicationServiceState::kEnabled);
+    assert(usb.payload.device.snapshot.relay_forwarding_applied == 0);
     assert(strcmp(usb.payload.device.snapshot.firmware_version,
                   "0.5.0-alpha") == 0);
 
@@ -234,7 +239,20 @@ int main() {
     assert(unsupported.code == ApplicationResponseCode::kUnsupported);
   }
 
-  // 5. A service without a status snapshot keeps GET_CONFIG usable while new
+  // 5. A present-but-never-populated snapshot is also UNAVAILABLE. This
+  // prevents a future adapter (including LoRa) from accidentally returning the
+  // boot-time zero image as authoritative status if it forgets to refresh.
+  {
+    ApplicationStatusSnapshot empty{};
+    ApplicationRequestService unpopulated(store, &empty);
+    const ApplicationResponse unavailable = submitTake(
+        unpopulated, ApplicationRequester::kUsb, 71,
+        ApplicationRequestKind::kGetDeviceStatus,
+        ApplicationAccessContext(ApplicationAccessChannel::kUsbLocal));
+    assert(unavailable.code == ApplicationResponseCode::kUnavailable);
+  }
+
+  // 6. A service without a status snapshot keeps GET_CONFIG usable while new
   // status families fail closed as UNAVAILABLE.
   ApplicationRequestService no_status(store);
   {
