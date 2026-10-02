@@ -167,6 +167,19 @@ ApplicationStatusSnapshot makeSnapshot() {
 }  // namespace
 
 int main() {
+  static_assert(
+      static_cast<uint8_t>(bat::applicationErrorCode(
+          ApplicationResponseCode::kAccessDenied)) == 0x03,
+      "ACCESS_DENIED BLE mapping changed");
+  static_assert(
+      static_cast<uint8_t>(bat::applicationErrorCode(
+          ApplicationResponseCode::kUnavailable)) == 0x04,
+      "UNAVAILABLE BLE mapping changed");
+  static_assert(
+      static_cast<uint8_t>(bat::applicationErrorCode(
+          ApplicationResponseCode::kUnsupported)) == 0x01,
+      "UNSUPPORTED BLE mapping changed");
+
   ReadOnlyFlash flash;
   ConfigStore store(flash);
   assert(store.begin());
