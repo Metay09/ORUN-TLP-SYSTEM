@@ -28,6 +28,13 @@ assert "kGetTrackingStatus" in request_h
 assert "kGetGeofenceStatus" in request_h
 assert "kGetStorageStatus" in request_h
 assert "kApplicationSurfaceRevision" in status_h
+assert "relay_forwarding_applied" in status_h
+assert "uptime_ms_mod32" in status_h
+assert "uint8_t populated;" in status_h
+assert "status_snapshot_->populated == 0" in (
+    root / "firmware/src/application_request.cpp"
+).read_text(encoding="utf-8")
+assert "radio_manager.relayForwardingEnabled()" in main
 
 # Freeze additive BLE message identities for M7P7H.
 for needle in (
