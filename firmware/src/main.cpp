@@ -1401,6 +1401,263 @@ orun_tlp::EffectiveConfig resolveRuntimeConfig() {
   return orun_tlp::resolveRequestedConfig(requested, currentCapabilitySnapshot());
 }
 
+
+orun_tlp::ApplicationRole applicationRole(orun_tlp::NodeRole role) {
+  switch (role) {
+    case orun_tlp::NodeRole::kTracker:
+      return orun_tlp::ApplicationRole::kTracker;
+    case orun_tlp::NodeRole::kRelay:
+      return orun_tlp::ApplicationRole::kRelay;
+    case orun_tlp::NodeRole::kBase:
+      return orun_tlp::ApplicationRole::kBase;
+  }
+  return orun_tlp::ApplicationRole::kBase;
+}
+
+orun_tlp::ApplicationPresence applicationPresence(
+    orun_tlp::CapabilityPresence presence) {
+  switch (presence) {
+    case orun_tlp::CapabilityPresence::kUnknown:
+      return orun_tlp::ApplicationPresence::kUnknown;
+    case orun_tlp::CapabilityPresence::kPresent:
+      return orun_tlp::ApplicationPresence::kPresent;
+    case orun_tlp::CapabilityPresence::kAbsent:
+      return orun_tlp::ApplicationPresence::kAbsent;
+  }
+  return orun_tlp::ApplicationPresence::kUnknown;
+}
+
+orun_tlp::ApplicationHealth applicationHealth(
+    orun_tlp::CapabilityHealth health) {
+  switch (health) {
+    case orun_tlp::CapabilityHealth::kOk:
+      return orun_tlp::ApplicationHealth::kOk;
+    case orun_tlp::CapabilityHealth::kDegraded:
+      return orun_tlp::ApplicationHealth::kDegraded;
+    case orun_tlp::CapabilityHealth::kFault:
+      return orun_tlp::ApplicationHealth::kFault;
+    case orun_tlp::CapabilityHealth::kUnavailable:
+      return orun_tlp::ApplicationHealth::kUnavailable;
+  }
+  return orun_tlp::ApplicationHealth::kUnavailable;
+}
+
+orun_tlp::ApplicationServiceState applicationServiceState(
+    orun_tlp::ServiceState state) {
+  switch (state) {
+    case orun_tlp::ServiceState::kDisabled:
+      return orun_tlp::ApplicationServiceState::kDisabled;
+    case orun_tlp::ServiceState::kEnabled:
+      return orun_tlp::ApplicationServiceState::kEnabled;
+    case orun_tlp::ServiceState::kBlocked:
+      return orun_tlp::ApplicationServiceState::kBlocked;
+    case orun_tlp::ServiceState::kDegraded:
+      return orun_tlp::ApplicationServiceState::kDegraded;
+  }
+  return orun_tlp::ApplicationServiceState::kDisabled;
+}
+
+orun_tlp::ApplicationServiceReason applicationServiceReason(
+    orun_tlp::ServiceReason reason) {
+  switch (reason) {
+    case orun_tlp::ServiceReason::kNone:
+      return orun_tlp::ApplicationServiceReason::kNone;
+    case orun_tlp::ServiceReason::kNotRequested:
+      return orun_tlp::ApplicationServiceReason::kNotRequested;
+    case orun_tlp::ServiceReason::kInvalidConfiguration:
+      return orun_tlp::ApplicationServiceReason::kInvalidConfiguration;
+    case orun_tlp::ServiceReason::kCapabilityUnsupported:
+      return orun_tlp::ApplicationServiceReason::kCapabilityUnsupported;
+    case orun_tlp::ServiceReason::kCapabilityUnknown:
+      return orun_tlp::ApplicationServiceReason::kCapabilityUnknown;
+    case orun_tlp::ServiceReason::kCapabilityAbsent:
+      return orun_tlp::ApplicationServiceReason::kCapabilityAbsent;
+    case orun_tlp::ServiceReason::kCapabilityDegraded:
+      return orun_tlp::ApplicationServiceReason::kCapabilityDegraded;
+    case orun_tlp::ServiceReason::kCapabilityFault:
+      return orun_tlp::ApplicationServiceReason::kCapabilityFault;
+    case orun_tlp::ServiceReason::kCapabilityUnavailable:
+      return orun_tlp::ApplicationServiceReason::kCapabilityUnavailable;
+  }
+  return orun_tlp::ApplicationServiceReason::kInvalidConfiguration;
+}
+
+orun_tlp::ApplicationGnssState applicationGnssState(
+    orun_tlp::GnssManager::State state) {
+  using Input = orun_tlp::GnssManager::State;
+  using Output = orun_tlp::ApplicationGnssState;
+  switch (state) {
+    case Input::kNotPresent: return Output::kNotPresent;
+    case Input::kDetectionBackoff: return Output::kDetectionBackoff;
+    case Input::kPowerOff: return Output::kPowerOff;
+    case Input::kPowerOnWait: return Output::kPowerOnWait;
+    case Input::kDetecting: return Output::kDetecting;
+    case Input::kIdle: return Output::kIdle;
+    case Input::kStarting: return Output::kStarting;
+    case Input::kAcquiring: return Output::kAcquiring;
+    case Input::kFixAvailable: return Output::kFixAvailable;
+    case Input::kTimeout: return Output::kTimeout;
+    case Input::kFailure: return Output::kFailure;
+    case Input::kSleeping: return Output::kSleeping;
+  }
+  return Output::kFailure;
+}
+
+orun_tlp::ApplicationCadenceMode applicationCadenceMode(
+    orun_tlp::GeofenceCadenceMode mode) {
+  return mode == orun_tlp::GeofenceCadenceMode::kBaseDividedBy3
+             ? orun_tlp::ApplicationCadenceMode::kBaseDividedBy3
+             : orun_tlp::ApplicationCadenceMode::kBase;
+}
+
+orun_tlp::ApplicationGeofenceResourceState applicationGeofenceResourceState(
+    orun_tlp::GeofenceResourceState state) {
+  switch (state) {
+    case orun_tlp::GeofenceResourceState::kUnavailable:
+      return orun_tlp::ApplicationGeofenceResourceState::kUnavailable;
+    case orun_tlp::GeofenceResourceState::kClear:
+      return orun_tlp::ApplicationGeofenceResourceState::kClear;
+    case orun_tlp::GeofenceResourceState::kConfigured:
+      return orun_tlp::ApplicationGeofenceResourceState::kConfigured;
+  }
+  return orun_tlp::ApplicationGeofenceResourceState::kUnavailable;
+}
+
+orun_tlp::ApplicationGeofenceTokenState applicationGeofenceTokenState(
+    orun_tlp::GeofenceTokenState state) {
+  switch (state) {
+    case orun_tlp::GeofenceTokenState::kUnavailable:
+      return orun_tlp::ApplicationGeofenceTokenState::kUnavailable;
+    case orun_tlp::GeofenceTokenState::kValid:
+      return orun_tlp::ApplicationGeofenceTokenState::kValid;
+    case orun_tlp::GeofenceTokenState::kUncertain:
+      return orun_tlp::ApplicationGeofenceTokenState::kUncertain;
+  }
+  return orun_tlp::ApplicationGeofenceTokenState::kUnavailable;
+}
+
+orun_tlp::ApplicationSecurityState applicationSecurityState(
+    orun_tlp::SecurityState state) {
+  switch (state) {
+    case orun_tlp::SecurityState::kUnprovisioned:
+      return orun_tlp::ApplicationSecurityState::kUnprovisioned;
+    case orun_tlp::SecurityState::kProvisioned:
+      return orun_tlp::ApplicationSecurityState::kProvisioned;
+    case orun_tlp::SecurityState::kForeign:
+      return orun_tlp::ApplicationSecurityState::kForeign;
+    case orun_tlp::SecurityState::kUnsupported:
+      return orun_tlp::ApplicationSecurityState::kUnsupported;
+    case orun_tlp::SecurityState::kFault:
+      return orun_tlp::ApplicationSecurityState::kFault;
+  }
+  return orun_tlp::ApplicationSecurityState::kFault;
+}
+
+void refreshApplicationStatusSnapshot(uint32_t now_ms) {
+  const orun_tlp::CapabilitySnapshot capabilities = currentCapabilitySnapshot();
+  const orun_tlp::EffectiveConfig effective = resolveRuntimeConfig();
+  const auto& reset = orun_tlp::WatchdogManager::bootInfo();
+
+  auto& device = application_status_snapshot.device;
+  device.uptime_ms = now_ms;
+  device.reset_reason = reset.reset_reason;
+  device.surface_revision = orun_tlp::kApplicationSurfaceRevision;
+  device.role = applicationRole(role_controller.role());
+  device.role_automatic = role_controller.automatic() ? 1U : 0U;
+  device.watchdog_reset = reset.watchdog_reset ? 1U : 0U;
+  device.gnss_presence = applicationPresence(capabilities.gnss.presence);
+  device.gnss_health = applicationHealth(capabilities.gnss.health);
+  device.accelerometer_presence =
+      applicationPresence(capabilities.accelerometer.presence);
+  device.accelerometer_health =
+      applicationHealth(capabilities.accelerometer.health);
+  device.tracking_state = applicationServiceState(effective.tracking.state);
+  device.tracking_reason = applicationServiceReason(effective.tracking.reason);
+  device.relay_state =
+      applicationServiceState(effective.relay_forwarding.state);
+  device.relay_reason =
+      applicationServiceReason(effective.relay_forwarding.reason);
+
+  const auto& gnss_diagnostics = gnss_manager.diagnostics();
+  auto& tracking = application_status_snapshot.tracking;
+  tracking.requested_interval_seconds =
+      config_store.config().tracking_interval_seconds;
+  tracking.applied_base_interval_seconds =
+      active_tracking_base_interval_seconds;
+  const orun_tlp::GeofenceCadenceMode cadence =
+      geofence_confirmation.cadenceMode();
+  tracking.effective_interval_seconds =
+      orun_tlp::geofence_runtime_policy::effectiveTrackingIntervalMs(
+          active_tracking_base_interval_seconds, cadence) /
+      1000UL;
+  tracking.acquisition_attempts = gnss_diagnostics.acquisition_attempts;
+  tracking.successful_fresh_fixes =
+      gnss_diagnostics.successful_fresh_fixes;
+  tracking.acquisition_timeouts = gnss_diagnostics.acquisition_timeouts;
+  tracking.invalid_fixes = gnss_diagnostics.invalid_fixes;
+  tracking.last_ttff_ms = gnss_diagnostics.last_ttff_ms;
+  tracking.config_backend_ready = config_store.ready() ? 1U : 0U;
+  tracking.config_has_committed_record =
+      config_store.hasCommittedRecord() ? 1U : 0U;
+  tracking.gnss_detected = gnss_manager.detected() ? 1U : 0U;
+  tracking.additional_fix_active =
+      gnss_manager.additionalFixAcquisitionActive() ? 1U : 0U;
+  tracking.cadence_mode = applicationCadenceMode(cadence);
+  tracking.gnss_state = applicationGnssState(gnss_manager.state());
+
+  auto& geofence = application_status_snapshot.geofence;
+  geofence.total_vertex_count = geofence_store.totalVertexCount();
+  geofence.area_count = geofence_store.areaCount();
+  geofence.resource_state =
+      applicationGeofenceResourceState(geofence_store.resourceState());
+  geofence.token_state =
+      applicationGeofenceTokenState(geofence_store.tokenState());
+  geofence.runtime_configured = geofence_confirmation.configured() ? 1U : 0U;
+  geofence.confirmation_active =
+      geofence_confirmation.confirmationActive() ? 1U : 0U;
+  geofence.cadence_mode =
+      applicationCadenceMode(geofence_confirmation.cadenceMode());
+  orun_tlp::GeofenceOperationalState confirmed_state;
+  geofence.has_confirmed_state =
+      geofence_confirmation.getConfirmedState(&confirmed_state) ? 1U : 0U;
+  geofence.confirmed_state =
+      geofence.has_confirmed_state == 0
+          ? orun_tlp::ApplicationGeofenceOperationalState::kUnknown
+          : confirmed_state == orun_tlp::GeofenceOperationalState::kOutside
+                ? orun_tlp::ApplicationGeofenceOperationalState::kOutside
+                : orun_tlp::ApplicationGeofenceOperationalState::kInside;
+
+  const auto& history_diagnostics = history.diagnostics();
+  const auto& config_diagnostics = config_store.diagnostics();
+  const auto& geofence_diagnostics = geofence_store.diagnostics();
+  const auto& security_diagnostics = security_store.diagnostics();
+  auto& storage = application_status_snapshot.storage;
+  storage.history_count = history.count();
+  storage.history_capacity = history.capacity();
+  storage.history_overwritten = history_diagnostics.overwritten;
+  storage.history_append_failures = history_diagnostics.append_failures;
+  storage.history_recovery_corruptions =
+      history_diagnostics.recovery_corruptions;
+  storage.history_metadata_failures = history_diagnostics.metadata_failures;
+  storage.config_recovery_corruptions =
+      config_diagnostics.recovery_corruptions;
+  storage.geofence_recovery_corruptions =
+      geofence_diagnostics.recovery_corruptions;
+  storage.security_recovery_corruptions =
+      security_diagnostics.recovery_corruptions;
+  storage.history_ready = history.ready() ? 1U : 0U;
+  storage.history_busy = history.busy() ? 1U : 0U;
+  storage.config_ready = config_store.ready() ? 1U : 0U;
+  storage.config_maintenance =
+      config_store.maintenanceResetRequired() ? 1U : 0U;
+  storage.geofence_ready = geofence_store.ready() ? 1U : 0U;
+  storage.geofence_maintenance =
+      geofence_store.maintenanceResetRequired() ? 1U : 0U;
+  storage.security_ready = security_store.ready() ? 1U : 0U;
+  storage.security_exhausted = security_store.exhausted() ? 1U : 0U;
+  storage.security_state = applicationSecurityState(security_store.state());
+}
+
 void handleAccelerometerEvent(orun_tlp::AccelerometerManager::Event event) {
   if (event == orun_tlp::AccelerometerManager::Event::kPresent) {
     accelerometer_diagnostic_state = AccelerometerDiagnosticState::kPresent;
