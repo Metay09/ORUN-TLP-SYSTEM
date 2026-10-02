@@ -1406,6 +1406,7 @@ void refreshApplicationStatusSnapshot(uint32_t now_ms) {
       role_controller.automatic(),
       capabilities,
       effective,
+      radio_manager.relayForwardingEnabled(),
       active_tracking_base_interval_seconds,
       gnss_manager,
       config_store,
