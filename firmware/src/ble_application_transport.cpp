@@ -328,7 +328,8 @@ void BleApplicationTransport::buildApplicationResponse(
       outbound_.payload[2] = static_cast<uint8_t>(s.role);
       outbound_.payload[3] =
           static_cast<uint8_t>((s.role_automatic ? 0x01U : 0U) |
-                               (s.watchdog_reset ? 0x02U : 0U));
+                               (s.watchdog_reset ? 0x02U : 0U) |
+                               (s.relay_forwarding_applied ? 0x04U : 0U));
       outbound_.payload[4] = static_cast<uint8_t>(s.gnss_presence);
       outbound_.payload[5] = static_cast<uint8_t>(s.gnss_health);
       outbound_.payload[6] =
@@ -338,7 +339,7 @@ void BleApplicationTransport::buildApplicationResponse(
       outbound_.payload[9] = static_cast<uint8_t>(s.tracking_reason);
       outbound_.payload[10] = static_cast<uint8_t>(s.relay_state);
       outbound_.payload[11] = static_cast<uint8_t>(s.relay_reason);
-      writeLE32(outbound_.payload + 12, s.uptime_ms);
+      writeLE32(outbound_.payload + 12, s.uptime_ms_mod32);
       writeLE32(outbound_.payload + 16, s.reset_reason);
       memcpy(outbound_.payload + 20, s.firmware_version,
              kApplicationFirmwareVersionSize);
