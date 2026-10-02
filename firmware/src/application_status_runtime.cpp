@@ -1,6 +1,5 @@
 #include "application_status_runtime.h"
 
-#include "geofence_runtime_policy.h"
 #include "watchdog_manager.h"
 
 namespace orun_tlp {
@@ -176,10 +175,11 @@ void buildApplicationStatusSnapshot(
       config.config().tracking_interval_seconds;
   tracking.applied_base_interval_seconds = applied_base_interval_seconds;
   const GeofenceCadenceMode cadence = geofence_runtime.cadenceMode();
-  tracking.effective_interval_seconds =
-      geofence_runtime_policy::effectiveTrackingIntervalMs(
-          applied_base_interval_seconds, cadence) /
-      1000UL;
+  // Report the interval actually owned/applied by GnssManager rather than
+  // re-deriving an expected B/B3 value. If a future runtime-apply/re-anchor
+  // fails, diagnostics must expose the real applied state instead of the
+  // desired calculation.
+  tracking.effective_interval_seconds = gnss.trackingIntervalMs() / 1000UL;
   tracking.acquisition_attempts = gnss_diagnostics.acquisition_attempts;
   tracking.successful_fresh_fixes =
       gnss_diagnostics.successful_fresh_fixes;
