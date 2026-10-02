@@ -86,6 +86,14 @@ enum class ErrorCode : uint8_t {
   kUnavailable = 0x04,
 };
 
+constexpr ErrorCode applicationErrorCode(ApplicationResponseCode code) {
+  return code == ApplicationResponseCode::kAccessDenied
+             ? ErrorCode::kAccessDenied
+             : code == ApplicationResponseCode::kUnavailable
+                   ? ErrorCode::kUnavailable
+                   : ErrorCode::kUnsupported;
+}
+
 // Advances a local monotonic request-id counter, skipping zero on
 // wraparound (docs/milestones/M7P7F.md section 7). Exposed as a pure free
 // function, mirroring monotonic_time.h's testable-helper style, so host
