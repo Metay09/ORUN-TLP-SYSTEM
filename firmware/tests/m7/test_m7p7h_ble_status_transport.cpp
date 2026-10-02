@@ -96,21 +96,25 @@ uint16_t transact(BleApplicationTransport& transport, bat::MessageType request,
 
 ApplicationStatusSnapshot makeSnapshot() {
   ApplicationStatusSnapshot s{};
-  s.device.uptime_ms = 0x11223344UL;
+  s.populated = 1;
+  s.device.uptime_ms_mod32 = 0x11223344UL;
   s.device.reset_reason = 0xAABBCCDDUL;
   memcpy(s.device.firmware_version, "0.5.0-alpha", sizeof("0.5.0-alpha"));
   s.device.surface_revision = kApplicationSurfaceRevision;
   s.device.role = ApplicationRole::kTracker;
   s.device.role_automatic = 1;
   s.device.watchdog_reset = 1;
+  s.device.relay_forwarding_applied = 0;
   s.device.gnss_presence = ApplicationPresence::kPresent;
   s.device.gnss_health = ApplicationHealth::kOk;
   s.device.accelerometer_presence = ApplicationPresence::kAbsent;
   s.device.accelerometer_health = ApplicationHealth::kUnavailable;
   s.device.tracking_state = ApplicationServiceState::kEnabled;
   s.device.tracking_reason = ApplicationServiceReason::kNone;
-  s.device.relay_state = ApplicationServiceState::kDisabled;
-  s.device.relay_reason = ApplicationServiceReason::kNotRequested;
+  // Resolved relay intent can be enabled while the radio has not yet
+  // applied it. Byte 3 bit2 must reflect the latter, not the intent.
+  s.device.relay_state = ApplicationServiceState::kEnabled;
+  s.device.relay_reason = ApplicationServiceReason::kNone;
 
   s.tracking.requested_interval_seconds = 900;
   s.tracking.applied_base_interval_seconds = 600;
@@ -171,67 +175,114 @@ int main() {
   BleApplicationTransport transport(service);
   transport.beginSession();
 
-  // DEVICE: 36-byte logical response -> three physical frames.
+  // Golden vectors freeze every logical byte before Android parsing/physical
+  // qualification. DEVICE bit2 is actual relay-forwarding application state;
+  // resolved relay intent remains separately encoded in bytes 10..11.
   {
     uint8_t payload[bat::kMaxLogicalPayload]{};
     const uint16_t len =
         transact(transport, bat::MessageType::kGetDeviceStatusRequest,
                  bat::MessageType::kGetDeviceStatusResponse, 0x1001, payload);
-    assert(len == 36);
-    assert(payload[0] == bat::kApplicationStatusOk);
-    assert(payload[1] == kApplicationSurfaceRevision);
-    assert(payload[2] == static_cast<uint8_t>(ApplicationRole::kTracker));
-    assert(payload[3] == 0x03);  // AUTO + watchdog.
-    assert(readLE32(payload + 12) == 0x11223344UL);
-    assert(readLE32(payload + 16) == 0xAABBCCDDUL);
-    assert(memcmp(payload + 20, "0.5.0-alpha", sizeof("0.5.0-alpha")) == 0);
+    const uint8_t expected[] = {
+        0x00, 0x01, 0x00, 0x03, 0x01, 0x00, 0x02, 0x03,
+        0x01, 0x00, 0x01, 0x00, 0x44, 0x33, 0x22, 0x11,
+        0xDD, 0xCC, 0xBB, 0xAA, 0x30, 0x2E, 0x35, 0x2E,
+        0x30, 0x2D, 0x61, 0x6C, 0x70, 0x68, 0x61, 0x00,
+        0x00, 0x00, 0x00, 0x00};
+    assert(len == sizeof(expected));
+    assert(memcmp(payload, expected, sizeof(expected)) == 0);
   }
 
-  // TRACKING: 36 bytes -> three frames, preserving requested/applied/effective.
+  // TRACKING: full 36-byte golden, including cadence/state and all diagnostics.
   {
     uint8_t payload[bat::kMaxLogicalPayload]{};
     const uint16_t len =
         transact(transport, bat::MessageType::kGetTrackingStatusRequest,
                  bat::MessageType::kGetTrackingStatusResponse, 0x1002, payload);
-    assert(len == 36);
-    assert(payload[1] == 0x0F);
-    assert(readLE32(payload + 4) == 900);
-    assert(readLE32(payload + 8) == 600);
-    assert(readLE32(payload + 12) == 200);
-    assert(readLE32(payload + 32) == 2760);
+    const uint8_t expected[] = {
+        0x00, 0x0F, 0x01, 0x06,
+        0x84, 0x03, 0x00, 0x00,
+        0x58, 0x02, 0x00, 0x00,
+        0xC8, 0x00, 0x00, 0x00,
+        0x0A, 0x00, 0x00, 0x00,
+        0x08, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00,
+        0xC8, 0x0A, 0x00, 0x00};
+    assert(len == sizeof(expected));
+    assert(memcmp(payload, expected, sizeof(expected)) == 0);
   }
 
-  // GEOFENCE: summary only; no geometry/token bytes.
+  // GEOFENCE: full summary golden; no geometry/token bytes.
   {
     uint8_t payload[bat::kMaxLogicalPayload]{};
     const uint16_t len =
         transact(transport, bat::MessageType::kGetGeofenceStatusRequest,
                  bat::MessageType::kGetGeofenceStatusResponse, 0x1003, payload);
-    assert(len == 9);
-    assert(payload[1] ==
-           static_cast<uint8_t>(
-               ApplicationGeofenceResourceState::kConfigured));
-    assert(payload[2] ==
-           static_cast<uint8_t>(ApplicationGeofenceTokenState::kUncertain));
-    assert(payload[3] == 0x07);
-    assert(payload[4] == 8);
-    assert(readLE16(payload + 5) == 64);
+    const uint8_t expected[] = {
+        0x00, 0x02, 0x02, 0x07, 0x08, 0x40, 0x00, 0x02, 0x01};
+    assert(len == sizeof(expected));
+    assert(memcmp(payload, expected, sizeof(expected)) == 0);
   }
 
-  // STORAGE: all O(1) summary counters fit the existing four-fragment ceiling.
+  // STORAGE: full 40-byte golden, freezing every counter/flag position.
   {
     uint8_t payload[bat::kMaxLogicalPayload]{};
     const uint16_t len =
         transact(transport, bat::MessageType::kGetStorageStatusRequest,
                  bat::MessageType::kGetStorageStatusResponse, 0x1004, payload);
-    assert(len == 40);
-    assert(payload[1] == 0x77);  // all set except config maintenance/exhausted.
-    assert(payload[2] ==
-           static_cast<uint8_t>(ApplicationSecurityState::kProvisioned));
-    assert(readLE32(payload + 4) == 625);
-    assert(readLE32(payload + 8) == 728);
-    assert(readLE32(payload + 12) == 104);
-    assert(readLE32(payload + 36) == 7);
+    const uint8_t expected[] = {
+        0x00, 0x77, 0x01, 0x00,
+        0x71, 0x02, 0x00, 0x00,
+        0xD8, 0x02, 0x00, 0x00,
+        0x68, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00,
+        0x03, 0x00, 0x00, 0x00,
+        0x04, 0x00, 0x00, 0x00,
+        0x05, 0x00, 0x00, 0x00,
+        0x06, 0x00, 0x00, 0x00,
+        0x07, 0x00, 0x00, 0x00};
+    assert(len == sizeof(expected));
+    assert(memcmp(payload, expected, sizeof(expected)) == 0);
+  }
+
+  // Every M7P7H status query is exactly zero-payload. A syntactically complete
+  // one-byte request is malformed and must fail closed: no response and no
+  // ApplicationRequestService slot acquisition.
+  for (bat::MessageType type : {
+           bat::MessageType::kGetDeviceStatusRequest,
+           bat::MessageType::kGetTrackingStatusRequest,
+           bat::MessageType::kGetGeofenceStatusRequest,
+           bat::MessageType::kGetStorageStatusRequest}) {
+    uint8_t frame[bat::kMaxFrameSize]{};
+    frame[0] = bat::kTransportVersion;
+    frame[1] = static_cast<uint8_t>(type);
+    frame[2] = bat::kFlagStart | bat::kFlagEnd;
+    frame[3] = 0;
+    writeLE16(frame + 4, 0x2200);
+    writeLE16(frame + 6, 1);
+    frame[8] = 0xA5;
+    transport.onFrameReceived(transport.currentSessionGeneration(), frame, 9,
+                              200);
+    assert(!transport.outboundFramePending());
+    assert(!service.responsePending());
+  }
+
+  // A known status kind with no populated snapshot maps to the additive
+  // ERROR/UNAVAILABLE wire result: [0x04, offending-type].
+  {
+    ApplicationRequestService no_status_service(store);
+    BleApplicationTransport no_status_transport(no_status_service);
+    no_status_transport.beginSession();
+    uint8_t payload[bat::kMaxLogicalPayload]{};
+    const uint16_t len =
+        transact(no_status_transport, bat::MessageType::kGetDeviceStatusRequest,
+                 bat::MessageType::kError, 0x3301, payload);
+    const uint8_t expected[] = {
+        static_cast<uint8_t>(bat::ErrorCode::kUnavailable),
+        static_cast<uint8_t>(bat::MessageType::kGetDeviceStatusRequest)};
+    assert(len == sizeof(expected));
+    assert(memcmp(payload, expected, sizeof(expected)) == 0);
   }
 
   return 0;
