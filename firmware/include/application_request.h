@@ -2,30 +2,21 @@
 
 #include <stdint.h>
 
-#include "config_format.h"
+#include "application_status.h"
 
 namespace orun_tlp {
 
 class ConfigStore;
 
-// M7P7D/M7P7E: typed, transport-neutral application request seam.
+// M7P7D/M7P7E established the typed, transport-neutral request seam.
+// M7P7H keeps the same fixed-memory, loop-owned model but expands the
+// read-only surface without turning one response struct into a monolith.
 //
-// This is deliberately NOT a wire format. USB/BLE/other adapters translate
-// their bounded transport input into one of these typed requests. The request
-// service remains loop-task owned; BLE callbacks must never call it directly.
-//
-// M7P7E adds explicit requester ownership before a second transport adapter is
-// allowed to exist. A response may be consumed only by the requester that
-// submitted the accepted request; another adapter cannot steal or clear it.
+// This is deliberately NOT a wire format. USB/BLE/future LoRa adapters
+// translate transport input into typed requests and typed results.
 //
 // ApplicationRequester is LOCAL adapter provenance, not user identity,
-// authorization, connection identity or a future wire field. Each adapter must
-// assign its own constant requester value; peer-controlled bytes must never be
-// allowed to choose kUsb/kBle.
-//
-// The seam still exposes only one safe, read-only operation. Protected config
-// mutation, provisioning, MESSAGE and command/control requests remain later
-// work behind their reviewed authorization/security gates.
+// authorization, connection identity or a future wire field.
 enum class ApplicationRequester : uint8_t {
   kUsb = 1,
   kBle = 2,
@@ -33,11 +24,17 @@ enum class ApplicationRequester : uint8_t {
 
 enum class ApplicationRequestKind : uint8_t {
   kGetConfig = 1,
+  kGetDeviceStatus = 2,
+  kGetTrackingStatus = 3,
+  kGetGeofenceStatus = 4,
+  kGetStorageStatus = 5,
 };
 
 enum class ApplicationResponseCode : uint8_t {
   kOk = 0,
   kUnsupported = 1,
+  kUnavailable = 2,
+  kAccessDenied = 3,
 };
 
 enum class ApplicationSubmitResult : uint8_t {
@@ -46,6 +43,33 @@ enum class ApplicationSubmitResult : uint8_t {
   kRejected = 2,
 };
 
+// Access/security facts are intentionally separate from requester provenance.
+// This is not final user authorization; it is the central seam that prevents
+// each transport adapter from growing its own product-operation allow-list.
+enum class ApplicationAccessChannel : uint8_t {
+  kInvalid = 0,
+  kUsbLocal = 1,
+  kBleOpen = 2,
+  kBleEncrypted = 3,
+};
+
+struct ApplicationAccessContext {
+  constexpr ApplicationAccessContext(
+      ApplicationAccessChannel channel_value = ApplicationAccessChannel::kInvalid)
+      : channel(channel_value) {}
+
+  ApplicationAccessChannel channel;
+};
+
+constexpr ApplicationAccessContext defaultApplicationAccess(
+    ApplicationRequester requester) {
+  return requester == ApplicationRequester::kUsb
+             ? ApplicationAccessContext(ApplicationAccessChannel::kUsbLocal)
+             : requester == ApplicationRequester::kBle
+                   ? ApplicationAccessContext(ApplicationAccessChannel::kBleOpen)
+                   : ApplicationAccessContext(ApplicationAccessChannel::kInvalid);
+}
+
 struct ApplicationRequest {
   constexpr ApplicationRequest(
       ApplicationRequester requester_value,
@@ -53,52 +77,89 @@ struct ApplicationRequest {
       ApplicationRequestKind kind_value = ApplicationRequestKind::kGetConfig)
       : requester(requester_value),
         request_id(request_id_value),
-        kind(kind_value) {}
+        kind(kind_value),
+        access(defaultApplicationAccess(requester_value)) {}
+
+  constexpr ApplicationRequest(
+      ApplicationRequester requester_value,
+      uint32_t request_id_value,
+      ApplicationRequestKind kind_value,
+      ApplicationAccessContext access_value)
+      : requester(requester_value),
+        request_id(request_id_value),
+        kind(kind_value),
+        access(access_value) {}
 
   ApplicationRequester requester;
   uint32_t request_id;
   ApplicationRequestKind kind;
+  ApplicationAccessContext access;
+};
+
+// Response payloads are constructor-free POD so the union remains compatible
+// with the repository's gnu++11 production toolchain.
+struct ApplicationConfigResponsePayload {
+  uint32_t tracking_interval_seconds;
+  uint32_t battery_capacity_mah;
+  uint8_t backend_ready;
+  uint8_t has_committed_record;
+};
+
+struct ApplicationDeviceResponsePayload {
+  ApplicationDeviceSnapshot snapshot;
+};
+
+struct ApplicationTrackingResponsePayload {
+  ApplicationTrackingSnapshot snapshot;
+};
+
+struct ApplicationGeofenceResponsePayload {
+  ApplicationGeofenceSnapshot snapshot;
+};
+
+struct ApplicationStorageResponsePayload {
+  ApplicationStorageSnapshot snapshot;
+};
+
+union ApplicationResponsePayload {
+  ApplicationConfigResponsePayload config;
+  ApplicationDeviceResponsePayload device;
+  ApplicationTrackingResponsePayload tracking;
+  ApplicationGeofenceResponsePayload geofence;
+  ApplicationStorageResponsePayload storage;
+  uint8_t raw[48];
 };
 
 struct ApplicationResponse {
-  constexpr ApplicationResponse(
-      ApplicationRequester requester_value = ApplicationRequester::kUsb,
-      uint32_t request_id_value = 0,
-      ApplicationResponseCode code_value = ApplicationResponseCode::kUnsupported,
-      bool config_backend_ready_value = false,
-      bool config_has_committed_record_value = false,
-      config_format::Config config_value = config_format::Config())
-      : requester(requester_value),
-        request_id(request_id_value),
-        code(code_value),
-        config_backend_ready(config_backend_ready_value),
-        config_has_committed_record(config_has_committed_record_value),
-        config(config_value) {}
+  ApplicationResponse()
+      : requester(ApplicationRequester::kUsb),
+        request_id(0),
+        kind(ApplicationRequestKind::kGetConfig),
+        code(ApplicationResponseCode::kUnsupported),
+        payload{} {}
 
   ApplicationRequester requester;
   uint32_t request_id;
+  ApplicationRequestKind kind;
   ApplicationResponseCode code;
-
-  // Meaningful for kGetConfig/kOk. ready() only means ConfigStore/backend
-  // initialization succeeded. config_has_committed_record preserves the
-  // frozen application provenance meaning: false for safe/default config,
-  // including ConfigStore v2's internal default token baseline; true only
-  // after a semantic config override has been durably committed.
-  bool config_backend_ready;
-  bool config_has_committed_record;
-  config_format::Config config;
+  ApplicationResponsePayload payload;
 };
 
-// One response slot is intentional backpressure: a transport must consume the
-// prior result before submitting more work. This keeps memory fixed. M7P7E
-// makes response ownership explicit: a mismatched requester cannot consume or
-// clear the pending response. The rightful requester may explicitly discard
-// its response (for example after a transport disconnect) so one abandoned
-// result cannot wedge the global bounded slot forever.
+static_assert(sizeof(ApplicationResponsePayload) <= 48,
+              "application response payload must remain bounded");
+
+// One response slot remains intentional read-path backpressure. It is NOT a
+// future durable mutation lock; side-effecting operations require domain-owned
+// serialized mutation lifecycles.
 class ApplicationRequestService {
  public:
-  explicit ApplicationRequestService(ConfigStore& config_store)
-      : config_store_(config_store), response_ready_(false), response_() {}
+  explicit ApplicationRequestService(
+      ConfigStore& config_store,
+      const ApplicationStatusSnapshot* status_snapshot = nullptr)
+      : config_store_(config_store),
+        status_snapshot_(status_snapshot),
+        response_ready_(false),
+        response_() {}
 
   ApplicationSubmitResult submit(const ApplicationRequest& request);
   bool takeResponse(ApplicationRequester requester, ApplicationResponse& response);
@@ -106,7 +167,13 @@ class ApplicationRequestService {
   bool responsePending() const { return response_ready_; }
 
  private:
+  static bool requesterSupported(ApplicationRequester requester);
+  static bool requestKindSupported(ApplicationRequestKind kind);
+  static bool accessAllowed(ApplicationRequestKind kind,
+                            const ApplicationAccessContext& access);
+
   ConfigStore& config_store_;
+  const ApplicationStatusSnapshot* status_snapshot_;
   bool response_ready_;
   ApplicationResponse response_;
 };
