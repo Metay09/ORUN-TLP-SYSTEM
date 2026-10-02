@@ -61,12 +61,16 @@ orun_tlp::GeofenceStore geofence_store(storage_flash_gate.geofencePort(),
 // margins around GeofenceStore::begin(). Keep the record-sized M6D3C boot copy
 // out of setup()'s stack frame; this scratch is used only during boot activation.
 orun_tlp::geofence_format::Snapshot geofence_boot_snapshot;
+// M7P7H: one bounded transport-neutral read snapshot, populated only by the
+// loop-owned composition root from existing domain owners. It owns no domain
+// truth and contains no driver references.
+orun_tlp::ApplicationStatusSnapshot application_status_snapshot{};
 // M7P7D/M7P7E: one typed, transport-neutral application request owner.
-// USB and BLE now share this same owner; requester provenance prevents either
-// adapter from consuming the other's response. M7P7G exposes only M7P7F's
-// pre-authorization read-only GET_CONFIG contract -- protected writes and
-// provisioning remain later work.
-orun_tlp::ApplicationRequestService application_requests(config_store);
+// M7P7H expands the same owner with bounded read-only status families; USB and
+// BLE remain adapters, while future LoRa must bind to this same target-side
+// application boundary rather than duplicate domain logic.
+orun_tlp::ApplicationRequestService application_requests(
+    config_store, &application_status_snapshot);
 orun_tlp::BleApplicationTransport ble_application_transport(application_requests);
 // Cross-task state is kept in one fixed-memory mailbox owner. Production wraps
 // every callback/loop access in taskENTER/EXIT_CRITICAL; the transport itself
