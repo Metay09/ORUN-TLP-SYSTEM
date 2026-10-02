@@ -1390,7 +1390,11 @@ orun_tlp::EffectiveConfig resolveRuntimeConfig() {
 
 void refreshApplicationStatusSnapshot(uint32_t now_ms) {
   const orun_tlp::CapabilitySnapshot capabilities = currentCapabilitySnapshot();
-  const orun_tlp::EffectiveConfig effective = resolveRuntimeConfig();
+  const orun_tlp::RequestedConfig requested =
+      orun_tlp::requestedConfigFromLegacyBehavior(
+          orun_tlp::legacyRoleBehavior(role_controller.role()));
+  const orun_tlp::EffectiveConfig effective =
+      orun_tlp::resolveRequestedConfig(requested, capabilities);
   orun_tlp::buildApplicationStatusSnapshot(
       now_ms,
       role_controller.role(),
