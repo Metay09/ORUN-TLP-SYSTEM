@@ -1245,10 +1245,29 @@ int main(int argc, char** argv) {
          history.capacity());
   assert(application_status_snapshot.storage.config_ready ==
          (config_store.ready() ? 1U : 0U));
+  assert(application_status_snapshot.storage.config_maintenance ==
+         (config_store.maintenanceResetRequired() ? 1U : 0U));
   assert(application_status_snapshot.storage.geofence_ready ==
          (geofence_store.ready() ? 1U : 0U));
+  assert(application_status_snapshot.storage.geofence_maintenance ==
+         (geofence_store.maintenanceResetRequired() ? 1U : 0U));
   assert(application_status_snapshot.storage.security_ready ==
          (security_store.ready() ? 1U : 0U));
+  assert(application_status_snapshot.storage.security_exhausted ==
+         (security_store.exhausted() ? 1U : 0U));
+  assert(application_status_snapshot.tracking.config_backend_ready ==
+         (config_store.ready() ? 1U : 0U));
+  assert(application_status_snapshot.tracking.config_has_committed_record ==
+         (config_store.hasCommittedRecord() ? 1U : 0U));
+  const auto& hdiag = history.diagnostics();
+  assert(application_status_snapshot.storage.history_overwritten ==
+         hdiag.overwritten);
+  assert(application_status_snapshot.storage.history_append_failures ==
+         hdiag.append_failures);
+  assert(application_status_snapshot.storage.history_recovery_corruptions ==
+         hdiag.recovery_corruptions);
+  assert(application_status_snapshot.storage.history_metadata_failures ==
+         hdiag.metadata_failures);
   {
     GeofenceOperationalState owner_state{};
     const bool owner_has_state =
