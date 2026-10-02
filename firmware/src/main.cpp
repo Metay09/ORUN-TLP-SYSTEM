@@ -1366,7 +1366,31 @@ void handleRoleCommand() {
   }
   if (isActivityCommand("APP CONFIG?", 11)) {
     role_command_length = 0;
-    startUsbApplicationConfigQuery();
+    startUsbApplicationQuery(orun_tlp::ApplicationRequestKind::kGetConfig);
+    return;
+  }
+  if (isActivityCommand("APP DEVICE?", 11)) {
+    role_command_length = 0;
+    startUsbApplicationQuery(
+        orun_tlp::ApplicationRequestKind::kGetDeviceStatus);
+    return;
+  }
+  if (isActivityCommand("APP TRACKING?", 13)) {
+    role_command_length = 0;
+    startUsbApplicationQuery(
+        orun_tlp::ApplicationRequestKind::kGetTrackingStatus);
+    return;
+  }
+  if (isActivityCommand("APP GEOFENCE?", 13)) {
+    role_command_length = 0;
+    startUsbApplicationQuery(
+        orun_tlp::ApplicationRequestKind::kGetGeofenceStatus);
+    return;
+  }
+  if (isActivityCommand("APP STORAGE?", 12)) {
+    role_command_length = 0;
+    startUsbApplicationQuery(
+        orun_tlp::ApplicationRequestKind::kGetStorageStatus);
     return;
   }
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
