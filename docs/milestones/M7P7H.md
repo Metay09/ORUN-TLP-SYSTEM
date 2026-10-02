@@ -189,7 +189,7 @@ remain unchanged.
 
 Candidate response logical payloads:
 
-### DEVICE — 20 bytes
+### DEVICE — 36 bytes
 
 ```text
 0      status
@@ -206,6 +206,7 @@ Candidate response logical payloads:
 11     relay-forwarding reason
 12..15 uptime_ms LE32
 16..19 reset_reason LE32
+20..35 firmware version, fixed 16-byte NUL-padded ASCII
 ```
 
 ### TRACKING/GNSS — 36 bytes
