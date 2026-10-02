@@ -82,12 +82,25 @@ M1 uses a previously unused DEVICE flag bit and keeps the DEVICE logical payload
 
 The earlier owner host/build results remain historical evidence for the pre-fix candidate. Because accepted audit findings changed firmware and tests, they are not promoted to the corrected head.
 
-Required next gates:
+Post-fix owner revalidation is complete on code-bearing head
+`20fcc417a242558e24c2ab73ee557157737f18cc`:
 
-1. rerun full `firmware/tests/run_host_tests.sh`;
-2. rerun `pio run -e rak4630` and record corrected RAM/flash;
-3. if both pass, run focused RAK4631 + Android/nRF Connect qualification on the exact corrected code-bearing head;
-4. update this disposition and `docs/milestones/M7P7H.md` with exact evidence;
-5. only then make PR #61 merge-ready.
+- full `firmware/tests/run_host_tests.sh`: **PASS**;
+- warnings-as-errors / ASan / UBSan coverage: **PASS**;
+- all production startup scenarios: **PASS**;
+- production `pio run -e rak4630`: **SUCCESS**;
+- corrected size: **28,936 B RAM / 264,624 B flash**
+  (**11.6% / 32.5%**);
+- delta versus PR #58 immediate production baseline:
+  **+192 B RAM / +4,424 B flash**;
+- audit-fix-only delta versus the earlier M7P7H build:
+  **+8 B RAM / +88 B flash**.
+
+Remaining gate:
+
+1. run focused RAK4631 + Android/nRF Connect qualification on the exact
+   corrected code-bearing firmware;
+2. record the physical evidence;
+3. only then make PR #61 merge-ready.
 
 No M7P7H physical PASS is claimed here.
