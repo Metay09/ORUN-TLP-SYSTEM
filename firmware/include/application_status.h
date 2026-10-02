@@ -98,9 +98,12 @@ enum class ApplicationSecurityState : uint8_t {
 // DEVICE: compact product-facing identity/runtime/capability summary.
 // Firmware/build strings intentionally remain USB boot/service text for now;
 // the stable application-surface revision is sufficient for bounded clients.
+constexpr uint8_t kApplicationFirmwareVersionSize = 16;
+
 struct ApplicationDeviceSnapshot {
   uint32_t uptime_ms;
   uint32_t reset_reason;
+  char firmware_version[kApplicationFirmwareVersionSize];
   uint8_t surface_revision;
   ApplicationRole role;
   uint8_t role_automatic;
@@ -176,7 +179,7 @@ struct ApplicationStatusSnapshot {
   ApplicationStorageSnapshot storage;
 };
 
-static_assert(sizeof(ApplicationDeviceSnapshot) <= 24,
+static_assert(sizeof(ApplicationDeviceSnapshot) <= 40,
               "DEVICE snapshot must remain bounded");
 static_assert(sizeof(ApplicationTrackingSnapshot) <= 40,
               "TRACKING snapshot must remain bounded");
