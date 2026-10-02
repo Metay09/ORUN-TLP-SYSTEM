@@ -348,5 +348,13 @@ The implementation candidate changes only the local read-only application
 surface and additive BLE application message types. It does not change TLP v1,
 RF behavior, persistent flash formats, GNSS power policy or enable a writer.
 
-At this point no host/build/physical PASS is claimed. Evidence is added only
-after it is actually run against the candidate head.
+Validation evidence on candidate head
+`257f09b9be25d3b1bec2fbb2668303123f986293`:
+
+- Full `firmware/tests/run_host_tests.sh`: **PASS** on 2026-10-02.
+- The suite ran with the repository's warnings-as-errors and sanitizer flags,
+  and all production startup scenarios passed, including
+  `history_erase_i2c`.
+- M7P7H source-contract guards passed.
+- This is host evidence only. RAK4630 production build, independent audit and
+  physical BLE qualification are still pending; no hardware PASS is claimed.
