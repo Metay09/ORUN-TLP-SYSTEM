@@ -12,6 +12,9 @@ Governing architecture:
 Independent architecture review disposition:
 `docs/audits/APPLICATION_SURFACE_ARCHITECTURE_AUDIT_DISPOSITION.md`.
 
+Independent implementation audit disposition:
+`docs/audits/M7P7H_FINAL_AUDIT_DISPOSITION.md`.
+
 ## 1. Goal
 
 Expand the existing transport-neutral application seam beyond GET_CONFIG
