@@ -3,6 +3,7 @@
 // byte-for-byte/text-compatible with the established M7P7D service command.
 #include <assert.h>
 #include <string.h>
+#include <string>
 
 #include "Arduino.h"
 #include "application_request.h"
