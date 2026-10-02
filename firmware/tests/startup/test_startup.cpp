@@ -966,6 +966,26 @@ int main(int argc, char** argv) {
     assert(!ble_application_indication_in_flight);
     assert(!ble_application_transport.outboundFramePending());
 
+    // M7P7H production composition: an additive status request travels through
+    // the same callback -> loop -> ApplicationRequestService -> indication path.
+    // GEOFENCE is intentionally a one-fragment summary: no geometry/token bytes.
+    const uint8_t get_geofence_1[] = {
+        0x01, 0x04, 0x03, 0x00, 0x11, 0x00, 0x00, 0x00};
+    const unsigned status_hvx_before = BluefruitHvx.calls;
+    ble_application_request_characteristic.simulateWrite(
+        Bluefruit.connHandle(), get_geofence_1, sizeof(get_geofence_1));
+    assert(tick(0).empty());
+    assert(BluefruitHvx.calls == status_hvx_before + 1);
+    assert(BluefruitHvx.len == 17);  // 8-byte frame header + 9-byte summary.
+    assert(BluefruitHvx.data[0] == 0x01 && BluefruitHvx.data[1] == 0x84);
+    assert(BluefruitHvx.data[4] == 0x11 && BluefruitHvx.data[5] == 0x00);
+    assert(BluefruitHvx.data[6] == 0x09 && BluefruitHvx.data[7] == 0x00);
+    assert(ble_application_indication_in_flight);
+    Bluefruit.simulateHvc(ble_application_response_value_handle);
+    assert(tick(0).empty());
+    assert(!ble_application_indication_in_flight);
+    assert(!ble_application_transport.outboundFramePending());
+
     // A documented transient HVX return is retried at bounded spacing with
     // the same pending response, without disconnecting or reopening ingress.
     const uint8_t get_config_2[] = {
