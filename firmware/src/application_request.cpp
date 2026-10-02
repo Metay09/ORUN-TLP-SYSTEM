@@ -92,7 +92,7 @@ ApplicationSubmitResult ApplicationRequestService::submit(
     }
 
     case ApplicationRequestKind::kGetDeviceStatus:
-      if (status_snapshot_ == nullptr) {
+      if (status_snapshot_ == nullptr || status_snapshot_->populated == 0) {
         response_.code = ApplicationResponseCode::kUnavailable;
       } else {
         response_.code = ApplicationResponseCode::kOk;
@@ -101,7 +101,7 @@ ApplicationSubmitResult ApplicationRequestService::submit(
       break;
 
     case ApplicationRequestKind::kGetTrackingStatus:
-      if (status_snapshot_ == nullptr) {
+      if (status_snapshot_ == nullptr || status_snapshot_->populated == 0) {
         response_.code = ApplicationResponseCode::kUnavailable;
       } else {
         response_.code = ApplicationResponseCode::kOk;
@@ -110,7 +110,7 @@ ApplicationSubmitResult ApplicationRequestService::submit(
       break;
 
     case ApplicationRequestKind::kGetGeofenceStatus:
-      if (status_snapshot_ == nullptr) {
+      if (status_snapshot_ == nullptr || status_snapshot_->populated == 0) {
         response_.code = ApplicationResponseCode::kUnavailable;
       } else {
         response_.code = ApplicationResponseCode::kOk;
@@ -119,7 +119,7 @@ ApplicationSubmitResult ApplicationRequestService::submit(
       break;
 
     case ApplicationRequestKind::kGetStorageStatus:
-      if (status_snapshot_ == nullptr) {
+      if (status_snapshot_ == nullptr || status_snapshot_->populated == 0) {
         response_.code = ApplicationResponseCode::kUnavailable;
       } else {
         response_.code = ApplicationResponseCode::kOk;
