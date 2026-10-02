@@ -1,8 +1,7 @@
 # ORUN Current Architecture Rules
 
-Status: **CURRENT through `main@fb1a47b549d18517078facc5d2d3437445277b65` (PR #42 architecture consolidation). The first real ORUN application GATT adapter remains the pre-authorization read-only GET_CONFIG path; M7P6F adds durable SecurityStore v2/backend-A2D replay persistence but no production secure-RF caller. Delegated-command and config state-token/CAS work remain architecture direction only; provisioning, application authorization, protected config writes, secure TLP v2, MESSAGE/commands and private-location services remain later implementation gates.**
-Last reviewed against code checkpoint `main@fb1a47b549d18517078facc5d2d3437445277b65`.
-Last architecture review update: 2026-09-26. High-level service decomposition,
+Status: **CURRENT architecture/ownership record. Canonical main is at least `main@8f5f8b75e2b5c27d10e4dfec3130267afc300314` for the M7P7H application-surface direction. M7P7G remains the latest physically qualified BLE application-GATT evidence boundary; PR #61 / M7P7H is an implementation candidate that adds read-only DEVICE, TRACKING/GNSS, GEOFENCE and STORAGE over the same USB+BLE application seam, with post-audit software revalidation and focused physical qualification still required. Provisioning, final application authorization, protected writes, secure TLP v2, MESSAGE/commands and private-location services remain later gates.**
+Last reviewed against M7P7H candidate branch on 2026-10-02. High-level service decomposition,
 engineering-scale assumptions and hardware-portability direction are recorded in
 `ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md`. Owner-approved delegated gateway-command
 security direction is recorded in
@@ -898,6 +897,26 @@ post-audit full host/sanitizer/startup/source-guard plus RAK4630 production
 build revalidation is **PASS** on `e510a96f3d541ca113d4cfd297fa869ffdcb27c2`
 (22,672 B RAM / 234,456 B flash). Exact evidence is in
 `docs/milestones/M7P7G.md`.
+
+M7P7H / PR #61 extends that same transport/application boundary additively:
+`0x02..0x05` request types and `0x82..0x85` responses expose bounded
+DEVICE, TRACKING/GNSS, GEOFENCE and STORAGE snapshots through the existing
+UUIDs, 20-byte frame, 48-byte logical limit, stop-and-wait/HVC and session
+generation machinery. GET_CONFIG `0x01/0x81` bytes remain unchanged. The
+application service now carries a separate access-context seam and a
+kind-specific bounded response payload rather than a growing flat struct.
+
+The first independent M7P7H final audit returned **PASS WITH FIXES** with
+0 BLOCKER / 0 HIGH. Before physical qualification, accepted fixes separate
+resolved relay intent from `RadioManager::relayForwardingEnabled()`, freeze
+full logical golden vectors, fail closed on unpopulated snapshots, document the
+32-bit modulo uptime meaning, and explicitly classify the temporary
+pre-authorization status exposure. Current BLE requests still enter the
+application boundary as `kBleOpen`; `kBleEncrypted` is an insertion seam,
+not yet populated from Bluefruit link state. This is acceptable only for the
+current development/read-only allowlist and must be wired before any access
+rule depends on encryption or before field/private deployment. Exact candidate
+scope/evidence is in `docs/milestones/M7P7H.md`.
 
 ## 18. RF configuration semantics and radio-platform portability
 
