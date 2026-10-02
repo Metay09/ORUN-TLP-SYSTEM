@@ -37,6 +37,19 @@ EVENT/alarm, MESSAGE, COMMAND/RESULT, health/history/map), hardware-portability
 boundary and layered validation model. It is architecture direction, not evidence
 that those later runtimes exist.
 
+Owner-approved application/transport convergence is recorded in
+`ORUN_APPLICATION_TRANSPORT_SURFACE.md`, with the independent review disposition
+in `docs/audits/APPLICATION_SURFACE_ARCHITECTURE_AUDIT_DISPOSITION.md`.
+USB, BLE and future LoRa remain adapters into common target-side application
+owners; transport symmetry applies to product semantics, not every engineering
+probe. The direction adds a small access-context seam, keeps read response
+delivery separate from durable mutation serialization, and prevents the current
+GET_CONFIG-shaped response from growing into one flat monolith. The next planned
+implementation is `docs/milestones/M7P7H.md`: read-only DEVICE,
+TRACKING/GNSS, GEOFENCE and STORAGE status over USB + BLE. GET_LOCATION,
+protected writers, LoRa COMMAND/RESULT/store-forward and final authorization
+remain later slices. This documentation adds no runtime/wire/RF/storage change.
+
 Owner-approved current geofence operational direction is recorded in
 `ORUN_GEOFENCE_OPERATIONAL_POLICY.md`. M6D2 now implements the software
 composition from already accepted Location into the validated geometry/state
