@@ -434,5 +434,8 @@ Validation evidence on candidate head
   aborting the production build.
 - The visible SX126x-Arduino warnings are emitted by the pinned third-party
   library; the production build still completed successfully.
-- Independent audit and physical BLE qualification remain pending; no hardware
-  PASS is claimed.
+- Independent final audit: **PASS WITH FIXES** (0 BLOCKER / 0 HIGH /
+  3 MEDIUM / 4 LOW). Accepted fixes are applied on the same branch, but the
+  corrected code head still requires owner host/build revalidation.
+- Focused physical BLE qualification remains pending; no M7P7H hardware PASS
+  is claimed.
