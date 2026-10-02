@@ -438,7 +438,20 @@ Validation evidence on candidate head
 - The visible SX126x-Arduino warnings are emitted by the pinned third-party
   library; the production build still completed successfully.
 - Independent final audit: **PASS WITH FIXES** (0 BLOCKER / 0 HIGH /
-  3 MEDIUM / 4 LOW). Accepted fixes are applied on the same branch, but the
-  corrected code head still requires owner host/build revalidation.
+  3 MEDIUM / 4 LOW). Accepted fixes are applied on the same branch.
+- Corrected code-bearing head
+  `20fcc417a242558e24c2ab73ee557157737f18cc`:
+  - full `firmware/tests/run_host_tests.sh`: **PASS**;
+  - warnings-as-errors / ASan / UBSan coverage: **PASS**;
+  - all production startup scenarios: **PASS**;
+  - M7P7H full logical BLE golden/source-contract coverage: **PASS**;
+  - production `pio run -e rak4630`: **SUCCESS**;
+  - corrected linked size: **28,936 B RAM / 264,624 B flash**
+    (**11.6% / 32.5%**).
+- Delta versus immediate PR #58 production baseline
+  (**28,744 B RAM / 260,200 B flash**):
+  **+192 B RAM / +4,424 B flash**.
+- Audit-fix delta versus the earlier pre-fix M7P7H build
+  (**28,928 B / 264,536 B**): **+8 B RAM / +88 B flash**.
 - Focused physical BLE qualification remains pending; no M7P7H hardware PASS
   is claimed.
