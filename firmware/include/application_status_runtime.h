@@ -24,6 +24,7 @@ void buildApplicationStatusSnapshot(
     bool role_automatic,
     const CapabilitySnapshot& capabilities,
     const EffectiveConfig& effective,
+    bool relay_forwarding_applied,
     uint32_t applied_base_interval_seconds,
     const GnssManager& gnss,
     const ConfigStore& config,
