@@ -101,13 +101,16 @@ enum class ApplicationSecurityState : uint8_t {
 constexpr uint8_t kApplicationFirmwareVersionSize = 16;
 
 struct ApplicationDeviceSnapshot {
-  uint32_t uptime_ms;
+  // Low 32 bits of monotonic milliseconds since boot; wraps modulo 2^32
+  // (~49.7 days). This is diagnostic continuity, not wall-clock time.
+  uint32_t uptime_ms_mod32;
   uint32_t reset_reason;
   char firmware_version[kApplicationFirmwareVersionSize];
   uint8_t surface_revision;
   ApplicationRole role;
   uint8_t role_automatic;
   uint8_t watchdog_reset;
+  uint8_t relay_forwarding_applied;
   ApplicationPresence gnss_presence;
   ApplicationHealth gnss_health;
   ApplicationPresence accelerometer_presence;
@@ -173,6 +176,10 @@ struct ApplicationStorageSnapshot {
 };
 
 struct ApplicationStatusSnapshot {
+  // False until the composition owner has built at least one complete snapshot.
+  // A transport that forgets to refresh status therefore gets UNAVAILABLE,
+  // never a zero-filled status reported as authoritative.
+  uint8_t populated;
   ApplicationDeviceSnapshot device;
   ApplicationTrackingSnapshot tracking;
   ApplicationGeofenceSnapshot geofence;
