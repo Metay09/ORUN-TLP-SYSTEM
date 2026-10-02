@@ -194,7 +194,7 @@ int main() {
 
     uint8_t frame[bat::kMaxFrameSize];
     const uint8_t frame_len =
-        buildFrame(frame, bat::kTransportVersion, 0x02,
+        buildFrame(frame, bat::kTransportVersion, 0x7E,
                    bat::kFlagStart | bat::kFlagEnd, 0, 55, 0, nullptr, 0);
     receiveCurrent(transport, frame, frame_len, 0);
 
@@ -207,7 +207,7 @@ int main() {
     assert(readLE16(out + 4) == 55);
     assert(readLE16(out + 6) == 2);
     assert(out[8] == static_cast<uint8_t>(bat::ErrorCode::kUnsupported));
-    assert(out[9] == 0x02);  // offending message type.
+    assert(out[9] == 0x7E);  // offending message type.
   }
 
   // 5 & 6. Global ApplicationRequestService BUSY (held by USB) -> local
