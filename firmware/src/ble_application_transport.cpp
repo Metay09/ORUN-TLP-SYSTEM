@@ -340,7 +340,9 @@ void BleApplicationTransport::buildApplicationResponse(
       outbound_.payload[11] = static_cast<uint8_t>(s.relay_reason);
       writeLE32(outbound_.payload + 12, s.uptime_ms);
       writeLE32(outbound_.payload + 16, s.reset_reason);
-      outbound_.total_length = 20;
+      memcpy(outbound_.payload + 20, s.firmware_version,
+             kApplicationFirmwareVersionSize);
+      outbound_.total_length = 36;
       return;
     }
 
