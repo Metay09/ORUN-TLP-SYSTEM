@@ -68,6 +68,7 @@ ApplicationStatusSnapshot sampleSnapshot() {
 
   s.device.uptime_ms = 123456;
   s.device.reset_reason = 0xA5A50011UL;
+  memcpy(s.device.firmware_version, "0.5.0-alpha", sizeof("0.5.0-alpha"));
   s.device.surface_revision = kApplicationSurfaceRevision;
   s.device.role = ApplicationRole::kTracker;
   s.device.role_automatic = 1;
@@ -149,6 +150,8 @@ int main() {
     assert(usb.code == ApplicationResponseCode::kOk);
     assert(usb.payload.device.snapshot.uptime_ms == 123456);
     assert(usb.payload.device.snapshot.role == ApplicationRole::kTracker);
+    assert(strcmp(usb.payload.device.snapshot.firmware_version,
+                  "0.5.0-alpha") == 0);
 
     const ApplicationResponse ble = submitTake(
         service, ApplicationRequester::kBle, 2,
