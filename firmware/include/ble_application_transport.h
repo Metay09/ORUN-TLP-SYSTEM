@@ -60,7 +60,16 @@ constexpr uint8_t kValidFlagsMask = kFlagStart | kFlagEnd;
 
 enum class MessageType : uint8_t {
   kGetConfigRequest = 0x01,
+  kGetDeviceStatusRequest = 0x02,
+  kGetTrackingStatusRequest = 0x03,
+  kGetGeofenceStatusRequest = 0x04,
+  kGetStorageStatusRequest = 0x05,
+
   kGetConfigResponse = 0x81,
+  kGetDeviceStatusResponse = 0x82,
+  kGetTrackingStatusResponse = 0x83,
+  kGetGeofenceStatusResponse = 0x84,
+  kGetStorageStatusResponse = 0x85,
   kError = 0xFF,
 };
 
@@ -73,6 +82,8 @@ constexpr uint8_t kApplicationStatusOk = 0x00;
 enum class ErrorCode : uint8_t {
   kUnsupported = 0x01,
   kBusy = 0x02,
+  kAccessDenied = 0x03,
+  kUnavailable = 0x04,
 };
 
 // Advances a local monotonic request-id counter, skipping zero on
@@ -202,8 +213,8 @@ class BleApplicationTransport {
                      uint16_t correlation_id, uint16_t total_length,
                      uint32_t now);
   void dispatchInbound();
-  void buildGetConfigResponse(uint16_t correlation_id,
-                               const ApplicationResponse& response);
+  void buildApplicationResponse(uint16_t correlation_id,
+                                const ApplicationResponse& response);
   void buildErrorResponse(uint16_t correlation_id,
                            ble_app_transport::ErrorCode code,
                            uint8_t offending_message_type);
