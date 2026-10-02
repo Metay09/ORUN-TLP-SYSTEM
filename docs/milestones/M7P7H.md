@@ -286,7 +286,7 @@ engineering commands remain outside the product application surface.
 No validation result is claimed yet. Host/sanitizer/startup, RAK4630 build,
 independent audit and physical BLE qualification remain open gates.
 
-## 8. Acceptance criteria
+## 9. Acceptance criteria
 
 M7P7H closes only when all are true:
 
@@ -311,7 +311,7 @@ M7P7H closes only when all are true:
 13. Milestone and architecture docs are updated to actual implemented bytes and
     evidence; no unperformed physical result is claimed.
 
-## 9. Writer prerequisites kept out of this slice
+## 10. Writer prerequisites kept out of this slice
 
 Before SET_CONFIG:
 
