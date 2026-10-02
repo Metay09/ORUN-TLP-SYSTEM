@@ -51,12 +51,33 @@ int main() {
          "tracking_interval_seconds=180 battery_capacity_mah=0\n");
 
   Serial.output.clear();
+  ApplicationResponse device;
+  device.requester = ApplicationRequester::kUsb;
+  device.request_id = 18;
+  device.kind = ApplicationRequestKind::kGetDeviceStatus;
+  device.code = ApplicationResponseCode::kOk;
+  device.payload.device.snapshot.surface_revision = kApplicationSurfaceRevision;
+  memcpy(device.payload.device.snapshot.firmware_version, "0.5.0-alpha",
+         sizeof("0.5.0-alpha"));
+  device.payload.device.snapshot.uptime_ms_mod32 = 0xFFFFFFFFUL;
+  device.payload.device.snapshot.role = ApplicationRole::kRelay;
+  device.payload.device.snapshot.role_automatic = 0;
+  device.payload.device.snapshot.watchdog_reset = 0;
+  device.payload.device.snapshot.relay_forwarding_applied = 0;
+  device.payload.device.snapshot.relay_state = ApplicationServiceState::kEnabled;
+  device.payload.device.snapshot.relay_reason = ApplicationServiceReason::kNone;
+  printUsbApplicationResponse(device);
+  assert(Serial.output.find("uptime_ms_mod32=4294967295") !=
+         std::string::npos);
+  assert(Serial.output.find("relay_applied=no") != std::string::npos);
+
+  Serial.output.clear();
   ApplicationResponse denied;
-  denied.request_id = 18;
+  denied.request_id = 19;
   denied.kind = ApplicationRequestKind::kGetStorageStatus;
   denied.code = ApplicationResponseCode::kAccessDenied;
   printUsbApplicationResponse(denied);
-  assert(Serial.output == "APP RESULT id=18 code=ACCESS_DENIED\n");
+  assert(Serial.output == "APP RESULT id=19 code=ACCESS_DENIED\n");
 
   return 0;
 }
