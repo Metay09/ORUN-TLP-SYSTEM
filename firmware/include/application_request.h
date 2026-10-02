@@ -168,6 +168,8 @@ class ApplicationRequestService {
 
  private:
   static bool requesterSupported(ApplicationRequester requester);
+  static bool accessMatchesRequester(
+      ApplicationRequester requester, const ApplicationAccessContext& access);
   static bool requestKindSupported(ApplicationRequestKind kind);
   static bool accessAllowed(ApplicationRequestKind kind,
                             const ApplicationAccessContext& access);
