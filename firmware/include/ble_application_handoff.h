@@ -81,6 +81,10 @@ class BleApplicationHandoff {
   bool takeGattTimeout(BleApplicationGattTimeoutEvent& out);
 
   bool sessionActive() const { return session_active_; }
+  // Loop may sample this only under the same critical section used by the
+  // callback producer. M7P7H uses it to avoid rebuilding status snapshots on
+  // every idle BLE loop tick when no application request is pending.
+  bool ingressPending() const { return ingress_count_ != 0; }
   bool ingressAllowed() const { return ingress_allowed_; }
   uint16_t connectionHandle() const { return connection_handle_; }
   uint32_t sessionGeneration() const { return session_generation_; }
