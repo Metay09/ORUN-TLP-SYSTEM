@@ -10,6 +10,17 @@ bool ApplicationRequestService::requesterSupported(
          requester == ApplicationRequester::kBle;
 }
 
+bool ApplicationRequestService::accessMatchesRequester(
+    ApplicationRequester requester, const ApplicationAccessContext& access) {
+  if (access.channel == ApplicationAccessChannel::kInvalid) return true;
+  if (requester == ApplicationRequester::kUsb)
+    return access.channel == ApplicationAccessChannel::kUsbLocal;
+  if (requester == ApplicationRequester::kBle)
+    return access.channel == ApplicationAccessChannel::kBleOpen ||
+           access.channel == ApplicationAccessChannel::kBleEncrypted;
+  return false;
+}
+
 bool ApplicationRequestService::requestKindSupported(
     ApplicationRequestKind kind) {
   switch (kind) {
@@ -43,7 +54,8 @@ bool ApplicationRequestService::accessAllowed(
 
 ApplicationSubmitResult ApplicationRequestService::submit(
     const ApplicationRequest& request) {
-  if (!requesterSupported(request.requester)) {
+  if (!requesterSupported(request.requester) ||
+      !accessMatchesRequester(request.requester, request.access)) {
     return ApplicationSubmitResult::kRejected;
   }
   if (response_ready_) return ApplicationSubmitResult::kBusy;
