@@ -1933,11 +1933,17 @@ void loop() {
     const uint16_t connection_handle =
         input.connected ? Bluefruit.connHandle() : BLE_CONN_HANDLE_INVALID;
     const uint32_t ble_now = orun_tlp::monotonic::nowMs();
-    // Role/service state may have resolved after the earlier USB snapshot in
-    // this same loop. Refresh from the same owners immediately before BLE
-    // dispatch so both adapters consume the common typed surface, not private
-    // transport caches.
-    refreshApplicationStatusSnapshot(ble_now);
+    // Do not rebuild diagnostics on every idle BLE loop tick. Callback input
+    // is already bounded in BleApplicationHandoff; sample only the pending
+    // fact under the same critical section, then compose one status snapshot
+    // before loop-owned request dispatch. This keeps disconnected/idle tracker
+    // power behavior unchanged apart from the tiny mailbox check.
+    taskENTER_CRITICAL();
+    const bool ble_application_ingress_pending =
+        ble_application_handoff.ingressPending();
+    taskEXIT_CRITICAL();
+    if (ble_application_ingress_pending)
+      refreshApplicationStatusSnapshot(ble_now);
 
     // M7P7G cleanup/transport work must happen before admission can restart
     // advertising after a disconnect.
