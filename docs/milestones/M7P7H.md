@@ -1,9 +1,10 @@
 # M7P7H — Read-only Device Status application surface (USB + BLE)
 
-Status: **PLANNED — ARCHITECTURE/ACCEPTANCE CONTRACT ONLY; NO RUNTIME IMPLEMENTATION IN THIS DOCUMENT.**
+Status: **IMPLEMENTATION CANDIDATE — VALIDATION PENDING; NOT MERGE-READY.**
 
-Baseline for planning:
-`main@034d0afdbd7b4e26fd2cd44310486f20a61307d7`.
+Implementation baseline:
+`main@8f5f8b75e2b5c27d10e4dfec3130267afc300314`
+(PR #60 application-surface direction merged).
 
 Governing architecture:
 `docs/architecture/ORUN_APPLICATION_TRANSPORT_SURFACE.md`.
@@ -135,6 +136,156 @@ operation-admission table.
 This slice does not implement final user authorization. It must merely avoid
 hard-coding product operation allow-lists independently in USB and BLE adapters.
 
+## 8. Candidate implementation contract
+
+The current implementation candidate is on
+`feat/m7p7h-read-only-device-status`.
+
+Internal typed request kinds are additive:
+
+```text
+1 GET_CONFIG
+2 GET_DEVICE_STATUS
+3 GET_TRACKING_STATUS
+4 GET_GEOFENCE_STATUS
+5 GET_STORAGE_STATUS
+```
+
+`ApplicationRequester` remains USB/BLE only in this slice. A separate
+`ApplicationAccessContext` now carries local channel/security facts; all five
+current operations are read-only local operations and are admitted for USB
+local, BLE open and BLE encrypted contexts. This is an insertion seam, not
+final authorization.
+
+The application response is now a common header
+`(requester, request_id, kind, code)` plus one bounded kind-specific POD
+payload. `ApplicationRequestService` still depends only on ConfigStore plus
+the bounded application snapshot; concrete GNSS/radio/Arduino driver headers
+remain outside it.
+
+Candidate BLE message types are additive on the existing UUID/20-byte framing:
+
+```text
+request   response
+0x01      0x81   GET_CONFIG (unchanged)
+0x02      0x82   DEVICE
+0x03      0x83   TRACKING/GNSS
+0x04      0x84   GEOFENCE
+0x05      0x85   STORAGE
+0xFF             ERROR
+```
+
+New ERROR values are additive:
+
+```text
+0x01 UNSUPPORTED (unchanged)
+0x02 BUSY        (unchanged)
+0x03 ACCESS_DENIED
+0x04 UNAVAILABLE
+```
+
+Every M7P7H request has zero logical payload. Existing GET_CONFIG response bytes
+remain unchanged.
+
+Candidate response logical payloads:
+
+### DEVICE — 20 bytes
+
+```text
+0      status
+1      application-surface revision
+2      legacy role observation
+3      flags: bit0 AUTO, bit1 watchdog-reset
+4      GNSS presence
+5      GNSS health
+6      accelerometer presence
+7      accelerometer health
+8      tracking effective state
+9      tracking reason
+10     relay-forwarding effective state
+11     relay-forwarding reason
+12..15 uptime_ms LE32
+16..19 reset_reason LE32
+```
+
+### TRACKING/GNSS — 36 bytes
+
+```text
+0      status
+1      flags: bit0 config-ready, bit1 stored semantic override,
+              bit2 GNSS detected, bit3 additional-fix active
+2      geofence cadence mode
+3      GNSS state
+4..7   requested durable base interval seconds
+8..11  applied-at-boot base interval seconds
+12..15 actual GnssManager runtime interval seconds
+16..19 acquisition attempts
+20..23 successful fresh fixes
+24..27 acquisition timeouts
+28..31 invalid fixes
+32..35 last TTFF ms
+```
+
+The actual GnssManager interval is exposed rather than re-deriving B/B3. A
+failed future cadence apply must therefore remain observable as an applied-state
+difference rather than being hidden by an expected-value calculation.
+
+### GEOFENCE — 9 bytes
+
+```text
+0      status
+1      durable resource state
+2      token-state summary (not token bytes)
+3      flags: bit0 runtime configured, bit1 confirmed state available,
+              bit2 confirmation active
+4      area count
+5..6   total effective vertex count LE16
+7      confirmed operational state (UNKNOWN/INSIDE/OUTSIDE)
+8      cadence mode
+```
+
+GeofenceStore exposes only O(1) area/vertex summary accessors for this query.
+The durable geometry is not copied.
+
+### STORAGE — 40 bytes
+
+```text
+0      status
+1      flags: history ready/busy, config ready/maintenance,
+              geofence ready/maintenance, security ready/exhausted
+2      SecurityStore state
+3      reserved=0
+4..7   history count
+8..11  history capacity
+12..15 overwritten
+16..19 history append failures
+20..23 history recovery corruptions
+24..27 history metadata failures
+28..31 config recovery corruptions
+32..35 geofence recovery corruptions
+36..39 security recovery corruptions
+```
+
+Routine status uses O(1) RAM state/counters only. It does not invoke
+`HistoryStore::newest()`, `backlogCount()`, or
+`GeofenceStore::currentSnapshot()`.
+
+USB command spellings are:
+
+```text
+APP CONFIG?
+APP DEVICE?
+APP TRACKING?
+APP GEOFENCE?
+APP STORAGE?
+```
+
+USB formatting is isolated in `usb_application_adapter.cpp`; existing
+engineering commands remain outside the product application surface.
+
+No validation result is claimed yet. Host/sanitizer/startup, RAK4630 build,
+independent audit and physical BLE qualification remain open gates.
+
 ## 8. Acceptance criteria
 
 M7P7H closes only when all are true:
@@ -190,7 +341,11 @@ Before the first production geofence writer:
 
 These are writer prerequisites, not M7P7H implementation scope.
 
-## 10. Evidence boundary
+## 11. Evidence boundary
 
-This planning document itself changes no firmware/runtime/protocol behavior and
-claims no host/build/physical PASS.
+The implementation candidate changes only the local read-only application
+surface and additive BLE application message types. It does not change TLP v1,
+RF behavior, persistent flash formats, GNSS power policy or enable a writer.
+
+At this point no host/build/physical PASS is claimed. Evidence is added only
+after it is actually run against the candidate head.
