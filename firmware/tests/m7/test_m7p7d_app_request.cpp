@@ -93,10 +93,10 @@ int main() {
     const ApplicationResponse response = take(service);
     assert(response.request_id == 7);
     assert(response.code == ApplicationResponseCode::kOk);
-    assert(response.config_backend_ready);
-    assert(!response.config_has_committed_record);
-    assert(response.config.tracking_interval_seconds == 180);
-    assert(response.config.battery_capacity_mah == 0);
+    assert(response.payload.config.backend_ready);
+    assert(!response.payload.config.has_committed_record);
+    assert(response.payload.config.tracking_interval_seconds == 180);
+    assert(response.payload.config.battery_capacity_mah == 0);
     assert(flash.program_calls == 0);
     assert(flash.erase_calls == 0);
   }
@@ -117,10 +117,10 @@ int main() {
     const ApplicationResponse response = take(service);
     assert(response.request_id == 42);
     assert(response.code == ApplicationResponseCode::kOk);
-    assert(response.config_backend_ready);
-    assert(response.config_has_committed_record);
-    assert(response.config.tracking_interval_seconds == 247);
-    assert(response.config.battery_capacity_mah == 9000);
+    assert(response.payload.config.backend_ready);
+    assert(response.payload.config.has_committed_record);
+    assert(response.payload.config.tracking_interval_seconds == 247);
+    assert(response.payload.config.battery_capacity_mah == 9000);
     assert(flash.program_calls == 0);
     assert(flash.erase_calls == 0);
   }
@@ -167,8 +167,8 @@ int main() {
     const ApplicationResponse response = take(service);
     assert(response.request_id == 200);
     assert(response.code == ApplicationResponseCode::kUnsupported);
-    assert(!response.config_backend_ready);
-    assert(!response.config_has_committed_record);
+    assert(!response.payload.config.backend_ready);
+    assert(!response.payload.config.has_committed_record);
     assert(flash.program_calls == 0);
     assert(flash.erase_calls == 0);
   }
@@ -188,10 +188,10 @@ int main() {
            ApplicationSubmitResult::kAccepted);
     const ApplicationResponse response = take(service);
     assert(response.code == ApplicationResponseCode::kOk);
-    assert(!response.config_backend_ready);
-    assert(!response.config_has_committed_record);
-    assert(response.config.tracking_interval_seconds == 180);
-    assert(response.config.battery_capacity_mah == 0);
+    assert(!response.payload.config.backend_ready);
+    assert(!response.payload.config.has_committed_record);
+    assert(response.payload.config.tracking_interval_seconds == 180);
+    assert(response.payload.config.battery_capacity_mah == 0);
     assert(flash.program_calls == 0);
     assert(flash.erase_calls == 0);
   }
@@ -216,10 +216,10 @@ int main() {
            ApplicationSubmitResult::kAccepted);
     const ApplicationResponse response = take(service);
     assert(response.code == ApplicationResponseCode::kOk);
-    assert(response.config_backend_ready);
-    assert(!response.config_has_committed_record);
-    assert(response.config.tracking_interval_seconds == 180);
-    assert(response.config.battery_capacity_mah == 0);
+    assert(response.payload.config.backend_ready);
+    assert(!response.payload.config.has_committed_record);
+    assert(response.payload.config.tracking_interval_seconds == 180);
+    assert(response.payload.config.battery_capacity_mah == 0);
     assert(flash.program_calls == 0);
     assert(flash.erase_calls == 0);
   }
