@@ -59,6 +59,19 @@ assert "buildApplicationStatusSnapshot(" in main
 assert "parseUsbApplicationQuery(" in main
 assert "printUsbApplicationResponse(" in main
 
+# Status assembly must not become idle-loop work. USB refreshes only when an
+# APP query is submitted; BLE refreshes only after loop atomically consumes an
+# ingress frame from the callback handoff.
+assert "refreshApplicationStatusSnapshot(orun_tlp::monotonic::nowMs())" in main
+poll_start = main.index("void pollBleApplicationRuntime(")
+poll_end = main.index("enum class AccelerometerDiagnosticState", poll_start)
+ble_runtime = main[poll_start:poll_end]
+assert "if (have_ingress)" in ble_runtime
+ingress_pos = ble_runtime.index("if (have_ingress)")
+refresh_pos = ble_runtime.index("refreshApplicationStatusSnapshot(now)", ingress_pos)
+dispatch_pos = ble_runtime.index("ble_application_transport.onFrameReceived(", ingress_pos)
+assert ingress_pos < refresh_pos < dispatch_pos
+
 # USB exposes the four read families plus existing GET_CONFIG through the
 # adapter, not transport-specific domain logic in main.
 for command in (
