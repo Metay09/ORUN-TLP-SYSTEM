@@ -2259,6 +2259,10 @@ void loop() {
         accelerometer_manager.poll(orun_tlp::monotonic::nowMs()));
   }
   activity_capture.poll();
+  // M7P7H: compose one bounded read snapshot before local USB application
+  // dispatch. This reads only O(1) owner state/counters; no flash scan or
+  // geofence geometry copy is performed.
+  refreshApplicationStatusSnapshot(loop_started_at_ms);
   pollRoleCommands();
   // M7P7D: transport input and application result consumption are separate
   // loop-owned steps. A future BLE callback may only enqueue/copy bounded
@@ -2310,6 +2314,11 @@ void loop() {
     const uint16_t connection_handle =
         input.connected ? Bluefruit.connHandle() : BLE_CONN_HANDLE_INVALID;
     const uint32_t ble_now = orun_tlp::monotonic::nowMs();
+    // Role/service state may have resolved after the earlier USB snapshot in
+    // this same loop. Refresh from the same owners immediately before BLE
+    // dispatch so both adapters consume the common typed surface, not private
+    // transport caches.
+    refreshApplicationStatusSnapshot(ble_now);
 
     // M7P7G cleanup/transport work must happen before admission can restart
     // advertising after a disconnect.
