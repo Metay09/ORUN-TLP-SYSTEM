@@ -96,8 +96,8 @@ enum class ApplicationSecurityState : uint8_t {
 };
 
 // DEVICE: compact product-facing identity/runtime/capability summary.
-// Firmware/build strings intentionally remain USB boot/service text for now;
-// the stable application-surface revision is sufficient for bounded clients.
+// Firmware version uses one bounded fixed field; verbose build metadata remains
+// USB/service text rather than expanding the product wire surface.
 constexpr uint8_t kApplicationFirmwareVersionSize = 16;
 
 struct ApplicationDeviceSnapshot {
