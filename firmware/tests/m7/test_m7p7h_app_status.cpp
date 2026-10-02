@@ -208,6 +208,23 @@ int main() {
     assert(denied.code == ApplicationResponseCode::kAccessDenied);
   }
 
+  // Requester provenance and access facts cannot be cross-wired. This is an
+  // internal adapter invariant and fails before a response slot is acquired.
+  {
+    assert(service.submit(ApplicationRequest(
+               ApplicationRequester::kUsb, 61,
+               ApplicationRequestKind::kGetDeviceStatus,
+               ApplicationAccessContext(ApplicationAccessChannel::kBleOpen))) ==
+           ApplicationSubmitResult::kRejected);
+    assert(!service.responsePending());
+    assert(service.submit(ApplicationRequest(
+               ApplicationRequester::kBle, 62,
+               ApplicationRequestKind::kGetDeviceStatus,
+               ApplicationAccessContext(ApplicationAccessChannel::kUsbLocal))) ==
+           ApplicationSubmitResult::kRejected);
+    assert(!service.responsePending());
+  }
+
   // 4. Unsupported kind remains UNSUPPORTED even when access is invalid.
   {
     const ApplicationResponse unsupported = submitTake(
