@@ -98,6 +98,7 @@ ApplicationStatusSnapshot makeSnapshot() {
   ApplicationStatusSnapshot s{};
   s.device.uptime_ms = 0x11223344UL;
   s.device.reset_reason = 0xAABBCCDDUL;
+  memcpy(s.device.firmware_version, "0.5.0-alpha", sizeof("0.5.0-alpha"));
   s.device.surface_revision = kApplicationSurfaceRevision;
   s.device.role = ApplicationRole::kTracker;
   s.device.role_automatic = 1;
@@ -170,19 +171,20 @@ int main() {
   BleApplicationTransport transport(service);
   transport.beginSession();
 
-  // DEVICE: 20-byte logical response -> two physical frames.
+  // DEVICE: 36-byte logical response -> three physical frames.
   {
     uint8_t payload[bat::kMaxLogicalPayload]{};
     const uint16_t len =
         transact(transport, bat::MessageType::kGetDeviceStatusRequest,
                  bat::MessageType::kGetDeviceStatusResponse, 0x1001, payload);
-    assert(len == 20);
+    assert(len == 36);
     assert(payload[0] == bat::kApplicationStatusOk);
     assert(payload[1] == kApplicationSurfaceRevision);
     assert(payload[2] == static_cast<uint8_t>(ApplicationRole::kTracker));
     assert(payload[3] == 0x03);  // AUTO + watchdog.
     assert(readLE32(payload + 12) == 0x11223344UL);
     assert(readLE32(payload + 16) == 0xAABBCCDDUL);
+    assert(memcmp(payload + 20, "0.5.0-alpha", sizeof("0.5.0-alpha")) == 0);
   }
 
   // TRACKING: 36 bytes -> three frames, preserving requested/applied/effective.
