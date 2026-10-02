@@ -144,6 +144,7 @@ void buildApplicationStatusSnapshot(
     bool role_automatic,
     const CapabilitySnapshot& capabilities,
     const EffectiveConfig& effective,
+    bool relay_forwarding_applied,
     uint32_t applied_base_interval_seconds,
     const GnssManager& gnss,
     const ConfigStore& config,
@@ -155,7 +156,7 @@ void buildApplicationStatusSnapshot(
   const WatchdogManager::BootInfo& reset = WatchdogManager::bootInfo();
 
   ApplicationDeviceSnapshot& device = out.device;
-  device.uptime_ms = now_ms;
+  device.uptime_ms_mod32 = now_ms;
   device.reset_reason = reset.reset_reason;
   static_assert(sizeof(kFirmwareVersion) <= kApplicationFirmwareVersionSize,
                 "firmware version exceeds DEVICE status field");
@@ -165,6 +166,7 @@ void buildApplicationStatusSnapshot(
   device.role = mapRole(role);
   device.role_automatic = role_automatic ? 1U : 0U;
   device.watchdog_reset = reset.watchdog_reset ? 1U : 0U;
+  device.relay_forwarding_applied = relay_forwarding_applied ? 1U : 0U;
   device.gnss_presence = mapPresence(capabilities.gnss.presence);
   device.gnss_health = mapHealth(capabilities.gnss.health);
   device.accelerometer_presence =
@@ -254,6 +256,10 @@ void buildApplicationStatusSnapshot(
   storage.security_ready = security.ready() ? 1U : 0U;
   storage.security_exhausted = security.exhausted() ? 1U : 0U;
   storage.security_state = mapSecurityState(security.state());
+
+  // Publish validity last so no caller can mistake the zero-initialized global
+  // snapshot for a completed composition result.
+  out.populated = 1U;
 }
 
 }  // namespace orun_tlp
