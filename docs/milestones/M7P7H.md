@@ -356,5 +356,19 @@ Validation evidence on candidate head
   and all production startup scenarios passed, including
   `history_erase_i2c`.
 - M7P7H source-contract guards passed.
-- This is host evidence only. RAK4630 production build, independent audit and
-  physical BLE qualification are still pending; no hardware PASS is claimed.
+- Production `pio run -e rak4630`: **SUCCESS** on 2026-10-02 at
+  branch head `b8005b75301dc502f6ce9ab0383467176f9049cc`; the only commit
+  after the host-validated runtime head was this milestone's evidence-only
+  documentation update.
+- Linked production size: **28,928 B RAM / 264,536 B flash**
+  (**11.6% / 32.5%**).
+- Current production baseline from PR #58 / `main@034d0af`:
+  **28,744 B RAM / 260,200 B flash**.
+- M7P7H delta versus that immediate production baseline:
+  **+184 B RAM / +4,336 B flash**.
+- `check_exclusive_owner` and `check_application_ceiling` completed without
+  aborting the production build.
+- The visible SX126x-Arduino warnings are emitted by the pinned third-party
+  library; the production build still completed successfully.
+- Independent audit and physical BLE qualification remain pending; no hardware
+  PASS is claimed.
