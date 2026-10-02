@@ -43,12 +43,16 @@ in `docs/audits/APPLICATION_SURFACE_ARCHITECTURE_AUDIT_DISPOSITION.md`.
 USB, BLE and future LoRa remain adapters into common target-side application
 owners; transport symmetry applies to product semantics, not every engineering
 probe. The direction adds a small access-context seam, keeps read response
-delivery separate from durable mutation serialization, and prevents the current
-GET_CONFIG-shaped response from growing into one flat monolith. The next planned
-implementation is `docs/milestones/M7P7H.md`: read-only DEVICE,
-TRACKING/GNSS, GEOFENCE and STORAGE status over USB + BLE. GET_LOCATION,
-protected writers, LoRa COMMAND/RESULT/store-forward and final authorization
-remain later slices. This documentation adds no runtime/wire/RF/storage change.
+delivery separate from durable mutation serialization, and prevents the former
+GET_CONFIG-shaped response from growing into one flat monolith. PR #61 /
+`docs/milestones/M7P7H.md` is the current implementation candidate for
+read-only DEVICE, TRACKING/GNSS, GEOFENCE and STORAGE over USB + BLE. Its first
+independent final audit returned PASS WITH FIXES (0 BLOCKER / 0 HIGH); accepted
+pre-physical fixes are on the same branch and require owner host/build
+revalidation before focused hardware qualification. M7P7G remains the latest
+physically qualified BLE application-GATT evidence. GET_LOCATION, protected
+writers, LoRa COMMAND/RESULT/store-forward and final authorization remain later
+slices.
 
 Owner-approved current geofence operational direction is recorded in
 `ORUN_GEOFENCE_OPERATIONAL_POLICY.md`. M6D2 now implements the software
