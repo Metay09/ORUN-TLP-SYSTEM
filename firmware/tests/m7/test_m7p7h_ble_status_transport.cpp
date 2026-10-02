@@ -50,11 +50,6 @@ uint16_t readLE16(const uint8_t* p) {
   return static_cast<uint16_t>(uint16_t(p[0]) | (uint16_t(p[1]) << 8));
 }
 
-uint32_t readLE32(const uint8_t* p) {
-  return uint32_t(p[0]) | (uint32_t(p[1]) << 8) |
-         (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
-}
-
 uint8_t buildQuery(uint8_t* out, bat::MessageType type, uint16_t correlation) {
   out[0] = bat::kTransportVersion;
   out[1] = static_cast<uint8_t>(type);
