@@ -91,9 +91,9 @@ void recoverOnly(HistoryStore& store) {
 void start(HistoryStore& store) {
   recoverOnly(store);
   if (!store.canAppend()) {
-    // Tests which need a ticket explicitly create demand. Production now does
-    // the same through PositionFlow::canAcceptFix(); reboot recovery alone
-    // must remain read-only.
+    // Tests which need a ticket explicitly create demand. Production does the
+    // same through PositionFlow::prepareForFixStorage(); canAcceptFix() stays a
+    // pure query and reboot recovery alone must remain read-only.
     assert(!store.prepareAppend());
     settle(store);
   }

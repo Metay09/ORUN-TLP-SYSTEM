@@ -9,9 +9,12 @@ Baseline: `main@182814c6dd3cf770bafe67ede0cb98b5845b04c7`
 
 ## Scope
 
-This record closes the physical evidence for the history-reboot preservation
-fix chain and the follow-up page-erase/I2C coexistence regression found during
-long-running qualification.
+This record physically qualifies the History page-erase/I2C coexistence fix on
+`8ffbcc980dea40909083c9e0bf06797b55890cae` and records earlier branch-lineage
+power-removal evidence for committed-history recovery / sequence no-reuse.
+Demand-driven read-only reboot recovery itself is host-qualified; no dedicated
+physical measurement of flash program/erase counts across a no-work reboot was
+performed.
 
 The branch intentionally keeps the existing TLP v1 POSITION bytes, RF behavior,
 history flash allocation/record format and circular-history capacity unchanged.
@@ -59,7 +62,11 @@ reuse sequence identities. Immediately before the cut the log showed
 the sequence advanced to `27648`, `records=682`.
 
 The jump is consistent with the existing reserved-block no-reuse contract. It is
-not evidence of record loss.
+not evidence of record loss. The exact firmware SHA used for this earlier
+power-removal sample was not independently recorded; it predates the final
+`8ffbcc9` page-erase/I2C fix on the same branch lineage. It is therefore used
+only as scoped evidence for committed-history recovery and no-reuse, not as
+physical proof of the newer no-work/read-only reboot behavior.
 
 ### Circular history page rotation
 
@@ -101,6 +108,17 @@ This physically validates the narrow production behavior implemented by
 - Accelerometer ownership: unchanged; polling is only deferred during the
   physically pending history erase window.
 - Security/provisioning/command semantics: **unchanged**.
+
+## Remaining reboot-churn risk
+
+The no-work reboot failure mode is removed: recovery and idle polling no longer
+consume a reservation slot. A different bounded risk remains when every reboot
+actually reaches a new fix and therefore creates legitimate ticket demand.
+Each such boot may reserve a new 256-ticket block; after the active page's eight
+sequence slots are consumed, metadata pressure can rotate to the next ring page
+even if only a few new records were added, reclaiming up to 104 older records.
+Eliminating that work-producing reboot churn would require a separate
+persistence-format/policy change and is outside this PR.
 
 ## Evidence boundary / not claimed
 
