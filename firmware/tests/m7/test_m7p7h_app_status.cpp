@@ -216,11 +216,6 @@ int main() {
 
   // 5. A service without a status snapshot keeps GET_CONFIG usable while new
   // status families fail closed as UNAVAILABLE.
-  {
-    ApplicationRequestService no_status(service = ApplicationRequestService(store));
-  }
-
-  // Recreate explicitly; assignment above would obscure ownership semantics.
   ApplicationRequestService no_status(store);
   {
     const ApplicationResponse unavailable = submitTake(
