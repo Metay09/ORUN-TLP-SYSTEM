@@ -10,13 +10,13 @@ namespace orun_tlp {
 // .cpp have NO Bluefruit/Arduino dependency -- it is driven entirely by
 // loop/task-owned code (future M7P7G) and is fully host-testable today.
 //
-// Scope: transport framing, fragmentation/reassembly, GET_CONFIG dispatch
-// through the existing ApplicationRequestService, stop-and-wait backpressure
-// and bounded session/generation hygiene. It does NOT instantiate a
-// Bluefruit BLEService/BLECharacteristic, does not change BLE admission, and
-// exposes no operation beyond the pre-authorization read-only GET_CONFIG
-// allowlist documented in docs/milestones/M7P7F.md section 6. See that
-// document for the full contract and rationale.
+// Scope: transport framing, fragmentation/reassembly, bounded application
+// dispatch through ApplicationRequestService, stop-and-wait backpressure and
+// bounded session/generation hygiene. M7P7F originally froze GET_CONFIG only;
+// M7P7H adds DEVICE/TRACKING/GEOFENCE/STORAGE read-only message types without
+// changing the UUID/frame contract or GET_CONFIG bytes. Production Bluefruit
+// wiring remains owned by M7P7G/main composition. See M7P7F section 6 and
+// M7P7H section 7.1 for the current pre-authorization read classification.
 namespace ble_app_transport {
 
 // ---------------------------------------------------------------------------
