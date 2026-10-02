@@ -73,11 +73,12 @@ void printUsbApplicationResponse(const ApplicationResponse& response) {
     case ApplicationRequestKind::kGetDeviceStatus: {
       const ApplicationDeviceSnapshot& s = response.payload.device.snapshot;
       Serial.printf(
-          "APP DEVICE id=%lu rev=%u uptime_ms=%lu reset=0x%08lX watchdog=%s "
+          "APP DEVICE id=%lu fw=%s rev=%u uptime_ms=%lu reset=0x%08lX watchdog=%s "
           "role=%u role_mode=%s gnss_presence=%u gnss_health=%u "
           "accel_presence=%u accel_health=%u tracking_state=%u "
           "tracking_reason=%u relay_state=%u relay_reason=%u\n",
           static_cast<unsigned long>(response.request_id),
+          s.firmware_version,
           static_cast<unsigned>(s.surface_revision),
           static_cast<unsigned long>(s.uptime_ms),
           static_cast<unsigned long>(s.reset_reason),
