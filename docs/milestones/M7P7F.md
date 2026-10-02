@@ -149,6 +149,14 @@ byte 0  error code: 0x01 = UNSUPPORTED, 0x02 = BUSY
 byte 1  offending message type
 ```
 
+> **M7P7H additive extension:** M7P7F remains the frozen transport-v1 base
+> contract for UUIDs, framing and GET_CONFIG bytes. M7P7H allocates request
+> types `0x02..0x05`, responses `0x82..0x85`, and ERROR codes
+> `0x03 ACCESS_DENIED` / `0x04 UNAVAILABLE` without changing the existing
+> `0x01/0x81` GET_CONFIG or `0x01/0x02` ERROR meanings. See
+> `docs/milestones/M7P7H.md` for the exact additive layouts and current
+> validation boundary.
+
 The ConfigStore v2 runtime cutover does not change any byte above. The bit1
 clarification preserves the already-observed application meaning
 `source=default|stored`: persistence metadata created only to establish an
@@ -201,6 +209,12 @@ section 17). This document does not choose or invent the final
 commissioning cryptographic ceremony; that remains a dedicated, reviewed
 future slice that must also decide authority-key custody/recovery before any
 protected write exists.
+
+> **M7P7H extension:** the later read-only status slice deliberately broadens
+> the development/local pre-authorization read allowlist beyond GET_CONFIG and
+> records an explicit field-by-field classification, including the privacy
+> caveat for geofence/security/runtime status. That decision does not
+> retroactively turn all diagnostics into safe pre-auth data. See M7P7H §7.1.
 
 ## 7. `BleApplicationTransport` — bounded adapter/session state
 
