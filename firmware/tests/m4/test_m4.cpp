@@ -82,9 +82,21 @@ void settle(HistoryStore& store) {
   assert(!store.busy());
 }
 
-void start(HistoryStore& store) {
+void recoverOnly(HistoryStore& store) {
   assert(store.begin(kDevice));
   settle(store);
+  assert(store.ready());
+}
+
+void start(HistoryStore& store) {
+  recoverOnly(store);
+  if (!store.canAppend()) {
+    // Tests which need a ticket explicitly create demand. Production does the
+    // same through PositionFlow::prepareForFixStorage(); canAcceptFix() stays a
+    // pure query and reboot recovery alone must remain read-only.
+    assert(!store.prepareAppend());
+    settle(store);
+  }
   assert(store.ready() && store.canAppend());
 }
 
@@ -92,7 +104,14 @@ HistoryStore::Record allocate(HistoryStore& store,
                               int32_t latitude = 410000000) {
   uint32_t sequence = 0;
   HistoryStore::Record record;
-  assert(store.nextSequence(sequence, record.identity));
+  if (!store.nextSequence(sequence, record.identity)) {
+    // Demand-driven reservation may make the ticket available only after the
+    // cooperative store step completes. Tests that explicitly exercise
+    // exhaustion call nextSequence() directly and are unaffected by this helper.
+    assert(store.busy());
+    settle(store);
+    assert(store.nextSequence(sequence, record.identity));
+  }
   const tlp::PositionPacket packet{kDevice, sequence, 0, latitude, -290000000,
                                    -10, 123, 8, 5};
   assert(tlp::serializePositionPacket(packet, record.packet,
@@ -181,14 +200,73 @@ void reservationPowerLossNeverReusesTickets() {
   for (int cut = 0; cut <= int(kSequenceSlotSize); ++cut) {
     FaultFlash flash = baseline;
     HistoryStore rebooting(flash);
-    assert(rebooting.begin(kDevice));
+    recoverOnly(rebooting);
+    uint32_t sequence = 0;
+    uint64_t identity = 0;
     flash.program_budget = cut;
+    // Recovery itself is read-only. The first real ticket demand starts the
+    // reservation whose body/commit boundary is being cut here.
+    assert(!rebooting.nextSequence(sequence, identity));
     settle(rebooting);
     flash.program_budget = -1;
     HistoryStore final_store(flash);
     start(final_store);
     assert(allocate(final_store).identity > used.identity);
   }
+}
+
+void rebootWithoutTicketDemandPreservesHistory() {
+  FaultFlash flash;
+  HistoryStore seeded(flash);
+  start(seeded);
+  for (unsigned index = 0; index < 600; ++index)
+    append(seeded, allocate(seeded, 410000000 + int32_t(index)));
+
+  assert(seeded.count() == 600);
+  HistoryStore::Record oldest_before;
+  HistoryStore::Record newest_before;
+  assert(seeded.oldest(oldest_before));
+  assert(seeded.newest(newest_before));
+
+  const auto bytes_before = flash.bytes;
+  const uint32_t programs_before = flash.program_operations;
+  const uint32_t erases_before = flash.erase_operations;
+
+  // A brown-out/watchdog loop that never reaches a new position must perform
+  // recovery reads only. Repeated idle poll() calls are also forbidden from
+  // turning the reboot into a metadata reservation.
+  for (unsigned boot = 0; boot < 64; ++boot) {
+    HistoryStore recovered(flash);
+    recoverOnly(recovered);
+    assert(!recovered.canAppend());
+    assert(recovered.count() == 600);
+    HistoryStore::Record oldest_after;
+    HistoryStore::Record newest_after;
+    assert(recovered.oldest(oldest_after));
+    assert(recovered.newest(newest_after));
+    assert(oldest_after.identity == oldest_before.identity);
+    assert(newest_after.identity == newest_before.identity);
+    recovered.poll();
+    recovered.poll();
+    assert(!recovered.busy());
+    assert(flash.bytes == bytes_before);
+    assert(flash.program_operations == programs_before);
+    assert(flash.erase_operations == erases_before);
+  }
+
+  // Once there is real work, demand-driven reservation resumes the unchanged
+  // no-sequence-reuse contract before a ticket can be issued.
+  HistoryStore demanded(flash);
+  recoverOnly(demanded);
+  assert(!demanded.canAppend());
+  assert(!demanded.prepareAppend());
+  assert(demanded.busy());
+  settle(demanded);
+  assert(demanded.canAppend());
+  const auto next = allocate(demanded);
+  assert(next.identity > newest_before.identity);
+  append(demanded, next);
+  assert(demanded.count() == 601);
 }
 
 void compactSemanticCorruptionAndIdentityBoundaries() {
@@ -314,6 +392,53 @@ bool RadioManager::sendPositionPacket(const uint8_t* bytes, const uint32_t*) {
   ++sends;
   return true;
 }
+
+void positionFlowWaitsForLazyReservationWithoutDroppingFix() {
+  FaultFlash flash;
+  HistoryStore seeded(flash);
+  start(seeded);
+  append(seeded, allocate(seeded));
+
+  HistoryStore rebooted(flash);
+  recoverOnly(rebooted);
+  assert(!rebooted.canAppend());
+
+  tx_flash = &flash;
+  sends = 0;
+  radio_available = false;
+  HistoryStore& store = rebooted;
+  RadioManager radio;
+  assert(radio.begin(store));
+  PositionFlow flow(store, radio);
+  const GnssFix fix{0, 410000123, 290000456, 10, 100, 8, 5};
+
+  // Merely polling admission must not create flash work. Only an application
+  // owner which already knows a real fix is pending may demand a reservation.
+  const auto programs_before = flash.program_operations;
+  const auto erases_before = flash.erase_operations;
+  assert(!flow.canAcceptFix());
+  assert(!store.busy());
+  assert(flash.program_operations == programs_before);
+  assert(flash.erase_operations == erases_before);
+  assert(flow.storageDrops() == 0);
+
+  // Once the real fix is known to be waiting, prepare storage without
+  // consuming the observation. The fix remains available while the
+  // reservation commits cooperatively.
+  assert(!flow.prepareForFixStorage());
+  assert(store.busy());
+  settle(store);
+  assert(flow.canAcceptFix());
+  assert(flow.prepareForFixStorage());
+  assert(flow.acceptFix(fix, 0));
+  settle(store);
+  assert(flow.update(1, false) == PositionFlow::Event::kStored);
+  assert(!flow.pending());
+  assert(flow.storageDrops() == 0);
+  assert(store.count() == 2);
+  radio_available = true;
+}
+
 
 void captureAgeSurvivesStorageAndRadioWait() {
   for (bool delayed_commit : {false, true}) {
@@ -602,10 +727,13 @@ void lastTicketPositionAndReservationCuts() {
     assert(recovered.lookup(256, last));
     assert(recovered.nextSequence(sequence, identity) && identity > 256);
   }
+  // Exhaustion creates demand immediately; on the synchronous NOR model one
+  // poll completes body + commit + verify for the new reservation. The ticket
+  // remains unavailable until that durable step has completed.
   assert(!store.nextSequence(sequence, identity));
-  store.poll(); // Begin next block, still not durable.
-  assert(!store.nextSequence(sequence, identity));
-  settle(store);
+  assert(store.busy());
+  store.poll();
+  assert(!store.busy());
   assert(flash.erase_operations == erases);
   assert(store.nextSequence(sequence, identity) && identity == 257);
   radio_available = true;
@@ -711,6 +839,8 @@ int main() {
   firstInitializationPowerLoss();
   recordPowerLossPreservesCommittedDataAndSequence();
   reservationPowerLossNeverReusesTickets();
+  rebootWithoutTicketDemandPreservesHistory();
+  positionFlowWaitsForLazyReservationWithoutDroppingFix();
   compactSemanticCorruptionAndIdentityBoundaries();
   reservationExhaustionRenewsAutomatically();
   circularWrapAndPageTransitionCuts();

@@ -68,6 +68,11 @@ class GnssManager {
   }
 
   bool takeFreshFixForTransmission(GnssFix* fix);
+  // Read-only application admission hint. poll() normally expires stale
+  // observations before the composition root uses this. If loop-owned I2C is
+  // temporarily quiesced during a History page erase, consumption still
+  // re-checks freshness in takeFreshFixForTransmission().
+  bool hasFreshFixForTransmission() const { return fresh_fix_ready_; }
   bool detected() const;
   bool detectionComplete() const {
     return state_ != State::kDetectionBackoff && state_ != State::kPowerOff &&

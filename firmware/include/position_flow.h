@@ -14,7 +14,21 @@ class PositionFlow {
         radio_(radio),
         device_identity_(radio.deviceIdentity()) {}
   void setDeviceIdentity(DeviceIdentity identity) { device_identity_ = identity; }
-  bool canAcceptFix() const { return !appending_ && (!store_.ready() || store_.canAppend()); }
+  // Pure admission query: callers may poll this freely without causing flash
+  // mutation. A reboot with no actual position work must therefore remain
+  // read-only.
+  bool canAcceptFix() const {
+    return !appending_ && (!store_.ready() || store_.canAppend());
+  }
+  // Called only after the application knows that a real fix is waiting to be
+  // consumed. Starts the demand-driven sequence reservation when necessary.
+  // Unready storage returns true so acceptFix() preserves the existing
+  // fail-stop/drop reporting behavior instead of holding a GNSS fix forever.
+  bool prepareForFixStorage() {
+    if (appending_) return false;
+    if (!store_.ready()) return true;
+    return store_.prepareAppend();
+  }
   bool acceptFix(const GnssFix& fix, uint32_t now);
   // M6D2: the geofence coordinator may choose a fix which was already accepted
   // as fresh Location evidence, then wait behind an existing History append.

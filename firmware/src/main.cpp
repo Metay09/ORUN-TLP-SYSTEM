@@ -1856,9 +1856,17 @@ void loop() {
   // GNSS detection/power remains owned by GnssManager. Service resolution must
   // not silently turn role, location source, GNSS power or accelerometer
   // presence into one knob.
-  gnss_manager.poll();
-  handleAccelerometerEvent(
-      accelerometer_manager.poll(orun_tlp::monotonic::nowMs()));
+  // Physical RAK4631 qualification showed that a HistoryStore page erase
+  // accepted by SoftDevice can remain active across loop passes and overlap a
+  // Wire transaction, tripping the bounded 25 ms TWIM timeout and forcing an
+  // otherwise-unnecessary GNSS session resync. Quiesce the two loop-owned I2C
+  // clients from the moment HistoryStore enters its erase phase until that
+  // erase completes. Normal record programs are intentionally unaffected.
+  if (!history.erasePending()) {
+    gnss_manager.poll();
+    handleAccelerometerEvent(
+        accelerometer_manager.poll(orun_tlp::monotonic::nowMs()));
+  }
   activity_capture.poll();
   pollRoleCommands();
   // M7P7D: transport input and application result consumption are separate
@@ -2005,7 +2013,7 @@ void loop() {
   // its immediate logical POSITION. Queue exactly one representative until the
   // existing store-before-send owner can accept it; do not bypass HistoryStore.
   if (tracking_enabled && geofence_representative_pending &&
-      positions.canAcceptFix()) {
+      positions.prepareForFixStorage()) {
     if (positions.acceptPreviouslyAcceptedFix(
             geofence_representative_fix, orun_tlp::monotonic::nowMs())) {
       geofence_representative_pending = false;
@@ -2026,8 +2034,12 @@ void loop() {
   // normal fixes are consumed only when PositionFlow can accept them. During a
   // bounded confirmation episode, the two extra accepted fixes are local
   // evidence and must not be blocked by an unrelated in-flight History append.
-  if (tracking_enabled &&
-      (confirmation_fix_expected || positions.canAcceptFix()) &&
+  const bool normal_fix_storage_ready =
+      tracking_enabled &&
+      (confirmation_fix_expected ||
+       (gnss_manager.hasFreshFixForTransmission() &&
+        positions.prepareForFixStorage()));
+  if (normal_fix_storage_ready &&
       gnss_manager.takeFreshFixForTransmission(&fix)) {
     processGeofenceAcceptedFix(fix, !confirmation_fix_expected);
 

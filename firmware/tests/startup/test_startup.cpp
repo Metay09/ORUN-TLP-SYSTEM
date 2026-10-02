@@ -26,7 +26,12 @@ TestUicr uicr{{0xF4000}};
 TestFicr* NRF_FICR = &ficr;
 TestUicr* NRF_UICR = &uicr;
 
-uint32_t sd_softdevice_is_enabled(uint8_t* enabled) { *enabled = 0; return NRF_SUCCESS; }
+bool fake_softdevice_enabled = false;
+uint32_t fake_soc_event = 0;
+uint32_t sd_softdevice_is_enabled(uint8_t* enabled) {
+  *enabled = fake_softdevice_enabled ? 1 : 0;
+  return NRF_SUCCESS;
+}
 uint32_t sd_flash_write(uint32_t* dst, const uint32_t* src, uint32_t count) {
   ++programs;
   const auto address = reinterpret_cast<uintptr_t>(dst);
@@ -61,10 +66,16 @@ uint32_t sd_flash_page_erase(uint32_t page) {
   memset(reinterpret_cast<void*>(uintptr_t(page) * kPageSize), 0xFF, kPageSize);
   return NRF_SUCCESS;
 }
-// SoftDevice is always reported disabled above, so FlashMutationGate's
-// pumpEvents()/pollPending() never reach sd_evt_get() here; this satisfies
-// the link only. A dedicated M7P3 test exercises real event draining.
-uint32_t sd_evt_get(uint32_t*) { return NRF_ERROR_NOT_FOUND; }
+// Most startup scenarios keep SoftDevice disabled, matching the original
+// synchronous harness. The history_erase_i2c scenario enables it only after
+// setup and explicitly controls completion delivery so a real production loop
+// sees a multi-pass asynchronous erase.
+uint32_t sd_evt_get(uint32_t* event) {
+  if (fake_soc_event == 0) return NRF_ERROR_NOT_FOUND;
+  *event = fake_soc_event;
+  fake_soc_event = 0;
+  return NRF_SUCCESS;
+}
 
 bool orun_tlp::NrfConfigIncarnationSource::generate(uint64_t& incarnation) {
   // Host startup composition stub: production implementation is target-only
@@ -130,9 +141,11 @@ int main(int argc, char** argv) {
   const bool geofence_scenario = mode == "geofence";
   const bool persisted_geofence_scenario = mode == "geofence_persisted";
   const bool uncertain_geofence_scenario = mode == "geofence_uncertain";
+  const bool history_erase_i2c_scenario = mode == "history_erase_i2c";
   const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails ||
                        no_event_control || geofence_scenario ||
-                       persisted_geofence_scenario || uncertain_geofence_scenario;
+                       persisted_geofence_scenario || uncertain_geofence_scenario ||
+                       history_erase_i2c_scenario;
   // Each scenario runs in a new process, like a cold boot (static driver gate).
   assert(success || mode == "mutex" || mode == "gate" || mode == "queue" ||
          mode == "lora");
@@ -319,6 +332,146 @@ int main(int argc, char** argv) {
   assert(radio_manager.canSend() == success);
   assert((rx_calls != 0) == success && send_calls == 0);
 
+  if (history_erase_i2c_scenario) {
+    // M2 audit regression: exercise the actual production loop, not only
+    // HistoryStore::erasePending() in isolation. First drive the real GNSS
+    // state machine into kAcquiring so checkUblox() is an observable loop-owned
+    // client during the erase window. Then arrange one almost-full active page
+    // synchronously and enable the SoftDevice path so an accepted erase remains
+    // pending across multiple loop passes.
+    for (unsigned i = 0; i < 16; ++i) {
+      test_now += i < 2 ? gnss_config::kPowerSettleMs : 10;
+      loop();
+    }
+    assert(gnss_manager.state() == GnssManager::State::kAcquiring);
+    const unsigned active_gnss_reads = SFE_UBLOX_GNSS::reads;
+    loop();
+    assert(SFE_UBLOX_GNSS::reads > active_gnss_reads);
+
+    auto allocateFixturePacket = [&](int32_t latitude_e7, uint8_t* bytes,
+                                     uint64_t& identity) {
+      if (!history.canAppend()) {
+        assert(!history.prepareAppend());
+        settle(history);
+      }
+      uint32_t fixture_sequence = 0;
+      assert(history.nextSequence(fixture_sequence, identity));
+      const tlp::PositionPacket fixture{
+          kHardwareId, fixture_sequence, 0, latitude_e7, 290000000,
+          10, 100, 8, tlp::kPositionFlagValidFix};
+      assert(tlp::serializePositionPacket(
+          fixture, bytes, tlp::kPositionPacketSize));
+    };
+
+    auto appendFixtureSync = [&](int32_t latitude_e7) {
+      uint8_t bytes[tlp::kPositionPacketSize]{};
+      uint64_t identity = 0;
+      allocateFixturePacket(latitude_e7, bytes, identity);
+      assert(history.append(bytes, identity));
+      settle(history);
+      bool stored = false;
+      assert(history.takeAppendResult(stored) && stored);
+    };
+
+    while (history.count() < 102U)
+      appendFixtureSync(410000100 + static_cast<int32_t>(history.count()));
+    assert(history.count() == 102U);
+
+    // A normal record program may be asynchronously pending, but it must NOT
+    // quiesce the loop-owned Wire clients. Reset the accelerometer probe before
+    // each pass so a missing main-loop poll is observable as zero transactions.
+    fake_softdevice_enabled = true;
+    uint8_t normal_packet[tlp::kPositionPacketSize]{};
+    uint64_t normal_identity = 0;
+    allocateFixturePacket(410000300, normal_packet, normal_identity);
+    assert(history.append(normal_packet, normal_identity));
+    assert(history.busy() && !history.erasePending());
+
+    accelerometer_manager.begin(test_now);
+    unsigned wire_before = Wire.transaction_calls;
+    unsigned gnss_reads_before = SFE_UBLOX_GNSS::reads;
+    loop();  // submits record body -> async pending
+    assert(Wire.transaction_calls > wire_before);
+    assert(SFE_UBLOX_GNSS::reads > gnss_reads_before);
+    assert(history.busy() && !history.erasePending());
+
+    accelerometer_manager.begin(test_now);
+    wire_before = Wire.transaction_calls;
+    gnss_reads_before = SFE_UBLOX_GNSS::reads;
+    loop();  // body is still pending: both loop-owned I2C clients must run
+    assert(Wire.transaction_calls > wire_before);
+    assert(SFE_UBLOX_GNSS::reads > gnss_reads_before);
+    assert(history.busy() && !history.erasePending());
+
+    fake_soc_event = NRF_EVT_FLASH_OPERATION_SUCCESS;
+    accelerometer_manager.begin(test_now);
+    loop();  // body completes; commit is submitted
+    assert(history.busy() && !history.erasePending());
+    fake_soc_event = NRF_EVT_FLASH_OPERATION_SUCCESS;
+    accelerometer_manager.begin(test_now);
+    loop();  // commit completes
+    bool normal_stored = false;
+    assert(history.takeAppendResult(normal_stored) && normal_stored);
+    assert(history.count() == 103U);
+
+    // Fill the final slot synchronously so the next append enters kNewPage /
+    // kErase before the production loop executes.
+    fake_softdevice_enabled = false;
+    appendFixtureSync(410000301);
+    assert(history.count() == 104U);
+
+    fake_softdevice_enabled = true;
+    uint8_t rotating_packet[tlp::kPositionPacketSize]{};
+    uint64_t rotating_identity = 0;
+    allocateFixturePacket(410000302, rotating_packet, rotating_identity);
+    assert(history.append(rotating_packet, rotating_identity));
+    assert(history.erasePending());
+
+    accelerometer_manager.begin(test_now);
+    wire_before = Wire.transaction_calls;
+    gnss_reads_before = SFE_UBLOX_GNSS::reads;
+    loop();  // submits erase -> kPending; both loop-owned I2C clients skipped
+    assert(Wire.transaction_calls == wire_before);
+    assert(SFE_UBLOX_GNSS::reads == gnss_reads_before);
+    assert(history.erasePending());
+
+    accelerometer_manager.begin(test_now);
+    wire_before = Wire.transaction_calls;
+    gnss_reads_before = SFE_UBLOX_GNSS::reads;
+    loop();  // erase still pending without completion
+    assert(Wire.transaction_calls == wire_before);
+    assert(SFE_UBLOX_GNSS::reads == gnss_reads_before);
+    assert(history.erasePending());
+
+    fake_soc_event = NRF_EVT_FLASH_OPERATION_SUCCESS;
+    accelerometer_manager.begin(test_now);
+    wire_before = Wire.transaction_calls;
+    gnss_reads_before = SFE_UBLOX_GNSS::reads;
+    loop();  // completion is consumed, but this pass began inside erase window
+    assert(Wire.transaction_calls == wire_before);
+    assert(SFE_UBLOX_GNSS::reads == gnss_reads_before);
+    assert(!history.erasePending());
+
+    // The next pass must immediately resume both loop-owned I2C clients even
+    // though History is still busy with the new-page header program. This
+    // distinguishes erase-only quiescence from an accidental "all flash
+    // mutation" gate.
+    accelerometer_manager.begin(test_now);
+    wire_before = Wire.transaction_calls;
+    gnss_reads_before = SFE_UBLOX_GNSS::reads;
+    loop();
+    assert(Wire.transaction_calls > wire_before);
+    assert(SFE_UBLOX_GNSS::reads > gnss_reads_before);
+    assert(history.busy() && !history.erasePending());
+
+    assert(munmap(region, kRegionSize) == 0);
+    assert(munmap(config_region, kConfigRegionSize) == 0);
+    assert(munmap(security_region, kSecurityRegionSize) == 0);
+    assert(munmap(geofence_region, kGeofenceRegionSize) == 0);
+    printf("Production startup identity/history/loop (history_erase_i2c): PASS\n");
+    return 0;
+  }
+
   // Complete recovery and GNSS detection/configuration through the actual loop.
   for (unsigned i = 0; i < 16; ++i) {
     // Wait for both rail transitions, then service the loop at normal cadence.
@@ -328,11 +481,10 @@ int main(int argc, char** argv) {
   assert(watchdog_feeds == 16 && fake_idle_calls == 16);
   assert(gnss_manager.state() == GnssManager::State::kAcquiring);
   assert(role_controller.role() == NodeRole::kTracker);
-  assert(erases == 0 && programs == expected_boot_programs + 2U);
-  // +2 HistoryStore reservation after the boot baselines/recovery.
-  assert(memcmp(region, before.data(), journal_format::kStaticHeaderSize) == 0);
-  assert(memcmp(static_cast<uint8_t*>(region) + kPageHeaderSize,
-                before.data() + kPageHeaderSize, kRegionSize - kPageHeaderSize) == 0);
+  // Recovery plus ordinary runtime polling must remain read-only for History.
+  // No sequence reservation is allowed until a real fresh fix is pending.
+  assert(erases == 0 && programs == expected_boot_programs);
+  assert(memcmp(region, before.data(), before.size()) == 0);
   HistoryStore::Record recovered{};
   assert(history.lookup(original.identity, recovered));
   assert(memcmp(recovered.packet, original.packet, sizeof(original.packet)) == 0);
@@ -351,6 +503,13 @@ int main(int argc, char** argv) {
     });
     loop(); // First epoch establishes the R3 boundary; second is fresh.
   }
+  // The fresh fix first creates real demand for a sequence reservation. The
+  // next loop durably completes that reservation and queues the store-first
+  // append; the record itself is not committed until the following loop.
+  loop();
+  assert(history.count() == 1 && erases == 0 &&
+         programs == expected_boot_programs + 2U);
+  assert(history.busy());
   loop();
   assert(history.count() == 2 && erases == 0 &&
          programs == expected_boot_programs + 4U);
@@ -514,7 +673,10 @@ int main(int argc, char** argv) {
     assert(!radio_manager.sendPositionPacket(recovered.packet));
     assert(send_calls == 0);
   }
-  assert(watchdog_feeds == 19 && fake_idle_calls == 19);
+  // 16 startup service loops + 2 GNSS epochs + 2 lazy History steps
+  // (reservation commit, then record commit). Every production loop must still
+  // feed the watchdog and enter the idle hook exactly once.
+  assert(watchdog_feeds == 20 && fake_idle_calls == 20);
 
   // The USB diagnostic must be queryable after the early boot window is gone.
   // While the bounded probe is incomplete it reports PENDING, not ABSENT.

@@ -165,6 +165,18 @@ GNSS/TX current dips the rail, resets). Each ~8 boots destroys ~104 records;
 Watchdog loops have the same effect. Sequence non-reuse is preserved; data is
 not.
 
+> **2026-10-02 disposition (PR #58): PARTIALLY CLOSED.** The measured no-work
+> reboot mechanism above is fixed by demand-driven reservation: recovery and
+> idle polling no longer write a sequence reservation. Host regression coverage
+> verifies repeated reboot-without-ticket-demand leaves history bytes and flash
+> program/erase counts unchanged. The remaining risk is narrower: a reboot loop
+> that reaches a real fresh fix on every boot legitimately demands a new
+> reservation; after the eight sequence slots on an active page are consumed,
+> metadata pressure can still rotate a ring page and reclaim up to 104 older
+> records. That residual requires a separate persistence-format/policy change.
+> The no-work/read-only behavior has not been physically qualified by counting
+> flash mutations across a dedicated reboot test.
+
 **F-H2 — Role inferred from GNSS presence, override volatile.**
 `RoleController::updateAutomatic()` maps "GNSS not detected" to BASE
 (`firmware/src/node_role.cpp:45`); GNSS detection has 3 boot attempts and then

@@ -112,15 +112,19 @@ unrelated corruption is outside the power-loss guarantee and can reset identity.
 ## Sequence and flow
 
 TEST and POSITION share `SequenceSource`. Reservations contain 256 tickets.
-Boot starts after the largest committed reservation and commits another block
-before exposing a ticket, intentionally skipping unused tickets after reset.
-When a running block is exhausted, `HistoryStore::poll()` commits the next
-reservation automatically. Allocation requires an available reserved ticket;
-append eligibility instead accepts an already allocated identity even when the
-block has just been exhausted. Thus the final ticket can be committed as a
-POSITION, and the next block's first ticket is unavailable until reservation
-commit. A torn reservation therefore
-cannot cause a previously exposed wire sequence to be reused.
+Recovery scans the largest committed reservation, sets the in-RAM next ticket
+to that reservation end and performs no reservation write merely because the
+MCU rebooted. This still intentionally skips every reserved-but-unused identity
+from the prior boot, so an exposed wire sequence can never be reused.
+
+A new block is started only when real application work demands a ticket through
+`prepareAppend()` / `nextSequence()`. Until that reservation commits, no new
+ticket is exposed. Exhausting a running block follows the same demand-driven
+path; idle `HistoryStore::poll()` is read-only and only advances a mutation
+that an owner already started. Append eligibility still accepts an already
+allocated final identity even when its block has just been exhausted. A torn
+reservation therefore cannot cause a previously exposed wire sequence to be
+reused.
 
 `PositionFlow` remains store-first. A fresh fix is encoded, committed and read
 back before one live TX attempt. Failure of page erase, page header,
@@ -138,6 +142,17 @@ and zero page erases. Header, sequence reservation and replay-state updates use
 the same two append-only program operations. A record-driven rotation performs
 one page erase and six program operations: header pair, reservation pair and
 record pair.
+
+On the RAK4630/RAK4631 production composition, `HistoryStore::erasePending()`
+is true from the page-rotation decision until the physical asynchronous erase
+completion is observed. While it is true, `loop()` does not poll the two
+loop-owned Wire clients (GNSS and accelerometer); `ActivityCapture::poll()`
+only consumes already-buffered RAM state and starts no I2C transaction. I2C
+polling resumes after erase completion. Header, reservation and ordinary record
+program phases do not assert this gate, so normal flash programs do not
+unnecessarily suppress sensor polling. This is a narrow coexistence rule for
+the physically qualified History page-erase path, not a generic promise about
+future flash writers.
 
 A physical page is reclaimed once per 7 × 104 = 728 normal records. At a
 15-minute interval this is once per 7.583 days per physical page. Applying the

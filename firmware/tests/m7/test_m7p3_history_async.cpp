@@ -115,7 +115,14 @@ void settle(HistoryStore& store, unsigned max_passes = 200) {
 HistoryStore::Record allocate(HistoryStore& store) {
   uint32_t sequence = 0;
   HistoryStore::Record record;
-  assert(store.nextSequence(sequence, record.identity));
+  if (!store.nextSequence(sequence, record.identity)) {
+    // After recovery, ticket reservation is demand-driven. With an async
+    // backend the reservation may span several pollPending() ticks before a
+    // ticket is safe to issue; do not weaken that invariant for the test.
+    assert(store.busy());
+    settle(store);
+    assert(store.nextSequence(sequence, record.identity));
+  }
   const tlp::PositionPacket packet{kDevice, sequence, 0, 410000000, -290000000,
                                    -10, 123, 8, 5};
   assert(tlp::serializePositionPacket(packet, record.packet, sizeof(record.packet)));
@@ -187,7 +194,46 @@ int main() {
     assert(recovered.lookup(next.identity, missing));
   }
 
-  // H: store-before-send -- PositionFlow must not allow TX while storage is
+  // H: page-erase exposure spans the whole async erase window. Production
+  // uses this signal to quiesce loop-owned I2C clients until SoftDevice reports
+  // erase completion; it must not remain asserted for header/reservation writes.
+  {
+    PendingFlash flash;
+    flash.pending_steps = 3;
+    HistoryStore store(flash);
+    assert(store.begin(kDevice));
+    settle(store);
+
+    for (unsigned index = 0; index < kRecordsPerPage; ++index) {
+      const auto record = allocate(store);
+      assert(store.append(record.packet, record.identity));
+      settle(store);
+      bool success = false;
+      assert(store.takeAppendResult(success) && success);
+    }
+    assert(!store.erasePending());
+
+    const auto rotating = allocate(store);
+    assert(store.append(rotating.packet, rotating.identity));
+    assert(store.erasePending());
+
+    store.poll();  // submit erase -> kPending
+    assert(store.erasePending());
+    store.poll();  // still pending
+    assert(store.erasePending());
+    store.poll();  // still pending
+    assert(store.erasePending());
+    store.poll();  // still pending (remaining reaches zero after this call)
+    assert(store.erasePending());
+    store.poll();  // erase resolves; phase advances to header
+    assert(!store.erasePending());
+
+    settle(store);
+    bool success = false;
+    assert(store.takeAppendResult(success) && success);
+  }
+
+  // I: store-before-send -- PositionFlow must not allow TX while storage is
   // pending (including across several async poll ticks), only after a
   // durably-completed append, and never after a storage failure.
   {
