@@ -1,6 +1,9 @@
 #include "application_status_runtime.h"
 
 #include "watchdog_manager.h"
+#include "firmware_version.h"
+
+#include <string.h>
 
 namespace orun_tlp {
 namespace {
@@ -154,6 +157,10 @@ void buildApplicationStatusSnapshot(
   ApplicationDeviceSnapshot& device = out.device;
   device.uptime_ms = now_ms;
   device.reset_reason = reset.reset_reason;
+  static_assert(sizeof(kFirmwareVersion) <= kApplicationFirmwareVersionSize,
+                "firmware version exceeds DEVICE status field");
+  memset(device.firmware_version, 0, sizeof(device.firmware_version));
+  memcpy(device.firmware_version, kFirmwareVersion, sizeof(kFirmwareVersion));
   device.surface_revision = kApplicationSurfaceRevision;
   device.role = mapRole(role);
   device.role_automatic = role_automatic ? 1U : 0U;
