@@ -464,69 +464,6 @@ int main(int argc, char** argv) {
     assert(SFE_UBLOX_GNSS::reads > gnss_reads_before);
     assert(history.busy() && !history.erasePending());
 
-    // M7P7H value-level production composition guard. Exercise the real
-  // owner->snapshot mapper used by USB/BLE rather than only synthetic PODs.
-  refreshApplicationStatusSnapshot(test_now);
-  assert(application_status_snapshot.populated == 1);
-  assert(application_status_snapshot.device.uptime_ms_mod32 == test_now);
-  assert(strcmp(application_status_snapshot.device.firmware_version,
-                kFirmwareVersion) == 0);
-  assert(application_status_snapshot.tracking.requested_interval_seconds ==
-         config_store.config().tracking_interval_seconds);
-  assert(application_status_snapshot.tracking.applied_base_interval_seconds ==
-         active_tracking_base_interval_seconds);
-  assert(application_status_snapshot.tracking.effective_interval_seconds ==
-         gnss_manager.trackingIntervalMs() / 1000UL);
-  assert(application_status_snapshot.geofence.area_count ==
-         geofence_store.areaCount());
-  assert(application_status_snapshot.geofence.total_vertex_count ==
-         geofence_store.totalVertexCount());
-  assert(application_status_snapshot.storage.history_count == history.count());
-  assert(application_status_snapshot.storage.history_capacity ==
-         history.capacity());
-  assert(application_status_snapshot.storage.config_ready ==
-         (config_store.ready() ? 1U : 0U));
-  assert(application_status_snapshot.storage.geofence_ready ==
-         (geofence_store.ready() ? 1U : 0U));
-  assert(application_status_snapshot.storage.security_ready ==
-         (security_store.ready() ? 1U : 0U));
-  {
-    GeofenceOperationalState owner_state{};
-    const bool owner_has_state =
-        geofence_confirmation.getConfirmedState(&owner_state);
-    assert(application_status_snapshot.geofence.has_confirmed_state ==
-           (owner_has_state ? 1U : 0U));
-    if (owner_has_state) {
-      const ApplicationGeofenceOperationalState expected =
-          owner_state == GeofenceOperationalState::kOutside
-              ? ApplicationGeofenceOperationalState::kOutside
-              : ApplicationGeofenceOperationalState::kInside;
-      assert(application_status_snapshot.geofence.confirmed_state == expected);
-    } else {
-      assert(application_status_snapshot.geofence.confirmed_state ==
-             ApplicationGeofenceOperationalState::kUnknown);
-    }
-  }
-
-  // M1 regression: resolved relay intent and actual radio application are
-  // distinct. Do not run loop() between override and snapshot; the effective
-  // config is RELAY while RadioManager still truthfully reports not applied.
-  if (mode == "success") {
-    assert(!radio_manager.relayForwardingEnabled());
-    assert(role_controller.applyOverride(NodeRole::kRelay));
-    refreshApplicationStatusSnapshot(test_now);
-    assert(application_status_snapshot.device.relay_state ==
-           ApplicationServiceState::kEnabled);
-    assert(application_status_snapshot.device.relay_reason ==
-           ApplicationServiceReason::kNone);
-    assert(application_status_snapshot.device.relay_forwarding_applied == 0);
-
-    Serial.output.clear();
-    startUsbApplicationQuery(ApplicationRequestKind::kGetDeviceStatus);
-    drainApplicationResponse();
-    assert(has(Serial.output, "relay_applied=no"));
-  }
-
   assert(munmap(region, kRegionSize) == 0);
     assert(munmap(config_region, kConfigRegionSize) == 0);
     assert(munmap(security_region, kSecurityRegionSize) == 0);
@@ -1284,6 +1221,69 @@ int main(int argc, char** argv) {
     // The Periph/ada_callback path was never used by production.
     assert(Bluefruit.Periph.disconnect_cb == nullptr &&
            Bluefruit.Periph.pending_disconnect_cbs == 0);
+  }
+
+  // M7P7H value-level production composition guard. Exercise the real
+  // owner->snapshot mapper used by USB/BLE rather than only synthetic PODs.
+  refreshApplicationStatusSnapshot(test_now);
+  assert(application_status_snapshot.populated == 1);
+  assert(application_status_snapshot.device.uptime_ms_mod32 == test_now);
+  assert(strcmp(application_status_snapshot.device.firmware_version,
+                kFirmwareVersion) == 0);
+  assert(application_status_snapshot.tracking.requested_interval_seconds ==
+         config_store.config().tracking_interval_seconds);
+  assert(application_status_snapshot.tracking.applied_base_interval_seconds ==
+         active_tracking_base_interval_seconds);
+  assert(application_status_snapshot.tracking.effective_interval_seconds ==
+         gnss_manager.trackingIntervalMs() / 1000UL);
+  assert(application_status_snapshot.geofence.area_count ==
+         geofence_store.areaCount());
+  assert(application_status_snapshot.geofence.total_vertex_count ==
+         geofence_store.totalVertexCount());
+  assert(application_status_snapshot.storage.history_count == history.count());
+  assert(application_status_snapshot.storage.history_capacity ==
+         history.capacity());
+  assert(application_status_snapshot.storage.config_ready ==
+         (config_store.ready() ? 1U : 0U));
+  assert(application_status_snapshot.storage.geofence_ready ==
+         (geofence_store.ready() ? 1U : 0U));
+  assert(application_status_snapshot.storage.security_ready ==
+         (security_store.ready() ? 1U : 0U));
+  {
+    GeofenceOperationalState owner_state{};
+    const bool owner_has_state =
+        geofence_confirmation.getConfirmedState(&owner_state);
+    assert(application_status_snapshot.geofence.has_confirmed_state ==
+           (owner_has_state ? 1U : 0U));
+    if (owner_has_state) {
+      const ApplicationGeofenceOperationalState expected =
+          owner_state == GeofenceOperationalState::kOutside
+              ? ApplicationGeofenceOperationalState::kOutside
+              : ApplicationGeofenceOperationalState::kInside;
+      assert(application_status_snapshot.geofence.confirmed_state == expected);
+    } else {
+      assert(application_status_snapshot.geofence.confirmed_state ==
+             ApplicationGeofenceOperationalState::kUnknown);
+    }
+  }
+
+  // M1 regression: resolved relay intent and actual radio application are
+  // distinct. Do not run loop() between override and snapshot; the effective
+  // config is RELAY while RadioManager still truthfully reports not applied.
+  if (mode == "success") {
+    assert(!radio_manager.relayForwardingEnabled());
+    assert(role_controller.applyOverride(NodeRole::kRelay));
+    refreshApplicationStatusSnapshot(test_now);
+    assert(application_status_snapshot.device.relay_state ==
+           ApplicationServiceState::kEnabled);
+    assert(application_status_snapshot.device.relay_reason ==
+           ApplicationServiceReason::kNone);
+    assert(application_status_snapshot.device.relay_forwarding_applied == 0);
+
+    Serial.output.clear();
+    startUsbApplicationQuery(ApplicationRequestKind::kGetDeviceStatus);
+    drainApplicationResponse();
+    assert(has(Serial.output, "relay_applied=no"));
   }
 
   assert(munmap(region, kRegionSize) == 0);
