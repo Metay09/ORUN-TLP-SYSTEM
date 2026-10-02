@@ -79,6 +79,9 @@ orun_tlp::BleApplicationTransport ble_application_transport(application_requests
 // remains loop-owned and is never invoked by a BLE callback.
 orun_tlp::BleApplicationHandoff ble_application_handoff;
 uint32_t next_usb_application_request_id = 1;
+// M7P7H loop-owned snapshot assembly; declared here so the BLE runtime can
+// refresh immediately after atomically taking an ingress frame.
+void refreshApplicationStatusSnapshot(uint32_t now_ms);
 // M7P6B: recovery-only composition. SecurityStore never auto-provisions a
 // credential in production firmware -- begin() only recovers whatever
 // already exists (or reports kUnprovisioned on blank flash). A recovered
@@ -530,6 +533,10 @@ void pollBleApplicationRuntime(bool connected, uint16_t connection_handle,
   have_ingress = ble_application_handoff.takeIngress(ingress);
   taskEXIT_CRITICAL();
   if (have_ingress) {
+    // Snapshot only on actual application ingress, after atomically taking the
+    // callback-produced frame. This avoids idle-loop work and closes the race
+    // where a frame could arrive after a pre-poll "pending" sample.
+    refreshApplicationStatusSnapshot(now);
     ble_application_transport.onFrameReceived(
         ingress.session_generation, ingress.frame, ingress.frame_len, now);
     setBleApplicationIngressAllowed(
@@ -645,8 +652,6 @@ bool isActivityCommand(const char* text, uint8_t length) {
     if (role_command[i] != text[i]) return false;
   return true;
 }
-
-void refreshApplicationStatusSnapshot(uint32_t now_ms);
 
 void startUsbApplicationQuery(orun_tlp::ApplicationRequestKind kind) {
   refreshApplicationStatusSnapshot(orun_tlp::monotonic::nowMs());
@@ -1933,17 +1938,6 @@ void loop() {
     const uint16_t connection_handle =
         input.connected ? Bluefruit.connHandle() : BLE_CONN_HANDLE_INVALID;
     const uint32_t ble_now = orun_tlp::monotonic::nowMs();
-    // Do not rebuild diagnostics on every idle BLE loop tick. Callback input
-    // is already bounded in BleApplicationHandoff; sample only the pending
-    // fact under the same critical section, then compose one status snapshot
-    // before loop-owned request dispatch. This keeps disconnected/idle tracker
-    // power behavior unchanged apart from the tiny mailbox check.
-    taskENTER_CRITICAL();
-    const bool ble_application_ingress_pending =
-        ble_application_handoff.ingressPending();
-    taskEXIT_CRITICAL();
-    if (ble_application_ingress_pending)
-      refreshApplicationStatusSnapshot(ble_now);
 
     // M7P7G cleanup/transport work must happen before admission can restart
     // advertising after a disconnect.
