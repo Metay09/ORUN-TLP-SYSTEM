@@ -338,6 +338,7 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7h_ble_status_transport.cpp
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m7p7h_ble_status_transport"
 "$test_dir/m7p7h_ble_status_transport"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p7h_source_contract.py
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7g_ble_application_handoff.cpp \
   firmware/src/ble_application_handoff.cpp -o "$test_dir/m7p7g_ble_application_handoff"
 "$test_dir/m7p7g_ble_application_handoff"
