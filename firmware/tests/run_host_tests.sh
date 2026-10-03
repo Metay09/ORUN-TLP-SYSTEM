@@ -1,6 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+
+# Remove the per-run build directory on any exit (pass, failure, INT/TERM/HUP).
+# Set ORUN_KEEP_TEST_DIR=1 to keep it for debugging.
+test_dir=""
+cleanup_test_dir() {
+  local status=$?
+  local LC_ALL=C
+  if [[ -n "$test_dir" && "$test_dir" =~ ^/tmp/orun-host-tests\.[A-Za-z0-9]{6}$ &&
+        -d "$test_dir" && ! -L "$test_dir" && -O "$test_dir" ]]; then
+    if [[ "${ORUN_KEEP_TEST_DIR:-0}" == 1 ]]; then
+      echo "run_host_tests: keeping $test_dir (ORUN_KEEP_TEST_DIR=1)" >&2
+    else
+      rm -rf -- "$test_dir"
+    fi
+  fi
+  return "$status"
+}
+trap cleanup_test_dir EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 test_dir=$(mktemp -d /tmp/orun-host-tests.XXXXXX)
 flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined
        -Ifirmware/tests/m3/stubs -Ifirmware/include)
