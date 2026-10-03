@@ -291,10 +291,20 @@ production logic is now included. The resulting percentages replace the old
 src-only numbers for final DEVQ1 evidence. They remain diagnostic only; no
 coverage threshold is a merge gate.
 
+Post-audit verified CodeQL setup is **PASS**:
+
+- official CodeQL 2.27.1 bundle downloaded again because the hardened install
+  policy requires a verification marker created by the new setup script;
+- pinned SHA-256 verification passed;
+- exact CLI version 2.27.1 verified;
+- language/query-pack checks passed;
+- verified install marker created successfully;
+- final setup result: `ORUN local CodeQL setup: PASS`.
+
 Before merge, remaining post-fix gates are:
 
 ```text
-local CodeQL setup/analysis + corrected severity summary
+local CodeQL analysis + corrected severity summary
 RAK4630 production build
 focused independent re-review of fixes
 ```
