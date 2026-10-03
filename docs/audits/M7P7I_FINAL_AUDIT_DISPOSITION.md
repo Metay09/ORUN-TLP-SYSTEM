@@ -87,7 +87,8 @@ behavior, but host/build evidence must not be relabeled as physical evidence.
 
 After the accepted audit fixes:
 
-1. rerun the complete host suite;
+1. complete host suite: **PASS** on
+   `7d203a3f65e49e013b6bd0e06b6147db88bd2073`;
 2. rerun the production RAK4630 build and record RAM/Flash;
 3. verify no new audit finding was introduced;
 4. mark PR #63 merge-ready and merge.
