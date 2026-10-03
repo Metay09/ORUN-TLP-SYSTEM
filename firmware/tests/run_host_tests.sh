@@ -1,13 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-test_dir=$(mktemp -d /tmp/orun-host-tests.XXXXXX)
+if [[ -n "${ORUN_HOST_TEST_DIR:-}" ]]; then
+  test_dir="$ORUN_HOST_TEST_DIR"
+  rm -rf "$test_dir"
+  mkdir -p "$test_dir"
+else
+  test_dir=$(mktemp -d /tmp/orun-host-tests.XXXXXX)
+fi
+
+coverage_flags=()
+if [[ "${ORUN_HOST_COVERAGE:-0}" == "1" ]]; then
+  coverage_flags=(--coverage -fprofile-abs-path)
+fi
+
 flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined
-       -Ifirmware/tests/m3/stubs -Ifirmware/include)
+       "${coverage_flags[@]}" -Ifirmware/tests/m3/stubs -Ifirmware/include)
 portable_flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror
-                -fsanitize=address,undefined -Ifirmware/include)
+                -fsanitize=address,undefined "${coverage_flags[@]}" -Ifirmware/include)
 b3_flags=(-std=gnu++11 -O1 -g -Wall -Wextra -Werror
-          -fsanitize=address,undefined -Ifirmware/include)
+          -fsanitize=address,undefined "${coverage_flags[@]}" -Ifirmware/include)
 gnss_sources=(firmware/src/gnss_manager.cpp firmware/src/gnss_utc.cpp
               firmware/src/i2c_recovery.cpp firmware/src/sensor_power_manager.cpp)
 
@@ -357,6 +369,9 @@ g++ "${flags[@]}" firmware/tests/r4/test_r4.cpp "${gnss_sources[@]}" \
 "$test_dir/r4"
 g++ -DNRF52_SERIES -Ifirmware/tests/r4/stubs -Ifirmware/include \
   -std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
+  "${coverage_flags[@]}" \
   firmware/tests/r4/test_watchdog_nrf.cpp firmware/src/watchdog_manager.cpp \
   -o "$test_dir/r4_watchdog_nrf"
 "$test_dir/r4_watchdog_nrf"
+
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/tooling/test_tooling_contract.py
