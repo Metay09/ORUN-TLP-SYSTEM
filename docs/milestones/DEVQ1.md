@@ -1,6 +1,6 @@
 # DEVQ1 — Host quality gates: coverage, fuzzing and CodeQL
 
-Status: **PASS WITH FIXES — independent-audit fixes applied; post-fix host + hardened fuzz + coverage + CodeQL revalidation PASS, remaining post-fix build/re-review pending.**
+Status: **PASS — PR #64 merged as `d28beff1c5783988f493ce399c803142004ab968`; residual LOW tooling hardening is tracked in Issue #65.**
 
 Baseline:
 `main@9e8e2b8e2d333fbedadb69ed72f316a775579b27`
@@ -346,14 +346,12 @@ These values exactly match the M7P7I baseline and the pre-audit DEVQ1 build:
 **0 B RAM delta / 0 B Flash delta**. The production source/configuration graph
 remains unchanged by DEVQ1.
 
-Before merge, the only remaining gate is:
+Focused independent re-review returned **PASS** on the final PR #64 head
+`7d7e5326ff342bf89337fe78cfd4bc57cd0f9785`. PR #64 was then squash-merged
+to `main` as `d28beff1c5783988f493ce399c803142004ab968`.
 
-```text
-focused independent re-review of the audit fixes
-```
-
-No physical-device test is required for this tooling-only slice unless a later
-fix touches the production firmware graph.
+No physical-device test is required for DEVQ1 because the production firmware
+graph was unchanged.
 
 ## 10. Follow-up
 
@@ -363,3 +361,71 @@ connect / indication / fragmentation / disconnect / reconnect testing.
 A small DEVQ1.1 fuzz extension should add the BLE logical transport parser
 before or alongside DEVQ2; relay/test packet and USB/application request parsers
 can follow based on attack surface and change rate.
+
+
+## 11. Residual LOW hardening — Issue #65
+
+Issue #65 is a tooling-only follow-up to the final PASS verdict. Active branch:
+
+```text
+fix/devq1-tooling-hardening
+```
+
+The follow-up closes the three non-blocking residual findings without changing
+production firmware:
+
+1. security fuzz CRC/commit offsets are now derived from serialized field sizes
+   and protected by compile-time record-layout assertions;
+2. CodeQL setup retains the official checksum-verified 2.27.1 bundle archive,
+   and both setup and run verify the installed executable byte content against
+   the executable inside that SHA-256-pinned archive before trusting it;
+3. SARIF severity resolution now applies the SARIF 2.1.0 `kind` rule and
+   resolves extension rules through `result.rule.toolComponent.index` plus
+   `result.rule.index`.
+
+Focused regression coverage includes a negative executable-tamper test and
+synthetic SARIF fixtures for explicit severity, rule defaults, SARIF warning
+default, extension-component lookup and non-`fail` results.
+
+Initial isolated validation on the implementation branch:
+
+```text
+CodeQL bundle integrity fixture:       PASS
+SARIF severity/component fixture:      PASS
+security-format libFuzzer smoke:       PASS (2,000 runs, ASan/UBSan)
+production src/include changes:        none
+```
+
+Owner-host validation has now also confirmed:
+
+```text
+real pinned local CodeQL analysis:     PASS
+RAK4630 production build:              PASS
+RAM:                                   28,976 / 248,832 B (11.6%)
+Flash:                                 264,912 / 815,104 B (32.5%)
+production RAM / Flash delta:          0 B / 0 B
+```
+
+Owner-host full host-suite validation is also **PASS**, including the DEVQ1
+tooling-contract guard, SARIF severity regression and CodeQL extracted-bundle
+integrity regression.
+
+Owner-host canonical fuzz validation is also **PASS**:
+
+```text
+tlp_position:      10,000 runs PASS
+config_format:     10,000 runs PASS
+security_format:   10,000 runs PASS
+geofence_format:   10,000 runs PASS
+bounded fuzz smoke: PASS
+```
+
+The real pinned CodeQL run remains at the reviewed **31 findings** with the
+expected severity distribution: **1 error / 19 warning / 11 note / 0 none**.
+The single error is the already-disposed R2 host-fixture missing-return finding;
+the production-source findings remain unchanged from the reviewed DEVQ1
+disposition.
+
+All Issue #65 implementation gates are now satisfied. Focused final review found
+no BLOCKER/HIGH/MEDIUM regression. A physical-device test is not required because
+the production firmware graph remains unchanged.

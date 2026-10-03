@@ -27,11 +27,25 @@ sarif = {
             }],
         },
         "results": [
-            {"ruleId": "explicit-error", "message": {"text": "a"}},
+            {"ruleId": "explicit-error", "ruleIndex": 0, "message": {"text": "a"}},
             {"ruleId": "default-note", "message": {"text": "b"}},
-            {"ruleId": "extension-warning", "message": {"text": "c"}},
-            {"ruleId": "sarif-default-warning", "message": {"text": "d"}},
-            {"ruleId": "explicit-error", "level": "note", "message": {"text": "override"}},
+            {
+                "rule": {"id": "extension-warning", "index": 0, "toolComponent": {"index": 0}},
+                "message": {"text": "c"},
+            },
+            {"ruleId": "sarif-default-warning", "ruleIndex": 2, "message": {"text": "d"}},
+            {
+                "ruleId": "explicit-error",
+                "ruleIndex": 0,
+                "level": "note",
+                "message": {"text": "override"},
+            },
+            {
+                "ruleId": "explicit-error",
+                "ruleIndex": 0,
+                "kind": "pass",
+                "message": {"text": "severity-not-applicable"},
+            },
         ],
     }],
 }
@@ -47,11 +61,12 @@ with tempfile.TemporaryDirectory(prefix="orun-sarif-") as td:
     )
 
 out = proc.stdout
-assert "total findings: 5" in out
+assert "total findings: 6" in out
 assert "error: 1" in out
 assert "warning: 2" in out
 assert "note: 2" in out
-assert "none: 0" in out
+assert "none: 1" in out
 assert "[warning] extension-warning" in out
 assert "[note] explicit-error" in out
+assert "[none] explicit-error" in out
 print("DEVQ1 CodeQL SARIF severity resolution checks: PASS")

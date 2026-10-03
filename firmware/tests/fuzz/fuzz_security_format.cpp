@@ -9,6 +9,47 @@ namespace jf = orun_tlp::journal_format;
 namespace sf = orun_tlp::security_format;
 
 namespace {
+constexpr size_t kSerializedWordSize = sizeof(uint32_t);
+
+constexpr size_t kPageHeaderCrcOffset =
+    sizeof(uint32_t) + sizeof(uint8_t) + 3U + sizeof(uint64_t) +
+    sizeof(uint64_t);
+constexpr size_t kPageHeaderCommitOffset =
+    kPageHeaderCrcOffset + kSerializedWordSize;
+static_assert(kPageHeaderCrcOffset == 24, "security page-header CRC layout");
+static_assert(kPageHeaderCommitOffset + kSerializedWordSize ==
+                  sf::kPageHeaderSize,
+              "security page-header record layout");
+
+constexpr size_t kCredentialCrcOffset =
+    sf::kCredentialIdSize + sizeof(uint32_t) + sizeof(uint64_t) +
+    sf::kKRootSize;
+constexpr size_t kCredentialCommitOffset =
+    kCredentialCrcOffset + kSerializedWordSize;
+static_assert(kCredentialCrcOffset == 60, "security credential CRC layout");
+static_assert(kCredentialCommitOffset + kSerializedWordSize ==
+                  sf::kCredentialRecordSize,
+              "security credential record layout");
+
+constexpr size_t kTxReserveCrcOffset =
+    sf::kCredentialIdSize + sizeof(uint32_t) + sizeof(uint64_t);
+constexpr size_t kTxReserveCommitOffset =
+    kTxReserveCrcOffset + kSerializedWordSize;
+static_assert(kTxReserveCrcOffset == 28, "security TX reserve CRC layout");
+static_assert(kTxReserveCommitOffset + kSerializedWordSize ==
+                  sf::kTxReserveRecordSize,
+              "security TX reserve record layout");
+
+constexpr size_t kSecurityStateCrcOffset =
+    sf::kCredentialIdSize + sizeof(uint32_t) + sizeof(uint8_t) + 3U +
+    sizeof(uint64_t);
+constexpr size_t kSecurityStateCommitOffset =
+    kSecurityStateCrcOffset + kSerializedWordSize;
+static_assert(kSecurityStateCrcOffset == 32, "security state CRC layout");
+static_assert(kSecurityStateCommitOffset + kSerializedWordSize ==
+                  sf::kSecurityStateRecordSize,
+              "security state record layout");
+
 uint64_t fold64(const uint8_t* data, size_t size, size_t start) {
   uint64_t value = 0;
   if (size == 0) return 0;
@@ -97,7 +138,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     uint8_t encoded[sf::kPageHeaderSize]{};
     sf::encodePageHeaderVersion(header, version, encoded);
     checkHeaderRoundTrip(encoded, version);
-    mutateAndReseal(encoded, 24, 24, 28, data, size, 16, 20);
+    mutateAndReseal(encoded, kPageHeaderCrcOffset, kPageHeaderCrcOffset,
+                    kPageHeaderCommitOffset, data, size, 16, 20);
     checkHeaderRoundTrip(encoded, version);
   }
 
@@ -112,7 +154,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   uint8_t credential_bytes[sf::kCredentialRecordSize]{};
   sf::encodeCredential(credential, credential_bytes);
   checkCredentialRoundTrip(credential_bytes);
-  mutateAndReseal(credential_bytes, 60, 60, 64, data, size, 36, 40);
+  mutateAndReseal(credential_bytes, kCredentialCrcOffset,
+                  kCredentialCrcOffset, kCredentialCommitOffset, data, size,
+                  36, 40);
   checkCredentialRoundTrip(credential_bytes);
 
   sf::TxReserve reserve;
@@ -127,7 +171,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   uint8_t reserve_bytes[sf::kTxReserveRecordSize]{};
   sf::encodeTxReserve(reserve, reserve_bytes);
   checkTxRoundTrip(reserve_bytes);
-  mutateAndReseal(reserve_bytes, 28, 28, 32, data, size, 44, 48);
+  mutateAndReseal(reserve_bytes, kTxReserveCrcOffset, kTxReserveCrcOffset,
+                  kTxReserveCommitOffset, data, size, 44, 48);
   checkTxRoundTrip(reserve_bytes);
 
   sf::SecurityStateRecord state;
@@ -147,7 +192,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   uint8_t state_bytes[sf::kSecurityStateRecordSize]{};
   sf::encodeSecurityState(state, state_bytes);
   checkStateRoundTrip(state_bytes);
-  mutateAndReseal(state_bytes, 32, 32, 36, data, size, 52, 56);
+  mutateAndReseal(state_bytes, kSecurityStateCrcOffset,
+                  kSecurityStateCrcOffset, kSecurityStateCommitOffset, data,
+                  size, 52, 56);
   checkStateRoundTrip(state_bytes);
 
   return 0;
