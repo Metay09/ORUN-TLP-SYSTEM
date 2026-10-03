@@ -5,27 +5,69 @@ from collections import Counter
 from pathlib import Path
 
 
-def rules_by_id(run):
-    rules = {}
+def resolve_tool_component(run, reference):
     tool = run.get("tool", {})
-    components = [tool.get("driver", {})] + list(tool.get("extensions", []))
-    for component in components:
-        for rule in component.get("rules", []):
-            rid = rule.get("id")
-            if rid:
-                rules[rid] = rule
-    return rules
+    driver = tool.get("driver", {})
+    extensions = list(tool.get("extensions", []))
+
+    if not reference:
+        return driver
+
+    index = reference.get("index")
+    if isinstance(index, int):
+        if 0 <= index < len(extensions):
+            return extensions[index]
+        return {}
+
+    guid = reference.get("guid")
+    name = reference.get("name")
+    if guid is None and name is None:
+        return driver
+
+    for component in [driver] + extensions:
+        if guid is not None and component.get("guid") == guid:
+            return component
+        if guid is None and name is not None and component.get("name") == name:
+            return component
+    return {}
+
+
+def resolve_rule(run, result):
+    rule_reference = result.get("rule") or {}
+    component = resolve_tool_component(run, rule_reference.get("toolComponent"))
+    rules = component.get("rules", [])
+
+    index = rule_reference.get("index")
+    if index is None:
+        index = result.get("ruleIndex")
+    if isinstance(index, int) and 0 <= index < len(rules):
+        return rules[index]
+
+    rule_id = rule_reference.get("id") or result.get("ruleId")
+    if rule_id:
+        for rule in rules:
+            if rule.get("id") == rule_id:
+                return rule
+
+    return {}
 
 
 def resolve_level(result, rule):
+    # SARIF 2.1.0: absent kind defaults to fail. If kind is present and is not
+    # fail, severity does not apply and level is none.
+    if result.get("kind", "fail") != "fail":
+        return "none"
+
     explicit = result.get("level")
     if explicit:
         return explicit
+
     default = rule.get("defaultConfiguration", {}).get("level")
     if default:
         return default
-    # SARIF result.level defaults to warning when neither the result nor the
-    # reportingDescriptor default configuration supplies a level.
+
+    # For fail results, SARIF defaults level to warning when neither the result
+    # nor the reportingDescriptor default configuration supplies a level.
     return "warning"
 
 
@@ -34,16 +76,8 @@ def main(path):
 
     resolved_results = []
     for run in data.get("runs", []):
-        by_id = rules_by_id(run)
-        driver_rules = run.get("tool", {}).get("driver", {}).get("rules", [])
         for result in run.get("results", []):
-            rule = by_id.get(result.get("ruleId"))
-            if rule is None:
-                index = result.get("ruleIndex")
-                if isinstance(index, int) and 0 <= index < len(driver_rules):
-                    rule = driver_rules[index]
-                else:
-                    rule = {}
+            rule = resolve_rule(run, result)
             resolved_results.append((result, rule, resolve_level(result, rule)))
 
     levels = Counter(level for _, _, level in resolved_results)
@@ -59,7 +93,9 @@ def main(path):
 
     print("CodeQL findings:")
     for i, (result, _rule, level) in enumerate(resolved_results, start=1):
-        rid = result.get("ruleId", "<unknown-rule>")
+        rid = result.get("ruleId")
+        if not rid:
+            rid = (result.get("rule") or {}).get("id", "<unknown-rule>")
         message = result.get("message", {}).get("text", "").replace("\n", " ").strip()
         locations = result.get("locations") or []
         where = "<no-location>"
