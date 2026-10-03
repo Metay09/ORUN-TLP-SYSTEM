@@ -404,3 +404,4 @@ g++ -DNRF52_SERIES -Ifirmware/tests/r4/stubs -Ifirmware/include \
 
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/tooling/test_tooling_contract.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/codeql/test_summarize_sarif.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/codeql/test_verify_bundle_install.py
