@@ -1,6 +1,6 @@
 # DEVQ1 — Host quality gates: coverage, fuzzing and CodeQL
 
-Status: **IMPLEMENTATION CANDIDATE — host + bounded fuzz + coverage generation PASS; tooling validation continues.**
+Status: **IMPLEMENTATION CANDIDATE — host + bounded fuzz + coverage + production size invariance PASS; CodeQL/audit remain.**
 
 Baseline:
 `main@9e8e2b8e2d333fbedadb69ed72f316a775579b27`
@@ -169,8 +169,17 @@ DEVQ1 intentionally does not turn these percentages into merge thresholds.
 The branch number is useful as a gap-finder for defensive/error/recovery paths,
 not as a score to optimize.
 
-Remaining validation: production RAK4630 size invariance and CodeQL
-execution/root-cause.
+Owner-run production RAK4630 build is **PASS**:
+
+- RAM: **28,976 / 248,832 B (11.6%)**;
+- Flash: **264,912 / 815,104 B (32.5%)**;
+- build result: `SUCCESS`;
+- exact match to the M7P7I baseline: **0 B RAM / 0 B Flash delta**.
+
+This proves the DEVQ1 tooling files and optional host flags do not enter the
+production RAK4630 image at the current baseline.
+
+Remaining validation: CodeQL execution/root-cause and focused independent audit.
 
 ## 8. Follow-up, not this slice
 
