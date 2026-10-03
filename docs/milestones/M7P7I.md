@@ -397,6 +397,17 @@ not changed for that failure; the test was corrected to assert UNKNOWN before
 the real acceptance point and accepted Location immediately after it. The full
 suite then passed.
 
-Remaining gates are the production RAK4630 build and independent final audit.
-Physical GNSS qualification remains conditional on audit finding a real
-acquisition/consumption-order behavior change.
+Owner production RAK4630 build on branch head `20adb35` is **PASS**:
+
+- RAM: 28,976 / 248,832 bytes = 11.6%;
+- Flash: 264,896 / 815,104 bytes = 32.5%;
+- PlatformIO environment: `rak4630`;
+- result: SUCCESS.
+
+Reference M7P7H merged-build evidence was RAM 28,936 bytes and Flash 264,624
+bytes, so the M7P7I runtime delta is **+40 bytes RAM / +272 bytes Flash**. This
+adds no persistent partition and does not change the flash-layout ceiling.
+
+Remaining gate is the independent final audit. Physical GNSS qualification
+remains conditional on audit finding a real acquisition/consumption-order
+behavior change.
