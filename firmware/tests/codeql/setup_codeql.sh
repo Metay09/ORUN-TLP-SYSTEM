@@ -22,6 +22,7 @@ expected_sha256="1d380f79896ededc654c7b21fafb3360136f1aeb678ad4df4df9af3910c6b81
 install_root="$(safe_build_child "${ORUN_CODEQL_HOME:-build/tools/codeql-v$version}")"
 codeql_bin="$install_root/codeql/codeql"
 marker="$install_root/.orun-codeql-verified"
+bundle_archive="$install_root/$asset"
 url="https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.1/$asset"
 api_asset_url="https://api.github.com/repos/github/codeql-action/releases/assets/572325752"
 
@@ -35,9 +36,11 @@ codeql_terse_version() {
 }
 
 verified_install() {
-  [[ -x "$codeql_bin" && -f "$marker" ]] || return 1
+  [[ -x "$codeql_bin" && -f "$marker" && -f "$bundle_archive" ]] || return 1
   grep -Fxq "version=$version" "$marker" || return 1
   grep -Fxq "sha256=$expected_sha256" "$marker" || return 1
+  python3 firmware/tests/codeql/verify_bundle_install.py \
+    "$bundle_archive" "$codeql_bin" "$expected_sha256" >/dev/null || return 1
   [[ "$(codeql_terse_version "$codeql_bin")" == "$version" ]] || return 1
   "$codeql_bin" resolve languages | grep -E '(^|[[:space:]])(c-cpp|cpp)([[:space:]]|$)' >/dev/null
   "$codeql_bin" resolve packs | grep 'codeql/cpp-queries' >/dev/null
@@ -50,7 +53,7 @@ if verified_install; then
   exit 0
 fi
 
-for tool in curl sha256sum tar; do
+for tool in curl sha256sum tar python3; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "ERROR: required tool missing: $tool" >&2
     exit 2
@@ -89,7 +92,8 @@ printf '%s  %s\n' "$expected_sha256" "$archive" | sha256sum --check -
 
 rm -rf -- "$install_root"
 mkdir -p -- "$install_root"
-tar -xzf "$archive" -C "$install_root"
+cp -- "$archive" "$bundle_archive"
+tar -xzf "$bundle_archive" -C "$install_root"
 
 if [[ ! -x "$codeql_bin" ]]; then
   echo "ERROR: CodeQL executable missing after extraction: $codeql_bin" >&2
