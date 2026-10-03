@@ -54,8 +54,12 @@ unchanged; the durable evidence boundary is recorded in
 `docs/audits/M7P7H_FINAL_AUDIT_DISPOSITION.md`.
 `docs/milestones/M7P7I.md` defines the next small trunk step: a GNSS-produced,
 source-neutral accepted-Location runtime owner before any GET_LOCATION opcode.
-Protected writers, LoRa COMMAND/RESULT/store-forward and final authorization
-remain later slices.
+PR #63 is the current implementation candidate for that owner foundation; it
+adds no Location transport opcode, persistence or source arbitration. Full host
+and RAK4630 build validation passed before audit; the independent audit returned
+PASS WITH FIXES (0 BLOCKER / 0 HIGH / 1 MEDIUM), and the accepted semantic/test
+fixes are on the same branch awaiting owner revalidation. Protected writers,
+LoRa COMMAND/RESULT/store-forward and final authorization remain later slices.
 
 Owner-approved current geofence operational direction is recorded in
 `ORUN_GEOFENCE_OPERATIONAL_POLICY.md`. M6D2 now implements the software

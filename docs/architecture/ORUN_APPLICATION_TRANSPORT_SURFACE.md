@@ -269,11 +269,12 @@ acceptance rule. It must not be exported as the product definition of "live."
 Recovered/persisted location without trustworthy observation time must never be
 presented as live.
 
-The planned `M7P7I` follow-up establishes only the missing accepted-Location
-runtime owner: GNSS is the sole production producer, the owner starts UNKNOWN
-after reboot, and no new GET_LOCATION wire/persistence/source-switching path is
-added in that owner slice. GET_LOCATION is a later adapter consumer of that
-owner, not a direct GnssManager query.
+M7P7I implements only the missing accepted-Location runtime owner: GNSS is the
+sole production producer, the owner starts UNKNOWN after reboot, and no new
+GET_LOCATION wire/persistence/source-switching path is added in that owner
+slice. Its implementation candidate is PR #63; final audit fixes are applied
+and owner revalidation is the remaining merge gate. GET_LOCATION is a later
+adapter consumer of that owner, not a direct GnssManager query.
 
 Do not add a speculative multi-source Location framework before a real second
 source is implemented.

@@ -115,6 +115,7 @@ void orunRadioQuiesceLocked() { requireDriverGate(); }
 void orunRadioTimeoutLocked() { requireDriverGate(); callbacks->TxTimeout(); }
 
 uint32_t orun_tlp::monotonic::nowMs() { return test_now; }
+uint64_t orun_tlp::monotonic::nowMs64() { return test_now; }
 void WatchdogManager::begin() { ++watchdog_starts; }
 void WatchdogManager::feed() { ++watchdog_feeds; }
 const WatchdogManager::BootInfo& WatchdogManager::bootInfo() {
@@ -263,6 +264,9 @@ int main(int argc, char** argv) {
 
   assert(board_reads == 1 && radio_manager.deviceId() == kHardwareId);
   assert(watchdog_starts == 1);
+  // M7P7I is RAM-only and never reconstructs a product Location from recovered
+  // HistoryStore contents at boot.
+  assert(!location_owner.hasLocation());
   assert(history.ready() && history.count() == 1);
   assert(history.diagnostics().recovery_corruptions == 0);
   // Fresh blank ConfigStore establishes its internal v2 token baseline.
@@ -490,11 +494,15 @@ int main(int argc, char** argv) {
   assert(memcmp(recovered.packet, original.packet, sizeof(original.packet)) == 0);
 
   // Feed a fresh matched PVT/DOP through production GNSS -> store-first flow.
+  // Reuse the existing noevent startup scenario as the 2D Location-validity
+  // regression; all other scenarios exercise the ordinary 3D path.
   using Fake = SFE_UBLOX_GNSS;
+  const uint8_t initial_fix_type = no_event_control ? 2U : 3U;
   for (uint32_t tow : {1000U, 2000U}) {
-    Fake::pending.push_back([tow] {
+    Fake::pending.push_back([tow, initial_fix_type] {
       UBX_NAV_PVT_data_t pvt{};
-      pvt.iTOW = tow; pvt.flags.bits.gnssFixOK = true; pvt.fixType = 3;
+      pvt.iTOW = tow; pvt.flags.bits.gnssFixOK = true;
+      pvt.fixType = initial_fix_type;
       pvt.lat = 410000001; pvt.lon = 290000001; pvt.numSV = 8;
       Fake::current_pvt = pvt; Fake::itow_fresh = true;
       Fake::pvt(&pvt);
@@ -503,10 +511,24 @@ int main(int argc, char** argv) {
     });
     loop(); // First epoch establishes the R3 boundary; second is fresh.
   }
-  // The fresh fix first creates real demand for a sequence reservation. The
-  // next loop durably completes that reservation and queues the store-first
-  // append; the record itself is not committed until the following loop.
+  // The fresh fix first creates real demand for a sequence reservation.
+  // It is not consumed yet, so Location must still be UNKNOWN at this exact
+  // pre-admission point. The next loop completes the reservation and reaches
+  // the existing successful takeFreshFixForTransmission() acceptance point.
+  assert(!location_owner.hasLocation());
   loop();
+  // M7P7I publishes from that exact accepted observation before the record
+  // itself is committed on the following loop. Recovered history was never
+  // used to manufacture a Location.
+  AcceptedLocation accepted_location{};
+  assert(location_owner.latest(&accepted_location));
+  assert(accepted_location.source == LocationSource::kGnss);
+  assert(accepted_location.latitude_e7 == 410000001);
+  assert(accepted_location.longitude_e7 == 290000001);
+  assert(accepted_location.altitude_valid == !no_event_control);
+  assert(!accepted_location.utc_valid);
+  assert(accepted_location.observed_monotonic_ms == test_now);
+  // The record itself is not committed until the following loop.
   assert(history.count() == 1 && erases == 0 &&
          programs == expected_boot_programs + 2U);
   assert(history.busy());
@@ -630,9 +652,17 @@ int main(int argc, char** argv) {
     assert(geofence_confirmation.confirmationActive());
     assert(gnss_manager.diagnostics().acquisition_attempts ==
            confirmation_attempts);
+    // Confirmation-only observations are accepted Location facts even though
+    // they intentionally bypass the normal PositionFlow branch.
+    assert(location_owner.latest(&accepted_location));
+    assert(accepted_location.latitude_e7 == 410011000);
+    assert(accepted_location.longitude_e7 == 290011000);
 
     queueEpoch(8000, 410000001, 290000001, 20, 12); // slot 2 INSIDE
     loop();
+    assert(location_owner.latest(&accepted_location));
+    assert(accepted_location.latitude_e7 == 410000001);
+    assert(accepted_location.longitude_e7 == 290000001);
     assert(!geofence_confirmation.confirmationActive());
     assert(geofence_confirmation.cadenceMode() ==
            GeofenceCadenceMode::kBaseDividedBy3);
