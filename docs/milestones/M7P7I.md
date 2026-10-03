@@ -1,6 +1,6 @@
 # M7P7I — Accepted Location Owner Foundation
 
-Status: **PLANNED — ARCHITECTURE/ACCEPTANCE CONTRACT ONLY; NO RUNTIME IMPLEMENTATION IN THIS DOCUMENT.**
+Status: **IMPLEMENTATION CANDIDATE — OWNER VALIDATION / AUDIT PENDING; NOT MERGE-READY.**
 
 Planning baseline:
 `main@3aa36c67f2f9fe41d183af2729afb5dbf4b94ef5` (M7P7H merged).
@@ -323,3 +323,59 @@ review/merge M7P7I owner contract
 
 This keeps the Location trunk small and reviewable without folding transport
 exposure, persistence or future PHONE source arbitration into the first owner.
+
+
+## 14. Implementation candidate
+
+PR #63 implements only the owner foundation frozen above.
+
+Current production changes:
+
+- new `LocationOwner` / `AcceptedLocation` fixed-memory runtime value;
+- current source provenance values are only `UNKNOWN` and `GNSS`; these are
+  internal runtime semantics, not frozen wire IDs or active-source policy;
+- legal latitude/longitude and non-UNKNOWN provenance are defended before owner
+  replacement; rejection preserves the prior accepted Location;
+- every successful production `takeFreshFixForTransmission()` publishes that
+  exact `GnssFix` to the Location owner before geofence processing;
+- geofence confirmation-only extra observations therefore update latest
+  Location while still bypassing the normal PositionFlow branch exactly as
+  before;
+- normal PositionFlow/HistoryStore failure cannot retract an already accepted
+  runtime Location;
+- GNSS UTC validity maps from the existing
+  `kPositionFlagValidUtcTime` bit; zero epoch remains a value, not the
+  validity sentinel;
+- promoted GNSS fixes set `altitude_valid=true` because the existing manager
+  rejects NAV-PVT `invalidLlh`; the separate 3D-fix bit remains quality/type,
+  not altitude validity;
+- the existing loop-owned `TickMillis` clock now exposes one shared
+  rollover-extended `nowMs64()` while `nowMs()` retains its exact modulo
+  32-bit scheduling interface;
+- the recent GNSS callback timestamp is extended into that 64-bit timeline from
+  the already-bounded fresh-fix delta, so a long-lived runtime cannot make an
+  old Location appear young merely because the legacy millisecond clock
+  wrapped.
+
+Still deliberately absent:
+
+- GET_LOCATION over USB/BLE/LoRa;
+- PHONE/MANUAL/fixed location input;
+- active-source arbitration/generation;
+- durable last-known Location;
+- new flash allocation/format;
+- any TLP v1/v2 wire change.
+
+Added validation coverage:
+
+- focused `test_m7p7i_location_owner.cpp`;
+- focused `test_m7p7i_source_contract.py`;
+- production startup checks for UNKNOWN-after-reboot, ordinary GNSS publication
+  and confirmation-only observation replacement;
+- the existing full host/startup suite continues to be the merge gate.
+
+A local compiler smoke check of the isolated new owner/clock primitives passed
+with both `-std=gnu++11 -Wall -Wextra -Werror` and C++17
+ASan/UBSan. This is developer syntax/unit smoke only; it is **not** a substitute
+for the repository full host suite, production RAK4630 build, independent audit
+or physical evidence.
