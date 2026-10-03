@@ -17,10 +17,12 @@ safe_build_child() {
 }
 
 version="2.27.1"
+asset="codeql-bundle-linux64.tar.gz"
 expected_sha256="1d380f79896ededc654c7b21fafb3360136f1aeb678ad4df4df9af3910c6b815"
 install_root="$(safe_build_child "${ORUN_CODEQL_HOME:-build/tools/codeql-v$version}")"
 codeql_bin="$install_root/codeql/codeql"
 marker="$install_root/.orun-codeql-verified"
+bundle_archive="$install_root/$asset"
 
 if [[ -n "${ORUN_CODEQL_VERSION:-}" && "${ORUN_CODEQL_VERSION}" != "$version" ]]; then
   echo "ERROR: DEVQ1 pins CodeQL $version; ORUN_CODEQL_VERSION override is not allowed." >&2
@@ -30,7 +32,7 @@ if [[ -n "${CODEQL_BIN:-}" ]]; then
   echo "ERROR: DEVQ1 does not accept CODEQL_BIN overrides; use the verified pinned bundle." >&2
   exit 2
 fi
-if [[ ! -x "$codeql_bin" || ! -f "$marker" ]]; then
+if [[ ! -x "$codeql_bin" || ! -f "$marker" || ! -f "$bundle_archive" ]]; then
   echo "ERROR: verified CodeQL bundle not found. Run ./firmware/tests/codeql/setup_codeql.sh." >&2
   exit 2
 fi
@@ -40,6 +42,11 @@ grep -Fxq "version=$version" "$marker" || {
 }
 grep -Fxq "sha256=$expected_sha256" "$marker" || {
   echo "ERROR: CodeQL verification marker has wrong checksum." >&2
+  exit 2
+}
+python3 firmware/tests/codeql/verify_bundle_install.py \
+  "$bundle_archive" "$codeql_bin" "$expected_sha256" || {
+  echo "ERROR: CodeQL install does not match the pinned checksum-verified bundle." >&2
   exit 2
 }
 actual_version="$("$codeql_bin" version --format=terse | head -n 1 | tr -d '\r')"
