@@ -1,6 +1,6 @@
 # DEVQ1 — Host quality gates: coverage, fuzzing and CodeQL
 
-Status: **PASS WITH FIXES — independent-audit fixes applied; post-fix host + hardened fuzz + coverage + CodeQL revalidation PASS, remaining post-fix gates pending.**
+Status: **PASS WITH FIXES — independent-audit fixes applied; post-fix host + hardened fuzz + coverage + CodeQL revalidation PASS, remaining post-fix build/re-review pending.**
 
 Baseline:
 `main@9e8e2b8e2d333fbedadb69ed72f316a775579b27`
@@ -317,6 +317,22 @@ Post-fix local CodeQL analysis is **PASS**:
 - the 31 findings match the independently reviewed disposition; no new
   production-source finding appeared;
 - final runner result: `ORUN local CodeQL execution: PASS`.
+
+Post-fix local CodeQL analysis is **PASS**:
+
+- verified pinned CodeQL CLI **2.27.1** was accepted by the hardened runner;
+- database creation traced the canonical host build with the explicit
+  `ORUN_HOST_SANITIZERS=0` preload-conflict override;
+- the complete traced host suite passed;
+- all **183** `cpp-security-and-quality` queries completed;
+- CodeQL again reported **193 / 223 C/C++ files** in this invocation;
+- SARIF findings remained **31 total**;
+- corrected severity resolution produced exactly **1 error / 19 warning / 11 note / 0 none**;
+- the one error-severity finding remains the reviewed R2 host-fixture
+  `cpp/missing-return`, not a production-source defect.
+
+This validates the post-audit H3/M1 corrections and exactly matches the
+independent reviewer's expected severity distribution.
 
 Before merge, remaining post-fix gates are:
 
