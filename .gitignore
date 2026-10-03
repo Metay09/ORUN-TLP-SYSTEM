@@ -32,4 +32,4 @@ Thumbs.db
 secrets/
 
 # Host tooling outputs (coverage/fuzz artifacts)
-build/
+/build/
