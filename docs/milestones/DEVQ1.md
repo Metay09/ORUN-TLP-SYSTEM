@@ -1,6 +1,6 @@
 # DEVQ1 — Host quality gates: coverage, fuzzing and CodeQL
 
-Status: **IMPLEMENTATION CANDIDATE — host + bounded fuzz + coverage + production size invariance PASS; local CodeQL/audit remain.**
+Status: **IMPLEMENTATION CANDIDATE — host + bounded fuzz + coverage + production size invariance + local CodeQL setup PASS; CodeQL analysis/audit remain.**
 
 Baseline:
 `main@9e8e2b8e2d333fbedadb69ed72f316a775579b27`
@@ -198,8 +198,16 @@ than repository code execution: repeated PR jobs had no assigned runner, no
 steps and no logs despite repository Actions permissions allowing all actions.
 DEVQ1 therefore does not treat the hosted runner as a required gate.
 
-Remaining validation: pinned local CodeQL execution/result review and focused
-independent audit.
+Owner-run local CodeQL setup is **PASS**:
+
+- official Linux x64 CodeQL bundle **2.27.1** downloaded successfully;
+- pinned SHA-256 verified before extraction;
+- CLI reports `CodeQL command-line toolchain release 2.27.1`;
+- bundled C/C++ language/query packs resolved;
+- final setup result: `ORUN local CodeQL setup: PASS`.
+
+Remaining validation: local CodeQL database creation + analysis/result review and
+focused independent audit.
 
 ## 9. Follow-up, not this slice
 
