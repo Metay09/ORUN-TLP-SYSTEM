@@ -1,6 +1,6 @@
 # DEVQ1 — Host quality gates: coverage, fuzzing and CodeQL
 
-Status: **IMPLEMENTATION CANDIDATE — host + fuzz + coverage + zero-delta build + local CodeQL execution PASS; independent audit remains.**
+Status: **PASS WITH FIXES — independent-audit fixes applied; post-fix revalidation pending.**
 
 Baseline:
 `main@9e8e2b8e2d333fbedadb69ed72f316a775579b27`
@@ -10,234 +10,266 @@ Branch:
 
 ## 1. Purpose
 
-This slice adds developer-side evidence only. It must improve defect discovery
-without changing the production RAK4630 image, framework patches, RF behavior,
-GNSS behavior, persistence ownership, BLE runtime, protocol bytes or power
-policy.
+DEVQ1 adds developer-side defect-discovery tooling only. It must not change the
+production RAK4630 image, framework patches, RF behavior, GNSS behavior,
+persistence ownership, BLE runtime, TLP v1 bytes or power policy.
 
-The three added layers answer different questions:
+The layers answer different questions:
 
-- host coverage: which production source lines/branches are actually exercised
-  by the existing host suite?
-- libFuzzer + ASan/UBSan: what happens when protocol/persistence parsers receive
-  malformed, truncated or mutated bytes?
-- CodeQL: are there source-level C/C++ security/memory/data-flow patterns that
-  the dynamic tests do not expose?
+- normal host suite + ASan/UBSan: do known regression/integration paths remain
+  correct, and do sanitizer findings fail the run?
+- gcovr: which production source/header paths are exercised?
+- libFuzzer + ASan/UBSan: how do selected codecs/persistence parsers behave
+  under malformed and semantics-preserving mutated inputs?
+- CodeQL: which source-level C/C++ security/correctness/maintainability patterns
+  deserve review beyond dynamic tests?
 
-No coverage percentage is a merge threshold in DEVQ1. Coverage is diagnostic
-evidence for finding blind spots, not a score to game.
+No coverage percentage is a merge threshold.
 
 ## 2. Production boundary
 
-DEVQ1 must remain outside the production firmware graph.
-
-Expected production effects:
+Expected and audited production effects:
 
 ```text
-RAK4630 source/runtime behavior: unchanged
-PlatformIO production flags:     unchanged
-RAM / flash:                     0 B intended delta
-RF airtime / duty cycle:         unchanged
-GNSS acquisition/power:          unchanged
-storage layout/wear:             unchanged
-BLE UUID/framing/runtime:        unchanged
-TLP v1 bytes:                    unchanged
-framework patches:               unchanged
+firmware/src/ changes:            none
+firmware/include/ changes:        none
+PlatformIO production flags:      unchanged
+RAK4630 runtime behavior:         unchanged
+RAM / flash:                      0 B intended delta
+RF airtime / duty cycle:          unchanged
+GNSS acquisition / power:        unchanged
+storage layout / wear:            unchanged
+BLE UUID / framing / runtime:     unchanged
+TLP v1 bytes:                     unchanged
+framework patch inputs:           unchanged
 ```
 
-The normal `run_host_tests.sh` receives only two optional environment-controlled
-test features:
+The independent audit reproduced the pre-fix production build at:
 
-- `ORUN_HOST_TEST_DIR` selects a persistent host object/output directory;
-- `ORUN_HOST_COVERAGE=1` adds GCC coverage instrumentation.
+- RAM: 28,976 / 248,832 B (11.6%)
+- Flash: 264,912 / 815,104 B (32.5%)
 
-The default path remains the existing ASan/UBSan warnings-as-errors suite.
+Those values exactly match the M7P7I baseline. A fresh post-fix build is still
+required because tooling files changed after that measurement.
 
-## 3. Coverage
+## 3. Host sanitizer gate
 
-`firmware/tests/run_coverage.sh` reruns the complete existing host suite with
-GCC coverage instrumentation, then asks `gcovr` for an annotated HTML report
-limited to `firmware/src/`.
+`firmware/tests/run_host_tests.sh` remains the canonical regression suite.
 
-DEVQ1 deliberately does not use `--fail-under` or any equivalent threshold.
-The first useful output is a gap inventory, especially for recovery, timeout,
-wraparound, malformed-input and fail-closed branches.
+Sanitizers are default-on. `ORUN_HOST_SANITIZERS` accepts only exact `0` or
+`1`. The default sanitizer flags include:
 
-Coverage files are written under `build/host-coverage/` and are ignored by
-Git.
+```text
+-fsanitize=address,undefined
+-fno-sanitize-recover=undefined
+```
 
-## 4. Fuzzing
+This closes the independent-audit finding that UBSan could previously print a
+runtime error while the process still exited zero.
+
+The only intentional sanitizer-off execution is the CodeQL traced build, where
+CodeQL's preload tracer conflicts with ASan's preload ordering. That override is
+explicit, logged and source-contract guarded.
+
+## 4. Coverage
+
+`firmware/tests/run_coverage.sh` reruns the complete host suite with GCC
+coverage instrumentation and generates a gcovr HTML report.
+
+Post-audit scope includes both:
+
+```text
+firmware/src/
+firmware/include/
+```
+
+This includes header-only production logic that the first DEVQ1 report omitted.
+
+The pre-audit report, limited to `firmware/src/`, was independently reproduced
+at:
+
+```text
+lines:     92.5% (6052 / 6541)
+functions: 98.9% (539 / 545)
+branches:  67.1% (4002 / 5966)
+```
+
+These are historical pre-fix numbers only. They must not be used as the final
+DEVQ1 coverage totals after the header filter change.
+
+No `--fail-under` or equivalent percentage gate exists.
+
+## 5. Fuzzing
 
 `firmware/tests/fuzz/run_fuzz.sh` builds host-only Clang/libFuzzer targets with
-AddressSanitizer and UndefinedBehaviorSanitizer.
+ASan + UBSan and fatal undefined-behavior recovery disabled.
 
-Initial bounded targets:
+Initial targets remain:
 
 1. `tlp_position`
-   - arbitrary POSITION bytes;
-   - valid decode -> canonical re-encode equivalence.
-
 2. `config_format`
-   - legacy v1 and tokenized v2 decode/classification;
-   - near-valid v2 mutation around a canonical encoded record.
-
 3. `security_format`
-   - page header, credential, legacy TX reserve and v2 security-state records;
-   - near-valid typed state mutation.
-
 4. `geofence_format`
-   - full durable record decode/classification;
-   - canonical CLEAR/configured records followed by bounded mutation.
 
-The default smoke budget is 10,000 executions per target and can be changed with
-`ORUN_FUZZ_RUNS`. A finding must preserve the generated artifact as a regression
-fixture before the bug is considered closed.
+The independent audit correctly found that the first persistence harnesses
+mostly rejected inputs at CRC before reaching semantic decode. Post-audit
+harnesses therefore use two distinct paths:
 
-Fuzzing is host evidence only. It does not prove flash power-cut behavior,
-SoftDevice concurrency, RF/GNSS behavior or hardware correctness.
+- raw malformed bytes for rejection/classifier behavior;
+- canonical accepted records followed by body mutation plus CRC/commit reseal,
+  so semantic validation is actually reached.
 
-## 5. CodeQL
+Additional corrections:
 
-DEVQ1 originally added a GitHub Actions CodeQL workflow. Repository Actions
-permissions were confirmed enabled, but repeated PR runs failed before runner
-dispatch: no runner was assigned, no step started, and no job log existed.
-Because that hosted-infrastructure failure is outside firmware correctness, the
-hosted workflow was removed rather than leaving a permanent red check.
+- config covers legacy v1 and tokenized v2 accepted paths;
+- security covers v1/v2 page headers, credentials, legacy TX reserve and v2
+  security state;
+- security explicitly exercises `decodePageHeaderVersion(..., kVersionV1,...)`;
+- geofence has a fixed 564-byte seed from the first corpus load;
+- geofence mutation selectors span the full record, including offsets above
+  255;
+- semantic and physical/torn mutation paths are separate;
+- corpus and failure artifacts persist across runs;
+- UBSan is fatal via `-fno-sanitize-recover=undefined`.
 
-The canonical DEVQ1 CodeQL gate is now local CLI execution on the owner Debian
-host:
+The pre-audit 10k x4 run completed successfully, but the independent audit showed
+that its semantic reach was too shallow. Therefore that old PASS is retained
+only as historical evidence; the hardened fuzz targets require a fresh run.
 
-- `firmware/tests/codeql/setup_codeql.sh` downloads the official GitHub CodeQL
-  Linux x64 bundle pinned to **2.27.1** and verifies the published SHA-256 before
-  extraction;
-- `firmware/tests/codeql/run_codeql.sh` creates a C/C++ database by tracing the
-  same canonical `firmware/tests/run_host_tests.sh` build graph;
-- analysis uses the bundled
-  `cpp-security-and-quality.qls` suite, which already includes the
-  security-extended queries plus maintainability/reliability queries;
-- results are kept as SARIF under `build/codeql/` and summarized to the
-  terminal for review.
+Still outside DEVQ1 fuzz scope are BLE fragment reassembly/logical transport,
+`tlp_relay_forward_packet`, `tlp_test_packet`, USB application command parsing
+and broader application-request input surfaces. BLE transport is the highest
+value follow-up fuzz target before/alongside DEVQ2 physical BLE automation.
 
-This intentionally avoids changing PlatformIO or adding CodeQL instrumentation
-to the production image. Findings are review inputs, not automatic permission to
-rewrite proven state machines or compatibility fixtures.
+## 6. Local CodeQL
 
-## 6. Source contract
+The hosted GitHub Actions workflow was removed after repeated jobs failed before
+runner dispatch despite repository Actions permissions allowing all actions.
+No runner, step or job log was produced, so hosted execution is not a DEVQ1
+gate.
 
-`firmware/tests/tooling/test_tooling_contract.py` is part of the normal host
-suite and guards the separation:
+Canonical CodeQL execution is local on the owner Debian host.
 
-- coverage remains opt-in;
-- no coverage percentage threshold is silently introduced;
-- fuzz targets remain host sanitizer binaries;
-- local CodeQL uses the host source graph and a checksum-pinned official bundle;
-- the failing hosted CodeQL workflow is absent;
-- no fuzz/coverage/CodeQL environment or sanitizer flags enter `platformio.ini`.
+The setup/runner now require:
 
-## 7. Validation plan
+- CodeQL CLI exactly 2.27.1;
+- official GitHub Linux x64 bundle;
+- pinned SHA-256
+  `1d380f79896ededc654c7b21fafb3360136f1aeb678ad4df4df9af3910c6b815`;
+- a verification marker written only after checksum, version, language and
+  query-pack validation;
+- exact runtime version check using `version --format=terse`;
+- no `CODEQL_BIN` bypass in the canonical runner;
+- safe output/install paths under repository `/build/`.
 
-Because this slice changes test/CI infrastructure but not production runtime:
+Database extraction traces:
 
-1. complete existing host suite;
-2. tooling source-contract;
-3. coverage runner on the owner Debian environment;
-4. bounded fuzz smoke on the owner Debian environment;
-5. production `pio run -e rak4630` and exact RAM/Flash comparison to
-   `main@9e8e2b8` to prove intended 0 B runtime delta;
-6. pinned local CodeQL database creation + security-and-quality analysis;
-7. focused independent audit of tooling isolation and false-confidence risks.
+```text
+env ORUN_HOST_SANITIZERS=0 ./firmware/tests/run_host_tests.sh
+```
 
-No dedicated physical device test is required for DEVQ1 because it adds no
-device-side behavior.
+Analysis uses:
 
-## 8. Validation evidence so far
+```text
+codeql/cpp-queries:codeql-suites/cpp-security-and-quality.qls
+```
 
-Owner-run full host suite on the DEVQ1 branch is **PASS**, including:
+The independently reproduced run reported:
 
-- all existing legacy / RF / GNSS / storage / geofence / BLE / startup regressions;
-- warnings-as-errors plus the existing ASan/UBSan coverage in the host suite;
-- the new `DEVQ1 host quality tooling source-contract guards`.
+```text
+193 / 223 C/C++ files extracted/scanned in this invocation
+31 SARIF findings
+1 error / 19 warning / 11 note
+```
 
-This confirms the default host-test path remains compatible after adding the
-optional coverage plumbing and tooling contract.
+The first summarizer incorrectly reported all 31 as unlevelled because it ignored
+the SARIF rule's `defaultConfiguration.level`. That is fixed and covered by a
+synthetic behavioral regression test.
 
-Owner-run bounded libFuzzer smoke is also **PASS**:
+Detailed finding disposition:
+`docs/audits/DEVQ1_CODEQL_DISPOSITION.md`
 
-- `tlp_position`: 10,000 executions, no crash / ASan / UBSan finding;
-- `config_format`: 10,000 executions, no crash / ASan / UBSan finding;
-- `security_format`: 10,000 executions, no crash / ASan / UBSan finding;
-- `geofence_format`: 10,000 executions, no crash / ASan / UBSan finding;
-- final runner result: `ORUN bounded host fuzz smoke: PASS`.
+Independent audit/fix disposition:
+`docs/audits/DEVQ1_INDEPENDENT_AUDIT_DISPOSITION.md`
 
-This is bounded host evidence only; it is not proof of exhaustive parser
-correctness or hardware behavior.
+## 7. CodeQL evidence boundary
 
-Owner-run gcovr 5.2 coverage generation is **PASS** after using the Debian 12
-compatible `--print-summary` flag:
+The host CodeQL database is not exhaustive whole-production analysis.
 
-- lines: **92.5%** (6052 / 6541);
-- functions: **98.9%** (539 / 545);
-- branches: **67.1%** (4002 / 5966).
+Known production-relevant gaps include at least:
 
-DEVQ1 intentionally does not turn these percentages into merge thresholds.
-The branch number is useful as a gap-finder for defensive/error/recovery paths,
-not as a score to optimize.
+- `config_incarnation_source.cpp`
+- `geofence_incarnation_source.cpp`
+- `monotonic_time.cpp`
+- `rakwireless/variants/rak4630/variant.cpp`
+- framework patch implementation paths
+- target-only `NRF52_SERIES` branches not selected by host composition
 
-Owner-run production RAK4630 build is **PASS**:
+`main.cpp` is analyzed through the startup host harness and host stubs, not the
+exact ARM/SoftDevice target compilation environment.
 
-- RAM: **28,976 / 248,832 B (11.6%)**;
-- Flash: **264,912 / 815,104 B (32.5%)**;
-- build result: `SUCCESS`;
-- exact match to the M7P7I baseline: **0 B RAM / 0 B Flash delta**.
+The 31 CodeQL findings include 11 production-source and 20 host
+test/fixture/stub findings. Independent review found zero confirmed production
+security/correctness defects. Two callback-singleton lifetime findings remain
+important architectural constraints: production `GnssManager` and
+`RadioManager` have firmware/static lifetime; a future shorter-lived owner
+would require explicit unregister/lifetime handling.
 
-This proves the DEVQ1 tooling files and optional host flags do not enter the
-production RAK4630 image at the current baseline.
+## 8. Destructive-path safety
 
-Hosted CodeQL root cause was isolated to pre-runner dispatch behavior rather
-than repository code execution: repeated PR jobs had no assigned runner, no
-steps and no logs despite repository Actions permissions allowing all actions.
-DEVQ1 therefore does not treat the hosted runner as a required gate.
+All user-controlled destructive tooling output paths are now canonicalized and
+must be strict children of repository `/build/`.
 
-Owner-run local CodeQL setup is **PASS**:
+This applies to:
 
-- official Linux x64 CodeQL bundle **2.27.1** downloaded successfully;
-- pinned SHA-256 verified before extraction;
-- CLI reports `CodeQL command-line toolchain release 2.27.1`;
-- bundled C/C++ language/query packs resolved;
-- final setup result: `ORUN local CodeQL setup: PASS`.
+- explicit host-test output;
+- coverage output;
+- fuzz output;
+- CodeQL installation;
+- CodeQL analysis output.
 
-The first local database-create attempt exposed a tooling interaction, not a
-firmware defect: CodeQL's preload tracer and the host suite's ASan runtime both
-need first position in the preload chain, so the traced process exited before
-compilation with `ASan runtime does not come first`.
+Repository root, `.`, `/build` itself and traversal outside `/build/` are
+rejected before destructive cleanup.
 
-DEVQ1 now keeps sanitizers **default-on** for every normal host run, but gives
-the CodeQL database trace a dedicated `ORUN_HOST_SANITIZERS=0` override. This
-does not weaken the canonical sanitizer gate because the full default host suite
-has already passed with ASan/UBSan; it only prevents two preload-based
-instrumentation systems from colliding during CodeQL extraction.
+`.gitignore` uses root-scoped `/build/`.
 
-Owner-run local CodeQL database creation and analysis are **PASS**:
+## 9. Validation evidence and remaining gates
 
-- traced build command used `ORUN_HOST_SANITIZERS=0` only inside CodeQL;
-- the complete traced host suite passed;
-- C/C++ database finalized successfully;
-- `cpp-security-and-quality.qls` completed all 183 queries;
-- CodeQL reported scanning **193 / 223 C/C++ files** in this invocation;
-- SARIF: **31 findings**, with **0 error / 0 warning / 0 note / 31 unlevelled**;
-- focused disposition found **0 confirmed production security/correctness
-  defects** and recorded two callback-owner lifetime constraints;
-- detailed disposition:
-  `docs/audits/DEVQ1_CODEQL_DISPOSITION.md`.
+Pre-audit evidence independently reproduced by the reviewer:
 
-The 193 / 223 extraction count is explicitly not described as exhaustive
-whole-repository/framework coverage.
+```text
+full host suite:                      PASS
+pre-fix fuzz 10k x4 runner:           completed PASS, semantic depth inadequate
+pre-fix src-only coverage:            92.5 / 98.9 / 67.1
+RAK4630 build:                        PASS
+RAM / Flash:                          28,976 B / 264,912 B
+production delta vs baseline:         0 B / 0 B
+CodeQL database/query execution:      PASS
+CodeQL extraction:                    193 / 223 C/C++ files
+CodeQL findings:                      31
+independent audit verdict:            PASS WITH FIXES
+dedicated physical DEVQ1 test needed: no
+```
 
-Remaining validation: focused independent audit of DEVQ1 tooling isolation,
-evidence boundaries and finding disposition.
+Post-audit fixes have been applied. Before merge, rerun:
 
-## 9. Follow-up, not this slice
+```text
+default full host suite
+hardened fuzz 10k x4
+coverage with src + include filters
+local CodeQL setup/analysis + corrected severity summary
+RAK4630 production build
+focused independent re-review of fixes
+```
 
-A Python/Bleak physical BLE regression harness is intentionally separate
-(DEVQ2). It will exercise real GATT connect/indicate/fragment/reconnect behavior
-and therefore has a different evidence boundary from these host/CI tools.
+No physical-device test is required for this tooling-only slice unless a later
+fix touches the production firmware graph.
+
+## 10. Follow-up
+
+DEVQ2 remains the Python/Bleak physical BLE regression harness for real-device
+connect / indication / fragmentation / disconnect / reconnect testing.
+
+A small DEVQ1.1 fuzz extension should add the BLE logical transport parser
+before or alongside DEVQ2; relay/test packet and USB/application request parsers
+can follow based on attack surface and change rate.
