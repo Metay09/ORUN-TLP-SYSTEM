@@ -375,7 +375,28 @@ Added validation coverage:
 - the existing full host/startup suite continues to be the merge gate.
 
 A local compiler smoke check of the isolated new owner/clock primitives passed
-with both `-std=gnu++11 -Wall -Wextra -Werror` and C++17
-ASan/UBSan. This is developer syntax/unit smoke only; it is **not** a substitute
-for the repository full host suite, production RAK4630 build, independent audit
-or physical evidence.
+with both `-std=gnu++11 -Wall -Wextra -Werror` and C++17 ASan/UBSan.
+
+Owner full host revalidation on branch head `4ccc4b1` is now **PASS**:
+
+- all legacy compatibility / B1A-B4 / RF / GNSS / storage regressions: PASS;
+- M6 geofence/runtime/persistence families: PASS;
+- M7 persistence/security/BLE/application regressions: PASS;
+- all production startup scenarios
+  (`mutex`, `gate`, `queue`, `lora`, `success`, `advfail`,
+  `blefail`, `noevent`, `geofence`, `geofence_persisted`,
+  `geofence_uncertain`, `history_erase_i2c`): PASS;
+- M7P7I accepted Location owner source-contract guard: PASS;
+- warnings-as-errors and the host ASan/UBSan coverage embedded in
+  `run_host_tests.sh`: PASS.
+
+One startup assertion initially ran one loop too early, before the existing
+PositionFlow sequence/storage admission allowed
+`takeFreshFixForTransmission()` to consume the fix. The production code was
+not changed for that failure; the test was corrected to assert UNKNOWN before
+the real acceptance point and accepted Location immediately after it. The full
+suite then passed.
+
+Remaining gates are the production RAK4630 build and independent final audit.
+Physical GNSS qualification remains conditional on audit finding a real
+acquisition/consumption-order behavior change.
