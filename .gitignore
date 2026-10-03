@@ -30,3 +30,6 @@ Thumbs.db
 *.pem
 *.key
 secrets/
+
+# Host tooling outputs (coverage/fuzz artifacts)
+build/
