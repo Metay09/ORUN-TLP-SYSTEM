@@ -96,11 +96,11 @@ A source-neutral accepted-location value needs only facts that are genuinely
 owned now:
 
 - latitude/longitude in the existing E7 coordinate convention;
-- altitude where available, with explicit availability rather than a magic
-  sentinel; for the first GNSS adapter, every promoted `GnssFix` already
-  passed the existing `invalidLlh` rejection, so altitude is available even
-  for an accepted 2D fix; `kPositionFlag3dFix` remains a quality/fix-type fact,
-  not an altitude-validity bit;
+- altitude where trustworthy, with explicit availability rather than a magic
+  sentinel. The GNSS producer carries NAV-PVT `height` in millimetres above
+  the WGS84 ellipsoid (HAE), not mean sea level. A 2D fix may report an assumed
+  or retained height even when `invalidLlh` is clear, so M7P7I marks altitude
+  valid only when the existing `kPositionFlag3dFix` bit is set;
 - source provenance: GNSS for this slice. Provenance is not active-source
   selection intent; M7P7I does not yet own GNSS-vs-PHONE arbitration;
 - a local monotonic observation-time anchor suitable for truthful age across
@@ -346,9 +346,9 @@ Current production changes:
 - GNSS UTC validity maps from the existing
   `kPositionFlagValidUtcTime` bit; zero epoch remains a value, not the
   validity sentinel;
-- promoted GNSS fixes set `altitude_valid=true` because the existing manager
-  rejects NAV-PVT `invalidLlh`; the separate 3D-fix bit remains quality/type,
-  not altitude validity;
+- GNSS `altitude_mm` is NAV-PVT WGS84-ellipsoid height; `altitude_valid`
+  is true only when the existing `kPositionFlag3dFix` bit is set. Accepted
+  2D fixes keep valid latitude/longitude but do not claim trustworthy altitude;
 - the existing loop-owned `TickMillis` clock now exposes one shared
   rollover-extended `nowMs64()` while `nowMs()` retains its exact modulo
   32-bit scheduling interface;
@@ -408,6 +408,20 @@ Reference M7P7H merged-build evidence was RAM 28,936 bytes and Flash 264,624
 bytes, so the M7P7I runtime delta is **+40 bytes RAM / +272 bytes Flash**. This
 adds no persistent partition and does not change the flash-layout ceiling.
 
-Remaining gate is the independent final audit. Physical GNSS qualification
-remains conditional on audit finding a real acquisition/consumption-order
-behavior change.
+Independent final audit result: **PASS WITH FIXES** with 0 BLOCKER, 0 HIGH,
+1 MEDIUM and LOW test/documentation findings.
+
+The MEDIUM finding identified an incorrect semantic assumption: an accepted 2D
+GNSS fix can carry an assumed/retained NAV-PVT height, so
+`altitude_valid=true` was too strong. The implementation now maps
+`altitude_valid` from `kPositionFlag3dFix`. The audit's cheap LOW findings
+were also addressed: WGS84-ellipsoid altitude datum is documented, recent-time
+extension preconditions and ordinary/static rollover cases are explicit,
+exactly-once/order guards are stronger, the startup suite exercises both 2D and
+3D altitude validity, accepted observation time is checked exactly, and
+architecture status text is synchronized.
+
+These audit fixes require owner host/build revalidation before merge. The audit
+found no concrete reason for a dedicated physical GNSS qualification: the
+acquisition/consumption predicate is unchanged and M7P7I has no product reader
+yet. Host/build evidence remains non-physical evidence.
