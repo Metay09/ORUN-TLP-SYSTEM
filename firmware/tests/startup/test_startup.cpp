@@ -115,6 +115,7 @@ void orunRadioQuiesceLocked() { requireDriverGate(); }
 void orunRadioTimeoutLocked() { requireDriverGate(); callbacks->TxTimeout(); }
 
 uint32_t orun_tlp::monotonic::nowMs() { return test_now; }
+uint64_t orun_tlp::monotonic::nowMs64() { return test_now; }
 void WatchdogManager::begin() { ++watchdog_starts; }
 void WatchdogManager::feed() { ++watchdog_feeds; }
 const WatchdogManager::BootInfo& WatchdogManager::bootInfo() {
@@ -263,6 +264,9 @@ int main(int argc, char** argv) {
 
   assert(board_reads == 1 && radio_manager.deviceId() == kHardwareId);
   assert(watchdog_starts == 1);
+  // M7P7I is RAM-only and never reconstructs a product Location from recovered
+  // HistoryStore contents at boot.
+  assert(!location_owner.hasLocation());
   assert(history.ready() && history.count() == 1);
   assert(history.diagnostics().recovery_corruptions == 0);
   // Fresh blank ConfigStore establishes its internal v2 token baseline.
@@ -503,6 +507,16 @@ int main(int argc, char** argv) {
     });
     loop(); // First epoch establishes the R3 boundary; second is fresh.
   }
+  // The same accepted GNSS observation becomes the runtime Location product
+  // fact before persistence completes; recovered history was never used.
+  AcceptedLocation accepted_location{};
+  assert(location_owner.latest(&accepted_location));
+  assert(accepted_location.source == LocationSource::kGnss);
+  assert(accepted_location.latitude_e7 == 410000001);
+  assert(accepted_location.longitude_e7 == 290000001);
+  assert(accepted_location.altitude_valid);
+  assert(!accepted_location.utc_valid);
+  assert(accepted_location.observed_monotonic_ms <= test_now);
   // The fresh fix first creates real demand for a sequence reservation. The
   // next loop durably completes that reservation and queues the store-first
   // append; the record itself is not committed until the following loop.
@@ -630,9 +644,17 @@ int main(int argc, char** argv) {
     assert(geofence_confirmation.confirmationActive());
     assert(gnss_manager.diagnostics().acquisition_attempts ==
            confirmation_attempts);
+    // Confirmation-only observations are accepted Location facts even though
+    // they intentionally bypass the normal PositionFlow branch.
+    assert(location_owner.latest(&accepted_location));
+    assert(accepted_location.latitude_e7 == 410011000);
+    assert(accepted_location.longitude_e7 == 290011000);
 
     queueEpoch(8000, 410000001, 290000001, 20, 12); // slot 2 INSIDE
     loop();
+    assert(location_owner.latest(&accepted_location));
+    assert(accepted_location.latitude_e7 == 410000001);
+    assert(accepted_location.longitude_e7 == 290000001);
     assert(!geofence_confirmation.confirmationActive());
     assert(geofence_confirmation.cadenceMode() ==
            GeofenceCadenceMode::kBaseDividedBy3);
