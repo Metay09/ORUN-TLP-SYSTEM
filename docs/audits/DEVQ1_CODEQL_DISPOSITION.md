@@ -12,7 +12,12 @@ Analysis:
 - query suite: `cpp-security-and-quality.qls`
 - extracted/scanned in this invocation: 193 / 223 C/C++ files reported by CodeQL
 - SARIF findings: 31 total
-- SARIF levels: 0 error, 0 warning, 0 note, 31 unlevelled (`none`)
+- severity, resolved from SARIF rule defaults: **1 error / 19 warning / 11 note**
+
+The first DEVQ1 summarizer incorrectly treated missing `result.level` as
+unlevelled. The independent audit caught this: SARIF inherits severity from the
+rule's `defaultConfiguration.level`. The summarizer now implements that rule
+and has a behavioral regression test.
 
 This document records a focused engineering disposition. It does not redefine
 CodeQL severity, suppress queries, or weaken compatibility/runtime tests.
@@ -57,8 +62,8 @@ must not be removed.
 
 Disposition: host-model false positive. These mutate the real Bluefruit
 advertising payload. They are deliberately present because `setName()` alone
-does not advertise the name; this behavior was already physically exercised in
-the BLE qualification path. Do not remove them to silence host-only analysis.
+does not advertise the name; prior BLE qualification physically observed the
+advertised device behavior. Do not remove them to silence host-only analysis.
 
 ### 1.5 Long application response functions (3)
 
@@ -91,23 +96,25 @@ protocol is added. DEVQ1 does not alter this proven callback architecture.
 
 Twenty findings point only at host tests, fixtures or stubs:
 
-- 6 unused static fixture vectors in
-  `m7p6e_candidate_contract.h`;
-- 1 missing-return report on the R2 test entry point;
-- 3 deliberate `.cpp` includes used by host composition/source-contract
-  harnesses;
+- 6 unused static fixture vectors in `m7p6e_candidate_contract.h`;
+- 1 `cpp/missing-return` finding on the R2 embedded test entry point;
+- 3 deliberate `.cpp` includes used by host composition/source-contract harnesses;
 - 1 non-constant-format report in the Arduino host stub;
 - 2 constant-comparison reports in test code;
 - 1 long/poorly-documented test function;
 - 6 stack-address-escape reports in M4 host fixtures.
 
+The R2 missing-return finding is the single **error-severity** result. Its
+function is renamed from `main` to `r2_embedded_regression_main` in the
+embedded host harness, the return-type warning is suppressed for that fixture,
+and the renamed function is not called. Therefore it does not affect production
+runtime. The earlier claim that this was ordinary C++ `main()` was incorrect
+and is withdrawn.
+
 Disposition: no production runtime impact identified. These are harness
 construction/style/model findings. They are not grounds to weaken or rewrite
 fixtures that protect compatibility, RF ownership, startup composition or
 storage behavior.
-
-The R2 source-level entry point is ordinary C++ `main()`; falling off the end
-of `main` is defined as returning zero. No production code change is needed.
 
 ## 3. Security conclusion for DEVQ1
 
@@ -123,16 +130,27 @@ No CodeQL finding justifies changing TLP v1 bytes, RF behavior, GNSS acquisition
 storage format, BLE framing, power policy, framework patches or proven state
 machines.
 
-The analysis is useful precisely because it surfaced the callback lifetime
-constraint and distinguished real platform side effects from host-stub
-modeling. The result should be carried into the final independent audit rather
-than treated as an automatic clean bill of health.
-
 ## 4. Evidence boundary
 
 CodeQL reported scanning 193 / 223 C/C++ files in this host-build invocation.
-Therefore this result is **not** described as exhaustive whole-repository or
-whole-framework coverage. The production PlatformIO build remains a separate
-compiler/build gate, already PASS with exact 0 B DEVQ1 RAM/Flash delta.
+The result is **not** exhaustive whole-repository, target-toolchain or framework
+coverage.
 
-No physical-device claim is made from CodeQL.
+Known production-relevant gaps in this host CodeQL build graph include at least:
+- `config_incarnation_source.cpp`
+- `geofence_incarnation_source.cpp`
+- `monotonic_time.cpp`
+- `rakwireless/variants/rak4630/variant.cpp`
+- framework patch implementation paths
+- target-only `NRF52_SERIES` branches not selected by the host composition
+
+`main.cpp` is observed through the startup host harness with host stubs, not
+through the exact ARM/SoftDevice production compilation environment.
+
+The CodeQL trace disables ASan/UBSan only because both CodeQL and ASan require
+preload priority. There is no sanitizer-dependent conditional production source
+under `firmware/src` or `firmware/include`; the normal host sanitizer gate
+remains separate and default-on.
+
+The production PlatformIO build remains a separate compiler/build gate. No
+physical-device claim is made from CodeQL.
