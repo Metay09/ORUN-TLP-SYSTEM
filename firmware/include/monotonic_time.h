@@ -22,8 +22,9 @@ constexpr uint32_t nextFuture(uint32_t now, uint32_t due, uint32_t interval) {
              : due;
 }
 
-// Adafruit nRF52 1.7.0 millis() converts a wrapping 1024 Hz tick count to ms.
-// Extend ticks BEFORE conversion so our ms clock wraps at exactly 2^32 ms.
+// Adafruit nRF52 1.7.0 uses a wrapping 32-bit RTOS tick count. Extend ticks
+// BEFORE conversion: update() preserves the existing modulo-2^32 millisecond
+// API while update64() exposes the same clock without the 49.7-day ms wrap.
 // Called from the cooperative loop only, at least once per tick-counter wrap.
 class TickMillis {
  public:
