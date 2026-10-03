@@ -44,8 +44,15 @@ segment = main[take:geofence]
 assert "monotonic::nowMs64()" in segment
 assert "extendRecentMonotonicMs" in segment
 assert "LocationSource::kGnss" in segment
-assert "accepted_location.altitude_valid = true" in segment
+assert "accepted_location.altitude_valid =" in segment
+assert "kPositionFlag3dFix" in segment
 assert "kPositionFlagValidUtcTime" in segment
+assert main.count("location_owner.accept(") == 1
+position_accept = main.index("positions.acceptFix(fix", geofence)
+assert publish < geofence < position_accept
+representative_start = main.index("positions.acceptPreviouslyAcceptedFix(")
+representative_end = main.index("orun_tlp::GnssFix fix{}", representative_start)
+assert "location_owner.accept(" not in main[representative_start:representative_end]
 
 for text in (request_h, ble_h):
     assert "GetLocation" not in text
