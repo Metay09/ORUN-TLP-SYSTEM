@@ -403,3 +403,4 @@ g++ -DNRF52_SERIES -Ifirmware/tests/r4/stubs -Ifirmware/include \
 "$test_dir/r4_watchdog_nrf"
 
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/tooling/test_tooling_contract.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/codeql/test_summarize_sarif.py
