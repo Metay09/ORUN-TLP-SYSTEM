@@ -206,6 +206,17 @@ Owner-run local CodeQL setup is **PASS**:
 - bundled C/C++ language/query packs resolved;
 - final setup result: `ORUN local CodeQL setup: PASS`.
 
+The first local database-create attempt exposed a tooling interaction, not a
+firmware defect: CodeQL's preload tracer and the host suite's ASan runtime both
+need first position in the preload chain, so the traced process exited before
+compilation with `ASan runtime does not come first`.
+
+DEVQ1 now keeps sanitizers **default-on** for every normal host run, but gives
+the CodeQL database trace a dedicated `ORUN_HOST_SANITIZERS=0` override. This
+does not weaken the canonical sanitizer gate because the full default host suite
+has already passed with ASan/UBSan; it only prevents two preload-based
+instrumentation systems from colliding during CodeQL extraction.
+
 Remaining validation: local CodeQL database creation + analysis/result review and
 focused independent audit.
 
