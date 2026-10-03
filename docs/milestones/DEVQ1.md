@@ -334,11 +334,22 @@ Post-fix local CodeQL analysis is **PASS**:
 This validates the post-audit H3/M1 corrections and exactly matches the
 independent reviewer's expected severity distribution.
 
-Before merge, remaining post-fix gates are:
+Post-fix RAK4630 production build is **PASS**:
 
 ```text
-RAK4630 production build
-focused independent re-review of fixes
+RAM:   28,976 / 248,832 B (11.6%)
+Flash: 264,912 / 815,104 B (32.5%)
+Build: SUCCESS
+```
+
+These values exactly match the M7P7I baseline and the pre-audit DEVQ1 build:
+**0 B RAM delta / 0 B Flash delta**. The production source/configuration graph
+remains unchanged by DEVQ1.
+
+Before merge, the only remaining gate is:
+
+```text
+focused independent re-review of the audit fixes
 ```
 
 No physical-device test is required for this tooling-only slice unless a later
