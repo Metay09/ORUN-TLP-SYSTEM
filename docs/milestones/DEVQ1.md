@@ -396,7 +396,17 @@ security-format libFuzzer smoke:       PASS (2,000 runs, ASan/UBSan)
 production src/include changes:        none
 ```
 
-Before Issue #65 can close, the owner-host full suite, canonical security fuzz
-smoke, real pinned CodeQL setup/run and RAK4630 build-delta confirmation remain
-merge evidence. A physical-device test is not required unless the production
-firmware graph changes.
+Owner-host validation has now also confirmed:
+
+```text
+real pinned local CodeQL analysis:     PASS
+RAK4630 production build:              PASS
+RAM:                                   28,976 / 248,832 B (11.6%)
+Flash:                                 264,912 / 815,104 B (32.5%)
+production RAM / Flash delta:          0 B / 0 B
+```
+
+Before Issue #65 can close, the owner-host full host-suite result, canonical
+10k fuzz-runner result, exact real CodeQL severity totals for this branch and
+focused final review remain merge evidence. A physical-device test is not
+required unless the production firmware graph changes.
