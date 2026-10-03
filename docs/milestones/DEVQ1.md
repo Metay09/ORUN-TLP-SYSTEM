@@ -1,6 +1,6 @@
 # DEVQ1 — Host quality gates: coverage, fuzzing and CodeQL
 
-Status: **PASS WITH FIXES — independent-audit fixes applied; post-fix revalidation pending.**
+Status: **PASS WITH FIXES — independent-audit fixes applied; post-fix host revalidation PASS, remaining post-fix gates pending.**
 
 Baseline:
 `main@9e8e2b8e2d333fbedadb69ed72f316a775579b27`
@@ -251,10 +251,21 @@ independent audit verdict:            PASS WITH FIXES
 dedicated physical DEVQ1 test needed: no
 ```
 
-Post-audit fixes have been applied. Before merge, rerun:
+Post-audit fixes have been applied.
+
+Post-fix default full host suite is **PASS** on the owner Debian host, including:
+
+- all existing legacy / RF / GNSS / storage / geofence / BLE / startup regressions;
+- warnings-as-errors;
+- ASan/UBSan with undefined-behavior recovery disabled;
+- DEVQ1 tooling source-contract guards;
+- DEVQ1 CodeQL SARIF severity regression checks.
+
+No hidden runtime error was reported in the supplied run.
+
+Before merge, remaining post-fix gates are:
 
 ```text
-default full host suite
 hardened fuzz 10k x4
 coverage with src + include filters
 local CodeQL setup/analysis + corrected severity summary
