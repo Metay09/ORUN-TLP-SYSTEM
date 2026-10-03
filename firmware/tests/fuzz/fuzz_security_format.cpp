@@ -92,7 +92,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   // CRC/commit after a body mutation so semantic validation is reached.
   const sf::PageHeader header(fold64(data, size, 0) | 1ULL,
                               fold64(data, size, 8));
-  for (const uint8_t version : {sf::kVersionV1, sf::kVersionV2}) {
+  const uint8_t versions[2] = {sf::kVersionV1, sf::kVersionV2};
+  for (const uint8_t version : versions) {
     uint8_t encoded[sf::kPageHeaderSize]{};
     sf::encodePageHeaderVersion(header, version, encoded);
     checkHeaderRoundTrip(encoded, version);
