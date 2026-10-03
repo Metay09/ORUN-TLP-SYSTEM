@@ -27,6 +27,7 @@ done
 
 asset="codeql-bundle-linux64.tar.gz"
 url="https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.1/$asset"
+api_asset_url="https://api.github.com/repos/github/codeql-action/releases/assets/572325752"
 expected_sha256="1d380f79896ededc654c7b21fafb3360136f1aeb678ad4df4df9af3910c6b815"
 tmp_dir="$(mktemp -d /tmp/orun-codeql.XXXXXX)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -34,7 +35,27 @@ archive="$tmp_dir/$asset"
 
 echo "== DEVQ1 CodeQL setup: download pinned official bundle v$version =="
 echo "This is a one-time host tooling download (~692 MB compressed)."
-curl --fail --location --retry 3 --output "$archive" "$url"
+download_asset() {
+  local source_url="$1"
+  shift
+  curl --fail --location \
+    --connect-timeout 30 \
+    --retry 10 \
+    --retry-all-errors \
+    --retry-delay 3 \
+    --retry-max-time 300 \
+    "$@" \
+    --output "$archive" \
+    "$source_url"
+}
+
+if ! download_asset "$url"; then
+  echo "Primary GitHub release URL failed; trying the official REST asset endpoint." >&2
+  rm -f "$archive"
+  download_asset "$api_asset_url" \
+    -H 'Accept: application/octet-stream' \
+    -H 'X-GitHub-Api-Version: 2022-11-28'
+fi
 
 printf '%s  %s\n' "$expected_sha256" "$archive" | sha256sum --check -
 
