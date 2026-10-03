@@ -453,5 +453,19 @@ Validation evidence on candidate head
   **+192 B RAM / +4,424 B flash**.
 - Audit-fix delta versus the earlier pre-fix M7P7H build
   (**28,928 B / 264,536 B**): **+8 B RAM / +88 B flash**.
-- Focused physical BLE qualification remains pending; no M7P7H hardware PASS
-  is claimed.
+- Focused physical RAK4631 + Android/nRF Connect qualification is
+  **PARTIAL PASS** on the corrected code-bearing firmware:
+  - firmware upload: PASS;
+  - boot/runtime sanity: GNSS fresh fix, POSITION TX and HistoryStore append
+    observed;
+  - BLE connect + ORUN GATT discovery: PASS;
+  - indications enable: PASS;
+  - existing GET_CONFIG regression: PASS;
+  - DEVICE 36-byte response over 3 indication fragments: PASS;
+  - TRACKING/GNSS 36-byte response over 3 indication fragments: PASS;
+  - GEOFENCE 9-byte response over 1 indication fragment: PASS;
+  - STORAGE 40-byte response over 4 indication fragments: PASS.
+- The phone later disconnected after the operator moved out of BLE range. The
+  required controlled **disconnect -> reconnect -> GET_CONFIG indication**
+  regression has not yet been performed. Therefore acceptance criterion 12 is
+  still open and full M7P7H physical PASS is **not** claimed.
