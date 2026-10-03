@@ -3,8 +3,10 @@
 #include <string.h>
 
 #include "geofence_format.h"
+#include "journal_format.h"
 
 namespace gf = orun_tlp::geofence_format;
+namespace jf = orun_tlp::journal_format;
 
 namespace {
 uint64_t fold64(const uint8_t* data, size_t size, size_t start) {
@@ -22,22 +24,38 @@ uint32_t fold32(const uint8_t* data, size_t size, size_t start) {
     value = (value << 8) | data[(start + i) % size];
   return value;
 }
+
+uint8_t deltaByte(const uint8_t* data, size_t size, size_t start) {
+  if (size == 0) return 1;
+  const uint8_t value = data[start % size];
+  return value == 0 ? 1U : value;
+}
+
+void reseal(uint8_t* bytes) {
+  jf::put32(bytes + gf::kCrcOffset,
+            jf::crc32(bytes, gf::kCrcOffset));
+  jf::put32(bytes + gf::kCommitOffset, gf::kCommit);
+}
+
+void checkRoundTrip(const uint8_t* bytes) {
+  gf::Record decoded;
+  if (!gf::decode(bytes, gf::kRecordSize, decoded)) return;
+  uint8_t encoded[gf::kRecordSize]{};
+  if (!gf::encode(decoded, encoded, sizeof(encoded))) __builtin_trap();
+  if (memcmp(encoded, bytes, sizeof(encoded)) != 0) __builtin_trap();
+}
 }  // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+  // Raw fixed-record malformed-input path. The runner seeds a full 564-byte
+  // record so this path is exercised immediately instead of relying on random
+  // length growth.
   if (size >= gf::kRecordSize) {
-    gf::Record decoded;
-    if (gf::decode(data, gf::kRecordSize, decoded)) {
-      uint8_t encoded[gf::kRecordSize]{};
-      if (!gf::encode(decoded, encoded, sizeof(encoded))) __builtin_trap();
-      if (memcmp(encoded, data, sizeof(encoded)) != 0) __builtin_trap();
-    }
-
+    checkRoundTrip(data);
     gf::PageInspection inspection;
     if (!gf::inspectPage(data, gf::kRecordSize, inspection))
       __builtin_trap();
   }
-
   if (size == 0) return 0;
 
   gf::Record candidate;
@@ -59,19 +77,34 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     gf::makeClearSnapshot(candidate.snapshot);
   }
 
-  uint8_t encoded[gf::kRecordSize]{};
-  if (!gf::encode(candidate, encoded, sizeof(encoded))) __builtin_trap();
+  uint8_t canonical[gf::kRecordSize]{};
+  if (!gf::encode(candidate, canonical, sizeof(canonical))) __builtin_trap();
+  checkRoundTrip(canonical);
 
+  // Semantic mutation spans the complete body (including bytes >255), then
+  // reseals CRC/commit so the decoder's semantic checks are reachable.
+  uint8_t semantic[gf::kRecordSize];
+  memcpy(semantic, canonical, sizeof(semantic));
   if (size > 1) {
-    const size_t index = data[0] % sizeof(encoded);
-    const uint8_t delta = data[1] == 0 ? 1U : data[1];
-    encoded[index] ^= delta;
+    const size_t index = fold32(data, size, 20) % gf::kCrcOffset;
+    semantic[index] ^= deltaByte(data, size, 24);
+    reseal(semantic);
   }
+  checkRoundTrip(semantic);
+  gf::PageInspection semantic_inspection;
+  if (!gf::inspectPage(semantic, sizeof(semantic), semantic_inspection))
+    __builtin_trap();
 
-  gf::Record decoded;
-  (void)gf::decode(encoded, sizeof(encoded), decoded);
-  gf::PageInspection inspection;
-  if (!gf::inspectPage(encoded, sizeof(encoded), inspection))
+  // Independent physical mutation spans CRC and commit too, without resealing,
+  // so corruption/torn classifiers are exercised rather than hidden.
+  uint8_t physical[gf::kRecordSize];
+  memcpy(physical, canonical, sizeof(physical));
+  if (size > 1) {
+    const size_t index = fold32(data, size, 28) % sizeof(physical);
+    physical[index] ^= deltaByte(data, size, 32);
+  }
+  gf::PageInspection physical_inspection;
+  if (!gf::inspectPage(physical, sizeof(physical), physical_inspection))
     __builtin_trap();
 
   return 0;
