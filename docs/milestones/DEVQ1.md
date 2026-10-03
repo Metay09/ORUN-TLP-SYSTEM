@@ -1,6 +1,6 @@
 # DEVQ1 — Host quality gates: coverage, fuzzing and CodeQL
 
-Status: **PASS WITH FIXES — independent-audit fixes applied; post-fix host revalidation PASS, remaining post-fix gates pending.**
+Status: **PASS WITH FIXES — independent-audit fixes applied; post-fix host + hardened fuzz revalidation PASS, remaining post-fix gates pending.**
 
 Baseline:
 `main@9e8e2b8e2d333fbedadb69ed72f316a775579b27`
@@ -263,10 +263,23 @@ Post-fix default full host suite is **PASS** on the owner Debian host, including
 
 No hidden runtime error was reported in the supplied run.
 
+Post-fix hardened fuzz smoke is also **PASS**:
+
+- `tlp_position`: 10,000 executions, PASS;
+- `config_format`: 10,000 executions, PASS;
+- `security_format`: 10,000 executions, PASS;
+- `geofence_format`: 10,000 executions, PASS;
+- no ASan/UBSan crash or fatal undefined-behavior finding was reported;
+- geofence corpus included a 564-byte full-record seed and reached a
+  564-byte corpus input during the run;
+- persistent corpus/artifact paths were retained under `build/fuzz/`.
+
+This validates the post-audit H1/H2/L3/L5 tooling changes at bounded-smoke
+depth. It is still not exhaustive parser proof.
+
 Before merge, remaining post-fix gates are:
 
 ```text
-hardened fuzz 10k x4
 coverage with src + include filters
 local CodeQL setup/analysis + corrected severity summary
 RAK4630 production build
