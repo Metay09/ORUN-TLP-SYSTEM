@@ -35,7 +35,7 @@ echo "== DEVQ1 local CodeQL: verify CLI =="
 "$codeql_bin" version
 
 echo "== DEVQ1 local CodeQL: create C/C++ database from canonical host build graph =="
-"$codeql_bin" database create "$db"   --language=c-cpp   --source-root=.   --command="./firmware/tests/run_host_tests.sh"
+"$codeql_bin" database create "$db"   --language=c-cpp   --source-root=.   --command="env ORUN_HOST_SANITIZERS=0 ./firmware/tests/run_host_tests.sh"
 
 echo "== DEVQ1 local CodeQL: security-and-quality analysis =="
 "$codeql_bin" database analyze "$db"   'codeql/cpp-queries:codeql-suites/cpp-security-and-quality.qls'   --format=sarif-latest   --sarif-category=orun-cpp   --output="$sarif"
