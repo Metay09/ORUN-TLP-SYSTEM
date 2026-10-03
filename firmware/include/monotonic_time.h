@@ -27,10 +27,14 @@ constexpr uint32_t nextFuture(uint32_t now, uint32_t due, uint32_t interval) {
 // Called from the cooperative loop only, at least once per tick-counter wrap.
 class TickMillis {
  public:
-  uint32_t update(uint32_t ticks, uint32_t ticks_per_second) {
+  uint64_t update64(uint32_t ticks, uint32_t ticks_per_second) {
     extended_ticks_ += uint32_t(ticks - previous_ticks_);
     previous_ticks_ = ticks;
-    return static_cast<uint32_t>(extended_ticks_ * 1000 / ticks_per_second);
+    return extended_ticks_ * 1000 / ticks_per_second;
+  }
+
+  uint32_t update(uint32_t ticks, uint32_t ticks_per_second) {
+    return static_cast<uint32_t>(update64(ticks, ticks_per_second));
   }
 
  private:
@@ -38,7 +42,8 @@ class TickMillis {
   uint32_t previous_ticks_ = 0;
 };
 
-uint32_t nowMs();  // Loop task only; not an ISR or cross-task clock.
+uint32_t nowMs();   // Existing modulo-2^32 loop-task clock.
+uint64_t nowMs64();  // Same loop-task clock, rollover-extended for long-lived age.
 
 static_assert(reached(5, UINT32_MAX - 5), "deadline across rollover");
 static_assert(!reached(UINT32_MAX - 5, 5), "future across rollover");
