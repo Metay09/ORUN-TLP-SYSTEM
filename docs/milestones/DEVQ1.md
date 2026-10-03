@@ -410,7 +410,22 @@ Owner-host full host-suite validation is also **PASS**, including the DEVQ1
 tooling-contract guard, SARIF severity regression and CodeQL extracted-bundle
 integrity regression.
 
-Before Issue #65 can close, the canonical 10k fuzz-runner result, exact real
-CodeQL severity totals for this branch and focused final review remain merge
-evidence. A physical-device test is not required unless the production firmware
-graph changes.
+Owner-host canonical fuzz validation is also **PASS**:
+
+```text
+tlp_position:      10,000 runs PASS
+config_format:     10,000 runs PASS
+security_format:   10,000 runs PASS
+geofence_format:   10,000 runs PASS
+bounded fuzz smoke: PASS
+```
+
+The real pinned CodeQL run remains at the reviewed **31 findings** with the
+expected severity distribution: **1 error / 19 warning / 11 note / 0 none**.
+The single error is the already-disposed R2 host-fixture missing-return finding;
+the production-source findings remain unchanged from the reviewed DEVQ1
+disposition.
+
+All Issue #65 implementation gates are now satisfied. Focused final review found
+no BLOCKER/HIGH/MEDIUM regression. A physical-device test is not required because
+the production firmware graph remains unchanged.
