@@ -1,6 +1,6 @@
 # DEVQ1 — Host quality gates: coverage, fuzzing and CodeQL
 
-Status: **IMPLEMENTATION CANDIDATE — host + bounded fuzz + coverage + production size invariance + local CodeQL setup PASS; CodeQL analysis/audit remain.**
+Status: **IMPLEMENTATION CANDIDATE — host + fuzz + coverage + zero-delta build + local CodeQL execution PASS; independent audit remains.**
 
 Baseline:
 `main@9e8e2b8e2d333fbedadb69ed72f316a775579b27`
@@ -217,8 +217,24 @@ does not weaken the canonical sanitizer gate because the full default host suite
 has already passed with ASan/UBSan; it only prevents two preload-based
 instrumentation systems from colliding during CodeQL extraction.
 
-Remaining validation: local CodeQL database creation + analysis/result review and
-focused independent audit.
+Owner-run local CodeQL database creation and analysis are **PASS**:
+
+- traced build command used `ORUN_HOST_SANITIZERS=0` only inside CodeQL;
+- the complete traced host suite passed;
+- C/C++ database finalized successfully;
+- `cpp-security-and-quality.qls` completed all 183 queries;
+- CodeQL reported scanning **193 / 223 C/C++ files** in this invocation;
+- SARIF: **31 findings**, with **0 error / 0 warning / 0 note / 31 unlevelled**;
+- focused disposition found **0 confirmed production security/correctness
+  defects** and recorded two callback-owner lifetime constraints;
+- detailed disposition:
+  `docs/audits/DEVQ1_CODEQL_DISPOSITION.md`.
+
+The 193 / 223 extraction count is explicitly not described as exhaustive
+whole-repository/framework coverage.
+
+Remaining validation: focused independent audit of DEVQ1 tooling isolation,
+evidence boundaries and finding disposition.
 
 ## 9. Follow-up, not this slice
 
