@@ -429,7 +429,23 @@ Audit-fix owner host revalidation on branch head
 - M7P7I accepted Location owner source-contract guard: PASS;
 - warnings-as-errors and host ASan/UBSan coverage in the suite: PASS.
 
-The remaining revalidation gate is the production RAK4630 rebuild. The audit
-found no concrete reason for a dedicated physical GNSS qualification: the
-acquisition/consumption predicate is unchanged and M7P7I has no product reader
-yet. Host/build evidence remains non-physical evidence.
+Post-audit production RAK4630 rebuild is **PASS**:
+
+- RAM: 28,976 / 248,832 bytes = 11.6%;
+- Flash: 264,912 / 815,104 bytes = 32.5%;
+- PlatformIO environment: `rak4630`;
+- result: SUCCESS.
+
+Reference M7P7H merged-build evidence remains RAM 28,936 bytes and Flash
+264,624 bytes, so the final M7P7I delta is **+40 bytes RAM / +288 bytes Flash**.
+
+Focused audit-fix verification confirms the accepted MEDIUM correction is
+present in production composition: `altitude_valid` follows
+`kPositionFlag3dFix`; the 2D/3D startup regression and exactly-once/order
+guards are present; no new firmware finding was identified in the fix set.
+
+The audit found no concrete reason for a dedicated physical GNSS qualification:
+the acquisition/consumption predicate is unchanged and M7P7I has no product
+reader yet. Host/build evidence remains non-physical evidence.
+
+**M7P7I is merge-ready.**
