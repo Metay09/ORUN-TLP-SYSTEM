@@ -66,6 +66,11 @@ class GeofenceConfirmationCoordinator {
   bool configured() const { return runtime_.configured(); }
   bool confirmationActive() const { return operational_.confirmationActive(); }
   GeofenceCadenceMode cadenceMode() const { return operational_.cadenceMode(); }
+  // M7P7H read-only product status. Runtime ownership stays here; callers may
+  // observe only the already-confirmed semantic state, never internal votes.
+  bool getConfirmedState(GeofenceOperationalState* state) const {
+    return operational_.getConfirmedState(state);
+  }
 
   GeofenceConfirmationUpdate observeAcceptedLocation(
       const GeoPointE7& point, uint32_t captured_at_ms, uint16_t hdop_x100,

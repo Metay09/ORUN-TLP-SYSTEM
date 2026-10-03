@@ -10,13 +10,13 @@ namespace orun_tlp {
 // .cpp have NO Bluefruit/Arduino dependency -- it is driven entirely by
 // loop/task-owned code (future M7P7G) and is fully host-testable today.
 //
-// Scope: transport framing, fragmentation/reassembly, GET_CONFIG dispatch
-// through the existing ApplicationRequestService, stop-and-wait backpressure
-// and bounded session/generation hygiene. It does NOT instantiate a
-// Bluefruit BLEService/BLECharacteristic, does not change BLE admission, and
-// exposes no operation beyond the pre-authorization read-only GET_CONFIG
-// allowlist documented in docs/milestones/M7P7F.md section 6. See that
-// document for the full contract and rationale.
+// Scope: transport framing, fragmentation/reassembly, bounded application
+// dispatch through ApplicationRequestService, stop-and-wait backpressure and
+// bounded session/generation hygiene. M7P7F originally froze GET_CONFIG only;
+// M7P7H adds DEVICE/TRACKING/GEOFENCE/STORAGE read-only message types without
+// changing the UUID/frame contract or GET_CONFIG bytes. Production Bluefruit
+// wiring remains owned by M7P7G/main composition. See M7P7F section 6 and
+// M7P7H section 7.1 for the current pre-authorization read classification.
 namespace ble_app_transport {
 
 // ---------------------------------------------------------------------------
@@ -60,7 +60,16 @@ constexpr uint8_t kValidFlagsMask = kFlagStart | kFlagEnd;
 
 enum class MessageType : uint8_t {
   kGetConfigRequest = 0x01,
+  kGetDeviceStatusRequest = 0x02,
+  kGetTrackingStatusRequest = 0x03,
+  kGetGeofenceStatusRequest = 0x04,
+  kGetStorageStatusRequest = 0x05,
+
   kGetConfigResponse = 0x81,
+  kGetDeviceStatusResponse = 0x82,
+  kGetTrackingStatusResponse = 0x83,
+  kGetGeofenceStatusResponse = 0x84,
+  kGetStorageStatusResponse = 0x85,
   kError = 0xFF,
 };
 
@@ -73,7 +82,17 @@ constexpr uint8_t kApplicationStatusOk = 0x00;
 enum class ErrorCode : uint8_t {
   kUnsupported = 0x01,
   kBusy = 0x02,
+  kAccessDenied = 0x03,
+  kUnavailable = 0x04,
 };
+
+constexpr ErrorCode applicationErrorCode(ApplicationResponseCode code) {
+  return code == ApplicationResponseCode::kAccessDenied
+             ? ErrorCode::kAccessDenied
+             : code == ApplicationResponseCode::kUnavailable
+                   ? ErrorCode::kUnavailable
+                   : ErrorCode::kUnsupported;
+}
 
 // Advances a local monotonic request-id counter, skipping zero on
 // wraparound (docs/milestones/M7P7F.md section 7). Exposed as a pure free
@@ -202,8 +221,8 @@ class BleApplicationTransport {
                      uint16_t correlation_id, uint16_t total_length,
                      uint32_t now);
   void dispatchInbound();
-  void buildGetConfigResponse(uint16_t correlation_id,
-                               const ApplicationResponse& response);
+  void buildApplicationResponse(uint16_t correlation_id,
+                                const ApplicationResponse& response);
   void buildErrorResponse(uint16_t correlation_id,
                            ble_app_transport::ErrorCode code,
                            uint8_t offending_message_type);

@@ -1,15 +1,19 @@
 # M7P7H — Read-only Device Status application surface (USB + BLE)
 
-Status: **PLANNED — ARCHITECTURE/ACCEPTANCE CONTRACT ONLY; NO RUNTIME IMPLEMENTATION IN THIS DOCUMENT.**
+Status: **VALIDATED — MERGE-READY; MILESTONE ACCEPTED.**
 
-Baseline for planning:
-`main@034d0afdbd7b4e26fd2cd44310486f20a61307d7`.
+Implementation baseline:
+`main@8f5f8b75e2b5c27d10e4dfec3130267afc300314`
+(PR #60 application-surface direction merged).
 
 Governing architecture:
 `docs/architecture/ORUN_APPLICATION_TRANSPORT_SURFACE.md`.
 
 Independent architecture review disposition:
 `docs/audits/APPLICATION_SURFACE_ARCHITECTURE_AUDIT_DISPOSITION.md`.
+
+Independent implementation audit disposition:
+`docs/audits/M7P7H_FINAL_AUDIT_DISPOSITION.md`.
 
 ## 1. Goal
 
@@ -135,7 +139,222 @@ operation-admission table.
 This slice does not implement final user authorization. It must merely avoid
 hard-coding product operation allow-lists independently in USB and BLE adapters.
 
-## 8. Acceptance criteria
+### 7.1 M7P7H pre-authorization read classification
+
+M7P7F's original pre-authorization allowlist covered only GET_CONFIG. M7P7H
+intentionally broadens that **development/local diagnostic** allowlist for the
+four new read-only status families while final ORUN application authorization is
+still deferred.
+
+The following fields are accepted for M7P7H's currently open local BLE read path:
+
+- DEVICE: firmware/application-surface revision, 32-bit modulo monotonic uptime,
+  reset/watchdog reason, legacy role/mode, GNSS/accelerometer presence/health,
+  resolved tracking/relay state and actual relay-forwarding-applied bit;
+- TRACKING/GNSS: requested/applied/effective intervals, cadence, GNSS state and
+  bounded acquisition diagnostics, ConfigStore readiness/provenance;
+- GEOFENCE: resource/token **state summaries** (never token bytes), area/vertex
+  counts, runtime configured state, confirmed INSIDE/OUTSIDE/unknown state,
+  confirmation-active and cadence state;
+- STORAGE: bounded count/capacity/error counters, store readiness/maintenance,
+  and SecurityStore state/exhaustion summary.
+
+This is a deliberate prototype/serviceability exposure, **not** a statement
+that those fields are non-sensitive in a deployed fleet. In particular,
+confirmed geofence state, reset/uptime behavior and SecurityStore state can
+reveal operational information to a nearby client. Before field/customer
+deployment or any private-person/location use, the application access table must
+be reviewed and sensitive families/fields moved behind the appropriate
+authenticated/authorized encrypted context.
+
+Still excluded pre-auth:
+
+- coordinates or accepted/last-known Location;
+- geofence geometry;
+- raw config/geofence state-token bytes;
+- credentials/keys;
+- protected writes, MESSAGE and COMMAND/RESULT.
+
+M7P7H's BLE adapter currently reports every BLE request as `kBleOpen`.
+`kBleEncrypted` exists only as the insertion seam; actual Bluefruit link
+security is not yet sampled into `ApplicationAccessContext`. That is safe for
+this all-open read-only slice, but real link-security state must be wired before
+the first access rule distinguishes open from encrypted BLE.
+
+## 8. Candidate implementation contract
+
+The current implementation candidate is on
+`feat/m7p7h-read-only-device-status`.
+
+Internal typed request kinds are additive:
+
+```text
+1 GET_CONFIG
+2 GET_DEVICE_STATUS
+3 GET_TRACKING_STATUS
+4 GET_GEOFENCE_STATUS
+5 GET_STORAGE_STATUS
+```
+
+`ApplicationRequester` remains USB/BLE only in this slice. A separate
+`ApplicationAccessContext` now carries local channel/security facts; all five
+current operations are read-only local operations and are admitted for USB
+local, BLE open and BLE encrypted contexts. This is an insertion seam, not
+final authorization.
+
+The application response is now a common header
+`(requester, request_id, kind, code)` plus one bounded kind-specific POD
+payload. `ApplicationRequestService` still depends only on ConfigStore plus
+the bounded application snapshot; concrete GNSS/radio/Arduino driver headers
+remain outside it.
+
+Candidate BLE message types are additive on the existing UUID/20-byte framing:
+
+```text
+request   response
+0x01      0x81   GET_CONFIG (unchanged)
+0x02      0x82   DEVICE
+0x03      0x83   TRACKING/GNSS
+0x04      0x84   GEOFENCE
+0x05      0x85   STORAGE
+0xFF             ERROR
+```
+
+New ERROR values are additive:
+
+```text
+0x01 UNSUPPORTED (unchanged)
+0x02 BUSY        (unchanged)
+0x03 ACCESS_DENIED
+0x04 UNAVAILABLE
+```
+
+Every M7P7H request has zero logical payload. Existing GET_CONFIG response bytes
+remain unchanged.
+
+Candidate response logical payloads:
+
+### DEVICE — 36 bytes
+
+```text
+0      status
+1      application-surface revision
+2      legacy role observation
+3      flags: bit0 AUTO, bit1 watchdog-reset,
+              bit2 actual relay-forwarding applied
+4      GNSS presence
+5      GNSS health
+6      accelerometer presence
+7      accelerometer health
+8      tracking effective state
+9      tracking reason
+10     relay-forwarding effective state
+11     relay-forwarding reason
+12..15 uptime_ms_mod32 LE32 (monotonic milliseconds modulo 2^32;
+        wraps about every 49.7 days and is not wall-clock/lifetime uptime)
+16..19 reset_reason LE32
+20..35 firmware version, fixed 16-byte NUL-padded ASCII
+```
+
+### TRACKING/GNSS — 36 bytes
+
+```text
+0      status
+1      flags: bit0 config-ready, bit1 stored semantic override,
+              bit2 GNSS detected, bit3 additional-fix active
+2      geofence cadence mode
+3      GNSS state
+4..7   requested durable base interval seconds
+8..11  applied-at-boot base interval seconds
+12..15 actual GnssManager runtime interval seconds
+16..19 acquisition attempts
+20..23 successful fresh fixes
+24..27 acquisition timeouts
+28..31 invalid fixes
+32..35 last TTFF ms
+```
+
+The actual GnssManager interval is exposed rather than re-deriving B/B3. A
+failed future cadence apply must therefore remain observable as an applied-state
+difference rather than being hidden by an expected-value calculation.
+
+DEVICE follows the same rule for relay forwarding: bytes 10..11 describe the
+resolved relay service intent/state/reason, while DEVICE byte 3 bit2 reports
+`RadioManager::relayForwardingEnabled()`, the behavior actually installed in
+the radio/network owner. A deferred/failed radio transition must therefore not
+be reported as applied merely because resolution requested ENABLED.
+
+### GEOFENCE — 9 bytes
+
+```text
+0      status
+1      durable resource state
+2      token-state summary (not token bytes)
+3      flags: bit0 runtime configured, bit1 confirmed state available,
+              bit2 confirmation active
+4      area count
+5..6   total effective vertex count LE16
+7      confirmed operational state (UNKNOWN/INSIDE/OUTSIDE)
+8      cadence mode
+```
+
+GeofenceStore exposes only O(1) area/vertex summary accessors for this query.
+The durable geometry is not copied.
+
+### STORAGE — 40 bytes
+
+```text
+0      status
+1      flags: history ready/busy, config ready/maintenance,
+              geofence ready/maintenance, security ready/exhausted
+2      SecurityStore state
+3      reserved=0
+4..7   history count
+8..11  history capacity
+12..15 overwritten
+16..19 history append failures
+20..23 history recovery corruptions
+24..27 history metadata failures
+28..31 config recovery corruptions
+32..35 geofence recovery corruptions
+36..39 security recovery corruptions
+```
+
+Routine status uses O(1) RAM state/counters only. It does not invoke
+`HistoryStore::newest()`, `backlogCount()`, or
+`GeofenceStore::currentSnapshot()`.
+
+USB command spellings are:
+
+```text
+APP CONFIG?
+APP DEVICE?
+APP TRACKING?
+APP GEOFENCE?
+APP STORAGE?
+```
+
+USB formatting is isolated in `usb_application_adapter.cpp`; existing
+engineering commands remain outside the product application surface.
+
+The independent final audit of the first implementation candidate returned
+**PASS WITH FIXES** (0 BLOCKER / 0 HIGH / 3 MEDIUM / 4 LOW). The accepted
+pre-physical corrections on the same branch include:
+
+- actual relay-forwarding-applied truth separated from resolved relay intent;
+- full logical BLE golden vectors for all four new families;
+- malformed nonzero-payload coverage for 0x02..0x05 and UNAVAILABLE error-wire
+  coverage;
+- value-level production owner->snapshot assertions in the startup harness;
+- explicit unpopulated-snapshot -> UNAVAILABLE behavior for future adapters;
+- explicit modulo-2^32 uptime semantics;
+- field-level pre-authorization classification and current BLE-open limitation;
+- stale M7P7F/current-architecture documentation cross-references.
+
+These fixes require owner revalidation before the earlier host/build PASS is
+promoted to the corrected head. Physical M7P7H qualification remains pending.
+
+## 9. Acceptance criteria
 
 M7P7H closes only when all are true:
 
@@ -155,12 +374,15 @@ M7P7H closes only when all are true:
 9. Full host suite including warnings-as-errors and sanitizers passes.
 10. Production startup scenarios pass.
 11. RAK4630 production build passes; RAM/flash delta is recorded.
-12. Physical RAK4631 + Android/nRF Connect reads each new family and repeats
-    GET_CONFIG/HVC/disconnect-reconnect regression.
+12. Physical RAK4631 + Android/nRF Connect reads each new family and exercises
+    GET_CONFIG/HVC on the M7P7H firmware. Disconnect/reconnect may be accepted
+    from the existing M7P7G physical regression only when review confirms the
+    M7P7H session/disconnect/HVC lifecycle is unchanged; the evidence provenance
+    must be stated explicitly.
 13. Milestone and architecture docs are updated to actual implemented bytes and
     evidence; no unperformed physical result is claimed.
 
-## 9. Writer prerequisites kept out of this slice
+## 10. Writer prerequisites kept out of this slice
 
 Before SET_CONFIG:
 
@@ -190,7 +412,80 @@ Before the first production geofence writer:
 
 These are writer prerequisites, not M7P7H implementation scope.
 
-## 10. Evidence boundary
+## 11. Evidence boundary
 
-This planning document itself changes no firmware/runtime/protocol behavior and
-claims no host/build/physical PASS.
+The implementation candidate changes only the local read-only application
+surface and additive BLE application message types. It does not change TLP v1,
+RF behavior, persistent flash formats, GNSS power policy or enable a writer.
+
+Validation evidence on candidate head
+`257f09b9be25d3b1bec2fbb2668303123f986293`:
+
+- Full `firmware/tests/run_host_tests.sh`: **PASS** on 2026-10-02.
+- The suite ran with the repository's warnings-as-errors and sanitizer flags,
+  and all production startup scenarios passed, including
+  `history_erase_i2c`.
+- M7P7H source-contract guards passed.
+- Production `pio run -e rak4630`: **SUCCESS** on 2026-10-02 at
+  branch head `b8005b75301dc502f6ce9ab0383467176f9049cc`; the only commit
+  after the host-validated runtime head was this milestone's evidence-only
+  documentation update.
+- Linked production size: **28,928 B RAM / 264,536 B flash**
+  (**11.6% / 32.5%**).
+- Current production baseline from PR #58 / `main@034d0af`:
+  **28,744 B RAM / 260,200 B flash**.
+- M7P7H delta versus that immediate production baseline:
+  **+184 B RAM / +4,336 B flash**.
+- `check_exclusive_owner` and `check_application_ceiling` completed without
+  aborting the production build.
+- The visible SX126x-Arduino warnings are emitted by the pinned third-party
+  library; the production build still completed successfully.
+- Independent final audit: **PASS WITH FIXES** (0 BLOCKER / 0 HIGH /
+  3 MEDIUM / 4 LOW). Accepted fixes are applied on the same branch.
+- Corrected code-bearing head
+  `20fcc417a242558e24c2ab73ee557157737f18cc`:
+  - full `firmware/tests/run_host_tests.sh`: **PASS**;
+  - warnings-as-errors / ASan / UBSan coverage: **PASS**;
+  - all production startup scenarios: **PASS**;
+  - M7P7H full logical BLE golden/source-contract coverage: **PASS**;
+  - production `pio run -e rak4630`: **SUCCESS**;
+  - corrected linked size: **28,936 B RAM / 264,624 B flash**
+    (**11.6% / 32.5%**).
+- Delta versus immediate PR #58 production baseline
+  (**28,744 B RAM / 260,200 B flash**):
+  **+192 B RAM / +4,424 B flash**.
+- Audit-fix delta versus the earlier pre-fix M7P7H build
+  (**28,928 B / 264,536 B**): **+8 B RAM / +88 B flash**.
+- Focused physical RAK4631 + Android nRF Connect qualification on
+  the corrected code-bearing firmware:
+  - firmware upload: **PASS**;
+  - boot/runtime sanity: GNSS fresh fix, POSITION TX and HistoryStore append
+    observed;
+  - BLE connect + ORUN GATT discovery: **PASS**;
+  - indications enable: **PASS**;
+  - existing GET_CONFIG regression: **PASS**;
+  - DEVICE 36-byte response over 3 indication fragments: **PASS**;
+  - TRACKING/GNSS 36-byte response over 3 indication fragments: **PASS**;
+  - GEOFENCE 9-byte response over 1 indication fragment: **PASS**;
+  - STORAGE 40-byte response over 4 indication fragments: **PASS**.
+- Multi-fragment DEVICE/TRACKING/STORAGE responses physically exercised the
+  real non-blocking indication -> HVC -> next-fragment stop-and-wait path on
+  the M7P7H firmware.
+- The phone later disconnected after the operator moved out of BLE range. A
+  fresh controlled reconnect was **not** performed on the M7P7H firmware.
+  This is not reported as a physical reconnect PASS.
+- Owner closure review compared the M7P7H production code with its M7P7G-based
+  baseline and confirmed that `onBleEvent()`, `endBleApplicationSession()` /
+  `beginBleApplicationSession()`, the disconnect-recovery function and GATT
+  setup are unchanged. M7P7H adds snapshot refresh/application-family handling
+  on ingress; it does not change the session-generation/disconnect lifecycle.
+- M7P7G already has focused physical evidence for explicit disconnect ->
+  re-advertise -> reconnect -> fresh GET_CONFIG on the same production session
+  machinery. Because that machinery is unchanged and M7P7H physically exercises
+  HVC/fragment progression on its new responses, the owner accepts the prior
+  reconnect evidence as an inherited regression for M7P7H rather than requiring
+  a redundant current-head rerun.
+- **Evidence boundary:** the reconnect itself was not freshly observed on the
+  M7P7H head. Milestone acceptance is therefore based on current-head physical
+  coverage for the changed surface plus inherited physical evidence for the
+  unchanged reconnect path. No unperformed physical observation is claimed.

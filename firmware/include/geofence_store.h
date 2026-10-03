@@ -54,6 +54,19 @@ class GeofenceStore {
   bool busy() const { return job_ != Job::kNone; }
 
   GeofenceResourceState resourceState() const { return resource_state_; }
+  // M7P7H bounded status accessors. These expose only summary metadata from
+  // the already-owned durable snapshot and deliberately avoid copying the
+  // ~524-byte geometry into the loop task merely to answer a status query.
+  uint8_t areaCount() const {
+    return resource_state_ == GeofenceResourceState::kConfigured
+               ? snapshot_.area_count
+               : 0;
+  }
+  uint16_t totalVertexCount() const {
+    return resource_state_ == GeofenceResourceState::kConfigured
+               ? snapshot_.total_vertex_count
+               : 0;
+  }
   bool currentSnapshot(geofence_format::Snapshot& snapshot) const {
     if (resource_state_ == GeofenceResourceState::kUnavailable) return false;
     snapshot = snapshot_;

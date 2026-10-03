@@ -222,86 +222,205 @@ void BleApplicationTransport::dispatchInbound() {
   const uint16_t correlation_id = inbound_.correlation_id;
   const uint8_t message_type = inbound_.message_type;
   const uint16_t total_length = inbound_.total_length;
-  // Snapshot what is needed, then clear reassembly before dispatch so any
-  // early return below never leaves partial inbound state lingering.
   clearInbound();
 
   if (outbound_.pending) {
-    // Stop-and-wait backpressure (docs/milestones/M7P7F.md section 9): a new
-    // request is not accepted while a prior response awaits indication
-    // confirmation. There is only one outbound logical result buffer, so
-    // this is silently rejected locally -- no second reply is generated.
     return;
   }
 
-  if (message_type != static_cast<uint8_t>(MessageType::kGetConfigRequest)) {
-    buildErrorResponse(correlation_id, ble_app_transport::ErrorCode::kUnsupported,
-                        message_type);
-    return;
+  ApplicationRequestKind kind = ApplicationRequestKind::kGetConfig;
+  switch (static_cast<MessageType>(message_type)) {
+    case MessageType::kGetConfigRequest:
+      kind = ApplicationRequestKind::kGetConfig;
+      break;
+    case MessageType::kGetDeviceStatusRequest:
+      kind = ApplicationRequestKind::kGetDeviceStatus;
+      break;
+    case MessageType::kGetTrackingStatusRequest:
+      kind = ApplicationRequestKind::kGetTrackingStatus;
+      break;
+    case MessageType::kGetGeofenceStatusRequest:
+      kind = ApplicationRequestKind::kGetGeofenceStatus;
+      break;
+    case MessageType::kGetStorageStatusRequest:
+      kind = ApplicationRequestKind::kGetStorageStatus;
+      break;
+    default:
+      buildErrorResponse(correlation_id,
+                         ble_app_transport::ErrorCode::kUnsupported,
+                         message_type);
+      return;
   }
-  if (total_length != 0) {
-    // GET_CONFIG's frozen wire contract requires a zero-length logical
-    // payload. A nonzero length is malformed for this message type; fail
-    // closed with no reply and no application/storage side effect.
-    return;
-  }
+
+  // Every M7P7H read request is a zero-payload query. Non-zero payloads fail
+  // closed without dispatch or reply, preserving M7P7F malformed-input
+  // behavior.
+  if (total_length != 0) return;
 
   const uint32_t local_request_id = nextLocalRequestId();
   const ApplicationRequest request(ApplicationRequester::kBle,
-                                    local_request_id,
-                                    ApplicationRequestKind::kGetConfig);
+                                   local_request_id, kind);
   const auto result = service_.submit(request);
   if (result == ApplicationSubmitResult::kBusy) {
     buildErrorResponse(correlation_id, ble_app_transport::ErrorCode::kBusy,
-                        message_type);
+                       message_type);
     return;
   }
   if (result != ApplicationSubmitResult::kAccepted) {
-    // kRejected only occurs for an unsupported requester value; this adapter
-    // always submits kBle locally, so this is a defensive fail-closed path
-    // for an internal invariant violation, not peer-controlled input.
     return;
   }
 
-  // Take the response into this adapter's own bounded buffer immediately
-  // (submit() is synchronous), releasing the global ApplicationRequestService
-  // slot right away so a non-reading BLE client can never wedge it, and so
-  // USB (or any other requester) remains free to use the shared slot while
-  // this response awaits indication (docs/milestones/M7P7F.md section 9).
   ApplicationResponse response;
   if (!service_.takeResponse(ApplicationRequester::kBle, response) ||
-      response.request_id != local_request_id) {
-    return;  // Defensive; unreachable given synchronous submit()/take above.
+      response.request_id != local_request_id || response.kind != kind) {
+    return;
   }
 
   if (response.code != ApplicationResponseCode::kOk) {
-    buildErrorResponse(correlation_id, ble_app_transport::ErrorCode::kUnsupported,
-                        message_type);
+    buildErrorResponse(
+        correlation_id,
+        ble_app_transport::applicationErrorCode(response.code),
+        message_type);
     return;
   }
-  buildGetConfigResponse(correlation_id, response);
+
+  buildApplicationResponse(correlation_id, response);
 }
 
-void BleApplicationTransport::buildGetConfigResponse(
+void BleApplicationTransport::buildApplicationResponse(
     uint16_t correlation_id, const ApplicationResponse& response) {
   outbound_ = OutboundResponse();
   outbound_.pending = true;
   outbound_.correlation_id = correlation_id;
-  outbound_.message_type =
-      static_cast<uint8_t>(MessageType::kGetConfigResponse);
-  outbound_.payload[0] = ble_app_transport::kApplicationStatusOk;
-  uint8_t flags = 0;
-  if (response.config_backend_ready) {
-    flags |= ble_app_transport::kConfigFlagBackendReady;
-  }
-  if (response.config_has_committed_record) {
-    flags |= ble_app_transport::kConfigFlagHasCommittedRecord;
-  }
-  outbound_.payload[1] = flags;
-  writeLE32(outbound_.payload + 2, response.config.tracking_interval_seconds);
-  writeLE32(outbound_.payload + 6, response.config.battery_capacity_mah);
-  outbound_.total_length = 10;
   outbound_.next_fragment_index = 0;
+
+  switch (response.kind) {
+    case ApplicationRequestKind::kGetConfig: {
+      outbound_.message_type =
+          static_cast<uint8_t>(MessageType::kGetConfigResponse);
+      outbound_.payload[0] = ble_app_transport::kApplicationStatusOk;
+      uint8_t flags = 0;
+      if (response.payload.config.backend_ready != 0) {
+        flags |= ble_app_transport::kConfigFlagBackendReady;
+      }
+      if (response.payload.config.has_committed_record != 0) {
+        flags |= ble_app_transport::kConfigFlagHasCommittedRecord;
+      }
+      outbound_.payload[1] = flags;
+      writeLE32(outbound_.payload + 2,
+                response.payload.config.tracking_interval_seconds);
+      writeLE32(outbound_.payload + 6,
+                response.payload.config.battery_capacity_mah);
+      outbound_.total_length = 10;
+      return;
+    }
+
+    case ApplicationRequestKind::kGetDeviceStatus: {
+      const ApplicationDeviceSnapshot& s = response.payload.device.snapshot;
+      outbound_.message_type =
+          static_cast<uint8_t>(MessageType::kGetDeviceStatusResponse);
+      outbound_.payload[0] = ble_app_transport::kApplicationStatusOk;
+      outbound_.payload[1] = s.surface_revision;
+      outbound_.payload[2] = static_cast<uint8_t>(s.role);
+      outbound_.payload[3] =
+          static_cast<uint8_t>((s.role_automatic ? 0x01U : 0U) |
+                               (s.watchdog_reset ? 0x02U : 0U) |
+                               (s.relay_forwarding_applied ? 0x04U : 0U));
+      outbound_.payload[4] = static_cast<uint8_t>(s.gnss_presence);
+      outbound_.payload[5] = static_cast<uint8_t>(s.gnss_health);
+      outbound_.payload[6] =
+          static_cast<uint8_t>(s.accelerometer_presence);
+      outbound_.payload[7] = static_cast<uint8_t>(s.accelerometer_health);
+      outbound_.payload[8] = static_cast<uint8_t>(s.tracking_state);
+      outbound_.payload[9] = static_cast<uint8_t>(s.tracking_reason);
+      outbound_.payload[10] = static_cast<uint8_t>(s.relay_state);
+      outbound_.payload[11] = static_cast<uint8_t>(s.relay_reason);
+      writeLE32(outbound_.payload + 12, s.uptime_ms_mod32);
+      writeLE32(outbound_.payload + 16, s.reset_reason);
+      memcpy(outbound_.payload + 20, s.firmware_version,
+             kApplicationFirmwareVersionSize);
+      outbound_.total_length = 36;
+      return;
+    }
+
+    case ApplicationRequestKind::kGetTrackingStatus: {
+      const ApplicationTrackingSnapshot& s =
+          response.payload.tracking.snapshot;
+      outbound_.message_type =
+          static_cast<uint8_t>(MessageType::kGetTrackingStatusResponse);
+      outbound_.payload[0] = ble_app_transport::kApplicationStatusOk;
+      outbound_.payload[1] = static_cast<uint8_t>(
+          (s.config_backend_ready ? 0x01U : 0U) |
+          (s.config_has_committed_record ? 0x02U : 0U) |
+          (s.gnss_detected ? 0x04U : 0U) |
+          (s.additional_fix_active ? 0x08U : 0U));
+      outbound_.payload[2] = static_cast<uint8_t>(s.cadence_mode);
+      outbound_.payload[3] = static_cast<uint8_t>(s.gnss_state);
+      writeLE32(outbound_.payload + 4, s.requested_interval_seconds);
+      writeLE32(outbound_.payload + 8, s.applied_base_interval_seconds);
+      writeLE32(outbound_.payload + 12, s.effective_interval_seconds);
+      writeLE32(outbound_.payload + 16, s.acquisition_attempts);
+      writeLE32(outbound_.payload + 20, s.successful_fresh_fixes);
+      writeLE32(outbound_.payload + 24, s.acquisition_timeouts);
+      writeLE32(outbound_.payload + 28, s.invalid_fixes);
+      writeLE32(outbound_.payload + 32, s.last_ttff_ms);
+      outbound_.total_length = 36;
+      return;
+    }
+
+    case ApplicationRequestKind::kGetGeofenceStatus: {
+      const ApplicationGeofenceSnapshot& s =
+          response.payload.geofence.snapshot;
+      outbound_.message_type =
+          static_cast<uint8_t>(MessageType::kGetGeofenceStatusResponse);
+      outbound_.payload[0] = ble_app_transport::kApplicationStatusOk;
+      outbound_.payload[1] = static_cast<uint8_t>(s.resource_state);
+      outbound_.payload[2] = static_cast<uint8_t>(s.token_state);
+      outbound_.payload[3] = static_cast<uint8_t>(
+          (s.runtime_configured ? 0x01U : 0U) |
+          (s.has_confirmed_state ? 0x02U : 0U) |
+          (s.confirmation_active ? 0x04U : 0U));
+      outbound_.payload[4] = s.area_count;
+      writeLE16(outbound_.payload + 5, s.total_vertex_count);
+      outbound_.payload[7] = static_cast<uint8_t>(s.confirmed_state);
+      outbound_.payload[8] = static_cast<uint8_t>(s.cadence_mode);
+      outbound_.total_length = 9;
+      return;
+    }
+
+    case ApplicationRequestKind::kGetStorageStatus: {
+      const ApplicationStorageSnapshot& s =
+          response.payload.storage.snapshot;
+      outbound_.message_type =
+          static_cast<uint8_t>(MessageType::kGetStorageStatusResponse);
+      outbound_.payload[0] = ble_app_transport::kApplicationStatusOk;
+      outbound_.payload[1] = static_cast<uint8_t>(
+          (s.history_ready ? 0x01U : 0U) |
+          (s.history_busy ? 0x02U : 0U) |
+          (s.config_ready ? 0x04U : 0U) |
+          (s.config_maintenance ? 0x08U : 0U) |
+          (s.geofence_ready ? 0x10U : 0U) |
+          (s.geofence_maintenance ? 0x20U : 0U) |
+          (s.security_ready ? 0x40U : 0U) |
+          (s.security_exhausted ? 0x80U : 0U));
+      outbound_.payload[2] = static_cast<uint8_t>(s.security_state);
+      outbound_.payload[3] = 0;
+      writeLE32(outbound_.payload + 4, s.history_count);
+      writeLE32(outbound_.payload + 8, s.history_capacity);
+      writeLE32(outbound_.payload + 12, s.history_overwritten);
+      writeLE32(outbound_.payload + 16, s.history_append_failures);
+      writeLE32(outbound_.payload + 20, s.history_recovery_corruptions);
+      writeLE32(outbound_.payload + 24, s.history_metadata_failures);
+      writeLE32(outbound_.payload + 28, s.config_recovery_corruptions);
+      writeLE32(outbound_.payload + 32, s.geofence_recovery_corruptions);
+      writeLE32(outbound_.payload + 36, s.security_recovery_corruptions);
+      outbound_.total_length = 40;
+      return;
+    }
+  }
+
+  // Defensive only: every supported response kind is handled above.
+  outbound_ = OutboundResponse();
 }
 
 void BleApplicationTransport::buildErrorResponse(

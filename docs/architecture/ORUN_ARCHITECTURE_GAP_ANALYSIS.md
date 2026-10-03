@@ -234,11 +234,11 @@ future capability described in the target.
 
 | Field | Assessment |
 | --- | --- |
-| Current state | Bounded USB parsing and application of role commands live in main.cpp; no privileged radio/BLE path. |
-| Evidence | `firmware/src/main.cpp:pollRoleCommands/handleRoleCommand`, `firmware/src/node_role.cpp:parseRoleCommand` |
-| Risk | BLE/radio handlers could duplicate validation, privilege and persistence rules. |
+| Current state | M7P7D-G establish a bounded transport-neutral `ApplicationRequestService`; USB and BLE converge on GET_CONFIG. M7P7H PR #61 candidate adds the same typed DEVICE/TRACKING/GEOFENCE/STORAGE reads plus a separate access-context seam. Legacy ROLE mutation still lives in main/USB and no protected remote mutation exists. |
+| Evidence | `firmware/include/application_request.h`, `firmware/src/{application_request,usb_application_adapter,ble_application_transport}.cpp`, `docs/milestones/M7P7H.md` |
+| Risk | Future protected BLE/LoRa writers could still duplicate authorization, idempotency or persistence rules if they bypass the common application/domain mutation owners. |
 | Target state | Framing adapters deliver typed requests with issuer/auth context to one validator/handler and result path. |
-| Smallest change | Route existing USB ROLE semantics through a small pure handler, retaining bounds and quiescent radio application. |
+| Smallest change | Keep read operations on the existing seam; before the first writer, add the reviewed domain-owned mutation lifecycle/result/CAS path rather than promoting legacy USB ROLE mutation. |
 | Dependencies | G08; G18 before remote privileged ingress. |
 | Compatibility impact | Existing USB syntax/results retained; no new remote command functionality. |
 | Wire impact | None. |

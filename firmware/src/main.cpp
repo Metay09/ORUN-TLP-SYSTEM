@@ -5,6 +5,7 @@
 #include "accelerometer_manager.h"
 #include "activity_capture.h"
 #include "application_request.h"
+#include "application_status_runtime.h"
 #include "ble_admission_policy.h"
 #include "ble_application_handoff.h"
 #include "ble_application_transport.h"
@@ -35,6 +36,7 @@
 #include "runtime_config.h"
 #include "security_store.h"
 #include "sensor_power_manager.h"
+#include "usb_application_adapter.h"
 #include "watchdog_manager.h"
 
 namespace {
@@ -61,18 +63,25 @@ orun_tlp::GeofenceStore geofence_store(storage_flash_gate.geofencePort(),
 // margins around GeofenceStore::begin(). Keep the record-sized M6D3C boot copy
 // out of setup()'s stack frame; this scratch is used only during boot activation.
 orun_tlp::geofence_format::Snapshot geofence_boot_snapshot;
+// M7P7H: one bounded transport-neutral read snapshot, populated only by the
+// loop-owned composition root from existing domain owners. It owns no domain
+// truth and contains no driver references.
+orun_tlp::ApplicationStatusSnapshot application_status_snapshot{};
 // M7P7D/M7P7E: one typed, transport-neutral application request owner.
-// USB and BLE now share this same owner; requester provenance prevents either
-// adapter from consuming the other's response. M7P7G exposes only M7P7F's
-// pre-authorization read-only GET_CONFIG contract -- protected writes and
-// provisioning remain later work.
-orun_tlp::ApplicationRequestService application_requests(config_store);
+// M7P7H expands the same owner with bounded read-only status families; USB and
+// BLE remain adapters, while future LoRa must bind to this same target-side
+// application boundary rather than duplicate domain logic.
+orun_tlp::ApplicationRequestService application_requests(
+    config_store, &application_status_snapshot);
 orun_tlp::BleApplicationTransport ble_application_transport(application_requests);
 // Cross-task state is kept in one fixed-memory mailbox owner. Production wraps
 // every callback/loop access in taskENTER/EXIT_CRITICAL; the transport itself
 // remains loop-owned and is never invoked by a BLE callback.
 orun_tlp::BleApplicationHandoff ble_application_handoff;
 uint32_t next_usb_application_request_id = 1;
+// M7P7H loop-owned snapshot assembly; declared here so the BLE runtime can
+// refresh immediately after atomically taking an ingress frame.
+void refreshApplicationStatusSnapshot(uint32_t now_ms);
 // M7P6B: recovery-only composition. SecurityStore never auto-provisions a
 // credential in production firmware -- begin() only recovers whatever
 // already exists (or reports kUnprovisioned on blank flash). A recovered
@@ -524,6 +533,10 @@ void pollBleApplicationRuntime(bool connected, uint16_t connection_handle,
   have_ingress = ble_application_handoff.takeIngress(ingress);
   taskEXIT_CRITICAL();
   if (have_ingress) {
+    // Snapshot only on actual application ingress, after atomically taking the
+    // callback-produced frame. This avoids idle-loop work and closes the race
+    // where a frame could arrive after a pre-poll "pending" sample.
+    refreshApplicationStatusSnapshot(now);
     ble_application_transport.onFrameReceived(
         ingress.session_generation, ingress.frame, ingress.frame_len, now);
     setBleApplicationIngressAllowed(
@@ -640,22 +653,17 @@ bool isActivityCommand(const char* text, uint8_t length) {
   return true;
 }
 
-void startUsbApplicationConfigQuery() {
+void startUsbApplicationQuery(orun_tlp::ApplicationRequestKind kind) {
+  refreshApplicationStatusSnapshot(orun_tlp::monotonic::nowMs());
   const orun_tlp::ApplicationRequest request(
       orun_tlp::ApplicationRequester::kUsb,
-      next_usb_application_request_id,
-      orun_tlp::ApplicationRequestKind::kGetConfig);
+      next_usb_application_request_id, kind);
   const auto result = application_requests.submit(request);
   if (result == orun_tlp::ApplicationSubmitResult::kBusy) {
-    // Rejected requests do not receive a correlation id. Reusing the same
-    // numeric id later for an accepted request would otherwise make logs
-    // ambiguous ("BUSY id=N" followed by "RESULT id=N").
     Serial.println(F("APP BUSY"));
     return;
   }
   if (result == orun_tlp::ApplicationSubmitResult::kRejected) {
-    // The production USB adapter always supplies kUsb locally, so this means
-    // an internal invariant was violated rather than peer input being bad.
     Serial.println(F("APP REJECTED"));
     return;
   }
@@ -668,22 +676,7 @@ void drainApplicationResponse() {
   if (!application_requests.takeResponse(
           orun_tlp::ApplicationRequester::kUsb, response))
     return;
-
-  if (response.code != orun_tlp::ApplicationResponseCode::kOk) {
-    Serial.printf("APP RESULT id=%lu code=UNSUPPORTED\n",
-                  static_cast<unsigned long>(response.request_id));
-    return;
-  }
-
-  const char* config_source =
-      response.config_has_committed_record ? "stored" : "default";
-  Serial.printf(
-      "APP RESULT id=%lu code=OK config_backend_ready=%s source=%s "
-      "tracking_interval_seconds=%lu battery_capacity_mah=%lu\n",
-      static_cast<unsigned long>(response.request_id),
-      response.config_backend_ready ? "yes" : "no", config_source,
-      static_cast<unsigned long>(response.config.tracking_interval_seconds),
-      static_cast<unsigned long>(response.config.battery_capacity_mah));
+  orun_tlp::printUsbApplicationResponse(response);
 }
 
 void printActivityDiagnostic() {
@@ -1254,9 +1247,11 @@ void handleRoleCommand() {
     printBleDiagnostic();
     return;
   }
-  if (isActivityCommand("APP CONFIG?", 11)) {
+  orun_tlp::ApplicationRequestKind application_query_kind;
+  if (orun_tlp::parseUsbApplicationQuery(
+          role_command, role_command_length, &application_query_kind)) {
     role_command_length = 0;
-    startUsbApplicationConfigQuery();
+    startUsbApplicationQuery(application_query_kind);
     return;
   }
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
@@ -1395,6 +1390,31 @@ orun_tlp::EffectiveConfig resolveRuntimeConfig() {
   const auto requested = orun_tlp::requestedConfigFromLegacyBehavior(
       orun_tlp::legacyRoleBehavior(role_controller.role()));
   return orun_tlp::resolveRequestedConfig(requested, currentCapabilitySnapshot());
+}
+
+
+void refreshApplicationStatusSnapshot(uint32_t now_ms) {
+  const orun_tlp::CapabilitySnapshot capabilities = currentCapabilitySnapshot();
+  const orun_tlp::RequestedConfig requested =
+      orun_tlp::requestedConfigFromLegacyBehavior(
+          orun_tlp::legacyRoleBehavior(role_controller.role()));
+  const orun_tlp::EffectiveConfig effective =
+      orun_tlp::resolveRequestedConfig(requested, capabilities);
+  orun_tlp::buildApplicationStatusSnapshot(
+      now_ms,
+      role_controller.role(),
+      role_controller.automatic(),
+      capabilities,
+      effective,
+      radio_manager.relayForwardingEnabled(),
+      active_tracking_base_interval_seconds,
+      gnss_manager,
+      config_store,
+      geofence_store,
+      geofence_confirmation,
+      history,
+      security_store,
+      application_status_snapshot);
 }
 
 void handleAccelerometerEvent(orun_tlp::AccelerometerManager::Event event) {

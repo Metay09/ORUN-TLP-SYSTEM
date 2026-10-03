@@ -297,6 +297,8 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/flash_mutation_gate.cpp \
   firmware/src/config_store.cpp firmware/src/config_format.cpp \
   firmware/src/application_request.cpp \
+  firmware/src/application_status_runtime.cpp \
+  firmware/src/usb_application_adapter.cpp \
   firmware/src/ble_application_transport.cpp \
   firmware/src/ble_application_handoff.cpp \
   firmware/src/security_store.cpp firmware/src/security_format.cpp \
@@ -321,12 +323,27 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7d_app_request.cpp \
   firmware/src/config_format.cpp firmware/src/journal_format.cpp \
   firmware/src/tlp_position_packet.cpp -o "$test_dir/m7p7d_app_request"
 "$test_dir/m7p7d_app_request"
+g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7h_app_status.cpp \
+  firmware/src/application_request.cpp firmware/src/config_store.cpp \
+  firmware/src/config_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp -o "$test_dir/m7p7h_app_status"
+"$test_dir/m7p7h_app_status"
+g++ "${flags[@]}" firmware/tests/m7/test_m7p7h_usb_adapter.cpp \
+  firmware/src/usb_application_adapter.cpp -o "$test_dir/m7p7h_usb_adapter"
+"$test_dir/m7p7h_usb_adapter"
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7f_ble_application_transport.cpp \
   firmware/src/ble_application_transport.cpp firmware/src/application_request.cpp \
   firmware/src/config_store.cpp firmware/src/config_format.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m7p7f_ble_application_transport"
 "$test_dir/m7p7f_ble_application_transport"
+g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7h_ble_status_transport.cpp \
+  firmware/src/ble_application_transport.cpp firmware/src/application_request.cpp \
+  firmware/src/config_store.cpp firmware/src/config_format.cpp \
+  firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/m7p7h_ble_status_transport"
+"$test_dir/m7p7h_ble_status_transport"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p7h_source_contract.py
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7g_ble_application_handoff.cpp \
   firmware/src/ble_application_handoff.cpp -o "$test_dir/m7p7g_ble_application_handoff"
 "$test_dir/m7p7g_ble_application_handoff"
