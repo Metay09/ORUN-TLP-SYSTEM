@@ -14,12 +14,18 @@ struct AcceptedLocation {
   uint32_t utc_epoch_seconds = 0;
   int32_t latitude_e7 = 0;
   int32_t longitude_e7 = 0;
+  // GNSS producer uses NAV-PVT height: signed millimetres above the WGS84
+  // ellipsoid (HAE), not mean sea level.
   int32_t altitude_mm = 0;
   LocationSource source = LocationSource::kUnknown;
   bool altitude_valid = false;
   bool utc_valid = false;
 };
 
+// Preconditions: captured_at_ms_mod32 comes from this same monotonic clock,
+ // is not from the future, and is less than 2^32 ms old. M7P7I calls this only
+ // after the existing <=5 s accepted-fix handoff, so the modulo delta is
+ // unambiguous even across UINT32_MAX -> 0.
 constexpr uint64_t extendRecentMonotonicMs(uint64_t now_ms,
                                            uint32_t captured_at_ms_mod32) {
   return now_ms - static_cast<uint64_t>(
