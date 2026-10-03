@@ -507,8 +507,15 @@ int main(int argc, char** argv) {
     });
     loop(); // First epoch establishes the R3 boundary; second is fresh.
   }
-  // The same accepted GNSS observation becomes the runtime Location product
-  // fact before persistence completes; recovered history was never used.
+  // The fresh fix first creates real demand for a sequence reservation.
+  // It is not consumed yet, so Location must still be UNKNOWN at this exact
+  // pre-admission point. The next loop completes the reservation and reaches
+  // the existing successful takeFreshFixForTransmission() acceptance point.
+  assert(!location_owner.hasLocation());
+  loop();
+  // M7P7I publishes from that exact accepted observation before the record
+  // itself is committed on the following loop. Recovered history was never
+  // used to manufacture a Location.
   AcceptedLocation accepted_location{};
   assert(location_owner.latest(&accepted_location));
   assert(accepted_location.source == LocationSource::kGnss);
@@ -517,10 +524,7 @@ int main(int argc, char** argv) {
   assert(accepted_location.altitude_valid);
   assert(!accepted_location.utc_valid);
   assert(accepted_location.observed_monotonic_ms <= test_now);
-  // The fresh fix first creates real demand for a sequence reservation. The
-  // next loop durably completes that reservation and queues the store-first
-  // append; the record itself is not committed until the following loop.
-  loop();
+  // The record itself is not committed until the following loop.
   assert(history.count() == 1 && erases == 0 &&
          programs == expected_boot_programs + 2U);
   assert(history.busy());
