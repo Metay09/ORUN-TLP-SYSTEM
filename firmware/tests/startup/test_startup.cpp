@@ -494,11 +494,15 @@ int main(int argc, char** argv) {
   assert(memcmp(recovered.packet, original.packet, sizeof(original.packet)) == 0);
 
   // Feed a fresh matched PVT/DOP through production GNSS -> store-first flow.
+  // Reuse the existing noevent startup scenario as the 2D Location-validity
+  // regression; all other scenarios exercise the ordinary 3D path.
   using Fake = SFE_UBLOX_GNSS;
+  const uint8_t initial_fix_type = no_event_control ? 2U : 3U;
   for (uint32_t tow : {1000U, 2000U}) {
-    Fake::pending.push_back([tow] {
+    Fake::pending.push_back([tow, initial_fix_type] {
       UBX_NAV_PVT_data_t pvt{};
-      pvt.iTOW = tow; pvt.flags.bits.gnssFixOK = true; pvt.fixType = 3;
+      pvt.iTOW = tow; pvt.flags.bits.gnssFixOK = true;
+      pvt.fixType = initial_fix_type;
       pvt.lat = 410000001; pvt.lon = 290000001; pvt.numSV = 8;
       Fake::current_pvt = pvt; Fake::itow_fresh = true;
       Fake::pvt(&pvt);
@@ -521,9 +525,9 @@ int main(int argc, char** argv) {
   assert(accepted_location.source == LocationSource::kGnss);
   assert(accepted_location.latitude_e7 == 410000001);
   assert(accepted_location.longitude_e7 == 290000001);
-  assert(accepted_location.altitude_valid);
+  assert(accepted_location.altitude_valid == !no_event_control);
   assert(!accepted_location.utc_valid);
-  assert(accepted_location.observed_monotonic_ms <= test_now);
+  assert(accepted_location.observed_monotonic_ms == test_now);
   // The record itself is not committed until the following loop.
   assert(history.count() == 1 && erases == 0 &&
          programs == expected_boot_programs + 2U);
