@@ -406,7 +406,11 @@ Flash:                                 264,912 / 815,104 B (32.5%)
 production RAM / Flash delta:          0 B / 0 B
 ```
 
-Before Issue #65 can close, the owner-host full host-suite result, canonical
-10k fuzz-runner result, exact real CodeQL severity totals for this branch and
-focused final review remain merge evidence. A physical-device test is not
-required unless the production firmware graph changes.
+Owner-host full host-suite validation is also **PASS**, including the DEVQ1
+tooling-contract guard, SARIF severity regression and CodeQL extracted-bundle
+integrity regression.
+
+Before Issue #65 can close, the canonical 10k fuzz-runner result, exact real
+CodeQL severity totals for this branch and focused final review remain merge
+evidence. A physical-device test is not required unless the production firmware
+graph changes.
