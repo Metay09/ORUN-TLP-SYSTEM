@@ -14,12 +14,17 @@ if [[ "${ORUN_HOST_COVERAGE:-0}" == "1" ]]; then
   coverage_flags=(--coverage -fprofile-abs-path)
 fi
 
-flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined
+sanitizer_flags=()
+if [[ "${ORUN_HOST_SANITIZERS:-1}" == "1" ]]; then
+  sanitizer_flags=(-fsanitize=address,undefined)
+fi
+
+flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror "${sanitizer_flags[@]}"
        "${coverage_flags[@]}" -Ifirmware/tests/m3/stubs -Ifirmware/include)
 portable_flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror
-                -fsanitize=address,undefined "${coverage_flags[@]}" -Ifirmware/include)
+                "${sanitizer_flags[@]}" "${coverage_flags[@]}" -Ifirmware/include)
 b3_flags=(-std=gnu++11 -O1 -g -Wall -Wextra -Werror
-          -fsanitize=address,undefined "${coverage_flags[@]}" -Ifirmware/include)
+          "${sanitizer_flags[@]}" "${coverage_flags[@]}" -Ifirmware/include)
 gnss_sources=(firmware/src/gnss_manager.cpp firmware/src/gnss_utc.cpp
               firmware/src/i2c_recovery.cpp firmware/src/sensor_power_manager.cpp)
 
@@ -368,7 +373,7 @@ g++ "${flags[@]}" firmware/tests/r4/test_r4.cpp "${gnss_sources[@]}" \
   firmware/src/watchdog_manager.cpp -o "$test_dir/r4"
 "$test_dir/r4"
 g++ -DNRF52_SERIES -Ifirmware/tests/r4/stubs -Ifirmware/include \
-  -std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
+  -std=c++17 -O1 -g -Wall -Wextra -Werror "${sanitizer_flags[@]}" \
   "${coverage_flags[@]}" \
   firmware/tests/r4/test_watchdog_nrf.cpp firmware/src/watchdog_manager.cpp \
   -o "$test_dir/r4_watchdog_nrf"
