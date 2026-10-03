@@ -89,8 +89,13 @@ After the accepted audit fixes:
 
 1. complete host suite: **PASS** on
    `7d203a3f65e49e013b6bd0e06b6147db88bd2073`;
-2. rerun the production RAK4630 build and record RAM/Flash;
-3. verify no new audit finding was introduced;
-4. mark PR #63 merge-ready and merge.
+2. production RAK4630 rebuild: **PASS** — RAM 28,976 / 248,832 (11.6%),
+   Flash 264,912 / 815,104 (32.5%);
+3. focused audit-fix verification: **PASS** — the MEDIUM altitude-validity fix,
+   2D/3D regression, exactly-once publication/order guards and documentation
+   corrections are present; no new firmware finding identified;
+4. PR #63 is merge-ready.
+
+No dedicated M7P7I physical PASS is claimed or required for this slice.
 
 TLP v1 compatibility/golden fixtures must remain unchanged.
