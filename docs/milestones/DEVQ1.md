@@ -1,6 +1,6 @@
 # DEVQ1 — Host quality gates: coverage, fuzzing and CodeQL
 
-Status: **IMPLEMENTATION CANDIDATE — host + bounded fuzz + coverage + production size invariance PASS; CodeQL/audit remain.**
+Status: **IMPLEMENTATION CANDIDATE — host + bounded fuzz + coverage + production size invariance PASS; local CodeQL/audit remain.**
 
 Baseline:
 `main@9e8e2b8e2d333fbedadb69ed72f316a775579b27`
@@ -98,16 +98,29 @@ SoftDevice concurrency, RF/GNSS behavior or hardware correctness.
 
 ## 5. CodeQL
 
-`.github/workflows/codeql.yml` adds C/C++ CodeQL analysis for firmware changes.
-The workflow uses manual build mode and builds the same host source graph through
-`firmware/tests/run_host_tests.sh`.
+DEVQ1 originally added a GitHub Actions CodeQL workflow. Repository Actions
+permissions were confirmed enabled, but repeated PR runs failed before runner
+dispatch: no runner was assigned, no step started, and no job log existed.
+Because that hosted-infrastructure failure is outside firmware correctness, the
+hosted workflow was removed rather than leaving a permanent red check.
+
+The canonical DEVQ1 CodeQL gate is now local CLI execution on the owner Debian
+host:
+
+- `firmware/tests/codeql/setup_codeql.sh` downloads the official GitHub CodeQL
+  Linux x64 bundle pinned to **2.27.1** and verifies the published SHA-256 before
+  extraction;
+- `firmware/tests/codeql/run_codeql.sh` creates a C/C++ database by tracing the
+  same canonical `firmware/tests/run_host_tests.sh` build graph;
+- analysis uses the bundled
+  `cpp-security-and-quality.qls` suite, which already includes the
+  security-extended queries plus maintainability/reliability queries;
+- results are kept as SARIF under `build/codeql/` and summarized to the
+  terminal for review.
 
 This intentionally avoids changing PlatformIO or adding CodeQL instrumentation
-to the production image.
-
-The first workflow uses the extended security/quality query suites. Findings are
-review inputs, not automatic permission to rewrite proven state machines or
-compatibility fixtures.
+to the production image. Findings are review inputs, not automatic permission to
+rewrite proven state machines or compatibility fixtures.
 
 ## 6. Source contract
 
@@ -117,8 +130,9 @@ suite and guards the separation:
 - coverage remains opt-in;
 - no coverage percentage threshold is silently introduced;
 - fuzz targets remain host sanitizer binaries;
-- CodeQL uses the host source graph;
-- no fuzz/coverage environment or sanitizer flags enter `platformio.ini`.
+- local CodeQL uses the host source graph and a checksum-pinned official bundle;
+- the failing hosted CodeQL workflow is absent;
+- no fuzz/coverage/CodeQL environment or sanitizer flags enter `platformio.ini`.
 
 ## 7. Validation plan
 
@@ -130,7 +144,7 @@ Because this slice changes test/CI infrastructure but not production runtime:
 4. bounded fuzz smoke on the owner Debian environment;
 5. production `pio run -e rak4630` and exact RAM/Flash comparison to
    `main@9e8e2b8` to prove intended 0 B runtime delta;
-6. CodeQL workflow result on the PR;
+6. pinned local CodeQL database creation + security-and-quality analysis;
 7. focused independent audit of tooling isolation and false-confidence risks.
 
 No dedicated physical device test is required for DEVQ1 because it adds no
@@ -179,9 +193,15 @@ Owner-run production RAK4630 build is **PASS**:
 This proves the DEVQ1 tooling files and optional host flags do not enter the
 production RAK4630 image at the current baseline.
 
-Remaining validation: CodeQL execution/root-cause and focused independent audit.
+Hosted CodeQL root cause was isolated to pre-runner dispatch behavior rather
+than repository code execution: repeated PR jobs had no assigned runner, no
+steps and no logs despite repository Actions permissions allowing all actions.
+DEVQ1 therefore does not treat the hosted runner as a required gate.
 
-## 8. Follow-up, not this slice
+Remaining validation: pinned local CodeQL execution/result review and focused
+independent audit.
+
+## 9. Follow-up, not this slice
 
 A Python/Bleak physical BLE regression harness is intentionally separate
 (DEVQ2). It will exercise real GATT connect/indicate/fragment/reconnect behavior
