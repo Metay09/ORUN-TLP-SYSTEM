@@ -1,10 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+repo_root="$(pwd -P)"
+build_root="$(realpath -m -- "$repo_root/build")"
+
+safe_build_child() {
+  local requested="$1"
+  local resolved
+  resolved="$(realpath -m -- "$requested")"
+  if [[ "$resolved" != "$build_root/"* ]]; then
+    echo "ERROR: tooling output path must be a child of $build_root: $requested" >&2
+    exit 2
+  fi
+  printf '%s\n' "$resolved"
+}
+
 if [[ -n "${ORUN_HOST_TEST_DIR:-}" ]]; then
-  test_dir="$ORUN_HOST_TEST_DIR"
-  rm -rf "$test_dir"
-  mkdir -p "$test_dir"
+  test_dir="$(safe_build_child "$ORUN_HOST_TEST_DIR")"
+  rm -rf -- "$test_dir"
+  mkdir -p -- "$test_dir"
 else
   test_dir=$(mktemp -d /tmp/orun-host-tests.XXXXXX)
 fi
@@ -15,9 +29,18 @@ if [[ "${ORUN_HOST_COVERAGE:-0}" == "1" ]]; then
 fi
 
 sanitizer_flags=()
-if [[ "${ORUN_HOST_SANITIZERS:-1}" == "1" ]]; then
-  sanitizer_flags=(-fsanitize=address,undefined)
-fi
+case "${ORUN_HOST_SANITIZERS:-1}" in
+  1)
+    sanitizer_flags=(-fsanitize=address,undefined -fno-sanitize-recover=undefined)
+    ;;
+  0)
+    echo "ORUN host sanitizers: DISABLED by explicit ORUN_HOST_SANITIZERS=0" >&2
+    ;;
+  *)
+    echo "ERROR: ORUN_HOST_SANITIZERS must be exactly 0 or 1." >&2
+    exit 2
+    ;;
+esac
 
 flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror "${sanitizer_flags[@]}"
        "${coverage_flags[@]}" -Ifirmware/tests/m3/stubs -Ifirmware/include)
