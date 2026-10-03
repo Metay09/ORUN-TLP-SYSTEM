@@ -10,6 +10,8 @@ platformio = (root / "firmware/platformio.ini").read_text(encoding="utf-8")
 codeql_setup = (root / "firmware/tests/codeql/setup_codeql.sh").read_text(encoding="utf-8")
 codeql_run = (root / "firmware/tests/codeql/run_codeql.sh").read_text(encoding="utf-8")
 codeql_summary = (root / "firmware/tests/codeql/summarize_sarif.py").read_text(encoding="utf-8")
+codeql_verify = (root / "firmware/tests/codeql/verify_bundle_install.py").read_text(encoding="utf-8")
+security_fuzz = (root / "firmware/tests/fuzz/fuzz_security_format.cpp").read_text(encoding="utf-8")
 gitignore = (root / ".gitignore").read_text(encoding="utf-8")
 
 # Host sanitizers remain default-on and UBSan must be fatal. The only explicit
@@ -68,12 +70,34 @@ assert 'env ORUN_HOST_SANITIZERS=0 ./firmware/tests/run_host_tests.sh' in codeql
 assert 'cpp-security-and-quality.qls' in codeql_run
 assert '--format=sarif-latest' in codeql_run
 assert 'summarize_sarif.py' in codeql_run
+assert 'codeql-bundle-linux64.tar.gz' in codeql_setup
+assert 'codeql-bundle-linux64.tar.gz' in codeql_run
+assert 'verify_bundle_install.py' in codeql_setup
+assert 'verify_bundle_install.py' in codeql_run
+assert 'sha256_archive_member' in codeql_verify
+assert 'differs from checksum-verified bundle' in codeql_verify
+assert 'test_verify_bundle_install.py' in host
 
-# SARIF severity must honor rule defaultConfiguration when result.level is
-# omitted, and default to warning only when neither supplies a level.
+# SARIF severity must honor kind, rule/component indexes and rule defaults.
+# Non-fail results have no severity; fail results default to warning only when
+# neither the result nor the reporting descriptor supplies a level.
+assert 'result.get("kind", "fail")' in codeql_summary
+assert 'return "none"' in codeql_summary
 assert 'defaultConfiguration' in codeql_summary
 assert 'return "warning"' in codeql_summary
+assert 'toolComponent' in codeql_summary
 assert 'tool.get("extensions", [])' in codeql_summary
+
+# Security fuzz semantic mutation offsets are derived and compile-time guarded
+# against record-size/layout drift instead of being unguarded numeric literals.
+for guarded_offset in (
+    'kPageHeaderCrcOffset',
+    'kCredentialCrcOffset',
+    'kTxReserveCrcOffset',
+    'kSecurityStateCrcOffset',
+):
+    assert guarded_offset in security_fuzz
+assert security_fuzz.count('static_assert(') >= 8
 
 # User-controlled destructive output paths are constrained below root /build/.
 assert 'safe_build_child' in host
