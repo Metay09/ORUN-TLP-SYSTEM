@@ -2079,10 +2079,11 @@ void loop() {
     accepted_location.longitude_e7 = fix.longitude_e7;
     accepted_location.altitude_mm = fix.altitude_mm;
     accepted_location.source = orun_tlp::LocationSource::kGnss;
-    // GnssManager rejects NAV-PVT invalidLlh before promotion. A 2D fix is
-    // still allowed and must not misuse the separate 3D-fix quality flag as an
-    // altitude-validity sentinel.
-    accepted_location.altitude_valid = true;
+    // A promoted 2D navigation fix may carry an assumed/stale height even when
+    // invalidLlh is clear. Publish altitude as trustworthy only for the existing
+    // 3D / GNSS+dead-reckoning fix classes.
+    accepted_location.altitude_valid =
+        (fix.flags & orun_tlp::tlp::kPositionFlag3dFix) != 0;
     accepted_location.utc_valid =
         (fix.flags & orun_tlp::tlp::kPositionFlagValidUtcTime) != 0;
     if (!location_owner.accept(accepted_location)) {
