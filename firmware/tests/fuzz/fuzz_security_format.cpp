@@ -2,8 +2,10 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "journal_format.h"
 #include "security_format.h"
 
+namespace jf = orun_tlp::journal_format;
 namespace sf = orun_tlp::security_format;
 
 namespace {
@@ -22,70 +24,130 @@ uint32_t fold32(const uint8_t* data, size_t size, size_t start) {
     value = (value << 8) | data[(start + i) % size];
   return value;
 }
+
+uint8_t deltaByte(const uint8_t* data, size_t size, size_t start) {
+  if (size == 0) return 1;
+  const uint8_t value = data[start % size];
+  return value == 0 ? 1U : value;
+}
+
+void mutateAndReseal(uint8_t* bytes, size_t body_size, size_t crc_offset,
+                     size_t commit_offset, const uint8_t* data, size_t size,
+                     size_t selector_start, size_t delta_start) {
+  if (size > 1) {
+    const size_t index = fold32(data, size, selector_start) % body_size;
+    bytes[index] ^= deltaByte(data, size, delta_start);
+  }
+  jf::put32(bytes + crc_offset, jf::crc32(bytes, crc_offset));
+  jf::put32(bytes + commit_offset, sf::kCommit);
+}
+
+void checkHeaderRoundTrip(const uint8_t* bytes, uint8_t version) {
+  sf::PageHeader decoded;
+  if (!sf::decodePageHeaderVersion(bytes, version, decoded)) return;
+  uint8_t encoded[sf::kPageHeaderSize]{};
+  sf::encodePageHeaderVersion(decoded, version, encoded);
+  if (memcmp(encoded, bytes, sizeof(encoded)) != 0) __builtin_trap();
+}
+
+void checkCredentialRoundTrip(const uint8_t* bytes) {
+  sf::Credential decoded;
+  if (!sf::decodeCredential(bytes, decoded)) return;
+  uint8_t encoded[sf::kCredentialRecordSize]{};
+  sf::encodeCredential(decoded, encoded);
+  if (memcmp(encoded, bytes, sizeof(encoded)) != 0) __builtin_trap();
+}
+
+void checkTxRoundTrip(const uint8_t* bytes) {
+  sf::TxReserve decoded;
+  if (!sf::decodeTxReserve(bytes, decoded)) return;
+  uint8_t encoded[sf::kTxReserveRecordSize]{};
+  sf::encodeTxReserve(decoded, encoded);
+  if (memcmp(encoded, bytes, sizeof(encoded)) != 0) __builtin_trap();
+}
+
+void checkStateRoundTrip(const uint8_t* bytes) {
+  sf::SecurityStateRecord decoded;
+  if (!sf::decodeSecurityState(bytes, decoded)) return;
+  uint8_t encoded[sf::kSecurityStateRecordSize]{};
+  sf::encodeSecurityState(decoded, encoded);
+  if (memcmp(encoded, bytes, sizeof(encoded)) != 0) __builtin_trap();
+}
 }  // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+  // Raw malformed-input paths.
   if (size >= sf::kPageHeaderSize) {
-    sf::PageHeader header;
-    if (sf::decodePageHeader(data, header)) {
-      uint8_t encoded[sf::kPageHeaderSize]{};
-      sf::encodePageHeader(header, encoded);
-      if (memcmp(encoded, data, sizeof(encoded)) != 0) __builtin_trap();
-    }
+    checkHeaderRoundTrip(data, sf::kVersionV1);
+    checkHeaderRoundTrip(data, sf::kVersionV2);
+    uint8_t version = 0;
+    (void)sf::headerMagicPresent(data, &version);
   }
-
-  if (size >= sf::kCredentialRecordSize) {
-    sf::Credential credential;
-    if (sf::decodeCredential(data, credential)) {
-      uint8_t encoded[sf::kCredentialRecordSize]{};
-      sf::encodeCredential(credential, encoded);
-      if (memcmp(encoded, data, sizeof(encoded)) != 0) __builtin_trap();
-    }
-  }
-
-  if (size >= sf::kTxReserveRecordSize) {
-    sf::TxReserve reserve;
-    if (sf::decodeTxReserve(data, reserve)) {
-      uint8_t encoded[sf::kTxReserveRecordSize]{};
-      sf::encodeTxReserve(reserve, encoded);
-      if (memcmp(encoded, data, sizeof(encoded)) != 0) __builtin_trap();
-    }
-  }
-
-  if (size >= sf::kSecurityStateRecordSize) {
-    sf::SecurityStateRecord state;
-    if (sf::decodeSecurityState(data, state)) {
-      uint8_t encoded[sf::kSecurityStateRecordSize]{};
-      sf::encodeSecurityState(state, encoded);
-      if (memcmp(encoded, data, sizeof(encoded)) != 0) __builtin_trap();
-    }
-  }
-
+  if (size >= sf::kCredentialRecordSize) checkCredentialRoundTrip(data);
+  if (size >= sf::kTxReserveRecordSize) checkTxRoundTrip(data);
+  if (size >= sf::kSecurityStateRecordSize) checkStateRoundTrip(data);
   if (size == 0) return 0;
 
-  sf::SecurityStateRecord candidate;
-  for (size_t i = 0; i < sf::kCredentialIdSize; ++i)
-    candidate.credential_id[i] = data[i % size];
-  candidate.key_epoch = fold32(data, size, 16);
-  candidate.kind = (data[0] & 1U)
-                       ? sf::SecurityStateKind::kTxReserveExclusiveBound
-                       : sf::SecurityStateKind::kA2dReplayExclusiveBound;
-  const uint64_t block =
-      candidate.kind == sf::SecurityStateKind::kTxReserveExclusiveBound
-          ? sf::kTxReservationBlockSize
-          : sf::kA2dReplayReservationBlockSize;
-  candidate.value = fold64(data, size, 20) & ~(block - 1U);
-  if (candidate.value == 0) candidate.value = block;
-
-  uint8_t encoded[sf::kSecurityStateRecordSize]{};
-  sf::encodeSecurityState(candidate, encoded);
-  if (size > 1) {
-    const size_t index = data[0] % sizeof(encoded);
-    const uint8_t delta = data[1] == 0 ? 1U : data[1];
-    encoded[index] ^= delta;
+  // Page header: exercise both supported v1 and v2 decode paths, then preserve
+  // CRC/commit after a body mutation so semantic validation is reached.
+  const sf::PageHeader header(fold64(data, size, 0) | 1ULL,
+                              fold64(data, size, 8));
+  for (const uint8_t version : {sf::kVersionV1, sf::kVersionV2}) {
+    uint8_t encoded[sf::kPageHeaderSize]{};
+    sf::encodePageHeaderVersion(header, version, encoded);
+    checkHeaderRoundTrip(encoded, version);
+    mutateAndReseal(encoded, 24, 24, 28, data, size, 16, 20);
+    checkHeaderRoundTrip(encoded, version);
   }
 
-  sf::SecurityStateRecord decoded;
-  (void)sf::decodeSecurityState(encoded, decoded);
+  sf::Credential credential;
+  for (size_t i = 0; i < sf::kCredentialIdSize; ++i)
+    credential.credential_id[i] = data[i % size];
+  credential.key_epoch = fold32(data, size, 16);
+  credential.device_identity = fold64(data, size, 20);
+  for (size_t i = 0; i < sf::kKRootSize; ++i)
+    credential.k_root[i] = data[(28 + i) % size];
+
+  uint8_t credential_bytes[sf::kCredentialRecordSize]{};
+  sf::encodeCredential(credential, credential_bytes);
+  checkCredentialRoundTrip(credential_bytes);
+  mutateAndReseal(credential_bytes, 60, 60, 64, data, size, 36, 40);
+  checkCredentialRoundTrip(credential_bytes);
+
+  sf::TxReserve reserve;
+  for (size_t i = 0; i < sf::kCredentialIdSize; ++i)
+    reserve.credential_id[i] = data[(8 + i) % size];
+  reserve.key_epoch = fold32(data, size, 24);
+  reserve.tx_reserved_bound =
+      fold64(data, size, 28) & ~(sf::kTxReservationBlockSize - 1ULL);
+  if (reserve.tx_reserved_bound == 0)
+    reserve.tx_reserved_bound = sf::kTxReservationBlockSize;
+
+  uint8_t reserve_bytes[sf::kTxReserveRecordSize]{};
+  sf::encodeTxReserve(reserve, reserve_bytes);
+  checkTxRoundTrip(reserve_bytes);
+  mutateAndReseal(reserve_bytes, 28, 28, 32, data, size, 44, 48);
+  checkTxRoundTrip(reserve_bytes);
+
+  sf::SecurityStateRecord state;
+  for (size_t i = 0; i < sf::kCredentialIdSize; ++i)
+    state.credential_id[i] = data[(16 + i) % size];
+  state.key_epoch = fold32(data, size, 32);
+  state.kind = (data[0] & 1U)
+                   ? sf::SecurityStateKind::kTxReserveExclusiveBound
+                   : sf::SecurityStateKind::kA2dReplayExclusiveBound;
+  const uint64_t block =
+      state.kind == sf::SecurityStateKind::kTxReserveExclusiveBound
+          ? sf::kTxReservationBlockSize
+          : sf::kA2dReplayReservationBlockSize;
+  state.value = fold64(data, size, 36) & ~(block - 1ULL);
+  if (state.value == 0) state.value = block;
+
+  uint8_t state_bytes[sf::kSecurityStateRecordSize]{};
+  sf::encodeSecurityState(state, state_bytes);
+  checkStateRoundTrip(state_bytes);
+  mutateAndReseal(state_bytes, 32, 32, 36, data, size, 52, 56);
+  checkStateRoundTrip(state_bytes);
+
   return 0;
 }
