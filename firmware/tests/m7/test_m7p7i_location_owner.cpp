@@ -66,6 +66,10 @@ int main() {
   assert(out.observed_monotonic_ms == second.observed_monotonic_ms);
   assert(!out.utc_valid);
 
+  static_assert(extendRecentMonotonicMs(10ULL, 5U) == 5ULL,
+                "ordinary recent capture extension");
+  static_assert(extendRecentMonotonicMs(10ULL, 10U) == 10ULL,
+                "zero-age capture extension");
   constexpr uint64_t kAfterFirstWrap = (1ULL << 32) + 0x10ULL;
   constexpr uint32_t kCapturedBeforeWrap = 0xFFFFFFF0UL;
   static_assert(
