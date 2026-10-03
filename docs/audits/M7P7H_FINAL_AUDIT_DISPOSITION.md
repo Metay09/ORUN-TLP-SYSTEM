@@ -96,11 +96,27 @@ Post-fix owner revalidation is complete on code-bearing head
 - audit-fix-only delta versus the earlier M7P7H build:
   **+8 B RAM / +88 B flash**.
 
+Physical qualification on the corrected code-bearing firmware is now
+**PARTIAL PASS**:
+
+- upload: PASS;
+- boot/runtime sanity with GNSS fix, POSITION TX and HistoryStore append: PASS;
+- BLE connect/GATT discovery and indications enable: PASS;
+- GET_CONFIG regression: PASS;
+- DEVICE: PASS, 36 bytes / 3 indication fragments;
+- TRACKING/GNSS: PASS, 36 bytes / 3 indication fragments;
+- GEOFENCE: PASS, 9 bytes / 1 indication fragment;
+- STORAGE: PASS, 40 bytes / 4 indication fragments.
+
+The connection later dropped after the operator moved out of BLE range. That
+does not count as a failure, but it also does not satisfy the controlled
+disconnect/reconnect acceptance check.
+
 Remaining gate:
 
-1. run focused RAK4631 + Android/nRF Connect qualification on the exact
-   corrected code-bearing firmware;
-2. record the physical evidence;
-3. only then make PR #61 merge-ready.
+1. when hardware is available again, connect to the same firmware and perform
+   **disconnect -> reconnect -> GET_CONFIG indication**;
+2. record that exact result;
+3. only then claim full M7P7H physical PASS and make PR #61 merge-ready.
 
-No M7P7H physical PASS is claimed here.
+No full M7P7H physical PASS is claimed here.
