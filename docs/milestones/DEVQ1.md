@@ -1,6 +1,6 @@
 # DEVQ1 — Host quality gates: coverage, fuzzing and CodeQL
 
-Status: **IMPLEMENTATION CANDIDATE — validation pending.**
+Status: **IMPLEMENTATION CANDIDATE — host revalidation PASS; tooling validation continues.**
 
 Baseline:
 `main@9e8e2b8e2d333fbedadb69ed72f316a775579b27`
@@ -135,6 +135,19 @@ Because this slice changes test/CI infrastructure but not production runtime:
 
 No dedicated physical device test is required for DEVQ1 because it adds no
 device-side behavior.
+
+## 8. Validation evidence so far
+
+Owner-run full host suite on the DEVQ1 branch is **PASS**, including:
+
+- all existing legacy / RF / GNSS / storage / geofence / BLE / startup regressions;
+- warnings-as-errors plus the existing ASan/UBSan coverage in the host suite;
+- the new `DEVQ1 host quality tooling source-contract guards`.
+
+This confirms the default host-test path remains compatible after adding the
+optional coverage plumbing and tooling contract. It does not yet validate the
+libFuzzer runner, gcovr report generation, production RAK4630 size invariance or
+CodeQL execution.
 
 ## 8. Follow-up, not this slice
 
