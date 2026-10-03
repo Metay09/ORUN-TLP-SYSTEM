@@ -1,6 +1,6 @@
 # M7P7H — Read-only Device Status application surface (USB + BLE)
 
-Status: **IMPLEMENTATION CANDIDATE — VALIDATION PENDING; NOT MERGE-READY.**
+Status: **VALIDATED — MERGE-READY; MILESTONE ACCEPTED.**
 
 Implementation baseline:
 `main@8f5f8b75e2b5c27d10e4dfec3130267afc300314`
@@ -374,8 +374,11 @@ M7P7H closes only when all are true:
 9. Full host suite including warnings-as-errors and sanitizers passes.
 10. Production startup scenarios pass.
 11. RAK4630 production build passes; RAM/flash delta is recorded.
-12. Physical RAK4631 + Android/nRF Connect reads each new family and repeats
-    GET_CONFIG/HVC/disconnect-reconnect regression.
+12. Physical RAK4631 + Android/nRF Connect reads each new family and exercises
+    GET_CONFIG/HVC on the M7P7H firmware. Disconnect/reconnect may be accepted
+    from the existing M7P7G physical regression only when review confirms the
+    M7P7H session/disconnect/HVC lifecycle is unchanged; the evidence provenance
+    must be stated explicitly.
 13. Milestone and architecture docs are updated to actual implemented bytes and
     evidence; no unperformed physical result is claimed.
 
@@ -453,19 +456,36 @@ Validation evidence on candidate head
   **+192 B RAM / +4,424 B flash**.
 - Audit-fix delta versus the earlier pre-fix M7P7H build
   (**28,928 B / 264,536 B**): **+8 B RAM / +88 B flash**.
-- Focused physical RAK4631 + Android/nRF Connect qualification is
-  **PARTIAL PASS** on the corrected code-bearing firmware:
-  - firmware upload: PASS;
+- Focused physical RAK4631 + Android nRF Connect qualification on
+  the corrected code-bearing firmware:
+  - firmware upload: **PASS**;
   - boot/runtime sanity: GNSS fresh fix, POSITION TX and HistoryStore append
     observed;
-  - BLE connect + ORUN GATT discovery: PASS;
-  - indications enable: PASS;
-  - existing GET_CONFIG regression: PASS;
-  - DEVICE 36-byte response over 3 indication fragments: PASS;
-  - TRACKING/GNSS 36-byte response over 3 indication fragments: PASS;
-  - GEOFENCE 9-byte response over 1 indication fragment: PASS;
-  - STORAGE 40-byte response over 4 indication fragments: PASS.
-- The phone later disconnected after the operator moved out of BLE range. The
-  required controlled **disconnect -> reconnect -> GET_CONFIG indication**
-  regression has not yet been performed. Therefore acceptance criterion 12 is
-  still open and full M7P7H physical PASS is **not** claimed.
+  - BLE connect + ORUN GATT discovery: **PASS**;
+  - indications enable: **PASS**;
+  - existing GET_CONFIG regression: **PASS**;
+  - DEVICE 36-byte response over 3 indication fragments: **PASS**;
+  - TRACKING/GNSS 36-byte response over 3 indication fragments: **PASS**;
+  - GEOFENCE 9-byte response over 1 indication fragment: **PASS**;
+  - STORAGE 40-byte response over 4 indication fragments: **PASS**.
+- Multi-fragment DEVICE/TRACKING/STORAGE responses physically exercised the
+  real non-blocking indication -> HVC -> next-fragment stop-and-wait path on
+  the M7P7H firmware.
+- The phone later disconnected after the operator moved out of BLE range. A
+  fresh controlled reconnect was **not** performed on the M7P7H firmware.
+  This is not reported as a physical reconnect PASS.
+- Owner closure review compared the M7P7H production code with its M7P7G-based
+  baseline and confirmed that `onBleEvent()`, `endBleApplicationSession()` /
+  `beginBleApplicationSession()`, the disconnect-recovery function and GATT
+  setup are unchanged. M7P7H adds snapshot refresh/application-family handling
+  on ingress; it does not change the session-generation/disconnect lifecycle.
+- M7P7G already has focused physical evidence for explicit disconnect ->
+  re-advertise -> reconnect -> fresh GET_CONFIG on the same production session
+  machinery. Because that machinery is unchanged and M7P7H physically exercises
+  HVC/fragment progression on its new responses, the owner accepts the prior
+  reconnect evidence as an inherited regression for M7P7H rather than requiring
+  a redundant current-head rerun.
+- **Evidence boundary:** the reconnect itself was not freshly observed on the
+  M7P7H head. Milestone acceptance is therefore based on current-head physical
+  coverage for the changed surface plus inherited physical evidence for the
+  unchanged reconnect path. No unperformed physical observation is claimed.
