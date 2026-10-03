@@ -138,7 +138,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     uint8_t encoded[sf::kPageHeaderSize]{};
     sf::encodePageHeaderVersion(header, version, encoded);
     checkHeaderRoundTrip(encoded, version);
-    mutateAndReseal(encoded, kPageHeaderCrcOffset, kPageHeaderCrcOffset,\n                    kPageHeaderCommitOffset, data, size, 16, 20);
+    mutateAndReseal(encoded, kPageHeaderCrcOffset, kPageHeaderCrcOffset,
+                    kPageHeaderCommitOffset, data, size, 16, 20);
     checkHeaderRoundTrip(encoded, version);
   }
 
@@ -153,7 +154,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   uint8_t credential_bytes[sf::kCredentialRecordSize]{};
   sf::encodeCredential(credential, credential_bytes);
   checkCredentialRoundTrip(credential_bytes);
-  mutateAndReseal(credential_bytes, kCredentialCrcOffset,\n                  kCredentialCrcOffset, kCredentialCommitOffset, data, size,\n                  36, 40);
+  mutateAndReseal(credential_bytes, kCredentialCrcOffset,
+                  kCredentialCrcOffset, kCredentialCommitOffset, data, size,
+                  36, 40);
   checkCredentialRoundTrip(credential_bytes);
 
   sf::TxReserve reserve;
@@ -168,7 +171,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   uint8_t reserve_bytes[sf::kTxReserveRecordSize]{};
   sf::encodeTxReserve(reserve, reserve_bytes);
   checkTxRoundTrip(reserve_bytes);
-  mutateAndReseal(reserve_bytes, kTxReserveCrcOffset, kTxReserveCrcOffset,\n                  kTxReserveCommitOffset, data, size, 44, 48);
+  mutateAndReseal(reserve_bytes, kTxReserveCrcOffset, kTxReserveCrcOffset,
+                  kTxReserveCommitOffset, data, size, 44, 48);
   checkTxRoundTrip(reserve_bytes);
 
   sf::SecurityStateRecord state;
@@ -188,7 +192,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   uint8_t state_bytes[sf::kSecurityStateRecordSize]{};
   sf::encodeSecurityState(state, state_bytes);
   checkStateRoundTrip(state_bytes);
-  mutateAndReseal(state_bytes, kSecurityStateCrcOffset,\n                  kSecurityStateCrcOffset, kSecurityStateCommitOffset, data,\n                  size, 52, 56);
+  mutateAndReseal(state_bytes, kSecurityStateCrcOffset,
+                  kSecurityStateCrcOffset, kSecurityStateCommitOffset, data,
+                  size, 52, 56);
   checkStateRoundTrip(state_bytes);
 
   return 0;
