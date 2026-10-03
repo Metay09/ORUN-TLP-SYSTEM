@@ -15,6 +15,8 @@ codeql_summary = (root / "firmware/tests/codeql/summarize_sarif.py").read_text(e
 # hidden production/compiler flag or a percentage gate.
 assert 'ORUN_HOST_COVERAGE:-0' in host
 assert 'coverage_flags=(--coverage -fprofile-abs-path)' in host
+assert 'ORUN_HOST_SANITIZERS:-1' in host
+assert 'sanitizer_flags=(-fsanitize=address,undefined)' in host
 assert 'ORUN_HOST_COVERAGE=1' in coverage
 assert 'run_host_tests.sh' in coverage
 assert '--html-details' in coverage
@@ -41,7 +43,7 @@ assert '1d380f79896ededc654c7b21fafb3360136f1aeb678ad4df4df9af3910c6b815' in cod
 assert 'sha256sum --check' in codeql_setup
 assert 'database create' in codeql_run
 assert '--language=c-cpp' in codeql_run
-assert './firmware/tests/run_host_tests.sh' in codeql_run
+assert 'env ORUN_HOST_SANITIZERS=0 ./firmware/tests/run_host_tests.sh' in codeql_run
 assert 'cpp-security-and-quality.qls' in codeql_run
 assert '--format=sarif-latest' in codeql_run
 assert 'summarize_sarif.py' in codeql_run
