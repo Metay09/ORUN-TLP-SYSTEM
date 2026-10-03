@@ -1,6 +1,6 @@
 # DEVQ1 — Host quality gates: coverage, fuzzing and CodeQL
 
-Status: **PASS WITH FIXES — independent-audit fixes applied; post-fix host + hardened fuzz revalidation PASS, remaining post-fix gates pending.**
+Status: **PASS WITH FIXES — independent-audit fixes applied; post-fix host + hardened fuzz + coverage revalidation PASS, remaining post-fix gates pending.**
 
 Baseline:
 `main@9e8e2b8e2d333fbedadb69ed72f316a775579b27`
@@ -277,10 +277,23 @@ Post-fix hardened fuzz smoke is also **PASS**:
 This validates the post-audit H1/H2/L3/L5 tooling changes at bounded-smoke
 depth. It is still not exhaustive parser proof.
 
+Post-fix coverage generation is **PASS** with both production source and
+header filters enabled:
+
+```text
+lines:     92.9% (6563 / 7065)
+functions: 98.2% (590 / 601)
+branches:  64.8% (5269 / 8132)
+```
+
+The denominator increase is expected because `firmware/include/` header-only
+production logic is now included. The resulting percentages replace the old
+src-only numbers for final DEVQ1 evidence. They remain diagnostic only; no
+coverage threshold is a merge gate.
+
 Before merge, remaining post-fix gates are:
 
 ```text
-coverage with src + include filters
 local CodeQL setup/analysis + corrected severity summary
 RAK4630 production build
 focused independent re-review of fixes
