@@ -22,6 +22,7 @@
 #include "firmware_version.h"
 #include "flash_mutation_gate.h"
 #include "gnss_manager.h"
+#include "location_owner.h"
 #include "geofence_confirmation_coordinator.h"
 #include "geofence_incarnation_source.h"
 #include "geofence_runtime_policy.h"
@@ -36,6 +37,7 @@
 #include "runtime_config.h"
 #include "security_store.h"
 #include "sensor_power_manager.h"
+#include "tlp_position_packet.h"
 #include "usb_application_adapter.h"
 #include "watchdog_manager.h"
 
@@ -95,6 +97,10 @@ void refreshApplicationStatusSnapshot(uint32_t now_ms);
 orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort(),
                                        storage_flash_gate.securityMaintPort());
 orun_tlp::PositionFlow positions(history, radio_manager);
+// M7P7I: source-neutral RAM owner for the latest accepted Location product
+// fact. GNSS is the only producer in this slice. It owns no source-selection
+// policy, persistence, transport or GNSS quality state.
+orun_tlp::LocationOwner location_owner;
 // M6D3C production composition seam. GeofenceStore owns durable semantic
 // authority; the M6D2 coordinator owns runtime geometry/confirmation. Boot
 // applies only the already-recovered CLEAR/CONFIGURED semantic snapshot across
@@ -2061,6 +2067,30 @@ void loop() {
         positions.prepareForFixStorage()));
   if (normal_fix_storage_ready &&
       gnss_manager.takeFreshFixForTransmission(&fix)) {
+    // M7P7I observes the exact same already-accepted GNSS value once. Extend
+    // its recent uint32 callback capture time into the shared long-lived
+    // monotonic timeline before geofence processing can request another fix.
+    const uint64_t location_now_ms = orun_tlp::monotonic::nowMs64();
+    orun_tlp::AcceptedLocation accepted_location{};
+    accepted_location.observed_monotonic_ms =
+        orun_tlp::extendRecentMonotonicMs(location_now_ms, fix.captured_at_ms);
+    accepted_location.utc_epoch_seconds = fix.utc_epoch_seconds;
+    accepted_location.latitude_e7 = fix.latitude_e7;
+    accepted_location.longitude_e7 = fix.longitude_e7;
+    accepted_location.altitude_mm = fix.altitude_mm;
+    accepted_location.source = orun_tlp::LocationSource::kGnss;
+    // GnssManager rejects NAV-PVT invalidLlh before promotion. A 2D fix is
+    // still allowed and must not misuse the separate 3D-fix quality flag as an
+    // altitude-validity sentinel.
+    accepted_location.altitude_valid = true;
+    accepted_location.utc_valid =
+        (fix.flags & orun_tlp::tlp::kPositionFlagValidUtcTime) != 0;
+    if (!location_owner.accept(accepted_location)) {
+      // Defensive invariant only. Never let the new read-only Location owner
+      // gate the physically proven geofence/store-first path.
+      Serial.println(F("LOCATION accepted fix invariant rejected"));
+    }
+
     processGeofenceAcceptedFix(fix, !confirmation_fix_expected);
 
     if (!confirmation_fix_expected) {
