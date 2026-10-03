@@ -1,6 +1,6 @@
 # DEVQ1 — Host quality gates: coverage, fuzzing and CodeQL
 
-Status: **IMPLEMENTATION CANDIDATE — host + bounded fuzz revalidation PASS; tooling validation continues.**
+Status: **IMPLEMENTATION CANDIDATE — host + bounded fuzz + coverage generation PASS; tooling validation continues.**
 
 Baseline:
 `main@9e8e2b8e2d333fbedadb69ed72f316a775579b27`
@@ -156,8 +156,21 @@ Owner-run bounded libFuzzer smoke is also **PASS**:
 - final runner result: `ORUN bounded host fuzz smoke: PASS`.
 
 This is bounded host evidence only; it is not proof of exhaustive parser
-correctness or hardware behavior. Remaining validation: gcovr report generation,
-production RAK4630 size invariance and CodeQL execution.
+correctness or hardware behavior.
+
+Owner-run gcovr 5.2 coverage generation is **PASS** after using the Debian 12
+compatible `--print-summary` flag:
+
+- lines: **92.5%** (6052 / 6541);
+- functions: **98.9%** (539 / 545);
+- branches: **67.1%** (4002 / 5966).
+
+DEVQ1 intentionally does not turn these percentages into merge thresholds.
+The branch number is useful as a gap-finder for defensive/error/recovery paths,
+not as a score to optimize.
+
+Remaining validation: production RAK4630 size invariance and CodeQL
+execution/root-cause.
 
 ## 8. Follow-up, not this slice
 
