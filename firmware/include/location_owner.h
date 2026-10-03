@@ -22,9 +22,8 @@ struct AcceptedLocation {
 
 constexpr uint64_t extendRecentMonotonicMs(uint64_t now_ms,
                                            uint32_t captured_at_ms_mod32) {
-  const uint32_t now_mod32 = static_cast<uint32_t>(now_ms);
-  const uint32_t age_ms = now_mod32 - captured_at_ms_mod32;
-  return now_ms - static_cast<uint64_t>(age_ms);
+  return now_ms - static_cast<uint64_t>(
+                      static_cast<uint32_t>(now_ms) - captured_at_ms_mod32);
 }
 
 class LocationOwner {
