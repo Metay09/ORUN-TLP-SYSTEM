@@ -1,6 +1,6 @@
 # DEVQ1 — Host quality gates: coverage, fuzzing and CodeQL
 
-Status: **IMPLEMENTATION CANDIDATE — host revalidation PASS; tooling validation continues.**
+Status: **IMPLEMENTATION CANDIDATE — host + bounded fuzz revalidation PASS; tooling validation continues.**
 
 Baseline:
 `main@9e8e2b8e2d333fbedadb69ed72f316a775579b27`
@@ -145,9 +145,19 @@ Owner-run full host suite on the DEVQ1 branch is **PASS**, including:
 - the new `DEVQ1 host quality tooling source-contract guards`.
 
 This confirms the default host-test path remains compatible after adding the
-optional coverage plumbing and tooling contract. It does not yet validate the
-libFuzzer runner, gcovr report generation, production RAK4630 size invariance or
-CodeQL execution.
+optional coverage plumbing and tooling contract.
+
+Owner-run bounded libFuzzer smoke is also **PASS**:
+
+- `tlp_position`: 10,000 executions, no crash / ASan / UBSan finding;
+- `config_format`: 10,000 executions, no crash / ASan / UBSan finding;
+- `security_format`: 10,000 executions, no crash / ASan / UBSan finding;
+- `geofence_format`: 10,000 executions, no crash / ASan / UBSan finding;
+- final runner result: `ORUN bounded host fuzz smoke: PASS`.
+
+This is bounded host evidence only; it is not proof of exhaustive parser
+correctness or hardware behavior. Remaining validation: gcovr report generation,
+production RAK4630 size invariance and CodeQL execution.
 
 ## 8. Follow-up, not this slice
 
