@@ -14,8 +14,12 @@ as inherited evidence. M7P7I therefore starts from the merged M7P7H baseline.
 
 The product question is not "does the GNSS parser currently have a fix?" It is:
 
-> Where was this device/entity last validly observed, by which source, when was
-> that observation made, and how old is that accepted product fact now?
+> Where was this device last validly observed, by which source, when was that
+> observation made, and how old is that accepted product fact now?
+
+Firmware owns device Location. Mapping a device to an animal/person/vehicle
+entity remains an app/backend Entity Registry responsibility; M7P7I must not
+collapse Device Identity into user/entity identity.
 
 Current firmware already has several correct but deliberately narrower pieces:
 
@@ -71,8 +75,17 @@ It must **not**:
 - alter geofence confirmation ordering;
 - alter TLP v1 POSITION bytes, sequence allocation or RF scheduling.
 
-The existing observation is accepted once; Location, geofence and PositionFlow
-are consumers of that accepted fact according to their current responsibilities.
+Every successful `takeFreshFixForTransmission()` handoff is the existing
+composition-root acceptance point for this slice, including the extra fresh
+observations requested by a geofence confirmation episode. M7P7I must update
+the Location owner exactly once from that already-consumed `GnssFix`, before
+the existing geofence path. A normal scheduled observation may then also enter
+PositionFlow; an extra confirmation observation intentionally does not.
+
+This distinction matters: HistoryStore admission is not Location validity.
+If `PositionFlow::acceptFix()` later fails, store-first still suppresses live
+RF transmission exactly as today, but that failure must not retroactively erase
+the already accepted runtime Location or geofence observation.
 
 ## 4. Minimal runtime value/owner
 
@@ -84,10 +97,19 @@ owned now:
 
 - latitude/longitude in the existing E7 coordinate convention;
 - altitude where available, with explicit availability rather than a magic
-  sentinel;
-- source provenance: GNSS for this slice;
-- local monotonic capture time used for wrap-safe age calculation within the
-  current boot;
+  sentinel; for the first GNSS adapter, every promoted `GnssFix` already
+  passed the existing `invalidLlh` rejection, so altitude is available even
+  for an accepted 2D fix; `kPositionFlag3dFix` remains a quality/fix-type fact,
+  not an altitude-validity bit;
+- source provenance: GNSS for this slice. Provenance is not active-source
+  selection intent; M7P7I does not yet own GNSS-vs-PHONE arbitration;
+- a local monotonic observation-time anchor suitable for truthful age across
+  normal long-lived tracker uptime. Do not expose raw 32-bit
+  `captured_at_ms` as an indefinitely valid product age: it wraps in about
+  49.7 days. The implementation should minimally extend the existing
+  loop-owned monotonic clock to 64-bit and reconstruct the accepted PVT capture
+  time from the bounded (<5 s) 32-bit handoff delta, without changing existing
+  GNSS/PositionFlow 32-bit scheduling APIs;
 - observation UTC time when the source supplied trustworthy UTC, with explicit
   validity; the GNSS adapter must use the existing
   `kPositionFlagValidUtcTime` semantic rather than infer validity from
@@ -116,9 +138,10 @@ For the first GNSS-only runtime owner:
 5. The owner never mutates HistoryStore, ConfigStore, GeofenceStore or
    SecurityStore.
 6. Reading the owner performs no I/O and no O(N) scan.
-7. Age is computed by the consumer from local capture time with the existing
-   wrap-safe monotonic helpers. The owner does not label an observation
-   "live" merely because it is younger than five seconds.
+7. The owner retains a rollover-safe local observation-time anchor. The owner
+   does not label an observation "live" merely because it is younger than five
+   seconds. The existing five-second rule remains only GNSS admission/live-TX
+   evidence, not product freshness policy.
 8. Boot/reset creates a new UNKNOWN runtime owner unless a later separately
    reviewed persistence slice establishes trustworthy last-known semantics.
 
@@ -152,17 +175,23 @@ existing confirmation representative-selection policy.
 
 M7P7I must not rewrite the proven geofence state machine.
 
-For the GNSS-only first slice, the same accepted GNSS observation may:
+For the GNSS-only first slice, one consumed accepted observation fans out
+without a second GNSS read:
 
 ```text
-accepted GNSS observation
+successful takeFreshFixForTransmission()
         |
-        +--> Location owner
+        +--> Location owner (every accepted observation)
         |
         +--> existing geofence confirmation path
         |
-        +--> existing PositionFlow/store-first path
+        +--> PositionFlow/store-first path (normal scheduled observation only)
 ```
+
+The Location update occurs before geofence processing so a geofence-triggered
+request for another observation cannot create an ownership/order ambiguity.
+This does not change the geofence state machine or its representative-fix
+storage behavior.
 
 Future PHONE support must review the GNSS-specific HDOP/satellite representative
 ranking before PHONE observations are allowed to drive geofence confirmation.
@@ -241,8 +270,10 @@ The implementation slice must prove at least:
 - `0,0` remains a valid coordinate when the caller has accepted it;
 - later accepted observation replaces the previous one;
 - no invalid/rejected update path erases the prior valid Location;
-- monotonic capture time near `uint32_t` wrap is retained and age consumers
-  use wrap-safe elapsed semantics;
+- accepted capture time immediately across a 32-bit millis rollover is
+  reconstructed correctly into the rollover-extended local time;
+- a long-lived runtime cannot make an old Location appear newly fresh merely
+  because the legacy 32-bit millisecond clock wrapped;
 - construction/reboot starts UNKNOWN and does not read HistoryStore;
 - owner reads are O(1), side-effect free and fixed-memory;
 - existing geofence confirmation tests remain unchanged/passing;
@@ -263,7 +294,8 @@ HistoryStore format/wear:      unchanged
 Config/Geofence/Security:      unchanged
 BLE UUID/framing:              unchanged
 M7P7H status wire:             unchanged
-RAM:                           one small bounded runtime value/owner
+RAM:                           one small bounded runtime value/owner plus
+                               existing-clock 64-bit exposure
 Flash:                         code only; no new persistent allocation
 Physical behavior:             no new radio/GNSS behavior expected
 ```
