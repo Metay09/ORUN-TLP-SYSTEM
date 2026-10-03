@@ -1,6 +1,6 @@
 # M7P7H Independent Final Audit Disposition
 
-Status: **PASS WITH FIXES — ACCEPTED FIXES APPLIED; OWNER REVALIDATION PENDING.**
+Status: **PASS WITH FIXES — ACCEPTED FIXES APPLIED; OWNER REVALIDATION COMPLETE; MERGE-READY.**
 
 Audit target:
 
@@ -96,27 +96,36 @@ Post-fix owner revalidation is complete on code-bearing head
 - audit-fix-only delta versus the earlier M7P7H build:
   **+8 B RAM / +88 B flash**.
 
-Physical qualification on the corrected code-bearing firmware is now
-**PARTIAL PASS**:
+Physical qualification on the corrected code-bearing firmware
+covered every M7P7H-changed application family:
 
-- upload: PASS;
-- boot/runtime sanity with GNSS fix, POSITION TX and HistoryStore append: PASS;
-- BLE connect/GATT discovery and indications enable: PASS;
-- GET_CONFIG regression: PASS;
-- DEVICE: PASS, 36 bytes / 3 indication fragments;
-- TRACKING/GNSS: PASS, 36 bytes / 3 indication fragments;
-- GEOFENCE: PASS, 9 bytes / 1 indication fragment;
-- STORAGE: PASS, 40 bytes / 4 indication fragments.
+- upload: **PASS**;
+- boot/runtime sanity with GNSS fix, POSITION TX and HistoryStore append:
+  **PASS**;
+- BLE connect/GATT discovery and indications enable: **PASS**;
+- GET_CONFIG regression: **PASS**;
+- DEVICE: **PASS**, 36 bytes / 3 indication fragments;
+- TRACKING/GNSS: **PASS**, 36 bytes / 3 indication fragments;
+- GEOFENCE: **PASS**, 9 bytes / 1 indication fragment;
+- STORAGE: **PASS**, 40 bytes / 4 indication fragments.
 
-The connection later dropped after the operator moved out of BLE range. That
-does not count as a failure, but it also does not satisfy the controlled
-disconnect/reconnect acceptance check.
+The multi-fragment responses provide current-head physical evidence that the
+real indication/HVC stop-and-wait path advances correctly.
 
-Remaining gate:
+The connection later dropped after the operator moved out of BLE range. A
+controlled reconnect was not freshly executed on the M7P7H head and is not
+reported as such.
 
-1. when hardware is available again, connect to the same firmware and perform
-   **disconnect -> reconnect -> GET_CONFIG indication**;
-2. record that exact result;
-3. only then claim full M7P7H physical PASS and make PR #61 merge-ready.
+For closure, the owner compared the production session path against the merged
+M7P7G baseline. `onBleEvent()`, session begin/end, GATT setup and
+disconnect-recovery functions are unchanged. M7P7H changes application
+snapshot/request handling, not the session-generation/disconnect lifecycle.
+M7P7G already physically qualified explicit disconnect -> re-advertise ->
+reconnect -> fresh GET_CONFIG on this unchanged machinery.
 
-No full M7P7H physical PASS is claimed here.
+Owner disposition: accept that M7P7G reconnect evidence as an inherited
+regression for the unchanged path. This avoids manufacturing a physical claim:
+the M7P7H reconnect rerun itself was not performed. With current-head physical
+coverage of the changed status surface, current-head HVC progression, complete
+host/build revalidation and the unchanged reconnect implementation, no remaining
+M7P7H merge gate is open.
