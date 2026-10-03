@@ -421,7 +421,15 @@ exactly-once/order guards are stronger, the startup suite exercises both 2D and
 3D altitude validity, accepted observation time is checked exactly, and
 architecture status text is synchronized.
 
-These audit fixes require owner host/build revalidation before merge. The audit
+Audit-fix owner host revalidation on branch head
+`7d203a3f65e49e013b6bd0e06b6147db88bd2073` is **PASS**:
+
+- full legacy / RF / GNSS / storage / geofence / M7 regression suite: PASS;
+- all production startup scenarios: PASS;
+- M7P7I accepted Location owner source-contract guard: PASS;
+- warnings-as-errors and host ASan/UBSan coverage in the suite: PASS.
+
+The remaining revalidation gate is the production RAK4630 rebuild. The audit
 found no concrete reason for a dedicated physical GNSS qualification: the
 acquisition/consumption predicate is unchanged and M7P7I has no product reader
 yet. Host/build evidence remains non-physical evidence.
