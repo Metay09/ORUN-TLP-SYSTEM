@@ -1,6 +1,6 @@
 # ORUN History / Store-Forward Delivery Contract
 
-Status: **DRAFT IMPLEMENTATION CONTRACT — DOCUMENTATION ONLY; independent architecture/security audit required before runtime or wire implementation.**
+Status: **INDEPENDENT AUDIT PASS WITH FIXES; FIXES APPLIED; FINAL VERIFICATION PENDING — DOCUMENTATION ONLY; NO RUNTIME / WIRE IMPLEMENTATION AUTHORIZED.**
 
 Baseline: `main@c88516615ec956abc3a079d625b034dc2c2c34aa`.
 
@@ -140,33 +140,64 @@ This conservative first rule permits any compatible gateway path to carry the
 observation and any compatible return path to carry the receipt while avoiding
 data loss when an intermediate gateway disappears before synchronization.
 
+**Authority boundary:** a BACKEND_DURABLE receipt is an A2D authority statement
+from the canonical backend side of the per-device security relationship. It must
+authenticate under a reviewed backend-authority A2D context rooted in the
+device's security credential; a gateway must not possess the authority material
+needed to mint this receipt. Delegated gateway grant/frame material
+(`DELEGATED_GW2D` / `K_grant` / delegated `K_frame`) can transport commands
+and may relay opaque receipt bytes, but **must never** authorize advancement of
+History `delivered_through`. The exact compact A2D receipt wire bytes/key label
+remain an SF2 contract.
+
 ---
 
 ## 5. Replay ordering and receipt rule
 
-The initial tracker replay algorithm is intentionally simple and bounded:
+The **safety invariants** are frozen here; exact replay batching/scheduling is
+not.
 
 1. live/critical work has priority;
-2. choose the **oldest undelivered actual History record**;
-3. expose at most one distinct backlog observation as outstanding for delivery
-   confirmation at a time;
-4. retransmission of that logical observation keeps the same History observation
+2. replay selection starts from the **oldest undelivered actual History
+   record**;
+3. retransmission of a logical observation keeps the same History observation
    identity;
-5. accept only an authenticated receipt that names the exact outstanding
-   observation identity and correct tracker/credential context;
-6. advance an in-RAM contiguous delivered watermark only after that receipt;
-7. then move to the next actual History record.
+4. an authenticated receipt must name one or more **explicit logical
+   observation identities** and bind the correct tracker, History incarnation
+   and security lifetime;
+5. authenticated delivery facts may be accumulated in a **bounded RAM
+   acknowledged-ID set** even if they arrive for a newer live/stored record;
+6. durable `delivered_through` advances only while the oldest remaining actual
+   History records form a contiguous locally-confirmed prefix;
+7. a numeric gap caused by ticket reservation/reboot is never treated as an
+   implicitly delivered observation.
 
-This oldest-first stop-and-wait rule makes cumulative durable checkpointing safe
-without assuming that every numeric sequence/ticket value existed as a History
-record.
+Do **not** accept a raw `delivered through sequence N` receipt or a remote
+numeric range and blindly erase all lower records. Ticket reservations, reboot
+skips and other sequence users create numeric gaps.
 
-Do **not** accept a raw `delivered through sequence N` receipt from a remote
-peer and blindly erase all lower records. Ticket reservations, reboot skips and
-other sequence users create numeric gaps.
+The previous one-distinct-outstanding stop-and-wait idea remains a valid
+**candidate sender policy**, but it is **not** frozen as the only production
+receipt shape. SF2 may choose a bounded explicit-identity batch receipt when that
+materially improves airtime/latency. Such a batch must list bounded exact
+observation identities; it must not become a cumulative sequence ACK. SF3 then
+owns the bounded RAM selective set and contiguous-watermark algorithm.
 
-Out-of-order/selective ACK optimization may be added later only with a separately
-reviewed bounded bitmap/range contract.
+### Live/current transmission relationship
+
+A live POSITION remains store-first and its live RF transmission is
+**non-blocking with respect to BACKEND_DURABLE receipt**: the tracker does not
+hold the current tracking path open waiting for one receipt per live packet.
+
+If backend durable evidence for a currently stored live record arrives later,
+SF3 may place that explicit identity into the same bounded RAM acknowledged-ID
+set. This avoids forcing a record already known durable at the backend to be
+replayed solely because it was first sent on the live path. If the selective
+fact is lost on reboot before a coarse durable checkpoint, replay is allowed;
+backend dedupe makes that safe duplicate work.
+
+The exact RAM-set bound, batch bound, retry policy and sender concurrency remain
+SF2/SF3 decisions and are gated by the throughput/airtime proof in §9.
 
 ---
 
@@ -191,12 +222,23 @@ Initial policy:
 The runtime implementation milestone must choose and test an exact checkpoint
 policy against:
 
-- four state slots per page;
+- four History state slots per page;
 - normal record-driven page rotation;
 - outage backlog size;
 - reboot frequency;
 - duplicate replay cost;
-- flash erase/write budget.
+- History flash erase/write budget;
+- SecurityStore A2D replay-reservation writes used to admit authenticated
+  backend receipts;
+- SecurityStore D2A TX-reservation writes used by protected historical uplink
+  traffic.
+
+Current reviewed implementation facts are
+`kA2dReplayReservationBlockSize = 8`,
+`kSecurityStateSlotsPerPage = 99`, and
+`kTxReservationBlockSize = 256`. They are engineering inputs to the SF2/SF3
+wear model, not permission to move per-record History writes into SecurityStore
+and ignore total erase cost.
 
 A checkpoint policy must not create metadata-driven history destruction merely
 to reduce duplicate retransmission.
@@ -277,9 +319,20 @@ explicit **History observation-stream incarnation** rule so an old record and a
 post-maintenance new record can never collide merely because both use the same
 DeviceIdentity and local History identity.
 
-Acceptable implementation directions include a random or monotonic History
-incarnation owned by History persistence. Do not derive it from gateway identity,
-boot uptime, phone time or a wrapping v1 sequence.
+SF1 must choose one reviewed incarnation mechanism that survives the exact
+failure it is meant to disambiguate:
+
+- a cryptographically random value of at least 64 bits generated from the
+  project's approved CSPRNG and durably committed before the first record of the
+  new History stream becomes authoritative; or
+- a monotonic value durably owned outside the History erase/re-baseline region,
+  so destructive History reinitialization cannot roll it back.
+
+The incarnation is semantically owned by History observation identity even if
+its monotonic durability lives in another reviewed persistence owner. Do not
+derive it from gateway identity, boot uptime, phone time or a wrapping v1
+sequence. A monotonic counter stored only inside the partition being erased does
+**not** satisfy this rule.
 
 The incarnation lifecycle is part of the contract:
 
@@ -326,6 +379,42 @@ The initial runtime must:
 - avoid blind continuous replay when no authenticated downstream contact exists;
 - use collision-domain airtime assumptions, not total fleet count alone.
 
+For this contract, **authenticated downstream contact** means a successfully
+authenticated backend-authority A2D frame under the currently accepted security
+lifetime (or an explicitly reviewed rotation/grace rule). A delegated gateway
+frame by itself is not backend contact. When such contact is absent, SF3 may
+send at most one distinct backlog probe per active backoff interval; exact
+backoff/contact timers are frozen only after the RF model is measured.
+
+### Backlog-drain feasibility gate
+
+SF2 wire freeze is blocked until its candidate historical-observation/receipt
+shape demonstrates that backlog service capacity can exceed the claimed nominal
+record-production rate under the current rendezvous model.
+
+The model must include, at minimum:
+
+- the 10-second TRACKER post-TX development RX window and the fact that a
+  worst-case current relayed uplink can reach a gateway about 5.433 seconds
+  after TRACKER TX completion before processing/Internet latency;
+- final/candidate protected uplink and receipt airtime;
+- direct and selected-relay return paths;
+- gateway half-duplex occupancy from receipt downlinks;
+- relay amplification/turnaround;
+- backend durable-commit/return latency that may push a receipt into a later RX
+  opportunity rather than the same 10-second window;
+- live/critical traffic priority;
+- retry/backoff and expected loss;
+- configured tracking interval(s) for which the product claims backlog
+  recovery;
+- History capacity and the possibility of new records being created while the
+  backlog drains.
+
+A simple per-record stop-and-wait receipt is acceptable only if this model
+passes with margin. Otherwise SF2 must use a bounded explicit-identity batch
+receipt or another reviewed non-cumulative mechanism. After exact wire lengths
+are frozen, the calculation is rerun before SF3 runtime activation.
+
 No regulatory duty-cycle percentage is hard-coded by this contract.
 
 The nominal engineering load remains roughly 30–50 active devices with about
@@ -342,12 +431,19 @@ eventually overwrite. It is therefore security-sensitive.
 
 The receipt path must provide:
 
-- origin/authority authentication;
+- origin/authority authentication by the backend-authority A2D security owner;
 - target-device binding;
 - credential/incarnation binding;
 - observation identity binding;
-- anti-replay;
-- bounded freshness/session semantics appropriate to the receipt design.
+- anti-replay.
+
+A BACKEND_DURABLE receipt is an idempotent durable fact, not a wall-clock-fresh
+command. Its application validity must not expire merely because an offline
+gateway uploads hours later. Transport anti-replay is enforced by the reviewed
+A2D counter/security layer and by credential/epoch rules. If the device rotates
+credentials while retained History remains valid for the same owner, the
+backend may reissue the same logical delivery fact under the currently accepted
+security lifetime; the logical observation identity itself does not change.
 
 Do not add an unauthenticated TLP v1 ACK.
 
@@ -424,10 +520,21 @@ Authentication/anti-replay failure; no History delivery state mutation.
 Current circular overwrite behavior remains a capacity loss mode: physical page
 rotation is capacity-driven and is **not** gated by `delivered_through`.
 A delivery checkpoint controls logical replay progress; it is not current
-physical erase authorization. Product diagnostics must expose overwrite/backlog
-pressure and distinguish confirmed backlog release from capacity overwrite.
-Increasing retention or adding reviewed durable gateway custody is a separate
-capacity decision.
+physical erase authorization.
+
+If an unconfirmed or currently replay-outstanding record is overwritten by
+capacity rotation:
+
+- count/report the observation as **capacity loss**, not delivered data;
+- discard any RAM outstanding/selective-receipt state for the missing record;
+- ignore a later receipt for that no-longer-present identity for History
+  mutation purposes;
+- reselect the oldest remaining actual undelivered record;
+- never advance a checkpoint to the missing identity merely to bridge the gap.
+
+Product diagnostics must expose overwrite/backlog pressure and distinguish
+confirmed backlog release from capacity overwrite. Increasing retention or
+adding reviewed durable gateway custody is a separate capacity decision.
 
 ---
 
@@ -444,9 +551,14 @@ RAM contiguous receipt watermark + bounded durable checkpoint policy. Preserve
 store-first behavior and flash wear invariants.
 
 ### SF2 — secure historical observation + receipt codec
-After the relevant TLP v2 compact D2A security contract is ready, freeze exact
-historical-observation and authenticated BACKEND_DURABLE receipt bytes with
-golden/malformed/security vectors. TLP v1 remains byte-identical.
+After the relevant TLP v2 compact D2A/A2D security contract is ready and the
+§9 backlog-drain feasibility gate passes for the candidate frame bounds, freeze
+exact historical-observation and authenticated BACKEND_DURABLE receipt bytes
+with golden/malformed/security vectors. Receipt design must preserve the H1
+authority boundary: backend-authority A2D material may authorize
+BACKEND_DURABLE; delegated gateway material may not. SF2 may choose a bounded
+explicit-identity batch receipt if required by the airtime/throughput result.
+TLP v1 remains byte-identical.
 
 ### SF3 — tracker replay runtime
 Oldest-first one-outstanding replay, live/critical priority, retry/backoff,
@@ -470,10 +582,26 @@ Before claiming store-forward complete:
 - existing M4/R1 History fault tests remain PASS;
 - TLP v1 compatibility/golden fixtures remain byte-identical;
 - new identity/incarnation recovery and power-cut tests PASS;
-- metadata/checkpoint wear tests prove no per-ACK page churn;
-- replay priority/backoff tests PASS;
+- metadata/checkpoint wear tests prove **zero metadata-only History page
+  erases**, including append-free receipt/checkpoint sequences after all four
+  state slots have been consumed;
+- SecurityStore mutation/erase accounting covers A2D replay reservation and D2A
+  TX reservation under representative backlog-drain workloads;
+- destructive History re-baseline creates a non-colliding incarnation before
+  the first new record, including power-cut/reboot boundaries;
+- replay selection ignores/re-baselines legacy persistent `replay_cursor` so
+  stale cursor state cannot skip undelivered records;
+- replay priority/backoff/contact-probe tests PASS;
+- live-record receipts plus bounded RAM selective acknowledgement advance the
+  durable watermark only through a contiguous actual-record prefix;
 - duplicate backend ingest and lost-receipt tests PASS;
-- authenticated receipt replay/forgery tests PASS;
+- a receipt forged with delegated gateway authority is rejected and causes
+  **zero History delivery-state mutation**;
+- authenticated backend-authority receipt replay/forgery tests PASS;
+- capacity overwrite of an outstanding/unconfirmed record increments loss
+  diagnostics and cannot be converted into delivery by a late receipt;
+- candidate then exact-wire backlog-drain/airtime model passes with margin for
+  the tracking intervals/topologies the product claims;
 - RAK4630 production build PASS;
 - physical direct and relay outage/recovery path PASS;
 - fixed gateway and MOBILE gateway paths both prove the same application
@@ -495,3 +623,41 @@ This document does not claim that:
 - History format v3 already has a production-safe incarnation identifier;
 - current four state slots support per-record delivery persistence;
 - any current gateway can erase tracker history merely by receiving a packet.
+
+
+## 16. Independent audit disposition boundary
+
+The recovered independent M4P1 architecture/security audit returned
+**PASS WITH FIXES** with:
+
+- 0 BLOCKER
+- 2 HIGH
+- 4 MEDIUM
+- 5 LOW
+
+The audit transcript did not print its exact head SHA in the recovered summary.
+Repository chronology shows that the audited pre-hardening PR state had four
+branch commits and preceded the post-audit hardening commits. This document
+therefore does not mislabel the later head as already independently reviewed.
+
+Disposition implemented in this revision:
+
+- **H1** backend-only A2D authority for BACKEND_DURABLE; delegated gateway
+  material cannot advance History delivery;
+- **H2** stop-and-wait removed from frozen semantics; bounded explicit-ID batch
+  receipts allowed; candidate/exact throughput gate added before runtime;
+- **M1** no metadata-only History rotation/erase; explicit zero-erase test gate;
+- **M2** SecurityStore A2D/D2A reservation wear included;
+- **M3** incarnation source must survive History re-baseline and commit before
+  first new record;
+- **M4** live transmission is non-blocking; authenticated live delivery facts
+  may feed a bounded RAM selective set while durable progress remains contiguous;
+- **L1** baseline corrected to current main;
+- **L2** persistent replay cursor excluded from the production replay contract;
+- **L3** outstanding-record capacity overwrite becomes explicit loss/reselect
+  behavior;
+- **L4** durable receipt facts are not invalidated by wall-clock delay;
+- **L5** authenticated downstream contact/probe semantics defined.
+
+A focused independent final verification of the **post-fix head** is still
+required before SF1 implementation begins.
