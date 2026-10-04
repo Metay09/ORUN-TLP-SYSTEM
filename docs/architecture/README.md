@@ -283,14 +283,18 @@ semantics and LoRa MESSAGE prerequisites. It is documentation-only and must not 
 as evidence that those runtimes exist.
 
 The History/POSITION backlog delivery implementation contract is recorded in
-`ORUN_HISTORY_STORE_FORWARD_DELIVERY.md`. It preserves TLP v1 bytes and the
-current HistoryStore runtime while defining the required future boundary:
-gateway-independent replay, oldest-first exact receipt correlation, authenticated
-BACKEND_DURABLE evidence for the initial release policy, RAM replay progress,
-coarse durable delivery checkpoints to avoid four-slot metadata churn, explicit
-historical freshness semantics, and a stable History observation-stream
-incarnation before production backend dedupe is frozen. The record is
-documentation-only and requires the recorded audit/final-verification closure before runtime/wire changes.
+`ORUN_HISTORY_STORE_FORWARD_DELIVERY.md`. Its independent audit/final-review
+disposition is recorded in
+`docs/audits/HISTORY_STORE_FORWARD_DELIVERY_AUDIT_DISPOSITION.md`.
+The audit returned PASS WITH FIXES (0 BLOCKER / 2 HIGH / 4 MEDIUM / 5 LOW);
+focused final verification returned PASS WITH MINOR DOC FIX with no remaining
+BLOCKER/HIGH/MEDIUM, and R1-R4 are applied. The contract preserves TLP v1 bytes
+and the current HistoryStore runtime while defining the future boundary:
+gateway-independent replay, explicit-identity authenticated BACKEND_DURABLE
+evidence, bounded RAM receipt progress, no metadata-only History erase, explicit
+historical freshness semantics, a stable History observation-stream incarnation
+and a backlog-drain feasibility gate before SF2 wire freeze. It remains
+documentation-only and does not authorize runtime/wire implementation by itself.
 
 The owner-provided independent review and ORUN disposition are recorded in
 `docs/audits/M7P7C_INDEPENDENT_ARCH_REVIEW_DISPOSITION.md`.
