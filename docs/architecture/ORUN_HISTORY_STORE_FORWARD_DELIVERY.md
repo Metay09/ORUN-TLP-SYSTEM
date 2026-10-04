@@ -1,6 +1,6 @@
 # ORUN History / Store-Forward Delivery Contract
 
-Status: **INDEPENDENT AUDIT PASS WITH FIXES; FIXES APPLIED; FINAL VERIFICATION PENDING — DOCUMENTATION ONLY; NO RUNTIME / WIRE IMPLEMENTATION AUTHORIZED.**
+Status: **INDEPENDENT AUDIT PASS WITH FIXES; FOCUSED FINAL VERIFICATION PASS WITH MINOR DOC FIX; R1-R4 APPLIED — DOCUMENTATION ONLY; NO RUNTIME / WIRE IMPLEMENTATION AUTHORIZED.**
 
 Baseline: `main@c88516615ec956abc3a079d625b034dc2c2c34aa`.
 
@@ -469,8 +469,9 @@ For the initial BACKEND_DURABLE policy:
 2. backend transactionally/durably accepts or recognizes the same observation;
 3. backend creates an authenticated receipt for that logical observation;
 4. the receipt may return through any currently valid gateway/downlink path;
-5. tracker accepts it only if security/identity checks pass and it matches the
-   current oldest outstanding replay record.
+5. tracker accepts it only if security/identity checks pass and every named
+   identity is an actual retained History record; acceptance feeds the §5
+   bounded RAM acknowledged-ID set.
 
 An offline gateway may keep opaque observations for later synchronization, but
 its volatile receipt is not enough to advance tracker delivery state.
@@ -561,8 +562,9 @@ explicit-identity batch receipt if required by the airtime/throughput result.
 TLP v1 remains byte-identical.
 
 ### SF3 — tracker replay runtime
-Oldest-first one-outstanding replay, live/critical priority, retry/backoff,
-reboot behavior and diagnostics.
+Oldest-first replay with the §5 bounded sender policy selected after the §9
+feasibility gate, live/critical priority, retry/backoff, reboot behavior and
+diagnostics.
 
 ### SF4 — fixed/MOBILE gateway + backend ingestion
 Idempotent observation ingest, path metadata retention, durable backend receipt
@@ -659,5 +661,7 @@ Disposition implemented in this revision:
 - **L4** durable receipt facts are not invalidated by wall-clock delay;
 - **L5** authenticated downstream contact/probe semantics defined.
 
-A focused independent final verification of the **post-fix head** is still
-required before SF1 implementation begins.
+Focused independent final verification returned **PASS WITH MINOR DOC FIX**:
+no BLOCKER/HIGH/MEDIUM remained; R1-R4 were documentation-only consistency
+corrections and are applied in the current branch. No new broad audit round is
+required before merge.
