@@ -1165,6 +1165,22 @@ void bitPartialFirstHeaderAndVersionPolicy() {
   assert(!mixed.begin(kDevice));
   assert(mixed.formatResetRequired());
   assert(flash.bytes == mixed_before && flash.erase_operations == erases);
+
+  // A genuinely committed future header must still fail closed. This is
+  // distinct from the torn-v4 cases above, whose CRC/commit are incomplete and
+  // must remain recoverable as unauthoritative first-page debris.
+  FaultFlash future;
+  encodePage(1, kDevice, kHistoryIncarnation, header);
+  header[4] = uint8_t(kVersion + 1);
+  put32(header + 56, crc32(header, 56));
+  assert(future.program(0, header, sizeof(header)) == FlashOpResult::kDone);
+  const auto future_before = future.bytes;
+  TestHistoryIncarnationSource future_source;
+  HistoryStore unsupported_future(future, &future_source);
+  assert(!unsupported_future.begin(kDevice));
+  assert(!unsupported_future.formatResetRequired());
+  assert(future_source.calls == 0);
+  assert(future.bytes == future_before && future.erase_operations == 0);
 }
 
 int main() {
