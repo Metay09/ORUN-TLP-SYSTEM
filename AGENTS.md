@@ -108,10 +108,13 @@ production maintenance/re-baseline prerequisite and
 `UNCONFIRMED / OUTCOME_UNKNOWN` mutation contract remain mandatory before
 protected CAS mutation is enabled.
 
-The delegated authority/header architecture and config CAS contract are
-owner-approved design direction. They are not a wire freeze or production-runtime
-authorization. Durable audit dispositions summarize the review chain; raw
-reviewer prompts/transcripts and superseded drafts are not architecture sources.
+The delegated authority architecture and config CAS contract remain
+owner-approved design direction. M7P6H freezes only the exact
+`DELEGATED_SECURE_APP` envelope/container bytes and initial delegated
+context/family allocation; COMMAND/RESULT plaintext and production secure-RF
+runtime remain unfrozen. Durable audit dispositions summarize the review chain;
+raw reviewer prompts/transcripts and superseded drafts are not architecture
+sources.
 
 For RF-domain/channel planning, shared relay/gateway infrastructure, field coverage
 learning, USB/BLE diagnostics or future serviceability UI, read
