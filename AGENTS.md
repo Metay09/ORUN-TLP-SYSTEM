@@ -117,6 +117,13 @@ For RF-domain/channel planning, shared relay/gateway infrastructure, field cover
 learning, USB/BLE diagnostics or future serviceability UI, read
 `docs/architecture/ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`.
 
+For HistoryStore backlog replay, multi-gateway delivery, authenticated receipt
+semantics, durable delivery checkpointing and flash-wear rules, read
+`docs/architecture/ORUN_HISTORY_STORE_FORWARD_DELIVERY.md`. The current record
+is a documentation-only implementation contract pending independent audit. It
+does not authorize a TLP v1 ACK, blind replay of historical POSITION as live
+data, per-record delivery-state flash writes, or runtime store-forward changes.
+
 BLE product direction is broader than transport bring-up. The intended local
 product surface is phone-based setup, configuration and service/diagnostics,
 with USB and BLE converging on the same typed application/service owners rather
@@ -373,6 +380,20 @@ Live data must not wait behind a large historical backlog.
 When connectivity returns, old records should be transferred gradually.
 
 Records confirmed delivered must not be continuously retransmitted.
+
+Store-forward delivery must remain gateway-independent. A fixed gateway, MOBILE
+gateway or another compatible bridge may carry the same logical observation;
+downstream duplicate transport/path observations must converge on one
+application observation while retaining useful path metadata. `TX_DONE`, relay
+TX completion and ordinary gateway RF receipt are not delivery.
+
+Do not persist a replay cursor or delivered checkpoint after every historical
+packet. History format v3 has only four state slots per active page; per-record
+metadata writes can force destructive metadata-driven page rotation. Initial
+store-forward work must accumulate contiguous authenticated receipt progress in
+RAM and checkpoint durable delivery only at a separately reviewed bounded
+frequency. Reboot may cause safe duplicate replay; premature deletion is not
+acceptable. See `docs/architecture/ORUN_HISTORY_STORE_FORWARD_DELIVERY.md`.
 
 ---
 
