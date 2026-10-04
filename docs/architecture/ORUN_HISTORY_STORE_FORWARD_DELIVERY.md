@@ -2,7 +2,7 @@
 
 Status: **DRAFT IMPLEMENTATION CONTRACT — DOCUMENTATION ONLY; independent architecture/security audit required before runtime or wire implementation.**
 
-Baseline: `main@d25d51d597735cc6611820e60ac6084716a0090e`.
+Baseline: `main@c88516615ec956abc3a079d625b034dc2c2c34aa`.
 
 This document closes the product-level ambiguity around HistoryStore replay,
 delivery evidence, multi-gateway ingestion and flash-wear behavior before the
