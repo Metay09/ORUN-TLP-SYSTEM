@@ -282,6 +282,16 @@ DELIVERED semantics, Internet-first/LoRa-fallback/store-forward direction, prese
 semantics and LoRa MESSAGE prerequisites. It is documentation-only and must not be read
 as evidence that those runtimes exist.
 
+The History/POSITION backlog delivery implementation contract is recorded in
+`ORUN_HISTORY_STORE_FORWARD_DELIVERY.md`. It preserves TLP v1 bytes and the
+current HistoryStore runtime while defining the required future boundary:
+gateway-independent replay, oldest-first exact receipt correlation, authenticated
+BACKEND_DURABLE evidence for the initial release policy, RAM replay progress,
+coarse durable delivery checkpoints to avoid four-slot metadata churn, explicit
+historical freshness semantics, and a stable History observation-stream
+incarnation before production backend dedupe is frozen. The record is
+documentation-only and requires independent audit before runtime/wire changes.
+
 The owner-provided independent review and ORUN disposition are recorded in
 `docs/audits/M7P7C_INDEPENDENT_ARCH_REVIEW_DISPOSITION.md`.
 
@@ -305,7 +315,8 @@ For current architecture decisions, use this order:
    `ORUN_FIELD_NETWORK_DIAGNOSTICS_PLAN.md`,
    `ADR_RF_CONFIGURATION_PORTABILITY.md`,
    `ORUN_GATEWAY_COMMAND_AUTHORITY_DIRECTION.md`,
-   `ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md` and
+   `ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md`,
+   `ORUN_HISTORY_STORE_FORWARD_DELIVERY.md` and
    `ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md`;
 5. current code, tests, golden/compatibility fixtures and milestone/audit reports
    describing the exact commit being changed;
