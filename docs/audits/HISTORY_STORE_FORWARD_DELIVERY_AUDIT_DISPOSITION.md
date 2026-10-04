@@ -1,6 +1,6 @@
 # History Store-Forward Delivery — Independent Audit Disposition
 
-Status: **PASS WITH FIXES RECEIVED; FIXES APPLIED; FINAL VERIFICATION PENDING.**
+Status: **PASS WITH FIXES RECEIVED; FIXES APPLIED; FOCUSED FINAL VERIFICATION PASS WITH MINOR DOC FIX; R1-R4 APPLIED.**
 
 PR: #69
 
@@ -120,15 +120,22 @@ Status: **FIX APPLIED.**
 
 Status: **FIXES APPLIED.**
 
-## 5. Remaining gate
+## 5. Focused final verification
 
-This file is a disposition summary, not an independent final verification.
+Independent focused final verification of post-fix head
+`9b7a4afb2f87f4c326a3ffa473c7d89aff9fc40f` returned:
 
-Before M4P1 merge:
+```text
+PASS WITH MINOR DOC FIX
+BLOCKER 0
+HIGH    0
+MEDIUM  0
+LOW     R1-R4 documentation consistency only
+```
 
-- reviewer must inspect the post-fix PR head;
-- no BLOCKER/HIGH may remain;
-- documentation must still be the only diff;
-- no build/physical PASS is required for this documentation-only slice.
+R1-R4 are applied in the current branch. The reviewer stated that these
+line-level documentation fixes do not require a new broad audit round.
 
-SF1 runtime/storage implementation begins only after that gate closes.
+M4P1 may merge once the final diff is confirmed documentation-only. No
+build/physical PASS is required for this documentation-only slice. SF1 may
+begin only after M4P1 is merged.
