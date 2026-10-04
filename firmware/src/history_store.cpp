@@ -18,7 +18,8 @@ bool HistoryStore::begin(uint64_t device) {
   acknowledged_through_ = 0;
   active_page_ = -1;
   state_ = {};
-  append_after_new_page_ = state_after_new_page_ = false;
+  append_after_new_page_ = false;
+  pending_capacity_lost_undelivered_ = 0;
   append_result_ready_ = append_success_ = false;
   blob_step_ = BlobStep::kBody; flash_op_awaiting_completion_ = false;
   if (!flash_.begin() || !recover()) return false;
@@ -87,6 +88,45 @@ bool HistoryStore::erasePending() const {
 
 uint32_t HistoryStore::count() const { uint32_t n=0; for(unsigned p=0;p<kPageCount;++p)n+=pages_[p].records_valid; return n; }
 bool HistoryStore::readSlot(unsigned p,unsigned s,Record& r) const { uint8_t b[kRecordSize]; return flash_.read(recordOffset(p,s),b,sizeof(b))&&decodeRecord(b,device_id_,r); }
+
+bool HistoryStore::readNextRetainedStrict(uint64_t id, Record& out) const {
+  bool found = false;
+  for (unsigned p = 0; p < kPageCount; ++p) {
+    for (unsigned s = 0; s < kRecordsPerPage; ++s) {
+      if (!bitSet(pages_[p].valid, s)) continue;
+      Record record{};
+      // Receipt admission is fail-closed: a slot recovery classified as valid
+      // may not be silently skipped merely because this read/decode fails.
+      if (!readSlot(p, s, record)) return false;
+      if (record.identity > id &&
+          (!found || record.identity < out.identity)) {
+        out = record;
+        found = true;
+      }
+    }
+  }
+  return found;
+}
+
+uint32_t HistoryStore::countCapacityLostUndelivered(unsigned page) const {
+  if (page >= kPageCount) return 0;
+  const uint64_t confirmed_through =
+      acknowledged_through_ > state_.delivered_through
+          ? acknowledged_through_
+          : state_.delivered_through;
+  uint32_t lost = 0;
+  for (unsigned slot = 0; slot < kRecordsPerPage; ++slot) {
+    if (!bitSet(pages_[page].valid, slot)) continue;
+    Record record{};
+    // A previously valid record which can no longer be decoded immediately
+    // before its page is erased is conservatively reported as capacity loss.
+    if (!readSlot(page, slot, record) ||
+        record.identity > confirmed_through)
+      ++lost;
+  }
+  return lost;
+}
+
 bool HistoryStore::readAfter(uint64_t id,Record& out) const { bool found=false; for(unsigned p=0;p<kPageCount;++p)for(unsigned s=0;s<kRecordsPerPage;++s)if(bitSet(pages_[p].valid,s)){Record r;if(readSlot(p,s,r)&&r.identity>id&&(!found||r.identity<out.identity)){out=r;found=true;}}return found; }
 bool HistoryStore::newest(Record& out) const { bool found=false; for(unsigned p=0;p<kPageCount;++p)for(unsigned s=0;s<kRecordsPerPage;++s)if(bitSet(pages_[p].valid,s)){Record r;if(readSlot(p,s,r)&&(!found||r.identity>out.identity)){out=r;found=true;}}return found; }
 bool HistoryStore::lookup(uint64_t id,Record& out) const { return id && readAfter(id-1,out) && out.identity==id; }
@@ -130,7 +170,7 @@ bool HistoryStore::acknowledgeDeliveredRecord(uint64_t id) {
   if (id <= acknowledged_through_) return true;
 
   Record expected{};
-  if (!readAfter(acknowledged_through_, expected) ||
+  if (!readNextRetainedStrict(acknowledged_through_, expected) ||
       expected.identity != id) {
     return false;
   }
@@ -146,9 +186,13 @@ HistoryStore::checkpointAcknowledgedDelivery() {
   if (acknowledged_through_ <= state_.delivered_through)
     return DeliveryCheckpointResult::kNoChange;
 
-  Record record{};
-  if (!lookup(acknowledged_through_, record) || active_page_ < 0)
+  if (active_page_ < 0)
     return DeliveryCheckpointResult::kRejected;
+
+  // acknowledgeDeliveredRecord() validated this identity while it was an
+  // actual retained record. A later capacity-driven page erase does not revoke
+  // an already authenticated BACKEND_DURABLE fact, so checkpointing must not
+  // deadlock merely because the acknowledged record has since left the ring.
 
   if (pages_[active_page_].state_used >= kStateSlotsPerPage) {
     ++diagnostics_.delivery_checkpoint_deferrals;
@@ -165,10 +209,21 @@ HistoryStore::checkpointAcknowledgedDelivery() {
 }
 
 bool HistoryStore::markDeliveredThrough(uint64_t id) {
-  // Preserve the legacy API's no-regression contract while routing valid
-  // progress through the SF1 RAM + safe-checkpoint path.
-  if (id < state_.delivered_through) return false;
-  if (!acknowledgeDeliveredRecord(id)) return false;
+  // Preserve the legacy API's no-regression and false-without-new-RAM-progress
+  // behavior. The new SF1 API owns explicit deferred RAM progress.
+  if (!ready_ || busy() || active_page_ < 0 ||
+      state_.generation == UINT64_MAX ||
+      id < state_.delivered_through)
+    return false;
+  if (id == state_.delivered_through) return true;
+  if (pages_[active_page_].state_used >= kStateSlotsPerPage) return false;
+
+  if (acknowledged_through_ == state_.delivered_through) {
+    if (!acknowledgeDeliveredRecord(id)) return false;
+  } else if (id != acknowledged_through_) {
+    return false;
+  }
+
   const auto result = checkpointAcknowledgedDelivery();
   return result == DeliveryCheckpointResult::kStarted ||
          result == DeliveryCheckpointResult::kNoChange;
@@ -189,9 +244,19 @@ bool HistoryStore::saveReplayCursor(uint64_t id) {
 
 bool HistoryStore::startNewPage(bool append_after) {
   if (!ready_ || busy()) return false;
-  target_page_ = active_page_ < 0 ? 0 : (unsigned(active_page_) + 1) % kPageCount;
-  target_generation_ = newest_generation_ + 1; if (!target_generation_) return false;
-  append_after_new_page_ = append_after; job_=Job::kNewPage; phase_=Phase::kErase; return true;
+  target_page_ =
+      active_page_ < 0 ? 0 : (unsigned(active_page_) + 1) % kPageCount;
+  target_generation_ = newest_generation_ + 1;
+  if (!target_generation_) return false;
+
+  // Capture the capacity-loss classification while the target page is still
+  // readable. Publish it only after the physical erase actually succeeds.
+  pending_capacity_lost_undelivered_ =
+      countCapacityLostUndelivered(target_page_);
+  append_after_new_page_ = append_after;
+  job_ = Job::kNewPage;
+  phase_ = Phase::kErase;
+  return true;
 }
 bool HistoryStore::startReservation() {
   if (!ready_ || busy() || active_page_ < 0 || sequence_end_ > UINT64_MAX-kSequenceBlockSize) return false;
@@ -246,10 +311,10 @@ FlashOpResult HistoryStore::writeBlob(){
   blob_step_=BlobStep::kBody;
   return FlashOpResult::kDone;
 }
-void HistoryStore::fail(bool append_failure){if(append_failure){++diagnostics_.append_failures;append_result_ready_=true;append_success_=false;}else ++diagnostics_.metadata_failures;append_after_new_page_=false;state_after_new_page_=false;blob_step_=BlobStep::kBody;flash_op_awaiting_completion_=false;job_=Job::kNone;ready_=false;}
+void HistoryStore::fail(bool append_failure){if(append_failure){++diagnostics_.append_failures;append_result_ready_=true;append_success_=false;}else ++diagnostics_.metadata_failures;append_after_new_page_=false;pending_capacity_lost_undelivered_=0;blob_step_=BlobStep::kBody;flash_op_awaiting_completion_=false;job_=Job::kNone;ready_=false;}
 void HistoryStore::finishBlob(){
   if(job_==Job::kNewPage){pages_[target_page_]={};pages_[target_page_].generation=target_generation_;newest_generation_=target_generation_;active_page_=target_page_;job_=Job::kNone;if(!startReservation())fail(append_after_new_page_);return;}
-  if(job_==Job::kReserve){++pages_[target_page_].sequence_used;sequence_end_=pending_sequence_end_;job_=Job::kNone;if(state_after_new_page_){state_after_new_page_=false;if(!startState(pending_state_))fail(false);return;}if(append_after_new_page_){append_after_new_page_=false;if(!append(pending_record_.packet,pending_record_.identity)){append_result_ready_=true;append_success_=false;ready_=false;}}return;}
+  if(job_==Job::kReserve){++pages_[target_page_].sequence_used;sequence_end_=pending_sequence_end_;job_=Job::kNone;if(append_after_new_page_){append_after_new_page_=false;if(!append(pending_record_.packet,pending_record_.identity)){append_result_ready_=true;append_success_=false;ready_=false;}}return;}
   if(job_==Job::kState){++pages_[target_page_].state_used;state_=pending_state_;job_=Job::kNone;return;}
   pages_[target_page_].records_used=target_slot_+1;pages_[target_page_].valid[target_slot_/8]|=1U<<(target_slot_%8);++pages_[target_page_].records_valid;++diagnostics_.appended;job_=Job::kNone;append_result_ready_=true;append_success_=true;
 }
@@ -264,7 +329,12 @@ void HistoryStore::poll(){
     if(r==FlashOpResult::kPending){flash_op_awaiting_completion_=true;return;}
     flash_op_awaiting_completion_=false;
     if(r==FlashOpResult::kFailed){fail(append_after_new_page_);return;}
-    const uint32_t old=pages_[target_page_].records_valid;diagnostics_.overwritten+=old;phase_=Phase::kHeader;
+    const uint32_t old=pages_[target_page_].records_valid;
+    diagnostics_.overwritten += old;
+    diagnostics_.capacity_lost_undelivered +=
+        pending_capacity_lost_undelivered_;
+    pending_capacity_lost_undelivered_ = 0;
+    phase_=Phase::kHeader;
     uint8_t b[kStaticHeaderSize];encodePage(target_generation_,device_id_,b);startBlob(pageOffset(target_page_),b,sizeof(b));
     return;
   }
