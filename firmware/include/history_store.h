@@ -7,7 +7,24 @@ namespace orun_tlp {
 class HistoryStore : public SequenceSource {
  public:
   using Record = journal_format::Record;
-  struct Diagnostics { uint32_t appended=0, append_failures=0, recovery_corruptions=0, overwritten=0, metadata_failures=0; };
+  struct Diagnostics {
+    uint32_t appended = 0;
+    uint32_t append_failures = 0;
+    uint32_t recovery_corruptions = 0;
+    uint32_t overwritten = 0;
+    uint32_t metadata_failures = 0;
+    uint32_t delivery_checkpoint_deferrals = 0;
+    uint32_t capacity_lost_undelivered = 0;
+  };
+
+  enum class DeliveryCheckpointResult : uint8_t {
+    kStarted,
+    kNoChange,
+    kDeferredNoStateSlot,
+    kBusy,
+    kRejected,
+  };
+
   explicit HistoryStore(FlashBackend& backend) : flash_(backend) {}
   bool begin(uint64_t device_id);
   void poll();  // One synchronous journal step per call.
@@ -33,11 +50,35 @@ class HistoryStore : public SequenceSource {
   bool newest(Record& record) const;
   bool lookup(uint64_t identity, Record& record) const;
   bool readAfter(uint64_t identity, Record& record) const;
-  bool getOldestUndelivered(Record& record) const { return readAfter(state_.delivered_through, record); }
+  bool getOldestUndelivered(Record& record) const {
+    return readAfter(state_.delivered_through, record);
+  }
+  // Legacy name retained for source compatibility. Production store-forward
+  // selection ignores the persisted replay_cursor and starts from durable
+  // delivered_through; SF3 may layer bounded RAM selection above this.
   bool getNextBacklog(Record& record) const;
   uint32_t backlogCount() const;
-  // Reserved for future explicit BASE confirmation; TX_DONE never calls these.
+
+  // SF1 foundation. The caller supplies only an already-authenticated delivery
+  // fact for an explicit retained History identity. This method is RAM-only and
+  // advances strictly across the next actual record, never across numeric
+  // ticket gaps.
+  bool acknowledgeDeliveredRecord(uint64_t identity);
+  uint64_t acknowledgedThrough() const { return acknowledged_through_; }
+  bool deliveryCheckpointPending() const {
+    return acknowledged_through_ > state_.delivered_through;
+  }
+
+  // Persist the current contiguous RAM watermark only when an existing state
+  // slot is available. This method must never rotate/erase a History page just
+  // to save delivery metadata.
+  DeliveryCheckpointResult checkpointAcknowledgedDelivery();
+
+  // Legacy primitive retained for existing callers/tests. It now composes the
+  // RAM acknowledgement + safe checkpoint policy above and therefore cannot
+  // trigger metadata-only page rotation.
   bool markDeliveredThrough(uint64_t identity);
+  // Legacy development primitive only; production replay selection ignores it.
   bool saveReplayCursor(uint64_t identity);
   uint64_t deliveredThrough() const { return state_.delivered_through; }
   uint64_t replayCursor() const { return state_.replay_cursor; }
@@ -60,6 +101,8 @@ class HistoryStore : public SequenceSource {
   bool recover();
   bool pageValid(unsigned page) const { return pages_[page].generation != 0; }
   bool readSlot(unsigned page, unsigned slot, Record& record) const;
+  bool readNextRetainedStrict(uint64_t identity, Record& record) const;
+  uint32_t countCapacityLostUndelivered(unsigned page) const;
   bool startNewPage(bool append_after);
   bool startReservation();
   bool startState(journal_format::State next);
@@ -69,13 +112,15 @@ class HistoryStore : public SequenceSource {
   void fail(bool append_failure);
   FlashBackend& flash_;
   uint64_t device_id_=0, sequence_end_=0, next_ticket_=0, newest_generation_=0;
+  uint64_t acknowledged_through_=0;
   journal_format::State state_{};
   Diagnostics diagnostics_{};
   Page pages_[storage_config::kPageCount]{};
   int active_page_=-1;
   uint32_t target_page_=0, target_slot_=0, target_sequence_slot_=0, target_state_slot_=0;
   uint64_t target_generation_=0, pending_sequence_end_=0;
-  bool append_after_new_page_=false, state_after_new_page_=false;
+  uint32_t pending_capacity_lost_undelivered_=0;
+  bool append_after_new_page_=false;
   bool append_result_ready_=false, append_success_=false, ready_=false;
   Job job_=Job::kNone;
   Phase phase_=Phase::kBlob;

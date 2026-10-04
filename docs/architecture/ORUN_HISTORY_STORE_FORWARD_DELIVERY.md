@@ -264,8 +264,12 @@ SF1 must enforce all of the following:
 
 - the durable checkpoint may never advance beyond the highest contiguous
   authenticated RAM receipt watermark;
-- a checkpoint identity must correspond to an actual History record, not merely
-  a numeric sequence/ticket bound;
+- an identity may enter the authenticated RAM receipt watermark only while it
+  corresponds to an actual retained History record, not merely a numeric
+  sequence/ticket bound; once admitted, a later capacity-driven erase does not
+  revoke that already authenticated BACKEND_DURABLE fact, so the same RAM
+  watermark may still be checkpointed even if that record is no longer
+  physically retained;
 - a delivery checkpoint must **not initiate page rotation or erase solely
   because state slots are exhausted**;
 - if no safe state slot exists, durability is deferred until a normal
@@ -528,10 +532,18 @@ capacity rotation:
 
 - count/report the observation as **capacity loss**, not delivered data;
 - discard any RAM outstanding/selective-receipt state for the missing record;
-- ignore a later receipt for that no-longer-present identity for History
+- ignore a **new** later receipt for that no-longer-present identity for History
   mutation purposes;
 - reselect the oldest remaining actual undelivered record;
-- never advance a checkpoint to the missing identity merely to bridge the gap.
+- never newly admit a missing identity merely to bridge the gap.
+
+If a record had already been explicitly authenticated and admitted into the
+contiguous RAM delivery watermark **before** capacity rotation erased it, that
+durable backend fact remains valid. A later coarse checkpoint may persist that
+previously validated watermark; this does not retroactively mark any
+intervening unconfirmed/capacity-lost records as delivered. Progress beyond a
+capacity-loss gap requires an explicit authenticated receipt for the oldest
+remaining actual History record.
 
 Product diagnostics must expose overwrite/backlog pressure and distinguish
 confirmed backlog release from capacity overwrite. Increasing retention or
