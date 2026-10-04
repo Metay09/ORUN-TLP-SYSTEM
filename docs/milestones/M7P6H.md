@@ -1,6 +1,6 @@
 # M7P6H — DELEGATED_SECURE_APP exact envelope codec
 
-Status: **FOCUSED HOST PASS; PRODUCTION RAK BUILD PENDING; NO PHYSICAL TEST REQUIRED.**
+Status: **PASS — FOCUSED HOST + RAK4630 PRODUCTION BUILD; NO PHYSICAL TEST REQUIRED; NO PRODUCTION RUNTIME ACTIVATION.**
 
 Baseline:
 `main@d25d51d597735cc6611820e60ac6084716a0090e` (M7P6G merged).
@@ -129,8 +129,10 @@ It does not change:
 - COMMAND/RESULT plaintext;
 - BLE/GNSS/geofence/history/power behavior.
 
-No RAK build or physical-device test is required while the new codec remains
-unreferenced by production composition.
+The codec source is part of the PlatformIO production source graph even though
+no runtime caller references it, so a normal RAK4630 production build is required.
+No physical-device test is required because the slice does not alter runtime
+radio, crypto, storage, BLE, GNSS or power behavior.
 
 ## 7. Validation evidence
 
@@ -154,10 +156,24 @@ under warnings-as-errors plus ASan/UBSan.
 
 Because the implementation lives under `firmware/src`, it participates in the
 RAK4630 production build graph even though no production runtime caller exists.
-Per project risk-based validation policy, one normal production RAK4630 build is
-still required before merge. Full host regression, fuzzing, CodeQL and physical
-device testing are not required for this bounded slice unless the diff scope
-changes.
+
+Owner production build:
+
+```text
+pio run -d firmware -e rak4630
+RAK4630: SUCCESS
+RAM:   28,976 / 248,832 bytes (11.6%)
+Flash: 264,912 / 815,104 bytes (32.5%)
+```
+
+The owner reran the build after synchronizing the branch and again received
+**SUCCESS** with the same linked size.
+
+Therefore the required validation for this bounded slice is complete:
+focused host warnings-as-errors + ASan/UBSan **PASS**, production RAK4630 build
+**PASS**. Full host regression, fuzzing, CodeQL and physical-device testing were
+not required because no production runtime behavior, security persistence,
+radio scheduling or hardware interaction changed.
 
 ## 8. Next gate
 
