@@ -1,6 +1,6 @@
 # M7P6H — DELEGATED_SECURE_APP exact envelope codec
 
-Status: **IMPLEMENTATION CANDIDATE — FOCUSED HOST VALIDATION PENDING.**
+Status: **FOCUSED HOST PASS; PRODUCTION RAK BUILD PENDING; NO PHYSICAL TEST REQUIRED.**
 
 Baseline:
 `main@d25d51d597735cc6611820e60ac6084716a0090e` (M7P6G merged).
@@ -132,7 +132,34 @@ It does not change:
 No RAK build or physical-device test is required while the new codec remains
 unreferenced by production composition.
 
-## 7. Next gate
+## 7. Validation evidence
+
+Owner-host focused validation:
+
+```text
+g++ -Ifirmware/include -std=c++17 -O1 -g \
+  -Wall -Wextra -Werror \
+  -fsanitize=address,undefined -fno-omit-frame-pointer \
+  firmware/tests/m7/test_m7p6h_delegated_secure_codec.cpp \
+  firmware/src/tlp_v2_delegated_secure_app.cpp \
+  -o /tmp/m7p6h_codec
+
+/tmp/m7p6h_codec
+```
+
+Result: **PASS**.
+
+The focused host gate therefore closes the exact golden/malformed codec behavior
+under warnings-as-errors plus ASan/UBSan.
+
+Because the implementation lives under `firmware/src`, it participates in the
+RAK4630 production build graph even though no production runtime caller exists.
+Per project risk-based validation policy, one normal production RAK4630 build is
+still required before merge. Full host regression, fuzzing, CodeQL and physical
+device testing are not required for this bounded slice unless the diff scope
+changes.
+
+## 8. Next gate
 
 After focused host validation and review, the next security slice should run the
 delegated M7P6G KDF/frame-key contract against the pinned target crypto path and
