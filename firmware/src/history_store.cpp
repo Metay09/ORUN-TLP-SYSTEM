@@ -14,11 +14,15 @@ bool bitSet(const uint8_t* p, unsigned n) { return p[n / 8] & (1U << (n % 8)); }
 
 bool HistoryStore::begin(uint64_t device) {
   ready_ = false; job_ = Job::kNone; diagnostics_ = {}; device_id_ = device;
-  sequence_end_ = next_ticket_ = newest_generation_ = 0; active_page_ = -1; state_ = {};
+  sequence_end_ = next_ticket_ = newest_generation_ = 0;
+  acknowledged_through_ = 0;
+  active_page_ = -1;
+  state_ = {};
   append_after_new_page_ = state_after_new_page_ = false;
   append_result_ready_ = append_success_ = false;
   blob_step_ = BlobStep::kBody; flash_op_awaiting_completion_ = false;
   if (!flash_.begin() || !recover()) return false;
+  acknowledged_through_ = state_.delivered_through;
   ready_ = true;
   if (active_page_ < 0) return startNewPage(false);
   // A reboot never reuses unused tickets, but recovery itself must stay
@@ -86,7 +90,12 @@ bool HistoryStore::readSlot(unsigned p,unsigned s,Record& r) const { uint8_t b[k
 bool HistoryStore::readAfter(uint64_t id,Record& out) const { bool found=false; for(unsigned p=0;p<kPageCount;++p)for(unsigned s=0;s<kRecordsPerPage;++s)if(bitSet(pages_[p].valid,s)){Record r;if(readSlot(p,s,r)&&r.identity>id&&(!found||r.identity<out.identity)){out=r;found=true;}}return found; }
 bool HistoryStore::newest(Record& out) const { bool found=false; for(unsigned p=0;p<kPageCount;++p)for(unsigned s=0;s<kRecordsPerPage;++s)if(bitSet(pages_[p].valid,s)){Record r;if(readSlot(p,s,r)&&(!found||r.identity>out.identity)){out=r;found=true;}}return found; }
 bool HistoryStore::lookup(uint64_t id,Record& out) const { return id && readAfter(id-1,out) && out.identity==id; }
-bool HistoryStore::getNextBacklog(Record& r) const { return readAfter(state_.replay_cursor>state_.delivered_through?state_.replay_cursor:state_.delivered_through,r); }
+bool HistoryStore::getNextBacklog(Record& r) const {
+  // Persistent replay_cursor is legacy development state and is deliberately
+  // not a production replay selector. Durable delivery is the only persistent
+  // lower bound; later SF3 RAM scheduling may add a transient bound above it.
+  return getOldestUndelivered(r);
+}
 uint32_t HistoryStore::backlogCount() const { uint32_t n=0;for(unsigned p=0;p<kPageCount;++p)for(unsigned s=0;s<kRecordsPerPage;++s)if(bitSet(pages_[p].valid,s)){Record r;if(readSlot(p,s,r)&&r.identity>state_.delivered_through)++n;}return n; }
 
 bool HistoryStore::prepareAppend() {
@@ -113,8 +122,67 @@ bool HistoryStore::append(const uint8_t* packet,uint64_t identity) {
   target_page_=active_page_;target_slot_=pages_[active_page_].records_used;uint8_t b[kRecordSize];encodeRecord(pending_record_,b);startBlob(recordOffset(target_page_,target_slot_),b,sizeof(b));job_=Job::kAppend;phase_=Phase::kBlob;return true;
 }
 bool HistoryStore::takeAppendResult(bool& ok){if(!append_result_ready_)return false;ok=append_success_;append_result_ready_=false;return true;}
-bool HistoryStore::markDeliveredThrough(uint64_t id){Record r;if(!ready_||busy()||id<state_.delivered_through||!lookup(id,r))return false;if(id==state_.delivered_through)return true;State n=state_;n.delivered_through=id;return startState(n);}
-bool HistoryStore::saveReplayCursor(uint64_t id){Record r;if(!ready_||busy()||(id&&!lookup(id,r)))return false;if(id==state_.replay_cursor)return true;State n=state_;n.replay_cursor=id;return startState(n);}
+bool HistoryStore::acknowledgeDeliveredRecord(uint64_t id) {
+  if (!ready_ || busy() || id == 0) return false;
+
+  // Duplicate/late receipt for an already contiguous acknowledged prefix is
+  // idempotent and cannot regress either RAM or durable progress.
+  if (id <= acknowledged_through_) return true;
+
+  Record expected{};
+  if (!readAfter(acknowledged_through_, expected) ||
+      expected.identity != id) {
+    return false;
+  }
+
+  acknowledged_through_ = id;
+  return true;
+}
+
+HistoryStore::DeliveryCheckpointResult
+HistoryStore::checkpointAcknowledgedDelivery() {
+  if (!ready_) return DeliveryCheckpointResult::kRejected;
+  if (busy()) return DeliveryCheckpointResult::kBusy;
+  if (acknowledged_through_ <= state_.delivered_through)
+    return DeliveryCheckpointResult::kNoChange;
+
+  Record record{};
+  if (!lookup(acknowledged_through_, record) || active_page_ < 0)
+    return DeliveryCheckpointResult::kRejected;
+
+  if (pages_[active_page_].state_used >= kStateSlotsPerPage) {
+    ++diagnostics_.delivery_checkpoint_deferrals;
+    return DeliveryCheckpointResult::kDeferredNoStateSlot;
+  }
+
+  State next = state_;
+  next.delivered_through = acknowledged_through_;
+  // Persistent replay_cursor is outside the production SF1/SF3 contract.
+  // Any new trusted checkpoint clears legacy cursor influence.
+  next.replay_cursor = 0;
+  if (!startState(next)) return DeliveryCheckpointResult::kRejected;
+  return DeliveryCheckpointResult::kStarted;
+}
+
+bool HistoryStore::markDeliveredThrough(uint64_t id) {
+  if (!acknowledgeDeliveredRecord(id)) return false;
+  const auto result = checkpointAcknowledgedDelivery();
+  return result == DeliveryCheckpointResult::kStarted ||
+         result == DeliveryCheckpointResult::kNoChange;
+}
+
+bool HistoryStore::saveReplayCursor(uint64_t id) {
+  Record r;
+  if (!ready_ || busy() || (id && !lookup(id, r))) return false;
+  if (id == state_.replay_cursor) return true;
+  // Legacy development API must not create metadata-only page rotation either.
+  if (active_page_ < 0 ||
+      pages_[active_page_].state_used >= kStateSlotsPerPage)
+    return false;
+  State n = state_;
+  n.replay_cursor = id;
+  return startState(n);
+}
 
 bool HistoryStore::startNewPage(bool append_after) {
   if (!ready_ || busy()) return false;
@@ -129,10 +197,22 @@ bool HistoryStore::startReservation() {
   uint8_t b[kSequenceSlotSize];encodeSequenceEnd(pending_sequence_end_,b);startBlob(sequenceOffset(target_page_,target_sequence_slot_),b,sizeof(b));job_=Job::kReserve;phase_=Phase::kBlob;return true;
 }
 bool HistoryStore::startState(State next) {
-  if(!ready_||busy()||active_page_<0||state_.generation==UINT64_MAX)return false;
-  if(pages_[active_page_].state_used>=kStateSlotsPerPage){ pending_state_=next; state_after_new_page_=true; return startNewPage(false); }
-  next.generation=state_.generation+1;pending_state_=next;target_page_=active_page_;target_state_slot_=pages_[active_page_].state_used;
-  uint8_t b[kStateSlotSize];encodeState(next,b);startBlob(stateOffset(target_page_,target_state_slot_),b,sizeof(b));job_=Job::kState;phase_=Phase::kBlob;return true;
+  if (!ready_ || busy() || active_page_ < 0 ||
+      state_.generation == UINT64_MAX)
+    return false;
+  // SF1 invariant: delivery/replay metadata may never rotate/erase a History
+  // page. State durability waits for a normal record-driven page transition.
+  if (pages_[active_page_].state_used >= kStateSlotsPerPage) return false;
+  next.generation = state_.generation + 1;
+  pending_state_ = next;
+  target_page_ = active_page_;
+  target_state_slot_ = pages_[active_page_].state_used;
+  uint8_t b[kStateSlotSize];
+  encodeState(next, b);
+  startBlob(stateOffset(target_page_, target_state_slot_), b, sizeof(b));
+  job_ = Job::kState;
+  phase_ = Phase::kBlob;
+  return true;
 }
 void HistoryStore::startBlob(uint32_t off,const uint8_t* b,uint32_t n){memcpy(blob_,b,n);blob_offset_=off;blob_size_=n;blob_step_=BlobStep::kBody;flash_op_awaiting_completion_=false;}
 // M7P3: body/CRC then a separate final commit word, exactly as before -- the
