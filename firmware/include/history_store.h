@@ -14,6 +14,7 @@ class HistoryStore : public SequenceSource {
     uint32_t overwritten = 0;
     uint32_t metadata_failures = 0;
     uint32_t delivery_checkpoint_deferrals = 0;
+    uint32_t capacity_lost_undelivered = 0;
   };
 
   enum class DeliveryCheckpointResult : uint8_t {
@@ -100,6 +101,8 @@ class HistoryStore : public SequenceSource {
   bool recover();
   bool pageValid(unsigned page) const { return pages_[page].generation != 0; }
   bool readSlot(unsigned page, unsigned slot, Record& record) const;
+  bool readNextRetainedStrict(uint64_t identity, Record& record) const;
+  uint32_t countCapacityLostUndelivered(unsigned page) const;
   bool startNewPage(bool append_after);
   bool startReservation();
   bool startState(journal_format::State next);
@@ -116,7 +119,8 @@ class HistoryStore : public SequenceSource {
   int active_page_=-1;
   uint32_t target_page_=0, target_slot_=0, target_sequence_slot_=0, target_state_slot_=0;
   uint64_t target_generation_=0, pending_sequence_end_=0;
-  bool append_after_new_page_=false, state_after_new_page_=false;
+  uint32_t pending_capacity_lost_undelivered_=0;
+  bool append_after_new_page_=false;
   bool append_result_ready_=false, append_success_=false, ready_=false;
   Job job_=Job::kNone;
   Phase phase_=Phase::kBlob;
