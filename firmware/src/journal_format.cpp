@@ -14,8 +14,27 @@ bool looksLikeJournalHeader(const uint8_t* p) { const uint8_t m[4]={'O','R','J',
 bool validPacket(const uint8_t* p,uint64_t id,uint64_t device) { tlp::PositionPacket d{}; return id&&tlp::deserializePositionPacket(p,tlp::kPositionPacketSize,&d)&&d.source_device_id==device&&d.sequence_number==uint32_t(id-1)&&(d.flags&tlp::kPositionFlagValidFix)&&((d.flags&tlp::kPositionFlagValidUtcTime)||d.gnss_utc_epoch_seconds==0); }
 static void seal(uint8_t* p,unsigned crc,unsigned commit){put32(p+crc,crc32(p,crc));put32(p+commit,kCommit);}
 static bool sealed(const uint8_t* p,unsigned crc,unsigned commit){return get32(p+commit)==kCommit&&get32(p+crc)==crc32(p,crc);}
-void encodePage(uint64_t gen,uint64_t dev,uint8_t* p){memset(p,0,kStaticHeaderSize);put32(p,kPageMagic);p[4]=kVersion;put64(p+8,gen);put64(p+16,dev);seal(p,56,60);}
-bool decodePage(const uint8_t* p,uint64_t dev,uint64_t& gen){if(get32(p)!=kPageMagic||p[4]!=kVersion||p[5]||p[6]||p[7]||get64(p+16)!=dev||!(gen=get64(p+8))||!sealed(p,56,60))return false;for(unsigned i=24;i<56;++i)if(p[i])return false;return true;}
+void encodePage(uint64_t gen, uint64_t dev, uint64_t incarnation,
+                uint8_t* p) {
+  memset(p, 0, kStaticHeaderSize);
+  put32(p, kPageMagic);
+  p[4] = kVersion;
+  put64(p + 8, gen);
+  put64(p + 16, dev);
+  put64(p + 24, incarnation);
+  seal(p, 56, 60);
+}
+
+bool decodePage(const uint8_t* p, uint64_t dev, uint64_t& gen,
+                uint64_t& incarnation) {
+  if (get32(p) != kPageMagic || p[4] != kVersion || p[5] || p[6] || p[7] ||
+      get64(p + 16) != dev || !(gen = get64(p + 8)) ||
+      !(incarnation = get64(p + 24)) || !sealed(p, 56, 60))
+    return false;
+  for (unsigned i = 32; i < 56; ++i)
+    if (p[i]) return false;
+  return true;
+}
 void encodeSequenceEnd(uint64_t end,uint8_t* p){memset(p,0,kSequenceSlotSize);put64(p,end);seal(p,8,12);}
 bool decodeSequenceEnd(const uint8_t* p,uint64_t& end){return sealed(p,8,12)&&(end=get64(p))&&!(end%storage_config::kSequenceBlockSize);}
 void encodeState(const State& s,uint8_t* p){memset(p,0,kStateSlotSize);put64(p,s.generation);put64(p+8,s.delivered_through);put64(p+16,s.replay_cursor);seal(p,24,28);}
