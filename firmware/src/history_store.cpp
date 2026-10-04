@@ -165,6 +165,9 @@ HistoryStore::checkpointAcknowledgedDelivery() {
 }
 
 bool HistoryStore::markDeliveredThrough(uint64_t id) {
+  // Preserve the legacy API's no-regression contract while routing valid
+  // progress through the SF1 RAM + safe-checkpoint path.
+  if (id < state_.delivered_through) return false;
   if (!acknowledgeDeliveredRecord(id)) return false;
   const auto result = checkpointAcknowledgedDelivery();
   return result == DeliveryCheckpointResult::kStarted ||
