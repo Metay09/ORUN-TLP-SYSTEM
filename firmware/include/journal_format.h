@@ -6,7 +6,7 @@
 
 namespace orun_tlp::journal_format {
 constexpr uint32_t kPageMagic = 0x4F524A34;  // ORJ4
-constexpr uint8_t kVersion = 3; // High word encodes the zero-based ticket.
+constexpr uint8_t kVersion = 4; // v4 adds History stream incarnation to page header.
 constexpr uint32_t kCommit = 0;
 constexpr uint32_t kStaticHeaderSize = 64;
 constexpr uint32_t kSequenceSlotSize = 16;
@@ -28,8 +28,10 @@ struct State { uint64_t generation = 0, delivered_through = 0, replay_cursor = 0
 bool validPacket(const uint8_t* packet, uint64_t identity, uint64_t device);
 void encodeRecord(const Record& record, uint8_t* bytes);
 bool decodeRecord(const uint8_t* bytes, uint64_t device, Record& record);
-void encodePage(uint64_t generation, uint64_t device, uint8_t* bytes);
-bool decodePage(const uint8_t* bytes, uint64_t device, uint64_t& generation);
+void encodePage(uint64_t generation, uint64_t device, uint64_t incarnation,
+                uint8_t* bytes);
+bool decodePage(const uint8_t* bytes, uint64_t device, uint64_t& generation,
+                uint64_t& incarnation);
 void encodeSequenceEnd(uint64_t sequence_end, uint8_t* bytes);
 bool decodeSequenceEnd(const uint8_t* bytes, uint64_t& sequence_end);
 void encodeState(const State& state, uint8_t* bytes);
