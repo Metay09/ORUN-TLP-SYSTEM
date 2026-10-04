@@ -1020,6 +1020,90 @@ void allocatedIdentityWrapRecovery() {
   ordered(store);
 }
 
+void historyIncarnationPersistsAcrossRebootAndRotation() {
+  FaultFlash flash;
+  TestHistoryIncarnationSource source;
+  source.next = 0x8877665544332211ULL;
+
+  HistoryStore store(flash, &source);
+  start(store);
+  assert(source.calls == 1);
+  const uint64_t incarnation = store.incarnation();
+  assert(incarnation == 0x8877665544332211ULL);
+
+  // Fill one page and force one ordinary record-driven page rotation.
+  for (unsigned index = 0; index <= kRecordsPerPage; ++index)
+    append(store, allocate(store, 410000000 + int32_t(index)));
+
+  assert(store.incarnation() == incarnation);
+
+  uint64_t generation0 = 0, incarnation0 = 0;
+  uint64_t generation1 = 0, incarnation1 = 0;
+  uint8_t header[kStaticHeaderSize];
+  assert(flash.read(0, header, sizeof(header)));
+  assert(decodePage(header, kDevice, generation0, incarnation0));
+  assert(flash.read(kPageSize, header, sizeof(header)));
+  assert(decodePage(header, kDevice, generation1, incarnation1));
+  assert(incarnation0 == incarnation && incarnation1 == incarnation);
+  assert(generation1 > generation0);
+
+  HistoryStore rebooted(flash, &source);
+  recoverOnly(rebooted);
+  assert(rebooted.incarnation() == incarnation);
+  // Recovery of a valid v4 stream never asks for fresh entropy.
+  assert(source.calls == 1);
+}
+
+void historyIncarnationFailsClosedWithoutEntropy() {
+  FaultFlash flash;
+  TestHistoryIncarnationSource source;
+  source.fail = true;
+
+  const auto before = flash.bytes;
+  HistoryStore store(flash, &source);
+  assert(!store.begin(kDevice));
+  assert(!store.ready());
+  assert(store.incarnation() == 0);
+  assert(!store.formatResetRequired());
+  assert(flash.bytes == before);
+  assert(flash.program_operations == 0);
+  assert(flash.erase_operations == 0);
+  assert(source.calls == 1);
+}
+
+void historyIncarnationMismatchFailsClosed() {
+  FaultFlash flash;
+  uint8_t first[kStaticHeaderSize];
+  uint8_t second[kStaticHeaderSize];
+  encodePage(1, kDevice, 0x1111111111111111ULL, first);
+  encodePage(2, kDevice, 0x2222222222222222ULL, second);
+  assert(flash.program(0, first, sizeof(first)) == FlashOpResult::kDone);
+  assert(flash.program(kPageSize, second, sizeof(second)) ==
+         FlashOpResult::kDone);
+
+  const auto before = flash.bytes;
+  const uint32_t erases = flash.erase_operations;
+  TestHistoryIncarnationSource source;
+  HistoryStore store(flash, &source);
+  assert(!store.begin(kDevice));
+  assert(!store.ready());
+  assert(!store.formatResetRequired());
+  assert(source.calls == 0);
+  assert(flash.bytes == before);
+  assert(flash.erase_operations == erases);
+}
+
+void historyPageRejectsZeroIncarnation() {
+  uint8_t header[kStaticHeaderSize];
+  encodePage(1, kDevice, kHistoryIncarnation, header);
+  memset(header + 24, 0, 8);
+  put32(header + 56, crc32(header, 56));
+
+  uint64_t generation = 0;
+  uint64_t incarnation = 0;
+  assert(!decodePage(header, kDevice, generation, incarnation));
+}
+
 void bitPartialFirstHeaderAndVersionPolicy() {
   uint8_t header[kStaticHeaderSize];
   encodePage(1, kDevice, kHistoryIncarnation, header);
@@ -1088,6 +1172,10 @@ int main() {
   previouslyAcceptedStaleRepresentativeIsStoredButNotSentLive();
   lastTicketPositionAndReservationCuts();
   allocatedIdentityWrapRecovery();
+  historyIncarnationPersistsAcrossRebootAndRotation();
+  historyIncarnationFailsClosedWithoutEntropy();
+  historyIncarnationMismatchFailsClosed();
+  historyPageRejectsZeroIncarnation();
   bitPartialFirstHeaderAndVersionPolicy();
   virginNormalAppendAndWear();
   firstInitializationPowerLoss();
