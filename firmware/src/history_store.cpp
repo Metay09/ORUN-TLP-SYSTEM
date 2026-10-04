@@ -10,6 +10,17 @@ uint32_t recordOffset(unsigned p, unsigned s) { return pageOffset(p) + kPageHead
 uint32_t sequenceOffset(unsigned p, unsigned s) { return pageOffset(p) + kStaticHeaderSize + s * kSequenceSlotSize; }
 uint32_t stateOffset(unsigned p, unsigned s) { return pageOffset(p) + kStaticHeaderSize + kSequenceSlotsPerPage * kSequenceSlotSize + s * kStateSlotSize; }
 bool bitSet(const uint8_t* p, unsigned n) { return p[n / 8] & (1U << (n % 8)); }
+
+// Version/cutover policy applies only to a fully committed static-header
+// envelope. A power cut while programming a current v4 header can leave the
+// magic complete while the version byte is still an intermediate 0x07/0x05
+// value. Treating that torn, unauthoritative header as a genuine future format
+// would brick normal first-page recovery.
+bool committedPageHeaderEnvelope(const uint8_t* header) {
+  return get32(header) == kPageMagic &&
+         get32(header + 60) == kCommit &&
+         get32(header + 56) == crc32(header, 56);
+}
 }
 
 bool HistoryStore::begin(uint64_t device) {
@@ -53,7 +64,7 @@ bool HistoryStore::recover() {
     pages_[p] = {};
     uint8_t header[kStaticHeaderSize];
     if (!flash_.read(pageOffset(p),header,sizeof(header))) return false;
-    if (get32(header) == kPageMagic) {
+    if (committedPageHeaderEnvelope(header)) {
       if (header[4] == 2 || header[4] == 3) legacy_format = true;
       if (header[4] > kVersion) unsupported_newer = true;
     }
