@@ -14,6 +14,24 @@ using namespace orun_tlp::journal_format;
 using namespace orun_tlp::storage_config;
 
 constexpr uint64_t kDevice = 0x123456789ABCDEF0ULL;
+constexpr uint64_t kHistoryIncarnation = 0x1122334455667788ULL;
+
+class TestHistoryIncarnationSource : public HistoryIncarnationSource {
+ public:
+  bool generate(uint64_t& incarnation) override {
+    ++calls;
+    if (fail) return false;
+    incarnation = next++;
+    if (incarnation == 0) incarnation = next++;
+    return true;
+  }
+
+  uint64_t next = kHistoryIncarnation;
+  unsigned calls = 0;
+  bool fail = false;
+};
+
+TestHistoryIncarnationSource history_incarnation_source;
 
 // Models synchronous NOR operations, not SoftDevice asynchronous completion.
 class FaultFlash : public FlashBackend {
@@ -140,7 +158,7 @@ void ordered(const HistoryStore& store) {
 
 void virginNormalAppendAndWear() {
   FaultFlash flash;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
   assert(store.count() == 0);
   const uint32_t erases = flash.erase_operations;
@@ -154,12 +172,12 @@ void virginNormalAppendAndWear() {
 void firstInitializationPowerLoss() {
   for (int cut = 0; cut <= int(kStaticHeaderSize); ++cut) {
     FaultFlash flash;
-    HistoryStore interrupted(flash);
+    HistoryStore interrupted(flash, &history_incarnation_source);
     assert(interrupted.begin(kDevice));
     flash.program_budget = cut;
     settle(interrupted);
     flash.program_budget = -1;
-    HistoryStore rebooted(flash);
+    HistoryStore rebooted(flash, &history_incarnation_source);
     start(rebooted);
     assert(rebooted.count() == 0);
     append(rebooted, allocate(rebooted));
@@ -168,21 +186,21 @@ void firstInitializationPowerLoss() {
 
 void recordPowerLossPreservesCommittedDataAndSequence() {
   FaultFlash baseline;
-  HistoryStore original(baseline);
+  HistoryStore original(baseline, &history_incarnation_source);
   start(original);
   const auto committed = allocate(original);
   append(original, committed);
 
   for (int cut = 0; cut <= int(kRecordSize); ++cut) {
     FaultFlash flash = baseline;
-    HistoryStore interrupted(flash);
+    HistoryStore interrupted(flash, &history_incarnation_source);
     start(interrupted);
     const auto pending = allocate(interrupted);
     flash.program_budget = cut;
     assert(interrupted.append(pending.packet, pending.identity));
     settle(interrupted);
     flash.program_budget = -1;
-    HistoryStore rebooted(flash);
+    HistoryStore rebooted(flash, &history_incarnation_source);
     start(rebooted);
     HistoryStore::Record recovered;
     assert(rebooted.lookup(committed.identity, recovered));
@@ -194,12 +212,12 @@ void recordPowerLossPreservesCommittedDataAndSequence() {
 
 void reservationPowerLossNeverReusesTickets() {
   FaultFlash baseline;
-  HistoryStore initial(baseline);
+  HistoryStore initial(baseline, &history_incarnation_source);
   start(initial);
   const auto used = allocate(initial);
   for (int cut = 0; cut <= int(kSequenceSlotSize); ++cut) {
     FaultFlash flash = baseline;
-    HistoryStore rebooting(flash);
+    HistoryStore rebooting(flash, &history_incarnation_source);
     recoverOnly(rebooting);
     uint32_t sequence = 0;
     uint64_t identity = 0;
@@ -209,7 +227,7 @@ void reservationPowerLossNeverReusesTickets() {
     assert(!rebooting.nextSequence(sequence, identity));
     settle(rebooting);
     flash.program_budget = -1;
-    HistoryStore final_store(flash);
+    HistoryStore final_store(flash, &history_incarnation_source);
     start(final_store);
     assert(allocate(final_store).identity > used.identity);
   }
@@ -217,7 +235,7 @@ void reservationPowerLossNeverReusesTickets() {
 
 void rebootWithoutTicketDemandPreservesHistory() {
   FaultFlash flash;
-  HistoryStore seeded(flash);
+  HistoryStore seeded(flash, &history_incarnation_source);
   start(seeded);
   for (unsigned index = 0; index < 600; ++index)
     append(seeded, allocate(seeded, 410000000 + int32_t(index)));
@@ -236,7 +254,7 @@ void rebootWithoutTicketDemandPreservesHistory() {
   // recovery reads only. Repeated idle poll() calls are also forbidden from
   // turning the reboot into a metadata reservation.
   for (unsigned boot = 0; boot < 64; ++boot) {
-    HistoryStore recovered(flash);
+    HistoryStore recovered(flash, &history_incarnation_source);
     recoverOnly(recovered);
     assert(!recovered.canAppend());
     assert(recovered.count() == 600);
@@ -256,7 +274,7 @@ void rebootWithoutTicketDemandPreservesHistory() {
 
   // Once there is real work, demand-driven reservation resumes the unchanged
   // no-sequence-reuse contract before a ticket can be issued.
-  HistoryStore demanded(flash);
+  HistoryStore demanded(flash, &history_incarnation_source);
   recoverOnly(demanded);
   assert(!demanded.canAppend());
   assert(!demanded.prepareAppend());
@@ -271,7 +289,7 @@ void rebootWithoutTicketDemandPreservesHistory() {
 
 void compactSemanticCorruptionAndIdentityBoundaries() {
   FaultFlash flash;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
   const auto first = allocate(store, 412345678);
   append(store, first);
@@ -282,7 +300,7 @@ void compactSemanticCorruptionAndIdentityBoundaries() {
          kRecordsPerPage == 104 && kCapacity == 728);
 
   flash.bytes[kPageHeaderSize + 28] ^= 1;
-  HistoryStore corrupted(flash);
+  HistoryStore corrupted(flash, &history_incarnation_source);
   start(corrupted);
   assert(corrupted.count() == 0);
   assert(corrupted.diagnostics().recovery_corruptions == 1);
@@ -306,7 +324,7 @@ void compactSemanticCorruptionAndIdentityBoundaries() {
 
 void reservationExhaustionRenewsAutomatically() {
   FaultFlash flash;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
   uint32_t sequence = 0;
   uint64_t identity = 0;
@@ -324,7 +342,7 @@ void reservationExhaustionRenewsAutomatically() {
 
 void circularWrapAndPageTransitionCuts() {
   FaultFlash flash;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
   for (unsigned index = 0; index < kCapacity + 120; ++index)
     append(store, allocate(store));
@@ -332,7 +350,7 @@ void circularWrapAndPageTransitionCuts() {
   assert(store.count() >= kCapacity - kRecordsPerPage);
   ordered(store);
 
-  HistoryStore rebooted(flash);
+  HistoryStore rebooted(flash, &history_incarnation_source);
   start(rebooted);
   while (rebooted.count() < kCapacity)
     append(rebooted, allocate(rebooted));
@@ -341,7 +359,7 @@ void circularWrapAndPageTransitionCuts() {
   assert(rebooted.append(pending.packet, pending.identity));
   settle(rebooted);
   flash.erase_budget = -1;
-  HistoryStore after_cut(flash);
+  HistoryStore after_cut(flash, &history_incarnation_source);
   start(after_cut);
   assert(after_cut.count() >= 6 * kRecordsPerPage);
   ordered(after_cut);
@@ -349,7 +367,7 @@ void circularWrapAndPageTransitionCuts() {
 
 void pageRotationUsesOneErase() {
   FaultFlash flash;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
   for (unsigned index = 0; index < kRecordsPerPage; ++index)
     append(store, allocate(store));
@@ -384,7 +402,7 @@ bool RadioManager::encodePosition(const GnssFix& fix, uint8_t* output,
 }
 bool RadioManager::sendPositionPacket(const uint8_t* bytes, const uint32_t*) {
   if (radio_gate_contended) return false;
-  HistoryStore disk(*tx_flash);
+  HistoryStore disk(*tx_flash, &history_incarnation_source);
   start(disk);
   HistoryStore::Record record;
   assert(disk.newest(record));
@@ -395,11 +413,11 @@ bool RadioManager::sendPositionPacket(const uint8_t* bytes, const uint32_t*) {
 
 void positionFlowWaitsForLazyReservationWithoutDroppingFix() {
   FaultFlash flash;
-  HistoryStore seeded(flash);
+  HistoryStore seeded(flash, &history_incarnation_source);
   start(seeded);
   append(seeded, allocate(seeded));
 
-  HistoryStore rebooted(flash);
+  HistoryStore rebooted(flash, &history_incarnation_source);
   recoverOnly(rebooted);
   assert(!rebooted.canAppend());
 
@@ -446,7 +464,7 @@ void captureAgeSurvivesStorageAndRadioWait() {
     tx_flash = &flash;
     sends = 0;
     radio_available = false;
-    HistoryStore store(flash);
+    HistoryStore store(flash, &history_incarnation_source);
     start(store);
     RadioManager radio;
     assert(radio.begin(store));
@@ -470,7 +488,7 @@ void captureAgeSurvivesStorageAndRadioWait() {
     assert(flow.update(fix.captured_at_ms + 5000) == PositionFlow::Event::kLiveExpired);
     assert(sends == 0 && !flow.pending());
     assert(store.count() == 1 && store.backlogCount() == 1 && store.deliveredThrough() == 0);
-    HistoryStore rebooted(flash);
+    HistoryStore rebooted(flash, &history_incarnation_source);
     start(rebooted);
     HistoryStore::Record record;
     assert(rebooted.newest(record));
@@ -487,7 +505,7 @@ void previouslyAcceptedStaleRepresentativeIsStoredButNotSentLive() {
   tx_flash = &flash;
   sends = 0;
   radio_available = true;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
   RadioManager radio;
   assert(radio.begin(store));
@@ -521,7 +539,7 @@ void livePacketSurvivesRadioGateDefer() {
   FaultFlash flash;
   tx_flash = &flash;
   sends = 0;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
   RadioManager radio;
   assert(radio.begin(store));
@@ -541,7 +559,7 @@ void storeFirstAndPageTransitionFailureCompletes() {
   FaultFlash flash;
   tx_flash = &flash;
   sends = 0;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
   RadioManager radio;
   assert(radio.begin(store));
@@ -620,7 +638,7 @@ void injectTransitionFault(HistoryStore& store, FaultFlash& flash,
 
 void everyPageTransitionFailureCompletesPositionFlow() {
   FaultFlash baseline;
-  HistoryStore preparing(baseline);
+  HistoryStore preparing(baseline, &history_incarnation_source);
   start(preparing);
   for (unsigned index = 0; index < kRecordsPerPage; ++index)
     append(preparing, allocate(preparing));
@@ -637,7 +655,7 @@ void everyPageTransitionFailureCompletesPositionFlow() {
     FaultFlash flash = baseline;
     tx_flash = &flash;
     sends = 0;
-    HistoryStore store(flash);
+    HistoryStore store(flash, &history_incarnation_source);
     start(store);
     RadioManager radio;
     assert(radio.begin(store));
@@ -651,7 +669,7 @@ void everyPageTransitionFailureCompletesPositionFlow() {
     assert(sends == 0);
     flash.program_budget = -1;
     flash.erase_budget = -1;
-    HistoryStore rebooted(flash);
+    HistoryStore rebooted(flash, &history_incarnation_source);
     start(rebooted);
     assert(rebooted.count() >= kRecordsPerPage);
     assert(rebooted.count() <= kRecordsPerPage + 1);
@@ -663,7 +681,7 @@ void everyPageTransitionFailureCompletesPositionFlow() {
 
 void deliveryCheckpointNeverErasesForMetadata() {
   FaultFlash flash;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
 
   std::array<HistoryStore::Record, 7> records{};
@@ -700,7 +718,7 @@ void deliveryCheckpointNeverErasesForMetadata() {
   // Reboot loses only the RAM-only receipt progress and returns to the last
   // durable checkpoint. Safe duplicate replay is preferable to metadata erase.
   FaultFlash snapshot = flash;
-  HistoryStore rebooted(snapshot);
+  HistoryStore rebooted(snapshot, &history_incarnation_source);
   start(rebooted);
   assert(rebooted.deliveredThrough() == records[3].identity);
   assert(rebooted.acknowledgedThrough() == records[3].identity);
@@ -722,7 +740,7 @@ void deliveryCheckpointNeverErasesForMetadata() {
   assert(flash.erase_operations == after_record_rotation);
 
   FaultFlash final_snapshot = flash;
-  HistoryStore final_reboot(final_snapshot);
+  HistoryStore final_reboot(final_snapshot, &history_incarnation_source);
   start(final_reboot);
   assert(final_reboot.deliveredThrough() == records[4].identity);
   assert(final_reboot.acknowledgedThrough() == records[4].identity);
@@ -731,7 +749,7 @@ void deliveryCheckpointNeverErasesForMetadata() {
 
 void acknowledgedCheckpointSurvivesCapacityOverwrite() {
   FaultFlash flash;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
 
   std::array<HistoryStore::Record, 5> acknowledged{};
@@ -784,7 +802,7 @@ void acknowledgedCheckpointSurvivesCapacityOverwrite() {
 
 void acknowledgementReadFailureFailsClosed() {
   FaultFlash flash;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
   const auto first = allocate(store);
   append(store, first);
@@ -804,14 +822,14 @@ void acknowledgementReadFailureFailsClosed() {
 
 void numericTicketGapStillUsesActualRecordOrder() {
   FaultFlash flash;
-  HistoryStore first_boot(flash);
+  HistoryStore first_boot(flash, &history_incarnation_source);
   start(first_boot);
   const auto first = allocate(first_boot);
   append(first_boot, first);
 
   // Reboot discards the unused reservation range. The next real record gets a
   // much larger identity, but it is still the next actual History record.
-  HistoryStore second_boot(flash);
+  HistoryStore second_boot(flash, &history_incarnation_source);
   start(second_boot);
   const auto after_gap = allocate(second_boot);
   assert(after_gap.identity > first.identity + 1);
@@ -830,7 +848,7 @@ void numericTicketGapStillUsesActualRecordOrder() {
 
 void checkpointPowerCutsAreDuplicateSafe() {
   FaultFlash baseline;
-  HistoryStore seeded(baseline);
+  HistoryStore seeded(baseline, &history_incarnation_source);
   start(seeded);
   const auto first = allocate(seeded);
   append(seeded, first);
@@ -841,7 +859,7 @@ void checkpointPowerCutsAreDuplicateSafe() {
 
   for (int cut = 0; cut <= int(kStateSlotSize); ++cut) {
     FaultFlash flash = baseline;
-    HistoryStore interrupted(flash);
+    HistoryStore interrupted(flash, &history_incarnation_source);
     start(interrupted);
     assert(interrupted.acknowledgeDeliveredRecord(first.identity));
     const uint32_t erases_before = flash.erase_operations;
@@ -851,7 +869,7 @@ void checkpointPowerCutsAreDuplicateSafe() {
     settle(interrupted);
     flash.program_budget = -1;
 
-    HistoryStore rebooted(flash);
+    HistoryStore rebooted(flash, &history_incarnation_source);
     start(rebooted);
     assert(rebooted.count() == 3);
     assert(rebooted.deliveredThrough() == 0 ||
@@ -868,7 +886,7 @@ void checkpointPowerCutsAreDuplicateSafe() {
 
 void legacyMarkDeferredHasNoRamSideEffect() {
   FaultFlash flash;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
   std::array<HistoryStore::Record, 5> records{};
   for (auto& record : records) {
@@ -886,7 +904,7 @@ void legacyMarkDeferredHasNoRamSideEffect() {
 
 void cursorDelivery() {
   FaultFlash flash;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
   const auto first = allocate(store);
   append(store, first);
@@ -905,7 +923,7 @@ void cursorDelivery() {
   assert(store.backlogCount() == 1);
   assert(store.getNextBacklog(record) && record.identity == second.identity);
 
-  HistoryStore rebooted(flash);
+  HistoryStore rebooted(flash, &history_incarnation_source);
   start(rebooted);
   assert(rebooted.deliveredThrough() == first.identity);
   assert(rebooted.acknowledgedThrough() == first.identity);
@@ -915,7 +933,7 @@ void cursorDelivery() {
 
 void lastTicketPositionAndReservationCuts() {
   FaultFlash flash;
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store);
   uint32_t sequence;
   uint64_t identity;
@@ -939,7 +957,7 @@ void lastTicketPositionAndReservationCuts() {
   assert(store.lookup(256, last));
   assert(flash.erase_operations == erases);
   FaultFlash committed = flash;
-  HistoryStore rebooted(committed);
+  HistoryStore rebooted(committed, &history_incarnation_source);
   start(rebooted);
   assert(rebooted.lookup(256, last));
   assert(rebooted.nextSequence(sequence, identity) && identity == 257);
@@ -947,13 +965,13 @@ void lastTicketPositionAndReservationCuts() {
   // Every body/commit byte cut of the next reservation after ticket 256.
   for (int cut = 0; cut <= int(kSequenceSlotSize); ++cut) {
     FaultFlash interrupted = flash;
-    HistoryStore renewing(interrupted);
+    HistoryStore renewing(interrupted, &history_incarnation_source);
     assert(renewing.begin(kDevice));
     assert(!renewing.nextSequence(sequence, identity));
     interrupted.program_budget = cut;
     settle(renewing);
     interrupted.program_budget = -1;
-    HistoryStore recovered(interrupted);
+    HistoryStore recovered(interrupted, &history_incarnation_source);
     start(recovered);
     assert(recovered.lookup(256, last));
     assert(recovered.nextSequence(sequence, identity) && identity > 256);
@@ -973,11 +991,11 @@ void lastTicketPositionAndReservationCuts() {
 void allocatedIdentityWrapRecovery() {
   FaultFlash flash;
   uint8_t header[kStaticHeaderSize], reservation[kSequenceSlotSize];
-  encodePage(1, kDevice, header);
+  encodePage(1, kDevice, kHistoryIncarnation, header);
   encodeSequenceEnd(0xFFFFFF00ULL, reservation);
   assert(flash.program(0, header, sizeof(header)) == FlashOpResult::kDone);
   assert(flash.program(kStaticHeaderSize, reservation, sizeof(reservation)) == FlashOpResult::kDone);
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   start(store); // Allocates from 0xFFFFFF00 after reserving to 0x100000000.
   uint32_t sequence;
   uint64_t identity;
@@ -991,7 +1009,7 @@ void allocatedIdentityWrapRecovery() {
     assert(record.identity == expected);
     append(store, record);
     FaultFlash snapshot = flash;
-    HistoryStore rebooted(snapshot);
+    HistoryStore rebooted(snapshot, &history_incarnation_source);
     start(rebooted);
     HistoryStore::Record recovered;
     assert(rebooted.lookup(expected, recovered));
@@ -1004,14 +1022,14 @@ void allocatedIdentityWrapRecovery() {
 
 void bitPartialFirstHeaderAndVersionPolicy() {
   uint8_t header[kStaticHeaderSize];
-  encodePage(1, kDevice, header);
+  encodePage(1, kDevice, kHistoryIncarnation, header);
   for (int cut = 0; cut <= 64; ++cut) {
     FaultFlash flash;
     flash.program_bit_budget = cut;
     assert(flash.program(0, header, sizeof(header)) == FlashOpResult::kFailed);
     if (cut == 1) assert(flash.bytes[0] == 0x7F);
     flash.program_bit_budget = -1;
-    HistoryStore recovered(flash);
+    HistoryStore recovered(flash, &history_incarnation_source);
     start(recovered);
     append(recovered, allocate(recovered));
   }
@@ -1022,12 +1040,12 @@ void bitPartialFirstHeaderAndVersionPolicy() {
     flash.program_bit_budget = 1;
     assert(flash.program(offset, header + offset, 4) == FlashOpResult::kFailed);
     flash.program_bit_budget = -1;
-    HistoryStore recovered(flash);
+    HistoryStore recovered(flash, &history_incarnation_source);
     start(recovered);
     assert(recovered.count() == 0);
   }
   FaultFlash flash;
-  HistoryStore original(flash);
+  HistoryStore original(flash, &history_incarnation_source);
   start(original);
   const auto record = allocate(original);
   append(original, record);
@@ -1035,29 +1053,34 @@ void bitPartialFirstHeaderAndVersionPolicy() {
   assert(flash.program(kPageSize, header, sizeof(header)) == FlashOpResult::kFailed);
   flash.program_bit_budget = -1;
   const auto erases = flash.erase_operations;
-  HistoryStore recovered(flash);
+  HistoryStore recovered(flash, &history_incarnation_source);
   start(recovered);
   HistoryStore::Record output;
   assert(recovered.lookup(record.identity, output));
   assert(flash.erase_operations == erases);
 
   FaultFlash old;
-  header[4] = 2;
+  header[4] = 3;
+  memset(header + 24, 0, 32);
   put32(header + 56, crc32(header, 56));
   assert(old.program(0, header, sizeof(header)) == FlashOpResult::kDone);
-  uint64_t generation;
-  assert(!decodePage(header, kDevice, generation));
+  uint64_t generation = 0;
+  uint64_t incarnation = 0;
+  assert(!decodePage(header, kDevice, generation, incarnation));
   const auto before = old.bytes;
-  HistoryStore unsupported(old);
+  HistoryStore unsupported(old, &history_incarnation_source);
   assert(!unsupported.begin(kDevice));
+  assert(unsupported.formatResetRequired());
   unsupported.poll();
   assert(old.bytes == before && old.erase_operations == 0);
-  // Old-format debris must not cause the valid v3 history to be reset.
+
+  // Mixed v3/v4 evidence is also an explicit development-reset boundary.
   assert(flash.program(2 * kPageSize, header, sizeof(header)) == FlashOpResult::kDone);
-  HistoryStore mixed(flash);
-  start(mixed);
-  assert(mixed.lookup(record.identity, output));
-  assert(flash.erase_operations == erases);
+  const auto mixed_before = flash.bytes;
+  HistoryStore mixed(flash, &history_incarnation_source);
+  assert(!mixed.begin(kDevice));
+  assert(mixed.formatResetRequired());
+  assert(flash.bytes == mixed_before && flash.erase_operations == erases);
 }
 
 int main() {
