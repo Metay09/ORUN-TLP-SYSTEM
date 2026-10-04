@@ -736,7 +736,7 @@ state before being enabled.
 
 ---
 
-## 14. Delegated secure frame candidate V2
+## 14. Delegated secure envelope V2
 
 As of M7P6H, this is the **frozen DELEGATED_SECURE_APP envelope contract** for
 the delegated command path. It is not a universal TLP v2 application header.
@@ -1230,9 +1230,13 @@ new BLOCKER/HIGH issue. This revision applies its D1-D4 corrections:
 - D4: the first relay wrapper explicitly allow-lists only delegated type 0x01;
   future compact secure types require a reviewed allow-list change.
 
-The delegated authority architecture and delegated secure-frame header are **owner-approved as design direction**. That is not a wire freeze or implementation authorization.
+The delegated authority architecture and delegated secure-frame header were
+**owner-approved as design direction** by this historical review. At the time of
+that audit they were not a wire freeze or implementation authorization. M7P6H
+later freezes the envelope bytes under the explicit post-audit boundary in §25;
+that later codec code is not covered by the earlier independent audit.
 
-No firmware/runtime/build/physical PASS is claimed by this document.
+No production runtime or physical PASS is claimed by this architecture document.
 
 
 ## 25. Post-audit implementation freeze note — M7P6G / M7P6H
