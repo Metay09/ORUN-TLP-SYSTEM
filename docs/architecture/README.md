@@ -290,7 +290,7 @@ BACKEND_DURABLE evidence for the initial release policy, RAM replay progress,
 coarse durable delivery checkpoints to avoid four-slot metadata churn, explicit
 historical freshness semantics, and a stable History observation-stream
 incarnation before production backend dedupe is frozen. The record is
-documentation-only and requires independent audit before runtime/wire changes.
+documentation-only and requires the recorded audit/final-verification closure before runtime/wire changes.
 
 The owner-provided independent review and ORUN disposition are recorded in
 `docs/audits/M7P7C_INDEPENDENT_ARCH_REVIEW_DISPOSITION.md`.
