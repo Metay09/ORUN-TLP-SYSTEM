@@ -54,7 +54,8 @@ orun_tlp::ActivityCapture activity_capture(accelerometer_manager);
 // ConfigStore through configPort() (docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md
 // §9/§10); the history-facing API/behavior used below is unchanged.
 orun_tlp::FlashMutationGate storage_flash_gate;
-orun_tlp::HistoryStore history(storage_flash_gate);
+orun_tlp::NrfHistoryIncarnationSource history_incarnation_source;
+orun_tlp::HistoryStore history(storage_flash_gate, &history_incarnation_source);
 orun_tlp::NrfConfigIncarnationSource config_incarnation_source;
 orun_tlp::ConfigStore config_store(storage_flash_gate.configPort(),
                                    &config_incarnation_source);
@@ -1727,7 +1728,11 @@ void setup() {
                   static_cast<unsigned long>(history.capacity()),
                   static_cast<unsigned long>(history.diagnostics().recovery_corruptions),
                   static_cast<unsigned long>(history.backlogCount()));
-  } else Serial.println(F("STORAGE unavailable; POSITION TX disabled"));
+  } else if (history.formatResetRequired()) {
+    Serial.println(F("STORAGE v3 development reset required; POSITION TX disabled"));
+  } else {
+    Serial.println(F("STORAGE unavailable; POSITION TX disabled"));
+  }
   // M7P5: recover durable config before GNSS starts, so the very first
   // acquisition schedule already reflects it. config_store.config() reads
   // the safe 180s/unspecified-battery default on blank flash, a corrupt
