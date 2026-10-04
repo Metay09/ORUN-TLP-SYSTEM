@@ -728,6 +728,162 @@ void deliveryCheckpointNeverErasesForMetadata() {
   assert(final_reboot.acknowledgedThrough() == records[4].identity);
 }
 
+
+void acknowledgedCheckpointSurvivesCapacityOverwrite() {
+  FaultFlash flash;
+  HistoryStore store(flash);
+  start(store);
+
+  std::array<HistoryStore::Record, 5> acknowledged{};
+  for (auto& record : acknowledged) {
+    record = allocate(store);
+    append(store, record);
+  }
+
+  // Consume all four state slots, then leave record 5 authenticated in RAM.
+  for (unsigned index = 0; index < 4; ++index) {
+    assert(store.acknowledgeDeliveredRecord(acknowledged[index].identity));
+    assert(store.checkpointAcknowledgedDelivery() ==
+           HistoryStore::DeliveryCheckpointResult::kStarted);
+    settle(store);
+  }
+  assert(store.acknowledgeDeliveredRecord(acknowledged[4].identity));
+  assert(store.checkpointAcknowledgedDelivery() ==
+         HistoryStore::DeliveryCheckpointResult::kDeferredNoStateSlot);
+
+  // Fill the complete seven-page ring. The next append erases page zero,
+  // including the already-authenticated record 5 and unconfirmed records 6-104.
+  while (store.count() < HistoryStore::capacity())
+    append(store, allocate(store));
+  const uint32_t lost_before =
+      store.diagnostics().capacity_lost_undelivered;
+  append(store, allocate(store));
+
+  assert(store.diagnostics().capacity_lost_undelivered ==
+         lost_before + (kRecordsPerPage - acknowledged.size()));
+  HistoryStore::Record gone{};
+  assert(!store.lookup(acknowledged[4].identity, gone));
+
+  // The previously validated delivery fact remains checkpointable even though
+  // capacity rotation removed its record. This does not claim the unconfirmed
+  // records in between were delivered.
+  assert(store.checkpointAcknowledgedDelivery() ==
+         HistoryStore::DeliveryCheckpointResult::kStarted);
+  settle(store);
+  assert(store.deliveredThrough() == acknowledged[4].identity);
+
+  HistoryStore::Record oldest_remaining{};
+  assert(store.getOldestUndelivered(oldest_remaining));
+  assert(oldest_remaining.identity > acknowledged[4].identity);
+  assert(store.acknowledgeDeliveredRecord(oldest_remaining.identity));
+  assert(store.checkpointAcknowledgedDelivery() ==
+         HistoryStore::DeliveryCheckpointResult::kStarted);
+  settle(store);
+  assert(store.deliveredThrough() == oldest_remaining.identity);
+}
+
+void acknowledgementReadFailureFailsClosed() {
+  FaultFlash flash;
+  HistoryStore store(flash);
+  start(store);
+  const auto first = allocate(store);
+  append(store, first);
+  const auto second = allocate(store);
+  append(store, second);
+
+  assert(store.acknowledgeDeliveredRecord(first.identity));
+  assert(store.checkpointAcknowledgedDelivery() ==
+         HistoryStore::DeliveryCheckpointResult::kStarted);
+  settle(store);
+
+  flash.fail_next_read = true;
+  assert(!store.acknowledgeDeliveredRecord(second.identity));
+  assert(store.acknowledgedThrough() == first.identity);
+  assert(store.deliveredThrough() == first.identity);
+}
+
+void numericTicketGapStillUsesActualRecordOrder() {
+  FaultFlash flash;
+  HistoryStore first_boot(flash);
+  start(first_boot);
+  const auto first = allocate(first_boot);
+  append(first_boot, first);
+
+  // Reboot discards the unused reservation range. The next real record gets a
+  // much larger identity, but it is still the next actual History record.
+  HistoryStore second_boot(flash);
+  start(second_boot);
+  const auto after_gap = allocate(second_boot);
+  assert(after_gap.identity > first.identity + 1);
+  append(second_boot, after_gap);
+
+  assert(second_boot.acknowledgeDeliveredRecord(first.identity));
+  assert(second_boot.checkpointAcknowledgedDelivery() ==
+         HistoryStore::DeliveryCheckpointResult::kStarted);
+  settle(second_boot);
+  assert(second_boot.acknowledgeDeliveredRecord(after_gap.identity));
+  assert(second_boot.checkpointAcknowledgedDelivery() ==
+         HistoryStore::DeliveryCheckpointResult::kStarted);
+  settle(second_boot);
+  assert(second_boot.deliveredThrough() == after_gap.identity);
+}
+
+void checkpointPowerCutsAreDuplicateSafe() {
+  FaultFlash baseline;
+  HistoryStore seeded(baseline);
+  start(seeded);
+  const auto first = allocate(seeded);
+  append(seeded, first);
+  const auto second = allocate(seeded);
+  append(seeded, second);
+  const auto third = allocate(seeded);
+  append(seeded, third);
+
+  for (int cut = 0; cut <= int(kStateSlotSize); ++cut) {
+    FaultFlash flash = baseline;
+    HistoryStore interrupted(flash);
+    start(interrupted);
+    assert(interrupted.acknowledgeDeliveredRecord(first.identity));
+    const uint32_t erases_before = flash.erase_operations;
+    flash.program_budget = cut;
+    assert(interrupted.checkpointAcknowledgedDelivery() ==
+           HistoryStore::DeliveryCheckpointResult::kStarted);
+    settle(interrupted);
+    flash.program_budget = -1;
+
+    HistoryStore rebooted(flash);
+    start(rebooted);
+    assert(rebooted.count() == 3);
+    assert(rebooted.deliveredThrough() == 0 ||
+           rebooted.deliveredThrough() == first.identity);
+    assert(rebooted.acknowledgedThrough() == rebooted.deliveredThrough());
+    assert(flash.erase_operations == erases_before);
+
+    HistoryStore::Record retained{};
+    assert(rebooted.lookup(first.identity, retained));
+    assert(rebooted.lookup(second.identity, retained));
+    assert(rebooted.lookup(third.identity, retained));
+  }
+}
+
+void legacyMarkDeferredHasNoRamSideEffect() {
+  FaultFlash flash;
+  HistoryStore store(flash);
+  start(store);
+  std::array<HistoryStore::Record, 5> records{};
+  for (auto& record : records) {
+    record = allocate(store);
+    append(store, record);
+  }
+  for (unsigned index = 0; index < 4; ++index) {
+    assert(store.markDeliveredThrough(records[index].identity));
+    settle(store);
+  }
+  assert(!store.markDeliveredThrough(records[4].identity));
+  assert(store.deliveredThrough() == records[3].identity);
+  assert(store.acknowledgedThrough() == records[3].identity);
+}
+
 void cursorDelivery() {
   FaultFlash flash;
   HistoryStore store(flash);
@@ -924,6 +1080,11 @@ int main() {
   livePacketSurvivesRadioGateDefer();
   everyPageTransitionFailureCompletesPositionFlow();
   deliveryCheckpointNeverErasesForMetadata();
+  acknowledgedCheckpointSurvivesCapacityOverwrite();
+  acknowledgementReadFailureFailsClosed();
+  numericTicketGapStillUsesActualRecordOrder();
+  checkpointPowerCutsAreDuplicateSafe();
+  legacyMarkDeferredHasNoRamSideEffect();
   cursorDelivery();
   puts("M4 storage repair regression checks: PASS");
 }
