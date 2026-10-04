@@ -1,6 +1,6 @@
 # M7P6G — Delegated gateway KDF / frame-key host vectors
 
-Status: **IMPLEMENTATION CANDIDATE — HOST-ONLY; OWNER VALIDATION PENDING.**
+Status: **PASS — HOST-ONLY KDF/FRAME-KEY VECTOR GATE COMPLETE; NO PRODUCTION RUNTIME CHANGE.**
 
 Baseline:
 `main@8128b5113f7f924610a023e1eff097f98e46addb`.
@@ -114,7 +114,24 @@ It does **not** change:
 
 No physical test is required for this host-only slice.
 
-## 5. Next gate
+## 5. Validation
+
+Owner-host focused validation on the branch:
+
+```text
+python3 firmware/tests/m7/test_m7p6g_delegated_kdf_vectors.py
+M7P6G delegated KDF/frame-key host vectors: PASS
+```
+
+A separate independent RFC5869 regeneration also reproduced the committed
+PRK, K_grant, GW2D K_frame and D2GW K_frame byte-for-byte.
+
+Focused final diff review confirmed that the slice remains limited to tests,
+host-runner integration and documentation. No production source/header,
+radio, storage, BLE, GNSS or power behavior changed. No physical test or
+production RAK build is required for this host-only gate.
+
+## 6. Next gate
 
 After host validation and focused review, the next delegated slice is the exact
 `DELEGATED_SECURE_APP` codec golden/malformed contract. A later target slice
