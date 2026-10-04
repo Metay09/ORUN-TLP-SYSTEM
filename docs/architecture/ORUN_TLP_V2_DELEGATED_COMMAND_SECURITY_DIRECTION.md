@@ -1,6 +1,6 @@
 # ORUN TLP v2 Delegated Command Security Direction
 
-Status: **OWNER-APPROVED DESIGN DIRECTION — 2026-09-26. NOT WIRE-FROZEN. NO PRODUCTION RUNTIME AUTHORIZED.**
+Status: **OWNER-APPROVED DESIGN DIRECTION — DELEGATED_SECURE_APP ENVELOPE FROZEN BY M7P6H; COMMAND/RESULT PLAINTEXT UNFROZEN; NO PRODUCTION RUNTIME AUTHORIZED.**
 
 Baseline: `main@e2a370510c595c5f4b88e94a1212fb95d848a273`.
 
@@ -17,7 +17,11 @@ avoid keeping conversation artifacts as long-term architecture sources.
 
 The re-audit returned **PASS WITH FIXES** with no BLOCKER/HIGH findings. The
 final focused verification then returned **PASS WITH MINOR DOC FIX**; those D1-D4
-documentation corrections are applied in this revision. The delegated authority and delegated secure-header direction is owner-approved. COMMAND/RESULT plaintext and implementation details remain unfrozen.
+documentation corrections are applied in this revision. The delegated authority
+and secure-header direction were owner-approved by that review chain. M7P6H later
+freezes the exact DELEGATED_SECURE_APP envelope bytes and initial numeric
+context/family allocation. COMMAND/RESULT plaintext, opcode/result-code values
+and production secure-RF runtime remain unfrozen.
 
 This revision incorporates the independent audit's implementation-blocking
 findings while preserving the product requirement:
@@ -35,7 +39,10 @@ authorized user
 Internet may disappear after command creation. The user may leave. The
 originating gateway need not remain RF-adjacent once custody is transferred.
 
-This is an owner-approved **design-direction** artifact. It does not modify firmware, TLP v1 bytes, SecurityStore, ConfigStore, BLE behavior or RF runtime, and it is not implementation authorization.
+This remains the owner-approved **design-direction** artifact. M7P6H adds an
+unreferenced bounded codec implementation for the frozen delegated envelope, but
+does not activate production secure RF or change TLP v1, SecurityStore,
+ConfigStore, BLE behavior or RF runtime.
 
 ---
 
@@ -729,9 +736,11 @@ state before being enabled.
 
 ---
 
-## 14. Delegated secure frame candidate V2
+## 14. Delegated secure envelope V2
 
-This is the owner-approved **delegated-command header direction**, not a universal TLP v2 application header and not a wire freeze.
+As of M7P6H, this is the **frozen DELEGATED_SECURE_APP envelope contract** for
+the delegated command path. It is not a universal TLP v2 application header.
+COMMAND/RESULT plaintext remains a separate unfrozen contract.
 
 To avoid turning command/security overhead into a tax on routine tracking and
 telemetry, this 56-byte header is **delegated-context only**. Future
@@ -753,7 +762,7 @@ Total: 64..96 bytes.
 ```text
 off  size  field
 0    1     version = 0x02
-1    1     type = 0x01                 // DELEGATED_SECURE_APP candidate
+1    1     type = 0x01                 // DELEGATED_SECURE_APP
 2    1     security_context
 3    1     app_family
 4    1     path_flags
@@ -810,11 +819,11 @@ Invalid/reserved values fail closed.
 
 ### 14.3 Context/family matrix
 
-Initial delegated matrix:
+Frozen initial delegated matrix:
 
 ```text
-DELEGATED_GW2D -> COMMAND
-DELEGATED_D2GW -> RESULT
+0x03 DELEGATED_GW2D  -> 0x01 COMMAND
+0x04 DELEGATED_D2GW  -> 0x02 RESULT
 ```
 
 Other combinations reject.
@@ -1118,9 +1127,9 @@ No plaintext v1 command fallback exists.
 Do not implement this as one milestone.
 
 1. independent re-audit of this V2 design;
-2. host-only delegated KDF/frame-key vectors;
-3. exact DELEGATED_SECURE_APP codec golden/malformed tests;
-4. RAK delegated KDF/AES-CCM/CSPRNG KAT/coexistence proof;
+2. host-only delegated KDF/frame-key vectors — **COMPLETE: M7P6G**;
+3. exact DELEGATED_SECURE_APP codec golden/malformed tests — **COMPLETE: M7P6H**;
+4. RAK delegated KDF/AES-CCM/CSPRNG KAT/coexistence proof — **NEXT**;
 5. SecurityStore v3 delegated replay design + fault tests;
 6. gateway authority-store design + crash/rollback tests;
 7. secure receive path to a read-only/no-side-effect test application;
@@ -1221,6 +1230,37 @@ new BLOCKER/HIGH issue. This revision applies its D1-D4 corrections:
 - D4: the first relay wrapper explicitly allow-lists only delegated type 0x01;
   future compact secure types require a reviewed allow-list change.
 
-The delegated authority architecture and delegated secure-frame header are **owner-approved as design direction**. That is not a wire freeze or implementation authorization.
+The delegated authority architecture and delegated secure-frame header were
+**owner-approved as design direction** by this historical review. At the time of
+that audit they were not a wire freeze or implementation authorization. M7P6H
+later freezes the envelope bytes under the explicit post-audit boundary in §25;
+that later codec code is not covered by the earlier independent audit.
 
-No firmware/runtime/build/physical PASS is claimed by this document.
+No production runtime or physical PASS is claimed by this architecture document.
+
+
+## 25. Post-audit implementation freeze note — M7P6G / M7P6H
+
+The independent delegated-command audit predates the implementation freezes in
+M7P6G and M7P6H. Its historical PASS must not be misrepresented as review of
+new code added later.
+
+M7P6G freezes deterministic delegated KDF/frame-key host vectors for the
+owner-approved `GW-GRANT-v1` / `GW-FRAME-v1` hierarchy.
+
+M7P6H freezes only the `DELEGATED_SECURE_APP` envelope/container bytes and the
+initial numeric delegated context/family allocation:
+
+```text
+version/type:           0x02 / 0x01
+DELEGATED_GW2D/COMMAND: 0x03 / 0x01
+DELEGATED_D2GW/RESULT:  0x04 / 0x02
+header:                 56 bytes
+ciphertext:             0..32 bytes
+tag:                    8 bytes
+AAD:                    bytes 0..55
+```
+
+M7P6H does not freeze COMMAND opcode values, RESULT codes, scope registry
+values, plaintext layouts, production crypto composition, delegated replay
+persistence or gateway authority storage. Those remain gated by later slices.
