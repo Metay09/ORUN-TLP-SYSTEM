@@ -355,11 +355,32 @@ The incarnation lifecycle is part of the contract:
 This keeps security credential lifetime separate from History observation
 identity while closing the privacy boundary around reprovisioning.
 
-This requirement may justify a future HistoryStore format revision, but this
-documentation slice does not change format v3. Because no deployed customer
-fleet currently depends on History format v3, the production cutover may choose
-an explicit development reset rather than build speculative migration logic;
-that decision requires its own storage review and physical qualification.
+M4P3 selects the first concrete implementation candidate for this rule:
+
+- History journal format advances from v3 to **v4**;
+- each committed page header carries one nonzero 64-bit
+  `history_incarnation` at bytes 24..31;
+- the existing 64-byte static header size, 352-byte page header, 36-byte record
+  size and 728-record capacity remain unchanged;
+- a blank/re-baselined History partition obtains its incarnation from the
+  RAK4630/nRF52840 hardware CSPRNG before SoftDevice startup;
+- the page header is committed before any record on that page can become
+  authoritative;
+- every valid page in one recovered stream must carry the same incarnation;
+  conflicting committed incarnations fail closed;
+- reboot and capacity-driven page rotation preserve the recovered incarnation;
+- entropy failure on a blank partition fails closed without writing flash;
+- retained v2/v3 development History is **not** automatically migrated or
+  assigned a synthetic incarnation. It remains untouched and requires an
+  explicit full History development reset/re-baseline before v4 can start;
+- mixed v3/v4 evidence is also a reset boundary rather than a partial
+  migration path.
+
+This is a deliberate clean development cutover. No deployed customer fleet
+currently depends on History format v3, so speculative in-place migration is
+not justified. Because this changes persistence format and physical recovery
+behavior, M4P3 still requires focused storage review and physical
+qualification before the v4 cutover is claimed complete.
 
 ---
 
