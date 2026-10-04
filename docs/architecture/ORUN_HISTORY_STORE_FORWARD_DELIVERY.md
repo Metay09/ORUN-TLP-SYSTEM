@@ -66,6 +66,17 @@ History record identity
 != backend receipt ID
 ```
 
+The application-level logical observation identity is:
+
+```text
+(DeviceIdentity, HistoryIncarnation, HistoryRecordIdentity)
+```
+
+`credential_id` and `key_epoch` authenticate a security lifetime and the
+receipt/transport carrying an observation, but they are **not** part of the
+logical observation identity. Ordinary credential/key rotation must not mint a
+second backend observation row for the same stored History record.
+
 And:
 
 ```text
@@ -191,8 +202,40 @@ A checkpoint policy must not create metadata-driven history destruction merely
 to reduce duplicate retransmission.
 
 The existing persistent `replay_cursor` field/API is **not** authorization to
-persist every replay attempt. The initial runtime should prefer a RAM replay
-cursor. Any durable use of `replay_cursor` requires the same wear analysis.
+persist every replay attempt. The initial runtime uses a RAM replay cursor.
+Any durable use of `replay_cursor` requires the same wear analysis.
+
+Two current implementation details are explicit hazards for SF1/SF3:
+
+1. current `markDeliveredThrough()` calls `startState()`; when the active
+   page's four state slots are exhausted, `startState()` can call
+   `startNewPage(false)`, causing a page erase/rotation solely to persist
+   metadata;
+2. current `getNextBacklog()` chooses after
+   `max(replay_cursor, delivered_through)`, so an old persisted replay cursor
+   can skip otherwise-undelivered records.
+
+Therefore the production store-forward path **must not** blindly reuse either
+behavior.
+
+SF1 must enforce all of the following:
+
+- the durable checkpoint may never advance beyond the highest contiguous
+  authenticated RAM receipt watermark;
+- a checkpoint identity must correspond to an actual History record, not merely
+  a numeric sequence/ticket bound;
+- a delivery checkpoint must **not initiate page rotation or erase solely
+  because state slots are exhausted**;
+- if no safe state slot exists, durability is deferred until a normal
+  record-capacity-driven page transition can carry the checkpoint, or the
+  reviewed History format is revised to provide a safe state area;
+- SF3 backlog selection starts from durable `delivered_through` plus a
+  RAM-owned replay cursor. The current persistent `replay_cursor` /
+  `getNextBacklog()` behavior is not a production replay contract and must be
+  removed, ignored after an explicit development re-baseline, or replaced by
+  the reviewed SF1 API before replay is enabled.
+
+Duplicate replay after reboot remains preferable to metadata-driven record loss.
 
 ---
 
@@ -237,6 +280,23 @@ DeviceIdentity and local History identity.
 Acceptable implementation directions include a random or monotonic History
 incarnation owned by History persistence. Do not derive it from gateway identity,
 boot uptime, phone time or a wrapping v1 sequence.
+
+The incarnation lifecycle is part of the contract:
+
+- normal reboot, page rotation and ordinary key-epoch rotation preserve it;
+- ordinary credential rotation/re-provisioning for the **same authorized owner**
+  does not by itself create a new logical observation stream if History is
+  intentionally retained;
+- a destructive History reset/re-baseline creates a new incarnation before the
+  first new record becomes authoritative;
+- an ownership/tenant transfer must never silently expose retained historical
+  location data to the new owner. Such a transfer requires either a reviewed
+  same-owner continuity decision by the backend authority or an explicit
+  History purge/re-baseline with a new incarnation before the new owner can
+  receive historical data.
+
+This keeps security credential lifetime separate from History observation
+identity while closing the privacy boundary around reprovisioning.
 
 This requirement may justify a future HistoryStore format revision, but this
 documentation slice does not change format v3. Because no deployed customer
@@ -317,7 +377,16 @@ For the initial BACKEND_DURABLE policy:
    current oldest outstanding replay record.
 
 An offline gateway may keep opaque observations for later synchronization, but
-its volatile receipt is not enough to erase tracker history.
+its volatile receipt is not enough to advance tracker delivery state.
+
+This conservative first closure intentionally has a capacity limitation: while
+the backend is unreachable, the tracker continues retaining observations even if
+a gateway has heard or buffered them. If the outage exceeds tracker History
+capacity, today's circular overwrite policy can still lose the oldest
+unconfirmed observations. Product diagnostics must expose that pressure; the
+first BACKEND_DURABLE slice must not claim arbitrary-duration Internet-outage
+retention. A later reviewed and physically qualified DURABLE_CUSTODY path may
+extend that bound without weakening receipt authentication.
 
 Gateway-to-gateway complete-site synchronization is a separate capability and is
 not required for the first store-forward closure.
@@ -352,9 +421,13 @@ may issue/reissue the same delivery fact.
 Authentication/anti-replay failure; no History delivery state mutation.
 
 ### Storage wrap before delivery
-Current circular overwrite behavior remains a capacity loss mode. Product
-diagnostics must expose overwrite/backlog pressure. Increasing retention or
-adding reviewed durable gateway custody is a separate capacity decision.
+Current circular overwrite behavior remains a capacity loss mode: physical page
+rotation is capacity-driven and is **not** gated by `delivered_through`.
+A delivery checkpoint controls logical replay progress; it is not current
+physical erase authorization. Product diagnostics must expose overwrite/backlog
+pressure and distinguish confirmed backlog release from capacity overwrite.
+Increasing retention or adding reviewed durable gateway custody is a separate
+capacity decision.
 
 ---
 
