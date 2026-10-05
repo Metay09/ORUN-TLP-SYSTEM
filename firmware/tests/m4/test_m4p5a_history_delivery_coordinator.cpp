@@ -96,7 +96,7 @@ HistoryStore::Record allocate(HistoryStore& store, int32_t latitude) {
   tlp::PositionPacket packet{};
   packet.source_device_id = kDevice;
   packet.sequence_number = sequence;
-  packet.utc_epoch_seconds = 0x11223344U + sequence;
+  packet.gnss_utc_epoch_seconds = 0x11223344U + sequence;
   packet.latitude_e7 = latitude;
   packet.longitude_e7 = -290000000;
   packet.altitude_mm = 1234;
