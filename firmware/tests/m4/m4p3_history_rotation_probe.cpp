@@ -16,6 +16,7 @@
 #include <Arduino.h>
 #include <Adafruit_TinyUSB.h>
 #include <nrf_sdm.h>
+#include <nrf.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -31,6 +32,15 @@ using namespace orun_tlp::journal_format;
 using namespace orun_tlp::storage_config;
 
 namespace {
+
+bool inheritedWatchdogRunning() {
+  return NRF_WDT->RUNSTATUS != 0;
+}
+
+void feedInheritedWatchdog() {
+  if (inheritedWatchdogRunning())
+    NRF_WDT->RR[0] = WDT_RR_RR_Reload;
+}
 
 class RejectingIncarnationSource : public HistoryIncarnationSource {
  public:
@@ -111,8 +121,10 @@ bool discoverBaseline() {
 }
 
 void settleStore() {
-  while (history.busy())
+  while (history.busy()) {
+    feedInheritedWatchdog();
     history.poll();
+  }
 }
 
 bool allocateRecord(HistoryStore::Record& record, uint32_t synthetic_index) {
@@ -237,6 +249,7 @@ void runRotation() {
   // sufficient even if the page started empty; the normal record-driven path
   // must then create a later-generation page.
   while (appended <= kRecordsPerPage) {
+    feedInheritedWatchdog();
     if (findRotatedPage(rotated_page, rotated_generation,
                         rotated_incarnation))
       break;
@@ -307,11 +320,16 @@ void handleCommand() {
 }  // namespace
 
 void setup() {
+  const bool inherited_watchdog = inheritedWatchdogRunning();
+  feedInheritedWatchdog();
   Serial.begin(115200);
   const uint32_t started = millis();
-  while (!Serial && (millis() - started) < 15000U) delay(10);
+  while (!Serial && (millis() - started) < 15000U) {
+    feedInheritedWatchdog();
+    delay(10);
+  }
 
-  Serial.println(F("M4P3 HISTORY V4 ROTATION PROBE BOOT"));
+  Serial.printf("M4P3 HISTORY V4 ROTATION PROBE BOOT inherited_watchdog=%s\n",\n                inherited_watchdog ? "yes" : "no");
   Serial.println(F("TEST-ONLY: boot is read-only; ROTATE adds History test records"));
   Serial.println(F("RULE: do not send ROTATE without explicit operator approval"));
   Serial.flush();
@@ -349,6 +367,7 @@ void setup() {
 }
 
 void loop() {
+  feedInheritedWatchdog();
   if (terminal) {
     if (Serial && (millis() - last_terminal_report_ms) >= 3000U) {
       Serial.println(final_report);
