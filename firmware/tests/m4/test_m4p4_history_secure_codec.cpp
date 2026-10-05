@@ -115,7 +115,7 @@ HistorySecurePacket baseObservationEnvelope() {
 
 void envelopeGoldenAndRoundTrip() {
   HistorySecurePacket packet = baseObservationEnvelope();
-  uint8_t bytes[kHistorySecureMinPacketSize]{};
+  uint8_t bytes[kHistoryObservationPacketSize]{};
   assert(sizeof(bytes) == 73U);
   assert(serializeHistorySecurePacket(packet, bytes, sizeof(bytes)));
 
@@ -168,10 +168,10 @@ void maxReceiptEnvelope() {
 
 void malformedEnvelope() {
   HistorySecurePacket packet = baseObservationEnvelope();
-  uint8_t bytes[kHistorySecureMinPacketSize]{};
+  uint8_t bytes[kHistoryObservationPacketSize]{};
   assert(serializeHistorySecurePacket(packet, bytes, sizeof(bytes)));
 
-  uint8_t bad[kHistorySecureMinPacketSize]{};
+  uint8_t bad[kHistoryObservationPacketSize]{};
 
   memcpy(bad, bytes, sizeof(bad));
   bad[0] = 1U;
@@ -259,7 +259,9 @@ int main() {
   static_assert(kHistorySecureHeaderSize == 36U);
   static_assert(kHistoryObservationPlaintextSize == 29U);
   static_assert(kHistoryReceiptMaxPlaintextSize == 52U);
-  static_assert(kHistorySecureMinPacketSize == 73U);
+  static_assert(kHistoryObservationPacketSize == 73U);
+  static_assert(kHistoryReceiptMinPacketSize == 56U);
+  static_assert(kHistorySecureMinPacketSize == 56U);
   static_assert(kHistorySecureMaxPacketSize == 96U);
   observationPlaintextGolden();
   receiptPlaintextGoldenAndBounds();
