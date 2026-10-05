@@ -22,6 +22,9 @@
 #ifdef ORUN_M7P6I_HISTORY_CRYPTO_PROBE
 #include "m7p6i_history_crypto_probe.h"
 #endif
+#ifdef ORUN_M4P5C_HISTORY_RECEIPT_PROBE
+#include "m4p5c_history_receipt_probe.h"
+#endif
 #include "firmware_version.h"
 #include "flash_mutation_gate.h"
 #include "gnss_manager.h"
@@ -1725,6 +1728,28 @@ void printM7P6IHistoryCryptoKat() {
 }
 #endif
 
+#ifdef ORUN_M4P5C_HISTORY_RECEIPT_PROBE
+orun_tlp::m4p5c_test::HistoryReceiptKatResult m4p5c_history_receipt_kat{};
+bool m4p5c_history_receipt_kat_done = false;
+uint32_t m4p5c_history_receipt_last_report_ms = 0;
+
+void printM4P5CHistoryReceiptKat() {
+  Serial.printf(
+      "M4P5C HISTORY RECEIPT KAT %s history=%s provision=%s opaque=%s "
+      "busy=%s replaywait=%s applied=%s tamper=%s duplicate=%s\n",
+      m4p5c_history_receipt_kat.pass() ? "PASS" : "FAIL",
+      m4p5c_history_receipt_kat.history_ready ? "PASS" : "FAIL",
+      m4p5c_history_receipt_kat.provision ? "PASS" : "FAIL",
+      m4p5c_history_receipt_kat.opaque_started ? "PASS" : "FAIL",
+      m4p5c_history_receipt_kat.busy_guard ? "PASS" : "FAIL",
+      m4p5c_history_receipt_kat.replay_wait ? "PASS" : "FAIL",
+      m4p5c_history_receipt_kat.applied ? "PASS" : "FAIL",
+      m4p5c_history_receipt_kat.tamper_rejected ? "PASS" : "FAIL",
+      m4p5c_history_receipt_kat.duplicate_rejected ? "PASS" : "FAIL");
+  m4p5c_history_receipt_last_report_ms = millis();
+}
+#endif
+
 void setup() {
   Serial.begin(115200);
   // Start the hardware watchdog before peripheral initialization. It is the
@@ -1796,12 +1821,17 @@ void setup() {
 
   // M7P6B: recovery only -- never provisions a credential. See the
   // composition-root comment on security_store above.
-#ifdef ORUN_M7P6I_HISTORY_CRYPTO_PROBE
+#if defined(ORUN_M7P6I_HISTORY_CRYPTO_PROBE)
   // This test-only image must not mutate or even recover the physical
   // SecurityStore partition. Its KAT below uses a separate RAM-backed store
   // with public vector material. Leaving the production object unopened also
   // makes any accidental probe dependency on real credentials fail closed.
   Serial.println(F("SECURITY physical store skipped by M7P6I probe"));
+#elif defined(ORUN_M4P5C_HISTORY_RECEIPT_PROBE)
+  // M4P5C also uses a separate RAM-backed public SecurityStore for its
+  // full receive-composition KAT. Do not make the test result depend on or
+  // mutate the development unit's real credential partition.
+  Serial.println(F("SECURITY physical store skipped by M4P5C probe"));
 #else
   if (!security_store.begin(device_identity)) {
     Serial.println(F("SECURITY unavailable"));
@@ -1836,6 +1866,19 @@ void setup() {
   // M7P7F read-only ORUN application GATT service after Bluefruit.begin().
   // This does not add commissioning/authorization/protected writes.
   ble_ready = Bluefruit.begin();
+#ifdef ORUN_M4P5C_HISTORY_RECEIPT_PROBE
+  if (ble_ready) {
+    // Exercise the exact production crypto + opaque receipt + replay-admission
+    // composition only after Bluefruit owns the shared CC310 lifecycle.
+    // Persistence used by this KAT is RAM-backed public test state.
+    m4p5c_history_receipt_kat =
+        orun_tlp::m4p5c_test::runHistoryReceiptKat();
+    m4p5c_history_receipt_kat_done = true;
+    printM4P5CHistoryReceiptKat();
+  } else {
+    Serial.println(F("M4P5C HISTORY RECEIPT KAT FAIL reason=ble-not-ready"));
+  }
+#endif
 #ifdef ORUN_M7P6I_HISTORY_CRYPTO_PROBE
   if (ble_ready) {
     // M7P6I calls the exact production HistorySecureCrypto implementation
@@ -1922,6 +1965,12 @@ void loop() {
   if (m7p6i_history_crypto_kat_done && Serial &&
       (millis() - m7p6i_history_crypto_last_report_ms) >= 3000U) {
     printM7P6IHistoryCryptoKat();
+  }
+#endif
+#ifdef ORUN_M4P5C_HISTORY_RECEIPT_PROBE
+  if (m4p5c_history_receipt_kat_done && Serial &&
+      (millis() - m4p5c_history_receipt_last_report_ms) >= 3000U) {
+    printM4P5CHistoryReceiptKat();
   }
 #endif
   // M6D2 deadline is checked BEFORE servicing another GNSS callback so an
