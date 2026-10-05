@@ -461,3 +461,35 @@ translation units while production compilation remains unaffected.
 Remaining final owner-side gate before final independent verification:
 
 - aggregate host regression with the corrected runner.
+
+
+## 17. Final post-audit aggregate host regression
+
+After the host-test ODR cleanup, the owner reran the complete aggregate host
+suite:
+
+```text
+bash firmware/tests/run_host_tests.sh
+```
+
+Result: **PASS**.
+
+The run preserved PASS across the full existing History/SecurityStore,
+M4P4/M7P6I, production-startup, radio, BLE, storage and tooling gates with the
+corrected M4P5B runner configuration.
+
+Owner-side post-audit validation is now complete:
+
+- focused strict-warning ASan/UBSan: PASS;
+- ODR-clean focused strict-warning ASan/UBSan: PASS;
+- aggregate host regression after audit fixes: PASS;
+- final aggregate host regression after ODR cleanup: PASS;
+- fresh normal RAK4630 production build: PASS
+  (RAM 29,024 bytes / Flash 265,356 bytes).
+
+The ODR cleanup changed only host-test compilation and documentation after the
+fresh RAK4630 build; no normal production source path changed.
+
+Remaining merge gate:
+
+- independent focused final verification of the exact final branch head.
