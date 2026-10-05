@@ -569,3 +569,36 @@ Remaining before independent final review:
 - fresh normal production `rak4630` build;
 - fresh `rak4630_m7p6i_history_crypto_probe` build;
 - physical hardened-head probe upload + boot KAT.
+
+
+## 20. Hardened-head normal production build
+
+After the post-KAT D2A counter-ownership and probe-isolation hardening, the
+owner reran the normal production build:
+
+```text
+pio run -d firmware -e rak4630
+
+RAM:   29,024 / 248,832 bytes (11.7%)
+Flash: 265,356 / 815,104 bytes (32.6%)
+SUCCESS — 16.52 s
+```
+
+Result: **PASS**.
+
+The normal production footprint remains exactly unchanged from the prior
+M4P4/M7P6I pre-hardening baseline:
+
+```text
+RAM:   29,024 bytes
+Flash: 265,356 bytes
+```
+
+This confirms the hardened production crypto seam still has no active normal
+runtime caller and does not alter current RF/History/GNSS/BLE/power/storage
+runtime behavior.
+
+Remaining hardened-head gates before independent final review:
+
+- fresh `rak4630_m7p6i_history_crypto_probe` build;
+- physical hardened-head probe upload + boot KAT.
