@@ -52,8 +52,10 @@ OBS_PLAINTEXT = bytes.fromhex(
     "08"
     "07"
 )
+# Header security_context registry is distinct from the KDF/nonce direction
+# namespace: DEVICE_D2A context=0x02 maps to D2A direction=0x01.
 OBS_AAD = (
-    bytes.fromhex("02030101011d0000")
+    bytes.fromhex("02030201011d0000")
     + be(DEVICE_ID, 8)
     + be(KEY_EPOCH, 4)
     + be(OBS_COUNTER, 8)
@@ -71,7 +73,7 @@ assert OBS_NONCE.hex() == "01020304011122334455667788"
 assert OBS_CIPHERTEXT.hex() == (
     "61ff0ec3e211ae143cbee92d895cb1631134aa08fd957b0b96093f0d66"
 )
-assert OBS_TAG.hex() == "fbcff9c04d2f4e81"
+assert OBS_TAG.hex() == "12c18c91aeb7750a"
 
 RECEIPT_COUNTER = 0x8877665544332211
 RECEIPT_PLAINTEXT = bytes.fromhex(
@@ -79,8 +81,9 @@ RECEIPT_PLAINTEXT = bytes.fromhex(
     "0102030405060708"
     "1112131415161718"
 )
+# BACKEND_A2D context=0x01 maps to A2D direction=0x02.
 RECEIPT_AAD = (
-    bytes.fromhex("0203020201140000")
+    bytes.fromhex("0203010201140000")
     + be(DEVICE_ID, 8)
     + be(KEY_EPOCH, 4)
     + be(RECEIPT_COUNTER, 8)
@@ -103,6 +106,6 @@ assert RECEIPT_NONCE.hex() == "01020304028877665544332211"
 assert RECEIPT_CIPHERTEXT.hex() == (
     "1977aff69f4a3ec1ef72bfd819058631140bf16a"
 )
-assert RECEIPT_TAG.hex() == "e28ddfd258634294"
+assert RECEIPT_TAG.hex() == "dc88d6a5fd0ae962"
 
 print("M4P4 History secure D2A/A2D vectors: PASS")
