@@ -1113,8 +1113,14 @@ void bitPartialFirstHeaderAndVersionPolicy() {
     assert(flash.program(0, header, sizeof(header)) == FlashOpResult::kFailed);
     if (cut == 1) assert(flash.bytes[0] == 0x7F);
     flash.program_bit_budget = -1;
-    HistoryStore recovered(flash, &history_incarnation_source);
+    TestHistoryIncarnationSource torn_source;
+    const uint64_t fresh_incarnation =
+        0xA400000000000000ULL + static_cast<uint64_t>(cut);
+    torn_source.next = fresh_incarnation;
+    HistoryStore recovered(flash, &torn_source);
     start(recovered);
+    assert(torn_source.calls == 1);
+    assert(recovered.incarnation() == fresh_incarnation);
     append(recovered, allocate(recovered));
   }
   // CRC and commit tears, including bit-partial words after a valid magic.
@@ -1152,11 +1158,30 @@ void bitPartialFirstHeaderAndVersionPolicy() {
   uint64_t incarnation = 0;
   assert(!decodePage(header, kDevice, generation, incarnation));
   const auto before = old.bytes;
-  HistoryStore unsupported(old, &history_incarnation_source);
+  TestHistoryIncarnationSource v3_source;
+  HistoryStore unsupported(old, &v3_source);
   assert(!unsupported.begin(kDevice));
   assert(unsupported.formatResetRequired());
   unsupported.poll();
+  assert(v3_source.calls == 0);
   assert(old.bytes == before && old.erase_operations == 0);
+
+  // Retained committed v2 is the same explicit reset boundary. Do not mint a
+  // v4 incarnation or mutate any byte merely because the older format cannot
+  // be decoded as v4.
+  FaultFlash v2;
+  header[4] = 2;
+  memset(header + 24, 0, 32);
+  put32(header + 56, crc32(header, 56));
+  assert(v2.program(0, header, sizeof(header)) == FlashOpResult::kDone);
+  const auto v2_before = v2.bytes;
+  TestHistoryIncarnationSource v2_source;
+  HistoryStore unsupported_v2(v2, &v2_source);
+  assert(!unsupported_v2.begin(kDevice));
+  assert(unsupported_v2.formatResetRequired());
+  unsupported_v2.poll();
+  assert(v2_source.calls == 0);
+  assert(v2.bytes == v2_before && v2.erase_operations == 0);
 
   // Mixed v3/v4 evidence is also an explicit development-reset boundary.
   assert(flash.program(2 * kPageSize, header, sizeof(header)) == FlashOpResult::kDone);
