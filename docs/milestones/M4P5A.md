@@ -213,3 +213,51 @@ firmware image.
 Remaining merge gate:
 
 - independent focused review/audit of the exact final branch head.
+
+
+## 10. Independent audit and post-audit fixes
+
+Independent audit of exact head:
+
+```text
+82ffae948abf6bd9ab870c68c882226baa94f8ea
+```
+
+returned:
+
+```text
+VERDICT: PASS WITH FIXES
+BLOCKER 0
+HIGH 0
+MEDIUM 3
+LOW 3
+```
+
+Merge-blocking findings:
+
+- **M1:** a full selective set could deadlock after capacity overwrite when an
+  already-selective duplicate became the oldest surviving actual record;
+- **M2:** commit-phase `kInvariantFailure` could expose a shorter safe RAM
+  prefix despite the original documentation claiming full atomicity.
+
+Non-blocking but pre-runtime **M3** also identified that authenticated History
+incarnation was not explicit at the coordinator seam.
+
+Post-audit fixes on this branch:
+
+- drain already-authenticated selective prefix immediately after stale pruning;
+- expose/use strict fail-closed retained-record traversal during delivery
+  preflight and commit;
+- document `kInvariantFailure` precisely: it may leave a strictly validated
+  safe RAM prefix, which is never rolled back;
+- bind each coordinator application to the exact authenticated History
+  incarnation and isolate selective RAM across a destructive re-baseline;
+- add overwrite, no-flash-mutation, transient-read-fault, incarnation-reuse and
+  receipt-validation edge tests.
+
+The detailed disposition is recorded in
+`docs/audits/M4P5A_HISTORY_DELIVERY_COORDINATOR_AUDIT_DISPOSITION.md`.
+
+Because production source/header code changed after the audit, the earlier host
+and RAK build evidence remains historical. Exact post-fix validation is required
+before final independent verification.
