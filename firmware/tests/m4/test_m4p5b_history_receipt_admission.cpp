@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include <array>
+#include <type_traits>
 
 #include "history_receipt_admission.h"
 #include "journal_format.h"
@@ -36,6 +37,12 @@ namespace {
 constexpr uint64_t kDevice = UINT64_C(0x123456789ABCDEF0);
 constexpr uint64_t kHistoryIncarnation = UINT64_C(0x1122334455667788);
 constexpr uint8_t kCredentialSeed = 0x40;
+constexpr uint64_t kSecondHistoryIncarnation =
+    UINT64_C(0x8877665544332211);
+
+static_assert(
+    !std::is_aggregate<AuthenticatedBackendDurableReceipt>::value,
+    "authenticated receipt must not expose aggregate packet/plaintext binding");
 
 template <size_t Pages>
 class RamFlash final : public FlashBackend {
@@ -197,6 +204,17 @@ tlp::BackendDurableReceiptPlaintext oneReceipt(uint64_t identity) {
   tlp::BackendDurableReceiptPlaintext receipt{};
   receipt.count = 1;
   receipt.history_record_identities[0] = identity;
+  return receipt;
+}
+
+tlp::BackendDurableReceiptPlaintext recordReceipt(
+    const HistoryStore::Record* records, size_t first, uint8_t count) {
+  assert(records != nullptr);
+  assert(count > 0 && count <= tlp::kHistoryReceiptMaxIdentities);
+  tlp::BackendDurableReceiptPlaintext receipt{};
+  receipt.count = count;
+  for (uint8_t i = 0; i < count; ++i)
+    receipt.history_record_identities[i] = records[first + i].identity;
   return receipt;
 }
 
