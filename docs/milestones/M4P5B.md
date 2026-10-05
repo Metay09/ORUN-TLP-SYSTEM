@@ -381,3 +381,34 @@ Remaining post-fix gates:
 
 - fresh RAK4630 production build;
 - independent focused final verification.
+
+
+## 14. Post-audit RAK4630 production build
+
+After the opaque authenticated-receipt binding fix and added audit regressions,
+the owner rebuilt the normal production image:
+
+```text
+pio run -d firmware -e rak4630
+
+RAM:   29,024 / 248,832 bytes (11.7%)
+Flash: 265,356 / 815,104 bytes (32.6%)
+SUCCESS — 14.98 s
+```
+
+Result: **PASS**.
+
+The normal production footprint remains unchanged:
+
+```text
+RAM:   29,024 bytes
+Flash: 265,356 bytes
+```
+
+This remains consistent with no active production runtime caller for M4P5B.
+
+All owner-side post-audit validation gates are now PASS.
+
+Remaining merge gate:
+
+- independent focused final verification of the exact final branch head.
