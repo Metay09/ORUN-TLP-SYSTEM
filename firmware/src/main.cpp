@@ -1796,6 +1796,13 @@ void setup() {
 
   // M7P6B: recovery only -- never provisions a credential. See the
   // composition-root comment on security_store above.
+#ifdef ORUN_M7P6I_HISTORY_CRYPTO_PROBE
+  // This test-only image must not mutate or even recover the physical
+  // SecurityStore partition. Its KAT below uses a separate RAM-backed store
+  // with public vector material. Leaving the production object unopened also
+  // makes any accidental probe dependency on real credentials fail closed.
+  Serial.println(F("SECURITY physical store skipped by M7P6I probe"));
+#else
   if (!security_store.begin(device_identity)) {
     Serial.println(F("SECURITY unavailable"));
   } else {
@@ -1809,6 +1816,7 @@ void setup() {
     }
     Serial.printf("SECURITY state=%s\n", state);
   }
+#endif
   active_tracking_base_interval_seconds =
       config_store.config().tracking_interval_seconds;
   gnss_manager.begin();
