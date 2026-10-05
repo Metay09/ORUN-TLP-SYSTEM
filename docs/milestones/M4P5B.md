@@ -192,3 +192,32 @@ Remaining PR-completion gates:
 - aggregate host regression;
 - normal RAK4630 production build;
 - independent focused review/audit.
+
+
+## 9. Aggregate host regression
+
+The owner ran the complete host suite:
+
+```text
+bash firmware/tests/run_host_tests.sh
+```
+
+Result: **PASS**.
+
+The run completed with the new M4P5B host gate integrated into the aggregate
+runner and preserved PASS across the existing:
+
+- History/SecurityStore regression suites;
+- M4P4 secure History vectors;
+- M7P6I SecurityStore-owned D2A vector;
+- production startup scenarios;
+- radio ownership/listen-window guards;
+- BLE/storage/tooling guards.
+
+This remains host evidence only and does not constitute physical RF,
+backend/outage-recovery, power-cut or brownout qualification.
+
+Remaining PR-completion gates:
+
+- normal RAK4630 production build;
+- independent focused review/audit.
