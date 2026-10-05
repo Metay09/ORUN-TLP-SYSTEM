@@ -16,6 +16,10 @@ namespace orun_tlp {
 //   2. SecurityStore accepted the exact authenticated
 //      (credential_id, key_epoch, security_counter) replay tuple.
 //
+// The caller must also pass the exact authenticated History incarnation from
+// the same successfully opened packet. The coordinator never re-reads or
+// invents remote security context.
+//
 // This class then owns only application-delivery RAM state. It never mutates
 // SecurityStore, never sends RF, never persists replay cursors and never writes
 // a History delivery checkpoint.
@@ -58,10 +62,17 @@ class HistoryDeliveryCoordinator {
   // - newer explicit identities may wait in the bounded RAM selective set;
   // - only a contiguous prefix of actual records advances acknowledgedThrough.
   //
+  // All ordinary rejection results are atomic with respect to HistoryStore's
+  // RAM delivery watermark. kInvariantFailure is different: a transient read
+  // fault may occur after one or more individually strict-validated prefix
+  // records were safely acknowledged. That safe RAM prefix is never rolled
+  // back; callers must re-read acknowledgedThrough() after kInvariantFailure.
+  //
   // No durable checkpoint is written by this method. SF3 checkpoint policy is
   // a separate wear-sensitive decision.
   ApplyResult applyReplayAcceptedBackendDurableReceipt(
-      const tlp::BackendDurableReceiptPlaintext& receipt);
+      const tlp::BackendDurableReceiptPlaintext& receipt,
+      uint64_t authenticated_history_incarnation);
 
   size_t selectiveAcknowledgementCount() const {
     return selective_count_;
@@ -81,6 +92,7 @@ class HistoryDeliveryCoordinator {
   HistoryStore& history_;
   uint64_t selective_ids_[kMaxSelectiveAcknowledgements]{};
   size_t selective_count_ = 0;
+  uint64_t bound_history_incarnation_ = 0;
   Diagnostics diagnostics_{};
 };
 
