@@ -759,3 +759,36 @@ Remaining before final verification:
 - fresh normal production `rak4630` build;
 - physical upload + boot KAT of this exact post-audit probe image;
 - independent focused final verification of H1/L1 on the exact final head.
+
+
+## 26. Post-audit normal production build
+
+After applying the independent-audit H1 credential-lifetime handoff fix and L1
+CC310 context wipe, the owner rebuilt the normal production image:
+
+```text
+pio run -d firmware -e rak4630
+
+RAM:   29,024 / 248,832 bytes (11.7%)
+Flash: 265,356 / 815,104 bytes (32.6%)
+SUCCESS — 15.09 s
+```
+
+Result: **PASS**.
+
+The normal production footprint remains exactly unchanged:
+
+```text
+RAM:   29,024 bytes
+Flash: 265,356 bytes
+```
+
+This confirms the post-audit crypto fixes remain inactive in the current normal
+production runtime because M7P6I still has no production History secure caller.
+No existing RF/GNSS/BLE/power/storage runtime behavior is activated or changed
+by this slice.
+
+Remaining before independent focused final verification:
+
+- upload the exact post-audit probe image;
+- confirm its physical boot KAT PASS.
