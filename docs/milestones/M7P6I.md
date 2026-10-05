@@ -811,3 +811,42 @@ Result: **PASS for physical programming of the post-audit probe image.**
 This is not yet the final physical KAT result. The serial monitor must still
 confirm the exact post-audit image reports provision/observation/receipt/
 tamper/recovery PASS.
+
+
+## 28. Post-audit final physical crypto KAT
+
+The owner monitored the exact post-audit probe image containing the independent
+audit H1 credential-lifetime handoff fix and L1 CC310 context wipe.
+
+Serial repeatedly reported:
+
+```text
+M7P6I HISTORY CRYPTO KAT PASS provision=PASS observation=PASS receipt=PASS tamper=PASS recovery=PASS
+```
+
+A normal production-graph GNSS cycle also continued during the probe:
+
+```text
+GNSS ACQUIRE start
+GNSS FIX ttff=2976ms lat=376102763 lon=280544893 sats=3 hdop=1.42
+```
+
+Result: **PHYSICAL PASS for the exact post-audit M7P6I crypto KAT image.**
+
+This physically closes the owner-side H1/L1 validation:
+
+- successful BACKEND_A2D authentication returns the exact authenticated
+  credential lifetime used by HKDF;
+- wrong-tag receipt leaves packet/receipt/credential-lifetime outputs untouched;
+- valid receipt immediately after rejection succeeds;
+- D2A counter ownership remains inside SecurityStore;
+- the CC310 AES-CCM context wipe is present in the exercised production crypto
+  implementation.
+
+Scope remains narrow. This is not secure-History RF, store-forward outage,
+gateway/backend, power-cut, brownout or RF-range qualification.
+
+Remaining merge gate:
+
+- independent focused final verification of the H1/L1 fixes on the exact final
+  branch head.
