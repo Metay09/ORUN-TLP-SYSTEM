@@ -132,3 +132,69 @@ Because production security-seam code and tests changed after the original
 audit, the pre-fix host/build evidence remains historical. Focused host,
 aggregate host and RAK4630 production build must be rerun before independent
 final verification.
+
+
+## Independent focused final verification
+
+Final verification target:
+
+```text
+exact reviewed final head:
+502fc1ed0ee89dbf3eac7d2b93eaaed6c8823a6e
+```
+
+Final verdict: **PASS**
+
+Closure:
+
+- M1: **CLOSED**
+- L1: **CLOSED**
+- L2: **ACCEPTABLE DEFERRED**
+- L3: **CLOSED**
+- L4: **CLOSED**
+
+New findings:
+
+- BLOCKER: 0
+- HIGH: 0
+- MEDIUM: 0
+- LOW: 2, both non-blocking
+
+LOW notes:
+
+1. The block-8 reboot arithmetic may be stated more explicitly in milestone
+   prose: durable bound 8 -> recovered HWM 7 -> counter 8 is first admissible.
+2. The new opaque HistorySecureCrypto overload is a thin wrapper verified by
+   review and target build, but it is not yet exercised by a host end-to-end
+   AEAD-open -> admission test. The first production runtime/target wiring
+   slice must add that integrated path test.
+
+Explicit final checks all PASS:
+
+- packet/plaintext/credential binding
+- exact credential lifetime handoff
+- replay-before-delivery ordering
+- credential-rotation safety
+- History incarnation isolation
+- async replay-result ownership
+- busy-History behavior
+- kInvariantFailure safe-prefix behavior
+- reboot replay-boundary behavior
+- selective-set-full recovery
+- bounded RAM / no heap
+- host-test ODR hygiene
+- TLP v1 / M4P4 compatibility
+- production runtime containment
+
+The verifier independently reran:
+
+- focused ASan/UBSan + warnings-as-errors: PASS
+- aggregate host suite: PASS
+- RAK4630 production build: PASS
+  - RAM 29,024 / 248,832 (11.7%)
+  - Flash 265,356 / 815,104 (32.6%)
+
+No physical RF, outage-recovery, gateway/backend, power-cut or brownout
+qualification is claimed.
+
+Final merge recommendation: **MERGE PR #76**.
