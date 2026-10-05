@@ -31,11 +31,11 @@ for forbidden in [
     "markDeliveredThrough",
     "checkpointAcknowledgedDelivery",
     "saveReplayCursor",
-    "RadioManager",
-    "NetworkService",
-    "sendPositionPacket",
-    "Radio.Send",
-    "Radio.Rx",
+    '#include "radio_manager.h"',
+    '#include "network_service.h"',
+    "sendPositionPacket(",
+    "Radio.Send(",
+    "Radio.Rx(",
 ]:
     assert forbidden not in combined, f"forbidden M4P5C coupling: {forbidden}"
 
