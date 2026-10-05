@@ -375,6 +375,8 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p6i_security_traffic_bytes.c
   -o "$test_dir/m7p6i_security_traffic_bytes"
 "$test_dir/m7p6i_security_traffic_bytes"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p6i_history_crypto_vectors.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m4/test_m4p5c_history_receipt_vector.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m4/test_m4p5c_source_contract.py
 "$test_dir/m4p4_history_secure_codec"
 "$test_dir/m7p6h_delegated_secure_codec"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p4_patch_internalfs.py
