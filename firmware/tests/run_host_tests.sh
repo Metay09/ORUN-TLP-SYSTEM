@@ -352,6 +352,11 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p6g_delegated_kdf_vec
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p6h_delegated_secure_codec.cpp \
   firmware/src/tlp_v2_delegated_secure_app.cpp \
   -o "$test_dir/m7p6h_delegated_secure_codec"
+g++ "${portable_flags[@]}" firmware/tests/m4/test_m4p4_history_secure_codec.cpp \
+  firmware/src/tlp_v2_history_secure.cpp \
+  -o "$test_dir/m4p4_history_secure_codec"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m4/test_m4p4_history_secure_vectors.py
+"$test_dir/m4p4_history_secure_codec"
 "$test_dir/m7p6h_delegated_secure_codec"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p4_patch_internalfs.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p7a_patch_ble_flash.py
