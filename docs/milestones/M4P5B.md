@@ -358,3 +358,26 @@ Remaining post-fix gates:
 - aggregate host regression;
 - fresh RAK4630 production build;
 - independent focused final verification.
+
+
+## 13. Post-audit aggregate host regression
+
+After the opaque authenticated-receipt binding fix and added audit regressions,
+the owner reran:
+
+```text
+bash firmware/tests/run_host_tests.sh
+```
+
+Result: **PASS**.
+
+The completed suite preserved PASS across the existing production startup,
+radio ownership/listen-window, History/SecurityStore, M4P4/M7P6I vectors,
+BLE, storage and tooling guards.
+
+This remains host evidence only.
+
+Remaining post-fix gates:
+
+- fresh RAK4630 production build;
+- independent focused final verification.
