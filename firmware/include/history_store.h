@@ -53,6 +53,12 @@ class HistoryStore : public SequenceSource {
   bool newest(Record& record) const;
   bool lookup(uint64_t identity, Record& record) const;
   bool readAfter(uint64_t identity, Record& record) const;
+  // Delivery-sensitive traversal. Unlike readAfter(), this fails closed if
+  // any slot classified valid during recovery can no longer be read/decoded;
+  // callers must not skip that evidence and advance delivery beyond it.
+  bool readNextRetained(uint64_t identity, Record& record) const {
+    return readNextRetainedStrict(identity, record);
+  }
   bool getOldestUndelivered(Record& record) const {
     return readAfter(state_.delivered_through, record);
   }
