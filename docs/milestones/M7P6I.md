@@ -733,3 +733,29 @@ Because these fixes change production crypto code after the first independent
 audit, prior PASS evidence is retained as historical only. The exact post-audit
 head must be rebuilt/retested and receive independent focused final verification
 before merge.
+
+
+## 25. Post-audit probe build
+
+After applying the independent audit H1 fix and L1 context wipe, the owner
+rebuilt the dedicated full-production-graph probe:
+
+```text
+pio run -d firmware -e rak4630_m7p6i_history_crypto_probe
+
+RAM:   37,736 / 248,832 bytes (15.2%)
+Flash: 289,480 / 815,104 bytes (35.5%)
+SUCCESS — 16.08 s
+```
+
+Result: **PASS**.
+
+This confirms the post-audit API change, authenticated credential-lifetime
+handoff, CC310 context wipe and updated probe checks compile and link together
+on the RAK4630 target.
+
+Remaining before final verification:
+
+- fresh normal production `rak4630` build;
+- physical upload + boot KAT of this exact post-audit probe image;
+- independent focused final verification of H1/L1 on the exact final head.
