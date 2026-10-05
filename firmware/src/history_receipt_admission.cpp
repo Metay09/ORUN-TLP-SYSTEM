@@ -12,22 +12,21 @@ void HistoryReceiptAdmissionCoordinator::clearPending() {
 
 HistoryReceiptAdmissionCoordinator::SubmitResult
 HistoryReceiptAdmissionCoordinator::submitAuthenticatedReceipt(
-    const tlp::HistorySecurePacket& packet,
-    const tlp::BackendDurableReceiptPlaintext& receipt,
-    const uint8_t (&authenticated_credential_id)
-        [security_format::kCredentialIdSize]) {
+    const AuthenticatedBackendDurableReceipt& authenticated) {
   if (state_ != State::kIdle) {
     ++diagnostics_.busy_rejections;
     return SubmitResult::kBusy;
   }
 
+  const auto& packet = authenticated.packet_;
+  const auto& receipt = authenticated.receipt_;
   const size_t receipt_size =
       tlp::backendDurableReceiptPlaintextSize(receipt.count);
   uint8_t encoded_receipt[tlp::kHistoryReceiptMaxPlaintextSize]{};
 
-  // These checks do not replace AEAD authentication. They only make misuse of
-  // this post-authentication seam fail closed if unrelated packet/plaintext
-  // objects are accidentally paired by a future runtime caller.
+  // Defense-in-depth for a corrupted/test-constructed opaque value. Production
+  // packet/plaintext binding itself comes from HistorySecureCrypto being the
+  // only writer of AuthenticatedBackendDurableReceipt after successful AEAD.
   if (!tlp::validateHistorySecurePacket(packet) ||
       packet.security_context != tlp::kHistorySecurityContextBackendA2d ||
       packet.app_family !=
@@ -43,7 +42,7 @@ HistoryReceiptAdmissionCoordinator::submitAuthenticatedReceipt(
   // Critical ordering boundary: submit the EXACT lifetime authenticated by
   // HistorySecureCrypto. Never re-read currentCredentialId() here.
   if (!security_store_.submitAuthenticatedA2dCounter(
-          authenticated_credential_id,
+          authenticated.authenticated_credential_id_,
           packet.key_epoch,
           packet.security_counter)) {
     ++diagnostics_.security_unavailable;
