@@ -19,7 +19,7 @@ Findings:
 
 ## H1 — A2D authenticated credential lifetime was not returned
 
-Status: **FIXED — final verification pending**
+Status: **CLOSED — independently final-verified**
 
 The audited seam authenticated a BACKEND_A2D receipt using the current
 `credential_id` as the HKDF salt, but returned only the decoded packet and
@@ -54,7 +54,7 @@ Applied in:
 
 ## L1 — CC310 AES-CCM context was not explicitly wiped
 
-Status: **FIXED — final verification pending**
+Status: **CLOSED — independently final-verified**
 
 `runAesCcm()` now zeroes `CRYS_AESCCM_UserContext_t` on every return path,
 including Init failure, AAD failure, Finish/tag-size failure and success.
@@ -114,3 +114,47 @@ audit, merge still requires:
 
 No TLP v1 bytes, M4P4 wire bytes, flash formats, RF runtime, History delivery
 state or production secure-RF activation are changed by these fixes.
+
+
+## Independent focused final verification
+
+Final verification target:
+
+```text
+final reviewed branch head:
+dea2f6df2d512c5efcd8430320049efdd3afd64c
+
+firmware-code fix head:
+ddb40700748da154907e219c425594de0c36e902
+```
+
+The verifier independently confirmed that the commits from the firmware-code
+fix head through the reviewed final branch head are documentation-only.
+
+Final verdict: **PASS**
+
+Results:
+
+- H1: **CLOSED**
+- L1: **CLOSED**
+- new BLOCKER: 0
+- new HIGH: 0
+- new MEDIUM: 0
+- new LOW: 0
+
+Explicit final checks:
+
+- authenticated credential lifetime handoff: PASS
+- output-on-failure atomicity: PASS
+- credential snapshot zeroization: PASS
+- CC310 context zeroization: PASS
+- replay/delivery mutation isolation: PASS
+- TLP v1 / M4P4 compatibility: PASS
+- scope containment: PASS
+
+Final merge recommendation: **MERGE**.
+
+The verifier did not rerun physical hardware itself. Physical evidence remains
+the owner-operated post-audit RAK4630/RAK4631 crypto KAT recorded in M7P6I and
+is scoped only to the crypto seam. No secure-RF, store-forward, backend,
+brownout or power-cut qualification is claimed.
