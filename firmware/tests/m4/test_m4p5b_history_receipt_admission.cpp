@@ -1,3 +1,4 @@
+#define ORUN_M4P5B_HOST_TEST 1
 #include <assert.h>
 #include <stdint.h>
 #include <string.h>
@@ -13,6 +14,22 @@ using namespace orun_tlp;
 using namespace orun_tlp::journal_format;
 using namespace orun_tlp::security_format;
 using namespace orun_tlp::storage_config;
+
+namespace orun_tlp {
+struct HistoryReceiptAdmissionTestPeer {
+  static AuthenticatedBackendDurableReceipt make(
+      const tlp::HistorySecurePacket& packet,
+      const tlp::BackendDurableReceiptPlaintext& receipt,
+      const uint8_t (&credential_id)[security_format::kCredentialIdSize]) {
+    AuthenticatedBackendDurableReceipt authenticated;
+    authenticated.packet_ = packet;
+    authenticated.receipt_ = receipt;
+    memcpy(authenticated.authenticated_credential_id_,
+           credential_id, sizeof(credential_id));
+    return authenticated;
+  }
+};
+}  // namespace orun_tlp
 
 namespace {
 
@@ -30,11 +47,21 @@ class RamFlash final : public FlashBackend {
   bool begin() override { return true; }
 
   bool read(uint32_t offset, void* data, size_t size) const override {
+    if (read_fail_countdown == 0) {
+      read_fail_countdown = -1;
+      ++read_failures;
+      return false;
+    }
+    if (read_fail_countdown > 0) --read_fail_countdown;
     if (data == nullptr || offset > bytes.size() ||
         size > bytes.size() - offset)
       return false;
     memcpy(data, bytes.data() + offset, size);
     return true;
+  }
+
+  void failOneReadAfter(uint32_t successful_reads) {
+    read_fail_countdown = static_cast<int64_t>(successful_reads);
   }
 
   FlashOpResult program(uint32_t offset, const void* data,
@@ -65,6 +92,8 @@ class RamFlash final : public FlashBackend {
   std::array<uint8_t, kSize> bytes{};
   uint32_t program_calls = 0;
   uint32_t erase_calls = 0;
+  mutable int64_t read_fail_countdown = -1;
+  mutable uint32_t read_failures = 0;
 };
 
 class TestHistoryIncarnationSource final : public HistoryIncarnationSource {
@@ -83,7 +112,8 @@ void settleHistory(HistoryStore& store) {
   assert(!store.busy());
 }
 
-void startHistory(HistoryStore& store) {
+void startHistory(HistoryStore& store,
+                  uint64_t expected_incarnation = kHistoryIncarnation) {
   assert(store.begin(kDevice));
   settleHistory(store);
   if (!store.canAppend()) {
@@ -92,7 +122,7 @@ void startHistory(HistoryStore& store) {
   }
   assert(store.ready());
   assert(store.canAppend());
-  assert(store.incarnation() == kHistoryIncarnation);
+  assert(store.incarnation() == expected_incarnation);
 }
 
 void settleSecurity(SecurityStore& store) {
@@ -187,6 +217,14 @@ tlp::HistorySecurePacket receiptPacket(
   packet.history_incarnation = incarnation;
   assert(tlp::validateHistorySecurePacket(packet));
   return packet;
+}
+
+AuthenticatedBackendDurableReceipt authenticatedReceipt(
+    const tlp::HistorySecurePacket& packet,
+    const tlp::BackendDurableReceiptPlaintext& receipt,
+    const uint8_t (&credential_id)[kCredentialIdSize]) {
+  return HistoryReceiptAdmissionTestPeer::make(
+      packet, receipt, credential_id);
 }
 
 struct Fixture {
