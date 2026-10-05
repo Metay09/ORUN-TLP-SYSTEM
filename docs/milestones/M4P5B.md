@@ -320,3 +320,41 @@ Detailed disposition:
 Because production security-seam code changed after the audit, the earlier
 focused/aggregate/build evidence is historical. Exact post-fix validation is
 required before final independent verification.
+
+
+## 12. Post-audit focused host validation
+
+After the independent-audit M1 opaque-binding fix and the added L1/L4
+regressions, the owner reran the dedicated M4P5B host binary under the same
+strict-warning ASan/UBSan build.
+
+The compile command succeeded; the first invocation contained only a shell typo
+(`/tmp/m4p5b9`). Running the correctly built binary:
+
+```text
+/tmp/m4p5b
+```
+
+returned silently to the shell prompt.
+
+Result: **PASS**.
+
+This post-fix focused gate covers:
+
+- opaque authenticated packet/plaintext/credential binding;
+- replay-before-delivery ordering;
+- credential lifetime rejection;
+- History incarnation change after replay acceptance;
+- selective-set-full after replay acceptance;
+- kDeliveryInvariantFailure safe-prefix / consumed-counter behavior;
+- fresh-counter recovery;
+- reboot replay-boundary host model.
+
+This remains host/state-machine evidence only. It is not physical RF,
+power-cut, brownout, gateway/backend or outage-recovery qualification.
+
+Remaining post-fix gates:
+
+- aggregate host regression;
+- fresh RAK4630 production build;
+- independent focused final verification.
