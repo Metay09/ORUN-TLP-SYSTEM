@@ -81,9 +81,8 @@ bool receiptCiphertextLengthValid(size_t size) {
 
 }  // namespace
 
-HistorySecureCryptoResult HistorySecureCrypto::protectObservation(
-    uint64_t history_incarnation, uint64_t security_counter,
-    uint8_t path_flags,
+HistorySecureCryptoResult HistorySecureCrypto::protectNextObservation(
+    uint64_t history_incarnation, uint8_t path_flags,
     const tlp::HistoryObservationPlaintext& observation,
     tlp::HistorySecurePacket& packet) {
   if (!security_store_.ready_ ||
@@ -92,15 +91,46 @@ HistorySecureCryptoResult HistorySecureCrypto::protectObservation(
     return HistorySecureCryptoResult::kUnavailable;
   }
 
-  if (history_incarnation == 0U || security_counter == 0U ||
-      security_store_.credential_.key_epoch == UINT32_MAX) {
+  if (history_incarnation == 0U ||
+      security_store_.credential_.key_epoch == UINT32_MAX ||
+      (path_flags & static_cast<uint8_t>(
+                        ~tlp::kHistoryPathFlagsAllowedMask)) != 0U) {
     return HistorySecureCryptoResult::kInvalidArgument;
   }
 
+  // Validate all caller-owned application semantics before consuming a
+  // nonce-safety counter. Once a counter is returned by SecurityStore it is
+  // never reused, even if later crypto work fails.
   uint8_t plaintext[tlp::kHistoryObservationPlaintextSize]{};
   if (!tlp::serializeHistoryObservationPlaintext(
           observation, plaintext, sizeof(plaintext))) {
     return HistorySecureCryptoResult::kInvalidArgument;
+  }
+
+  uint64_t security_counter = 0;
+  uint32_t counter_epoch = 0;
+  if (!security_store_.reserveNextTxCounter(
+          security_counter, counter_epoch)) {
+    secureZero(plaintext, sizeof(plaintext));
+    return HistorySecureCryptoResult::kUnavailable;
+  }
+
+  // SecurityStore's historical first reservation begins at counter 0, while
+  // the frozen M4P4 HISTORY_SECURE envelope deliberately rejects counter 0.
+  // Burn that one value exactly once rather than weakening the wire contract.
+  if (security_counter == 0U) {
+    if (!security_store_.reserveNextTxCounter(
+            security_counter, counter_epoch)) {
+      secureZero(plaintext, sizeof(plaintext));
+      return HistorySecureCryptoResult::kUnavailable;
+    }
+  }
+
+  if (security_counter == 0U ||
+      counter_epoch != security_store_.credential_.key_epoch ||
+      counter_epoch == UINT32_MAX) {
+    secureZero(plaintext, sizeof(plaintext));
+    return HistorySecureCryptoResult::kEngineError;
   }
 
   tlp::HistorySecurePacket candidate{};
@@ -109,7 +139,7 @@ HistorySecureCryptoResult HistorySecureCrypto::protectObservation(
   candidate.path_flags = path_flags;
   candidate.ciphertext_len = tlp::kHistoryObservationPlaintextSize;
   candidate.device_id = security_store_.device_identity_.legacyUint64();
-  candidate.key_epoch = security_store_.credential_.key_epoch;
+  candidate.key_epoch = counter_epoch;
   candidate.security_counter = security_counter;
   candidate.history_incarnation = history_incarnation;
 
