@@ -260,3 +260,32 @@ Still required before merge:
 - fresh normal production `rak4630` build on the corrected head;
 - physical probe boot KAT;
 - independent focused security review.
+
+
+## 12. Focused portable host validation
+
+Owner-host focused validation on the corrected M7P6I branch:
+
+```text
+g++ -Ifirmware/include -std=c++17 -O1 -g \
+  -Wall -Wextra -Werror \
+  -fsanitize=address,undefined -fno-omit-frame-pointer \
+  firmware/tests/m7/test_m7p6i_security_traffic_bytes.cpp \
+  -o /tmp/m7p6i_bytes && /tmp/m7p6i_bytes
+```
+
+Result: **PASS**. The test is intentionally silent on success and returned to
+the shell without compiler, sanitizer or assertion failure.
+
+This closes the focused portable contract gate for:
+- exact D2A/A2D direction values;
+- 21-byte HKDF info serialization;
+- 13-byte nonce serialization;
+- epoch/counter invalid-input rejection;
+- consistency with the frozen M4P4 direction constants.
+
+Remaining before merge:
+- aggregate host suite;
+- fresh normal production `rak4630` build;
+- physical M7P6I target KAT;
+- independent focused security review.
