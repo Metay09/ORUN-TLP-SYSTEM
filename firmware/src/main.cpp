@@ -1740,17 +1740,22 @@ void serviceHistoryReceiptAdmission() {
 }
 
 void ingestHistorySecureRadioFrame() {
-  // Keep the raw frame in RadioManager's bounded handoff slot while an older
-  // receipt or flash reservation owns the replay path. This avoids dropping a
-  // valid receipt merely because SecurityStore is temporarily busy.
+  // Keep the raw frame in RadioManager's bounded handoff slot only across
+  // transient owner activity. An unprovisioned/fault security state cannot
+  // ever authenticate the frame and must not clog the slot indefinitely.
   if (history_receipt_receiver.pending() ||
-      !history.ready() || history.busy() ||
-      !security_store.ready() || security_store.busy()) {
+      history.busy() || security_store.busy()) {
     return;
   }
 
   orun_tlp::HistorySecureRxFrame frame{};
   if (!radio_manager.takeHistorySecureRx(frame)) return;
+
+  if (!history.ready() || !security_store.ready() ||
+      security_store.state() != orun_tlp::SecurityState::kProvisioned) {
+    Serial.println(F("RX HISTORY_SECURE dropped security/history unavailable"));
+    return;
+  }
 
   const auto result = history_receipt_receiver.submitBackendDurableFrame(
       frame.payload, frame.size);
@@ -1801,7 +1806,11 @@ void serviceHistoryReplay(uint32_t now_ms) {
   }
 
   orun_tlp::HistoryStore::Record record{};
-  if (!history.getOldestUndelivered(record)) {
+  // Runtime replay starts after the RAM authenticated-delivery watermark, not
+  // merely the durable checkpoint. Reboot may replay the uncheckpointed prefix,
+  // but while this boot is alive we must not repeatedly transmit facts already
+  // accepted by M4P5A.
+  if (!history.readNextRetained(history.acknowledgedThrough(), record)) {
     scheduleNextHistoryReplay(now_ms);
     return;
   }
@@ -2010,6 +2019,17 @@ void setup() {
     }
     Serial.printf("SECURITY state=%s\n", state);
   }
+#endif
+#if !defined(ORUN_M7P6I_HISTORY_CRYPTO_PROBE) && \
+    !defined(ORUN_M4P5C_HISTORY_RECEIPT_PROBE)
+  Serial.printf("STORE-FORWARD runtime=ACTIVE security=%s replay_probe=%lus\n",
+                security_store.ready() &&
+                        security_store.state() ==
+                            orun_tlp::SecurityState::kProvisioned
+                    ? "PROVISIONED"
+                    : "UNAVAILABLE",
+                static_cast<unsigned long>(
+                    kHistoryReplayProbeIntervalMs / 1000UL));
 #endif
   next_history_replay_at_ms =
       orun_tlp::monotonic::nowMs() +
