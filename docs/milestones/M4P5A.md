@@ -183,3 +183,33 @@ Remaining PR-completion gates:
 
 - RAK4630 production build;
 - focused independent review/audit.
+
+
+## 9. RAK4630 production build
+
+The owner built the normal production image:
+
+```text
+pio run -d firmware -e rak4630
+
+RAM:   29,024 / 248,832 bytes (11.7%)
+Flash: 265,356 / 815,104 bytes (32.6%)
+SUCCESS — 79.65 s
+```
+
+Result: **PASS**.
+
+The normal production footprint is unchanged from the M7P6I baseline:
+
+```text
+RAM:   29,024 bytes
+Flash: 265,356 bytes
+```
+
+This confirms M4P5A adds no active production runtime caller. The new
+HistoryDeliveryCoordinator remains transport-neutral and dormant in the normal
+firmware image.
+
+Remaining merge gate:
+
+- independent focused review/audit of the exact final branch head.
