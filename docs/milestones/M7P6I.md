@@ -691,3 +691,45 @@ All required owner-side validation gates are now PASS.
 Remaining merge gate:
 
 - independent focused security review of the exact final branch head.
+
+
+## 24. Independent audit and post-audit fixes
+
+Independent audit of exact head
+`20757d999723e330bcdfb668b0f4da0e04e27fb2` returned:
+
+```text
+VERDICT: PASS WITH FIXES
+BLOCKER 0
+HIGH 1
+MEDIUM 1
+LOW 3
+```
+
+The merge-blocking HIGH found that successful A2D authentication did not return
+the exact credential lifetime used for HKDF authentication. That could let a
+future deferred SF3 replay submission re-read a newer credential and bind an old
+authenticated receipt to the wrong replay lifetime.
+
+Post-audit fix:
+
+- `openBackendDurableReceipt()` now returns the exact authenticated
+  `credential_id` snapshot on `kOk` only;
+- future SF3 MUST submit that returned credential ID together with
+  `packet.key_epoch` and `packet.security_counter`;
+- packet, receipt and credential-ID outputs remain untouched on failure.
+
+The audit's low CC310-context-wipe finding is also fixed:
+`CRYS_AESCCM_UserContext_t` is explicitly zeroed on every `runAesCcm()`
+return path.
+
+Probe coverage now verifies the authenticated credential ID on success,
+wrong-tag failure atomicity and immediate valid recovery.
+
+The independent audit disposition is recorded in
+`docs/audits/M7P6I_HISTORY_ROOT_CRYPTO_AUDIT_DISPOSITION.md`.
+
+Because these fixes change production crypto code after the first independent
+audit, prior PASS evidence is retained as historical only. The exact post-audit
+head must be rebuilt/retested and receive independent focused final verification
+before merge.
