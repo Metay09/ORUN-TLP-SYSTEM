@@ -298,8 +298,8 @@ records may lack trustworthy UTC. Therefore the production store-forward path
 must not simply blind-replay v1 POSITION bytes and let consumers treat arrival
 as freshness.
 
-The future secure D2A observation/replay contract must carry or unambiguously
-bind enough context to represent at least:
+The secure D2A observation/replay contract must carry or unambiguously bind
+enough context to represent at least:
 
 - logical History observation identity;
 - source device / credential lifetime;
@@ -308,7 +308,24 @@ bind enough context to represent at least:
 - historical/replay context;
 - authenticated receipt correlation.
 
-Exact wire bytes are deliberately not frozen here.
+M4P4 / SF2 now carries the reviewed **candidate** exact compact wire for this
+requirement under TLP v2 `HISTORY_SECURE` type `0x03`:
+
+- 36-byte authenticated header;
+- DEVICE_D2A header context `0x02` for historical observation;
+- BACKEND_A2D header context `0x01` for BACKEND_DURABLE receipt;
+- header context codes remain distinct from M7P6D KDF/nonce direction bytes
+  (D2A `0x01`, A2D `0x02`);
+- History incarnation is authenticated in the header;
+- History record identity is explicit in protected plaintext;
+- receipt lists 1..6 explicit identities and never a cumulative numeric range.
+
+Until M4P4 post-audit revalidation/final verification closes, these bytes remain
+candidate rather than canonical wire freeze.
+
+For UNKNOWN observation time, backend/application code must preserve UNKNOWN.
+Gateway/backend receive time may be stored separately as path/ingestion
+metadata; it must never be substituted as observation time.
 
 ---
 
@@ -480,6 +497,18 @@ credentials while retained History remains valid for the same owner, the
 backend may reissue the same logical delivery fact under the currently accepted
 security lifetime; the logical observation identity itself does not change.
 
+The first device A2D replay policy is a strictly increasing durable HWM. A
+receipt delayed behind a newer already-accepted A2D frame can therefore be
+rejected at the transport replay layer even though its BACKEND_DURABLE fact
+remains true. In that case the backend must reissue the same logical delivery
+fact under a **fresh A2D security counter**; it must not change or mint a new
+History observation identity merely to get past replay state.
+
+SF3 wear accounting must include both SecurityStore owners already identified
+by this contract: D2A TX reservation (current block 256) and A2D replay
+reservation (current block 8 / shared security state slots). Receipt/replay
+scheduling is not allowed to treat those flash writes as free.
+
 Do not add an unauthenticated TLP v1 ACK.
 
 The secure receipt family should reuse the reviewed TLP v2 security foundations
@@ -590,19 +619,31 @@ Do not implement store-forward as one large PR.
 Freeze semantics and audit them. No runtime/wire changes.
 
 ### SF1 — History identity / checkpoint foundation
-Resolve the production observation-stream incarnation and implement/test the
-RAM contiguous receipt watermark + bounded durable checkpoint policy. Preserve
-store-first behavior and flash wear invariants.
+M4P2/M4P3 provide the delivery-progress foundation and physical History v4
+observation-stream incarnation cutover. Preserve store-first behavior and flash
+wear invariants.
 
 ### SF2 — secure historical observation + receipt codec
-After the relevant TLP v2 compact D2A/A2D security contract is ready and the
-§9 backlog-drain feasibility gate passes for the candidate frame bounds, freeze
-exact historical-observation and authenticated BACKEND_DURABLE receipt bytes
-with golden/malformed/security vectors. Receipt design must preserve the H1
-authority boundary: backend-authority A2D material may authorize
-BACKEND_DURABLE; delegated gateway material may not. SF2 may choose a bounded
-explicit-identity batch receipt if required by the airtime/throughput result.
-TLP v1 remains byte-identical.
+M4P4 is the active exact-wire slice. Its post-audit candidate is:
+
+- TLP v2 type `0x03 HISTORY_SECURE`;
+- 73-byte protected historical POSITION observation;
+- 56..96-byte BACKEND_DURABLE receipt;
+- receipt batch of 1..6 explicit History record identities;
+- backend-authority A2D material may authorize BACKEND_DURABLE;
+- delegated gateway material may not;
+- TLP v1 remains byte-identical.
+
+The security-context registry is canonical and separate from crypto-direction
+bytes:
+
+```text
+header contexts: 0x01 BACKEND_A2D, 0x02 DEVICE_D2A
+KDF/nonce dirs:  0x01 D2A,         0x02 A2D
+```
+
+M4P4 bytes become frozen only after its post-audit focused revalidation and
+final focused verification close the wire review.
 
 ### SF3 — tracker replay runtime
 Oldest-first replay with the §5 bounded sender policy selected after the §9
@@ -661,7 +702,7 @@ Host/build PASS alone is not physical store-forward proof.
 This document does not claim that:
 
 - backlog replay is implemented today;
-- a production ACK/receipt wire type exists;
+- a production runtime ACK/receipt path is active;
 - TLP v1 provides delivery;
 - gateway durable custody is implemented;
 - backend/mobile synchronization is implemented;
