@@ -42,6 +42,7 @@
 #include "monotonic_time.h"
 #include "rak_device_identity.h"
 #include "runtime_config.h"
+#include "security_format.h"
 #include "security_store.h"
 #include "sensor_power_manager.h"
 #include "tlp_position_packet.h"
@@ -153,6 +154,20 @@ bool automatic_role_resolved = false;
 char role_command[24]{};
 uint8_t role_command_length = 0;
 bool role_command_overflow = false;
+
+#ifdef ORUN_SF3_RUNTIME_QUAL
+bool sf3_test_provision_pending = false;
+const uint8_t kSf3TestCredentialId[
+    orun_tlp::security_format::kCredentialIdSize] = {
+    0xA0,0xA1,0xA2,0xA3,0xA4,0xA5,0xA6,0xA7,
+    0xA8,0xA9,0xAA,0xAB,0xAC,0xAD,0xAE,0xAF};
+const uint8_t kSf3TestRoot[orun_tlp::security_format::kKRootSize] = {
+    0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
+    0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
+    0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,
+    0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x1F};
+constexpr uint32_t kSf3TestKeyEpoch = 0x01020304U;
+#endif
 
 // M7P7B: BLE runtime/admission. BleAdmissionPolicy is the pure, host-tested
 // tracker no-client-timeout decision (docs/architecture/
@@ -1250,6 +1265,67 @@ void printFlashProbeReport() {
 }
 #endif
 
+#ifdef ORUN_SF3_RUNTIME_QUAL
+void printSf3QualificationStatus() {
+  const char* state = "UNKNOWN";
+  switch (security_store.state()) {
+    case orun_tlp::SecurityState::kUnprovisioned: state = "UNPROVISIONED"; break;
+    case orun_tlp::SecurityState::kProvisioned: state = "PROVISIONED"; break;
+    case orun_tlp::SecurityState::kForeign: state = "FOREIGN"; break;
+    case orun_tlp::SecurityState::kUnsupported: state = "UNSUPPORTED"; break;
+    case orun_tlp::SecurityState::kFault: state = "FAULT"; break;
+  }
+  const auto& sf = history_store_forward.diagnostics();
+  Serial.printf(
+      "SF3 QUAL security=%s busy=%s history=%s records=%lu ack=%08lX%08lX "
+      "replay_sent=%lu receipt_applied=%lu auth_reject=%lu\n",
+      state,
+      security_store.busy() ? "yes" : "no",
+      history.ready() ? "ready" : "unavailable",
+      static_cast<unsigned long>(history.count()),
+      static_cast<unsigned long>(
+          uint32_t(history.acknowledgedThrough() >> 32)),
+      static_cast<unsigned long>(uint32_t(history.acknowledgedThrough())),
+      static_cast<unsigned long>(sf.replay_sent),
+      static_cast<unsigned long>(sf.receipt_applied),
+      static_cast<unsigned long>(sf.receipt_auth_rejections));
+}
+
+void startSf3TestProvisioning() {
+  if (!security_store.ready() ||
+      security_store.state() != orun_tlp::SecurityState::kUnprovisioned ||
+      security_store.busy() || sf3_test_provision_pending) {
+    Serial.println(F("SF3 TEST PROVISION rejected; require idle UNPROVISIONED store"));
+    return;
+  }
+
+  uint8_t credential_id[orun_tlp::security_format::kCredentialIdSize]{};
+  uint8_t root[orun_tlp::security_format::kKRootSize]{};
+  memcpy(credential_id, kSf3TestCredentialId, sizeof(credential_id));
+  memcpy(root, kSf3TestRoot, sizeof(root));
+
+  if (!security_store.commitCredential(
+          credential_id, kSf3TestKeyEpoch, root)) {
+    memset(root, 0, sizeof(root));
+    Serial.println(F("SF3 TEST PROVISION start failed"));
+    return;
+  }
+
+  memset(root, 0, sizeof(root));
+  sf3_test_provision_pending = true;
+  Serial.println(F("SF3 TEST PROVISION started PUBLIC TEST CREDENTIAL"));
+}
+
+void pollSf3TestProvisioning() {
+  if (!sf3_test_provision_pending) return;
+  bool success = false;
+  if (!security_store.takeCommitResult(success)) return;
+  sf3_test_provision_pending = false;
+  Serial.println(success ? F("SF3 TEST PROVISION PASS")
+                         : F("SF3 TEST PROVISION FAIL"));
+}
+#endif
+
 void handleRoleCommand() {
   if (role_command_overflow) {
     role_command_length = 0;
@@ -1301,6 +1377,18 @@ void handleRoleCommand() {
   if (isActivityCommand("FLASH PROBE", 11)) {
     role_command_length = 0;
     startFlashProbe();
+    return;
+  }
+#endif
+#ifdef ORUN_SF3_RUNTIME_QUAL
+  if (isActivityCommand("SF3?", 4)) {
+    role_command_length = 0;
+    printSf3QualificationStatus();
+    return;
+  }
+  if (isActivityCommand("SF3 PROVISION TEST", 18)) {
+    role_command_length = 0;
+    startSf3TestProvisioning();
     return;
   }
 #endif
@@ -1851,6 +1939,10 @@ void setup() {
     Serial.printf("SECURITY state=%s\n", state);
   }
 #endif
+#ifdef ORUN_SF3_RUNTIME_QUAL
+  Serial.println(F(
+      "SF3 QUAL image: fast replay timing; PUBLIC TEST credential command enabled"));
+#endif
   active_tracking_base_interval_seconds =
       config_store.config().tracking_interval_seconds;
   gnss_manager.begin();
@@ -2102,6 +2194,9 @@ void loop() {
     config_store.poll();
     security_store.poll();
   }
+#ifdef ORUN_SF3_RUNTIME_QUAL
+  pollSf3TestProvisioning();
+#endif
 #ifdef ORUN_M7P7B_FLASH_PROBE
   // Stepped after config_store.poll() so a just-finished save is consumed on
   // the same tick. Idle/done: no sampling, no critical section, no output.
