@@ -96,13 +96,24 @@ HistoryDeliveryCoordinator::applyReplayAcceptedBackendDurableReceipt(
       return ApplyResult::kUnknownIdentity;
     }
 
-    if (!insertIdentitySorted(
-            scratch, scratch_count,
-            kMaxSelectiveAcknowledgements, id)) {
-      ++diagnostics_.capacity_rejections;
-      return ApplyResult::kSelectiveSetFull;
+    // The exact next actual record does not need a selective-set slot. This is
+    // important when the bounded set is full: an authenticated receipt for the
+    // missing oldest record must be able to unlock and drain the waiting prefix
+    // instead of being rejected merely because all selective slots are occupied.
+    HistoryStore::Record next_actual{};
+    if (history_.readAfter(simulated_acknowledged, next_actual) &&
+        next_actual.identity == id) {
+      simulated_acknowledged = id;
+      new_fact = true;
+    } else {
+      if (!insertIdentitySorted(
+              scratch, scratch_count,
+              kMaxSelectiveAcknowledgements, id)) {
+        ++diagnostics_.capacity_rejections;
+        return ApplyResult::kSelectiveSetFull;
+      }
+      new_fact = true;
     }
-    new_fact = true;
 
     // Advance only through actual retained records whose exact identities have
     // already been authenticated and admitted into the selective RAM set.
