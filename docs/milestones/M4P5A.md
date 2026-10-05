@@ -300,3 +300,26 @@ Remaining post-fix gates:
 - aggregate host regression;
 - fresh RAK4630 production build;
 - independent focused final verification.
+
+
+## 12. Post-audit aggregate host regression
+
+After the M1/M2 fixes and M3 incarnation binding, the owner reran:
+
+```text
+bash firmware/tests/run_host_tests.sh
+```
+
+Result: **PASS**.
+
+The completed output included PASS for the existing History secure D2A/A2D
+vectors, M7P6I SecurityStore-owned D2A vector, BLE framework/admission/GATT
+guards, R4 I2C/watchdog guards and DEVQ1 tooling/CodeQL guards.
+
+This is host regression evidence only.
+
+Remaining post-fix owner-side gate:
+
+- fresh RAK4630 production build.
+
+After that, independent focused final verification remains before merge.
