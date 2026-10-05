@@ -170,7 +170,7 @@ HistorySecureCryptoResult HistorySecureCrypto::protectObservation(
       nonce, sizeof(nonce),
       frame, tlp::kHistorySecureHeaderSize,
       plaintext, sizeof(plaintext),
-      candidate.ciphertext, candidate.ciphertext_len,
+      candidate.ciphertext,
       candidate.tag, tlp::kHistorySecureTagSize);
 
   secureZero(ccm_key, sizeof(ccm_key));
