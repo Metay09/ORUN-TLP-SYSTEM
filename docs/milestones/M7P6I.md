@@ -317,3 +317,39 @@ Remaining before merge:
 - fresh normal production `rak4630` build;
 - physical M7P6I full-graph KAT;
 - independent focused security review.
+
+
+## 14. Normal production RAK4630 build
+
+Owner ran a fresh normal production build on the M7P6I branch:
+
+```text
+pio run -d firmware -e rak4630
+
+RAM:   29,024 / 248,832 bytes (11.7%)
+Flash: 265,356 / 815,104 bytes (32.6%)
+SUCCESS — 65.76 s
+```
+
+Result: **PASS**.
+
+The linked production footprint is exactly unchanged from the M4P4/SF2
+baseline:
+
+```text
+RAM:   29,024 bytes
+Flash: 265,356 bytes
+```
+
+This is expected because M7P6I introduces the production crypto implementation
+into the source graph but still adds no normal runtime caller. Link-time garbage
+collection therefore keeps the inactive seam out of the current production
+image.
+
+This is evidence that M7P6I has not yet changed normal RF, History, BLE, GNSS,
+power or storage runtime behavior.
+
+Remaining before merge:
+
+- physical M7P6I full-graph KAT on the RAK4631 development unit;
+- independent focused security review.
