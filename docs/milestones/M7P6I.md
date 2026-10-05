@@ -900,3 +900,28 @@ SF3 runtime activation. They are not M7P6I merge blockers.
 
 No secure-RF, store-forward outage, gateway/backend, brownout or power-cut PASS
 is claimed by this milestone.
+
+
+## Post-M4P5B receive-seam refinement
+
+M7P6I originally exposed the authenticated BACKEND_DURABLE packet, plaintext
+and credential-id snapshot as three separate outputs. That low-level overload
+is retained for compatibility with the already-qualified M7P6I probe/tests.
+
+M4P5B adds the preferred SF3 receive overload:
+
+```text
+HistorySecureCrypto::openBackendDurableReceipt(
+    ...,
+    AuthenticatedBackendDurableReceipt& output)
+```
+
+The opaque output binds the packet, decoded receipt and authenticated
+credential snapshot from one successful AEAD open. The M4P5B replay-admission
+owner accepts only that opaque object, preventing a future runtime caller from
+mixing a fresh counter/incarnation from one authenticated frame with plaintext
+from another.
+
+This is an API-seam hardening only. It does not change the frozen M4P4 wire,
+KDF/nonce/AES-CCM behavior, SecurityStore replay rules or the scope of the
+original M7P6I physical crypto evidence.
