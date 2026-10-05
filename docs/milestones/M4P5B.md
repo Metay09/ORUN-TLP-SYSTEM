@@ -412,3 +412,20 @@ All owner-side post-audit validation gates are now PASS.
 Remaining merge gate:
 
 - independent focused final verification of the exact final branch head.
+
+
+## 15. Host-test ODR hygiene
+
+Before final independent verification, the M4P5B host-only friend macro was
+tightened.
+
+The test capability friend remains absent from production. For the dedicated
+host test program, `ORUN_M4P5B_HOST_TEST` is now supplied as a compiler define
+to the complete M4P5B test link rather than being defined only inside the test
+translation unit. Therefore every translation unit in that test program sees
+the same `AuthenticatedBackendDurableReceipt` class definition.
+
+This change affects test compilation only. It does not change the normal
+RAK4630 production preprocessor path, runtime behavior or footprint.
+
+A fresh focused host run is required after this test-harness correction.
