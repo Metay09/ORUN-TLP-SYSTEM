@@ -4,19 +4,20 @@
 #include <stdint.h>
 
 #include "history_delivery_coordinator.h"
+#include "history_secure_crypto.h"
 #include "security_store.h"
-#include "tlp_v2_history_secure.h"
 
 namespace orun_tlp {
 
 // SF3B transport-neutral owner for the security ordering between an already
 // authenticated BACKEND_DURABLE History receipt and M4P5A delivery application.
 //
-// The caller may invoke submitAuthenticatedReceipt() ONLY with packet,
-// plaintext and credential-id outputs produced by the SAME successful
-// HistorySecureCrypto::openBackendDurableReceipt() call.
+// The caller may invoke submitAuthenticatedReceipt() only with the opaque
+// AuthenticatedBackendDurableReceipt produced by ONE successful
+// HistorySecureCrypto::openBackendDurableReceipt() call. Packet, plaintext and
+// credential lifetime are therefore inseparable at this seam.
 //
-// This class then freezes that exact authenticated security lifetime into the
+// This class freezes that exact authenticated security lifetime into the
 // SecurityStore replay submission:
 //   authenticated credential_id + packet.key_epoch + packet.security_counter
 //
@@ -73,18 +74,15 @@ class HistoryReceiptAdmissionCoordinator {
   // Starts replay admission for one already-authenticated receipt.
   //
   // The method deliberately does NOT re-read SecurityStore's current
-  // credential. The exact authenticated credential-id snapshot returned by
-  // HistorySecureCrypto must be supplied by the caller and is submitted
-  // together with the authenticated packet epoch/counter.
+  // credential. It consumes the exact opaque tuple produced by
+  // HistorySecureCrypto and submits that authenticated epoch/counter/lifetime
+  // unchanged.
   //
   // A kStarted result means SecurityStore accepted ownership of this replay
   // decision. The receipt is copied into bounded RAM and no second receipt may
   // be submitted until service() reaches a terminal result.
   SubmitResult submitAuthenticatedReceipt(
-      const tlp::HistorySecurePacket& packet,
-      const tlp::BackendDurableReceiptPlaintext& receipt,
-      const uint8_t (&authenticated_credential_id)
-          [security_format::kCredentialIdSize]);
+      const AuthenticatedBackendDurableReceipt& authenticated);
 
   // Consumes at most one SecurityStore replay result and, only after an
   // accepted result, attempts M4P5A delivery application.
@@ -95,6 +93,10 @@ class HistoryReceiptAdmissionCoordinator {
   // service() may be retried without consuming another security counter.
   //
   // All other non-idle values are terminal and clear the pending receipt.
+  // kDeliveryInvariantFailure may still mean M4P5A committed a shorter,
+  // strict-validated RAM prefix. Callers must re-read acknowledgedThrough()
+  // before deciding what remains outstanding; the watermark is never rolled
+  // back and the consumed A2D counter must never be retried.
   ServiceResult service();
 
   bool pending() const { return state_ != State::kIdle; }
