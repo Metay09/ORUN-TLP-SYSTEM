@@ -9,6 +9,31 @@
 namespace orun_tlp {
 
 class SecurityStore;
+class HistoryReceiptAdmissionCoordinator;
+
+// Opaque post-authentication capability for one exact BACKEND_DURABLE frame.
+//
+// Production callers may default-construct this only as an output destination.
+// Its authenticated packet/plaintext/credential tuple can be populated only by
+// HistorySecureCrypto after one successful AEAD open, preventing a later caller
+// from mixing packet/counter/incarnation from frame B with plaintext from frame
+// A. M4P5B is the only application owner allowed to consume the private tuple.
+class AuthenticatedBackendDurableReceipt {
+ public:
+  AuthenticatedBackendDurableReceipt() = default;
+
+ private:
+  friend class HistorySecureCrypto;
+  friend class HistoryReceiptAdmissionCoordinator;
+#ifdef ORUN_M4P5B_HOST_TEST
+  friend struct HistoryReceiptAdmissionTestPeer;
+#endif
+
+  tlp::HistorySecurePacket packet_{};
+  tlp::BackendDurableReceiptPlaintext receipt_{};
+  uint8_t authenticated_credential_id_[
+      security_format::kCredentialIdSize]{};
+};
 
 enum class HistorySecureCryptoResult : uint8_t {
   kOk,
@@ -57,6 +82,14 @@ class HistorySecureCrypto {
       tlp::BackendDurableReceiptPlaintext& receipt,
       uint8_t (&authenticated_credential_id)
           [security_format::kCredentialIdSize]);
+
+  // Preferred SF3 receive seam. On kOk, output contains one inseparable
+  // authenticated packet/plaintext/credential tuple from the same AEAD open.
+  // On failure, output is untouched.
+  HistorySecureCryptoResult openBackendDurableReceipt(
+      const uint8_t* frame, size_t frame_size,
+      uint64_t expected_history_incarnation,
+      AuthenticatedBackendDurableReceipt& output);
 
  private:
   SecurityStore& security_store_;
