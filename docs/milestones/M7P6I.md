@@ -538,3 +538,34 @@ Remaining hardened-head gates before independent review:
 - fresh normal production RAK4630 build;
 - fresh M7P6I probe build;
 - physical hardened-head probe KAT.
+
+
+## 19. Hardened-head aggregate regression
+
+After the D2A counter-ownership and probe-isolation hardening, the owner reran:
+
+```text
+bash firmware/tests/run_host_tests.sh
+```
+
+Result: **PASS**.
+
+The complete host regression reached the final DEVQ1 gates without failure.
+Relevant security evidence inside the same run included:
+
+```text
+M7P6G delegated KDF/frame-key host vectors: PASS
+M4P4 History secure D2A/A2D vectors: PASS
+M7P6I SecurityStore-owned D2A vector: PASS
+```
+
+All production-startup scenarios also remained PASS, including the History v4
+startup seam restored by PR #73.
+
+This closes the hardened-head host regression gate.
+
+Remaining before independent final review:
+
+- fresh normal production `rak4630` build;
+- fresh `rak4630_m7p6i_history_crypto_probe` build;
+- physical hardened-head probe upload + boot KAT.
