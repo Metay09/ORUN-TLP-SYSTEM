@@ -124,3 +124,33 @@ Dedicated host coverage must lock at least:
 No hardware qualification is required for this RAM-only, transport-neutral
 slice unless later code changes touch production runtime, flash mutation,
 radio, security crypto or hardware drivers.
+
+
+## 7. Focused host validation
+
+The owner ran the dedicated M4P5A host test with strict warnings and
+ASan/UBSan:
+
+```text
+g++ -std=c++17 -O1 -g -Wall -Wextra -Werror \
+  -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+  -Ifirmware/include \
+  firmware/tests/m4/test_m4p5a_history_delivery_coordinator.cpp \
+  firmware/src/history_delivery_coordinator.cpp \
+  firmware/src/history_store.cpp \
+  firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o /tmp/m4p5a && /tmp/m4p5a
+```
+
+Result: **PASS** (silent exit to shell prompt).
+
+This focused gate covers the RAM-only coordinator semantics and does not
+constitute RF, flash power-cut, gateway/backend or physical-hardware evidence.
+
+Remaining PR-completion gates:
+
+- aggregate host regression;
+- RAK4630 production build, because the new source file is part of the firmware
+  source tree even though no production runtime caller exists yet;
+- focused review/audit before merge.
