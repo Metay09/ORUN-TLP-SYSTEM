@@ -1,6 +1,6 @@
 # M4P5B — SF3 authenticated History receipt admission ordering
 
-Status: **IMPLEMENTATION IN PROGRESS — NO PRODUCTION RF/RUNTIME ACTIVATION**
+Status: **COMPLETE / MERGE READY — NO PRODUCTION RF/RUNTIME ACTIVATION**
 
 Baseline:
 
@@ -493,3 +493,54 @@ fresh RAK4630 build; no normal production source path changed.
 Remaining merge gate:
 
 - independent focused final verification of the exact final branch head.
+
+
+## 18. Independent focused final verification
+
+Independent focused final verification reviewed exact final head:
+
+```text
+502fc1ed0ee89dbf3eac7d2b93eaaed6c8823a6e
+```
+
+Result:
+
+```text
+VERDICT: PASS
+
+M1: CLOSED
+L1: CLOSED
+L2: ACCEPTABLE DEFERRED
+L3: CLOSED
+L4: CLOSED
+
+NEW BLOCKER: 0
+NEW HIGH: 0
+NEW MEDIUM: 0
+NEW LOW: 2 (non-blocking)
+
+FINAL MERGE RECOMMENDATION: MERGE
+```
+
+The verifier independently reran the focused sanitizer/warnings gate, aggregate
+host suite and normal RAK4630 production build; all PASS. RAK footprint matched
+owner evidence exactly:
+
+```text
+RAM:   29,024 / 248,832 bytes (11.7%)
+Flash: 265,356 / 815,104 bytes (32.6%)
+```
+
+Two non-blocking follow-ups remain:
+
+- documentation may state the replay-reservation reboot arithmetic more
+  explicitly: bound 8 -> recovered HWM 7 -> counter 8 first admissible;
+- the first production runtime/target wiring slice must add a real
+  `HistorySecureCrypto` opaque AEAD-open -> M4P5B admission integrated test,
+  because the new opaque producer overload is not host-executed in this slice.
+
+M4P5B remains transport-neutral and does not activate secure History RF,
+gateway/backend runtime, relay forwarding, durable delivery checkpointing or
+outage-recovery behavior.
+
+No physical RF, power-cut or brownout PASS is claimed.
