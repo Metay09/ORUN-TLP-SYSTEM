@@ -261,3 +261,42 @@ The detailed disposition is recorded in
 Because production source/header code changed after the audit, the earlier host
 and RAK build evidence remains historical. Exact post-fix validation is required
 before final independent verification.
+
+
+## 11. Post-audit focused host validation
+
+After applying the independent-audit M1/M2 fixes and the M3 incarnation seam
+hardening, the owner reran the dedicated M4P5A host test with strict warnings
+and ASan/UBSan:
+
+```text
+g++ -std=c++17 -O1 -g -Wall -Wextra -Werror \
+  -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+  -Ifirmware/include \
+  firmware/tests/m4/test_m4p5a_history_delivery_coordinator.cpp \
+  firmware/src/history_delivery_coordinator.cpp \
+  firmware/src/history_store.cpp \
+  firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o /tmp/m4p5a && /tmp/m4p5a
+```
+
+Result: **PASS** (silent exit to shell prompt).
+
+This exact post-fix focused gate includes coverage for:
+
+- full selective-set drain after capacity overwrite;
+- strict retained-record traversal;
+- transient commit read fault / safe-prefix invariant behavior;
+- no durable History checkpoint or flash-byte mutation;
+- History incarnation re-baseline isolation;
+- receipt validation edge cases.
+
+The earlier RAK4630 build predates these production-source/header changes and is
+therefore retained only as historical evidence.
+
+Remaining post-fix gates:
+
+- aggregate host regression;
+- fresh RAK4630 production build;
+- independent focused final verification.
