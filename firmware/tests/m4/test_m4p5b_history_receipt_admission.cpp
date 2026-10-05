@@ -1,4 +1,3 @@
-#define ORUN_M4P5B_HOST_TEST 1
 #include <assert.h>
 #include <stdint.h>
 #include <string.h>
