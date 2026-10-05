@@ -153,7 +153,7 @@ void historySecureTxAndRxUseLoopOwnedRadioSeam() {
   assert(manager.sendHistorySecurePacket(frame, sizeof(frame)));
   assert(manager.isTransmitting());
   assert(last_tx_size == sizeof(frame));
-  assert(memcmp(last_tx_payload, frame, sizeof(frame)) == 0);
+  assert(memcmp(last_tx, frame, sizeof(frame)) == 0);
   assert(manager.eventDiagnostics().history_secure_tx_attempts == 1);
 
   radio_state = RF_IDLE;
