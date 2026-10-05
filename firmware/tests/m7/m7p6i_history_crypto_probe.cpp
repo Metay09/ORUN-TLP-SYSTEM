@@ -174,9 +174,11 @@ bool runObservation(HistorySecureCrypto& crypto) {
 bool runReceipt(HistorySecureCrypto& crypto) {
   tlp::HistorySecurePacket packet{};
   tlp::BackendDurableReceiptPlaintext receipt{};
+  uint8_t authenticated_credential_id[security_format::kCredentialIdSize]{};
   if (crypto.openBackendDurableReceipt(
           kReceiptFrame, sizeof(kReceiptFrame), kIncarnation,
-          packet, receipt) != HistorySecureCryptoResult::kOk)
+          packet, receipt, authenticated_credential_id) !=
+      HistorySecureCryptoResult::kOk)
     return false;
 
   return receipt.count == 2U &&
@@ -184,7 +186,9 @@ bool runReceipt(HistorySecureCrypto& crypto) {
              UINT64_C(0x0102030405060708) &&
          receipt.history_record_identities[1] ==
              UINT64_C(0x1112131415161718) &&
-         packet.security_counter == UINT64_C(0x8877665544332211);
+         packet.security_counter == UINT64_C(0x8877665544332211) &&
+         memcmp(authenticated_credential_id,
+                kCredentialId, sizeof(authenticated_credential_id)) == 0;
 }
 
 bool runTamperAndRecovery(HistorySecureCrypto& crypto, bool& recovery) {
@@ -196,18 +200,34 @@ bool runTamperAndRecovery(HistorySecureCrypto& crypto, bool& recovery) {
   sentinel_packet.device_id = UINT64_C(0xDEADBEEFDEADBEEF);
   tlp::BackendDurableReceiptPlaintext sentinel_receipt{};
   sentinel_receipt.count = 5U;
+  uint8_t sentinel_credential_id[security_format::kCredentialIdSize];
+  memset(sentinel_credential_id, 0x5A, sizeof(sentinel_credential_id));
 
   const auto rejected = crypto.openBackendDurableReceipt(
-      bad, sizeof(bad), kIncarnation, sentinel_packet, sentinel_receipt);
+      bad, sizeof(bad), kIncarnation,
+      sentinel_packet, sentinel_receipt, sentinel_credential_id);
+  bool credential_untouched = true;
+  for (size_t index = 0; index < sizeof(sentinel_credential_id); ++index) {
+    if (sentinel_credential_id[index] != 0x5AU) {
+      credential_untouched = false;
+      break;
+    }
+  }
   const bool untouched =
       sentinel_packet.device_id == UINT64_C(0xDEADBEEFDEADBEEF) &&
-      sentinel_receipt.count == 5U;
+      sentinel_receipt.count == 5U &&
+      credential_untouched;
 
   tlp::HistorySecurePacket packet{};
   tlp::BackendDurableReceiptPlaintext receipt{};
-  recovery = crypto.openBackendDurableReceipt(
-                 kReceiptFrame, sizeof(kReceiptFrame), kIncarnation,
-                 packet, receipt) == HistorySecureCryptoResult::kOk;
+  uint8_t authenticated_credential_id[security_format::kCredentialIdSize]{};
+  recovery =
+      crypto.openBackendDurableReceipt(
+          kReceiptFrame, sizeof(kReceiptFrame), kIncarnation,
+          packet, receipt, authenticated_credential_id) ==
+          HistorySecureCryptoResult::kOk &&
+      memcmp(authenticated_credential_id,
+             kCredentialId, sizeof(authenticated_credential_id)) == 0;
 
   return rejected == HistorySecureCryptoResult::kAuthRejected &&
          untouched;
