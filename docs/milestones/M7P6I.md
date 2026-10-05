@@ -792,3 +792,22 @@ Remaining before independent focused final verification:
 
 - upload the exact post-audit probe image;
 - confirm its physical boot KAT PASS.
+
+
+## 27. Post-audit physical probe upload
+
+The owner uploaded the exact post-audit M7P6I probe image containing the
+independent-audit H1 credential-lifetime handoff fix and L1 CC310 context wipe:
+
+```text
+pio run -d firmware -e rak4630_m7p6i_history_crypto_probe -t upload
+
+Device programmed.
+SUCCESS — 34.52 s
+```
+
+Result: **PASS for physical programming of the post-audit probe image.**
+
+This is not yet the final physical KAT result. The serial monitor must still
+confirm the exact post-audit image reports provision/observation/receipt/
+tamper/recovery PASS.
