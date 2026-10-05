@@ -289,3 +289,31 @@ Remaining before merge:
 - fresh normal production `rak4630` build;
 - physical M7P6I target KAT;
 - independent focused security review.
+
+
+## 13. Aggregate host regression
+
+Owner ran the complete aggregate host suite:
+
+```text
+bash firmware/tests/run_host_tests.sh
+```
+
+Result: **PASS**.
+
+The suite completed through all existing production-startup scenarios, M4P4
+History secure vectors, BLE patch/admission/source-contract gates, R4 checks and
+DEVQ1 tooling checks without failure.
+
+The new M7P6I traffic-byte test is intentionally silent on success but is
+compiled and executed under the runner's `set -e`; reaching the final DEVQ1
+PASS lines therefore confirms the M7P6I gate also completed successfully.
+
+This also confirms PR #73's restored History v4 startup host seam remains clean
+after adding the production crypto source graph.
+
+Remaining before merge:
+
+- fresh normal production `rak4630` build;
+- physical M7P6I full-graph KAT;
+- independent focused security review.
