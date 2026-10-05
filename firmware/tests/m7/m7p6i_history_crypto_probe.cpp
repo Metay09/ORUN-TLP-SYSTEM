@@ -78,6 +78,10 @@ class RamSecurityFlash final : public FlashBackend {
   uint8_t bytes_[kRegionSize]{};
 };
 
+RamSecurityFlash probe_flash;
+SecurityStore probe_store(probe_flash, probe_flash);
+HistorySecureCrypto probe_crypto(probe_store);
+
 bool settle(SecurityStore& store) {
   for (uint32_t guard = 0; guard < 2000U && store.busy(); ++guard)
     store.poll();
@@ -212,16 +216,14 @@ bool runTamperAndRecovery(HistorySecureCrypto& crypto, bool& recovery) {
 
 HistoryCryptoKatResult runHistoryCryptoKat() {
   HistoryCryptoKatResult result{};
-  RamSecurityFlash flash;
-  SecurityStore store(flash, flash);
 
-  result.provision = provisionPublicCredential(store);
+  result.provision = provisionPublicCredential(probe_store);
   if (!result.provision) return result;
 
-  HistorySecureCrypto crypto(store);
-  result.observation = runObservation(crypto);
-  result.receipt = runReceipt(crypto);
-  result.tamper_rejected = runTamperAndRecovery(crypto, result.recovery);
+  result.observation = runObservation(probe_crypto);
+  result.receipt = runReceipt(probe_crypto);
+  result.tamper_rejected =
+      runTamperAndRecovery(probe_crypto, result.recovery);
   return result;
 }
 
