@@ -323,3 +323,36 @@ Remaining post-fix owner-side gate:
 - fresh RAK4630 production build.
 
 After that, independent focused final verification remains before merge.
+
+
+## 13. Post-audit RAK4630 production build
+
+After the M1/M2 fixes and M3 incarnation binding, the owner rebuilt the normal
+production image:
+
+```text
+pio run -d firmware -e rak4630
+
+RAM:   29,024 / 248,832 bytes (11.7%)
+Flash: 265,356 / 815,104 bytes (32.6%)
+SUCCESS — 17.24 s
+```
+
+Result: **PASS**.
+
+The normal production footprint remains unchanged:
+
+```text
+RAM:   29,024 bytes
+Flash: 265,356 bytes
+```
+
+This remains consistent with no active production runtime caller for
+HistoryDeliveryCoordinator.
+
+All owner-side post-audit validation gates are now PASS.
+
+Remaining merge gate:
+
+- independent focused final verification of M1/M2/M3 on the exact final branch
+  head.
