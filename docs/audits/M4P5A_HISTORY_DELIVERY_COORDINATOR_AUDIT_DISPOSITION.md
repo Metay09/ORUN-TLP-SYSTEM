@@ -19,7 +19,7 @@ Findings:
 
 ## M1 — full selective set could deadlock after capacity overwrite
 
-Status: **FIXED — final verification pending**
+Status: **CLOSED — independently final-verified**
 
 The audited implementation drained the selective set only after accepting a new
 receipt identity. If the original missing oldest record was capacity-overwritten,
@@ -36,7 +36,7 @@ diagnostics remain the owner of that loss fact.
 
 ## M2 — commit-phase invariant failure could expose partial safe RAM progress
 
-Status: **FIXED CONTRACT / HARDENED PREFLIGHT — final verification pending**
+Status: **CLOSED — independently final-verified**
 
 The audited preflight used permissive `readAfter()/lookup()`, while the final
 HistoryStore commit used fail-closed `readNextRetainedStrict()`. A persistent
@@ -60,7 +60,7 @@ No durable History checkpoint is written by this behavior.
 
 ## M3 — authenticated History incarnation was not carried into the coordinator
 
-Status: **FIXED — final verification pending**
+Status: **CLOSED — independently final-verified**
 
 The audited API accepted only receipt plaintext. A future deferred SF3 wiring
 could therefore lose the authenticated History incarnation between AEAD open,
@@ -94,7 +94,7 @@ observability details, not safety violations.
 
 ## L3 — cheap receipt-validation coverage gaps
 
-Status: **FIXED — final verification pending**
+Status: **CLOSED — independently final-verified**
 
 The dedicated test now also covers:
 
@@ -132,3 +132,58 @@ The fixes do not:
 Because production-source and public-header code changed after the first audit,
 the pre-fix PASS evidence remains historical. Focused host, aggregate host and
 RAK4630 build must be rerun before focused final verification.
+
+
+## Independent focused final verification
+
+Final verification target:
+
+```text
+exact reviewed branch head:
+8b5de81a3f8b1a0228bce66a5405ddd70b407d5e
+
+firmware/test code head:
+8c05fb2cecdecc3198ef76909259a918bc0829e4
+```
+
+The verifier confirmed that `8c05fb2..8b5de81` changes documentation only;
+the firmware/test trees are identical across that range.
+
+Final verdict: **PASS**
+
+Results:
+
+- M1: **CLOSED**
+- M2: **CLOSED**
+- M3: **CLOSED**
+- new BLOCKER: 0
+- new HIGH: 0
+- new MEDIUM: 0
+- new LOW: 0
+
+Explicit final checks:
+
+- capacity-overwrite liveness: PASS
+- contiguous actual-record safety: PASS
+- strict preflight behavior: PASS
+- kInvariantFailure safe-prefix contract: PASS
+- durable/flash non-mutation: PASS
+- History incarnation isolation: PASS
+- security/replay ownership boundary: PASS
+- selective-set boundedness: PASS
+- TLP v1 / M4P4 compatibility: PASS
+- production runtime containment: PASS
+
+The verifier independently reran the focused strict-warning ASan/UBSan tests,
+supplemental review probes, aggregate host tests and a fresh RAK4630 production
+build; all reported PASS with the unchanged production footprint:
+
+```text
+RAM:   29,024 bytes
+Flash: 265,356 bytes
+```
+
+Final merge recommendation: **MERGE PR #75**.
+
+Evidence remains scoped to host/build behavior. No physical RF, outage recovery,
+gateway/backend, flash power-cut or brownout qualification is claimed.
