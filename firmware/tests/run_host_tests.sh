@@ -185,6 +185,12 @@ g++ "${flags[@]}" firmware/tests/m4/test_m4.cpp firmware/src/history_store.cpp \
   firmware/src/legacy_position_mapping.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m4"
 "$test_dir/m4"
+g++ "${portable_flags[@]}" \
+  firmware/tests/m4/test_m4p5a_history_delivery_coordinator.cpp \
+  firmware/src/history_delivery_coordinator.cpp firmware/src/history_store.cpp \
+  firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/m4p5a_history_delivery_coordinator"
+"$test_dir/m4p5a_history_delivery_coordinator"
 g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
   firmware/tests/m4/test_nrf_backend.cpp firmware/src/nrf_history_flash.cpp \
