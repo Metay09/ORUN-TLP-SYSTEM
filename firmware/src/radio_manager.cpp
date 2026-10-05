@@ -45,7 +45,9 @@ alignas(uint32_t) uint8_t rx_event_queue_storage[
 QueueHandle_t rx_event_queue = nullptr;
 
 static_assert(tlp::kRelayForwardPacketSize <= kRadioReceiveLimit,
-              "largest TLP packet must fit radio event storage");
+              "legacy relay packet must fit radio event storage");
+static_assert(tlp::kHistorySecureMaxPacketSize <= kRadioReceiveLimit,
+              "HISTORY_SECURE packet must fit radio event storage");
 
 void saturatingIncrement(uint32_t& value) {
   if (value != UINT32_MAX) ++value;
