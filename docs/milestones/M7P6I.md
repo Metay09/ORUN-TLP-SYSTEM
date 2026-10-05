@@ -631,3 +631,22 @@ Remaining hardened-head validation before independent final review:
 
 - upload this exact hardened probe image to the RAK4630/RAK4631 development unit;
 - confirm the boot KAT reports provision/observation/receipt/tamper/recovery PASS.
+
+
+## 22. Hardened-head physical probe upload
+
+The owner uploaded the exact hardened full-production-graph probe image to the
+RAK4630/RAK4631 development unit:
+
+```text
+pio run -d firmware -e rak4630_m7p6i_history_crypto_probe -t upload
+
+Device programmed.
+SUCCESS — 34.26 s
+```
+
+Result: **PASS for physical programming of the hardened probe image.**
+
+This is not yet the final physical crypto KAT result. The serial boot KAT must
+still confirm provision/observation/receipt/tamper/recovery PASS on this exact
+post-hardening head.
