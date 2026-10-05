@@ -602,3 +602,32 @@ Remaining hardened-head gates before independent final review:
 
 - fresh `rak4630_m7p6i_history_crypto_probe` build;
 - physical hardened-head probe upload + boot KAT.
+
+
+## 21. Hardened-head probe build
+
+After the D2A counter-ownership and physical-SecurityStore isolation hardening,
+the owner rebuilt the dedicated full-production-graph probe:
+
+```text
+pio run -d firmware -e rak4630_m7p6i_history_crypto_probe
+
+RAM:   37,736 / 248,832 bytes (15.2%)
+Flash: 289,128 / 815,104 bytes (35.5%)
+SUCCESS — 16.05 s
+```
+
+Result: **PASS**.
+
+The hardened probe now:
+
+- exercises the production `HistorySecureCrypto` implementation;
+- obtains the D2A counter only through its RAM-backed SecurityStore;
+- uses the independently locked first usable counter = 1 vector;
+- explicitly skips production physical SecurityStore startup in this test-only
+  environment.
+
+Remaining hardened-head validation before independent final review:
+
+- upload this exact hardened probe image to the RAK4630/RAK4631 development unit;
+- confirm the boot KAT reports provision/observation/receipt/tamper/recovery PASS.
