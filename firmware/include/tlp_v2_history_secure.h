@@ -12,8 +12,14 @@ namespace orun_tlp::tlp {
 constexpr uint8_t kHistorySecureProtocolVersion = 0x02U;
 constexpr uint8_t kPacketTypeHistorySecure = 0x03U;
 
-constexpr uint8_t kHistorySecurityContextDeviceD2a = 0x01U;
-constexpr uint8_t kHistorySecurityContextBackendA2d = 0x02U;
+// Canonical TLP v2 security-context registry. These header values are NOT the
+// same namespace as the M7P6D KDF/nonce direction byte.
+constexpr uint8_t kHistorySecurityContextBackendA2d = 0x01U;
+constexpr uint8_t kHistorySecurityContextDeviceD2a = 0x02U;
+
+// M7P6D traffic direction bytes used by KDF/nonce construction.
+constexpr uint8_t kHistoryTrafficDirectionD2a = 0x01U;
+constexpr uint8_t kHistoryTrafficDirectionA2d = 0x02U;
 
 constexpr uint8_t kHistoryAppFamilyObservation = 0x01U;
 constexpr uint8_t kHistoryAppFamilyBackendDurableReceipt = 0x02U;
@@ -110,6 +116,7 @@ enum class HistoryPlaintextDecodeStatus : uint8_t {
   kIdentity,
   kIdentityOrder,
   kPositionFlags,
+  kPositionCoordinates,
   kPositionFix,
   kPositionTime,
   kCount,
@@ -117,6 +124,11 @@ enum class HistoryPlaintextDecodeStatus : uint8_t {
 
 bool historySecureContextFamilyAllowed(uint8_t security_context,
                                        uint8_t app_family);
+
+// Maps the on-air security-context registry to the distinct M7P6D traffic
+// direction namespace. Returns false for an unknown context.
+bool historyTrafficDirectionForSecurityContext(uint8_t security_context,
+                                               uint8_t* direction);
 
 bool validateHistorySecurePacket(const HistorySecurePacket& packet);
 
