@@ -228,3 +228,35 @@ History oldest-undelivered selection
 
 That next slice must still preserve live/critical priority, collision-domain
 admission, retry/backoff and the M4P4 airtime limits.
+
+
+## 11. Full-graph probe build
+
+After correcting one compile-only AES-CCM call-site argument mismatch in
+`HistorySecureCrypto::protectObservation()`, the dedicated target build passed:
+
+```text
+pio run -d firmware -e rak4630_m7p6i_history_crypto_probe
+
+RAM:   37,736 / 248,832 bytes (15.2%)
+Flash: 289,192 / 815,104 bytes (35.5%)
+SUCCESS — 66.43 s
+```
+
+Result: **PASS**.
+
+The size above belongs to the test-only full-production-graph probe image, which
+adds the RAM-backed SecurityStore KAT state and probe code. It is not a normal
+production footprint claim.
+
+The compile failure that preceded this PASS was limited to an incorrect extra
+argument in the AES-CCM encrypt helper call; no wire/security semantics changed
+when it was corrected.
+
+Still required before merge:
+
+- portable focused M7P6I host test evidence;
+- aggregate host suite;
+- fresh normal production `rak4630` build on the corrected head;
+- physical probe boot KAT;
+- independent focused security review.
