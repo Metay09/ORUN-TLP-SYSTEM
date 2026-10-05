@@ -1,5 +1,6 @@
 #pragma once
 #include "flash_backend.h"
+#include "history_incarnation_source.h"
 #include "journal_format.h"
 #include "sequence_source.h"
 
@@ -25,7 +26,9 @@ class HistoryStore : public SequenceSource {
     kRejected,
   };
 
-  explicit HistoryStore(FlashBackend& backend) : flash_(backend) {}
+  explicit HistoryStore(FlashBackend& backend,
+                        HistoryIncarnationSource* incarnation_source = nullptr)
+      : flash_(backend), incarnation_source_(incarnation_source) {}
   bool begin(uint64_t device_id);
   void poll();  // One synchronous journal step per call.
   bool ready() const { return ready_; }
@@ -82,6 +85,8 @@ class HistoryStore : public SequenceSource {
   bool saveReplayCursor(uint64_t identity);
   uint64_t deliveredThrough() const { return state_.delivered_through; }
   uint64_t replayCursor() const { return state_.replay_cursor; }
+  uint64_t incarnation() const { return history_incarnation_; }
+  bool formatResetRequired() const { return format_reset_required_; }
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
  private:
@@ -111,8 +116,9 @@ class HistoryStore : public SequenceSource {
   void finishBlob();
   void fail(bool append_failure);
   FlashBackend& flash_;
+  HistoryIncarnationSource* incarnation_source_ = nullptr;
   uint64_t device_id_=0, sequence_end_=0, next_ticket_=0, newest_generation_=0;
-  uint64_t acknowledged_through_=0;
+  uint64_t history_incarnation_=0, acknowledged_through_=0;
   journal_format::State state_{};
   Diagnostics diagnostics_{};
   Page pages_[storage_config::kPageCount]{};
@@ -122,6 +128,7 @@ class HistoryStore : public SequenceSource {
   uint32_t pending_capacity_lost_undelivered_=0;
   bool append_after_new_page_=false;
   bool append_result_ready_=false, append_success_=false, ready_=false;
+  bool format_reset_required_=false;
   Job job_=Job::kNone;
   Phase phase_=Phase::kBlob;
   Record pending_record_{};

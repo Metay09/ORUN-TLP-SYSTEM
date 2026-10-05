@@ -21,6 +21,19 @@ using namespace orun_tlp::storage_config;
 
 namespace {
 constexpr uint64_t kDevice = 0xA1B2C3D4E5F60718ULL;
+
+class TestHistoryIncarnationSource : public HistoryIncarnationSource {
+ public:
+  bool generate(uint64_t& incarnation) override {
+    incarnation = next++;
+    return incarnation != 0;
+  }
+
+ private:
+  uint64_t next = 0x33445566778899AAULL;
+};
+
+TestHistoryIncarnationSource history_incarnation_source;
 unsigned sends = 0;
 }  // namespace
 
@@ -138,7 +151,7 @@ int main() {
   {
     PendingFlash flash;
     flash.pending_steps = 2;  // each primitive takes 2 extra poll() ticks
-    HistoryStore store(flash);
+    HistoryStore store(flash, &history_incarnation_source);
     assert(store.begin(kDevice));
     settle(store);
     assert(store.ready() && store.canAppend());
@@ -165,7 +178,7 @@ int main() {
   {
     PendingFlash flash;
     flash.pending_steps = 3;
-    HistoryStore store(flash);
+    HistoryStore store(flash, &history_incarnation_source);
     assert(store.begin(kDevice));
     settle(store);
 
@@ -179,7 +192,7 @@ int main() {
     PendingFlash snapshot;
     snapshot.bytes = flash.bytes;
 
-    HistoryStore recovered(snapshot);
+    HistoryStore recovered(snapshot, &history_incarnation_source);
     assert(recovered.begin(kDevice));
     settle(recovered);
     HistoryStore::Record missing;
@@ -200,7 +213,7 @@ int main() {
   {
     PendingFlash flash;
     flash.pending_steps = 3;
-    HistoryStore store(flash);
+    HistoryStore store(flash, &history_incarnation_source);
     assert(store.begin(kDevice));
     settle(store);
 
@@ -239,7 +252,7 @@ int main() {
   {
     PendingFlash flash;
     flash.pending_steps = 4;
-    HistoryStore store(flash);
+    HistoryStore store(flash, &history_incarnation_source);
     assert(store.begin(1));  // Must match the RadioManager stub's device_id_ below.
     settle(store);
     RadioManager radio;
@@ -276,7 +289,7 @@ int main() {
     // append itself -- otherwise this would just be testing begin() failure.
     PendingFlash failing;
     failing.pending_steps = 2;
-    HistoryStore failing_store(failing);
+    HistoryStore failing_store(failing, &history_incarnation_source);
     assert(failing_store.begin(1));
     settle(failing_store);
     failing.fail_on_resolve = true;

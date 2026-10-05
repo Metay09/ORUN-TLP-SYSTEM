@@ -13,6 +13,19 @@
 
 using namespace orun_tlp;
 using namespace orun_tlp::storage_config;
+
+class TestHistoryIncarnationSource : public HistoryIncarnationSource {
+ public:
+  bool generate(uint64_t& incarnation) override {
+    incarnation = next++;
+    return incarnation != 0;
+  }
+
+ private:
+  uint64_t next = 0x2233445566778899ULL;
+};
+
+TestHistoryIncarnationSource history_incarnation_source;
 TestFicr ficr{kPageSize, 256};
 TestUicr uicr{{0xF4000}};
 TestFicr* NRF_FICR = &ficr;
@@ -100,7 +113,7 @@ int main() {
   mismatch = false;
   assert(flash.erasePage(0) == FlashOpResult::kDone);
 
-  HistoryStore store(flash);
+  HistoryStore store(flash, &history_incarnation_source);
   assert(store.begin(1));
   while (store.busy()) store.poll();
   RadioManager radio;
@@ -123,7 +136,7 @@ int main() {
   assert(!flow.acceptFix(fix, 4));
   assert(programs == before_programs && erases == before_erases);
   enabled = false;
-  HistoryStore recovered(flash);
+  HistoryStore recovered(flash, &history_incarnation_source);
   assert(recovered.begin(1));
   while (recovered.busy()) recovered.poll();
   assert(recovered.lookup(1, committed) && recovered.count() == 1);

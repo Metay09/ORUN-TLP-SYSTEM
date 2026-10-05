@@ -10,20 +10,43 @@ uint32_t recordOffset(unsigned p, unsigned s) { return pageOffset(p) + kPageHead
 uint32_t sequenceOffset(unsigned p, unsigned s) { return pageOffset(p) + kStaticHeaderSize + s * kSequenceSlotSize; }
 uint32_t stateOffset(unsigned p, unsigned s) { return pageOffset(p) + kStaticHeaderSize + kSequenceSlotsPerPage * kSequenceSlotSize + s * kStateSlotSize; }
 bool bitSet(const uint8_t* p, unsigned n) { return p[n / 8] & (1U << (n % 8)); }
+
+// Version/cutover policy applies only to a fully committed static-header
+// envelope. A power cut while programming a current v4 header can leave the
+// magic complete while the version byte is still an intermediate 0x07/0x05
+// value. Treating that torn, unauthoritative header as a genuine future format
+// would brick normal first-page recovery.
+bool committedPageHeaderEnvelope(const uint8_t* header) {
+  return get32(header) == kPageMagic &&
+         get32(header + 60) == kCommit &&
+         get32(header + 56) == crc32(header, 56);
+}
 }
 
 bool HistoryStore::begin(uint64_t device) {
   ready_ = false; job_ = Job::kNone; diagnostics_ = {}; device_id_ = device;
   sequence_end_ = next_ticket_ = newest_generation_ = 0;
+  history_incarnation_ = 0;
   acknowledged_through_ = 0;
   active_page_ = -1;
   state_ = {};
+  format_reset_required_ = false;
   append_after_new_page_ = false;
   pending_capacity_lost_undelivered_ = 0;
   append_result_ready_ = append_success_ = false;
   blob_step_ = BlobStep::kBody; flash_op_awaiting_completion_ = false;
   if (!flash_.begin() || !recover()) return false;
   acknowledged_through_ = state_.delivered_through;
+
+  if (active_page_ < 0) {
+    uint64_t fresh_incarnation = 0;
+    if (incarnation_source_ == nullptr ||
+        !incarnation_source_->generate(fresh_incarnation) ||
+        fresh_incarnation == 0)
+      return false;
+    history_incarnation_ = fresh_incarnation;
+  }
+
   ready_ = true;
   if (active_page_ < 0) return startNewPage(false);
   // A reboot never reuses unused tickets, but recovery itself must stay
@@ -34,16 +57,28 @@ bool HistoryStore::begin(uint64_t device) {
 }
 
 bool HistoryStore::recover() {
-  bool old_format = false;
+  bool legacy_format = false;
+  bool unsupported_newer = false;
+  uint64_t recovered_incarnation = 0;
   for (unsigned p=0;p<kPageCount;++p) {
     pages_[p] = {};
     uint8_t header[kStaticHeaderSize];
     if (!flash_.read(pageOffset(p),header,sizeof(header))) return false;
-    old_format |= get32(header) == kPageMagic && header[4] == 2;
+    if (committedPageHeaderEnvelope(header)) {
+      if (header[4] == 2 || header[4] == 3) legacy_format = true;
+      if (header[4] > kVersion) unsupported_newer = true;
+    }
     uint64_t gen = 0;
-    if (!decodePage(header,device_id_,gen)) {
+    uint64_t page_incarnation = 0;
+    if (!decodePage(header, device_id_, gen, page_incarnation)) {
       if (!erased(header,sizeof(header)) && looksLikeJournalHeader(header)) ++diagnostics_.recovery_corruptions;
       continue;
+    }
+    if (recovered_incarnation == 0)
+      recovered_incarnation = page_incarnation;
+    else if (page_incarnation != recovered_incarnation) {
+      ++diagnostics_.recovery_corruptions;
+      return false;
     }
     pages_[p].generation = gen;
     if (gen > newest_generation_) { newest_generation_ = gen; active_page_ = p; }
@@ -73,12 +108,19 @@ bool HistoryStore::recover() {
       previous = r.identity; pages_[p].valid[s/8] |= 1U << (s%8); ++pages_[p].records_valid;
     }
   }
-  // Never interpret development v2 identities as v3. A v2-only partition
-  // requires an explicit development reset; no automatic migration or erase.
-  if (active_page_ < 0 && old_format) return false;
-  // This partition is exclusively ORUN-owned. With no valid page, including
-  // bit-partial first magic/CRC/commit, begin() reinitializes page zero only.
-  // If any v3 page survived, keep its history and recover normally instead.
+  // History v4 is an explicit development cutover: never invent an
+  // incarnation for retained v2/v3 pages and never partially migrate mixed
+  // generations. The existing bytes remain untouched until an explicit
+  // development reset erases the complete History partition.
+  if (legacy_format) {
+    format_reset_required_ = true;
+    return false;
+  }
+
+  // A genuine newer schema is a downgrade boundary, not a reset request.
+  if (unsupported_newer) return false;
+
+  if (active_page_ >= 0) history_incarnation_ = recovered_incarnation;
   return true;
 }
 
@@ -243,7 +285,7 @@ bool HistoryStore::saveReplayCursor(uint64_t id) {
 }
 
 bool HistoryStore::startNewPage(bool append_after) {
-  if (!ready_ || busy()) return false;
+  if (!ready_ || busy() || history_incarnation_ == 0) return false;
   target_page_ =
       active_page_ < 0 ? 0 : (unsigned(active_page_) + 1) % kPageCount;
   target_generation_ = newest_generation_ + 1;
@@ -335,7 +377,7 @@ void HistoryStore::poll(){
         pending_capacity_lost_undelivered_;
     pending_capacity_lost_undelivered_ = 0;
     phase_=Phase::kHeader;
-    uint8_t b[kStaticHeaderSize];encodePage(target_generation_,device_id_,b);startBlob(pageOffset(target_page_),b,sizeof(b));
+    uint8_t b[kStaticHeaderSize];encodePage(target_generation_,device_id_,history_incarnation_,b);startBlob(pageOffset(target_page_),b,sizeof(b));
     return;
   }
   if(writeBlob()!=FlashOpResult::kDone)return;
