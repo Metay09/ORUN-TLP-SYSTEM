@@ -221,3 +221,38 @@ Remaining PR-completion gates:
 
 - normal RAK4630 production build;
 - independent focused review/audit.
+
+
+## 10. RAK4630 production build
+
+The owner built the normal production image:
+
+```text
+pio run -d firmware -e rak4630
+
+RAM:   29,024 / 248,832 bytes (11.7%)
+Flash: 265,356 / 815,104 bytes (32.6%)
+SUCCESS — 79.39 s
+```
+
+Result: **PASS**.
+
+The normal production footprint remains unchanged from the M4P5A/M7P6I
+baseline:
+
+```text
+RAM:   29,024 bytes
+Flash: 265,356 bytes
+```
+
+This is consistent with M4P5B adding no active production runtime caller.
+
+Owner-side validation gates now complete:
+
+- focused strict-warning ASan/UBSan host test: PASS;
+- aggregate host regression: PASS;
+- RAK4630 production build: PASS.
+
+Remaining merge gate:
+
+- independent focused review/audit of the exact branch head.
