@@ -191,7 +191,7 @@ g++ "${portable_flags[@]}" \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m4p5a_history_delivery_coordinator"
 "$test_dir/m4p5a_history_delivery_coordinator"
-g++ "${portable_flags[@]}" \
+g++ -DORUN_M4P5B_HOST_TEST=1 "${portable_flags[@]}" \
   firmware/tests/m4/test_m4p5b_history_receipt_admission.cpp \
   firmware/src/history_receipt_admission.cpp \
   firmware/src/history_delivery_coordinator.cpp firmware/src/history_store.cpp \
