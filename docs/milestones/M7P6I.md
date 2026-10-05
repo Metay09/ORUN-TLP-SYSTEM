@@ -650,3 +650,44 @@ Result: **PASS for physical programming of the hardened probe image.**
 This is not yet the final physical crypto KAT result. The serial boot KAT must
 still confirm provision/observation/receipt/tamper/recovery PASS on this exact
 post-hardening head.
+
+
+## 23. Hardened-head physical crypto KAT
+
+The owner monitored the exact post-hardening probe image on the
+RAK4630/RAK4631 development unit. Serial repeatedly reported:
+
+```text
+M7P6I HISTORY CRYPTO KAT PASS provision=PASS observation=PASS receipt=PASS tamper=PASS recovery=PASS
+```
+
+Result: **PHYSICAL PASS for the final hardened M7P6I crypto KAT head.**
+
+This closes the physical gate for the post-KAT hardening:
+
+- production `HistorySecureCrypto` implementation executes on real reference
+  hardware after Bluefruit/SoftDevice startup;
+- D2A protection obtains its nonce counter from the RAM-backed SecurityStore
+  rather than a caller-supplied value;
+- the exact first usable counter = 1 vector matches the independently generated
+  host vector;
+- exact frozen BACKEND_A2D receipt authentication/decryption succeeds;
+- wrong-tag receipt is rejected;
+- a valid receipt immediately after the forged receipt succeeds;
+- the test-only image explicitly skips physical production SecurityStore
+  startup, so this KAT does not depend on or mutate the device's real security
+  credential partition.
+
+Scope remains intentionally narrow:
+
+- no production secure History RF sender/receiver is enabled;
+- no A2D replay admission is mutated by `HistorySecureCrypto`;
+- no History delivery watermark/checkpoint is advanced;
+- no relay/gateway/backend runtime is exercised;
+- no power-cut/brownout/RF-range/outage-recovery claim is made.
+
+All required owner-side validation gates are now PASS.
+
+Remaining merge gate:
+
+- independent focused security review of the exact final branch head.
