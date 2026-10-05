@@ -154,3 +154,32 @@ Remaining PR-completion gates:
 - RAK4630 production build, because the new source file is part of the firmware
   source tree even though no production runtime caller exists yet;
 - focused review/audit before merge.
+
+
+## 8. Aggregate host regression
+
+The owner ran the full aggregate host suite:
+
+```text
+bash firmware/tests/run_host_tests.sh
+```
+
+Result: **PASS**.
+
+The completed output included, among others:
+
+- production startup scenarios PASS;
+- R2/R4 radio ownership/recovery guards PASS;
+- B4 relay behavior PASS;
+- M6P1 listen-window checks PASS;
+- M4P4 History secure D2A/A2D vectors PASS;
+- M7P6I SecurityStore-owned D2A vector PASS;
+- BLE/storage/tooling source-contract guards PASS.
+
+This is host regression evidence only. It does not constitute physical RF,
+flash power-cut, gateway/backend or hardware qualification.
+
+Remaining PR-completion gates:
+
+- RAK4630 production build;
+- focused independent review/audit.
