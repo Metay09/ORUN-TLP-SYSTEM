@@ -259,7 +259,7 @@ void replayAcceptanceStrictlyPrecedesDelivery() {
   fixture.credentialId(credential_id);
 
   assert(fixture.admission.submitAuthenticatedReceipt(
-             packet, receipt, credential_id) ==
+             authenticatedReceipt(packet, receipt, credential_id)) ==
          HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
   assert(fixture.admission.pending());
   assert(fixture.history.acknowledgedThrough() == 0);
@@ -292,7 +292,7 @@ void replayDuplicateAndWrongLifetimeNeverReachHistory() {
   const auto first_receipt = oneReceipt(first.identity);
   const auto first_packet = receiptPacket(first_receipt, 1);
   assert(fixture.admission.submitAuthenticatedReceipt(
-             first_packet, first_receipt, credential_id) ==
+             authenticatedReceipt(first_packet, first_receipt, credential_id)) ==
          HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
   settleSecurity(fixture.security);
   assert(fixture.admission.service() ==
@@ -305,7 +305,8 @@ void replayDuplicateAndWrongLifetimeNeverReachHistory() {
   // the second History identity.
   const auto duplicate_counter_packet = receiptPacket(second_receipt, 1);
   assert(fixture.admission.submitAuthenticatedReceipt(
-             duplicate_counter_packet, second_receipt, credential_id) ==
+             authenticatedReceipt(
+                 duplicate_counter_packet, second_receipt, credential_id)) ==
          HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
   assert(fixture.admission.service() ==
          HistoryReceiptAdmissionCoordinator::ServiceResult::kReplayRejected);
@@ -317,7 +318,8 @@ void replayDuplicateAndWrongLifetimeNeverReachHistory() {
   fixture.credentialId(wrong_credential_id, kCredentialSeed + 1);
   const auto fresh_packet = receiptPacket(second_receipt, 2);
   assert(fixture.admission.submitAuthenticatedReceipt(
-             fresh_packet, second_receipt, wrong_credential_id) ==
+             authenticatedReceipt(
+                 fresh_packet, second_receipt, wrong_credential_id)) ==
          HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
   assert(fixture.admission.service() ==
          HistoryReceiptAdmissionCoordinator::ServiceResult::kReplayRejected);
@@ -325,7 +327,7 @@ void replayDuplicateAndWrongLifetimeNeverReachHistory() {
 
   // The exact authenticated lifetime and a fresh counter can then apply.
   assert(fixture.admission.submitAuthenticatedReceipt(
-             fresh_packet, second_receipt, credential_id) ==
+             authenticatedReceipt(fresh_packet, second_receipt, credential_id)) ==
          HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
   assert(fixture.admission.service() ==
          HistoryReceiptAdmissionCoordinator::ServiceResult::kApplied);
@@ -345,13 +347,15 @@ void onePendingReceiptOwnsTheReplayResult() {
   const auto second_receipt = oneReceipt(second.identity);
 
   assert(fixture.admission.submitAuthenticatedReceipt(
-             receiptPacket(first_receipt, 1),
-             first_receipt, credential_id) ==
+             authenticatedReceipt(
+                 receiptPacket(first_receipt, 1),
+                 first_receipt, credential_id)) ==
          HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
 
   assert(fixture.admission.submitAuthenticatedReceipt(
-             receiptPacket(second_receipt, 2),
-             second_receipt, credential_id) ==
+             authenticatedReceipt(
+                 receiptPacket(second_receipt, 2),
+                 second_receipt, credential_id)) ==
          HistoryReceiptAdmissionCoordinator::SubmitResult::kBusy);
   assert(fixture.history.acknowledgedThrough() == 0);
 
@@ -374,7 +378,7 @@ void acceptedReplayWaitsForBusyHistoryWithoutNewCounter() {
   const auto packet = receiptPacket(receipt, 1);
 
   assert(fixture.admission.submitAuthenticatedReceipt(
-             packet, receipt, credential_id) ==
+             authenticatedReceipt(packet, receipt, credential_id)) ==
          HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
   settleSecurity(fixture.security);
 
@@ -419,7 +423,7 @@ void malformedAuthenticatedPairingFailsBeforeReplayMutation() {
       tlp::backendDurableReceiptPlaintextSize(2));
   assert(tlp::validateHistorySecurePacket(packet));
   assert(fixture.admission.submitAuthenticatedReceipt(
-             packet, receipt, credential_id) ==
+             authenticatedReceipt(packet, receipt, credential_id)) ==
          HistoryReceiptAdmissionCoordinator::SubmitResult::
              kInvalidAuthenticatedInput);
 
@@ -454,7 +458,7 @@ void rebootAfterReplayCommitNeedsFreshSecurityCounter() {
   const auto original_packet = receiptPacket(receipt, 1);
 
   assert(original_admission.submitAuthenticatedReceipt(
-             original_packet, receipt, credential_id) ==
+             authenticatedReceipt(original_packet, receipt, credential_id)) ==
          HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
   settleSecurity(original_security);
 
@@ -474,7 +478,7 @@ void rebootAfterReplayCommitNeedsFreshSecurityCounter() {
   // The same security counter is burned/rejected after reboot. This preserves
   // anti-replay but cannot advance History by itself.
   assert(recovered_admission.submitAuthenticatedReceipt(
-             original_packet, receipt, credential_id) ==
+             authenticatedReceipt(original_packet, receipt, credential_id)) ==
          HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
   assert(recovered_admission.service() ==
          HistoryReceiptAdmissionCoordinator::ServiceResult::kReplayRejected);
@@ -485,7 +489,7 @@ void rebootAfterReplayCommitNeedsFreshSecurityCounter() {
   // that burned range; the History record identity remains unchanged.
   const auto fresh_packet = receiptPacket(receipt, 8);
   assert(recovered_admission.submitAuthenticatedReceipt(
-             fresh_packet, receipt, credential_id) ==
+             authenticatedReceipt(fresh_packet, receipt, credential_id)) ==
          HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
   settleSecurity(recovered_security);
   assert(recovered_admission.service() ==
