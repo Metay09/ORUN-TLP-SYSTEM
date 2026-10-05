@@ -148,6 +148,28 @@ void envelopeGoldenAndRoundTrip() {
   assert(memcmp(decoded.tag, packet.tag, kHistorySecureTagSize) == 0);
 }
 
+void minReceiptEnvelope() {
+  HistorySecurePacket packet{};
+  packet.security_context = kHistorySecurityContextBackendA2d;
+  packet.app_family = kHistoryAppFamilyBackendDurableReceipt;
+  packet.path_flags = 0U;
+  packet.ciphertext_len =
+      kHistoryReceiptFixedPlaintextSize + sizeof(uint64_t);
+  packet.device_id = 0x1122334455667788ULL;
+  packet.key_epoch = 1U;
+  packet.security_counter = 1U;
+  packet.history_incarnation = 1U;
+
+  uint8_t bytes[kHistoryReceiptMinPacketSize]{};
+  assert(sizeof(bytes) == 56U);
+  assert(serializeHistorySecurePacket(packet, bytes, sizeof(bytes)));
+
+  HistorySecurePacket decoded{};
+  assert(deserializeHistorySecurePacket(bytes, sizeof(bytes), &decoded) ==
+         HistorySecureDecodeStatus::kOk);
+  assert(decoded.ciphertext_len == packet.ciphertext_len);
+}
+
 void maxReceiptEnvelope() {
   HistorySecurePacket packet{};
   packet.security_context = kHistorySecurityContextBackendA2d;
@@ -266,6 +288,7 @@ int main() {
   observationPlaintextGolden();
   receiptPlaintextGoldenAndBounds();
   envelopeGoldenAndRoundTrip();
+  minReceiptEnvelope();
   maxReceiptEnvelope();
   malformedEnvelope();
   malformedPlaintexts();
