@@ -14,6 +14,7 @@
 #include <Arduino.h>
 #include <Adafruit_TinyUSB.h>
 #include <nrf_sdm.h>
+#include <nrf.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -27,6 +28,15 @@ using namespace orun_tlp::journal_format;
 using namespace orun_tlp::storage_config;
 
 namespace {
+
+bool inheritedWatchdogRunning() {
+  return NRF_WDT->RUNSTATUS != 0;
+}
+
+void feedInheritedWatchdog() {
+  if (inheritedWatchdogRunning())
+    NRF_WDT->RR[0] = WDT_RR_RR_Reload;
+}
 
 NrfHistoryFlash history_flash;
 
@@ -257,11 +267,16 @@ void handleCommand() {
 }  // namespace
 
 void setup() {
+  const bool inherited_watchdog = inheritedWatchdogRunning();
+  feedInheritedWatchdog();
   Serial.begin(115200);
   const uint32_t wait_started = millis();
-  while (!Serial && (millis() - wait_started) < 15000U) delay(10);
+  while (!Serial && (millis() - wait_started) < 15000U) {
+    feedInheritedWatchdog();
+    delay(10);
+  }
 
-  Serial.println(F("M4P3 HISTORY V4 PHYSICAL QUAL BOOT"));
+  Serial.printf("M4P3 HISTORY V4 PHYSICAL QUAL BOOT inherited_watchdog=%s\n",\n                inherited_watchdog ? "yes" : "no");
   Serial.println(
       F("TEST-ONLY: CLEAN destructively owns ONLY History 0x0ED000..0x0F3FFF"));
   Serial.println(
@@ -285,6 +300,7 @@ void setup() {
 }
 
 void loop() {
+  feedInheritedWatchdog();
   if (terminal) {
     if (Serial && (millis() - last_terminal_report_ms) >= 3000U) {
       Serial.println(final_report);
