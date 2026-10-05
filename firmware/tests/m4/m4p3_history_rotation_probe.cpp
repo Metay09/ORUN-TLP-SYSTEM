@@ -329,7 +329,8 @@ void setup() {
     delay(10);
   }
 
-  Serial.printf("M4P3 HISTORY V4 ROTATION PROBE BOOT inherited_watchdog=%s\n",\n                inherited_watchdog ? "yes" : "no");
+  Serial.printf("M4P3 HISTORY V4 ROTATION PROBE BOOT inherited_watchdog=%s\n",
+                inherited_watchdog ? "yes" : "no");
   Serial.println(F("TEST-ONLY: boot is read-only; ROTATE adds History test records"));
   Serial.println(F("RULE: do not send ROTATE without explicit operator approval"));
   Serial.flush();
