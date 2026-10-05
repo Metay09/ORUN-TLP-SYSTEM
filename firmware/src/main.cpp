@@ -44,6 +44,7 @@
 #include "security_store.h"
 #include "sensor_power_manager.h"
 #include "tlp_position_packet.h"
+#include "tlp_v2_history_secure.h"
 #include "usb_application_adapter.h"
 #include "watchdog_manager.h"
 
@@ -88,6 +89,14 @@ orun_tlp::BleApplicationTransport ble_application_transport(application_requests
 // remains loop-owned and is never invoked by a BLE callback.
 orun_tlp::BleApplicationHandoff ble_application_handoff;
 uint32_t next_usb_application_request_id = 1;
+
+// Initial production SF3 replay policy is intentionally conservative until
+// collision-domain measurements exist. Without authenticated downstream-contact
+// acceleration, send at most one oldest-undelivered probe per 15 minutes.
+// A deterministic per-device phase staggers same-fleet nodes.
+constexpr uint32_t kHistoryReplayProbeIntervalMs = 15UL * 60UL * 1000UL;
+constexpr uint32_t kHistoryReplayStartupJitterMs = 5UL * 60UL * 1000UL;
+uint32_t next_history_replay_at_ms = 0;
 // M7P7H loop-owned snapshot assembly; declared here so the BLE runtime can
 // refresh immediately after atomically taking an ingress frame.
 void refreshApplicationStatusSnapshot(uint32_t now_ms);
@@ -103,6 +112,14 @@ void refreshApplicationStatusSnapshot(uint32_t now_ms);
 // role behavior without implementing crypto, secure envelope, commands or BLE.
 orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort(),
                                        storage_flash_gate.securityMaintPort());
+// SF3 production tracker composition. The path is active in normal firmware
+// but remains fail-closed while SecurityStore is unprovisioned.
+orun_tlp::HistorySecureCrypto history_secure_crypto(security_store);
+orun_tlp::HistoryDeliveryCoordinator history_delivery(history);
+orun_tlp::HistoryReceiptAdmissionCoordinator history_receipt_admission(
+    security_store, history_delivery);
+orun_tlp::HistoryReceiptReceiver history_receipt_receiver(
+    history, history_secure_crypto, history_receipt_admission);
 orun_tlp::PositionFlow positions(history, radio_manager);
 // M7P7I: source-neutral RAM owner for the latest accepted Location product
 // fact. GNSS is the only producer in this slice. It owns no source-selection
@@ -1692,6 +1709,153 @@ void processGeofenceAcceptedFix(const orun_tlp::GnssFix& fix,
   }
 }
 
+void serviceHistoryReceiptAdmission() {
+  const auto result = history_receipt_receiver.service();
+  switch (result) {
+    case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kIdle:
+    case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kWaitingReplay:
+    case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kWaitingDelivery:
+      break;
+    case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kApplied:
+      Serial.printf("HISTORY receipt applied ack=%lu\n",
+                    static_cast<unsigned long>(
+                        history.acknowledgedThrough()));
+      break;
+    case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kDuplicateOnly:
+      Serial.println(F("HISTORY receipt duplicate"));
+      break;
+    case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kReplayRejected:
+      Serial.println(F("HISTORY receipt replay rejected"));
+      break;
+    case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kDeliveryInvalidReceipt:
+    case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kDeliveryUnknownIdentity:
+    case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kDeliverySetFull:
+    case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kDeliveryInvariantFailure:
+      Serial.printf("HISTORY receipt delivery rejected result=%u ack=%lu\n",
+                    static_cast<unsigned>(result),
+                    static_cast<unsigned long>(
+                        history.acknowledgedThrough()));
+      break;
+  }
+}
+
+void ingestHistorySecureRadioFrame() {
+  // Keep the raw frame in RadioManager's bounded handoff slot while an older
+  // receipt or flash reservation owns the replay path. This avoids dropping a
+  // valid receipt merely because SecurityStore is temporarily busy.
+  if (history_receipt_receiver.pending() ||
+      !history.ready() || history.busy() ||
+      !security_store.ready() || security_store.busy()) {
+    return;
+  }
+
+  orun_tlp::HistorySecureRxFrame frame{};
+  if (!radio_manager.takeHistorySecureRx(frame)) return;
+
+  const auto result = history_receipt_receiver.submitBackendDurableFrame(
+      frame.payload, frame.size);
+  switch (result) {
+    case orun_tlp::HistoryReceiptReceiver::SubmitResult::kStarted:
+      Serial.printf("RX HISTORY_SECURE admitted bytes=%u rssi=%d snr=%d\n",
+                    static_cast<unsigned>(frame.size),
+                    static_cast<int>(frame.rssi_dbm),
+                    static_cast<int>(frame.snr_db));
+      break;
+    case orun_tlp::HistoryReceiptReceiver::SubmitResult::kBusy:
+      // Defensive only: pending/busy was checked above.
+      Serial.println(F("RX HISTORY_SECURE deferred busy"));
+      break;
+    case orun_tlp::HistoryReceiptReceiver::SubmitResult::kUnavailable:
+      Serial.println(F("RX HISTORY_SECURE unavailable"));
+      break;
+    case orun_tlp::HistoryReceiptReceiver::SubmitResult::kInvalidFrame:
+      Serial.println(F("RX HISTORY_SECURE invalid"));
+      break;
+    case orun_tlp::HistoryReceiptReceiver::SubmitResult::kAuthRejected:
+      Serial.println(F("RX HISTORY_SECURE auth rejected"));
+      break;
+    case orun_tlp::HistoryReceiptReceiver::SubmitResult::kCryptoEngineError:
+      Serial.println(F("RX HISTORY_SECURE crypto error"));
+      break;
+    case orun_tlp::HistoryReceiptReceiver::SubmitResult::kInvariantFailure:
+      Serial.println(F("RX HISTORY_SECURE invariant failure"));
+      break;
+  }
+}
+
+void scheduleNextHistoryReplay(uint32_t now_ms) {
+  next_history_replay_at_ms = now_ms + kHistoryReplayProbeIntervalMs;
+}
+
+void serviceHistoryReplay(uint32_t now_ms) {
+  if (!orun_tlp::monotonic::reached(now_ms, next_history_replay_at_ms) ||
+      !history.ready() || history.busy() ||
+      !security_store.ready() ||
+      security_store.state() != orun_tlp::SecurityState::kProvisioned ||
+      security_store.busy() ||
+      history_receipt_receiver.pending() ||
+      positions.pending() ||
+      radio_manager.relayForwardingEnabled() ||
+      !radio_manager.canSend()) {
+    return;
+  }
+
+  orun_tlp::HistoryStore::Record record{};
+  if (!history.getOldestUndelivered(record)) {
+    scheduleNextHistoryReplay(now_ms);
+    return;
+  }
+
+  orun_tlp::tlp::PositionPacket stored{};
+  if (!orun_tlp::tlp::deserializePositionPacket(
+          record.packet, sizeof(record.packet), &stored) ||
+      stored.source_device_id != radio_manager.deviceId()) {
+    Serial.println(F("HISTORY replay record decode rejected"));
+    scheduleNextHistoryReplay(now_ms);
+    return;
+  }
+
+  orun_tlp::tlp::HistoryObservationPlaintext observation{};
+  observation.history_record_identity = record.identity;
+  observation.gnss_utc_epoch_seconds = stored.gnss_utc_epoch_seconds;
+  observation.latitude_e7 = stored.latitude_e7;
+  observation.longitude_e7 = stored.longitude_e7;
+  observation.altitude_mm = stored.altitude_mm;
+  observation.hdop_x100 = stored.hdop_x100;
+  observation.satellites = stored.satellites;
+  observation.position_flags =
+      stored.flags & orun_tlp::tlp::kHistoryPositionFlagsAllowedMask;
+
+  orun_tlp::tlp::HistorySecurePacket protected_packet{};
+  const auto crypto_result = history_secure_crypto.protectNextObservation(
+      history.incarnation(), 0U, observation, protected_packet);
+  if (crypto_result != orun_tlp::HistorySecureCryptoResult::kOk) {
+    // kUnavailable is normally a transient counter-reservation boundary. Do
+    // not spin or burn airtime; retry after the owner becomes ready. Structural
+    // failures are also rate-limited rather than hammering the same record.
+    if (crypto_result != orun_tlp::HistorySecureCryptoResult::kUnavailable)
+      scheduleNextHistoryReplay(now_ms);
+    return;
+  }
+
+  uint8_t frame[orun_tlp::tlp::kHistoryObservationPacketSize]{};
+  if (!orun_tlp::tlp::serializeHistorySecurePacket(
+          protected_packet, frame, sizeof(frame)) ||
+      !radio_manager.sendHistorySecurePacket(frame, sizeof(frame))) {
+    // A D2A counter may already have been consumed by crypto. Burning a counter
+    // is safe; immediate reuse is forbidden. Keep the logical record
+    // undelivered and retry only after the normal bounded interval.
+    Serial.println(F("HISTORY replay TX start failed"));
+    scheduleNextHistoryReplay(now_ms);
+    return;
+  }
+
+  Serial.printf("HISTORY replay sent id=%lu backlog=%lu\n",
+                static_cast<unsigned long>(record.identity),
+                static_cast<unsigned long>(history.backlogCount()));
+  scheduleNextHistoryReplay(now_ms);
+}
+
 void printBootBanner() {
   Serial.println(F("ORUN TLP"));
   Serial.print(F("firmware version "));
@@ -1847,6 +2011,11 @@ void setup() {
     Serial.printf("SECURITY state=%s\n", state);
   }
 #endif
+  next_history_replay_at_ms =
+      orun_tlp::monotonic::nowMs() +
+      kHistoryReplayProbeIntervalMs +
+      static_cast<uint32_t>(
+          device_identity.legacyUint64() % kHistoryReplayStartupJitterMs);
   active_tracking_base_interval_seconds =
       config_store.config().tracking_interval_seconds;
   gnss_manager.begin();
@@ -2117,6 +2286,9 @@ void loop() {
     config_store.poll();
     security_store.poll();
   }
+  // Replay admission result consumption is loop-owned and runs only after the
+  // SecurityStore poll above has had a chance to complete a durable A2D bound.
+  serviceHistoryReceiptAdmission();
 #ifdef ORUN_M7P7B_FLASH_PROBE
   // Stepped after config_store.poll() so a just-finished save is consumed on
   // the same tick. Idle/done: no sampling, no critical section, no output.
@@ -2219,7 +2391,18 @@ void loop() {
     abortGeofenceConfirmation("GNSS_SESSION_ENDED");
   }
 
+  // Live/current PositionFlow has already had first TX opportunity above.
+  // Historical replay is lower priority and is disabled while relay forwarding
+  // is enabled. Its first production policy is one oldest-undelivered probe per
+  // conservative interval until a later measured contact-aware scheduler.
+  serviceHistoryReplay(orun_tlp::monotonic::nowMs());
+
   radio_manager.update(tracking_enabled && !positions.pending());
+
+  // RadioManager only performs a bounded byte-copy under its driver gate.
+  // Decrypt/auth/replay admission happens here after update() released it.
+  ingestHistorySecureRadioFrame();
+
   // Feed only after the cooperative loop has completed all service work. A
   // blocked I2C/flash/radio path therefore cannot hide behind an unrelated task.
   orun_tlp::WatchdogManager::feed();
