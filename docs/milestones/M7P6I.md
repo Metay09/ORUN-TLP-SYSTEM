@@ -353,3 +353,30 @@ Remaining before merge:
 
 - physical M7P6I full-graph KAT on the RAK4631 development unit;
 - independent focused security review.
+
+
+## 15. Physical probe upload
+
+Owner uploaded the M7P6I full-production-graph probe image to the RAK4630/RAK4631
+development unit:
+
+```text
+pio run -d firmware -e rak4630_m7p6i_history_crypto_probe -t upload
+
+Device programmed.
+SUCCESS — 34.57 s
+```
+
+The uploaded image footprint was:
+
+```text
+RAM:   37,736 / 248,832 bytes (15.2%)
+Flash: 289,192 / 815,104 bytes (35.5%)
+```
+
+This establishes only successful physical programming of the intended test-only
+probe image. It is **not yet** a physical crypto KAT PASS. The serial boot KAT
+must still report the exact M7P6I production crypto path result.
+
+The probe uses RAM-backed public test credential material and does not mutate the
+physical SecurityStore partition.
