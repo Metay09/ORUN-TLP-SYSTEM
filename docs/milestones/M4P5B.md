@@ -81,6 +81,13 @@ already-admitted receipt in RAM and retries only the M4P5A application step. It
 must not consume another A2D security counter merely because HistoryStore was
 busy.
 
+While a receipt is pending, M4P5B is the sole consumer of
+`SecurityStore::takeA2dReplayResult()`. There is currently no production A2D
+dispatcher/caller, so this introduces no ownership conflict. Before another
+protected A2D application family is activated, replay-result consumption must
+be serialized through one reviewed receive owner; two independent consumers
+must never race on SecurityStore's single result channel.
+
 ## 4. Power-loss boundary
 
 There is an unavoidable safe window:
