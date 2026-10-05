@@ -481,7 +481,10 @@ void rebootAfterReplayCommitNeedsFreshSecurityCounter() {
   settleSecurity(original_security);
 
   // Simulate power loss after the durable SecurityStore replay reservation but
-  // before the RAM-only application owner consumes accepted=true.
+  // before the RAM-only application owner consumes accepted=true. The History
+  // object is intentionally not reconstructed here: its RAM watermark and
+  // selective state are both still zero, so the replay-boundary outcome is
+  // equivalent. This remains a host model, not physical power-cut evidence.
   assert(history.acknowledgedThrough() == 0);
 
   SecurityStore recovered_security(security_flash, security_flash);
@@ -516,6 +519,195 @@ void rebootAfterReplayCommitNeedsFreshSecurityCounter() {
   assert(history.deliveredThrough() == 0);
 }
 
+
+void incarnationChangeAfterReplayAcceptanceRejectsSafely() {
+  Fixture fixture;
+  const auto old_first = allocateRecord(fixture.history, 470000001);
+  appendRecord(fixture.history, old_first);
+
+  uint8_t credential_id[kCredentialIdSize]{};
+  fixture.credentialId(credential_id);
+  const auto old_receipt = oneReceipt(old_first.identity);
+
+  assert(fixture.admission.submitAuthenticatedReceipt(
+             authenticatedReceipt(
+                 receiptPacket(old_receipt, 1),
+                 old_receipt, credential_id)) ==
+         HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
+  settleSecurity(fixture.security);
+
+  // Destructive History re-baseline occurs after replay acceptance but before
+  // application delivery. Local record identities intentionally restart.
+  fixture.history_flash.bytes.fill(0xFF);
+  fixture.incarnation_source.next = kSecondHistoryIncarnation;
+  startHistory(fixture.history, kSecondHistoryIncarnation);
+  const auto new_first = allocateRecord(fixture.history, 470100001);
+  appendRecord(fixture.history, new_first);
+  assert(new_first.identity == old_first.identity);
+
+  assert(fixture.admission.service() ==
+         HistoryReceiptAdmissionCoordinator::ServiceResult::
+             kDeliveryInvalidReceipt);
+  assert(!fixture.admission.pending());
+  assert(fixture.history.acknowledgedThrough() == 0);
+
+  // Counter 1 is already consumed. The backend reissues the SAME logical new
+  // incarnation fact under a fresh A2D counter.
+  const auto new_receipt = oneReceipt(new_first.identity);
+  assert(fixture.admission.submitAuthenticatedReceipt(
+             authenticatedReceipt(
+                 receiptPacket(
+                     new_receipt, 2, 1, kSecondHistoryIncarnation),
+                 new_receipt, credential_id)) ==
+         HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
+  assert(fixture.admission.service() ==
+         HistoryReceiptAdmissionCoordinator::ServiceResult::kApplied);
+  assert(fixture.history.acknowledgedThrough() == new_first.identity);
+}
+
+void selectiveSetFullAfterReplayAcceptanceIsSafeAndRecoverable() {
+  Fixture fixture;
+  HistoryStore::Record records[14]{};
+  for (size_t i = 0; i < 14; ++i) {
+    records[i] =
+        allocateRecord(fixture.history, 480000000 + static_cast<int32_t>(i));
+    appendRecord(fixture.history, records[i]);
+  }
+
+  // Test setup: M4P5A already owns two authenticated selective batches 2..13.
+  const auto batch_one = recordReceipt(
+      records, 1, tlp::kHistoryReceiptMaxIdentities);
+  const auto batch_two = recordReceipt(
+      records, 1 + tlp::kHistoryReceiptMaxIdentities,
+      tlp::kHistoryReceiptMaxIdentities);
+  assert(fixture.delivery.applyReplayAcceptedBackendDurableReceipt(
+             batch_one, kHistoryIncarnation) ==
+         HistoryDeliveryCoordinator::ApplyResult::kApplied);
+  assert(fixture.delivery.applyReplayAcceptedBackendDurableReceipt(
+             batch_two, kHistoryIncarnation) ==
+         HistoryDeliveryCoordinator::ApplyResult::kApplied);
+  assert(fixture.delivery.selectiveAcknowledgementCount() ==
+         HistoryDeliveryCoordinator::kMaxSelectiveAcknowledgements);
+  assert(fixture.history.acknowledgedThrough() == 0);
+
+  uint8_t credential_id[kCredentialIdSize]{};
+  fixture.credentialId(credential_id);
+
+  // Record 14 is valid at the backend but cannot enter the full RAM set. Its
+  // security counter is consumed, while History delivery remains unchanged.
+  const auto fourteenth = oneReceipt(records[13].identity);
+  assert(fixture.admission.submitAuthenticatedReceipt(
+             authenticatedReceipt(
+                 receiptPacket(fourteenth, 1),
+                 fourteenth, credential_id)) ==
+         HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
+  settleSecurity(fixture.security);
+  assert(fixture.admission.service() ==
+         HistoryReceiptAdmissionCoordinator::ServiceResult::kDeliverySetFull);
+  assert(!fixture.admission.pending());
+  assert(fixture.history.acknowledgedThrough() == 0);
+  assert(fixture.delivery.selectiveAcknowledgementCount() ==
+         HistoryDeliveryCoordinator::kMaxSelectiveAcknowledgements);
+
+  // A fresh receipt for the missing oldest actual record drains 1..13.
+  const auto oldest = oneReceipt(records[0].identity);
+  assert(fixture.admission.submitAuthenticatedReceipt(
+             authenticatedReceipt(
+                 receiptPacket(oldest, 2),
+                 oldest, credential_id)) ==
+         HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
+  assert(fixture.admission.service() ==
+         HistoryReceiptAdmissionCoordinator::ServiceResult::kApplied);
+  assert(fixture.history.acknowledgedThrough() == records[12].identity);
+  assert(fixture.delivery.selectiveAcknowledgementCount() == 0);
+
+  // Record 14 is reissued under another fresh counter and can now apply.
+  assert(fixture.admission.submitAuthenticatedReceipt(
+             authenticatedReceipt(
+                 receiptPacket(fourteenth, 3),
+                 fourteenth, credential_id)) ==
+         HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
+  assert(fixture.admission.service() ==
+         HistoryReceiptAdmissionCoordinator::ServiceResult::kApplied);
+  assert(fixture.history.acknowledgedThrough() == records[13].identity);
+}
+
+void invariantFailureTerminatesAndRequiresFreshCounter() {
+  bool saw_partial_safe_prefix = false;
+
+  for (uint32_t fail_after = 0; fail_after < 128; ++fail_after) {
+    Fixture fixture;
+    HistoryStore::Record records[4]{};
+    for (size_t i = 0; i < 4; ++i) {
+      records[i] =
+          allocateRecord(fixture.history, 490000000 + static_cast<int32_t>(i));
+      appendRecord(fixture.history, records[i]);
+    }
+
+    const auto newer = recordReceipt(records, 1, 3);
+    assert(fixture.delivery.applyReplayAcceptedBackendDurableReceipt(
+               newer, kHistoryIncarnation) ==
+           HistoryDeliveryCoordinator::ApplyResult::kApplied);
+    assert(fixture.history.acknowledgedThrough() == 0);
+
+    uint8_t credential_id[kCredentialIdSize]{};
+    fixture.credentialId(credential_id);
+    const auto oldest = oneReceipt(records[0].identity);
+    const auto counter_one =
+        authenticatedReceipt(receiptPacket(oldest, 1), oldest, credential_id);
+
+    assert(fixture.admission.submitAuthenticatedReceipt(counter_one) ==
+           HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
+    settleSecurity(fixture.security);
+
+    fixture.history_flash.failOneReadAfter(fail_after);
+    const auto result = fixture.admission.service();
+    if (result !=
+        HistoryReceiptAdmissionCoordinator::ServiceResult::
+            kDeliveryInvariantFailure) {
+      continue;
+    }
+
+    assert(!fixture.admission.pending());
+    assert(fixture.history.deliveredThrough() == 0);
+
+    const uint64_t acknowledged = fixture.history.acknowledgedThrough();
+    assert(acknowledged <= records[3].identity);
+    if (acknowledged != 0) {
+      bool exact_prefix_identity = false;
+      for (const auto& record : records) {
+        if (record.identity == acknowledged) {
+          exact_prefix_identity = true;
+          break;
+        }
+      }
+      assert(exact_prefix_identity);
+    }
+
+    if (acknowledged > 0 && acknowledged < records[3].identity)
+      saw_partial_safe_prefix = true;
+
+    // The consumed A2D counter is terminal even if M4P5A exposed only a
+    // shorter strict-validated RAM prefix.
+    assert(fixture.admission.submitAuthenticatedReceipt(counter_one) ==
+           HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
+    assert(fixture.admission.service() ==
+           HistoryReceiptAdmissionCoordinator::ServiceResult::kReplayRejected);
+
+    // Backend reissues the same logical receipt under a fresh counter. The
+    // surviving M4P5A selective facts then complete the safe prefix.
+    const auto counter_two =
+        authenticatedReceipt(receiptPacket(oldest, 2), oldest, credential_id);
+    assert(fixture.admission.submitAuthenticatedReceipt(counter_two) ==
+           HistoryReceiptAdmissionCoordinator::SubmitResult::kStarted);
+    assert(fixture.admission.service() ==
+           HistoryReceiptAdmissionCoordinator::ServiceResult::kApplied);
+    assert(fixture.history.acknowledgedThrough() == records[3].identity);
+  }
+
+  assert(saw_partial_safe_prefix);
+}
+
 }  // namespace
 
 int main() {
@@ -525,5 +717,8 @@ int main() {
   acceptedReplayWaitsForBusyHistoryWithoutNewCounter();
   malformedAuthenticatedPairingFailsBeforeReplayMutation();
   rebootAfterReplayCommitNeedsFreshSecurityCounter();
+  incarnationChangeAfterReplayAcceptanceRejectsSafely();
+  selectiveSetFullAfterReplayAcceptanceIsSafeAndRecoverable();
+  invariantFailureTerminatesAndRequiresFreshCounter();
   return 0;
 }
