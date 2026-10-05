@@ -25,6 +25,10 @@
 #include "firmware_version.h"
 #include "flash_mutation_gate.h"
 #include "gnss_manager.h"
+#include "history_delivery_coordinator.h"
+#include "history_receipt_admission.h"
+#include "history_secure_crypto.h"
+#include "history_store_forward_runtime.h"
 #include "location_owner.h"
 #include "geofence_confirmation_coordinator.h"
 #include "geofence_incarnation_source.h"
@@ -95,11 +99,23 @@ void refreshApplicationStatusSnapshot(uint32_t now_ms);
 // the next secure counter skips all possibly-used counters from the prior
 // reserved block; poll() advances that bounded recovery reservation.
 // Current production has no provisioning path, so blank devices remain
-// UNPROVISIONED and perform no security writes. This proves the real
-// instantiated object's RAM/flash footprint and preserves TLP v1/RF/GNSS/
-// role behavior without implementing crypto, secure envelope, commands or BLE.
+// UNPROVISIONED and perform no security writes. SF3 runtime below is therefore
+// active only for an already-provisioned authorized device; it never invents
+// credentials or weakens the existing recovery-only provisioning boundary.
 orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort(),
                                        storage_flash_gate.securityMaintPort());
+orun_tlp::HistorySecureCrypto history_secure_crypto(security_store);
+orun_tlp::HistoryDeliveryCoordinator history_delivery(history);
+orun_tlp::HistoryReceiptAdmissionCoordinator history_receipt_admission(
+    security_store, history_delivery);
+#ifdef ORUN_SF3_RUNTIME_QUAL
+orun_tlp::HistoryStoreForwardRuntime history_store_forward(
+    history, history_secure_crypto, history_receipt_admission, radio_manager,
+    5000U, 15000U);
+#else
+orun_tlp::HistoryStoreForwardRuntime history_store_forward(
+    history, history_secure_crypto, history_receipt_admission, radio_manager);
+#endif
 orun_tlp::PositionFlow positions(history, radio_manager);
 // M7P7I: source-neutral RAM owner for the latest accepted Location product
 // fact. GNSS is the only producer in this slice. It owns no source-selection
@@ -1689,6 +1705,24 @@ void processGeofenceAcceptedFix(const orun_tlp::GnssFix& fix,
   }
 }
 
+const char* historyStoreForwardEventName(
+    orun_tlp::HistoryStoreForwardRuntime::Event event) {
+  using Event = orun_tlp::HistoryStoreForwardRuntime::Event;
+  switch (event) {
+    case Event::kNone: return "NONE";
+    case Event::kReplaySent: return "REPLAY_SENT";
+    case Event::kReplaySendFailed: return "REPLAY_SEND_FAILED";
+    case Event::kReceiptApplied: return "RECEIPT_APPLIED";
+    case Event::kReceiptDuplicate: return "RECEIPT_DUPLICATE";
+    case Event::kReceiptReplayRejected: return "RECEIPT_REPLAY_REJECTED";
+    case Event::kReceiptRejected: return "RECEIPT_REJECTED";
+    case Event::kReceiptAuthRejected: return "RECEIPT_AUTH_REJECTED";
+    case Event::kReceiptInvalidFrame: return "RECEIPT_INVALID";
+    case Event::kOpaqueObservationReceived: return "OPAQUE_OBSERVATION";
+  }
+  return "UNKNOWN";
+}
+
 void printBootBanner() {
   Serial.println(F("ORUN TLP"));
   Serial.print(F("firmware version "));
@@ -2171,6 +2205,39 @@ void loop() {
   }
 
   radio_manager.update(tracking_enabled && !positions.pending());
+
+  // SF3 device runtime executes only after RadioManager has drained callback
+  // work and released its driver gate. Root-credential crypto can take much
+  // longer than ordinary loop work during BLE pairing stress, so it must never
+  // execute inside a radio callback or while the SX1262 gate is held.
+  //
+  // Current/live POSITION and relay-availability commitments outrank backlog.
+  // Blank/unprovisioned devices stay fail-closed and do not emit secure History.
+  if (ble_ready) {
+    const bool history_higher_priority_pending =
+        positions.pending() || radio_manager.relayForwardingEnabled();
+    const auto sf_event = history_store_forward.update(
+        orun_tlp::monotonic::nowMs(), history_higher_priority_pending);
+    if (sf_event != orun_tlp::HistoryStoreForwardRuntime::Event::kNone) {
+      Serial.printf(
+          "HISTORY SF event=%s ack=%08lX%08lX replay=%08lX%08lX "
+          "counter=%08lX%08lX\n",
+          historyStoreForwardEventName(sf_event),
+          static_cast<unsigned long>(
+              uint32_t(history.acknowledgedThrough() >> 32)),
+          static_cast<unsigned long>(
+              uint32_t(history.acknowledgedThrough())),
+          static_cast<unsigned long>(
+              uint32_t(history_store_forward.lastReplayIdentity() >> 32)),
+          static_cast<unsigned long>(
+              uint32_t(history_store_forward.lastReplayIdentity())),
+          static_cast<unsigned long>(
+              uint32_t(history_store_forward.lastReplaySecurityCounter() >> 32)),
+          static_cast<unsigned long>(
+              uint32_t(history_store_forward.lastReplaySecurityCounter())));
+    }
+  }
+
   // Feed only after the cooperative loop has completed all service work. A
   // blocked I2C/flash/radio path therefore cannot hide behind an unrelated task.
   orun_tlp::WatchdogManager::feed();
