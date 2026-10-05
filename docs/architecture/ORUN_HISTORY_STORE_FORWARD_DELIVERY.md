@@ -378,9 +378,19 @@ M4P3 selects the first concrete implementation candidate for this rule:
 
 This is a deliberate clean development cutover. No deployed customer fleet
 currently depends on History format v3, so speculative in-place migration is
-not justified. Because this changes persistence format and physical recovery
-behavior, M4P3 still requires focused storage review and physical
-qualification before the v4 cutover is claimed complete.
+not justified.
+
+After a device has committed any v4 History page, do **not** flash a pre-v4
+History firmware while retaining that v4 partition. The older implementation
+does not recognize v4 as authoritative History evidence and can create a new v3
+page zero, destroying part of the v4 stream. If downgrade is required, first
+erase the complete History region `0xED000..0xF3FFF` and verify by readback
+that the full region is erased. That operation is an explicit destructive
+development re-baseline, not migration.
+
+Because this changes persistence format and physical recovery behavior, M4P3
+still requires focused storage review and physical qualification before the v4
+cutover is claimed complete.
 
 ---
 
