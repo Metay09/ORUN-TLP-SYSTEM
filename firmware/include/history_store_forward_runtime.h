@@ -26,6 +26,7 @@ class HistoryStoreForwardRuntime {
  public:
   static constexpr uint32_t kDefaultInitialProbeDelayMs = 15UL * 60UL * 1000UL;
   static constexpr uint32_t kDefaultProbeIntervalMs = 60UL * 60UL * 1000UL;
+  static constexpr uint32_t kUnavailableRetryMs = 60UL * 1000UL;
 
   enum class Event : uint8_t {
     kNone,
