@@ -5,6 +5,16 @@
 namespace orun_tlp::tlp {
 namespace {
 
+constexpr int32_t kMinLatitudeE7 = -900000000;
+constexpr int32_t kMaxLatitudeE7 = 900000000;
+constexpr int32_t kMinLongitudeE7 = -1800000000;
+constexpr int32_t kMaxLongitudeE7 = 1800000000;
+
+bool coordinatesAreInRange(int32_t latitude_e7, int32_t longitude_e7) {
+  return latitude_e7 >= kMinLatitudeE7 && latitude_e7 <= kMaxLatitudeE7 &&
+         longitude_e7 >= kMinLongitudeE7 && longitude_e7 <= kMaxLongitudeE7;
+}
+
 void writeU16BigEndian(uint8_t* output, uint16_t value) {
   output[0] = static_cast<uint8_t>(value >> 8);
   output[1] = static_cast<uint8_t>(value);
@@ -69,6 +79,9 @@ bool ciphertextLengthValid(uint8_t app_family, uint8_t ciphertext_len) {
 bool observationValid(const HistoryObservationPlaintext& observation) {
   if (observation.history_record_identity == 0U)
     return false;
+  if (!coordinatesAreInRange(observation.latitude_e7,
+                             observation.longitude_e7))
+    return false;
   if ((observation.position_flags &
        static_cast<uint8_t>(~kHistoryPositionFlagsAllowedMask)) != 0U)
     return false;
@@ -102,6 +115,21 @@ bool historySecureContextFamilyAllowed(uint8_t security_context,
           app_family == kHistoryAppFamilyObservation) ||
          (security_context == kHistorySecurityContextBackendA2d &&
           app_family == kHistoryAppFamilyBackendDurableReceipt);
+}
+
+bool historyTrafficDirectionForSecurityContext(uint8_t security_context,
+                                               uint8_t* direction) {
+  if (direction == nullptr)
+    return false;
+  if (security_context == kHistorySecurityContextDeviceD2a) {
+    *direction = kHistoryTrafficDirectionD2a;
+    return true;
+  }
+  if (security_context == kHistorySecurityContextBackendA2d) {
+    *direction = kHistoryTrafficDirectionA2d;
+    return true;
+  }
+  return false;
 }
 
 bool validateHistorySecurePacket(const HistorySecurePacket& packet) {
@@ -246,6 +274,8 @@ HistoryPlaintextDecodeStatus deserializeHistoryObservationPlaintext(
 
   if (decoded.history_record_identity == 0U)
     return HistoryPlaintextDecodeStatus::kIdentity;
+  if (!coordinatesAreInRange(decoded.latitude_e7, decoded.longitude_e7))
+    return HistoryPlaintextDecodeStatus::kPositionCoordinates;
   if ((decoded.position_flags &
        static_cast<uint8_t>(~kHistoryPositionFlagsAllowedMask)) != 0U)
     return HistoryPlaintextDecodeStatus::kPositionFlags;
