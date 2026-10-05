@@ -35,9 +35,13 @@ constexpr size_t kHistoryReceiptMaxPlaintextSize =
     kHistoryReceiptMaxIdentities * sizeof(uint64_t);
 constexpr size_t kHistorySecureMaxCiphertextSize =
     kHistoryReceiptMaxPlaintextSize;
-constexpr size_t kHistorySecureMinPacketSize =
+constexpr size_t kHistoryObservationPacketSize =
     kHistorySecureHeaderSize + kHistoryObservationPlaintextSize +
     kHistorySecureTagSize;
+constexpr size_t kHistoryReceiptMinPacketSize =
+    kHistorySecureHeaderSize + kHistoryReceiptFixedPlaintextSize +
+    sizeof(uint64_t) + kHistorySecureTagSize;
+constexpr size_t kHistorySecureMinPacketSize = kHistoryReceiptMinPacketSize;
 constexpr size_t kHistorySecureMaxPacketSize =
     kHistorySecureHeaderSize + kHistorySecureMaxCiphertextSize +
     kHistorySecureTagSize;
