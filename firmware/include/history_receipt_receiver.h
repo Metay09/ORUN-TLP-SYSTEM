@@ -12,9 +12,9 @@ namespace orun_tlp {
 // M4P5C transport-neutral composition seam for raw BACKEND_DURABLE
 // HISTORY_SECURE frames.
 //
-// This owner deliberately stops before RF. A future reviewed receive dispatcher
-// may pass one complete raw frame here, but RadioManager, NetworkService and
-// relay policy are not dependencies of this class.
+// This owner remains transport-neutral even though normal production now wires
+// RadioManager's bounded raw-frame handoff into it. RadioManager, NetworkService
+// and relay policy are deliberately not dependencies of this class.
 //
 // Exact ordering:
 //   raw frame
