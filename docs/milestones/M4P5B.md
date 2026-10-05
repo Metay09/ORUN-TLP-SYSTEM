@@ -429,3 +429,35 @@ This change affects test compilation only. It does not change the normal
 RAK4630 production preprocessor path, runtime behavior or footprint.
 
 A fresh focused host run is required after this test-harness correction.
+
+
+## 16. ODR-clean focused host revalidation
+
+After moving the host-only `ORUN_M4P5B_HOST_TEST` define to the complete
+M4P5B test build, the owner reran the focused strict-warning ASan/UBSan gate:
+
+```text
+g++ -DORUN_M4P5B_HOST_TEST=1 \
+  -std=c++17 -O1 -g -Wall -Wextra -Werror \
+  -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+  -Ifirmware/include \
+  firmware/tests/m4/test_m4p5b_history_receipt_admission.cpp \
+  firmware/src/history_receipt_admission.cpp \
+  firmware/src/history_delivery_coordinator.cpp \
+  firmware/src/history_store.cpp \
+  firmware/src/security_store.cpp \
+  firmware/src/security_format.cpp \
+  firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  firmware/src/tlp_v2_history_secure.cpp \
+  -o /tmp/m4p5b && /tmp/m4p5b
+```
+
+Result: **PASS** (silent exit to shell prompt).
+
+This confirms the host-only test capability remains ODR-consistent across all
+translation units while production compilation remains unaffected.
+
+Remaining final owner-side gate before final independent verification:
+
+- aggregate host regression with the corrected runner.
