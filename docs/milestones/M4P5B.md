@@ -36,14 +36,12 @@ M4P5B closes only that ordering seam. It does not enable RF receive.
 
 ## 2. Non-negotiable ordering
 
-A future runtime caller must first obtain all of these from the same successful
-`HistorySecureCrypto::openBackendDurableReceipt()` call:
+A future runtime caller must obtain one
+`AuthenticatedBackendDurableReceipt` from a successful
+`HistorySecureCrypto::openBackendDurableReceipt()` call.
 
-- decoded `HistorySecurePacket`;
-- decoded `BackendDurableReceiptPlaintext`;
-- exact authenticated `credential_id` snapshot.
-
-M4P5B then submits exactly:
+That object keeps the authenticated packet, plaintext receipt and credential
+snapshot inseparable at the M4P5B API boundary. M4P5B then submits exactly:
 
 ```text
 authenticated_credential_id
@@ -54,7 +52,8 @@ packet.security_counter
 to `SecurityStore::submitAuthenticatedA2dCounter()`.
 
 It must never re-read `currentCredentialId()` for an already-authenticated
-receipt.
+receipt, and it no longer accepts separate packet/plaintext/credential
+arguments that a future caller could mix across two successful opens.
 
 History delivery application is forbidden until
 `takeA2dReplayResult()` returns `accepted=true`.
@@ -80,6 +79,18 @@ If replay was accepted but History is temporarily busy, M4P5B retains the
 already-admitted receipt in RAM and retries only the M4P5A application step. It
 must not consume another A2D security counter merely because HistoryStore was
 busy.
+
+If M4P5A returns `kInvariantFailure`, M4P5B treats the receipt as terminal.
+A shorter strict-validated RAM prefix may already have advanced, so the future
+caller must re-read `acknowledgedThrough()`. The consumed A2D counter is never
+retried; backend recovery uses the same logical receipt fact under a fresh
+counter.
+
+If History remains permanently unavailable after replay acceptance, this slice
+intentionally keeps the receipt pending and blocks later submits. That is
+fail-safe. The first production runtime-wiring slice must define persistent
+History-fault teardown/reset ownership; M4P5B does not invent a timeout or
+cancellation policy without a caller.
 
 While a receipt is pending, M4P5B is the sole consumer of
 `SecurityStore::takeA2dReplayResult()`. There is currently no production A2D
@@ -110,15 +121,21 @@ This yields duplicate/retry cost, not premature deletion.
 
 M4P5B does not authenticate cryptography again.
 
-It performs structural cross-checks only to catch future caller misuse:
+After the independent audit, packet/plaintext/credential binding is no longer a
+caller convention. `HistorySecureCrypto` is the production writer of one
+opaque `AuthenticatedBackendDurableReceipt`, and M4P5B consumes only that
+object.
+
+The coordinator still performs structural cross-checks on the private contents:
 
 - packet must be valid frozen `HISTORY_SECURE`;
 - context must be `BACKEND_A2D`;
 - family must be `BACKEND_DURABLE receipt`;
-- packet ciphertext length must match the supplied receipt count;
-- supplied receipt must satisfy the frozen explicit-ID plaintext rules.
+- packet ciphertext length must match the bound receipt count;
+- bound receipt must satisfy the frozen explicit-ID plaintext rules.
 
 These checks are defense-in-depth after AEAD success, not a second authority.
+The production API does not expose a way to rebuild or remix the private tuple.
 
 ## 6. Explicit non-scope
 
@@ -256,3 +273,50 @@ Owner-side validation gates now complete:
 Remaining merge gate:
 
 - independent focused review/audit of the exact branch head.
+
+
+## 11. Independent audit and post-audit fixes
+
+Independent focused audit of exact head:
+
+```text
+a31b0a383978b11beb99cdef458868a687d58449
+```
+
+returned:
+
+```text
+VERDICT: PASS WITH FIXES
+BLOCKER 0
+HIGH 0
+MEDIUM 1
+LOW 4
+```
+
+The medium finding demonstrated that the original three-argument API could be
+misused by a future caller to combine packet/counter/incarnation from one
+authenticated frame with plaintext from another. Across History re-baseline and
+identity reuse, that could become premature acknowledgement.
+
+Post-audit changes:
+
+- add opaque `AuthenticatedBackendDurableReceipt`;
+- add a preferred HistorySecureCrypto overload which produces that object only
+  after one successful AEAD open;
+- make M4P5B accept only the opaque object;
+- keep private tuple fields inaccessible in production;
+- correct the defense-in-depth comments;
+- document `kDeliveryInvariantFailure` safe-prefix behavior;
+- document persistent-History-unavailable liveness as a future runtime-owner
+  decision;
+- clarify the reboot host-model boundary;
+- add incarnation-change, selective-set-full and invariant-failure recovery
+  regressions.
+
+Detailed disposition:
+
+`docs/audits/M4P5B_HISTORY_RECEIPT_ADMISSION_AUDIT_DISPOSITION.md`.
+
+Because production security-seam code changed after the audit, the earlier
+focused/aggregate/build evidence is historical. Exact post-fix validation is
+required before final independent verification.
