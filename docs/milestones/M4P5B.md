@@ -158,3 +158,37 @@ backends and lock at least:
 
 This is host/state-machine evidence only. It is not physical RF, flash
 power-cut, backend or outage-recovery qualification.
+
+
+## 8. Focused host validation
+
+The owner ran the dedicated M4P5B host test with strict warnings and
+ASan/UBSan:
+
+```text
+g++ -std=c++17 -O1 -g -Wall -Wextra -Werror \
+  -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+  -Ifirmware/include \
+  firmware/tests/m4/test_m4p5b_history_receipt_admission.cpp \
+  firmware/src/history_receipt_admission.cpp \
+  firmware/src/history_delivery_coordinator.cpp \
+  firmware/src/history_store.cpp \
+  firmware/src/security_store.cpp \
+  firmware/src/security_format.cpp \
+  firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  firmware/src/tlp_v2_history_secure.cpp \
+  -o /tmp/m4p5b && /tmp/m4p5b
+```
+
+Result: **PASS** (silent exit to shell prompt).
+
+This focused gate covers only the transport-neutral receive/admission state
+machine. It does not constitute physical RF, backend, outage-recovery,
+power-cut or brownout evidence.
+
+Remaining PR-completion gates:
+
+- aggregate host regression;
+- normal RAK4630 production build;
+- independent focused review/audit.
