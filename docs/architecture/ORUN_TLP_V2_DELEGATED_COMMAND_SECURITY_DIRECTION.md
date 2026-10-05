@@ -119,6 +119,19 @@ Four secure contexts are conceptually distinct:
 
 The first two retain the M7P6D/M7P6F direction and persistence rules.
 
+These **header security-context codes are not the M7P6D KDF/nonce direction
+bytes**. The explicit mapping is:
+
+```text
+header 0x01 BACKEND_A2D -> crypto direction 0x02 A2D
+header 0x02 DEVICE_D2A  -> crypto direction 0x01 D2A
+header 0x03 DELEGATED_GW2D -> delegated direction 0x03
+header 0x04 DELEGATED_D2GW -> delegated direction 0x04
+```
+
+Do not infer the root-credential D2A/A2D crypto direction by copying the compact
+header context byte.
+
 Delegated gateway state is not silently mapped onto M7P6F's backend A2D replay
 record.
 
@@ -831,6 +844,20 @@ Other combinations reject.
 BACKEND_A2D / DEVICE_D2A use separately reviewed compact secure types and do not
 inherit this delegated frame layout.
 
+M4P4/SF2 currently carries the post-audit **candidate** compact History type:
+
+```text
+version 0x02
+type    0x03 HISTORY_SECURE
+
+0x02 DEVICE_D2A  -> historical POSITION observation
+0x01 BACKEND_A2D -> BACKEND_DURABLE receipt
+```
+
+It uses the root-credential M7P6D/M7P6E D2A/A2D KDF and nonce contract, not
+delegated `K_grant/K_frame`. Exact M4P4 bytes are not called frozen until its
+post-audit revalidation/final verification completes.
+
 ---
 
 ## 15. COMMAND candidate
@@ -991,9 +1018,10 @@ Rules:
 
 - the first relay slice allow-list accepts only inner
   `DELEGATED_SECURE_APP` (version 0x02, type 0x01);
-- future compact BACKEND_A2D/DEVICE_D2A secure types are **not** implicitly
-  accepted by this wrapper; adding any new inner type requires an explicit
-  reviewed allow-list update;
+- compact BACKEND_A2D/DEVICE_D2A secure types are **not** implicitly accepted
+  by this wrapper; in particular M4P4 candidate `HISTORY_SECURE` type `0x03`
+  is not relay-authorized by this existing wrapper; adding it requires an
+  explicit reviewed allow-list update;
 - nested relay wrappers reject;
 - relay metadata is untrusted path observation;
 - inner `relay_allowed` must be set;
