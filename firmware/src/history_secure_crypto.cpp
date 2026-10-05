@@ -32,14 +32,19 @@ AesCcmCallResult runAesCcm(
   AesCcmCallResult call{};
   CRYS_AESCCM_UserContext_t context{};
 
+  const auto finish = [&]() {
+    secureZero(&context, sizeof(context));
+    return call;
+  };
+
   call.result = CC_AESCCM_Init(
       &context, mode, key, CRYS_AES_Key128BitSize, aad_size, input_size,
       nonce, nonce_size, tag_size, CRYS_AESCCM_MODE_CCM);
-  if (call.result != CRYS_OK) return call;
+  if (call.result != CRYS_OK) return finish();
 
   if (aad_size != 0U) {
     call.result = CRYS_AESCCM_BlockAdata(&context, aad, aad_size);
-    if (call.result != CRYS_OK) return call;
+    if (call.result != CRYS_OK) return finish();
   }
 
   CRYS_AESCCM_Mac_Res_t mac_buffer{};
@@ -51,13 +56,13 @@ AesCcmCallResult runAesCcm(
       &context, input, input_size, output, mac_buffer, &finish_tag_size);
   if (call.result == CRYS_OK && finish_tag_size != tag_size) {
     call.result = CRYS_AESCCM_ILLEGAL_PARAMETER_SIZE_ERROR;
-    return call;
+    return finish();
   }
 
   if (call.result == CRYS_OK && mode == SASI_AES_ENCRYPT)
     memcpy(tag, mac_buffer, tag_size);
 
-  return call;
+  return finish();
 }
 
 bool finishAuthRejected(const AesCcmCallResult& call) {
@@ -220,7 +225,9 @@ HistorySecureCryptoResult HistorySecureCrypto::openBackendDurableReceipt(
     const uint8_t* frame, size_t frame_size,
     uint64_t expected_history_incarnation,
     tlp::HistorySecurePacket& packet,
-    tlp::BackendDurableReceiptPlaintext& receipt) {
+    tlp::BackendDurableReceiptPlaintext& receipt,
+    uint8_t (&authenticated_credential_id)
+        [security_format::kCredentialIdSize]) {
   if (frame == nullptr || expected_history_incarnation == 0U)
     return HistorySecureCryptoResult::kInvalidArgument;
 
@@ -247,7 +254,7 @@ HistorySecureCryptoResult HistorySecureCrypto::openBackendDurableReceipt(
   }
 
   uint8_t root[security_format::kKRootSize]{};
-  uint8_t salt[security_format::kCredentialIdSize]{};
+  uint8_t credential_id_snapshot[security_format::kCredentialIdSize]{};
   uint8_t info[kSecurityTrafficInfoSize]{};
   uint8_t traffic_key[kSecurityTrafficKeySize]{};
   uint8_t nonce[kSecurityTrafficNonceSize]{};
@@ -258,7 +265,9 @@ HistorySecureCryptoResult HistorySecureCrypto::openBackendDurableReceipt(
   CRYS_AESCCM_Key_t ccm_key{};
 
   memcpy(root, security_store_.credential_.k_root, sizeof(root));
-  memcpy(salt, security_store_.credential_.credential_id, sizeof(salt));
+  memcpy(credential_id_snapshot,
+         security_store_.credential_.credential_id,
+         sizeof(credential_id_snapshot));
   memcpy(aad, frame, sizeof(aad));
   memcpy(cipher, candidate.ciphertext, candidate.ciphertext_len);
   memcpy(tag, candidate.tag, sizeof(tag));
@@ -269,7 +278,7 @@ HistorySecureCryptoResult HistorySecureCrypto::openBackendDurableReceipt(
           kSecurityTrafficDirectionA2d, candidate.key_epoch,
           candidate.security_counter, nonce)) {
     secureZero(root, sizeof(root));
-    secureZero(salt, sizeof(salt));
+    secureZero(credential_id_snapshot, sizeof(credential_id_snapshot));
     secureZero(info, sizeof(info));
     secureZero(aad, sizeof(aad));
     secureZero(cipher, sizeof(cipher));
@@ -280,17 +289,17 @@ HistorySecureCryptoResult HistorySecureCrypto::openBackendDurableReceipt(
 
   const CRYSError_t hkdf_result = CRYS_HKDF_KeyDerivFunc(
       CRYS_HKDF_HASH_SHA256_mode,
-      salt, sizeof(salt),
+      credential_id_snapshot, sizeof(credential_id_snapshot),
       root, sizeof(root),
       info, sizeof(info),
       traffic_key, sizeof(traffic_key),
       SASI_FALSE);
 
   secureZero(root, sizeof(root));
-  secureZero(salt, sizeof(salt));
   secureZero(info, sizeof(info));
 
   if (hkdf_result != CRYS_OK) {
+    secureZero(credential_id_snapshot, sizeof(credential_id_snapshot));
     secureZero(traffic_key, sizeof(traffic_key));
     secureZero(nonce, sizeof(nonce));
     secureZero(aad, sizeof(aad));
@@ -317,6 +326,7 @@ HistorySecureCryptoResult HistorySecureCrypto::openBackendDurableReceipt(
   secureZero(tag, sizeof(tag));
 
   if (call.result != CRYS_OK) {
+    secureZero(credential_id_snapshot, sizeof(credential_id_snapshot));
     secureZero(plaintext, sizeof(plaintext));
     return finishAuthRejected(call)
                ? HistorySecureCryptoResult::kAuthRejected
@@ -329,11 +339,16 @@ HistorySecureCryptoResult HistorySecureCrypto::openBackendDurableReceipt(
           plaintext, candidate.ciphertext_len, &decoded_receipt);
   secureZero(plaintext, sizeof(plaintext));
 
-  if (plaintext_status != tlp::HistoryPlaintextDecodeStatus::kOk)
+  if (plaintext_status != tlp::HistoryPlaintextDecodeStatus::kOk) {
+    secureZero(credential_id_snapshot, sizeof(credential_id_snapshot));
     return HistorySecureCryptoResult::kInvalidArgument;
+  }
 
   packet = candidate;
   receipt = decoded_receipt;
+  memcpy(authenticated_credential_id,
+         credential_id_snapshot, sizeof(credential_id_snapshot));
+  secureZero(credential_id_snapshot, sizeof(credential_id_snapshot));
   return HistorySecureCryptoResult::kOk;
 }
 
