@@ -77,6 +77,13 @@ uint32_t sd_evt_get(uint32_t* event) {
   return NRF_SUCCESS;
 }
 
+bool orun_tlp::NrfHistoryIncarnationSource::generate(uint64_t& incarnation) {
+  // Host startup composition stub: this harness tests startup ownership and
+  // History recovery, not the nRF52840 hardware RNG implementation.
+  incarnation = 0xA1A2A3A4A5A6A7A8ULL;
+  return true;
+}
+
 bool orun_tlp::NrfConfigIncarnationSource::generate(uint64_t& incarnation) {
   // Host startup composition stub: production implementation is target-only
   // hardware RNG and is independently compiler/link checked by the RAK build.
@@ -223,7 +230,8 @@ int main(int argc, char** argv) {
 
   // Seed page 0 through the real journal/backend, including a committed fix.
   NrfHistoryFlash seed_flash;
-  HistoryStore seed(seed_flash);
+  NrfHistoryIncarnationSource seed_incarnation_source;
+  HistoryStore seed(seed_flash, &seed_incarnation_source);
   assert(seed.begin(kHardwareId));
   settle(seed);
   HistoryStore::Record original{};
