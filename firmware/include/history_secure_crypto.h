@@ -30,9 +30,11 @@ class HistorySecureCrypto {
   explicit HistorySecureCrypto(SecurityStore& security_store)
       : security_store_(security_store) {}
 
-  HistorySecureCryptoResult protectObservation(
-      uint64_t history_incarnation, uint64_t security_counter,
-      uint8_t path_flags,
+  // Reserves/consumes the D2A security counter from SecurityStore itself.
+  // Callers cannot supply an arbitrary counter; nonce ownership remains with
+  // the durable security owner.
+  HistorySecureCryptoResult protectNextObservation(
+      uint64_t history_incarnation, uint8_t path_flags,
       const tlp::HistoryObservationPlaintext& observation,
       tlp::HistorySecurePacket& packet);
 
