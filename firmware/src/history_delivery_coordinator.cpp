@@ -39,7 +39,8 @@ bool HistoryDeliveryCoordinator::insertIdentitySorted(
 
 HistoryDeliveryCoordinator::ApplyResult
 HistoryDeliveryCoordinator::applyReplayAcceptedBackendDurableReceipt(
-    const tlp::BackendDurableReceiptPlaintext& receipt) {
+    const tlp::BackendDurableReceiptPlaintext& receipt,
+    uint64_t authenticated_history_incarnation) {
   if (!history_.ready() || history_.busy())
     return ApplyResult::kUnavailable;
 
@@ -56,11 +57,22 @@ HistoryDeliveryCoordinator::applyReplayAcceptedBackendDurableReceipt(
     }
   }
 
-  // Work on a scratch image first. An invalid/unknown/over-capacity receipt
-  // must not partially change the coordinator or HistoryStore RAM watermark.
+  const uint64_t current_incarnation = history_.incarnation();
+  if (authenticated_history_incarnation == 0 ||
+      current_incarnation == 0 ||
+      authenticated_history_incarnation != current_incarnation) {
+    return ApplyResult::kInvalidReceipt;
+  }
+
+  // Work on a scratch image first. A History re-baseline/incarnation change
+  // invalidates every old RAM-only selective fact, but do not mutate the owned
+  // set until this current-incarnation receipt itself successfully commits.
   uint64_t scratch[kMaxSelectiveAcknowledgements]{};
-  size_t scratch_count = selective_count_;
-  memcpy(scratch, selective_ids_, sizeof(scratch));
+  size_t scratch_count = 0;
+  if (bound_history_incarnation_ == current_incarnation) {
+    scratch_count = selective_count_;
+    memcpy(scratch, selective_ids_, sizeof(scratch));
+  }
 
   const uint64_t initial_acknowledged = history_.acknowledgedThrough();
   uint64_t simulated_acknowledged = initial_acknowledged;
@@ -80,7 +92,35 @@ HistoryDeliveryCoordinator::applyReplayAcceptedBackendDurableReceipt(
     ++i;
   }
 
-  bool new_fact = false;
+  // Drain any already-authenticated selective prefix before processing the new
+  // receipt. This is required after capacity overwrite: the former missing
+  // oldest record may no longer exist, making an already-selective record the
+  // new oldest surviving actual record. A full selective set must not deadlock
+  // merely because the receipt is a duplicate of that now-oldest record.
+  auto drainSelectivePrefix = [&]() -> bool {
+    while (scratch_count != 0) {
+      HistoryStore::Record next{};
+      if (!history_.readNextRetained(simulated_acknowledged, next))
+        return false;
+
+      size_t next_index = 0;
+      if (!findIdentity(
+              scratch, scratch_count, next.identity, &next_index)) {
+        return true;
+      }
+
+      simulated_acknowledged = next.identity;
+      eraseIdentityAt(scratch, scratch_count, next_index);
+    }
+    return true;
+  };
+
+  if (!drainSelectivePrefix()) {
+    ++diagnostics_.invariant_failures;
+    return ApplyResult::kInvariantFailure;
+  }
+
+  bool new_fact = simulated_acknowledged > initial_acknowledged;
 
   for (uint8_t i = 0; i < receipt.count; ++i) {
     const uint64_t id = receipt.history_record_identities[i];
@@ -96,13 +136,20 @@ HistoryDeliveryCoordinator::applyReplayAcceptedBackendDurableReceipt(
       return ApplyResult::kUnknownIdentity;
     }
 
+    // Strict traversal must agree with the looser lookup before any History RAM
+    // mutation. Persistent slot corruption therefore fails in preflight rather
+    // than being skipped by readAfter()/lookup().
+    HistoryStore::Record next_actual{};
+    if (!history_.readNextRetained(simulated_acknowledged, next_actual)) {
+      ++diagnostics_.invariant_failures;
+      return ApplyResult::kInvariantFailure;
+    }
+
     // The exact next actual record does not need a selective-set slot. This is
     // important when the bounded set is full: an authenticated receipt for the
     // missing oldest record must be able to unlock and drain the waiting prefix
     // instead of being rejected merely because all selective slots are occupied.
-    HistoryStore::Record next_actual{};
-    if (history_.readAfter(simulated_acknowledged, next_actual) &&
-        next_actual.identity == id) {
+    if (next_actual.identity == id) {
       simulated_acknowledged = id;
       new_fact = true;
     } else {
@@ -115,28 +162,22 @@ HistoryDeliveryCoordinator::applyReplayAcceptedBackendDurableReceipt(
       new_fact = true;
     }
 
-    // Advance only through actual retained records whose exact identities have
-    // already been authenticated and admitted into the selective RAM set.
-    while (true) {
-      HistoryStore::Record next{};
-      if (!history_.readAfter(simulated_acknowledged, next)) break;
-
-      size_t next_index = 0;
-      if (!findIdentity(
-              scratch, scratch_count, next.identity, &next_index)) {
-        break;
-      }
-
-      simulated_acknowledged = next.identity;
-      eraseIdentityAt(scratch, scratch_count, next_index);
+    if (!drainSelectivePrefix()) {
+      ++diagnostics_.invariant_failures;
+      return ApplyResult::kInvariantFailure;
     }
   }
 
   // Commit the preflighted contiguous prefix to HistoryStore RAM only.
+  //
+  // A transient read fault can still appear after preflight. In that case
+  // acknowledgeDeliveredRecord() may already have committed a shorter,
+  // individually strict-validated safe prefix. Never roll that watermark back;
+  // report kInvariantFailure and require the caller to re-read it.
   uint32_t advances = 0;
   while (history_.acknowledgedThrough() < simulated_acknowledged) {
     HistoryStore::Record next{};
-    if (!history_.readAfter(history_.acknowledgedThrough(), next) ||
+    if (!history_.readNextRetained(history_.acknowledgedThrough(), next) ||
         next.identity > simulated_acknowledged ||
         !history_.acknowledgeDeliveredRecord(next.identity)) {
       ++diagnostics_.invariant_failures;
@@ -147,6 +188,7 @@ HistoryDeliveryCoordinator::applyReplayAcceptedBackendDurableReceipt(
 
   memcpy(selective_ids_, scratch, sizeof(selective_ids_));
   selective_count_ = scratch_count;
+  bound_history_incarnation_ = current_incarnation;
   diagnostics_.stale_selective_prunes += stale_prunes;
   diagnostics_.contiguous_advances += advances;
 
