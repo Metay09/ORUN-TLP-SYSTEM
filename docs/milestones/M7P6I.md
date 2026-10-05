@@ -380,3 +380,43 @@ must still report the exact M7P6I production crypto path result.
 
 The probe uses RAM-backed public test credential material and does not mutate the
 physical SecurityStore partition.
+
+
+## 16. Physical M7P6I History crypto KAT
+
+The uploaded `rak4630_m7p6i_history_crypto_probe` image was exercised on the
+RAK4630/RAK4631 development unit after Bluefruit/SoftDevice startup.
+
+Serial evidence repeatedly reported:
+
+```text
+M7P6I HISTORY CRYPTO KAT PASS provision=PASS observation=PASS receipt=PASS tamper=PASS recovery=PASS
+```
+
+Result: **PHYSICAL PASS for the scoped M7P6I History root-credential crypto KAT.**
+
+This physically demonstrates, on the pinned reference hardware/framework path,
+that the actual production `HistorySecureCrypto` implementation can:
+
+- provision the fixed public test credential into the RAM-backed SecurityStore;
+- derive/protect the exact frozen SF2 DEVICE_D2A historical observation;
+- authenticate/decrypt the exact frozen BACKEND_A2D two-ID durable receipt;
+- reject a forged/wrong-tag receipt;
+- recover immediately and successfully authenticate a later valid receipt.
+
+The KAT executes after `Bluefruit.begin()`, so the shared CC310 lifecycle is
+the production Bluefruit/SoftDevice-owned lifecycle previously qualified by
+M7P6E.
+
+Scope boundary:
+
+- physical SecurityStore flash is not touched by this probe;
+- no production RF sender/receiver is enabled;
+- no SecurityStore A2D replay state is mutated by the crypto seam;
+- no History delivery watermark/checkpoint is advanced;
+- no relay/gateway/backend runtime is exercised;
+- this is not an RF range, outage-recovery, power, or brownout test.
+
+Remaining merge gate:
+
+- independent focused security review of the final code head.
