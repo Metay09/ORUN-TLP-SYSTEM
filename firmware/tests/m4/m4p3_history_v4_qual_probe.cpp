@@ -276,7 +276,8 @@ void setup() {
     delay(10);
   }
 
-  Serial.printf("M4P3 HISTORY V4 PHYSICAL QUAL BOOT inherited_watchdog=%s\n",\n                inherited_watchdog ? "yes" : "no");
+  Serial.printf("M4P3 HISTORY V4 PHYSICAL QUAL BOOT inherited_watchdog=%s\n",
+                inherited_watchdog ? "yes" : "no");
   Serial.println(
       F("TEST-ONLY: CLEAN destructively owns ONLY History 0x0ED000..0x0F3FFF"));
   Serial.println(
