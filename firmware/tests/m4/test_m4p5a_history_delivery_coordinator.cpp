@@ -145,7 +145,7 @@ HistoryDeliveryCoordinator::ApplyResult apply(
     HistoryDeliveryCoordinator& coordinator,
     const tlp::BackendDurableReceiptPlaintext& value,
     uint64_t authenticated_history_incarnation = kIncarnation) {
-  return apply(coordinator, 
+  return coordinator.applyReplayAcceptedBackendDurableReceipt(
       value, authenticated_history_incarnation);
 }
 
