@@ -844,7 +844,7 @@ Other combinations reject.
 BACKEND_A2D / DEVICE_D2A use separately reviewed compact secure types and do not
 inherit this delegated frame layout.
 
-M4P4/SF2 currently carries the post-audit **candidate** compact History type:
+M4P4/SF2 carries the independently final-verified **frozen** compact History type:
 
 ```text
 version 0x02
@@ -855,8 +855,8 @@ type    0x03 HISTORY_SECURE
 ```
 
 It uses the root-credential M7P6D/M7P6E D2A/A2D KDF and nonce contract, not
-delegated `K_grant/K_frame`. Exact M4P4 bytes are not called frozen until its
-post-audit revalidation/final verification completes.
+delegated `K_grant/K_frame`. M4P4 post-audit revalidation/final verification completed PASS; these exact
+History bytes are frozen.
 
 ---
 
@@ -1019,7 +1019,7 @@ Rules:
 - the first relay slice allow-list accepts only inner
   `DELEGATED_SECURE_APP` (version 0x02, type 0x01);
 - compact BACKEND_A2D/DEVICE_D2A secure types are **not** implicitly accepted
-  by this wrapper; in particular M4P4 candidate `HISTORY_SECURE` type `0x03`
+  by this wrapper; in particular M4P4 frozen `HISTORY_SECURE` type `0x03`
   is not relay-authorized by this existing wrapper; adding it requires an
   explicit reviewed allow-list update;
 - nested relay wrappers reject;
