@@ -193,6 +193,7 @@ HistoryStoreForwardRuntime::serviceReplay(
 
   if (protected_result == HistorySecureCryptoResult::kUnavailable) {
     ++diagnostics_.replay_crypto_unavailable;
+    next_probe_at_ms_ = now_ms + kUnavailableRetryMs;
     return Event::kNone;
   }
   if (protected_result != HistorySecureCryptoResult::kOk) {
