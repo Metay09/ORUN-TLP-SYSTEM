@@ -352,4 +352,33 @@ HistorySecureCryptoResult HistorySecureCrypto::openBackendDurableReceipt(
   return HistorySecureCryptoResult::kOk;
 }
 
+HistorySecureCryptoResult HistorySecureCrypto::openBackendDurableReceipt(
+    const uint8_t* frame, size_t frame_size,
+    uint64_t expected_history_incarnation,
+    AuthenticatedBackendDurableReceipt& output) {
+  tlp::HistorySecurePacket packet{};
+  tlp::BackendDurableReceiptPlaintext receipt{};
+  uint8_t authenticated_credential_id[
+      security_format::kCredentialIdSize]{};
+
+  const HistorySecureCryptoResult result = openBackendDurableReceipt(
+      frame, frame_size, expected_history_incarnation,
+      packet, receipt, authenticated_credential_id);
+
+  if (result != HistorySecureCryptoResult::kOk) {
+    secureZero(authenticated_credential_id,
+               sizeof(authenticated_credential_id));
+    return result;
+  }
+
+  output.packet_ = packet;
+  output.receipt_ = receipt;
+  memcpy(output.authenticated_credential_id_,
+         authenticated_credential_id,
+         sizeof(authenticated_credential_id));
+  secureZero(authenticated_credential_id,
+             sizeof(authenticated_credential_id));
+  return HistorySecureCryptoResult::kOk;
+}
+
 }  // namespace orun_tlp
