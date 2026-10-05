@@ -501,3 +501,40 @@ Required rerun on the hardened head:
 6. independent focused security review.
 
 No SF2 wire byte or TLP v1 byte changed.
+
+
+## 18. Hardened-head focused revalidation
+
+After the post-KAT security hardening, the owner reran the focused portable
+contract and independent D2A crypto-vector gates:
+
+```text
+g++ -Ifirmware/include -std=c++17 -O1 -g \
+  -Wall -Wextra -Werror \
+  -fsanitize=address,undefined -fno-omit-frame-pointer \
+  firmware/tests/m7/test_m7p6i_security_traffic_bytes.cpp \
+  -o /tmp/m7p6i_bytes && /tmp/m7p6i_bytes
+```
+
+Result: **PASS**.
+
+```text
+python3 firmware/tests/m7/test_m7p6i_history_crypto_vectors.py
+
+M7P6I SecurityStore-owned D2A vector: PASS
+```
+
+This closes the hardened-head focused validation for:
+
+- exact traffic direction/info/nonce bytes;
+- invalid epoch/counter/direction rejection;
+- SecurityStore-owned first usable D2A counter = 1;
+- independently regenerated HKDF-SHA256 + AES-128-CCM nonce/AAD/
+  ciphertext/tag for the exact 73-byte target KAT frame.
+
+Remaining hardened-head gates before independent review:
+
+- aggregate host suite;
+- fresh normal production RAK4630 build;
+- fresh M7P6I probe build;
+- physical hardened-head probe KAT.
