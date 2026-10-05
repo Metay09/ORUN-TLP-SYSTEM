@@ -64,17 +64,15 @@ class HistorySecureCrypto {
       const tlp::HistoryObservationPlaintext& observation,
       tlp::HistorySecurePacket& packet);
 
-  // Authenticates/decrypts a complete frozen SF2 BACKEND_DURABLE receipt frame.
-  // On any failure, packet/receipt/authenticated_credential_id outputs are left
-  // untouched.
+  // Low-level M7P6I compatibility seam: authenticates/decrypts a complete
+  // frozen SF2 BACKEND_DURABLE receipt frame and exposes the three outputs
+  // separately. On any failure, outputs are left untouched.
   //
   // This does NOT mutate SecurityStore A2D replay state or History delivery
-  // state. The future SF3 owner MUST submit exactly:
-  //   authenticated_credential_id,
-  //   packet.key_epoch,
-  //   packet.security_counter
-  // to SecurityStore after kOk. It MUST NOT re-read the current credential,
-  // because credential rotation may occur before a deferred replay submission.
+  // state. New SF3 receive wiring must prefer the opaque overload below so
+  // packet/plaintext/credential outputs from different successful opens cannot
+  // be mixed before replay admission. It must never re-read the current
+  // credential for a previously authenticated frame.
   HistorySecureCryptoResult openBackendDurableReceipt(
       const uint8_t* frame, size_t frame_size,
       uint64_t expected_history_incarnation,
