@@ -5,6 +5,8 @@
 
 namespace orun_tlp {
 
+class HistorySecureCrypto;
+
 enum class SecurityState : uint8_t {
   kUnprovisioned,
   kProvisioned,
@@ -17,8 +19,12 @@ enum class SecurityState : uint8_t {
 //
 // M7P6F upgrades new writes to SecurityStore format v2 while retaining exact
 // read/migration compatibility with M7P6B format v1. The physical partition
-// remains the same two-page A/B region. This class still implements no crypto,
-// RF secure envelope, provisioning transport, command dispatch or BLE authority.
+// remains the same two-page A/B region.
+//
+// M7P6I permits only the narrow HistorySecureCrypto friend to use the active
+// in-RAM root credential for the frozen SF2 protected-History operation. There
+// is still no public/remote K_root readback API, RF secure runtime,
+// provisioning transport, command dispatch or BLE authority here.
 class SecurityStore {
  public:
   struct Diagnostics {
@@ -83,6 +89,8 @@ class SecurityStore {
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
  private:
+  friend class HistorySecureCrypto;
+
   enum class Job {
     kNone,
     kNewPage,
