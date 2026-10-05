@@ -1,6 +1,6 @@
 # ORUN History / Store-Forward Delivery Contract
 
-Status: **INDEPENDENT AUDIT PASS WITH FIXES; FOCUSED FINAL VERIFICATION PASS WITH MINOR DOC FIX; R1-R4 APPLIED — DOCUMENTATION ONLY; NO RUNTIME / WIRE IMPLEMENTATION AUTHORIZED.**
+Status: **SF0/SF1/SF2 CONTRACT FOUNDATION COMPLETE; M4P4 SF2 WIRE FROZEN; SF3 RUNTIME NOT YET ACTIVE.**
 
 Baseline: `main@c88516615ec956abc3a079d625b034dc2c2c34aa`.
 
@@ -308,7 +308,7 @@ enough context to represent at least:
 - historical/replay context;
 - authenticated receipt correlation.
 
-M4P4 / SF2 now carries the reviewed **candidate** exact compact wire for this
+M4P4 / SF2 carries the independently reviewed and final-verified **frozen** compact wire for this
 requirement under TLP v2 `HISTORY_SECURE` type `0x03`:
 
 - 36-byte authenticated header;
@@ -320,8 +320,8 @@ requirement under TLP v2 `HISTORY_SECURE` type `0x03`:
 - History record identity is explicit in protected plaintext;
 - receipt lists 1..6 explicit identities and never a cumulative numeric range.
 
-Until M4P4 post-audit revalidation/final verification closes, these bytes remain
-candidate rather than canonical wire freeze.
+M4P4 post-audit revalidation and independent final verification are complete.
+These exact bytes are the canonical SF2 wire freeze.
 
 For UNKNOWN observation time, backend/application code must preserve UNKNOWN.
 Gateway/backend receive time may be stored separately as path/ingestion
@@ -624,7 +624,7 @@ observation-stream incarnation cutover. Preserve store-first behavior and flash
 wear invariants.
 
 ### SF2 — secure historical observation + receipt codec
-M4P4 is the active exact-wire slice. Its post-audit candidate is:
+M4P4 completed the exact-wire slice. Its frozen SF2 contract is:
 
 - TLP v2 type `0x03 HISTORY_SECURE`;
 - 73-byte protected historical POSITION observation;
@@ -642,8 +642,8 @@ header contexts: 0x01 BACKEND_A2D, 0x02 DEVICE_D2A
 KDF/nonce dirs:  0x01 D2A,         0x02 A2D
 ```
 
-M4P4 bytes become frozen only after its post-audit focused revalidation and
-final focused verification close the wire review.
+M4P4 post-audit focused revalidation and independent final verification
+closed PASS; the exact bytes are frozen.
 
 ### SF3 — tracker replay runtime
 Oldest-first replay with the §5 bounded sender policy selected after the §9

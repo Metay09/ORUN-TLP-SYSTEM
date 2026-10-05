@@ -19,6 +19,9 @@
 #include "m7p6e_crypto_ble_probe.h"
 #include "m7p6e_pairing_evidence.h"
 #endif
+#ifdef ORUN_M7P6I_HISTORY_CRYPTO_PROBE
+#include "m7p6i_history_crypto_probe.h"
+#endif
 #include "firmware_version.h"
 #include "flash_mutation_gate.h"
 #include "gnss_manager.h"
@@ -1703,6 +1706,25 @@ void printBootBanner() {
 
 }  // namespace
 
+#ifdef ORUN_M7P6I_HISTORY_CRYPTO_PROBE
+orun_tlp::m7p6i_test::HistoryCryptoKatResult m7p6i_history_crypto_kat{};
+bool m7p6i_history_crypto_kat_done = false;
+uint32_t m7p6i_history_crypto_last_report_ms = 0;
+
+void printM7P6IHistoryCryptoKat() {
+  Serial.printf(
+      "M7P6I HISTORY CRYPTO KAT %s provision=%s observation=%s "
+      "receipt=%s tamper=%s recovery=%s\n",
+      m7p6i_history_crypto_kat.pass() ? "PASS" : "FAIL",
+      m7p6i_history_crypto_kat.provision ? "PASS" : "FAIL",
+      m7p6i_history_crypto_kat.observation ? "PASS" : "FAIL",
+      m7p6i_history_crypto_kat.receipt ? "PASS" : "FAIL",
+      m7p6i_history_crypto_kat.tamper_rejected ? "PASS" : "FAIL",
+      m7p6i_history_crypto_kat.recovery ? "PASS" : "FAIL");
+  m7p6i_history_crypto_last_report_ms = millis();
+}
+#endif
+
 void setup() {
   Serial.begin(115200);
   // Start the hardware watchdog before peripheral initialization. It is the
@@ -1774,6 +1796,13 @@ void setup() {
 
   // M7P6B: recovery only -- never provisions a credential. See the
   // composition-root comment on security_store above.
+#ifdef ORUN_M7P6I_HISTORY_CRYPTO_PROBE
+  // This test-only image must not mutate or even recover the physical
+  // SecurityStore partition. Its KAT below uses a separate RAM-backed store
+  // with public vector material. Leaving the production object unopened also
+  // makes any accidental probe dependency on real credentials fail closed.
+  Serial.println(F("SECURITY physical store skipped by M7P6I probe"));
+#else
   if (!security_store.begin(device_identity)) {
     Serial.println(F("SECURITY unavailable"));
   } else {
@@ -1787,6 +1816,7 @@ void setup() {
     }
     Serial.printf("SECURITY state=%s\n", state);
   }
+#endif
   active_tracking_base_interval_seconds =
       config_store.config().tracking_interval_seconds;
   gnss_manager.begin();
@@ -1806,6 +1836,20 @@ void setup() {
   // M7P7F read-only ORUN application GATT service after Bluefruit.begin().
   // This does not add commissioning/authorization/protected writes.
   ble_ready = Bluefruit.begin();
+#ifdef ORUN_M7P6I_HISTORY_CRYPTO_PROBE
+  if (ble_ready) {
+    // M7P6I calls the exact production HistorySecureCrypto implementation
+    // after Bluefruit/SoftDevice owns the shared nRFCrypto/CC310 lifecycle.
+    // The probe uses only RAM-backed public test credentials; no physical
+    // SecurityStore partition is touched.
+    m7p6i_history_crypto_kat =
+        orun_tlp::m7p6i_test::runHistoryCryptoKat();
+    m7p6i_history_crypto_kat_done = true;
+    printM7P6IHistoryCryptoKat();
+  } else {
+    Serial.println(F("M7P6I HISTORY CRYPTO KAT FAIL reason=ble-not-ready"));
+  }
+#endif
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
   if (ble_ready) {
     // Bluefruit.begin() has already enabled SoftDevice and initialized the
@@ -1874,6 +1918,12 @@ void setup() {
 }
 
 void loop() {
+#ifdef ORUN_M7P6I_HISTORY_CRYPTO_PROBE
+  if (m7p6i_history_crypto_kat_done && Serial &&
+      (millis() - m7p6i_history_crypto_last_report_ms) >= 3000U) {
+    printM7P6IHistoryCryptoKat();
+  }
+#endif
   // M6D2 deadline is checked BEFORE servicing another GNSS callback so an
   // observation arriving at/after the exact deadline cannot win a race and be
   // counted as confirmation evidence.
