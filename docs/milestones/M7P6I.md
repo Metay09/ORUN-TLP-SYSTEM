@@ -1,6 +1,6 @@
 # M7P6I — production root-credential History crypto seam
 
-Status: **IMPLEMENTATION IN PROGRESS — NO PRODUCTION RF/RUNTIME ACTIVATION.**
+Status: **COMPLETE / MERGE READY — NO PRODUCTION RF/RUNTIME ACTIVATION.**
 
 Baseline:
 `main@b0e446776b43c298e657a25777db62613a8cfb27`
@@ -846,7 +846,57 @@ This physically closes the owner-side H1/L1 validation:
 Scope remains narrow. This is not secure-History RF, store-forward outage,
 gateway/backend, power-cut, brownout or RF-range qualification.
 
-Remaining merge gate:
+Independent focused final verification: **PASS**.
+H1 and L1 are CLOSED with no new BLOCKER/HIGH/MEDIUM/LOW findings.
 
-- independent focused final verification of the H1/L1 fixes on the exact final
-  branch head.
+
+## 29. Independent focused final verification
+
+Independent focused final verification reviewed exact branch head:
+
+```text
+dea2f6df2d512c5efcd8430320049efdd3afd64c
+```
+
+The verifier confirmed that firmware code had last changed at:
+
+```text
+ddb40700748da154907e219c425594de0c36e902
+```
+
+and that the six commits after that point through the reviewed head were
+documentation-only.
+
+Result:
+
+```text
+VERDICT: PASS
+H1: CLOSED
+L1: CLOSED
+NEW BLOCKER: 0
+NEW HIGH: 0
+NEW MEDIUM: 0
+NEW LOW: 0
+FINAL MERGE RECOMMENDATION: MERGE
+```
+
+Explicit final verification PASS:
+
+- authenticated credential lifetime handoff;
+- output-on-failure atomicity;
+- credential snapshot zeroization;
+- CC310 context zeroization;
+- replay/delivery mutation isolation;
+- TLP v1 / M4P4 compatibility;
+- scope containment.
+
+M7P6I is therefore complete for its bounded purpose: production root-credential
+History crypto seam, with no production secure-History RF/runtime activation.
+
+M1 broad friend access / K_root stack-copy reduction, L2 diagnostics around the
+pinned Finish-time `CRYS_FATAL_ERROR` compatibility path, and remaining L3
+negative-path test opportunities stay explicit follow-up items before or with
+SF3 runtime activation. They are not M7P6I merge blockers.
+
+No secure-RF, store-forward outage, gateway/backend, brownout or power-cut PASS
+is claimed by this milestone.
