@@ -23,6 +23,12 @@ namespace orun_tlp {
 // History delivery is forbidden until SecurityStore returns accepted=true.
 // SecurityStore::poll() remains externally owned by the composition root; this
 // coordinator never drives flash or security polling itself.
+//
+// While a receipt is pending, this object must be the sole consumer of
+// SecurityStore::takeA2dReplayResult(). There is no production A2D dispatcher
+// yet; before another protected A2D family is activated, result ownership must
+// be serialized through one reviewed receive owner rather than allowing
+// competing consumers to steal each other's replay decisions.
 class HistoryReceiptAdmissionCoordinator {
  public:
   enum class SubmitResult : uint8_t {
