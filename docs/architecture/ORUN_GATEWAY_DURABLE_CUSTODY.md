@@ -144,21 +144,27 @@ metadata-only-erase prohibition.
 
 ### 4.2 Gateway -> Edge
 
-The gateway retains its custodied record until an Edge durably accepts the same
-logical observation.
+The gateway retains its custodied **opaque custody object** until an Edge
+durably accepts that exact object.
 
 Only after durable Edge acceptance may the gateway reclaim the corresponding
 queue entry.
 
 A volatile BLE/USB/UART transfer, process RAM enqueue or socket write is not
-enough.
+enough. The Edge need not decrypt HISTORY_SECURE merely to own custody.
 
 ### 4.3 Edge -> Backend
 
-The Edge retains its record while Internet/backend is unavailable.
+The Edge retains the opaque custody object while Internet/backend is
+unavailable.
 
 Only after backend durable acceptance (or idempotent recognition of the same
-logical observation) may the Edge reclaim the local queue entry.
+object/logical observation) may the Edge reclaim its local queue entry.
+
+The backend is the first mandatory decrypting/deduplicating owner in this
+custody path. A separately authorized offline application may gain local
+plaintext through a different reviewed application-security path; custody
+storage itself does not imply decryption authority.
 
 Internet restoration triggers synchronization; it is not required for local
 field collection.
@@ -291,9 +297,22 @@ not a frozen storage format.
 
 No new external flash is a current product requirement.
 
+The current HISTORY_SECURE outer header exposes device_id, key_epoch,
+security_counter and History incarnation, but an opaque gateway cannot verify
+the inner AEAD tag. A malicious transmitter can therefore fabricate
+structurally valid-looking frames. This is an availability/storage-wear threat,
+not permission to weaken custody correctness.
+
 Before gateway persistence is implemented on RAK4630/nRF52840:
 
 - choose an explicit queue owner;
+- define bounded ingress admission by enrolled/expected source plus per-source
+  and global rate/capacity limits; visible source fields are useful for
+  partitioning/rate limits but are not trusted authentication;
+- ensure unauthenticated traffic cannot force unbounded flash writes, evict
+  already ACKed custody, or consume all custody capacity;
+- preserve a fail-safe reserved-capacity/backpressure policy so queue pressure
+  produces no false ACK;
 - review the existing application/geofence/security/config/bond/history layout;
 - preserve DFU/bootloader/framework ownership;
 - calculate firmware growth headroom separately from data-storage headroom;
@@ -384,8 +403,10 @@ the reviewed handoff protocol. Ambiguous handoff keeps the safer copy.
 
 ### Edge has data but no Internet
 
-Edge retains it and presents appropriate local/pending state. It synchronizes
-when Internet returns.
+Edge retains the opaque custody object and synchronizes when Internet returns.
+If the user-facing app separately has valid local authority/plaintext state, it
+may present local/pending information; custody storage alone is not decryption
+authority.
 
 ### Backend receives duplicate upload
 
@@ -466,6 +487,8 @@ Before production custody is claimed:
 - existing SF1-SF3 host/startup tests remain PASS;
 - queue power-cut/torn-write recovery passes deterministic fault injection;
 - ACK-before-durable-commit is impossible by construction/test;
+- structurally valid unauthenticated RF flood is bounded in RAM/flash wear and
+  cannot evict already ACKed custody without explicit loss diagnostics;
 - queue-full/fault emits no false ACK;
 - byte-identical protected retransmission/duplicate ACK behavior is idempotent;
 - reboot-created opaque duplicates of one logical observation converge safely
