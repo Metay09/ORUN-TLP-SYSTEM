@@ -210,7 +210,6 @@ bool CustodyStore::recover() {
         header.evidence == csf::PageEvidence::kPartialActivation) {
       if (authorized_target) continue;
       if ((header.evidence == csf::PageEvidence::kStaged ||
-           header.evidence == csf::PageEvidence::kStaged ||
            header.evidence == csf::PageEvidence::kPartialCommit ||
            header.evidence == csf::PageEvidence::kPartialActivation) &&
           pageRecordAreaErased(page)) {
