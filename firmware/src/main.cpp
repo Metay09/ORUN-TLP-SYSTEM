@@ -1743,7 +1743,8 @@ void ingestHistorySecureRadioFrame() {
   // Keep the raw frame in RadioManager's bounded handoff slot only across
   // transient owner activity. An unprovisioned/fault security state cannot
   // ever authenticate the frame and must not clog the slot indefinitely.
-  if (history_receipt_receiver.pending() ||
+  if (!ble_ready ||
+      history_receipt_receiver.pending() ||
       history.busy() || security_store.busy()) {
     return;
   }
@@ -1795,6 +1796,7 @@ void scheduleNextHistoryReplay(uint32_t now_ms) {
 void serviceHistoryReplay(uint32_t now_ms) {
   if (!orun_tlp::monotonic::reached(now_ms, next_history_replay_at_ms) ||
       !history.ready() || history.busy() ||
+      !ble_ready ||
       !security_store.ready() ||
       security_store.state() != orun_tlp::SecurityState::kProvisioned ||
       security_store.busy() ||
@@ -2020,17 +2022,7 @@ void setup() {
     Serial.printf("SECURITY state=%s\n", state);
   }
 #endif
-#if !defined(ORUN_M7P6I_HISTORY_CRYPTO_PROBE) && \
-    !defined(ORUN_M4P5C_HISTORY_RECEIPT_PROBE)
-  Serial.printf("STORE-FORWARD runtime=ACTIVE security=%s replay_probe=%lus\n",
-                security_store.ready() &&
-                        security_store.state() ==
-                            orun_tlp::SecurityState::kProvisioned
-                    ? "PROVISIONED"
-                    : "UNAVAILABLE",
-                static_cast<unsigned long>(
-                    kHistoryReplayProbeIntervalMs / 1000UL));
-#endif
+
   next_history_replay_at_ms =
       orun_tlp::monotonic::nowMs() +
       kHistoryReplayProbeIntervalMs +
@@ -2147,6 +2139,20 @@ void setup() {
   } else {
     Serial.println(F("BLE unavailable"));
   }
+
+#if !defined(ORUN_M7P6I_HISTORY_CRYPTO_PROBE) && \
+    !defined(ORUN_M4P5C_HISTORY_RECEIPT_PROBE)
+  Serial.printf(
+      "STORE-FORWARD runtime=ACTIVE security=%s crypto=%s replay_probe=%lus\n",
+      security_store.ready() &&
+              security_store.state() ==
+                  orun_tlp::SecurityState::kProvisioned
+          ? "PROVISIONED"
+          : "UNAVAILABLE",
+      ble_ready ? "READY" : "UNAVAILABLE",
+      static_cast<unsigned long>(
+          kHistoryReplayProbeIntervalMs / 1000UL));
+#endif
 }
 
 void loop() {
@@ -2411,17 +2417,20 @@ void loop() {
     abortGeofenceConfirmation("GNSS_SESSION_ENDED");
   }
 
-  // Live/current PositionFlow has already had first TX opportunity above.
-  // Historical replay is lower priority and is disabled while relay forwarding
-  // is enabled. Its first production policy is one oldest-undelivered probe per
-  // conservative interval until a later measured contact-aware scheduler.
-  serviceHistoryReplay(orun_tlp::monotonic::nowMs());
-
   radio_manager.update(tracking_enabled && !positions.pending());
 
   // RadioManager only performs a bounded byte-copy under its driver gate.
   // Decrypt/auth/replay admission happens here after update() released it.
+  // A received backend receipt therefore outranks background replay work.
   ingestHistorySecureRadioFrame();
+  serviceHistoryReceiptAdmission();
+
+  // Live/current PositionFlow and inbound receipt work have already had first
+  // opportunity. Historical replay is lower priority and is disabled while
+  // relay forwarding is enabled. Its initial production policy is one
+  // oldest-unacknowledged probe per conservative interval until measured
+  // contact-aware scheduling is introduced.
+  serviceHistoryReplay(orun_tlp::monotonic::nowMs());
 
   // Feed only after the cooperative loop has completed all service work. A
   // blocked I2C/flash/radio path therefore cannot hide behind an unrelated task.
