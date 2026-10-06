@@ -496,9 +496,26 @@ SF4 requires this reviewed exception before custody can release tracker data:
   lies behind the backend's ordinary bounded reordering window;
 - repeated old frames are idempotently deduplicated by the decrypted stable
   History observation identity and may be rate-limited/recorded as abuse;
-- retired credential/epoch D2A key material is retained **decrypt-only** while
-  any authorized Gateway/Edge custody from that lifetime can remain unresolved;
-- key destruction waits for durable closure/synchronization of those custody
+- retired credential/epoch D2A key material may be retained
+  **decrypt-only** while authorized Gateway/Edge custody from that lifetime can
+  remain unresolved, but automatic canonical ingest is bounded by a durable
+  retirement acceptance ceiling;
+- for planned rotation, the authority records before/at retirement the maximum
+  D2A counter bound that the old lifetime could legitimately have originated
+  (and, where the reviewed rotation protocol can bind it, the accepted History
+  incarnation/identity range). This bound comes from authoritative
+  credential/counter lifecycle state, not merely the largest counter observed by
+  backend traffic;
+- an authenticated old-epoch frame above that retirement ceiling is rejected;
+- if retirement is caused by suspected/confirmed credential compromise,
+  decrypt-only material may be retained for recovery/forensics but late
+  old-epoch observations are quarantined rather than automatically admitted to
+  canonical History;
+- backend dedupe is content-aware: identical logical identity + equivalent
+  authenticated observation content is idempotent, while identical logical
+  identity + different authenticated content is an integrity conflict that is
+  retained/diagnosed, never silently "first writer wins";
+- key destruction waits for durable closure/synchronization of relevant custody
   owners, or an explicit operator recovery decision that accepts the associated
   data-loss risk.
 
@@ -506,6 +523,9 @@ This is a narrow store-forward ingestion exception. It does **not** relax replay
 freshness, epoch or idempotency rules for commands, configuration mutations,
 actuation, RESULT processing or other side-effecting families. It also does not
 authorize an old credential/epoch to originate new traffic after retirement.
+If the authoritative retirement ceiling cannot be established safely, the
+backend fails closed to quarantine/recovery rather than widening old-epoch
+automatic acceptance.
 
 The exact backend old-key retention representation and custody-closure
 bookkeeping are SF4 backend/security implementation work; they must be reviewed

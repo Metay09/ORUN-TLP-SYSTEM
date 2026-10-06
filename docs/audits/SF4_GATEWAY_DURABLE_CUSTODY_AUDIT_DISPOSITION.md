@@ -1,6 +1,6 @@
 # SF4 Gateway Durable Custody — Independent Audit Disposition
 
-Status: **INITIAL INDEPENDENT AUDIT FAIL; 1 BLOCKER / 4 HIGH / 6 MEDIUM / 5 LOW; REQUIRED DOCUMENTATION FIXES APPLIED; FOCUSED RE-VERIFICATION REQUIRED.**
+Status: **INITIAL AUDIT FAIL; FIRST FIX SET RE-VERIFIED PASS WITH FIXES AT ce47f8cb0ba608f886db217304458885ac205b58 (0 BLOCKER / 0 HIGH / 1 MEDIUM / 3 LOW); RESIDUAL DOCUMENTATION FIXES APPLIED; SHORT FINAL CONTROL REQUIRED.**
 
 PR: #79
 
@@ -282,3 +282,40 @@ Independent focused re-verification must confirm at minimum:
 
 Only after focused re-verification may the documentation PR move from audit
 FAIL-with-fixes-applied to a mergeable architecture state.
+
+
+---
+
+## 8. Focused re-verification at ce47f8c
+
+Independent focused re-verification of
+`ce47f8cb0ba608f886db217304458885ac205b58` returned:
+
+```text
+PASS WITH FIXES
+BLOCKER 0
+HIGH    0
+MEDIUM  1
+LOW     3
+```
+
+The reviewer confirmed B1, H1-H4, M1-M6 and L1-L5 were substantively closed and
+that the first fix set introduced no new BLOCKER/HIGH.
+
+Remaining findings and dispositions:
+
+- **R-M1 retired-epoch compromise boundary:** fixed after ce47f8c by requiring a
+  durable retirement acceptance ceiling for planned rotation, quarantine for
+  compromise-driven retirement, and content-aware integrity conflict handling
+  for same logical identity with different authenticated content.
+- **R-L1 opaque Edge wording:** fixed; DURABLE_EDGE_CUSTODY now commits the
+  exact opaque protected custody object.
+- **R-L2 revocation validation gate:** fixed; after durable floor/generation
+  advance, stale/revoked gateway ACK must cause zero tracker-release mutation,
+  and residual offline authority must have an explicit reviewed bound.
+- **R-L3 status/disposition staleness:** fixed in this disposition, AGENTS and
+  the custody document.
+
+Per the reviewer, these are documentation-level corrections and do not require
+another broad audit. A short final control of the post-fix head is still
+required before merge.

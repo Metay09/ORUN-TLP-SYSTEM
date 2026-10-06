@@ -1,6 +1,6 @@
 # ORUN Gateway Durable Custody / Edge Synchronization Direction
 
-Status: **OWNER-APPROVED SF4A DIRECTION — INITIAL INDEPENDENT AUDIT FAIL (1 BLOCKER / 4 HIGH / 6 MEDIUM / 5 LOW); REQUIRED DOC FIXES APPLIED; FOCUSED RE-VERIFICATION REQUIRED. NO NEW WIRE BYTES, FLASH PARTITION OR PRODUCTION RUNTIME AUTHORIZED YET.**
+Status: **OWNER-APPROVED SF4A DIRECTION — FOCUSED RE-VERIFICATION PASS WITH FIXES (0 BLOCKER / 0 HIGH / 1 MEDIUM / 3 LOW at ce47f8c); RESIDUAL DOC FIXES APPLIED; SHORT FINAL CONTROL REQUIRED. NO NEW WIRE BYTES, FLASH PARTITION OR PRODUCTION RUNTIME AUTHORIZED YET.**
 
 Baseline: `main@572f92cdb664150ac0dfec8394573da71061d1bd`.
 
@@ -221,11 +221,30 @@ For the HISTORY_SECURE **observation** family only:
 - this exception does **not** apply to COMMAND, RESULT, configuration mutation,
   actuation or any other side-effecting application family.
 
-Credential/key rotation must not strand already ACKed custody. The backend
-security authority must retain decrypt-only material for retired D2A
-credential/epochs while any authorized Gateway/Edge custody from that lifetime
-can remain unresolved. An old epoch may be cryptographically retired for new
-origination while still being retained for decrypt-only store-forward ingest.
+Credential/key rotation must not strand already ACKed custody, but
+decrypt-only acceptance of a retired credential/epoch is **bounded**, never
+open-ended.
+
+For an ordinary planned rotation, the backend/security authority must durably
+record a retirement acceptance ceiling that bounds what the retired lifetime
+could legitimately have originated before retirement. At minimum this includes
+an authoritative maximum D2A security-counter bound; where the reviewed rotation
+protocol can safely bind retained History stream state, it should also bind the
+accepted History incarnation/identity range. The ceiling must come from reviewed
+credential/counter lifecycle state, not from "largest packet seen" heuristics.
+Retired-epoch frames above that ceiling are rejected.
+
+If the credential/epoch is retired because compromise is suspected or confirmed,
+old-key decrypt may still be retained for forensic/recovery use, but newly
+arriving old-epoch custody objects are **not automatically admitted to canonical
+History**. They enter a quarantine/recovery path until operator/backend security
+policy explicitly resolves them.
+
+For duplicate logical History identity, backend acceptance is content-aware:
+same identity + equivalent authenticated observation content is idempotent;
+same identity + different authenticated plaintext/content is an **integrity
+conflict**, not "first writer wins". The conflict is retained/diagnosed and must
+not silently replace or suppress the other observation.
 
 A retired decrypt key may be destroyed only after all relevant custody-capable
 Gateway/Edge owners have durably synchronized/closed that lifetime, or an
@@ -730,6 +749,12 @@ Before production custody is claimed:
 - reboot-created opaque duplicates of one logical observation converge safely
   downstream;
 - unauthorized/forged/replayed ACK causes zero tracker release mutation;
+- after a tracker has durably advanced its gateway policy floor/generation,
+  custody ACKs authenticated only under revoked/stale gateway authority cause
+  zero tracker-release mutation;
+- the residual offline authority window before that floor/generation reaches the
+  tracker is explicitly bounded by the reviewed custody-authority lifecycle and
+  is reported as a security exposure, not assumed to be instantaneous revocation;
 - custody-object identifier covers the entire exact protected frame and passes
   adversarial collision/substitution tests;
 - gateway reset preserves every ACKed-but-not-yet-handed-off observation,

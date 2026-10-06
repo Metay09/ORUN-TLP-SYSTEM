@@ -130,8 +130,9 @@ ORUN keeps delivery scopes explicit:
 1. **RF_RECEIPT** — some receiver heard the frame.
 2. **DURABLE_GATEWAY_CUSTODY** — an authorized gateway durably committed the
    exact opaque protected custody object to its reviewed local queue.
-3. **DURABLE_EDGE_CUSTODY** — a phone/Pi/Linux Edge durably committed the
-   observation to its larger local queue.
+3. **DURABLE_EDGE_CUSTODY** — an authorized phone/Pi/Linux Edge durably
+   committed the exact opaque protected custody object to its larger local
+   queue.
 4. **BACKEND_DURABLE** — the canonical backend durably accepted the observation.
 5. **APPLICATION_DELIVERED** — a family-specific endpoint condition, used by
    services such as MESSAGE where backend custody alone is insufficient.
@@ -580,10 +581,24 @@ For this observation family only:
 - treat old-counter repeats as idempotent duplicate observations/abuse signals,
   not as side-effecting commands.
 
-The backend/authority must retain retired D2A decrypt material while custody
-objects from that credential/epoch may remain unresolved. This family-specific
-exception is recorded in `ADR_M7P6_SECURITY_ARCHITECTURE.md` and does not
-weaken replay/freshness rules for COMMAND, RESULT or other mutations.
+The backend/authority may retain retired D2A decrypt material while custody
+objects from that credential/epoch remain unresolved, but automatic canonical
+acceptance of that retired lifetime is bounded by a durable retirement
+acceptance ceiling recorded by the security authority.
+
+For planned rotation, authenticated old-epoch frames above the authoritative
+maximum counter/range that could legitimately have been originated before
+retirement are rejected. If retirement is compromise-driven, late old-epoch
+objects enter quarantine/recovery instead of canonical History automatically.
+
+Backend dedupe is content-aware: the same logical History identity with
+equivalent authenticated observation content is idempotent; the same identity
+with different authenticated content is an integrity conflict and must not be
+silently resolved as "first arrival wins".
+
+This family-specific exception is recorded in
+`ADR_M7P6_SECURITY_ARCHITECTURE.md` and does not weaken replay/freshness rules
+for COMMAND, RESULT or other mutations.
 
 ### GATEWAY_CUSTODY_ACK
 

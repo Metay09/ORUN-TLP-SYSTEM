@@ -133,11 +133,13 @@ For the owner-approved next custody direction, also read
 `docs/audits/SF4_GATEWAY_DURABLE_CUSTODY_AUDIT_DISPOSITION.md`. It separates
 Tracker -> Gateway -> Edge -> Backend responsibility, requires gateway durable
 commit before custody ACK, and moves long Internet-outage buffering to Edge.
-The first focused independent SF4 audit returned FAIL with
-1 BLOCKER / 4 HIGH / 6 MEDIUM / 5 LOW. The required documentation fixes are
-being applied on the same branch and focused re-verification remains mandatory
-before new custody wire bytes, flash ownership or production runtime are
-authorized. It does not authorize a TLP v1 ACK,
+The first focused independent SF4 audit returned FAIL
+(1 BLOCKER / 4 HIGH / 6 MEDIUM / 5 LOW). Focused re-verification at
+`ce47f8cb0ba608f886db217304458885ac205b58` then returned **PASS WITH
+FIXES** (0 BLOCKER / 0 HIGH / 1 MEDIUM / 3 LOW). Those residual documentation
+findings are applied on the same branch; only the requested short final control
+remains before merge. No custody wire bytes, flash ownership or production
+runtime are authorized by this documentation audit. It does not authorize a TLP v1 ACK,
 blind replay of historical POSITION as live data, per-record History metadata
 writes, or delegated-gateway BACKEND_DURABLE authority.
 
