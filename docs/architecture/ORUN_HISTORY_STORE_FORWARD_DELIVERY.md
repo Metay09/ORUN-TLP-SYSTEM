@@ -4,9 +4,11 @@ Status: **SF0/SF1/SF2 FOUNDATION COMPLETE; M4P4 SF2 WIRE FROZEN; SF3 DEVICE-SIDE
 
 Baseline for the SF4 custody amendment: `main@572f92cdb664150ac0dfec8394573da71061d1bd`.
 
-This document closes the product-level ambiguity around HistoryStore replay,
-delivery evidence, multi-gateway ingestion and flash-wear behavior before the
-first production backlog replay path is implemented.
+This document originally closed the product-level ambiguity around HistoryStore
+replay, delivery evidence, multi-gateway ingestion and flash-wear behavior
+before production backlog replay. SF3 has since activated that device-side
+runtime; SF4 now amends the downstream custody boundary without rewriting the
+validated SF1-SF3 foundations.
 
 The original SF0-SF3 contract did not change TLP v1 bytes or activate gateway,
 backend or mobile behavior. SF3 is now merged and physically qualified only on
@@ -212,10 +214,11 @@ hold the current tracking path open waiting for one receipt per live packet.
 
 If backend durable evidence for a currently stored live record arrives later,
 SF3 may place that explicit identity into the same bounded RAM acknowledged-ID
-set. This avoids forcing a record already known durable at the backend to be
-replayed solely because it was first sent on the live path. If the selective
-fact is lost on reboot before a coarse durable checkpoint, replay is allowed;
-backend dedupe makes that safe duplicate work.
+set. Under SF4, an independently reviewed authenticated gateway-custody fact may
+feed the same logical release mechanism once that runtime is implemented. In
+both cases, the fact names the explicit logical observation; no numeric range is
+trusted. If a selective fact is lost on reboot before a coarse durable
+checkpoint, duplicate replay is allowed and downstream dedupe makes it safe.
 
 The exact RAM-set bound, batch bound, retry policy and sender concurrency remain
 SF2/SF3 decisions and are gated by the throughput/airtime proof in §9.
@@ -224,7 +227,7 @@ SF2/SF3 decisions and are gated by the throughput/airtime proof in §9.
 
 ## 6. Flash-wear and durable checkpoint policy
 
-Current HistoryStore format v3 has only four 32-byte state slots per active
+Current HistoryStore format v4 retains four bounded state slots per active
 page. Calling `markDeliveredThrough()` after every acknowledged record would
 consume metadata slots far faster than normal record appends and can force
 metadata-driven page rotation/erase while useful record capacity remains.
@@ -285,10 +288,11 @@ SF1 must enforce all of the following:
 
 - the durable checkpoint may never advance beyond the highest contiguous
   authenticated RAM receipt watermark;
-- an identity may enter the authenticated RAM receipt watermark only while it
+- an identity may enter the authenticated RAM release watermark only while it
   corresponds to an actual retained History record, not merely a numeric
-  sequence/ticket bound; once admitted, a later capacity-driven erase does not
-  revoke that already authenticated BACKEND_DURABLE fact, so the same RAM
+  sequence/ticket bound; once admitted from an authorized durable release fact
+  (BACKEND_DURABLE in SF0-SF3, or reviewed DURABLE_GATEWAY_CUSTODY in SF4), a
+  later capacity-driven erase does not revoke that fact, so the same RAM
   watermark may still be checkpointed even if that record is no longer
   physically retained;
 - a delivery checkpoint must **not initiate page rotation or erase solely
@@ -452,12 +456,14 @@ The initial runtime must:
 - avoid blind continuous replay when no authenticated downstream contact exists;
 - use collision-domain airtime assumptions, not total fleet count alone.
 
-For this contract, **authenticated downstream contact** means a successfully
-authenticated backend-authority A2D frame under the currently accepted security
-lifetime (or an explicitly reviewed rotation/grace rule). A delegated gateway
-frame by itself is not backend contact. When such contact is absent, SF3 may
-send at most one distinct backlog probe per active backoff interval; exact
-backoff/contact timers are frozen only after the RF model is measured.
+For the activated SF3 runtime, **authenticated downstream contact** means a
+successfully authenticated backend-authority A2D frame under the currently
+accepted security lifetime; an arbitrary gateway frame is not backend contact.
+SF4 may add a separately authenticated custody-capable gateway contact signal,
+but only under the reviewed custody authority contract. Mere RF reception or
+ordinary delegated COMMAND authority never counts. When trusted downstream
+contact is absent, backlog probing remains bounded rather than becoming a tight
+retry loop.
 
 ### Backlog-drain feasibility gate
 
@@ -483,10 +489,10 @@ The model must include, at minimum:
 - History capacity and the possibility of new records being created while the
   backlog drains.
 
-A simple per-record stop-and-wait receipt is acceptable only if this model
-passes with margin. Otherwise SF2 must use a bounded explicit-identity batch
-receipt or another reviewed non-cumulative mechanism. After exact wire lengths
-are frozen, the calculation is rerun before SF3 runtime activation.
+The frozen SF2 backend receipt shape and the activated SF3 replay policy retain
+their existing evidence. SF4 must run a new airtime/rendezvous calculation for
+the candidate custody ACK shape before custody runtime activation, including
+gateway half-duplex occupancy, relay delay, tracker RX-window timing and loss.
 
 No regulatory duty-cycle percentage is hard-coded by this contract.
 
@@ -499,45 +505,45 @@ different quantities.
 
 ## 10. Security / receipt requirements
 
-A receipt that advances durable delivery state changes what data the tracker may
-eventually overwrite. It is therefore security-sensitive.
+Any receipt that releases tracker replay state can eventually allow old History
+records to be overwritten. It is therefore security-sensitive.
 
-The receipt path must provide:
+### BACKEND_DURABLE
+
+The existing SF2 BACKEND_DURABLE receipt remains a backend-authority A2D fact.
+Its path must provide:
 
 - origin/authority authentication by the backend-authority A2D security owner;
 - target-device binding;
 - credential/incarnation binding;
-- observation identity binding;
+- explicit observation identity binding;
 - anti-replay.
 
 A BACKEND_DURABLE receipt is an idempotent durable fact, not a wall-clock-fresh
 command. Its application validity must not expire merely because an offline
 gateway uploads hours later. Transport anti-replay is enforced by the reviewed
-A2D counter/security layer and by credential/epoch rules. If the device rotates
-credentials while retained History remains valid for the same owner, the
-backend may reissue the same logical delivery fact under the currently accepted
-security lifetime; the logical observation identity itself does not change.
+A2D counter/security layer and credential/epoch rules. If a valid fact arrives
+behind a newer accepted A2D counter, backend may reissue the same logical fact
+under a fresh security counter; the observation identity does not change.
 
-The first device A2D replay policy is a strictly increasing durable HWM. A
-receipt delayed behind a newer already-accepted A2D frame can therefore be
-rejected at the transport replay layer even though its BACKEND_DURABLE fact
-remains true. In that case the backend must reissue the same logical delivery
-fact under a **fresh A2D security counter**; it must not change or mint a new
-History observation identity merely to get past replay state.
+### GATEWAY_CUSTODY_ACK
 
-SF3 wear accounting must include both SecurityStore owners already identified
-by this contract: D2A TX reservation (current block 256) and A2D replay
-reservation (current block 8 / shared security state slots). Receipt/replay
-scheduling is not allowed to treat those flash writes as free.
+SF4 adds a separate authority statement: an authorized gateway proves that the
+explicit observation is in its own reviewed durable queue.
+
+This ACK must provide the bindings and revocation/replay properties defined in
+`ORUN_GATEWAY_DURABLE_CUSTODY.md`. It must **not** reuse BACKEND_DURABLE
+authority, must not give a gateway tracker `K_root`, and must not make ordinary
+delegated COMMAND authority sufficient to release History.
+
+Exact custody security context, key derivation, counter ownership and bytes
+remain unfrozen pending focused independent review.
 
 Do not add an unauthenticated TLP v1 ACK.
 
-The secure receipt family should reuse the reviewed TLP v2 security foundations
-rather than invent separate cryptography.
-
-A receipt means only the scope it states. It must not be reused as COMMAND
-`RESULT`, human MESSAGE `DELIVERED`, user READ state or generic LOST contact
-without an explicit service rule.
+A receipt means only the scope it states. Neither custody nor backend receipt may
+be reused as COMMAND `RESULT`, human MESSAGE `DELIVERED`, user READ state or
+generic LOST contact without an explicit service rule.
 
 ---
 
@@ -676,10 +682,11 @@ feasibility gate, live/critical priority, retry/backoff, reboot behavior and
 diagnostics.
 
 ### SF4 — gateway durable custody + Edge handoff
-SF4A freezes the custody contract. Subsequent slices add the bounded
-power-cut-safe gateway queue, authenticated custody ACK, tracker custody-receipt
-integration, then durable Gateway -> Edge handoff. Exact wire/security/partition
-choices require independent review before runtime activation.
+SF4A defines the owner-approved custody contract for focused independent review.
+After that review closes, subsequent slices may add the bounded power-cut-safe
+gateway queue, authenticated custody ACK, tracker custody-receipt integration,
+then durable Gateway -> Edge handoff. Exact wire/security/partition choices
+remain blocked until the review is closed.
 
 ### SF5 — backend synchronization + end-to-end physical qualification
 Prove tracker -> gateway durable write -> authenticated custody ACK -> tracker
@@ -709,9 +716,12 @@ Before claiming store-forward complete:
 - live-record receipts plus bounded RAM selective acknowledgement advance the
   durable watermark only through a contiguous actual-record prefix;
 - duplicate backend ingest and lost-receipt tests PASS;
-- a receipt forged with delegated gateway authority is rejected and causes
-  **zero History delivery-state mutation**;
-- authenticated backend-authority receipt replay/forgery tests PASS;
+- an unenrolled/unauthorized custody ACK, including one authenticated only with
+  ordinary delegated COMMAND authority, is rejected and causes **zero History
+  release-state mutation**;
+- authenticated backend-authority BACKEND_DURABLE replay/forgery tests remain
+  PASS;
+- custody ACK replay/forgery/revocation tests PASS before SF4 runtime activation;
 - capacity overwrite of an outstanding/unconfirmed record increments loss
   diagnostics and cannot be converted into delivery by a late receipt;
 - candidate then exact-wire backlog-drain/airtime model passes with margin for
@@ -762,8 +772,10 @@ therefore does not mislabel the later head as already independently reviewed.
 
 Disposition implemented in this revision:
 
-- **H1** backend-only A2D authority for BACKEND_DURABLE; delegated gateway
-  material cannot advance History delivery;
+- **H1** backend-only A2D authority for **BACKEND_DURABLE**; delegated gateway
+  material cannot mint or impersonate that backend fact. SF4's later
+  custody-specific authority is a distinct scope and is not covered by the old
+  audit;
 - **H2** stop-and-wait removed from frozen semantics; bounded explicit-ID batch
   receipts allowed; candidate/exact throughput gate added before runtime;
 - **M1** no metadata-only History rotation/erase; explicit zero-erase test gate;
