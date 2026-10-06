@@ -566,13 +566,16 @@ The intended custody chain is:
 4. tracker accepts the ACK only after security checks and unambiguous mapping
    from the ACKed object to one retained History record, then stops RF replay
    for that logical observation;
-5. gateway retains the observation until an Edge durably accepts it;
-6. Edge retains it through Internet outage until backend durable acceptance;
-7. backend ingestion remains idempotent by logical observation identity and
-   retains useful path metadata separately.
+5. gateway retains the exact opaque custody object until an Edge durably
+   accepts that object;
+6. Edge may remain opaque and retains the object through Internet outage until
+   backend durable acceptance;
+7. backend authenticates/decrypts and ingestion remains idempotent by logical
+   observation identity while retaining useful path metadata separately.
 
 A volatile BLE/USB/UART transfer from Gateway to Edge is not durable handoff.
 Likewise a socket/HTTP send from Edge to Backend is not durable acceptance.
+Custody storage does not itself grant Edge plaintext authority.
 
 Gateway custody is intentionally a short outage bridge. Long-duration buffering
 belongs to Edge storage such as Android SQLite or Pi/Linux disk/database. No
