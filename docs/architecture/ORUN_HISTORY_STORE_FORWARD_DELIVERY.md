@@ -178,6 +178,24 @@ remain unfrozen until SF4 independent review. See
 
 ---
 
+## 4.1 SF4 tracker-release watermark
+
+The original persistent field/API name `delivered_through` was created while
+BACKEND_DURABLE was the only trusted release fact. SF4 introduces an earlier
+durable responsibility transfer at the gateway.
+
+The conceptual SF4 watermark is therefore **tracker_release_through**:
+the oldest contiguous History prefix whose responsibility has been durably
+transferred away from the tracker. It must not be presented as proof that every
+record is already BACKEND_DURABLE.
+
+SF4A does not change HistoryStore bytes or APIs. SF4E must explicitly review
+whether the existing durable field is semantically migrated/renamed or whether
+a distinct state is required. No silent reinterpretation and no per-record
+flash write is authorized.
+
+---
+
 ## 5. Replay ordering and receipt rule
 
 The **safety invariants** are frozen here; exact replay batching/scheduling is
@@ -579,7 +597,10 @@ Custody storage does not itself grant Edge plaintext authority.
 
 Gateway custody is intentionally a short outage bridge. Long-duration buffering
 belongs to Edge storage such as Android SQLite or Pi/Linux disk/database. No
-30-60 day internal RAK gateway buffer is assumed.
+30-60 day internal RAK gateway buffer is assumed. Once an object has been
+custody-ACKed, normal gateway capacity pressure may **not** evict it before
+durable Edge handoff; when space is exhausted the gateway refuses new custody
+instead.
 
 Gateway-to-gateway complete-site synchronization remains a separate capability
 and is not required for the first custody closure.
@@ -622,7 +643,7 @@ may issue/reissue the same delivery fact.
 ### Malicious/forged receipt
 Authentication/anti-replay failure; no History delivery state mutation.
 
-### Storage wrap before delivery
+### Tracker storage wrap before trusted release
 Current circular overwrite behavior remains a capacity loss mode: physical page
 rotation is capacity-driven and is **not** gated by `delivered_through`.
 A delivery checkpoint controls logical replay progress; it is not current
@@ -647,9 +668,11 @@ capacity-loss gap requires an explicit authenticated receipt for the oldest
 remaining actual History record.
 
 Product diagnostics must expose overwrite/backlog pressure and distinguish
-confirmed backlog release from capacity overwrite. Increasing tracker retention remains a separate capacity decision; reviewed
-gateway custody instead transfers responsibility earlier and must expose queue
-pressure/backpressure of its own.
+confirmed backlog release from capacity overwrite. Increasing tracker retention
+remains a separate capacity decision; reviewed gateway custody instead transfers
+responsibility earlier and must expose queue pressure/backpressure of its own.
+Gateway queue pressure must fail closed by refusing new ACKs, never by silently
+dropping already ACKed-but-not-handed-off custody.
 
 ---
 
