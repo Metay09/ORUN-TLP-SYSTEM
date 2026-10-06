@@ -129,7 +129,8 @@ active; its physical qualification proves only the single-device origination/
 replay boundary, not gateway/backend delivery.
 
 For the owner-approved next custody direction, also read
-`docs/architecture/ORUN_GATEWAY_DURABLE_CUSTODY.md`. It separates
+`docs/architecture/ORUN_GATEWAY_DURABLE_CUSTODY.md` together with
+`docs/audits/SF4_GATEWAY_DURABLE_CUSTODY_AUDIT_DISPOSITION.md`. It separates
 Tracker -> Gateway -> Edge -> Backend responsibility, requires gateway durable
 commit before custody ACK, and moves long Internet-outage buffering to Edge.
 The first focused independent SF4 audit returned FAIL with
