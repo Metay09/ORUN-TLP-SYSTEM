@@ -129,7 +129,7 @@ ORUN keeps delivery scopes explicit:
 
 1. **RF_RECEIPT** — some receiver heard the frame.
 2. **DURABLE_GATEWAY_CUSTODY** — an authorized gateway durably committed the
-   observation to its reviewed local custody queue.
+   exact opaque protected custody object to its reviewed local queue.
 3. **DURABLE_EDGE_CUSTODY** — a phone/Pi/Linux Edge durably committed the
    observation to its larger local queue.
 4. **BACKEND_DURABLE** — the canonical backend durably accepted the observation.
@@ -236,8 +236,10 @@ hold the current tracking path open waiting for one receipt per live packet.
 If backend durable evidence for a currently stored live record arrives later,
 SF3 may place that explicit identity into the same bounded RAM acknowledged-ID
 set. Under SF4, an independently reviewed authenticated gateway-custody fact may
-feed the same logical release mechanism once that runtime is implemented. In
-both cases, the fact names the explicit logical observation; no numeric range is
+feed the same logical release mechanism once that runtime is implemented.
+BACKEND_DURABLE names explicit logical History identities after decrypt;
+GATEWAY_CUSTODY_ACK instead names/binds the exact opaque custody object and the
+tracker performs the object -> retained-record mapping. No numeric range is
 trusted. If a selective fact is lost on reboot before a coarse durable
 checkpoint, duplicate replay is allowed and downstream dedupe makes it safe.
 
@@ -517,6 +519,19 @@ gateway half-duplex occupancy, relay delay, tracker RX-window timing and loss.
 
 No regulatory duty-cycle percentage is hard-coded by this contract.
 
+SF4's initial custody scope is protected History backlog, not legacy live
+POSITION. Once trusted custody contact exists, the connected drain policy must
+demonstrate:
+
+```text
+confirmed custody drain rate > retained-record production rate
+```
+
+with documented margin. The model must also include a quantitative gateway
+flash-wear budget; merely proving RF airtime is insufficient. Candidate bounded
+multi-object/delayed ACK and Edge-connected fast handoff may be evaluated in
+SF4C/D, but none is frozen here.
+
 The nominal engineering load remains roughly 30–50 active devices with about
 100 in one RF collision domain as the current stress target. A backend fleet may
 contain many more devices because fleet size and one RF collision domain are
@@ -547,10 +562,35 @@ A2D counter/security layer and credential/epoch rules. If a valid fact arrives
 behind a newer accepted A2D counter, backend may reissue the same logical fact
 under a fresh security counter; the observation identity does not change.
 
+### Custody-delayed DEVICE_D2A observation acceptance
+
+Tracker -> Gateway custody can release the tracker before backend ingest.
+Therefore the backend must not use the generic bounded DEVICE_D2A replay window
+as a hard rejection rule for authenticated immutable HISTORY_SECURE
+observations arriving later from Gateway/Edge custody.
+
+For this observation family only:
+
+- authenticate AEAD under the credential/epoch that originally protected the
+  object;
+- accept a valid old security counter even when it lies behind the ordinary
+  bounded reordering window;
+- dedupe the decrypted application observation by
+  `(DeviceIdentity, HistoryIncarnation, HistoryRecordIdentity)`;
+- treat old-counter repeats as idempotent duplicate observations/abuse signals,
+  not as side-effecting commands.
+
+The backend/authority must retain retired D2A decrypt material while custody
+objects from that credential/epoch may remain unresolved. This family-specific
+exception is recorded in `ADR_M7P6_SECURITY_ARCHITECTURE.md` and does not
+weaken replay/freshness rules for COMMAND, RESULT or other mutations.
+
 ### GATEWAY_CUSTODY_ACK
 
 SF4 adds a separate authority statement: an authorized gateway proves that the
-explicit observation is in its own reviewed durable queue.
+exact opaque protected custody object is in its own reviewed durable queue. The
+gateway is not required or permitted to infer the encrypted logical
+HistoryRecordIdentity.
 
 This ACK must provide the custody-object binding and revocation/replay
 properties defined in `ORUN_GATEWAY_DURABLE_CUSTODY.md`. The tracker must
@@ -573,34 +613,46 @@ generic LOST contact without an explicit service rule.
 ## 11. Gateway / Edge / backend behavior
 
 Any compatible authorized fixed or MOBILE gateway may durably accept a received
-observation. A tracker is not assigned to one gateway.
+opaque custody object. A tracker is not assigned to one gateway.
 
 The intended custody chain is:
 
 1. gateway receives the complete opaque HISTORY_SECURE protected frame;
 2. gateway commits that exact custody object to its power-cut-safe local queue;
-3. only after that commit, gateway may return authenticated
-   GATEWAY_CUSTODY_ACK bound to that object;
+3. flash success completion + readback/integrity/commit verification must finish
+   before gateway may return authenticated GATEWAY_CUSTODY_ACK bound to that
+   object;
 4. tracker accepts the ACK only after security checks and unambiguous mapping
    from the ACKed object to one retained History record, then stops RF replay
    for that logical observation;
-5. gateway retains the exact opaque custody object until an Edge durably
-   accepts that object;
-6. Edge may remain opaque and retains the object through Internet outage until
-   backend durable acceptance;
-7. backend authenticates/decrypts and ingestion remains idempotent by logical
-   observation identity while retaining useful path metadata separately.
+5. gateway retains the exact opaque custody object until an **enrolled Edge**
+   durably commits that object and returns authenticated, object-bound
+   EDGE_DURABLE_ACCEPT evidence;
+6. Edge retains the object through Internet outage until **authenticated
+   backend durable acceptance** (for example server-authenticated TLS plus an
+   application result bound to the submitted object/observation);
+7. backend authenticates/decrypts the original HISTORY_SECURE object, accepts
+   custody-delayed immutable observations under the §10 exception, and dedupes
+   by logical observation identity while retaining useful path metadata.
 
-A volatile BLE/USB/UART transfer from Gateway to Edge is not durable handoff.
-Likewise a socket/HTTP send from Edge to Backend is not durable acceptance.
-Custody storage does not itself grant Edge plaintext authority.
+A volatile or unauthenticated BLE/USB/UART transfer from Gateway to Edge is not
+durable handoff. Likewise a socket write or unauthenticated success response
+from Edge to Backend is not durable acceptance. Custody storage does not itself
+grant Edge plaintext authority.
 
 Gateway custody is intentionally a short outage bridge. Long-duration buffering
 belongs to Edge storage such as Android SQLite or Pi/Linux disk/database. No
 30-60 day internal RAK gateway buffer is assumed. Once an object has been
 custody-ACKed, normal gateway capacity pressure may **not** evict it before
-durable Edge handoff; when space is exhausted the gateway refuses new custody
-instead.
+authenticated durable Edge handoff; when space is exhausted the gateway refuses
+new custody instead.
+
+The first SF4 runtime scope is HISTORY_SECURE backlog replay. Legacy live TLP v1
+POSITION remains unchanged. When an authenticated custody-capable gateway is
+present, SF4D must provide a bounded drain mode whose confirmed custody service
+rate exceeds new History production with documented margin for every product
+cadence/topology claimed. The existing one-probe/hour no-contact SF3 policy is
+not itself a sufficient connected drain policy.
 
 Gateway-to-gateway complete-site synchronization remains a separate capability
 and is not required for the first custody closure.
@@ -613,21 +665,22 @@ and is not required for the first custody closure.
 Keep the record undelivered. Retry later under bounded policy.
 
 ### Gateway receives then loses Internet
-If the gateway has **not** durably committed the observation, tracker remains
-responsible. If it has durably committed and its authenticated custody ACK was
+If the gateway has **not** durably committed the exact protected custody
+object, tracker remains responsible. If it has durably committed that object
+and its authenticated custody ACK was
 accepted, tracker does not resume that record merely because Internet is down;
 the gateway now retains responsibility until durable Edge handoff.
 
 ### Gateway commits but custody ACK is lost
-Within the same SF4 send attempt the tracker should retransmit the same protected
-frame byte-for-byte. Gateway can dedupe that opaque custody object and reissue
+While the protected frame remains available in RAM, the tracker should
+retransmit that same frame byte-for-byte across ordinary retry/backoff cycles. Gateway can dedupe that opaque custody object and reissue
 an ACK. After tracker reboot, a fresh protected frame for the same logical
 observation may be different; downstream trusted owners dedupe by logical
 observation identity.
 
-### Backend stores but Edge acknowledgement is lost
-Edge retains/retries the same logical observation. Backend dedupes and confirms
-the same durable fact again.
+### Backend stores but authenticated Edge-facing acceptance is lost
+Edge retains/retries the same opaque object. Backend dedupes the decrypted
+logical observation and returns authenticated durable acceptance again.
 
 ### Tracker reboots before durable delivery checkpoint
 Previously receipted records after the last checkpoint may replay again. This is
@@ -636,9 +689,10 @@ safe duplicate work.
 ### Tracker reboots after durable checkpoint
 Resume from the next actual record after the durable checkpoint.
 
-### Two gateways receive the same record
-Both may upload path observations; backend stores one logical observation and
-may issue/reissue the same delivery fact.
+### Two gateways receive the same protected object
+Both may hold/upload the same opaque object; exact-object dedupe is byte-based at
+custody owners, while backend decrypts and stores one logical observation with
+multiple path observations if useful.
 
 ### Malicious/forged receipt
 Authentication/anti-replay failure; no History delivery state mutation.
