@@ -1747,10 +1747,10 @@ void serviceHistoryReceiptAdmission() {
 
 void ingestHistorySecureRadioFrame() {
   // Keep the raw frame in RadioManager's bounded handoff slot only across
-  // transient owner activity. An unprovisioned/fault security state cannot
-  // ever authenticate the frame and must not clog the slot indefinitely.
-  if (!ble_ready ||
-      history_receipt_receiver.pending() ||
+  // transient owner activity. Permanent local unavailability (including
+  // Bluefruit/CC310 startup failure) must drain/drop the frame rather than
+  // clog the one-slot handoff forever.
+  if (history_receipt_receiver.pending() ||
       history.busy() || security_store.busy()) {
     return;
   }
@@ -1758,9 +1758,9 @@ void ingestHistorySecureRadioFrame() {
   orun_tlp::HistorySecureRxFrame frame{};
   if (!radio_manager.takeHistorySecureRx(frame)) return;
 
-  if (!history.ready() || !security_store.ready() ||
+  if (!ble_ready || !history.ready() || !security_store.ready() ||
       security_store.state() != orun_tlp::SecurityState::kProvisioned) {
-    Serial.println(F("RX HISTORY_SECURE dropped security/history unavailable"));
+    Serial.println(F("RX HISTORY_SECURE dropped crypto/security/history unavailable"));
     return;
   }
 
