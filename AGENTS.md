@@ -123,14 +123,20 @@ learning, USB/BLE diagnostics or future serviceability UI, read
 For HistoryStore backlog replay, multi-gateway delivery, authenticated receipt
 semantics, durable delivery checkpointing and flash-wear rules, read
 `docs/architecture/ORUN_HISTORY_STORE_FORWARD_DELIVERY.md` together with
-`docs/audits/HISTORY_STORE_FORWARD_DELIVERY_AUDIT_DISPOSITION.md`. The
-independent architecture/security audit returned **PASS WITH FIXES**
-(0 BLOCKER / 2 HIGH / 4 MEDIUM / 5 LOW). Required corrections are applied on
-the M4P1 branch; focused final verification of the post-fix head remains
-required before SF1 implementation. This does not authorize a TLP v1 ACK, blind
-replay of historical POSITION as live data, per-record delivery-state flash
-writes, delegated-gateway BACKEND_DURABLE authority, or runtime store-forward
-changes.
+`docs/audits/HISTORY_STORE_FORWARD_DELIVERY_AUDIT_DISPOSITION.md`.
+SF1/SF2 foundations are merged and SF3 device-side HISTORY_SECURE replay is
+active; its physical qualification proves only the single-device origination/
+replay boundary, not gateway/backend delivery.
+
+For the owner-approved next custody direction, also read
+`docs/architecture/ORUN_GATEWAY_DURABLE_CUSTODY.md`. It separates
+Tracker -> Gateway -> Edge -> Backend responsibility, requires gateway durable
+commit before custody ACK, and moves long Internet-outage buffering to Edge.
+This SF4 authority/persistence amendment still requires focused independent
+security/storage/airtime review before new custody wire bytes, flash ownership
+or production runtime are authorized. It does not authorize a TLP v1 ACK,
+blind replay of historical POSITION as live data, per-record History metadata
+writes, or delegated-gateway BACKEND_DURABLE authority.
 
 BLE product direction is broader than transport bring-up. The intended local
 product surface is phone-based setup, configuration and service/diagnostics,
