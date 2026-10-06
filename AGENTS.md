@@ -135,11 +135,12 @@ Tracker -> Gateway -> Edge -> Backend responsibility, requires gateway durable
 commit before custody ACK, and moves long Internet-outage buffering to Edge.
 The first focused independent SF4 audit returned FAIL
 (1 BLOCKER / 4 HIGH / 6 MEDIUM / 5 LOW). Focused re-verification at
-`ce47f8cb0ba608f886db217304458885ac205b58` then returned **PASS WITH
-FIXES** (0 BLOCKER / 0 HIGH / 1 MEDIUM / 3 LOW). Those residual documentation
-findings are applied on the same branch; only the requested short final control
-remains before merge. No custody wire bytes, flash ownership or production
-runtime are authorized by this documentation audit. It does not authorize a TLP v1 ACK,
+`ce47f8cb0ba608f886db217304458885ac205b58` returned **PASS WITH FIXES**
+(0 BLOCKER / 0 HIGH / 1 MEDIUM / 3 LOW), and the independent short final control
+at `ae00e43a5eb2b7c467c1e81b39e6d2d225960493` returned **PASS** with
+0 BLOCKER / 0 HIGH / 0 MEDIUM / 0 LOW. SF4A is closed as a
+documentation/architecture contract. No custody wire bytes, flash ownership or
+production runtime are authorized by that audit. It does not authorize a TLP v1 ACK,
 blind replay of historical POSITION as live data, per-record History metadata
 writes, or delegated-gateway BACKEND_DURABLE authority.
 
