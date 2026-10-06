@@ -302,6 +302,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp 
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
   firmware/src/node_role.cpp firmware/src/tlp_test_packet.cpp \
   firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
+  firmware/src/tlp_v2_history_secure.cpp \
   -o "$test_dir/b4_radio"
 "$test_dir/b4_radio"
 
@@ -313,6 +314,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
   firmware/src/node_role.cpp firmware/src/tlp_test_packet.cpp \
   firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
+  firmware/src/tlp_v2_history_secure.cpp \
   -o "$test_dir/m6p1_radio"
 "$test_dir/m6p1_radio"
 
@@ -324,6 +326,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
   firmware/src/legacy_position_mapping.cpp \
   firmware/src/node_role.cpp firmware/src/tlp_test_packet.cpp \
   firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
+  firmware/src/tlp_v2_history_secure.cpp \
   -o "$test_dir/r2"
 "$test_dir/r2"
 g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
@@ -345,7 +348,12 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/geofence_runtime_provider.cpp firmware/src/geofence_store.cpp \
   firmware/src/geofence_format.cpp \
   firmware/src/tlp_test_packet.cpp firmware/src/tlp_position_packet.cpp \
-  firmware/src/tlp_relay_forward_packet.cpp firmware/src/history_store.cpp \
+  firmware/src/tlp_relay_forward_packet.cpp firmware/src/tlp_v2_history_secure.cpp \
+  firmware/src/history_store.cpp \
+  firmware/src/history_store_forward_runtime.cpp \
+  firmware/src/history_receipt_admission.cpp \
+  firmware/src/history_delivery_coordinator.cpp \
+  firmware/tests/startup/stubs/history_secure_crypto_stub.cpp \
   firmware/src/journal_format.cpp firmware/src/nrf_history_flash.cpp \
   firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
   firmware/src/nrf_geofence_flash.cpp \

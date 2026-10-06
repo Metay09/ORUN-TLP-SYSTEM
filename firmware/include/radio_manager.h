@@ -1,10 +1,12 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 #include "device_identity.h"
 #include "network_service.h"
 #include "radio_listen_policy.h"
 #include "sequence_source.h"
+#include "tlp_v2_history_secure.h"
 
 namespace orun_tlp {
 
@@ -35,6 +37,16 @@ struct RadioEventDiagnostics {
   uint32_t control_event_drops = 0;
   uint32_t stale_rx_events = 0;
   uint32_t stale_tx_results = 0;
+  uint32_t history_secure_rx_queued = 0;
+  uint32_t history_secure_rx_drops = 0;
+  uint32_t history_secure_tx_attempts = 0;
+};
+
+struct HistorySecureRxFrame {
+  uint16_t size = 0;
+  int16_t rssi_dbm = 0;
+  int8_t snr_db = 0;
+  uint8_t payload[tlp::kHistorySecureMaxPacketSize]{};
 };
 
 class RadioManager {
@@ -68,6 +80,17 @@ class RadioManager {
   bool encodePosition(const GnssFix& fix, uint8_t* payload, uint64_t& identity);
   // A live capture timestamp adds a final freshness gate; backlog omits it.
   bool sendPositionPacket(const uint8_t* payload, const uint32_t* captured_at_ms = nullptr);
+
+  // SF3 device runtime: sends one already-protected frozen HISTORY_SECURE
+  // DEVICE_D2A observation. The crypto owner constructs the bytes; RadioManager
+  // only validates transport-family/device binding and owns SX1262 TX.
+  bool sendHistorySecurePacket(const uint8_t* payload, size_t size);
+
+  // Loop-owner handoff for frozen HISTORY_SECURE frames received by the radio.
+  // Callbacks still only enqueue immutable RadioRxEvent data; crypto/replay
+  // work happens later outside the driver gate in the composition root.
+  bool takeHistorySecureFrame(HistorySecureRxFrame* frame);
+
   uint64_t deviceId() const;
   uint32_t txAttempts() const { return tx_attempts_; }
   uint32_t txTimeouts() const { return tx_timeouts_; }
@@ -119,7 +142,13 @@ class RadioManager {
                             int16_t rssi, int8_t snr);
   void sendDueRelay(uint32_t now);
 
-  enum class TxKind : uint8_t { kNone, kTest, kPosition, kRelay };
+  enum class TxKind : uint8_t {
+    kNone,
+    kTest,
+    kPosition,
+    kRelay,
+    kHistorySecure,
+  };
 
   uint64_t device_id_ = 0;
   SequenceSource* sequences_ = nullptr;
@@ -149,6 +178,8 @@ class RadioManager {
   uint32_t pending_rx_timeouts_ = 0;
   uint32_t pending_rx_errors_ = 0;
   NetworkService network_{};
+  HistorySecureRxFrame history_secure_rx_{};
+  bool history_secure_rx_pending_ = false;
   uint32_t tx_attempts_ = 0, local_tx_failures_ = 0;
   uint32_t tx_timeouts_ = 0;
   RadioEventDiagnostics event_diagnostics_{};

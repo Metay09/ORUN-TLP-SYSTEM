@@ -25,6 +25,10 @@
 #include "firmware_version.h"
 #include "flash_mutation_gate.h"
 #include "gnss_manager.h"
+#include "history_delivery_coordinator.h"
+#include "history_receipt_admission.h"
+#include "history_secure_crypto.h"
+#include "history_store_forward_runtime.h"
 #include "location_owner.h"
 #include "geofence_confirmation_coordinator.h"
 #include "geofence_incarnation_source.h"
@@ -38,6 +42,7 @@
 #include "monotonic_time.h"
 #include "rak_device_identity.h"
 #include "runtime_config.h"
+#include "security_format.h"
 #include "security_store.h"
 #include "sensor_power_manager.h"
 #include "tlp_position_packet.h"
@@ -95,11 +100,23 @@ void refreshApplicationStatusSnapshot(uint32_t now_ms);
 // the next secure counter skips all possibly-used counters from the prior
 // reserved block; poll() advances that bounded recovery reservation.
 // Current production has no provisioning path, so blank devices remain
-// UNPROVISIONED and perform no security writes. This proves the real
-// instantiated object's RAM/flash footprint and preserves TLP v1/RF/GNSS/
-// role behavior without implementing crypto, secure envelope, commands or BLE.
+// UNPROVISIONED and perform no security writes. SF3 runtime below is therefore
+// active only for an already-provisioned authorized device; it never invents
+// credentials or weakens the existing recovery-only provisioning boundary.
 orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort(),
                                        storage_flash_gate.securityMaintPort());
+orun_tlp::HistorySecureCrypto history_secure_crypto(security_store);
+orun_tlp::HistoryDeliveryCoordinator history_delivery(history);
+orun_tlp::HistoryReceiptAdmissionCoordinator history_receipt_admission(
+    security_store, history_delivery);
+#ifdef ORUN_SF3_RUNTIME_QUAL
+orun_tlp::HistoryStoreForwardRuntime history_store_forward(
+    history, history_secure_crypto, history_receipt_admission, radio_manager,
+    5000U, 15000U);
+#else
+orun_tlp::HistoryStoreForwardRuntime history_store_forward(
+    history, history_secure_crypto, history_receipt_admission, radio_manager);
+#endif
 orun_tlp::PositionFlow positions(history, radio_manager);
 // M7P7I: source-neutral RAM owner for the latest accepted Location product
 // fact. GNSS is the only producer in this slice. It owns no source-selection
@@ -137,6 +154,20 @@ bool automatic_role_resolved = false;
 char role_command[24]{};
 uint8_t role_command_length = 0;
 bool role_command_overflow = false;
+
+#ifdef ORUN_SF3_RUNTIME_QUAL
+bool sf3_test_provision_pending = false;
+const uint8_t kSf3TestCredentialId[
+    orun_tlp::security_format::kCredentialIdSize] = {
+    0xA0,0xA1,0xA2,0xA3,0xA4,0xA5,0xA6,0xA7,
+    0xA8,0xA9,0xAA,0xAB,0xAC,0xAD,0xAE,0xAF};
+const uint8_t kSf3TestRoot[orun_tlp::security_format::kKRootSize] = {
+    0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
+    0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
+    0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,
+    0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x1F};
+constexpr uint32_t kSf3TestKeyEpoch = 0x01020304U;
+#endif
 
 // M7P7B: BLE runtime/admission. BleAdmissionPolicy is the pure, host-tested
 // tracker no-client-timeout decision (docs/architecture/
@@ -1234,6 +1265,67 @@ void printFlashProbeReport() {
 }
 #endif
 
+#ifdef ORUN_SF3_RUNTIME_QUAL
+void printSf3QualificationStatus() {
+  const char* state = "UNKNOWN";
+  switch (security_store.state()) {
+    case orun_tlp::SecurityState::kUnprovisioned: state = "UNPROVISIONED"; break;
+    case orun_tlp::SecurityState::kProvisioned: state = "PROVISIONED"; break;
+    case orun_tlp::SecurityState::kForeign: state = "FOREIGN"; break;
+    case orun_tlp::SecurityState::kUnsupported: state = "UNSUPPORTED"; break;
+    case orun_tlp::SecurityState::kFault: state = "FAULT"; break;
+  }
+  const auto& sf = history_store_forward.diagnostics();
+  Serial.printf(
+      "SF3 QUAL security=%s busy=%s history=%s records=%lu ack=%08lX%08lX "
+      "replay_sent=%lu receipt_applied=%lu auth_reject=%lu\n",
+      state,
+      security_store.busy() ? "yes" : "no",
+      history.ready() ? "ready" : "unavailable",
+      static_cast<unsigned long>(history.count()),
+      static_cast<unsigned long>(
+          uint32_t(history.acknowledgedThrough() >> 32)),
+      static_cast<unsigned long>(uint32_t(history.acknowledgedThrough())),
+      static_cast<unsigned long>(sf.replay_sent),
+      static_cast<unsigned long>(sf.receipt_applied),
+      static_cast<unsigned long>(sf.receipt_auth_rejections));
+}
+
+void startSf3TestProvisioning() {
+  if (!security_store.ready() ||
+      security_store.state() != orun_tlp::SecurityState::kUnprovisioned ||
+      security_store.busy() || sf3_test_provision_pending) {
+    Serial.println(F("SF3 TEST PROVISION rejected; require idle UNPROVISIONED store"));
+    return;
+  }
+
+  uint8_t credential_id[orun_tlp::security_format::kCredentialIdSize]{};
+  uint8_t root[orun_tlp::security_format::kKRootSize]{};
+  memcpy(credential_id, kSf3TestCredentialId, sizeof(credential_id));
+  memcpy(root, kSf3TestRoot, sizeof(root));
+
+  if (!security_store.commitCredential(
+          credential_id, kSf3TestKeyEpoch, root)) {
+    memset(root, 0, sizeof(root));
+    Serial.println(F("SF3 TEST PROVISION start failed"));
+    return;
+  }
+
+  memset(root, 0, sizeof(root));
+  sf3_test_provision_pending = true;
+  Serial.println(F("SF3 TEST PROVISION started PUBLIC TEST CREDENTIAL"));
+}
+
+void pollSf3TestProvisioning() {
+  if (!sf3_test_provision_pending) return;
+  bool success = false;
+  if (!security_store.takeCommitResult(success)) return;
+  sf3_test_provision_pending = false;
+  Serial.println(success ? F("SF3 TEST PROVISION PASS")
+                         : F("SF3 TEST PROVISION FAIL"));
+}
+#endif
+
 void handleRoleCommand() {
   if (role_command_overflow) {
     role_command_length = 0;
@@ -1285,6 +1377,18 @@ void handleRoleCommand() {
   if (isActivityCommand("FLASH PROBE", 11)) {
     role_command_length = 0;
     startFlashProbe();
+    return;
+  }
+#endif
+#ifdef ORUN_SF3_RUNTIME_QUAL
+  if (isActivityCommand("SF3?", 4)) {
+    role_command_length = 0;
+    printSf3QualificationStatus();
+    return;
+  }
+  if (isActivityCommand("SF3 PROVISION TEST", 18)) {
+    role_command_length = 0;
+    startSf3TestProvisioning();
     return;
   }
 #endif
@@ -1689,6 +1793,24 @@ void processGeofenceAcceptedFix(const orun_tlp::GnssFix& fix,
   }
 }
 
+const char* historyStoreForwardEventName(
+    orun_tlp::HistoryStoreForwardRuntime::Event event) {
+  using Event = orun_tlp::HistoryStoreForwardRuntime::Event;
+  switch (event) {
+    case Event::kNone: return "NONE";
+    case Event::kReplaySent: return "REPLAY_SENT";
+    case Event::kReplaySendFailed: return "REPLAY_SEND_FAILED";
+    case Event::kReceiptApplied: return "RECEIPT_APPLIED";
+    case Event::kReceiptDuplicate: return "RECEIPT_DUPLICATE";
+    case Event::kReceiptReplayRejected: return "RECEIPT_REPLAY_REJECTED";
+    case Event::kReceiptRejected: return "RECEIPT_REJECTED";
+    case Event::kReceiptAuthRejected: return "RECEIPT_AUTH_REJECTED";
+    case Event::kReceiptInvalidFrame: return "RECEIPT_INVALID";
+    case Event::kOpaqueObservationReceived: return "OPAQUE_OBSERVATION";
+  }
+  return "UNKNOWN";
+}
+
 void printBootBanner() {
   Serial.println(F("ORUN TLP"));
   Serial.print(F("firmware version "));
@@ -1816,6 +1938,10 @@ void setup() {
     }
     Serial.printf("SECURITY state=%s\n", state);
   }
+#endif
+#ifdef ORUN_SF3_RUNTIME_QUAL
+  Serial.println(F(
+      "SF3 QUAL image: fast replay timing; PUBLIC TEST credential command enabled"));
 #endif
   active_tracking_base_interval_seconds =
       config_store.config().tracking_interval_seconds;
@@ -2068,6 +2194,9 @@ void loop() {
     config_store.poll();
     security_store.poll();
   }
+#ifdef ORUN_SF3_RUNTIME_QUAL
+  pollSf3TestProvisioning();
+#endif
 #ifdef ORUN_M7P7B_FLASH_PROBE
   // Stepped after config_store.poll() so a just-finished save is consumed on
   // the same tick. Idle/done: no sampling, no critical section, no output.
@@ -2171,6 +2300,39 @@ void loop() {
   }
 
   radio_manager.update(tracking_enabled && !positions.pending());
+
+  // SF3 device runtime executes only after RadioManager has drained callback
+  // work and released its driver gate. Root-credential crypto can take much
+  // longer than ordinary loop work during BLE pairing stress, so it must never
+  // execute inside a radio callback or while the SX1262 gate is held.
+  //
+  // Current/live POSITION and relay-availability commitments outrank backlog.
+  // Blank/unprovisioned devices stay fail-closed and do not emit secure History.
+  if (ble_ready) {
+    const bool history_higher_priority_pending =
+        positions.pending() || radio_manager.relayForwardingEnabled();
+    const auto sf_event = history_store_forward.update(
+        orun_tlp::monotonic::nowMs(), history_higher_priority_pending);
+    if (sf_event != orun_tlp::HistoryStoreForwardRuntime::Event::kNone) {
+      Serial.printf(
+          "HISTORY SF event=%s ack=%08lX%08lX replay=%08lX%08lX "
+          "counter=%08lX%08lX\n",
+          historyStoreForwardEventName(sf_event),
+          static_cast<unsigned long>(
+              uint32_t(history.acknowledgedThrough() >> 32)),
+          static_cast<unsigned long>(
+              uint32_t(history.acknowledgedThrough())),
+          static_cast<unsigned long>(
+              uint32_t(history_store_forward.lastReplayIdentity() >> 32)),
+          static_cast<unsigned long>(
+              uint32_t(history_store_forward.lastReplayIdentity())),
+          static_cast<unsigned long>(
+              uint32_t(history_store_forward.lastReplaySecurityCounter() >> 32)),
+          static_cast<unsigned long>(
+              uint32_t(history_store_forward.lastReplaySecurityCounter())));
+    }
+  }
+
   // Feed only after the cooperative loop has completed all service work. A
   // blocked I2C/flash/radio path therefore cannot hide behind an unrelated task.
   orun_tlp::WatchdogManager::feed();

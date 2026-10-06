@@ -122,6 +122,80 @@ void relayEnabledTrackerStillSendsOwnPosition() {
   assert(radio_state == RF_RX_RUNNING);
 }
 
+void makeHistoryObservationFrame(
+    const RadioManager& manager,
+    uint8_t (&frame)[tlp::kHistoryObservationPacketSize],
+    uint64_t counter = 1) {
+  tlp::HistorySecurePacket packet{};
+  packet.security_context = tlp::kHistorySecurityContextDeviceD2a;
+  packet.app_family = tlp::kHistoryAppFamilyObservation;
+  packet.path_flags = 0;
+  packet.ciphertext_len = tlp::kHistoryObservationPlaintextSize;
+  packet.device_id = manager.deviceId();
+  packet.key_epoch = 1;
+  packet.security_counter = counter;
+  packet.history_incarnation = UINT64_C(0x0102030405060708);
+  for (size_t i = 0; i < packet.ciphertext_len; ++i)
+    packet.ciphertext[i] = static_cast<uint8_t>(i + 1U);
+  for (size_t i = 0; i < tlp::kHistorySecureTagSize; ++i)
+    packet.tag[i] = static_cast<uint8_t>(0xA0U + i);
+  assert(tlp::serializeHistorySecurePacket(packet, frame, sizeof(frame)));
+}
+
+void historySecureTxAndRxUseLoopOwnedRadioSeam() {
+  RadioManager manager;
+  TestSequence sequences;
+  beginAs(manager, sequences, NodeRole::kTracker);
+
+  uint8_t frame[tlp::kHistoryObservationPacketSize]{};
+  makeHistoryObservationFrame(manager, frame);
+
+  assert(manager.sendHistorySecurePacket(frame, sizeof(frame)));
+  assert(manager.isTransmitting());
+  assert(last_tx_size == sizeof(frame));
+  assert(memcmp(last_tx, frame, sizeof(frame)) == 0);
+  assert(manager.eventDiagnostics().history_secure_tx_attempts == 1);
+
+  radio_state = RF_IDLE;
+  terminal(false);
+  manager.update(false);
+  assert(!manager.isTransmitting());
+
+  rxDone(frame, sizeof(frame), -91, 5);
+  manager.update(false);
+
+  HistorySecureRxFrame received{};
+  assert(manager.takeHistorySecureFrame(&received));
+  assert(received.size == sizeof(frame));
+  assert(received.rssi_dbm == -91);
+  assert(received.snr_db == 5);
+  assert(memcmp(received.payload, frame, sizeof(frame)) == 0);
+  assert(!manager.takeHistorySecureFrame(&received));
+  assert(manager.eventDiagnostics().history_secure_rx_queued == 1);
+}
+
+void historySecureMailboxIsBounded() {
+  RadioManager manager;
+  TestSequence sequences;
+  beginAs(manager, sequences, NodeRole::kTracker);
+
+  uint8_t first[tlp::kHistoryObservationPacketSize]{};
+  uint8_t second[tlp::kHistoryObservationPacketSize]{};
+  makeHistoryObservationFrame(manager, first, 1);
+  makeHistoryObservationFrame(manager, second, 2);
+
+  rxDone(first, sizeof(first), -90, 4);
+  rxDone(second, sizeof(second), -89, 3);
+  manager.update(false);
+
+  HistorySecureRxFrame received{};
+  assert(manager.takeHistorySecureFrame(&received));
+  assert(memcmp(received.payload, first, sizeof(first)) == 0);
+  const auto diagnostics = manager.eventDiagnostics();
+  assert(diagnostics.history_secure_rx_queued == 1);
+  assert(diagnostics.history_secure_rx_drops == 1);
+}
+
 }  // namespace
 
 int main() {
@@ -177,6 +251,8 @@ int main() {
   delayedOldIrqCannotCrossBehaviorEpoch();
   pendingRoleTransitionDefersRelayApply();
   relayEnabledTrackerStillSendsOwnPosition();
+  historySecureTxAndRxUseLoopOwnedRadioSeam();
+  historySecureMailboxIsBounded();
 
   puts("B4 RadioManager independent relay behavior apply: PASS");
 }

@@ -44,7 +44,9 @@ alignas(uint32_t) uint8_t rx_event_queue_storage[
 QueueHandle_t rx_event_queue = nullptr;
 
 static_assert(tlp::kRelayForwardPacketSize <= kRadioReceiveLimit,
-              "largest TLP packet must fit radio event storage");
+              "relay packet must fit radio event storage");
+static_assert(tlp::kHistorySecureMaxPacketSize <= kRadioReceiveLimit,
+              "HISTORY_SECURE packet must fit radio event storage");
 
 void saturatingIncrement(uint32_t& value) {
   if (value != UINT32_MAX) ++value;
@@ -95,6 +97,8 @@ bool RadioManager::begin(SequenceSource& sequences) {
   tx_in_progress_ = false;
   tx_kind_ = TxKind::kNone;
   tx_generation_ = armed_tx_generation_ = pending_tx_generation_ = 0;
+  history_secure_rx_ = {};
+  history_secure_rx_pending_ = false;
   role_transition_pending_ = false;
   accept_rx_events_ = true;
   network_.begin(device_id_, NodeRole::kBase);
@@ -261,6 +265,59 @@ bool RadioManager::sendPositionPacket(const uint8_t* payload, const uint32_t* ca
                 static_cast<unsigned long>(packet.sequence_number),
                 static_cast<long>(packet.latitude_e7),
                 static_cast<long>(packet.longitude_e7), packet.satellites);
+  return true;
+}
+
+bool RadioManager::sendHistorySecurePacket(const uint8_t* payload,
+                                           size_t size) {
+  radio_driver::Guard gate;
+  if (!gate) return false;
+
+  tlp::HistorySecurePacket packet{};
+  if (!canSend() || payload == nullptr ||
+      tlp::deserializeHistorySecurePacket(payload, size, &packet) !=
+          tlp::HistorySecureDecodeStatus::kOk ||
+      packet.security_context != tlp::kHistorySecurityContextDeviceD2a ||
+      packet.app_family != tlp::kHistoryAppFamilyObservation ||
+      packet.device_id != device_id_) {
+    ++local_tx_failures_;
+    return false;
+  }
+
+  uint8_t tx_payload[tlp::kHistoryObservationPacketSize]{};
+  if (size != sizeof(tx_payload)) {
+    ++local_tx_failures_;
+    return false;
+  }
+  memcpy(tx_payload, payload, sizeof(tx_payload));
+
+  startTxOperation();
+  tx_kind_ = TxKind::kHistorySecure;
+  tx_role_epoch_ = role_epoch_;
+  rx_restore_state_ = RxRestoreState::kNone;
+  ++tx_attempts_;
+  ++event_diagnostics_.history_secure_tx_attempts;
+  Radio.Send(tx_payload, sizeof(tx_payload));
+  tx_started_ms_ = monotonic::nowMs();
+
+  Serial.printf(
+      "TX HISTORY_SECURE id=%08lX%08lX counter=%08lX%08lX\n",
+      static_cast<unsigned long>(
+          uint32_t(packet.history_incarnation >> 32)),
+      static_cast<unsigned long>(
+          uint32_t(packet.history_incarnation)),
+      static_cast<unsigned long>(
+          uint32_t(packet.security_counter >> 32)),
+      static_cast<unsigned long>(
+          uint32_t(packet.security_counter)));
+  return true;
+}
+
+bool RadioManager::takeHistorySecureFrame(HistorySecureRxFrame* frame) {
+  if (frame == nullptr || !history_secure_rx_pending_) return false;
+  *frame = history_secure_rx_;
+  history_secure_rx_ = {};
+  history_secure_rx_pending_ = false;
   return true;
 }
 
@@ -667,6 +724,41 @@ void RadioManager::scheduleNextTransmission(uint32_t now) {
 
 void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
                                         int16_t rssi, int8_t snr) {
+  if (size >= 2 &&
+      payload[0] == tlp::kHistorySecureProtocolVersion &&
+      payload[1] == tlp::kPacketTypeHistorySecure) {
+    tlp::HistorySecurePacket packet{};
+    if (tlp::deserializeHistorySecurePacket(payload, size, &packet) !=
+        tlp::HistorySecureDecodeStatus::kOk) {
+      ++event_diagnostics_.history_secure_rx_drops;
+      Serial.printf("RX HISTORY_SECURE rejected length=%u\n", size);
+      return;
+    }
+
+    if (history_secure_rx_pending_) {
+      ++event_diagnostics_.history_secure_rx_drops;
+      Serial.println(F("RX HISTORY_SECURE drop pending-mailbox"));
+      return;
+    }
+
+    history_secure_rx_.size = size;
+    history_secure_rx_.rssi_dbm = rssi;
+    history_secure_rx_.snr_db = snr;
+    memcpy(history_secure_rx_.payload, payload, size);
+    history_secure_rx_pending_ = true;
+    ++event_diagnostics_.history_secure_rx_queued;
+
+    Serial.printf(
+        "RX HISTORY_SECURE queued context=%u family=%u length=%u "
+        "rssi=%d snr=%d\n",
+        static_cast<unsigned>(packet.security_context),
+        static_cast<unsigned>(packet.app_family),
+        static_cast<unsigned>(size),
+        static_cast<int>(rssi),
+        static_cast<int>(snr));
+    return;
+  }
+
   if (size >= 2 && payload[0] == tlp::kProtocolVersion &&
       payload[1] == tlp::kPacketTypeTest) {
     tlp::TestPacket packet{};
