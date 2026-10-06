@@ -140,9 +140,10 @@ SF0-SF3 originally used the conservative rule that only authenticated
 BACKEND_DURABLE evidence could advance tracker delivery state. SF4 intentionally
 changes that product boundary:
 
-> After a gateway has durably committed an explicitly identified History
-> observation, a valid authenticated **GATEWAY_CUSTODY_ACK** may release the
-> tracker from further RF replay of that observation.
+> After a gateway has durably committed the exact protected custody object, a
+> valid authenticated **GATEWAY_CUSTODY_ACK** may release the tracker from
+> further RF replay only when the tracker can unambiguously map that ACKed
+> object to one retained History observation.
 
 RF receipt or volatile RAM custody is still insufficient. The ACK is
 authoritative only after the gateway's persistent queue commit is complete. If
@@ -165,9 +166,11 @@ BACKEND_DURABLE receipt.
 
 The custody ACK security authority is separate from both backend authority and
 application COMMAND authority. A forged custody ACK could suppress tracker
-replay, so custody ACK requires target/incarnation/record binding,
-authentication, anti-replay/revocation behavior and explicit custody
-authorization. The gateway must not receive tracker `K_root`.
+replay, so custody ACK requires authentication, anti-replay/revocation,
+explicit custody authorization, and binding to the exact protected custody
+object. The tracker must map that object to one retained History record before
+release-state mutation. The opaque gateway is not required to decrypt the
+current encrypted HistoryRecordIdentity and must not receive tracker `K_root`.
 
 Exact custody wire bytes, security context/key derivation and flash partitioning
 remain unfrozen until SF4 independent review. See
@@ -531,10 +534,12 @@ under a fresh security counter; the observation identity does not change.
 SF4 adds a separate authority statement: an authorized gateway proves that the
 explicit observation is in its own reviewed durable queue.
 
-This ACK must provide the bindings and revocation/replay properties defined in
-`ORUN_GATEWAY_DURABLE_CUSTODY.md`. It must **not** reuse BACKEND_DURABLE
-authority, must not give a gateway tracker `K_root`, and must not make ordinary
-delegated COMMAND authority sufficient to release History.
+This ACK must provide the custody-object binding and revocation/replay
+properties defined in `ORUN_GATEWAY_DURABLE_CUSTODY.md`. The tracker must
+resolve that authenticated custody object to one retained History record before
+advancing release state. The ACK must **not** reuse BACKEND_DURABLE authority,
+must not give a gateway tracker `K_root`, and must not make ordinary delegated
+COMMAND authority sufficient to release History.
 
 Exact custody security context, key derivation, counter ownership and bytes
 remain unfrozen pending focused independent review.
@@ -554,12 +559,13 @@ observation. A tracker is not assigned to one gateway.
 
 The intended custody chain is:
 
-1. gateway receives the HISTORY_SECURE observation;
-2. gateway commits it to its power-cut-safe local custody queue;
+1. gateway receives the complete opaque HISTORY_SECURE protected frame;
+2. gateway commits that exact custody object to its power-cut-safe local queue;
 3. only after that commit, gateway may return authenticated
-   GATEWAY_CUSTODY_ACK;
-4. tracker accepts the ACK only after security/identity checks and then stops RF
-   replay for that logical observation;
+   GATEWAY_CUSTODY_ACK bound to that object;
+4. tracker accepts the ACK only after security checks and unambiguous mapping
+   from the ACKed object to one retained History record, then stops RF replay
+   for that logical observation;
 5. gateway retains the observation until an Edge durably accepts it;
 6. Edge retains it through Internet outage until backend durable acceptance;
 7. backend ingestion remains idempotent by logical observation identity and
@@ -589,9 +595,11 @@ accepted, tracker does not resume that record merely because Internet is down;
 the gateway now retains responsibility until durable Edge handoff.
 
 ### Gateway commits but custody ACK is lost
-Tracker may resend the same logical observation. Gateway dedupes the custody
-record and may reissue the same logical custody fact under a fresh/valid
-transport security attempt as required by the final contract.
+Within the same SF4 send attempt the tracker should retransmit the same protected
+frame byte-for-byte. Gateway can dedupe that opaque custody object and reissue
+an ACK. After tracker reboot, a fresh protected frame for the same logical
+observation may be different; downstream trusted owners dedupe by logical
+observation identity.
 
 ### Backend stores but Edge acknowledgement is lost
 Edge retains/retries the same logical observation. Backend dedupes and confirms
