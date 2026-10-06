@@ -646,9 +646,27 @@ M4P4 post-audit focused revalidation and independent final verification
 closed PASS; the exact bytes are frozen.
 
 ### SF3 — tracker replay runtime
-Oldest-first replay with the §5 bounded sender policy selected after the §9
-feasibility gate, live/critical priority, retry/backoff, reboot behavior and
-diagnostics.
+M4P5C activates the first conservative tracker-side runtime in normal RAK4630
+firmware:
+
+- select the oldest retained record after the current RAM
+  `acknowledgedThrough()` watermark;
+- protect it with the reviewed DEVICE_D2A History crypto seam;
+- send the frozen 73-byte HISTORY_SECURE observation directly;
+- preserve live/current POSITION and inbound receipt priority;
+- do not originate backlog replay while relay forwarding is enabled;
+- when no accelerated authenticated-contact policy exists, probe at most one
+  oldest-unacknowledged record per 15-minute interval with a deterministic
+  per-device startup phase;
+- receive raw HISTORY_SECURE bytes through a bounded RadioManager handoff,
+  then perform AEAD/replay/delivery outside the radio driver gate;
+- keep delivery progress RAM-only in this activation slice; reboot may cause
+  safe duplicate replay before a later coarse checkpoint policy is added.
+
+This is a real production tracker runtime activation, not a host-only seam.
+It is still only the initial direct-path SF3 policy. Contact-aware faster drain,
+secure relay forwarding, durable checkpoint cadence and fleet-scale airtime
+qualification remain separate work.
 
 ### SF4 — fixed/MOBILE gateway + backend ingestion
 Idempotent observation ingest, path metadata retention, durable backend receipt
@@ -699,10 +717,13 @@ Host/build PASS alone is not physical store-forward proof.
 
 ## 15. Explicit non-claims
 
-This document does not claim that:
+M4P5C activates tracker-side direct HISTORY_SECURE replay and authenticated
+BACKEND_DURABLE receipt admission in normal firmware. This document still does
+not claim that:
 
-- backlog replay is implemented today;
-- a production runtime ACK/receipt path is active;
+- the initial 15-minute no-contact replay policy is a final fleet-scale drain
+  policy;
+- durable delivery checkpoint cadence is active;
 - TLP v1 provides delivery;
 - gateway durable custody is implemented;
 - backend/mobile synchronization is implemented;
