@@ -460,11 +460,15 @@ bytes are designed:
   never roll backward across crash, failover or backup restore;
 - replay state is updated only after successful authentication and must never be
   advanced by unauthenticated input; only the current accepted epoch is valid
-  unless a future explicit rotation/grace protocol authorizes otherwise;
+  unless a future explicit rotation/grace protocol authorizes otherwise,
+  **subject to the narrow SF4 decrypt-only immutable-observation exception
+  below**;
 - device A2D replay starts with a strict durable high-water-mark contract,
   committed before protected application dispatch;
 - backend D2A reception may use a bounded sliding replay window to tolerate
-  legitimate multi-path reordering and duplicates;
+  legitimate multi-path reordering and duplicates, except that the SF4
+  custody-delayed immutable HISTORY_SECURE observation family below must not be
+  rejected solely for falling behind that window;
 - Bluefruit/framework shares the global CC310 lifecycle in production; ORUN
   production code must not call `nRFCrypto.end()`, must not trust
   `nRFCrypto.begin()` alone as readiness evidence, and normal-path CC310 use
@@ -475,6 +479,57 @@ M7P6D is documentation-only. It does not modify SecurityStore persistence,
 allocate v2 bytes or authorize secure-RF runtime. See
 `docs/milestones/M7P6D.md` for exact byte-domain definitions and deferred
 items.
+
+#### SF4 immutable store-forward observation exception
+
+The generic M7P6D rule above allows a bounded backend D2A sliding replay window
+and accepts only the current epoch unless a reviewed grace protocol says
+otherwise. That generic rule is **not sufficient** once a tracker is allowed to
+transfer responsibility to durable Gateway/Edge custody before backend ingest.
+
+For the frozen HISTORY_SECURE **DEVICE_D2A immutable observation family only**,
+SF4 requires this reviewed exception before custody can release tracker data:
+
+- successful AEAD authentication under the credential/epoch that protected the
+  object remains mandatory;
+- a valid observation is not rejected merely because its D2A security counter
+  lies behind the backend's ordinary bounded reordering window;
+- repeated old frames are idempotently deduplicated by the decrypted stable
+  History observation identity and may be rate-limited/recorded as abuse;
+- retired credential/epoch D2A key material may be retained
+  **decrypt-only** while authorized Gateway/Edge custody from that lifetime can
+  remain unresolved, but automatic canonical ingest is bounded by a durable
+  retirement acceptance ceiling;
+- for planned rotation, the authority records before/at retirement the maximum
+  D2A counter bound that the old lifetime could legitimately have originated
+  (and, where the reviewed rotation protocol can bind it, the accepted History
+  incarnation/identity range). This bound comes from authoritative
+  credential/counter lifecycle state, not merely the largest counter observed by
+  backend traffic;
+- an authenticated old-epoch frame above that retirement ceiling is rejected;
+- if retirement is caused by suspected/confirmed credential compromise,
+  decrypt-only material may be retained for recovery/forensics but late
+  old-epoch observations are quarantined rather than automatically admitted to
+  canonical History;
+- backend dedupe is content-aware: identical logical identity + equivalent
+  authenticated observation content is idempotent, while identical logical
+  identity + different authenticated content is an integrity conflict that is
+  retained/diagnosed, never silently "first writer wins";
+- key destruction waits for durable closure/synchronization of relevant custody
+  owners, or an explicit operator recovery decision that accepts the associated
+  data-loss risk.
+
+This is a narrow store-forward ingestion exception. It does **not** relax replay,
+freshness, epoch or idempotency rules for commands, configuration mutations,
+actuation, RESULT processing or other side-effecting families. It also does not
+authorize an old credential/epoch to originate new traffic after retirement.
+If the authoritative retirement ceiling cannot be established safely, the
+backend fails closed to quarantine/recovery rather than widening old-epoch
+automatic acceptance.
+
+The exact backend old-key retention representation and custody-closure
+bookkeeping are SF4 backend/security implementation work; they must be reviewed
+before tracker-release-on-custody is activated.
 
 ### Later secure-envelope implementation milestone
 

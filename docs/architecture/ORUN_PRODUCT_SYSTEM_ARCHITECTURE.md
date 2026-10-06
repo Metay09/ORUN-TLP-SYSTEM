@@ -141,19 +141,43 @@ Transport responsibilities:
 Transport answers "how did bytes move?", not "what does the application state
 mean?".
 
-### 3.4 Edge / gateway
+### 3.4 Gateway and Edge — logically separate owners
 
-A gateway may combine several independent responsibilities:
+Gateway and Edge are separate responsibilities even when one physical product
+combines them.
 
-- LoRa endpoint;
+A **Gateway** owns the LoRa-side bridge and may additionally own:
+
+- short-duration opaque durable custody;
 - local bridge to phone/USB/IP;
-- opaque store-forward custody;
-- backend synchronization;
 - diagnostics aggregation;
-- explicitly enrolled delegated command authority when approved.
+- explicitly enrolled delegated command or custody authority when separately
+  approved.
 
-Gateway bridge capability is not automatically relay forwarding, user
-authorization, tracker identity or root security authority.
+An **Edge** owns larger local persistence and synchronization, for example:
+
+- Android phone;
+- Raspberry Pi;
+- Linux/OpenWrt host;
+- a future combined gateway appliance with equivalent local durable storage.
+
+Edge may continue collecting and serving local state without Internet and later
+synchronize to backend. Phone/Pi/Linux is not automatically the canonical
+backend.
+
+Gateway bridge capability is not automatically relay forwarding, Edge storage,
+user authorization, tracker identity, root security authority or backend
+authority.
+
+For History/store-forward, the owner-approved direction is a chain of durable
+handoffs:
+
+```text
+Tracker -> Gateway -> Edge -> Backend
+```
+
+Each owner releases only after the next owner durably accepts. See
+`ORUN_GATEWAY_DURABLE_CUSTODY.md`.
 
 ### 3.5 App / backend
 
@@ -174,6 +198,13 @@ Backend/application responsibilities include:
 
 The backend is not allowed to overwrite device observation time with backend
 receipt time and then present old data as live.
+
+Normal field operation is offline-first where authority permits it: an already
+authorized user may use valid bounded local/delegated authority through
+App/Edge/Gateway without Internet, local data/results are durably queued, and
+synchronization occurs when Internet returns. Backend-owned account/ownership/
+authority issuance or revocation remains a backend/security-authority
+responsibility; offline mode does not create a second permission system.
 
 ---
 
@@ -433,7 +464,8 @@ physical sensor/source
 -> local persistence if required
 -> transport admission
 -> LoRa/BLE/USB/IP
--> gateway/backend
+-> gateway durable custody when used
+-> edge durable custody/synchronization when used
 -> durable backend model
 -> app/map/notification
 ```
@@ -845,8 +877,9 @@ The architecture must preserve a clear path for:
 | Store-forward | History/Custody owners | no-data-loss/recovery |
 | Map | app/backend Entity Registry + Location | shared situational view |
 | BLE/local | transport adapter | nearby/offline service |
-| Gateway | bridge/custody/enrollment | local/cloud connectivity |
-| Backend | registry/auth/history/routing | long-term system state |
+| Gateway | LoRa bridge + short durable custody/enrollment | tracker RF handoff |
+| Edge | local durable queue + synchronization | offline/local continuity, later cloud sync |
+| Backend | registry/auth/history/routing | long-term canonical system state |
 
 No single firmware class or protocol packet should become the owner of this
 entire table.

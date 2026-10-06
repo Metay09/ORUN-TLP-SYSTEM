@@ -123,14 +123,26 @@ learning, USB/BLE diagnostics or future serviceability UI, read
 For HistoryStore backlog replay, multi-gateway delivery, authenticated receipt
 semantics, durable delivery checkpointing and flash-wear rules, read
 `docs/architecture/ORUN_HISTORY_STORE_FORWARD_DELIVERY.md` together with
-`docs/audits/HISTORY_STORE_FORWARD_DELIVERY_AUDIT_DISPOSITION.md`. The
-independent architecture/security audit returned **PASS WITH FIXES**
-(0 BLOCKER / 2 HIGH / 4 MEDIUM / 5 LOW). Required corrections are applied on
-the M4P1 branch; focused final verification of the post-fix head remains
-required before SF1 implementation. This does not authorize a TLP v1 ACK, blind
-replay of historical POSITION as live data, per-record delivery-state flash
-writes, delegated-gateway BACKEND_DURABLE authority, or runtime store-forward
-changes.
+`docs/audits/HISTORY_STORE_FORWARD_DELIVERY_AUDIT_DISPOSITION.md`.
+SF1/SF2 foundations are merged and SF3 device-side HISTORY_SECURE replay is
+active; its physical qualification proves only the single-device origination/
+replay boundary, not gateway/backend delivery.
+
+For the owner-approved next custody direction, also read
+`docs/architecture/ORUN_GATEWAY_DURABLE_CUSTODY.md` together with
+`docs/audits/SF4_GATEWAY_DURABLE_CUSTODY_AUDIT_DISPOSITION.md`. It separates
+Tracker -> Gateway -> Edge -> Backend responsibility, requires gateway durable
+commit before custody ACK, and moves long Internet-outage buffering to Edge.
+The first focused independent SF4 audit returned FAIL
+(1 BLOCKER / 4 HIGH / 6 MEDIUM / 5 LOW). Focused re-verification at
+`ce47f8cb0ba608f886db217304458885ac205b58` returned **PASS WITH FIXES**
+(0 BLOCKER / 0 HIGH / 1 MEDIUM / 3 LOW), and the independent short final control
+at `ae00e43a5eb2b7c467c1e81b39e6d2d225960493` returned **PASS** with
+0 BLOCKER / 0 HIGH / 0 MEDIUM / 0 LOW. SF4A is closed as a
+documentation/architecture contract. No custody wire bytes, flash ownership or
+production runtime are authorized by that audit. It does not authorize a TLP v1 ACK,
+blind replay of historical POSITION as live data, per-record History metadata
+writes, or delegated-gateway BACKEND_DURABLE authority.
 
 BLE product direction is broader than transport bring-up. The intended local
 product surface is phone-based setup, configuration and service/diagnostics,
@@ -396,7 +408,7 @@ application observation while retaining useful path metadata. `TX_DONE`, relay
 TX completion and ordinary gateway RF receipt are not delivery.
 
 Do not persist a replay cursor or delivered checkpoint after every historical
-packet. History format v3 has only four state slots per active page; per-record
+packet. History format v4 retains only four bounded state slots per active page; per-record
 metadata writes can force destructive metadata-driven page rotation. Initial
 store-forward work must accumulate contiguous authenticated receipt progress in
 RAM and checkpoint durable delivery only at a separately reviewed bounded
