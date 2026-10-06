@@ -1,6 +1,6 @@
 # SF4 Gateway Durable Custody — Independent Audit Disposition
 
-Status: **INITIAL AUDIT FAIL; FIRST FIX SET RE-VERIFIED PASS WITH FIXES AT ce47f8cb0ba608f886db217304458885ac205b58 (0 BLOCKER / 0 HIGH / 1 MEDIUM / 3 LOW); RESIDUAL DOCUMENTATION FIXES APPLIED; SHORT FINAL CONTROL REQUIRED.**
+Status: **FINAL INDEPENDENT CONTROL PASS AT ae00e43a5eb2b7c467c1e81b39e6d2d225960493; 0 BLOCKER / 0 HIGH / 0 MEDIUM / 0 LOW. SF4A DOCUMENTATION CONTRACT CLOSED.**
 
 PR: #79
 
@@ -316,6 +316,26 @@ Remaining findings and dispositions:
 - **R-L3 status/disposition staleness:** fixed in this disposition, AGENTS and
   the custody document.
 
-Per the reviewer, these are documentation-level corrections and do not require
-another broad audit. A short final control of the post-fix head is still
-required before merge.
+Per the reviewer, these were documentation-level corrections and did not
+require another broad audit.
+
+### Final short control
+
+Independent short final control of
+`ae00e43a5eb2b7c467c1e81b39e6d2d225960493` returned:
+
+```text
+PASS
+BLOCKER 0
+HIGH    0
+MEDIUM  0
+LOW     0
+```
+
+The reviewer confirmed R-M1 and R-L1-R-L3 are closed and that the residual
+fixes introduced no new BLOCKER/HIGH/MEDIUM issue.
+
+This closes the SF4A **documentation/architecture** audit only. It does not
+approve wire bytes, MAC/KDF/fingerprint parameters, flash partition/queue
+format, RF timing/regulatory compliance, runtime behavior or physical custody
+evidence.
