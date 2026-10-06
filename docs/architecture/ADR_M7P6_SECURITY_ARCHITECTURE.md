@@ -460,11 +460,15 @@ bytes are designed:
   never roll backward across crash, failover or backup restore;
 - replay state is updated only after successful authentication and must never be
   advanced by unauthenticated input; only the current accepted epoch is valid
-  unless a future explicit rotation/grace protocol authorizes otherwise;
+  unless a future explicit rotation/grace protocol authorizes otherwise,
+  **subject to the narrow SF4 decrypt-only immutable-observation exception
+  below**;
 - device A2D replay starts with a strict durable high-water-mark contract,
   committed before protected application dispatch;
 - backend D2A reception may use a bounded sliding replay window to tolerate
-  legitimate multi-path reordering and duplicates;
+  legitimate multi-path reordering and duplicates, except that the SF4
+  custody-delayed immutable HISTORY_SECURE observation family below must not be
+  rejected solely for falling behind that window;
 - Bluefruit/framework shares the global CC310 lifecycle in production; ORUN
   production code must not call `nRFCrypto.end()`, must not trust
   `nRFCrypto.begin()` alone as readiness evidence, and normal-path CC310 use
