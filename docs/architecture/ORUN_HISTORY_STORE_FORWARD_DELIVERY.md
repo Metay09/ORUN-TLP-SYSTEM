@@ -1,15 +1,20 @@
 # ORUN History / Store-Forward Delivery Contract
 
-Status: **SF0/SF1/SF2 CONTRACT FOUNDATION COMPLETE; M4P4 SF2 WIRE FROZEN; SF3 RUNTIME NOT YET ACTIVE.**
+Status: **SF0/SF1/SF2 FOUNDATION COMPLETE; M4P4 SF2 WIRE FROZEN; SF3 DEVICE-SIDE RUNTIME ACTIVE; SF4 GATEWAY DURABLE CUSTODY DIRECTION UNDER REVIEW.**
 
-Baseline: `main@c88516615ec956abc3a079d625b034dc2c2c34aa`.
+Baseline for the SF4 custody amendment: `main@572f92cdb664150ac0dfec8394573da71061d1bd`.
 
 This document closes the product-level ambiguity around HistoryStore replay,
 delivery evidence, multi-gateway ingestion and flash-wear behavior before the
 first production backlog replay path is implemented.
 
-It does **not** change TLP v1 bytes, HistoryStore format v3, RF behavior,
-SecurityStore, gateway runtime, backend behavior or mobile behavior.
+The original SF0-SF3 contract did not change TLP v1 bytes or activate gateway,
+backend or mobile behavior. SF3 is now merged and physically qualified only on
+the device-side HISTORY_SECURE replay boundary. The owner-approved next
+direction is recorded in
+`docs/architecture/ORUN_GATEWAY_DURABLE_CUSTODY.md`; that SF4 amendment does
+not authorize production custody runtime until its storage/security contract is
+independently reviewed.
 
 The product requirement is simple:
 
@@ -116,39 +121,55 @@ different observation identities.
 
 ---
 
-## 4. Initial trusted delivery scope
+## 4. Trusted delivery scopes and SF4 custody amendment
 
-ORUN needs explicit receipt scopes.
-
-Candidate scopes are:
+ORUN keeps delivery scopes explicit:
 
 1. **RF_RECEIPT** — some receiver heard the frame.
-2. **DURABLE_CUSTODY** — a reviewed downstream custodian durably stored it.
-3. **BACKEND_DURABLE** — the canonical backend durably accepted the observation.
-4. **APPLICATION_DELIVERED** — a family-specific endpoint condition, used by
+2. **DURABLE_GATEWAY_CUSTODY** — an authorized gateway durably committed the
+   observation to its reviewed local custody queue.
+3. **DURABLE_EDGE_CUSTODY** — a phone/Pi/Linux Edge durably committed the
+   observation to its larger local queue.
+4. **BACKEND_DURABLE** — the canonical backend durably accepted the observation.
+5. **APPLICATION_DELIVERED** — a family-specific endpoint condition, used by
    services such as MESSAGE where backend custody alone is insufficient.
 
-For the first tracker POSITION/history store-forward implementation,
-**only authenticated BACKEND_DURABLE evidence may advance tracker durable
-`delivered_through`**.
+SF0-SF3 originally used the conservative rule that only authenticated
+BACKEND_DURABLE evidence could advance tracker delivery state. SF4 intentionally
+changes that product boundary:
 
-A future physically qualified gateway-custody store may later be authorized to
-release tracker history earlier, but gateway RF receipt or volatile RAM custody
-must never do so.
+> After a gateway has durably committed an explicitly identified History
+> observation, a valid authenticated **GATEWAY_CUSTODY_ACK** may release the
+> tracker from further RF replay of that observation.
 
-This conservative first rule permits any compatible gateway path to carry the
-observation and any compatible return path to carry the receipt while avoiding
-data loss when an intermediate gateway disappears before synchronization.
+RF receipt or volatile RAM custody is still insufficient. The ACK is
+authoritative only after the gateway's persistent queue commit is complete. If
+the gateway queue is full, faulted, or the write outcome is unknown, it must not
+ACK and the tracker remains responsible.
 
-**Authority boundary:** a BACKEND_DURABLE receipt is an A2D authority statement
-from the canonical backend side of the per-device security relationship. It must
-authenticate under a reviewed backend-authority A2D context rooted in the
-device's security credential; a gateway must not possess the authority material
-needed to mint this receipt. Delegated gateway grant/frame material
-(`DELEGATED_GW2D` / `K_grant` / delegated `K_frame`) can transport commands
-and may relay opaque receipt bytes, but **must never** authorize advancement of
-History `delivered_through`. The exact compact A2D receipt wire bytes/key label
-remain an SF2 contract.
+This is a **chain-of-custody** transfer, not a claim that the data already
+reached the backend:
+
+```text
+Tracker -> Gateway durable custody -> Edge durable custody -> Backend durable
+```
+
+Each owner may release its own copy/responsibility only after the next owner has
+durably accepted the same logical observation.
+
+BACKEND_DURABLE remains the canonical backend/application fact and keeps the
+existing backend-authority security meaning. A gateway must still never mint a
+BACKEND_DURABLE receipt.
+
+The custody ACK security authority is separate from both backend authority and
+application COMMAND authority. A forged custody ACK could suppress tracker
+replay, so custody ACK requires target/incarnation/record binding,
+authentication, anti-replay/revocation behavior and explicit custody
+authorization. The gateway must not receive tracker `K_root`.
+
+Exact custody wire bytes, security context/key derivation and flash partitioning
+remain unfrozen until SF4 independent review. See
+`ORUN_GATEWAY_DURABLE_CUSTODY.md`.
 
 ---
 
@@ -520,37 +541,33 @@ without an explicit service rule.
 
 ---
 
-## 11. Gateway / backend behavior
+## 11. Gateway / Edge / backend behavior
 
-Any compatible fixed or MOBILE gateway may upload a received observation.
+Any compatible authorized fixed or MOBILE gateway may durably accept a received
+observation. A tracker is not assigned to one gateway.
 
-Gateway/backend ingestion must be idempotent by logical observation identity.
-It should retain per-path reception evidence separately.
+The intended custody chain is:
 
-For the initial BACKEND_DURABLE policy:
+1. gateway receives the HISTORY_SECURE observation;
+2. gateway commits it to its power-cut-safe local custody queue;
+3. only after that commit, gateway may return authenticated
+   GATEWAY_CUSTODY_ACK;
+4. tracker accepts the ACK only after security/identity checks and then stops RF
+   replay for that logical observation;
+5. gateway retains the observation until an Edge durably accepts it;
+6. Edge retains it through Internet outage until backend durable acceptance;
+7. backend ingestion remains idempotent by logical observation identity and
+   retains useful path metadata separately.
 
-1. gateway sends observation plus path metadata to backend;
-2. backend transactionally/durably accepts or recognizes the same observation;
-3. backend creates an authenticated receipt for that logical observation;
-4. the receipt may return through any currently valid gateway/downlink path;
-5. tracker accepts it only if security/identity checks pass and every named
-   identity is an actual retained History record; acceptance feeds the §5
-   bounded RAM acknowledged-ID set.
+A volatile BLE/USB/UART transfer from Gateway to Edge is not durable handoff.
+Likewise a socket/HTTP send from Edge to Backend is not durable acceptance.
 
-An offline gateway may keep opaque observations for later synchronization, but
-its volatile receipt is not enough to advance tracker delivery state.
+Gateway custody is intentionally a short outage bridge. Long-duration buffering
+belongs to Edge storage such as Android SQLite or Pi/Linux disk/database. No
+30-60 day internal RAK gateway buffer is assumed.
 
-This conservative first closure intentionally has a capacity limitation: while
-the backend is unreachable, the tracker continues retaining observations even if
-a gateway has heard or buffered them. If the outage exceeds tracker History
-capacity, today's circular overwrite policy can still lose the oldest
-unconfirmed observations. Product diagnostics must expose that pressure; the
-first BACKEND_DURABLE slice must not claim arbitrary-duration Internet-outage
-retention. A later reviewed and physically qualified DURABLE_CUSTODY path may
-extend that bound without weakening receipt authentication.
-
-Gateway-to-gateway complete-site synchronization is a separate capability and is
-not required for the first store-forward closure.
+Gateway-to-gateway complete-site synchronization remains a separate capability
+and is not required for the first custody closure.
 
 ---
 
@@ -560,12 +577,19 @@ not required for the first store-forward closure.
 Keep the record undelivered. Retry later under bounded policy.
 
 ### Gateway receives then loses Internet
-Keep tracker record undelivered under the initial policy. Gateway may upload
-later.
+If the gateway has **not** durably committed the observation, tracker remains
+responsible. If it has durably committed and its authenticated custody ACK was
+accepted, tracker does not resume that record merely because Internet is down;
+the gateway now retains responsibility until durable Edge handoff.
 
-### Backend stores but receipt is lost
-Tracker may resend the same logical observation. Backend dedupes and returns the
-same delivery fact again.
+### Gateway commits but custody ACK is lost
+Tracker may resend the same logical observation. Gateway dedupes the custody
+record and may reissue the same logical custody fact under a fresh/valid
+transport security attempt as required by the final contract.
+
+### Backend stores but Edge acknowledgement is lost
+Edge retains/retries the same logical observation. Backend dedupes and confirms
+the same durable fact again.
 
 ### Tracker reboots before durable delivery checkpoint
 Previously receipted records after the last checkpoint may replay again. This is
@@ -598,16 +622,17 @@ capacity rotation:
 - never newly admit a missing identity merely to bridge the gap.
 
 If a record had already been explicitly authenticated and admitted into the
-contiguous RAM delivery watermark **before** capacity rotation erased it, that
-durable backend fact remains valid. A later coarse checkpoint may persist that
+contiguous RAM release watermark **before** capacity rotation erased it, that
+trusted durable custody/delivery fact remains valid. A later coarse checkpoint may persist that
 previously validated watermark; this does not retroactively mark any
 intervening unconfirmed/capacity-lost records as delivered. Progress beyond a
 capacity-loss gap requires an explicit authenticated receipt for the oldest
 remaining actual History record.
 
 Product diagnostics must expose overwrite/backlog pressure and distinguish
-confirmed backlog release from capacity overwrite. Increasing retention or
-adding reviewed durable gateway custody is a separate capacity decision.
+confirmed backlog release from capacity overwrite. Increasing tracker retention remains a separate capacity decision; reviewed
+gateway custody instead transfers responsibility earlier and must expose queue
+pressure/backpressure of its own.
 
 ---
 
@@ -650,14 +675,17 @@ Oldest-first replay with the §5 bounded sender policy selected after the §9
 feasibility gate, live/critical priority, retry/backoff, reboot behavior and
 diagnostics.
 
-### SF4 — fixed/MOBILE gateway + backend ingestion
-Idempotent observation ingest, path metadata retention, durable backend receipt
-generation and return through any valid gateway path.
+### SF4 — gateway durable custody + Edge handoff
+SF4A freezes the custody contract. Subsequent slices add the bounded
+power-cut-safe gateway queue, authenticated custody ACK, tracker custody-receipt
+integration, then durable Gateway -> Edge handoff. Exact wire/security/partition
+choices require independent review before runtime activation.
 
-### SF5 — end-to-end physical qualification
-Prove outage -> backlog -> restored path -> duplicate/retry -> receipt ->
-checkpoint across direct and relay paths, tracker/gateway reboot and real
-RAK4630 RF timing.
+### SF5 — backend synchronization + end-to-end physical qualification
+Prove tracker -> gateway durable write -> authenticated custody ACK -> tracker
+replay stop -> gateway reset recovery -> Edge durable handoff -> Internet outage
+-> backend synchronization -> duplicate/retry convergence using real RAK4630 RF
+timing where hardware behavior is claimed.
 
 ---
 
@@ -701,15 +729,21 @@ Host/build PASS alone is not physical store-forward proof.
 
 This document does not claim that:
 
-- backlog replay is implemented today;
-- a production runtime ACK/receipt path is active;
-- TLP v1 provides delivery;
-- gateway durable custody is implemented;
-- backend/mobile synchronization is implemented;
-- History format v3 already has a production-safe incarnation identifier;
-- current four state slots support per-record delivery persistence;
-- any current gateway can erase tracker history merely by receiving a packet.
+- gateway durable custody is implemented today;
+- the SF3 single-device physical qualification proved gateway reception,
+  gateway persistence, custody ACK, Edge handoff or backend ingest;
+- any gateway can stop tracker replay merely by hearing a packet;
+- a GATEWAY_CUSTODY_ACK wire format/security context is frozen;
+- gateway internal-flash queue size/partition ownership has been selected;
+- 30-60 days of buffering belong on the RAK gateway;
+- Edge/mobile/backend synchronization is implemented;
+- current History metadata supports per-record durable delivery writes;
+- TLP v1 provides authenticated delivery.
 
+SF3 device-side HISTORY_SECURE replay is implemented and was physically
+qualified only within that stated single-device evidence boundary.
+
+---
 
 ## 16. Independent audit disposition boundary
 
@@ -745,7 +779,12 @@ Disposition implemented in this revision:
 - **L4** durable receipt facts are not invalidated by wall-clock delay;
 - **L5** authenticated downstream contact/probe semantics defined.
 
-Focused independent final verification returned **PASS WITH MINOR DOC FIX**:
-no BLOCKER/HIGH/MEDIUM remained; R1-R4 were documentation-only consistency
-corrections and are applied in the current branch. No new broad audit round is
-required before merge.
+Focused independent final verification of the original SF0-SF3 contract
+returned **PASS WITH MINOR DOC FIX**: no BLOCKER/HIGH/MEDIUM remained; R1-R4
+were documentation-only consistency corrections.
+
+That audit does **not** approve the later SF4 gateway-custody authority change.
+The SF4 amendment changes who may release tracker replay state and adds a new
+persistent custody owner, so it requires a focused independent
+security/storage/airtime review before custody wire bytes or runtime are
+merged.
