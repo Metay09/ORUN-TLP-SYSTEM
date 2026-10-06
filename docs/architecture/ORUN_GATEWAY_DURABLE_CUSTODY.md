@@ -99,8 +99,10 @@ custody.
 For tracker History, the new owner-approved direction is:
 
 > A valid authenticated GATEWAY_CUSTODY_ACK may release the tracker from further
-> RF replay of the explicitly named logical observation, but only after the
-> gateway has committed that observation to its own reviewed persistent queue.
+> RF replay only when the ACK is unambiguously bound to a custody object that
+> the tracker can map to one exact retained History observation, and only after
+> the gateway has committed that custody object to its reviewed persistent
+> queue.
 
 This intentionally changes the earlier first-slice rule that only
 BACKEND_DURABLE could release tracker History. The old rule remains historical
@@ -115,19 +117,20 @@ security/storage review before production implementation.
 
 The gateway may emit GATEWAY_CUSTODY_ACK only after all of these are true:
 
-1. the received HISTORY_SECURE frame is structurally admissible for custody;
+1. the complete received HISTORY_SECURE frame is structurally admissible for
+   opaque custody;
 2. the gateway has enough durable queue capacity;
-3. the complete custody record has been committed using the reviewed
-   power-cut-safe storage protocol;
-4. the committed record can be recovered as authoritative after reset;
+3. the exact custody object has been committed using the reviewed power-cut-safe
+   storage protocol;
+4. the committed object can be recovered as authoritative after reset;
 5. the ACK can be authenticated as coming from an authorized custody-capable
-   gateway.
+   gateway and is bound to that exact custody object.
 
 The gateway must **not ACK** when the queue is full, faulted, busy beyond the
 admission bound, or the durable write outcome is unknown.
 
-Once the tracker accepts a valid custody ACK for an explicit logical History
-identity:
+Once the tracker accepts a valid custody ACK and can unambiguously map the
+ACKed custody object to one retained logical History identity:
 
 - it stops RF replay of that observation;
 - it may advance its local releasable/delivered prefix according to the
@@ -162,7 +165,7 @@ field collection.
 
 ---
 
-## 5. Stable identity and dedupe
+## 5. Stable identity, opaque custody object and dedupe
 
 The existing logical History observation identity remains:
 
@@ -172,18 +175,51 @@ The existing logical History observation identity remains:
 
 Custody changes ownership of responsibility, not observation identity.
 
+However, the current 73-byte HISTORY_SECURE observation keeps
+`HistoryRecordIdentity` inside authenticated ciphertext. An opaque gateway
+that does not possess tracker `K_root` therefore cannot be required to decrypt
+or even know the logical History identity.
+
+SF4 must distinguish:
+
+```text
+logical observation identity
+!= opaque gateway custody object identity
+```
+
+A candidate custody-object identity may be a cryptographic fingerprint of the
+exact protected frame, or another compact value exposed by a separately
+reviewed wire revision. No algorithm, truncation length or field is frozen by
+this document.
+
+The tracker may release a History record only when it can unambiguously map the
+authenticated custody ACK back to the exact outstanding protected frame for
+that retained record.
+
+For the first custody sender policy, prefer **one distinct protected
+HISTORY_SECURE frame outstanding per retained record attempt** and byte-identical
+RF retransmission of that frame until custody ACK or a bounded attempt reset.
+That provides three useful properties:
+
+- lost ACK -> gateway can recognize the same opaque frame and re-ACK it;
+- retransmission does not burn a fresh D2A security counter every few seconds;
+- gateway can dedupe exact duplicate custody objects without decrypting them.
+
+A reboot may lose that RAM-held protected frame. The tracker may then protect
+the same logical History observation again with a new security counter, producing
+a different opaque custody object. Gateway/Edge may temporarily hold both;
+backend decrypt/dedupe must still collapse them to the same logical observation.
+
 Therefore:
 
-- the same observation through two gateways remains one logical observation;
-- duplicate gateway custody attempts are idempotent;
-- duplicate Edge/backend uploads are idempotent;
-- gateway/edge/backend may retain path metadata separately;
-- a retry or different secure transport counter must never mint another
-  application observation.
-
-A custody ACK must identify the exact logical observation. The final wire may
-also bind a frame fingerprint if required by the security review, but no hash or
-wire field is frozen by this document.
+- the same logical observation through two gateways remains one backend
+  observation;
+- exact duplicate custody objects are idempotent at the gateway;
+- different protected frames for the same logical observation may remain opaque
+  duplicates until a trusted decrypting owner dedupes them;
+- Edge/backend uploads are idempotent by logical observation identity after
+  authentication/decryption;
+- retries never mint a new **application** observation identity.
 
 ---
 
@@ -197,8 +233,9 @@ Required properties:
 - authenticated origin;
 - authorization specifically for **gateway custody**;
 - target tracker binding;
-- History incarnation binding;
-- explicit History record identity binding;
+- binding to the exact opaque custody object being acknowledged;
+- tracker-side unambiguous mapping from that object to one retained History
+  record before release-state mutation;
 - replay/duplication safety;
 - revocation/re-enrollment behavior;
 - no unauthenticated TLP v1 fallback.
@@ -223,16 +260,20 @@ A tracker is not locked to one gateway.
 
 Any currently authorized custody-capable gateway may accept an observation.
 
-If multiple gateways durably store the same observation:
+If multiple gateways durably store the same protected custody object:
 
-- each may independently hold a duplicate custody copy;
-- the tracker may accept the first valid custody ACK;
-- downstream dedupe uses the stable logical observation identity;
+- each may independently hold a copy;
+- the tracker may accept the first valid ACK bound to that object;
+- exact-frame dedupe is possible without decryption;
+- downstream trusted owners still dedupe the logical observation identity;
 - no gateway obtains exclusive ownership of the tracker.
 
-If an ACK is lost, the tracker may replay later. A gateway that already holds
-the observation must treat the duplicate idempotently and may reissue an
-authenticated ACK without creating a second logical queue item.
+If an ACK is lost, the tracker should retransmit the same protected frame during
+the current attempt. A gateway that already holds that exact object treats it
+idempotently and may reissue an authenticated ACK without a second queue item.
+After tracker reboot a newly protected frame for the same logical observation
+may be opaque-distinct and is allowed to coexist until downstream logical
+dedupe.
 
 ---
 
@@ -426,7 +467,9 @@ Before production custody is claimed:
 - queue power-cut/torn-write recovery passes deterministic fault injection;
 - ACK-before-durable-commit is impossible by construction/test;
 - queue-full/fault emits no false ACK;
-- duplicate frame/duplicate ACK behavior is idempotent;
+- byte-identical protected retransmission/duplicate ACK behavior is idempotent;
+- reboot-created opaque duplicates of one logical observation converge safely
+  downstream;
 - unauthorized/forged/replayed ACK causes zero tracker release mutation;
 - gateway reset preserves every ACKed-but-not-yet-handed-off observation;
 - Edge reset preserves every durably accepted-but-not-backend-durable
@@ -447,6 +490,8 @@ This direction does not claim today that:
 
 - gateway durable custody exists in production firmware;
 - any current gateway may stop tracker replay merely by hearing a packet;
+- an opaque gateway can see/decrypt HistoryRecordIdentity in the current
+  HISTORY_SECURE payload;
 - a custody ACK wire format or numeric context is frozen;
 - gateway internal-flash queue size has been selected;
 - 30-60 days of buffering belong on the RAK gateway;
