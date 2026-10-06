@@ -194,9 +194,15 @@ logical observation identity
 ```
 
 A candidate custody-object identity may be a cryptographic fingerprint of the
-exact protected frame, or another compact value exposed by a separately
-reviewed wire revision. No algorithm, truncation length or field is frozen by
-this document.
+**entire exact protected frame** (header + ciphertext + authentication tag), or
+another compact value exposed by a separately reviewed wire revision. Header
+fields, security counter or the 8-byte AEAD tag alone are insufficient because
+an opaque gateway cannot verify them and an attacker could substitute different
+ciphertext while copying visible fields/tag bytes.
+
+The final identifier must have a reviewed collision/second-preimage security
+margin appropriate to adversarial RF input; no algorithm, truncation length or
+wire field is frozen by this document.
 
 The tracker may release a History record only when it can unambiguously map the
 authenticated custody ACK back to the exact outstanding protected frame for
@@ -229,6 +235,38 @@ Therefore:
 
 ---
 
+## 5.1 Tracker release watermark semantics
+
+SF0-SF3 named the durable History state `delivered_through` because only
+BACKEND_DURABLE could advance it. SF4 changes the product meaning: the tracker
+may release RF/storage responsibility earlier on authenticated durable gateway
+custody.
+
+Therefore the conceptual SF4 state is:
+
+```text
+tracker_release_through
+```
+
+It means "the oldest contiguous History prefix for which tracker responsibility
+has been durably transferred", not "backend has stored every record in this
+prefix".
+
+SF4A does **not** silently reinterpret the existing on-flash
+`journal_format::State::delivered_through` bytes. SF4E must make an explicit,
+reviewed implementation decision:
+
+- reuse those bytes as the renamed tracker-release watermark with updated API,
+  diagnostics and migration/compatibility tests; or
+- add a distinct durable state if preserving the old backend-only semantic is
+  required.
+
+Whichever option is selected must preserve the four-state-slot wear invariant,
+must not add per-record writes, and must keep BACKEND_DURABLE separately
+observable downstream.
+
+---
+
 ## 6. Security boundary
 
 A forged custody ACK could make a tracker stop replaying data that no real
@@ -251,10 +289,21 @@ application COMMAND authority.
 
 The gateway must not receive tracker `K_root`.
 
-The existing delegated-gateway security architecture is a candidate foundation,
-but SF4A does not silently reuse `DELEGATED_GW2D`, `K_grant`, command scopes,
-or numeric security-context values. A custody-specific authorization/key/context
-must be independently reviewed before bytes are frozen.
+The existing delegated-gateway security architecture is the preferred
+**authority/enrollment foundation** so ORUN does not create a second unrelated
+gateway permission system. However SF4A must not blindly reuse command-plane
+wire/context/quota details.
+
+In particular, command grant quota values and reserve-ahead policy were designed
+for sparse commands. Custody ACK traffic may occur once per observation and can
+be orders of magnitude more frequent. Reusing command quota/counter persistence
+as-is could exhaust authority or create unacceptable flash wear.
+
+The reviewed custody design should therefore reuse gateway enrollment,
+policy-floor/generation and scoped derivation principles where appropriate, but
+derive a custody-specific capability/key/context and independently size any
+counter/reservation or choose an idempotent object-bound authentication scheme.
+No numeric context, quota, counter block or crypto primitive is frozen here.
 
 No fleet-wide custody secret is introduced.
 
@@ -309,10 +358,13 @@ Before gateway persistence is implemented on RAK4630/nRF52840:
 - define bounded ingress admission by enrolled/expected source plus per-source
   and global rate/capacity limits; visible source fields are useful for
   partitioning/rate limits but are not trusted authentication;
-- ensure unauthenticated traffic cannot force unbounded flash writes, evict
-  already ACKed custody, or consume all custody capacity;
+- ensure unauthenticated traffic cannot force unbounded flash writes or consume
+  unbounded custody capacity;
+- **never evict an ACKed-but-not-yet-durably-handed-off custody object merely
+  to admit newer traffic**; once ACKed, that object is gateway-owned until
+  durable Edge handoff or an explicit catastrophic-storage fault;
 - preserve a fail-safe reserved-capacity/backpressure policy so queue pressure
-  produces no false ACK;
+  refuses new custody and produces no false ACK;
 - review the existing application/geofence/security/config/bond/history layout;
 - preserve DFU/bootloader/framework ownership;
 - calculate firmware growth headroom separately from data-storage headroom;
@@ -334,7 +386,10 @@ where practical. SF4 must not quietly convert the tracker into an always-listeni
 receiver.
 
 Exact ACK turnaround, direct/relay path behavior and retry timing remain
-unfrozen until modeled and measured.
+unfrozen until modeled and measured. The first runtime slice should be
+**direct Tracker -> Gateway custody only** unless a separate relay timing/
+ownership review proves the relayed path; secure relay forwarding is not
+silently activated by SF4.
 
 Required policy direction:
 
@@ -385,7 +440,12 @@ No custody ACK is authoritative. Tracker retains/retries later.
 
 ### Gateway commits, ACK is lost
 
-Tracker may replay. Gateway dedupes and re-ACKs.
+Tracker may replay the same protected custody object. Gateway dedupes and
+re-ACKs. Gateway reboot must not make an already committed object impossible to
+acknowledge: the final ACK-security design must retain/recover enough
+authorization/counter state, or use an idempotent construction, so the gateway
+can safely reissue custody proof after reset without weakening nonce/replay
+rules.
 
 ### Gateway commits and ACK reaches tracker, then Internet disappears
 
@@ -415,7 +475,17 @@ metadata.
 
 ### Malicious/unauthorized ACK
 
-Tracker rejects it with zero delivery-state mutation.
+Tracker rejects it with zero tracker-release mutation.
+
+### Active RF attacker floods structurally valid-looking frames
+
+Because the gateway intentionally remains opaque to the current inner
+HISTORY_SECURE AEAD, it cannot cryptographically distinguish every forged
+candidate before storage. Admission/rate/wear bounds must keep the attack
+finite and must protect previously ACKed custody, but SF4 does **not** claim
+availability against a sustained local RF attacker/jammer. Under pressure the
+safe failure is refusal of new custody ACKs; tracker data remains retained and
+replayed under its bounded policy.
 
 ### Gateway authorization is revoked while offline
 
@@ -489,12 +559,16 @@ Before production custody is claimed:
 - ACK-before-durable-commit is impossible by construction/test;
 - structurally valid unauthenticated RF flood is bounded in RAM/flash wear and
   cannot evict already ACKed custody without explicit loss diagnostics;
-- queue-full/fault emits no false ACK;
+- queue-full/fault emits no false ACK and leaves already ACKed custody intact;
 - byte-identical protected retransmission/duplicate ACK behavior is idempotent;
 - reboot-created opaque duplicates of one logical observation converge safely
   downstream;
 - unauthorized/forged/replayed ACK causes zero tracker release mutation;
-- gateway reset preserves every ACKed-but-not-yet-handed-off observation;
+- custody-object identifier covers the entire exact protected frame and passes
+  adversarial collision/substitution tests;
+- gateway reset preserves every ACKed-but-not-yet-handed-off observation and
+  permits safe re-ACK of committed objects;
+- capacity pressure never evicts ACKed custody before durable Edge handoff;
 - Edge reset preserves every durably accepted-but-not-backend-durable
   observation;
 - backend dedupe converges multiple gateway paths to one logical observation;
