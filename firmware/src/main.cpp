@@ -1716,11 +1716,13 @@ void serviceHistoryReceiptAdmission() {
     case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kWaitingReplay:
     case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kWaitingDelivery:
       break;
-    case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kApplied:
-      Serial.printf("HISTORY receipt applied ack=%lu\n",
-                    static_cast<unsigned long>(
-                        history.acknowledgedThrough()));
+    case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kApplied: {
+      const uint64_t ack = history.acknowledgedThrough();
+      Serial.printf("HISTORY receipt applied ack=%08lX%08lX\n",
+                    static_cast<unsigned long>(uint32_t(ack >> 32)),
+                    static_cast<unsigned long>(uint32_t(ack)));
       break;
+    }
     case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kDuplicateOnly:
       Serial.println(F("HISTORY receipt duplicate"));
       break;
@@ -1731,10 +1733,14 @@ void serviceHistoryReceiptAdmission() {
     case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kDeliveryUnknownIdentity:
     case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kDeliverySetFull:
     case orun_tlp::HistoryReceiptAdmissionCoordinator::ServiceResult::kDeliveryInvariantFailure:
-      Serial.printf("HISTORY receipt delivery rejected result=%u ack=%lu\n",
-                    static_cast<unsigned>(result),
-                    static_cast<unsigned long>(
-                        history.acknowledgedThrough()));
+      {
+        const uint64_t ack = history.acknowledgedThrough();
+        Serial.printf(
+            "HISTORY receipt delivery rejected result=%u ack=%08lX%08lX\n",
+            static_cast<unsigned>(result),
+            static_cast<unsigned long>(uint32_t(ack >> 32)),
+            static_cast<unsigned long>(uint32_t(ack)));
+      }
       break;
   }
 }
@@ -1861,9 +1867,11 @@ void serviceHistoryReplay(uint32_t now_ms) {
     return;
   }
 
-  Serial.printf("HISTORY replay sent id=%lu backlog=%lu\n",
-                static_cast<unsigned long>(record.identity),
-                static_cast<unsigned long>(history.backlogCount()));
+  Serial.printf(
+      "HISTORY replay sent id=%08lX%08lX durable_backlog=%lu\n",
+      static_cast<unsigned long>(uint32_t(record.identity >> 32)),
+      static_cast<unsigned long>(uint32_t(record.identity)),
+      static_cast<unsigned long>(history.backlogCount()));
   scheduleNextHistoryReplay(now_ms);
 }
 
