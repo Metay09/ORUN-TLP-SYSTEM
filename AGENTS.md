@@ -132,9 +132,11 @@ For the owner-approved next custody direction, also read
 `docs/architecture/ORUN_GATEWAY_DURABLE_CUSTODY.md`. It separates
 Tracker -> Gateway -> Edge -> Backend responsibility, requires gateway durable
 commit before custody ACK, and moves long Internet-outage buffering to Edge.
-This SF4 authority/persistence amendment still requires focused independent
-security/storage/airtime review before new custody wire bytes, flash ownership
-or production runtime are authorized. It does not authorize a TLP v1 ACK,
+The first focused independent SF4 audit returned FAIL with
+1 BLOCKER / 4 HIGH / 6 MEDIUM / 5 LOW. The required documentation fixes are
+being applied on the same branch and focused re-verification remains mandatory
+before new custody wire bytes, flash ownership or production runtime are
+authorized. It does not authorize a TLP v1 ACK,
 blind replay of historical POSITION as live data, per-record History metadata
 writes, or delegated-gateway BACKEND_DURABLE authority.
 
@@ -402,7 +404,7 @@ application observation while retaining useful path metadata. `TX_DONE`, relay
 TX completion and ordinary gateway RF receipt are not delivery.
 
 Do not persist a replay cursor or delivered checkpoint after every historical
-packet. History format v3 has only four state slots per active page; per-record
+packet. History format v4 retains only four bounded state slots per active page; per-record
 metadata writes can force destructive metadata-driven page rotation. Initial
 store-forward work must accumulate contiguous authenticated receipt progress in
 RAM and checkpoint durable delivery only at a separately reviewed bounded
