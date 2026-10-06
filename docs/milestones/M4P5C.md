@@ -1,6 +1,6 @@
-# M4P5C — secure History receipt composition seam
+# M4P5C — tracker History store-forward runtime activation
 
-Status: **IMPLEMENTATION IN PROGRESS — NO HISTORY_SECURE RF/RUNTIME ACTIVATION**
+Status: **ACTIVE IMPLEMENTATION / VALIDATION PENDING**
 
 Baseline:
 
@@ -14,202 +14,155 @@ Branch:
 feat/m4p5c-history-receipt-composition
 ```
 
-## 1. Why this slice exists
+## Goal
 
-M7P6I provides the production root-credential History crypto seam.
+Stop accumulating transport-neutral pieces without using them on the device.
 
-M4P5A owns bounded RAM BACKEND_DURABLE delivery facts.
+This slice activates the already-reviewed History store-forward foundations in
+the normal RAK4630 firmware while keeping frozen wire, flash formats and
+security ownership unchanged.
 
-M4P5B enforces:
+Normal production now composes:
 
 ```text
-authenticated receipt
+HistoryStore retained record
+ -> HistorySecureCrypto DEVICE_D2A protection
+ -> RadioManager HISTORY_SECURE TX
+ -> existing post-TX TRACKER RX window
+
+RadioManager raw HISTORY_SECURE RX
+ -> bounded one-frame loop handoff
+ -> HistorySecureCrypto BACKEND_A2D open
+ -> opaque AuthenticatedBackendDurableReceipt
  -> SecurityStore A2D replay admission
  -> accepted == true
- -> M4P5A History delivery
+ -> M4P5A RAM delivery watermark
 ```
 
-Its final independent audit closed the packet/plaintext/credential mix-and-match
-risk by introducing one opaque `AuthenticatedBackendDurableReceipt`.
+## Runtime ownership
 
-The remaining non-blocking evidence gap was that the new opaque
-`HistorySecureCrypto::openBackendDurableReceipt(..., opaque_output)` producer
-had not yet been executed end-to-end into M4P5B. M4P5C closes that seam before
-any RF receive path is activated.
+`RadioManager` owns only SX1262 transport and one bounded raw-frame handoff.
+It does not own crypto, replay admission or History delivery.
 
-## 2. Ownership
+`HistorySecureCrypto` keeps the reviewed root-credential/KDF/AES-CCM
+boundary.
 
-M4P5C adds one narrow transport-neutral owner:
+`HistoryReceiptAdmissionCoordinator` remains the sole consumer of the
+SecurityStore A2D replay result while a receipt is pending.
+
+`HistoryDeliveryCoordinator` remains the bounded RAM delivery owner.
+
+`HistoryStore` remains persistence authority.
+
+Crypto never runs in an RF callback or while RadioManager holds its driver
+gate. RadioManager copies the complete received HISTORY_SECURE frame in loop
+context; the composition root decrypts it only after `RadioManager::update()`
+returns.
+
+## Initial replay policy
+
+This is deliberately conservative until real collision-domain measurements
+exist.
+
+- current/live PositionFlow gets first TX opportunity;
+- an inbound backend receipt gets priority over background replay;
+- relay-forwarding-enabled nodes do not originate backlog replay;
+- selection starts after `HistoryStore::acknowledgedThrough()`, not merely
+  durable `delivered_through`;
+- when no accelerated authenticated-contact policy exists, at most one oldest
+  unacknowledged record is probed every 15 minutes;
+- startup phase is deterministically staggered by device ID over an additional
+  0..5 minute window;
+- `path_flags=0`: this activation is direct only; secure relay forwarding is
+  not enabled;
+- no persistent replay cursor is used.
+
+A failed TX may burn a SecurityStore D2A counter. That is safe; the logical
+History record stays undelivered and is retried later with a fresh counter.
+
+## Receipt behavior
+
+A received frame is retained in the one-frame radio handoff slot while
+SecurityStore/History is transiently busy.
+
+Unprovisioned/fault security cannot authenticate a receipt, so such a frame is
+dropped rather than clogging the handoff slot indefinitely.
+
+Authenticated application delivery still follows the strict order:
 
 ```text
-HistoryReceiptReceiver
+AEAD success
+ -> exact opaque credential/epoch/counter tuple
+ -> durable A2D replay admission
+ -> accepted=true
+ -> M4P5A delivery
 ```
 
-It owns no RF, queue, retry timer, flash format, checkpoint or backend policy.
+No History delivery mutation happens before replay acceptance.
 
-Its dependencies remain the existing domain owners:
+## Persistence boundary
 
-- `HistoryStore` — current History incarnation and retained-record truth;
-- `HistorySecureCrypto` — AEAD authentication/decryption and opaque tuple
-  production;
-- `HistoryReceiptAdmissionCoordinator` — exact SecurityStore anti-replay
-  ordering and M4P5A handoff.
+This slice does **not** add a new durable checkpoint policy.
 
-The transport caller supplies only the complete raw frozen M4P4 frame bytes.
+The current authenticated RAM watermark is honored during the boot, so already
+accepted records are not continuously retransmitted.
 
-It does **not** supply:
+A reboot before a later coarse checkpoint may replay already-delivered records.
+That is safe duplicate work and remains preferable to metadata-driven page
+rotation.
 
-- History incarnation;
-- credential ID;
-- key epoch;
-- security counter;
-- decoded receipt plaintext.
+The existing safe `checkpointAcknowledgedDelivery()` foundation is unchanged
+and no per-record `markDeliveredThrough()` call is introduced here.
 
-## 3. Exact receive sequence
+## Fail-closed activation gates
 
-```text
-raw BACKEND_A2D HISTORY_SECURE frame
- -> read current HistoryStore incarnation
- -> HistorySecureCrypto::openBackendDurableReceipt(...)
- -> AuthenticatedBackendDurableReceipt
- -> HistoryReceiptAdmissionCoordinator::submitAuthenticatedReceipt(...)
- -> SecurityStore::submitAuthenticatedA2dCounter(...)
- -> wait for takeA2dReplayResult()
- -> accepted == true
- -> M4P5A History delivery application
-```
+Normal production runtime is linked and called on every boot, but secure replay
+requires:
 
-The opaque authenticated object is local to the composition method and never
-escapes to the transport caller.
+- HistoryStore ready;
+- SecurityStore ready and PROVISIONED;
+- Bluefruit/CC310 lifecycle ready;
+- radio idle;
+- no higher-priority live PositionFlow work;
+- relay forwarding disabled.
 
-M4P5C does not re-read `currentCredentialId()` and does not directly call
-`submitAuthenticatedA2dCounter()`.
+A blank development device therefore reports the runtime as active but
+security unavailable; it does not transmit unauthenticated History.
 
-## 4. One pending receipt / replay-result ownership
+## Compatibility
 
-Before performing crypto, M4P5C checks the M4P5B pending state.
+Unchanged:
 
-If one receipt already owns the single SecurityStore A2D replay-result channel,
-a second raw frame returns `kBusy` without overtaking the first frame.
+- TLP v1 packet bytes and existing POSITION/RELAY behavior;
+- frozen M4P4 HISTORY_SECURE wire bytes;
+- M7P6I KDF/nonce/AES-CCM contract;
+- SecurityStore format/layout;
+- HistoryStore format/layout;
+- GNSS policy;
+- BLE application policy;
+- existing relay forwarding semantics.
 
-The future transport owner may retry/drop according to its separately reviewed
-bounded receive policy. M4P5C does not add a queue.
+## Not implemented here
 
-## 5. Failure mapping
+- gateway/backend ingestion and receipt generation;
+- secure HISTORY_SECURE relay forwarding;
+- contact-aware fast backlog drain;
+- durable coarse-checkpoint cadence;
+- mobile/backend UI.
 
-Raw-frame submission distinguishes:
+## Validation process
 
-- `kBusy` — existing admitted receipt owns the replay result;
-- `kUnavailable` — History/security/admission owner is temporarily
-  unavailable;
-- `kInvalidFrame` — frozen frame/binding/epoch/incarnation arguments invalid;
-- `kAuthRejected` — authenticated decrypt/tag rejection;
-- `kCryptoEngineError` — CC310/HKDF engine failure;
-- `kInvariantFailure` — successful opaque crypto output unexpectedly fails
-  M4P5B structural admission checks.
+This runtime integration does not require another independent audit round.
 
-None of these failure results advances History delivery state.
+Required before merge:
 
-## 6. Target integration KAT
+1. focused M4P5C vector + active-runtime source-contract gates;
+2. aggregate host regression;
+3. normal RAK4630 production build;
+4. M4P5C target build;
+5. physical normal-firmware boot check showing the store-forward runtime state;
+6. physical scoped target KAT for the crypto/admission chain if needed;
+7. one focused code review of runtime ordering, radio ownership and power/
+   airtime behavior.
 
-A dedicated test-only full-production-graph environment:
-
-```text
-rak4630_m4p5c_history_receipt_probe
-```
-
-runs after `Bluefruit.begin()`, preserving the already-qualified
-Bluefruit/SoftDevice-owned CC310 lifecycle.
-
-The KAT uses only RAM-backed public History/Security test state for the
-composition under test.
-
-It exercises:
-
-1. one real retained History record with identity 1;
-2. public fixed root credential;
-3. independently regenerated 56-byte BACKEND_A2D receipt, counter 1;
-4. real `HistorySecureCrypto` opaque open;
-5. real M4P5B replay submission;
-6. async fresh A2D replay reservation;
-7. no History acknowledgement while replay result is pending;
-8. second-frame busy guard;
-9. accepted replay -> M4P5A RAM acknowledgement;
-10. forged-tag rejection with zero additional History effect;
-11. valid duplicate counter rejection with zero additional History effect.
-
-The frozen receipt vector is independently regenerated by:
-
-```text
-firmware/tests/m4/test_m4p5c_history_receipt_vector.py
-```
-
-## 7. Inherited replay-reboot arithmetic
-
-M4P5C does not add a new reboot policy. The already-reviewed M4P5B /
-SecurityStore rule remains:
-
-```text
-fresh receipt counter 1
- -> A2D exclusive durable bound 8
- -> reboot recovery HWM = 7
- -> first fresh admissible counter = 8
-```
-
-This is documentation of the existing reviewed block-8 behavior, not new
-physical power-cut evidence.
-
-## 8. Hard non-goals
-
-M4P5C does **not**:
-
-- add a normal production caller in `main.cpp`;
-- modify `RadioManager` or `NetworkService`;
-- accept `HISTORY_SECURE` from LoRa in normal runtime;
-- send historical observations;
-- enable HISTORY_SECURE relay forwarding;
-- choose sender retry/backoff/contact timers;
-- add a receive queue;
-- write a durable History delivery checkpoint;
-- call `markDeliveredThrough()`;
-- persist replay cursor state;
-- add gateway/backend/mobile runtime;
-- change SecurityStore or History flash formats;
-- change TLP v1 bytes;
-- change frozen M4P4 wire bytes;
-- change GNSS, BLE or power policy.
-
-The test-only probe macro in `main.cpp` does not activate in the normal
-`rak4630` environment.
-
-## 9. Validation plan
-
-Before merge:
-
-1. focused host vector + source-contract gates;
-2. complete aggregate host regression;
-3. normal `rak4630` production build;
-4. `rak4630_m4p5c_history_receipt_probe` target build;
-5. physical probe upload and serial KAT on the RAK4631 development unit;
-6. independent focused audit of the exact final head.
-
-Physical probe PASS, if obtained, proves only the scoped target composition KAT.
-It is not RF, range, gateway/backend, outage-recovery, electrical power-cut,
-brownout or store-forward end-to-end proof.
-
-## 10. Next boundary
-
-After M4P5C closes, the next separate slice may wire reviewed
-`HISTORY_SECURE` receive dispatch into the radio owner.
-
-That future slice must separately address:
-
-- RadioManager single-owner/callback handoff;
-- TRACKER receive-window timing;
-- frame-size admission;
-- live/critical priority;
-- relay/mixed-fleet behavior;
-- malformed/auth-failure diagnostics;
-- no blocking crypto inside radio callbacks.
-
-M4P5C intentionally stops before that boundary.
+Host/build PASS is not physical RF or end-to-end backend proof.
