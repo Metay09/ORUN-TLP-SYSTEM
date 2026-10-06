@@ -476,6 +476,37 @@ allocate v2 bytes or authorize secure-RF runtime. See
 `docs/milestones/M7P6D.md` for exact byte-domain definitions and deferred
 items.
 
+#### SF4 immutable store-forward observation exception
+
+The generic M7P6D rule above allows a bounded backend D2A sliding replay window
+and accepts only the current epoch unless a reviewed grace protocol says
+otherwise. That generic rule is **not sufficient** once a tracker is allowed to
+transfer responsibility to durable Gateway/Edge custody before backend ingest.
+
+For the frozen HISTORY_SECURE **DEVICE_D2A immutable observation family only**,
+SF4 requires this reviewed exception before custody can release tracker data:
+
+- successful AEAD authentication under the credential/epoch that protected the
+  object remains mandatory;
+- a valid observation is not rejected merely because its D2A security counter
+  lies behind the backend's ordinary bounded reordering window;
+- repeated old frames are idempotently deduplicated by the decrypted stable
+  History observation identity and may be rate-limited/recorded as abuse;
+- retired credential/epoch D2A key material is retained **decrypt-only** while
+  any authorized Gateway/Edge custody from that lifetime can remain unresolved;
+- key destruction waits for durable closure/synchronization of those custody
+  owners, or an explicit operator recovery decision that accepts the associated
+  data-loss risk.
+
+This is a narrow store-forward ingestion exception. It does **not** relax replay,
+freshness, epoch or idempotency rules for commands, configuration mutations,
+actuation, RESULT processing or other side-effecting families. It also does not
+authorize an old credential/epoch to originate new traffic after retirement.
+
+The exact backend old-key retention representation and custody-closure
+bookkeeping are SF4 backend/security implementation work; they must be reviewed
+before tracker-release-on-custody is activated.
+
 ### Later secure-envelope implementation milestone
 
 After M7P6D review and the required CryptoCell/Bluefruit coexistence proof,
