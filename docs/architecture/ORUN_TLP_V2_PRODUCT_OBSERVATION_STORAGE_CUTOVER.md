@@ -115,6 +115,11 @@ The durable tracker store owns product observations. TLP v2 owns protected
 transport. A future wire-format change must not require reinterpreting the
 tracker's durable product facts merely because transport framing changes.
 
+This separation does not waive the end-to-end custody requirement: if a custody
+ACK is bound to one exact protected object, the tracker must retain/reconstruct
+whatever transport state is required to validate that exact ACK safely until
+responsibility transfers.
+
 ---
 
 ## 4. Tracker durable-data policy
@@ -158,19 +163,29 @@ The 256 KiB region has exactly one owner in one concrete product profile.
 
 For an animal tracker it is the future ObservationStore.
 
-For a Gateway-only custody product/profile the same physical budget may be used
-by CustodyStore.
+For a device that owns only Gateway custody in the selected product
+configuration, the same physical budget may be used by CustodyStore.
 
-Independent ObservationStore and CustodyStore instances must never both believe
-they own the same pages. A future combined tracker+gateway product must receive
-an explicit ownership/layout review rather than a hidden Role-based split or
-generic allocator.
+ORUN also explicitly allows tracking/sensing and Gateway bridging capability to
+coexist on one physical node. That combined case is not a new Role and is not a
+speculative corner case. Before SF5D freezes a physical owner/layout, it must
+therefore define how one such device can durably own both its **own product
+observations** and **foreign opaque custody** without two independent stores
+writing the same pages and without silently reducing either product guarantee.
+
+Until that focused ownership decision is made, ObservationStore and CustodyStore
+must never both believe they own the same physical pages. Do not select the
+owner by legacy Role and do not add a generic allocator merely to avoid making
+the explicit product decision.
 
 ---
 
 ## 5. Periodic observation cadence
 
-Normal durable-record cadence follows the configured report/tracking period.
+Normal durable-record cadence follows the **effective report period actually
+selected by Tracking policy for that interval**. This may be the configured base
+cadence or a separately reviewed adaptive cadence such as the existing geofence
+OUTSIDE policy; an old record is never reinterpreted after policy/config changes.
 
 Examples:
 
@@ -259,6 +274,13 @@ before depending on RF delivery of that RESULT.
 
 A duplicate command must not repeat a side effect merely because the previous
 RESULT was lost.
+
+Unauthenticated, malformed or replay-rejected command traffic must not be able to
+fill the tracker durable-data store with RESULT records. Authentication,
+authorization/replay and command admission happen before a durable application
+RESULT is created for legitimate traffic. A valid authenticated command may
+still produce a durable application rejection RESULT when the application
+contract requires one.
 
 Config mutation continues to obey the separately reviewed ConfigStore state-token
 /CAS contract.
@@ -398,6 +420,16 @@ Relevant existing invariants include:
 
 Exact new application-family numeric allocations, plaintext layouts, tag/header
 composition and custody-ACK bytes require their own focused wire/security slice.
+
+SF5B must also close the **retransmission identity** question created by opaque
+custody. A Gateway may acknowledge only an exact durably committed protected
+object, while a tracker ObservationStore owns the logical product observation.
+After retry/reset, the tracker must never reuse an AEAD nonce/counter
+unsafely or accidentally turn one logical observation into an unbounded stream
+of distinct opaque custody objects. SF5B/SF5C must explicitly define whether
+the exact protected object is durably retained, deterministically reconstructable
+from separately durable state, or intentionally re-protected under a new
+counter with bounded duplicate semantics. Do not assume these are equivalent.
 
 ---
 
