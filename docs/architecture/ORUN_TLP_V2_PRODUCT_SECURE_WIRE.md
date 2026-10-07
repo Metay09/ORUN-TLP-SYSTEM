@@ -141,6 +141,14 @@ tag  = 8 bytes
 The device uses the existing durable D2A counter allocator. A returned counter
 is never put back into the pool.
 
+For PRODUCT_SECURE profile 0x01:
+
+- `key_epoch == UINT32_MAX` is invalid;
+- `security_counter == 0` is invalid;
+- the protected frame's epoch must match the credential/counter epoch used by
+  the security owner;
+- a decoded visible header never advances epoch/counter state by itself.
+
 The same exact protected frame may be retransmitted byte-for-byte. Changed AAD
 or plaintext requires a fresh security counter.
 
@@ -798,8 +806,8 @@ ack_info =
   || device_id_be64
   || key_epoch_be32
   || gateway_device_id_be64
-  || gateway_policy_floor_be32
-  || gateway_grant_generation_be32
+  || custody_policy_floor_be32
+  || custody_grant_generation_be32
 
 K_custody_ack =
   HKDF-Expand(
@@ -845,8 +853,8 @@ off size field
 4   8    tracker_device_id
 12  8    gateway_device_id
 20  4    key_epoch
-24  4    gateway_policy_floor
-28  4    gateway_grant_generation
+24  4    custody_policy_floor
+28  4    custody_grant_generation
 32  8    object_ref
 
 40  16   hmac_tag
@@ -877,29 +885,88 @@ hmac_tag = first 16 bytes of full_mac
 The 128-bit truncated HMAC is the ACK authenticator. The 8-byte object_ref is not
 used as a substitute for HMAC verification.
 
-### 12.4 Tracker ACK acceptance
+### 12.4 Tracker custody-authority state
+
+Custody authority uses the existing gateway-enrollment/security authority
+foundation but has its **own persistent capability state**. It does not consume
+or alias the delegated COMMAND replay slots, quota, HWM or grant generation.
+
+The tracker durably owns:
+
+```text
+custody_policy_floor : u32
+
+custody_gateway_slot[]:
+    gateway_device_id          : u64
+    custody_grant_generation   : u32
+```
+
+Initial product bound:
+
+> At most **4 simultaneously custody-capable gateways per tracker**.
+
+This is a separate bounded slot set from the maximum four command-capable
+delegated gateways. One physical Gateway may hold both capabilities, but the two
+authorities remain independently provisioned/revoked.
+
+Rules:
+
+- `custody_policy_floor == UINT32_MAX` is invalid;
+- `custody_grant_generation` is non-zero and not `UINT32_MAX`;
+- an ACK's `custody_policy_floor` must equal the tracker's current durable
+  custody floor exactly;
+- an ACK's `custody_grant_generation` must equal the current durable
+  generation in the matching custody slot exactly;
+- a lower floor/generation is stale and rejected;
+- a higher floor/generation is also rejected until a separately authenticated
+  policy/enrollment update has been durably applied;
+- an ACK is never itself authority to advance floor, install a Gateway, or bump
+  generation;
+- removing a custody slot, replacing its generation, or advancing the custody
+  floor becomes authoritative only after that policy change is durably committed
+  under the security owner.
+
+Therefore re-enrollment from generation N to N+1 does not make N+1 ACKs valid
+until the tracker has learned/committed that update, and once it has committed
+the update, generation N ACKs are rejected.
+
+Revocation has the SF4 boundary: before the tracker learns a revocation/floor
+advance, the previously valid enrolled Gateway remains a data-loss trust anchor;
+after the durable policy update, new ACKs under the old slot/floor are rejected.
+Previously held opaque objects may still be forwarded downstream and authenticated
+there.
+
+The exact on-flash SecurityStore-v3 encoding and authenticated policy-update
+transport are later implementation slices. **Production custody ACK acceptance
+is blocked until this independent custody authority state exists.** It must not
+be synthesized from command-plane replay slots.
+
+### 12.5 Tracker ACK acceptance
 
 Tracker accepts an ACK only if:
 
-1. bounded length/version/type/reserved flags are valid;
+1. exact 56-byte length/version/type/reserved flags are valid;
 2. `tracker_device_id` is local;
-3. key epoch/policy floor/grant generation identify a currently acceptable
-   custody authority;
-4. gateway ID is an authorized custody-capable Gateway for that generation;
-5. one bounded outstanding exact object matches `object_len + object_ref`;
-6. tracker recomputes the **full** SHA-256 digest of that exact object;
-7. HMAC verifies under the matching `K_custody_ack`;
-8. the ACK maps unambiguously to one retained logical record;
-9. release-state mutation is durably admitted under SF5C rules.
+3. `key_epoch` matches the current accepted credential epoch and is not
+   `UINT32_MAX`;
+4. `custody_policy_floor` exactly equals the durable local custody floor;
+5. a separate custody slot exists for `gateway_device_id` and its durable
+   `custody_grant_generation` exactly matches the ACK;
+6. one bounded outstanding exact object matches `object_len + object_ref`;
+7. tracker recomputes the **full** SHA-256 digest of that exact object;
+8. HMAC verifies under the `K_custody_ack` derived from the durable local
+   custody authority tuple, not blindly from untrusted ACK fields;
+9. the ACK maps unambiguously to one retained logical record/result;
+10. release-state mutation is durably admitted under SF5C rules.
 
 If zero candidates or more than one candidate remain after full verification,
 release fails closed.
 
 Replaying the same valid ACK is idempotent and consumes no ACK counter.
 
-A compromised enrolled custody Gateway can still ACK and then discard data.
-That is the already documented custody trust-anchor risk; cryptography cannot
-prove honest flash behavior after enrollment.
+A compromised currently enrolled custody Gateway can still ACK and then discard
+data. That is the documented custody trust-anchor risk; cryptography cannot prove
+honest flash behavior after enrollment.
 
 ---
 
@@ -1286,7 +1353,14 @@ Before crypto:
 - reserved bytes/bits;
 - supported context/family/profile;
 - family exact ciphertext length;
-- basic public identity/epoch/counter bounds.
+- PRODUCT_SECURE `key_epoch != UINT32_MAX`;
+- PRODUCT_SECURE `security_counter >= 1`;
+- GATEWAY_CUSTODY_ACK `key_epoch != UINT32_MAX`;
+- GATEWAY_CUSTODY_ACK `custody_policy_floor != UINT32_MAX`;
+- GATEWAY_CUSTODY_ACK `custody_grant_generation != 0` and
+  `!= UINT32_MAX`;
+- public identity/length bounds used only for routing/candidate lookup until
+  authentication succeeds.
 
 After successful crypto:
 
