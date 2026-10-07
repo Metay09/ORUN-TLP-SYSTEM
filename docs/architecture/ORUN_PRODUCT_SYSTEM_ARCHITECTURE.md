@@ -330,6 +330,11 @@ and clear/update semantics.
 
 Critical event traffic has higher QoS than routine history or messaging.
 
+An open EVENT occurrence is application control state, not merely a historical
+row. The minimum state needed to preserve the occurrence identity through reset
+and later emit the matching CLEARED transition must be durably owned and must
+not disappear merely because historical backlog rotates.
+
 ### 5.6 Geofence / LOST
 
 Geofence evaluation remains local where safety/value requires offline behavior.
@@ -384,6 +389,10 @@ Side-effecting commands require:
 - idempotency/CAS;
 - durable application ownership;
 - authenticated RESULT.
+
+Durable RESULT ownership is for the logical command outcome, not one new
+persistent record per cryptographic retry. Authenticated retries must remain
+bounded and must not create a flash-amplification path.
 
 ### 5.9 Health / Diagnostics
 
@@ -514,6 +523,9 @@ The same logical message keeps one application identity across route changes.
 Current reference behavior remains private LoRa P2P.
 
 Current validated TLP v1 one-hop behavior remains frozen in the current runtime.
+The current tracker runtime also includes provisioned SF3 **TLP v2
+HISTORY_SECURE** replay from the legacy HistoryStore; the system is therefore not
+"v1 only".
 
 The owner-approved SF5 direction
 (`ORUN_TLP_V2_PRODUCT_OBSERVATION_STORAGE_CUTOVER.md`) is now the explicit
@@ -599,6 +611,12 @@ requires an explicit owner, reset policy, power-cut invariant, wear budget and
 partition review before implementation.
 
 Do not share pages casually between services.
+
+A profile/capability change is not storage migration authority. If a physical
+region changes durable owner, the transition must be explicit: unresolved
+custody/data responsibility is drained or deliberately abandoned under an
+operator-visible destructive re-baseline before a new owner may format/reuse the
+region.
 
 ---
 
