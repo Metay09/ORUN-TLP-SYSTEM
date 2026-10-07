@@ -191,6 +191,12 @@ g++ "${portable_flags[@]}" \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m4p5a_history_delivery_coordinator"
 "$test_dir/m4p5a_history_delivery_coordinator"
+g++ "${portable_flags[@]}" firmware/tests/sf4/test_sf4b_custody_store.cpp \
+  firmware/src/custody_store.cpp firmware/src/custody_store_format.cpp \
+  -o "$test_dir/sf4b_custody_store"
+"$test_dir/sf4b_custody_store"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf4/test_sf4b_capacity_model.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf4/test_sf4b_source_contract.py
 g++ -DORUN_M4P5B_HOST_TEST=1 "${portable_flags[@]}" \
   firmware/tests/m4/test_m4p5b_history_receipt_admission.cpp \
   firmware/src/history_receipt_admission.cpp \
