@@ -351,6 +351,13 @@ traffic as the **new production target**. Read
 `docs/milestones/SF5.md` before changing tracker observation/history protocol or
 persistence.
 
+The current SF5B branch also contains the **candidate, not-yet-approved** exact
+product wire/security proposal in
+`docs/architecture/ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md` and
+`docs/milestones/SF5B.md`. Treat those bytes/IDs/security choices as review
+material only until the independent SF5B security/protocol audit closes. Do not
+implement codecs or runtime from that candidate prematurely.
+
 Until the explicit SF5 runtime cutover is implemented and validated, preserve
 the **current production runtime paths** and their evidence boundary:
 
