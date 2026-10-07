@@ -1,6 +1,6 @@
 # SF4B — Gateway CustodyStore persistence foundation
 
-Status: **POST-AUDIT FIXES IN PROGRESS — independent audit on `ea1085f132e6434b77e19de8fc49ec4337839861` returned FAIL (1 BLOCKER / 2 HIGH / 3 MEDIUM / 6 LOW). Format/store v2 fixes are now implemented on-branch; fresh aggregate host validation, RAK4630 build and independent re-audit are pending. No physical gateway partition/runtime is allocated or activated.**
+Status: **POST-AUDIT SOFTWARE VALIDATION PASS — independent audit on `ea1085f132e6434b77e19de8fc49ec4337839861` returned FAIL (1 BLOCKER / 2 HIGH / 3 MEDIUM / 6 LOW). Format/store v2 fixes are implemented; fresh aggregate host validation PASS and fresh normal RAK4630 production build PASS. Independent re-audit remains pending. No physical gateway partition/runtime is allocated or activated.**
 
 Baseline: `main@6fc9669837563e4acd297c5cc519bb5e52fa8b0f` (SF4A merged via PR #79).
 Branch: `feat/sf4b-gateway-custody-store-foundation`.
@@ -337,14 +337,23 @@ The current branch contains the corresponding format-v2/store/test/model fixes.
 Detailed disposition is recorded in
 `docs/audits/SF4B_GATEWAY_CUSTODY_STORE_AUDIT_DISPOSITION.md`.
 
+Fresh post-audit owner evidence:
+
+```text
+aggregate host suite: PASS
+RAK4630 normal build: PASS
+RAM:   29,536 / 248,832 = 11.9%
+Flash: 285,924 / 815,104 = 35.1%
+```
+
+The normal production footprint remains unchanged, consistent with CustodyStore
+still being unwired and linker-dead in production.
+
 Remaining gates:
 
-1. fresh aggregate host suite on the exact post-fix head;
-2. fresh normal `rak4630` production build because production source/header
-   code changed;
-3. independent focused re-audit of the exact validated head;
-4. fix any real residual findings and rerun affected gates;
-5. merge only after the independent gate closes.
+1. independent focused re-audit of the exact validated head;
+2. fix any real residual findings and rerun affected gates;
+3. merge only after the independent gate closes.
 
 No physical hardware test is required for this portable/no-partition slice.
 Physical flash qualification belongs to the later slice that selects and wires
