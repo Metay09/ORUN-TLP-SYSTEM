@@ -1,6 +1,6 @@
 # SF4B — Gateway CustodyStore persistence foundation
 
-Status: **IN PROGRESS — portable format/store and focused host tests added; aggregate host regression, RAK4630 build and independent audit pending. No physical gateway partition/runtime is allocated or activated.**
+Status: **SOFTWARE VALIDATION PASS — portable CustodyStore/format host foundation implemented; aggregate host regression PASS and normal RAK4630 production build PASS. Independent audit remains pending. No physical gateway partition/runtime is allocated or activated.**
 
 Baseline: `main@6fc9669837563e4acd297c5cc519bb5e52fa8b0f` (SF4A merged via PR #79).
 Branch: `feat/sf4b-gateway-custody-store-foundation`.
@@ -231,19 +231,49 @@ a separate gate.
 `test_sf4b_source_contract.py` locks the no-partition/no-runtime activation
 boundary. `test_sf4b_capacity_model.py` locks the capacity/wear arithmetic.
 
-Focused standalone C++ host compilation of the candidate files with
-`-Wall -Wextra -Werror` + ASan/UBSan passed during development. This is not yet
-aggregate repository evidence.
+The aggregate host suite now compiles the SF4B CustodyStore test under
+GNU++11, matching the RAK4630 Arduino target language level instead of relying
+only on the repository's C++17 portable-test flags. This permanently covers the
+C++11 aggregate-initialization mismatch that the first RAK4630 build exposed.
+
+### 8.1 Software validation evidence
+
+Exact aggregate-host-tested branch head:
+
+```text
+7431129718e7d0955c0693514d22608607d0b357
+```
+
+`./firmware/tests/run_host_tests.sh`: **PASS** with the SF4B
+CustodyStore, capacity/wear and source-ownership tests included. The suite uses
+strict warnings and ASan/UBSan on the applicable host targets.
+
+The normal RAK4630 production image was built successfully on code-equivalent
+firmware head:
+
+```text
+7f7053dcda7c9dc88064e7a3d357dabf9f550d33
+```
+
+The only later change through `7431129...` was the host-test compile flag for
+SF4B; production source was unchanged.
+
+```text
+RAM:   29,536 / 248,832 bytes = 11.9%
+Flash: 285,924 / 815,104 bytes = 35.1%
+rak4630: SUCCESS
+```
+
+This matches the pre-SF4B normal production footprint, consistent with
+CustodyStore remaining unwired and linker-dead in production. Build/host PASS is
+software evidence only; no physical custody flash behavior is claimed.
 
 ## 9. Remaining gates before SF4B merge
 
-1. run the complete aggregate host suite with the SF4B tests now integrated into
-   `firmware/tests/run_host_tests.sh`;
-2. run the normal `rak4630` production build and confirm no partition/runtime
-   activation and no unexpected footprint/layout regression;
-3. run independent Astra review of the exact branch head;
-4. apply real findings and rerun validation;
-5. merge only after the focused independent gate closes.
+1. run independent Astra review of the exact final branch head;
+2. apply any real findings and rerun affected focused + aggregate validation;
+3. rerun the normal RAK4630 build if production source/header code changes;
+4. merge only after the independent focused gate closes.
 
 No physical hardware test is required for this portable/no-partition slice.
 Physical flash qualification belongs to the later slice that selects and wires
