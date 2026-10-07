@@ -701,6 +701,185 @@ static void testUnsupportedAndCommittedCorruptionFailClosed() {
   }
 }
 
+static void testIntentSlotsExhaustedIsPersistentAndFailSafe() {
+  FakeFlash flash(2);
+  CustodyStore store(flash, 2);
+  TwoPageFixture fixture(flash, store);
+  fixture.buildReclaimableFirstPage();
+
+  for (unsigned attempt = 0; attempt < csf::kIntentSlotsPerPage; ++attempt) {
+    flash.setPartialProgram(flash.program_calls + 1U);
+    assert(store.requestMaintenance() ==
+           CustodyStore::MaintenanceResult::kStarted);
+    settle(store);
+    bool success = true;
+    assert(store.takeMaintenanceResult(success) && !success);
+    assert(!store.faulted());
+  }
+
+  assert(store.requestMaintenance() ==
+         CustodyStore::MaintenanceResult::kIntentSlotsExhausted);
+
+  // Consume the remaining append capacity. The old page is reclaimable and
+  // nearly everything is already handed off, but exhausted intent slots are
+  // deliberately a persistent fail-safe state in the SF4B foundation.
+  for (uint32_t i = 0; i < csf::kRecordsPerPage - 1U; ++i) {
+    uint8_t object[csf::kObjectSize];
+    makeObject(static_cast<uint8_t>(100U + i), object);
+    const CustodyStore::Handle h = storeOne(store, object);
+    handoffOne(store, h, object);
+  }
+
+  assert(held(store) == 1U);
+  uint8_t extra[csf::kObjectSize];
+  makeObject(249, extra);
+  assert(store.requestCustody(extra, sizeof(extra)) ==
+         CustodyStore::AdmissionResult::kNoCapacity);
+  assert(store.requestMaintenance() ==
+         CustodyStore::MaintenanceResult::kIntentSlotsExhausted);
+
+  CustodyStore reboot(flash, 2);
+  assert(reboot.begin() && !reboot.faulted());
+  assert(reboot.requestCustody(extra, sizeof(extra)) ==
+         CustodyStore::AdmissionResult::kNoCapacity);
+  assert(reboot.requestMaintenance() ==
+         CustodyStore::MaintenanceResult::kIntentSlotsExhausted);
+}
+
+static void testDoubleTornHandoffExhaustionStaysHeld() {
+  FakeFlash flash(2);
+  CustodyStore store(flash, 2);
+  assert(store.begin());
+  prepareOne(store);
+
+  uint8_t object[csf::kObjectSize];
+  makeObject(52, object);
+  const CustodyStore::Handle h = storeOne(store, object);
+
+  for (unsigned attempt = 0; attempt < csf::kRecordHandoffSlots; ++attempt) {
+    flash.setPartialProgram(flash.program_calls + 1U);
+    assert(store.requestMarkEdgeDurableAccepted(h, object, sizeof(object)));
+    settle(store);
+    bool success = true;
+    assert(store.takeHandoffResult(success) && !success);
+    assert(!store.faulted());
+    assert(held(store) == 1U);
+  }
+
+  assert(!store.requestMarkEdgeDurableAccepted(h, object, sizeof(object)));
+  assert(store.diagnostics().handoff_marker_exhausted == 1U);
+
+  CustodyStore::Handle oldest;
+  uint8_t oldest_object[csf::kObjectSize];
+  assert(store.oldestHeld(oldest, oldest_object) ==
+         CustodyStore::HeldLookupResult::kFound);
+  assert(oldest.page == h.page && oldest.slot == h.slot &&
+         oldest.page_generation == h.page_generation);
+  assert(memcmp(oldest_object, object, sizeof(object)) == 0);
+}
+
+static void testTornCompletionWordNeverRegainsEraseAuthority() {
+  FakeFlash flash(2);
+  CustodyStore store(flash, 2);
+  TwoPageFixture fixture(flash, store);
+  fixture.buildReclaimableFirstPage();
+
+  // Intent body, intent commit, header body, header commit, completion word:
+  // completion is the fifth program operation in this maintenance transaction.
+  flash.setPartialProgram(flash.program_calls + 5U);
+  assert(store.requestMaintenance() ==
+         CustodyStore::MaintenanceResult::kStarted);
+  settle(store);
+
+  bool success = true;
+  assert(store.takeMaintenanceResult(success) && !success);
+  assert(!store.faulted());
+  assert(store.hasPreparedPage());
+  assert(store.diagnostics().reclaim_intent_partial_completions >= 1U);
+
+  CustodyStore reboot(flash, 2);
+  assert(reboot.begin() && !reboot.faulted());
+  assert(reboot.hasPreparedPage());
+  assert(held(reboot) == 1U);
+
+  uint8_t next[csf::kObjectSize];
+  makeObject(223, next);
+  (void)storeOne(reboot, next);
+  assert(held(reboot) == 2U);
+}
+
+static void testPartialActivationIsRepairable() {
+  FakeFlash flash(2);
+  CustodyStore store(flash, 2);
+  assert(store.begin());
+  prepareOne(store);
+
+  uint8_t object[csf::kObjectSize];
+  makeObject(71, object);
+  flash.setPartialProgram(flash.program_calls + 1U);
+  assert(store.requestCustody(object, sizeof(object)) ==
+         CustodyStore::AdmissionResult::kStarted);
+  settle(store);
+
+  bool success = true;
+  CustodyStore::Handle h;
+  assert(store.takeCustodyResult(success, h) && !success);
+  assert(!store.faulted());
+
+  assert(store.requestMaintenance() ==
+         CustodyStore::MaintenanceResult::kStarted);
+  settle(store);
+  success = false;
+  assert(store.takeMaintenanceResult(success) && success);
+  assert(store.hasPreparedPage());
+}
+
+static void testCommittedCorruptIntentFailsClosed() {
+  FakeFlash flash(2);
+
+  uint8_t header[csf::kPageHeaderSize];
+  csf::encodePageHeader(1U, header);
+  csf::put32(header + csf::kPageHeaderActiveOffset, 0U);
+  memcpy(flash.bytes.data(), header, sizeof(header));
+
+  csf::encodePageHeader(2U, header);
+  csf::put32(header + csf::kPageHeaderActiveOffset, 0U);
+  memcpy(flash.bytes.data() + csf::kPageSize, header, sizeof(header));
+
+  uint8_t intent[csf::kIntentSlotSize];
+  csf::encodeReclaimIntent(0U, 1U, intent);
+  intent[csf::kIntentCrcOffset] ^= 0x01U;
+  memcpy(flash.bytes.data() + csf::kPageSize + csf::kIntentAreaOffset,
+         intent, sizeof(intent));
+
+  CustodyStore store(flash, 2);
+  assert(store.begin() && store.faulted());
+  assert(store.requestMaintenance() ==
+         CustodyStore::MaintenanceResult::kRejected);
+}
+
+static void testAsyncFailureWithUnreconciledMutationFaultsClosed() {
+  FakeFlash flash(2);
+  flash.async_mode = true;
+  flash.async_polls = 1;
+  CustodyStore store(flash, 2);
+  assert(store.begin());
+
+  assert(store.requestMaintenance() ==
+         CustodyStore::MaintenanceResult::kStarted);
+  store.poll();  // submit header body; backend now owns a pending mutation
+  assert(store.busy());
+
+  flash.setFailAfterApplyProgram(flash.program_calls);
+  flash.unreconciled = true;
+  settle(store);
+
+  bool success = true;
+  assert(store.takeMaintenanceResult(success) && !success);
+  assert(store.faulted());
+  assert(store.diagnostics().unreconciled_mutation_faults == 1U);
+}
+
 static void testGenerationBoundaryAndStaleHandle() {
   {
     FakeFlash flash(2);
@@ -750,6 +929,12 @@ int main() {
   testReadFailureRejectsDuplicateLookup();
   testUnreconciledBeginFailsClosed();
   testUnsupportedAndCommittedCorruptionFailClosed();
+  testIntentSlotsExhaustedIsPersistentAndFailSafe();
+  testDoubleTornHandoffExhaustionStaysHeld();
+  testTornCompletionWordNeverRegainsEraseAuthority();
+  testPartialActivationIsRepairable();
+  testCommittedCorruptIntentFailsClosed();
+  testAsyncFailureWithUnreconciledMutationFaultsClosed();
   testGenerationBoundaryAndStaleHandle();
   puts("SF4B CustodyStore v2 recovery/power-cut/audit-regression checks: PASS");
   return 0;
