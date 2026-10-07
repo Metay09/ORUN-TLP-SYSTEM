@@ -51,7 +51,8 @@ receipt time.
 
 ## 3. PERIODIC_OBSERVATION
 
-One record represents one configured report period.
+One record represents one **effective report period actually selected by
+Tracking policy**.
 
 Required semantic fields:
 
@@ -109,11 +110,13 @@ are not durable product records.
 Invariant:
 
 ```text
-coverage_seconds + unknown_seconds <= period_duration_seconds
+coverage_seconds + unknown_seconds == period_duration_seconds
 ```
 
-and any classified-duration breakdown introduced later must not claim more
-covered time than `coverage_seconds`.
+for a finalized periodic record. Any interval not backed by usable activity
+evidence is `unknown`; there is no third implicit duration bucket that can hide
+reset/sampling gaps. Any classified-duration breakdown introduced later must not
+claim more covered time than `coverage_seconds`.
 
 ### 3.4 Battery
 
@@ -185,6 +188,15 @@ for one occurrence refer to the same occurrence identity. If the condition later
 becomes active again after a real clear, that is a new occurrence and receives a
 new occurrence identity.
 
+The minimal **open-occurrence state** required to preserve that identity is
+durable control state. It must survive reset and must not be lost merely because
+the historical ACTIVE record is evicted by oldest-first ring rotation. SF5C may
+store this in domain-owned durable state or bounded ObservationStore metadata,
+but ownership must be singular and power-cut recovery must not create two active
+identities for one still-active occurrence. If authoritative open-occurrence
+state is uncertain, recovery must fail closed/reconcile explicitly rather than
+silently mint a second occurrence.
+
 App/backend owns reminder cadence, escalation, mute/acknowledgement and repeated
 notifications.
 
@@ -227,6 +239,17 @@ command processing after the security/admission gates required by that command
 family. An authenticated command that is validly admitted may still produce a
 durable application rejection RESULT.
 
+Durable RESULT ownership is **per logical command in its authenticated authority
+context**, not per security-counter retry. Repeating the same `command_id` with
+the same logical payload/target must not append an unbounded sequence of RESULT
+records. While the retained logical RESULT exists, retries reuse it. For the
+first ConfigStore desired-state family, a lost RESULT may be reconstructed from
+the reviewed durable CAS/application state (for example
+`ALREADY_SATISFIED`) without another application-effect flash write. SF5B/C
+must define the bounded retained-result/deduplication rule and keep it consistent
+with delegated-command §12.1/§13; it must not introduce a generic persistent
+command-ID journal merely to solve retries.
+
 A duplicate COMMAND must not repeat a side effect merely because the previous
 RESULT was lost.
 
@@ -258,6 +281,15 @@ reset. A semantic record alone must not be assumed sufficient if safe ACK
 matching requires durable frame/counter/digest state. Conversely, the tracker
 must never reuse an AEAD nonce/counter simply to reproduce old bytes.
 
+ObservationStore must also retain or reference bounded, reset-safe
+**responsibility-release state** after authenticated custody transfer. Because
+RF QoS can acknowledge newer critical/current records before older backlog, the
+design must support selective/non-prefix release or explicitly constrain
+scheduling so its durable representation remains correct. RAM-only progress may
+cause safe duplicate replay after reset, but SF5B/SF5C must bound the maximum
+duplicate re-protection/replay amplification rather than allowing every reset to
+recreate the whole backlog indefinitely.
+
 Do not serialize internal C++ structs directly as either persistent or wire
 format.
 
@@ -286,7 +318,7 @@ Exact packing belongs to SF5C after SF5B semantic/wire review.
 
 ## 8. Capacity/cadence invariant
 
-Routine write rate is one PERIODIC_OBSERVATION per configured report period.
+Routine write rate is one PERIODIC_OBSERVATION per **effective** report period.
 
 Examples:
 
@@ -299,6 +331,11 @@ Examples:
 
 EVENT and COMMAND_RESULT are additional asynchronous records and must remain
 sparse relative to normal tracking under healthy operation.
+
+Capacity/RF analysis must use the shortest effective cadence that an approved
+runtime policy can actually select. For example, the current geofence OUTSIDE
+policy may use an effective cadence of `B / 3`; using only the configured base
+`B` would understate routine record generation and airtime.
 
 No separate activity, battery or routine health record is written merely because
 those components were observed internally during the period.
