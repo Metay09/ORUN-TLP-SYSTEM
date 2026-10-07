@@ -40,6 +40,7 @@ class CustodyStore {
     uint32_t pages_reclaimed = 0;
     uint32_t reclaim_intents_committed = 0;
     uint32_t reclaim_intent_recoveries = 0;
+    uint32_t reclaim_intent_completed_recoveries = 0;
     uint32_t reclaim_intent_faults = 0;
     uint32_t maintenance_failures = 0;
     uint32_t recovery_faults = 0;

@@ -453,6 +453,53 @@ static void testReclaimIntentSurvivesErasePowerCut() {
   assert(reboot.heldCount() == 1);
 }
 
+static void testCompletedReclaimRebootBeforeActivation() {
+  FakeFlash flash(2);
+  CustodyStore store(flash, 2);
+  assert(store.begin());
+  prepareOne(store);  // page 0 prepared
+
+  std::vector<std::vector<uint8_t>> page0_objects;
+  std::vector<CustodyStore::Handle> page0_handles;
+  for (uint32_t i = 0; i < csf::kRecordsPerPage; ++i) {
+    std::vector<uint8_t> object(csf::kObjectSize);
+    makeObject(static_cast<uint8_t>(90U + i), object.data());
+    const auto handle = storeOne(store, object.data());
+    if (i == 0U) prepareOne(store);  // page 1 reserve
+    page0_objects.push_back(object);
+    page0_handles.push_back(handle);
+  }
+
+  uint8_t live[csf::kObjectSize];
+  makeObject(180, live);
+  (void)storeOne(store, live);  // activates page 1
+
+  for (size_t i = 0; i < page0_handles.size(); ++i)
+    handoffOne(store, page0_handles[i], page0_objects[i].data());
+
+  assert(store.requestMaintenance() == CustodyStore::MaintenanceResult::kStarted);
+  settle(store);
+  bool success = false;
+  assert(store.takeMaintenanceResult(success) && success);
+  assert(store.hasPreparedPage());
+  assert(store.heldCount() == 1);
+
+  // Power loss here is after target erase + PREPARED successor commit, but
+  // before that successor is activated by a new admission. The old active page
+  // still contains the committed reclaim intent. Recovery must recognize the
+  // transaction as complete instead of reapplying that intent to the new page.
+  CustodyStore reboot(flash, 2);
+  assert(reboot.begin() && reboot.ready() && !reboot.faulted());
+  assert(reboot.hasPreparedPage());
+  assert(reboot.heldCount() == 1);
+  assert(reboot.diagnostics().reclaim_intent_completed_recoveries == 1);
+
+  uint8_t next[csf::kObjectSize];
+  makeObject(181, next);
+  (void)storeOne(reboot, next);
+  assert(reboot.heldCount() == 2);
+}
+
 static void testUnsupportedAndCommittedCorruptionFailClosed() {
   {
     FakeFlash flash(2);
@@ -492,6 +539,7 @@ int main() {
   testTornRetireStaysHeld();
   testQueueFullNeverErasesHeldCustody();
   testReclaimIntentSurvivesErasePowerCut();
+  testCompletedReclaimRebootBeforeActivation();
   testUnsupportedAndCommittedCorruptionFailClosed();
   puts("SF4B CustodyStore format/recovery/power-cut checks: PASS");
   return 0;

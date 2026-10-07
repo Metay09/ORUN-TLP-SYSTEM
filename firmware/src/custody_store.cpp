@@ -155,10 +155,30 @@ bool CustodyStore::recover() {
           ++diagnostics_.recovery_faults;
           ++diagnostics_.reclaim_intent_faults;
         } else {
-          reclaim_intent_valid_ = true;
-          reclaim_target_page_ = reclaim.target_page;
-          reclaim_target_generation_ = reclaim.target_generation;
-          ++diagnostics_.reclaim_intent_recoveries;
+          csf::PageInspection target;
+          if (!readPage(reclaim.target_page, target)) return false;
+
+          // A completed reclaim leaves its durable intent on the previous
+          // active page until the newly PREPARED successor is activated.
+          // Reboot in that exact window must not mistake the historical intent
+          // for permission to erase the already-reprepared successor. The
+          // successor is unambiguous only when it is the same target page,
+          // clean, and exactly the next generation after the intent owner.
+          const bool completed_reclaim =
+              target.evidence == csf::PageEvidence::kPrepared &&
+              int(reclaim.target_page) == prepared_page_ &&
+              active_generation != UINT64_MAX &&
+              target.generation == active_generation + 1U &&
+              pageRecordAreaErased(reclaim.target_page);
+
+          if (completed_reclaim) {
+            ++diagnostics_.reclaim_intent_completed_recoveries;
+          } else {
+            reclaim_intent_valid_ = true;
+            reclaim_target_page_ = reclaim.target_page;
+            reclaim_target_generation_ = reclaim.target_generation;
+            ++diagnostics_.reclaim_intent_recoveries;
+          }
         }
         break;
       case csf::ReclaimEvidence::kStaged:
