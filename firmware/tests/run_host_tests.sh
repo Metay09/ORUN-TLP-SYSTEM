@@ -191,7 +191,10 @@ g++ "${portable_flags[@]}" \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m4p5a_history_delivery_coordinator"
 "$test_dir/m4p5a_history_delivery_coordinator"
-g++ "${portable_flags[@]}" firmware/tests/sf4/test_sf4b_custody_store.cpp \
+# SF4B is compiled as GNU++11 here to match the RAK4630 Arduino target.
+# This deliberately catches target-language compatibility regressions that a
+# C++17-only host build can hide.
+g++ "${b3_flags[@]}" firmware/tests/sf4/test_sf4b_custody_store.cpp \
   firmware/src/custody_store.cpp firmware/src/custody_store_format.cpp \
   -o "$test_dir/sf4b_custody_store"
 "$test_dir/sf4b_custody_store"
