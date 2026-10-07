@@ -475,24 +475,6 @@ static void testTornHeaderRepairableWithoutReboot() {
   assert(store.takeMaintenanceResult(success) && success);
   assert(store.hasPreparedPage());
 
-  // The first maintenance above uses the other erased page as the reserve.
-  // Fill that reserve so the next maintenance must choose and erase the
-  // PARTIAL_ACTIVATION page itself via findRepairableBlankPage().
-  for (uint32_t i = 0; i < csf::kRecordsPerPage; ++i) {
-    uint8_t fill[csf::kObjectSize];
-    makeObject(static_cast<uint8_t>(120U + i), fill);
-    (void)storeOne(store, fill);
-  }
-  assert(!store.hasPreparedPage());
-
-  const unsigned erases_before_repair = flash.erase_calls;
-  assert(store.requestMaintenance() ==
-         CustodyStore::MaintenanceResult::kStarted);
-  settle(store);
-  success = false;
-  assert(store.takeMaintenanceResult(success) && success);
-  assert(store.hasPreparedPage());
-  assert(flash.erase_calls == erases_before_repair + 1U);
 }
 
 static void testMultipleIntentSlotsSurviveTornAttempts() {
@@ -869,6 +851,25 @@ static void testPartialActivationIsRepairable() {
   success = false;
   assert(store.takeMaintenanceResult(success) && success);
   assert(store.hasPreparedPage());
+
+  // The first maintenance uses the other fully-erased page as the reserve.
+  // Fill that reserve so the next maintenance has to repair the actual
+  // PARTIAL_ACTIVATION page via erase + fresh PREPARED header.
+  for (uint32_t i = 0; i < csf::kRecordsPerPage; ++i) {
+    uint8_t fill[csf::kObjectSize];
+    makeObject(static_cast<uint8_t>(120U + i), fill);
+    (void)storeOne(store, fill);
+  }
+  assert(!store.hasPreparedPage());
+
+  const unsigned erases_before_repair = flash.erase_calls;
+  assert(store.requestMaintenance() ==
+         CustodyStore::MaintenanceResult::kStarted);
+  settle(store);
+  success = false;
+  assert(store.takeMaintenanceResult(success) && success);
+  assert(store.hasPreparedPage());
+  assert(flash.erase_calls == erases_before_repair + 1U);
 }
 
 static void testCommittedCorruptIntentFailsClosed() {
