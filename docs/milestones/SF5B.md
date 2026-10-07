@@ -55,9 +55,24 @@ object and is not reused silently.
 PRODUCT_SECURE profile 0x01 reuses the reviewed root D2A HKDF/AES-CCM
 construction and the device SecurityStore TX counter.
 
-A new custody-specific key is per tracker + gateway + key epoch + policy floor +
-grant generation and is used only for standard HMAC-SHA256 custody ACK
-authentication.
+A new custody-specific key is per tracker + gateway + key epoch +
+**custody-policy floor + custody-grant generation** and is used only for
+standard HMAC-SHA256 custody ACK authentication.
+
+Tracker custody authorization is a separate durable capability table from
+delegated COMMAND slots:
+
+```text
+custody_policy_floor
+custody_gateway_slot[] = (gateway_device_id, custody_grant_generation)
+```
+
+Initial maximum is four custody-capable gateways per tracker, independent from
+the four command-capable delegated slots. ACK floor/generation must exactly
+match the durable custody state. Lower values are stale; higher values do not
+self-advance policy and are rejected until an authenticated policy update is
+durably committed. Production custody remains blocked until this tracker-side
+state exists.
 
 Gateway never receives K_root.
 
