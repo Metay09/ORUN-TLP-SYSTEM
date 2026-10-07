@@ -325,7 +325,12 @@ When `LOCATION_VALID=0`:
 
 - coordinates are ignored and encoded as zero;
 - `location_source=UNKNOWN`;
-- GNSS-only quality fields are non-authoritative.
+- `ALTITUDE_VALID=0` and `LOCATION_AGE_VALID=0`;
+- altitude/age/GNSS-only quality fields are encoded as their non-authoritative
+  values.
+
+When `LOCATION_VALID=1`, `location_source` must be a non-UNKNOWN supported
+source and latitude/longitude must pass range validation.
 
 No consumer interprets `0,0` as the missing-location sentinel; validity is the
 authority.
@@ -355,7 +360,10 @@ encoded as zero.
 0xFFFF         unknown / not authoritative
 ```
 
-The age field is used only when `LOCATION_AGE_VALID=1`.
+The age field is used only when `LOCATION_AGE_VALID=1`. It means the elapsed
+age of the referenced location at PERIODIC finalization. It may be derived from
+trusted monotonic elapsed time and therefore does **not** require
+`PERIOD_TIME_VALID`; it must never be fabricated from an untrusted wall clock.
 
 ### 7.3 Activity semantics
 
@@ -381,6 +389,21 @@ classifier label.
 1 PARTIAL
 2 COMPLETE
 ```
+
+For schema v1 the relationship is strict:
+
+```text
+coverage == 0                      -> quality = UNKNOWN, ACTIVITY_VALID=0
+0 < coverage < period_duration    -> quality = PARTIAL, ACTIVITY_VALID=1
+coverage == period_duration       -> quality = COMPLETE, ACTIVITY_VALID=1
+```
+
+When `ACTIVITY_VALID=0`, `active_seconds`,
+`activity_transition_count` and `movement_mean_abs_delta_mg` are encoded
+zero/non-authoritative.
+
+`activity_transition_count=0xFFFF` means saturated at >=65535.
+`movement_mean_abs_delta_mg=0xFFFF` means saturated at >=65535 mg.
 
 A reset/power gap therefore cannot be reported as complete coverage.
 
@@ -410,20 +433,26 @@ hardware/battery qualification policy.
 
 A percentage is not carried in v1 of this schema.
 
+When `BATTERY_VALID=0`, `battery_mv=0`, `battery_state=UNKNOWN` and
+`battery_quality=UNKNOWN`.
+
 ### 7.5 Health
 
 `health_flags` is a bounded product-health bitmap. Initial bits:
 
 ```text
-bit0 GNSS_DEGRADED
-bit1 GNSS_FAULT
-bit2 SENSOR_DEGRADED
-bit3 SENSOR_FAULT
-bit4 RADIO_DEGRADED
-bit5 STORAGE_DEGRADED
-bit6 SECURITY_DEGRADED
-bit7 TIME_UNTRUSTED
-bits8..15 = 0
+bit0  GNSS_DEGRADED
+bit1  GNSS_FAULT
+bit2  SENSOR_DEGRADED
+bit3  SENSOR_FAULT
+bit4  RADIO_DEGRADED
+bit5  RADIO_FAULT
+bit6  STORAGE_DEGRADED
+bit7  STORAGE_FAULT
+bit8  SECURITY_DEGRADED
+bit9  SECURITY_FAULT
+bit10 TIME_UNTRUSTED
+bits11..15 = 0
 ```
 
 The four failure-count bytes are **report-period saturating counters**:
@@ -432,6 +461,9 @@ The four failure-count bytes are **report-period saturating counters**:
 0..254 exact count during represented period
 255    >=255
 ```
+
+When `HEALTH_VALID=0`, health flags and all four counters are zero and
+non-authoritative.
 
 They are not lifetime counters and do not create one flash record per retry.
 
@@ -556,6 +588,30 @@ For SUBSYSTEM_FAULT, `SUBSYSTEM_ID` identifies the bounded product subsystem.
 Exact subsystem IDs are an application registry, not driver error-code leakage.
 
 `context_flags` currently must be zero.
+
+Schema-v1 relationship rules:
+
+- if `TRANSITION_TIME_VALID=0`, `transition_epoch_seconds=0`;
+- if `LOCATION_VALID=0`, location source/coordinates/age are encoded as
+  UNKNOWN/zero and `LOCATION_AGE_VALID=0`;
+- if `LOCATION_VALID=1`, source must be non-UNKNOWN and coordinates must be in
+  range;
+- if `CONTEXT_VALID=0`, `context_kind=NONE` and `context_value=0`;
+- if `CONTEXT_VALID=1`, `context_kind` must be a supported non-NONE kind.
+
+For `BATTERY_STATE`, initial `reason_code` values are:
+
+```text
+0x01 LOW
+0x02 CRITICAL
+```
+
+A LOW occurrence may be CLEARED before a distinct CRITICAL occurrence is
+activated; LOW and CRITICAL are not silently collapsed into one changing
+occurrence identity.
+
+For the other initial event types, schema-v1 `reason_code=0` unless a later
+reviewed schema/registry explicitly assigns a meaning.
 
 ---
 
@@ -812,6 +868,13 @@ Before production custody runtime, SF5G must either:
 - receive explicit independent security acceptance of bounded residual risk with
   enrolled-source filtering plus strict per-source/global RAM/flash admission,
   rate, wear and capacity limits.
+
+If an admission authenticator is required, it must be a **separate outer
+custody-admission/control object** around the already-frozen exact
+PRODUCT_SECURE/RESULT custody object. It must not silently change the
+PRODUCT_SECURE plaintext/header bytes after SF5B, and Gateway durable custody /
+ACK identity continues to bind the exact protected inner object. This preserves
+the product wire while leaving one explicit later admission-security seam.
 
 Untrusted traffic may never evict already accepted custody.
 
