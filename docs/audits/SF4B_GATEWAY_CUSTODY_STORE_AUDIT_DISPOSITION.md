@@ -1,6 +1,6 @@
 # SF4B Gateway CustodyStore — independent audit disposition
 
-Status: **RE-AUDIT PASS WITH FIXES; MERGE-REQUIRED N1(a) + N6 TEST/DOC FOLLOW-UP IMPLEMENTED, CONTROL RE-AUDIT PENDING.**
+Status: **FINAL CONTROL AUDIT PASS; 0 BLOCKER / 0 HIGH / 0 MEDIUM. OPTIONAL LOW TEST/DOC HARDENING APPLIED; FINAL AGGREGATE HOST RUN PENDING BEFORE MERGE.**
 
 Audited head:
 
@@ -268,7 +268,7 @@ measure this before ACK/rendezvous timing is frozen.
 
 ### N6 — remaining regression gaps
 
-**Disposition: CLOSED PENDING FRESH HOST EVIDENCE.**
+**Disposition: CLOSED — final control audit confirmed the coverage; optional assertions were strengthened afterward.**
 
 Permanent tests were added for:
 
@@ -285,3 +285,42 @@ The re-audit follow-up changes are tests/docs only. No production runtime,
 partition, wire protocol, TLP v1 bytes, security context, RF behavior or flash
 owner changed. A fresh aggregate host run and short independent control re-audit
 are the remaining SF4B merge gates.
+
+
+## Final control review — 8e4e512e48c471c313026befa1dc3ecbacc98024
+
+Independent result:
+
+```text
+VERDICT: PASS
+BLOCKER 0
+HIGH 0
+MEDIUM 0
+LOW 3
+FINAL RECOMMENDATION: MERGE
+```
+
+The reviewer independently reran the SF4B GNU++11 ASan/UBSan host target and
+confirmed the follow-up affected only tests/docs. N1(a) and every requested N6
+item were CLOSED.
+
+The three LOW observations were non-blocking regression/documentation quality
+notes. They were nevertheless applied on-branch:
+
+- N1 exhaustion regression now also proves the live HELD object survives reboot
+  byte-for-byte and that no extra erase occurs;
+- torn completion regression now proves no reclaim authority is recovered,
+  maintenance reports no work and erase count does not advance;
+- committed-corrupt intent regression now locks
+  `reclaim_intent_faults == 1`;
+- PARTIAL_ACTIVATION regression now drives the actual torn page through
+  `findRepairableBlankPage()`, erase and fresh PREPARED creation;
+- scan-budget documentation no longer calls an incomplete analytical estimate a
+  strict worst-case bound.
+
+These final changes do not touch CustodyStore production implementation,
+storage ownership, main runtime, RF, protocol/TLP v1, security wire/KDF or any
+physical partition.
+
+One final aggregate host run on the exact final test/docs head is the only
+remaining SF4B merge gate.
