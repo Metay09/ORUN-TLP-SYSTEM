@@ -62,6 +62,12 @@ normal durable product records.
 New production tracker traffic is to move to reviewed TLP v2 protected
 application traffic.
 
+The **current** runtime is not "v1 only": normal live POSITION / relay behavior
+still uses the frozen TLP v1 path, while provisioned trackers can also originate
+the already-frozen SF3 TLP v2 `HISTORY_SECURE` replay family from the legacy
+HistoryStore. SF5 must preserve that evidence boundary until its explicit
+runtime cutover.
+
 TLP v1 remains a **frozen legacy compatibility format**:
 
 - existing v1 byte definitions/golden fixtures are not weakened or rewritten;
@@ -75,6 +81,14 @@ TLP v1 remains a **frozen legacy compatibility format**:
 This document is the explicit product migration direction required before later
 implementation slices may stop treating v1 POSITION as the normal production
 tracker path.
+
+The existing SF2/SF3 `HISTORY_SECURE` wire bytes, vectors and family semantics
+are also frozen compatibility evidence. SF5B must define a **new reviewed
+product-observation protected family** rather than silently widening or
+reinterpreting that 73-byte observation family. At the SF5F direct cutover, the
+new family replaces SF3 HISTORY_SECURE as the normal new-record store-forward
+path; the legacy SF3 replay runtime is retired together with the legacy
+POSITION HistoryStore unless a separately approved migration requirement exists.
 
 This does **not** itself allocate new v2 numeric packet/family codes or freeze
 wire bytes.
@@ -154,8 +168,17 @@ The candidate 256 KiB range is not authorized for production writes until:
 
 1. the application ceiling/build guard is deliberately revised;
 2. current firmware size/headroom is re-measured;
-3. the physical flash backend and ownership guard are reviewed;
-4. destructive physical qualification is completed on a development unit.
+3. the **DFU bank/update model is explicitly resolved before freezing this
+   ceiling**;
+4. the physical flash backend and ownership guard are reviewed;
+5. destructive physical qualification is completed on a development unit.
+
+The DFU gate is not cosmetic. The candidate application range
+`0x026000..0x0A5000` is `0x7F000` = 520,192 bytes. A simple equal two-bank
+split of that range would allow about 260,096 bytes per bank, which is smaller
+than the current SF4B production image measurement of 285,924 bytes. This does
+not prove which DFU model ORUN will use; it proves only that the 256 KiB
+reservation and the DFU model cannot be frozen independently.
 
 ### 4.2 One physical owner
 
@@ -177,6 +200,14 @@ Until that focused ownership decision is made, ObservationStore and CustodyStore
 must never both believe they own the same physical pages. Do not select the
 owner by legacy Role and do not add a generic allocator merely to avoid making
 the explicit product decision.
+
+A profile/capability change must never implicitly reinterpret or format a
+non-empty owner region. Changing from observation ownership to custody ownership,
+or the reverse, requires an explicit maintenance transition that proves the old
+responsibility is closed (for example durable downstream handoff/drain) or an
+explicit destructive re-baseline that surfaces accepted data loss. Unresolved
+Gateway custody blocks owner transition. Profile selection alone is never an
+erase ceremony.
 
 ---
 
@@ -250,6 +281,13 @@ Lifecycle is conceptually:
 ACTIVE -> CLEARED
 ```
 
+The minimal state needed to preserve an **open occurrence identity** is durable
+control state, not expendable historical backlog. It must survive reset and must
+not disappear merely because the historical EVENT record ages out of the
+oldest-first ObservationStore ring. SF5C may choose the concrete owner/bytes,
+but one owner must retain enough state to emit a later CLEARED transition for
+the same occurrence or to perform an explicit fail-closed reconciliation.
+
 Application/backend owns repeated user reminders, escalation intervals,
 notification suppression and acknowledgement UX.
 
@@ -269,8 +307,18 @@ TX_DONE
 ```
 
 For a valid command, the tracker must retain the minimum reviewed durable state
-needed for replay safety/idempotency and must durably own the application RESULT
-before depending on RF delivery of that RESULT.
+needed for replay safety/idempotency and must durably own the **logical command
+outcome** before depending on store-forward RF delivery of that RESULT.
+
+Durable RESULT ownership is per logical command in its authenticated authority
+context, **not per cryptographic retry**. Repeating the same `command_id` with
+the same logical payload/target must not append an unbounded sequence of
+persistent RESULT records. While a retained durable RESULT exists, retries
+reuse that logical result. For the first desired-state ConfigStore family, the
+reviewed CAS state may reconstruct `ALREADY_SATISFIED` after RESULT loss
+without another application-effect flash write, consistent with the delegated
+command contract. SF5B/SF5C must define a bounded RESULT retention/deduplication
+rule rather than creating one durable record for every new security counter.
 
 A duplicate command must not repeat a side effect merely because the previous
 RESULT was lost.
@@ -319,13 +367,26 @@ Tracker durable storage is bounded. It cannot promise infinite retention.
 
 When the 256 KiB tracker store is full:
 
-1. reclaim already-releasable/obsolete storage where the final storage design
-   defines such state;
+1. reclaim already-released/obsolete historical storage according to the
+   reviewed release-state rules;
 2. if the retained tracker history itself exceeds finite capacity, reclaim in
    oldest-first order so new product observations continue to be recorded;
 3. increment bounded capacity-loss diagnostics and retain enough state for the
    application/backend to distinguish a storage gap from "no observation
    occurred".
+
+ObservationStore must also own or reference **bounded reset-safe release state**
+for responsibility already transferred by authenticated custody ACK. Because
+critical/current RF QoS can produce out-of-order acknowledgements, a single
+contiguous watermark is not automatically sufficient. SF5C must either represent
+bounded selective/non-prefix release safely or constrain scheduling so the
+durable representation remains correct.
+
+A custody ACK that is only remembered in RAM may cause a safe duplicate after
+reset, but duplicate amplification must be bounded. SF5B/SF5C must quantify and
+test the maximum replay/re-protection amplification per retained record and per
+reset/checkpoint cycle; reset must not make the complete backlog look
+indefinitely unreleased.
 
 Do not silently present an overwritten historical interval as complete.
 
@@ -448,6 +509,14 @@ Security Authority / Backend
 
 Do not copy tracker `K_root` to a phone as a shortcut.
 
+A future **read** grant must not silently become tracker-origin authentication
+authority. In particular, SF5B must not freeze an envelope/key-binding design
+that makes offline decryption possible only by granting the phone/Edge the
+ability to forge tracker-originated PERIODIC/EVENT/RESULT traffic. If a proposed
+symmetric construction cannot provide that separation, the limitation is an
+explicit security decision/blocker before wire freeze, not something hidden in a
+later mobile implementation.
+
 The exact grant/key lifecycle, scope, expiry, revocation and lost-phone blast
 radius remain a future reviewed security slice.
 
@@ -464,12 +533,21 @@ The owner-approved product direction is a **direct v2 cutover**, not permanent
 dual-write:
 
 ```text
-legacy production:
-POSITION -> 28 KiB HistoryStore
+current runtime:
+live POSITION / relay             -> frozen TLP v1 path
+28 KiB HistoryStore backlog       -> frozen SF3 TLP v2 HISTORY_SECURE replay
+                                    (when provisioned)
 
-new production after explicit cutover:
-PERIODIC / EVENT / RESULT -> 256 KiB ObservationStore -> TLP v2
+new production after explicit SF5F cutover:
+PERIODIC / EVENT / RESULT         -> 256 KiB ObservationStore
+                                  -> new reviewed SF5 TLP v2 protected family
 ```
+
+SF5 does not reinterpret the frozen SF2 HISTORY_SECURE bytes. The new SF5 family
+replaces HISTORY_SECURE for **new product observations** at cutover. With no
+deployed-fleet migration requirement, the legacy development History backlog is
+not automatically migrated; any erase/re-baseline at cutover must be explicit
+and must not be reported as preserved history.
 
 Do not keep writing the same location to both stores in normal production.
 
@@ -504,8 +582,12 @@ Initial design target:
 - CRC plus commit-last power-cut seal;
 - deterministic recovery;
 - bounded boot scan and RAM state;
-- oldest-first rotation;
-- explicit capacity-loss diagnostics.
+- oldest-first historical rotation;
+- explicit capacity-loss diagnostics;
+- bounded reset-safe tracker responsibility-release state, including safe
+  treatment of out-of-order custody facts;
+- durable active-EVENT occurrence state that is not lost merely because a
+  historical record rotates out.
 
 A 96-byte slot is a **planning target only**, not a requirement. If the reviewed
 field set needs 112/128 bytes, preserve product semantics rather than dropping
@@ -571,9 +653,13 @@ Proceed in small, reviewable slices:
 
 1. independent architecture review of this cutover direction;
 2. exact PERIODIC / EVENT / RESULT semantic field contract;
-3. exact v2 protected wire-family/security-envelope review;
-4. ObservationStore fixed-slot format + deterministic host power-cut tests;
-5. 256 KiB layout/application-ceiling reservation + build guards;
+3. exact v2 protected wire-family/security-envelope review, including
+   HISTORY_SECURE replacement/retirement, retry/reset protected-object lifetime,
+   bounded logical-RESULT retry behavior, and offline-read-vs-forgery separation;
+4. ObservationStore fixed-slot format + deterministic host power-cut tests,
+   including reset-safe selective release state and active-EVENT lifecycle state;
+5. 256 KiB layout/application-ceiling reservation + build guards, only after
+   the DFU bank/update model and owner-transition ceremony are resolved;
 6. RAK4630 build/size verification;
 7. destructive physical ObservationStore qualification on a development unit;
 8. tracker runtime cutover from legacy POSITION History to the new store;
