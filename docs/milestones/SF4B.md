@@ -165,7 +165,12 @@ expected SF4A behavior.
 ## 7. Capacity and wear model
 
 Current candidate geometry provides **45 objects per 4-KiB page**. The script
-`firmware/scripts/sf4b_custody_capacity.py` reproduces the planning arithmetic.
+`firmware/scripts/sf4b_custody_capacity.py` reproduces the planning arithmetic
+and explicitly accounts for admission body+commit bytes, Edge-handoff markers,
+page-header prepare/activation bytes, reclaim-intent bytes and page erases.
+It also exposes an opaque-distinct duplicate factor for tracker reboot/
+re-protection churn. Byte-identical RF retries are not counted as extra writes
+because CustodyStore exact-byte dedupe suppresses them before flash mutation.
 
 For the existing 15-minute retained-position example (`4 objects/hour/device`),
 the following table assumes every produced object is committed by this one
@@ -217,6 +222,9 @@ a separate gate.
 - full queue cannot erase HELD custody;
 - committed reclaim intent survives a partial erase/power-cut model and permits
   safe recovery;
+- reboot after reclaim completed and the successor page is PREPARED, but before
+  that page is activated, recognizes the historical intent as complete and
+  never reapplies it to the newly prepared successor;
 - unsupported-newer format fail-closed;
 - committed record corruption fail-closed.
 
@@ -229,8 +237,8 @@ aggregate repository evidence.
 
 ## 9. Remaining gates before SF4B merge
 
-1. integrate these tests into `firmware/tests/run_host_tests.sh` and run the
-   complete host suite;
+1. run the complete aggregate host suite with the SF4B tests now integrated into
+   `firmware/tests/run_host_tests.sh`;
 2. run the normal `rak4630` production build and confirm no partition/runtime
    activation and no unexpected footprint/layout regression;
 3. run independent Astra review of the exact branch head;
