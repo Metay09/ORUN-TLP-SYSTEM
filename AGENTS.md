@@ -351,12 +351,21 @@ traffic as the **new production target**. Read
 `docs/milestones/SF5.md` before changing tracker observation/history protocol or
 persistence.
 
-Until the explicit SF5 runtime cutover is implemented and validated, preserve the
-current production v1 runtime and its physical evidence. Keep all v1
-golden/compatibility bytes frozen; do not add new product features to v1 and do
-not weaken fixtures merely to pass new v2 work. After validated cutover, new
-trackers need not continue emitting v1 POSITION. Add mixed-fleet/dual-stack
-support only if a real deployment/interoperability requirement exists.
+Until the explicit SF5 runtime cutover is implemented and validated, preserve
+the **current production runtime paths** and their evidence boundary:
+
+- frozen TLP v1 live POSITION / relay behavior;
+- provisioned SF3 TLP v2 HISTORY_SECURE backlog replay from the legacy
+  HistoryStore.
+
+Keep all v1 golden/compatibility bytes **and the frozen SF2/SF3 HISTORY_SECURE
+bytes/vectors** intact; do not add new product features by silently widening
+either legacy family. SF5B defines a new protected product-observation family,
+and SF5F retires HISTORY_SECURE as the normal new-record store-forward path
+together with the legacy HistoryStore. After validated cutover, new trackers
+need not continue emitting v1 POSITION or new HISTORY_SECURE observations. Add
+mixed-fleet/dual-stack support only if a real deployment/interoperability
+requirement exists.
 
 Plan for fields such as:
 
@@ -415,7 +424,13 @@ Live data must not wait behind a large historical backlog.
 
 When connectivity returns, old records should be transferred gradually.
 
-Records confirmed delivered must not be continuously retransmitted.
+Records whose responsibility has durably transferred must not be continuously
+retransmitted. SF5 ObservationStore must preserve bounded reset-safe
+responsibility-release state; because critical/current QoS can acknowledge
+records out of backlog order, do not assume a single contiguous watermark is
+always sufficient. RAM-only release progress may cause safe duplicate replay
+after reset, but reset/checkpoint loss must not allow unbounded whole-backlog
+re-protection/amplification.
 
 Store-forward delivery must remain gateway-independent. A fixed gateway, MOBILE
 gateway or another compatible bridge may carry the same logical observation;
@@ -423,13 +438,18 @@ downstream duplicate transport/path observations must converge on one
 application observation while retaining useful path metadata. `TX_DONE`, relay
 TX completion and ordinary gateway RF receipt are not delivery.
 
-Do not persist a replay cursor or delivered checkpoint after every historical
-packet. History format v4 retains only four bounded state slots per active page; per-record
-metadata writes can force destructive metadata-driven page rotation. Initial
-store-forward work must accumulate contiguous authenticated receipt progress in
-RAM and checkpoint durable delivery only at a separately reviewed bounded
-frequency. Reboot may cause safe duplicate replay; premature deletion is not
-acceptable. See `docs/architecture/ORUN_HISTORY_STORE_FORWARD_DELIVERY.md`.
+For the **current legacy HistoryStore**, do not persist a replay cursor or
+delivered checkpoint after every historical packet. History format v4 retains
+only four bounded state slots per active page; per-record metadata writes can
+force destructive metadata-driven page rotation. Current SF1-SF4 logic therefore
+uses bounded/coarse delivery progress and permits safe duplicate replay after
+checkpoint loss.
+
+SF5C is a new persistence format and must explicitly solve bounded reset-safe
+selective release without copying HistoryStore's four-slot limitation or causing
+per-ACK wear. Premature deletion is never acceptable. See
+`docs/architecture/ORUN_HISTORY_STORE_FORWARD_DELIVERY.md` and the SF5
+contracts.
 
 ---
 
