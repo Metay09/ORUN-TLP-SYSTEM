@@ -1,6 +1,6 @@
 # SF5B — TLP v2 protected product wire + custody security contract
 
-Status: **INITIAL INDEPENDENT SECURITY/PROTOCOL AUDIT: FIX THEN RE-REVIEW. Required documentation fixes are being applied on the same branch; no production runtime is authorized.**
+Status: **INITIAL INDEPENDENT SECURITY/PROTOCOL AUDIT PASS WITH FIXES — 0 BLOCKER / 2 HIGH / 3 MEDIUM / 1 LOW; H1-H2 / M1-M3 / L1 documentation fixes applied; focused re-review required before merge. No production runtime is authorized.**
 
 Baseline:
 `main@cdb9db172d178acc877b9315453e7adbd7947985` (SF5A merged).
@@ -10,6 +10,9 @@ Branch:
 
 Primary contract:
 `docs/architecture/ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md`.
+
+Independent audit disposition:
+`docs/audits/SF5B_TLP_V2_PRODUCT_SECURE_WIRE_AUDIT_DISPOSITION.md`.
 
 ## 1. Scope
 
