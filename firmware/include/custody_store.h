@@ -17,6 +17,12 @@ namespace orun_tlp {
 class CustodyStore {
  public:
   struct Handle {
+    constexpr Handle() = default;
+    constexpr Handle(uint16_t page_value, uint16_t slot_value,
+                     uint64_t generation_value)
+        : page(page_value), slot(slot_value),
+          page_generation(generation_value) {}
+
     uint16_t page = UINT16_MAX;
     uint16_t slot = UINT16_MAX;
     uint64_t page_generation = 0;
