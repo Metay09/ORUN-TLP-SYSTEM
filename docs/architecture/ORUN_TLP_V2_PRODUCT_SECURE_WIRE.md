@@ -1189,7 +1189,10 @@ For every authenticated retry:
 - acquire/evaluate through the normative CAS §6 path; do not bypass CAS merely
   because `command_id` was seen before;
 - if a retained RESULT exists and the canonical request tuple matches exactly,
-  that retained logical outcome may be reused/reconstructed as allowed by CAS;
+  it suppresses duplicate durable RESULT persistence, but the **emitted status
+  still follows CAS §6 for this attempt**; for example an original `APPLIED`
+  may legitimately become `ALREADY_SATISFIED` on a later retry after the
+  desired state is already current;
 - if the same `command_id` is presented with a different canonical tuple,
   fail closed with `POLICY_REJECTED / COMMAND_ID_REUSE_CONFLICT`; never return
   the old command's APPLIED/token as if it belonged to the new payload;
