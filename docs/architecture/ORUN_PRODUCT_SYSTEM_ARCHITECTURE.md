@@ -506,8 +506,15 @@ The same logical message keeps one application identity across route changes.
 
 Current reference behavior remains private LoRa P2P.
 
-Current validated TLP v1 one-hop behavior remains frozen until an explicit
-protocol cutover.
+Current validated TLP v1 one-hop behavior remains frozen in the current runtime.
+
+The owner-approved SF5 direction
+(`ORUN_TLP_V2_PRODUCT_OBSERVATION_STORAGE_CUTOVER.md`) is now the explicit
+**future production cutover direction**: new product observations move to
+reviewed TLP v2 protected traffic after the SF5 semantic/security/storage/
+physical gates pass. This direction does not retroactively claim that current
+runtime has already cut over. TLP v1 bytes/golden fixtures remain frozen legacy
+compatibility evidence.
 
 Near-term network principles:
 
@@ -563,9 +570,15 @@ Current ownership classes include:
 
 - SecurityStore — credential/security counters/replay state authorized by its schema;
 - ConfigStore — durable requested device configuration;
-- HistoryStore — application observation/history backlog;
+- HistoryStore — current application observation/history backlog;
 - BLE/InternalFS bond storage — framework BLE state;
 - bootloader/settings — firmware lifecycle ownership.
+
+SF5 defines a future 256 KiB ObservationStore product direction, but it is not a
+current physical/runtime owner until its layout/backend/qualification gates pass.
+The same device may eventually originate its own observations and also bridge
+Gateway custody; that combined capability must receive one explicit physical
+ownership design and must not be inferred from Role.
 
 Future durable state such as:
 
