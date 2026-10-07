@@ -59,8 +59,9 @@ MESSAGE is not part of the animal-tracker durable profile.
 - Gateway -> Edge initial drain is global oldest-first/FIFO.
 - Gateways are independent; duplicate custody is acceptable and downstream
   dedupe/idempotency is required.
-- Activity summary covers the configured report period; internal short sensor
-  windows are not independently persisted.
+- Activity summary covers the **effective report period actually selected by
+  Tracking policy**; internal short sensor windows are not independently
+  persisted.
 - Battery is sampled only on an already-required device wake; routine battery
   checking never creates its own wake.
 - EVENT is recorded on real occurrence/state transition; repeated phone
@@ -92,6 +93,11 @@ Define exact application-family allocation, plaintext layout, protected-frame
 binding, retry/reset protected-object lifetime and custody-ACK binding while
 reusing the reviewed M7P6 security direction.
 
+SF5B must explicitly define the transition from the **already active/frozen SF3
+TLP v2 HISTORY_SECURE replay family**: the new SF5 protected product-observation
+family replaces HISTORY_SECURE for new records at SF5F cutover; it must not
+silently widen/reinterpret the existing 73-byte SF2/SF3 family.
+
 Must preserve:
 
 - gateway remains opaque;
@@ -99,7 +105,12 @@ Must preserve:
 - nonce/replay/idempotency/delivery separation;
 - exact-object custody binding;
 - delayed immutable-observation old-epoch rules;
-- COMMAND/RESULT delegated-security + CAS contracts.
+- COMMAND/RESULT delegated-security + CAS contracts;
+- logical RESULT persistence is bounded per authenticated logical command, not
+  per security-counter retry;
+- offline read authority remains separable from tracker-origin forgery
+  authority; do not freeze a wire/key binding that makes "read" necessarily
+  mean "can forge PERIODIC/EVENT/RESULT".
 
 Gate: independent security/protocol audit before runtime activation.
 
@@ -110,9 +121,17 @@ Implement fixed-slot portable persistence over abstract FlashBackend:
 - deterministic recovery;
 - body/CRC then commit-last;
 - bounded RAM and boot scan;
-- oldest-first page rotation;
+- oldest-first historical page rotation;
 - explicit capacity-loss diagnostics;
 - fixed record types PERIODIC / EVENT / RESULT;
+- bounded **reset-safe tracker responsibility-release state**, including safe
+  treatment of out-of-order custody acknowledgements;
+- bounded proof that reset/checkpoint loss cannot re-protect/replay the whole
+  backlog indefinitely;
+- durable open-EVENT occurrence state that survives reset and historical ring
+  eviction until CLEARED/reconciled;
+- bounded RESULT retention/deduplication so authenticated retries do not append
+  one persistent RESULT per security counter;
 - no nRF address allocation yet.
 
 Gate: complete host regression + ASan/UBSan/warnings + deterministic fault
@@ -126,7 +145,13 @@ Candidate reference-platform range:
 0x0A5000..0x0E5000  256 KiB / 64 pages
 ```
 
-Revise application ceiling only after current image size/headroom is checked.
+Revise application ceiling only after current image size/headroom **and the DFU
+bank/update model** are resolved. The candidate app range
+`0x026000..0x0A5000` is 520,192 bytes; a simple equal two-bank split would be
+about 260,096 bytes per bank, below the current SF4B image measurement of
+285,924 bytes. This arithmetic does not choose the DFU model, but it makes that
+choice a prerequisite to freezing the 256 KiB reservation.
+
 Wire the concrete nRF backend through the existing FlashMutationGate/
 SoftDevice ownership model. No overlapping owner is allowed.
 
@@ -134,6 +159,12 @@ Before freezing the physical owner, resolve the real universal-firmware case
 where one node originates its own observations **and** has Gateway bridge
 capability. Do not solve this by legacy Role and do not let independent
 ObservationStore/CustodyStore writers share pages.
+
+Also freeze an explicit **owner-transition ceremony**. A profile/capability
+change must not implicitly reformat a non-empty region. Unresolved accepted
+Gateway custody blocks transition; tracker data may be destructively re-baselined
+only through an explicit maintenance/data-loss decision after the old owner's
+responsibility is closed or intentionally abandoned.
 
 Gate: host suite + RAK4630 build + storage-layout guards.
 
@@ -155,14 +186,18 @@ Gate: physical evidence document. Build PASS alone is not hardware PASS.
 Move normal tracker durable ownership from legacy POSITION History to the new
 ObservationStore:
 
-- one PERIODIC record per report period;
+- one PERIODIC record per **effective** report period;
 - EVENT/RESULT asynchronous records;
 - no permanent dual-write;
 - no routine raw accelerometer/GNSS/debug persistence;
-- v2 protected TX path becomes the normal product path only after SF5B/C/D/E
-  gates are satisfied.
+- the new SF5 protected family becomes the normal product store-forward path
+  only after SF5B/C/D/E gates are satisfied;
+- retire the legacy SF3 HISTORY_SECURE replay runtime together with the legacy
+  HistoryStore for new records; do not reinterpret its frozen bytes.
 
-Legacy v1 fixtures remain frozen and must not be weakened.
+Before SF5F, the current runtime remains: frozen TLP v1 live POSITION/relay plus
+provisioned SF3 TLP v2 HISTORY_SECURE replay. Legacy v1 fixtures **and SF2/SF3
+HISTORY_SECURE vectors/bytes** remain frozen and must not be weakened.
 
 Gate: full host + target build + required physical tracking/GNSS/power/storage
 regression + independent final audit.
@@ -187,7 +222,11 @@ Implement Gateway -> Edge durable handoff and FIFO drain using the first chosen
 local transport. Edge must durably accept before Gateway reclaim.
 
 Offline phone/Edge decryption requires a separately reviewed bounded/scoped
-offline-read authority; do not copy K_root to phone.
+offline-read authority; do not copy K_root to phone. The chosen SF5B envelope
+must leave a path to grant read/decrypt access without also granting authority
+to forge tracker-originated PERIODIC/EVENT/RESULT. If the selected symmetric
+construction cannot provide that property, it must be an explicit reviewed
+security limitation before the wire contract is frozen.
 
 Gate: Tracker -> Gateway -> Edge end-to-end offline test.
 
