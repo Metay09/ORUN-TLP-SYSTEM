@@ -474,6 +474,25 @@ static void testTornHeaderRepairableWithoutReboot() {
   success = false;
   assert(store.takeMaintenanceResult(success) && success);
   assert(store.hasPreparedPage());
+
+  // The first maintenance above uses the other erased page as the reserve.
+  // Fill that reserve so the next maintenance must choose and erase the
+  // PARTIAL_ACTIVATION page itself via findRepairableBlankPage().
+  for (uint32_t i = 0; i < csf::kRecordsPerPage; ++i) {
+    uint8_t fill[csf::kObjectSize];
+    makeObject(static_cast<uint8_t>(120U + i), fill);
+    (void)storeOne(store, fill);
+  }
+  assert(!store.hasPreparedPage());
+
+  const unsigned erases_before_repair = flash.erase_calls;
+  assert(store.requestMaintenance() ==
+         CustodyStore::MaintenanceResult::kStarted);
+  settle(store);
+  success = false;
+  assert(store.takeMaintenanceResult(success) && success);
+  assert(store.hasPreparedPage());
+  assert(flash.erase_calls == erases_before_repair + 1U);
 }
 
 static void testMultipleIntentSlotsSurviveTornAttempts() {
@@ -738,12 +757,25 @@ static void testIntentSlotsExhaustedIsPersistentAndFailSafe() {
   assert(store.requestMaintenance() ==
          CustodyStore::MaintenanceResult::kIntentSlotsExhausted);
 
+  const unsigned erases_before_reboot = flash.erase_calls;
   CustodyStore reboot(flash, 2);
   assert(reboot.begin() && !reboot.faulted());
+  assert(held(reboot) == 1U);
+
+  CustodyStore::Handle oldest;
+  uint8_t oldest_object[csf::kObjectSize];
+  assert(reboot.oldestHeld(oldest, oldest_object) ==
+         CustodyStore::HeldLookupResult::kFound);
+  assert(oldest.page == fixture.live_handle.page &&
+         oldest.slot == fixture.live_handle.slot &&
+         oldest.page_generation == fixture.live_handle.page_generation);
+  assert(memcmp(oldest_object, fixture.live, sizeof(fixture.live)) == 0);
+
   assert(reboot.requestCustody(extra, sizeof(extra)) ==
          CustodyStore::AdmissionResult::kNoCapacity);
   assert(reboot.requestMaintenance() ==
          CustodyStore::MaintenanceResult::kIntentSlotsExhausted);
+  assert(flash.erase_calls == erases_before_reboot);
 }
 
 static void testDoubleTornHandoffExhaustionStaysHeld() {
@@ -797,10 +829,15 @@ static void testTornCompletionWordNeverRegainsEraseAuthority() {
   assert(store.hasPreparedPage());
   assert(store.diagnostics().reclaim_intent_partial_completions >= 1U);
 
+  const unsigned erases_before_reboot = flash.erase_calls;
   CustodyStore reboot(flash, 2);
   assert(reboot.begin() && !reboot.faulted());
   assert(reboot.hasPreparedPage());
   assert(held(reboot) == 1U);
+  assert(reboot.diagnostics().reclaim_intent_recoveries == 0U);
+  assert(reboot.requestMaintenance() ==
+         CustodyStore::MaintenanceResult::kNoWork);
+  assert(flash.erase_calls == erases_before_reboot);
 
   uint8_t next[csf::kObjectSize];
   makeObject(223, next);
@@ -854,6 +891,7 @@ static void testCommittedCorruptIntentFailsClosed() {
 
   CustodyStore store(flash, 2);
   assert(store.begin() && store.faulted());
+  assert(store.diagnostics().reclaim_intent_faults == 1U);
   assert(store.requestMaintenance() ==
          CustodyStore::MaintenanceResult::kRejected);
 }
