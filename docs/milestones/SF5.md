@@ -89,8 +89,8 @@ Gate: focused architecture review; no production code change.
 ### SF5B — TLP v2 protected wire/security contract
 
 Define exact application-family allocation, plaintext layout, protected-frame
-binding and custody-ACK binding while reusing the reviewed M7P6 security
-direction.
+binding, retry/reset protected-object lifetime and custody-ACK binding while
+reusing the reviewed M7P6 security direction.
 
 Must preserve:
 
@@ -129,6 +129,11 @@ Candidate reference-platform range:
 Revise application ceiling only after current image size/headroom is checked.
 Wire the concrete nRF backend through the existing FlashMutationGate/
 SoftDevice ownership model. No overlapping owner is allowed.
+
+Before freezing the physical owner, resolve the real universal-firmware case
+where one node originates its own observations **and** has Gateway bridge
+capability. Do not solve this by legacy Role and do not let independent
+ObservationStore/CustodyStore writers share pages.
 
 Gate: host suite + RAK4630 build + storage-layout guards.
 
