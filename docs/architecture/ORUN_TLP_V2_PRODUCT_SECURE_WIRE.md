@@ -219,11 +219,27 @@ When the bit is clear:
 - RF receipt/TX_DONE is not custody;
 - the Gateway must not use receipt alone to make the tracker release the record.
 
-This keeps routine live traffic from requiring an ACK on every report while
-preserving store-first ownership.
+For the initial SF5 tracker policy, **durable PERIODIC/EVENT records are not
+normally sent twice as "live now, custody later"**. Their normal first protected
+transmission into a custody-capable path uses `CUSTODY_REQUESTED=1`. The same
+protected object may be forwarded onward immediately while the Gateway performs
+its durable commit; "custody requested" does not mean "delay live forwarding".
 
-A critical EVENT may be sent immediately as a live frame even if another custody
-attempt is already outstanding. Durable custody can be acquired separately.
+A durable tracker record is releasable only after an authenticated durable
+responsibility-transfer fact for that exact object. In the initial SF5 path that
+fact is `GATEWAY_CUSTODY_ACK`. Therefore every retained PERIODIC/EVENT that is
+eventually removed from tracker responsibility needs one such successful custody
+transfer (unless a separately reviewed equivalent durable-release path is added
+later). Merely spacing those ACKs out changes collision timing; it does not make
+their long-term airtime disappear.
+
+`CUSTODY_REQUESTED=0` remains a bounded best-effort mode, not the normal
+routine durable-record policy. A critical EVENT may use one exceptional
+best-effort live transmission when immediate notification is useful but durable
+custody admission cannot yet be obtained (for example all bounded exact-object
+slots are occupied). That exception does not release the durable EVENT; the
+record still enters the normal custody path later. It must be rate-limited and
+included as **additional** airtime, never counted as a replacement for custody.
 
 Changing `CUSTODY_REQUESTED` changes authenticated content and therefore
 requires a fresh security counter/object.
@@ -244,6 +260,16 @@ Logical product-record identity is:
 ```text
 (DeviceIdentity, record_incarnation, record_sequence)
 ```
+
+The `record_sequence` namespace is **one tracker-wide durable record sequence
+inside one `record_incarnation`**, not one counter per app family. PERIODIC and
+EVENT therefore cannot both mint sequence N in the same incarnation. SF5C must
+use the same allocator for all ObservationStore record kinds; an internal
+COMMAND_RESULT record may use that same durable record identity even though its
+delegated wire correlation is `command_id/request_counter`.
+
+This keeps backend dedupe unambiguous without adding `app_family` to the
+logical identity.
 
 This identity survives retransmission, relay path, Gateway choice, D2A security
 counter change and credential transport retry.
@@ -319,18 +345,28 @@ bit7 = 0
 
 Unknown/reserved bits reject.
 
-When `PERIOD_TIME_VALID=0`, `period_end_epoch_seconds=0`.
+`period_duration_seconds` must be non-zero.
 
-When `LOCATION_VALID=0`:
+When `PERIOD_TIME_VALID=0`, `period_end_epoch_seconds=0`. When
+`PERIOD_TIME_VALID=1`, `period_end_epoch_seconds` must be non-zero.
 
-- coordinates are ignored and encoded as zero;
-- `location_source=UNKNOWN`;
-- `ALTITUDE_VALID=0` and `LOCATION_AGE_VALID=0`;
-- altitude/age/GNSS-only quality fields are encoded as their non-authoritative
-  values.
+Canonical location encoding is mandatory:
 
-When `LOCATION_VALID=1`, `location_source` must be a non-UNKNOWN supported
-source and latitude/longitude must pass range validation.
+- `LOCATION_VALID=0` requires `location_source=UNKNOWN`,
+  `ALTITUDE_VALID=0`, `LOCATION_AGE_VALID=0`,
+  `latitude_e7=0`, `longitude_e7=0`, `altitude_mm=0`,
+  `hdop_x100=0`, `satellites=0`, and
+  `location_age_seconds=0xFFFF`;
+- `LOCATION_VALID=1` requires a supported non-UNKNOWN source and in-range
+  latitude/longitude;
+- `ALTITUDE_VALID=0` requires `altitude_mm=0`;
+- `LOCATION_AGE_VALID=0` requires `location_age_seconds=0xFFFF`;
+- `LOCATION_AGE_VALID=1` requires
+  `location_age_seconds <= 0xFFFE`;
+- non-GNSS sources require `hdop_x100=0` and `satellites=0`.
+
+These canonical bytes are part of schema v1. A producer must not retain stale
+sensor values in fields whose validity bit is clear.
 
 No consumer interprets `0,0` as the missing-location sentinel; validity is the
 authority.
@@ -349,8 +385,9 @@ Wire semantic registry:
 
 This registry does not imply all sources are implemented today.
 
-For non-GNSS sources, `hdop_x100` and `satellites` are non-authoritative and
-encoded as zero.
+For GNSS source, `hdop_x100=0` or `satellites=0` means that specific
+quality value is unavailable; successful position validity does not fabricate
+quality precision.
 
 `location_age_seconds` uses:
 
@@ -375,8 +412,10 @@ unknown_seconds = period_duration_seconds - activity_coverage_seconds
 inactive_seconds = activity_coverage_seconds - active_seconds
 ```
 
-When `ACTIVITY_VALID=0`, activity classification fields are non-authoritative;
-coverage may still expose how much sensor evidence existed.
+When `ACTIVITY_VALID=0`, there is no usable activity evidence for this
+schema: `activity_coverage_seconds=0`, `active_seconds=0`,
+`activity_transition_count=0`, `movement_mean_abs_delta_mg=0`, and
+`activity_quality=UNKNOWN`.
 
 `movement_mean_abs_delta_mg` is the bounded report-period aggregate of usable
 short-window acceleration change evidence. It is not a grazing/walking/lying
@@ -390,17 +429,15 @@ classifier label.
 2 COMPLETE
 ```
 
-For schema v1 the relationship is strict:
+For schema v1 the relationship is strict and `period_duration_seconds > 0`:
 
 ```text
-coverage == 0                      -> quality = UNKNOWN, ACTIVITY_VALID=0
-0 < coverage < period_duration    -> quality = PARTIAL, ACTIVITY_VALID=1
-coverage == period_duration       -> quality = COMPLETE, ACTIVITY_VALID=1
+coverage == 0                    -> quality = UNKNOWN,  ACTIVITY_VALID=0
+0 < coverage < period_duration  -> quality = PARTIAL,  ACTIVITY_VALID=1
+coverage == period_duration     -> quality = COMPLETE, ACTIVITY_VALID=1
 ```
 
-When `ACTIVITY_VALID=0`, `active_seconds`,
-`activity_transition_count` and `movement_mean_abs_delta_mg` are encoded
-zero/non-authoritative.
+No other combination is valid.
 
 `activity_transition_count=0xFFFF` means saturated at >=65535.
 `movement_mean_abs_delta_mg=0xFFFF` means saturated at >=65535 mg.
@@ -643,30 +680,45 @@ exception. It does not relax COMMAND/RESULT replay/freshness rules.
 
 Logical record identity and exact protected object identity remain different.
 
-For one logical PERIODIC/EVENT record:
+Initial routine sender policy is:
 
-1. a best-effort live frame may be protected once with
-   `CUSTODY_REQUESTED=0`;
-2. a later durable-custody attempt may protect the same logical record with a
-   fresh counter and `CUSTODY_REQUESTED=1`;
-3. retransmissions of one active custody attempt are byte-identical;
-4. a security counter is never reused to rebuild changed bytes.
+1. select one retained logical record for custody admission;
+2. protect it once with `CUSTODY_REQUESTED=1` and a fresh security counter;
+3. **durably persist the exact protected object (or an independently audited
+   exact-byte-equivalent representation) before its first RF transmission**;
+4. retransmit that exact object byte-for-byte until its custody lifecycle closes;
+5. never re-protect merely because a retry timer, backoff epoch or delivery
+   attempt number rolled over.
+
+A custody-requested object may be re-protected only when the prior exact object
+cannot safely remain authoritative, specifically:
+
+- durable exact-object cache evidence is unavailable/corrupt after recovery;
+- credential/key lifetime changes make the old object unusable for the active
+  custody path;
+- another separately reviewed security-invalidating condition explicitly
+  requires a new protected object.
+
+Each such replacement uses a fresh security counter and increments bounded
+duplicate-amplification diagnostics. Ordinary timeout/ACK loss is **not** a
+re-protection reason.
 
 Initial tracker bound:
 
-> At most **4 exact custody-requested protected objects** may be outstanding at
-> once for one tracker.
+> At most **4 exact custody-requested protected objects total** may be outstanding
+> at once for one tracker across PRODUCT_SECURE PERIODIC/EVENT and custody-
+> eligible DELEGATED_D2GW RESULT objects.
 
-SF5C must durably retain/recover the exact bytes (or an independently audited
-equivalent exact-object representation) for those bounded outstanding attempts.
-It must not cache every historical record as a second full wire copy.
+SF5C must durably retain/recover those exact objects and their logical-record /
+logical-result mapping. It must not cache every historical record as a second
+full wire copy.
 
-A power cut before the exact protected object becomes durably cache-authoritative
-may force a fresh counter/object on recovery. That failure path must be
-fault-injected and counted. The design must bound duplicate amplification; every
-reset must not regenerate the complete backlog.
+If the exact object cannot be made durably cache-authoritative, that custody
+attempt is not transmitted. This removes the "send first, lose cache, mint a new
+opaque object after reset" path.
 
-One logical record may have only one active custody-request object at a time.
+One logical record/result may have only one active custody-request object at a
+time.
 
 Authenticated custody ACK may arrive out of record order. Tracker release state
 therefore remains selective/bounded as required by SF5A.
@@ -1003,8 +1055,15 @@ For `STALE_PRECONDITION`, a current token may be returned when valid, but the
 sender must not replace its config/token cache from token alone; it performs the
 reviewed coherent state read when needed.
 
-`detail_code` is zero for the first config family unless a later reviewed
-result-code-specific registry defines a bounded value.
+`detail_code` is zero except for the following initial bounded policy detail:
+
+```text
+result_code = POLICY_REJECTED
+detail_code = 0x01 COMMAND_ID_REUSE_CONFLICT
+```
+
+This detail means the authenticated `command_id` matches a retained logical
+command result but the canonical request identity does not match.
 
 ### 15.2 CONFIG_STATE_READ RESULT
 
@@ -1042,15 +1101,41 @@ BUSY/UNCERTAIN/UNAVAILABLE responses carry no authoritative token/config values.
 ObservationStore owns one logical RESULT outcome for the admitted logical
 command, not one record per new crypto retry.
 
-When the same logical CONFIG_SET_DESIRED is retried:
+For CONFIG_SET_DESIRED, `command_id` alone never authorizes RESULT reuse.
 
-- the application effect is not repeated merely because RESULT was lost;
-- retained logical outcome or current durable CAS state is used;
-- the newly emitted RESULT binds the **new** request_counter;
+The canonical logical-request identity for this first family is the exact tuple:
+
+```text
+(opcode,
+ command_id,
+ expected_state_token[12],
+ tracking_interval_seconds,
+ battery_capacity_mah)
+```
+
+SF5C's bounded retained RESULT ownership must retain enough canonical request
+identity to compare this tuple while the logical RESULT is retained. This is
+bounded RESULT metadata, not a generic persistent command journal.
+
+For every authenticated retry:
+
+- acquire/evaluate through the normative CAS §6 path; do not bypass CAS merely
+  because `command_id` was seen before;
+- if a retained RESULT exists and the canonical request tuple matches exactly,
+  that retained logical outcome may be reused/reconstructed as allowed by CAS;
+- if the same `command_id` is presented with a different canonical tuple,
+  fail closed with `POLICY_REJECTED / COMMAND_ID_REUSE_CONFLICT`; never return
+  the old command's APPLIED/token as if it belonged to the new payload;
+- the newly emitted RESULT binds the **new** `request_counter`;
 - creating the response transport frame may consume a fresh D2GW security
   counter/salt as required by the delegated envelope;
 - this does not append another durable logical RESULT merely because the
   transport counter changed.
+
+If the retained RESULT itself has already aged out, the tracker does not invent
+historical command-id memory merely to detect ancient reuse; the existing
+delegated authority/CAS/replay contract remains authoritative for the newly
+admitted request.
 
 ---
 
@@ -1121,7 +1206,7 @@ Calculated raw airtime:
 | relay-wrapped EVENT | 100 | ~2215.936 ms |
 | relay-wrapped PERIODIC | 116 | ~2461.696 ms |
 | GATEWAY_CUSTODY_ACK | 56 | ~1396.736 ms |
-| relay-wrapped custody ACK | 72 | ~1724.416 ms |
+| relay-wrapped custody ACK | 72 | ~1642.496 ms |
 
 These are calculations, not RF measurements and not regulatory compliance
 claims.
@@ -1131,8 +1216,19 @@ retry/collision overhead.
 
 ### 18.1 Flat-domain raw-load warning
 
-If every PERIODIC required immediate direct custody ACK, raw channel occupancy
-from only PERIODIC+ACK would be approximately:
+Every durable record eventually needs a durable responsibility-transfer fact
+before tracker release. Pacing custody attempts helps collision scheduling, but
+does not remove the long-term per-record custody/ACK airtime.
+
+For the initial sender policy, routine PERIODIC uses **one custody-requested
+PRODUCT_SECURE transmission**, not a separate live frame plus a second custody
+frame. Its raw direct cost is therefore:
+
+```text
+100 B PERIODIC + 56 B custody ACK ~= 3.613 s
+```
+
+Raw occupancy for that **single custody-requested-frame policy** is:
 
 | effective cadence | 5 nodes | 10 nodes | 30 nodes | 50 nodes |
 | --- | ---: | ---: | ---: | ---: |
@@ -1141,17 +1237,39 @@ from only PERIODIC+ACK would be approximately:
 | 30 min | 1.0% | 2.0% | 6.0% | 10.0% |
 | 60 min | 0.5% | 1.0% | 3.0% | 5.0% |
 
-This excludes relays, retries, EVENT, COMMAND/RESULT, collisions and other
-traffic.
+If an implementation instead sends a separate best-effort 100 B live PERIODIC
+**and later** sends another 100 B custody-requested PERIODIC plus its ACK, the
+raw cost becomes about **5.829 s per record** and occupancy rises to:
+
+| effective cadence | 5 nodes | 10 nodes | 30 nodes | 50 nodes |
+| --- | ---: | ---: | ---: | ---: |
+| 3 min | 16.2% | 32.4% | 97.1% | 161.9% |
+| 15 min | 3.2% | 6.5% | 19.4% | 32.4% |
+| 30 min | 1.6% | 3.2% | 9.7% | 16.2% |
+| 60 min | 0.8% | 1.6% | 4.9% | 8.1% |
+
+That second policy is **not** the normal SF5 routine policy. Live+custody double
+publication is an exceptional cost (for example one rate-limited critical EVENT
+notification when custody admission is temporarily unavailable), not a capacity
+optimization.
+
+Both tables exclude relays, retries, EVENT, COMMAND/RESULT, collisions and other
+traffic. Pure-ALOHA-like contention makes useful capacity materially lower than
+raw occupancy, so even apparently moderate percentages are not an operating
+margin.
 
 Therefore:
 
 - 30-50 nodes at a 3-minute SF11 cadence cannot be treated as a flat single-RF-
   domain normal operating target;
-- routine live PERIODIC must not require an ACK merely because it was sent;
-- custody acquisition/backlog drain must be paced;
+- every durable record's custody transfer must be included in long-term
+  capacity, not dismissed because ACKs are paced;
+- custody attempts/backlog drain must still be scheduled to reduce collisions;
 - adaptive data rate/cadence, gateway placement and RF-domain partitioning remain
-  system-level capacity tools.
+  system-level capacity tools;
+- a future aggregate/selective batch-release protocol may reduce ACK overhead,
+  but it is **not** part of SF5B and would require its own reviewed type/security
+  contract before SF5G production closure.
 
 SF5B does not silently change the current RF profile. Final regional
 duty-cycle/compliance analysis remains a later evidence gate.
