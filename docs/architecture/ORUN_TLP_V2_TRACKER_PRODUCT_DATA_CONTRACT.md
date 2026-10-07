@@ -61,8 +61,10 @@ Required semantic fields:
 - period end/observation time when valid;
 - time-validity/quality.
 
-The report period is the configured tracking/report interval in effect for that
-record. A later config change does not reinterpret old records.
+The report period is the **effective** interval selected by Tracking policy for
+that record. It may be the configured base interval or a reviewed adaptive
+interval. The record carries the duration actually represented; a later config
+or policy change does not reinterpret old records.
 
 ### 3.2 Location
 
@@ -133,12 +135,15 @@ record.
 Required:
 
 - compact current product-health state/flags;
+- bounded diagnostic counter/status information where it is needed to explain
+  repeated recoverable degradation;
 - no unbounded string/debug payload;
 - no per-retry history.
 
 Persistent product-affecting fault transitions are EVENTs. Repeated transient
-issues may contribute to bounded counters/status but do not create one durable
-record per retry.
+issues may contribute to bounded/saturating counters or report-period deltas,
+but do not create one durable record per retry. Exact counter selection belongs
+to the later schema slice; it must remain bounded.
 
 ### 3.6 Current tracker telemetry scope
 
@@ -175,7 +180,10 @@ Examples:
 - persistent sensor/radio/storage/security fault transition;
 - future reviewed tamper/safety event.
 
-The same still-active condition is not appended every wake.
+The same still-active condition is not appended every wake. ACTIVE and CLEARED
+for one occurrence refer to the same occurrence identity. If the condition later
+becomes active again after a real clear, that is a new occurrence and receives a
+new occurrence identity.
 
 App/backend owns reminder cadence, escalation, mute/acknowledgement and repeated
 notifications.
@@ -213,6 +221,12 @@ authoritative. RESULT therefore needs to support:
 The exact opcode/result-code numeric registry and plaintext byte layout remain
 SF5B work.
 
+Unauthenticated, malformed, unauthorized or replay-rejected input must not
+create durable RESULT spam. Durable RESULT creation is for legitimate protected
+command processing after the security/admission gates required by that command
+family. An authenticated command that is validly admitted may still produce a
+durable application rejection RESULT.
+
 A duplicate COMMAND must not repeat a side effect merely because the previous
 RESULT was lost.
 
@@ -237,6 +251,12 @@ power-cut recovery.
 
 SF5B may choose a compact protected plaintext representation optimized for RF,
 provided it preserves the same product semantics and security bindings.
+
+Because Gateway custody is opaque and ACK eligibility is exact-object-bound,
+SF5B/SF5C must also specify the lifetime of the protected object across retry and
+reset. A semantic record alone must not be assumed sufficient if safe ACK
+matching requires durable frame/counter/digest state. Conversely, the tracker
+must never reuse an AEAD nonce/counter simply to reproduce old bytes.
 
 Do not serialize internal C++ structs directly as either persistent or wire
 format.
