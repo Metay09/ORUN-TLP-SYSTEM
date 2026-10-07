@@ -343,11 +343,20 @@ Every packet must be versioned.
 
 As of 2026-09-23 there is no deployed/customer ORUN fleet. TLP v1 is therefore a
 development compatibility baseline, not a permanent production legacy obligation.
-Keep its current golden/compatibility behavior intact until an explicit v2 cutover
-milestone, but do not require long-lived dual-stack product support merely for a
-fleet that does not exist. When v2 is ready and validated, the owner may migrate all
-development hardware together. Add mixed-fleet/dual-stack support only if a real
-deployment/interoperability requirement exists at that time.
+
+The owner-approved SF5 direction now designates reviewed TLP v2 protected product
+traffic as the **new production target**. Read
+`docs/architecture/ORUN_TLP_V2_PRODUCT_OBSERVATION_STORAGE_CUTOVER.md`,
+`docs/architecture/ORUN_TLP_V2_TRACKER_PRODUCT_DATA_CONTRACT.md` and
+`docs/milestones/SF5.md` before changing tracker observation/history protocol or
+persistence.
+
+Until the explicit SF5 runtime cutover is implemented and validated, preserve the
+current production v1 runtime and its physical evidence. Keep all v1
+golden/compatibility bytes frozen; do not add new product features to v1 and do
+not weaken fixtures merely to pass new v2 work. After validated cutover, new
+trackers need not continue emitting v1 POSITION. Add mixed-fleet/dual-stack
+support only if a real deployment/interoperability requirement exists.
 
 Plan for fields such as:
 
@@ -379,21 +388,28 @@ Duplicate packets must be safely detectable.
 
 ## Tracker Storage
 
-Important TRACKER records must be stored locally before transmission.
+Important TRACKER product records must be stored locally before transmission.
 
-Target approximately 1-2 weeks of compact local history where flash capacity
-permits.
+The current physically proven HistoryStore remains the runtime owner until the
+explicit SF5 cutover. The owner-approved next target is a **256 KiB bounded
+ObservationStore** carrying one report-period PERIODIC_OBSERVATION plus
+asynchronous EVENT and COMMAND_RESULT records. Do not permanently dual-write the
+same observation to legacy History and the new store.
 
-Use a circular/ring log.
+Normal tracker data is one meaningful record per **effective** report period:
+Location + activity summary for that same period + battery/bounded telemetry +
+bounded health. Raw accelerometer streams, raw GNSS/NMEA and unbounded debug
+logs are not routine durable product data.
+
+Use bounded circular/ring retention. When finite tracker capacity is exhausted,
+oldest retained tracker data may be overwritten so new observations continue,
+but capacity loss must be explicit through bounded diagnostics/gap semantics.
 
 Avoid excessive flash erase cycles.
 
-Priority order:
-
-1. Critical events
-2. Current live data
-3. Historical GNSS records
-4. Historical activity summaries
+Critical current/event transmission may receive higher RF QoS, but do not create
+an unreviewed storage scheduler that falsifies oldest-first retention/custody
+ownership.
 
 Live data must not wait behind a large historical backlog.
 
