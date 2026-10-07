@@ -543,6 +543,13 @@ A storage capacity result is not automatically an RF capacity result.
 SF4B proved a portable CustodyStore persistence foundation but did not authorize
 production Gateway custody runtime or a physical partition.
 
+The current SF4B store format is intentionally bound to the existing **73-byte
+HISTORY_SECURE observation object** (92-byte on-flash record, 43 records/page).
+SF5 product observations/events/results may produce a different protected-object
+size. Therefore SF5G must not silently reuse the current 73-byte geometry or its
+capacity arithmetic. Any widening/versioning of CustodyStore is a new reviewed
+format decision with fresh power-cut, recovery, wear, scan and capacity analysis.
+
 Before real custody ACK is enabled, the carried runtime gates remain mandatory,
 including:
 
