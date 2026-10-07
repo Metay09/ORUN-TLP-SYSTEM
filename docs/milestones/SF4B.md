@@ -1,6 +1,6 @@
 # SF4B — Gateway CustodyStore persistence foundation
 
-Status: **POST-RE-AUDIT FIXES IN PROGRESS — re-audit on `ba429db8fd4c3fde76284df27dde5530ebbe7bf4` returned PASS WITH FIXES (0 BLOCKER / 0 HIGH / 1 MEDIUM / 5 LOW). Merge-required N1(a) documentation and regression coverage plus the requested N6 regression gaps are now added; fresh host validation and short control re-audit remain pending. No physical gateway partition/runtime is allocated or activated.**
+Status: **FINAL CONTROL AUDIT PASS — independent control review on `8e4e512e48c471c313026befa1dc3ecbacc98024` returned PASS (0 BLOCKER / 0 HIGH / 0 MEDIUM / 3 LOW, none merge-blocking). The remaining optional test/doc hardening from that review is now on-branch; one final aggregate host run on the exact final head remains before merge. No physical gateway partition/runtime is allocated or activated.**
 
 Baseline: `main@6fc9669837563e4acd297c5cc519bb5e52fa8b0f` (SF4A merged via PR #79).
 Branch: `feat/sf4b-gateway-custody-store-foundation`.
@@ -252,19 +252,20 @@ claim.
 ### 7.1 Full-scan budget assigned by SF4A
 
 The store intentionally has no speculative persistent/RAM fingerprint index in
-SF4B. Worst-case duplicate admission therefore scans all retained slots.
-Analytical read work is:
+SF4B. A full duplicate admission scan therefore visits all retained slots.
+The table below is an **analytical sizing estimate**, not a strict timing/read upper bound:
 
-| Pages | Admission full-scan reads | Admission CRC bytes | Recovery worst-case reads | Recovery CRC bytes |
+| Pages | Admission full-scan estimate | Admission CRC bytes | Recovery scan estimate | Recovery CRC bytes |
 | ---: | ---: | ---: | ---: | ---: |
 | 16 | ~62.8 KiB | ~51.1 KiB | ~78.9 KiB | ~51.1 KiB |
 | 24 | ~94.2 KiB | ~76.6 KiB | ~130.3 KiB | ~76.6 KiB |
 | 32 | ~125.6 KiB | ~102.1 KiB | ~189.7 KiB | ~102.1 KiB |
 
 Recovery's header component is currently O(pages²) because generation
-uniqueness is checked without a dynamic allocation/index. This is acceptable as
-a bounded SF4B foundation, but **latency on real nRF52840 hardware is not yet
-measured**. Before SF4D freezes ACK/rendezvous timing, target measurements must
+uniqueness is checked without a dynamic allocation/index. The table intentionally
+omits some secondary helper rescans and is therefore not labeled a worst-case
+upper bound. This is acceptable as a bounded SF4B foundation, but **latency on
+real nRF52840 hardware is not yet measured**. Before SF4D freezes ACK/rendezvous timing, target measurements must
 decide whether the no-index implementation fits the receive window or whether a
 small bounded RAM index is justified.
 
@@ -380,16 +381,38 @@ N1(b), N2, N3, N4 and the exact scan-timing refinement in N5 are explicitly
 - propagate maintenance/admission read failures distinctly;
 - refine/measure scan timing before ACK/rendezvous timing is frozen.
 
-Remaining SF4B merge gates:
+Final independent control review of
+`8e4e512e48c471c313026befa1dc3ecbacc98024` returned:
 
-1. fresh aggregate host suite on the exact docs/test-fix head;
-2. short independent control re-audit confirming N1(a)/N6 closure and no new
-   merge-blocking issue;
-3. merge only after that control gate closes.
+```text
+VERDICT: PASS
+BLOCKER 0
+HIGH 0
+MEDIUM 0
+LOW 3
+FINAL RECOMMENDATION: MERGE
+```
 
-The prior normal RAK4630 build remains code-equivalent because the re-audit
-follow-up changes are tests/docs only; production source/header code did not
-change.
+The three LOW notes were test-strength/status-documentation quality items, not
+production defects. The branch now also pins:
+
+- N1 reboot preservation and zero-extra-erase evidence;
+- torn completion producing no recovered erase authority / no extra erase;
+- committed-corrupt intent diagnostic evidence;
+- the direct erase-and-reprepare path for the actual PARTIAL_ACTIVATION page.
+
+The scan table wording is also corrected to an analytical estimate rather than
+a strict worst-case bound.
+
+Remaining SF4B merge gate:
+
+1. one final aggregate host suite on the exact final test/docs head;
+2. merge if that suite is PASS.
+
+A new RAK4630 build or another independent audit is not required for these final
+changes because production source/header/runtime code did not change after the
+already validated/audited implementation. The prior normal RAK4630 build
+therefore remains code-equivalent.
 
 No physical hardware test is required for this portable/no-partition slice.
 Physical flash qualification belongs to the later slice that selects and wires
