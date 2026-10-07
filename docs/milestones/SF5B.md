@@ -1,6 +1,6 @@
 # SF5B — TLP v2 protected product wire + custody security contract
 
-Status: **CANDIDATE DESIGN CREATED — INDEPENDENT SECURITY/PROTOCOL AUDIT REQUIRED; NO PRODUCTION RUNTIME AUTHORIZED.**
+Status: **INITIAL INDEPENDENT SECURITY/PROTOCOL AUDIT: FIX THEN RE-REVIEW. Required documentation fixes are being applied on the same branch; no production runtime is authorized.**
 
 Baseline:
 `main@cdb9db172d178acc877b9315453e7adbd7947985` (SF5A merged).
@@ -76,13 +76,40 @@ authority or explicitly fail review.
 
 ## 5. Sender policy
 
-Routine live report does not require custody ACK per packet.
+For the initial SF5 durable tracker profile, routine PERIODIC/EVENT records are
+not double-published as one best-effort live frame plus a second custody frame.
 
-`CUSTODY_REQUESTED` explicitly requests durable Gateway custody.
+Normal policy:
 
-Tracker supports at most four exact outstanding custody-request objects in the
-initial contract; SF5C must preserve them/release state across reset without
-turning the whole backlog into fresh opaque duplicates.
+```text
+durable record
+-> protect once with CUSTODY_REQUESTED=1
+-> make exact protected object durably cache-authoritative
+-> transmit/retry that exact object byte-for-byte
+-> authenticated durable custody ACK
+-> durable selective release
+```
+
+Every retained durable record eventually needs a durable responsibility-transfer
+fact before tracker release. Pacing ACKs changes collision timing but does not
+remove their long-term airtime cost.
+
+`CUSTODY_REQUESTED=0` is only a bounded best-effort exception. A critical EVENT
+may use one extra live notification when custody admission is temporarily
+unavailable, but that transmission does not release the durable record and later
+custody is still required.
+
+Tracker supports at most four exact outstanding custody-request objects total
+across PRODUCT_SECURE PERIODIC/EVENT and custody-eligible DELEGATED_D2GW RESULT.
+
+A custody-requested exact object must be durably retained **before first RF
+transmission**. Retry/backoff/attempt timeout never justifies re-protection.
+Re-protection is limited to exact-cache loss/corruption, credential-lifetime
+change, or another separately reviewed security-invalidating condition; every
+replacement uses a fresh security counter and bounded diagnostics.
+
+SF5C must preserve those exact objects plus selective release state across reset
+without turning the whole backlog into fresh opaque duplicates.
 
 ## 6. Capacity warning
 
@@ -90,15 +117,31 @@ At the current reference SF11/BW125/CR4/5 calculation:
 
 - PERIODIC 100 B ~= 2.216 s;
 - custody ACK 56 B ~= 1.397 s;
-- immediate PERIODIC+ACK ~= 3.613 s.
+- one custody-requested PERIODIC + ACK ~= 3.613 s;
+- separate live PERIODIC + later custody PERIODIC + ACK ~= 5.829 s.
 
-50 devices at 3-minute effective cadence would exceed 100% raw channel time if
-every report required immediate custody ACK, before retry/relay/event traffic.
+The normal initial policy is the **single custody-requested frame**, not
+live+custody double publication.
 
-This is why live traffic and durable custody acquisition are separate and why
-30-50 nodes cannot be treated as a flat 3-minute SF11 domain.
+Raw occupancy examples:
 
-These are calculations only, not measurements/regulatory claims.
+| effective cadence | policy | 30 nodes | 50 nodes |
+| --- | --- | ---: | ---: |
+| 3 min | one custody-requested frame + ACK | 60.2% | 100.4% |
+| 3 min | separate live + custody + ACK | 97.1% | 161.9% |
+| 15 min | one custody-requested frame + ACK | 12.0% | 20.1% |
+| 15 min | separate live + custody + ACK | 19.4% | 32.4% |
+
+These are raw occupancy calculations only; they exclude collision/retry/relay/
+EVENT/COMMAND traffic. Pure-ALOHA-like contention means practical capacity is
+materially lower than raw channel percentage.
+
+Therefore 30-50 nodes cannot be treated as a flat 3-minute SF11 domain. Pacing
+custody attempts is still useful for collision control, but does not erase the
+per-record release cost. A later aggregate/selective batch-release design may
+reduce ACK overhead only through a separately reviewed protocol change.
+
+These are calculations only, not RF measurements or regulatory claims.
 
 ## 7. Merge gate
 
