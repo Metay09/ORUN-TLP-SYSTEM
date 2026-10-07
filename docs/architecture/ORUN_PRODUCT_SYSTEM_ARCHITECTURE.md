@@ -402,14 +402,21 @@ USB/BLE/backend are consumers of this model.
 
 History persists important observations before transmission where required.
 
-Priority order remains conceptually:
+Priority order remains conceptually a **service/RF QoS** concern:
 
 1. critical events;
 2. current/live data;
-3. historical position;
-4. historical activity/telemetry.
+3. historical observation backlog.
 
-Backlog must not starve current critical data.
+This does not define a storage-eviction order and does not override SF4/SF5
+custody ownership. In particular:
+
+- tracker finite-retention loss follows the explicitly reviewed tracker policy;
+- Gateway accepted custody is not pressure-evicted;
+- the initial Gateway -> Edge durable backlog drain is global oldest-first/FIFO.
+
+Backlog must not starve a current critical transmit opportunity, but a fast/live
+notification path must not falsely mark or delete older durable custody.
 
 ---
 
