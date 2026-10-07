@@ -343,11 +343,29 @@ Every packet must be versioned.
 
 As of 2026-09-23 there is no deployed/customer ORUN fleet. TLP v1 is therefore a
 development compatibility baseline, not a permanent production legacy obligation.
-Keep its current golden/compatibility behavior intact until an explicit v2 cutover
-milestone, but do not require long-lived dual-stack product support merely for a
-fleet that does not exist. When v2 is ready and validated, the owner may migrate all
-development hardware together. Add mixed-fleet/dual-stack support only if a real
-deployment/interoperability requirement exists at that time.
+
+The owner-approved SF5 direction now designates reviewed TLP v2 protected product
+traffic as the **new production target**. Read
+`docs/architecture/ORUN_TLP_V2_PRODUCT_OBSERVATION_STORAGE_CUTOVER.md`,
+`docs/architecture/ORUN_TLP_V2_TRACKER_PRODUCT_DATA_CONTRACT.md` and
+`docs/milestones/SF5.md` before changing tracker observation/history protocol or
+persistence.
+
+Until the explicit SF5 runtime cutover is implemented and validated, preserve
+the **current production runtime paths** and their evidence boundary:
+
+- frozen TLP v1 live POSITION / relay behavior;
+- provisioned SF3 TLP v2 HISTORY_SECURE backlog replay from the legacy
+  HistoryStore.
+
+Keep all v1 golden/compatibility bytes **and the frozen SF2/SF3 HISTORY_SECURE
+bytes/vectors** intact; do not add new product features by silently widening
+either legacy family. SF5B defines a new protected product-observation family,
+and SF5F retires HISTORY_SECURE as the normal new-record store-forward path
+together with the legacy HistoryStore. After validated cutover, new trackers
+need not continue emitting v1 POSITION or new HISTORY_SECURE observations. Add
+mixed-fleet/dual-stack support only if a real deployment/interoperability
+requirement exists.
 
 Plan for fields such as:
 
@@ -379,27 +397,40 @@ Duplicate packets must be safely detectable.
 
 ## Tracker Storage
 
-Important TRACKER records must be stored locally before transmission.
+Important TRACKER product records must be stored locally before transmission.
 
-Target approximately 1-2 weeks of compact local history where flash capacity
-permits.
+The current physically proven HistoryStore remains the runtime owner until the
+explicit SF5 cutover. The owner-approved next target is a **256 KiB bounded
+ObservationStore** carrying one report-period PERIODIC_OBSERVATION plus
+asynchronous EVENT and COMMAND_RESULT records. Do not permanently dual-write the
+same observation to legacy History and the new store.
 
-Use a circular/ring log.
+Normal tracker data is one meaningful record per **effective** report period:
+Location + activity summary for that same period + battery/bounded telemetry +
+bounded health. Raw accelerometer streams, raw GNSS/NMEA and unbounded debug
+logs are not routine durable product data.
+
+Use bounded circular/ring retention. When finite tracker capacity is exhausted,
+oldest retained tracker data may be overwritten so new observations continue,
+but capacity loss must be explicit through bounded diagnostics/gap semantics.
 
 Avoid excessive flash erase cycles.
 
-Priority order:
-
-1. Critical events
-2. Current live data
-3. Historical GNSS records
-4. Historical activity summaries
+Critical current/event transmission may receive higher RF QoS, but do not create
+an unreviewed storage scheduler that falsifies oldest-first retention/custody
+ownership.
 
 Live data must not wait behind a large historical backlog.
 
 When connectivity returns, old records should be transferred gradually.
 
-Records confirmed delivered must not be continuously retransmitted.
+Records whose responsibility has durably transferred must not be continuously
+retransmitted. SF5 ObservationStore must preserve bounded reset-safe
+responsibility-release state; because critical/current QoS can acknowledge
+records out of backlog order, do not assume a single contiguous watermark is
+always sufficient. RAM-only release progress may cause safe duplicate replay
+after reset, but reset/checkpoint loss must not allow unbounded whole-backlog
+re-protection/amplification.
 
 Store-forward delivery must remain gateway-independent. A fixed gateway, MOBILE
 gateway or another compatible bridge may carry the same logical observation;
@@ -407,13 +438,19 @@ downstream duplicate transport/path observations must converge on one
 application observation while retaining useful path metadata. `TX_DONE`, relay
 TX completion and ordinary gateway RF receipt are not delivery.
 
-Do not persist a replay cursor or delivered checkpoint after every historical
-packet. History format v4 retains only four bounded state slots per active page; per-record
-metadata writes can force destructive metadata-driven page rotation. Initial
-store-forward work must accumulate contiguous authenticated receipt progress in
-RAM and checkpoint durable delivery only at a separately reviewed bounded
-frequency. Reboot may cause safe duplicate replay; premature deletion is not
-acceptable. See `docs/architecture/ORUN_HISTORY_STORE_FORWARD_DELIVERY.md`.
+For the **current legacy HistoryStore**, do not persist a replay cursor or
+delivered checkpoint after every historical packet. History format v4 retains
+only four bounded state slots per active page; per-record metadata writes can
+force destructive metadata-driven page rotation. Current SF1-SF3 **runtime** therefore uses bounded/coarse delivery
+progress and permits safe duplicate replay after checkpoint loss. SF4 adds the
+reviewed custody architecture/foundation but its Gateway custody runtime is not
+yet active.
+
+SF5C is a new persistence format and must explicitly solve bounded reset-safe
+selective release without copying HistoryStore's four-slot limitation or causing
+per-ACK wear. Premature deletion is never acceptable. See
+`docs/architecture/ORUN_HISTORY_STORE_FORWARD_DELIVERY.md` and the SF5
+contracts.
 
 ---
 

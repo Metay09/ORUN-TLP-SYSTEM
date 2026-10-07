@@ -330,6 +330,11 @@ and clear/update semantics.
 
 Critical event traffic has higher QoS than routine history or messaging.
 
+An open EVENT occurrence is application control state, not merely a historical
+row. The minimum state needed to preserve the occurrence identity through reset
+and later emit the matching CLEARED transition must be durably owned and must
+not disappear merely because historical backlog rotates.
+
 ### 5.6 Geofence / LOST
 
 Geofence evaluation remains local where safety/value requires offline behavior.
@@ -385,6 +390,10 @@ Side-effecting commands require:
 - durable application ownership;
 - authenticated RESULT.
 
+Durable RESULT ownership is for the logical command outcome, not one new
+persistent record per cryptographic retry. Authenticated retries must remain
+bounded and must not create a flash-amplification path.
+
 ### 5.9 Health / Diagnostics
 
 Health is a bounded service model, not raw serial logging.
@@ -402,14 +411,21 @@ USB/BLE/backend are consumers of this model.
 
 History persists important observations before transmission where required.
 
-Priority order remains conceptually:
+Priority order remains conceptually a **service/RF QoS** concern:
 
 1. critical events;
 2. current/live data;
-3. historical position;
-4. historical activity/telemetry.
+3. historical observation backlog.
 
-Backlog must not starve current critical data.
+This does not define a storage-eviction order and does not override SF4/SF5
+custody ownership. In particular:
+
+- tracker finite-retention loss follows the explicitly reviewed tracker policy;
+- Gateway accepted custody is not pressure-evicted;
+- the initial Gateway -> Edge durable backlog drain is global oldest-first/FIFO.
+
+Backlog must not starve a current critical transmit opportunity, but a fast/live
+notification path must not falsely mark or delete older durable custody.
 
 ---
 
@@ -506,8 +522,18 @@ The same logical message keeps one application identity across route changes.
 
 Current reference behavior remains private LoRa P2P.
 
-Current validated TLP v1 one-hop behavior remains frozen until an explicit
-protocol cutover.
+Current validated TLP v1 one-hop behavior remains frozen in the current runtime.
+The current tracker runtime also includes provisioned SF3 **TLP v2
+HISTORY_SECURE** replay from the legacy HistoryStore; the system is therefore not
+"v1 only".
+
+The owner-approved SF5 direction
+(`ORUN_TLP_V2_PRODUCT_OBSERVATION_STORAGE_CUTOVER.md`) is now the explicit
+**future production cutover direction**: new product observations move to
+reviewed TLP v2 protected traffic after the SF5 semantic/security/storage/
+physical gates pass. This direction does not retroactively claim that current
+runtime has already cut over. TLP v1 bytes/golden fixtures remain frozen legacy
+compatibility evidence.
 
 Near-term network principles:
 
@@ -563,9 +589,15 @@ Current ownership classes include:
 
 - SecurityStore — credential/security counters/replay state authorized by its schema;
 - ConfigStore — durable requested device configuration;
-- HistoryStore — application observation/history backlog;
+- HistoryStore — current application observation/history backlog;
 - BLE/InternalFS bond storage — framework BLE state;
 - bootloader/settings — firmware lifecycle ownership.
+
+SF5 defines a future 256 KiB ObservationStore product direction, but it is not a
+current physical/runtime owner until its layout/backend/qualification gates pass.
+The same device may eventually originate its own observations and also bridge
+Gateway custody; that combined capability must receive one explicit physical
+ownership design and must not be inferred from Role.
 
 Future durable state such as:
 
@@ -579,6 +611,12 @@ requires an explicit owner, reset policy, power-cut invariant, wear budget and
 partition review before implementation.
 
 Do not share pages casually between services.
+
+A profile/capability change is not storage migration authority. If a physical
+region changes durable owner, the transition must be explicit: unresolved
+custody/data responsibility is drained or deliberately abandoned under an
+operator-visible destructive re-baseline before a new owner may format/reuse the
+region.
 
 ---
 
