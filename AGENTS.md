@@ -441,9 +441,10 @@ TX completion and ordinary gateway RF receipt are not delivery.
 For the **current legacy HistoryStore**, do not persist a replay cursor or
 delivered checkpoint after every historical packet. History format v4 retains
 only four bounded state slots per active page; per-record metadata writes can
-force destructive metadata-driven page rotation. Current SF1-SF4 logic therefore
-uses bounded/coarse delivery progress and permits safe duplicate replay after
-checkpoint loss.
+force destructive metadata-driven page rotation. Current SF1-SF3 **runtime** therefore uses bounded/coarse delivery
+progress and permits safe duplicate replay after checkpoint loss. SF4 adds the
+reviewed custody architecture/foundation but its Gateway custody runtime is not
+yet active.
 
 SF5C is a new persistence format and must explicitly solve bounded reset-safe
 selective release without copying HistoryStore's four-slot limitation or causing
