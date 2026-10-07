@@ -1,6 +1,6 @@
 # SF5 — TLP v2 product observation + 256 KiB durable-data cutover
 
-Status: **SF5A INITIAL INDEPENDENT AUDIT PASS WITH FIXES — 0 BLOCKER / 2 HIGH / 6 MEDIUM / 1 LOW; F1-F9 documentation fixes applied; focused re-review required before merge. No production implementation is authorized.**
+Status: **SF5A FINAL INDEPENDENT RE-REVIEW PASS — 0 BLOCKER / 0 HIGH / 0 MEDIUM / 0 LOW; F1-F9 CLOSED; MERGE APPROVED. No production implementation is authorized by SF5A.**
 
 Baseline: `main@89492c8d87b42fe1c9bd6bb334b41812640db74b` (SF4B merged).
 
