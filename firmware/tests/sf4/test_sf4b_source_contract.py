@@ -47,5 +47,12 @@ assert '"flash_backend.h"' in store_h
 assert '"tlp_v2_history_secure.h"' in format_h
 assert "kHistoryObservationPacketSize" in format_h
 assert "kObjectSize == 73U" in format_h
+assert "kVersion = 2U" in format_h
+assert "kRecordSize = 92U" in format_h
+assert "kRecordsPerPage == 43U" in format_h
+assert "kIntentSlotsPerPage = 3U" in format_h
+assert "kIntentCompleteOffset = 20U" in format_h
+assert "kRecordHandoff0Offset = 84U" in format_h
+assert "kRecordHandoff1Offset = 88U" in format_h
 
 print("SF4B source ownership/activation contract: PASS")
