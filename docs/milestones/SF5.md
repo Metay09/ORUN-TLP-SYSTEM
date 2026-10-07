@@ -1,6 +1,6 @@
 # SF5 — TLP v2 product observation + 256 KiB durable-data cutover
 
-Status: **IN PROGRESS — product direction captured; implementation not yet authorized.**
+Status: **SF5A INITIAL INDEPENDENT AUDIT PASS WITH FIXES — 0 BLOCKER / 2 HIGH / 6 MEDIUM / 1 LOW; F1-F9 documentation fixes applied; focused re-review required before merge. No production implementation is authorized.**
 
 Baseline: `main@89492c8d87b42fe1c9bd6bb334b41812640db74b` (SF4B merged).
 
@@ -8,6 +8,9 @@ Active branch: `design/tlp-v2-product-observation-cutover`.
 
 Primary architecture contract:
 `docs/architecture/ORUN_TLP_V2_PRODUCT_OBSERVATION_STORAGE_CUTOVER.md`.
+
+Independent audit disposition:
+`docs/audits/SF5A_TLP_V2_PRODUCT_OBSERVATION_AUDIT_DISPOSITION.md`.
 
 ## 1. Goal
 
