@@ -173,6 +173,12 @@ Close SF4B pre-runtime gates N1-N5, select/wire the 256 KiB Gateway custody
 owner for the relevant product profile, then enable authenticated
 GATEWAY_CUSTODY_ACK only after durable commit.
 
+The existing SF4B CustodyStore format is frozen around the current 73-byte
+HISTORY_SECURE object. If SF5B produces a different protected-object size, do
+not silently stretch that format or reuse its 43-record/page capacity numbers.
+Version/review the Gateway custody format and rerun power-cut/recovery/wear/scan
+analysis for the actual SF5 object size.
+
 Gate: host + target + physical custody qualification + independent audit.
 
 ### SF5H — Edge sync / offline local data
