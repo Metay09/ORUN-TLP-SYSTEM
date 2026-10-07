@@ -1,6 +1,6 @@
 # SF4B — Gateway CustodyStore persistence foundation
 
-Status: **POST-AUDIT SOFTWARE VALIDATION PASS — independent audit on `ea1085f132e6434b77e19de8fc49ec4337839861` returned FAIL (1 BLOCKER / 2 HIGH / 3 MEDIUM / 6 LOW). Format/store v2 fixes are implemented; fresh aggregate host validation PASS and fresh normal RAK4630 production build PASS. Independent re-audit remains pending. No physical gateway partition/runtime is allocated or activated.**
+Status: **POST-RE-AUDIT FIXES IN PROGRESS — re-audit on `ba429db8fd4c3fde76284df27dde5530ebbe7bf4` returned PASS WITH FIXES (0 BLOCKER / 0 HIGH / 1 MEDIUM / 5 LOW). Merge-required N1(a) documentation and regression coverage plus the requested N6 regression gaps are now added; fresh host validation and short control re-audit remain pending. No physical gateway partition/runtime is allocated or activated.**
 
 Baseline: `main@6fc9669837563e4acd297c5cc519bb5e52fa8b0f` (SF4A merged via PR #79).
 Branch: `feat/sf4b-gateway-custody-store-foundation`.
@@ -170,11 +170,19 @@ highest-generation ACTIVE page may authorize destructive recovery. Completed or
 partial-completion historical intents are ignored. A valid reused target page
 with a different generation is never erased by the intent.
 
-Three intent slots prevent one torn intent body/commit from permanently pinning
-the queue. If all three slots on one active page are consumed before one reclaim
-can finish, maintenance returns the explicit
-`kIntentSlotsExhausted` fail-safe result; it never guesses or erases HELD
-custody.
+Three intent slots tolerate up to two consumed/torn intent attempts on one
+ACTIVE page. If **all three** slots are consumed before one reclaim can finish,
+maintenance returns the explicit `kIntentSlotsExhausted` fail-safe result; it
+never guesses or erases HELD custody.
+
+This condition is intentionally documented as **persistent in the current SF4B
+foundation**: when the store is full and no PREPARED page exists, reboot does
+not manufacture a new intent slot and the gateway can remain unable to admit
+new custody even though older records are already HANDED_OFF. That is safe
+(no HELD data is erased and no new custody ACK is justified) but it is a
+liveness failure. SF4B accepts this bounded fail-safe mode only because custody
+runtime is not activated in this slice. A bounded recovery mechanism is a
+mandatory precondition before SF4C/D production runtime activation.
 
 A target named by a current committed intent may be partially erased/corrupt,
 because that damage can be the result of the already-authorized erase. Without
@@ -310,6 +318,12 @@ Post-audit regression coverage now includes:
 - committed record corruption fail-closed;
 - UINT64 generation boundary;
 - stale handle rejected after page-generation reuse;
+- persistent `kIntentSlotsExhausted` fail-safe across reboot/full queue;
+- both handoff marker words torn/exhausted while custody remains HELD;
+- torn intent completion word never regains erase authority;
+- PARTIAL_ACTIVATION repair path;
+- committed-corrupt reclaim intent fail-closed;
+- async failed mutation with backend-unreconciled ownership fail-closed;
 - capacity/wear/scan arithmetic and source-ownership guards.
 
 The production runtime/partition boundary remains unchanged: no
@@ -349,11 +363,33 @@ Flash: 285,924 / 815,104 = 35.1%
 The normal production footprint remains unchanged, consistent with CustodyStore
 still being unwired and linker-dead in production.
 
-Remaining gates:
+Re-audit of `ba429db8fd4c3fde76284df27dde5530ebbe7bf4`
+returned `PASS WITH FIXES` with 0 BLOCKER / 0 HIGH / 1 MEDIUM / 5 LOW.
 
-1. independent focused re-audit of the exact validated head;
-2. fix any real residual findings and rerun affected gates;
-3. merge only after the independent gate closes.
+Merge-required action from that review is N1(a): explicitly document the
+persistent intent-slot-exhaustion liveness failure and lock it with regression
+coverage. The reviewer also requested the remaining N6 regression gaps in the
+same test-only pass; those tests are now on-branch.
+
+N1(b), N2, N3, N4 and the exact scan-timing refinement in N5 are explicitly
+**pre-runtime gates**, not hidden SF4B claims:
+
+- choose a bounded recovery path for exhausted intent slots;
+- prevent an exhausted dual-handoff marker from head-of-line blocking Edge drain;
+- reject/reconcile `begin()` while the store itself owns a pending async op;
+- propagate maintenance/admission read failures distinctly;
+- refine/measure scan timing before ACK/rendezvous timing is frozen.
+
+Remaining SF4B merge gates:
+
+1. fresh aggregate host suite on the exact docs/test-fix head;
+2. short independent control re-audit confirming N1(a)/N6 closure and no new
+   merge-blocking issue;
+3. merge only after that control gate closes.
+
+The prior normal RAK4630 build remains code-equivalent because the re-audit
+follow-up changes are tests/docs only; production source/header code did not
+change.
 
 No physical hardware test is required for this portable/no-partition slice.
 Physical flash qualification belongs to the later slice that selects and wires
