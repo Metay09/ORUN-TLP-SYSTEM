@@ -1375,7 +1375,8 @@ bool ObservationStore::controlCopyFinished() const {
 ObservationStore::ControlLookupResult ObservationStore::findExactObject(
     const osf::RecordIdentity& identity, osc::ExactObject& value) const {
   value = osc::ExactObject();
-  if (!identity.valid()) return ControlLookupResult::kReadError;
+  if (!identity.valid() || flash_.hasUnreconciledMutation())
+    return ControlLookupResult::kReadError;
   osc::ExactObject probe;
   probe.identity = identity;
   probe.record_kind = osf::RecordKind::kPeriodic;
@@ -1691,7 +1692,8 @@ ObservationStore::LookupResult ObservationStore::findRecord(
 
 ObservationStore::LookupResult ObservationStore::lookup(
     const osf::RecordIdentity& identity, Record& record) const {
-  if (!ready_ || faulted_ || rotation_resuming_)
+  if (!ready_ || faulted_ || rotation_resuming_ ||
+      flash_.hasUnreconciledMutation())
     return LookupResult::kReadError;
   return findRecord(identity, record);
 }
