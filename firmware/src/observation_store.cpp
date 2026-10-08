@@ -40,6 +40,17 @@ bool ObservationStore::readRecord(
   return osf::inspectRecord(bytes, sizeof(bytes), inspection);
 }
 
+bool ObservationStore::readControl(
+    uint16_t page, uint16_t slot, osf::ControlInspection& inspection) const {
+  if (page >= osf::kControlPageCount ||
+      slot >= osf::kControlRecordsPerPage)
+    return false;
+  uint8_t bytes[osf::kControlRecordSize];
+  if (!flash_.read(controlOffset(page, slot), bytes, sizeof(bytes)))
+    return false;
+  return osf::inspectControl(bytes, sizeof(bytes), inspection);
+}
+
 bool ObservationStore::pageAllErased(uint16_t page) const {
   if (page >= page_count_) return false;
   uint8_t chunk[64];
