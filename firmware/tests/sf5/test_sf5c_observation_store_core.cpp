@@ -459,8 +459,14 @@ static void testUnreconciledFlipDuringCommitPollFailsClosed() {
   bool success = true;
   ObservationStore::Handle handle;
   assert(!store.takeAppendResult(success, handle));
-  store.poll();  // fail closed on unresolved physical ownership
+  // Real FlashMutationGate can receive a late completion and clear its
+  // quarantine BEFORE the store polls again. The store must still remember
+  // the timed-out logical operation; never resubmit its already-written word.
+  const unsigned submissions = flash.program_calls;
+  flash.unreconciled = false;
+  store.poll();
   assert(store.faulted());
+  assert(flash.program_calls == submissions);
   assert(store.takeAppendResult(success, handle) && !success);
   assert(store.diagnostics().unreconciled_mutation_faults == 1U);
 }
