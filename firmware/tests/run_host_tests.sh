@@ -220,6 +220,12 @@ g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5c_observation_store_controls.cpp
   firmware/src/observation_store_format.cpp \
   -o "$test_dir/sf5c_observation_store_controls"
 "$test_dir/sf5c_observation_store_controls"
+# SF5C oldest-first rotation, persistent gap accounting and power-cut recovery.
+g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5c_observation_store_rotation.cpp \
+  firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
+  -o "$test_dir/sf5c_observation_store_rotation"
+"$test_dir/sf5c_observation_store_rotation"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf4/test_sf4b_capacity_model.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf4/test_sf4b_source_contract.py
 g++ -DORUN_M4P5B_HOST_TEST=1 "${portable_flags[@]}" \
