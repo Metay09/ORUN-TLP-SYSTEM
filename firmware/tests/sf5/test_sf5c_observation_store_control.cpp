@@ -76,8 +76,8 @@ static void testStoreState() {
   state.target_page = 4U;
   state.target_old_generation = 6U;
   state.target_new_generation = 9U;
-  state.first_lost_sequence = 10U;
-  state.last_lost_sequence = 12U;
+  state.first_retired_sequence = 10U;
+  state.last_retired_sequence = 12U;
 
   uint8_t bytes[osc::kStoreStatePayloadSize];
   assert(osc::encodeStoreState(state, bytes));
