@@ -267,5 +267,29 @@ It does **not** prove:
 - offline phone decryption;
 - Tracker -> Gateway -> Edge -> Backend end-to-end behavior.
 
+## Post-audit owner clarification — connected Gateway write-around
+
+After the initial audit/fix pass, the owner explicitly froze the intended
+Gateway connected-path behavior:
+
+```text
+verified authenticated exact-object Edge durable accept before fallback
+  -> no Gateway flash write
+  -> Gateway may ACK tracker
+
+no verified durable Edge accept / timeout / failure / uncertainty
+  -> Gateway local durable commit/readback
+  -> then Gateway may ACK tracker
+```
+
+Connectivity alone is not durability. Once local flash fallback begins, a late
+Edge durable-accept does not cancel the in-flight flash mutation; the Gateway
+must reconcile that mutation to a known state first.
+
+This clarification changes no PRODUCT_SECURE/GATEWAY_CUSTODY_ACK bytes, but it
+does refine custody ownership/concurrency behavior and Gateway flash-wear
+policy. Therefore it remains inside the required focused independent re-review
+scope.
+
 A focused independent re-review of the exact final PR head is required before
 merge.
