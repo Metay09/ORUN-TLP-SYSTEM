@@ -143,11 +143,11 @@ bool encodeStoreState(const StoreState& value,
              value.target_new_generation != 0U) {
     return false;
   }
-  if ((value.first_lost_sequence == 0U) !=
-      (value.last_lost_sequence == 0U))
+  if ((value.first_retired_sequence == 0U) !=
+      (value.last_retired_sequence == 0U))
     return false;
-  if (value.first_lost_sequence != 0U &&
-      value.first_lost_sequence > value.last_lost_sequence)
+  if (value.first_retired_sequence != 0U &&
+      value.first_retired_sequence > value.last_retired_sequence)
     return false;
 
   memset(out, 0, kStoreStatePayloadSize);
@@ -159,8 +159,8 @@ bool encodeStoreState(const StoreState& value,
   osf::put16(out + 20U, value.target_page);
   osf::put64(out + 24U, value.target_old_generation);
   osf::put64(out + 32U, value.target_new_generation);
-  osf::put32(out + 40U, value.first_lost_sequence);
-  osf::put32(out + 44U, value.last_lost_sequence);
+  osf::put32(out + 40U, value.first_retired_sequence);
+  osf::put32(out + 44U, value.last_retired_sequence);
   return true;
 }
 
@@ -178,8 +178,8 @@ bool decodeStoreState(const uint8_t* bytes, size_t size, StoreState& value) {
   value.target_page = osf::get16(bytes + 20U);
   value.target_old_generation = osf::get64(bytes + 24U);
   value.target_new_generation = osf::get64(bytes + 32U);
-  value.first_lost_sequence = osf::get32(bytes + 40U);
-  value.last_lost_sequence = osf::get32(bytes + 44U);
+  value.first_retired_sequence = osf::get32(bytes + 40U);
+  value.last_retired_sequence = osf::get32(bytes + 44U);
 
   if (value.capacity_lost_total != value.capacity_lost_periodic +
                                        value.capacity_lost_event +
@@ -196,11 +196,11 @@ bool decodeStoreState(const uint8_t* bytes, size_t size, StoreState& value) {
              value.target_new_generation != 0U) {
     return false;
   }
-  if ((value.first_lost_sequence == 0U) !=
-      (value.last_lost_sequence == 0U))
+  if ((value.first_retired_sequence == 0U) !=
+      (value.last_retired_sequence == 0U))
     return false;
-  return value.first_lost_sequence == 0U ||
-         value.first_lost_sequence <= value.last_lost_sequence;
+  return value.first_retired_sequence == 0U ||
+         value.first_retired_sequence <= value.last_retired_sequence;
 }
 
 bool sameExactObjectKey(const ExactObject& a, const ExactObject& b) {
