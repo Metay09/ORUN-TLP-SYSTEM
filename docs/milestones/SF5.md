@@ -229,7 +229,22 @@ regression + independent final audit.
 
 Close SF4B pre-runtime gates N1-N5, select/wire the 128 KiB Gateway custody
 owner for the relevant product profile, then enable authenticated
-GATEWAY_CUSTODY_ACK only after durable commit.
+GATEWAY_CUSTODY_ACK only after a reviewed durable handoff fact.
+
+Before enabling the SF5 connected-path write-around branch, measure and freeze a
+timing bound such that:
+
+```text
+Edge wait budget
++ worst-case local fallback commit/readback
++ custody ACK airtime
+<= tracker ACK rendezvous window
+```
+
+If the bound does not fit for the active Edge transport/RF profile, the Gateway
+must skip Edge waiting and take the local durable-custody path immediately for
+that attempt. Write-around must not increase tracker retransmissions by missing
+the ACK rendezvous window.
 
 The existing SF4B CustodyStore format is frozen around the current 73-byte
 HISTORY_SECURE object. If SF5B produces a different protected-object size, do
