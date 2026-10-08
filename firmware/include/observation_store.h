@@ -30,6 +30,8 @@ class ObservationStore {
     uint8_t schema = 0;
     uint8_t payload_size = 0;
     bool released = false;
+    bool release_uncertain = false;
+    bool release_marker_exhausted = false;
     uint8_t payload[osf::kDataPayloadSize]{};
   };
 
