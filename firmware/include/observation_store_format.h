@@ -100,6 +100,8 @@ struct PageInspection {
   uint64_t generation = 0;
   uint64_t device_id = 0;
   uint64_t incarnation = 0;
+  bool control_intent_present = false;
+  bool control_intent_retired = false;
 };
 
 struct RecordIdentity {
