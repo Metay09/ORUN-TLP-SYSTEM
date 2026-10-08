@@ -211,7 +211,8 @@ g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5c_observation_store_control.cpp 
 "$test_dir/sf5c_observation_store_control"
 # SF5C portable ObservationStore core: no physical nRF address ownership.
 g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5c_observation_store_core.cpp \
-  firmware/src/observation_store.cpp firmware/src/observation_store_format.cpp \
+  firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
   -o "$test_dir/sf5c_observation_store_core"
 "$test_dir/sf5c_observation_store_core"
 # SF5C bounded control journal semantics and compaction.
