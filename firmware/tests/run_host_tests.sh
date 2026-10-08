@@ -209,6 +209,11 @@ g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5c_observation_store_control.cpp 
   firmware/src/observation_store_format.cpp \\
   -o "$test_dir/sf5c_observation_store_control"
 "$test_dir/sf5c_observation_store_control"
+# SF5C portable ObservationStore core: no physical nRF address ownership.
+g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5c_observation_store_core.cpp \\
+  firmware/src/observation_store.cpp firmware/src/observation_store_format.cpp \\
+  -o "$test_dir/sf5c_observation_store_core"
+"$test_dir/sf5c_observation_store_core"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf4/test_sf4b_capacity_model.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf4/test_sf4b_source_contract.py
 g++ -DORUN_M4P5B_HOST_TEST=1 "${portable_flags[@]}" \
