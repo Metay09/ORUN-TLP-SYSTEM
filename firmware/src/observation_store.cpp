@@ -1428,13 +1428,15 @@ ObservationStore::LookupResult ObservationStore::findRecord(
 
 ObservationStore::LookupResult ObservationStore::lookup(
     const osf::RecordIdentity& identity, Record& record) const {
-  if (!ready_ || faulted_) return LookupResult::kReadError;
+  if (!ready_ || faulted_ || rotation_resuming_)
+    return LookupResult::kReadError;
   return findRecord(identity, record);
 }
 
 ObservationStore::LookupResult ObservationStore::oldestRetained(
     Record& out) const {
-  if (!ready_ || faulted_) return LookupResult::kReadError;
+  if (!ready_ || faulted_ || rotation_resuming_)
+    return LookupResult::kReadError;
 
   bool found = false;
   Record best;
@@ -1758,7 +1760,7 @@ bool ObservationStore::takeControlMaintenanceResult(bool& success) {
 
 bool ObservationStore::countByRelease(bool released, uint32_t& count) const {
   count = 0;
-  if (!ready_ || faulted_) return false;
+  if (!ready_ || faulted_ || rotation_resuming_) return false;
   for (uint16_t page = osf::kControlPageCount; page < page_count_; ++page) {
     osf::PageInspection header;
     if (!readPage(page, header)) return false;
