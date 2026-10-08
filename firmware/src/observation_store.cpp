@@ -1539,12 +1539,13 @@ ObservationStore::ControlWriteResult ObservationStore::requestClearResultGuard(
     return ControlWriteResult::kRejected;
   if (lookup == ControlLookupResult::kNone)
     return ControlWriteResult::kAlreadySatisfied;
-  uint8_t payload[osc::kResultGuardPayloadSize];
-  if (!osc::encodeResultGuard(existing, payload))
-    return ControlWriteResult::kRejected;
-  return requestControlWrite(osf::ControlKind::kResultGuard,
-                             kControlSchemaTombstone,
-                             payload, sizeof(payload));
+
+  // A live guard protects either a not-yet-written RESULT reservation or its
+  // retained canonical command/result binding. Clearing it early allows a
+  // different record to steal the reservation or a conflicting request to be
+  // admitted. Lifetime ends only when the logical RESULT leaves retention;
+  // delegated anti-replay/CAS state remains an independent owner.
+  return ControlWriteResult::kRejected;
 }
 
 bool ObservationStore::takeControlWriteResult(bool& success) {
