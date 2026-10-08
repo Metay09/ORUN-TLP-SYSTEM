@@ -1118,7 +1118,8 @@ uint16_t ObservationStore::activeControlCount(
           Record backing;
           const LookupResult backing_result = findRecord(exact.identity, backing);
           if (backing_result == LookupResult::kReadError) return 0U;
-          if (backing_result == LookupResult::kNone) continue;
+          if (backing_result == LookupResult::kNone || backing.released)
+            continue;
         } else if (kind == osf::ControlKind::kResultGuard) {
           osc::ResultGuard guard;
           if (!osc::decodeResultGuard(control.payload,
@@ -1238,7 +1239,7 @@ bool ObservationStore::prepareNextControlCopy() {
         faulted_ = true;
         return false;
       }
-      if (backing_result == LookupResult::kNone)
+      if (backing_result == LookupResult::kNone || backing.released)
         logically_active = false;
     }
     if (logically_active &&
@@ -1309,7 +1310,7 @@ ObservationStore::ControlLookupResult ObservationStore::findExactObject(
   const LookupResult backing_result = findRecord(value.identity, backing);
   if (backing_result == LookupResult::kReadError)
     return ControlLookupResult::kReadError;
-  if (backing_result == LookupResult::kNone)
+  if (backing_result == LookupResult::kNone || backing.released)
     return ControlLookupResult::kNone;
   return ControlLookupResult::kFound;
 }
