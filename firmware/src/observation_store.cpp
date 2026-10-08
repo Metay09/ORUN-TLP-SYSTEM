@@ -698,8 +698,11 @@ bool ObservationStore::readLatestStoreState(
 }
 
 int ObservationStore::findOldestDataPage() const {
-  int selected = -1;
-  uint64_t generation = UINT64_MAX;
+  int oldest_any = -1;
+  uint64_t oldest_any_generation = UINT64_MAX;
+  int oldest_fully_released = -1;
+  uint64_t oldest_released_generation = UINT64_MAX;
+
   for (uint16_t page = osf::kControlPageCount; page < page_count_; ++page) {
     osf::PageInspection header;
     if (!readPage(page, header)) return -1;
@@ -708,12 +711,32 @@ int ObservationStore::findOldestDataPage() const {
         header.device_id != device_id_ ||
         header.incarnation != incarnation_)
       return -1;
-    if (header.generation < generation) {
-      generation = header.generation;
-      selected = static_cast<int>(page);
+
+    bool has_retained = false;
+    for (uint16_t slot = 0; slot < osf::kDataRecordsPerPage; ++slot) {
+      osf::RecordInspection record;
+      if (!readRecord(page, slot, record)) return -1;
+      if (record.evidence == osf::RecordEvidence::kCorrupt)
+        return -1;
+      if (record.evidence == osf::RecordEvidence::kRetained)
+        has_retained = true;
+    }
+
+    if (header.generation < oldest_any_generation) {
+      oldest_any_generation = header.generation;
+      oldest_any = static_cast<int>(page);
+    }
+    if (!has_retained &&
+        header.generation < oldest_released_generation) {
+      oldest_released_generation = header.generation;
+      oldest_fully_released = static_cast<int>(page);
     }
   }
-  return selected;
+
+  // Product rule: reclaim responsibility-free history before intentionally
+  // losing retained history. If every page still owns retained data, fall back
+  // to strict oldest-generation eviction.
+  return oldest_fully_released >= 0 ? oldest_fully_released : oldest_any;
 }
 
 bool ObservationStore::buildRotationIntent(
@@ -1597,6 +1620,16 @@ ObservationStore::MaintenanceResult ObservationStore::requestMaintenance() {
     flash_op_awaiting_completion_ = false;
     return MaintenanceResult::kStarted;
   }
+
+  // If the newest ACTIVE page still has a free record slot, there is no
+  // capacity pressure yet. Do not evict history merely because no erased page
+  // is currently available for pre-preparation.
+  uint16_t append_page = 0U;
+  uint16_t append_slot = 0U;
+  bool append_needs_activation = false;
+  if (findAppendSlot(append_page, append_slot, append_needs_activation) &&
+      !append_needs_activation)
+    return MaintenanceResult::kNoWork;
 
   // No erased data page remains. Rotation is permitted only after a durable
   // StoreState intent can be appended with one additional slot reserved for
