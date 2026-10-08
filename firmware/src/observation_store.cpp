@@ -677,7 +677,9 @@ bool ObservationStore::findAppendSlot(
 ObservationStore::AppendResult ObservationStore::requestAppend(
     osf::RecordKind kind, uint8_t schema,
     const uint8_t* payload, size_t payload_size) {
-  if (!ready_ || faulted_ || mutationUncertain() || next_sequence_ == 0U || schema == 0U ||
+  if (!ready_ || faulted_ || mutationUncertain() ||
+      control_compaction_resuming_ || control_retirement_resuming_ ||
+      next_sequence_ == 0U || schema == 0U ||
       payload_size > osf::kDataPayloadSize ||
       (payload_size != 0U && payload == nullptr))
     return AppendResult::kRejected;
@@ -1263,7 +1265,9 @@ uint16_t ObservationStore::activeControlCount(
 ObservationStore::ControlWriteResult ObservationStore::requestControlWrite(
     osf::ControlKind kind, uint8_t schema,
     const uint8_t* payload, size_t payload_size) {
-  if (!ready_ || faulted_ || mutationUncertain() || next_control_serial_ == 0U ||
+  if (!ready_ || faulted_ || mutationUncertain() ||
+      control_compaction_resuming_ || control_retirement_resuming_ ||
+      next_control_serial_ == 0U ||
       payload == nullptr ||
       payload_size == 0U || payload_size > osf::kControlPayloadSize ||
       (schema != kControlSchemaActive &&
@@ -1785,7 +1789,9 @@ ObservationStore::LookupResult ObservationStore::oldestRetained(
 }
 
 bool ObservationStore::requestRelease(const osf::RecordIdentity& identity) {
-  if (!ready_ || faulted_ || mutationUncertain() || !identity.valid()) return false;
+  if (!ready_ || faulted_ || mutationUncertain() ||
+      control_compaction_resuming_ || control_retirement_resuming_ ||
+      !identity.valid()) return false;
   if (rotation_resuming_ || busy() || append_result_ready_ ||
       release_result_ready_ || maintenance_result_ready_ ||
       control_write_result_ready_ || control_maintenance_result_ready_)
@@ -1857,7 +1863,9 @@ int ObservationStore::findReclaimableDataPage() const {
 }
 
 ObservationStore::MaintenanceResult ObservationStore::requestMaintenance() {
-  if (!ready_ || faulted_ || mutationUncertain()) return MaintenanceResult::kRejected;
+  if (!ready_ || faulted_ || mutationUncertain() ||
+      control_compaction_resuming_ || control_retirement_resuming_)
+    return MaintenanceResult::kRejected;
   if (busy() || append_result_ready_ || release_result_ready_ ||
       maintenance_result_ready_ || control_write_result_ready_ ||
       control_maintenance_result_ready_)
@@ -2018,13 +2026,24 @@ bool ObservationStore::takeMaintenanceResult(bool& success) {
 
 ObservationStore::MaintenanceResult
 ObservationStore::requestControlMaintenance() {
-  if (!ready_ || faulted_ || mutationUncertain()) return MaintenanceResult::kRejected;
+  if (!ready_ || faulted_ || mutationUncertain())
+    return MaintenanceResult::kRejected;
   if (busy() || append_result_ready_ || release_result_ready_ ||
       maintenance_result_ready_ || control_write_result_ready_ ||
       control_maintenance_result_ready_)
     return MaintenanceResult::kBusy;
 
-  if (active_control_page_ >= 0) {
+  if (control_retirement_resuming_) {
+    if (control_retire_source_page_ >= osf::kControlPageCount)
+      return MaintenanceResult::kRejected;
+    control_source_page_ = control_retire_source_page_;
+    job_ = Job::kControlMaintenance;
+    phase_ = Phase::kControlRetireIntent;
+    flash_op_awaiting_completion_ = false;
+    return MaintenanceResult::kStarted;
+  }
+
+  if (active_control_page_ >= 0 && !control_compaction_resuming_) {
     bool read_ok = false;
     const uint16_t empty = emptyControlSlots(read_ok);
     if (!read_ok) return MaintenanceResult::kRejected;
@@ -2054,10 +2073,25 @@ ObservationStore::requestControlMaintenance() {
   osf::encodePageHeader(osf::PageKind::kControl, target_generation_,
                         device_id_, incarnation_, page_blob_);
 
+  control_next_phase_ = pageAllErased(target_page_)
+                            ? Phase::kControlHeaderBody
+                            : Phase::kControlEraseTarget;
+  if (control_source_page_ == UINT16_MAX) {
+    phase_ = control_next_phase_;  // First initialization has no source.
+  } else {
+    osf::PageInspection source_header;
+    if (!readPage(control_source_page_, source_header) ||
+        source_header.evidence != osf::PageEvidence::kActive ||
+        source_header.generation != active_control_generation_ ||
+        source_header.device_id != device_id_ ||
+        source_header.incarnation != incarnation_ ||
+        source_header.control_intent_retired)
+      return MaintenanceResult::kRejected;
+    phase_ = source_header.control_intent_present
+                 ? control_next_phase_  // Resume already durable intent.
+                 : Phase::kControlIntent;
+  }
   job_ = Job::kControlMaintenance;
-  phase_ = pageAllErased(target_page_)
-               ? Phase::kControlHeaderBody
-               : Phase::kControlEraseTarget;
   flash_op_awaiting_completion_ = false;
   return MaintenanceResult::kStarted;
 }
@@ -2703,6 +2737,48 @@ void ObservationStore::poll() {
   }
 
   if (job_ == Job::kControlMaintenance) {
+    if (phase_ == Phase::kControlIntent) {
+      // Commit source ownership before any target erase or mutation.
+      const uint32_t offset =
+          pageOffset(control_source_page_) + osf::kControlIntentOffset;
+      const uint8_t marker[4] = {0x4FU, 0x42U, 0x43U, 0x49U};
+      const FlashOpResult result = programStep(offset, marker, sizeof(marker));
+      if (result == FlashOpResult::kPending) return;
+      osf::PageInspection header;
+      const bool committed = readPage(control_source_page_, header) &&
+                             header.evidence == osf::PageEvidence::kActive &&
+                             header.control_intent_present &&
+                             !header.control_intent_retired &&
+                             header.generation == active_control_generation_;
+      if (result == FlashOpResult::kFailed && !committed)
+        return failCurrentJob();
+      if (!committed) return failCurrentJob();
+      phase_ = control_next_phase_;
+      return;
+    }
+
+    if (phase_ == Phase::kControlRetireIntent) {
+      // No later logical writes until the old source marker is retired.
+      const uint32_t offset =
+          pageOffset(control_source_page_) +
+          osf::kControlIntentRetiredOffset;
+      const FlashOpResult result = programStep(offset, &kZero, sizeof(kZero));
+      if (result == FlashOpResult::kPending) return;
+      osf::PageInspection source;
+      const bool retired = readPage(control_source_page_, source) &&
+                           source.evidence == osf::PageEvidence::kActive &&
+                           source.control_intent_present &&
+                           source.control_intent_retired;
+      if (result == FlashOpResult::kFailed && !retired)
+        return failCurrentJob();
+      if (!retired) return failCurrentJob();
+      control_compaction_resuming_ = false;
+      control_retirement_resuming_ = false;
+      control_retire_source_page_ = UINT16_MAX;
+      finishControlMaintenance(true);
+      return;
+    }
+
     if (phase_ == Phase::kControlEraseTarget) {
       const FlashOpResult result = eraseStep(target_page_);
       if (result == FlashOpResult::kPending) return;
@@ -2847,6 +2923,11 @@ void ObservationStore::poll() {
         ++diagnostics_.control_pages_compacted;
       active_control_page_ = target_page_;
       active_control_generation_ = target_generation_;
+      if (control_source_page_ != UINT16_MAX) {
+        phase_ = Phase::kControlRetireIntent;
+        return;
+      }
+      control_compaction_resuming_ = false;
       finishControlMaintenance(true);
       return;
     }
