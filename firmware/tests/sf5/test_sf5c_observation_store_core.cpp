@@ -70,7 +70,14 @@ class FakeFlash : public FlashBackend {
     const uint32_t offset = pending_.offset;
     const std::vector<uint8_t> data = pending_.data;
     pending_ = Pending();
-    return applyProgram(offset, data.data(), data.size(), program_calls);
+    const FlashOpResult result =
+        applyProgram(offset, data.data(), data.size(), program_calls);
+    if (unreconciled_on_poll_call == program_calls) {
+      unreconciled_on_poll_call = 0U;
+      unreconciled = true;
+      return FlashOpResult::kFailed;
+    }
+    return result;
   }
 
   bool hasUnreconciledMutation() const override { return unreconciled; }
@@ -86,6 +93,7 @@ class FakeFlash : public FlashBackend {
   bool async_mode = false;
   unsigned async_polls = 1U;
   bool unreconciled = false;
+  unsigned unreconciled_on_poll_call = 0U;
   unsigned program_calls = 0U;
   unsigned erase_calls = 0U;
   unsigned fail_after_apply_program_call = 0U;
@@ -424,6 +432,39 @@ static void testUnreconciledDataCommitCannotBeAccepted() {
   assert(!reboot.begin(0x77U) && reboot.faulted());
 }
 
+
+static void testUnreconciledFlipDuringCommitPollFailsClosed() {
+  FakeFlash flash(4U);
+  FixedIncarnation incarnation(0x1313U);
+  ObservationStore store(flash, 4U, &incarnation);
+  assert(store.begin(0x78U));
+  prepareOne(store);
+
+  flash.async_mode = true;
+  flash.async_polls = 0U;
+  uint8_t payload[osf::kPeriodicPayloadSizeV1]{};
+  assert(store.requestAppend(osf::RecordKind::kPeriodic, 1U,
+                             payload, sizeof(payload)) ==
+         ObservationStore::AppendResult::kStarted);
+  store.poll();  // activate submission (PENDING)
+  store.poll();  // activate completion
+  store.poll();  // body submission (PENDING)
+  store.poll();  // body completion
+  flash.unreconciled_on_poll_call = flash.program_calls + 1U;
+  store.poll();  // commit submission (PENDING)
+  assert(store.busy());
+  store.poll();  // bytes applied; backend reports timeout+UNRECONCILED
+  // Must not report success based on the matching readback in this same poll.
+  assert(store.busy());
+  bool success = true;
+  ObservationStore::Handle handle;
+  assert(!store.takeAppendResult(success, handle));
+  store.poll();  // fail closed on unresolved physical ownership
+  assert(store.faulted());
+  assert(store.takeAppendResult(success, handle) && !success);
+  assert(store.diagnostics().unreconciled_mutation_faults == 1U);
+}
+
 static void testUnreconciledBeginFailsClosed() {
   FakeFlash flash(4U);
   flash.unreconciled = true;
@@ -572,6 +613,7 @@ int main() {
   testDoubleTornReleaseIsExposedFailClosed();
   testAsyncNoResubmit();
   testUnreconciledDataCommitCannotBeAccepted();
+  testUnreconciledFlipDuringCommitPollFailsClosed();
   testUnreconciledBeginFailsClosed();
   testReadFailureFailsClosed();
   return 0;
