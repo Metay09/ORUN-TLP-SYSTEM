@@ -351,12 +351,14 @@ traffic as the **new production target**. Read
 `docs/milestones/SF5.md` before changing tracker observation/history protocol or
 persistence.
 
-The current SF5B branch also contains the **candidate, not-yet-approved** exact
-product wire/security proposal in
+SF5B is merged and independently reviewed at
+`main@5b757966489e5fe221c05fe1cbf66ff7b1e602d5`. Its exact
+product wire/security contract in
 `docs/architecture/ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md` and
-`docs/milestones/SF5B.md`. Treat those bytes/IDs/security choices as review
-material only until the independent SF5B security/protocol audit closes. Do not
-implement codecs or runtime from that candidate prematurely.
+`docs/milestones/SF5B.md` is therefore the frozen input to SF5C. SF5C may
+implement the portable persistence semantics required by that contract, but it
+still does **not** authorize PRODUCT_SECURE RF/runtime activation, a physical
+128 KiB nRF flash allocation, Gateway custody runtime or EDGE_DURABLE_ACCEPT.
 
 Until the explicit SF5 runtime cutover is implemented and validated, preserve
 the **current production runtime paths** and their evidence boundary:
