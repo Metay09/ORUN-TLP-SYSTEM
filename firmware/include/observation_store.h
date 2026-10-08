@@ -47,6 +47,12 @@ class ObservationStore {
     uint32_t release_marker_exhausted = 0;
     uint32_t pages_prepared = 0;
     uint32_t pages_activated = 0;
+    uint32_t pages_reclaimed = 0;
+    uint32_t rotation_recoveries = 0;
+    uint32_t capacity_lost_total = 0;
+    uint32_t capacity_lost_periodic = 0;
+    uint32_t capacity_lost_event = 0;
+    uint32_t capacity_lost_result = 0;
     uint32_t control_recovered_active = 0;
     uint32_t control_recovered_tombstones = 0;
     uint32_t control_staged_records = 0;
@@ -67,6 +73,7 @@ class ObservationStore {
   enum class MaintenanceResult : uint8_t {
     kStarted,
     kNoWork,
+    kControlMaintenanceRequired,
     kBusy,
     kRejected
   };
@@ -174,6 +181,13 @@ class ObservationStore {
     kControlCopyBody,
     kControlCopyCommit,
     kControlActivate,
+    kRotationIntentBody,
+    kRotationIntentCommit,
+    kRotationErasePage,
+    kRotationHeaderBody,
+    kRotationHeaderCommit,
+    kRotationCompleteBody,
+    kRotationCompleteCommit,
   };
 
   struct PageSummary {
@@ -208,6 +222,11 @@ class ObservationStore {
                       bool& needs_activation) const;
   int findErasedDataPage() const;
   int findEmptyControlSlot() const;
+  uint16_t emptyControlSlots(bool& read_ok) const;
+  bool readLatestStoreState(osc::StoreState& state, bool& found) const;
+  int findOldestDataPage() const;
+  bool buildRotationIntent(uint16_t page, uint64_t new_generation,
+                           osc::StoreState& state) const;
   bool controlPayloadValid(const osf::ControlInspection& control) const;
   bool controlSameKey(const osf::ControlInspection& a,
                       const osf::ControlInspection& b) const;
@@ -279,6 +298,12 @@ class ObservationStore {
   uint16_t control_source_page_ = UINT16_MAX;
   uint16_t control_source_scan_slot_ = 0;
   uint16_t control_target_slot_ = 0;
+
+  osc::StoreState rotation_state_{};
+  osc::StoreState rotation_complete_state_{};
+  uint16_t rotation_control_slot_ = UINT16_MAX;
+  uint64_t rotation_state_serial_ = 0;
+  bool rotation_resuming_ = false;
 
   bool append_result_ready_ = false;
   bool append_result_success_ = false;
