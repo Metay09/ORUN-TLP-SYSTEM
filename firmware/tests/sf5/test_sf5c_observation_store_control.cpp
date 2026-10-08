@@ -43,6 +43,31 @@ static void testOpenOccurrence() {
   assert(decoded.occurrence_id == 99U);
 }
 
+static void testOpenOccurrenceKeySemantics() {
+  osc::OpenOccurrence battery_a;
+  battery_a.event_type = 3U;     // BATTERY_STATE
+  battery_a.reason_code = 1U;    // LOW
+  battery_a.context_kind = 1U;   // BATTERY_MV
+  battery_a.context_value = 3600U;
+  battery_a.occurrence_id = 10U;
+
+  osc::OpenOccurrence battery_b = battery_a;
+  battery_b.context_value = 3500U;
+  battery_b.occurrence_id = 11U;
+  assert(osc::sameOpenOccurrenceKey(battery_a, battery_b));
+
+  osc::OpenOccurrence subsystem_a;
+  subsystem_a.event_type = 4U;   // SUBSYSTEM_FAULT
+  subsystem_a.context_kind = 2U; // SUBSYSTEM_ID
+  subsystem_a.context_value = 1U;
+  subsystem_a.occurrence_id = 20U;
+
+  osc::OpenOccurrence subsystem_b = subsystem_a;
+  subsystem_b.context_value = 2U;
+  subsystem_b.occurrence_id = 21U;
+  assert(!osc::sameOpenOccurrenceKey(subsystem_a, subsystem_b));
+}
+
 static void testResultGuard() {
   osc::ResultGuard value;
   value.gateway_device_id = 2U;
@@ -102,6 +127,7 @@ static void testStoreState() {
 int main() {
   testExactObject();
   testOpenOccurrence();
+  testOpenOccurrenceKeySemantics();
   testResultGuard();
   testStoreState();
   return 0;
