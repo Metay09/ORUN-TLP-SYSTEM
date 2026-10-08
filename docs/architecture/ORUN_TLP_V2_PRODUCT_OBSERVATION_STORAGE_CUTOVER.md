@@ -443,20 +443,34 @@ delete accepted custody.
 
 ## 12. Gateway -> Edge durable bypass and backlog drain
 
-When Edge is online, the preferred write path is **write-around**:
+When Edge is online, the preferred write path is **write-around**, and this is a
+product invariant rather than an optimization hint:
 
 ```text
 Tracker object
-  -> Gateway RAM / bounded in-flight state
+  -> Gateway bounded in-flight RAM
   -> Edge
   -> authenticated exact-object Edge durable accept
-  -> Gateway may ACK tracker
-  -> no Gateway flash write
+  -> Gateway ACKs tracker
+  -> Gateway flash write = NONE
 ```
 
-If that durable Edge accept is not obtained within the bounded in-flight policy,
-the Gateway falls back to its local custody store and only then becomes ACK-
-eligible after local durable commit/readback.
+If that durable Edge accept is not obtained within the bounded in-flight policy
+—for example disconnect, timeout, rejection or uncertain outcome—the Gateway
+falls back to its local custody store:
+
+```text
+no verified Edge durable accept
+  -> local Gateway flash commit/readback
+  -> Gateway ACKs tracker
+```
+
+The decision criterion is **durability**, not connectivity. "Connected" without
+durable exact-object acceptance is equivalent to "not safely handed off".
+
+Once local flash fallback begins, it is not cancelled by a late Edge response.
+The mutation must reach a known reconciled state before the object lifecycle can
+close; late downstream acceptance is handled as an idempotent duplicate.
 
 Existing locally held backlog still drains global oldest-first/FIFO:
 
