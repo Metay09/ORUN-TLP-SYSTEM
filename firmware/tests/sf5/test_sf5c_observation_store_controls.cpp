@@ -505,13 +505,14 @@ static void testTornRetiredControlEraseRecoversWithoutAuthorityRollback() {
 
   assert(store.requestControlMaintenance() ==
          ObservationStore::MaintenanceResult::kStarted);
+  store.poll();  // durable intent on g=2 BEFORE touching stale g=1
   osc::OpenOccurrence key = durable;
   key.occurrence_id = 0U;
 
-  // Probe *every byte boundary*, including 1..3 and 45..48 where
-  // header generation/CRC can be partially or entirely lost.
-  for (size_t prefix = 1U; prefix <= osf::kPageHeaderCommitOffset;
-       ++prefix) {
+  // The target can be interrupted at ANY byte. Its header can be entirely
+  // gone while some copied controls remain; only the independent source
+  // authority's committed intent authorizes ignoring this target.
+  for (size_t prefix = 1U; prefix <= osf::kPageSize; ++prefix) {
     ControlFakeFlash torn = flash;
     memset(torn.bytes.data(), 0xFF, prefix);
     ObservationStore reboot(torn, 6U, &incarnation);
@@ -530,13 +531,16 @@ static void testTornRetiredControlEraseRecoversWithoutAuthorityRollback() {
            ObservationStore::ControlLookupResult::kFound);
   }
 
-  // If erase reaches an ACTIVE marker, neither PREPARED status nor old
-  // control generation is proven; never guess the surviving authority.
-  ControlFakeFlash missing_proof = flash;
-  memset(missing_proof.bytes.data(), 0xFF,
+  // Erasing the entire old header is safe precisely because g=2 contains
+  // the matching durable intent. Header generation/CRC need not survive.
+  ControlFakeFlash missing_header = flash;
+  memset(missing_header.bytes.data(), 0xFF,
          osf::kPageHeaderActiveOffset + 1U);
-  ObservationStore ambiguous(missing_proof, 6U, &incarnation);
-  assert(ambiguous.begin(0x91U) && ambiguous.faulted());
+  ObservationStore authorized(missing_header, 6U, &incarnation);
+  assert(authorized.begin(0x91U) && !authorized.faulted());
+  osc::OpenOccurrence still_open;
+  assert(authorized.findOpenOccurrence(key, still_open) ==
+         ObservationStore::ControlLookupResult::kFound);
 
   // A truly NEWER (g=2) page with new live state must not be ignored just
   // because its first 48 header bytes were erased and g=1 is still valid.
@@ -631,15 +635,13 @@ static void testDamagedNewestControlAuthorityCannotRollbackAfterGenerationThree(
 
   const ControlFakeFlash identical = flash;
   for (size_t prefix = 45U; prefix <= 48U; ++prefix) {
-    // Both pages still agree on all latest live controls.
-    ControlFakeFlash safe = identical;
-    memset(safe.bytes.data(), 0xFF, prefix);
-    ObservationStore same(safe, 6U, &incarnation);
-    assert(same.begin(0x94U) && !same.faulted());
-    osc::OpenOccurrence seen;
-    assert(same.findOpenOccurrence(durable, seen) ==
-           ObservationStore::ControlLookupResult::kFound);
-    assert(seen.occurrence_id == durable.occurrence_id);
+    // Once the previous source intent is durably retired, a newer damaged
+    // ACTIVE page has no independent erase authorization. Even equivalent
+    // live records cannot prove that its future serial history was unchanged.
+    ControlFakeFlash unproven = identical;
+    memset(unproven.bytes.data(), 0xFF, prefix);
+    ObservationStore fail_closed(unproven, 6U, &incarnation);
+    assert(fail_closed.begin(0x94U) && fail_closed.faulted());
   }
 
   osc::OpenOccurrence newest = occurrence(0xD00DU);
