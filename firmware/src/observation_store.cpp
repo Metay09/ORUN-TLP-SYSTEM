@@ -203,12 +203,27 @@ bool ObservationStore::recover() {
     osf::PageInspection header;
     if (!readPage(page, header)) return false;
 
-    if (header.evidence == osf::PageEvidence::kErased ||
-        header.evidence == osf::PageEvidence::kStaged ||
-        header.evidence == osf::PageEvidence::kPrepared ||
-        header.evidence == osf::PageEvidence::kPartialCommit ||
-        header.evidence == osf::PageEvidence::kPartialActivation)
+    if (header.evidence == osf::PageEvidence::kErased) {
+      if (pageAllErased(page)) continue;
+      // An erased header with non-erased control rows could also be the
+      // interrupted erase of an ACTIVE authority, not a blank target.
+      suspect_control_header[page] = true;
       continue;
+    }
+    if (header.evidence == osf::PageEvidence::kPrepared)
+      continue;  // A committed, unactivated header was never authority.
+    if (header.evidence == osf::PageEvidence::kStaged ||
+        header.evidence == osf::PageEvidence::kPartialCommit) {
+      if (pagePayloadErased(page)) continue;
+      // Erased commit bytes from a formerly ACTIVE page can look kStaged.
+      // Never silently ignore committed control rows under that header.
+      suspect_control_header[page] = true;
+      continue;
+    }
+    if (header.evidence == osf::PageEvidence::kPartialActivation) {
+      suspect_control_header[page] = true;
+      continue;
+    }
 
     // Defer suspect-header classification until we know whether the other
     // page carries a valid, strictly newer ACTIVE authority. Generic header
@@ -311,6 +326,18 @@ bool ObservationStore::recover() {
               page, static_cast<uint16_t>(active_control_page_));
         }
       }
+    }
+    if (!proven_stale_torn_erase &&
+        evidence.evidence == osf::PageEvidence::kPartialActivation &&
+        active_control_page_ >= 0 &&
+        evidence.kind == osf::PageKind::kControl &&
+        evidence.device_id == device_id_ &&
+        evidence.incarnation == recovered_incarnation &&
+        page != static_cast<uint16_t>(active_control_page_)) {
+      // Torn activation and erased ACTIVE marker share this evidence class.
+      // Only identical committed live content permits safe fallback.
+      proven_stale_torn_erase = sameLiveControlSnapshot(
+          page, static_cast<uint16_t>(active_control_page_));
     }
     if (!proven_stale_torn_erase) {
       faulted_ = true;
