@@ -1333,6 +1333,19 @@ FlashOpResult ObservationStore::programStep(
   return result;
 }
 
+FlashOpResult ObservationStore::eraseStep(uint16_t page) {
+  if (flash_op_awaiting_completion_) {
+    const FlashOpResult result = flash_.pollPending();
+    if (result != FlashOpResult::kPending)
+      flash_op_awaiting_completion_ = false;
+    return result;
+  }
+  const FlashOpResult result = flash_.erasePage(page);
+  if (result == FlashOpResult::kPending)
+    flash_op_awaiting_completion_ = true;
+  return result;
+}
+
 void ObservationStore::finishAppend(bool success) {
   append_result_ready_ = true;
   append_result_success_ = success;
