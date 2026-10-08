@@ -31,6 +31,12 @@ constexpr uint32_t kControlRecordsPerPage =
 constexpr uint32_t kPageStaticCrcOffset = 44U;
 constexpr uint32_t kPageHeaderCommitOffset = 48U;
 constexpr uint32_t kPageHeaderActiveOffset = 52U;
+// Control-only one-way compaction journal: intent before target mutation,
+// retirement after new authority has activated. Data headers stay unchanged.
+constexpr uint32_t kControlIntentOffset = 56U;
+constexpr uint32_t kControlIntentRetiredOffset = 60U;
+constexpr uint32_t kControlIntent = 0x4F424349U;  // OBCI
+
 
 constexpr uint32_t kDataRecordCrcOffset = 80U;
 constexpr uint32_t kDataRecordCommitOffset = 84U;
