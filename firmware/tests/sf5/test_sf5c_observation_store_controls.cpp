@@ -84,9 +84,9 @@ static void initData(ObservationStore& store) {
 
 static ObservationStore::Handle appendPeriodic(
     ObservationStore& store, uint8_t seed) {
-  uint8_t payload[4] = {seed, static_cast<uint8_t>(seed + 1U),
-                        static_cast<uint8_t>(seed + 2U),
-                        static_cast<uint8_t>(seed + 3U)};
+  uint8_t payload[osf::kPeriodicPayloadSizeV1];
+  for (unsigned i = 0; i < sizeof(payload); ++i)
+    payload[i] = static_cast<uint8_t>(seed + i);
   assert(store.requestAppend(osf::RecordKind::kPeriodic, 1U,
                              payload, sizeof(payload)) ==
          ObservationStore::AppendResult::kStarted);
@@ -267,7 +267,8 @@ static void testResultGuardReservesIdentityAcrossReset() {
          ObservationStore::ControlWriteResult::kStarted);
   finishControlWrite(store);
 
-  uint8_t periodic_payload[1] = {1U};
+  uint8_t periodic_payload[osf::kPeriodicPayloadSizeV1];
+  memset(periodic_payload, 0x11, sizeof(periodic_payload));
   assert(store.requestAppend(osf::RecordKind::kPeriodic, 1U,
                              periodic_payload, sizeof(periodic_payload)) ==
          ObservationStore::AppendResult::kBusy);
@@ -287,7 +288,8 @@ static void testResultGuardReservesIdentityAcrossReset() {
   assert(reboot.peekNextIdentity(next));
   assert(next.sequence == 1U);
 
-  uint8_t result_payload[4] = {7U, 8U, 9U, 10U};
+  uint8_t result_payload[osf::kResultPayloadSizeV1];
+  memset(result_payload, 0x77, sizeof(result_payload));
   assert(reboot.requestAppend(osf::RecordKind::kResult, 1U,
                               result_payload, sizeof(result_payload)) ==
          ObservationStore::AppendResult::kStarted);
