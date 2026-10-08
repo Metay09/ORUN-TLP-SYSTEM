@@ -277,6 +277,9 @@ accepted the exact object and the Gateway has authenticated that acceptance.
 
 The fast path is deliberately bounded and single-owner:
 
+- **production write-around is disabled until a separately reviewed
+  EDGE_DURABLE_ACCEPT authentication/exact-object contract exists**; transport
+  connectivity alone never enables it;
 - only bounded in-flight RAM state may exist before one of the two durable facts
   above becomes authoritative;
 - once `LOCAL_CUSTODY_PENDING` starts, the Gateway does not cancel or rewrite
@@ -1499,6 +1502,9 @@ not need to emit both formats by default.
 Before production runtime:
 
 1. independent architecture/security audit of this exact byte/security contract;
+1a. before enabling the connected-path no-flash bypass, independently review and
+    test the exact-object EDGE_DURABLE_ACCEPT authentication/idempotency contract;
+    until then Gateway runtime must use local durable custody before ACK;
 2. host golden vectors for PRODUCT_SECURE header/plaintexts and malformed cases;
 3. host KDF/HMAC/SHA-256 vectors for custody ACK;
 4. RAK4630/RAK4631 KAT/coexistence proof for any newly exercised crypto primitive
