@@ -1503,6 +1503,20 @@ int ObservationStore::findErasedDataPage() const {
   return -1;
 }
 
+int ObservationStore::findReclaimableDataPage() const {
+  for (uint16_t page = osf::kControlPageCount; page < page_count_; ++page) {
+    osf::PageInspection inspection;
+    if (!readPage(page, inspection)) return -1;
+    const bool orphan_header =
+        inspection.evidence == osf::PageEvidence::kStaged ||
+        inspection.evidence == osf::PageEvidence::kPartialCommit ||
+        inspection.evidence == osf::PageEvidence::kPartialActivation;
+    if (orphan_header && pagePayloadErased(page))
+      return static_cast<int>(page);
+  }
+  return -1;
+}
+
 ObservationStore::MaintenanceResult ObservationStore::requestMaintenance() {
   if (!ready_ || faulted_) return MaintenanceResult::kRejected;
   if (busy() || append_result_ready_ || release_result_ready_ ||
