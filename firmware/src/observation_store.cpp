@@ -540,6 +540,511 @@ bool ObservationStore::takeAppendResult(bool& success, Handle& handle) {
   return true;
 }
 
+int ObservationStore::findEmptyControlSlot() const {
+  if (active_control_page_ < 0) return -1;
+  for (uint16_t slot = 0; slot < osf::kControlRecordsPerPage; ++slot) {
+    osf::ControlInspection control;
+    if (!readControl(static_cast<uint16_t>(active_control_page_), slot,
+                     control))
+      return -1;
+    if (control.evidence == osf::ControlEvidence::kErased)
+      return static_cast<int>(slot);
+  }
+  return -1;
+}
+
+bool ObservationStore::controlPayloadValid(
+    const osf::ControlInspection& control) const {
+  if (control.schema != kControlSchemaActive &&
+      control.schema != kControlSchemaTombstone)
+    return false;
+
+  switch (control.kind) {
+    case osf::ControlKind::kExactObject: {
+      if (control.payload_size != osc::kExactObjectPayloadSize) return false;
+      osc::ExactObject value;
+      return osc::decodeExactObject(control.payload, control.payload_size,
+                                    value);
+    }
+    case osf::ControlKind::kOpenOccurrence: {
+      if (control.payload_size != osc::kOpenOccurrencePayloadSize)
+        return false;
+      osc::OpenOccurrence value;
+      return osc::decodeOpenOccurrence(control.payload, control.payload_size,
+                                       value);
+    }
+    case osf::ControlKind::kResultGuard: {
+      if (control.payload_size != osc::kResultGuardPayloadSize) return false;
+      osc::ResultGuard value;
+      return osc::decodeResultGuard(control.payload, control.payload_size,
+                                    value);
+    }
+    case osf::ControlKind::kStoreState: {
+      if (control.schema != kControlSchemaActive ||
+          control.payload_size != osc::kStoreStatePayloadSize)
+        return false;
+      osc::StoreState value;
+      return osc::decodeStoreState(control.payload, control.payload_size,
+                                   value);
+    }
+  }
+  return false;
+}
+
+bool ObservationStore::controlSameKey(
+    const osf::ControlInspection& a,
+    const osf::ControlInspection& b) const {
+  if (a.kind != b.kind) return false;
+
+  switch (a.kind) {
+    case osf::ControlKind::kExactObject: {
+      osc::ExactObject av;
+      osc::ExactObject bv;
+      return osc::decodeExactObject(a.payload, a.payload_size, av) &&
+             osc::decodeExactObject(b.payload, b.payload_size, bv) &&
+             osc::sameExactObjectKey(av, bv);
+    }
+    case osf::ControlKind::kOpenOccurrence: {
+      osc::OpenOccurrence av;
+      osc::OpenOccurrence bv;
+      return osc::decodeOpenOccurrence(a.payload, a.payload_size, av) &&
+             osc::decodeOpenOccurrence(b.payload, b.payload_size, bv) &&
+             osc::sameOpenOccurrenceKey(av, bv);
+    }
+    case osf::ControlKind::kResultGuard: {
+      osc::ResultGuard av;
+      osc::ResultGuard bv;
+      return osc::decodeResultGuard(a.payload, a.payload_size, av) &&
+             osc::decodeResultGuard(b.payload, b.payload_size, bv) &&
+             osc::sameResultGuardKey(av, bv);
+    }
+    case osf::ControlKind::kStoreState:
+      return true;
+  }
+  return false;
+}
+
+bool ObservationStore::controlIsLatest(
+    uint16_t slot, const osf::ControlInspection& control) const {
+  if (active_control_page_ < 0 ||
+      (control.evidence != osf::ControlEvidence::kActive &&
+       control.evidence != osf::ControlEvidence::kCleared) ||
+      !controlPayloadValid(control))
+    return false;
+
+  for (uint16_t other = 0; other < osf::kControlRecordsPerPage; ++other) {
+    if (other == slot) continue;
+    osf::ControlInspection candidate;
+    if (!readControl(static_cast<uint16_t>(active_control_page_), other,
+                     candidate))
+      return false;
+    if (candidate.evidence != osf::ControlEvidence::kActive &&
+        candidate.evidence != osf::ControlEvidence::kCleared)
+      continue;
+    if (!controlPayloadValid(candidate)) return false;
+    if (candidate.serial > control.serial &&
+        controlSameKey(control, candidate))
+      return false;
+  }
+  return true;
+}
+
+ObservationStore::ControlLookupResult ObservationStore::findLatestControl(
+    osf::ControlKind kind, const uint8_t* key_payload, size_t key_size,
+    osf::ControlInspection& out) const {
+  out = osf::ControlInspection();
+  if (!ready_ || faulted_ || active_control_page_ < 0 ||
+      key_payload == nullptr || key_size == 0U ||
+      key_size > osf::kControlPayloadSize)
+    return active_control_page_ < 0
+               ? ControlLookupResult::kNone
+               : ControlLookupResult::kReadError;
+
+  osf::ControlInspection key;
+  key.evidence = osf::ControlEvidence::kActive;
+  key.kind = kind;
+  key.schema = kControlSchemaActive;
+  key.payload_size = static_cast<uint16_t>(key_size);
+  memcpy(key.payload, key_payload, key_size);
+  if (!controlPayloadValid(key)) return ControlLookupResult::kReadError;
+
+  bool found = false;
+  osf::ControlInspection best;
+  for (uint16_t slot = 0; slot < osf::kControlRecordsPerPage; ++slot) {
+    osf::ControlInspection candidate;
+    if (!readControl(static_cast<uint16_t>(active_control_page_), slot,
+                     candidate))
+      return ControlLookupResult::kReadError;
+    if (candidate.evidence == osf::ControlEvidence::kErased ||
+        candidate.evidence == osf::ControlEvidence::kStaged ||
+        candidate.evidence == osf::ControlEvidence::kPartialCommit)
+      continue;
+    if (candidate.evidence == osf::ControlEvidence::kCorrupt ||
+        !controlPayloadValid(candidate))
+      return ControlLookupResult::kReadError;
+    if (candidate.kind != kind || !controlSameKey(key, candidate)) continue;
+    if (!found || candidate.serial > best.serial) {
+      best = candidate;
+      found = true;
+    }
+  }
+
+  if (!found ||
+      best.evidence == osf::ControlEvidence::kCleared ||
+      best.schema == kControlSchemaTombstone)
+    return ControlLookupResult::kNone;
+  out = best;
+  return ControlLookupResult::kFound;
+}
+
+uint16_t ObservationStore::activeControlCount(
+    osf::ControlKind kind, bool& read_ok) const {
+  read_ok = false;
+  if (active_control_page_ < 0) {
+    read_ok = true;
+    return 0U;
+  }
+
+  uint16_t count = 0U;
+  for (uint16_t slot = 0; slot < osf::kControlRecordsPerPage; ++slot) {
+    osf::ControlInspection control;
+    if (!readControl(static_cast<uint16_t>(active_control_page_), slot,
+                     control))
+      return 0U;
+    if (control.evidence == osf::ControlEvidence::kErased ||
+        control.evidence == osf::ControlEvidence::kStaged ||
+        control.evidence == osf::ControlEvidence::kPartialCommit)
+      continue;
+    if (control.evidence == osf::ControlEvidence::kCorrupt ||
+        !controlPayloadValid(control))
+      return 0U;
+    if (control.kind == kind &&
+        control.evidence == osf::ControlEvidence::kActive &&
+        control.schema == kControlSchemaActive &&
+        controlIsLatest(slot, control))
+      ++count;
+  }
+  read_ok = true;
+  return count;
+}
+
+ObservationStore::ControlWriteResult ObservationStore::requestControlWrite(
+    osf::ControlKind kind, uint8_t schema,
+    const uint8_t* payload, size_t payload_size) {
+  if (!ready_ || faulted_ || active_control_page_ < 0 ||
+      next_control_serial_ == 0U || payload == nullptr ||
+      payload_size == 0U || payload_size > osf::kControlPayloadSize ||
+      (schema != kControlSchemaActive &&
+       schema != kControlSchemaTombstone))
+    return ControlWriteResult::kRejected;
+  if (busy() || append_result_ready_ || release_result_ready_ ||
+      maintenance_result_ready_ || control_write_result_ready_ ||
+      control_maintenance_result_ready_)
+    return ControlWriteResult::kBusy;
+  if (kind == osf::ControlKind::kStoreState &&
+      schema != kControlSchemaActive)
+    return ControlWriteResult::kRejected;
+
+  const int slot = findEmptyControlSlot();
+  if (slot < 0) return ControlWriteResult::kNoCapacity;
+
+  osf::ControlInspection semantic;
+  semantic.evidence = osf::ControlEvidence::kActive;
+  semantic.kind = kind;
+  semantic.schema = schema;
+  semantic.payload_size = static_cast<uint16_t>(payload_size);
+  semantic.serial = next_control_serial_;
+  memcpy(semantic.payload, payload, payload_size);
+  if (!controlPayloadValid(semantic)) return ControlWriteResult::kRejected;
+
+  if (!osf::encodeControl(kind, schema, next_control_serial_,
+                          payload, payload_size, control_blob_))
+    return ControlWriteResult::kRejected;
+
+  target_page_ = static_cast<uint16_t>(active_control_page_);
+  target_slot_ = static_cast<uint16_t>(slot);
+  target_generation_ = active_control_generation_;
+  pending_control_kind_ = kind;
+  pending_control_schema_ = schema;
+  pending_control_payload_size_ = static_cast<uint16_t>(payload_size);
+  pending_control_serial_ = next_control_serial_;
+  memset(pending_control_payload_, 0, sizeof(pending_control_payload_));
+  memcpy(pending_control_payload_, payload, payload_size);
+
+  job_ = Job::kControlWrite;
+  phase_ = Phase::kControlBody;
+  flash_op_awaiting_completion_ = false;
+  ++diagnostics_.control_writes_started;
+  return ControlWriteResult::kStarted;
+}
+
+bool ObservationStore::prepareNextControlCopy() {
+  if (control_source_page_ >= osf::kControlPageCount) {
+    faulted_ = true;
+    return false;
+  }
+
+  while (control_source_scan_slot_ < osf::kControlRecordsPerPage) {
+    const uint16_t source_slot = control_source_scan_slot_++;
+    osf::ControlInspection control;
+    if (!readControl(control_source_page_, source_slot, control)) {
+      faulted_ = true;
+      return false;
+    }
+    if (control.evidence == osf::ControlEvidence::kErased ||
+        control.evidence == osf::ControlEvidence::kStaged ||
+        control.evidence == osf::ControlEvidence::kPartialCommit)
+      continue;
+    if (control.evidence == osf::ControlEvidence::kCorrupt ||
+        !controlPayloadValid(control)) {
+      faulted_ = true;
+      return false;
+    }
+
+    const bool logically_active =
+        control.evidence == osf::ControlEvidence::kActive &&
+        control.schema == kControlSchemaActive &&
+        controlIsLatest(source_slot, control);
+    if (!logically_active) continue;
+
+    if (control_target_slot_ >= osf::kControlRecordsPerPage) {
+      faulted_ = true;
+      return false;
+    }
+
+    if (!osf::encodeControl(control.kind, control.schema, control.serial,
+                            control.payload, control.payload_size,
+                            control_blob_)) {
+      faulted_ = true;
+      return false;
+    }
+    pending_control_kind_ = control.kind;
+    pending_control_schema_ = control.schema;
+    pending_control_payload_size_ = control.payload_size;
+    pending_control_serial_ = control.serial;
+    memset(pending_control_payload_, 0, sizeof(pending_control_payload_));
+    memcpy(pending_control_payload_, control.payload, control.payload_size);
+    return true;
+  }
+  return false;
+}
+
+bool ObservationStore::controlCopyFinished() const {
+  return control_source_scan_slot_ >= osf::kControlRecordsPerPage;
+}
+
+ObservationStore::ControlLookupResult ObservationStore::findExactObject(
+    const osf::RecordIdentity& identity, osc::ExactObject& value) const {
+  value = osc::ExactObject();
+  if (!identity.valid()) return ControlLookupResult::kReadError;
+  osc::ExactObject probe;
+  probe.identity = identity;
+  probe.record_kind = osf::RecordKind::kPeriodic;
+  probe.object_size = 1U;
+  probe.object[0] = 0U;
+  uint8_t payload[osc::kExactObjectPayloadSize];
+  if (!osc::encodeExactObject(probe, payload))
+    return ControlLookupResult::kReadError;
+  osf::ControlInspection control;
+  const ControlLookupResult result =
+      findLatestControl(osf::ControlKind::kExactObject,
+                        payload, sizeof(payload), control);
+  if (result != ControlLookupResult::kFound) return result;
+  if (!osc::decodeExactObject(control.payload, control.payload_size, value))
+    return ControlLookupResult::kReadError;
+  return ControlLookupResult::kFound;
+}
+
+ObservationStore::ControlWriteResult ObservationStore::requestPutExactObject(
+    const osc::ExactObject& value) {
+  uint8_t payload[osc::kExactObjectPayloadSize];
+  if (!osc::encodeExactObject(value, payload))
+    return ControlWriteResult::kRejected;
+
+  osf::ControlInspection existing;
+  const ControlLookupResult lookup =
+      findLatestControl(osf::ControlKind::kExactObject,
+                        payload, sizeof(payload), existing);
+  if (lookup == ControlLookupResult::kReadError)
+    return ControlWriteResult::kRejected;
+  if (lookup == ControlLookupResult::kFound) {
+    if (existing.payload_size == sizeof(payload) &&
+        memcmp(existing.payload, payload, sizeof(payload)) == 0)
+      return ControlWriteResult::kAlreadySatisfied;
+    return ControlWriteResult::kRejected;
+  }
+
+  bool read_ok = false;
+  if (activeControlCount(osf::ControlKind::kExactObject, read_ok) >=
+          osf::kMaxExactCustodyObjects ||
+      !read_ok)
+    return read_ok ? ControlWriteResult::kNoCapacity
+                   : ControlWriteResult::kRejected;
+  return requestControlWrite(osf::ControlKind::kExactObject,
+                             kControlSchemaActive,
+                             payload, sizeof(payload));
+}
+
+ObservationStore::ControlWriteResult ObservationStore::requestClearExactObject(
+    const osf::RecordIdentity& identity) {
+  osc::ExactObject existing;
+  const ControlLookupResult lookup = findExactObject(identity, existing);
+  if (lookup == ControlLookupResult::kReadError)
+    return ControlWriteResult::kRejected;
+  if (lookup == ControlLookupResult::kNone)
+    return ControlWriteResult::kAlreadySatisfied;
+  uint8_t payload[osc::kExactObjectPayloadSize];
+  if (!osc::encodeExactObject(existing, payload))
+    return ControlWriteResult::kRejected;
+  return requestControlWrite(osf::ControlKind::kExactObject,
+                             kControlSchemaTombstone,
+                             payload, sizeof(payload));
+}
+
+ObservationStore::ControlLookupResult ObservationStore::findOpenOccurrence(
+    const osc::OpenOccurrence& key, osc::OpenOccurrence& value) const {
+  value = osc::OpenOccurrence();
+  osc::OpenOccurrence probe = key;
+  if (probe.occurrence_id == 0U) probe.occurrence_id = 1U;
+  uint8_t payload[osc::kOpenOccurrencePayloadSize];
+  if (!osc::encodeOpenOccurrence(probe, payload))
+    return ControlLookupResult::kReadError;
+  osf::ControlInspection control;
+  const ControlLookupResult result =
+      findLatestControl(osf::ControlKind::kOpenOccurrence,
+                        payload, sizeof(payload), control);
+  if (result != ControlLookupResult::kFound) return result;
+  if (!osc::decodeOpenOccurrence(control.payload, control.payload_size, value))
+    return ControlLookupResult::kReadError;
+  return ControlLookupResult::kFound;
+}
+
+ObservationStore::ControlWriteResult
+ObservationStore::requestPutOpenOccurrence(
+    const osc::OpenOccurrence& value) {
+  uint8_t payload[osc::kOpenOccurrencePayloadSize];
+  if (!osc::encodeOpenOccurrence(value, payload))
+    return ControlWriteResult::kRejected;
+
+  osf::ControlInspection existing;
+  const ControlLookupResult lookup =
+      findLatestControl(osf::ControlKind::kOpenOccurrence,
+                        payload, sizeof(payload), existing);
+  if (lookup == ControlLookupResult::kReadError)
+    return ControlWriteResult::kRejected;
+  if (lookup == ControlLookupResult::kFound) {
+    if (existing.payload_size == sizeof(payload) &&
+        memcmp(existing.payload, payload, sizeof(payload)) == 0)
+      return ControlWriteResult::kAlreadySatisfied;
+    return ControlWriteResult::kRejected;
+  }
+
+  bool read_ok = false;
+  if (activeControlCount(osf::ControlKind::kOpenOccurrence, read_ok) >=
+          osf::kMaxOpenOccurrences ||
+      !read_ok)
+    return read_ok ? ControlWriteResult::kNoCapacity
+                   : ControlWriteResult::kRejected;
+  return requestControlWrite(osf::ControlKind::kOpenOccurrence,
+                             kControlSchemaActive,
+                             payload, sizeof(payload));
+}
+
+ObservationStore::ControlWriteResult
+ObservationStore::requestClearOpenOccurrence(
+    const osc::OpenOccurrence& key) {
+  osc::OpenOccurrence existing;
+  const ControlLookupResult lookup = findOpenOccurrence(key, existing);
+  if (lookup == ControlLookupResult::kReadError)
+    return ControlWriteResult::kRejected;
+  if (lookup == ControlLookupResult::kNone)
+    return ControlWriteResult::kAlreadySatisfied;
+  uint8_t payload[osc::kOpenOccurrencePayloadSize];
+  if (!osc::encodeOpenOccurrence(existing, payload))
+    return ControlWriteResult::kRejected;
+  return requestControlWrite(osf::ControlKind::kOpenOccurrence,
+                             kControlSchemaTombstone,
+                             payload, sizeof(payload));
+}
+
+ObservationStore::ControlLookupResult ObservationStore::findResultGuard(
+    const osc::ResultGuard& key, osc::ResultGuard& value) const {
+  value = osc::ResultGuard();
+  osc::ResultGuard probe = key;
+  if (probe.opcode == 0U) probe.opcode = 1U;
+  if (!probe.result_identity.valid()) {
+    probe.result_identity.incarnation =
+        incarnation_ == 0U ? 1U : incarnation_;
+    probe.result_identity.sequence = 1U;
+  }
+  uint8_t payload[osc::kResultGuardPayloadSize];
+  if (!osc::encodeResultGuard(probe, payload))
+    return ControlLookupResult::kReadError;
+  osf::ControlInspection control;
+  const ControlLookupResult result =
+      findLatestControl(osf::ControlKind::kResultGuard,
+                        payload, sizeof(payload), control);
+  if (result != ControlLookupResult::kFound) return result;
+  if (!osc::decodeResultGuard(control.payload, control.payload_size, value))
+    return ControlLookupResult::kReadError;
+  return ControlLookupResult::kFound;
+}
+
+ObservationStore::ControlWriteResult ObservationStore::requestPutResultGuard(
+    const osc::ResultGuard& value) {
+  uint8_t payload[osc::kResultGuardPayloadSize];
+  if (!osc::encodeResultGuard(value, payload))
+    return ControlWriteResult::kRejected;
+
+  osf::ControlInspection existing;
+  const ControlLookupResult lookup =
+      findLatestControl(osf::ControlKind::kResultGuard,
+                        payload, sizeof(payload), existing);
+  if (lookup == ControlLookupResult::kReadError)
+    return ControlWriteResult::kRejected;
+  if (lookup == ControlLookupResult::kFound) {
+    if (existing.payload_size == sizeof(payload) &&
+        memcmp(existing.payload, payload, sizeof(payload)) == 0)
+      return ControlWriteResult::kAlreadySatisfied;
+    // Same authenticated authority context + command_id but a different
+    // canonical request/result binding is a fail-closed conflict.
+    return ControlWriteResult::kRejected;
+  }
+
+  bool read_ok = false;
+  if (activeControlCount(osf::ControlKind::kResultGuard, read_ok) >=
+          osf::kMaxResultGuards ||
+      !read_ok)
+    return read_ok ? ControlWriteResult::kNoCapacity
+                   : ControlWriteResult::kRejected;
+  return requestControlWrite(osf::ControlKind::kResultGuard,
+                             kControlSchemaActive,
+                             payload, sizeof(payload));
+}
+
+ObservationStore::ControlWriteResult ObservationStore::requestClearResultGuard(
+    const osc::ResultGuard& key) {
+  osc::ResultGuard existing;
+  const ControlLookupResult lookup = findResultGuard(key, existing);
+  if (lookup == ControlLookupResult::kReadError)
+    return ControlWriteResult::kRejected;
+  if (lookup == ControlLookupResult::kNone)
+    return ControlWriteResult::kAlreadySatisfied;
+  uint8_t payload[osc::kResultGuardPayloadSize];
+  if (!osc::encodeResultGuard(existing, payload))
+    return ControlWriteResult::kRejected;
+  return requestControlWrite(osf::ControlKind::kResultGuard,
+                             kControlSchemaTombstone,
+                             payload, sizeof(payload));
+}
+
+bool ObservationStore::takeControlWriteResult(bool& success) {
+  if (!control_write_result_ready_) return false;
+  success = control_write_result_success_;
+  control_write_result_ready_ = false;
+  return true;
+}
+
 ObservationStore::LookupResult ObservationStore::findRecord(
     const osf::RecordIdentity& identity, Record& out) const {
   if (!identity.valid()) return LookupResult::kNone;
