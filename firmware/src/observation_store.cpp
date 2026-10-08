@@ -1239,6 +1239,54 @@ bool ObservationStore::takeMaintenanceResult(bool& success) {
   return true;
 }
 
+ObservationStore::MaintenanceResult
+ObservationStore::requestControlMaintenance() {
+  if (!ready_ || faulted_) return MaintenanceResult::kRejected;
+  if (busy() || append_result_ready_ || release_result_ready_ ||
+      maintenance_result_ready_ || control_write_result_ready_ ||
+      control_maintenance_result_ready_)
+    return MaintenanceResult::kBusy;
+
+  if (active_control_page_ >= 0 && findEmptyControlSlot() >= 0)
+    return MaintenanceResult::kNoWork;
+
+  if (active_control_page_ >= 0 &&
+      active_control_generation_ == UINT64_MAX)
+    return MaintenanceResult::kRejected;
+
+  if (active_control_page_ < 0) {
+    target_page_ = 0U;
+    control_source_page_ = UINT16_MAX;
+    target_generation_ = 1U;
+  } else {
+    target_page_ =
+        static_cast<uint16_t>(1 - active_control_page_);
+    control_source_page_ =
+        static_cast<uint16_t>(active_control_page_);
+    target_generation_ = active_control_generation_ + 1U;
+  }
+
+  target_slot_ = UINT16_MAX;
+  control_source_scan_slot_ = 0U;
+  control_target_slot_ = 0U;
+  osf::encodePageHeader(osf::PageKind::kControl, target_generation_,
+                        device_id_, incarnation_, page_blob_);
+
+  job_ = Job::kControlMaintenance;
+  phase_ = pageAllErased(target_page_)
+               ? Phase::kControlHeaderBody
+               : Phase::kControlEraseTarget;
+  flash_op_awaiting_completion_ = false;
+  return MaintenanceResult::kStarted;
+}
+
+bool ObservationStore::takeControlMaintenanceResult(bool& success) {
+  if (!control_maintenance_result_ready_) return false;
+  success = control_maintenance_result_success_;
+  control_maintenance_result_ready_ = false;
+  return true;
+}
+
 bool ObservationStore::countByRelease(bool released, uint32_t& count) const {
   count = 0;
   if (!ready_ || faulted_) return false;
