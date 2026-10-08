@@ -199,19 +199,19 @@ g++ "${b3_flags[@]}" firmware/tests/sf4/test_sf4b_custody_store.cpp \
   -o "$test_dir/sf4b_custody_store"
 "$test_dir/sf4b_custody_store"
 # SF5C portable storage format has no physical nRF address ownership yet.
-g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5c_observation_store_format.cpp \\
-  firmware/src/observation_store_format.cpp \\
+g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5c_observation_store_format.cpp \
+  firmware/src/observation_store_format.cpp \
   -o "$test_dir/sf5c_observation_store_format"
 "$test_dir/sf5c_observation_store_format"
 # SF5C bounded control payload codecs.
-g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5c_observation_store_control.cpp \\
-  firmware/src/observation_store_control.cpp \\
-  firmware/src/observation_store_format.cpp \\
+g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5c_observation_store_control.cpp \
+  firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
   -o "$test_dir/sf5c_observation_store_control"
 "$test_dir/sf5c_observation_store_control"
 # SF5C portable ObservationStore core: no physical nRF address ownership.
-g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5c_observation_store_core.cpp \\
-  firmware/src/observation_store.cpp firmware/src/observation_store_format.cpp \\
+g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5c_observation_store_core.cpp \
+  firmware/src/observation_store.cpp firmware/src/observation_store_format.cpp \
   -o "$test_dir/sf5c_observation_store_core"
 "$test_dir/sf5c_observation_store_core"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf4/test_sf4b_capacity_model.py
