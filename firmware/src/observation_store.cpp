@@ -124,6 +124,7 @@ bool ObservationStore::recover() {
   diagnostics_.capacity_lost_result = 0U;
 
   uint64_t recovered_incarnation = 0U;
+  uint64_t control_incarnation = 0U;
 
   // Phase 1: choose the highest-generation ACTIVE control page. The other
   // control page is either the stale source of a completed compaction or a
@@ -153,6 +154,17 @@ bool ObservationStore::recover() {
     if (header.evidence != osf::PageEvidence::kActive ||
         header.kind != osf::PageKind::kControl ||
         header.device_id != device_id_ || header.incarnation == 0U) {
+      faulted_ = true;
+      ++diagnostics_.recovery_faults;
+      continue;
+    }
+
+    if (control_incarnation == 0U)
+      control_incarnation = header.incarnation;
+    else if (control_incarnation != header.incarnation) {
+      // Two ACTIVE control pages may exist only as old/new generations of one
+      // compaction lineage. Cross-incarnation coexistence is ambiguous and
+      // must not silently select the numerically newer generation.
       faulted_ = true;
       ++diagnostics_.recovery_faults;
       continue;
