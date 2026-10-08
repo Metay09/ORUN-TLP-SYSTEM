@@ -23,6 +23,34 @@ This direction does not change TLP v1 bytes. It does not yet freeze a custody
 ACK wire format, allocate gateway flash, authorize a new security context, or
 claim multi-device physical validation.
 
+### SF5 product-path supersession note — 2026-10-08
+
+SF4A originally required a Gateway-local durable flash commit before every
+tracker-facing custody ACK. That remains the historical requirement for the
+SF4 HISTORY_SECURE path and its audit evidence.
+
+For the **new SF5 PRODUCT_SECURE path**, the owner-approved rule is narrower and
+more wear-efficient:
+
+```text
+authenticated exact-object EDGE_DURABLE_ACCEPT verified before local fallback
+  -> Gateway local flash write is not required
+  -> Gateway may issue the tracker-facing custody/responsibility ACK
+
+otherwise / timeout / failure / uncertainty
+  -> Gateway local durable commit + readback is required
+  -> only then may Gateway issue the tracker-facing ACK
+```
+
+This is not an ACK-before-durability relaxation. It changes **which durable
+owner** may satisfy the handoff. A live connection, BLE/TCP/socket success, RAM
+enqueue or unauthenticated Edge response is never enough.
+
+The exact EDGE_DURABLE_ACCEPT authentication/wire contract remains a later
+reviewed gate. Until that contract exists, production Gateway runtime may use
+the local-flash custody path only; it must not activate the write-around fast
+path from transport connectivity alone.
+
 ---
 
 ## 1. Product outcome
@@ -99,13 +127,17 @@ A raw RF receive event, CRC-valid packet, TX_DONE, relay forwarding completion,
 BLE notification, socket write or HTTP request completion is not durable
 custody.
 
-For tracker History, the new owner-approved direction is:
+For tracker History, the SF4 owner-approved direction is:
 
 > A valid authenticated GATEWAY_CUSTODY_ACK may release the tracker from further
 > RF replay only when the ACK is unambiguously bound to a custody object that
 > the tracker can map to one exact retained History observation, and only after
 > the gateway has committed that custody object to its reviewed persistent
 > queue.
+
+For the later SF5 PRODUCT_SECURE path, the supersession note above permits the
+same tracker-facing release only after **either** reviewed Gateway-local durable
+custody **or** an authenticated exact-object Edge durable-accept proof.
 
 This intentionally changes the earlier first-slice rule that only
 BACKEND_DURABLE could release tracker History. The old rule remains historical
@@ -118,7 +150,8 @@ security/storage review before production implementation.
 
 ### 4.1 Tracker -> Gateway
 
-The gateway may emit GATEWAY_CUSTODY_ACK only after all of these are true:
+For the historical SF4 HISTORY_SECURE path, the gateway may emit
+GATEWAY_CUSTODY_ACK only after all of these are true:
 
 1. the complete received HISTORY_SECURE frame is structurally admissible for
    opaque custody;
@@ -159,8 +192,14 @@ metadata-only-erase prohibition.
 
 ### 4.2 Gateway -> Edge
 
-The gateway retains its custodied **opaque custody object** until an authorized
-Edge durably accepts that exact object.
+For a locally committed custody object, the gateway retains its custodied
+**opaque custody object** until an authorized Edge durably accepts that exact
+object.
+
+For the SF5 write-around fast path, the same authenticated exact-object
+EDGE_DURABLE_ACCEPT semantics may instead be used **before** any local Gateway
+flash write. In that case Edge becomes the next durable owner directly and the
+Gateway holds only bounded in-flight volatile state.
 
 Gateway reclaim requires an authenticated **EDGE_DURABLE_ACCEPT** fact from an
 enrolled/authorized Edge (or an authenticated mutually trusted local channel
@@ -615,9 +654,11 @@ sync API is frozen by this custody document.
 
 ## 11. Failure behavior
 
-### Gateway hears frame but power fails before durable commit
+### Gateway hears frame but power fails before a durable owner is established
 
-No custody ACK is authoritative. Tracker retains/retries later.
+No custody ACK is authoritative. Tracker retains/retries later. For SF5, a
+durable owner means either verified local Gateway commit/readback or a verified
+authenticated exact-object Edge durable accept.
 
 ### Gateway commits, ACK is lost
 
