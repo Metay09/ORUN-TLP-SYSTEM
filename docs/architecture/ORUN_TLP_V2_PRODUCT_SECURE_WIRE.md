@@ -218,8 +218,10 @@ This is a request to an authorized Gateway to attempt reviewed durable custody.
 
 It does **not** mean the Gateway has accepted custody.
 
-A Gateway may emit `GATEWAY_CUSTODY_ACK` only after durable commit/readback of
-the exact inner protected object.
+A Gateway may emit `GATEWAY_CUSTODY_ACK` only after responsibility for the
+exact inner protected object is durably safe: either local custody
+commit/readback is complete, or an authenticated exact-object
+`EDGE_DURABLE_ACCEPT` proves that the next durable owner already accepted it.
 
 When the bit is clear:
 
@@ -230,17 +232,46 @@ When the bit is clear:
 
 For the initial SF5 tracker policy, **durable PERIODIC/EVENT records are not
 normally sent twice as "live now, custody later"**. Their normal first protected
-transmission into a custody-capable path uses `CUSTODY_REQUESTED=1`. The same
-protected object may be forwarded onward immediately while the Gateway performs
-its durable commit; "custody requested" does not mean "delay live forwarding".
+transmission into a custody-capable path uses `CUSTODY_REQUESTED=1`.
 
-A durable tracker record is releasable only after an authenticated durable
-responsibility-transfer fact for that exact object. In the initial SF5 path that
-fact is `GATEWAY_CUSTODY_ACK`. Therefore every retained PERIODIC/EVENT that is
-eventually removed from tracker responsibility needs one such successful custody
-transfer (unless a separately reviewed equivalent durable-release path is added
-later). Merely spacing those ACKs out changes collision timing; it does not make
-their long-term airtime disappear.
+The Gateway uses a **durable downstream bypass first, local flash fallback
+second** policy:
+
+```text
+receive exact protected object
+  -> if an Edge is currently usable:
+       forward exact object without committing Gateway flash
+       wait for authenticated exact-object EDGE_DURABLE_ACCEPT
+       if verified: issue GATEWAY_CUSTODY_ACK to tracker
+                    (Gateway flash stays untouched)
+  -> otherwise / timeout / uncertain Edge outcome:
+       commit exact object to Gateway custody flash
+       read/verify durable state
+       issue GATEWAY_CUSTODY_ACK to tracker
+```
+
+"Edge usable" never means BLE/TCP/Wi-Fi connected, socket write succeeded or RAM
+receive completed. The bypass is allowed only after the next owner has durably
+accepted the exact object and the Gateway has authenticated that acceptance.
+
+Thus `GATEWAY_CUSTODY_ACK` is the tracker-facing proof that responsibility has
+left the tracker into the Gateway-controlled durable chain. Honest Gateway
+issuance requires **either**:
+
+1. the exact object is durably held in Gateway custody flash; **or**
+2. an authenticated exact-object Edge durable-accept proof has already moved
+   responsibility to Edge.
+
+The same protected object may be forwarded onward immediately in either case.
+This write-around fast path reduces Gateway flash wear and queue pressure while
+preserving the root invariant: no tracker release on connectivity alone.
+
+A durable tracker record is releasable only after one such authenticated
+responsibility-transfer ACK for that exact object. Every retained PERIODIC/EVENT
+that is eventually removed from tracker responsibility therefore still has one
+tracker-facing ACK cost unless a later separately reviewed aggregate-release
+protocol is introduced. Pacing ACKs changes collision timing; it does not make
+their long-term LoRa airtime disappear.
 
 `CUSTODY_REQUESTED=0` remains a bounded best-effort mode, not the normal
 routine durable-record policy. A critical EVENT may use one exceptional
@@ -784,6 +815,11 @@ Gateway custody stores/binds the exact **inner protected object**, not the
 Custody ACK is a security authority separate from COMMAND and
 BACKEND_DURABLE authority.
 
+The ACK does **not** prove which durable tier currently owns the object. It proves
+that the tracker may release responsibility because the enrolled Gateway has
+verified one of the two allowed durable facts: local Gateway custody or exact-
+object Edge durable acceptance. A mere live connection is never such a fact.
+
 It has no confidentiality requirement. The candidate uses standard SHA-256,
 HKDF-SHA256 and HMAC-SHA256; no ORUN-designed primitive is introduced.
 
@@ -965,9 +1001,12 @@ release fails closed.
 
 Replaying the same valid ACK is idempotent and consumes no ACK counter.
 
-A compromised currently enrolled custody Gateway can still ACK and then discard
-data. That is the documented custody trust-anchor risk; cryptography cannot prove
-honest flash behavior after enrollment.
+A compromised currently enrolled custody Gateway can still lie about either
+local flash custody or downstream Edge acceptance and then discard data. That is
+the documented custody trust-anchor risk; cryptography cannot prove honest
+durable behavior after enrollment. The online bypass therefore does not create a
+new trust class; it reduces honest-path flash wear while preserving the same
+bounded Gateway trust anchor.
 
 ---
 
@@ -1293,7 +1332,9 @@ does not remove the long-term per-record custody/ACK airtime.
 
 For the initial sender policy, routine PERIODIC uses **one custody-requested
 PRODUCT_SECURE transmission**, not a separate live frame plus a second custody
-frame. Its raw direct cost is therefore:
+frame. Whether the Gateway completes responsibility transfer through Edge
+durable bypass or local flash fallback does not change this LoRa frame/ACK
+airtime. Its raw direct cost is therefore:
 
 ```text
 100 B PERIODIC + 56 B custody ACK ~= 3.613 s
