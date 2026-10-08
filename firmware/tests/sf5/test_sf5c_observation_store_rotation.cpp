@@ -466,7 +466,7 @@ static void testNewestReclaimedPageRemainsAppendable() {
   // Page 3 used to be the newest ACTIVE page; it is now PREPARED.
   const auto appended = appendRecord(store, osf::RecordKind::kPeriodic, 0x90U);
   assert(appended.identity.sequence == 85U);
-  assert(appended.handle.page == 3U);
+  assert(appended.page == 3U);
   ObservationStore reboot(flash, 4U, &incarnation);
   assert(reboot.begin(0xCAFEU) && !reboot.faulted());
   ObservationStore::Record found;
