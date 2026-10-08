@@ -630,7 +630,9 @@ bool ObservationStore::controlSameKey(
 }
 
 bool ObservationStore::controlIsLatest(
-    uint16_t slot, const osf::ControlInspection& control) const {
+    uint16_t slot, const osf::ControlInspection& control,
+    bool& read_ok) const {
+  read_ok = false;
   if (active_control_page_ < 0 ||
       (control.evidence != osf::ControlEvidence::kActive &&
        control.evidence != osf::ControlEvidence::kCleared) ||
@@ -648,9 +650,12 @@ bool ObservationStore::controlIsLatest(
       continue;
     if (!controlPayloadValid(candidate)) return false;
     if (candidate.serial > control.serial &&
-        controlSameKey(control, candidate))
+        controlSameKey(control, candidate)) {
+      read_ok = true;
       return false;
+    }
   }
+  read_ok = true;
   return true;
 }
 
@@ -725,9 +730,12 @@ uint16_t ObservationStore::activeControlCount(
       return 0U;
     if (control.kind == kind &&
         control.evidence == osf::ControlEvidence::kActive &&
-        control.schema == kControlSchemaActive &&
-        controlIsLatest(slot, control))
-      ++count;
+        control.schema == kControlSchemaActive) {
+      bool latest_read_ok = false;
+      const bool latest = controlIsLatest(slot, control, latest_read_ok);
+      if (!latest_read_ok) return 0U;
+      if (latest) ++count;
+    }
   }
   read_ok = true;
   return count;
@@ -736,12 +744,14 @@ uint16_t ObservationStore::activeControlCount(
 ObservationStore::ControlWriteResult ObservationStore::requestControlWrite(
     osf::ControlKind kind, uint8_t schema,
     const uint8_t* payload, size_t payload_size) {
-  if (!ready_ || faulted_ || active_control_page_ < 0 ||
-      next_control_serial_ == 0U || payload == nullptr ||
+  if (!ready_ || faulted_ || next_control_serial_ == 0U ||
+      payload == nullptr ||
       payload_size == 0U || payload_size > osf::kControlPayloadSize ||
       (schema != kControlSchemaActive &&
        schema != kControlSchemaTombstone))
     return ControlWriteResult::kRejected;
+  if (active_control_page_ < 0)
+    return ControlWriteResult::kNoCapacity;
   if (busy() || append_result_ready_ || release_result_ready_ ||
       maintenance_result_ready_ || control_write_result_ready_ ||
       control_maintenance_result_ready_)
@@ -806,10 +816,16 @@ bool ObservationStore::prepareNextControlCopy() {
       return false;
     }
 
+    bool latest_read_ok = false;
+    const bool latest =
+        controlIsLatest(source_slot, control, latest_read_ok);
+    if (!latest_read_ok) {
+      faulted_ = true;
+      return false;
+    }
     const bool logically_active =
         control.evidence == osf::ControlEvidence::kActive &&
-        control.schema == kControlSchemaActive &&
-        controlIsLatest(source_slot, control);
+        control.schema == kControlSchemaActive && latest;
     if (!logically_active) continue;
 
     if (control_target_slot_ >= osf::kControlRecordsPerPage) {
