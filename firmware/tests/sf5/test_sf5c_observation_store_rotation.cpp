@@ -454,6 +454,50 @@ static void testRotationPowerCutMatrix() {
   resumeAndVerify(torn);
 }
 
+static void testRepeatedRotationSurvivesControlCompaction() {
+  RotationFakeFlash flash = makeFullStore(false);
+  RotationIncarnation incarnation;
+  ObservationStore store(flash, 4U, &incarnation);
+  assert(store.begin(0xCAFEU));
+
+  const uint32_t rounds = 16U;
+  for (uint32_t round = 1U; round <= rounds; ++round) {
+    ObservationStore::MaintenanceResult result = store.requestMaintenance();
+    if (result ==
+        ObservationStore::MaintenanceResult::kControlMaintenanceRequired) {
+      assert(store.requestControlMaintenance() ==
+             ObservationStore::MaintenanceResult::kStarted);
+      settle(store);
+      bool control_ok = false;
+      assert(store.takeControlMaintenanceResult(control_ok) && control_ok);
+      result = store.requestMaintenance();
+    }
+    assert(result == ObservationStore::MaintenanceResult::kStarted);
+    settle(store);
+    bool maintenance_ok = false;
+    assert(store.takeMaintenanceResult(maintenance_ok) && maintenance_ok);
+
+    assert(store.diagnostics().capacity_lost_total ==
+           round * osf::kDataRecordsPerPage);
+    assert(store.diagnostics().capacity_lost_periodic ==
+           round * osf::kDataRecordsPerPage);
+
+    for (uint32_t i = 0U; i < osf::kDataRecordsPerPage; ++i)
+      (void)appendRecord(store, osf::RecordKind::kPeriodic,
+                         static_cast<uint8_t>(round + i));
+  }
+
+  assert(store.diagnostics().control_pages_compacted >= 1U);
+
+  ObservationStore reboot(flash, 4U, &incarnation);
+  assert(reboot.begin(0xCAFEU));
+  assert(!reboot.faulted());
+  assert(reboot.diagnostics().capacity_lost_total ==
+         rounds * osf::kDataRecordsPerPage);
+  assert(reboot.diagnostics().capacity_lost_periodic ==
+         rounds * osf::kDataRecordsPerPage);
+}
+
 static void testAsyncRotationDoesNotResubmitFlashMutations() {
   RotationFakeFlash flash = makeFullStore(false);
   RotationIncarnation incarnation;
@@ -505,6 +549,7 @@ int main() {
   testOldestFirstRotationAndDurableGapState();
   testReleasedPageReclaimedBeforeRetainedHistory();
   testRotationPowerCutMatrix();
+  testRepeatedRotationSurvivesControlCompaction();
   testAsyncRotationDoesNotResubmitFlashMutations();
   testTornNeverActiveHeaderIsReclaimedBeforeHistory();
   return 0;
