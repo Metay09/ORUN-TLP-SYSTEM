@@ -453,10 +453,11 @@ bool ObservationStore::recover() {
   if (faulted_) return true;
 
   if (!rotation_resuming_ && prepared_data_page_ >= 0) {
-    const uint64_t expected =
-        active_generation == 0U ? 1U : active_generation + 1U;
-    if (active_generation == UINT64_MAX ||
-        prepared_generation != expected) {
+    // Page generations are monotonic but need not be contiguous: a fully
+    // released newer page may be reclaimed before an older retained page,
+    // intentionally leaving a generation gap.
+    if (prepared_generation == 0U ||
+        prepared_generation <= active_generation) {
       faulted_ = true;
       ++diagnostics_.recovery_faults;
       return true;
