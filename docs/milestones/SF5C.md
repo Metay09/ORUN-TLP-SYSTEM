@@ -1,16 +1,61 @@
 # SF5C — Portable ObservationStore
 
-Status: **THIRD INDEPENDENT AUDIT FAIL (6e5c306: 0 BLOCKER /
-1 HIGH / 1 MEDIUM / 2 LOW). DURABLE CONTROL INTENT IMPLEMENTATION IS
-ON THE FEATURE BRANCH BUT NOT YET HOST/RAK OR INDEPENDENTLY VERIFIED.
+Status: **FOURTH INDEPENDENT AUDIT PASS WITH FIXES (0c39aba:
+0 BLOCKER / 0 HIGH / 2 MEDIUM / 2 LOW). TWO MEDIUM FIXES AND TARGETED
+LOW TESTS ARE COMMITTED ON THE FEATURE BRANCH, NOT YET REVALIDATED.
 PORTABLE STORAGE ONLY; NO nRF ADDRESS ALLOCATION, NO PRODUCTION RF
-CUTOVER, NO PHYSICAL PASS. DO NOT MERGE.**
+CUTOVER, NO PHYSICAL PASS. DO NOT MERGE UNTIL NEW TESTS/REVIEW PASS.**
 
 Baseline:
 `main@5b757966489e5fe221c05fe1cbf66ff7b1e602d5` (SF5B merged).
 
 Branch:
 `feat/sf5c-observation-store`.
+
+### 2026-10-09 — Fourth independent audit of `0c39aba`: PASS WITH FIXES
+
+Independent Astra audit checked exactly `0c39aba8c85beab92c957dfd63b58b3c0d6a0644`
+and found **0 BLOCKER / 0 HIGH / 2 MEDIUM / 2 LOW**. Full host
+ASan/UBSan/-Werror suite passed (79 PASS lines); RAK4630 build succeeded
+(RAM 29,536 B, Flash 285,924 B). The compiled ObservationStore is **NOT
+linked into production runtime**; no physical NVMC or power-cut test occurred.
+
+Confirmed: prior HIGH torn control erase recovery is closed under the
+portable fake-flash model, including the full 4096-prefix matrix, PREPARED
+targets, repeated reset, and the auditor's 2,400 random erase-pattern probes.
+This does not establish physical safety.
+
+Mandatory findings and same-branch remediation after the audited HEAD:
+
+- **MEDIUM-1:** a torn source intent word (header offset 56) faulted an
+  otherwise valid ACTIVE control journal. Interpret any non-0xFFFFFFFF
+  one-way intent word as present. Do not attempt to reprogram partially
+  programmed words after reset. Added 14 nonempty/proper byte subsets and
+  a single programmed-bit fixture for first and second compaction, including
+  write admission, repeated reboot, custody and successful maintenance.
+- **MEDIUM-2:** previously, the 4096-prefix regression did not prove intent
+  preceded target mutation (M17 reordering mutant survived). After the
+  FIRST compaction poll, assert the current source is ACTIVE, its intent
+  is durable and unretired, and the *entire target page* is byte-identical
+  to its pre-intent snapshot.
+- **LOW-1:** regression now asserts that a recovered in-progress control
+  compaction rejects logical control writes and data maintenance; the
+  admission/result API remains unchanged.
+- **LOW-2:** a fake FlashBackend can return `kDone` without writing the
+  intent or retirement word; tests require readback to reject false success,
+  and verify safe repair/retirement after reboot.
+
+No golden/TLP v1/SF2/SF3 wire changes; no new flash page. These follow-up
+commits have **NOT yet passed targeted/full host tests, RAK4630 build or
+an independent focused re-audit**; do not represent the old `0c39aba`
+PASS evidence as new-HEAD validation. The earlier accepted LOW finding
+about presubmission BUSY/timeout `kFailed` remains fail-closed and needs
+a separate explicit backend-submission-status contract before alteration.
+
+Fourth-audit merge guidance: after MEDIUM fixes, full host and RAK4630
+revalidation and focused independent confirmation, SF5C may be merged
+**only as portable storage**, with physical NVMC validation, write limits,
+wear and runtime integration deferred to SF5D/SF5F.
 
 ### 2026-10-09 — Unverified control-erase intent implementation
 
