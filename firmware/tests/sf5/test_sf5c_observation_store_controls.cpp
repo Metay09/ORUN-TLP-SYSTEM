@@ -380,7 +380,69 @@ static void testControlCompactionDropsTombstonedHistory() {
   assert(found.occurrence_id == 20U);
 }
 
+// Interrupt control compaction at every poll boundary. The prior ACTIVE
+// journal must remain authoritative until the new page activates last.
+static void testControlCompactionResetMatrix() {
+  ControlFakeFlash baseline(6U);
+  ControlIncarnation incarnation;
+  ObservationStore seed(baseline, 6U, &incarnation);
+  assert(seed.begin(0x88U));
+  initControl(seed);
+
+  osc::OpenOccurrence durable = occurrence(555U);
+  assert(seed.requestPutOpenOccurrence(durable) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(seed);
+
+  osc::OpenOccurrence transient = occurrence(1000U);
+  transient.event_type = 2U;
+  for (uint64_t i = 0; i < 13U; ++i) {
+    transient.occurrence_id = 1000U + i;
+    assert(seed.requestPutOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(seed);
+    assert(seed.requestClearOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(seed);
+  }
+
+  osc::OpenOccurrence key = durable;
+  key.occurrence_id = 0U;
+  for (unsigned cut = 0U; cut <= 12U; ++cut) {
+    ControlFakeFlash flash = baseline;
+    ObservationStore attempt(flash, 6U, &incarnation);
+    assert(attempt.begin(0x88U) && !attempt.faulted());
+    assert(attempt.requestControlMaintenance() ==
+           ObservationStore::MaintenanceResult::kStarted);
+    for (unsigned step = 0U; step < cut && attempt.busy(); ++step)
+      attempt.poll();
+
+    ObservationStore reboot(flash, 6U, &incarnation);
+    assert(reboot.begin(0x88U) && !reboot.faulted());
+    osc::OpenOccurrence recovered;
+    assert(reboot.findOpenOccurrence(key, recovered) ==
+           ObservationStore::ControlLookupResult::kFound);
+    assert(recovered.occurrence_id == durable.occurrence_id);
+
+    const auto maintenance = reboot.requestControlMaintenance();
+    assert(maintenance == ObservationStore::MaintenanceResult::kStarted ||
+           maintenance == ObservationStore::MaintenanceResult::kNoWork);
+    if (maintenance == ObservationStore::MaintenanceResult::kStarted) {
+      settle(reboot);
+      bool ok = false;
+      assert(reboot.takeControlMaintenanceResult(ok) && ok);
+    }
+
+    ObservationStore second_reboot(flash, 6U, &incarnation);
+    assert(second_reboot.begin(0x88U) && !second_reboot.faulted());
+    assert(second_reboot.findOpenOccurrence(key, recovered) ==
+           ObservationStore::ControlLookupResult::kFound);
+    assert(recovered.occurrence_id == durable.occurrence_id);
+  }
+}
+
 int main() {
+  testControlCompactionResetMatrix();
   testExactObjectBoundAndReplacement();
   testOccurrenceAndResultConflictSurviveReboot();
   testResultGuardReservesIdentityAcrossReset();
