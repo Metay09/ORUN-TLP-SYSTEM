@@ -306,6 +306,42 @@ static void resumeAndVerify(RotationFakeFlash& flash) {
   assert(next.sequence == 2U * osf::kDataRecordsPerPage + 1U);
 }
 
+static void testReleasedPageReclaimedBeforeRetainedHistory() {
+  RotationFakeFlash flash = makeFullStore(false);
+  RotationIncarnation incarnation;
+  ObservationStore store(flash, 4U, &incarnation);
+  assert(store.begin(0xCAFEU));
+
+  for (uint32_t seq = osf::kDataRecordsPerPage + 1U;
+       seq <= 2U * osf::kDataRecordsPerPage; ++seq) {
+    osf::RecordIdentity identity;
+    identity.incarnation = RotationIncarnation::kValue;
+    identity.sequence = seq;
+    releaseRecord(store, identity);
+  }
+
+  assert(store.requestMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store);
+  bool ok = false;
+  assert(store.takeMaintenanceResult(ok) && ok);
+  assert(store.diagnostics().capacity_lost_total == 0U);
+
+  ObservationStore::Record record;
+  osf::RecordIdentity retained_oldest;
+  retained_oldest.incarnation = RotationIncarnation::kValue;
+  retained_oldest.sequence = 1U;
+  assert(store.lookup(retained_oldest, record) ==
+         ObservationStore::LookupResult::kFound);
+  assert(!record.released);
+
+  osf::RecordIdentity reclaimed_newer;
+  reclaimed_newer.incarnation = RotationIncarnation::kValue;
+  reclaimed_newer.sequence = osf::kDataRecordsPerPage + 1U;
+  assert(store.lookup(reclaimed_newer, record) ==
+         ObservationStore::LookupResult::kNone);
+}
+
 static void testRotationPowerCutMatrix() {
   const RotationFakeFlash baseline = makeFullStore(false);
 
@@ -365,6 +401,7 @@ static void testTornNeverActiveHeaderIsReclaimedBeforeHistory() {
 
 int main() {
   testOldestFirstRotationAndDurableGapState();
+  testReleasedPageReclaimedBeforeRetainedHistory();
   testRotationPowerCutMatrix();
   testTornNeverActiveHeaderIsReclaimedBeforeHistory();
   return 0;
