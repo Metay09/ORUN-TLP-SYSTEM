@@ -507,6 +507,18 @@ static void testTornRetiredControlEraseRecoversWithoutAuthorityRollback() {
   assert(store.requestControlMaintenance() ==
          ObservationStore::MaintenanceResult::kStarted);
   store.poll();  // durable intent on g=2 BEFORE touching stale g=1
+  osf::PageInspection source_after_intent;
+  assert(osf::inspectPageHeader(
+      flash.bytes.data() + osf::kPageSize, osf::kPageHeaderSize,
+      source_after_intent));
+  assert(source_after_intent.evidence == osf::PageEvidence::kActive);
+  assert(source_after_intent.control_intent_present);
+  assert(!source_after_intent.control_intent_retired);
+  // Mutation ordering MUST be: durable source intent, THEN target erase/write.
+  // A fast fake erase otherwise masks a regression which deletes the target
+  // during the first poll and only writes its source intent afterwards.
+  assert(memcmp(flash.bytes.data(), before_intent.bytes.data(),
+                osf::kPageSize) == 0);
   osc::OpenOccurrence key = durable;
   key.occurrence_id = 0U;
 
