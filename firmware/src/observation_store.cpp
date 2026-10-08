@@ -209,8 +209,11 @@ bool ObservationStore::recover() {
       size_t prefix = 0U;
       while (prefix < sizeof(actual) && actual[prefix] == 0xFFU)
         ++prefix;
+      // Require the complete STATIC CRC (which binds generation/device/
+      // incarnation) to survive. If erasure reaches the CRC, suffix bytes
+      // cannot prove the damaged page was older than the live authority.
       proven_stale_torn_erase =
-          prefix >= 4U && prefix < sizeof(actual) &&
+          prefix >= 4U && prefix <= osf::kPageStaticCrcOffset &&
           memcmp(actual + prefix, expected + prefix,
                  sizeof(actual) - prefix) == 0;
     }
