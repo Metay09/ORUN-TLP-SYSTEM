@@ -24,6 +24,18 @@ bool validControlKind(uint8_t value) {
          value == static_cast<uint8_t>(ControlKind::kStoreState);
 }
 
+uint8_t expectedPayloadSizeV1(RecordKind kind) {
+  switch (kind) {
+    case RecordKind::kPeriodic:
+      return kPeriodicPayloadSizeV1;
+    case RecordKind::kEvent:
+      return kEventPayloadSizeV1;
+    case RecordKind::kResult:
+      return kResultPayloadSizeV1;
+  }
+  return 0U;
+}
+
 uint16_t slotSizeFor(PageKind kind) {
   return kind == PageKind::kData ? static_cast<uint16_t>(kDataRecordSize)
                                  : static_cast<uint16_t>(kControlRecordSize);
@@ -189,6 +201,9 @@ bool encodeRecord(RecordKind kind, uint8_t schema, uint64_t incarnation,
       payload_size > kDataPayloadSize ||
       (payload_size != 0U && payload == nullptr))
     return false;
+  if (schema == kProductSchemaV1 &&
+      payload_size != expectedPayloadSizeV1(kind))
+    return false;
 
   memset(bytes, 0, kDataRecordSize);
   bytes[0] = static_cast<uint8_t>(kind);
@@ -232,7 +247,14 @@ bool inspectRecord(const uint8_t* bytes, size_t size,
     return true;
   }
 
+  const RecordKind kind = static_cast<RecordKind>(bytes[0]);
+  const uint8_t schema = bytes[1];
   const uint8_t payload_size = bytes[2];
+  if (schema == kProductSchemaV1 &&
+      payload_size != expectedPayloadSizeV1(kind)) {
+    inspection.evidence = RecordEvidence::kCorrupt;
+    return true;
+  }
   for (uint32_t i = 16U + payload_size; i < kDataRecordCrcOffset; ++i) {
     if (bytes[i] != 0U) {
       inspection.evidence = RecordEvidence::kCorrupt;
@@ -240,8 +262,8 @@ bool inspectRecord(const uint8_t* bytes, size_t size,
     }
   }
 
-  inspection.kind = static_cast<RecordKind>(bytes[0]);
-  inspection.schema = bytes[1];
+  inspection.kind = kind;
+  inspection.schema = schema;
   inspection.payload_size = payload_size;
   inspection.incarnation = get64(bytes + 4U);
   inspection.sequence = get32(bytes + 12U);
