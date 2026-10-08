@@ -508,10 +508,10 @@ static void testTornRetiredControlEraseRecoversWithoutAuthorityRollback() {
   osc::OpenOccurrence key = durable;
   key.occurrence_id = 0U;
 
-  // Each interrupted prefix retains the complete authoritative static CRC;
-  // recovery must retain the g=2 journal and safely resume target erase.
-  for (size_t prefix = 4U; prefix <= osf::kPageStaticCrcOffset;
-       prefix += 4U) {
+  // Probe *every byte boundary*, including 1..3 and 45..48 where
+  // header generation/CRC can be partially or entirely lost.
+  for (size_t prefix = 1U; prefix <= osf::kPageHeaderCommitOffset;
+       ++prefix) {
     ControlFakeFlash torn = flash;
     memset(torn.bytes.data(), 0xFF, prefix);
     ObservationStore reboot(torn, 6U, &incarnation);
@@ -530,12 +530,57 @@ static void testTornRetiredControlEraseRecoversWithoutAuthorityRollback() {
            ObservationStore::ControlLookupResult::kFound);
   }
 
-  // Losing the old header CRC destroys proof that it was a stale page.
+  // If erase reaches an ACTIVE marker, neither PREPARED status nor old
+  // control generation is proven; never guess the surviving authority.
   ControlFakeFlash missing_proof = flash;
   memset(missing_proof.bytes.data(), 0xFF,
-         osf::kPageStaticCrcOffset + 4U);
+         osf::kPageHeaderActiveOffset + 1U);
   ObservationStore ambiguous(missing_proof, 6U, &incarnation);
   assert(ambiguous.begin(0x91U) && ambiguous.faulted());
+
+  // A truly NEWER (g=2) page with new live state must not be ignored just
+  // because its first 48 header bytes were erased and g=1 is still valid.
+  ControlFakeFlash newer_damaged = flash;
+  ObservationStore latest(newer_damaged, 6U, &incarnation);
+  assert(latest.begin(0x91U) && !latest.faulted());
+  osc::OpenOccurrence newer_fact = occurrence(0xD00DU);
+  newer_fact.event_type = 3U;
+  assert(latest.requestPutOpenOccurrence(newer_fact) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(latest);
+  memset(newer_damaged.bytes.data() + osf::kPageSize, 0xFF,
+         osf::kPageHeaderCommitOffset);
+  ObservationStore rollback(newer_damaged, 6U, &incarnation);
+  assert(rollback.begin(0x91U) && rollback.faulted());
+
+  // Two successive interruptions: first leaves next-generation target
+  // PREPARED, reboot, second tears its erase. Its ACTIVE marker is still FF,
+  // hence it never carried control authority.
+  ControlFakeFlash prepared = flash;
+  ObservationStore interrupted(prepared, 6U, &incarnation);
+  assert(interrupted.begin(0x91U) && !interrupted.faulted());
+  assert(interrupted.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  interrupted.poll();  // erase stale g=1 target
+  interrupted.poll();  // header body g=3
+  interrupted.poll();  // header commit -> PREPARED g=3
+  for (size_t prefix = 1U;
+       prefix <= osf::kPageHeaderCommitOffset; ++prefix) {
+    ControlFakeFlash twice_cut = prepared;
+    memset(twice_cut.bytes.data(), 0xFF, prefix);
+    ObservationStore recovered(twice_cut, 6U, &incarnation);
+    assert(recovered.begin(0x91U) && !recovered.faulted());
+    osc::OpenOccurrence found;
+    assert(recovered.findOpenOccurrence(key, found) ==
+           ObservationStore::ControlLookupResult::kFound);
+    assert(recovered.requestControlMaintenance() ==
+           ObservationStore::MaintenanceResult::kStarted);
+    settle(recovered);
+    bool completed = false;
+    assert(recovered.takeControlMaintenanceResult(completed) && completed);
+    ObservationStore final_boot(twice_cut, 6U, &incarnation);
+    assert(final_boot.begin(0x91U) && !final_boot.faulted());
+  }
 }
 
 static void testUnreconciledExactObjectCommitCannotBePublished() {
