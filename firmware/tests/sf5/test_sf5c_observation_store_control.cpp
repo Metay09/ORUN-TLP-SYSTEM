@@ -23,6 +23,16 @@ static void testExactObject() {
   assert(decoded.object_size == value.object_size);
   assert(memcmp(value.object, decoded.object, value.object_size) == 0);
 
+  // A 100-byte object exactly fills bytes 16..115, so there is no tail
+  // padding to corrupt in the maximum-size case. Reserved bytes must still be
+  // rejected.
+  bytes[14] = 1U;
+  assert(!osc::decodeExactObject(bytes, sizeof(bytes), decoded));
+
+  // Use a 99-byte object to exercise the canonical zero-padding check at the
+  // final byte of the 116-byte control payload.
+  value.object_size = 99U;
+  assert(osc::encodeExactObject(value, bytes));
   bytes[115] = 1U;
   assert(!osc::decodeExactObject(bytes, sizeof(bytes), decoded));
 }
