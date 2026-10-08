@@ -209,9 +209,19 @@ bool sameExactObjectKey(const ExactObject& a, const ExactObject& b) {
 }
 
 bool sameOpenOccurrenceKey(const OpenOccurrence& a, const OpenOccurrence& b) {
-  return a.event_type == b.event_type && a.reason_code == b.reason_code &&
-         a.context_kind == b.context_kind &&
-         a.context_value == b.context_value;
+  if (a.event_type != b.event_type || a.reason_code != b.reason_code ||
+      a.context_kind != b.context_kind)
+    return false;
+
+  // SF5B EVENT context registry:
+  //   0 NONE         -> no sub-entity key
+  //   1 BATTERY_MV   -> transition snapshot, not occurrence identity
+  //   2 SUBSYSTEM_ID -> identifies the affected subsystem
+  // Battery voltage may move while one LOW/CRITICAL occurrence remains
+  // active; using the measured mV as a key would mint duplicate occurrences.
+  if (a.context_kind == 2U)
+    return a.context_value == b.context_value;
+  return true;
 }
 
 bool sameResultGuardKey(const ResultGuard& a, const ResultGuard& b) {
