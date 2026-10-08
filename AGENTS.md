@@ -407,9 +407,12 @@ Duplicate packets must be safely detectable.
 Important TRACKER product records must be stored locally before transmission.
 
 The current physically proven HistoryStore remains the runtime owner until the
-explicit SF5 cutover. The owner-approved next target is a **256 KiB bounded
+explicit SF5 cutover. The owner-approved next target is a **128 KiB bounded
 ObservationStore** carrying one report-period PERIODIC_OBSERVATION plus
-asynchronous EVENT and COMMAND_RESULT records. Do not permanently dual-write the
+asynchronous EVENT and COMMAND_RESULT records. This 2026-10-08 decision
+supersedes the earlier 256 KiB planning target specifically to preserve
+firmware-update/rollback headroom, including a future separately reviewed LoRa
+FOTA path. Do not consume that recovered headroom speculatively. Do not permanently dual-write the
 same observation to legacy History and the new store.
 
 Normal tracker data is one meaningful record per **effective** report period:
