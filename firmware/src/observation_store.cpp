@@ -1455,22 +1455,121 @@ int ObservationStore::findErasedDataPage() const {
 ObservationStore::MaintenanceResult ObservationStore::requestMaintenance() {
   if (!ready_ || faulted_) return MaintenanceResult::kRejected;
   if (busy() || append_result_ready_ || release_result_ready_ ||
-      maintenance_result_ready_)
+      maintenance_result_ready_ || control_write_result_ready_ ||
+      control_maintenance_result_ready_)
     return MaintenanceResult::kBusy;
-  if (prepared_data_page_ >= 0) return MaintenanceResult::kNoWork;
+
   if (max_data_generation_ == UINT64_MAX)
     return MaintenanceResult::kRejected;
 
-  const int page = findErasedDataPage();
-  if (page < 0) return MaintenanceResult::kNoWork;
+  // Resume a previously committed rotation intent before allowing any other
+  // data-store mutation. One free control slot is needed for the completion
+  // StoreState record; control compaction may be requested first if necessary.
+  if (rotation_resuming_) {
+    if (active_control_page_ < 0 || next_control_serial_ == 0U)
+      return MaintenanceResult::kRejected;
+    bool read_ok = false;
+    const uint16_t empty = emptyControlSlots(read_ok);
+    if (!read_ok) return MaintenanceResult::kRejected;
+    if (empty < 1U)
+      return MaintenanceResult::kControlMaintenanceRequired;
 
-  target_page_ = static_cast<uint16_t>(page);
+    target_page_ = rotation_state_.target_page;
+    target_generation_ = rotation_state_.target_new_generation;
+    target_slot_ = UINT16_MAX;
+    osf::encodePageHeader(osf::PageKind::kData, target_generation_,
+                          device_id_, incarnation_, page_blob_);
+
+    rotation_complete_state_ = rotation_state_;
+    rotation_complete_state_.rotation_pending = false;
+    rotation_complete_state_.target_page = UINT16_MAX;
+    rotation_complete_state_.target_old_generation = 0U;
+    rotation_complete_state_.target_new_generation = 0U;
+
+    rotation_control_slot_ =
+        static_cast<uint16_t>(findEmptyControlSlot());
+    if (rotation_control_slot_ == UINT16_MAX)
+      return MaintenanceResult::kControlMaintenanceRequired;
+    rotation_state_serial_ = next_control_serial_;
+
+    job_ = Job::kMaintenance;
+    phase_ = Phase::kRotationErasePage;
+    flash_op_awaiting_completion_ = false;
+    return MaintenanceResult::kStarted;
+  }
+
+  if (prepared_data_page_ >= 0) return MaintenanceResult::kNoWork;
+
+  const int erased_page = findErasedDataPage();
+  if (erased_page >= 0) {
+    target_page_ = static_cast<uint16_t>(erased_page);
+    target_slot_ = UINT16_MAX;
+    target_generation_ = max_data_generation_ + 1U;
+    osf::encodePageHeader(osf::PageKind::kData, target_generation_,
+                          device_id_, incarnation_, page_blob_);
+    job_ = Job::kMaintenance;
+    phase_ = Phase::kHeaderBody;
+    flash_op_awaiting_completion_ = false;
+    return MaintenanceResult::kStarted;
+  }
+
+  // No erased data page remains. Rotation is permitted only after a durable
+  // StoreState intent can be appended with one additional slot reserved for
+  // completion. This preserves oldest-first loss diagnostics across power cut.
+  if (active_control_page_ < 0 || next_control_serial_ == 0U)
+    return MaintenanceResult::kControlMaintenanceRequired;
+
+  bool read_ok = false;
+  const uint16_t empty = emptyControlSlots(read_ok);
+  if (!read_ok) return MaintenanceResult::kRejected;
+  if (empty < 2U)
+    return MaintenanceResult::kControlMaintenanceRequired;
+
+  const int oldest = findOldestDataPage();
+  if (oldest < 0) return MaintenanceResult::kRejected;
+
+  const uint64_t new_generation = max_data_generation_ + 1U;
+  if (!buildRotationIntent(static_cast<uint16_t>(oldest),
+                           new_generation, rotation_state_))
+    return MaintenanceResult::kRejected;
+
+  uint8_t state_payload[osc::kStoreStatePayloadSize];
+  if (!osc::encodeStoreState(rotation_state_, state_payload))
+    return MaintenanceResult::kRejected;
+
+  const int control_slot = findEmptyControlSlot();
+  if (control_slot < 0) return MaintenanceResult::kControlMaintenanceRequired;
+  rotation_control_slot_ = static_cast<uint16_t>(control_slot);
+  rotation_state_serial_ = next_control_serial_;
+  if (!osf::encodeControl(osf::ControlKind::kStoreState,
+                          kControlSchemaActive,
+                          rotation_state_serial_,
+                          state_payload, sizeof(state_payload),
+                          control_blob_))
+    return MaintenanceResult::kRejected;
+
+  pending_control_kind_ = osf::ControlKind::kStoreState;
+  pending_control_schema_ = kControlSchemaActive;
+  pending_control_payload_size_ =
+      static_cast<uint16_t>(sizeof(state_payload));
+  pending_control_serial_ = rotation_state_serial_;
+  memset(pending_control_payload_, 0, sizeof(pending_control_payload_));
+  memcpy(pending_control_payload_, state_payload, sizeof(state_payload));
+
+  target_page_ = static_cast<uint16_t>(oldest);
+  target_generation_ = new_generation;
   target_slot_ = UINT16_MAX;
-  target_generation_ = max_data_generation_ + 1U;
   osf::encodePageHeader(osf::PageKind::kData, target_generation_,
                         device_id_, incarnation_, page_blob_);
+
+  rotation_complete_state_ = rotation_state_;
+  rotation_complete_state_.rotation_pending = false;
+  rotation_complete_state_.target_page = UINT16_MAX;
+  rotation_complete_state_.target_old_generation = 0U;
+  rotation_complete_state_.target_new_generation = 0U;
+
   job_ = Job::kMaintenance;
-  phase_ = Phase::kHeaderBody;
+  phase_ = Phase::kRotationIntentBody;
   flash_op_awaiting_completion_ = false;
   return MaintenanceResult::kStarted;
 }
@@ -1490,8 +1589,13 @@ ObservationStore::requestControlMaintenance() {
       control_maintenance_result_ready_)
     return MaintenanceResult::kBusy;
 
-  if (active_control_page_ >= 0 && findEmptyControlSlot() >= 0)
-    return MaintenanceResult::kNoWork;
+  if (active_control_page_ >= 0) {
+    bool read_ok = false;
+    const uint16_t empty = emptyControlSlots(read_ok);
+    if (!read_ok) return MaintenanceResult::kRejected;
+    const uint16_t reserve = rotation_resuming_ ? 1U : 2U;
+    if (empty >= reserve) return MaintenanceResult::kNoWork;
+  }
 
   if (active_control_page_ >= 0 &&
       active_control_generation_ == UINT64_MAX)
