@@ -1569,6 +1569,9 @@ ObservationStore::MaintenanceResult ObservationStore::requestMaintenance() {
   // completion. This preserves oldest-first loss diagnostics across power cut.
   if (active_control_page_ < 0 || next_control_serial_ == 0U)
     return MaintenanceResult::kControlMaintenanceRequired;
+  // A fresh rotation needs two serials: durable intent and durable completion.
+  if (next_control_serial_ == UINT64_MAX)
+    return MaintenanceResult::kRejected;
 
   bool read_ok = false;
   const uint16_t empty = emptyControlSlots(read_ok);
