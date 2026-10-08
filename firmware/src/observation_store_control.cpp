@@ -128,9 +128,11 @@ bool decodeResultGuard(const uint8_t* bytes, size_t size, ResultGuard& value) {
 bool encodeStoreState(const StoreState& value,
                       uint8_t out[kStoreStatePayloadSize]) {
   if (out == nullptr) return false;
-  if (value.capacity_lost_total != value.capacity_lost_periodic +
-                                       value.capacity_lost_event +
-                                       value.capacity_lost_result)
+  const uint64_t lost_sum =
+      uint64_t(value.capacity_lost_periodic) +
+      uint64_t(value.capacity_lost_event) +
+      uint64_t(value.capacity_lost_result);
+  if (lost_sum > UINT32_MAX || value.capacity_lost_total != lost_sum)
     return false;
   if (value.rotation_pending) {
     if (value.target_page == UINT16_MAX ||
@@ -181,9 +183,11 @@ bool decodeStoreState(const uint8_t* bytes, size_t size, StoreState& value) {
   value.first_retired_sequence = osf::get32(bytes + 40U);
   value.last_retired_sequence = osf::get32(bytes + 44U);
 
-  if (value.capacity_lost_total != value.capacity_lost_periodic +
-                                       value.capacity_lost_event +
-                                       value.capacity_lost_result)
+  const uint64_t lost_sum =
+      uint64_t(value.capacity_lost_periodic) +
+      uint64_t(value.capacity_lost_event) +
+      uint64_t(value.capacity_lost_result);
+  if (lost_sum > UINT32_MAX || value.capacity_lost_total != lost_sum)
     return false;
   if (value.rotation_pending) {
     if (value.target_page == UINT16_MAX ||
