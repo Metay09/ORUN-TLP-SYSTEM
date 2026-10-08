@@ -555,6 +555,7 @@ bool ObservationStore::begin(uint64_t device_id) {
   ready_ = false;
   faulted_ = false;
   flash_op_awaiting_completion_ = false;
+  mutation_outcome_uncertain_ = false;
   job_ = Job::kNone;
   phase_ = Phase::kNone;
   diagnostics_ = Diagnostics();
@@ -597,7 +598,7 @@ bool ObservationStore::begin(uint64_t device_id) {
 
 bool ObservationStore::peekNextIdentity(osf::RecordIdentity& identity) const {
   identity = osf::RecordIdentity();
-  if (!ready_ || faulted_ || busy() || rotation_resuming_ ||
+  if (!ready_ || faulted_ || mutationUncertain() || busy() || rotation_resuming_ ||
       next_sequence_ == 0U || incarnation_ == 0U)
     return false;
   identity.incarnation = incarnation_;
@@ -644,7 +645,7 @@ bool ObservationStore::findAppendSlot(
 ObservationStore::AppendResult ObservationStore::requestAppend(
     osf::RecordKind kind, uint8_t schema,
     const uint8_t* payload, size_t payload_size) {
-  if (!ready_ || faulted_ || next_sequence_ == 0U || schema == 0U ||
+  if (!ready_ || faulted_ || mutationUncertain() || next_sequence_ == 0U || schema == 0U ||
       payload_size > osf::kDataPayloadSize ||
       (payload_size != 0U && payload == nullptr))
     return AppendResult::kRejected;
@@ -1127,7 +1128,7 @@ ObservationStore::ControlLookupResult ObservationStore::findLatestControl(
     osf::ControlKind kind, const uint8_t* key_payload, size_t key_size,
     osf::ControlInspection& out) const {
   out = osf::ControlInspection();
-  if (!ready_ || faulted_ || active_control_page_ < 0 ||
+  if (!ready_ || faulted_ || mutationUncertain() || active_control_page_ < 0 ||
       key_payload == nullptr || key_size == 0U ||
       key_size > osf::kControlPayloadSize)
     return active_control_page_ < 0
@@ -1230,7 +1231,7 @@ uint16_t ObservationStore::activeControlCount(
 ObservationStore::ControlWriteResult ObservationStore::requestControlWrite(
     osf::ControlKind kind, uint8_t schema,
     const uint8_t* payload, size_t payload_size) {
-  if (!ready_ || faulted_ || next_control_serial_ == 0U ||
+  if (!ready_ || faulted_ || mutationUncertain() || next_control_serial_ == 0U ||
       payload == nullptr ||
       payload_size == 0U || payload_size > osf::kControlPayloadSize ||
       (schema != kControlSchemaActive &&
@@ -1378,7 +1379,7 @@ bool ObservationStore::controlCopyFinished() const {
 ObservationStore::ControlLookupResult ObservationStore::findExactObject(
     const osf::RecordIdentity& identity, osc::ExactObject& value) const {
   value = osc::ExactObject();
-  if (!identity.valid() || flash_.hasUnreconciledMutation())
+  if (!identity.valid() || mutationUncertain())
     return ControlLookupResult::kReadError;
   osc::ExactObject probe;
   probe.identity = identity;
@@ -1464,6 +1465,8 @@ ObservationStore::ControlWriteResult ObservationStore::requestClearExactObject(
 ObservationStore::ControlLookupResult ObservationStore::findOpenOccurrence(
     const osc::OpenOccurrence& key, osc::OpenOccurrence& value) const {
   value = osc::OpenOccurrence();
+  if (!ready_ || faulted_ || mutationUncertain())
+    return ControlLookupResult::kReadError;
   osc::OpenOccurrence probe = key;
   if (probe.occurrence_id == 0U) probe.occurrence_id = 1U;
   uint8_t payload[osc::kOpenOccurrencePayloadSize];
@@ -1530,6 +1533,8 @@ ObservationStore::requestClearOpenOccurrence(
 ObservationStore::ControlLookupResult ObservationStore::findResultGuard(
     const osc::ResultGuard& key, osc::ResultGuard& value) const {
   value = osc::ResultGuard();
+  if (!ready_ || faulted_ || mutationUncertain())
+    return ControlLookupResult::kReadError;
   osc::ResultGuard probe = key;
   if (probe.opcode == 0U) probe.opcode = 1U;
   if (!probe.result_identity.valid()) {
@@ -1695,15 +1700,14 @@ ObservationStore::LookupResult ObservationStore::findRecord(
 
 ObservationStore::LookupResult ObservationStore::lookup(
     const osf::RecordIdentity& identity, Record& record) const {
-  if (!ready_ || faulted_ || rotation_resuming_ ||
-      flash_.hasUnreconciledMutation())
+  if (!ready_ || faulted_ || rotation_resuming_ || mutationUncertain())
     return LookupResult::kReadError;
   return findRecord(identity, record);
 }
 
 ObservationStore::LookupResult ObservationStore::oldestRetained(
     Record& out) const {
-  if (!ready_ || faulted_ || rotation_resuming_)
+  if (!ready_ || faulted_ || rotation_resuming_ || mutationUncertain())
     return LookupResult::kReadError;
 
   bool found = false;
@@ -1749,7 +1753,7 @@ ObservationStore::LookupResult ObservationStore::oldestRetained(
 }
 
 bool ObservationStore::requestRelease(const osf::RecordIdentity& identity) {
-  if (!ready_ || faulted_ || !identity.valid()) return false;
+  if (!ready_ || faulted_ || mutationUncertain() || !identity.valid()) return false;
   if (rotation_resuming_ || busy() || append_result_ready_ ||
       release_result_ready_ || maintenance_result_ready_ ||
       control_write_result_ready_ || control_maintenance_result_ready_)
@@ -1821,7 +1825,7 @@ int ObservationStore::findReclaimableDataPage() const {
 }
 
 ObservationStore::MaintenanceResult ObservationStore::requestMaintenance() {
-  if (!ready_ || faulted_) return MaintenanceResult::kRejected;
+  if (!ready_ || faulted_ || mutationUncertain()) return MaintenanceResult::kRejected;
   if (busy() || append_result_ready_ || release_result_ready_ ||
       maintenance_result_ready_ || control_write_result_ready_ ||
       control_maintenance_result_ready_)
@@ -1982,7 +1986,7 @@ bool ObservationStore::takeMaintenanceResult(bool& success) {
 
 ObservationStore::MaintenanceResult
 ObservationStore::requestControlMaintenance() {
-  if (!ready_ || faulted_) return MaintenanceResult::kRejected;
+  if (!ready_ || faulted_ || mutationUncertain()) return MaintenanceResult::kRejected;
   if (busy() || append_result_ready_ || release_result_ready_ ||
       maintenance_result_ready_ || control_write_result_ready_ ||
       control_maintenance_result_ready_)
@@ -2035,7 +2039,7 @@ bool ObservationStore::takeControlMaintenanceResult(bool& success) {
 
 bool ObservationStore::countByRelease(bool released, uint32_t& count) const {
   count = 0;
-  if (!ready_ || faulted_ || rotation_resuming_) return false;
+  if (!ready_ || faulted_ || rotation_resuming_ || mutationUncertain()) return false;
   for (uint16_t page = osf::kControlPageCount; page < page_count_; ++page) {
     osf::PageInspection header;
     if (!readPage(page, header)) return false;
@@ -2071,18 +2075,21 @@ FlashOpResult ObservationStore::programStep(
     const FlashOpResult result = flash_.pollPending();
     if (result != FlashOpResult::kPending)
       flash_op_awaiting_completion_ = false;
-    // pollPending() itself can first enter timeout/unreconciled state, even
-    // after flash bytes appear committed. Force this poll to yield; the next
-    // poll's entry guard faults the job before success can be published.
-    if (flash_.hasUnreconciledMutation())
+    // A late SoC event can clear timeout quarantine before the next poll.
+    // Latch the ambiguous outcome and never resubmit this logical mutation.
+    if (flash_.hasUnreconciledMutation()) {
+      mutation_outcome_uncertain_ = true;
       return FlashOpResult::kPending;
+    }
     return result;
   }
   const FlashOpResult result = flash_.program(offset, data, size);
   if (result == FlashOpResult::kPending)
     flash_op_awaiting_completion_ = true;
-  if (flash_.hasUnreconciledMutation())
+  if (flash_.hasUnreconciledMutation()) {
+    mutation_outcome_uncertain_ = true;
     return FlashOpResult::kPending;
+  }
   return result;
 }
 
@@ -2091,18 +2098,21 @@ FlashOpResult ObservationStore::eraseStep(uint16_t page) {
     const FlashOpResult result = flash_.pollPending();
     if (result != FlashOpResult::kPending)
       flash_op_awaiting_completion_ = false;
-    // pollPending() itself can first enter timeout/unreconciled state, even
-    // after flash bytes appear committed. Force this poll to yield; the next
-    // poll's entry guard faults the job before success can be published.
-    if (flash_.hasUnreconciledMutation())
+    // A late SoC event can clear timeout quarantine before the next poll.
+    // Latch the ambiguous outcome and never resubmit this logical mutation.
+    if (flash_.hasUnreconciledMutation()) {
+      mutation_outcome_uncertain_ = true;
       return FlashOpResult::kPending;
+    }
     return result;
   }
   const FlashOpResult result = flash_.erasePage(page);
   if (result == FlashOpResult::kPending)
     flash_op_awaiting_completion_ = true;
-  if (flash_.hasUnreconciledMutation())
+  if (flash_.hasUnreconciledMutation()) {
+    mutation_outcome_uncertain_ = true;
     return FlashOpResult::kPending;
+  }
   return result;
 }
 
@@ -2171,7 +2181,7 @@ void ObservationStore::finishControlMaintenance(bool success) {
 
 void ObservationStore::failCurrentJob() {
   const Job failed = job_;
-  const bool unreconciled = flash_.hasUnreconciledMutation();
+  const bool unreconciled = mutationUncertain();
 
   switch (failed) {
     case Job::kAppend:
@@ -2222,7 +2232,7 @@ void ObservationStore::poll() {
   // Once a timed-out physical operation is unreconciled, readback equality
   // cannot substitute for the backend's definitive completion signal.
   // In particular, never publish a durable exact custody object as usable.
-  if (flash_.hasUnreconciledMutation()) return failCurrentJob();
+  if (mutationUncertain()) return failCurrentJob();
   static const uint32_t kZero = 0U;
 
   if (job_ == Job::kAppend) {
