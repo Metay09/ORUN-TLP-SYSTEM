@@ -171,6 +171,7 @@ class ObservationStore {
     kRecordBody,
     kRecordCommit,
     kReleaseMarker,
+    kHeaderErasePage,
     kHeaderBody,
     kHeaderCommit,
     kControlBody,
@@ -221,6 +222,7 @@ class ObservationStore {
   bool findAppendSlot(uint16_t& page, uint16_t& slot,
                       bool& needs_activation) const;
   int findErasedDataPage() const;
+  int findReclaimableDataPage() const;
   int findEmptyControlSlot() const;
   uint16_t emptyControlSlots(bool& read_ok) const;
   bool readLatestStoreState(osc::StoreState& state, bool& found) const;
