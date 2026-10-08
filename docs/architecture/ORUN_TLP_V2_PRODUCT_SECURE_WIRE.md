@@ -16,8 +16,9 @@ Parent contracts:
 - `docs/architecture/ORUN_GATEWAY_DURABLE_CUSTODY.md`
 
 This slice deliberately does **not** implement codecs, activate RF paths, allocate
-the 256 KiB flash region, enable Gateway custody, select the DFU model, or claim
-that offline phone decryption is already solved.
+the owner-approved 128 KiB flash region, enable Gateway custody, select the DFU/
+firmware-update model, implement LoRa FOTA, or claim that offline phone
+decryption is already solved.
 
 ---
 
