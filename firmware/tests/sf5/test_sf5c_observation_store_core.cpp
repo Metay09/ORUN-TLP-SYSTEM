@@ -225,7 +225,7 @@ static void testCommitReportedFailureReconciles() {
   // Append: activation, body, commit. Fail after applying the commit word.
   flash.setFailAfterApplyProgram(flash.program_calls + 3U);
   uint8_t payload[4] = {1U, 2U, 3U, 4U};
-  assert(store.requestAppend(osf::RecordKind::kResult, 1U,
+  assert(store.requestAppend(osf::RecordKind::kEvent, 1U,
                              payload, sizeof(payload)) ==
          ObservationStore::AppendResult::kStarted);
   settle(store);
@@ -236,7 +236,7 @@ static void testCommitReportedFailureReconciles() {
   ObservationStore::Record record;
   assert(store.lookup(handle.identity, record) ==
          ObservationStore::LookupResult::kFound);
-  assert(record.kind == osf::RecordKind::kResult);
+  assert(record.kind == osf::RecordKind::kEvent);
 }
 
 static void testTornReleaseUsesSecondMarker() {
