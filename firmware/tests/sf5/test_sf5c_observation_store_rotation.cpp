@@ -402,6 +402,13 @@ static void testReleasedPageReclaimedBeforeRetainedHistory() {
   reclaimed_newer.sequence = osf::kDataRecordsPerPage + 1U;
   assert(store.lookup(reclaimed_newer, record) ==
          ObservationStore::LookupResult::kNone);
+
+  ObservationStore reboot(flash, 4U, &incarnation);
+  assert(reboot.begin(0xCAFEU));
+  assert(!reboot.faulted());
+  assert(reboot.diagnostics().capacity_lost_total == 0U);
+  assert(reboot.lookup(retained_oldest, record) ==
+         ObservationStore::LookupResult::kFound);
 }
 
 static void testRotationPowerCutMatrix() {
