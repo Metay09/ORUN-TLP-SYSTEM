@@ -125,6 +125,7 @@ bool ObservationStore::recover() {
 
   uint64_t recovered_incarnation = 0U;
   uint64_t control_incarnation = 0U;
+  bool suspect_control_header[osf::kControlPageCount]{};
 
   // Phase 1: choose the highest-generation ACTIVE control page. The other
   // control page is either the stale source of a completed compaction or a
@@ -141,13 +142,12 @@ bool ObservationStore::recover() {
         header.evidence == osf::PageEvidence::kPartialActivation)
       continue;
 
-    // A committed-but-corrupt/unsupported control header could be the newest
-    // authority. Silently falling back to the sibling page would risk
-    // resurrecting revoked/released state, so corruption fails closed.
+    // Defer suspect-header classification until we know whether the other
+    // page carries a valid, strictly newer ACTIVE authority. Generic header
+    // corruption must still fail closed.
     if (header.evidence == osf::PageEvidence::kCorrupt ||
         header.evidence == osf::PageEvidence::kUnsupported) {
-      faulted_ = true;
-      ++diagnostics_.recovery_faults;
+      suspect_control_header[page] = true;
       continue;
     }
 
@@ -181,6 +181,42 @@ bool ObservationStore::recover() {
       active_control_generation_ = header.generation;
       active_control_page_ = page;
       recovered_incarnation = header.incarnation;
+    }
+  }
+
+  // A torn erase of a stale control page can erase a PREFIX of its header,
+  // leaving a misleading kCorrupt classification. Recover only when the
+  // surviving suffix matches *exactly* the ACTIVE header for generation g-1
+  // under the verified g authority. This is not a generic corruption bypass:
+  // missing/ambiguous authority or a non-prefix mutation still faults.
+  for (uint16_t page = 0; page < osf::kControlPageCount; ++page) {
+    if (!suspect_control_header[page]) continue;
+    osf::PageInspection evidence;
+    if (!readPage(page, evidence)) return false;
+    bool proven_stale_torn_erase = false;
+    if (evidence.evidence == osf::PageEvidence::kCorrupt &&
+        active_control_page_ >= 0 &&
+        active_control_generation_ > 1U &&
+        page != static_cast<uint16_t>(active_control_page_)) {
+      uint8_t actual[osf::kPageHeaderSize];
+      uint8_t expected[osf::kPageHeaderSize];
+      if (!flash_.read(pageOffset(page), actual, sizeof(actual)))
+        return false;
+      osf::encodePageHeader(osf::PageKind::kControl,
+                            active_control_generation_ - 1U,
+                            device_id_, recovered_incarnation, expected);
+      osf::put32(expected + osf::kPageHeaderActiveOffset, osf::kActive);
+      size_t prefix = 0U;
+      while (prefix < sizeof(actual) && actual[prefix] == 0xFFU)
+        ++prefix;
+      proven_stale_torn_erase =
+          prefix >= 4U && prefix < sizeof(actual) &&
+          memcmp(actual + prefix, expected + prefix,
+                 sizeof(actual) - prefix) == 0;
+    }
+    if (!proven_stale_torn_erase) {
+      faulted_ = true;
+      ++diagnostics_.recovery_faults;
     }
   }
 
@@ -619,12 +655,23 @@ ObservationStore::AppendResult ObservationStore::requestAppend(
 
   osf::RecordIdentity reserved_result;
   bool result_pending = false;
-  if (!pendingResultReservation(reserved_result, result_pending))
+  uint64_t reserved_command_id = 0U;
+  if (!pendingResultReservation(reserved_result, result_pending,
+                                &reserved_command_id))
     return AppendResult::kRejected;
   if (result_pending) {
     if (kind != osf::RecordKind::kResult ||
         !sameIdentity(identity, reserved_result))
       return AppendResult::kBusy;
+    // Guard-first reservation alone is insufficient: a different command
+    // must not consume the reserved RESULT identity. Current bounded guards
+    // own mutation RESULT v1 (command_id at bytes 4..11); state-read RESULT
+    // has different semantics and cannot consume a mutation reservation.
+    if (schema != osf::kProductSchemaV1 ||
+        payload_size != osf::kResultPayloadSizeV1 ||
+        payload[0] != osf::kProductSchemaV1 ||
+        osf::get64(payload + 4U) != reserved_command_id)
+      return AppendResult::kRejected;
   } else if (kind == osf::RecordKind::kResult) {
     // RESULT rows are guard-first so reset cannot create one durable RESULT
     // per transport retry or let another record consume the reserved identity.
@@ -810,6 +857,18 @@ bool ObservationStore::buildRotationIntent(
   state.capacity_lost_periodic = diagnostics_.capacity_lost_periodic;
   state.capacity_lost_event = diagnostics_.capacity_lost_event;
   state.capacity_lost_result = diagnostics_.capacity_lost_result;
+
+  // The retired sequence bounds are cumulative, not merely the sequence
+  // range of this rotation target. An erased/reclaimed page may contain only
+  // staged (uncommitted) records, so replacing the previous high-water with
+  // zero would reissue an old record identity after reboot.
+  osc::StoreState prior_state;
+  bool prior_found = false;
+  if (!readLatestStoreState(prior_state, prior_found)) return false;
+  if (prior_found) {
+    state.first_retired_sequence = prior_state.first_retired_sequence;
+    state.last_retired_sequence = prior_state.last_retired_sequence;
+  }
   state.rotation_pending = true;
   state.target_page = page;
   state.target_old_generation = header.generation;
@@ -826,9 +885,11 @@ bool ObservationStore::buildRotationIntent(
         record.incarnation != incarnation_ || record.sequence == 0U)
       return false;
 
-    if (state.first_retired_sequence == 0U)
+    if (state.first_retired_sequence == 0U ||
+        record.sequence < state.first_retired_sequence)
       state.first_retired_sequence = record.sequence;
-    state.last_retired_sequence = record.sequence;
+    if (record.sequence > state.last_retired_sequence)
+      state.last_retired_sequence = record.sequence;
 
     if (record.evidence != osf::RecordEvidence::kRetained)
       continue;
@@ -967,9 +1028,11 @@ bool ObservationStore::resultGuardLive(
 }
 
 bool ObservationStore::pendingResultReservation(
-    osf::RecordIdentity& identity, bool& found) const {
+    osf::RecordIdentity& identity, bool& found,
+    uint64_t* command_id) const {
   identity = osf::RecordIdentity();
   found = false;
+  if (command_id != nullptr) *command_id = 0U;
   if (active_control_page_ < 0) return true;
 
   for (uint16_t slot = 0; slot < osf::kControlRecordsPerPage; ++slot) {
@@ -1020,6 +1083,7 @@ bool ObservationStore::pendingResultReservation(
     if (found)
       return false;  // Two logical commands cannot reserve one record id.
     identity = guard.result_identity;
+    if (command_id != nullptr) *command_id = guard.command_id;
     found = true;
   }
 
@@ -2136,6 +2200,10 @@ void ObservationStore::failCurrentJob() {
 
 void ObservationStore::poll() {
   if (!ready_ || faulted_ || job_ == Job::kNone) return;
+  // Once a timed-out physical operation is unreconciled, readback equality
+  // cannot substitute for the backend's definitive completion signal.
+  // In particular, never publish a durable exact custody object as usable.
+  if (flash_.hasUnreconciledMutation()) return failCurrentJob();
   static const uint32_t kZero = 0U;
 
   if (job_ == Job::kAppend) {
@@ -2369,6 +2437,10 @@ void ObservationStore::poll() {
         return failCurrentJob();
       if (!prepared) return failCurrentJob();
 
+      // If the most recent ACTIVE page was the fully released or oldest
+      // rotation target, it is now PREPARED, not an appendable ACTIVE page.
+      if (active_data_page_ == static_cast<int>(target_page_))
+        active_data_page_ = -1;
       prepared_data_page_ = target_page_;
       max_data_generation_ = target_generation_;
       ++diagnostics_.pages_prepared;
