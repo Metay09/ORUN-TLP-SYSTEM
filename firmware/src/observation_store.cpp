@@ -674,6 +674,10 @@ bool ObservationStore::recover() {
 }
 
 bool ObservationStore::begin(uint64_t device_id) {
+  // begin() is not a physical reset. Do not abandon a submitted async
+  // mutation and clear its ownership token while the backend still owns it.
+  // The caller must drive poll() to completion (or perform a real reboot).
+  if (busy() || flash_op_awaiting_completion_) return false;
   ready_ = false;
   faulted_ = false;
   flash_op_awaiting_completion_ = false;
