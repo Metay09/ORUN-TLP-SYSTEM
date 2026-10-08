@@ -1578,6 +1578,21 @@ ObservationStore::MaintenanceResult ObservationStore::requestMaintenance() {
     return MaintenanceResult::kStarted;
   }
 
+  // A torn never-authoritative page header is safe to erase/reuse without a
+  // capacity-loss intent because no ACTIVE data ownership was established.
+  const int orphan_page = findReclaimableDataPage();
+  if (orphan_page >= 0) {
+    target_page_ = static_cast<uint16_t>(orphan_page);
+    target_slot_ = UINT16_MAX;
+    target_generation_ = max_data_generation_ + 1U;
+    osf::encodePageHeader(osf::PageKind::kData, target_generation_,
+                          device_id_, incarnation_, page_blob_);
+    job_ = Job::kMaintenance;
+    phase_ = Phase::kHeaderErasePage;
+    flash_op_awaiting_completion_ = false;
+    return MaintenanceResult::kStarted;
+  }
+
   // No erased data page remains. Rotation is permitted only after a durable
   // StoreState intent can be appended with one additional slot reserved for
   // completion. This preserves oldest-first loss diagnostics across power cut.
@@ -1972,6 +1987,17 @@ void ObservationStore::poll() {
   }
 
   if (job_ == Job::kMaintenance) {
+    if (phase_ == Phase::kHeaderErasePage) {
+      const FlashOpResult result = eraseStep(target_page_);
+      if (result == FlashOpResult::kPending) return;
+      const bool erased = pageAllErased(target_page_);
+      if (result == FlashOpResult::kFailed && !erased)
+        return failCurrentJob();
+      if (!erased) return failCurrentJob();
+      phase_ = Phase::kHeaderBody;
+      return;
+    }
+
     if (phase_ == Phase::kRotationIntentBody) {
       if (active_control_page_ < 0 ||
           rotation_control_slot_ >= osf::kControlRecordsPerPage)
