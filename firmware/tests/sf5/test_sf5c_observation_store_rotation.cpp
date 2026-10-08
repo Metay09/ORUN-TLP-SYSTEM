@@ -173,6 +173,11 @@ static ObservationStore::Handle appendRecord(
   memset(payload, 0, sizeof(payload));
   for (unsigned i = 0; i < size; ++i)
     payload[i] = static_cast<uint8_t>(seed + i);
+  if (kind == osf::RecordKind::kResult) {
+    // Only mutation RESULT v1 is admitted by the reserved RESULT guard.
+    payload[0] = osf::kProductSchemaV1;
+    osf::put64(payload + 4U, 0x8888U);
+  }
   assert(store.requestAppend(kind, 1U, payload, size) ==
          ObservationStore::AppendResult::kStarted);
   settle(store);
@@ -440,6 +445,93 @@ static void testReleasedPageReclaimedBeforeRetainedHistory() {
   assert(next.sequence == 2U * osf::kDataRecordsPerPage + 1U);
 }
 
+
+static void testNewestReclaimedPageRemainsAppendable() {
+  RotationFakeFlash flash = makeFullStore(false);
+  RotationIncarnation incarnation;
+  ObservationStore store(flash, 4U, &incarnation);
+  assert(store.begin(0xCAFEU));
+  for (uint32_t sequence = osf::kDataRecordsPerPage + 1U;
+       sequence <= 2U * osf::kDataRecordsPerPage; ++sequence) {
+    osf::RecordIdentity id;
+    id.incarnation = RotationIncarnation::kValue;
+    id.sequence = sequence;
+    releaseRecord(store, id);
+  }
+  assert(store.requestMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store);
+  bool ok = false;
+  assert(store.takeMaintenanceResult(ok) && ok);
+  // Page 3 used to be the newest ACTIVE page; it is now PREPARED.
+  const auto appended = appendRecord(store, osf::RecordKind::kPeriodic, 0x90U);
+  assert(appended.identity.sequence == 85U);
+  assert(appended.handle.page == 3U);
+  ObservationStore reboot(flash, 4U, &incarnation);
+  assert(reboot.begin(0xCAFEU) && !reboot.faulted());
+  ObservationStore::Record found;
+  assert(reboot.lookup(appended.identity, found) ==
+         ObservationStore::LookupResult::kFound);
+}
+
+static void testRetiredHighWaterSurvivesStagedOnlyReclamation() {
+  RotationFakeFlash flash = makeFullStore(false);
+  RotationIncarnation incarnation;
+  ObservationStore store(flash, 4U, &incarnation);
+  assert(store.begin(0xCAFEU));
+  for (uint32_t sequence = osf::kDataRecordsPerPage + 1U;
+       sequence <= 2U * osf::kDataRecordsPerPage; ++sequence) {
+    osf::RecordIdentity id;
+    id.incarnation = RotationIncarnation::kValue;
+    id.sequence = sequence;
+    releaseRecord(store, id);
+  }
+  assert(store.requestMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store);
+  bool ok = false;
+  assert(store.takeMaintenanceResult(ok) && ok);
+
+  // Interrupt one append after activation and record body, then deliberately
+  // leave the remaining slots staged: no committed sequence exists on page 3.
+  uint8_t payload[osf::kPeriodicPayloadSizeV1]{};
+  assert(store.requestAppend(osf::RecordKind::kPeriodic, 1U,
+                             payload, sizeof(payload)) ==
+         ObservationStore::AppendResult::kStarted);
+  store.poll();  // activate prepared page
+  store.poll();  // stage seq 85 body; do NOT commit
+  uint8_t staged[osf::kDataRecordSize]{};
+  assert(osf::encodeRecord(osf::RecordKind::kPeriodic, 1U,
+                           RotationIncarnation::kValue, 85U, payload,
+                           sizeof(payload), staged));
+  for (uint16_t slot = 1U; slot < osf::kDataRecordsPerPage; ++slot) {
+    const uint32_t offset = 3U * osf::kPageSize +
+                            osf::kPageHeaderSize +
+                            uint32_t(slot) * osf::kDataRecordSize;
+    assert(flash.program(offset, staged, osf::kDataRecordCommitOffset) ==
+           FlashOpResult::kDone);
+  }
+
+  ObservationStore reboot(flash, 4U, &incarnation);
+  assert(reboot.begin(0xCAFEU) && !reboot.faulted());
+  osf::RecordIdentity next;
+  assert(reboot.peekNextIdentity(next));
+  assert(next.sequence == 85U);
+  // Page 3 is full but has zero committed/unreleased rows; the second
+  // reclamation must NOT reset the high-water from 84 back to 42.
+  assert(reboot.requestMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(reboot);
+  assert(reboot.takeMaintenanceResult(ok) && ok);
+  ObservationStore second_boot(flash, 4U, &incarnation);
+  assert(second_boot.begin(0xCAFEU) && !second_boot.faulted());
+  assert(second_boot.peekNextIdentity(next));
+  assert(next.sequence == 85U);
+  const auto admitted =
+      appendRecord(second_boot, osf::RecordKind::kPeriodic, 0x55U);
+  assert(admitted.identity.sequence == 85U);
+}
+
 static void testRotationPowerCutMatrix() {
   const RotationFakeFlash baseline = makeFullStore(false);
 
@@ -569,6 +661,8 @@ static void testTornNeverActiveHeaderIsReclaimedBeforeHistory() {
 int main() {
   testOldestFirstRotationAndDurableGapState();
   testReleasedPageReclaimedBeforeRetainedHistory();
+  testNewestReclaimedPageRemainsAppendable();
+  testRetiredHighWaterSurvivesStagedOnlyReclamation();
   testRotationPowerCutMatrix();
   testRepeatedRotationSurvivesControlCompaction();
   testAsyncRotationDoesNotResubmitFlashMutations();
