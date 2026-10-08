@@ -13,6 +13,13 @@ constexpr uint32_t kPageHeaderSize = 64U;
 
 constexpr uint32_t kDataRecordSize = 96U;
 constexpr uint32_t kDataPayloadSize = 64U;
+
+// SF5B schema-v1 semantic plaintext sizes. ObservationStore persists the
+// canonical product record, not an arbitrarily truncated payload.
+constexpr uint8_t kProductSchemaV1 = 1U;
+constexpr uint8_t kPeriodicPayloadSizeV1 = 64U;
+constexpr uint8_t kEventPayloadSizeV1 = 48U;
+constexpr uint8_t kResultPayloadSizeV1 = 32U;
 constexpr uint32_t kDataRecordsPerPage =
     (kPageSize - kPageHeaderSize) / kDataRecordSize;
 
