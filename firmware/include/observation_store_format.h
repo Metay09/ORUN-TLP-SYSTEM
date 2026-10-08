@@ -48,8 +48,10 @@ constexpr uint16_t kControlPageCount = 2U;
 constexpr uint16_t kMaxExactCustodyObjects = 4U;
 constexpr uint16_t kMaxOpenOccurrences = 8U;
 constexpr uint16_t kMaxResultGuards = 8U;
+constexpr uint16_t kStoreStateControls = 1U;
 constexpr uint16_t kMaxActiveControls =
-    kMaxExactCustodyObjects + kMaxOpenOccurrences + kMaxResultGuards;
+    kMaxExactCustodyObjects + kMaxOpenOccurrences + kMaxResultGuards +
+    kStoreStateControls;
 
 static_assert(kDataRecordsPerPage == 42U, "SF5C data page geometry changed");
 static_assert(kPageHeaderSize + kDataRecordsPerPage * kDataRecordSize ==
@@ -87,6 +89,13 @@ struct PageInspection {
   uint64_t incarnation = 0;
 };
 
+struct RecordIdentity {
+  uint64_t incarnation = 0;
+  uint32_t sequence = 0;
+
+  bool valid() const { return incarnation != 0U && sequence != 0U; }
+};
+
 enum class RecordKind : uint8_t {
   kPeriodic = 1U,
   kEvent = 2U,
@@ -118,6 +127,7 @@ enum class ControlKind : uint8_t {
   kExactObject = 1U,
   kOpenOccurrence = 2U,
   kResultGuard = 3U,
+  kStoreState = 4U,
 };
 
 enum class ControlEvidence : uint8_t {
