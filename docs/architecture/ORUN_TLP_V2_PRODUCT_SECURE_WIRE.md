@@ -282,6 +282,13 @@ The fast path is deliberately bounded and single-owner:
   connectivity alone never enables it;
 - only bounded in-flight RAM state may exist before one of the two durable facts
   above becomes authoritative;
+- before SF5G enables write-around, the measured Edge-wait budget plus worst-case
+  local-fallback commit/readback plus custody-ACK airtime must fit the tracker's
+  measured ACK rendezvous window; if that bound cannot be met for the active
+  transport/RF profile, the Gateway must skip Edge waiting and go directly to
+  local durable custody for that attempt;
+- write-around must not increase tracker retransmission merely because the
+  Gateway waited too long for Edge durable acceptance;
 - once `LOCAL_CUSTODY_PENDING` starts, the Gateway does not cancel or rewrite
   that flash mutation merely because a late Edge durable-accept arrives;
 - a late Edge durable-accept may create a safe downstream duplicate, but the
