@@ -1793,21 +1793,11 @@ ObservationStore::MaintenanceResult ObservationStore::requestMaintenance() {
 
   if (prepared_data_page_ >= 0) return MaintenanceResult::kNoWork;
 
-  const int erased_page = findErasedDataPage();
-  if (erased_page >= 0) {
-    target_page_ = static_cast<uint16_t>(erased_page);
-    target_slot_ = UINT16_MAX;
-    target_generation_ = max_data_generation_ + 1U;
-    osf::encodePageHeader(osf::PageKind::kData, target_generation_,
-                          device_id_, incarnation_, page_blob_);
-    job_ = Job::kMaintenance;
-    phase_ = Phase::kHeaderBody;
-    flash_op_awaiting_completion_ = false;
-    return MaintenanceResult::kStarted;
-  }
-
-  // A torn never-authoritative page header is safe to erase/reuse without a
-  // capacity-loss intent because no ACTIVE data ownership was established.
+  // Reclaim a torn never-authoritative header before consuming a pristine
+  // erased page. Otherwise an interrupted prepare can become a stranded page
+  // and progressively reduce usable capacity across repeated resets. No
+  // capacity-loss intent is required because ACTIVE data ownership was never
+  // established for this page.
   const int orphan_page = findReclaimableDataPage();
   if (orphan_page >= 0) {
     target_page_ = static_cast<uint16_t>(orphan_page);
@@ -1817,6 +1807,19 @@ ObservationStore::MaintenanceResult ObservationStore::requestMaintenance() {
                           device_id_, incarnation_, page_blob_);
     job_ = Job::kMaintenance;
     phase_ = Phase::kHeaderErasePage;
+    flash_op_awaiting_completion_ = false;
+    return MaintenanceResult::kStarted;
+  }
+
+  const int erased_page = findErasedDataPage();
+  if (erased_page >= 0) {
+    target_page_ = static_cast<uint16_t>(erased_page);
+    target_slot_ = UINT16_MAX;
+    target_generation_ = max_data_generation_ + 1U;
+    osf::encodePageHeader(osf::PageKind::kData, target_generation_,
+                          device_id_, incarnation_, page_blob_);
+    job_ = Job::kMaintenance;
+    phase_ = Phase::kHeaderBody;
     flash_op_awaiting_completion_ = false;
     return MaintenanceResult::kStarted;
   }
