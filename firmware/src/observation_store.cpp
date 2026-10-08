@@ -558,6 +558,146 @@ int ObservationStore::findEmptyControlSlot() const {
   return -1;
 }
 
+uint16_t ObservationStore::emptyControlSlots(bool& read_ok) const {
+  read_ok = false;
+  if (active_control_page_ < 0) {
+    read_ok = true;
+    return 0U;
+  }
+  uint16_t count = 0U;
+  for (uint16_t slot = 0; slot < osf::kControlRecordsPerPage; ++slot) {
+    osf::ControlInspection control;
+    if (!readControl(static_cast<uint16_t>(active_control_page_), slot,
+                     control))
+      return 0U;
+    if (control.evidence == osf::ControlEvidence::kErased)
+      ++count;
+  }
+  read_ok = true;
+  return count;
+}
+
+bool ObservationStore::readLatestStoreState(
+    osc::StoreState& state, bool& found) const {
+  state = osc::StoreState();
+  found = false;
+  if (active_control_page_ < 0) return true;
+
+  uint64_t best_serial = 0U;
+  for (uint16_t slot = 0; slot < osf::kControlRecordsPerPage; ++slot) {
+    osf::ControlInspection control;
+    if (!readControl(static_cast<uint16_t>(active_control_page_), slot,
+                     control))
+      return false;
+    if (control.evidence == osf::ControlEvidence::kErased ||
+        control.evidence == osf::ControlEvidence::kStaged ||
+        control.evidence == osf::ControlEvidence::kPartialCommit)
+      continue;
+    if (control.evidence == osf::ControlEvidence::kCorrupt ||
+        !controlPayloadValid(control))
+      return false;
+    if (control.kind != osf::ControlKind::kStoreState ||
+        control.schema != kControlSchemaActive)
+      continue;
+    if (!found || control.serial > best_serial) {
+      if (!osc::decodeStoreState(control.payload, control.payload_size, state))
+        return false;
+      best_serial = control.serial;
+      found = true;
+    }
+  }
+  return true;
+}
+
+int ObservationStore::findOldestDataPage() const {
+  int selected = -1;
+  uint64_t generation = UINT64_MAX;
+  for (uint16_t page = osf::kControlPageCount; page < page_count_; ++page) {
+    osf::PageInspection header;
+    if (!readPage(page, header)) return -1;
+    if (header.evidence != osf::PageEvidence::kActive) continue;
+    if (header.kind != osf::PageKind::kData ||
+        header.device_id != device_id_ ||
+        header.incarnation != incarnation_)
+      return -1;
+    if (header.generation < generation) {
+      generation = header.generation;
+      selected = static_cast<int>(page);
+    }
+  }
+  return selected;
+}
+
+bool ObservationStore::buildRotationIntent(
+    uint16_t page, uint64_t new_generation,
+    osc::StoreState& state) const {
+  state = osc::StoreState();
+  if (page < osf::kControlPageCount || page >= page_count_ ||
+      new_generation == 0U)
+    return false;
+
+  osf::PageInspection header;
+  if (!readPage(page, header) ||
+      header.evidence != osf::PageEvidence::kActive ||
+      header.kind != osf::PageKind::kData ||
+      header.device_id != device_id_ ||
+      header.incarnation != incarnation_ ||
+      header.generation == 0U ||
+      new_generation <= header.generation)
+    return false;
+
+  state.capacity_lost_total = diagnostics_.capacity_lost_total;
+  state.capacity_lost_periodic = diagnostics_.capacity_lost_periodic;
+  state.capacity_lost_event = diagnostics_.capacity_lost_event;
+  state.capacity_lost_result = diagnostics_.capacity_lost_result;
+  state.rotation_pending = true;
+  state.target_page = page;
+  state.target_old_generation = header.generation;
+  state.target_new_generation = new_generation;
+
+  for (uint16_t slot = 0; slot < osf::kDataRecordsPerPage; ++slot) {
+    osf::RecordInspection record;
+    if (!readRecord(page, slot, record)) return false;
+    if (record.evidence == osf::RecordEvidence::kErased ||
+        record.evidence == osf::RecordEvidence::kStaged ||
+        record.evidence == osf::RecordEvidence::kPartialCommit)
+      continue;
+    if (record.evidence == osf::RecordEvidence::kCorrupt ||
+        record.incarnation != incarnation_ || record.sequence == 0U)
+      return false;
+
+    if (state.first_retired_sequence == 0U)
+      state.first_retired_sequence = record.sequence;
+    state.last_retired_sequence = record.sequence;
+
+    if (record.evidence != osf::RecordEvidence::kRetained)
+      continue;
+
+    if (state.capacity_lost_total == UINT32_MAX)
+      return false;
+    ++state.capacity_lost_total;
+    switch (record.kind) {
+      case osf::RecordKind::kPeriodic:
+        if (state.capacity_lost_periodic == UINT32_MAX) return false;
+        ++state.capacity_lost_periodic;
+        break;
+      case osf::RecordKind::kEvent:
+        if (state.capacity_lost_event == UINT32_MAX) return false;
+        ++state.capacity_lost_event;
+        break;
+      case osf::RecordKind::kResult:
+        if (state.capacity_lost_result == UINT32_MAX) return false;
+        ++state.capacity_lost_result;
+        break;
+    }
+  }
+
+  return state.capacity_lost_total ==
+         state.capacity_lost_periodic +
+             state.capacity_lost_event +
+             state.capacity_lost_result;
+}
+
 bool ObservationStore::controlPayloadValid(
     const osf::ControlInspection& control) const {
   if (control.schema != kControlSchemaActive &&
