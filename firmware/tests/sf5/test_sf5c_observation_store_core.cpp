@@ -77,6 +77,11 @@ class FakeFlash : public FlashBackend {
       unreconciled = true;
       return FlashOpResult::kFailed;
     }
+    if (failed_after_apply_on_poll_call == program_calls) {
+      // A late completion may already have cleared the gate quarantine.
+      failed_after_apply_on_poll_call = 0U;
+      return FlashOpResult::kFailed;
+    }
     return result;
   }
 
@@ -94,6 +99,7 @@ class FakeFlash : public FlashBackend {
   unsigned async_polls = 1U;
   bool unreconciled = false;
   unsigned unreconciled_on_poll_call = 0U;
+  unsigned failed_after_apply_on_poll_call = 0U;
   unsigned program_calls = 0U;
   unsigned erase_calls = 0U;
   unsigned fail_after_apply_program_call = 0U;
@@ -471,6 +477,39 @@ static void testUnreconciledFlipDuringCommitPollFailsClosed() {
   assert(store.diagnostics().unreconciled_mutation_faults == 1U);
 }
 
+
+static void testFailedAsyncPollCannotPromoteMatchingReadback() {
+  FakeFlash flash(4U);
+  FixedIncarnation incarnation(0x1515U);
+  ObservationStore store(flash, 4U, &incarnation);
+  assert(store.begin(0x79U));
+  prepareOne(store);
+  flash.async_mode = true;
+  flash.async_polls = 0U;
+
+  uint8_t payload[osf::kPeriodicPayloadSizeV1]{};
+  assert(store.requestAppend(osf::RecordKind::kPeriodic, 1U,
+                             payload, sizeof(payload)) ==
+         ObservationStore::AppendResult::kStarted);
+  store.poll();  // activate submission
+  store.poll();  // activate completion
+  store.poll();  // data body submission
+  store.poll();  // data body completion
+  flash.failed_after_apply_on_poll_call = flash.program_calls + 1U;
+  store.poll();  // commit submission
+  const unsigned before = flash.program_calls;
+  store.poll();  // failed completion after bytes written; backend flag is 0
+  assert(!flash.hasUnreconciledMutation());
+  assert(store.busy());
+  bool success = true;
+  ObservationStore::Handle result;
+  assert(!store.takeAppendResult(success, result));
+  store.poll();
+  assert(store.faulted());
+  assert(flash.program_calls == before);
+  assert(store.takeAppendResult(success, result) && !success);
+}
+
 static void testUnreconciledBeginFailsClosed() {
   FakeFlash flash(4U);
   flash.unreconciled = true;
@@ -620,6 +659,7 @@ int main() {
   testAsyncNoResubmit();
   testUnreconciledDataCommitCannotBeAccepted();
   testUnreconciledFlipDuringCommitPollFailsClosed();
+  testFailedAsyncPollCannotPromoteMatchingReadback();
   testUnreconciledBeginFailsClosed();
   testReadFailureFailsClosed();
   return 0;
