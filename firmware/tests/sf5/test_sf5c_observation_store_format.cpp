@@ -68,10 +68,11 @@ static void testRecordCommitReleaseAndCanonicalPadding() {
   assert(osf::inspectRecord(bytes, sizeof(bytes), record));
   assert(record.evidence == osf::RecordEvidence::kReleased);
 
-  uint8_t short_payload[3] = {1U, 2U, 3U};
+  uint8_t event_payload[osf::kEventPayloadSizeV1];
+  memset(event_payload, 0x5A, sizeof(event_payload));
   assert(osf::encodeRecord(osf::RecordKind::kEvent, 1U, 1U, 1U,
-                           short_payload, sizeof(short_payload), bytes));
-  bytes[19] = 1U;  // Non-zero byte outside payload.
+                           event_payload, sizeof(event_payload), bytes));
+  bytes[16U + osf::kEventPayloadSizeV1] = 1U;  // Non-zero canonical padding.
   osf::put32(bytes + osf::kDataRecordCrcOffset,
              osf::crc32(bytes, osf::kDataRecordCrcOffset));
   assert(osf::inspectRecord(bytes, sizeof(bytes), record));
@@ -79,7 +80,8 @@ static void testRecordCommitReleaseAndCanonicalPadding() {
 }
 
 static void testRecordTornAndCorrupt() {
-  uint8_t payload[4] = {9U, 8U, 7U, 6U};
+  uint8_t payload[osf::kResultPayloadSizeV1];
+  memset(payload, 0x39, sizeof(payload));
   uint8_t bytes[osf::kDataRecordSize];
   assert(osf::encodeRecord(osf::RecordKind::kResult, 1U, 3U, 4U,
                            payload, sizeof(payload), bytes));
@@ -101,6 +103,11 @@ static void testRecordTornAndCorrupt() {
                             payload, sizeof(payload), bytes));
   assert(!osf::encodeRecord(osf::RecordKind::kResult, 1U, 3U, 0U,
                             payload, sizeof(payload), bytes));
+
+  uint8_t wrong_event[osf::kEventPayloadSizeV1 - 1U];
+  memset(wrong_event, 0, sizeof(wrong_event));
+  assert(!osf::encodeRecord(osf::RecordKind::kEvent, 1U, 3U, 5U,
+                            wrong_event, sizeof(wrong_event), bytes));
 }
 
 static void testControlCommitClearAndCorrupt() {
