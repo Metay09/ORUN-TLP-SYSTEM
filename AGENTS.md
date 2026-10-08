@@ -351,6 +351,13 @@ traffic as the **new production target**. Read
 `docs/milestones/SF5.md` before changing tracker observation/history protocol or
 persistence.
 
+The current SF5B branch also contains the **candidate, not-yet-approved** exact
+product wire/security proposal in
+`docs/architecture/ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md` and
+`docs/milestones/SF5B.md`. Treat those bytes/IDs/security choices as review
+material only until the independent SF5B security/protocol audit closes. Do not
+implement codecs or runtime from that candidate prematurely.
+
 Until the explicit SF5 runtime cutover is implemented and validated, preserve
 the **current production runtime paths** and their evidence boundary:
 
@@ -400,9 +407,12 @@ Duplicate packets must be safely detectable.
 Important TRACKER product records must be stored locally before transmission.
 
 The current physically proven HistoryStore remains the runtime owner until the
-explicit SF5 cutover. The owner-approved next target is a **256 KiB bounded
+explicit SF5 cutover. The owner-approved next target is a **128 KiB bounded
 ObservationStore** carrying one report-period PERIODIC_OBSERVATION plus
-asynchronous EVENT and COMMAND_RESULT records. Do not permanently dual-write the
+asynchronous EVENT and COMMAND_RESULT records. This 2026-10-08 decision
+supersedes the earlier 256 KiB planning target specifically to preserve
+firmware-update/rollback headroom, including a future separately reviewed LoRa
+FOTA path. Do not consume that recovered headroom speculatively. Do not permanently dual-write the
 same observation to legacy History and the new store.
 
 Normal tracker data is one meaningful record per **effective** report period:
@@ -432,7 +442,15 @@ always sufficient. RAM-only release progress may cause safe duplicate replay
 after reset, but reset/checkpoint loss must not allow unbounded whole-backlog
 re-protection/amplification.
 
-Store-forward delivery must remain gateway-independent. A fixed gateway, MOBILE
+Store-forward delivery must remain gateway-independent.
+
+For the SF5 Gateway connected-path policy, do not write every received custody
+object to Gateway flash by default. If an authenticated exact-object Edge
+durable-accept is verified before fallback begins, ACK the tracker without a
+Gateway flash write. If that proof is absent/failed/timed-out/uncertain, persist
+locally and verify commit before ACK. Connectivity, BLE/TCP write success or RAM
+receipt is never durable acceptance. Once a local flash mutation has started,
+do not cancel it on a late Edge response; reconcile the mutation first. A fixed gateway, MOBILE
 gateway or another compatible bridge may carry the same logical observation;
 downstream duplicate transport/path observations must converge on one
 application observation while retaining useful path metadata. `TX_DONE`, relay

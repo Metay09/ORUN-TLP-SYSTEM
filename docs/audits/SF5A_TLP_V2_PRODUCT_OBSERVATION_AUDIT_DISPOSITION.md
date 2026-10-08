@@ -29,6 +29,18 @@ The review was documentation/repository consistency only. It did not run a
 production build or physical test and did not claim runtime, RF, power, flash,
 DFU or end-to-end validation.
 
+## Post-audit owner supersession — 2026-10-08
+
+After SF5A merged, the owner reduced the future shared durable-data planning
+target from **256 KiB to 128 KiB** to preserve substantially more internal-flash
+headroom for firmware lifecycle/rollback and a future separately reviewed LoRa
+firmware-update path.
+
+This does not invalidate the original F1-F9 audit result; it supersedes the
+capacity/layout planning input that F2 evaluated. The new candidate range is
+`0x0C5000..0x0E5000` (128 KiB / 32 pages). The real DFU/FOTA bank/staging
+model remains an unresolved implementation/physical gate.
+
 ## F1 — Reset-safe tracker responsibility release
 
 Severity: **HIGH**

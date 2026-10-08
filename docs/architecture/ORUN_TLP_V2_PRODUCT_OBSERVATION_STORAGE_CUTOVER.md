@@ -143,14 +143,19 @@ responsibility transfers.
 Reference RAK4630/RAK4631 tracker profile target:
 
 ```text
-256 KiB durable product-observation region
-= 64 × 4096-byte nRF52840 pages
+128 KiB durable product-observation region
+= 32 × 4096-byte nRF52840 pages
 ```
+
+Owner decision 2026-10-08: this **supersedes the earlier 256 KiB SF5A planning
+target**. The deliberate reason is firmware-lifecycle headroom: preserve a
+realistic path for robust BLE/serial DFU now and a future reviewed LoRa firmware
+update path without consuming half of internal flash as product history.
 
 Candidate physical range, subject to the dedicated layout slice and build guard:
 
 ```text
-0x0A5000 .. 0x0E5000   256 KiB ObservationStore
+0x0C5000 .. 0x0E5000   128 KiB ObservationStore
 ```
 
 The existing regions above it remain at their current addresses:
@@ -164,7 +169,7 @@ The existing regions above it remain at their current addresses:
 0x0F4000 .. 0x100000   bootloader/settings boundary classes
 ```
 
-The candidate 256 KiB range is not authorized for production writes until:
+The candidate 128 KiB range is not authorized for production writes until:
 
 1. the application ceiling/build guard is deliberately revised;
 2. current firmware size/headroom is re-measured;
@@ -173,16 +178,28 @@ The candidate 256 KiB range is not authorized for production writes until:
 4. the physical flash backend and ownership guard are reviewed;
 5. destructive physical qualification is completed on a development unit.
 
-The DFU gate is not cosmetic. The candidate application range
-`0x026000..0x0A5000` is `0x7F000` = 520,192 bytes. A simple equal two-bank
-split of that range would allow about 260,096 bytes per bank, which is smaller
-than the current SF4B production image measurement of 285,924 bytes. This does
-not prove which DFU model ORUN will use; it proves only that the 256 KiB
-reservation and the DFU model cannot be frozen independently.
+The DFU/FOTA gate is not cosmetic. With the 128 KiB candidate, the application /
+update planning range below ObservationStore is
+`0x026000..0x0C5000` = `0x9F000` = 651,264 bytes. A simple equal two-bank
+arithmetic split is about 325,632 bytes per bank. Against the current SF4B image
+measurement of 285,924 bytes, that leaves about **39,708 bytes** of arithmetic
+margin per equal bank.
+
+This is materially better than the superseded 256 KiB target, whose equal-bank
+arithmetic was already smaller than the current image. It does **not** prove the
+actual RAK4631 bootloader uses equal dual-bank DFU, does not reserve a LoRa FOTA
+implementation, and does not guarantee that future firmware growth will remain
+inside 325,632 bytes. SF5D must still resolve the real bootloader/update model.
+
+Future LoRa firmware update is a firmware-lifecycle/security feature, not an
+ObservationStore transport trick. Before any LoRa FOTA activation it will need a
+separately reviewed authenticated image/update contract, anti-rollback/version
+policy, interrupted-transfer/power-cut recovery, staging/rollback ownership,
+battery/power policy and RF-capacity/regional-compliance evidence.
 
 ### 4.2 One physical owner
 
-The 256 KiB region has exactly one owner in one concrete product profile.
+The 128 KiB region has exactly one owner in one concrete product profile.
 
 For an animal tracker it is the future ObservationStore.
 
@@ -365,7 +382,7 @@ development debug prints must not fill product flash one record at a time.
 
 Tracker durable storage is bounded. It cannot promise infinite retention.
 
-When the 256 KiB tracker store is full:
+When the 128 KiB tracker store is full:
 
 1. reclaim already-released/obsolete historical storage according to the
    reviewed release-state rules;
@@ -399,12 +416,18 @@ This tracker policy is intentionally different from Gateway custody.
 An authorized Gateway that already accepted custody of an exact protected object
 must not evict that object merely because newer traffic arrives.
 
-For Gateway custody:
+For Gateway responsibility transfer:
 
-- durable commit precedes custody ACK eligibility;
-- full/fault/busy/commit-unknown => no custody ACK;
-- once custody has been ACKed, the object remains Gateway responsibility until
-  Edge durable acceptance permits reclaim;
+- an authenticated exact-object **Edge durable accept may bypass Gateway flash**
+  when Edge is currently available;
+- mere Edge/phone/network connectivity, RAM receive, socket/BLE write or
+  transport success never permits tracker release;
+- if Edge durable accept is absent, timed out or uncertain, local Gateway durable
+  commit/readback precedes custody ACK eligibility;
+- full/fault/busy/commit-unknown with no verified Edge durable accept => no
+  custody ACK;
+- once a locally stored custody object has been ACKed, it remains Gateway
+  responsibility until Edge durable acceptance permits reclaim;
 - admission may close before physical exhaustion to preserve reviewed
   maintenance/emergency headroom;
 - the exact watermark/reserve percentages remain an implementation/load-test
@@ -418,11 +441,47 @@ delete accepted custody.
 
 ---
 
-## 12. Gateway -> Edge drain
+## 12. Gateway -> Edge durable bypass and backlog drain
 
-Initial Gateway -> Edge backlog drain is global oldest-first/FIFO.
+When Edge is online, the preferred write path is **write-around**, and this is a
+product invariant rather than an optimization hint:
 
-For each object:
+```text
+Tracker object
+  -> Gateway bounded in-flight RAM
+  -> Edge
+  -> authenticated exact-object Edge durable accept
+  -> Gateway ACKs tracker
+  -> Gateway flash write = NONE
+```
+
+If that durable Edge accept is not obtained within the bounded in-flight policy
+—for example disconnect, timeout, rejection or uncertain outcome—the Gateway
+falls back to its local custody store.
+
+That bounded wait is subordinate to the tracker's measured ACK rendezvous
+budget. Before SF5G enables write-around, measured Edge wait + worst-case local
+fallback commit/readback + ACK airtime must fit the rendezvous window. If it
+does not, the Gateway skips Edge waiting and uses local durable custody
+immediately for that attempt; write-around is not allowed to create avoidable
+tracker retransmissions by missing the ACK window.
+
+Fallback path:
+
+```text
+no verified Edge durable accept
+  -> local Gateway flash commit/readback
+  -> Gateway ACKs tracker
+```
+
+The decision criterion is **durability**, not connectivity. "Connected" without
+durable exact-object acceptance is equivalent to "not safely handed off".
+
+Once local flash fallback begins, it is not cancelled by a late Edge response.
+The mutation must reach a known reconciled state before the object lifecycle can
+close; late downstream acceptance is handled as an idempotent duplicate.
+
+Existing locally held backlog still drains global oldest-first/FIFO:
 
 ```text
 Gateway HELD
@@ -431,8 +490,11 @@ Gateway HELD
   -> Gateway may mark/reclaim
 ```
 
-A disconnect during transfer leaves the object held at the Gateway. A retry may
-produce a duplicate at Edge; idempotency/deduplication must make duplicates safe.
+A disconnect during either fast-path or backlog transfer never counts as durable
+acceptance. On the fast path the tracker simply remains responsible unless the
+Gateway falls back to local durable custody; on the backlog path the object stays
+HELD at the Gateway. A retry may produce a duplicate at Edge; idempotency/
+deduplication must make duplicates safe.
 
 Do not add a complex scheduler before measured need.
 
@@ -539,7 +601,7 @@ live POSITION / relay             -> frozen TLP v1 path
                                     (when provisioned)
 
 new production after explicit SF5F cutover:
-PERIODIC / EVENT / RESULT         -> 256 KiB ObservationStore
+PERIODIC / EVENT / RESULT         -> 128 KiB ObservationStore
                                   -> new reviewed SF5 TLP v2 protected family
 ```
 
@@ -554,7 +616,7 @@ Do not keep writing the same location to both stores in normal production.
 There is no deployed-fleet requirement in this decision to migrate old
 development History backlog into the new ObservationStore.
 
-The legacy 28 KiB region is not automatically appended to the 256 KiB journal:
+The legacy 28 KiB region is not automatically appended to the 128 KiB journal:
 it is non-contiguous because Geofence/Security/Config/BLE own the intervening
 pages. Creating a split journal only for that extra capacity is not justified.
 
@@ -658,7 +720,7 @@ Proceed in small, reviewable slices:
    bounded logical-RESULT retry behavior, and offline-read-vs-forgery separation;
 4. ObservationStore fixed-slot format + deterministic host power-cut tests,
    including reset-safe selective release state and active-EVENT lifecycle state;
-5. 256 KiB layout/application-ceiling reservation + build guards, only after
+5. 128 KiB layout/application-ceiling reservation + build guards, only after
    the DFU bank/update model and owner-transition ceremony are resolved;
 6. RAK4630 build/size verification;
 7. destructive physical ObservationStore qualification on a development unit;
