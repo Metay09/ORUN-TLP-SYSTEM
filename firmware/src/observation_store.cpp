@@ -1908,6 +1908,228 @@ void ObservationStore::poll() {
   }
 
   if (job_ == Job::kMaintenance) {
+    if (phase_ == Phase::kRotationIntentBody) {
+      if (active_control_page_ < 0 ||
+          rotation_control_slot_ >= osf::kControlRecordsPerPage)
+        return failCurrentJob();
+
+      const uint32_t offset =
+          controlOffset(static_cast<uint16_t>(active_control_page_),
+                        rotation_control_slot_);
+      const FlashOpResult result =
+          programStep(offset, control_blob_, osf::kControlRecordCommitOffset);
+      if (result == FlashOpResult::kPending) return;
+
+      uint8_t verify[osf::kControlRecordCommitOffset];
+      const bool body_ok =
+          flash_.read(offset, verify, sizeof(verify)) &&
+          memcmp(verify, control_blob_, sizeof(verify)) == 0;
+      if (result == FlashOpResult::kFailed && !body_ok)
+        return failCurrentJob();
+      if (!body_ok) return failCurrentJob();
+
+      phase_ = Phase::kRotationIntentCommit;
+      return;
+    }
+
+    if (phase_ == Phase::kRotationIntentCommit) {
+      const uint16_t control_page =
+          static_cast<uint16_t>(active_control_page_);
+      const uint32_t offset =
+          controlOffset(control_page, rotation_control_slot_) +
+          osf::kControlRecordCommitOffset;
+      const FlashOpResult result =
+          programStep(offset,
+                      control_blob_ + osf::kControlRecordCommitOffset, 4U);
+      if (result == FlashOpResult::kPending) return;
+
+      osf::ControlInspection control;
+      const bool committed =
+          readControl(control_page, rotation_control_slot_, control) &&
+          control.evidence == osf::ControlEvidence::kActive &&
+          control.kind == osf::ControlKind::kStoreState &&
+          control.schema == kControlSchemaActive &&
+          control.serial == rotation_state_serial_ &&
+          control.payload_size == osc::kStoreStatePayloadSize &&
+          memcmp(control.payload, pending_control_payload_,
+                 osf::kControlPayloadSize) == 0;
+      if (result == FlashOpResult::kFailed && !committed)
+        return failCurrentJob();
+      if (!committed) return failCurrentJob();
+
+      rotation_resuming_ = true;
+      diagnostics_.capacity_lost_total =
+          rotation_state_.capacity_lost_total;
+      diagnostics_.capacity_lost_periodic =
+          rotation_state_.capacity_lost_periodic;
+      diagnostics_.capacity_lost_event =
+          rotation_state_.capacity_lost_event;
+      diagnostics_.capacity_lost_result =
+          rotation_state_.capacity_lost_result;
+
+      if (rotation_state_serial_ == UINT64_MAX)
+        return failCurrentJob();
+      next_control_serial_ = rotation_state_serial_ + 1U;
+      const int completion_slot = findEmptyControlSlot();
+      if (completion_slot < 0) return failCurrentJob();
+      rotation_control_slot_ =
+          static_cast<uint16_t>(completion_slot);
+      rotation_state_serial_ = next_control_serial_;
+
+      phase_ = Phase::kRotationErasePage;
+      return;
+    }
+
+    if (phase_ == Phase::kRotationErasePage) {
+      const FlashOpResult result = eraseStep(target_page_);
+      if (result == FlashOpResult::kPending) return;
+
+      const bool erased = pageAllErased(target_page_);
+      if (result == FlashOpResult::kFailed && !erased)
+        return failCurrentJob();
+      if (!erased) return failCurrentJob();
+
+      phase_ = Phase::kRotationHeaderBody;
+      return;
+    }
+
+    if (phase_ == Phase::kRotationHeaderBody) {
+      const uint32_t offset = pageOffset(target_page_);
+      const FlashOpResult result =
+          programStep(offset, page_blob_, osf::kPageHeaderCommitOffset);
+      if (result == FlashOpResult::kPending) return;
+
+      uint8_t verify[osf::kPageHeaderCommitOffset];
+      const bool body_ok =
+          flash_.read(offset, verify, sizeof(verify)) &&
+          memcmp(verify, page_blob_, sizeof(verify)) == 0;
+      if (result == FlashOpResult::kFailed && !body_ok)
+        return failCurrentJob();
+      if (!body_ok) return failCurrentJob();
+
+      phase_ = Phase::kRotationHeaderCommit;
+      return;
+    }
+
+    if (phase_ == Phase::kRotationHeaderCommit) {
+      const uint32_t offset =
+          pageOffset(target_page_) + osf::kPageHeaderCommitOffset;
+      const FlashOpResult result =
+          programStep(offset,
+                      page_blob_ + osf::kPageHeaderCommitOffset, 4U);
+      if (result == FlashOpResult::kPending) return;
+
+      osf::PageInspection header;
+      const bool prepared =
+          readPage(target_page_, header) &&
+          header.evidence == osf::PageEvidence::kPrepared &&
+          header.kind == osf::PageKind::kData &&
+          header.generation == target_generation_ &&
+          header.device_id == device_id_ &&
+          header.incarnation == incarnation_ &&
+          pagePayloadErased(target_page_);
+      if (result == FlashOpResult::kFailed && !prepared)
+        return failCurrentJob();
+      if (!prepared) return failCurrentJob();
+
+      prepared_data_page_ = target_page_;
+      max_data_generation_ = target_generation_;
+      ++diagnostics_.pages_prepared;
+
+      uint8_t state_payload[osc::kStoreStatePayloadSize];
+      if (!osc::encodeStoreState(rotation_complete_state_, state_payload))
+        return failCurrentJob();
+      if (!osf::encodeControl(osf::ControlKind::kStoreState,
+                              kControlSchemaActive,
+                              rotation_state_serial_,
+                              state_payload, sizeof(state_payload),
+                              control_blob_))
+        return failCurrentJob();
+
+      pending_control_kind_ = osf::ControlKind::kStoreState;
+      pending_control_schema_ = kControlSchemaActive;
+      pending_control_payload_size_ =
+          static_cast<uint16_t>(sizeof(state_payload));
+      pending_control_serial_ = rotation_state_serial_;
+      memset(pending_control_payload_, 0, sizeof(pending_control_payload_));
+      memcpy(pending_control_payload_, state_payload, sizeof(state_payload));
+
+      phase_ = Phase::kRotationCompleteBody;
+      return;
+    }
+
+    if (phase_ == Phase::kRotationCompleteBody) {
+      if (active_control_page_ < 0 ||
+          rotation_control_slot_ >= osf::kControlRecordsPerPage)
+        return failCurrentJob();
+
+      const uint32_t offset =
+          controlOffset(static_cast<uint16_t>(active_control_page_),
+                        rotation_control_slot_);
+      const FlashOpResult result =
+          programStep(offset, control_blob_, osf::kControlRecordCommitOffset);
+      if (result == FlashOpResult::kPending) return;
+
+      uint8_t verify[osf::kControlRecordCommitOffset];
+      const bool body_ok =
+          flash_.read(offset, verify, sizeof(verify)) &&
+          memcmp(verify, control_blob_, sizeof(verify)) == 0;
+      if (result == FlashOpResult::kFailed && !body_ok)
+        return failCurrentJob();
+      if (!body_ok) return failCurrentJob();
+
+      phase_ = Phase::kRotationCompleteCommit;
+      return;
+    }
+
+    if (phase_ == Phase::kRotationCompleteCommit) {
+      const uint16_t control_page =
+          static_cast<uint16_t>(active_control_page_);
+      const uint32_t offset =
+          controlOffset(control_page, rotation_control_slot_) +
+          osf::kControlRecordCommitOffset;
+      const FlashOpResult result =
+          programStep(offset,
+                      control_blob_ + osf::kControlRecordCommitOffset, 4U);
+      if (result == FlashOpResult::kPending) return;
+
+      osf::ControlInspection control;
+      const bool committed =
+          readControl(control_page, rotation_control_slot_, control) &&
+          control.evidence == osf::ControlEvidence::kActive &&
+          control.kind == osf::ControlKind::kStoreState &&
+          control.schema == kControlSchemaActive &&
+          control.serial == rotation_state_serial_ &&
+          control.payload_size == osc::kStoreStatePayloadSize &&
+          memcmp(control.payload, pending_control_payload_,
+                 osf::kControlPayloadSize) == 0;
+      if (result == FlashOpResult::kFailed && !committed)
+        return failCurrentJob();
+      if (!committed) return failCurrentJob();
+
+      diagnostics_.capacity_lost_total =
+          rotation_complete_state_.capacity_lost_total;
+      diagnostics_.capacity_lost_periodic =
+          rotation_complete_state_.capacity_lost_periodic;
+      diagnostics_.capacity_lost_event =
+          rotation_complete_state_.capacity_lost_event;
+      diagnostics_.capacity_lost_result =
+          rotation_complete_state_.capacity_lost_result;
+      ++diagnostics_.pages_reclaimed;
+
+      if (rotation_state_serial_ == UINT64_MAX)
+        next_control_serial_ = 0U;
+      else
+        next_control_serial_ = rotation_state_serial_ + 1U;
+
+      rotation_state_ = rotation_complete_state_;
+      rotation_resuming_ = false;
+      rotation_control_slot_ = UINT16_MAX;
+      rotation_state_serial_ = 0U;
+      finishMaintenance(true);
+      return;
+    }
+
     if (phase_ == Phase::kHeaderBody) {
       const uint32_t offset = pageOffset(target_page_);
       const FlashOpResult result =
