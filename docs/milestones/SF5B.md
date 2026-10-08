@@ -124,6 +124,10 @@ verified Edge durable accept before fallback -> NO Gateway flash write
 no verified Edge durable accept              -> Gateway flash commit required
 ```
 
+The no-flash branch is **not production-enabled by SF5B**. It remains gated on a
+separately reviewed authenticated exact-object EDGE_DURABLE_ACCEPT contract.
+Until that later gate closes, runtime must take the local durable custody path.
+
 Once local fallback has started, a late Edge response does not cancel an in-flight
 flash mutation; the mutation is reconciled to a known result first.
 
