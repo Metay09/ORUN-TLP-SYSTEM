@@ -595,6 +595,20 @@ ObservationStore::AppendResult ObservationStore::requestAppend(
   osf::RecordIdentity identity;
   if (!peekNextIdentity(identity)) return AppendResult::kRejected;
 
+  osf::RecordIdentity reserved_result;
+  bool result_pending = false;
+  if (!pendingResultReservation(reserved_result, result_pending))
+    return AppendResult::kRejected;
+  if (result_pending) {
+    if (kind != osf::RecordKind::kResult ||
+        !sameIdentity(identity, reserved_result))
+      return AppendResult::kBusy;
+  } else if (kind == osf::RecordKind::kResult) {
+    // RESULT rows are guard-first so reset cannot create one durable RESULT
+    // per transport retry or let another record consume the reserved identity.
+    return AppendResult::kRejected;
+  }
+
   uint16_t page = 0;
   uint16_t slot = 0;
   bool needs_activation = false;
@@ -1105,6 +1119,15 @@ uint16_t ObservationStore::activeControlCount(
           const LookupResult backing_result = findRecord(exact.identity, backing);
           if (backing_result == LookupResult::kReadError) return 0U;
           if (backing_result == LookupResult::kNone) continue;
+        } else if (kind == osf::ControlKind::kResultGuard) {
+          osc::ResultGuard guard;
+          if (!osc::decodeResultGuard(control.payload,
+                                      control.payload_size, guard))
+            return 0U;
+          bool guard_read_ok = false;
+          const bool live = resultGuardLive(guard, guard_read_ok);
+          if (!guard_read_ok) return 0U;
+          if (!live) continue;
         }
         ++count;
       }
@@ -1217,6 +1240,22 @@ bool ObservationStore::prepareNextControlCopy() {
       }
       if (backing_result == LookupResult::kNone)
         logically_active = false;
+    }
+    if (logically_active &&
+        control.kind == osf::ControlKind::kResultGuard) {
+      osc::ResultGuard guard;
+      if (!osc::decodeResultGuard(control.payload,
+                                  control.payload_size, guard)) {
+        faulted_ = true;
+        return false;
+      }
+      bool guard_read_ok = false;
+      const bool live = resultGuardLive(guard, guard_read_ok);
+      if (!guard_read_ok) {
+        faulted_ = true;
+        return false;
+      }
+      if (!live) logically_active = false;
     }
     if (!logically_active) continue;
 
@@ -1412,6 +1451,10 @@ ObservationStore::ControlLookupResult ObservationStore::findResultGuard(
   if (result != ControlLookupResult::kFound) return result;
   if (!osc::decodeResultGuard(control.payload, control.payload_size, value))
     return ControlLookupResult::kReadError;
+  bool guard_read_ok = false;
+  const bool live = resultGuardLive(value, guard_read_ok);
+  if (!guard_read_ok) return ControlLookupResult::kReadError;
+  if (!live) return ControlLookupResult::kNone;
   return ControlLookupResult::kFound;
 }
 
@@ -1421,20 +1464,33 @@ ObservationStore::ControlWriteResult ObservationStore::requestPutResultGuard(
   if (!osc::encodeResultGuard(value, payload))
     return ControlWriteResult::kRejected;
 
-  osf::ControlInspection existing;
-  const ControlLookupResult lookup =
-      findLatestControl(osf::ControlKind::kResultGuard,
-                        payload, sizeof(payload), existing);
+  osc::ResultGuard existing_value;
+  const ControlLookupResult lookup = findResultGuard(value, existing_value);
   if (lookup == ControlLookupResult::kReadError)
     return ControlWriteResult::kRejected;
   if (lookup == ControlLookupResult::kFound) {
-    if (existing.payload_size == sizeof(payload) &&
-        memcmp(existing.payload, payload, sizeof(payload)) == 0)
+    uint8_t existing_payload[osc::kResultGuardPayloadSize];
+    if (!osc::encodeResultGuard(existing_value, existing_payload))
+      return ControlWriteResult::kRejected;
+    if (memcmp(existing_payload, payload, sizeof(payload)) == 0)
       return ControlWriteResult::kAlreadySatisfied;
-    // Same authenticated authority context + command_id but a different
-    // canonical request/result binding is a fail-closed conflict.
+    // Same authenticated authority context + command_id while the retained
+    // logical RESULT is still live: a different canonical request is a
+    // fail-closed conflict.
     return ControlWriteResult::kRejected;
   }
+
+  if (value.result_identity.incarnation != incarnation_ ||
+      next_sequence_ == 0U ||
+      value.result_identity.sequence != next_sequence_)
+    return ControlWriteResult::kRejected;
+
+  osf::RecordIdentity pending_identity;
+  bool pending_found = false;
+  if (!pendingResultReservation(pending_identity, pending_found))
+    return ControlWriteResult::kRejected;
+  if (pending_found)
+    return ControlWriteResult::kBusy;
 
   bool read_ok = false;
   if (activeControlCount(osf::ControlKind::kResultGuard, read_ok) >=
