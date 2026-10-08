@@ -510,6 +510,38 @@ static void testFailedAsyncPollCannotPromoteMatchingReadback() {
   assert(store.takeAppendResult(success, result) && !success);
 }
 
+static void testBeginDoesNotAbandonInFlightAsyncMutation() {
+  FakeFlash flash(4U);
+  FixedIncarnation incarnation(0x1616U);
+  ObservationStore store(flash, 4U, &incarnation);
+  assert(store.begin(0x81U));
+  prepareOne(store);
+  flash.async_mode = true;
+  flash.async_polls = 1U;
+
+  uint8_t payload[osf::kPeriodicPayloadSizeV1]{};
+  assert(store.requestAppend(osf::RecordKind::kPeriodic, 1U,
+                             payload, sizeof(payload)) ==
+         ObservationStore::AppendResult::kStarted);
+  store.poll();  // submits page activation; backend owns in-flight request
+  assert(store.busy());
+  const unsigned before = flash.program_calls;
+  assert(!store.begin(0x81U));
+  assert(store.busy() && store.ready() && !store.faulted());
+  assert(flash.program_calls == before);
+
+  settle(store);
+  bool committed = false;
+  ObservationStore::Handle handle;
+  assert(store.takeAppendResult(committed, handle) && committed);
+  assert(handle.identity.sequence == 1U);
+  ObservationStore reboot(flash, 4U, &incarnation);
+  assert(reboot.begin(0x81U) && !reboot.faulted());
+  ObservationStore::Record recovered;
+  assert(reboot.lookup(handle.identity, recovered) ==
+         ObservationStore::LookupResult::kFound);
+}
+
 static void testUnreconciledBeginFailsClosed() {
   FakeFlash flash(4U);
   flash.unreconciled = true;
@@ -660,6 +692,7 @@ int main() {
   testUnreconciledDataCommitCannotBeAccepted();
   testUnreconciledFlipDuringCommitPollFailsClosed();
   testFailedAsyncPollCannotPromoteMatchingReadback();
+  testBeginDoesNotAbandonInFlightAsyncMutation();
   testUnreconciledBeginFailsClosed();
   testReadFailureFailsClosed();
   return 0;
