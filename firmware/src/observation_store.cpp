@@ -2071,11 +2071,18 @@ FlashOpResult ObservationStore::programStep(
     const FlashOpResult result = flash_.pollPending();
     if (result != FlashOpResult::kPending)
       flash_op_awaiting_completion_ = false;
+    // pollPending() itself can first enter timeout/unreconciled state, even
+    // after flash bytes appear committed. Force this poll to yield; the next
+    // poll's entry guard faults the job before success can be published.
+    if (flash_.hasUnreconciledMutation())
+      return FlashOpResult::kPending;
     return result;
   }
   const FlashOpResult result = flash_.program(offset, data, size);
   if (result == FlashOpResult::kPending)
     flash_op_awaiting_completion_ = true;
+  if (flash_.hasUnreconciledMutation())
+    return FlashOpResult::kPending;
   return result;
 }
 
@@ -2084,11 +2091,18 @@ FlashOpResult ObservationStore::eraseStep(uint16_t page) {
     const FlashOpResult result = flash_.pollPending();
     if (result != FlashOpResult::kPending)
       flash_op_awaiting_completion_ = false;
+    // pollPending() itself can first enter timeout/unreconciled state, even
+    // after flash bytes appear committed. Force this poll to yield; the next
+    // poll's entry guard faults the job before success can be published.
+    if (flash_.hasUnreconciledMutation())
+      return FlashOpResult::kPending;
     return result;
   }
   const FlashOpResult result = flash_.erasePage(page);
   if (result == FlashOpResult::kPending)
     flash_op_awaiting_completion_ = true;
+  if (flash_.hasUnreconciledMutation())
+    return FlashOpResult::kPending;
   return result;
 }
 
