@@ -117,6 +117,16 @@ durable record
 Connectivity alone is never enough: Edge durable accept must be authenticated and
 exact-object-bound.
 
+Normative connected-path rule:
+
+```text
+verified Edge durable accept before fallback -> NO Gateway flash write
+no verified Edge durable accept              -> Gateway flash commit required
+```
+
+Once local fallback has started, a late Edge response does not cancel an in-flight
+flash mutation; the mutation is reconciled to a known result first.
+
 Every retained durable record eventually needs a durable responsibility-transfer
 fact before tracker release. Pacing ACKs changes collision timing but does not
 remove their long-term airtime cost. The online Edge bypass **does** remove most
