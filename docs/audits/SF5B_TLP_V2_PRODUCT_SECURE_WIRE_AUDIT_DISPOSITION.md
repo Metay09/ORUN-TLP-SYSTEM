@@ -1,8 +1,8 @@
 # SF5B TLP v2 Product Secure Wire — Independent Audit Disposition
 
-Status: **INITIAL INDEPENDENT AUDIT PASS WITH FIXES — 0 BLOCKER / 2 HIGH / 3
-MEDIUM / 1 LOW. H1-H2 / M1-M3 / L1 documentation fixes applied; focused
-independent re-review required before merge.**
+Status: **FINAL FOCUSED RE-REVIEW PASS WITH MINOR DOC FIX — 0 BLOCKER / 0 HIGH /
+0 MEDIUM. H1-H2 / M1-M3 / L1 remain CLOSED; follow-up N1-N3 documentation
+findings are CLOSED. FINAL RECOMMENDATION: MERGE.**
 
 Audit target:
 `pr82@23999959e9cc9f79e1a5da4b5c0df527eb356247`
@@ -328,5 +328,41 @@ That review is **not the final review for the current PR head**, because later
 owner decisions added the 128 KiB storage supersession, SF5 Gateway Edge-durable
 write-around policy, and explicit SF4->SF5 custody-contract supersession.
 
-A focused independent re-review of the exact final PR head is required before
-merge.
+## Final focused re-review at 4fbd6da7
+
+The independent focused review of `4fbd6da7826891643b6dead9512565d7564baa8c`
+returned:
+
+```text
+VERDICT: PASS WITH MINOR DOC FIX
+BLOCKER: 0
+HIGH:    0
+MEDIUM:  0
+LOW:     3
+FINAL RECOMMENDATION: MERGE
+```
+
+It revalidated the full PR against base and confirmed:
+
+- H1/H2/M1/M2/M3/L1 remain CLOSED;
+- the 128 KiB supersession arithmetic and evidence boundary are correct;
+- SF5 Gateway write-around is correctly gated and does not conflict with
+  historical SF4 HISTORY_SECURE custody semantics;
+- EDGE_DURABLE_ACCEPT is not assumed implemented and remains a production gate;
+- TLP v1, frozen SF2/SF3 HISTORY_SECURE and frozen DELEGATED_SECURE_APP bytes
+  remain unchanged;
+- no runtime/physical/RF/regulatory PASS is claimed.
+
+The three LOW documentation items are closed on the final branch:
+
+- N1: EVENT location-age canonical encoding now matches PERIODIC;
+- N2: COMMAND_ID_REUSE_CONFLICT is checked under serialized Config/CAS ownership
+  before any ConfigStore mutation/token write;
+- N3: SF5G now requires measured Edge-wait + worst-case local fallback
+  commit/readback + custody-ACK airtime to fit the tracker ACK rendezvous
+  window; otherwise the Gateway skips Edge waiting and goes directly to local
+  durable custody for that attempt.
+
+No further independent re-review was required by the reviewer for N1-N3.
+
+Final disposition: **MERGE APPROVED**.
