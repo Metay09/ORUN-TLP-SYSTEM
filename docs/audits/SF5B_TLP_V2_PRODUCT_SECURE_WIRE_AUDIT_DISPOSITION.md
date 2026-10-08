@@ -288,8 +288,17 @@ must reconcile that mutation to a known state first.
 
 This clarification changes no PRODUCT_SECURE/GATEWAY_CUSTODY_ACK bytes, but it
 does refine custody ownership/concurrency behavior and Gateway flash-wear
-policy. Therefore it remains inside the required focused independent re-review
-scope.
+policy. The older SF4 local-commit-only contract is now explicitly retained as
+historical HISTORY_SECURE behavior and superseded only for the new SF5 product
+path.
+
+The write-around branch is also explicitly **production-disabled until a
+separately reviewed authenticated exact-object EDGE_DURABLE_ACCEPT contract
+exists**. Until then, Gateway runtime must use the reviewed local durable
+custody path before ACK.
+
+Therefore these clarifications remain inside the required focused independent
+re-review scope.
 
 A focused independent re-review of the exact final PR head is required before
 merge.
