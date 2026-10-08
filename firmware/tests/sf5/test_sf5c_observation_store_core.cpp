@@ -390,6 +390,40 @@ static void testAsyncNoResubmit() {
   assert(flash.program_calls == before + 3U);
 }
 
+
+static void testUnreconciledDataCommitCannotBeAccepted() {
+  FakeFlash flash(4U);
+  FixedIncarnation incarnation(0x1212U);
+  ObservationStore store(flash, 4U, &incarnation);
+  assert(store.begin(0x77U));
+  prepareOne(store);
+  uint8_t payload[osf::kPeriodicPayloadSizeV1]{};
+  assert(store.requestAppend(osf::RecordKind::kPeriodic, 1U,
+                             payload, sizeof(payload)) ==
+         ObservationStore::AppendResult::kStarted);
+  store.poll();  // prepared page becomes ACTIVE
+  store.poll();  // data body written, before commit API completion
+
+  // Even matching flash readback after an unresolved async timeout cannot
+  // be promoted into a successful logical append.
+  osf::put32(flash.bytes.data() + 2U * osf::kPageSize +
+                 osf::kPageHeaderSize + osf::kDataRecordCommitOffset,
+             osf::kCommit);
+  flash.unreconciled = true;
+  store.poll();
+  assert(store.faulted());
+  assert(store.diagnostics().unreconciled_mutation_faults == 1U);
+  bool success = true;
+  ObservationStore::Handle handle;
+  assert(store.takeAppendResult(success, handle) && !success);
+  ObservationStore::Record record;
+  assert(store.lookup(handle.identity, record) ==
+         ObservationStore::LookupResult::kReadError);
+
+  ObservationStore reboot(flash, 4U, &incarnation);
+  assert(!reboot.begin(0x77U) && reboot.faulted());
+}
+
 static void testUnreconciledBeginFailsClosed() {
   FakeFlash flash(4U);
   flash.unreconciled = true;
@@ -537,6 +571,7 @@ int main() {
   testTornReleaseUsesSecondMarker();
   testDoubleTornReleaseIsExposedFailClosed();
   testAsyncNoResubmit();
+  testUnreconciledDataCommitCannotBeAccepted();
   testUnreconciledBeginFailsClosed();
   testReadFailureFailsClosed();
   return 0;
