@@ -338,6 +338,42 @@ static void testTornReleaseUsesSecondMarker() {
   assert(record.released);
 }
 
+static void testDoubleTornReleaseIsExposedFailClosed() {
+  FakeFlash flash(4U);
+  FixedIncarnation source(0xABCDEFU);
+  ObservationStore store(flash, 4U, &source);
+  assert(store.begin(0x77U));
+  prepareOne(store);
+  const ObservationStore::Handle handle =
+      appendOne(store, osf::RecordKind::kPeriodic, 9U);
+
+  for (unsigned attempt = 0U; attempt < 2U; ++attempt) {
+    flash.setPartialProgram(flash.program_calls + 1U);
+    assert(store.requestRelease(handle.identity));
+    settle(store);
+    bool success = true;
+    assert(store.takeReleaseResult(success) && !success);
+    assert(!store.faulted());
+  }
+
+  ObservationStore::Record record;
+  assert(store.lookup(handle.identity, record) ==
+         ObservationStore::LookupResult::kFound);
+  assert(!record.released);
+  assert(record.release_uncertain);
+  assert(record.release_marker_exhausted);
+
+  assert(!store.requestRelease(handle.identity));
+  assert(store.diagnostics().release_marker_exhausted == 1U);
+
+  ObservationStore reboot(flash, 4U, &source);
+  assert(reboot.begin(0x77U) && !reboot.faulted());
+  assert(reboot.lookup(handle.identity, record) ==
+         ObservationStore::LookupResult::kFound);
+  assert(record.release_uncertain);
+  assert(record.release_marker_exhausted);
+}
+
 static void testAsyncNoResubmit() {
   FakeFlash flash(4U);
   FixedIncarnation source(11U);
@@ -499,6 +535,7 @@ int main() {
   testBlankAppendReleaseRecovery();
   testCommitReportedFailureReconciles();
   testTornReleaseUsesSecondMarker();
+  testDoubleTornReleaseIsExposedFailClosed();
   testAsyncNoResubmit();
   testUnreconciledBeginFailsClosed();
   testReadFailureFailsClosed();
