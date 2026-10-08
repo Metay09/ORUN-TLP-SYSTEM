@@ -748,8 +748,18 @@ void ObservationStore::failCurrentJob() {
   }
 
   const uint64_t saved_incarnation = incarnation_;
-  if (!recover() || faulted_ ||
-      (saved_incarnation != 0U && incarnation_ != saved_incarnation)) {
+  if (!recover() || faulted_) {
+    faulted_ = true;
+    ++diagnostics_.recovery_faults;
+    return;
+  }
+
+  // Before the first committed OBS1 header exists, the freshly generated
+  // incarnation is RAM-authoritative for this boot. A torn first header must
+  // not force a second random incarnation or permanently fault the store.
+  if (incarnation_ == 0U && saved_incarnation != 0U)
+    incarnation_ = saved_incarnation;
+  else if (saved_incarnation != 0U && incarnation_ != saved_incarnation) {
     faulted_ = true;
     ++diagnostics_.recovery_faults;
   }
