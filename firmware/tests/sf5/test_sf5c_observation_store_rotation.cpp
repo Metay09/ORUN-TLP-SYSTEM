@@ -27,24 +27,67 @@ class RotationFakeFlash : public FlashBackend {
 
   FlashOpResult program(uint32_t offset, const void* data,
                         size_t size) override {
-    if (data == nullptr || size == 0U || (offset & 3U) != 0U ||
-        (size & 3U) != 0U || uint64_t(offset) + size > bytes.size())
+    if (pending_.kind != Pending::kNone || data == nullptr || size == 0U ||
+        (offset & 3U) != 0U || (size & 3U) != 0U ||
+        uint64_t(offset) + size > bytes.size())
       return FlashOpResult::kFailed;
+
     const uint8_t* src = static_cast<const uint8_t*>(data);
     for (size_t i = 0; i < size; ++i)
       if (bytes[offset + i] != 0xFFU)
         return FlashOpResult::kFailed;
-    for (size_t i = 0; i < size; ++i) bytes[offset + i] &= src[i];
+
     ++program_calls;
+    if (async_mode) {
+      pending_.kind = Pending::kProgram;
+      pending_.offset = offset;
+      pending_.data.assign(src, src + size);
+      pending_.polls_left = async_polls;
+      return FlashOpResult::kPending;
+    }
+
+    applyProgram(offset, src, size);
     return FlashOpResult::kDone;
   }
 
   FlashOpResult erasePage(uint32_t page) override {
-    if (page >= pages_) return FlashOpResult::kFailed;
-    memset(bytes.data() + size_t(page) * osf::kPageSize,
-           0xFF, osf::kPageSize);
+    if (pending_.kind != Pending::kNone || page >= pages_)
+      return FlashOpResult::kFailed;
+
     ++erase_calls;
+    if (async_mode) {
+      pending_.kind = Pending::kErase;
+      pending_.page = static_cast<uint16_t>(page);
+      pending_.polls_left = async_polls;
+      return FlashOpResult::kPending;
+    }
+
+    applyErase(static_cast<uint16_t>(page));
     return FlashOpResult::kDone;
+  }
+
+  FlashOpResult pollPending() override {
+    if (pending_.kind == Pending::kNone) return FlashOpResult::kFailed;
+    if (pending_.polls_left > 0U) {
+      --pending_.polls_left;
+      return FlashOpResult::kPending;
+    }
+
+    const Pending::Kind kind = pending_.kind;
+    const uint32_t offset = pending_.offset;
+    const uint16_t page = pending_.page;
+    const std::vector<uint8_t> data = pending_.data;
+    pending_ = Pending();
+
+    if (kind == Pending::kProgram) {
+      applyProgram(offset, data.data(), data.size());
+      return FlashOpResult::kDone;
+    }
+    if (kind == Pending::kErase) {
+      applyErase(page);
+      return FlashOpResult::kDone;
+    }
+    return FlashOpResult::kFailed;
   }
 
   void tearErase(uint16_t page) {
@@ -54,10 +97,29 @@ class RotationFakeFlash : public FlashBackend {
   }
 
   std::vector<uint8_t> bytes;
+  bool async_mode = false;
+  unsigned async_polls = 1U;
   unsigned program_calls = 0U;
   unsigned erase_calls = 0U;
 
  private:
+  struct Pending {
+    enum Kind { kNone, kProgram, kErase } kind = kNone;
+    uint32_t offset = 0U;
+    uint16_t page = 0U;
+    std::vector<uint8_t> data;
+    unsigned polls_left = 0U;
+  } pending_;
+
+  void applyProgram(uint32_t offset, const uint8_t* data, size_t size) {
+    for (size_t i = 0; i < size; ++i) bytes[offset + i] &= data[i];
+  }
+
+  void applyErase(uint16_t page) {
+    memset(bytes.data() + size_t(page) * osf::kPageSize,
+           0xFF, osf::kPageSize);
+  }
+
   uint16_t pages_;
 };
 
@@ -377,6 +439,31 @@ static void testRotationPowerCutMatrix() {
   resumeAndVerify(torn);
 }
 
+static void testAsyncRotationDoesNotResubmitFlashMutations() {
+  RotationFakeFlash flash = makeFullStore(false);
+  RotationIncarnation incarnation;
+  ObservationStore store(flash, 4U, &incarnation);
+  assert(store.begin(0xCAFEU));
+
+  const unsigned before_program = flash.program_calls;
+  const unsigned before_erase = flash.erase_calls;
+  flash.async_mode = true;
+  flash.async_polls = 2U;
+
+  assert(store.requestMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store, 10000U);
+  bool ok = false;
+  assert(store.takeMaintenanceResult(ok) && ok);
+
+  // One physical submission per state-machine mutation despite repeated
+  // pollPending() passes.
+  assert(flash.program_calls == before_program + 6U);
+  assert(flash.erase_calls == before_erase + 1U);
+  assert(store.diagnostics().capacity_lost_total ==
+         osf::kDataRecordsPerPage);
+}
+
 static void testTornNeverActiveHeaderIsReclaimedBeforeHistory() {
   RotationFakeFlash flash(4U);
   RotationIncarnation incarnation;
@@ -403,6 +490,7 @@ int main() {
   testOldestFirstRotationAndDurableGapState();
   testReleasedPageReclaimedBeforeRetainedHistory();
   testRotationPowerCutMatrix();
+  testAsyncRotationDoesNotResubmitFlashMutations();
   testTornNeverActiveHeaderIsReclaimedBeforeHistory();
   return 0;
 }
