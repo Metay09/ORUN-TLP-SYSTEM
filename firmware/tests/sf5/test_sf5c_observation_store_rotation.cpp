@@ -190,10 +190,12 @@ static void testOldestFirstRotationAndDurableGapState() {
 
   // Release one PERIODIC and the EVENT on the oldest page. Only unreleased
   // responsibility loss contributes to capacity-loss diagnostics.
-  osf::RecordIdentity periodic_release{RotationIncarnation::kValue, 1U};
-  osf::RecordIdentity event_release{
-      RotationIncarnation::kValue,
-      osf::kDataRecordsPerPage - 1U};
+  osf::RecordIdentity periodic_release;
+  periodic_release.incarnation = RotationIncarnation::kValue;
+  periodic_release.sequence = 1U;
+  osf::RecordIdentity event_release;
+  event_release.incarnation = RotationIncarnation::kValue;
+  event_release.sequence = osf::kDataRecordsPerPage - 1U;
   releaseRecord(store, periodic_release);
   releaseRecord(store, event_release);
 
@@ -226,13 +228,15 @@ static void testOldestFirstRotationAndDurableGapState() {
   assert(d.capacity_lost_result == 1U);
 
   ObservationStore::Record record;
-  osf::RecordIdentity old_result{
-      RotationIncarnation::kValue, osf::kDataRecordsPerPage};
+  osf::RecordIdentity old_result;
+  old_result.incarnation = RotationIncarnation::kValue;
+  old_result.sequence = osf::kDataRecordsPerPage;
   assert(store.lookup(old_result, record) ==
          ObservationStore::LookupResult::kNone);
 
-  osf::RecordIdentity newer{
-      RotationIncarnation::kValue, osf::kDataRecordsPerPage + 1U};
+  osf::RecordIdentity newer;
+  newer.incarnation = RotationIncarnation::kValue;
+  newer.sequence = osf::kDataRecordsPerPage + 1U;
   assert(store.lookup(newer, record) ==
          ObservationStore::LookupResult::kFound);
 
