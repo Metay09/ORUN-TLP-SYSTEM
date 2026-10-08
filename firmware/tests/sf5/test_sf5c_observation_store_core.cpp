@@ -145,12 +145,27 @@ static void prepareOne(ObservationStore& store) {
   assert(store.hasPreparedDataPage());
 }
 
+static uint8_t payloadSize(osf::RecordKind kind) {
+  switch (kind) {
+    case osf::RecordKind::kPeriodic:
+      return osf::kPeriodicPayloadSizeV1;
+    case osf::RecordKind::kEvent:
+      return osf::kEventPayloadSizeV1;
+    case osf::RecordKind::kResult:
+      return osf::kResultPayloadSizeV1;
+  }
+  return 0U;
+}
+
 static ObservationStore::Handle appendOne(
     ObservationStore& store, osf::RecordKind kind, uint8_t seed) {
-  uint8_t payload[8];
-  for (unsigned i = 0; i < sizeof(payload); ++i)
+  uint8_t payload[osf::kDataPayloadSize];
+  const uint8_t size = payloadSize(kind);
+  assert(size != 0U);
+  memset(payload, 0, sizeof(payload));
+  for (unsigned i = 0; i < size; ++i)
     payload[i] = static_cast<uint8_t>(seed + i);
-  assert(store.requestAppend(kind, 1U, payload, sizeof(payload)) ==
+  assert(store.requestAppend(kind, 1U, payload, size) ==
          ObservationStore::AppendResult::kStarted);
   settle(store);
   bool success = false;
@@ -171,7 +186,8 @@ static void testBlankAppendReleaseRecovery() {
   assert(store.peekNextIdentity(next));
   assert(next.incarnation == source.value_ && next.sequence == 1U);
 
-  uint8_t payload[1] = {1U};
+  uint8_t payload[osf::kPeriodicPayloadSizeV1];
+  memset(payload, 1, sizeof(payload));
   assert(store.requestAppend(osf::RecordKind::kPeriodic, 1U,
                              payload, sizeof(payload)) ==
          ObservationStore::AppendResult::kNoCapacity);
@@ -224,7 +240,8 @@ static void testCommitReportedFailureReconciles() {
 
   // Append: activation, body, commit. Fail after applying the commit word.
   flash.setFailAfterApplyProgram(flash.program_calls + 3U);
-  uint8_t payload[4] = {1U, 2U, 3U, 4U};
+  uint8_t payload[osf::kEventPayloadSizeV1];
+  memset(payload, 0x12, sizeof(payload));
   assert(store.requestAppend(osf::RecordKind::kEvent, 1U,
                              payload, sizeof(payload)) ==
          ObservationStore::AppendResult::kStarted);
