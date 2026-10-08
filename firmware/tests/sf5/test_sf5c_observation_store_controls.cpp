@@ -203,6 +203,9 @@ static void testOccurrenceAndResultConflictSurviveReboot() {
   ObservationStore store(flash, 6U, &incarnation);
   assert(store.begin(0x22U));
   initControl(store);
+  initData(store);
+  for (uint8_t seed = 1U; seed <= 4U; ++seed)
+    (void)appendPeriodic(store, seed);
 
   osc::OpenOccurrence open = occurrence(100U);
   assert(store.requestPutOpenOccurrence(open) ==
