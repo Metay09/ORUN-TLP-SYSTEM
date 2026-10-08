@@ -416,12 +416,18 @@ This tracker policy is intentionally different from Gateway custody.
 An authorized Gateway that already accepted custody of an exact protected object
 must not evict that object merely because newer traffic arrives.
 
-For Gateway custody:
+For Gateway responsibility transfer:
 
-- durable commit precedes custody ACK eligibility;
-- full/fault/busy/commit-unknown => no custody ACK;
-- once custody has been ACKed, the object remains Gateway responsibility until
-  Edge durable acceptance permits reclaim;
+- an authenticated exact-object **Edge durable accept may bypass Gateway flash**
+  when Edge is currently available;
+- mere Edge/phone/network connectivity, RAM receive, socket/BLE write or
+  transport success never permits tracker release;
+- if Edge durable accept is absent, timed out or uncertain, local Gateway durable
+  commit/readback precedes custody ACK eligibility;
+- full/fault/busy/commit-unknown with no verified Edge durable accept => no
+  custody ACK;
+- once a locally stored custody object has been ACKed, it remains Gateway
+  responsibility until Edge durable acceptance permits reclaim;
 - admission may close before physical exhaustion to preserve reviewed
   maintenance/emergency headroom;
 - the exact watermark/reserve percentages remain an implementation/load-test
@@ -435,11 +441,24 @@ delete accepted custody.
 
 ---
 
-## 12. Gateway -> Edge drain
+## 12. Gateway -> Edge durable bypass and backlog drain
 
-Initial Gateway -> Edge backlog drain is global oldest-first/FIFO.
+When Edge is online, the preferred write path is **write-around**:
 
-For each object:
+```text
+Tracker object
+  -> Gateway RAM / bounded in-flight state
+  -> Edge
+  -> authenticated exact-object Edge durable accept
+  -> Gateway may ACK tracker
+  -> no Gateway flash write
+```
+
+If that durable Edge accept is not obtained within the bounded in-flight policy,
+the Gateway falls back to its local custody store and only then becomes ACK-
+eligible after local durable commit/readback.
+
+Existing locally held backlog still drains global oldest-first/FIFO:
 
 ```text
 Gateway HELD
@@ -448,8 +467,11 @@ Gateway HELD
   -> Gateway may mark/reclaim
 ```
 
-A disconnect during transfer leaves the object held at the Gateway. A retry may
-produce a duplicate at Edge; idempotency/deduplication must make duplicates safe.
+A disconnect during either fast-path or backlog transfer never counts as durable
+acceptance. On the fast path the tracker simply remains responsible unless the
+Gateway falls back to local durable custody; on the backlog path the object stays
+HELD at the Gateway. A retry may produce a duplicate at Edge; idempotency/
+deduplication must make duplicates safe.
 
 Do not add a complex scheduler before measured need.
 
