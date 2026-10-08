@@ -165,10 +165,26 @@ bool inspectPageHeader(const uint8_t* bytes, size_t size,
     return true;
   }
 
-  for (uint32_t i = kPageHeaderActiveOffset + 4U; i < kPageHeaderSize; ++i) {
-    if (bytes[i] != 0xFFU) {
+  if (kind == PageKind::kControl) {
+    const uint32_t intent = get32(bytes + kControlIntentOffset);
+    const uint32_t retired = get32(bytes + kControlIntentRetiredOffset);
+    if (intent == 0xFFFFFFFFU && retired == 0xFFFFFFFFU) {
+      // No compaction has been initiated from this control generation.
+    } else if (intent == kControlIntent &&
+               (retired == 0xFFFFFFFFU || retired == 0U)) {
+      inspection.control_intent_present = true;
+      inspection.control_intent_retired = retired == 0U;
+    } else {
+      // A torn marker is not authorization to discard either page.
       inspection.evidence = PageEvidence::kCorrupt;
       return true;
+    }
+  } else {
+    for (uint32_t i = kControlIntentOffset; i < kPageHeaderSize; ++i) {
+      if (bytes[i] != 0xFFU) {
+        inspection.evidence = PageEvidence::kCorrupt;
+        return true;
+      }
     }
   }
 
