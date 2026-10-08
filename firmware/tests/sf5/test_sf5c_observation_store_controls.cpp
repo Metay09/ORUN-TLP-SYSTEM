@@ -583,6 +583,78 @@ static void testTornRetiredControlEraseRecoversWithoutAuthorityRollback() {
   }
 }
 
+static void testDamagedNewestControlAuthorityCannotRollbackAfterGenerationThree() {
+  ControlFakeFlash flash(6U);
+  ControlIncarnation incarnation;
+  ObservationStore store(flash, 6U, &incarnation);
+  assert(store.begin(0x94U));
+  initControl(store);
+  const osc::OpenOccurrence durable = occurrence(0xABCDU);
+  assert(store.requestPutOpenOccurrence(durable) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+
+  osc::OpenOccurrence transient = occurrence(0U);
+  transient.event_type = 2U;
+  // The first compaction leaves ACTIVE g=1 and ACTIVE g=2.
+  for (uint32_t i = 0U; i < 13U; ++i) {
+    transient.occurrence_id = 4000U + i;
+    assert(store.requestPutOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+    assert(store.requestClearOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+  }
+  assert(store.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store);
+  bool ok = false;
+  assert(store.takeControlMaintenanceResult(ok) && ok);
+
+  // The second compaction leaves ACTIVE g=2 on page 1 and ACTIVE g=3
+  // on page 0. The surviving alternative thus has generation > 1,
+  // exercising snapshot matching instead of the early generation guard.
+  for (uint32_t i = 0U; i < 13U; ++i) {
+    transient.occurrence_id = 5000U + i;
+    assert(store.requestPutOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+    assert(store.requestClearOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+  }
+  assert(store.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store);
+  assert(store.takeControlMaintenanceResult(ok) && ok);
+
+  const ControlFakeFlash identical = flash;
+  for (size_t prefix = 45U; prefix <= 48U; ++prefix) {
+    // Both pages still agree on all latest live controls.
+    ControlFakeFlash safe = identical;
+    memset(safe.bytes.data(), 0xFF, prefix);
+    ObservationStore same(safe, 6U, &incarnation);
+    assert(same.begin(0x94U) && !same.faulted());
+    osc::OpenOccurrence seen;
+    assert(same.findOpenOccurrence(durable, seen) ==
+           ObservationStore::ControlLookupResult::kFound);
+    assert(seen.occurrence_id == durable.occurrence_id);
+  }
+
+  osc::OpenOccurrence newest = occurrence(0xD00DU);
+  newest.event_type = 3U;
+  assert(store.requestPutOpenOccurrence(newest) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+  for (size_t prefix = 45U; prefix <= 48U; ++prefix) {
+    ControlFakeFlash lost_header = flash;
+    memset(lost_header.bytes.data(), 0xFF, prefix);
+    ObservationStore rollback(lost_header, 6U, &incarnation);
+    assert(rollback.begin(0x94U) && rollback.faulted());
+  }
+}
+
 static void testUnreconciledExactObjectCommitCannotBePublished() {
   ControlFakeFlash flash(6U);
   ControlIncarnation incarnation;
@@ -680,6 +752,7 @@ static void testEveryPublicReadRejectsUnreconciledMutation() {
 int main() {
   testControlCompactionResetMatrix();
   testTornRetiredControlEraseRecoversWithoutAuthorityRollback();
+  testDamagedNewestControlAuthorityCannotRollbackAfterGenerationThree();
   testUnreconciledExactObjectCommitCannotBePublished();
   testEveryPublicReadRejectsUnreconciledMutation();
   testExactObjectBoundAndReplacement();
