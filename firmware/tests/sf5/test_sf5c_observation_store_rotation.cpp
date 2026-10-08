@@ -153,12 +153,27 @@ static void prepareData(ObservationStore& store) {
   assert(store.takeMaintenanceResult(ok) && ok);
 }
 
+static uint8_t payloadSize(osf::RecordKind kind) {
+  switch (kind) {
+    case osf::RecordKind::kPeriodic:
+      return osf::kPeriodicPayloadSizeV1;
+    case osf::RecordKind::kEvent:
+      return osf::kEventPayloadSizeV1;
+    case osf::RecordKind::kResult:
+      return osf::kResultPayloadSizeV1;
+  }
+  return 0U;
+}
+
 static ObservationStore::Handle appendRecord(
     ObservationStore& store, osf::RecordKind kind, uint8_t seed) {
-  uint8_t payload[8];
-  for (unsigned i = 0; i < sizeof(payload); ++i)
+  uint8_t payload[osf::kDataPayloadSize];
+  const uint8_t size = payloadSize(kind);
+  assert(size != 0U);
+  memset(payload, 0, sizeof(payload));
+  for (unsigned i = 0; i < size; ++i)
     payload[i] = static_cast<uint8_t>(seed + i);
-  assert(store.requestAppend(kind, 1U, payload, sizeof(payload)) ==
+  assert(store.requestAppend(kind, 1U, payload, size) ==
          ObservationStore::AppendResult::kStarted);
   settle(store);
   bool ok = false;
