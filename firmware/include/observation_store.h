@@ -178,7 +178,9 @@ class ObservationStore {
     kHeaderCommit,
     kControlBody,
     kControlCommit,
+    kControlIntent,
     kControlEraseTarget,
+    kControlRetireIntent,
     kControlHeaderBody,
     kControlHeaderCommit,
     kControlCopyBody,
@@ -231,9 +233,6 @@ class ObservationStore {
   int findOldestDataPage() const;
   bool buildRotationIntent(uint16_t page, uint64_t new_generation,
                            osc::StoreState& state) const;
-  // Compare the effective committed control state when a damaged header
-  // no longer carries an independently verifiable generation.
-  bool sameLiveControlSnapshot(uint16_t a, uint16_t b) const;
   bool controlPayloadValid(const osf::ControlInspection& control) const;
   bool controlSameKey(const osf::ControlInspection& a,
                       const osf::ControlInspection& b) const;
@@ -314,6 +313,12 @@ class ObservationStore {
   uint16_t control_source_page_ = UINT16_MAX;
   uint16_t control_source_scan_slot_ = 0;
   uint16_t control_target_slot_ = 0;
+  // Recovered ACTIVE source with unretired intent must finish compaction;
+  // recovered ACTIVE target must retire its older source intent before writes.
+  bool control_compaction_resuming_ = false;
+  bool control_retirement_resuming_ = false;
+  uint16_t control_retire_source_page_ = UINT16_MAX;
+  Phase control_next_phase_ = Phase::kNone;
 
   osc::StoreState rotation_state_{};
   osc::StoreState rotation_complete_state_{};
