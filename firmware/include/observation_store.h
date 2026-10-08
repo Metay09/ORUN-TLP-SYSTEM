@@ -231,6 +231,9 @@ class ObservationStore {
   int findOldestDataPage() const;
   bool buildRotationIntent(uint16_t page, uint64_t new_generation,
                            osc::StoreState& state) const;
+  // Compare the effective committed control state when a damaged header
+  // no longer carries an independently verifiable generation.
+  bool sameLiveControlSnapshot(uint16_t a, uint16_t b) const;
   bool controlPayloadValid(const osf::ControlInspection& control) const;
   bool controlSameKey(const osf::ControlInspection& a,
                       const osf::ControlInspection& b) const;
