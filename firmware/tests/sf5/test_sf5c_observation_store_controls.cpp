@@ -173,6 +173,11 @@ static void testExactObjectBoundAndReplacement() {
   assert(store.requestPutExactObject(conflict) ==
          ObservationStore::ControlWriteResult::kRejected);
 
+  osc::ExactObject wrong_kind = first;
+  wrong_kind.record_kind = osf::RecordKind::kEvent;
+  assert(store.requestPutExactObject(wrong_kind) ==
+         ObservationStore::ControlWriteResult::kRejected);
+
   for (uint32_t seq = 2U; seq <= 4U; ++seq) {
     osc::ExactObject value = exact(seq, static_cast<uint8_t>(10U + seq));
     assert(store.requestPutExactObject(value) ==
@@ -183,18 +188,31 @@ static void testExactObjectBoundAndReplacement() {
   assert(store.requestPutExactObject(fifth) ==
          ObservationStore::ControlWriteResult::kNoCapacity);
 
+  // An unreleased record still owns the exact durable protected bytes.
   assert(store.requestClearExactObject(first.identity) ==
-         ObservationStore::ControlWriteResult::kStarted);
-  finishControlWrite(store);
+         ObservationStore::ControlWriteResult::kRejected);
+  assert(store.findExactObject(first.identity, found) ==
+         ObservationStore::ControlLookupResult::kFound);
+  assert(store.requestPutExactObject(conflict) ==
+         ObservationStore::ControlWriteResult::kRejected);
+
+  assert(store.requestRelease(first.identity));
+  settle(store);
+  bool release_ok = false;
+  assert(store.takeReleaseResult(release_ok) && release_ok);
   assert(store.findExactObject(first.identity, found) ==
          ObservationStore::ControlLookupResult::kNone);
+  assert(store.requestClearExactObject(first.identity) ==
+         ObservationStore::ControlWriteResult::kAlreadySatisfied);
 
-  assert(store.requestPutExactObject(conflict) ==
+  // The released logical record no longer occupies an exact-object cache slot.
+  assert(store.requestPutExactObject(fifth) ==
          ObservationStore::ControlWriteResult::kStarted);
   finishControlWrite(store);
-  assert(store.findExactObject(conflict.identity, found) ==
+  assert(store.findExactObject(fifth.identity, found) ==
          ObservationStore::ControlLookupResult::kFound);
-  assert(found.object[0] == conflict.object[0]);
+  assert(store.requestPutExactObject(conflict) ==
+         ObservationStore::ControlWriteResult::kRejected);
 }
 
 static void testOccurrenceAndResultConflictSurviveReboot() {
