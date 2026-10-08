@@ -1,15 +1,55 @@
 # SF5C — Portable ObservationStore
 
-Status: **SECOND INDEPENDENT RE-AUDIT FAIL (10d483c: 0 BLOCKER /
-1 HIGH / 1 MEDIUM / 1 LOW). RE-AUDIT REMEDIATION ON BRANCH; HOST/RAK RETEST
-AND THIRD INDEPENDENT AUDIT PENDING. PORTABLE STORAGE ONLY; NO nRF ADDRESS
-ALLOCATION, NO PRODUCTION RF CUTOVER, NO PHYSICAL PASS.**
+Status: **THIRD INDEPENDENT AUDIT FAIL (6e5c306: 0 BLOCKER /
+1 HIGH / 1 MEDIUM / 2 LOW). HIGH CONTROL-ERASE RECOVERY IS STILL OPEN.
+FOLLOW-UP SAFETY GUARD/REGRESSION-TEST COMMITS ARE NOT VALIDATED.
+PORTABLE STORAGE ONLY; NO nRF ADDRESS ALLOCATION, NO PRODUCTION RF
+CUTOVER, NO PHYSICAL PASS. DO NOT MERGE.**
 
 Baseline:
 `main@5b757966489e5fe221c05fe1cbf66ff7b1e602d5` (SF5B merged).
 
 Branch:
 `feat/sf5c-observation-store`.
+
+### 2026-10-08 — Third independent audit of `6e5c306`: FAIL
+
+Independent Astra review reported **0 BLOCKER / 1 HIGH / 1 MEDIUM / 2 LOW**
+with complete ASan/UBSan/-Werror host suite PASS and RAK4630 build PASS.
+The RAK image has no linked ObservationStore symbols, so the build proves no
+active runtime integration, not real flash durability. No physical test.
+
+- **HIGH OPEN:** aborted erases of stale/PREPARED control pages can leave a
+  suspected header whose generation/static CRC/activation proof was erased.
+  Rejecting it faults the whole store despite a valid current authority; simply
+  ignoring it can also roll back a corrupted newer ACTIVE authority. Prefix
+  lengths 49..4096 and copied PREPARED targets remain unhandled. Header-prefix
+  classification is not a reliable physical NVMC erase model.
+- **MEDIUM TEST GAP:** existing rollback fixture used surviving g=1 and never
+  called `sameLiveControlSnapshot()`; g=3/g=2 divergent authority cases and
+  snapshot bypass mutations lacked regression coverage.
+- **LOW #1:** treating pre-submission BUSY/token-timeout `kFailed` as an
+  unreconciled submitted write sacrifices availability; fail-closed remains
+  safer while FlashBackend cannot distinguish *never submitted* from a timed-out
+  accepted operation.
+- **LOW #2:** `begin()` while an async job is in flight discards the store's
+  pending-operation ownership; reject reinitialization until `poll()` settles.
+
+Unvalidated follow-up on same draft branch: guard `begin()` against in-flight
+jobs, add an async ownership regression, and exercise an actually divergent
+latest g=3 authority with surviving g=2 so removing snapshot matching must
+cause test failure. These do **NOT** close HIGH control-erase recovery.
+
+**Required H-1 design step:** persist a control-page erase/compaction intent
+*before* erasing its target and bind the intent to the current authoritative
+source and target. Make activation/intent retirement crash-safe so a stale
+intent cannot cause rollback of a newer active journal. Define marker/program
+partial-write semantics, source-vs-target arbitration, serial/custody invariants,
+and brown-out recovery under arbitrary (not just prefix) torn erases before
+coding a recovery shortcut. Exercise reset/power-cut at every phase, divergent
+newer authority, old/new control copies, and fully erased targets. Preserve
+frozen wire/golden fixtures. SF5D must physically qualify NVMC behavior and
+flash wear after this portable design passes independent review.
 
 ### 2026-10-08 — Re-audit of `10d483c` (NOT CLOSED)
 
