@@ -181,6 +181,8 @@ static void finishControlWrite(ObservationStore& store) {
   assert(store.takeControlWriteResult(ok) && ok);
 }
 
+static osc::ResultGuard resultGuard();
+
 static RotationFakeFlash makeFullStore(bool mixed_first_page) {
   RotationFakeFlash flash(4U);  // 2 control + 2 data pages.
   RotationIncarnation incarnation;
@@ -193,8 +195,13 @@ static RotationFakeFlash makeFullStore(bool mixed_first_page) {
     osf::RecordKind kind = osf::RecordKind::kPeriodic;
     if (mixed_first_page && i == osf::kDataRecordsPerPage - 1U)
       kind = osf::RecordKind::kEvent;
-    if (mixed_first_page && i == osf::kDataRecordsPerPage)
+    if (mixed_first_page && i == osf::kDataRecordsPerPage) {
       kind = osf::RecordKind::kResult;
+      const osc::ResultGuard guard = resultGuard();
+      assert(store.requestPutResultGuard(guard) ==
+             ObservationStore::ControlWriteResult::kStarted);
+      finishControlWrite(store);
+    }
     (void)appendRecord(store, kind, static_cast<uint8_t>(i));
   }
 
@@ -273,8 +280,7 @@ static void testOldestFirstRotationAndDurableGapState() {
 
   osc::ResultGuard guard = resultGuard();
   assert(store.requestPutResultGuard(guard) ==
-         ObservationStore::ControlWriteResult::kStarted);
-  finishControlWrite(store);
+         ObservationStore::ControlWriteResult::kAlreadySatisfied);
 
   assert(store.requestMaintenance() ==
          ObservationStore::MaintenanceResult::kStarted);
