@@ -841,6 +841,40 @@ static void testTornControlIntentWordRecoversBeforeAndAfterFirstCompaction() {
   }
 }
 
+static void testControlIntentHeaderFormatVectors() {
+  uint8_t header[osf::kPageHeaderSize];
+  osf::PageInspection decoded;
+  osf::encodePageHeader(osf::PageKind::kControl, 1U, 0x99U,
+                        0xAABBCCDDEEFF0011ULL, header);
+  osf::put32(header + osf::kPageHeaderActiveOffset, osf::kActive);
+  assert(osf::inspectPageHeader(header, sizeof(header), decoded));
+  assert(decoded.evidence == osf::PageEvidence::kActive);
+  assert(!decoded.control_intent_present && !decoded.control_intent_retired);
+
+  header[osf::kControlIntentOffset] = 0x7FU;  // One programmed bit.
+  assert(osf::inspectPageHeader(header, sizeof(header), decoded));
+  assert(decoded.evidence == osf::PageEvidence::kActive);
+  assert(decoded.control_intent_present && !decoded.control_intent_retired);
+
+  header[osf::kControlIntentRetiredOffset] = 0x7FU;
+  assert(osf::inspectPageHeader(header, sizeof(header), decoded));
+  assert(decoded.evidence == osf::PageEvidence::kActive);
+  assert(decoded.control_intent_present && decoded.control_intent_retired);
+
+  // A retirement marker without even a partial intent is not valid.
+  header[osf::kControlIntentOffset] = 0xFFU;
+  assert(osf::inspectPageHeader(header, sizeof(header), decoded));
+  assert(decoded.evidence == osf::PageEvidence::kCorrupt);
+
+  // The same two header words are reserved and MUST remain erased on data.
+  osf::encodePageHeader(osf::PageKind::kData, 1U, 0x99U,
+                        0xAABBCCDDEEFF0011ULL, header);
+  osf::put32(header + osf::kPageHeaderActiveOffset, osf::kActive);
+  header[osf::kControlIntentOffset] = 0x7FU;
+  assert(osf::inspectPageHeader(header, sizeof(header), decoded));
+  assert(decoded.evidence == osf::PageEvidence::kCorrupt);
+}
+
 static void testIntentAndRetirementRequirePhysicalReadback() {
   ControlFakeFlash baseline(6U);
   ControlIncarnation incarnation;
@@ -1092,6 +1126,7 @@ int main() {
   testDamagedNewestControlAuthorityCannotRollbackAfterGenerationThree();
   testControlIntentAcrossPreparedCopyAndSecondErase();
   testTornControlIntentWordRecoversBeforeAndAfterFirstCompaction();
+  testControlIntentHeaderFormatVectors();
   testIntentAndRetirementRequirePhysicalReadback();
   testHalfRetiredIntentResumesBeforeAllowingNewWrites();
   testUnreconciledExactObjectCommitCannotBePublished();
