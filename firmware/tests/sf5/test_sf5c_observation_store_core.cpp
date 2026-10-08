@@ -174,6 +174,55 @@ static ObservationStore::Handle appendOne(
   return handle;
 }
 
+static void prepareControl(ObservationStore& store) {
+  assert(store.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store);
+  bool success = false;
+  assert(store.takeControlMaintenanceResult(success) && success);
+}
+
+static void fillTwoDataPages(ObservationStore& store) {
+  prepareOne(store);
+  (void)appendOne(store, osf::RecordKind::kPeriodic, 1U);
+
+  assert(store.requestMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store);
+  bool maintenance_ok = false;
+  assert(store.takeMaintenanceResult(maintenance_ok) && maintenance_ok);
+
+  const uint32_t total =
+      2U * static_cast<uint32_t>(osf::kDataRecordsPerPage);
+  for (uint32_t sequence = 2U; sequence <= total; ++sequence)
+    (void)appendOne(store, osf::RecordKind::kPeriodic,
+                    static_cast<uint8_t>(sequence));
+}
+
+static void finishDataMaintenance(ObservationStore& store) {
+  for (unsigned pass = 0; pass < 4U; ++pass) {
+    const ObservationStore::MaintenanceResult result =
+        store.requestMaintenance();
+    if (result == ObservationStore::MaintenanceResult::kStarted) {
+      settle(store, 1000U);
+      bool success = false;
+      assert(store.takeMaintenanceResult(success) && success);
+      return;
+    }
+    if (result ==
+        ObservationStore::MaintenanceResult::kControlMaintenanceRequired) {
+      assert(store.requestControlMaintenance() ==
+             ObservationStore::MaintenanceResult::kStarted);
+      settle(store, 1000U);
+      bool success = false;
+      assert(store.takeControlMaintenanceResult(success) && success);
+      continue;
+    }
+    assert(false);
+  }
+  assert(false);
+}
+
 static void testBlankAppendReleaseRecovery() {
   FakeFlash flash(5U);  // 2 control + 3 data pages.
   FixedIncarnation source(0x1122334455667788ULL);
@@ -330,7 +379,123 @@ static void testReadFailureFailsClosed() {
          ObservationStore::LookupResult::kReadError);
 }
 
+static void testOldestFirstRotationPersistsCapacityLoss() {
+  FakeFlash flash(4U);  // 2 control + 2 data pages.
+  FixedIncarnation source(0x445566778899AABBULL);
+  ObservationStore store(flash, 4U, &source);
+  assert(store.begin(0x55U));
+  prepareControl(store);
+  fillTwoDataPages(store);
+
+  osf::RecordIdentity first;
+  first.incarnation = source.value_;
+  first.sequence = 1U;
+  assert(store.requestRelease(first));
+  settle(store);
+  bool release_ok = false;
+  assert(store.takeReleaseResult(release_ok) && release_ok);
+
+  // Rotation is required only after the active page is full and no erased
+  // data page remains. The oldest page contains seq 1..42; seq 1 was already
+  // released, so only 41 records are capacity loss.
+  assert(store.requestMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store, 1000U);
+  bool maintenance_ok = false;
+  assert(store.takeMaintenanceResult(maintenance_ok) && maintenance_ok);
+  assert(store.hasPreparedDataPage());
+  assert(store.diagnostics().pages_reclaimed == 1U);
+  assert(store.diagnostics().capacity_lost_total ==
+         osf::kDataRecordsPerPage - 1U);
+  assert(store.diagnostics().capacity_lost_periodic ==
+         osf::kDataRecordsPerPage - 1U);
+  assert(store.diagnostics().capacity_lost_event == 0U);
+  assert(store.diagnostics().capacity_lost_result == 0U);
+
+  ObservationStore::Record record;
+  assert(store.lookup(first, record) ==
+         ObservationStore::LookupResult::kNone);
+  assert(store.oldestRetained(record) ==
+         ObservationStore::LookupResult::kFound);
+  assert(record.handle.identity.sequence ==
+         osf::kDataRecordsPerPage + 1U);
+
+  const ObservationStore::Handle next =
+      appendOne(store, osf::RecordKind::kPeriodic, 90U);
+  assert(next.identity.sequence ==
+         2U * osf::kDataRecordsPerPage + 1U);
+
+  ObservationStore reboot(flash, 4U, &source);
+  assert(reboot.begin(0x55U));
+  assert(reboot.ready() && !reboot.faulted());
+  assert(reboot.diagnostics().capacity_lost_total ==
+         osf::kDataRecordsPerPage - 1U);
+  assert(reboot.diagnostics().capacity_lost_periodic ==
+         osf::kDataRecordsPerPage - 1U);
+  osf::RecordIdentity identity;
+  assert(reboot.peekNextIdentity(identity));
+  assert(identity.sequence ==
+         2U * osf::kDataRecordsPerPage + 2U);
+}
+
+static void testRotationPowerCutRecoveryMatrix() {
+  FakeFlash baseline_flash(4U);
+  FixedIncarnation baseline_source(0x1122000011112222ULL);
+  ObservationStore baseline(baseline_flash, 4U, &baseline_source);
+  assert(baseline.begin(0x66U));
+  prepareControl(baseline);
+  fillTwoDataPages(baseline);
+
+  const std::vector<uint8_t> image = baseline_flash.bytes;
+
+  // Synchronous rotation has seven durable transitions:
+  // intent body, intent commit, erase, page-header body, page-header commit,
+  // completion body, completion commit. Reboot after each pre-completion
+  // transition and require deterministic recovery.
+  for (unsigned cut_after_polls = 1U; cut_after_polls <= 6U;
+       ++cut_after_polls) {
+    FakeFlash flash(4U);
+    flash.bytes = image;
+    FixedIncarnation source(0x1122000011112222ULL);
+
+    {
+      ObservationStore store(flash, 4U, &source);
+      assert(store.begin(0x66U));
+      assert(store.requestMaintenance() ==
+             ObservationStore::MaintenanceResult::kStarted);
+      for (unsigned i = 0; i < cut_after_polls; ++i) {
+        assert(store.busy());
+        store.poll();
+      }
+    }  // simulated power cut / reset
+
+    ObservationStore reboot(flash, 4U, &source);
+    assert(reboot.begin(0x66U));
+    assert(reboot.ready() && !reboot.faulted());
+    finishDataMaintenance(reboot);
+    assert(reboot.hasPreparedDataPage());
+    assert(reboot.diagnostics().capacity_lost_total ==
+           osf::kDataRecordsPerPage);
+    assert(reboot.diagnostics().capacity_lost_periodic ==
+           osf::kDataRecordsPerPage);
+
+    ObservationStore second_reboot(flash, 4U, &source);
+    assert(second_reboot.begin(0x66U));
+    assert(second_reboot.ready() && !second_reboot.faulted());
+    assert(second_reboot.diagnostics().capacity_lost_total ==
+           osf::kDataRecordsPerPage);
+
+    ObservationStore::Record oldest;
+    assert(second_reboot.oldestRetained(oldest) ==
+           ObservationStore::LookupResult::kFound);
+    assert(oldest.handle.identity.sequence ==
+           osf::kDataRecordsPerPage + 1U);
+  }
+}
+
 int main() {
+  testOldestFirstRotationPersistsCapacityLoss();
+  testRotationPowerCutRecoveryMatrix();
   testBlankAppendReleaseRecovery();
   testCommitReportedFailureReconciles();
   testTornReleaseUsesSecondMarker();
