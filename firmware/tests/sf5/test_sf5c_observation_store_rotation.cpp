@@ -323,9 +323,11 @@ static void testOldestFirstRotationAndDurableGapState() {
   guard_key.opcode = 0U;
   guard_key.result_identity = osf::RecordIdentity();
   osc::ResultGuard recovered_guard;
+  // RESULT guard retention is bounded with the retained RESULT row. Once the
+  // historical RESULT is capacity-reclaimed, delegated replay/CAS state—not
+  // an unbounded command-id journal—remains authoritative.
   assert(store.findResultGuard(guard_key, recovered_guard) ==
-         ObservationStore::ControlLookupResult::kFound);
-  assert(recovered_guard.command_id == guard.command_id);
+         ObservationStore::ControlLookupResult::kNone);
 
   osf::RecordIdentity next;
   assert(store.peekNextIdentity(next));
@@ -344,7 +346,7 @@ static void testOldestFirstRotationAndDurableGapState() {
   assert(reboot.findOpenOccurrence(open_key, recovered_open) ==
          ObservationStore::ControlLookupResult::kFound);
   assert(reboot.findResultGuard(guard_key, recovered_guard) ==
-         ObservationStore::ControlLookupResult::kFound);
+         ObservationStore::ControlLookupResult::kNone);
 }
 
 static void resumeAndVerify(RotationFakeFlash& flash) {
