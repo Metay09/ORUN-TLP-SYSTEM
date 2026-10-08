@@ -264,6 +264,9 @@ class ObservationStore {
   void finishControlWrite(bool success);
   void finishControlMaintenance(bool success);
   void failCurrentJob();
+  bool mutationUncertain() const {
+    return mutation_outcome_uncertain_ || flash_.hasUnreconciledMutation();
+  }
 
   FlashBackend& flash_;
   uint16_t page_count_ = 0;
@@ -272,6 +275,7 @@ class ObservationStore {
   bool ready_ = false;
   bool faulted_ = false;
   bool flash_op_awaiting_completion_ = false;
+  bool mutation_outcome_uncertain_ = false;
   uint64_t device_id_ = 0;
   uint64_t incarnation_ = 0;
   uint32_t next_sequence_ = 1U;
