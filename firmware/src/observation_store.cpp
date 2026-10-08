@@ -1148,6 +1148,11 @@ ObservationStore::ControlWriteResult ObservationStore::requestPutExactObject(
   if (!osc::encodeExactObject(value, payload))
     return ControlWriteResult::kRejected;
 
+  Record backing;
+  const LookupResult backing_result = findRecord(value.identity, backing);
+  if (backing_result != LookupResult::kFound || backing.released)
+    return ControlWriteResult::kRejected;
+
   osf::ControlInspection existing;
   const ControlLookupResult lookup =
       findLatestControl(osf::ControlKind::kExactObject,
