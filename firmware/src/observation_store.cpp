@@ -1595,6 +1595,11 @@ ObservationStore::LookupResult ObservationStore::findRecord(
       best.schema = record.schema;
       best.payload_size = record.payload_size;
       best.released = record.evidence == osf::RecordEvidence::kReleased;
+      best.release_uncertain = record.release_uncertain;
+      best.release_marker_exhausted =
+          record.evidence == osf::RecordEvidence::kRetained &&
+          record.release_uncertain &&
+          record.next_release_slot == UINT8_MAX;
       memcpy(best.payload, record.payload, sizeof(best.payload));
     }
   }
@@ -1644,6 +1649,10 @@ ObservationStore::LookupResult ObservationStore::oldestRetained(
         best.schema = record.schema;
         best.payload_size = record.payload_size;
         best.released = false;
+        best.release_uncertain = record.release_uncertain;
+        best.release_marker_exhausted =
+            record.release_uncertain &&
+            record.next_release_slot == UINT8_MAX;
         memcpy(best.payload, record.payload, sizeof(best.payload));
       }
     }
