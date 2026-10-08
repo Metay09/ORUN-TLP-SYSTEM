@@ -505,24 +505,37 @@ static void testTornRetiredControlEraseRecoversWithoutAuthorityRollback() {
 
   assert(store.requestControlMaintenance() ==
          ObservationStore::MaintenanceResult::kStarted);
-  // Interrupted erase of the stale target page 0, first 16 header bytes.
-  memset(flash.bytes.data(), 0xFF, 16U);
-  ObservationStore reboot(flash, 6U, &incarnation);
-  assert(reboot.begin(0x91U) && !reboot.faulted());
-  osc::OpenOccurrence recovered;
   osc::OpenOccurrence key = durable;
   key.occurrence_id = 0U;
-  assert(reboot.findOpenOccurrence(key, recovered) ==
-         ObservationStore::ControlLookupResult::kFound);
-  assert(recovered.occurrence_id == durable.occurrence_id);
-  assert(reboot.requestControlMaintenance() ==
-         ObservationStore::MaintenanceResult::kStarted);
-  settle(reboot);
-  assert(reboot.takeControlMaintenanceResult(ok) && ok);
-  ObservationStore second_boot(flash, 6U, &incarnation);
-  assert(second_boot.begin(0x91U) && !second_boot.faulted());
-  assert(second_boot.findOpenOccurrence(key, recovered) ==
-         ObservationStore::ControlLookupResult::kFound);
+
+  // Each interrupted prefix retains the complete authoritative static CRC;
+  // recovery must retain the g=2 journal and safely resume target erase.
+  for (size_t prefix = 4U; prefix <= osf::kPageStaticCrcOffset;
+       prefix += 4U) {
+    ControlFakeFlash torn = flash;
+    memset(torn.bytes.data(), 0xFF, prefix);
+    ObservationStore reboot(torn, 6U, &incarnation);
+    assert(reboot.begin(0x91U) && !reboot.faulted());
+    osc::OpenOccurrence recovered;
+    assert(reboot.findOpenOccurrence(key, recovered) ==
+           ObservationStore::ControlLookupResult::kFound);
+    assert(recovered.occurrence_id == durable.occurrence_id);
+    assert(reboot.requestControlMaintenance() ==
+           ObservationStore::MaintenanceResult::kStarted);
+    settle(reboot);
+    assert(reboot.takeControlMaintenanceResult(ok) && ok);
+    ObservationStore second_boot(torn, 6U, &incarnation);
+    assert(second_boot.begin(0x91U) && !second_boot.faulted());
+    assert(second_boot.findOpenOccurrence(key, recovered) ==
+           ObservationStore::ControlLookupResult::kFound);
+  }
+
+  // Losing the old header CRC destroys proof that it was a stale page.
+  ControlFakeFlash missing_proof = flash;
+  memset(missing_proof.bytes.data(), 0xFF,
+         osf::kPageStaticCrcOffset + 4U);
+  ObservationStore ambiguous(missing_proof, 6U, &incarnation);
+  assert(ambiguous.begin(0x91U) && ambiguous.faulted());
 }
 
 static void testUnreconciledExactObjectCommitCannotBePublished() {
