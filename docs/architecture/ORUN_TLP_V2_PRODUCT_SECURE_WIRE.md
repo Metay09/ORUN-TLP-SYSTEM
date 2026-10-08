@@ -235,32 +235,71 @@ normally sent twice as "live now, custody later"**. Their normal first protected
 transmission into a custody-capable path uses `CUSTODY_REQUESTED=1`.
 
 The Gateway uses a **durable downstream bypass first, local flash fallback
-second** policy:
+second** policy. This is a normative product invariant:
+
+> **If an authenticated exact-object Edge durable-accept proof is verified
+> before local custody fallback begins, Gateway MUST NOT write that object to
+> Gateway flash. If such proof is absent, timed out, failed or uncertain,
+> Gateway MUST persist the exact object locally before tracker release.**
 
 ```text
 receive exact protected object
-  -> if an Edge is currently usable:
-       forward exact object without committing Gateway flash
+  -> FAST_EDGE_PENDING
+       send exact object to Edge
        wait for authenticated exact-object EDGE_DURABLE_ACCEPT
-       if verified: issue GATEWAY_CUSTODY_ACK to tracker
-                    (Gateway flash stays untouched)
-  -> otherwise / timeout / uncertain Edge outcome:
-       commit exact object to Gateway custody flash
-       read/verify durable state
-       issue GATEWAY_CUSTODY_ACK to tracker
+
+       verified before fallback starts
+         -> do NOT write Gateway flash
+         -> issue GATEWAY_CUSTODY_ACK
+         -> tracker may release
+
+       timeout / disconnect / reject / uncertain outcome
+         -> LOCAL_CUSTODY_PENDING
+         -> commit exact object to Gateway flash
+         -> read/verify durable state
+         -> issue GATEWAY_CUSTODY_ACK
+         -> tracker may release
 ```
+
+Exactly one durable fact is required for honest ACK eligibility:
+
+```text
+EDGE_DURABLE_ACCEPT(exact object)
+OR
+GATEWAY_LOCAL_DURABLE_COMMIT(exact object)
+```
+
+A transport-level success is not a third option.
 
 "Edge usable" never means BLE/TCP/Wi-Fi connected, socket write succeeded or RAM
 receive completed. The bypass is allowed only after the next owner has durably
 accepted the exact object and the Gateway has authenticated that acceptance.
 
+The fast path is deliberately bounded and single-owner:
+
+- only bounded in-flight RAM state may exist before one of the two durable facts
+  above becomes authoritative;
+- once `LOCAL_CUSTODY_PENDING` starts, the Gateway does not cancel or rewrite
+  that flash mutation merely because a late Edge durable-accept arrives;
+- a late Edge durable-accept may create a safe downstream duplicate, but the
+  pending local flash operation must first reach a known reconciled state;
+- tracker ACK is never emitted while the Gateway's own flash mutation outcome is
+  unknown;
+- no second local flash append is started for the same exact object while one is
+  pending.
+
+This prevents a connectivity race from becoming double-write, ownership or
+commit-unknown ambiguity.
+
 Thus `GATEWAY_CUSTODY_ACK` is the tracker-facing proof that responsibility has
-left the tracker into the Gateway-controlled durable chain. Honest Gateway
-issuance requires **either**:
+left the tracker into the Gateway-controlled durable chain. Honest Gateway issuance requires **either**:
 
 1. the exact object is durably held in Gateway custody flash; **or**
 2. an authenticated exact-object Edge durable-accept proof has already moved
    responsibility to Edge.
+
+If condition 2 is true before local fallback begins, condition 1 is intentionally
+not performed for that object. This is the normal connected-path wear policy.
 
 The same protected object may be forwarded onward immediately in either case.
 This write-around fast path reduces Gateway flash wear and queue pressure while
