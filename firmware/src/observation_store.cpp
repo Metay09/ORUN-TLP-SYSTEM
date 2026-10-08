@@ -5,6 +5,9 @@
 namespace orun_tlp {
 namespace {
 
+constexpr uint8_t kControlSchemaActive = 1U;
+constexpr uint8_t kControlSchemaTombstone = 2U;
+
 bool sameIdentity(const osf::RecordIdentity& a,
                   const osf::RecordIdentity& b) {
   return a.incarnation == b.incarnation && a.sequence == b.sequence;
