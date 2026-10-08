@@ -6,10 +6,12 @@
 #include "flash_backend.h"
 #include "observation_incarnation_source.h"
 #include "observation_store_format.h"
+#include "observation_store_control.h"
 
 namespace orun_tlp {
 
 namespace osf = observation_store_format;
+namespace osc = observation_store_control;
 
 class ObservationStore {
  public:
@@ -45,6 +47,14 @@ class ObservationStore {
     uint32_t release_marker_exhausted = 0;
     uint32_t pages_prepared = 0;
     uint32_t pages_activated = 0;
+    uint32_t control_recovered_active = 0;
+    uint32_t control_recovered_tombstones = 0;
+    uint32_t control_staged_records = 0;
+    uint32_t control_partial_commits = 0;
+    uint32_t control_writes_started = 0;
+    uint32_t control_writes_committed = 0;
+    uint32_t control_write_failures = 0;
+    uint32_t control_pages_compacted = 0;
     uint32_t unreconciled_mutation_faults = 0;
   };
 
@@ -61,6 +71,18 @@ class ObservationStore {
     kRejected
   };
   enum class LookupResult : uint8_t { kFound, kNone, kReadError };
+  enum class ControlWriteResult : uint8_t {
+    kStarted,
+    kAlreadySatisfied,
+    kNoCapacity,
+    kBusy,
+    kRejected
+  };
+  enum class ControlLookupResult : uint8_t {
+    kFound,
+    kNone,
+    kReadError
+  };
 
   ObservationStore(FlashBackend& backend, uint16_t page_count,
                    ObservationIncarnationSource* incarnation_source)
@@ -101,8 +123,41 @@ class ObservationStore {
   bool retainedCount(uint32_t& count) const;
   bool releasedCount(uint32_t& count) const;
 
+  // Bounded durable control state. These operations use an append-only
+  // control journal; logical deletion is a tombstone record, not an in-place
+  // rewrite of the authoritative payload.
+  MaintenanceResult requestControlMaintenance();
+  bool takeControlMaintenanceResult(bool& success);
+
+  ControlWriteResult requestPutExactObject(const osc::ExactObject& value);
+  ControlWriteResult requestClearExactObject(
+      const osf::RecordIdentity& identity);
+  ControlLookupResult findExactObject(
+      const osf::RecordIdentity& identity, osc::ExactObject& value) const;
+
+  ControlWriteResult requestPutOpenOccurrence(
+      const osc::OpenOccurrence& value);
+  ControlWriteResult requestClearOpenOccurrence(
+      const osc::OpenOccurrence& key);
+  ControlLookupResult findOpenOccurrence(
+      const osc::OpenOccurrence& key, osc::OpenOccurrence& value) const;
+
+  ControlWriteResult requestPutResultGuard(const osc::ResultGuard& value);
+  ControlWriteResult requestClearResultGuard(const osc::ResultGuard& key);
+  ControlLookupResult findResultGuard(
+      const osc::ResultGuard& key, osc::ResultGuard& value) const;
+
+  bool takeControlWriteResult(bool& success);
+
  private:
-  enum class Job : uint8_t { kNone, kAppend, kRelease, kMaintenance };
+  enum class Job : uint8_t {
+    kNone,
+    kAppend,
+    kRelease,
+    kMaintenance,
+    kControlWrite,
+    kControlMaintenance
+  };
   enum class Phase : uint8_t {
     kNone,
     kActivatePage,
@@ -111,6 +166,14 @@ class ObservationStore {
     kReleaseMarker,
     kHeaderBody,
     kHeaderCommit,
+    kControlBody,
+    kControlCommit,
+    kControlEraseTarget,
+    kControlHeaderBody,
+    kControlHeaderCommit,
+    kControlCopyBody,
+    kControlCopyCommit,
+    kControlActivate,
   };
 
   struct PageSummary {
@@ -127,25 +190,50 @@ class ObservationStore {
     return pageOffset(page) + osf::kPageHeaderSize +
            uint32_t(slot) * osf::kDataRecordSize;
   }
+  uint32_t controlOffset(uint16_t page, uint16_t slot) const {
+    return pageOffset(page) + osf::kPageHeaderSize +
+           uint32_t(slot) * osf::kControlRecordSize;
+  }
 
   bool recover();
   bool readPage(uint16_t page, osf::PageInspection& inspection) const;
   bool readRecord(uint16_t page, uint16_t slot,
                   osf::RecordInspection& inspection) const;
+  bool readControl(uint16_t page, uint16_t slot,
+                   osf::ControlInspection& inspection) const;
   bool pageAllErased(uint16_t page) const;
   bool pagePayloadErased(uint16_t page) const;
   bool pageGenerationMatches(uint16_t page, uint64_t generation) const;
   bool findAppendSlot(uint16_t& page, uint16_t& slot,
                       bool& needs_activation) const;
   int findErasedDataPage() const;
+  int findEmptyControlSlot() const;
+  bool controlPayloadValid(const osf::ControlInspection& control) const;
+  bool controlSameKey(const osf::ControlInspection& a,
+                      const osf::ControlInspection& b) const;
+  bool controlIsLatest(uint16_t slot,
+                       const osf::ControlInspection& control) const;
+  ControlLookupResult findLatestControl(
+      osf::ControlKind kind, const uint8_t* key_payload, size_t key_size,
+      osf::ControlInspection& out) const;
+  uint16_t activeControlCount(osf::ControlKind kind,
+                              bool& read_ok) const;
+  ControlWriteResult requestControlWrite(
+      osf::ControlKind kind, uint8_t schema,
+      const uint8_t* payload, size_t payload_size);
+  bool prepareNextControlCopy();
+  bool controlCopyFinished() const;
   LookupResult findRecord(const osf::RecordIdentity& identity,
                           Record& out) const;
   bool countByRelease(bool released, uint32_t& count) const;
 
   FlashOpResult programStep(uint32_t offset, const void* data, size_t size);
+  FlashOpResult eraseStep(uint16_t page);
   void finishAppend(bool success);
   void finishRelease(bool success);
   void finishMaintenance(bool success);
+  void finishControlWrite(bool success);
+  void finishControlMaintenance(bool success);
   void failCurrentJob();
 
   FlashBackend& flash_;
@@ -161,6 +249,9 @@ class ObservationStore {
   uint64_t max_data_generation_ = 0;
   int active_data_page_ = -1;
   int prepared_data_page_ = -1;
+  int active_control_page_ = -1;
+  uint64_t active_control_generation_ = 0;
+  uint64_t next_control_serial_ = 1U;
 
   Diagnostics diagnostics_{};
   Job job_ = Job::kNone;
@@ -178,6 +269,16 @@ class ObservationStore {
   uint8_t record_blob_[osf::kDataRecordSize]{};
   uint8_t page_blob_[osf::kPageHeaderSize]{};
 
+  osf::ControlKind pending_control_kind_ = osf::ControlKind::kExactObject;
+  uint8_t pending_control_schema_ = 0;
+  uint16_t pending_control_payload_size_ = 0;
+  uint64_t pending_control_serial_ = 0;
+  uint8_t pending_control_payload_[osf::kControlPayloadSize]{};
+  uint8_t control_blob_[osf::kControlRecordSize]{};
+  uint16_t control_source_page_ = UINT16_MAX;
+  uint16_t control_source_scan_slot_ = 0;
+  uint16_t control_target_slot_ = 0;
+
   bool append_result_ready_ = false;
   bool append_result_success_ = false;
   Handle append_result_handle_{};
@@ -185,6 +286,10 @@ class ObservationStore {
   bool release_result_success_ = false;
   bool maintenance_result_ready_ = false;
   bool maintenance_result_success_ = false;
+  bool control_write_result_ready_ = false;
+  bool control_write_result_success_ = false;
+  bool control_maintenance_result_ready_ = false;
+  bool control_maintenance_result_success_ = false;
 };
 
 }  // namespace orun_tlp
