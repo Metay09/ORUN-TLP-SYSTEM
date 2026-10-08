@@ -57,8 +57,11 @@ struct StoreState {
   uint16_t target_page = UINT16_MAX;
   uint64_t target_old_generation = 0;
   uint64_t target_new_generation = 0;
-  uint32_t first_lost_sequence = 0;
-  uint32_t last_lost_sequence = 0;
+  // Sequence range physically retired by the latest page rotation. It may
+  // include already-released records; capacity-loss counters identify which
+  // retired records were still tracker responsibility.
+  uint32_t first_retired_sequence = 0;
+  uint32_t last_retired_sequence = 0;
 };
 
 bool encodeExactObject(const ExactObject& value,
