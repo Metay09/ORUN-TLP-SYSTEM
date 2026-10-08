@@ -734,6 +734,95 @@ static void testControlIntentAcrossPreparedCopyAndSecondErase() {
   }
 }
 
+static void testTornControlIntentWordRecoversBeforeAndAfterFirstCompaction() {
+  // 0: first compaction, fresh alternate page. 1: second compaction,
+  // where the alternate page still holds the retired prior generation.
+  for (unsigned generation = 0U; generation < 2U; ++generation) {
+    ControlFakeFlash flash(6U);
+    ControlIncarnation incarnation;
+    ObservationStore seed(flash, 6U, &incarnation);
+    assert(seed.begin(0x97U));
+    initControl(seed);
+    const osc::OpenOccurrence durable = occurrence(0xC0DEU);
+    assert(seed.requestPutOpenOccurrence(durable) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(seed);
+    osc::OpenOccurrence transient = occurrence(0U);
+    transient.event_type = 2U;
+    for (unsigned cycle = 0U; cycle <= generation; ++cycle) {
+      for (uint32_t i = 0U; i < 13U; ++i) {
+        transient.occurrence_id = 9000U + 100U * cycle + i;
+        assert(seed.requestPutOpenOccurrence(transient) ==
+               ObservationStore::ControlWriteResult::kStarted);
+        finishControlWrite(seed);
+        assert(seed.requestClearOpenOccurrence(transient) ==
+               ObservationStore::ControlWriteResult::kStarted);
+        finishControlWrite(seed);
+      }
+      if (cycle < generation) {
+        assert(seed.requestControlMaintenance() ==
+               ObservationStore::MaintenanceResult::kStarted);
+        settle(seed);
+        bool completed = false;
+        assert(seed.takeControlMaintenanceResult(completed) && completed);
+      }
+    }
+
+    const uint32_t source_offset =
+        generation * osf::kPageSize + osf::kControlIntentOffset;
+    const uint8_t marker[4] = {0x4FU, 0x42U, 0x43U, 0x49U};
+    assert(osf::erased(flash.bytes.data() + source_offset, 4U));
+    // All 14 nonempty, proper subsets of programmed marker bytes, plus
+    // one bit-cleared partial word. Never reprogram the torn NVMC word.
+    for (unsigned cut = 1U; cut <= 15U; ++cut) {
+      ControlFakeFlash torn = flash;
+      for (unsigned byte = 0U; byte < 4U; ++byte) {
+        if ((cut & (1U << byte)) != 0U)
+          torn.bytes[source_offset + byte] = marker[byte];
+      }
+      if (cut == 15U) {
+        memset(torn.bytes.data() + source_offset, 0xFF, 4U);
+        torn.bytes[source_offset] = 0x7FU;  // Only bit 7 programmed.
+      }
+      const uint8_t before[4] = {
+          torn.bytes[source_offset], torn.bytes[source_offset + 1U],
+          torn.bytes[source_offset + 2U], torn.bytes[source_offset + 3U]};
+
+      ObservationStore recovered(torn, 6U, &incarnation);
+      assert(recovered.begin(0x97U) && !recovered.faulted());
+      osc::OpenOccurrence found;
+      assert(recovered.findOpenOccurrence(durable, found) ==
+             ObservationStore::ControlLookupResult::kFound);
+      assert(found.occurrence_id == durable.occurrence_id);
+      osc::OpenOccurrence new_event = occurrence(0xBABEU);
+      new_event.event_type = 3U;
+      assert(recovered.requestPutOpenOccurrence(new_event) ==
+             ObservationStore::ControlWriteResult::kRejected);
+      assert(recovered.requestMaintenance() ==
+             ObservationStore::MaintenanceResult::kRejected);
+
+      assert(recovered.requestControlMaintenance() ==
+             ObservationStore::MaintenanceResult::kStarted);
+      recovered.poll();  // target mutation begins only on recovery.
+      ObservationStore second_boot(torn, 6U, &incarnation);
+      assert(second_boot.begin(0x97U) && !second_boot.faulted());
+      assert(second_boot.requestControlMaintenance() ==
+             ObservationStore::MaintenanceResult::kStarted);
+      settle(second_boot);
+      bool completed = false;
+      assert(second_boot.takeControlMaintenanceResult(completed) && completed);
+      // The once-programmed intent word must remain bit-for-bit untouched.
+      assert(memcmp(torn.bytes.data() + source_offset, before, 4U) == 0);
+
+      ObservationStore final_boot(torn, 6U, &incarnation);
+      assert(final_boot.begin(0x97U) && !final_boot.faulted());
+      assert(final_boot.findOpenOccurrence(durable, found) ==
+             ObservationStore::ControlLookupResult::kFound);
+      assert(found.occurrence_id == durable.occurrence_id);
+    }
+  }
+}
+
 static void testHalfRetiredIntentResumesBeforeAllowingNewWrites() {
   ControlFakeFlash flash(6U);
   ControlIncarnation incarnation;
@@ -911,6 +1000,7 @@ int main() {
   testTornRetiredControlEraseRecoversWithoutAuthorityRollback();
   testDamagedNewestControlAuthorityCannotRollbackAfterGenerationThree();
   testControlIntentAcrossPreparedCopyAndSecondErase();
+  testTornControlIntentWordRecoversBeforeAndAfterFirstCompaction();
   testHalfRetiredIntentResumesBeforeAllowingNewWrites();
   testUnreconciledExactObjectCommitCannotBePublished();
   testEveryPublicReadRejectsUnreconciledMutation();
