@@ -287,6 +287,8 @@ static void testResultGuardReservesIdentityAcrossReset() {
   assert(store.requestPutResultGuard(guard) ==
          ObservationStore::ControlWriteResult::kStarted);
   finishControlWrite(store);
+  assert(store.requestClearResultGuard(guard) ==
+         ObservationStore::ControlWriteResult::kRejected);
 
   uint8_t periodic_payload[osf::kPeriodicPayloadSizeV1];
   memset(periodic_payload, 0x11, sizeof(periodic_payload));
@@ -305,6 +307,8 @@ static void testResultGuardReservesIdentityAcrossReset() {
   assert(reboot.findResultGuard(key, recovered) ==
          ObservationStore::ControlLookupResult::kFound);
   assert(recovered.result_identity.sequence == 1U);
+  assert(reboot.requestClearResultGuard(key) ==
+         ObservationStore::ControlWriteResult::kRejected);
 
   assert(reboot.peekNextIdentity(next));
   assert(next.sequence == 1U);
@@ -322,6 +326,8 @@ static void testResultGuardReservesIdentityAcrossReset() {
 
   assert(reboot.requestPutResultGuard(guard) ==
          ObservationStore::ControlWriteResult::kAlreadySatisfied);
+  assert(reboot.requestClearResultGuard(key) ==
+         ObservationStore::ControlWriteResult::kRejected);
 
   osc::ResultGuard conflict = guard;
   conflict.tracking_interval_seconds = 300U;
