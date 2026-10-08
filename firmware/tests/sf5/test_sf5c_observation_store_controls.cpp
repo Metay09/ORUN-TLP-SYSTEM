@@ -250,6 +250,69 @@ static void testOccurrenceAndResultConflictSurviveReboot() {
   finishControlWrite(reboot);
 }
 
+static void testResultGuardReservesIdentityAcrossReset() {
+  ControlFakeFlash flash(6U);
+  ControlIncarnation incarnation;
+  ObservationStore store(flash, 6U, &incarnation);
+  assert(store.begin(0x44U));
+  initControl(store);
+  initData(store);
+
+  osf::RecordIdentity next;
+  assert(store.peekNextIdentity(next));
+  assert(next.sequence == 1U);
+
+  osc::ResultGuard guard = resultGuard(0x1234U, next.sequence);
+  assert(store.requestPutResultGuard(guard) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+
+  uint8_t periodic_payload[1] = {1U};
+  assert(store.requestAppend(osf::RecordKind::kPeriodic, 1U,
+                             periodic_payload, sizeof(periodic_payload)) ==
+         ObservationStore::AppendResult::kBusy);
+
+  ObservationStore reboot(flash, 6U, &incarnation);
+  assert(reboot.begin(0x44U));
+  assert(!reboot.faulted());
+
+  osc::ResultGuard key = guard;
+  key.opcode = 0U;
+  key.result_identity = osf::RecordIdentity();
+  osc::ResultGuard recovered;
+  assert(reboot.findResultGuard(key, recovered) ==
+         ObservationStore::ControlLookupResult::kFound);
+  assert(recovered.result_identity.sequence == 1U);
+
+  assert(reboot.peekNextIdentity(next));
+  assert(next.sequence == 1U);
+
+  uint8_t result_payload[4] = {7U, 8U, 9U, 10U};
+  assert(reboot.requestAppend(osf::RecordKind::kResult, 1U,
+                              result_payload, sizeof(result_payload)) ==
+         ObservationStore::AppendResult::kStarted);
+  settle(reboot);
+  bool append_ok = false;
+  ObservationStore::Handle result_handle;
+  assert(reboot.takeAppendResult(append_ok, result_handle) && append_ok);
+  assert(result_handle.identity.sequence == 1U);
+
+  assert(reboot.requestPutResultGuard(guard) ==
+         ObservationStore::ControlWriteResult::kAlreadySatisfied);
+
+  osc::ResultGuard conflict = guard;
+  conflict.tracking_interval_seconds = 300U;
+  assert(reboot.requestPutResultGuard(conflict) ==
+         ObservationStore::ControlWriteResult::kRejected);
+
+  assert(reboot.requestAppend(osf::RecordKind::kPeriodic, 1U,
+                              periodic_payload, sizeof(periodic_payload)) ==
+         ObservationStore::AppendResult::kStarted);
+  settle(reboot);
+  assert(reboot.takeAppendResult(append_ok, result_handle) && append_ok);
+  assert(result_handle.identity.sequence == 2U);
+}
+
 static void testControlCompactionDropsTombstonedHistory() {
   ControlFakeFlash flash(6U);
   ControlIncarnation incarnation;
@@ -297,6 +360,7 @@ static void testControlCompactionDropsTombstonedHistory() {
 int main() {
   testExactObjectBoundAndReplacement();
   testOccurrenceAndResultConflictSurviveReboot();
+  testResultGuardReservesIdentityAcrossReset();
   testControlCompactionDropsTombstonedHistory();
   return 0;
 }
