@@ -1,14 +1,43 @@
 # SF5C — Portable ObservationStore
 
-Status: **IMPLEMENTATION CANDIDATE COMPLETE — HOST/FAULT VALIDATION PENDING.
-PORTABLE STORAGE ONLY; NO nRF ADDRESS ALLOCATION, NO PRODUCTION RF CUTOVER, NO
-PHYSICAL PASS.**
+Status: **INDEPENDENT AUDIT FAIL (59ebe23: 1 BLOCKER / 3 HIGH / 1 MEDIUM).
+FIXES AND REGRESSION TESTS ON BRANCH — POST-FIX HOST/RAK RETEST AND
+INDEPENDENT RE-AUDIT PENDING. PORTABLE STORAGE ONLY; NO nRF ADDRESS
+ALLOCATION, NO PRODUCTION RF CUTOVER, NO PHYSICAL PASS.**
 
 Baseline:
 `main@5b757966489e5fe221c05fe1cbf66ff7b1e602d5` (SF5B merged).
 
 Branch:
 `feat/sf5c-observation-store`.
+
+### 2026-10-08 — Independent audit disposition (NOT CLOSED)
+
+The independent review of `59ebe2308d03cc4eb96fc8507dfe947343b414b5`
+returned **FAIL: 1 BLOCKER / 3 HIGH / 1 MEDIUM / 0 LOW**, despite that
+earlier commit's complete host suite and RAK4630 build passing. Source details
+and reproduction evidence are held in the reviewer's local
+`/tmp/SF5C_INDEPENDENT_AUDIT_59ebe23.md` (not yet a repository artifact).
+
+The same branch now contains targeted, **not-yet-retested** remediation:
+
+- **BLOCKER:** carry cumulative retired-sequence high-water through every
+  rotation, including a page with only staged writes, preventing identity reuse.
+- **HIGH:** clear the old ACTIVE data-page pointer when rotation prepares it.
+- **HIGH:** recover a torn, stale control-page erase only if a valid newer
+  authority exists and the remaining stale-header suffix exactly matches the
+  expected prior-generation header; other corruption remains fail-closed.
+- **HIGH:** reject DATA/CONTROL success and public custody-object publication
+  during a backend `hasUnreconciledMutation()` condition.
+- **MEDIUM:** mutation RESULT admission binds the reserved guard's
+  `command_id` to the committed v1 RESULT payload.
+
+Added regression cases cover each report and authority-corruption rejection.
+**Do not merge** until updated SF5C targets, full host ASan/UBSan + `-Werror`,
+RAK4630 build and independent reviewer re-verification all pass. Earlier
+`59ebe23` PASS reports must not be represented as evidence for the new head.
+The control-page wear amplification measured by the independent reviewer
+remains a required endurance/budget evaluation before physical SF5D activation.
 
 Parent contracts:
 
