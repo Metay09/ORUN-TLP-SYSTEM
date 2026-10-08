@@ -1,4 +1,4 @@
-# SF5 — TLP v2 product observation + 256 KiB durable-data cutover
+# SF5 — TLP v2 product observation + 128 KiB durable-data cutover
 
 Status: **SF5A MERGED; SF5B PROTECTED WIRE/SECURITY CONTRACT IN DESIGN REVIEW. No SF5 production runtime is authorized.**
 
@@ -31,7 +31,7 @@ Target product path:
 ```text
 sensor/source
   -> product observation
-  -> 256 KiB tracker ObservationStore
+  -> 128 KiB tracker ObservationStore
   -> TLP v2 protected object
   -> Gateway durable custody
   -> Edge durable custody
@@ -61,8 +61,12 @@ MESSAGE is not part of the animal-tracker durable profile.
 ## 2. Owner-approved decisions already closed
 
 - New production direction is TLP v2; TLP v1 remains frozen legacy compatibility.
-- Tracker durable-data target is 256 KiB.
-- Gateway custody target is 256 KiB.
+- Tracker durable-data target is **128 KiB**.
+- Gateway custody target is **128 KiB**.
+- Owner decision 2026-10-08 supersedes the earlier SF5A 256 KiB planning target
+  to preserve firmware-update/rollback headroom, including a future reviewed
+  LoRa FOTA path. This is a storage-budget decision, not a claim that LoRa FOTA
+  is implemented.
 - Tracker full-store policy is oldest-first retention loss with explicit bounded
   capacity-loss diagnostics.
 - Gateway accepted custody is never evicted for pressure; no durable commit means
@@ -152,20 +156,24 @@ Implement fixed-slot portable persistence over abstract FlashBackend:
 Gate: complete host regression + ASan/UBSan/warnings + deterministic fault
 injection/power-cut tests.
 
-### SF5D — 256 KiB flash ownership + nRF backend
+### SF5D — 128 KiB flash ownership + nRF backend
 
 Candidate reference-platform range:
 
 ```text
-0x0A5000..0x0E5000  256 KiB / 64 pages
+0x0C5000..0x0E5000  128 KiB / 32 pages
 ```
 
-Revise application ceiling only after current image size/headroom **and the DFU
-bank/update model** are resolved. The candidate app range
-`0x026000..0x0A5000` is 520,192 bytes; a simple equal two-bank split would be
-about 260,096 bytes per bank, below the current SF4B image measurement of
-285,924 bytes. This arithmetic does not choose the DFU model, but it makes that
-choice a prerequisite to freezing the 256 KiB reservation.
+Revise application ceiling only after current image size/headroom **and the DFU/
+firmware-update model** are resolved. The candidate app/update planning range
+`0x026000..0x0C5000` is 651,264 bytes; a simple equal two-bank arithmetic
+split is about 325,632 bytes per bank. Against the current SF4B image measurement
+of 285,924 bytes, that leaves about 39,708 bytes per equal bank.
+
+This makes the current image arithmetically compatible with a two-image budget,
+unlike the superseded 256 KiB target, but does not prove the actual bootloader
+bank model or future growth headroom. Future LoRa FOTA remains a separate
+security/power/RF/rollback design slice.
 
 Wire the concrete nRF backend through the existing FlashMutationGate/
 SoftDevice ownership model. No overlapping owner is allowed.
@@ -219,7 +227,7 @@ regression + independent final audit.
 
 ### SF5G — Gateway custody runtime closure
 
-Close SF4B pre-runtime gates N1-N5, select/wire the 256 KiB Gateway custody
+Close SF4B pre-runtime gates N1-N5, select/wire the 128 KiB Gateway custody
 owner for the relevant product profile, then enable authenticated
 GATEWAY_CUSTODY_ACK only after durable commit.
 
