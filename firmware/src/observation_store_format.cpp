@@ -170,11 +170,15 @@ bool inspectPageHeader(const uint8_t* bytes, size_t size,
     const uint32_t retired = get32(bytes + kControlIntentRetiredOffset);
     if (intent == 0xFFFFFFFFU && retired == 0xFFFFFFFFU) {
       // No compaction has been initiated from this control generation.
-    } else if (intent == kControlIntent) {
-      // One-way retirement: ANY programmed bit proves that the retirement
-      // write started, which occurs only after the new ACTIVE page commits.
-      // This avoids rewriting a partly programmed NVMC word after power cut.
-      // An all-FF marker is the only pending-retirement state.
+    } else if (intent != 0xFFFFFFFFU) {
+      // Intent is programmed before any target mutation. Any 1->0 bit in
+      // this one-shot word proves it started; a torn word must never be
+      // rewritten after reboot. Treat it as an unretired intent and resume
+      // compaction under the still-ACTIVE source authority.
+      //
+      // Retirement is written only AFTER the new target activates. Any
+      // programmed bit in its one-shot word retires the source's erase
+      // authorization without attempting another write to that NVMC word.
       inspection.control_intent_present = true;
       inspection.control_intent_retired = retired != 0xFFFFFFFFU;
     } else {
