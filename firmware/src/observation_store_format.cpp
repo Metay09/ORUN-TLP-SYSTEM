@@ -171,11 +171,12 @@ bool inspectPageHeader(const uint8_t* bytes, size_t size,
     if (intent == 0xFFFFFFFFU && retired == 0xFFFFFFFFU) {
       // No compaction has been initiated from this control generation.
     } else if (intent == kControlIntent) {
-      // A torn retirement write is still PENDING, never proof of retirement.
-      // No subsequent application writes may proceed until the marker reads
-      // as fully zero; the next control-maintenance pass finishes retirement.
+      // One-way retirement: ANY programmed bit proves that the retirement
+      // write started, which occurs only after the new ACTIVE page commits.
+      // This avoids rewriting a partly programmed NVMC word after power cut.
+      // An all-FF marker is the only pending-retirement state.
       inspection.control_intent_present = true;
-      inspection.control_intent_retired = retired == 0U;
+      inspection.control_intent_retired = retired != 0xFFFFFFFFU;
     } else {
       // A torn marker is not authorization to discard either page.
       inspection.evidence = PageEvidence::kCorrupt;
