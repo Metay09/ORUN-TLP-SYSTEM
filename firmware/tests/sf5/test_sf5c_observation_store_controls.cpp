@@ -30,6 +30,20 @@ class ControlFakeFlash : public FlashBackend {
     if (data == nullptr || size == 0U || (offset & 3U) != 0U ||
         (size & 3U) != 0U || uint64_t(offset) + size > bytes.size())
       return FlashOpResult::kFailed;
+    // Fault-inject an apparently successful but physically missing write.
+    // Store must verify durable readback, not trust kDone alone.
+    if (offset % osf::kPageSize == osf::kControlIntentOffset &&
+        drop_next_intent_program) {
+      drop_next_intent_program = false;
+      ++dropped_intent_programs;
+      return FlashOpResult::kDone;
+    }
+    if (offset % osf::kPageSize == osf::kControlIntentRetiredOffset &&
+        drop_next_retirement_program) {
+      drop_next_retirement_program = false;
+      ++dropped_retirement_programs;
+      return FlashOpResult::kDone;
+    }
     const uint8_t* src = static_cast<const uint8_t*>(data);
     for (size_t i = 0; i < size; ++i)
       if (bytes[offset + i] != 0xFFU)
@@ -48,6 +62,10 @@ class ControlFakeFlash : public FlashBackend {
 
   std::vector<uint8_t> bytes;
   bool unreconciled = false;
+  bool drop_next_intent_program = false;
+  bool drop_next_retirement_program = false;
+  unsigned dropped_intent_programs = 0U;
+  unsigned dropped_retirement_programs = 0U;
   unsigned program_calls = 0U;
   unsigned erase_calls = 0U;
 
@@ -823,6 +841,79 @@ static void testTornControlIntentWordRecoversBeforeAndAfterFirstCompaction() {
   }
 }
 
+static void testIntentAndRetirementRequirePhysicalReadback() {
+  ControlFakeFlash baseline(6U);
+  ControlIncarnation incarnation;
+  ObservationStore seed(baseline, 6U, &incarnation);
+  assert(seed.begin(0x98U));
+  initControl(seed);
+  const osc::OpenOccurrence durable = occurrence(0xFADEU);
+  assert(seed.requestPutOpenOccurrence(durable) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(seed);
+  osc::OpenOccurrence transient = occurrence(0U);
+  transient.event_type = 2U;
+  for (uint32_t i = 0U; i < 13U; ++i) {
+    transient.occurrence_id = 11000U + i;
+    assert(seed.requestPutOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(seed);
+    assert(seed.requestClearOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(seed);
+  }
+
+  // Backend lies: kDone but no intent word programmed. Target must remain
+  // byte-identical; store must not advance to any target erase or write.
+  ControlFakeFlash no_intent = baseline;
+  no_intent.drop_next_intent_program = true;
+  ObservationStore missing_intent(no_intent, 6U, &incarnation);
+  assert(missing_intent.begin(0x98U));
+  assert(missing_intent.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  missing_intent.poll();
+  assert(no_intent.dropped_intent_programs == 1U);
+  assert(!missing_intent.busy());
+  bool completed = true;
+  assert(missing_intent.takeControlMaintenanceResult(completed) && !completed);
+  assert(memcmp(no_intent.bytes.data() + osf::kPageSize,
+                baseline.bytes.data() + osf::kPageSize,
+                osf::kPageSize) == 0);
+  ObservationStore after_missing_intent(no_intent, 6U, &incarnation);
+  assert(after_missing_intent.begin(0x98U) &&
+         !after_missing_intent.faulted());
+
+  // Backend again lies, this time after the NEW ACTIVE authority commits.
+  // The missing retirement must not be published as success and reboot must
+  // finish it before accepting any new logical control writes.
+  ControlFakeFlash no_retirement = baseline;
+  no_retirement.drop_next_retirement_program = true;
+  ObservationStore missing_retirement(no_retirement, 6U, &incarnation);
+  assert(missing_retirement.begin(0x98U));
+  assert(missing_retirement.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(missing_retirement);
+  assert(no_retirement.dropped_retirement_programs == 1U);
+  completed = true;
+  assert(missing_retirement.takeControlMaintenanceResult(completed) &&
+         !completed);
+  ObservationStore needs_retirement(no_retirement, 6U, &incarnation);
+  assert(needs_retirement.begin(0x98U) && !needs_retirement.faulted());
+  osc::OpenOccurrence second = occurrence(0x123456U);
+  second.event_type = 3U;
+  assert(needs_retirement.requestPutOpenOccurrence(second) ==
+         ObservationStore::ControlWriteResult::kRejected);
+  assert(needs_retirement.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(needs_retirement);
+  assert(needs_retirement.takeControlMaintenanceResult(completed) && completed);
+  ObservationStore reboot(no_retirement, 6U, &incarnation);
+  assert(reboot.begin(0x98U) && !reboot.faulted());
+  osc::OpenOccurrence recovered;
+  assert(reboot.findOpenOccurrence(durable, recovered) ==
+         ObservationStore::ControlLookupResult::kFound);
+}
+
 static void testHalfRetiredIntentResumesBeforeAllowingNewWrites() {
   ControlFakeFlash flash(6U);
   ControlIncarnation incarnation;
@@ -1001,6 +1092,7 @@ int main() {
   testDamagedNewestControlAuthorityCannotRollbackAfterGenerationThree();
   testControlIntentAcrossPreparedCopyAndSecondErase();
   testTornControlIntentWordRecoversBeforeAndAfterFirstCompaction();
+  testIntentAndRetirementRequirePhysicalReadback();
   testHalfRetiredIntentResumesBeforeAllowingNewWrites();
   testUnreconciledExactObjectCommitCannotBePublished();
   testEveryPublicReadRejectsUnreconciledMutation();
