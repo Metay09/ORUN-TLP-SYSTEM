@@ -400,12 +400,17 @@ bool ObservationStore::begin(uint64_t device_id) {
   append_result_ready_ = false;
   release_result_ready_ = false;
   maintenance_result_ready_ = false;
+  control_write_result_ready_ = false;
+  control_maintenance_result_ready_ = false;
   device_id_ = device_id;
   incarnation_ = 0;
   next_sequence_ = 1U;
+  next_control_serial_ = 1U;
   max_data_generation_ = 0;
   active_data_page_ = -1;
   prepared_data_page_ = -1;
+  active_control_page_ = -1;
+  active_control_generation_ = 0U;
 
   if (device_id_ == 0U || page_count_ < osf::kControlPageCount + 2U ||
       page_count_ > kMaxPages || incarnation_source_ == nullptr)
