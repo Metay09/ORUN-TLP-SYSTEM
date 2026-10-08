@@ -14,4 +14,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run full host suite
-        run: bash firmware/tests/run_host_tests.sh
+        id: host
+        shell: bash
+        run: |
+          set +e
+          bash firmware/tests/run_host_tests.sh > sf5c-host.log 2>&1
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          cat sf5c-host.log
+          exit "$rc"
+      - name: Upload host log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sf5c-host-log
+          path: sf5c-host.log
+          if-no-files-found: error
