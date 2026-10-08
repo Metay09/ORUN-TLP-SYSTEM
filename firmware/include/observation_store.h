@@ -212,7 +212,8 @@ class ObservationStore {
   bool controlSameKey(const osf::ControlInspection& a,
                       const osf::ControlInspection& b) const;
   bool controlIsLatest(uint16_t slot,
-                       const osf::ControlInspection& control) const;
+                       const osf::ControlInspection& control,
+                       bool& read_ok) const;
   ControlLookupResult findLatestControl(
       osf::ControlKind kind, const uint8_t* key_payload, size_t key_size,
       osf::ControlInspection& out) const;
