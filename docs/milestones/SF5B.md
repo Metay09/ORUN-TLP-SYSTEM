@@ -102,15 +102,26 @@ Normal policy:
 ```text
 durable record
 -> protect once with CUSTODY_REQUESTED=1
--> make exact protected object durably cache-authoritative
+-> make tracker exact protected object durably cache-authoritative
 -> transmit/retry that exact object byte-for-byte
--> authenticated durable custody ACK
--> durable selective release
+-> Gateway:
+     Edge online + exact durable accept verified
+       -> no Gateway flash write
+       -> custody/responsibility ACK
+     otherwise
+       -> Gateway flash durable commit/readback
+       -> custody/responsibility ACK
+-> tracker durable selective release
 ```
+
+Connectivity alone is never enough: Edge durable accept must be authenticated and
+exact-object-bound.
 
 Every retained durable record eventually needs a durable responsibility-transfer
 fact before tracker release. Pacing ACKs changes collision timing but does not
-remove their long-term airtime cost.
+remove their long-term airtime cost. The online Edge bypass **does** remove most
+Gateway flash writes when downstream service is healthy; local flash is the
+outage/uncertain-downstream safety net.
 
 `CUSTODY_REQUESTED=0` is only a bounded best-effort exception. A critical EVENT
 may use one extra live notification when custody admission is temporarily
