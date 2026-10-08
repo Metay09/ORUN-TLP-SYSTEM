@@ -1,8 +1,8 @@
 # SF5C — Portable ObservationStore
 
 Status: **THIRD INDEPENDENT AUDIT FAIL (6e5c306: 0 BLOCKER /
-1 HIGH / 1 MEDIUM / 2 LOW). HIGH CONTROL-ERASE RECOVERY IS STILL OPEN.
-FOLLOW-UP SAFETY GUARD/REGRESSION-TEST COMMITS ARE NOT VALIDATED.
+1 HIGH / 1 MEDIUM / 2 LOW). DURABLE CONTROL INTENT IMPLEMENTATION IS
+ON THE FEATURE BRANCH BUT NOT YET HOST/RAK OR INDEPENDENTLY VERIFIED.
 PORTABLE STORAGE ONLY; NO nRF ADDRESS ALLOCATION, NO PRODUCTION RF
 CUTOVER, NO PHYSICAL PASS. DO NOT MERGE.**
 
@@ -11,6 +11,41 @@ Baseline:
 
 Branch:
 `feat/sf5c-observation-store`.
+
+### 2026-10-09 — Unverified control-erase intent implementation
+
+The feature branch now records one control-compaction intent and one monotonic
+retirement word in each control page's *previously erased* 8-byte header tail:
+offset 56 stores the `OBCI` intent marker; offset 60 stores its retirement
+word. A source control generation commits the intent BEFORE any mutation of
+the alternate target page. It activates the new page LAST and then retires
+the old source marker BEFORE allowing subsequent writes. A torn retirement
+with even one programmed bit is treated as already retired because the write
+cannot start until the target is ACTIVE; an all-erased retirement word means
+that retirement still must be completed.
+
+On boot, if the surviving ACTIVE authority has an unretired intent, the
+alternate page can be re-erased and its control compaction restarted regardless
+of how much of its torn-erase header/rows remains. If the target already
+activated, the previous source's unretired intent must be retired before
+normal mutations resume. No fresh application writes may run while a recovered
+control compaction/retirement is incomplete. With no durable intent evidence,
+a damaged other ACTIVE header remains fail-closed rather than performing
+content-heuristic `sameLiveControlSnapshot` fallback.
+
+The source-header marker is NOT a TLP wire change and uses no new physical
+flash page, but introduces two one-word flash programs per completed
+compaction. This is additional wear/program overhead; the SF5D endurance
+budget MUST include it. Power-cut simulator coverage includes all 4096
+old-page erase prefixes, partially copied PREPARED targets and partial
+retirement bytes, and must be independently repeated on the exact tested
+HEAD. Torn *intent-word programming* and non-prefix/nRF52-specific erase
+patterns still require conservative fault handling and SF5D qualification;
+do not report blanket physical power-loss immunity.
+
+**Validation pending:** targeted host, complete host ASan/UBSan + warnings,
+PlatformIO RAK4630 build, and fourth independent audit on the exact
+implementation commit. PR #83 remains draft and unmerged.
 
 ### 2026-10-08 — Third independent audit of `6e5c306`: FAIL
 
