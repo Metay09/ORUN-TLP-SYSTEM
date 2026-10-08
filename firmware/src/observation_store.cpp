@@ -523,8 +523,8 @@ bool ObservationStore::begin(uint64_t device_id) {
 
 bool ObservationStore::peekNextIdentity(osf::RecordIdentity& identity) const {
   identity = osf::RecordIdentity();
-  if (!ready_ || faulted_ || busy() || next_sequence_ == 0U ||
-      incarnation_ == 0U)
+  if (!ready_ || faulted_ || busy() || rotation_resuming_ ||
+      next_sequence_ == 0U || incarnation_ == 0U)
     return false;
   identity.incarnation = incarnation_;
   identity.sequence = next_sequence_;
@@ -574,8 +574,9 @@ ObservationStore::AppendResult ObservationStore::requestAppend(
       payload_size > osf::kDataPayloadSize ||
       (payload_size != 0U && payload == nullptr))
     return AppendResult::kRejected;
-  if (busy() || append_result_ready_ || release_result_ready_ ||
-      maintenance_result_ready_)
+  if (rotation_resuming_ || busy() || append_result_ready_ ||
+      release_result_ready_ || maintenance_result_ready_ ||
+      control_write_result_ready_ || control_maintenance_result_ready_)
     return AppendResult::kBusy;
 
   osf::RecordIdentity identity;
@@ -979,6 +980,8 @@ ObservationStore::ControlWriteResult ObservationStore::requestControlWrite(
     return ControlWriteResult::kRejected;
   if (active_control_page_ < 0)
     return ControlWriteResult::kNoCapacity;
+  if (rotation_resuming_)
+    return ControlWriteResult::kBusy;
   if (busy() || append_result_ready_ || release_result_ready_ ||
       maintenance_result_ready_ || control_write_result_ready_ ||
       control_maintenance_result_ready_)
@@ -1397,8 +1400,9 @@ ObservationStore::LookupResult ObservationStore::oldestRetained(
 
 bool ObservationStore::requestRelease(const osf::RecordIdentity& identity) {
   if (!ready_ || faulted_ || !identity.valid()) return false;
-  if (busy() || append_result_ready_ || release_result_ready_ ||
-      maintenance_result_ready_)
+  if (rotation_resuming_ || busy() || append_result_ready_ ||
+      release_result_ready_ || maintenance_result_ready_ ||
+      control_write_result_ready_ || control_maintenance_result_ready_)
     return false;
 
   Record record;
