@@ -57,9 +57,12 @@ struct StoreState {
   uint16_t target_page = UINT16_MAX;
   uint64_t target_old_generation = 0;
   uint64_t target_new_generation = 0;
-  // Sequence range physically retired by the latest page rotation. It may
-  // include already-released records; capacity-loss counters identify which
-  // retired records were still tracker responsibility.
+  // Cumulative bounds across ALL completed/pending data-page retirements in
+  // this incarnation. They are not the latest page's local sequence range:
+  // retaining last_retired_sequence as a high-water prevents identity reuse
+  // if the next retired page contains only staged, uncommitted records.
+  // This may include already-released data; capacity-loss counters separately
+  // identify records still under tracker responsibility.
   uint32_t first_retired_sequence = 0;
   uint32_t last_retired_sequence = 0;
 };
