@@ -17,6 +17,7 @@ class ControlFakeFlash : public FlashBackend {
         pages_(pages) {}
 
   bool begin() override { return true; }
+  bool hasUnreconciledMutation() const override { return unreconciled; }
   bool read(uint32_t offset, void* data, size_t size) const override {
     if (data == nullptr || size == 0U ||
         uint64_t(offset) + size > bytes.size())
@@ -46,6 +47,7 @@ class ControlFakeFlash : public FlashBackend {
   }
 
   std::vector<uint8_t> bytes;
+  bool unreconciled = false;
   unsigned program_calls = 0U;
   unsigned erase_calls = 0U;
 
@@ -314,7 +316,14 @@ static void testResultGuardReservesIdentityAcrossReset() {
   assert(next.sequence == 1U);
 
   uint8_t result_payload[osf::kResultPayloadSizeV1];
-  memset(result_payload, 0x77, sizeof(result_payload));
+  memset(result_payload, 0, sizeof(result_payload));
+  result_payload[0] = osf::kProductSchemaV1;
+  osf::put64(result_payload + 4U, guard.command_id + 1U);
+  // Same reserved record identity must not be consumed by command 0x1235.
+  assert(reboot.requestAppend(osf::RecordKind::kResult, 1U,
+                              result_payload, sizeof(result_payload)) ==
+         ObservationStore::AppendResult::kRejected);
+  osf::put64(result_payload + 4U, guard.command_id);
   assert(reboot.requestAppend(osf::RecordKind::kResult, 1U,
                               result_payload, sizeof(result_payload)) ==
          ObservationStore::AppendResult::kStarted);
@@ -447,8 +456,111 @@ static void testControlCompactionResetMatrix() {
   }
 }
 
+
+static void testTornRetiredControlEraseRecoversWithoutAuthorityRollback() {
+  ControlFakeFlash flash(6U);
+  ControlIncarnation incarnation;
+  ObservationStore store(flash, 6U, &incarnation);
+  assert(store.begin(0x91U));
+  initControl(store);
+
+  const osc::OpenOccurrence durable = occurrence(0xABCDU);
+  assert(store.requestPutOpenOccurrence(durable) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+  osc::OpenOccurrence transient = occurrence(0U);
+  transient.event_type = 2U;
+  for (uint32_t i = 0U; i < 13U; ++i) {
+    transient.occurrence_id = 2000U + i;
+    assert(store.requestPutOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+    assert(store.requestClearOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+  }
+  // First compaction activates control page 1, keeping the old page 0
+  // as a stale source (same incarnation, generation one less).
+  assert(store.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store);
+  bool ok = false;
+  assert(store.takeControlMaintenanceResult(ok) && ok);
+  for (uint32_t i = 0U; i < 13U; ++i) {
+    transient.occurrence_id = 3000U + i;
+    assert(store.requestPutOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+    assert(store.requestClearOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+  }
+
+  // An unrelated corruption of the NEWER authority must still fault, rather
+  // than resurrecting the old control journal.
+  ControlFakeFlash damaged_authority = flash;
+  damaged_authority.bytes[osf::kPageSize] ^= 0x01U;
+  ObservationStore unsafe(damaged_authority, 6U, &incarnation);
+  assert(unsafe.begin(0x91U) && unsafe.faulted());
+
+  assert(store.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  // Interrupted erase of the stale target page 0, first 16 header bytes.
+  memset(flash.bytes.data(), 0xFF, 16U);
+  ObservationStore reboot(flash, 6U, &incarnation);
+  assert(reboot.begin(0x91U) && !reboot.faulted());
+  osc::OpenOccurrence recovered;
+  osc::OpenOccurrence key = durable;
+  key.occurrence_id = 0U;
+  assert(reboot.findOpenOccurrence(key, recovered) ==
+         ObservationStore::ControlLookupResult::kFound);
+  assert(recovered.occurrence_id == durable.occurrence_id);
+  assert(reboot.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(reboot);
+  assert(reboot.takeControlMaintenanceResult(ok) && ok);
+  ObservationStore second_boot(flash, 6U, &incarnation);
+  assert(second_boot.begin(0x91U) && !second_boot.faulted());
+  assert(second_boot.findOpenOccurrence(key, recovered) ==
+         ObservationStore::ControlLookupResult::kFound);
+}
+
+static void testUnreconciledExactObjectCommitCannotBePublished() {
+  ControlFakeFlash flash(6U);
+  ControlIncarnation incarnation;
+  ObservationStore store(flash, 6U, &incarnation);
+  assert(store.begin(0x92U));
+  initControl(store);
+  initData(store);
+  (void)appendPeriodic(store, 0x43U);
+  const osc::ExactObject value = exact(1U, 0x22U);
+  assert(store.requestPutExactObject(value) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  store.poll();  // body written; commit not submitted yet
+
+  // A matching durable image does not override an unresolved backend
+  // mutation: simulate readback of the commit without definitive completion.
+  osf::put32(flash.bytes.data() + osf::kPageHeaderSize +
+                 osf::kControlRecordCommitOffset, osf::kCommit);
+  flash.unreconciled = true;
+  store.poll();
+  assert(store.faulted());
+  assert(store.diagnostics().unreconciled_mutation_faults == 1U);
+  bool success = true;
+  assert(store.takeControlWriteResult(success) && !success);
+  osc::ExactObject readback;
+  assert(store.findExactObject(value.identity, readback) ==
+         ObservationStore::ControlLookupResult::kReadError);
+
+  ObservationStore unresolved_reboot(flash, 6U, &incarnation);
+  assert(!unresolved_reboot.begin(0x92U));
+  assert(unresolved_reboot.faulted());
+}
+
 int main() {
   testControlCompactionResetMatrix();
+  testTornRetiredControlEraseRecoversWithoutAuthorityRollback();
+  testUnreconciledExactObjectCommitCannotBePublished();
   testExactObjectBoundAndReplacement();
   testOccurrenceAndResultConflictSurviveReboot();
   testResultGuardReservesIdentityAcrossReset();
