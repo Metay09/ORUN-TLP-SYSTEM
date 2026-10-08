@@ -432,6 +432,12 @@ static void testReleasedPageReclaimedBeforeRetainedHistory() {
   assert(reboot.diagnostics().capacity_lost_total == 0U);
   assert(reboot.lookup(retained_oldest, record) ==
          ObservationStore::LookupResult::kFound);
+
+  // The responsibility-free newer page carried sequence 43..84. Reclaiming it
+  // must not allow those stable logical identities to be reused after reset.
+  osf::RecordIdentity next;
+  assert(reboot.peekNextIdentity(next));
+  assert(next.sequence == 2U * osf::kDataRecordsPerPage + 1U);
 }
 
 static void testRotationPowerCutMatrix() {
