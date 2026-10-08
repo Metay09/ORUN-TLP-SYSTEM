@@ -442,7 +442,15 @@ always sufficient. RAM-only release progress may cause safe duplicate replay
 after reset, but reset/checkpoint loss must not allow unbounded whole-backlog
 re-protection/amplification.
 
-Store-forward delivery must remain gateway-independent. A fixed gateway, MOBILE
+Store-forward delivery must remain gateway-independent.
+
+For the SF5 Gateway connected-path policy, do not write every received custody
+object to Gateway flash by default. If an authenticated exact-object Edge
+durable-accept is verified before fallback begins, ACK the tracker without a
+Gateway flash write. If that proof is absent/failed/timed-out/uncertain, persist
+locally and verify commit before ACK. Connectivity, BLE/TCP write success or RAM
+receipt is never durable acceptance. Once a local flash mutation has started,
+do not cancel it on a late Edge response; reconcile the mutation first. A fixed gateway, MOBILE
 gateway or another compatible bridge may carry the same logical observation;
 downstream duplicate transport/path observations must converge on one
 application observation while retaining useful path metadata. `TX_DONE`, relay
