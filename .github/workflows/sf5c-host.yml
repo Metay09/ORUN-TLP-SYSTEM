@@ -1,0 +1,17 @@
+name: SF5C temporary host validation
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run full host suite
+        run: bash firmware/tests/run_host_tests.sh
