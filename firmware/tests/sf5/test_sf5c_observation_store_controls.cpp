@@ -615,10 +615,73 @@ static void testUnreconciledExactObjectCommitCannotBePublished() {
   assert(unresolved_reboot.faulted());
 }
 
+
+static void testEveryPublicReadRejectsUnreconciledMutation() {
+  ControlFakeFlash flash(6U);
+  ControlIncarnation incarnation;
+  ObservationStore store(flash, 6U, &incarnation);
+  assert(store.begin(0x93U));
+  initControl(store);
+  initData(store);
+  const ObservationStore::Handle existing = appendPeriodic(store, 0x10U);
+  const osc::ExactObject custody = exact(existing.identity.sequence, 0x22U);
+  assert(store.requestPutExactObject(custody) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+  const osc::OpenOccurrence open = occurrence(0xABU);
+  assert(store.requestPutOpenOccurrence(open) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+  const osc::ResultGuard guard = resultGuard(0xABU, 2U);
+  assert(store.requestPutResultGuard(guard) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+
+  ObservationStore::Record record;
+  uint32_t count = 0U;
+  osc::ExactObject exact_result;
+  osc::OpenOccurrence open_result;
+  osc::ResultGuard guard_result;
+  assert(store.oldestRetained(record) ==
+         ObservationStore::LookupResult::kFound);
+  assert(store.retainedCount(count) && count == 1U);
+  assert(store.findExactObject(custody.identity, exact_result) ==
+         ObservationStore::ControlLookupResult::kFound);
+  assert(store.findOpenOccurrence(open, open_result) ==
+         ObservationStore::ControlLookupResult::kFound);
+  assert(store.findResultGuard(guard, guard_result) ==
+         ObservationStore::ControlLookupResult::kFound);
+
+  // In this interval the backend knows completion is ambiguous, but the
+  // store has not had a chance to poll and set its own fault indicator.
+  flash.unreconciled = true;
+  assert(store.lookup(existing.identity, record) ==
+         ObservationStore::LookupResult::kReadError);
+  assert(store.oldestRetained(record) ==
+         ObservationStore::LookupResult::kReadError);
+  assert(!store.retainedCount(count));
+  assert(!store.releasedCount(count));
+  assert(store.findExactObject(custody.identity, exact_result) ==
+         ObservationStore::ControlLookupResult::kReadError);
+  assert(store.findOpenOccurrence(open, open_result) ==
+         ObservationStore::ControlLookupResult::kReadError);
+  assert(store.findResultGuard(guard, guard_result) ==
+         ObservationStore::ControlLookupResult::kReadError);
+  osf::RecordIdentity next;
+  assert(!store.peekNextIdentity(next));
+  assert(store.requestMaintenance() ==
+         ObservationStore::MaintenanceResult::kRejected);
+  assert(store.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kRejected);
+  assert(store.requestPutOpenOccurrence(occurrence(0xCDU)) ==
+         ObservationStore::ControlWriteResult::kRejected);
+}
+
 int main() {
   testControlCompactionResetMatrix();
   testTornRetiredControlEraseRecoversWithoutAuthorityRollback();
   testUnreconciledExactObjectCommitCannotBePublished();
+  testEveryPublicReadRejectsUnreconciledMutation();
   testExactObjectBoundAndReplacement();
   testOccurrenceAndResultConflictSurviveReboot();
   testResultGuardReservesIdentityAcrossReset();
