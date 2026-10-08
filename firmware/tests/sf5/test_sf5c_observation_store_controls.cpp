@@ -745,10 +745,28 @@ static void testHalfRetiredIntentResumesBeforeAllowingNewWrites() {
   }
   assert(seed.requestControlMaintenance() ==
          ObservationStore::MaintenanceResult::kStarted);
-  // Intent, erase, header body, commit, copied body, copied commit,
-  // activate. Before the retire step, new ACTIVE authority is durable.
-  for (unsigned i = 0U; i < 7U; ++i) seed.poll();
-  assert(seed.busy());
+  // The target page starts fully erased in this FIRST compaction, so there
+  // is no erase poll. Stop at the actual durability boundary, not a guessed
+  // number of polls: NEW page ACTIVE, OLD source intent still unretired.
+  bool new_active_before_retirement = false;
+  for (unsigned step = 0U; step < 24U && seed.busy(); ++step) {
+    seed.poll();
+    osf::PageInspection next;
+    osf::PageInspection source;
+    assert(osf::inspectPageHeader(
+        flash.bytes.data() + osf::kPageSize,
+        osf::kPageHeaderSize, next));
+    assert(osf::inspectPageHeader(
+        flash.bytes.data(), osf::kPageHeaderSize, source));
+    if (next.evidence == osf::PageEvidence::kActive &&
+        next.kind == osf::PageKind::kControl &&
+        source.control_intent_present &&
+        !source.control_intent_retired) {
+      new_active_before_retirement = true;
+      break;
+    }
+  }
+  assert(new_active_before_retirement && seed.busy());
   for (unsigned byte_count = 0U; byte_count < 4U; ++byte_count) {
     ControlFakeFlash torn_retire = flash;
     const uint32_t word = osf::kControlIntentRetiredOffset;
