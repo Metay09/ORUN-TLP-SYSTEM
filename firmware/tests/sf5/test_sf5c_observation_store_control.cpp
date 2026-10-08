@@ -122,6 +122,12 @@ static void testStoreState() {
 
   state.capacity_lost_total = 2U;
   assert(!osc::encodeStoreState(state, bytes));
+
+  state.capacity_lost_periodic = UINT32_MAX;
+  state.capacity_lost_event = 1U;
+  state.capacity_lost_result = 0U;
+  state.capacity_lost_total = 0U;  // wrapped 32-bit sum must not validate.
+  assert(!osc::encodeStoreState(state, bytes));
 }
 
 int main() {
