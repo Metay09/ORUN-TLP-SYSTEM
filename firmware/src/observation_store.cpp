@@ -1334,6 +1334,9 @@ ObservationStore::ControlLookupResult ObservationStore::findExactObject(
     return ControlLookupResult::kReadError;
   if (backing_result == LookupResult::kNone || backing.released)
     return ControlLookupResult::kNone;
+  // The cached object family is part of its durable semantic binding.
+  if (backing.kind != value.record_kind)
+    return ControlLookupResult::kReadError;
   return ControlLookupResult::kFound;
 }
 
@@ -1345,7 +1348,8 @@ ObservationStore::ControlWriteResult ObservationStore::requestPutExactObject(
 
   Record backing;
   const LookupResult backing_result = findRecord(value.identity, backing);
-  if (backing_result != LookupResult::kFound || backing.released)
+  if (backing_result != LookupResult::kFound || backing.released ||
+      backing.kind != value.record_kind)
     return ControlWriteResult::kRejected;
 
   osf::ControlInspection existing;
@@ -1380,12 +1384,13 @@ ObservationStore::ControlWriteResult ObservationStore::requestClearExactObject(
     return ControlWriteResult::kRejected;
   if (lookup == ControlLookupResult::kNone)
     return ControlWriteResult::kAlreadySatisfied;
-  uint8_t payload[osc::kExactObjectPayloadSize];
-  if (!osc::encodeExactObject(existing, payload))
-    return ControlWriteResult::kRejected;
-  return requestControlWrite(osf::ControlKind::kExactObject,
-                             kControlSchemaTombstone,
-                             payload, sizeof(payload));
+
+  // SF5B requires byte-identical retransmission while the tracker still owns
+  // the backing record. Do not silently drop the durable object and permit a
+  // different protection/counter after an ordinary timeout or lost ACK.
+  // Exceptional security-invalidating replacements require a separately
+  // reviewed, explicitly authorized lifecycle operation (not enabled by SF5C).
+  return ControlWriteResult::kRejected;
 }
 
 ObservationStore::ControlLookupResult ObservationStore::findOpenOccurrence(
