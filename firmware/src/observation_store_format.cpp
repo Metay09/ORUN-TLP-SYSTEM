@@ -170,8 +170,10 @@ bool inspectPageHeader(const uint8_t* bytes, size_t size,
     const uint32_t retired = get32(bytes + kControlIntentRetiredOffset);
     if (intent == 0xFFFFFFFFU && retired == 0xFFFFFFFFU) {
       // No compaction has been initiated from this control generation.
-    } else if (intent == kControlIntent &&
-               (retired == 0xFFFFFFFFU || retired == 0U)) {
+    } else if (intent == kControlIntent) {
+      // A torn retirement write is still PENDING, never proof of retirement.
+      // No subsequent application writes may proceed until the marker reads
+      // as fully zero; the next control-maintenance pass finishes retirement.
       inspection.control_intent_present = true;
       inspection.control_intent_retired = retired == 0U;
     } else {
