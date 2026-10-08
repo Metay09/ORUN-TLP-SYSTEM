@@ -1384,6 +1384,31 @@ void ObservationStore::finishMaintenance(bool success) {
   flash_op_awaiting_completion_ = false;
 }
 
+void ObservationStore::finishControlWrite(bool success) {
+  control_write_result_ready_ = true;
+  control_write_result_success_ = success;
+  if (success) {
+    ++diagnostics_.control_writes_committed;
+    if (next_control_serial_ != UINT64_MAX)
+      ++next_control_serial_;
+    else
+      next_control_serial_ = 0U;
+  } else {
+    ++diagnostics_.control_write_failures;
+  }
+  job_ = Job::kNone;
+  phase_ = Phase::kNone;
+  flash_op_awaiting_completion_ = false;
+}
+
+void ObservationStore::finishControlMaintenance(bool success) {
+  control_maintenance_result_ready_ = true;
+  control_maintenance_result_success_ = success;
+  job_ = Job::kNone;
+  phase_ = Phase::kNone;
+  flash_op_awaiting_completion_ = false;
+}
+
 void ObservationStore::failCurrentJob() {
   const Job failed = job_;
   const bool unreconciled = flash_.hasUnreconciledMutation();
