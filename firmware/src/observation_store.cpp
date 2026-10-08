@@ -99,30 +99,42 @@ bool ObservationStore::pageGenerationMatches(
 bool ObservationStore::recover() {
   active_data_page_ = -1;
   prepared_data_page_ = -1;
-  max_data_generation_ = 0;
+  active_control_page_ = -1;
+  active_control_generation_ = 0U;
+  max_data_generation_ = 0U;
   next_sequence_ = 1U;
+  next_control_serial_ = 1U;
 
-  diagnostics_.recovered_retained = 0;
-  diagnostics_.recovered_released = 0;
-  diagnostics_.staged_records = 0;
-  diagnostics_.partial_record_commits = 0;
+  diagnostics_.recovered_retained = 0U;
+  diagnostics_.recovered_released = 0U;
+  diagnostics_.staged_records = 0U;
+  diagnostics_.partial_record_commits = 0U;
+  diagnostics_.control_recovered_active = 0U;
+  diagnostics_.control_recovered_tombstones = 0U;
+  diagnostics_.control_staged_records = 0U;
+  diagnostics_.control_partial_commits = 0U;
 
-  uint64_t recovered_incarnation = 0;
+  uint64_t recovered_incarnation = 0U;
   uint64_t generations[kMaxPages]{};
-  uint16_t generation_count = 0;
+  uint16_t generation_count = 0U;
   PageSummary summaries[kMaxPages]{};
-  uint16_t summary_count = 0;
-  uint32_t max_sequence = 0;
-  uint64_t active_generation = 0;
-  uint64_t prepared_generation = 0;
+  uint16_t summary_count = 0U;
+  uint32_t max_sequence = 0U;
+  uint64_t active_generation = 0U;
+  uint64_t prepared_generation = 0U;
+  int prepared_control_page = -1;
 
   for (uint16_t page = 0; page < page_count_; ++page) {
     osf::PageInspection header;
     if (!readPage(page, header)) return false;
 
     const bool control_region = page < osf::kControlPageCount;
+
     if (header.evidence == osf::PageEvidence::kErased) {
-      if (!pageAllErased(page)) {
+      // Data pages with an erased header but non-erased payload are ambiguous
+      // ownership evidence. Control pages may be a non-authoritative
+      // interrupted compaction target and are safe to re-erase later.
+      if (!control_region && !pageAllErased(page)) {
         faulted_ = true;
         ++diagnostics_.recovery_faults;
       }
@@ -132,7 +144,7 @@ bool ObservationStore::recover() {
     if (header.evidence == osf::PageEvidence::kStaged ||
         header.evidence == osf::PageEvidence::kPartialCommit ||
         header.evidence == osf::PageEvidence::kPartialActivation) {
-      if (!pagePayloadErased(page)) {
+      if (!control_region && !pagePayloadErased(page)) {
         faulted_ = true;
         ++diagnostics_.recovery_faults;
       }
@@ -146,8 +158,7 @@ bool ObservationStore::recover() {
       continue;
     }
 
-    if (header.device_id != device_id_ ||
-        header.incarnation == 0U ||
+    if (header.device_id != device_id_ || header.incarnation == 0U ||
         (control_region && header.kind != osf::PageKind::kControl) ||
         (!control_region && header.kind != osf::PageKind::kData)) {
       faulted_ = true;
@@ -164,21 +175,29 @@ bool ObservationStore::recover() {
     }
 
     if (control_region) {
-      // SF5C core lands before the bounded control journal implementation.
-      // A committed empty control page is accepted so the next slice can be
-      // integrated without changing the data-page recovery contract. Any
-      // committed control payload fails closed until that owner exists.
-      for (uint16_t slot = 0; slot < osf::kControlRecordsPerPage; ++slot) {
-        uint8_t bytes[osf::kControlRecordSize];
-        const uint32_t offset =
-            pageOffset(page) + osf::kPageHeaderSize +
-            uint32_t(slot) * osf::kControlRecordSize;
-        if (!flash_.read(offset, bytes, sizeof(bytes))) return false;
-        if (!osf::erased(bytes, sizeof(bytes))) {
+      if (header.evidence == osf::PageEvidence::kPrepared) {
+        if (prepared_control_page >= 0) {
           faulted_ = true;
           ++diagnostics_.recovery_faults;
-          break;
+        } else {
+          prepared_control_page = page;
         }
+        continue;
+      }
+      if (header.evidence != osf::PageEvidence::kActive) {
+        faulted_ = true;
+        ++diagnostics_.recovery_faults;
+        continue;
+      }
+      if (header.generation == active_control_generation_ &&
+          active_control_page_ >= 0) {
+        faulted_ = true;
+        ++diagnostics_.recovery_faults;
+        continue;
+      }
+      if (header.generation > active_control_generation_) {
+        active_control_generation_ = header.generation;
+        active_control_page_ = page;
       }
       continue;
     }
@@ -218,7 +237,7 @@ bool ObservationStore::recover() {
     PageSummary summary;
     summary.page = page;
     summary.generation = header.generation;
-    uint32_t previous_sequence = 0;
+    uint32_t previous_sequence = 0U;
 
     for (uint16_t slot = 0; slot < osf::kDataRecordsPerPage; ++slot) {
       osf::RecordInspection record;
@@ -261,11 +280,68 @@ bool ObservationStore::recover() {
 
   if (faulted_) return true;
 
+  // Validate only the highest-generation active control page. An older active
+  // page is the stale source left by activation-last compaction and is no
+  // longer authoritative.
+  if (active_control_page_ >= 0) {
+    uint64_t serials[osf::kControlRecordsPerPage]{};
+    uint16_t serial_count = 0U;
+    uint64_t max_serial = 0U;
+    for (uint16_t slot = 0; slot < osf::kControlRecordsPerPage; ++slot) {
+      osf::ControlInspection control;
+      if (!readControl(static_cast<uint16_t>(active_control_page_), slot,
+                       control))
+        return false;
+      if (control.evidence == osf::ControlEvidence::kErased) continue;
+      if (control.evidence == osf::ControlEvidence::kStaged) {
+        ++diagnostics_.control_staged_records;
+        continue;
+      }
+      if (control.evidence == osf::ControlEvidence::kPartialCommit) {
+        ++diagnostics_.control_partial_commits;
+        continue;
+      }
+      if (control.evidence == osf::ControlEvidence::kCorrupt ||
+          !controlPayloadValid(control) ||
+          (control.schema != kControlSchemaActive &&
+           control.schema != kControlSchemaTombstone)) {
+        faulted_ = true;
+        ++diagnostics_.recovery_faults;
+        continue;
+      }
+      if (control.kind == osf::ControlKind::kStoreState &&
+          control.schema != kControlSchemaActive) {
+        faulted_ = true;
+        ++diagnostics_.recovery_faults;
+        continue;
+      }
+      bool duplicate_serial = false;
+      for (uint16_t i = 0; i < serial_count; ++i)
+        if (serials[i] == control.serial) duplicate_serial = true;
+      if (duplicate_serial || serial_count >= osf::kControlRecordsPerPage) {
+        faulted_ = true;
+        ++diagnostics_.recovery_faults;
+        continue;
+      }
+      serials[serial_count++] = control.serial;
+      if (control.serial > max_serial) max_serial = control.serial;
+      if (control.schema == kControlSchemaTombstone ||
+          control.evidence == osf::ControlEvidence::kCleared)
+        ++diagnostics_.control_recovered_tombstones;
+      else
+        ++diagnostics_.control_recovered_active;
+    }
+    next_control_serial_ =
+        max_serial == UINT64_MAX ? 0U : max_serial + 1U;
+  }
+
+  if (faulted_) return true;
+
   // Retained data-page generations must preserve strictly increasing sequence
   // ranges. This makes one tracker-wide sequence namespace recoverable without
   // a second persistent counter journal in the first SF5C slice.
-  uint64_t previous_generation = 0;
-  uint32_t previous_last_sequence = 0;
+  uint64_t previous_generation = 0U;
+  uint32_t previous_last_sequence = 0U;
   for (uint16_t consumed = 0; consumed < summary_count; ++consumed) {
     int selected = -1;
     uint64_t selected_generation = UINT64_MAX;
