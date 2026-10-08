@@ -755,13 +755,24 @@ static void testHalfRetiredIntentResumesBeforeAllowingNewWrites() {
       torn_retire.bytes[word + j] = 0U;
     ObservationStore reboot(torn_retire, 6U, &incarnation);
     assert(reboot.begin(0x96U) && !reboot.faulted());
-    assert(reboot.requestPutOpenOccurrence(occurrence(0xFFFFU)) ==
-           ObservationStore::ControlWriteResult::kRejected);
-    assert(reboot.requestControlMaintenance() ==
-           ObservationStore::MaintenanceResult::kStarted);
-    settle(reboot);
-    bool ok = false;
-    assert(reboot.takeControlMaintenanceResult(ok) && ok);
+    osc::OpenOccurrence extra = occurrence(0xFFFFU);
+    extra.event_type = 3U;
+    if (byte_count == 0U) {
+      // Still FF means retirement never began: finish it before writes.
+      assert(reboot.requestPutOpenOccurrence(extra) ==
+             ObservationStore::ControlWriteResult::kRejected);
+      assert(reboot.requestControlMaintenance() ==
+             ObservationStore::MaintenanceResult::kStarted);
+      settle(reboot);
+      bool ok = false;
+      assert(reboot.takeControlMaintenanceResult(ok) && ok);
+    } else {
+      // One programmed bit means retirement STARTED after new ACTIVE
+      // activation; never reprogram this partially written NVMC word.
+      assert(reboot.requestPutOpenOccurrence(extra) ==
+             ObservationStore::ControlWriteResult::kStarted);
+      finishControlWrite(reboot);
+    }
     ObservationStore after(torn_retire, 6U, &incarnation);
     assert(after.begin(0x96U) && !after.faulted());
     osc::OpenOccurrence recovered;
