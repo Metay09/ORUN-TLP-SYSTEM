@@ -1,6 +1,6 @@
 # SF5B — TLP v2 protected product wire + custody security contract
 
-Status: **INITIAL INDEPENDENT SECURITY/PROTOCOL AUDIT PASS WITH FIXES — 0 BLOCKER / 2 HIGH / 3 MEDIUM / 1 LOW; H1-H2 / M1-M3 / L1 documentation fixes applied; focused re-review required before merge. No production runtime is authorized.**
+Status: **FINAL INDEPENDENT FOCUSED RE-REVIEW: PASS WITH MINOR DOC FIX — 0 BLOCKER / 0 HIGH / 0 MEDIUM; all H1-H2 / M1-M3 / L1 and follow-up N1-N3 documentation findings closed; MERGE APPROVED. No production runtime is authorized.**
 
 Baseline:
 `main@cdb9db172d178acc877b9315453e7adbd7947985` (SF5A merged).
@@ -188,10 +188,14 @@ These are calculations only, not RF measurements or regulatory claims.
 
 ## 7. Merge gate
 
+Completed:
+
 1. independent security/protocol audit;
-2. apply findings on this branch;
+2. findings applied on this branch;
 3. focused re-review;
-4. merge documentation only if clean.
+4. N1-N3 minor documentation fixes closed.
+
+Final recommendation: **MERGE**.
 
 Codec/tests belong to the next implementation slice after the byte/security
-contract is independently approved.
+contract is merged.
