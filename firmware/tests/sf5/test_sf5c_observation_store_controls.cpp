@@ -1,0 +1,276 @@
+#include <assert.h>
+#include <stdint.h>
+#include <string.h>
+
+#include <vector>
+
+#include "observation_store.h"
+
+using namespace orun_tlp;
+namespace osf = orun_tlp::observation_store_format;
+namespace osc = orun_tlp::observation_store_control;
+
+class ControlFakeFlash : public FlashBackend {
+ public:
+  explicit ControlFakeFlash(uint16_t pages)
+      : bytes(size_t(pages) * osf::kPageSize, 0xFF),
+        pages_(pages) {}
+
+  bool begin() override { return true; }
+  bool read(uint32_t offset, void* data, size_t size) const override {
+    if (data == nullptr || size == 0U ||
+        uint64_t(offset) + size > bytes.size())
+      return false;
+    memcpy(data, bytes.data() + offset, size);
+    return true;
+  }
+  FlashOpResult program(uint32_t offset, const void* data,
+                        size_t size) override {
+    if (data == nullptr || size == 0U || (offset & 3U) != 0U ||
+        (size & 3U) != 0U || uint64_t(offset) + size > bytes.size())
+      return FlashOpResult::kFailed;
+    const uint8_t* src = static_cast<const uint8_t*>(data);
+    for (size_t i = 0; i < size; ++i)
+      if (bytes[offset + i] != 0xFFU)
+        return FlashOpResult::kFailed;
+    for (size_t i = 0; i < size; ++i) bytes[offset + i] &= src[i];
+    ++program_calls;
+    return FlashOpResult::kDone;
+  }
+  FlashOpResult erasePage(uint32_t page) override {
+    if (page >= pages_) return FlashOpResult::kFailed;
+    memset(bytes.data() + size_t(page) * osf::kPageSize,
+           0xFF, osf::kPageSize);
+    ++erase_calls;
+    return FlashOpResult::kDone;
+  }
+
+  std::vector<uint8_t> bytes;
+  unsigned program_calls = 0U;
+  unsigned erase_calls = 0U;
+
+ private:
+  uint16_t pages_;
+};
+
+class ControlIncarnation : public ObservationIncarnationSource {
+ public:
+  bool generate(uint64_t& value) override {
+    value = 0xAABBCCDDEEFF0011ULL;
+    return true;
+  }
+};
+
+static void settle(ObservationStore& store, unsigned limit = 1000U) {
+  for (unsigned i = 0; i < limit && store.busy(); ++i) store.poll();
+  assert(!store.busy());
+}
+
+static void initControl(ObservationStore& store) {
+  assert(store.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store);
+  bool ok = false;
+  assert(store.takeControlMaintenanceResult(ok) && ok);
+}
+
+static void finishControlWrite(ObservationStore& store) {
+  settle(store);
+  bool ok = false;
+  assert(store.takeControlWriteResult(ok) && ok);
+}
+
+static osc::ExactObject exact(uint32_t sequence, uint8_t seed) {
+  osc::ExactObject value;
+  value.identity.incarnation = 0xAABBCCDDEEFF0011ULL;
+  value.identity.sequence = sequence;
+  value.record_kind = osf::RecordKind::kPeriodic;
+  value.object_size = 100U;
+  for (unsigned i = 0; i < value.object_size; ++i)
+    value.object[i] = static_cast<uint8_t>(seed + i);
+  return value;
+}
+
+static osc::OpenOccurrence occurrence(uint64_t id) {
+  osc::OpenOccurrence value;
+  value.event_type = 1U;
+  value.reason_code = 0U;
+  value.context_kind = 0U;
+  value.context_value = 0U;
+  value.occurrence_id = id;
+  return value;
+}
+
+static osc::ResultGuard resultGuard(uint64_t command_id,
+                                    uint32_t result_sequence) {
+  osc::ResultGuard value;
+  value.gateway_device_id = 0x99U;
+  value.gateway_policy_floor = 3U;
+  value.gateway_grant_generation = 4U;
+  value.command_id = command_id;
+  value.opcode = 1U;
+  for (unsigned i = 0; i < sizeof(value.expected_state_token); ++i)
+    value.expected_state_token[i] = static_cast<uint8_t>(i + 1U);
+  value.tracking_interval_seconds = 900U;
+  value.battery_capacity_mah = 4000U;
+  value.result_identity.incarnation = 0xAABBCCDDEEFF0011ULL;
+  value.result_identity.sequence = result_sequence;
+  return value;
+}
+
+static void testExactObjectBoundAndReplacement() {
+  ControlFakeFlash flash(6U);
+  ControlIncarnation incarnation;
+  ObservationStore store(flash, 6U, &incarnation);
+  assert(store.begin(0x11U));
+  osc::ExactObject first = exact(1U, 10U);
+
+  assert(store.requestPutExactObject(first) ==
+         ObservationStore::ControlWriteResult::kNoCapacity);
+  initControl(store);
+
+  assert(store.requestPutExactObject(first) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+
+  osc::ExactObject found;
+  assert(store.findExactObject(first.identity, found) ==
+         ObservationStore::ControlLookupResult::kFound);
+  assert(found.object_size == first.object_size);
+  assert(memcmp(found.object, first.object, first.object_size) == 0);
+
+  assert(store.requestPutExactObject(first) ==
+         ObservationStore::ControlWriteResult::kAlreadySatisfied);
+
+  osc::ExactObject conflict = first;
+  conflict.object[0] ^= 0x55U;
+  assert(store.requestPutExactObject(conflict) ==
+         ObservationStore::ControlWriteResult::kRejected);
+
+  for (uint32_t seq = 2U; seq <= 4U; ++seq) {
+    osc::ExactObject value = exact(seq, static_cast<uint8_t>(10U + seq));
+    assert(store.requestPutExactObject(value) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+  }
+  osc::ExactObject fifth = exact(5U, 30U);
+  assert(store.requestPutExactObject(fifth) ==
+         ObservationStore::ControlWriteResult::kNoCapacity);
+
+  assert(store.requestClearExactObject(first.identity) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+  assert(store.findExactObject(first.identity, found) ==
+         ObservationStore::ControlLookupResult::kNone);
+
+  assert(store.requestPutExactObject(conflict) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+  assert(store.findExactObject(conflict.identity, found) ==
+         ObservationStore::ControlLookupResult::kFound);
+  assert(found.object[0] == conflict.object[0]);
+}
+
+static void testOccurrenceAndResultConflictSurviveReboot() {
+  ControlFakeFlash flash(6U);
+  ControlIncarnation incarnation;
+  ObservationStore store(flash, 6U, &incarnation);
+  assert(store.begin(0x22U));
+  initControl(store);
+
+  osc::OpenOccurrence open = occurrence(100U);
+  assert(store.requestPutOpenOccurrence(open) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+
+  osc::OpenOccurrence wrong = occurrence(101U);
+  assert(store.requestPutOpenOccurrence(wrong) ==
+         ObservationStore::ControlWriteResult::kRejected);
+
+  osc::ResultGuard guard = resultGuard(77U, 5U);
+  assert(store.requestPutResultGuard(guard) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+
+  osc::ResultGuard conflict = guard;
+  conflict.tracking_interval_seconds = 300U;
+  assert(store.requestPutResultGuard(conflict) ==
+         ObservationStore::ControlWriteResult::kRejected);
+
+  ObservationStore reboot(flash, 6U, &incarnation);
+  assert(reboot.begin(0x22U));
+  assert(!reboot.faulted());
+
+  osc::OpenOccurrence recovered_open;
+  osc::OpenOccurrence key = open;
+  key.occurrence_id = 0U;
+  assert(reboot.findOpenOccurrence(key, recovered_open) ==
+         ObservationStore::ControlLookupResult::kFound);
+  assert(recovered_open.occurrence_id == 100U);
+
+  osc::ResultGuard recovered_guard;
+  osc::ResultGuard guard_key = guard;
+  guard_key.opcode = 0U;
+  guard_key.result_identity = osf::RecordIdentity();
+  assert(reboot.findResultGuard(guard_key, recovered_guard) ==
+         ObservationStore::ControlLookupResult::kFound);
+  assert(recovered_guard.result_identity.sequence == 5U);
+
+  assert(reboot.requestClearOpenOccurrence(key) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(reboot);
+  assert(reboot.requestPutOpenOccurrence(wrong) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(reboot);
+}
+
+static void testControlCompactionDropsTombstonedHistory() {
+  ControlFakeFlash flash(6U);
+  ControlIncarnation incarnation;
+  ObservationStore store(flash, 6U, &incarnation);
+  assert(store.begin(0x33U));
+  initControl(store);
+
+  // 14 create/clear cycles consume all 28 slots while leaving no logical
+  // open occurrence. Compaction must copy no stale/tombstoned history.
+  for (uint64_t id = 1U; id <= 14U; ++id) {
+    osc::OpenOccurrence value = occurrence(id);
+    assert(store.requestPutOpenOccurrence(value) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+    assert(store.requestClearOpenOccurrence(value) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+  }
+
+  osc::OpenOccurrence next = occurrence(20U);
+  assert(store.requestPutOpenOccurrence(next) ==
+         ObservationStore::ControlWriteResult::kNoCapacity);
+
+  assert(store.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store);
+  bool ok = false;
+  assert(store.takeControlMaintenanceResult(ok) && ok);
+  assert(store.diagnostics().control_pages_compacted == 1U);
+
+  assert(store.requestPutOpenOccurrence(next) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+
+  ObservationStore reboot(flash, 6U, &incarnation);
+  assert(reboot.begin(0x33U) && !reboot.faulted());
+  osc::OpenOccurrence key = next;
+  key.occurrence_id = 0U;
+  osc::OpenOccurrence found;
+  assert(reboot.findOpenOccurrence(key, found) ==
+         ObservationStore::ControlLookupResult::kFound);
+  assert(found.occurrence_id == 20U);
+}
+
+int main() {
+  testExactObjectBoundAndReplacement();
+  testOccurrenceAndResultConflictSurviveReboot();
+  testControlCompactionDropsTombstonedHistory();
+  return 0;
+}
