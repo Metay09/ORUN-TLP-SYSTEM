@@ -143,14 +143,19 @@ responsibility transfers.
 Reference RAK4630/RAK4631 tracker profile target:
 
 ```text
-256 KiB durable product-observation region
-= 64 × 4096-byte nRF52840 pages
+128 KiB durable product-observation region
+= 32 × 4096-byte nRF52840 pages
 ```
+
+Owner decision 2026-10-08: this **supersedes the earlier 256 KiB SF5A planning
+target**. The deliberate reason is firmware-lifecycle headroom: preserve a
+realistic path for robust BLE/serial DFU now and a future reviewed LoRa firmware
+update path without consuming half of internal flash as product history.
 
 Candidate physical range, subject to the dedicated layout slice and build guard:
 
 ```text
-0x0A5000 .. 0x0E5000   256 KiB ObservationStore
+0x0C5000 .. 0x0E5000   128 KiB ObservationStore
 ```
 
 The existing regions above it remain at their current addresses:
@@ -164,7 +169,7 @@ The existing regions above it remain at their current addresses:
 0x0F4000 .. 0x100000   bootloader/settings boundary classes
 ```
 
-The candidate 256 KiB range is not authorized for production writes until:
+The candidate 128 KiB range is not authorized for production writes until:
 
 1. the application ceiling/build guard is deliberately revised;
 2. current firmware size/headroom is re-measured;
@@ -173,16 +178,28 @@ The candidate 256 KiB range is not authorized for production writes until:
 4. the physical flash backend and ownership guard are reviewed;
 5. destructive physical qualification is completed on a development unit.
 
-The DFU gate is not cosmetic. The candidate application range
-`0x026000..0x0A5000` is `0x7F000` = 520,192 bytes. A simple equal two-bank
-split of that range would allow about 260,096 bytes per bank, which is smaller
-than the current SF4B production image measurement of 285,924 bytes. This does
-not prove which DFU model ORUN will use; it proves only that the 256 KiB
-reservation and the DFU model cannot be frozen independently.
+The DFU/FOTA gate is not cosmetic. With the 128 KiB candidate, the application /
+update planning range below ObservationStore is
+`0x026000..0x0C5000` = `0x9F000` = 651,264 bytes. A simple equal two-bank
+arithmetic split is about 325,632 bytes per bank. Against the current SF4B image
+measurement of 285,924 bytes, that leaves about **39,708 bytes** of arithmetic
+margin per equal bank.
+
+This is materially better than the superseded 256 KiB target, whose equal-bank
+arithmetic was already smaller than the current image. It does **not** prove the
+actual RAK4631 bootloader uses equal dual-bank DFU, does not reserve a LoRa FOTA
+implementation, and does not guarantee that future firmware growth will remain
+inside 325,632 bytes. SF5D must still resolve the real bootloader/update model.
+
+Future LoRa firmware update is a firmware-lifecycle/security feature, not an
+ObservationStore transport trick. Before any LoRa FOTA activation it will need a
+separately reviewed authenticated image/update contract, anti-rollback/version
+policy, interrupted-transfer/power-cut recovery, staging/rollback ownership,
+battery/power policy and RF-capacity/regional-compliance evidence.
 
 ### 4.2 One physical owner
 
-The 256 KiB region has exactly one owner in one concrete product profile.
+The 128 KiB region has exactly one owner in one concrete product profile.
 
 For an animal tracker it is the future ObservationStore.
 
@@ -365,7 +382,7 @@ development debug prints must not fill product flash one record at a time.
 
 Tracker durable storage is bounded. It cannot promise infinite retention.
 
-When the 256 KiB tracker store is full:
+When the 128 KiB tracker store is full:
 
 1. reclaim already-released/obsolete historical storage according to the
    reviewed release-state rules;
@@ -539,7 +556,7 @@ live POSITION / relay             -> frozen TLP v1 path
                                     (when provisioned)
 
 new production after explicit SF5F cutover:
-PERIODIC / EVENT / RESULT         -> 256 KiB ObservationStore
+PERIODIC / EVENT / RESULT         -> 128 KiB ObservationStore
                                   -> new reviewed SF5 TLP v2 protected family
 ```
 
@@ -554,7 +571,7 @@ Do not keep writing the same location to both stores in normal production.
 There is no deployed-fleet requirement in this decision to migrate old
 development History backlog into the new ObservationStore.
 
-The legacy 28 KiB region is not automatically appended to the 256 KiB journal:
+The legacy 28 KiB region is not automatically appended to the 128 KiB journal:
 it is non-contiguous because Geofence/Security/Config/BLE own the intervening
 pages. Creating a split journal only for that extra capacity is not justified.
 
@@ -658,7 +675,7 @@ Proceed in small, reviewable slices:
    bounded logical-RESULT retry behavior, and offline-read-vs-forgery separation;
 4. ObservationStore fixed-slot format + deterministic host power-cut tests,
    including reset-safe selective release state and active-EVENT lifecycle state;
-5. 256 KiB layout/application-ceiling reservation + build guards, only after
+5. 128 KiB layout/application-ceiling reservation + build guards, only after
    the DFU bank/update model and owner-transition ceremony are resolved;
 6. RAK4630 build/size verification;
 7. destructive physical ObservationStore qualification on a development unit;
