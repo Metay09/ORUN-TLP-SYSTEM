@@ -893,6 +893,103 @@ bool ObservationStore::controlSameKey(
   return false;
 }
 
+bool ObservationStore::resultGuardLive(
+    const osc::ResultGuard& guard, bool& read_ok) const {
+  read_ok = false;
+  if (!guard.result_identity.valid() ||
+      guard.result_identity.incarnation != incarnation_)
+    return false;
+
+  Record backing;
+  const LookupResult result = findRecord(guard.result_identity, backing);
+  if (result == LookupResult::kReadError) return false;
+  if (result == LookupResult::kFound) {
+    read_ok = true;
+    return backing.kind == osf::RecordKind::kResult;
+  }
+
+  if (next_sequence_ == 0U) {
+    read_ok = true;
+    return false;
+  }
+  if (guard.result_identity.sequence == next_sequence_) {
+    // Guard-first RESULT transaction: the identity is durably reserved but
+    // the RESULT row has not committed yet.
+    read_ok = true;
+    return true;
+  }
+  if (guard.result_identity.sequence < next_sequence_) {
+    // Historical RESULT already aged out. SF5B deliberately does not retain
+    // command-id memory forever; delegated replay/CAS state remains separate.
+    read_ok = true;
+    return false;
+  }
+
+  // A guard that points into the future cannot be produced by the serialized
+  // store protocol and is treated as corrupted control state.
+  return false;
+}
+
+bool ObservationStore::pendingResultReservation(
+    osf::RecordIdentity& identity, bool& found) const {
+  identity = osf::RecordIdentity();
+  found = false;
+  if (active_control_page_ < 0) return true;
+
+  for (uint16_t slot = 0; slot < osf::kControlRecordsPerPage; ++slot) {
+    osf::ControlInspection control;
+    if (!readControl(static_cast<uint16_t>(active_control_page_), slot,
+                     control))
+      return false;
+    if (control.evidence == osf::ControlEvidence::kErased ||
+        control.evidence == osf::ControlEvidence::kStaged ||
+        control.evidence == osf::ControlEvidence::kPartialCommit)
+      continue;
+    if (control.evidence == osf::ControlEvidence::kCorrupt ||
+        !controlPayloadValid(control))
+      return false;
+    if (control.kind != osf::ControlKind::kResultGuard ||
+        control.evidence != osf::ControlEvidence::kActive ||
+        control.schema != kControlSchemaActive)
+      continue;
+
+    bool latest_read_ok = false;
+    const bool latest = controlIsLatest(slot, control, latest_read_ok);
+    if (!latest_read_ok) return false;
+    if (!latest) continue;
+
+    osc::ResultGuard guard;
+    if (!osc::decodeResultGuard(control.payload, control.payload_size, guard))
+      return false;
+
+    Record backing;
+    const LookupResult backing_result =
+        findRecord(guard.result_identity, backing);
+    if (backing_result == LookupResult::kReadError) return false;
+    if (backing_result == LookupResult::kFound) {
+      if (backing.kind != osf::RecordKind::kResult) return false;
+      continue;
+    }
+
+    if (guard.result_identity.incarnation != incarnation_)
+      return false;
+    if (guard.result_identity.sequence < next_sequence_)
+      continue;
+    if (guard.result_identity.sequence > next_sequence_ ||
+        next_sequence_ == 0U)
+      return false;
+
+    if (found && !sameIdentity(identity, guard.result_identity))
+      return false;
+    if (found)
+      return false;  // Two logical commands cannot reserve one record id.
+    identity = guard.result_identity;
+    found = true;
+  }
+
+  return true;
+}
+
 bool ObservationStore::controlIsLatest(
     uint16_t slot, const osf::ControlInspection& control,
     bool& read_ok) const {
