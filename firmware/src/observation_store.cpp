@@ -118,6 +118,10 @@ bool ObservationStore::recover() {
   diagnostics_.control_recovered_tombstones = 0U;
   diagnostics_.control_staged_records = 0U;
   diagnostics_.control_partial_commits = 0U;
+  diagnostics_.capacity_lost_total = 0U;
+  diagnostics_.capacity_lost_periodic = 0U;
+  diagnostics_.capacity_lost_event = 0U;
+  diagnostics_.capacity_lost_result = 0U;
 
   uint64_t recovered_incarnation = 0U;
 
