@@ -198,6 +198,11 @@ g++ "${b3_flags[@]}" firmware/tests/sf4/test_sf4b_custody_store.cpp \
   firmware/src/custody_store.cpp firmware/src/custody_store_format.cpp \
   -o "$test_dir/sf4b_custody_store"
 "$test_dir/sf4b_custody_store"
+# SF5C portable storage format has no physical nRF address ownership yet.
+g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5c_observation_store_format.cpp \\
+  firmware/src/observation_store_format.cpp \\
+  -o "$test_dir/sf5c_observation_store_format"
+"$test_dir/sf5c_observation_store_format"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf4/test_sf4b_capacity_model.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf4/test_sf4b_source_contract.py
 g++ -DORUN_M4P5B_HOST_TEST=1 "${portable_flags[@]}" \
