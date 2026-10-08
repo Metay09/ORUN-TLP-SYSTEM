@@ -1,8 +1,8 @@
 # SF5C — Portable ObservationStore
 
-Status: **INDEPENDENT AUDIT FAIL (59ebe23: 1 BLOCKER / 3 HIGH / 1 MEDIUM).
-FIXES AND REGRESSION TESTS ON BRANCH — POST-FIX HOST/RAK RETEST AND
-INDEPENDENT RE-AUDIT PENDING. PORTABLE STORAGE ONLY; NO nRF ADDRESS
+Status: **SECOND INDEPENDENT RE-AUDIT FAIL (10d483c: 0 BLOCKER /
+1 HIGH / 1 MEDIUM / 1 LOW). RE-AUDIT REMEDIATION ON BRANCH; HOST/RAK RETEST
+AND THIRD INDEPENDENT AUDIT PENDING. PORTABLE STORAGE ONLY; NO nRF ADDRESS
 ALLOCATION, NO PRODUCTION RF CUTOVER, NO PHYSICAL PASS.**
 
 Baseline:
@@ -10,6 +10,38 @@ Baseline:
 
 Branch:
 `feat/sf5c-observation-store`.
+
+### 2026-10-08 — Re-audit of `10d483c` (NOT CLOSED)
+
+Independent Astra re-audit reported **FAIL: 0 BLOCKER / 1 HIGH / 1 MEDIUM /
+1 LOW**, although full host and RAK4630 build passed on that exact SHA.
+
+- **HIGH H2:** torn stale control-header prefixes 1–3 and 45–48, and a
+  second power cut while erasing never-authoritative PREPARED control target,
+  still caused persistent fault.
+- **MEDIUM H3:** some public backlog/control reads remained accessible while
+  backend `hasUnreconciledMutation()` was true before `poll()` faulting.
+- **LOW:** a late SoC completion could clear backend timeout quarantine
+  before the next store poll, permitting resubmission of the same mutation.
+
+Subsequent same-branch remediation (not yet validated):
+- bounded semantic-equivalence check of *latest live committed* control entries
+  when the damaged ACTIVE header's generation/CRC is lost; require matching
+  canonical serial/payload for all live keys before accepting fallback. Reject
+  divergent newer control authority and ambiguous active-marker destruction;
+- recovery of a never-ACTIVE PREPARED target only while its erased activation
+  word is intact, including two successive interrupted erases;
+- every byte prefix from 1 through 48 covered on stale and PREPARED pages;
+- block public backlog counts, oldest retention, open EVENT and RESULT lookups
+  as well as existing exact-object and record lookup while backend uncertainty
+  exists; preserve a local uncertainty latch even if late hardware completion
+  clears the gate quarantine before the next store poll.
+
+No TLP v1, SF2/SF3, radio, on-device flash allocation or golden fixture
+changes are authorized by these fixes. **Do not merge** before a new focused
+host run, full host regressions, PlatformIO RAK4630 build and independent
+review of the new commit. The higher-read-cost recovery comparison is confined
+to the exceptional torn-header path; endurance still needs SF5D qualification.
 
 ### 2026-10-08 — Independent audit disposition (NOT CLOSED)
 
