@@ -188,6 +188,8 @@ bool ObservationStore::recover() {
 
   // Phase 2: validate only the authoritative control page and recover the
   // latest StoreState. Older active control pages are stale compaction sources.
+  uint32_t persisted_last_retired_sequence = 0U;
+
   if (active_control_page_ >= 0) {
     uint64_t serials[osf::kControlRecordsPerPage]{};
     uint16_t serial_count = 0U;
@@ -252,6 +254,7 @@ bool ObservationStore::recover() {
       diagnostics_.capacity_lost_periodic = state.capacity_lost_periodic;
       diagnostics_.capacity_lost_event = state.capacity_lost_event;
       diagnostics_.capacity_lost_result = state.capacity_lost_result;
+      persisted_last_retired_sequence = state.last_retired_sequence;
 
       if (state.rotation_pending) {
         if (state.target_page < osf::kControlPageCount ||
@@ -487,6 +490,13 @@ bool ObservationStore::recover() {
       return true;
     }
   }
+
+  // A responsibility-free page may be reclaimed ahead of an older retained
+  // page. The retired sequence range is therefore part of the durable logical
+  // identity high-water; never reuse an identity merely because its page no
+  // longer exists.
+  if (persisted_last_retired_sequence > max_sequence)
+    max_sequence = persisted_last_retired_sequence;
 
   incarnation_ = recovered_incarnation;
   if (max_sequence == UINT32_MAX)
