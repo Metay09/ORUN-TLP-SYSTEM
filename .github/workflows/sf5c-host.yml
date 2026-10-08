@@ -6,27 +6,45 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   host:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - name: Run full host suite
-        id: host
+      - name: Fetch exact PR head
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --depth=1 origin "${HEAD_SHA}"
+          git checkout --detach FETCH_HEAD
+      - name: Run host suite and publish temporary result
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set +e
-          bash firmware/tests/run_host_tests.sh > sf5c-host.log 2>&1
+          bash firmware/tests/run_host_tests.sh > /tmp/sf5c-host.log 2>&1
           rc=$?
-          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
-          cat sf5c-host.log
+          tail -n 120 /tmp/sf5c-host.log > /tmp/sf5c-tail.log
+          RC="$rc" python3 - <<'PY' > /tmp/comment.json
+          import json, os
+          from pathlib import Path
+          tail = Path('/tmp/sf5c-tail.log').read_text(errors='replace')
+          body = '<!-- sf5c-temp-ci -->\nTemporary SF5C host validation exit code: **' + os.environ['RC'] + '**\n\nLast 120 log lines:\n\n```text\n' + tail[-30000:] + '\n```'
+          print(json.dumps({'body': body}))
+          PY
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --data-binary @/tmp/comment.json
           exit "$rc"
-      - name: Upload host log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sf5c-host-log
-          path: sf5c-host.log
-          if-no-files-found: error
