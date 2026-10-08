@@ -593,8 +593,12 @@ Current ownership classes include:
 - BLE/InternalFS bond storage — framework BLE state;
 - bootloader/settings — firmware lifecycle ownership.
 
-SF5 defines a future 256 KiB ObservationStore product direction, but it is not a
-current physical/runtime owner until its layout/backend/qualification gates pass.
+SF5 defines a future **128 KiB ObservationStore** product direction (owner
+decision 2026-10-08, superseding the earlier 256 KiB planning target to preserve
+firmware-update/rollback headroom), but it is not a current physical/runtime
+owner until its layout/backend/qualification gates pass. Future LoRa firmware
+update remains a separate Firmware Lifecycle / DFU security and RF design; the
+128 KiB decision only keeps internal-flash headroom available for it.
 The same device may eventually originate its own observations and also bridge
 Gateway custody; that combined capability must receive one explicit physical
 ownership design and must not be inferred from Role.
