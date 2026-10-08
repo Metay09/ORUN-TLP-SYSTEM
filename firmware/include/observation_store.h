@@ -237,7 +237,8 @@ class ObservationStore {
   bool resultGuardLive(const osc::ResultGuard& guard,
                        bool& read_ok) const;
   bool pendingResultReservation(osf::RecordIdentity& identity,
-                                bool& found) const;
+                                bool& found,
+                                uint64_t* command_id = nullptr) const;
   bool controlIsLatest(uint16_t slot,
                        const osf::ControlInspection& control,
                        bool& read_ok) const;
