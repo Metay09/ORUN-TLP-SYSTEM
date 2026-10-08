@@ -300,5 +300,33 @@ custody path before ACK.
 Therefore these clarifications remain inside the required focused independent
 re-review scope.
 
+## Earlier focused re-review at fb958a5a — historical result
+
+A focused re-review of the earlier head `fb958a5a` returned:
+
+```text
+VERDICT: PASS WITH MINOR DOC FIX
+BLOCKER: 0
+HIGH:    0
+MEDIUM:  0
+LOW:     2
+FINAL RECOMMENDATION: MERGE
+```
+
+All previous H1/H2/M1/M2/M3/L1 findings were CLOSED.
+
+The two LOW documentation notes from that review are now also closed on the
+current branch:
+
+- N1: EVENT uses the same canonical location-age sentinel rules as PERIODIC
+  (`0xFFFF` unknown; AGE_VALID requires <= `0xFFFE`);
+- N2: same-`command_id` / different canonical request tuple is rejected while
+  the serialized Config/CAS owner is held **before any ConfigStore mutation or
+  token/state write**.
+
+That review is **not the final review for the current PR head**, because later
+owner decisions added the 128 KiB storage supersession, SF5 Gateway Edge-durable
+write-around policy, and explicit SF4->SF5 custody-contract supersession.
+
 A focused independent re-review of the exact final PR head is required before
 merge.
