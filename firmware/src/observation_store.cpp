@@ -1423,6 +1423,12 @@ void ObservationStore::failCurrentJob() {
     case Job::kMaintenance:
       finishMaintenance(false);
       break;
+    case Job::kControlWrite:
+      finishControlWrite(false);
+      break;
+    case Job::kControlMaintenance:
+      finishControlMaintenance(false);
+      break;
     case Job::kNone:
       return;
   }
