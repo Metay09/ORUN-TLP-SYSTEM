@@ -503,6 +503,7 @@ static void testTornRetiredControlEraseRecoversWithoutAuthorityRollback() {
   ObservationStore unsafe(damaged_authority, 6U, &incarnation);
   assert(unsafe.begin(0x91U) && unsafe.faulted());
 
+  const ControlFakeFlash before_intent = flash;
   assert(store.requestControlMaintenance() ==
          ObservationStore::MaintenanceResult::kStarted);
   store.poll();  // durable intent on g=2 BEFORE touching stale g=1
@@ -544,7 +545,7 @@ static void testTornRetiredControlEraseRecoversWithoutAuthorityRollback() {
 
   // A truly NEWER (g=2) page with new live state must not be ignored just
   // because its first 48 header bytes were erased and g=1 is still valid.
-  ControlFakeFlash newer_damaged = flash;
+  ControlFakeFlash newer_damaged = before_intent;
   ObservationStore latest(newer_damaged, 6U, &incarnation);
   assert(latest.begin(0x91U) && !latest.faulted());
   osc::OpenOccurrence newer_fact = occurrence(0xD00DU);
