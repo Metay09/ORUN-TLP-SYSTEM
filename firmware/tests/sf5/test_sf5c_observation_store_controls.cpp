@@ -74,6 +74,29 @@ static void initControl(ObservationStore& store) {
   assert(store.takeControlMaintenanceResult(ok) && ok);
 }
 
+static void initData(ObservationStore& store) {
+  assert(store.requestMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store);
+  bool ok = false;
+  assert(store.takeMaintenanceResult(ok) && ok);
+}
+
+static ObservationStore::Handle appendPeriodic(
+    ObservationStore& store, uint8_t seed) {
+  uint8_t payload[4] = {seed, static_cast<uint8_t>(seed + 1U),
+                        static_cast<uint8_t>(seed + 2U),
+                        static_cast<uint8_t>(seed + 3U)};
+  assert(store.requestAppend(osf::RecordKind::kPeriodic, 1U,
+                             payload, sizeof(payload)) ==
+         ObservationStore::AppendResult::kStarted);
+  settle(store);
+  bool ok = false;
+  ObservationStore::Handle handle;
+  assert(store.takeAppendResult(ok, handle) && ok);
+  return handle;
+}
+
 static void finishControlWrite(ObservationStore& store) {
   settle(store);
   bool ok = false;
@@ -123,8 +146,11 @@ static void testExactObjectBoundAndReplacement() {
   ControlIncarnation incarnation;
   ObservationStore store(flash, 6U, &incarnation);
   assert(store.begin(0x11U));
-  osc::ExactObject first = exact(1U, 10U);
+  initData(store);
+  for (uint8_t seed = 1U; seed <= 5U; ++seed)
+    (void)appendPeriodic(store, seed);
 
+  osc::ExactObject first = exact(1U, 10U);
   assert(store.requestPutExactObject(first) ==
          ObservationStore::ControlWriteResult::kNoCapacity);
   initControl(store);
