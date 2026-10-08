@@ -20,7 +20,8 @@ bool validRecordKind(uint8_t value) {
 bool validControlKind(uint8_t value) {
   return value == static_cast<uint8_t>(ControlKind::kExactObject) ||
          value == static_cast<uint8_t>(ControlKind::kOpenOccurrence) ||
-         value == static_cast<uint8_t>(ControlKind::kResultGuard);
+         value == static_cast<uint8_t>(ControlKind::kResultGuard) ||
+         value == static_cast<uint8_t>(ControlKind::kStoreState);
 }
 
 uint16_t slotSizeFor(PageKind kind) {
