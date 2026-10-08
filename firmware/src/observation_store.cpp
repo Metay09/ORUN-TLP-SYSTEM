@@ -137,10 +137,18 @@ bool ObservationStore::recover() {
         header.evidence == osf::PageEvidence::kStaged ||
         header.evidence == osf::PageEvidence::kPrepared ||
         header.evidence == osf::PageEvidence::kPartialCommit ||
-        header.evidence == osf::PageEvidence::kPartialActivation ||
-        header.evidence == osf::PageEvidence::kCorrupt ||
-        header.evidence == osf::PageEvidence::kUnsupported)
+        header.evidence == osf::PageEvidence::kPartialActivation)
       continue;
+
+    // A committed-but-corrupt/unsupported control header could be the newest
+    // authority. Silently falling back to the sibling page would risk
+    // resurrecting revoked/released state, so corruption fails closed.
+    if (header.evidence == osf::PageEvidence::kCorrupt ||
+        header.evidence == osf::PageEvidence::kUnsupported) {
+      faulted_ = true;
+      ++diagnostics_.recovery_faults;
+      continue;
+    }
 
     if (header.evidence != osf::PageEvidence::kActive ||
         header.kind != osf::PageKind::kControl ||
