@@ -1604,6 +1604,203 @@ void ObservationStore::poll() {
     }
   }
 
+  if (job_ == Job::kControlWrite) {
+    if (phase_ == Phase::kControlBody) {
+      const uint32_t offset = controlOffset(target_page_, target_slot_);
+      const FlashOpResult result =
+          programStep(offset, control_blob_, osf::kControlRecordCommitOffset);
+      if (result == FlashOpResult::kPending) return;
+
+      uint8_t verify[osf::kControlRecordCommitOffset];
+      const bool body_ok =
+          flash_.read(offset, verify, sizeof(verify)) &&
+          memcmp(verify, control_blob_, sizeof(verify)) == 0;
+      if (result == FlashOpResult::kFailed && !body_ok)
+        return failCurrentJob();
+      if (!body_ok) return failCurrentJob();
+
+      phase_ = Phase::kControlCommit;
+      return;
+    }
+
+    if (phase_ == Phase::kControlCommit) {
+      const uint32_t offset =
+          controlOffset(target_page_, target_slot_) +
+          osf::kControlRecordCommitOffset;
+      const FlashOpResult result =
+          programStep(offset,
+                      control_blob_ + osf::kControlRecordCommitOffset, 4U);
+      if (result == FlashOpResult::kPending) return;
+
+      osf::ControlInspection control;
+      const bool committed =
+          readControl(target_page_, target_slot_, control) &&
+          control.evidence == osf::ControlEvidence::kActive &&
+          control.kind == pending_control_kind_ &&
+          control.schema == pending_control_schema_ &&
+          control.serial == pending_control_serial_ &&
+          control.payload_size == pending_control_payload_size_ &&
+          memcmp(control.payload, pending_control_payload_,
+                 osf::kControlPayloadSize) == 0;
+      if (result == FlashOpResult::kFailed && !committed)
+        return failCurrentJob();
+      if (!committed) return failCurrentJob();
+
+      finishControlWrite(true);
+      return;
+    }
+  }
+
+  if (job_ == Job::kControlMaintenance) {
+    if (phase_ == Phase::kControlEraseTarget) {
+      const FlashOpResult result = eraseStep(target_page_);
+      if (result == FlashOpResult::kPending) return;
+      const bool erased = pageAllErased(target_page_);
+      if (result == FlashOpResult::kFailed && !erased)
+        return failCurrentJob();
+      if (!erased) return failCurrentJob();
+      phase_ = Phase::kControlHeaderBody;
+      return;
+    }
+
+    if (phase_ == Phase::kControlHeaderBody) {
+      const uint32_t offset = pageOffset(target_page_);
+      const FlashOpResult result =
+          programStep(offset, page_blob_, osf::kPageHeaderCommitOffset);
+      if (result == FlashOpResult::kPending) return;
+
+      uint8_t verify[osf::kPageHeaderCommitOffset];
+      const bool body_ok =
+          flash_.read(offset, verify, sizeof(verify)) &&
+          memcmp(verify, page_blob_, sizeof(verify)) == 0;
+      if (result == FlashOpResult::kFailed && !body_ok)
+        return failCurrentJob();
+      if (!body_ok) return failCurrentJob();
+      phase_ = Phase::kControlHeaderCommit;
+      return;
+    }
+
+    if (phase_ == Phase::kControlHeaderCommit) {
+      const uint32_t offset =
+          pageOffset(target_page_) + osf::kPageHeaderCommitOffset;
+      const FlashOpResult result =
+          programStep(offset,
+                      page_blob_ + osf::kPageHeaderCommitOffset, 4U);
+      if (result == FlashOpResult::kPending) return;
+
+      osf::PageInspection header;
+      const bool prepared =
+          readPage(target_page_, header) &&
+          header.evidence == osf::PageEvidence::kPrepared &&
+          header.kind == osf::PageKind::kControl &&
+          header.generation == target_generation_ &&
+          header.device_id == device_id_ &&
+          header.incarnation == incarnation_;
+      if (result == FlashOpResult::kFailed && !prepared)
+        return failCurrentJob();
+      if (!prepared) return failCurrentJob();
+
+      control_target_slot_ = 0U;
+      control_source_scan_slot_ = 0U;
+      if (control_source_page_ == UINT16_MAX) {
+        phase_ = Phase::kControlActivate;
+        return;
+      }
+
+      if (prepareNextControlCopy()) {
+        phase_ = Phase::kControlCopyBody;
+        return;
+      }
+      if (faulted_) return failCurrentJob();
+      if (controlCopyFinished()) {
+        phase_ = Phase::kControlActivate;
+        return;
+      }
+      return failCurrentJob();
+    }
+
+    if (phase_ == Phase::kControlCopyBody) {
+      const uint32_t offset =
+          controlOffset(target_page_, control_target_slot_);
+      const FlashOpResult result =
+          programStep(offset, control_blob_, osf::kControlRecordCommitOffset);
+      if (result == FlashOpResult::kPending) return;
+
+      uint8_t verify[osf::kControlRecordCommitOffset];
+      const bool body_ok =
+          flash_.read(offset, verify, sizeof(verify)) &&
+          memcmp(verify, control_blob_, sizeof(verify)) == 0;
+      if (result == FlashOpResult::kFailed && !body_ok)
+        return failCurrentJob();
+      if (!body_ok) return failCurrentJob();
+      phase_ = Phase::kControlCopyCommit;
+      return;
+    }
+
+    if (phase_ == Phase::kControlCopyCommit) {
+      const uint32_t offset =
+          controlOffset(target_page_, control_target_slot_) +
+          osf::kControlRecordCommitOffset;
+      const FlashOpResult result =
+          programStep(offset,
+                      control_blob_ + osf::kControlRecordCommitOffset, 4U);
+      if (result == FlashOpResult::kPending) return;
+
+      osf::ControlInspection control;
+      const bool committed =
+          readControl(target_page_, control_target_slot_, control) &&
+          control.evidence == osf::ControlEvidence::kActive &&
+          control.kind == pending_control_kind_ &&
+          control.schema == pending_control_schema_ &&
+          control.serial == pending_control_serial_ &&
+          control.payload_size == pending_control_payload_size_ &&
+          memcmp(control.payload, pending_control_payload_,
+                 osf::kControlPayloadSize) == 0;
+      if (result == FlashOpResult::kFailed && !committed)
+        return failCurrentJob();
+      if (!committed) return failCurrentJob();
+
+      ++control_target_slot_;
+      if (prepareNextControlCopy()) {
+        phase_ = Phase::kControlCopyBody;
+        return;
+      }
+      if (faulted_) return failCurrentJob();
+      if (controlCopyFinished()) {
+        phase_ = Phase::kControlActivate;
+        return;
+      }
+      return failCurrentJob();
+    }
+
+    if (phase_ == Phase::kControlActivate) {
+      const uint32_t offset =
+          pageOffset(target_page_) + osf::kPageHeaderActiveOffset;
+      const FlashOpResult result =
+          programStep(offset, &kZero, sizeof(kZero));
+      if (result == FlashOpResult::kPending) return;
+
+      osf::PageInspection header;
+      const bool active =
+          readPage(target_page_, header) &&
+          header.evidence == osf::PageEvidence::kActive &&
+          header.kind == osf::PageKind::kControl &&
+          header.generation == target_generation_ &&
+          header.device_id == device_id_ &&
+          header.incarnation == incarnation_;
+      if (result == FlashOpResult::kFailed && !active)
+        return failCurrentJob();
+      if (!active) return failCurrentJob();
+
+      if (control_source_page_ != UINT16_MAX)
+        ++diagnostics_.control_pages_compacted;
+      active_control_page_ = target_page_;
+      active_control_generation_ = target_generation_;
+      finishControlMaintenance(true);
+      return;
+    }
+  }
+
   failCurrentJob();
 }
 
