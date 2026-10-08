@@ -232,6 +232,10 @@ class ObservationStore {
   bool controlPayloadValid(const osf::ControlInspection& control) const;
   bool controlSameKey(const osf::ControlInspection& a,
                       const osf::ControlInspection& b) const;
+  bool resultGuardLive(const osc::ResultGuard& guard,
+                       bool& read_ok) const;
+  bool pendingResultReservation(osf::RecordIdentity& identity,
+                                bool& found) const;
   bool controlIsLatest(uint16_t slot,
                        const osf::ControlInspection& control,
                        bool& read_ok) const;
