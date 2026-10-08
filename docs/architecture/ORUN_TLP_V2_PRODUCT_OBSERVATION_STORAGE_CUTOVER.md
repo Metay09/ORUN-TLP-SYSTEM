@@ -457,7 +457,16 @@ Tracker object
 
 If that durable Edge accept is not obtained within the bounded in-flight policy
 —for example disconnect, timeout, rejection or uncertain outcome—the Gateway
-falls back to its local custody store:
+falls back to its local custody store.
+
+That bounded wait is subordinate to the tracker's measured ACK rendezvous
+budget. Before SF5G enables write-around, measured Edge wait + worst-case local
+fallback commit/readback + ACK airtime must fit the rendezvous window. If it
+does not, the Gateway skips Edge waiting and uses local durable custody
+immediately for that attempt; write-around is not allowed to create avoidable
+tracker retransmissions by missing the ACK window.
+
+Fallback path:
 
 ```text
 no verified Edge durable accept
