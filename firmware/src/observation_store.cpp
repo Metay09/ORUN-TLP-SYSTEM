@@ -2172,7 +2172,11 @@ FlashOpResult ObservationStore::programStep(
       flash_op_awaiting_completion_ = false;
     // A late SoC event can clear timeout quarantine before the next poll.
     // Latch the ambiguous outcome and never resubmit this logical mutation.
-    if (flash_.hasUnreconciledMutation()) {
+    if (result == FlashOpResult::kFailed ||
+        flash_.hasUnreconciledMutation()) {
+      // Async terminal failure is never evidence of durable completion.
+      // Quarantine may have cleared immediately after pollPending(), so
+      // readback equality must not promote a failed async operation to PASS.
       mutation_outcome_uncertain_ = true;
       return FlashOpResult::kPending;
     }
@@ -2195,7 +2199,11 @@ FlashOpResult ObservationStore::eraseStep(uint16_t page) {
       flash_op_awaiting_completion_ = false;
     // A late SoC event can clear timeout quarantine before the next poll.
     // Latch the ambiguous outcome and never resubmit this logical mutation.
-    if (flash_.hasUnreconciledMutation()) {
+    if (result == FlashOpResult::kFailed ||
+        flash_.hasUnreconciledMutation()) {
+      // Async terminal failure is never evidence of durable completion.
+      // Quarantine may have cleared immediately after pollPending(), so
+      // readback equality must not promote a failed async operation to PASS.
       mutation_outcome_uncertain_ = true;
       return FlashOpResult::kPending;
     }
