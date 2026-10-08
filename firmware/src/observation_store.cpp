@@ -962,7 +962,19 @@ uint16_t ObservationStore::activeControlCount(
       bool latest_read_ok = false;
       const bool latest = controlIsLatest(slot, control, latest_read_ok);
       if (!latest_read_ok) return 0U;
-      if (latest) ++count;
+      if (latest) {
+        if (kind == osf::ControlKind::kExactObject) {
+          osc::ExactObject exact;
+          if (!osc::decodeExactObject(control.payload,
+                                      control.payload_size, exact))
+            return 0U;
+          Record backing;
+          const LookupResult backing_result = findRecord(exact.identity, backing);
+          if (backing_result == LookupResult::kReadError) return 0U;
+          if (backing_result == LookupResult::kNone) continue;
+        }
+        ++count;
+      }
     }
   }
   read_ok = true;
@@ -1053,9 +1065,26 @@ bool ObservationStore::prepareNextControlCopy() {
       faulted_ = true;
       return false;
     }
-    const bool logically_active =
+    bool logically_active =
         control.evidence == osf::ControlEvidence::kActive &&
         control.schema == kControlSchemaActive && latest;
+    if (logically_active &&
+        control.kind == osf::ControlKind::kExactObject) {
+      osc::ExactObject exact;
+      if (!osc::decodeExactObject(control.payload,
+                                  control.payload_size, exact)) {
+        faulted_ = true;
+        return false;
+      }
+      Record backing;
+      const LookupResult backing_result = findRecord(exact.identity, backing);
+      if (backing_result == LookupResult::kReadError) {
+        faulted_ = true;
+        return false;
+      }
+      if (backing_result == LookupResult::kNone)
+        logically_active = false;
+    }
     if (!logically_active) continue;
 
     if (control_target_slot_ >= osf::kControlRecordsPerPage) {
@@ -1103,6 +1132,13 @@ ObservationStore::ControlLookupResult ObservationStore::findExactObject(
   if (result != ControlLookupResult::kFound) return result;
   if (!osc::decodeExactObject(control.payload, control.payload_size, value))
     return ControlLookupResult::kReadError;
+
+  Record backing;
+  const LookupResult backing_result = findRecord(value.identity, backing);
+  if (backing_result == LookupResult::kReadError)
+    return ControlLookupResult::kReadError;
+  if (backing_result == LookupResult::kNone)
+    return ControlLookupResult::kNone;
   return ControlLookupResult::kFound;
 }
 
@@ -1305,17 +1341,28 @@ ObservationStore::LookupResult ObservationStore::findRecord(
   for (uint16_t page = osf::kControlPageCount; page < page_count_; ++page) {
     osf::PageInspection header;
     if (!readPage(page, header)) return LookupResult::kReadError;
-    if (header.evidence == osf::PageEvidence::kErased ||
-        header.evidence == osf::PageEvidence::kPrepared ||
-        header.evidence == osf::PageEvidence::kStaged ||
-        header.evidence == osf::PageEvidence::kPartialCommit ||
-        header.evidence == osf::PageEvidence::kPartialActivation)
-      continue;
-    if (header.evidence != osf::PageEvidence::kActive ||
-        header.kind != osf::PageKind::kData ||
-        header.device_id != device_id_ ||
-        header.incarnation != incarnation_)
-      return LookupResult::kReadError;
+    const bool rotation_target =
+        rotation_resuming_ && page == rotation_state_.target_page;
+    if (rotation_target) {
+      if (header.evidence != osf::PageEvidence::kActive ||
+          header.kind != osf::PageKind::kData ||
+          header.device_id != device_id_ ||
+          header.incarnation != incarnation_ ||
+          header.generation != rotation_state_.target_old_generation)
+        continue;
+    } else {
+      if (header.evidence == osf::PageEvidence::kErased ||
+          header.evidence == osf::PageEvidence::kPrepared ||
+          header.evidence == osf::PageEvidence::kStaged ||
+          header.evidence == osf::PageEvidence::kPartialCommit ||
+          header.evidence == osf::PageEvidence::kPartialActivation)
+        continue;
+      if (header.evidence != osf::PageEvidence::kActive ||
+          header.kind != osf::PageKind::kData ||
+          header.device_id != device_id_ ||
+          header.incarnation != incarnation_)
+        return LookupResult::kReadError;
+    }
 
     for (uint16_t slot = 0; slot < osf::kDataRecordsPerPage; ++slot) {
       osf::RecordInspection record;
