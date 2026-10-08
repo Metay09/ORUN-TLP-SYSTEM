@@ -96,6 +96,74 @@ bool ObservationStore::pageGenerationMatches(
          inspection.incarnation == incarnation_;
 }
 
+// Two control pages can remain ACTIVE across activation-last compaction.
+// If a torn erase destroys the page generation/CRC, a surviving control page
+// may be selected only when the damaged page cannot contain a newer logical
+// authority. Compare ALL latest live control entries, not just header flags.
+// Tombstones, staged writes and superseded controls have no live authority.
+// This bounded check is used only for exceptional damaged-header recovery.
+bool ObservationStore::sameLiveControlSnapshot(
+    uint16_t a, uint16_t b) const {
+  const uint16_t pages[2] = {a, b};
+  uint16_t slots[2][osf::kControlRecordsPerPage]{};
+  uint16_t counts[2]{};
+  for (uint16_t side = 0U; side < 2U; ++side) {
+    for (uint16_t slot = 0U; slot < osf::kControlRecordsPerPage; ++slot) {
+      osf::ControlInspection control;
+      if (!readControl(pages[side], slot, control)) return false;
+      if (control.evidence == osf::ControlEvidence::kErased ||
+          control.evidence == osf::ControlEvidence::kStaged ||
+          control.evidence == osf::ControlEvidence::kPartialCommit)
+        continue;
+      if (control.evidence == osf::ControlEvidence::kCorrupt ||
+          !controlPayloadValid(control) || control.clear_uncertain)
+        return false;
+      bool superseded = false;
+      for (uint16_t other = 0U; other < osf::kControlRecordsPerPage;
+           ++other) {
+        if (other == slot) continue;
+        osf::ControlInspection next;
+        if (!readControl(pages[side], other, next)) return false;
+        if (next.evidence == osf::ControlEvidence::kErased ||
+            next.evidence == osf::ControlEvidence::kStaged ||
+            next.evidence == osf::ControlEvidence::kPartialCommit)
+          continue;
+        if (next.evidence == osf::ControlEvidence::kCorrupt ||
+            !controlPayloadValid(next) || next.clear_uncertain)
+          return false;
+        if (next.serial == control.serial) return false;
+        if (next.serial > control.serial && controlSameKey(control, next)) {
+          superseded = true;
+          break;
+        }
+      }
+      if (!superseded &&
+          control.evidence == osf::ControlEvidence::kActive &&
+          control.schema == kControlSchemaActive)
+        slots[side][counts[side]++] = slot;
+    }
+  }
+  if (counts[0] != counts[1]) return false;
+  for (uint16_t i = 0U; i < counts[0]; ++i) {
+    osf::ControlInspection lhs;
+    if (!readControl(a, slots[0][i], lhs)) return false;
+    bool matched = false;
+    for (uint16_t j = 0U; j < counts[1]; ++j) {
+      osf::ControlInspection rhs;
+      if (!readControl(b, slots[1][j], rhs)) return false;
+      if (lhs.kind == rhs.kind && lhs.schema == rhs.schema &&
+          lhs.serial == rhs.serial &&
+          lhs.payload_size == rhs.payload_size &&
+          memcmp(lhs.payload, rhs.payload, lhs.payload_size) == 0) {
+        if (matched) return false;
+        matched = true;
+      }
+    }
+    if (!matched) return false;
+  }
+  return true;
+}
+
 bool ObservationStore::recover() {
   active_data_page_ = -1;
   prepared_data_page_ = -1;
@@ -209,13 +277,40 @@ bool ObservationStore::recover() {
       size_t prefix = 0U;
       while (prefix < sizeof(actual) && actual[prefix] == 0xFFU)
         ++prefix;
-      // Require the complete STATIC CRC (which binds generation/device/
-      // incarnation) to survive. If erasure reaches the CRC, suffix bytes
-      // cannot prove the damaged page was older than the live authority.
+      // An intact CRC plus exact older-generation suffix proves stale
+      // ownership. Prefixes of 1..3 bytes must not be excluded.
       proven_stale_torn_erase =
-          prefix >= 4U && prefix <= osf::kPageStaticCrcOffset &&
+          prefix >= 1U && prefix <= osf::kPageStaticCrcOffset &&
           memcmp(actual + prefix, expected + prefix,
                  sizeof(actual) - prefix) == 0;
+
+      // If erasure destroyed the generation/CRC, the remaining commit and
+      // ACTIVE markers still distinguish a never-authoritative PREPARED
+      // target (active word erased) from a previously ACTIVE page.
+      if (!proven_stale_torn_erase && prefix >= 1U &&
+          prefix <= osf::kPageHeaderCommitOffset &&
+          osf::get32(actual + osf::kPageHeaderCommitOffset) ==
+              osf::kCommit) {
+        bool reserved_erased = true;
+        for (uint32_t i = osf::kPageHeaderActiveOffset + 4U;
+             i < osf::kPageHeaderSize; ++i)
+          if (actual[i] != 0xFFU) reserved_erased = false;
+        const uint32_t active =
+            osf::get32(actual + osf::kPageHeaderActiveOffset);
+        if (reserved_erased && active == 0xFFFFFFFFU) {
+          // Interrupted erase of a PREPARED compaction target: it has never
+          // been authoritative, even across a second power cut.
+          proven_stale_torn_erase = true;
+        } else if (reserved_erased && active == osf::kActive &&
+                   prefix > osf::kPageStaticCrcOffset) {
+          // No generation proof remains. Accept ONLY if all committed live
+          // controls are byte-identical to the valid authority. This covers
+          // a stale ACTIVE source, but never rolls back divergent mutations
+          // from a damaged newer ACTIVE page.
+          proven_stale_torn_erase = sameLiveControlSnapshot(
+              page, static_cast<uint16_t>(active_control_page_));
+        }
+      }
     }
     if (!proven_stale_torn_erase) {
       faulted_ = true;
