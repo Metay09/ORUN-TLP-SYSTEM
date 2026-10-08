@@ -711,12 +711,23 @@ Exact subsystem IDs are an application registry, not driver error-code leakage.
 Schema-v1 relationship rules:
 
 - if `TRANSITION_TIME_VALID=0`, `transition_epoch_seconds=0`;
-- if `LOCATION_VALID=0`, location source/coordinates/age are encoded as
-  UNKNOWN/zero and `LOCATION_AGE_VALID=0`;
-- if `LOCATION_VALID=1`, source must be non-UNKNOWN and coordinates must be in
-  range;
+- if `TRANSITION_TIME_VALID=1`, `transition_epoch_seconds` must be non-zero;
+- if `LOCATION_VALID=0`:
+  - `location_source=UNKNOWN`;
+  - `latitude_e7=0` and `longitude_e7=0`;
+  - `LOCATION_AGE_VALID=0`;
+  - `location_age_seconds=0xFFFF`;
+- if `LOCATION_VALID=1`, source must be a supported non-UNKNOWN value and
+  coordinates must be in range;
+- if `LOCATION_AGE_VALID=0`, `location_age_seconds=0xFFFF`;
+- if `LOCATION_AGE_VALID=1`, `LOCATION_VALID=1` and
+  `location_age_seconds <= 0xFFFE`;
+- `LOCATION_AGE_VALID=1` with `0xFFFF` is invalid;
 - if `CONTEXT_VALID=0`, `context_kind=NONE` and `context_value=0`;
 - if `CONTEXT_VALID=1`, `context_kind` must be a supported non-NONE kind.
+
+EVENT therefore uses the same canonical location-age sentinel semantics as
+PERIODIC: `0xFFFF` means unknown/unavailable age and is never valid exact age.
 
 For `BATTERY_STATE`, initial `reason_code` values are:
 
@@ -1268,15 +1279,21 @@ bounded RESULT metadata, not a generic persistent command journal.
 
 For every authenticated retry:
 
-- acquire/evaluate through the normative CAS §6 path; do not bypass CAS merely
-  because `command_id` was seen before;
+- while the serialized Config/CAS owner is held, compare any retained
+  `command_id` entry's canonical request tuple **before CAS §6 reaches its
+  mutation/write step**;
+- if the same `command_id` has a different canonical tuple, return
+  `POLICY_REJECTED / COMMAND_ID_REUSE_CONFLICT` without any ConfigStore write
+  or token/state mutation;
+- only after that conflict check passes, acquire/evaluate the request through
+  the remaining normative CAS §6 path; do not bypass CAS merely because
+  `command_id` was seen before;
 - if a retained RESULT exists and the canonical request tuple matches exactly,
   it suppresses duplicate durable RESULT persistence, but the **emitted status
   still follows CAS §6 for this attempt**; for example an original `APPLIED`
   may legitimately become `ALREADY_SATISFIED` on a later retry after the
   desired state is already current;
-- if the same `command_id` is presented with a different canonical tuple,
-  fail closed with `POLICY_REJECTED / COMMAND_ID_REUSE_CONFLICT`; never return
+- the different-tuple case above is fail-closed before mutation; never return
   the old command's APPLIED/token as if it belonged to the new payload;
 - the newly emitted RESULT binds the **new** `request_counter`;
 - creating the response transport frame may consume a fresh D2GW security
