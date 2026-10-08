@@ -657,6 +657,119 @@ static void testDamagedNewestControlAuthorityCannotRollbackAfterGenerationThree(
   }
 }
 
+
+static void testControlIntentAcrossPreparedCopyAndSecondErase() {
+  ControlFakeFlash flash(6U);
+  ControlIncarnation incarnation;
+  ObservationStore store(flash, 6U, &incarnation);
+  assert(store.begin(0x95U));
+  initControl(store);
+  const osc::OpenOccurrence durable = occurrence(0xBEEFU);
+  assert(store.requestPutOpenOccurrence(durable) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(store);
+  osc::OpenOccurrence transient = occurrence(0U);
+  transient.event_type = 2U;
+  for (uint32_t i = 0U; i < 13U; ++i) {
+    transient.occurrence_id = 6000U + i;
+    assert(store.requestPutOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+    assert(store.requestClearOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+  }
+  assert(store.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  settle(store);
+  bool ok = false;
+  assert(store.takeControlMaintenanceResult(ok) && ok);
+
+  // New target is the old control page zero. Fill active g=2 and initiate
+  // next compaction, stopping after PREPARED g=3 has copied committed rows.
+  for (uint32_t i = 0U; i < 13U; ++i) {
+    transient.occurrence_id = 7000U + i;
+    assert(store.requestPutOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+    assert(store.requestClearOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(store);
+  }
+  assert(store.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  for (unsigned i = 0U; i < 5U; ++i) store.poll();
+  // intent, erase, header body, header commit, first copied body
+  const ControlFakeFlash prepared_with_rows = flash;
+  const size_t cuts[] = {
+      1U, 3U, 44U, 48U, 49U, 52U, 53U, 63U, 64U, 65U, 96U,
+      128U, 144U, 145U, 512U, 2048U, 4095U, 4096U};
+  for (size_t prefix : cuts) {
+    ControlFakeFlash interrupted = prepared_with_rows;
+    memset(interrupted.bytes.data(), 0xFF, prefix);
+    ObservationStore recovered(interrupted, 6U, &incarnation);
+    assert(recovered.begin(0x95U) && !recovered.faulted());
+    osc::OpenOccurrence found;
+    assert(recovered.findOpenOccurrence(durable, found) ==
+           ObservationStore::ControlLookupResult::kFound);
+    assert(recovered.requestControlMaintenance() ==
+           ObservationStore::MaintenanceResult::kStarted);
+    settle(recovered);
+    assert(recovered.takeControlMaintenanceResult(ok) && ok);
+    ObservationStore reboot(interrupted, 6U, &incarnation);
+    assert(reboot.begin(0x95U) && !reboot.faulted());
+  }
+}
+
+static void testHalfRetiredIntentResumesBeforeAllowingNewWrites() {
+  ControlFakeFlash flash(6U);
+  ControlIncarnation incarnation;
+  ObservationStore seed(flash, 6U, &incarnation);
+  assert(seed.begin(0x96U));
+  initControl(seed);
+  const osc::OpenOccurrence durable = occurrence(0xB00BU);
+  assert(seed.requestPutOpenOccurrence(durable) ==
+         ObservationStore::ControlWriteResult::kStarted);
+  finishControlWrite(seed);
+  osc::OpenOccurrence transient = occurrence(0U);
+  transient.event_type = 2U;
+  for (uint32_t i = 0U; i < 13U; ++i) {
+    transient.occurrence_id = 8000U + i;
+    assert(seed.requestPutOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(seed);
+    assert(seed.requestClearOpenOccurrence(transient) ==
+           ObservationStore::ControlWriteResult::kStarted);
+    finishControlWrite(seed);
+  }
+  assert(seed.requestControlMaintenance() ==
+         ObservationStore::MaintenanceResult::kStarted);
+  // Intent, erase, header body, commit, copied body, copied commit,
+  // activate. Before the retire step, new ACTIVE authority is durable.
+  for (unsigned i = 0U; i < 7U; ++i) seed.poll();
+  assert(seed.busy());
+  for (unsigned byte_count = 0U; byte_count < 4U; ++byte_count) {
+    ControlFakeFlash torn_retire = flash;
+    const uint32_t word = osf::kControlIntentRetiredOffset;
+    for (unsigned j = 0U; j < byte_count; ++j)
+      torn_retire.bytes[word + j] = 0U;
+    ObservationStore reboot(torn_retire, 6U, &incarnation);
+    assert(reboot.begin(0x96U) && !reboot.faulted());
+    assert(reboot.requestPutOpenOccurrence(occurrence(0xFFFFU)) ==
+           ObservationStore::ControlWriteResult::kRejected);
+    assert(reboot.requestControlMaintenance() ==
+           ObservationStore::MaintenanceResult::kStarted);
+    settle(reboot);
+    bool ok = false;
+    assert(reboot.takeControlMaintenanceResult(ok) && ok);
+    ObservationStore after(torn_retire, 6U, &incarnation);
+    assert(after.begin(0x96U) && !after.faulted());
+    osc::OpenOccurrence recovered;
+    assert(after.findOpenOccurrence(durable, recovered) ==
+           ObservationStore::ControlLookupResult::kFound);
+  }
+}
+
 static void testUnreconciledExactObjectCommitCannotBePublished() {
   ControlFakeFlash flash(6U);
   ControlIncarnation incarnation;
@@ -755,6 +868,8 @@ int main() {
   testControlCompactionResetMatrix();
   testTornRetiredControlEraseRecoversWithoutAuthorityRollback();
   testDamagedNewestControlAuthorityCannotRollbackAfterGenerationThree();
+  testControlIntentAcrossPreparedCopyAndSecondErase();
+  testHalfRetiredIntentResumesBeforeAllowingNewWrites();
   testUnreconciledExactObjectCommitCannotBePublished();
   testEveryPublicReadRejectsUnreconciledMutation();
   testExactObjectBoundAndReplacement();
