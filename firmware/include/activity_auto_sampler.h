@@ -18,11 +18,18 @@ static_assert(kSummaryPeriodMs < 0x80000000UL, "bounded summary period");
 }  // namespace activity_auto_config
 
 struct ActivityHourSummary {
-  uint32_t finished_at_ms = 0;  // monotonic time; NOT a UTC timestamp.
+  // The sampling period is independently anchored. It is NOT automatically
+  // the current GNSS reporting period or an authoritative UTC time.
+  uint32_t started_at_ms = 0;
+  uint32_t finished_at_ms = 0;
+  uint32_t duration_seconds = 0;  // actual elapsed, may exceed nominal 1 h.
+  uint32_t measured_coverage_ms = 0;  // usable, nonoverlapping window duration.
+
   uint16_t usable_windows = 0;
   uint16_t invalid_windows = 0;
   uint16_t fault_windows = 0;
   uint16_t unavailable_attempts = 0;
+  uint16_t boundary_discarded_windows = 0;
   uint32_t mean_axis_variance_sum_mg2 = 0;  // per usable window.
   uint32_t mean_abs_delta_mg = 0;          // per usable window.
 };
@@ -61,10 +68,13 @@ class ActivityAutoSampler {
   bool summary_ready_ = false;
   uint32_t period_started_at_ms_ = 0;
   uint32_t next_due_at_ms_ = 0;
+  uint32_t capture_started_at_ms_ = 0;
+  uint64_t summed_coverage_ms_ = 0;
   uint16_t usable_windows_ = 0;
   uint16_t invalid_windows_ = 0;
   uint16_t fault_windows_ = 0;
   uint16_t unavailable_attempts_ = 0;
+  uint16_t boundary_discarded_windows_ = 0;
   uint64_t summed_variance_mg2_ = 0;
   uint64_t summed_abs_delta_mg_ = 0;
   uint32_t published_summaries_ = 0;
