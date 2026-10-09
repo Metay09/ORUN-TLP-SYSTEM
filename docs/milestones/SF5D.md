@@ -273,8 +273,32 @@ existing protected stores or deployed devices.
     CRC32=`0xAED32820` (**new expected marker**).
   - `matched=1/3 erased=0/3 seed_address=0x0E4000 seed_state=MATCH`.
 - This is a physical SEED PASS and the **pre-DFU CRC baseline**.
-  **VERIFY image upload/retention comparison remains unreported.**
-  Do not infer DFU preservation merely from successful SEED readback.
+  At this stage VERIFY was still pending; the subsequent matched post-DFU
+  readout is documented below.
+
+**RAK-1 physical VERIFY / actual serial DFU retention result (operator report, 2026-10-09):**
+- `pio run -e rak4630_sf5d_dfu_verify -t upload` on the same RAK-1
+  USB identity: **SUCCESS**, 8.636 s; nrfutil reported `Single bank`,
+  then `Device programmed`.
+- The standalone **read-only VERIFY** image booted. Two successive
+  `SF5D STATUS` readouts agreed with the recorded SEED pre-update baseline:
+  - `0x0C5000`: OTHER, first=`0x2578303D`,
+    full-page CRC32=`0x8FCBBCDC` (**MATCH before/after**);
+  - `0x0D5000`: OTHER, first=`0x09091701`,
+    full-page CRC32=`0x1CAE7BAD` (**MATCH before/after**);
+  - `0x0E4000`: MATCH, first=`0x53463544`,
+    full-page CRC32=`0xAED32820` (**MATCH before/after**);
+  - `matched=1/3 erased=0/3 seed_address=0x0E4000 seed_state=MATCH`.
+- **SF5D3 sampled DFU preservation: PHYSICAL PASS.** These exact three
+  4096-byte pages retained their full-page CRC32 values across this one
+  successful **SEED → VERIFY** serial DFU update under installed bootloader
+  handoff version `0.4.2`. Only the seed page had an intentionally written
+  test marker; the other two contained existing unknown data.
+- **Not proven:** 29 unsampled pages; a production-size image update;
+  interrupted DFU; a future larger application, different bootloader or
+  update path; or preservation of the adjacent protected partitions.
+  **D1 remains OPEN; D2 remains OPEN.** No production observation/custody
+  flash backend, firmware partition cutover or product ACK was activated.
 
 **Revised experiment — smaller/safer bounded scope:**
 
