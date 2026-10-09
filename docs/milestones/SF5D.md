@@ -222,68 +222,73 @@ change production application boundaries or activate the unallocated
 128 KiB region. Gate D1 must be closed with observed update/erase behavior
 before any production storage writes.
 
-### SF5D3 — three-page DFU sentinel-retention physical experiment (TEST ONLY)
+### SF5D3 — mixed-content DFU sentinel-retention physical experiment (TEST ONLY)
 
-**Operator build evidence (2026-10-09; before physical flash test):**
-- On `test/sf5d-dfu-sentinel-retention` at `69925b9`, focused
-  `firmware/tests/sf5/test_sf5d_dfu_probe_source_contract.py`: **PASS**.
-- `pio run -e rak4630_sf5d_dfu_seed`: **SUCCESS**, 3.904 s,
-  Flash **56,164 B**, RAM **8,776 B**. This was after the initial link
-  rejection `M4 backend is missing Nordic primitive sd_flash_page_erase`
-  and the targeted linker guard change, without weakening production guards.
-- `pio run -e rak4630_sf5d_dfu_verify`: **SUCCESS**, 24.452 s,
-  Flash **55,372 B**, RAM **8,776 B**.
-- These are host/source and target-build observations only. **No SEED upload,
-  page status, marker program, subsequent VERIFY upload or physical retention
-  result has yet been reported.**
+**Owner-approved DEVELOPMENT device RAK-1, bootloader handoff 0.4.2.**
+This experiment does NOT assign production flash ownership. It does NOT
+permit changes to the application linker boundary, bootloader/SoftDevice,
+existing protected stores or deployed devices.
 
+**Operator's first physical observations (2026-10-09):**
+- Host source-contract checks: **PASS**; both isolated target builds:
+  `rak4630_sf5d_dfu_seed` **SUCCESS** (Flash 56,164 B / RAM 8,776 B);
+  `rak4630_sf5d_dfu_verify` **SUCCESS** (Flash 55,372 B / RAM 8,776 B).
+  The first SEED build previously failed an original M4 primitive link guard;
+  the corrected exact-target-only guard preserved production requirements.
+- First SEED firmware upload to RAK-1 unique serial `0E8ADE7E71531AA3`:
+  **SUCCESS** 8.913 s, serial nrfutil single-bank.
+- Without any explicit marker-write command, boot/read-only `SF5D STATUS`:
+  - page `0x0C5000`: **OTHER**, first word `0x2578303D`;
+  - page `0x0D5000`: **OTHER**, first word `0x09091701`;
+  - page `0x0E4000`: **ERASED**, first word `0xFFFFFFFF`;
+  - `matched=0/3 erased=1/3 result=MISMATCH` under the **original
+    all-three-erased precondition**, not data corruption evidence.
+- The original all-three marker seed was not run; its code would reject
+  because the first two pages were not erased. No test marker was reported
+  written. We MUST NOT automatically erase/reinitialize these pages.
 
+**Revised experiment — smaller/safer bounded scope:**
 
-This is a **bounded diagnostic**, not an ObservationStore allocation and not a
-production data-retention guarantee. RAK-1 reports bootloader-version handoff
-`0.4.2`, but its exact installed bootloader binary/update erasure policy remains
-unverified. The owner explicitly permits loss of existing **development** data,
-while requiring preserved data for any eventual shipped product.
+Keep **three read-only observed pages**, each with a **whole-page CRC32**
+and original first-word/status output:
 
-Two deliberately separate test images, sharing a static read-only marker check:
+- `0x0C5000` and `0x0D5000` are **read-only pre-existing controls**;
+  do not write, erase, repair, or infer their previous ownership.
+- `0x0E4000` is the **one and only writable sample**; `SF5D SEED CONFIRM`
+  writes 16 marker bytes only if its entire 4096-byte page is erased.
+  No erase primitive is linked to either experiment image.
+- The test-only `rak4630_sf5d_dfu_verify` is read-only. Its ordinary serial
+  DFU upload is the update under examination; it prints the same three
+  whole-page CRC32 values and the final marker state.
 
-- `rak4630_sf5d_dfu_seed` includes the ONLY writer. Its startup is read-only.
-  Only serial `SF5D SEED CONFIRM` may program 16 marker bytes into each of
-  the three **already erased** candidate pages `0x0C5000`, `0x0D5000`,
-  `0x0E4000`. If any page has non-FF content it REFUSES to write; it never
-  erases a page. Preflight also checks nRF52840 flash geometry and that the
-  SoftDevice is disabled. These pages are unallocated; any data held in them
-  must be treated as development-only.
-- `rak4630_sf5d_dfu_verify` includes NO mutation API and only reads and
-  compares the markers, with an on-boot report and `SF5D STATUS` USB query.
-  Its serial DFU upload is the firmware update whose impact is being measured.
+**Operator procedure** (both images must be built again after this revision):
 
-**Qualification procedure** (Fish, from `firmware/`, operator must resolve
-RAK-1 stable `/dev/serial/by-id/` device and target *that* board only):
+1. Rebuild `rak4630_sf5d_dfu_seed` and
+   `rak4630_sf5d_dfu_verify`; run the focused source-contract guard.
+2. Re-upload the revised `rak4630_sf5d_dfu_seed` to RAK-1 identified by its
+   unique USB serial; open serial monitor and issue `SF5D STATUS`.
+   **Record all three CRC32 values.** Do not continue if `0x0E4000` is OTHER.
+3. If `0x0E4000` is `ERASED`, deliberately issue `SF5D SEED CONFIRM`
+   and demand `SF5D DFU SEED PASS one-page-readback`, plus
+   `seed_address=0x0E4000 seed_state=MATCH`. Record three CRC32 values
+   after the marker is written, for a reliable **pre-update baseline**.
+4. Close monitor with Ctrl+C, upload the separately built
+   `rak4630_sf5d_dfu_verify` firmware over the SAME RAK-1 USB serial,
+   reopen monitor and issue `SF5D STATUS`. Capture all three page CRC32s.
+   Compare the `0x0C5000`, `0x0D5000` CRC32s before versus after and
+   compare `0x0E4000` marker/readback/CRC32 before versus after.
+5. Any mismatch is **evidence of changed data or a readout issue** requiring
+   investigation before writes. Three matching CRCs plus a matching marker
+   demonstrate retention of these particular sampled pages for this one
+   tested update, not a general product guarantee.
+6. Restore production firmware only as a **separate**, recorded DFU upload
+   after the experiment; validate GNSS/LoRa independently.
 
-1. Build **both** images first with
-   `pio run -e rak4630_sf5d_dfu_seed` and
-   `pio run -e rak4630_sf5d_dfu_verify`.
-2. Upload `rak4630_sf5d_dfu_seed` to RAK-1 and open serial monitor at 115200
-   using `-f send_on_enter`. Query `SF5D STATUS`. Expect all three ERASED.
-   Any OTHER/non-erased page is a **stop**, not reason to erase automatically.
-3. Enter `SF5D SEED CONFIRM`. Require `SF5D DFU SEED PASS` AND
-   `SF5D DFU STATUS matched=3/3 ... result=MATCHED`. Record this output.
-4. Close serial monitor with Ctrl+C; upload the separately built
-   `rak4630_sf5d_dfu_verify` image using exactly the same RAK-1 USB unique
-   serial; query `SF5D STATUS`. If all three markers MATCH, record
-   **three sampled candidate pages survived this one serial DFU update**.
-   If any fail, record address/evidence and investigate before further writes.
-5. Later restore the production image separately, then check normal GNSS/radio.
-   Do not switch source branches during qualification.
-
-**Proof boundary:** even MATCHED 3/3 only demonstrates retention at the sampled
-addresses under the exact tested bootloader, image size and DFU path. It does
-not show that all 32 pages are safe, that interrupted DFU is safe, that a
-larger application remains below `0x0C5000`, or that future bootloader upgrades
-preserve observations. Gate D1 stays OPEN until the full model is tested and
-reviewed. No production `kApplicationPolicyEndAddress` change or new store
-writes are allowed by this experiment.
+**Limits:** This does NOT prove all 32 candidate pages survive, match the
+installed bootloader binary to a reproducible 0.4.2 build, guarantee retained
+data for larger firmware, test interrupted DFU, establish rollbacks or resolve
+combined Tracker/Gateway partition capacity. **D1 stays OPEN**; no production
+ObservationStore/CustodyStore activation follows from this test.
 
 ## 3. Gate D2 — owner and combined Tracker + Gateway, NOT YET CLOSED
 
