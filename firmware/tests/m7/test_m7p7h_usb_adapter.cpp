@@ -80,5 +80,92 @@ int main() {
   printUsbApplicationResponse(denied);
   assert(Serial.output == "APP RESULT id=19 code=ACCESS_DENIED\n");
 
+  // Configuration change spelling: APP INTERVAL <seconds>, strict decimal.
+  {
+    ConfigMutationKind kind = ConfigMutationKind::kSetTrackingInterval;
+    uint32_t value = 0;
+    const auto parse_config = [&](const char* text) {
+      return parseUsbConfigCommand(
+          text, static_cast<uint8_t>(strlen(text)), &kind, &value);
+    };
+    assert(parse_config("APP INTERVAL 900") == UsbConfigCommandParse::kOk);
+    assert(kind == ConfigMutationKind::kSetTrackingInterval && value == 900);
+    // The widest value still fits the 23-character USB command buffer.
+    assert(strlen("APP INTERVAL 4294967295") == 23);
+    assert(parse_config("APP INTERVAL 4294967295") ==
+           UsbConfigCommandParse::kOk);
+    assert(value == UINT32_MAX);
+    assert(parse_config("APP INTERVAL 0") == UsbConfigCommandParse::kOk);
+    assert(value == 0);  // range is the owner's decision, not the parser's
+
+    // Recognized command, unusable argument: never silently reinterpreted.
+    value = 77;
+    const char* malformed[] = {
+        "APP INTERVAL ",      "APP INTERVAL 9x",    "APP INTERVAL x9",
+        "APP INTERVAL -5",    "APP INTERVAL +5",    "APP INTERVAL  5",
+        "APP INTERVAL 5 ",    "APP INTERVAL 0x10",  "APP INTERVAL 4294967296",
+        "APP INTERVAL 99999999999"};
+    for (const char* text : malformed) {
+      assert(parse_config(text) == UsbConfigCommandParse::kMalformed);
+      assert(value == 77);
+    }
+
+    // Other commands are left to their own parsers.
+    const char* unrelated[] = {"APP INTERVAL", "APP INTERVAL?", "APP CONFIG?",
+                               "app interval 900", "ROLE?", ""};
+    for (const char* text : unrelated) {
+      assert(parse_config(text) == UsbConfigCommandParse::kNotConfigCommand);
+      assert(value == 77);
+    }
+    assert(parseUsbConfigCommand(nullptr, 0, &kind, &value) ==
+           UsbConfigCommandParse::kNotConfigCommand);
+    assert(parseUsbConfigCommand("APP INTERVAL 900", 16, nullptr, &value) ==
+           UsbConfigCommandParse::kNotConfigCommand);
+    assert(parseUsbConfigCommand("APP INTERVAL 900", 16, &kind, nullptr) ==
+           UsbConfigCommandParse::kNotConfigCommand);
+
+    ConfigMutationResult applied;
+    applied.request_id = 40;
+    applied.outcome = ConfigMutationOutcome::kApplied;
+    applied.token_valid = true;
+    applied.token = config_format::StateToken(0x1122334455667788ULL, 2);
+    applied.config = config_format::Config(600, 0);
+    Serial.output.clear();
+    printUsbConfigMutationResult(applied);
+    assert(Serial.output ==
+           "APP SET id=40 code=APPLIED tracking_interval_seconds=600 "
+           "token=VALID revision=2\n");
+
+    // Without a VALID token nothing token-like is printed, and the interval
+    // shown is the store's value, not the requested one.
+    ConfigMutationResult unknown;
+    unknown.request_id = 41;
+    unknown.outcome = ConfigMutationOutcome::kOutcomeUnknown;
+    unknown.config = config_format::Config(180, 0);
+    Serial.output.clear();
+    printUsbConfigMutationResult(unknown);
+    assert(Serial.output ==
+           "APP SET id=41 code=OUTCOME_UNKNOWN tracking_interval_seconds=180 "
+           "token=UNAVAILABLE\n");
+
+    const struct {
+      ConfigMutationOutcome outcome;
+      const char* text;
+    } names[] = {
+        {ConfigMutationOutcome::kUnchanged, "code=UNCHANGED "},
+        {ConfigMutationOutcome::kInvalid, "code=INVALID "},
+        {ConfigMutationOutcome::kAccessDenied, "code=ACCESS_DENIED "},
+        {ConfigMutationOutcome::kMaintenance, "code=MAINTENANCE "},
+        {ConfigMutationOutcome::kUnavailable, "code=UNAVAILABLE "},
+    };
+    for (const auto& name : names) {
+      ConfigMutationResult result;
+      result.outcome = name.outcome;
+      Serial.output.clear();
+      printUsbConfigMutationResult(result);
+      assert(Serial.output.find(name.text) != std::string::npos);
+    }
+  }
+
   return 0;
 }

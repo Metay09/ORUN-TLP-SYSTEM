@@ -43,6 +43,63 @@ bool parseUsbApplicationQuery(const char* text, uint8_t length,
   return false;
 }
 
+UsbConfigCommandParse parseUsbConfigCommand(const char* text, uint8_t length,
+                                            ConfigMutationKind* kind,
+                                            uint32_t* value) {
+  static const char kPrefix[] = "APP INTERVAL ";
+  constexpr uint8_t kPrefixLength = sizeof(kPrefix) - 1;
+  if (text == nullptr || kind == nullptr || value == nullptr ||
+      length < kPrefixLength || memcmp(text, kPrefix, kPrefixLength) != 0) {
+    return UsbConfigCommandParse::kNotConfigCommand;
+  }
+
+  // Strict unsigned decimal: at least one digit, nothing else, no overflow.
+  if (length == kPrefixLength) return UsbConfigCommandParse::kMalformed;
+  uint32_t parsed = 0;
+  for (uint8_t index = kPrefixLength; index < length; ++index) {
+    const char digit = text[index];
+    if (digit < '0' || digit > '9') return UsbConfigCommandParse::kMalformed;
+    const uint32_t increment = static_cast<uint32_t>(digit - '0');
+    if (parsed > (UINT32_MAX - increment) / 10U)
+      return UsbConfigCommandParse::kMalformed;
+    parsed = parsed * 10U + increment;
+  }
+
+  *kind = ConfigMutationKind::kSetTrackingInterval;
+  *value = parsed;
+  return UsbConfigCommandParse::kOk;
+}
+
+void printUsbConfigMutationResult(const ConfigMutationResult& result) {
+  const char* code = "UNAVAILABLE";
+  switch (result.outcome) {
+    case ConfigMutationOutcome::kApplied: code = "APPLIED"; break;
+    case ConfigMutationOutcome::kUnchanged: code = "UNCHANGED"; break;
+    case ConfigMutationOutcome::kInvalid: code = "INVALID"; break;
+    case ConfigMutationOutcome::kAccessDenied: code = "ACCESS_DENIED"; break;
+    case ConfigMutationOutcome::kMaintenance: code = "MAINTENANCE"; break;
+    case ConfigMutationOutcome::kUnavailable: code = "UNAVAILABLE"; break;
+    case ConfigMutationOutcome::kOutcomeUnknown: code = "OUTCOME_UNKNOWN"; break;
+  }
+
+  // The interval printed is what the store holds now, never the requested
+  // value: after OUTCOME_UNKNOWN or a refusal it is the previous setting.
+  if (result.token_valid) {
+    Serial.printf(
+        "APP SET id=%lu code=%s tracking_interval_seconds=%lu "
+        "token=VALID revision=%lu\n",
+        static_cast<unsigned long>(result.request_id), code,
+        static_cast<unsigned long>(result.config.tracking_interval_seconds),
+        static_cast<unsigned long>(result.token.revision));
+  } else {
+    Serial.printf(
+        "APP SET id=%lu code=%s tracking_interval_seconds=%lu "
+        "token=UNAVAILABLE\n",
+        static_cast<unsigned long>(result.request_id), code,
+        static_cast<unsigned long>(result.config.tracking_interval_seconds));
+  }
+}
+
 void printUsbApplicationResponse(const ApplicationResponse& response) {
   if (response.code != ApplicationResponseCode::kOk) {
     const char* code = "UNSUPPORTED";

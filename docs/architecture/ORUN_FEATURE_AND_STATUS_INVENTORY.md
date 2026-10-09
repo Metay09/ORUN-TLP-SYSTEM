@@ -181,7 +181,7 @@ market-ready product completion.
 | Multi-hop Relay / mesh routing | **Explicit D** (v1 exactly one hop) | Stable device identity, duplicate suppression, planned TTL/security domain | Bounded multi-hop design, airtime regulation, replay/domain ownership before implementation |
 | Configurable channel/SF/BW/power and airtime admission | **D**, radio values compile-time fixed; host airtime model | `radio_config.h` 869.525 MHz / SF11 / BW125 / 14 dBm; `lora_airtime.h` and M5 host tests, RF-portability ADR | No runtime persistent RF profile, duty-cycle/airtime enforcement, scale field survey or compliant multi-domain plan |
 | Legacy BASE receive / serial display | **P+H+F** for direct POSITION | NetworkService base path, USB serial `BASE RX` diagnostics | Not yet full Gateway, no Edge database or authenticated custody ACK |
-| Host bridge line v1 (received POSITION -> attached host) | **P+H; physical pending** (2026-10-10). The receiver prints one checksummed `BRIDGE` line per accepted POSITION with the original 34-byte packet plus path/link metadata; `BASE RX` lines alone never carried the coordinates | `bridge_frame.cpp`, `RadioManager::emitBridgePosition`, `protocol/BRIDGE_FRAME_V1.md`, `test_bridge_frame.cpp`, R2 end-to-end asserts | Output only: no custody, ACK or authentication. Host reader, backend ingest and map still missing; opaque secure kinds and BLE carriage are later slices |
+| Host bridge line v1 (received POSITION -> attached host) | **P+H+scoped F** (2026-10-10: six consecutive direct-path lines from one RAK receiver, checksums verified and packets decoded off-device, counter restarting at 1 after reboot; relay path and a host that stops reading not observed). The receiver prints one checksummed `BRIDGE` line per accepted POSITION with the original 34-byte packet plus path/link metadata; `BASE RX` lines alone never carried the coordinates | `bridge_frame.cpp`, `RadioManager::emitBridgePosition`, `protocol/BRIDGE_FRAME_V1.md`, `test_bridge_frame.cpp`, R2 end-to-end asserts | Output only: no custody, ACK or authentication. Host reader, backend ingest and map still missing; opaque secure kinds and BLE carriage are later slices |
 | Gateway bridge (tek servis) | **Approved D, foundations A** | Gateway/Edge custody design; USB/BLE transport and other runtime services | One real LoRa-to-attached-host bridge with secure protocol, durable admission and connected-host availability; **sabit/gezer is solely deployment metadata**, not a second Gateway type or data contract |
 | Gateway foreign durable custody | **A+H portable SF4B; no production physical owner/runtime** | `custody_store.cpp`, `custody_store_format.cpp`, exact-object acceptance/release tests; PR #80 | SF5 object-size/format review, nRF flash owner, authenticated custody ACK, actual Edge handoff, load and reset tests |
 | Gateway→Edge→Backend ACK chain | **Architecture D; not end-to-end implemented** | `ORUN_GATEWAY_DURABLE_CUSTODY.md`, SF5G/H/I ordered plans, secure receipt foundation | Edge durable acceptance proof, app/backend ingestion and data ownership propagation; `TX_DONE` never means custody |
@@ -269,9 +269,17 @@ policy must be explicit, durable user intention, not automatic GNSS-based role.
   `tracking_interval_seconds` and `battery_capacity_mah` (the latter is
   configured metadata, not a battery charge measurement).
 - The normal firmware starts `ConfigStore` and reads persisted values at boot.
-  **There is no normal production user-facing authenticated writer for all
-  service settings.** Manual USB `ROLE` override is still RAM-only; that
-  selected role does **not** survive reset.
+  Since 2026-10-10 a local USB writer exists for the **tracking interval
+  only** (`APP INTERVAL <seconds>`, 60 s floor): `ConfigMutationOwner`
+  serializes the change, ConfigStore commits it, the runtime adopts it and a
+  typed result is printed (**P+H+scoped F**, 2026-10-10 on one receiver:
+  APPLIED, read back as stored, retained across a serial DFU of the same
+  image plus reboot, then restored; not observed: a tracker changing cadence,
+  a save with BLE connected, power loss during a save started this way).
+  **There is still no
+  writer for service settings and no authenticated BLE/LoRa writer.** Manual
+  USB `ROLE` override is still RAM-only; that selected role does **not**
+  survive reset.
 - The independent ConfigStore v2 physical qualification PASS covers
   **specific between-flash-operation** reboot/cut points on one device.
   It is not analog brownout, an interrupted live SoftDevice write, or

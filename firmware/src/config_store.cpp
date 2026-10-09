@@ -506,33 +506,45 @@ bool ConfigStore::establishFreshBaseline() {
 }
 
 bool ConfigStore::requestSave(const config_format::Config& candidate) {
-  if (!ready_ || busy() || mutation_unreconciled_ || recovery_pending_)
-    return false;
+  const ConfigSaveAdmission admission = admitSave(candidate);
+  return admission == ConfigSaveAdmission::kStarted ||
+         admission == ConfigSaveAdmission::kUnchanged;
+}
+
+ConfigSaveAdmission ConfigStore::admitSave(
+    const config_format::Config& candidate) {
+  // Check order and diagnostics counters are the established requestSave()
+  // contract; only the returned reason is new.
+  if (!ready_) return ConfigSaveAdmission::kUnavailable;
+  if (busy()) return ConfigSaveAdmission::kBusy;
+  if (mutation_unreconciled_ || recovery_pending_)
+    return ConfigSaveAdmission::kUnavailable;
 
   if (!validCandidate(candidate)) {
     ++diagnostics_.rejected_candidates;
-    return false;
+    return ConfigSaveAdmission::kInvalid;
   }
 
   if (sameConfig(candidate, config_)) {
-    if (!semantic_unambiguous_) return false;
+    if (!semantic_unambiguous_) return ConfigSaveAdmission::kMaintenance;
     ++diagnostics_.skipped_unchanged;
-    return true;
+    return ConfigSaveAdmission::kUnchanged;
   }
 
   if (maintenance_reset_required_ ||
       token_state_ != ConfigTokenState::kValid ||
       active_page_ < 0) {
     ++diagnostics_.maintenance_lockouts;
-    return false;
+    return ConfigSaveAdmission::kMaintenance;
   }
 
   if (save_result_ready_) {
     ++diagnostics_.blocked_pending_result;
-    return false;
+    return ConfigSaveAdmission::kBusy;
   }
 
-  return startSave(candidate);
+  return startSave(candidate) ? ConfigSaveAdmission::kStarted
+                              : ConfigSaveAdmission::kUnavailable;
 }
 
 bool ConfigStore::requestReset() {

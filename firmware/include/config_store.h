@@ -11,6 +11,27 @@ enum class ConfigTokenState : uint8_t {
   kUncertain,
 };
 
+// Typed admission outcome for one semantic save request. A writer needs to
+// tell these apart to report an honest result; the bool requestSave() seam
+// below collapses them and is kept for existing internal callers.
+enum class ConfigSaveAdmission : uint8_t {
+  // A durable save started. Exactly one takeSaveResult() will follow.
+  kStarted,
+  // The candidate already equals the authoritative config; nothing is written
+  // and the state token does not move.
+  kUnchanged,
+  // Another save is in flight or its result has not been taken yet.
+  kBusy,
+  // The candidate violates the store's semantic bounds.
+  kInvalid,
+  // Maintenance/reset is required or the state token is not VALID: semantic
+  // mutation is unavailable until that is resolved.
+  kMaintenance,
+  // The store is not ready, an earlier mutation is still being reconciled,
+  // or the save could not be started.
+  kUnavailable,
+};
+
 // Durable desired configuration owner for the fixed two-page ConfigStore
 // partition.
 //
@@ -84,6 +105,10 @@ class ConfigStore {
   // semantic change. An unchanged config is a no-op only when recovery has an
   // unambiguous semantic state.
   bool requestSave(const config_format::Config& candidate);
+
+  // Same admission as requestSave() with a typed outcome. requestSave()
+  // returns true exactly for kStarted and kUnchanged.
+  ConfigSaveAdmission admitSave(const config_format::Config& candidate);
 
   // Returns one logical result for the submitted save attempt.
   //
