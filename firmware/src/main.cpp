@@ -1864,12 +1864,12 @@ void setup() {
   const uint32_t reported_bootloader_version = bootloaderVersion;
   if (reported_bootloader_version == 0U ||
       reported_bootloader_version == UINT32_MAX) {
-    Serial.printf("SF5D BL VERSION unavailable handoff=0x%08lX\\n",
+    Serial.printf("SF5D BL VERSION unavailable handoff=0x%08lX\n",
                   static_cast<unsigned long>(reported_bootloader_version));
   } else {
     Serial.printf(
         "SF5D BL VERSION handoff=0x%08lX candidate=%lu.%lu.%lu "
-        "evidence=core-handoff-only\\n",
+        "evidence=core-handoff-only\n",
         static_cast<unsigned long>(reported_bootloader_version),
         static_cast<unsigned long>((reported_bootloader_version >> 16) & 0xFFU),
         static_cast<unsigned long>((reported_bootloader_version >> 8) & 0xFFU),
