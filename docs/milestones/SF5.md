@@ -1,18 +1,24 @@
 # SF5 — TLP v2 product observation + 128 KiB durable-data cutover
 
-Status: **SF5A MERGED; SF5B PROTECTED WIRE/SECURITY CONTRACT IN DESIGN REVIEW. No SF5 production runtime is authorized.**
+Status: **SF5A + SF5B MERGED; SF5C PORTABLE OBSERVATIONSTORE ACTIVE. No SF5 production runtime or physical 128 KiB flash allocation is authorized yet.**
 
 SF5A merge baseline:
 `main@cdb9db172d178acc877b9315453e7adbd7947985`.
 
-Active SF5B branch:
-`design/sf5b-tlp-v2-protected-product-wire`.
+SF5B merged baseline:
+`main@5b757966489e5fe221c05fe1cbf66ff7b1e602d5`.
 
-SF5B candidate contract:
+Active SF5C branch:
+`feat/sf5c-observation-store`.
+
+SF5B frozen contract:
 `docs/architecture/ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md`.
 
 SF5B milestone:
 `docs/milestones/SF5B.md`.
+
+SF5C milestone:
+`docs/milestones/SF5C.md`.
 
 Primary architecture contract:
 `docs/architecture/ORUN_TLP_V2_PRODUCT_OBSERVATION_STORAGE_CUTOVER.md`.
@@ -127,11 +133,10 @@ Must preserve:
   authority; do not freeze a wire/key binding that makes "read" necessarily
   mean "can forge PERIODIC/EVENT/RESULT".
 
-Current SF5B candidate is recorded in
-`ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md` and remains **unapproved** until its
-independent security/protocol audit closes.
+SF5B is merged and independently reviewed. Its wire/security contract is now
+the input to SF5C. No production codec/RF activation is implied by that merge.
 
-Gate: independent security/protocol audit before any codec/runtime activation.
+Gate: **CLOSED for design**; implementation evidence belongs to later slices.
 
 ### SF5C — portable ObservationStore
 
