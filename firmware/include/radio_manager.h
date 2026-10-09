@@ -140,6 +140,10 @@ class RadioManager {
   void scheduleNextTransmission(uint32_t now);
   void handleReceivedPacket(const uint8_t* payload, uint16_t size,
                             int16_t rssi, int8_t snr);
+  // Loop-owned: prints the host bridge line for one accepted application
+  // POSITION (protocol/BRIDGE_FRAME_V1.md). Output only; no radio, flash or
+  // delivery state changes.
+  void emitBridgePosition(const NetworkEvent& event);
   void sendDueRelay(uint32_t now);
 
   enum class TxKind : uint8_t {
@@ -180,6 +184,7 @@ class RadioManager {
   NetworkService network_{};
   HistorySecureRxFrame history_secure_rx_{};
   bool history_secure_rx_pending_ = false;
+  uint32_t bridge_line_number_ = 0;  // per boot; first printed line is 1.
   uint32_t tx_attempts_ = 0, local_tx_failures_ = 0;
   uint32_t tx_timeouts_ = 0;
   RadioEventDiagnostics event_diagnostics_{};
