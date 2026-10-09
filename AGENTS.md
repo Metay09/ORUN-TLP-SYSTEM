@@ -202,6 +202,22 @@ and physical-evidence boundary unless the active milestone explicitly changes it
 
 ## Universal Firmware
 
+**ORUN feature/name inventory (2026-10-09):**
+`docs/architecture/ORUN_FEATURE_AND_STATUS_INVENTORY.md` tracks actual
+`main` source/test/physical evidence, explicitly deferred capabilities and
+future infrastructure. Consult it **alongside** canonical architecture and
+current milestones before claiming a feature is new, complete or absent.
+Product-facing terms: one **ORUN node/device** (identity/hardware); installed
+**capabilities** (GNSS/sensor/actuator driver); independently requested and
+effective **services** (tracking, sensing, actuation, Relay, Gateway bridge,
+durable Gateway custody); user **profiles** are editable preset collections;
+fixed/mobile is deployment context. Existing
+`NodeRole::kTracker/kRelay/kBase`, `ROLE` USB commands and TLP v1
+packet/fixture bytes remain frozen **legacy compatibility surfaces** until
+a separately reviewed, tested migration. In particular, BASE is not itself
+a completed Gateway and Relay is not Gateway durable custody.
+
+
 There must be ONE firmware codebase.
 
 Do NOT create separate tracker, relay and base firmware projects.
