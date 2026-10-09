@@ -83,6 +83,7 @@ void loop() {
     const int c = Serial.read();
     if (c < 0) break;
     if (c == '\r' || c == '\n') {
+      if (command_length == 0U) continue;  // Ignore a trailing CR/LF.
       command[command_length] = '\0';
       handleCommand();
     } else if (command_length < sizeof(command) - 1U) {
