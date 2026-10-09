@@ -175,9 +175,15 @@ and physical-evidence boundary unless the active milestone explicitly changes it
 
 ---
 
-## Hardware
+## Hardware — legacy development setups, **not** separate ORUN product types
 
-### TRACKER
+The three headings below describe the originally tested hardware setups and
+legacy firmware modes only. In the final product there is **one ORUN device**
+with detectable attached hardware and independent enabled services. Do not
+offer TRACKER / RELAY / BASE as mutually exclusive new user-facing SKUs or
+service switches. See the Universal Firmware rules and current feature inventory.
+
+### Legacy TRACKER setup
 
 - RAK4630 / RAK4631
 - Nordic nRF52840
@@ -188,12 +194,12 @@ and physical-evidence boundary unless the active milestone explicitly changes it
 - 1S Li-ion/LiPo battery
 - WisBlock Unify solar enclosure
 
-### RELAY
+### Legacy RELAY setup
 
 - RAK4630 / RAK4631
 - additional GNSS/accelerometer hardware optional
 
-### BASE
+### Legacy BASE receiver setup (not yet a Gateway)
 
 - RAK4630 / RAK4631
 - later connected to an Android phone over BLE
