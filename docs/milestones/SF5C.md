@@ -1,16 +1,54 @@
 # SF5C — Portable ObservationStore
 
-Status: **FOURTH INDEPENDENT AUDIT PASS WITH FIXES (0c39aba:
-0 BLOCKER / 0 HIGH / 2 MEDIUM / 2 LOW). TWO MEDIUM FIXES AND TARGETED
-LOW TESTS ARE COMMITTED ON THE FEATURE BRANCH, NOT YET REVALIDATED.
-PORTABLE STORAGE ONLY; NO nRF ADDRESS ALLOCATION, NO PRODUCTION RF
-CUTOVER, NO PHYSICAL PASS. DO NOT MERGE UNTIL NEW TESTS/REVIEW PASS.**
+Status: **SF5C PORTABLE STORAGE: INDEPENDENTLY ACCEPTED FOR PORTABLE-ONLY
+MERGE after focused review of ccb43cc (PASS WITH FIXES: 0 BLOCKER /
+0 HIGH / 0 MEDIUM / 1 LOW documentation-only, closed here). Targeted
+SF5C tests, full host ASan/UBSan/-Werror suite, and RAK4630 build PASS
+on ccb43cc. NO nRF FLASH ADDRESS ALLOCATION, PRODUCTION RUNTIME/RF CUTOVER,
+NVMC POWER-CUT VALIDATION OR PHYSICAL PASS. SF5D/SF5F gates remain open.**
 
 Baseline:
 `main@5b757966489e5fe221c05fe1cbf66ff7b1e602d5` (SF5B merged).
 
 Branch:
 `feat/sf5c-observation-store`.
+
+### 2026-10-09 — Final focused independent verification of `ccb43cc`
+
+Independent Astra verification of exact
+`ccb43ccb752e27c112ffdf8b301d922c056d6630` returned
+**PASS WITH FIXES: 0 BLOCKER / 0 HIGH / 0 MEDIUM / 1 LOW (documentation
+only; corrected in this commit)**. No further code/test/fixture defects
+reported. Both mandatory MEDIUM corrections from the preceding
+`0c39aba` audit are independently closed:
+
+- Torn control-intent write: first/second compaction tests plus 600 extra
+  partial-word/reset probes, with no reprogramming of the torn word,
+  authority rollback, data loss or incorrect admission. The previous
+  exact-marker mutant was caught by the new test.
+- Intent-before-target ordering: inspect source ACTIVE/unretired intent and
+  byte-for-byte unchanged 4096-byte target after the first poll. Both
+  deliberately reordered M17 mutants fail the updated test.
+- Recovered-compaction write admission, false `kDone` readback, and control/
+  data header-format guards independently checked; associated mutation
+  probes caught the bypasses.
+
+**Validation on the audited `ccb43cc` HEAD:** `run_host_tests.sh` EXIT=0,
+79 PASS lines with ASan/UBSan and `-Werror`; SF5C controls/core/rotation
+and compatibility regressions passed; `pio run -e rak4630` SUCCESS,
+RAM 29,536/248,832 bytes (11.9%), Flash 285,924/815,104 bytes (35.1%).
+No ObservationStore symbol is linked into the production ELF and no physical
+flash operation was qualified by these passes. This final documentation-only
+correction does not modify firmware, tests, frozen wire bytes, or fixtures.
+
+**Remaining accepted risks, deferred to SF5D/SF5F:** actual nRF52 NVMC,
+SoftDevice flash ownership and brown-out behavior, marginal programmed
+bit retention, page/word wear budgeting (+2 one-word programs per
+compaction), physical partition/DFU/bootloader boundaries, runtime hookup
+and end-to-end RF/gateway custody. Existing fail-closed pre-submission
+BUSY/timeout classification remains a known availability limitation, not
+a verified physical defect. **Merge authorization is only for portable
+storage**, never physical or product cutover.
 
 ### 2026-10-09 — Fourth independent audit of `0c39aba`: PASS WITH FIXES
 
@@ -45,19 +83,20 @@ Mandatory findings and same-branch remediation after the audited HEAD:
   intent or retirement word; tests require readback to reject false success,
   and verify safe repair/retirement after reboot.
 
-No golden/TLP v1/SF2/SF3 wire changes; no new flash page. These follow-up
-commits have **NOT yet passed targeted/full host tests, RAK4630 build or
-an independent focused re-audit**; do not represent the old `0c39aba`
-PASS evidence as new-HEAD validation. The earlier accepted LOW finding
+No golden/TLP v1/SF2/SF3 wire changes; no new flash page. **At the time
+of this fourth audit** the follow-up commits had not been validated.
+The later `ccb43cc` validation and focused audit, documented above,
+supersede that pending status. The earlier accepted LOW finding
 about presubmission BUSY/timeout `kFailed` remains fail-closed and needs
 a separate explicit backend-submission-status contract before alteration.
 
-Fourth-audit merge guidance: after MEDIUM fixes, full host and RAK4630
-revalidation and focused independent confirmation, SF5C may be merged
+Fourth-audit merge guidance (now fulfilled at `ccb43cc`): after MEDIUM
+fixes, full host and RAK4630 revalidation and focused independent
+confirmation, SF5C may be merged
 **only as portable storage**, with physical NVMC validation, write limits,
 wear and runtime integration deferred to SF5D/SF5F.
 
-### 2026-10-09 — Unverified control-erase intent implementation
+### 2026-10-09 — Control-erase intent implementation (historical checkpoint)
 
 The feature branch now records one control-compaction intent and one monotonic
 retirement word in each control page's *previously erased* 8-byte header tail:
@@ -83,14 +122,23 @@ flash page, but introduces two one-word flash programs per completed
 compaction. This is additional wear/program overhead; the SF5D endurance
 budget MUST include it. Power-cut simulator coverage includes all 4096
 old-page erase prefixes, partially copied PREPARED targets and partial
-retirement bytes, and must be independently repeated on the exact tested
-HEAD. Torn *intent-word programming* and non-prefix/nRF52-specific erase
-patterns still require conservative fault handling and SF5D qualification;
-do not report blanket physical power-loss immunity.
+retirement bytes. Torn *intent-word programming* now has a verified
+monotonic present-bit recovery rule in portable host tests; a marginal bit
+that changes value later and actual non-prefix/nRF52-specific erase
+patterns still require SF5D physical qualification. Do not report
+blanket physical power-loss immunity.
 
-**Validation pending:** targeted host, complete host ASan/UBSan + warnings,
-PlatformIO RAK4630 build, and fourth independent audit on the exact
-implementation commit. PR #83 remains draft and unmerged.
+**Historical note:** these validation gates were pending when the
+intent implementation was first committed. They were completed and
+independently rechecked on `ccb43cc` as recorded in the current
+closure evidence above; physical gates remain pending.
+
+### Earlier audit history (superseded by the 2026-10-09 focused PASS)
+
+The following FAILURE/DO NOT MERGE dispositions and pending remediation
+notes describe their **respective historical commit heads only** and are
+retained for traceability. They do not override the current `ccb43cc`
+portable-only signoff above.
 
 ### 2026-10-08 — Third independent audit of `6e5c306`: FAIL
 
