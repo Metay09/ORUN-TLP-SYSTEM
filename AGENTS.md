@@ -175,9 +175,15 @@ and physical-evidence boundary unless the active milestone explicitly changes it
 
 ---
 
-## Hardware
+## Hardware — legacy development setups, **not** separate ORUN product types
 
-### TRACKER
+The three headings below describe the originally tested hardware setups and
+legacy firmware modes only. In the final product there is **one ORUN device**
+with detectable attached hardware and independent enabled services. Do not
+offer TRACKER / RELAY / BASE as mutually exclusive new user-facing SKUs or
+service switches. See the Universal Firmware rules and current feature inventory.
+
+### Legacy TRACKER setup
 
 - RAK4630 / RAK4631
 - Nordic nRF52840
@@ -188,12 +194,12 @@ and physical-evidence boundary unless the active milestone explicitly changes it
 - 1S Li-ion/LiPo battery
 - WisBlock Unify solar enclosure
 
-### RELAY
+### Legacy RELAY setup
 
 - RAK4630 / RAK4631
 - additional GNSS/accelerometer hardware optional
 
-### BASE
+### Legacy BASE receiver setup (not yet a Gateway)
 
 - RAK4630 / RAK4631
 - later connected to an Android phone over BLE
@@ -201,6 +207,35 @@ and physical-evidence boundary unless the active milestone explicitly changes it
 ---
 
 ## Universal Firmware
+
+**ORUN feature/name inventory (2026-10-09):**
+`docs/architecture/ORUN_FEATURE_AND_STATUS_INVENTORY.md` tracks actual
+`main` source/test/physical evidence, explicitly deferred capabilities and
+future infrastructure. Consult it **alongside** canonical architecture and
+current milestones before claiming a feature is new, complete or absent.
+Product-facing terms: one **ORUN node/device** (identity/hardware);
+installed **capabilities** (GNSS, sensors, actuator driver); independently
+requested/effective **services** (Konum Takibi, Sensör Raporlama, Vana Kontrolü,
+Relay, **Gateway**); user **profiles** are editable preset bundles.
+
+**ONE user-facing `Gateway` service/name.** Fixed/mobile is only an
+installation/mobility property (`Kurulum: Sabit/Gezer`), **not** two gateway
+types, separate profiles, firmwares, security authorities or storage
+allocations. A Gateway requires its actual connected phone/host/Edge transport.
+
+`NodeRole::kTracker/kRelay/kBase` and current USB `ROLE` commands are
+**internal, legacy compatibility** and should not appear as new product-device
+choices. Keep their existing runtime behavior and TLP v1 bytes/golden fixtures
+until an explicit **tested, persisted-service configuration migration**
+replaces the source of truth. The new user-facing editor/status must show
+independent requested/effective **services**, not both services and old
+mutually exclusive role selectors. Developer `ROLE?` output may remain
+temporarily and must be identified as **legacy firmware mode**.
+Do **NOT** text-replace `BASE` with `Gateway`: today's BASE only receives
+legacy traffic and is not a completed Edge/Gateway bridge. Likewise, Relay
+does not imply Gateway durable custody or an authenticated custody ACK.
+No silent AUTO fallback may replace an explicitly saved service selection.
+
 
 There must be ONE firmware codebase.
 
@@ -232,9 +267,11 @@ explicit configuration migration authorizes runtime changes.
 
 Do not extend the legacy role enum for every new application. Future explicit
 configuration must take precedence over hardware-based AUTO suggestions.
-Role-named power and planned BLE policies below describe application defaults
-and availability commitments, not hardware-capability restrictions. BLE remains
-an M7 implementation task; do not enable it before its storage prerequisites.
+Role-named power and BLE policy descriptions below refer to availability
+commitments, not hardware-capability restrictions. Basic BLE application GATT
+and bounded read-only status have been implemented and scoped physically
+qualified in M7P7G/H; protected BLE writes, complete service authorization
+and additional service-specific power policies remain separate future gates.
 
 Hardware capabilities should be automatically detected at boot when practical.
 
@@ -782,6 +819,31 @@ Do NOT jump ahead unless a dependency requires it.
 ---
 
 ## Development Discipline
+
+**Owner priority (2026-10-09): deliver working incremental firmware
+development with the actual RAK4631/RAK12500 GNSS/RAK1904 modules first.**
+Keep future sensors, valve/actuation, mobile and backends **extensible** through
+existing accepted contracts; do NOT build placeholder drivers, speculative
+plugins, whole product profiles or new framework abstractions just to be
+"future proof". Reuse already implemented work before proposing new slices.
+
+**Do not confuse test/document throughput with product progress.**
+Begin each feature task with a source audit of the relevant owner, make one
+small **working code improvement** where authorized, and add only the
+targeted regression assertions needed for the changed behavior. Run the
+relevant focused tests and PlatformIO build; **do not repeatedly rerun
+unchanged suites on the same SHA** as a substitute for engineering progress.
+Before merge/release, run the mandated full host/sanitizer/compatibility gates
+once for the final code head and record its exact SHA. Retest **affected
+areas** after fixes, rather than multiplying identical physical/CI probes
+without code or risk changes. Never skip any new physical safety, RF, flash,
+DFU, power or security gate that the *actual changed functionality* needs.
+
+Documentation rule: update a concise affected status/milestone entry once
+for real implementation/decision/test changes; do not create a new architecture
+document, review transcript or duplicate milestone for every small task.
+Distinguish code merged/tested/physically proven/pending. The architecture
+and long-term product inventory remain references, not the work deliverable.
 
 For every task:
 
