@@ -144,6 +144,34 @@ the matching binary/implementation and actual update policy. If the
 required evidence cannot be obtained, Gate D1 remains OPEN and
 production storage writes are forbidden.
 
+### D1 read-only source-geometry preflight (SF5D1; not D1 clearance)
+
+`firmware/scripts/sf5d_layout_preflight.py` verifies that the **unassigned**
+candidate interval `[0x0C5000,0x0E5000)` abuts the existing geofence region
+and that all current Geofence/Security/Config/BLE bond/legacy History intervals
+remain page-aligned, contiguous, and correctly bounded below the bootloader.
+It reuses the existing fail-closed application-ceiling parser and checks the
+corresponding active C++ declarations/static assertions. Changing the physical
+owner geometry without coordinated review must reject.
+
+`firmware/tests/sf5/test_sf5d_flash_layout_preflight.py` exercises the
+current source and deliberately altered source fixtures (security/config
+growth, relocated geofence, altered ceiling/alias, broken history boundary).
+The check runs as part of `firmware/tests/run_host_tests.sh` and is independently
+runnable from the project root:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/scripts/sf5d_layout_preflight.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5d_flash_layout_preflight.py
+```
+
+**Non-claims:** This parses only repository source; it does not interrogate
+physical flash, installed bootloader, actual DFU erasure policy, linker LOAD
+sections, or capacity for two separate durable stores. The existing production
+application ceiling remains `0x0E5000`; the proposed candidate remains
+**unallocated**. D1/D2 remain OPEN. Firmware/bootloader upload, reset,
+erase, reformat, physical qualification and runtime cutover are excluded.
+
 ## 3. Gate D2 — owner and combined Tracker + Gateway, NOT YET CLOSED
 
 **Role != Capability != Profile != Transport != Physical Flash Owner.**
