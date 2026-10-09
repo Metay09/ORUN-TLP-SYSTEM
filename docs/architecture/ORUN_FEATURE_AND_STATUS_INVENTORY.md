@@ -218,6 +218,36 @@ market-ready product completion.
 | LoRa OTA/FOTA | **Explicit D / N** | Architecture reserves update headroom; DFU preflight and version/trust boundaries | Separate secure transport, energy/airtime, rollback and capacity milestone; not bundled into SF5D3 |
 | Host regression/sanitizers/fuzz/CodeQL | **H** full host suite **EXIT 0** on 2026-10-09 user log; production build SUCCESS; CodeQL and fuzz setup present | `firmware/tests/run_host_tests.sh`, `tests/fuzz`, `tests/codeql`, startup harness, source-contract guards | A green build is not all CodeQL analyses or physical tests; individual workflow failures need explicit triage, never relabel FAIL as PASS |
 
+## 3F. Power and sleep: important current sensor-only gap (verified from `main` source)
+
+**Do not state that every node with Relay=OFF and Gateway=OFF already
+sleeps in production.** The target service-driven rule is valid; the
+existing implementation is partly dependent on legacy role behavior.
+
+| Case | Current `main` evidence | Result |
+|---|---|---|
+| Legacy `TRACKER` with forwarding OFF | `RadioManager::desiredListenPolicy()` resolves `kWindowed`; `serviceWindowDeadline()` calls `Radio.Sleep()`; local TX wakes radio; `kWindowedRxAfterTxMs=10000` | **LoRa RADIO sleeps** after a bounded 10-second RX window; M6P1/2 have scoped real RAK evidence |
+| Legacy `RELAY` or application-receiving `BASE` | `resolveRadioListenPolicy(relay_running, receives_application, role_transition_pending)` returns `kContinuous` | LoRa stays **continuous RX** (except own TX); normal for Relay/receiver availability |
+| **GNSS-absent future fixed sensor, Relay OFF, Gateway OFF** | `RoleController::updateAutomatic()` currently maps **missing GNSS to BASE**; `BASE` sets `receive_application_position=true` | **BUG/GAP against target:** LoRa would use continuous RX despite no Relay/Gateway requested. A service-driven RX requirement must replace legacy role-based admission; absent GNSS must not turn a fixed sensor into a receiver |
+| Normal nRF CPU | `PowerManager::idle()` calls `delay(10)`; FreeRTOS tickless idle may wait when no task is runnable | Cooperative low-power idle, **not guaranteed SYSTEM OFF/deep sleep** or a measured battery lifetime |
+| GNSS peripheral after acquisition | `GnssManager::enterLowPower()` conditionally releases `SensorPowerManager::kGnss` 3V3_S rail | Peripheral supply can turn off between acquisitions, except explicitly preserved continuous GNSS policy |
+| BLE availability | bounded advertising window, connected sessions may remain; independent BLE radio | BLE state can impact whole-board consumption; not evidence the entire node sleeps |
+
+**Design prerequisite before sensor-only devices ship:** `RxListenRequired`
+must derive from independently requested/effective **Relay, Gateway
+RF receive/bridge, actual downlink rendezvous and any explicitly committed
+receiver service**, not from GNSS presence or `NodeRole::kBase`. When no
+continuous receiver service is enabled, keep bounded TX/response/listen
+windows, then radio sleep. A legitimate Gateway/Relay must not be silently
+suspended by this fix. User configuration remains authoritative after
+persistent-service migration. Prove startup with **no GNSS, Relay OFF,
+Gateway OFF**, with timer-based sensor sampling/own packet TX, LoRa
+`WINDOWED→ASLEEP→TX→WINDOWED→ASLEEP`, BLE bounds, zero unauthorized
+Gateway custody ACK, and measure current before estimating run time.
+
+No physical fixed-sensor radio cycle was tested during this inventory
+update; no firmware changed.
+
 ## 4. Deferred items: does the prerequisite architecture exist?
 
 | Planned item | Is groundwork already there? | Real dependency / acceptance criterion | Priority |
