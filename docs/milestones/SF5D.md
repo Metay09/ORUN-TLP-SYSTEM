@@ -224,6 +224,21 @@ before any production storage writes.
 
 ### SF5D3 — three-page DFU sentinel-retention physical experiment (TEST ONLY)
 
+**Operator build evidence (2026-10-09; before physical flash test):**
+- On `test/sf5d-dfu-sentinel-retention` at `69925b9`, focused
+  `firmware/tests/sf5/test_sf5d_dfu_probe_source_contract.py`: **PASS**.
+- `pio run -e rak4630_sf5d_dfu_seed`: **SUCCESS**, 3.904 s,
+  Flash **56,164 B**, RAM **8,776 B**. This was after the initial link
+  rejection `M4 backend is missing Nordic primitive sd_flash_page_erase`
+  and the targeted linker guard change, without weakening production guards.
+- `pio run -e rak4630_sf5d_dfu_verify`: **SUCCESS**, 24.452 s,
+  Flash **55,372 B**, RAM **8,776 B**.
+- These are host/source and target-build observations only. **No SEED upload,
+  page status, marker program, subsequent VERIFY upload or physical retention
+  result has yet been reported.**
+
+
+
 This is a **bounded diagnostic**, not an ObservationStore allocation and not a
 production data-retention guarantee. RAK-1 reports bootloader-version handoff
 `0.4.2`, but its exact installed bootloader binary/update erasure policy remains
