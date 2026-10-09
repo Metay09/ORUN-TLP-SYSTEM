@@ -5,6 +5,7 @@
 #include <Wire.h>
 #include "accelerometer_config.h"
 #include "activity_capture.h"
+#include "activity_auto_sampler.h"
 
 using namespace orun_tlp;
 using Event = AccelerometerManager::Event;
@@ -216,6 +217,82 @@ void runtimeFailures() {
   assert(fake_accelerometer_registers[0x20] == 0);
 }
 
+// Only the newly added opt-in auto path is exercised here. Existing M6B3
+// sensor admission, cleanup, I2C and power-fault scenarios are not duplicated.
+void autoHourlySummary() {
+  reset();
+  AccelerometerManager m;
+  uint32_t now = boot(m);
+  ActivityCapture c(m);
+  ActivityAutoSampler auto_sampler;
+  const uint32_t enabled_at = now;
+  auto_sampler.setEnabled(true, enabled_at);
+  auto_sampler.setEnabled(true, enabled_at + 1);  // ON is idempotent.
+  assert(auto_sampler.enabled());
+  assert(!auto_sampler.poll(c, now));
+  assert(c.state() == State::kCapturing);
+  assert(auto_sampler.awaitingCapture());
+
+  now = configure(m, now + 1);
+  for (unsigned i = 0; i < 50; ++i) {
+    m.poll(now);
+    m.poll(now);
+    c.poll();
+    assert(!auto_sampler.poll(c, now));
+    now += 100;
+  }
+  assert(c.state() == State::kStopping);
+  m.poll(now);
+  c.poll();
+  auto_sampler.poll(c, now);
+  assert(c.state() == State::kReady);
+  assert(auto_sampler.usableWindows() == 1);
+  assert(auto_sampler.invalidWindows() == 0);
+  assert(!auto_sampler.awaitingCapture());
+  assert(!auto_sampler.poll(c, now + 100)); // no hot-loop resampling.
+  assert(c.state() == State::kReady);
+
+  const uint32_t hour_end =
+      enabled_at + activity_auto_config::kSummaryPeriodMs;
+  assert(auto_sampler.poll(c, hour_end));
+  assert(auto_sampler.summaryReady());
+  const auto summary = auto_sampler.latestSummary();
+  assert(summary.usable_windows == 1);
+  assert(summary.invalid_windows == 0);
+  assert(summary.unavailable_attempts == 0);
+  assert(summary.mean_axis_variance_sum_mg2 ==
+         c.result()->axis_variance_sum_mg2);
+  assert(summary.mean_abs_delta_mg == c.result()->mean_abs_delta_mg);
+  assert(auto_sampler.publishedSummaries() == 1);
+  auto_sampler.setEnabled(false, hour_end);
+  assert(!auto_sampler.enabled());
+  assert(!auto_sampler.poll(c, hour_end + 100));
+}
+
+void autoAbsentAndRollover() {
+  reset();
+  fake_accelerometer_present = false;
+  AccelerometerManager m;
+  m.begin(0);
+  m.poll(0);
+  m.poll(250);
+  m.poll(500);
+  assert(m.detectionComplete() && !m.detected());
+  ActivityCapture c(m);
+  ActivityAutoSampler auto_sampler;
+  const uint32_t started = UINT32_MAX - 1000U;
+  auto_sampler.setEnabled(true, started);
+  assert(!auto_sampler.poll(c, started));
+  assert(auto_sampler.unavailableAttempts() == 1);
+  assert(!auto_sampler.poll(c, started + 100U));
+  assert(auto_sampler.unavailableAttempts() == 1);
+  assert(!auto_sampler.poll(c, started + activity_auto_config::kCaptureIntervalMs));
+  assert(auto_sampler.unavailableAttempts() == 2);
+  assert(auto_sampler.poll(c, started + activity_auto_config::kSummaryPeriodMs));
+  assert(auto_sampler.latestSummary().usable_windows == 0);
+  assert(auto_sampler.latestSummary().unavailable_attempts == 2);
+}
+
 int main() {
   admissionAndHandoff();
   capture(false, false, 1000);
@@ -223,5 +300,7 @@ int main() {
   capture(false, true, 1000);
   capture(false, false, UINT32_MAX - 800);
   runtimeFailures();
+  autoHourlySummary();
+  autoAbsentAndRollover();
   puts("M6B3 runtime session/capture checks: PASS");
 }
