@@ -261,6 +261,21 @@ existing protected stores or deployed devices.
 - All physical reads are **before** `SF5D SEED CONFIRM`.
   No successful marker-write or post-DFU comparison reported yet.
 
+**RAK-1 physical SEED write result (operator report, 2026-10-09):**
+- Explicit `SF5D SEED CONFIRM` yielded
+  `SF5D DFU SEED PASS one-page-readback`.
+- After the single 16-byte marker write:
+  - `0x0C5000` OTHER first=`0x2578303D`
+    CRC32=`0x8FCBBCDC` (**unchanged**).
+  - `0x0D5000` OTHER first=`0x09091701`
+    CRC32=`0x1CAE7BAD` (**unchanged**).
+  - `0x0E4000` MATCH first=`0x53463544`
+    CRC32=`0xAED32820` (**new expected marker**).
+  - `matched=1/3 erased=0/3 seed_address=0x0E4000 seed_state=MATCH`.
+- This is a physical SEED PASS and the **pre-DFU CRC baseline**.
+  **VERIFY image upload/retention comparison remains unreported.**
+  Do not infer DFU preservation merely from successful SEED readback.
+
 **Revised experiment — smaller/safer bounded scope:**
 
 Keep **three read-only observed pages**, each with a **whole-page CRC32**
