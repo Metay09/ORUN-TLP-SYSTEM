@@ -200,7 +200,7 @@ the test-device firmware using serial DFU and can alter application flash;
 do not use it on deployed devices. Record the reported handoff value together
 with which bootloader family/source can actually be substantiated.
 
-**RAK-1 physical observation (2026-10-09, 09:00 local, operator report):**
+**RAK-1 physical observation (2026-10-09, operator report):**
 - Target USB unique serial: `0E8ADE7E71531AA3` (TRACKER).
 - `pio run -e rak4630_sf5d_bl_version_probe`: **PASS**, RAM 29,536 B,
   Flash 286,308 B; 94.02 s.
