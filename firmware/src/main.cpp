@@ -4,6 +4,7 @@
 
 #include "accelerometer_manager.h"
 #include "activity_capture.h"
+#include "activity_auto_sampler.h"
 #include "application_request.h"
 #include "application_status_runtime.h"
 #include "ble_admission_policy.h"
@@ -60,6 +61,8 @@ orun_tlp::RadioManager radio_manager;
 orun_tlp::GnssManager gnss_manager;
 orun_tlp::AccelerometerManager accelerometer_manager;
 orun_tlp::ActivityCapture activity_capture(accelerometer_manager);
+// Opt-in autonomous RAK1904 windows and a one-hour RAM summary, not RF/storage.
+orun_tlp::ActivityAutoSampler activity_auto_sampler;
 // M7P3: FlashMutationGate wraps NrfHistoryFlash unchanged for the
 // SoftDevice-disabled path (still the only path exercised by shipped
 // firmware); its asynchronous path is not enabled by anything in this
@@ -761,6 +764,31 @@ void printActivityDiagnostic() {
   }
 }
 
+void printActivityAutoDiagnostic() {
+  Serial.printf("ACTIVITY AUTO %s awaiting=%s valid=%u invalid=%u "
+                "fault=%u unavailable=%u summaries=%lu persistent=no\\n",
+                activity_auto_sampler.enabled() ? "ON" : "OFF",
+                activity_auto_sampler.awaitingCapture() ? "yes" : "no",
+                static_cast<unsigned>(activity_auto_sampler.usableWindows()),
+                static_cast<unsigned>(activity_auto_sampler.invalidWindows()),
+                static_cast<unsigned>(activity_auto_sampler.faultWindows()),
+                static_cast<unsigned>(activity_auto_sampler.unavailableAttempts()),
+                static_cast<unsigned long>(activity_auto_sampler.publishedSummaries()));
+  if (activity_auto_sampler.summaryReady()) {
+    const auto& summary = activity_auto_sampler.latestSummary();
+    Serial.printf("ACTIVITY HOUR usable=%u invalid=%u fault=%u "
+                  "unavailable=%u mean_axis_variance_sum_mg2=%lu "
+                  "mean_abs_delta_mg=%lu finished_monotonic_ms=%lu\\n",
+                  static_cast<unsigned>(summary.usable_windows),
+                  static_cast<unsigned>(summary.invalid_windows),
+                  static_cast<unsigned>(summary.fault_windows),
+                  static_cast<unsigned>(summary.unavailable_attempts),
+                  static_cast<unsigned long>(summary.mean_axis_variance_sum_mg2),
+                  static_cast<unsigned long>(summary.mean_abs_delta_mg),
+                  static_cast<unsigned long>(summary.finished_at_ms));
+  }
+}
+
 void startActivityCapture() {
   using Result = orun_tlp::ActivityCapture::StartResult;
   const auto result = activity_capture.start();
@@ -1425,6 +1453,23 @@ void handleRoleCommand() {
     return;
   }
 #endif
+  if (isActivityCommand("ACTIVITY AUTO?", 14)) {
+    role_command_length = 0;
+    printActivityAutoDiagnostic();
+    return;
+  }
+  if (isActivityCommand("ACTIVITY AUTO ON", 16)) {
+    role_command_length = 0;
+    activity_auto_sampler.setEnabled(true, orun_tlp::monotonic::nowMs());
+    printActivityAutoDiagnostic();
+    return;
+  }
+  if (isActivityCommand("ACTIVITY AUTO OFF", 17)) {
+    role_command_length = 0;
+    activity_auto_sampler.setEnabled(false, orun_tlp::monotonic::nowMs());
+    printActivityAutoDiagnostic();
+    return;
+  }
   if (isActivityCommand("ACTIVITY?", 9)) {
     role_command_length = 0;
     printActivityDiagnostic();
@@ -2111,6 +2156,11 @@ void loop() {
         accelerometer_manager.poll(orun_tlp::monotonic::nowMs()));
   }
   activity_capture.poll();
+  if (!history.erasePending() &&
+      activity_auto_sampler.poll(activity_capture, orun_tlp::monotonic::nowMs())) {
+    // Emit one concise period-level fact, not raw 10 Hz sensor samples.
+    printActivityAutoDiagnostic();
+  }
   pollRoleCommands();
   // M7P7D: transport input and application result consumption are separate
   // loop-owned steps. A future BLE callback may only enqueue/copy bounded
