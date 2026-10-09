@@ -172,6 +172,42 @@ application ceiling remains `0x0E5000`; the proposed candidate remains
 **unallocated**. D1/D2 remain OPEN. Firmware/bootloader upload, reset,
 erase, reformat, physical qualification and runtime cutover are excluded.
 
+### SF5D2 — installed bootloader version handoff (TEST-ONLY, D1 still OPEN)
+
+The temporary PlatformIO environment `rak4630_sf5d_bl_version_probe` keeps
+the production sources and normal storage/LoRa behavior unchanged. It adds
+one read-only diagnostic to `main.cpp` behind a build macro. The pinned
+Adafruit nRF52 Arduino startup reads a version value handed off through the
+bootloader's TIMER2 CC[0] register into `bootloaderVersion` before `setup()`.
+RAK's older published 0.4.3 bootloader source encodes the number as
+`(major << 16) | (minor << 8) | patch`. **A result is an untrusted version
+hint, not proof of the exact bootloader binary or DFU page-erasure policy.**
+
+On an **approved development device only** (from `firmware/`):
+
+```sh
+pio run -e rak4630_sf5d_bl_version_probe
+pio run -e rak4630_sf5d_bl_version_probe -t upload --upload-port /dev/ttyACM0
+pio device monitor -b 115200 -p /dev/ttyACM0
+```
+
+`ttyACM0` is illustrative; re-resolve the selected USB-by-id symlink before
+every flash and select the correct **test device**, never rely on port order.
+In the test image serial monitor, send `SF5D BL?` followed by Enter (or
+observe the startup `SF5D BL VERSION` line). The query does not change device
+flash, reset the MCU or enter DFU. The `pio ... upload` step **does** program
+the test-device firmware using serial DFU and can alter application flash;
+do not use it on deployed devices. Record the reported handoff value together
+with which bootloader family/source can actually be substantiated.
+
+The two current RAK4631 units are development devices; the owner accepts
+loss of **existing test records** for deliberate qualification. This does
+**not** relax the future product requirement that updates preserve durable
+user observations. It is also not permission to erase bootloader/SoftDevice,
+change production application boundaries or activate the unallocated
+128 KiB region. Gate D1 must be closed with observed update/erase behavior
+before any production storage writes.
+
 ## 3. Gate D2 — owner and combined Tracker + Gateway, NOT YET CLOSED
 
 **Role != Capability != Profile != Transport != Physical Flash Owner.**
