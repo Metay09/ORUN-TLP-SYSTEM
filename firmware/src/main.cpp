@@ -48,6 +48,11 @@
 #include "tlp_position_packet.h"
 #include "usb_application_adapter.h"
 #include "watchdog_manager.h"
+#ifdef ORUN_SF5D_BL_VERSION_PROBE
+// Adafruit nRF52 1.7.0 startup captures the bootloader's TIMER2 CC[0]
+// version handoff into this C-linkage symbol before Arduino setup().
+extern "C" uint32_t bootloaderVersion;
+#endif
 
 namespace {
 
@@ -1326,6 +1331,27 @@ void pollSf3TestProvisioning() {
 }
 #endif
 
+#ifdef ORUN_SF5D_BL_VERSION_PROBE
+void printSf5dBootloaderVersion() {
+  // TEST ONLY: This is a version *handoff*, not bootloader binary attestation
+  // or evidence that DFU preserves any particular flash page.
+  const uint32_t reported_bootloader_version = bootloaderVersion;
+  if (reported_bootloader_version == 0U ||
+      reported_bootloader_version == UINT32_MAX) {
+    Serial.printf("SF5D BL VERSION unavailable handoff=0x%08lX\n",
+                  static_cast<unsigned long>(reported_bootloader_version));
+  } else {
+    Serial.printf(
+        "SF5D BL VERSION handoff=0x%08lX candidate=%lu.%lu.%lu "
+        "evidence=core-handoff-only\n",
+        static_cast<unsigned long>(reported_bootloader_version),
+        static_cast<unsigned long>((reported_bootloader_version >> 16) & 0xFFU),
+        static_cast<unsigned long>((reported_bootloader_version >> 8) & 0xFFU),
+        static_cast<unsigned long>(reported_bootloader_version & 0xFFU));
+  }
+}
+#endif
+
 void handleRoleCommand() {
   if (role_command_overflow) {
     role_command_length = 0;
@@ -1333,6 +1359,13 @@ void handleRoleCommand() {
     Serial.println(F("ROLE command rejected: too long"));
     return;
   }
+#ifdef ORUN_SF5D_BL_VERSION_PROBE
+  if (isActivityCommand("SF5D BL?", 8)) {
+    role_command_length = 0;
+    printSf5dBootloaderVersion();
+    return;
+  }
+#endif
   if (isAccelerometerQuery()) {
     role_command_length = 0;
     printAccelerometerDiagnostic();
@@ -1853,6 +1886,9 @@ void setup() {
   // final recovery layer if bounded driver recovery itself cannot make progress.
   orun_tlp::WatchdogManager::begin();
   printBootBanner();
+#ifdef ORUN_SF5D_BL_VERSION_PROBE
+  printSf5dBootloaderVersion();
+#endif
   orun_tlp::SensorPowerManager::begin();
 
   // Identity is a board capability, not a radio side effect. Resolve it before
