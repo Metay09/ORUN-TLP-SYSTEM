@@ -5,6 +5,7 @@
 #include "accelerometer_manager.h"
 #include "activity_capture.h"
 #include "activity_auto_sampler.h"
+#include "activity_period_evidence.h"
 #include "application_request.h"
 #include "application_status_runtime.h"
 #include "ble_admission_policy.h"
@@ -786,6 +787,25 @@ void printActivityAutoDiagnostic() {
                   static_cast<unsigned long>(summary.mean_axis_variance_sum_mg2),
                   static_cast<unsigned long>(summary.mean_abs_delta_mg),
                   static_cast<unsigned long>(summary.finished_at_ms));
+    // Pre-wire SF5A evidence only: report-period anchor is NOT available yet.
+    // Match this RAM summary to its own anchors to expose measured vs unknown
+    // duration. Actual SF5F PERIODIC linking must use the report owner's
+    // real [start,end] anchors; do not set PRODUCT_SECURE ACTIVITY_VALID here.
+    orun_tlp::ActivityPeriodEvidence evidence{};
+    const auto result = orun_tlp::linkActivityPeriodEvidence(
+        summary, summary.started_at_ms, summary.finished_at_ms, evidence);
+    if (result == orun_tlp::ActivityPeriodLinkResult::kLinkedUnclassified ||
+        result == orun_tlp::ActivityPeriodLinkResult::kNoUsableEvidence) {
+      Serial.printf("ACTIVITY EVIDENCE duration_s=%lu covered_s=%lu "
+                    "unknown_s=%lu boundary_discarded=%u "
+                    "classification=no report_link=UNBOUND sf5_written=no\n",
+                    static_cast<unsigned long>(evidence.period_duration_seconds),
+                    static_cast<unsigned long>(evidence.coverage_seconds),
+                    static_cast<unsigned long>(evidence.unknown_seconds),
+                    static_cast<unsigned>(evidence.boundary_discarded_windows));
+    } else {
+      Serial.println(F("ACTIVITY EVIDENCE invalid period; no SF5 record"));
+    }
   }
 }
 
