@@ -252,6 +252,7 @@ void autoHourlySummary() {
   assert(!auto_sampler.poll(c, now + 100)); // no hot-loop resampling.
   assert(c.state() == State::kReady);
 
+  const ActivityWindowFeatures expected = *c.result();
   const uint32_t hour_end =
       enabled_at + activity_auto_config::kSummaryPeriodMs;
   assert(auto_sampler.poll(c, hour_end));
@@ -261,8 +262,8 @@ void autoHourlySummary() {
   assert(summary.invalid_windows == 0);
   assert(summary.unavailable_attempts == 0);
   assert(summary.mean_axis_variance_sum_mg2 ==
-         c.result()->axis_variance_sum_mg2);
-  assert(summary.mean_abs_delta_mg == c.result()->mean_abs_delta_mg);
+         expected.axis_variance_sum_mg2);
+  assert(summary.mean_abs_delta_mg == expected.mean_abs_delta_mg);
   assert(auto_sampler.publishedSummaries() == 1);
   auto_sampler.setEnabled(false, hour_end);
   assert(!auto_sampler.enabled());
