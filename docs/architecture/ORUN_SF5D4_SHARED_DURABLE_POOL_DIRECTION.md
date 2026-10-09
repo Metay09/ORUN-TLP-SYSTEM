@@ -72,6 +72,53 @@ Learn from role coexistence and disciplined page management. Do not copy
 generic mesh flooding, APRS acknowledgment semantics, or a foreign on-flash
 format into ORUN's TLP v2 and local flash without review.
 
+## 2A. Selectively enabled Tracker + Relay on the same device
+
+**Current implementation truth (source and operator evidence, 2026-10-09):**
+- The production `RequestedConfig` and `EffectiveConfig` distinguish
+  `tracking_enabled` and `relay_forwarding_enabled`; the `RadioManager`
+  independently implements guarded `setRelayForwardingEnabled()`.
+- **Production requested settings are still derived from legacy `NodeRole`**:
+  `TRACKER` = GNSS tracking on, relay off;
+  `RELAY` = tracking off, relay on;
+  `BASE` = local application receive, relay off.
+  There is **no independently usable, persisted Tracker+Relay switch** on the
+  normal production configuration surface today.
+- The frozen v1 relay path forwards accepted **direct POSITION** frames in
+  a bounded 4-entry RAM queue with 16-key duplicate suppression,
+  deterministic 1,200–4,200 ms delay, one hop and no nested relay packets.
+  This is **opportunistic volatile forwarding**, not foreign durable custody.
+  It does not ACK source records, nor can the Relay promise post-reset delivery.
+- Relay enabled imposes **continuous LoRa RX between local transmissions**,
+  vs the battery-optimized Tracker's scheduled receive windows. Because SX1262
+  is half-duplex, incoming packets can be missed during the node's own TX;
+  contention, coverage, current draw and heat/energy must be measured.
+- Available operator records prove direct Tracker→Base on two RAK boards,
+  not three-node Tracker→Relay→Base nor simultaneous own-position TX plus
+  foreign relay TX on one physical RAK board.
+
+**Required next-slice behavior:**
+1. Keep relay **OFF by default** for animal collars. Explicitly select devices
+   with suitable power source/charging/role (powered fixed nodes, vehicle,
+   solar or independently reviewed collar exceptions). No silent auto-enable.
+2. Give tracking and forwarding **independent persisted service requests**,
+   observable effective state, and documented power-policy conflict handling;
+   enabling forwarding must not silently disable own tracking.
+3. Keep relay traffic priority, dedupe, queue/airtime admission and bounded
+   listening requirements explicit. Preserve the legacy one-hop v1 contract;
+   independently design forwarding for the v2 product and secure object
+   families before relying on it.
+4. Test both simultaneously: (a) tracker keeps acquiring and persisting GNSS
+   while relay remains enabled; (b) receive/queue/transmit another source's
+   position; (c) downstream independently receives `path=RELAY`; (d)
+   lost packets, duplicate/collision behavior, battery current, resets,
+   TX/RX contention and mode switches are recorded. A two-board test can
+   demonstrate local combined transmit/forward diagnostics, but complete
+   source→combined→receiver RF end-to-end ordinarily needs a third radio.
+5. **Do not consume SharedDurablePool merely to forward**. Persist foreign
+   packets only when a separate authenticated Gateway durable-custody service
+   has accepted responsibility under the reviewed custody contract.
+
 ## 3. Candidate storage ownership
 
 Introduce one **SharedDurablePool** *logical physical owner*, controlling
