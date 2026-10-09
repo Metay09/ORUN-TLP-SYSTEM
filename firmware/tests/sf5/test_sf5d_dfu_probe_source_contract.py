@@ -22,7 +22,16 @@ for text in (header, verify):
 assert "sd_flash_write(" in seed
 assert "sd_flash_page_erase(" not in seed
 assert 'acceptLine(command, "SF5D SEED CONFIRM")' in seed
-assert "if (!pageErased(kAddresses[i]))" in seed
+assert "if (!pageErased(kSeedAddress))" in seed
+assert 'kSeedAddress = 0x0E4000U' in header
+assert 'kSeedAddress == kAddresses[2]' in header
+assert "expectedWords(kSeedAddress, marker)" in seed
+assert "reinterpret_cast<uint32_t*>(kSeedAddress)" in seed
+assert "pageCrc32(address)" in header
+assert "crc32=0x%08lX" in header
+assert 'seed_state=%s' in header
+assert "for (unsigned i = 0; i < kSampleCount; ++i)" not in seed
+assert "kAddresses[0]" not in seed and "kAddresses[1]" not in seed
 assert "physicalSafety()" in seed
 assert "sd_softdevice_is_enabled(&enabled)" in seed
 assert "SF5D SEED CONFIRM" not in verify
