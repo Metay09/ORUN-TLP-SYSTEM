@@ -124,7 +124,7 @@ This matrix distinguishes current runtime from product direction.
 | GEOFENCE status | M7P7H | M7P7H | later adapter | Summary only; no geometry/token bytes |
 | STORAGE status | M7P7H | M7P7H | later adapter | No O(N) history scan |
 | GET_LOCATION | later | later | later | Wait for an accepted/last-known Location owner |
-| SET_CONFIG | later | later | later | One mutation owner; CAS + durable apply + RESULT |
+| SET_CONFIG | tracking interval only (`APP INTERVAL <s>`) | later | later | One mutation owner (`ConfigMutationOwner`): serialized slot, durable apply, runtime apply, typed RESULT. Local USB is physical-access trust. Caller-supplied CAS precondition, authentication and BLE/LoRa adapters are later slices on the same owner |
 | REPLACE/CLEAR_GEOFENCE | later | later | later | One GeofenceStore/runtime owner; protected resource transfer |
 | history/backlog export | local future | local future | bounded later | Must not starve live/critical RF traffic |
 | POSITION uplink | local inspection only | local inspection later | implemented TLP v1 uplink | Existing TLP v1 behavior remains frozen |

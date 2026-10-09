@@ -1324,6 +1324,79 @@ int main(int argc, char** argv) {
     }
   }
 
+  // Configuration write path through the REAL production loop:
+  // USB text -> ConfigMutationOwner -> ConfigStore flash save -> runtime
+  // apply -> typed result. Removing config_mutations.poll(),
+  // applyCommittedConfigToRuntime() or drainConfigMutationResult() from
+  // loop() must fail here rather than pass through a manual call.
+  if (mode == "success") {
+    assert(config_store.ready() && !config_store.maintenanceResetRequired());
+    assert(!config_store.hasCommittedRecord());
+    assert(active_tracking_base_interval_seconds == 180);
+    assert(gnss_manager.trackingIntervalMs() == 180000UL);
+    const unsigned write_erases = erases;
+    const unsigned write_programs = programs;
+    next_usb_application_request_id = 40;
+
+    Serial.output.clear();
+    Serial.queueInput("APP INTERVAL 600\n");
+    for (int pass = 0; pass < 16 && !has(Serial.output, "APP SET id=40");
+         ++pass) {
+      loop();
+    }
+    assert(has(Serial.output,
+               "CONFIG applied base_s=600 effective_ms=600000\n"));
+    assert(has(Serial.output,
+               "APP SET id=40 code=APPLIED tracking_interval_seconds=600 "
+               "token=VALID revision=2\n"));
+    // The runtime adopts the change before the result is reported.
+    assert(Serial.output.find("CONFIG applied") <
+           Serial.output.find("APP SET id=40"));
+    assert(erases == write_erases + 1 && programs > write_programs);
+    assert(config_store.config().tracking_interval_seconds == 600);
+    assert(config_store.hasCommittedRecord());
+    assert(active_tracking_base_interval_seconds == 600);
+    assert(gnss_manager.trackingIntervalMs() == 600000UL);
+    assert(!config_mutations.busy());
+
+    // The same value again writes nothing and does not move the token.
+    const unsigned settled_erases = erases;
+    const unsigned settled_programs = programs;
+    Serial.output.clear();
+    Serial.queueInput("APP INTERVAL 600\n");
+    loop();
+    assert(has(Serial.output,
+               "APP SET id=41 code=UNCHANGED tracking_interval_seconds=600 "
+               "token=VALID revision=2\n"));
+    assert(!has(Serial.output, "CONFIG applied"));
+
+    // Below the writer floor: refused, stored value reported back.
+    Serial.output.clear();
+    Serial.queueInput("APP INTERVAL 59\n");
+    loop();
+    assert(has(Serial.output,
+               "APP SET id=42 code=INVALID tracking_interval_seconds=600 "
+               "token=VALID revision=2\n"));
+
+    // Unusable arguments never reach the owner and take no request id.
+    Serial.output.clear();
+    Serial.queueInput("APP INTERVAL 6x\nAPP INTERVAL \n");
+    loop();
+    assert(has(Serial.output, "APP REJECTED\nAPP REJECTED\n"));
+    assert(!has(Serial.output, "APP SET"));
+    assert(next_usb_application_request_id == 43);
+    assert(erases == settled_erases && programs == settled_programs);
+    assert(active_tracking_base_interval_seconds == 600);
+
+    // The read path now reports the stored value.
+    Serial.output.clear();
+    Serial.queueInput("APP CONFIG?\n");
+    loop();
+    assert(has(Serial.output,
+               "source=stored tracking_interval_seconds=600 "
+               "battery_capacity_mah=0\n"));
+  }
+
   // M1 regression: resolved relay intent and actual radio application are
   // distinct. Do not run loop() between override and snapshot; the effective
   // config is RELAY while RadioManager still truthfully reports not applied.

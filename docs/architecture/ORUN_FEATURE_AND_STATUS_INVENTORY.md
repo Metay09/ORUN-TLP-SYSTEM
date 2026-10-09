@@ -268,9 +268,13 @@ policy must be explicit, durable user intention, not automatic GNSS-based role.
   `tracking_interval_seconds` and `battery_capacity_mah` (the latter is
   configured metadata, not a battery charge measurement).
 - The normal firmware starts `ConfigStore` and reads persisted values at boot.
-  **There is no normal production user-facing authenticated writer for all
-  service settings.** Manual USB `ROLE` override is still RAM-only; that
-  selected role does **not** survive reset.
+  Since 2026-10-10 a local USB writer exists for the **tracking interval
+  only** (`APP INTERVAL <seconds>`, 60 s floor): `ConfigMutationOwner`
+  serializes the change, ConfigStore commits it, the runtime adopts it and a
+  typed result is printed (**P+H; physical pending**). **There is still no
+  writer for service settings and no authenticated BLE/LoRa writer.** Manual
+  USB `ROLE` override is still RAM-only; that selected role does **not**
+  survive reset.
 - The independent ConfigStore v2 physical qualification PASS covers
   **specific between-flash-operation** reboot/cut points on one device.
   It is not analog brownout, an interrupted live SoftDevice write, or

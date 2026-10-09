@@ -9,6 +9,7 @@
 #include "ble_admission_policy.h"
 #include "ble_application_handoff.h"
 #include "ble_application_transport.h"
+#include "config_mutation.h"
 #include "config_store.h"
 #include "config_incarnation_source.h"
 #ifdef ORUN_M7P7B_FLASH_PROBE
@@ -72,6 +73,10 @@ orun_tlp::HistoryStore history(storage_flash_gate, &history_incarnation_source);
 orun_tlp::NrfConfigIncarnationSource config_incarnation_source;
 orun_tlp::ConfigStore config_store(storage_flash_gate.configPort(),
                                    &config_incarnation_source);
+// The one owner of durable configuration changes. USB is its first adapter;
+// later BLE/LoRa writers submit to this same owner instead of calling
+// ConfigStore themselves.
+orun_tlp::ConfigMutationOwner config_mutations(config_store);
 orun_tlp::NrfGeofenceIncarnationSource geofence_incarnation_source;
 orun_tlp::GeofenceStore geofence_store(storage_flash_gate.geofencePort(),
                                        &geofence_incarnation_source);
@@ -136,9 +141,10 @@ orun_tlp::GnssFix geofence_episode_fixes[
     orun_tlp::geofence_operational_config::kConfirmationObservationLimit]{};
 bool geofence_representative_pending = false;
 orun_tlp::GnssFix geofence_representative_fix{};
-// Applied-at-boot base cadence. Runtime config writes are not applied to GNSS
-// mid-session by M7P5, so geofence B/B/3 must derive from the same applied B
-// rather than a newer durable value which GNSS has not otherwise adopted.
+// Applied base cadence B: set at boot and again by
+// applyCommittedConfigToRuntime() after a durable configuration change.
+// Geofence B/B/3 must derive from this applied B, never from a durable value
+// which GNSS has not adopted.
 uint32_t active_tracking_base_interval_seconds =
     orun_tlp::gnss_config::kTrackingIntervalSeconds;
 // Slot 0 is also the ordinary scheduled POSITION. If PositionFlow accepted it
@@ -723,6 +729,55 @@ void drainApplicationResponse() {
           orun_tlp::ApplicationRequester::kUsb, response))
     return;
   orun_tlp::printUsbApplicationResponse(response);
+}
+
+void startUsbConfigMutation(orun_tlp::ConfigMutationKind kind,
+                            uint32_t value) {
+  const orun_tlp::ConfigMutationRequest request(
+      orun_tlp::ApplicationRequester::kUsb, next_usb_application_request_id,
+      orun_tlp::defaultApplicationAccess(orun_tlp::ApplicationRequester::kUsb),
+      kind, value);
+  const auto result = config_mutations.submit(request);
+  if (result == orun_tlp::ConfigMutationSubmitResult::kBusy) {
+    Serial.println(F("APP BUSY"));
+    return;
+  }
+  if (result == orun_tlp::ConfigMutationSubmitResult::kRejected) {
+    Serial.println(F("APP REJECTED"));
+    return;
+  }
+  ++next_usb_application_request_id;
+  if (next_usb_application_request_id == 0) next_usb_application_request_id = 1;
+}
+
+// Runtime half of a durable configuration change: make the committed base
+// interval B the one GNSS and the geofence cadence actually use. An
+// in-progress acquisition is not disturbed; the new interval decides where
+// the next due point lands.
+void applyCommittedConfigToRuntime() {
+  const uint32_t base_seconds =
+      config_store.config().tracking_interval_seconds;
+  if (base_seconds == active_tracking_base_interval_seconds) return;
+  const uint32_t effective_interval_ms =
+      orun_tlp::geofence_runtime_policy::effectiveTrackingIntervalMs(
+          base_seconds, geofence_confirmation.cadenceMode());
+  if (effective_interval_ms == 0) {
+    Serial.println(F("CONFIG interval stored; applies after restart"));
+    return;
+  }
+  active_tracking_base_interval_seconds = base_seconds;
+  gnss_manager.setTrackingIntervalMs(effective_interval_ms);
+  Serial.printf("CONFIG applied base_s=%lu effective_ms=%lu\n",
+                static_cast<unsigned long>(base_seconds),
+                static_cast<unsigned long>(effective_interval_ms));
+}
+
+void drainConfigMutationResult() {
+  orun_tlp::ConfigMutationResult result;
+  if (!config_mutations.takeResult(orun_tlp::ApplicationRequester::kUsb,
+                                   result))
+    return;
+  orun_tlp::printUsbConfigMutationResult(result);
 }
 
 void printActivityDiagnostic() {
@@ -1380,6 +1435,21 @@ void handleRoleCommand() {
   if (isActivityCommand("BLE?", 4)) {
     role_command_length = 0;
     printBleDiagnostic();
+    return;
+  }
+  orun_tlp::ConfigMutationKind config_command_kind =
+      orun_tlp::ConfigMutationKind::kSetTrackingInterval;
+  uint32_t config_command_value = 0;
+  const auto config_command = orun_tlp::parseUsbConfigCommand(
+      role_command, role_command_length, &config_command_kind,
+      &config_command_value);
+  if (config_command != orun_tlp::UsbConfigCommandParse::kNotConfigCommand) {
+    role_command_length = 0;
+    if (config_command == orun_tlp::UsbConfigCommandParse::kMalformed) {
+      Serial.println(F("APP REJECTED"));
+      return;
+    }
+    startUsbConfigMutation(config_command_kind, config_command_value);
     return;
   }
   orun_tlp::ApplicationRequestKind application_query_kind;
@@ -2230,6 +2300,13 @@ void loop() {
     config_store.poll();
     security_store.poll();
   }
+  // A confirmed configuration change is applied to the runtime in the same
+  // pass, before its result is reported to whichever adapter asked for it.
+  // A save that could not be confirmed (OUTCOME_UNKNOWN) is never adopted
+  // mid-session; if it did commit, it takes effect at the next boot like any
+  // other durable value, and the status keeps showing requested vs applied.
+  if (config_mutations.poll()) applyCommittedConfigToRuntime();
+  drainConfigMutationResult();
 #ifdef ORUN_SF3_RUNTIME_QUAL
   pollSf3TestProvisioning();
 #endif
