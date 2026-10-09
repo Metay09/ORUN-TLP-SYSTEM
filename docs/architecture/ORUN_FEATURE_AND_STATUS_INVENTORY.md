@@ -248,6 +248,75 @@ Gateway custody ACK, and measure current before estimating run time.
 No physical fixed-sensor radio cycle was tested during this inventory
 update; no firmware changed.
 
+## 3G. Persistent settings across reboot and firmware update — product requirement
+
+**User-required outcome (2026-10-09):** After a normal restart, watchdog
+reset, external-power disconnection/reconnection, or **supported, ordinary**
+firmware update, previously committed valid ORUN configuration must remain
+intact and active **without a second setup**. This includes *future* independent
+requested services (Konum Takibi, Sensör Raporlama, Relay, Gateway, Vana
+Kontrolü), location source, device installation/calibration and power/report
+policy only **after each corresponding versioned semantic schema is actually
+implemented**. Preserving a configuration value must not by itself grant
+security authorization, valve authority, or keep any hazardous actuator
+energized across reboot. Gateway/Relay enablement and continuous-RX power
+policy must be explicit, durable user intention, not automatic GNSS-based role.
+
+**Current, demonstrable scope:**
+- `ConfigStore v2` at `[0xE9000,0xEB000)` implements two-page crash-safe
+  commit/recovery with config state token. Its **only** semantic values are
+  `tracking_interval_seconds` and `battery_capacity_mah` (the latter is
+  configured metadata, not a battery charge measurement).
+- The normal firmware starts `ConfigStore` and reads persisted values at boot.
+  **There is no normal production user-facing authenticated writer for all
+  service settings.** Manual USB `ROLE` override is still RAM-only; that
+  selected role does **not** survive reset.
+- The independent ConfigStore v2 physical qualification PASS covers
+  **specific between-flash-operation** reboot/cut points on one device.
+  It is not analog brownout, an interrupted live SoftDevice write, or
+  an arbitrary erase/program brownout proof.
+- SF5D3 sampled serial DFU retention PASS covers **three sample pages**
+  in the *candidate* `[0xC5000,0xE5000)`, not ConfigStore
+  `[0xE9000,0xEB000)` itself, all data regions, all update
+  modes or schema migration. SF5D D1/D2 remain OPEN.
+
+**Mandatory implementation/upgrade acceptance contract:**
+1. Design one durable desired-state owner and explicit versioned schema.
+   Preserve configured service intent **independently** from capability
+   probes or transient effective service failure. Use atomic whole-config
+   (or equivalent reviewed transactional) commits with token/CAS semantics.
+2. **Restart**: save/verify `A` → restart/watchdog/power cycle →
+   recover exact semantic `A` + valid token, ensure effective status
+   reflects capabilities, and no unnecessary write/erase occurs at boot.
+   Report committed vs pending change separately; never promise uncommitted
+   values survive.
+3. **Firmware update**: backup/baseline snapshot and per-owned-partition
+   canaries on a development device → supported serial/USB DFU of
+   production-size image → reboot → exact config/token recovery and
+   no unintended overwrite of History/Geofence/Security/BLE or future
+   Observation/Custody. Repeat for each **actually supported** update
+   transport; DO NOT conflate sampled SF5D3 pages with full protection.
+4. **Schema evolution**: explicitly reviewed forward/backward compatibility
+   and power-cut-safe migration; preserve known values, supply defined
+   defaults only for *new* fields. If unknown newer/legacy/corrupt state
+   cannot be interpreted safely, **fail closed** and report maintenance;
+   never silently factory-reset/format/reinitialize an ambiguous page.
+   Downgrade/rollback safety requires its own tested policy, not a promise.
+5. **Interrupted save / DFU**: after tested failure paths, either the
+   last committed valid state is retained or the node enters an
+   observable maintenance/safe state. Security counter, anti-replay,
+   actuator safety, PIN/bond and stored observations are distinct from
+   ordinary editable settings and have separate preservation rules.
+6. **Status/UI**: expose `saved` vs `requested` vs `effective`,
+   pending/failed mutation, schema version and error reason without
+   presenting old volatile `ROLE?` as permanent config. A user sees
+   only the independent services and the single **Gateway** label.
+
+**Do not say “firmware updates already guarantee all settings survive.”**
+That contract requires the release/update path, schema migration and
+physical evidence above before it can be declared complete. No flash
+changes or device writes are authorized by this documentation.
+
 ## 4. Deferred items: does the prerequisite architecture exist?
 
 | Planned item | Is groundwork already there? | Real dependency / acceptance criterion | Priority |
