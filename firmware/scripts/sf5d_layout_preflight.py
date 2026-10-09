@@ -5,6 +5,7 @@ Reads only the current source header. This neither reserves memory nor proves
 the installed bootloader/DFU preserves pages during firmware updates.
 """
 from pathlib import Path
+import re
 
 import storage_layout_policy as policy
 
@@ -47,12 +48,10 @@ def verify(source: str) -> dict[str, tuple[int, int]]:
         ("kFutureBondRegionEnd", "kFutureBondRegionStart + kFutureBondRegionPages * kPageSize"),
     ):
         # The source expressions above are intentionally fixed, not evaluated.
-        import re
-
-        expression = r"\\s*".join(re.escape(token) for token in parent.split())
+        expression = r"\s*".join(re.escape(token) for token in parent.split())
         policy._require_unique(
             active,
-            rf"constexpr\\s+uint32_t\\s+{re.escape(symbol)}\\s*=\\s*{expression}\\s*;",
+            rf"constexpr\s+uint32_t\s+{re.escape(symbol)}\s*=\s*{expression}\s*;",
             f"derived {symbol}",
         )
 
@@ -63,11 +62,9 @@ def verify(source: str) -> dict[str, tuple[int, int]]:
         ("kFutureConfigRegionEnd", "kFutureBondRegionStart"),
         ("kFutureBondRegionEnd", "kBaseAddress"),
     ):
-        import re
-
         policy._require_unique(
             active,
-            rf"static_assert\\s*\\(\\s*{re.escape(left)}\\s*==\\s*{re.escape(right)}\\s*,",
+            rf"static_assert\s*\(\s*{re.escape(left)}\s*==\s*{re.escape(right)}\s*,",
             f"adjacency assertion {left} == {right}",
         )
 
