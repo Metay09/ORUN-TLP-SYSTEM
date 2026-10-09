@@ -7,6 +7,7 @@
 #include <queue.h>
 #include <task.h>
 
+#include "bridge_frame.h"
 #include "gnss_fix.h"
 #include "legacy_position_mapping.h"
 #include "monotonic_time.h"
@@ -99,6 +100,7 @@ bool RadioManager::begin(SequenceSource& sequences) {
   tx_generation_ = armed_tx_generation_ = pending_tx_generation_ = 0;
   history_secure_rx_ = {};
   history_secure_rx_pending_ = false;
+  bridge_line_number_ = 0;
   role_transition_pending_ = false;
   accept_rx_events_ = true;
   network_.begin(device_id_, NodeRole::kBase);
@@ -722,6 +724,35 @@ void RadioManager::scheduleNextTransmission(uint32_t now) {
                                        radio_config::kPerPacketJitterRangeMs);
 }
 
+void RadioManager::emitBridgePosition(const NetworkEvent& event) {
+  bridge_frame::ReceivedPosition received{};
+  // The decoded packet re-encodes to the exact bytes its source transmitted
+  // (the v1 codec is canonical), for both the direct and the relayed path.
+  if (!tlp::serializePositionPacket(event.position, received.packet,
+                                    sizeof(received.packet))) {
+    Serial.println(F("BRIDGE encode failed"));
+    return;
+  }
+  received.line_number = ++bridge_line_number_;
+  received.uptime_ms = monotonic::nowMs();
+  received.receiver_device_id = device_id_;
+  received.duplicate = event.kind == NetworkEventKind::kBaseDuplicate;
+  received.relayed = event.path == NetworkPath::kRelay;
+  received.relay_device_id = event.relay_device_id;
+  received.ingress_rssi_dbm = event.ingress_rssi_dbm;
+  received.ingress_snr_db = event.ingress_snr_db;
+  received.link_rssi_dbm = event.link_rssi_dbm;
+  received.link_snr_db = event.link_snr_db;
+
+  // Loop-owned static buffer keeps the 256-byte line off the 4 KiB loop stack.
+  static char line[bridge_frame::kMaxLineSize];
+  if (bridge_frame::formatPositionLine(received, line, sizeof(line)) == 0) {
+    Serial.println(F("BRIDGE format failed"));
+    return;
+  }
+  Serial.println(line);
+}
+
 void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
                                         int16_t rssi, int8_t snr) {
   if (size >= 2 &&
@@ -816,6 +847,7 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
                       static_cast<int>(event.link_rssi_dbm),
                       static_cast<int>(event.link_snr_db));
       }
+      emitBridgePosition(event);
       break;
     }
     case NetworkEventKind::kIgnoredPosition:
