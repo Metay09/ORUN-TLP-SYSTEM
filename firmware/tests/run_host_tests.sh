@@ -101,6 +101,7 @@ g++ "${b3_flags[@]}" firmware/tests/m6/test_m6_activity_quality.cpp \
 "$test_dir/m6_activity_quality"
 
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/test_storage_layout_policy.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5d_flash_layout_preflight.py
 
 g++ "${b3_flags[@]}" firmware/tests/m6/test_m6_geofence_geometry.cpp \
   firmware/src/geofence_geometry.cpp -o "$test_dir/m6_geofence_geometry"
