@@ -377,6 +377,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/tests/startup/test_startup.cpp "${gnss_sources[@]}" \
   firmware/src/activity_capture.cpp firmware/src/activity_window.cpp \
   firmware/src/activity_quality.cpp firmware/src/activity_auto_sampler.cpp \
+  firmware/src/activity_period_evidence.cpp \
   firmware/src/accelerometer_manager.cpp \
   firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/radio_driver_gate.cpp \
