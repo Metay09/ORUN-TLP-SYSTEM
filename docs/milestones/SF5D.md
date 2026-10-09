@@ -1,6 +1,6 @@
 # SF5D — nRF52840 Flash Ownership + DFU Preflight
 
-Status: **SF5D0 PREFLIGHT IN PROGRESS — DESIGN/READ-ONLY ONLY.** No physical
+Status: **SF5D0 PREFLIGHT IN PROGRESS — DFU PRESERVATION GATE BLOCKED PENDING INSTALLED BOOTLOADER EVIDENCE; DESIGN/READ-ONLY ONLY.** No physical
 128 KiB reservation, no `FlashBackend` added, no change to the production
 linker/build ceiling, no ObservationStore/CustodyStore runtime attachment,
 no erase/program and no SF5D/SF5E physical PASS.
@@ -78,6 +78,71 @@ Before changing `kApplicationPolicyEndAddress` or admitting **any** writes:
 5. Record the device-specific evidence. If access to bootloader internals is
    unavailable, mark the gate OPEN; no guessed workaround, linker rewrite,
    erase or firmware upload.
+
+### D1 source evidence — RAK4631 bootloader (2026-10-09)
+
+**Confirmed from RAKwireless official documentation, not from the user's
+installed board:**
+
+- RAK's current bootloader update manual documents **v0.4.4**,
+  S140 **6.1.1**, dated **2026-06-17**. It documents USB/serial/BLE
+  methods; the Linux serial example invokes `adafruit-nrfutil` with
+  `--singlebank --touch 1200`. A command-line option in an example
+  is evidence of the documented update path, **not a readout of the
+  installed bootloader's configuration**.
+- The same manual explicitly cautions that **updating the bootloader
+  overwrites the current application**. No bootloader replacement,
+  firmware erase, flash relocation, or experimental DFU is authorized
+  for this evidence-gathering step.
+- The RAK source directory currently published under `Latest/`
+  contains an older `Makefile` identifying its own `GIT_VERSION` as
+  **0.4.3**. For its `nrf52840` build case, this source configures
+  `DFU_APP_DATA_RESERVED=10*4096` (40 KiB), and its
+  `src/usb/uf2/uf2cfg.h` defines
+  `USER_FLASH_END = BOOTLOADER_REGION_START - DFU_APP_DATA_RESERVED`.
+  Given its `0xF4000` bootloader start, that source's nominal
+  reserved tail is **[0x0EA000, 0x0F4000)**. Its
+  `dfu_single_bank.c` erases/writes app image pages in bank 0.
+- **Do not equate** the published older source or upstream Adafruit
+  defaults with the **0.4.4 binary**, and do not equate any of them
+  with the **unknown revision physically installed** on the device.
+  Version-specific build macros, DFU staging locations and erase
+  boundaries must be established from the matching source/binary or
+  targeted nondestructive tests before authorizing a new partition.
+
+This exposes a **real compatibility gate**, not proof of data loss:
+if an installed bootloader had the older 40 KiB app-data reservation
+and performed an update that wrote into the rest of application flash,
+the proposed [0x0C5000,0x0E5000) ObservationStore would **not** lie
+inside that tail reservation. Nor would all of the current Geofence,
+Security and Config pages. Current normal firmware images are much
+smaller than that address, and no destructive/OTA update test was
+performed here; do not claim actual erasure of existing data.
+The previously computed hypothetical 325,632-byte dual-bank budget
+**is not a proven operating mode**; retaining 128 KiB without update
+corruption may require an update-compatible memory contract not
+provided by the installed bootloader.
+
+Primary vendor evidence (source and documentation inspected directly):
+- RAK bootloader update manual:
+  https://github.com/RAKWireless/WisBlock/blob/master/bootloader/RAK4630/README.md
+- RAK-published source Makefile (older `0.4.3` tree):
+  https://github.com/RAKWireless/WisBlock/blob/master/bootloader/RAK4630/Latest/WisCore_RAK4631_Bootloader/Makefile
+- Its UF2 application limit:
+  https://github.com/RAKWireless/WisBlock/blob/master/bootloader/RAK4630/Latest/WisCore_RAK4631_Bootloader/src/usb/uf2/uf2cfg.h
+- Its Nordic DFU code:
+  https://github.com/RAKWireless/WisBlock/blob/master/bootloader/RAK4630/Latest/WisCore_RAK4631_Bootloader/lib/sdk11/components/libraries/bootloader_dfu/dfu_single_bank.c
+- Upstream Adafruit bootloader documentation:
+  https://github.com/adafruit/Adafruit_nRF52_Bootloader
+
+**Next safe evidence action when needed:** identify the installed bootloader
+version/board ID through `INFO_UF2.TXT` in the device's read-only UF2
+drive, as explicitly documented by RAK. Entering UF2 mode is not
+permission to copy/update any firmware. This version alone **does not
+prove data-page preservation**; the next investigation must correlate
+the matching binary/implementation and actual update policy. If the
+required evidence cannot be obtained, Gate D1 remains OPEN and
+production storage writes are forbidden.
 
 ## 3. Gate D2 — owner and combined Tracker + Gateway, NOT YET CLOSED
 
