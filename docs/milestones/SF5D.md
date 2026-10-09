@@ -247,6 +247,20 @@ existing protected stores or deployed devices.
   because the first two pages were not erased. No test marker was reported
   written. We MUST NOT automatically erase/reinitialize these pages.
 
+**Revised SEED physical pre-write baseline (operator report, 2026-10-09):**
+- Fresh revised SEED firmware upload to RAK-1: **SUCCESS**, 8.657 s,
+  serial nrfutil reporting `Single bank`.
+- Repeated independent `SF5D STATUS` reads were identical:
+  - `0x0C5000` OTHER first=`0x2578303D`,
+    whole-page CRC32=`0x8FCBBCDC` (read-only control).
+  - `0x0D5000` OTHER first=`0x09091701`,
+    whole-page CRC32=`0x1CAE7BAD` (read-only control).
+  - `0x0E4000` ERASED first=`0xFFFFFFFF`,
+    whole-page CRC32=`0xF154670A` (sole permitted seed page).
+  - `matched=0/3 erased=1/3 seed_address=0x0E4000 seed_state=ERASED`.
+- All physical reads are **before** `SF5D SEED CONFIRM`.
+  No successful marker-write or post-DFU comparison reported yet.
+
 **Revised experiment — smaller/safer bounded scope:**
 
 Keep **three read-only observed pages**, each with a **whole-page CRC32**
