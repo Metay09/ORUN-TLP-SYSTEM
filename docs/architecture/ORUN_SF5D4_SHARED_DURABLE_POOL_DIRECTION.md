@@ -1,4 +1,4 @@
-# ORUN SF5D4 — Shared Durable Pool for Combined Tracker + Relay + Gateway (DRAFT)
+# ORUN SF5D4 — Shared Durable Pool for Composable ORUN Nodes (DRAFT)
 
 Status: **PROPOSAL FOR INDEPENDENT REVIEW, DESIGN-ONLY**.
 Owner decision, 2026-10-09: favor **dynamic common management** of the
@@ -10,6 +10,7 @@ Baseline: `main@336ab8f13f1f2ced4eb18034e4a05ac131e0f4e1`
 (SF5D3 one-page SEED / three-page CRC32 serial DFU physical qualification).
 
 Canonical directions:
+- `docs/architecture/ORUN_NODE_CAPABILITIES_AND_PROFILES.md` — single ORUN node, independently enabled sensing, location, actuation, relay and gateway; user-facing naming.
 - `docs/architecture/ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md`
 - `docs/architecture/ORUN_TLP_V2_PRODUCT_OBSERVATION_STORAGE_CUTOVER.md`
 - `docs/architecture/ORUN_GATEWAY_DURABLE_CUSTODY.md`
@@ -18,18 +19,35 @@ Canonical directions:
 
 ## 1. Product decision and separation
 
-One ORUN physical node may simultaneously offer:
-- **Tracker**: originates its own observations and location;
-- **Relay**: forwards authorized/eligible RF envelopes without durable
-  possession; forwarding does not imply custody or an ACK;
-- **Gateway**: bridges RF toward an Edge/phone/USB/IP connection and optionally
-  accepts **durable custody of foreign** logical observations.
+An **ORUN node** has one stable device identity. Its independently requested
+services may include **GNSS/Location tracking, sensor sampling/reports,
+valve/actuator control, Relay forwarding, Gateway bridge and Gateway durable
+custody**. Which services can effectively run depends on attached/validated
+hardware, authorization, power, RF and explicit safety policy. See
+`ORUN_NODE_CAPABILITIES_AND_PROFILES.md` for the normative proposed
+terminology, deployment examples and actuator-safety boundaries.
 
-These are separately enabled *capabilities and services*, not mutually
-exclusive permanent device roles. Hardware/power/half-duplex SX1262 RF duty
-and bounded listening policy still determine whether each service is actually
-available. Gateway != Edge: a RAK4631 alone has no general IP/Wi-Fi Internet
-connection; local USB/BLE transport may hand data to a separate phone/host.
+A physical node can originate its own location/sensor observations, operate
+an authorized local actuator, **and** forward other nodes' RF traffic; a
+fixed sensor/valve node may optionally be a Relay. Animal collars keep Relay
+OFF by default. A Gateway can be fixed or mobile without requiring different
+gateway semantics; both depend on an approved connected phone/host/Edge for
+upstream connectivity.
+
+- **Own-data service**: creates this node's location, sensor, activity or
+  eligible equipment observations; no GNSS prerequisite for ordinary sensors.
+- **Relay**: forwards approved RF frames without taking durable possession.
+  Forwarding neither stores foreign custody nor establishes a custody ACK.
+- **Gateway bridge**: transfers traffic via external phone/USB/BLE/IP-capable
+  host; its durable-custody capability is separately authorized and proven.
+- **Actuator service**: may coexist with Relay and sensors, but independent
+  hardware interlocks, secure commands and verifiable outcomes are mandatory.
+  Neither Relay nor Gateway implies authority to operate a valve.
+
+No service is an exclusive permanent device type. Hardware/power/half-duplex
+SX1262 RF duty and bounded listening policy still determine actual runtime
+availability. The current legacy production role-to-service projection is not
+yet replaced; this is a proposed migration design, not a running combination.
 
 **Decision direction:** one common, bounded physical durable-pool owner,
 not two isolated 64 KiB partitions and not two independent 128 KiB promises.
@@ -126,7 +144,7 @@ all format, page allocation, flash append, garbage collection, erase,
 readback, recovery and resource accounting within the proposed region:
 
 ```
-TRACKING observation service ----> own-observation logical view ----\
+OWN data (GNSS/sensors/eligible equipment events) ----> own-observation view ----\
                                                                     > SharedDurablePool
 GATEWAY custody service ---------> foreign-custody logical view --/        |
                                                                              +-- one bounded flash backend
@@ -142,9 +160,14 @@ composition. Two `FlashBackend` instances with overlapping pages are
 
 Two logical record classes (not separate partitions):
 - `OWN_OBSERVATION`: stable source/record identity, original observation
-  time and integrity metadata; bounded oldest-first eviction permitted under
-  explicitly recorded local-capacity loss. No silent reinterpretation as
-  successfully uploaded data.
+  time and integrity metadata, including this node's eligible GNSS, movement,
+  environmental sensor and *reported* equipment observations. Bounded
+  oldest-eligible-first eviction applies only to ordinary finite-retention
+  observations with explicitly recorded local-capacity loss. Do not silently
+  reinterpret loss as successful upload. **Actuator command authority, replay
+  state, pending operations and safety-critical verification/audit data are
+  not automatically evictable observations**; assign and review their
+  ownership/retention separately before implementation.
 - `FOREIGN_CUSTODY`: stable originating device/record/exact protected-object
   identity and opaque payload, custody/admission lifecycle, downstream durable
   acceptance. Accepted custody is **pinned** against capacity eviction until
@@ -183,8 +206,10 @@ Edge fast path remains forbidden until separately implemented/authenticated.
    a simple pooled journal is not permission for a single attacker/device
    to crowd out the node or repeatedly wear flash. Admission quotas, auth,
    replay, peer bounding and flash-wear limits remain separate required gates.
-9. Logical `Tracker`, `Relay` or `Gateway` enablement must never change
-   flash ownership, erase, reformat, or orphan a previously ACKed object.
+9. Any sensor, Location, actuator, Relay or Gateway service toggle or profile
+   change must never implicitly change physical flash ownership, erase,
+   reformat, or orphan a previously ACKed object. Actuator safety/security
+   state may not be reclassified as disposable telemetry.
 
 ## 5. Size and installed-device caveats
 
@@ -244,8 +269,9 @@ flash endurance. **D1 remains OPEN.**
 
 ## 7. Explicit non-claims
 
-This is a **design direction**, not a claim that combined Tracker/Relay/Gateway
-or pooled flash works today; no code is implemented and no physical flash is
-allocated by this proposal. Role coexistence in other projects does not prove
+This is a **design direction**, not a claim that combined GNSS/sensors/valve/
+Relay/Gateway or pooled flash works today; no code is implemented and no
+physical flash is allocated by this proposal. Valve/actuator control is
+subject to its own hardware and security qualification. Role coexistence in other projects does not prove
 ORUN's exact-object custody, offline handset delivery, scale, range, power
 budget or data retention.
