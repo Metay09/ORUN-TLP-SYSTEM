@@ -1,5 +1,14 @@
 # ORUN Architecture Documentation Index
 
+**Current feature inventory / terminology:** see
+[`ORUN_FEATURE_AND_STATUS_INVENTORY.md`](ORUN_FEATURE_AND_STATUS_INVENTORY.md)
+for a 2026-10-09 evidence-bounded map of *implemented, portable/test-only,
+designed, and deferred* capabilities, with dependencies and the legacy
+TRACKER/RELAY/BASE naming-migration boundary. That inventory is a live
+navigation companion, **not** a replacement for the canonical product
+architecture, scoped milestone audits, or frozen protocol/security contracts.
+
+
 Status: **CURRENT documentation governance index**.
 Last governance review: 2026-09-26 against
 `main@fb1a47b549d18517078facc5d2d3437445277b65` (PR #42 architecture
