@@ -120,9 +120,31 @@ def check_exclusive_owner(source, target, env):
         # Only InternalFS's own driver plausibly links these; their presence
         # without InternalFS itself linked is anomalous and still rejected.
         raise RuntimeError("M4 append-only backend must not link the erase/rewrite cache")
-    for primitive in ("sd_flash_write", "sd_flash_page_erase"):
-        if not re.search(rf"\b{primitive}$", symbols, re.MULTILINE):
-            raise RuntimeError(f"M4 backend is missing Nordic primitive {primitive}")
+    # SF5D3 uses two deliberately isolated firmware images with NO M4
+    # HistoryStore backend. Requiring a page-erase symbol here would force the
+    # read-only verifier to link a forbidden flash mutation capability. Keep
+    # all existing owner/layout/ceiling checks, but enforce *stricter* Nordic
+    # primitive permissions for these TWO exact test environments only.
+    sf5d_mode = {
+        "rak4630_sf5d_dfu_seed": "seed",
+        "rak4630_sf5d_dfu_verify": "verify",
+    }.get(env.get("PIOENV", ""))
+    if sf5d_mode:
+        if internalfs_linked or bluefruit_linked:
+            raise RuntimeError("SF5D isolated DFU probe must not link BLE/InternalFS")
+        if re.search(r"\bsd_flash_page_erase$", symbols, re.MULTILINE):
+            raise RuntimeError("SF5D DFU probe must not link Nordic page erase")
+        has_write = bool(re.search(r"\bsd_flash_write$", symbols, re.MULTILINE))
+        if sf5d_mode == "seed" and not has_write:
+            raise RuntimeError("SF5D DFU seed lacks expected Nordic word write")
+        if sf5d_mode == "verify" and has_write:
+            raise RuntimeError("SF5D DFU verifier must not link Nordic write")
+    else:
+        # Production and all existing qualification targets retain the
+        # original M4 primitive requirements unchanged.
+        for primitive in ("sd_flash_write", "sd_flash_page_erase"):
+            if not re.search(rf"\b{primitive}$", symbols, re.MULTILINE):
+                raise RuntimeError(f"M4 backend is missing Nordic primitive {primitive}")
 
 
 # M6D3A extends M7P2's policy-reserved top-of-application layout with two
