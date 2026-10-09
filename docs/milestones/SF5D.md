@@ -200,6 +200,20 @@ the test-device firmware using serial DFU and can alter application flash;
 do not use it on deployed devices. Record the reported handoff value together
 with which bootloader family/source can actually be substantiated.
 
+**RAK-1 physical observation (2026-10-09, 09:00 local, operator report):**
+- Target USB unique serial: `0E8ADE7E71531AA3` (TRACKER).
+- `pio run -e rak4630_sf5d_bl_version_probe`: **PASS**, RAM 29,536 B,
+  Flash 286,308 B; 94.02 s.
+- `pio run -e rak4630_sf5d_bl_version_probe -t upload`:
+  **PASS**, serial nrfutil single-bank, Device programmed; 34.25 s.
+- Live read-only `SF5D BL?` returned:
+  `SF5D BL VERSION handoff=0x00000402 candidate=0.4.2 evidence=core-handoff-only`.
+- After upload, operator saw GNSS FIX, TX POSITION and STORAGE appended
+  diagnostics; RF receiver confirmation in this test was not established.
+- **Version-handoff 0.4.2 is not attestation of the installed binary, nor
+  proof of what pages a later DFU actually erases or preserves. Gate D1 OPEN.**
+  The candidate `[0x0C5000,0x0E5000)` was not read, written or erased.
+
 The two current RAK4631 units are development devices; the owner accepts
 loss of **existing test records** for deliberate qualification. This does
 **not** relax the future product requirement that updates preserve durable
