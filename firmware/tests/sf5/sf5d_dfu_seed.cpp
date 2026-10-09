@@ -1,4 +1,4 @@
-// SF5D TEST-ONLY. Physically writes exactly three sentinel headers.
+// SF5D TEST-ONLY. Physically writes one 16-byte sentinel at 0x0E4000.
 // Upload only to the owner-approved RAK4631 development device. Explicit
 // serial command required; no boot-time auto erase or write.
 #include <Arduino.h>
@@ -30,31 +30,26 @@ void seedOnce() {
     Serial.println(F("SF5D DFU SEED FAIL reason=flash-geometry-or-softdevice"));
     return;
   }
-  // Fail closed if any page is non-empty. This includes an existing marker:
-  // a second SEED must not overwrite or erase prior evidence.
-  for (unsigned i = 0; i < kSampleCount; ++i) {
-    if (!pageErased(kAddresses[i])) {
-      Serial.printf(
-          "SF5D DFU SEED REJECT non-erased-page=0x%06lX\n",
-          static_cast<unsigned long>(kAddresses[i]));
-      return;
-    }
+  // The two previously observed nonblank pages (0xC5000, 0xD5000) are
+  // read-only reference controls. Do NOT erase or program either page.
+  if (!pageErased(kSeedAddress)) {
+    Serial.printf("SF5D DFU SEED REJECT non-erased-page=0x%06lX\n",
+                  static_cast<unsigned long>(kSeedAddress));
+    printStatus();
+    return;
   }
-  for (unsigned i = 0; i < kSampleCount; ++i) {
-    const uint32_t address = kAddresses[i];
-    alignas(4) uint32_t marker[4]{};
-    expectedWords(address, marker);
-    if (sd_flash_write(reinterpret_cast<uint32_t*>(address),
-                       marker, 4U) != NRF_SUCCESS ||
-        !markerMatches(address)) {
-      Serial.printf("SF5D DFU SEED FAIL address=0x%06lX\n",
-                    static_cast<unsigned long>(address));
-      printStatus();
-      return;
-    }
-    feedInheritedWatchdog();
+  alignas(4) uint32_t marker[4]{};
+  expectedWords(kSeedAddress, marker);
+  if (sd_flash_write(reinterpret_cast<uint32_t*>(kSeedAddress),
+                     marker, 4U) != NRF_SUCCESS ||
+      !markerMatches(kSeedAddress)) {
+    Serial.printf("SF5D DFU SEED FAIL address=0x%06lX\n",
+                  static_cast<unsigned long>(kSeedAddress));
+    printStatus();
+    return;
   }
-  Serial.println(F("SF5D DFU SEED PASS three-page-readback"));
+  feedInheritedWatchdog();
+  Serial.println(F("SF5D DFU SEED PASS one-page-readback"));
   printStatus();
 }
 
