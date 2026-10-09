@@ -6,6 +6,7 @@
 #include "accelerometer_config.h"
 #include "activity_capture.h"
 #include "activity_auto_sampler.h"
+#include "activity_period_evidence.h"
 
 using namespace orun_tlp;
 using Event = AccelerometerManager::Event;
@@ -260,10 +261,36 @@ void autoHourlySummary() {
   const auto summary = auto_sampler.latestSummary();
   assert(summary.usable_windows == 1);
   assert(summary.invalid_windows == 0);
+  assert(summary.started_at_ms == enabled_at);
+  assert(summary.finished_at_ms == hour_end);
+  assert(summary.duration_seconds == 3600);
+  assert(summary.measured_coverage_ms == expected.duration_ms);
   assert(summary.unavailable_attempts == 0);
   assert(summary.mean_axis_variance_sum_mg2 ==
          expected.axis_variance_sum_mg2);
   assert(summary.mean_abs_delta_mg == expected.mean_abs_delta_mg);
+  ActivityPeriodEvidence evidence{};
+  assert(linkActivityPeriodEvidence(summary, enabled_at, hour_end, evidence) ==
+         ActivityPeriodLinkResult::kLinkedUnclassified);
+  assert(evidence.period_duration_seconds == 3600);
+  assert(evidence.coverage_seconds == expected.duration_ms / 1000U);
+  assert(evidence.unknown_seconds ==
+         3600 - expected.duration_ms / 1000U);
+  assert(evidence.coverage_seconds + evidence.unknown_seconds == 3600);
+  assert(evidence.movement_evidence_present);
+  assert(!evidence.active_inactive_classification_valid);
+  // A 3-minute tracker record is not the 1-hour activity summary.
+  assert(linkActivityPeriodEvidence(
+             summary, enabled_at, enabled_at + 180000U, evidence) ==
+         ActivityPeriodLinkResult::kPeriodMismatch);
+  assert(evidence.period_duration_seconds == 0);
+  assert(linkActivityPeriodEvidence(
+             summary, enabled_at + 1U, hour_end + 1U, evidence) ==
+         ActivityPeriodLinkResult::kPeriodMismatch);
+  ActivityHourSummary corrupt = summary;
+  corrupt.measured_coverage_ms = activity_auto_config::kSummaryPeriodMs + 1U;
+  assert(linkActivityPeriodEvidence(corrupt, enabled_at, hour_end, evidence) ==
+         ActivityPeriodLinkResult::kInvalidPeriod);
   assert(auto_sampler.publishedSummaries() == 1);
   auto_sampler.setEnabled(false, hour_end);
   assert(!auto_sampler.enabled());
@@ -292,6 +319,12 @@ void autoAbsentAndRollover() {
   assert(auto_sampler.poll(c, started + activity_auto_config::kSummaryPeriodMs));
   assert(auto_sampler.latestSummary().usable_windows == 0);
   assert(auto_sampler.latestSummary().unavailable_attempts == 2);
+  ActivityPeriodEvidence evidence{};
+  assert(linkActivityPeriodEvidence(auto_sampler.latestSummary(), started,
+             started + activity_auto_config::kSummaryPeriodMs, evidence) ==
+         ActivityPeriodLinkResult::kNoUsableEvidence);
+  assert(evidence.coverage_seconds == 0);
+  assert(evidence.unknown_seconds == 3600);
 }
 
 int main() {
