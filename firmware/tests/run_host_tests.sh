@@ -89,7 +89,9 @@ g++ -Ifirmware/tests/m6/stubs "${flags[@]}" \
   firmware/tests/m6/test_m6_activity_capture.cpp \
   firmware/src/accelerometer_manager.cpp firmware/src/i2c_recovery.cpp \
   firmware/src/activity_capture.cpp firmware/src/activity_window.cpp \
-  firmware/src/activity_quality.cpp -o "$test_dir/m6_activity_capture"
+  firmware/src/activity_quality.cpp firmware/src/activity_auto_sampler.cpp \
+  firmware/src/activity_period_evidence.cpp \
+  -o "$test_dir/m6_activity_capture"
 "$test_dir/m6_activity_capture"
 
 g++ "${b3_flags[@]}" firmware/tests/m6/test_m6_activity.cpp \
@@ -381,7 +383,8 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
   firmware/tests/startup/test_startup.cpp "${gnss_sources[@]}" \
   firmware/src/activity_capture.cpp firmware/src/activity_window.cpp \
-  firmware/src/activity_quality.cpp \
+  firmware/src/activity_quality.cpp firmware/src/activity_auto_sampler.cpp \
+  firmware/src/activity_period_evidence.cpp \
   firmware/src/accelerometer_manager.cpp \
   firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/bridge_frame.cpp \

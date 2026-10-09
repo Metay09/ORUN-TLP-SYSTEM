@@ -5,6 +5,8 @@
 #include <Wire.h>
 #include "accelerometer_config.h"
 #include "activity_capture.h"
+#include "activity_auto_sampler.h"
+#include "activity_period_evidence.h"
 
 using namespace orun_tlp;
 using Event = AccelerometerManager::Event;
@@ -216,6 +218,148 @@ void runtimeFailures() {
   assert(fake_accelerometer_registers[0x20] == 0);
 }
 
+// Only the newly added opt-in auto path is exercised here. Existing M6B3
+// sensor admission, cleanup, I2C and power-fault scenarios are not duplicated.
+void autoHourlySummary() {
+  reset();
+  AccelerometerManager m;
+  uint32_t now = boot(m);
+  ActivityCapture c(m);
+  ActivityAutoSampler auto_sampler;
+  const uint32_t enabled_at = now;
+  auto_sampler.setEnabled(true, enabled_at);
+  auto_sampler.setEnabled(true, enabled_at + 1);  // ON is idempotent.
+  assert(auto_sampler.enabled());
+  assert(!auto_sampler.poll(c, now));
+  assert(c.state() == State::kCapturing);
+  assert(auto_sampler.awaitingCapture());
+
+  now = configure(m, now + 1);
+  for (unsigned i = 0; i < 50; ++i) {
+    m.poll(now);
+    m.poll(now);
+    c.poll();
+    assert(!auto_sampler.poll(c, now));
+    now += 100;
+  }
+  assert(c.state() == State::kStopping);
+  m.poll(now);
+  c.poll();
+  auto_sampler.poll(c, now);
+  assert(c.state() == State::kReady);
+  assert(auto_sampler.usableWindows() == 1);
+  assert(auto_sampler.invalidWindows() == 0);
+  assert(!auto_sampler.awaitingCapture());
+  assert(!auto_sampler.poll(c, now + 100)); // no hot-loop resampling.
+  assert(c.state() == State::kReady);
+
+  const ActivityWindowFeatures expected = *c.result();
+  const uint32_t hour_end =
+      enabled_at + activity_auto_config::kSummaryPeriodMs;
+  assert(auto_sampler.poll(c, hour_end));
+  assert(auto_sampler.summaryReady());
+  const auto summary = auto_sampler.latestSummary();
+  assert(summary.usable_windows == 1);
+  assert(summary.invalid_windows == 0);
+  assert(summary.started_at_ms == enabled_at);
+  assert(summary.finished_at_ms == hour_end);
+  assert(summary.duration_seconds == 3600);
+  assert(summary.measured_coverage_ms == expected.duration_ms);
+  assert(summary.unavailable_attempts == 0);
+  assert(summary.mean_axis_variance_sum_mg2 ==
+         expected.axis_variance_sum_mg2);
+  assert(summary.mean_abs_delta_mg == expected.mean_abs_delta_mg);
+  ActivityPeriodEvidence evidence{};
+  assert(linkActivityPeriodEvidence(summary, enabled_at, hour_end, evidence) ==
+         ActivityPeriodLinkResult::kLinkedUnclassified);
+  assert(evidence.period_duration_seconds == 3600);
+  assert(evidence.coverage_seconds == expected.duration_ms / 1000U);
+  assert(evidence.unknown_seconds ==
+         3600 - expected.duration_ms / 1000U);
+  assert(evidence.coverage_seconds + evidence.unknown_seconds == 3600);
+  assert(evidence.movement_evidence_present);
+  assert(!evidence.active_inactive_classification_valid);
+  // A 3-minute tracker record is not the 1-hour activity summary.
+  assert(linkActivityPeriodEvidence(
+             summary, enabled_at, enabled_at + 180000U, evidence) ==
+         ActivityPeriodLinkResult::kPeriodMismatch);
+  assert(evidence.period_duration_seconds == 0);
+  assert(linkActivityPeriodEvidence(
+             summary, enabled_at + 1U, hour_end + 1U, evidence) ==
+         ActivityPeriodLinkResult::kPeriodMismatch);
+  ActivityHourSummary corrupt = summary;
+  corrupt.measured_coverage_ms = activity_auto_config::kSummaryPeriodMs + 1U;
+  assert(linkActivityPeriodEvidence(corrupt, enabled_at, hour_end, evidence) ==
+         ActivityPeriodLinkResult::kInvalidPeriod);
+  assert(auto_sampler.publishedSummaries() == 1);
+  auto_sampler.setEnabled(false, hour_end);
+  assert(!auto_sampler.enabled());
+  assert(!auto_sampler.poll(c, hour_end + 100));
+}
+
+void autoAbsentAndRollover() {
+  reset();
+  fake_accelerometer_present = false;
+  AccelerometerManager m;
+  m.begin(0);
+  m.poll(0);
+  m.poll(250);
+  m.poll(500);
+  assert(m.detectionComplete() && !m.detected());
+  ActivityCapture c(m);
+  ActivityAutoSampler auto_sampler;
+  const uint32_t started = UINT32_MAX - 1000U;
+  auto_sampler.setEnabled(true, started);
+  assert(!auto_sampler.poll(c, started));
+  assert(auto_sampler.unavailableAttempts() == 1);
+  assert(!auto_sampler.poll(c, started + 100U));
+  assert(auto_sampler.unavailableAttempts() == 1);
+  assert(!auto_sampler.poll(c, started + activity_auto_config::kCaptureIntervalMs));
+  assert(auto_sampler.unavailableAttempts() == 2);
+  assert(auto_sampler.poll(c, started + activity_auto_config::kSummaryPeriodMs));
+  assert(auto_sampler.latestSummary().usable_windows == 0);
+  assert(auto_sampler.latestSummary().unavailable_attempts == 2);
+  ActivityPeriodEvidence evidence{};
+  assert(linkActivityPeriodEvidence(auto_sampler.latestSummary(), started,
+             started + activity_auto_config::kSummaryPeriodMs, evidence) ==
+         ActivityPeriodLinkResult::kNoUsableEvidence);
+  assert(evidence.coverage_seconds == 0);
+  assert(evidence.unknown_seconds == 3600);
+}
+
+void autoBoundaryWindowNotMisattributed() {
+  reset();
+  AccelerometerManager m;
+  const uint32_t started = boot(m);
+  ActivityCapture c(m);
+  ActivityAutoSampler auto_sampler;
+  auto_sampler.setEnabled(true, started);
+  assert(!auto_sampler.poll(c, started));
+  const uint32_t deadline =
+      started + activity_auto_config::kSummaryPeriodMs;
+  // A capture was started before the hour boundary but sensor work was
+  // delayed. Publish the hour without inventing covered seconds.
+  assert(auto_sampler.poll(c, deadline));
+  assert(auto_sampler.latestSummary().usable_windows == 0);
+  assert(auto_sampler.latestSummary().measured_coverage_ms == 0);
+
+  uint32_t now = configure(m, deadline + 1);
+  for (unsigned i = 0; i < 50; ++i) {
+    m.poll(now); m.poll(now); c.poll();
+    auto_sampler.poll(c, now);
+    now += 100;
+  }
+  m.poll(now); c.poll();
+  auto_sampler.poll(c, now);
+  // The completed straddling window belongs to neither complete hour.
+  assert(auto_sampler.usableWindows() == 0);
+  assert(!auto_sampler.awaitingCapture());
+  assert(auto_sampler.poll(c, deadline + activity_auto_config::kSummaryPeriodMs));
+  assert(auto_sampler.latestSummary().usable_windows == 0);
+  assert(auto_sampler.latestSummary().measured_coverage_ms == 0);
+  assert(auto_sampler.latestSummary().boundary_discarded_windows == 1);
+}
+
 int main() {
   admissionAndHandoff();
   capture(false, false, 1000);
@@ -223,5 +367,8 @@ int main() {
   capture(false, true, 1000);
   capture(false, false, UINT32_MAX - 800);
   runtimeFailures();
+  autoHourlySummary();
+  autoAbsentAndRollover();
+  autoBoundaryWindowNotMisattributed();
   puts("M6B3 runtime session/capture checks: PASS");
 }
