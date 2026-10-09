@@ -9,14 +9,16 @@
 
 namespace sf5d_dfu_sentinel {
 
-// Intentional three-page samples inside the unallocated 128 KiB candidate.
-// This does NOT allocate or reserve the entire region for production.
+// Observe three pages in the unallocated candidate region. Existing nonblank
+// content in the first two pages is NEVER modified; only the third page may
+// receive a sentinel, and only after explicit user confirmation.
 constexpr uint32_t kAddresses[] = {0x0C5000U, 0x0D5000U, 0x0E4000U};
 constexpr uint32_t kPageSize = orun_tlp::storage_config::kPageSize;
 constexpr uint32_t kMagic = 0x53463544U;  // "SF5D"
 constexpr uint32_t kTrial = 0x20261009U;
 constexpr uint32_t kThirdWord = 0xA4F21C39U;
 constexpr unsigned kSampleCount = sizeof(kAddresses) / sizeof(kAddresses[0]);
+constexpr uint32_t kSeedAddress = 0x0E4000U;
 
 static_assert(kPageSize == 4096U, "expected nRF52840 page size");
 static_assert(kAddresses[0] == 0x0C5000U, "candidate lower bound moved");
@@ -25,6 +27,7 @@ static_assert(kAddresses[2] + kPageSize ==
                   orun_tlp::storage_config::kGeofenceRegionStart,
               "sample must stop before the owned geofence region");
 static_assert(kAddresses[0] >= 0x0C5000U, "sample below candidate");
+static_assert(kSeedAddress == kAddresses[2], "seed must only target last sample");
 
 inline void expectedWords(uint32_t address, uint32_t (&words)[4]) {
   words[0] = kMagic;
@@ -49,6 +52,19 @@ inline bool pageErased(uint32_t address) {
   return true;
 }
 
+// Each page fingerprint covers all 4096 bytes. The existing OTHER pages
+// provide a read-only control sample across the subsequent DFU upload.
+inline uint32_t pageCrc32(uint32_t address) {
+  const auto* bytes = reinterpret_cast<const volatile uint8_t*>(address);
+  uint32_t crc = UINT32_MAX;
+  for (uint32_t index = 0; index < kPageSize; ++index) {
+    crc ^= static_cast<uint32_t>(bytes[index]);
+    for (unsigned bit = 0; bit < 8U; ++bit)
+      crc = (crc >> 1) ^ ((crc & 1U) ? 0xEDB88320U : 0U);
+  }
+  return ~crc;
+}
+
 inline void printStatus() {
   unsigned matched = 0;
   unsigned erased = 0;
@@ -60,16 +76,21 @@ inline void printStatus() {
     erased += empty ? 1U : 0U;
     const auto* stored = reinterpret_cast<const volatile uint32_t*>(address);
     Serial.printf(
-        "SF5D DFU PAGE address=0x%06lX state=%s first=0x%08lX\n",
+        "SF5D DFU PAGE address=0x%06lX state=%s first=0x%08lX "
+        "crc32=0x%08lX\n",
         static_cast<unsigned long>(address),
         match ? "MATCH" : (empty ? "ERASED" : "OTHER"),
-        static_cast<unsigned long>(stored[0]));
+        static_cast<unsigned long>(stored[0]),
+        static_cast<unsigned long>(pageCrc32(address)));
   }
   Serial.printf(
-      "SF5D DFU STATUS matched=%u/%u erased=%u/%u result=%s\n",
+      "SF5D DFU STATUS matched=%u/%u erased=%u/%u "
+      "seed_address=0x%06lX seed_state=%s\n",
       matched, kSampleCount, erased, kSampleCount,
-      matched == kSampleCount ? "MATCHED"
-                             : (erased == kSampleCount ? "UNSEEDED" : "MISMATCH"));
+      static_cast<unsigned long>(kSeedAddress),
+      markerMatches(kSeedAddress)
+          ? "MATCH"
+          : (pageErased(kSeedAddress) ? "ERASED" : "OTHER"));
 }
 
 inline void feedInheritedWatchdog() {
