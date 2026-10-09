@@ -8,6 +8,7 @@ seed = (root / "firmware/tests/sf5/sf5d_dfu_seed.cpp").read_text()
 verify = (root / "firmware/tests/sf5/sf5d_dfu_verify.cpp").read_text()
 pio = (root / "firmware/platformio.ini").read_text()
 production = (root / "firmware/src/main.cpp").read_text()
+guard = (root / "firmware/scripts/check_storage_layout.py").read_text()
 
 for required in ("0x0C5000U", "0x0D5000U", "0x0E4000U",
                  "kGeofenceRegionStart", "markerMatches", "pageErased"):
@@ -38,5 +39,17 @@ for name, source in (
     assert "pre:scripts/check_storage_layout.py" in section
     assert "-<*>" in section
     assert "lib_deps =" in section
+
+# The existing universal M4 guard remains mandatory outside these two named
+# test images; the seed and read-only verify images have narrower symbol gates.
+assert 'env.get("PIOENV", "")' in guard
+assert '"rak4630_sf5d_dfu_seed": "seed"' in guard
+assert '"rak4630_sf5d_dfu_verify": "verify"' in guard
+assert 'sf5d_mode == "seed" and not has_write' in guard
+assert 'sf5d_mode == "verify" and has_write' in guard
+assert 'SF5D DFU probe must not link Nordic page erase' in guard
+assert 'for primitive in ("sd_flash_write", "sd_flash_page_erase"):' in guard
+assert 'raise RuntimeError(f"M4 backend is missing Nordic primitive {primitive}")' in guard
+assert 'env.AddPostAction("$BUILD_DIR/${PROGNAME}.elf", check_application_ceiling)' in guard
 
 print("SF5D DFU sentinel test-only source contracts: PASS")
