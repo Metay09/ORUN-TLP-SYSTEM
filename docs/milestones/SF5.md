@@ -1,6 +1,6 @@
 # SF5 — TLP v2 product observation + 128 KiB durable-data cutover
 
-Status: **SF5A + SF5B MERGED; SF5C PORTABLE OBSERVATIONSTORE ACTIVE. No SF5 production runtime or physical 128 KiB flash allocation is authorized yet.**
+Status: **SF5A + SF5B + SF5C MERGED. SF5C IS PORTABLE STORAGE ONLY, NOT LINKED INTO PRODUCTION RUNTIME. SF5D PREFLIGHT IS OPEN (see `docs/milestones/SF5D.md`); no physical 128 KiB flash allocation, DFU-model clearance or SF5 production runtime is authorized.**
 
 SF5A merge baseline:
 `main@cdb9db172d178acc877b9315453e7adbd7947985`.
@@ -162,6 +162,9 @@ Gate: complete host regression + ASan/UBSan/warnings + deterministic fault
 injection/power-cut tests.
 
 ### SF5D — 128 KiB flash ownership + nRF backend
+
+**First gate:** `docs/milestones/SF5D.md` records the read-only bootloader/DFU and hybrid Tracker+Gateway ownership preflight. The `[0x0C5000,0x0E5000)` range below is a CANDIDATE only. Do not lower the application ceiling or enable a physical writer until both gates close.
+
 
 Candidate reference-platform range:
 
