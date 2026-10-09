@@ -327,6 +327,39 @@ void autoAbsentAndRollover() {
   assert(evidence.unknown_seconds == 3600);
 }
 
+void autoBoundaryWindowNotMisattributed() {
+  reset();
+  AccelerometerManager m;
+  const uint32_t started = boot(m);
+  ActivityCapture c(m);
+  ActivityAutoSampler auto_sampler;
+  auto_sampler.setEnabled(true, started);
+  assert(!auto_sampler.poll(c, started));
+  const uint32_t deadline =
+      started + activity_auto_config::kSummaryPeriodMs;
+  // A capture was started before the hour boundary but sensor work was
+  // delayed. Publish the hour without inventing covered seconds.
+  assert(auto_sampler.poll(c, deadline));
+  assert(auto_sampler.latestSummary().usable_windows == 0);
+  assert(auto_sampler.latestSummary().measured_coverage_ms == 0);
+
+  uint32_t now = configure(m, deadline + 1);
+  for (unsigned i = 0; i < 50; ++i) {
+    m.poll(now); m.poll(now); c.poll();
+    auto_sampler.poll(c, now);
+    now += 100;
+  }
+  m.poll(now); c.poll();
+  auto_sampler.poll(c, now);
+  // The completed straddling window belongs to neither complete hour.
+  assert(auto_sampler.usableWindows() == 0);
+  assert(!auto_sampler.awaitingCapture());
+  assert(auto_sampler.poll(c, deadline + activity_auto_config::kSummaryPeriodMs));
+  assert(auto_sampler.latestSummary().usable_windows == 0);
+  assert(auto_sampler.latestSummary().measured_coverage_ms == 0);
+  assert(auto_sampler.latestSummary().boundary_discarded_windows == 1);
+}
+
 int main() {
   admissionAndHandoff();
   capture(false, false, 1000);
@@ -336,5 +369,6 @@ int main() {
   runtimeFailures();
   autoHourlySummary();
   autoAbsentAndRollover();
+  autoBoundaryWindowNotMisattributed();
   puts("M6B3 runtime session/capture checks: PASS");
 }
