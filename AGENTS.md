@@ -207,15 +207,28 @@ and physical-evidence boundary unless the active milestone explicitly changes it
 `main` source/test/physical evidence, explicitly deferred capabilities and
 future infrastructure. Consult it **alongside** canonical architecture and
 current milestones before claiming a feature is new, complete or absent.
-Product-facing terms: one **ORUN node/device** (identity/hardware); installed
-**capabilities** (GNSS/sensor/actuator driver); independently requested and
-effective **services** (tracking, sensing, actuation, Relay, Gateway bridge,
-durable Gateway custody); user **profiles** are editable preset collections;
-fixed/mobile is deployment context. Existing
-`NodeRole::kTracker/kRelay/kBase`, `ROLE` USB commands and TLP v1
-packet/fixture bytes remain frozen **legacy compatibility surfaces** until
-a separately reviewed, tested migration. In particular, BASE is not itself
-a completed Gateway and Relay is not Gateway durable custody.
+Product-facing terms: one **ORUN node/device** (identity/hardware);
+installed **capabilities** (GNSS, sensors, actuator driver); independently
+requested/effective **services** (Konum Takibi, Sensör Raporlama, Vana Kontrolü,
+Relay, **Gateway**); user **profiles** are editable preset bundles.
+
+**ONE user-facing `Gateway` service/name.** Fixed/mobile is only an
+installation/mobility property (`Kurulum: Sabit/Gezer`), **not** two gateway
+types, separate profiles, firmwares, security authorities or storage
+allocations. A Gateway requires its actual connected phone/host/Edge transport.
+
+`NodeRole::kTracker/kRelay/kBase` and current USB `ROLE` commands are
+**internal, legacy compatibility** and should not appear as new product-device
+choices. Keep their existing runtime behavior and TLP v1 bytes/golden fixtures
+until an explicit **tested, persisted-service configuration migration**
+replaces the source of truth. The new user-facing editor/status must show
+independent requested/effective **services**, not both services and old
+mutually exclusive role selectors. Developer `ROLE?` output may remain
+temporarily and must be identified as **legacy firmware mode**.
+Do **NOT** text-replace `BASE` with `Gateway`: today's BASE only receives
+legacy traffic and is not a completed Edge/Gateway bridge. Likewise, Relay
+does not imply Gateway durable custody or an authenticated custody ACK.
+No silent AUTO fallback may replace an explicitly saved service selection.
 
 
 There must be ONE firmware codebase.
@@ -248,9 +261,11 @@ explicit configuration migration authorizes runtime changes.
 
 Do not extend the legacy role enum for every new application. Future explicit
 configuration must take precedence over hardware-based AUTO suggestions.
-Role-named power and planned BLE policies below describe application defaults
-and availability commitments, not hardware-capability restrictions. BLE remains
-an M7 implementation task; do not enable it before its storage prerequisites.
+Role-named power and BLE policy descriptions below refer to availability
+commitments, not hardware-capability restrictions. Basic BLE application GATT
+and bounded read-only status have been implemented and scoped physically
+qualified in M7P7G/H; protected BLE writes, complete service authorization
+and additional service-specific power policies remain separate future gates.
 
 Hardware capabilities should be automatically detected at boot when practical.
 
