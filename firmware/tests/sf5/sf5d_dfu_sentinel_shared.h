@@ -2,6 +2,8 @@
 #pragma once
 #include <Arduino.h>
 #include <stdint.h>
+#include <nrf.h>
+#include <string.h>
 
 #include "storage_config.h"
 
@@ -58,13 +60,13 @@ inline void printStatus() {
     erased += empty ? 1U : 0U;
     const auto* stored = reinterpret_cast<const volatile uint32_t*>(address);
     Serial.printf(
-        "SF5D DFU PAGE address=0x%06lX state=%s first=0x%08lX\\n",
+        "SF5D DFU PAGE address=0x%06lX state=%s first=0x%08lX\n",
         static_cast<unsigned long>(address),
         match ? "MATCH" : (empty ? "ERASED" : "OTHER"),
         static_cast<unsigned long>(stored[0]));
   }
   Serial.printf(
-      "SF5D DFU STATUS matched=%u/%u erased=%u/%u result=%s\\n",
+      "SF5D DFU STATUS matched=%u/%u erased=%u/%u result=%s\n",
       matched, kSampleCount, erased, kSampleCount,
       matched == kSampleCount ? "MATCHED"
                              : (erased == kSampleCount ? "UNSEEDED" : "MISMATCH"));
