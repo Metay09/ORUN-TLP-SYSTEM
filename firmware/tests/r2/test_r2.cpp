@@ -129,6 +129,25 @@ void resetFakeRadio() {
   driver_calls = 0;
 }
 
+std::string hexOf(const uint8_t* data, size_t size) {
+  static const char kDigits[] = "0123456789ABCDEF";
+  std::string text;
+  for (size_t index = 0; index < size; ++index) {
+    text += kDigits[data[index] >> 4];
+    text += kDigits[data[index] & 0x0F];
+  }
+  return text;
+}
+
+size_t countOf(const std::string& text, const std::string& needle) {
+  size_t count = 0;
+  for (size_t at = text.find(needle); at != std::string::npos;
+       at = text.find(needle, at + needle.size())) {
+    ++count;
+  }
+  return count;
+}
+
 void makePosition(uint64_t source, uint32_t sequence, uint8_t* bytes) {
   const tlp::PositionPacket packet{
       source, sequence, 1700000000, 410000000, 290000000, 12345, 175, 9, 7};
@@ -509,8 +528,11 @@ void portableDeviceIdDiagnostics() {
   test_now = relay_config::kMaximumDelayMs;
   manager.update(false);
   assert(Serial.output.find("RELAY TX source=89ABCDEF01234567 seq=40\n") != std::string::npos);
+  // Forwarding is not application reception: a relay prints no bridge line.
+  assert(Serial.output.find("BRIDGE ") == std::string::npos);
 
   beginAs(manager, sequences, NodeRole::kBase);
+  test_now = 4242;
   makePosition(source, 40, bytes);
   rxDone(bytes, sizeof(bytes), -82, 6);
   manager.update(false);
@@ -529,10 +551,35 @@ void portableDeviceIdDiagnostics() {
   manager.update(false);
   assert(Serial.output.find("BASE RX NEW source=89ABCDEF01234567 seq=41 path=RELAY relay=FEDCBA9876543210 ingress_rssi=-110 ingress_snr=-9 rssi=-82 snr=6\n") != std::string::npos);
 
+  // Host bridge line (protocol/BRIDGE_FRAME_V1.md): exactly one per accepted
+  // application POSITION, numbered from 1 per boot, carrying the receiver's
+  // identity and the exact bytes the source transmitted -- for the direct,
+  // the duplicate and the relayed observation alike.
+  const std::string bridge_prefix =
+      "BRIDGE v=1 kind=POSITION n=";
+  const std::string direct_raw = hexOf(bytes, sizeof(bytes));
+  const std::string relayed_raw =
+      hexOf(envelope.original_packet, sizeof(envelope.original_packet));
+  assert(direct_raw != relayed_raw);
+  assert(Serial.output.find(bridge_prefix +
+      "1 up=4242 node=0102030405060708 dup=0 path=DIRECT rssi=-82 snr=6 raw=" +
+      direct_raw + " crc=") != std::string::npos);
+  assert(Serial.output.find(bridge_prefix +
+      "2 up=4242 node=0102030405060708 dup=1 path=DIRECT rssi=-83 snr=5 raw=" +
+      direct_raw + " crc=") != std::string::npos);
+  assert(Serial.output.find(bridge_prefix +
+      "3 up=4242 node=0102030405060708 dup=0 path=RELAY relay=FEDCBA9876543210 "
+      "in_rssi=-110 in_snr=-9 rssi=-82 snr=6 raw=" +
+      relayed_raw + " crc=") != std::string::npos);
+  assert(countOf(Serial.output, "BRIDGE ") == 3);
+  assert(countOf(Serial.output, "BASE RX ") == 3);
+
   beginAs(manager, sequences, NodeRole::kTracker);
   rxDone(bytes, sizeof(bytes), -82, 6);
   manager.update(false);
   assert(Serial.output.find("RX POSITION source=89ABCDEF01234567 seq=40 ignored role=TRACKER\n") != std::string::npos);
+  // A node that ignores the POSITION has nothing to bridge.
+  assert(Serial.output.find("BRIDGE ") == std::string::npos);
 }
 
 }  // namespace
