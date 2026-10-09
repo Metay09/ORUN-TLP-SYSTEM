@@ -90,6 +90,7 @@ g++ -Ifirmware/tests/m6/stubs "${flags[@]}" \
   firmware/src/accelerometer_manager.cpp firmware/src/i2c_recovery.cpp \
   firmware/src/activity_capture.cpp firmware/src/activity_window.cpp \
   firmware/src/activity_quality.cpp firmware/src/activity_auto_sampler.cpp \
+  firmware/src/activity_period_evidence.cpp \
   -o "$test_dir/m6_activity_capture"
 "$test_dir/m6_activity_capture"
 
