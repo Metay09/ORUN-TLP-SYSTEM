@@ -27,20 +27,20 @@ override newer code/PRs.
 | Physical object | **ORUN cihazı / ORUN düğümü** (`ORUN node`) | Stable device ID, board, radio and installed modules | Device identity already implemented; **do not rename persisted IDs** |
 | Hardware | **Donanım / yetenek** | GNSS, RAK1904 accelerometer, other sensors, GPIO/actuator driver, USB/BLE, power | `CapabilitySnapshot` currently covers **GNSS and accelerometer only**; presence does not mean service enabled |
 | Function | **Servis / görev** | Konum takibi, sensör ölçümü, aktivite, Relay, Gateway köprüsü, vana/aktüatör kontrolü | Each has independently requested/effective state *as it is implemented*, with reasons; B4 currently handles Tracking + Relay, **not all listed services** |
-| User preset | **Profil** | Hayvan, Sabit Sensör, Sulama/Vana, Relay Altyapısı, Sabit Gateway, Gezer Gateway | Names are **examples of intended editable presets**, **not a functioning persisted profile editor** |
-| Where/how installed | **Kurulum / kullanım bağlamı** | Animal collar, fixed solar mast, vehicle, USB/phone-tethered | Fixed vs mobile **does not create two Gateway protocols** |
+| User preset | **Profil** | Hayvan, Sensör, Sulama, Ağ İstasyonu, **Gateway** (tek varsayılan profil örneği) | These are editable initial defaults, **not permanent node categories** and not yet a persisted profile editor. No `Sabit Gateway` / `Gezer Gateway` user-visible profile split. |
+| Where/how installed | **Kurulum / kullanım bağlamı** | Hayvana takılı, direğe sabit, araçta/gezer; USB/telefon/Edge bağlı | A single **Gateway** function applies to each; `sabit/gezer` describes installation/mobility, **not a different product name, service or protocol**. |
 | Upstream service | **Gateway Köprüsü** | LoRa side to a *connected* phone/Edge/host | **Not identical** to a bare legacy BASE receiver, and does not imply IP on RAK4631 |
 | Reliable foreign hold | **Gateway Kalıcı Teslim Sorumluluğu** (`durable custody`) | Explicit authenticated responsibility for exact foreign object | Not the same as Relay; ACK requires review and durable proof |
-| Legacy firmware compatibility | `NodeRole::kTracker/kRelay/kBase`, `ROLE TRACKER/RELAY/BASE` | Existing RF and boot-time compatibility behavior | **Keep C++ enum, USB commands, wire bytes and host fixtures unchanged** until a migration passes tests. Do **not** rename BASE to Gateway in executable code or claim BASE already bridges to backend. |
+| Legacy firmware compatibility | `NodeRole::kTracker/kRelay/kBase`, `ROLE TRACKER/RELAY/BASE` | Existing RF/boot-time compatibility values **for developers** | Keep exact old C++ enum, USB commands, wire bytes and test fixtures temporarily; **never expose them as additional product device types or user-facing choices**. Do not call legacy BASE a working Gateway. Plan explicit compatibility retirement after tested configuration migration. |
 
-**Do not say:** "five different ORUN firmwares", "this device is permanently a
+**Do not say:** "five different ORUN firmwares", "Sabit Gateway/Gezer Gateway are separate names", "this device is permanently a
 Relay", "any sensor implies automatic Relay", "Gateway ACK means backend
 delivered", "a Valve controller cannot relay", or "128 KiB for each service".
 
 **Permitted composability — an existing architecture decision, NOT invented
 by this inventory:** One node may have GNSS + accelerometer; only fixed
 environmental sensors; environmental sensor + local valve driver + optional
-Relay; fixed Relay + its own sensor reports; or a fixed/vehicle Gateway that
+Relay; fixed Relay + its own sensor reports; or a **Gateway** mounted on a fixed site or vehicle that
 also originates data and/or relays. Vana+Relay is a **planned permitted**
 combination, **not** a claim that production valve control is coded.
 
@@ -50,6 +50,71 @@ transmissions, with energy/airtime/regulatory trade-offs. No hardwired
 mutual exclusion of sensors, tracking, actuation, forwarding or bridging is
 acceptable in the **target** model. Existing legacy profile behavior is
 intentionally still more restricted.
+
+## 1A. What the operator actually sees — **one Gateway** and no legacy-role maze
+
+**Only one user-visible gateway label: `Gateway`.** A Gateway can be
+mounted, solar-powered, vehicle-carried or hand-carried. That difference is
+deployment metadata, for example `Kurulum: Sabit` or `Kurulum: Gezer`
+where genuinely useful, **never** a separate selectable service, firmware,
+protocol, SKU, permanent `Sabit Gateway` / `Gezer Gateway` title,
+permission level or custody guarantee. It needs an appropriate connected
+phone/host/Edge for its data-bridge work.
+
+Target configuration surfaces should display **one ORUN device identity** and
+its actual services, e.g.:
+
+```text
+ORUN • Sulama İstasyonu                    (example, not a deployed UI)
+Kurulum: Sabit
+Donanım: Toprak nem sensörü, vana sürücüsü, LoRa
+Konum Takibi: Kapalı
+Sensör Raporlama: Açık
+Vana Kontrolü: Açık (yalnız yetkilendirildiğinde)
+Relay: Açık
+Gateway: Kapalı
+```
+
+```text
+ORUN • Araç İstasyonu                     (example, not a deployed UI)
+Kurulum: Gezer
+Konum Takibi: İsteğe bağlı
+Sensör Raporlama: İsteğe bağlı
+Relay: Açık
+Gateway: Açık (bağlantı varsa)
+```
+
+The **future user interface must not offer `TRACKER`, `RELAY` and
+`BASE` as mutually exclusive device choices**. Services must not be
+silently replaced by legacy roles, even if old internals still contain
+those strings. A Relay service can be enabled alongside valve/sensor/tracking;
+a Gateway service may also be enabled independently when its actual host
+transport/custody prerequisites are satisfied.
+
+**Compatibility isolation (non-destructive, in stages):**
+1. **Now — documentation / no runtime change:** show product-facing
+   `Konum Takibi / Sensör / Vana / Relay / Gateway` concepts in user-facing
+   plans. Restrict `NodeRole`/old `ROLE?` labels to firmware developer
+   diagnostics, migration records and v1 tests; when they must be mentioned,
+   prefix `Eski firmware modu` with current effect. Never translate
+   `BASE` to `Gateway` as if the old receiver has an Edge bridge.
+2. **Later — after persistence contract review:** save a node's independent
+   requested services and observable effective states; safely migrate known
+   existing settings without erasing ConfigStore, overriding provisioned
+   settings or inferring service from GNSS presence. Make the app/editor and
+   status surfaces use **services only**. Retain a compatibility adapter while
+   the old firmware and golden TLP v1 fixtures remain supported.
+3. **Only after tests & review:** retire redundant runtime role selection and
+   developer alias surfaces once the replacement is physically validated.
+   Prove upgrade/reboot/DFU, mixed old/new nodes, RF fixtures, reconfiguration
+   and rollback first. **Never global-search/replace `BASE`→`Gateway`**
+   or renumber wire codes, change packet bytes or reinterpret stored state.
+
+This prevents **two competing sources of truth**: a future saved requested
+service configuration is authoritative; legacy auto-role projection is an
+explicit, bounded pre-migration fallback only. Existing normal-production
+`ROLE?` remains available as a developer tool until the migration is
+completed, not as a permanent separate product taxonomy.
 
 ## 2. Evidence/status vocabulary — do not inflate a PASS
 
@@ -116,7 +181,7 @@ market-ready product completion.
 | Multi-hop Relay / mesh routing | **Explicit D** (v1 exactly one hop) | Stable device identity, duplicate suppression, planned TTL/security domain | Bounded multi-hop design, airtime regulation, replay/domain ownership before implementation |
 | Configurable channel/SF/BW/power and airtime admission | **D**, radio values compile-time fixed; host airtime model | `radio_config.h` 869.525 MHz / SF11 / BW125 / 14 dBm; `lora_airtime.h` and M5 host tests, RF-portability ADR | No runtime persistent RF profile, duty-cycle/airtime enforcement, scale field survey or compliant multi-domain plan |
 | Legacy BASE receive / serial display | **P+H+F** for direct POSITION | NetworkService base path, USB serial `BASE RX` diagnostics | Not yet full Gateway, no Edge database or authenticated custody ACK |
-| Fixed/mobile Gateway bridge | **Approved D, foundations A** | Gateway/Edge custody design; USB/BLE transport and other runtime services | One real LoRa-to-attached-host bridge with secure protocol, durable admission and connected-host availability; fixed/mobile differ by deployment and power, **not a different Gateway data contract** |
+| Gateway bridge (tek servis) | **Approved D, foundations A** | Gateway/Edge custody design; USB/BLE transport and other runtime services | One real LoRa-to-attached-host bridge with secure protocol, durable admission and connected-host availability; **sabit/gezer is solely deployment metadata**, not a second Gateway type or data contract |
 | Gateway foreign durable custody | **A+H portable SF4B; no production physical owner/runtime** | `custody_store.cpp`, `custody_store_format.cpp`, exact-object acceptance/release tests; PR #80 | SF5 object-size/format review, nRF flash owner, authenticated custody ACK, actual Edge handoff, load and reset tests |
 | Gateway→Edge→Backend ACK chain | **Architecture D; not end-to-end implemented** | `ORUN_GATEWAY_DURABLE_CUSTODY.md`, SF5G/H/I ordered plans, secure receipt foundation | Edge durable acceptance proof, app/backend ingestion and data ownership propagation; `TX_DONE` never means custody |
 
