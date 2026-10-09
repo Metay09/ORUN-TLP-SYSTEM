@@ -1,4 +1,4 @@
-# ORUN SF5D4 — Shared Durable Pool for Composable ORUN Nodes (DRAFT)
+# ORUN SF5D4 — Dynamic Shared Durable Pool for an Already-Modular ORUN Node (DRAFT)
 
 Status: **PROPOSAL FOR INDEPENDENT REVIEW, DESIGN-ONLY**.
 Owner decision, 2026-10-09: favor **dynamic common management** of the
@@ -10,50 +10,37 @@ Baseline: `main@336ab8f13f1f2ced4eb18034e4a05ac131e0f4e1`
 (SF5D3 one-page SEED / three-page CRC32 serial DFU physical qualification).
 
 Canonical directions:
-- `docs/architecture/ORUN_NODE_CAPABILITIES_AND_PROFILES.md` — single ORUN node, independently enabled sensing, location, actuation, relay and gateway; user-facing naming.
 - `docs/architecture/ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md`
 - `docs/architecture/ORUN_TLP_V2_PRODUCT_OBSERVATION_STORAGE_CUTOVER.md`
 - `docs/architecture/ORUN_GATEWAY_DURABLE_CUSTODY.md`
 - `docs/milestones/SF5D.md`
 - `docs/milestones/SF5C.md`
 
-## 1. Product decision and separation
+## 1. Existing product decisions — do not redesign
 
-An **ORUN node** has one stable device identity. Its independently requested
-services may include **GNSS/Location tracking, sensor sampling/reports,
-valve/actuator control, Relay forwarding, Gateway bridge and Gateway durable
-custody**. Which services can effectively run depends on attached/validated
-hardware, authorization, power, RF and explicit safety policy. See
-`ORUN_NODE_CAPABILITIES_AND_PROFILES.md` for the normative proposed
-terminology, deployment examples and actuator-safety boundaries.
+**The universal ORUN node was ALREADY approved and merged before this PR.**
+`AGENTS.md` (see `Universal Firmware`, `Radio Architecture` and `Power Policy`)
+and `docs/architecture/ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md` are canonical:
+a node's one stable identity, physical modules/capabilities, independent
+services, power policy, transport and editable profile are distinct.
+The 2026-09-26 architecture PR #42 formalized the existing product decision.
 
-A physical node can originate its own location/sensor observations, operate
-an authorized local actuator, **and** forward other nodes' RF traffic; a
-fixed sensor/valve node may optionally be a Relay. Animal collars keep Relay
-OFF by default. A Gateway can be fixed or mobile without requiring different
-gateway semantics; both depend on an approved connected phone/host/Edge for
-upstream connectivity.
+Existing approved combinations include own GNSS/sensor measurements and
+LoRa Relay on one node, a fixed sensor/actuator/valve node that also Relays,
+and a fixed or mobile Gateway with optional other services. A Gateway's
+mobility is deployment context, not a new exclusive firmware/device type.
+Animal collars default to Relay OFF to protect battery; Relay enabled
+requires continuous LoRa RX between local transmissions.
 
-- **Own-data service**: creates this node's location, sensor, activity or
-  eligible equipment observations; no GNSS prerequisite for ordinary sensors.
-- **Relay**: forwards approved RF frames without taking durable possession.
-  Forwarding neither stores foreign custody nor establishes a custody ACK.
-- **Gateway bridge**: transfers traffic via external phone/USB/BLE/IP-capable
-  host; its durable-custody capability is separately authorized and proven.
-- **Actuator service**: may coexist with Relay and sensors, but independent
-  hardware interlocks, secure commands and verifiable outcomes are mandatory.
-  Neither Relay nor Gateway implies authority to operate a valve.
+**Do not reimplement or re-freeze these as SF5D4 scope.** Under an approved
+separate feature milestone, implement missing generic sensor/actuator drivers
+and safe, authenticated actuator control; this PR must not invent an
+unaudited valve command format or imply a valve already works.
 
-No service is an exclusive permanent device type. Hardware/power/half-duplex
-SX1262 RF duty and bounded listening policy still determine actual runtime
-availability. The current legacy production role-to-service projection is not
-yet replaced; this is a proposed migration design, not a running combination.
-
-**Decision direction:** one common, bounded physical durable-pool owner,
-not two isolated 64 KiB partitions and not two independent 128 KiB promises.
-Any split into metadata/scratch/recovery pages is **mechanical overhead**, not
-a fixed per-service capacity partition. Usable payload capacity is lower than
-128 KiB and not yet measured.
+The **new question exclusively in SF5D4** is how the candidate *one physical*
+128 KiB flash region can have a safely reviewed single owner that dynamically
+serves this node's own observations and separately accepted foreign Gateway
+custody without overlap, fixed 64/64 quotas or false dual-capacity guarantees.
 
 ## 2. External project comparison: role coexistence only, NOT custody proof
 
@@ -90,52 +77,22 @@ Learn from role coexistence and disciplined page management. Do not copy
 generic mesh flooding, APRS acknowledgment semantics, or a foreign on-flash
 format into ORUN's TLP v2 and local flash without review.
 
-## 2A. Selectively enabled Tracker + Relay on the same device
+## 2A. Existing code inventory and actual gaps (read-only GitHub main audit)
 
-**Current implementation truth (source and operator evidence, 2026-10-09):**
-- The production `RequestedConfig` and `EffectiveConfig` distinguish
-  `tracking_enabled` and `relay_forwarding_enabled`; the `RadioManager`
-  independently implements guarded `setRelayForwardingEnabled()`.
-- **Production requested settings are still derived from legacy `NodeRole`**:
-  `TRACKER` = GNSS tracking on, relay off;
-  `RELAY` = tracking off, relay on;
-  `BASE` = local application receive, relay off.
-  There is **no independently usable, persisted Tracker+Relay switch** on the
-  normal production configuration surface today.
-- The frozen v1 relay path forwards accepted **direct POSITION** frames in
-  a bounded 4-entry RAM queue with 16-key duplicate suppression,
-  deterministic 1,200–4,200 ms delay, one hop and no nested relay packets.
-  This is **opportunistic volatile forwarding**, not foreign durable custody.
-  It does not ACK source records, nor can the Relay promise post-reset delivery.
-- Relay enabled imposes **continuous LoRa RX between local transmissions**,
-  vs the battery-optimized Tracker's scheduled receive windows. Because SX1262
-  is half-duplex, incoming packets can be missed during the node's own TX;
-  contention, coverage, current draw and heat/energy must be measured.
-- Available operator records prove direct Tracker→Base on two RAK boards,
-  not three-node Tracker→Relay→Base nor simultaneous own-position TX plus
-  foreign relay TX on one physical RAK board.
+| Area | Already implemented | Gap — do not imply complete |
+|---|---|---|
+| Independent feature resolver | `runtime_config.h/.cpp`: `RequestedConfig(tracking_enabled, relay_forwarding_enabled, location_source)`, `EffectiveConfig` with reasons; `firmware/tests/b4/test_b4.cpp` explicitly tests **tracking+relay both ENABLED** | Production `main.cpp::resolveRuntimeConfig()` still projects legacy `NodeRole` into requested settings |
+| Relay | `NetworkService::setRelayForwardingEnabled()`, `RadioManager::setRelayForwardingEnabled()`, source/sequence duplicate suppression, 4-entry RAM queue, 1,200–4,200 ms scheduling; source and host tests | Current v1 forwards direct POSITION only (one-hop); no full simultaneous GNSS+Relay physical evidence, no generic v2/sensor/command-forward proof |
+| GNSS/sensor | Production GNSS/HistoryStore/TX proven on RAK-1; RAK1904/LIS3DH capability probe, `AccelerometerManager`, `ActivityCapture`, activity window code/tests | Do not confuse this with arbitrary plug-and-play environmental sensor data or a finished permanent sensor-report runtime |
+| Config persistence | `ConfigStore` v2 crash-safe tokenized A/B persistence | Current `config_format::Config` stores only `tracking_interval_seconds` and `battery_capacity_mah`; independent service intentions/profiles are **not persisted** |
+| Valve/actuator | Existing command security direction and limited application/delegated security foundation | No production valve driver, output/interlock/feedback owner or secure valve-application command handler demonstrated; application request service currently supports read-only GET_* |
+| Gateway/custody | Portable `CustodyStore` foundation and documented backend/Edge handoff semantics | Full Gateway custody runtime and combined physical owner not activated |
+| Shared flash | SF5C portable ObservationStore; SF5D3 three sample page CRC retention across one serial DFU | No physically allocated or audited 128 KiB shared pool; D1/D2 **OPEN** |
 
-**Required next-slice behavior:**
-1. Keep relay **OFF by default** for animal collars. Explicitly select devices
-   with suitable power source/charging/role (powered fixed nodes, vehicle,
-   solar or independently reviewed collar exceptions). No silent auto-enable.
-2. Give tracking and forwarding **independent persisted service requests**,
-   observable effective state, and documented power-policy conflict handling;
-   enabling forwarding must not silently disable own tracking.
-3. Keep relay traffic priority, dedupe, queue/airtime admission and bounded
-   listening requirements explicit. Preserve the legacy one-hop v1 contract;
-   independently design forwarding for the v2 product and secure object
-   families before relying on it.
-4. Test both simultaneously: (a) tracker keeps acquiring and persisting GNSS
-   while relay remains enabled; (b) receive/queue/transmit another source's
-   position; (c) downstream independently receives `path=RELAY`; (d)
-   lost packets, duplicate/collision behavior, battery current, resets,
-   TX/RX contention and mode switches are recorded. A two-board test can
-   demonstrate local combined transmit/forward diagnostics, but complete
-   source→combined→receiver RF end-to-end ordinarily needs a third radio.
-5. **Do not consume SharedDurablePool merely to forward**. Persist foreign
-   packets only when a separate authenticated Gateway durable-custody service
-   has accepted responsibility under the reviewed custody contract.
+Architecture stays canonical in `AGENTS.md` and
+`docs/architecture/ORUN_PRODUCT_SYSTEM_ARCHITECTURE.md`.
+SF5D4 should reuse these contracts rather than duplicate the universal-device
+specification in an additional product architecture file.
 
 ## 3. Candidate storage ownership
 
@@ -269,9 +226,6 @@ flash endurance. **D1 remains OPEN.**
 
 ## 7. Explicit non-claims
 
-This is a **design direction**, not a claim that combined GNSS/sensors/valve/
-Relay/Gateway or pooled flash works today; no code is implemented and no
-physical flash is allocated by this proposal. Valve/actuator control is
-subject to its own hardware and security qualification. Role coexistence in other projects does not prove
+The existing B4 combined-service **host resolver** is not physical proof of a working simultaneous GNSS+Relay node. This document does not implement actuator controls, sensor adapters, service persistence or the SharedDurablePool. No existing device flash is allocated, erased or reformatted. SF5D D1/D2 remain OPEN. Role coexistence in other projects does not prove
 ORUN's exact-object custody, offline handset delivery, scale, range, power
 budget or data retention.
