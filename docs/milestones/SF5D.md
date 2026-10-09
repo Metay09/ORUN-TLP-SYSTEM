@@ -1,9 +1,11 @@
 # SF5D — nRF52840 Flash Ownership + DFU Preflight
 
-Status: **SF5D0 PREFLIGHT IN PROGRESS — DFU PRESERVATION GATE BLOCKED PENDING INSTALLED BOOTLOADER EVIDENCE; DESIGN/READ-ONLY ONLY.** No physical
-128 KiB reservation, no `FlashBackend` added, no change to the production
-linker/build ceiling, no ObservationStore/CustodyStore runtime attachment,
-no erase/program and no SF5D/SF5E physical PASS.
+Status: **SF5D3 SAMPLED SERIAL DFU RETENTION: PHYSICAL PASS (3 pages, one update).**
+**Gates D1/D2 remain OPEN** for the proposed full 128 KiB production store and
+combined Tracker/Gateway ownership. No production 128 KiB reservation or
+`FlashBackend`, no linker/build-ceiling change, and no ObservationStore/CustodyStore
+runtime attachment. The test-only 16-byte marker did program one approved
+unallocated development flash page; this is NOT full SF5D/SF5E clearance.
 
 Baseline: `main@b9a97630bfd0c842dcca8ec332f80f25756b81be`
 (SF5C portable-only squash merge of PR #83).
@@ -299,6 +301,19 @@ existing protected stores or deployed devices.
   update path; or preservation of the adjacent protected partitions.
   **D1 remains OPEN; D2 remains OPEN.** No production observation/custody
   flash backend, firmware partition cutover or product ACK was activated.
+
+**Full post-qualification regression (operator report, 2026-10-09):**
+- `git pull --ff-only` on test branch from `5f517f3` to `574b6f9`
+  (documentation-only evidence update).
+- `bash firmware/tests/run_host_tests.sh > /tmp/orun-sf5d3-host.log 2>&1`
+  returned **HOST_EXIT=0**, including production startup, history/security,
+  GNSS/driver and tooling source-contract test paths in operator output.
+- `pio run -e rak4630` **SUCCESS**, 82.732 s;
+  RAM **29,536 / 248,832 B (11.9%)** and
+  Flash **285,924 / 815,104 B (35.1%)**.
+- Host PASS and production BUILD PASS do not mean production was physically
+  uploaded or that the full 128 KiB bank is DFU-safe. RAK-1 was still
+  running the test-only VERIFY image when this report was recorded.
 
 **Revised experiment — smaller/safer bounded scope:**
 
