@@ -766,7 +766,7 @@ void printActivityDiagnostic() {
 
 void printActivityAutoDiagnostic() {
   Serial.printf("ACTIVITY AUTO %s awaiting=%s valid=%u invalid=%u "
-                "fault=%u unavailable=%u summaries=%lu persistent=no\\n",
+                "fault=%u unavailable=%u summaries=%lu persistent=no\n",
                 activity_auto_sampler.enabled() ? "ON" : "OFF",
                 activity_auto_sampler.awaitingCapture() ? "yes" : "no",
                 static_cast<unsigned>(activity_auto_sampler.usableWindows()),
@@ -778,7 +778,7 @@ void printActivityAutoDiagnostic() {
     const auto& summary = activity_auto_sampler.latestSummary();
     Serial.printf("ACTIVITY HOUR usable=%u invalid=%u fault=%u "
                   "unavailable=%u mean_axis_variance_sum_mg2=%lu "
-                  "mean_abs_delta_mg=%lu finished_monotonic_ms=%lu\\n",
+                  "mean_abs_delta_mg=%lu finished_monotonic_ms=%lu\n",
                   static_cast<unsigned>(summary.usable_windows),
                   static_cast<unsigned>(summary.invalid_windows),
                   static_cast<unsigned>(summary.fault_windows),
