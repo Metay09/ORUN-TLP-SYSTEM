@@ -27,8 +27,14 @@ The 2026-09-26 architecture PR #42 formalized the existing product decision.
 
 Existing approved combinations include own GNSS/sensor measurements and
 LoRa Relay on one node, a fixed sensor/actuator/valve node that also Relays,
-and a fixed or mobile Gateway with optional other services. A Gateway's
-mobility is deployment context, not a new exclusive firmware/device type.
+and one **Gateway** service with optional other services. "Sabit"/"gezer"
+is only deployment metadata; do **not** name different Gateway types,
+profiles, flash owners or protocols. The operator must see one `Gateway`
+control alongside `Konum Takibi / Sensör Raporlama / Vana Kontrolü / Relay`.
+Do not present legacy `TRACKER/RELAY/BASE` as competing product choices:
+their current source symbols/USB compatibility are temporary internal
+adapters until an explicitly tested configuration cutover. Especially,
+legacy `BASE` must **never be relabeled** as an already working Gateway.
 Animal collars default to Relay OFF to protect battery; Relay enabled
 requires continuous LoRa RX between local transmissions.
 
