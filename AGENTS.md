@@ -820,6 +820,31 @@ Do NOT jump ahead unless a dependency requires it.
 
 ## Development Discipline
 
+**Owner priority (2026-10-09): deliver working incremental firmware
+development with the actual RAK4631/RAK12500 GNSS/RAK1904 modules first.**
+Keep future sensors, valve/actuation, mobile and backends **extensible** through
+existing accepted contracts; do NOT build placeholder drivers, speculative
+plugins, whole product profiles or new framework abstractions just to be
+"future proof". Reuse already implemented work before proposing new slices.
+
+**Do not confuse test/document throughput with product progress.**
+Begin each feature task with a source audit of the relevant owner, make one
+small **working code improvement** where authorized, and add only the
+targeted regression assertions needed for the changed behavior. Run the
+relevant focused tests and PlatformIO build; **do not repeatedly rerun
+unchanged suites on the same SHA** as a substitute for engineering progress.
+Before merge/release, run the mandated full host/sanitizer/compatibility gates
+once for the final code head and record its exact SHA. Retest **affected
+areas** after fixes, rather than multiplying identical physical/CI probes
+without code or risk changes. Never skip any new physical safety, RF, flash,
+DFU, power or security gate that the *actual changed functionality* needs.
+
+Documentation rule: update a concise affected status/milestone entry once
+for real implementation/decision/test changes; do not create a new architecture
+document, review transcript or duplicate milestone for every small task.
+Distinguish code merged/tested/physically proven/pending. The architecture
+and long-term product inventory remain references, not the work deliverable.
+
 For every task:
 
 1. Inspect the repository before editing.
