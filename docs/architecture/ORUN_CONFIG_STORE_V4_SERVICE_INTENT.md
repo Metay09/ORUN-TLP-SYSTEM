@@ -4,9 +4,11 @@ Status (2026-10-10): **persistence half implemented** on
 `feat/config-store-v4` (host tests and ARM builds pass). Section 9 items 2 and
 5 **passed on hardware** (receiver RAK4631 `09A462BD4B275BA5`,
 `firmware/tests/m7/config_v4_remote_check.sh`, 10/10). Items 1, 3 and 4 are
-pending and gate the merge. Using the saved intent at boot
-is the next slice (section 10). An independent review of this document was
-recommended and has not happened; the owner chose to proceed.
+pending and gate the merge. The runtime half (section 11: saved intent used
+at boot, `APP SERVICES` writer and status, GNSS-absent rule) is implemented on
+`feat/persistent-services`, stacked on the persistence half; host tests and
+ARM builds pass, hardware not yet observed. An independent review of this
+document was recommended and has not happened; the owner chose to proceed.
 
 Design baseline: `main@0a5e078`; implementation baseline: `main@7782a55`.
 
@@ -195,9 +197,51 @@ brown-out, no SoftDevice-async power cut) carry over unchanged.
 - The three config probe images and the M7P7B flash probe target the write
   schema (`kWriteCommitOffset`, schema-aware tail check) and name v4 evidence.
 
-## 11. Not in this slice
+## 11. Runtime use (second slice)
 
-- Using the saved intent at boot, the USB command that sets it, status
-  fields and the GNSS-absent rule: the next slice, on `ConfigMutationOwner`.
+- `service_intent.h` owns the mapping. Admitted (runnable today): `AUTO`,
+  and EXPLICIT `NONE`, `T`, `R`, `TR`, `A`. Refused as
+  `kUnsupportedCombination`: receive together with tracking or relay
+  (`AT`, `AR`, `ATR`) -- relay forwarding takes every received POSITION
+  before the receive path, and tracking on a receiver was never exercised.
+- Boot: after `ConfigStore` and `GnssManager` begin, an admitted EXPLICIT
+  intent sets the legacy carrier role directly (`A` -> BASE, `R` -> RELAY,
+  otherwise TRACKER; `ROLE <x> source=CONFIG`) and feeds `RequestedConfig`
+  (tracking -> GNSS location source). GNSS detection no longer chooses the
+  role. AUTO keeps the legacy GNSS rule unchanged.
+- GNSS-absent rule (owner decision 2): with tracking requested and no GNSS
+  the device stays TRACKER, tracking is `BLOCKED` (capability absent) and
+  `GnssManager` re-runs the bounded detection every 10 minutes
+  (`setRedetectIntervalMs`); when the module answers, tracking runs without a
+  reset. Interval 0 (AUTO) keeps "absent until reboot".
+- Writer: `APP SERVICES AUTO|NONE|<letters>` (T tracking, R relay, A
+  receive) -> `ConfigMutationOwner` kind `kSetServiceIntent` -> ConfigStore
+  -> runtime apply -> `APP SET id=.. code=.. services=.. mode=.. token=..`.
+  A change applies at once: EXPLICIT sets the carrier role; back to AUTO
+  returns the role to GNSS inference (`RoleController::restoreAutomatic`).
+- Status: `APP SERVICES?` prints requested intent, whether it is applied,
+  effective tracking/relay state (e.g. `tracking=BLOCKED_GNSS_ABSENT`),
+  receive and the legacy mode. An EXPLICIT record this firmware cannot run
+  (written by later firmware) is reported as `applied=LEGACY_AUTO_UNSUPPORTED`
+  and the legacy AUTO role runs; it is never silently rewritten.
+- While services are EXPLICIT, the RAM-only `ROLE TRACKER|RELAY|BASE`
+  override is refused (it would contradict the saved intent); `ROLE?` shows
+  `mode=SERVICES`.
+- Unchanged: the GNSS acquisition cycle still runs whenever the module is
+  present, even with tracking off (GNSS power policy is a separate axis);
+  TLP v1 bytes, GET_CONFIG bytes, BLE surface.
+- Tests: `tests/m7/test_service_intent.cpp`, service cases in
+  `test_config_mutation.cpp` and `test_m7p7h_usb_adapter.cpp`, re-detect in
+  `tests/r3/test_r3.cpp`, and startup scenario `services_no_gnss` (real
+  setup()/loop(): saved `T`, GNSS never answers -> TRACKER, BLOCKED, ROLE
+  BASE refused, AUTO -> BASE, `AT` refused, `T` -> TRACKER, re-detect after
+  10 minutes finds the module and tracking runs).
+- Physical check still to do: on the tasma, `APP SERVICES T`, reboot,
+  `APP SERVICES?`; ideally once with the GNSS module unplugged.
+
+## 12. Not in this slice
+
 - BLE/LoRa writers, authentication, caller-supplied CAS precondition.
+- Services in GET_CONFIG/BLE status, profiles, Gateway, sensor/valve or
+  location-source intent.
 - Any change to GET_CONFIG bytes, TLP v1 or other partitions.

@@ -145,10 +145,10 @@ market-ready product completion.
 | RAK4631 nRF52840 + SX1262 firmware build | **P+H+F**; 2026-10-09 `rak4630` `SUCCESS`, production upload 34.04 s, RAM 29,536 B / 248,832 (11.9 %), Flash 285,924 B / 815,104 (35.1 %) | `firmware/platformio.ini`, pinned framework/driver patches | Other MCU/board ports are **not** implemented; reference platform remains RAK |
 | Device identity | **P+H; historical physical direct RF** | `rak_device_identity.cpp`, `device_identity.h`, B1/B4 tests | Provisioned application ownership/group identity still separate |
 | One universal codebase / separable concepts | **Approved architecture**, existing from B4 / PR #42, **not new** | `AGENTS.md`, current rules, product architecture | Actual user-facing independent profile selection not wired |
-| Legacy `TRACKER / RELAY / BASE` and AUTO boot decision | **P+H** (compatible, not desired final UX) | `node_role.cpp`, `node_behavior.h`, `main.cpp`; `ROLE?` and USB override | AUTO currently derives legacy role from GNSS presence; manual override **volatile**. Replace with persisted explicit service intent, retaining a compatibility transition |
+| Legacy `TRACKER / RELAY / BASE` and AUTO boot decision | **P+H** (compatible, not desired final UX) | `node_role.cpp`, `node_behavior.h`, `main.cpp`; `ROLE?` and USB override | AUTO derives legacy role from GNSS presence; manual override **volatile**. With saved EXPLICIT services (`feat/persistent-services`, **H+build**, not yet physical) the role is derived from the services, the override is refused and a missing GNSS blocks tracking instead of making a BASE |
 | Separate Tracking/Relay effective resolver | **H and partly P**; B4 test asserts **both enabled** in a pure config; `RadioManager` can change forwarding state independently | `runtime_config.h/.cpp`, `test_b4.cpp`, `test_b4_network.cpp`, `radio_manager_relay_config.cpp` | Production `main.cpp::resolveRuntimeConfig()` still obtains requested flags from mutually exclusive legacy role; **no persisted combined-service switch or physical combined test** |
 | GNSS/accelerometer discovery and health | **P+H; targeted physical M6A and GNSS evidence** | `CapabilitySnapshot`, `AccelerometerManager`, `GnssManager` | Generic arbitrary environmental sensor capability registry/driver registry not implemented |
-| ConfigStore v2 → v4 | v2: **P+H+scoped F**; A/B tokenized safe persistence. v4 (2026-10-10, `feat/config-store-v4`): **H+build+partial F** — adds `service_mode` + requested services; reads v2/v4, writes v4. On one receiver: v2→v4 upgrade and v4→old→v4 downgrade passed; blank baseline, power cuts and BLE-connected save pending | `config_store.cpp`, `config_format.cpp`, `FlashMutationGate`, PR #46/#49; `ORUN_CONFIG_STORE_V4_SERVICE_INTENT.md` | Saved service intent is **not yet used at boot** and has **no writer** (next slice). No profile, Gateway, sensor, valve or location-source intent. No authenticated app writer |
+| ConfigStore v2 → v4 | v2: **P+H+scoped F**; A/B tokenized safe persistence. v4 (2026-10-10, `feat/config-store-v4`): **H+build+partial F** — adds `service_mode` + requested services; reads v2/v4, writes v4. On one receiver: v2→v4 upgrade and v4→old→v4 downgrade passed; blank baseline, power cuts and BLE-connected save pending | `config_store.cpp`, `config_format.cpp`, `FlashMutationGate`, PR #46/#49; `ORUN_CONFIG_STORE_V4_SERVICE_INTENT.md` | Runtime use on `feat/persistent-services` (**H+build**): intent applied at boot, USB `APP SERVICES` writer and `APP SERVICES?` status, GNSS re-probe while tracking is requested. No profile, Gateway, sensor, valve or location-source intent. No authenticated app writer |
 | Device/status querying | **P+H+scoped F for M7P7H**; USB+BLE GET_CONFIG, DEVICE, TRACKING/GNSS, GEOFENCE, STORAGE | `application_request.cpp`, `application_status_runtime.cpp`, BLE/USB adapters | No measured battery status, comprehensive RADIO/HEALTH app family, GET_LOCATION product operation, secure mutations or generic dashboard |
 | Location source-neutral accepted value | **P+H**, GNSS producer only (M7P7I / PR #63) | `location_owner.h`, `main.cpp` | PHONE/MANUAL/fixed sources and source-switch permission/ownership, GET_LOCATION, app map all **deferred** |
 
@@ -270,8 +270,8 @@ policy must be explicit, durable user intention, not automatic GNSS-based role.
   `tracking_interval_seconds` and `battery_capacity_mah` (the latter is
   configured metadata, not a battery charge measurement). Schema v4
   (2026-10-10, host-tested, physical validation pending) adds the requested
-  service intent to the same record; nothing reads or writes that intent at
-  runtime yet.
+  service intent to the same record; its runtime use (boot, USB
+  `APP SERVICES` writer, status) is host-tested on `feat/persistent-services`.
 - The normal firmware starts `ConfigStore` and reads persisted values at boot.
   Since 2026-10-10 a local USB writer exists for the **tracking interval
   only** (`APP INTERVAL <seconds>`, 60 s floor): `ConfigMutationOwner`
@@ -280,10 +280,10 @@ policy must be explicit, durable user intention, not automatic GNSS-based role.
   APPLIED, read back as stored, retained across a serial DFU of the same
   image plus reboot, then restored; not observed: a tracker changing cadence,
   a save with BLE connected, power loss during a save started this way).
-  **There is still no
-  writer for service settings and no authenticated BLE/LoRa writer.** Manual
-  USB `ROLE` override is still RAM-only; that selected role does **not**
-  survive reset.
+  `APP SERVICES AUTO|NONE|<T,R,A>` sets the requested services the same way
+  (host-tested, `feat/persistent-services`). **There is still no
+  authenticated BLE/LoRa writer.** The USB `ROLE` override stays RAM-only and
+  is refused while services are EXPLICIT.
 - The independent ConfigStore v2 physical qualification PASS covers
   **specific between-flash-operation** reboot/cut points on one device.
   It is not analog brownout, an interrupted live SoftDevice write, or

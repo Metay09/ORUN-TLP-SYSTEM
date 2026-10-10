@@ -248,6 +248,69 @@ void detectionRetry(bool eventually_present) {
   assert(role.role() == NodeRole::kRelay);
 }
 
+// Tracking explicitly requested: a GNSS that was not found is probed again
+// after the configured interval instead of staying absent until reset.
+void redetectAfterAbsent() {
+  GnssManager manager;
+  test_now = UINT32_MAX - 4000;
+  Fake::pending.clear(); Fake::callback_valid = false;
+  Fake::present = false; Fake::configuration_ok = true;
+  Fake::read_ok = true;
+  Wire.status_ok = true; Wire.bytes_available = 0;
+  const unsigned calls = Fake::detection_calls;
+  manager.begin();
+  for (unsigned n = 0; n < 200 && manager.state() != State::kNotPresent; ++n) {
+    test_now += 1000; manager.poll();
+  }
+  assert(manager.state() == State::kNotPresent && sensor_power == LOW);
+  const unsigned after_first = Fake::detection_calls;
+  assert(after_first == calls + gnss_config::kDetectionMaxAttempts);
+
+  constexpr uint32_t kInterval = 600000;
+  manager.setRedetectIntervalMs(kInterval);
+  const uint32_t absent_at = manager.state_changed_at_ms_;
+  test_now = absent_at + kInterval - 1; manager.poll();
+  assert(manager.state() == State::kNotPresent && manager.detectionComplete());
+  test_now = absent_at + kInterval; manager.poll();
+  assert(manager.state() == State::kPowerOff && !manager.detectionComplete());
+
+  // Still absent: a new bounded detection round, then absent again.
+  for (unsigned n = 0; n < 200 && manager.state() != State::kNotPresent; ++n) {
+    test_now += 1000; manager.poll();
+  }
+  assert(manager.state() == State::kNotPresent && sensor_power == LOW);
+  assert(Fake::detection_calls == after_first + gnss_config::kDetectionMaxAttempts);
+
+  // Module answers on the next round: detected, acquisition starts.
+  Fake::present = true;
+  test_now = manager.state_changed_at_ms_ + kInterval; manager.poll();
+  for (unsigned n = 0; n < 10 && !manager.detected(); ++n) {
+    test_now += 1000; manager.poll();
+  }
+  assert(manager.detected() && manager.detectionComplete());
+
+  // Interval 0 keeps the legacy "absent until reboot".
+  GnssManager legacy;
+  Fake::present = false;
+  legacy.begin();
+  for (unsigned n = 0; n < 200 && legacy.state() != State::kNotPresent; ++n) {
+    test_now += 1000; legacy.poll();
+  }
+  const unsigned legacy_calls = Fake::detection_calls;
+  for (unsigned n = 0; n < 2000; ++n) { test_now += 1000; legacy.poll(); }
+  assert(legacy.state() == State::kNotPresent &&
+         Fake::detection_calls == legacy_calls);
+
+  // Leaving explicit services hands the role back to GNSS inference.
+  RoleController role;
+  role.applyOverride(NodeRole::kTracker);
+  assert(!role.updateAutomatic(true, false) && role.role() == NodeRole::kTracker);
+  role.restoreAutomatic();
+  assert(role.automatic() && role.role() == NodeRole::kTracker);
+  role.updateAutomatic(true, false);
+  assert(role.role() == NodeRole::kBase);
+}
+
 void drainAndPartialDopBoundary() {
   GnssManager manager;
   boot(manager);
@@ -405,7 +468,7 @@ int main() {
   ageIsNotRenewed(false); ageIsNotRenewed(true);
   sessionBoundary(false); sessionBoundary(true);
   utcSnapshotAndWire(); utcValidity(); repeatedStaleEpoch();
-  detectionRetry(true); detectionRetry(false);
+  detectionRetry(true); detectionRetry(false); redetectAfterAbsent();
   drainAndPartialDopBoundary(); receiverBacklogIsNotFresh();
   partialReadBacklogStaysGated(); callbackGapThresholds();
   puts("R3 capture/session, UTC snapshot/wire, drain-resync and detection checks: PASS");
