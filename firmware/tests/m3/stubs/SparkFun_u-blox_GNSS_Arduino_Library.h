@@ -1,9 +1,11 @@
 #pragma once
 
+#include <assert.h>
 #include <stdint.h>
 #include <functional>
 #include <utility>
 #include <vector>
+#include "Arduino.h"
 #include "Wire.h"
 #include "gnss_utc.h"
 
@@ -43,10 +45,15 @@ struct SFE_UBLOX_GNSS {
   void setI2CpollingWait(uint8_t wait) { polling_wait = wait; }
   bool checkUblox() { ++reads; last_read_polling_wait = polling_wait; return read_ok; }
   void checkCallbacks() {
+    // The real 2.2.29 checkCallbacks() has a ~3 KB stack frame. Anything that
+    // prints from inside a callback overruns the 4 KB nRF52 loop task stack
+    // (seen on a RAK4631 as HEALTH stack_free=0), so callbacks must not print.
+    const size_t output_before = Serial.output.size();
     auto callbacks = std::move(pending);
     pending.clear();
     for (auto& callback : callbacks) callback();
     if (callback_valid) { pvt(&callback_pvt); callback_valid = false; }
+    assert(Serial.output.size() == output_before);
   }
   // 2.2.29 keeps the first unconsumed callback copy while data keeps changing.
   inline static UBX_NAV_PVT_data_t current_pvt{}, callback_pvt{};

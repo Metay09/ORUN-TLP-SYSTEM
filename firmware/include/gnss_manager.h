@@ -88,6 +88,9 @@ class GnssManager {
   void handlePvt(const UBX_NAV_PVT_data_t& pvt_data);
   void handleDop(const UBX_NAV_DOP_data_t& dop_data);
   void considerPositionFix();
+  // Prints the "GNSS FIX" line for a fix promoted by a callback. Called after
+  // SparkFun checkCallbacks() has returned, never from inside the callback.
+  void printPendingFixReport();
   void startAcquisition(uint32_t now);
   void prepareAcquisition();
   void startTransportResync(uint32_t now);
@@ -132,6 +135,7 @@ class GnssManager {
   GnssFix fresh_fix_{};
   uint32_t fresh_fix_itow_ = 0;
   bool fresh_fix_ready_ = false;
+  bool fix_report_pending_ = false;
   uint32_t last_promoted_fix_itow_ = 0;
   bool has_last_promoted_fix_itow_ = false;
   bool schedule_reanchor_pending_ = false;

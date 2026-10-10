@@ -429,6 +429,7 @@ for scenario in mutex gate queue lora success advfail blefail noevent geofence g
   "$test_dir/startup" "$scenario"
 done
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r4/test_patch_wire.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r4/test_patch_loop_stack.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p6g_delegated_kdf_vectors.py
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p6h_delegated_secure_codec.cpp \
   firmware/src/tlp_v2_delegated_secure_app.cpp \

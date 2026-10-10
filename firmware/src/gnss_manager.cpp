@@ -109,6 +109,7 @@ bool GnssManager::cancelAdditionalFixAcquisition() {
 }
 
 void GnssManager::poll() {
+  printPendingFixReport();
   const uint32_t now = monotonic::nowMs();
   expireFreshFix(now);
   if ((state_ == State::kStarting || state_ == State::kAcquiring) &&
@@ -185,6 +186,7 @@ void GnssManager::poll() {
       gnss.checkUblox();
       if (handleI2cTimeout(now)) return;
       gnss.checkCallbacks();
+      printPendingFixReport();
       return;
 
     case State::kIdle:
@@ -651,6 +653,15 @@ void GnssManager::considerPositionFix() {
   diagnostics_.last_ttff_ms = now - acquisition_started_at_ms_;
   ++diagnostics_.successful_fresh_fixes;
   state_ = State::kFixAvailable;
+  // Do not print here. This runs inside SparkFun checkCallbacks(), whose own
+  // stack frame is about 3 KB; a printf on top of it overran the 4 KB loop
+  // task stack on a RAK4631 (HEALTH stack_free=0) and corrupted memory below.
+  fix_report_pending_ = true;
+}
+
+void GnssManager::printPendingFixReport() {
+  if (!fix_report_pending_) return;
+  fix_report_pending_ = false;
   Serial.printf("GNSS FIX ttff=%lums lat=%ld lon=%ld sats=%u hdop=%u.%02u\n",
                 static_cast<unsigned long>(diagnostics_.last_ttff_ms),
                 static_cast<long>(fresh_fix_.latitude_e7),
