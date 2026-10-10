@@ -1,8 +1,11 @@
-// ConfigStore v2 runtime checks against the production class.
+// ConfigStore runtime checks against the production class.
 //
 // A portable fake FlashBackend models the fixed two-page ConfigStore region.
-// Legacy v1 byte compatibility remains covered by test_m7p5_config_format.cpp;
-// this file now verifies the intentional clean runtime cutover to v2.
+// Legacy v1 byte compatibility remains covered by test_m7p5_config_format.cpp.
+// This file was written for the v2 cutover. Since schema v4 the store writes
+// v4 records: cases that seed pages with seedV2() check that v2 is still read,
+// cases that inspect pages the store wrote expect v4. v4-specific recovery
+// (upgrade, mixed v2/v4 lineage, service intent) is in test_config_store_v4.cpp.
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -57,7 +60,7 @@ class PendingFlash : public FlashBackend {
         size > bytes.size() - offset)
       return false;
     if (fail_full_record_read_once &&
-        size == config_format::kV2RecordSize) {
+        size == config_format::kWriteRecordSize) {
       fail_full_record_read_once = false;
       return false;
     }
@@ -193,14 +196,14 @@ PageInspection pageInspection(const PendingFlash& flash, unsigned page) {
   PageInspection inspection;
   const uint8_t* prefix =
       flash.bytes.data() + size_t(page) * kPageSize;
-  assert(inspectPagePrefix(prefix, kV2PagePrefixSize, inspection));
+  assert(inspectPagePrefix(prefix, kMaxPagePrefixSize, inspection));
   return inspection;
 }
 
 }  // namespace
 
 int main() {
-  // 1. Blank development partition + healthy CSPRNG -> fresh v2 baseline.
+  // 1. Blank development partition + healthy CSPRNG -> fresh v4 baseline.
   {
     PendingFlash flash;
     DeterministicIncarnation rng;
@@ -218,10 +221,10 @@ int main() {
     assert(rng.calls == 1);
     assert(store.diagnostics().baseline_commits == 1);
     assert(flash.erase_calls == 0);
-    assert(flash.program_calls == 2);  // 44-byte stage + 4-byte commit
+    assert(flash.program_calls == 2);  // 64-byte stage + 4-byte commit
 
     const PageInspection p0 = pageInspection(flash, 0);
-    assert(p0.evidence == PageEvidence::kV2Committed);
+    assert(p0.evidence == PageEvidence::kV4Committed);
     assert(p0.generation == 1);
     assert(p0.token.incarnation == rng.next && p0.token.revision == 1);
     assert(pageInspection(flash, 1).evidence == PageEvidence::kErased);
@@ -387,7 +390,7 @@ int main() {
     memset(flash.bytes.data(), 0, kV2PagePrefixSize);
     flash.bytes[0] = 0x4F; flash.bytes[1] = 0x52;
     flash.bytes[2] = 0x43; flash.bytes[3] = 0x31;
-    flash.bytes[4] = 4;  // deployable future namespace
+    flash.bytes[4] = 8;  // deployable future namespace (4 is v4 since 2026-10-10)
     // Final classifier word must be non-FF; memset(0) satisfies it.
     DeterministicIncarnation rng;
     ConfigStore store(flash, &rng);

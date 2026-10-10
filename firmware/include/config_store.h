@@ -35,9 +35,12 @@ enum class ConfigSaveAdmission : uint8_t {
 // Durable desired configuration owner for the fixed two-page ConfigStore
 // partition.
 //
-// Runtime schema v2 seals semantic config and its application state token in one
-// 48-byte record. Normal saves remain A/B ping-pong: inactive page erase,
-// body+CRC stage/readback, commit-last/readback, then RAM publication.
+// The tokenized record seals semantic config and its application state token.
+// Recovery reads schema v2 (48 bytes) and v4 (68 bytes, adds requested
+// service intent); every save and fresh baseline writes v4. A v2 page is never
+// rewritten merely because it was recovered. Normal saves remain A/B
+// ping-pong: inactive page erase, body+CRC stage/readback, commit-last/
+// readback, then RAM publication.
 //
 // Current product scope has no deployed ConfigStore-v1 fleet. Legacy v1 evidence
 // is detected only to fail closed into maintenance/reset; it is never
@@ -144,7 +147,7 @@ class ConfigStore {
 
   bool recover();
   bool establishFreshBaseline();
-  bool writeFreshBaseline(const config_format::V2Record& record);
+  bool writeFreshBaseline(const config_format::TokenizedRecord& record);
   bool startSave(const config_format::Config& candidate);
   FlashOpResult writeBlob();
   void fail();
@@ -183,7 +186,7 @@ class ConfigStore {
   config_format::Config pending_config_{};
   config_format::StateToken pending_token_{};
   uint64_t pending_generation_ = 0;
-  uint8_t blob_[config_format::kV2RecordSize]{};
+  uint8_t blob_[config_format::kWriteRecordSize]{};
 };
 
 }  // namespace orun_tlp
