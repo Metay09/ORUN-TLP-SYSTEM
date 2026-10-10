@@ -40,6 +40,8 @@
 #include "geofence_incarnation_source.h"
 #include "geofence_runtime_policy.h"
 #include "geofence_runtime_provider.h"
+#include "geofence_mutation.h"
+#include "geofence_staging.h"
 #include "geofence_store.h"
 #include "node_role.h"
 #include "power_manager.h"
@@ -91,6 +93,11 @@ orun_tlp::ConfigMutationOwner config_mutations(config_store);
 orun_tlp::NrfGeofenceIncarnationSource geofence_incarnation_source;
 orun_tlp::GeofenceStore geofence_store(storage_flash_gate.geofencePort(),
                                        &geofence_incarnation_source);
+// The one owner of geofence resource changes (REPLACE_SET / CLEAR_SET). USB is
+// its first adapter; BLE/LoRa submit here once they are authorized.
+orun_tlp::GeofenceMutationOwner geofence_mutations(geofence_store);
+// Non-authoritative RAM candidate filled vertex by vertex over USB.
+orun_tlp::GeofenceStaging geofence_staging;
 // M6D3B's physical qualification measured tight-but-safe loop-task stack
 // margins around GeofenceStore::begin(). Keep the record-sized M6D3C boot copy
 // out of setup()'s stack frame; this scratch is used only during boot activation.
@@ -183,7 +190,8 @@ constexpr int32_t kM6D2ProbeHalfSpanE7 = 2500;  // ~20-30 m at field latitudes.
 #endif
 orun_tlp::RoleController role_controller;
 bool automatic_role_resolved = false;
-char role_command[24]{};
+// Long enough for "APP FENCE V -89.9999999 -179.9999999".
+char role_command[48]{};
 uint8_t role_command_length = 0;
 bool role_command_overflow = false;
 
@@ -686,6 +694,9 @@ void applyRole(orun_tlp::NodeRole role, const char* source) {
 }
 
 void printServiceStatus();
+void abortGeofenceConfirmation(const char* reason);
+void clearGeofenceEpisodeFixes();
+const char* geofenceTokenStateName(orun_tlp::GeofenceTokenState state);
 
 // What the device is asked to run: the stored EXPLICIT intent when there is
 // one this firmware can run, otherwise the legacy role projection.
@@ -874,6 +885,120 @@ void applyCommittedConfigToRuntime() {
   if (config.service_mode != applied_service_mode ||
       config.requested_services != applied_requested_services)
     applyServiceIntent("CONFIG");
+}
+
+// A committed geofence change: evidence and confirmation tied to the old
+// geometry are void, the runtime takes the new durable snapshot, and the
+// cadence returns to base B until fresh evidence says otherwise
+// (ORUN_GEOFENCE_CONFIGURATION_DISTRIBUTION.md 9.1). No INSIDE/OUTSIDE event
+// is synthesized by the change itself.
+void applyGeofenceMutationToRuntime() {
+  if (geofence_confirmation.confirmationActive())
+    abortGeofenceConfirmation("GEOFENCE_CHANGED");
+  (void)gnss_manager.cancelAdditionalFixAcquisition();
+  clearGeofenceEpisodeFixes();
+  if (geofence_representative_pending) {
+    geofence_representative_pending = false;
+    Serial.println(F("GEOFENCE representative discarded; geofence changed"));
+  }
+  // The boot snapshot buffer is reused so no record-sized copy lands on the
+  // loop task stack.
+  if (!geofence_store.currentSnapshot(geofence_boot_snapshot)) {
+    geofence_confirmation.clear();
+    Serial.println(F("GEOFENCE durable authority unavailable; runtime unconfigured"));
+  } else {
+    const auto applied = orun_tlp::applyGeofenceSnapshotToRuntime(
+        geofence_boot_snapshot, geofence_confirmation);
+    if (applied == orun_tlp::GeofenceRuntimeApplyResult::kConfigured)
+      Serial.printf("GEOFENCE runtime configured areas=%u vertices=%u token=%s\n",
+                    static_cast<unsigned>(geofence_boot_snapshot.area_count),
+                    static_cast<unsigned>(geofence_boot_snapshot.total_vertex_count),
+                    geofenceTokenStateName(geofence_store.tokenState()));
+    else if (applied == orun_tlp::GeofenceRuntimeApplyResult::kCleared)
+      Serial.printf("GEOFENCE runtime clear token=%s\n",
+                    geofenceTokenStateName(geofence_store.tokenState()));
+    else
+      Serial.println(F("GEOFENCE durable snapshot rejected; runtime unconfigured"));
+  }
+  gnss_manager.setTrackingIntervalMs(runtimeTrackingIntervalMs(
+      active_tracking_base_interval_seconds, geofence_confirmation.cadenceMode()));
+}
+
+void drainGeofenceMutationResult() {
+  orun_tlp::GeofenceMutationResult result;
+  if (!geofence_mutations.takeResult(orun_tlp::ApplicationRequester::kUsb,
+                                     result))
+    return;
+  orun_tlp::printUsbGeofenceMutationResult(result);
+}
+
+void advanceUsbRequestId() {
+  ++next_usb_application_request_id;
+  if (next_usb_application_request_id == 0) next_usb_application_request_id = 1;
+}
+
+void handleUsbFenceCommand(orun_tlp::UsbFenceCommand command,
+                           const orun_tlp::GeoPointE7& vertex) {
+  using orun_tlp::UsbFenceCommand;
+  using Result = orun_tlp::GeofenceStaging::Result;
+  const auto access =
+      orun_tlp::defaultApplicationAccess(orun_tlp::ApplicationRequester::kUsb);
+  switch (command) {
+    case UsbFenceCommand::kBegin:
+      geofence_staging.begin();
+      orun_tlp::printUsbFenceStaging(geofence_staging);
+      return;
+    case UsbFenceCommand::kVertex: {
+      const Result result = geofence_staging.addVertex(vertex);
+      if (result != Result::kOk) orun_tlp::printUsbFenceRejected(result);
+      else orun_tlp::printUsbFenceStaging(geofence_staging);
+      return;
+    }
+    case UsbFenceCommand::kArea: {
+      const Result result = geofence_staging.nextArea();
+      if (result != Result::kOk) orun_tlp::printUsbFenceRejected(result);
+      else orun_tlp::printUsbFenceStaging(geofence_staging);
+      return;
+    }
+    case UsbFenceCommand::kAbort:
+      geofence_staging.abort();
+      Serial.println(F("APP FENCE ABORTED"));
+      return;
+    case UsbFenceCommand::kCommit: {
+      if (!geofence_staging.active()) {
+        orun_tlp::printUsbFenceRejected(Result::kNotStaging);
+        return;
+      }
+      orun_tlp::GeofencePolygonView polygons[orun_tlp::geofence_format::kMaximumAreas];
+      const auto submitted = geofence_mutations.submitReplace(
+          orun_tlp::ApplicationRequester::kUsb, next_usb_application_request_id,
+          access, geofence_staging.view(polygons));
+      if (submitted == orun_tlp::ConfigMutationSubmitResult::kBusy) {
+        Serial.println(F("APP BUSY"));  // staging kept; COMMIT again
+        return;
+      }
+      // The store copied what it needed; the candidate is done either way.
+      geofence_staging.abort();
+      advanceUsbRequestId();
+      return;
+    }
+    case UsbFenceCommand::kClear: {
+      const auto submitted = geofence_mutations.submitClear(
+          orun_tlp::ApplicationRequester::kUsb, next_usb_application_request_id,
+          access);
+      if (submitted == orun_tlp::ConfigMutationSubmitResult::kBusy) {
+        Serial.println(F("APP BUSY"));
+        return;
+      }
+      advanceUsbRequestId();
+      return;
+    }
+    case UsbFenceCommand::kMalformed:
+      Serial.println(F("APP REJECTED"));
+      return;
+    case UsbFenceCommand::kNotFenceCommand:
+      return;
+  }
 }
 
 void drainConfigMutationResult() {
@@ -1656,6 +1781,14 @@ void handleRoleCommand() {
   if (isActivityCommand("BLE?", 4)) {
     role_command_length = 0;
     printBleDiagnostic();
+    return;
+  }
+  orun_tlp::GeoPointE7 fence_vertex;
+  const auto fence_command = orun_tlp::parseUsbFenceCommand(
+      role_command, role_command_length, &fence_vertex);
+  if (fence_command != orun_tlp::UsbFenceCommand::kNotFenceCommand) {
+    role_command_length = 0;
+    handleUsbFenceCommand(fence_command, fence_vertex);
     return;
   }
   if (orun_tlp::isUsbServicesQuery(role_command, role_command_length)) {
@@ -2608,7 +2741,12 @@ void loop() {
     config_store.poll();
     orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kSecurityStore);
     security_store.poll();
+    orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kGeofenceStore);
+    geofence_store.poll();
   }
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kGeofenceStore);
+  if (geofence_mutations.poll()) applyGeofenceMutationToRuntime();
+  drainGeofenceMutationResult();
   // A confirmed configuration change is applied to the runtime in the same
   // pass, before its result is reported to whichever adapter asked for it.
   // A save that could not be confirmed (OUTCOME_UNKNOWN) is never adopted

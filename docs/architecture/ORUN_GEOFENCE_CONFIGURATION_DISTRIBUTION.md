@@ -676,8 +676,12 @@ does **not** prohibit that explicit test fixture.
 
 The durable geofence source itself is now implemented through M6D3B, and
 M6D3C supplies its recovered semantic snapshot to M6D2 at boot. What remains
-gated on configuration/security work is the **user-mutable remote/local
-protected mutation path**. No BLE/LoRa geofence writer is authorized by these
+gated on configuration/security work is the **user-mutable remote/BLE
+protected mutation path**. A local USB writer (physical-access trust, like the
+config writer) stages a candidate in RAM (`GeofenceStaging`) and submits
+whole-resource REPLACE_SET / CLEAR_SET to the one `GeofenceMutationOwner`;
+the runtime follows only a confirmed commit, with the section 9.1 effects
+(confirmation cancelled, unclassified, cadence B, no synthetic event). No BLE/LoRa geofence writer is authorized by these
 storage/runtime slices. The original foundation contract remains recorded in
 `docs/milestones/M6D3.md`, including the production capacity, dedicated
 persistence range and independent geofence-resource CAS namespace.
@@ -733,6 +737,7 @@ resource contract                             [DONE]
 -> capacity/storage/CAS                       [DONE: M6D3/M6D3A]
 -> atomic durable active geofence source      [DONE: M6D3B]
 -> connect production provider to M6D2        [DONE: M6D3C, PHYSICAL PASS]
+-> local USB writer on one mutation owner       [H+build: GeofenceMutationOwner]
 -> secure BLE + protected LoRa resource transfer [NOT IMPLEMENTED]
 
 Then:

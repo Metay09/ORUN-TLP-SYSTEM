@@ -137,6 +137,98 @@ void printUsbServiceStatus(const UsbServiceStatus& status) {
       status.application_receive ? "ON" : "OFF", roleName(status.legacy_role));
 }
 
+UsbFenceCommand parseUsbFenceCommand(const char* text, uint8_t length,
+                                     GeoPointE7* vertex) {
+  static const char kPrefix[] = "APP FENCE ";
+  constexpr uint8_t kPrefixLength = sizeof(kPrefix) - 1;
+  if (text == nullptr || length < kPrefixLength ||
+      memcmp(text, kPrefix, kPrefixLength) != 0)
+    return UsbFenceCommand::kNotFenceCommand;
+  const char* arg = text + kPrefixLength;
+  const uint8_t arg_length = static_cast<uint8_t>(length - kPrefixLength);
+  if (equals(arg, arg_length, "BEGIN")) return UsbFenceCommand::kBegin;
+  if (equals(arg, arg_length, "AREA")) return UsbFenceCommand::kArea;
+  if (equals(arg, arg_length, "COMMIT")) return UsbFenceCommand::kCommit;
+  if (equals(arg, arg_length, "ABORT")) return UsbFenceCommand::kAbort;
+  if (equals(arg, arg_length, "CLEAR")) return UsbFenceCommand::kClear;
+
+  // V <lat> <lon>: exactly one space between the parts.
+  if (vertex == nullptr || arg_length < 2 || arg[0] != 'V' || arg[1] != ' ')
+    return UsbFenceCommand::kMalformed;
+  const char* lat = arg + 2;
+  const uint8_t rest = static_cast<uint8_t>(arg_length - 2);
+  const char* space = static_cast<const char*>(memchr(lat, ' ', rest));
+  if (space == nullptr) return UsbFenceCommand::kMalformed;
+  const size_t lat_length = static_cast<size_t>(space - lat);
+  const char* lon = space + 1;
+  const size_t lon_length = rest - lat_length - 1;
+  int32_t lat_e7 = 0;
+  int32_t lon_e7 = 0;
+  if (!parseDegreesE7(lat, lat_length, 90, &lat_e7) ||
+      !parseDegreesE7(lon, lon_length, 180, &lon_e7))
+    return UsbFenceCommand::kMalformed;
+  *vertex = GeoPointE7(lat_e7, lon_e7);
+  return UsbFenceCommand::kVertex;
+}
+
+void printUsbFenceStaging(const GeofenceStaging& staging) {
+  Serial.printf("APP FENCE STAGING areas=%u vertices=%u\n",
+                static_cast<unsigned>(staging.areaCount()),
+                static_cast<unsigned>(staging.vertexCount()));
+}
+
+void printUsbFenceRejected(GeofenceStaging::Result reason) {
+  const char* text = "UNKNOWN";
+  switch (reason) {
+    case GeofenceStaging::Result::kOk: text = "NONE"; break;
+    case GeofenceStaging::Result::kNotStaging: text = "NOT_STAGING"; break;
+    case GeofenceStaging::Result::kFull: text = "FULL"; break;
+    case GeofenceStaging::Result::kEmptyArea: text = "EMPTY_AREA"; break;
+    case GeofenceStaging::Result::kTooManyAreas: text = "TOO_MANY_AREAS"; break;
+  }
+  Serial.printf("APP FENCE REJECTED reason=%s\n", text);
+}
+
+namespace {
+
+const char* mutationCodeName(ConfigMutationOutcome outcome) {
+  switch (outcome) {
+    case ConfigMutationOutcome::kApplied: return "APPLIED";
+    case ConfigMutationOutcome::kUnchanged: return "UNCHANGED";
+    case ConfigMutationOutcome::kInvalid: return "INVALID";
+    case ConfigMutationOutcome::kAccessDenied: return "ACCESS_DENIED";
+    case ConfigMutationOutcome::kMaintenance: return "MAINTENANCE";
+    case ConfigMutationOutcome::kUnavailable: return "UNAVAILABLE";
+    case ConfigMutationOutcome::kOutcomeUnknown: return "OUTCOME_UNKNOWN";
+  }
+  return "UNAVAILABLE";
+}
+
+}  // namespace
+
+void printUsbGeofenceMutationResult(const GeofenceMutationResult& result) {
+  const char* state = "UNAVAILABLE";
+  if (result.state == GeofenceResourceState::kClear) state = "CLEAR";
+  else if (result.state == GeofenceResourceState::kConfigured) state = "CONFIGURED";
+  // What the store holds now; after a refusal it is the previous resource.
+  if (result.token_valid) {
+    Serial.printf("APP FENCE id=%lu code=%s state=%s areas=%u vertices=%u "
+                  "token=VALID revision=%lu\n",
+                  static_cast<unsigned long>(result.request_id),
+                  mutationCodeName(result.outcome), state,
+                  static_cast<unsigned>(result.area_count),
+                  static_cast<unsigned>(result.total_vertex_count),
+                  static_cast<unsigned long>(result.token.revision));
+  } else {
+    Serial.printf("APP FENCE id=%lu code=%s state=%s areas=%u vertices=%u "
+                  "token=UNAVAILABLE\n",
+                  static_cast<unsigned long>(result.request_id),
+                  mutationCodeName(result.outcome), state,
+                  static_cast<unsigned>(result.area_count),
+                  static_cast<unsigned>(result.total_vertex_count));
+  }
+}
+
 void printUsbConfigMutationResult(const ConfigMutationResult& result) {
   const char* code = "UNAVAILABLE";
   switch (result.outcome) {

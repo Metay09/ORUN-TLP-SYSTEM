@@ -51,7 +51,8 @@ void portableRecord() {
       LoopStage::kSecurityStore, LoopStage::kConfigMutation,
       LoopStage::kPositionFlow, LoopStage::kFixHandling,
       LoopStage::kRadio,        LoopStage::kStoreForward,
-      LoopStage::kIdle,         LoopStage::kBattery};
+      LoopStage::kIdle,         LoopStage::kBattery,
+      LoopStage::kGeofenceStore};
   const unsigned count = sizeof(stages) / sizeof(stages[0]);
   for (unsigned i = 0; i < count; ++i) {
     assert(static_cast<uint8_t>(stages[i]) <= kLoopStageMaxValue);
