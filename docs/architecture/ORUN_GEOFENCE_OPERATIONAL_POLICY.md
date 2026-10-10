@@ -65,6 +65,11 @@ OUTSIDE -> effective interval = B / 3
 
 `B / 3` is runtime policy only. It must not overwrite `B` in ConfigStore.
 
+The battery rule (owner decision 2026-10-10, `battery_policy.h`) applies on
+top of this: while the measured battery is CRITICAL the interval GNSS uses is
+the geofence interval x4 (for example OUTSIDE with B = 180 s gives 240 s).
+It is runtime only as well and never rewrites `B`.
+
 The exact integer rounding/minimum-bound rule is an M6D implementation detail
 that must respect the existing GNSS scheduling safety contract. A policy change
 must never create overlapping acquisitions or catch-up bursts.

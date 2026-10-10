@@ -259,6 +259,60 @@ int servicesNoGnssScenario() {
   return 0;
 }
 
+// Battery policy through the real loop: CRITICAL after three low readings
+// stretches the tracking interval x4 without touching the stored B; it comes
+// back through LOW (status only) to NORMAL as the voltage recovers.
+int batteryCriticalScenario() {
+  auto rawFor = [](uint32_t mv) {
+    constexpr uint64_t kPerCount = uint64_t(battery_config::kFullScaleMv) *
+                                   battery_config::kDividerCompX1000;
+    return static_cast<uint32_t>(
+        (uint64_t(mv) * battery_config::kAdcCounts * 1000U + kPerCount / 2) /
+        kPerCount);
+  };
+  // One minute of loop passes: exactly one new battery reading.
+  auto minute = [] {
+    for (int i = 0; i < 60; ++i) {
+      test_now += 1000;
+      loop();
+    }
+  };
+  const uint32_t base_ms = config_store.config().tracking_interval_seconds * 1000UL;
+  assert(battery_state.state() == BatteryState::kNormal);
+  assert(gnss_manager.trackingIntervalMs() == base_ms);
+
+  fake_analog_value = rawFor(3300);
+  Serial.output.clear();
+  minute();
+  minute();
+  assert(battery_state.state() == BatteryState::kNormal);
+  assert(gnss_manager.trackingIntervalMs() == base_ms);
+  minute();
+  assert(battery_state.state() == BatteryState::kCritical);
+  assert(gnss_manager.trackingIntervalMs() == 4 * base_ms);
+  assert(config_store.config().tracking_interval_seconds * 1000UL == base_ms);
+  assert(Serial.output.find("BATTERY state=CRITICAL mv=3300 tracking_interval_ms=") !=
+         std::string::npos);
+
+  Serial.output.clear();
+  Serial.queueInput("BATTERY?\n");
+  pollRoleCommands();
+  assert(Serial.output.rfind("BATTERY state=CRITICAL mv=3300 ", 0) == 0);
+
+  // 3.55 V: out of CRITICAL into LOW, which only shows in status.
+  fake_analog_value = rawFor(3550);
+  minute(); minute(); minute();
+  assert(battery_state.state() == BatteryState::kLow);
+  assert(gnss_manager.trackingIntervalMs() == base_ms);
+
+  fake_analog_value = rawFor(3650);
+  minute(); minute(); minute();
+  assert(battery_state.state() == BatteryState::kNormal);
+  assert(gnss_manager.trackingIntervalMs() == base_ms);
+  puts("Startup battery policy scenario: PASS");
+  return 0;
+}
+
 int main(int argc, char** argv) {
   assert(argc == 2);
   const std::string mode = argv[1];
@@ -275,10 +329,12 @@ int main(int argc, char** argv) {
   const bool uncertain_geofence_scenario = mode == "geofence_uncertain";
   const bool history_erase_i2c_scenario = mode == "history_erase_i2c";
   const bool services_scenario = mode == "services_no_gnss";
+  const bool battery_scenario = mode == "battery_critical";
   const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails ||
                        no_event_control || geofence_scenario ||
                        persisted_geofence_scenario || uncertain_geofence_scenario ||
-                       history_erase_i2c_scenario || services_scenario;
+                       history_erase_i2c_scenario || services_scenario ||
+                       battery_scenario;
   // Each scenario runs in a new process, like a cold boot (static driver gate).
   assert(success || mode == "mutex" || mode == "gate" || mode == "queue" ||
          mode == "lora");
@@ -395,6 +451,7 @@ int main(int argc, char** argv) {
   fake_analog_value = 3315;  // battery divider at 4.2 V
   setup();
   if (services_scenario) return servicesNoGnssScenario();
+  if (battery_scenario) return batteryCriticalScenario();
 
   // M6D2 legacy startup composition scenario: install an explicit host-only
   // area set before the first accepted fix. M6D3C's separate
@@ -879,7 +936,8 @@ int main(int argc, char** argv) {
   Serial.output.clear();
   Serial.queueInput("BATTERY?\n");
   pollRoleCommands();
-  assert(Serial.output.rfind("BATTERY mv=4200 raw=3315 age_ms=", 0) == 0);
+  assert(Serial.output.rfind("BATTERY state=NORMAL mv=4200 raw=3315 age_ms=",
+                             0) == 0);
   assert(Serial.output.find(" readings=1 calibrated=no\n") !=
          std::string::npos);
 

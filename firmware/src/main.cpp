@@ -9,6 +9,7 @@
 #include "application_request.h"
 #include "application_status_runtime.h"
 #include "battery_monitor.h"
+#include "battery_policy.h"
 #include "ble_admission_policy.h"
 #include "ble_application_handoff.h"
 #include "ble_application_transport.h"
@@ -70,6 +71,7 @@ orun_tlp::ActivityCapture activity_capture(accelerometer_manager);
 orun_tlp::ActivityAutoSampler activity_auto_sampler;
 // Battery voltage on WB_A0, read once a minute. Measurement only for now.
 orun_tlp::BatteryMonitor battery_monitor;
+orun_tlp::BatteryStateTracker battery_state;
 // M7P3: FlashMutationGate wraps NrfHistoryFlash unchanged for the
 // SoftDevice-disabled path (still the only path exercised by shipped
 // firmware); its asynchronous path is not enabled by anything in this
@@ -821,17 +823,40 @@ void startUsbConfigMutation(orun_tlp::ConfigMutationKind kind,
   if (next_usb_application_request_id == 0) next_usb_application_request_id = 1;
 }
 
+// The tracking interval GNSS actually uses: stored base B, then the geofence
+// cadence rule, then the battery rule. Runtime only; B is never rewritten.
+uint32_t runtimeTrackingIntervalMs(uint32_t base_seconds,
+                                   orun_tlp::GeofenceCadenceMode cadence) {
+  return orun_tlp::batteryAdjustedIntervalMs(
+      orun_tlp::geofence_runtime_policy::effectiveTrackingIntervalMs(
+          base_seconds, cadence),
+      battery_state.state());
+}
+
 // Runtime half of a durable configuration change: make the committed base
 // interval B the one GNSS and the geofence cadence actually use. An
 // in-progress acquisition is not disturbed; the new interval decides where
 // the next due point lands.
+// Feed a new battery reading to the state tracker; on a state change, apply
+// the battery rule to the interval. Like a config change, the current
+// acquisition is not disturbed; the next due point uses the new interval.
+void handleBatteryReading() {
+  if (!battery_state.update(battery_monitor.millivolts())) return;
+  const uint32_t interval_ms = runtimeTrackingIntervalMs(
+      active_tracking_base_interval_seconds, geofence_confirmation.cadenceMode());
+  gnss_manager.setTrackingIntervalMs(interval_ms);
+  Serial.printf("BATTERY state=%s mv=%lu tracking_interval_ms=%lu\n",
+                orun_tlp::batteryStateName(battery_state.state()),
+                static_cast<unsigned long>(battery_monitor.millivolts()),
+                static_cast<unsigned long>(interval_ms));
+}
+
 void applyCommittedIntervalToRuntime() {
   const uint32_t base_seconds =
       config_store.config().tracking_interval_seconds;
   if (base_seconds == active_tracking_base_interval_seconds) return;
-  const uint32_t effective_interval_ms =
-      orun_tlp::geofence_runtime_policy::effectiveTrackingIntervalMs(
-          base_seconds, geofence_confirmation.cadenceMode());
+  const uint32_t effective_interval_ms = runtimeTrackingIntervalMs(
+      base_seconds, geofence_confirmation.cadenceMode());
   if (effective_interval_ms == 0) {
     Serial.println(F("CONFIG interval stored; applies after restart"));
     return;
@@ -1019,8 +1044,9 @@ void printBatteryDiagnostic() {
   }
   const uint32_t age_ms =
       orun_tlp::monotonic::nowMs() - battery_monitor.readAtMs();
-  Serial.printf("BATTERY mv=%lu raw=%lu age_ms=%lu readings=%lu "
+  Serial.printf("BATTERY state=%s mv=%lu raw=%lu age_ms=%lu readings=%lu "
                 "calibrated=no\n",
+                orun_tlp::batteryStateName(battery_state.state()),
                 static_cast<unsigned long>(battery_monitor.millivolts()),
                 static_cast<unsigned long>(battery_monitor.raw()),
                 static_cast<unsigned long>(age_ms),
@@ -2039,9 +2065,8 @@ const char* geofenceTokenStateName(orun_tlp::GeofenceTokenState state) {
 
 void applyGeofenceCadence(
     orun_tlp::GeofenceCadenceMode cadence_mode) {
-  const uint32_t effective_interval_ms =
-      orun_tlp::geofence_runtime_policy::effectiveTrackingIntervalMs(
-          active_tracking_base_interval_seconds, cadence_mode);
+  const uint32_t effective_interval_ms = runtimeTrackingIntervalMs(
+      active_tracking_base_interval_seconds, cadence_mode);
   if (effective_interval_ms == 0 ||
       !gnss_manager.setTrackingIntervalMsAndReanchor(effective_interval_ms)) {
     // Do not overwrite durable B or guess a schedule. This should be reachable
@@ -2316,6 +2341,7 @@ void setup() {
       active_tracking_base_interval_seconds * 1000UL);
   accelerometer_manager.begin(orun_tlp::monotonic::nowMs());
   battery_monitor.begin(orun_tlp::monotonic::nowMs());
+  handleBatteryReading();
   // A stored EXPLICIT service intent replaces the GNSS-based role inference.
   applyServiceIntent("CONFIG");
   if (!explicit_services_active)
@@ -2455,7 +2481,7 @@ void loop() {
     printActivityAutoDiagnostic();
   }
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kBattery);
-  battery_monitor.poll(orun_tlp::monotonic::nowMs());
+  if (battery_monitor.poll(orun_tlp::monotonic::nowMs())) handleBatteryReading();
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kUsbCommands);
   serviceLoopHealthReports();
   pollRoleCommands();
