@@ -94,7 +94,11 @@ R1-R3 corrections are applied.
 Schema v4 adds persisted requested-service intent:
 `docs/architecture/ORUN_CONFIG_STORE_V4_SERVICE_INTENT.md`. v4 firmware reads
 v2 and v4 records and writes only v4; v2 records are never erased or rewritten
-at boot. Its physical validation (section 9) gates the merge.
+at boot. Its physical validation (section 9) gates the merge. Section 11 of
+the same document is the runtime use: an EXPLICIT saved intent replaces the
+GNSS-based legacy role at boot, `APP SERVICES` writes it through
+`ConfigMutationOwner`, and tracking requested without GNSS stays TRACKER with
+tracking BLOCKED (never BASE). AUTO keeps the legacy rule.
 
 Current product scope has no deployed ConfigStore fleet. ConfigStore v1 contents
 on development devices are therefore **not** a backward-compatibility contract.

@@ -229,6 +229,13 @@ void GnssManager::poll() {
       return;
 
     case State::kNotPresent:
+      if (redetect_interval_ms_ != 0 &&
+          monotonic::elapsed(now, state_changed_at_ms_, redetect_interval_ms_)) {
+        detection_attempts_ = 0;
+        state_ = State::kPowerOff;
+        state_changed_at_ms_ = now;
+        Serial.println(F("GNSS: re-detect"));
+      }
       return;
   }
 }

@@ -120,8 +120,13 @@ bootstrap:
 - USB role override is volatile until reboot.
 
 That heuristic is temporary compatibility behavior. Hardware presence must not
-become the future owner of application profile or relay responsibility. Explicit
-validated configuration will take precedence once implemented.
+become the future owner of application profile or relay responsibility.
+ConfigStore v4 runtime use (`ORUN_CONFIG_STORE_V4_SERVICE_INTENT.md` section
+11) makes explicit configuration take precedence: with a saved EXPLICIT
+service intent the role above is derived from the services, never from GNSS
+presence; tracking requested without GNSS is BLOCKED (and GNSS is re-probed),
+not a switch to BASE; the volatile USB override is refused. Only
+`service_mode = AUTO` (no saved selection) keeps the heuristic.
 
 B4 has moved actual relay-forwarding service ownership away from the raw role
 enum. `NetworkService` owns an explicit `relay_forwarding_enabled` runtime state,
@@ -272,8 +277,9 @@ One-shot commands are different from configuration intent. A future actuation
 command targeting an unavailable actuator must be rejected with an explicit
 result; it must not be retained as "requested=true until hardware appears".
 
-The current production composition still derives RequestedConfig from the frozen
-legacy role projection. This is intentionally only a migration source. Tracking
+The production composition derives RequestedConfig from the saved EXPLICIT
+service intent when one is admitted (`service_intent.h`), and otherwise from the
+frozen legacy role projection, which remains only a migration source. Tracking
 effective state gates PositionFlow/fix admission; relay effective state is
 applied through the safe RadioManager forwarding boundary. M6A adds accelerometer
 capability observation only; there is still no requested/effective activity or
@@ -284,12 +290,14 @@ B4/M6's `RequestedConfig`/`CapabilitySnapshot`/`EffectiveConfig` model (tracking
 enablement, relay forwarding, location source) remains runtime-only; do not
 extend it into durable storage without its own reviewed migration. M7P5 added
 one narrow, separately-scoped durable exception: `ConfigStore`
-(`firmware/include/config_store.h`, `0x0E9000..0x0EB000`) persists exactly
-`tracking_interval_seconds` and `battery_capacity_mah`. It does not persist or
-migrate `tracking_enabled`, relay forwarding, role, location source, profile,
-or capability, and does not replace or feed B4's requested/effective
-resolution pipeline — `tracking_interval_seconds` only overrides the GNSS
-schedule interval (`GnssManager::setTrackingIntervalMs`), nothing else.
+(`firmware/include/config_store.h`, `0x0E9000..0x0EB000`) persists
+`tracking_interval_seconds` and `battery_capacity_mah`; schema v4 adds the
+requested-service intent (`service_mode`, tracking / relay forwarding /
+application receive bits). That intent, when EXPLICIT, is the requested side
+of B4's pipeline; capability, effective state, location source (derived:
+tracking -> GNSS), profile and role are still not stored.
+`tracking_interval_seconds` only overrides the GNSS schedule interval
+(`GnssManager::setTrackingIntervalMs`).
 
 Protected desired-state config writes additionally follow
 `ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md`: the application precondition is an

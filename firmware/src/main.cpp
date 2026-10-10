@@ -48,6 +48,7 @@
 #include "runtime_config.h"
 #include "security_format.h"
 #include "security_store.h"
+#include "service_intent.h"
 #include "sensor_power_manager.h"
 #include "tlp_position_packet.h"
 #include "usb_application_adapter.h"
@@ -152,6 +153,16 @@ orun_tlp::GnssFix geofence_representative_fix{};
 // which GNSS has not adopted.
 uint32_t active_tracking_base_interval_seconds =
     orun_tlp::gnss_config::kTrackingIntervalSeconds;
+// Applied requested-service intent (ConfigStore v4), set at boot and by
+// applyCommittedConfigToRuntime(). AUTO keeps the legacy GNSS-inferred role.
+// explicit_services_active means EXPLICIT *and* runnable on this firmware;
+// only then does the intent, not the legacy role, decide what runs.
+uint8_t applied_service_mode = orun_tlp::config_format::kServiceModeAuto;
+uint8_t applied_requested_services = 0;
+bool explicit_services_active = false;
+// With tracking explicitly requested, a GNSS that was not found is probed
+// again this often instead of staying absent until the next reset.
+constexpr uint32_t kGnssRedetectIntervalMs = 10UL * 60UL * 1000UL;
 // Slot 0 is also the ordinary scheduled POSITION. If PositionFlow accepted it
 // once, a later representative selection of slot 0 must not allocate a second
 // sequence/history record for the same physical observation.
@@ -669,6 +680,57 @@ void applyRole(orun_tlp::NodeRole role, const char* source) {
   Serial.printf("ROLE %s source=%s\n", orun_tlp::roleName(role), source);
 }
 
+void printServiceStatus();
+
+// What the device is asked to run: the stored EXPLICIT intent when there is
+// one this firmware can run, otherwise the legacy role projection.
+orun_tlp::RequestedConfig requestedRuntimeConfig() {
+  if (explicit_services_active)
+    return orun_tlp::requestedConfigForServices(applied_requested_services);
+  return orun_tlp::requestedConfigFromLegacyBehavior(
+      orun_tlp::legacyRoleBehavior(role_controller.role()));
+}
+
+// Make the runtime follow the stored service intent: at boot (after the
+// GNSS owner has begun) and after a committed change. With EXPLICIT intent
+// the role is no longer inferred from GNSS: a missing GNSS blocks tracking,
+// it never turns the device into a receiver.
+void applyServiceIntent(const char* source) {
+  const orun_tlp::config_format::Config& config = config_store.config();
+  applied_service_mode = config.service_mode;
+  applied_requested_services = config.requested_services;
+  const bool explicit_mode =
+      applied_service_mode == orun_tlp::config_format::kServiceModeExplicit;
+  const bool admitted =
+      orun_tlp::admitServiceIntent(applied_service_mode,
+                                   applied_requested_services) ==
+      orun_tlp::ServiceIntentAdmission::kSupported;
+  const bool was_explicit = explicit_services_active;
+  explicit_services_active = explicit_mode && admitted;
+
+  if (explicit_services_active) {
+    const orun_tlp::NodeRole role =
+        orun_tlp::legacyRoleForServices(applied_requested_services);
+    role_controller.applyOverride(role);
+    automatic_role_resolved = true;
+    applyRole(role, source);
+  } else if (was_explicit) {
+    // Back to AUTO: the loop infers the role again from GNSS detection.
+    role_controller.restoreAutomatic();
+    automatic_role_resolved = false;
+  }
+  if (explicit_mode && !admitted)
+    Serial.println(F("SERVICES saved intent not runnable on this firmware; "
+                     "legacy AUTO role in effect"));
+
+  const bool tracking_requested =
+      explicit_services_active &&
+      (applied_requested_services &
+       orun_tlp::config_format::kServiceTracking) != 0;
+  gnss_manager.setRedetectIntervalMs(tracking_requested ? kGnssRedetectIntervalMs
+                                                        : 0);
+}
+
 bool isAccelerometerQuery() {
   static const char kQuery[] = "ACCEL?";
   constexpr uint8_t kQueryLength = sizeof(kQuery) - 1;
@@ -737,11 +799,12 @@ void drainApplicationResponse() {
 }
 
 void startUsbConfigMutation(orun_tlp::ConfigMutationKind kind,
-                            uint32_t value) {
+                            uint32_t value, uint8_t service_mode = 0,
+                            uint8_t requested_services = 0) {
   const orun_tlp::ConfigMutationRequest request(
       orun_tlp::ApplicationRequester::kUsb, next_usb_application_request_id,
       orun_tlp::defaultApplicationAccess(orun_tlp::ApplicationRequester::kUsb),
-      kind, value);
+      kind, value, service_mode, requested_services);
   const auto result = config_mutations.submit(request);
   if (result == orun_tlp::ConfigMutationSubmitResult::kBusy) {
     Serial.println(F("APP BUSY"));
@@ -759,7 +822,7 @@ void startUsbConfigMutation(orun_tlp::ConfigMutationKind kind,
 // interval B the one GNSS and the geofence cadence actually use. An
 // in-progress acquisition is not disturbed; the new interval decides where
 // the next due point lands.
-void applyCommittedConfigToRuntime() {
+void applyCommittedIntervalToRuntime() {
   const uint32_t base_seconds =
       config_store.config().tracking_interval_seconds;
   if (base_seconds == active_tracking_base_interval_seconds) return;
@@ -775,6 +838,14 @@ void applyCommittedConfigToRuntime() {
   Serial.printf("CONFIG applied base_s=%lu effective_ms=%lu\n",
                 static_cast<unsigned long>(base_seconds),
                 static_cast<unsigned long>(effective_interval_ms));
+}
+
+void applyCommittedConfigToRuntime() {
+  applyCommittedIntervalToRuntime();
+  const orun_tlp::config_format::Config& config = config_store.config();
+  if (config.service_mode != applied_service_mode ||
+      config.requested_services != applied_requested_services)
+    applyServiceIntent("CONFIG");
 }
 
 void drainConfigMutationResult() {
@@ -1538,6 +1609,25 @@ void handleRoleCommand() {
     printBleDiagnostic();
     return;
   }
+  if (orun_tlp::isUsbServicesQuery(role_command, role_command_length)) {
+    role_command_length = 0;
+    printServiceStatus();
+    return;
+  }
+  uint8_t services_mode = 0;
+  uint8_t services_requested = 0;
+  const auto services_command = orun_tlp::parseUsbServicesCommand(
+      role_command, role_command_length, &services_mode, &services_requested);
+  if (services_command != orun_tlp::UsbConfigCommandParse::kNotConfigCommand) {
+    role_command_length = 0;
+    if (services_command == orun_tlp::UsbConfigCommandParse::kMalformed) {
+      Serial.println(F("APP REJECTED"));
+      return;
+    }
+    startUsbConfigMutation(orun_tlp::ConfigMutationKind::kSetServiceIntent, 0,
+                           services_mode, services_requested);
+    return;
+  }
   orun_tlp::ConfigMutationKind config_command_kind =
       orun_tlp::ConfigMutationKind::kSetTrackingInterval;
   uint32_t config_command_value = 0;
@@ -1633,8 +1723,11 @@ void handleRoleCommand() {
                                                    role_command_length);
   role_command_length = 0;
   if (command == orun_tlp::RoleCommand::kQuery) {
+    // Legacy firmware mode. With saved services it is derived from them.
     Serial.printf("ROLE %s mode=%s\n", orun_tlp::roleName(role_controller.role()),
-                  role_controller.automatic() ? "AUTO" : "OVERRIDE");
+                  explicit_services_active      ? "SERVICES"
+                  : role_controller.automatic() ? "AUTO"
+                                                : "OVERRIDE");
     return;
   }
   orun_tlp::NodeRole role;
@@ -1648,6 +1741,13 @@ void handleRoleCommand() {
     return;
   else {
     Serial.println(F("ROLE command rejected"));
+    return;
+  }
+  if (explicit_services_active) {
+    // The saved service intent owns the device's job; a RAM-only legacy
+    // override would silently contradict it until the next reset.
+    Serial.println(F("ROLE command rejected: services are configured "
+                     "(APP SERVICES AUTO to return to legacy roles)"));
     return;
   }
   role_controller.applyOverride(role);
@@ -1723,21 +1823,32 @@ bool serviceRuns(const orun_tlp::ServiceStatus& status) {
 }
 
 orun_tlp::EffectiveConfig resolveRuntimeConfig() {
-  // B4 still uses the frozen legacy role projection as the requested defaults.
-  // A later validated config surface can replace this source without returning
-  // runtime ownership to NodeRole. M6A adds only hardware capability discovery;
-  // it does not invent an activity requested-config field yet.
-  const auto requested = orun_tlp::requestedConfigFromLegacyBehavior(
-      orun_tlp::legacyRoleBehavior(role_controller.role()));
-  return orun_tlp::resolveRequestedConfig(requested, currentCapabilitySnapshot());
+  // The stored EXPLICIT service intent when present (ConfigStore v4),
+  // otherwise the frozen legacy role projection. M6A adds only hardware
+  // capability discovery; it does not invent an activity requested field.
+  return orun_tlp::resolveRequestedConfig(requestedRuntimeConfig(),
+                                          currentCapabilitySnapshot());
+}
+
+void printServiceStatus() {
+  const orun_tlp::EffectiveConfig effective = resolveRuntimeConfig();
+  orun_tlp::UsbServiceStatus status;
+  status.service_mode = applied_service_mode;
+  status.requested_services = applied_requested_services;
+  status.intent_applied = explicit_services_active;
+  status.tracking = effective.tracking;
+  status.relay_forwarding = effective.relay_forwarding;
+  status.legacy_role = role_controller.role();
+  status.application_receive =
+      orun_tlp::legacyRoleBehavior(role_controller.role())
+          .receive_application_position;
+  orun_tlp::printUsbServiceStatus(status);
 }
 
 
 void refreshApplicationStatusSnapshot(uint32_t now_ms) {
   const orun_tlp::CapabilitySnapshot capabilities = currentCapabilitySnapshot();
-  const orun_tlp::RequestedConfig requested =
-      orun_tlp::requestedConfigFromLegacyBehavior(
-          orun_tlp::legacyRoleBehavior(role_controller.role()));
+  const orun_tlp::RequestedConfig requested = requestedRuntimeConfig();
   const orun_tlp::EffectiveConfig effective =
       orun_tlp::resolveRequestedConfig(requested, capabilities);
   orun_tlp::buildApplicationStatusSnapshot(
@@ -2181,7 +2292,10 @@ void setup() {
   gnss_manager.setTrackingIntervalMs(
       active_tracking_base_interval_seconds * 1000UL);
   accelerometer_manager.begin(orun_tlp::monotonic::nowMs());
-  Serial.println(F("ROLE AUTO pending (GNSS=>TRACKER, no GNSS=>BASE)"));
+  // A stored EXPLICIT service intent replaces the GNSS-based role inference.
+  applyServiceIntent("CONFIG");
+  if (!explicit_services_active)
+    Serial.println(F("ROLE AUTO pending (GNSS=>TRACKER, no GNSS=>BASE)"));
 
   // M7P7B: BLE starts last, strictly after History/Config/Geofence/Security
   // have finished their SoftDevice-disabled synchronous recovery above --

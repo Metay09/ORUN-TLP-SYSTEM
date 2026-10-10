@@ -4,6 +4,9 @@
 
 #include <string.h>
 
+#include "config_format.h"
+#include "service_intent.h"
+
 namespace orun_tlp {
 namespace {
 
@@ -70,6 +73,70 @@ UsbConfigCommandParse parseUsbConfigCommand(const char* text, uint8_t length,
   return UsbConfigCommandParse::kOk;
 }
 
+UsbConfigCommandParse parseUsbServicesCommand(const char* text, uint8_t length,
+                                              uint8_t* service_mode,
+                                              uint8_t* requested_services) {
+  static const char kPrefix[] = "APP SERVICES ";
+  constexpr uint8_t kPrefixLength = sizeof(kPrefix) - 1;
+  if (text == nullptr || service_mode == nullptr ||
+      requested_services == nullptr || length < kPrefixLength ||
+      memcmp(text, kPrefix, kPrefixLength) != 0) {
+    return UsbConfigCommandParse::kNotConfigCommand;
+  }
+  uint8_t mode = 0;
+  uint8_t services = 0;
+  if (!parseServiceIntent(text + kPrefixLength,
+                          static_cast<size_t>(length - kPrefixLength), &mode,
+                          &services))
+    return UsbConfigCommandParse::kMalformed;
+  *service_mode = mode;
+  *requested_services = services;
+  return UsbConfigCommandParse::kOk;
+}
+
+bool isUsbServicesQuery(const char* text, uint8_t length) {
+  return equals(text, length, "APP SERVICES?");
+}
+
+namespace {
+
+const char* serviceStateName(const ServiceStatus& status) {
+  switch (status.state) {
+    case ServiceState::kDisabled: return "OFF";
+    case ServiceState::kEnabled: return "ON";
+    case ServiceState::kDegraded: return "DEGRADED";
+    case ServiceState::kBlocked: break;
+  }
+  switch (status.reason) {
+    case ServiceReason::kCapabilityAbsent: return "BLOCKED_GNSS_ABSENT";
+    case ServiceReason::kCapabilityUnknown: return "BLOCKED_GNSS_PENDING";
+    case ServiceReason::kCapabilityFault: return "BLOCKED_GNSS_FAULT";
+    case ServiceReason::kCapabilityUnavailable: return "BLOCKED_GNSS_UNAVAILABLE";
+    case ServiceReason::kCapabilityUnsupported: return "BLOCKED_UNSUPPORTED";
+    case ServiceReason::kInvalidConfiguration: return "BLOCKED_INVALID";
+    default: return "BLOCKED";
+  }
+}
+
+}  // namespace
+
+void printUsbServiceStatus(const UsbServiceStatus& status) {
+  char requested[5];
+  formatServices(status.requested_services, requested, sizeof(requested));
+  const bool explicit_mode =
+      status.service_mode == config_format::kServiceModeExplicit;
+  const char* applied = "LEGACY_AUTO";
+  if (explicit_mode)
+    applied = status.intent_applied ? "EXPLICIT" : "LEGACY_AUTO_UNSUPPORTED";
+  Serial.printf(
+      "APP SERVICES mode=%s requested=%s applied=%s tracking=%s relay=%s "
+      "receive=%s legacy_mode=%s\n",
+      explicit_mode ? "EXPLICIT" : "AUTO", explicit_mode ? requested : "-",
+      applied, serviceStateName(status.tracking),
+      serviceStateName(status.relay_forwarding),
+      status.application_receive ? "ON" : "OFF", roleName(status.legacy_role));
+}
+
 void printUsbConfigMutationResult(const ConfigMutationResult& result) {
   const char* code = "UNAVAILABLE";
   switch (result.outcome) {
@@ -82,8 +149,38 @@ void printUsbConfigMutationResult(const ConfigMutationResult& result) {
     case ConfigMutationOutcome::kOutcomeUnknown: code = "OUTCOME_UNKNOWN"; break;
   }
 
-  // The interval printed is what the store holds now, never the requested
-  // value: after OUTCOME_UNKNOWN or a refusal it is the previous setting.
+  // What is printed is what the store holds now, never the requested value:
+  // after OUTCOME_UNKNOWN or a refusal it is the previous setting.
+  if (result.kind == ConfigMutationKind::kSetServiceIntent) {
+    char services[5];
+    const char* mode =
+        result.config.service_mode == config_format::kServiceModeExplicit
+            ? "EXPLICIT"
+            : "AUTO";
+    formatServices(result.config.requested_services, services,
+                   sizeof(services));
+    if (result.token_valid) {
+      Serial.printf("APP SET id=%lu code=%s services=%s mode=%s "
+                    "token=VALID revision=%lu\n",
+                    static_cast<unsigned long>(result.request_id), code,
+                    result.config.service_mode ==
+                            config_format::kServiceModeExplicit
+                        ? services
+                        : "AUTO",
+                    mode, static_cast<unsigned long>(result.token.revision));
+    } else {
+      Serial.printf("APP SET id=%lu code=%s services=%s mode=%s "
+                    "token=UNAVAILABLE\n",
+                    static_cast<unsigned long>(result.request_id), code,
+                    result.config.service_mode ==
+                            config_format::kServiceModeExplicit
+                        ? services
+                        : "AUTO",
+                    mode);
+    }
+    return;
+  }
+
   if (result.token_valid) {
     Serial.printf(
         "APP SET id=%lu code=%s tracking_interval_seconds=%lu "
