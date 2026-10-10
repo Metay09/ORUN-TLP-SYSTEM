@@ -715,6 +715,19 @@ int main(int argc, char** argv) {
   // (reservation commit, then record commit). Every production loop must still
   // feed the watchdog and enter the idle hook exactly once.
   assert(watchdog_feeds == 20 && fake_idle_calls == 20);
+  // Each of those passes is also visible to the independent liveness timer,
+  // and a finished pass leaves the loop marked as idle, so a stall record can
+  // tell "stuck inside a step" from "never woke up".
+  assert(LoopHealthMonitor::completedPasses() == 20);
+  assert(LoopHealthMonitor::currentStageCode() ==
+         static_cast<uint8_t>(LoopStage::kIdle));
+  Serial.output.clear();
+  Serial.queueInput("HEALTH?\n");
+  pollRoleCommands();
+  assert(Serial.output ==
+         "HEALTH reset=0x00000000 watchdog=no prev_stall=no prev_fault=no "
+         "prev_stage=- idle_oversleeps=0 idle_longest_ms=0 "
+         "stalls_recovered=0 stack_free=0\n");
 
   // The USB diagnostic must be queryable after the early boot window is gone.
   // While the bounded probe is incomplete it reports PENDING, not ABSENT.

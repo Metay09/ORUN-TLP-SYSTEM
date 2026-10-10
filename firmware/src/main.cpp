@@ -33,6 +33,7 @@
 #include "history_secure_crypto.h"
 #include "history_store_forward_runtime.h"
 #include "location_owner.h"
+#include "loop_health_monitor.h"
 #include "geofence_confirmation_coordinator.h"
 #include "geofence_incarnation_source.h"
 #include "geofence_runtime_policy.h"
@@ -789,10 +790,10 @@ void printActivityDiagnostic() {
   const auto state = activity_capture.state();
   const auto* features = activity_capture.result();
   if (features != nullptr) {
+    // Two calls, one line: a single printf must stay under the core's
+    // 256-byte Print::printf buffer for every field value.
     Serial.printf("ACTIVITY %s samples=%u duration_ms=%lu discontinuities=%u "
-                  "usable=%s mean_x_mg=%ld mean_y_mg=%ld mean_z_mg=%ld "
-                  "axis_variance_sum_mg2=%lu mean_magnitude_squared_mg2=%lu "
-                  "mean_abs_delta_mg=%lu\n",
+                  "usable=%s mean_x_mg=%ld mean_y_mg=%ld mean_z_mg=%ld ",
                   state == State::kReady ? "READY" : "INVALID",
                   static_cast<unsigned>(features->sample_count),
                   static_cast<unsigned long>(features->duration_ms),
@@ -800,7 +801,9 @@ void printActivityDiagnostic() {
                   activity_capture.assessment().usable ? "yes" : "no",
                   static_cast<long>(features->mean_x_mg),
                   static_cast<long>(features->mean_y_mg),
-                  static_cast<long>(features->mean_z_mg),
+                  static_cast<long>(features->mean_z_mg));
+    Serial.printf("axis_variance_sum_mg2=%lu mean_magnitude_squared_mg2=%lu "
+                  "mean_abs_delta_mg=%lu\n",
                   static_cast<unsigned long>(features->axis_variance_sum_mg2),
                   static_cast<unsigned long>(features->mean_magnitude_squared_mg2),
                   static_cast<unsigned long>(features->mean_abs_delta_mg));
@@ -875,6 +878,50 @@ void startActivityCapture() {
                        result == Result::kAbsent ? "ABSENT" :
                        result == Result::kFault ? "FAULT" : "BUSY";
   Serial.printf("ACTIVITY START rejected: %s\n", reason);
+}
+
+// Reset attribution and loop liveness. One line, on demand (HEALTH?) and once
+// shortly after boot so a serial log taken across a reset records it.
+uint32_t loop_health_oversleeps_reported = 0;
+bool loop_health_boot_line_printed = false;
+constexpr uint32_t kLoopHealthBootLineDelayMs = 5000;
+
+void printLoopHealth() {
+  using Monitor = orun_tlp::LoopHealthMonitor;
+  const auto& boot = orun_tlp::WatchdogManager::bootInfo();
+  const orun_tlp::LoopStallRecord& previous = Monitor::previousBoot();
+  const bool recorded = previous.stall_captured || previous.hard_fault;
+  Serial.printf(
+      "HEALTH reset=0x%08lX watchdog=%s prev_stall=%s prev_fault=%s "
+      "prev_stage=%s idle_oversleeps=%lu idle_longest_ms=%lu "
+      "stalls_recovered=%lu stack_free=%lu\n",
+      static_cast<unsigned long>(boot.reset_reason),
+      boot.watchdog_reset ? "yes" : "no",
+      previous.stall_captured ? "yes" : "no",
+      previous.hard_fault ? "yes" : "no",
+      recorded ? orun_tlp::loopStageName(previous.stage) : "-",
+      static_cast<unsigned long>(Monitor::idleOversleeps()),
+      static_cast<unsigned long>(Monitor::longestIdleMs()),
+      static_cast<unsigned long>(Monitor::recoveredStalls()),
+      static_cast<unsigned long>(Monitor::loopStackFreeBytes()));
+}
+
+void serviceLoopHealthReports() {
+  using Monitor = orun_tlp::LoopHealthMonitor;
+  if (!loop_health_boot_line_printed &&
+      orun_tlp::monotonic::nowMs() >= kLoopHealthBootLineDelayMs) {
+    loop_health_boot_line_printed = true;
+    printLoopHealth();
+  }
+  // An idle sleep that overran is reported when it happens, so a timestamped
+  // log shows the moment. The count is the authority, not this line.
+  const uint32_t oversleeps = Monitor::idleOversleeps();
+  if (oversleeps != loop_health_oversleeps_reported) {
+    loop_health_oversleeps_reported = oversleeps;
+    Serial.printf("HEALTH idle oversleep count=%lu longest_ms=%lu\n",
+                  static_cast<unsigned long>(oversleeps),
+                  static_cast<unsigned long>(Monitor::longestIdleMs()));
+  }
 }
 
 void printRadioDiagnostic() {
@@ -1543,6 +1590,11 @@ void handleRoleCommand() {
     return;
   }
 #endif
+  if (isActivityCommand("HEALTH?", 7)) {
+    role_command_length = 0;
+    printLoopHealth();
+    return;
+  }
   if (isActivityCommand("ACTIVITY AUTO?", 14)) {
     role_command_length = 0;
     printActivityAutoDiagnostic();
@@ -2020,6 +2072,9 @@ void setup() {
   // Start the hardware watchdog before peripheral initialization. It is the
   // final recovery layer if bounded driver recovery itself cannot make progress.
   orun_tlp::WatchdogManager::begin();
+  // Reads what the previous boot recorded about a stalled loop or a fault,
+  // then starts the independent liveness timer.
+  orun_tlp::LoopHealthMonitor::begin();
   printBootBanner();
 #ifdef ORUN_SF5D_BL_VERSION_PROBE
   printSf5dBootloaderVersion();
@@ -2224,6 +2279,7 @@ void loop() {
   // M6D2 deadline is checked BEFORE servicing another GNSS callback so an
   // observation arriving at/after the exact deadline cannot win a race and be
   // counted as confirmation evidence.
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kGnss);
   const uint32_t loop_started_at_ms = orun_tlp::monotonic::nowMs();
   if (geofence_confirmation.expireConfirmation(loop_started_at_ms)) {
     (void)gnss_manager.cancelAdditionalFixAcquisition();
@@ -2241,16 +2297,21 @@ void loop() {
   // clients from the moment HistoryStore enters its erase phase until that
   // erase completes. Normal record programs are intentionally unaffected.
   if (!history.erasePending()) {
+    orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kGnss);
     gnss_manager.poll();
+    orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kAccelerometer);
     handleAccelerometerEvent(
         accelerometer_manager.poll(orun_tlp::monotonic::nowMs()));
   }
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kActivity);
   activity_capture.poll();
   if (!history.erasePending() &&
       activity_auto_sampler.poll(activity_capture, orun_tlp::monotonic::nowMs())) {
     // Emit one concise period-level fact, not raw 10 Hz sensor samples.
     printActivityAutoDiagnostic();
   }
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kUsbCommands);
+  serviceLoopHealthReports();
   pollRoleCommands();
   // M7P7D: transport input and application result consumption are separate
   // loop-owned steps. A future BLE callback may only enqueue/copy bounded
@@ -2259,6 +2320,7 @@ void loop() {
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
   pollM7P6ECryptoStress();
 #endif
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kServices);
   if (!automatic_role_resolved && role_controller.automatic() &&
       gnss_manager.detectionComplete()) {
     role_controller.updateAutomatic(true, gnss_manager.detected());
@@ -2288,6 +2350,7 @@ void loop() {
   // polls). BLE has its own physical radio (nRF52840 2.4GHz),
   // independent of the SX1262 LoRa radio_manager guards below, so this does
   // not need the TX guard.
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kBle);
   if (ble_ready) {
     taskENTER_CRITICAL();
     const uint32_t disconnect_events = ble_disconnect_events;
@@ -2357,6 +2420,7 @@ void loop() {
   // this consumes the M7P7A-forwarded gate-owned completion mailbox instead
   // of racing Bluefruit's own sd_evt_get() consumption. One shared drain for
   // History, Config (M7P5), Geofence (M6D3C) and Security (M7P6B) clients.
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kFlashEvents);
   storage_flash_gate.pumpEvents();
   // Leave local TX undisturbed; otherwise service one small flash operation.
   // config_store.poll() shares the same TX guard as history.poll() -- a
@@ -2366,8 +2430,11 @@ void loop() {
   // (docs/architecture/ADR_M7_PERSISTENCE_LAYOUT.md §10), and the shared
   // gate's own admission also enforces this regardless of call order.
   if (!radio_manager.isTransmitting()) {
+    orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kHistoryStore);
     history.poll();
+    orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kConfigStore);
     config_store.poll();
+    orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kSecurityStore);
     security_store.poll();
   }
   // A confirmed configuration change is applied to the runtime in the same
@@ -2375,6 +2442,7 @@ void loop() {
   // A save that could not be confirmed (OUTCOME_UNKNOWN) is never adopted
   // mid-session; if it did commit, it takes effect at the next boot like any
   // other durable value, and the status keeps showing requested vs applied.
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kConfigMutation);
   if (config_mutations.poll()) applyCommittedConfigToRuntime();
   drainConfigMutationResult();
 #ifdef ORUN_SF3_RUNTIME_QUAL
@@ -2391,6 +2459,7 @@ void loop() {
     }
   }
 #endif
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kPositionFlow);
   const auto event =
       positions.update(orun_tlp::monotonic::nowMs(), tracking_enabled);
   if (event == orun_tlp::PositionFlow::Event::kStorageFailure)
@@ -2419,6 +2488,7 @@ void loop() {
     }
   }
 
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kFixHandling);
   orun_tlp::GnssFix fix{};
   const bool confirmation_fix_expected =
       geofence_confirmation.confirmationActive();
@@ -2482,6 +2552,7 @@ void loop() {
     abortGeofenceConfirmation("GNSS_SESSION_ENDED");
   }
 
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kRadio);
   radio_manager.update(tracking_enabled && !positions.pending());
 
   // SF3 device runtime executes only after RadioManager has drained callback
@@ -2491,6 +2562,7 @@ void loop() {
   //
   // Current/live POSITION and relay-availability commitments outrank backlog.
   // Blank/unprovisioned devices stay fail-closed and do not emit secure History.
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kStoreForward);
   if (ble_ready) {
     const bool history_higher_priority_pending =
         positions.pending() || radio_manager.relayForwardingEnabled();
@@ -2519,5 +2591,12 @@ void loop() {
   // Feed only after the cooperative loop has completed all service work. A
   // blocked I2C/flash/radio path therefore cannot hide behind an unrelated task.
   orun_tlp::WatchdogManager::feed();
+  // The independent timer watches this counter, and measures the sleep on
+  // its own clock: an idle call that returns far too late means the RTOS
+  // wake-up was missed.
+  orun_tlp::LoopHealthMonitor::passCompleted();
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kIdle);
+  const uint32_t idle_clock = orun_tlp::LoopHealthMonitor::idleClock();
   orun_tlp::PowerManager::idle();
+  orun_tlp::LoopHealthMonitor::idleReturned(idle_clock);
 }

@@ -100,6 +100,12 @@ void printUsbConfigMutationResult(const ConfigMutationResult& result) {
   }
 }
 
+// Adafruit nRF52 1.7.0 Print::printf formats into a 256-byte stack buffer and
+// then writes the UNTRUNCATED length. A status line longer than 255 characters
+// therefore loses its tail and prints stack bytes instead (observed on a
+// RAK4631: APP STORAGE ended in binary garbage, APP DEVICE lost its newline).
+// Every printf call below must stay under that limit for all field values, so
+// the long status lines are emitted as several calls that form one line.
 void printUsbApplicationResponse(const ApplicationResponse& response) {
   if (response.code != ApplicationResponseCode::kOk) {
     const char* code = "UNSUPPORTED";
@@ -129,11 +135,11 @@ void printUsbApplicationResponse(const ApplicationResponse& response) {
 
     case ApplicationRequestKind::kGetDeviceStatus: {
       const ApplicationDeviceSnapshot& s = response.payload.device.snapshot;
+      // One status line, several printf calls: see the note above
+      // printUsbApplicationResponse(). Output bytes are unchanged.
       Serial.printf(
           "APP DEVICE id=%lu fw=%s rev=%u uptime_ms_mod32=%lu reset=0x%08lX watchdog=%s "
-          "role=%u role_mode=%s relay_applied=%s gnss_presence=%u gnss_health=%u "
-          "accel_presence=%u accel_health=%u tracking_state=%u "
-          "tracking_reason=%u relay_state=%u relay_reason=%u\n",
+          "role=%u role_mode=%s relay_applied=%s ",
           static_cast<unsigned long>(response.request_id),
           s.firmware_version,
           static_cast<unsigned>(s.surface_revision),
@@ -142,7 +148,11 @@ void printUsbApplicationResponse(const ApplicationResponse& response) {
           s.watchdog_reset ? "yes" : "no",
           static_cast<unsigned>(s.role),
           s.role_automatic ? "AUTO" : "OVERRIDE",
-          s.relay_forwarding_applied ? "yes" : "no",
+          s.relay_forwarding_applied ? "yes" : "no");
+      Serial.printf(
+          "gnss_presence=%u gnss_health=%u "
+          "accel_presence=%u accel_health=%u tracking_state=%u "
+          "tracking_reason=%u relay_state=%u relay_reason=%u\n",
           static_cast<unsigned>(s.gnss_presence),
           static_cast<unsigned>(s.gnss_health),
           static_cast<unsigned>(s.accelerometer_presence),
@@ -159,9 +169,7 @@ void printUsbApplicationResponse(const ApplicationResponse& response) {
           response.payload.tracking.snapshot;
       Serial.printf(
           "APP TRACKING id=%lu requested_s=%lu applied_s=%lu effective_s=%lu "
-          "cadence=%u gnss_state=%u detected=%s extra_fix=%s "
-          "attempts=%lu fresh=%lu timeouts=%lu invalid=%lu last_ttff_ms=%lu "
-          "config_ready=%s source=%s\n",
+          "cadence=%u gnss_state=%u detected=%s extra_fix=%s ",
           static_cast<unsigned long>(response.request_id),
           static_cast<unsigned long>(s.requested_interval_seconds),
           static_cast<unsigned long>(s.applied_base_interval_seconds),
@@ -169,7 +177,10 @@ void printUsbApplicationResponse(const ApplicationResponse& response) {
           static_cast<unsigned>(s.cadence_mode),
           static_cast<unsigned>(s.gnss_state),
           s.gnss_detected ? "yes" : "no",
-          s.additional_fix_active ? "yes" : "no",
+          s.additional_fix_active ? "yes" : "no");
+      Serial.printf(
+          "attempts=%lu fresh=%lu timeouts=%lu invalid=%lu last_ttff_ms=%lu "
+          "config_ready=%s source=%s\n",
           static_cast<unsigned long>(s.acquisition_attempts),
           static_cast<unsigned long>(s.successful_fresh_fixes),
           static_cast<unsigned long>(s.acquisition_timeouts),
@@ -203,11 +214,7 @@ void printUsbApplicationResponse(const ApplicationResponse& response) {
       const ApplicationStorageSnapshot& s = response.payload.storage.snapshot;
       Serial.printf(
           "APP STORAGE id=%lu history_ready=%s busy=%s count=%lu capacity=%lu "
-          "overwritten=%lu append_failures=%lu corrupt=%lu metadata_failures=%lu "
-          "config_ready=%s config_maintenance=%s config_corrupt=%lu "
-          "geofence_ready=%s geofence_maintenance=%s geofence_corrupt=%lu "
-          "security_ready=%s security_state=%u security_exhausted=%s "
-          "security_corrupt=%lu\n",
+          "overwritten=%lu append_failures=%lu corrupt=%lu metadata_failures=%lu ",
           static_cast<unsigned long>(response.request_id),
           s.history_ready ? "yes" : "no",
           s.history_busy ? "yes" : "no",
@@ -216,13 +223,19 @@ void printUsbApplicationResponse(const ApplicationResponse& response) {
           static_cast<unsigned long>(s.history_overwritten),
           static_cast<unsigned long>(s.history_append_failures),
           static_cast<unsigned long>(s.history_recovery_corruptions),
-          static_cast<unsigned long>(s.history_metadata_failures),
+          static_cast<unsigned long>(s.history_metadata_failures));
+      Serial.printf(
+          "config_ready=%s config_maintenance=%s config_corrupt=%lu "
+          "geofence_ready=%s geofence_maintenance=%s geofence_corrupt=%lu ",
           s.config_ready ? "yes" : "no",
           s.config_maintenance ? "yes" : "no",
           static_cast<unsigned long>(s.config_recovery_corruptions),
           s.geofence_ready ? "yes" : "no",
           s.geofence_maintenance ? "yes" : "no",
-          static_cast<unsigned long>(s.geofence_recovery_corruptions),
+          static_cast<unsigned long>(s.geofence_recovery_corruptions));
+      Serial.printf(
+          "security_ready=%s security_state=%u security_exhausted=%s "
+          "security_corrupt=%lu\n",
           s.security_ready ? "yes" : "no",
           static_cast<unsigned>(s.security_state),
           s.security_exhausted ? "yes" : "no",

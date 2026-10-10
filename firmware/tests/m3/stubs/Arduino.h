@@ -1,4 +1,5 @@
 #pragma once
+#include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string>
@@ -69,8 +70,12 @@ struct TestSerial {
   void print(const char* value) { output += value; }
   void println(const char* value) { print(value); output += '\n'; }
   template <typename... Args> void printf(const char* format, Args... args) {
-    char buffer[512];
-    snprintf(buffer, sizeof(buffer), format, args...);
+    // Adafruit nRF52 1.7.0 Print::printf formats into a 256-byte stack buffer
+    // and then writes the UNTRUNCATED length, so a longer line prints stack
+    // bytes on the device. Model that limit here: one printf call must fit.
+    char buffer[256];
+    const int length = snprintf(buffer, sizeof(buffer), format, args...);
+    assert(length >= 0 && static_cast<size_t>(length) < sizeof(buffer));
     output += buffer;
   }
 };

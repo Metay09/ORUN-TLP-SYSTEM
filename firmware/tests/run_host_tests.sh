@@ -423,6 +423,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/ble_application_handoff.cpp \
   firmware/src/security_store.cpp firmware/src/security_format.cpp \
   firmware/src/position_flow.cpp firmware/src/ble_admission_policy.cpp \
+  firmware/src/loop_health.cpp firmware/src/loop_health_monitor.cpp \
   -o "$test_dir/startup"
 for scenario in mutex gate queue lora success advfail blefail noevent geofence geofence_persisted geofence_uncertain history_erase_i2c; do
   "$test_dir/startup" "$scenario"
@@ -495,6 +496,12 @@ g++ -DNRF52_SERIES -Ifirmware/tests/r4/stubs -Ifirmware/include \
   firmware/tests/r4/test_watchdog_nrf.cpp firmware/src/watchdog_manager.cpp \
   -o "$test_dir/r4_watchdog_nrf"
 "$test_dir/r4_watchdog_nrf"
+g++ -DNRF52_SERIES -Ifirmware/tests/r4/stubs -Ifirmware/include \
+  -std=c++17 -O1 -g -Wall -Wextra -Werror "${sanitizer_flags[@]}" \
+  "${coverage_flags[@]}" \
+  firmware/tests/r4/test_loop_health.cpp firmware/src/loop_health_monitor.cpp \
+  firmware/src/loop_health.cpp -o "$test_dir/r4_loop_health"
+"$test_dir/r4_loop_health"
 
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/tooling/test_tooling_contract.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/codeql/test_summarize_sarif.py

@@ -80,6 +80,87 @@ int main() {
   printUsbApplicationResponse(denied);
   assert(Serial.output == "APP RESULT id=19 code=ACCESS_DENIED\n");
 
+  // Status lines are longer than the target's 256-byte Print::printf buffer.
+  // On a RAK4631 the single-printf form cut APP DEVICE at 255 characters and
+  // ended APP STORAGE in stack bytes. The test Serial enforces the per-call
+  // limit; these cases prove each complete line still arrives byte-for-byte.
+  {
+    // The exact line a tracker printed before the fix, minus the cut.
+    Serial.output.clear();
+    ApplicationResponse observed;
+    observed.request_id = 1;
+    observed.kind = ApplicationRequestKind::kGetDeviceStatus;
+    observed.code = ApplicationResponseCode::kOk;
+    ApplicationDeviceSnapshot& d = observed.payload.device.snapshot;
+    d.surface_revision = 1;
+    memcpy(d.firmware_version, "0.5.0-alpha", sizeof("0.5.0-alpha"));
+    d.uptime_ms_mod32 = 1150237;
+    d.reset_reason = 2;
+    d.watchdog_reset = 1;
+    d.role = static_cast<ApplicationRole>(0);
+    d.role_automatic = 1;
+    d.gnss_presence = static_cast<ApplicationPresence>(1);
+    d.accelerometer_presence = static_cast<ApplicationPresence>(1);
+    d.tracking_state = static_cast<ApplicationServiceState>(1);
+    d.relay_reason = static_cast<ApplicationServiceReason>(1);
+    printUsbApplicationResponse(observed);
+    assert(Serial.output ==
+           "APP DEVICE id=1 fw=0.5.0-alpha rev=1 uptime_ms_mod32=1150237 "
+           "reset=0x00000002 watchdog=yes role=0 role_mode=AUTO "
+           "relay_applied=no gnss_presence=1 gnss_health=0 accel_presence=1 "
+           "accel_health=0 tracking_state=1 tracking_reason=0 relay_state=0 "
+           "relay_reason=1\n");
+    assert(Serial.output.size() > 255);
+
+    // Widest possible values of every numeric field.
+    Serial.output.clear();
+    ApplicationResponse storage;
+    storage.request_id = UINT32_MAX;
+    storage.kind = ApplicationRequestKind::kGetStorageStatus;
+    storage.code = ApplicationResponseCode::kOk;
+    ApplicationStorageSnapshot& s = storage.payload.storage.snapshot;
+    s.history_count = s.history_capacity = s.history_overwritten = UINT32_MAX;
+    s.history_append_failures = s.history_recovery_corruptions = UINT32_MAX;
+    s.history_metadata_failures = s.config_recovery_corruptions = UINT32_MAX;
+    s.geofence_recovery_corruptions = UINT32_MAX;
+    s.security_recovery_corruptions = UINT32_MAX;
+    s.history_ready = s.history_busy = s.config_ready = 1;
+    s.config_maintenance = s.geofence_ready = s.geofence_maintenance = 1;
+    s.security_ready = s.security_exhausted = 1;
+    s.security_state = static_cast<ApplicationSecurityState>(255);
+    printUsbApplicationResponse(storage);
+    assert(Serial.output ==
+           "APP STORAGE id=4294967295 history_ready=yes busy=yes "
+           "count=4294967295 capacity=4294967295 overwritten=4294967295 "
+           "append_failures=4294967295 corrupt=4294967295 "
+           "metadata_failures=4294967295 config_ready=yes "
+           "config_maintenance=yes config_corrupt=4294967295 "
+           "geofence_ready=yes geofence_maintenance=yes "
+           "geofence_corrupt=4294967295 security_ready=yes security_state=255 "
+           "security_exhausted=yes security_corrupt=4294967295\n");
+
+    Serial.output.clear();
+    ApplicationResponse tracking;
+    tracking.request_id = UINT32_MAX;
+    tracking.kind = ApplicationRequestKind::kGetTrackingStatus;
+    tracking.code = ApplicationResponseCode::kOk;
+    ApplicationTrackingSnapshot& t = tracking.payload.tracking.snapshot;
+    t.requested_interval_seconds = t.applied_base_interval_seconds = UINT32_MAX;
+    t.effective_interval_seconds = t.acquisition_attempts = UINT32_MAX;
+    t.successful_fresh_fixes = t.acquisition_timeouts = UINT32_MAX;
+    t.invalid_fixes = t.last_ttff_ms = UINT32_MAX;
+    t.config_backend_ready = t.gnss_detected = t.additional_fix_active = 1;
+    t.cadence_mode = static_cast<ApplicationCadenceMode>(255);
+    t.gnss_state = static_cast<ApplicationGnssState>(255);
+    printUsbApplicationResponse(tracking);
+    assert(Serial.output ==
+           "APP TRACKING id=4294967295 requested_s=4294967295 "
+           "applied_s=4294967295 effective_s=4294967295 cadence=255 "
+           "gnss_state=255 detected=yes extra_fix=yes attempts=4294967295 "
+           "fresh=4294967295 timeouts=4294967295 invalid=4294967295 "
+           "last_ttff_ms=4294967295 config_ready=yes source=default\n");
+  }
+
   // Configuration change spelling: APP INTERVAL <seconds>, strict decimal.
   {
     ConfigMutationKind kind = ConfigMutationKind::kSetTrackingInterval;
