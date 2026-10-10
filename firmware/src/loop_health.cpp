@@ -21,6 +21,7 @@ const char* loopStageName(LoopStage stage) {
     case LoopStage::kRadio: return "RADIO";
     case LoopStage::kStoreForward: return "STORE_FORWARD";
     case LoopStage::kIdle: return "IDLE";
+    case LoopStage::kBattery: return "BATTERY";
   }
   return "UNKNOWN";
 }
