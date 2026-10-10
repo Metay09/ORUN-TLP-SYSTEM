@@ -110,10 +110,21 @@ void testMissedSlotsAndFailures() {
   manager.poll();
   assert(manager.state() == State::kFailure);
   assert(manager.diagnostics().configuration_failures == 1);
+  const uint32_t failed_at = test_now;
   manager.poll();
   assert(manager.state() == State::kSleeping);
+  // Timeout then configuration failure: two in a row, so the next attempt
+  // waits 2x the interval from the failure instead of the next grid point.
+  assert(manager.consecutiveFailedAcquisitions() == 2);
+  assert(manager.diagnostics().failure_backoffs == 1);
   Fake::configuration_ok = true;
   test_now = anchor + 5 * gnss_config::kTrackingIntervalMs;
+  manager.poll();
+  assert(manager.state() == State::kSleeping);
+  test_now = failed_at + 2 * gnss_config::kTrackingIntervalMs - 1;
+  manager.poll();
+  assert(manager.state() == State::kSleeping);
+  test_now = failed_at + 2 * gnss_config::kTrackingIntervalMs;
   manager.poll();
   test_now += gnss_config::kPowerSettleMs;
   prepare(manager);
@@ -153,11 +164,99 @@ void testTimeAndPolicy() {
   assert(gnss_config::keepTracking(900000, 1000));
 }
 
+// No sky (barn, shed): consecutive timeouts stretch the wait 2x, 4x, ... up
+// to 30 minutes, with the receiver powered down; the first fix ends it.
+void testFailureBackoff() {
+  using gnss_config::failureBackoffMs;
+  constexpr uint32_t kInterval = gnss_config::kTrackingIntervalMs;  // 180 s
+  assert(failureBackoffMs(kInterval, 0) == 0);
+  assert(failureBackoffMs(kInterval, 1) == 0);
+  assert(failureBackoffMs(kInterval, 2) == 2 * kInterval);
+  assert(failureBackoffMs(kInterval, 3) == 4 * kInterval);
+  assert(failureBackoffMs(kInterval, 4) == 8 * kInterval);
+  assert(failureBackoffMs(kInterval, 5) == gnss_config::kFailureBackoffMaxMs);
+  assert(failureBackoffMs(kInterval, 255) == gnss_config::kFailureBackoffMaxMs);
+  assert(failureBackoffMs(60000, 2) == 120000);
+  assert(failureBackoffMs(29UL * 60000, 2) == gnss_config::kFailureBackoffMaxMs);
+  assert(failureBackoffMs(30UL * 60000, 9) == 0);  // never stretched
+  assert(failureBackoffMs(0, 9) == 0);
+
+  GnssManager manager;
+  const uint32_t anchor = boot(manager);
+  uint32_t started = anchor;
+  auto timeOut = [&] {
+    test_now = started + gnss_config::kAcquisitionTimeoutMs;
+    manager.poll();
+    assert(manager.state() == State::kTimeout);
+    manager.poll();
+    assert(manager.state() == State::kSleeping && sensor_power == LOW);
+    return test_now;
+  };
+  auto startsAt = [&](uint32_t due) {
+    test_now = due - 1;
+    manager.poll();
+    assert(manager.state() == State::kSleeping);
+    test_now = due;
+    manager.poll();
+    assert(manager.state() == State::kStarting);
+    started = due;
+    test_now += gnss_config::kPowerSettleMs;
+    prepare(manager);
+  };
+
+  // First failure: still the normal grid.
+  timeOut();
+  assert(manager.consecutiveFailedAcquisitions() == 1);
+  assert(manager.diagnostics().failure_backoffs == 0);
+  startsAt(anchor + kInterval);
+  // Then 2x, 4x, 8x, capped at 30 minutes, from the end of each failure.
+  const uint32_t waits[] = {2 * kInterval, 4 * kInterval, 8 * kInterval,
+                            gnss_config::kFailureBackoffMaxMs,
+                            gnss_config::kFailureBackoffMaxMs};
+  for (const uint32_t wait : waits) {
+    const uint32_t failed_at = timeOut();
+    startsAt(failed_at + wait);
+  }
+  assert(manager.consecutiveFailedAcquisitions() == 6);
+  assert(manager.diagnostics().failure_backoffs == 5);
+  assert(manager.diagnostics().acquisition_timeouts == 6);
+
+  // Sky again: the first fresh fix ends the backoff and the grid resumes.
+  emitPvt(manager, pvt(10000));  // first epoch of a session is a boundary
+  emitDop(manager, 10000);
+  test_now += 1000;
+  emitPvt(manager, pvt(11000));
+  emitDop(manager, 11000);
+  GnssFix fix{};
+  assert(manager.takeFreshFixForTransmission(&fix));
+  assert(manager.consecutiveFailedAcquisitions() == 0);
+  manager.poll();
+  assert(manager.state() == State::kSleeping);
+  startsAt(started + kInterval);
+
+  // A short interval is stretched too, and the receiver sleeps through it.
+  manager.setTrackingIntervalMs(60000);
+  timeOut();
+  // Next grid point (the old 180 s due point still stands).
+  for (unsigned i = 0; i < 400 && manager.state() != State::kStarting; ++i) {
+    test_now += 1000;
+    manager.poll();
+  }
+  assert(manager.state() == State::kStarting);
+  started = test_now;
+  test_now += gnss_config::kPowerSettleMs;
+  prepare(manager);
+  const uint32_t failed_at = timeOut();
+  assert(sensor_power == LOW);
+  startsAt(failed_at + 120000);
+}
+
 int main() {
   testTimeAndPolicy();
   testFixes(false);
   testFixes(true);
   testTimeoutAndRecovery();
   testMissedSlotsAndFailures();
+  testFailureBackoff();
   puts("M3 deterministic checks: PASS");
 }
