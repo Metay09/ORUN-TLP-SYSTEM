@@ -54,6 +54,23 @@ inline int digitalRead(int pin) {
 
 inline void delayMicroseconds(uint32_t us) { fake_delay_us += us; }
 
+// SAADC: the battery divider on WB_A0. Tests set fake_analog_value and read
+// back the configuration the firmware chose.
+enum eAnalogReference { AR_DEFAULT, AR_INTERNAL_3_0 };
+constexpr uint8_t WB_A0 = 5;
+inline eAnalogReference fake_analog_reference = AR_DEFAULT;
+inline int fake_analog_resolution = 10;
+inline uint32_t fake_analog_value = 0;
+inline unsigned fake_analog_reads = 0;
+inline int fake_analog_last_pin = -1;
+inline void analogReference(eAnalogReference mode) { fake_analog_reference = mode; }
+inline void analogReadResolution(int bits) { fake_analog_resolution = bits; }
+inline uint32_t analogRead(uint32_t pin) {
+  ++fake_analog_reads;
+  fake_analog_last_pin = static_cast<int>(pin);
+  return fake_analog_value;
+}
+
 struct TestSerial {
   std::string output;
   std::string input;

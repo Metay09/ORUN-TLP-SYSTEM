@@ -8,6 +8,7 @@
 #include "activity_period_evidence.h"
 #include "application_request.h"
 #include "application_status_runtime.h"
+#include "battery_monitor.h"
 #include "ble_admission_policy.h"
 #include "ble_application_handoff.h"
 #include "ble_application_transport.h"
@@ -67,6 +68,8 @@ orun_tlp::AccelerometerManager accelerometer_manager;
 orun_tlp::ActivityCapture activity_capture(accelerometer_manager);
 // Opt-in autonomous RAK1904 windows and a one-hour RAM summary, not RF/storage.
 orun_tlp::ActivityAutoSampler activity_auto_sampler;
+// Battery voltage on WB_A0, read once a minute. Measurement only for now.
+orun_tlp::BatteryMonitor battery_monitor;
 // M7P3: FlashMutationGate wraps NrfHistoryFlash unchanged for the
 // SoftDevice-disabled path (still the only path exercised by shipped
 // firmware); its asynchronous path is not enabled by anything in this
@@ -1009,6 +1012,21 @@ void printRadioDiagnostic() {
                 static_cast<unsigned long>(diagnostics.estimated_rx_ms));
 }
 
+void printBatteryDiagnostic() {
+  if (!battery_monitor.hasReading()) {
+    Serial.println(F("BATTERY PENDING"));
+    return;
+  }
+  const uint32_t age_ms =
+      orun_tlp::monotonic::nowMs() - battery_monitor.readAtMs();
+  Serial.printf("BATTERY mv=%lu raw=%lu age_ms=%lu readings=%lu "
+                "calibrated=no\n",
+                static_cast<unsigned long>(battery_monitor.millivolts()),
+                static_cast<unsigned long>(battery_monitor.raw()),
+                static_cast<unsigned long>(age_ms),
+                static_cast<unsigned long>(battery_monitor.readings()));
+}
+
 void printBleDiagnostic() {
   const char* initial_start = "not-attempted";
   if (ble_initial_start == BleInitialStart::kOk) initial_start = "ok";
@@ -1602,6 +1620,11 @@ void handleRoleCommand() {
   if (isActivityCommand("RADIO?", 6)) {
     role_command_length = 0;
     printRadioDiagnostic();
+    return;
+  }
+  if (isActivityCommand("BATTERY?", 8)) {
+    role_command_length = 0;
+    printBatteryDiagnostic();
     return;
   }
   if (isActivityCommand("BLE?", 4)) {
@@ -2292,6 +2315,7 @@ void setup() {
   gnss_manager.setTrackingIntervalMs(
       active_tracking_base_interval_seconds * 1000UL);
   accelerometer_manager.begin(orun_tlp::monotonic::nowMs());
+  battery_monitor.begin(orun_tlp::monotonic::nowMs());
   // A stored EXPLICIT service intent replaces the GNSS-based role inference.
   applyServiceIntent("CONFIG");
   if (!explicit_services_active)
@@ -2430,6 +2454,8 @@ void loop() {
     // Emit one concise period-level fact, not raw 10 Hz sensor samples.
     printActivityAutoDiagnostic();
   }
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kBattery);
+  battery_monitor.poll(orun_tlp::monotonic::nowMs());
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kUsbCommands);
   serviceLoopHealthReports();
   pollRoleCommands();

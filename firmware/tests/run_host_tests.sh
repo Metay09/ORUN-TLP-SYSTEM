@@ -184,6 +184,9 @@ g++ "${flags[@]}" firmware/tests/r3/test_delayed_pair.cpp "${gnss_sources[@]}" \
 g++ "${flags[@]}" firmware/tests/r3/test_r3.cpp "${gnss_sources[@]}" \
   firmware/src/tlp_position_packet.cpp firmware/src/node_role.cpp -o "$test_dir/r3"
 "$test_dir/r3"
+g++ "${flags[@]}" firmware/tests/m3/test_battery_monitor.cpp \
+  firmware/src/battery_monitor.cpp -o "$test_dir/battery_monitor"
+"$test_dir/battery_monitor"
 g++ "${flags[@]}" firmware/tests/m4/test_m4.cpp firmware/src/history_store.cpp \
   firmware/src/journal_format.cpp firmware/src/position_flow.cpp \
   firmware/src/legacy_position_mapping.cpp firmware/src/tlp_position_packet.cpp \
@@ -439,6 +442,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/security_store.cpp firmware/src/security_format.cpp \
   firmware/src/position_flow.cpp firmware/src/ble_admission_policy.cpp \
   firmware/src/loop_health.cpp firmware/src/loop_health_monitor.cpp \
+  firmware/src/battery_monitor.cpp \
   -o "$test_dir/startup"
 for scenario in mutex gate queue lora success advfail blefail noevent geofence geofence_persisted geofence_uncertain history_erase_i2c services_no_gnss; do
   "$test_dir/startup" "$scenario"

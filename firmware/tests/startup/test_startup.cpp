@@ -245,6 +245,8 @@ int servicesNoGnssScenario() {
   assert(resolveRuntimeConfig().tracking.state == ServiceState::kEnabled);
   assert(role_controller.role() == NodeRole::kTracker);
   assert(!has(Serial.output, "ROLE BASE"));
+  // Battery read once a minute through all of it.
+  assert(battery_monitor.readings() >= 10);
 
   // A cold boot on the same flash recovers the same intent.
   ConfigStore rebooted(storage_flash_gate.configPort(),
@@ -390,6 +392,7 @@ int main(int argc, char** argv) {
   lora_result = mode == "lora" ? -1 : 0;
   Bluefruit.Advertising.start_result = !ble_advertising_fails;
   Bluefruit.begin_result = !ble_runtime_fails;
+  fake_analog_value = 3315;  // battery divider at 4.2 V
   setup();
   if (services_scenario) return servicesNoGnssScenario();
 
@@ -867,6 +870,18 @@ int main(int argc, char** argv) {
          "HEALTH reset=0x00000000 watchdog=no prev_stall=no prev_fault=no "
          "prev_stage=- idle_oversleeps=0 idle_longest_ms=0 "
          "stalls_recovered=0 stack_free=0\n");
+
+  // Battery voltage: read once at boot, then once a minute.
+  assert(battery_monitor.readings() == 1);
+  assert(fake_analog_last_pin == WB_A0 &&
+         fake_analog_reference == AR_INTERNAL_3_0 &&
+         fake_analog_resolution == 12);
+  Serial.output.clear();
+  Serial.queueInput("BATTERY?\n");
+  pollRoleCommands();
+  assert(Serial.output.rfind("BATTERY mv=4200 raw=3315 age_ms=", 0) == 0);
+  assert(Serial.output.find(" readings=1 calibrated=no\n") !=
+         std::string::npos);
 
   // The USB diagnostic must be queryable after the early boot window is gone.
   // While the bounded probe is incomplete it reports PENDING, not ABSENT.
