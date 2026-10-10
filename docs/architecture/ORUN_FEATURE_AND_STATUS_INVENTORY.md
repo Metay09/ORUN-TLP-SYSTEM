@@ -148,7 +148,7 @@ market-ready product completion.
 | Legacy `TRACKER / RELAY / BASE` and AUTO boot decision | **P+H** (compatible, not desired final UX) | `node_role.cpp`, `node_behavior.h`, `main.cpp`; `ROLE?` and USB override | AUTO currently derives legacy role from GNSS presence; manual override **volatile**. Replace with persisted explicit service intent, retaining a compatibility transition |
 | Separate Tracking/Relay effective resolver | **H and partly P**; B4 test asserts **both enabled** in a pure config; `RadioManager` can change forwarding state independently | `runtime_config.h/.cpp`, `test_b4.cpp`, `test_b4_network.cpp`, `radio_manager_relay_config.cpp` | Production `main.cpp::resolveRuntimeConfig()` still obtains requested flags from mutually exclusive legacy role; **no persisted combined-service switch or physical combined test** |
 | GNSS/accelerometer discovery and health | **P+H; targeted physical M6A and GNSS evidence** | `CapabilitySnapshot`, `AccelerometerManager`, `GnssManager` | Generic arbitrary environmental sensor capability registry/driver registry not implemented |
-| ConfigStore v2 | **P+H+scoped F**; A/B tokenized safe persistence | `config_store.cpp`, `config_format.cpp`, `FlashMutationGate`, PR #46/#49 | Current durable payload has **only** tracking interval and battery capacity metadata; **no** profile, role, Relay, Gateway, sensor, valve or location-source intent. No authenticated app writer/migration |
+| ConfigStore v2 → v4 | v2: **P+H+scoped F**; A/B tokenized safe persistence. v4 (2026-10-10, `feat/config-store-v4`): **H+build+partial F** — adds `service_mode` + requested services; reads v2/v4, writes v4. On one receiver: v2→v4 upgrade and v4→old→v4 downgrade passed; blank baseline, power cuts and BLE-connected save pending | `config_store.cpp`, `config_format.cpp`, `FlashMutationGate`, PR #46/#49; `ORUN_CONFIG_STORE_V4_SERVICE_INTENT.md` | Saved service intent is **not yet used at boot** and has **no writer** (next slice). No profile, Gateway, sensor, valve or location-source intent. No authenticated app writer |
 | Device/status querying | **P+H+scoped F for M7P7H**; USB+BLE GET_CONFIG, DEVICE, TRACKING/GNSS, GEOFENCE, STORAGE | `application_request.cpp`, `application_status_runtime.cpp`, BLE/USB adapters | No measured battery status, comprehensive RADIO/HEALTH app family, GET_LOCATION product operation, secure mutations or generic dashboard |
 | Location source-neutral accepted value | **P+H**, GNSS producer only (M7P7I / PR #63) | `location_owner.h`, `main.cpp` | PHONE/MANUAL/fixed sources and source-switch permission/ownership, GET_LOCATION, app map all **deferred** |
 
@@ -268,7 +268,10 @@ policy must be explicit, durable user intention, not automatic GNSS-based role.
 - `ConfigStore v2` at `[0xE9000,0xEB000)` implements two-page crash-safe
   commit/recovery with config state token. Its **only** semantic values are
   `tracking_interval_seconds` and `battery_capacity_mah` (the latter is
-  configured metadata, not a battery charge measurement).
+  configured metadata, not a battery charge measurement). Schema v4
+  (2026-10-10, host-tested, physical validation pending) adds the requested
+  service intent to the same record; nothing reads or writes that intent at
+  runtime yet.
 - The normal firmware starts `ConfigStore` and reads persisted values at boot.
   Since 2026-10-10 a local USB writer exists for the **tracking interval
   only** (`APP INTERVAL <seconds>`, 60 s floor): `ConfigMutationOwner`

@@ -48,6 +48,36 @@ bool validV2Body(const uint8_t* bytes, V2Record& record) {
   return true;
 }
 
+bool validV4Body(const uint8_t* bytes, TokenizedRecord& record) {
+  if (jf::get32(bytes) != kMagic) return false;
+  if (bytes[4] != kV4Version || bytes[5] || bytes[6] || bytes[7])
+    return false;
+
+  const uint64_t generation = jf::get64(bytes + 8);
+  if (generation == 0) return false;
+  if (jf::get16(bytes + 16) != kV4PayloadSize ||
+      jf::get16(bytes + 18) != 0)
+    return false;
+  if (bytes[30] != 0 || bytes[31] != 0) return false;
+  for (uint32_t i = 0; i < kV4ReservedSize; ++i)
+    if (bytes[kV4ReservedOffset + i] != 0) return false;
+
+  if (jf::get32(bytes + kV4CrcOffset) != jf::crc32(bytes, kV4CrcOffset))
+    return false;
+
+  const uint64_t incarnation = jf::get64(bytes + 32);
+  const uint32_t revision = jf::get32(bytes + 40);
+  if (incarnation == 0 || revision == 0) return false;
+
+  TokenizedRecord decoded(
+      generation,
+      Config(jf::get32(bytes + 20), jf::get32(bytes + 24), bytes[28],
+             bytes[29]),
+      StateToken(incarnation, revision));
+  record = decoded;
+  return true;
+}
+
 bool wordErased(const uint8_t* bytes) {
   return bytes[0] == 0xFF && bytes[1] == 0xFF &&
          bytes[2] == 0xFF && bytes[3] == 0xFF;
@@ -77,7 +107,8 @@ bool programmedPrefixWithErasedTail(const uint8_t* bytes, size_t size) {
 bool unsupportedNewerDiscriminator(const uint8_t* bytes) {
   if (jf::get32(bytes) != kMagic) return false;
   const uint8_t version = bytes[4];
-  if (version == kVersion || version == kV2Version || version == 0xFF)
+  if (version == kVersion || version == kV2Version || version == kV4Version ||
+      version == 0xFF)
     return false;
   return bytes[5] == 0 && bytes[6] == 0 && bytes[7] == 0 &&
          (version & 0x03U) == 0;
@@ -105,6 +136,45 @@ void setV2DecodedInspection(const V2Record& record,
 }
 
 }  // namespace
+
+bool evidenceIsCommitted(PageEvidence evidence) {
+  return evidence == PageEvidence::kV2Committed ||
+         evidence == PageEvidence::kV4Committed;
+}
+
+bool evidenceIsStaged(PageEvidence evidence) {
+  return evidence == PageEvidence::kV2Staged ||
+         evidence == PageEvidence::kV4Staged;
+}
+
+bool evidenceIsUncommittedOrTorn(PageEvidence evidence) {
+  return evidence == PageEvidence::kV2UncommittedOrTorn ||
+         evidence == PageEvidence::kV4UncommittedOrTorn;
+}
+
+bool evidenceIsPartialCommit(PageEvidence evidence) {
+  return evidence == PageEvidence::kV2PartialCommit ||
+         evidence == PageEvidence::kV4PartialCommit;
+}
+
+bool evidenceIsCommittedRetired(PageEvidence evidence) {
+  return evidence == PageEvidence::kV2CommittedRetired ||
+         evidence == PageEvidence::kV4CommittedRetired;
+}
+
+uint32_t ownedPrefixSize(PageEvidence evidence) {
+  switch (evidence) {
+    case PageEvidence::kV4Staged:
+    case PageEvidence::kV4UncommittedOrTorn:
+    case PageEvidence::kV4PartialCommit:
+    case PageEvidence::kV4Committed:
+    case PageEvidence::kV4CommittedRetired:
+    case PageEvidence::kV4CommittedCorrupt:
+      return kV4PagePrefixSize;
+    default:
+      return kV2PagePrefixSize;
+  }
+}
 
 void encode(const Config& config, uint64_t generation, uint8_t* bytes) {
   memset(bytes, 0, kRecordSize);
@@ -164,13 +234,47 @@ bool decodeV2(const uint8_t* bytes, V2Record& record) {
   return decodeV2Body(bytes, record);
 }
 
+void encodeV4(const TokenizedRecord& record, uint8_t* bytes) {
+  memset(bytes, 0, kV4RecordSize);
+  jf::put32(bytes, kMagic);
+  bytes[4] = kV4Version;
+  jf::put64(bytes + 8, record.generation);
+  jf::put16(bytes + 16, kV4PayloadSize);
+  jf::put32(bytes + 20, record.config.tracking_interval_seconds);
+  jf::put32(bytes + 24, record.config.battery_capacity_mah);
+  bytes[28] = record.config.service_mode;
+  bytes[29] = record.config.requested_services;
+  jf::put64(bytes + 32, record.token.incarnation);
+  jf::put32(bytes + 40, record.token.revision);
+  jf::put32(bytes + kV4CrcOffset, jf::crc32(bytes, kV4CrcOffset));
+  jf::put32(bytes + kV4CommitOffset, kCommit);
+}
+
+bool decodeV4Body(const uint8_t* bytes, TokenizedRecord& record) {
+  if (bytes == nullptr) return false;
+  TokenizedRecord decoded;
+  if (!validV4Body(bytes, decoded)) return false;
+  record = decoded;
+  return true;
+}
+
+bool decodeV4(const uint8_t* bytes, TokenizedRecord& record) {
+  if (bytes == nullptr || jf::get32(bytes + kV4CommitOffset) != kCommit)
+    return false;
+  return decodeV4Body(bytes, record);
+}
+
 bool inspectPagePrefix(const uint8_t* bytes, size_t size,
                        PageInspection& inspection) {
   if (bytes == nullptr || size < kV2PagePrefixSize) return false;
 
   inspection = PageInspection();
 
-  if (jf::erased(bytes, kV2PagePrefixSize)) {
+  // Everything the caller supplied up to the largest owned prefix must be
+  // erased; the page tail after that is checked by ConfigStore.
+  const size_t owned =
+      size < kMaxPagePrefixSize ? size : static_cast<size_t>(kMaxPagePrefixSize);
+  if (jf::erased(bytes, owned)) {
     inspection.evidence = PageEvidence::kErased;
     return true;
   }
@@ -223,6 +327,46 @@ bool inspectPagePrefix(const uint8_t* bytes, size_t size,
     if (body_valid) {
       setV2DecodedInspection(record, inspection);
       inspection.evidence = PageEvidence::kV2PartialCommit;
+      return true;
+    }
+
+    inspection.evidence = PageEvidence::kSupportedCorrupt;
+    return true;
+  }
+
+  // Exact supported v4: same evidence shapes as v2 at the v4 offsets.
+  if (magic_matches && version == kV4Version) {
+    if (size < kV4PagePrefixSize) {
+      inspection.evidence = PageEvidence::kSupportedCorrupt;
+      return true;
+    }
+    TokenizedRecord record;
+    const bool body_valid = validV4Body(bytes, record);
+    const uint32_t commit = jf::get32(bytes + kV4CommitOffset);
+
+    if (commit == kErasedWord) {
+      inspection.evidence = body_valid ? PageEvidence::kV4Staged
+                                       : PageEvidence::kV4UncommittedOrTorn;
+      if (body_valid) setV2DecodedInspection(record, inspection);
+      return true;
+    }
+
+    if (commit == kCommit) {
+      if (!body_valid) {
+        inspection.evidence = PageEvidence::kV4CommittedCorrupt;
+        return true;
+      }
+      setV2DecodedInspection(record, inspection);
+      inspection.evidence =
+          jf::get32(bytes + kV4RetireOffset) == kErasedWord
+              ? PageEvidence::kV4Committed
+              : PageEvidence::kV4CommittedRetired;
+      return true;
+    }
+
+    if (body_valid) {
+      setV2DecodedInspection(record, inspection);
+      inspection.evidence = PageEvidence::kV4PartialCommit;
       return true;
     }
 

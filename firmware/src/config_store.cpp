@@ -18,13 +18,29 @@ config_format::Config defaultConfig() {
 bool sameConfig(const config_format::Config& a,
                 const config_format::Config& b) {
   return a.tracking_interval_seconds == b.tracking_interval_seconds &&
-         a.battery_capacity_mah == b.battery_capacity_mah;
+         a.battery_capacity_mah == b.battery_capacity_mah &&
+         a.service_mode == b.service_mode &&
+         a.requested_services == b.requested_services;
+}
+
+// Service intent rules of schema v4 (a decoded v2 record is always AUTO/0).
+// AUTO carries no selection; EXPLICIT may hold any subset of the known
+// services, including none. Anything else is corruption evidence, never a
+// guess.
+bool validServiceIntent(const config_format::Config& candidate) {
+  if (candidate.service_mode == config_format::kServiceModeAuto)
+    return candidate.requested_services == 0;
+  if (candidate.service_mode == config_format::kServiceModeExplicit)
+    return (candidate.requested_services &
+            static_cast<uint8_t>(~config_format::kKnownServicesMask)) == 0;
+  return false;
 }
 
 bool validCandidate(const config_format::Config& candidate) {
   return candidate.tracking_interval_seconds > 0 &&
          candidate.tracking_interval_seconds <=
-             gnss_config::kMaxTrackingIntervalSeconds;
+             gnss_config::kMaxTrackingIntervalSeconds &&
+         validServiceIntent(candidate);
 }
 
 bool evidenceIsLegacy(config_format::PageEvidence evidence) {
@@ -37,7 +53,7 @@ bool evidenceIsLegacy(config_format::PageEvidence evidence) {
 
 bool evidenceIsSafeUncommitted(config_format::PageEvidence evidence) {
   return evidence == config_format::PageEvidence::kErased ||
-         evidence == config_format::PageEvidence::kV2UncommittedOrTorn;
+         config_format::evidenceIsUncommittedOrTorn(evidence);
 }
 
 bool exactSuccessor(const config_format::PageInspection& committed,
@@ -49,15 +65,15 @@ bool exactSuccessor(const config_format::PageInspection& committed,
          staged.token.revision == committed.token.revision + 1;
 }
 
-// ConfigStore v2 owns only a fixed 52-byte prefix in each 4096-byte page.
-// Everything after that prefix is currently unused and must remain erased.
-// Check it in a small fixed buffer so recovery never spends a 4 KiB stack
-// allocation merely to prove that a page is physically blank/current-schema.
+// A record owns a fixed prefix of its 4096-byte page: 52 bytes for v1/v2,
+// 72 bytes for v4. Everything after that prefix is unused and must remain
+// erased. Check it in a small fixed buffer so recovery never spends a 4 KiB
+// stack allocation merely to prove that a page is physically blank/current.
 bool readPageTailErased(FlashBackend& flash, unsigned page,
-                        bool& tail_erased) {
+                        uint32_t owned_prefix, bool& tail_erased) {
   constexpr size_t kChunkSize = 64;
   uint8_t chunk[kChunkSize];
-  uint32_t within_page = config_format::kV2PagePrefixSize;
+  uint32_t within_page = owned_prefix;
   tail_erased = true;
 
   while (within_page < storage_config::kPageSize) {
@@ -160,7 +176,7 @@ bool ConfigStore::recover() {
   int fallback_pages[kConfigPageCount] = {-1, -1};
 
   for (unsigned page = 0; page < kConfigPageCount; ++page) {
-    uint8_t bytes[config_format::kV2PagePrefixSize];
+    uint8_t bytes[config_format::kMaxPagePrefixSize];
     if (!flash_.read(page * storage_config::kPageSize, bytes,
                      sizeof(bytes)))
       return false;
@@ -170,14 +186,18 @@ bool ConfigStore::recover() {
       return false;
 
     // Prefix-erased is not enough to call a 4096-byte page blank. Likewise a
-    // current v1/v2 record with programmed bytes after the owned 52-byte
-    // prefix is not a normal current-schema page. Genuine future schemas are
-    // excluded because their discriminator is a downgrade boundary and older
-    // firmware must not interpret their page layout.
+    // current v1/v2/v4 record with programmed bytes after its owned prefix is
+    // not a normal current-schema page. Genuine future schemas are excluded
+    // because their discriminator is a downgrade boundary and older firmware
+    // must not interpret their page layout.
     if (pages[page].inspection.evidence !=
         config_format::PageEvidence::kUnsupportedNewer) {
       bool tail_erased = false;
-      if (!readPageTailErased(flash_, page, tail_erased)) return false;
+      if (!readPageTailErased(
+              flash_, page,
+              config_format::ownedPrefixSize(pages[page].inspection.evidence),
+              tail_erased))
+        return false;
       pages[page].tail_dirty = !tail_erased;
     }
 
@@ -207,21 +227,20 @@ bool ConfigStore::recover() {
       any_supported_corrupt = true;
       // Preserve structurally/semantically verified prefix data as read-only
       // fallback, but never let a dirty reserved tail retain token authority.
-      if (evidence == config_format::PageEvidence::kV2Committed &&
+      if (config_format::evidenceIsCommitted(evidence) &&
           pages[page].semantic_valid) {
         committed_pages[committed_count++] = static_cast<int>(page);
       } else if (pages[page].inspection.has_decoded_record &&
                  pages[page].semantic_valid &&
-                 (evidence == config_format::PageEvidence::kV2Staged ||
-                  evidence == config_format::PageEvidence::kV2PartialCommit ||
-                  evidence ==
-                      config_format::PageEvidence::kV2CommittedRetired)) {
+                 (config_format::evidenceIsStaged(evidence) ||
+                  config_format::evidenceIsPartialCommit(evidence) ||
+                  config_format::evidenceIsCommittedRetired(evidence))) {
         fallback_pages[fallback_count++] = static_cast<int>(page);
       }
       continue;
     }
 
-    if (evidence == config_format::PageEvidence::kV2Committed) {
+    if (config_format::evidenceIsCommitted(evidence)) {
       if (!pages[page].semantic_valid) {
         ++diagnostics_.recovery_corruptions;
         any_supported_corrupt = true;
@@ -231,7 +250,7 @@ bool ConfigStore::recover() {
       continue;
     }
 
-    if (evidence == config_format::PageEvidence::kV2Staged) {
+    if (config_format::evidenceIsStaged(evidence)) {
       // A verified stage is never promoted to token authority after reboot,
       // but its semantic config is still an independently verified persistent
       // copy and may be used as read-only fallback when no committed authority
@@ -243,12 +262,10 @@ bool ConfigStore::recover() {
       continue;
     }
 
-    if (evidence == config_format::PageEvidence::kErased ||
-        evidence == config_format::PageEvidence::kV2UncommittedOrTorn)
-      continue;
+    if (evidenceIsSafeUncommitted(evidence)) continue;
 
-    if ((evidence == config_format::PageEvidence::kV2PartialCommit ||
-         evidence == config_format::PageEvidence::kV2CommittedRetired) &&
+    if ((config_format::evidenceIsPartialCommit(evidence) ||
+         config_format::evidenceIsCommittedRetired(evidence)) &&
         pages[page].semantic_valid) {
       fallback_pages[fallback_count++] = static_cast<int>(page);
     }
@@ -330,8 +347,8 @@ bool ConfigStore::recover() {
       if (same_semantics) {
         bool has_committed_provenance = false;
         for (unsigned i = 0; i < fallback_count; ++i) {
-          if (pages[fallback_pages[i]].inspection.evidence ==
-              config_format::PageEvidence::kV2CommittedRetired) {
+          if (config_format::evidenceIsCommittedRetired(
+                  pages[fallback_pages[i]].inspection.evidence)) {
             has_committed_provenance = true;
             break;
           }
@@ -409,7 +426,7 @@ bool ConfigStore::recover() {
     return true;
   }
 
-  if (other.evidence == config_format::PageEvidence::kV2Staged) {
+  if (config_format::evidenceIsStaged(other.evidence)) {
     if (!pages[other_page].semantic_valid) {
       // A never-committed semantically invalid stage is equivalent to
       // uncommitted/torn evidence; it cannot supersede the committed page.
@@ -438,26 +455,26 @@ bool ConfigStore::recover() {
 }
 
 bool ConfigStore::writeFreshBaseline(
-    const config_format::V2Record& record) {
-  uint8_t bytes[config_format::kV2RecordSize];
-  config_format::encodeV2(record, bytes);
+    const config_format::TokenizedRecord& record) {
+  uint8_t bytes[config_format::kWriteRecordSize];
+  config_format::encodeV4(record, bytes);
 
   const uint32_t offset = 0;
   const FlashOpResult body =
-      flash_.program(offset, bytes, config_format::kV2BodyAndCrcSize);
+      flash_.program(offset, bytes, config_format::kWriteBodyAndCrcSize);
   if (body != FlashOpResult::kDone) return false;
 
-  uint8_t stage_verify[config_format::kV2BodyAndCrcSize];
+  uint8_t stage_verify[config_format::kWriteBodyAndCrcSize];
   if (!flash_.read(offset, stage_verify, sizeof(stage_verify)) ||
       memcmp(stage_verify, bytes, sizeof(stage_verify)) != 0)
     return false;
 
   const FlashOpResult commit =
-      flash_.program(offset + config_format::kV2CommitOffset,
-                     bytes + config_format::kV2CommitOffset, 4);
+      flash_.program(offset + config_format::kWriteCommitOffset,
+                     bytes + config_format::kWriteCommitOffset, 4);
   if (commit != FlashOpResult::kDone) return false;
 
-  uint8_t verify[config_format::kV2RecordSize];
+  uint8_t verify[config_format::kWriteRecordSize];
   if (!flash_.read(offset, verify, sizeof(verify)) ||
       memcmp(verify, bytes, sizeof(verify)) != 0)
     return false;
@@ -475,7 +492,7 @@ bool ConfigStore::establishFreshBaseline() {
   if (!incarnation_source_->generate(incarnation) || incarnation == 0)
     return true;
 
-  const config_format::V2Record record(
+  const config_format::TokenizedRecord record(
       1, defaultConfig(),
       config_format::StateToken(incarnation, 1));
 
@@ -568,9 +585,9 @@ bool ConfigStore::startSave(const config_format::Config& candidate) {
   pending_token_ =
       config_format::StateToken(token_.incarnation, token_.revision + 1);
 
-  const config_format::V2Record record(
+  const config_format::TokenizedRecord record(
       pending_generation_, pending_config_, pending_token_);
-  config_format::encodeV2(record, blob_);
+  config_format::encodeV4(record, blob_);
 
   job_ = Job::kErase;
   blob_step_ = BlobStep::kBody;
@@ -586,7 +603,7 @@ FlashOpResult ConfigStore::writeBlob() {
         flash_op_awaiting_completion_
             ? flash_.pollPending()
             : flash_.program(offset, blob_,
-                             config_format::kV2BodyAndCrcSize);
+                             config_format::kWriteBodyAndCrcSize);
     if (result == FlashOpResult::kPending) {
       flash_op_awaiting_completion_ = true;
       return FlashOpResult::kPending;
@@ -598,7 +615,7 @@ FlashOpResult ConfigStore::writeBlob() {
       return FlashOpResult::kFailed;
     }
 
-    uint8_t verify[config_format::kV2BodyAndCrcSize];
+    uint8_t verify[config_format::kWriteBodyAndCrcSize];
     if (!flash_.read(offset, verify, sizeof(verify)) ||
         memcmp(verify, blob_, sizeof(verify)) != 0) {
       fail();
@@ -612,8 +629,8 @@ FlashOpResult ConfigStore::writeBlob() {
     const FlashOpResult result =
         flash_op_awaiting_completion_
             ? flash_.pollPending()
-            : flash_.program(offset + config_format::kV2CommitOffset,
-                             blob_ + config_format::kV2CommitOffset, 4);
+            : flash_.program(offset + config_format::kWriteCommitOffset,
+                             blob_ + config_format::kWriteCommitOffset, 4);
     if (result == FlashOpResult::kPending) {
       flash_op_awaiting_completion_ = true;
       return FlashOpResult::kPending;
@@ -628,7 +645,7 @@ FlashOpResult ConfigStore::writeBlob() {
     blob_step_ = BlobStep::kVerify;
   }
 
-  uint8_t verify[config_format::kV2RecordSize];
+  uint8_t verify[config_format::kWriteRecordSize];
   if (!flash_.read(offset, verify, sizeof(verify)) ||
       memcmp(verify, blob_, sizeof(verify)) != 0) {
     fail();
