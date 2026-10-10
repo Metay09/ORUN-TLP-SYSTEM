@@ -85,7 +85,7 @@ expect() {
     FAILURES=$((FAILURES + 1))
   fi
   tail -n +"$((MARK + 1))" "$LOG" | tr -d '\r' |
-    grep -E '^(APP SERVICES|APP SET|APP CONFIG|ROLE)' | sed 's/^/     /'
+    grep -E '^(APP SERVICES|APP SET|APP RESULT|ROLE)' | sed 's/^/     /'
 }
 
 flash "$REF"

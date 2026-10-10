@@ -7,7 +7,7 @@ Status (2026-10-10): **persistence half implemented** on
 pending and gate the merge. The runtime half (section 11: saved intent used
 at boot, `APP SERVICES` writer and status, GNSS-absent rule) is implemented on
 `feat/persistent-services`, stacked on the persistence half; host tests and
-ARM builds pass, hardware not yet observed. An independent review of this
+ARM builds pass, and the collar check passed on hardware (section 11). An independent review of this
 document was recommended and has not happened; the owner chose to proceed.
 
 Design baseline: `main@0a5e078`; implementation baseline: `main@7782a55`.
@@ -236,8 +236,14 @@ brown-out, no SoftDevice-async power cut) carry over unchanged.
   setup()/loop(): saved `T`, GNSS never answers -> TRACKER, BLOCKED, ROLE
   BASE refused, AUTO -> BASE, `AT` refused, `T` -> TRACKER, re-detect after
   10 minutes finds the module and tracking runs).
-- Physical check still to do: on the tasma, `APP SERVICES T`, reboot,
-  `APP SERVICES?`; ideally once with the GNSS module unplugged.
+- Physical (2026-10-10, collar RAK4631 `0E8ADE7E71531AA3` with GNSS,
+  `firmware/tests/m7/services_remote_check.sh`, 9/9 PASS): AUTO after the
+  upgrade (legacy TRACKER); `APP SERVICES T` APPLIED revision 2 with
+  `ROLE TRACKER source=CONFIG`; `ROLE BASE` refused; after a reboot
+  `ROLE TRACKER mode=SERVICES` and `applied=EXPLICIT tracking=ON`; AUTO
+  round trip (revision 3, `ROLE TRACKER source=AUTO`); `T` again
+  (revision 4). The collar is left with services `T`. Still to do on the
+  bench: boot with the GNSS module unplugged (TRACKER, BLOCKED, re-detect).
 
 ## 12. Not in this slice
 
