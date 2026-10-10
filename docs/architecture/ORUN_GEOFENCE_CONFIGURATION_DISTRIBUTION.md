@@ -737,7 +737,7 @@ resource contract                             [DONE]
 -> capacity/storage/CAS                       [DONE: M6D3/M6D3A]
 -> atomic durable active geofence source      [DONE: M6D3B]
 -> connect production provider to M6D2        [DONE: M6D3C, PHYSICAL PASS]
--> local USB writer on one mutation owner       [H+build: GeofenceMutationOwner]
+-> local USB writer on one mutation owner       [H+build, collar check PASS]
 -> secure BLE + protected LoRa resource transfer [NOT IMPLEMENTED]
 
 Then:
