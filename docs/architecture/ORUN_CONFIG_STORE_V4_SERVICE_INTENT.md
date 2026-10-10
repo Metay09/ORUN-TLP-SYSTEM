@@ -1,8 +1,10 @@
 # ORUN ConfigStore schema v4: persisted service intent
 
 Status (2026-10-10): **persistence half implemented** on
-`feat/config-store-v4` (host tests and ARM builds pass). **Physical validation
-of section 9 is pending** and gates the merge. Using the saved intent at boot
+`feat/config-store-v4` (host tests and ARM builds pass). Section 9 items 2 and
+5 **passed on hardware** (receiver RAK4631 `09A462BD4B275BA5`,
+`firmware/tests/m7/config_v4_remote_check.sh`, 10/10). Items 1, 3 and 4 are
+pending and gate the merge. Using the saved intent at boot
 is the next slice (section 10). An independent review of this document was
 recommended and has not happened; the owner chose to proceed.
 
@@ -160,6 +162,15 @@ the v4 offsets:
    erased; v4 firmware flashed back: record recovered.
 
 Items 1, 3 and 4 repeat the scoped v2 qualification for the new record size.
+
+Result 2026-10-10, receiver RAK4631 `09A462BD4B275BA5`, serial DFU between
+steps (a reboot, not a power cycle):
+
+| Item | Observed |
+| --- | --- |
+| 2 | v4 boot over its v2 record (revision 6): `source=stored`, 180 s, no maintenance; `APP INTERVAL 300` APPLIED revision 7; after reboot `source=stored` 300 s |
+| 5 | `main@7782a55` over the v4 record: `source=default` 180 s, `config_maintenance=yes`, `APP INTERVAL 600` → `MAINTENANCE`; v4 again: `source=stored` 300 s, no maintenance; `APP INTERVAL 180` APPLIED revision 8 |
+| 1, 3, 4 | pending (bench: blank partition, power cuts, BLE connected) |
 The non-claims of `CONFIG_STORE_V2_PHYSICAL_QUALIFICATION.md` (no mid-NVMC
 brown-out, no SoftDevice-async power cut) carry over unchanged.
 
