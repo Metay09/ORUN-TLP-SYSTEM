@@ -20,6 +20,8 @@ constexpr uint8_t kCtrl5 = 0x24;
 constexpr uint8_t kCtrl6 = 0x25;
 constexpr uint8_t kStatus = 0x27;
 constexpr uint8_t kOutXL = 0x28;
+constexpr uint8_t kFifoCtrl = 0x2E;
+constexpr uint8_t kFifoSrc = 0x2F;
 constexpr uint8_t kInt1Cfg = 0x30;
 constexpr uint8_t kClickCfg = 0x38;
 constexpr uint8_t kActThs = 0x3E;
@@ -27,6 +29,16 @@ constexpr uint8_t kActThs = 0x3E;
 constexpr uint8_t kStatusXyzDataAvailable = 0x08;
 constexpr uint8_t kCtrl1TenHzXyz = 0x27;   // 10 Hz, normal/HR path, XYZ enabled.
 constexpr uint8_t kCtrl4BduHighResolution2g = 0x88;  // BDU + HR, +/-2 g.
+constexpr uint8_t kCtrl4BduNormal2g = 0x80;          // BDU, normal, +/-2 g.
+constexpr uint8_t kCtrl5FifoEnable = 0x40;
+// FIFO_CTRL_REG FM[1:0] in bits 7:6 (AN3308): Bypass empties the FIFO,
+// Stream keeps the newest 32 samples and flags an overrun.
+constexpr uint8_t kFifoModeBypass = 0x00;
+constexpr uint8_t kFifoModeStream = 0x80;
+// FIFO_SRC_REG: OVRN_FIFO (32 unread samples, the oldest is being
+// overwritten), EMPTY, and FSS[4:0] = unread samples (31 also when full).
+constexpr uint8_t kFifoSrcOverrun = 0x40;
+constexpr uint8_t kFifoSrcLevelMask = 0x1F;
 
 struct RegisterWrite {
   uint8_t reg;
@@ -59,6 +71,29 @@ constexpr size_t kProbeRegisterWriteCount =
 static_assert(kProbeRegisterWriteCount <= UINT8_MAX,
               "M6A configuration step index must fit uint8_t");
 
+// Continuous stream: the same reset-safe order (CTRL1=0 first, ODR last).
+// The FIFO is enabled but held in Bypass, which stores nothing; Stream mode
+// is selected only after the turn-on settle (kStreamSettling), as AN3308
+// requires FIFO_EN before a FIFO mode is chosen.
+const RegisterWrite kStreamRegisterWrites[] = {
+    {kCtrl1, 0x00},
+    {kTempCfg, 0x00},
+    {kCtrl2, 0x00},
+    {kCtrl3, 0x00},
+    {kCtrl6, 0x00},
+    {kInt1Cfg, 0x00},
+    {kClickCfg, 0x00},
+    {kActThs, 0x00},
+    {kFifoCtrl, kFifoModeBypass},
+    {kCtrl5, kCtrl5FifoEnable},
+    {kCtrl4, kCtrl4BduNormal2g},
+    {kCtrl1, kCtrl1TenHzXyz},
+};
+constexpr size_t kStreamRegisterWriteCount =
+    sizeof(kStreamRegisterWrites) / sizeof(kStreamRegisterWrites[0]);
+static_assert(kStreamRegisterWriteCount <= UINT8_MAX,
+              "stream configuration step index must fit uint8_t");
+
 // LIS3DH high-resolution +/-2 g output is signed 12-bit, left-justified in the
 // 16-bit OUT registers. Sensitivity is 1 mg/digit, so divide the assembled
 // signed value by 16. Valid high-resolution samples have zero low four bits.
@@ -67,6 +102,24 @@ int16_t highResolution2gToMg(uint8_t low, uint8_t high) {
                              (static_cast<uint16_t>(high) << 8);
   const int16_t raw = static_cast<int16_t>(assembled);
   return static_cast<int16_t>(raw / 16);
+}
+
+// Normal mode +/-2 g (the FIFO stream): signed 10-bit, left-justified,
+// 4 mg/digit, so the same left-justified value divided by 16 is milli-g.
+int16_t normal2gToMg(uint8_t low, uint8_t high) {
+  const uint16_t assembled = static_cast<uint16_t>(low) |
+                             (static_cast<uint16_t>(high) << 8);
+  const int16_t raw = static_cast<int16_t>(assembled);
+  return static_cast<int16_t>((raw / 64) * 4);
+}
+
+// A drain is plausible when its sample count is within a quarter (plus two
+// for phase) of what 10 Hz gives over the elapsed time. Far outside means the
+// sensor is not sampling at the configured rate; an overrun is judged apart.
+bool streamCountPlausible(uint32_t stored, uint32_t elapsed_ms) {
+  const uint32_t expected = elapsed_ms / accelerometer_config::kProbeSamplePeriodMs;
+  const uint32_t slack = expected / 4U + 2U;
+  return stored + slack >= expected && stored <= expected + slack;
 }
 
 enum class BusResult : uint8_t {
@@ -114,8 +167,13 @@ BusResult writeRegister(uint8_t reg, uint8_t value) {
   return finishBusOperation(wrote_register && wrote_value && tx_status == 0);
 }
 
+// Reads one or more 6-byte sample sets from OUT_X_L. With the FIFO enabled
+// the address rolls back from 0x2D to 0x28, so each set is the next-oldest
+// FIFO sample (AN3308).
 BusResult readAxes(uint8_t* bytes, uint8_t length) {
-  if (bytes == nullptr || length != 6) return BusResult::kIoError;
+  if (bytes == nullptr || length == 0 || length % 6U != 0 ||
+      length > accelerometer_config::kStreamMaxSamplesPerRead * 6U)
+    return BusResult::kIoError;
 
   Wire.beginTransmission(accelerometer_config::kI2cAddress);
   // LIS3DH I2C multi-byte reads require bit 7 of the sub-address.
@@ -176,8 +234,9 @@ void AccelerometerManager::scheduleDetectionRetry(uint32_t now) {
 }
 
 void AccelerometerManager::startPowerDown(Event event) {
-  if (runtime_active_) {
+  if (runtime_active_ || stream_active_) {
     runtime_sample_ready_ = false;
+    clearStreamBuffer();
     // Fault visibility is immediate; shutdown continues cooperatively.
     if (event == Event::kFault) faulted_ = true;
   }
@@ -196,6 +255,8 @@ AccelerometerManager::Event AccelerometerManager::enterFaultCleanup(uint32_t now
   faulted_ = true;
   runtime_active_ = false;
   runtime_sample_ready_ = false;
+  stream_active_ = false;
+  clearStreamBuffer();
   probe_sample_ready_ = false;
   pending_finish_event_ = Event::kNone;
   next_action_at_ms_ = now + accelerometer_config::kFaultCleanupRetryBackoffMs;
@@ -218,6 +279,8 @@ AccelerometerManager::Event AccelerometerManager::finishFault() {
   faulted_ = true;
   runtime_active_ = false;
   runtime_sample_ready_ = false;
+  stream_active_ = false;
+  clearStreamBuffer();
   probe_sample_ready_ = false;
   pending_finish_event_ = Event::kNone;
   state_ = State::kDone;
@@ -281,8 +344,16 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
     return Event::kNone;
   }
 
+  if (state_ == State::kStreamSettling || state_ == State::kStreamWaiting ||
+      state_ == State::kStreamReading)
+    return pollStream(now);
+
   if (state_ == State::kConfiguring) {
-    const RegisterWrite& write = kProbeRegisterWrites[configuration_step_];
+    const RegisterWrite* writes =
+        stream_active_ ? kStreamRegisterWrites : kProbeRegisterWrites;
+    const size_t write_count =
+        stream_active_ ? kStreamRegisterWriteCount : kProbeRegisterWriteCount;
+    const RegisterWrite& write = writes[configuration_step_];
     const BusResult result = writeRegister(write.reg, write.value);
     accountBusResult(result, diagnostics_, saw_transport_timeout_);
     if (result != BusResult::kOk) {
@@ -292,7 +363,10 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
     }
 
     ++configuration_step_;
-    if (configuration_step_ == kProbeRegisterWriteCount) {
+    if (configuration_step_ == write_count && stream_active_) {
+      next_action_at_ms_ = now + accelerometer_config::kStreamSettleMs;
+      state_ = State::kStreamSettling;
+    } else if (configuration_step_ == write_count) {
       // CTRL_REG1=10 Hz is the final configuration write. LIS3DH high-resolution
       // output requires 7/ODR turn-on time; do not inspect DRDY or output data
       // until that interval has elapsed, even if retained status is already set.
@@ -394,8 +468,10 @@ AccelerometerManager::Event AccelerometerManager::poll(uint32_t now) {
         return Event::kNone;
       return enterFaultCleanup(now);
     }
-    if (runtime_active_ && pending_finish_event_ == Event::kNone) {
+    if ((runtime_active_ || stream_active_) &&
+        pending_finish_event_ == Event::kNone) {
       runtime_active_ = false;
+      stream_active_ = false;
       state_ = State::kDone;
       return Event::kNone;
     }
@@ -446,6 +522,165 @@ bool AccelerometerManager::takeProbeSample(AccelerometerSample* sample) {
   *sample = probe_sample_;
   probe_sample_ready_ = false;
   return true;
+}
+
+bool AccelerometerManager::startStream() {
+  if (!runtimeShutdownConfirmed()) return false;
+  stream_active_ = true;
+  stream_break_pending_ = true;
+  stream_consecutive_errors_ = 0;
+  clearStreamBuffer();
+  configuration_step_ = 0;
+  state_ = State::kConfiguring;
+  return true;
+}
+
+void AccelerometerManager::stopStream() {
+  // Like stopRuntimeSession(): repeated stop keeps the shutdown budget.
+  if (stream_active_ && state_ != State::kPoweringDown &&
+      state_ != State::kFaultCleanup)
+    startPowerDown(Event::kNone);
+}
+
+bool AccelerometerManager::takeStreamSample(AccelerometerStreamSample* sample) {
+  if (sample == nullptr || stream_count_ == 0 || faulted_) return false;
+  *sample = stream_buffer_[stream_head_];
+  stream_head_ = static_cast<uint8_t>((stream_head_ + 1U) %
+                                      accelerometer_config::kFifoCapacity);
+  --stream_count_;
+  return true;
+}
+
+void AccelerometerManager::clearStreamBuffer() {
+  stream_head_ = 0;
+  stream_count_ = 0;
+}
+
+void AccelerometerManager::pushStreamSample(const AccelerometerSample& sample) {
+  if (stream_count_ == accelerometer_config::kFifoCapacity) {
+    // The consumer fell a whole FIFO behind: keep nothing that would hide
+    // the loss; the next kept sample starts after a break.
+    ++diagnostics_.stream_overruns;
+    stream_break_pending_ = true;
+    return;
+  }
+  const uint8_t tail = static_cast<uint8_t>(
+      (stream_head_ + stream_count_) % accelerometer_config::kFifoCapacity);
+  stream_buffer_[tail].sample = sample;
+  stream_buffer_[tail].continuity_break = stream_break_pending_;
+  stream_break_pending_ = false;
+  ++stream_count_;
+}
+
+AccelerometerManager::Event AccelerometerManager::streamDrainFailed(
+    uint32_t now) {
+  ++diagnostics_.stream_read_errors;
+  stream_break_pending_ = true;
+  if (++stream_consecutive_errors_ >=
+      accelerometer_config::kStreamMaxConsecutiveErrors) {
+    startPowerDown(Event::kFault);
+    return Event::kNone;
+  }
+  next_action_at_ms_ = now + accelerometer_config::kStreamDrainPeriodMs;
+  state_ = State::kStreamWaiting;
+  return Event::kNone;
+}
+
+// One bus operation per pass, like configuration: select Stream mode after the
+// settle, then every drain period read FIFO_SRC, then the stored samples in
+// reads of at most kStreamMaxSamplesPerRead.
+AccelerometerManager::Event AccelerometerManager::pollStream(uint32_t now) {
+  if (state_ == State::kStreamSettling) {
+    if (!monotonic::reached(now, next_action_at_ms_)) return Event::kNone;
+    const BusResult result = writeRegister(kFifoCtrl, kFifoModeStream);
+    accountBusResult(result, diagnostics_, saw_transport_timeout_);
+    if (result != BusResult::kOk) {
+      ++diagnostics_.configuration_failures;
+      startPowerDown(Event::kFault);
+      return Event::kNone;
+    }
+    last_drain_at_ms_ = now;
+    next_action_at_ms_ = now + accelerometer_config::kStreamDrainPeriodMs;
+    state_ = State::kStreamWaiting;
+    return Event::kNone;
+  }
+
+  if (state_ == State::kStreamWaiting) {
+    if (!monotonic::reached(now, next_action_at_ms_)) return Event::kNone;
+    uint8_t source = 0;
+    const BusResult result = readRegister(kFifoSrc, &source);
+    accountBusResult(result, diagnostics_, saw_transport_timeout_);
+    if (result == BusResult::kTimeoutFailed) {
+      startPowerDown(Event::kFault);
+      return Event::kNone;
+    }
+    if (result != BusResult::kOk) return streamDrainFailed(now);
+
+    ++diagnostics_.stream_drains;
+    const uint32_t elapsed_ms = now - last_drain_at_ms_;
+    last_drain_at_ms_ = now;
+    const uint8_t stored = source & kFifoSrcLevelMask;
+    if ((source & kFifoSrcOverrun) != 0) {
+      // Late drain: the oldest samples were overwritten. The stored ones are
+      // still contiguous among themselves, so keep them after a break.
+      ++diagnostics_.stream_overruns;
+      stream_break_pending_ = true;
+      stream_consecutive_errors_ = 0;
+    } else if (!streamCountPlausible(stored, elapsed_ms)) {
+      // Not sampling at 10 Hz: read the samples out but do not keep them.
+      ++diagnostics_.stream_timing_errors;
+      stream_break_pending_ = true;
+      if (++stream_consecutive_errors_ >=
+          accelerometer_config::kStreamMaxConsecutiveErrors) {
+        startPowerDown(Event::kFault);
+        return Event::kNone;
+      }
+    } else {
+      stream_consecutive_errors_ = 0;
+    }
+
+    next_action_at_ms_ = now + accelerometer_config::kStreamDrainPeriodMs;
+    if (stored == 0) return Event::kNone;
+    drain_at_ms_ = now;
+    drain_total_ = stored;
+    drain_read_ = 0;
+    state_ = State::kStreamReading;
+    return Event::kNone;
+  }
+
+  // kStreamReading
+  const uint8_t remaining = static_cast<uint8_t>(drain_total_ - drain_read_);
+  const uint8_t batch =
+      remaining < accelerometer_config::kStreamMaxSamplesPerRead
+          ? remaining
+          : accelerometer_config::kStreamMaxSamplesPerRead;
+  uint8_t bytes[accelerometer_config::kStreamMaxSamplesPerRead * 6U]{};
+  const BusResult result =
+      readAxes(bytes, static_cast<uint8_t>(batch * 6U));
+  accountBusResult(result, diagnostics_, saw_transport_timeout_);
+  if (result == BusResult::kTimeoutFailed) {
+    startPowerDown(Event::kFault);
+    return Event::kNone;
+  }
+  if (result != BusResult::kOk) return streamDrainFailed(now);
+
+  // The error count is nonzero here only when this drain's sample count was
+  // implausible: such samples are read out (the FIFO keeps its phase) but
+  // not kept.
+  const bool keep = stream_consecutive_errors_ == 0;
+  for (uint8_t i = 0; keep && i < batch; ++i) {
+    const uint32_t index = drain_read_ + i;
+    const uint32_t age_ms = (drain_total_ - 1U - index) *
+                            accelerometer_config::kProbeSamplePeriodMs;
+    const uint8_t* axes = bytes + 6U * i;
+    pushStreamSample(AccelerometerSample(
+        drain_at_ms_ - age_ms, normal2gToMg(axes[0], axes[1]),
+        normal2gToMg(axes[2], axes[3]), normal2gToMg(axes[4], axes[5])));
+  }
+  if (keep) diagnostics_.stream_samples += batch;
+  drain_read_ = static_cast<uint8_t>(drain_read_ + batch);
+  if (drain_read_ == drain_total_) state_ = State::kStreamWaiting;
+  return Event::kNone;
 }
 
 }  // namespace orun_tlp

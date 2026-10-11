@@ -20,6 +20,8 @@ void reset() {
   fake_accelerometer_short_axis_read = false;
   fake_accelerometer_fail_write_register = -1;
   fake_accelerometer_write_count = fake_accelerometer_axis_read_count = 0;
+  fake_accelerometer_max_request = fake_accelerometer_fail_reads = 0;
+  fakeFifoClear();
   memset(fake_accelerometer_registers, 0, sizeof(fake_accelerometer_registers));
   fake_accelerometer_registers[0x0f] = 0x33;
   fake_accelerometer_registers[0x27] = 8;
@@ -218,244 +220,333 @@ void runtimeFailures() {
   assert(fake_accelerometer_registers[0x20] == 0);
 }
 
-// Only the newly added opt-in auto path is exercised here. Existing M6B3
-// sensor admission, cleanup, I2C and power-fault scenarios are not duplicated.
-void autoHourlySummary() {
-  reset();
-  AccelerometerManager m;
-  uint32_t now = boot(m);
-  ActivityCapture c(m);
-  ActivityAutoSampler auto_sampler;
-  const uint32_t enabled_at = now;
-  auto_sampler.setEnabled(true, enabled_at);
-  auto_sampler.setEnabled(true, enabled_at + 1);  // ON is idempotent.
-  assert(auto_sampler.enabled());
-  assert(!auto_sampler.poll(c, now));
-  assert(c.state() == State::kCapturing);
-  assert(auto_sampler.awaitingCapture());
+// ---- Continuous FIFO stream (owner decision 2026-10-12) ----------------
 
-  now = configure(m, now + 1);
-  for (unsigned i = 0; i < 50; ++i) {
-    m.poll(now);
-    m.poll(now);
-    c.poll();
-    assert(!auto_sampler.poll(c, now));
-    now += 100;
+constexpr int16_t kStillZ = 992;    // mg; multiples of 4 (10-bit, 4 mg/digit)
+constexpr int16_t kMovingLowZ = 768;
+
+// Starts the stream on a booted manager: twelve configuration writes, one
+// per pass, then Stream mode after the settle. Returns that time.
+uint32_t startStream(AccelerometerManager& m, uint32_t now) {
+  assert(m.startStream());
+  assert(!m.startStream());
+  const unsigned first = fake_accelerometer_write_count;
+  fake_accelerometer_registers[0x2E] = 0x80;  // retained across an MCU reset
+  for (unsigned i = 0; i < 12; ++i) {
+    const auto count = fake_accelerometer_write_count;
+    assert(m.poll(now++) == Event::kNone);
+    assert(fake_accelerometer_write_count == count + 1);
   }
-  assert(c.state() == State::kStopping);
-  m.poll(now);
-  c.poll();
-  auto_sampler.poll(c, now);
-  assert(c.state() == State::kReady);
-  assert(auto_sampler.usableWindows() == 1);
-  assert(auto_sampler.invalidWindows() == 0);
-  assert(!auto_sampler.awaitingCapture());
-  assert(!auto_sampler.poll(c, now + 100)); // no hot-loop resampling.
-  assert(c.state() == State::kReady);
-
-  const ActivityWindowFeatures expected = *c.result();
-  const uint32_t hour_end =
-      enabled_at + activity_auto_config::kSummaryPeriodMs;
-  assert(auto_sampler.poll(c, hour_end));
-  assert(auto_sampler.summaryReady());
-  const auto summary = auto_sampler.latestSummary();
-  assert(summary.usable_windows == 1);
-  assert(summary.invalid_windows == 0);
-  assert(summary.started_at_ms == enabled_at);
-  assert(summary.finished_at_ms == hour_end);
-  assert(summary.duration_seconds == 3600);
-  assert(summary.measured_coverage_ms == expected.duration_ms);
-  assert(summary.unavailable_attempts == 0);
-  assert(summary.mean_axis_variance_sum_mg2 ==
-         expected.axis_variance_sum_mg2);
-  assert(summary.mean_abs_delta_mg == expected.mean_abs_delta_mg);
-  ActivityPeriodEvidence evidence{};
-  assert(summary.active_windows == 0 && summary.activity_transitions == 0 &&
-         summary.measured_active_ms == 0);  // a still sensor is inactive
-  assert(linkActivityPeriodEvidence(summary, enabled_at, hour_end, evidence) ==
-         ActivityPeriodLinkResult::kLinkedClassified);
-  assert(evidence.period_duration_seconds == 3600);
-  assert(evidence.coverage_seconds == expected.duration_ms / 1000U);
-  assert(evidence.unknown_seconds ==
-         3600 - expected.duration_ms / 1000U);
-  assert(evidence.coverage_seconds + evidence.unknown_seconds == 3600);
-  assert(evidence.movement_evidence_present);
-  assert(evidence.active_inactive_classification_valid);
-  assert(evidence.active_seconds == 0 && evidence.transition_count == 0);
-  // A 3-minute tracker record is not the 1-hour activity summary.
-  assert(linkActivityPeriodEvidence(
-             summary, enabled_at, enabled_at + 180000U, evidence) ==
-         ActivityPeriodLinkResult::kPeriodMismatch);
-  assert(evidence.period_duration_seconds == 0);
-  assert(linkActivityPeriodEvidence(
-             summary, enabled_at + 1U, hour_end + 1U, evidence) ==
-         ActivityPeriodLinkResult::kPeriodMismatch);
-  ActivityHourSummary corrupt = summary;
-  corrupt.measured_coverage_ms = activity_auto_config::kSummaryPeriodMs + 1U;
-  assert(linkActivityPeriodEvidence(corrupt, enabled_at, hour_end, evidence) ==
-         ActivityPeriodLinkResult::kInvalidPeriod);
-  assert(auto_sampler.publishedSummaries() == 1);
-  auto_sampler.setEnabled(false, hour_end);
-  assert(!auto_sampler.enabled());
-  assert(!auto_sampler.poll(c, hour_end + 100));
+  assert(fake_accelerometer_write_regs[first] == 0x20 &&
+         fake_accelerometer_write_values[first] == 0);
+  assert(fake_accelerometer_write_regs[first + 11] == 0x20 &&
+         fake_accelerometer_write_values[first + 11] == 0x27);
+  assert(fake_accelerometer_registers[0x24] == 0x40);  // FIFO enabled
+  assert(fake_accelerometer_registers[0x23] == 0x80);  // BDU, normal, 2 g
+  assert(fake_accelerometer_registers[0x2E] == 0x00);  // Bypass: empty
+  assert(fake_accelerometer_registers[0x3E] == 0);
+  const uint32_t settled = now - 1 + accelerometer_config::kStreamSettleMs;
+  m.poll(settled - 1);
+  assert(!fakeFifoStreaming());
+  fakeFifoPush(0, 0, 4000);  // a turn-on sample is not stored in Bypass
+  m.poll(settled);
+  assert(fakeFifoStreaming() && fake_fifo_count == 0);
+  return settled;
 }
 
-void autoAbsentAndRollover() {
-  reset();
-  fake_accelerometer_present = false;
-  AccelerometerManager m;
-  m.begin(0);
-  m.poll(0);
-  m.poll(250);
-  m.poll(500);
-  assert(m.detectionComplete() && !m.detected());
-  ActivityCapture c(m);
-  ActivityAutoSampler auto_sampler;
-  const uint32_t started = UINT32_MAX - 1000U;
-  auto_sampler.setEnabled(true, started);
-  assert(!auto_sampler.poll(c, started));
-  assert(auto_sampler.unavailableAttempts() == 1);
-  assert(!auto_sampler.poll(c, started + 100U));
-  assert(auto_sampler.unavailableAttempts() == 1);
-  assert(!auto_sampler.poll(c, started + activity_auto_config::kCaptureIntervalMs));
-  assert(auto_sampler.unavailableAttempts() == 2);
-  assert(auto_sampler.poll(c, started + activity_auto_config::kSummaryPeriodMs));
-  assert(auto_sampler.latestSummary().usable_windows == 0);
-  assert(auto_sampler.latestSummary().unavailable_attempts == 2);
-  ActivityPeriodEvidence evidence{};
-  assert(linkActivityPeriodEvidence(auto_sampler.latestSummary(), started,
-             started + activity_auto_config::kSummaryPeriodMs, evidence) ==
-         ActivityPeriodLinkResult::kNoUsableEvidence);
-  assert(evidence.coverage_seconds == 0);
-  assert(evidence.unknown_seconds == 3600);
-}
-
-void autoBoundaryWindowNotMisattributed() {
-  reset();
-  AccelerometerManager m;
-  const uint32_t started = boot(m);
-  ActivityCapture c(m);
-  ActivityAutoSampler auto_sampler;
-  auto_sampler.setEnabled(true, started);
-  assert(!auto_sampler.poll(c, started));
-  const uint32_t deadline =
-      started + activity_auto_config::kSummaryPeriodMs;
-  // A capture was started before the hour boundary but sensor work was
-  // delayed. Publish the hour without inventing covered seconds.
-  assert(auto_sampler.poll(c, deadline));
-  assert(auto_sampler.latestSummary().usable_windows == 0);
-  assert(auto_sampler.latestSummary().measured_coverage_ms == 0);
-
-  uint32_t now = configure(m, deadline + 1);
-  for (unsigned i = 0; i < 50; ++i) {
-    m.poll(now); m.poll(now); c.poll();
-    auto_sampler.poll(c, now);
+// The sensor produces one sample per 100 ms; the loop polls the manager and
+// then the sampler several times per tick (one bus operation per pass).
+uint32_t runStream(AccelerometerManager& m, ActivityAutoSampler* s,
+                   uint32_t now, uint32_t duration_ms, bool moving,
+                   unsigned* tick) {
+  for (uint32_t t = 0; t < duration_ms; t += 100) {
     now += 100;
+    const int16_t z = moving && (*tick % 2u) ? kMovingLowZ : kStillZ;
+    fakeFifoPush(0, 0, z);
+    ++*tick;
+    for (unsigned pass = 0; pass < 4; ++pass) {
+      m.poll(now);
+      if (s != nullptr) s->poll(m, now);
+    }
   }
-  m.poll(now); c.poll();
-  auto_sampler.poll(c, now);
-  // The completed straddling window belongs to neither complete hour.
-  assert(auto_sampler.usableWindows() == 0);
-  assert(!auto_sampler.awaitingCapture());
-  assert(auto_sampler.poll(c, deadline + activity_auto_config::kSummaryPeriodMs));
-  assert(auto_sampler.latestSummary().usable_windows == 0);
-  assert(auto_sampler.latestSummary().measured_coverage_ms == 0);
-  assert(auto_sampler.latestSummary().boundary_discarded_windows == 1);
-}
-
-// One sampler-driven capture: still sensor, or Z alternating 992/768 mg.
-uint32_t runAutoCapture(AccelerometerManager& m, ActivityCapture& c,
-                        ActivityAutoSampler& sampler, uint32_t now,
-                        bool moving) {
-  assert(!sampler.poll(c, now));
-  assert(c.state() == State::kCapturing);
-  now = configure(m, now + 1);
-  for (unsigned i = 0; i < 50; ++i) {
-    if (moving) fake_accelerometer_registers[0x2d] = (i % 2) ? 0x30 : 0x3e;
-    m.poll(now);
-    m.poll(now);
-    c.poll();
-    assert(!sampler.poll(c, now));
-    now += 100;
-  }
-  fake_accelerometer_registers[0x2d] = 0x3e;
-  m.poll(now);
-  c.poll();
-  assert(!sampler.poll(c, now));
-  assert(c.state() == State::kReady);
   return now;
 }
 
-void autoReportOwnedPeriods() {
+void streamDrainsInOrder() {
   reset();
   AccelerometerManager m;
   uint32_t now = boot(m);
-  ActivityCapture c(m);
+  const uint32_t started = startStream(m, now);
+  ActivityCapture diagnostic(m);
+  assert(diagnostic.start() == Start::kBusy);  // the stream owns the sensor
+  assert(!m.startRuntimeSession());
+
+  unsigned tick = 0;
+  now = runStream(m, nullptr, started, 1900, false, &tick);
+  AccelerometerStreamSample sample;
+  assert(!m.takeStreamSample(&sample));  // nothing before the first drain
+  now = runStream(m, nullptr, now, 100, false, &tick);  // drain at +2000
+  for (unsigned i = 0; i < 20; ++i) {
+    assert(m.takeStreamSample(&sample));
+    assert(sample.continuity_break == (i == 0));
+    assert(sample.sample.captured_at_ms == started + 100 + 100 * i);
+    assert(sample.sample.z_mg == kStillZ && sample.sample.x_mg == 0);
+  }
+  assert(!m.takeStreamSample(&sample));
+  assert(fake_accelerometer_max_request <= 60);
+  assert(m.diagnostics().stream_drains == 1);
+  assert(m.diagnostics().stream_samples == 20);
+
+  // A late drain: 40 samples arrive, the FIFO keeps the newest 32 and flags
+  // the overrun. FSS reads 31, so one sample waits for the next drain.
+  for (unsigned i = 0; i < 40; ++i) fakeFifoPush(0, 0, kStillZ);
+  now += 4000;
+  for (unsigned pass = 0; pass < 5; ++pass) m.poll(now);
+  assert(m.diagnostics().stream_overruns == 1);
+  for (unsigned i = 0; i < 31; ++i) {
+    assert(m.takeStreamSample(&sample));
+    assert(sample.continuity_break == (i == 0));
+  }
+  assert(!m.takeStreamSample(&sample) && fake_fifo_count == 1);
+  now = runStream(m, nullptr, now, 2000, false, &tick);
+  for (unsigned i = 0; i < 21; ++i) {
+    assert(m.takeStreamSample(&sample) && !sample.continuity_break);
+  }
+  assert(m.diagnostics().stream_timing_errors == 0);
+
+  // One failed read only breaks continuity; the next drain is kept.
+  fake_accelerometer_fail_reads = 1;
+  now = runStream(m, nullptr, now, 2000, false, &tick);
+  assert(m.diagnostics().stream_read_errors == 1 && !m.faulted());
+  assert(!m.takeStreamSample(&sample));
+  now = runStream(m, nullptr, now, 2000, false, &tick);
+  assert(m.takeStreamSample(&sample) && sample.continuity_break);
+
+  // Stop: bounded power-down, then the one-shot path is available again.
+  m.stopStream();
+  m.stopStream();  // repeated stop keeps the shutdown budget
+  m.poll(now);
+  assert(fake_accelerometer_registers[0x20] == 0);
+  assert(!m.streamActive() && m.runtimeShutdownConfirmed());
+  assert(!m.takeStreamSample(&sample));
+  assert(m.startRuntimeSession());
+  m.stopRuntimeSession();
+  m.poll(now + 1);
+  assert(m.runtimeShutdownConfirmed());
+}
+
+void streamTimingAndReadFaults() {
+  // A sensor not sampling at 10 Hz: samples are read out but not kept, and
+  // the third implausible drain in a row is a sensor fault.
+  reset();
+  AccelerometerManager m;
+  uint32_t now = startStream(m, boot(m));
+  AccelerometerStreamSample sample;
+  for (unsigned drain = 1; drain <= 3; ++drain) {
+    for (unsigned i = 0; i < 5; ++i) fakeFifoPush(0, 0, kStillZ);
+    now += 2000;
+    for (unsigned pass = 0; pass < 3; ++pass) m.poll(now);
+    assert(m.diagnostics().stream_timing_errors == drain);
+    assert(!m.takeStreamSample(&sample));
+    assert(m.faulted() == (drain == 3));
+  }
+  m.poll(now);
+  assert(fake_accelerometer_registers[0x20] == 0 && !m.streamActive());
+  assert(!m.startStream());
+
+  // Too many samples for the elapsed time is implausible too.
+  reset();
+  AccelerometerManager fast;
+  now = startStream(fast, boot(fast));
+  for (unsigned i = 0; i < 30; ++i) fakeFifoPush(0, 0, kStillZ);
+  now += 2000;
+  for (unsigned pass = 0; pass < 4; ++pass) fast.poll(now);
+  assert(fast.diagnostics().stream_timing_errors == 1 && !fast.faulted());
+  assert(!fast.takeStreamSample(&sample) && fake_fifo_count == 0);
+
+  // Three failed drains in a row are a sensor fault.
+  reset();
+  AccelerometerManager failing;
+  now = startStream(failing, boot(failing));
+  fake_accelerometer_fail_reads = 3;
+  for (unsigned drain = 1; drain <= 3; ++drain) {
+    now += 2000;
+    failing.poll(now);
+  }
+  assert(failing.diagnostics().stream_read_errors == 3 && failing.faulted());
+}
+
+void autoReportOwnedContinuous() {
+  reset();
+  AccelerometerManager m;
+  uint32_t now = boot(m);
   ActivityAutoSampler sampler;
   sampler.setReportOwned(true);
   const uint32_t opened = now;
   sampler.setEnabled(true, opened);
+  sampler.setEnabled(true, opened + 1);  // ON is idempotent
   assert(!sampler.closePeriod(opened + 999));  // shorter than one second
 
-  // Moving window, then (one capture interval later) a still one.
-  now = runAutoCapture(m, c, sampler, now, true);
-  const ActivityWindowFeatures moving = *c.result();
-  assert(moving.axis_variance_sum_mg2 >= 2000);
-  now = sampler.nextDueAtMs();
-  now = runAutoCapture(m, c, sampler, now, false);
-  const ActivityWindowFeatures still = *c.result();
-  assert(still.axis_variance_sum_mg2 < 2000);
-
-  // No automatic hourly cut while report-owned.
-  assert(!sampler.poll(c, opened + activity_auto_config::kSummaryPeriodMs));
-  const uint32_t closed = opened + activity_auto_config::kSummaryPeriodMs + 5000;
+  // One minute moving, one still, one moving: a three-minute report period.
+  unsigned tick = 0;
+  now = runStream(m, &sampler, now, 60000, true, &tick);
+  assert(sampler.streaming() && m.streamActive());
+  now = runStream(m, &sampler, now, 60000, false, &tick);
+  now = runStream(m, &sampler, now, 60000, true, &tick);
+  // No automatic hourly cut while report-owned, also after an hour.
+  assert(!sampler.poll(m, opened + activity_auto_config::kSummaryPeriodMs));
+  const uint32_t closed = now;
   assert(sampler.closePeriod(closed));
   const ActivityHourSummary summary = sampler.latestSummary();
   assert(summary.started_at_ms == opened && summary.finished_at_ms == closed);
-  assert(summary.usable_windows == 2 && summary.active_windows == 1);
-  assert(summary.activity_transitions == 1);
-  assert(summary.measured_active_ms == moving.duration_ms);
+  assert(summary.duration_seconds == 180);
+  assert(summary.invalid_windows == 0 && summary.fault_windows == 0);
+  // Back-to-back 5 s windows: the whole period except the stream start and
+  // the window still filling at the close (at most 5 s each).
   assert(summary.measured_coverage_ms ==
-         moving.duration_ms + still.duration_ms);
+         summary.usable_windows * activity_auto_config::kWindowCoverageMs);
+  // Stream mode starts 0.6 s in; drains every 2 s leave the last samples
+  // (178.7-180 s) in a window still filling at the close: 35 windows, 175 s.
+  assert(summary.usable_windows == 35 && summary.measured_coverage_ms == 175000);
+  assert(summary.boundary_discarded_windows == 1);
+  // Windows over the still minute are inactive; the two windows straddling a
+  // change still carry movement (12 + 12 active). Exactly two transitions.
+  assert(summary.active_windows == 24);
+  assert(summary.activity_transitions == 2);
+  assert(summary.measured_active_ms ==
+         summary.active_windows * activity_auto_config::kWindowCoverageMs);
+  assert(sampler.lastMeanMagnitudeSquaredMg2() > 600000);
 
-  // The report owner's identical anchors link it, with active seconds.
   ActivityPeriodEvidence evidence{};
   assert(linkActivityPeriodEvidence(summary, opened, closed, evidence) ==
          ActivityPeriodLinkResult::kLinkedClassified);
-  assert(evidence.active_seconds == moving.duration_ms / 1000U);
+  assert(evidence.coverage_seconds == summary.measured_coverage_ms / 1000U);
+  assert(evidence.unknown_seconds == 180 - evidence.coverage_seconds);
   assert(evidence.active_seconds <= evidence.coverage_seconds);
-  assert(evidence.transition_count == 1);
-  // Corrupt counts never pass.
+  assert(evidence.transition_count == 2);
+  // A different report period is not this summary.
+  assert(linkActivityPeriodEvidence(summary, opened + 1U, closed, evidence) ==
+         ActivityPeriodLinkResult::kPeriodMismatch);
   ActivityHourSummary corrupt = summary;
   corrupt.measured_active_ms = summary.measured_coverage_ms + 1;
   assert(linkActivityPeriodEvidence(corrupt, opened, closed, evidence) ==
          ActivityPeriodLinkResult::kInvalidPeriod);
-  corrupt = summary;
-  corrupt.active_windows = 3;
-  assert(linkActivityPeriodEvidence(corrupt, opened, closed, evidence) ==
-         ActivityPeriodLinkResult::kInvalidPeriod);
 
-  // The next period starts at the close and counts afresh; a window still
-  // running at the next close is discarded, not moved.
-  now = closed;
-  assert(!sampler.poll(c, now));  // capture due -> started
-  assert(c.state() == State::kCapturing);
-  assert(sampler.closePeriod(now + 2000));
-  assert(sampler.latestSummary().usable_windows == 0);
-  assert(sampler.latestSummary().active_windows == 0);
-  now = configure(m, now + 2001);
-  for (unsigned i = 0; i < 50; ++i) {
-    m.poll(now); m.poll(now); c.poll();
-    sampler.poll(c, now);
-    now += 100;
-  }
-  m.poll(now); c.poll();
-  sampler.poll(c, now);
-  assert(sampler.usableWindows() == 0);
-  assert(sampler.closePeriod(now + 1000));
-  assert(sampler.latestSummary().boundary_discarded_windows == 1);
+  // Close between drains: samples still in the FIFO at the close belong to
+  // the closed period and never enter the next one.
+  now = runStream(m, &sampler, now, 1000, false, &tick);
+  const uint32_t mid = now;
+  assert(sampler.closePeriod(mid));
+  now = runStream(m, &sampler, now, 20000, false, &tick);
+  assert(sampler.closePeriod(now));
+  const ActivityHourSummary next = sampler.latestSummary();
+  assert(next.started_at_ms == mid && next.duration_seconds == 20);
+  assert(next.measured_coverage_ms <= 20000);
+  assert(next.measured_coverage_ms >= 15000);
+  assert(next.active_windows == 0 && next.activity_transitions == 0);
+
+  // A stall longer than the FIFO: the window it breaks is dropped and the
+  // lost time stays unmeasured.
+  now = runStream(m, &sampler, now, 10000, false, &tick);
+  for (unsigned i = 0; i < 40; ++i) fakeFifoPush(0, 0, kStillZ);
+  tick += 40;
+  now += 4000;
+  now = runStream(m, &sampler, now, 10000, false, &tick);
+  assert(sampler.closePeriod(now));
+  const ActivityHourSummary stalled = sampler.latestSummary();
+  assert(stalled.duration_seconds == 24);
+  assert(stalled.invalid_windows == 1);
+  assert(stalled.measured_coverage_ms <= 20000);
+  assert(m.diagnostics().stream_overruns == 1);
+
+  // OFF stops the stream through the bounded power-down.
   sampler.setEnabled(false, now);
+  sampler.poll(m, now);
+  assert(!sampler.streaming());
+  m.poll(now);
+  assert(!m.streamActive() && fake_accelerometer_registers[0x20] == 0);
   assert(!sampler.closePeriod(now + 5000));  // disabled
+}
+
+void autoHourlySummary() {
+  reset();
+  AccelerometerManager m;
+  uint32_t now = boot(m);
+  ActivityAutoSampler sampler;
+  const uint32_t enabled_at = now;
+  sampler.setEnabled(true, enabled_at);
+  unsigned tick = 0;
+  now = runStream(m, &sampler, now, activity_auto_config::kSummaryPeriodMs - 100,
+                  false, &tick);
+  assert(!sampler.summaryReady());
+  // The automatic publication happens on the hour.
+  now += 100;
+  fakeFifoPush(0, 0, kStillZ);
+  m.poll(now);
+  assert(sampler.poll(m, now));
+  const ActivityHourSummary summary = sampler.latestSummary();
+  assert(summary.started_at_ms == enabled_at && summary.duration_seconds == 3600);
+  assert(summary.measured_coverage_ms >= 3590000);
+  assert(summary.active_windows == 0 && summary.activity_transitions == 0);
+  assert(summary.mean_axis_variance_sum_mg2 == 0);
+  ActivityPeriodEvidence evidence{};
+  assert(linkActivityPeriodEvidence(summary, enabled_at, now, evidence) ==
+         ActivityPeriodLinkResult::kLinkedClassified);
+  assert(evidence.coverage_seconds + evidence.unknown_seconds == 3600);
+  assert(evidence.active_seconds == 0);
+  // A 3-minute tracker record is not the 1-hour activity summary.
+  assert(linkActivityPeriodEvidence(summary, enabled_at, enabled_at + 180000U,
+                                    evidence) ==
+         ActivityPeriodLinkResult::kPeriodMismatch);
+  assert(sampler.publishedSummaries() == 1);
+}
+
+void autoUnavailableFaultAndRollover() {
+  // Absent sensor across the 32-bit wrap: bounded retries, honest zero.
+  reset();
+  fake_accelerometer_present = false;
+  AccelerometerManager absent;
+  absent.begin(0);
+  absent.poll(0); absent.poll(250); absent.poll(500);
+  assert(absent.detectionComplete() && !absent.detected());
+  ActivityAutoSampler sampler;
+  const uint32_t started = UINT32_MAX - 1000U;
+  sampler.setEnabled(true, started);
+  assert(!sampler.poll(absent, started));
+  assert(sampler.unavailableAttempts() == 1);
+  assert(!sampler.poll(absent, started + 100U));
+  assert(sampler.unavailableAttempts() == 1);
+  assert(!sampler.poll(absent,
+                       started + activity_auto_config::kUnavailableRetryMs));
+  assert(sampler.unavailableAttempts() == 2);
+  assert(sampler.poll(absent, started + activity_auto_config::kSummaryPeriodMs));
+  assert(sampler.latestSummary().usable_windows == 0);
+  ActivityPeriodEvidence evidence{};
+  assert(linkActivityPeriodEvidence(sampler.latestSummary(), started,
+             started + activity_auto_config::kSummaryPeriodMs, evidence) ==
+         ActivityPeriodLinkResult::kNoUsableEvidence);
+  assert(evidence.coverage_seconds == 0 && evidence.unknown_seconds == 3600);
+
+  // Pending detection waits; a fault mid-stream ends it and counts once.
+  reset();
+  AccelerometerManager m;
+  ActivityAutoSampler streaming;
+  streaming.setReportOwned(true);
+  streaming.setEnabled(true, 0);
+  m.begin(0);
+  assert(!streaming.poll(m, 0) && !streaming.streaming());
+  assert(streaming.unavailableAttempts() == 0);
+  uint32_t now = boot(m);
+  unsigned tick = 0;
+  now = runStream(m, &streaming, now + 1000, 12000, false, &tick);
+  assert(streaming.streaming() && streaming.usableWindows() >= 1);
+  fake_accelerometer_fail_reads = 3;
+  now = runStream(m, &streaming, now, 6000, false, &tick);
+  assert(m.faulted() && !streaming.streaming());
+  assert(streaming.faultWindows() == 1);
+  now = runStream(m, &streaming, now,
+                  activity_auto_config::kUnavailableRetryMs, false, &tick);
+  assert(streaming.unavailableAttempts() == 1 && streaming.faultWindows() == 1);
 }
 
 int main() {
@@ -465,9 +556,10 @@ int main() {
   capture(false, true, 1000);
   capture(false, false, UINT32_MAX - 800);
   runtimeFailures();
+  streamDrainsInOrder();
+  streamTimingAndReadFaults();
+  autoReportOwnedContinuous();
   autoHourlySummary();
-  autoAbsentAndRollover();
-  autoBoundaryWindowNotMisattributed();
-  autoReportOwnedPeriods();
-  puts("M6B3 runtime session/capture checks: PASS");
+  autoUnavailableFaultAndRollover();
+  puts("M6B3 runtime session/capture and continuous stream checks: PASS");
 }

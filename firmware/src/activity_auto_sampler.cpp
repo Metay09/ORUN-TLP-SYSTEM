@@ -1,6 +1,7 @@
 #include "activity_auto_sampler.h"
 
 #include "activity_classifier.h"
+#include "activity_quality.h"
 #include "monotonic_time.h"
 
 namespace orun_tlp {
@@ -13,9 +14,8 @@ void incrementBounded(uint16_t& value) {
 void ActivityAutoSampler::setEnabled(bool enabled, uint32_t now) {
   if (enabled == enabled_) return;
   enabled_ = enabled;
-  awaiting_capture_ = false;
-  if (!enabled_) return;  // Do not interrupt the manager's sensor shutdown.
-  next_due_at_ms_ = now;
+  if (!enabled_) return;  // poll() stops the stream through the manager.
+  next_start_at_ms_ = now;
   resetPeriod(now);
   summary_ready_ = false;
   latest_summary_ = ActivityHourSummary{};
@@ -23,6 +23,7 @@ void ActivityAutoSampler::setEnabled(bool enabled, uint32_t now) {
 
 void ActivityAutoSampler::resetPeriod(uint32_t now) {
   period_started_at_ms_ = now;
+  window_.reset();
   usable_windows_ = invalid_windows_ = fault_windows_ = 0;
   unavailable_attempts_ = boundary_discarded_windows_ = 0;
   summed_variance_mg2_ = summed_abs_delta_mg_ = 0;
@@ -32,28 +33,45 @@ void ActivityAutoSampler::resetPeriod(uint32_t now) {
   has_last_window_ = false;
 }
 
-void ActivityAutoSampler::recordCompleted(const ActivityCapture& capture) {
-  const ActivityCapture::State state = capture.state();
-  if (state == ActivityCapture::State::kFault) {
-    incrementBounded(fault_windows_);
-    return;
-  }
-  if (state != ActivityCapture::State::kReady ||
-      !capture.assessment().usable || capture.result() == nullptr) {
+void ActivityAutoSampler::consume(const AccelerometerStreamSample& stream) {
+  if (stream.continuity_break && window_.sampleCount() != 0) {
     incrementBounded(invalid_windows_);
-    return;
+    window_.reset();
   }
+  // A sample taken before this period started belongs to a period that is
+  // already closed (it was still in the FIFO at the close). Keep it out.
+  if (!monotonic::reached(stream.sample.captured_at_ms, period_started_at_ms_))
+    return;
+
+  // FIFO samples are evenly spaced at the output data rate between breaks,
+  // so the window timing is the nominal 100 ms spacing; the manager checks
+  // the real rate against the MCU clock at every drain.
+  if (window_.sampleCount() == 0) window_first_ms_ = stream.sample.captured_at_ms;
+  AccelerometerSample stamped = stream.sample;
+  stamped.captured_at_ms =
+      window_first_ms_ +
+      window_.sampleCount() * activity_config::kExpectedSamplePeriodMs;
+  window_.addSample(stamped);
+  if (!window_.complete()) return;
+
+  ActivityWindowFeatures features;
+  window_.takeCompletedFeatures(&features);
+  if (assessActivityWindow(features).usable)
+    recordWindow(features);
+  else
+    incrementBounded(invalid_windows_);
+}
+
+void ActivityAutoSampler::recordWindow(const ActivityWindowFeatures& features) {
   incrementBounded(usable_windows_);
-  // Actual first-to-last sample interval: do not pretend 50 samples cover
-  // 180 seconds, nor count initial sensor setup/settling as observations.
-  summed_coverage_ms_ += capture.result()->duration_ms;
-  summed_variance_mg2_ += capture.result()->axis_variance_sum_mg2;
-  summed_abs_delta_mg_ += capture.result()->mean_abs_delta_mg;
-  const bool active =
-      activityWindowActive(capture.result()->axis_variance_sum_mg2);
+  summed_coverage_ms_ += activity_auto_config::kWindowCoverageMs;
+  summed_variance_mg2_ += features.axis_variance_sum_mg2;
+  summed_abs_delta_mg_ += features.mean_abs_delta_mg;
+  last_magnitude_mg2_ = features.mean_magnitude_squared_mg2;
+  const bool active = activityWindowActive(features.axis_variance_sum_mg2);
   if (active) {
     incrementBounded(active_windows_);
-    summed_active_ms_ += capture.result()->duration_ms;
+    summed_active_ms_ += activity_auto_config::kWindowCoverageMs;
   }
   if (has_last_window_ && active != last_window_active_)
     incrementBounded(transitions_);
@@ -79,6 +97,8 @@ bool ActivityAutoSampler::closePeriod(uint32_t now) {
 }
 
 void ActivityAutoSampler::publish(uint32_t now) {
+  // The window still filling belongs to this period but is incomplete.
+  if (window_.sampleCount() != 0) incrementBounded(boundary_discarded_windows_);
   ActivityHourSummary summary{};
   summary.started_at_ms = period_started_at_ms_;
   summary.finished_at_ms = now;
@@ -109,48 +129,43 @@ void ActivityAutoSampler::publish(uint32_t now) {
   resetPeriod(now);  // No catch-up burst or fabricated lost periods.
 }
 
-bool ActivityAutoSampler::poll(ActivityCapture& capture, uint32_t now) {
-  if (!enabled_) return false;
+bool ActivityAutoSampler::poll(AccelerometerManager& manager, uint32_t now) {
+  if (!enabled_) {
+    if (stream_owned_) {
+      manager.stopStream();
+      stream_owned_ = false;
+      window_.reset();
+    }
+    return false;
+  }
 
-  if (awaiting_capture_) {
-    const auto state = capture.state();
-    if (state == ActivityCapture::State::kReady ||
-        state == ActivityCapture::State::kInvalid ||
-        state == ActivityCapture::State::kFault) {
-      // Never allocate a short window to an hour that it straddles.
-      // Late completion after a previous report was published must not
-      // be misattributed to the new reporting period either.
-      const bool started_in_period =
-          monotonic::reached(capture_started_at_ms_, period_started_at_ms_);
-      const bool finished_before_deadline =
-          report_owned_ ||
-          !monotonic::elapsed(now, period_started_at_ms_,
-                              activity_auto_config::kSummaryPeriodMs);
-      if (started_in_period && finished_before_deadline) {
-        recordCompleted(capture);
-      } else {
-        incrementBounded(boundary_discarded_windows_);
-      }
-      awaiting_capture_ = false;
-      next_due_at_ms_ = now + activity_auto_config::kCaptureIntervalMs;
+  if (stream_owned_) {
+    if (manager.faulted() || !manager.streamActive()) {
+      // A sensor fault ended the stream; its partial window is lost.
+      incrementBounded(fault_windows_);
+      window_.reset();
+      stream_owned_ = false;
+      next_start_at_ms_ = now + activity_auto_config::kUnavailableRetryMs;
+    } else {
+      AccelerometerStreamSample sample;
+      while (manager.takeStreamSample(&sample)) consume(sample);
     }
   }
 
   const bool published = publishIfDue(now);
-  if (!awaiting_capture_ && monotonic::reached(now, next_due_at_ms_)) {
-    const ActivityCapture::StartResult result = capture.start();
-    if (result == ActivityCapture::StartResult::kStarted) {
-      awaiting_capture_ = true;
-      capture_started_at_ms_ = now;
-    } else if (result == ActivityCapture::StartResult::kPending ||
-               result == ActivityCapture::StartResult::kBusy) {
-      // Capability detection or an explicit USB capture still owns the sensor.
-      // Retry cooperatively, without overwriting that result/session.
-      next_due_at_ms_ = now + 1000U;
-    } else {
+  if (!stream_owned_ && monotonic::reached(now, next_start_at_ms_)) {
+    if (!manager.detectionComplete()) {
+      next_start_at_ms_ = now + activity_auto_config::kBusyRetryMs;
+    } else if (manager.faulted() || !manager.detected()) {
       // Absent/faulted hardware must not induce hot-loop I2C retries.
       incrementBounded(unavailable_attempts_);
-      next_due_at_ms_ = now + activity_auto_config::kCaptureIntervalMs;
+      next_start_at_ms_ = now + activity_auto_config::kUnavailableRetryMs;
+    } else if (manager.startStream()) {
+      stream_owned_ = true;
+    } else {
+      // A USB diagnostic capture or the previous stream's shutdown still
+      // owns the sensor. Retry cooperatively without disturbing it.
+      next_start_at_ms_ = now + activity_auto_config::kBusyRetryMs;
     }
   }
   return published;

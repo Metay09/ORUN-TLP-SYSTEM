@@ -218,7 +218,9 @@ Gate: physical evidence document. Build PASS alone is not hardware PASS.
   plaintext (validity bits decide, stale values zeroed, saturations, coverage-based quality).
 - Activity: research-derived, unvalidated active/inactive window threshold
   (`activity_classifier.h`), active seconds/transitions per period, report-owned sampler periods
-  so the summary anchors equal the report period.
+  so the summary anchors equal the report period. Since 2026-10-12 the sampler reads the
+  continuous LIS3DH FIFO stream (M6B3), so activity coverage spans the period instead of 5 s
+  every 3 minutes.
 - USB dry run on the tracker: `PRODUCT PERIODIC DRYRUN ...` and `bytes=<128 hex>` per normal fix or
   timed-out acquisition. RAM-only identity (`record_incarnation=1`), no ObservationStore write, no
   sealing, no RF. TLP v1 POSITION and HistoryStore stay the production path.
