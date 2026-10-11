@@ -248,5 +248,131 @@ int main() {
     }
   }
 
+  // Requested services: APP SERVICES AUTO|NONE|<letters>, APP SERVICES?.
+  {
+    namespace cf = config_format;
+    uint8_t mode = 0x55, services = 0x66;
+    const auto parse_services = [&](const char* text) {
+      return parseUsbServicesCommand(
+          text, static_cast<uint8_t>(strlen(text)), &mode, &services);
+    };
+    assert(parse_services("APP SERVICES T") == UsbConfigCommandParse::kOk);
+    assert(mode == cf::kServiceModeExplicit && services == cf::kServiceTracking);
+    assert(parse_services("APP SERVICES RT") == UsbConfigCommandParse::kOk);
+    assert(services == (cf::kServiceTracking | cf::kServiceRelayForwarding));
+    assert(parse_services("APP SERVICES NONE") == UsbConfigCommandParse::kOk);
+    assert(mode == cf::kServiceModeExplicit && services == 0);
+    assert(parse_services("APP SERVICES AUTO") == UsbConfigCommandParse::kOk);
+    assert(mode == cf::kServiceModeAuto && services == 0);
+    // Spelling is the parser's job; whether a combination runs is the owner's.
+    assert(parse_services("APP SERVICES AT") == UsbConfigCommandParse::kOk);
+    assert(services ==
+           (cf::kServiceTracking | cf::kServiceApplicationReceive));
+
+    mode = 0x55; services = 0x66;
+    const char* malformed[] = {"APP SERVICES ",  "APP SERVICES TT",
+                               "APP SERVICES X", "APP SERVICES t",
+                               "APP SERVICES  T", "APP SERVICES T "};
+    for (const char* text : malformed) {
+      assert(parse_services(text) == UsbConfigCommandParse::kMalformed);
+      assert(mode == 0x55 && services == 0x66);
+    }
+    const char* unrelated[] = {"APP SERVICES", "APP SERVICES?", "ROLE?",
+                               "app services T", "APP INTERVAL 900", ""};
+    for (const char* text : unrelated)
+      assert(parse_services(text) == UsbConfigCommandParse::kNotConfigCommand);
+    assert(strlen("APP SERVICES AUTO") <= 23);
+
+    assert(isUsbServicesQuery("APP SERVICES?", 13));
+    assert(!isUsbServicesQuery("APP SERVICES", 12));
+    assert(!isUsbServicesQuery("APP SERVICES? ", 14));
+
+    // Explicit tracking on a collar whose GNSS was not found: still a
+    // tracker, tracking blocked -- never a receiver.
+    UsbServiceStatus status;
+    status.service_mode = cf::kServiceModeExplicit;
+    status.requested_services = cf::kServiceTracking;
+    status.intent_applied = true;
+    status.tracking =
+        ServiceStatus(ServiceState::kBlocked, ServiceReason::kCapabilityAbsent);
+    status.relay_forwarding = ServiceStatus();
+    status.application_receive = false;
+    status.legacy_role = NodeRole::kTracker;
+    Serial.output.clear();
+    printUsbServiceStatus(status);
+    assert(Serial.output ==
+           "APP SERVICES mode=EXPLICIT requested=T applied=EXPLICIT "
+           "tracking=BLOCKED_GNSS_ABSENT relay=OFF receive=OFF "
+           "legacy_mode=TRACKER\n");
+
+    status.tracking =
+        ServiceStatus(ServiceState::kBlocked, ServiceReason::kCapabilityUnknown);
+    Serial.output.clear();
+    printUsbServiceStatus(status);
+    assert(Serial.output.find("tracking=BLOCKED_GNSS_PENDING ") !=
+           std::string::npos);
+
+    // Legacy AUTO: no requested set, the inferred role is what runs.
+    UsbServiceStatus legacy;
+    legacy.tracking = ServiceStatus(ServiceState::kDisabled);
+    legacy.application_receive = true;
+    legacy.legacy_role = NodeRole::kBase;
+    Serial.output.clear();
+    printUsbServiceStatus(legacy);
+    assert(Serial.output ==
+           "APP SERVICES mode=AUTO requested=- applied=LEGACY_AUTO "
+           "tracking=OFF relay=OFF receive=ON legacy_mode=BASE\n");
+
+    // A saved intent this firmware cannot run is reported, not hidden.
+    UsbServiceStatus unsupported;
+    unsupported.service_mode = cf::kServiceModeExplicit;
+    unsupported.requested_services =
+        cf::kServiceTracking | cf::kServiceRelayForwarding |
+        cf::kServiceApplicationReceive;
+    unsupported.intent_applied = false;
+    unsupported.tracking = ServiceStatus(ServiceState::kEnabled);
+    unsupported.relay_forwarding = ServiceStatus(ServiceState::kEnabled);
+    unsupported.legacy_role = NodeRole::kTracker;
+    Serial.output.clear();
+    printUsbServiceStatus(unsupported);
+    assert(Serial.output ==
+           "APP SERVICES mode=EXPLICIT requested=TRA "
+           "applied=LEGACY_AUTO_UNSUPPORTED tracking=ON relay=ON receive=OFF "
+           "legacy_mode=TRACKER\n");
+    assert(Serial.output.size() < 256);
+
+    ConfigMutationResult set;
+    set.kind = ConfigMutationKind::kSetServiceIntent;
+    set.request_id = 50;
+    set.outcome = ConfigMutationOutcome::kApplied;
+    set.token_valid = true;
+    set.token = config_format::StateToken(0x1122334455667788ULL, 4);
+    set.config = config_format::Config(
+        180, 0, cf::kServiceModeExplicit,
+        cf::kServiceTracking | cf::kServiceRelayForwarding);
+    Serial.output.clear();
+    printUsbConfigMutationResult(set);
+    assert(Serial.output ==
+           "APP SET id=50 code=APPLIED services=TR mode=EXPLICIT "
+           "token=VALID revision=4\n");
+
+    set.config = config_format::Config(180, 0);
+    set.outcome = ConfigMutationOutcome::kOutcomeUnknown;
+    set.token_valid = false;
+    Serial.output.clear();
+    printUsbConfigMutationResult(set);
+    assert(Serial.output ==
+           "APP SET id=50 code=OUTCOME_UNKNOWN services=AUTO mode=AUTO "
+           "token=UNAVAILABLE\n");
+
+    set.config = config_format::Config(180, 0, cf::kServiceModeExplicit, 0);
+    set.outcome = ConfigMutationOutcome::kInvalid;
+    Serial.output.clear();
+    printUsbConfigMutationResult(set);
+    assert(Serial.output ==
+           "APP SET id=50 code=INVALID services=NONE mode=EXPLICIT "
+           "token=UNAVAILABLE\n");
+  }
+
   return 0;
 }

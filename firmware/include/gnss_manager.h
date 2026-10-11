@@ -67,6 +67,14 @@ class GnssManager {
     return additional_fix_acquisition_active_;
   }
 
+  // After detection gave up (kNotPresent), start a fresh bounded detection
+  // every interval_ms. 0 (default) keeps the legacy "absent until reboot".
+  // Used while tracking is explicitly requested: a collar whose GNSS probe
+  // failed once must not need a reset to start tracking again.
+  void setRedetectIntervalMs(uint32_t interval_ms) {
+    redetect_interval_ms_ = interval_ms;
+  }
+
   bool takeFreshFixForTransmission(GnssFix* fix);
   // Read-only application admission hint. poll() normally expires stale
   // observations before the composition root uses this. If loop-owned I2C is
@@ -120,6 +128,7 @@ class GnssManager {
   uint32_t pvt_generation_ = 0, dop_generation_ = 0;
   uint32_t dop_received_at_ms_ = 0;
   uint8_t detection_attempts_ = 0;
+  uint32_t redetect_interval_ms_ = 0;
   bool has_boundary_epoch_ = false;
   uint32_t boundary_epoch_ = 0;
   bool has_dop_boundary_epoch_ = false;

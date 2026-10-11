@@ -16,10 +16,10 @@ namespace orun_tlp {
 // docs/architecture/ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md section 3.4 and
 // docs/architecture/ORUN_APPLICATION_TRANSPORT_SURFACE.md section 7.
 //
-// This slice admits only the local USB channel and only the tracking
-// interval. Authentication, authorization, a caller-supplied precondition
-// token (CAS) and remote transports are later slices that reuse this owner;
-// nothing here is a wire format.
+// This slice admits only the local USB channel, for the tracking interval and
+// the requested-service intent. Authentication, authorization, a
+// caller-supplied precondition token (CAS) and remote transports are later
+// slices that reuse this owner; nothing here is a wire format.
 //
 // Loop-owned and fixed-memory, like the ConfigStore it drives.
 
@@ -35,6 +35,9 @@ constexpr uint32_t kMinTrackingIntervalSeconds = 60;
 
 enum class ConfigMutationKind : uint8_t {
   kSetTrackingInterval = 1,
+  // service_mode + requested_services (ConfigStore v4). Only combinations
+  // this runtime can run are admitted (service_intent.h).
+  kSetServiceIntent = 2,
 };
 
 struct ConfigMutationRequest {
@@ -43,18 +46,26 @@ struct ConfigMutationRequest {
       uint32_t request_id_value,
       ApplicationAccessContext access_value,
       ConfigMutationKind kind_value,
-      uint32_t tracking_interval_seconds_value)
+      uint32_t tracking_interval_seconds_value,
+      uint8_t service_mode_value = 0,
+      uint8_t requested_services_value = 0)
       : requester(requester_value),
         request_id(request_id_value),
         access(access_value),
         kind(kind_value),
-        tracking_interval_seconds(tracking_interval_seconds_value) {}
+        tracking_interval_seconds(tracking_interval_seconds_value),
+        service_mode(service_mode_value),
+        requested_services(requested_services_value) {}
 
   ApplicationRequester requester;
   uint32_t request_id;
   ApplicationAccessContext access;
   ConfigMutationKind kind;
+  // kSetTrackingInterval
   uint32_t tracking_interval_seconds;
+  // kSetServiceIntent
+  uint8_t service_mode;
+  uint8_t requested_services;
 };
 
 enum class ConfigMutationSubmitResult : uint8_t {
@@ -72,7 +83,8 @@ enum class ConfigMutationOutcome : uint8_t {
   kApplied = 0,
   // Desired state already in effect. Nothing written; `token` unchanged.
   kUnchanged = 1,
-  // The requested value is outside the admitted range.
+  // The requested value is outside the admitted range, or the service
+  // combination cannot run on this firmware.
   kInvalid = 2,
   // This access channel may not change configuration (yet).
   kAccessDenied = 3,

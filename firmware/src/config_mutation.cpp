@@ -1,5 +1,7 @@
 #include "config_mutation.h"
 
+#include "service_intent.h"
+
 namespace orun_tlp {
 namespace {
 
@@ -43,17 +45,32 @@ ConfigMutationSubmitResult ConfigMutationOwner::submit(
     return ConfigMutationSubmitResult::kAccepted;
   }
 
-  if (request.kind != ConfigMutationKind::kSetTrackingInterval ||
-      request.tracking_interval_seconds <
-          config_mutation_policy::kMinTrackingIntervalSeconds) {
-    complete(ConfigMutationOutcome::kInvalid);
-    return ConfigMutationSubmitResult::kAccepted;
-  }
-
-  // Change one field of the authoritative record; every other field is
-  // carried over unchanged.
+  // Change the requested field(s) of the authoritative record; every other
+  // field is carried over unchanged.
   config_format::Config candidate = store_.config();
-  candidate.tracking_interval_seconds = request.tracking_interval_seconds;
+  switch (request.kind) {
+    case ConfigMutationKind::kSetTrackingInterval:
+      if (request.tracking_interval_seconds <
+          config_mutation_policy::kMinTrackingIntervalSeconds) {
+        complete(ConfigMutationOutcome::kInvalid);
+        return ConfigMutationSubmitResult::kAccepted;
+      }
+      candidate.tracking_interval_seconds = request.tracking_interval_seconds;
+      break;
+    case ConfigMutationKind::kSetServiceIntent:
+      if (admitServiceIntent(request.service_mode,
+                             request.requested_services) !=
+          ServiceIntentAdmission::kSupported) {
+        complete(ConfigMutationOutcome::kInvalid);
+        return ConfigMutationSubmitResult::kAccepted;
+      }
+      candidate.service_mode = request.service_mode;
+      candidate.requested_services = request.requested_services;
+      break;
+    default:
+      complete(ConfigMutationOutcome::kInvalid);
+      return ConfigMutationSubmitResult::kAccepted;
+  }
 
   switch (store_.admitSave(candidate)) {
     case ConfigSaveAdmission::kStarted:

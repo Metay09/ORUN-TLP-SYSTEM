@@ -43,6 +43,9 @@ class RoleController {
   bool automatic() const { return automatic_; }
   bool updateAutomatic(bool detection_complete, bool gnss_detected);
   bool applyOverride(NodeRole role);
+  // Return to GNSS-based inference. The role is kept until the next
+  // updateAutomatic() call decides it again.
+  void restoreAutomatic() { automatic_ = true; }
 
  private:
   NodeRole role_ = NodeRole::kBase;

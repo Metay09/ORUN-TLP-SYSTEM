@@ -106,6 +106,14 @@ ConfigMutationRequest usbInterval(uint32_t id, uint32_t seconds) {
       ConfigMutationKind::kSetTrackingInterval, seconds);
 }
 
+ConfigMutationRequest usbServices(uint32_t id, uint8_t mode,
+                                  uint8_t services) {
+  return ConfigMutationRequest(
+      ApplicationRequester::kUsb, id,
+      ApplicationAccessContext(ApplicationAccessChannel::kUsbLocal),
+      ConfigMutationKind::kSetServiceIntent, 0, mode, services);
+}
+
 struct Completion {
   ConfigMutationResult result;
   uint32_t applied_signals = 0;
@@ -473,6 +481,110 @@ void typedAdmissionMatchesTheBoolSeam() {
 
 }  // namespace
 
+void serviceIntentIsDurableAndOnlyRunnableCombinationsAreAdmitted() {
+  namespace cf = config_format;
+  FakeFlash flash;
+  FixedIncarnation incarnation;
+  ConfigStore store(flash, &incarnation);
+  assert(store.begin());
+  assert(store.config().service_mode == cf::kServiceModeAuto &&
+         store.config().requested_services == 0);
+  ConfigMutationOwner owner(store);
+  assert(owner.submit(usbInterval(1, 900)) ==
+         ConfigMutationSubmitResult::kAccepted);
+  assert(finish(store, owner).result.outcome == ConfigMutationOutcome::kApplied);
+
+  // Explicit tracking: durable, interval carried over, token advances once.
+  assert(owner.submit(usbServices(2, cf::kServiceModeExplicit,
+                                  cf::kServiceTracking)) ==
+         ConfigMutationSubmitResult::kAccepted);
+  const Completion tracking = finish(store, owner);
+  assert(tracking.applied_signals == 1);
+  assert(tracking.result.kind == ConfigMutationKind::kSetServiceIntent);
+  assert(tracking.result.outcome == ConfigMutationOutcome::kApplied);
+  assert(tracking.result.config.service_mode == cf::kServiceModeExplicit);
+  assert(tracking.result.config.requested_services == cf::kServiceTracking);
+  assert(tracking.result.config.tracking_interval_seconds == 900);
+  assert(tracking.result.token.revision == 3);
+  ConfigStore rebooted(flash, &incarnation);
+  assert(rebooted.begin());
+  assert(rebooted.config().service_mode == cf::kServiceModeExplicit &&
+         rebooted.config().requested_services == cf::kServiceTracking &&
+         rebooted.config().tracking_interval_seconds == 900);
+
+  // Same intent again: nothing written.
+  uint32_t programs = flash.program_calls, erases = flash.erase_calls;
+  assert(owner.submit(usbServices(3, cf::kServiceModeExplicit,
+                                  cf::kServiceTracking)) ==
+         ConfigMutationSubmitResult::kAccepted);
+  const Completion same = finish(store, owner);
+  assert(same.result.outcome == ConfigMutationOutcome::kUnchanged &&
+         same.applied_signals == 0 && same.result.token.revision == 3);
+  assert(flash.program_calls == programs && flash.erase_calls == erases);
+
+  // Refused without writing: combinations this runtime cannot run, AUTO with
+  // services, unknown mode, unknown service bits. The result reports what
+  // the store holds.
+  const struct {
+    uint8_t mode, services;
+  } refused[] = {
+      {cf::kServiceModeExplicit,
+       cf::kServiceApplicationReceive | cf::kServiceTracking},
+      {cf::kServiceModeExplicit,
+       cf::kServiceApplicationReceive | cf::kServiceRelayForwarding},
+      {cf::kServiceModeExplicit, cf::kKnownServicesMask},
+      {cf::kServiceModeAuto, cf::kServiceTracking},
+      {2, cf::kServiceTracking},
+      {cf::kServiceModeExplicit, 0x08},
+  };
+  uint32_t id = 10;
+  for (const auto& r : refused) {
+    assert(owner.submit(usbServices(id, r.mode, r.services)) ==
+           ConfigMutationSubmitResult::kAccepted);
+    const Completion done = finish(store, owner);
+    assert(done.result.outcome == ConfigMutationOutcome::kInvalid);
+    assert(done.applied_signals == 0 && done.result.request_id == id);
+    assert(done.result.config.service_mode == cf::kServiceModeExplicit &&
+           done.result.config.requested_services == cf::kServiceTracking);
+    ++id;
+  }
+  assert(flash.program_calls == programs && flash.erase_calls == erases);
+
+  // Every runnable intent is accepted, including back to AUTO.
+  const struct {
+    uint8_t mode, services;
+  } accepted[] = {
+      {cf::kServiceModeExplicit, 0},
+      {cf::kServiceModeExplicit, cf::kServiceRelayForwarding},
+      {cf::kServiceModeExplicit,
+       cf::kServiceTracking | cf::kServiceRelayForwarding},
+      {cf::kServiceModeExplicit, cf::kServiceApplicationReceive},
+      {cf::kServiceModeAuto, 0},
+  };
+  for (const auto& a : accepted) {
+    assert(owner.submit(usbServices(id++, a.mode, a.services)) ==
+           ConfigMutationSubmitResult::kAccepted);
+    const Completion done = finish(store, owner);
+    assert(done.result.outcome == ConfigMutationOutcome::kApplied);
+    assert(done.result.config.service_mode == a.mode &&
+           done.result.config.requested_services == a.services);
+    assert(done.result.config.tracking_interval_seconds == 900);
+  }
+
+  // An interval change keeps the stored intent.
+  assert(owner.submit(usbServices(id++, cf::kServiceModeExplicit,
+                                  cf::kServiceRelayForwarding)) ==
+         ConfigMutationSubmitResult::kAccepted);
+  assert(finish(store, owner).result.outcome == ConfigMutationOutcome::kApplied);
+  assert(owner.submit(usbInterval(id++, 600)) ==
+         ConfigMutationSubmitResult::kAccepted);
+  const Completion interval = finish(store, owner);
+  assert(interval.result.outcome == ConfigMutationOutcome::kApplied);
+  assert(interval.result.config.service_mode == cf::kServiceModeExplicit &&
+         interval.result.config.requested_services ==
+             cf::kServiceRelayForwarding);
+}
+
 int main() {
   appliedChangeIsDurableAndAdvancesTheTokenOnce();
   unchangedValueWritesNothing();
@@ -482,5 +594,6 @@ int main() {
   unconfirmedSaveIsOutcomeUnknownNeverApplied();
   storeStatesMapToHonestOutcomes();
   typedAdmissionMatchesTheBoolSeam();
+  serviceIntentIsDurableAndOnlyRunnableCombinationsAreAdmitted();
   puts("Config write path: mutation owner and typed admission checks: PASS");
 }

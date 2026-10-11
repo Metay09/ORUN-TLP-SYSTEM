@@ -135,6 +135,128 @@ void settle(HistoryStore& store) {
   assert(store.ready() && !store.busy());
 }
 
+// Persistent services (ConfigStore v4): a collar with "tracking" saved and no
+// GNSS found stays a tracker with tracking blocked; it never becomes a
+// receiver. Driven through the real setup()/loop() and USB command surface.
+int servicesNoGnssScenario() {
+  auto has = [](const std::string& text, const char* needle) {
+    return text.find(needle) != std::string::npos;
+  };
+  auto loopFor = [](uint32_t ms, uint32_t step) {
+    for (uint32_t t = 0; t < ms; t += step) {
+      test_now += step;
+      loop();
+    }
+  };
+  auto command = [&](const char* text, const char* until) {
+    Serial.output.clear();
+    Serial.queueInput(text);
+    for (int pass = 0; pass < 16 && !has(Serial.output, until); ++pass) {
+      test_now += 10;
+      loop();
+    }
+    assert(has(Serial.output, until));
+  };
+
+  // Boot: the saved intent decides the job, not GNSS detection.
+  assert(config_store.hasCommittedRecord());
+  assert(explicit_services_active);
+  assert(has(Serial.output, "ROLE TRACKER source=CONFIG\n"));
+  assert(!has(Serial.output, "ROLE AUTO pending"));
+  assert(role_controller.role() == NodeRole::kTracker &&
+         !role_controller.automatic());
+
+  // Bounded detection gives up: still a tracker, tracking blocked.
+  for (int pass = 0; pass < 200 &&
+                     gnss_manager.state() != GnssManager::State::kNotPresent;
+       ++pass) {
+    test_now += 500;
+    loop();
+  }
+  assert(gnss_manager.state() == GnssManager::State::kNotPresent);
+  const uint32_t absent_since = static_cast<uint32_t>(test_now);
+  assert(!has(Serial.output, "ROLE BASE"));
+  assert(role_controller.role() == NodeRole::kTracker);
+  assert(radio_manager.role() == NodeRole::kTracker);
+  const EffectiveConfig blocked = resolveRuntimeConfig();
+  assert(blocked.tracking.state == ServiceState::kBlocked &&
+         blocked.tracking.reason == ServiceReason::kCapabilityAbsent);
+
+  command("APP SERVICES?\n", "APP SERVICES mode=");
+  assert(has(Serial.output,
+             "APP SERVICES mode=EXPLICIT requested=T applied=EXPLICIT "
+             "tracking=BLOCKED_GNSS_ABSENT relay=OFF receive=OFF "
+             "legacy_mode=TRACKER\n"));
+  command("ROLE?\n", "ROLE TRACKER mode=SERVICES\n");
+
+  // A RAM-only legacy override would contradict the saved intent.
+  command("ROLE BASE\n", "ROLE command rejected: services are configured");
+  assert(role_controller.role() == NodeRole::kTracker);
+  assert(!has(Serial.output, "ROLE BASE source"));
+
+  // Back to AUTO: the legacy rule decides again (no GNSS => BASE).
+  next_usb_application_request_id = 60;
+  command("APP SERVICES AUTO\n", "APP SET id=60");
+  assert(has(Serial.output,
+             "APP SET id=60 code=APPLIED services=AUTO mode=AUTO "
+             "token=VALID revision=2\n"));
+  for (int pass = 0; pass < 4; ++pass) { test_now += 10; loop(); }
+  assert(has(Serial.output, "ROLE BASE source=AUTO\n"));
+  assert(!explicit_services_active && role_controller.automatic());
+  assert(role_controller.role() == NodeRole::kBase);
+  command("ROLE?\n", "ROLE BASE mode=AUTO\n");
+
+  // An intent this runtime cannot run is refused, nothing written.
+  const unsigned refused_programs = programs;
+  command("APP SERVICES AT\n", "APP SET id=61");
+  assert(has(Serial.output,
+             "APP SET id=61 code=INVALID services=AUTO mode=AUTO "
+             "token=VALID revision=2\n"));
+  assert(programs == refused_programs);
+
+  // Tracking again: applied at once, the device leaves BASE.
+  command("APP SERVICES T\n", "APP SET id=62");
+  assert(has(Serial.output, "ROLE TRACKER source=CONFIG\n"));
+  assert(has(Serial.output,
+             "APP SET id=62 code=APPLIED services=T mode=EXPLICIT "
+             "token=VALID revision=3\n"));
+  assert(Serial.output.find("ROLE TRACKER source=CONFIG") <
+         Serial.output.find("APP SET id=62"));
+  assert(explicit_services_active &&
+         role_controller.role() == NodeRole::kTracker);
+
+  // The GNSS is probed again on its own; when it answers, tracking runs.
+  const unsigned detection_calls = SFE_UBLOX_GNSS::detection_calls;
+  SFE_UBLOX_GNSS::present = true;
+  Serial.output.clear();
+  // Not before the re-detect interval since detection gave up...
+  while (static_cast<uint32_t>(test_now + 5000 - absent_since) < 600000UL) {
+    test_now += 5000;
+    loop();
+  }
+  assert(gnss_manager.state() == GnssManager::State::kNotPresent);
+  assert(SFE_UBLOX_GNSS::detection_calls == detection_calls);
+  // ...then on its own, without a reset.
+  loopFor(30000, 5000);
+  assert(has(Serial.output, "GNSS: re-detect\n"));
+  assert(has(Serial.output, "GNSS: detected\n"));
+  assert(SFE_UBLOX_GNSS::detection_calls > detection_calls);
+  assert(gnss_manager.detected());
+  assert(resolveRuntimeConfig().tracking.state == ServiceState::kEnabled);
+  assert(role_controller.role() == NodeRole::kTracker);
+  assert(!has(Serial.output, "ROLE BASE"));
+
+  // A cold boot on the same flash recovers the same intent.
+  ConfigStore rebooted(storage_flash_gate.configPort(),
+                       &config_incarnation_source);
+  assert(rebooted.begin());
+  assert(rebooted.config().service_mode == config_format::kServiceModeExplicit &&
+         rebooted.config().requested_services ==
+             config_format::kServiceTracking);
+  puts("Startup persistent services (no GNSS) scenario: PASS");
+  return 0;
+}
+
 int main(int argc, char** argv) {
   assert(argc == 2);
   const std::string mode = argv[1];
@@ -150,10 +272,11 @@ int main(int argc, char** argv) {
   const bool persisted_geofence_scenario = mode == "geofence_persisted";
   const bool uncertain_geofence_scenario = mode == "geofence_uncertain";
   const bool history_erase_i2c_scenario = mode == "history_erase_i2c";
+  const bool services_scenario = mode == "services_no_gnss";
   const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails ||
                        no_event_control || geofence_scenario ||
                        persisted_geofence_scenario || uncertain_geofence_scenario ||
-                       history_erase_i2c_scenario;
+                       history_erase_i2c_scenario || services_scenario;
   // Each scenario runs in a new process, like a cold boot (static driver gate).
   assert(success || mode == "mutex" || mode == "gate" || mode == "queue" ||
          mode == "lora");
@@ -228,6 +351,21 @@ int main(int argc, char** argv) {
     }
   }
 
+  // services_no_gnss: one committed v4 record with EXPLICIT tracking, and a
+  // GNSS module that never answers.
+  if (services_scenario) {
+    config_format::TokenizedRecord record(
+        1,
+        config_format::Config(gnss_config::kTrackingIntervalSeconds, 0,
+                              config_format::kServiceModeExplicit,
+                              config_format::kServiceTracking),
+        config_format::StateToken(0x0102030405060708ULL, 1));
+    uint8_t encoded[config_format::kWriteRecordSize]{};
+    config_format::encodeV4(record, encoded);
+    memcpy(config_region, encoded, sizeof(encoded));
+    SFE_UBLOX_GNSS::present = false;
+  }
+
   // Seed page 0 through the real journal/backend, including a committed fix.
   NrfHistoryFlash seed_flash;
   NrfHistoryIncarnationSource seed_incarnation_source;
@@ -253,6 +391,7 @@ int main(int argc, char** argv) {
   Bluefruit.Advertising.start_result = !ble_advertising_fails;
   Bluefruit.begin_result = !ble_runtime_fails;
   setup();
+  if (services_scenario) return servicesNoGnssScenario();
 
   // M6D2 legacy startup composition scenario: install an explicit host-only
   // area set before the first accepted fix. M6D3C's separate
