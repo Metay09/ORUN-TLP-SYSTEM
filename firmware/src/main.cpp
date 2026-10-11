@@ -1088,8 +1088,10 @@ void printActivityDiagnostic() {
 ProductPeriodBaseline currentProductBaseline() {
   ProductPeriodBaseline now{};
   const auto& gnss = gnss_manager.diagnostics();
-  now.gnss_failures = gnss.acquisition_timeouts + gnss.invalid_fixes +
-                      gnss.configuration_failures;
+  // Acquisitions that ended without a fix and receiver setup failures.
+  // invalid_fixes is not a failure: it counts every 1 Hz "no fix yet" epoch
+  // of a normal acquisition (collar 2026-10-12: 5-29 per successful period).
+  now.gnss_failures = gnss.acquisition_timeouts + gnss.configuration_failures;
   now.storage_failures = history.diagnostics().append_failures;
   const auto radio = radio_manager.eventDiagnostics();
   now.radio_failures = radio.rx_queue_drops + radio.control_event_drops;
