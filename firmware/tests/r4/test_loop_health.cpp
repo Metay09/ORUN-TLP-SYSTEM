@@ -51,7 +51,7 @@ void portableRecord() {
       LoopStage::kSecurityStore, LoopStage::kConfigMutation,
       LoopStage::kPositionFlow, LoopStage::kFixHandling,
       LoopStage::kRadio,        LoopStage::kStoreForward,
-      LoopStage::kIdle};
+      LoopStage::kIdle,         LoopStage::kBattery};
   const unsigned count = sizeof(stages) / sizeof(stages[0]);
   for (unsigned i = 0; i < count; ++i) {
     assert(static_cast<uint8_t>(stages[i]) <= kLoopStageMaxValue);
@@ -65,6 +65,7 @@ void portableRecord() {
   // Retained codes are frozen: these two anchor the numbering.
   assert(static_cast<uint8_t>(LoopStage::kGnss) == 1);
   assert(static_cast<uint8_t>(LoopStage::kIdle) == 16);
+  assert(static_cast<uint8_t>(LoopStage::kBattery) == 17);
 }
 
 void portableDetector() {

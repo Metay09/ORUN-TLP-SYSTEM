@@ -37,6 +37,7 @@ enum class LoopStage : uint8_t {
   kRadio = 14,
   kStoreForward = 15,
   kIdle = 16,           // PowerManager::idle(): asleep or pre-empted
+  kBattery = 17,        // battery voltage ADC reading
 };
 
 constexpr uint8_t kLoopStageMaxValue = 63;

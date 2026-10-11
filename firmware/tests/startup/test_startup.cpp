@@ -245,6 +245,8 @@ int servicesNoGnssScenario() {
   assert(resolveRuntimeConfig().tracking.state == ServiceState::kEnabled);
   assert(role_controller.role() == NodeRole::kTracker);
   assert(!has(Serial.output, "ROLE BASE"));
+  // Battery read once a minute through all of it.
+  assert(battery_monitor.readings() >= 10);
 
   // A cold boot on the same flash recovers the same intent.
   ConfigStore rebooted(storage_flash_gate.configPort(),
@@ -254,6 +256,60 @@ int servicesNoGnssScenario() {
          rebooted.config().requested_services ==
              config_format::kServiceTracking);
   puts("Startup persistent services (no GNSS) scenario: PASS");
+  return 0;
+}
+
+// Battery policy through the real loop: CRITICAL after three low readings
+// stretches the tracking interval x4 without touching the stored B; it comes
+// back through LOW (status only) to NORMAL as the voltage recovers.
+int batteryCriticalScenario() {
+  auto rawFor = [](uint32_t mv) {
+    constexpr uint64_t kPerCount = uint64_t(battery_config::kFullScaleMv) *
+                                   battery_config::kDividerCompX1000;
+    return static_cast<uint32_t>(
+        (uint64_t(mv) * battery_config::kAdcCounts * 1000U + kPerCount / 2) /
+        kPerCount);
+  };
+  // One minute of loop passes: exactly one new battery reading.
+  auto minute = [] {
+    for (int i = 0; i < 60; ++i) {
+      test_now += 1000;
+      loop();
+    }
+  };
+  const uint32_t base_ms = config_store.config().tracking_interval_seconds * 1000UL;
+  assert(battery_state.state() == BatteryState::kNormal);
+  assert(gnss_manager.trackingIntervalMs() == base_ms);
+
+  fake_analog_value = rawFor(3300);
+  Serial.output.clear();
+  minute();
+  minute();
+  assert(battery_state.state() == BatteryState::kNormal);
+  assert(gnss_manager.trackingIntervalMs() == base_ms);
+  minute();
+  assert(battery_state.state() == BatteryState::kCritical);
+  assert(gnss_manager.trackingIntervalMs() == 4 * base_ms);
+  assert(config_store.config().tracking_interval_seconds * 1000UL == base_ms);
+  assert(Serial.output.find("BATTERY state=CRITICAL mv=3300 tracking_interval_ms=") !=
+         std::string::npos);
+
+  Serial.output.clear();
+  Serial.queueInput("BATTERY?\n");
+  pollRoleCommands();
+  assert(Serial.output.rfind("BATTERY state=CRITICAL mv=3300 ", 0) == 0);
+
+  // 3.55 V: out of CRITICAL into LOW, which only shows in status.
+  fake_analog_value = rawFor(3550);
+  minute(); minute(); minute();
+  assert(battery_state.state() == BatteryState::kLow);
+  assert(gnss_manager.trackingIntervalMs() == base_ms);
+
+  fake_analog_value = rawFor(3650);
+  minute(); minute(); minute();
+  assert(battery_state.state() == BatteryState::kNormal);
+  assert(gnss_manager.trackingIntervalMs() == base_ms);
+  puts("Startup battery policy scenario: PASS");
   return 0;
 }
 
@@ -273,10 +329,12 @@ int main(int argc, char** argv) {
   const bool uncertain_geofence_scenario = mode == "geofence_uncertain";
   const bool history_erase_i2c_scenario = mode == "history_erase_i2c";
   const bool services_scenario = mode == "services_no_gnss";
+  const bool battery_scenario = mode == "battery_critical";
   const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails ||
                        no_event_control || geofence_scenario ||
                        persisted_geofence_scenario || uncertain_geofence_scenario ||
-                       history_erase_i2c_scenario || services_scenario;
+                       history_erase_i2c_scenario || services_scenario ||
+                       battery_scenario;
   // Each scenario runs in a new process, like a cold boot (static driver gate).
   assert(success || mode == "mutex" || mode == "gate" || mode == "queue" ||
          mode == "lora");
@@ -390,8 +448,10 @@ int main(int argc, char** argv) {
   lora_result = mode == "lora" ? -1 : 0;
   Bluefruit.Advertising.start_result = !ble_advertising_fails;
   Bluefruit.begin_result = !ble_runtime_fails;
+  fake_analog_value = 3315;  // battery divider at 4.2 V
   setup();
   if (services_scenario) return servicesNoGnssScenario();
+  if (battery_scenario) return batteryCriticalScenario();
 
   // M6D2 legacy startup composition scenario: install an explicit host-only
   // area set before the first accepted fix. M6D3C's separate
@@ -867,6 +927,19 @@ int main(int argc, char** argv) {
          "HEALTH reset=0x00000000 watchdog=no prev_stall=no prev_fault=no "
          "prev_stage=- idle_oversleeps=0 idle_longest_ms=0 "
          "stalls_recovered=0 stack_free=0\n");
+
+  // Battery voltage: read once at boot, then once a minute.
+  assert(battery_monitor.readings() == 1);
+  assert(fake_analog_last_pin == WB_A0 &&
+         fake_analog_reference == AR_INTERNAL_3_0 &&
+         fake_analog_resolution == 12);
+  Serial.output.clear();
+  Serial.queueInput("BATTERY?\n");
+  pollRoleCommands();
+  assert(Serial.output.rfind("BATTERY state=NORMAL mv=4200 raw=3315 age_ms=",
+                             0) == 0);
+  assert(Serial.output.find(" readings=1 calibrated=no\n") !=
+         std::string::npos);
 
   // The USB diagnostic must be queryable after the early boot window is gone.
   // While the bounded probe is incomplete it reports PENDING, not ABSENT.
