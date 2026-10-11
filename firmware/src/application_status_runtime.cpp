@@ -269,6 +269,9 @@ void buildApplicationPowerSnapshot(uint32_t now_ms,
   out = ApplicationPowerSnapshot();
   out.battery_valid = battery.hasReading() ? 1U : 0U;
   out.battery_calibrated = 0U;  // RAK reference compensation, not this board
+  out.battery_percent = battery.hasReading()
+                            ? batteryPercentEstimate(battery.millivolts())
+                            : kBatteryPercentUnknown;
   if (battery.hasReading()) {
     out.battery_mv = static_cast<uint16_t>(
         battery.millivolts() > UINT16_MAX ? UINT16_MAX : battery.millivolts());

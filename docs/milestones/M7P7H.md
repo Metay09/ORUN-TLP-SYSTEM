@@ -372,7 +372,9 @@ POWER — 16 bytes:
 1      flags: bit0 battery reading valid, bit1 calibrated
 2      battery state (0 UNKNOWN, 1 NORMAL, 2 LOW, 3 CRITICAL;
        same values as battery_state in ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md 7.4)
-3      reserved=0
+3      estimated charge percent 0..100 (255 without a reading); typical
+       1S LiPo rest-voltage curve, an estimate only (load, temperature,
+       age and charging move it)
 4..5   battery mV LE16 (0 without a reading)
 6..7   raw ADC count LE16
 8..11  age of the reading ms LE32

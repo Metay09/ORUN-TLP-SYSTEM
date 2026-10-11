@@ -164,6 +164,7 @@ ApplicationStatusSnapshot makeSnapshot() {
   s.power.battery_raw = 2728;       // 0x0AA8
   s.power.battery_age_ms = 0x01020304UL;
   s.power.battery_readings = 0x0A0B0C0DUL;
+  s.power.battery_percent = 4;
 
   s.services.service_mode = 1;      // EXPLICIT
   s.services.requested_services = 0x03;  // tracking + relay
@@ -279,7 +280,7 @@ int main() {
         transact(transport, bat::MessageType::kGetPowerStatusRequest,
                  bat::MessageType::kGetPowerStatusResponse, 0x1005, payload);
     const uint8_t expected[] = {
-        0x00, 0x01, 0x02, 0x00,
+        0x00, 0x01, 0x02, 0x04,
         0x80, 0x0D, 0xA8, 0x0A,
         0x04, 0x03, 0x02, 0x01,
         0x0D, 0x0C, 0x0B, 0x0A};

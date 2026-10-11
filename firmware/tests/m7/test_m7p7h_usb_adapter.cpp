@@ -360,17 +360,18 @@ int main() {
     ps.battery_raw = 2604;
     ps.battery_age_ms = 4200;
     ps.battery_readings = 17;
+    ps.battery_percent = 1;
     Serial.output.clear();
     printUsbApplicationResponse(power);
     assert(Serial.output ==
-           "APP POWER id=12 battery=MEASURED state=CRITICAL mv=3300 raw=2604 "
-           "age_ms=4200 readings=17 calibrated=no\n");
+           "APP POWER id=12 battery=MEASURED state=CRITICAL percent_est=1 "
+           "mv=3300 raw=2604 age_ms=4200 readings=17 calibrated=no\n");
     power.payload.power.snapshot = ApplicationPowerSnapshot();
     Serial.output.clear();
     printUsbApplicationResponse(power);
     assert(Serial.output ==
-           "APP POWER id=12 battery=NONE state=UNKNOWN mv=0 raw=0 age_ms=0 "
-           "readings=0 calibrated=no\n");
+           "APP POWER id=12 battery=NONE state=UNKNOWN percent_est=- mv=0 "
+           "raw=0 age_ms=0 readings=0 calibrated=no\n");
 
     ConfigMutationResult set;
     set.kind = ConfigMutationKind::kSetServiceIntent;

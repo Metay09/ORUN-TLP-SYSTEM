@@ -99,6 +99,24 @@ void intervalRule() {
   assert(static_cast<uint8_t>(BatteryState::kLow) == 2);  // wire value 7.4
 }
 
+void percentEstimate() {
+  assert(batteryPercentEstimate(4200) == 100);
+  assert(batteryPercentEstimate(4300) == 100);
+  assert(batteryPercentEstimate(3270) == 0);
+  assert(batteryPercentEstimate(2900) == 0);
+  assert(batteryPercentEstimate(3840) == 50);
+  assert(batteryPercentEstimate(4020) == 80);
+  assert(batteryPercentEstimate(3995) == 77);  // between 3980/75 and 4020/80
+  assert(batteryPercentEstimate(kLowEnterMv) == 3);
+  assert(batteryPercentEstimate(kCriticalEnterMv) == 1);
+  uint8_t previous = 0;
+  for (uint32_t mv = 3000; mv <= 4400; mv += 5) {
+    const uint8_t p = batteryPercentEstimate(mv);
+    assert(p <= 100 && p >= previous);  // monotonic
+    previous = p;
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -106,6 +124,7 @@ int main() {
   changesNeedConsecutiveConfirmation();
   hysteresis();
   intervalRule();
+  percentEstimate();
   puts("Battery state thresholds, confirmation and interval rule checks: PASS");
   return 0;
 }

@@ -192,6 +192,7 @@ struct ApplicationPowerSnapshot {
   uint8_t battery_valid;     // a reading exists
   uint8_t battery_calibrated;
   ApplicationBatteryState battery_state;
+  uint8_t battery_percent;   // estimate 0..100, 255 without a reading
 };
 
 // Requested service intent next to what runs (ConfigStore v4 section 11).

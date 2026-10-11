@@ -1168,9 +1168,11 @@ void printBatteryDiagnostic() {
   }
   const uint32_t age_ms =
       orun_tlp::monotonic::nowMs() - battery_monitor.readAtMs();
-  Serial.printf("BATTERY state=%s mv=%lu raw=%lu age_ms=%lu readings=%lu "
-                "calibrated=no\n",
+  Serial.printf("BATTERY state=%s percent_est=%u mv=%lu raw=%lu age_ms=%lu "
+                "readings=%lu calibrated=no\n",
                 orun_tlp::batteryStateName(battery_state.state()),
+                static_cast<unsigned>(orun_tlp::batteryPercentEstimate(
+                    battery_monitor.millivolts())),
                 static_cast<unsigned long>(battery_monitor.millivolts()),
                 static_cast<unsigned long>(battery_monitor.raw()),
                 static_cast<unsigned long>(age_ms),

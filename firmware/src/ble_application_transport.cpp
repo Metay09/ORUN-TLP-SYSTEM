@@ -433,7 +433,7 @@ void BleApplicationTransport::buildApplicationResponse(
       outbound_.payload[1] = static_cast<uint8_t>(
           (s.battery_valid ? 0x01U : 0U) | (s.battery_calibrated ? 0x02U : 0U));
       outbound_.payload[2] = static_cast<uint8_t>(s.battery_state);
-      outbound_.payload[3] = 0;
+      outbound_.payload[3] = s.battery_percent;
       writeLE16(outbound_.payload + 4, s.battery_mv);
       writeLE16(outbound_.payload + 6, s.battery_raw);
       writeLE32(outbound_.payload + 8, s.battery_age_ms);

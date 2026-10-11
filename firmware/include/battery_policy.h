@@ -44,6 +44,13 @@ class BatteryStateTracker {
   uint8_t candidate_count_ = 0;
 };
 
+// Estimated charge in percent from the measured voltage, using a typical
+// 1S LiPo rest-voltage curve (linear between points). An estimate only:
+// load, temperature, cell age and charging (USB/solar raise the voltage)
+// all move it. kBatteryPercentUnknown when there is no reading.
+constexpr uint8_t kBatteryPercentUnknown = 255;
+uint8_t batteryPercentEstimate(uint32_t millivolts);
+
 // The tracking interval actually used, given the battery state. Saturates
 // instead of overflowing; 0 stays 0.
 uint32_t batteryAdjustedIntervalMs(uint32_t interval_ms, BatteryState state);

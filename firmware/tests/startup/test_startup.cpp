@@ -297,7 +297,8 @@ int batteryCriticalScenario() {
   Serial.output.clear();
   Serial.queueInput("BATTERY?\n");
   pollRoleCommands();
-  assert(Serial.output.rfind("BATTERY state=CRITICAL mv=3300 ", 0) == 0);
+  assert(Serial.output.rfind("BATTERY state=CRITICAL percent_est=0 mv=3300 ",
+                             0) == 0);
 
   // 3.55 V: out of CRITICAL into LOW, which only shows in status.
   fake_analog_value = rawFor(3550);
@@ -1018,8 +1019,9 @@ int main(int argc, char** argv) {
   Serial.output.clear();
   Serial.queueInput("BATTERY?\n");
   pollRoleCommands();
-  assert(Serial.output.rfind("BATTERY state=NORMAL mv=4200 raw=3315 age_ms=",
-                             0) == 0);
+  assert(Serial.output.rfind(
+             "BATTERY state=NORMAL percent_est=100 mv=4200 raw=3315 age_ms=",
+             0) == 0);
   assert(Serial.output.find(" readings=1 calibrated=no\n") !=
          std::string::npos);
 
@@ -1032,7 +1034,8 @@ int main(int argc, char** argv) {
   for (int pass = 0; pass < 4 && Serial.output.find("APP POWER id=") ==
                                      std::string::npos; ++pass)
     drainApplicationResponse();
-  assert(Serial.output.find(" battery=MEASURED state=NORMAL mv=4200 raw=3315 ") !=
+  assert(Serial.output.find(
+             " battery=MEASURED state=NORMAL percent_est=100 mv=4200 raw=3315 ") !=
          std::string::npos);
   assert(Serial.output.find(" readings=1 calibrated=no\n") != std::string::npos);
   next_usb_application_request_id = power_saved_request_id;

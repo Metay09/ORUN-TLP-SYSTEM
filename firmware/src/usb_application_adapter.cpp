@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 
+#include <stdio.h>
 #include <string.h>
 
 #include "config_format.h"
@@ -411,12 +412,16 @@ void printUsbApplicationResponse(const ApplicationResponse& response) {
 
     case ApplicationRequestKind::kGetPowerStatus: {
       const ApplicationPowerSnapshot& s = response.payload.power.snapshot;
+      char percent[4] = {'-', '\0', '\0', '\0'};
+      if (s.battery_valid && s.battery_percent <= 100)
+        snprintf(percent, sizeof(percent), "%u",
+                 static_cast<unsigned>(s.battery_percent));
       Serial.printf(
-          "APP POWER id=%lu battery=%s state=%s mv=%u raw=%u age_ms=%lu "
-          "readings=%lu calibrated=%s\n",
+          "APP POWER id=%lu battery=%s state=%s percent_est=%s mv=%u raw=%u "
+          "age_ms=%lu readings=%lu calibrated=%s\n",
           static_cast<unsigned long>(response.request_id),
           s.battery_valid ? "MEASURED" : "NONE",
-          batteryStateName(s.battery_state),
+          batteryStateName(s.battery_state), percent,
           static_cast<unsigned>(s.battery_mv),
           static_cast<unsigned>(s.battery_raw),
           static_cast<unsigned long>(s.battery_age_ms),
