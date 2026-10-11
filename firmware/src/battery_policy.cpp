@@ -91,4 +91,28 @@ uint32_t batteryAdjustedIntervalMs(uint32_t interval_ms, BatteryState state) {
   return interval_ms * kMultiplier;
 }
 
+bool BatteryLogWindow::setPeriod(uint32_t readings) {
+  if (readings > battery_log::kMaxPeriodReadings) return false;
+  period_ = static_cast<uint16_t>(readings);
+  count_ = 0;
+  complete_ = false;
+  return true;
+}
+
+bool BatteryLogWindow::add(uint32_t millivolts) {
+  if (period_ == 0) return false;
+  if (count_ == 0 || complete_) {
+    count_ = 0;
+    complete_ = false;
+    lowest_ = millivolts;
+    highest_ = millivolts;
+  }
+  last_ = millivolts;
+  if (millivolts < lowest_) lowest_ = millivolts;
+  if (millivolts > highest_) highest_ = millivolts;
+  if (++count_ < period_) return false;
+  complete_ = true;
+  return true;
+}
+
 }  // namespace orun_tlp

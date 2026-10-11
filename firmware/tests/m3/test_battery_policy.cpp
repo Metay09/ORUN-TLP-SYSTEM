@@ -117,6 +117,42 @@ void percentEstimate() {
   }
 }
 
+void logWindow() {
+  using namespace battery_log;
+  BatteryLogWindow log;
+  assert(log.period() == kDefaultPeriodReadings);
+  // One line per period: last, lowest and highest of that period only.
+  const uint32_t first[] = {4100, 3900, 4150, 4000, 4000,
+                            4000, 4000, 4000, 4000, 3980};
+  for (unsigned i = 0; i < 9; ++i) assert(!log.add(first[i]));
+  assert(log.add(first[9]));
+  assert(log.last() == 3980 && log.lowest() == 3900 &&
+         log.highest() == 4150 && log.count() == 10);
+  // The next period starts fresh.
+  for (unsigned i = 0; i < 9; ++i) assert(!log.add(3700));
+  assert(log.add(3750));
+  assert(log.last() == 3750 && log.lowest() == 3700 &&
+         log.highest() == 3750 && log.count() == 10);
+
+  // A new period length restarts counting; a too-long one changes nothing.
+  assert(!log.add(3600));
+  assert(log.setPeriod(2));
+  assert(!log.add(3500));
+  assert(log.add(3550));
+  assert(log.lowest() == 3500 && log.count() == 2);
+  assert(!log.setPeriod(kMaxPeriodReadings + 1));
+  assert(log.period() == 2);
+  assert(log.setPeriod(kMaxPeriodReadings));
+  assert(log.setPeriod(1));
+  assert(log.add(3333) && log.add(3334) && log.lowest() == 3334);
+
+  // 0 turns it off.
+  assert(log.setPeriod(0));
+  for (int i = 0; i < 3000; ++i) assert(!log.add(3800));
+  assert(log.setPeriod(3));
+  assert(!log.add(1) && !log.add(2) && log.add(3) && log.lowest() == 1);
+}
+
 }  // namespace
 
 int main() {
@@ -125,6 +161,7 @@ int main() {
   hysteresis();
   intervalRule();
   percentEstimate();
+  logWindow();
   puts("Battery state thresholds, confirmation and interval rule checks: PASS");
   return 0;
 }

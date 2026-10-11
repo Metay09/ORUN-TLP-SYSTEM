@@ -307,9 +307,40 @@ int batteryCriticalScenario() {
   assert(gnss_manager.trackingIntervalMs() == base_ms);
 
   fake_analog_value = rawFor(3650);
+  Serial.output.clear();
   minute(); minute(); minute();
   assert(battery_state.state() == BatteryState::kNormal);
   assert(gnss_manager.trackingIntervalMs() == base_ms);
+
+  // Periodic log line: the boot reading plus nine one-minute readings make
+  // the first 10-reading period (4200 at boot, lowest 3300).
+  assert(battery_monitor.readings() == 10);
+  assert(Serial.output.find(
+             "BATTERY LOG mv=3650 low=3300 high=4200 percent_est=8 "
+             "state=NORMAL period_min=10 readings=10\n") != std::string::npos);
+  Serial.output.clear();
+  Serial.queueInput("BATTERY LOG?\n");
+  pollRoleCommands();
+  assert(Serial.output == "BATTERY LOG period_min=10\n");
+  Serial.output.clear();
+  Serial.queueInput("BATTERY LOG 1441\n");
+  pollRoleCommands();
+  assert(Serial.output == "BATTERY LOG REJECTED max_min=1440\n");
+  Serial.output.clear();
+  Serial.queueInput("BATTERY LOG 2\n");
+  pollRoleCommands();
+  assert(Serial.output == "BATTERY LOG period_min=2\n");
+  Serial.output.clear();
+  minute();
+  assert(Serial.output.find("BATTERY LOG") == std::string::npos);
+  minute();
+  assert(Serial.output.find("BATTERY LOG mv=3650 low=3650 high=3650 ") !=
+         std::string::npos);
+  Serial.queueInput("BATTERY LOG 0\n");
+  pollRoleCommands();
+  Serial.output.clear();
+  minute(); minute(); minute();
+  assert(Serial.output.find("BATTERY LOG") == std::string::npos);
   puts("Startup battery policy scenario: PASS");
   return 0;
 }
