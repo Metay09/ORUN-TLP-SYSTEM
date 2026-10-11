@@ -1,5 +1,6 @@
 #include "activity_auto_sampler.h"
 
+#include "activity_classifier.h"
 #include "monotonic_time.h"
 
 namespace orun_tlp {
@@ -14,14 +15,21 @@ void ActivityAutoSampler::setEnabled(bool enabled, uint32_t now) {
   enabled_ = enabled;
   awaiting_capture_ = false;
   if (!enabled_) return;  // Do not interrupt the manager's sensor shutdown.
-  period_started_at_ms_ = now;
   next_due_at_ms_ = now;
+  resetPeriod(now);
+  summary_ready_ = false;
+  latest_summary_ = ActivityHourSummary{};
+}
+
+void ActivityAutoSampler::resetPeriod(uint32_t now) {
+  period_started_at_ms_ = now;
   usable_windows_ = invalid_windows_ = fault_windows_ = 0;
   unavailable_attempts_ = boundary_discarded_windows_ = 0;
   summed_variance_mg2_ = summed_abs_delta_mg_ = 0;
   summed_coverage_ms_ = 0;
-  summary_ready_ = false;
-  latest_summary_ = ActivityHourSummary{};
+  summed_active_ms_ = 0;
+  active_windows_ = transitions_ = 0;
+  has_last_window_ = false;
 }
 
 void ActivityAutoSampler::recordCompleted(const ActivityCapture& capture) {
@@ -41,13 +49,36 @@ void ActivityAutoSampler::recordCompleted(const ActivityCapture& capture) {
   summed_coverage_ms_ += capture.result()->duration_ms;
   summed_variance_mg2_ += capture.result()->axis_variance_sum_mg2;
   summed_abs_delta_mg_ += capture.result()->mean_abs_delta_mg;
+  const bool active =
+      activityWindowActive(capture.result()->axis_variance_sum_mg2);
+  if (active) {
+    incrementBounded(active_windows_);
+    summed_active_ms_ += capture.result()->duration_ms;
+  }
+  if (has_last_window_ && active != last_window_active_)
+    incrementBounded(transitions_);
+  has_last_window_ = true;
+  last_window_active_ = active;
 }
 
 bool ActivityAutoSampler::publishIfDue(uint32_t now) {
-  if (!monotonic::elapsed(now, period_started_at_ms_,
+  if (report_owned_ ||
+      !monotonic::elapsed(now, period_started_at_ms_,
                           activity_auto_config::kSummaryPeriodMs)) {
     return false;
   }
+  publish(now);
+  return true;
+}
+
+bool ActivityAutoSampler::closePeriod(uint32_t now) {
+  if (!enabled_ || !monotonic::elapsed(now, period_started_at_ms_, 1000U))
+    return false;
+  publish(now);
+  return true;
+}
+
+void ActivityAutoSampler::publish(uint32_t now) {
   ActivityHourSummary summary{};
   summary.started_at_ms = period_started_at_ms_;
   summary.finished_at_ms = now;
@@ -66,15 +97,16 @@ bool ActivityAutoSampler::publishIfDue(uint32_t now) {
     summary.mean_abs_delta_mg =
         static_cast<uint32_t>(summed_abs_delta_mg_ / usable_windows_);
   }
+  summary.active_windows = active_windows_;
+  summary.activity_transitions = transitions_;
+  summary.measured_active_ms = static_cast<uint32_t>(
+      summed_active_ms_ > summary.measured_coverage_ms
+          ? summary.measured_coverage_ms
+          : summed_active_ms_);
   latest_summary_ = summary;
   summary_ready_ = true;
   if (published_summaries_ != UINT32_MAX) ++published_summaries_;
-  period_started_at_ms_ = now;  // No catch-up burst or fabricated lost periods.
-  usable_windows_ = invalid_windows_ = fault_windows_ = 0;
-  unavailable_attempts_ = boundary_discarded_windows_ = 0;
-  summed_variance_mg2_ = summed_abs_delta_mg_ = 0;
-  summed_coverage_ms_ = 0;
-  return true;
+  resetPeriod(now);  // No catch-up burst or fabricated lost periods.
 }
 
 bool ActivityAutoSampler::poll(ActivityCapture& capture, uint32_t now) {
@@ -91,6 +123,7 @@ bool ActivityAutoSampler::poll(ActivityCapture& capture, uint32_t now) {
       const bool started_in_period =
           monotonic::reached(capture_started_at_ms_, period_started_at_ms_);
       const bool finished_before_deadline =
+          report_owned_ ||
           !monotonic::elapsed(now, period_started_at_ms_,
                               activity_auto_config::kSummaryPeriodMs);
       if (started_in_period && finished_before_deadline) {

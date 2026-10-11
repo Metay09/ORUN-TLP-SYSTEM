@@ -212,6 +212,17 @@ On a development RAK4631 only:
 
 Gate: physical evidence document. Build PASS alone is not hardware PASS.
 
+### SF5F preparation 2026-10-11 (not the cutover)
+
+- PERIODIC builder `product_period_builder.cpp`: one finished report period -> canonical schema-v1
+  plaintext (validity bits decide, stale values zeroed, saturations, coverage-based quality).
+- Activity: research-derived, unvalidated active/inactive window threshold
+  (`activity_classifier.h`), active seconds/transitions per period, report-owned sampler periods
+  so the summary anchors equal the report period.
+- USB dry run on the tracker: `PRODUCT PERIODIC DRYRUN ...` and `bytes=<128 hex>` per normal fix or
+  timed-out acquisition. RAM-only identity (`record_incarnation=1`), no ObservationStore write, no
+  sealing, no RF. TLP v1 POSITION and HistoryStore stay the production path.
+
 ### SF5F — tracker runtime cutover
 
 Move normal tracker durable ownership from legacy POSITION History to the new

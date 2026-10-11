@@ -6,6 +6,7 @@
 #include "activity_capture.h"
 #include "activity_auto_sampler.h"
 #include "activity_period_evidence.h"
+#include "product_period_builder.h"
 #include "application_request.h"
 #include "application_status_runtime.h"
 #include "battery_monitor.h"
@@ -74,6 +75,24 @@ orun_tlp::AccelerometerManager accelerometer_manager;
 orun_tlp::ActivityCapture activity_capture(accelerometer_manager);
 // Opt-in autonomous RAK1904 windows and a one-hour RAM summary, not RF/storage.
 orun_tlp::ActivityAutoSampler activity_auto_sampler;
+// "ACTIVITY AUTO OFF" keeps the sampler off even while tracking runs.
+bool activity_auto_user_off = false;
+
+// SF5 PERIODIC dry run (USB only): at each finished report period the real
+// owners' facts are mapped to the canonical PRODUCT_SECURE plaintext and
+// validated by the codec. Nothing is stored, sealed or sent; TLP v1 POSITION
+// stays the only product traffic until SF5F. Record identity is a RAM-only
+// placeholder because the durable SF5C allocator is not attached.
+struct ProductPeriodBaseline {
+  uint32_t gnss_failures = 0;
+  uint32_t storage_failures = 0;
+  uint32_t radio_failures = 0;
+};
+bool product_period_open = false;
+uint32_t product_period_started_ms = 0;
+uint32_t product_dryrun_sequence = 0;
+uint32_t product_last_gnss_timeouts = 0;
+ProductPeriodBaseline product_period_baseline;
 // Battery voltage on WB_A0, read once a minute. Measurement only for now.
 orun_tlp::BatteryMonitor battery_monitor;
 orun_tlp::BatteryStateTracker battery_state;
@@ -1066,6 +1085,142 @@ void printActivityDiagnostic() {
   }
 }
 
+ProductPeriodBaseline currentProductBaseline() {
+  ProductPeriodBaseline now{};
+  const auto& gnss = gnss_manager.diagnostics();
+  now.gnss_failures = gnss.acquisition_timeouts + gnss.invalid_fixes +
+                      gnss.configuration_failures;
+  now.storage_failures = history.diagnostics().append_failures;
+  const auto radio = radio_manager.eventDiagnostics();
+  now.radio_failures = radio.rx_queue_drops + radio.control_event_drops;
+  return now;
+}
+
+// Opens the first report period (and the report-owned activity sampler) on
+// the first boundary after boot, so both share the same start anchor.
+void openProductPeriod(uint32_t now) {
+  product_period_open = true;
+  product_period_started_ms = now;
+  product_period_baseline = currentProductBaseline();
+  if (!activity_auto_user_off && accelerometer_manager.detected()) {
+    activity_auto_sampler.setReportOwned(true);
+    if (!activity_auto_sampler.enabled())
+      activity_auto_sampler.setEnabled(true, now);
+  }
+}
+
+// One finished report period: a normal accepted fix, or an acquisition that
+// timed out without one.
+void finishProductPeriod(const orun_tlp::GnssFix* fix) {
+  const uint32_t now = orun_tlp::monotonic::nowMs();
+  if (!product_period_open) {
+    openProductPeriod(now);
+    return;
+  }
+  const uint32_t elapsed_ms = now - product_period_started_ms;
+  if (elapsed_ms < 1000U) return;
+
+  orun_tlp::PeriodicRecordInputs in{};
+  in.record_incarnation = 1;  // RAM-only dry-run placeholder
+  in.record_sequence = ++product_dryrun_sequence;
+  in.period_duration_seconds = elapsed_ms / 1000U;
+  if (fix != nullptr) {
+    const uint32_t age_s = (now - fix->captured_at_ms) / 1000U;
+    in.location.valid = true;
+    in.location.latitude_e7 = fix->latitude_e7;
+    in.location.longitude_e7 = fix->longitude_e7;
+    in.location.altitude_mm = fix->altitude_mm;
+    in.location.altitude_valid =
+        (fix->flags & orun_tlp::tlp::kPositionFlag3dFix) != 0;
+    in.location.hdop_x100 = fix->hdop_x100;
+    in.location.satellites = fix->satellites;
+    in.location.age_valid = true;
+    in.location.age_seconds = age_s;
+    if ((fix->flags & orun_tlp::tlp::kPositionFlagValidUtcTime) != 0) {
+      in.period_end_time_valid = true;
+      in.period_end_epoch_seconds = fix->utc_epoch_seconds + age_s;
+    }
+  }
+
+  uint16_t sensor_faults = 0;
+  if (activity_auto_sampler.enabled() && activity_auto_sampler.reportOwned() &&
+      activity_auto_sampler.closePeriod(now)) {
+    const auto& summary = activity_auto_sampler.latestSummary();
+    sensor_faults = summary.fault_windows;
+    // Anchors must match exactly; otherwise activity stays unknown.
+    orun_tlp::linkActivityPeriodEvidence(summary, product_period_started_ms,
+                                         now, in.activity);
+  }
+
+  if (battery_monitor.hasReading()) {
+    in.battery_valid = true;
+    const uint32_t mv = battery_monitor.millivolts();
+    in.battery_mv = static_cast<uint16_t>(mv > UINT16_MAX ? UINT16_MAX : mv);
+    in.battery_state = static_cast<uint8_t>(battery_state.state());
+  }
+
+  const ProductPeriodBaseline current = currentProductBaseline();
+  in.health.valid = true;
+  in.health.gnss_failures =
+      current.gnss_failures - product_period_baseline.gnss_failures;
+  in.health.storage_failures =
+      current.storage_failures - product_period_baseline.storage_failures;
+  in.health.radio_failures =
+      current.radio_failures - product_period_baseline.radio_failures;
+  in.health.sensor_failures = sensor_faults;
+  if (in.health.gnss_failures != 0)
+    in.health.flags |= orun_tlp::tlp::kHealthGnssDegraded;
+  if (in.health.sensor_failures != 0)
+    in.health.flags |= orun_tlp::tlp::kHealthSensorDegraded;
+  if (in.health.storage_failures != 0)
+    in.health.flags |= orun_tlp::tlp::kHealthStorageDegraded;
+  if (in.health.radio_failures != 0)
+    in.health.flags |= orun_tlp::tlp::kHealthRadioDegraded;
+  if (!in.period_end_time_valid)
+    in.health.flags |= orun_tlp::tlp::kHealthTimeUntrusted;
+
+  orun_tlp::tlp::PeriodicObservationPlaintext record{};
+  const auto verdict = orun_tlp::buildPeriodicPlaintext(in, &record);
+  Serial.printf(
+      "PRODUCT PERIODIC DRYRUN seq=%lu period_s=%lu result=%s flags=0x%02X "
+      "loc=%s age_s=%u batt_mv=%u batt=%u act_cov_s=%lu act_s=%lu trans=%u "
+      "move_mg=%u health=0x%04X fails=%u/%u/%u/%u\n",
+      static_cast<unsigned long>(in.record_sequence),
+      static_cast<unsigned long>(in.period_duration_seconds),
+      orun_tlp::tlp::productSecureCodecResultName(verdict),
+      static_cast<unsigned>(record.record_flags),
+      in.location.valid ? "GNSS" : "NONE",
+      static_cast<unsigned>(record.location_age_seconds),
+      static_cast<unsigned>(record.battery_mv),
+      static_cast<unsigned>(record.battery_state),
+      static_cast<unsigned long>(record.activity_coverage_seconds),
+      static_cast<unsigned long>(record.active_seconds),
+      static_cast<unsigned>(record.activity_transition_count),
+      static_cast<unsigned>(record.movement_mean_abs_delta_mg),
+      static_cast<unsigned>(record.health_flags),
+      static_cast<unsigned>(record.gnss_failure_count),
+      static_cast<unsigned>(record.sensor_failure_count),
+      static_cast<unsigned>(record.storage_failure_count),
+      static_cast<unsigned>(record.radio_failure_count));
+  if (verdict == orun_tlp::tlp::ProductSecureCodecResult::kOk) {
+    uint8_t bytes[orun_tlp::tlp::kPeriodicPlaintextSize];
+    if (orun_tlp::tlp::encodePeriodicPlaintext(record, bytes, sizeof(bytes)) ==
+        orun_tlp::tlp::ProductSecureCodecResult::kOk) {
+      static const char kHex[] = "0123456789abcdef";
+      char hex[2 * sizeof(bytes) + 1];
+      for (size_t i = 0; i < sizeof(bytes); ++i) {
+        hex[2 * i] = kHex[bytes[i] >> 4];
+        hex[2 * i + 1] = kHex[bytes[i] & 0x0F];
+      }
+      hex[2 * sizeof(bytes)] = '\0';
+      Serial.printf("PRODUCT PERIODIC DRYRUN bytes=%s\n", hex);
+    }
+  }
+
+  product_period_started_ms = now;
+  product_period_baseline = current;
+}
+
 void printActivityAutoDiagnostic() {
   Serial.printf("ACTIVITY AUTO %s awaiting=%s valid=%u invalid=%u "
                 "fault=%u unavailable=%u summaries=%lu persistent=no\n",
@@ -1095,15 +1250,21 @@ void printActivityAutoDiagnostic() {
     orun_tlp::ActivityPeriodEvidence evidence{};
     const auto result = orun_tlp::linkActivityPeriodEvidence(
         summary, summary.started_at_ms, summary.finished_at_ms, evidence);
-    if (result == orun_tlp::ActivityPeriodLinkResult::kLinkedUnclassified ||
+    if (result == orun_tlp::ActivityPeriodLinkResult::kLinkedClassified ||
+        result == orun_tlp::ActivityPeriodLinkResult::kLinkedUnclassified ||
         result == orun_tlp::ActivityPeriodLinkResult::kNoUsableEvidence) {
       Serial.printf("ACTIVITY EVIDENCE duration_s=%lu covered_s=%lu "
-                    "unknown_s=%lu boundary_discarded=%u "
-                    "classification=no report_link=UNBOUND sf5_written=no\n",
+                    "unknown_s=%lu active_s=%lu transitions=%u "
+                    "boundary_discarded=%u classification=%s sf5_written=no\n",
                     static_cast<unsigned long>(evidence.period_duration_seconds),
                     static_cast<unsigned long>(evidence.coverage_seconds),
                     static_cast<unsigned long>(evidence.unknown_seconds),
-                    static_cast<unsigned>(evidence.boundary_discarded_windows));
+                    static_cast<unsigned long>(evidence.active_seconds),
+                    static_cast<unsigned>(evidence.transition_count),
+                    static_cast<unsigned>(evidence.boundary_discarded_windows),
+                    evidence.active_inactive_classification_valid
+                        ? "LITERATURE_THRESHOLD"
+                        : "no");
     } else {
       Serial.println(F("ACTIVITY EVIDENCE invalid period; no SF5 record"));
     }
@@ -1958,12 +2119,14 @@ void handleRoleCommand() {
   }
   if (isActivityCommand("ACTIVITY AUTO ON", 16)) {
     role_command_length = 0;
+    activity_auto_user_off = false;
     activity_auto_sampler.setEnabled(true, orun_tlp::monotonic::nowMs());
     printActivityAutoDiagnostic();
     return;
   }
   if (isActivityCommand("ACTIVITY AUTO OFF", 17)) {
     role_command_length = 0;
+    activity_auto_user_off = true;
     activity_auto_sampler.setEnabled(false, orun_tlp::monotonic::nowMs());
     printActivityAutoDiagnostic();
     return;
@@ -2951,6 +3114,7 @@ void loop() {
     processGeofenceAcceptedFix(fix, !confirmation_fix_expected);
 
     if (!confirmation_fix_expected) {
+      finishProductPeriod(&fix);
       const bool accepted =
           positions.acceptFix(fix, orun_tlp::monotonic::nowMs());
       if (geofence_slot0_normal_store_expected) {
@@ -2959,6 +3123,17 @@ void loop() {
       }
       if (!accepted)
         Serial.println(F("STORAGE position dropped; no live TX"));
+    }
+  }
+
+  // A normal acquisition that timed out still ends a report period (SF5: one
+  // PERIODIC per effective period, LOCATION_VALID=0 when there is no fix).
+  {
+    const uint32_t timeouts = gnss_manager.diagnostics().acquisition_timeouts;
+    if (timeouts != product_last_gnss_timeouts) {
+      product_last_gnss_timeouts = timeouts;
+      if (tracking_enabled && !confirmation_fix_expected)
+        finishProductPeriod(nullptr);
     }
   }
 

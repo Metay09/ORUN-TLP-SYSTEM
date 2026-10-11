@@ -9,7 +9,9 @@ namespace orun_tlp {
 // Opt-in, bounded RAM-only coordinator for the already-qualified RAK1904
 // ActivityCapture path. It does not own I2C, RF, flash, power or permissions.
 // One capture takes approximately five seconds; the sampling *opportunity*
-// repeats at most every three minutes. No cow-behaviour classifier is implied.
+// repeats at most every three minutes. Each usable window is classified
+// active/inactive by the research-derived, unvalidated threshold of
+// activity_classifier.h; no grazing/walking/lying label is implied.
 namespace activity_auto_config {
 constexpr uint32_t kCaptureIntervalMs = 3UL * 60UL * 1000UL;
 constexpr uint32_t kSummaryPeriodMs = 60UL * 60UL * 1000UL;
@@ -32,6 +34,12 @@ struct ActivityHourSummary {
   uint16_t boundary_discarded_windows = 0;
   uint32_t mean_axis_variance_sum_mg2 = 0;  // per usable window.
   uint32_t mean_abs_delta_mg = 0;          // per usable window.
+  // activity_classifier.h: usable windows classified active, their measured
+  // duration, and active<->inactive changes between consecutive usable
+  // windows of this period (the first window is not a transition).
+  uint16_t active_windows = 0;
+  uint16_t activity_transitions = 0;
+  uint32_t measured_active_ms = 0;
 };
 
 // A service owner can later map this period summary into one typed product
@@ -49,6 +57,18 @@ class ActivityAutoSampler {
   // Returns true exactly on publication of a new bounded RAM summary.
   bool poll(ActivityCapture& capture, uint32_t now);
 
+  // Report-owned periods (SF5 PERIODIC): the report owner closes each period
+  // at its own boundary with closePeriod(), so the summary anchors are exactly
+  // the report period's and link with linkActivityPeriodEvidence(). While
+  // report-owned there is no automatic hourly publication and windows are not
+  // cut at one hour. A window still running at the close is discarded, never
+  // split or moved into the next period.
+  void setReportOwned(bool report_owned) { report_owned_ = report_owned; }
+  bool reportOwned() const { return report_owned_; }
+  // Publishes [period start, now] and starts the next period at `now`.
+  // False when disabled or the period is shorter than one second.
+  bool closePeriod(uint32_t now);
+
   uint16_t usableWindows() const { return usable_windows_; }
   uint16_t invalidWindows() const { return invalid_windows_; }
   uint16_t faultWindows() const { return fault_windows_; }
@@ -62,6 +82,8 @@ class ActivityAutoSampler {
  private:
   void recordCompleted(const ActivityCapture& capture);
   bool publishIfDue(uint32_t now);
+  void publish(uint32_t now);
+  void resetPeriod(uint32_t now);
 
   bool enabled_ = false;
   bool awaiting_capture_ = false;
@@ -77,6 +99,12 @@ class ActivityAutoSampler {
   uint16_t boundary_discarded_windows_ = 0;
   uint64_t summed_variance_mg2_ = 0;
   uint64_t summed_abs_delta_mg_ = 0;
+  uint64_t summed_active_ms_ = 0;
+  uint16_t active_windows_ = 0;
+  uint16_t transitions_ = 0;
+  bool has_last_window_ = false;
+  bool last_window_active_ = false;
+  bool report_owned_ = false;
   uint32_t published_summaries_ = 0;
   ActivityHourSummary latest_summary_{};
 };

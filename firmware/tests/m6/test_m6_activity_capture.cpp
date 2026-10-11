@@ -270,15 +270,18 @@ void autoHourlySummary() {
          expected.axis_variance_sum_mg2);
   assert(summary.mean_abs_delta_mg == expected.mean_abs_delta_mg);
   ActivityPeriodEvidence evidence{};
+  assert(summary.active_windows == 0 && summary.activity_transitions == 0 &&
+         summary.measured_active_ms == 0);  // a still sensor is inactive
   assert(linkActivityPeriodEvidence(summary, enabled_at, hour_end, evidence) ==
-         ActivityPeriodLinkResult::kLinkedUnclassified);
+         ActivityPeriodLinkResult::kLinkedClassified);
   assert(evidence.period_duration_seconds == 3600);
   assert(evidence.coverage_seconds == expected.duration_ms / 1000U);
   assert(evidence.unknown_seconds ==
          3600 - expected.duration_ms / 1000U);
   assert(evidence.coverage_seconds + evidence.unknown_seconds == 3600);
   assert(evidence.movement_evidence_present);
-  assert(!evidence.active_inactive_classification_valid);
+  assert(evidence.active_inactive_classification_valid);
+  assert(evidence.active_seconds == 0 && evidence.transition_count == 0);
   // A 3-minute tracker record is not the 1-hour activity summary.
   assert(linkActivityPeriodEvidence(
              summary, enabled_at, enabled_at + 180000U, evidence) ==
@@ -360,6 +363,101 @@ void autoBoundaryWindowNotMisattributed() {
   assert(auto_sampler.latestSummary().boundary_discarded_windows == 1);
 }
 
+// One sampler-driven capture: still sensor, or Z alternating 992/768 mg.
+uint32_t runAutoCapture(AccelerometerManager& m, ActivityCapture& c,
+                        ActivityAutoSampler& sampler, uint32_t now,
+                        bool moving) {
+  assert(!sampler.poll(c, now));
+  assert(c.state() == State::kCapturing);
+  now = configure(m, now + 1);
+  for (unsigned i = 0; i < 50; ++i) {
+    if (moving) fake_accelerometer_registers[0x2d] = (i % 2) ? 0x30 : 0x3e;
+    m.poll(now);
+    m.poll(now);
+    c.poll();
+    assert(!sampler.poll(c, now));
+    now += 100;
+  }
+  fake_accelerometer_registers[0x2d] = 0x3e;
+  m.poll(now);
+  c.poll();
+  assert(!sampler.poll(c, now));
+  assert(c.state() == State::kReady);
+  return now;
+}
+
+void autoReportOwnedPeriods() {
+  reset();
+  AccelerometerManager m;
+  uint32_t now = boot(m);
+  ActivityCapture c(m);
+  ActivityAutoSampler sampler;
+  sampler.setReportOwned(true);
+  const uint32_t opened = now;
+  sampler.setEnabled(true, opened);
+  assert(!sampler.closePeriod(opened + 999));  // shorter than one second
+
+  // Moving window, then (one capture interval later) a still one.
+  now = runAutoCapture(m, c, sampler, now, true);
+  const ActivityWindowFeatures moving = *c.result();
+  assert(moving.axis_variance_sum_mg2 >= 2000);
+  now = sampler.nextDueAtMs();
+  now = runAutoCapture(m, c, sampler, now, false);
+  const ActivityWindowFeatures still = *c.result();
+  assert(still.axis_variance_sum_mg2 < 2000);
+
+  // No automatic hourly cut while report-owned.
+  assert(!sampler.poll(c, opened + activity_auto_config::kSummaryPeriodMs));
+  const uint32_t closed = opened + activity_auto_config::kSummaryPeriodMs + 5000;
+  assert(sampler.closePeriod(closed));
+  const ActivityHourSummary summary = sampler.latestSummary();
+  assert(summary.started_at_ms == opened && summary.finished_at_ms == closed);
+  assert(summary.usable_windows == 2 && summary.active_windows == 1);
+  assert(summary.activity_transitions == 1);
+  assert(summary.measured_active_ms == moving.duration_ms);
+  assert(summary.measured_coverage_ms ==
+         moving.duration_ms + still.duration_ms);
+
+  // The report owner's identical anchors link it, with active seconds.
+  ActivityPeriodEvidence evidence{};
+  assert(linkActivityPeriodEvidence(summary, opened, closed, evidence) ==
+         ActivityPeriodLinkResult::kLinkedClassified);
+  assert(evidence.active_seconds == moving.duration_ms / 1000U);
+  assert(evidence.active_seconds <= evidence.coverage_seconds);
+  assert(evidence.transition_count == 1);
+  // Corrupt counts never pass.
+  ActivityHourSummary corrupt = summary;
+  corrupt.measured_active_ms = summary.measured_coverage_ms + 1;
+  assert(linkActivityPeriodEvidence(corrupt, opened, closed, evidence) ==
+         ActivityPeriodLinkResult::kInvalidPeriod);
+  corrupt = summary;
+  corrupt.active_windows = 3;
+  assert(linkActivityPeriodEvidence(corrupt, opened, closed, evidence) ==
+         ActivityPeriodLinkResult::kInvalidPeriod);
+
+  // The next period starts at the close and counts afresh; a window still
+  // running at the next close is discarded, not moved.
+  now = closed;
+  assert(!sampler.poll(c, now));  // capture due -> started
+  assert(c.state() == State::kCapturing);
+  assert(sampler.closePeriod(now + 2000));
+  assert(sampler.latestSummary().usable_windows == 0);
+  assert(sampler.latestSummary().active_windows == 0);
+  now = configure(m, now + 2001);
+  for (unsigned i = 0; i < 50; ++i) {
+    m.poll(now); m.poll(now); c.poll();
+    sampler.poll(c, now);
+    now += 100;
+  }
+  m.poll(now); c.poll();
+  sampler.poll(c, now);
+  assert(sampler.usableWindows() == 0);
+  assert(sampler.closePeriod(now + 1000));
+  assert(sampler.latestSummary().boundary_discarded_windows == 1);
+  sampler.setEnabled(false, now);
+  assert(!sampler.closePeriod(now + 5000));  // disabled
+}
+
 int main() {
   admissionAndHandoff();
   capture(false, false, 1000);
@@ -370,5 +468,6 @@ int main() {
   autoHourlySummary();
   autoAbsentAndRollover();
   autoBoundaryWindowNotMisattributed();
+  autoReportOwnedPeriods();
   puts("M6B3 runtime session/capture checks: PASS");
 }

@@ -953,6 +953,21 @@ int main(int argc, char** argv) {
     drainPosition();
     assert(history.count() == timeout_records_before + 1);
 
+    // SF5 dry run: the second normal fix closed the first report period and
+    // produced one canonical PERIODIC plaintext (USB only, nothing stored).
+    {
+      const size_t line_at = Serial.output.find("PRODUCT PERIODIC DRYRUN seq=1 ");
+      assert(line_at != std::string::npos);
+      const size_t line_end = Serial.output.find('\n', line_at);
+      const std::string line = Serial.output.substr(line_at, line_end - line_at);
+      assert(line.size() < 256);  // Print::printf buffer
+      assert(line.find(" result=OK ") != std::string::npos);
+      assert(line.find(" loc=GNSS ") != std::string::npos);
+      const size_t bytes_at = Serial.output.find("PRODUCT PERIODIC DRYRUN bytes=01");
+      assert(bytes_at != std::string::npos);
+      assert(Serial.output.find('\n', bytes_at) == bytes_at + 30 + 128);
+    }
+
     // Successful transition. Slot 0 has the best OUTSIDE HDOP and was already
     // accepted by the ordinary store-first path. Selecting it as the logical
     // representative must NOT create a duplicate record/sequence/TX.

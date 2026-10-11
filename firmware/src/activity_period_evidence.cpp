@@ -42,10 +42,17 @@ ActivityPeriodLinkResult linkActivityPeriodEvidence(
           ? UINT16_MAX
           : static_cast<uint16_t>(summary.mean_abs_delta_mg);
   output.movement_evidence_present = true;
-  // Intentionally no ACTIVE/INACTIVE duration. This type is a pre-wire
-  // evidence boundary. SF5B schema v1 demands ACTIVITY_VALID=0 and canonical
-  // zero activity wire fields until validated active_seconds are available.
-  return ActivityPeriodLinkResult::kLinkedUnclassified;
+  // Window labels (activity_classifier.h). Whole seconds round down on both
+  // sides, so active_seconds <= coverage_seconds holds by construction.
+  if (summary.active_windows > summary.usable_windows ||
+      summary.measured_active_ms > summary.measured_coverage_ms) {
+    output = ActivityPeriodEvidence{};
+    return ActivityPeriodLinkResult::kInvalidPeriod;
+  }
+  output.active_seconds = summary.measured_active_ms / 1000U;
+  output.transition_count = summary.activity_transitions;
+  output.active_inactive_classification_valid = true;
+  return ActivityPeriodLinkResult::kLinkedClassified;
 }
 
 }  // namespace orun_tlp
