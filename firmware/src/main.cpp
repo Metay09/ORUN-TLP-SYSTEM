@@ -1176,11 +1176,10 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
       current.radio_failures - product_period_baseline.radio_failures;
   in.health.sensor_failures =
       current.sensor_failures - product_period_baseline.sensor_failures;
-  // A detected accelerometer that has faulted stays degraded every period
-  // until the reboot that re-probes it.
-  if (in.health.sensor_failures == 0 && accelerometer_manager.detected() &&
-      accelerometer_manager.faulted())
-    in.health.sensor_failures = 1;
+  // A detected accelerometer that has faulted reports SENSOR_FAULT every
+  // period until the reboot that re-probes it.
+  if (accelerometer_manager.detected() && accelerometer_manager.faulted())
+    in.health.flags |= orun_tlp::tlp::kHealthSensorFault;
   if (in.health.gnss_failures != 0)
     in.health.flags |= orun_tlp::tlp::kHealthGnssDegraded;
   if (in.health.sensor_failures != 0)
