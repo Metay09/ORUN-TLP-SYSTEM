@@ -25,12 +25,20 @@ begin_pos = main.index("geofence_store.begin()")
 ble_pos = main.index("ble_ready = Bluefruit.begin()")
 assert begin_pos < ble_pos
 
-# The runtime bridge consumes a recovered snapshot only. No production
-# geofence mutation API is activated in this slice.
+# The runtime bridge consumes a recovered snapshot only. Since the local USB
+# writer, mutations reach the store only through the one GeofenceMutationOwner
+# (REPLACE_SET / CLEAR_SET, durable first); main never calls the store's
+# mutation API directly.
 assert "geofence_store.currentSnapshot(geofence_boot_snapshot)" in main
 assert "applyGeofenceSnapshotToRuntime" in main
 assert "geofence_store.requestReplace" not in main
 assert "geofence_store.requestClear" not in main
+assert main.count("orun_tlp::GeofenceMutationOwner geofence_mutations(geofence_store)") == 1
+mutation_cpp = (root / "src" / "geofence_mutation.cpp").read_text()
+assert "store_.requestReplace(" in mutation_cpp
+assert "store_.requestClear()" in mutation_cpp
+# The runtime follows only a confirmed commit.
+assert "if (geofence_mutations.poll()) applyGeofenceMutationToRuntime();" in main
 
 # Token authority and semantic readability must remain separate. Production
 # logs token state but does not gate currentSnapshot/configure on VALID.

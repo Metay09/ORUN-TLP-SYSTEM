@@ -313,6 +313,86 @@ int batteryCriticalScenario() {
   return 0;
 }
 
+// Local geofence writer through the real USB command surface and loop:
+// stage, commit (durable first, then runtime), refuse invalid sets, clear
+// (runtime off, cadence back to B), recover after a cold boot.
+int geofenceUsbScenario() {
+  auto has = [](const char* needle) {
+    return Serial.output.find(needle) != std::string::npos;
+  };
+  auto send = [&](const char* lines) {
+    Serial.output.clear();
+    Serial.queueInput(lines);
+    while (Serial.available()) pollRoleCommands();
+  };
+  auto loopUntil = [&](const char* needle) {
+    for (int pass = 0; pass < 32 && !has(needle); ++pass) {
+      test_now += 10;
+      loop();
+    }
+    assert(has(needle));
+  };
+  const uint32_t base_ms =
+      config_store.config().tracking_interval_seconds * 1000UL;
+  assert(geofence_store.resourceState() == GeofenceResourceState::kClear);
+  assert(!geofence_confirmation.configured());
+  next_usb_application_request_id = 80;
+
+  send("APP FENCE V 41 29\nAPP FENCE COMMIT\n");
+  assert(Serial.output == "APP FENCE REJECTED reason=NOT_STAGING\n"
+                          "APP FENCE REJECTED reason=NOT_STAGING\n");
+  send("APP FENCE BEGIN\nAPP FENCE V 40.9999 28.9999\n"
+       "APP FENCE V 40.9999 29.0001\nAPP FENCE V 41.0001 29.0001\n"
+       "APP FENCE V 41.0001 28.9999\nAPP FENCE V 91 29\n");
+  assert(has("APP FENCE STAGING areas=0 vertices=0\n"));
+  assert(has("APP FENCE STAGING areas=1 vertices=4\n"));
+  assert(has("APP REJECTED\n"));  // latitude 91
+  assert(!geofence_confirmation.configured());  // nothing before COMMIT
+
+  send("APP FENCE COMMIT\n");
+  loopUntil("APP FENCE id=80");
+  assert(has("GEOFENCE runtime configured areas=1 vertices=4 token=VALID\n"));
+  assert(has("APP FENCE id=80 code=APPLIED state=CONFIGURED areas=1 "
+             "vertices=4 token=VALID revision=2\n"));
+  assert(Serial.output.find("GEOFENCE runtime configured") <
+         Serial.output.find("APP FENCE id=80"));
+  assert(geofence_confirmation.configured());
+  assert(geofence_store.resourceState() == GeofenceResourceState::kConfigured);
+  assert(gnss_manager.trackingIntervalMs() == base_ms);
+
+  // An invalid set changes nothing.
+  send("APP FENCE BEGIN\nAPP FENCE V 40.9 28.9\nAPP FENCE V 41.1 29.1\n"
+       "APP FENCE COMMIT\n");
+  loopUntil("APP FENCE id=81");
+  assert(has("APP FENCE id=81 code=INVALID state=CONFIGURED areas=1 "
+             "vertices=4 token=VALID revision=2\n"));
+  assert(!has("GEOFENCE runtime"));
+  assert(geofence_confirmation.configured());
+
+  // CLEAR_SET while OUTSIDE cadence were in effect: back to B.
+  gnss_manager.setTrackingIntervalMs(base_ms / 3);
+  send("APP FENCE CLEAR\n");
+  loopUntil("APP FENCE id=82");
+  assert(has("GEOFENCE runtime clear token=VALID\n"));
+  assert(has("APP FENCE id=82 code=APPLIED state=CLEAR areas=0 vertices=0 "
+             "token=VALID revision=3\n"));
+  assert(!geofence_confirmation.configured());
+  assert(gnss_manager.trackingIntervalMs() == base_ms);
+
+  send("APP FENCE CLEAR\n");
+  loopUntil("APP FENCE id=83");
+  assert(has("APP FENCE id=83 code=UNCHANGED state=CLEAR"));
+
+  GeofenceStore rebooted(storage_flash_gate.geofencePort(),
+                         &geofence_incarnation_source);
+  assert(rebooted.begin());
+  assert(rebooted.resourceState() == GeofenceResourceState::kClear);
+  geofence_format::StateToken token;
+  assert(rebooted.stateToken(token) && token.revision == 3);
+  puts("Startup local geofence writer scenario: PASS");
+  return 0;
+}
+
 int main(int argc, char** argv) {
   assert(argc == 2);
   const std::string mode = argv[1];
@@ -330,11 +410,12 @@ int main(int argc, char** argv) {
   const bool history_erase_i2c_scenario = mode == "history_erase_i2c";
   const bool services_scenario = mode == "services_no_gnss";
   const bool battery_scenario = mode == "battery_critical";
+  const bool geofence_usb_scenario = mode == "geofence_usb";
   const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails ||
                        no_event_control || geofence_scenario ||
                        persisted_geofence_scenario || uncertain_geofence_scenario ||
                        history_erase_i2c_scenario || services_scenario ||
-                       battery_scenario;
+                       battery_scenario || geofence_usb_scenario;
   // Each scenario runs in a new process, like a cold boot (static driver gate).
   assert(success || mode == "mutex" || mode == "gate" || mode == "queue" ||
          mode == "lora");
@@ -452,6 +533,7 @@ int main(int argc, char** argv) {
   setup();
   if (services_scenario) return servicesNoGnssScenario();
   if (battery_scenario) return batteryCriticalScenario();
+  if (geofence_usb_scenario) return geofenceUsbScenario();
 
   // M6D2 legacy startup composition scenario: install an explicit host-only
   // area set before the first accepted fix. M6D3C's separate
@@ -983,7 +1065,9 @@ int main(int argc, char** argv) {
   assert(role_controller.role() == prior_role);
   assert(Wire.transaction_calls == wire_calls);
   Serial.output.clear();
-  Serial.queueInput("ACTIVITY STARTxxxxxxxxxxxxxxxxxxxxxxxx\nACTIVITY STARTX\nACCEL?\n");
+  // Longer than the 47-character command buffer.
+  Serial.queueInput("ACTIVITY STARTxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"
+                    "ACTIVITY STARTX\nACCEL?\n");
   while (Serial.available()) pollRoleCommands();
   assert(Serial.output == "ROLE command rejected: too long\n"
                           "ROLE command rejected\nACCEL ABSENT\n");

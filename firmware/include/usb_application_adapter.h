@@ -4,6 +4,8 @@
 
 #include "application_request.h"
 #include "config_mutation.h"
+#include "geofence_mutation.h"
+#include "geofence_staging.h"
 #include "node_role.h"
 #include "runtime_config.h"
 
@@ -56,5 +58,30 @@ struct UsbServiceStatus {
 };
 
 void printUsbServiceStatus(const UsbServiceStatus& status);
+
+// Local USB spelling of a geofence change (GeofenceMutationOwner owns the
+// semantics). A replacement is staged vertex by vertex, then committed whole:
+//   APP FENCE BEGIN            new candidate, first area open
+//   APP FENCE V <lat> <lon>    one vertex, decimal degrees, <= 7 decimals
+//   APP FENCE AREA             start the next area (permitted union)
+//   APP FENCE COMMIT           REPLACE_SET with the staged set
+//   APP FENCE ABORT            drop the candidate
+//   APP FENCE CLEAR            CLEAR_SET (no geofence)
+enum class UsbFenceCommand : uint8_t {
+  kNotFenceCommand,
+  kMalformed,
+  kBegin,
+  kVertex,
+  kArea,
+  kCommit,
+  kAbort,
+  kClear,
+};
+
+UsbFenceCommand parseUsbFenceCommand(const char* text, uint8_t length,
+                                     GeoPointE7* vertex);
+void printUsbFenceStaging(const GeofenceStaging& staging);
+void printUsbFenceRejected(GeofenceStaging::Result reason);
+void printUsbGeofenceMutationResult(const GeofenceMutationResult& result);
 
 }  // namespace orun_tlp

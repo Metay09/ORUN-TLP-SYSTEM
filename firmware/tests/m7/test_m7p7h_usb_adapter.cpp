@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <string.h>
 #include <string>
+#include <initializer_list>
 
 #include "Arduino.h"
 #include "application_request.h"
@@ -171,7 +172,7 @@ int main() {
     };
     assert(parse_config("APP INTERVAL 900") == UsbConfigCommandParse::kOk);
     assert(kind == ConfigMutationKind::kSetTrackingInterval && value == 900);
-    // The widest value still fits the 23-character USB command buffer.
+    // The widest value fits the 47-character USB command buffer.
     assert(strlen("APP INTERVAL 4294967295") == 23);
     assert(parse_config("APP INTERVAL 4294967295") ==
            UsbConfigCommandParse::kOk);
@@ -371,6 +372,73 @@ int main() {
     printUsbConfigMutationResult(set);
     assert(Serial.output ==
            "APP SET id=50 code=INVALID services=NONE mode=EXPLICIT "
+           "token=UNAVAILABLE\n");
+  }
+
+  // Geofence change spelling: APP FENCE BEGIN|V <lat> <lon>|AREA|COMMIT|ABORT|CLEAR.
+  {
+    GeoPointE7 v(5, 5);
+    const auto fence = [&](const char* text) {
+      return parseUsbFenceCommand(text, static_cast<uint8_t>(strlen(text)), &v);
+    };
+    assert(fence("APP FENCE BEGIN") == UsbFenceCommand::kBegin);
+    assert(fence("APP FENCE AREA") == UsbFenceCommand::kArea);
+    assert(fence("APP FENCE COMMIT") == UsbFenceCommand::kCommit);
+    assert(fence("APP FENCE ABORT") == UsbFenceCommand::kAbort);
+    assert(fence("APP FENCE CLEAR") == UsbFenceCommand::kClear);
+    assert(fence("APP FENCE V 37.8512345 28.1234567") == UsbFenceCommand::kVertex);
+    assert(v.latitude_e7 == 378512345 && v.longitude_e7 == 281234567);
+    // The widest vertex line fits the 47-character command buffer.
+    const char* widest = "APP FENCE V -89.9999999 -179.9999999";
+    assert(strlen(widest) <= 47);
+    assert(fence(widest) == UsbFenceCommand::kVertex);
+    assert(v.latitude_e7 == -899999999 && v.longitude_e7 == -1799999999);
+
+    v = GeoPointE7(5, 5);
+    for (const char* bad :
+         {"APP FENCE ", "APP FENCE V", "APP FENCE V 37.85", "APP FENCE V 37.85 ",
+          "APP FENCE V  37.85 28.12", "APP FENCE V 37.85  28.12",
+          "APP FENCE V 91 28", "APP FENCE V 37 181", "APP FENCE V 37,85 28",
+          "APP FENCE V 37.123456789 28", "APP FENCE begin", "APP FENCE CLEAR ",
+          "APP FENCE V 37.85 28.12 1"}) {
+      assert(fence(bad) == UsbFenceCommand::kMalformed);
+      assert(v.latitude_e7 == 5 && v.longitude_e7 == 5);
+    }
+    for (const char* other : {"APP FENCE", "APP GEOFENCE?", "APP FENCEX", ""})
+      assert(fence(other) == UsbFenceCommand::kNotFenceCommand);
+
+    GeofenceStaging staging;
+    staging.begin();
+    staging.addVertex(GeoPointE7(1, 1));
+    Serial.output.clear();
+    printUsbFenceStaging(staging);
+    assert(Serial.output == "APP FENCE STAGING areas=1 vertices=1\n");
+    Serial.output.clear();
+    printUsbFenceRejected(GeofenceStaging::Result::kTooManyAreas);
+    assert(Serial.output == "APP FENCE REJECTED reason=TOO_MANY_AREAS\n");
+
+    GeofenceMutationResult applied;
+    applied.request_id = 70;
+    applied.kind = GeofenceMutationKind::kReplace;
+    applied.outcome = ConfigMutationOutcome::kApplied;
+    applied.state = GeofenceResourceState::kConfigured;
+    applied.area_count = 2;
+    applied.total_vertex_count = 7;
+    applied.token_valid = true;
+    applied.token = geofence_format::StateToken(1, 4);
+    Serial.output.clear();
+    printUsbGeofenceMutationResult(applied);
+    assert(Serial.output ==
+           "APP FENCE id=70 code=APPLIED state=CONFIGURED areas=2 vertices=7 "
+           "token=VALID revision=4\n");
+    GeofenceMutationResult unknown;
+    unknown.request_id = 71;
+    unknown.outcome = ConfigMutationOutcome::kOutcomeUnknown;
+    unknown.state = GeofenceResourceState::kClear;
+    Serial.output.clear();
+    printUsbGeofenceMutationResult(unknown);
+    assert(Serial.output ==
+           "APP FENCE id=71 code=OUTCOME_UNKNOWN state=CLEAR areas=0 vertices=0 "
            "token=UNAVAILABLE\n");
   }
 

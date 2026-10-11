@@ -125,7 +125,7 @@ This matrix distinguishes current runtime from product direction.
 | STORAGE status | M7P7H | M7P7H | later adapter | No O(N) history scan |
 | GET_LOCATION | later | later | later | Wait for an accepted/last-known Location owner |
 | SET_CONFIG | tracking interval (`APP INTERVAL <s>`) and requested services (`APP SERVICES AUTO\|NONE\|<T,R,A>`, status `APP SERVICES?`) | later | later | One mutation owner (`ConfigMutationOwner`): serialized slot, durable apply, runtime apply, typed RESULT. Local USB is physical-access trust. Caller-supplied CAS precondition, authentication and BLE/LoRa adapters are later slices on the same owner |
-| REPLACE/CLEAR_GEOFENCE | later | later | later | One GeofenceStore/runtime owner; protected resource transfer |
+| REPLACE/CLEAR_GEOFENCE | staged `APP FENCE BEGIN/V/AREA/COMMIT`, `APP FENCE CLEAR` | later | later | One owner (`GeofenceMutationOwner`): durable commit first, then runtime (9.1). Local USB is physical-access trust; BLE/LoRa need authorization/protected resource transfer |
 | history/backlog export | local future | local future | bounded later | Must not starve live/critical RF traffic |
 | POSITION uplink | local inspection only | local inspection later | implemented TLP v1 uplink | Existing TLP v1 behavior remains frozen |
 | COMMAND/RESULT | later | later | later TLP v2 | Security/replay/store-forward required |

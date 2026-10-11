@@ -134,6 +134,12 @@ g++ "${portable_flags[@]}" firmware/tests/m6/test_m6d3b_geofence_store.cpp \
   firmware/src/geofence_geometry.cpp firmware/src/journal_format.cpp \
   firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m6d3b_geofence_store"
+g++ "${portable_flags[@]}" firmware/tests/m6/test_geofence_writer.cpp \
+  firmware/src/geofence_mutation.cpp firmware/src/geofence_staging.cpp \
+  firmware/src/geofence_store.cpp firmware/src/geofence_format.cpp \
+  firmware/src/geofence_geometry.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp -o "$test_dir/geofence_writer"
+"$test_dir/geofence_writer"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m6/test_m6d3b_source_contract.py
 
 g++ "${b3_flags[@]}" firmware/tests/m6/test_m6d3c_geofence_runtime_provider.cpp \
@@ -447,8 +453,9 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/position_flow.cpp firmware/src/ble_admission_policy.cpp \
   firmware/src/loop_health.cpp firmware/src/loop_health_monitor.cpp \
   firmware/src/battery_monitor.cpp firmware/src/battery_policy.cpp \
+  firmware/src/geofence_mutation.cpp firmware/src/geofence_staging.cpp \
   -o "$test_dir/startup"
-for scenario in mutex gate queue lora success advfail blefail noevent geofence geofence_persisted geofence_uncertain history_erase_i2c services_no_gnss battery_critical; do
+for scenario in mutex gate queue lora success advfail blefail noevent geofence geofence_persisted geofence_uncertain history_erase_i2c services_no_gnss battery_critical geofence_usb; do
   "$test_dir/startup" "$scenario"
 done
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r4/test_patch_wire.py
@@ -489,7 +496,8 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7h_app_status.cpp \
 "$test_dir/m7p7h_app_status"
 g++ "${flags[@]}" firmware/tests/m7/test_m7p7h_usb_adapter.cpp \
   firmware/src/usb_application_adapter.cpp firmware/src/service_intent.cpp \
-  firmware/src/node_role.cpp -o "$test_dir/m7p7h_usb_adapter"
+  firmware/src/node_role.cpp firmware/src/geofence_staging.cpp \
+  -o "$test_dir/m7p7h_usb_adapter"
 "$test_dir/m7p7h_usb_adapter"
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7f_ble_application_transport.cpp \
   firmware/src/ble_application_transport.cpp firmware/src/application_request.cpp \

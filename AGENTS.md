@@ -45,7 +45,9 @@ composition and M6D3B durable geofence persistence are implemented and merged.
 M6D3C physically qualified the normal production image recovering the durable
 CLEAR/CONFIGURED snapshot at boot and supplying only that semantic snapshot to
 the existing M6D2 runtime owner. No production BLE/LoRa geofence writer,
-protected mutation path or secure EVENT transport is enabled by M6D3C. This is
+protected mutation path or secure EVENT transport is enabled by M6D3C. A local
+USB writer (`APP FENCE ...`) now submits REPLACE_SET / CLEAR_SET to the one
+`GeofenceMutationOwner`; BLE/LoRa must reuse that owner once authorized. This is
 not evidence that backend alarms or trustworthy LOST semantics exist. The
 policy refines older conceptual NEAR_FENCE and fixed outside-cadence notes
 without weakening the validated M6C geometry layer.
