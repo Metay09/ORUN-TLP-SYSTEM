@@ -693,7 +693,6 @@ void applyRole(orun_tlp::NodeRole role, const char* source) {
   Serial.printf("ROLE %s source=%s\n", orun_tlp::roleName(role), source);
 }
 
-void printServiceStatus();
 void abortGeofenceConfirmation(const char* reason);
 void clearGeofenceEpisodeFixes();
 const char* geofenceTokenStateName(orun_tlp::GeofenceTokenState state);
@@ -1835,11 +1834,6 @@ void handleRoleCommand() {
     handleUsbFenceCommand(fence_command, fence_vertex);
     return;
   }
-  if (orun_tlp::isUsbServicesQuery(role_command, role_command_length)) {
-    role_command_length = 0;
-    printServiceStatus();
-    return;
-  }
   uint8_t services_mode = 0;
   uint8_t services_requested = 0;
   const auto services_command = orun_tlp::parseUsbServicesCommand(
@@ -2056,22 +2050,6 @@ orun_tlp::EffectiveConfig resolveRuntimeConfig() {
                                           currentCapabilitySnapshot());
 }
 
-void printServiceStatus() {
-  const orun_tlp::EffectiveConfig effective = resolveRuntimeConfig();
-  orun_tlp::UsbServiceStatus status;
-  status.service_mode = applied_service_mode;
-  status.requested_services = applied_requested_services;
-  status.intent_applied = explicit_services_active;
-  status.tracking = effective.tracking;
-  status.relay_forwarding = effective.relay_forwarding;
-  status.legacy_role = role_controller.role();
-  status.application_receive =
-      orun_tlp::legacyRoleBehavior(role_controller.role())
-          .receive_application_position;
-  orun_tlp::printUsbServiceStatus(status);
-}
-
-
 void refreshApplicationStatusSnapshot(uint32_t now_ms) {
   const orun_tlp::CapabilitySnapshot capabilities = currentCapabilitySnapshot();
   const orun_tlp::RequestedConfig requested = requestedRuntimeConfig();
@@ -2092,6 +2070,15 @@ void refreshApplicationStatusSnapshot(uint32_t now_ms) {
       history,
       security_store,
       application_status_snapshot);
+  orun_tlp::buildApplicationPowerSnapshot(now_ms, battery_monitor,
+                                          battery_state.state(),
+                                          application_status_snapshot.power);
+  orun_tlp::buildApplicationServicesSnapshot(
+      applied_service_mode, applied_requested_services,
+      explicit_services_active,
+      orun_tlp::legacyRoleBehavior(role_controller.role())
+          .receive_application_position,
+      effective, role_controller.role(), application_status_snapshot.services);
 }
 
 void handleAccelerometerEvent(orun_tlp::AccelerometerManager::Event event) {

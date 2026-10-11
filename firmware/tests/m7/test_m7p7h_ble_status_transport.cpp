@@ -156,6 +156,24 @@ ApplicationStatusSnapshot makeSnapshot() {
   s.storage.security_ready = 1;
   s.storage.security_exhausted = 0;
   s.storage.security_state = ApplicationSecurityState::kProvisioned;
+
+  s.power.battery_valid = 1;
+  s.power.battery_calibrated = 0;
+  s.power.battery_state = ApplicationBatteryState::kLow;
+  s.power.battery_mv = 3456;        // 0x0D80
+  s.power.battery_raw = 2728;       // 0x0AA8
+  s.power.battery_age_ms = 0x01020304UL;
+  s.power.battery_readings = 0x0A0B0C0DUL;
+
+  s.services.service_mode = 1;      // EXPLICIT
+  s.services.requested_services = 0x03;  // tracking + relay
+  s.services.intent_applied = 1;
+  s.services.application_receive = 0;
+  s.services.tracking_state = ApplicationServiceState::kBlocked;
+  s.services.tracking_reason = ApplicationServiceReason::kCapabilityAbsent;
+  s.services.relay_state = ApplicationServiceState::kEnabled;
+  s.services.relay_reason = ApplicationServiceReason::kNone;
+  s.services.legacy_role = ApplicationRole::kTracker;
   return s;
 }
 
@@ -254,6 +272,33 @@ int main() {
     assert(memcmp(payload, expected, sizeof(expected)) == 0);
   }
 
+  // POWER (M7P7H addendum): 16 bytes.
+  {
+    uint8_t payload[bat::kMaxLogicalPayload]{};
+    const uint16_t len =
+        transact(transport, bat::MessageType::kGetPowerStatusRequest,
+                 bat::MessageType::kGetPowerStatusResponse, 0x1005, payload);
+    const uint8_t expected[] = {
+        0x00, 0x01, 0x02, 0x00,
+        0x80, 0x0D, 0xA8, 0x0A,
+        0x04, 0x03, 0x02, 0x01,
+        0x0D, 0x0C, 0x0B, 0x0A};
+    assert(len == sizeof(expected));
+    assert(memcmp(payload, expected, sizeof(expected)) == 0);
+  }
+
+  // SERVICES (M7P7H addendum): 9 bytes.
+  {
+    uint8_t payload[bat::kMaxLogicalPayload]{};
+    const uint16_t len =
+        transact(transport, bat::MessageType::kGetServicesStatusRequest,
+                 bat::MessageType::kGetServicesStatusResponse, 0x1006, payload);
+    const uint8_t expected[] = {
+        0x00, 0x01, 0x03, 0x01, 0x02, 0x05, 0x01, 0x00, 0x00};
+    assert(len == sizeof(expected));
+    assert(memcmp(payload, expected, sizeof(expected)) == 0);
+  }
+
   // Every M7P7H status query is exactly zero-payload. A syntactically complete
   // one-byte request is malformed and must fail closed: no response and no
   // ApplicationRequestService slot acquisition.
@@ -261,7 +306,9 @@ int main() {
            bat::MessageType::kGetDeviceStatusRequest,
            bat::MessageType::kGetTrackingStatusRequest,
            bat::MessageType::kGetGeofenceStatusRequest,
-           bat::MessageType::kGetStorageStatusRequest}) {
+           bat::MessageType::kGetStorageStatusRequest,
+           bat::MessageType::kGetPowerStatusRequest,
+           bat::MessageType::kGetServicesStatusRequest}) {
     uint8_t frame[bat::kMaxFrameSize]{};
     frame[0] = bat::kTransportVersion;
     frame[1] = static_cast<uint8_t>(type);

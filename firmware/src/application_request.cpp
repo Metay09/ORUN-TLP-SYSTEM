@@ -29,6 +29,8 @@ bool ApplicationRequestService::requestKindSupported(
     case ApplicationRequestKind::kGetTrackingStatus:
     case ApplicationRequestKind::kGetGeofenceStatus:
     case ApplicationRequestKind::kGetStorageStatus:
+    case ApplicationRequestKind::kGetPowerStatus:
+    case ApplicationRequestKind::kGetServicesStatus:
       return true;
   }
   return false;
@@ -124,6 +126,24 @@ ApplicationSubmitResult ApplicationRequestService::submit(
       } else {
         response_.code = ApplicationResponseCode::kOk;
         response_.payload.storage.snapshot = status_snapshot_->storage;
+      }
+      break;
+
+    case ApplicationRequestKind::kGetPowerStatus:
+      if (status_snapshot_ == nullptr || status_snapshot_->populated == 0) {
+        response_.code = ApplicationResponseCode::kUnavailable;
+      } else {
+        response_.code = ApplicationResponseCode::kOk;
+        response_.payload.power.snapshot = status_snapshot_->power;
+      }
+      break;
+
+    case ApplicationRequestKind::kGetServicesStatus:
+      if (status_snapshot_ == nullptr || status_snapshot_->populated == 0) {
+        response_.code = ApplicationResponseCode::kUnavailable;
+      } else {
+        response_.code = ApplicationResponseCode::kOk;
+        response_.payload.services.snapshot = status_snapshot_->services;
       }
       break;
   }

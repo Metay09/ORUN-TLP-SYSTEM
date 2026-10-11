@@ -245,6 +245,12 @@ void BleApplicationTransport::dispatchInbound() {
     case MessageType::kGetStorageStatusRequest:
       kind = ApplicationRequestKind::kGetStorageStatus;
       break;
+    case MessageType::kGetPowerStatusRequest:
+      kind = ApplicationRequestKind::kGetPowerStatus;
+      break;
+    case MessageType::kGetServicesStatusRequest:
+      kind = ApplicationRequestKind::kGetServicesStatus;
+      break;
     default:
       buildErrorResponse(correlation_id,
                          ble_app_transport::ErrorCode::kUnsupported,
@@ -415,6 +421,45 @@ void BleApplicationTransport::buildApplicationResponse(
       writeLE32(outbound_.payload + 32, s.geofence_recovery_corruptions);
       writeLE32(outbound_.payload + 36, s.security_recovery_corruptions);
       outbound_.total_length = 40;
+      return;
+    }
+
+    case ApplicationRequestKind::kGetPowerStatus: {
+      // M7P7H addendum (docs/milestones/M7P7H.md, POWER): 16 bytes.
+      const ApplicationPowerSnapshot& s = response.payload.power.snapshot;
+      outbound_.message_type =
+          static_cast<uint8_t>(MessageType::kGetPowerStatusResponse);
+      outbound_.payload[0] = ble_app_transport::kApplicationStatusOk;
+      outbound_.payload[1] = static_cast<uint8_t>(
+          (s.battery_valid ? 0x01U : 0U) | (s.battery_calibrated ? 0x02U : 0U));
+      outbound_.payload[2] = static_cast<uint8_t>(s.battery_state);
+      outbound_.payload[3] = 0;
+      writeLE16(outbound_.payload + 4, s.battery_mv);
+      writeLE16(outbound_.payload + 6, s.battery_raw);
+      writeLE32(outbound_.payload + 8, s.battery_age_ms);
+      writeLE32(outbound_.payload + 12, s.battery_readings);
+      outbound_.total_length = 16;
+      return;
+    }
+
+    case ApplicationRequestKind::kGetServicesStatus: {
+      // M7P7H addendum (docs/milestones/M7P7H.md, SERVICES): 9 bytes.
+      const ApplicationServicesSnapshot& s =
+          response.payload.services.snapshot;
+      outbound_.message_type =
+          static_cast<uint8_t>(MessageType::kGetServicesStatusResponse);
+      outbound_.payload[0] = ble_app_transport::kApplicationStatusOk;
+      outbound_.payload[1] = s.service_mode;
+      outbound_.payload[2] = s.requested_services;
+      outbound_.payload[3] = static_cast<uint8_t>(
+          (s.intent_applied ? 0x01U : 0U) |
+          (s.application_receive ? 0x02U : 0U));
+      outbound_.payload[4] = static_cast<uint8_t>(s.tracking_state);
+      outbound_.payload[5] = static_cast<uint8_t>(s.tracking_reason);
+      outbound_.payload[6] = static_cast<uint8_t>(s.relay_state);
+      outbound_.payload[7] = static_cast<uint8_t>(s.relay_reason);
+      outbound_.payload[8] = static_cast<uint8_t>(s.legacy_role);
+      outbound_.total_length = 9;
       return;
     }
   }

@@ -284,63 +284,93 @@ int main() {
       assert(parse_services(text) == UsbConfigCommandParse::kNotConfigCommand);
     assert(strlen("APP SERVICES AUTO") <= 23);
 
-    assert(isUsbServicesQuery("APP SERVICES?", 13));
-    assert(!isUsbServicesQuery("APP SERVICES", 12));
-    assert(!isUsbServicesQuery("APP SERVICES? ", 14));
-
+    // APP SERVICES? is a typed read-only query now; same output line.
+    assert(parse("APP SERVICES?") == ApplicationRequestKind::kGetServicesStatus);
+    assert(parse("APP POWER?") == ApplicationRequestKind::kGetPowerStatus);
+    const auto servicesLine = [](uint8_t mode, uint8_t requested, bool applied,
+                             ApplicationServiceState tracking,
+                             ApplicationServiceReason tracking_reason,
+                             ApplicationServiceState relay, bool receive,
+                             ApplicationRole role) {
+      ApplicationResponse r;
+      r.request_id = 9;
+      r.kind = ApplicationRequestKind::kGetServicesStatus;
+      r.code = ApplicationResponseCode::kOk;
+      ApplicationServicesSnapshot& s = r.payload.services.snapshot;
+      s.service_mode = mode;
+      s.requested_services = requested;
+      s.intent_applied = applied ? 1 : 0;
+      s.application_receive = receive ? 1 : 0;
+      s.tracking_state = tracking;
+      s.tracking_reason = tracking_reason;
+      s.relay_state = relay;
+      s.relay_reason = ApplicationServiceReason::kNotRequested;
+      s.legacy_role = role;
+      Serial.output.clear();
+      printUsbApplicationResponse(r);
+      return Serial.output;
+    };
     // Explicit tracking on a collar whose GNSS was not found: still a
     // tracker, tracking blocked -- never a receiver.
-    UsbServiceStatus status;
-    status.service_mode = cf::kServiceModeExplicit;
-    status.requested_services = cf::kServiceTracking;
-    status.intent_applied = true;
-    status.tracking =
-        ServiceStatus(ServiceState::kBlocked, ServiceReason::kCapabilityAbsent);
-    status.relay_forwarding = ServiceStatus();
-    status.application_receive = false;
-    status.legacy_role = NodeRole::kTracker;
-    Serial.output.clear();
-    printUsbServiceStatus(status);
-    assert(Serial.output ==
+    assert(servicesLine(cf::kServiceModeExplicit, cf::kServiceTracking, true,
+                    ApplicationServiceState::kBlocked,
+                    ApplicationServiceReason::kCapabilityAbsent,
+                    ApplicationServiceState::kDisabled, false,
+                    ApplicationRole::kTracker) ==
            "APP SERVICES mode=EXPLICIT requested=T applied=EXPLICIT "
            "tracking=BLOCKED_GNSS_ABSENT relay=OFF receive=OFF "
            "legacy_mode=TRACKER\n");
-
-    status.tracking =
-        ServiceStatus(ServiceState::kBlocked, ServiceReason::kCapabilityUnknown);
-    Serial.output.clear();
-    printUsbServiceStatus(status);
-    assert(Serial.output.find("tracking=BLOCKED_GNSS_PENDING ") !=
-           std::string::npos);
-
+    assert(servicesLine(cf::kServiceModeExplicit, cf::kServiceTracking, true,
+                    ApplicationServiceState::kBlocked,
+                    ApplicationServiceReason::kCapabilityUnknown,
+                    ApplicationServiceState::kDisabled, false,
+                    ApplicationRole::kTracker)
+               .find("tracking=BLOCKED_GNSS_PENDING ") != std::string::npos);
     // Legacy AUTO: no requested set, the inferred role is what runs.
-    UsbServiceStatus legacy;
-    legacy.tracking = ServiceStatus(ServiceState::kDisabled);
-    legacy.application_receive = true;
-    legacy.legacy_role = NodeRole::kBase;
-    Serial.output.clear();
-    printUsbServiceStatus(legacy);
-    assert(Serial.output ==
+    assert(servicesLine(cf::kServiceModeAuto, 0, false,
+                    ApplicationServiceState::kDisabled,
+                    ApplicationServiceReason::kNotRequested,
+                    ApplicationServiceState::kDisabled, true,
+                    ApplicationRole::kBase) ==
            "APP SERVICES mode=AUTO requested=- applied=LEGACY_AUTO "
            "tracking=OFF relay=OFF receive=ON legacy_mode=BASE\n");
-
     // A saved intent this firmware cannot run is reported, not hidden.
-    UsbServiceStatus unsupported;
-    unsupported.service_mode = cf::kServiceModeExplicit;
-    unsupported.requested_services =
+    const std::string unsupported = servicesLine(
+        cf::kServiceModeExplicit,
         cf::kServiceTracking | cf::kServiceRelayForwarding |
-        cf::kServiceApplicationReceive;
-    unsupported.intent_applied = false;
-    unsupported.tracking = ServiceStatus(ServiceState::kEnabled);
-    unsupported.relay_forwarding = ServiceStatus(ServiceState::kEnabled);
-    unsupported.legacy_role = NodeRole::kTracker;
-    Serial.output.clear();
-    printUsbServiceStatus(unsupported);
-    assert(Serial.output ==
+            cf::kServiceApplicationReceive,
+        false, ApplicationServiceState::kEnabled,
+        ApplicationServiceReason::kNone, ApplicationServiceState::kEnabled,
+        false, ApplicationRole::kTracker);
+    assert(unsupported ==
            "APP SERVICES mode=EXPLICIT requested=TRA "
            "applied=LEGACY_AUTO_UNSUPPORTED tracking=ON relay=ON receive=OFF "
            "legacy_mode=TRACKER\n");
-    assert(Serial.output.size() < 256);
+    assert(unsupported.size() < 256);
+
+    // APP POWER?: measured battery and its state.
+    ApplicationResponse power;
+    power.request_id = 12;
+    power.kind = ApplicationRequestKind::kGetPowerStatus;
+    power.code = ApplicationResponseCode::kOk;
+    ApplicationPowerSnapshot& ps = power.payload.power.snapshot;
+    ps.battery_valid = 1;
+    ps.battery_state = ApplicationBatteryState::kCritical;
+    ps.battery_mv = 3300;
+    ps.battery_raw = 2604;
+    ps.battery_age_ms = 4200;
+    ps.battery_readings = 17;
+    Serial.output.clear();
+    printUsbApplicationResponse(power);
+    assert(Serial.output ==
+           "APP POWER id=12 battery=MEASURED state=CRITICAL mv=3300 raw=2604 "
+           "age_ms=4200 readings=17 calibrated=no\n");
+    power.payload.power.snapshot = ApplicationPowerSnapshot();
+    Serial.output.clear();
+    printUsbApplicationResponse(power);
+    assert(Serial.output ==
+           "APP POWER id=12 battery=NONE state=UNKNOWN mv=0 raw=0 age_ms=0 "
+           "readings=0 calibrated=no\n");
 
     ConfigMutationResult set;
     set.kind = ConfigMutationKind::kSetServiceIntent;

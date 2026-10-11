@@ -3,6 +3,8 @@
 #include <stdint.h>
 
 #include "application_status.h"
+#include "battery_monitor.h"
+#include "battery_policy.h"
 #include "config_store.h"
 #include "geofence_confirmation_coordinator.h"
 #include "geofence_store.h"
@@ -33,5 +35,20 @@ void buildApplicationStatusSnapshot(
     const HistoryStore& history,
     const SecurityStore& security,
     ApplicationStatusSnapshot& out);
+
+// Owners added after M7P7H; the composition root fills these right after the
+// main snapshot. Same rules: no state, no I/O, bounded copies only.
+void buildApplicationPowerSnapshot(uint32_t now_ms,
+                                   const BatteryMonitor& battery,
+                                   BatteryState battery_state,
+                                   ApplicationPowerSnapshot& out);
+
+void buildApplicationServicesSnapshot(uint8_t service_mode,
+                                      uint8_t requested_services,
+                                      bool intent_applied,
+                                      bool application_receive,
+                                      const EffectiveConfig& effective,
+                                      NodeRole legacy_role,
+                                      ApplicationServicesSnapshot& out);
 
 }  // namespace orun_tlp

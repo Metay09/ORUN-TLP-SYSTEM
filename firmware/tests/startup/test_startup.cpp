@@ -1023,6 +1023,20 @@ int main(int argc, char** argv) {
   assert(Serial.output.find(" readings=1 calibrated=no\n") !=
          std::string::npos);
 
+  // The same battery fact as typed POWER status (USB here, BLE alike). The
+  // request id is restored so later checks keep their expected ids.
+  const uint32_t power_saved_request_id = next_usb_application_request_id;
+  Serial.output.clear();
+  Serial.queueInput("APP POWER?\n");
+  pollRoleCommands();
+  for (int pass = 0; pass < 4 && Serial.output.find("APP POWER id=") ==
+                                     std::string::npos; ++pass)
+    drainApplicationResponse();
+  assert(Serial.output.find(" battery=MEASURED state=NORMAL mv=4200 raw=3315 ") !=
+         std::string::npos);
+  assert(Serial.output.find(" readings=1 calibrated=no\n") != std::string::npos);
+  next_usb_application_request_id = power_saved_request_id;
+
   // GNSS backup sleep: enabled at boot with the 4 h limit; a RAM-only USB
   // override exists for testing.
   assert(gnss_manager.backupSleepMaxWaitMs() ==

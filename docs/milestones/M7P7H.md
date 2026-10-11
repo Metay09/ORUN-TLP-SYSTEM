@@ -354,6 +354,49 @@ pre-physical corrections on the same branch include:
 These fixes require owner revalidation before the earlier host/build PASS is
 promoted to the corrected head. Physical M7P7H qualification remains pending.
 
+### Addendum (2026-10-11): POWER and SERVICES
+
+Two more read-only families on the same typed path, same rules (zero-payload
+request, O(1) snapshot, UNAVAILABLE before the first snapshot, admitted for
+USB local / BLE open / BLE encrypted). Request/response types are additive:
+
+```text
+0x06      0x86   POWER     (APP POWER?)
+0x07      0x87   SERVICES  (APP SERVICES?)
+```
+
+POWER — 16 bytes:
+
+```text
+0      status
+1      flags: bit0 battery reading valid, bit1 calibrated
+2      battery state (0 UNKNOWN, 1 NORMAL, 2 LOW, 3 CRITICAL;
+       same values as battery_state in ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md 7.4)
+3      reserved=0
+4..5   battery mV LE16 (0 without a reading)
+6..7   raw ADC count LE16
+8..11  age of the reading ms LE32
+12..15 readings taken LE32
+```
+
+SERVICES — 9 bytes:
+
+```text
+0      status
+1      service mode (0 AUTO, 1 EXPLICIT)
+2      requested services (bit0 tracking, bit1 relay, bit2 receive)
+3      flags: bit0 intent applied (EXPLICIT and runnable), bit1 receive active
+4      tracking effective state
+5      tracking reason
+6      relay-forwarding effective state
+7      relay-forwarding reason
+8      legacy role observation
+```
+
+`APP SERVICES?` keeps the line it printed before it became a typed query.
+Host goldens: `tests/m7/test_m7p7h_ble_status_transport.cpp`. Not yet observed
+over BLE on hardware.
+
 ## 9. Acceptance criteria
 
 M7P7H closes only when all are true:
