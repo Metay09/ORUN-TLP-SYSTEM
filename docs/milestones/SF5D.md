@@ -1,8 +1,9 @@
 # SF5D — nRF52840 Flash Ownership + DFU Preflight
 
 Status: **SF5D3 SAMPLED SERIAL DFU RETENTION: PHYSICAL PASS (3 pages, one update).**
-**Gates D1/D2 remain OPEN** for the proposed full 128 KiB production store and
-combined Tracker/Gateway ownership. No production 128 KiB reservation or
+**D2 owner decision taken 2026-10-12 (one owner per device, by its job);
+SF5D4 full-region retention test prepared. Gate D1 remains OPEN** for the
+proposed full 128 KiB production store. No production 128 KiB reservation or
 `FlashBackend`, no linker/build-ceiling change, and no ObservationStore/CustodyStore
 runtime attachment. The test-only 16-byte marker did program one approved
 unallocated development flash page; this is NOT full SF5D/SF5E clearance.
@@ -393,6 +394,49 @@ responsibility first; unresolved Gateway custody blocks a destructive switch.
 Tracker data re-baseline is allowed only after an explicit operator-visible
 data-loss authorization. A power cut/reset mid-transition must never make
 both writers claim the same physical region.
+
+### D2 owner decision (2026-10-12): one owner per device, by its job
+
+Asked in plain terms, the owner chose **one owner of the whole 128 KiB region
+per device, decided by the device's job**, over a fixed 96/32 KiB split:
+
+- a device that originates its own observations (tracking) gives the whole
+  region to ObservationStore (about 13 days of PERIODIC records at a
+  15-minute period, about 7 weeks at one hour);
+- a Gateway-only device gives the whole region to CustodyStore;
+- a device that does both keeps **ObservationStore** as the owner. It may
+  still bridge foreign traffic, but only on the connected path (Edge durable
+  accept before any ACK, ORUN_GATEWAY_DURABLE_CUSTODY.md); it holds no local
+  foreign custody and never emits a durable-custody ACK from local storage;
+- changing a device's job never reformats the region implicitly: the new owner
+  refuses pages in the other store's format until an explicit, operator-
+  visible maintenance erase, which unresolved Gateway custody blocks.
+
+This closes the D2 *decision*. Its implementation (owner selection from the
+persisted service intent, mount refusal of the foreign format, maintenance
+erase) belongs to D3 and still needs tests. D1 stays OPEN.
+
+### SF5D4 — full candidate-region DFU retention (TEST ONLY, prepared)
+
+SF5D3 sampled 3 of the 32 candidate pages across one small-image DFU. SF5D4
+covers all 32 pages across an update with the **full production image**:
+
+- `rak4630_sf5d_full_seed`: after `SF5D FULL SEED CONFIRM`, writes a 16-byte
+  marker at the start of every fully erased candidate page (never erases; a
+  page holding any data stays a read-only control), so no page is blank and a
+  later erase shows as a changed page CRC;
+- the normal `rak4630` production image is uploaded next (the update under
+  test) and runs for a minute;
+- `rak4630_sf5d_full_verify` (no flash write or erase linked) prints the 32
+  page CRCs and their digest; production is restored afterwards.
+
+`firmware/tests/sf5/sf5d_full_retention_remote.sh <ID>` runs the whole
+sequence and compares all 32 page CRCs; source contract
+`test_sf5d_full_region_source_contract.py`; the post-link guard gives the two
+new images the same seed/verify symbol limits as SF5D3. Build PASS for both
+images (seed 57,852 B, verify 56,332 B). **Physical run pending.** Even a
+PASS covers serial single-bank DFU with this image size only, not an
+interrupted update, the future phone (BLE) DFU path or a larger image.
 
 ## 4. Gate D3 — future implementation sequence (not authorized here)
 

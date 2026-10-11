@@ -124,10 +124,13 @@ def check_exclusive_owner(source, target, env):
     # HistoryStore backend. Requiring a page-erase symbol here would force the
     # read-only verifier to link a forbidden flash mutation capability. Keep
     # all existing owner/layout/ceiling checks, but enforce *stricter* Nordic
-    # primitive permissions for these TWO exact test environments only.
+    # primitive permissions for these exact test environments only (SF5D3
+    # sampled pages, SF5D4 full candidate region).
     sf5d_mode = {
         "rak4630_sf5d_dfu_seed": "seed",
         "rak4630_sf5d_dfu_verify": "verify",
+        "rak4630_sf5d_full_seed": "seed",
+        "rak4630_sf5d_full_verify": "verify",
     }.get(env.get("PIOENV", ""))
     if sf5d_mode:
         if internalfs_linked or bluefruit_linked:
