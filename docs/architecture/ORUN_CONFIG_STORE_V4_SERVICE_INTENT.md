@@ -173,6 +173,9 @@ steps (a reboot, not a power cycle):
 | 2 | v4 boot over its v2 record (revision 6): `source=stored`, 180 s, no maintenance; `APP INTERVAL 300` APPLIED revision 7; after reboot `source=stored` 300 s |
 | 5 | `main@7782a55` over the v4 record: `source=default` 180 s, `config_maintenance=yes`, `APP INTERVAL 600` → `MAINTENANCE`; v4 again: `source=stored` 300 s, no maintenance; `APP INTERVAL 180` APPLIED revision 8 |
 | 1, 3, 4 | pending (bench: blank partition, power cuts, BLE connected) |
+
+Items 1, 3 and 4 are scripted for a USB-powered unit without a battery (unplugging is the power cut): `sh firmware/tests/m7/config_v4_bench.sh <ID>`. It erases that unit's ConfigStore, guides each unplug, checks the probe and production output and stops at the first failure.
+
 The non-claims of `CONFIG_STORE_V2_PHYSICAL_QUALIFICATION.md` (no mid-NVMC
 brown-out, no SoftDevice-async power cut) carry over unchanged.
 
