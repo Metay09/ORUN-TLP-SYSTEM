@@ -27,6 +27,29 @@ constexpr uint8_t kPowerDownMaxAttempts = 3;
 // I2C recovery loop that could interfere with GNSS.
 constexpr uint32_t kFaultCleanupRetryBackoffMs = 60UL * 1000UL;
 
+// Continuous activity stream (owner decision 2026-10-12: sample all the time,
+// as other collars do, instead of 5 s every 3 min). LIS3DH FIFO in Stream
+// mode at the same 10 Hz. The FIFO holds 10-bit samples (ST AN3308, FIFO
+// section), so the stream uses normal mode, not high resolution. 32 levels
+// hold 3.2 s; draining every 2 s leaves 1.2 s of slack. A later drain still
+// loses nothing silently: the sensor flags the overrun and the consumer
+// treats the break as unmeasured time.
+constexpr uint8_t kFifoCapacity = 32;
+constexpr uint32_t kStreamDrainPeriodMs = 2000;
+// One I2C read carries at most 10 samples: 60 bytes fit the 64-byte Wire
+// receive buffer of the Adafruit nRF52 core, which does not bound the length.
+constexpr uint8_t kStreamMaxSamplesPerRead = 10;
+// Normal-mode turn-on is 1.6 ms. The FIFO stays in Bypass (stores nothing)
+// for two output periods after the 10 Hz write, so no turn-on sample is kept.
+constexpr uint32_t kStreamSettleMs = 2UL * kProbeSamplePeriodMs;
+// Failed or implausible drains in a row before the stream is a sensor fault.
+constexpr uint8_t kStreamMaxConsecutiveErrors = 3;
+
+static_assert(kStreamDrainPeriodMs / kProbeSamplePeriodMs < kFifoCapacity,
+              "the stream must be drained before the FIFO fills");
+static_assert(kStreamMaxSamplesPerRead * 6U <= 64U,
+              "one FIFO read must fit the Wire receive buffer");
+
 static_assert(1000UL % kProbeSampleRateHz == 0,
               "accelerometer sample period must be integral milliseconds");
 static_assert(kHighResolutionSettleMs >= 7UL * kProbeSamplePeriodMs,

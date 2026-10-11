@@ -87,6 +87,7 @@ struct ProductPeriodBaseline {
   uint32_t gnss_failures = 0;
   uint32_t storage_failures = 0;
   uint32_t radio_failures = 0;
+  uint32_t sensor_failures = 0;
 };
 bool product_period_open = false;
 uint32_t product_period_started_ms = 0;
@@ -1095,6 +1096,12 @@ ProductPeriodBaseline currentProductBaseline() {
   now.storage_failures = history.diagnostics().append_failures;
   const auto radio = radio_manager.eventDiagnostics();
   now.radio_failures = radio.rx_queue_drops + radio.control_event_drops;
+  // Accelerometer failures, including failed or implausible stream drains. A
+  // late drain (FIFO overrun) is lost time, reported as unknown coverage.
+  const auto& accel = accelerometer_manager.diagnostics();
+  now.sensor_failures = accel.configuration_failures + accel.sample_failures +
+                        accel.power_down_failures + accel.stream_read_errors +
+                        accel.stream_timing_errors;
   return now;
 }
 
@@ -1144,11 +1151,9 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
     }
   }
 
-  uint16_t sensor_faults = 0;
   if (activity_auto_sampler.enabled() && activity_auto_sampler.reportOwned() &&
       activity_auto_sampler.closePeriod(now)) {
     const auto& summary = activity_auto_sampler.latestSummary();
-    sensor_faults = summary.fault_windows;
     // Anchors must match exactly; otherwise activity stays unknown.
     orun_tlp::linkActivityPeriodEvidence(summary, product_period_started_ms,
                                          now, in.activity);
@@ -1169,7 +1174,12 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
       current.storage_failures - product_period_baseline.storage_failures;
   in.health.radio_failures =
       current.radio_failures - product_period_baseline.radio_failures;
-  in.health.sensor_failures = sensor_faults;
+  in.health.sensor_failures =
+      current.sensor_failures - product_period_baseline.sensor_failures;
+  // A detected accelerometer that has faulted reports SENSOR_FAULT every
+  // period until the reboot that re-probes it.
+  if (accelerometer_manager.detected() && accelerometer_manager.faulted())
+    in.health.flags |= orun_tlp::tlp::kHealthSensorFault;
   if (in.health.gnss_failures != 0)
     in.health.flags |= orun_tlp::tlp::kHealthGnssDegraded;
   if (in.health.sensor_failures != 0)
@@ -1224,15 +1234,30 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
 }
 
 void printActivityAutoDiagnostic() {
-  Serial.printf("ACTIVITY AUTO %s awaiting=%s valid=%u invalid=%u "
-                "fault=%u unavailable=%u summaries=%lu persistent=no\n",
+  // mag_mg: sqrt of the last window's mean |a|^2, about 1000 when still and
+  // the FIFO data path is scaled right.
+  uint32_t magnitude_mg = 0;
+  for (uint32_t bit = 1UL << 15; bit != 0; bit >>= 1) {
+    const uint32_t trial = magnitude_mg | bit;
+    if (trial * trial <= activity_auto_sampler.lastMeanMagnitudeSquaredMg2())
+      magnitude_mg = trial;
+  }
+  const auto& accel = accelerometer_manager.diagnostics();
+  Serial.printf("ACTIVITY AUTO %s stream=%s valid=%u invalid=%u fault=%u "
+                "unavailable=%u summaries=%lu drains=%lu overruns=%lu "
+                "timing_errors=%lu read_errors=%lu mag_mg=%lu persistent=no\n",
                 activity_auto_sampler.enabled() ? "ON" : "OFF",
-                activity_auto_sampler.awaitingCapture() ? "yes" : "no",
+                activity_auto_sampler.streaming() ? "yes" : "no",
                 static_cast<unsigned>(activity_auto_sampler.usableWindows()),
                 static_cast<unsigned>(activity_auto_sampler.invalidWindows()),
                 static_cast<unsigned>(activity_auto_sampler.faultWindows()),
                 static_cast<unsigned>(activity_auto_sampler.unavailableAttempts()),
-                static_cast<unsigned long>(activity_auto_sampler.publishedSummaries()));
+                static_cast<unsigned long>(activity_auto_sampler.publishedSummaries()),
+                static_cast<unsigned long>(accel.stream_drains),
+                static_cast<unsigned long>(accel.stream_overruns),
+                static_cast<unsigned long>(accel.stream_timing_errors),
+                static_cast<unsigned long>(accel.stream_read_errors),
+                static_cast<unsigned long>(magnitude_mg));
   if (activity_auto_sampler.summaryReady()) {
     const auto& summary = activity_auto_sampler.latestSummary();
     Serial.printf("ACTIVITY HOUR usable=%u invalid=%u fault=%u "
@@ -2883,7 +2908,8 @@ void loop() {
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kActivity);
   activity_capture.poll();
   if (!history.erasePending() &&
-      activity_auto_sampler.poll(activity_capture, orun_tlp::monotonic::nowMs())) {
+      activity_auto_sampler.poll(accelerometer_manager,
+                                 orun_tlp::monotonic::nowMs())) {
     // Emit one concise period-level fact, not raw 10 Hz sensor samples.
     printActivityAutoDiagnostic();
   }

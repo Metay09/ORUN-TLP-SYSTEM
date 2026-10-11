@@ -229,10 +229,15 @@ projection therefore remains intentionally coarse: detected hardware is reported
 as `PRESENT + OK`; acquisition timeout/recovery is not yet aggregated into the
 capability health field.
 
-The accelerometer performs the bounded boot/probe path and, only on explicit
-`ACTIVITY START`, one bounded 50-sample diagnostic capture. M6B3 uses M6B1/M6B2
-feature/quality helpers but is not an automatically enabled activity service.
-Accelerometer presence must not imply activity enablement or classification.
+The accelerometer performs the bounded boot/probe path; explicit `ACTIVITY
+START` still runs one bounded 50-sample diagnostic capture. Since the SF5
+builder and 2026-10-12 continuous-stream branches (H+build, physical run
+pending), the activity summary is part of the tracking service's PERIODIC
+record: when tracking produces its first fix and a RAK1904 is detected, the
+report-owned sampler runs the continuous 10 Hz FIFO stream (M6B3); USB
+`ACTIVITY AUTO OFF` keeps it off and there is no persisted activity-service
+setting yet. Presence alone, without the tracking service, does not start it.
+The active/inactive label is research-derived and unvalidated.
 
 ## 6. Requested configuration, effective state and commands
 
@@ -445,8 +450,10 @@ fresh location and local rules.
 
 The current software stack has bounded explicit M6B3 diagnostic activity
 capture plus deterministic activity feature/quality helpers and geofence
-geometry/permitted-area composition. It does **not** yet implement an automatically
-enabled production activity service or production activity classification,
+geometry/permitted-area composition. Activity sampling now runs with tracking
+(see section 5) with a research-derived, unvalidated active/inactive label; it
+does **not** yet implement a separately configured activity service or validated
+behaviour classification,
 GNSS-to-geofence production wiring, transition-confirmation runtime, FREE_GRAZE,
 OUTSIDE event transport or local operational state. Host-only geometry PASS must
 not be described as field geofence PASS.
