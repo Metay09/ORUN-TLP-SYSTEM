@@ -224,6 +224,12 @@ Gate: physical evidence document. Build PASS alone is not hardware PASS.
 - USB dry run on the tracker: `PRODUCT PERIODIC DRYRUN ...` and `bytes=<128 hex>` per normal fix or
   timed-out acquisition. RAM-only identity (`record_incarnation=1`), no ObservationStore write, no
   sealing, no RF. TLP v1 POSITION and HistoryStore stay the production path.
+- Health counters: GNSS failures are acquisitions that ended without a fix plus receiver setup
+  failures; the per-second "no fix yet" epochs of a normal acquisition are not failures.
+- Collar 2026-10-12 (with the continuous stream branch): four 162-201 s periods all `result=OK`,
+  `flags=0x7F`, GNSS location, battery; activity covered 160-200 s per period, 0 s active while
+  still and 40-75 s while shaken. The first run counted "no fix yet" epochs as GNSS failures
+  (5-29 per period, GNSS_DEGRADED every period); fixed above, not yet re-flashed.
 
 ### SF5F — tracker runtime cutover
 
