@@ -199,3 +199,17 @@ Final recommendation: **MERGE**.
 
 Codec/tests belong to the next implementation slice after the byte/security
 contract is merged.
+
+## Implementation 2026-10-11: codec + host vectors (gate 21.2)
+
+`firmware/include/tlp_v2_product_secure.h`, `firmware/src/tlp_v2_product_secure.cpp`:
+28-byte header, PERIODIC (64 B) and EVENT (48 B) plaintext encode/decode with the
+section 7, 8 and 19 rules (encoders refuse non-canonical bytes, decoders leave
+their output untouched on failure), profile-0x01 AAD (bytes 0..27) and nonce.
+`firmware/tests/sf5/test_sf5b_product_secure_vectors.py` builds both plaintexts
+field by field with `struct.pack`, seals them with HKDF-SHA256 + AES-128-CCM
+(same test credential and D2A key as the SF2 vectors) and pins 100/84-byte frames;
+`test_sf5b_product_secure_codec.cpp` checks the codec against the same bytes plus
+every malformed/semantic case. Host only: no caller, no RF, no flash; the CC310
+KAT (gate 4) and the sealing seam are the next slice.
+

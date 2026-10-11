@@ -474,6 +474,12 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p6i_security_traffic_bytes.c
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p6i_history_crypto_vectors.py
 "$test_dir/m4p4_history_secure_codec"
 "$test_dir/m7p6h_delegated_secure_codec"
+g++ "${portable_flags[@]}" -Wconversion -Wsign-conversion \
+  firmware/tests/sf5/test_sf5b_product_secure_codec.cpp \
+  firmware/src/tlp_v2_product_secure.cpp \
+  -o "$test_dir/sf5b_product_secure_codec"
+"$test_dir/sf5b_product_secure_codec"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5b_product_secure_vectors.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p4_patch_internalfs.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p7a_patch_ble_flash.py
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7b_ble_admission_policy.cpp \
