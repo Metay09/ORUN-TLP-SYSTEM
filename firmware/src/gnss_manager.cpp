@@ -201,7 +201,8 @@ void GnssManager::poll() {
       return;
 
     case State::kSleeping:
-      // No GNSS bus traffic while the switched sensor rail is off for GNSS.
+      // No GNSS bus traffic while the rail is off or the receiver is in
+      // backup (it would not answer and must not be woken early).
       if (monotonic::reached(now, next_due_at_ms_)) {
         startAcquisition(now);
       }
@@ -394,6 +395,19 @@ void GnssManager::serviceTransportResync(uint32_t now) {
   has_last_pvt_callback_time_ = true;
 }
 
+bool GnssManager::enterBackupSleep(uint32_t duration_ms) {
+  // UBX-RXM-PMREQ is never acknowledged, so do not wait for an ACK. A bus
+  // timeout means the request may not have arrived: cut the rail instead.
+  gnss.powerOff(duration_ms, 0);
+  if (I2cRecovery::serviceTimeout() != I2cRecoveryResult::kNoTimeout) {
+    ++diagnostics_.i2c_timeouts;
+    ++diagnostics_.backup_sleep_failures;
+    return false;
+  }
+  ++diagnostics_.backup_sleeps;
+  return true;
+}
+
 bool GnssManager::handleI2cTimeout(uint32_t now) {
   const auto result = I2cRecovery::serviceTimeout();
   if (result == I2cRecoveryResult::kNoTimeout) return false;
@@ -460,6 +474,9 @@ void GnssManager::restartAfterI2cRecovery(uint32_t now) {
 void GnssManager::enterLowPower(uint32_t now) {
   const bool failed =
       state_ == State::kTimeout || state_ == State::kFailure;
+  // A failure (configuration, bus recovery) cuts the rail as before: the
+  // power cycle is part of recovering the receiver.
+  const bool receiver_failed = state_ == State::kFailure;
   const uint32_t backoff_ms =
       failed ? gnss_config::failureBackoffMs(tracking_interval_ms_,
                                              consecutive_failed_acquisitions_)
@@ -496,6 +513,20 @@ void GnssManager::enterLowPower(uint32_t now) {
                                 remaining_ms)) {
     state_ = State::kIdle;
     Serial.println(F("GNSS idle (continuous tracking)"));
+    return;
+  }
+
+  // A wait that is short enough for the ephemeris to stay valid is spent in
+  // receiver backup: the rail stays on and the receiver wakes itself just
+  // before the next attempt, ready for a hot start.
+  if (!receiver_failed && backup_sleep_max_wait_ms_ != 0 &&
+      remaining_ms < backup_sleep_max_wait_ms_ &&
+      remaining_ms > gnss_config::kBackupWakeLeadMs &&
+      enterBackupSleep(remaining_ms - gnss_config::kBackupWakeLeadMs)) {
+    needs_configuration_ = true;  // reapply volatile config after the wake
+    state_ = State::kSleeping;
+    Serial.printf("GNSS backup sleep wait_ms=%lu\n",
+                  static_cast<unsigned long>(remaining_ms));
     return;
   }
 

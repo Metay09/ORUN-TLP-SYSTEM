@@ -33,6 +33,8 @@ class GnssManager {
     uint32_t i2c_recoveries = 0;
     uint32_t i2c_recovery_failures = 0;
     uint32_t failure_backoffs = 0;  // waits stretched by the failure backoff
+    uint32_t backup_sleeps = 0;     // waits spent in receiver backup
+    uint32_t backup_sleep_failures = 0;  // PMREQ not delivered; rail cut
   };
 
   void begin();
@@ -75,6 +77,13 @@ class GnssManager {
   void setRedetectIntervalMs(uint32_t interval_ms) {
     redetect_interval_ms_ = interval_ms;
   }
+
+  // Waits shorter than this are spent in receiver backup instead of with the
+  // rail cut (gnss_config::kBackupSleepMaxWaitMs). 0 = always cut the rail.
+  void setBackupSleepMaxWaitMs(uint32_t max_wait_ms) {
+    backup_sleep_max_wait_ms_ = max_wait_ms;
+  }
+  uint32_t backupSleepMaxWaitMs() const { return backup_sleep_max_wait_ms_; }
 
   bool takeFreshFixForTransmission(GnssFix* fix);
   // Read-only application admission hint. poll() normally expires stale
@@ -135,6 +144,8 @@ class GnssManager {
   uint8_t detection_attempts_ = 0;
   uint32_t redetect_interval_ms_ = 0;
   uint8_t consecutive_failed_acquisitions_ = 0;
+  uint32_t backup_sleep_max_wait_ms_ = 0;
+  bool enterBackupSleep(uint32_t duration_ms);
   bool has_boundary_epoch_ = false;
   uint32_t boundary_epoch_ = 0;
   bool has_dop_boundary_epoch_ = false;
