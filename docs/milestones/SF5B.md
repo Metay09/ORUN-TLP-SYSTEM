@@ -227,5 +227,16 @@ runs the M7P6I History KAT as a control) must reproduce the pinned counter-1 PER
 and counter-2 EVENT frames of `tests/sf5/sf5b_product_vectors.h`, refuse an
 unprovisioned store, and refuse an invalid plaintext or path flag without consuming a
 counter (the next record gets counter 3). Remote run:
-`sh firmware/tests/sf5/sf5b_crypto_kat_remote.sh <ID>`. Physical result: pending.
+`sh firmware/tests/sf5/sf5b_crypto_kat_remote.sh <ID>`.
+
+Physical result 2026-10-11, receiver RAK4631 `09A462BD4B275BA5`, image at `57a2343`:
+
+```text
+M7P6I HISTORY CRYPTO KAT PASS provision=PASS observation=PASS receipt=PASS tamper=PASS recovery=PASS
+SF5B PRODUCT CRYPTO KAT PASS unprovisioned=PASS provision=PASS periodic=PASS event=PASS refused=PASS
+```
+
+CC310 reproduced the independently computed PERIODIC and EVENT frames byte for byte
+after `Bluefruit.begin()`; production was flashed back. Gate 21.4 is met for the
+seal path. Gates 21.1 (independent audit) and 21.5-21.8 remain before production RF.
 
