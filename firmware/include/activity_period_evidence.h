@@ -6,15 +6,17 @@
 
 namespace orun_tlp {
 
-// SF5A period-level *evidence* only, NOT a serialized SF5B ACTIVITY_VALID field.
-// The existing RAK1904 windows have no validated active/inactive classifier.
-// Therefore their physical movement statistics must never imply active_seconds=0
-// (which would falsely label every usable sample as inactive).
+// Period-level activity evidence for one SF5 PERIODIC record. Since
+// 2026-10-11 each usable window carries the research-derived (unvalidated)
+// active/inactive label of activity_classifier.h, so linked evidence includes
+// active seconds and transitions. It is still not a grazing/walking/lying
+// label, and an absent label must never be reported as active_seconds=0.
 enum class ActivityPeriodLinkResult : uint8_t {
   kLinkedUnclassified,  // real sampled duration, but NO active/inactive label.
   kNoUsableEvidence,
   kInvalidPeriod,
   kPeriodMismatch,
+  kLinkedClassified,    // sampled duration with active seconds/transitions.
 };
 
 struct ActivityPeriodEvidence {
@@ -24,8 +26,10 @@ struct ActivityPeriodEvidence {
   uint16_t usable_windows = 0;
   uint16_t boundary_discarded_windows = 0;
   uint16_t movement_mean_abs_delta_mg = 0;  // saturates at 0xFFFF.
+  uint32_t active_seconds = 0;              // <= coverage_seconds.
+  uint16_t transition_count = 0;            // saturates at 0xFFFF.
   bool movement_evidence_present = false;
-  bool active_inactive_classification_valid = false; // always false for M6.
+  bool active_inactive_classification_valid = false;
 };
 
 // A consumer must provide the actual period anchors from its record owner,

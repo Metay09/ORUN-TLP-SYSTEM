@@ -896,6 +896,16 @@ int main(int argc, char** argv) {
         Fake::dop(&dop);
       });
     };
+    // A 1 Hz epoch without a fix yet, as during any normal acquisition.
+    auto queueNoFixEpoch = [&](uint32_t tow) {
+      Fake::pending.push_back([=] {
+        UBX_NAV_PVT_data_t pvt{};
+        pvt.iTOW = tow;
+        Fake::current_pvt = pvt;
+        Fake::itow_fresh = true;
+        Fake::pvt(&pvt);
+      });
+    };
 
     auto startNextAcquisition = [&]() {
       const uint32_t attempts_before =
@@ -933,6 +943,8 @@ int main(int argc, char** argv) {
     startNextAcquisition();
     queueEpoch(3000, 410010000, 290010000, 100, 8);  // session boundary
     loop();
+    queueNoFixEpoch(3500);  // "no fix yet" is not a GNSS failure
+    loop();
     const uint32_t timeout_records_before = history.count();
     queueEpoch(4000, 410010000, 290010000, 60, 10);  // OUTSIDE candidate
     loop();
@@ -952,6 +964,22 @@ int main(int argc, char** argv) {
            std::string::npos);
     drainPosition();
     assert(history.count() == timeout_records_before + 1);
+
+    // SF5 dry run: the second normal fix closed the first report period and
+    // produced one canonical PERIODIC plaintext (USB only, nothing stored).
+    {
+      const size_t line_at = Serial.output.find("PRODUCT PERIODIC DRYRUN seq=1 ");
+      assert(line_at != std::string::npos);
+      const size_t line_end = Serial.output.find('\n', line_at);
+      const std::string line = Serial.output.substr(line_at, line_end - line_at);
+      assert(line.size() < 256);  // Print::printf buffer
+      assert(line.find(" result=OK ") != std::string::npos);
+      assert(line.find(" loc=GNSS ") != std::string::npos);
+      assert(line.find(" fails=0/0/0/0") != std::string::npos);
+      const size_t bytes_at = Serial.output.find("PRODUCT PERIODIC DRYRUN bytes=01");
+      assert(bytes_at != std::string::npos);
+      assert(Serial.output.find('\n', bytes_at) == bytes_at + 30 + 128);
+    }
 
     // Successful transition. Slot 0 has the best OUTSIDE HDOP and was already
     // accepted by the ordinary store-first path. Selecting it as the logical

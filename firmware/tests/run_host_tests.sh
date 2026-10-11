@@ -454,6 +454,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/loop_health.cpp firmware/src/loop_health_monitor.cpp \
   firmware/src/battery_monitor.cpp firmware/src/battery_policy.cpp \
   firmware/src/geofence_mutation.cpp firmware/src/geofence_staging.cpp \
+  firmware/src/product_period_builder.cpp firmware/src/tlp_v2_product_secure.cpp \
   -o "$test_dir/startup"
 for scenario in mutex gate queue lora success advfail blefail noevent geofence geofence_persisted geofence_uncertain history_erase_i2c services_no_gnss battery_critical geofence_usb; do
   "$test_dir/startup" "$scenario"
@@ -480,6 +481,11 @@ g++ "${portable_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
   -o "$test_dir/sf5b_product_secure_codec"
 "$test_dir/sf5b_product_secure_codec"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5b_product_secure_vectors.py
+g++ "${portable_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5_period_builder.cpp \
+  firmware/src/product_period_builder.cpp firmware/src/tlp_v2_product_secure.cpp \
+  -o "$test_dir/sf5_period_builder"
+"$test_dir/sf5_period_builder"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p4_patch_internalfs.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p7a_patch_ble_flash.py
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7b_ble_admission_policy.cpp \
