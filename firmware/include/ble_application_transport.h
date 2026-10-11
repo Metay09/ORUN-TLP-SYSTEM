@@ -64,12 +64,16 @@ enum class MessageType : uint8_t {
   kGetTrackingStatusRequest = 0x03,
   kGetGeofenceStatusRequest = 0x04,
   kGetStorageStatusRequest = 0x05,
+  kGetPowerStatusRequest = 0x06,
+  kGetServicesStatusRequest = 0x07,
 
   kGetConfigResponse = 0x81,
   kGetDeviceStatusResponse = 0x82,
   kGetTrackingStatusResponse = 0x83,
   kGetGeofenceStatusResponse = 0x84,
   kGetStorageStatusResponse = 0x85,
+  kGetPowerStatusResponse = 0x86,
+  kGetServicesStatusResponse = 0x87,
   kError = 0xFF,
 };
 

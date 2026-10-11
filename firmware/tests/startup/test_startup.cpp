@@ -297,7 +297,8 @@ int batteryCriticalScenario() {
   Serial.output.clear();
   Serial.queueInput("BATTERY?\n");
   pollRoleCommands();
-  assert(Serial.output.rfind("BATTERY state=CRITICAL mv=3300 ", 0) == 0);
+  assert(Serial.output.rfind("BATTERY state=CRITICAL percent_est=0 mv=3300 ",
+                             0) == 0);
 
   // 3.55 V: out of CRITICAL into LOW, which only shows in status.
   fake_analog_value = rawFor(3550);
@@ -306,9 +307,40 @@ int batteryCriticalScenario() {
   assert(gnss_manager.trackingIntervalMs() == base_ms);
 
   fake_analog_value = rawFor(3650);
+  Serial.output.clear();
   minute(); minute(); minute();
   assert(battery_state.state() == BatteryState::kNormal);
   assert(gnss_manager.trackingIntervalMs() == base_ms);
+
+  // Periodic log line: the boot reading plus nine one-minute readings make
+  // the first 10-reading period (4200 at boot, lowest 3300).
+  assert(battery_monitor.readings() == 10);
+  assert(Serial.output.find(
+             "BATTERY LOG mv=3650 low=3300 high=4200 percent_est=8 "
+             "state=NORMAL period_min=10 readings=10\n") != std::string::npos);
+  Serial.output.clear();
+  Serial.queueInput("BATTERY LOG?\n");
+  pollRoleCommands();
+  assert(Serial.output == "BATTERY LOG period_min=10\n");
+  Serial.output.clear();
+  Serial.queueInput("BATTERY LOG 1441\n");
+  pollRoleCommands();
+  assert(Serial.output == "BATTERY LOG REJECTED max_min=1440\n");
+  Serial.output.clear();
+  Serial.queueInput("BATTERY LOG 2\n");
+  pollRoleCommands();
+  assert(Serial.output == "BATTERY LOG period_min=2\n");
+  Serial.output.clear();
+  minute();
+  assert(Serial.output.find("BATTERY LOG") == std::string::npos);
+  minute();
+  assert(Serial.output.find("BATTERY LOG mv=3650 low=3650 high=3650 ") !=
+         std::string::npos);
+  Serial.queueInput("BATTERY LOG 0\n");
+  pollRoleCommands();
+  Serial.output.clear();
+  minute(); minute(); minute();
+  assert(Serial.output.find("BATTERY LOG") == std::string::npos);
   puts("Startup battery policy scenario: PASS");
   return 0;
 }
@@ -1018,23 +1050,38 @@ int main(int argc, char** argv) {
   Serial.output.clear();
   Serial.queueInput("BATTERY?\n");
   pollRoleCommands();
-  assert(Serial.output.rfind("BATTERY state=NORMAL mv=4200 raw=3315 age_ms=",
-                             0) == 0);
+  assert(Serial.output.rfind(
+             "BATTERY state=NORMAL percent_est=100 mv=4200 raw=3315 age_ms=",
+             0) == 0);
   assert(Serial.output.find(" readings=1 calibrated=no\n") !=
          std::string::npos);
 
-  // GNSS backup sleep: enabled at boot with the 4 h limit; a RAM-only USB
-  // override exists for testing.
-  assert(gnss_manager.backupSleepMaxWaitMs() ==
-         gnss_config::kBackupSleepMaxWaitMs);
+  // The same battery fact as typed POWER status (USB here, BLE alike). The
+  // request id is restored so later checks keep their expected ids.
+  const uint32_t power_saved_request_id = next_usb_application_request_id;
   Serial.output.clear();
-  Serial.queueInput("GNSS SLEEP?\nGNSS SLEEP 0\nGNSS SLEEP 240\nGNSS SLEEP 12345\n");
+  Serial.queueInput("APP POWER?\n");
+  pollRoleCommands();
+  for (int pass = 0; pass < 4 && Serial.output.find("APP POWER id=") ==
+                                     std::string::npos; ++pass)
+    drainApplicationResponse();
+  assert(Serial.output.find(
+             " battery=MEASURED state=NORMAL percent_est=100 mv=4200 raw=3315 ") !=
+         std::string::npos);
+  assert(Serial.output.find(" readings=1 calibrated=no\n") != std::string::npos);
+  next_usb_application_request_id = power_saved_request_id;
+
+  // GNSS backup sleep: off at boot (no hot-start gain measured on the
+  // RAK12500); a RAM-only USB override enables it for testing.
+  assert(gnss_config::kBackupSleepDefaultMaxWaitMs == 0);
+  assert(gnss_manager.backupSleepMaxWaitMs() == 0);
+  Serial.output.clear();
+  Serial.queueInput("GNSS SLEEP?\nGNSS SLEEP 240\nGNSS SLEEP 0\nGNSS SLEEP 12345\n");
   while (Serial.available()) pollRoleCommands();
-  assert(Serial.output.rfind("GNSS SLEEP backup_max_min=240 ", 0) == 0);
-  assert(Serial.output.find("GNSS SLEEP backup_max_min=0 ") != std::string::npos);
+  assert(Serial.output.rfind("GNSS SLEEP backup_max_min=0 ", 0) == 0);
+  assert(Serial.output.find("GNSS SLEEP backup_max_min=240 ") != std::string::npos);
   assert(Serial.output.find("ROLE command rejected\n") != std::string::npos);
-  assert(gnss_manager.backupSleepMaxWaitMs() ==
-         gnss_config::kBackupSleepMaxWaitMs);
+  assert(gnss_manager.backupSleepMaxWaitMs() == 0);
 
   // The USB diagnostic must be queryable after the early boot window is gone.
   // While the bounded probe is incomplete it reports PENDING, not ABSENT.

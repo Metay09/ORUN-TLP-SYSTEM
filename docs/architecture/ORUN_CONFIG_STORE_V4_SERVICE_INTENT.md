@@ -3,8 +3,9 @@
 Status (2026-10-10): **persistence half implemented** on
 `feat/config-store-v4` (host tests and ARM builds pass). Section 9 items 2 and
 5 **passed on hardware** (receiver RAK4631 `09A462BD4B275BA5`,
-`firmware/tests/m7/config_v4_remote_check.sh`, 10/10). Items 1, 3 and 4 are
-pending and gate the merge. The runtime half (section 11: saved intent used
+`firmware/tests/m7/config_v4_remote_check.sh`, 10/10); items 1, 3 and 4
+passed on the same receiver on 2026-10-11 (`config_v4_bench.sh`, real power
+cuts), so the section 9 merge gate is met. The runtime half (section 11: saved intent used
 at boot, `APP SERVICES` writer and status, GNSS-absent rule) is implemented on
 `feat/persistent-services`, stacked on the persistence half; host tests and
 ARM builds pass, and the collar check passed on hardware (section 11). An independent review of this
@@ -172,7 +173,23 @@ steps (a reboot, not a power cycle):
 | --- | --- |
 | 2 | v4 boot over its v2 record (revision 6): `source=stored`, 180 s, no maintenance; `APP INTERVAL 300` APPLIED revision 7; after reboot `source=stored` 300 s |
 | 5 | `main@7782a55` over the v4 record: `source=default` 180 s, `config_maintenance=yes`, `APP INTERVAL 600` → `MAINTENANCE`; v4 again: `source=stored` 300 s, no maintenance; `APP INTERVAL 180` APPLIED revision 8 |
-| 1, 3, 4 | pending (bench: blank partition, power cuts, BLE connected) |
+| 1, 3, 4 | see below (2026-10-11) |
+
+Result 2026-10-11, same receiver, `sh firmware/tests/m7/config_v4_bench.sh`
+at `1a80297` (USB-powered, no battery: each unplug is a real power cut),
+**ALL PASS**:
+
+| Item | Observed |
+| --- | --- |
+| 1 | `CLEAN` erased and verified both pages (before: v4 revision 8, incarnation `E70B5167C5F370E5`). First cold boot: `baseline_commits=1`, new incarnation `B5B15B729734D192` revision 1, Page A `V4_COMMITTED` generation 1, Page B `ERASED`. Second cold boot: `baseline_commits=0`, same incarnation, revision 1 |
+| 3a | cut after inactive-page erase: old config kept (battery 0), token revision 1, Page B `ERASED`, no maintenance |
+| 3b | cut after body+CRC readback: old config kept, token revision 1, Page B `V4_STAGED` revision 2 not promoted, no maintenance |
+| 3c | cut after commit readback: new config recovered (battery 1), `committed_override=yes`, token revision 2, Page B `V4_COMMITTED` revision 2, no maintenance |
+| 4 | phone connected over BLE (`ORUN-4B275BA5`, `connected=1` before and after): `APP INTERVAL 300` APPLIED; after a power cut `source=stored` 300 s; `APP INTERVAL 180` restored |
+
+The script erases that unit's ConfigStore, guides each unplug, checks the
+probe and production output and stops at the first failure.
+
 The non-claims of `CONFIG_STORE_V2_PHYSICAL_QUALIFICATION.md` (no mid-NVMC
 brown-out, no SoftDevice-async power cut) carry over unchanged.
 

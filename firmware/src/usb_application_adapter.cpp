@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 
+#include <stdio.h>
 #include <string.h>
 
 #include "config_format.h"
@@ -41,6 +42,14 @@ bool parseUsbApplicationQuery(const char* text, uint8_t length,
   }
   if (equals(text, length, "APP STORAGE?")) {
     *kind = ApplicationRequestKind::kGetStorageStatus;
+    return true;
+  }
+  if (equals(text, length, "APP POWER?")) {
+    *kind = ApplicationRequestKind::kGetPowerStatus;
+    return true;
+  }
+  if (equals(text, length, "APP SERVICES?")) {
+    *kind = ApplicationRequestKind::kGetServicesStatus;
     return true;
   }
   return false;
@@ -94,48 +103,50 @@ UsbConfigCommandParse parseUsbServicesCommand(const char* text, uint8_t length,
   return UsbConfigCommandParse::kOk;
 }
 
-bool isUsbServicesQuery(const char* text, uint8_t length) {
-  return equals(text, length, "APP SERVICES?");
-}
-
 namespace {
 
-const char* serviceStateName(const ServiceStatus& status) {
-  switch (status.state) {
-    case ServiceState::kDisabled: return "OFF";
-    case ServiceState::kEnabled: return "ON";
-    case ServiceState::kDegraded: return "DEGRADED";
-    case ServiceState::kBlocked: break;
+const char* serviceStateName(ApplicationServiceState state,
+                             ApplicationServiceReason reason) {
+  switch (state) {
+    case ApplicationServiceState::kDisabled: return "OFF";
+    case ApplicationServiceState::kEnabled: return "ON";
+    case ApplicationServiceState::kDegraded: return "DEGRADED";
+    case ApplicationServiceState::kBlocked: break;
   }
-  switch (status.reason) {
-    case ServiceReason::kCapabilityAbsent: return "BLOCKED_GNSS_ABSENT";
-    case ServiceReason::kCapabilityUnknown: return "BLOCKED_GNSS_PENDING";
-    case ServiceReason::kCapabilityFault: return "BLOCKED_GNSS_FAULT";
-    case ServiceReason::kCapabilityUnavailable: return "BLOCKED_GNSS_UNAVAILABLE";
-    case ServiceReason::kCapabilityUnsupported: return "BLOCKED_UNSUPPORTED";
-    case ServiceReason::kInvalidConfiguration: return "BLOCKED_INVALID";
+  switch (reason) {
+    case ApplicationServiceReason::kCapabilityAbsent: return "BLOCKED_GNSS_ABSENT";
+    case ApplicationServiceReason::kCapabilityUnknown: return "BLOCKED_GNSS_PENDING";
+    case ApplicationServiceReason::kCapabilityFault: return "BLOCKED_GNSS_FAULT";
+    case ApplicationServiceReason::kCapabilityUnavailable:
+      return "BLOCKED_GNSS_UNAVAILABLE";
+    case ApplicationServiceReason::kCapabilityUnsupported:
+      return "BLOCKED_UNSUPPORTED";
+    case ApplicationServiceReason::kInvalidConfiguration:
+      return "BLOCKED_INVALID";
     default: return "BLOCKED";
   }
 }
 
-}  // namespace
-
-void printUsbServiceStatus(const UsbServiceStatus& status) {
-  char requested[5];
-  formatServices(status.requested_services, requested, sizeof(requested));
-  const bool explicit_mode =
-      status.service_mode == config_format::kServiceModeExplicit;
-  const char* applied = "LEGACY_AUTO";
-  if (explicit_mode)
-    applied = status.intent_applied ? "EXPLICIT" : "LEGACY_AUTO_UNSUPPORTED";
-  Serial.printf(
-      "APP SERVICES mode=%s requested=%s applied=%s tracking=%s relay=%s "
-      "receive=%s legacy_mode=%s\n",
-      explicit_mode ? "EXPLICIT" : "AUTO", explicit_mode ? requested : "-",
-      applied, serviceStateName(status.tracking),
-      serviceStateName(status.relay_forwarding),
-      status.application_receive ? "ON" : "OFF", roleName(status.legacy_role));
+const char* applicationRoleName(ApplicationRole role) {
+  switch (role) {
+    case ApplicationRole::kTracker: return "TRACKER";
+    case ApplicationRole::kRelay: return "RELAY";
+    case ApplicationRole::kBase: return "BASE";
+  }
+  return "BASE";
 }
+
+const char* batteryStateName(ApplicationBatteryState state) {
+  switch (state) {
+    case ApplicationBatteryState::kUnknown: return "UNKNOWN";
+    case ApplicationBatteryState::kNormal: return "NORMAL";
+    case ApplicationBatteryState::kLow: return "LOW";
+    case ApplicationBatteryState::kCritical: return "CRITICAL";
+  }
+  return "UNKNOWN";
+}
+
+}  // namespace
 
 UsbFenceCommand parseUsbFenceCommand(const char* text, uint8_t length,
                                      GeoPointE7* vertex) {
@@ -396,6 +407,47 @@ void printUsbApplicationResponse(const ApplicationResponse& response) {
           static_cast<unsigned>(s.confirmed_state),
           s.confirmation_active ? "active" : "idle",
           static_cast<unsigned>(s.cadence_mode));
+      return;
+    }
+
+    case ApplicationRequestKind::kGetPowerStatus: {
+      const ApplicationPowerSnapshot& s = response.payload.power.snapshot;
+      char percent[4] = {'-', '\0', '\0', '\0'};
+      if (s.battery_valid && s.battery_percent <= 100)
+        snprintf(percent, sizeof(percent), "%u",
+                 static_cast<unsigned>(s.battery_percent));
+      Serial.printf(
+          "APP POWER id=%lu battery=%s state=%s percent_est=%s mv=%u raw=%u "
+          "age_ms=%lu readings=%lu calibrated=%s\n",
+          static_cast<unsigned long>(response.request_id),
+          s.battery_valid ? "MEASURED" : "NONE",
+          batteryStateName(s.battery_state), percent,
+          static_cast<unsigned>(s.battery_mv),
+          static_cast<unsigned>(s.battery_raw),
+          static_cast<unsigned long>(s.battery_age_ms),
+          static_cast<unsigned long>(s.battery_readings),
+          s.battery_calibrated ? "yes" : "no");
+      return;
+    }
+
+    case ApplicationRequestKind::kGetServicesStatus: {
+      // Same line as before the typed query existed (scripts parse it).
+      const ApplicationServicesSnapshot& s = response.payload.services.snapshot;
+      char requested[5];
+      formatServices(s.requested_services, requested, sizeof(requested));
+      const bool explicit_mode =
+          s.service_mode == config_format::kServiceModeExplicit;
+      const char* applied = "LEGACY_AUTO";
+      if (explicit_mode)
+        applied = s.intent_applied ? "EXPLICIT" : "LEGACY_AUTO_UNSUPPORTED";
+      Serial.printf(
+          "APP SERVICES mode=%s requested=%s applied=%s tracking=%s relay=%s "
+          "receive=%s legacy_mode=%s\n",
+          explicit_mode ? "EXPLICIT" : "AUTO", explicit_mode ? requested : "-",
+          applied, serviceStateName(s.tracking_state, s.tracking_reason),
+          serviceStateName(s.relay_state, s.relay_reason),
+          s.application_receive ? "ON" : "OFF",
+          applicationRoleName(s.legacy_role));
       return;
     }
 

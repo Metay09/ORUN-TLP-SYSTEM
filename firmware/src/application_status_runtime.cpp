@@ -262,4 +262,53 @@ void buildApplicationStatusSnapshot(
   out.populated = 1U;
 }
 
+void buildApplicationPowerSnapshot(uint32_t now_ms,
+                                   const BatteryMonitor& battery,
+                                   BatteryState battery_state,
+                                   ApplicationPowerSnapshot& out) {
+  out = ApplicationPowerSnapshot();
+  out.battery_valid = battery.hasReading() ? 1U : 0U;
+  out.battery_calibrated = 0U;  // RAK reference compensation, not this board
+  out.battery_percent = battery.hasReading()
+                            ? batteryPercentEstimate(battery.millivolts())
+                            : kBatteryPercentUnknown;
+  if (battery.hasReading()) {
+    out.battery_mv = static_cast<uint16_t>(
+        battery.millivolts() > UINT16_MAX ? UINT16_MAX : battery.millivolts());
+    out.battery_raw = static_cast<uint16_t>(
+        battery.raw() > UINT16_MAX ? UINT16_MAX : battery.raw());
+    out.battery_age_ms = now_ms - battery.readAtMs();
+  }
+  out.battery_readings = battery.readings();
+  switch (battery_state) {
+    case BatteryState::kUnknown:
+      out.battery_state = ApplicationBatteryState::kUnknown; break;
+    case BatteryState::kNormal:
+      out.battery_state = ApplicationBatteryState::kNormal; break;
+    case BatteryState::kLow:
+      out.battery_state = ApplicationBatteryState::kLow; break;
+    case BatteryState::kCritical:
+      out.battery_state = ApplicationBatteryState::kCritical; break;
+  }
+}
+
+void buildApplicationServicesSnapshot(uint8_t service_mode,
+                                      uint8_t requested_services,
+                                      bool intent_applied,
+                                      bool application_receive,
+                                      const EffectiveConfig& effective,
+                                      NodeRole legacy_role,
+                                      ApplicationServicesSnapshot& out) {
+  out = ApplicationServicesSnapshot();
+  out.service_mode = service_mode;
+  out.requested_services = requested_services;
+  out.intent_applied = intent_applied ? 1U : 0U;
+  out.application_receive = application_receive ? 1U : 0U;
+  out.tracking_state = mapServiceState(effective.tracking.state);
+  out.tracking_reason = mapServiceReason(effective.tracking.reason);
+  out.relay_state = mapServiceState(effective.relay_forwarding.state);
+  out.relay_reason = mapServiceReason(effective.relay_forwarding.reason);
+  out.legacy_role = mapRole(legacy_role);
+}
+
 }  // namespace orun_tlp

@@ -175,6 +175,39 @@ struct ApplicationStorageSnapshot {
   ApplicationSecurityState security_state;
 };
 
+// Battery state values match battery_state in
+// ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md 7.4 and BatteryState.
+enum class ApplicationBatteryState : uint8_t {
+  kUnknown = 0,
+  kNormal = 1,
+  kLow = 2,
+  kCritical = 3,
+};
+
+struct ApplicationPowerSnapshot {
+  uint32_t battery_age_ms;   // since the last reading
+  uint32_t battery_readings;
+  uint16_t battery_mv;       // 0 without a reading
+  uint16_t battery_raw;
+  uint8_t battery_valid;     // a reading exists
+  uint8_t battery_calibrated;
+  ApplicationBatteryState battery_state;
+  uint8_t battery_percent;   // estimate 0..100, 255 without a reading
+};
+
+// Requested service intent next to what runs (ConfigStore v4 section 11).
+struct ApplicationServicesSnapshot {
+  uint8_t service_mode;        // 0 AUTO, 1 EXPLICIT
+  uint8_t requested_services;  // bit0 tracking, bit1 relay, bit2 receive
+  uint8_t intent_applied;      // EXPLICIT and runnable on this firmware
+  uint8_t application_receive;
+  ApplicationServiceState tracking_state;
+  ApplicationServiceReason tracking_reason;
+  ApplicationServiceState relay_state;
+  ApplicationServiceReason relay_reason;
+  ApplicationRole legacy_role;
+};
+
 struct ApplicationStatusSnapshot {
   // False until the composition owner has built at least one complete snapshot.
   // A transport that forgets to refresh status therefore gets UNAVAILABLE,
@@ -184,6 +217,8 @@ struct ApplicationStatusSnapshot {
   ApplicationTrackingSnapshot tracking;
   ApplicationGeofenceSnapshot geofence;
   ApplicationStorageSnapshot storage;
+  ApplicationPowerSnapshot power;
+  ApplicationServicesSnapshot services;
 };
 
 static_assert(sizeof(ApplicationDeviceSnapshot) <= 40,
@@ -194,5 +229,9 @@ static_assert(sizeof(ApplicationGeofenceSnapshot) <= 16,
               "GEOFENCE snapshot must remain bounded");
 static_assert(sizeof(ApplicationStorageSnapshot) <= 48,
               "STORAGE snapshot must remain bounded");
+static_assert(sizeof(ApplicationPowerSnapshot) <= 48,
+              "POWER snapshot must remain bounded");
+static_assert(sizeof(ApplicationServicesSnapshot) <= 48,
+              "SERVICES snapshot must remain bounded");
 
 }  // namespace orun_tlp

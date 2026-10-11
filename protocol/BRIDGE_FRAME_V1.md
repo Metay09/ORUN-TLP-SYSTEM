@@ -80,6 +80,15 @@ BRIDGE v=1 kind=POSITION n=4294967295 up=4294967295 node=0123456789ABCDEF dup=1 
 The second line is the format's widest case; it exercises field widths, not a
 position a real node would send.
 
+## Reference host decoder
+
+`tools/orun_positions.py` (development tool, Python 3 standard library) reads a
+receiver log or stdin, drops lines whose `crc` does not match, decodes `raw` and
+prints one readable line per position with its GNSS observation time (host local time with UTC offset),
+coordinates and a map link; `--kml` also writes a track. Repeated copies of the
+same (source, sequence) are skipped unless `--all`. Tested against the reference
+lines above by `firmware/tests/tooling/test_orun_positions.py`.
+
 ## Not covered yet
 
 - Opaque secure objects (`HISTORY_SECURE`, future `PRODUCT_SECURE`): a later

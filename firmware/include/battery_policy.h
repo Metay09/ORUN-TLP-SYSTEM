@@ -44,8 +44,51 @@ class BatteryStateTracker {
   uint8_t candidate_count_ = 0;
 };
 
+// Estimated charge in percent from the measured voltage, using a typical
+// 1S LiPo rest-voltage curve (linear between points). An estimate only:
+// load, temperature, cell age and charging (USB/solar raise the voltage)
+// all move it. kBatteryPercentUnknown when there is no reading.
+constexpr uint8_t kBatteryPercentUnknown = 255;
+uint8_t batteryPercentEstimate(uint32_t millivolts);
+
 // The tracking interval actually used, given the battery state. Saturates
 // instead of overflowing; 0 stays 0.
 uint32_t batteryAdjustedIntervalMs(uint32_t interval_ms, BatteryState state);
+
+// Periodic battery log line (owner request 2026-10-11): a record of charge
+// and discharge (for example with a solar panel), and a coarse average
+// consumption from the voltage drop over several days with the panel
+// covered. Readings come once a minute (battery_config::kReadingIntervalMs);
+// one line per period of that many readings carries the last, lowest and
+// highest reading of the period. Period 0 turns the line off.
+namespace battery_log {
+constexpr uint16_t kDefaultPeriodReadings = 10;
+constexpr uint16_t kMaxPeriodReadings = 1440;  // one day
+}  // namespace battery_log
+
+class BatteryLogWindow {
+ public:
+  // Starts a new period. A value above kMaxPeriodReadings is refused and
+  // changes nothing.
+  bool setPeriod(uint32_t readings);
+  uint16_t period() const { return period_; }
+
+  // Folds one reading in. Returns true when it completes a period; last(),
+  // lowest(), highest() and count() then describe that period until the
+  // next add().
+  bool add(uint32_t millivolts);
+  uint32_t last() const { return last_; }
+  uint32_t lowest() const { return lowest_; }
+  uint32_t highest() const { return highest_; }
+  uint16_t count() const { return count_; }
+
+ private:
+  uint16_t period_ = battery_log::kDefaultPeriodReadings;
+  uint16_t count_ = 0;
+  bool complete_ = false;
+  uint32_t last_ = 0;
+  uint32_t lowest_ = 0;
+  uint32_t highest_ = 0;
+};
 
 }  // namespace orun_tlp

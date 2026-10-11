@@ -129,6 +129,16 @@ ApplicationStatusSnapshot sampleSnapshot() {
   s.storage.security_ready = 1;
   s.storage.security_exhausted = 0;
   s.storage.security_state = ApplicationSecurityState::kProvisioned;
+  s.power.battery_valid = 1;
+  s.power.battery_state = ApplicationBatteryState::kNormal;
+  s.power.battery_mv = 4012;
+  s.power.battery_readings = 3;
+  s.services.service_mode = 1;
+  s.services.requested_services = 0x01;
+  s.services.intent_applied = 1;
+  s.services.tracking_state = ApplicationServiceState::kBlocked;
+  s.services.tracking_reason = ApplicationServiceReason::kCapabilityAbsent;
+  s.services.legacy_role = ApplicationRole::kTracker;
 
   return s;
 }
@@ -200,6 +210,24 @@ int main() {
     assert(storage.payload.storage.snapshot.history_capacity == 728);
     assert(storage.payload.storage.snapshot.security_state ==
            ApplicationSecurityState::kProvisioned);
+
+    const ApplicationResponse power = submitTake(
+        service, ApplicationRequester::kBle, 51,
+        ApplicationRequestKind::kGetPowerStatus,
+        ApplicationAccessContext(ApplicationAccessChannel::kBleOpen));
+    assert(power.code == ApplicationResponseCode::kOk);
+    assert(power.payload.power.snapshot.battery_mv == 4012);
+    assert(power.payload.power.snapshot.battery_state ==
+           ApplicationBatteryState::kNormal);
+
+    const ApplicationResponse services = submitTake(
+        service, ApplicationRequester::kUsb, 52,
+        ApplicationRequestKind::kGetServicesStatus,
+        ApplicationAccessContext(ApplicationAccessChannel::kUsbLocal));
+    assert(services.code == ApplicationResponseCode::kOk);
+    assert(services.payload.services.snapshot.requested_services == 0x01);
+    assert(services.payload.services.snapshot.tracking_reason ==
+           ApplicationServiceReason::kCapabilityAbsent);
   }
 
   // 3. The access decision is central and distinct from requester provenance.

@@ -42,22 +42,8 @@ UsbConfigCommandParse parseUsbServicesCommand(const char* text, uint8_t length,
                                               uint8_t* service_mode,
                                               uint8_t* requested_services);
 
-//   APP SERVICES?   requested intent next to what actually runs
-bool isUsbServicesQuery(const char* text, uint8_t length);
-
-struct UsbServiceStatus {
-  uint8_t service_mode = 0;
-  uint8_t requested_services = 0;
-  // false when an EXPLICIT intent saved by other firmware cannot run here
-  // and the legacy GNSS-based role is in effect instead.
-  bool intent_applied = false;
-  ServiceStatus tracking;
-  ServiceStatus relay_forwarding;
-  bool application_receive = false;
-  NodeRole legacy_role = NodeRole::kBase;
-};
-
-void printUsbServiceStatus(const UsbServiceStatus& status);
+// "APP SERVICES?" and "APP POWER?" are typed read-only queries
+// (parseUsbApplicationQuery); BLE carries the same snapshots.
 
 // Local USB spelling of a geofence change (GeofenceMutationOwner owns the
 // semantics). A replacement is staged vertex by vertex, then committed whole:

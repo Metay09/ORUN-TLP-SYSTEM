@@ -74,6 +74,7 @@ orun_tlp::ActivityAutoSampler activity_auto_sampler;
 // Battery voltage on WB_A0, read once a minute. Measurement only for now.
 orun_tlp::BatteryMonitor battery_monitor;
 orun_tlp::BatteryStateTracker battery_state;
+orun_tlp::BatteryLogWindow battery_log;
 // M7P3: FlashMutationGate wraps NrfHistoryFlash unchanged for the
 // SoftDevice-disabled path (still the only path exercised by shipped
 // firmware); its asynchronous path is not enabled by anything in this
@@ -693,7 +694,6 @@ void applyRole(orun_tlp::NodeRole role, const char* source) {
   Serial.printf("ROLE %s source=%s\n", orun_tlp::roleName(role), source);
 }
 
-void printServiceStatus();
 void abortGeofenceConfirmation(const char* reason);
 void clearGeofenceEpisodeFixes();
 const char* geofenceTokenStateName(orun_tlp::GeofenceTokenState state);
@@ -851,15 +851,31 @@ uint32_t runtimeTrackingIntervalMs(uint32_t base_seconds,
 // Feed a new battery reading to the state tracker; on a state change, apply
 // the battery rule to the interval. Like a config change, the current
 // acquisition is not disturbed; the next due point uses the new interval.
+// Every reading also goes into the periodic battery log line.
 void handleBatteryReading() {
-  if (!battery_state.update(battery_monitor.millivolts())) return;
-  const uint32_t interval_ms = runtimeTrackingIntervalMs(
-      active_tracking_base_interval_seconds, geofence_confirmation.cadenceMode());
-  gnss_manager.setTrackingIntervalMs(interval_ms);
-  Serial.printf("BATTERY state=%s mv=%lu tracking_interval_ms=%lu\n",
+  const uint32_t mv = battery_monitor.millivolts();
+  if (battery_state.update(mv)) {
+    const uint32_t interval_ms = runtimeTrackingIntervalMs(
+        active_tracking_base_interval_seconds,
+        geofence_confirmation.cadenceMode());
+    gnss_manager.setTrackingIntervalMs(interval_ms);
+    Serial.printf("BATTERY state=%s mv=%lu tracking_interval_ms=%lu\n",
+                  orun_tlp::batteryStateName(battery_state.state()),
+                  static_cast<unsigned long>(mv),
+                  static_cast<unsigned long>(interval_ms));
+  }
+  if (!battery_log.add(mv)) return;
+  // readings counts minutes since boot, so the line carries its own time base.
+  Serial.printf("BATTERY LOG mv=%lu low=%lu high=%lu percent_est=%u state=%s "
+                "period_min=%u readings=%lu\n",
+                static_cast<unsigned long>(battery_log.last()),
+                static_cast<unsigned long>(battery_log.lowest()),
+                static_cast<unsigned long>(battery_log.highest()),
+                static_cast<unsigned>(
+                    orun_tlp::batteryPercentEstimate(battery_log.last())),
                 orun_tlp::batteryStateName(battery_state.state()),
-                static_cast<unsigned long>(battery_monitor.millivolts()),
-                static_cast<unsigned long>(interval_ms));
+                static_cast<unsigned>(battery_log.count()),
+                static_cast<unsigned long>(battery_monitor.readings()));
 }
 
 void applyCommittedIntervalToRuntime() {
@@ -1169,9 +1185,11 @@ void printBatteryDiagnostic() {
   }
   const uint32_t age_ms =
       orun_tlp::monotonic::nowMs() - battery_monitor.readAtMs();
-  Serial.printf("BATTERY state=%s mv=%lu raw=%lu age_ms=%lu readings=%lu "
-                "calibrated=no\n",
+  Serial.printf("BATTERY state=%s percent_est=%u mv=%lu raw=%lu age_ms=%lu "
+                "readings=%lu calibrated=no\n",
                 orun_tlp::batteryStateName(battery_state.state()),
+                static_cast<unsigned>(orun_tlp::batteryPercentEstimate(
+                    battery_monitor.millivolts())),
                 static_cast<unsigned long>(battery_monitor.millivolts()),
                 static_cast<unsigned long>(battery_monitor.raw()),
                 static_cast<unsigned long>(age_ms),
@@ -1190,18 +1208,18 @@ void printGnssSleepDiagnostic() {
                 static_cast<unsigned long>(d.last_ttff_ms));
 }
 
-// "GNSS SLEEP <minutes>": RAM-only override of the backup-sleep limit for
-// testing (0 = always cut the rail). A reboot restores the default; a stored
-// setting needs the next ConfigStore schema.
-bool parseGnssSleepMinutes(uint32_t* minutes) {
-  static const char kPrefix[] = "GNSS SLEEP ";
-  constexpr uint8_t kPrefixLength = sizeof(kPrefix) - 1;
-  if (role_command_length <= kPrefixLength ||
-      role_command_length > kPrefixLength + 4 ||
-      memcmp(role_command, kPrefix, kPrefixLength) != 0)
+// "<prefix><minutes>" with 1-4 decimal digits, for RAM-only settings such as
+// "GNSS SLEEP <minutes>" (backup-sleep limit, 0 = always cut the rail) and
+// "BATTERY LOG <minutes>" (0 = off). A reboot restores the defaults; stored
+// settings need the next ConfigStore schema.
+bool parseCommandMinutes(const char* prefix, uint32_t* minutes) {
+  const uint8_t prefix_length = static_cast<uint8_t>(strlen(prefix));
+  if (role_command_length <= prefix_length ||
+      role_command_length > prefix_length + 4 ||
+      memcmp(role_command, prefix, prefix_length) != 0)
     return false;
   uint32_t value = 0;
-  for (uint8_t i = kPrefixLength; i < role_command_length; ++i) {
+  for (uint8_t i = prefix_length; i < role_command_length; ++i) {
     const char c = role_command[i];
     if (c < '0' || c > '9') return false;
     value = value * 10U + static_cast<uint32_t>(c - '0');
@@ -1811,7 +1829,7 @@ void handleRoleCommand() {
     return;
   }
   uint32_t gnss_sleep_minutes = 0;
-  if (parseGnssSleepMinutes(&gnss_sleep_minutes)) {
+  if (parseCommandMinutes("GNSS SLEEP ", &gnss_sleep_minutes)) {
     role_command_length = 0;
     gnss_manager.setBackupSleepMaxWaitMs(gnss_sleep_minutes * 60000UL);
     printGnssSleepDiagnostic();
@@ -1820,6 +1838,24 @@ void handleRoleCommand() {
   if (isActivityCommand("BATTERY?", 8)) {
     role_command_length = 0;
     printBatteryDiagnostic();
+    return;
+  }
+  if (isActivityCommand("BATTERY LOG?", 12)) {
+    role_command_length = 0;
+    Serial.printf("BATTERY LOG period_min=%u\n",
+                  static_cast<unsigned>(battery_log.period()));
+    return;
+  }
+  uint32_t battery_log_minutes = 0;
+  if (parseCommandMinutes("BATTERY LOG ", &battery_log_minutes)) {
+    role_command_length = 0;
+    if (battery_log.setPeriod(battery_log_minutes)) {
+      Serial.printf("BATTERY LOG period_min=%u\n",
+                    static_cast<unsigned>(battery_log.period()));
+    } else {
+      Serial.printf("BATTERY LOG REJECTED max_min=%u\n",
+                    static_cast<unsigned>(orun_tlp::battery_log::kMaxPeriodReadings));
+    }
     return;
   }
   if (isActivityCommand("BLE?", 4)) {
@@ -1833,11 +1869,6 @@ void handleRoleCommand() {
   if (fence_command != orun_tlp::UsbFenceCommand::kNotFenceCommand) {
     role_command_length = 0;
     handleUsbFenceCommand(fence_command, fence_vertex);
-    return;
-  }
-  if (orun_tlp::isUsbServicesQuery(role_command, role_command_length)) {
-    role_command_length = 0;
-    printServiceStatus();
     return;
   }
   uint8_t services_mode = 0;
@@ -2056,22 +2087,6 @@ orun_tlp::EffectiveConfig resolveRuntimeConfig() {
                                           currentCapabilitySnapshot());
 }
 
-void printServiceStatus() {
-  const orun_tlp::EffectiveConfig effective = resolveRuntimeConfig();
-  orun_tlp::UsbServiceStatus status;
-  status.service_mode = applied_service_mode;
-  status.requested_services = applied_requested_services;
-  status.intent_applied = explicit_services_active;
-  status.tracking = effective.tracking;
-  status.relay_forwarding = effective.relay_forwarding;
-  status.legacy_role = role_controller.role();
-  status.application_receive =
-      orun_tlp::legacyRoleBehavior(role_controller.role())
-          .receive_application_position;
-  orun_tlp::printUsbServiceStatus(status);
-}
-
-
 void refreshApplicationStatusSnapshot(uint32_t now_ms) {
   const orun_tlp::CapabilitySnapshot capabilities = currentCapabilitySnapshot();
   const orun_tlp::RequestedConfig requested = requestedRuntimeConfig();
@@ -2092,6 +2107,15 @@ void refreshApplicationStatusSnapshot(uint32_t now_ms) {
       history,
       security_store,
       application_status_snapshot);
+  orun_tlp::buildApplicationPowerSnapshot(now_ms, battery_monitor,
+                                          battery_state.state(),
+                                          application_status_snapshot.power);
+  orun_tlp::buildApplicationServicesSnapshot(
+      applied_service_mode, applied_requested_services,
+      explicit_services_active,
+      orun_tlp::legacyRoleBehavior(role_controller.role())
+          .receive_application_position,
+      effective, role_controller.role(), application_status_snapshot.services);
 }
 
 void handleAccelerometerEvent(orun_tlp::AccelerometerManager::Event event) {
@@ -2516,9 +2540,10 @@ void setup() {
   gnss_manager.begin();
   gnss_manager.setTrackingIntervalMs(
       active_tracking_base_interval_seconds * 1000UL);
-  // Waits under ~4 h in receiver backup for hot starts (gnss_config.h).
+  // Receiver backup sleep is off by default: no hot-start gain was measured
+  // on the RAK12500 (gnss_config.h); "GNSS SLEEP <min>" enables it for tests.
   gnss_manager.setBackupSleepMaxWaitMs(
-      orun_tlp::gnss_config::kBackupSleepMaxWaitMs);
+      orun_tlp::gnss_config::kBackupSleepDefaultMaxWaitMs);
   accelerometer_manager.begin(orun_tlp::monotonic::nowMs());
   battery_monitor.begin(orun_tlp::monotonic::nowMs());
   handleBatteryReading();
