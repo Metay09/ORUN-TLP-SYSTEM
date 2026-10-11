@@ -175,4 +175,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:  # Ctrl+C ends a live "tail -f" quietly.
+        sys.exit(0)
