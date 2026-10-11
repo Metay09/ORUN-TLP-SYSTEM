@@ -404,7 +404,7 @@ off size field
 40  1    satellites
 41  1    activity_quality
 42  1    battery_quality
-43  1    reserved = 0
+43  1    head_down_share          (amendment A1; was reserved = 0)
 
 44  4    activity_coverage_seconds
 48  4    active_seconds
@@ -429,7 +429,7 @@ bit3 LOCATION_AGE_VALID
 bit4 ACTIVITY_VALID
 bit5 BATTERY_VALID
 bit6 HEALTH_VALID
-bit7 = 0
+bit7 BEHAVIOUR_VALID           (amendment A1; was 0)
 ```
 
 Unknown/reserved bits reject.
@@ -509,6 +509,36 @@ schema: `activity_coverage_seconds=0`, `active_seconds=0`,
 `movement_mean_abs_delta_mg` is the bounded report-period aggregate of usable
 short-window acceleration change evidence. It is not a grazing/walking/lying
 classifier label.
+
+**Amendment A1 — head position (owner decision 2026-10-12, before any
+PRODUCT_SECURE record was stored or sent).** Byte 43, reserved until then,
+becomes `head_down_share`, governed by record_flags bit7 `BEHAVIOUR_VALID`:
+
+```text
+BEHAVIOUR_VALID=0 -> head_down_share = 0 (no head position for this period)
+BEHAVIOUR_VALID=1 -> requires ACTIVITY_VALID=1
+                     head_down_share = 0..200: share of active_seconds spent
+                     with the head down, in 0.5 % steps (200 = 100 %)
+                     active_seconds = 0 requires head_down_share = 0
+201..255          -> invalid
+```
+
+Derived by a consumer, not carried:
+
+```text
+head_down_active_seconds = round(active_seconds * head_down_share / 200)
+head_up_active_seconds   = active_seconds - head_down_active_seconds
+```
+
+Head down with movement is the published grazing rule (Gonzalez et al. 2015
+for the rule shape; head angle below -20 degrees down / above -10 degrees up
+from the Swiss LoRa collar, arXiv 2406.06245); head up with movement covers
+walking and other activity. It is research-derived and not validated on ORUN
+collars; it is not a validated behaviour label. Lying is not carried. The
+size, every other field and every record valid before A1 are unchanged: a v1
+record with bit7=0 and byte 43=0 means exactly what it meant, so the existing
+host vectors and the RAK4631 KAT frames stay valid; only bit7=1 encodings are
+newly valid. The ObservationStore payload (64 bytes) is unchanged.
 
 `activity_quality` initial registry:
 

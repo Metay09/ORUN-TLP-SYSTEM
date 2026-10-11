@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <Adafruit_TinyUSB.h>
 #include <bluefruit.h>
+#include <math.h>
+#include <string.h>
 
 #include "accelerometer_manager.h"
 #include "activity_capture.h"
@@ -1193,10 +1195,20 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
 
   orun_tlp::tlp::PeriodicObservationPlaintext record{};
   const auto verdict = orun_tlp::buildPeriodicPlaintext(in, &record);
+  // graze_s: active seconds with the head down, as a receiver would derive
+  // it from active_seconds and head_down_share; "-" without head position.
+  char graze[12] = "-";
+  if ((record.record_flags & orun_tlp::tlp::kPeriodicBehaviourValid) != 0) {
+    snprintf(graze, sizeof(graze), "%lu",
+             static_cast<unsigned long>(
+                 (static_cast<uint64_t>(record.active_seconds) *
+                      record.head_down_share + 100U) /
+                 orun_tlp::tlp::kPeriodicHeadDownShareMax));
+  }
   Serial.printf(
       "PRODUCT PERIODIC DRYRUN seq=%lu period_s=%lu result=%s flags=0x%02X "
-      "loc=%s age_s=%u batt_mv=%u batt=%u act_cov_s=%lu act_s=%lu trans=%u "
-      "move_mg=%u health=0x%04X fails=%u/%u/%u/%u\n",
+      "loc=%s age_s=%u batt_mv=%u batt=%u act_cov_s=%lu act_s=%lu graze_s=%s "
+      "trans=%u move_mg=%u health=0x%04X fails=%u/%u/%u/%u\n",
       static_cast<unsigned long>(in.record_sequence),
       static_cast<unsigned long>(in.period_duration_seconds),
       orun_tlp::tlp::productSecureCodecResultName(verdict),
@@ -1206,7 +1218,7 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
       static_cast<unsigned>(record.battery_mv),
       static_cast<unsigned>(record.battery_state),
       static_cast<unsigned long>(record.activity_coverage_seconds),
-      static_cast<unsigned long>(record.active_seconds),
+      static_cast<unsigned long>(record.active_seconds), graze,
       static_cast<unsigned>(record.activity_transition_count),
       static_cast<unsigned>(record.movement_mean_abs_delta_mg),
       static_cast<unsigned>(record.health_flags),
@@ -1231,6 +1243,54 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
 
   product_period_started_ms = now;
   product_period_baseline = current;
+}
+
+// Head position diagnostics: the neck axis, the current head position and
+// the last usable window's mean acceleration (the bench step reads g_mg).
+void printActivityPose() {
+  const int32_t x = activity_auto_sampler.lastMeanXMg();
+  const int32_t y = activity_auto_sampler.lastMeanYMg();
+  const int32_t z = activity_auto_sampler.lastMeanZMg();
+  const auto axis = activity_auto_sampler.neckForwardAxis();
+  char tilt[8] = "-";
+  const float g = sqrtf(static_cast<float>(x) * x + static_cast<float>(y) * y +
+                        static_cast<float>(z) * z);
+  if (axis != orun_tlp::NeckAxis::kUnset && g >= 500.0f && g <= 1500.0f) {
+    const float forward = static_cast<float>(
+        orun_tlp::neckForwardComponent(x, y, z, axis));
+    snprintf(tilt, sizeof(tilt), "%d",
+             static_cast<int>(lroundf(asinf(forward / g) * 57.29578f)));
+  }
+  Serial.printf("ACTIVITY POSE axis=%s head=%s tilt_deg=%s g_mg=%ld,%ld,%ld\n",
+                orun_tlp::neckAxisName(axis),
+                axis == orun_tlp::NeckAxis::kUnset
+                    ? "-"
+                    : (activity_auto_sampler.headPose() ==
+                               orun_tlp::HeadPose::kDown
+                           ? "DOWN"
+                           : "UP"),
+                tilt, static_cast<long>(x), static_cast<long>(y),
+                static_cast<long>(z));
+}
+
+// "ACTIVITY AXIS +X" .. "-Z" or "OFF": RAM only until the next ConfigStore
+// schema can keep it (like GNSS SLEEP).
+bool parseNeckAxis(const char* text, uint8_t length, orun_tlp::NeckAxis* axis) {
+  using orun_tlp::NeckAxis;
+  static const struct {
+    const char* name;
+    NeckAxis axis;
+  } kAxes[] = {{"+X", NeckAxis::kPlusX}, {"-X", NeckAxis::kMinusX},
+               {"+Y", NeckAxis::kPlusY}, {"-Y", NeckAxis::kMinusY},
+               {"+Z", NeckAxis::kPlusZ}, {"-Z", NeckAxis::kMinusZ},
+               {"OFF", NeckAxis::kUnset}};
+  for (const auto& entry : kAxes) {
+    if (strlen(entry.name) == length && memcmp(entry.name, text, length) == 0) {
+      *axis = entry.axis;
+      return true;
+    }
+  }
+  return false;
 }
 
 void printActivityAutoDiagnostic() {
@@ -1258,6 +1318,7 @@ void printActivityAutoDiagnostic() {
                 static_cast<unsigned long>(accel.stream_timing_errors),
                 static_cast<unsigned long>(accel.stream_read_errors),
                 static_cast<unsigned long>(magnitude_mg));
+  printActivityPose();
   if (activity_auto_sampler.summaryReady()) {
     const auto& summary = activity_auto_sampler.latestSummary();
     Serial.printf("ACTIVITY HOUR usable=%u invalid=%u fault=%u "
@@ -2156,6 +2217,28 @@ void handleRoleCommand() {
     activity_auto_user_off = true;
     activity_auto_sampler.setEnabled(false, orun_tlp::monotonic::nowMs());
     printActivityAutoDiagnostic();
+    return;
+  }
+  if (isActivityCommand("ACTIVITY AXIS?", 14)) {
+    role_command_length = 0;
+    printActivityPose();
+    return;
+  }
+  static const char kAxisPrefix[] = "ACTIVITY AXIS ";
+  constexpr uint8_t kAxisPrefixLength = sizeof(kAxisPrefix) - 1;
+  if (role_command_length > kAxisPrefixLength &&
+      memcmp(role_command, kAxisPrefix, kAxisPrefixLength) == 0) {
+    orun_tlp::NeckAxis axis{};
+    const bool ok = parseNeckAxis(role_command + kAxisPrefixLength,
+                                  role_command_length - kAxisPrefixLength,
+                                  &axis);
+    role_command_length = 0;
+    if (!ok) {
+      Serial.println(F("ACTIVITY AXIS rejected: use +X -X +Y -Y +Z -Z or OFF"));
+      return;
+    }
+    activity_auto_sampler.setNeckForwardAxis(axis);
+    printActivityPose();
     return;
   }
   if (isActivityCommand("ACTIVITY?", 9)) {

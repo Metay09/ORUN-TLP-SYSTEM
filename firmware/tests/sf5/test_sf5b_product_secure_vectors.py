@@ -56,6 +56,18 @@ assert PERIODIC.hex() == (
     "017f0101a1a2a3a4a5a6a7a8000001016acba47000000e10166adf3e10b8c704"
     "0001e84800ba000c0501010000000ce400000384000e00250fac000101000000")
 
+# Section 7 amendment A1: the same record with BEHAVIOUR_VALID and
+# head_down_share = 72 (36 % of the 900 active seconds, 324 s head down).
+PERIODIC_BEHAVIOUR = struct.pack(
+    ">BBBBQIIIiiiHHBBBBIIHHHHBBBB",
+    0x01, 0xFF, 1, 1, INCARNATION, 257, PERIOD_END, 3600,
+    376102718, 280545028, 125000, 186, 12, 5, 1, 1, 72,
+    3300, 900, 14, 37, 4012, 0x0001, 1, 0, 0, 0)
+assert len(PERIODIC_BEHAVIOUR) == 64
+assert PERIODIC_BEHAVIOUR.hex() == (
+    "01ff0101a1a2a3a4a5a6a7a8000001016acba47000000e10166adf3e10b8c704"
+    "0001e84800ba000c0501014800000ce400000384000e00250fac000101000000")
+
 # Section 8: GEOFENCE_OUTSIDE ACTIVE, WARNING, time + location + age, no context.
 EVENT = struct.pack(
     ">BBBBBBBBQIIQiiHHI",
@@ -92,6 +104,14 @@ assert EVENT_FRAME.hex() == (
     "3bbd99aa262fc4aed44203fb2c0a9e6e32815ee72f5b0a03dcc34a22b153b66"
     "ea9269a9a8428c27dbaebfcf615154d9158e90b4be8a6887f5")
 
+PERIODIC_BEHAVIOUR_FRAME = seal(0x01, PERIODIC_BEHAVIOUR, 0x44)
+assert len(PERIODIC_BEHAVIOUR_FRAME) == 100
+assert PERIODIC_BEHAVIOUR_FRAME.hex() == (
+    "0204020103014000112233445566778801020304000000000000004"
+    "4f47c07d7bb1070d8592a5ef03849191ec5d1ee965c893abadcea9c7ed32106"
+    "0c5015dd4e3e76261e9e0d45d8002c94d634a1d009d2cc5715aacc5593444e9a"
+    "8e7991504ffda03b3e")
+
 # RAK4631 KAT frames (sf5b_product_crypto_probe.cpp): a freshly provisioned
 # SecurityStore burns counter 0, so the first two protected records use
 # counters 1 and 2 with the same plaintexts and path flags.
@@ -118,4 +138,4 @@ try:
 except Exception as error:  # cryptography raises InvalidTag
     assert type(error).__name__ == "InvalidTag"
 
-print("SF5B PRODUCT_SECURE independent PERIODIC/EVENT vectors: PASS")
+print("SF5B PRODUCT_SECURE independent PERIODIC/EVENT vectors (incl. A1 head-down share): PASS")

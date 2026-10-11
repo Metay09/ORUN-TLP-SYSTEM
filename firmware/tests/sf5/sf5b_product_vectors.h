@@ -33,6 +33,10 @@ constexpr uint8_t kPathFlags = tlp::kProductPathFlagRelayAllowed |
 static const char kPeriodicPlaintextHex[] =
     "017f0101a1a2a3a4a5a6a7a8000001016acba47000000e10166adf3e10b8c704"
     "0001e84800ba000c0501010000000ce400000384000e00250fac000101000000";
+// Amendment A1: BEHAVIOUR_VALID with head_down_share = 72 (36 %).
+static const char kPeriodicBehaviourPlaintextHex[] =
+    "01ff0101a1a2a3a4a5a6a7a8000001016acba47000000e10166adf3e10b8c704"
+    "0001e84800ba000c0501014800000ce400000384000e00250fac000101000000";
 static const char kEventPlaintextHex[] =
     "0101010207000100a1a2a3a4a5a6a7a8000001026acba218b1b2b3b4b5b6b7b8"
     "166b97f010b99dc0001e000000000000";

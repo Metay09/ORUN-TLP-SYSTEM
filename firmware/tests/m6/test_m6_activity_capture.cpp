@@ -549,6 +549,122 @@ void autoUnavailableFaultAndRollover() {
   assert(streaming.unavailableAttempts() == 1 && streaming.faultWindows() == 1);
 }
 
+// ---- Head position (published grazing rule, 2026-10-12) -----------------
+
+void headPoseClassifier() {
+  using H = HeadPose;
+  const NeckAxis x = NeckAxis::kPlusX;
+  assert(classifyHeadPose(0, 0, 1000, x, H::kDown) == H::kUp);      // level
+  assert(classifyHeadPose(-500, 0, 866, x, H::kUp) == H::kDown);    // -30 deg
+  assert(classifyHeadPose(-423, 0, 906, x, H::kUp) == H::kDown);    // -25 deg
+  assert(classifyHeadPose(-87, 0, 996, x, H::kDown) == H::kUp);     // -5 deg
+  assert(classifyHeadPose(500, 0, 866, x, H::kDown) == H::kUp);     // +30 deg
+  // -15 deg is inside the -20..-10 band: the previous position stays.
+  assert(classifyHeadPose(-259, 0, 966, x, H::kUp) == H::kUp);
+  assert(classifyHeadPose(-259, 0, 966, x, H::kDown) == H::kDown);
+  // Band edges: -21 deg is down, -9 deg is up, from either side.
+  assert(classifyHeadPose(-358, 0, 934, x, H::kUp) == H::kDown);
+  assert(classifyHeadPose(-156, 0, 988, x, H::kDown) == H::kUp);
+  // Rotation of the collar around the neck keeps the forward component.
+  assert(classifyHeadPose(-500, 600, 624, x, H::kUp) == H::kDown);
+  // Every axis and sign.
+  assert(classifyHeadPose(500, 0, 866, NeckAxis::kMinusX, H::kUp) == H::kDown);
+  assert(classifyHeadPose(0, -500, 866, NeckAxis::kPlusY, H::kUp) == H::kDown);
+  assert(classifyHeadPose(0, 500, 866, NeckAxis::kMinusY, H::kUp) == H::kDown);
+  assert(classifyHeadPose(0, 866, -500, NeckAxis::kPlusZ, H::kUp) == H::kDown);
+  assert(classifyHeadPose(0, 866, 500, NeckAxis::kMinusZ, H::kUp) == H::kDown);
+  // Unset axis or an unusable gravity reading keep the previous position.
+  assert(classifyHeadPose(-500, 0, 866, NeckAxis::kUnset, H::kUp) == H::kUp);
+  assert(classifyHeadPose(-300, 0, 100, x, H::kUp) == H::kUp);
+  assert(classifyHeadPose(-1500, 0, 900, x, H::kUp) == H::kUp);
+  assert(neckForwardComponent(1, 2, 3, NeckAxis::kMinusZ) == -3);
+  assert(strcmp(neckAxisName(NeckAxis::kMinusY), "-Y") == 0);
+  assert(strcmp(neckAxisName(NeckAxis::kUnset), "OFF") == 0);
+}
+
+// Like runStream, with the neck tilted 34 degrees down (+X forward) when
+// head_down, still or moving (Z alternating by 224 mg).
+uint32_t runPose(AccelerometerManager& m, ActivityAutoSampler& s, uint32_t now,
+                 uint32_t duration_ms, bool head_down, bool moving,
+                 unsigned* tick) {
+  for (uint32_t t = 0; t < duration_ms; t += 100) {
+    now += 100;
+    const int16_t base_z = head_down ? 860 : kStillZ;
+    const int16_t z =
+        moving && (*tick % 2u) ? static_cast<int16_t>(base_z - 224) : base_z;
+    fakeFifoPush(head_down ? -500 : 0, 0, z);
+    ++*tick;
+    for (unsigned pass = 0; pass < 4; ++pass) {
+      m.poll(now);
+      s.poll(m, now);
+    }
+  }
+  return now;
+}
+
+void autoHeadDownShare() {
+  reset();
+  AccelerometerManager m;
+  uint32_t now = boot(m);
+  ActivityAutoSampler sampler;
+  sampler.setReportOwned(true);
+  assert(sampler.neckForwardAxis() == activity_classifier::kDefaultNeckForwardAxis);
+  sampler.setNeckForwardAxis(NeckAxis::kPlusX);
+  const uint32_t opened = now;
+  sampler.setEnabled(true, opened);
+  unsigned tick = 0;
+  // Grazing minute (head down, moving), resting minute (head up, still),
+  // walking minute (head up, moving).
+  now = runPose(m, sampler, now, 60000, true, true, &tick);
+  assert(sampler.headPose() == HeadPose::kDown);
+  assert(sampler.lastMeanXMg() == -500);
+  now = runPose(m, sampler, now, 60000, false, false, &tick);
+  assert(sampler.headPose() == HeadPose::kUp);
+  now = runPose(m, sampler, now, 60000, false, true, &tick);
+  assert(sampler.closePeriod(now));
+  const ActivityHourSummary summary = sampler.latestSummary();
+  // As in autoReportOwnedContinuous: 35 windows, 24 active. The 12 windows of
+  // the first minute (the last one straddling into the still minute, still
+  // tilted 30 degrees on average) are head down.
+  assert(summary.usable_windows == 35 && summary.active_windows == 24);
+  assert(summary.head_pose_classified);
+  assert(summary.measured_head_down_active_ms == 12 * 5000U);
+  ActivityPeriodEvidence evidence{};
+  assert(linkActivityPeriodEvidence(summary, opened, now, evidence) ==
+         ActivityPeriodLinkResult::kLinkedClassified);
+  assert(evidence.head_pose_valid && evidence.head_down_share == 100);  // 50 %
+  // Corrupt head-down time never passes.
+  ActivityHourSummary corrupt = summary;
+  corrupt.measured_head_down_active_ms = summary.measured_active_ms + 1;
+  assert(linkActivityPeriodEvidence(corrupt, opened, now, evidence) ==
+         ActivityPeriodLinkResult::kInvalidPeriod);
+
+  // Axis unknown for part of a period: no head position for that period.
+  const uint32_t second = now;
+  sampler.setNeckForwardAxis(NeckAxis::kUnset);
+  now = runPose(m, sampler, now, 20000, true, true, &tick);
+  sampler.setNeckForwardAxis(NeckAxis::kPlusX);
+  now = runPose(m, sampler, now, 20000, true, true, &tick);
+  assert(sampler.closePeriod(now));
+  assert(!sampler.latestSummary().head_pose_classified);
+  assert(sampler.latestSummary().measured_head_down_active_ms == 0);
+  assert(linkActivityPeriodEvidence(sampler.latestSummary(), second, now,
+                                    evidence) ==
+         ActivityPeriodLinkResult::kLinkedClassified);
+  assert(!evidence.head_pose_valid && evidence.head_down_share == 0);
+
+  // A resting period with a known axis: valid head position, share zero.
+  const uint32_t third = now;
+  now = runPose(m, sampler, now, 20000, true, false, &tick);
+  assert(sampler.closePeriod(now));
+  assert(sampler.latestSummary().head_pose_classified);
+  assert(sampler.latestSummary().active_windows == 0);
+  assert(linkActivityPeriodEvidence(sampler.latestSummary(), third, now,
+                                    evidence) ==
+         ActivityPeriodLinkResult::kLinkedClassified);
+  assert(evidence.head_pose_valid && evidence.head_down_share == 0);
+}
+
 int main() {
   admissionAndHandoff();
   capture(false, false, 1000);
@@ -561,5 +677,7 @@ int main() {
   autoReportOwnedContinuous();
   autoHourlySummary();
   autoUnavailableFaultAndRollover();
+  headPoseClassifier();
+  autoHeadDownShare();
   puts("M6B3 runtime session/capture and continuous stream checks: PASS");
 }

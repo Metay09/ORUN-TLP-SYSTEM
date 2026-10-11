@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "accelerometer_manager.h"
+#include "activity_classifier.h"
 #include "activity_window.h"
 
 namespace orun_tlp {
@@ -50,6 +51,12 @@ struct ActivityHourSummary {
   uint16_t active_windows = 0;
   uint16_t activity_transitions = 0;
   uint32_t measured_active_ms = 0;
+  // activity_classifier.h head position: part of measured_active_ms spent
+  // with the head down (the published grazing rule). Only meaningful when
+  // head_pose_classified: the neck axis was known for every active window of
+  // the period.
+  uint32_t measured_head_down_active_ms = 0;
+  bool head_pose_classified = false;
 };
 
 // A service owner can later map this period summary into one typed product
@@ -86,6 +93,18 @@ class ActivityAutoSampler {
   uint16_t faultWindows() const { return fault_windows_; }
   uint16_t unavailableAttempts() const { return unavailable_attempts_; }
   uint16_t windowSampleCount() const { return window_.sampleCount(); }
+
+  // Which accelerometer axis runs along the neck toward the head (see
+  // activity_classifier.h). kUnset leaves head position unknown. A change
+  // takes effect at the next window; the current period's head position is
+  // reported only if the axis was set for all of its active windows.
+  void setNeckForwardAxis(NeckAxis axis) { neck_axis_ = axis; }
+  NeckAxis neckForwardAxis() const { return neck_axis_; }
+  HeadPose headPose() const { return head_pose_; }
+  // Diagnostics: mean acceleration of the last usable window, milli-g.
+  int32_t lastMeanXMg() const { return last_mean_x_mg_; }
+  int32_t lastMeanYMg() const { return last_mean_y_mg_; }
+  int32_t lastMeanZMg() const { return last_mean_z_mg_; }
   // Diagnostics only: mean |a|^2 of the last usable window. Near 1 g^2
   // (1,000,000 mg^2) when the data path is scaled correctly.
   uint32_t lastMeanMagnitudeSquaredMg2() const { return last_magnitude_mg2_; }
@@ -123,6 +142,13 @@ class ActivityAutoSampler {
   bool last_window_active_ = false;
   bool report_owned_ = false;
   uint32_t last_magnitude_mg2_ = 0;
+  NeckAxis neck_axis_ = activity_classifier::kDefaultNeckForwardAxis;
+  HeadPose head_pose_ = HeadPose::kUp;
+  uint64_t summed_head_down_active_ms_ = 0;
+  uint16_t unclassified_active_windows_ = 0;
+  int32_t last_mean_x_mg_ = 0;
+  int32_t last_mean_y_mg_ = 0;
+  int32_t last_mean_z_mg_ = 0;
   uint32_t published_summaries_ = 0;
   ActivityHourSummary latest_summary_{};
 };

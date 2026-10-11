@@ -240,3 +240,18 @@ CC310 reproduced the independently computed PERIODIC and EVENT frames byte for b
 after `Bluefruit.begin()`; production was flashed back. Gate 21.4 is met for the
 seal path. Gates 21.1 (independent audit) and 21.5-21.8 remain before production RF.
 
+
+## Amendment A1 2026-10-12: head position in PERIODIC (before activation)
+
+Owner decision: separate grazing from other movement with published rules
+before the format goes live, because changing it later is harder. No
+PRODUCT_SECURE record has been stored or sent, so the change is made inside
+schema v1 instead of a new schema: byte 43 (reserved) becomes
+`head_down_share` (0..200 = share of `active_seconds` with the head down, 0.5 %
+steps) under record_flags bit7 `BEHAVIOUR_VALID`; rules in the wire contract
+section 7.3. Every record valid before A1 keeps its bytes and meaning; the
+host vectors, the RAK4631 KAT frames (gate 21.4) and the 64-byte
+ObservationStore payload are unchanged. New independent vector:
+`PERIODIC_BEHAVIOUR` (flags 0xFF, share 72) and its sealed frame (counter
+0x44) in `test_sf5b_product_secure_vectors.py`; codec and builder tests cover
+the new rules. Gate 21.1 (independent audit) must include A1.

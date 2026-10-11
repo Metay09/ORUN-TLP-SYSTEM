@@ -178,6 +178,16 @@ ProductSecureCodecResult validatePeriodicPlaintext(
     if (p.activity_quality != expected) return R::kBadActivity;
   }
 
+  // 7.3 amendment A1: head position needs activity, canonical zero without.
+  if ((flags & kPeriodicBehaviourValid) == 0) {
+    if (p.head_down_share != 0) return R::kBadActivity;
+  } else {
+    if ((flags & kPeriodicActivityValid) == 0 ||
+        p.head_down_share > kPeriodicHeadDownShareMax ||
+        (p.active_seconds == 0 && p.head_down_share != 0))
+      return R::kBadActivity;
+  }
+
   // 7.4
   if ((flags & kPeriodicBatteryValid) == 0 &&
       (p.battery_mv != 0 || p.battery_state != kBatteryStateUnknown ||
@@ -265,7 +275,7 @@ ProductSecureCodecResult encodePeriodicPlaintext(
   out[40] = p.satellites;
   out[41] = p.activity_quality;
   out[42] = p.battery_quality;
-  out[43] = 0;
+  out[43] = p.head_down_share;
   putU32(out + 44, p.activity_coverage_seconds);
   putU32(out + 48, p.active_seconds);
   putU16(out + 52, p.activity_transition_count);
@@ -284,7 +294,6 @@ ProductSecureCodecResult decodePeriodicPlaintext(
   if (in == nullptr || output == nullptr) return R::kInvalidArgument;
   if (in_size != kPeriodicPlaintextSize) return R::kBadLength;
   if (in[0] != kPeriodicSchema) return R::kBadSchema;
-  if (in[43] != 0) return R::kBadReserved;
   PeriodicObservationPlaintext p;
   p.record_flags = in[1];
   p.location_source = in[2];
@@ -301,6 +310,7 @@ ProductSecureCodecResult decodePeriodicPlaintext(
   p.satellites = in[40];
   p.activity_quality = in[41];
   p.battery_quality = in[42];
+  p.head_down_share = in[43];
   p.activity_coverage_seconds = getU32(in + 44);
   p.active_seconds = getU32(in + 48);
   p.activity_transition_count = getU16(in + 52);

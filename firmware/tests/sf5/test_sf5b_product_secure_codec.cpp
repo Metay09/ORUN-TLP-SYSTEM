@@ -21,6 +21,7 @@ namespace v = orun_tlp::sf5b_vectors;
 using v::kEventFrameHex;
 using v::kEventPlaintextHex;
 using v::kPeriodicFrameHex;
+using v::kPeriodicBehaviourPlaintextHex;
 using v::kPeriodicPlaintextHex;
 
 std::vector<uint8_t> fromHex(const char* hex) {
@@ -220,8 +221,37 @@ void periodicRules() {
     p.activity_quality = kActivityQualityUnknown;
   };
 
-  expect([](PeriodicObservationPlaintext& p) { p.record_flags |= 0x80; },
-         R::kBadFlags);
+  // Amendment A1: BEHAVIOUR_VALID (bit7) carries head_down_share in byte 43.
+  auto behaviour = [](PeriodicObservationPlaintext& p) {
+    p.record_flags |= kPeriodicBehaviourValid;
+    p.head_down_share = 72;
+  };
+  ok(behaviour);
+  ok([](PeriodicObservationPlaintext& p) {
+    p.record_flags |= kPeriodicBehaviourValid;  // all active time head up
+  });
+  ok([](PeriodicObservationPlaintext& p) {
+    p.record_flags |= kPeriodicBehaviourValid;
+    p.head_down_share = kPeriodicHeadDownShareMax;
+  });
+  expect([](PeriodicObservationPlaintext& p) {
+    p.record_flags |= kPeriodicBehaviourValid;
+    p.head_down_share = kPeriodicHeadDownShareMax + 1;
+  }, R::kBadActivity);
+  expect([](PeriodicObservationPlaintext& p) { p.head_down_share = 1; },
+         R::kBadActivity);  // a stale share behind a clear bit
+  expect([&](PeriodicObservationPlaintext& p) {
+    noActivity(p);
+    p.record_flags |= kPeriodicBehaviourValid;
+  }, R::kBadActivity);  // head position needs this period's activity
+  expect([&](PeriodicObservationPlaintext& p) {
+    behaviour(p);
+    p.active_seconds = 0;
+  }, R::kBadActivity);  // no active time, no head-down share
+  ok([](PeriodicObservationPlaintext& p) {
+    p.record_flags |= kPeriodicBehaviourValid;
+    p.active_seconds = 0;
+  });
   expect([](PeriodicObservationPlaintext& p) { p.location_source = 5; },
          R::kBadEnum);
   expect([](PeriodicObservationPlaintext& p) { p.activity_quality = 3; },
@@ -371,9 +401,22 @@ void periodicRules() {
   assert(decodePeriodicPlaintext(bytes.data(), bytes.size(), &out) ==
          R::kBadSchema);
   bytes = fromHex(kPeriodicPlaintextHex);
-  bytes[43] = 1;
+  bytes[43] = 1;  // byte 43 without BEHAVIOUR_VALID
   assert(decodePeriodicPlaintext(bytes.data(), bytes.size(), &out) ==
-         R::kBadReserved);
+         R::kBadActivity);
+  bytes = fromHex(kPeriodicBehaviourPlaintextHex);
+  assert(decodePeriodicPlaintext(bytes.data(), bytes.size(), &out) == R::kOk);
+  assert(out.record_flags == 0xFF && out.head_down_share == 72 &&
+         out.active_seconds == 900);
+  {
+    PeriodicObservationPlaintext with = goldenPeriodic();
+    with.record_flags |= kPeriodicBehaviourValid;
+    with.head_down_share = 72;
+    uint8_t encoded[kPeriodicPlaintextSize];
+    assert(encodePeriodicPlaintext(with, encoded, sizeof(encoded)) == R::kOk);
+    assert(memcmp(encoded, bytes.data(), sizeof(encoded)) == 0);
+  }
+  out.record_sequence = 0x5A5A;
   bytes = fromHex(kPeriodicPlaintextHex);
   bytes[1] = 0x77;  // LOCATION_AGE_VALID dropped, age 12 kept
   assert(decodePeriodicPlaintext(bytes.data(), bytes.size(), &out) ==
