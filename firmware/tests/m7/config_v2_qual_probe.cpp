@@ -60,6 +60,12 @@ const char* evidenceName(config_format::PageEvidence evidence) {
     case E::kV2CommittedCorrupt: return "V2_COMMITTED_CORRUPT";
     case E::kSupportedCorrupt: return "SUPPORTED_CORRUPT";
     case E::kUnsupportedNewer: return "UNSUPPORTED_NEWER";
+    case E::kV4Staged: return "V4_STAGED";
+    case E::kV4UncommittedOrTorn: return "V4_TORN";
+    case E::kV4PartialCommit: return "V4_PARTIAL_COMMIT";
+    case E::kV4Committed: return "V4_COMMITTED";
+    case E::kV4CommittedRetired: return "V4_COMMITTED_RETIRED";
+    case E::kV4CommittedCorrupt: return "V4_COMMITTED_CORRUPT";
   }
   return "UNKNOWN";
 }
@@ -94,10 +100,12 @@ bool regionErased() {
   return true;
 }
 
-bool pageTailErased(uint32_t page, bool& erased) {
+// The tail starts after the owned prefix of the schema found on the page
+// (52 bytes for v1/v2, 72 for v4), exactly as ConfigStore recovery checks it.
+bool pageTailErased(uint32_t page, uint32_t owned_prefix, bool& erased) {
   erased = true;
   uint8_t bytes[64];
-  for (uint32_t offset = config_format::kV2PagePrefixSize;
+  for (uint32_t offset = owned_prefix;
        offset < kPageSize; offset += sizeof(bytes)) {
     const size_t remaining = kPageSize - offset;
     const size_t chunk = remaining < sizeof(bytes) ? remaining : sizeof(bytes);
@@ -119,7 +127,7 @@ void printU64Hex(uint64_t value) {
 }
 
 void printPageStatus(uint32_t page) {
-  uint8_t prefix[config_format::kV2PagePrefixSize]{};
+  uint8_t prefix[config_format::kMaxPagePrefixSize]{};
   config_format::PageInspection inspection;
   if (!config_flash.read(page * kPageSize, prefix, sizeof(prefix)) ||
       !config_format::inspectPagePrefix(prefix, sizeof(prefix), inspection)) {
@@ -130,7 +138,8 @@ void printPageStatus(uint32_t page) {
   bool tail_erased = false;
   const bool tail_known =
       inspection.evidence != config_format::PageEvidence::kUnsupportedNewer &&
-      pageTailErased(page, tail_erased);
+      pageTailErased(page, config_format::ownedPrefixSize(inspection.evidence),
+                   tail_erased);
 
   Serial.printf("CONFIG V2 PAGE %c evidence=%s decoded=%s ",
                 page == 0 ? 'A' : 'B',

@@ -91,6 +91,11 @@ independent layout audit returned PASS WITH FIXES. Final focused verification
 returned PASS WITH MINOR DOC FIX with 0 BLOCKER/HIGH; H1/H2, M1-M4, L1-L5 and
 R1-R3 corrections are applied.
 
+Schema v4 adds persisted requested-service intent:
+`docs/architecture/ORUN_CONFIG_STORE_V4_SERVICE_INTENT.md`. v4 firmware reads
+v2 and v4 records and writes only v4; v2 records are never erased or rewritten
+at boot. Its physical validation (section 9) gates the merge.
+
 Current product scope has no deployed ConfigStore fleet. ConfigStore v1 contents
 on development devices are therefore **not** a backward-compatibility contract.
 The v2 runtime cutover requires a fully erased two-page development ConfigStore

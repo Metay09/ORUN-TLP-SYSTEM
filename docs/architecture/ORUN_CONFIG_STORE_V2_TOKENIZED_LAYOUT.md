@@ -1839,7 +1839,8 @@ authorized.
     SUPPORTED_CORRUPT;
 92. a genuine future discriminator requires bytes[5..7] == 0 and
     (version & 0x03) == 0; representative version 4 is UNSUPPORTED_NEWER only
-    after earlier torn-evidence checks;
+    after earlier torn-evidence checks (since 2026-10-10 version 4 is a
+    supported schema, `ORUN_CONFIG_STORE_V4_SERVICE_INTENT.md`; tests use 8);
 93. verified v2 body/CRC/config/token with partial commit word becomes
     V2_PARTIAL_COMMIT: token non-authoritative, semantic config recoverable;
 94. V2_PARTIAL_COMMIT + erased page performs fresh-incarnation recovery without

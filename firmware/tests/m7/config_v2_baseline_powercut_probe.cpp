@@ -33,9 +33,9 @@ class BaselineCommitCutBackend final : public FlashBackend {
   }
 
   FlashOpResult program(uint32_t offset, const void* data, size_t size) override {
-    if (offset == config_format::kV2CommitOffset && size == 4U) {
+    if (offset == config_format::kWriteCommitOffset && size == 4U) {
       // Reaching this call proves ConfigStore already:
-      // 1) programmed the real 44-byte body+CRC through physical_, and
+      // 1) programmed the real body+CRC through physical_, and
       // 2) read it back successfully in writeFreshBaseline().
       // Do NOT delegate the commit. Hold here until real power is removed.
       while (true) {
@@ -75,6 +75,12 @@ const char* evidenceName(config_format::PageEvidence evidence) {
     case E::kV2CommittedCorrupt: return "V2_COMMITTED_CORRUPT";
     case E::kSupportedCorrupt: return "SUPPORTED_CORRUPT";
     case E::kUnsupportedNewer: return "UNSUPPORTED_NEWER";
+    case E::kV4Staged: return "V4_STAGED";
+    case E::kV4UncommittedOrTorn: return "V4_TORN";
+    case E::kV4PartialCommit: return "V4_PARTIAL_COMMIT";
+    case E::kV4Committed: return "V4_COMMITTED";
+    case E::kV4CommittedRetired: return "V4_COMMITTED_RETIRED";
+    case E::kV4CommittedCorrupt: return "V4_COMMITTED_CORRUPT";
   }
   return "UNKNOWN";
 }
@@ -94,10 +100,12 @@ void printU64Hex(uint64_t value) {
                 static_cast<unsigned long>(static_cast<uint32_t>(value)));
 }
 
-bool tailErased(uint32_t page, bool& erased) {
+// The tail starts after the owned prefix of the schema found on the page
+// (52 bytes for v1/v2, 72 for v4), exactly as ConfigStore recovery checks it.
+bool tailErased(uint32_t page, uint32_t owned_prefix, bool& erased) {
   erased = true;
   uint8_t bytes[64];
-  for (uint32_t offset = config_format::kV2PagePrefixSize;
+  for (uint32_t offset = owned_prefix;
        offset < kPageSize; offset += sizeof(bytes)) {
     const size_t remaining = kPageSize - offset;
     const size_t chunk = remaining < sizeof(bytes) ? remaining : sizeof(bytes);
@@ -113,7 +121,7 @@ bool tailErased(uint32_t page, bool& erased) {
 }
 
 void printPage(uint32_t page) {
-  uint8_t prefix[config_format::kV2PagePrefixSize]{};
+  uint8_t prefix[config_format::kMaxPagePrefixSize]{};
   config_format::PageInspection inspection;
   if (!cut_backend.read(page * kPageSize, prefix, sizeof(prefix)) ||
       !config_format::inspectPagePrefix(prefix, sizeof(prefix), inspection)) {
@@ -124,7 +132,8 @@ void printPage(uint32_t page) {
   bool tail_erased = false;
   const bool tail_known =
       inspection.evidence != config_format::PageEvidence::kUnsupportedNewer &&
-      tailErased(page, tail_erased);
+      tailErased(page, config_format::ownedPrefixSize(inspection.evidence),
+                   tail_erased);
 
   Serial.printf("CONFIG V2 CUT PAGE %c evidence=%s decoded=%s ",
                 page == 0 ? 'A' : 'B', evidenceName(inspection.evidence),

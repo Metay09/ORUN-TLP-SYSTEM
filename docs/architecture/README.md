@@ -132,6 +132,10 @@ in POSITION/telemetry/event frames. It remains documentation-only: ConfigStore
 schema/runtime and complete COMMAND/RESULT wire bytes are not changed by that
 direction.
 
+`ORUN_CONFIG_STORE_V4_SERVICE_INTENT.md` (2026-10-10) extends the record
+with requested-service intent: read v2/v4, write v4, same lineage and
+recovery rules; physical validation pending.
+
 The proposed exact persistence follow-up is
 `ORUN_CONFIG_STORE_V2_TOKENIZED_LAYOUT.md`. Its focused independent audit
 returned **PASS WITH FIXES** with 0 BLOCKER / 2 HIGH. Final focused

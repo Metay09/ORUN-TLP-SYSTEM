@@ -108,9 +108,9 @@ class ConfigFlashProbe {
     report_.original = store.config();
     // battery_capacity_mah is not consumed by any runtime behavior (power,
     // GNSS, radio); toggling bit 0 always differs and is fully reversible.
-    report_.temporary = config_format::Config(
-        report_.original.tracking_interval_seconds,
-        report_.original.battery_capacity_mah ^ 1U);
+    // Every other field, including the v4 service intent, is carried over.
+    report_.temporary = report_.original;
+    report_.temporary.battery_capacity_mah ^= 1U;
     start_events_ = in.ble_disconnect_events;
     start_async_ = in.async;
     started_ms_ = in.now_ms;
@@ -152,7 +152,9 @@ class ConfigFlashProbe {
 
   static bool sameConfig(const config_format::Config& a, const config_format::Config& b) {
     return a.tracking_interval_seconds == b.tracking_interval_seconds &&
-           a.battery_capacity_mah == b.battery_capacity_mah;
+           a.battery_capacity_mah == b.battery_capacity_mah &&
+           a.service_mode == b.service_mode &&
+           a.requested_services == b.requested_services;
   }
 
   // Re-arm after the final report has been consumed (kDone only).

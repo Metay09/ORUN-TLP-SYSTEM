@@ -257,11 +257,13 @@ int main() {
 
   // A real reserved future version (multiple-of-four namespace, zero
   // reserved bytes) is unsupported and must not be auto-overwritten.
+  // Version 4 became a supported schema on 2026-10-10 (persisted service
+  // intent); 8 is the next reserved value.
   {
     uint8_t page[kV2PagePrefixSize];
     memset(page, 0, sizeof(page));
     put32(page, kMagic);
-    page[4] = 4;
+    page[4] = 8;
     assert(inspect(page).evidence == PageEvidence::kUnsupportedNewer);
 
     page[5] = 1;
@@ -274,7 +276,7 @@ int main() {
     uint8_t page[kV2PagePrefixSize];
     memset(page, 0xFF, sizeof(page));
     put32(page, kMagic);
-    page[4] = 4;
+    page[4] = 8;
     page[5] = page[6] = page[7] = 0;
     assert(inspect(page).evidence == PageEvidence::kSupportedCorrupt);
   }

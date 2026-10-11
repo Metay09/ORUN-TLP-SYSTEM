@@ -1267,6 +1267,12 @@ const char* configFlashProbeEvidenceName(
     case E::kV2CommittedCorrupt: return "V2_COMMITTED_CORRUPT";
     case E::kSupportedCorrupt: return "SUPPORTED_CORRUPT";
     case E::kUnsupportedNewer: return "UNSUPPORTED_NEWER";
+    case E::kV4Staged: return "V4_STAGED";
+    case E::kV4UncommittedOrTorn: return "V4_TORN";
+    case E::kV4PartialCommit: return "V4_PARTIAL_COMMIT";
+    case E::kV4Committed: return "V4_COMMITTED";
+    case E::kV4CommittedRetired: return "V4_COMMITTED_RETIRED";
+    case E::kV4CommittedCorrupt: return "V4_COMMITTED_CORRUPT";
   }
   return "UNKNOWN";
 }
@@ -1292,7 +1298,7 @@ void printConfigFlashProbeLineage(const char* phase) {
   Serial.println();
 
   for (uint32_t page = 0; page < 2U; ++page) {
-    uint8_t prefix[orun_tlp::config_format::kV2PagePrefixSize]{};
+    uint8_t prefix[orun_tlp::config_format::kMaxPagePrefixSize]{};
     orun_tlp::config_format::PageInspection inspection;
     const bool read_ok = storage_flash_gate.configPort().read(
         page * orun_tlp::storage_config::kPageSize,

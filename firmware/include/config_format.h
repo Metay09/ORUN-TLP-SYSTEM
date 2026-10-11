@@ -50,6 +50,51 @@ static_assert(kV2BodyAndCrcSize <= 64, "v2 body+CRC must fit ConfigPort staging"
 static_assert(kV2RecordSize == kV2CommitOffset + 4, "v2 record packing");
 static_assert(kV2PagePrefixSize == kV2RetireOffset + 4, "v2 page-prefix packing");
 
+// ---- Tokenized v4 sealed-record contract (persisted service intent). ----
+// docs/architecture/ORUN_CONFIG_STORE_V4_SERVICE_INTENT.md. Same family and
+// write discipline as v2, 68-byte sealed record, page-local retire word at 68.
+// v4 firmware reads v2 and v4 and writes only v4.
+constexpr uint8_t kV4Version = 4;
+constexpr uint16_t kV4PayloadSize = 40;
+constexpr uint32_t kV4RecordSize = 68;
+constexpr uint32_t kV4ReservedOffset = 44;
+constexpr uint32_t kV4ReservedSize = 16;
+constexpr uint32_t kV4CrcOffset = 60;
+constexpr uint32_t kV4CommitOffset = 64;
+constexpr uint32_t kV4BodyAndCrcSize = 64;
+constexpr uint32_t kV4RetireOffset = 68;
+constexpr uint32_t kV4PagePrefixSize = 72;
+
+static_assert(kV4CrcOffset % 4 == 0, "v4 CRC must be word aligned");
+static_assert(kV4CommitOffset % 4 == 0, "v4 commit must be word aligned");
+static_assert(kV4RetireOffset % 4 == 0, "v4 retire word must be word aligned");
+static_assert(kV4BodyAndCrcSize <= 64, "v4 body+CRC must fit ConfigPort staging");
+static_assert(kV4RecordSize == kV4CommitOffset + 4, "v4 record packing");
+static_assert(kV4PagePrefixSize == kV4RetireOffset + 4, "v4 page-prefix packing");
+static_assert(kV4ReservedOffset + kV4ReservedSize == kV4CrcOffset,
+              "v4 reserved room ends at the CRC");
+// The v2-only forward-compatibility discriminator requires bytes [48..51] of
+// every valid newer record to be non-FF. In v4 they are reserved zeros.
+static_assert(kV4ReservedOffset <= 48 && 52 <= kV4CrcOffset,
+              "v4 keeps bytes 48..51 inside the zero reserved room");
+
+// The schema every save and every fresh baseline writes.
+constexpr uint32_t kWriteRecordSize = kV4RecordSize;
+constexpr uint32_t kWriteBodyAndCrcSize = kV4BodyAndCrcSize;
+constexpr uint32_t kWriteCommitOffset = kV4CommitOffset;
+// Largest owned page prefix of any schema this firmware reads.
+constexpr uint32_t kMaxPagePrefixSize = kV4PagePrefixSize;
+
+// Requested-service intent. Requested, not effective: capability and runtime
+// state are never stored here.
+constexpr uint8_t kServiceModeAuto = 0;      // no explicit selection saved
+constexpr uint8_t kServiceModeExplicit = 1;  // requested_services is the intent
+constexpr uint8_t kServiceTracking = 0x01;
+constexpr uint8_t kServiceRelayForwarding = 0x02;
+constexpr uint8_t kServiceApplicationReceive = 0x04;
+constexpr uint8_t kKnownServicesMask =
+    kServiceTracking | kServiceRelayForwarding | kServiceApplicationReceive;
+
 struct Config {
   // Explicit constructor (not default member initializers): the vendored
   // RAK toolchain builds this firmware under gnu++11, where a struct with
@@ -57,12 +102,19 @@ struct Config {
   // Config{a, b} would not compile -- matches the same pattern already used
   // by RequestedConfig/CapabilityState in runtime_config.h.
   constexpr Config(uint32_t tracking_interval_seconds_value = 0,
-                   uint32_t battery_capacity_mah_value = 0)
+                   uint32_t battery_capacity_mah_value = 0,
+                   uint8_t service_mode_value = kServiceModeAuto,
+                   uint8_t requested_services_value = 0)
       : tracking_interval_seconds(tracking_interval_seconds_value),
-        battery_capacity_mah(battery_capacity_mah_value) {}
+        battery_capacity_mah(battery_capacity_mah_value),
+        service_mode(service_mode_value),
+        requested_services(requested_services_value) {}
 
   uint32_t tracking_interval_seconds;
   uint32_t battery_capacity_mah;
+  // v4 only. A decoded v2 record reads as AUTO with no requested services.
+  uint8_t service_mode;
+  uint8_t requested_services;
 };
 
 struct StateToken {
@@ -74,6 +126,7 @@ struct StateToken {
   uint32_t revision;
 };
 
+// One tokenized record, independent of the schema (v2 or v4) it is stored in.
 struct V2Record {
   constexpr V2Record(uint64_t generation_value = 0,
                      Config config_value = Config(),
@@ -84,6 +137,7 @@ struct V2Record {
   Config config;
   StateToken token;
 };
+using TokenizedRecord = V2Record;
 
 // Low-level physical/format evidence only. "Committed" here means the known
 // format/CRC/commit structure is coherent; ConfigStore must still apply the
@@ -106,7 +160,24 @@ enum class PageEvidence : uint8_t {
   kV2CommittedCorrupt,
   kSupportedCorrupt,
   kUnsupportedNewer,
+  // v4 mirrors the v2 cases one for one. Appended so existing values and
+  // their diagnostic names do not move.
+  kV4Staged,
+  kV4UncommittedOrTorn,
+  kV4PartialCommit,
+  kV4Committed,
+  kV4CommittedRetired,
+  kV4CommittedCorrupt,
 };
+
+// Schema-neutral views over the tokenized v2/v4 evidence.
+bool evidenceIsCommitted(PageEvidence evidence);
+bool evidenceIsStaged(PageEvidence evidence);
+bool evidenceIsUncommittedOrTorn(PageEvidence evidence);
+bool evidenceIsPartialCommit(PageEvidence evidence);
+bool evidenceIsCommittedRetired(PageEvidence evidence);
+// Bytes of the page this evidence owns; everything after must be erased.
+uint32_t ownedPrefixSize(PageEvidence evidence);
 
 struct PageInspection {
   PageInspection()
@@ -149,7 +220,20 @@ void encodeV2(const V2Record& record, uint8_t* bytes);
 bool decodeV2Body(const uint8_t* bytes, V2Record& record);
 bool decodeV2(const uint8_t* bytes, V2Record& record);
 
-// Classifies the first kV2PagePrefixSize bytes of one ConfigStore page.
+// ---- Tokenized v4 codec. ----
+// encodeV4() emits the complete 68-byte sealed record including commit=0;
+// ConfigStore programs bytes [0..63] first and [64..67] separately last.
+// decodeV4Body() validates bytes [0..63] (structure, reserved zeros, CRC,
+// token) independently of commit state; decodeV4() also requires commit==0.
+// Neither evaluates service-mode/service-bit semantics: an unknown mode or
+// bit decodes, and ConfigStore treats it as semantically invalid.
+void encodeV4(const TokenizedRecord& record, uint8_t* bytes);
+bool decodeV4Body(const uint8_t* bytes, TokenizedRecord& record);
+bool decodeV4(const uint8_t* bytes, TokenizedRecord& record);
+
+// Classifies the owned prefix of one ConfigStore page. At least
+// kV2PagePrefixSize bytes are required; a v4 page needs kV4PagePrefixSize
+// bytes (with fewer, a v4 page is reported as supported corruption).
 // The ordering implements the reviewed forward-compatibility contract:
 // erased -> exact v1/v2 -> recognizable torn prefix -> unsupported-newer
 // discriminator -> supported local corruption.
