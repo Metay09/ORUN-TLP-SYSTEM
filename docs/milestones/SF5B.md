@@ -210,6 +210,22 @@ their output untouched on failure), profile-0x01 AAD (bytes 0..27) and nonce.
 field by field with `struct.pack`, seals them with HKDF-SHA256 + AES-128-CCM
 (same test credential and D2A key as the SF2 vectors) and pins 100/84-byte frames;
 `test_sf5b_product_secure_codec.cpp` checks the codec against the same bytes plus
-every malformed/semantic case. Host only: no caller, no RF, no flash; the CC310
-KAT (gate 4) and the sealing seam are the next slice.
+every malformed/semantic case. Host only: no caller, no RF, no flash.
+
+## Implementation 2026-10-11: sealing seam + RAK4631 KAT (gate 4)
+
+`ProductSecureCrypto` (`firmware/include/product_secure_crypto.h`, `src/product_secure_crypto.cpp`)
+seals PERIODIC/EVENT records with the existing root D2A construction on CC310
+(HKDF-SHA256 -> AES-128-CCM, 8-byte tag), using the SecurityStore credential and D2A
+counter through a second narrow friend next to `HistorySecureCrypto`. The codec
+validates the plaintext before a counter is reserved; the store's first counter 0 is
+burned once, as for HISTORY_SECURE. Seal only, no RF/runtime caller.
+
+KAT: `rak4630_sf5b_product_crypto_probe` (full production graph, after
+`Bluefruit.begin()`, RAM-backed SecurityStore with the public vector credential; also
+runs the M7P6I History KAT as a control) must reproduce the pinned counter-1 PERIODIC
+and counter-2 EVENT frames of `tests/sf5/sf5b_product_vectors.h`, refuse an
+unprovisioned store, and refuse an invalid plaintext or path flag without consuming a
+counter (the next record gets counter 3). Remote run:
+`sh firmware/tests/sf5/sf5b_crypto_kat_remote.sh <ID>`. Physical result: pending.
 

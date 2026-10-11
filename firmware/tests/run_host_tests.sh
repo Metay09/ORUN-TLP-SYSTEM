@@ -474,7 +474,7 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p6i_security_traffic_bytes.c
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m7/test_m7p6i_history_crypto_vectors.py
 "$test_dir/m4p4_history_secure_codec"
 "$test_dir/m7p6h_delegated_secure_codec"
-g++ "${portable_flags[@]}" -Wconversion -Wsign-conversion \
+g++ "${portable_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
   firmware/tests/sf5/test_sf5b_product_secure_codec.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   -o "$test_dir/sf5b_product_secure_codec"

@@ -27,6 +27,9 @@
 #ifdef ORUN_M7P6I_HISTORY_CRYPTO_PROBE
 #include "m7p6i_history_crypto_probe.h"
 #endif
+#ifdef ORUN_SF5B_PRODUCT_CRYPTO_PROBE
+#include "sf5b_product_crypto_probe.h"
+#endif
 #include "firmware_version.h"
 #include "flash_mutation_gate.h"
 #include "gnss_manager.h"
@@ -2433,6 +2436,23 @@ void printM7P6IHistoryCryptoKat() {
 }
 #endif
 
+#ifdef ORUN_SF5B_PRODUCT_CRYPTO_PROBE
+orun_tlp::sf5b_test::ProductCryptoKatResult sf5b_product_crypto_kat{};
+bool sf5b_product_crypto_kat_done = false;
+uint32_t sf5b_product_crypto_last_report_ms = 0;
+
+void printSf5bProductCryptoKat() {
+  const auto& r = sf5b_product_crypto_kat;
+  Serial.printf(
+      "SF5B PRODUCT CRYPTO KAT %s unprovisioned=%s provision=%s periodic=%s "
+      "event=%s refused=%s\n",
+      r.pass() ? "PASS" : "FAIL", r.unprovisioned_refused ? "PASS" : "FAIL",
+      r.provision ? "PASS" : "FAIL", r.periodic ? "PASS" : "FAIL",
+      r.event ? "PASS" : "FAIL", r.refused_without_counter ? "PASS" : "FAIL");
+  sf5b_product_crypto_last_report_ms = millis();
+}
+#endif
+
 void setup() {
   Serial.begin(115200);
   // Start the hardware watchdog before peripheral initialization. It is the
@@ -2577,6 +2597,17 @@ void setup() {
     Serial.println(F("M7P6I HISTORY CRYPTO KAT FAIL reason=ble-not-ready"));
   }
 #endif
+#ifdef ORUN_SF5B_PRODUCT_CRYPTO_PROBE
+  if (ble_ready) {
+    // SF5B: the production ProductSecureCrypto seam on CC310, after the same
+    // Bluefruit-owned nRFCrypto bring-up, with a separate RAM-backed store.
+    sf5b_product_crypto_kat = orun_tlp::sf5b_test::runProductCryptoKat();
+    sf5b_product_crypto_kat_done = true;
+    printSf5bProductCryptoKat();
+  } else {
+    Serial.println(F("SF5B PRODUCT CRYPTO KAT FAIL reason=ble-not-ready"));
+  }
+#endif
 #ifdef ORUN_M7P6E_CRYPTO_BLE_PROBE
   if (ble_ready) {
     // Bluefruit.begin() has already enabled SoftDevice and initialized the
@@ -2649,6 +2680,12 @@ void loop() {
   if (m7p6i_history_crypto_kat_done && Serial &&
       (millis() - m7p6i_history_crypto_last_report_ms) >= 3000U) {
     printM7P6IHistoryCryptoKat();
+  }
+#endif
+#ifdef ORUN_SF5B_PRODUCT_CRYPTO_PROBE
+  if (sf5b_product_crypto_kat_done && Serial &&
+      (millis() - sf5b_product_crypto_last_report_ms) >= 3000U) {
+    printSf5bProductCryptoKat();
   }
 #endif
   // M6D2 deadline is checked BEFORE servicing another GNSS callback so an

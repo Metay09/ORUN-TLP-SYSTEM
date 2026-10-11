@@ -8,6 +8,8 @@
 #include <functional>
 #include <vector>
 
+#include "security_traffic_bytes.h"
+#include "sf5b_product_vectors.h"
 #include "tlp_v2_product_secure.h"
 
 using namespace orun_tlp::tlp;
@@ -15,77 +17,20 @@ using R = ProductSecureCodecResult;
 
 namespace {
 
-// Golden bytes, identical to the pinned hex in the Python vector script.
-const char kPeriodicPlaintextHex[] =
-    "017f0101a1a2a3a4a5a6a7a8000001016acba47000000e10166adf3e10b8c704"
-    "0001e84800ba000c0501010000000ce400000384000e00250fac000101000000";
-const char kEventPlaintextHex[] =
-    "0101010207000100a1a2a3a4a5a6a7a8000001026acba218b1b2b3b4b5b6b7b8"
-    "166b97f010b99dc0001e000000000000";
-const char kPeriodicFrameHex[] =
-    "0204020103014000112233445566778801020304000000000000004"
-    "20a19fe1a180d483149c11e413e3944c95bf8152d9d888ad7b4f16fc0bd0732"
-    "07543030490747856b73c6294bec5cac9962ef666a45aeed52a37e70c12790c0"
-    "e5283b12ba5d38d03f";
-const char kEventFrameHex[] =
-    "0204020203013000112233445566778801020304000000000000004"
-    "3bbd99aa262fc4aed44203fb2c0a9e6e32815ee72f5b0a03dcc34a22b153b66"
-    "ea9269a9a8428c27dbaebfcf615154d9158e90b4be8a6887f5";
+namespace v = orun_tlp::sf5b_vectors;
+using v::kEventFrameHex;
+using v::kEventPlaintextHex;
+using v::kPeriodicFrameHex;
+using v::kPeriodicPlaintextHex;
 
 std::vector<uint8_t> fromHex(const char* hex) {
-  std::vector<uint8_t> out;
-  for (size_t i = 0; hex[i] != '\0' && hex[i + 1] != '\0'; i += 2) {
-    unsigned value = 0;
-    assert(sscanf(hex + i, "%2x", &value) == 1);
-    out.push_back(static_cast<uint8_t>(value));
-  }
+  std::vector<uint8_t> out(strlen(hex) / 2);
+  assert(v::fromHex(hex, out.data(), out.size()));
   return out;
 }
 
-PeriodicObservationPlaintext goldenPeriodic() {
-  PeriodicObservationPlaintext p;
-  p.record_flags = 0x7F;
-  p.location_source = kLocationSourceGnss;
-  p.battery_state = 1;  // NORMAL
-  p.record_incarnation = 0xA1A2A3A4A5A6A7A8ULL;
-  p.record_sequence = 257;
-  p.period_end_epoch_seconds = 1791730800UL;
-  p.period_duration_seconds = 3600;
-  p.latitude_e7 = 376102718;
-  p.longitude_e7 = 280545028;
-  p.altitude_mm = 125000;
-  p.hdop_x100 = 186;
-  p.location_age_seconds = 12;
-  p.satellites = 5;
-  p.activity_quality = kActivityQualityPartial;
-  p.battery_quality = kBatteryQualityMeasured;
-  p.activity_coverage_seconds = 3300;
-  p.active_seconds = 900;
-  p.activity_transition_count = 14;
-  p.movement_mean_abs_delta_mg = 37;
-  p.battery_mv = 4012;
-  p.health_flags = kHealthGnssDegraded;
-  p.gnss_failure_count = 1;
-  return p;
-}
-
-EventPlaintext goldenEvent() {
-  EventPlaintext e;
-  e.event_type = kEventTypeGeofenceOutside;
-  e.lifecycle_state = kEventLifecycleActive;
-  e.severity = kEventSeverityWarning;
-  e.event_flags =
-      kEventTransitionTimeValid | kEventLocationValid | kEventLocationAgeValid;
-  e.location_source = kLocationSourceGnss;
-  e.record_incarnation = 0xA1A2A3A4A5A6A7A8ULL;
-  e.record_sequence = 258;
-  e.transition_epoch_seconds = 1791730800UL - 600;
-  e.occurrence_id = 0xB1B2B3B4B5B6B7B8ULL;
-  e.latitude_e7 = 376150000;
-  e.longitude_e7 = 280600000;
-  e.location_age_seconds = 30;
-  return e;
-}
+PeriodicObservationPlaintext goldenPeriodic() { return v::periodic(); }
+EventPlaintext goldenEvent() { return v::event(); }
 
 void goldenPlaintexts() {
   uint8_t out[kPeriodicPlaintextSize];
@@ -145,6 +90,25 @@ void goldenFrames() {
   productSecureNonce(frame.key_epoch, frame.security_counter, nonce);
   assert(memcmp(nonce, fromHex("01020304010000000000000042").data(),
                 sizeof(nonce)) == 0);
+  // Same bytes as the M7P6 D2A nonce builder the AEAD owner uses.
+  uint8_t reference[orun_tlp::kSecurityTrafficNonceSize];
+  assert(orun_tlp::buildSecurityTrafficNonce(
+      orun_tlp::kSecurityTrafficDirectionD2a, frame.key_epoch,
+      frame.security_counter, reference));
+  assert(memcmp(nonce, reference, sizeof(nonce)) == 0);
+
+  // The KAT frames (counters 1 and 2) decode to the same headers.
+  const std::vector<uint8_t> kat = fromHex(v::kKatPeriodicFrameHex);
+  ProductSecureFrame kat_frame;
+  assert(decodeProductSecureFrame(kat.data(), kat.size(), &kat_frame) ==
+         R::kOk);
+  assert(kat_frame.security_counter == 1 &&
+         kat_frame.path_flags == v::kPathFlags);
+  const std::vector<uint8_t> kat_event = fromHex(v::kKatEventFrameHex);
+  assert(decodeProductSecureFrame(kat_event.data(), kat_event.size(),
+                                  &kat_frame) == R::kOk);
+  assert(kat_frame.security_counter == 2 &&
+         kat_frame.app_family == kProductAppFamilyEvent);
 
   const std::vector<uint8_t> event = fromHex(kEventFrameHex);
   assert(event.size() == kEventFrameSize);

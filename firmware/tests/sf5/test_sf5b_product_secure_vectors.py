@@ -4,8 +4,9 @@
 Builds the PERIODIC and EVENT plaintexts field by field with struct.pack (not
 with the firmware codec), seals them with the profile-0x01 root D2A
 construction (HKDF-SHA256 + AES-128-CCM, 8-byte tag) and pins the bytes. The
-same hex strings are the golden inputs of test_sf5b_product_secure_codec.cpp;
-a later RAK4631 KAT must reproduce the ciphertext/tag with CC310.
+same hex strings are the golden inputs of sf5b_product_vectors.h, used by the
+host codec test and by the RAK4631 KAT, which must reproduce the KAT frames
+with CC310 through ProductSecureCrypto.
 """
 import calendar
 import hashlib
@@ -90,6 +91,21 @@ assert EVENT_FRAME.hex() == (
     "0204020203013000112233445566778801020304000000000000004"
     "3bbd99aa262fc4aed44203fb2c0a9e6e32815ee72f5b0a03dcc34a22b153b66"
     "ea9269a9a8428c27dbaebfcf615154d9158e90b4be8a6887f5")
+
+# RAK4631 KAT frames (sf5b_product_crypto_probe.cpp): a freshly provisioned
+# SecurityStore burns counter 0, so the first two protected records use
+# counters 1 and 2 with the same plaintexts and path flags.
+KAT_PERIODIC_FRAME = seal(0x01, PERIODIC, 1)
+assert KAT_PERIODIC_FRAME.hex() == (
+    "02040201030140001122334455667788010203040000000000000001"
+    "e50cbc0f761c6a0eb03b458063cb18b8f077576bc1a2a7e4768c6838f05cbcce"
+    "b5e1c5ebea866295c57085068185f0f6a698df279a8a7d2b5e9f9b7beda0a3f9"
+    "b3417dfed60d254d")
+KAT_EVENT_FRAME = seal(0x02, EVENT, 2)
+assert KAT_EVENT_FRAME.hex() == (
+    "02040202030130001122334455667788010203040000000000000002"
+    "527c4362b1049d40724479242eff9cbc3746611b09d93b737d325ac3b884ea99"
+    "96b2d4c7019183c5cc8562073586d139598a349b548bf7c6")
 
 # Authentication binds the visible header: one changed AAD byte must fail.
 tampered = bytearray(PERIODIC_FRAME)
