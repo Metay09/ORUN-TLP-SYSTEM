@@ -12,9 +12,10 @@ also write a KML track for Google Earth / Google My Maps.
   python3 tools/orun_positions.py ~/alici.log --kml ~/iz.kml
   tail -f ~/alici.log | python3 tools/orun_positions.py
 
-Time shown is the GNSS observation time inside the packet (UTC), not the time
-the line was read: an old position is never shown as live. Repeated copies of
-the same (source, sequence) are skipped unless --all is given.
+Time shown is the GNSS observation time inside the packet, in this computer's
+local time with its UTC offset, not the time the line was read: an old
+position is never shown as live. Repeated copies of the same (source,
+sequence) are skipped unless --all is given.
 """
 
 import argparse
@@ -100,9 +101,10 @@ def degrees(value_e7):
 def utc_text(position):
     if not position["flags"] & FLAG_VALID_UTC or position["utc"] == 0:
         return "saat yok"
+    # Shown in this computer's local time with its UTC offset (Turkey: +0300).
     moment = datetime.datetime.fromtimestamp(position["utc"],
-                                             datetime.timezone.utc)
-    return moment.strftime("%Y-%m-%d %H:%M:%S UTC")
+                                             datetime.timezone.utc).astimezone()
+    return moment.strftime("%Y-%m-%d %H:%M:%S %z")
 
 
 def readable(position):

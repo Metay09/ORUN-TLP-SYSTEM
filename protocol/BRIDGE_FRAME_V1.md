@@ -84,7 +84,7 @@ position a real node would send.
 
 `tools/orun_positions.py` (development tool, Python 3 standard library) reads a
 receiver log or stdin, drops lines whose `crc` does not match, decodes `raw` and
-prints one readable line per position with its GNSS observation time (UTC),
+prints one readable line per position with its GNSS observation time (host local time with UTC offset),
 coordinates and a map link; `--kml` also writes a track. Repeated copies of the
 same (source, sequence) are skipped unless `--all`. Tested against the reference
 lines above by `firmware/tests/tooling/test_orun_positions.py`.

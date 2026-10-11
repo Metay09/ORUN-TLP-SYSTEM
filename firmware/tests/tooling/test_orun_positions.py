@@ -5,6 +5,11 @@ import io
 import os
 import sys
 import tempfile
+import time
+
+# Local time is shown with its offset; pin Turkey's fixed +03 without tzdata.
+os.environ["TZ"] = "<+03>-3"
+time.tzset()
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
@@ -33,7 +38,7 @@ def decode():
     assert p["altitude_mm"] == 12345 and p["hdop_x100"] == 175
     assert p["satellites"] == 9 and not p["duplicate"]
     line = op.readable(p)
-    assert line.startswith("2023-11-14 22:13:20 UTC  tasma=89ABCDEF01234567 sira=40")
+    assert line.startswith("2023-11-15 01:13:20 +0300  tasma=89ABCDEF01234567 sira=40")
     assert "41.0000000,29.0000000  uydu=9 hdop=1.75" in line
     assert line.endswith("https://maps.google.com/?q=41.0000000,29.0000000")
 
