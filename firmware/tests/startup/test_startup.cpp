@@ -1166,7 +1166,7 @@ int main(int argc, char** argv) {
                     "ACTIVITY AXIS OFF\n");
   while (Serial.available()) pollRoleCommands();
   assert(Serial.output ==
-         "ACTIVITY POSE axis=OFF head=- tilt_deg=- g_mg=0,0,0\n"
+         "ACTIVITY POSE axis=-Y head=UP tilt_deg=- g_mg=0,0,0\n"  // default
          "ACTIVITY POSE axis=-Y head=UP tilt_deg=- g_mg=0,0,0\n"
          "ACTIVITY AXIS rejected: use +X -X +Y -Y +Z -Z or OFF\n"
          "ACTIVITY POSE axis=OFF head=- tilt_deg=- g_mg=0,0,0\n");

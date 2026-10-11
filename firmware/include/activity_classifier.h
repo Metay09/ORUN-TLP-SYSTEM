@@ -73,10 +73,13 @@ constexpr int64_t kHeadUpSinSquaredX10000 = 302;
 constexpr int64_t kGravityMinMg = 500;
 constexpr int64_t kGravityMaxMg = 1500;
 // Which LIS3DH axis runs along the neck toward the head on the ORUN collar.
-// Unset until the bench step on the assembled collar
-// (firmware/tests/m6/activity_axis_bench.sh); USB "ACTIVITY AXIS <axis>"
-// sets it until reboot.
-constexpr NeckAxis kDefaultNeckForwardAxis = NeckAxis::kUnset;
+// Bench step 2026-10-12 (firmware/tests/m6/activity_axis_bench.sh, collar
+// 0E8ADE7E71531AA3, RAK1904 in the Unify box, panel up): level
+// g_mg=-118,-79,-943; head-side edge tilted down g_mg=-37,521,-797, so the
+// axis toward the head is -Y (it read -521 mg, about -33 degrees). Valid
+// while every collar is assembled the same way. USB "ACTIVITY AXIS <axis>"
+// overrides it until reboot.
+constexpr NeckAxis kDefaultNeckForwardAxis = NeckAxis::kMinusY;
 }  // namespace activity_classifier
 
 inline const char* neckAxisName(NeckAxis axis) {

@@ -238,8 +238,9 @@ report-owned sampler runs the continuous 10 Hz FIFO stream (M6B3); USB
 `ACTIVITY AUTO OFF` keeps it off and there is no persisted activity-service
 setting yet. Presence alone, without the tracking service, does not start it.
 The active/inactive label and the head-down (grazing) split are
-research-derived and unvalidated; the head position needs the neck axis of
-the assembled collar (RAM setting until the next ConfigStore schema).
+research-derived and unvalidated; the head position uses the neck axis of
+the assembled collar (build default -Y from the 2026-10-12 bench step, USB
+override until the next ConfigStore schema).
 
 ## 6. Requested configuration, effective state and commands
 
