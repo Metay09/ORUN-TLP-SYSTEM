@@ -52,6 +52,22 @@ ActivityPeriodLinkResult linkActivityPeriodEvidence(
   output.active_seconds = summary.measured_active_ms / 1000U;
   output.transition_count = summary.activity_transitions;
   output.active_inactive_classification_valid = true;
+  if (summary.head_pose_classified) {
+    if (summary.measured_head_down_active_ms > summary.measured_active_ms) {
+      output = ActivityPeriodEvidence{};
+      return ActivityPeriodLinkResult::kInvalidPeriod;
+    }
+    output.head_pose_valid = true;
+    if (summary.measured_active_ms != 0) {
+      // Rounded to the nearest 0.5 %.
+      const uint64_t share =
+          (static_cast<uint64_t>(summary.measured_head_down_active_ms) *
+               kHeadDownShareMax +
+           summary.measured_active_ms / 2U) /
+          summary.measured_active_ms;
+      output.head_down_share = static_cast<uint8_t>(share);
+    }
+  }
   return ActivityPeriodLinkResult::kLinkedClassified;
 }
 

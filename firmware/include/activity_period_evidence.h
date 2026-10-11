@@ -30,7 +30,13 @@ struct ActivityPeriodEvidence {
   uint16_t transition_count = 0;            // saturates at 0xFFFF.
   bool movement_evidence_present = false;
   bool active_inactive_classification_valid = false;
+  // Share of the active time with the head down (published grazing rule),
+  // in 0.5 % steps: 0..kHeadDownShareMax. Only with head_pose_valid.
+  uint8_t head_down_share = 0;
+  bool head_pose_valid = false;
 };
+
+constexpr uint8_t kHeadDownShareMax = 200;  // 100 %
 
 // A consumer must provide the actual period anchors from its record owner,
 // not just a similarly sized interval. With no established matching anchors,

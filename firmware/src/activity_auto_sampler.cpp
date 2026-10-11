@@ -29,7 +29,8 @@ void ActivityAutoSampler::resetPeriod(uint32_t now) {
   summed_variance_mg2_ = summed_abs_delta_mg_ = 0;
   summed_coverage_ms_ = 0;
   summed_active_ms_ = 0;
-  active_windows_ = transitions_ = 0;
+  summed_head_down_active_ms_ = 0;
+  active_windows_ = transitions_ = unclassified_active_windows_ = 0;
   has_last_window_ = false;
 }
 
@@ -68,10 +69,21 @@ void ActivityAutoSampler::recordWindow(const ActivityWindowFeatures& features) {
   summed_variance_mg2_ += features.axis_variance_sum_mg2;
   summed_abs_delta_mg_ += features.mean_abs_delta_mg;
   last_magnitude_mg2_ = features.mean_magnitude_squared_mg2;
+  last_mean_x_mg_ = features.mean_x_mg;
+  last_mean_y_mg_ = features.mean_y_mg;
+  last_mean_z_mg_ = features.mean_z_mg;
+  // Every usable window moves the head position, resting ones too, so the
+  // -20..-10 degree band keeps the posture the animal actually had.
+  head_pose_ = classifyHeadPose(features.mean_x_mg, features.mean_y_mg,
+                                features.mean_z_mg, neck_axis_, head_pose_);
   const bool active = activityWindowActive(features.axis_variance_sum_mg2);
   if (active) {
     incrementBounded(active_windows_);
     summed_active_ms_ += activity_auto_config::kWindowCoverageMs;
+    if (neck_axis_ == NeckAxis::kUnset)
+      incrementBounded(unclassified_active_windows_);
+    else if (head_pose_ == HeadPose::kDown)
+      summed_head_down_active_ms_ += activity_auto_config::kWindowCoverageMs;
   }
   if (has_last_window_ && active != last_window_active_)
     incrementBounded(transitions_);
@@ -123,6 +135,14 @@ void ActivityAutoSampler::publish(uint32_t now) {
       summed_active_ms_ > summary.measured_coverage_ms
           ? summary.measured_coverage_ms
           : summed_active_ms_);
+  summary.head_pose_classified =
+      neck_axis_ != NeckAxis::kUnset && unclassified_active_windows_ == 0;
+  if (summary.head_pose_classified) {
+    summary.measured_head_down_active_ms = static_cast<uint32_t>(
+        summed_head_down_active_ms_ > summary.measured_active_ms
+            ? summary.measured_active_ms
+            : summed_head_down_active_ms_);
+  }
   latest_summary_ = summary;
   summary_ready_ = true;
   if (published_summaries_ != UINT32_MAX) ++published_summaries_;

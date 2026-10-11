@@ -152,6 +152,46 @@ void activity() {
   in.activity.active_seconds = 3301;
   assert(buildPeriodicPlaintext(in, &p) == R::kOk);
   assert((p.record_flags & tlp::kPeriodicActivityValid) == 0);
+  assert((p.record_flags & tlp::kPeriodicBehaviourValid) == 0);
+}
+
+void headPosition() {
+  tlp::PeriodicObservationPlaintext p;
+  // Amendment A1 vector: 36 % of the active time head down.
+  PeriodicRecordInputs in = goldenInputs();
+  in.activity.head_pose_valid = true;
+  in.activity.head_down_share = 72;
+  assert(buildPeriodicPlaintext(in, &p) == R::kOk);
+  encodeEq(p, v::kPeriodicBehaviourPlaintextHex);
+
+  // Without a known neck axis, or without this period's activity, nothing.
+  in.activity.head_pose_valid = false;
+  assert(buildPeriodicPlaintext(in, &p) == R::kOk);
+  assert((p.record_flags & tlp::kPeriodicBehaviourValid) == 0 &&
+         p.head_down_share == 0);
+  in = goldenInputs();
+  in.activity.head_pose_valid = true;
+  in.activity.head_down_share = 72;
+  in.activity.period_duration_seconds = 180;  // another period's evidence
+  assert(buildPeriodicPlaintext(in, &p) == R::kOk);
+  assert((p.record_flags & tlp::kPeriodicBehaviourValid) == 0 &&
+         p.head_down_share == 0);
+
+  // No active time: valid head position, share zero.
+  in = goldenInputs();
+  in.activity.head_pose_valid = true;
+  in.activity.head_down_share = 72;
+  in.activity.active_seconds = 0;
+  assert(buildPeriodicPlaintext(in, &p) == R::kOk);
+  assert((p.record_flags & tlp::kPeriodicBehaviourValid) != 0 &&
+         p.head_down_share == 0);
+
+  // An out-of-range share is dropped, not sent.
+  in = goldenInputs();
+  in.activity.head_pose_valid = true;
+  in.activity.head_down_share = 201;
+  assert(buildPeriodicPlaintext(in, &p) == R::kOk);
+  assert((p.record_flags & tlp::kPeriodicBehaviourValid) == 0);
 }
 
 void refusals() {
@@ -184,6 +224,7 @@ int main() {
   canonicalWhenAbsent();
   saturation();
   activity();
+  headPosition();
   refusals();
   puts("SF5 PERIODIC record builder checks: PASS");
   return 0;

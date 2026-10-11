@@ -59,6 +59,14 @@ tlp::ProductSecureCodecResult buildPeriodicPlaintext(
     p.activity_quality = activity.coverage_seconds == in.period_duration_seconds
                              ? tlp::kActivityQualityComplete
                              : tlp::kActivityQualityPartial;
+    // Head position only with this period's activity and a known neck axis.
+    if (activity.head_pose_valid &&
+        activity.head_down_share <= tlp::kPeriodicHeadDownShareMax) {
+      flags |= tlp::kPeriodicBehaviourValid;
+      p.head_down_share = activity.active_seconds == 0
+                              ? 0
+                              : activity.head_down_share;
+    }
   }
 
   if (in.battery_valid) {

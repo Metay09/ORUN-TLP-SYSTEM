@@ -63,7 +63,11 @@ constexpr uint8_t kPeriodicLocationAgeValid = 1U << 3;
 constexpr uint8_t kPeriodicActivityValid = 1U << 4;
 constexpr uint8_t kPeriodicBatteryValid = 1U << 5;
 constexpr uint8_t kPeriodicHealthValid = 1U << 6;
-constexpr uint8_t kPeriodicRecordFlagsAllowedMask = 0x7FU;
+// Amendment A1 (owner decision 2026-10-12, before activation): byte 43,
+// reserved until then, carries head_down_share under BEHAVIOUR_VALID.
+constexpr uint8_t kPeriodicBehaviourValid = 1U << 7;
+constexpr uint8_t kPeriodicRecordFlagsAllowedMask = 0xFFU;
+constexpr uint8_t kPeriodicHeadDownShareMax = 200U;  // 0.5 % steps
 
 constexpr uint8_t kActivityQualityUnknown = 0U;
 constexpr uint8_t kActivityQualityPartial = 1U;
@@ -168,6 +172,8 @@ struct PeriodicObservationPlaintext {
   uint8_t satellites = 0;
   uint8_t activity_quality = kActivityQualityUnknown;
   uint8_t battery_quality = kBatteryQualityUnknown;
+  // Share of active_seconds with the head down (grazing rule), 0.5 % steps.
+  uint8_t head_down_share = 0;
   uint32_t activity_coverage_seconds = 0;
   uint32_t active_seconds = 0;
   uint16_t activity_transition_count = 0;

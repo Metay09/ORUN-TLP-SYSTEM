@@ -1160,6 +1160,18 @@ int main(int argc, char** argv) {
   assert(Serial.output == "ROLE command rejected: too long\n"
                           "ROLE command rejected\nACCEL ABSENT\n");
   assert(Wire.transaction_calls == wire_calls);
+  // Neck axis for the head position: RAM setting, no bus traffic.
+  Serial.output.clear();
+  Serial.queueInput("ACTIVITY AXIS?\nACTIVITY AXIS -Y\nACTIVITY AXIS +W\n"
+                    "ACTIVITY AXIS OFF\n");
+  while (Serial.available()) pollRoleCommands();
+  assert(Serial.output ==
+         "ACTIVITY POSE axis=-Y head=UP tilt_deg=- g_mg=0,0,0\n"  // default
+         "ACTIVITY POSE axis=-Y head=UP tilt_deg=- g_mg=0,0,0\n"
+         "ACTIVITY AXIS rejected: use +X -X +Y -Y +Z -Z or OFF\n"
+         "ACTIVITY POSE axis=OFF head=- tilt_deg=- g_mg=0,0,0\n");
+  assert(activity_auto_sampler.neckForwardAxis() == NeckAxis::kUnset);
+  assert(Wire.transaction_calls == wire_calls);
   Serial.output.clear();
   Serial.queueInput("ROLE RELAY\rROLE?\nROLE BASE\r\nROLE TRACKER\nROLE?\n");
   while (Serial.available()) pollRoleCommands();
