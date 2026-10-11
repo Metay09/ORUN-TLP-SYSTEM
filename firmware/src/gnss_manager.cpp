@@ -219,6 +219,8 @@ void GnssManager::poll() {
 
     case State::kTimeout:
     case State::kFailure:
+      if (consecutive_failed_acquisitions_ < UINT8_MAX)
+        ++consecutive_failed_acquisitions_;
       enterLowPower(now);
       return;
 
@@ -456,11 +458,26 @@ void GnssManager::restartAfterI2cRecovery(uint32_t now) {
 }
 
 void GnssManager::enterLowPower(uint32_t now) {
+  const bool failed =
+      state_ == State::kTimeout || state_ == State::kFailure;
+  const uint32_t backoff_ms =
+      failed ? gnss_config::failureBackoffMs(tracking_interval_ms_,
+                                             consecutive_failed_acquisitions_)
+             : 0;
   clearCandidates();
   transport_resync_pending_ = false;
   has_last_pvt_callback_time_ = false;
   additional_fix_acquisition_active_ = false;
-  if (schedule_reanchor_pending_) {
+  if (backoff_ms != 0) {
+    // Stretch from the end of this failed attempt; a pending geofence
+    // re-anchor is satisfied by this later due point as well.
+    next_due_at_ms_ = now + backoff_ms;
+    schedule_reanchor_pending_ = false;
+    ++diagnostics_.failure_backoffs;
+    Serial.printf("GNSS backoff failures=%u wait_ms=%lu\n",
+                  static_cast<unsigned>(consecutive_failed_acquisitions_),
+                  static_cast<unsigned long>(backoff_ms));
+  } else if (schedule_reanchor_pending_) {
     // Re-anchor from completion, never from an old due point. This avoids both
     // an immediate catch-up burst and an unintended wait on the previous base
     // cadence after a B <-> B/3 transition.
@@ -471,8 +488,12 @@ void GnssManager::enterLowPower(uint32_t now) {
         now, next_due_at_ms_, tracking_interval_ms_);
   }
   const uint32_t remaining_ms = next_due_at_ms_ - now;
+  // During a backoff the receiver is powered down for the stretched wait,
+  // even when the normal interval would keep it tracking continuously.
   if (!needs_configuration_ &&
-      gnss_config::keepTracking(tracking_interval_ms_, remaining_ms)) {
+      gnss_config::keepTracking(backoff_ms != 0 ? backoff_ms
+                                                : tracking_interval_ms_,
+                                remaining_ms)) {
     state_ = State::kIdle;
     Serial.println(F("GNSS idle (continuous tracking)"));
     return;
@@ -659,6 +680,7 @@ void GnssManager::considerPositionFix() {
   has_last_promoted_fix_itow_ = true;
   diagnostics_.last_ttff_ms = now - acquisition_started_at_ms_;
   ++diagnostics_.successful_fresh_fixes;
+  consecutive_failed_acquisitions_ = 0;  // the first fresh fix ends a backoff
   state_ = State::kFixAvailable;
   // Do not print here. This runs inside SparkFun checkCallbacks(), whose own
   // stack frame is about 3 KB; a printf on top of it overran the 4 KB loop

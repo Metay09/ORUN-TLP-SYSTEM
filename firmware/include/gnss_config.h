@@ -39,9 +39,33 @@ constexpr uint32_t kMinimumPowerOffMs = 2000;
 // Age is strictly less than this limit, from each callback (not pair match).
 constexpr uint32_t kFreshFixMaxAgeMs = 5000;
 // Three boot detection attempts total, with 5s then 10s powered backoff.
-// After exhaustion stay absent until reboot; no periodic absent-device wake.
+// After exhaustion stay absent until reboot, unless setRedetectIntervalMs()
+// asks for periodic re-detection (tracking explicitly requested).
 constexpr uint8_t kDetectionMaxAttempts = 3;
 constexpr uint32_t kDetectionRetryBackoffMs = 5000;
+
+// Failure backoff (owner decision 2026-10-10): after this many consecutive
+// acquisitions without a fresh fix (timeout or failure), the wait before the
+// next one doubles each time, from 2x the interval up to 30 minutes, counted
+// from the end of the failed attempt. The first fresh fix ends it. A receiver
+// that cannot see the sky (barn, shed) then stops burning 120 s of GNSS every
+// interval. Intervals of 30 minutes or more are never stretched.
+constexpr uint8_t kFailureBackoffAfter = 2;
+constexpr uint32_t kFailureBackoffMaxMs = 30UL * 60UL * 1000UL;
+
+// 0 = no backoff; otherwise the wait from the end of the failed attempt.
+// inline, not constexpr: the RAK toolchain builds this header as gnu++11.
+inline uint32_t failureBackoffMs(uint32_t interval_ms,
+                                    uint8_t consecutive_failures) {
+  if (interval_ms == 0 || interval_ms >= kFailureBackoffMaxMs ||
+      consecutive_failures < kFailureBackoffAfter)
+    return 0;
+  uint32_t wait = interval_ms;
+  for (uint8_t i = 1; i < consecutive_failures && wait < kFailureBackoffMaxMs;
+       ++i)
+    wait = wait > kFailureBackoffMaxMs / 2 ? kFailureBackoffMaxMs : wait * 2;
+  return wait < kFailureBackoffMaxMs ? wait : kFailureBackoffMaxMs;
+}
 
 constexpr bool keepTracking(uint32_t interval_ms, uint32_t remaining_ms) {
   return interval_ms <= kShortIntervalThresholdMs ||

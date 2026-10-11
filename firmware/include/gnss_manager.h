@@ -32,6 +32,7 @@ class GnssManager {
     uint32_t i2c_timeouts = 0;
     uint32_t i2c_recoveries = 0;
     uint32_t i2c_recovery_failures = 0;
+    uint32_t failure_backoffs = 0;  // waits stretched by the failure backoff
   };
 
   void begin();
@@ -88,6 +89,10 @@ class GnssManager {
            state_ != State::kDetecting;
   }
   State state() const { return state_; }
+  // Acquisitions in a row that ended without a fresh fix.
+  uint8_t consecutiveFailedAcquisitions() const {
+    return consecutive_failed_acquisitions_;
+  }
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
  private:
@@ -129,6 +134,7 @@ class GnssManager {
   uint32_t dop_received_at_ms_ = 0;
   uint8_t detection_attempts_ = 0;
   uint32_t redetect_interval_ms_ = 0;
+  uint8_t consecutive_failed_acquisitions_ = 0;
   bool has_boundary_epoch_ = false;
   uint32_t boundary_epoch_ = 0;
   bool has_dop_boundary_epoch_ = false;
