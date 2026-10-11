@@ -22,7 +22,10 @@ enum class SecurityState : uint8_t {
 // remains the same two-page A/B region.
 //
 // M7P6I permits only the narrow HistorySecureCrypto friend to use the active
-// in-RAM root credential for the frozen SF2 protected-History operation. There
+// in-RAM root credential for the frozen SF2 protected-History operation.
+// SF5B adds the equally narrow ProductSecureCrypto friend: PRODUCT_SECURE
+// profile 0x01 reuses exactly the same root D2A construction and TX counter
+// (ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md 3.2), seal only. There
 // is still no public/remote K_root readback API, RF secure runtime,
 // provisioning transport, command dispatch or BLE authority here.
 class SecurityStore {
@@ -90,6 +93,7 @@ class SecurityStore {
 
  private:
   friend class HistorySecureCrypto;
+  friend class ProductSecureCrypto;
 
   enum class Job {
     kNone,

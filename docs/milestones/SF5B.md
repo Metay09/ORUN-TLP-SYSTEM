@@ -199,3 +199,44 @@ Final recommendation: **MERGE**.
 
 Codec/tests belong to the next implementation slice after the byte/security
 contract is merged.
+
+## Implementation 2026-10-11: codec + host vectors (gate 21.2)
+
+`firmware/include/tlp_v2_product_secure.h`, `firmware/src/tlp_v2_product_secure.cpp`:
+28-byte header, PERIODIC (64 B) and EVENT (48 B) plaintext encode/decode with the
+section 7, 8 and 19 rules (encoders refuse non-canonical bytes, decoders leave
+their output untouched on failure), profile-0x01 AAD (bytes 0..27) and nonce.
+`firmware/tests/sf5/test_sf5b_product_secure_vectors.py` builds both plaintexts
+field by field with `struct.pack`, seals them with HKDF-SHA256 + AES-128-CCM
+(same test credential and D2A key as the SF2 vectors) and pins 100/84-byte frames;
+`test_sf5b_product_secure_codec.cpp` checks the codec against the same bytes plus
+every malformed/semantic case. Host only: no caller, no RF, no flash.
+
+## Implementation 2026-10-11: sealing seam + RAK4631 KAT (gate 4)
+
+`ProductSecureCrypto` (`firmware/include/product_secure_crypto.h`, `src/product_secure_crypto.cpp`)
+seals PERIODIC/EVENT records with the existing root D2A construction on CC310
+(HKDF-SHA256 -> AES-128-CCM, 8-byte tag), using the SecurityStore credential and D2A
+counter through a second narrow friend next to `HistorySecureCrypto`. The codec
+validates the plaintext before a counter is reserved; the store's first counter 0 is
+burned once, as for HISTORY_SECURE. Seal only, no RF/runtime caller.
+
+KAT: `rak4630_sf5b_product_crypto_probe` (full production graph, after
+`Bluefruit.begin()`, RAM-backed SecurityStore with the public vector credential; also
+runs the M7P6I History KAT as a control) must reproduce the pinned counter-1 PERIODIC
+and counter-2 EVENT frames of `tests/sf5/sf5b_product_vectors.h`, refuse an
+unprovisioned store, and refuse an invalid plaintext or path flag without consuming a
+counter (the next record gets counter 3). Remote run:
+`sh firmware/tests/sf5/sf5b_crypto_kat_remote.sh <ID>`.
+
+Physical result 2026-10-11, receiver RAK4631 `09A462BD4B275BA5`, image at `57a2343`:
+
+```text
+M7P6I HISTORY CRYPTO KAT PASS provision=PASS observation=PASS receipt=PASS tamper=PASS recovery=PASS
+SF5B PRODUCT CRYPTO KAT PASS unprovisioned=PASS provision=PASS periodic=PASS event=PASS refused=PASS
+```
+
+CC310 reproduced the independently computed PERIODIC and EVENT frames byte for byte
+after `Bluefruit.begin()`; production was flashed back. Gate 21.4 is met for the
+seal path. Gates 21.1 (independent audit) and 21.5-21.8 remain before production RF.
+
