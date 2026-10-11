@@ -2540,9 +2540,10 @@ void setup() {
   gnss_manager.begin();
   gnss_manager.setTrackingIntervalMs(
       active_tracking_base_interval_seconds * 1000UL);
-  // Waits under ~4 h in receiver backup for hot starts (gnss_config.h).
+  // Receiver backup sleep is off by default: no hot-start gain was measured
+  // on the RAK12500 (gnss_config.h); "GNSS SLEEP <min>" enables it for tests.
   gnss_manager.setBackupSleepMaxWaitMs(
-      orun_tlp::gnss_config::kBackupSleepMaxWaitMs);
+      orun_tlp::gnss_config::kBackupSleepDefaultMaxWaitMs);
   accelerometer_manager.begin(orun_tlp::monotonic::nowMs());
   battery_monitor.begin(orun_tlp::monotonic::nowMs());
   handleBatteryReading();

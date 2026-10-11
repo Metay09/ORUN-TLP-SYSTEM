@@ -73,8 +73,15 @@ inline uint32_t failureBackoffMs(uint32_t interval_ms,
 // position and ephemeris for a hot start (~1-2 s instead of ~26-30 s at
 // 28-45 mA). Ephemeris ages out after about 4 h, after which a cut rail
 // (0 uA) is cheaper than ~15 uA of backup current. GnssManager starts with
-// backup sleep off; the composition root enables it with this value.
+// backup sleep off; the composition root sets the default below.
 constexpr uint32_t kBackupSleepMaxWaitMs = 4UL * 60UL * 60UL * 1000UL;
+// Off by default (owner decision 2026-10-11, after the collar A/B): in the same
+// place and hour, with the 3-minute interval, TTFF after backup sleep was no
+// better than after a rail cut (median 22 s, 15-68 s, against 24 s, 13-80 s;
+// 9 and 10 fixes, no timeouts). No hot start was seen on this RAK12500, so the
+// ~15 uA backup current buys nothing and the rail is cut as before. The RAM-only
+// USB "GNSS SLEEP <minutes>" still enables it for tests on other boards.
+constexpr uint32_t kBackupSleepDefaultMaxWaitMs = 0;
 // The receiver wakes this much before the next attempt is due.
 constexpr uint32_t kBackupWakeLeadMs = 2000;
 

@@ -1071,18 +1071,17 @@ int main(int argc, char** argv) {
   assert(Serial.output.find(" readings=1 calibrated=no\n") != std::string::npos);
   next_usb_application_request_id = power_saved_request_id;
 
-  // GNSS backup sleep: enabled at boot with the 4 h limit; a RAM-only USB
-  // override exists for testing.
-  assert(gnss_manager.backupSleepMaxWaitMs() ==
-         gnss_config::kBackupSleepMaxWaitMs);
+  // GNSS backup sleep: off at boot (no hot-start gain measured on the
+  // RAK12500); a RAM-only USB override enables it for testing.
+  assert(gnss_config::kBackupSleepDefaultMaxWaitMs == 0);
+  assert(gnss_manager.backupSleepMaxWaitMs() == 0);
   Serial.output.clear();
-  Serial.queueInput("GNSS SLEEP?\nGNSS SLEEP 0\nGNSS SLEEP 240\nGNSS SLEEP 12345\n");
+  Serial.queueInput("GNSS SLEEP?\nGNSS SLEEP 240\nGNSS SLEEP 0\nGNSS SLEEP 12345\n");
   while (Serial.available()) pollRoleCommands();
-  assert(Serial.output.rfind("GNSS SLEEP backup_max_min=240 ", 0) == 0);
-  assert(Serial.output.find("GNSS SLEEP backup_max_min=0 ") != std::string::npos);
+  assert(Serial.output.rfind("GNSS SLEEP backup_max_min=0 ", 0) == 0);
+  assert(Serial.output.find("GNSS SLEEP backup_max_min=240 ") != std::string::npos);
   assert(Serial.output.find("ROLE command rejected\n") != std::string::npos);
-  assert(gnss_manager.backupSleepMaxWaitMs() ==
-         gnss_config::kBackupSleepMaxWaitMs);
+  assert(gnss_manager.backupSleepMaxWaitMs() == 0);
 
   // The USB diagnostic must be queryable after the early boot window is gone.
   // While the bounded probe is incomplete it reports PENDING, not ABSENT.

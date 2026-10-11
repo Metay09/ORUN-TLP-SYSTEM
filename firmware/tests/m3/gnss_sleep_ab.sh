@@ -4,11 +4,11 @@
 #
 # The serial logger keeps running. This script only writes the RAM-only
 # "GNSS SLEEP <min>" setting to the port, alternating every 6 minutes
-# (0 = cut the rail, 240 = the default backup sleep), then reads the logger's
+# (0 = cut the rail, the default; 240 = backup sleep), then reads the logger's
 # file. Each TTFF is attributed to the sleep line printed before its ACQUIRE:
 #   "GNSS backup sleep ..."          -> BACKUP
 #   "GNSS low power (3V3_S release)" -> RAILCUT
-# so the exact moment of switching does not matter. The default (240) is
+# so the exact moment of switching does not matter. The default (0) is
 # restored at the end, also on Ctrl+C.
 #
 # Usage, from the repository root:
@@ -26,7 +26,7 @@ PORT="/dev/serial/by-id/usb-RAKwireless_WisCore_RAK4631_Board_${ID}-if00"
 [ -f "$LOG" ] || { echo "No log file $LOG (is the logger running?)"; exit 1; }
 
 send() { printf '%s\n' "$1" > "$PORT"; }
-restore() { send "GNSS SLEEP 240" 2>/dev/null || true; }
+restore() { send "GNSS SLEEP 0" 2>/dev/null || true; }
 trap 'restore; exit 130' INT TERM
 
 start=$(($(wc -l < "$LOG") + 1))
@@ -68,4 +68,4 @@ for mode in RAILCUT BACKUP; do
   all=$(printf '%s\n' "$times" | grep '[0-9]' | awk '{ printf "%s%d", sep, $1 / 1000; sep = " " }')
   echo "$mode: fixes=$fixes timeouts=$timeouts median_ttff_s=$median all_s=[$all]"
 done
-echo "(raw: $LOG.ab; GNSS SLEEP restored to 240)"
+echo "(raw: $LOG.ab; GNSS SLEEP restored to 0, the default)"
