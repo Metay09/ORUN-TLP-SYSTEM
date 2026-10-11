@@ -34,6 +34,16 @@ struct SFE_UBLOX_GNSS {
   bool setI2COutput(uint8_t, uint16_t) { return configure(); }
   bool setNavigationFrequency(uint8_t, uint16_t) { return configure(); }
   bool powerSaveMode(bool, uint16_t) { return configure(); }
+  // UBX-RXM-PMREQ backup with a timed wake.
+  inline static unsigned power_off_calls = 0;
+  inline static uint32_t last_power_off_ms = 0;
+  inline static bool power_off_times_out = false;
+  bool powerOff(uint32_t duration_ms, uint16_t) {
+    ++power_off_calls;
+    last_power_off_ms = duration_ms;
+    if (power_off_times_out) fake_wire_timeout_flag = true;
+    return false;
+  }
   bool setAutoPVTcallbackPtr(void (*fn)(UBX_NAV_PVT_data_t*), uint16_t) {
     pvt = fn; return configure();
   }

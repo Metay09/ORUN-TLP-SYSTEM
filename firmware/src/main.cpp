@@ -1178,6 +1178,38 @@ void printBatteryDiagnostic() {
                 static_cast<unsigned long>(battery_monitor.readings()));
 }
 
+void printGnssSleepDiagnostic() {
+  const auto& d = gnss_manager.diagnostics();
+  Serial.printf("GNSS SLEEP backup_max_min=%lu backup_sleeps=%lu "
+                "backup_failures=%lu backoffs=%lu last_ttff_ms=%lu\n",
+                static_cast<unsigned long>(gnss_manager.backupSleepMaxWaitMs() /
+                                           60000UL),
+                static_cast<unsigned long>(d.backup_sleeps),
+                static_cast<unsigned long>(d.backup_sleep_failures),
+                static_cast<unsigned long>(d.failure_backoffs),
+                static_cast<unsigned long>(d.last_ttff_ms));
+}
+
+// "GNSS SLEEP <minutes>": RAM-only override of the backup-sleep limit for
+// testing (0 = always cut the rail). A reboot restores the default; a stored
+// setting needs the next ConfigStore schema.
+bool parseGnssSleepMinutes(uint32_t* minutes) {
+  static const char kPrefix[] = "GNSS SLEEP ";
+  constexpr uint8_t kPrefixLength = sizeof(kPrefix) - 1;
+  if (role_command_length <= kPrefixLength ||
+      role_command_length > kPrefixLength + 4 ||
+      memcmp(role_command, kPrefix, kPrefixLength) != 0)
+    return false;
+  uint32_t value = 0;
+  for (uint8_t i = kPrefixLength; i < role_command_length; ++i) {
+    const char c = role_command[i];
+    if (c < '0' || c > '9') return false;
+    value = value * 10U + static_cast<uint32_t>(c - '0');
+  }
+  *minutes = value;
+  return true;
+}
+
 void printBleDiagnostic() {
   const char* initial_start = "not-attempted";
   if (ble_initial_start == BleInitialStart::kOk) initial_start = "ok";
@@ -1771,6 +1803,18 @@ void handleRoleCommand() {
   if (isActivityCommand("RADIO?", 6)) {
     role_command_length = 0;
     printRadioDiagnostic();
+    return;
+  }
+  if (isActivityCommand("GNSS SLEEP?", 11)) {
+    role_command_length = 0;
+    printGnssSleepDiagnostic();
+    return;
+  }
+  uint32_t gnss_sleep_minutes = 0;
+  if (parseGnssSleepMinutes(&gnss_sleep_minutes)) {
+    role_command_length = 0;
+    gnss_manager.setBackupSleepMaxWaitMs(gnss_sleep_minutes * 60000UL);
+    printGnssSleepDiagnostic();
     return;
   }
   if (isActivityCommand("BATTERY?", 8)) {
@@ -2472,6 +2516,9 @@ void setup() {
   gnss_manager.begin();
   gnss_manager.setTrackingIntervalMs(
       active_tracking_base_interval_seconds * 1000UL);
+  // Waits under ~4 h in receiver backup for hot starts (gnss_config.h).
+  gnss_manager.setBackupSleepMaxWaitMs(
+      orun_tlp::gnss_config::kBackupSleepMaxWaitMs);
   accelerometer_manager.begin(orun_tlp::monotonic::nowMs());
   battery_monitor.begin(orun_tlp::monotonic::nowMs());
   handleBatteryReading();

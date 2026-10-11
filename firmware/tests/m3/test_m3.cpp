@@ -251,6 +251,111 @@ void testFailureBackoff() {
   startsAt(failed_at + 120000);
 }
 
+// Waits shorter than ~4 h are spent in receiver backup (rail on, timed wake
+// just before the next attempt) for a hot start; longer waits, receiver
+// failures and a failed PMREQ cut the rail as before.
+void testBackupSleep() {
+  constexpr uint32_t kInterval = gnss_config::kTrackingIntervalMs;  // 180 s
+  GnssManager manager;
+  uint32_t anchor = boot(manager);
+  manager.setBackupSleepMaxWaitMs(gnss_config::kBackupSleepMaxWaitMs);
+  uint32_t tow = 20000;
+  auto fixNow = [&] {
+    emitPvt(manager, pvt(tow));  // first epoch of a session is a boundary
+    emitDop(manager, tow);
+    test_now += 1000;
+    tow += 1000;
+    emitPvt(manager, pvt(tow));
+    emitDop(manager, tow);
+    tow += 1000;
+    GnssFix fix{};
+    assert(manager.takeFreshFixForTransmission(&fix));
+  };
+
+  fixNow();
+  const unsigned calls = Fake::power_off_calls;
+  const uint32_t fixed_at = test_now;
+  manager.poll();
+  assert(manager.state() == State::kSleeping);
+  assert(sensor_power == HIGH);  // rail kept for the backup domain
+  assert(Fake::power_off_calls == calls + 1);
+  const uint32_t remaining = anchor + kInterval - fixed_at;
+  assert(Fake::last_power_off_ms == remaining - gnss_config::kBackupWakeLeadMs);
+  assert(manager.diagnostics().backup_sleeps == 1);
+  // Asleep: no bus traffic.
+  const unsigned reads = Fake::reads;
+  test_now = anchor + kInterval - 1;
+  manager.poll();
+  assert(manager.state() == State::kSleeping && Fake::reads == reads);
+  // Due: a new attempt, configuration reapplied after the wake.
+  const unsigned configs = Fake::config_calls;
+  test_now = anchor + kInterval;
+  manager.poll();
+  assert(manager.state() == State::kStarting && sensor_power == HIGH);
+  test_now += gnss_config::kPowerSettleMs;
+  prepare(manager);
+  assert(Fake::config_calls > configs);
+
+  // A timeout also sleeps in backup (time and almanac still help).
+  test_now = anchor + kInterval + gnss_config::kAcquisitionTimeoutMs;
+  manager.poll();
+  assert(manager.state() == State::kTimeout);
+  manager.poll();
+  assert(manager.state() == State::kSleeping && sensor_power == HIGH);
+  assert(Fake::power_off_calls == calls + 2);
+
+  // Next attempt: a fix, then a PMREQ that times out on the bus -> rail cut.
+  test_now = anchor + 2 * kInterval;
+  manager.poll();
+  test_now += gnss_config::kPowerSettleMs;
+  prepare(manager);
+  fixNow();
+  Fake::power_off_times_out = true;
+  manager.poll();
+  Fake::power_off_times_out = false;
+  assert(manager.state() == State::kSleeping && sensor_power == LOW);
+  assert(manager.diagnostics().backup_sleep_failures == 1);
+
+  // Waits of 4 h or more cut the rail: ephemeris would be stale anyway.
+  manager.setTrackingIntervalMs(5UL * 60 * 60 * 1000);
+  test_now = anchor + 3 * kInterval;
+  manager.poll();
+  test_now += gnss_config::kPowerSettleMs;
+  prepare(manager);
+  fixNow();
+  const unsigned before_long = Fake::power_off_calls;
+  manager.poll();
+  assert(manager.state() == State::kSleeping && sensor_power == LOW);
+  assert(Fake::power_off_calls == before_long);
+
+  // Off (the GnssManager default): always the rail cut.
+  GnssManager off;
+  anchor = boot(off);
+  tow = 50000;
+  emitPvt(off, pvt(tow)); emitDop(off, tow);
+  test_now += 1000;
+  emitPvt(off, pvt(tow + 1000)); emitDop(off, tow + 1000);
+  GnssFix fix{};
+  assert(off.takeFreshFixForTransmission(&fix));
+  const unsigned before_off = Fake::power_off_calls;
+  off.poll();
+  assert(off.state() == State::kSleeping && sensor_power == LOW);
+  assert(Fake::power_off_calls == before_off);
+
+  // A receiver failure cuts the rail even with backup sleep on.
+  off.setBackupSleepMaxWaitMs(gnss_config::kBackupSleepMaxWaitMs);
+  test_now = anchor + kInterval;
+  off.poll();
+  test_now += gnss_config::kPowerSettleMs;
+  Fake::configuration_ok = false;
+  off.poll();
+  assert(off.state() == State::kFailure);
+  off.poll();
+  Fake::configuration_ok = true;
+  assert(off.state() == State::kSleeping && sensor_power == LOW);
+  assert(Fake::power_off_calls == before_off);
+}
+
 int main() {
   testTimeAndPolicy();
   testFixes(false);
@@ -258,5 +363,6 @@ int main() {
   testTimeoutAndRecovery();
   testMissedSlotsAndFailures();
   testFailureBackoff();
+  testBackupSleep();
   puts("M3 deterministic checks: PASS");
 }

@@ -67,6 +67,17 @@ inline uint32_t failureBackoffMs(uint32_t interval_ms,
   return wait < kFailureBackoffMaxMs ? wait : kFailureBackoffMaxMs;
 }
 
+// Backup sleep (owner decision 2026-10-11). When the next attempt is less
+// than this far away, the receiver goes into u-blox backup (UBX-RXM-PMREQ
+// with a timed wake) instead of having its rail cut, so it keeps time,
+// position and ephemeris for a hot start (~1-2 s instead of ~26-30 s at
+// 28-45 mA). Ephemeris ages out after about 4 h, after which a cut rail
+// (0 uA) is cheaper than ~15 uA of backup current. GnssManager starts with
+// backup sleep off; the composition root enables it with this value.
+constexpr uint32_t kBackupSleepMaxWaitMs = 4UL * 60UL * 60UL * 1000UL;
+// The receiver wakes this much before the next attempt is due.
+constexpr uint32_t kBackupWakeLeadMs = 2000;
+
 constexpr bool keepTracking(uint32_t interval_ms, uint32_t remaining_ms) {
   return interval_ms <= kShortIntervalThresholdMs ||
          remaining_ms <= kMinimumPowerOffMs;
