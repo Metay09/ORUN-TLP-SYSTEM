@@ -178,6 +178,15 @@ The candidate 128 KiB range is not authorized for production writes until:
 4. the physical flash backend and ownership guard are reviewed;
 5. destructive physical qualification is completed on a development unit.
 
+Status 2026-10-12 (SF5D4/SF5D5, `docs/milestones/SF5D.md`): (1) done, the
+ceiling is `0x0C5000` and the region is reserved; (2) the owner's production
+build is 320,108 bytes against a 651,264-byte application range; (3) resolved
+only for serial single-bank updates (SF5D4: all 32 pages kept), interrupted
+and BLE/LoRa updates still open; (4) backend and guard implemented with host
+tests, review pending; (5) not started (SF5E). Per the owner's D2 decision
+the region belongs to ObservationStore on a tracking device and to
+CustodyStore on a device with the Gateway job.
+
 The DFU/FOTA gate is not cosmetic. With the 128 KiB candidate, the application /
 update planning range below ObservationStore is
 `0x026000..0x0C5000` = `0x9F000` = 651,264 bytes. A simple equal two-bank

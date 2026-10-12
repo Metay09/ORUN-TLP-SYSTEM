@@ -1,4 +1,4 @@
-// SF5D4 TEST-ONLY read-only verification of the candidate [0x0C5000,
+// SF5D4 TEST-ONLY read-only verification of the product region [0x0C5000,
 // 0x0E5000). Links no flash write or erase; it only prints the page states,
 // the 32 page CRCs and their digest.
 #include <Arduino.h>

@@ -106,6 +106,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/test_storage_layout_policy.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5d_flash_layout_preflight.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5d_dfu_probe_source_contract.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5d_full_region_source_contract.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5d5_scope_contract.py
 
 g++ "${b3_flags[@]}" firmware/tests/m6/test_m6_geofence_geometry.cpp \
   firmware/src/geofence_geometry.cpp -o "$test_dir/m6_geofence_geometry"
@@ -267,7 +268,8 @@ g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
   firmware/tests/m7/test_m7p3_flash_gate.cpp firmware/src/flash_mutation_gate.cpp \
   firmware/src/nrf_history_flash.cpp firmware/src/nrf_config_flash.cpp \
-  firmware/src/nrf_security_flash.cpp firmware/src/nrf_geofence_flash.cpp -o "$test_dir/m7p3_flash_gate"
+  firmware/src/nrf_security_flash.cpp firmware/src/nrf_geofence_flash.cpp \
+  firmware/src/nrf_product_flash.cpp -o "$test_dir/m7p3_flash_gate"
 "$test_dir/m7p3_flash_gate"
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p3_history_async.cpp \
   firmware/src/history_store.cpp firmware/src/journal_format.cpp \
@@ -311,7 +313,8 @@ g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
   firmware/tests/m7/test_m7p5_flash_gate.cpp firmware/src/flash_mutation_gate.cpp \
   firmware/src/nrf_history_flash.cpp firmware/src/nrf_config_flash.cpp \
-  firmware/src/nrf_security_flash.cpp firmware/src/nrf_geofence_flash.cpp -o "$test_dir/m7p5_flash_gate"
+  firmware/src/nrf_security_flash.cpp firmware/src/nrf_geofence_flash.cpp \
+  firmware/src/nrf_product_flash.cpp -o "$test_dir/m7p5_flash_gate"
 "$test_dir/m7p5_flash_gate"
 g++ "${flags[@]}" firmware/tests/m7/test_m7p5_gnss_interval.cpp "${gnss_sources[@]}" \
   -o "$test_dir/m7p5_gnss_interval"
@@ -333,6 +336,7 @@ g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   firmware/src/flash_mutation_gate.cpp firmware/src/nrf_history_flash.cpp \
   firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
   firmware/src/nrf_geofence_flash.cpp \
+  firmware/src/nrf_product_flash.cpp \
   -o "$test_dir/m7p6f_security_gate_integration"
 "$test_dir/m7p6f_security_gate_integration"
 g++ -Ifirmware/tests/m7 "${portable_flags[@]}" \
@@ -347,21 +351,37 @@ g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
   firmware/tests/m7/test_m7p6_flash_gate.cpp firmware/src/flash_mutation_gate.cpp \
   firmware/src/nrf_history_flash.cpp firmware/src/nrf_config_flash.cpp \
-  firmware/src/nrf_security_flash.cpp firmware/src/nrf_geofence_flash.cpp -o "$test_dir/m7p6_flash_gate"
+  firmware/src/nrf_security_flash.cpp firmware/src/nrf_geofence_flash.cpp \
+  firmware/src/nrf_product_flash.cpp -o "$test_dir/m7p6_flash_gate"
 
 g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
   firmware/tests/m6/test_m6d3b_flash_gate.cpp firmware/src/flash_mutation_gate.cpp \
   firmware/src/nrf_history_flash.cpp firmware/src/nrf_config_flash.cpp \
   firmware/src/nrf_security_flash.cpp firmware/src/nrf_geofence_flash.cpp \
+  firmware/src/nrf_product_flash.cpp \
   -o "$test_dir/m6d3b_flash_gate"
 "$test_dir/m6d3b_flash_gate"
+# SF5D5 product region: backend, gate client, ObservationStore on the region,
+# one-owner-per-device decision.
+g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
+  -Wl,--defsym,__flash_arduino_end=0xED000 \
+  firmware/tests/sf5/test_sf5d5_product_region.cpp \
+  firmware/src/flash_mutation_gate.cpp firmware/src/nrf_history_flash.cpp \
+  firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
+  firmware/src/nrf_geofence_flash.cpp firmware/src/nrf_product_flash.cpp \
+  firmware/src/product_region.cpp firmware/src/observation_store.cpp \
+  firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
+  -o "$test_dir/sf5d5_product_region"
+"$test_dir/sf5d5_product_region"
 "$test_dir/m7p6_flash_gate"
 g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
   firmware/tests/m7/test_m7p7a_flash_gate.cpp firmware/src/flash_mutation_gate.cpp \
   firmware/src/nrf_history_flash.cpp firmware/src/nrf_config_flash.cpp \
-  firmware/src/nrf_security_flash.cpp firmware/src/nrf_geofence_flash.cpp -o "$test_dir/m7p7a_flash_gate"
+  firmware/src/nrf_security_flash.cpp firmware/src/nrf_geofence_flash.cpp \
+  firmware/src/nrf_product_flash.cpp -o "$test_dir/m7p7a_flash_gate"
 "$test_dir/m7p7a_flash_gate"
 g++ "${flags[@]}" firmware/tests/m5/test_m5.cpp \
   firmware/src/network_service.cpp firmware/src/node_role.cpp \
@@ -442,6 +462,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/journal_format.cpp firmware/src/nrf_history_flash.cpp \
   firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
   firmware/src/nrf_geofence_flash.cpp \
+  firmware/src/nrf_product_flash.cpp \
   firmware/src/flash_mutation_gate.cpp \
   firmware/src/config_store.cpp firmware/src/config_format.cpp \
   firmware/src/application_request.cpp \

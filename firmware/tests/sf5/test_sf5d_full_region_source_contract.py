@@ -17,11 +17,12 @@ pio = (root / "firmware/platformio.ini").read_text()
 production = (root / "firmware/src/main.cpp").read_text()
 guard = (root / "firmware/scripts/check_storage_layout.py").read_text()
 
-# Region: exactly the unassigned candidate, ending at the geofence region.
-for required in ("kStart = 0x0C5000U",
-                 "kEnd = orun_tlp::storage_config::kGeofenceRegionStart",
-                 'kEnd == 0x0E5000U', "kPages == 32U",
-                 "kApplicationPolicyEndAddress", "pageCrc32(address)",
+# Region: exactly the reserved product region, ending at the geofence region.
+for required in ("kStart = orun_tlp::storage_config::kProductRegionStart",
+                 "kEnd = orun_tlp::storage_config::kProductRegionEnd",
+                 "kStart == 0x0C5000U",
+                 "kEnd == orun_tlp::storage_config::kGeofenceRegionStart",
+                 "kPages == 32U", "pageCrc32(address)",
                  "digest=0x%08lX"):
     assert required in header, f"full-region header missing {required}"
 

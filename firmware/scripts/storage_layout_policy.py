@@ -1,8 +1,9 @@
 """Pure parser for ORUN's application-policy flash ceiling.
 
 Kept outside the PlatformIO/SCons script so host tests can prove that stale,
-commented or conditionally-disabled M7 layout declarations cannot silently
-weaken the M6D3A 0x0E5000 application ceiling.
+commented or conditionally-disabled layout declarations cannot silently weaken
+the application ceiling. M6D3A set it at GeofenceStore's 0x0E5000; SF5D5 moves
+it down to the 128 KiB product region's 0x0C5000.
 """
 import re
 
@@ -109,10 +110,18 @@ def application_policy_ceiling(storage_config_text):
     _reject_conditionals(text)
 
     page_size = _literal(text, "kPageSize")
+    product_start = _literal(text, "kProductRegionStart")
+    product_pages = _literal(text, "kProductRegionPages")
     geofence_start = _literal(text, "kGeofenceRegionStart")
     geofence_pages = _literal(text, "kGeofenceRegionPages")
     security_start = _literal(text, "kFutureSecurityRegionStart")
 
+    _require_unique(
+        text,
+        r"constexpr\s+uint32_t\s+kProductRegionEnd\s*=\s*"
+        r"kProductRegionStart\s*\+\s*kProductRegionPages\s*\*\s*kPageSize\s*;",
+        "derived kProductRegionEnd",
+    )
     _require_unique(
         text,
         r"constexpr\s+uint32_t\s+kGeofenceRegionEnd\s*=\s*"
@@ -122,14 +131,20 @@ def application_policy_ceiling(storage_config_text):
     _require_unique(
         text,
         r"constexpr\s+uint32_t\s+kApplicationPolicyEndAddress\s*=\s*"
-        r"kGeofenceRegionStart\s*;",
+        r"kProductRegionStart\s*;",
         "application ceiling alias",
     )
     _require_unique(
         text,
         r"static_assert\s*\(\s*kApplicationPolicyEndAddress\s*==\s*"
+        r"kProductRegionStart\s*,",
+        "application/product ceiling static_assert",
+    )
+    _require_unique(
+        text,
+        r"static_assert\s*\(\s*kProductRegionEnd\s*==\s*"
         r"kGeofenceRegionStart\s*,",
-        "application/geofence ceiling static_assert",
+        "product/geofence contiguity static_assert",
     )
     _require_unique(
         text,
@@ -150,5 +165,12 @@ def application_policy_ceiling(storage_config_text):
         )
     if geofence_start + geofence_pages * page_size != security_start:
         raise RuntimeError("geofence region no longer directly abuts SecurityStore")
+    if product_start != 0x0C5000 or product_pages != 32:
+        raise RuntimeError(
+            f"SF5D5 product region changed: 0x{product_start:06X}, "
+            f"{product_pages} pages; re-audit layout"
+        )
+    if product_start + product_pages * page_size != geofence_start:
+        raise RuntimeError("product region no longer directly abuts GeofenceStore")
 
-    return geofence_start
+    return product_start

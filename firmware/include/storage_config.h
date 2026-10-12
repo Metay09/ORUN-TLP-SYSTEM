@@ -32,10 +32,21 @@ static_assert(kPageHeaderSize + kRecordsPerPage * kRecordSize == kPageSize, "pag
 // add a GeofenceStore writer or runtime owner.
 // The "kFuture*" names are kept even after a region gains an owner, matching
 // M7P4's own precedent, to avoid unrelated renames/churn.
+// SF5D5 (docs/milestones/SF5D.md) reserves the 128 KiB product region
+// directly below GeofenceStore. SF5D4 showed a serial single-bank firmware
+// update keeps all 32 pages (Gate D1, serial path); the owner's D2 decision
+// gives the whole region to one store per device, chosen by the device's job
+// (product_region.h). This slice reserves/protects the bytes and adds their
+// nRF backend under FlashMutationGate; no production runtime writer yet.
+constexpr uint32_t kProductRegionPages = 32;
 constexpr uint32_t kGeofenceRegionPages = 2;
 constexpr uint32_t kFutureSecurityRegionPages = 2;
 constexpr uint32_t kFutureConfigRegionPages = 2;
 constexpr uint32_t kFutureBondRegionPages = 2;
+
+constexpr uint32_t kProductRegionStart = 0x0C5000;
+constexpr uint32_t kProductRegionEnd =
+    kProductRegionStart + kProductRegionPages * kPageSize;
 
 constexpr uint32_t kGeofenceRegionStart = 0x0E5000;
 constexpr uint32_t kGeofenceRegionEnd =
@@ -52,11 +63,18 @@ constexpr uint32_t kFutureBondRegionEnd =
     kFutureBondRegionStart + kFutureBondRegionPages * kPageSize;
 
 // The post-link guard in scripts/check_storage_layout.py enforces that no
-// linked application byte reaches the lowest reserved data region. M6D3A moves
-// that boundary from SecurityStore's 0x0E7000 down to GeofenceStore's 0x0E5000.
-// The parser validates this alias plus the contiguous geofence->security chain.
-constexpr uint32_t kApplicationPolicyEndAddress = kGeofenceRegionStart;
+// linked application byte reaches the lowest reserved data region. M6D3A moved
+// that boundary from SecurityStore's 0x0E7000 down to GeofenceStore's
+// 0x0E5000; SF5D5 moves it down to the product region's 0x0C5000. The parser
+// validates this alias plus the contiguous product->geofence->security chain.
+constexpr uint32_t kApplicationPolicyEndAddress = kProductRegionStart;
 
+static_assert(kProductRegionStart % kPageSize == 0,
+              "product region must start page-aligned");
+static_assert(kProductRegionEnd % kPageSize == 0,
+              "product region must end page-aligned");
+static_assert(kProductRegionEnd - kProductRegionStart == 128U * 1024U,
+              "product region is the owner-approved 128 KiB");
 static_assert(kGeofenceRegionStart % kPageSize == 0,
               "geofence region must start page-aligned");
 static_assert(kGeofenceRegionEnd % kPageSize == 0,
@@ -84,10 +102,13 @@ static_assert(kFutureBondRegionEnd - kFutureBondRegionStart ==
               "bond region must be exactly its declared page count");
 
 // Chained equalities make the reserved regions exactly contiguous and
-// non-overlapping by construction: application | geofence | security | config
-// | bond | history, with no gap and no overlap anywhere in that chain.
-static_assert(kApplicationPolicyEndAddress == kGeofenceRegionStart,
-              "application policy ceiling must equal geofence region start");
+// non-overlapping by construction: application | product | geofence |
+// security | config | bond | history, with no gap and no overlap anywhere in
+// that chain.
+static_assert(kApplicationPolicyEndAddress == kProductRegionStart,
+              "application policy ceiling must equal product region start");
+static_assert(kProductRegionEnd == kGeofenceRegionStart,
+              "product region must directly abut geofence region");
 static_assert(kGeofenceRegionEnd == kFutureSecurityRegionStart,
               "geofence region must directly abut security region");
 static_assert(kFutureSecurityRegionEnd == kFutureConfigRegionStart,

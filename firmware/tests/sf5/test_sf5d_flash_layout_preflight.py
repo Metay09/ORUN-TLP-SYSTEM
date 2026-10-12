@@ -10,7 +10,7 @@ import sf5d_layout_preflight as preflight  # noqa: E402
 header = (FIRMWARE / "include" / "storage_config.h").read_text(encoding="utf-8")
 regions = preflight.verify(header)
 assert regions == {
-    "candidate_unassigned": (0x0C5000, 0x0E5000),
+    "product": (0x0C5000, 0x0E5000),
     "geofence": (0x0E5000, 0x0E7000),
     "security": (0x0E7000, 0x0E9000),
     "config": (0x0E9000, 0x0EB000),
@@ -47,13 +47,23 @@ reject(
     "kFutureBondRegionEnd != kBaseAddress,",
 )
 reject(
-    "geofence overlaps candidate",
+    "product region shrinks and leaves a gap",
+    "constexpr uint32_t kProductRegionPages = 32;",
+    "constexpr uint32_t kProductRegionPages = 30;",
+)
+reject(
+    "ceiling back at the geofence start",
+    "kApplicationPolicyEndAddress = kProductRegionStart;",
+    "kApplicationPolicyEndAddress = kGeofenceRegionStart;",
+)
+reject(
+    "geofence overlaps product region",
     "constexpr uint32_t kGeofenceRegionStart = 0x0E5000;",
     "constexpr uint32_t kGeofenceRegionStart = 0x0E3000;",
 )
 reject(
     "policy ceiling moved above protected data",
-    "kApplicationPolicyEndAddress = kGeofenceRegionStart;",
+    "kApplicationPolicyEndAddress = kProductRegionStart;",
     "kApplicationPolicyEndAddress = kFutureSecurityRegionStart;",
 )
 reject(
@@ -63,7 +73,7 @@ reject(
 )
 
 # A stale commented declaration cannot be used as an alternative to the
-# active immutable candidate-protection chain.
+# active immutable region-protection chain.
 reject(
     "silently changed security size",
     "constexpr uint32_t kFutureSecurityRegionPages = 2;",

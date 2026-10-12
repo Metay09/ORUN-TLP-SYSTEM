@@ -101,4 +101,20 @@ class NrfGeofenceFlash : public FlashBackend {
  private:
   bool ready_ = false;
 };
+
+// SF5D5: synchronous-only primitive for the 128 KiB product region
+// (storage_config::kProductRegionStart, 32 pages). One store owns the whole
+// region per device (ObservationStore or CustodyStore, product_region.h); this
+// backend does not know which. A sibling of the other Nrf*Flash backends;
+// FlashMutationGate owns it for the SoftDevice-disabled path and supplies the
+// asynchronous/arbitrated path once SoftDevice is active.
+class NrfProductFlash : public FlashBackend {
+ public:
+  bool begin() override;
+  bool read(uint32_t offset, void* data, size_t size) const override;
+  FlashOpResult program(uint32_t offset, const void* data, size_t size) override;
+  FlashOpResult erasePage(uint32_t page) override;
+ private:
+  bool ready_ = false;
+};
 }  // namespace orun_tlp

@@ -51,6 +51,13 @@ namespace orun_tlp {
 // SEC_MAINT, generalized in higherPriorityWaiting() below. Existing
 // Security/History/Config relative ordering is unchanged.
 //
+// SF5D5 adds the product region (128 KiB, one store per device by its job:
+// ObservationStore or CustodyStore) as one more client. Its writes are
+// store-before-send / durable-accept-before-ACK work like History's, so it is
+// admitted after History and before Config:
+// SEC_CRITICAL > History > Product > Config > Geofence > SEC_MAINT. The
+// relative order of the existing clients is unchanged.
+//
 // M7P7A closes the remaining BLE-storage concurrency hole without enabling
 // BLE: stock InternalFS keeps its LittleFS/cache format, but a pinned
 // framework patch acquires the same physical-flash arbiter used by this gate
@@ -93,9 +100,10 @@ class FlashMutationGate : public FlashBackend {
   enum class Priority : uint8_t {
     kSecCritical = 0,
     kHistory = 1,
-    kConfig = 2,
-    kGeofence = 3,
-    kSecMaint = 4
+    kProduct = 2,
+    kConfig = 3,
+    kGeofence = 4,
+    kSecMaint = 5
   };
 
   struct Diagnostics {
@@ -184,6 +192,31 @@ class FlashMutationGate : public FlashBackend {
     return geofence_diagnostics_;
   }
 
+  // ---- Product client (SF5D5): the 128 KiB product region. ----
+  class ProductPort : public FlashBackend {
+   public:
+    explicit ProductPort(FlashMutationGate& gate) : gate_(gate) {}
+    bool begin() override { return gate_.beginProduct(); }
+    bool read(uint32_t offset, void* data, size_t size) const override {
+      return gate_.readProduct(offset, data, size);
+    }
+    FlashOpResult program(uint32_t offset, const void* data, size_t size) override {
+      return gate_.programProduct(offset, data, size);
+    }
+    FlashOpResult erasePage(uint32_t page) override {
+      return gate_.erasePageProduct(page);
+    }
+    FlashOpResult pollPending() override { return gate_.pollPendingProduct(); }
+    bool hasUnreconciledMutation() const override {
+      return gate_.productMutationUnreconciled();
+    }
+
+   private:
+    FlashMutationGate& gate_;
+  };
+  FlashBackend& productPort() { return product_port_; }
+  const Diagnostics& productDiagnostics() const { return product_diagnostics_; }
+
   // ---- Security client (M7P6B): two FlashBackend views of the SAME
   // underlying security client/slot/staging buffer, differing only in which
   // Priority they tag a submission with. SecurityStore itself decides which
@@ -251,10 +284,14 @@ class FlashMutationGate : public FlashBackend {
   bool geofenceMutationUnreconciled() const {
     return geofence_slot_.quarantined;
   }
+  bool productMutationUnreconciled() const {
+    return product_slot_.quarantined;
+  }
 
  private:
   friend class ConfigPort;
   friend class GeofencePort;
+  friend class ProductPort;
   friend class SecurityCriticalPort;
   friend class SecurityMaintPort;
   enum class Owner : uint8_t {
@@ -262,6 +299,7 @@ class FlashMutationGate : public FlashBackend {
     kHistory,
     kConfig,
     kGeofence,
+    kProduct,
     kSecurity
   };
   enum class Kind : uint8_t { kNone, kProgram, kErase };
@@ -320,26 +358,29 @@ class FlashMutationGate : public FlashBackend {
     if (owner == Owner::kHistory) return history_slot_;
     if (owner == Owner::kConfig) return config_slot_;
     if (owner == Owner::kGeofence) return geofence_slot_;
+    if (owner == Owner::kProduct) return product_slot_;
     return security_slot_;
   }
   uint8_t* staging(Owner owner) {
     if (owner == Owner::kHistory) return history_staging_;
     if (owner == Owner::kConfig) return config_staging_;
     if (owner == Owner::kGeofence) return geofence_staging_;
+    if (owner == Owner::kProduct) return product_staging_;
     return security_staging_;
   }
   Diagnostics& diag(Owner owner) {
     if (owner == Owner::kHistory) return history_diagnostics_;
     if (owner == Owner::kConfig) return config_diagnostics_;
     if (owner == Owner::kGeofence) return geofence_diagnostics_;
+    if (owner == Owner::kProduct) return product_diagnostics_;
     return security_diagnostics_;
   }
   // True if some OTHER owner has a staged, not-yet-admitted request whose
   // priority strictly outranks `owner`'s own staged request. Generalizes the
   // old two-owner "config waits behind a staged history request" special
-  // case to all four clients. M6D3B freezes the order as SEC_CRITICAL >
-  // History > Config > Geofence > SEC_MAINT. Aging still bounds starvation
-  // for every staged lower-priority request.
+  // case to all clients. M6D3B froze SEC_CRITICAL > History > Config >
+  // Geofence > SEC_MAINT; SF5D5 inserts Product after History. Aging still
+  // bounds starvation for every staged lower-priority request.
   bool higherPriorityWaiting(Owner owner) const;
   FlashOpResult attemptSubmit(Owner owner);
   FlashOpResult submitOrRetry(Owner owner);
@@ -363,6 +404,12 @@ class FlashMutationGate : public FlashBackend {
   FlashOpResult erasePageGeofence(uint32_t page);
   FlashOpResult pollPendingGeofence();
 
+  bool beginProduct();
+  bool readProduct(uint32_t offset, void* data, size_t size) const;
+  FlashOpResult programProduct(uint32_t offset, const void* data, size_t size);
+  FlashOpResult erasePageProduct(uint32_t page);
+  FlashOpResult pollPendingProduct();
+
   bool beginSecurity();
   bool readSecurity(uint32_t offset, void* data, size_t size) const;
   FlashOpResult programSecurity(uint32_t offset, const void* data, size_t size, Priority priority);
@@ -372,18 +419,22 @@ class FlashMutationGate : public FlashBackend {
   NrfHistoryFlash sync_history_;
   NrfConfigFlash sync_config_;
   NrfGeofenceFlash sync_geofence_;
+  NrfProductFlash sync_product_;
   NrfSecurityFlash sync_security_;
   bool ready_history_ = false;
   bool ready_config_ = false;
   bool ready_geofence_ = false;
+  bool ready_product_ = false;
   bool ready_security_ = false;
   ConfigPort config_port_{*this};
   GeofencePort geofence_port_{*this};
+  ProductPort product_port_{*this};
   SecurityCriticalPort security_critical_port_{*this};
   SecurityMaintPort security_maint_port_{*this};
   Diagnostics history_diagnostics_{};
   Diagnostics config_diagnostics_{};
   Diagnostics geofence_diagnostics_{};
+  Diagnostics product_diagnostics_{};
   Diagnostics security_diagnostics_{};
 
   // Shared: at most one physical Nordic flash mutation in flight at a time,
@@ -398,6 +449,7 @@ class FlashMutationGate : public FlashBackend {
   Slot history_slot_{};
   Slot config_slot_{};
   Slot geofence_slot_{};
+  Slot product_slot_{};
   Slot security_slot_{};
   // Owned staging copies: Nordic's own documentation requires the source
   // buffer to remain unmodified until the completion event arrives when
@@ -406,10 +458,13 @@ class FlashMutationGate : public FlashBackend {
   // own largest single program operation -- history's
   // storage_config::kPageHeaderSize, config v2's 44-byte body+CRC stage
   // (commit/retire are separate 4-byte writes), and security's 68-byte
-  // credential record. This file stays decoupled from format headers.
+  // credential record, and the product stores' largest single write (an
+  // ObservationStore control record body+CRC, 132 of its 144 bytes). This
+  // file stays decoupled from format headers.
   alignas(4) uint8_t history_staging_[storage_config::kPageHeaderSize]{};
   alignas(4) uint8_t config_staging_[64]{};
   alignas(4) uint8_t geofence_staging_[560]{};
+  alignas(4) uint8_t product_staging_[144]{};
   alignas(4) uint8_t security_staging_[96]{};
 };
 
