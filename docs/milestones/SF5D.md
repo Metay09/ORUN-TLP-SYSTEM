@@ -5,10 +5,10 @@ Status: **SF5D3 SAMPLED SERIAL DFU RETENTION: PHYSICAL PASS (3 pages, one update
 SF5D4 full-region retention PHYSICAL PASS (32/32 pages); Gate D1 closed for
 the serial single-bank update path** (interrupted and BLE DFU still open).
 **SF5D5 (D3 steps 1-3): region reserved, nRF backend under FlashMutationGate,
-D2 owner/mount decision — H+build; SF5E physical qualification next.** No production 128 KiB reservation or
-`FlashBackend`, no linker/build-ceiling change, and no ObservationStore/CustodyStore
-runtime attachment. The test-only 16-byte marker did program one approved
-unallocated development flash page; this is NOT full SF5D/SF5E clearance.
+D2 owner/mount decision — H+build, merged #112; SF5E physical qualification
+next.** No ObservationStore/CustodyStore runtime attachment yet. The SF5D3 and
+SF5D4 test-only markers did program development flash pages in the region;
+this is NOT SF5E clearance.
 
 Baseline: `main@b9a97630bfd0c842dcca8ec332f80f25756b81be`
 (SF5C portable-only squash merge of PR #83).
