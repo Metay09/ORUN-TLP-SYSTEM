@@ -212,6 +212,40 @@ On a development RAK4631 only:
 
 Gate: physical evidence document. Build PASS alone is not hardware PASS.
 
+**Prepared 2026-10-12 (H+build; physical run pending):**
+
+- Image `rak4630_sf5e_qual` (`tests/sf5/sf5e_observation_qual.cpp`) runs the
+  real ObservationStore -> FlashMutationGate product port -> NrfProductFlash
+  path (SoftDevice off). Boot is read-only and mounts only an erased region
+  or the store's own pages (`product_region.h`); `SF5E PREPARE CONFIRM` is the
+  only whole-region erase. A thin wrapper can cut one store write or erase
+  per command: BEFORE, TORN (first half of a program written, the state a
+  power cut leaves mid-write), AFTER (written, reset before the store sees
+  it) or HOLD (stop and wait for a real power cut). VERIFY walks the raw
+  pages: every committed record carries its exact pattern, no duplicate,
+  no gap. PROTECT prints CRC32s of Geofence, Security, Config, bond,
+  History and the bootloader code.
+- `tests/sf5/sf5e_qual_remote.sh <ID>` runs it over USB without unplugging:
+  prepare, append/verify/reboot, 5 append cut points, 2 release-marker cut
+  points, every page-maintenance cut point before the store wraps and every
+  rotation/reclaim cut point after it wraps (each followed by a reset that
+  must mount healthy, keep all committed records, finish maintenance and
+  append again), the protected-region comparison, and a final PREPARE so no
+  test records stay behind; then production is flashed back.
+- Host checks: `test_sf5e_qual_probe.cpp` runs the probe source itself, one
+  forked process per boot over shared fake flash (137 boots, PASS); the
+  remote script was also dry-run end to end against an emulated serial
+  device (34 cuts, PASS).
+- Finding for the SF5F runtime driver: after a reset during control-page
+  compaction the store resumes that compaction and rejects data maintenance
+  and appends until control maintenance finishes it (SF5C LOW-1). The driver
+  must answer a rejection while the store is ready and not faulted with
+  control maintenance, as the probe does.
+- Not covered by this script: a real power cut (HOLD, needs the operator at
+  the device), power loss in the middle of a page erase, the asynchronous
+  SoftDevice path on hardware, and deliberate cuts inside control-page
+  compaction (it only happens incidentally).
+
 ### SF5F preparation 2026-10-11 (not the cutover)
 
 - PERIODIC builder `product_period_builder.cpp`: one finished report period -> canonical schema-v1
