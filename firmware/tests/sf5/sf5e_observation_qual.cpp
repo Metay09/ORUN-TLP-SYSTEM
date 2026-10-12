@@ -31,7 +31,8 @@
 
 using namespace orun_tlp;
 using namespace orun_tlp::storage_config;
-namespace osf = orun_tlp::observation_store_format;
+// `osf` comes from observation_store.h (orun_tlp::osf). A second global alias
+// is ambiguous for the RAK toolchain's GCC 7 under `using namespace`.
 namespace pr = orun_tlp::product_region;
 
 namespace {
