@@ -100,6 +100,18 @@ int main() {
   auto p = fakeFrame(100);
   std::array<uint8_t,kRecordSize> out{};
   out.fill(0x7A);
+  // A custody-eligible DELEGATED_D2GW RESULT can be 96 bytes, but is not
+  // authorized by this SF5G candidate's PRODUCT_SECURE-only discriminator.
+  // Its separate type/context/family and admission policy remain a gate.
+  auto delegated_result = p;
+  delegated_result.resize(96);
+  delegated_result[1] = 0x01;  // DELEGATED_SECURE_APP
+  delegated_result[2] = 0x04;  // delegated D2GW
+  delegated_result[3] = 0x02;  // RESULT
+  assert(!productObjectShape(delegated_result.data(), delegated_result.size()));
+  assert(!encodeStagedRecord(delegated_result.data(), delegated_result.size(),
+                             out.data(), out.size()));
+  assert(out[0] == 0x7A);
   for (unsigned offset: {0U,1U,2U,3U,4U,5U,6U,7U}) {
     auto bad = p;
     bad[offset] = 0xFF;
