@@ -23,6 +23,7 @@ const char* loopStageName(LoopStage stage) {
     case LoopStage::kIdle: return "IDLE";
     case LoopStage::kBattery: return "BATTERY";
     case LoopStage::kGeofenceStore: return "GEOFENCE";
+    case LoopStage::kProductStore: return "PRODUCT";
   }
   return "UNKNOWN";
 }

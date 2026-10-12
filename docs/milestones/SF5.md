@@ -290,6 +290,29 @@ ObservationStore:
 - retire the legacy SF3 HISTORY_SECURE replay runtime together with the legacy
   HistoryStore for new records; do not reinterpret its frozen bytes.
 
+**Step 1, durable PERIODIC records (2026-10-12, H+build; collar run
+pending):** `ProductRecordStore` (`product_record_store.h`) mounts
+ObservationStore on the product region at boot, before SoftDevice, by the D2
+decision (no device has the Gateway job yet; every device that may track
+mounts; mounting writes nothing). Each finished report period is handed to
+it; it appends the canonical PERIODIC plaintext with the store's own
+identity (the identity inside the record always equals the stored one),
+runs maintenance when the store has no room (control maintenance first when
+a compaction resumes after a reset) and reports one outcome per record
+(`PRODUCT STORE append seq=.. inc=.. result=OK`). USB: `PRODUCT STORE?`,
+`PRODUCT STORE PREPARE CONFIRM` (erases only unrecognised leftovers or a
+faulted store, then reboots to mount). Product append failures count as
+storage failures in the record's health. Host: `test_sf5f_product_record_store`
+(sync/async, owners, prepare, 2000 records through rotation and control
+compaction, then a reset with a half-done write at every one of the 2122
+writes in the second half, each remount storing the next record), startup
+harness (boot mount before BLE, first record stored with the store's
+identity), scope contract. Device: `tests/sf5/sf5f_records_remote_check.sh`
+(also step 6 of `device_check.sh`). Transitional: TLP v1 POSITION and the
+legacy HistoryStore stay the live path until the RF step; this is not a
+permanent dual store. Not yet: sealing, sending, release on delivery,
+EVENT/RESULT records.
+
 Before SF5F, the current runtime remains: frozen TLP v1 live POSITION/relay plus
 provisioned SF3 TLP v2 HISTORY_SECURE replay. Legacy v1 fixtures **and SF2/SF3
 HISTORY_SECURE vectors/bytes** remain frozen and must not be weakened.
