@@ -375,6 +375,22 @@ g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   firmware/src/observation_store_format.cpp \
   -o "$test_dir/sf5d5_product_region"
 "$test_dir/sf5d5_product_region"
+# SF5E physical qualification probe, run on the host: one forked process per
+# boot over shared fake flash, the same command sequence as the remote script.
+g++ -Ifirmware/tests/sf5/sf5e_stubs -Ifirmware/tests/m4/nrf_stubs \
+  -std=c++17 -O1 -g -Wall -Wextra -Werror "${sanitizer_flags[@]}" \
+  "${coverage_flags[@]}" -Ifirmware/include -fno-pie -no-pie \
+  -Wl,--defsym,__flash_arduino_end=0xED000 \
+  firmware/tests/sf5/test_sf5e_qual_probe.cpp \
+  firmware/tests/sf5/sf5e_observation_qual.cpp \
+  firmware/src/flash_mutation_gate.cpp firmware/src/nrf_history_flash.cpp \
+  firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
+  firmware/src/nrf_geofence_flash.cpp firmware/src/nrf_product_flash.cpp \
+  firmware/src/product_region.cpp firmware/src/observation_store.cpp \
+  firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
+  -o "$test_dir/sf5e_qual_probe"
+"$test_dir/sf5e_qual_probe"
 "$test_dir/m7p6_flash_gate"
 g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
