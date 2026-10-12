@@ -529,7 +529,9 @@ immediately below that layout:
 ```
 
 Accordingly, once M6D3A implements the reservation,
-`kApplicationPolicyEndAddress` moves to `0x0E5000`. This supersession does
+`kApplicationPolicyEndAddress` moves to `0x0E5000`. SF5D5 later reserves the
+128 KiB product region `0x0C5000..0x0E5000` below it and moves the ceiling to
+`0x0C5000` (`docs/milestones/SF5D.md`). This supersession does
 not rewrite the historical M7P1 decision rationale; it extends the later
 canonical map. The build guard must derive the new lowest reserved boundary
 correctly rather than continuing to parse the historical SecurityStore start.

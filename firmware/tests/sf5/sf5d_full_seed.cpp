@@ -1,5 +1,5 @@
 // SF5D4 TEST-ONLY. Writes a 16-byte marker at the start of every fully erased
-// page of the unassigned candidate [0x0C5000, 0x0E5000). Never erases, never
+// page of the product region [0x0C5000, 0x0E5000). Never erases, never
 // touches a page that holds any data, and only after an explicit serial
 // command. Upload only to an owner-approved RAK4631 development device.
 #include <Arduino.h>

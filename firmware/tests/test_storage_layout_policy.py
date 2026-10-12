@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""M6D3A application-ceiling parser regression."""
+"""M6D3A/SF5D5 application-ceiling parser regression."""
 from pathlib import Path
 import importlib.util
 
@@ -12,18 +12,37 @@ policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(policy)
 
 text = HEADER.read_text()
-assert policy.application_policy_ceiling(text) == 0x0E5000
+assert policy.application_policy_ceiling(text) == 0x0C5000
 assert "kFutureSecurityRegionStart = 0x0E7000" in text
 
-bad_alias = text.replace(
-    "kApplicationPolicyEndAddress = kGeofenceRegionStart",
-    "kApplicationPolicyEndAddress = kFutureSecurityRegionStart",
-)
-try:
-    policy.application_policy_ceiling(bad_alias)
-    raise AssertionError("stale application ceiling alias was accepted")
-except RuntimeError:
-    pass
+
+def rejected(mutated, message):
+    try:
+        policy.application_policy_ceiling(mutated)
+    except RuntimeError:
+        return
+    raise AssertionError(message)
+
+
+# SF5D5: the old M6D3A ceiling at the geofence start would let the
+# application grow into the product region.
+for stale in ("kGeofenceRegionStart", "kFutureSecurityRegionStart"):
+    bad_alias = text.replace(
+        "kApplicationPolicyEndAddress = kProductRegionStart",
+        f"kApplicationPolicyEndAddress = {stale}",
+    )
+    assert bad_alias != text
+    rejected(bad_alias, f"stale application ceiling alias {stale} was accepted")
+
+rejected(text.replace("kProductRegionEnd == kGeofenceRegionStart",
+                      "kProductRegionEnd != kGeofenceRegionStart"),
+         "broken product/geofence chain was accepted")
+rejected(text.replace("constexpr uint32_t kProductRegionPages = 32;",
+                      "constexpr uint32_t kProductRegionPages = 31;"),
+         "shrunk product region was accepted")
+rejected(text.replace("constexpr uint32_t kProductRegionStart = 0x0C5000;",
+                      "constexpr uint32_t kProductRegionStart = 0x0C4000;"),
+         "moved product region was accepted")
 
 bad_chain = text.replace(
     "kGeofenceRegionEnd == kFutureSecurityRegionStart",
@@ -90,4 +109,4 @@ try:
 except RuntimeError:
     pass
 
-print("M6D3A storage ceiling parser checks: PASS")
+print("M6D3A/SF5D5 storage ceiling parser checks: PASS")

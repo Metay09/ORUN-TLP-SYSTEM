@@ -1,7 +1,8 @@
 #!/bin/sh
-# SF5D4: does a normal firmware update keep all 32 pages of the candidate
-# product store [0x0C5000, 0x0E5000)? Gate D1 evidence on a DEVELOPMENT
-# RAK4631 only (owner accepts loss of test data on it). Over USB, no
+# SF5D4: does a normal firmware update keep all 32 pages of the product
+# region [0x0C5000, 0x0E5000)? Gate D1 evidence on a DEVELOPMENT RAK4631 only
+# (owner accepts loss of test data on it; seeding leaves marker pages that a
+# product store mount refuses until the region is prepared). Over USB, no
 # unplugging:
 #
 #   1. flash rak4630_sf5d_full_seed; "SF5D FULL SEED CONFIRM" writes a 16-byte

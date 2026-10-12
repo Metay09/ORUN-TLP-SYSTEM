@@ -79,8 +79,11 @@ the M6D3 geofence-resource foundation. The later canonical top-of-application
 layout is:
 
 ```text
-0x026000..0x0E5000  application policy range after M6D3A
-0x0E5000..0x0E7000  GeofenceStore reservation (M6D3 proposed; no writer yet)
+0x026000..0x0C5000  application policy range after SF5D5
+0x0C5000..0x0E5000  product region, 128 KiB / 32 pages (SF5D5): one store per
+                    device by its job (ObservationStore or CustodyStore);
+                    backend under FlashMutationGate, no runtime writer yet
+0x0E5000..0x0E7000  GeofenceStore
 0x0E7000..0x0E9000  SecurityStore
 0x0E9000..0x0EB000  ConfigStore
 0x0EB000..0x0ED000  relocated BLE bond InternalFS
@@ -88,9 +91,10 @@ layout is:
 0x0F4000..0x100000  bootloader/settings boundary classes
 ```
 
-M6D3A must update the application-ceiling guard to `0x0E5000`; merely
-changing a C++ alias while the build script still parses
-`kFutureSecurityRegionStart == 0x0E7000` is explicitly insufficient.
+M6D3A had to update the application-ceiling guard to `0x0E5000`, and SF5D5
+lowered it to `0x0C5000`; in both cases `storage_layout_policy.py` parses the
+active alias and the contiguous region chain, so merely changing a C++ alias
+is explicitly insufficient.
 
 ## 3. nRF52840 flash ownership map (0x00000–0x100000)
 

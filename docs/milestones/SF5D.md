@@ -3,7 +3,9 @@
 Status: **SF5D3 SAMPLED SERIAL DFU RETENTION: PHYSICAL PASS (3 pages, one update).**
 **D2 owner decision taken 2026-10-12 (one owner per device, by its job);
 SF5D4 full-region retention PHYSICAL PASS (32/32 pages); Gate D1 closed for
-the serial single-bank update path** (interrupted and BLE DFU still open). No production 128 KiB reservation or
+the serial single-bank update path** (interrupted and BLE DFU still open).
+**SF5D5 (D3 steps 1-3): region reserved, nRF backend under FlashMutationGate,
+D2 owner/mount decision — H+build; SF5E physical qualification next.** No production 128 KiB reservation or
 `FlashBackend`, no linker/build-ceiling change, and no ObservationStore/CustodyStore
 runtime attachment. The test-only 16-byte marker did program one approved
 unallocated development flash page; this is NOT full SF5D/SF5E clearance.
@@ -495,8 +497,58 @@ After D1 and D2 are evidenced/decided:
 5. Only after SF5E permits it, design the separately reviewed SF5F runtime
    tracker-data cutover and SF5G Gateway durable custody attachment.
 
+### SF5D5 — region reservation, nRF backend and owner decision (H+build)
+
+Branch `feat/sf5d5-product-region`, D3 steps 1-3:
+
+- **Reservation:** `storage_config.h` adds `kProductRegionStart = 0x0C5000`,
+  32 pages, ending exactly at GeofenceStore. The application ceiling
+  (`kApplicationPolicyEndAddress`) moves to `0x0C5000`; the post-link guard
+  and `sf5d_layout_preflight.py` parse the alias and the contiguous
+  product -> geofence -> security -> config -> bond -> history chain and
+  reject a stale ceiling, a moved/shrunk region or a broken chain. All other
+  partitions are unchanged.
+- **Backend:** `NrfProductFlash` (synchronous sibling of the other
+  `Nrf*Flash`, region bounds, word alignment, no page crossing, at most 144
+  bytes per write, erased-destination check, readback). `FlashMutationGate`
+  gets one more client, `productPort()`, sharing the one in-flight slot,
+  shared-flash token, event drain and quarantine rules. Admission order:
+  SEC_CRITICAL > History > **Product** > Config > Geofence > SEC_MAINT
+  (product writes are store-before-send / durable-accept-before-ACK like
+  History's; existing relative order unchanged).
+- **D2 logic:** `product_region.h`: `ownerFor(Jobs)` (Gateway job ->
+  CustodyStore even if it could track; tracking -> ObservationStore; else
+  none; legacy BASE receive is not the Gateway job), `takeCensus()` and
+  `mountDecision()`: MOUNT for an erased region or own pages, FOREIGN_STORE
+  for the other store's pages, NEEDS_PREPARATION for only unrecognised
+  leftovers (old images, SF5D4 markers). Nothing is ever reformatted
+  implicitly.
+- **Tests:** `test_sf5d5_product_region.cpp` (bounds/alignment/no reprogram/
+  erase readback, History > Product > Config admission, 132-byte staging,
+  accepted-timeout quarantine and late reconciliation, ObservationStore
+  append/release/remount on the 32-page region both synchronous and through
+  the async gate path, whole-region fill with reclaim, owner/census/mount
+  decisions) plus the updated ceiling-parser and preflight mutations. Full
+  host suite PASS. Builds PASS: `rak4630`, `rak4630_m7p7a_compile`, SF5D4
+  probes (in this session with a stand-in GCC 13 toolchain because the
+  PlatformIO registry was unreachable; image sizes come from the owner's
+  build).
+
+Headroom (owner's build, 320,108 bytes, against the new 651,264-byte
+application range `0x026000..0x0C5000`): ample for today's serial
+single-bank updates, but an equal dual-bank split would leave only about
+5.5 KB per bank, so a future phone (BLE) or LoRa update path must either stay
+single-bank or be designed against this limit.
+
+Not in this slice: runtime composition (SF5F), the explicit maintenance
+erase/prepare command, scan time on the device, and SF5E physical
+power-cut/NVMC qualification. A store must mount before SoftDevice starts
+(the synchronous backend's `begin()` refuses afterwards), like the other
+stores. A development device that ran the SF5D4 seed probe holds marker
+pages and therefore reports NEEDS_PREPARATION until prepared.
+
 ### Explicit current disposition
 
-**SF5C: MERGED portable-only. SF5D0: preflight documentation. SF5D
-physical reservation/backend: NOT IMPLEMENTED. SF5E/SF5F: NOT STARTED.
+**SF5C: MERGED portable-only. SF5D0: preflight documentation. SF5D5
+reservation/backend/owner decision: H+build. SF5E/SF5F: NOT STARTED.
 Existing firmware and all physically proven M0–M5/R1–R4 paths remain untouched.**

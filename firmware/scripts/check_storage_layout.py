@@ -155,7 +155,8 @@ def check_exclusive_owner(source, target, env):
 # guard, not a linker MEMORY-region change: the stock audited linker still
 # physically permits linking through 0x0ED000. The post-link check MUST
 # validate the new lowest reserved boundary rather than silently retaining
-# M7P2's historical SecurityStore start at 0x0E7000.
+# M7P2's historical SecurityStore start at 0x0E7000. SF5D5 lowers it again to
+# the 128 KiB product region at 0x0C5000..0x0E5000.
 STORAGE_CONFIG_H = Path(env.subst("$PROJECT_DIR")) / "include" / "storage_config.h"
 
 
@@ -216,11 +217,12 @@ def check_application_ceiling(source, target, env):
     highest_end = _highest_flash_load_end(headers)
     if highest_end > ceiling:
         raise RuntimeError(
-            "M6D3A application flash ceiling exceeded: configured ceiling is "
+            "Application flash ceiling exceeded: configured ceiling is "
             f"0x{ceiling:06X}, highest occupied flash byte end is "
             f"0x{highest_end:06X} (exceeds by {highest_end - ceiling} "
-            "bytes). Flash at/above this boundary is reserved for geofence/"
-            "security/config/bond/history ownership; audit the partition map "
+            "bytes). Flash at/above this boundary is reserved for product/"
+            "geofence/security/config/bond/history ownership; audit the "
+            "partition map "
             "before building."
         )
 

@@ -134,6 +134,10 @@ bool inBoundsGeofence(uint32_t offset, size_t size) {
   return offset <= kGeofenceRegionSize &&
          size <= kGeofenceRegionSize - offset;
 }
+constexpr uint32_t kProductRegionSize = kProductRegionEnd - kProductRegionStart;
+bool inBoundsProduct(uint32_t offset, size_t size) {
+  return offset <= kProductRegionSize && size <= kProductRegionSize - offset;
+}
 constexpr uint32_t kSecurityRegionSize =
     kFutureSecurityRegionEnd - kFutureSecurityRegionStart;
 bool inBoundsSecurity(uint32_t offset, size_t size) {
@@ -443,6 +447,78 @@ FlashOpResult FlashMutationGate::pollPendingGeofence() {
 }
 
 // ---------------------------------------------------------------------
+// Product client (SF5D5): the 128 KiB product region, admitted after History.
+// ---------------------------------------------------------------------
+
+bool FlashMutationGate::beginProduct() {
+  ready_product_ = sync_product_.begin();
+  return ready_product_;
+}
+
+bool FlashMutationGate::readProduct(uint32_t offset, void* data,
+                                    size_t size) const {
+  return sync_product_.read(offset, data, size);
+}
+
+FlashOpResult FlashMutationGate::programProduct(uint32_t offset,
+                                                const void* data,
+                                                size_t size) {
+  if (!ready_product_) return FlashOpResult::kFailed;
+  ++product_diagnostics_.submits;
+  if (!softDeviceEnabled()) return sync_product_.program(offset, data, size);
+
+  if (product_slot_.kind != Kind::kNone) return FlashOpResult::kFailed;
+  if (!data || !size || !inBoundsProduct(offset, size) ||
+      (offset & 3U) != 0 || (size & 3U) != 0 ||
+      size > sizeof(product_staging_) ||
+      size > kPageSize - offset % kPageSize)
+    return FlashOpResult::kFailed;
+
+  const auto* destination =
+      reinterpret_cast<const uint8_t*>(kProductRegionStart + offset);
+  for (size_t index = 0; index < size; ++index)
+    if (destination[index] != 0xFF) return FlashOpResult::kFailed;
+
+  memcpy(product_staging_, data, size);
+  product_slot_.staging_size = size;
+  product_slot_.kind = Kind::kProgram;
+  product_slot_.target = kProductRegionStart + offset;
+  product_slot_.priority = Priority::kProduct;
+  product_slot_.staged_since_ms = monotonic::nowMs();
+  product_slot_.admitted = false;
+  product_slot_.token_acquired = false;
+  product_slot_.submission_accepted = false;
+  product_slot_.event_ready = false;
+  product_slot_.quarantined = false;
+  return submitOrRetry(Owner::kProduct);
+}
+
+FlashOpResult FlashMutationGate::erasePageProduct(uint32_t page) {
+  if (!ready_product_) return FlashOpResult::kFailed;
+  ++product_diagnostics_.submits;
+  if (!softDeviceEnabled()) return sync_product_.erasePage(page);
+
+  if (product_slot_.kind != Kind::kNone) return FlashOpResult::kFailed;
+  if (page >= kProductRegionPages) return FlashOpResult::kFailed;
+
+  product_slot_.kind = Kind::kErase;
+  product_slot_.target = kProductRegionStart / kPageSize + page;
+  product_slot_.priority = Priority::kProduct;
+  product_slot_.staged_since_ms = monotonic::nowMs();
+  product_slot_.admitted = false;
+  product_slot_.token_acquired = false;
+  product_slot_.submission_accepted = false;
+  product_slot_.event_ready = false;
+  product_slot_.quarantined = false;
+  return submitOrRetry(Owner::kProduct);
+}
+
+FlashOpResult FlashMutationGate::pollPendingProduct() {
+  if (product_slot_.kind == Kind::kNone) return FlashOpResult::kFailed;
+  return submitOrRetry(Owner::kProduct);
+}
+
+// ---------------------------------------------------------------------
 // Security client (M7P6B): symmetrical API, own region, own diagnostics,
 // two priority-tagged entry points (SecurityCriticalPort/SecurityMaintPort)
 // sharing one physical slot -- SecurityStore only ever has one request
@@ -535,17 +611,22 @@ bool FlashMutationGate::higherPriorityWaiting(Owner owner) const {
   const Slot* mine = owner == Owner::kHistory  ? &history_slot_
                     : owner == Owner::kConfig   ? &config_slot_
                     : owner == Owner::kGeofence ? &geofence_slot_
+                    : owner == Owner::kProduct  ? &product_slot_
                                                  : &security_slot_;
-  const Slot* others[] = {
-      &history_slot_, &config_slot_, &geofence_slot_, &security_slot_};
-  const Owner owners[] = {
-      Owner::kHistory, Owner::kConfig, Owner::kGeofence, Owner::kSecurity};
+  const Slot* others[] = {&history_slot_, &config_slot_, &geofence_slot_,
+                          &product_slot_, &security_slot_};
+  const Owner owners[] = {Owner::kHistory, Owner::kConfig, Owner::kGeofence,
+                          Owner::kProduct, Owner::kSecurity};
+  static_assert(sizeof(others) / sizeof(others[0]) ==
+                    sizeof(owners) / sizeof(owners[0]),
+                "every gate client must be considered for admission");
   const uint32_t now = monotonic::nowMs();
   const bool mine_aged = aged(*mine, now);
   const uint32_t mine_wait = uint32_t(now - mine->staged_since_ms);
   const Priority mine_priority = effectivePriority(*mine);
 
-  for (unsigned index = 0; index < 4; ++index) {
+  for (unsigned index = 0; index < sizeof(owners) / sizeof(owners[0]);
+       ++index) {
     if (owners[index] == owner) continue;
     const Slot& other = *others[index];
     if (other.kind == Kind::kNone || other.admitted) continue;
@@ -569,8 +650,8 @@ bool FlashMutationGate::higherPriorityWaiting(Owner owner) const {
 
 // Bounded, no-heap admission: the physical in-flight slot is free, or
 // already owned by `owner` (a retry), or owned by another client (this call
-// stays queued). Priority (M6D3B: SEC_CRITICAL > History > Config >
-// Geofence > SEC_MAINT) is enforced here, independent of which client
+// stays queued). Priority (SF5D5: SEC_CRITICAL > History > Product > Config
+// > Geofence > SEC_MAINT) is enforced here, independent of which client
 // happens to call
 // first: if the slot is free but a higher-priority client currently has a
 // request staged and not yet admitted, this owner is held back so that

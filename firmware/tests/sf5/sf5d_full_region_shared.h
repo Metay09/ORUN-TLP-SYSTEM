@@ -1,5 +1,7 @@
-// SF5D4 TEST-ONLY full candidate-region DFU retention. No production storage
-// ownership; the candidate [0x0C5000, 0x0E5000) stays unassigned.
+// SF5D4 TEST-ONLY full product-region DFU retention, [0x0C5000, 0x0E5000).
+// SF5D5 reserved this region for the product store; the probe images stay
+// test-only and must only run on a development device whose region holds no
+// store data (seeding leaves marker pages that a store mount will refuse).
 //
 // SF5D3 sampled 3 of the 32 candidate pages across one small-image DFU. This
 // covers all 32 pages across an update with the full production image: the
@@ -14,15 +16,14 @@ namespace sf5d_full_region {
 
 using namespace sf5d_dfu_sentinel;
 
-constexpr uint32_t kStart = 0x0C5000U;
-constexpr uint32_t kEnd = orun_tlp::storage_config::kGeofenceRegionStart;
+constexpr uint32_t kStart = orun_tlp::storage_config::kProductRegionStart;
+constexpr uint32_t kEnd = orun_tlp::storage_config::kProductRegionEnd;
 constexpr unsigned kPages = (kEnd - kStart) / kPageSize;
 
-static_assert(kEnd == 0x0E5000U, "candidate must stop at the geofence region");
-static_assert(kPages == 32U, "candidate is 128 KiB = 32 pages");
-static_assert(kStart == orun_tlp::storage_config::kApplicationPolicyEndAddress -
-                           kPages * kPageSize,
-              "candidate must sit directly below the application ceiling");
+static_assert(kStart == 0x0C5000U, "probe covers the reserved product region");
+static_assert(kEnd == orun_tlp::storage_config::kGeofenceRegionStart,
+              "product region must stop at the geofence region");
+static_assert(kPages == 32U, "product region is 128 KiB = 32 pages");
 
 inline uint32_t pageAddress(unsigned index) { return kStart + index * kPageSize; }
 
