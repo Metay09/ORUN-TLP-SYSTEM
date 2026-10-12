@@ -2,7 +2,7 @@
 # Physical check of the local USB geofence writer on one RAK4631 over USB.
 # No power cut, no unplugging.
 #
-#   - flash REF, read the stored geofence and tracking interval;
+#   - flash the current checkout, read the stored geofence and interval;
 #   - CLEAR: durable first, runtime clear, effective interval back to base B;
 #   - REPLACE with a small square far from here (valid geometry), runtime
 #     configured; an invalid set changes nothing;
@@ -11,8 +11,9 @@
 # Usage, from the repository root, with the device's serial logger stopped:
 #   sh firmware/tests/m6/geofence_usb_remote_check.sh <DEVICE_ID_HEX>
 #
-# It checks out and flashes REF, so the working tree must be clean. It ends on
-# branch "main" with the device running REF and no geofence.
+# It builds and flashes the current checkout and leaves NO geofence (a fence
+# set before is cleared). With REF=<git ref> it checks out REF instead (clean
+# tree needed) and ends on branch "main". Part of firmware/tests/device_check.sh.
 # Every device line it reads is kept in ~/geofence_usb_check.log.
 set -eu
 
@@ -24,17 +25,20 @@ fi
 
 ID=${1:?usage: sh $0 <DEVICE_ID_HEX>}
 PORT="/dev/serial/by-id/usb-RAKwireless_WisCore_RAK4631_Board_${ID}-if00"
-REF=${REF:-origin/feat/usb-geofence-writer}
+REF=${REF:-}
+NAME=${REF:-current checkout}
 LOG="$HOME/geofence_usb_check.log"
 READER=""
 FAILURES=0
 
 [ -e "$PORT" ] || { echo "No device at $PORT"; exit 1; }
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  echo "Working tree has local changes; commit or stash first."
-  exit 1
+if [ -n "$REF" ]; then
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "Working tree has local changes; commit or stash first."
+    exit 1
+  fi
+  git fetch --quiet origin
 fi
-git fetch --quiet origin
 : > "$LOG"
 
 listen() {
@@ -58,11 +62,11 @@ stop_listen() {
 trap 'stop_listen' EXIT
 
 flash() {
-  echo "== flashing $1"
+  echo "== flashing $NAME"
   stop_listen
-  git checkout --quiet --detach "$1"
+  [ -z "$REF" ] || git checkout --quiet --detach "$REF"
   pio run -d firmware -e rak4630 -t upload --upload-port "$PORT" \
-    > "$LOG.build" 2>&1 || { echo "FAIL build/upload of $1 (see $LOG.build)"; exit 1; }
+    > "$LOG.build" 2>&1 || { echo "FAIL build/upload of $NAME (see $LOG.build)"; exit 1; }
   sleep 3
   listen
   sleep 15
@@ -95,7 +99,7 @@ square() {
   ask "APP FENCE V 35.0010 30.0000"
 }
 
-flash "$REF"
+flash
 ask "APP GEOFENCE?"
 expect 'APP GEOFENCE id=' "geofence status readable after the upgrade"
 ask "APP TRACKING?"
@@ -118,7 +122,7 @@ ask "APP FENCE V 35.0010 30.0010"
 ask "APP FENCE COMMIT"
 expect 'code=INVALID state=CONFIGURED areas=1 vertices=4' "two-point area refused, square kept"
 
-flash "$REF"
+flash
 ask "APP GEOFENCE?"
 expect 'APP GEOFENCE id=.* areas=1 vertices=4 runtime=configured' "square recovered after reboot"
 ask "HEALTH?"
@@ -129,10 +133,11 @@ ask "APP TRACKING?"
 expect 'applied_s=([0-9]+) effective_s=\1 ' "interval at base B at the end"
 
 stop_listen
-git checkout --quiet main
+[ -z "$REF" ] || git checkout --quiet main
 echo
 if [ "$FAILURES" -eq 0 ]; then
-  echo "RESULT: ALL PASS (device left on $REF, no geofence)"
+  echo "RESULT: ALL PASS (device left on $NAME, no geofence)"
 else
-  echo "RESULT: $FAILURES FAIL (device left on $REF; log: $LOG)"
+  echo "RESULT: $FAILURES FAIL (device left on $NAME; log: $LOG)"
+  exit 1
 fi

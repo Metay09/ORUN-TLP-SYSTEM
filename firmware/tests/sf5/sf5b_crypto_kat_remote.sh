@@ -13,8 +13,9 @@
 #
 # Usage, from the repository root, with that device's serial logger stopped:
 #   sh firmware/tests/sf5/sf5b_crypto_kat_remote.sh <DEVICE_ID_HEX>
-# It checks out REF (detached) and leaves it checked out. Device lines go to
-# ~/sf5b_kat.log.
+# It builds the current checkout. With REF=<git ref> it checks out REF
+# (detached) first and leaves it checked out. Device lines go to
+# ~/sf5b_kat.log. Part of firmware/tests/device_check.sh.
 set -eu
 
 if [ "${ORUN_SF5B_KAT_COPY:-}" != 1 ]; then
@@ -25,7 +26,8 @@ fi
 
 ID=${1:?usage: sh $0 <DEVICE_ID_HEX>}
 PORT="/dev/serial/by-id/usb-RAKwireless_WisCore_RAK4631_Board_${ID}-if00"
-REF=${REF:-origin/feat/sf5b-product-codec}
+REF=${REF:-}
+NAME=${REF:-current checkout}
 LOG="$HOME/sf5b_kat.log"
 READER=""
 MARK=0
@@ -35,12 +37,14 @@ if pgrep -f "orunlog.sh $ID" > /dev/null 2>&1; then
   echo "Bu cihazin logger'i calisiyor. Once durdur:  pkill -f \"orunlog.sh $ID\""
   exit 1
 fi
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  echo "Working tree has local changes; commit or stash first."
-  exit 1
+if [ -n "$REF" ]; then
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "Working tree has local changes; commit or stash first."
+    exit 1
+  fi
+  git fetch --quiet origin
+  git checkout --quiet --detach "$REF"
 fi
-git fetch --quiet origin
-git checkout --quiet --detach "$REF"
 : > "$LOG"
 
 listen() {
@@ -91,14 +95,14 @@ history=$(last_line '^M7P6I HISTORY CRYPTO KAT ')
 echo "     ${history:-no M7P6I line}"
 echo "     ${sf5b:-no SF5B line}"
 
-flash rak4630 "$REF (production)"
+flash rak4630 "$NAME (production)"
 sleep 10
 stop_listen
 
 case "$sf5b" in
   "SF5B PRODUCT CRYPTO KAT PASS "*)
-    echo; echo "RESULT: PASS (device back on $REF production)" ;;
+    echo; echo "RESULT: PASS (device back on $NAME production)" ;;
   *)
-    echo; echo "RESULT: FAIL (device back on $REF production; log: $LOG)"; exit 1 ;;
+    echo; echo "RESULT: FAIL (device back on $NAME production; log: $LOG)"; exit 1 ;;
 esac
 echo "Logger'i tekrar baslat:  nohup sh ~/orunlog.sh $ID >> ~/alici.log 2>&1 &"

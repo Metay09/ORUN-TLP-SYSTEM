@@ -212,7 +212,18 @@ On a development RAK4631 only:
 
 Gate: physical evidence document. Build PASS alone is not hardware PASS.
 
-**Prepared 2026-10-12 (H+build; physical run pending):**
+**Physical PASS 2026-10-12 (scoped), collar `0E8ADE7E71531AA3`, owner's
+RAK toolchain build of `main@a11bff2`:** region found with 32 unrecognised
+pages (old images + SF5D4 markers) and refused until PREPARE; append/verify/
+reboot PASS; append 5/5, release marker 2/2, page maintenance before wrap
+2+2+2 (BEFORE/TORN/AFTER) and rotation/reclaim after wrap 7+7+7 cut points
+recovered (34 resets, every one mounted healthy with all committed records
+intact and contiguous, maintenance finished, append continued); Geofence/
+Security/Config/bond/History/bootloader CRC32 unchanged; region erased at
+the end, production restored. Software resets at exact write boundaries plus
+half-written programs, not electrical power removal.
+
+**Prepared 2026-10-12 (H+build):**
 
 - Image `rak4630_sf5e_qual` (`tests/sf5/sf5e_observation_qual.cpp`) runs the
   real ObservationStore -> FlashMutationGate product port -> NrfProductFlash
