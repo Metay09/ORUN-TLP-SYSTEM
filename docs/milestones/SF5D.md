@@ -398,16 +398,21 @@ both writers claim the same physical region.
 ### D2 owner decision (2026-10-12): one owner per device, by its job
 
 Asked in plain terms, the owner chose **one owner of the whole 128 KiB region
-per device, decided by the device's job**, over a fixed 96/32 KiB split:
+per device, decided by the device's job**, over a fixed 96/32 KiB split.
+Refined the same night: a device with the Gateway job is a CustodyStore owner
+even when it could also track (the first draft had given such a device to
+ObservationStore):
 
-- a device that originates its own observations (tracking) gives the whole
+- a device **with the Gateway job** gives the whole region to CustodyStore,
+  also if it has GNSS or tracking: storing what it receives matters more than
+  its own records. Its location needs no durable record of its own: a fixed
+  gateway has a configured fixed location, a mobile gateway takes its
+  location from the phone app (owner, 2026-10-12: "storing incoming packets
+  is what must not fail");
+- every other device that originates observations (tracking) gives the whole
   region to ObservationStore (about 13 days of PERIODIC records at a
-  15-minute period, about 7 weeks at one hour);
-- a Gateway-only device gives the whole region to CustodyStore;
-- a device that does both keeps **ObservationStore** as the owner. It may
-  still bridge foreign traffic, but only on the connected path (Edge durable
-  accept before any ACK, ORUN_GATEWAY_DURABLE_CUSTODY.md); it holds no local
-  foreign custody and never emits a durable-custody ACK from local storage;
+  15-minute period, about 7 weeks at one hour). Relay forwarding alone is not
+  custody and does not change the owner;
 - changing a device's job never reformats the region implicitly: the new owner
   refuses pages in the other store's format until an explicit, operator-
   visible maintenance erase, which unresolved Gateway custody blocks.
