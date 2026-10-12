@@ -50,6 +50,8 @@
 #include "geofence_staging.h"
 #include "geofence_store.h"
 #include "node_role.h"
+#include "observation_incarnation_source.h"
+#include "product_record_store.h"
 #include "power_manager.h"
 #include "radio_manager.h"
 #include "position_flow.h"
@@ -80,11 +82,11 @@ orun_tlp::ActivityAutoSampler activity_auto_sampler;
 // "ACTIVITY AUTO OFF" keeps the sampler off even while tracking runs.
 bool activity_auto_user_off = false;
 
-// SF5 PERIODIC dry run (USB only): at each finished report period the real
-// owners' facts are mapped to the canonical PRODUCT_SECURE plaintext and
-// validated by the codec. Nothing is stored, sealed or sent; TLP v1 POSITION
-// stays the only product traffic until SF5F. Record identity is a RAM-only
-// placeholder because the durable SF5C allocator is not attached.
+// SF5 PERIODIC record: at each finished report period the real owners' facts
+// are mapped to the canonical PRODUCT_SECURE plaintext and, since SF5F step 1,
+// stored durably in ObservationStore on the product region with the store's
+// own identity (ProductRecordStore). Nothing is sealed or sent yet; TLP v1
+// POSITION and HistoryStore stay the live path until the SF5F RF step.
 struct ProductPeriodBaseline {
   uint32_t gnss_failures = 0;
   uint32_t storage_failures = 0;
@@ -93,7 +95,7 @@ struct ProductPeriodBaseline {
 };
 bool product_period_open = false;
 uint32_t product_period_started_ms = 0;
-uint32_t product_dryrun_sequence = 0;
+uint32_t product_preview_sequence = 0;
 uint32_t product_last_gnss_timeouts = 0;
 ProductPeriodBaseline product_period_baseline;
 // Battery voltage on WB_A0, read once a minute. Measurement only for now.
@@ -116,6 +118,13 @@ orun_tlp::ConfigStore config_store(storage_flash_gate.configPort(),
 // later BLE/LoRa writers submit to this same owner instead of calling
 // ConfigStore themselves.
 orun_tlp::ConfigMutationOwner config_mutations(config_store);
+orun_tlp::NrfObservationIncarnationSource observation_incarnation_source;
+// SF5F step 1: durable PERIODIC records on the 128 KiB product region, mounted
+// at boot before SoftDevice (docs/milestones/SF5.md).
+orun_tlp::ProductRecordStore product_records(
+    storage_flash_gate.productPort(),
+    orun_tlp::storage_config::kProductRegionPages,
+    &observation_incarnation_source);
 orun_tlp::NrfGeofenceIncarnationSource geofence_incarnation_source;
 orun_tlp::GeofenceStore geofence_store(storage_flash_gate.geofencePort(),
                                        &geofence_incarnation_source);
@@ -1095,7 +1104,8 @@ ProductPeriodBaseline currentProductBaseline() {
   // invalid_fixes is not a failure: it counts every 1 Hz "no fix yet" epoch
   // of a normal acquisition (collar 2026-10-12: 5-29 per successful period).
   now.gnss_failures = gnss.acquisition_timeouts + gnss.configuration_failures;
-  now.storage_failures = history.diagnostics().append_failures;
+  now.storage_failures = history.diagnostics().append_failures +
+                         product_records.diagnostics().failed;
   const auto radio = radio_manager.eventDiagnostics();
   now.radio_failures = radio.rx_queue_drops + radio.control_event_drops;
   // Accelerometer failures, including failed or implausible stream drains. A
@@ -1132,8 +1142,6 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
   if (elapsed_ms < 1000U) return;
 
   orun_tlp::PeriodicRecordInputs in{};
-  in.record_incarnation = 1;  // RAM-only dry-run placeholder
-  in.record_sequence = ++product_dryrun_sequence;
   in.period_duration_seconds = elapsed_ms / 1000U;
   if (fix != nullptr) {
     const uint32_t age_s = (now - fix->captured_at_ms) / 1000U;
@@ -1193,8 +1201,15 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
   if (!in.period_end_time_valid)
     in.health.flags |= orun_tlp::tlp::kHealthTimeUntrusted;
 
+  // The store gives the record its identity when it appends it; the line
+  // below is a preview with a placeholder identity, for the period's fields.
+  const orun_tlp::ProductRecordStore::Submit submit =
+      product_records.submitPeriodic(in);
+  orun_tlp::PeriodicRecordInputs preview = in;
+  preview.record_incarnation = 1;
+  preview.record_sequence = ++product_preview_sequence;
   orun_tlp::tlp::PeriodicObservationPlaintext record{};
-  const auto verdict = orun_tlp::buildPeriodicPlaintext(in, &record);
+  const auto verdict = orun_tlp::buildPeriodicPlaintext(preview, &record);
   // graze_s: active seconds with the head down, as a receiver would derive
   // it from active_seconds and head_down_share; "-" without head position.
   char graze[12] = "-";
@@ -1205,11 +1220,15 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
                       record.head_down_share + 100U) /
                  orun_tlp::tlp::kPeriodicHeadDownShareMax));
   }
+  const char* store_state = "NOT_MOUNTED";
+  if (submit == orun_tlp::ProductRecordStore::Submit::kAccepted)
+    store_state = "ACCEPTED";
+  else if (submit == orun_tlp::ProductRecordStore::Submit::kBusy)
+    store_state = "BUSY";
   Serial.printf(
-      "PRODUCT PERIODIC DRYRUN seq=%lu period_s=%lu result=%s flags=0x%02X "
+      "PRODUCT PERIODIC period_s=%lu result=%s flags=0x%02X "
       "loc=%s age_s=%u batt_mv=%u batt=%u act_cov_s=%lu act_s=%lu graze_s=%s "
-      "trans=%u move_mg=%u health=0x%04X fails=%u/%u/%u/%u\n",
-      static_cast<unsigned long>(in.record_sequence),
+      "trans=%u move_mg=%u health=0x%04X fails=%u/%u/%u/%u store=%s\n",
       static_cast<unsigned long>(in.period_duration_seconds),
       orun_tlp::tlp::productSecureCodecResultName(verdict),
       static_cast<unsigned>(record.record_flags),
@@ -1225,24 +1244,82 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
       static_cast<unsigned>(record.gnss_failure_count),
       static_cast<unsigned>(record.sensor_failure_count),
       static_cast<unsigned>(record.storage_failure_count),
-      static_cast<unsigned>(record.radio_failure_count));
-  if (verdict == orun_tlp::tlp::ProductSecureCodecResult::kOk) {
-    uint8_t bytes[orun_tlp::tlp::kPeriodicPlaintextSize];
-    if (orun_tlp::tlp::encodePeriodicPlaintext(record, bytes, sizeof(bytes)) ==
-        orun_tlp::tlp::ProductSecureCodecResult::kOk) {
-      static const char kHex[] = "0123456789abcdef";
-      char hex[2 * sizeof(bytes) + 1];
-      for (size_t i = 0; i < sizeof(bytes); ++i) {
-        hex[2 * i] = kHex[bytes[i] >> 4];
-        hex[2 * i + 1] = kHex[bytes[i] & 0x0F];
-      }
-      hex[2 * sizeof(bytes)] = '\0';
-      Serial.printf("PRODUCT PERIODIC DRYRUN bytes=%s\n", hex);
-    }
-  }
+      static_cast<unsigned>(record.radio_failure_count), store_state);
 
   product_period_started_ms = now;
   product_period_baseline = current;
+}
+
+void printU64HexTo(char (&out)[17], uint64_t value) {
+  snprintf(out, sizeof(out), "%08lX%08lX",
+           static_cast<unsigned long>(static_cast<uint32_t>(value >> 32)),
+           static_cast<unsigned long>(static_cast<uint32_t>(value)));
+}
+
+// "PRODUCT STORE?": the product region, the mount decision and the store.
+void printProductStore() {
+  const auto& census = product_records.census();
+  Serial.printf(
+      "PRODUCT STORE region=%s erased=%u observation=%u custody=%u "
+      "unknown=%u owner=%s decision=%s mounted=%s preparing=%s\n",
+      product_records.regionReadable() ? "OK" : "READ_FAIL",
+      static_cast<unsigned>(census.erased),
+      static_cast<unsigned>(census.observation),
+      static_cast<unsigned>(census.custody),
+      static_cast<unsigned>(census.unknown),
+      orun_tlp::product_region::ownerName(product_records.owner()),
+      orun_tlp::product_region::mountDecisionName(product_records.decision()),
+      product_records.mounted() ? "yes" : "no",
+      product_records.preparing() ? "yes" : "no");
+  if (!product_records.mounted()) return;
+  const orun_tlp::ObservationStore& store = product_records.store();
+  orun_tlp::osf::RecordIdentity next{};
+  const bool have_next = store.peekNextIdentity(next);
+  uint32_t retained = 0;
+  uint32_t released = 0;
+  const bool counted =
+      store.retainedCount(retained) && store.releasedCount(released);
+  char incarnation[17];
+  printU64HexTo(incarnation, store.incarnation());
+  const auto& d = product_records.diagnostics();
+  Serial.printf(
+      "PRODUCT STORE ready=%s faulted=%s inc=%s next_seq=%lu retained=%ld "
+      "released=%ld lost=%lu stored=%lu failed=%lu busy_drops=%lu\n",
+      store.ready() ? "yes" : "no", store.faulted() ? "yes" : "no",
+      incarnation,
+      static_cast<unsigned long>(have_next ? next.sequence : 0U),
+      counted ? static_cast<long>(retained) : -1L,
+      counted ? static_cast<long>(released) : -1L,
+      static_cast<unsigned long>(store.diagnostics().capacity_lost_total),
+      static_cast<unsigned long>(d.stored),
+      static_cast<unsigned long>(d.failed),
+      static_cast<unsigned long>(d.dropped_busy));
+}
+
+// One line per durable record outcome; after PREPARE the device reboots so
+// the empty region is mounted before SoftDevice starts.
+void drainProductStore() {
+  orun_tlp::ProductRecordStore::Outcome outcome;
+  if (product_records.takeOutcome(outcome)) {
+    char incarnation[17];
+    printU64HexTo(incarnation, outcome.incarnation);
+    Serial.printf("PRODUCT STORE append seq=%lu inc=%s result=%s\n",
+                  static_cast<unsigned long>(outcome.sequence), incarnation,
+                  outcome.stored ? "OK" : "FAIL");
+  }
+  bool prepared = false;
+  if (product_records.takePrepareResult(prepared)) {
+    Serial.printf("PRODUCT STORE PREPARE result=%s%s\n",
+                  prepared ? "PASS" : "FAIL",
+                  prepared ? "; rebooting to mount" : "");
+#if defined(NRF52_SERIES)
+    if (prepared) {
+      Serial.flush();
+      delay(200);
+      NVIC_SystemReset();
+    }
+#endif
+  }
 }
 
 // Head position diagnostics: the neck axis, the current head position and
@@ -2224,6 +2301,24 @@ void handleRoleCommand() {
     printActivityPose();
     return;
   }
+  if (isActivityCommand("PRODUCT STORE?", 14)) {
+    role_command_length = 0;
+    printProductStore();
+    return;
+  }
+  // The only whole-region erase: only for unrecognised leftovers or a faulted
+  // store, never over healthy records (ProductRecordStore::requestPrepare).
+  if (isActivityCommand("PRODUCT STORE PREPARE CONFIRM", 29)) {
+    role_command_length = 0;
+    if (product_records.requestPrepare()) {
+      Serial.println(F("PRODUCT STORE PREPARE started"));
+    } else {
+      Serial.println(F("PRODUCT STORE PREPARE rejected: only for leftovers "
+                       "(NEEDS_PREPARATION) or a faulted store"));
+      printProductStore();
+    }
+    return;
+  }
   static const char kAxisPrefix[] = "ACTIVITY AXIS ";
   constexpr uint8_t kAxisPrefixLength = sizeof(kAxisPrefix) - 1;
   if (role_command_length > kAxisPrefixLength &&
@@ -2845,6 +2940,21 @@ void setup() {
   if (!explicit_services_active)
     Serial.println(F("ROLE AUTO pending (GNSS=>TRACKER, no GNSS=>BASE)"));
 
+  // SF5F step 1: mount the product region before SoftDevice starts (the
+  // synchronous backend refuses afterwards). The Gateway service does not
+  // exist yet, so no device has the Gateway job; every device that may track
+  // (AUTO, or explicit services with tracking) mounts ObservationStore.
+  // Mounting writes nothing: only a tracker's first record prepares a page.
+  {
+    const bool may_track =
+        !explicit_services_active ||
+        (applied_requested_services &
+         orun_tlp::config_format::kServiceTracking) != 0;
+    product_records.begin(device_identity.legacyUint64(),
+                          orun_tlp::product_region::Jobs{false, may_track});
+    printProductStore();
+  }
+
   // M7P7B: BLE starts last, strictly after History/Config/Geofence/Security
   // have finished their SoftDevice-disabled synchronous recovery above --
   // NrfHistoryFlash::begin() (and the Config/Geofence/Security equivalents) fail
@@ -3126,7 +3236,11 @@ void loop() {
     security_store.poll();
     orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kGeofenceStore);
     geofence_store.poll();
+    orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kProductStore);
+    product_records.poll();
   }
+  orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kProductStore);
+  drainProductStore();
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kGeofenceStore);
   if (geofence_mutations.poll()) applyGeofenceMutationToRuntime();
   drainGeofenceMutationResult();

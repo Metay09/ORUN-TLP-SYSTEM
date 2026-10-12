@@ -106,7 +106,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/test_storage_layout_policy.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5d_flash_layout_preflight.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5d_dfu_probe_source_contract.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5d_full_region_source_contract.py
-PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5d5_scope_contract.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5f_store_scope_contract.py
 
 g++ "${b3_flags[@]}" firmware/tests/m6/test_m6_geofence_geometry.cpp \
   firmware/src/geofence_geometry.cpp -o "$test_dir/m6_geofence_geometry"
@@ -391,6 +391,15 @@ g++ -Ifirmware/tests/sf5/sf5e_stubs -Ifirmware/tests/m4/nrf_stubs \
   firmware/src/observation_store_format.cpp \
   -o "$test_dir/sf5e_qual_probe"
 "$test_dir/sf5e_qual_probe"
+# SF5F step 1: durable PERIODIC records (ProductRecordStore), gnu++11 like
+# the target, including a reset at every write through rotation/compaction.
+g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5f_product_record_store.cpp \
+  firmware/src/product_record_store.cpp firmware/src/product_region.cpp \
+  firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
+  firmware/src/product_period_builder.cpp firmware/src/tlp_v2_product_secure.cpp \
+  -o "$test_dir/sf5f_product_record_store"
+"$test_dir/sf5f_product_record_store"
 "$test_dir/m7p6_flash_gate"
 g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
@@ -493,6 +502,9 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/battery_monitor.cpp firmware/src/battery_policy.cpp \
   firmware/src/geofence_mutation.cpp firmware/src/geofence_staging.cpp \
   firmware/src/product_period_builder.cpp firmware/src/tlp_v2_product_secure.cpp \
+  firmware/src/product_record_store.cpp firmware/src/product_region.cpp \
+  firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
   -o "$test_dir/startup"
 for scenario in mutex gate queue lora success advfail blefail noevent geofence geofence_persisted geofence_uncertain history_erase_i2c services_no_gnss battery_critical geofence_usb; do
   "$test_dir/startup" "$scenario"

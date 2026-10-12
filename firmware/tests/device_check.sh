@@ -8,10 +8,13 @@
 #   3. USB geofence writer              m6/geofence_usb_remote_check.sh
 #   4. firmware update keeps the product region   sf5/sf5d_full_retention_remote.sh
 #   5. ObservationStore on real flash with cut points   sf5/sf5e_qual_remote.sh
+#   6. production stores each period, keeps it across a reboot
+#                                       sf5/sf5f_records_remote_check.sh
 #
-# The device ends on production with services T, NO geofence and an erased
-# product region (checks 4 and 5 write test data there and clean it up; once
-# the production store uses that region, they erase its records too).
+# The device ends on production with services T, NO geofence, its tracking
+# interval unchanged and a product region holding only the few records of
+# check 6 (checks 4 and 5 write test data there and erase the region,
+# including any earlier records).
 # Not included, because they need hands or hours: activity_axis_bench.sh
 # (tilt the box), config_v4_bench.sh (unplug), gnss_sleep_ab.sh (hours).
 #
@@ -41,7 +44,8 @@ CHECKS="sf5/sf5b_crypto_kat_remote.sh|Sifreleme (CC310)
 m7/services_remote_check.sh|Servis ayari
 m6/geofence_usb_remote_check.sh|Otlak siniri yazma
 sf5/sf5d_full_retention_remote.sh|Guncellemede kayit alani korunur
-sf5/sf5e_qual_remote.sh|Kayit yazma ve kesmeler"
+sf5/sf5e_qual_remote.sh|Kayit yazma ve kesmeler
+sf5/sf5f_records_remote_check.sh|Normal yazilim kaydi saklar"
 
 started=$(date +%s)
 {
@@ -52,7 +56,7 @@ n=0
 echo "$CHECKS" | while IFS='|' read -r script title; do
   n=$((n + 1))
   out="$HOME/device_check_$n.out"
-  echo "== $n/5 $title"
+  echo "== $n/6 $title"
   t0=$(date +%s)
   # stdin closed: nothing a check runs may eat the list of checks.
   sh "firmware/tests/$script" "$ID" > "$out" 2>&1 < /dev/null
@@ -80,11 +84,11 @@ passed=$(grep -c -E '^[0-9] .* PASS ' "$SUMMARY")
 elapsed=$(( ($(date +%s) - started + 30) / 60 ))
 {
   echo
-  if [ "$total" -eq 5 ] && [ "$passed" -eq 5 ]; then
-    echo "SONUC: 5/5 PASS ($elapsed dk)"
+  if [ "$total" -eq 6 ] && [ "$passed" -eq 6 ]; then
+    echo "SONUC: 6/6 PASS ($elapsed dk)"
   else
-    echo "SONUC: $passed/5 PASS, $((total - passed)) FAIL, $((5 - total)) calismadi ($elapsed dk)"
+    echo "SONUC: $passed/6 PASS, $((total - passed)) FAIL, $((6 - total)) calismadi ($elapsed dk)"
   fi
 } | tee -a "$SUMMARY"
 echo "Ozet: $SUMMARY   Logger'i tekrar baslat:  sh ~/orunlog.sh $ID >> ~/tasma.log &"
-[ "$total" -eq 5 ] && [ "$passed" -eq 5 ]
+[ "$total" -eq 6 ] && [ "$passed" -eq 6 ]

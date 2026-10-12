@@ -44,7 +44,9 @@ uint32_t sd_flash_write(uint32_t* dst, const uint32_t* src, uint32_t count) {
       address >= kFutureSecurityRegionStart && end <= kFutureSecurityRegionEnd;
   const bool in_geofence =
       address >= kGeofenceRegionStart && end <= kGeofenceRegionEnd;
-  assert(in_history || in_config || in_security || in_geofence);
+  const bool in_product =
+      address >= kProductRegionStart && end <= kProductRegionEnd;
+  assert(in_history || in_config || in_security || in_geofence || in_product);
   for (uint32_t i = 0; i < count; ++i) {
     assert(dst[i] == UINT32_MAX);
     dst[i] &= src[i];
@@ -62,7 +64,9 @@ uint32_t sd_flash_page_erase(uint32_t page) {
       address >= kFutureSecurityRegionStart && address < kFutureSecurityRegionEnd;
   const bool in_geofence =
       address >= kGeofenceRegionStart && address < kGeofenceRegionEnd;
-  assert(in_history || in_config || in_security || in_geofence);
+  const bool in_product =
+      address >= kProductRegionStart && address < kProductRegionEnd;
+  assert(in_history || in_config || in_security || in_geofence || in_product);
   memset(reinterpret_cast<void*>(uintptr_t(page) * kPageSize), 0xFF, kPageSize);
   return NRF_SUCCESS;
 }
@@ -95,6 +99,12 @@ bool orun_tlp::NrfGeofenceIncarnationSource::generate(uint64_t& incarnation) {
   // Same composition-only stub as Config: the real nRF RNG implementation is
   // independently compiled/linked by the RAK4630 production build.
   incarnation = 0x1020304050607080ULL;
+  return true;
+}
+
+bool orun_tlp::NrfObservationIncarnationSource::generate(uint64_t& incarnation) {
+  // Composition-only stub; the nRF RNG source is built by the RAK4630 target.
+  incarnation = 0x5F5D5A5B5C5D5E5FULL;
   return true;
 }
 
@@ -479,6 +489,14 @@ int main(int argc, char** argv) {
       -1, 0);
   assert(geofence_region == reinterpret_cast<void*>(kGeofenceRegionStart));
   memset(geofence_region, 0xFF, kGeofenceRegionSize);
+  // SF5F: setup() mounts the product region (ObservationStore) before BLE.
+  constexpr uint32_t kProductRegionSize = kProductRegionEnd - kProductRegionStart;
+  void* product_region = mmap(
+      reinterpret_cast<void*>(kProductRegionStart), kProductRegionSize,
+      PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+      -1, 0);
+  assert(product_region == reinterpret_cast<void*>(kProductRegionStart));
+  memset(product_region, 0xFF, kProductRegionSize);
 
   // M6D3C startup scenarios:
   // - geofence_persisted: one real committed CONFIGURED record with VALID token;
@@ -965,20 +983,43 @@ int main(int argc, char** argv) {
     drainPosition();
     assert(history.count() == timeout_records_before + 1);
 
-    // SF5 dry run: the second normal fix closed the first report period and
-    // produced one canonical PERIODIC plaintext (USB only, nothing stored).
+    // SF5F step 1: the second normal fix closed the first report period;
+    // its canonical PERIODIC record was accepted by the record store, which
+    // mounted the erased product region at boot, and stored with the
+    // store's first identity. Nothing is sealed or sent.
     {
-      const size_t line_at = Serial.output.find("PRODUCT PERIODIC DRYRUN seq=1 ");
+      const std::string& out = Serial.output;
+      const size_t boot_at = out.find("PRODUCT STORE region=OK erased=32 ");
+      assert(boot_at != std::string::npos);
+      const std::string boot =
+          out.substr(boot_at, out.find('\n', boot_at) - boot_at);
+      assert(boot.find(" owner=OBSERVATION decision=MOUNT mounted=yes") !=
+             std::string::npos);
+      const size_t ble_at = out.find("BLE APP GATT ready");
+      assert(ble_at == std::string::npos || boot_at < ble_at);
+      const size_t line_at = out.find("PRODUCT PERIODIC period_s=");
       assert(line_at != std::string::npos);
-      const size_t line_end = Serial.output.find('\n', line_at);
-      const std::string line = Serial.output.substr(line_at, line_end - line_at);
+      const size_t line_end = out.find('\n', line_at);
+      const std::string line = out.substr(line_at, line_end - line_at);
       assert(line.size() < 256);  // Print::printf buffer
       assert(line.find(" result=OK ") != std::string::npos);
       assert(line.find(" loc=GNSS ") != std::string::npos);
-      assert(line.find(" fails=0/0/0/0") != std::string::npos);
-      const size_t bytes_at = Serial.output.find("PRODUCT PERIODIC DRYRUN bytes=01");
-      assert(bytes_at != std::string::npos);
-      assert(Serial.output.find('\n', bytes_at) == bytes_at + 30 + 128);
+      assert(line.find(" fails=0/0/0/0 ") != std::string::npos);
+      assert(line.find(" store=ACCEPTED") != std::string::npos);
+      // The first record also prepares the first page; finish that here
+      // without extra loop passes (the scenario counts them below).
+      for (unsigned i = 0; i < 200U && product_records.pending(); ++i)
+        product_records.poll();
+      assert(!product_records.pending());
+      assert(product_records.diagnostics().stored == 1U);
+      assert(product_records.diagnostics().failed == 0U);
+      const bool printed =
+          out.find("PRODUCT STORE append seq=1 inc=5F5D5A5B5C5D5E5F "
+                   "result=OK") != std::string::npos;
+      orun_tlp::ProductRecordStore::Outcome outcome;
+      assert(printed || (product_records.takeOutcome(outcome) &&
+                         outcome.stored && outcome.sequence == 1U &&
+                         outcome.incarnation == 0x5F5D5A5B5C5D5E5FULL));
     }
 
     // Successful transition. Slot 0 has the best OUTSIDE HDOP and was already

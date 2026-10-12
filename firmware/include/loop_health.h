@@ -39,6 +39,7 @@ enum class LoopStage : uint8_t {
   kIdle = 16,           // PowerManager::idle(): asleep or pre-empted
   kBattery = 17,        // battery voltage ADC reading
   kGeofenceStore = 18,  // geofence store poll and mutation owner
+  kProductStore = 19,   // SF5F durable PERIODIC records (ProductRecordStore)
 };
 
 constexpr uint8_t kLoopStageMaxValue = 63;
