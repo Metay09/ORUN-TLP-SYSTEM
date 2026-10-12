@@ -417,6 +417,16 @@ ObservationStore):
   refuses pages in the other store's format until an explicit, operator-
   visible maintenance erase, which unresolved Gateway custody blocks.
 
+This matches the owner's earlier gateway direction (2026-10-09, SF4B
+discussion): the phone/Linux app is the main store; the gateway's RAK node
+buffers about 3-5 hours when the cable/BLE link to the phone drops (fixed and
+mobile gateway alike); while the phone is connected, received objects go
+straight to it and flash is written only when the link is down (wear); a
+tracker keeps its own records while it cannot reach a gateway. With the
+whole region, a gateway holds about 34 h of 10 trackers at a 15-minute period
+(43 objects per page, 32 pages), well above the 3-5 h target. A later DIY
+fixed gateway with more flash is planned separately.
+
 This closes the D2 *decision*. Its implementation (owner selection from the
 persisted service intent, mount refusal of the foreign format, maintenance
 erase) belongs to D3 and still needs tests. D1 stays OPEN.
