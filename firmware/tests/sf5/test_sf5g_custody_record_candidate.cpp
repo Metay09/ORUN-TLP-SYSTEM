@@ -1,4 +1,5 @@
 #include "sf5g_custody_record_candidate.h"
+#include "sf5b_product_vectors.h"  // independent SF5B sealed golden frames
 
 #include <assert.h>
 #include <stdio.h>
@@ -81,6 +82,21 @@ void checkOne(size_t n) {
 int main() {
   checkOne(84);
   checkOne(100);
+  // Exact encrypted PRODUCT_SECURE bytes from the independent SF5B golden set.
+  for (const char* hex : {orun_tlp::sf5b_vectors::kEventFrameHex,
+                          orun_tlp::sf5b_vectors::kPeriodicFrameHex}) {
+    const size_t n = strlen(hex) / 2U;
+    std::vector<uint8_t> frame(n);
+    assert(orun_tlp::sf5b_vectors::fromHex(hex, frame.data(), n));
+    std::array<uint8_t,kRecordSize> slot{};
+    assert(encodeStagedRecord(frame.data(), frame.size(),
+                              slot.data(), slot.size()));
+    memset(slot.data() + kRecordCommitOffset, 0, 4);
+    RecordInspection actual;
+    assert(inspectRecord(slot.data(), slot.size(), actual));
+    assert(actual.evidence == Evidence::kHeld);
+    assert(sameExactObject(actual, frame.data(), frame.size()));
+  }
   auto p = fakeFrame(100);
   std::array<uint8_t,kRecordSize> out{};
   out.fill(0x7A);
