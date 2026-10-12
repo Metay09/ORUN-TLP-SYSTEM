@@ -2,8 +2,8 @@
 
 Status: **SF5D3 SAMPLED SERIAL DFU RETENTION: PHYSICAL PASS (3 pages, one update).**
 **D2 owner decision taken 2026-10-12 (one owner per device, by its job);
-SF5D4 full-region retention test prepared. Gate D1 remains OPEN** for the
-proposed full 128 KiB production store. No production 128 KiB reservation or
+SF5D4 full-region retention PHYSICAL PASS (32/32 pages); Gate D1 closed for
+the serial single-bank update path** (interrupted and BLE DFU still open). No production 128 KiB reservation or
 `FlashBackend`, no linker/build-ceiling change, and no ObservationStore/CustodyStore
 runtime attachment. The test-only 16-byte marker did program one approved
 unallocated development flash page; this is NOT full SF5D/SF5E clearance.
@@ -449,9 +449,32 @@ covers all 32 pages across an update with the **full production image**:
 sequence and compares all 32 page CRCs; source contract
 `test_sf5d_full_region_source_contract.py`; the post-link guard gives the two
 new images the same seed/verify symbol limits as SF5D3. Build PASS for both
-images (seed 57,852 B, verify 56,332 B). **Physical run pending.** Even a
-PASS covers serial single-bank DFU with this image size only, not an
-interrupted update, the future phone (BLE) DFU path or a larger image.
+images (seed 57,852 B, verify 56,332 B).
+
+**Physical PASS 2026-10-12, RAK-1 `0E8ADE7E71531AA3`, bootloader handoff
+0.4.2, serial nrfutil single-bank, production image of `main@e5a32be`
+(about 320 KB):**
+
+```text
+before seed:  pages=32 matched=1 erased=4 other=27 digest=0xF32531FC
+seed:         SF5D FULL SEED PASS written=4 kept=28
+after seed:   pages=32 matched=5 erased=0 other=27 digest=0xE5E046E0
+after update: pages=32 matched=5 erased=0 other=27 digest=0xE5E046E0
+RESULT: PASS (32/32 pages identical; device back on production)
+```
+
+All 32 candidate pages, none blank, kept their full-page CRC32 across the
+production-image update (and the small verify-image update after it). The
+27 OTHER pages are leftovers of earlier images and stayed read-only controls.
+
+**Gate D1 disposition:** closed for the **serial single-bank update path**
+with images of this size: the update rewrites only the application image
+pages and leaves `[0x0C5000,0x0E5000)` intact. Still open, each before it is
+relied on: an interrupted update, the future phone (BLE) DFU path, and an
+image that grows toward the candidate region (the post-link ceiling guard
+must then stop the build). This lets D3 reserve the region and add the
+backend; SF5E physical power-cut qualification still precedes any runtime
+writer.
 
 ## 4. Gate D3 — future implementation sequence (not authorized here)
 

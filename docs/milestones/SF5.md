@@ -163,7 +163,7 @@ injection/power-cut tests.
 
 ### SF5D — 128 KiB flash ownership + nRF backend
 
-**First gate:** `docs/milestones/SF5D.md` records the read-only bootloader/DFU and hybrid Tracker+Gateway ownership preflight. D2 owner decision 2026-10-12: one owner of the whole region per device, by its job (a device with the Gateway job keeps CustodyStore, also if it could track; other tracking devices keep ObservationStore); SF5D4 full-region DFU retention test prepared, D1 still open. The `[0x0C5000,0x0E5000)` range below is a CANDIDATE only. Do not lower the application ceiling or enable a physical writer until both gates close.
+**First gate:** `docs/milestones/SF5D.md` records the read-only bootloader/DFU and hybrid Tracker+Gateway ownership preflight. D2 owner decision 2026-10-12: one owner of the whole region per device, by its job (a device with the Gateway job keeps CustodyStore, also if it could track; other tracking devices keep ObservationStore); SF5D4 full-region DFU retention PHYSICAL PASS 2026-10-12 (32/32 pages kept across a production-image serial update), so D1 is closed for the serial single-bank path; interrupted and BLE DFU remain open. The `[0x0C5000,0x0E5000)` range below is a CANDIDATE only. Do not lower the application ceiling or enable a physical writer until both gates close.
 
 
 Candidate reference-platform range:
