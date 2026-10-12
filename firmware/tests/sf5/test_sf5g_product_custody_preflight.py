@@ -12,6 +12,7 @@ import zlib
 root = Path(__file__).resolve().parents[2]
 legacy = (root / "include" / "custody_store_format.h").read_text()
 product = (root / "include" / "tlp_v2_product_secure.h").read_text()
+delegated = (root / "include" / "tlp_v2_delegated_secure_app.h").read_text()
 
 
 def pinned(assertion: str, source: str) -> None:
@@ -27,6 +28,15 @@ pinned(r"static_assert\(kObjectSize == 73U", legacy)
 pinned(r"static_assert\(kRecordsPerPage == 43U", legacy)
 pinned(r"static_assert\(kPeriodicFrameSize == 100U", product)
 pinned(r"static_assert\(kEventFrameSize == 84U", product)
+pinned(r"kDelegatedSecureHeaderSize\s*=\s*56U", delegated)
+pinned(r"kDelegatedSecureMaxCiphertextSize\s*=\s*32U", delegated)
+pinned(r"kDelegatedSecureTagSize\s*=\s*8U", delegated)
+pinned(r"kPacketTypeDelegatedSecureApp\s*=\s*0x01U", delegated)
+pinned(r"kSecurityContextDelegatedD2gw\s*=\s*0x04U", delegated)
+pinned(r"kDelegatedAppFamilyResult\s*=\s*0x02U", delegated)
+# Envelope upper bound = 56 + 32 + 8 = 96; this test does not
+# yet authorize custody of that family in the 84/100-only codec.
+assert 56 + 32 + 8 == 96 and 96 <= 100
 
 # An UNAPPROVED candidate: 64-byte header, 3 x 24-byte intent slots,
 # 120-byte record with 2-byte length + 2-byte reserved + 100-byte frame slot,
