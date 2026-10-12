@@ -1,6 +1,6 @@
 # SF5 — TLP v2 product observation + 128 KiB durable-data cutover
 
-Status: **SF5A/B/C MERGED. SF5D5 reserves the 128 KiB product region; SF5E physical qualification passed on 2026-10-12. SF5F step 1 stores PERIODIC records in production code; its collar run remains pending. Protected RF, delivery release and EVENT/RESULT runtime are not yet active. Serial single-bank DFU retention is proven for the recorded image; interrupted/BLE DFU remain open.**
+Status: **SF5A/B/C MERGED. SF5D5 reserves the 128 KiB product region; SF5E physical qualification passed on 2026-10-12. SF5F step 1 stores PERIODIC records in production code; scoped collar append/reflash/reboot validation PASS on 2026-10-13. Protected RF, delivery release and EVENT/RESULT runtime are not yet active. Serial single-bank DFU retention is proven for the recorded image; interrupted/BLE DFU remain open.**
 
 SF5A merge baseline:
 `main@cdb9db172d178acc877b9315453e7adbd7947985`.
@@ -290,8 +290,8 @@ ObservationStore:
 - retire the legacy SF3 HISTORY_SECURE replay runtime together with the legacy
   HistoryStore for new records; do not reinterpret its frozen bytes.
 
-**Step 1, durable PERIODIC records (2026-10-12, H+build; collar run
-pending):** `ProductRecordStore` (`product_record_store.h`) mounts
+**Step 1, durable PERIODIC records (2026-10-12 H+build; 2026-10-13
+scoped physical PASS):** `ProductRecordStore` (`product_record_store.h`) mounts
 ObservationStore on the product region at boot, before SoftDevice, by the D2
 decision (no device has the Gateway job yet). Every node recovers a prospective
 ObservationStore before SoftDevice starts, including saved OFF/Relay-only
@@ -318,6 +318,24 @@ Device: `tests/sf5/sf5f_records_remote_check.sh`
 legacy HistoryStore stay the live path until the RF step; this is not a
 permanent dual store. Not yet: sealing, sending, release on delivery,
 EVENT/RESULT records.
+
+**SF5F step 1 scoped collar evidence (2026-10-13, device
+`0E8ADE7E71531AA3`):** production mounted the ObservationStore with
+`faulted=no`, `retained=7`, `next_seq=8`. The remote check appended `seq=8`,
+`seq=9`, and `seq=10`, each `result=OK` with the same incarnation. A serial
+production re-upload/reboot remounted with `retained=10`, `next_seq=11`,
+`lost=0`, `faulted=no`; the next `seq=11` append was OK. The script reported
+`RESULT: PASS (kayitlar 8..11 kalici; cihaz production'da)`. An earlier
+12-minute script-timeout FAIL had already produced successful `seq=5` and
+`seq=6` appends; GNSS had no fix (`loc=NONE`) and applied failure backoff.
+The test-only wait was raised to 20 minutes, and an APP CONFIG response-prefix
+parsing defect was fixed (`APP RESULT` rather than `APP CONFIG`, with an
+empty-value guard). Shell syntax and diff checks passed. The stored tracking
+interval was 60 seconds before the run and still 60 afterward; restoration
+from a *different* initial interval was not physically exercised. This gate
+proves scoped production append and reflash/reboot persistence, not successful
+GNSS fixes, electrical power-cut/HOLD resilience, physical OFF/Relay-only to
+Tracking transitions, sealed RF delivery or authenticated Gateway custody ACK.
 
 Before SF5F, the current runtime remains: frozen TLP v1 live POSITION/relay plus
 provisioned SF3 TLP v2 HISTORY_SECURE replay. Legacy v1 fixtures **and SF2/SF3
