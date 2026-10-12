@@ -1,6 +1,6 @@
 # SF5G product-custody preflight — 2026-10-13
 
-Status: **HOST-ONLY DESIGN CANDIDATE, NOT A STORAGE-FORMAT APPROVAL OR GATEWAY ACTIVATION.**
+Status: **HOST-ONLY DESIGN MODEL + C++ RECORD-CODEC CANDIDATE, NOT A STORAGE-FORMAT APPROVAL OR GATEWAY ACTIVATION.**
 Baseline: `main@b1d2239fa3f1a7c9f7f81f109b6a245017527a66` after SF5F step 1 scoped collar PASS.
 Related contracts: `docs/milestones/SF4B.md`, `docs/milestones/SF5.md`,
 `docs/architecture/ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md` (sections 3, 10, 12),
@@ -106,15 +106,35 @@ Gateway product flash format is approved.
   bounded physical CustodyStore experiments with explicit safe storage
   ownership, and finally full tracker→Gateway→Edge evidence.
 
-## 5. This first branch changes only
+## 5. First branch scope and host-only evidence
 
-The `test_sf5g_product_custody_preflight.py` host test checks frozen
-SF4B/SF5B source constants, candidate capacity arithmetic, exact lengths,
-CRC corruption rejection and refusal of uncommitted synthetic records.
-It **does not** test a production writer, recovery, power cuts, crypto,
-Gateway/ACK, or actual RF. No firmware code, live store geometry, device
-flash content or protocol bytes are changed.
+`test_sf5g_product_custody_preflight.py` guards the frozen SF4B/SF5B
+constants and checks the proposed page geometry, exact lengths, CRC and
+commit model.
 
-Recommended next implementation slice after design approval: a **separate
-portable product-custody-format module** and targeted host torn-write
-tests. Keep the original 73-byte SF4B format and its tests intact.
+The separate **host-only** `sf5g_custody_record_candidate.h/.cpp` implements
+staged 120-byte record encoding and classification, exact-object comparison,
+CRC corruption checks, two handoff-marker states and structural PRODUCT_SECURE
+84/100-byte shape validation. It is kept in `firmware/tests/sf5/` and linked
+**only** into the dedicated `test_sf5g_custody_record_candidate.cpp` host
+test. The latter exercises staged/partial-commit classification, 108 possible
+prefix tears per record length, synthetic reboot/re-read, data/padding/length
+corruption and torn handoff recovery. It also verifies byte-exact retention of
+the independent SF5B golden encrypted PERIODIC/EVENT frames.
+
+All host checks are added to `run_host_tests.sh`. They model read-side record
+classification only. There is **no page header codec, reclaim-intent state
+machine, page rotation, FlashBackend writer, asynchronous mutation, Gateway
+runtime instance, radio/counter/ACK integration, real power-cut or authenticated
+custody proof**. An apparently committed record still needs actual verified
+durable storage and authenticated custody policy before ACK eligibility.
+
+This C++ candidate is **not production firmware** and does not change the
+existing 73-byte SF4B format, product flash ownership, live data, firmware
+binary or frozen SF5B bytes. Full host suite on this new exact branch HEAD and
+independent audit are still separate gates.
+
+Next slice: independently review the candidate page header/version,
+reclaim/maintenance semantics and the multi-family object size requirements.
+Only then implement a portable store with asynchronous failure and power-cut
+injection, before contemplating any Gateway flash activation.
