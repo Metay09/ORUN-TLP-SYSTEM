@@ -2,7 +2,7 @@
 # Physical check of ORUN_CONFIG_STORE_V4_SERVICE_INTENT.md section 11 on a
 # GNSS-equipped RAK4631 (the collar) over USB. No power cut, no unplugging.
 #
-#   - after the upgrade the device is still AUTO (legacy GNSS rule);
+#   - AUTO (whatever was saved before): legacy GNSS rule gives TRACKER;
 #   - APP SERVICES T is saved and applied; ROLE BASE is refused;
 #   - after a reboot the saved intent is used (ROLE? mode=SERVICES,
 #     APP SERVICES? applied=EXPLICIT, tracking running);
@@ -11,8 +11,9 @@
 # Usage, from the repository root, with the device's serial logger stopped:
 #   sh firmware/tests/m7/services_remote_check.sh <DEVICE_ID_HEX>
 #
-# It checks out and flashes REF, so the working tree must be clean. It ends on
-# branch "main" with the device running REF and services saved as T.
+# It builds and flashes the current checkout and leaves services saved as T.
+# With REF=<git ref> it checks out REF instead (clean tree needed) and ends
+# on branch "main". Part of firmware/tests/device_check.sh.
 # Every device line it reads is kept in ~/services_check.log.
 set -eu
 
@@ -25,17 +26,20 @@ fi
 
 ID=${1:?usage: sh $0 <DEVICE_ID_HEX>}
 PORT="/dev/serial/by-id/usb-RAKwireless_WisCore_RAK4631_Board_${ID}-if00"
-REF=${REF:-origin/feat/persistent-services}
+REF=${REF:-}
+NAME=${REF:-current checkout}
 LOG="$HOME/services_check.log"
 READER=""
 FAILURES=0
 
 [ -e "$PORT" ] || { echo "No device at $PORT"; exit 1; }
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  echo "Working tree has local changes; commit or stash first."
-  exit 1
+if [ -n "$REF" ]; then
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "Working tree has local changes; commit or stash first."
+    exit 1
+  fi
+  git fetch --quiet origin
 fi
-git fetch --quiet origin
 : > "$LOG"
 
 listen() {
@@ -59,11 +63,11 @@ stop_listen() {
 trap 'stop_listen' EXIT
 
 flash() {
-  echo "== flashing $1"
+  echo "== flashing $NAME"
   stop_listen
-  git checkout --quiet --detach "$1"
+  [ -z "$REF" ] || git checkout --quiet --detach "$REF"
   pio run -d firmware -e rak4630 -t upload --upload-port "$PORT" \
-    > "$LOG.build" 2>&1 || { echo "FAIL build/upload of $1 (see $LOG.build)"; exit 1; }
+    > "$LOG.build" 2>&1 || { echo "FAIL build/upload of $NAME (see $LOG.build)"; exit 1; }
   sleep 3
   listen
   sleep 15  # boot, stores recovered, GNSS detected
@@ -88,10 +92,12 @@ expect() {
     grep -E '^(APP SERVICES|APP SET|APP RESULT|ROLE)' | sed 's/^/     /'
 }
 
-flash "$REF"
+flash
+ask "APP SERVICES AUTO"
+expect 'APP SET .*code=(APPLIED|UNCHANGED) services=AUTO mode=AUTO' "start from AUTO"
 ask "APP SERVICES?"
 expect 'APP SERVICES mode=AUTO .*applied=LEGACY_AUTO .*legacy_mode=TRACKER' \
-  "after the upgrade: AUTO, legacy rule, tracker"
+  "AUTO: legacy rule, tracker"
 ask "APP SERVICES T"
 expect 'APP SET .*code=APPLIED services=T mode=EXPLICIT token=VALID' \
   "tracking saved"
@@ -100,7 +106,7 @@ expect 'ROLE TRACKER mode=SERVICES' "role follows the saved services"
 ask "ROLE BASE"
 expect 'ROLE command rejected: services are configured' "ROLE BASE refused"
 
-flash "$REF"
+flash
 ask "ROLE?"
 expect 'ROLE TRACKER mode=SERVICES' "after reboot: role from saved services"
 ask "APP SERVICES?"
@@ -117,10 +123,11 @@ ask "APP SERVICES T"
 expect 'APP SET .*code=APPLIED services=T mode=EXPLICIT' "tracking saved again"
 
 stop_listen
-git checkout --quiet main
+[ -z "$REF" ] || git checkout --quiet main
 echo
 if [ "$FAILURES" -eq 0 ]; then
-  echo "RESULT: ALL PASS (device left on $REF, services T)"
+  echo "RESULT: ALL PASS (device left on $NAME, services T)"
 else
-  echo "RESULT: $FAILURES FAIL (device left on $REF; log: $LOG)"
+  echo "RESULT: $FAILURES FAIL (device left on $NAME; log: $LOG)"
+  exit 1
 fi
