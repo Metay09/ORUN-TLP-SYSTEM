@@ -269,6 +269,142 @@ int servicesNoGnssScenario() {
   return 0;
 }
 
+// A saved no-tracking intent must not prevent enabling Tracking through the
+// normal USB writer later in this boot. The dormant product region stays
+// untouched until a real accepted GNSS report closes a period.
+int productServicesScenario() {
+  using Fake = SFE_UBLOX_GNSS;
+  auto pass = [](uint32_t elapsed = 10U) {
+    test_now += elapsed;
+    if (radio_manager.isTransmitting()) {
+      radio_driver::Guard guard;
+      assert(guard);
+      callbacks->TxDone();
+    }
+    loop();
+  };
+  auto epoch = [&](uint32_t tow) {
+    Fake::pending.push_back([tow] {
+      UBX_NAV_PVT_data_t pvt{};
+      pvt.iTOW = tow;
+      pvt.flags.bits.gnssFixOK = true;
+      pvt.fixType = 3;
+      pvt.lat = 410000001;
+      pvt.lon = 290000001;
+      pvt.numSV = 8;
+      Fake::current_pvt = pvt;
+      Fake::itow_fresh = true;
+      Fake::pvt(&pvt);
+      UBX_NAV_DOP_data_t dop{tow, 100};
+      Fake::dop(&dop);
+    });
+    pass();
+  };
+  auto regionErased = [] {
+    const auto* bytes = reinterpret_cast<const uint8_t*>(kProductRegionStart);
+    for (uint32_t i = 0; i < kProductRegionEnd - kProductRegionStart; ++i)
+      assert(bytes[i] == 0xFF);
+  };
+
+  assert(config_store.hasCommittedRecord() && explicit_services_active);
+  assert((applied_requested_services & config_format::kServiceTracking) == 0);
+  assert(resolveRuntimeConfig().tracking.state == ServiceState::kDisabled);
+  regionErased();  // boot mount/recovery must be read-only
+  for (unsigned i = 0; i < 16U; ++i)
+    pass(i < 2U ? gnss_config::kPowerSettleMs : 10U);
+  assert(gnss_manager.state() == GnssManager::State::kAcquiring);
+  epoch(1000);
+  epoch(2000);
+  for (unsigned i = 0; i < 8U; ++i) pass();
+  assert(!product_period_open && !location_owner.hasLocation());
+  assert(product_records.diagnostics().submitted == 0U);
+  assert(product_records.diagnostics().stored == 0U);
+  regionErased();  // GNSS input and normal disabled passes still write nothing
+
+  Serial.output.clear();
+  Serial.queueInput("APP SERVICES T\n");
+  for (unsigned i = 0; i < 32U &&
+                       Serial.output.find("code=APPLIED services=T") ==
+                           std::string::npos; ++i)
+    pass();
+  assert(Serial.output.find("code=APPLIED services=T") != std::string::npos);
+  assert(resolveRuntimeConfig().tracking.state == ServiceState::kEnabled);
+  for (unsigned i = 0; i < 24U; ++i) pass();
+  assert(product_period_open && location_owner.hasLocation());
+  assert(product_records.diagnostics().stored == 0U);
+
+  // A second real acquisition closes the first report period and commits
+  // its product record through the production loop, without another setup.
+  pass(gnss_manager.trackingIntervalMs());
+  for (unsigned i = 0; i < 16U &&
+                       gnss_manager.state() != GnssManager::State::kAcquiring;
+       ++i)
+    pass(i == 0U ? gnss_config::kPowerSettleMs : 10U);
+  assert(gnss_manager.state() == GnssManager::State::kAcquiring);
+  epoch(3000);
+  epoch(4000);
+  for (unsigned i = 0; i < 200U &&
+                       product_records.diagnostics().stored == 0U; ++i)
+    pass();
+  assert(product_records.diagnostics().stored == 1U);
+  assert(product_records.diagnostics().failed == 0U);
+  assert(Serial.output.find("PRODUCT STORE append seq=1 ") !=
+         std::string::npos);
+  assert(watchdog_starts == 1U && board_reads == 1U);
+
+  osf::RecordIdentity identity;
+  identity.incarnation = product_records.store().incarnation();
+  identity.sequence = 1;
+  ObservationStore::Record stored;
+  assert(product_records.store().lookup(identity, stored) ==
+         ObservationStore::LookupResult::kFound);
+  tlp::PeriodicObservationPlaintext decoded{};
+  assert(tlp::decodePeriodicPlaintext(stored.payload, stored.payload_size,
+                                      &decoded) ==
+         tlp::ProductSecureCodecResult::kOk);
+  assert(decoded.record_incarnation == identity.incarnation &&
+         decoded.record_sequence == identity.sequence);
+  assert(decoded.latitude_e7 == 410000001 &&
+         decoded.longitude_e7 == 290000001);
+  puts("Startup product records after enabling Tracking in-session: PASS");
+  return 0;
+}
+
+// An unfinished append can drop a later report period. The next successful
+// period must preserve that loss as storage health, not merely a USB counter.
+int productBusyHealthScenario() {
+  assert(product_records.mounted());
+  openProductPeriod(test_now);
+  test_now += 1000;
+  finishProductPeriod(nullptr);
+  assert(product_records.pending());
+  test_now += 1000;
+  finishProductPeriod(nullptr);
+  assert(product_records.diagnostics().dropped_busy == 1U);
+  for (unsigned i = 0; i < 200U && product_records.pending(); ++i) loop();
+  assert(product_records.diagnostics().stored == 1U);
+  test_now += 1000;
+  finishProductPeriod(nullptr);
+  for (unsigned i = 0; i < 200U && product_records.pending(); ++i) loop();
+  assert(product_records.diagnostics().stored == 2U);
+  assert(product_records.diagnostics().failed == 0U);
+
+  osf::RecordIdentity identity;
+  identity.incarnation = product_records.store().incarnation();
+  identity.sequence = 2;
+  ObservationStore::Record stored;
+  assert(product_records.store().lookup(identity, stored) ==
+         ObservationStore::LookupResult::kFound);
+  tlp::PeriodicObservationPlaintext decoded{};
+  assert(tlp::decodePeriodicPlaintext(stored.payload, stored.payload_size,
+                                      &decoded) ==
+         tlp::ProductSecureCodecResult::kOk);
+  assert(decoded.storage_failure_count == 1U);
+  assert((decoded.health_flags & tlp::kHealthStorageDegraded) != 0U);
+  puts("Startup product busy-drop health scenario: PASS");
+  return 0;
+}
+
 // Battery policy through the real loop: CRITICAL after three low readings
 // stretches the tracking interval x4 without touching the stored B; it comes
 // back through LOW (status only) to NORMAL as the voltage recovers.
@@ -451,12 +587,16 @@ int main(int argc, char** argv) {
   const bool uncertain_geofence_scenario = mode == "geofence_uncertain";
   const bool history_erase_i2c_scenario = mode == "history_erase_i2c";
   const bool services_scenario = mode == "services_no_gnss";
+  const bool product_services_scenario = mode == "product_services_none" ||
+                                         mode == "product_services_relay";
+  const bool product_busy_scenario = mode == "product_busy_health";
   const bool battery_scenario = mode == "battery_critical";
   const bool geofence_usb_scenario = mode == "geofence_usb";
   const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails ||
                        no_event_control || geofence_scenario ||
                        persisted_geofence_scenario || uncertain_geofence_scenario ||
                        history_erase_i2c_scenario || services_scenario ||
+                       product_services_scenario || product_busy_scenario ||
                        battery_scenario || geofence_usb_scenario;
   // Each scenario runs in a new process, like a cold boot (static driver gate).
   assert(success || mode == "mutex" || mode == "gate" || mode == "queue" ||
@@ -542,17 +682,22 @@ int main(int argc, char** argv) {
 
   // services_no_gnss: one committed v4 record with EXPLICIT tracking, and a
   // GNSS module that never answers.
-  if (services_scenario) {
+  if (services_scenario || product_services_scenario) {
+    const uint8_t services = services_scenario
+                                 ? config_format::kServiceTracking
+                                 : mode == "product_services_relay"
+                                       ? config_format::kServiceRelayForwarding
+                                       : 0U;
     config_format::TokenizedRecord record(
         1,
         config_format::Config(gnss_config::kTrackingIntervalSeconds, 0,
                               config_format::kServiceModeExplicit,
-                              config_format::kServiceTracking),
+                              services),
         config_format::StateToken(0x0102030405060708ULL, 1));
     uint8_t encoded[config_format::kWriteRecordSize]{};
     config_format::encodeV4(record, encoded);
     memcpy(config_region, encoded, sizeof(encoded));
-    SFE_UBLOX_GNSS::present = false;
+    SFE_UBLOX_GNSS::present = !services_scenario;
   }
 
   // Seed page 0 through the real journal/backend, including a committed fix.
@@ -582,6 +727,8 @@ int main(int argc, char** argv) {
   fake_analog_value = 3315;  // battery divider at 4.2 V
   setup();
   if (services_scenario) return servicesNoGnssScenario();
+  if (product_services_scenario) return productServicesScenario();
+  if (product_busy_scenario) return productBusyHealthScenario();
   if (battery_scenario) return batteryCriticalScenario();
   if (geofence_usb_scenario) return geofenceUsbScenario();
 

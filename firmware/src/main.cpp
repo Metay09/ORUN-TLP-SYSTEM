@@ -1105,7 +1105,8 @@ ProductPeriodBaseline currentProductBaseline() {
   // of a normal acquisition (collar 2026-10-12: 5-29 per successful period).
   now.gnss_failures = gnss.acquisition_timeouts + gnss.configuration_failures;
   now.storage_failures = history.diagnostics().append_failures +
-                         product_records.diagnostics().failed;
+                         product_records.diagnostics().failed +
+                         product_records.diagnostics().dropped_busy;
   const auto radio = radio_manager.eventDiagnostics();
   now.radio_failures = radio.rx_queue_drops + radio.control_event_drops;
   // Accelerometer failures, including failed or implausible stream drains. A
@@ -2940,20 +2941,15 @@ void setup() {
   if (!explicit_services_active)
     Serial.println(F("ROLE AUTO pending (GNSS=>TRACKER, no GNSS=>BASE)"));
 
-  // SF5F step 1: mount the product region before SoftDevice starts (the
-  // synchronous backend refuses afterwards). The Gateway service does not
-  // exist yet, so no device has the Gateway job; every device that may track
-  // (AUTO, or explicit services with tracking) mounts ObservationStore.
-  // Mounting writes nothing: only a tracker's first record prepares a page.
-  {
-    const bool may_track =
-        !explicit_services_active ||
-        (applied_requested_services &
-         orun_tlp::config_format::kServiceTracking) != 0;
-    product_records.begin(device_identity.legacyUint64(),
-                          orun_tlp::product_region::Jobs{false, may_track});
-    printProductStore();
-  }
+  // SF5F step 1: recover the prospective tracker store before SoftDevice
+  // starts (both the synchronous backend and incarnation RNG refuse later).
+  // The Gateway service does not exist yet; every node can enable Tracking
+  // through APP SERVICES without rebooting, including OFF/Relay-only boots.
+  // This read-only mount grants no active Tracking job and does not change
+  // foreign-store refusal. Only a finished tracking period writes a record.
+  product_records.begin(device_identity.legacyUint64(),
+                        orun_tlp::product_region::Jobs{false, true});
+  printProductStore();
 
   // M7P7B: BLE starts last, strictly after History/Config/Geofence/Security
   // have finished their SoftDevice-disabled synchronous recovery above --

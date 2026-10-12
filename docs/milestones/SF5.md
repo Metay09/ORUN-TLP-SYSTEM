@@ -1,6 +1,6 @@
 # SF5 — TLP v2 product observation + 128 KiB durable-data cutover
 
-Status: **SF5A + SF5B + SF5C MERGED. SF5C IS PORTABLE STORAGE ONLY, NOT LINKED INTO PRODUCTION RUNTIME. SF5D PREFLIGHT IS OPEN (see `docs/milestones/SF5D.md`); no physical 128 KiB flash allocation, DFU-model clearance or SF5 production runtime is authorized.**
+Status: **SF5A/B/C MERGED. SF5D5 reserves the 128 KiB product region; SF5E physical qualification passed on 2026-10-12. SF5F step 1 stores PERIODIC records in production code; its collar run remains pending. Protected RF, delivery release and EVENT/RESULT runtime are not yet active. Serial single-bank DFU retention is proven for the recorded image; interrupted/BLE DFU remain open.**
 
 SF5A merge baseline:
 `main@cdb9db172d178acc877b9315453e7adbd7947985`.
@@ -8,7 +8,7 @@ SF5A merge baseline:
 SF5B merged baseline:
 `main@5b757966489e5fe221c05fe1cbf66ff7b1e602d5`.
 
-Active SF5C branch:
+Merged SF5C implementation branch:
 `feat/sf5c-observation-store`.
 
 SF5B frozen contract:
@@ -293,8 +293,11 @@ ObservationStore:
 **Step 1, durable PERIODIC records (2026-10-12, H+build; collar run
 pending):** `ProductRecordStore` (`product_record_store.h`) mounts
 ObservationStore on the product region at boot, before SoftDevice, by the D2
-decision (no device has the Gateway job yet; every device that may track
-mounts; mounting writes nothing). Each finished report period is handed to
+decision (no device has the Gateway job yet). Every node recovers a prospective
+ObservationStore before SoftDevice starts, including saved OFF/Relay-only
+boots, so `APP SERVICES T` can start durable recording without a reboot.
+This standby mount writes nothing and enables no Tracking service; foreign
+CustodyStore pages remain refused. Each finished report period is handed to
 it; it appends the canonical PERIODIC plaintext with the store's own
 identity (the identity inside the record always equals the stored one),
 runs maintenance when the store has no room (control maintenance first when
@@ -302,12 +305,15 @@ a compaction resumes after a reset) and reports one outcome per record
 (`PRODUCT STORE append seq=.. inc=.. result=OK`). USB: `PRODUCT STORE?`,
 `PRODUCT STORE PREPARE CONFIRM` (erases only unrecognised leftovers or a
 faulted store, then reboots to mount). Product append failures count as
-storage failures in the record's health. Host: `test_sf5f_product_record_store`
+storage failures in the record's health, including periods dropped because an
+earlier append is still busy. Host: `test_sf5f_product_record_store`
 (sync/async, owners, prepare, 2000 records through rotation and control
 compaction, then a reset with a half-done write at every one of the 2122
 writes in the second half, each remount storing the next record), startup
 harness (boot mount before BLE, first record stored with the store's
-identity), scope contract. Device: `tests/sf5/sf5f_records_remote_check.sh`
+identity; saved OFF and Relay-only boots enabling Tracking in-session without
+reboot; busy-period loss in the next stored health record), scope contract.
+Device: `tests/sf5/sf5f_records_remote_check.sh`
 (also step 6 of `device_check.sh`). Transitional: TLP v1 POSITION and the
 legacy HistoryStore stay the live path until the RF step; this is not a
 permanent dual store. Not yet: sealing, sending, release on delivery,

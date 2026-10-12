@@ -506,7 +506,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
   firmware/src/observation_store_format.cpp \
   -o "$test_dir/startup"
-for scenario in mutex gate queue lora success advfail blefail noevent geofence geofence_persisted geofence_uncertain history_erase_i2c services_no_gnss battery_critical geofence_usb; do
+for scenario in mutex gate queue lora success advfail blefail noevent geofence geofence_persisted geofence_uncertain history_erase_i2c services_no_gnss product_services_none product_services_relay product_busy_health battery_critical geofence_usb; do
   "$test_dir/startup" "$scenario"
 done
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r4/test_patch_wire.py
