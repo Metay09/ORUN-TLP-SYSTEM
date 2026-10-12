@@ -53,10 +53,16 @@ partially programmed slots, HELD records, intentional admission limits and
 wear/maintenance reduce actual headroom. No capacity or battery-life claim
 is authorized by this arithmetic.
 
-Additional SF5 protected object families (including delegated RESULT) are
-**out of scope** for this 84/100-byte candidate. Check their exact maximum
-size and decide one interoperable storage representation **before** any
-Gateway product flash format is approved.
+A third custody-eligible family is `DELEGATED_SECURE_APP / D2GW RESULT`
+(type 0x01, context 0x04, family 0x02). Its existing envelope has a 56-byte
+header, up to 32-byte ciphertext and an 8-byte tag: **maximum 96 bytes**
+(`tlp_v2_delegated_secure_app.h`, SF5B wire-contract section 16). Thus the
+100-byte *payload slot* fits the three currently documented maxima, but the
+host-only candidate's `productObjectShape()` **intentionally rejects RESULT**.
+There is no approved common family discriminator, variable-length validation,
+identity binding or ACK policy yet. Adding RESULT requires explicit v2 semantic
+decoding/fail-closed tests; do not accept arbitrary 64–96-byte objects merely
+because the bytes fit in the slot.
 
 ## 3. Mandatory sequencing / failure rules
 
@@ -99,6 +105,11 @@ Gateway product flash format is approved.
   erase, queue-full refusal, wear and FIFO progress on the **new** format.
 * Design the tracker's persistent exact-ciphertext cache and identity mapping
   without replacing its validated ObservationStore with a second full history.
+* Close the **DELEGATED_D2GW RESULT acceptance gap**: explicit type/context/
+  family allow-list, exact frame-length validation (envelope maximum 96
+  bytes), full-byte duplicate identity, applicable grant/security policy,
+  and negative tests for cross-family confusion. The current record
+  candidate must continue rejecting that type until this gate closes.
 * Resolve representation/size for *all* custody-eligible product families,
   actual target RAM/flash/airtime, authenticated ACK and Gateway/Edge
   trust-boundary behavior.
