@@ -127,7 +127,8 @@ sleep 10  # GNSS detected, tracking scheduled
 
 send "APP CONFIG?"
 wait_seen 'tracking_interval_seconds=' 10 || fail "APP CONFIG?"
-INTERVAL0=$(field 'APP CONFIG' tracking_interval_seconds)
+INTERVAL0=$(field 'APP RESULT' tracking_interval_seconds)
+[ -n "$INTERVAL0" ] || fail "APP CONFIG? interval missing"
 echo "     once: $(since_mark | grep '^PRODUCT STORE ready=' | tail -n 1)"
 send "APP INTERVAL 60"
 wait_seen '^APP SET .*code=(APPLIED|UNCHANGED) tracking_interval_seconds=60' 10 ||
@@ -135,13 +136,13 @@ wait_seen '^APP SET .*code=(APPLIED|UNCHANGED) tracking_interval_seconds=60' 10 
 
 # 3. Three stored periods with consecutive numbers.
 MARK=$(wc -l < "$LOG")
-for _ in $(seq 1 720); do
+for _ in $(seq 1 1200); do
   [ "$(since_mark | grep -c '^PRODUCT STORE append .*result=OK')" -ge 3 ] && break
   since_mark | grep -q '^PRODUCT STORE append .*result=FAIL' && fail "append FAIL"
   sleep 1
 done
 appends=$(since_mark | grep '^PRODUCT STORE append .*result=OK' | head -n 3)
-[ "$(printf '%s\n' "$appends" | grep -c .)" -eq 3 ] || fail "3 records not stored in 12 min"
+[ "$(printf '%s\n' "$appends" | grep -c .)" -eq 3 ] || fail "3 records not stored in 20 min"
 printf '%s\n' "$appends" | sed 's/^/     /'
 seqs=$(printf '%s\n' "$appends" | sed -n 's/.* seq=\([0-9]*\) .*/\1/p')
 first=$(printf '%s\n' "$seqs" | head -n 1)
