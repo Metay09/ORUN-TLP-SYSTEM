@@ -259,6 +259,13 @@ void testSemanticHeaderGuards() {
     put16(badInverse.data() + 6U, uint16_t(0x1234U));
     resealHeader(badInverse);
     rejectHeader(badInverse);
+    // Pin the explicit version guard independently of the ~version guard:
+    // version=4 with the original ~3 and a NEW valid CRC must be rejected.
+    // Without this case, removing only the version check remains invisible.
+    Header badVersionOnly = valid;
+    put16(badVersionOnly.data() + 4U, 4U);
+    resealHeader(badVersionOnly);
+    rejectHeader(badVersionOnly);
 
     for (uint64_t gen : {uint64_t(0U), uint64_t(UINT64_MAX)}) {
       Header bad = valid;
@@ -291,6 +298,19 @@ void testSemanticIntentGuards() {
     assert(!encodeStagedIntent(page, 18U,
                                untouched.data(), untouched.size()));
     assert(untouched[0] == 0xA5U);
+  }
+
+  // Both ends of the legal 0..31 range must continue to work. This
+  // catches an accidental >=31 bound that would reject the last page.
+  for (uint16_t page_index : {uint16_t(0U), uint16_t(31U)}) {
+    Intent positive{};
+    assert(encodeStagedIntent(page_index, 18U,
+                              positive.data(), positive.size()));
+    commit(positive.data(), kIntentCommitOffset);
+    IntentInspection good;
+    assert(inspectIntent(positive.data(), positive.size(), good));
+    assert(good.evidence == IntentEvidence::kCommitted);
+    assert(good.target_page == page_index && good.target_generation == 18U);
   }
 
   // CRC is recalculated for all the invalid fields, so removing semantic
