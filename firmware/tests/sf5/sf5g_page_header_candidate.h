@@ -22,6 +22,12 @@ constexpr size_t kRecordSize = record::kRecordSize;
 constexpr size_t kObjectMax = record::kObjectMax;
 constexpr size_t kIntentSize = record::kIntentSize;
 constexpr size_t kIntentsPerPage = record::kIntentsPerPage;
+// The 128 KiB product flash region has at most 32 physical 4 KiB pages.
+// A future runtime must ALSO check its actual page count, ownership,
+// source != target, generation and live custody before any erase.
+constexpr uint16_t kMaxRegionPages = 32U;
+static_assert(kMaxRegionPages * kPageSize == 128U * 1024U,
+             "product region size changed");
 
 constexpr size_t kStaticCrcOffset = 28U;
 constexpr size_t kCommitOffset = 32U;
@@ -55,6 +61,7 @@ enum class HeaderEvidence : uint8_t {
 
 struct HeaderInspection {
   HeaderEvidence evidence = HeaderEvidence::kCorrupt;
+  // Diagnostics only on partial activation: never ownership/erase/ACK proof.
   uint64_t generation = 0U;
 };
 
@@ -76,6 +83,8 @@ enum class IntentEvidence : uint8_t {
 
 struct IntentInspection {
   IntentEvidence evidence = IntentEvidence::kCorrupt;
+  // CRC-validated fields may be exposed on partial completion solely for
+  // diagnosis/reconciliation; no erase, completion or ACK authority.
   uint16_t target_page = UINT16_MAX;
   uint64_t target_generation = 0U;
 };
