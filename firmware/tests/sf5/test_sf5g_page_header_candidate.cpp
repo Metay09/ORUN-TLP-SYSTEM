@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include <array>
+#include <initializer_list>
 
 #include "custody_store_format.h"
 #include "observation_store_format.h"
