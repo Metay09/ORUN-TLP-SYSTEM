@@ -256,6 +256,14 @@ g++ "${portable_flags[@]}" -Ifirmware/tests/sf5 \
   firmware/tests/sf5/sf5g_custody_record_candidate.cpp \
   -o "$test_dir/sf5g_custody_record_candidate"
 "$test_dir/sf5g_custody_record_candidate"
+# SF5G next slice: distinct host-only page magic/version and reclaim intent.
+# No FlashBackend writer, mount, erase, or ACK path is linked.
+g++ "${portable_flags[@]}" -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5g_page_header_candidate.cpp \
+  firmware/tests/sf5/sf5g_page_header_candidate.cpp \
+  firmware/tests/sf5/sf5g_custody_record_candidate.cpp \
+  -o "$test_dir/sf5g_page_header_candidate"
+"$test_dir/sf5g_page_header_candidate"
 g++ -DORUN_M4P5B_HOST_TEST=1 "${portable_flags[@]}" \
   firmware/tests/m4/test_m4p5b_history_receipt_admission.cpp \
   firmware/src/history_receipt_admission.cpp \
