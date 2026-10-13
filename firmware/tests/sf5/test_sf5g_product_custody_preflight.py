@@ -13,6 +13,7 @@ root = Path(__file__).resolve().parents[2]
 legacy = (root / "include" / "custody_store_format.h").read_text()
 product = (root / "include" / "tlp_v2_product_secure.h").read_text()
 delegated = (root / "include" / "tlp_v2_delegated_secure_app.h").read_text()
+vectors = (root / "tests" / "sf5" / "sf5b_product_vectors.h").read_text()
 
 
 def pinned(assertion: str, source: str) -> None:
@@ -104,6 +105,36 @@ for size, family in ((84, 2), (100, 1)):
     truncated = bytearray(staged)
     truncated[:2] = b"\x00\x49"
     assert inspect_committed(truncated) is None
+
+# Shared independent encrypted-frame fixtures and independent zlib CRC pin.
+# This cross-checks the C++ candidate's pinned records without using its CRC
+# implementation. Encoders must NOT treat CRC as authentication.
+assert zlib.crc32(b"123456789") == 0xCBF43926
+
+
+def frame_hex(name: str) -> bytes:
+    match = re.search(r"static const char " + name + r"\\[\\] =(.+?);",
+                      vectors, re.DOTALL)
+    assert match is not None, f"SF5B golden vector not found: {name}"
+    parts = re.findall(r'"([0-9a-f]+)"', match.group(1))
+    assert parts, f"SF5B golden vector malformed: {name}"
+    return bytes.fromhex("".join(parts))
+
+
+for name, n, pinned_crc in (
+    ("kPeriodicFrameHex", 100, 0x8F3C43A4),
+    ("kEventFrameHex", 84, 0x2BC3C99C),
+):
+    payload = frame_hex(name)
+    assert len(payload) == n
+    record = stage_exact_object(payload)
+    assert int.from_bytes(record[CRC_AT:COMMIT_AT], "big") == pinned_crc
+    assert zlib.crc32(record[:CRC_AT]) == pinned_crc
+    assert record[COMMIT_AT:COMMIT_AT + 4] == b"\\xff" * 4
+    assert inspect_committed(record) is None
+    record[COMMIT_AT:COMMIT_AT + 4] = b"\\x00" * 4
+    assert inspect_committed(record) == payload
+
 
 print("SF5G custody preflight (legacy guard + candidate geometry/model): PASS")
 print(f"Candidate: {RECORDS_PER_PAGE} records/page, {GAP}-byte gap, "
