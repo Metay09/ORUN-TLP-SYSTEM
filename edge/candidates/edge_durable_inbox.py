@@ -7,6 +7,7 @@ authority, protocol and physical power-cut qualification are not implemented.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from enum import Enum, auto
 from hashlib import sha256
@@ -85,7 +86,7 @@ class EdgeDurableInbox:
         return connection
 
     def _setup(self) -> None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
             if mode.lower() != "wal":
                 raise RuntimeError("WAL journaling is required for inbox")
@@ -110,13 +111,14 @@ class EdgeDurableInbox:
     def _readback(self, sequence: int, original: bytes) -> bool:
         # Independently reopen the SQLite store after successful COMMIT.
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 row = conn.execute(
-                    "SELECT ciphertext,size FROM exact_frames WHERE sequence=?",
+                    "SELECT ciphertext,size,digest FROM exact_frames WHERE sequence=?",
                     (sequence,),
                 ).fetchone()
                 return bool(row and row[1] == len(original) and
-                            bytes(row[0]) == original)
+                            bytes(row[0]) == original and
+                            bytes(row[2]) == sha256(original).digest())
         except sqlite3.Error:
             return False
 
@@ -133,7 +135,7 @@ class EdgeDurableInbox:
         committed = False
 
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 try:
                     matches = conn.execute(
@@ -142,7 +144,11 @@ class EdgeDurableInbox:
                         (digest, len(object_bytes)),
                     ).fetchall()
                     for existing_id, blob in matches:
-                        if bytes(blob) == object_bytes:
+                        stored = bytes(blob)
+                        if len(stored) != len(object_bytes) or sha256(stored).digest() != digest:
+                            conn.execute("ROLLBACK")
+                            return PutResult(PutState.REJECTED)
+                        if stored == object_bytes:
                             sequence = int(existing_id)
                             duplicate = True
                             break
@@ -182,7 +188,7 @@ class EdgeDurableInbox:
 
     def retained_count(self) -> Optional[int]:
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 return int(conn.execute(
                     "SELECT count(*) FROM exact_frames"
                 ).fetchone()[0])
