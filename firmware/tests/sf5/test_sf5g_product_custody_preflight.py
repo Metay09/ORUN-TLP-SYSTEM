@@ -113,7 +113,7 @@ assert zlib.crc32(b"123456789") == 0xCBF43926
 
 
 def frame_hex(name: str) -> bytes:
-    match = re.search(r"static const char " + name + r"\\[\\] =(.+?);",
+    match = re.search(r"static const char " + name + r"\[\] =(.+?);",
                       vectors, re.DOTALL)
     assert match is not None, f"SF5B golden vector not found: {name}"
     parts = re.findall(r'"([0-9a-f]+)"', match.group(1))
@@ -130,9 +130,9 @@ for name, n, pinned_crc in (
     record = stage_exact_object(payload)
     assert int.from_bytes(record[CRC_AT:COMMIT_AT], "big") == pinned_crc
     assert zlib.crc32(record[:CRC_AT]) == pinned_crc
-    assert record[COMMIT_AT:COMMIT_AT + 4] == b"\\xff" * 4
+    assert record[COMMIT_AT:COMMIT_AT + 4] == b"\xff" * 4
     assert inspect_committed(record) is None
-    record[COMMIT_AT:COMMIT_AT + 4] = b"\\x00" * 4
+    record[COMMIT_AT:COMMIT_AT + 4] = b"\x00" * 4
     assert inspect_committed(record) == payload
 
 
