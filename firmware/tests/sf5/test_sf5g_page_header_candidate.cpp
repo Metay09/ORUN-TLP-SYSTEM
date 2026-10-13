@@ -20,6 +20,48 @@ void put32(uint8_t* p, uint32_t n) {
   p[2] = static_cast<uint8_t>(n >> 8);
   p[3] = static_cast<uint8_t>(n);
 }
+void put16(uint8_t* p, uint16_t n) {
+  p[0] = static_cast<uint8_t>(n >> 8);
+  p[1] = static_cast<uint8_t>(n);
+}
+void put64(uint8_t* p, uint64_t n) {
+  for (unsigned i = 0U; i < 8U; ++i)
+    p[i] = static_cast<uint8_t>(n >> (56U - 8U * i));
+}
+using Header = std::array<uint8_t, kHeaderSize>;
+using Intent = std::array<uint8_t, kIntentSize>;
+void resealHeader(Header& raw) {
+  put32(raw.data() + kStaticCrcOffset,
+        record::crc32(raw.data(), kStaticCrcOffset));
+}
+void resealIntent(Intent& raw) {
+  put32(raw.data() + kIntentCrcOffset,
+        record::crc32(raw.data(), kIntentCrcOffset));
+}
+void rejectHeader(const Header& raw) {
+  // A valid CRC excludes the easy false positive where the CRC, not
+  // semantic validation, is solely responsible for rejection.
+  assert(record::crc32(raw.data(), kStaticCrcOffset) ==
+         (uint32_t(raw[kStaticCrcOffset]) << 24 |
+          uint32_t(raw[kStaticCrcOffset + 1U]) << 16 |
+          uint32_t(raw[kStaticCrcOffset + 2U]) << 8 |
+          uint32_t(raw[kStaticCrcOffset + 3U])));
+  HeaderInspection state;
+  assert(inspectHeader(raw.data(), raw.size(), state));
+  assert(state.evidence == HeaderEvidence::kCorrupt);
+  assert(state.generation == 0U);
+}
+void rejectIntent(const Intent& raw) {
+  assert(record::crc32(raw.data(), kIntentCrcOffset) ==
+         (uint32_t(raw[kIntentCrcOffset]) << 24 |
+          uint32_t(raw[kIntentCrcOffset + 1U]) << 16 |
+          uint32_t(raw[kIntentCrcOffset + 2U]) << 8 |
+          uint32_t(raw[kIntentCrcOffset + 3U])));
+  IntentInspection state;
+  assert(inspectIntent(raw.data(), raw.size(), state));
+  assert(state.evidence == IntentEvidence::kCorrupt);
+  assert(state.target_page == UINT16_MAX && state.target_generation == 0U);
+}
 void commit(uint8_t* p, size_t offset) {
   memset(p + offset, 0, 4U);
 }
@@ -47,6 +89,26 @@ void testHeader() {
   assert(result.evidence == HeaderEvidence::kStaged);
   const auto staged = out;
 
+  // A partial OCP3 magic is intentionally FOREIGN, not automatically
+  // reclaimable or even provably our page. This is a documented, safe but
+  // currently liveness-limiting preflight choice.
+  for (size_t prefix = 1U; prefix < 4U; ++prefix) {
+    Header torn{};
+    torn.fill(0xFFU);
+    memcpy(torn.data(), staged.data(), prefix);
+    assert(inspectHeader(torn.data(), torn.size(), result));
+    assert(result.evidence == HeaderEvidence::kForeign);
+  }
+  auto partialMagic = staged;
+  partialMagic[0] |= 0x80U;  // NOR partial program: clear fewer bits
+  assert(inspectHeader(partialMagic.data(), partialMagic.size(), result));
+  assert(result.evidence == HeaderEvidence::kForeign);
+  partialMagic = staged;
+  partialMagic[1] = 0xFFU;
+  commit(partialMagic.data(), kCommitOffset);
+  assert(inspectHeader(partialMagic.data(), partialMagic.size(), result));
+  assert(result.evidence == HeaderEvidence::kForeign);
+
   for (size_t prefix = 0U; prefix <= kCommitOffset; ++prefix) {
     auto torn = std::array<uint8_t, kHeaderSize>{};
     torn.fill(0xFFU);
@@ -70,6 +132,7 @@ void testHeader() {
   out[kActiveOffset] = 0xFEU;
   assert(inspectHeader(out.data(), out.size(), result));
   assert(result.evidence == HeaderEvidence::kPartialActivation);
+  assert(result.generation == 17U);  // diagnostic-only, never mount authority
 
   out = staged;
   commit(out.data(), kCommitOffset);
@@ -144,6 +207,7 @@ void testIntent() {
   out[kIntentDoneOffset] = 0xFEU;
   assert(inspectIntent(out.data(), out.size(), result));
   assert(result.evidence == IntentEvidence::kPartialCompletion);
+  assert(result.target_page == 7U && result.target_generation == 18U);
   out = staged;
   commit(out.data(), kIntentCommitOffset);
   commit(out.data(), kIntentDoneOffset);
@@ -161,10 +225,102 @@ void testIntent() {
     }
   }
 }
+
+// Test semantic contract checks with CRC32 RESEALED after every mutation.
+// Without this, deleting version, inverse, generation and geometry guards
+// would still PASS the ordinary bit-flip checks (the independent audit's
+// MEDIUM-1 finding).
+void testSemanticHeaderGuards() {
+  Header staged{};
+  assert(encodeStagedHeader(17U, staged.data(), staged.size()));
+  Header prepared = staged;
+  commit(prepared.data(), kCommitOffset);
+  Header active = prepared;
+  commit(active.data(), kActiveOffset);
+  struct GeometryCase { size_t offset; uint16_t wrong; };
+  const GeometryCase geometry[] = {
+      {16U, 63U},  // header size
+      {18U, 92U},  // legacy record size
+      {20U, 33U},  // records per page
+      {22U, 73U},  // legacy object max
+      {24U, 23U},  // intent slot size
+      {26U, 4U},   // intent slot count
+  };
+  // BOTH prepared and active headers must reject unsupported metadata.
+  for (const auto& valid : {prepared, active}) {
+    for (uint16_t version : {uint16_t(2U), uint16_t(4U)}) {
+      Header bad = valid;
+      put16(bad.data() + 4U, version);
+      put16(bad.data() + 6U, static_cast<uint16_t>(~version));
+      resealHeader(bad);
+      rejectHeader(bad);
+    }
+    Header badInverse = valid;
+    put16(badInverse.data() + 6U, uint16_t(0x1234U));
+    resealHeader(badInverse);
+    rejectHeader(badInverse);
+
+    for (uint64_t gen : {uint64_t(0U), UINT64_MAX}) {
+      Header bad = valid;
+      put64(bad.data() + 8U, gen);
+      resealHeader(bad);
+      rejectHeader(bad);
+    }
+    for (const auto& entry : geometry) {
+      Header bad = valid;
+      put16(bad.data() + entry.offset, entry.wrong);
+      resealHeader(bad);
+      rejectHeader(bad);
+    }
+  }
+}
+
+void testSemanticIntentGuards() {
+  Intent staged{};
+  assert(encodeStagedIntent(7U, 18U, staged.data(), staged.size()));
+  Intent committed = staged;
+  commit(committed.data(), kIntentCommitOffset);
+  Intent completed = committed;
+  commit(completed.data(), kIntentDoneOffset);
+
+  // Encoding never emits an intent outside the 128 KiB product region;
+  // rejected writes leave output bytes unchanged.
+  Intent untouched{};
+  untouched.fill(0xA5U);
+  for (uint16_t page : {uint16_t(32U), uint16_t(7000U), UINT16_MAX}) {
+    assert(!encodeStagedIntent(page, 18U,
+                               untouched.data(), untouched.size()));
+    assert(untouched[0] == 0xA5U);
+  }
+
+  // CRC is recalculated for all the invalid fields, so removing semantic
+  // guards is detectable even though CRC checking itself still works.
+  for (const auto& valid : {committed, completed}) {
+    for (uint16_t page : {kMaxRegionPages, uint16_t(7000U), UINT16_MAX}) {
+      Intent bad = valid;
+      put16(bad.data(), page);
+      resealIntent(bad);
+      rejectIntent(bad);
+    }
+    Intent reserved = valid;
+    put16(reserved.data() + 2U, 1U);
+    resealIntent(reserved);
+    rejectIntent(reserved);
+
+    for (uint64_t gen : {uint64_t(0U), UINT64_MAX}) {
+      Intent bad = valid;
+      put64(bad.data() + 4U, gen);
+      resealIntent(bad);
+      rejectIntent(bad);
+    }
+  }
+}
 }  // namespace
 
 int main() {
   testHeader();
   testIntent();
+  testSemanticHeaderGuards();
+  testSemanticIntentGuards();
   puts("SF5G page header/intent candidate: staged/commit/foreign/torn guards: PASS");
 }
