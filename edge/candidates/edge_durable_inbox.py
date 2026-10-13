@@ -53,7 +53,7 @@ def admissible_product_frame(data: bytes) -> bool:
         return False
     if data[6] != (48 if len(data) == 84 else 64):
         return False
-    if data[16:20] == b"\\xff" * 4 or data[20:28] == b"\\x00" * 8:
+    if data[16:20] == bytes([0xFF]) * 4 or data[20:28] == bytes(8):
         return False
     return True
 
