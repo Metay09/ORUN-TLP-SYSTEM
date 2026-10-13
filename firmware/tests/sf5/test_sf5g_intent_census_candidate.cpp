@@ -151,7 +151,7 @@ void testRefusalAndReadFaults() {
     nor::NorPage media;
     putSlot(media, 0U, staged(2U, 7U), true, true);
     const uint8_t zero = 0U;
-    assert(media.program(kArea + 7U, &zero, 1U));
+    assert(media.program(kArea + 11U, &zero, 1U));
     assert(inspectJournal(media, 0U, 4U).state ==
            JournalState::kRefused);  // CRC mismatch with committed markers
   }
