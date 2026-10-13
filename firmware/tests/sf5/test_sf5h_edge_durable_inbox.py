@@ -139,10 +139,10 @@ def test_shape_and_database_paths() -> None:
             changed[index] = value
             variants.append(bytes(changed))
         changed = bytearray(a)
-        changed[16:20] = b"\\xff" * 4
+        changed[16:20] = bytes([0xFF]) * 4
         variants.append(bytes(changed))
         changed = bytearray(a)
-        changed[20:28] = b"\\x00" * 8
+        changed[20:28] = bytes(8)
         variants.append(bytes(changed))
         for value in variants:
             assert inbox.put(value).state == PutState.INVALID
