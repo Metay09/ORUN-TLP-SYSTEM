@@ -59,9 +59,11 @@ def test_exact_bytes_and_restart() -> None:
                 "SELECT ciphertext,size FROM exact_frames ORDER BY sequence"
             ).fetchall()
             mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
-            sync = conn.execute("PRAGMA synchronous").fetchone()[0]
             assert stored == [(a, 84), (b, 100)]
-            assert mode.lower() == "wal" and sync == 2
+            assert mode.lower() == "wal"
+        from contextlib import closing
+        with closing(reopened._connect()) as checked_conn:
+            assert checked_conn.execute("PRAGMA synchronous").fetchone()[0] == 2
 
 
 def test_crash_before_and_after_commit() -> None:
@@ -97,8 +99,7 @@ def test_index_collision_requires_exact_bytes() -> None:
 
     with tempfile.TemporaryDirectory() as folder:
         inbox = EdgeDurableInbox(Path(folder) / "hashcollision.db")
-        original_sha = module.sha256
-        del original_sha  # fixture intentionally models an unlikely digest collision
+        # Inject a digest collision to prove full-byte comparison.
         with patch.object(module, "sha256", return_value=ConstantHash()):
             a, b = frame(84, 44), frame(84, 45)
             assert inbox.put(a).state == PutState.COMMITTED
