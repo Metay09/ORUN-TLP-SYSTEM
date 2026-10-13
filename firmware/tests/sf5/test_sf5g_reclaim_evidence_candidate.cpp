@@ -183,13 +183,8 @@ void testRejectAmbiguousBytes() {
     assert(f.run().state == ReviewState::kRefused);
   }
   {
-    Fixture f;
-    f.handoffAll();
-    f.acceptAll();
-    // A-only handoff ordering is mandatory: B committed with A erased
-    // is impossible for an ordered writer and must not count as release.
-    const uint8_t ones[4] = {0U, 0U, 0U, 0U};
-    // First construct a fresh page with B-only on one slot.
+    // A must be committed before B in an ordered writer. A B-only
+    // handoff is impossible and must not be interpreted as release.
     Fixture broken;
     broken.acceptAll();
     for (size_t i = 0U; i < format::kRecordsPerPage; ++i) {
@@ -198,7 +193,6 @@ void testRejectAmbiguousBytes() {
       else
         broken.handoff(i);
     }
-    (void)ones;
     assert(broken.run().state == ReviewState::kRefused);
   }
   {
