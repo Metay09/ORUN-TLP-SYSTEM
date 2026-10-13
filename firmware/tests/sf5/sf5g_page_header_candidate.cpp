@@ -101,9 +101,12 @@ bool inspectHeader(const uint8_t* bytes, size_t size,
     return true;
   }
   const uint32_t active = get32(bytes + kActiveOffset);
+  // Static header has already passed CRC, version and geometry guards.
+  // Retain validated identity for partial-activation diagnostics only; the
+  // caller must never infer mount/erase/custody authority from it.
+  out.generation = get64(bytes + 8U);
   if (active == kErased) {
     out.evidence = HeaderEvidence::kPrepared;
-    out.generation = get64(bytes + 8U);
     return true;
   }
   if (active != kCommitted) {
@@ -111,13 +114,13 @@ bool inspectHeader(const uint8_t* bytes, size_t size,
     return true;
   }
   out.evidence = HeaderEvidence::kActive;
-  out.generation = get64(bytes + 8U);
   return true;
 }
 
 bool encodeStagedIntent(uint16_t page, uint64_t generation,
                         uint8_t* out, size_t size) {
-  if (out == nullptr || size != kIntentSize || page == UINT16_MAX ||
+  if (out == nullptr || size != kIntentSize ||
+      page >= kMaxRegionPages ||
       generation == 0U || generation == UINT64_MAX) return false;
   uint8_t intent[kIntentSize];
   memset(intent, 0xFF, sizeof(intent));
@@ -145,7 +148,9 @@ bool inspectIntent(const uint8_t* bytes, size_t size, IntentInspection& out) {
     out.evidence = IntentEvidence::kPartialCommit;
     return true;
   }
-  if (get16(bytes + 0U) == UINT16_MAX ||
+  // Structural region bound only. A future store must also verify its
+  // actual page count and prohibit self-targeting before any erase.
+  if (get16(bytes + 0U) >= kMaxRegionPages ||
       get16(bytes + 2U) != 0U ||
       get64(bytes + 4U) == 0U || get64(bytes + 4U) == UINT64_MAX ||
       get32(bytes + kIntentCrcOffset) !=
@@ -153,13 +158,16 @@ bool inspectIntent(const uint8_t* bytes, size_t size, IntentInspection& out) {
     out.evidence = IntentEvidence::kCorrupt;
     return true;
   }
+  // The target fields are CRC-validated but NEVER authorize an erase on
+  // their own. Expose them even if the completion marker is torn, so a
+  // separate fail-closed state machine can diagnose/reconcile the record.
+  out.target_page = get16(bytes);
+  out.target_generation = get64(bytes + 4U);
   const uint32_t done = get32(bytes + kIntentDoneOffset);
   if (done != kErased && done != kCommitted) {
     out.evidence = IntentEvidence::kPartialCompletion;
     return true;
   }
-  out.target_page = get16(bytes);
-  out.target_generation = get64(bytes + 4U);
   out.evidence = done == kCommitted ? IntentEvidence::kCompleted
                                     : IntentEvidence::kCommitted;
   return true;
