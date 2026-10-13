@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include <array>
+#include <initializer_list>
 
 using namespace orun_tlp::sf5g_edge_accept_candidate;
 
