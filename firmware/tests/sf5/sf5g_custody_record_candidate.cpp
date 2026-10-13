@@ -112,7 +112,11 @@ bool inspectRecord(const uint8_t* bytes, size_t size,
 
 bool sameExactObject(const RecordInspection& found,
                      const uint8_t* object, size_t size) {
-  if (object == nullptr || found.object_size != size ||
+  // Never trust a caller-supplied inspection's length to bound our fixed
+  // object buffer. The normal reader produces only 84 or 100 bytes, but this
+  // helper must remain safe even with a corrupted or synthetic inspection.
+  if (object == nullptr || (size != 84U && size != 100U) ||
+      size > kObjectMax || found.object_size != size ||
       (found.evidence != Evidence::kHeld &&
        found.evidence != Evidence::kHandedOff)) return false;
   return memcmp(found.object, object, size) == 0;
