@@ -254,12 +254,25 @@ int main() {
   assert(!sameExactObject(forged, huge.data(), huge.size()));
   forged.object_size = 101U;
   std::vector<uint8_t> correct_size(100U, 0xAAU);
+  memcpy(forged.object, correct_size.data(), correct_size.size());
   assert(!sameExactObject(forged, correct_size.data(), correct_size.size()));
+  // Positive control proves the negative evidence/size cases fail due
+  // to their gate, NOT because memcmp happens to differ.
   forged.object_size = 100U;
-  forged.evidence = Evidence::kCorrupt;
-  assert(!sameExactObject(forged, correct_size.data(), correct_size.size()));
-  forged.evidence = Evidence::kStaged;
-  assert(!sameExactObject(forged, correct_size.data(), correct_size.size()));
+  assert(sameExactObject(forged, correct_size.data(), correct_size.size()));
+  for (Evidence invalid : {Evidence::kCorrupt, Evidence::kStaged,
+                           Evidence::kPartialCommit, Evidence::kErased}) {
+    forged.evidence = invalid;
+    assert(!sameExactObject(forged, correct_size.data(),
+                            correct_size.size()));
+  }
+  forged.evidence = Evidence::kHeld;
+  for (size_t invalid_size : {50U, 99U}) {
+    forged.object_size = static_cast<uint16_t>(invalid_size);
+    std::vector<uint8_t> short_object(invalid_size, 0xAAU);
+    assert(!sameExactObject(forged, short_object.data(),
+                            short_object.size()));
+  }
   auto p = fakeFrame(100);
   std::array<uint8_t,kRecordSize> out{};
   out.fill(0x7A);
