@@ -47,6 +47,14 @@ Candidate 120-byte record:
 | 112 | 4 | Edge-handoff marker A |
 | 116 | 4 | Edge-handoff marker B |
 
+For PRODUCT_SECURE custody admission the wire-contract section 5
+permits a direct `CUSTODY_REQUESTED` frame with flags `0x02` **or** a
+relay-allowed custody frame with flags `0x03`. Only the custody-request
+bit is mandatory here; `RELAY_ALLOWED` is optional. Best-effort flags
+`0x00/0x01` and unknown flags are rejected by this *host-only*
+candidate's custody prefilter. This is not cryptographic authentication
+and does not alter the production codec or general PRODUCT_SECURE decoder.
+
 The `32 x 32 = 1,024` theoretical slots across 32 product-region pages
 are **NOT** usable queue capacity: a spare page, reclamation,
 partially programmed slots, HELD records, intentional admission limits and
@@ -132,6 +140,18 @@ test. The latter exercises staged/partial-commit classification, 108 possible
 prefix tears per record length, synthetic reboot/re-read, data/padding/length
 corruption and torn handoff recovery. It also verifies byte-exact retention of
 the independent SF5B golden encrypted PERIODIC/EVENT frames.
+
+Independent PR #119 audit on `b56e72d` concluded
+**PASS WITH FIXES / 0 BLOCKER / 0 HIGH / 1 MEDIUM / 5 LOW**.
+The MEDIUM finding was the incorrect hard-coded `path_flags=0x03`
+restriction; the candidate now admits `0x02` and `0x03` and rejects
+`0x00/0x01`. Additional host regressions check delegated-family rejection
+at both supported lengths, bounded exact-object matching, impossible
+handoff marker ordering, synthetic bit/commit tears, absent commit and
+corrupt/legacy records, and independent SF5B packet CRC fixtures against
+Python `zlib`. **All these later changes still require a fresh full host
+run and independent follow-up review on the final HEAD; earlier PASS logs
+do not verify the newly added tests.**
 
 All host checks are added to `run_host_tests.sh`. They model read-side record
 classification only. There is **no page header codec, reclaim-intent state
