@@ -76,6 +76,16 @@ void checkOne(size_t n) {
   assert(inspectRecord(raw.data(), raw.size(), found));
   assert(found.evidence == Evidence::kHandedOff);
   assert(sameExactObject(found, frame.data(), frame.size()));
+  // When BOTH marker slots have torn, retain the exact object but do not
+  // mistake either partial marker for completed handoff or free space.
+  raw = staged;
+  memset(raw.data() + kRecordCommitOffset, 0, 4);
+  raw[kRecordHandoff0Offset] = 0xFE;
+  raw[kRecordHandoff1Offset] = 0xFE;
+  assert(inspectRecord(raw.data(), raw.size(), found));
+  assert(found.evidence == Evidence::kHeld);
+  assert(found.handoff_uncertain && found.next_handoff_slot == 0xFFU);
+  assert(sameExactObject(found, frame.data(), frame.size()));
   // Don't authorize this state as custody ACK: no such interface exists.
 }
 }
@@ -97,6 +107,16 @@ int main() {
     assert(actual.evidence == Evidence::kHeld);
     assert(sameExactObject(actual, frame.data(), frame.size()));
   }
+  // The comparison API must reject an externally corrupted length rather
+  // than reading past RecordInspection.object[100] under ASan.
+  RecordInspection forged;
+  forged.evidence = Evidence::kHeld;
+  forged.object_size = 101U;
+  std::vector<uint8_t> oversized(101U, 0xAAU);
+  assert(!sameExactObject(forged, oversized.data(), oversized.size()));
+  forged.object_size = 65535U;
+  std::vector<uint8_t> huge(65535U, 0xAAU);
+  assert(!sameExactObject(forged, huge.data(), huge.size()));
   auto p = fakeFrame(100);
   std::array<uint8_t,kRecordSize> out{};
   out.fill(0x7A);
