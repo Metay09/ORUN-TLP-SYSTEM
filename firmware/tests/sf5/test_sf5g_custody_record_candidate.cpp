@@ -88,10 +88,145 @@ void checkOne(size_t n) {
   assert(sameExactObject(found, frame.data(), frame.size()));
   // Don't authorize this state as custody ACK: no such interface exists.
 }
+
+// Independent admission matrix for both supported PRODUCT_SECURE families.
+// Only custody-requested path flags are eligible; RELAY_ALLOWED is optional.
+void testCustodyPathFlags() {
+  for (size_t n : {84U, 100U}) {
+    for (unsigned flags = 0U; flags < 8U; ++flags) {
+      std::vector<uint8_t> frame = fakeFrame(n);
+      frame[4] = static_cast<uint8_t>(flags);
+      const bool accept = (flags == 2U || flags == 3U);
+      assert(productObjectShape(frame.data(), frame.size()) == accept);
+      std::array<uint8_t, kRecordSize> staged{};
+      staged.fill(0x7AU);
+      assert(encodeStagedRecord(frame.data(), frame.size(),
+                                staged.data(), staged.size()) == accept);
+      if (!accept) {
+        assert(staged[0] == 0x7AU);
+        continue;
+      }
+      memset(staged.data() + kRecordCommitOffset, 0, 4U);
+      RecordInspection found;
+      assert(inspectRecord(staged.data(), staged.size(), found));
+      assert(found.evidence == Evidence::kHeld);
+      assert(sameExactObject(found, frame.data(), frame.size()));
+    }
+  }
+}
+
+void testDelegatedRejectedByFamilyNotJustLength() {
+  for (size_t n : {84U, 96U, 100U}) {
+    std::vector<uint8_t> delegated = fakeFrame(n);
+    delegated[1] = 0x01U;  // DELEGATED_SECURE_APP
+    delegated[2] = 0x04U;  // D2GW
+    delegated[3] = 0x02U;  // RESULT
+    assert(!productObjectShape(delegated.data(), delegated.size()));
+    std::array<uint8_t, kRecordSize> out{};
+    out.fill(0x7AU);
+    assert(!encodeStagedRecord(delegated.data(), delegated.size(),
+                               out.data(), out.size()));
+    assert(out[0] == 0x7AU);
+  }
+}
+
+void testBitTearsAndNegativeStates() {
+  std::vector<uint8_t> frame = fakeFrame(100U);
+  std::array<uint8_t, kRecordSize> staged{};
+  assert(encodeStagedRecord(frame.data(), frame.size(),
+                            staged.data(), staged.size()));
+  std::array<uint8_t, kRecordSize> committed = staged;
+  memset(committed.data() + kRecordCommitOffset, 0, 4U);
+  RecordInspection state;
+  assert(inspectRecord(committed.data(), committed.size(), state));
+  assert(state.evidence == Evidence::kHeld);
+
+  // Flip each one of the 864 data/CRC bits of an otherwise committed record.
+  // A torn body or CRC must never become HELD or HANDED_OFF.
+  for (size_t at = 0U; at < kRecordCommitOffset; ++at) {
+    for (unsigned bit = 0U; bit < 8U; ++bit) {
+      auto damaged = committed;
+      damaged[at] ^= static_cast<uint8_t>(1U << bit);
+      assert(inspectRecord(damaged.data(), damaged.size(), state));
+      assert(state.evidence != Evidence::kHeld &&
+             state.evidence != Evidence::kHandedOff);
+    }
+  }
+  // Each nonzero commit byte (all 255 byte values, at all 4 offsets)
+  // means PARTIAL_COMMIT, regardless of the perfect data and CRC.
+  for (size_t at = kRecordCommitOffset; at < kRecordCommitOffset + 4U; ++at) {
+    for (unsigned value = 1U; value <= 255U; ++value) {
+      auto damaged = committed;
+      damaged[at] = static_cast<uint8_t>(value);
+      assert(inspectRecord(damaged.data(), damaged.size(), state));
+      assert(state.evidence == Evidence::kPartialCommit);
+    }
+  }
+  // Commit absent, handoff programmed: the handoff must not promote a
+  // record that was never committed.
+  auto abnormal = staged;
+  memset(abnormal.data() + kRecordHandoff0Offset, 0, 4U);
+  assert(inspectRecord(abnormal.data(), abnormal.size(), state));
+  assert(state.evidence == Evidence::kStaged);
+
+  // Completely erased data/CRC plus committed marker has no valid object.
+  abnormal.fill(0xFFU);
+  memset(abnormal.data() + kRecordCommitOffset, 0, 4U);
+  assert(inspectRecord(abnormal.data(), abnormal.size(), state));
+  assert(state.evidence == Evidence::kCorrupt);
+
+  // A legacy 73-byte item is never a valid product frame, even when the
+  // record CRC is recalculated correctly for that unsupported length.
+  abnormal = committed;
+  abnormal[0] = 0U; abnormal[1] = 73U;
+  const uint32_t legacy_crc = crc32(abnormal.data(), kRecordCrcOffset);
+  abnormal[kRecordCrcOffset] = static_cast<uint8_t>(legacy_crc >> 24);
+  abnormal[kRecordCrcOffset + 1U] = static_cast<uint8_t>(legacy_crc >> 16);
+  abnormal[kRecordCrcOffset + 2U] = static_cast<uint8_t>(legacy_crc >> 8);
+  abnormal[kRecordCrcOffset + 3U] = static_cast<uint8_t>(legacy_crc);
+  assert(inspectRecord(abnormal.data(), abnormal.size(), state));
+  assert(state.evidence == Evidence::kCorrupt);
+
+  // Impossible handoff order: A erased, B torn. Do not offer A as writable.
+  abnormal = committed;
+  abnormal[kRecordHandoff1Offset] = 0xFEU;
+  assert(inspectRecord(abnormal.data(), abnormal.size(), state));
+  assert(state.evidence == Evidence::kHeld);
+  assert(state.handoff_uncertain && state.next_handoff_slot == 0xFFU);
+  assert(sameExactObject(state, frame.data(), frame.size()));
+}
+
+void testCrossLanguageCrcVectors() {
+  const uint8_t kat[] = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  assert(crc32(kat, sizeof(kat)) == 0xCBF43926U);
+  struct Vector { const char* hex; size_t size; uint32_t crc; };
+  const Vector cases[] = {
+      {orun_tlp::sf5b_vectors::kPeriodicFrameHex, 100U, 0x8F3C43A4U},
+      {orun_tlp::sf5b_vectors::kEventFrameHex, 84U, 0x2BC3C99CU},
+  };
+  for (const Vector& v : cases) {
+    std::vector<uint8_t> frame(v.size);
+    assert(orun_tlp::sf5b_vectors::fromHex(v.hex, frame.data(), v.size));
+    std::array<uint8_t, kRecordSize> staged{};
+    assert(encodeStagedRecord(frame.data(), frame.size(),
+                              staged.data(), staged.size()));
+    assert(crc32(staged.data(), kRecordCrcOffset) == v.crc);
+    assert(staged[kRecordCrcOffset] == static_cast<uint8_t>(v.crc >> 24));
+    assert(staged[kRecordCrcOffset + 1U] ==
+           static_cast<uint8_t>(v.crc >> 16));
+    assert(staged[kRecordCrcOffset + 2U] ==
+           static_cast<uint8_t>(v.crc >> 8));
+    assert(staged[kRecordCrcOffset + 3U] == static_cast<uint8_t>(v.crc));
+  }
+}
 }
 int main() {
   checkOne(84);
   checkOne(100);
+  testCustodyPathFlags();
+  testDelegatedRejectedByFamilyNotJustLength();
+  testBitTearsAndNegativeStates();
+  testCrossLanguageCrcVectors();
   // Exact encrypted PRODUCT_SECURE bytes from the independent SF5B golden set.
   for (const char* hex : {orun_tlp::sf5b_vectors::kEventFrameHex,
                           orun_tlp::sf5b_vectors::kPeriodicFrameHex}) {
@@ -117,6 +252,14 @@ int main() {
   forged.object_size = 65535U;
   std::vector<uint8_t> huge(65535U, 0xAAU);
   assert(!sameExactObject(forged, huge.data(), huge.size()));
+  forged.object_size = 101U;
+  std::vector<uint8_t> correct_size(100U, 0xAAU);
+  assert(!sameExactObject(forged, correct_size.data(), correct_size.size()));
+  forged.object_size = 100U;
+  forged.evidence = Evidence::kCorrupt;
+  assert(!sameExactObject(forged, correct_size.data(), correct_size.size()));
+  forged.evidence = Evidence::kStaged;
+  assert(!sameExactObject(forged, correct_size.data(), correct_size.size()));
   auto p = fakeFrame(100);
   std::array<uint8_t,kRecordSize> out{};
   out.fill(0x7A);
