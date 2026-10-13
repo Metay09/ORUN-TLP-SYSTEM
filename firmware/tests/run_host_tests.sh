@@ -306,6 +306,8 @@ g++ "${portable_flags[@]}" -Ifirmware/tests/sf5 \
   firmware/tests/sf5/sf5g_custody_record_candidate.cpp \
   -o "$test_dir/sf5g_edge_accept_gate_candidate"
 "$test_dir/sf5g_edge_accept_gate_candidate"
+# SF5H host-only Edge SQLite inbox: exact ciphertext commit/reopen, NO Edge receipts.
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5h_edge_durable_inbox.py
 g++ -DORUN_M4P5B_HOST_TEST=1 "${portable_flags[@]}" \
   firmware/tests/m4/test_m4p5b_history_receipt_admission.cpp \
   firmware/src/history_receipt_admission.cpp \
