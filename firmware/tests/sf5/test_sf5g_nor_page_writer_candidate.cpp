@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <array>
+#include <initializer_list>
 #include <vector>
 
 using namespace orun_tlp::sf5g_nor_writer_candidate;
