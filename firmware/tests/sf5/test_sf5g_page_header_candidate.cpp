@@ -287,7 +287,7 @@ void testSemanticIntentGuards() {
   // rejected writes leave output bytes unchanged.
   Intent untouched{};
   untouched.fill(0xA5U);
-  for (uint16_t page : {uint16_t(32U), uint16_t(7000U), UINT16_MAX}) {
+  for (uint16_t page : {uint16_t(32U), uint16_t(7000U), uint16_t(UINT16_MAX)}) {
     assert(!encodeStagedIntent(page, 18U,
                                untouched.data(), untouched.size()));
     assert(untouched[0] == 0xA5U);
@@ -296,7 +296,7 @@ void testSemanticIntentGuards() {
   // CRC is recalculated for all the invalid fields, so removing semantic
   // guards is detectable even though CRC checking itself still works.
   for (const auto& valid : {committed, completed}) {
-    for (uint16_t page : {kMaxRegionPages, uint16_t(7000U), UINT16_MAX}) {
+    for (uint16_t page : {kMaxRegionPages, uint16_t(7000U), uint16_t(UINT16_MAX)}) {
       Intent bad = valid;
       put16(bad.data(), page);
       resealIntent(bad);
