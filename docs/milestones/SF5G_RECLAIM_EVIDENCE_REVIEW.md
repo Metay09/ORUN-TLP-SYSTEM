@@ -28,7 +28,7 @@ hardware media or radio/ACK code.
 ## Conservative structural policy
 
 `reviewPage(NorPage, page index, actual page count, ReceiptSource)`
-inspects one complete 4 KiB page snapshot and refuses unknown ownership,
+inspects one complete 4 KiB page snapshot and refuses
 invalid count/index, non-ACTIVE/foreign/torn OCP3 header, nonerased
 reserved tail (guard + intents), corrupt/staged/torn records, impossible
 handoff ordering, and any gap in the record sequence.
