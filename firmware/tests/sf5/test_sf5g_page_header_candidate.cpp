@@ -260,7 +260,7 @@ void testSemanticHeaderGuards() {
     resealHeader(badInverse);
     rejectHeader(badInverse);
 
-    for (uint64_t gen : {uint64_t(0U), UINT64_MAX}) {
+    for (uint64_t gen : {uint64_t(0U), uint64_t(UINT64_MAX)}) {
       Header bad = valid;
       put64(bad.data() + 8U, gen);
       resealHeader(bad);
@@ -307,7 +307,7 @@ void testSemanticIntentGuards() {
     resealIntent(reserved);
     rejectIntent(reserved);
 
-    for (uint64_t gen : {uint64_t(0U), UINT64_MAX}) {
+    for (uint64_t gen : {uint64_t(0U), uint64_t(UINT64_MAX)}) {
       Intent bad = valid;
       put64(bad.data() + 4U, gen);
       resealIntent(bad);
