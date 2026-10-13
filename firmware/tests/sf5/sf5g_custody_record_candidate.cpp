@@ -42,8 +42,12 @@ uint32_t crc32(const uint8_t* data, size_t n) {
 
 bool productObjectShape(const uint8_t* p, size_t size) {
   if (p == nullptr || (size != 84U && size != 100U)) return false;
-  if (p[0] != 2U || p[1] != 4U || p[2] != 2U || p[4] != 3U ||
+  if (p[0] != 2U || p[1] != 4U || p[2] != 2U ||
       p[5] != 1U || p[7] != 0U) return false;
+  // PRODUCT_SECURE section 5: direct custody (0x02) and relayed custody
+  // (0x03) are both valid. Admission here REQUIRES custody_requested;
+  // relay_allowed is optional. Never accept non-custody best-effort frames.
+  if ((p[4] & 0x02U) == 0U || (p[4] & ~0x03U) != 0U) return false;
   if (!((size == 100U && p[3] == 1U && p[6] == 64U) ||
         (size == 84U && p[3] == 2U && p[6] == 48U))) return false;
   // Invalid epoch and zero counter; bytes remain untrusted until AEAD.
@@ -103,9 +107,12 @@ bool inspectRecord(const uint8_t* bytes, size_t size,
   }
   out.evidence = Evidence::kHeld;
   out.handoff_uncertain = h0 != kErasedMarker || h1 != kErasedMarker;
-  if (h0 == kErasedMarker)
+  // An erased A with a torn B is impossible for a well-ordered writer.
+  // Preserve the object, but offer NO slot instead of implicitly trusting
+  // the impossible state. A future store must diagnose/repair it explicitly.
+  if (h0 == kErasedMarker && h1 == kErasedMarker)
     out.next_handoff_slot = 0;
-  else if (h1 == kErasedMarker)
+  else if (h0 != kErasedMarker && h1 == kErasedMarker)
     out.next_handoff_slot = 1;
   return true;
 }
