@@ -559,7 +559,6 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/activity_period_evidence.cpp \
   firmware/src/accelerometer_manager.cpp \
   firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
-  firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/radio_driver_gate.cpp \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
