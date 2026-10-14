@@ -312,6 +312,14 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5h_edge_durable_inbo
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5h_edge_fifo_readonly.py
 # SF5H dev-only 127.0.0.1 HTTP staging: no authenticated backend acceptance.
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5h_loopback_backend_ingress.py
+# SF5H: REAL AES-CCM verified backend ledger; requires Python 'cryptography'.
+# Existing no-third-party host tests remain runnable if dependency is absent.
+# Merge requires an explicit NEW PASS line, not just HOST_EXIT=0 with SKIP.
+if python3 -c 'from cryptography.hazmat.primitives.ciphers.aead import AESCCM; from cryptography.hazmat.primitives.kdf.hkdf import HKDF' >/dev/null 2>&1; then
+  PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5h_backend_verified_ledger.py
+else
+  echo 'SF5H backend crypto ledger: SKIP (install python3-cryptography; full verification gate remains OPEN)'
+fi
 g++ -DORUN_M4P5B_HOST_TEST=1 "${portable_flags[@]}" \
   firmware/tests/m4/test_m4p5b_history_receipt_admission.cpp \
   firmware/src/history_receipt_admission.cpp \
