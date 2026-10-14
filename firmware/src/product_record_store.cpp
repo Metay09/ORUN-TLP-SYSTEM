@@ -1,10 +1,13 @@
 #include "product_record_store.h"
 
+#include <string.h>
+
 namespace orun_tlp {
 
 void ProductRecordStore::begin(uint64_t device_id,
                                const product_region::Jobs& jobs) {
   mounted_ = false;
+  device_id_ = device_id;
   owner_ = product_region::ownerFor(jobs);
   region_readable_ = flash_.begin() &&
                      product_region::takeCensus(flash_, page_count_, census_);
@@ -61,6 +64,124 @@ void ProductRecordStore::finishPending(bool stored,
   job_ = Job::kNone;
 }
 
+
+ObservationStore::LookupResult ProductRecordStore::oldestRetained(
+    ObservationStore::Record& record) const {
+  if (!mounted_ || preparing()) return ObservationStore::LookupResult::kReadError;
+  return store_.oldestRetained(record);
+}
+
+ObservationStore::ControlLookupResult ProductRecordStore::findCachedExact(
+    const osf::RecordIdentity& identity, osc::ExactObject& value) const {
+  if (!mounted_ || preparing())
+    return ObservationStore::ControlLookupResult::kReadError;
+  return store_.findExactObject(identity, value);
+}
+
+bool ProductRecordStore::matchesCachedObject(
+    const osc::ExactObject& expected) const {
+  osc::ExactObject found{};
+  if (store_.findExactObject(expected.identity, found) !=
+      ObservationStore::ControlLookupResult::kFound)
+    return false;
+  return found.identity.incarnation == expected.identity.incarnation &&
+         found.identity.sequence == expected.identity.sequence &&
+         found.record_kind == expected.record_kind &&
+         found.object_size == expected.object_size &&
+         memcmp(found.object, expected.object, expected.object_size) == 0;
+}
+
+ProductRecordStore::CacheSubmit ProductRecordStore::startCache(
+    bool allow_control_maintenance) {
+  switch (store_.requestPutExactObject(cache_object_)) {
+    case ObservationStore::ControlWriteResult::kStarted:
+      job_ = Job::kExactCache;
+      return CacheSubmit::kStarted;
+    case ObservationStore::ControlWriteResult::kAlreadySatisfied:
+      return matchesCachedObject(cache_object_)
+                 ? CacheSubmit::kAlreadyDurable : CacheSubmit::kRejected;
+    case ObservationStore::ControlWriteResult::kBusy:
+      return CacheSubmit::kBusy;
+    case ObservationStore::ControlWriteResult::kRejected:
+      return CacheSubmit::kRejected;
+    case ObservationStore::ControlWriteResult::kNoCapacity: {
+      if (!allow_control_maintenance) return CacheSubmit::kNoCapacity;
+      uint16_t active = 0U;
+      if (!store_.exactObjectCount(active)) return CacheSubmit::kRejected;
+      if (active >= osf::kMaxExactCustodyObjects)
+        return CacheSubmit::kNoCapacity;
+      // First use and control compaction both require maintenance. One
+      // attempt only; compaction cannot help a saturated four-object cache.
+      switch (store_.requestControlMaintenance()) {
+        case ObservationStore::MaintenanceResult::kStarted:
+          job_ = Job::kCacheMaintenance;
+          return CacheSubmit::kStarted;
+        case ObservationStore::MaintenanceResult::kBusy:
+          return CacheSubmit::kBusy;
+        case ObservationStore::MaintenanceResult::kNoWork:
+          return CacheSubmit::kNoCapacity;
+        case ObservationStore::MaintenanceResult::kControlMaintenanceRequired:
+        case ObservationStore::MaintenanceResult::kRejected:
+          return CacheSubmit::kRejected;
+      }
+    }
+  }
+  return CacheSubmit::kRejected;
+}
+
+ProductRecordStore::CacheSubmit ProductRecordStore::submitExactCache(
+    const osc::ExactObject& value) {
+  if (!mounted_ || !store_.ready() || store_.faulted() || preparing())
+    return CacheSubmit::kNotMounted;
+  if (pending_ || job_ != Job::kNone || store_.busy() ||
+      outcome_ready_ || cache_pending_ || cache_outcome_ready_)
+    return CacheSubmit::kBusy;
+
+  if (!value.identity.valid() ||
+      (value.record_kind != osf::RecordKind::kPeriodic &&
+       value.record_kind != osf::RecordKind::kEvent))
+    return CacheSubmit::kRejected;
+  tlp::ProductSecureFrame frame{};
+  if (tlp::decodeProductSecureFrame(value.object, value.object_size, &frame) !=
+          tlp::ProductSecureCodecResult::kOk ||
+      frame.device_id != device_id_ ||
+      (frame.path_flags & tlp::kProductPathFlagCustodyRequested) == 0U ||
+      (value.record_kind == osf::RecordKind::kPeriodic &&
+       frame.app_family != tlp::kProductAppFamilyPeriodic) ||
+      (value.record_kind == osf::RecordKind::kEvent &&
+       frame.app_family != tlp::kProductAppFamilyEvent))
+    return CacheSubmit::kRejected;
+
+  cache_object_ = value;
+  const CacheSubmit result = startCache(true);
+  if (result == CacheSubmit::kStarted) {
+    cache_pending_ = true;
+  } else {
+    cache_object_ = osc::ExactObject{};
+  }
+  return result;
+}
+
+void ProductRecordStore::finishCache(bool durable) {
+  cache_outcome_.identity = cache_object_.identity;
+  cache_outcome_.durable = durable;
+  cache_outcome_ready_ = true;
+  cache_pending_ = false;
+  cache_object_ = osc::ExactObject{};
+  job_ = Job::kNone;
+  if (durable)
+    ++diagnostics_.exact_cache_committed;
+  else
+    ++diagnostics_.exact_cache_failed;
+}
+
+bool ProductRecordStore::takeCacheOutcome(CacheOutcome& outcome) {
+  if (!cache_outcome_ready_) return false;
+  outcome = cache_outcome_;
+  cache_outcome_ready_ = false;
+  return true;
+}
+
 void ProductRecordStore::poll() {
   if (preparing()) {
     drivePrepare();
@@ -97,6 +218,26 @@ void ProductRecordStore::poll() {
         return;
       }
       break;
+    case Job::kExactCache:
+      if (!store_.takeControlWriteResult(success)) {
+        finishCache(false);
+        return;
+      }
+      // The radio sender may not use kStarted or TX_DONE as custody proof.
+      // Require readback of identical committed bytes before eligibility.
+      finishCache(success && matchesCachedObject(cache_object_));
+      return;
+    case Job::kCacheMaintenance: {
+      const bool completed = store_.takeControlMaintenanceResult(success);
+      if (!completed || !success) {
+        finishCache(false);
+        return;
+      }
+      const CacheSubmit again = startCache(false);
+      if (again == CacheSubmit::kStarted) return;
+      finishCache(again == CacheSubmit::kAlreadyDurable);
+      return;
+    }
   }
   if (pending_) startNext();
 }
@@ -168,7 +309,11 @@ void ProductRecordStore::runMaintenance() {
 }
 
 bool ProductRecordStore::requestPrepare() {
-  if (preparing() || pending_ || !region_readable_) return false;
+  // Keep destructive service work out of every owner job and unconsumed
+  // cache outcome, including failures that have faulted the mounted store.
+  if (preparing() || pending_ || cache_pending_ || cache_outcome_ready_ ||
+      job_ != Job::kNone || store_.busy() || !region_readable_)
+    return false;
   const bool leftovers =
       decision_ == product_region::MountDecision::kNeedsPreparation;
   const bool faulted_store = mounted_ && store_.faulted();

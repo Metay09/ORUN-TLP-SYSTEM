@@ -25,13 +25,25 @@ namespace orun_tlp {
 //   once through takeOutcome().
 // - requestPrepare() is the only whole-region erase, allowed only when the
 //   region holds nothing this store can use (unrecognised leftovers) or the
-//   mounted store is faulted. The caller reboots afterwards to mount.
+//   mounted store is faulted, with no pending job/cache outcome or unreconciled
+//   flash mutation. The caller reboots afterwards to mount.
 //
 // Nothing is sealed or sent here; TLP v1 POSITION and HistoryStore stay the
 // live path until the SF5F RF step.
 class ProductRecordStore {
  public:
   enum class Submit : uint8_t { kAccepted, kNotMounted, kBusy };
+
+  // SF5J2a: Exact protected-byte cache admission for retained observations.
+  // kStarted is NOT durable: the caller must wait for takeCacheOutcome().
+  enum class CacheSubmit : uint8_t {
+    kStarted, kAlreadyDurable, kNotMounted, kBusy, kNoCapacity, kRejected
+  };
+
+  struct CacheOutcome {
+    osf::RecordIdentity identity{};
+    bool durable = false;
+  };
 
   struct Outcome {
     uint64_t incarnation = 0;
@@ -45,6 +57,8 @@ class ProductRecordStore {
     uint32_t failed = 0;
     uint32_t dropped_busy = 0;
     uint32_t maintenance_runs = 0;
+    uint32_t exact_cache_committed = 0;
+    uint32_t exact_cache_failed = 0;
   };
 
   ProductRecordStore(FlashBackend& flash, uint16_t page_count,
@@ -57,6 +71,18 @@ class ProductRecordStore {
 
   Submit submitPeriodic(const PeriodicRecordInputs& inputs);
   bool takeOutcome(Outcome& outcome);
+
+  // Read-only candidate selectors; no RF and no custody authority.
+  ObservationStore::LookupResult oldestRetained(
+      ObservationStore::Record& record) const;
+  ObservationStore::ControlLookupResult findCachedExact(
+      const osf::RecordIdentity& identity, osc::ExactObject& value) const;
+
+  // Caller supplies a previously sealed exact frame. Structural checks bind
+  // local device, supported family and custody intent. Flash success and
+  // readback must finish before kStarted can become durable.
+  CacheSubmit submitExactCache(const osc::ExactObject& value);
+  bool takeCacheOutcome(CacheOutcome& outcome);
 
   bool requestPrepare();
   bool preparing() const { return prepare_state_ != PrepareState::kIdle; }
@@ -72,7 +98,9 @@ class ProductRecordStore {
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
  private:
-  enum class Job : uint8_t { kNone, kAppend, kMaintenance, kControl };
+  enum class Job : uint8_t {
+    kNone, kAppend, kMaintenance, kControl, kExactCache, kCacheMaintenance
+  };
   enum class PrepareState : uint8_t { kIdle, kErasing, kWaiting };
   static constexpr uint8_t kMaxMaintenanceRounds = 4U;
 
@@ -81,6 +109,9 @@ class ProductRecordStore {
   void finishPending(bool stored, const osf::RecordIdentity& identity);
   void drivePrepare();
   void endPrepare(bool success);
+  CacheSubmit startCache(bool allow_control_maintenance);
+  void finishCache(bool durable);
+  bool matchesCachedObject(const osc::ExactObject& expected) const;
 
   FlashBackend& flash_;
   uint16_t page_count_;
@@ -91,6 +122,7 @@ class ProductRecordStore {
   product_region::Census census_{0U, 0U, 0U, 0U};
   bool region_readable_ = false;
   bool mounted_ = false;
+  uint64_t device_id_ = 0;
 
   bool pending_ = false;
   PeriodicRecordInputs pending_inputs_{};
@@ -100,6 +132,11 @@ class ProductRecordStore {
 
   bool outcome_ready_ = false;
   Outcome outcome_{};
+
+  bool cache_pending_ = false;
+  bool cache_outcome_ready_ = false;
+  CacheOutcome cache_outcome_{};
+  osc::ExactObject cache_object_{};
 
   PrepareState prepare_state_ = PrepareState::kIdle;
   uint16_t prepare_page_ = 0;

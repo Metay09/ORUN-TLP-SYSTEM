@@ -143,6 +143,8 @@ class ObservationStore {
       const osf::RecordIdentity& identity);
   ControlLookupResult findExactObject(
       const osf::RecordIdentity& identity, osc::ExactObject& value) const;
+  // Read-only live-object bound, distinct from free control-journal slots.
+  bool exactObjectCount(uint16_t& count) const;
 
   ControlWriteResult requestPutOpenOccurrence(
       const osc::OpenOccurrence& value);
