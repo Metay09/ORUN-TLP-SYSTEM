@@ -161,7 +161,14 @@ def test_ledger_logical_idempotence_and_conflict() -> None:
         plain[56:58] = (4001).to_bytes(2, "big")
         conflicting = reencrypt(periodic, 102, bytes(plain))
         assert ledger.ingest(conflicting).state == secure.LedgerState.CONTENT_CONFLICT
+        assert ledger.ingest(conflicting).state == secure.LedgerState.CONTENT_CONFLICT
         assert ledger.record_count() == 1
+        assert ledger.conflict_count() == 1  # forensic evidence, no replay multiplication
+        with sqlite3.connect(db) as conn:
+            row = conn.execute(
+                "SELECT exact_first_frame FROM verified_conflicts WHERE sequence=257"
+            ).fetchone()
+            assert row is not None and bytes(row[0]) == conflicting
 
         assert ledger.ingest(event).state == secure.LedgerState.VERIFIED_STORED
         assert ledger.record_count() == 2
@@ -169,10 +176,12 @@ def test_ledger_logical_idempotence_and_conflict() -> None:
         cross_family[16:20] = (257).to_bytes(4, "big")
         assert ledger.ingest(reencrypt(event, 103, bytes(cross_family))).state == secure.LedgerState.CONTENT_CONFLICT
         assert ledger.record_count() == 2
+        assert ledger.conflict_count() == 2
 
         restarted = secure.VerifiedLocalLedger(db, keys)
         assert restarted.ingest(reencrypt(periodic, 104)).state == secure.LedgerState.VERIFIED_DUPLICATE
         assert restarted.record_count() == 2
+        assert restarted.conflict_count() == 2  # survives backend process restart
         forged = bytearray(periodic)
         forged[-1] ^= 1
         assert ledger.ingest(bytes(forged)).state == secure.LedgerState.REJECTED
@@ -185,6 +194,42 @@ def test_ledger_logical_idempotence_and_conflict() -> None:
                 "SELECT plaintext FROM verified_observations WHERE sequence=257"
             ).fetchone()[0]
         assert bytes(value) == public_fixture("kPeriodicPlaintextHex")
+
+        # The DB can have an intact plaintext/dedup key but damaged
+        # original ciphertext. A repeat MUST NOT be treated as verified.
+        with sqlite3.connect(db) as conn:
+            damaged = bytearray(periodic)
+            damaged[-1] ^= 0x01
+            conn.execute(
+                "UPDATE verified_observations SET exact_first_frame=?"
+                " WHERE device_id=? AND sequence=257",
+                (sqlite3.Binary(bytes(damaged)), DEVICE),
+            )
+        assert restarted.ingest(periodic).state == secure.LedgerState.UNCERTAIN
+
+
+def test_conflict_capacity_fails_closed() -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "limited.db"
+        ledger = secure.VerifiedLocalLedger(path, keys, max_conflicts=1)
+        base = public_fixture("kPeriodicFrameHex")
+        assert ledger.ingest(base).state == secure.LedgerState.VERIFIED_STORED
+        plain = bytearray(secure.open_product_frame(base, keys).plaintext)
+        plain[56:58] = (3900).to_bytes(2, "big")
+        one = reencrypt(base, 110, bytes(plain))
+        assert ledger.ingest(one).state == secure.LedgerState.CONTENT_CONFLICT
+        assert ledger.ingest(reencrypt(base, 111, bytes(plain))).state == secure.LedgerState.CONTENT_CONFLICT
+        plain[56:58] = (3800).to_bytes(2, "big")
+        two = reencrypt(base, 112, bytes(plain))
+        assert ledger.ingest(two).state == secure.LedgerState.UNCERTAIN
+        assert ledger.conflict_count() == 1 and ledger.record_count() == 1
+        for invalid in (0, -1, 100001, True, 1.5):
+            try:
+                secure.VerifiedLocalLedger(path, keys, max_conflicts=invalid)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("accepted unbounded/invalid conflict capacity")
 
 
 def test_real_edge_http_backend_then_crypto_verify() -> None:
@@ -222,6 +267,7 @@ def main() -> None:
     test_golden_vectors()
     test_tag_header_key_and_semantic_refusal()
     test_ledger_logical_idempotence_and_conflict()
+    test_conflict_capacity_fails_closed()
     test_real_edge_http_backend_then_crypto_verify()
     print("SF5H backend crypto ledger: AESCCM-KAT/semantic-id/dedup/conflict/live-HTTP: PASS")
 
