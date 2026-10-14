@@ -471,6 +471,11 @@ g++ -Ifirmware/tests/sf5/sf5e_stubs -Ifirmware/tests/m4/nrf_stubs \
 "$test_dir/sf5e_qual_probe"
 # SF5F step 1: durable PERIODIC records (ProductRecordStore), gnu++11 like
 # the target, including a reset at every write through rotation/compaction.
+# SF5J2B1: dormant cache-first send owner (no production port or RF use).
+g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5j2b_sender.cpp \
+  firmware/src/product_send_owner.cpp \
+  -o "$test_dir/sf5j2b_sender"
+"$test_dir/sf5j2b_sender"
 g++ "${b3_flags[@]}" firmware/tests/sf5/test_sf5f_product_record_store.cpp \
   firmware/src/product_record_store.cpp firmware/src/product_region.cpp \
   firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
