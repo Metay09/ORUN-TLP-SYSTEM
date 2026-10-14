@@ -1,7 +1,7 @@
 # SF5H — Trusted Backend PRODUCT_SECURE Verified Ledger (candidate)
 
 Date: 2026-10-14
-Status: **NEW HEAD HOST TESTS PENDING; NOT PRODUCTION, NOT CUSTODY ACCEPTANCE**.
+Status: **REVISED HEAD HOST TESTS PENDING (conflict-quarantine fixes); NOT PRODUCTION, NOT CUSTODY ACCEPTANCE**.
 Base: `main@2a936c0ab4ab59e196ccdf94e13f6045e6d5a605` (PR #128).
 
 ## Scope — real cryptography, not a mock
@@ -46,8 +46,18 @@ conversion problems.
   app_family (even if a different D2A counter/ciphertext) =>
   `VERIFIED_DUPLICATE` with no new row.
 - Same identity + different plaintext or app_family =>
-  `CONTENT_CONFLICT`, no overwrite or ACK. This is an integrity
-  diagnostic, never first-writer-wins.
+  `CONTENT_CONFLICT`, no overwrite or ACK. The **first exact authenticated
+  ciphertext** for each distinct divergent family/plaintext is retained
+  in a separate `verified_conflicts` forensic table with a bounded
+  `max_conflicts` capacity. Replayed identical conflicts do not add rows.
+  If this capacity is exhausted, the new conflict returns `UNCERTAIN`,
+  never a false acceptance. The conflicting identity stays quarantined:
+  **even the original otherwise-identical frame cannot subsequently be
+  returned as a clean `VERIFIED_DUPLICATE`** until a future explicitly
+  authorized resolution policy is implemented. This is never
+  first-writer-wins. After SQLite commit, the first exact stored protected
+  frame is re-opened and reauthenticated before reporting success; damaged
+  local evidence yields `UNCERTAIN`.
 - Bad AEAD key, tag, header, schema, unsupported flags, credential
   lookup or missing context => `REJECTED`; SQLite uncertainty =>
   `UNCERTAIN`. No record release.
@@ -73,9 +83,12 @@ noncanonical* decrypted data.
 
 Additional tests protect the whole logical identity namespace:
 same observation across different AEAD counters/frames gives only
-one SQLite row; changed valid content using the same identity is
-an explicit conflict; cross-family identity collision refuses;
-restart and unknown/readback errors fail closed.
+one SQLite row; changed valid content using the same identity
+retains independent forensic evidence; cross-family collisions are
+quarantined; conflict evidence survives restart; replayed conflicts
+do not grow the table; known-conflicted original records never
+return clean duplicate acceptance; capacity exhaustion, damaged
+original ciphertext, restart and unknown/readback errors fail closed.
 
 The integration regression also transfers actual golden product
 packets over **existing local 127.0.0.1 HTTP** from Edge SQLite
