@@ -48,6 +48,8 @@ static_assert(tlp::kRelayForwardPacketSize <= kRadioReceiveLimit,
               "relay packet must fit radio event storage");
 static_assert(tlp::kHistorySecureMaxPacketSize <= kRadioReceiveLimit,
               "HISTORY_SECURE packet must fit radio event storage");
+static_assert(tlp::kProductSecureMaxFrameSize <= kRadioReceiveLimit,
+              "PRODUCT_SECURE packet must fit radio event storage");
 
 void saturatingIncrement(uint32_t& value) {
   if (value != UINT32_MAX) ++value;
@@ -100,6 +102,8 @@ bool RadioManager::begin(SequenceSource& sequences) {
   tx_generation_ = armed_tx_generation_ = pending_tx_generation_ = 0;
   history_secure_rx_ = {};
   history_secure_rx_pending_ = false;
+  product_secure_rx_ = {};
+  product_secure_rx_pending_ = false;
   bridge_line_number_ = 0;
   role_transition_pending_ = false;
   accept_rx_events_ = true;
@@ -320,6 +324,52 @@ bool RadioManager::takeHistorySecureFrame(HistorySecureRxFrame* frame) {
   *frame = history_secure_rx_;
   history_secure_rx_ = {};
   history_secure_rx_pending_ = false;
+  return true;
+}
+
+
+bool RadioManager::sendProductSecurePacket(const uint8_t* payload,
+                                           size_t size) {
+  radio_driver::Guard gate;
+  if (!gate) return false;
+
+  // The radio owner transports only already-sealed exact bytes. Caller must
+  // establish durable exact-object authority before any custody-request TX.
+  tlp::ProductSecureFrame frame{};
+  if (!canSend() || payload == nullptr ||
+      tlp::decodeProductSecureFrame(payload, size, &frame) !=
+          tlp::ProductSecureCodecResult::kOk ||
+      frame.device_id != device_id_) {
+    ++local_tx_failures_;
+    return false;
+  }
+
+  uint8_t tx_payload[tlp::kProductSecureMaxFrameSize]{};
+  memcpy(tx_payload, payload, size);  // Driver copies to SX1262 FIFO in Send.
+  startTxOperation();
+  tx_kind_ = TxKind::kProductSecure;
+  tx_role_epoch_ = role_epoch_;
+  rx_restore_state_ = RxRestoreState::kNone;
+  ++tx_attempts_;
+  ++event_diagnostics_.product_secure_tx_attempts;
+  Radio.Send(tx_payload, static_cast<uint8_t>(size));
+  tx_started_ms_ = monotonic::nowMs();
+  Serial.printf(
+      "TX PRODUCT_SECURE id=%08lX%08lX family=%u length=%u counter=%08lX%08lX\n",
+      static_cast<unsigned long>(uint32_t(frame.device_id >> 32)),
+      static_cast<unsigned long>(uint32_t(frame.device_id)),
+      static_cast<unsigned>(frame.app_family),
+      static_cast<unsigned>(size),
+      static_cast<unsigned long>(uint32_t(frame.security_counter >> 32)),
+      static_cast<unsigned long>(uint32_t(frame.security_counter)));
+  return true;  // TX admission is not RF receipt or durable custody.
+}
+
+bool RadioManager::takeProductSecureFrame(ProductSecureRxFrame* frame) {
+  if (frame == nullptr || !product_secure_rx_pending_) return false;
+  *frame = product_secure_rx_;
+  product_secure_rx_ = {};
+  product_secure_rx_pending_ = false;
   return true;
 }
 
@@ -755,6 +805,39 @@ void RadioManager::emitBridgePosition(const NetworkEvent& event) {
 
 void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
                                         int16_t rssi, int8_t snr) {
+
+  if (size >= 2 &&
+      payload[0] == tlp::kProductSecureVersion &&
+      payload[1] == tlp::kPacketTypeProductSecure) {
+    // Visible headers have not been AEAD-authenticated. This mailbox neither
+    // accepts custody nor authorizes a tracker-facing ACK.
+    tlp::ProductSecureFrame frame{};
+    if (tlp::decodeProductSecureFrame(payload, size, &frame) !=
+        tlp::ProductSecureCodecResult::kOk) {
+      ++event_diagnostics_.product_secure_rx_drops;
+      Serial.printf("RX PRODUCT_SECURE rejected length=%u\n",
+                    static_cast<unsigned>(size));
+      return;
+    }
+    if (product_secure_rx_pending_) {
+      ++event_diagnostics_.product_secure_rx_drops;
+      Serial.println(F("RX PRODUCT_SECURE drop pending-mailbox"));
+      return;
+    }
+    product_secure_rx_.size = size;
+    product_secure_rx_.rssi_dbm = rssi;
+    product_secure_rx_.snr_db = snr;
+    memcpy(product_secure_rx_.payload, payload, size);
+    product_secure_rx_pending_ = true;
+    ++event_diagnostics_.product_secure_rx_queued;
+    Serial.printf(
+        "RX PRODUCT_SECURE queued family=%u length=%u rssi=%d snr=%d unverified=yes\n",
+        static_cast<unsigned>(frame.app_family),
+        static_cast<unsigned>(size),
+        static_cast<int>(rssi), static_cast<int>(snr));
+    return;
+  }
+
   if (size >= 2 &&
       payload[0] == tlp::kHistorySecureProtocolVersion &&
       payload[1] == tlp::kPacketTypeHistorySecure) {
