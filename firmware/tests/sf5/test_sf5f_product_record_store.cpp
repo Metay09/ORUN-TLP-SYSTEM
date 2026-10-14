@@ -178,6 +178,129 @@ void testStoreAndRemount(bool async) {
   checkStored(records, 2, 2);
 }
 
+
+osc::ExactObject protectedFixture(const ProductRecordStore& records,
+                                  uint32_t sequence,
+                                  uint64_t source = kDevice,
+                                  bool custody_requested = true) {
+  osc::ExactObject exact{};
+  exact.identity.incarnation = records.store().incarnation();
+  exact.identity.sequence = sequence;
+  exact.record_kind = osf::RecordKind::kPeriodic;
+  exact.object_size = tlp::kPeriodicFrameSize;
+  tlp::ProductSecureFrame frame{};
+  frame.app_family = tlp::kProductAppFamilyPeriodic;
+  frame.path_flags = custody_requested ? tlp::kProductPathFlagCustodyRequested : 0U;
+  frame.device_id = source;
+  frame.key_epoch = 7U;
+  frame.security_counter = sequence + 100U;
+  frame.ciphertext_len = tlp::kPeriodicPlaintextSize;
+  assert(tlp::encodeProductSecureFrame(frame, exact.object, exact.object_size) ==
+         tlp::ProductSecureCodecResult::kOk);
+  return exact;
+}
+
+void settleExactCache(ProductRecordStore& records,
+                      const osc::ExactObject& expected,
+                      bool expected_durable) {
+  ProductRecordStore::CacheOutcome outcome{};
+  assert(!records.takeCacheOutcome(outcome));
+  bool completed = false;
+  for (unsigned i = 0; i < 10000U; ++i) {
+    records.poll();
+    if (records.takeCacheOutcome(outcome)) {
+      completed = true;
+      break;
+    }
+  }
+  assert(completed);
+  assert(outcome.identity.incarnation == expected.identity.incarnation);
+  assert(outcome.identity.sequence == expected.identity.sequence);
+  assert(outcome.durable == expected_durable);
+}
+
+void testExactObjectCacheAndReboot(bool async) {
+  FakeFlash flash;
+  flash.async = async;
+  FixedIncarnation source;
+  osc::ExactObject original{};
+  {
+    ProductRecordStore records(flash, kPages, &source);
+    records.begin(kDevice, kTracker);
+    assert(records.mounted());
+    assert(store(records, 1).stored);
+    ObservationStore::Record oldest{};
+    assert(records.oldestRetained(oldest) ==
+           ObservationStore::LookupResult::kFound);
+    assert(oldest.handle.identity.sequence == 1U);
+    original = protectedFixture(records, 1U);
+    osc::ExactObject found{};
+    assert(records.findCachedExact(original.identity, found) ==
+           ObservationStore::ControlLookupResult::kNone);
+    assert(records.submitExactCache(original) ==
+           ProductRecordStore::CacheSubmit::kStarted);
+    settleExactCache(records, original, true);
+    assert(records.findCachedExact(original.identity, found) ==
+           ObservationStore::ControlLookupResult::kFound);
+    assert(found.object_size == original.object_size);
+    assert(memcmp(found.object, original.object, found.object_size) == 0);
+    assert(records.submitExactCache(original) ==
+           ProductRecordStore::CacheSubmit::kAlreadyDurable);
+
+    osc::ExactObject conflict = original;
+    conflict.object[27] ^= 1U;  // New counter would violate retry immutability.
+    assert(records.submitExactCache(conflict) ==
+           ProductRecordStore::CacheSubmit::kRejected);
+    assert(records.submitExactCache(protectedFixture(records, 1U, 0x1234U)) ==
+           ProductRecordStore::CacheSubmit::kRejected);
+    assert(records.submitExactCache(protectedFixture(records, 1U, kDevice, false)) ==
+           ProductRecordStore::CacheSubmit::kRejected);
+
+    // An uncommitted/uncached record must not become TX eligible.
+    assert(store(records, 2).stored);
+    assert(records.findCachedExact(protectedFixture(records, 2U).identity, found) ==
+           ObservationStore::ControlLookupResult::kNone);
+  }
+  flash.async = false;  // Boot recovery before enabling async mutations.
+  ProductRecordStore remounted(flash, kPages, &source);
+  remounted.begin(kDevice, kTracker);
+  assert(remounted.mounted());
+  flash.async = async;
+  osc::ExactObject recovered{};
+  assert(remounted.findCachedExact(original.identity, recovered) ==
+         ObservationStore::ControlLookupResult::kFound);
+  assert(recovered.object_size == original.object_size);
+  assert(memcmp(recovered.object, original.object, original.object_size) == 0);
+  assert(remounted.submitExactCache(original) ==
+         ProductRecordStore::CacheSubmit::kAlreadyDurable);
+  assert(remounted.diagnostics().exact_cache_committed == 0U);
+}
+
+void testExactCacheBound() {
+  FakeFlash flash;
+  FixedIncarnation source;
+  ProductRecordStore records(flash, kPages, &source);
+  records.begin(kDevice, kTracker);
+  for (uint32_t seq = 1; seq <= 5U; ++seq)
+    assert(store(records, seq).stored);
+  for (uint32_t seq = 1; seq <= 4U; ++seq) {
+    const auto exact = protectedFixture(records, seq);
+    assert(records.submitExactCache(exact) ==
+           ProductRecordStore::CacheSubmit::kStarted);
+    settleExactCache(records, exact, true);
+  }
+  const auto fifth = protectedFixture(records, 5U);
+  const auto result = records.submitExactCache(fifth);
+  // No fifth outstanding custody object, even after control compaction.
+  if (result == ProductRecordStore::CacheSubmit::kStarted)
+    settleExactCache(records, fifth, false);
+  else
+    assert(result == ProductRecordStore::CacheSubmit::kNoCapacity);
+  osc::ExactObject ignored{};
+  assert(records.findCachedExact(fifth.identity, ignored) ==
+         ObservationStore::ControlLookupResult::kNone);
+}
+
 void testOwnersAndPrepare() {
   FakeFlash flash;
   FixedIncarnation source;
@@ -293,6 +416,9 @@ int main() {
   testStoreAndRemount(false);
   testStoreAndRemount(true);
   testOwnersAndPrepare();
+  testExactObjectCacheAndReboot(false);
+  testExactObjectCacheAndReboot(true);
+  testExactCacheBound();
   testFillAndResetEverywhere();
   puts("SF5F ProductRecordStore checks: PASS");
 }
