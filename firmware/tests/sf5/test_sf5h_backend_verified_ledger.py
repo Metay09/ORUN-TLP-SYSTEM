@@ -164,6 +164,9 @@ def test_ledger_logical_idempotence_and_conflict() -> None:
         assert ledger.ingest(conflicting).state == secure.LedgerState.CONTENT_CONFLICT
         assert ledger.record_count() == 1
         assert ledger.conflict_count() == 1  # forensic evidence, no replay multiplication
+        # After one verified divergence, the original winner must NOT be
+        # returned as a clean duplicate until an authorized resolution.
+        assert ledger.ingest(periodic).state == secure.LedgerState.CONTENT_CONFLICT
         with sqlite3.connect(db) as conn:
             row = conn.execute(
                 "SELECT exact_first_frame FROM verified_conflicts WHERE sequence=257"
@@ -179,7 +182,7 @@ def test_ledger_logical_idempotence_and_conflict() -> None:
         assert ledger.conflict_count() == 2
 
         restarted = secure.VerifiedLocalLedger(db, keys)
-        assert restarted.ingest(reencrypt(periodic, 104)).state == secure.LedgerState.VERIFIED_DUPLICATE
+        assert restarted.ingest(reencrypt(periodic, 104)).state == secure.LedgerState.CONTENT_CONFLICT
         assert restarted.record_count() == 2
         assert restarted.conflict_count() == 2  # survives backend process restart
         forged = bytearray(periodic)
@@ -219,6 +222,7 @@ def test_conflict_capacity_fails_closed() -> None:
         one = reencrypt(base, 110, bytes(plain))
         assert ledger.ingest(one).state == secure.LedgerState.CONTENT_CONFLICT
         assert ledger.ingest(reencrypt(base, 111, bytes(plain))).state == secure.LedgerState.CONTENT_CONFLICT
+        assert ledger.ingest(base).state == secure.LedgerState.CONTENT_CONFLICT
         plain[56:58] = (3800).to_bytes(2, "big")
         two = reencrypt(base, 112, bytes(plain))
         assert ledger.ingest(two).state == secure.LedgerState.UNCERTAIN
