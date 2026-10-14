@@ -203,12 +203,15 @@ class VerifiedLocalLedger:
     network trust, release/delete, or production power-loss proof.
     """
 
-    def __init__(self, db_path: str | Path, credentials: CredentialLookup):
+    def __init__(self, db_path: str | Path, credentials: CredentialLookup,
+                 max_conflicts: int = 4096):
         path = str(db_path)
-        if not path or path == ":memory:" or path.startswith("file:"):
-            raise ValueError("require a disk SQLite path")
+        if (not path or path == ":memory:" or path.startswith("file:") or
+                type(max_conflicts) is not int or not 1 <= max_conflicts <= 100000):
+            raise ValueError("disk SQLite path and bounded conflict capacity required")
         self.path = path
         self.credentials = credentials
+        self.max_conflicts = max_conflicts
         with closing(self._conn()) as db:
             if db.execute("PRAGMA journal_mode=WAL").fetchone()[0].lower() != "wal":
                 raise RuntimeError("SQLite WAL mode required")
@@ -222,6 +225,19 @@ class VerifiedLocalLedger:
                 " exact_first_frame BLOB NOT NULL CHECK(length(exact_first_frame) IN (84,100)),"
                 " PRIMARY KEY (device_id,incarnation,sequence))"
             )
+            # A verified logical-identity conflict is NOT discarded.
+            # Retain the first exact protected evidence for each distinct
+            # conflicting canonical content. Never overwrite the winner.
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS verified_conflicts ("
+                " device_id BLOB NOT NULL CHECK(length(device_id)=8),"
+                " incarnation BLOB NOT NULL CHECK(length(incarnation)=8),"
+                " sequence INTEGER NOT NULL CHECK(sequence>0),"
+                " family INTEGER NOT NULL CHECK(family IN (1,2)),"
+                " plaintext BLOB NOT NULL CHECK(length(plaintext) IN (48,64)),"
+                " exact_first_frame BLOB NOT NULL CHECK(length(exact_first_frame) IN (84,100)),"
+                " PRIMARY KEY (device_id,incarnation,sequence,family,plaintext))"
+            )
 
     def _conn(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=1.0, isolation_level=None)
@@ -229,14 +245,31 @@ class VerifiedLocalLedger:
         db.execute("PRAGMA synchronous=FULL")
         return db
 
-    def _matches(self, item: VerifiedObservation) -> bool:
+    def _matches(self, item: VerifiedObservation, conflict: bool = False) -> bool:
+        # Reopen after COMMIT, and verify the stored FIRST exact ciphertext
+        # really authenticates back to the claimed logical content. A damaged
+        # local DB is not allowed to yield a duplicate success.
+        table = "verified_conflicts" if conflict else "verified_observations"
         with closing(self._conn()) as db:
-            saved = db.execute(
-                "SELECT family,plaintext FROM verified_observations"
-                " WHERE device_id=? AND incarnation=? AND sequence=?",
-                (item.device_id, item.incarnation, item.sequence),
-            ).fetchone()
-            return bool(saved and saved[0] == item.family and bytes(saved[1]) == item.plaintext)
+            query = ("SELECT family,plaintext,exact_first_frame FROM " + table +
+                     " WHERE device_id=? AND incarnation=? AND sequence=?")
+            args: tuple[object, ...] = (item.device_id, item.incarnation, item.sequence)
+            if conflict:
+                query += " AND family=? AND plaintext=?"
+                args += (item.family, item.plaintext)
+            saved = db.execute(query, args).fetchone()
+            if (saved is None or saved[0] != item.family or
+                    bytes(saved[1]) != item.plaintext):
+                return False
+            try:
+                stored = open_product_frame(bytes(saved[2]), self.credentials)
+            except (Reject, TypeError, ValueError):
+                return False
+            return (stored.device_id == item.device_id and
+                    stored.incarnation == item.incarnation and
+                    stored.sequence == item.sequence and
+                    stored.family == item.family and
+                    stored.plaintext == item.plaintext)
 
     def ingest(self, raw: bytes) -> LedgerResult:
         try:
@@ -264,18 +297,50 @@ class VerifiedLocalLedger:
                     elif int(saved[0]) == item.family and bytes(saved[1]) == item.plaintext:
                         state = LedgerState.VERIFIED_DUPLICATE
                     else:
-                        db.execute("ROLLBACK")
-                        return LedgerResult(LedgerState.CONTENT_CONFLICT)
+                        # Persist the conflicting authenticated evidence
+                        # transactionally. Replays of identical conflict
+                        # content do not multiply forensic rows.
+                        prior = db.execute(
+                            "SELECT exact_first_frame FROM verified_conflicts"
+                            " WHERE device_id=? AND incarnation=? AND sequence=?"
+                            " AND family=? AND plaintext=?",
+                            (item.device_id, item.incarnation, item.sequence,
+                             item.family, item.plaintext),
+                        ).fetchone()
+                        if prior is None:
+                            count = int(db.execute(
+                                "SELECT count(*) FROM verified_conflicts"
+                            ).fetchone()[0])
+                            if count >= self.max_conflicts:
+                                db.execute("ROLLBACK")
+                                return LedgerResult(LedgerState.UNCERTAIN)
+                            db.execute(
+                                "INSERT INTO verified_conflicts"
+                                " (device_id,incarnation,sequence,family,plaintext,exact_first_frame)"
+                                " VALUES(?,?,?,?,?,?)",
+                                (item.device_id, item.incarnation, item.sequence,
+                                 item.family, item.plaintext, item.protected_frame),
+                            )
+                        state = LedgerState.CONTENT_CONFLICT
                     db.execute("COMMIT")
                 except Exception:
                     if db.in_transaction:
                         db.execute("ROLLBACK")
                     raise
-            if not self._matches(item):
+            if not self._matches(item, conflict=(state == LedgerState.CONTENT_CONFLICT)):
                 return LedgerResult(LedgerState.UNCERTAIN)
             return LedgerResult(state)
         except (sqlite3.Error, OSError):
             return LedgerResult(LedgerState.UNCERTAIN)
+
+    def conflict_count(self) -> Optional[int]:
+        try:
+            with closing(self._conn()) as db:
+                return int(db.execute(
+                    "SELECT count(*) FROM verified_conflicts"
+                ).fetchone()[0])
+        except sqlite3.Error:
+            return None
 
     def record_count(self) -> Optional[int]:
         try:
