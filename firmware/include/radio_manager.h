@@ -7,6 +7,7 @@
 #include "radio_listen_policy.h"
 #include "sequence_source.h"
 #include "tlp_v2_history_secure.h"
+#include "tlp_v2_product_secure.h"
 
 namespace orun_tlp {
 
@@ -40,6 +41,9 @@ struct RadioEventDiagnostics {
   uint32_t history_secure_rx_queued = 0;
   uint32_t history_secure_rx_drops = 0;
   uint32_t history_secure_tx_attempts = 0;
+  uint32_t product_secure_rx_queued = 0;
+  uint32_t product_secure_rx_drops = 0;
+  uint32_t product_secure_tx_attempts = 0;
 };
 
 struct HistorySecureRxFrame {
@@ -47,6 +51,14 @@ struct HistorySecureRxFrame {
   int16_t rssi_dbm = 0;
   int8_t snr_db = 0;
   uint8_t payload[tlp::kHistorySecureMaxPacketSize]{};
+};
+
+// Structurally admitted only; no crypto verification or durable custody.
+struct ProductSecureRxFrame {
+  uint16_t size = 0;
+  int16_t rssi_dbm = 0;
+  int8_t snr_db = 0;
+  uint8_t payload[tlp::kProductSecureMaxFrameSize]{};
 };
 
 class RadioManager {
@@ -90,6 +102,12 @@ class RadioManager {
   // Callbacks still only enqueue immutable RadioRxEvent data; crypto/replay
   // work happens later outside the driver gate in the composition root.
   bool takeHistorySecureFrame(HistorySecureRxFrame* frame);
+
+  // SF5J1: TX accepts only an already-protected exact frame from its caller.
+  // The caller must cache that exact object durably before first custody TX.
+  // No production caller is enabled until that owner is integrated.
+  bool sendProductSecurePacket(const uint8_t* payload, size_t size);
+  bool takeProductSecureFrame(ProductSecureRxFrame* frame);
 
   uint64_t deviceId() const;
   uint32_t txAttempts() const { return tx_attempts_; }
@@ -152,6 +170,7 @@ class RadioManager {
     kPosition,
     kRelay,
     kHistorySecure,
+    kProductSecure,
   };
 
   uint64_t device_id_ = 0;
@@ -184,6 +203,8 @@ class RadioManager {
   NetworkService network_{};
   HistorySecureRxFrame history_secure_rx_{};
   bool history_secure_rx_pending_ = false;
+  ProductSecureRxFrame product_secure_rx_{};
+  bool product_secure_rx_pending_ = false;
   uint32_t bridge_line_number_ = 0;  // per boot; first printed line is 1.
   uint32_t tx_attempts_ = 0, local_tx_failures_ = 0;
   uint32_t tx_timeouts_ = 0;
