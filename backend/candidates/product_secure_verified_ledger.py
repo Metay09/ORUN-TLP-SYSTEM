@@ -279,6 +279,7 @@ class VerifiedLocalLedger:
         try:
             with closing(self._conn()) as db:
                 db.execute("BEGIN IMMEDIATE")
+                conflict_evidence = False
                 try:
                     saved = db.execute(
                         "SELECT family,plaintext FROM verified_observations"
@@ -295,7 +296,17 @@ class VerifiedLocalLedger:
                         )
                         state = LedgerState.VERIFIED_STORED
                     elif int(saved[0]) == item.family and bytes(saved[1]) == item.plaintext:
-                        state = LedgerState.VERIFIED_DUPLICATE
+                        # An unresolved conflicting observation quarantines
+                        # the whole logical identity, even the original winner.
+                        # Never report a clean duplicate while a divergence
+                        # is known, or future receipt code could release it.
+                        has_conflict = db.execute(
+                            "SELECT 1 FROM verified_conflicts"
+                            " WHERE device_id=? AND incarnation=? AND sequence=? LIMIT 1",
+                            (item.device_id, item.incarnation, item.sequence),
+                        ).fetchone()
+                        state = (LedgerState.CONTENT_CONFLICT if has_conflict
+                                 else LedgerState.VERIFIED_DUPLICATE)
                     else:
                         # Persist the conflicting authenticated evidence
                         # transactionally. Replays of identical conflict
@@ -322,12 +333,13 @@ class VerifiedLocalLedger:
                                  item.family, item.plaintext, item.protected_frame),
                             )
                         state = LedgerState.CONTENT_CONFLICT
+                        conflict_evidence = True
                     db.execute("COMMIT")
                 except Exception:
                     if db.in_transaction:
                         db.execute("ROLLBACK")
                     raise
-            if not self._matches(item, conflict=(state == LedgerState.CONTENT_CONFLICT)):
+            if not self._matches(item, conflict=conflict_evidence):
                 return LedgerResult(LedgerState.UNCERTAIN)
             return LedgerResult(state)
         except (sqlite3.Error, OSError):
