@@ -320,6 +320,12 @@ if python3 -c 'from cryptography.hazmat.primitives.ciphers.aead import AESCCM; f
 else
   echo 'SF5H backend crypto ledger: SKIP (install python3-cryptography; full verification gate remains OPEN)'
 fi
+# SF5I actual Ed25519 Edge signature candidate: no runtime receipt authority.
+if python3 -c 'from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey' >/dev/null 2>&1; then
+  PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5i_edge_durable_accept_signed.py
+else
+  echo 'SF5I Edge signed durable-accept: SKIP (cryptography/Ed25519 absent; merge gate OPEN)'
+fi
 g++ -DORUN_M4P5B_HOST_TEST=1 "${portable_flags[@]}" \
   firmware/tests/m4/test_m4p5b_history_receipt_admission.cpp \
   firmware/src/history_receipt_admission.cpp \
