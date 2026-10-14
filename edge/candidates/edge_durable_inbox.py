@@ -33,6 +33,26 @@ class PutResult:
     sequence: Optional[int] = None
 
 
+class ScanState(Enum):
+    READY = auto()      # bounded FIFO batch after complete-table integrity check
+    EMPTY = auto()      # no rows in a coherent snapshot
+    REFUSED = auto()    # malformed content or impossible retained metadata
+    UNAVAILABLE = auto()  # SQLite busy, unreadable or otherwise uncertain
+    INVALID = auto()    # bad requested batch limit
+
+
+@dataclass(frozen=True)
+class QueuedFrame:
+    sequence: int           # local Edge row identity, NOT protocol identity
+    ciphertext: bytes       # exact 84/100B protected object
+
+
+@dataclass(frozen=True)
+class ScanResult:
+    state: ScanState
+    items: tuple[QueuedFrame, ...] = ()
+
+
 class InjectedFailure(Exception):
     pass
 
@@ -194,5 +214,47 @@ class EdgeDurableInbox:
                 ).fetchone()[0])
         except sqlite3.Error:
             return None
+
+    def oldest_batch(self, limit: int = 16) -> ScanResult:
+        """Read a bounded oldest-first batch, validating the ENTIRE queue.
+
+        A later corrupted object invalidates the whole batch; no partial
+        earlier 'good' prefix is returned to downstream code. Uses one
+        consistent SQLite read transaction. This is NOT a backend delivery
+        claim, an authenticated receipt, or a checkpoint/reclaim operation.
+        """
+        if type(limit) is not int or limit < 1 or limit > 64:
+            return ScanResult(ScanState.INVALID)
+        try:
+            with closing(self._connect()) as conn:
+                conn.execute("BEGIN")
+                items: list[QueuedFrame] = []
+                rows_seen = 0
+                previous_sequence = 0
+                cursor = conn.execute(
+                    "SELECT sequence,digest,size,ciphertext "
+                    "FROM exact_frames ORDER BY sequence ASC"
+                )
+                for sequence, digest, size, object_blob in cursor:
+                    rows_seen += 1
+                    if (rows_seen > self.max_objects or
+                            type(sequence) is not int or
+                            sequence <= previous_sequence or sequence <= 0 or
+                            type(size) is not int or size not in (84, 100) or
+                            not isinstance(digest, bytes) or len(digest) != 32 or
+                            not isinstance(object_blob, bytes) or
+                            len(object_blob) != size or
+                            not admissible_product_frame(object_blob) or
+                            sha256(object_blob).digest() != digest):
+                        return ScanResult(ScanState.REFUSED)
+                    previous_sequence = sequence
+                    if len(items) < limit:
+                        items.append(QueuedFrame(sequence, object_blob))
+                conn.execute("COMMIT")
+                if rows_seen == 0:
+                    return ScanResult(ScanState.EMPTY)
+                return ScanResult(ScanState.READY, tuple(items))
+        except (sqlite3.Error, OSError):
+            return ScanResult(ScanState.UNAVAILABLE)
 
     # Intentionally no delete / reclaim / receipt-generation function.
