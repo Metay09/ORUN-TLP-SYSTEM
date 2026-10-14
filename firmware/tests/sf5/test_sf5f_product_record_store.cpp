@@ -31,13 +31,21 @@ class FakeFlash : public FlashBackend {
   FakeFlash() : bytes(size_t(kPages) * kPage, 0xFF) {}
 
   bool begin() override { return true; }
+  bool hasUnreconciledMutation() const override { return unreconciled; }
   bool read(uint32_t offset, void* data, size_t size) const override {
+    ++read_calls;
+    if (read_calls == fail_read_at ||
+        (fail_reads_after_mutation != 0U &&
+         mutation_calls >= fail_reads_after_mutation))
+      return false;
     if (data == nullptr || uint64_t(offset) + size > bytes.size()) return false;
     memcpy(data, bytes.data() + offset, size);
     return true;
   }
   FlashOpResult program(uint32_t offset, const void* data,
                         size_t size) override {
+    ++program_calls;
+    ++mutation_calls;
     if (pending_ || data == nullptr || size == 0 || (offset & 3U) ||
         (size & 3U) || uint64_t(offset) + size > bytes.size())
       return FlashOpResult::kFailed;
@@ -45,12 +53,20 @@ class FakeFlash : public FlashBackend {
       if (bytes[offset + i] != 0xFF) return FlashOpResult::kFailed;
     const auto* src = static_cast<const uint8_t*>(data);
     if (record) ops.push_back(Op{false, offset, {src, src + size}});
+    if (mutation_calls == fail_mutation_at) {
+      assert(torn_bytes < size);
+      for (size_t i = 0; i < torn_bytes; ++i) bytes[offset + i] &= src[i];
+      return FlashOpResult::kFailed;
+    }
     for (size_t i = 0; i < size; ++i) bytes[offset + i] &= src[i];
     return finish();
   }
   FlashOpResult erasePage(uint32_t page) override {
+    ++erase_calls;
+    ++mutation_calls;
     if (pending_ || page >= kPages) return FlashOpResult::kFailed;
     if (record) ops.push_back(Op{true, page * kPage, {}});
+    if (mutation_calls == fail_mutation_at) return FlashOpResult::kFailed;
     memset(bytes.data() + size_t(page) * kPage, 0xFF, kPage);
     return finish();
   }
@@ -61,6 +77,12 @@ class FakeFlash : public FlashBackend {
       return FlashOpResult::kPending;
     }
     pending_ = false;
+    if (fail_async_completion) {
+      // Bytes may already be visible, but a timeout is not completion proof.
+      // Both a still-quarantined and an already-late-completed backend exist.
+      unreconciled = quarantine_on_failure;
+      return FlashOpResult::kFailed;
+    }
     return FlashOpResult::kDone;
   }
 
@@ -68,6 +90,17 @@ class FakeFlash : public FlashBackend {
   std::vector<Op> ops;
   bool record = false;
   bool async = false;
+  unsigned program_calls = 0;
+  unsigned erase_calls = 0;
+  unsigned mutation_calls = 0;
+  mutable unsigned read_calls = 0;
+  unsigned fail_mutation_at = 0;
+  size_t torn_bytes = 0;
+  unsigned fail_read_at = 0;
+  unsigned fail_reads_after_mutation = 0;
+  bool fail_async_completion = false;
+  bool quarantine_on_failure = false;
+  bool unreconciled = false;
 
  private:
   FlashOpResult finish() {
@@ -195,6 +228,7 @@ osc::ExactObject protectedFixture(const ProductRecordStore& records,
   frame.key_epoch = 7U;
   frame.security_counter = sequence + 100U;
   frame.ciphertext_len = tlp::kPeriodicPlaintextSize;
+  // Structural fixture only: zero ciphertext/tag is deliberately not AEAD proof.
   assert(tlp::encodeProductSecureFrame(frame, exact.object, exact.object_size) ==
          tlp::ProductSecureCodecResult::kOk);
   return exact;
@@ -207,7 +241,10 @@ void settleExactCache(ProductRecordStore& records,
   assert(!records.takeCacheOutcome(outcome));
   bool completed = false;
   for (unsigned i = 0; i < 10000U; ++i) {
+    assert(!records.requestPrepare());
     records.poll();
+    // Includes a faulted store with an unconsumed cache failure outcome.
+    assert(!records.requestPrepare());
     if (records.takeCacheOutcome(outcome)) {
       completed = true;
       break;
@@ -217,6 +254,106 @@ void settleExactCache(ProductRecordStore& records,
   assert(outcome.identity.incarnation == expected.identity.incarnation);
   assert(outcome.identity.sequence == expected.identity.sequence);
   assert(outcome.durable == expected_durable);
+  assert(!records.takeCacheOutcome(outcome));  // outcome is delivered once
+}
+
+void checkExact(const ProductRecordStore& records,
+                const osc::ExactObject& expected, bool present) {
+  osc::ExactObject found{};
+  assert(records.findCachedExact(expected.identity, found) ==
+         (present ? ObservationStore::ControlLookupResult::kFound
+                  : ObservationStore::ControlLookupResult::kNone));
+  if (present) {
+    assert(found.identity.incarnation == expected.identity.incarnation);
+    assert(found.identity.sequence == expected.identity.sequence);
+    assert(found.record_kind == expected.record_kind);
+    assert(found.object_size == expected.object_size);
+    assert(memcmp(found.object, expected.object, expected.object_size) == 0);
+  }
+}
+
+// Fixture construction uses sequential owners, never a mutable escape from
+// ProductRecordStore. Existing occurrence/tombstone writes fill journal slots
+// without releasing any backing record or changing the exact objects.
+std::vector<uint8_t> cacheImage(unsigned active, unsigned used) {
+  FakeFlash flash;
+  FixedIncarnation source;
+  {
+    ProductRecordStore records(flash, kPages, &source);
+    records.begin(kDevice, kTracker);
+    for (unsigned seq = 1; seq <= 5U; ++seq)
+      assert(store(records, seq).stored);
+    for (unsigned seq = 1; seq <= active; ++seq) {
+      const auto exact = protectedFixture(records, seq);
+      assert(records.submitExactCache(exact) ==
+             ProductRecordStore::CacheSubmit::kStarted);
+      settleExactCache(records, exact, true);
+    }
+  }
+  if (used > active) {
+    ObservationStore fixture(flash, kPages, &source);
+    assert(fixture.begin(kDevice));
+    osc::OpenOccurrence occurrence{};
+    occurrence.event_type = 1U;
+    occurrence.occurrence_id = 7U;
+    for (unsigned i = active; i < used; ++i) {
+      const auto result = (i - active) % 2U == 0U
+          ? fixture.requestPutOpenOccurrence(occurrence)
+          : fixture.requestClearOpenOccurrence(occurrence);
+      assert(result == ObservationStore::ControlWriteResult::kStarted);
+      for (unsigned step = 0; fixture.busy() && step < 1000U; ++step)
+        fixture.poll();
+      bool ok = false;
+      assert(fixture.takeControlWriteResult(ok) && ok);
+    }
+  }
+  return flash.bytes;
+}
+
+void checkRecovery(const std::vector<uint8_t>& bytes, unsigned active,
+                   const osc::ExactObject& target, bool target_present,
+                   bool expected_fault = false) {
+  FakeFlash reboot;
+  reboot.bytes = bytes;  // A new backend/owner models reset, not begin in-flight.
+  FixedIncarnation source;
+  ProductRecordStore recovered(reboot, kPages, &source);
+  recovered.begin(kDevice, kTracker);
+  assert(recovered.mounted());
+  assert(recovered.store().faulted() == expected_fault);
+  assert(reboot.mutation_calls == 0U);  // recovery itself must be read-only
+  if (expected_fault) {
+    // A torn first-ever control activation has no older control authority.
+    // Preserve SF5C's faulted/read-only policy; do not erase to hide evidence.
+    assert(recovered.submitExactCache(target) ==
+           ProductRecordStore::CacheSubmit::kNotMounted);
+    assert(recovered.submitPeriodic(period(6U)) ==
+           ProductRecordStore::Submit::kNotMounted);
+    osc::ExactObject ignored;
+    assert(recovered.findCachedExact(target.identity, ignored) !=
+           ObservationStore::ControlLookupResult::kFound);
+    recovered.poll();
+    assert(reboot.mutation_calls == 0U && reboot.bytes == bytes);
+    return;
+  }
+  for (unsigned seq = 1; seq <= active; ++seq)
+    checkExact(recovered, protectedFixture(recovered, seq), true);
+  checkExact(recovered, target, target_present);
+  for (unsigned seq = 1; seq <= 5U; ++seq) checkStored(recovered, seq, seq);
+  if (target_present) {
+    assert(recovered.submitExactCache(target) ==
+           ProductRecordStore::CacheSubmit::kAlreadyDurable);
+    assert(reboot.mutation_calls == 0U);
+  }
+  // The existing periodic path resumes interrupted control maintenance.
+  assert(store(recovered, 6U).stored);
+  for (unsigned seq = 1; seq <= active; ++seq)
+    checkExact(recovered, protectedFixture(recovered, seq), true);
+  if (!target_present) {
+    assert(recovered.submitExactCache(target) ==
+           ProductRecordStore::CacheSubmit::kStarted);
+    settleExactCache(recovered, target, true);
+  }
+  checkExact(recovered, target, true);
 }
 
 void testExactObjectCacheAndReboot(bool async) {
@@ -276,29 +413,200 @@ void testExactObjectCacheAndReboot(bool async) {
   assert(remounted.diagnostics().exact_cache_committed == 0U);
 }
 
-void testExactCacheBound() {
+void testExactCacheJournalCapacity(bool async) {
+  FixedIncarnation source;
+  // Fresh, one spare slot, and completely full journals: capacity saturation
+  // must never cause compaction, eviction, or any flash mutation on retries.
+  for (unsigned used : {4U, osf::kControlRecordsPerPage - 1U,
+                        osf::kControlRecordsPerPage}) {
+    FakeFlash flash;
+    flash.bytes = cacheImage(4U, used);
+    const auto before = flash.bytes;
+    ProductRecordStore records(flash, kPages, &source);
+    records.begin(kDevice, kTracker);
+    assert(records.mounted());
+    flash.async = async;
+    const auto fifth = protectedFixture(records, 5U);
+    for (unsigned retry = 0; retry < 8U; ++retry) {
+      assert(records.submitExactCache(fifth) ==
+             ProductRecordStore::CacheSubmit::kNoCapacity);
+      records.poll();
+      ProductRecordStore::CacheOutcome outcome;
+      assert(!records.takeCacheOutcome(outcome));
+      for (unsigned seq = 1; seq <= 4U; ++seq) {
+        const auto exact = protectedFixture(records, seq);
+        checkExact(records, exact, true);
+        assert(records.submitExactCache(exact) ==
+               ProductRecordStore::CacheSubmit::kAlreadyDurable);
+      }
+    }
+    checkExact(records, fifth, false);
+    assert(flash.program_calls == 0U && flash.erase_calls == 0U);
+    assert(flash.bytes == before);
+    assert(records.store().diagnostics().control_pages_compacted == 0U);
+    // Verify all four remain the immutable authorities after reboot as well.
+    ProductRecordStore reboot(flash, kPages, &source);
+    reboot.begin(kDevice, kTracker);
+    for (unsigned seq = 1; seq <= 4U; ++seq)
+      checkExact(reboot, protectedFixture(reboot, seq), true);
+    checkExact(reboot, fifth, false);
+  }
+
+  // Slot exhaustion with only three live objects is different: compact once
+  // and admit the fourth, preserving all previous live objects byte-for-byte.
   FakeFlash flash;
+  flash.bytes = cacheImage(3U, osf::kControlRecordsPerPage);
+  ProductRecordStore records(flash, kPages, &source);
+  records.begin(kDevice, kTracker);
+  flash.async = async;
+  const auto fourth = protectedFixture(records, 4U);
+  assert(records.submitExactCache(fourth) ==
+         ProductRecordStore::CacheSubmit::kStarted);
+  settleExactCache(records, fourth, true);
+  assert(records.store().diagnostics().control_pages_compacted == 1U);
+  for (unsigned seq = 1; seq <= 4U; ++seq)
+    checkExact(records, protectedFixture(records, seq), true);
+  const unsigned mutations = flash.mutation_calls;
+  assert(records.submitExactCache(protectedFixture(records, 5U)) ==
+         ProductRecordStore::CacheSubmit::kNoCapacity);
+  assert(flash.mutation_calls == mutations);
+}
+
+void testExactCacheFailuresAndResets(unsigned active, unsigned used) {
+  const auto baseline = cacheImage(active, used);
+  FixedIncarnation source;
+  FakeFlash reference;
+  reference.bytes = baseline;
+  reference.record = true;
+  ProductRecordStore successful(reference, kPages, &source);
+  successful.begin(kDevice, kTracker);
+  const auto target = protectedFixture(successful, active + 1U);
+  assert(successful.submitExactCache(target) ==
+         ProductRecordStore::CacheSubmit::kStarted);
+  settleExactCache(successful, target, true);
+  const auto ops = reference.ops;
+  assert(ops.size() >= 2U);
+  assert(ops.back().data.size() == 4U);  // final exact-object commit
+
+  for (unsigned fault = 1; fault <= ops.size(); ++fault) {
+    // Definite mutation failure, and persistent read failure starting at each
+    // mutation's verification. Neither may produce a durable owner outcome.
+    for (bool read_failure : {false, true}) {
+      FakeFlash flash;
+      flash.bytes = baseline;
+      ProductRecordStore records(flash, kPages, &source);
+      records.begin(kDevice, kTracker);
+      assert(records.submitExactCache(target) ==
+             ProductRecordStore::CacheSubmit::kStarted);
+      if (read_failure)
+        flash.fail_reads_after_mutation = fault;
+      else
+        flash.fail_mutation_at = fault;
+      settleExactCache(records, target, false);
+      assert(flash.mutation_calls == fault);
+      assert(records.diagnostics().exact_cache_committed == 0U);
+      assert(records.diagnostics().exact_cache_failed == 1U);
+      // A commit can have reached flash even though its verification failed.
+      checkRecovery(flash.bytes, active, target,
+                    read_failure && fault == ops.size());
+    }
+  }
+
+  // Fail only the owner's final exact/backing readback, after the lower store
+  // has reported a committed control write. Lower-layer success is not enough.
+  FakeFlash readback;
+  readback.bytes = baseline;
+  ProductRecordStore records(readback, kPages, &source);
+  records.begin(kDevice, kTracker);
+  readback.fail_read_at = reference.read_calls;
+  assert(records.submitExactCache(target) ==
+         ProductRecordStore::CacheSubmit::kStarted);
+  settleExactCache(records, target, false);
+  assert(records.store().diagnostics().control_writes_committed == 1U);
+  assert(readback.read_calls == reference.read_calls);
+  checkRecovery(readback.bytes, active, target, true);
+
+  // Replay the actual successful mutation trace. Reset before, midway through,
+  // and after every mutation, including maintenance activation and copy steps.
+  // Partial commit words are byte-level models, not physical NVMC evidence.
+  std::vector<uint8_t> replay = baseline;
+  unsigned cuts = 0U;
+  for (size_t i = 0; i < ops.size(); ++i) {
+    const auto& op = ops[i];
+    const size_t size = op.erase ? kPage : op.data.size();
+    for (size_t prefix : {size_t(0), size / 2U, size}) {
+      auto cut = replay;
+      if (op.erase)
+        memset(cut.data() + op.offset, 0xFF, prefix);
+      else
+        for (size_t byte = 0; byte < prefix; ++byte)
+          cut[op.offset + byte] &= op.data[byte];
+      checkRecovery(cut, active, target,
+                    i + 1U == ops.size() && prefix == size,
+                    active == 0U && !op.erase &&
+                        op.offset == osf::kPageHeaderActiveOffset &&
+                        prefix != 0U && prefix != size);
+      ++cuts;
+    }
+    if (op.erase)
+      memset(replay.data() + op.offset, 0xFF, size);
+    else
+      for (size_t byte = 0; byte < size; ++byte)
+        replay[op.offset + byte] &= op.data[byte];
+  }
+  assert(replay == reference.bytes);
+  printf("  exact cache active=%u: %u mutation/read faults, %u reset cuts\n",
+         active, unsigned(ops.size() * 2U + 1U), cuts);
+}
+
+void testExactCacheTornWrite(bool commit) {
+  FakeFlash flash;
+  flash.bytes = cacheImage(1U, 1U);
   FixedIncarnation source;
   ProductRecordStore records(flash, kPages, &source);
   records.begin(kDevice, kTracker);
-  for (uint32_t seq = 1; seq <= 5U; ++seq)
-    assert(store(records, seq).stored);
-  for (uint32_t seq = 1; seq <= 4U; ++seq) {
-    const auto exact = protectedFixture(records, seq);
-    assert(records.submitExactCache(exact) ==
-           ProductRecordStore::CacheSubmit::kStarted);
-    settleExactCache(records, exact, true);
-  }
-  const auto fifth = protectedFixture(records, 5U);
-  const auto result = records.submitExactCache(fifth);
-  // No fifth outstanding custody object, even after control compaction.
-  if (result == ProductRecordStore::CacheSubmit::kStarted)
-    settleExactCache(records, fifth, false);
-  else
-    assert(result == ProductRecordStore::CacheSubmit::kNoCapacity);
-  osc::ExactObject ignored{};
-  assert(records.findCachedExact(fifth.identity, ignored) ==
-         ObservationStore::ControlLookupResult::kNone);
+  const auto target = protectedFixture(records, 2U);
+  assert(records.submitExactCache(target) ==
+         ProductRecordStore::CacheSubmit::kStarted);
+  flash.fail_mutation_at = commit ? 2U : 1U;
+  flash.torn_bytes = commit ? 2U : osf::kControlRecordCommitOffset / 2U;
+  settleExactCache(records, target, false);
+  checkExact(records, target, false);
+  checkRecovery(flash.bytes, 1U, target, false);
+}
+
+void testExactCacheLateCompletion(bool commit, bool quarantined) {
+  FakeFlash flash;
+  flash.bytes = cacheImage(1U, 1U);
+  FixedIncarnation source;
+  ProductRecordStore records(flash, kPages, &source);
+  records.begin(kDevice, kTracker);
+  const auto target = protectedFixture(records, 2U);
+  assert(records.submitExactCache(target) ==
+         ProductRecordStore::CacheSubmit::kStarted);
+  if (commit) records.poll();  // complete body synchronously first
+  flash.async = true;
+  flash.fail_async_completion = true;
+  flash.quarantine_on_failure = quarantined;
+  records.poll();  // start pending body or commit (bytes are already visible)
+  assert(records.store().busy());
+  assert(!records.requestPrepare());
+  assert(records.submitExactCache(target) == ProductRecordStore::CacheSubmit::kBusy);
+  const unsigned mutations = flash.mutation_calls;
+  settleExactCache(records, target, false);
+  assert(records.store().faulted());
+  assert(records.store().diagnostics().unreconciled_mutation_faults == 1U);
+  if (quarantined) assert(!records.requestPrepare());
+  flash.unreconciled = false;  // late hardware reconciliation cannot clear latch
+  for (unsigned poll = 0; poll < 8U; ++poll) records.poll();
+  osc::ExactObject ignored;
+  assert(records.findCachedExact(target.identity, ignored) ==
+         ObservationStore::ControlLookupResult::kReadError);
+  assert(records.submitExactCache(target) ==
+         ProductRecordStore::CacheSubmit::kNotMounted);
+  assert(flash.mutation_calls == mutations);  // no resubmission or erase
+  assert(flash.erase_calls == 0U);
+  checkRecovery(flash.bytes, 1U, target, commit);
 }
 
 void testOwnersAndPrepare() {
@@ -418,7 +726,15 @@ int main() {
   testOwnersAndPrepare();
   testExactObjectCacheAndReboot(false);
   testExactObjectCacheAndReboot(true);
-  testExactCacheBound();
+  testExactCacheJournalCapacity(false);
+  testExactCacheJournalCapacity(true);
+  testExactCacheFailuresAndResets(0U, 0U);  // first control-page maintenance
+  testExactCacheFailuresAndResets(3U, osf::kControlRecordsPerPage);
+  for (bool commit : {false, true}) {
+    testExactCacheTornWrite(commit);
+    testExactCacheLateCompletion(commit, false);
+    testExactCacheLateCompletion(commit, true);
+  }
   testFillAndResetEverywhere();
   puts("SF5F ProductRecordStore checks: PASS");
 }

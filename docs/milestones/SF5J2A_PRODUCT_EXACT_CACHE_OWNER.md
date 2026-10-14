@@ -27,7 +27,12 @@ New APIs on `ProductRecordStore`:
   can be used only after the existing bytes were read back and matched.
 - When the control page is absent or needs compaction, start one bounded
   control maintenance operation and retry the exact bytes once. A full
-  four-object cache remains full, not a reason to evict or re-protect.
+  four-object cache returns `kNoCapacity` without maintenance, eviction or
+  re-protection, even when its journal is nearly/full. A read-only
+  `ObservationStore::exactObjectCount` separates this bound from slot exhaustion.
+- `requestPrepare()` refuses pending cache writes/maintenance, unconsumed cache
+  outcomes and any owner/store job, in addition to the existing pending-period,
+  region-eligibility and unreconciled-flash guards. Erase privileges are unchanged.
 
 The existing `ObservationStore` caps outstanding cached protected objects
 at four, retains immutable ciphertext across reboot, and only frees an object
@@ -59,6 +64,23 @@ regressions:
   custody-requested flag are rejected.
 - An unprotected second logical record remains uncached.
 - Outstanding cache capacity remains bounded to four exact objects.
+- Deterministic program/read failure at every mutation in first-use control
+  maintenance and three-live-object journal compaction; final owner readback
+  failure after a successful lower-store commit (42 injected cases total).
+- Reset before/during/after each mutation in those two traces (60 cuts), with
+  committed exact-byte recovery, no publication of torn body/commit records,
+  retained backing records and continued operation after recoverable cuts.
+- Separate torn body/commit writes and four async body/commit timeout cases,
+  with quarantine still present or already cleared by late completion. Failed
+  async operations never become durable through readback alone, never resubmit,
+  and recover only committed exact bytes after reboot.
+- PREPARE refusal throughout cache maintenance/write and while a faulted store's
+  cache failure outcome remains unconsumed; backend quarantine remains blocking
+  after consuming that outcome.
+- Four live objects with 4/27/28 used journal slots, sync and async: repeated
+  fifth admission returns `kNoCapacity`, performs **zero program/erase calls**,
+  and preserves all four objects across reboot. Three live objects with 28 used
+  slots instead compact once and admit a fourth.
 
 Commands (fish):
 
@@ -73,8 +95,36 @@ pio run -d firmware -e rak4630
 echo PIO_EXIT=$status
 ```
 
-Status at creation: **candidate, host and target build not yet executed**.
-Do not upload this dormant slice merely to reproduce already proven legacy RF.
+## 2026-10-14 independent-review follow-up
+
+Addresses the two MEDIUM and one LOW findings in the
+[PR #132 independent review](https://github.com/Metay09/ORUN-TLP-SYSTEM/pull/132#issuecomment-6175042179)
+of `42cc3e0f88ed5c44a121288f046d1c1e1dd60ad0`. **Keep Draft pending independent
+re-review**; these changes do not constitute that re-review or authorize merge.
+
+Validation of this revision:
+
+- Focused ProductRecordStore host suite: PASS with ASan/UBSan and `-Werror`;
+  existing 2,122 rotation/reset probes also pass.
+- Temporary source mutants removing either the PREPARE guard or the saturated
+  cache check are both caught by the targeted regressions.
+- `pio run -d firmware -e rak4630`: PASS; RAM 33,144 B, flash 354,144 B.
+- `bash firmware/tests/run_host_tests.sh`: PASS, exit 0, with default ASan/UBSan,
+  `-Werror` and legacy compatibility gates. The final commit SHA is recorded
+  on PR #132 with these results.
+
+The first-ever control-page activation torn mid-word still leaves SF5C faulted
+when no previous control authority exists. The test explicitly preserves that
+fail-closed, non-mutating recovery policy; it does not erase evidence or promise
+automatic repair. An ambiguous async failure remains latched for the current
+store instance even after backend quarantine clears; reboot recovery is tested.
+
+All new failure/reset evidence is from the host fake backend. Physical NVMC /
+brown-out / SoftDevice late-completion qualification remains open for this cache
+owner. No firmware upload, physical PREPARE/erase, production RF, crypto-owner
+activation or custody ACK was performed. Flash ownership, allocation and
+persistent/wire formats are unchanged. Do not upload this dormant slice merely
+to reproduce already proven legacy RF.
 
 ## Follow-on runtime sequencing (SF5J2B)
 

@@ -25,7 +25,8 @@ namespace orun_tlp {
 //   once through takeOutcome().
 // - requestPrepare() is the only whole-region erase, allowed only when the
 //   region holds nothing this store can use (unrecognised leftovers) or the
-//   mounted store is faulted. The caller reboots afterwards to mount.
+//   mounted store is faulted, with no pending job/cache outcome or unreconciled
+//   flash mutation. The caller reboots afterwards to mount.
 //
 // Nothing is sealed or sent here; TLP v1 POSITION and HistoryStore stay the
 // live path until the SF5F RF step.

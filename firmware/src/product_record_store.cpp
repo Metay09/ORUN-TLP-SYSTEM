@@ -104,10 +104,14 @@ ProductRecordStore::CacheSubmit ProductRecordStore::startCache(
       return CacheSubmit::kBusy;
     case ObservationStore::ControlWriteResult::kRejected:
       return CacheSubmit::kRejected;
-    case ObservationStore::ControlWriteResult::kNoCapacity:
+    case ObservationStore::ControlWriteResult::kNoCapacity: {
       if (!allow_control_maintenance) return CacheSubmit::kNoCapacity;
+      uint16_t active = 0U;
+      if (!store_.exactObjectCount(active)) return CacheSubmit::kRejected;
+      if (active >= osf::kMaxExactCustodyObjects)
+        return CacheSubmit::kNoCapacity;
       // First use and control compaction both require maintenance. One
-      // attempt only; an actual four-object limit must stay NO_CAPACITY.
+      // attempt only; compaction cannot help a saturated four-object cache.
       switch (store_.requestControlMaintenance()) {
         case ObservationStore::MaintenanceResult::kStarted:
           job_ = Job::kCacheMaintenance;
@@ -120,6 +124,7 @@ ProductRecordStore::CacheSubmit ProductRecordStore::startCache(
         case ObservationStore::MaintenanceResult::kRejected:
           return CacheSubmit::kRejected;
       }
+    }
   }
   return CacheSubmit::kRejected;
 }
@@ -304,7 +309,11 @@ void ProductRecordStore::runMaintenance() {
 }
 
 bool ProductRecordStore::requestPrepare() {
-  if (preparing() || pending_ || !region_readable_) return false;
+  // Keep destructive service work out of every owner job and unconsumed
+  // cache outcome, including failures that have faulted the mounted store.
+  if (preparing() || pending_ || cache_pending_ || cache_outcome_ready_ ||
+      job_ != Job::kNone || store_.busy() || !region_readable_)
+    return false;
   const bool leftovers =
       decision_ == product_region::MountDecision::kNeedsPreparation;
   const bool faulted_store = mounted_ && store_.faulted();

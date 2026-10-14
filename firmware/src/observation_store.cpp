@@ -1445,6 +1445,17 @@ ObservationStore::ControlLookupResult ObservationStore::findExactObject(
   return ControlLookupResult::kFound;
 }
 
+bool ObservationStore::exactObjectCount(uint16_t& count) const {
+  count = 0U;
+  if (!ready_ || faulted_ || mutationUncertain()) return false;
+  bool read_ok = false;
+  const uint16_t active =
+      activeControlCount(osf::ControlKind::kExactObject, read_ok);
+  if (!read_ok) return false;
+  count = active;
+  return true;
+}
+
 ObservationStore::ControlWriteResult ObservationStore::requestPutExactObject(
     const osc::ExactObject& value) {
   uint8_t payload[osc::kExactObjectPayloadSize];
