@@ -216,14 +216,23 @@ class EdgeDurableInbox:
             return None
 
     def oldest_batch(self, limit: int = 16) -> ScanResult:
-        """Read a bounded oldest-first batch, validating the ENTIRE queue.
+        return self.oldest_batch_after(0, limit)
+
+    def oldest_batch_after(self, after_sequence: int, limit: int = 16) -> ScanResult:
+        """Read a bounded oldest-first batch after a volatile local cursor.
+
+        Cursor is NOT a delivery checkpoint, release watermark, or authority
+        to skip retained data on the next process restart. Every call scans
+        and validates the whole queue, including records outside the batch.
 
         A later corrupted object invalidates the whole batch; no partial
         earlier 'good' prefix is returned to downstream code. Uses one
         consistent SQLite read transaction. This is NOT a backend delivery
         claim, an authenticated receipt, or a checkpoint/reclaim operation.
         """
-        if type(limit) is not int or limit < 1 or limit > 64:
+        if (type(after_sequence) is not int or after_sequence < 0 or
+                after_sequence > 9223372036854775807 or
+                type(limit) is not int or limit < 1 or limit > 64):
             return ScanResult(ScanState.INVALID)
         try:
             with closing(self._connect()) as conn:
@@ -248,10 +257,10 @@ class EdgeDurableInbox:
                             sha256(object_blob).digest() != digest):
                         return ScanResult(ScanState.REFUSED)
                     previous_sequence = sequence
-                    if len(items) < limit:
+                    if sequence > after_sequence and len(items) < limit:
                         items.append(QueuedFrame(sequence, object_blob))
                 conn.execute("COMMIT")
-                if rows_seen == 0:
+                if not items:
                     return ScanResult(ScanState.EMPTY)
                 return ScanResult(ScanState.READY, tuple(items))
         except (sqlite3.Error, OSError):
