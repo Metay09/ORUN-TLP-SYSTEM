@@ -500,6 +500,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r2/test_patch_radio.py "$test_d
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp \
   "$test_dir/driver_bridge.cpp" \
   firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp \
   firmware/src/network_service.cpp firmware/src/radio_driver_gate.cpp \
@@ -513,6 +514,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/m6/test_m6p1_radio.cpp "$test_dir/driver_bridge.cpp" \
   firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp \
   firmware/src/network_service.cpp firmware/src/radio_driver_gate.cpp \
@@ -526,6 +528,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
   "$test_dir/driver_bridge.cpp" \
   firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
   firmware/src/radio_driver_gate.cpp firmware/src/rak_device_identity.cpp \
@@ -535,6 +538,18 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
   firmware/src/tlp_v2_history_secure.cpp \
   -o "$test_dir/r2"
 "$test_dir/r2"
+g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
+  firmware/tests/sf5/test_sf5j_radio_transport.cpp "$test_dir/driver_bridge.cpp" \
+  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/tlp_v2_product_secure.cpp firmware/src/bridge_frame.cpp \
+  firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
+  firmware/src/radio_driver_gate.cpp firmware/src/rak_device_identity.cpp \
+  firmware/src/legacy_position_mapping.cpp \
+  firmware/src/node_role.cpp firmware/src/tlp_test_packet.cpp \
+  firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
+  firmware/src/tlp_v2_history_secure.cpp \
+  -o "$test_dir/sf5j1_radio_transport"
+"$test_dir/sf5j1_radio_transport"
 g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
@@ -544,6 +559,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/activity_period_evidence.cpp \
   firmware/src/accelerometer_manager.cpp \
   firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/radio_driver_gate.cpp \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
