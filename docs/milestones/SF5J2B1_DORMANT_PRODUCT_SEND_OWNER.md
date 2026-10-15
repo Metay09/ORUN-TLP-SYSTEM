@@ -97,3 +97,29 @@ product cutover is authorized by this milestone.
   release; no TX_DONE shortcut.
 - Two-node physical RF and power-cut/SoftDevice validation before product
   cutover.
+
+## 2026-10-15 source review and independent focused verification
+
+- Corrected exponential retry delay to reach the documented 15-minute cap
+  (30/60/120/240/480/900 seconds, then capped at 900 seconds). Added a
+  wrap-safe boundary regression for every scheduled attempt.
+- On cached-object recovery, the send owner now compares the first read to a
+  second persisted read before accepting the cache; a difference fails closed
+  without sealing or transmission. A targeted mutation-between-reads
+  regression proves `tx=0` and `State::kFault`.
+- Independently compiled **byte-for-byte matching GitHub source blobs** in an
+  isolated container (same SHA as GitHub contents API) using GCC C++11 with
+  ASan/UBSan/`-Werror`, GCC `-Wconversion -Wsign-conversion`, and Clang C++11
+  with ASan/UBSan/`-Werror`/`-Wconversion -Wsign-conversion`. Every focused
+  execution returned `SF5J2B1 dormant product send coordinator: PASS`.
+- Full project host suite/PlatformIO are **unverified in this environment**:
+  no repository checkout or `pio` binary is available. GitHub commit CI
+  statuses also have not been reported for the current branch.
+- Important remaining integration gate: real production adapter needs a
+  independently reviewed, durable credential-lifetime binding before cached
+  bytes may be sent. `currentCredentialOwns` is intentionally abstract.
+  A non-activated sender does not qualify live RF, custody, power behavior,
+  or Gateway/Edge durability.
+- SF5J2B1 stays **Draft**. Do not activate production RF, merge to main,
+  erase/prepare flash, provision credentials, or physically upload firmware
+  solely on the basis of the focused portable tests.
