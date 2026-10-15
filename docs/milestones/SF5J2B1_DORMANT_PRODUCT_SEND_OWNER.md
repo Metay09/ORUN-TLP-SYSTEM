@@ -28,9 +28,14 @@ custody release, and priority arbitration are not implemented.
 4. Every scheduled RF attempt re-checks retained backing record, unchanged
    persisted exact bytes and active credential-lifetime authority. TX results
    do not constitute custody and never release the record.
-5. Local attempt backoff starts at 30 s and doubles to a cap of 15 min.
-   Radio-busy defers without scanning flash on every loop. Empty-store
-   rescans are throttled to 30 s, avoiding repeated 128 KiB reads.
+5. Only the FIRST failed-contact episode gets ONE extra retry at half the
+   current report interval: for 1h reports, +30min; for 2h reports, +1h.
+   Afterwards, remain radio-quiet until the report owner announces another
+   durably committed PERIODIC via `onReportCommitted()`. That contact attempt
+   reuses the SAME cached object, with no new AEAD/counter and NO extra
+   half-period retry. There is no 30s→15min retry escalation.
+   Radio-busy defers without flash scanning each loop; empty-store scans
+   remain throttled to 30s.
 6. Faulted cache/crypto operations do not auto-reseal on a timer.
    After an uncertain flash mutation, a future separately reviewed
    recovery policy must decide whether new protection is safe.
@@ -69,7 +74,9 @@ g++ -std=c++11 -O1 -g -Wall -Wextra -Werror \
 
 Result: `SF5J2B1 dormant product send coordinator: PASS`.
 
-Tests include cache-before-send, identical retries, reboot reuse without
+Tests include cache-before-send, single half-report retry, report-boundary
+contact probes, quiet offline periods, ACK-and-release-gated backlog pacing,
+identical retries, reboot reuse without
 re-sealing, unprovisioned/credential-mismatch refusal, cache-write failure,
 owner readback failure, radio BUSY/send rejection, changed exact bytes,
 released backing, idle-store throttling and millisecond counter rollover.
@@ -166,3 +173,44 @@ proposal, not authority to change the existing seal-only security owner.
 Until such a proof or another reviewed durable binding exists,
 `ProductSendPort::currentCredentialOwns()` must return false and no
 production PRODUCT_SECURE TX can be activated by this PR.
+
+## 2026-10-15 owner-requested link-aware retry change
+
+The original exponential 30s→15min timer is RETIRED in this Draft PR.
+The new **report-cadence-aligned stop-and-probe** policy is:
+
+1. Select the oldest retained PERIODIC. If it has cached exact bytes,
+   recover them first. Otherwise seal once and durably cache before the first
+   on-air opportunity.
+2. On initial TX attempt without authenticated custody, permit one extra
+   attempt exactly half the configured report interval later.
+3. No further standalone retries. When the *existing* report owner finishes
+   committing the next report period, the dormant sender may make ONE contact
+   probe using its PREVIOUSLY cached object, then stays quiet again.
+   Do not use an internal timer to pretend that a new report was committed.
+4. On a separately authenticated, exact-object-matched Gateway custody ACK
+   **and durable local record release**, a future trusted adapter may call
+   `onCustodyReleaseCommitted(identity, now_ms)`. The sender then waits at
+   least 15 seconds before it selects/sends the next oldest retained record.
+   That next record needs its **own** verified ACK; an ACK for the newest
+   record is not a blanket ACK for the earlier five.
+5. A tracker can retain 5, 6 or many logical observation records while its
+   control journal admits at most four actively encrypted exact objects.
+   To preserve the bound while disconnected, this single-in-flight policy
+   resends the existing oldest exact frame as the periodic reachability probe.
+   **It does not guarantee the packet sent during the sixth reporting period
+   is the sixth report.** Once custody for the old frame is proven, previously
+   retained reports can drain oldest-first with pacing and per-object ACKs.
+6. `reportPeriodMs()` is injected by the future real config/report owner.
+   Invalid cadence never authorizes rapid retries. This slice is dormant and
+   cannot authenticate ACK or mutate release state itself.
+
+At host scope, test both 1-hour and 2-hour intervals, no transmission while
+offline between report events, old exact-frame reuse, selective release
+notification, 15-second drain pacing, and missing cadence behavior. Actual
+radio RX-window scheduling, awake duration, power draw, duty cycle, Gateway
+receipt handling, and physically measured convergence remain **unproven**.
+
+No production adapter, Gateway ACK authority, physical flash work, firmware
+upload, or TLP v1 retirement is added. Full host/PlatformIO verification
+is still required; GitHub Actions previously failed before running any steps.
