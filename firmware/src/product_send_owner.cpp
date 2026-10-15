@@ -48,13 +48,49 @@ bool ProductSendOwner::loadDurable(const ProductSendExact* expected) {
   return true;
 }
 
-void ProductSendOwner::scheduleRetry(uint32_t now_ms) {
-  // 30 s, 60 s, 120 s, 240 s, 480 s, max 15 min.
-  uint32_t delay_ms = 30000U << (retry_level_ > 5U ? 5U : retry_level_);
-  if (delay_ms > 900000U) delay_ms = 900000U;
-  if (retry_level_ < 5U) ++retry_level_;
-  next_retry_ms_ = now_ms + delay_ms;
+void ProductSendOwner::scheduleHalfRetry(uint32_t now_ms) {
+  // Exactly ONE supplemental retry after half the *configured* report
+  // interval. The next attempt thereafter requires a new committed report
+  // period; never spin at 30 s / 15 min while out of coverage.
+  const uint32_t period_ms = port_.reportPeriodMs();
+  if (period_ms < 2000U || period_ms > 0x7FFFFFFEU) {
+    // Missing/invalid cadence is no license to invent periodic RF retries.
+    half_retry_consumed_ = true;
+    retry_scheduled_ = false;
+    state_ = State::kWaitReport;
+    return;
+  }
+  next_retry_ms_ = now_ms + period_ms / 2U;
   retry_scheduled_ = true;
+  state_ = State::kRetry;
+}
+
+void ProductSendOwner::onReportCommitted() {
+  // A stored new logical record provides a bounded contact opportunity.
+  // Re-probe using the *same* cached object; do not mint a fresh ciphertext
+  // every hour and exhaust the four-object custody cache during an outage.
+  if (state_ == State::kWaitReport) {
+    retry_scheduled_ = false;
+    state_ = State::kRetry;
+  }
+}
+
+void ProductSendOwner::onCustodyReleaseCommitted(
+    const ProductSendIdentity& identity, uint32_t now_ms) {
+  if (state_ == State::kFault || !identity.valid() ||
+      !sameProductSendIdentity(identity, selected_) ||
+      (state_ != State::kRetry && state_ != State::kWaitReport))
+    return;
+  // This notification is not itself an ACK. A future reviewed caller must
+  // authenticate and validate exact-object custody, then durably release
+  // the selected record BEFORE invoking this method. We never release here.
+  selected_ = ProductSendIdentity{};
+  exact_ = ProductSendExact{};
+  state_ = State::kIdle;
+  half_retry_consumed_ = false;
+  retry_scheduled_ = false;
+  scan_scheduled_ = true;
+  next_scan_ms_ = now_ms + kBacklogPaceMs;
 }
 
 void ProductSendOwner::poll(uint32_t now_ms) {
@@ -152,8 +188,15 @@ void ProductSendOwner::poll(uint32_t now_ms) {
     ++diagnostics_.tx_started;
   else
     ++diagnostics_.tx_refused;
-  // A TX start, TX_DONE or timeout is NOT custody and NEVER releases a row.
-  scheduleRetry(now_ms);
+  // TX start/TX_DONE/timeout is NOT custody. After the single half-period
+  // retry, quiet until an actual completed report or authenticated handoff.
+  if (!half_retry_consumed_ && !retry_scheduled_) {
+    scheduleHalfRetry(now_ms);
+  } else {
+    half_retry_consumed_ = true;
+    retry_scheduled_ = false;
+    state_ = State::kWaitReport;
+  }
 }
 
 }  // namespace orun_tlp
