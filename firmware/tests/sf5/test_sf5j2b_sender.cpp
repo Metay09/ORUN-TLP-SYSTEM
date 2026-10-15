@@ -234,6 +234,27 @@ void testMissingCadenceDisablesExtraRetry() {
   assert(p.tx == 2U && p.seals == 1U);
 }
 
+void testSealUnavailableThrottlesFlashScan() {
+  Fake p;
+  p.seal_unavailable = true;
+  ProductSendOwner sender(p);
+  sender.poll(0U);
+  assert(p.record_reads == 1U && p.seal_attempts == 1U);
+  assert(p.seals == 0U && p.puts == 0U && p.tx == 0U);
+  for (unsigned now = 1U; now < 60000U; now += 17U) sender.poll(now);
+  assert(p.record_reads == 1U && p.seal_attempts == 1U);
+  sender.poll(60000U);
+  assert(p.record_reads == 2U && p.seal_attempts == 2U);
+  assert(p.seals == 0U);
+  p.seal_unavailable = false;
+  sender.poll(60001U);
+  assert(p.record_reads == 2U && p.tx == 0U);
+  sender.poll(120000U);
+  assert(p.record_reads == 3U && p.seals == 1U && p.tx == 0U);
+  sender.poll(120001U);
+  assert(p.tx == 1U && p.puts == 1U);
+}
+
 void testCachedObjectChangesBetweenReads() {
   Fake p;
   p.cached_present = true;
