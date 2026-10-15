@@ -21,6 +21,8 @@ struct Fake : ProductSendPort {
   bool read_fails = false;
   bool cache_fails = false;
   bool seal_fails = false;
+  bool change_cached_between_reads = false;
+  uint32_t cache_reads = 0;
   uint32_t seals = 0;
   uint32_t puts = 0;
   uint32_t tx = 0;
@@ -41,6 +43,8 @@ struct Fake : ProductSendPort {
     if (!cached_present) return ProductSendRead::kNone;
     assert(sameProductSendIdentity(id, cache.identity));
     out = cache;
+    if (change_cached_between_reads && cache_reads++ == 0U)
+      cache.bytes[10] ^= 0x01U;
     return ProductSendRead::kFound;
   }
   ProductSendSeal sealOnce(const ProductSendPeriodic& record,
@@ -119,6 +123,21 @@ void testBackoffReachesFifteenMinuteCap() {
   assert(p.seals == 1U && p.puts == 1U);
   assert(sender.diagnostics().tx_started == 8U);
   assert(sender.state() == ProductSendOwner::State::kRetry);
+}
+
+void testCachedObjectChangesBetweenReads() {
+  Fake p;
+  p.cached_present = true;
+  p.cache.identity.incarnation = 42U;
+  p.cache.identity.sequence = 7U;
+  p.cache.size = 100U;
+  memset(p.cache.bytes, 0xA5, sizeof(p.cache.bytes));
+  p.change_cached_between_reads = true;
+  ProductSendOwner sender(p);
+  sender.poll(0U);
+  assert(p.cache_reads == 2U);
+  assert(sender.state() == ProductSendOwner::State::kFault);
+  assert(p.seals == 0U && p.puts == 0U && p.tx == 0U);
 }
 
 void testRebootUsesExactAndBurnsNoCounter() {
@@ -221,6 +240,7 @@ void testWraparoundDeadline() {
 int main() {
   testStoreBeforeSendAndBackoff();
   testBackoffReachesFifteenMinuteCap();
+  testCachedObjectChangesBetweenReads();
   testRebootUsesExactAndBurnsNoCounter();
   testSecurityAndNoCredentialLifetime();
   testWriteFailuresFailClosed();
