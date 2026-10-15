@@ -100,7 +100,14 @@ void ProductSendOwner::poll(uint32_t now_ms) {
     } else if (cached == ProductSendRead::kNone) {
       ProductSendExact sealed{};
       const ProductSendSeal seal = port_.sealOnce(candidate, sealed);
-      if (seal == ProductSendSeal::kUnavailable) return;
+      if (seal == ProductSendSeal::kUnavailable) {
+        // Counter reservations may be temporarily busy. Avoid repeatedly
+        // scanning the entire product region and invoking the crypto owner
+        // in a tight loop while the flash/security gate is unavailable.
+        scan_scheduled_ = true;
+        next_scan_ms_ = now_ms + 60000U;
+        return;
+      }
       if (seal != ProductSendSeal::kOk ||
           !validExact(sealed, selected_)) {
         fail();
