@@ -100,6 +100,27 @@ void testStoreBeforeSendAndBackoff() {
   assert(p.tx == 3 && p.seals == 1 && p.puts == 1);
 }
 
+
+void testBackoffReachesFifteenMinuteCap() {
+  Fake p;
+  ProductSendOwner sender(p);
+  sender.poll(0U);     // durability still pending
+  sender.poll(1U);     // first attempt; next in 30 s
+  assert(p.tx == 1U);
+  const uint32_t attempts[] = {
+      30001U, 90001U, 210001U, 450001U, 930001U,
+      1830001U, 2730001U};
+  for (unsigned i = 0U; i < sizeof(attempts) / sizeof(attempts[0]); ++i) {
+    sender.poll(attempts[i] - 1U);
+    assert(p.tx == i + 1U);
+    sender.poll(attempts[i]);
+    assert(p.tx == i + 2U);
+  }
+  assert(p.seals == 1U && p.puts == 1U);
+  assert(sender.diagnostics().tx_started == 8U);
+  assert(sender.state() == ProductSendOwner::State::kRetry);
+}
+
 void testRebootUsesExactAndBurnsNoCounter() {
   Fake p;
   ProductSendOwner first(p);
@@ -199,6 +220,7 @@ void testWraparoundDeadline() {
 
 int main() {
   testStoreBeforeSendAndBackoff();
+  testBackoffReachesFifteenMinuteCap();
   testRebootUsesExactAndBurnsNoCounter();
   testSecurityAndNoCredentialLifetime();
   testWriteFailuresFailClosed();
