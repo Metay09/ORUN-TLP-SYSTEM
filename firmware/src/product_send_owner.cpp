@@ -50,7 +50,7 @@ bool ProductSendOwner::loadDurable(const ProductSendExact* expected) {
 
 void ProductSendOwner::scheduleRetry(uint32_t now_ms) {
   // 30 s, 60 s, 120 s, 240 s, 480 s, max 15 min.
-  uint32_t delay_ms = 30000U << (retry_level_ > 4U ? 4U : retry_level_);
+  uint32_t delay_ms = 30000U << (retry_level_ > 5U ? 5U : retry_level_);
   if (delay_ms > 900000U) delay_ms = 900000U;
   if (retry_level_ < 5U) ++retry_level_;
   next_retry_ms_ = now_ms + delay_ms;
