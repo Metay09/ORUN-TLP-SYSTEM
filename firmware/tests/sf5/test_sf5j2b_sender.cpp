@@ -154,13 +154,19 @@ void testOnlyCommittedCustodyReleaseResumesBacklog() {
   sender.poll(0U);
   sender.poll(1U);
   assert(p.tx == 1U);
-  sender.onCustodyReleaseCommitted(ProductSendIdentity{42U, 999U}, 10U);
+  ProductSendIdentity wrong{};
+  wrong.incarnation = 42U;
+  wrong.sequence = 999U;
+  sender.onCustodyReleaseCommitted(wrong, 10U);
   assert(sender.state() == ProductSendOwner::State::kRetry);
   // Simulate a separately authenticated receipt + durable store release.
   // The sender itself neither trusts RF_RX nor mutates ObservationStore.
   p.record_sequence = 8U;
   p.cached_present = false;
-  sender.onCustodyReleaseCommitted(ProductSendIdentity{42U, 7U}, 100U);
+  ProductSendIdentity committed{};
+  committed.incarnation = 42U;
+  committed.sequence = 7U;
+  sender.onCustodyReleaseCommitted(committed, 100U);
   assert(sender.state() == ProductSendOwner::State::kIdle);
   sender.poll(15099U);
   assert(p.tx == 1U && p.puts == 1U);
