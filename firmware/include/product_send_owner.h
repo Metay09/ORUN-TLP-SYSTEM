@@ -55,13 +55,16 @@ class ProductSendPort {
   // object belongs to the current credential lifetime. Fail closed unless
   // the adapter can establish this binding from reviewed durable authority.
   virtual bool currentCredentialOwns(const ProductSendExact& exact) const = 0;
+  // Effective time between normal committed PERIODIC reports, in milliseconds.
+  // No hard-coded 30s..15min retry escalation may bypass this cadence.
+  virtual uint32_t reportPeriodMs() const = 0;
   virtual bool radioReady() const = 0;
   virtual bool transmitExact(const uint8_t* bytes, size_t size) = 0;
 };
 
 class ProductSendOwner {
  public:
-  enum class State : uint8_t { kIdle, kAwaitCache, kRetry, kFault };
+  enum class State : uint8_t { kIdle, kAwaitCache, kRetry, kWaitReport, kFault };
   struct Diagnostics {
     uint32_t cached_recovered = 0;
     uint32_t sealed = 0;
@@ -74,13 +77,21 @@ class ProductSendOwner {
 
   explicit ProductSendOwner(ProductSendPort& port) : port_(port) {}
   void poll(uint32_t now_ms);
+  // Called only for a newly COMMITTED report period, not from a free-running
+  // timer. During an outage this arms at most one exact-byte contact probe.
+  void onReportCommitted();
+  // Called only AFTER a separately authenticated custody ACK has been mapped
+  // to this exact record AND its release has durably committed. No ACK parsing,
+  // authorization or store mutation is performed by this dormant class.
+  void onCustodyReleaseCommitted(const ProductSendIdentity& identity,
+                                 uint32_t now_ms);
   State state() const { return state_; }
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
  private:
   bool loadDurable(const ProductSendExact* expected);
   void fail();
-  void scheduleRetry(uint32_t now_ms);
+  void scheduleHalfRetry(uint32_t now_ms);
 
   ProductSendPort& port_;
   State state_ = State::kIdle;
@@ -90,7 +101,8 @@ class ProductSendOwner {
   bool retry_scheduled_ = false;
   uint32_t next_scan_ms_ = 0;
   bool scan_scheduled_ = false;
-  uint8_t retry_level_ = 0;
+  bool half_retry_consumed_ = false;
+  static constexpr uint32_t kBacklogPaceMs = 15000U;
   Diagnostics diagnostics_{};
 };
 
