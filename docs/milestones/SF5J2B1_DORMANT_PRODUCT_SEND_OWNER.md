@@ -123,3 +123,46 @@ product cutover is authorized by this milestone.
 - SF5J2B1 stays **Draft**. Do not activate production RF, merge to main,
   erase/prepare flash, provision credentials, or physically upload firmware
   solely on the basis of the focused portable tests.
+
+## 2026-10-15 follow-up: verification and battery guard
+
+- Independently mirrored the three focused sender source files using GitHub
+  contents and checked their **exact Git blob SHA** against the remote sources
+  before compiling locally.
+- GCC and Clang C++11 with `-Wall -Wextra -Werror`,
+  `-Wconversion -Wsign-conversion`, ASan and UBSan: focused sender
+  regression suite **PASS** after the unavailability throttle patch.
+- One source review found `ProductSendSeal::kUnavailable` retried every loop
+  and re-read ObservationStore, potentially scanning a 128 KiB region
+  repeatedly during SecurityStore reservation contention. The sender now
+  schedules a **60-second scan/retry interval**, with a host regression
+  asserting no intermediate flash reads, seals, writes or TX.
+- A GitHub Actions workflow was created to request the full host test suite
+  and a compile-only `rak4630` build. Two separate workflow attempts
+  reported `failure` **before executing any steps** (both jobs had empty
+  step arrays and no executable job logs). Therefore **neither full suite
+  nor target build passed or ran** from those Actions attempts. Treat the
+  runner/startup failure as an unresolved infrastructure gate, not code-test
+  evidence. Keep the PR Draft pending successful runs.
+- No physical upload, radio activation, provisioning, product-partition
+  PREPARE/erase, authenticated custody ACK, or production record release.
+
+### Credential binding direction for a later reviewed slice
+
+Existing SF5C exact-object bytes lack `credential_id`; the same device
+identity and key epoch can belong to a *different* credential after
+reprovision. Neither a CRC nor an unchanged object proves key ownership.
+A possible **new, explicitly audited** option is an internal verification-only
+cryptographic check: with the current credential, recompute the canonical
+PERIODIC protected object deterministically from the *retained logical
+plaintext* using the cached frame's nonce/counter, and compare all ciphertext
+and tag bytes in constant time, without consuming a new TX counter or
+publishing a newly sealed object. This requires a separate ProductSecureCrypto
+verification API/contract, crypto-engine KATs, and an audit of nonce, plaintext
+binding and lifetime transitions; the current `protectNextPeriodic()` must
+**not** be reused because it reserves a fresh counter. The option is a
+proposal, not authority to change the existing seal-only security owner.
+
+Until such a proof or another reviewed durable binding exists,
+`ProductSendPort::currentCredentialOwns()` must return false and no
+production PRODUCT_SECURE TX can be activated by this PR.
