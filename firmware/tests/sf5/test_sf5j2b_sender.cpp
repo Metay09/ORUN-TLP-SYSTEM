@@ -176,6 +176,48 @@ void testOnlyCommittedCustodyReleaseResumesBacklog() {
   assert(p.tx == 2U && p.seals == 2U);
 }
 
+void testSixReportsOneProbeAndSelectiveBacklogDrain() {
+  Fake p;
+  p.record_sequence = 1U;
+  p.report_period_ms = 3600000U;
+  ProductSendOwner sender(p);
+  sender.poll(0U);    // First PERIODIC sealed and cached
+  sender.poll(1U);    // Contact attempt
+  sender.poll(1800001U); // Only extra half-hour retry
+  assert(p.tx == 2U && p.puts == 1U && p.seals == 1U);
+  for (uint32_t period = 2U; period <= 6U; ++period) {
+    // New logical periods are stored by the independent observation owner.
+    // Unacknowledged encrypted object 1 remains our on-air contact probe.
+    sender.onReportCommitted();
+    sender.poll(period * 3600000U);
+    assert(p.tx == period + 1U);
+    assert(p.puts == 1U && p.seals == 1U);
+    sender.poll(period * 3600000U + 1799000U);
+    assert(p.tx == period + 1U);
+  }
+  // The ACK at the sixth period was for exact object 1, NOT automatic
+  // acceptance of records 2..6. Simulate separately verified, durably
+  // released custody for each subsequent oldest record.
+  for (uint32_t delivered = 1U; delivered <= 5U; ++delivered) {
+    ProductSendIdentity acknowledged{};
+    acknowledged.incarnation = 42U;
+    acknowledged.sequence = delivered;
+    p.record_sequence = delivered + 1U;
+    p.cached_present = false;
+    const uint32_t accepted_at = 6U * 3600000U + delivered * 20000U;
+    sender.onCustodyReleaseCommitted(acknowledged, accepted_at);
+    sender.poll(accepted_at + 14999U);
+    assert(p.tx == 6U + delivered);
+    sender.poll(accepted_at + 15000U);
+    assert(p.puts == delivered + 1U);
+    sender.poll(accepted_at + 15001U);
+    assert(p.tx == 7U + delivered);
+  }
+  assert(p.seals == 6U && p.puts == 6U);
+  assert(sender.state() == ProductSendOwner::State::kRetry);
+  assert(sender.diagnostics().tx_started == p.tx);
+}
+
 void testMissingCadenceDisablesExtraRetry() {
   Fake p;
   p.report_period_ms = 0U;
@@ -307,6 +349,7 @@ int main() {
   testStoreBeforeSendAndBackoff();
   testOneHalfPeriodRetryThenReportOnly();
   testOnlyCommittedCustodyReleaseResumesBacklog();
+  testSixReportsOneProbeAndSelectiveBacklogDrain();
   testMissingCadenceDisablesExtraRetry();
   testCachedObjectChangesBetweenReads();
   testSealUnavailableThrottlesFlashScan();
