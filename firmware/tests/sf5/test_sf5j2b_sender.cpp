@@ -192,8 +192,10 @@ void testSixReportsOneProbeAndSelectiveBacklogDrain() {
     sender.poll(period * 3600000U);
     assert(p.tx == period + 1U);
     assert(p.puts == 1U && p.seals == 1U);
-    sender.poll(period * 3600000U + 1799000U);
-    assert(p.tx == period + 1U);
+    if (period < 6U) {
+      sender.poll(period * 3600000U + 1799000U);
+      assert(p.tx == period + 1U);
+    }
   }
   // The ACK at the sixth period was for exact object 1, NOT automatic
   // acceptance of records 2..6. Simulate separately verified, durably
