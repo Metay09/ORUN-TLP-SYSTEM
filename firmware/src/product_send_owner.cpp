@@ -95,7 +95,7 @@ void ProductSendOwner::poll(uint32_t now_ms) {
     ProductSendExact existing{};
     const ProductSendRead cached = port_.cached(selected_, existing);
     if (cached == ProductSendRead::kFound) {
-      if (!loadDurable(nullptr)) return;
+      if (!loadDurable(&existing)) return;
       ++diagnostics_.cached_recovered;
     } else if (cached == ProductSendRead::kNone) {
       ProductSendExact sealed{};
