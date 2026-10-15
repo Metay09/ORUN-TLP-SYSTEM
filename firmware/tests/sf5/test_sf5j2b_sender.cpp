@@ -22,6 +22,8 @@ struct Fake : ProductSendPort {
   bool cache_fails = false;
   bool seal_fails = false;
   bool seal_unavailable = false;
+  uint32_t report_period_ms = 60000U;
+  uint32_t record_sequence = 7U;
   uint32_t record_reads = 0;
   uint32_t seal_attempts = 0;
   bool change_cached_between_reads = false;
@@ -38,7 +40,7 @@ struct Fake : ProductSendPort {
     if (read_fails) return ProductSendRead::kUnavailable;
     if (!record_present) return ProductSendRead::kNone;
     out.identity.incarnation = 42;
-    out.identity.sequence = 7;
+    out.identity.sequence = record_sequence;
     return ProductSendRead::kFound;
   }
   ProductSendRead cached(const ProductSendIdentity& id,
@@ -81,6 +83,7 @@ struct Fake : ProductSendPort {
   bool currentCredentialOwns(const ProductSendExact&) const override {
     return owns;
   }
+  uint32_t reportPeriodMs() const override { return report_period_ms; }
   bool radioReady() const override { return radio; }
   bool transmitExact(const uint8_t* data, size_t size) override {
     assert(size == sizeof(last_sent));
@@ -107,49 +110,78 @@ void testStoreBeforeSendAndBackoff() {
   assert(p.tx == 2 && p.seals == 1 && p.puts == 1);
   assert(memcmp(original, p.last_sent, sizeof(original)) == 0);
   sender.poll(90002U);
+  assert(p.tx == 2);  // no repeated 60/120/... retry timer
+  sender.onReportCommitted();
+  sender.poll(90002U);
   assert(p.tx == 3 && p.seals == 1 && p.puts == 1);
 }
 
 
-void testBackoffReachesFifteenMinuteCap() {
-  Fake p;
-  ProductSendOwner sender(p);
-  sender.poll(0U);     // durability still pending
-  sender.poll(1U);     // first attempt; next in 30 s
-  assert(p.tx == 1U);
-  const uint32_t attempts[] = {
-      30001U, 90001U, 210001U, 450001U, 930001U,
-      1830001U, 2730001U};
-  for (unsigned i = 0U; i < sizeof(attempts) / sizeof(attempts[0]); ++i) {
-    sender.poll(attempts[i] - 1U);
-    assert(p.tx == i + 1U);
-    sender.poll(attempts[i]);
-    assert(p.tx == i + 2U);
+void testOneHalfPeriodRetryThenReportOnly() {
+  for (const uint32_t report_period : {3600000U, 7200000U}) {
+    Fake p;
+    p.report_period_ms = report_period;
+    ProductSendOwner sender(p);
+    sender.poll(0U);  // no TX before the durable cache outcome
+    sender.poll(1U);  // initial exact-object probe
+    assert(p.tx == 1U && p.seals == 1U && p.puts == 1U);
+    const uint32_t half = report_period / 2U;
+    sender.poll(half);
+    assert(p.tx == 1U);
+    sender.poll(half + 1U);
+    assert(p.tx == 2U);
+    assert(sender.state() == ProductSendOwner::State::kWaitReport);
+    // Even hours of silence do not start more arbitrary retries.
+    for (uint32_t t = half + 2U; t < 4U * report_period; t += 51011U)
+      sender.poll(t);
+    assert(p.tx == 2U && p.seals == 1U && p.puts == 1U);
+    // A newly COMMITTED normal report arms one contact opportunity, using
+    // the old exact ciphertext as probe; never a fifth cached object.
+    sender.onReportCommitted();
+    sender.poll(4U * report_period);
+    assert(p.tx == 3U && p.seals == 1U && p.puts == 1U);
+    sender.poll(6U * report_period);
+    assert(p.tx == 3U);
+    sender.onReportCommitted();
+    sender.poll(6U * report_period + 1U);
+    assert(p.tx == 4U && p.seals == 1U && p.puts == 1U);
   }
-  assert(p.seals == 1U && p.puts == 1U);
-  assert(sender.diagnostics().tx_started == 8U);
-  assert(sender.state() == ProductSendOwner::State::kRetry);
 }
 
-void testSealUnavailableThrottlesFlashScan() {
+void testOnlyCommittedCustodyReleaseResumesBacklog() {
   Fake p;
-  p.seal_unavailable = true;
   ProductSendOwner sender(p);
   sender.poll(0U);
-  assert(p.record_reads == 1U && p.seal_attempts == 1U);
-  assert(p.seals == 0U && p.puts == 0U && p.tx == 0U);
-  for (unsigned now = 1U; now < 60000U; now += 17U) sender.poll(now);
-  assert(p.record_reads == 1U && p.seal_attempts == 1U);
-  sender.poll(60000U);
-  assert(p.record_reads == 2U && p.seal_attempts == 2U);
-  assert(p.seals == 0U);
-  p.seal_unavailable = false;
-  sender.poll(60001U);
-  assert(p.record_reads == 2U && p.tx == 0U);
-  sender.poll(120000U);
-  assert(p.record_reads == 3U && p.seals == 1U && p.tx == 0U);
-  sender.poll(120001U);
+  sender.poll(1U);
+  assert(p.tx == 1U);
+  sender.onCustodyReleaseCommitted(ProductSendIdentity{42U, 999U}, 10U);
+  assert(sender.state() == ProductSendOwner::State::kRetry);
+  // Simulate a separately authenticated receipt + durable store release.
+  // The sender itself neither trusts RF_RX nor mutates ObservationStore.
+  p.record_sequence = 8U;
+  p.cached_present = false;
+  sender.onCustodyReleaseCommitted(ProductSendIdentity{42U, 7U}, 100U);
+  assert(sender.state() == ProductSendOwner::State::kIdle);
+  sender.poll(15099U);
   assert(p.tx == 1U && p.puts == 1U);
+  sender.poll(15100U);
+  assert(p.puts == 2U && p.tx == 1U);
+  sender.poll(15101U);
+  assert(p.tx == 2U && p.seals == 2U);
+}
+
+void testMissingCadenceDisablesExtraRetry() {
+  Fake p;
+  p.report_period_ms = 0U;
+  ProductSendOwner sender(p);
+  sender.poll(0U);
+  sender.poll(1U);
+  assert(p.tx == 1U && sender.state() == ProductSendOwner::State::kWaitReport);
+  sender.poll(10000000U);
+  assert(p.tx == 1U);
+  sender.onReportCommitted();
+  sender.poll(10000001U);
+  assert(p.tx == 2U && p.seals == 1U);
 }
 
 void testCachedObjectChangesBetweenReads() {
@@ -230,6 +262,7 @@ void testUnavailableRadioAndInvalidatedCache() {
   sender.poll(30002U);
   assert(p.tx == 2 && p.seals == 1);
   p.cache.bytes[13] ^= 0x01;
+  sender.onReportCommitted();
   sender.poll(90002U);
   assert(sender.state() == ProductSendOwner::State::kFault);
   assert(p.tx == 2);
@@ -266,7 +299,9 @@ void testWraparoundDeadline() {
 
 int main() {
   testStoreBeforeSendAndBackoff();
-  testBackoffReachesFifteenMinuteCap();
+  testOneHalfPeriodRetryThenReportOnly();
+  testOnlyCommittedCustodyReleaseResumesBacklog();
+  testMissingCadenceDisablesExtraRetry();
   testCachedObjectChangesBetweenReads();
   testSealUnavailableThrottlesFlashScan();
   testRebootUsesExactAndBurnsNoCounter();
