@@ -65,6 +65,11 @@ OUTSIDE -> effective interval = B / 3
 
 `B / 3` is runtime policy only. It must not overwrite `B` in ConfigStore.
 
+Owner decision 2026-10-17 (`ORUN_MAC_V0_DECISIONS.md` R12, **not yet
+implemented**): the OUTSIDE effective interval becomes `min(B / 3, 1 hour)`
+by default, with the 1-hour cap configurable/disableable, so LOST detection
+stays bounded for long base intervals.
+
 The battery rule (owner decision 2026-10-10, `battery_policy.h`) applies on
 top of this: while the measured battery is CRITICAL the interval GNSS uses is
 the geofence interval x4 (for example OUTSIDE with B = 180 s gives 240 s).
@@ -298,6 +303,12 @@ receipt/contact semantic.
 
 The local OUTSIDE state and its `B / 3` tracking cadence may exist before
 trustworthy LOST/contact is implemented.
+
+Owner decision 2026-10-17 (`ORUN_MAC_V0_DECISIONS.md` R12): the LOST trigger
+is counted in missed authenticated contacts rather than fixed hours — OUTSIDE
+plus `K` consecutive unanswered ACK requests (default `K = 3`, configurable);
+every OUTSIDE report requests an ACK. The security boundary above still
+applies: only an authenticated custody ACK counts as contact.
 
 ## 9. Implementation gate
 
