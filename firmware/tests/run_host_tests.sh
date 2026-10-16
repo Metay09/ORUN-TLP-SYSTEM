@@ -324,6 +324,7 @@ fi
 if python3 -c 'from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey' >/dev/null 2>&1; then
   PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5i_edge_durable_accept_signed.py
   PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k2b_signed_batch.py
+  PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k2c_gateway_ack_oracle.py
 else
   echo 'SF5I/SF5K2B Edge signed durable-accept/batch: SKIP (cryptography/Ed25519 absent; merge gate OPEN)'
 fi
