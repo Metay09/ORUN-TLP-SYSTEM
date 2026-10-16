@@ -10,6 +10,7 @@ Objects are synthetic frame-shaped bytes, not valid AEAD ciphertext.
 import hashlib
 import hmac
 import unittest
+from unittest.mock import patch
 
 DOMAIN = b"ORUN-TLP-V2-CUSTODY-BATCH-ACK-MAC-v1"
 KEY = bytes(range(32))  # TEST ONLY; never provision
@@ -183,6 +184,24 @@ class BatchMacReferenceTests(unittest.TestCase):
         # treating a claimed latest record as a prefix-delivery watermark.
         self.assertIsNone(self.verify(wire, cache=[self.cache[0], self.cache[0],
                                                     self.cache[2]]))
+
+    def test_deliberate_64_bit_hint_collision_is_ambiguous(self):
+        # A short hint is NEVER a unique identity proof. Model a hypothetical
+        # collision; the complete 32B digests remain distinct for the MAC.
+        wire = test_only_sign([self.cache[0]])
+        base_digest = digest(self.cache[0])
+        other_digest = digest(self.cache[2])
+        forged_collision_digest = base_digest[:8] + other_digest[8:]
+        assert forged_collision_digest != base_digest
+        original_digest = digest
+
+        def collision_hash(obj):
+            if obj == self.cache[2]:
+                return forged_collision_digest
+            return original_digest(obj)
+
+        with patch.dict(globals(), {"digest": collision_hash}):
+            self.assertIsNone(self.verify(wire))
 
     def test_malformed_or_replayed_different_context(self):
         wire = test_only_sign([self.cache[0]])
