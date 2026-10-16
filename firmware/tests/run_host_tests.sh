@@ -629,6 +629,7 @@ g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
   firmware/tests/sf5/test_sf5k1_batch_ack_candidate.cpp \
   firmware/tests/sf5/sf5k1_batch_ack_candidate.cpp \
   -o "$test_dir/sf5k1_batch_ack_candidate"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k1_batch_mac_reference.py
 "$test_dir/sf5k1_batch_ack_candidate"
 
 g++ "${portable_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
