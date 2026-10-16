@@ -174,6 +174,19 @@ These features are NOT included in this design PR. SF3 HISTORY_SECURE, TLP V1 PO
 
 **Document-only review candidate. It makes no flash/radio/ACK/runtime change and claims no passing tests, new codec, or actual aggregate custody capability.**
 
+## 8.1 Owner clarification: RELAY IS TRANSPORT ONLY (2026-10-16)
+
+**Product decision — non-negotiable:** an ORUN Relay is **never** a Gateway, an Edge, a durable-custody authority, or a custody-ACK originator merely because it participates in a route. Relays ONLY transparently forward permitted uplink and downlink protected frames according to the one-hop transport contract. There is no proposed dual-role relay-custodian shortcut.
+
+```text
+Tracker -- protected record --> [optional Relay TRANSPORT] --> Gateway
+Tracker <-- same Gateway-signed custody ACK -- [optional Relay TRANSPORT] <-- Gateway
+```
+
+The Gateway issues a custody ACK ONLY after authenticated exact-object durable Edge accept or its own durable flash commit/readback. Relay RF reception, relay queueing, relay forward `TX_DONE`, relay duplicates, or relay local persistence **cannot** release tracker records. A Relay MUST NOT create, sign, substitute, shorten, terminate or rewrite custody ACK payloads. The custodian's enrollment and key remain exclusively Gateway-authority scoped. A missing or asymmetric Gateway→Relay→Tracker route is a failed receipt path, not permission to make the Relay a custodian.
+
+**Practical implementation plan:** First demonstrate ONE complete direct and relayed Gateway ACK round-trip with safe source RX rendezvous (no product batch enablement); THEN qualify 2- and 4-member grouped ACKs with relay half-duplex slots, missing-last-packet, lost/late partial ACK, multiple trackers and realistic power/airtime measurements. The final user-approved architecture remains bounded separate encrypted data packets followed by ONE explicit selective Gateway batch ACK per completed window, not permanent per-record stop-and-wait. The existing 10-second post-TX window is a development value, not a promise; do not freeze a larger window or guess slot durations before measurement.
+
 ## 9. 2026-10-16 one-hop relay / full RF-path engineering audit (blocking)
 
 **Scope:** The calculations below are illustrative **SF11/BW125/CR4/5, 869.525 MHz** using the present reference radio config. These values are independently reproducible from the standard LoRa symbol airtime equation and match the existing SF5B 100B=2.215936s and 116B=2.461696s reference numbers. A **4-entry** batch ACK is a PROPOSAL, not running code. No deployment duty-cycle, radio reliability or battery consumption has been physically measured by this change.
