@@ -57,7 +57,7 @@ The receive ACK is not permission to transmit all queued records without regiona
 
 ## 3. Candidate new batch ACK type; original 0x05 stays untouched
 
-This section is **a candidate for review**, not an allocated type until registry review. Suggested new distinct `type 0x06` (`GATEWAY_CUSTODY_BATCH_ACK`), direct path first. All multi-byte fields use network byte order.
+This section is **a candidate for review**, not an allocated type until registry review. Suggested new distinct `type 0x06` (`GATEWAY_CUSTODY_BATCH_ACK`), with direct and reviewed one-hop-relay paths required before product cutover. An initial codec may be tested direct-only on the host, but production must NOT advertise relayed batch custody until the reverse ACK route is implemented and qualified. All multi-byte fields use network byte order.
 
 ```text
 offset  bytes  field
@@ -165,7 +165,7 @@ These features are NOT included in this design PR. SF3 HISTORY_SECURE, TLP V1 PO
 
 ## 8. Explicit hold / reviewer questions
 
-- Approve/alter proposed type `0x06`, direct-only receive initially, and whether a relay wrapper may carry its unmodified bytes; this requires new type registry and router tests.
+- Approve/alter proposed type `0x06` and its unmodified one-hop relay wrapping in BOTH directions; this requires a new explicit allow-list addition, type registry/router tests and physical reverse-hop qualification. Merely supporting relayed uplink is not sufficient.
 - Confirm a **four-member ACK** is the initial PRODUCT_SECURE batch ceiling (aligned to the *existing* exact ciphertext cache), distinct from the older six-ID HISTORY receipt. Do not pretend two authorities use the same wire semantics.
 - Decide canonical ordering `(object_len, object_ref)` and 9-byte entry encoding after collision/airtime review.
 - Review separate HKDF key versus reuse of current per-Gateway custody ACK key; this document proposes separate key to avoid cross-protocol confusion.
@@ -173,3 +173,150 @@ These features are NOT included in this design PR. SF3 HISTORY_SECURE, TLP V1 PO
 - Before writing security code, close `SecurityStore-v3` independent persistent custody grants and the SF5J2B1 recovered-cache credential-lifetime proof, without replacing an unauthenticated header comparison for real cryptographic binding.
 
 **Document-only review candidate. It makes no flash/radio/ACK/runtime change and claims no passing tests, new codec, or actual aggregate custody capability.**
+
+## 9. 2026-10-16 one-hop relay / full RF-path engineering audit (blocking)
+
+**Scope:** The calculations below are illustrative **SF11/BW125/CR4/5, 869.525 MHz** using the present reference radio config. These values are independently reproducible from the standard LoRa symbol airtime equation and match the existing SF5B 100B=2.215936s and 116B=2.461696s reference numbers. A **4-entry** batch ACK is a PROPOSAL, not running code. No deployment duty-cycle, radio reliability or battery consumption has been physically measured by this change.
+
+### 9.1 Critical source-code finding: relay path is not actually present for PRODUCT_SECURE
+
+Existing \`firmware/src/network_service.cpp\` forwards only legacy TLP v1 \`POSITION\` with a 15-byte wrapper and one-hop \`hop_count=1\`. Its \`relay_config.h\` delay \`kMinimumDelayMs=1200\`, \`kMaximumDelayMs=4200\`, queue capacity **four**, relay dedupe **16**, Base dedupe **32** are **V1 runtime facts**.
+
+SF5B \`V2_RELAY_FORWARD\` proposes a DIFFERENT 16-byte opaque one-hop wrapper for v2 types 0x01/0x04/0x05, with unchanged encrypted inner bytes and no nested wrappers. \`RadioManager::handleReceivedPacket()\` currently queues plain 0x04 PRODUCT_SECURE into a **single pending receive mailbox**; it does NOT route 0x02 V2_RELAY_FORWARD, nor 0x05 ACK, nor hypothetical 0x06 batch ACK. The generic RX callback event queue has capacity four, **not** a verified four-frame product window; the live ProductSecure mailbox admits one pending object only.
+
+Therefore NO product feature may assume that current relays can transport batch data OR return a batch receipt. Implementation must extend v2 route + uplink/downlink dispatch + signed batch ACK acceptance, using the existing radio/driver gate, without changing frozen legacy V1/SF2 bytes. The hypothetical 0x06 must be explicitly added to the reviewed v2 relay allow-list before enabling this route.
+
+**Gateway signs the batch ACK** under separately enrolled custody authority after individual objects become durable. A relay NEVER claims or creates Gateway durable custody; it only forwards an unchanged authenticated ACK through its own outer wrapper. The reverse link (Gateway→Relay→Tracker) is independent of whether uplink used a relay. A Gateway RX-only link or a relay unable to hear the Gateway's ACK is **not** a usable bidirectional custody path.
+
+### 9.2 Every physical transmission for one group
+
+For a one-hop return route, the RF path is:
+
+\`\`\`text
+Tracker -- 100B protected PERIODIC --> Relay
+Relay -- 116B opaque wrapper --> Gateway
+Gateway -- N-entry batch ACK (48+9N B) --> Relay
+Relay -- 16B wrapper + unchanged batch ACK --> Tracker
+\`\`\`
+
+Only Gateway/Edge durable acceptance admits ACK membership. \`TX_DONE\` at Tracker or Relay is never custody. All LoRa TXs are half-duplex: a forwarding relay CANNOT hear the next tracker packet while it is transmitting a previous packet; Gateway also cannot hear uplink while sending an ACK.
+
+LoRa symbol time uses \`2^SF/BW\`; airtime includes preamble, explicit header, CRC, CR4/5 and low-data-rate optimization. Results:
+
+| Number of 100B PERIODIC records | Candidate ACK B | ACK wrapper B | Direct total airtime (s) | One-hop uplink + one-hop ACK return total airtime (s) |
+|---:|---:|---:|---:|---:|
+| 1 | 57 | 73 | 3.613 | 7.799 |
+| 2 | 66 | 82 | 5.992 | 12.804 |
+| 3 | 75 | 91 | 8.372 | 17.809 |
+| 4 | 84 | 100 | 10.752 | 22.815 |
+
+These totals are **SUMS of transmissions by different nodes** on one RF collision domain. They are NOT wall-clock completion estimates, nor duty-cycle on one transmitter. Source TX, Relay TX and Gateway TX each need their own independent duty/energy budget. A relay that happens to hear the Gateway directly cannot shorten the reverse route by an unproven link assumption.
+
+### 9.3 Why a 4-frame back-to-back burst is broken with an intermediate relay
+
+For the CURRENT V1 forwarding delay range only, a relayed 100B uplink entails up to \`4.2s defer + 2.462s relay TX = 6.662s\` after the tracker finishes its own 2.216s TX. If the tracker sends the next 100B frame immediately (~2.216s later), that frame starts while Relay may be forwarding the first. A half-duplex radio cannot capture both; missing one frame creates false assumptions about the group's end.
+
+With one selected single-threaded relay, assuming its V2 scheduling adopted **exactly** the current V1 delay bounds and with NO channel contention, a conservative source packet **start-to-start** lower bound is:
+
+\`\`\`text
+2.215936s (source packet TX)
++ 4.2s (worst allowed forward scheduling defer)
++ 2.461696s (relay packet TX)
++ switching/processing/clock guard
+= 8.877632s + guard
+\`\`\`
+
+This is a **necessary isolated-link serialization lower bound**, NOT a production fixed delay or a proof of availability. Actual V2 Relay queue, scheduling bound, radio arbitration and collisions must be measured before choosing slot spacing. A relay receiving only some of the packets, duplicate forwards from multiple relays, or a separate Gateway downlink can extend this bound substantially. A group-end rule based only on silence fails when a packet, group header, or the final packet is lost or forwarded late.
+
+### 9.4 10-second tracker RX rendezvous can miss even a successful ACK
+
+\`radio_config::kWindowedRxAfterTxMs = 10000\` is a **development-default 10-second RX window**, opened on a terminal tracker TX event in \`radio_manager.cpp\`; it is NOT already an authenticated batch-return rendezvous.
+
+With one-hop uplink + one-hop return, 4-entry batch ACK 84B and its 100B reverse wrapper, the return time measured **from completion of the LAST tracker 100B TX** is:
+
+\`\`\`text
+uplink relay scheduling delay    1.2 ... 4.2s (V1 bounds, hypothetical V2)
+uplink relay wrapper TX           2.461696s
+Gateway durable accept/queue      G seconds (UNKNOWN; 0 only in lower-bound)
+Gateway 4-member ACK TX           1.888256s
+downlink relay scheduling delay  1.2 ... 4.2s (NOT IMPLEMENTED; hypothetical)
+downlink relay wrapper TX         2.215936s
+additional radio/CPU contention   S seconds (UNKNOWN)
+-------------------------------------------------------------
+elapsed before tracker gets ACK   8.965888 ... 14.965888s + G + S
+\`\`\`
+
+Thus **10s is insufficient at the worst of even these idealized legacy relay bounds**. A one-hop-only uplink and DIRECT ACK still requires the source to hear Gateway directly, which is NOT guaranteed. For all four source transmissions with worst-case isolated relay serialization, last relayed packet can reach Gateway at least about **35.51 seconds** after the first source TX starts, and an ideal return via Relay would finish around **43.81 seconds** from the start (all G/S/guard zero). These are best-case schedule calculations with assumed bounds, NOT maximum real elapsed time.
+
+Do NOT simply expand every tracker RX window to 20, 30 or 60s: this can destroy livestock battery life, and still does not bound a busy Gateway. A future control owner must provide a **bounded ACK rendezvous / short scheduled RX opportunity** (or a justified per-session extended RX commitment) that works for direct AND selected relay paths, with explicit sleep wakeup, local clock tolerance and lost-ACK recovery. ACK transmission after Tracker's window ended is not an ACK; it is an expensive missed downlink.
+
+### 9.5 Batch boundary / start / end — silence is not a protocol
+
+The design MUST explicitly define how sender and Gateway agree on:
+- same tracker credential lifetime and bounded **transfer-session ID**, current group window, count in [1,4], and membership;
+- expected number of slots / latest allowed Gateway receive deadline, including relay timing and missing frames;
+- a deterministic **ACK-return rendezvous** after the Gateway's last allowable receipt/commit deadline;
+- ability to ACK fewer than expected frames (or no frame), without treating a missing final frame as "the group ended";
+- receiving 2 frames when only 2 exist, and receiving 2 of 4 frames after two were lost;
+- a session retry that reuses identical cached ciphertext, never counter-burning to satisfy a timeout;
+- delayed/duplicated group control and ACKs arriving after the sender chose another group or Gateway.
+
+Candidate methods to evaluate **before choosing** (none frozen): short authenticated window descriptor/END control; authenticated per-window scheduling without modifying existing 0x04 bytes; or a finite fixed-slot batch protocol with a separate authenticated session grant. All add some downlink/airtime/RAM/security complexity. Timer silence alone with an arbitrary threshold is NOT an acceptable final batch end or custody release rule. A group's ACK membership remains per-object exact digest, independent of untrusted framing/scheduling hints.
+
+### 9.6 Fleet, Gateway and Relay shared-airtime constraints
+
+A **single** tracker backlog of 20x100B PERIODIC, in ideal groups of 4:
+- Tracker TX = \`20*2.215936 = 44.319s\`;
+- chosen Relay **uplink** TX = \`20*2.461696 = 49.234s\`;
+- Gateway **downlink** TX = \`5*1.888256 = 9.441s\`;
+- chosen Relay **ACK downlink** TX = \`5*2.215936 = 11.080s\`;
+- aggregate shared-channel raw airtime = **114.074s**, not 44.319s;
+- tracker, relay and Gateway RF receive/listen times add POWER cost but do not add channel TX airtime.
+
+If **each** of M livestock devices has 20 backlog records and all traverse the SAME relay, with no simultaneous independent channels:
+
+| M trackers | Combined one-domain TX airtime (s) | Channel load if all drained within 1h | One shared relay's TX alone (s) |
+|---:|---:|---:|---:|
+| 1 | 114.1 | 3.2% | 60.3 |
+| 10 | 1,140.7 | 31.7% | 603.1 |
+| 30 | 3,422.2 | 95.1% | 1,809.4 |
+| 50 | 5,703.7 | 158.4% | 3,015.7 |
+| 100 | 11,407.4 | 316.9% | 6,031.4 |
+
+100% raw occupancy is impossible before collisions; **31.7% is also not a safe contention target** for random unslotted LoRa. The existing 869.525MHz radio reference band falls within the Turkish BTK 869.4–869.65MHz row: **<=10% duty cycle OR qualifying LBT+AFA**, with limits/conditions to assess against the actual equipment (BTK official technical measures, table 1 item 21). If the 10% duty-cycle path is used, **360s/hr per transmitter** is an optimistic planning boundary. The example **single relay carrying 10 trackers x 20 reports** already requires ~603s of relay TX alone, so it cannot fit in one hour under that path; 50 trackers require ~3,016s of relay TX plus other traffic. A single Gateway with 50 trackers x 20 reports needs ~472s of ACK downlink TX alone, also above 360s/hr. This is a topology bottleneck even if every TRACKER individually has spare airtime.
+
+These numbers are upper stress examples and ideal no-loss transmission calculations. A deployed site can use multiple Relays/Gateways and/or separated RF channels/domains, but no 50-node all-via-one-relay one-hour drain guarantee may be promised.
+
+Do **not** claim a permissive PHY maximum ("255B packet", or "20 reports only 44s") proves multi-device product capacity. Regulatory, collision-domain and gateway/relay per-transmitter duty must be enforced/qualified before production. A heavyweight adaptive airtime optimizer is optional; **an approved compliance-safe minimal TX gate is not optional**.
+
+### 9.7 Variables that must enter a verified scheduler
+
+| Family | Required measured/configured inputs | If missing |
+|---|---|---|
+| RF PHY | frequency, SF7..12, BW, coding rate, power/ERP/antenna, preamble, CRC, exact frame length, TX timeout | keep conservative reviewed SF11; do not infer a faster link |
+| Link/topology | direct/one selected relay, route to send ACK back, asymmetric RSSI/SNR and link budgets, channel/error statistics | no claimed ACK-capable custodian |
+| Half-duplex | Source TX, relay RX+TX, Gateway RX+TX, relay reverse TX and radio turn-around/driver gate | no consecutive unscheduled burst |
+| Scheduling | relay bounded defer, queue depth, competing forwarded packets, lost final packet, jitter/clock error, inter-node fairness | no arbitrary silence-end timer |
+| Custody | Gateway durable queue capacity and erase/commit/readback latency; valid Edge durable accept/fallback; re-ACK duplicate | no custody ACK on merely received frames |
+| Security | separately enrolled Gateway custody grants, key_epoch/credential lifetime, exact-inner-frame full digest HMAC, replay/revocation, out-of-order | no release; fail closed |
+| Power | Tracker TX/RX/MCU/crypto/flash power & RX wake/sleep duty, Relay potentially continuous RX | no battery-life claim |
+| Multi-device | 1/10/30/50/100 nodes, multiple Relays/Gateways, hidden nodes, duplicate forwards, simultaneous emergencies | no single-track airtime extrapolation |
+| Compliance | region and date, duty-cycle/LBT+AFA choice, per-transmitter accounting, channel access; reboot-safe restriction | no product RF enablement without a safe limit |
+| Recovery | partial batch, ACK lost, source reset, relay reset, Gateway reset/flash full, delayed ACK, key rotation, flash tearing | exact bytes retained; no silent data deletion |
+
+The 4-object encrypted cache does not itself provide a 4-message event queue or four independent RX buffers. Owner scheduling must drain \`RadioManager\`'s mailbox and host queues before they overflow. Forwarders with \`relayForwardingEnabled()\` may require CONTINUOUS radio listening under the existing \`RadioListenPolicy\` resolver; **a livestock tracker that also relays traffic has a different battery budget** from an ordinary windowed tracker.
+
+No fixed interval between source frames, total ACK wait, airtime budget, channel count, exact PHY setting or ACK-grace timer is approved by this annex. Selection follows bounded simulation, host tests and physical measurement, not guessed constants.
+
+### 9.8 Required scenarios / stop conditions before SF5K1+ physical deployment
+
+- Direct, tracker→Relay→Gateway only, Gateway→Relay→Tracker only where feasible, both hops via same relay, and asymmetric/no-return topology.
+- Exactly 1, 2, 3 and 4 queued logical packets; selective 1/3 accepted of 4; 5/6/20/100 retained overall (4 encrypted slots only).
+- Relays 0/1/2 in radio range competing to forward same original; only **one hop per packet** and no nested relay, but multiple candidate relays may produce duplicates unless scheduled/deduped.
+- Head-of-line blocking: first or final frame missing; Gateway sees incomplete group; ACK route delayed beyond normal RX; group timer must not make future ACK undeliverable.
+- Priority EVENT/COMMAND preemption, new PERIODIC creation while backlog drains, Gateway flash busy/full and Edge unavailable.
+- 10 / 30–50 / ~100 trackers, heterogeneous cadence, synchronised report bursts and random offsets; all-via-one-relay vs partitioned site.
+- Verify minimal lawful TX admission and independent budgets at Tracker, selected Relay and Gateway, including reboot.
+- Physical tester must log **per-hop TX start/end, RX start/end, packet lengths, queue occupancy, Gateway durable completion, ACK start/arrival, wake times, battery current and expected/actual receipt bitmap**, plus duplicate and failed paths.
+
+**Final disposition for this audit:** SF5K0 batch ACK direction remains useful, but the previous simple "four consecutive TX followed by silence-driven ACK" implementation prescription is **REJECTED for production**. The blocker is absent v2 forward+reverse relay runtime and unproven half-duplex/rendezvous timing, NOT the cryptographic notion of one aggregate receipt. Do not merge #133's serial sender as a workaround. Treat two-way relay and explicit bounded session scheduling as mandatory production design review gates; preserve main and existing bytes.
