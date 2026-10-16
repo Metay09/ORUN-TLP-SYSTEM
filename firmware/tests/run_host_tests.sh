@@ -638,6 +638,12 @@ g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
   firmware/tests/sf5/sf5k2_gateway_batch_candidate.cpp \
   firmware/tests/sf5/sf5g_custody_record_candidate.cpp \
   -o "$test_dir/sf5k2_gateway_batch_candidate"
+# SF5K3A: host-only async release-then-clear progression (never RF/runtime).
+g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3_release_progress_candidate.cpp \
+  firmware/tests/sf5/sf5k3_release_progress_candidate.cpp \
+  -o "$test_dir/sf5k3_release_progress_candidate"
+"$test_dir/sf5k3_release_progress_candidate"
 "$test_dir/sf5k2_gateway_batch_candidate"
 "$test_dir/sf5k1_batch_ack_candidate"
 
