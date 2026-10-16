@@ -624,6 +624,14 @@ g++ "${portable_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
   -o "$test_dir/sf5b_product_secure_codec"
 "$test_dir/sf5b_product_secure_codec"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5b_product_secure_vectors.py
+# SF5K1: proposal-only packet-shape checks. No receipt authentication or RF enablement.
+g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k1_batch_ack_candidate.cpp \
+  firmware/tests/sf5/sf5k1_batch_ack_candidate.cpp \
+  -o "$test_dir/sf5k1_batch_ack_candidate"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k1_batch_mac_reference.py
+"$test_dir/sf5k1_batch_ack_candidate"
+
 g++ "${portable_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
   firmware/tests/sf5/test_sf5_period_builder.cpp \
   firmware/src/product_period_builder.cpp firmware/src/tlp_v2_product_secure.cpp \
