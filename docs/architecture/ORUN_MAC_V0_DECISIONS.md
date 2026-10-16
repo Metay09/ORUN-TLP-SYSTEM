@@ -52,12 +52,12 @@ Bu doküman SF5K0 §9–10'da açık bırakılan soruları **karara bağlamak** 
 
 - **Ne zaman:** Rapor zamanı = uyanma. Backlog ayrı bir uyanma yaratmaz.
 - **Sıra:** Önce bu uyanmanın canlı kaydı, sonra en eski backlog.
-- **Ne kadar:** Uyanma başına en fazla **N_MAX = 4** kayıt (v0).
-- **Gönderim şekli:** Her kayıt kendi ACK slotunu bekler (stop-and-wait). Sonraki kayıt ancak ACK geldikten sonra gönderilir.
+- **Ne kadar:** Uyanma başına en fazla **N_MAX** kayıt. Birikme yoksa 4, birikme varsa 8 (sahibin 2026-10-16 kararı).
+- **Gönderim şekli:** Birikme yoksa her kayıt kendi ACK slotunu bekler (stop-and-wait). Birikme varsa R11'deki emniyetli toplu gönderim kullanılır.
 - **ACK kaçarsa:** 2–8 s rastgele bekle, **1 kez** tekrar dene. Yine kaçarsa uyanma biter, kalanlar sonraki rapor zamanına kalır.
 - **Gateway kapalıyken:** Uyanma başına en fazla 2 boşa deneme yapılır. Bu, kendiliğinden sınırlı bir yoklama (bounded probing) olur ve sürekli tekrar döngüsü oluşmaz.
 - **Neden burst yok:** Relay 1. paketi iletirken tracker 2. paketi atmaz, çünkü 2. paket ancak 1.'nin ACK'inden sonra gider. SF5K0 §9.3'teki çakışma yapısal olarak ortadan kalkar.
-- **Batch ACK (SF5K) iptal edilmedi.** v1 optimizasyonudur. Simülatör ve saha ölçümü stop-and-wait'in yetmediğini gösterirse açılır.
+- **Toplu ACK:** R11'e taşındı. Sahibin 2026-10-16 kararıyla birikme modunda kullanılır, emniyet kuralıyla birlikte.
 - Simülatöre göre SF9'da N_MAX = 8 backlog'u daha hızlı boşaltıyor. 30 tasma, 6 saatlik kesinti, CAD açık, 3 tohum: N_MAX = 4 ile yaklaşık 4,1 saat, N_MAX = 8 ile yaklaşık 3,3 saat. Relay ve gateway duty %6,5'in altında kalıyor. Kesin değer, SF sahada belirlendikten sonra seçilecek.
 
 ### R4 — Yol işareti: mevcut `RELAY_ALLOWED` biti
@@ -116,6 +116,53 @@ SF5B §5'teki authenticated `path_flags.RELAY_ALLOWED` biti yol işareti olarak 
 - Her verici (tasma, relay, gateway) kendi TX süresini kayan 1 saatlik pencerede sayar. Sınır: BTK 869,4–869,65 MHz için %10, ya da LBT+AFA ile.
 - %8'e gelince düşük öncelikli trafik (backlog) durur. Canlı kayıt ve EVENT devam eder.
 - **Öncelik:** EVENT (sınır ihlali vb.) > canlı kayıt > backlog. EVENT de R1 slot kuralını kullanır.
+- **Relay ve gateway kendi duty'sini kendisi uygular.** Tasma relay'in yükünü bilemez. Birikme boşalırken relay %10'u aşabiliyor: 30 tasma SF9, 6 sa birikmede tek tek 8/uyanma ile %14,3, R11 ile %12,7. Sınıra gelen relay forward'ı düşürür; tasma kaydı saklar ve sonra tekrar dener.
+
+### R11 — Emniyetli toplu gönderim (birikme modu)
+
+**Sahibin kararı (2026-10-16):** Birikme varsa kayıtlar toplu gönderilsin, tek ACK ile onaylansın. Pahalıya patlayacak durumda tek teke dönülsün.
+
+**Ne zaman toplu:** Uyanmada şu iki koşul birden sağlanırsa:
+1. Tasmada en az **4 kayıt** bekliyor.
+2. Tasmanın son denemesi ACK aldı (bağlantı kanıtlı).
+
+Aksi hâlde R3'teki tek tek gönderim geçerlidir.
+
+**Nasıl:**
+- Grup en fazla **4 kayıt**tır: önce canlı kayıt, sonra en eski birikmiş kayıtlar. Uyanma başına en fazla **2 grup** gönderilir (toplam 8, R3 ile aynı bütçe).
+- Grubun ilk paketinden önce CAD yapılır. Grup içinde CAD yoktur; paketler **sabit aralıkla** gider:
+  - `RELAY_ALLOWED=0` ise aralık 0,25 s.
+  - `RELAY_ALLOWED=1` ise aralık `relay_gecikme_max + sarılı_paket_airtime + 0,25 s` (SF11'de yaklaşık 6,9 s). Böylece relay bir paketi iletirken bir sonraki gelmez (yarım çift yönlü radyo).
+- Her paket **kaçıncı / kaç tane** bilgisini taşır (`k/n`).
+- Tasma son paketten **X** saniye sonra tek pencere açar (R1 ile aynı kural). X, en büyük toplu ACK (84 B) ile hesaplanır; SF11'de 11 s.
+- **Gateway** son paketin zamanını `k/n` ve sabit aralıktan hesaplar. Durable kayda geçen üyeleri tek **seçmeli ACK**'te listeler: 48 + 9×üye bayt (57/66/75/84 B, SF5K adayı).
+- **Relay** aynı hesapla slotu bilir. Gateway'in ACK'ini tutar ve slotta değiştirmeden iletir (R6).
+- Tasma ACK'te listelenen kayıtları siler. Eksik kalan kayıt saklanır, sonra tekrar gider.
+
+**Emniyet (kendini koruma):**
+- Toplu ACK gelmezse, o uyanmada **tek bir kayıtla** tek tek deneme yapılır ve uyanma biter.
+- Tek tek bir ACK gelene kadar yeni grup açılmaz.
+
+**Gereken wire değişikliği (SF5B değişikliği, onay gerekir):**
+- `k/n` için PRODUCT_SECURE başlığındaki ayrılmış bayt (offset 7, bugün `reserved = 0`) önerilir: üst 4 bit `k`, alt 4 bit `n`, `0` = grup yok. Bu bayt AAD içinde olduğu için doğrulanır. Tekli paketler `0` ile bugünkü baytları aynen korur.
+- Seçmeli toplu ACK tipi (`0x06` adayı) SF5K1'de (#135) tasarlandı; yetki ve imza SF5K0'da (#134) açık.
+
+**Simülatör kanıtı** (`--compare-batch`, 3 tohum, CAD açık; bütün varyantlarda uyanma başına 8 kayıt):
+
+| Senaryo | Tek tek 4/uyanma | Tek tek 8/uyanma | Emniyetli toplu 2×4 |
+|---|---|---|---|
+| 2 tasma, 36 sa birikme, 3 dk, SF9 | 13,5–14 sa | 6,7–7 sa | **5,6–6,7 sa**, airtime/kayıt −%11 |
+| 1 tasma relay, 6 sa birikme, SF11 | 110–123 dk | 49–61 dk | 49–61 dk |
+| 10 tasma karışık, 6 sa, SF11 | 249–329 dk | 174–326 dk | **174–247 dk** |
+| 30 tasma relay, 6 sa, SF11 | erimedi (1257 bekleyen) | erimedi (898) | erimedi (1130) |
+| 30 tasma relay, 6 sa, SF9 | 276–388 dk | 236–274 dk | 230–278 dk |
+| 30 karışık, 12 sa, SF9 | 448–490 dk | 241–308 dk | 290–342 dk |
+
+**Okuma:**
+- Az cihazda toplu gönderim en hızlısı ve en az airtime harcayanı.
+- Kalabalıkta emniyet kuralı devreye giriyor ve sonuç tek tek gönderime yakın kalıyor; zarar yok. Karşılaştırma için: emniyet kuralı olmayan toplu model (16 Ekim deney dosyası), birikmesiz 30 tasma SF11'de 48 saatin sonunda 2810 kayıt bekletti ve duty'yi %33'e çıkardı; tek tek gönderimde bu sayı 750'ydi.
+- 30 tasma SF11'i hiçbir gönderim şekli kurtarmıyor; çözüm R9 (SF).
+- Asıl hız kaynağı uyanma başına kayıt sayısı (4 → 8). Toplu ACK bunun üstüne az cihazda küçük bir kazanç ekliyor.
 
 ---
 
@@ -124,7 +171,8 @@ SF5B §5'teki authenticated `path_flags.RELAY_ALLOWED` biti yol işareti olarak 
 | Soru | Cevap |
 |---|---|
 | Biriken paketler **ne zaman** gönderilecek? | Normal rapor uyanmasında, canlı kayıttan sonra (R3) |
-| **Ne kadar** gönderilecek? | Uyanma başına en fazla N_MAX; ilk kaçan ACK'te 1 tekrar, sonra dur (R3) |
+| **Ne kadar** gönderilecek? | Birikme yoksa uyanma başına 4, varsa 8 kayıt; ilk kaçan ACK'te 1 tekrar, sonra dur (R3) |
+| Birikenler toplu mu gidecek? | Evet: en az 4 kayıt bekliyorsa ve son ACK geldiyse 4'lü grup + tek seçmeli ACK; ACK kaçarsa tek teke dön (R11) |
 | Relay üzerinden aktarım nasıl? | Tracker `RELAY_ALLOWED` ile ister, relay iletir; ACK'i relay tutup slotta verir (R1, R4, R6) |
 | Relay ve gateway aynı anda duyarsa? | Dedupe; tek ACK yolu, direkt öncelikli; sonraki gönderimde relay devre dışı (R4, R5) |
 | ACK ne zaman gelecek? | Her zaman TX_bitişi + X'te; X tek ayar (R1) |
@@ -163,7 +211,8 @@ Ayarlar: 24 saat, 15 dk rapor aralığı (en kötü durum, hayvan hep hareketli)
 
 ## 4. Bilinçli olarak v0 dışında bırakılanlar (v1 ve sonrası)
 
-- Batch ACK (SF5K): yalnız simülatör ve ölçüm gerekli gösterirse.
+- Toplu ACK'in birikme modu dışında, normal trafikte kullanılması.
+- Birden çok kaydı tek pakete koyma (kayıt başına airtime −%46). Yeni bir paket tipi gerektirir.
 - Çoklu atlama, birden fazla relay arasında seçim.
 - Downlink COMMAND randevusu. Öneri: ACK'e "bekleyen komut var" biti eklenir, tracker ikinci bir slot açar. v0 slotunda **sadece ACK** gider.
 - Link başına SF/ADR, çoklu kanal.
@@ -193,12 +242,13 @@ Ayarlar: 24 saat, 15 dk rapor aralığı (en kötü durum, hayvan hep hareketli)
 python3 tools/mac_sim/orun_mac_sim.py --selftest            # airtime'ı SF5B tablosuyla doğrula
 python3 tools/mac_sim/orun_mac_sim.py                       # standart senaryo tablosu
 python3 tools/mac_sim/orun_mac_sim.py --scenario S7c --set n_max=8 --set sf=8
+python3 tools/mac_sim/orun_mac_sim.py --compare-batch       # R11: tek tek / toplu karşılaştırması
 ```
 
 ---
 
 ## 7. Geliştirme ajanları için kural
 
-- R1–R10 donduğunda, **bu kuralları değiştiren her öneri simülatör çıktısıyla gelir** (hangi senaryo, öncesi ve sonrası).
+- R1–R11 donduğunda, **bu kuralları değiştiren her öneri simülatör çıktısıyla gelir** (hangi senaryo, öncesi ve sonrası).
 - Simülatörle ölçülebilecek bir soru için yeni "blocker" bölümü yazılmaz; önce simülatöre senaryo eklenir.
 - Simülatörün modellemediği bir risk için önce simülatöre eklenip eklenemeyeceği sorulur.

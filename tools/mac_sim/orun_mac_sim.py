@@ -12,6 +12,8 @@ docs/architecture/ORUN_MAC_V0_DECISIONS.md:
       cleared after a direct ACK, set after a relayed ACK or a miss
   R5  Gateway dedupe by (device, seq); one ACK path per attempt
   R6  Relay holds the Gateway ACK and transmits it at the tracker's slot
+  R11 guarded batch: with backlog and a recent ACK, up to 4 records at a fixed
+      gap, one selective ACK at last_TX_end + X; on a miss, one single probe
 
 PHY: standard Semtech LoRa time-on-air equation.  Collision model is
 deliberately pessimistic: any time overlap of two frames audible at a
@@ -25,6 +27,7 @@ Usage:
   python3 orun_mac_sim.py                 # run the standard scenario table
   python3 orun_mac_sim.py --scenario S6   # one scenario
   python3 orun_mac_sim.py --json out.json # also write machine-readable results
+  python3 orun_mac_sim.py --compare-batch # R11 single vs guarded batch table
 """
 
 from __future__ import annotations
@@ -45,6 +48,7 @@ from dataclasses import dataclass, field
 PERIODIC_B = 100
 WRAP_B = 16
 ACK_B = 56
+BATCH_ACK_BASE_B = 48                    # SF5K candidate: 48 + 9 * members (57/66/75/84 B)
 
 
 def lora_airtime_s(payload: int, sf: int, bw_hz: int = 125_000, cr_denom_minus4: int = 1,
@@ -87,6 +91,13 @@ class Config:
     cad: bool = False                    # listen-before-talk (CAD) before non-slot TX
     cad_backoff: tuple = (0.3, 2.0)
     cad_max_tries: int = 8
+    backlog_h: float = 0.0               # records already waiting at t=0 (hours of reports)
+    # R11 guarded batch (Toplu gonderim, emniyetli)
+    batch: bool = False
+    batch_size: int = 4                  # records per group (one selective ACK)
+    batch_min_backlog: int = 4           # start a group only if this many records wait
+    batches_per_wake: int = 2
+    batch_gap_direct: float = 0.25       # gap between group packets when no relay is asked
 
     def airtimes(self):
         return {
@@ -94,12 +105,21 @@ class Config:
             "upw": lora_airtime_s(PERIODIC_B + WRAP_B, self.sf),
             "ack": lora_airtime_s(ACK_B, self.sf),
             "ackw": lora_airtime_s(ACK_B + WRAP_B, self.sf),
+            **{f"bak{n}": lora_airtime_s(BATCH_ACK_BASE_B + 9 * n, self.sf) for n in range(1, 9)},
+            **{f"bakw{n}": lora_airtime_s(BATCH_ACK_BASE_B + 9 * n + WRAP_B, self.sf) for n in range(1, 9)},
         }
 
     def x_min(self) -> float:
         a = self.airtimes()
         guard = 1.0
-        return self.relay_delay[1] + a["upw"] + self.gw_commit[1] + a["ack"] + guard
+        ack = a[f"bak{self.batch_size}"] if self.batch else a["ack"]
+        return self.relay_delay[1] + a["upw"] + self.gw_commit[1] + ack + guard
+
+    def batch_gap(self, via_relay: bool) -> float:
+        """Fixed gap between group packets; via relay it lets the relay finish forwarding first."""
+        if via_relay:
+            return self.relay_delay[1] + self.airtimes()["upw"] + 0.25
+        return self.batch_gap_direct
 
     def x(self) -> float:
         return self.x_s if self.x_s is not None else math.ceil(self.x_min())
@@ -146,7 +166,9 @@ class Sim:
             "miss_no_uplink", "miss_relay_late", "miss_slot_clash", "miss_ack_lost",
             "relay_queue_drop", "uplink_rx_fail_gw", "uplink_rx_fail_relay",
             "dup_copies_gw", "relay_forwards", "gw_acks", "cad_backoffs", "miss_outage",
+            "batches", "batch_acked", "batch_partial", "batch_miss", "batch_fallback",
         ]}
+        self.batch_id = 0
         self.cad_tries: dict = {}
         self.latencies: list[float] = []
         self.backlog_samples: list[tuple[float, int, int]] = []
@@ -166,13 +188,20 @@ class Sim:
                     "queue": [], "seq": 0, "in_wake": False,
                     "relay_allowed": not hg,       # first guess: direct if it can
                     "attempt": None, "plan": [], "sent_in_wake": 0,
-                    "tx_s": 0.0, "rx_s": 0.0,
+                    "tx_s": 0.0, "rx_s": 0.0, "last_ok": False, "batch": None,
                 }
                 phase = self.rng.uniform(0, self.cfg.interval_s)
+                k = int(self.cfg.backlog_h * 3600 // self.cfg.interval_s)
+                keep = min(k, self.cfg.history_cap)
+                self.stats["lost_capacity"] += max(0, k - keep)
+                tr = self.trackers[tid]
+                for i in range(keep):
+                    tr["seq"] += 1
+                    tr["queue"].append({"seq": tr["seq"], "created": phase - (keep - i) * self.cfg.interval_s})
                 self.push(phase, "report", tid)
         self.has_relay = any(t["hr"] for t in self.trackers.values())
-        self.relay = {"pending": 0, "hold": {}, "dedupe": {}}
-        self.gw = {"seen": {}, "committed": set()}
+        self.relay = {"pending": 0, "hold": {}, "dedupe": {}, "bhold": {}}
+        self.gw = {"seen": {}, "committed": set(), "batches": {}}
         for n in list(self.trackers) + ["G", "R"]:
             self.busy[n] = []
             self.tx_time_bins[n] = {}
@@ -294,11 +323,16 @@ class Sim:
         if not tr["in_wake"]:
             q = tr["queue"]
             plan = [q[-1]["seq"]] + [r["seq"] for r in q[:-1]]   # live first, then oldest
-            tr["plan"] = plan[: self.cfg.n_max]
             tr["in_wake"] = True
             tr["sent_in_wake"] = 0
             tr["retries_left"] = self.cfg.retry_in_wake
-            self.push(self.now, "tracker_send", tid)
+            if self.batch_eligible(tr):
+                tr["plan"] = plan
+                tr["batches_left"] = self.cfg.batches_per_wake
+                self.push(self.now, "batch_start", tid)
+            else:
+                tr["plan"] = plan[: self.cfg.n_max]
+                self.push(self.now, "tracker_send", tid)
 
     def ev_tracker_send(self, tid):
         tr = self.trackers[tid]
@@ -340,6 +374,7 @@ class Sim:
         reason = att.get("miss_reason", "miss_no_uplink")
         self.stats[reason if att["online"] else "miss_outage"] += 1
         tr["relay_allowed"] = True if tr["hr"] else False
+        tr["last_ok"] = False
         tr["attempt"] = None
         if tr.get("retries_left", 0) > 0:
             tr["retries_left"] -= 1
@@ -354,11 +389,16 @@ class Sim:
             self.on_uplink_end(tx)
         elif tx.kind == "upw":
             if self.gw_online(tx.start) and self.gw_online(tx.end) and self.received(tx, "G"):
-                self.gw_receive(tx.data, via_relay=True, rx_end=tx.end)
+                if "bid" in tx.data:
+                    self.gw_batch_receive(tx.data, via_relay=True, rx_end=tx.end)
+                else:
+                    self.gw_receive(tx.data, via_relay=True, rx_end=tx.end)
             else:
                 self.stats["uplink_rx_fail_gw"] += 1
         elif tx.kind in ("ack", "ackw"):
             self.on_ack_end(tx)
+        elif tx.kind in ("bak", "bakw"):
+            self.on_batch_ack_end(tx)
 
     def on_uplink_end(self, tx: Tx):
         d = tx.data
@@ -366,13 +406,19 @@ class Sim:
         got_any = False
         if tr["hg"]:
             if self.gw_online(tx.start) and self.gw_online(tx.end) and self.received(tx, "G"):
-                self.gw_receive(d, via_relay=False, rx_end=tx.end)
+                if "bid" in d:
+                    self.gw_batch_receive(d, via_relay=False, rx_end=tx.end)
+                else:
+                    self.gw_receive(d, via_relay=False, rx_end=tx.end)
                 got_any = True
             else:
                 self.stats["uplink_rx_fail_gw"] += 1
         if tr["hr"] and d["relay_allowed"]:
             if self.received(tx, "R"):
                 self.relay_receive(d, tx.end)
+                if "bid" in d:
+                    span = (d["n"] - 1 - d["k"]) * (self.a["up"] + d["gap"])
+                    self.relay["bhold"][(d["dev"], d["bid"])] = tx.end + span
                 got_any = True
             else:
                 self.stats["uplink_rx_fail_relay"] += 1
@@ -450,7 +496,8 @@ class Sim:
             tr = self.trackers[d["dev"]]
             for r in tr["queue"]:
                 if r["seq"] == d["seq"]:
-                    self.latencies.append(self.now - r["created"])
+                    if r["created"] >= 0:
+                        self.latencies.append(self.now - r["created"])
                     break
         if not self.gw_online(self.now):
             return
@@ -516,9 +563,204 @@ class Sim:
         self.stats["acked"] += 1
         tr["queue"] = [r for r in tr["queue"] if r["seq"] != d["seq"]]
         tr["relay_allowed"] = (tx.kind == "ackw")
+        tr["last_ok"] = True
         tr["sent_in_wake"] += 1
         tr["attempt"] = None
         self.push(self.now + 0.1, "tracker_send", tid)
+
+    # ---------------- R11 guarded batch ----------------
+    def batch_eligible(self, tr) -> bool:
+        return (self.cfg.batch and tr["last_ok"] and len(tr["queue"]) >= self.cfg.batch_min_backlog)
+
+    def ev_batch_start(self, tid):
+        tr = self.trackers[tid]
+        seqs_q = {r["seq"] for r in tr["queue"]}
+        tr["plan"] = [s for s in tr["plan"] if s in seqs_q]
+        group = tr["plan"][: self.cfg.batch_size]
+        if not group or tr.get("batches_left", 0) <= 0:
+            tr["in_wake"] = False
+            return
+        if self.cad_defer(("TB", tid), tid):
+            self.push(self.now + self.rng.uniform(*self.cfg.cad_backoff), "batch_start", tid)
+            return
+        tr["plan"] = tr["plan"][len(group):]
+        tr["batches_left"] -= 1
+        self.batch_id += 1
+        ra = tr["relay_allowed"]
+        gap = self.cfg.batch_gap(bool(ra and tr["hr"]))
+        tr["batch"] = {"bid": self.batch_id, "seqs": group, "n": len(group), "ra": ra, "gap": gap,
+                       "acked": False, "online": self.gw_online(self.now)}
+        self.stats["batches"] += 1
+        self.push(self.now, "batch_tx", (tid, self.batch_id, 0))
+
+    def ev_batch_tx(self, data):
+        tid, bid, k = data
+        tr = self.trackers[tid]
+        b = tr["batch"]
+        if not b or b["bid"] != bid:
+            return
+        seq = b["seqs"][k]
+        self.stats["attempts"] += 1
+        d = {"dev": tid, "seq": seq, "relay_allowed": b["ra"], "bid": bid, "k": k, "n": b["n"], "gap": b["gap"]}
+        tx = self.start_tx(tid, "up", "up", d)
+        tr["tx_s"] += self.a["up"]
+        if k < b["n"] - 1:
+            self.push(tx.end + b["gap"], "batch_tx", (tid, bid, k + 1))
+            return
+        w = self.cfg.window_s
+        b["win"] = (tx.end + self.X - w / 2, tx.end + self.X + w / 2)
+        tr["rx_s"] += w
+        self.push(b["win"][1] + self.a[f"bakw{b['n']}"] + 0.05, "batch_close", (tid, bid))
+
+    def ev_batch_close(self, data):
+        tid, bid = data
+        tr = self.trackers[tid]
+        b = tr["batch"]
+        if not b or b["bid"] != bid:
+            return
+        tr["batch"] = None
+        if b["acked"]:
+            return
+        if b["online"]:
+            self.stats["batch_miss"] += 1
+            self.stats["miss_no_uplink"] += b["n"]
+        else:
+            self.stats["miss_outage"] += b["n"]
+        tr["last_ok"] = False
+        tr["relay_allowed"] = True if tr["hr"] else False
+        # fall back to one single record for the rest of this wake (bounded probe)
+        self.stats["batch_fallback"] += 1
+        seqs_q = [r["seq"] for r in tr["queue"]]
+        tr["plan"] = seqs_q[:1]
+        tr["retries_left"] = 0
+        if tr["plan"]:
+            self.push(self.now + self.rng.uniform(*self.cfg.retry_backoff), "tracker_send", tid)
+        else:
+            tr["in_wake"] = False
+
+    def gw_batch_receive(self, d: dict, via_relay: bool, rx_end: float):
+        key = (d["dev"], d["bid"])
+        z = self.gw["batches"].get(key)
+        if z is None:
+            z = {"got": set(), "committed": set(), "n": d["n"], "direct_E": None,
+                 "sent": False, "decide_at": None, "direct_sched": False}
+            self.gw["batches"][key] = z
+        span = (d["n"] - 1 - d["k"]) * (self.a["up"] + d["gap"])
+        if d["seq"] in z["got"]:
+            self.stats["dup_copies_gw"] += 1
+        else:
+            z["got"].add(d["seq"])
+            rk = (d["dev"], d["seq"])
+            g = 0.0 if rk in self.gw["committed"] else self.rng.uniform(*self.cfg.gw_commit)
+            self.push(rx_end + g, "gw_bcommit", (key, d["dev"], d["seq"]))
+        if not via_relay:
+            z["direct_E"] = rx_end + span
+            if not z["direct_sched"]:
+                z["direct_sched"] = True
+                slot = z["direct_E"] + self.X
+                dur = self.a[f"bak{self.cfg.batch_size}"]
+                if self.overlaps_busy("G", slot, slot + dur):
+                    return
+                self.busy["G"].append((slot, slot + dur))
+                self.push(slot, "gw_back_direct", key)
+            return
+        if z["direct_E"] is not None:
+            return
+        if d["k"] == d["n"] - 1:
+            t = rx_end + self.cfg.gw_commit[1] + 0.05
+        else:
+            t = rx_end + span + (self.cfg.relay_delay[1] - self.cfg.relay_delay[0]) + self.cfg.gw_commit[1] + 0.05
+        z["decide_at"] = t
+        self.push(t, "gw_brelay", key)
+
+    def ev_gw_bcommit(self, data):
+        key, dev, seq = data
+        rk = (dev, seq)
+        if rk not in self.gw["committed"]:
+            self.gw["committed"].add(rk)
+            for r in self.trackers[dev]["queue"]:
+                if r["seq"] == seq:
+                    if r["created"] >= 0:
+                        self.latencies.append(self.now - r["created"])
+                    break
+        self.gw["batches"][key]["committed"].add(seq)
+
+    def ev_gw_back_direct(self, key):
+        z = self.gw["batches"].get(key)
+        if not z or z["sent"] or not self.gw_online(self.now):
+            return
+        members = sorted(z["committed"])
+        if not members:
+            return
+        z["sent"] = True
+        self.stats["gw_acks"] += 1
+        self.start_tx("G", "bak", f"bak{len(members)}",
+                      {"dev": key[0], "bid": key[1], "seqs": members, "relay_allowed": False}, reserved=True)
+
+    def ev_gw_brelay(self, key):
+        z = self.gw["batches"].get(key)
+        if not z or z["sent"] or z["direct_E"] is not None or abs(self.now - z["decide_at"]) > 1e-9:
+            return
+        members = sorted(z["committed"])
+        if not members or not self.gw_online(self.now):
+            return
+        z["sent"] = True
+        self.push(self.now, "gw_back_asap", {"dev": key[0], "bid": key[1], "seqs": members, "relay_allowed": True})
+
+    def ev_gw_back_asap(self, ack):
+        size = f"bak{len(ack['seqs'])}"
+        s = self.free_at("G", self.now, self.a[size])
+        if s > self.now + 1e-9:
+            self.push(s, "gw_back_asap", ack)
+            return
+        if self.cad_defer(("GB", ack["dev"], ack["bid"]), "G"):
+            self.push(self.now + self.rng.uniform(0.1, 0.5), "gw_back_asap", ack)
+            return
+        self.stats["gw_acks"] += 1
+        self.start_tx("G", "bak", size, ack)
+
+    def ev_relay_back_tx(self, ack):
+        self.start_tx("R", "bakw", f"bakw{len(ack['seqs'])}", dict(ack), reserved=True)
+
+    def on_batch_ack_end(self, tx: Tx):
+        d = tx.data
+        if tx.kind == "bak" and d.get("relay_allowed") and self.has_relay:
+            if not self.received(tx, "R"):
+                return
+            E = self.relay["bhold"].pop((d["dev"], d["bid"]), None)
+            if E is None:
+                return
+            slot = E + self.X
+            dur = self.a[f"bakw{len(d['seqs'])}"]
+            if slot < self.now + 0.02 or self.overlaps_busy("R", slot, slot + dur):
+                self.stats["miss_relay_late"] += 1
+                return
+            self.busy["R"].append((slot, slot + dur))
+            self.push(slot, "relay_back_tx", d)
+            return
+        tr = self.trackers[d["dev"]]
+        b = tr["batch"]
+        if not b or b["bid"] != d["bid"] or b["acked"] or "win" not in b:
+            return
+        w0, w1 = b["win"]
+        if not (w0 <= tx.start <= w1) or not self.received(tx, d["dev"]):
+            return
+        b["acked"] = True
+        tr["rx_s"] += tx.end - tx.start
+        got = set(d["seqs"])
+        before = len(tr["queue"])
+        tr["queue"] = [r for r in tr["queue"] if r["seq"] not in got]
+        n_rel = before - len(tr["queue"])
+        self.stats["acked"] += n_rel
+        self.stats["batch_acked"] += 1
+        if n_rel < b["n"]:
+            self.stats["batch_partial"] += 1
+        tr["relay_allowed"] = (tx.kind == "bakw")
+        tr["last_ok"] = True
+        if tr.get("batches_left", 0) > 0 and tr["queue"]:
+            self.push(self.now + 0.1, "batch_start", d["dev"])
+        else:
+            tr["in_wake"] = False
 
     # ---------------- results ----------------
     def results(self) -> dict:
@@ -532,10 +774,10 @@ class Sim:
         tracker_duty = max((max_duty(t) for t in self.trackers), default=0.0)
         pending = sum(len(t["queue"]) for t in self.trackers.values())
         drain_s = None
-        if self.cfg.outage:
-            oe = self.cfg.outage[1] * 3600
+        if self.cfg.outage or self.cfg.backlog_h > 0:
+            oe = self.cfg.outage[1] * 3600 if self.cfg.outage else 0.0
             for (t, total, mx) in self.backlog_samples:
-                if t >= oe and mx <= 1:
+                if t > oe and mx <= 1:
                     drain_s = t - oe
                     break
         n_tr = len(self.trackers)
@@ -559,6 +801,7 @@ class Sim:
             "tracker_rx_s_per_h_10s_window": 10.0 * (self.stats["attempts"] / n_tr) / hours,
             "tracker_tx_s_per_h": tx_per_h,
             "X_s": self.X,
+            "airtime_total_s": sum(sum(b.values()) for b in self.tx_time_bins.values()),
         }
 
 
@@ -622,6 +865,41 @@ DESCR = {
 }
 
 
+BATCH_SCENARIOS = [
+    ("2 tasma, 36 sa birikme, 3 dk, SF9", dict(sf=9, groups={"direct": 1, "relay": 1}, interval_s=180, backlog_h=36, hours=48, cad=True)),
+    ("1 tasma relay, 6 sa birikme, SF11", dict(sf=11, groups={"relay": 1}, backlog_h=6, hours=24, cad=True)),
+    ("10 tasma karisik, 6 sa birikme, SF11", dict(sf=11, groups={"direct": 3, "both": 2, "relay": 5}, backlog_h=6, hours=48, cad=True)),
+    ("30 tasma relay, 6 sa birikme, SF11", dict(sf=11, groups={"relay": 30}, backlog_h=6, hours=48, cad=True)),
+    ("30 tasma relay, 6 sa birikme, SF9", dict(sf=9, groups={"relay": 30}, backlog_h=6, hours=48, cad=True)),
+    ("30 karisik, 12 sa birikme, SF9", dict(sf=9, groups={"direct": 10, "both": 10, "relay": 10}, backlog_h=12, hours=48, cad=True)),
+]
+BATCH_VARIANTS = [
+    ("tek tek, 4/uyanma", dict(n_max=4)),
+    ("tek tek, 8/uyanma", dict(n_max=8)),
+    ("emniyetli toplu 2x4", dict(batch=True, n_max=8)),
+]
+
+
+def compare_batch(seeds: int = 3) -> dict:
+    """R11 check: guarded batch vs single at the same per-wake budget."""
+    out = {}
+    for name, kw in BATCH_SCENARIOS:
+        print(name)
+        out[name] = {}
+        for vn, vkw in BATCH_VARIANTS:
+            rs = [Sim(Config(name, **kw, **vkw), seed).run().results() for seed in range(seeds)]
+            drain = [r["drain_after_outage_s"] for r in rs]
+            duty = max(max(r["duty_relay_pct"], r["duty_gw_pct"], r["duty_tracker_max_pct"]) for r in rs)
+            pend = statistics.mean(r["pending_end"] for r in rs)
+            air = statistics.mean(r["airtime_total_s"] for r in rs) / max(statistics.mean(r["delivered_unique"] for r in rs), 1)
+            out[name][vn] = {"drain_min": [None if d is None else round(d / 60) for d in drain],
+                             "pending_end": pend, "duty_max_pct": duty, "airtime_per_record_s": air}
+            ds = "/".join("erimedi" if d is None else str(round(d / 60)) for d in drain)
+            print(f"   {vn:22s} bosalma (dk) {ds:22s} sonda bekleyen {pend:6.0f}  en kotu duty %{duty:4.1f}  airtime/kayit {air:5.2f} s")
+        print()
+    return out
+
+
 def selftest() -> int:
     # ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md section 18 (SF11/BW125/CR4/5/preamble 8)
     ref = {34: 0.987136, 56: 1.396736, 72: 1.642496, 84: 1.888256, 96: 2.134016,
@@ -656,9 +934,16 @@ def main(argv=None):
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                     help="override a Config field for the selected scenarios, e.g. --set sf=9 --set n_max=8 --set cad=1")
     ap.add_argument("--selftest", action="store_true", help="check airtime against the SF5B reference table and exit")
+    ap.add_argument("--compare-batch", action="store_true", help="R11: single vs guarded batch on backlog scenarios")
     args = ap.parse_args(argv)
     if args.selftest:
         return selftest()
+    if args.compare_batch:
+        res = compare_batch(args.seeds or 3)
+        if args.json:
+            with open(args.json, "w") as f:
+                json.dump(res, f, indent=2)
+        return 0
 
     print("Airtime (s), BW125 CR4/5 preamble 8:")
     for sf in (8, 9, 10, 11):
