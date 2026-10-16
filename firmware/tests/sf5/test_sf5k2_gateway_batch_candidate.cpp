@@ -124,6 +124,16 @@ void uncertainNoSoftAck() {
   Mock edgeOnly{}; edgeOnly.edge[0] = EdgeFact::kAuthenticatedDurableExact;
   assert(prepare(scope(), list, 1, edgeOnly, &out) == Result::kPrepared);
   assert(out.count == 1U);
+  // A *different*, perfectly committed record is not evidence for this input.
+  Mock wrong{}; wrong.store(0, pending(2));
+  PreparedCandidate untrusted{}; untrusted.count = 55U;
+  assert(prepare(scope(), list, 1, wrong, &untrusted) == Result::kNoDurableFact);
+  assert(untrusted.count == 55U);
+  // Committed record already marked as handed-off still contains exact bytes.
+  Mock handed{}; handed.store(0, list[0]);
+  memset(handed.stored[0] + rec::kRecordHandoff0Offset, 0, 4);
+  assert(prepare(scope(), list, 1, handed, &untrusted) == Result::kPrepared);
+  assert(untrusted.count == 1U);
 }
 void rejectIncorrectIdentity() {
   Pending p = pending(0);
