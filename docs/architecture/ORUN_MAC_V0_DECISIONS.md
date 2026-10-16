@@ -1,10 +1,10 @@
 # ORUN MAC v0 — Gönderim, ACK ve Relay Zamanlama Kararları
 
-**Durum:** ÖNERİ. Sahip (Metay) onaylarsa DONDURULUR.
+**Durum:** ONAYLANDI ve DONDURULDU — sahip (Metay), 2026-10-17. Wire değişiklikleri yön olarak onaylandı; uygulamadan önce güvenlik incelemesi (R11, madde 3) zorunludur.
 **Tarih:** 2026-10-16, güncelleme 2026-10-17 (R11 kümülatif ACK, R12 KAYIP, R3/R9/R10 değişiklikleri)
 **Kapsam:** Tracker → (isteğe bağlı tek relay) → Gateway yolunda veri gönderimi, custody ACK dönüşü, backlog boşaltma, çakışma ve duty kuralları.
 **Değişmeyenler:** TLP v1 baytları ve SF5K0 §8.1 "relay sadece taşıyıcıdır" kararı.
-**Önerilen wire değişiklikleri (onay ve güvenlik incelemesi gerekir):** R11 için `ACK_REQUESTED` biti ve kümülatif custody ACK çerçevesi (§1, R11 sonu). Bunlar onaylanana kadar SF5B baytları aynen geçerlidir.
+**Onaylanan wire değişiklikleri:** R11 için `ACK_REQUESTED` biti ve kümülatif custody ACK çerçevesi (§1, R11 sonu). Güvenlik incelemesi bitip uygulanana kadar SF5B baytları aynen geçerlidir.
 **Kanıt:** `tools/mac_sim/orun_mac_sim.py` (yalnız bilgisayarda çalışan zamanlama simülatörü). Fiziksel RF, akım veya mevzuat uyumu kanıtı DEĞİLDİR.
 
 Bu doküman SF5K0 §9–10'da açık bırakılan soruları **karara bağlamak** için yazıldı. Oradaki tespitler doğrudur; eksik olan bir karar setiydi.
@@ -158,7 +158,7 @@ SF5B §5'teki authenticated `path_flags.RELAY_ALLOWED` biti yol işareti olarak 
 - Tasma yalnız ACK istediği pakette dinler; dinleme süresi 2,5–4 kat azalır.
 - Kaçan ACK yük oluşturmaz.
 
-**Gereken wire değişiklikleri (onay ve güvenlik incelemesi gerekir):**
+**Wire değişiklikleri (sahip onayladı 2026-10-17; uygulamadan önce güvenlik incelemesi gerekir):**
 1. **`ACK_REQUESTED` biti:** PRODUCT_SECURE `path_flags` içinde bit 2 önerilir (bugün bit 2–7 "reserved, unknown reject"). Bit AAD içinde olduğu için doğrulanır.
 2. **Kümülatif custody ACK çerçevesi:** SF5B §12'deki tek-nesne ACK'ine (0x05, 56 B) ek olarak; içerik `base (4 B) + 32-bit bitmap`, yaklaşık 64 B.
 3. **Güvenlik sorusu:** SF5B ACK'i her nesnenin tam SHA-256 özetine bağlıdır. Kümülatif ACK ise `(cihaz, incarnation, sıra aralığı)` onaylar. Bunun SF5B §12 / SF4 custody yetkisiyle nasıl bağdaşacağı (HMAC hangi baytları kapsar, incarnation değişimi, yeniden başlatma) uygulamadan önce incelenmelidir. SF5K yığınının (#134–#140) HMAC, yetki ve seçmeli bırakma işi bu çerçeve için yeniden kullanılabilir.
