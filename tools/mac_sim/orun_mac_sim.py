@@ -12,8 +12,9 @@ docs/architecture/ORUN_MAC_V0_DECISIONS.md:
       cleared after a direct ACK, set after a relayed ACK or a miss
   R5  Gateway dedupe by (device, seq); one ACK path per attempt
   R6  Relay holds the Gateway ACK and transmits it at the tracker's slot
-  R11 guarded batch: with backlog and a recent ACK, up to 4 records at a fixed
-      gap, one selective ACK at last_TX_end + X; on a miss, one single probe
+  R11 cumulative ACK: every record is sent at once; an ACK is requested every N
+      packets (or after T without contact); the ACK carries base + bitmap of what
+      the Gateway holds durably; a missed ACK is not resent, the next one says it
 
 PHY: standard Semtech LoRa time-on-air equation.  Collision model is
 deliberately pessimistic: any time overlap of two frames audible at a
@@ -27,7 +28,8 @@ Usage:
   python3 orun_mac_sim.py                 # run the standard scenario table
   python3 orun_mac_sim.py --scenario S6   # one scenario
   python3 orun_mac_sim.py --json out.json # also write machine-readable results
-  python3 orun_mac_sim.py --compare-batch # R11 single vs guarded batch table
+  python3 orun_mac_sim.py --compare-cum   # R11 per-packet vs cumulative every-N ACK
+  python3 orun_mac_sim.py --compare-batch # older guarded-batch comparison
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ PERIODIC_B = 100
 WRAP_B = 16
 ACK_B = 56
 BATCH_ACK_BASE_B = 48                    # SF5K candidate: 48 + 9 * members (57/66/75/84 B)
+CUM_ACK_B = ACK_B + 8                    # R12 candidate: SF5B ACK + 4 B cumulative base + 4 B bitmap
 
 
 def lora_airtime_s(payload: int, sf: int, bw_hz: int = 125_000, cr_denom_minus4: int = 1,
@@ -98,6 +101,13 @@ class Config:
     batch_min_backlog: int = 4           # start a group only if this many records wait
     batches_per_wake: int = 2
     batch_gap_direct: float = 0.25       # gap between group packets when no relay is asked
+    # R12 cumulative ACK every N packets (sahibin 2026-10-17 karari)
+    cum_ack: bool = False
+    ack_every: int = 4                   # ask for an ACK every N packets ...
+    ack_max_s: float = 2 * 3600          # ... or at the latest after this long without contact
+    ack_bitmap: int = 32                 # records covered after the cumulative base
+    cum_wake_max: int = 8                # live + missing/backlog per round
+    cum_rounds: int = 1                  # rounds per wake (2 = faster drain, more relay load)
 
     def airtimes(self):
         return {
@@ -107,12 +117,14 @@ class Config:
             "ackw": lora_airtime_s(ACK_B + WRAP_B, self.sf),
             **{f"bak{n}": lora_airtime_s(BATCH_ACK_BASE_B + 9 * n, self.sf) for n in range(1, 9)},
             **{f"bakw{n}": lora_airtime_s(BATCH_ACK_BASE_B + 9 * n + WRAP_B, self.sf) for n in range(1, 9)},
+            "cack": lora_airtime_s(CUM_ACK_B, self.sf),
+            "cackw": lora_airtime_s(CUM_ACK_B + WRAP_B, self.sf),
         }
 
     def x_min(self) -> float:
         a = self.airtimes()
         guard = 1.0
-        ack = a[f"bak{self.batch_size}"] if self.batch else a["ack"]
+        ack = a["cack"] if self.cum_ack else (a[f"bak{self.batch_size}"] if self.batch else a["ack"])
         return self.relay_delay[1] + a["upw"] + self.gw_commit[1] + ack + guard
 
     def batch_gap(self, via_relay: bool) -> float:
@@ -167,6 +179,7 @@ class Sim:
             "relay_queue_drop", "uplink_rx_fail_gw", "uplink_rx_fail_relay",
             "dup_copies_gw", "relay_forwards", "gw_acks", "cad_backoffs", "miss_outage",
             "batches", "batch_acked", "batch_partial", "batch_miss", "batch_fallback",
+            "cum_packets", "cum_resends", "cum_req", "cum_req_miss", "cum_acks",
         ]}
         self.batch_id = 0
         self.cad_tries: dict = {}
@@ -189,6 +202,8 @@ class Sim:
                     "relay_allowed": not hg,       # first guess: direct if it can
                     "attempt": None, "plan": [], "sent_in_wake": 0,
                     "tx_s": 0.0, "rx_s": 0.0, "last_ok": False, "batch": None,
+                    "sent": {}, "missing": set(), "since_req": 0, "last_contact": 0.0,
+                    "need_ack": False, "rounds_left": 0,
                 }
                 phase = self.rng.uniform(0, self.cfg.interval_s)
                 k = int(self.cfg.backlog_h * 3600 // self.cfg.interval_s)
@@ -304,8 +319,14 @@ class Sim:
 
     # ---------------- events ----------------
     def ev_sample(self, _):
-        total = sum(len(t["queue"]) for t in self.trackers.values())
-        mx = max(len(t["queue"]) for t in self.trackers.values())
+        if self.cfg.cum_ack:
+            # unconfirmed-but-delivered records are not backlog; count what no Gateway holds yet
+            com = self.gw["committed"]
+            per = [sum(1 for r in t["queue"] if (tid, r["seq"]) not in com) for tid, t in self.trackers.items()]
+            total, mx = sum(per), max(per)
+        else:
+            total = sum(len(t["queue"]) for t in self.trackers.values())
+            mx = max(len(t["queue"]) for t in self.trackers.values())
         self.backlog_samples.append((self.now, total, mx))
         self.push(self.now + 60, "sample", None)
 
@@ -320,6 +341,12 @@ class Sim:
         j = self.cfg.jitter_frac * self.cfg.interval_s
         nxt = self.now + self.cfg.interval_s + self.rng.uniform(-j, j)
         self.push(nxt, "report", tid)
+        if self.cfg.cum_ack:
+            if not tr["in_wake"]:
+                tr["in_wake"] = True
+                tr["rounds_left"] = self.cfg.cum_rounds
+                self.push(self.now, "cum_round", tid)
+            return
         if not tr["in_wake"]:
             q = tr["queue"]
             plan = [q[-1]["seq"]] + [r["seq"] for r in q[:-1]]   # live first, then oldest
@@ -391,6 +418,8 @@ class Sim:
             if self.gw_online(tx.start) and self.gw_online(tx.end) and self.received(tx, "G"):
                 if "bid" in tx.data:
                     self.gw_batch_receive(tx.data, via_relay=True, rx_end=tx.end)
+                elif "cum" in tx.data:
+                    self.gw_cum_receive(tx.data, via_relay=True, rx_end=tx.end)
                 else:
                     self.gw_receive(tx.data, via_relay=True, rx_end=tx.end)
             else:
@@ -399,6 +428,8 @@ class Sim:
             self.on_ack_end(tx)
         elif tx.kind in ("bak", "bakw"):
             self.on_batch_ack_end(tx)
+        elif tx.kind in ("cack", "cackw"):
+            self.on_cum_ack_end(tx)
 
     def on_uplink_end(self, tx: Tx):
         d = tx.data
@@ -408,6 +439,8 @@ class Sim:
             if self.gw_online(tx.start) and self.gw_online(tx.end) and self.received(tx, "G"):
                 if "bid" in d:
                     self.gw_batch_receive(d, via_relay=False, rx_end=tx.end)
+                elif "cum" in d:
+                    self.gw_cum_receive(d, via_relay=False, rx_end=tx.end)
                 else:
                     self.gw_receive(d, via_relay=False, rx_end=tx.end)
                 got_any = True
@@ -762,6 +795,195 @@ class Sim:
         else:
             tr["in_wake"] = False
 
+    # ---------------- R12 cumulative ACK every N packets ----------------
+    def ev_cum_round(self, tid):
+        tr = self.trackers[tid]
+        c = self.cfg
+        if tr["rounds_left"] <= 0 or not tr["queue"]:
+            tr["in_wake"] = False
+            return
+        live = tr["queue"][-1]["seq"]
+        others = [r["seq"] for r in tr["queue"][:-1]]
+        missing = sorted(s for s in others if s in tr["missing"])
+        # sliding window: never-sent backlog only inside what the next ACK bitmap can report
+        lim = tr.get("ack_base", 0) + c.ack_bitmap
+        never = [s for s in others if s not in tr["sent"] and s not in tr["missing"] and s <= lim]
+        plan = ([] if live in tr["sent"] and live not in tr["missing"] else [live]) + missing + never
+        plan = plan[: 1 if tr["need_ack"] else c.cum_wake_max]   # unanswered request: probe with one record
+        if not plan:
+            tr["in_wake"] = False
+            return
+        if self.cad_defer(("TC", tid), tid):
+            self.push(self.now + self.rng.uniform(*c.cad_backoff), "cum_round", tid)
+            return
+        tr["rounds_left"] -= 1
+        req = (tr["need_ack"] or len(plan) > 1 or tr["since_req"] + len(plan) >= c.ack_every
+               or self.now - tr["last_contact"] >= c.ack_max_s)
+        ra = tr["relay_allowed"]
+        gap = c.batch_gap(bool(ra and tr["hr"]))
+        tr["cum_plan"] = {"plan": plan, "req": req, "ra": ra, "gap": gap}
+        self.push(self.now, "cum_tx", (tid, 0))
+
+    def ev_cum_tx(self, data):
+        tid, k = data
+        tr = self.trackers[tid]
+        cp = tr["cum_plan"]
+        seq = cp["plan"][k]
+        last = k == len(cp["plan"]) - 1
+        req = cp["req"] and last
+        self.stats["attempts"] += 1
+        self.stats["cum_packets"] += 1
+        if seq in tr["sent"]:
+            self.stats["cum_resends"] += 1
+        tr["missing"].discard(seq)
+        d = {"dev": tid, "seq": seq, "relay_allowed": cp["ra"], "cum": True, "req": req}
+        tx = self.start_tx(tid, "up", "up", d)
+        tr["sent"][seq] = tx.end
+        tr["tx_s"] += self.a["up"]
+        if not last:
+            self.push(tx.end + cp["gap"], "cum_tx", (tid, k + 1))
+            return
+        if not req:
+            tr["since_req"] += len(cp["plan"])
+            tr["in_wake"] = False
+            return
+        self.stats["cum_req"] += 1
+        w = self.cfg.window_s
+        tr["attempt"] = {"seq": seq, "id": tx.id, "win": (tx.end + self.X - w / 2, tx.end + self.X + w / 2),
+                         "acked": False, "tx_end": tx.end, "online": self.gw_online(self.now), "cum": True}
+        tr["rx_s"] += w
+        self.push(tx.end + self.X + w / 2 + self.a["cackw"] + 0.05, "cum_close", (tid, tx.id))
+
+    def ev_cum_close(self, data):
+        tid, att_id = data
+        tr = self.trackers[tid]
+        att = tr["attempt"]
+        if not att or att["id"] != att_id or att["acked"]:
+            return
+        tr["attempt"] = None
+        if att["online"]:
+            self.stats["cum_req_miss"] += 1
+        else:
+            self.stats["miss_outage"] += 1
+        tr["need_ack"] = True
+        tr["relay_allowed"] = True if tr["hr"] else False
+        tr["in_wake"] = False          # no immediate resend; the next ACK says what is missing
+
+    def gw_cum_receive(self, d: dict, via_relay: bool, rx_end: float):
+        key = (d["dev"], d["seq"], "cum")
+        seen = self.gw["seen"].get(key)
+        if seen and rx_end - seen["t"] < self.cfg.retry_dedupe_s + 10:
+            self.stats["dup_copies_gw"] += 1
+            if not via_relay and seen.get("direct_end") is None:
+                seen["direct_end"] = rx_end
+            return
+        rec = {"t": rx_end, "direct_end": None if via_relay else rx_end}
+        self.gw["seen"][key] = rec
+        rk = (d["dev"], d["seq"])
+        g = 0.02 if rk in self.gw["committed"] else self.rng.uniform(*self.cfg.gw_commit)
+        self.push(rx_end + g, "gw_cum_commit", (d, rec))
+
+    def ev_gw_cum_commit(self, data):
+        d, rec = data
+        rk = (d["dev"], d["seq"])
+        if rk not in self.gw["committed"]:
+            self.gw["committed"].add(rk)
+            self.gw.setdefault("cdev", {}).setdefault(d["dev"], set()).add(d["seq"])
+            for r in self.trackers[d["dev"]]["queue"]:
+                if r["seq"] == d["seq"]:
+                    if r["created"] >= 0:
+                        self.latencies.append(self.now - r["created"])
+                    break
+        if not d["req"] or not self.gw_online(self.now):
+            return
+        if rec["direct_end"] is not None:
+            slot = rec["direct_end"] + self.X
+            dur = self.a["cack"]
+            if slot < self.now + 0.02 or self.overlaps_busy("G", slot, slot + dur):
+                return
+            self.busy["G"].append((slot, slot + dur))
+            self.push(slot, "gw_cack_tx", {"dev": d["dev"], "req_seq": d["seq"], "relay_allowed": False, "slot": True})
+        else:
+            self.push(self.now, "gw_cack_tx", {"dev": d["dev"], "req_seq": d["seq"], "relay_allowed": True, "slot": False})
+
+    def cum_state(self, dev):
+        """Cumulative base + bitmap of what this Gateway holds durably for one device."""
+        tr = self.trackers[dev]
+        committed = self.gw.get("cdev", {}).get(dev, set())
+        base = tr.setdefault("gw_base", 0)
+        while base + 1 in committed:
+            base += 1
+        tr["gw_base"] = base
+        bits = {s for s in committed if base < s <= base + self.cfg.ack_bitmap}
+        return base, bits
+
+    def ev_gw_cack_tx(self, ack):
+        if not ack["slot"]:
+            s = self.free_at("G", self.now, self.a["cack"])
+            if s > self.now + 1e-9:
+                self.push(s, "gw_cack_tx", ack)
+                return
+            if self.cad_defer(("GC", ack["dev"], ack["req_seq"]), "G"):
+                self.push(self.now + self.rng.uniform(0.1, 0.5), "gw_cack_tx", ack)
+                return
+        base, bits = self.cum_state(ack["dev"])
+        ack = dict(ack, base=base, bits=bits)
+        self.stats["gw_acks"] += 1
+        self.start_tx("G", "cack", "cack", ack, reserved=ack["slot"])
+
+    def ev_relay_cack_tx(self, ack):
+        self.start_tx("R", "cackw", "cackw", dict(ack), reserved=True)
+
+    def on_cum_ack_end(self, tx: Tx):
+        d = tx.data
+        if tx.kind == "cack" and d.get("relay_allowed") and self.has_relay:
+            if not self.received(tx, "R"):
+                return
+            rx_end = self.relay["hold"].pop((d["dev"], d["req_seq"]), None)
+            if rx_end is None:
+                return
+            slot = rx_end + self.X
+            dur = self.a["cackw"]
+            if slot < self.now + 0.02 or self.overlaps_busy("R", slot, slot + dur):
+                self.stats["miss_relay_late"] += 1
+                return
+            self.busy["R"].append((slot, slot + dur))
+            self.push(slot, "relay_cack_tx", d)
+            return
+        tr = self.trackers[d["dev"]]
+        att = tr["attempt"]
+        if not att or not att.get("cum") or att["seq"] != d["req_seq"] or att["acked"]:
+            return
+        w0, w1 = att["win"]
+        if not (w0 <= tx.start <= w1) or not self.received(tx, d["dev"]):
+            return
+        att["acked"] = True
+        tr["attempt"] = None
+        tr["rx_s"] += tx.end - tx.start
+        self.stats["cum_acks"] += 1
+        base, bits = d["base"], d["bits"]
+        before = len(tr["queue"])
+        keep = []
+        for r in tr["queue"]:
+            if r["seq"] <= base or r["seq"] in bits:
+                tr["sent"].pop(r["seq"], None)
+                continue
+            if (r["seq"] in tr["sent"] and tr["sent"][r["seq"]] <= att["tx_end"]
+                    and r["seq"] <= base + self.cfg.ack_bitmap):
+                tr["missing"].add(r["seq"])        # inside the bitmap and absent: Gateway lacks it
+            keep.append(r)
+        tr["queue"] = keep
+        self.stats["acked"] += before - len(keep)
+        tr["ack_base"] = base
+        tr["need_ack"] = False
+        tr["since_req"] = 0
+        tr["last_contact"] = self.now
+        tr["relay_allowed"] = (tx.kind == "cackw")
+        if tr["rounds_left"] > 0 and (tr["missing"] or any(r["seq"] not in tr["sent"] for r in tr["queue"])):
+            self.push(self.now + 0.1, "cum_round", d["dev"])
+        else:
+            tr["in_wake"] = False
+
     # ---------------- results ----------------
     def results(self) -> dict:
         hours = self.cfg.hours
@@ -802,6 +1024,8 @@ class Sim:
             "tracker_tx_s_per_h": tx_per_h,
             "X_s": self.X,
             "airtime_total_s": sum(sum(b.values()) for b in self.tx_time_bins.values()),
+            "pending_not_delivered": sum(1 for t, tr in self.trackers.items() for r in tr["queue"]
+                                         if (t, r["seq"]) not in self.gw["committed"]),
         }
 
 
@@ -900,6 +1124,47 @@ def compare_batch(seeds: int = 3) -> dict:
     return out
 
 
+CUM_MIX = {"direct": 10, "both": 10, "relay": 10}
+
+
+def compare_cum(seeds: int = 3) -> dict:
+    """R11: per-packet ACK vs cumulative ACK every N packets; normal traffic and backlog drain."""
+    def run(**kw):
+        rs = [Sim(Config("cum", **kw), sd).run().results() for sd in range(seeds)]
+        mean = lambda k: statistics.mean(r[k] for r in rs)
+        return {"gw": max(r["duty_gw_pct"] for r in rs), "relay": max(r["duty_relay_pct"] for r in rs),
+                "not_delivered": mean("pending_not_delivered"), "unconfirmed": mean("pending_end"),
+                "resend_pct": 100 * mean("cum_resends") / max(mean("cum_packets"), 1),
+                "rx_s_per_h": mean("tracker_rx_s_per_h"),
+                "drain_min": [None if r["drain_after_outage_s"] is None else round(r["drain_after_outage_s"] / 60) for r in rs]}
+    out = {"normal": {}, "backlog": {}}
+    print("Normal trafik: 30 tasma karisik (10 direkt / 10 ikisi / 10 relay), 24 sa, CAD")
+    for sf in (11, 9):
+        for iv in (15, 30, 60):
+            base = dict(sf=sf, groups=CUM_MIX, interval_s=iv * 60, hours=24, cad=True)
+            old = run(**base, n_max=4)
+            row = {"her_pakete_ack": old}
+            line = f"  SF{sf} {iv:>2} dk  her pakete ACK: gw %{old['gw']:4.1f} relay %{old['relay']:4.1f} dinleme {old['rx_s_per_h']:4.1f} s/sa"
+            for n in (4, 6):
+                r = run(**base, cum_ack=True, ack_every=n)
+                row[f"N{n}"] = r
+                line += f" | N={n}: gw %{r['gw']:4.1f} relay %{r['relay']:4.1f} dinleme {r['rx_s_per_h']:4.1f} tekrar %{r['resend_pct']:4.1f} sunucuda-yok {r['not_delivered']:3.0f}"
+            print(line)
+            out["normal"][f"SF{sf}_{iv}dk"] = row
+    print("\nBirikme: 36 sa birikmis kayit, 30 dk aralik, ayni 30 tasma, 48 sa, CAD")
+    for sf in (11, 9):
+        base = dict(sf=sf, groups=CUM_MIX, interval_s=1800, hours=48, cad=True, backlog_h=36)
+        old = run(**base, n_max=8)
+        print(f"  SF{sf} her pakete ACK, 8/uyanma: bosalma {old['drain_min']} dk  gw %{old['gw']:.1f} relay %{old['relay']:.1f}")
+        row = {"her_pakete_ack_8": old}
+        for rounds in (1, 2):
+            r = run(**base, cum_ack=True, ack_every=4, cum_rounds=rounds)
+            row[f"N4_{rounds}tur"] = r
+            print(f"  SF{sf} kumulatif N=4, {rounds}x8/uyanma: bosalma {r['drain_min']} dk  gw %{r['gw']:.1f} relay %{r['relay']:.1f} tekrar %{r['resend_pct']:.1f}")
+        out["backlog"][f"SF{sf}"] = row
+    return out
+
+
 def selftest() -> int:
     # ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md section 18 (SF11/BW125/CR4/5/preamble 8)
     ref = {34: 0.987136, 56: 1.396736, 72: 1.642496, 84: 1.888256, 96: 2.134016,
@@ -934,10 +1199,17 @@ def main(argv=None):
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                     help="override a Config field for the selected scenarios, e.g. --set sf=9 --set n_max=8 --set cad=1")
     ap.add_argument("--selftest", action="store_true", help="check airtime against the SF5B reference table and exit")
-    ap.add_argument("--compare-batch", action="store_true", help="R11: single vs guarded batch on backlog scenarios")
+    ap.add_argument("--compare-batch", action="store_true", help="older guarded-batch comparison (superseded by --compare-cum)")
+    ap.add_argument("--compare-cum", action="store_true", help="R11: per-packet ACK vs cumulative ACK every N packets")
     args = ap.parse_args(argv)
     if args.selftest:
         return selftest()
+    if args.compare_cum:
+        res = compare_cum(args.seeds or 3)
+        if args.json:
+            with open(args.json, "w") as f:
+                json.dump(res, f, indent=2)
+        return 0
     if args.compare_batch:
         res = compare_batch(args.seeds or 3)
         if args.json:
