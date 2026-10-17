@@ -386,21 +386,29 @@ void testCredentialReplacementDropsOldGrants() {
   assert(d::recoverTwoPages(pages, kTracker, result, gen) ==
          d::BootResult::kFault);
 
-  // Even with a new identity/root, old grants or TX bound cannot be copied.
+  // A new credential may not inherit any old Gateway grants before
+  // the old A/B page has been erased. This test deliberately injects
+  // one correctly CRC'd but formerly authorized slot.
   renewed.gateways[0] = old_state.gateways[0];
   renewed.policy_revision = old_state.policy_revision;
   renewed.custody_floor = old_state.custody_floor;
   assert(d::makeV3SnapshotPage(kTracker, 11U, renewed, new_key, pages[1]));
   assert(d::recoverTwoPages(pages, kTracker, result, gen) ==
          d::BootResult::kFault);
+
+  // Counter reservations under the NEW credential can legitimately
+  // advance before the old A/B page is erased. Unlike Gateway grant
+  // provenance, their origin cannot be established from two snapshots:
+  // the real SecurityStore writer must reset them on rekey activation.
   renewed = seed();
   renewed.tx_bound = 768U;
-  renewed.a2d_bound = 0U;
+  renewed.a2d_bound = 8U;
   for (size_t i = 0U; i < sizeof(renewed.credential_id); ++i)
     renewed.credential_id[i] ^= 0x40U;
   assert(d::makeV3SnapshotPage(kTracker, 11U, renewed, new_key, pages[1]));
   assert(d::recoverTwoPages(pages, kTracker, result, gen) ==
-         d::BootResult::kFault);
+         d::BootResult::kV3);
+  expectEquivalent(result, renewed);
 }
 
 void testRejectCorruptCredentialAndSnapshot() {
