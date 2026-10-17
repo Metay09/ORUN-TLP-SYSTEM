@@ -212,23 +212,42 @@ bool encodeSnapshotPrefix(
   return true;
 }
 
-bool recoverCommittedJournal(const uint8_t* journal, size_t bytes,
-                             const uint8_t (&credential_id)[16],
-                             uint32_t key_epoch, Snapshot& out) {
-  if (!journal || bytes != kJournalBytes ||
-      !validIdentity(credential_id) || key_epoch == UINT32_MAX ||
-      !jf::erased(journal + kRecordCount * kRecordBytes, kTailBytes))
+namespace {
+class PointerReader : public JournalReader {
+ public:
+  explicit PointerReader(const uint8_t* p) : data_(p) {}
+  bool read(size_t offset, uint8_t* out, size_t size) const override {
+    if (offset > kJournalBytes || size > kJournalBytes - offset)
+      return false;
+    memcpy(out, data_ + offset, size);
+    return true;
+  }
+ private:
+  const uint8_t* data_;
+};
+}  // namespace
+
+bool recoverCommittedJournalStream(
+    const JournalReader& reader,
+    const uint8_t (&credential_id)[16],
+    uint32_t key_epoch, Snapshot& out) {
+  if (!validIdentity(credential_id) || key_epoch == UINT32_MAX)
+    return false;
+  uint8_t tail[kTailBytes]{};
+  if (!reader.read(kRecordCount * kRecordBytes, tail, sizeof(tail)) ||
+      !jf::erased(tail, sizeof(tail)))
     return false;
 
   Entry prefix[kSnapshotCount]{};
   for (size_t i = 0U; i < kSnapshotCount; ++i) {
-    uint8_t raw[kRecordBytes];
-    memcpy(raw, journal + i * kRecordBytes, sizeof(raw));
-    if (!decodeCommittedRecord(raw, prefix[i]) ||
+    uint8_t raw[kRecordBytes]{};
+    if (!reader.read(i * kRecordBytes, raw, sizeof(raw)) ||
+        !decodeCommittedRecord(raw, prefix[i]) ||
         memcmp(prefix[i].credential_id, credential_id, 16U) != 0 ||
         prefix[i].key_epoch != key_epoch)
       return false;
   }
+
   const Entry& meta = prefix[0];
   if (meta.kind != Kind::kPolicySnapshot) return false;
   Snapshot candidate{};
@@ -251,26 +270,33 @@ bool recoverCommittedJournal(const uint8_t* journal, size_t bytes,
 
   bool seen_erased = false;
   for (size_t i = kSnapshotCount; i < kRecordCount; ++i) {
-    const uint8_t* at = journal + i * kRecordBytes;
-    if (jf::erased(at, kRecordBytes)) {
+    uint8_t raw[kRecordBytes]{};
+    if (!reader.read(i * kRecordBytes, raw, sizeof(raw)))
+      return false;
+    if (jf::erased(raw, sizeof(raw))) {
       seen_erased = true;
       continue;
     }
     if (seen_erased) return false;
-    if (jf::erased(at + kCommitAt, 4U)) {
-      // Interrupted pre-commit: no security decision may have used it.
-      // Burn the slot; a later correctly committed entry may follow.
+    if (jf::erased(raw + kCommitAt, 4U)) {
+      // Torn pre-commit append: burn the slot, never replay authority.
       continue;
     }
-    uint8_t raw[kRecordBytes];
-    memcpy(raw, at, sizeof(raw));
     Entry update{};
     if (!decodeCommittedRecord(raw, update) ||
         !replayAppend(update, candidate))
       return false;
   }
-  out = candidate;  // only publish after ALL records and tail validate
+  out = candidate;
   return true;
+}
+
+bool recoverCommittedJournal(const uint8_t* journal, size_t bytes,
+                             const uint8_t (&credential_id)[16],
+                             uint32_t key_epoch, Snapshot& out) {
+  if (journal == nullptr || bytes != kJournalBytes) return false;
+  const PointerReader reader(journal);
+  return recoverCommittedJournalStream(reader, credential_id, key_epoch, out);
 }
 
 }  // namespace security_v3_format
