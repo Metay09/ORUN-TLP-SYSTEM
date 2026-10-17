@@ -1,9 +1,10 @@
 #pragma once
 
-// SF5K3A: HOST-ONLY crash/retry progress model, not an ACK admission path.
-// Only a future independently verified full-batch crypto preflight may submit
-// a plan. This module has NO cryptography, credential grant, runtime adapter,
-// radio, or authority to release production records.
+// SF5K3A: HOST-ONLY crash/retry progress model, NOT an ACK admission path.
+// Only full authenticated batch preflight can start RELEASE. Once ALL release
+// markers are durable, a restart may finish cache cleanup from those markers
+// alone, without pretending to reauthenticate already-cleared ciphertext.
+// NO crypto, grant, runtime adapter, radio, or production release authority.
 #include <stddef.h>
 #include <stdint.h>
 #include "observation_store_format.h"
@@ -46,6 +47,9 @@ class ReleaseProgress {
   // exact stored bytes, scoped gateway grant/epoch and full digest/HMAC.
   // The stored plan is volatile; after power loss, preflight the ACK again.
   bool beginHostPreflighted(const osf::RecordIdentity* ids, size_t count);
+  // Recovery only. Every selected logical record must ALREADY have a
+  // durable release marker; this path NEVER calls requestRelease().
+  bool beginReleasedCleanup(const osf::RecordIdentity* ids, size_t count);
   Status tick();
   Status status() const { return status_; }
   size_t completed() const { return index_; }
@@ -53,11 +57,14 @@ class ReleaseProgress {
 
  private:
   enum class Phase : uint8_t { kInspect, kAwaitRelease, kAwaitClear };
+  enum class Pass : uint8_t { kReleaseAll, kClearAll };
+  bool startPlan(const osf::RecordIdentity* ids, size_t count);
   StorePort& port_;
   osf::RecordIdentity members_[kMaxMembers]{};
   size_t count_ = 0U;
   size_t index_ = 0U;
   Phase phase_ = Phase::kInspect;
+  Pass pass_ = Pass::kReleaseAll;
   enum class Readback : uint8_t { kNone, kRequireReleased, kRequireCleared };
   Readback readback_ = Readback::kNone;
   Status status_ = Status::kIdle;
