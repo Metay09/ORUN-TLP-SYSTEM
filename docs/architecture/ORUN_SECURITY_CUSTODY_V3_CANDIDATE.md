@@ -63,9 +63,15 @@ a **real wear/compaction qualification** before format approval.
   separately committed slot writes.
 - Every authenticated policy entry advances `policy_revision` by exactly 1.
   A grant/revoke/replace for one Gateway advances only **that slot's**
-  `grant_generation` monotonically. Revocation persists a *zero Gateway ID*
-  with its new nonzero generation as a tombstone, preventing old ACK reuse
+  `grant_generation` monotonically. **All slot updates additionally require
+  a generation strictly above the maximum generation across all four slots,**
+  because the ACK binds Gateway ID and generation but not physical slot number.
+  This is a compact global high-water rule, not a global ACK key. Revocation
+  persists a *zero Gateway ID* with its new nonzero generation as a tombstone,
+  preventing old ACK reuse even if that Gateway moves to a different slot
   after re-enrollment. Another Gateway slot is not implicitly revoked.
+  Exhausting the non-max 32-bit generation space fails closed until a
+  separately reviewed rekey/rebaseline.
 - `custody_floor` may be zero (only `UINT32_MAX` is invalid under SF5B).
   It is nondecreasing. An explicit floor-only policy update must increase it,
   invalidating all earlier ACK floor/key scopes. Ordinary per-slot updates
@@ -95,7 +101,8 @@ is valid**, never a partially accepted grant set.
 
 The host candidate and its tests model byte cuts, floor/revision rollback,
 retained TX/A2D bounds, rejected malformed records, page v2-v3 header
-distinction and the four-slot policy. These are NOT evidence that the
+distinction, cross-slot Gateway re-enrollment with stale generations, and
+the four-slot policy. These are NOT evidence that the
 real `SecurityStore` can yet migrate, append, compact, reconcile uncertain
 flash completion, or authenticate enrollment.
 
