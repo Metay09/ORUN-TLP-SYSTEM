@@ -635,6 +635,15 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k1_batch_mac_refere
 # SF5K3B: approved-wire-shape 0x05 single-object test-only HKDF/HMAC oracle;
 # no Gateway provisioned state, no authenticated release or runtime linkage.
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k3b_single_ack_reference.py
+# SF5K3C host-only v3 proposed authority journal; explicitly INERT.
+# The live SecurityStore continues to persist v2 with no custody grants.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3c_security_v3_candidate.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3c_security_v3_candidate"
+"$test_dir/sf5k3c_security_v3_candidate"
 # SF5K2 host-only evidence candidate regression.
 g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
   firmware/tests/sf5/test_sf5k2_gateway_batch_candidate.cpp \
