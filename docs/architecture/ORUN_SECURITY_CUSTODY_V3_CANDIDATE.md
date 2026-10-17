@@ -144,6 +144,61 @@ host-only SF5K3C PASS. Build and test the snapshot/migration model first,
 then modify the live SecurityStore only under separate host and target
 build qualifications.
 
+## SF5K3D explicit page snapshots (host-only, not activated)
+
+The earlier SF5K3C append-only candidate did not define how to compact a
+nonzero policy revision without resetting revoked Gateway generations.
+SF5K3D proposes a **mandatory 5-entry committed prefix** in each v3 page:
+
+- entry 0: `kPolicySnapshot=4` — credential ID, epoch, global
+  `custody_floor`, exact `policy_revision`, maximum grant generation across
+  all four slots;
+- entries 1–4: `kGatewaySnapshot=5`, exactly in slot order 0–3, each
+  containing the Gateway ID (0 for empty/revoked), the **generation including
+  tombstones**, and the identical policy revision/floor from entry 0;
+- optional subsequent entry: latest 256-aligned TX reserved exclusive bound;
+- optional subsequent entry: latest 8-aligned A2D reserved exclusive bound;
+- subsequent ordinary v3 policy/counter appends preserve the preexisting
+  monotonic rules. A snapshot record cannot be accepted as a live policy
+  update (even with a synthetic `authenticated=true` fixture).
+
+The entire snapshot occupies **280 B** plus **0–112 B** of two counter
+records, leaving up to 66 journal slots for normal state updates (71 total
+minus the five mandatory snapshot records). The v3 4 KiB/2-page partition is
+unchanged, and capacity/wear qualification is still required.
+
+`sf5k3d_security_v3_snapshot_candidate.{h,cpp}` models candidate encoding,
+CRC/commit-last decoding, and read-only A/B boot selection using the **real
+existing v1/v2 `security_format` decoders**. Each v3 page must have all five
+committed prefix records with matching credential ID, epoch, floor, revision,
+slot order, unique active Gateway IDs, distinct nonzero generations and
+recorded maximum generation; partial snapshots, impossible tombstones,
+corrupt CRC, non-erased reserved tail, or later snapshot injections fail
+closed. Version-3 is not an authorized production serializer.
+
+The new host test `test_sf5k3d_security_v3_snapshot_candidate.cpp` exercises
+v2→v3 migration byte cuts, v3→v3 compaction byte cuts, interrupted older-page
+erase, stale-revocation and exclusive-bound rollback, malformed snapshot
+prefixes, duplicate A/B generation and credential damage. The model selects
+a newer page only after its complete snapshot, credential, bound records
+and page header COMMIT are durable. If an older page is still committed,
+the newer page cannot roll back that credential's bound/floor/revision or
+the maximum Gateway generation. A partially programmed COMMIT, a committed
+corrupt page or an unknown future version closes recovery rather than
+falling back to an older authority. A not-yet-programmed version byte
+(`0xFF`) on an unactivated destination page is recognized as staged by
+the *v3 model*, even though older production binaries may fail closed
+at that interruption point.
+
+**Scope:** all SF5K3D files are under `firmware/tests/sf5`. The real
+`security_format::kVersion` remains **2** and the real `SecurityStore`
+continues to write and recover its existing two-page v1/v2 format.
+The model does not yet implement an actual flash writer, async
+FlashMutationGate reconciliation, authorized provisioning/revocation,
+secure HMAC provider, production ACK admission or Tracker release. Tests
+have not yet been executed on the user's host; do not describe SF5K3D as
+PASS before that independent run.
+
 ## Gates before production integration
 
 1. Independent security/flash review of the v3 geometry, wear effects,
