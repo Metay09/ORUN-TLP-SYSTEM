@@ -197,6 +197,10 @@ bool applyHostAuthenticated(const Entry& record, bool authenticated,
     }
     next.custody_floor = record.custody_floor;
     next.policy_revision = record.policy_revision;
+  } else {
+    // Page snapshots are not externally authenticated policy commands.
+    // Only the complete, CRC-verified five-entry boot parser may use them.
+    return false;
   }
   state = next;
   return true;
