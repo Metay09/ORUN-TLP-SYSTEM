@@ -36,6 +36,20 @@ bool validEntry(const Entry& e) {
            e.grant_generation == 0U && e.custody_floor == 0U &&
            e.policy_revision == 0U;
   }
+  if (e.kind == Kind::kPolicySnapshot) {
+    // Snapshot metadata: max grant generation in value; the same floor
+    // and exact revision are repeated on each subsequent slot entry.
+    return e.slot == 0xFFU && e.grant_generation == 0U &&
+           e.value < UINT32_MAX && e.custody_floor != UINT32_MAX &&
+           e.policy_revision != UINT32_MAX;
+  }
+  if (e.kind == Kind::kGatewaySnapshot) {
+    return e.slot < kMaxGateways &&
+           e.custody_floor != UINT32_MAX &&
+           e.policy_revision != UINT32_MAX &&
+           e.grant_generation != UINT32_MAX &&
+           (e.value == 0U || e.grant_generation != 0U);
+  }
   if (e.kind != Kind::kCustodyPolicy ||
       e.custody_floor == UINT32_MAX ||
       e.policy_revision == 0U || e.policy_revision == UINT32_MAX)
