@@ -33,10 +33,11 @@ enum class Kind : uint8_t {
 // Logical 56-byte state journal entry. CRC and COMMIT are not struct fields.
 // Counter kinds store their exclusive bound in value with slot=0xFF.
 // Policy kind uses slot 0..3 (or 0xFF for floor-only), value=gateway ID
-// (zero for revoke), grant_generation and a strictly advancing global floor
-// and policy_revision. Grant changes are one atomic journal entry, not four
-// separate slot writes. Every update advances the global floor, revoking
-// all prior epoch/floor ACK scope even for unchanged gateway slots.
+// (zero for revoke), grant_generation, policy floor and policy_revision.
+// Each grant/revoke monotonically advances its own slot generation and the
+// revision. The global floor advances ONLY on an explicit policy-floor update,
+// so unrelated Gateway keys are not invalidated by a single-slot change.
+// Revoked slots preserve their last generation high-water as a tombstone.
 struct Entry {
   uint8_t credential_id[16]{};
   uint32_t key_epoch = 0U;
@@ -57,7 +58,7 @@ struct State {
   uint32_t key_epoch = 0U;
   uint64_t tx_bound = 0U;
   uint64_t a2d_bound = 0U;
-  uint32_t custody_floor = 0U;   // 0 with no grants
+  uint32_t custody_floor = 0U;   // 0 is a valid initial floor
   uint32_t policy_revision = 0U;
   GatewaySlot gateways[kMaxGateways]{};
 };
