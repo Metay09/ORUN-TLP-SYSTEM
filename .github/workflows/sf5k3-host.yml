@@ -4,10 +4,18 @@ on:
   push:
     branches:
       - feat/sf5k3a-release-progress-host
+  pull_request:
+    paths:
+      - 'firmware/tests/sf5/sf5k3_*'
+      - 'firmware/tests/sf5/test_sf5k3_*'
+      - 'firmware/tests/run_host_tests.sh'
+      - 'firmware/src/observation_store*'
+      - 'firmware/include/observation_store*'
+      - 'tools/ci/run_sf5k3a_host.sh'
+      - '.github/workflows/sf5k3-host.yml'
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   actual-store-regression:
@@ -16,49 +24,5 @@ jobs:
     steps:
       - name: Checkout exact PR branch
         uses: actions/checkout@v4
-      - name: Build and run both tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/orun-sf5k3
-          {
-            echo "=== GCC host model ==="
-            g++ -std=gnu++11 -O1 -g -Wall -Wextra -Werror -Wconversion -Wsign-conversion \
-              -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-              -Ifirmware/include -Ifirmware/tests/sf5 \
-              firmware/tests/sf5/test_sf5k3_release_progress_candidate.cpp \
-              firmware/tests/sf5/sf5k3_release_progress_candidate.cpp \
-              -o /tmp/orun-sf5k3/progress
-            /tmp/orun-sf5k3/progress
-            echo "=== GCC actual ObservationStore ==="
-            g++ -std=gnu++11 -O1 -g -Wall -Wextra -Werror -Wconversion -Wsign-conversion \
-              -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-              -Ifirmware/include -Ifirmware/tests/sf5 \
-              firmware/tests/sf5/test_sf5k3_observation_store_port.cpp \
-              firmware/tests/sf5/sf5k3_observation_store_port.cpp \
-              firmware/tests/sf5/sf5k3_release_progress_candidate.cpp \
-              firmware/src/observation_store.cpp \
-              firmware/src/observation_store_control.cpp \
-              firmware/src/observation_store_format.cpp \
-              -o /tmp/orun-sf5k3/actual-store
-            /tmp/orun-sf5k3/actual-store
-          } > /tmp/orun-sf5k3/build.log 2>&1 || {
-            cat /tmp/orun-sf5k3/build.log
-            exit 1
-          }
-          cat /tmp/orun-sf5k3/build.log
-      - name: Post bounded failure diagnostics to PR 140
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f /tmp/orun-sf5k3/build.log ]; then
-            diagnostic="$(tail -c 9000 /tmp/orun-sf5k3/build.log)"
-          else
-            diagnostic="No compiler log: workflow setup/checkout failed before compilation."
-          fi
-          printf -v body 'SF5K3A CI diagnostic (run %s, commit %s):\n\n```text\n%s\n```' \
-            "$GITHUB_RUN_ID" "$GITHUB_SHA" "$diagnostic"
-          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/140/comments" -f "body=$body"
+      - name: Run both host checks with GCC and sanitizers
+        run: bash tools/ci/run_sf5k3a_host.sh
