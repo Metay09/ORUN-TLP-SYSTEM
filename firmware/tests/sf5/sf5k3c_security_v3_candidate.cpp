@@ -16,9 +16,13 @@ constexpr size_t kHeaderCrcOffset = 24U;
 constexpr size_t kHeaderCommitOffset = 28U;
 
 bool credentialNotBlank(const uint8_t* bytes) {
-  for (size_t i = 0U; i < 16U; ++i)
-    if (bytes[i] != 0U && bytes[i] != 0xFFU) return true;
-  return false;
+  bool all_zero = true;
+  bool all_erased = true;
+  for (size_t i = 0U; i < 16U; ++i) {
+    all_zero = all_zero && bytes[i] == 0U;
+    all_erased = all_erased && bytes[i] == 0xFFU;
+  }
+  return !all_zero && !all_erased;
 }
 
 bool validEntry(const Entry& e) {
