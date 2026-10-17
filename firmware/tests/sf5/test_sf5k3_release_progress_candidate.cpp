@@ -112,6 +112,8 @@ void interruptionBeforeCommitAndAfterClear() {
   ReleaseProgress retry(f); assert(retry.beginHostPreflighted(&id, 1U));
   assert(retry.tick() == Status::kAwaitingFlash);
   f.complete(true); assert(retry.tick() == Status::kWorking);
+  assert(retry.tick() == Status::kWorking); // first release pass advanced
+  assert(retry.tick() == Status::kWorking); // transition all-released -> clear
   assert(retry.tick() == Status::kAwaitingFlash); // now clear requested
   f.complete(true); f.reboot(); // clear committed; callback lost
   ReleaseProgress after(f); assert(after.beginHostPreflighted(&id, 1U));
@@ -157,6 +159,8 @@ void faultsNeverClearWithoutRelease() {
   assert(cf.tick() == Status::kAwaitingFlash);
   clear_failure.complete(true);
   assert(cf.tick() == Status::kWorking);
+  assert(cf.tick() == Status::kWorking); // release pass advanced
+  assert(cf.tick() == Status::kWorking); // all released, enter clear pass
   assert(cf.tick() == Status::kAwaitingFlash);
   clear_failure.complete(false);
   assert(cf.tick() == Status::kFault);
@@ -185,12 +189,75 @@ void busyAndInvalid() {
   drain(c, f);
   assert(f.forbidden_early_clear == 0U);
 }
+
+void fourMemberReleaseThenClearCrashRecovery() {
+  FakeStore f;
+  ID ids[4] = {identity(1), identity(2), identity(3), identity(4)};
+  ReleaseProgress first(f); assert(first.beginHostPreflighted(ids, 4U));
+  // Crash while releasing the second member: none of the ciphertext slots
+  // have been cleared, so the full batch can be reauthenticated.
+  assert(first.tick() == Status::kAwaitingFlash);
+  f.complete(true);
+  assert(first.tick() == Status::kWorking);
+  assert(first.tick() == Status::kWorking);
+  assert(first.tick() == Status::kAwaitingFlash);
+  assert(f.releases == 2U && f.clears == 0U);
+  f.reboot();
+  for (const auto& item : f.items) assert(item.cache);
+  ReleaseProgress resumed(f); assert(resumed.beginHostPreflighted(ids, 4U));
+  // Re-run release pass; first release is an idempotent persisted fact.
+  for (int i = 0; i < 64 && f.clears == 0U; ++i) {
+    const Status s = resumed.tick();
+    assert(s != Status::kFault && s != Status::kFinished);
+    if (f.op != FakeStore::Op::kNone && !f.ready) f.complete(true);
+  }
+  assert(f.releases == 5U && f.clears == 1U);
+  for (const auto& item : f.items) assert(item.released);
+  f.reboot(); // One cache already cleared; the full ACK cannot be re-preflighted.
+  ReleaseProgress clean(f);
+  assert(clean.beginReleasedCleanup(ids, 4U)); // Released markers alone.
+  drain(clean, f);
+  assert(f.releases == 5U && f.clears == 4U);
+  for (const auto& item : f.items) assert(item.released && !item.cache);
+  f.reboot();
+  ReleaseProgress again(f); assert(again.beginReleasedCleanup(ids,4U));
+  drain(again,f);
+  assert(f.releases == 5U && f.clears == 4U); // No extra flash wear.
+}
+
+void cleanupRequiresAllDurableReleaseMarkers() {
+  FakeStore f;
+  ID ids[4] = {identity(1), identity(2), identity(3), identity(4)};
+  f.items[0].released = true;
+  ReleaseProgress c(f);
+  assert(!c.beginReleasedCleanup(ids, 4U)); // No partial group cleanup.
+  assert(c.status() == Status::kFault && f.clears == 0U);
+  // A single independently released record may be cleaned on its own.
+  ReleaseProgress single(f); assert(single.beginReleasedCleanup(ids, 1U));
+  drain(single, f);
+  assert(f.items[0].released && !f.items[0].cache);
+  assert(!f.items[1].released && f.items[1].cache);
+  FakeStore uncertain;
+  uncertain.items[0].released = true;
+  uncertain.items[0].uncertain = true;
+  ReleaseProgress refused(uncertain);
+  assert(!refused.beginReleasedCleanup(ids, 1U));
+  assert(uncertain.clears == 0U);
+  FakeStore mismatched;
+  mismatched.items[0].released = true;
+  mismatched.items[0].match = false;
+  ReleaseProgress refusedMismatch(mismatched);
+  assert(!refusedMismatch.beginReleasedCleanup(ids, 1U));
+  assert(mismatched.clears == 0U);
+}
 } // namespace
 int main() {
+  fourMemberReleaseThenClearCrashRecovery();
+  cleanupRequiresAllDurableReleaseMarkers();
   fourAndSelective();
   crashAfterReleaseAndLostCallback();
   interruptionBeforeCommitAndAfterClear();
   faultsNeverClearWithoutRelease();
   busyAndInvalid();
-  puts("SF5K3A host-only bounded release/clear crash progress: PASS");
+  puts("SF5K3A host-only two-pass release/clear crash progress: PASS");
 }
