@@ -116,9 +116,12 @@ SecurityV3Inspection SecurityStore::inspectV3PageReadOnly(
   uint8_t header[kPageHeaderSize]{};
   if (!critical_.read(headerOffset(page), header, sizeof(header)))
     return SecurityV3Inspection::kReadFault;
-  uint8_t version = 0;
-  if (!headerMagicPresent(header, &version) || version != kReadOnlyV3)
+  if (journal_format::erased(header, sizeof(header)))
     return SecurityV3Inspection::kNotV3;
+  uint8_t version = 0;
+  if (!headerMagicPresent(header, &version))
+    return SecurityV3Inspection::kCorrupt;
+  if (version != kReadOnlyV3) return SecurityV3Inspection::kNotV3;
   if (journal_format::erased(header + 28U, 4U))
     return SecurityV3Inspection::kStaged;
   if (journal_format::get32(header + 28U) != kCommit ||
