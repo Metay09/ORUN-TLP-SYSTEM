@@ -111,7 +111,8 @@ bool decodeV3ReadOnly(const uint8_t (&bytes)[kV3RecordBytes],
 
 SecurityV3Inspection SecurityStore::inspectV3PageReadOnly(
     uint32_t page, SecurityV3ReadOnlySummary& output) const {
-  if (page >= kPageCount) return SecurityV3Inspection::kReadFault;
+  if (!ready_ || page >= kPageCount)
+    return SecurityV3Inspection::kReadFault;
   uint8_t header[kPageHeaderSize]{};
   if (!critical_.read(headerOffset(page), header, sizeof(header)))
     return SecurityV3Inspection::kReadFault;
@@ -137,8 +138,17 @@ SecurityV3Inspection SecurityStore::inspectV3PageReadOnly(
   Credential candidate_credential{};
   if (!decodeCredential(credential_bytes, candidate_credential) ||
       candidate_credential.device_identity !=
-          device_identity_.legacyUint64())
+          device_identity_.legacyUint64() ||
+      candidate_credential.key_epoch == UINT32_MAX)
     return SecurityV3Inspection::kCorrupt;
+  bool id_all_zero = true;
+  bool id_all_erased = true;
+  for (unsigned i = 0U; i < kCredentialIdSize; ++i) {
+    id_all_zero = id_all_zero && candidate_credential.credential_id[i] == 0U;
+    id_all_erased = id_all_erased &&
+                    candidate_credential.credential_id[i] == 0xFFU;
+  }
+  if (id_all_zero || id_all_erased) return SecurityV3Inspection::kCorrupt;
 
   SecurityV3ReadOnlySummary verified{};
   verified.page_generation = journal_format::get64(header + 8U);
