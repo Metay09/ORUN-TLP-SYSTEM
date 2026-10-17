@@ -157,7 +157,15 @@ bool applyHostAuthenticated(const Entry& record, bool authenticated,
       if (record.custody_floor == state.custody_floor) return false;
     } else {
       GatewaySlot& target = next.gateways[record.slot];
-      if (record.grant_generation <= target.generation) return false;
+      // ACK identity contains Gateway ID + generation, NOT the slot index.
+      // A revoked Gateway can later be placed into a different empty slot.
+      // Therefore slot-local high-water alone is unsafe: never permit any
+      // generation to be reused, even if the Gateway changes slots.
+      uint32_t max_generation = 0U;
+      for (size_t i = 0U; i < kMaxGateways; ++i)
+        if (next.gateways[i].generation > max_generation)
+          max_generation = next.gateways[i].generation;
+      if (record.grant_generation <= max_generation) return false;
       if (record.value == 0U) {
         if (target.gateway_id == 0U) return false;
         target.gateway_id = 0U;
