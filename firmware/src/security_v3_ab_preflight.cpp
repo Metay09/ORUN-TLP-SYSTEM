@@ -146,9 +146,24 @@ PageResult inspectPage(const FlashBackend& flash, unsigned page,
   if (!read(flash, page, 0U, header, sizeof(header)))
     return PageResult::kReadFault;
 
-  // A blank/staged header cannot activate a page. No journal contents,
-  // even if partially written, can manufacture authority without it.
-  if (jf::erased(header, sizeof(header))) return PageResult::kAbsent;
+  // A genuinely blank page must have no residual credential or journal
+  // bytes. If only its header was erased but durable payload remains, it
+  // may be a torn erase of the previously newest page. Never silently
+  // fall back to an older committed credential or revoked Gateway state.
+  if (jf::erased(header, sizeof(header))) {
+    uint8_t scratch[v3::kRecordBytes]{};
+    for (uint32_t offset = sf::kPageHeaderSize; offset < kPageSize;
+         offset += static_cast<uint32_t>(sizeof(scratch))) {
+      const uint32_t remaining = kPageSize - offset;
+      const size_t length = remaining < sizeof(scratch) ?
+                            static_cast<size_t>(remaining) :
+                            sizeof(scratch);
+      if (!read(flash, page, offset, scratch, length))
+        return PageResult::kReadFault;
+      if (!jf::erased(scratch, length)) return PageResult::kFault;
+    }
+    return PageResult::kAbsent;
+  }
   uint8_t version = 0xFFU;
   const bool magic = sf::headerMagicPresent(header, &version);
   if (magic && version != 0xFFU &&
