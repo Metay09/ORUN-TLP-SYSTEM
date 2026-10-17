@@ -652,6 +652,16 @@ g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
   firmware/src/security_format.cpp firmware/src/journal_format.cpp \
   firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/sf5k3d_security_v3_snapshot_candidate"
+# SF5K3E: production SecurityStore read-only v3 integrity inspection;
+# v3 can never become active authority and no write/release API is added.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3e_real_security_v3_readonly.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/src/security_store.cpp firmware/src/security_format.cpp \
+  firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3e_real_security_v3_readonly"
+"$test_dir/sf5k3e_real_security_v3_readonly"
 "$test_dir/sf5k3d_security_v3_snapshot_candidate"
 "$test_dir/sf5k3c_security_v3_candidate"
 # SF5K2 host-only evidence candidate regression.

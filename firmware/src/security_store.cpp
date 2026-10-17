@@ -30,7 +30,246 @@ uint32_t v2StateOffset(unsigned page, unsigned slot) {
 uint32_t v2TailOffset(unsigned page) {
   return pageOffset(page) + securityStateRecordOffset(kSecurityStateSlotsPerPage);
 }
+
+// SF5K3E: the candidate v3 wire geometry is inspected independently of
+// SecurityStore's v1/v2 authority. No v3 writer, KDF or ACK admission here.
+constexpr uint8_t kReadOnlyV3 = 3U;
+constexpr uint32_t kV3RecordBytes = 56U;
+constexpr uint32_t kV3Count =
+    (storage_config::kPageSize - kPageHeaderSize -
+     kCredentialRecordSize) / kV3RecordBytes;
+constexpr uint32_t kV3Offset = kPageHeaderSize + kCredentialRecordSize;
+constexpr uint32_t kV3TailBytes =
+    storage_config::kPageSize - kV3Offset - kV3Count * kV3RecordBytes;
+static_assert(kV3Count == 71U && kV3TailBytes == 20U,
+              "candidate v3 geometry must fit unchanged security pages");
+
+struct V3Parsed {
+  uint8_t credential_id[kCredentialIdSize]{};
+  uint32_t key_epoch = 0;
+  uint8_t kind = 0;
+  uint8_t slot = 0;
+  uint64_t value = 0;
+  uint32_t generation = 0;
+  uint32_t floor = 0;
+  uint32_t revision = 0;
+};
+
+bool decodeV3ReadOnly(const uint8_t (&bytes)[kV3RecordBytes],
+                      V3Parsed& out) {
+  if (journal_format::get32(bytes + 52U) != kCommit ||
+      journal_format::get32(bytes + 48U) !=
+          journal_format::crc32(bytes, 48U) ||
+      bytes[22] != 0U || bytes[23] != 0U ||
+      journal_format::get32(bytes + 44U) != 0U)
+    return false;
+
+  V3Parsed candidate{};
+  memcpy(candidate.credential_id, bytes, kCredentialIdSize);
+  candidate.key_epoch = journal_format::get32(bytes + 16U);
+  candidate.kind = bytes[20];
+  candidate.slot = bytes[21];
+  candidate.value = journal_format::get64(bytes + 24U);
+  candidate.generation = journal_format::get32(bytes + 32U);
+  candidate.floor = journal_format::get32(bytes + 36U);
+  candidate.revision = journal_format::get32(bytes + 40U);
+  if (candidate.kind < 1U || candidate.kind > 5U ||
+      candidate.key_epoch == UINT32_MAX ||
+      candidate.floor == UINT32_MAX ||
+      candidate.revision == UINT32_MAX ||
+      candidate.generation == UINT32_MAX)
+    return false;
+  // First two kinds are strictly counter bounds, never a grant.
+  if (candidate.kind <= 2U) {
+    const uint64_t block = candidate.kind == 1U ? 256U : 8U;
+    if (candidate.slot != 0xFFU || candidate.value == 0U ||
+        candidate.value % block != 0U ||
+        candidate.generation != 0U || candidate.floor != 0U ||
+        candidate.revision != 0U)
+      return false;
+  } else if (candidate.kind == 3U) {
+    if (candidate.revision == 0U) return false;
+    if (candidate.slot == 0xFFU) {
+      if (candidate.value != 0U || candidate.generation != 0U)
+        return false;
+    } else if (candidate.slot >= 4U || candidate.generation == 0U) {
+      return false;
+    }
+  } else if (candidate.kind == 4U) {
+    if (candidate.slot != 0xFFU || candidate.generation != 0U ||
+        candidate.value >= UINT32_MAX)
+      return false;
+  } else {
+    if (candidate.slot >= 4U ||
+        (candidate.value != 0U && candidate.generation == 0U))
+      return false;
+  }
+  out = candidate;
+  return true;
+}
 }  // namespace
+
+SecurityV3Inspection SecurityStore::inspectV3PageReadOnly(
+    uint32_t page, SecurityV3ReadOnlySummary& output) const {
+  if (!ready_ || page >= kPageCount)
+    return SecurityV3Inspection::kReadFault;
+  uint8_t header[kPageHeaderSize]{};
+  if (!critical_.read(headerOffset(page), header, sizeof(header)))
+    return SecurityV3Inspection::kReadFault;
+  if (journal_format::erased(header, sizeof(header)))
+    return SecurityV3Inspection::kNotV3;
+  uint8_t version = 0;
+  if (!headerMagicPresent(header, &version))
+    return SecurityV3Inspection::kCorrupt;
+  if (version != kReadOnlyV3) return SecurityV3Inspection::kNotV3;
+  if (journal_format::erased(header + 28U, 4U))
+    return SecurityV3Inspection::kStaged;
+  if (journal_format::get32(header + 28U) != kCommit ||
+      journal_format::get32(header + 24U) !=
+          journal_format::crc32(header, 24U) ||
+      header[5] != 0U || header[6] != 0U || header[7] != 0U ||
+      journal_format::get64(header + 8U) == 0U)
+    return SecurityV3Inspection::kCorrupt;
+  if (journal_format::get64(header + 16U) !=
+      device_identity_.legacyUint64())
+    return SecurityV3Inspection::kForeign;
+
+  uint8_t credential_bytes[kCredentialRecordSize]{};
+  if (!critical_.read(credentialOffset(page), credential_bytes,
+                      sizeof(credential_bytes)))
+    return SecurityV3Inspection::kReadFault;
+  Credential candidate_credential{};
+  if (!decodeCredential(credential_bytes, candidate_credential) ||
+      candidate_credential.device_identity !=
+          device_identity_.legacyUint64() ||
+      candidate_credential.key_epoch == UINT32_MAX)
+    return SecurityV3Inspection::kCorrupt;
+  bool id_all_zero = true;
+  bool id_all_erased = true;
+  for (unsigned i = 0U; i < kCredentialIdSize; ++i) {
+    id_all_zero = id_all_zero && candidate_credential.credential_id[i] == 0U;
+    id_all_erased = id_all_erased &&
+                    candidate_credential.credential_id[i] == 0xFFU;
+  }
+  if (id_all_zero || id_all_erased) return SecurityV3Inspection::kCorrupt;
+
+  SecurityV3ReadOnlySummary verified{};
+  verified.page_generation = journal_format::get64(header + 8U);
+  verified.key_epoch = candidate_credential.key_epoch;
+
+  uint64_t gateway_ids[4]{};
+  uint32_t generations[4]{};
+  uint32_t maximum_generation = 0U;
+  uint8_t record_bytes[kV3RecordBytes]{};
+  V3Parsed record{};
+  const uint32_t begin_offset = pageOffset(page) + kV3Offset;
+  // The five-entry prefix is a *required* atomic policy snapshot:
+  // entry zero is the global metadata, followed by all four slots in order.
+  for (unsigned i = 0U; i < 5U; ++i) {
+    if (!critical_.read(begin_offset + i * kV3RecordBytes,
+                        record_bytes, sizeof(record_bytes)))
+      return SecurityV3Inspection::kReadFault;
+    if (!decodeV3ReadOnly(record_bytes, record) ||
+        memcmp(record.credential_id, candidate_credential.credential_id,
+               kCredentialIdSize) != 0 ||
+        record.key_epoch != candidate_credential.key_epoch)
+      return SecurityV3Inspection::kCorrupt;
+    if (i == 0U) {
+      if (record.kind != 4U) return SecurityV3Inspection::kCorrupt;
+      verified.custody_policy_floor = record.floor;
+      verified.policy_revision = record.revision;
+      maximum_generation = static_cast<uint32_t>(record.value);
+    } else {
+      const unsigned index = i - 1U;
+      if (record.kind != 5U || record.slot != index ||
+          record.floor != verified.custody_policy_floor ||
+          record.revision != verified.policy_revision)
+        return SecurityV3Inspection::kCorrupt;
+      gateway_ids[index] = record.value;
+      generations[index] = record.generation;
+      for (unsigned j = 0U; j < index; ++j) {
+        if ((record.value != 0U && record.value == gateway_ids[j]) ||
+            (record.generation != 0U &&
+             record.generation == generations[j]))
+          return SecurityV3Inspection::kCorrupt;
+      }
+      if (record.generation > verified.max_grant_generation)
+        verified.max_grant_generation = record.generation;
+      if (record.value != 0U) ++verified.active_gateway_count;
+    }
+  }
+  if (verified.max_grant_generation != maximum_generation ||
+      (verified.policy_revision == 0U &&
+       (verified.custody_policy_floor != 0U ||
+        verified.max_grant_generation != 0U)))
+    return SecurityV3Inspection::kCorrupt;
+
+  bool found_erased = false;
+  for (unsigned i = 5U; i < kV3Count; ++i) {
+    if (!critical_.read(begin_offset + i * kV3RecordBytes,
+                        record_bytes, sizeof(record_bytes)))
+      return SecurityV3Inspection::kReadFault;
+    if (journal_format::erased(record_bytes, sizeof(record_bytes))) {
+      found_erased = true;
+      continue;
+    }
+    if (found_erased) return SecurityV3Inspection::kCorrupt;
+    // Torn pre-commit entries are burned. They are never authority.
+    if (journal_format::erased(record_bytes + 52U, 4U)) continue;
+    if (!decodeV3ReadOnly(record_bytes, record) ||
+        memcmp(record.credential_id, candidate_credential.credential_id,
+               kCredentialIdSize) != 0 ||
+        record.key_epoch != candidate_credential.key_epoch ||
+        record.kind > 3U)
+      return SecurityV3Inspection::kCorrupt;
+    if (record.kind == 1U) {
+      if (record.value <= verified.tx_reserved_bound)
+        return SecurityV3Inspection::kCorrupt;
+      verified.tx_reserved_bound = record.value;
+    } else if (record.kind == 2U) {
+      if (record.value <= verified.a2d_replay_bound)
+        return SecurityV3Inspection::kCorrupt;
+      verified.a2d_replay_bound = record.value;
+    } else {
+      if (verified.policy_revision == UINT32_MAX ||
+          record.revision != verified.policy_revision + 1U ||
+          record.floor < verified.custody_policy_floor)
+        return SecurityV3Inspection::kCorrupt;
+      if (record.slot == 0xFFU) {
+        if (record.floor == verified.custody_policy_floor)
+          return SecurityV3Inspection::kCorrupt;
+      } else {
+        const unsigned index = record.slot;
+        if (record.generation <= verified.max_grant_generation)
+          return SecurityV3Inspection::kCorrupt;
+        if (record.value == 0U) {
+          if (gateway_ids[index] == 0U)
+            return SecurityV3Inspection::kCorrupt;
+          --verified.active_gateway_count;
+        } else {
+          for (unsigned j = 0U; j < 4U; ++j)
+            if (j != index && gateway_ids[j] == record.value)
+              return SecurityV3Inspection::kCorrupt;
+          if (gateway_ids[index] == 0U) ++verified.active_gateway_count;
+        }
+        gateway_ids[index] = record.value;
+        generations[index] = record.generation;
+        verified.max_grant_generation = record.generation;
+      }
+      verified.custody_policy_floor = record.floor;
+      verified.policy_revision = record.revision;
+    }
+  }
+  uint8_t tail[kV3TailBytes]{};
+  if (!critical_.read(begin_offset + kV3Count * kV3RecordBytes,
+                      tail, sizeof(tail)))
+    return SecurityV3Inspection::kReadFault;
+  if (!journal_format::erased(tail, sizeof(tail)))
+    return SecurityV3Inspection::kCorrupt;
+  // Publication on success ONLY. No durable claim, grant or secret escapes.
+  output = verified;
+  return SecurityV3Inspection::kVerified;
+}
 
 bool SecurityStore::begin(DeviceIdentity device_identity) {
   device_identity_ = device_identity;

@@ -15,6 +15,29 @@ enum class SecurityState : uint8_t {
   kFault,
 };
 
+// SF5K3E read-only V3 *inspection*. This is NOT a v3 security state,
+// migration, enrollment, writer or admission API. The active SecurityStore
+// keeps its existing v1/v2 recovery and writes v2 only.
+enum class SecurityV3Inspection : uint8_t {
+  kNotV3,
+  kStaged,
+  kVerified,
+  kForeign,
+  kCorrupt,
+  kReadFault
+};
+
+struct SecurityV3ReadOnlySummary {
+  uint64_t page_generation = 0;
+  uint64_t tx_reserved_bound = 0;
+  uint64_t a2d_replay_bound = 0;
+  uint32_t key_epoch = 0;
+  uint32_t custody_policy_floor = 0;
+  uint32_t policy_revision = 0;
+  uint32_t max_grant_generation = 0;
+  uint8_t active_gateway_count = 0;
+};
+
 // Durable security credential + nonce/replay persistence owner.
 //
 // M7P6F upgrades new writes to SecurityStore format v2 while retaining exact
@@ -63,6 +86,14 @@ class SecurityStore {
   SecurityState state() const { return state_; }
   bool ready() const { return ready_; }
   bool exhausted() const { return exhausted_; }
+
+  // Diagnostic-only physical V3 page scan (index 0 or 1).
+  // Does not touch state_, credential_, authorization, counters, or flash
+  // mutation APIs; no K_root, gateway IDs or grant entries are returned.
+  // Output is published ONLY on kVerified. A v3 page NEVER becomes active
+  // authority through this method; begin()/poll() still use v2 semantics.
+  SecurityV3Inspection inspectV3PageReadOnly(
+      uint32_t page, SecurityV3ReadOnlySummary& output) const;
 
   bool currentCredentialId(
       uint8_t (&out)[security_format::kCredentialIdSize]) const;
