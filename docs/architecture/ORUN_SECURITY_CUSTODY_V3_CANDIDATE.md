@@ -183,9 +183,16 @@ rollback, malformed snapshot prefixes, duplicate A/B generation and
 credential damage. The candidate also models the *real* current
 `SecurityStore::commitCredential` contract: changing a credential requires
 both a new credential ID and a new root, but may retain the same numerical
-`key_epoch`. Such a change resets TX/A2D reservations and **all** Gateway
-grants; an A/B copy under unchanged credential ID/epoch must retain the exact
-same root. This is a compatibility model, not approval of any new
+`key_epoch`. The production **credential-commit writer** must reset the prior
+TX/A2D reservation lifetime and **all** Gateway grants on activation.
+After activation, the new credential can allocate its own fresh TX/A2D
+reservations even if the old page remains on flash after an erase fault;
+the boot selector must permit those independently valid reservations.
+A/B snapshots alone **cannot prove counter provenance**: this remains
+a production writer/power-cut review obligation. Any old-credential Gateway
+grant copied to the new credential before old-page erase is forbidden.
+An A/B copy under unchanged credential ID/epoch must retain the exact same
+root. This is a compatibility model, not approval of any new
 credential-provisioning transport. The model selects
 a newer page only after its complete snapshot, credential, bound records
 and page header COMMIT are durable. If an older page is still committed,
