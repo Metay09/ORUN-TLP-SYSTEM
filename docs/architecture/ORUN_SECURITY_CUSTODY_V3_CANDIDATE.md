@@ -45,7 +45,7 @@ A proposed 56-byte state record (big-endian) is:
 | 21 | 1 | Gateway slot (0..3) or 0xFF for global/counter record |
 | 22 | 2 | reserved zero |
 | 24 | 8 | counter exclusive bound, or Gateway ID (zero for revocation) |
-| 32 | 4 | custody grant generation (zero for counters/revocations) |
+| 32 | 4 | per-slot grant generation (zero only for counters/floor-only; a revocation advances it) |
 | 36 | 4 | custody policy floor (zero for counters) |
 | 40 | 4 | policy revision (zero for counters) |
 | 44 | 4 | reserved zero |
@@ -61,12 +61,17 @@ a **real wear/compaction qualification** before format approval.
 
 - A change is a **single atomic authenticated policy entry**, never four
   separately committed slot writes.
-- Every enrolled/revoked/replaced Gateway change strictly advances both
-  `policy_revision` (+1) and `custody_floor` (> previous). The floor value
-  is bound into the custody ACK key and authenticated ACK bytes, so an old
-  grant's ACK cannot become valid after another slot is changed.
-- An enrolled Gateway has nonzero/non-max generation, unique among four
-  slots. A revocation clears a populated slot; it is not a COMMAND revoke.
+- Every authenticated policy entry advances `policy_revision` by exactly 1.
+  A grant/revoke/replace for one Gateway advances only **that slot's**
+  `grant_generation` monotonically. Revocation persists a *zero Gateway ID*
+  with its new nonzero generation as a tombstone, preventing old ACK reuse
+  after re-enrollment. Another Gateway slot is not implicitly revoked.
+- `custody_floor` may be zero (only `UINT32_MAX` is invalid under SF5B).
+  It is nondecreasing. An explicit floor-only policy update must increase it,
+  invalidating all earlier ACK floor/key scopes. Ordinary per-slot updates
+  can retain the same floor, so independent Gateways need not rekey.
+- Each active Gateway ID must be unique among four slots and have a
+  nonzero/non-max slot generation. Revocation is not a COMMAND revoke.
 - Different credential ID/key epoch, stale revision, rollback of floor,
   rollback of TX/A2D bounds, a duplicate Gateway, or unknown kind all
   **fail closed**. An ACK cannot mutate this state.
@@ -75,6 +80,9 @@ a **real wear/compaction qualification** before format approval.
   starting custody policy unprovisioned.
 - A lower-version firmware encountering a **committed** v3 page must stop
   in unsupported state, not fall back to an older v2 authority page.
+- A never-provisioned custody policy has four empty slots regardless of
+  whether its current policy floor is zero. The ACK key is still bound to
+  the real root credential and per-Gateway grant scope, not this host model.
 
 ## Power-cut behavior modeled by SF5K3C
 
