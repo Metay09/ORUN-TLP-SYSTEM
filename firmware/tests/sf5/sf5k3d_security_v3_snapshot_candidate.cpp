@@ -399,8 +399,9 @@ BootResult recoverTwoPages(const uint8_t (&pages)[2][c::kPageSize],
   }
   out = selected.state;
   selected_generation = selected.generation;
-  return selected.version == c::kCandidateVersion ?
-      BootResult::kV3 : BootResult::kV2;
+  if (selected.version == c::kCandidateVersion) return BootResult::kV3;
+  return selected.version == sf::kVersionV1 ?
+      BootResult::kV1 : BootResult::kV2;
 }
 
 }  // namespace sf5k3d_candidate
