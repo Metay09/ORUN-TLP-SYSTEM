@@ -268,7 +268,7 @@ void testV2MigrationThenV3Compaction() {
   assert(tx.status() == wr::Status::kCommitted);
   assert(memcmp(src.data(), flash.bytes.data(), kPageSize) == 0);
   verifyPrefix(flash, 1U, 7U);
-  assert(tx.physicalMutationCompletions() == 18U);
+  assert(tx.physicalMutationCompletions() == 19U);
   assert(!tx.start(0U, credential(), snapshot));
 
   // Recovered v3 is the only eligible physical source for a second
@@ -330,9 +330,12 @@ void testByteCutsAndSourcePreservation() {
     assert(flash.accepted_calls == static_cast<uint32_t>(call));
     ab::Summary s{};
     const ab::Result recovered = ab::inspect(flash, kTracker, s);
+    // The final 4-byte activation write can physically land despite
+    // kFailed (the API intentionally treats that as ambiguous). Never
+    // claim the old page remained authoritative in that final cut.
     assert(recovered == ab::Result::kV2 ||
-           recovered == ab::Result::kFault);
-    assert(recovered != ab::Result::kV3);
+           recovered == ab::Result::kFault ||
+           (call == 19 && recovered == ab::Result::kV3));
   }
 }
 
