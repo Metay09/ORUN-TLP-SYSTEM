@@ -305,6 +305,60 @@ void testCompactionAndTornOldErase() {
          d::BootResult::kFault);
 }
 
+void testCredentialReplacementDropsOldGrants() {
+  // Real SecurityStore::commitCredential accepts a DIFFERENT ID and K_root,
+  // even when the new epoch numerically equals the old epoch. v3 must not
+  // silently reject a compatible rotation or carry old Gateway grants.
+  const c::State old_state = grants();
+  c::State renewed = seed();
+  renewed.tx_bound = 0U;
+  renewed.a2d_bound = 0U;
+  for (size_t i = 0U; i < sizeof(renewed.credential_id); ++i)
+    renewed.credential_id[i] ^= 0x40U;
+  uint8_t old_key[32]{};
+  root(old_key);
+  uint8_t new_key[32]{};
+  memcpy(new_key, old_key, sizeof(new_key));
+  new_key[0] ^= 0x11U;
+  uint8_t pages[2][c::kPageSize]{};
+  assert(d::makeV3SnapshotPage(kTracker, 10U, old_state, old_key, pages[0]));
+  assert(d::makeV3SnapshotPage(kTracker, 11U, renewed, new_key, pages[1]));
+  c::State result{};
+  uint64_t gen = 0U;
+  assert(d::recoverTwoPages(pages, kTracker, result, gen) ==
+         d::BootResult::kV3);
+  assert(gen == 11U);
+  expectEquivalent(result, renewed);
+  assert(!c::grantScopeMatches(result, kGateway + 1U, 2U, 2U));
+
+  // Same credential ID with altered root must not be interpreted as a
+  // compaction and cannot be an independent credential commit.
+  assert(d::makeV3SnapshotPage(kTracker, 11U, old_state, new_key, pages[1]));
+  assert(d::recoverTwoPages(pages, kTracker, result, gen) ==
+         d::BootResult::kFault);
+
+  // Same secret with altered credential ID is also not a valid rekey.
+  assert(d::makeV3SnapshotPage(kTracker, 11U, renewed, old_key, pages[1]));
+  assert(d::recoverTwoPages(pages, kTracker, result, gen) ==
+         d::BootResult::kFault);
+
+  // Even with a new identity/root, old grants or TX bound cannot be copied.
+  renewed.gateways[0] = old_state.gateways[0];
+  renewed.policy_revision = old_state.policy_revision;
+  renewed.custody_floor = old_state.custody_floor;
+  assert(d::makeV3SnapshotPage(kTracker, 11U, renewed, new_key, pages[1]));
+  assert(d::recoverTwoPages(pages, kTracker, result, gen) ==
+         d::BootResult::kFault);
+  renewed = seed();
+  renewed.tx_bound = 768U;
+  renewed.a2d_bound = 0U;
+  for (size_t i = 0U; i < sizeof(renewed.credential_id); ++i)
+    renewed.credential_id[i] ^= 0x40U;
+  assert(d::makeV3SnapshotPage(kTracker, 11U, renewed, new_key, pages[1]));
+  assert(d::recoverTwoPages(pages, kTracker, result, gen) ==
+         d::BootResult::kFault);
+}
+
 void testRejectCorruptCredentialAndSnapshot() {
   const c::State state = grants();
   uint8_t key[32]{};
@@ -333,6 +387,7 @@ int main() {
   testSnapshotAndTombstones();
   testMigrationCuts();
   testCompactionAndTornOldErase();
+  testCredentialReplacementDropsOldGrants();
   testRejectCorruptCredentialAndSnapshot();
   puts("SF5K3D v3 A/B snapshot migration/compaction/byte-cut model: PASS");
 }
