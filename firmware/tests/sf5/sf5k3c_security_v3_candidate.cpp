@@ -111,6 +111,8 @@ bool decodeEntry(const uint8_t (&bytes)[kEntrySize], Entry& out) {
     case 1U: e.kind = Kind::kTxReserve; break;
     case 2U: e.kind = Kind::kA2dReplayReserve; break;
     case 3U: e.kind = Kind::kCustodyPolicy; break;
+    case 4U: e.kind = Kind::kPolicySnapshot; break;
+    case 5U: e.kind = Kind::kGatewaySnapshot; break;
     default: return false;
   }
   if (!validEntry(e)) return false;
