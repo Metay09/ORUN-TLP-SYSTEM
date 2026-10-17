@@ -80,6 +80,22 @@ bool encodeSnapshotPrefix(
 // global generation high-water and TX/A2D monotonicity.
 // Torn pre-commit appends burn their slot; holes and uncertain commits
 // fail closed. Returns reconstructed state ONLY on full success.
+// Streaming recovery from an immutable bounded journal view. The reader
+// takes offsets relative to the 3996-byte journal region and MUST implement
+// exact read/no partial success. This keeps production boot inspection below
+// a 56-byte scratch record rather than placing an entire page on nRF stack.
+class JournalReader {
+ public:
+  virtual ~JournalReader() = default;
+  virtual bool read(size_t offset, uint8_t* data, size_t size) const = 0;
+};
+
+bool recoverCommittedJournalStream(
+    const JournalReader& reader,
+    const uint8_t (&credential_id)[16], uint32_t key_epoch,
+    Snapshot& out);
+
+// Pointer compatibility API retains exactly the same parser via JournalReader.
 bool recoverCommittedJournal(const uint8_t* journal, size_t bytes,
                              const uint8_t (&credential_id)[16],
                              uint32_t key_epoch, Snapshot& out);
