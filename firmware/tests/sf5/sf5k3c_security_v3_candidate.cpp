@@ -33,13 +33,14 @@ bool validEntry(const Entry& e) {
            e.policy_revision == 0U;
   }
   if (e.kind != Kind::kCustodyPolicy ||
-      e.custody_floor == 0U || e.custody_floor == UINT32_MAX ||
+      e.custody_floor == UINT32_MAX ||
       e.policy_revision == 0U || e.policy_revision == UINT32_MAX)
     return false;
   if (e.slot == 0xFFU)
     return e.value == 0U && e.grant_generation == 0U;
   if (e.slot >= kMaxGateways) return false;
-  if (e.value == 0U) return e.grant_generation == 0U;
+  // An enrollment and a revocation both need a new, nonzero per-slot
+  // generation; revoked slots persist that high-water for safe re-enrollment.
   return e.grant_generation != 0U &&
          e.grant_generation != UINT32_MAX;
 }
@@ -145,17 +146,19 @@ bool applyHostAuthenticated(const Entry& record, bool authenticated,
   } else {
     if (state.policy_revision == UINT32_MAX ||
         record.policy_revision != state.policy_revision + 1U ||
-        record.custody_floor <= state.custody_floor)
+        record.custody_floor < state.custody_floor)
       return false;
-    if (record.slot != 0xFFU) {
+    if (record.slot == 0xFFU) {
+      // A floor-only record must actually advance the global floor.
+      if (record.custody_floor == state.custody_floor) return false;
+    } else {
       GatewaySlot& target = next.gateways[record.slot];
+      if (record.grant_generation <= target.generation) return false;
       if (record.value == 0U) {
         if (target.gateway_id == 0U) return false;
-        target = GatewaySlot{};
+        target.gateway_id = 0U;
+        target.generation = record.grant_generation;  // durable tombstone
       } else {
-        if (target.gateway_id == record.value &&
-            record.grant_generation <= target.generation)
-          return false;
         for (size_t i = 0U; i < kMaxGateways; ++i)
           if (i != record.slot &&
               next.gateways[i].gateway_id == record.value)
@@ -204,7 +207,7 @@ bool recoverHostJournal(const uint8_t* bytes, size_t len,
 
 bool grantScopeMatches(const State& state, uint64_t gateway_id,
                        uint32_t floor, uint32_t generation) {
-  if (gateway_id == 0U || floor == 0U || floor == UINT32_MAX ||
+  if (gateway_id == 0U || floor == UINT32_MAX ||
       generation == 0U || generation == UINT32_MAX ||
       floor != state.custody_floor)
     return false;
