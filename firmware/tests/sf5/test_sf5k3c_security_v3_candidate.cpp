@@ -152,10 +152,10 @@ void testGrantScopeAndCounters() {
 
   // A revocation increments ONLY that slot's durable generation; unrelated
   // Gateways remain entitled to ACK at the unchanged common floor.
-  const c::Entry revoke = policy(s, 1U, 0U, 4U, 0U, 5U);
+  const c::Entry revoke = policy(s, 1U, 0U, 6U, 0U, 5U);
   assert(c::applyHostAuthenticated(revoke, true, s));
   assert(s.gateways[1].gateway_id == 0U &&
-         s.gateways[1].generation == 4U);
+         s.gateways[1].generation == 6U);
   assert(!c::grantScopeMatches(s, kGatewayBase + 2U, 0U, 3U));
   assert(c::grantScopeMatches(s, kGatewayBase + 1U, 0U, 2U));
   assert(c::grantScopeMatches(s, kGatewayBase + 4U, 0U, 5U));
@@ -163,10 +163,12 @@ void testGrantScopeAndCounters() {
       policy(s, 1U, kGatewayBase + 2U, 3U, 0U, 6U), true, s));
   assert(!c::applyHostAuthenticated(
       policy(s, 1U, kGatewayBase + 2U, 4U, 0U, 6U), true, s));
+  assert(!c::applyHostAuthenticated(
+      policy(s, 1U, kGatewayBase + 2U, 6U, 0U, 6U), true, s));
   assert(c::applyHostAuthenticated(
-      policy(s, 1U, kGatewayBase + 2U, 5U, 0U, 6U), true, s));
+      policy(s, 1U, kGatewayBase + 2U, 7U, 0U, 6U), true, s));
   assert(!c::grantScopeMatches(s, kGatewayBase + 2U, 0U, 3U));
-  assert(c::grantScopeMatches(s, kGatewayBase + 2U, 0U, 5U));
+  assert(c::grantScopeMatches(s, kGatewayBase + 2U, 0U, 7U));
 
   // A deliberate floor-only policy bump revokes all former floor-0 ACKs.
   assert(c::applyHostAuthenticated(
@@ -198,6 +200,49 @@ void testGrantScopeAndCounters() {
   assert(!c::applyHostAuthenticated(bound(s, c::Kind::kA2dReplayReserve, 8U),
                                      true, s));
   assert(s.tx_bound == 512U && s.a2d_bound == 16U);
+}
+
+void testCrossSlotReenrollmentCannotReviveOldAck() {
+  // The on-wire ACK has NO physical custody-slot index. Gateway A can be
+  // revoked from slot 0 and later enrolled in slot 1. Reusing A's original
+  // generation would make its historic ACK HMAC scope valid again.
+  c::State s = initial();
+  const uint64_t gateway_a = kGatewayBase + 50U;
+  const uint64_t gateway_b = kGatewayBase + 51U;
+  assert(c::applyHostAuthenticated(
+      policy(s, 0U, gateway_a, 3U, 0U, 1U), true, s));
+  assert(c::grantScopeMatches(s, gateway_a, 0U, 3U));
+  assert(c::applyHostAuthenticated(
+      policy(s, 0U, 0U, 4U, 0U, 2U), true, s));
+  assert(!c::grantScopeMatches(s, gateway_a, 0U, 3U));
+
+  // Empty destination slot is NOT permission to replay a past grant.
+  assert(!c::applyHostAuthenticated(
+      policy(s, 1U, gateway_a, 3U, 0U, 3U), true, s));
+  assert(!c::applyHostAuthenticated(
+      policy(s, 1U, gateway_a, 4U, 0U, 3U), true, s));
+  assert(c::applyHostAuthenticated(
+      policy(s, 1U, gateway_a, 5U, 0U, 3U), true, s));
+  assert(!c::grantScopeMatches(s, gateway_a, 0U, 3U));
+  assert(c::grantScopeMatches(s, gateway_a, 0U, 5U));
+
+  // Replacing slot 1 with B burns one MORE generation. Re-enrolling A
+  // back into slot 0 cannot restore either of its earlier HMAC scopes.
+  assert(c::applyHostAuthenticated(
+      policy(s, 1U, gateway_b, 6U, 0U, 4U), true, s));
+  assert(!c::grantScopeMatches(s, gateway_a, 0U, 5U));
+  assert(c::grantScopeMatches(s, gateway_b, 0U, 6U));
+  assert(!c::applyHostAuthenticated(
+      policy(s, 0U, gateway_a, 5U, 0U, 5U), true, s));
+  assert(!c::applyHostAuthenticated(
+      policy(s, 0U, gateway_a, 6U, 0U, 5U), true, s));
+  assert(c::applyHostAuthenticated(
+      policy(s, 0U, gateway_a, 7U, 0U, 5U), true, s));
+  assert(c::grantScopeMatches(s, gateway_a, 0U, 7U));
+  assert(!c::grantScopeMatches(s, gateway_a, 0U, 3U));
+  assert(!c::grantScopeMatches(s, gateway_a, 0U, 5U));
+  // Independently enrolled B remains authorized.
+  assert(c::grantScopeMatches(s, gateway_b, 0U, 6U));
 }
 
 void testPowerCutsAndBootReplay() {
@@ -320,6 +365,7 @@ void testMigrationSnapshotBoundary() {
 int main() {
   testCodecFailClosed();
   testGrantScopeAndCounters();
+  testCrossSlotReenrollmentCannotReviveOldAck();
   testPowerCutsAndBootReplay();
   testMigrationSnapshotBoundary();
   puts("SF5K3C v3 custody-policy journal candidate: codec/scope/reboot/cuts PASS");
