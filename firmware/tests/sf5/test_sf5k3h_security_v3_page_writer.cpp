@@ -33,6 +33,7 @@ struct Flash : public FlashBackend {
   uint32_t prefix = 0U;
   bool pending_every = false;
   bool late_failed_completion = false;
+  int late_failure_call = -1;
   bool unreconciled = false;
   bool pending = false;
   bool pending_erase = false;
@@ -122,8 +123,11 @@ struct Flash : public FlashBackend {
     } else {
       applyProgram(pending_offset, pending_bytes, pending_size);
     }
-    return late_failed_completion ? FlashOpResult::kFailed :
-                                    FlashOpResult::kDone;
+    const bool fail = late_failed_completion ||
+                      (late_failure_call > 0 &&
+                       accepted_calls ==
+                           static_cast<uint32_t>(late_failure_call));
+    return fail ? FlashOpResult::kFailed : FlashOpResult::kDone;
   }
   bool hasUnreconciledMutation() const override { return unreconciled; }
 };
@@ -365,6 +369,28 @@ void testPendingAndLateCompletion() {
   assert(ambiguous.poll_calls == 1U);
 }
 
+void testAmbiguousAcceptedFinalActivation() {
+  // SoftDevice may have physically persisted the activation commit even
+  // when the completion callback arrives as failure. The transaction
+  // becomes FAULT (never returns an authorization success), while the
+  // independently recovered physical page may be valid v3 on reboot.
+  Flash flash;
+  v2Page(flash, 0U, 6U, 768U, 24U);
+  flash.pending_every = true;
+  flash.late_failure_call = 19;
+  wr::SnapshotTransaction tx(flash);
+  assert(tx.start(1U, credential(), emptySnapshot(768U,24U)));
+  finish(tx);
+  assert(tx.status() == wr::Status::kFault);
+  assert(tx.poll() == wr::Status::kFault);
+  assert(flash.accepted_calls == 19U);
+  assert(flash.poll_calls == 19U);
+  ab::Summary recovered{};
+  assert(ab::inspect(flash, kTracker, recovered) == ab::Result::kV3);
+  assert(recovered.generation == 7U &&
+         recovered.selected_page == 1U);
+}
+
 void testTamperPreactivationAndDirtyReadback() {
   Flash flash;
   v2Page(flash, 0U, 6U, 768U, 24U);
@@ -401,6 +427,7 @@ int main() {
   testGatewaysAndRefusal();
   testByteCutsAndSourcePreservation();
   testPendingAndLateCompletion();
+  testAmbiguousAcceptedFinalActivation();
   testTamperPreactivationAndDirtyReadback();
   puts("SF5K3H real FlashBackend v3 page writer commit-last/cuts/async: PASS");
 }
