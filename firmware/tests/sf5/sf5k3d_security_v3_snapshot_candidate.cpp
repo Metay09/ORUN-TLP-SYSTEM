@@ -385,15 +385,18 @@ BootResult recoverTwoPages(const uint8_t (&pages)[2][c::kPageSize],
            !samePolicy(selected.state, older.state)))
         return BootResult::kFault;
     } else {
-      // A new credential starts with no old TX/A2D counter lifetime or
-      // Gateway grants, even if it chooses the same numeric epoch under
-      // the existing credential-rotation policy.
+      // A different root and credential ID isolate the new counter
+      // namespace even if the numeric key_epoch is the same. A new
+      // credential's TX/A2D reservations MAY already have advanced after
+      // a failed old-page erase, so page selection must not require zero.
+      // The actual flash writer must reset these bounds at credential
+      // activation; the two snapshots alone cannot prove their history.
+      // Until old A/B authority is erased, no Gateway enrollment from
+      // the old credential may appear in a newly rotated snapshot.
       c::State fresh{};
       memcpy(fresh.credential_id, selected.state.credential_id, 16U);
       fresh.key_epoch = selected.state.key_epoch;
-      if (selected.state.tx_bound != 0U ||
-          selected.state.a2d_bound != 0U ||
-          !samePolicy(selected.state, fresh))
+      if (!samePolicy(selected.state, fresh))
         return BootResult::kFault;
     }
   }
