@@ -448,6 +448,104 @@ void testCustodyCandidatePreflightReadOnly(bool async) {
   }
 }
 
+// Enumerate at most four retained exact ciphertext objects without ever
+// interpreting an ACK, changing a record, or scanning the full logical backlog.
+void testCustodySnapshotReadOnly(bool async) {
+  FakeFlash flash;
+  flash.async = async;
+  FixedIncarnation source;
+  osc::ExactObject expected[4]{};
+  {
+    ProductRecordStore product(flash, kPages, &source);
+    product.begin(kDevice, kTracker);
+    assert(product.mounted());
+    for (uint32_t seq = 1U; seq <= 5U; ++seq)
+      assert(store(product, seq).stored);
+
+    osc::ExactObject found[osf::kMaxExactCustodyObjects]{};
+    uint16_t count = 77U;
+    assert(product.snapshotCustodyCandidates(found, count));
+    assert(count == 0U);
+    for (uint32_t seq = 1U; seq <= 4U; ++seq) {
+      expected[seq - 1U] = protectedFixture(product, seq);
+      assert(product.submitExactCache(expected[seq - 1U]) ==
+             ProductRecordStore::CacheSubmit::kStarted);
+      count = 77U;
+      found[0].object_size = 42U;
+      assert(!product.snapshotCustodyCandidates(found, count));
+      assert(count == 77U && found[0].object_size == 42U);
+      settleExactCache(product, expected[seq - 1U], true);
+      const unsigned writes_before = flash.mutation_calls;
+      assert(product.snapshotCustodyCandidates(found, count));
+      assert(count == seq);
+      assert(flash.mutation_calls == writes_before);
+      for (uint32_t i = 0U; i < seq; ++i) {
+        assert(found[i].identity.sequence == expected[i].identity.sequence);
+        assert(found[i].object_size == expected[i].object_size);
+        assert(memcmp(found[i].object, expected[i].object,
+                      expected[i].object_size) == 0);
+      }
+    }
+    // Fifth logical record exists, but the *exact protected cache* is only 4.
+    const osc::ExactObject fifth = protectedFixture(product, 5U);
+    assert(product.submitExactCache(fifth) ==
+           ProductRecordStore::CacheSubmit::kNoCapacity);
+    count = 77U;
+    assert(product.snapshotCustodyCandidates(found, count));
+    assert(count == 4U);
+    flash.fail_read_at = flash.read_calls + 1U;
+    count = 91U;
+    found[0].object_size = 43U;
+    assert(!product.snapshotCustodyCandidates(found, count));
+    assert(count == 91U && found[0].object_size == 43U);
+    flash.fail_read_at = 0U;
+    flash.unreconciled = true;
+    assert(!product.snapshotCustodyCandidates(found, count));
+    assert(count == 91U && found[0].object_size == 43U);
+    flash.unreconciled = false;
+  }
+
+  flash.async = false;
+  {
+    ProductRecordStore reboot(flash, kPages, &source);
+    reboot.begin(kDevice, kTracker);
+    assert(reboot.mounted());
+    const auto before = flash.mutation_calls;
+    osc::ExactObject recovered[osf::kMaxExactCustodyObjects]{};
+    uint16_t count = 0U;
+    assert(reboot.snapshotCustodyCandidates(recovered, count));
+    assert(count == 4U && flash.mutation_calls == before);
+    for (uint16_t i = 0U; i < count; ++i)
+      assert(memcmp(recovered[i].object, expected[i].object,
+                    expected[i].object_size) == 0);
+  }
+
+  // Simulate a previously authorized durable release through the test's
+  // direct ObservationStore fixture; the snapshot may no longer return it.
+  {
+    ObservationStore release_owner(flash, kPages, &source);
+    assert(release_owner.begin(kDevice));
+    assert(release_owner.requestRelease(expected[1].identity));
+    for (unsigned n = 0U; n < 1000U && release_owner.busy(); ++n)
+      release_owner.poll();
+    assert(!release_owner.busy());
+    bool success = false;
+    assert(release_owner.takeReleaseResult(success) && success);
+  }
+  {
+    ProductRecordStore after_release(flash, kPages, &source);
+    after_release.begin(kDevice, kTracker);
+    assert(after_release.mounted());
+    osc::ExactObject remaining[osf::kMaxExactCustodyObjects]{};
+    uint16_t count = 0U;
+    assert(after_release.snapshotCustodyCandidates(remaining, count));
+    assert(count == 3U);
+    assert(remaining[0].identity.sequence == 1U);
+    assert(remaining[1].identity.sequence == 3U);
+    assert(remaining[2].identity.sequence == 4U);
+  }
+}
+
 void testExactObjectCacheAndReboot(bool async) {
   FakeFlash flash;
   flash.async = async;
@@ -813,6 +911,8 @@ void testFillAndResetEverywhere() {
 }  // namespace
 
 int main(int argc, char** argv) {
+  testCustodySnapshotReadOnly(false);
+  testCustodySnapshotReadOnly(true);
   testCustodyCandidatePreflightReadOnly(false);
   testCustodyCandidatePreflightReadOnly(true);
   if (argc == 2 && strcmp(argv[1], "--custody-preflight-only") == 0) {
