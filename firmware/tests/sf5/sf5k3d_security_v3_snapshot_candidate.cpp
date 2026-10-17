@@ -360,11 +360,17 @@ BootResult recoverTwoPages(const uint8_t (&pages)[2][c::kPageSize],
   const Found& selected = found[winning];
   if (found[other].present) {
     const Found& older = found[other];
-    if (sameId(older.state.credential_id, selected.state.credential_id) &&
-        older.state.key_epoch == selected.state.key_epoch) {
-      // The same security lifetime cannot silently replace its root secret
-      // during page compaction. That would make the nonce namespace unsafe.
-      if (memcmp(selected.root, older.root, sizeof(selected.root)) != 0)
+    const bool same_credential = sameId(
+        older.state.credential_id, selected.state.credential_id);
+    const bool same_root = memcmp(
+        selected.root, older.root, sizeof(selected.root)) == 0;
+    // Mirror the *actual* SecurityStore::commitCredential contract:
+    // replacing a credential requires BOTH a new ID and new root. The
+    // existing store permits an independent credential with the same
+    // numeric key_epoch; do not invent an epoch-monotonic migration rule.
+    if (same_credential != same_root) return BootResult::kFault;
+    if (same_credential) {
+      if (older.state.key_epoch != selected.state.key_epoch)
         return BootResult::kFault;
       // A/B overlap from a compaction or v2->v3 migration may only advance
       // durable counters and policy scope. Same revision means byte-identical
@@ -378,10 +384,17 @@ BootResult recoverTwoPages(const uint8_t (&pages)[2][c::kPageSize],
           (selected.state.policy_revision == older.state.policy_revision &&
            !samePolicy(selected.state, older.state)))
         return BootResult::kFault;
-    } else if (selected.state.key_epoch <= older.state.key_epoch) {
-      // A new credential epoch cannot go backwards while both A/B
-      // generations remain. Old credential keys and grants never migrate.
-      return BootResult::kFault;
+    } else {
+      // A new credential starts with no old TX/A2D counter lifetime or
+      // Gateway grants, even if it chooses the same numeric epoch under
+      // the existing credential-rotation policy.
+      c::State fresh{};
+      memcpy(fresh.credential_id, selected.state.credential_id, 16U);
+      fresh.key_epoch = selected.state.key_epoch;
+      if (selected.state.tx_bound != 0U ||
+          selected.state.a2d_bound != 0U ||
+          !samePolicy(selected.state, fresh))
+        return BootResult::kFault;
     }
   }
   out = selected.state;
