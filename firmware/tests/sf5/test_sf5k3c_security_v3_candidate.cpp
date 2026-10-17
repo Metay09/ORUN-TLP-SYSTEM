@@ -97,8 +97,8 @@ void testCodecFailClosed() {
   assert(c::decodePageHeader(header, kTracker, generation) &&
          generation == 1U);
   assert(!c::decodePageHeader(header, kTracker + 1U, generation));
-  assert(!sf::decodePageHeaderVersion(header, sf::kVersionV2,
-                                      *new sf::PageHeader{}));
+  sf::PageHeader v2_view{};
+  assert(!sf::decodePageHeaderVersion(header, sf::kVersionV2, v2_view));
   // The old v2 decoder cannot consume the proposed v3 page.
   uint8_t staged[c::kHeaderSize]{};
   memcpy(staged, header, sizeof(staged));
