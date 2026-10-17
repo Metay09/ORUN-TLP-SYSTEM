@@ -47,4 +47,6 @@ echo "[SF5K3A] real ProductRecordStore read-only custody preflight ($cxx)"
   -o "$build_dir/product-store"
 "$build_dir/product-store" --custody-preflight-only
 
-echo "[SF5K3A] all focused host tests PASS"
+echo "[SF5K3B] 0x05 single-object SHA256/HKDF/HMAC host oracle (test-only)"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k3b_single_ack_reference.py
+echo "[SF5K3A/SF5K3B] all focused host tests PASS"
