@@ -71,6 +71,10 @@ a fake NOR FlashBackend (erased destination enforcement, injected
 cut points, and simulated asynchronous completions), covering
 v2→v3, v3→v3, tombstone/credential/counter refusal, byte cuts,
 source preservation, corrupt readback and pre-activation tamper.
+It additionally models a completed final activation whose asynchronous
+SoftDevice result is reported as failed: the transaction stays FAULT
+although reboot may legitimately inspect a physically committed v3
+page. Never convert such a result into same-boot authority.
 
 These tests do NOT prove actual SoftDevice timing, FlashMutationGate
 arbitration, device resets, wear endurance or safe on-device release.
