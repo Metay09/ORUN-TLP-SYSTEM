@@ -97,7 +97,7 @@ void testCodecFailClosed() {
   assert(!c::decodeEntry(damaged, decoded));
 
   c::Entry invalid = g;
-  invalid.custody_floor = 0U;
+  invalid.policy_revision = 0U;
   memset(damaged, 0xA5, sizeof(damaged));
   assert(!c::encodeEntry(invalid, damaged));
   for (size_t i = 0U; i < sizeof(damaged); ++i)
@@ -120,45 +120,65 @@ void testCodecFailClosed() {
 
 void testGrantScopeAndCounters() {
   c::State s = initial();
-  // No provisioned grant is never a valid ACK authority.
+  // Zero is a valid custody policy floor, but no slot has been enrolled.
   assert(!c::grantScopeMatches(s, kGatewayBase + 1U, 0U, 1U));
   assert(!c::applyHostAuthenticated(
-      policy(s, 0U, kGatewayBase + 1U, 2U, 1U, 1U), false, s));
+      policy(s, 0U, kGatewayBase + 1U, 2U, 0U, 1U), false, s));
   assert(s.policy_revision == 0U);
 
-  for (uint8_t i = 0U; i < 4U; ++i) {
+  // Four independent slots can be enrolled while preserving the shared
+  // policy floor; adding Gateway 4 must not revoke Gateway 1.
+  for (uint8_t idx = 0U; idx < 4U; ++idx) {
     const c::Entry update = policy(
-        s, i, kGatewayBase + static_cast<uint64_t>(i) + 1U,
-        static_cast<uint32_t>(i) + 2U,
-        static_cast<uint32_t>(i) + 1U,
-        static_cast<uint32_t>(i) + 1U);
+        s, idx, kGatewayBase + static_cast<uint64_t>(idx) + 1U,
+        static_cast<uint32_t>(idx) + 2U,
+        0U, static_cast<uint32_t>(idx) + 1U);
     assert(c::applyHostAuthenticated(update, true, s));
-    assert(s.custody_floor == static_cast<uint32_t>(i) + 1U);
+    assert(s.custody_floor == 0U);
   }
-  assert(c::grantScopeMatches(s, kGatewayBase + 1U, 4U, 2U));
-  assert(c::grantScopeMatches(s, kGatewayBase + 4U, 4U, 5U));
-  assert(!c::grantScopeMatches(s, kGatewayBase + 1U, 1U, 2U));
-  assert(!c::grantScopeMatches(s, kGatewayBase + 1U, 4U, 3U));
+  assert(c::grantScopeMatches(s, kGatewayBase + 1U, 0U, 2U));
+  assert(c::grantScopeMatches(s, kGatewayBase + 4U, 0U, 5U));
+  assert(!c::grantScopeMatches(s, kGatewayBase + 1U, 0U, 3U));
   assert(!c::applyHostAuthenticated(
-      policy(s, 4U, kGatewayBase + 5U, 7U, 5U, 5U), true, s));
+      policy(s, 4U, kGatewayBase + 5U, 7U, 0U, 5U), true, s));
   assert(!c::applyHostAuthenticated(
-      policy(s, 1U, kGatewayBase + 1U, 7U, 5U, 5U), true, s));
+      policy(s, 1U, kGatewayBase + 1U, 7U, 0U, 5U), true, s));
   assert(!c::applyHostAuthenticated(
-      policy(s, 1U, kGatewayBase + 9U, 7U, 3U, 5U), true, s));
+      policy(s, 1U, kGatewayBase + 9U, 3U, 0U, 4U), true, s));
   assert(!c::applyHostAuthenticated(
-      policy(s, 1U, kGatewayBase + 9U, 7U, 5U, 4U), true, s));
-  const c::Entry revoke = policy(s, 1U, 0U, 0U, 5U, 5U);
-  assert(c::applyHostAuthenticated(revoke, true, s));
-  assert(!c::grantScopeMatches(s, kGatewayBase + 2U, 5U, 3U));
-  assert(!c::grantScopeMatches(s, kGatewayBase + 4U, 4U, 5U));
-  assert(c::grantScopeMatches(s, kGatewayBase + 4U, 5U, 5U));
-  assert(c::applyHostAuthenticated(
-      policy(s, 1U, kGatewayBase + 2U, 6U, 6U, 6U), true, s));
-  assert(!c::grantScopeMatches(s, kGatewayBase + 2U, 6U, 3U));
-  assert(c::grantScopeMatches(s, kGatewayBase + 2U, 6U, 6U));
+      policy(s, 1U, kGatewayBase + 9U, 3U, 0U, 5U), true, s));
 
-  // Rekey under a different credential/epoch never inherits this decision.
-  c::Entry wrong_scope = policy(s, 2U, kGatewayBase + 10U, 8U, 7U, 7U);
+  // A revocation increments ONLY that slot's durable generation; unrelated
+  // Gateways remain entitled to ACK at the unchanged common floor.
+  const c::Entry revoke = policy(s, 1U, 0U, 4U, 0U, 5U);
+  assert(c::applyHostAuthenticated(revoke, true, s));
+  assert(s.gateways[1].gateway_id == 0U &&
+         s.gateways[1].generation == 4U);
+  assert(!c::grantScopeMatches(s, kGatewayBase + 2U, 0U, 3U));
+  assert(c::grantScopeMatches(s, kGatewayBase + 1U, 0U, 2U));
+  assert(c::grantScopeMatches(s, kGatewayBase + 4U, 0U, 5U));
+  assert(!c::applyHostAuthenticated(
+      policy(s, 1U, kGatewayBase + 2U, 3U, 0U, 6U), true, s));
+  assert(!c::applyHostAuthenticated(
+      policy(s, 1U, kGatewayBase + 2U, 4U, 0U, 6U), true, s));
+  assert(c::applyHostAuthenticated(
+      policy(s, 1U, kGatewayBase + 2U, 5U, 0U, 6U), true, s));
+  assert(!c::grantScopeMatches(s, kGatewayBase + 2U, 0U, 3U));
+  assert(c::grantScopeMatches(s, kGatewayBase + 2U, 0U, 5U));
+
+  // A deliberate floor-only policy bump revokes all former floor-0 ACKs.
+  assert(c::applyHostAuthenticated(
+      policy(s, 0xFFU, 0U, 0U, 1U, 7U), true, s));
+  assert(s.custody_floor == 1U && s.policy_revision == 7U);
+  assert(!c::grantScopeMatches(s, kGatewayBase + 1U, 0U, 2U));
+  assert(c::grantScopeMatches(s, kGatewayBase + 1U, 1U, 2U));
+  assert(!c::applyHostAuthenticated(
+      policy(s, 0xFFU, 0U, 0U, 1U, 8U), true, s));
+  assert(!c::applyHostAuthenticated(
+      policy(s, 0xFFU, 0U, 0U, 0U, 8U), true, s));
+
+  // Wrong credential/epoch cannot inherit or mutate a grant.
+  c::Entry wrong_scope = policy(s, 2U, kGatewayBase + 10U, 8U, 1U, 8U);
   wrong_scope.key_epoch = 8U;
   assert(!c::applyHostAuthenticated(wrong_scope, true, s));
   wrong_scope.key_epoch = 7U;
@@ -237,7 +257,7 @@ void testPowerCutsAndBootReplay() {
   journal[24] ^= 1U;
   assert(!c::recoverHostJournal(journal, sizeof(journal), seed, replayed));
   memcpy(journal, first_wire, sizeof(first_wire));
-  c::Entry stale = policy(seed, 1U, kGatewayBase + 2U, 4U, 1U, 2U);
+  c::Entry stale = policy(seed, 1U, kGatewayBase + 2U, 4U, 0U, 2U);
   uint8_t stale_wire[c::kEntrySize]{};
   assert(c::encodeEntry(stale, stale_wire));
   memcpy(journal + c::kEntrySize, stale_wire, sizeof(stale_wire));
