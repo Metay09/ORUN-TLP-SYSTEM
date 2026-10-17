@@ -238,6 +238,50 @@ void testMigrationCuts() {
          d::BootResult::kUnsupported);
 }
 
+void testLegacyV1Migration() {
+  // The real SecurityStore still recognizes ORS1/v1. An independent
+  // migration must carry the v1 TX-exclusive bound, never manufacture
+  // an A2D reserve or an enrolled custody Gateway.
+  c::State old = seed();
+  old.tx_bound = 512U;
+  old.a2d_bound = 0U;
+  uint8_t key[32]{};
+  root(key);
+  uint8_t pages[2][c::kPageSize]{};
+  memset(pages, 0xFF, sizeof(pages));
+  sf::encodePageHeaderVersion(sf::PageHeader{3U, kTracker},
+                              sf::kVersionV1, pages[0]);
+  sf::Credential cred{};
+  memcpy(cred.credential_id, old.credential_id, 16U);
+  cred.key_epoch = old.key_epoch;
+  cred.device_identity = kTracker;
+  memcpy(cred.k_root, key, sizeof(key));
+  sf::encodeCredential(cred, pages[0] + sf::kPageHeaderSize);
+  sf::TxReserve reserve{};
+  memcpy(reserve.credential_id, old.credential_id, 16U);
+  reserve.key_epoch = old.key_epoch;
+  reserve.tx_reserved_bound = old.tx_bound;
+  sf::encodeTxReserve(
+      reserve, pages[0] + sf::kPageHeaderSize + sf::kCredentialRecordSize);
+  c::State recovered{};
+  uint64_t generation = 0U;
+  assert(d::recoverTwoPages(pages, kTracker, recovered, generation) ==
+         d::BootResult::kV1);
+  expectEquivalent(recovered, old);
+  assert(generation == 3U);
+
+  uint8_t image[c::kPageSize]{};
+  assert(d::makeV3SnapshotPage(kTracker, 4U, old, key, image));
+  writePrefix(pages[1], image, kStagedBodySize);
+  assert(d::recoverTwoPages(pages, kTracker, recovered, generation) ==
+         d::BootResult::kV1);
+  writePrefix(pages[1], image, kCompleteWriteSize);
+  assert(d::recoverTwoPages(pages, kTracker, recovered, generation) ==
+         d::BootResult::kV3);
+  expectEquivalent(recovered, old);
+  assert(generation == 4U);
+}
+
 void testCompactionAndTornOldErase() {
   c::State held = grants();
   uint8_t key[32]{};
@@ -386,6 +430,7 @@ void testRejectCorruptCredentialAndSnapshot() {
 int main() {
   testSnapshotAndTombstones();
   testMigrationCuts();
+  testLegacyV1Migration();
   testCompactionAndTornOldErase();
   testCredentialReplacementDropsOldGrants();
   testRejectCorruptCredentialAndSnapshot();
