@@ -1445,6 +1445,96 @@ ObservationStore::ControlLookupResult ObservationStore::findExactObject(
   return ControlLookupResult::kFound;
 }
 
+bool ObservationStore::snapshotRetainedExact(
+    osc::ExactObject (&objects)[osf::kMaxExactCustodyObjects],
+    uint16_t& count) const {
+  // An ACK matcher must not observe a half-committed cache or an ambiguous
+  // flash mutation. Stage every result locally and publish atomically.
+  if (!ready_ || faulted_ || busy() || mutationUncertain() ||
+      rotation_resuming_ || control_compaction_resuming_ ||
+      control_retirement_resuming_ || append_result_ready_ ||
+      release_result_ready_ || control_write_result_ready_ ||
+      control_maintenance_result_ready_ || maintenance_result_ready_)
+    return false;
+
+  osc::ExactObject staged[osf::kMaxExactCustodyObjects]{};
+  uint16_t n = 0U;
+  if (active_control_page_ >= 0) {
+    for (uint16_t slot = 0U; slot < osf::kControlRecordsPerPage; ++slot) {
+      osf::ControlInspection control{};
+      if (!readControl(static_cast<uint16_t>(active_control_page_), slot,
+                       control)) return false;
+      if (control.evidence == osf::ControlEvidence::kErased ||
+          control.evidence == osf::ControlEvidence::kStaged ||
+          control.evidence == osf::ControlEvidence::kPartialCommit)
+        continue;
+      if (control.evidence == osf::ControlEvidence::kCorrupt ||
+          !controlPayloadValid(control))
+        return false;
+      if (control.kind != osf::ControlKind::kExactObject ||
+          control.evidence != osf::ControlEvidence::kActive)
+        continue;
+
+      bool read_ok = false;
+      const bool latest = controlIsLatest(slot, control, read_ok);
+      if (!read_ok) return false;
+      if (!latest) continue;
+
+      osc::ExactObject candidate{};
+      if (!osc::decodeExactObject(control.payload, control.payload_size,
+                                  candidate)) return false;
+      Record backing{};
+      const LookupResult backing_result =
+          findRecord(candidate.identity, backing);
+      if (backing_result == LookupResult::kReadError) return false;
+      // Control bytes may outlive the backing record after durable release
+      // and safe data-page retirement; those bytes are NOT pending custody.
+      if (backing_result == LookupResult::kNone || backing.released)
+        continue;
+      if (backing.kind != candidate.record_kind ||
+          backing.release_uncertain || backing.release_marker_exhausted)
+        return false;
+
+      // Reconfirm the public exact lookup's view to reject malformed,
+      // superseded or otherwise ambiguous control-journal state.
+      osc::ExactObject public_view{};
+      if (findExactObject(candidate.identity, public_view) !=
+              ControlLookupResult::kFound ||
+          public_view.record_kind != candidate.record_kind ||
+          public_view.object_size != candidate.object_size ||
+          memcmp(public_view.object, candidate.object,
+                 candidate.object_size) != 0)
+        return false;
+      if (n >= osf::kMaxExactCustodyObjects) return false;
+      for (uint16_t j = 0U; j < n; ++j) {
+        if (staged[j].identity.incarnation ==
+                candidate.identity.incarnation &&
+            staged[j].identity.sequence == candidate.identity.sequence)
+          return false; // never pick one of two equal-looking identities
+      }
+      // Stable ascending logical order; the ACK's digest matcher may sort
+      // differently, but this enumeration does not imply cumulative ACK.
+      uint16_t pos = n;
+      while (pos != 0U &&
+             (staged[pos - 1U].identity.incarnation >
+                  candidate.identity.incarnation ||
+              (staged[pos - 1U].identity.incarnation ==
+                   candidate.identity.incarnation &&
+               staged[pos - 1U].identity.sequence >
+                   candidate.identity.sequence))) {
+        staged[pos] = staged[pos - 1U];
+        --pos;
+      }
+      staged[pos] = candidate;
+      ++n;
+    }
+  }
+
+  for (uint16_t i = 0U; i < n; ++i) objects[i] = staged[i];
+  count = n;
+  return true;
+}
+
 bool ObservationStore::exactObjectCount(uint16_t& count) const {
   count = 0U;
   if (!ready_ || faulted_ || mutationUncertain()) return false;
