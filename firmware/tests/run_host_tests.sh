@@ -632,12 +632,51 @@ g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
   firmware/tests/sf5/sf5k1_batch_ack_candidate.cpp \
   -o "$test_dir/sf5k1_batch_ack_candidate"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k1_batch_mac_reference.py
+# SF5K3B: approved-wire-shape 0x05 single-object test-only HKDF/HMAC oracle;
+# no Gateway provisioned state, no authenticated release or runtime linkage.
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k3b_single_ack_reference.py
+# SF5K3C host-only v3 proposed authority journal; explicitly INERT.
+# The live SecurityStore continues to persist v2 with no custody grants.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3c_security_v3_candidate.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3c_security_v3_candidate"
+# SF5K3D: inert A/B snapshot/migration/compaction power-cut model.
+# Production SecurityStore remains v2; this test never writes real flash.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3d_security_v3_snapshot_candidate"
+"$test_dir/sf5k3d_security_v3_snapshot_candidate"
+"$test_dir/sf5k3c_security_v3_candidate"
 # SF5K2 host-only evidence candidate regression.
 g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
   firmware/tests/sf5/test_sf5k2_gateway_batch_candidate.cpp \
   firmware/tests/sf5/sf5k2_gateway_batch_candidate.cpp \
   firmware/tests/sf5/sf5g_custody_record_candidate.cpp \
   -o "$test_dir/sf5k2_gateway_batch_candidate"
+# SF5K3A: host-only exact-object release progress (never RF/runtime).
+g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3_release_progress_candidate.cpp \
+  firmware/tests/sf5/sf5k3_release_progress_candidate.cpp \
+  -o "$test_dir/sf5k3_release_progress_candidate"
+"$test_dir/sf5k3_release_progress_candidate"
+
+# SF5K3A integration: same progress logic against the ACTUAL flash-backed
+# ObservationStore APIs with durable release, restart and subset ACK tests.
+g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3_observation_store_port.cpp \
+  firmware/tests/sf5/sf5k3_observation_store_port.cpp \
+  firmware/tests/sf5/sf5k3_release_progress_candidate.cpp \
+  firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
+  -o "$test_dir/sf5k3_observation_store_port"
+"$test_dir/sf5k3_observation_store_port"
 "$test_dir/sf5k2_gateway_batch_candidate"
 "$test_dir/sf5k1_batch_ack_candidate"
 

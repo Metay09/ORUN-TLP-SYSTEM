@@ -78,6 +78,43 @@ ObservationStore::ControlLookupResult ProductRecordStore::findCachedExact(
   return store_.findExactObject(identity, value);
 }
 
+bool ProductRecordStore::custodyCandidateMatchesRetainedExact(
+    const osc::ExactObject& expected) const {
+  if (!mounted_ || preparing() || pending_ ||
+      job_ != Job::kNone || cache_pending_ || cache_outcome_ready_ ||
+      !store_.ready() || store_.faulted() || store_.busy() ||
+      flash_.hasUnreconciledMutation() ||
+      !expected.identity.valid() ||
+      (expected.record_kind != osf::RecordKind::kPeriodic &&
+       expected.record_kind != osf::RecordKind::kEvent) ||
+      expected.object_size == 0U ||
+      expected.object_size > osc::kMaxProtectedObjectSize)
+    return false;
+
+  ObservationStore::Record backing{};
+  if (store_.lookup(expected.identity, backing) !=
+          ObservationStore::LookupResult::kFound ||
+      backing.released || backing.release_uncertain ||
+      backing.release_marker_exhausted ||
+      backing.kind != expected.record_kind)
+    return false;
+
+  // The storage owner is opaque to ACK authority. This exact-byte equality
+  // is necessary, but NOT sufficient, for authenticated custody release.
+  return matchesCachedObject(expected);
+}
+
+bool ProductRecordStore::snapshotCustodyCandidates(
+    osc::ExactObject (&objects)[osf::kMaxExactCustodyObjects],
+    uint16_t& count) const {
+  if (!mounted_ || preparing() || pending_ || outcome_ready_ ||
+      job_ != Job::kNone || cache_pending_ || cache_outcome_ready_ ||
+      !store_.ready() || store_.faulted() || store_.busy() ||
+      flash_.hasUnreconciledMutation())
+    return false;
+  return store_.snapshotRetainedExact(objects, count);
+}
+
 bool ProductRecordStore::matchesCachedObject(
     const osc::ExactObject& expected) const {
   osc::ExactObject found{};

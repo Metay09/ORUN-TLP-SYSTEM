@@ -146,6 +146,15 @@ class ObservationStore {
   // Read-only live-object bound, distinct from free control-journal slots.
   bool exactObjectCount(uint16_t& count) const;
 
+  // Bounded, read-only snapshot of ACTIVE exact ciphertext objects that are
+  // still backed by retained, non-uncertain logical records. This enumerates
+  // the four-object physical cache, NOT the much larger observation history.
+  // On any read/corruption/ambiguous state, return false and leave outputs
+  // unchanged. No ACK cryptography or release authority is conferred.
+  bool snapshotRetainedExact(
+      osc::ExactObject (&objects)[osf::kMaxExactCustodyObjects],
+      uint16_t& count) const;
+
   ControlWriteResult requestPutOpenOccurrence(
       const osc::OpenOccurrence& value);
   ControlWriteResult requestClearOpenOccurrence(

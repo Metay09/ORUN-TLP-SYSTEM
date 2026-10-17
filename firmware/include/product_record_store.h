@@ -84,6 +84,21 @@ class ProductRecordStore {
   CacheSubmit submitExactCache(const osc::ExactObject& value);
   bool takeCacheOutcome(CacheOutcome& outcome);
 
+  // Read-only release preflight evidence for a future authenticated Gateway
+  // custody ACK. Requires a retained logical record and byte-identical,
+  // durably cached exact protected object. This is NOT ACK authorization:
+  // it checks neither Gateway credentials nor HMAC and releases NOTHING.
+  // Fail closed while the product store is mutating or needs recovery.
+  bool custodyCandidateMatchesRetainedExact(
+      const osc::ExactObject& expected) const;
+
+  // Enumerate at most four durably cached exact objects for a future
+  // authenticated 0x05/0x06 custody ACK matcher. Read-only and fail-closed.
+  // This is NOT a custody/ACK admission or a record release.
+  bool snapshotCustodyCandidates(
+      osc::ExactObject (&objects)[osf::kMaxExactCustodyObjects],
+      uint16_t& count) const;
+
   bool requestPrepare();
   bool preparing() const { return prepare_state_ != PrepareState::kIdle; }
   bool takePrepareResult(bool& success);
