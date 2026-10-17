@@ -48,6 +48,8 @@ The next concrete blocker for both the frozen one-object `0x05` ACK and the host
 
 **Actual next production security dependency:** implement separate durable custody Gateway enrollment/revocation state and independent, non-exportable scoped custody key derivation/verification (SF5B §12.1/§12.4) under the reviewed SecurityStore security owner; test power-fail and stale-floor/generation rollback. Only then compose a 0x05 receive verifier with exact-cache snapshot, authenticated HMAC and the one ProductRecordStore/ObservationStore release owner. Do not synthesize custody grants from command replay slots or test fixtures.
 
+SF5K3C now adds an **inert, test-only** v3 SecurityStore custody-policy journal codec and host model (`firmware/tests/sf5/sf5k3c_security_v3_candidate.{h,cpp}`, `test_sf5k3c_security_v3_candidate.cpp`). It models the same two 4 KiB A/B pages, an explicitly newer 56-byte typed journal format with 71 slots, strict one-entry Gateway grant/revoke policy transitions, revocation floor/revision monotonicity, staged commit failures and no automatic v2 authorization. **The shipping SecurityStore still writes v2**, and neither authenticated policy updates nor actual v3 A/B migration/compaction is implemented. See `docs/architecture/ORUN_SECURITY_CUSTODY_V3_CANDIDATE.md`. These new candidate C++ tests require user-host compilation and execution; no PASS is claimed yet.
+
 A true production authenticated `ProductRecordStore` release adapter, durable Gateway custody grant and HMAC admission remain blocked, as do hardware/physical RF and power-cut validation.
 
 ## Execution order — finish the real product chain
