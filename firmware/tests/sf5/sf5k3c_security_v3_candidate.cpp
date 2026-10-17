@@ -163,7 +163,7 @@ bool applyHostAuthenticated(const Entry& record, bool authenticated,
   } else if (record.kind == Kind::kA2dReplayReserve) {
     if (record.value <= state.a2d_bound) return false;
     next.a2d_bound = record.value;
-  } else {
+  } else if (record.kind == Kind::kCustodyPolicy) {
     if (state.policy_revision == UINT32_MAX ||
         record.policy_revision != state.policy_revision + 1U ||
         record.custody_floor < state.custody_floor)
