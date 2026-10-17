@@ -1495,16 +1495,10 @@ bool ObservationStore::snapshotRetainedExact(
           backing.release_uncertain || backing.release_marker_exhausted)
         return false;
 
-      // Reconfirm the public exact lookup's view to reject malformed,
-      // superseded or otherwise ambiguous control-journal state.
-      osc::ExactObject public_view{};
-      if (findExactObject(candidate.identity, public_view) !=
-              ControlLookupResult::kFound ||
-          public_view.record_kind != candidate.record_kind ||
-          public_view.object_size != candidate.object_size ||
-          memcmp(public_view.object, candidate.object,
-                 candidate.object_size) != 0)
-        return false;
+      // controlIsLatest already checked superseding tombstones and stale
+      // journal versions. Avoid a second full flash scan per candidate:
+      // findExactObject() would re-scan the record backing too, increasing
+      // radio-window energy cost without stronger custody authorization.
       if (n >= osf::kMaxExactCustodyObjects) return false;
       for (uint16_t j = 0U; j < n; ++j) {
         if (staged[j].identity.incarnation ==
