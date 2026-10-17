@@ -59,4 +59,15 @@ echo "[SF5K3C] candidate v3 custody-policy journal (host-only)"
   -o "$build_dir/v3-candidate"
 "$build_dir/v3-candidate"
 
-echo "[SF5K3A/SF5K3B/SF5K3C] all focused host tests PASS"
+echo "[SF5K3D] v2->v3 and v3->v3 A/B snapshot/byte-cut (host only)"
+"$cxx" "${flags[@]}" -Wno-conversion -Wno-sign-conversion \
+  firmware/tests/sf5/test_sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/src/security_format.cpp \
+  firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$build_dir/v3-snapshot"
+"$build_dir/v3-snapshot"
+
+echo "[SF5K3A/SF5K3B/SF5K3C/SF5K3D] all focused host tests PASS"
