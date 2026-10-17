@@ -812,9 +812,13 @@ void testFillAndResetEverywhere() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
   testCustodyCandidatePreflightReadOnly(false);
   testCustodyCandidatePreflightReadOnly(true);
+  if (argc == 2 && strcmp(argv[1], "--custody-preflight-only") == 0) {
+    puts("SF5K3A ProductRecordStore read-only preflight: PASS");
+    return 0;
+  }
   testStoreAndRemount(false);
   testStoreAndRemount(true);
   testOwnersAndPrepare();
