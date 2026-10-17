@@ -43,7 +43,9 @@ page. No root secrets or Gateway IDs are exposed.
   snapshot entries and a fully checked append sequence.
 - An unknown future ORS1 header blocks downgrade; a committed corrupt
   page, foreign credential or physical read failure cannot silently
-  fall back to the other page.
+  fall back to the other page. A fully erased header with ANY non-erased
+  credential/journal payload is an ambiguous torn erase (FAULT), not a
+  blank page eligible for silent fallback.
 - Highest page generation wins only if generations are unambiguous.
   For the same root and credential ID, TX/A2D bounds, policy
   revision/floor, GLOBAL grant-generation high-water and EACH
