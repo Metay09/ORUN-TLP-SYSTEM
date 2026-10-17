@@ -106,6 +106,44 @@ the four-slot policy. These are NOT evidence that the
 real `SecurityStore` can yet migrate, append, compact, reconcile uncertain
 flash completion, or authenticate enrollment.
 
+## Migration and compaction blocker found in real SecurityStore
+
+Source inspection at `0c8e73c` confirms that production
+`SecurityStore::startNewPage` stages TX/A2D exclusive-bound snapshots,
+`SecurityStore::poll` writes those snapshots and the credential before
+activating the new page, and `completeNewPage` currently publishes v2.
+Only those two typed bounds are copied. **It is not enough to switch
+`kVersion` from 2 to 3**: a live v3 policy would be lost as soon as TX/A2D
+reservations triggered A/B compaction.
+
+The present candidate v3 **append-entry** schema also has no reviewed
+mechanism to reconstruct an arbitrary *already advanced*
+`policy_revision`, global `custody_floor`, and all four (including revoked)
+slot generations when writing a compacted page: replaying merely the four
+most recent slot changes would fail its revision sequencing, while resetting
+revision or dropping tombstones could revive old ACK scopes.
+
+Therefore **v3 writer activation is blocked** until a separate
+credential-bound *policy snapshot* representation has been designed and
+exercised through the actual A/B page-swap owner. The snapshot must preserve
+all of the following atomically before header activation: TX and A2D
+exclusive bounds; custody floor and exact global policy revision; all
+Gateway IDs, including absent/tombstoned slots and their generation
+high-water; and the credential ID/epoch. It must not create a new grant,
+reset counters, silently revise the policy or let an ACK install any entry.
+
+Essential failure cases: cut after erasing the destination, after each
+snapshot body/commit, during header activation, before old-page erase, and
+during old-page erase. Reboot must select the highest unambiguous committed
+generation or fail closed; no interrupted compaction may roll back an
+authenticated revocation, prior floor, or bound. Once activated, a v3 page
+must also remain a downgrade boundary for old v2 firmware.
+
+This **blocks production integration** and is not currently covered by the
+host-only SF5K3C PASS. Build and test the snapshot/migration model first,
+then modify the live SecurityStore only under separate host and target
+build qualifications.
+
 ## Gates before production integration
 
 1. Independent security/flash review of the v3 geometry, wear effects,
