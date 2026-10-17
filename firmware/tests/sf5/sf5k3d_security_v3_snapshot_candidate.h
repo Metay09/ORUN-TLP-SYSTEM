@@ -34,7 +34,7 @@ bool recoverSnapshotJournal(const uint8_t* region, size_t region_size,
                             uint32_t epoch, c::State& result);
 
 enum class BootResult : uint8_t {
-  kUnprovisioned, kV2, kV3, kUnsupported, kFault
+  kUnprovisioned, kV1, kV2, kV3, kUnsupported, kFault
 };
 
 // Read-only two-page boot selection model: v2 uses the ACTUAL
