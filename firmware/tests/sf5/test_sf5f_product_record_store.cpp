@@ -356,6 +356,98 @@ void checkRecovery(const std::vector<uint8_t>& bytes, unsigned active,
   checkExact(recovered, target, true);
 }
 
+// SF5K3A next gate: ProductRecordStore performs a READ-ONLY exact-object
+// preflight; neither an ACK HMAC nor authority is proven by this comparison.
+void testCustodyCandidatePreflightReadOnly(bool async) {
+  FakeFlash flash;
+  flash.async = async;
+  FixedIncarnation source;
+  osc::ExactObject first{};
+  {
+    ProductRecordStore records(flash, kPages, &source);
+    records.begin(kDevice, kTracker);
+    assert(records.mounted());
+    assert(store(records, 1U).stored);
+    first = protectedFixture(records, 1U);
+
+    // A retained plaintext record is NOT enough: exact protected bytes must
+    // have completed durable cache admission and readback.
+    assert(!records.custodyCandidateMatchesRetainedExact(first));
+    assert(records.submitExactCache(first) ==
+           ProductRecordStore::CacheSubmit::kStarted);
+    assert(!records.custodyCandidateMatchesRetainedExact(first));
+    settleExactCache(records, first, true);
+
+    const auto writes = flash.mutation_calls;
+    const auto image = flash.bytes;
+    assert(records.custodyCandidateMatchesRetainedExact(first));
+    assert(flash.mutation_calls == writes);
+    assert(flash.bytes == image);
+
+    osc::ExactObject different = first;
+    different.object[40] ^= 1U;
+    assert(!records.custodyCandidateMatchesRetainedExact(different));
+    different = first;
+    ++different.identity.sequence;
+    assert(!records.custodyCandidateMatchesRetainedExact(different));
+    different = first;
+    different.record_kind = osf::RecordKind::kEvent;
+    assert(!records.custodyCandidateMatchesRetainedExact(different));
+    different = first;
+    different.object_size = 0U;
+    assert(!records.custodyCandidateMatchesRetainedExact(different));
+
+    // Read faults, an uncertain flash mutation and an in-flight report must
+    // never turn an ACK object into a release-eligible record.
+    flash.fail_read_at = flash.read_calls + 1U;
+    assert(!records.custodyCandidateMatchesRetainedExact(first));
+    flash.fail_read_at = 0U;
+    flash.unreconciled = true;
+    assert(!records.custodyCandidateMatchesRetainedExact(first));
+    flash.unreconciled = false;
+
+    assert(records.submitPeriodic(period(2U)) ==
+           ProductRecordStore::Submit::kAccepted);
+    assert(!records.custodyCandidateMatchesRetainedExact(first));
+    ProductRecordStore::Outcome outcome{};
+    bool taken = false;
+    for (unsigned i = 0U; i < 20000U; ++i) {
+      records.poll();
+      if (records.takeOutcome(outcome)) { taken = true; break; }
+    }
+    assert(taken && outcome.stored);
+    assert(records.custodyCandidateMatchesRetainedExact(first));
+  }
+
+  flash.async = false;
+  {
+    ProductRecordStore recovered(flash, kPages, &source);
+    recovered.begin(kDevice, kTracker);
+    assert(recovered.mounted());
+    assert(recovered.custodyCandidateMatchesRetainedExact(first));
+    assert(flash.bytes.size() == size_t(kPages) * kPage);
+  }
+
+  // A durable logical release makes its cached exact protected object
+  // unreachable even when old control-page bytes still physically exist.
+  {
+    ObservationStore release_owner(flash, kPages, &source);
+    assert(release_owner.begin(kDevice));
+    assert(release_owner.requestRelease(first.identity));
+    for (unsigned i = 0U; i < 1000U && release_owner.busy(); ++i)
+      release_owner.poll();
+    assert(!release_owner.busy());
+    bool committed = false;
+    assert(release_owner.takeReleaseResult(committed) && committed);
+  }
+  {
+    ProductRecordStore released(flash, kPages, &source);
+    released.begin(kDevice, kTracker);
+    assert(released.mounted());
+    assert(!released.custodyCandidateMatchesRetainedExact(first));
+  }
+}
+
 void testExactObjectCacheAndReboot(bool async) {
   FakeFlash flash;
   flash.async = async;
@@ -721,6 +813,8 @@ void testFillAndResetEverywhere() {
 }  // namespace
 
 int main() {
+  testCustodyCandidatePreflightReadOnly(false);
+  testCustodyCandidatePreflightReadOnly(true);
   testStoreAndRemount(false);
   testStoreAndRemount(true);
   testOwnersAndPrepare();
