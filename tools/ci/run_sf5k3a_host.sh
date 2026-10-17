@@ -33,7 +33,9 @@ echo "[SF5K3A] actual ObservationStore ($cxx)"
 "$build_dir/actual"
 
 echo "[SF5K3A] real ProductRecordStore read-only custody preflight ($cxx)"
-"$cxx" "${flags[@]}" \
+# Match the existing SF5F fixture's compiler-warning contract; unlike the
+# new SF5K3A-only test sources it was not originally -Wconversion clean.
+"$cxx" "${flags[@]}" -Wno-conversion -Wno-sign-conversion \
   firmware/tests/sf5/test_sf5f_product_record_store.cpp \
   firmware/src/product_record_store.cpp \
   firmware/src/product_region.cpp \
