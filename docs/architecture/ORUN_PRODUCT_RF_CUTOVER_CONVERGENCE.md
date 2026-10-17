@@ -36,7 +36,7 @@ Consequently, if a four-member authenticated ACK has released member 1 and the T
 3. If power is lost after a proper release, that member stays released. Other members remain retained with exact ciphertext. At a later authenticated contact, the Gateway creates a **NEW subset ACK naming only the still-retained exact objects**. Do not replay the old full batch as authority or infer other members from a released prefix.
 4. Missing Gateway/reissued subset ACK means records remain on Tracker. Never clear those retained records simply to free the four cached slots. If the platform ever needs offline receipt recovery without a new ACK, that needs a separately designed durable grant/proof journal.
 
-SF5K3A host code is a non-cryptographic model of this **fail-closed** release policy. A true ProductRecordStore adapter, durable Gateway custody grant, HMAC admission and full physical failure recovery are still outstanding.
+SF5K3A now includes a **host-only adapter to the actual flash-backed `ObservationStore`**, with a planned real-store regression for full/partial ACK release, reboot mid-batch, mismatched exact bytes and read failure (`firmware/tests/sf5/test_sf5k3_observation_store_port.cpp`). The adapter is not a `ProductRecordStore` runtime owner or a crypto verifier. The full repository test runner must pass before this host integration is counted as validated; no connected GitHub CI run is available yet. A true production `ProductRecordStore` adapter, durable Gateway custody grant, authenticated HMAC admission and physical fault/RF validation remain outstanding.
 
 ## Execution order — finish the real product chain
 
