@@ -643,6 +643,16 @@ g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
   firmware/src/security_format.cpp firmware/src/journal_format.cpp \
   firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/sf5k3c_security_v3_candidate"
+# SF5K3D: inert A/B snapshot/migration/compaction power-cut model.
+# Production SecurityStore remains v2; this test never writes real flash.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3d_security_v3_snapshot_candidate"
+"$test_dir/sf5k3d_security_v3_snapshot_candidate"
 "$test_dir/sf5k3c_security_v3_candidate"
 # SF5K2 host-only evidence candidate regression.
 g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
