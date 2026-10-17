@@ -1,0 +1,52 @@
+name: SF5K3A ObservationStore host integration
+
+on:
+  push:
+    branches:
+      - feat/sf5k3a-release-progress-host
+  pull_request:
+    paths:
+      - 'firmware/tests/sf5/sf5k3_*'
+      - 'firmware/tests/sf5/test_sf5k3_*'
+      - 'firmware/tests/run_host_tests.sh'
+      - 'firmware/src/observation_store*'
+      - 'firmware/include/observation_store*'
+      - '.github/workflows/sf5k3-host.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  actual-store-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact PR branch
+        uses: actions/checkout@v4
+      - name: Build SF5K3A model with GCC and UBSan/ASan
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/orun-sf5k3
+          g++ -std=gnu++11 -O1 -g -Wall -Wextra -Werror \
+            -Wconversion -Wsign-conversion \
+            -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+            -Ifirmware/include -Ifirmware/tests/sf5 \
+            firmware/tests/sf5/test_sf5k3_release_progress_candidate.cpp \
+            firmware/tests/sf5/sf5k3_release_progress_candidate.cpp \
+            -o /tmp/orun-sf5k3/progress
+          /tmp/orun-sf5k3/progress
+      - name: Build actual ObservationStore integration with GCC and UBSan/ASan
+        run: |
+          set -euo pipefail
+          g++ -std=gnu++11 -O1 -g -Wall -Wextra -Werror \
+            -Wconversion -Wsign-conversion \
+            -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+            -Ifirmware/include -Ifirmware/tests/sf5 \
+            firmware/tests/sf5/test_sf5k3_observation_store_port.cpp \
+            firmware/tests/sf5/sf5k3_observation_store_port.cpp \
+            firmware/tests/sf5/sf5k3_release_progress_candidate.cpp \
+            firmware/src/observation_store.cpp \
+            firmware/src/observation_store_control.cpp \
+            firmware/src/observation_store_format.cpp \
+            -o /tmp/orun-sf5k3/actual-store
+          /tmp/orun-sf5k3/actual-store
