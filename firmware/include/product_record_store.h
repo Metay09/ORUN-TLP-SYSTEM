@@ -92,6 +92,13 @@ class ProductRecordStore {
   bool custodyCandidateMatchesRetainedExact(
       const osc::ExactObject& expected) const;
 
+  // Enumerate at most four durably cached exact objects for a future
+  // authenticated 0x05/0x06 custody ACK matcher. Read-only and fail-closed.
+  // This is NOT a custody/ACK admission or a record release.
+  bool snapshotCustodyCandidates(
+      osc::ExactObject (&objects)[osf::kMaxExactCustodyObjects],
+      uint16_t& count) const;
+
   bool requestPrepare();
   bool preparing() const { return prepare_state_ != PrepareState::kIdle; }
   bool takePrepareResult(bool& success);
