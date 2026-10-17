@@ -103,4 +103,17 @@ echo "[SF5K3G] production FlashBackend v1/v2/v3 A/B read-only election"
   -o "$build_dir/v3-ab-preflight"
 "$build_dir/v3-ab-preflight"
 
-echo "[SF5K3A/SF5K3B/SF5K3C/SF5K3D/SF5K3E/SF5K3F/SF5K3G] all focused host tests PASS"
+echo "[SF5K3H] real FlashBackend v3 page commit-last migration/compaction"
+"$cxx" "${flags[@]}" -Wno-conversion -Wno-sign-conversion \
+  firmware/tests/sf5/test_sf5k3h_security_v3_page_writer.cpp \
+  firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$build_dir/v3-page-writer"
+"$build_dir/v3-page-writer"
+
+echo "[SF5K3A/SF5K3B/SF5K3C/SF5K3D/SF5K3E/SF5K3F/SF5K3G/SF5K3H] all focused host tests PASS"
