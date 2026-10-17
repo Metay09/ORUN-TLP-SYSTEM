@@ -188,6 +188,12 @@ void testBlankStagedUnsupportedAndFault() {
   FakeFlash flash;
   mustReturn(flash, ab::Result::kUnprovisioned);
 
+  // A seemingly erased page-header with a retained credential/journal body
+  // can be an interrupted ERASE of an authoritative page. It is NOT empty.
+  flash.data[100U] = 0U;
+  mustReturn(flash, ab::Result::kFault);
+  flash.reset();
+
   uint8_t page[c::kPageSize]{};
   makeV3(stateWithPolicy(), 1U, page);
   flash.write(0U, page);
