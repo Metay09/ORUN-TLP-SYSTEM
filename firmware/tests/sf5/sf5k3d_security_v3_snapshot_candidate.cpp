@@ -140,6 +140,7 @@ struct Found {
   bool present = false;
   uint8_t version = 0U;
   uint64_t generation = 0U;
+  uint8_t root[32]{};
   c::State state{};
 };
 
@@ -153,6 +154,7 @@ Inspection inspect(const uint8_t* page, uint64_t tracker, Found& f) {
   // ORS1 version is not silently ignored, even if activation is staged.
   uint8_t version = 0U;
   if (sf::headerMagicPresent(page, &version) &&
+      version != 0xFFU &&  // not yet programmed: a staged header
       version != sf::kVersionV1 && version != sf::kVersionV2 &&
       version != c::kCandidateVersion)
     return Inspection::kUnsupported;
@@ -196,6 +198,7 @@ Inspection inspect(const uint8_t* page, uint64_t tracker, Found& f) {
   f.present = true;
   f.version = version;
   f.generation = generation;
+  memcpy(f.root, cred.k_root, sizeof(f.root));
   f.state = state;
   return Inspection::kPresent;
 }
@@ -359,6 +362,10 @@ BootResult recoverTwoPages(const uint8_t (&pages)[2][c::kPageSize],
     const Found& older = found[other];
     if (sameId(older.state.credential_id, selected.state.credential_id) &&
         older.state.key_epoch == selected.state.key_epoch) {
+      // The same security lifetime cannot silently replace its root secret
+      // during page compaction. That would make the nonce namespace unsafe.
+      if (memcmp(selected.root, older.root, sizeof(selected.root)) != 0)
+        return BootResult::kFault;
       // A/B overlap from a compaction or v2->v3 migration may only advance
       // durable counters and policy scope. Same revision means byte-identical
       // grants, including tombstones. Never erase a revocation by copying
