@@ -27,7 +27,12 @@ static_assert(kSlotCount == 71U && kTailBytes == 20U,
               "v3 candidate must not change physical security partition");
 
 enum class Kind : uint8_t {
-  kTxReserve = 1U, kA2dReplayReserve = 2U, kCustodyPolicy = 3U
+  kTxReserve = 1U,
+  kA2dReplayReserve = 2U,
+  kCustodyPolicy = 3U,
+  // SF5K3D host-only, valid ONLY as a complete 5-entry page prefix.
+  kPolicySnapshot = 4U,
+  kGatewaySnapshot = 5U,
 };
 
 // Logical 56-byte state journal entry. CRC and COMMIT are not struct fields.
