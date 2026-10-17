@@ -661,6 +661,17 @@ g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
   firmware/src/security_store.cpp firmware/src/security_format.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/sf5k3e_real_security_v3_readonly"
+# SF5K3F: new product-source v3 codec, cross-checked byte for byte against
+# the prior independent host-only C/D golden and power-cut models.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3f_security_v3_product_format.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3f_security_v3_product_format"
+"$test_dir/sf5k3f_security_v3_product_format"
 "$test_dir/sf5k3e_real_security_v3_readonly"
 "$test_dir/sf5k3d_security_v3_snapshot_candidate"
 "$test_dir/sf5k3c_security_v3_candidate"
