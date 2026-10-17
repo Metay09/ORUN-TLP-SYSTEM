@@ -177,9 +177,16 @@ corrupt CRC, non-erased reserved tail, or later snapshot injections fail
 closed. Version-3 is not an authorized production serializer.
 
 The new host test `test_sf5k3d_security_v3_snapshot_candidate.cpp` exercises
-v2→v3 migration byte cuts, v3→v3 compaction byte cuts, interrupted older-page
-erase, stale-revocation and exclusive-bound rollback, malformed snapshot
-prefixes, duplicate A/B generation and credential damage. The model selects
+v2→v3 migration byte cuts, v1→v3 legacy bound migration, v3→v3 compaction
+byte cuts, interrupted older-page erase, stale-revocation and exclusive-bound
+rollback, malformed snapshot prefixes, duplicate A/B generation and
+credential damage. The candidate also models the *real* current
+`SecurityStore::commitCredential` contract: changing a credential requires
+both a new credential ID and a new root, but may retain the same numerical
+`key_epoch`. Such a change resets TX/A2D reservations and **all** Gateway
+grants; an A/B copy under unchanged credential ID/epoch must retain the exact
+same root. This is a compatibility model, not approval of any new
+credential-provisioning transport. The model selects
 a newer page only after its complete snapshot, credential, bound records
 and page header COMMIT are durable. If an older page is still committed,
 the newer page cannot roll back that credential's bound/floor/revision or
