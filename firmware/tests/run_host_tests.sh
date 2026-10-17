@@ -684,6 +684,19 @@ g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
   firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/sf5k3g_security_v3_ab_preflight"
 "$test_dir/sf5k3g_security_v3_ab_preflight"
+# SF5K3H physically mutating v3 writer exercised ONLY on a host FakeFlash;
+# production SecurityStore remains a v2 writer, v3 remains unsupported.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3h_security_v3_page_writer.cpp \
+  firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3h_security_v3_page_writer"
+"$test_dir/sf5k3h_security_v3_page_writer"
 "$test_dir/sf5k3e_real_security_v3_readonly"
 "$test_dir/sf5k3d_security_v3_snapshot_candidate"
 "$test_dir/sf5k3c_security_v3_candidate"
