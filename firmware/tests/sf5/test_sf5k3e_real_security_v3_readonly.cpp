@@ -117,6 +117,10 @@ void testVerifiedButNeverAuthorized() {
   const c::State fixture = fixtureState();
   makeV3(flash, fixture);
   SecurityStore real(flash, flash);
+  SecurityV3ReadOnlySummary before_begin = sentinel();
+  assert(real.inspectV3PageReadOnly(0U, before_begin) ==
+         SecurityV3Inspection::kReadFault);
+  assertUnchanged(before_begin);
   assert(real.begin(DeviceIdentity::fromLegacyUint64(kTracker)));
   // An unsupported v3 page must NOT issue counters, grants, nor activate
   // a root or start an automatic flash migration.
@@ -210,6 +214,29 @@ void testStagedForeignAndCorruptAreNotPublished() {
 
   makeV3(flash, fixtureState());
   flash.data[c::kPageSize - 1U] = 0x00U; // reserved v3 tail
+  assert(real.inspectV3PageReadOnly(0U, output) ==
+         SecurityV3Inspection::kCorrupt);
+  assertUnchanged(output);
+
+  // Even a correctly CRC-sealed V3 credential is invalid when its scope
+  // identity is all-zero/erased or key epoch is the reserved sentinel.
+  makeV3(flash, fixtureState());
+  sf::Credential credential{};
+  assert(sf::decodeCredential(
+      flash.data.data() + sf::kPageHeaderSize, credential));
+  memset(credential.credential_id, 0U, sizeof(credential.credential_id));
+  sf::encodeCredential(
+      credential, flash.data.data() + sf::kPageHeaderSize);
+  assert(real.inspectV3PageReadOnly(0U, output) ==
+         SecurityV3Inspection::kCorrupt);
+  assertUnchanged(output);
+
+  makeV3(flash, fixtureState());
+  assert(sf::decodeCredential(
+      flash.data.data() + sf::kPageHeaderSize, credential));
+  credential.key_epoch = UINT32_MAX;
+  sf::encodeCredential(
+      credential, flash.data.data() + sf::kPageHeaderSize);
   assert(real.inspectV3PageReadOnly(0U, output) ==
          SecurityV3Inspection::kCorrupt);
   assertUnchanged(output);
