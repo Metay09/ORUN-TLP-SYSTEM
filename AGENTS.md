@@ -30,6 +30,14 @@ Primary priorities:
 5. Recoverability after failures.
 6. Configurability without reflashing firmware.
 
+### Product brief and repository entry point
+
+Start at `README.md` for a navigation map and read `PRD.md` for a concise
+statement of product intent. These are orientation aids, **not** implementation
+evidence, security/wire/storage authorization or a replacement for this file,
+owner-approved architecture, current code/tests, and milestone/audit records.
+Do not promote a designed or open-PR capability to implemented status.
+
 ### Owner-approved architecture decision documents
 
 For the high-level product/system decomposition, service ownership, realistic
