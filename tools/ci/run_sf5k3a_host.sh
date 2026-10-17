@@ -49,4 +49,14 @@ echo "[SF5K3A] real ProductRecordStore read-only custody preflight ($cxx)"
 
 echo "[SF5K3B] 0x05 single-object SHA256/HKDF/HMAC host oracle (test-only)"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k3b_single_ack_reference.py
-echo "[SF5K3A/SF5K3B] all focused host tests PASS"
+echo "[SF5K3C] candidate v3 custody-policy journal (host-only)"
+"$cxx" "${flags[@]}" -Wno-conversion -Wno-sign-conversion \
+  firmware/tests/sf5/test_sf5k3c_security_v3_candidate.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/src/security_format.cpp \
+  firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$build_dir/v3-candidate"
+"$build_dir/v3-candidate"
+
+echo "[SF5K3A/SF5K3B/SF5K3C] all focused host tests PASS"
