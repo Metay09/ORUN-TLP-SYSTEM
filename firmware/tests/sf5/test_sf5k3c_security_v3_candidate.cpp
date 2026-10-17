@@ -48,6 +48,8 @@ c::Entry bound(const c::State& scope, c::Kind kind, uint64_t value) {
 }
 
 void testCodecFailClosed() {
+  static_assert(sf::kVersion == sf::kVersionV2,
+                "SF5K3C is inert: production SecurityStore writes v2");
   static_assert(c::kSlotCount == 71U && c::kTailBytes == 20U,
                 "candidate page arithmetic");
   const c::State scope = initial();
