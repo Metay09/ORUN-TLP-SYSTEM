@@ -31,4 +31,18 @@ echo "[SF5K3A] actual ObservationStore ($cxx)"
   firmware/src/observation_store_format.cpp \
   -o "$build_dir/actual"
 "$build_dir/actual"
+
+echo "[SF5K3A] real ProductRecordStore read-only custody preflight ($cxx)"
+"$cxx" "${flags[@]}" \
+  firmware/tests/sf5/test_sf5f_product_record_store.cpp \
+  firmware/src/product_record_store.cpp \
+  firmware/src/product_region.cpp \
+  firmware/src/observation_store.cpp \
+  firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
+  firmware/src/product_period_builder.cpp \
+  firmware/src/tlp_v2_product_secure.cpp \
+  -o "$build_dir/product-store"
+"$build_dir/product-store" --custody-preflight-only
+
 echo "[SF5K3A] all focused host tests PASS"
