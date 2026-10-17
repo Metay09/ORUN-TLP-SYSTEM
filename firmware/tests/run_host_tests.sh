@@ -638,12 +638,23 @@ g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
   firmware/tests/sf5/sf5k2_gateway_batch_candidate.cpp \
   firmware/tests/sf5/sf5g_custody_record_candidate.cpp \
   -o "$test_dir/sf5k2_gateway_batch_candidate"
-# SF5K3A: host-only async release-then-clear progression (never RF/runtime).
+# SF5K3A: host-only exact-object release progress (never RF/runtime).
 g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
   firmware/tests/sf5/test_sf5k3_release_progress_candidate.cpp \
   firmware/tests/sf5/sf5k3_release_progress_candidate.cpp \
   -o "$test_dir/sf5k3_release_progress_candidate"
 "$test_dir/sf5k3_release_progress_candidate"
+
+# SF5K3A integration: same progress logic against the ACTUAL flash-backed
+# ObservationStore APIs with durable release, restart and subset ACK tests.
+g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3_observation_store_port.cpp \
+  firmware/tests/sf5/sf5k3_observation_store_port.cpp \
+  firmware/tests/sf5/sf5k3_release_progress_candidate.cpp \
+  firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
+  -o "$test_dir/sf5k3_observation_store_port"
+"$test_dir/sf5k3_observation_store_port"
 "$test_dir/sf5k2_gateway_batch_candidate"
 "$test_dir/sf5k1_batch_ack_candidate"
 
