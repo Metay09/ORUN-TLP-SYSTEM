@@ -62,10 +62,12 @@ bool hex(const char* input,uint8_t* out,size_t size) {
 constexpr char kOracleAck[] =
   "02050164010203040506070823002300230023010000000700000000"
   "0000000192453945bd2224e144572044decab3402105011f5844a453";
+#ifndef ORUN_SF5K3M_HOST_TEST
 constexpr char kOracleDigest[] =
   "92453945bd2224e1e9d462cb964b6fdc1e2018bafbe765cd4ac9ebbfc57aef00";
 constexpr char kOracleKey[] =
   "b3b50abe4a260946f7a1e13361e742504736f11df4dfd3b1852e5ae242d5b04f";
+#endif // ORUN_SF5K3M_HOST_TEST
 
 void makeObject(osc::ExactObject& object) {
   tlp::ProductSecureFrame p{};
