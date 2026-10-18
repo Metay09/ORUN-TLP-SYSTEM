@@ -1,5 +1,6 @@
 // SF5K3E: REAL SecurityStore production code read-only v3 flash probe.
-// No production v3 writer, security authorization, RF or custody release.
+// SF5K3I adds a separate live v3 Store owner; this diagnostic alone
+// never authenticates Gateway RF ACK or releases custody.
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -331,5 +332,5 @@ int main() {
   testStagedForeignAndCorruptAreNotPublished();
   testMonotonicTrailingPolicyAndCounter();
   testV2StillRecognizedAsNotV3();
-  puts("SF5K3E REAL SecurityStore v3 read-only integrity/no-authority: PASS");
+  puts("SF5K3E SecurityStore v3 read-only diagnostic integrity: PASS");
 }
