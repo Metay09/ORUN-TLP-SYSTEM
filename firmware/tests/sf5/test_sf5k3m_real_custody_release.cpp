@@ -104,7 +104,10 @@ osf::RecordIdentity append(ProductRecordStore& store){
     store.poll();
     if(store.takeOutcome(outcome)) {
       assert(outcome.stored);
-      return {outcome.incarnation,outcome.sequence};
+      osf::RecordIdentity id{};
+      id.incarnation=outcome.incarnation;
+      id.sequence=outcome.sequence;
+      return id;
     }
   }
   assert(false);return {};
