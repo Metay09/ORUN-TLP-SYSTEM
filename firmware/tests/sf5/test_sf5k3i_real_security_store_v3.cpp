@@ -156,6 +156,58 @@ void testWriterFailureLocksSameBootAndRecoversV2() {
   assert(ab::inspect(flash,kDevice,summary)==ab::Result::kV2);
 }
 
+void testV3AmbiguousCounterCommitQuarantines() {
+  Flash flash;
+  SecurityStore s(flash, flash);
+  provisionV2(flash, s);
+  assert(s.requestV3Migration());
+  runUntilIdle(s);
+  assert(s.state() == SecurityState::kProvisioned);
+
+  // All 256 previously committed TX counters are consumed. Next reserve
+  // writes 52-byte body then 4-byte COMMIT: the physical COMMIT lands but
+  // backend reports kFailed, creating an ambiguous accepted record.
+  uint64_t issued = 0U;
+  uint32_t epoch = 0U;
+  for (unsigned i=0U; i<256U; ++i)
+    assert(s.reserveNextTxCounter(issued, epoch));
+  assert(!s.reserveNextTxCounter(issued, epoch));
+  s.poll(); // schedule the next v3 TX reservation
+  flash.failure_at_program = static_cast<int>(flash.programs) + 2;
+  flash.cut_bytes = 4; // COMMIT physically lands despite failure
+  s.poll();
+  assert(s.state() == SecurityState::kFault);
+  const uint32_t after = flash.programs;
+  for (unsigned i=0U;i<20U;++i) s.poll();
+  assert(flash.programs == after); // no duplicate 512-bound append
+  flash.failure_at_program = -1;
+
+  SecurityStore reboot(flash,flash);
+  assert(reboot.begin(DeviceIdentity::fromLegacyUint64(kDevice)));
+  assert(reboot.state()==SecurityState::kProvisioned);
+  runUntilIdle(reboot);
+  assert(reboot.reserveNextTxCounter(issued,epoch));
+  assert(issued>=512U); // no nonce can be reused after reboot
+}
+
+void testNoRollbackFromErasedHeaderWithLiveV3Payload() {
+  Flash flash;
+  SecurityStore s(flash,flash);
+  provisionV2(flash,s);
+  assert(s.requestV3Migration());
+  runUntilIdle(s);
+  ab::Summary choice{};
+  assert(ab::inspect(flash,kDevice,choice)==ab::Result::kV3);
+  // Simulate a torn erase of the NEWEST v3 page: only its header
+  // disappeared, leaving a credential and journal physically present.
+  const uint32_t base=static_cast<uint32_t>(choice.selected_page)*4096U;
+  memset(flash.memory.data()+base,0xFFU,32U);
+  SecurityStore reboot(flash,flash);
+  assert(reboot.begin(DeviceIdentity::fromLegacyUint64(kDevice)));
+  assert(reboot.state()==SecurityState::kFault);
+  assert(!reboot.requestV3Migration()); // no stale v2 fallback
+}
+
 void testV3GatewayTombstonesSurviveLiveCounterAppend() {
   Flash flash;
   const sf::Credential cred=credential();
@@ -245,6 +297,8 @@ void testV3GatewayTombstonesSurviveLiveCounterAppend() {
 int main(){
   testMigratedCountersAndReboot();
   testWriterFailureLocksSameBootAndRecoversV2();
+  testV3AmbiguousCounterCommitQuarantines();
+  testNoRollbackFromErasedHeaderWithLiveV3Payload();
   testV3GatewayTombstonesSurviveLiveCounterAppend();
   puts("SF5K3I REAL SecurityStore v3 migration/reboot/TX-A2D/tombstones: PASS");
 }
