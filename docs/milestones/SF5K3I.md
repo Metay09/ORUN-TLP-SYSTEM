@@ -94,9 +94,19 @@ At time of this document, no new SF5K3I host PASS or RAK4630
 SUCCESS has been observed; all described checks are test
 implementations, NOT claims that they passed.
 
+For iterative validation, first run ONLY the new actual-Store
+integration scenario (the older SF5K3A-H tests need not be repeated):
+
 ```bash
 cd ~/ORUN-TLP-SYSTEM
-bash tools/ci/run_sf5k3a_host.sh
+bash tools/ci/run_sf5k3i_integration_host.sh
+```
+
+After this focused gate passes, full host regression and the target
+build are release gates, preferably automated by GitHub CI rather
+than repeated manually after each small edit:
+
+```bash
 bash firmware/tests/run_host_tests.sh
 cd firmware && pio run -e rak4630
 ```
