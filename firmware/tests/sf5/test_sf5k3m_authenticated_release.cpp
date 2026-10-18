@@ -12,9 +12,8 @@
 
 // Reuse actual SF5K3L HMAC verifier and actual SF5K3J flash/policy fixture,
 // but do not rerun either previous test main.
-#define main sf5k3l_previous_main
+#define ORUN_SF5K3M_HOST_TEST 1
 #include "test_sf5k3l_custody_ack_crypto.cpp"
-#undef main
 
 namespace {
 namespace pr=orun_tlp::product_region;
