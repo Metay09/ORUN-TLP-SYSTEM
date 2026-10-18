@@ -171,6 +171,7 @@ CustodyAckVerifyResult CustodyAckVerifier::verifyCandidates(
   verified.gateway_id_=header.gateway_device_id;
   verified.generation_=header.grant_generation;
   verified.floor_=header.custody_floor;
+  verified.verified_=true;
   secureZero(selected_digest,sizeof(selected_digest));
 
   // Publish output only on success. Production store bridge additionally
