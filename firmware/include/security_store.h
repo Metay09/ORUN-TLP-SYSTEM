@@ -2,6 +2,8 @@
 #include "device_identity.h"
 #include "flash_backend.h"
 #include "security_format.h"
+#include "security_v3_format.h"
+#include "security_v3_page_writer.h"
 
 namespace orun_tlp {
 
@@ -78,10 +80,16 @@ class SecurityStore {
   };
 
   SecurityStore(FlashBackend& critical_flash, FlashBackend& maint_flash)
-      : critical_(critical_flash), maint_(maint_flash) {}
+      : critical_(critical_flash), maint_(maint_flash),
+        v3_writer_(maint_flash) {}
 
   bool begin(DeviceIdentity device_identity);
   void poll();
+  // Local maintenance admission only; no radio/BLE caller. Requires idle,
+  // provisioned v2 SecurityStore and an externally quiescent flash owner.
+  // Never automatically upgrades existing field devices just on boot.
+  // A completed migration activates v3 counter recovery/reservations.
+  bool requestV3Migration();
   bool busy() const { return job_ != Job::kNone; }
   SecurityState state() const { return state_; }
   bool ready() const { return ready_; }
@@ -131,7 +139,8 @@ class SecurityStore {
     kNewPage,
     kEraseOld,
     kReserve,
-    kA2dReplayReserve
+    kA2dReplayReserve,
+    kV3Page
   };
   enum class NewPagePurpose {
     kCredentialCommit,
@@ -162,6 +171,8 @@ class SecurityStore {
   bool startEraseOld();
   bool startReservation();
   bool startA2dReplayReservation(uint64_t counter, uint64_t bound);
+  bool startV3Page(bool migration);
+  void completeV3Page();
   void maybeAutoReserve();
   void startBlob(uint32_t offset, const uint8_t* bytes, uint32_t size);
   void startSnapshotTxState();
@@ -178,6 +189,7 @@ class SecurityStore {
 
   FlashBackend& critical_;
   FlashBackend& maint_;
+  security_v3_page_writer::SnapshotTransaction v3_writer_;
   DeviceIdentity device_identity_;
   SecurityState state_ = SecurityState::kFault;
   bool ready_ = false;
@@ -190,6 +202,7 @@ class SecurityStore {
   security_format::Credential credential_{};
   uint64_t tx_reserved_bound_ = 0;
   uint64_t tx_next_ = 0;
+  security_v3_format::Snapshot v3_snapshot_{};
   uint64_t a2d_replay_bound_ = 0;
   uint64_t a2d_runtime_hwm_ = 0;
   bool a2d_runtime_hwm_valid_ = false;
@@ -216,6 +229,7 @@ class SecurityStore {
   uint64_t pending_replay_counter_ = 0;
   uint64_t pending_replay_bound_ = 0;
   int erase_old_page_ = -1;
+  bool v3_page_is_migration_ = false;
 
   bool commit_result_ready_ = false;
   bool commit_success_ = false;
