@@ -199,9 +199,11 @@ void testRealStoreAndMac() {
 }
 } // namespace
 
+#ifndef ORUN_SF5K3M_HOST_TEST
 int main(){
   testIndependentCryptoOracle();
   testRealStoreAndMac();
   puts("SF5K3L actual SecurityStore v3 scoped SHA256/HKDF/HMAC verifier: PASS");
   return 0;
 }
+#endif // ORUN_SF5K3M_HOST_TEST
