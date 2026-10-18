@@ -776,6 +776,26 @@ g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion \
   -lcrypto -o "$test_dir/sf5k3l_custody_ack_crypto"
 "$test_dir/sf5k3l_custody_ack_crypto"
 
+# SF5K3M: actual SecurityStore-authenticated ACK -> ProductRecordStore
+# exclusive release marker, complete flash and reboot; no radio cutover.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion \
+  -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3m_real_custody_release.cpp \
+  firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
+  firmware/src/custody_ack_release_owner.cpp \
+  firmware/src/custody_ack_product_bridge.cpp \
+  firmware/src/custody_ack_verifier.cpp firmware/src/custody_ack.cpp \
+  firmware/src/product_record_store.cpp firmware/src/product_region.cpp \
+  firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
+  firmware/src/product_period_builder.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp firmware/src/security_v3_format.cpp \
+  firmware/src/tlp_v2_product_secure.cpp firmware/src/security_format.cpp \
+  firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
+  -lcrypto -o "$test_dir/sf5k3m_real_custody_release"
+"$test_dir/sf5k3m_real_custody_release"
+
 "$test_dir/sf5k3e_real_security_v3_readonly"
 "$test_dir/sf5k3d_security_v3_snapshot_candidate"
 "$test_dir/sf5k3c_security_v3_candidate"
