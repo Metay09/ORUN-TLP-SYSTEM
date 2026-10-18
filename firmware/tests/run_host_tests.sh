@@ -507,7 +507,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r2/test_patch_radio.py "$test_d
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp \
   "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp \
@@ -521,7 +521,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp 
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/m6/test_m6p1_radio.cpp "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp \
@@ -535,7 +535,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
   "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
@@ -548,7 +548,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
 "$test_dir/r2"
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/sf5/test_sf5j_radio_transport.cpp "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
   firmware/src/radio_driver_gate.cpp firmware/src/rak_device_identity.cpp \
@@ -557,6 +557,20 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
   firmware/src/tlp_v2_history_secure.cpp \
   -o "$test_dir/sf5j1_radio_transport"
+# Reuse SAME SF5J1 radio fake and build, but run the newly added
+# SF5K3K actual radio receiver assertions under explicit test define.
+g++ -DORUN_SF5K3K_ACK_RX_TEST -Ifirmware/tests/r2/stubs "${flags[@]}" \
+  firmware/tests/sf5/test_sf5j_radio_transport.cpp "$test_dir/driver_bridge.cpp" \
+  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp \
+  firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/tlp_v2_product_secure.cpp firmware/src/bridge_frame.cpp \
+  firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
+  firmware/src/radio_driver_gate.cpp firmware/src/rak_device_identity.cpp \
+  firmware/src/legacy_position_mapping.cpp firmware/src/node_role.cpp \
+  firmware/src/tlp_test_packet.cpp firmware/src/tlp_position_packet.cpp \
+  firmware/src/tlp_relay_forward_packet.cpp firmware/src/tlp_v2_history_secure.cpp \
+  -o "$test_dir/sf5k3k_radio_rx"
+"$test_dir/sf5k3k_radio_rx"
 "$test_dir/sf5j1_radio_transport"
 g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
@@ -566,7 +580,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/activity_quality.cpp firmware/src/activity_auto_sampler.cpp \
   firmware/src/activity_period_evidence.cpp \
   firmware/src/accelerometer_manager.cpp \
-  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/radio_driver_gate.cpp \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
@@ -733,6 +747,21 @@ g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
   firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/sf5k3j_real_security_v3_policy"
 "$test_dir/sf5k3j_real_security_v3_policy"
+
+# SF5K3K production ACK codec + actual SecurityStore durable grant precheck.
+# Explicitly NO HMAC acceptance, radio runtime authority, or release.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3k_custody_ack_scope.cpp \
+  firmware/src/security_store.cpp firmware/src/custody_ack.cpp \
+  firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/src/tlp_v2_product_secure.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3k_custody_ack_scope"
+"$test_dir/sf5k3k_custody_ack_scope"
+
 "$test_dir/sf5k3e_real_security_v3_readonly"
 "$test_dir/sf5k3d_security_v3_snapshot_candidate"
 "$test_dir/sf5k3c_security_v3_candidate"
