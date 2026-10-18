@@ -9,6 +9,8 @@
 
 namespace orun_tlp {
 
+class CustodyAckReleaseOwner;
+
 // SF5F step 1: the tracker's durable PERIODIC records on the product region
 // (docs/milestones/SF5.md). One owner composes ObservationStore with the D2
 // mount decision and drives it from the loop:
@@ -59,6 +61,8 @@ class ProductRecordStore {
     uint32_t maintenance_runs = 0;
     uint32_t exact_cache_committed = 0;
     uint32_t exact_cache_failed = 0;
+    uint32_t custody_release_committed = 0;
+    uint32_t custody_release_failed = 0;
   };
 
   ProductRecordStore(FlashBackend& flash, uint16_t page_count,
@@ -113,8 +117,17 @@ class ProductRecordStore {
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
  private:
+  friend class CustodyAckReleaseOwner;
+
+  // The only production release entry point is the privileged post-HMAC
+  // owner. Never expose a public identity-only custody release method.
+  bool beginAuthenticatedCustodyRelease(const osf::RecordIdentity& identity);
+  bool takeAuthenticatedCustodyReleaseResult(bool& durable);
+  void finishCustodyRelease(bool durable);
+
   enum class Job : uint8_t {
-    kNone, kAppend, kMaintenance, kControl, kExactCache, kCacheMaintenance
+    kNone, kAppend, kMaintenance, kControl, kExactCache, kCacheMaintenance,
+    kCustodyRelease
   };
   enum class PrepareState : uint8_t { kIdle, kErasing, kWaiting };
   static constexpr uint8_t kMaxMaintenanceRounds = 4U;
@@ -147,6 +160,11 @@ class ProductRecordStore {
 
   bool outcome_ready_ = false;
   Outcome outcome_{};
+
+  bool release_pending_ = false;
+  bool release_outcome_ready_ = false;
+  bool release_outcome_durable_ = false;
+  osf::RecordIdentity release_identity_{};
 
   bool cache_pending_ = false;
   bool cache_outcome_ready_ = false;
