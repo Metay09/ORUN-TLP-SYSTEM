@@ -80,7 +80,7 @@ ObservationStore::ControlLookupResult ProductRecordStore::findCachedExact(
 
 bool ProductRecordStore::custodyCandidateMatchesRetainedExact(
     const osc::ExactObject& expected) const {
-  if (!mounted_ || preparing() || pending_ ||
+  if (!mounted_ || preparing() || pending_ || release_outcome_ready_ ||
       job_ != Job::kNone || cache_pending_ || cache_outcome_ready_ ||
       !store_.ready() || store_.faulted() || store_.busy() ||
       flash_.hasUnreconciledMutation() ||
@@ -108,6 +108,7 @@ bool ProductRecordStore::snapshotCustodyCandidates(
     osc::ExactObject (&objects)[osf::kMaxExactCustodyObjects],
     uint16_t& count) const {
   if (!mounted_ || preparing() || pending_ || outcome_ready_ ||
+      release_outcome_ready_ ||
       job_ != Job::kNone || cache_pending_ || cache_outcome_ready_ ||
       !store_.ready() || store_.faulted() || store_.busy() ||
       flash_.hasUnreconciledMutation())
@@ -171,7 +172,8 @@ ProductRecordStore::CacheSubmit ProductRecordStore::submitExactCache(
   if (!mounted_ || !store_.ready() || store_.faulted() || preparing())
     return CacheSubmit::kNotMounted;
   if (pending_ || job_ != Job::kNone || store_.busy() ||
-      outcome_ready_ || cache_pending_ || cache_outcome_ready_)
+      outcome_ready_ || cache_pending_ || cache_outcome_ready_ ||
+      release_outcome_ready_)
     return CacheSubmit::kBusy;
 
   if (!value.identity.valid() ||
@@ -216,6 +218,44 @@ bool ProductRecordStore::takeCacheOutcome(CacheOutcome& outcome) {
   if (!cache_outcome_ready_) return false;
   outcome = cache_outcome_;
   cache_outcome_ready_ = false;
+  return true;
+}
+
+
+bool ProductRecordStore::requestAuthenticatedCustodyRelease(
+    const osc::ExactObject& expected) {
+  // Private friend-only entry. A raw RF ACK or public record identity can
+  // never reach ObservationStore::requestRelease through this facade.
+  if (!mounted_ || preparing() || pending_ || outcome_ready_ ||
+      job_ != Job::kNone || cache_pending_ || cache_outcome_ready_ ||
+      release_outcome_ready_ || store_.busy() || !store_.ready() ||
+      store_.faulted() || flash_.hasUnreconciledMutation() ||
+      !custodyCandidateMatchesRetainedExact(expected))
+    return false;
+  if (!store_.requestRelease(expected.identity)) return false;
+  release_identity_ = expected.identity;
+  job_ = Job::kCustodyRelease;
+  return true;  // Accepted for flash mutation, NOT a durable delivery fact.
+}
+
+void ProductRecordStore::finishCustodyRelease(bool durable) {
+  release_outcome_durable_ = durable;
+  release_outcome_ready_ = true;
+  job_ = Job::kNone;
+  if (durable)
+    ++diagnostics_.custody_release_committed;
+  else
+    ++diagnostics_.custody_release_failed;
+}
+
+bool ProductRecordStore::takeCustodyReleaseOutcome(
+    osf::RecordIdentity& identity, bool& durable) {
+  if (!release_outcome_ready_) return false;
+  identity = release_identity_;
+  durable = release_outcome_durable_;
+  release_outcome_ready_ = false;
+  release_identity_ = osf::RecordIdentity{};
+  release_outcome_durable_ = false;
   return true;
 }
 
@@ -264,6 +304,20 @@ void ProductRecordStore::poll() {
       // Require readback of identical committed bytes before eligibility.
       finishCache(success && matchesCachedObject(cache_object_));
       return;
+    case Job::kCustodyRelease: {
+      const bool completed = store_.takeReleaseResult(success);
+      ObservationStore::Record record{};
+      // The underlying ObservationStore release commit step has already
+      // verified flash marker+record identity. Require an independent
+      // post-completion lookup before publishing an application outcome.
+      const bool durable = completed && success &&
+          !flash_.hasUnreconciledMutation() &&
+          store_.lookup(release_identity_, record) ==
+              ObservationStore::LookupResult::kFound &&
+          record.released && !record.release_uncertain;
+      finishCustodyRelease(durable);
+      return;
+    }
     case Job::kCacheMaintenance: {
       const bool completed = store_.takeControlMaintenanceResult(success);
       if (!completed || !success) {
@@ -349,7 +403,8 @@ bool ProductRecordStore::requestPrepare() {
   // Keep destructive service work out of every owner job and unconsumed
   // cache outcome, including failures that have faulted the mounted store.
   if (preparing() || pending_ || cache_pending_ || cache_outcome_ready_ ||
-      job_ != Job::kNone || store_.busy() || !region_readable_)
+      release_outcome_ready_ || job_ != Job::kNone ||
+      store_.busy() || !region_readable_)
     return false;
   const bool leftovers =
       decision_ == product_region::MountDecision::kNeedsPreparation;
