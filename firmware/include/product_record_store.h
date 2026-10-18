@@ -30,6 +30,8 @@ namespace orun_tlp {
 //
 // Nothing is sealed or sent here; TLP v1 POSITION and HistoryStore stay the
 // live path until the SF5F RF step.
+class CustodyAckReleaseOwner;
+
 class ProductRecordStore {
  public:
   enum class Submit : uint8_t { kAccepted, kNotMounted, kBusy };
@@ -59,6 +61,8 @@ class ProductRecordStore {
     uint32_t maintenance_runs = 0;
     uint32_t exact_cache_committed = 0;
     uint32_t exact_cache_failed = 0;
+    uint32_t custody_release_committed = 0;
+    uint32_t custody_release_failed = 0;
   };
 
   ProductRecordStore(FlashBackend& flash, uint16_t page_count,
@@ -113,8 +117,19 @@ class ProductRecordStore {
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
  private:
+  friend class CustodyAckReleaseOwner;
+
+  // Only the HMAC-verifying custody owner may initiate this mutation.
+  // It carries one previously authenticated exact object and is checked
+  // against the live retained record again before starting any flash work.
+  bool requestAuthenticatedCustodyRelease(const osc::ExactObject& expected);
+  bool takeCustodyReleaseOutcome(osf::RecordIdentity& identity,
+                                 bool& durable);
+  void finishCustodyRelease(bool durable);
+
   enum class Job : uint8_t {
-    kNone, kAppend, kMaintenance, kControl, kExactCache, kCacheMaintenance
+    kNone, kAppend, kMaintenance, kControl, kExactCache, kCacheMaintenance,
+    kCustodyRelease
   };
   enum class PrepareState : uint8_t { kIdle, kErasing, kWaiting };
   static constexpr uint8_t kMaxMaintenanceRounds = 4U;
@@ -151,6 +166,9 @@ class ProductRecordStore {
   bool cache_pending_ = false;
   bool cache_outcome_ready_ = false;
   CacheOutcome cache_outcome_{};
+  bool release_outcome_ready_ = false;
+  bool release_outcome_durable_ = false;
+  osf::RecordIdentity release_identity_{};
   osc::ExactObject cache_object_{};
 
   PrepareState prepare_state_ = PrepareState::kIdle;
