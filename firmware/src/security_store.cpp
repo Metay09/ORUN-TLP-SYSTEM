@@ -328,6 +328,8 @@ bool SecurityStore::begin(DeviceIdentity device_identity) {
   policy_after_v3_compaction_ = false;
   pending_policy_entry_ = security_v3_format::Entry{};
   pending_policy_snapshot_ = security_v3_format::Snapshot{};
+  v3_policy_result_ready_ = false;
+  v3_policy_result_committed_ = false;
   commit_result_ready_ = false;
   commit_success_ = false;
   a2d_result_ready_ = false;
@@ -940,6 +942,8 @@ void SecurityStore::completeV3Page() {
     if (!startV3PolicyAppend()) {
       state_ = SecurityState::kFault;
       ++diagnostics_.v3_policy_failures;
+      v3_policy_result_ready_ = true;
+      v3_policy_result_committed_ = false;
     }
     return;
   }
@@ -963,7 +967,7 @@ bool SecurityStore::beginV3PolicyMutation(
   // The A2D replay-bound method alone is not administrative authority.
   if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
       active_page_ < 0 || a2d_result_ready_ || commit_result_ready_ ||
-      policy_after_v3_compaction_ ||
+      policy_after_v3_compaction_ || v3_policy_result_ready_ ||
       pages_[active_page_].version != security_v3_format::kVersion ||
       v3_snapshot_.policy_revision >= UINT32_MAX - 1U)
     return false;
@@ -1062,6 +1066,13 @@ bool SecurityStore::startV3PolicyAppend() {
   return true;
 }
 
+bool SecurityStore::takeV3PolicyResult(bool& committed) {
+  if (!v3_policy_result_ready_) return false;
+  committed = v3_policy_result_committed_;
+  v3_policy_result_ready_ = false;
+  return true;
+}
+
 void SecurityStore::completeV3PolicyAppend() {
   // Policy changes become visible internally ONLY after body, 4-byte
   // commit and whole-record readback have succeeded.
@@ -1073,6 +1084,8 @@ void SecurityStore::completeV3PolicyAppend() {
   consecutive_mutation_failures_ = 0U;
   job_ = Job::kNone;
   ++diagnostics_.v3_policy_commits;
+  v3_policy_result_ready_ = true;
+  v3_policy_result_committed_ = true;
   maybeAutoReserve();
 }
 
@@ -1486,6 +1499,8 @@ void SecurityStore::fail() {
   policy_after_v3_compaction_ = false;
   if (failing_job == Job::kV3PolicyAppend) {
     ++diagnostics_.v3_policy_failures;
+    v3_policy_result_ready_ = true;
+    v3_policy_result_committed_ = false;
     pending_policy_entry_ = security_v3_format::Entry{};
     pending_policy_snapshot_ = security_v3_format::Snapshot{};
   }
@@ -1734,6 +1749,8 @@ void SecurityStore::poll() {
       if (policy_after_v3_compaction_) {
         policy_after_v3_compaction_ = false;
         ++diagnostics_.v3_policy_failures;
+        v3_policy_result_ready_ = true;
+        v3_policy_result_committed_ = false;
       }
       pending_policy_entry_ = security_v3_format::Entry{};
       pending_policy_snapshot_ = security_v3_format::Snapshot{};
