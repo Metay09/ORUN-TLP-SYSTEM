@@ -170,4 +170,7 @@ echo "[SF5K3L] actual SecurityStore v3 HMAC ACK oracle (test-only OpenSSL)"
   -lcrypto -o "$build_dir/v3-ack-hmac"
 "$build_dir/v3-ack-hmac"
 
-echo "[SF5K3A/SF5K3B/SF5K3C/SF5K3D/SF5K3E/SF5K3F/SF5K3G/SF5K3H/SF5K3I/SF5K3J/SF5K3K/SF5K3L] all focused host tests PASS"
+echo "[SF5K3M] real ProductRecordStore durable release from authenticated ACK"
+bash tools/ci/run_sf5k3m_release_host.sh
+
+echo "[SF5K3A/SF5K3B/SF5K3C/SF5K3D/SF5K3E/SF5K3F/SF5K3G/SF5K3H/SF5K3I/SF5K3J/SF5K3K/SF5K3L/SF5K3M] all focused host tests PASS"
