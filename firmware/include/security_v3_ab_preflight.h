@@ -3,7 +3,8 @@
 #include "flash_backend.h"
 
 // SF5K3G: real FlashBackend read-only A/B boot-selection preflight.
-// No SecurityStore activation, no K_root/Gateway identities leak, and no
+// Used by SF5K3I SecurityStore for v3 boot selection, but exposes NO
+// K_root/Gateway identities, and calls no
 // program/erase calls. The active SecurityStore keeps v1/v2 authority.
 namespace orun_tlp {
 namespace security_v3_ab_preflight {
@@ -29,7 +30,7 @@ struct Summary {
 // Scans the exact two existing 4096-byte SecurityStore pages using bounded
 // buffers and independently validates legacy v1/v2 or v3.
 // Only a fully selected version publishes Summary. No operation mutates flash.
-// Result kV3 is NOT a production authorization decision.
+// Result kV3 is NOT a Gateway ACK authorization decision.
 Result inspect(const FlashBackend& flash, uint64_t tracker_id, Summary& out);
 
 }  // namespace security_v3_ab_preflight
