@@ -75,7 +75,9 @@ echo "[SF5K3E] real SecurityStore v3 read-only/no-authority (host)"
   firmware/tests/sf5/test_sf5k3e_real_security_v3_readonly.cpp \
   firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
   firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
-  firmware/src/security_store.cpp firmware/src/security_format.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$build_dir/v3-security-probe"
 "$build_dir/v3-security-probe"
@@ -116,4 +118,18 @@ echo "[SF5K3H] real FlashBackend v3 page commit-last migration/compaction"
   -o "$build_dir/v3-page-writer"
 "$build_dir/v3-page-writer"
 
-echo "[SF5K3A/SF5K3B/SF5K3C/SF5K3D/SF5K3E/SF5K3F/SF5K3G/SF5K3H] all focused host tests PASS"
+echo "[SF5K3I] LIVE SecurityStore v3 migration, boot, TX/A2D persistence"
+"$cxx" "${flags[@]}" -Wno-conversion -Wno-sign-conversion \
+  firmware/tests/sf5/test_sf5k3i_real_security_store_v3.cpp \
+  firmware/src/security_store.cpp \
+  firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$build_dir/v3-real-store"
+"$build_dir/v3-real-store"
+
+echo "[SF5K3A/SF5K3B/SF5K3C/SF5K3D/SF5K3E/SF5K3F/SF5K3G/SF5K3H/SF5K3I] all focused host tests PASS"
