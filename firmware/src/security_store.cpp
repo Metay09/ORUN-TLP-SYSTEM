@@ -373,7 +373,7 @@ bool SecurityStore::recover() {
       uint8_t scratch[kCredentialRecordSize]{};
       for (uint32_t offset = kPageHeaderSize;
            offset < storage_config::kPageSize;
-           offset += sizeof(scratch)) {
+           offset += static_cast<uint32_t>(sizeof(scratch))) {
         const uint32_t remaining =
             storage_config::kPageSize - offset;
         const size_t count = remaining < sizeof(scratch) ?
