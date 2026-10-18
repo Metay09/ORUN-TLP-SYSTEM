@@ -170,4 +170,22 @@ echo "[SF5K3L] actual SecurityStore v3 HMAC ACK oracle (test-only OpenSSL)"
   -lcrypto -o "$build_dir/v3-ack-hmac"
 "$build_dir/v3-ack-hmac"
 
-echo "[SF5K3A/SF5K3B/SF5K3C/SF5K3D/SF5K3E/SF5K3F/SF5K3G/SF5K3H/SF5K3I/SF5K3J/SF5K3K/SF5K3L] all focused host tests PASS"
+echo "[SF5K3M] actual signed ACK -> flash release -> reboot/cuts"
+"$cxx" "${flags[@]}" -Wno-conversion -Wno-sign-conversion \
+  firmware/tests/sf5/test_sf5k3m_real_custody_release.cpp \
+  firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
+  firmware/src/custody_ack_release_owner.cpp \
+  firmware/src/custody_ack_product_bridge.cpp \
+  firmware/src/custody_ack_verifier.cpp firmware/src/custody_ack.cpp \
+  firmware/src/product_record_store.cpp firmware/src/product_region.cpp \
+  firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
+  firmware/src/product_period_builder.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp firmware/src/security_v3_format.cpp \
+  firmware/src/tlp_v2_product_secure.cpp firmware/src/security_format.cpp \
+  firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
+  -lcrypto -o "$build_dir/v3-ack-release"
+"$build_dir/v3-ack-release"
+
+echo "[SF5K3A/SF5K3B/SF5K3C/SF5K3D/SF5K3E/SF5K3F/SF5K3G/SF5K3H/SF5K3I/SF5K3J/SF5K3K/SF5K3L/SF5K3M] all focused host tests PASS"
