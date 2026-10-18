@@ -111,6 +111,16 @@ class SecurityStore {
       uint8_t (&out)[security_format::kCredentialIdSize]) const;
   uint32_t currentKeyEpoch() const { return credential_.key_epoch; }
 
+  // Untrusted wire scope PRECHECK for later private HMAC verifier. Exactly
+  // matches one committed current v3 custody grant, not a COMMAND slot.
+  // True is NOT proof of an ACK, Gateway durable custody or release.
+  // No secret, Gateway list or write capability is returned.
+  bool custodyAckScopeMatches(uint64_t tracker_device_id,
+                              uint64_t gateway_device_id,
+                              uint32_t key_epoch,
+                              uint32_t custody_floor,
+                              uint32_t grant_generation) const;
+
   bool commitCredential(
       const uint8_t (&credential_id)[security_format::kCredentialIdSize],
       uint32_t key_epoch,
