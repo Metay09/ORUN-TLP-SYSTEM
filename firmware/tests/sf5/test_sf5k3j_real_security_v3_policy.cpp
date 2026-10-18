@@ -29,6 +29,9 @@ class SecurityV3PolicyTestSeam {
     return s.beginV3PolicyMutation(
         SecurityStore::PolicyAction::kAdvanceFloor, 0xFFU, 0U, next);
   }
+  static bool take(SecurityStore& s, bool& committed) {
+    return s.takeV3PolicyResult(committed);
+  }
   static uint32_t revision(const SecurityStore& s) {
     return s.v3_snapshot_.policy_revision;
   }
@@ -143,8 +146,12 @@ void testDurableGrantRevokeFloorAndReboot() {
   assert(Seam::grant(s,0U,kGateA));
   assert(!Seam::grant(s,1U,kGateB)); // no concurrent mutation
   assert(Seam::revision(s)==0U); // NOT authorized before durable commit
+  bool applied=false;
+  assert(!Seam::take(s,applied)); // queued is NOT durable
   inspect(flash,0U,0U,0U,0U);
   settle(s);
+  assert(Seam::take(s,applied) && applied);
+  assert(!Seam::take(s,applied)); // one-shot outcome
   assert(s.state()==SecurityState::kProvisioned);
   assert(Seam::revision(s)==1U);
   assert(Seam::id(s,0U)==kGateA);
@@ -156,7 +163,9 @@ void testDurableGrantRevokeFloorAndReboot() {
   assert(!Seam::revoke(s,0U,kGateB)); // exact ID/slot required
   assert(Seam::revoke(s,0U,kGateA));
   assert(Seam::id(s,0U)==kGateA); // old snapshot until commit
+  assert(!Seam::take(s,applied));
   settle(s);
+  assert(Seam::take(s,applied) && applied);
   assert(Seam::id(s,0U)==0U);
   assert(Seam::generation(s,0U)==2U); // tombstone retained
   inspect(flash,2U,2U,0U,0U);
@@ -164,12 +173,14 @@ void testDurableGrantRevokeFloorAndReboot() {
 
   assert(Seam::grant(s,1U,kGateA));
   settle(s);
+  assert(Seam::take(s,applied) && applied);
   assert(Seam::generation(s,1U)==3U);
   assert(Seam::generation(s,0U)==2U);
   inspect(flash,3U,3U,1U,0U);
   assert(Seam::floor(s,9U));
   assert(!Seam::floor(s,8U)); // in-flight refusal
   settle(s);
+  assert(Seam::take(s,applied) && applied);
   assert(!Seam::floor(s,9U)); // global floor must advance
   inspect(flash,4U,3U,1U,9U);
   assert(s.diagnostics().v3_policy_commits==4U);
@@ -199,6 +210,8 @@ void testTornAndAmbiguousPolicyCommit() {
     assert(s.state()==SecurityState::kFault);
     assert(!s.busy());
     assert(s.diagnostics().v3_policy_failures==1U);
+    bool applied=true;
+    assert(Seam::take(s,applied) && !applied);
     assert(Seam::revision(s)==0U && Seam::id(s,0U)==0U);
     const unsigned no_more_writes=flash.programs;
     for(unsigned i=0;i<16U;++i) s.poll();
@@ -219,10 +232,13 @@ void testPolicyTriggersV3PageCompaction() {
   Flash flash;
   SecurityStore s(flash,flash);
   provisionV3(flash,s);
+  bool applied=false;
   assert(Seam::grant(s,0U,kGateA));
   settle(s);
+  assert(Seam::take(s,applied) && applied);
   assert(Seam::revoke(s,0U,kGateA));
   settle(s);
+  assert(Seam::take(s,applied) && applied);
   const uint32_t gen=Seam::generation(s,0U);
   assert(gen==2U);
 
@@ -244,6 +260,7 @@ void testPolicyTriggersV3PageCompaction() {
   assert(Seam::floor(s,5U));
   assert(s.busy());
   settle(s);
+  assert(Seam::take(s,applied) && applied);
   assert(s.state()==SecurityState::kProvisioned);
   assert(s.diagnostics().compactions==comp_before+1U);
   assert(Seam::revision(s)==3U &&
