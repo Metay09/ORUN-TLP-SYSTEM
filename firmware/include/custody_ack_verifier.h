@@ -30,6 +30,8 @@ class AuthenticatedCustodyAck {
   observation_store_format::RecordIdentity identity_{};
   uint8_t full_digest_[32]{};
   uint64_t gateway_id_ = 0U;
+  uint64_t tracker_id_ = 0U;
+  uint32_t key_epoch_ = UINT32_MAX;
   uint32_t generation_ = 0U;
   uint32_t floor_ = 0U;
   // Default construction is deliberately NOT a valid security capability.
