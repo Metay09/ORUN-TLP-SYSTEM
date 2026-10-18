@@ -104,6 +104,8 @@ bool RadioManager::begin(SequenceSource& sequences) {
   history_secure_rx_pending_ = false;
   product_secure_rx_ = {};
   product_secure_rx_pending_ = false;
+  custody_ack_rx_ = {};
+  custody_ack_rx_pending_ = false;
   bridge_line_number_ = 0;
   role_transition_pending_ = false;
   accept_rx_events_ = true;
@@ -370,6 +372,15 @@ bool RadioManager::takeProductSecureFrame(ProductSecureRxFrame* frame) {
   *frame = product_secure_rx_;
   product_secure_rx_ = {};
   product_secure_rx_pending_ = false;
+  return true;
+}
+
+bool RadioManager::takeCustodyAckFrame(CustodyAckRxFrame* frame) {
+  if (frame == nullptr || !custody_ack_rx_pending_ ||
+      network_.role() != NodeRole::kTracker) return false;
+  *frame = custody_ack_rx_;
+  custody_ack_rx_ = {};
+  custody_ack_rx_pending_ = false;
   return true;
 }
 
@@ -689,6 +700,9 @@ void RadioManager::applyPendingRole() {
   orunRadioQuiesceLocked();
   processReceivedEvents();
   network_.setRole(requested_role_);
+  // No ACK received in an old role may be delivered in the new role.
+  custody_ack_rx_ = {};
+  custody_ack_rx_pending_ = false;
   ++role_epoch_;
   armed_tx_generation_ = 0;
   radio_driver::setGeneration(0);
@@ -805,6 +819,31 @@ void RadioManager::emitBridgePosition(const NetworkEvent& event) {
 
 void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
                                         int16_t rssi, int8_t snr) {
+
+  if (size >= 2 &&
+      payload[0] == custody_ack::kVersion &&
+      payload[1] == custody_ack::kType) {
+    custody_ack::Header header{};
+    // Even a valid-looking ACK has no authority in BASE/RELAY roles.
+    // Relay reverse transport is a separate reviewed feature; do not
+    // forward this as if it were a tracker-authenticated receipt.
+    if (network_.role() != NodeRole::kTracker ||
+        !custody_ack::decodeHeader(payload, size, header) ||
+        header.tracker_device_id != device_id_ ||
+        custody_ack_rx_pending_) {
+      ++event_diagnostics_.custody_ack_rx_drops;
+      return;
+    }
+    custody_ack_rx_.size = size;
+    custody_ack_rx_.rssi_dbm = rssi;
+    custody_ack_rx_.snr_db = snr;
+    memcpy(custody_ack_rx_.payload, payload, size);
+    custody_ack_rx_pending_ = true;
+    ++event_diagnostics_.custody_ack_rx_queued;
+    // Never log an unverified ACK as accepted, even if its visible Gateway
+    // ID appears to match a provisioned slot.
+    return;
+  }
 
   if (size >= 2 &&
       payload[0] == tlp::kProductSecureVersion &&
