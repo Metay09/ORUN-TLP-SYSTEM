@@ -747,6 +747,33 @@ bool SecurityStore::recover() {
   return true;
 }
 
+bool SecurityStore::custodyAckScopeMatches(
+    uint64_t tracker_device_id, uint64_t gateway_device_id,
+    uint32_t key_epoch, uint32_t custody_floor,
+    uint32_t grant_generation) const {
+  // Untrusted ACK header fields are NOT source of policy authority.
+  // Require a completely recovered, idle, current-v3 SecurityStore.
+  if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
+      active_page_ < 0 || v3_policy_result_ready_ ||
+      pages_[active_page_].version != security_v3_format::kVersion ||
+      tracker_device_id == 0U ||
+      tracker_device_id != device_identity_.legacyUint64() ||
+      gateway_device_id == 0U ||
+      key_epoch == UINT32_MAX ||
+      key_epoch != credential_.key_epoch ||
+      custody_floor == UINT32_MAX ||
+      custody_floor != v3_snapshot_.custody_floor ||
+      grant_generation == 0U || grant_generation == UINT32_MAX)
+    return false;
+  for (size_t i = 0U; i < security_v3_format::kGatewayCount; ++i) {
+    const security_v3_format::GatewaySlot& slot = v3_snapshot_.gateways[i];
+    if (slot.gateway_id == gateway_device_id &&
+        slot.generation == grant_generation)
+      return true;
+  }
+  return false;
+}
+
 bool SecurityStore::currentCredentialId(
     uint8_t (&out)[kCredentialIdSize]) const {
   if (state_ != SecurityState::kProvisioned) return false;
