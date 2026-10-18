@@ -823,7 +823,7 @@ int main() {
     PageHeader header{1, kDeviceA};
     uint8_t bytes[kPageHeaderSize];
     encodePageHeader(header, bytes);
-    bytes[4] = kVersion + 1;  // corrupt only the version byte after sealing.
+    bytes[4] = (security_v3_format::kVersion + 1U);  // corrupt only the version byte after sealing.
     memcpy(flash.bytes.data(), bytes, sizeof(bytes));
 
     SecurityStore store(flash, flash);
@@ -833,7 +833,7 @@ int main() {
     fillId(id, 9);
     fillKRoot(k_root, 9);
     assert(!store.commitCredential(id, 1, k_root));
-    assert(flash.bytes[4] == kVersion + 1);  // untouched.
+    assert(flash.bytes[4] == (security_v3_format::kVersion + 1U));  // untouched.
   }
 
   // 9b. Unsupported/newer page alongside an older valid current page is
@@ -848,7 +848,7 @@ int main() {
     PageHeader newer{2, kDeviceA};
     uint8_t header[kPageHeaderSize];
     encodePageHeader(newer, header);
-    header[4] = kVersion + 1;
+    header[4] = (security_v3_format::kVersion + 1U);
     memcpy(flash.bytes.data() + kPageSize, header, sizeof(header));
 
     SecurityStore recovered(flash, flash);
