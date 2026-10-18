@@ -157,4 +157,17 @@ echo "[SF5K3K] 0x05 untrusted ACK shape + actual SecurityStore scope"
   -o "$build_dir/v3-ack-scope"
 "$build_dir/v3-ack-scope"
 
-echo "[SF5K3A/SF5K3B/SF5K3C/SF5K3D/SF5K3E/SF5K3F/SF5K3G/SF5K3H/SF5K3I/SF5K3J/SF5K3K] all focused host tests PASS"
+echo "[SF5K3L] actual SecurityStore v3 HMAC ACK oracle (test-only OpenSSL)"
+"$cxx" "${flags[@]}" -Wno-conversion -Wno-sign-conversion \
+  -DORUN_SF5K3L_HOST_TEST \
+  firmware/tests/sf5/test_sf5k3l_custody_ack_crypto.cpp \
+  firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
+  firmware/src/custody_ack_verifier.cpp firmware/src/custody_ack.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp firmware/src/security_v3_format.cpp \
+  firmware/src/tlp_v2_product_secure.cpp firmware/src/security_format.cpp \
+  firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
+  -lcrypto -o "$build_dir/v3-ack-hmac"
+"$build_dir/v3-ack-hmac"
+
+echo "[SF5K3A/SF5K3B/SF5K3C/SF5K3D/SF5K3E/SF5K3F/SF5K3G/SF5K3H/SF5K3I/SF5K3J/SF5K3K/SF5K3L] all focused host tests PASS"
