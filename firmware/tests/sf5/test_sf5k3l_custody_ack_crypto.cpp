@@ -27,7 +27,8 @@ struct CustodyAckVerifierHostPeer {
       assert(selected<count);
     return verdict;
   }
-  static osf::RecordIdentity identity(const AuthenticatedCustodyAck& proof) {
+  static observation_store_format::RecordIdentity identity(
+      const AuthenticatedCustodyAck& proof) {
     return proof.identity_;
   }
   static void seed(AuthenticatedCustodyAck& proof) {
