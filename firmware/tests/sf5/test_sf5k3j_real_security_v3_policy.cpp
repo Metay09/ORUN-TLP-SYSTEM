@@ -281,4 +281,7 @@ int main() {
   testTornAndAmbiguousPolicyCommit();
   testPolicyTriggersV3PageCompaction();
   puts("SF5K3J REAL SecurityStore v3 Gateway policy journal/revoke/cuts: PASS");
+  // SF5K3K includes this fixture with main renamed to an ordinary function.
+  // Return explicitly so that both standalone and included builds pass -Werror.
+  return 0;
 }
