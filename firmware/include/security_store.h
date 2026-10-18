@@ -8,6 +8,7 @@
 namespace orun_tlp {
 
 class HistorySecureCrypto;
+class CustodyAckVerifier;
 
 enum class SecurityState : uint8_t {
   kUnprovisioned,
@@ -147,6 +148,9 @@ class SecurityStore {
  private:
   friend class HistorySecureCrypto;
   friend class ProductSecureCrypto;
+  // The only source owner allowed to use K_root in custody ACK HMAC
+  // verification. There is still no public root/key readback API.
+  friend class CustodyAckVerifier;
   // Only host regression defines this seam; no production implementation.
   // This is NOT a security/authentication boundary for radio or BLE.
   friend class SecurityV3PolicyTestSeam;
