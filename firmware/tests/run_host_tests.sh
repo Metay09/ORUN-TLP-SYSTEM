@@ -332,7 +332,9 @@ g++ -DORUN_M4P5B_HOST_TEST=1 "${portable_flags[@]}" \
   firmware/tests/m4/test_m4p5b_history_receipt_admission.cpp \
   firmware/src/history_receipt_admission.cpp \
   firmware/src/history_delivery_coordinator.cpp firmware/src/history_store.cpp \
-  firmware/src/security_store.cpp firmware/src/security_format.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   firmware/src/tlp_v2_history_secure.cpp \
   -o "$test_dir/m4p5b_history_receipt_admission"
@@ -404,14 +406,18 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p6_security_format.cpp \
   firmware/src/tlp_position_packet.cpp -o "$test_dir/m7p6_security_format"
 "$test_dir/m7p6_security_format"
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p6_security_store.cpp \
-  firmware/src/security_store.cpp firmware/src/security_format.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m7p6_security_store"
 "$test_dir/m7p6_security_store"
 g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
   firmware/tests/m7/test_m7p6f_security_gate_integration.cpp \
-  firmware/src/security_store.cpp firmware/src/security_format.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   firmware/src/flash_mutation_gate.cpp firmware/src/nrf_history_flash.cpp \
   firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
@@ -591,7 +597,9 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/config_mutation.cpp firmware/src/service_intent.cpp \
   firmware/src/ble_application_transport.cpp \
   firmware/src/ble_application_handoff.cpp \
-  firmware/src/security_store.cpp firmware/src/security_format.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
   firmware/src/position_flow.cpp firmware/src/ble_admission_policy.cpp \
   firmware/src/loop_health.cpp firmware/src/loop_health_monitor.cpp \
   firmware/src/battery_monitor.cpp firmware/src/battery_policy.cpp \
@@ -658,7 +666,9 @@ g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
   firmware/tests/sf5/test_sf5k3e_real_security_v3_readonly.cpp \
   firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
   firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
-  firmware/src/security_store.cpp firmware/src/security_format.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/sf5k3e_real_security_v3_readonly"
 # SF5K3F: new product-source v3 codec, cross-checked byte for byte against
@@ -697,6 +707,20 @@ g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
   firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/sf5k3h_security_v3_page_writer"
 "$test_dir/sf5k3h_security_v3_page_writer"
+# SF5K3I: ACTUAL SecurityStore v3 boot and v2->v3 migration (not a
+# model or codec-only test). No Gateway grant admission or ACK release.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3i_real_security_store_v3.cpp \
+  firmware/src/security_store.cpp \
+  firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3i_real_security_store_v3"
+"$test_dir/sf5k3i_real_security_store_v3"
 "$test_dir/sf5k3e_real_security_v3_readonly"
 "$test_dir/sf5k3d_security_v3_snapshot_candidate"
 "$test_dir/sf5k3c_security_v3_candidate"
