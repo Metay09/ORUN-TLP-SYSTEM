@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "journal_format.h"
+#include "security_v3_ab_preflight.h"
 #include "storage_config.h"
 
 namespace orun_tlp {
@@ -30,6 +31,28 @@ uint32_t v2StateOffset(unsigned page, unsigned slot) {
 uint32_t v2TailOffset(unsigned page) {
   return pageOffset(page) + securityStateRecordOffset(kSecurityStateSlotsPerPage);
 }
+
+uint32_t v3StateOffset(unsigned page, unsigned slot) {
+  return pageOffset(page) +
+         static_cast<uint32_t>(security_v3_format::kJournalOffset +
+                               slot * security_v3_format::kRecordBytes);
+}
+
+class StoreV3Reader : public security_v3_format::JournalReader {
+ public:
+  StoreV3Reader(const FlashBackend& port, unsigned page)
+      : port_(port), base_(v3StateOffset(page, 0U)) {}
+  bool read(size_t offset, uint8_t* data, size_t size) const override {
+    if (offset > security_v3_format::kJournalBytes ||
+        size > security_v3_format::kJournalBytes - offset)
+      return false;
+    return port_.read(base_ + static_cast<uint32_t>(offset), data, size);
+  }
+ private:
+  const FlashBackend& port_;
+  uint32_t base_;
+};
+
 
 // SF5K3E: the candidate v3 wire geometry is inspected independently of
 // SecurityStore's v1/v2 authority. No v3 writer, KDF or ACK admission here.
@@ -286,6 +309,7 @@ bool SecurityStore::begin(DeviceIdentity device_identity) {
   credential_ = {};
   tx_reserved_bound_ = 0;
   tx_next_ = 0;
+  v3_snapshot_ = security_v3_format::Snapshot{};
   a2d_replay_bound_ = 0;
   a2d_runtime_hwm_ = 0;
   a2d_runtime_hwm_valid_ = false;
@@ -300,6 +324,7 @@ bool SecurityStore::begin(DeviceIdentity device_identity) {
   pending_replay_counter_ = 0;
   pending_replay_bound_ = 0;
   erase_old_page_ = -1;
+  v3_page_is_migration_ = false;
   commit_result_ready_ = false;
   commit_success_ = false;
   a2d_result_ready_ = false;
@@ -324,6 +349,95 @@ bool SecurityStore::begin(DeviceIdentity device_identity) {
 }
 
 bool SecurityStore::recover() {
+  // A committed v3 page is selected only through the complete fail-closed
+  // physical A/B evaluator; legacy v1/v2 recovery below remains unchanged
+  // for installations without v3. A staged v3 header cannot supersede the
+  // older live v2 page after a brownout mid-migration.
+  bool saw_v3_header = false;
+  for (unsigned page = 0U; page < kPageCount; ++page) {
+    uint8_t header[kPageHeaderSize]{};
+    if (!critical_.read(headerOffset(page), header, sizeof(header)))
+      return false;
+    uint8_t version = 0U;
+    if (headerMagicPresent(header, &version) &&
+        version == security_v3_format::kVersion)
+      saw_v3_header = true;
+  }
+  if (saw_v3_header) {
+    security_v3_ab_preflight::Summary choice{};
+    const auto selected = security_v3_ab_preflight::inspect(
+        critical_, device_identity_.legacyUint64(), choice);
+    if (selected == security_v3_ab_preflight::Result::kReadFault)
+      return false;
+    if (selected == security_v3_ab_preflight::Result::kFault) {
+      state_ = SecurityState::kFault;
+      return true;
+    }
+    if (selected == security_v3_ab_preflight::Result::kForeign) {
+      state_ = SecurityState::kForeign;
+      return true;
+    }
+    if (selected == security_v3_ab_preflight::Result::kUnsupported) {
+      state_ = SecurityState::kUnsupported;
+      return true;
+    }
+    if (selected == security_v3_ab_preflight::Result::kV3) {
+      const unsigned page = choice.selected_page;
+      if (page >= kPageCount) return false;
+      uint8_t credential_bytes[kCredentialRecordSize]{};
+      if (!critical_.read(credentialOffset(page), credential_bytes,
+                          sizeof(credential_bytes)))
+        return false;
+      Credential parsed{};
+      if (!decodeCredential(credential_bytes, parsed) ||
+          parsed.device_identity != device_identity_.legacyUint64()) {
+        state_ = SecurityState::kFault;
+        return true;
+      }
+      security_v3_format::Snapshot recovered{};
+      const StoreV3Reader journal(critical_, page);
+      if (!security_v3_format::recoverCommittedJournalStream(
+              journal, parsed.credential_id, parsed.key_epoch, recovered) ||
+          recovered.tx_bound != choice.tx_reserved_bound ||
+          recovered.a2d_bound != choice.a2d_replay_bound ||
+          recovered.policy_revision != choice.policy_revision ||
+          recovered.custody_floor != choice.custody_floor) {
+        state_ = SecurityState::kFault;
+        return true;
+      }
+
+      // Used slots INCLUDE torn pre-commit appends. Reusing them can make
+      // an illegal flash write or manufacture a gap after a burned slot.
+      uint32_t used = 0U;
+      for (unsigned slot = 0U;
+           slot < security_v3_format::kRecordCount; ++slot) {
+        uint8_t raw[security_v3_format::kRecordBytes]{};
+        if (!critical_.read(v3StateOffset(page, slot),
+                            raw, sizeof(raw)))
+          return false;
+        if (!journal_format::erased(raw, sizeof(raw)))
+          used = slot + 1U;
+      }
+      credential_ = parsed;
+      v3_snapshot_ = recovered;
+      tx_reserved_bound_ = recovered.tx_bound;
+      tx_next_ = tx_reserved_bound_;  // burn unused reservations on reboot
+      a2d_replay_bound_ = recovered.a2d_bound;
+      a2d_runtime_hwm_valid_ = a2d_replay_bound_ != 0U;
+      a2d_runtime_hwm_ = a2d_runtime_hwm_valid_ ?
+                          a2d_replay_bound_ - 1U : 0U;
+      active_page_ = static_cast<int>(page);
+      newest_generation_ = choice.generation;
+      pages_[page].generation = choice.generation;
+      pages_[page].version = security_v3_format::kVersion;
+      pages_[page].state_used = used;
+      state_ = SecurityState::kProvisioned;
+      return true;
+    }
+    // A v1/v2 source with only a STAGED v3 page should recover the
+    // legacy source below, not classify the interrupted upgrade as active.
+  }
+
   struct PageClass {
     bool valid = false;
     uint8_t version = 0;
@@ -354,6 +468,13 @@ bool SecurityStore::recover() {
       continue;
     }
 
+    if (version == security_v3_format::kVersion &&
+        journal_format::erased(
+            header_bytes + kPageHeaderSize - sizeof(uint32_t),
+            sizeof(uint32_t))) {
+      ++diagnostics_.recovery_corruptions;
+      continue;  // v3 migration was never activated
+    }
     if (version != kVersionV1 && version != kVersionV2) {
       any_unsupported = true;
       continue;
