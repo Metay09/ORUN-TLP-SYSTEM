@@ -128,12 +128,6 @@ void storeOne(ProductRecordStore& product,osc::ExactObject& exact) {
   assert(product.custodyCandidateMatchesRetainedExact(exact));
 }
 
-void provisionAuthorized(SecurityStore& store) {
-  // Uses the real v2->v3 SecurityStore migration fixture, zero initially
-  // authorized custody Gateways, and the actual durable policy journal.
-  (void)store;
-}
-
 void testDurableReleaseAndReboot(bool async) {
   Flash sec_flash;
   SecurityStore security(sec_flash,sec_flash);
