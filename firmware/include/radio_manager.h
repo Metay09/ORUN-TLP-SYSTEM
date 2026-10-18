@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "custody_ack.h"
 #include "device_identity.h"
 #include "network_service.h"
 #include "radio_listen_policy.h"
@@ -44,6 +45,8 @@ struct RadioEventDiagnostics {
   uint32_t product_secure_rx_queued = 0;
   uint32_t product_secure_rx_drops = 0;
   uint32_t product_secure_tx_attempts = 0;
+  uint32_t custody_ack_rx_queued = 0;
+  uint32_t custody_ack_rx_drops = 0;
 };
 
 struct HistorySecureRxFrame {
@@ -59,6 +62,15 @@ struct ProductSecureRxFrame {
   int16_t rssi_dbm = 0;
   int8_t snr_db = 0;
   uint8_t payload[tlp::kProductSecureMaxFrameSize]{};
+};
+
+// Bounded raw ACK mailbox. Structural validation only: an untrusted radio
+// frame, NOT a signature/HMAC verification or custody-release capability.
+struct CustodyAckRxFrame {
+  uint16_t size = 0;
+  int16_t rssi_dbm = 0;
+  int8_t snr_db = 0;
+  uint8_t payload[custody_ack::kWireSize]{};
 };
 
 class RadioManager {
@@ -108,6 +120,9 @@ class RadioManager {
   // No production caller is enabled until that owner is integrated.
   bool sendProductSecurePacket(const uint8_t* payload, size_t size);
   bool takeProductSecureFrame(ProductSecureRxFrame* frame);
+  // Tracker-only, exact raw 56-byte ACK from driver callback mailbox.
+  // The consumer MUST separately check durable grant and full HMAC.
+  bool takeCustodyAckFrame(CustodyAckRxFrame* frame);
 
   uint64_t deviceId() const;
   uint32_t txAttempts() const { return tx_attempts_; }
@@ -205,6 +220,8 @@ class RadioManager {
   bool history_secure_rx_pending_ = false;
   ProductSecureRxFrame product_secure_rx_{};
   bool product_secure_rx_pending_ = false;
+  CustodyAckRxFrame custody_ack_rx_{};
+  bool custody_ack_rx_pending_ = false;
   uint32_t bridge_line_number_ = 0;  // per boot; first printed line is 1.
   uint32_t tx_attempts_ = 0, local_tx_failures_ = 0;
   uint32_t tx_timeouts_ = 0;
