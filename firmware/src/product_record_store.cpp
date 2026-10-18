@@ -28,7 +28,7 @@ ProductRecordStore::Submit ProductRecordStore::submitPeriodic(
     const PeriodicRecordInputs& inputs) {
   if (!mounted_ || !store_.ready() || store_.faulted() || preparing())
     return Submit::kNotMounted;
-  if (pending_) {
+  if (pending_ || release_pending_ || release_outcome_ready_) {
     // The previous period is still being written. Periods are minutes
     // apart and a write takes milliseconds, so this means the store is
     // stuck; keep the older record rather than reorder identities.
@@ -81,6 +81,7 @@ ObservationStore::ControlLookupResult ProductRecordStore::findCachedExact(
 bool ProductRecordStore::custodyCandidateMatchesRetainedExact(
     const osc::ExactObject& expected) const {
   if (!mounted_ || preparing() || pending_ ||
+      release_pending_ || release_outcome_ready_ ||
       job_ != Job::kNone || cache_pending_ || cache_outcome_ready_ ||
       !store_.ready() || store_.faulted() || store_.busy() ||
       flash_.hasUnreconciledMutation() ||
@@ -108,6 +109,7 @@ bool ProductRecordStore::snapshotCustodyCandidates(
     osc::ExactObject (&objects)[osf::kMaxExactCustodyObjects],
     uint16_t& count) const {
   if (!mounted_ || preparing() || pending_ || outcome_ready_ ||
+      release_pending_ || release_outcome_ready_ ||
       job_ != Job::kNone || cache_pending_ || cache_outcome_ready_ ||
       !store_.ready() || store_.faulted() || store_.busy() ||
       flash_.hasUnreconciledMutation())
@@ -171,6 +173,7 @@ ProductRecordStore::CacheSubmit ProductRecordStore::submitExactCache(
   if (!mounted_ || !store_.ready() || store_.faulted() || preparing())
     return CacheSubmit::kNotMounted;
   if (pending_ || job_ != Job::kNone || store_.busy() ||
+      release_pending_ || release_outcome_ready_ ||
       outcome_ready_ || cache_pending_ || cache_outcome_ready_)
     return CacheSubmit::kBusy;
 
@@ -219,6 +222,45 @@ bool ProductRecordStore::takeCacheOutcome(CacheOutcome& outcome) {
   return true;
 }
 
+bool ProductRecordStore::beginAuthenticatedCustodyRelease(
+    const osf::RecordIdentity& identity) {
+  // Exact-identity revalidation is performed by CustodyAckReleaseOwner
+  // immediately before this private handoff. Never release from a
+  // mailbox, token ID, TX_DONE or untrusted ACK header alone.
+  if (!identity.valid() || !mounted_ || preparing() || pending_ ||
+      outcome_ready_ || cache_pending_ || cache_outcome_ready_ ||
+      release_pending_ || release_outcome_ready_ ||
+      job_ != Job::kNone || !store_.ready() || store_.faulted() ||
+      store_.busy() || flash_.hasUnreconciledMutation())
+    return false;
+  if (!store_.requestRelease(identity)) return false;
+  release_identity_ = identity;
+  release_pending_ = true;
+  job_ = Job::kCustodyRelease;
+  return true;
+}
+
+bool ProductRecordStore::takeAuthenticatedCustodyReleaseResult(
+    bool& durable) {
+  if (!release_outcome_ready_) return false;
+  durable = release_outcome_durable_;
+  release_outcome_ready_ = false;
+  release_outcome_durable_ = false;
+  return true;
+}
+
+void ProductRecordStore::finishCustodyRelease(bool durable) {
+  release_outcome_durable_ = durable;
+  release_outcome_ready_ = true;
+  release_pending_ = false;
+  release_identity_ = osf::RecordIdentity{};
+  job_ = Job::kNone;
+  if (durable)
+    ++diagnostics_.custody_release_committed;
+  else
+    ++diagnostics_.custody_release_failed;
+}
+
 void ProductRecordStore::poll() {
   if (preparing()) {
     drivePrepare();
@@ -232,6 +274,25 @@ void ProductRecordStore::poll() {
   switch (job_) {
     case Job::kNone:
       break;
+    case Job::kCustodyRelease: {
+      // ObservationStore::poll() already consumed flash completion above.
+      // A terminal success must be proven again by readback of the exact
+      // backing logical record's durable release marker and invisibility
+      // of its former exact protected cache entry.
+      const bool taken = store_.takeReleaseResult(success);
+      ObservationStore::Record record{};
+      osc::ExactObject cached{};
+      const bool durable =
+          taken && success &&
+          store_.lookup(release_identity_, record) ==
+              ObservationStore::LookupResult::kFound &&
+          record.released && !record.release_uncertain &&
+          store_.findExactObject(release_identity_, cached) ==
+              ObservationStore::ControlLookupResult::kNone &&
+          !flash_.hasUnreconciledMutation();
+      finishCustodyRelease(durable);
+      return;
+    }
     case Job::kAppend: {
       ObservationStore::Handle handle;
       const bool taken = store_.takeAppendResult(success, handle);
@@ -349,6 +410,7 @@ bool ProductRecordStore::requestPrepare() {
   // Keep destructive service work out of every owner job and unconsumed
   // cache outcome, including failures that have faulted the mounted store.
   if (preparing() || pending_ || cache_pending_ || cache_outcome_ready_ ||
+      release_pending_ || release_outcome_ready_ ||
       job_ != Job::kNone || store_.busy() || !region_readable_)
     return false;
   const bool leftovers =
