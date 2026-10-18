@@ -122,17 +122,20 @@ void testVerifiedButNeverAuthorized() {
          SecurityV3Inspection::kReadFault);
   assertUnchanged(before_begin);
   assert(real.begin(DeviceIdentity::fromLegacyUint64(kTracker)));
-  // An unsupported v3 page must NOT issue counters, grants, nor activate
-  // a root or start an automatic flash migration.
-  assert(real.state() == SecurityState::kUnsupported);
-  assert(!real.busy());
+  // SF5K3I now recovers validated v3 credential/TX/A2D state in the
+  // actual SecurityStore. This diagnostic still grants NO Gateway ACK
+  // admission and never mutates flash. Automatic TX re-reservation is
+  // only staged until poll(), so FakeFlash has no physical write here.
+  assert(real.state() == SecurityState::kProvisioned);
+  assert(real.busy());
   uint64_t tx = 0U;
   uint32_t epoch = 0U;
   assert(!real.reserveNextTxCounter(tx, epoch));
   bool accepted = true;
   assert(!real.takeA2dReplayResult(accepted));
   uint8_t id[sf::kCredentialIdSize]{};
-  assert(!real.currentCredentialId(id));
+  assert(real.currentCredentialId(id));
+  assert(memcmp(id, fixture.credential_id, sizeof(id)) == 0);
   SecurityV3ReadOnlySummary summary = sentinel();
   assert(real.inspectV3PageReadOnly(0U, summary) ==
          SecurityV3Inspection::kVerified);
@@ -143,9 +146,10 @@ void testVerifiedButNeverAuthorized() {
          summary.policy_revision == 6U);
   assert(summary.active_gateway_count == 3U &&
          summary.max_grant_generation == 6U);
-  assert(real.state() == SecurityState::kUnsupported);
+  assert(real.state() == SecurityState::kProvisioned);
   assert(!real.reserveNextTxCounter(tx, epoch));
-  for (unsigned i = 0U; i < 4U; ++i) real.poll();
+  // inspectV3PageReadOnly must never call program/erase. No poll is
+  // called here because poll() is the separate live counter writer.
   assert(flash.program_calls == 0U && flash.erase_calls == 0U);
   assert(real.inspectV3PageReadOnly(1U, summary) ==
          SecurityV3Inspection::kNotV3);
