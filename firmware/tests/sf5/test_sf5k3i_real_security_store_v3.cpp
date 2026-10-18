@@ -206,6 +206,31 @@ void testV3GatewayTombstonesSurviveLiveCounterAppend() {
          summary.active_gateway_count==1U &&
          summary.max_grant_generation==3U);
 
+  // Force a real v3 journal wrap, not merely the independent page-writer
+  // model. All grants/tombstones must survive the live Store compaction.
+  uint64_t last_tx = 0U;
+  bool have_tx = false;
+  for (unsigned i = 0U; i < 70U * 256U; ++i) {
+    uint64_t next = 0U;
+    uint32_t epoch = 0U;
+    unsigned attempts = 0U;
+    while (!store.reserveNextTxCounter(next, epoch)) {
+      assert(++attempts < 300U);
+      assert(store.state() == SecurityState::kProvisioned);
+      store.poll();
+    }
+    assert(epoch == 7U);
+    if (have_tx) assert(next > last_tx);
+    last_tx = next;
+    have_tx = true;
+  }
+  runUntilIdle(store);
+  assert(store.diagnostics().compactions >= 1U);
+  assert(ab::inspect(flash,kDevice,summary)==ab::Result::kV3);
+  assert(summary.policy_revision==3U &&
+         summary.active_gateway_count==1U &&
+         summary.max_grant_generation==3U);
+
   SecurityStore reboot(flash,flash);
   assert(reboot.begin(DeviceIdentity::fromLegacyUint64(kDevice)));
   assert(reboot.state()==SecurityState::kProvisioned);
