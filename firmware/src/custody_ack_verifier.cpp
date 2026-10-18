@@ -169,6 +169,8 @@ CustodyAckVerifyResult CustodyAckVerifier::verifyCandidates(
   verified.identity_=objects[selected].identity;
   memcpy(verified.full_digest_,selected_digest,sizeof(selected_digest));
   verified.gateway_id_=header.gateway_device_id;
+  verified.tracker_id_=header.tracker_device_id;
+  verified.key_epoch_=header.key_epoch;
   verified.generation_=header.grant_generation;
   verified.floor_=header.custody_floor;
   verified.verified_=true;
