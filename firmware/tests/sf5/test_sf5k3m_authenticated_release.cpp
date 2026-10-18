@@ -292,19 +292,21 @@ void testFlashReleaseFailureNeverClaimsDurability() {
   assert(finish==CustodyAckReleaseOwner::Service::kNotDurable);
   assert(product.diagnostics().custody_release_failed==1U);
   ObservationStore::Record record{};
-  assert(product.store().lookup(exact.identity,record)==
-         ObservationStore::LookupResult::kFound);
-  assert(!record.released);
+  if (!product.store().faulted()) {
+    assert(product.store().lookup(exact.identity,record)==
+           ObservationStore::LookupResult::kFound);
+    assert(!record.released);
+  }
 
-  // Reboot may now return a retained record or a fail-closed fault, but
-  // never silently pretend that this ACK durably released the record.
+  // The flash operation failed before altering any byte. Reboot must
+  // recover the same retained logical observation and must not publish a
+  // false durable ACK-release result.
   ProductRecordStore reboot(flash,kProductPages,&source);
   reboot.begin(kDevice,jobs);
-  if(reboot.mounted()) {
-    const auto state=reboot.store().lookup(exact.identity,record);
-    assert(state!=ObservationStore::LookupResult::kFound ||
-           !record.released);
-  }
+  assert(reboot.mounted()&&!reboot.store().faulted());
+  assert(reboot.store().lookup(exact.identity,record)==
+         ObservationStore::LookupResult::kFound);
+  assert(!record.released);
 }
 
 } // namespace
