@@ -74,7 +74,7 @@ void runUntilIdle(SecurityStore& store) {
   assert(!store.busy());
 }
 
-void provisionV2(Flash& flash, SecurityStore& s) {
+void provisionV2(Flash&, SecurityStore& s) {
   assert(s.begin(DeviceIdentity::fromLegacyUint64(kDevice)));
   assert(s.state() == SecurityState::kUnprovisioned);
   sf::Credential c = credential();
