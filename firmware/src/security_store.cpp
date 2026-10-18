@@ -325,6 +325,9 @@ bool SecurityStore::begin(DeviceIdentity device_identity) {
   pending_replay_bound_ = 0;
   erase_old_page_ = -1;
   v3_page_is_migration_ = false;
+  policy_after_v3_compaction_ = false;
+  pending_policy_entry_ = security_v3_format::Entry{};
+  pending_policy_snapshot_ = security_v3_format::Snapshot{};
   commit_result_ready_ = false;
   commit_success_ = false;
   a2d_result_ready_ = false;
@@ -1437,6 +1440,7 @@ void SecurityStore::fail() {
   const bool mutation_failure =
       failing_job == Job::kReserve ||
       failing_job == Job::kA2dReplayReserve ||
+      failing_job == Job::kV3PolicyAppend ||
       failing_job == Job::kNewPage;
   const bool unreconciled_async_mutation =
       active_port_ != nullptr && active_port_->hasUnreconciledMutation();
@@ -1450,7 +1454,8 @@ void SecurityStore::fail() {
   // erased gap followed by a later committed record, which recovery must
   // reject. Close protected service for this boot instead.
   if (failing_job == Job::kReserve ||
-      failing_job == Job::kA2dReplayReserve) {
+      failing_job == Job::kA2dReplayReserve ||
+      failing_job == Job::kV3PolicyAppend) {
     const bool is_v3 = pages_[target_page_].version ==
                        security_v3_format::kVersion;
     const uint32_t width = is_v3 ?
@@ -1478,6 +1483,12 @@ void SecurityStore::fail() {
   flash_op_awaiting_completion_ = false;
   reserve_after_new_page_ = false;
   replay_after_new_page_ = false;
+  policy_after_v3_compaction_ = false;
+  if (failing_job == Job::kV3PolicyAppend) {
+    ++diagnostics_.v3_policy_failures;
+    pending_policy_entry_ = security_v3_format::Entry{};
+    pending_policy_snapshot_ = security_v3_format::Snapshot{};
+  }
 
   // Existing active page/state remains authoritative because every new-page
   // failure happens before activation or every append failure targets only the
@@ -1555,7 +1566,8 @@ void SecurityStore::fail() {
   // later slot would make the next boot reject the duplicate. Quarantine
   // protected service until reboot can inspect the exact durable record.
   if ((failing_job == Job::kReserve ||
-       failing_job == Job::kA2dReplayReserve) &&
+       failing_job == Job::kA2dReplayReserve ||
+       failing_job == Job::kV3PolicyAppend) &&
       pages_[target_page_].version == security_v3_format::kVersion) {
     state_ = SecurityState::kFault;
     ++diagnostics_.mutation_failure_lockouts;
@@ -1719,6 +1731,12 @@ void SecurityStore::poll() {
       active_port_ = nullptr;
       reserve_after_new_page_ = false;
       replay_after_new_page_ = false;
+      if (policy_after_v3_compaction_) {
+        policy_after_v3_compaction_ = false;
+        ++diagnostics_.v3_policy_failures;
+      }
+      pending_policy_entry_ = security_v3_format::Entry{};
+      pending_policy_snapshot_ = security_v3_format::Snapshot{};
       ++diagnostics_.activation_ambiguities;
       ++diagnostics_.migration_failures;
     }
@@ -1817,6 +1835,8 @@ void SecurityStore::poll() {
   if (phase_ == Phase::kWriteReserve) {
     if (job_ == Job::kA2dReplayReserve) {
       completeA2dReplayReserve();
+    } else if (job_ == Job::kV3PolicyAppend) {
+      completeV3PolicyAppend();
     } else {
       completeReserve();
     }
