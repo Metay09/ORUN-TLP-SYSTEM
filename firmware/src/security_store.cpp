@@ -1420,6 +1420,19 @@ void SecurityStore::fail() {
     return;
   }
 
+  // Unlike legacy v2, the v3 replay journal REQUIRES strictly rising
+  // committed counter bounds. A failed append may have physically
+  // committed before its completion failed; retrying the same bound in a
+  // later slot would make the next boot reject the duplicate. Quarantine
+  // protected service until reboot can inspect the exact durable record.
+  if ((failing_job == Job::kReserve ||
+       failing_job == Job::kA2dReplayReserve) &&
+      pages_[target_page_].version == security_v3_format::kVersion) {
+    state_ = SecurityState::kFault;
+    ++diagnostics_.mutation_failure_lockouts;
+    return;
+  }
+
   if (mutation_failure) {
     if (consecutive_mutation_failures_ < UINT8_MAX)
       ++consecutive_mutation_failures_;
