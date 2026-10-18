@@ -932,6 +932,14 @@ void SecurityStore::completeV3Page() {
   }
   v3_page_is_migration_ = false;
 
+  if (policy_after_v3_compaction_) {
+    policy_after_v3_compaction_ = false;
+    if (!startV3PolicyAppend()) {
+      state_ = SecurityState::kFault;
+      ++diagnostics_.v3_policy_failures;
+    }
+    return;
+  }
   if (reserve_after_new_page_) {
     reserve_after_new_page_ = false;
     (void)startReservation();
@@ -942,6 +950,127 @@ void SecurityStore::completeV3Page() {
   } else {
     maybeAutoReserve();
   }
+}
+
+bool SecurityStore::beginV3PolicyMutation(
+    PolicyAction action, uint8_t slot, uint64_t gateway_id,
+    uint32_t floor) {
+  // There is deliberately NO production caller of this private method.
+  // Future admission requires a separately authenticated ADMIN command.
+  // The A2D replay-bound method alone is not administrative authority.
+  if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
+      active_page_ < 0 || a2d_result_ready_ || commit_result_ready_ ||
+      policy_after_v3_compaction_ ||
+      pages_[active_page_].version != security_v3_format::kVersion ||
+      v3_snapshot_.policy_revision >= UINT32_MAX - 1U)
+    return false;
+
+  security_v3_format::Snapshot next = v3_snapshot_;
+  security_v3_format::Entry entry{};
+  memcpy(entry.credential_id, credential_.credential_id,
+         kCredentialIdSize);
+  entry.key_epoch = credential_.key_epoch;
+  entry.kind = security_v3_format::Kind::kCustodyPolicy;
+  entry.policy_revision = next.policy_revision + 1U;
+
+  uint32_t max_generation = 0U;
+  for (unsigned i = 0U; i < security_v3_format::kGatewayCount; ++i)
+    if (next.gateways[i].generation > max_generation)
+      max_generation = next.gateways[i].generation;
+
+  if (action == PolicyAction::kAdvanceFloor) {
+    if (slot != 0xFFU || gateway_id != 0U ||
+        floor <= next.custody_floor || floor == UINT32_MAX)
+      return false;
+    entry.slot = 0xFFU;
+    entry.custody_floor = floor;
+    next.custody_floor = floor;
+  } else {
+    if (slot >= security_v3_format::kGatewayCount ||
+        floor != next.custody_floor ||
+        max_generation >= UINT32_MAX - 1U)
+      return false;
+    const uint64_t existing = next.gateways[slot].gateway_id;
+    if (action == PolicyAction::kGrant) {
+      // No implicit replacement: an active Gateway must first be
+      // explicitly revoked and durably committed.
+      if (gateway_id == 0U || existing != 0U) return false;
+      for (unsigned i = 0U; i < security_v3_format::kGatewayCount; ++i)
+        if (next.gateways[i].gateway_id == gateway_id) return false;
+    } else if (action == PolicyAction::kRevoke) {
+      // Exact identity binding blocks stale or wrong-slot revocations.
+      if (existing == 0U || gateway_id != existing) return false;
+    } else {
+      return false;
+    }
+    entry.slot = slot;
+    entry.value = action == PolicyAction::kGrant ? gateway_id : 0U;
+    entry.grant_generation = max_generation + 1U;
+    entry.custody_floor = floor;
+    next.gateways[slot].gateway_id = entry.value;
+    next.gateways[slot].generation = entry.grant_generation;
+  }
+  next.policy_revision = entry.policy_revision;
+
+  // Enforce byte-codec validity BEFORE setting any pending state.
+  uint8_t encoded[security_v3_format::kRecordBytes]{};
+  if (!security_v3_format::encodeRecord(entry, encoded))
+    return false;
+
+  pending_policy_entry_ = entry;
+  pending_policy_snapshot_ = next;
+  if (pages_[active_page_].state_used + 1U >=
+      security_v3_format::kRecordCount) {
+    policy_after_v3_compaction_ = true;
+    if (!startV3Page(false)) {
+      policy_after_v3_compaction_ = false;
+      pending_policy_entry_ = security_v3_format::Entry{};
+      pending_policy_snapshot_ = security_v3_format::Snapshot{};
+      return false;
+    }
+    return true;
+  }
+  if (!startV3PolicyAppend()) {
+    pending_policy_entry_ = security_v3_format::Entry{};
+    pending_policy_snapshot_ = security_v3_format::Snapshot{};
+    return false;
+  }
+  return true;
+}
+
+bool SecurityStore::startV3PolicyAppend() {
+  if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
+      active_page_ < 0 ||
+      pages_[active_page_].version != security_v3_format::kVersion ||
+      pages_[active_page_].state_used >=
+          security_v3_format::kRecordCount)
+    return false;
+
+  uint8_t record[security_v3_format::kRecordBytes]{};
+  if (!security_v3_format::encodeRecord(pending_policy_entry_, record))
+    return false;
+  active_port_ = &critical_;
+  target_page_ = static_cast<uint32_t>(active_page_);
+  target_slot_ = pages_[active_page_].state_used;
+  job_ = Job::kV3PolicyAppend;
+  phase_ = Phase::kWriteReserve;
+  startBlob(v3StateOffset(target_page_, target_slot_),
+            record, sizeof(record));
+  return true;
+}
+
+void SecurityStore::completeV3PolicyAppend() {
+  // Policy changes become visible internally ONLY after body, 4-byte
+  // commit and whole-record readback have succeeded.
+  pages_[target_page_].state_used = target_slot_ + 1U;
+  v3_snapshot_ = pending_policy_snapshot_;
+  pending_policy_entry_ = security_v3_format::Entry{};
+  pending_policy_snapshot_ = security_v3_format::Snapshot{};
+  policy_after_v3_compaction_ = false;
+  consecutive_mutation_failures_ = 0U;
+  job_ = Job::kNone;
+  ++diagnostics_.v3_policy_commits;
+  maybeAutoReserve();
 }
 
 bool SecurityStore::startNewPage(NewPagePurpose purpose,
