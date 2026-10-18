@@ -721,6 +721,18 @@ g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
   firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/sf5k3i_real_security_store_v3"
 "$test_dir/sf5k3i_real_security_store_v3"
+# SF5K3J: actual production SecurityStore private policy journal path.
+# There is NO authenticated Gateway ACK owner or radio/BLE caller.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3j_real_security_v3_policy.cpp \
+  firmware/src/security_store.cpp \
+  firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3j_real_security_v3_policy"
+"$test_dir/sf5k3j_real_security_v3_policy"
 "$test_dir/sf5k3e_real_security_v3_readonly"
 "$test_dir/sf5k3d_security_v3_snapshot_candidate"
 "$test_dir/sf5k3c_security_v3_candidate"
