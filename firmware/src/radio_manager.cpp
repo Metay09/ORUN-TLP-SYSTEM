@@ -377,6 +377,7 @@ bool RadioManager::takeProductSecureFrame(ProductSecureRxFrame* frame) {
 
 bool RadioManager::takeCustodyAckFrame(CustodyAckRxFrame* frame) {
   if (frame == nullptr || !custody_ack_rx_pending_ ||
+      role_transition_pending_ ||
       network_.role() != NodeRole::kTracker) return false;
   *frame = custody_ack_rx_;
   custody_ack_rx_ = {};
