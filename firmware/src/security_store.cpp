@@ -333,6 +333,14 @@ bool SecurityStore::begin(DeviceIdentity device_identity) {
 
   // critical_/maint_ are priority-tagged views of the same physical security
   // backend. begin() one view only, matching the existing M7P6B ownership.
+  if (v3_writer_.status() ==
+          security_v3_page_writer::Status::kCommitted &&
+      !v3_writer_.rearmAfterCommit())
+    return false;
+  // A faulted asynchronous physical transaction must not be "restarted"
+  // by a repeated begin() call on the same live object.
+  if (v3_writer_.status() != security_v3_page_writer::Status::kIdle)
+    return false;
   if (!critical_.begin()) return false;
   if (!recover()) return false;
 
@@ -723,6 +731,9 @@ bool SecurityStore::commitCredential(
     const uint8_t (&credential_id)[kCredentialIdSize], uint32_t key_epoch,
     const uint8_t (&k_root)[kKRootSize]) {
   if (!ready_ || busy()) return false;
+  if (state_ == SecurityState::kProvisioned && active_page_ >= 0 &&
+      pages_[active_page_].version == security_v3_format::kVersion)
+    return false;  // credential rotation needs its own reviewed v3 transaction
   if (state_ != SecurityState::kUnprovisioned &&
       state_ != SecurityState::kProvisioned)
     return false;
@@ -825,6 +836,90 @@ bool SecurityStore::takeA2dReplayResult(bool& accepted) {
   accepted = a2d_result_accepted_;
   a2d_result_ready_ = false;
   return true;
+}
+
+bool SecurityStore::requestV3Migration() {
+  // This explicit local-maintenance entrypoint is not called by boot,
+  // networking or BLE. A policy/credential change is NOT supported here.
+  if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
+      active_page_ < 0 || a2d_result_ready_ || commit_result_ready_ ||
+      pages_[active_page_].version != kVersionV2)
+    return false;
+  return startV3Page(true);
+}
+
+bool SecurityStore::startV3Page(bool migration) {
+  if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
+      active_page_ < 0) return false;
+  const uint8_t current_version = pages_[active_page_].version;
+  if (migration ? current_version != kVersionV2 :
+                  current_version != security_v3_format::kVersion)
+    return false;
+  if (v3_writer_.status() ==
+          security_v3_page_writer::Status::kCommitted &&
+      !v3_writer_.rearmAfterCommit())
+    return false;
+  if (v3_writer_.status() != security_v3_page_writer::Status::kIdle)
+    return false;
+
+  security_v3_format::Snapshot desired{};
+  if (!migration) {
+    desired = v3_snapshot_;  // all four tombstones and policy HWM retained
+  } else {
+    memcpy(desired.credential_id, credential_.credential_id,
+           kCredentialIdSize);
+    desired.key_epoch = credential_.key_epoch;
+    desired.tx_bound = tx_reserved_bound_;
+    desired.a2d_bound = a2d_replay_bound_;
+    // v2 has no Gateway grants; never manufacture them.
+  }
+  if (desired.tx_bound != tx_reserved_bound_ ||
+      desired.a2d_bound != a2d_replay_bound_ ||
+      !v3_writer_.start(static_cast<uint8_t>(1 - active_page_),
+                        credential_, desired))
+    return false;
+
+  v3_page_is_migration_ = migration;
+  v3_snapshot_ = desired;
+  target_page_ = static_cast<uint32_t>(1 - active_page_);
+  target_generation_ = newest_generation_ + 1U;
+  job_ = Job::kV3Page;
+  active_port_ = &maint_;
+  return true;
+}
+
+void SecurityStore::completeV3Page() {
+  // A successful physical header activation was read-verified by the
+  // transaction engine. No ACK/grant authorization is inferred from it.
+  const unsigned page = target_page_;
+  pages_[page].generation = target_generation_;
+  pages_[page].version = security_v3_format::kVersion;
+  pages_[page].state_used =
+      static_cast<uint32_t>(security_v3_format::kSnapshotCount) +
+      (tx_reserved_bound_ != 0U ? 1U : 0U) +
+      (a2d_replay_bound_ != 0U ? 1U : 0U);
+  active_page_ = static_cast<int>(page);
+  newest_generation_ = target_generation_;
+  job_ = Job::kNone;
+  active_port_ = nullptr;
+  consecutive_mutation_failures_ = 0U;
+  if (v3_page_is_migration_) {
+    ++diagnostics_.migrations;
+  } else {
+    ++diagnostics_.compactions;
+  }
+  v3_page_is_migration_ = false;
+
+  if (reserve_after_new_page_) {
+    reserve_after_new_page_ = false;
+    (void)startReservation();
+  } else if (replay_after_new_page_) {
+    replay_after_new_page_ = false;
+    (void)startA2dReplayReservation(pending_replay_counter_,
+                                    pending_replay_bound_);
+  } else {
+    maybeAutoReserve();
+  }
 }
 
 bool SecurityStore::startNewPage(NewPagePurpose purpose,
