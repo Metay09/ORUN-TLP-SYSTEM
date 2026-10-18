@@ -39,6 +39,9 @@ class SnapshotTransaction {
   // On ANY failure the transaction becomes kFault and cannot retry.
   // Source A/B page is NEVER erased by this class.
   Status poll();
+  // A complete transaction may be reused for a later compaction; a FAULT
+  // remains permanently latched until a fresh SecurityStore boot/owner.
+  bool rearmAfterCommit();
   Status status() const { return status_; }
   uint32_t physicalMutationCompletions() const { return completed_ops_; }
 
