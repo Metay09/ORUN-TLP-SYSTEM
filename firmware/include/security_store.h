@@ -191,6 +191,8 @@ class SecurityStore {
                              uint64_t gateway_id, uint32_t floor);
   bool startV3PolicyAppend();
   void completeV3PolicyAppend();
+  // Only the future privileged owner may consume this durable result.
+  bool takeV3PolicyResult(bool& committed);
   void maybeAutoReserve();
   void startBlob(uint32_t offset, const uint8_t* bytes, uint32_t size);
   void startSnapshotTxState();
@@ -251,6 +253,8 @@ class SecurityStore {
   bool policy_after_v3_compaction_ = false;
   security_v3_format::Entry pending_policy_entry_{};
   security_v3_format::Snapshot pending_policy_snapshot_{};
+  bool v3_policy_result_ready_ = false;
+  bool v3_policy_result_committed_ = false;
 
   bool commit_result_ready_ = false;
   bool commit_success_ = false;
