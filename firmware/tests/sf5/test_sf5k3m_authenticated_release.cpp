@@ -251,8 +251,65 @@ void testRevocationAndFailureKeepRetained() {
   assert(!record.released);
 }
 
+void testFlashReleaseFailureNeverClaimsDurability() {
+  Flash sec_flash;
+  SecurityStore security(sec_flash,sec_flash);
+  provisionV3(sec_flash,security);
+  assert(Seam::grant(security,0U,kGateA));
+  settle(security);
+  bool committed=false;
+  assert(Seam::take(security,committed)&&committed);
+
+  ProductFlash flash;
+  ProductIncarnation source;
+  pr::Jobs jobs{false,true};
+  ProductRecordStore product(flash,kProductPages,&source);
+  product.begin(kDevice,jobs);
+  assert(product.mounted());
+  osc::ExactObject exact{};
+  storeOne(product,exact);
+  uint8_t ack[56]{};
+  assert(hex(kOracleAck,ack,sizeof(ack)));
+  CustodyAckVerifier verifier(security);
+  AuthenticatedCustodyAck proof{};
+  assert(verifier.verifyFromStore(ack,sizeof(ack),product,proof)==
+         CustodyAckVerifyResult::kAuthenticated);
+
+  CustodyAckReleaseOwner release(security,product);
+  // Physical flash refuses the release-marker write BEFORE mutating.
+  // No TX_DONE, HMAC acceptance, or requestRelease admission can
+  // substitute for an actual committed/readback release marker.
+  flash.fail_next_program=true;
+  assert(release.submitAuthenticated(proof)==
+         CustodyAckReleaseOwner::Submit::kStarted);
+  CustodyAckReleaseOwner::Service finish=
+      CustodyAckReleaseOwner::Service::kWaitingFlash;
+  for(unsigned n=0U;n<100U;++n) {
+    product.poll();
+    finish=release.service();
+    if(finish!=CustodyAckReleaseOwner::Service::kWaitingFlash)break;
+  }
+  assert(finish==CustodyAckReleaseOwner::Service::kNotDurable);
+  assert(product.diagnostics().custody_release_failed==1U);
+  ObservationStore::Record record{};
+  assert(product.store().lookup(exact.identity,record)==
+         ObservationStore::LookupResult::kFound);
+  assert(!record.released);
+
+  // Reboot may now return a retained record or a fail-closed fault, but
+  // never silently pretend that this ACK durably released the record.
+  ProductRecordStore reboot(flash,kProductPages,&source);
+  reboot.begin(kDevice,jobs);
+  if(reboot.mounted()) {
+    const auto state=reboot.store().lookup(exact.identity,record);
+    assert(state!=ObservationStore::LookupResult::kFound ||
+           !record.released);
+  }
+}
+
 } // namespace
 int main() {
+  testFlashReleaseFailureNeverClaimsDurability();
   testDurableReleaseAndReboot(false);
   testDurableReleaseAndReboot(true);
   testRevocationAndFailureKeepRetained();
