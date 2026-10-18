@@ -366,6 +366,28 @@ bool SecurityStore::recover() {
     uint8_t header[kPageHeaderSize]{};
     if (!critical_.read(headerOffset(page), header, sizeof(header)))
       return false;
+    if (journal_format::erased(header, sizeof(header))) {
+      // A fully erased header does not prove the whole page was erased.
+      // Residual credentials/journal after a torn erase may belong to a
+      // once-newer authority page: never resurrect an older generation.
+      uint8_t scratch[kCredentialRecordSize]{};
+      for (uint32_t offset = kPageHeaderSize;
+           offset < storage_config::kPageSize;
+           offset += sizeof(scratch)) {
+        const uint32_t remaining =
+            storage_config::kPageSize - offset;
+        const size_t count = remaining < sizeof(scratch) ?
+                             remaining : sizeof(scratch);
+        if (!critical_.read(pageOffset(page) + offset,
+                            scratch, count))
+          return false;
+        if (!journal_format::erased(scratch, count)) {
+          state_ = SecurityState::kFault;
+          ++diagnostics_.recovery_corruptions;
+          return true;
+        }
+      }
+    }
     uint8_t version = 0U;
     if (headerMagicPresent(header, &version) &&
         version == security_v3_format::kVersion)
