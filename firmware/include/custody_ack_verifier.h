@@ -32,6 +32,10 @@ class AuthenticatedCustodyAck {
   uint64_t gateway_id_ = 0U;
   uint32_t generation_ = 0U;
   uint32_t floor_ = 0U;
+  // Default construction is deliberately NOT a valid security capability.
+  // A future release owner must check this private verified bit and rebind
+  // the exact logical identity to current retained flash before release.
+  bool verified_ = false;
 };
 
 enum class CustodyAckVerifyResult : uint8_t {
