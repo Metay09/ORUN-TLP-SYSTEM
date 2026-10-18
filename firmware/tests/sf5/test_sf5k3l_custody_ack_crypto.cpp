@@ -88,6 +88,7 @@ void makeObject(osc::ExactObject& object) {
          tlp::ProductSecureCodecResult::kOk);
 }
 
+#ifndef ORUN_SF5K3M_HOST_TEST
 void testIndependentCryptoOracle() {
   uint8_t frame[tlp::kPeriodicFrameSize]{};
   osc::ExactObject obj{};
@@ -197,6 +198,7 @@ void testRealStoreAndMac() {
   assert(Peer::check(restarted,ack,sizeof(ack),cached,1U,proof)==
          Verdict::kNoDurableGrant);
 }
+} // ORUN_SF5K3M_HOST_TEST
 } // namespace
 
 #ifndef ORUN_SF5K3M_HOST_TEST
