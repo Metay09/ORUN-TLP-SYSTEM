@@ -144,4 +144,17 @@ echo "[SF5K3J] real SecurityStore v3 Gateway policy journal/revoke/cuts"
   -o "$build_dir/v3-policy"
 "$build_dir/v3-policy"
 
-echo "[SF5K3A/SF5K3B/SF5K3C/SF5K3D/SF5K3E/SF5K3F/SF5K3G/SF5K3H/SF5K3I/SF5K3J] all focused host tests PASS"
+echo "[SF5K3K] 0x05 untrusted ACK shape + actual SecurityStore scope"
+"$cxx" "${flags[@]}" -Wno-conversion -Wno-sign-conversion \
+  firmware/tests/sf5/test_sf5k3k_custody_ack_scope.cpp \
+  firmware/src/security_store.cpp firmware/src/custody_ack.cpp \
+  firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/src/tlp_v2_product_secure.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$build_dir/v3-ack-scope"
+"$build_dir/v3-ack-scope"
+
+echo "[SF5K3A/SF5K3B/SF5K3C/SF5K3D/SF5K3E/SF5K3F/SF5K3G/SF5K3H/SF5K3I/SF5K3J/SF5K3K] all focused host tests PASS"
