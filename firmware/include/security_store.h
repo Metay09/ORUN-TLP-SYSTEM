@@ -17,9 +17,10 @@ enum class SecurityState : uint8_t {
   kFault,
 };
 
-// SF5K3E read-only V3 *inspection*. This is NOT a v3 security state,
-// migration, enrollment, writer or admission API. The active SecurityStore
-// keeps its existing v1/v2 recovery and writes v2 only.
+// SF5K3E keeps its strict read-only physical V3 inspection API.
+// SF5K3I separately supports verified V3 live SecurityStore recovery and
+// local v2->v3 maintenance migration; the inspector itself never grants
+// Gateway ACK admission or mutates flash.
 enum class SecurityV3Inspection : uint8_t {
   kNotV3,
   kStaged,
@@ -42,9 +43,10 @@ struct SecurityV3ReadOnlySummary {
 
 // Durable security credential + nonce/replay persistence owner.
 //
-// M7P6F upgrades new writes to SecurityStore format v2 while retaining exact
-// read/migration compatibility with M7P6B format v1. The physical partition
-// remains the same two-page A/B region.
+// M7P6F writes v2 and retains v1 migration; SF5K3I adds live validated
+// v3 recovery/counter reserves and an EXPLICIT v2->v3 local migration.
+// New provisioning still writes v2, and no radio/BLE path invokes migration.
+// The physical two-page A/B partition remains unchanged.
 //
 // M7P6I permits only the narrow HistorySecureCrypto friend to use the active
 // in-RAM root credential for the frozen SF2 protected-History operation.
