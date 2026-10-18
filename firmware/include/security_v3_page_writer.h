@@ -7,12 +7,13 @@
 #include "security_v3_format.h"
 
 // SF5K3H: production-source, physically mutating v3 A/B page transaction.
-// INERT to application boot. There is deliberately no runtime caller.
+// SF5K3I integrates it through SecurityStore's explicit local migration
+// and v3 compaction owner, never through RF/BLE/automatic v2 boot upgrade.
 // Only same-credential, byte-identical policy + exact counter snapshots
 // from an independently verified v2/v3 SOURCE are eligible. No grants,
 // revokes, root rotations, new provisioning or ACK release operations.
-// A future SecurityStore integration MUST own admission, arbitration and
-// crash recovery; this testable engine grants no in-RAM authority.
+// SecurityStore now owns admission, arbitration and crash recovery;
+// this transaction engine still grants no in-RAM Gateway ACK authority.
 namespace orun_tlp {
 namespace security_v3_page_writer {
 
