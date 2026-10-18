@@ -79,6 +79,8 @@ class SecurityStore {
     uint32_t append_inspection_failures = 0;
     uint32_t unreconciled_mutation_faults = 0;
     uint32_t mutation_failure_lockouts = 0;
+    uint32_t v3_policy_commits = 0;
+    uint32_t v3_policy_failures = 0;
   };
 
   SecurityStore(FlashBackend& critical_flash, FlashBackend& maint_flash)
@@ -135,6 +137,13 @@ class SecurityStore {
  private:
   friend class HistorySecureCrypto;
   friend class ProductSecureCrypto;
+  // Only host regression defines this seam; no production implementation.
+  // This is NOT a security/authentication boundary for radio or BLE.
+  friend class SecurityV3PolicyTestSeam;
+
+  enum class PolicyAction : uint8_t {
+    kGrant, kRevoke, kAdvanceFloor
+  };
 
   enum class Job {
     kNone,
@@ -142,7 +151,8 @@ class SecurityStore {
     kEraseOld,
     kReserve,
     kA2dReplayReserve,
-    kV3Page
+    kV3Page,
+    kV3PolicyAppend
   };
   enum class NewPagePurpose {
     kCredentialCommit,
@@ -175,6 +185,12 @@ class SecurityStore {
   bool startA2dReplayReservation(uint64_t counter, uint64_t bound);
   bool startV3Page(bool migration);
   void completeV3Page();
+  // PRIVATE until a separately reviewed authenticated command owner exists.
+  // Caller must not infer radio ACK authority from a durable journal entry.
+  bool beginV3PolicyMutation(PolicyAction action, uint8_t slot,
+                             uint64_t gateway_id, uint32_t floor);
+  bool startV3PolicyAppend();
+  void completeV3PolicyAppend();
   void maybeAutoReserve();
   void startBlob(uint32_t offset, const uint8_t* bytes, uint32_t size);
   void startSnapshotTxState();
@@ -232,6 +248,9 @@ class SecurityStore {
   uint64_t pending_replay_bound_ = 0;
   int erase_old_page_ = -1;
   bool v3_page_is_migration_ = false;
+  bool policy_after_v3_compaction_ = false;
+  security_v3_format::Entry pending_policy_entry_{};
+  security_v3_format::Snapshot pending_policy_snapshot_{};
 
   bool commit_result_ready_ = false;
   bool commit_success_ = false;
