@@ -4,8 +4,8 @@
 
 // SF5K3F: PRODUCT-SOURCE version-3 custody journal byte codec.
 // This module performs neither flash I/O nor security authorization.
-// SecurityStore still writes only v2. Entry encoding alone grants nothing.
-// The explicit v3 page writer/recovery/owner gates are a LATER step.
+// SF5K3I SecurityStore uses this codec for live committed v3 recovery
+// and counters. Entry encoding ALONE grants no Gateway ACK authority.
 namespace orun_tlp {
 namespace security_v3_format {
 
