@@ -776,6 +776,10 @@ g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion \
   -lcrypto -o "$test_dir/sf5k3l_custody_ack_crypto"
 "$test_dir/sf5k3l_custody_ack_crypto"
 
+# SF5K3M checks real ProductRecordStore release after the validated
+# production crypto proof. Script runs the new M test only.
+bash tools/ci/run_sf5k3m_release_host.sh
+
 "$test_dir/sf5k3e_real_security_v3_readonly"
 "$test_dir/sf5k3d_security_v3_snapshot_candidate"
 "$test_dir/sf5k3c_security_v3_candidate"
