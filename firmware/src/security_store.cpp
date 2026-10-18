@@ -988,12 +988,19 @@ bool SecurityStore::startReservation() {
     }
     return true;
   }
-  if (version != kVersionV2) return false;
-
-  if (pages_[active_page_].state_used + 1 >=
-      kSecurityStateSlotsPerPage) {
+  if (version != kVersionV2 &&
+      version != security_v3_format::kVersion) return false;
+  const uint32_t capacity =
+      version == security_v3_format::kVersion ?
+      static_cast<uint32_t>(security_v3_format::kRecordCount) :
+      kSecurityStateSlotsPerPage;
+  if (pages_[active_page_].state_used + 1 >= capacity) {
     reserve_after_new_page_ = true;
-    return startNewPage(NewPagePurpose::kCompaction, credential_);
+    const bool started = version == security_v3_format::kVersion ?
+        startV3Page(false) :
+        startNewPage(NewPagePurpose::kCompaction, credential_);
+    if (!started) reserve_after_new_page_ = false;
+    return started;
   }
 
   pending_tx_bound_ = tx_reserved_bound_ + kTxReservationBlockSize;
@@ -1003,16 +1010,32 @@ bool SecurityStore::startReservation() {
   job_ = Job::kReserve;
   phase_ = Phase::kWriteReserve;
 
-  SecurityStateRecord state{};
-  memcpy(state.credential_id, credential_.credential_id,
-         kCredentialIdSize);
-  state.key_epoch = credential_.key_epoch;
-  state.kind = SecurityStateKind::kTxReserveExclusiveBound;
-  state.value = pending_tx_bound_;
-  uint8_t bytes[kSecurityStateRecordSize];
-  encodeSecurityState(state, bytes);
-  startBlob(v2StateOffset(target_page_, target_slot_), bytes,
-            sizeof(bytes));
+  if (version == security_v3_format::kVersion) {
+    security_v3_format::Entry record{};
+    memcpy(record.credential_id, credential_.credential_id,
+           kCredentialIdSize);
+    record.key_epoch = credential_.key_epoch;
+    record.kind = security_v3_format::Kind::kTxReserve;
+    record.value = pending_tx_bound_;
+    uint8_t raw[security_v3_format::kRecordBytes]{};
+    if (!security_v3_format::encodeRecord(record, raw)) {
+      job_ = Job::kNone;
+      return false;
+    }
+    startBlob(v3StateOffset(target_page_, target_slot_),
+              raw, sizeof(raw));
+  } else {
+    SecurityStateRecord state{};
+    memcpy(state.credential_id, credential_.credential_id,
+           kCredentialIdSize);
+    state.key_epoch = credential_.key_epoch;
+    state.kind = SecurityStateKind::kTxReserveExclusiveBound;
+    state.value = pending_tx_bound_;
+    uint8_t bytes[kSecurityStateRecordSize];
+    encodeSecurityState(state, bytes);
+    startBlob(v2StateOffset(target_page_, target_slot_),
+              bytes, sizeof(bytes));
+  }
   return true;
 }
 
@@ -1039,34 +1062,52 @@ bool SecurityStore::startA2dReplayReservation(uint64_t counter,
     }
     return true;
   }
-  if (version != kVersionV2) return false;
-
-  if (pages_[active_page_].state_used + 1 >=
-      kSecurityStateSlotsPerPage) {
+  if (version != kVersionV2 &&
+      version != security_v3_format::kVersion) return false;
+  const uint32_t capacity =
+      version == security_v3_format::kVersion ?
+      static_cast<uint32_t>(security_v3_format::kRecordCount) :
+      kSecurityStateSlotsPerPage;
+  if (pages_[active_page_].state_used + 1 >= capacity) {
     replay_after_new_page_ = true;
-    if (!startNewPage(NewPagePurpose::kCompaction, credential_)) {
-      replay_after_new_page_ = false;
-      return false;
-    }
-    return true;
+    const bool started = version == security_v3_format::kVersion ?
+        startV3Page(false) :
+        startNewPage(NewPagePurpose::kCompaction, credential_);
+    if (!started) replay_after_new_page_ = false;
+    return started;
   }
-
-  SecurityStateRecord state{};
-  memcpy(state.credential_id, credential_.credential_id,
-         kCredentialIdSize);
-  state.key_epoch = credential_.key_epoch;
-  state.kind = SecurityStateKind::kA2dReplayExclusiveBound;
-  state.value = bound;
-  uint8_t bytes[kSecurityStateRecordSize];
-  encodeSecurityState(state, bytes);
 
   active_port_ = &critical_;
   target_page_ = static_cast<uint32_t>(active_page_);
   target_slot_ = pages_[active_page_].state_used;
   job_ = Job::kA2dReplayReserve;
   phase_ = Phase::kWriteReserve;
-  startBlob(v2StateOffset(target_page_, target_slot_), bytes,
-            sizeof(bytes));
+  if (version == security_v3_format::kVersion) {
+    security_v3_format::Entry record{};
+    memcpy(record.credential_id, credential_.credential_id,
+           kCredentialIdSize);
+    record.key_epoch = credential_.key_epoch;
+    record.kind = security_v3_format::Kind::kA2dReplayReserve;
+    record.value = bound;
+    uint8_t raw[security_v3_format::kRecordBytes]{};
+    if (!security_v3_format::encodeRecord(record, raw)) {
+      job_ = Job::kNone;
+      return false;
+    }
+    startBlob(v3StateOffset(target_page_, target_slot_),
+              raw, sizeof(raw));
+  } else {
+    SecurityStateRecord state{};
+    memcpy(state.credential_id, credential_.credential_id,
+           kCredentialIdSize);
+    state.key_epoch = credential_.key_epoch;
+    state.kind = SecurityStateKind::kA2dReplayExclusiveBound;
+    state.value = bound;
+    uint8_t bytes[kSecurityStateRecordSize];
+    encodeSecurityState(state, bytes);
+    startBlob(v2StateOffset(target_page_, target_slot_),
+              bytes, sizeof(bytes));
+  }
   return true;
 }
 
