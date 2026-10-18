@@ -1300,14 +1300,21 @@ void SecurityStore::fail() {
   // reject. Close protected service for this boot instead.
   if (failing_job == Job::kReserve ||
       failing_job == Job::kA2dReplayReserve) {
-    uint8_t bytes[kSecurityStateRecordSize];
+    const bool is_v3 = pages_[target_page_].version ==
+                       security_v3_format::kVersion;
+    const uint32_t width = is_v3 ?
+        static_cast<uint32_t>(security_v3_format::kRecordBytes) :
+        kSecurityStateRecordSize;
+    const uint32_t offset = is_v3 ?
+        v3StateOffset(target_page_, target_slot_) :
+        v2StateOffset(target_page_, target_slot_);
+    uint8_t bytes[security_v3_format::kRecordBytes]{};
     const bool readable =
-        critical_.read(v2StateOffset(target_page_, target_slot_), bytes,
-                       sizeof(bytes));
+        critical_.read(offset, bytes, width);
     if (!readable) {
       append_inspection_failed = true;
       ++diagnostics_.append_inspection_failures;
-    } else if (!journal_format::erased(bytes, sizeof(bytes))) {
+    } else if (!journal_format::erased(bytes, width)) {
       const uint32_t used = target_slot_ + 1;
       if (pages_[target_page_].state_used < used)
         pages_[target_page_].state_used = used;
@@ -1487,6 +1494,8 @@ void SecurityStore::completeReserve() {
   consecutive_mutation_failures_ = 0;
   pages_[target_page_].state_used = target_slot_ + 1;
   tx_reserved_bound_ = pending_tx_bound_;
+  if (pages_[target_page_].version == security_v3_format::kVersion)
+    v3_snapshot_.tx_bound = tx_reserved_bound_;
   job_ = Job::kNone;
   ++diagnostics_.reservations;
 }
@@ -1495,6 +1504,8 @@ void SecurityStore::completeA2dReplayReserve() {
   consecutive_mutation_failures_ = 0;
   pages_[target_page_].state_used = target_slot_ + 1;
   a2d_replay_bound_ = pending_replay_bound_;
+  if (pages_[target_page_].version == security_v3_format::kVersion)
+    v3_snapshot_.a2d_bound = a2d_replay_bound_;
   a2d_runtime_hwm_ = pending_replay_counter_;
   a2d_runtime_hwm_valid_ = true;
   job_ = Job::kNone;
@@ -1527,6 +1538,26 @@ void SecurityStore::poll() {
 
   if (job_ == Job::kNone) {
     maybeAutoReserve();
+    return;
+  }
+
+  if (job_ == Job::kV3Page) {
+    const auto result = v3_writer_.poll();
+    if (result == security_v3_page_writer::Status::kBusy) return;
+    if (result == security_v3_page_writer::Status::kCommitted) {
+      completeV3Page();
+    } else {
+      // Even a FAILED completion may have physically landed the last
+      // four-byte activation word. Reboot is the only authority arbiter.
+      // Do not release, reuse, or automatically retry this flash owner.
+      job_ = Job::kNone;
+      state_ = SecurityState::kFault;
+      active_port_ = nullptr;
+      reserve_after_new_page_ = false;
+      replay_after_new_page_ = false;
+      ++diagnostics_.activation_ambiguities;
+      ++diagnostics_.migration_failures;
+    }
     return;
   }
 
