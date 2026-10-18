@@ -160,6 +160,25 @@ bool SnapshotTransaction::start(
   return true;
 }
 
+bool SnapshotTransaction::rearmAfterCommit() {
+  if (status_ != Status::kCommitted || awaiting_ ||
+      flash_.hasUnreconciledMutation()) return false;
+  status_ = Status::kIdle;
+  phase_ = Phase::kErase;
+  step_ = Step::kBody;
+  dest_ = 0U;
+  generation_ = 0U;
+  record_index_ = 0U;
+  record_total_ = 0U;
+  completed_ops_ = 0U;
+  blob_offset_ = 0U;
+  blob_size_ = 0U;
+  credential_ = sf::Credential{};
+  snapshot_ = v3::Snapshot{};
+  memset(blob_, 0, sizeof(blob_));
+  return true;
+}
+
 void SnapshotTransaction::fault() {
   awaiting_ = false;
   status_ = Status::kFault;
