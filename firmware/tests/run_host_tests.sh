@@ -896,3 +896,5 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/tooling/test_tooling_contract.p
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/tooling/test_orun_positions.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/codeql/test_summarize_sarif.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/codeql/test_verify_bundle_install.py
+# SF5K3Q OCQ2/OCQ1/OBS1 product-region isolation.
+bash tools/ci/run_sf5k3q_product_region_host.sh

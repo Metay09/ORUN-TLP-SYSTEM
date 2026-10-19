@@ -1,6 +1,7 @@
 #include "product_region.h"
 
 #include "custody_store_format.h"
+#include "custody_store_product_format.h"
 #include "observation_store_format.h"
 
 namespace orun_tlp::product_region {
@@ -14,6 +15,13 @@ static_assert(custody_store_format::kPageSize == kPageSize,
 static_assert(observation_store_format::kPageMagic !=
                   custody_store_format::kPageMagic,
               "the two product stores must be distinguishable");
+static_assert(custody_store_product_format::kPageSize == kPageSize,
+              "OCQ2 requires the same 4096-byte product page");
+static_assert(custody_store_product_format::kPageMagic !=
+                  custody_store_format::kPageMagic &&
+              custody_store_product_format::kPageMagic !=
+                  observation_store_format::kPageMagic,
+              "OCQ2 cannot alias OCQ1 or OBS1");
 
 uint32_t getBe32(const uint8_t* data) {
   return (uint32_t(data[0]) << 24U) | (uint32_t(data[1]) << 16U) |
@@ -42,7 +50,7 @@ const char* ownerName(Owner owner) {
 
 bool takeCensus(const FlashBackend& flash, uint16_t page_count,
                 Census& census) {
-  census = Census{0U, 0U, 0U, 0U};
+  census = Census{0U, 0U, 0U, 0U, 0U};
   uint8_t chunk[kChunkSize];
   for (uint16_t page = 0; page < page_count; ++page) {
     const uint32_t base = uint32_t(page) * kPageSize;
@@ -54,6 +62,10 @@ bool takeCensus(const FlashBackend& flash, uint16_t page_count,
     }
     if (magic == custody_store_format::kPageMagic) {
       ++census.custody;
+      continue;
+    }
+    if (magic == custody_store_product_format::kPageMagic) {
+      ++census.product_custody;
       continue;
     }
 
@@ -80,11 +92,21 @@ MountDecision mountDecision(Owner owner, const Census& census) {
   if (owner == Owner::kNone) return MountDecision::kNoOwner;
   const uint16_t own = owner == Owner::kObservation ? census.observation
                                                     : census.custody;
-  const uint16_t foreign = owner == Owner::kObservation ? census.custody
-                                                        : census.observation;
+  const uint32_t foreign = owner == Owner::kObservation ?
+      uint32_t(census.custody) + census.product_custody :
+      uint32_t(census.observation) + census.product_custody;
   if (foreign != 0U) return MountDecision::kForeignStore;
   if (own == 0U && census.unknown != 0U)
     return MountDecision::kNeedsPreparation;
+  return MountDecision::kMount;
+}
+
+MountDecision mountProductCustodyDecision(const Census& census) {
+  if (census.observation != 0U || census.custody != 0U)
+    return MountDecision::kForeignStore;
+  if (census.product_custody == 0U && census.unknown != 0U)
+    return MountDecision::kNeedsPreparation;
+  // Any unknown companion to OCQ2 is then rejected by the strict store scan.
   return MountDecision::kMount;
 }
 

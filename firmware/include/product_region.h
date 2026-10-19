@@ -32,16 +32,17 @@ struct Jobs {
 Owner ownerFor(const Jobs& jobs);
 const char* ownerName(Owner owner);
 
-// What a page holds, from its first header word: both product stores begin
+// What a page holds, from its first header word: the product stores begin
 // every page with their own magic. Anything else that is not fully erased
 // (leftover application code, test markers) is unknown.
-enum class PageContent : uint8_t { kErased, kObservation, kCustody, kUnknown };
+enum class PageContent : uint8_t { kErased, kObservation, kCustody, kUnknown, kProductCustody };
 
 struct Census {
   uint16_t erased;
   uint16_t observation;
   uint16_t custody;
   uint16_t unknown;
+  uint16_t product_custody;  // OCQ2/v3, never alias legacy OCQ1
 };
 
 // Reads every page in small chunks; false on any read failure.
@@ -64,6 +65,8 @@ enum class MountDecision : uint8_t {
 };
 
 MountDecision mountDecision(Owner owner, const Census& census);
+// New PRODUCT_SECURE Gateway store: explicit, non-migrating OCQ2 decision.
+MountDecision mountProductCustodyDecision(const Census& census);
 const char* mountDecisionName(MountDecision decision);
 
 }  // namespace orun_tlp::product_region

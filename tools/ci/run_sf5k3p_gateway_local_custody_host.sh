@@ -13,12 +13,14 @@ fi
 "${CXX:-g++}" "${flags[@]}" \
   firmware/src/custody_store_product_format.cpp \
   firmware/src/product_custody_store.cpp \
+  firmware/src/product_region.cpp \
   firmware/tests/sf5/test_sf5k3p_product_custody_store.cpp \
   -o "$work/product_custody"
 "$work/product_custody"
 "${CXX:-g++}" "${flags[@]}" \
   firmware/src/custody_store_product_format.cpp \
   firmware/src/product_custody_store.cpp \
+  firmware/src/product_region.cpp \
   firmware/src/gateway_local_custody_owner.cpp \
   firmware/tests/sf5/test_sf5k3p_gateway_local_owner.cpp \
   -o "$work/gateway_owner"

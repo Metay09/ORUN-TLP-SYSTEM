@@ -436,7 +436,7 @@ void ProductRecordStore::drivePrepare() {
   prepare_state_ = PrepareState::kErasing;
   if (++prepare_page_ < page_count_) return;
 
-  product_region::Census census{0U, 0U, 0U, 0U};
+  product_region::Census census{0U, 0U, 0U, 0U, 0U};
   endPrepare(product_region::takeCensus(flash_, page_count_, census) &&
              census.erased == page_count_);
 }

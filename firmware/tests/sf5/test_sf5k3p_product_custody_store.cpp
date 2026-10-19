@@ -178,7 +178,39 @@ void invalidAndCorrupt() {
  ProductCustodyStore reboot(nor,2);
  assert(!reboot.begin());
 }
+void foreignLayoutAndUnknownRefused() {
+  for (uint32_t magic : {UINT32_C(0x4F435131), UINT32_C(0x4F425331)}) {
+    Nor nor;
+    nor.bytes[0]=uint8_t(magic>>24); nor.bytes[1]=uint8_t(magic>>16);
+    nor.bytes[2]=uint8_t(magic>>8); nor.bytes[3]=uint8_t(magic);
+    ProductCustodyStore store(nor,2);
+    assert(!store.begin() && store.faulted() && nor.writes==0);
+  }
+  {
+    Nor nor;
+    nor.bytes[fmt::kPageSize+400U]=0x11U;
+    ProductCustodyStore store(nor,2);
+    assert(!store.begin() && store.faulted() && nor.writes==0);
+  }
+  {
+    Nor nor;
+    ProductCustodyStore store(nor,2);
+    assert(store.begin());
+    uint8_t packet[100]{};frame(packet,sizeof(packet));
+    assert(store.requestCustody(packet,sizeof(packet))==A::kStarted);
+    settle(store);
+    bool committed=false; ProductCustodyStore::Handle handle{};
+    assert(store.takeCustodyResult(committed,handle) && committed);
+    nor.bytes[fmt::kPageSize+0U]='O';
+    nor.bytes[fmt::kPageSize+1U]='C';
+    nor.bytes[fmt::kPageSize+2U]='Q';
+    nor.bytes[fmt::kPageSize+3U]='1';
+    ProductCustodyStore reboot(nor,2);
+    assert(!reboot.begin() && reboot.faulted());
+  }
+}
 int main() {
+ foreignLayoutAndUnknownRefused();
  normalAndReset();asyncNoEarlySuccess();cuts();invalidAndCorrupt();noEvictionOnFull();unreconciledNoAdmit();rebootAtEveryCommitBoundary();
  puts("SF5K3P PRODUCT_SECURE real FlashBackend custody store / sync async reboot cuts: PASS");
 }

@@ -149,7 +149,7 @@ class ProductRecordStore {
   product_region::Owner owner_ = product_region::Owner::kNone;
   product_region::MountDecision decision_ =
       product_region::MountDecision::kNoOwner;
-  product_region::Census census_{0U, 0U, 0U, 0U};
+  product_region::Census census_{0U, 0U, 0U, 0U, 0U};
   bool region_readable_ = false;
   bool mounted_ = false;
   uint64_t device_id_ = 0;
