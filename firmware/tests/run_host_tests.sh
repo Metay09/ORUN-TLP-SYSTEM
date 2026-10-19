@@ -898,3 +898,6 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/codeql/test_summarize_sarif.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/codeql/test_verify_bundle_install.py
 # SF5K3Q OCQ2/OCQ1/OBS1 product-region isolation.
 bash tools/ci/run_sf5k3q_product_region_host.sh
+
+# SF5K3R: real Gateway HMAC signer + flash store/owner host integration.
+bash tools/ci/run_sf5k3r_real_gateway_ack_chain_host.sh
