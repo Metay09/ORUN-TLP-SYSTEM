@@ -53,6 +53,10 @@
 #include "node_role.h"
 #include "observation_incarnation_source.h"
 #include "product_record_store.h"
+#ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
+#include "product_secure_crypto.h"
+#include "tracker_product_tx_pilot.h"
+#endif
 #include "power_manager.h"
 #include "radio_manager.h"
 #include "position_flow.h"
@@ -172,6 +176,14 @@ orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort()
 // The only Tracker release owner: grant/HMAC verification precedes flash.
 orun_tlp::CustodyAckReleaseOwner custody_ack_release(security_store,
                                                       product_records);
+#ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
+// Explicit test-image activation only; the default product runtime still
+// sends the existing TLP v1/History path until Gateway commissioning is ready.
+orun_tlp::ProductSecureCrypto product_crypto(security_store);
+orun_tlp::TrackerProductTxPilot tracker_product_tx(product_records,
+                                                  product_crypto,
+                                                  radio_manager);
+#endif
 orun_tlp::HistorySecureCrypto history_secure_crypto(security_store);
 orun_tlp::HistoryDeliveryCoordinator history_delivery(history);
 orun_tlp::HistoryReceiptAdmissionCoordinator history_receipt_admission(
@@ -3439,6 +3451,35 @@ void loop() {
               uint32_t(history_store_forward.lastReplaySecurityCounter())));
     }
   }
+
+#ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
+  // One pilot TX per boot, ONLY after a durable exact encrypted cache record.
+  // Keep legacy live Position + History replay higher-priority. This image
+  // requires deliberate separate selection and is never default firmware.
+  const bool pilot_allowed = ble_ready && tracking_enabled &&
+      radio_manager.role() == orun_tlp::NodeRole::kTracker &&
+      !positions.pending() && !radio_manager.relayForwardingEnabled() &&
+      !custody_ack_release.pending() && security_store.ready() &&
+      security_store.state() == orun_tlp::SecurityState::kProvisioned &&
+      !security_store.busy() && product_records.mounted() &&
+      product_records.store().ready();
+  switch (tracker_product_tx.update(pilot_allowed)) {
+    case orun_tlp::TrackerProductTxPilot::Event::kCachePending:
+      Serial.println(F("PRODUCT PILOT exact cache=pending"));
+      break;
+    case orun_tlp::TrackerProductTxPilot::Event::kCacheDurable:
+      Serial.println(F("PRODUCT PILOT exact cache=durable"));
+      break;
+    case orun_tlp::TrackerProductTxPilot::Event::kSent:
+      Serial.println(F("PRODUCT PILOT TX=start; custody=unconfirmed"));
+      break;
+    case orun_tlp::TrackerProductTxPilot::Event::kBlocked:
+      Serial.println(F("PRODUCT PILOT blocked; retained record preserved"));
+      break;
+    case orun_tlp::TrackerProductTxPilot::Event::kNone:
+      break;
+  }
+#endif
 
   // Feed only after the cooperative loop has completed all service work. A
   // blocked I2C/flash/radio path therefore cannot hide behind an unrelated task.

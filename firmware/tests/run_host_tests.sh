@@ -908,3 +908,7 @@ bash tools/ci/run_sf5k3t_gateway_ack_radio_host.sh
 
 # SF5K3U: actual main-loop ACK intake source guard + real HMAC/flash owner.
 bash tools/ci/run_sf5k3u_tracker_ack_runtime_host.sh
+
+# SF5K3V: actual OBS1 flash + tracker TX pilot state, fake sealed bytes/Radio.
+# This test does NOT claim AES/CC310 or physical SF11 RF qualification.
+bash tools/ci/run_sf5k3v_tracker_tx_host.sh
