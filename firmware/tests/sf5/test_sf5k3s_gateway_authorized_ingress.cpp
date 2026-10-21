@@ -182,4 +182,5 @@ int main() {
   accepted(100U,true);accepted(84U,true);
   deniedBeforeFlash();revokedAfterDurability();failedFlashNoAck();
   puts("SF5K3S Gateway scoped admission + flash + revocation: PASS (host only)");
+  return 0;  // The Gateway runtime host test imports this fixture as a helper.
 }

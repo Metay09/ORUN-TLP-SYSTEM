@@ -33,3 +33,24 @@ This prevents dormant Gateway custody code from introducing unresolved symbols
 in standalone radio tests while leaving normal PlatformIO source discovery
 intact. Full host regression and target build pending on the correction SHA.
 The change does not activate Gateway runtime or claim an on-air ACK.
+
+## SF5K3W: bounded Gateway runtime composition (not activated)
+
+`GatewayProductCustodyRuntime` now composes the existing `RadioManager`
+PRODUCT_SECURE mailbox, `GatewayCustodyAuthorizedIngress`,
+`GatewayLocalCustodyOwner` and `ProductCustodyStore` through one loop-owned
+RX -> durable write/readback -> scoped ACK send attempt. It never interprets
+legacy BASE role or an incoming radio header as Gateway authorization.
+
+`update(enabled)` requires an independently authenticated Gateway service
+and local identity match; already admitted async flash writes are still
+serviced if the Gateway service is disabled, but no ACK is then sent.
+The independent host test uses actual gateway custody/authorization/HMAC
+objects and fake NOR, with only RadioManager TX/RX replaced by mock methods;
+it covers duplicate, busy-radio, revoked grant and disabled admission.
+
+**Still absent:** trusted durable Gateway provisioning/activation, safe
+product-region OCQ2 owner on dedicated Gateway hardware, actual main-loop
+Gateway service instantiation, source AEAD verification, real on-air ACK
+timing, Gateway-to-Edge handoff and reclaim. This is not a physical Gateway
+delivery claim and must not be automatically flashed.

@@ -912,3 +912,7 @@ bash tools/ci/run_sf5k3u_tracker_ack_runtime_host.sh
 # SF5K3V: actual OBS1 flash + tracker TX pilot state, fake sealed bytes/Radio.
 # This test does NOT claim AES/CC310 or physical SF11 RF qualification.
 bash tools/ci/run_sf5k3v_tracker_tx_host.sh
+
+# Gateway RF mailbox -> real authorized custody flash/HMAC -> ACK TX mock;
+# production Gateway has no grant-enrollment or OCQ2 activation yet.
+bash tools/ci/run_sf5k3w_gateway_product_runtime_host.sh
