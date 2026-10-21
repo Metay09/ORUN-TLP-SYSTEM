@@ -599,6 +599,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/history_receipt_admission.cpp \
   firmware/src/history_delivery_coordinator.cpp \
   firmware/tests/startup/stubs/history_secure_crypto_stub.cpp \
+  firmware/tests/startup/stubs/custody_ack_release_owner_stub.cpp \
   firmware/src/journal_format.cpp firmware/src/nrf_history_flash.cpp \
   firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
   firmware/src/nrf_geofence_flash.cpp \
