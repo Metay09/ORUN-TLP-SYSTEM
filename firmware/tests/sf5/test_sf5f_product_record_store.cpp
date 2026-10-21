@@ -935,4 +935,5 @@ int main(int argc, char** argv) {
   }
   testFillAndResetEverywhere();
   puts("SF5F ProductRecordStore checks: PASS");
+  return 0;  // Explicit because SF5K3V imports this main under a test alias.
 }
