@@ -916,3 +916,7 @@ bash tools/ci/run_sf5k3v_tracker_tx_host.sh
 # Gateway RF mailbox -> real authorized custody flash/HMAC -> ACK TX mock;
 # production Gateway has no grant-enrollment or OCQ2 activation yet.
 bash tools/ci/run_sf5k3w_gateway_product_runtime_host.sh
+
+# SF5K3X: OCQ2-only Gateway boot gate, immutable flash ownership and
+# revocation-safe eligibility. No physical provisioning or Gateway enablement.
+bash tools/ci/run_sf5k3x_gateway_startup_guard_host.sh

@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "gateway_custody_authorized_ingress.h"
+#include "gateway_product_startup_guard.h"
 #include "radio_manager.h"
 
 namespace orun_tlp {
@@ -27,6 +28,15 @@ class GatewayProductCustodyRuntime final {
   // Pending flash completions still progress when service is disabled;
   // disabled/mismatched-identity instances never receive or transmit.
   Event update(bool enabled);
+
+  // Future production composition MUST use the verified boot gate; the
+  // boolean overload remains the existing low-level SF5K3W host seam.
+  Event updateGuarded(const GatewayProductStartupGuard& gate,
+                      bool authorized_gateway_service,
+                      bool observation_store_mounted) {
+    return update(gate.mayServe(authorized_gateway_service,
+                                observation_store_mounted, radio_.deviceId()));
+  }
 
  private:
   RadioManager& radio_;
