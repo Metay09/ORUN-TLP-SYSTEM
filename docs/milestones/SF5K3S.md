@@ -26,3 +26,10 @@ Based on commit `074daa9628bab789684aa8cd2a7969802270bfca` (SF5K3R).
 SF5K3S complete repository host regression and RAK4630 build **PASS** on 2026-10-21 at commit `50e1c8bb7dca885c357cc66e31100e5738569c9d` (user-supplied build log; hardware not flashed).
 
 SF5K3T candidate: use `bash tools/ci/run_sf5k3t_gateway_ack_radio_host.sh` for an ingress host runtime regression and new RadioManager source-contract checks. Run `bash firmware/tests/run_host_tests.sh` and `cd firmware && pio run -e rak4630` for complete validation. These **remain PENDING for SF5K3T** until executed on the candidate commit. No RF hardware loop or firmware flashing is claimed.
+
+SF5K3T linker isolation correction: privileged ACK TX is compiled from
+`radio_manager_custody_ack.cpp` separately from the legacy `radio_manager.cpp`.
+This prevents dormant Gateway custody code from introducing unresolved symbols
+in standalone radio tests while leaving normal PlatformIO source discovery
+intact. Full host regression and target build pending on the correction SHA.
+The change does not activate Gateway runtime or claim an on-air ACK.

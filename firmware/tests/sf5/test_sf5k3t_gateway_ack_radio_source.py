@@ -4,11 +4,15 @@ from pathlib import Path
 
 repo = Path(__file__).resolve().parents[3]
 hdr = (repo / "firmware/include/radio_manager.h").read_text()
-cpp = (repo / "firmware/src/radio_manager.cpp").read_text()
+legacy_cpp = (repo / "firmware/src/radio_manager.cpp").read_text()
+cpp = (repo / "firmware/src/radio_manager_custody_ack.cpp").read_text()
 ingress = (repo / "firmware/include/gateway_custody_authorized_ingress.h").read_text()
 signature = "bool RadioManager::sendAuthorizedCustodyAck("
 assert cpp.count(signature) == 1, "exactly one privileged ACK TX entry point"
-body = cpp.split(signature, 1)[1].split("bool RadioManager::takeProductSecureFrame(", 1)[0]
+assert signature not in legacy_cpp, "privileged ACK cannot impose a Gateway link dependency on legacy radio tests"
+assert '#include "gateway_custody_authorized_ingress.h"' not in legacy_cpp
+assert '#include "gateway_custody_authorized_ingress.h"' in cpp
+body = cpp.split(signature, 1)[1].split("}  // namespace orun_tlp", 1)[0]
 assert "bool sendAuthorizedCustodyAck(GatewayCustodyAuthorizedIngress& ingress);" in hdr
 assert "uint64_t localGatewayId() const { return gateway_id_; }" in ingress
 assert "sendCustodyAckPacket(" not in hdr, "raw ACK TX must not be exposed"
