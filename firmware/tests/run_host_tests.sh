@@ -904,3 +904,6 @@ bash tools/ci/run_sf5k3r_real_gateway_ack_chain_host.sh
 
 # SF5K3T: privileged ACK radio source contract and real flash/HMAC host checks.
 bash tools/ci/run_sf5k3t_gateway_ack_radio_host.sh
+
+# SF5K3U: actual main-loop ACK intake source guard + real HMAC/flash owner.
+bash tools/ci/run_sf5k3u_tracker_ack_runtime_host.sh

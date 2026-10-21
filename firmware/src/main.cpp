@@ -18,6 +18,7 @@
 #include "ble_application_transport.h"
 #include "config_mutation.h"
 #include "config_store.h"
+#include "custody_ack_release_owner.h"
 #include "config_incarnation_source.h"
 #ifdef ORUN_M7P7B_FLASH_PROBE
 #include "m7p7b_flash_probe.h"
@@ -168,6 +169,9 @@ void refreshApplicationStatusSnapshot(uint32_t now_ms);
 // credentials or weakens the existing recovery-only provisioning boundary.
 orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort(),
                                        storage_flash_gate.securityMaintPort());
+// The only Tracker release owner: grant/HMAC verification precedes flash.
+orun_tlp::CustodyAckReleaseOwner custody_ack_release(security_store,
+                                                      product_records);
 orun_tlp::HistorySecureCrypto history_secure_crypto(security_store);
 orun_tlp::HistoryDeliveryCoordinator history_delivery(history);
 orun_tlp::HistoryReceiptAdmissionCoordinator history_receipt_admission(
@@ -3237,6 +3241,16 @@ void loop() {
   }
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kProductStore);
   drainProductStore();
+  // ProductRecordStore::poll() has run before this service. A radio receipt
+  // never counts as delivery; only a committed release marker does.
+  const auto custody_result = custody_ack_release.service();
+  if (custody_result ==
+      orun_tlp::CustodyAckReleaseOwner::Service::kDurablyReleased) {
+    Serial.println(F("PRODUCT CUSTODY release=DURABLE"));
+  } else if (custody_result ==
+             orun_tlp::CustodyAckReleaseOwner::Service::kFailed) {
+    Serial.println(F("PRODUCT CUSTODY release=FAILED"));
+  }
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kGeofenceStore);
   if (geofence_mutations.poll()) applyGeofenceMutationToRuntime();
   drainGeofenceMutationResult();
@@ -3369,6 +3383,29 @@ void loop() {
 
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kRadio);
   radio_manager.update(tracking_enabled && !positions.pending());
+
+  // SF5K3U: loop-only Tracker ACK intake, after radio callback dispatch and
+  // outside the driver gate. The mailbox contains UNTRUSTED wire bytes.
+  // Release is strictly delegated to the existing SecurityStore/HMAC and
+  // ProductRecordStore owner; absent v3 grant or exact cache fails closed.
+  // Preserve a pending second ACK while a previous release awaits flash.
+  if (radio_manager.role() == orun_tlp::NodeRole::kTracker &&
+      !custody_ack_release.pending()) {
+    orun_tlp::CustodyAckRxFrame ack{};
+    if (radio_manager.takeCustodyAckFrame(&ack)) {
+      if (ble_ready && product_records.mounted() &&
+          product_records.store().ready() && security_store.ready() &&
+          security_store.state() == orun_tlp::SecurityState::kProvisioned &&
+          !security_store.busy()) {
+        const auto submitted = custody_ack_release.submit(ack.payload, ack.size);
+        if (submitted == orun_tlp::CustodyAckReleaseOwner::Submit::kStarted)
+          Serial.println(F("PRODUCT CUSTODY ACK authenticated; release=pending"));
+      }
+      // Unauthenticated, busy or unavailable ACK is never a delivery fact.
+      // The Gateway must retry when the Tracker cannot admit it.
+      memset(ack.payload, 0, sizeof(ack.payload));
+    }
+  }
 
   // SF3 device runtime executes only after RadioManager has drained callback
   // work and released its driver gate. Root-credential crypto can take much
