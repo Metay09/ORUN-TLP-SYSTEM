@@ -13,14 +13,16 @@ Based on commit `074daa9628bab789684aa8cd2a7969802270bfca` (SF5K3R).
 ## Not yet supplied / release blockers
 
 - No actual **persistent Gateway grant** or secure enrollment/provisioning backend; mock provider exists ONLY in host tests.
-- No live RF receiver/sender or a privileged RF transmit API, no Tracker seal/persist/replay composition, no Edge proof path, no Relay ACK route and no credential lifecycle.
+- SF5K3T adds a privileged RadioManager ACK **TX seam**, but there is still no live Gateway application composition, no trusted grant provisioning, no Tracker seal/persist/replay composition, no Edge proof path, no Relay ACK route and no credential lifecycle.
 - The Gateway does **not** validate Tracker AEAD; the grant authorizes admission to bounded opaque custody, not plaintext identity.
 - No runtime `main.cpp` hookup or flash layout migration; **DO NOT FLASH** this candidate onto devices as a new Gateway firmware.
 - An already-OBS1 Tracker product region must NEVER be remounted as Gateway OCQ2 or wiped. Real separate Gateway physical provisioning must be reviewed before activation.
-- Serialized grant revocation and RF send admission remains mandatory: a returned ACK must not be transmitted after a revocation between `takeAuthorizedAck()` and RF TX.
+- Serialized grant revocation and RF send admission remains mandatory: a returned ACK must not be transmitted after a revocation between `takeAuthorizedAck()` and RF TX. The SF5K3T seam assumes the same loop owner serializes both; do not wire concurrent grant mutation.
 
 ## Tests
 
 `bash tools/ci/run_sf5k3s_gateway_authorized_ingress_host.sh` tests exact 84/100 byte HMAC vectors, synchronous/asynchronous fake NOR, duplicate ACK, invalid grants, denied custody flag, post-commit revocation, failed flash write.
 
-This candidate was initially compiled/tested with local stub contracts; real repository host test and RAK4630 target build remain **PENDING** until run from the complete SF5K3R source tree.
+SF5K3S complete repository host regression and RAK4630 build **PASS** on 2026-10-21 at commit `50e1c8bb7dca885c357cc66e31100e5738569c9d` (user-supplied build log; hardware not flashed).
+
+SF5K3T candidate: use `bash tools/ci/run_sf5k3t_gateway_ack_radio_host.sh` for an ingress host runtime regression and new RadioManager source-contract checks. Run `bash firmware/tests/run_host_tests.sh` and `cd firmware && pio run -e rak4630` for complete validation. These **remain PENDING for SF5K3T** until executed on the candidate commit. No RF hardware loop or firmware flashing is claimed.

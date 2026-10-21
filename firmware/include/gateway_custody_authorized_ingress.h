@@ -45,6 +45,8 @@ class GatewayCustodyAuthorizedIngress final {
   // intake and ACK publication suppresses ACK, even if flash committed.
   bool takeAuthorizedAck(uint8_t (&output)[custody_ack::kWireSize]);
   bool pending() const { return pending_; }
+  // Identity bound at construction to the trusted Gateway custody owner.
+  uint64_t localGatewayId() const { return gateway_id_; }
 
  private:
   void clearPending();

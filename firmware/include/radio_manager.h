@@ -13,6 +13,7 @@
 namespace orun_tlp {
 
 struct GnssFix;
+class GatewayCustodyAuthorizedIngress;
 
 enum class RadioListenState : uint8_t {
   kRxContinuous,
@@ -47,6 +48,7 @@ struct RadioEventDiagnostics {
   uint32_t product_secure_tx_attempts = 0;
   uint32_t custody_ack_rx_queued = 0;
   uint32_t custody_ack_rx_drops = 0;
+  uint32_t custody_ack_tx_attempts = 0;
 };
 
 struct HistorySecureRxFrame {
@@ -119,6 +121,12 @@ class RadioManager {
   // The caller must cache that exact object durably before first custody TX.
   // No production caller is enabled until that owner is integrated.
   bool sendProductSecurePacket(const uint8_t* payload, size_t size);
+  // SF5K3T candidate: no raw ACK TX API; consume only the privileged
+  // durability-checked, still-authorized ACK from the Gateway ingress.
+  // No automatic Gateway service activation. Loop owner only.
+  // If RF cannot start after consumption, the Tracker must retry the exact
+  // object; durable custody deduplication can then issue another ACK.
+  bool sendAuthorizedCustodyAck(GatewayCustodyAuthorizedIngress& ingress);
   bool takeProductSecureFrame(ProductSecureRxFrame* frame);
   // Tracker-only, exact raw 56-byte ACK from driver callback mailbox.
   // The consumer MUST separately check durable grant and full HMAC.
@@ -186,6 +194,7 @@ class RadioManager {
     kRelay,
     kHistorySecure,
     kProductSecure,
+    kCustodyAck,
   };
 
   uint64_t device_id_ = 0;
