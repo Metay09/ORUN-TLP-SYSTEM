@@ -920,3 +920,7 @@ bash tools/ci/run_sf5k3w_gateway_product_runtime_host.sh
 # SF5K3X: OCQ2-only Gateway boot gate, immutable flash ownership and
 # revocation-safe eligibility. No physical provisioning or Gateway enablement.
 bash tools/ci/run_sf5k3x_gateway_startup_guard_host.sh
+
+# SF5K3Y: read-only Gateway security grant snapshot with TEST FAKE issuer
+# proof, real OCQ2 boot guard and separate security/product flash owners.
+bash tools/ci/run_sf5k3y_gateway_grant_reader_host.sh
