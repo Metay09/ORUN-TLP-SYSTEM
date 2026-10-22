@@ -932,3 +932,7 @@ bash tools/ci/run_sf5k3z_gateway_issuer_rollback_host.sh
 # SF5K3AA: Nordic CC310 Ed25519 adapter, real OpenSSL verifier HOST mock.
 # Actual pinned target SDK verified via separate standalone PlatformIO env.
 bash tools/ci/run_sf5k3aa_ed25519_host.sh
+
+# SF5K3AB: signed append-only enrollment proposal review with mocked
+# independent revision; no writer, no trusted anchor, no RF activation.
+bash tools/ci/run_sf5k3ab_signed_append_preflight_host.sh

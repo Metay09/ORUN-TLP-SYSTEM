@@ -180,9 +180,13 @@ void rejectForgedOrWrongIssuer() {
 
 }  // namespace
 
+// Other host suites can reuse the issuer proof fixture without defining
+// a second main(). The standard SF5K3Z test is unchanged by default.
+#ifndef ORUN_SF5K3AB_REUSE_SF5K3Z_FIXTURE
 int main() {
   issuerSignatureAndRollback();
   rejectForgedOrWrongIssuer();
   puts("SF5K3Z real Ed25519 issuer signature + exact rollback checkpoint: PASS (HOST ONLY)");
   return 0;
 }
+#endif  // ORUN_SF5K3AB_REUSE_SF5K3Z_FIXTURE

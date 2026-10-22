@@ -46,6 +46,9 @@ class GatewayEnrollmentProofVerifier {
 // activeGrant() exposes ONLY the exact active scoped K_custody_ack for a
 // matched Tracker and epoch, never a Tracker K_root.
 class GatewayGrantSnapshotReader final : public GatewayDurableGrantSource {
+  // Read access to VERIFIED immutable snapshots only, for a pure proposal
+  // preflight. No grant keys or writer capability escape this friendship.
+  friend class GatewaySignedGrantAppendPreflight;
  public:
   enum class Status : uint8_t {
     kUnopened, kWrongOwner, kUnavailable, kEmpty, kRejected, kReady
