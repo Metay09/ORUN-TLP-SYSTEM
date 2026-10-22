@@ -924,3 +924,7 @@ bash tools/ci/run_sf5k3x_gateway_startup_guard_host.sh
 # SF5K3Y: read-only Gateway security grant snapshot with TEST FAKE issuer
 # proof, real OCQ2 boot guard and separate security/product flash owners.
 bash tools/ci/run_sf5k3y_gateway_grant_reader_host.sh
+
+# SF5K3Z: actual OpenSSL Ed25519 issuer signatures on HOST, with the
+# independent exact-revision rollback checkpoint interface (mock anchor).
+bash tools/ci/run_sf5k3z_gateway_issuer_rollback_host.sh

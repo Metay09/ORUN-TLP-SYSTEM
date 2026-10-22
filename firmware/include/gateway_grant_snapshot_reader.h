@@ -68,6 +68,12 @@ class GatewayGrantSnapshotReader final : public GatewayDurableGrantSource {
                    GatewayCustodyAckScope& scope,
                    uint8_t (&scoped_key)[32]) override;
   Status status() const { return status_; }
+  // Read-only snapshot identity used ONLY with an independent trusted
+  // rollback checkpoint. A recovered signature alone is not authority.
+  uint64_t activeGeneration() const {
+    return verifiedForLocalGateway(gateway_id_) ? active_generation_ : 0U;
+  }
+  uint64_t localGatewayId() const { return gateway_id_; }
 
  private:
   void wipeScratch();
