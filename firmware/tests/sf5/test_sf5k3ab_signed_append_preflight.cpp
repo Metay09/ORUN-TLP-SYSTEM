@@ -150,6 +150,11 @@ void testUnsignedInvalidIssuerAndIdentity() {
 }  // namespace
 
 int main() {
+  // Run the reused SF5K3Z regression cases too. Apart from eliminating
+  // unused-function warnings under -Werror, this keeps issuer/tamper/old
+  // signed-snapshot tests active inside the SF5K3AB focused binary.
+  issuerSignatureAndRollback();
+  rejectForgedOrWrongIssuer();
   testAppendAndLiveRevocation();
   testScopeMutationBlocked();
   testUnsignedInvalidIssuerAndIdentity();
