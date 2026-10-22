@@ -30,6 +30,11 @@ GatewaySignedGrantAppendPreflight::inspect(
     return V::kCurrentUnverified;
   if (!candidate.verifiedForLocalGateway(gateway))
     return V::kCandidateUnverified;
+  // Both reader objects MUST rely on the SAME pinned local issuer authority.
+  // Merely saying "valid signature" under two unrelated/verifier-supplied
+  // public keys would let a differently trusted stage mint new ACK keys.
+  if (&current.verifier_ != &candidate.verifier_)
+    return V::kIssuerAuthorityMismatch;
 
   const uint64_t generation = current.activeGeneration();
   const uint64_t requested = candidate.activeGeneration();

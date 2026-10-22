@@ -49,6 +49,7 @@ class GatewayGrantSnapshotReader final : public GatewayDurableGrantSource {
   // Read access to VERIFIED immutable snapshots only, for a pure proposal
   // preflight. No grant keys or writer capability escape this friendship.
   friend class GatewaySignedGrantAppendPreflight;
+  friend class GatewaySignedGrantAppendTransaction;
  public:
   enum class Status : uint8_t {
     kUnopened, kWrongOwner, kUnavailable, kEmpty, kRejected, kReady

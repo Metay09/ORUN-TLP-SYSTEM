@@ -936,3 +936,7 @@ bash tools/ci/run_sf5k3aa_ed25519_host.sh
 # SF5K3AB: signed append-only enrollment proposal review with mocked
 # independent revision; no writer, no trusted anchor, no RF activation.
 bash tools/ci/run_sf5k3ab_signed_append_preflight_host.sh
+
+# SF5K3AC: host-only signed A/B flash transaction & power-cut model
+# with fake NOR and mock revision anchor; no field firmware writer.
+bash tools/ci/run_sf5k3ac_signed_append_transaction_host.sh

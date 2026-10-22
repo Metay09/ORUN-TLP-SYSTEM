@@ -19,6 +19,7 @@ class GatewaySignedGrantAppendPreflight final {
   enum class Verdict : uint8_t {
     kCurrentUnverified,
     kCandidateUnverified,
+    kIssuerAuthorityMismatch,
     kWrongGateway,
     kAnchorUnavailable,
     kAnchorMismatch,

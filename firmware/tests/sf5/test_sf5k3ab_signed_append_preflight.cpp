@@ -149,6 +149,7 @@ void testUnsignedInvalidIssuerAndIdentity() {
 
 }  // namespace
 
+#ifndef ORUN_SF5K3AC_REUSE_AB_FIXTURE
 int main() {
   // Run the reused SF5K3Z regression cases too. Apart from eliminating
   // unused-function warnings under -Werror, this keeps issuer/tamper/old
@@ -161,3 +162,5 @@ int main() {
   puts("SF5K3AB signed append-only Gateway enrollment preflight: PASS (HOST only)");
   return 0;
 }
+
+#endif  // ORUN_SF5K3AC_REUSE_AB_FIXTURE
