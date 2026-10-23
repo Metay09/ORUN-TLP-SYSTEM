@@ -1,6 +1,6 @@
 # SF5L1 — bench Gateway hand-out over USB → verified local ledger
 
-**Status:** code + host tests. Physical run pending. Bench only (SF5L0 images).
+**Status:** code + host tests + **physical bench PASS (2026-10-23)**. Bench only (SF5L0 images).
 **Base:** `main@7ce6a39` (SF5L0 merged, physical round trip PASS).
 **Scope:** the next link after custody: what the Gateway durably holds reaches
 a computer and becomes a readable, de-duplicated observation. The Tracker↔
@@ -39,6 +39,33 @@ SF5I direction), phone/BLE transport, backend server, map.
   another counter or re-sent is recognised as already present; a flipped bit
   or wrong length is refused; without `--bench-test-key` everything is refused.
 - Default `rak4630` image unchanged in size.
+
+## Physical result (2026-10-23, owner bench, `4380db3`)
+
+First attempt found a real defect: the Adafruit core's `Print::printf`
+formats into `char[256]`, so the ~280-char line was cut and the tool raised on
+odd hex. Fixed in `4380db3` (object via `Serial.write`; tool refuses cut lines).
+
+```
+tool: [gateway port] dinleniyor
+DUMP: YENİ tasma=0E8ADE7E71531AA3 seq=11005 zaman=2026-10-20T13:46:36Z
+      konum=37.610723,28.054740 (uydu=8 hdop=1.07) pil=4116mV NORMAL
+      EDGE DUMP END count=1
+collar re-flashed remotely (= reboot) -> pilot sent its oldest record:
+live: YENİ tasma=0E8ADE7E71531AA3 seq=11089 zaman=2026-10-20T15:10:36Z
+      konum=37.610550,28.054666 (uydu=10 hdop=0.96) pil=4119mV NORMAL
+```
+
+seq 11005 is the record ACKed in the SF5L0 run (still held by the Gateway,
+handed out on DUMP); seq 11089 arrived live through the whole chain
+Tracker → Gateway custody + ACK → USB → AEAD open → ledger.
+
+**Observation:** seq 11006–11088 were not lost in transit. The collar's
+ObservationStore is full (1260 retained) and records every period; between
+the two runs (~100 min) new records overwrote the oldest ones (ring
+retention, `lost` counter). The one-record-per-boot pilot cannot keep up.
+The real send scheduler (cutover step 3) must drain faster than records are
+produced, or the oldest backlog is overwritten by design.
 
 ## Bench procedure
 
