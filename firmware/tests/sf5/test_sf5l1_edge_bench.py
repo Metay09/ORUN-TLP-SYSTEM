@@ -37,7 +37,10 @@ def line(obj: bytes, slot: int = 0) -> str:
 
 def main() -> None:
     src = (ROOT / "firmware/src/sf5l0_bench_gateway.cpp").read_text()
-    assert 'printf("EDGE HELD v1 gw=%s page=%u slot=%u gen=%s len=%u obj=%s\\n"' in src
+    # Header via printf, object via Serial.write: the core's printf buffer is
+    # 256 bytes and a 280-char line would be truncated (found on the bench).
+    assert 'printf("EDGE HELD v1 gw=%s page=%u slot=%u gen=%s len=%u obj=",' in src
+    assert "Serial.write(reinterpret_cast<const uint8_t*>(object), 2U * r.size);" in src
     assert eb.TEST_CREDENTIAL_ID == bytes(range(0xA0, 0xB0))
     assert eb.TEST_ROOT == bytes(range(32)) and eb.TEST_KEY_EPOCH == 0x01020304
 
@@ -69,6 +72,9 @@ def main() -> None:
         assert edge.handle_line(line(bytes(bad))).startswith("RED")
         short = line(kat).replace("len=100", "len=84")
         assert edge.handle_line(short).startswith("RED")
+        # A line cut at 256 chars (odd hex count) is refused, not a crash.
+        cut = line(kat)[:255]
+        assert edge.handle_line(cut).startswith("RED")
         assert edge.ledger.record_count() == 1
         assert edge.counts["STORED"] == 1 and edge.counts["DUPLICATE"] == 2
 

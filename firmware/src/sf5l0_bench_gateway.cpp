@@ -79,10 +79,14 @@ void printHeld(const Sf5l0HeldRecord& r) {
   char gen[17];
   hex64(gw, radio != nullptr ? radio->deviceId() : 0U);
   hex64(gen, r.generation);
-  Serial.printf("EDGE HELD v1 gw=%s page=%u slot=%u gen=%s len=%u obj=%s\n",
+  // Serial.printf formats into a 256-byte buffer in the Adafruit core; the
+  // 200-char object would be cut. Print the header and the object separately.
+  Serial.printf("EDGE HELD v1 gw=%s page=%u slot=%u gen=%s len=%u obj=",
                 gw, static_cast<unsigned>(r.page),
                 static_cast<unsigned>(r.slot), gen,
-                static_cast<unsigned>(r.size), object);
+                static_cast<unsigned>(r.size));
+  Serial.write(reinterpret_cast<const uint8_t*>(object), 2U * r.size);
+  Serial.write('\n');
 }
 
 struct PrintAll : Sf5l0HeldVisitor {

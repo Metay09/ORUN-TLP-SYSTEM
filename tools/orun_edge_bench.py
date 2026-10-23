@@ -145,10 +145,14 @@ class BenchEdge:
         m = LINE.search(text)
         if not m:
             return None
-        raw = bytes.fromhex(m["obj"])
-        if len(raw) != int(m["len"]):
+        hex_text = m["obj"]
+        if len(hex_text) % 2 or len(hex_text) != 2 * int(m["len"]):
+            # Truncated or garbled serial line: never guess, never crash.
             self.counts["REJECTED"] += 1
-            return f"RED   gw={m['gw']} slot={m['slot']}: uzunluk tutmuyor"
+            return (f"RED   gw={m['gw']} page={m['page']} slot={m['slot']}: "
+                    f"satır eksik/bozuk ({len(hex_text)} hex, beklenen "
+                    f"{2 * int(m['len'])}); BENCH GW DUMP ile tekrar istenebilir")
+        raw = bytes.fromhex(hex_text)
         state = self.ledger.ingest(raw).state
         S = self.ledger_mod.LedgerState
         label = {S.VERIFIED_STORED: "STORED", S.VERIFIED_DUPLICATE: "DUPLICATE",
