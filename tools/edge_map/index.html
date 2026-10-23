@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ORUN Saha Haritası</title>
+<link rel="stylesheet" href="/vendor/leaflet-1.9.4/leaflet.css">
+<style>
+  :root {
+    --bg: #0f1412;
+    --panel: rgba(17, 23, 21, 0.94);
+    --line: #26302c;
+    --text: #e8eee9;
+    --muted: #93a29a;
+    --accent: #f2b53a;
+    --ok: #5fc48a;
+    --warn: #e7a33e;
+    --bad: #e2574c;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #map { position: fixed; inset: 0; }
+  .panel {
+    position: fixed; z-index: 1000; top: 12px; left: 12px; width: 340px;
+    max-height: calc(100% - 24px); display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: 0 8px 30px rgba(0,0,0,.35); backdrop-filter: blur(6px);
+  }
+  .head { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: baseline; gap: 8px; }
+  .brand b { font-size: 18px; letter-spacing: .14em; color: var(--accent); }
+  .brand span { color: var(--muted); font-size: 12px; }
+  .status { margin-top: 6px; font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 3px rgba(95,196,138,.18); }
+  .dot.err { background: var(--bad); }
+  .body { overflow: auto; padding: 10px 12px 12px; }
+  .tracker { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; cursor: pointer; }
+  .tracker:hover { border-color: #3a4842; }
+  .tracker .row1 { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .tracker .id { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 6px; vertical-align: middle; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #1b2420; border: 1px solid var(--line); color: var(--text); }
+  .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  h3 { margin: 12px 4px 6px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+  .list { list-style: none; margin: 0; padding: 0; }
+  .list li { display: grid; grid-template-columns: 58px 1fr auto; gap: 8px; align-items: center;
+    padding: 7px 6px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 13px; }
+  .list li:hover { background: #18201c; }
+  .list .seq { font-family: ui-monospace, monospace; color: var(--muted); font-size: 12px; }
+  .list .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .list .b { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .empty { color: var(--muted); padding: 16px 6px; }
+  .btns { display: flex; gap: 8px; margin-top: 10px; }
+  button { background: #1b2420; color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+  button:hover { border-color: #3a4842; }
+  .note { color: var(--muted); font-size: 11px; padding: 8px 4px 0; }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #141b18; color: var(--text); border: 1px solid var(--line); }
+  .leaflet-popup-content { margin: 10px 12px; font-size: 13px; }
+  .pop b { color: var(--accent); }
+  .pop table { border-collapse: collapse; margin-top: 4px; }
+  .pop td { padding: 1px 8px 1px 0; } .pop td:first-child { color: var(--muted); }
+  .leaflet-control-layers { background: var(--panel); color: var(--text); border: 1px solid var(--line) !important; }
+  .last-marker { width: 18px; height: 18px; border-radius: 50%; border: 3px solid #fff;
+    box-shadow: 0 0 0 6px rgba(242,181,58,.25); }
+  @media (max-width: 700px) {
+    .panel { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: 46%;
+      border-radius: var(--radius) var(--radius) 0 0; padding-bottom: env(safe-area-inset-bottom); }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<aside class="panel" aria-label="ORUN durum paneli">
+  <div class="head">
+    <div class="brand"><b>ORUN</b><span>Saha haritası · masa testi</span></div>
+    <div class="status"><span id="dot" class="dot"></span><span id="status">Yükleniyor…</span></div>
+    <div class="btns">
+      <button id="fit" type="button">Tümünü göster</button>
+      <button id="follow" type="button" aria-pressed="true">Son konumu izle: açık</button>
+    </div>
+  </div>
+  <div class="body">
+    <div id="trackers"></div>
+    <h3>Son kayıtlar</h3>
+    <ul id="recent" class="list"></ul>
+    <div class="note">Zaman, tasmanın kaydı aldığı andır (yerel saat). Kayıtlar gecikmeli gelebilir: tasma, birikmiş kayıtları sırayla gönderir.</div>
+  </div>
+</aside>
+
+<script src="/vendor/leaflet-1.9.4/leaflet.js"></script>
+<script>
+(() => {
+  "use strict";
+  const COLORS = ["#f2b53a", "#5fc48a", "#5aa9e6", "#e2574c", "#b58cf0", "#e88bc4"];
+  const REFRESH_MS = 10000;
+
+  const map = L.map("map", { zoomControl: false, attributionControl: true });
+  L.control.zoom({ position: "bottomright" }).addTo(map);
+  const satellite = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { maxZoom: 19, maxNativeZoom: 18, attribution: "Uydu: Esri, Maxar, Earthstar Geographics" });
+  const street = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    { maxZoom: 19, attribution: "&copy; OpenStreetMap katkıcıları" });
+  satellite.addTo(map);
+  L.control.layers({ "Uydu": satellite, "Harita": street }, null, { position: "topright" }).addTo(map);
+  map.setView([37.6106, 28.0548], 16);
+
+  // Keep the bounds clear of the panel: left column on wide screens,
+  // bottom sheet on phones.
+  const fitOptions = () => {
+    const panel = document.querySelector(".panel").getBoundingClientRect();
+    return window.innerWidth > 700
+      ? { paddingTopLeft: [panel.right + 24, 40], paddingBottomRight: [40, 40], maxZoom: 19 }
+      : { paddingTopLeft: [24, 60], paddingBottomRight: [24, panel.height + 24], maxZoom: 19 };
+  };
+  const layers = new Map();   // tracker id -> {line, dots, last}
+  let follow = true;
+  let fittedOnce = false;
+  let lastKey = "";
+  let lastOk = 0;
+
+  const fmtTime = (iso) => iso ? new Date(iso).toLocaleString("tr-TR",
+    { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "zaman yok";
+  const ago = (ms) => {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + " sn önce";
+    const m = Math.round(s / 60);
+    if (m < 60) return m + " dk önce";
+    const h = Math.round(m / 60);
+    if (h < 48) return h + " sa önce";
+    return Math.round(h / 24) + " gün önce";
+  };
+  const batteryClass = (p) => p.battery === "CRITICAL" ? "bad" : p.battery === "LOW" ? "warn" : "ok";
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+  function popup(p) {
+    const box = el("div", "pop");
+    box.appendChild(el("b", null, "Tasma " + p.tracker.slice(-6)));
+    const t = el("table");
+    const rows = [
+      ["Kayıt", "#" + p.seq],
+      ["Zaman", fmtTime(p.time)],
+      ["Konum", p.lat.toFixed(6) + ", " + p.lon.toFixed(6)],
+      ["Uydu / HDOP", (p.sats ?? "–") + " / " + (p.hdop != null ? p.hdop.toFixed(2) : "–")],
+      ["Pil", p.battery_mv != null ? p.battery_mv + " mV " + (p.battery || "") : "–"],
+      ["Aktif", p.active_s != null ? p.active_s + " / " + p.covered_s + " sn" : "–"],
+    ];
+    for (const [k, v] of rows) {
+      const tr = el("tr"); tr.appendChild(el("td", null, k)); tr.appendChild(el("td", null, v)); t.appendChild(tr);
+    }
+    box.appendChild(t);
+    return box;
+  }
+
+  function lastIcon(color) {
+    const d = el("div", "last-marker"); d.style.background = color;
+    return L.divIcon({ className: "", html: d.outerHTML, iconSize: [18, 18], iconAnchor: [9, 9] });
+  }
+
+  function render(points) {
+    const byTracker = new Map();
+    for (const p of points) {
+      if (!byTracker.has(p.tracker)) byTracker.set(p.tracker, []);
+      byTracker.get(p.tracker).push(p);
+    }
+    const trackersBox = document.getElementById("trackers");
+    trackersBox.replaceChildren();
+    const allLatLng = [];
+    let newest = null;
+    let i = 0;
+    for (const [id, list] of byTracker) {
+      const color = COLORS[i++ % COLORS.length];
+      list.sort((a, b) => (a.time || "").localeCompare(b.time || "") || a.seq - b.seq);
+      const latlngs = list.map(p => [p.lat, p.lon]);
+      allLatLng.push(...latlngs);
+      let layer = layers.get(id);
+      if (!layer) {
+        layer = { line: L.polyline([], { color, weight: 3, opacity: .85 }).addTo(map),
+                  dots: L.layerGroup().addTo(map), last: null };
+        layers.set(id, layer);
+      }
+      layer.line.setLatLngs(latlngs);
+      layer.dots.clearLayers();
+      list.forEach((p, k) => {
+        const age = list.length > 1 ? k / (list.length - 1) : 1;
+        L.circleMarker([p.lat, p.lon], { radius: 4, color: "#0b0f0d", weight: 1,
+          fillColor: color, fillOpacity: .35 + .55 * age }).bindPopup(() => popup(p)).addTo(layer.dots);
+      });
+      const last = list[list.length - 1];
+      if (layer.last) layer.last.remove();
+      layer.last = L.marker([last.lat, last.lon], { icon: lastIcon(color), zIndexOffset: 1000 })
+        .bindPopup(() => popup(last)).addTo(map);
+      if (!newest || (last.time || "") > (newest.time || "")) newest = last;
+
+      const card = el("div", "tracker");
+      const r1 = el("div", "row1");
+      const name = el("div", "id"); const sw = el("span", "swatch"); sw.style.background = color;
+      name.appendChild(sw); name.appendChild(document.createTextNode(id));
+      r1.appendChild(name); r1.appendChild(el("span", "meta", list.length + " kayıt"));
+      card.appendChild(r1);
+      const chips = el("div", "chips");
+      chips.appendChild(el("span", "chip", "Son: " + fmtTime(last.time)));
+      if (last.battery_mv != null) chips.appendChild(el("span", "chip " + batteryClass(last), last.battery_mv + " mV"));
+      if (last.sats != null) chips.appendChild(el("span", "chip", last.sats + " uydu"));
+      card.appendChild(chips);
+      card.appendChild(el("div", "meta", last.lat.toFixed(6) + ", " + last.lon.toFixed(6)));
+      card.addEventListener("click", () => { map.setView([last.lat, last.lon], Math.max(map.getZoom(), 17)); layer.last.openPopup(); });
+      trackersBox.appendChild(card);
+    }
+    for (const [id, layer] of layers) {
+      if (!byTracker.has(id)) { layer.line.remove(); layer.dots.remove(); if (layer.last) layer.last.remove(); layers.delete(id); }
+    }
+
+    const recent = document.getElementById("recent");
+    recent.replaceChildren();
+    const sorted = [...points].sort((a, b) => (b.time || "").localeCompare(a.time || "") || b.seq - a.seq).slice(0, 40);
+    if (!sorted.length) recent.appendChild(el("li", "empty", "Henüz konumlu kayıt yok."));
+    for (const p of sorted) {
+      const li = el("li");
+      li.appendChild(el("span", "seq", "#" + p.seq));
+      li.appendChild(el("span", "t", fmtTime(p.time)));
+      li.appendChild(el("span", "b", p.battery_mv != null ? p.battery_mv + " mV" : ""));
+      li.addEventListener("click", () => { map.setView([p.lat, p.lon], Math.max(map.getZoom(), 18)); L.popup().setLatLng([p.lat, p.lon]).setContent(popup(p)).openOn(map); });
+      recent.appendChild(li);
+    }
+
+    if (allLatLng.length && !fittedOnce) {
+      map.fitBounds(L.latLngBounds(allLatLng), fitOptions());
+      fittedOnce = true;
+    } else if (follow && newest) {
+      map.panTo([newest.lat, newest.lon]);
+    }
+    document.getElementById("fit").onclick = () => {
+      if (allLatLng.length) map.fitBounds(L.latLngBounds(allLatLng), fitOptions());
+    };
+  }
+
+  async function refresh() {
+    const dot = document.getElementById("dot"), status = document.getElementById("status");
+    try {
+      const r = await fetch("/api/points", { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      const key = data.count + ":" + data.points.map(p => p.tracker + p.seq).slice(-1)[0];
+      if (key !== lastKey) { render(data.points); lastKey = key; }
+      lastOk = Date.now();
+      dot.className = "dot live";
+      status.textContent = data.count + " konumlu kayıt · " + (data.skipped ? data.skipped + " konumsuz · " : "") + "güncellendi";
+    } catch (e) {
+      dot.className = "dot err";
+      status.textContent = "Bağlantı yok (" + e.message + ")" + (lastOk ? " · son başarılı " + ago(Date.now() - lastOk) : "");
+    }
+  }
+
+  document.getElementById("follow").addEventListener("click", (ev) => {
+    follow = !follow;
+    ev.currentTarget.setAttribute("aria-pressed", String(follow));
+    ev.currentTarget.textContent = "Son konumu izle: " + (follow ? "açık" : "kapalı");
+  });
+  map.on("dragstart", () => {
+    if (!follow) return;
+    follow = false;
+    const b = document.getElementById("follow");
+    b.setAttribute("aria-pressed", "false"); b.textContent = "Son konumu izle: kapalı";
+  });
+
+  refresh();
+  setInterval(refresh, REFRESH_MS);
+})();
+</script>
+</body>
+</html>

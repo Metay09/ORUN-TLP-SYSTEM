@@ -13,8 +13,15 @@ the Gateway; it only asks for `BENCH GW DUMP` (a read-only listing).
 
 Needs: python3 -m pip install cryptography pyserial   (pyserial only for --port)
 
+SF5L3: --serve PORT also serves a map page (tools/edge_map) and a read-only
+JSON view of the ledger at /api/points. Default bind is 127.0.0.1; use --host
+to expose it (e.g. the Tailscale address). Leaflet is vendored; only the map
+tiles come from the internet.
+
 Examples:
   python3 tools/orun_edge_bench.py --bench-test-key --port /dev/ttyACM0
+  python3 tools/orun_edge_bench.py --bench-test-key --port /dev/ttyACM0 --serve 8080
+  python3 tools/orun_edge_bench.py --serve 8080          # map of the ledger only
   python3 tools/orun_edge_bench.py --bench-test-key --file gateway.log
   python3 tools/orun_edge_bench.py --list
 """
@@ -22,17 +29,31 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
 import sqlite3
 import sys
+import threading
 import time
 from typing import Iterable, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 LEDGER_PATH = ROOT / "backend" / "candidates" / "product_secure_verified_ledger.py"
+MAP_DIR = ROOT / "tools" / "edge_map"
+_LEAFLET = "/vendor/leaflet-1.9.4/"
+# Only these files are ever served (no directory walking).
+STATIC_FILES = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/index.html": ("index.html", "text/html; charset=utf-8"),
+    _LEAFLET + "leaflet.js": ("vendor/leaflet-1.9.4/leaflet.js", "application/javascript"),
+    _LEAFLET + "leaflet.css": ("vendor/leaflet-1.9.4/leaflet.css", "text/css"),
+    _LEAFLET + "images/layers.png": ("vendor/leaflet-1.9.4/images/layers.png", "image/png"),
+    _LEAFLET + "images/layers-2x.png": ("vendor/leaflet-1.9.4/images/layers-2x.png", "image/png"),
+}
 
 # Same public vector as firmware/src/sf5l0_bench.cpp (and the SF3 qualification).
 TEST_CREDENTIAL_ID = bytes(range(0xA0, 0xB0))
@@ -222,6 +243,74 @@ def list_db(db_path: Path, test_key: bool) -> None:
     del edge
 
 
+def points_from_db(db_path: Path) -> dict:
+    """Read-only map view of the verified ledger: PERIODIC records with a
+    valid location, decoded. Opens SQLite read-only on every call."""
+    points, skipped = [], 0
+    if not Path(db_path).exists():
+        return {"count": 0, "skipped": 0, "points": []}
+    uri = "file:" + str(Path(db_path).resolve()) + "?mode=ro"
+    try:
+        with sqlite3.connect(uri, uri=True, timeout=1.0) as db:
+            rows = db.execute(
+                "SELECT device_id,family,plaintext FROM verified_observations "
+                "ORDER BY device_id,incarnation,sequence").fetchall()
+    except sqlite3.OperationalError:
+        return {"count": 0, "skipped": 0, "points": []}
+    for device, family, plaintext in rows:
+        if family != 1:
+            continue
+        d = describe_periodic(bytes(device), bytes(plaintext))
+        if d["lat"] is None:
+            skipped += 1
+            continue
+        points.append({k: d[k] for k in (
+            "tracker", "sequence", "time", "lat", "lon", "sats", "hdop",
+            "fix_age_s", "battery_mv", "battery", "active_s", "covered_s",
+            "source")})
+        points[-1]["seq"] = points[-1].pop("sequence")
+    return {"count": len(points), "skipped": skipped, "points": points}
+
+
+def make_map_server(db_path: Path, host: str, port: int) -> ThreadingHTTPServer:
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "ORUN-edge-bench"
+
+        def log_message(self, *_args):  # keep the serial output readable
+            pass
+
+        def _send(self, code: int, body: bytes, ctype: str, cache: bool) -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "max-age=3600" if cache else "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):  # noqa: N802
+            path = self.path.split("?", 1)[0]
+            if path == "/api/points":
+                body = json.dumps(points_from_db(db_path)).encode()
+                return self._send(200, body, "application/json", False)
+            entry = STATIC_FILES.get(path)
+            if entry is None:
+                return self._send(404, b"not found", "text/plain", False)
+            name, ctype = entry
+            body = (MAP_DIR / name).read_bytes()
+            return self._send(200, body, ctype, name != "index.html")
+
+    return ThreadingHTTPServer((host, port), Handler)
+
+
+def start_map_server(db_path: Path, host: str, port: int) -> ThreadingHTTPServer:
+    server = make_map_server(db_path, host, port)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    shown = "localhost" if host in ("127.0.0.1", "0.0.0.0") else host
+    print(f"[harita] http://{shown}:{server.server_address[1]}/  (çıkış Ctrl+C)", flush=True)
+    return server
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     src = ap.add_mutually_exclusive_group()
@@ -234,8 +323,20 @@ def main(argv=None) -> int:
                     help="accept the PUBLIC SF5L0 test credential (bench only)")
     ap.add_argument("--no-dump", action="store_true",
                     help="with --port: do not request BENCH GW DUMP at start")
+    ap.add_argument("--serve", type=int, metavar="HTTP_PORT",
+                    help="also serve the map page and /api/points on this port")
+    ap.add_argument("--host", default="127.0.0.1",
+                    help="address for --serve (default 127.0.0.1; e.g. your Tailscale IP)")
     args = ap.parse_args(argv)
     db = Path(os.path.expanduser(args.db))
+    server = start_map_server(db, args.host, args.serve) if args.serve else None
+    if server and not (args.port or args.file or args.list):
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            server.shutdown()
+            return 0
     if args.list:
         list_db(db, args.bench_test_key)
         return 0

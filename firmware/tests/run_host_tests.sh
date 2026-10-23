@@ -973,3 +973,7 @@ bash tools/ci/run_sf5l0_bench_round_trip_host.sh
 # SF5L1: bench Gateway USB hand-out line -> tools/orun_edge_bench.py ->
 # existing backend verified ledger (AEAD open + dedupe), using SF5B frames.
 python3 firmware/tests/sf5/test_sf5l1_edge_bench.py
+
+# SF5L3: bench map server over the verified ledger (read-only view,
+# static whitelist, vendored Leaflet, page wiring).
+python3 firmware/tests/sf5/test_sf5l3_edge_map.py
