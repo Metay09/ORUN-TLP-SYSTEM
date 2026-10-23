@@ -1,0 +1,49 @@
+# SF5L1 — bench Gateway hand-out over USB → verified local ledger
+
+**Status:** code + host tests. Physical run pending. Bench only (SF5L0 images).
+**Base:** `main@7ce6a39` (SF5L0 merged, physical round trip PASS).
+**Scope:** the next link after custody: what the Gateway durably holds reaches
+a computer and becomes a readable, de-duplicated observation. The Tracker↔
+Gateway ACK rule is unchanged: the Gateway ACKs after its own durable write,
+and from then on the record is the Gateway's responsibility.
+
+## What it adds
+
+- `sf5l0ForEachHeld()` (firmware): read-only walk over OCQ2 records the
+  Gateway holds, via the existing `ProductCustodyStore::readConfirmedHeld`,
+  oldest page generation first. Never writes, hands off or deletes.
+- Gateway bench image: after each durable custody + ACK, one USB line per new
+  record; `BENCH GW DUMP` lists everything held (e.g. after a reboot):
+  `EDGE HELD v1 gw=<16hex> page=<n> slot=<n> gen=<16hex> len=<84|100> obj=<hex>`
+  The object is the exact opaque PRODUCT_SECURE frame; the Gateway does not
+  decrypt it.
+- `tools/orun_edge_bench.py`: reads those lines from the serial port (sends
+  `BENCH GW DUMP` on connect) or a saved log, opens each frame with the
+  existing `backend/candidates/product_secure_verified_ledger.py` (AES-CCM +
+  canonical checks + SQLite dedupe by device/incarnation/sequence) and prints
+  time, position, battery and activity. `--list` reprints the ledger. The only
+  credential is the PUBLIC test key, and only with `--bench-test-key`.
+
+## Not in scope
+
+Gateway-side release/hand-off marking (needs an authenticated Edge accept,
+SF5I direction), phone/BLE transport, backend server, map.
+
+## Evidence
+
+- `test_sf5l0_bench_round_trip.cpp`: held-record walk returns exactly the
+  ACKed bytes; three records come back once each in order after a reboot;
+  walking is read-only; empty region → none.
+- `test_sf5l1_edge_bench.py`: the firmware line format parses; the on-device
+  CC310 KAT frame opens and decodes; the same logical record re-sealed with
+  another counter or re-sent is recognised as already present; a flipped bit
+  or wrong length is refused; without `--bench-test-key` everything is refused.
+- Default `rak4630` image unchanged in size.
+
+## Bench procedure
+
+1. Close any serial monitor on the Gateway (one program per port).
+2. `python3 tools/orun_edge_bench.py --bench-test-key --port <gateway port>`
+   → lists every held record (`YENİ`/`VARDI`), then waits.
+3. Reset the collar: its pilot sends the next stored record; a new `YENİ`
+   line appears.

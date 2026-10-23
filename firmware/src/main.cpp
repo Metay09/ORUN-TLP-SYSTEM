@@ -2397,6 +2397,11 @@ void handleRoleCommand() {
     orun_tlp::sf5l0_gateway::print();
     return;
   }
+  if (isActivityCommand("BENCH GW DUMP", 13)) {
+    role_command_length = 0;
+    orun_tlp::sf5l0_gateway::dump();
+    return;
+  }
   if (isActivityCommand("BENCH GW ERASE PRODUCT CONFIRM", 30)) {
     role_command_length = 0;
     orun_tlp::sf5l0_gateway::startErase();

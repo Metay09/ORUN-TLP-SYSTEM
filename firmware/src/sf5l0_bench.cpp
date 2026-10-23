@@ -8,6 +8,8 @@
 #include <string.h>
 
 #include "custody_ack_primitives.h"
+#include "custody_store_product_format.h"
+#include "product_custody_store.h"
 #include "security_store.h"
 #include "security_v3_format.h"
 
@@ -290,6 +292,55 @@ bool Sf5l0BenchGrantSource::activeGrant(uint64_t tracker_id,
   scope = candidate;
   ++grants_issued_;
   return true;
+}
+
+// ------------------------------------------------------- Gateway hand-out --
+
+uint16_t sf5l0ForEachHeld(const FlashBackend& port,
+                          const ProductCustodyStore& store,
+                          uint16_t page_count, Sf5l0HeldVisitor& visitor) {
+  namespace fmt = custody_store_product_format;
+  if (page_count == 0U || page_count > 32U) return 0U;
+  struct Active { uint16_t page; uint64_t generation; };
+  Active active[32]{};
+  uint16_t active_count = 0U;
+  for (uint16_t page = 0U; page < page_count; ++page) {
+    uint8_t header[fmt::kPageHeaderSize]{};
+    fmt::PageInspection inspection{};
+    if (!port.read(uint32_t(page) * fmt::kPageSize, header, sizeof(header)) ||
+        !fmt::inspectPageHeader(header, sizeof(header), inspection) ||
+        inspection.evidence != fmt::PageEvidence::kActive)
+      continue;
+    // Insertion sort by generation: oldest custody first.
+    uint16_t at = active_count++;
+    while (at > 0U && active[at - 1U].generation > inspection.generation) {
+      active[at] = active[at - 1U];
+      --at;
+    }
+    active[at] = Active{page, inspection.generation};
+  }
+  uint16_t visited = 0U;
+  for (uint16_t i = 0U; i < active_count; ++i) {
+    for (uint16_t slot = 0U; slot < fmt::kRecordsPerPage; ++slot) {
+      ProductCustodyStore::Handle handle{};
+      handle.page = active[i].page;
+      handle.slot = slot;
+      handle.generation = active[i].generation;
+      Sf5l0HeldRecord record{};
+      size_t size = 0U;
+      if (store.readConfirmedHeld(handle, record.object, size) !=
+              ProductCustodyStore::Lookup::kFound ||
+          size == 0U || size > sizeof(record.object))
+        continue;
+      record.page = handle.page;
+      record.slot = slot;
+      record.generation = handle.generation;
+      record.size = static_cast<uint8_t>(size);
+      visitor.held(record);
+      ++visited;
+    }
+  }
+  return visited;
 }
 
 }  // namespace orun_tlp
