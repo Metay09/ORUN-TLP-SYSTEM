@@ -15,12 +15,37 @@ safe_build_child() {
   printf '%s\n' "$resolved"
 }
 
+# Remove the per-run /tmp build directory on any exit (pass, failure,
+# INT/TERM/HUP). A caller-chosen ORUN_HOST_TEST_DIR is never removed.
+# Set ORUN_KEEP_TEST_DIR=1 to keep the /tmp directory for debugging.
+test_dir=""
+owned_tmp_dir=0
+cleanup_test_dir() {
+  local status=$?
+  local LC_ALL=C
+  if [[ "$owned_tmp_dir" == 1 && -n "$test_dir" &&
+        "$test_dir" =~ ^/tmp/orun-host-tests\.[A-Za-z0-9]{6}$ &&
+        -d "$test_dir" && ! -L "$test_dir" && -O "$test_dir" ]]; then
+    if [[ "${ORUN_KEEP_TEST_DIR:-0}" == 1 ]]; then
+      echo "run_host_tests: keeping $test_dir (ORUN_KEEP_TEST_DIR=1)" >&2
+    else
+      rm -rf -- "$test_dir"
+    fi
+  fi
+  return "$status"
+}
+trap cleanup_test_dir EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 if [[ -n "${ORUN_HOST_TEST_DIR:-}" ]]; then
   test_dir="$(safe_build_child "$ORUN_HOST_TEST_DIR")"
   rm -rf -- "$test_dir"
   mkdir -p -- "$test_dir"
 else
   test_dir=$(mktemp -d /tmp/orun-host-tests.XXXXXX)
+  owned_tmp_dir=1
 fi
 
 coverage_flags=()
