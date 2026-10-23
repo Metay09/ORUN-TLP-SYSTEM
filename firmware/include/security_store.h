@@ -154,6 +154,10 @@ class SecurityStore {
   // Only host regression defines this seam; no production implementation.
   // This is NOT a security/authentication boundary for radio or BLE.
   friend class SecurityV3PolicyTestSeam;
+  // SF5L0 bench-only PUBLIC test-key provisioning. Its definition exists only
+  // under ORUN_SF5L0_BENCH_TEST_KEYS (two bench images + host test); the
+  // default product image has no implementation of this class.
+  friend class Sf5l0BenchTestProvisioning;
 
   enum class PolicyAction : uint8_t {
     kGrant, kRevoke, kAdvanceFloor
