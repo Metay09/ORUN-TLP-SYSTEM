@@ -573,7 +573,10 @@ Conceptual defaults are configurable, not hard-coded:
   later field evidence justifies it
 - LOST trigger remains conceptually OUTSIDE + approximately 3 hours without
   network contact, but trustworthy LOST is still gated on authenticated
-  receipt/contact semantics
+  receipt/contact semantics. Owner decision 2026-10-17
+  (`docs/architecture/ORUN_MAC_V0_DECISIONS.md` R12, not yet implemented):
+  count LOST as OUTSIDE + K (default 3) consecutive unanswered ACK requests,
+  with OUTSIDE cadence `min(B / 3, 1 hour)`
 
 ---
 
