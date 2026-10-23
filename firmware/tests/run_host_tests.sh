@@ -969,3 +969,7 @@ bash tools/ci/run_sf5k3ac_signed_append_transaction_host.sh
 # SF5L0: BENCH-ONLY public test-key provisioning on the real SecurityStore and
 # a Gateway-signed custody ACK checked by the real Tracker verifier.
 bash tools/ci/run_sf5l0_bench_round_trip_host.sh
+
+# SF5L1: bench Gateway USB hand-out line -> tools/orun_edge_bench.py ->
+# existing backend verified ledger (AEAD open + dedupe), using SF5B frames.
+python3 firmware/tests/sf5/test_sf5l1_edge_bench.py

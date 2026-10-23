@@ -157,7 +157,67 @@ bool gatewayAck(uint64_t gateway_id, const osc::ExactObject& object,
     // takeAuthorizedAck consumes the pending state; call once ready.
     if (owner.ackReady()) break;
   }
-  return ingress.takeAuthorizedAck(ack);
+  const bool acked = ingress.takeAuthorizedAck(ack);
+  if (acked) {
+    // SF5L1: the Gateway can hand out exactly what it durably holds.
+    struct Collect : Sf5l0HeldVisitor {
+      unsigned count = 0U;
+      Sf5l0HeldRecord last{};
+      void held(const Sf5l0HeldRecord& r) override { ++count; last = r; }
+    } seen;
+    assert(sf5l0ForEachHeld(flash, store, 2U, seen) == 1U && seen.count == 1U);
+    assert(seen.last.size == object.object_size &&
+           memcmp(seen.last.object, object.object, object.object_size) == 0);
+  }
+  return acked;
+}
+
+// SF5L1: several held records come back once each, oldest first, and survive
+// a Gateway reboot (read from flash, not RAM). Nothing is deleted.
+void testGatewayHandOutOrder() {
+  ProductFlash flash;
+  {
+    ProductCustodyStore store(flash, 2U);
+    assert(store.begin());
+    GatewayLocalCustodyOwner owner(store);
+    Sf5l0BenchGrantSource grants(kGateway);
+    GatewayCustodyAuthorizedIngress ingress(owner, grants, kGateway);
+    for (uint64_t counter = 1U; counter <= 3U; ++counter) {
+      osc::ExactObject object{};
+      makeFrame(object, kTracker, sf5l0_bench::kTestKeyEpoch, counter);
+      assert(ingress.receive(object.object, object.object_size) ==
+             GatewayCustodyAuthorizedIngress::Result::kStarted);
+      for (unsigned i = 0U; i < 200U && !owner.ackReady(); ++i)
+        ingress.service();
+      uint8_t ack[custody_ack::kWireSize]{};
+      assert(ingress.takeAuthorizedAck(ack));
+    }
+  }
+  ProductCustodyStore rebooted(flash, 2U);
+  assert(rebooted.begin());
+  struct Collect : Sf5l0HeldVisitor {
+    uint64_t counters[8]{};
+    unsigned count = 0U;
+    void held(const Sf5l0HeldRecord& r) override {
+      tlp::ProductSecureFrame f{};
+      assert(tlp::decodeProductSecureFrame(r.object, r.size, &f) ==
+             tlp::ProductSecureCodecResult::kOk);
+      if (count < 8U) counters[count] = f.security_counter;
+      ++count;
+    }
+  } seen;
+  assert(sf5l0ForEachHeld(flash, rebooted, 2U, seen) == 3U);
+  assert(seen.counters[0] == 1U && seen.counters[1] == 2U &&
+         seen.counters[2] == 3U);
+  // Walking is read-only: a second walk sees the same three.
+  Collect again;
+  assert(sf5l0ForEachHeld(flash, rebooted, 2U, again) == 3U);
+  // Empty region hands out nothing.
+  ProductFlash empty;
+  ProductCustodyStore blank(empty, 2U);
+  assert(blank.begin());
+  Collect none;
+  assert(sf5l0ForEachHeld(empty, blank, 2U, none) == 0U);
 }
 
 void testTrackerProvisioningFromBlank() {
@@ -275,7 +335,8 @@ void testForeignCredentialNeverTouched() {
 int main() {
   testTrackerProvisioningFromBlank();
   testForeignCredentialNeverTouched();
-  puts("SF5L0 bench test-key provisioning + Gateway ACK -> Tracker verifier: "
-       "PASS (HOST ONLY)");
+  testGatewayHandOutOrder();
+  puts("SF5L0/SF5L1 bench test-key provisioning + Gateway ACK -> Tracker "
+       "verifier + Gateway held-record hand-out: PASS (HOST ONLY)");
   return 0;
 }

@@ -101,6 +101,28 @@ class Sf5l0BenchGrantSource final : public GatewayDurableGrantSource {
 };
 
 class RadioManager;
+class ProductCustodyStore;
+
+// Read-only walk over every record the Gateway currently holds (OCQ2 HELD,
+// confirmed through ProductCustodyStore::readConfirmedHeld), oldest page
+// generation first, then slot order. Never writes, hands off or deletes.
+struct Sf5l0HeldRecord {
+  uint16_t page = 0U;
+  uint16_t slot = 0U;
+  uint64_t generation = 0U;
+  uint8_t size = 0U;
+  uint8_t object[100]{};
+};
+class Sf5l0HeldVisitor {
+ public:
+  virtual ~Sf5l0HeldVisitor() = default;
+  virtual void held(const Sf5l0HeldRecord& record) = 0;
+};
+// Returns the number of records visited; false-free: unreadable or
+// non-active pages are skipped, never repaired.
+uint16_t sf5l0ForEachHeld(const FlashBackend& product_port,
+                          const ProductCustodyStore& store,
+                          uint16_t page_count, Sf5l0HeldVisitor& visitor);
 
 // Gateway bench image composition (src/sf5l0_bench_gateway.cpp, compiled
 // only with ORUN_SF5L0_GATEWAY). Kept out of main.cpp so the default image's
@@ -115,6 +137,8 @@ void service(bool observation_store_mounted);
 void print();
 // "BENCH GW ERASE PRODUCT CONFIRM": wipe this bench board's product region.
 void startErase();
+// "BENCH GW DUMP": print every held record as an EDGE HELD line.
+void dump();
 }  // namespace sf5l0_gateway
 
 }  // namespace orun_tlp

@@ -41,10 +41,71 @@ uint32_t erase_page = 0;
 bool erase_active = false;
 bool erase_waiting = false;
 
+// SF5L1 hand-out: newest (generation, slot) already printed as a live line.
+bool printed_any = false;
+uint64_t printed_generation = 0;
+uint16_t printed_slot = 0;
+bool emit_pending = false;
+
 void hex64(char (&out)[17], uint64_t value) {
   snprintf(out, sizeof(out), "%08lX%08lX",
            static_cast<unsigned long>(static_cast<uint32_t>(value >> 32)),
            static_cast<unsigned long>(static_cast<uint32_t>(value)));
+}
+
+bool newer(const Sf5l0HeldRecord& r) {
+  return !printed_any || r.generation > printed_generation ||
+         (r.generation == printed_generation && r.slot > printed_slot);
+}
+
+void remember(const Sf5l0HeldRecord& r) {
+  if (!newer(r)) return;
+  printed_any = true;
+  printed_generation = r.generation;
+  printed_slot = r.slot;
+}
+
+// One versioned USB line per held record. The object is the exact opaque
+// PRODUCT_SECURE frame; the Gateway never decrypts it.
+void printHeld(const Sf5l0HeldRecord& r) {
+  static const char kHex[] = "0123456789ABCDEF";
+  char object[2U * sizeof(r.object) + 1U];
+  for (uint8_t i = 0; i < r.size; ++i) {
+    object[2U * i] = kHex[r.object[i] >> 4U];
+    object[2U * i + 1U] = kHex[r.object[i] & 0x0FU];
+  }
+  object[2U * r.size] = '\0';
+  char gw[17];
+  char gen[17];
+  hex64(gw, radio != nullptr ? radio->deviceId() : 0U);
+  hex64(gen, r.generation);
+  // Serial.printf formats into a 256-byte buffer in the Adafruit core; the
+  // 200-char object would be cut. Print the header and the object separately.
+  Serial.printf("EDGE HELD v1 gw=%s page=%u slot=%u gen=%s len=%u obj=",
+                gw, static_cast<unsigned>(r.page),
+                static_cast<unsigned>(r.slot), gen,
+                static_cast<unsigned>(r.size));
+  Serial.write(reinterpret_cast<const uint8_t*>(object), 2U * r.size);
+  Serial.write('\n');
+}
+
+struct PrintAll : Sf5l0HeldVisitor {
+  void held(const Sf5l0HeldRecord& r) override { printHeld(r); remember(r); }
+};
+struct PrintNew : Sf5l0HeldVisitor {
+  void held(const Sf5l0HeldRecord& r) override {
+    if (!newer(r)) return;
+    printHeld(r);
+    remember(r);
+  }
+};
+struct MarkOnly : Sf5l0HeldVisitor {
+  void held(const Sf5l0HeldRecord& r) override { remember(r); }
+};
+
+bool canWalk() {
+  return custody != nullptr && product_port != nullptr && custody->ready() &&
+         !custody->busy() && !product_port->hasUnreconciledMutation();
 }
 
 const char* guardName(Guard::State s) {
@@ -124,11 +185,38 @@ void begin(FlashBackend& port, RadioManager& radio_manager,
       state == Guard::State::kNeedsPreparation)
     Serial.println(F("BENCH GATEWAY region holds other data; send "
                      "BENCH GW ERASE PRODUCT CONFIRM to wipe it (bench board only)"));
+  if (state == Guard::State::kReady && canWalk()) {
+    // Records held from earlier boots are handed out on BENCH GW DUMP; live
+    // lines cover only records that arrive from now on.
+    MarkOnly mark;
+    const uint16_t held = sf5l0ForEachHeld(
+        port, *custody, storage_config::kProductRegionPages, mark);
+    Serial.printf("BENCH GATEWAY held=%u (BENCH GW DUMP to list)\n",
+                  static_cast<unsigned>(held));
+  }
+}
+
+void dump() {
+  if (!canWalk()) {
+    Serial.println(F("EDGE DUMP busy; retry"));
+    return;
+  }
+  PrintAll all;
+  const uint16_t count = sf5l0ForEachHeld(
+      *product_port, *custody, storage_config::kProductRegionPages, all);
+  Serial.printf("EDGE DUMP END count=%u\n", static_cast<unsigned>(count));
 }
 
 void service(bool observation_store_mounted) {
   serviceErase();
   if (runtime == nullptr || guard == nullptr) return;
+  // Hand out a newly committed record once its flash write has settled.
+  if (emit_pending && canWalk()) {
+    emit_pending = false;
+    PrintNew fresh;
+    (void)sf5l0ForEachHeld(*product_port, *custody,
+                           storage_config::kProductRegionPages, fresh);
+  }
   const Event event = runtime->updateGuarded(
       *guard, roleOk() && !erase_active, observation_store_mounted);
   switch (event) {
@@ -146,6 +234,7 @@ void service(bool observation_store_mounted) {
       break;
     case Event::kAckTxStarted:
       ++ack_tx;
+      emit_pending = true;
       Serial.println(F("BENCH GW ACK TX started (after durable custody)"));
       break;
     case Event::kNone:
