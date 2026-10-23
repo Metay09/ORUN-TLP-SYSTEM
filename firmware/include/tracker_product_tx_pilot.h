@@ -25,6 +25,15 @@ class TrackerProductTxPilot {
   // initiate crypto/flash/RF. A sent object is never retried this boot.
   Event update(bool eligible);
 
+  // SF5L2: after a TX, allow ONE more selection of the oldest retained
+  // record. If the previous record was durably released this is the next
+  // one; if not, it is the same record and its already cached exact bytes
+  // are re-sent unchanged (never re-sealed). The caller owns pacing and
+  // duty-cycle policy. Blocked stays blocked. true = re-armed.
+  bool rearm();
+  bool sent() const { return phase_ == Phase::kDone; }
+  bool blocked() const { return phase_ == Phase::kBlocked; }
+
  private:
   enum class Phase : uint8_t {
     kSelect, kNeedCache, kWaitingCache, kReady, kDone, kBlocked

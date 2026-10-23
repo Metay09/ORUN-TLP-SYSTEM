@@ -6,6 +6,7 @@
 
 #include <Arduino.h>
 
+#include "custody_store_product_format.h"
 #include "gateway_custody_authorized_ingress.h"
 #include "gateway_local_custody_owner.h"
 #include "gateway_product_custody_runtime.h"
@@ -102,6 +103,13 @@ struct PrintNew : Sf5l0HeldVisitor {
 struct MarkOnly : Sf5l0HeldVisitor {
   void held(const Sf5l0HeldRecord& r) override { remember(r); }
 };
+struct CountOnly : Sf5l0HeldVisitor {
+  void held(const Sf5l0HeldRecord&) override {}
+};
+
+constexpr uint32_t kHeldCapacity =
+    storage_config::kProductRegionPages *
+    custody_store_product_format::kRecordsPerPage;
 
 bool canWalk() {
   return custody != nullptr && product_port != nullptr && custody->ready() &&
@@ -230,7 +238,8 @@ void service(bool observation_store_mounted) {
       break;
     case Event::kDenied:
       ++denied;
-      Serial.println(F("BENCH GW RX denied (no test grant for this tracker/epoch)"));
+      Serial.println(F("BENCH GW RX denied (no test grant, or custody store "
+                       "full: see BENCH? held=)"));
       break;
     case Event::kAckTxStarted:
       ++ack_tx;
@@ -245,14 +254,24 @@ void service(bool observation_store_mounted) {
 void print() {
   char id[17];
   hex64(id, radio != nullptr ? radio->deviceId() : 0U);
+  long held = -1;
+  if (canWalk()) {
+    CountOnly count;
+    held = sf5l0ForEachHeld(*product_port, *custody,
+                            storage_config::kProductRegionPages, count);
+  }
+  // Two lines: each stays well under the core's 256-byte printf buffer.
   Serial.printf(
-      "BENCH GATEWAY id=%s custody_region=%s custody_ready=%s role=%s%s "
-      "custody_started=%lu duplicates=%lu denied=%lu ack_tx=%lu "
-      "grants_issued=%lu grants_refused=%lu\n",
+      "BENCH GATEWAY id=%s custody_region=%s custody_ready=%s held=%ld/%lu "
+      "role=%s%s\n",
       id, guard != nullptr ? guardName(guard->state()) : "NOT_BUILT",
       custody != nullptr && custody->ready() ? "yes" : "no",
+      held, static_cast<unsigned long>(kHeldCapacity),
       radio != nullptr ? roleName(radio->role()) : "?",
-      roleOk() ? "" : " (needs ROLE BASE for continuous RX)",
+      roleOk() ? "" : " (needs ROLE BASE for continuous RX)");
+  Serial.printf(
+      "BENCH GATEWAY custody_started=%lu duplicates=%lu denied=%lu ack_tx=%lu "
+      "grants_issued=%lu grants_refused=%lu\n",
       static_cast<unsigned long>(custody_started),
       static_cast<unsigned long>(duplicates),
       static_cast<unsigned long>(denied),
@@ -261,12 +280,18 @@ void print() {
       static_cast<unsigned long>(grants ? grants->grantsRefused() : 0U));
 }
 
-void startErase() {
+void startErase(bool include_held) {
   if (guard == nullptr || erase_active || custody == nullptr ||
-      custody->busy() || guard->state() == Guard::State::kReady) {
-    Serial.println(F("BENCH GW ERASE rejected (region already READY or busy)"));
+      custody->busy() ||
+      (!include_held && guard->state() == Guard::State::kReady)) {
+    Serial.println(include_held
+        ? F("BENCH GW ERASE HELD rejected (busy)")
+        : F("BENCH GW ERASE rejected (region already READY or busy)"));
     return;
   }
+  if (include_held)
+    Serial.println(F("BENCH GW ERASE HELD: deleting every record this Gateway "
+                     "holds; only do this after the PC ledger has them"));
   erase_page = 0;
   erase_waiting = false;
   erase_active = true;
