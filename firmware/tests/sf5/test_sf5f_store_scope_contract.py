@@ -17,7 +17,35 @@ def code(path: Path) -> str:
     return re.sub(r"//.*?$", "", text, flags=re.MULTILINE)
 
 
-main = code(root / "src" / "main.cpp")
+def without_ifdef(text: str, macro: str) -> str:
+    """Drop `#ifdef macro ... #endif` blocks (nesting-aware), keeping any
+    `#else` branch. Used to judge the default image's composition."""
+    out, depth, skipping, skip_depth = [], 0, False, 0
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith(("#if", "#ifdef", "#ifndef")):
+            depth += 1
+            if not skipping and s == f"#ifdef {macro}":
+                skipping, skip_depth = True, depth
+                continue
+        elif s.startswith("#else") and skipping and depth == skip_depth:
+            skipping = False
+            continue
+        elif s.startswith("#endif"):
+            if depth == skip_depth and skip_depth:
+                skipping, skip_depth = False, 0
+                depth -= 1
+                continue
+            depth -= 1
+        if not skipping:
+            out.append(line)
+    return "\n".join(out)
+
+
+# The SF5L0 bench Gateway image is a separate, non-default composition: its
+# product region belongs to the OCQ2 custody store and ProductRecordStore is
+# never mounted (GatewayProductStartupGuard refuses otherwise).
+main = without_ifdef(code(root / "src" / "main.cpp"), "ORUN_SF5L0_GATEWAY")
 
 # Exactly one owner, on the gate's product port.
 assert main.count("orun_tlp::ProductRecordStore product_records(") == 1

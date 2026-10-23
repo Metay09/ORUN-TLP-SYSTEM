@@ -57,6 +57,9 @@
 #include "product_secure_crypto.h"
 #include "tracker_product_tx_pilot.h"
 #endif
+#ifdef ORUN_SF5L0_BENCH_TEST_KEYS
+#include "sf5l0_bench.h"
+#endif
 #include "power_manager.h"
 #include "radio_manager.h"
 #include "position_flow.h"
@@ -183,6 +186,10 @@ orun_tlp::ProductSecureCrypto product_crypto(security_store);
 orun_tlp::TrackerProductTxPilot tracker_product_tx(product_records,
                                                   product_crypto,
                                                   radio_manager);
+#endif
+#ifdef ORUN_SF5L0_TRACKER
+// SF5L0 bench image only: USB-started PUBLIC test-key provisioning.
+orun_tlp::Sf5l0BenchTestProvisioning bench_provisioning(security_store);
 #endif
 orun_tlp::HistorySecureCrypto history_secure_crypto(security_store);
 orun_tlp::HistoryDeliveryCoordinator history_delivery(history);
@@ -1339,6 +1346,77 @@ void drainProductStore() {
   }
 }
 
+#ifdef ORUN_SF5L0_TRACKER
+// Parses exactly 16 hex digits (upper or lower case) into a nonzero ID.
+bool parseBenchHex64(const char* text, uint8_t length, uint64_t& out) {
+  if (length != 16) return false;
+  uint64_t value = 0;
+  for (uint8_t i = 0; i < length; ++i) {
+    const char c = text[i];
+    uint8_t nibble;
+    if (c >= '0' && c <= '9') nibble = static_cast<uint8_t>(c - '0');
+    else if (c >= 'A' && c <= 'F') nibble = static_cast<uint8_t>(c - 'A' + 10);
+    else if (c >= 'a' && c <= 'f') nibble = static_cast<uint8_t>(c - 'a' + 10);
+    else return false;
+    value = (value << 4) | nibble;
+  }
+  if (value == 0) return false;
+  out = value;
+  return true;
+}
+#endif
+
+#ifdef ORUN_SF5L0_TRACKER
+const char* benchSecurityStateName() {
+  switch (security_store.state()) {
+    case orun_tlp::SecurityState::kUnprovisioned: return "UNPROVISIONED";
+    case orun_tlp::SecurityState::kProvisioned: return "PROVISIONED";
+    case orun_tlp::SecurityState::kFault: return "FAULT";
+    case orun_tlp::SecurityState::kForeign: return "FOREIGN";
+    case orun_tlp::SecurityState::kUnsupported: return "UNSUPPORTED";
+  }
+  return "?";
+}
+
+// "BENCH?" on the Tracker bench image.
+void printBenchTracker() {
+  char self[17];
+  printU64HexTo(self, radio_manager.deviceId());
+  const uint64_t granted =
+      orun_tlp::Sf5l0BenchTestProvisioning::firstGrantedGateway(security_store);
+  char gateway[17];
+  printU64HexTo(gateway, granted);
+  Serial.printf(
+      "BENCH TRACKER id=%s security=%s test_credential=%s page=v%u "
+      "granted_gateway=%s setup=%s%s%s role=%s product_store=%s\n",
+      self, benchSecurityStateName(),
+      orun_tlp::Sf5l0BenchTestProvisioning::holdsTestCredential(security_store)
+          ? "yes" : "no",
+      static_cast<unsigned>(
+          orun_tlp::Sf5l0BenchTestProvisioning::activePageVersion(
+              security_store)),
+      granted != 0 ? gateway : "none",
+      orun_tlp::sf5l0StepName(bench_provisioning.step()),
+      bench_provisioning.reason()[0] != '\0' ? " reason=" : "",
+      bench_provisioning.reason(),
+      orun_tlp::roleName(radio_manager.role()),
+      product_records.mounted() ? "mounted" : "NOT_MOUNTED");
+}
+
+void pollBenchTracker() {
+  if (!bench_provisioning.poll()) return;
+  const auto step = bench_provisioning.step();
+  if (step == orun_tlp::Sf5l0BenchTestProvisioning::Step::kDone) {
+    Serial.println(F("BENCH SETUP PASS; the pilot sends one stored record now"));
+    printBenchTracker();
+  } else if (step == orun_tlp::Sf5l0BenchTestProvisioning::Step::kFailed) {
+    Serial.printf("BENCH SETUP FAIL reason=%s\n", bench_provisioning.reason());
+  } else {
+    Serial.printf("BENCH SETUP step=%s\n", orun_tlp::sf5l0StepName(step));
+  }
+}
+#endif
+
 // Head position diagnostics: the neck axis, the current head position and
 // the last usable window's mean acceleration (the bench step reads g_mg).
 void printActivityPose() {
@@ -2289,6 +2367,42 @@ void handleRoleCommand() {
     return;
   }
 #endif
+#ifdef ORUN_SF5L0_TRACKER
+  if (isActivityCommand("BENCH?", 6)) {
+    role_command_length = 0;
+    printBenchTracker();
+    return;
+  }
+  if (role_command_length == 28 &&
+      memcmp(role_command, "BENCH SETUP ", 12) == 0) {
+    uint64_t gateway_id = 0;
+    const bool parsed =
+        parseBenchHex64(role_command + 12, 16, gateway_id);
+    role_command_length = 0;
+    if (!parsed) {
+      Serial.println(F("BENCH SETUP rejected; use BENCH SETUP <16 hex gateway id>"));
+      return;
+    }
+    if (bench_provisioning.start(gateway_id))
+      Serial.printf("BENCH SETUP started step=%s\n",
+                    orun_tlp::sf5l0StepName(bench_provisioning.step()));
+    else
+      Serial.printf("BENCH SETUP FAIL reason=%s\n", bench_provisioning.reason());
+    return;
+  }
+#endif
+#ifdef ORUN_SF5L0_GATEWAY
+  if (isActivityCommand("BENCH?", 6)) {
+    role_command_length = 0;
+    orun_tlp::sf5l0_gateway::print();
+    return;
+  }
+  if (isActivityCommand("BENCH GW ERASE PRODUCT CONFIRM", 30)) {
+    role_command_length = 0;
+    orun_tlp::sf5l0_gateway::startErase();
+    return;
+  }
+#endif
   if (isActivityCommand("HEALTH?", 7)) {
     role_command_length = 0;
     printLoopHealth();
@@ -2963,9 +3077,18 @@ void setup() {
   // through APP SERVICES without rebooting, including OFF/Relay-only boots.
   // This read-only mount grants no active Tracking job and does not change
   // foreign-store refusal. Only a finished tracking period writes a record.
+#ifdef ORUN_SF5L0_GATEWAY
+  // SF5L0 bench Gateway: this board's product region belongs to the OCQ2
+  // custody store; the Tracker ObservationStore is deliberately NOT mounted.
+  orun_tlp::sf5l0_gateway::begin(storage_flash_gate.productPort(),
+                                 radio_manager,
+                                 device_identity.legacyUint64(),
+                                 product_records.mounted());
+#else
   product_records.begin(device_identity.legacyUint64(),
                         orun_tlp::product_region::Jobs{false, true});
   printProductStore();
+#endif
 
   // M7P7B: BLE starts last, strictly after History/Config/Geofence/Security
   // have finished their SoftDevice-disabled synchronous recovery above --
@@ -3412,12 +3535,34 @@ void loop() {
         const auto submitted = custody_ack_release.submit(ack.payload, ack.size);
         if (submitted == orun_tlp::CustodyAckReleaseOwner::Submit::kStarted)
           Serial.println(F("PRODUCT CUSTODY ACK authenticated; release=pending"));
+#ifdef ORUN_SF5L0_TRACKER
+        else
+          Serial.printf("BENCH ACK not admitted submit=%u rssi=%d\n",
+                        static_cast<unsigned>(submitted),
+                        static_cast<int>(ack.rssi_dbm));
+#endif
       }
+#ifdef ORUN_SF5L0_TRACKER
+      else {
+        Serial.println(F("BENCH ACK received while store/security not ready; dropped"));
+      }
+#endif
       // Unauthenticated, busy or unavailable ACK is never a delivery fact.
       // The Gateway must retry when the Tracker cannot admit it.
       memset(ack.payload, 0, sizeof(ack.payload));
     }
   }
+
+#ifdef ORUN_SF5L0_TRACKER
+  pollBenchTracker();
+#endif
+#ifdef ORUN_SF5L0_GATEWAY
+  // Same rule as every other store: no product-region flash work while the
+  // radio is transmitting. The ACK TX itself starts only after the durable
+  // custody write has completed and been read back.
+  if (!radio_manager.isTransmitting())
+    orun_tlp::sf5l0_gateway::service(product_records.mounted());
+#endif
 
   // SF3 device runtime executes only after RadioManager has drained callback
   // work and released its driver gate. Root-credential crypto can take much
@@ -3462,7 +3607,14 @@ void loop() {
       !custody_ack_release.pending() && security_store.ready() &&
       security_store.state() == orun_tlp::SecurityState::kProvisioned &&
       !security_store.busy() && product_records.mounted() &&
-      product_records.store().ready();
+      product_records.store().ready()
+#ifdef ORUN_SF5L0_TRACKER
+      // Bench: spend the one pilot TX only once a Gateway is durably granted,
+      // so the ACK it triggers can actually be admitted.
+      && orun_tlp::Sf5l0BenchTestProvisioning::firstGrantedGateway(
+             security_store) != 0
+#endif
+      ;
   switch (tracker_product_tx.update(pilot_allowed)) {
     case orun_tlp::TrackerProductTxPilot::Event::kCachePending:
       Serial.println(F("PRODUCT PILOT exact cache=pending"));
