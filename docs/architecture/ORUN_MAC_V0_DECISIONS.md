@@ -5,6 +5,8 @@
 **Kapsam:** Tracker → (isteğe bağlı tek relay) → Gateway yolunda veri gönderimi, custody ACK dönüşü, backlog boşaltma, çakışma ve duty kuralları.
 **Değişmeyenler:** TLP v1 baytları ve SF5K0 §8.1 "relay sadece taşıyıcıdır" kararı.
 **Onaylanan wire değişiklikleri:** R11 için `ACK_REQUESTED` biti ve kümülatif custody ACK çerçevesi (§1, R11 sonu). Güvenlik incelemesi bitip uygulanana kadar SF5B baytları aynen geçerlidir.
+> **Güncelleme 2026-10-23 (sahip kararı):** Bu dokümandaki **R11** (kümülatif `base + 32-bit bitmap` ACK ve `ACK_REQUESTED` biti), **R4** (kaçan ACK sonrası yol işaretini değiştirme) ve **R3**'ün 8'li toplu gönderimi **geçersizdir**. Bunların yerini `ORUN_PRODUCT_RF_CUTOVER_CONVERGENCE.md` almıştır: ACK her kaydı tam özetiyle tek tek adlandırır, bir pencerede en fazla 4 kayıt (`kMaxExactCustodyObjects == 4`) bulunur. Sebep: `record_sequence` şifreli alandadır ve gateway anahtarı tutmaz, bu yüzden gateway sıra numarasıyla bitmap kuramaz. `RELAY_ALLOWED` biti de AAD içinde olduğundan mühürlendikten sonra değiştirilemez. Bu yüzden "N pakette bir ACK" kuralında N en fazla 4'tür. Diğer kurallar (R1 sabit ACK slotu ölçüm hipotezi olarak, R6 dedupe, R9, R10 duty sayacı, R12 KAYIP) mühendislik adayı olarak geçerlidir. Çelişki olursa cutover dokümanı esastır.
+
 **Kanıt:** `tools/mac_sim/orun_mac_sim.py` (yalnız bilgisayarda çalışan zamanlama simülatörü). Fiziksel RF, akım veya mevzuat uyumu kanıtı DEĞİLDİR.
 
 Bu doküman SF5K0 §9–10'da açık bırakılan soruları **karara bağlamak** için yazıldı. Oradaki tespitler doğrudur; eksik olan bir karar setiydi.
