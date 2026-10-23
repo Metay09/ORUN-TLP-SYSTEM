@@ -30,6 +30,8 @@ namespace orun_tlp {
 //
 // Nothing is sealed or sent here; TLP v1 POSITION and HistoryStore stay the
 // live path until the SF5F RF step.
+class CustodyAckReleaseOwner;
+
 class ProductRecordStore {
  public:
   enum class Submit : uint8_t { kAccepted, kNotMounted, kBusy };
@@ -59,6 +61,8 @@ class ProductRecordStore {
     uint32_t maintenance_runs = 0;
     uint32_t exact_cache_committed = 0;
     uint32_t exact_cache_failed = 0;
+    uint32_t custody_release_committed = 0;
+    uint32_t custody_release_failed = 0;
   };
 
   ProductRecordStore(FlashBackend& flash, uint16_t page_count,
@@ -84,6 +88,21 @@ class ProductRecordStore {
   CacheSubmit submitExactCache(const osc::ExactObject& value);
   bool takeCacheOutcome(CacheOutcome& outcome);
 
+  // Read-only release preflight evidence for a future authenticated Gateway
+  // custody ACK. Requires a retained logical record and byte-identical,
+  // durably cached exact protected object. This is NOT ACK authorization:
+  // it checks neither Gateway credentials nor HMAC and releases NOTHING.
+  // Fail closed while the product store is mutating or needs recovery.
+  bool custodyCandidateMatchesRetainedExact(
+      const osc::ExactObject& expected) const;
+
+  // Enumerate at most four durably cached exact objects for a future
+  // authenticated 0x05/0x06 custody ACK matcher. Read-only and fail-closed.
+  // This is NOT a custody/ACK admission or a record release.
+  bool snapshotCustodyCandidates(
+      osc::ExactObject (&objects)[osf::kMaxExactCustodyObjects],
+      uint16_t& count) const;
+
   bool requestPrepare();
   bool preparing() const { return prepare_state_ != PrepareState::kIdle; }
   bool takePrepareResult(bool& success);
@@ -98,8 +117,19 @@ class ProductRecordStore {
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
  private:
+  friend class CustodyAckReleaseOwner;
+
+  // Only the HMAC-verifying custody owner may initiate this mutation.
+  // It carries one previously authenticated exact object and is checked
+  // against the live retained record again before starting any flash work.
+  bool requestAuthenticatedCustodyRelease(const osc::ExactObject& expected);
+  bool takeCustodyReleaseOutcome(osf::RecordIdentity& identity,
+                                 bool& durable);
+  void finishCustodyRelease(bool durable);
+
   enum class Job : uint8_t {
-    kNone, kAppend, kMaintenance, kControl, kExactCache, kCacheMaintenance
+    kNone, kAppend, kMaintenance, kControl, kExactCache, kCacheMaintenance,
+    kCustodyRelease
   };
   enum class PrepareState : uint8_t { kIdle, kErasing, kWaiting };
   static constexpr uint8_t kMaxMaintenanceRounds = 4U;
@@ -119,7 +149,7 @@ class ProductRecordStore {
   product_region::Owner owner_ = product_region::Owner::kNone;
   product_region::MountDecision decision_ =
       product_region::MountDecision::kNoOwner;
-  product_region::Census census_{0U, 0U, 0U, 0U};
+  product_region::Census census_{0U, 0U, 0U, 0U, 0U};
   bool region_readable_ = false;
   bool mounted_ = false;
   uint64_t device_id_ = 0;
@@ -136,6 +166,9 @@ class ProductRecordStore {
   bool cache_pending_ = false;
   bool cache_outcome_ready_ = false;
   CacheOutcome cache_outcome_{};
+  bool release_outcome_ready_ = false;
+  bool release_outcome_durable_ = false;
+  osf::RecordIdentity release_identity_{};
   osc::ExactObject cache_object_{};
 
   PrepareState prepare_state_ = PrepareState::kIdle;

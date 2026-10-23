@@ -18,6 +18,7 @@
 #include "ble_application_transport.h"
 #include "config_mutation.h"
 #include "config_store.h"
+#include "custody_ack_release_owner.h"
 #include "config_incarnation_source.h"
 #ifdef ORUN_M7P7B_FLASH_PROBE
 #include "m7p7b_flash_probe.h"
@@ -52,6 +53,10 @@
 #include "node_role.h"
 #include "observation_incarnation_source.h"
 #include "product_record_store.h"
+#ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
+#include "product_secure_crypto.h"
+#include "tracker_product_tx_pilot.h"
+#endif
 #include "power_manager.h"
 #include "radio_manager.h"
 #include "position_flow.h"
@@ -168,6 +173,17 @@ void refreshApplicationStatusSnapshot(uint32_t now_ms);
 // credentials or weakens the existing recovery-only provisioning boundary.
 orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort(),
                                        storage_flash_gate.securityMaintPort());
+// The only Tracker release owner: grant/HMAC verification precedes flash.
+orun_tlp::CustodyAckReleaseOwner custody_ack_release(security_store,
+                                                      product_records);
+#ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
+// Explicit test-image activation only; the default product runtime still
+// sends the existing TLP v1/History path until Gateway commissioning is ready.
+orun_tlp::ProductSecureCrypto product_crypto(security_store);
+orun_tlp::TrackerProductTxPilot tracker_product_tx(product_records,
+                                                  product_crypto,
+                                                  radio_manager);
+#endif
 orun_tlp::HistorySecureCrypto history_secure_crypto(security_store);
 orun_tlp::HistoryDeliveryCoordinator history_delivery(history);
 orun_tlp::HistoryReceiptAdmissionCoordinator history_receipt_admission(
@@ -3237,6 +3253,16 @@ void loop() {
   }
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kProductStore);
   drainProductStore();
+  // ProductRecordStore::poll() has run before this service. A radio receipt
+  // never counts as delivery; only a committed release marker does.
+  const auto custody_result = custody_ack_release.service();
+  if (custody_result ==
+      orun_tlp::CustodyAckReleaseOwner::Service::kDurablyReleased) {
+    Serial.println(F("PRODUCT CUSTODY release=DURABLE"));
+  } else if (custody_result ==
+             orun_tlp::CustodyAckReleaseOwner::Service::kFailed) {
+    Serial.println(F("PRODUCT CUSTODY release=FAILED"));
+  }
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kGeofenceStore);
   if (geofence_mutations.poll()) applyGeofenceMutationToRuntime();
   drainGeofenceMutationResult();
@@ -3370,6 +3396,29 @@ void loop() {
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kRadio);
   radio_manager.update(tracking_enabled && !positions.pending());
 
+  // SF5K3U: loop-only Tracker ACK intake, after radio callback dispatch and
+  // outside the driver gate. The mailbox contains UNTRUSTED wire bytes.
+  // Release is strictly delegated to the existing SecurityStore/HMAC and
+  // ProductRecordStore owner; absent v3 grant or exact cache fails closed.
+  // Preserve a pending second ACK while a previous release awaits flash.
+  if (radio_manager.role() == orun_tlp::NodeRole::kTracker &&
+      !custody_ack_release.pending()) {
+    orun_tlp::CustodyAckRxFrame ack{};
+    if (radio_manager.takeCustodyAckFrame(&ack)) {
+      if (ble_ready && product_records.mounted() &&
+          product_records.store().ready() && security_store.ready() &&
+          security_store.state() == orun_tlp::SecurityState::kProvisioned &&
+          !security_store.busy()) {
+        const auto submitted = custody_ack_release.submit(ack.payload, ack.size);
+        if (submitted == orun_tlp::CustodyAckReleaseOwner::Submit::kStarted)
+          Serial.println(F("PRODUCT CUSTODY ACK authenticated; release=pending"));
+      }
+      // Unauthenticated, busy or unavailable ACK is never a delivery fact.
+      // The Gateway must retry when the Tracker cannot admit it.
+      memset(ack.payload, 0, sizeof(ack.payload));
+    }
+  }
+
   // SF3 device runtime executes only after RadioManager has drained callback
   // work and released its driver gate. Root-credential crypto can take much
   // longer than ordinary loop work during BLE pairing stress, so it must never
@@ -3402,6 +3451,35 @@ void loop() {
               uint32_t(history_store_forward.lastReplaySecurityCounter())));
     }
   }
+
+#ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
+  // One pilot TX per boot, ONLY after a durable exact encrypted cache record.
+  // Keep legacy live Position + History replay higher-priority. This image
+  // requires deliberate separate selection and is never default firmware.
+  const bool pilot_allowed = ble_ready && tracking_enabled &&
+      radio_manager.role() == orun_tlp::NodeRole::kTracker &&
+      !positions.pending() && !radio_manager.relayForwardingEnabled() &&
+      !custody_ack_release.pending() && security_store.ready() &&
+      security_store.state() == orun_tlp::SecurityState::kProvisioned &&
+      !security_store.busy() && product_records.mounted() &&
+      product_records.store().ready();
+  switch (tracker_product_tx.update(pilot_allowed)) {
+    case orun_tlp::TrackerProductTxPilot::Event::kCachePending:
+      Serial.println(F("PRODUCT PILOT exact cache=pending"));
+      break;
+    case orun_tlp::TrackerProductTxPilot::Event::kCacheDurable:
+      Serial.println(F("PRODUCT PILOT exact cache=durable"));
+      break;
+    case orun_tlp::TrackerProductTxPilot::Event::kSent:
+      Serial.println(F("PRODUCT PILOT TX=start; custody=unconfirmed"));
+      break;
+    case orun_tlp::TrackerProductTxPilot::Event::kBlocked:
+      Serial.println(F("PRODUCT PILOT blocked; retained record preserved"));
+      break;
+    case orun_tlp::TrackerProductTxPilot::Event::kNone:
+      break;
+  }
+#endif
 
   // Feed only after the cooperative loop has completed all service work. A
   // blocked I2C/flash/radio path therefore cannot hide behind an unrelated task.

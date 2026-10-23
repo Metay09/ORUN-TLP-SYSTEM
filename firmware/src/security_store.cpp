@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "journal_format.h"
+#include "security_v3_ab_preflight.h"
 #include "storage_config.h"
 
 namespace orun_tlp {
@@ -30,7 +31,268 @@ uint32_t v2StateOffset(unsigned page, unsigned slot) {
 uint32_t v2TailOffset(unsigned page) {
   return pageOffset(page) + securityStateRecordOffset(kSecurityStateSlotsPerPage);
 }
+
+uint32_t v3StateOffset(unsigned page, unsigned slot) {
+  return pageOffset(page) +
+         static_cast<uint32_t>(security_v3_format::kJournalOffset +
+                               slot * security_v3_format::kRecordBytes);
+}
+
+class StoreV3Reader : public security_v3_format::JournalReader {
+ public:
+  StoreV3Reader(const FlashBackend& port, unsigned page)
+      : port_(port), base_(v3StateOffset(page, 0U)) {}
+  bool read(size_t offset, uint8_t* data, size_t size) const override {
+    if (offset > security_v3_format::kJournalBytes ||
+        size > security_v3_format::kJournalBytes - offset)
+      return false;
+    return port_.read(base_ + static_cast<uint32_t>(offset), data, size);
+  }
+ private:
+  const FlashBackend& port_;
+  uint32_t base_;
+};
+
+
+// SF5K3E: the candidate v3 wire geometry is inspected independently of
+// SecurityStore's v1/v2 authority. No v3 writer, KDF or ACK admission here.
+constexpr uint8_t kReadOnlyV3 = 3U;
+constexpr uint32_t kV3RecordBytes = 56U;
+constexpr uint32_t kV3Count =
+    (storage_config::kPageSize - kPageHeaderSize -
+     kCredentialRecordSize) / kV3RecordBytes;
+constexpr uint32_t kV3Offset = kPageHeaderSize + kCredentialRecordSize;
+constexpr uint32_t kV3TailBytes =
+    storage_config::kPageSize - kV3Offset - kV3Count * kV3RecordBytes;
+static_assert(kV3Count == 71U && kV3TailBytes == 20U,
+              "candidate v3 geometry must fit unchanged security pages");
+
+struct V3Parsed {
+  uint8_t credential_id[kCredentialIdSize]{};
+  uint32_t key_epoch = 0;
+  uint8_t kind = 0;
+  uint8_t slot = 0;
+  uint64_t value = 0;
+  uint32_t generation = 0;
+  uint32_t floor = 0;
+  uint32_t revision = 0;
+};
+
+bool decodeV3ReadOnly(const uint8_t (&bytes)[kV3RecordBytes],
+                      V3Parsed& out) {
+  if (journal_format::get32(bytes + 52U) != kCommit ||
+      journal_format::get32(bytes + 48U) !=
+          journal_format::crc32(bytes, 48U) ||
+      bytes[22] != 0U || bytes[23] != 0U ||
+      journal_format::get32(bytes + 44U) != 0U)
+    return false;
+
+  V3Parsed candidate{};
+  memcpy(candidate.credential_id, bytes, kCredentialIdSize);
+  candidate.key_epoch = journal_format::get32(bytes + 16U);
+  candidate.kind = bytes[20];
+  candidate.slot = bytes[21];
+  candidate.value = journal_format::get64(bytes + 24U);
+  candidate.generation = journal_format::get32(bytes + 32U);
+  candidate.floor = journal_format::get32(bytes + 36U);
+  candidate.revision = journal_format::get32(bytes + 40U);
+  if (candidate.kind < 1U || candidate.kind > 5U ||
+      candidate.key_epoch == UINT32_MAX ||
+      candidate.floor == UINT32_MAX ||
+      candidate.revision == UINT32_MAX ||
+      candidate.generation == UINT32_MAX)
+    return false;
+  // First two kinds are strictly counter bounds, never a grant.
+  if (candidate.kind <= 2U) {
+    const uint64_t block = candidate.kind == 1U ? 256U : 8U;
+    if (candidate.slot != 0xFFU || candidate.value == 0U ||
+        candidate.value % block != 0U ||
+        candidate.generation != 0U || candidate.floor != 0U ||
+        candidate.revision != 0U)
+      return false;
+  } else if (candidate.kind == 3U) {
+    if (candidate.revision == 0U) return false;
+    if (candidate.slot == 0xFFU) {
+      if (candidate.value != 0U || candidate.generation != 0U)
+        return false;
+    } else if (candidate.slot >= 4U || candidate.generation == 0U) {
+      return false;
+    }
+  } else if (candidate.kind == 4U) {
+    if (candidate.slot != 0xFFU || candidate.generation != 0U ||
+        candidate.value >= UINT32_MAX)
+      return false;
+  } else {
+    if (candidate.slot >= 4U ||
+        (candidate.value != 0U && candidate.generation == 0U))
+      return false;
+  }
+  out = candidate;
+  return true;
+}
 }  // namespace
+
+SecurityV3Inspection SecurityStore::inspectV3PageReadOnly(
+    uint32_t page, SecurityV3ReadOnlySummary& output) const {
+  if (!ready_ || page >= kPageCount)
+    return SecurityV3Inspection::kReadFault;
+  uint8_t header[kPageHeaderSize]{};
+  if (!critical_.read(headerOffset(page), header, sizeof(header)))
+    return SecurityV3Inspection::kReadFault;
+  if (journal_format::erased(header, sizeof(header)))
+    return SecurityV3Inspection::kNotV3;
+  uint8_t version = 0;
+  if (!headerMagicPresent(header, &version))
+    return SecurityV3Inspection::kCorrupt;
+  if (version != kReadOnlyV3) return SecurityV3Inspection::kNotV3;
+  if (journal_format::erased(header + 28U, 4U))
+    return SecurityV3Inspection::kStaged;
+  if (journal_format::get32(header + 28U) != kCommit ||
+      journal_format::get32(header + 24U) !=
+          journal_format::crc32(header, 24U) ||
+      header[5] != 0U || header[6] != 0U || header[7] != 0U ||
+      journal_format::get64(header + 8U) == 0U)
+    return SecurityV3Inspection::kCorrupt;
+  if (journal_format::get64(header + 16U) !=
+      device_identity_.legacyUint64())
+    return SecurityV3Inspection::kForeign;
+
+  uint8_t credential_bytes[kCredentialRecordSize]{};
+  if (!critical_.read(credentialOffset(page), credential_bytes,
+                      sizeof(credential_bytes)))
+    return SecurityV3Inspection::kReadFault;
+  Credential candidate_credential{};
+  if (!decodeCredential(credential_bytes, candidate_credential) ||
+      candidate_credential.device_identity !=
+          device_identity_.legacyUint64() ||
+      candidate_credential.key_epoch == UINT32_MAX)
+    return SecurityV3Inspection::kCorrupt;
+  bool id_all_zero = true;
+  bool id_all_erased = true;
+  for (unsigned i = 0U; i < kCredentialIdSize; ++i) {
+    id_all_zero = id_all_zero && candidate_credential.credential_id[i] == 0U;
+    id_all_erased = id_all_erased &&
+                    candidate_credential.credential_id[i] == 0xFFU;
+  }
+  if (id_all_zero || id_all_erased) return SecurityV3Inspection::kCorrupt;
+
+  SecurityV3ReadOnlySummary verified{};
+  verified.page_generation = journal_format::get64(header + 8U);
+  verified.key_epoch = candidate_credential.key_epoch;
+
+  uint64_t gateway_ids[4]{};
+  uint32_t generations[4]{};
+  uint32_t maximum_generation = 0U;
+  uint8_t record_bytes[kV3RecordBytes]{};
+  V3Parsed record{};
+  const uint32_t begin_offset = pageOffset(page) + kV3Offset;
+  // The five-entry prefix is a *required* atomic policy snapshot:
+  // entry zero is the global metadata, followed by all four slots in order.
+  for (unsigned i = 0U; i < 5U; ++i) {
+    if (!critical_.read(begin_offset + i * kV3RecordBytes,
+                        record_bytes, sizeof(record_bytes)))
+      return SecurityV3Inspection::kReadFault;
+    if (!decodeV3ReadOnly(record_bytes, record) ||
+        memcmp(record.credential_id, candidate_credential.credential_id,
+               kCredentialIdSize) != 0 ||
+        record.key_epoch != candidate_credential.key_epoch)
+      return SecurityV3Inspection::kCorrupt;
+    if (i == 0U) {
+      if (record.kind != 4U) return SecurityV3Inspection::kCorrupt;
+      verified.custody_policy_floor = record.floor;
+      verified.policy_revision = record.revision;
+      maximum_generation = static_cast<uint32_t>(record.value);
+    } else {
+      const unsigned index = i - 1U;
+      if (record.kind != 5U || record.slot != index ||
+          record.floor != verified.custody_policy_floor ||
+          record.revision != verified.policy_revision)
+        return SecurityV3Inspection::kCorrupt;
+      gateway_ids[index] = record.value;
+      generations[index] = record.generation;
+      for (unsigned j = 0U; j < index; ++j) {
+        if ((record.value != 0U && record.value == gateway_ids[j]) ||
+            (record.generation != 0U &&
+             record.generation == generations[j]))
+          return SecurityV3Inspection::kCorrupt;
+      }
+      if (record.generation > verified.max_grant_generation)
+        verified.max_grant_generation = record.generation;
+      if (record.value != 0U) ++verified.active_gateway_count;
+    }
+  }
+  if (verified.max_grant_generation != maximum_generation ||
+      (verified.policy_revision == 0U &&
+       (verified.custody_policy_floor != 0U ||
+        verified.max_grant_generation != 0U)))
+    return SecurityV3Inspection::kCorrupt;
+
+  bool found_erased = false;
+  for (unsigned i = 5U; i < kV3Count; ++i) {
+    if (!critical_.read(begin_offset + i * kV3RecordBytes,
+                        record_bytes, sizeof(record_bytes)))
+      return SecurityV3Inspection::kReadFault;
+    if (journal_format::erased(record_bytes, sizeof(record_bytes))) {
+      found_erased = true;
+      continue;
+    }
+    if (found_erased) return SecurityV3Inspection::kCorrupt;
+    // Torn pre-commit entries are burned. They are never authority.
+    if (journal_format::erased(record_bytes + 52U, 4U)) continue;
+    if (!decodeV3ReadOnly(record_bytes, record) ||
+        memcmp(record.credential_id, candidate_credential.credential_id,
+               kCredentialIdSize) != 0 ||
+        record.key_epoch != candidate_credential.key_epoch ||
+        record.kind > 3U)
+      return SecurityV3Inspection::kCorrupt;
+    if (record.kind == 1U) {
+      if (record.value <= verified.tx_reserved_bound)
+        return SecurityV3Inspection::kCorrupt;
+      verified.tx_reserved_bound = record.value;
+    } else if (record.kind == 2U) {
+      if (record.value <= verified.a2d_replay_bound)
+        return SecurityV3Inspection::kCorrupt;
+      verified.a2d_replay_bound = record.value;
+    } else {
+      if (verified.policy_revision == UINT32_MAX ||
+          record.revision != verified.policy_revision + 1U ||
+          record.floor < verified.custody_policy_floor)
+        return SecurityV3Inspection::kCorrupt;
+      if (record.slot == 0xFFU) {
+        if (record.floor == verified.custody_policy_floor)
+          return SecurityV3Inspection::kCorrupt;
+      } else {
+        const unsigned index = record.slot;
+        if (record.generation <= verified.max_grant_generation)
+          return SecurityV3Inspection::kCorrupt;
+        if (record.value == 0U) {
+          if (gateway_ids[index] == 0U)
+            return SecurityV3Inspection::kCorrupt;
+          --verified.active_gateway_count;
+        } else {
+          for (unsigned j = 0U; j < 4U; ++j)
+            if (j != index && gateway_ids[j] == record.value)
+              return SecurityV3Inspection::kCorrupt;
+          if (gateway_ids[index] == 0U) ++verified.active_gateway_count;
+        }
+        gateway_ids[index] = record.value;
+        generations[index] = record.generation;
+        verified.max_grant_generation = record.generation;
+      }
+      verified.custody_policy_floor = record.floor;
+      verified.policy_revision = record.revision;
+    }
+  }
+  uint8_t tail[kV3TailBytes]{};
+  if (!critical_.read(begin_offset + kV3Count * kV3RecordBytes,
+                      tail, sizeof(tail)))
+    return SecurityV3Inspection::kReadFault;
+  if (!journal_format::erased(tail, sizeof(tail)))
+    return SecurityV3Inspection::kCorrupt;
+  // Publication on success ONLY. No durable claim, grant or secret escapes.
+  output = verified;
+  return SecurityV3Inspection::kVerified;
+}
 
 bool SecurityStore::begin(DeviceIdentity device_identity) {
   device_identity_ = device_identity;
@@ -47,6 +309,7 @@ bool SecurityStore::begin(DeviceIdentity device_identity) {
   credential_ = {};
   tx_reserved_bound_ = 0;
   tx_next_ = 0;
+  v3_snapshot_ = security_v3_format::Snapshot{};
   a2d_replay_bound_ = 0;
   a2d_runtime_hwm_ = 0;
   a2d_runtime_hwm_valid_ = false;
@@ -61,6 +324,12 @@ bool SecurityStore::begin(DeviceIdentity device_identity) {
   pending_replay_counter_ = 0;
   pending_replay_bound_ = 0;
   erase_old_page_ = -1;
+  v3_page_is_migration_ = false;
+  policy_after_v3_compaction_ = false;
+  pending_policy_entry_ = security_v3_format::Entry{};
+  pending_policy_snapshot_ = security_v3_format::Snapshot{};
+  v3_policy_result_ready_ = false;
+  v3_policy_result_committed_ = false;
   commit_result_ready_ = false;
   commit_success_ = false;
   a2d_result_ready_ = false;
@@ -69,6 +338,14 @@ bool SecurityStore::begin(DeviceIdentity device_identity) {
 
   // critical_/maint_ are priority-tagged views of the same physical security
   // backend. begin() one view only, matching the existing M7P6B ownership.
+  if (v3_writer_.status() ==
+          security_v3_page_writer::Status::kCommitted &&
+      !v3_writer_.rearmAfterCommit())
+    return false;
+  // A faulted asynchronous physical transaction must not be "restarted"
+  // by a repeated begin() call on the same live object.
+  if (v3_writer_.status() != security_v3_page_writer::Status::kIdle)
+    return false;
   if (!critical_.begin()) return false;
   if (!recover()) return false;
 
@@ -85,6 +362,117 @@ bool SecurityStore::begin(DeviceIdentity device_identity) {
 }
 
 bool SecurityStore::recover() {
+  // A committed v3 page is selected only through the complete fail-closed
+  // physical A/B evaluator; legacy v1/v2 recovery below remains unchanged
+  // for installations without v3. A staged v3 header cannot supersede the
+  // older live v2 page after a brownout mid-migration.
+  bool saw_v3_header = false;
+  for (unsigned page = 0U; page < kPageCount; ++page) {
+    uint8_t header[kPageHeaderSize]{};
+    if (!critical_.read(headerOffset(page), header, sizeof(header)))
+      return false;
+    if (journal_format::erased(header, sizeof(header))) {
+      // A fully erased header does not prove the whole page was erased.
+      // Residual credentials/journal after a torn erase may belong to a
+      // once-newer authority page: never resurrect an older generation.
+      uint8_t scratch[kCredentialRecordSize]{};
+      for (uint32_t offset = kPageHeaderSize;
+           offset < storage_config::kPageSize;
+           offset += static_cast<uint32_t>(sizeof(scratch))) {
+        const uint32_t remaining =
+            storage_config::kPageSize - offset;
+        const size_t count = remaining < sizeof(scratch) ?
+                             remaining : sizeof(scratch);
+        if (!critical_.read(pageOffset(page) + offset,
+                            scratch, count))
+          return false;
+        if (!journal_format::erased(scratch, count)) {
+          state_ = SecurityState::kFault;
+          ++diagnostics_.recovery_corruptions;
+          return true;
+        }
+      }
+    }
+    uint8_t version = 0U;
+    if (headerMagicPresent(header, &version) &&
+        version == security_v3_format::kVersion)
+      saw_v3_header = true;
+  }
+  if (saw_v3_header) {
+    security_v3_ab_preflight::Summary choice{};
+    const auto selected = security_v3_ab_preflight::inspect(
+        critical_, device_identity_.legacyUint64(), choice);
+    if (selected == security_v3_ab_preflight::Result::kReadFault)
+      return false;
+    if (selected == security_v3_ab_preflight::Result::kFault) {
+      state_ = SecurityState::kFault;
+      return true;
+    }
+    if (selected == security_v3_ab_preflight::Result::kForeign) {
+      state_ = SecurityState::kForeign;
+      return true;
+    }
+    if (selected == security_v3_ab_preflight::Result::kUnsupported) {
+      state_ = SecurityState::kUnsupported;
+      return true;
+    }
+    if (selected == security_v3_ab_preflight::Result::kV3) {
+      const unsigned page = choice.selected_page;
+      if (page >= kPageCount) return false;
+      uint8_t credential_bytes[kCredentialRecordSize]{};
+      if (!critical_.read(credentialOffset(page), credential_bytes,
+                          sizeof(credential_bytes)))
+        return false;
+      Credential parsed{};
+      if (!decodeCredential(credential_bytes, parsed) ||
+          parsed.device_identity != device_identity_.legacyUint64()) {
+        state_ = SecurityState::kFault;
+        return true;
+      }
+      security_v3_format::Snapshot recovered{};
+      const StoreV3Reader journal(critical_, page);
+      if (!security_v3_format::recoverCommittedJournalStream(
+              journal, parsed.credential_id, parsed.key_epoch, recovered) ||
+          recovered.tx_bound != choice.tx_reserved_bound ||
+          recovered.a2d_bound != choice.a2d_replay_bound ||
+          recovered.policy_revision != choice.policy_revision ||
+          recovered.custody_floor != choice.custody_floor) {
+        state_ = SecurityState::kFault;
+        return true;
+      }
+
+      // Used slots INCLUDE torn pre-commit appends. Reusing them can make
+      // an illegal flash write or manufacture a gap after a burned slot.
+      uint32_t used = 0U;
+      for (unsigned slot = 0U;
+           slot < security_v3_format::kRecordCount; ++slot) {
+        uint8_t raw[security_v3_format::kRecordBytes]{};
+        if (!critical_.read(v3StateOffset(page, slot),
+                            raw, sizeof(raw)))
+          return false;
+        if (!journal_format::erased(raw, sizeof(raw)))
+          used = slot + 1U;
+      }
+      credential_ = parsed;
+      v3_snapshot_ = recovered;
+      tx_reserved_bound_ = recovered.tx_bound;
+      tx_next_ = tx_reserved_bound_;  // burn unused reservations on reboot
+      a2d_replay_bound_ = recovered.a2d_bound;
+      a2d_runtime_hwm_valid_ = a2d_replay_bound_ != 0U;
+      a2d_runtime_hwm_ = a2d_runtime_hwm_valid_ ?
+                          a2d_replay_bound_ - 1U : 0U;
+      active_page_ = static_cast<int>(page);
+      newest_generation_ = choice.generation;
+      pages_[page].generation = choice.generation;
+      pages_[page].version = security_v3_format::kVersion;
+      pages_[page].state_used = used;
+      state_ = SecurityState::kProvisioned;
+      return true;
+    }
+    // A v1/v2 source with only a STAGED v3 page should recover the
+    // legacy source below, not classify the interrupted upgrade as active.
+  }
+
   struct PageClass {
     bool valid = false;
     uint8_t version = 0;
@@ -115,6 +503,13 @@ bool SecurityStore::recover() {
       continue;
     }
 
+    if (version == security_v3_format::kVersion &&
+        journal_format::erased(
+            header_bytes + kPageHeaderSize - sizeof(uint32_t),
+            sizeof(uint32_t))) {
+      ++diagnostics_.recovery_corruptions;
+      continue;  // v3 migration was never activated
+    }
     if (version != kVersionV1 && version != kVersionV2) {
       any_unsupported = true;
       continue;
@@ -352,6 +747,33 @@ bool SecurityStore::recover() {
   return true;
 }
 
+bool SecurityStore::custodyAckScopeMatches(
+    uint64_t tracker_device_id, uint64_t gateway_device_id,
+    uint32_t key_epoch, uint32_t custody_floor,
+    uint32_t grant_generation) const {
+  // Untrusted ACK header fields are NOT source of policy authority.
+  // Require a completely recovered, idle, current-v3 SecurityStore.
+  if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
+      active_page_ < 0 || v3_policy_result_ready_ ||
+      pages_[active_page_].version != security_v3_format::kVersion ||
+      tracker_device_id == 0U ||
+      tracker_device_id != device_identity_.legacyUint64() ||
+      gateway_device_id == 0U ||
+      key_epoch == UINT32_MAX ||
+      key_epoch != credential_.key_epoch ||
+      custody_floor == UINT32_MAX ||
+      custody_floor != v3_snapshot_.custody_floor ||
+      grant_generation == 0U || grant_generation == UINT32_MAX)
+    return false;
+  for (size_t i = 0U; i < security_v3_format::kGatewayCount; ++i) {
+    const security_v3_format::GatewaySlot& slot = v3_snapshot_.gateways[i];
+    if (slot.gateway_id == gateway_device_id &&
+        slot.generation == grant_generation)
+      return true;
+  }
+  return false;
+}
+
 bool SecurityStore::currentCredentialId(
     uint8_t (&out)[kCredentialIdSize]) const {
   if (state_ != SecurityState::kProvisioned) return false;
@@ -363,6 +785,9 @@ bool SecurityStore::commitCredential(
     const uint8_t (&credential_id)[kCredentialIdSize], uint32_t key_epoch,
     const uint8_t (&k_root)[kKRootSize]) {
   if (!ready_ || busy()) return false;
+  if (state_ == SecurityState::kProvisioned && active_page_ >= 0 &&
+      pages_[active_page_].version == security_v3_format::kVersion)
+    return false;  // credential rotation needs its own reviewed v3 transaction
   if (state_ != SecurityState::kUnprovisioned &&
       state_ != SecurityState::kProvisioned)
     return false;
@@ -467,6 +892,230 @@ bool SecurityStore::takeA2dReplayResult(bool& accepted) {
   return true;
 }
 
+bool SecurityStore::requestV3Migration() {
+  // This explicit local-maintenance entrypoint is not called by boot,
+  // networking or BLE. A policy/credential change is NOT supported here.
+  if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
+      active_page_ < 0 || a2d_result_ready_ || commit_result_ready_ ||
+      pages_[active_page_].version != kVersionV2)
+    return false;
+  return startV3Page(true);
+}
+
+bool SecurityStore::startV3Page(bool migration) {
+  if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
+      active_page_ < 0) return false;
+  const uint8_t current_version = pages_[active_page_].version;
+  if (migration ? current_version != kVersionV2 :
+                  current_version != security_v3_format::kVersion)
+    return false;
+  if (v3_writer_.status() ==
+          security_v3_page_writer::Status::kCommitted &&
+      !v3_writer_.rearmAfterCommit())
+    return false;
+  if (v3_writer_.status() != security_v3_page_writer::Status::kIdle)
+    return false;
+
+  security_v3_format::Snapshot desired{};
+  if (!migration) {
+    desired = v3_snapshot_;  // all four tombstones and policy HWM retained
+  } else {
+    memcpy(desired.credential_id, credential_.credential_id,
+           kCredentialIdSize);
+    desired.key_epoch = credential_.key_epoch;
+    desired.tx_bound = tx_reserved_bound_;
+    desired.a2d_bound = a2d_replay_bound_;
+    // v2 has no Gateway grants; never manufacture them.
+  }
+  if (desired.tx_bound != tx_reserved_bound_ ||
+      desired.a2d_bound != a2d_replay_bound_ ||
+      !v3_writer_.start(static_cast<uint8_t>(1 - active_page_),
+                        credential_, desired))
+    return false;
+
+  v3_page_is_migration_ = migration;
+  v3_snapshot_ = desired;
+  target_page_ = static_cast<uint32_t>(1 - active_page_);
+  target_generation_ = newest_generation_ + 1U;
+  job_ = Job::kV3Page;
+  active_port_ = &maint_;
+  return true;
+}
+
+void SecurityStore::completeV3Page() {
+  // A successful physical header activation was read-verified by the
+  // transaction engine. No ACK/grant authorization is inferred from it.
+  const unsigned page = target_page_;
+  pages_[page].generation = target_generation_;
+  pages_[page].version = security_v3_format::kVersion;
+  pages_[page].state_used =
+      static_cast<uint32_t>(security_v3_format::kSnapshotCount) +
+      (tx_reserved_bound_ != 0U ? 1U : 0U) +
+      (a2d_replay_bound_ != 0U ? 1U : 0U);
+  active_page_ = static_cast<int>(page);
+  newest_generation_ = target_generation_;
+  job_ = Job::kNone;
+  active_port_ = nullptr;
+  consecutive_mutation_failures_ = 0U;
+  if (v3_page_is_migration_) {
+    ++diagnostics_.migrations;
+  } else {
+    ++diagnostics_.compactions;
+  }
+  v3_page_is_migration_ = false;
+
+  if (policy_after_v3_compaction_) {
+    policy_after_v3_compaction_ = false;
+    if (!startV3PolicyAppend()) {
+      state_ = SecurityState::kFault;
+      ++diagnostics_.v3_policy_failures;
+      v3_policy_result_ready_ = true;
+      v3_policy_result_committed_ = false;
+    }
+    return;
+  }
+  if (reserve_after_new_page_) {
+    reserve_after_new_page_ = false;
+    (void)startReservation();
+  } else if (replay_after_new_page_) {
+    replay_after_new_page_ = false;
+    (void)startA2dReplayReservation(pending_replay_counter_,
+                                    pending_replay_bound_);
+  } else {
+    maybeAutoReserve();
+  }
+}
+
+bool SecurityStore::beginV3PolicyMutation(
+    PolicyAction action, uint8_t slot, uint64_t gateway_id,
+    uint32_t floor) {
+  // There is deliberately NO production caller of this private method.
+  // Future admission requires a separately authenticated ADMIN command.
+  // The A2D replay-bound method alone is not administrative authority.
+  if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
+      active_page_ < 0 || a2d_result_ready_ || commit_result_ready_ ||
+      policy_after_v3_compaction_ || v3_policy_result_ready_ ||
+      pages_[active_page_].version != security_v3_format::kVersion ||
+      v3_snapshot_.policy_revision >= UINT32_MAX - 1U)
+    return false;
+
+  security_v3_format::Snapshot next = v3_snapshot_;
+  security_v3_format::Entry entry{};
+  memcpy(entry.credential_id, credential_.credential_id,
+         kCredentialIdSize);
+  entry.key_epoch = credential_.key_epoch;
+  entry.kind = security_v3_format::Kind::kCustodyPolicy;
+  entry.policy_revision = next.policy_revision + 1U;
+
+  uint32_t max_generation = 0U;
+  for (unsigned i = 0U; i < security_v3_format::kGatewayCount; ++i)
+    if (next.gateways[i].generation > max_generation)
+      max_generation = next.gateways[i].generation;
+
+  if (action == PolicyAction::kAdvanceFloor) {
+    if (slot != 0xFFU || gateway_id != 0U ||
+        floor <= next.custody_floor || floor == UINT32_MAX)
+      return false;
+    entry.slot = 0xFFU;
+    entry.custody_floor = floor;
+    next.custody_floor = floor;
+  } else {
+    if (slot >= security_v3_format::kGatewayCount ||
+        floor != next.custody_floor ||
+        max_generation >= UINT32_MAX - 1U)
+      return false;
+    const uint64_t existing = next.gateways[slot].gateway_id;
+    if (action == PolicyAction::kGrant) {
+      // No implicit replacement: an active Gateway must first be
+      // explicitly revoked and durably committed.
+      if (gateway_id == 0U || existing != 0U) return false;
+      for (unsigned i = 0U; i < security_v3_format::kGatewayCount; ++i)
+        if (next.gateways[i].gateway_id == gateway_id) return false;
+    } else if (action == PolicyAction::kRevoke) {
+      // Exact identity binding blocks stale or wrong-slot revocations.
+      if (existing == 0U || gateway_id != existing) return false;
+    } else {
+      return false;
+    }
+    entry.slot = slot;
+    entry.value = action == PolicyAction::kGrant ? gateway_id : 0U;
+    entry.grant_generation = max_generation + 1U;
+    entry.custody_floor = floor;
+    next.gateways[slot].gateway_id = entry.value;
+    next.gateways[slot].generation = entry.grant_generation;
+  }
+  next.policy_revision = entry.policy_revision;
+
+  // Enforce byte-codec validity BEFORE setting any pending state.
+  uint8_t encoded[security_v3_format::kRecordBytes]{};
+  if (!security_v3_format::encodeRecord(entry, encoded))
+    return false;
+
+  pending_policy_entry_ = entry;
+  pending_policy_snapshot_ = next;
+  if (pages_[active_page_].state_used + 1U >=
+      security_v3_format::kRecordCount) {
+    policy_after_v3_compaction_ = true;
+    if (!startV3Page(false)) {
+      policy_after_v3_compaction_ = false;
+      pending_policy_entry_ = security_v3_format::Entry{};
+      pending_policy_snapshot_ = security_v3_format::Snapshot{};
+      return false;
+    }
+    return true;
+  }
+  if (!startV3PolicyAppend()) {
+    pending_policy_entry_ = security_v3_format::Entry{};
+    pending_policy_snapshot_ = security_v3_format::Snapshot{};
+    return false;
+  }
+  return true;
+}
+
+bool SecurityStore::startV3PolicyAppend() {
+  if (!ready_ || busy() || state_ != SecurityState::kProvisioned ||
+      active_page_ < 0 ||
+      pages_[active_page_].version != security_v3_format::kVersion ||
+      pages_[active_page_].state_used >=
+          security_v3_format::kRecordCount)
+    return false;
+
+  uint8_t record[security_v3_format::kRecordBytes]{};
+  if (!security_v3_format::encodeRecord(pending_policy_entry_, record))
+    return false;
+  active_port_ = &critical_;
+  target_page_ = static_cast<uint32_t>(active_page_);
+  target_slot_ = pages_[active_page_].state_used;
+  job_ = Job::kV3PolicyAppend;
+  phase_ = Phase::kWriteReserve;
+  startBlob(v3StateOffset(target_page_, target_slot_),
+            record, sizeof(record));
+  return true;
+}
+
+bool SecurityStore::takeV3PolicyResult(bool& committed) {
+  if (!v3_policy_result_ready_) return false;
+  committed = v3_policy_result_committed_;
+  v3_policy_result_ready_ = false;
+  return true;
+}
+
+void SecurityStore::completeV3PolicyAppend() {
+  // Policy changes become visible internally ONLY after body, 4-byte
+  // commit and whole-record readback have succeeded.
+  pages_[target_page_].state_used = target_slot_ + 1U;
+  v3_snapshot_ = pending_policy_snapshot_;
+  pending_policy_entry_ = security_v3_format::Entry{};
+  pending_policy_snapshot_ = security_v3_format::Snapshot{};
+  policy_after_v3_compaction_ = false;
+  consecutive_mutation_failures_ = 0U;
+  job_ = Job::kNone;
+  ++diagnostics_.v3_policy_commits;
+  v3_policy_result_ready_ = true;
+  v3_policy_result_committed_ = true;
+  maybeAutoReserve();
+}
+
 bool SecurityStore::startNewPage(NewPagePurpose purpose,
                                  const Credential& credential) {
   if (!ready_ || busy()) return false;
@@ -533,12 +1182,19 @@ bool SecurityStore::startReservation() {
     }
     return true;
   }
-  if (version != kVersionV2) return false;
-
-  if (pages_[active_page_].state_used + 1 >=
-      kSecurityStateSlotsPerPage) {
+  if (version != kVersionV2 &&
+      version != security_v3_format::kVersion) return false;
+  const uint32_t capacity =
+      version == security_v3_format::kVersion ?
+      static_cast<uint32_t>(security_v3_format::kRecordCount) :
+      kSecurityStateSlotsPerPage;
+  if (pages_[active_page_].state_used + 1 >= capacity) {
     reserve_after_new_page_ = true;
-    return startNewPage(NewPagePurpose::kCompaction, credential_);
+    const bool started = version == security_v3_format::kVersion ?
+        startV3Page(false) :
+        startNewPage(NewPagePurpose::kCompaction, credential_);
+    if (!started) reserve_after_new_page_ = false;
+    return started;
   }
 
   pending_tx_bound_ = tx_reserved_bound_ + kTxReservationBlockSize;
@@ -548,16 +1204,32 @@ bool SecurityStore::startReservation() {
   job_ = Job::kReserve;
   phase_ = Phase::kWriteReserve;
 
-  SecurityStateRecord state{};
-  memcpy(state.credential_id, credential_.credential_id,
-         kCredentialIdSize);
-  state.key_epoch = credential_.key_epoch;
-  state.kind = SecurityStateKind::kTxReserveExclusiveBound;
-  state.value = pending_tx_bound_;
-  uint8_t bytes[kSecurityStateRecordSize];
-  encodeSecurityState(state, bytes);
-  startBlob(v2StateOffset(target_page_, target_slot_), bytes,
-            sizeof(bytes));
+  if (version == security_v3_format::kVersion) {
+    security_v3_format::Entry record{};
+    memcpy(record.credential_id, credential_.credential_id,
+           kCredentialIdSize);
+    record.key_epoch = credential_.key_epoch;
+    record.kind = security_v3_format::Kind::kTxReserve;
+    record.value = pending_tx_bound_;
+    uint8_t raw[security_v3_format::kRecordBytes]{};
+    if (!security_v3_format::encodeRecord(record, raw)) {
+      job_ = Job::kNone;
+      return false;
+    }
+    startBlob(v3StateOffset(target_page_, target_slot_),
+              raw, sizeof(raw));
+  } else {
+    SecurityStateRecord state{};
+    memcpy(state.credential_id, credential_.credential_id,
+           kCredentialIdSize);
+    state.key_epoch = credential_.key_epoch;
+    state.kind = SecurityStateKind::kTxReserveExclusiveBound;
+    state.value = pending_tx_bound_;
+    uint8_t bytes[kSecurityStateRecordSize];
+    encodeSecurityState(state, bytes);
+    startBlob(v2StateOffset(target_page_, target_slot_),
+              bytes, sizeof(bytes));
+  }
   return true;
 }
 
@@ -584,34 +1256,52 @@ bool SecurityStore::startA2dReplayReservation(uint64_t counter,
     }
     return true;
   }
-  if (version != kVersionV2) return false;
-
-  if (pages_[active_page_].state_used + 1 >=
-      kSecurityStateSlotsPerPage) {
+  if (version != kVersionV2 &&
+      version != security_v3_format::kVersion) return false;
+  const uint32_t capacity =
+      version == security_v3_format::kVersion ?
+      static_cast<uint32_t>(security_v3_format::kRecordCount) :
+      kSecurityStateSlotsPerPage;
+  if (pages_[active_page_].state_used + 1 >= capacity) {
     replay_after_new_page_ = true;
-    if (!startNewPage(NewPagePurpose::kCompaction, credential_)) {
-      replay_after_new_page_ = false;
-      return false;
-    }
-    return true;
+    const bool started = version == security_v3_format::kVersion ?
+        startV3Page(false) :
+        startNewPage(NewPagePurpose::kCompaction, credential_);
+    if (!started) replay_after_new_page_ = false;
+    return started;
   }
-
-  SecurityStateRecord state{};
-  memcpy(state.credential_id, credential_.credential_id,
-         kCredentialIdSize);
-  state.key_epoch = credential_.key_epoch;
-  state.kind = SecurityStateKind::kA2dReplayExclusiveBound;
-  state.value = bound;
-  uint8_t bytes[kSecurityStateRecordSize];
-  encodeSecurityState(state, bytes);
 
   active_port_ = &critical_;
   target_page_ = static_cast<uint32_t>(active_page_);
   target_slot_ = pages_[active_page_].state_used;
   job_ = Job::kA2dReplayReserve;
   phase_ = Phase::kWriteReserve;
-  startBlob(v2StateOffset(target_page_, target_slot_), bytes,
-            sizeof(bytes));
+  if (version == security_v3_format::kVersion) {
+    security_v3_format::Entry record{};
+    memcpy(record.credential_id, credential_.credential_id,
+           kCredentialIdSize);
+    record.key_epoch = credential_.key_epoch;
+    record.kind = security_v3_format::Kind::kA2dReplayReserve;
+    record.value = bound;
+    uint8_t raw[security_v3_format::kRecordBytes]{};
+    if (!security_v3_format::encodeRecord(record, raw)) {
+      job_ = Job::kNone;
+      return false;
+    }
+    startBlob(v3StateOffset(target_page_, target_slot_),
+              raw, sizeof(raw));
+  } else {
+    SecurityStateRecord state{};
+    memcpy(state.credential_id, credential_.credential_id,
+           kCredentialIdSize);
+    state.key_epoch = credential_.key_epoch;
+    state.kind = SecurityStateKind::kA2dReplayExclusiveBound;
+    state.value = bound;
+    uint8_t bytes[kSecurityStateRecordSize];
+    encodeSecurityState(state, bytes);
+    startBlob(v2StateOffset(target_page_, target_slot_),
+              bytes, sizeof(bytes));
+  }
   return true;
 }
 
@@ -790,6 +1480,7 @@ void SecurityStore::fail() {
   const bool mutation_failure =
       failing_job == Job::kReserve ||
       failing_job == Job::kA2dReplayReserve ||
+      failing_job == Job::kV3PolicyAppend ||
       failing_job == Job::kNewPage;
   const bool unreconciled_async_mutation =
       active_port_ != nullptr && active_port_->hasUnreconciledMutation();
@@ -803,15 +1494,23 @@ void SecurityStore::fail() {
   // erased gap followed by a later committed record, which recovery must
   // reject. Close protected service for this boot instead.
   if (failing_job == Job::kReserve ||
-      failing_job == Job::kA2dReplayReserve) {
-    uint8_t bytes[kSecurityStateRecordSize];
+      failing_job == Job::kA2dReplayReserve ||
+      failing_job == Job::kV3PolicyAppend) {
+    const bool is_v3 = pages_[target_page_].version ==
+                       security_v3_format::kVersion;
+    const uint32_t width = is_v3 ?
+        static_cast<uint32_t>(security_v3_format::kRecordBytes) :
+        kSecurityStateRecordSize;
+    const uint32_t offset = is_v3 ?
+        v3StateOffset(target_page_, target_slot_) :
+        v2StateOffset(target_page_, target_slot_);
+    uint8_t bytes[security_v3_format::kRecordBytes]{};
     const bool readable =
-        critical_.read(v2StateOffset(target_page_, target_slot_), bytes,
-                       sizeof(bytes));
+        critical_.read(offset, bytes, width);
     if (!readable) {
       append_inspection_failed = true;
       ++diagnostics_.append_inspection_failures;
-    } else if (!journal_format::erased(bytes, sizeof(bytes))) {
+    } else if (!journal_format::erased(bytes, width)) {
       const uint32_t used = target_slot_ + 1;
       if (pages_[target_page_].state_used < used)
         pages_[target_page_].state_used = used;
@@ -824,6 +1523,14 @@ void SecurityStore::fail() {
   flash_op_awaiting_completion_ = false;
   reserve_after_new_page_ = false;
   replay_after_new_page_ = false;
+  policy_after_v3_compaction_ = false;
+  if (failing_job == Job::kV3PolicyAppend) {
+    ++diagnostics_.v3_policy_failures;
+    v3_policy_result_ready_ = true;
+    v3_policy_result_committed_ = false;
+    pending_policy_entry_ = security_v3_format::Entry{};
+    pending_policy_snapshot_ = security_v3_format::Snapshot{};
+  }
 
   // Existing active page/state remains authoritative because every new-page
   // failure happens before activation or every append failure targets only the
@@ -892,6 +1599,20 @@ void SecurityStore::fail() {
     // but must never revive SecurityStore authority in the same boot.
     state_ = SecurityState::kFault;
     ++diagnostics_.unreconciled_mutation_faults;
+    return;
+  }
+
+  // Unlike legacy v2, the v3 replay journal REQUIRES strictly rising
+  // committed counter bounds. A failed append may have physically
+  // committed before its completion failed; retrying the same bound in a
+  // later slot would make the next boot reject the duplicate. Quarantine
+  // protected service until reboot can inspect the exact durable record.
+  if ((failing_job == Job::kReserve ||
+       failing_job == Job::kA2dReplayReserve ||
+       failing_job == Job::kV3PolicyAppend) &&
+      pages_[target_page_].version == security_v3_format::kVersion) {
+    state_ = SecurityState::kFault;
+    ++diagnostics_.mutation_failure_lockouts;
     return;
   }
 
@@ -991,6 +1712,8 @@ void SecurityStore::completeReserve() {
   consecutive_mutation_failures_ = 0;
   pages_[target_page_].state_used = target_slot_ + 1;
   tx_reserved_bound_ = pending_tx_bound_;
+  if (pages_[target_page_].version == security_v3_format::kVersion)
+    v3_snapshot_.tx_bound = tx_reserved_bound_;
   job_ = Job::kNone;
   ++diagnostics_.reservations;
 }
@@ -999,6 +1722,8 @@ void SecurityStore::completeA2dReplayReserve() {
   consecutive_mutation_failures_ = 0;
   pages_[target_page_].state_used = target_slot_ + 1;
   a2d_replay_bound_ = pending_replay_bound_;
+  if (pages_[target_page_].version == security_v3_format::kVersion)
+    v3_snapshot_.a2d_bound = a2d_replay_bound_;
   a2d_runtime_hwm_ = pending_replay_counter_;
   a2d_runtime_hwm_valid_ = true;
   job_ = Job::kNone;
@@ -1031,6 +1756,34 @@ void SecurityStore::poll() {
 
   if (job_ == Job::kNone) {
     maybeAutoReserve();
+    return;
+  }
+
+  if (job_ == Job::kV3Page) {
+    const auto result = v3_writer_.poll();
+    if (result == security_v3_page_writer::Status::kBusy) return;
+    if (result == security_v3_page_writer::Status::kCommitted) {
+      completeV3Page();
+    } else {
+      // Even a FAILED completion may have physically landed the last
+      // four-byte activation word. Reboot is the only authority arbiter.
+      // Do not release, reuse, or automatically retry this flash owner.
+      job_ = Job::kNone;
+      state_ = SecurityState::kFault;
+      active_port_ = nullptr;
+      reserve_after_new_page_ = false;
+      replay_after_new_page_ = false;
+      if (policy_after_v3_compaction_) {
+        policy_after_v3_compaction_ = false;
+        ++diagnostics_.v3_policy_failures;
+        v3_policy_result_ready_ = true;
+        v3_policy_result_committed_ = false;
+      }
+      pending_policy_entry_ = security_v3_format::Entry{};
+      pending_policy_snapshot_ = security_v3_format::Snapshot{};
+      ++diagnostics_.activation_ambiguities;
+      ++diagnostics_.migration_failures;
+    }
     return;
   }
 
@@ -1126,6 +1879,8 @@ void SecurityStore::poll() {
   if (phase_ == Phase::kWriteReserve) {
     if (job_ == Job::kA2dReplayReserve) {
       completeA2dReplayReserve();
+    } else if (job_ == Job::kV3PolicyAppend) {
+      completeV3PolicyAppend();
     } else {
       completeReserve();
     }

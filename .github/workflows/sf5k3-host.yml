@@ -1,0 +1,28 @@
+name: SF5K3A ObservationStore host integration
+
+on:
+  push:
+    branches:
+      - feat/sf5k3a-release-progress-host
+  pull_request:
+    paths:
+      - 'firmware/tests/sf5/sf5k3_*'
+      - 'firmware/tests/sf5/test_sf5k3_*'
+      - 'firmware/tests/run_host_tests.sh'
+      - 'firmware/src/observation_store*'
+      - 'firmware/include/observation_store*'
+      - 'tools/ci/run_sf5k3a_host.sh'
+      - '.github/workflows/sf5k3-host.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  actual-store-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact PR branch
+        uses: actions/checkout@v4
+      - name: Run both host checks with GCC and sanitizers
+        run: bash tools/ci/run_sf5k3a_host.sh

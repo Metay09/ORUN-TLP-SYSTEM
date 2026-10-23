@@ -323,14 +323,18 @@ fi
 # SF5I actual Ed25519 Edge signature candidate: no runtime receipt authority.
 if python3 -c 'from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey' >/dev/null 2>&1; then
   PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5i_edge_durable_accept_signed.py
+  PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k2b_signed_batch.py
+  PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k2c_gateway_ack_oracle.py
 else
-  echo 'SF5I Edge signed durable-accept: SKIP (cryptography/Ed25519 absent; merge gate OPEN)'
+  echo 'SF5I/SF5K2B Edge signed durable-accept/batch: SKIP (cryptography/Ed25519 absent; merge gate OPEN)'
 fi
 g++ -DORUN_M4P5B_HOST_TEST=1 "${portable_flags[@]}" \
   firmware/tests/m4/test_m4p5b_history_receipt_admission.cpp \
   firmware/src/history_receipt_admission.cpp \
   firmware/src/history_delivery_coordinator.cpp firmware/src/history_store.cpp \
-  firmware/src/security_store.cpp firmware/src/security_format.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   firmware/src/tlp_v2_history_secure.cpp \
   -o "$test_dir/m4p5b_history_receipt_admission"
@@ -402,14 +406,18 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p6_security_format.cpp \
   firmware/src/tlp_position_packet.cpp -o "$test_dir/m7p6_security_format"
 "$test_dir/m7p6_security_format"
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p6_security_store.cpp \
-  firmware/src/security_store.cpp firmware/src/security_format.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m7p6_security_store"
 "$test_dir/m7p6_security_store"
 g++ -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
   -Wl,--defsym,__flash_arduino_end=0xED000 \
   firmware/tests/m7/test_m7p6f_security_gate_integration.cpp \
-  firmware/src/security_store.cpp firmware/src/security_format.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   firmware/src/flash_mutation_gate.cpp firmware/src/nrf_history_flash.cpp \
   firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
@@ -499,7 +507,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r2/test_patch_radio.py "$test_d
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp \
   "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp \
@@ -513,7 +521,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp 
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/m6/test_m6p1_radio.cpp "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp \
@@ -527,7 +535,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
   "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
@@ -540,7 +548,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
 "$test_dir/r2"
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/sf5/test_sf5j_radio_transport.cpp "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
   firmware/src/radio_driver_gate.cpp firmware/src/rak_device_identity.cpp \
@@ -549,6 +557,20 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/src/tlp_position_packet.cpp firmware/src/tlp_relay_forward_packet.cpp \
   firmware/src/tlp_v2_history_secure.cpp \
   -o "$test_dir/sf5j1_radio_transport"
+# Reuse SAME SF5J1 radio fake and build, but run the newly added
+# SF5K3K actual radio receiver assertions under explicit test define.
+g++ -DORUN_SF5K3K_ACK_RX_TEST -Ifirmware/tests/r2/stubs "${flags[@]}" \
+  firmware/tests/sf5/test_sf5j_radio_transport.cpp "$test_dir/driver_bridge.cpp" \
+  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp \
+  firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/tlp_v2_product_secure.cpp firmware/src/bridge_frame.cpp \
+  firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
+  firmware/src/radio_driver_gate.cpp firmware/src/rak_device_identity.cpp \
+  firmware/src/legacy_position_mapping.cpp firmware/src/node_role.cpp \
+  firmware/src/tlp_test_packet.cpp firmware/src/tlp_position_packet.cpp \
+  firmware/src/tlp_relay_forward_packet.cpp firmware/src/tlp_v2_history_secure.cpp \
+  -o "$test_dir/sf5k3k_radio_rx"
+"$test_dir/sf5k3k_radio_rx"
 "$test_dir/sf5j1_radio_transport"
 g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   -Ifirmware/tests/m4/nrf_stubs "${flags[@]}" -fno-pie -no-pie \
@@ -558,7 +580,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/activity_quality.cpp firmware/src/activity_auto_sampler.cpp \
   firmware/src/activity_period_evidence.cpp \
   firmware/src/accelerometer_manager.cpp \
-  firmware/src/radio_manager.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/radio_driver_gate.cpp \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
@@ -577,6 +599,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/history_receipt_admission.cpp \
   firmware/src/history_delivery_coordinator.cpp \
   firmware/tests/startup/stubs/history_secure_crypto_stub.cpp \
+  firmware/tests/startup/stubs/custody_ack_release_owner_stub.cpp \
   firmware/src/journal_format.cpp firmware/src/nrf_history_flash.cpp \
   firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
   firmware/src/nrf_geofence_flash.cpp \
@@ -589,7 +612,9 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/config_mutation.cpp firmware/src/service_intent.cpp \
   firmware/src/ble_application_transport.cpp \
   firmware/src/ble_application_handoff.cpp \
-  firmware/src/security_store.cpp firmware/src/security_format.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
   firmware/src/position_flow.cpp firmware/src/ble_admission_policy.cpp \
   firmware/src/loop_health.cpp firmware/src/loop_health_monitor.cpp \
   firmware/src/battery_monitor.cpp firmware/src/battery_policy.cpp \
@@ -624,6 +649,183 @@ g++ "${portable_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
   -o "$test_dir/sf5b_product_secure_codec"
 "$test_dir/sf5b_product_secure_codec"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5b_product_secure_vectors.py
+# SF5K1: proposal-only packet-shape checks. No receipt authentication or RF enablement.
+g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k1_batch_ack_candidate.cpp \
+  firmware/tests/sf5/sf5k1_batch_ack_candidate.cpp \
+  -o "$test_dir/sf5k1_batch_ack_candidate"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k1_batch_mac_reference.py
+# SF5K3B: approved-wire-shape 0x05 single-object test-only HKDF/HMAC oracle;
+# no Gateway provisioned state, no authenticated release or runtime linkage.
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_sf5k3b_single_ack_reference.py
+# SF5K3C host-only v3 proposed authority journal; explicitly INERT.
+# The live SecurityStore continues to persist v2 with no custody grants.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3c_security_v3_candidate.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3c_security_v3_candidate"
+# SF5K3D: inert A/B snapshot/migration/compaction power-cut model.
+# Production SecurityStore remains v2; this test never writes real flash.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3d_security_v3_snapshot_candidate"
+# SF5K3E: production SecurityStore read-only v3 integrity inspection;
+# v3 can never become active authority and no write/release API is added.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3e_real_security_v3_readonly.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
+  firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3e_real_security_v3_readonly"
+# SF5K3F: new product-source v3 codec, cross-checked byte for byte against
+# the prior independent host-only C/D golden and power-cut models.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3f_security_v3_product_format.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3f_security_v3_product_format"
+"$test_dir/sf5k3f_security_v3_product_format"
+# SF5K3G real FlashBackend A/B recovery preflight is deliberately inert:
+# it verifies v1/v2->v3 safe election, no authority, no writes, byte cuts.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3g_security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3g_security_v3_ab_preflight"
+"$test_dir/sf5k3g_security_v3_ab_preflight"
+# SF5K3H physically mutating v3 writer exercised ONLY on a host FakeFlash;
+# production SecurityStore remains a v2 writer, v3 remains unsupported.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3h_security_v3_page_writer.cpp \
+  firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3h_security_v3_page_writer"
+"$test_dir/sf5k3h_security_v3_page_writer"
+# SF5K3I: ACTUAL SecurityStore v3 boot and v2->v3 migration (not a
+# model or codec-only test). No Gateway grant admission or ACK release.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3i_real_security_store_v3.cpp \
+  firmware/src/security_store.cpp \
+  firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/tests/sf5/sf5k3c_security_v3_candidate.cpp \
+  firmware/tests/sf5/sf5k3d_security_v3_snapshot_candidate.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3i_real_security_store_v3"
+"$test_dir/sf5k3i_real_security_store_v3"
+# SF5K3J: actual production SecurityStore private policy journal path.
+# There is NO authenticated Gateway ACK owner or radio/BLE caller.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3j_real_security_v3_policy.cpp \
+  firmware/src/security_store.cpp \
+  firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3j_real_security_v3_policy"
+"$test_dir/sf5k3j_real_security_v3_policy"
+
+# SF5K3K production ACK codec + actual SecurityStore durable grant precheck.
+# Explicitly NO HMAC acceptance, radio runtime authority, or release.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3k_custody_ack_scope.cpp \
+  firmware/src/security_store.cpp firmware/src/custody_ack.cpp \
+  firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp \
+  firmware/src/tlp_v2_product_secure.cpp \
+  firmware/src/security_format.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/sf5k3k_custody_ack_scope"
+"$test_dir/sf5k3k_custody_ack_scope"
+
+# SF5K3L production verifier source against independently implemented
+# host OpenSSL SHA256/HKDF/HMAC; no ProductRecordStore release.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion \
+  -DORUN_SF5K3L_HOST_TEST -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3l_custody_ack_crypto.cpp \
+  firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
+  firmware/src/custody_ack_verifier.cpp firmware/src/custody_ack.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp firmware/src/security_v3_format.cpp \
+  firmware/src/tlp_v2_product_secure.cpp firmware/src/security_format.cpp \
+  firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
+  -lcrypto -o "$test_dir/sf5k3l_custody_ack_crypto"
+"$test_dir/sf5k3l_custody_ack_crypto"
+
+# SF5K3M: actual SecurityStore-authenticated ACK -> ProductRecordStore
+# exclusive release marker, complete flash and reboot; no radio cutover.
+g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion \
+  -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3m_real_custody_release.cpp \
+  firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
+  firmware/src/custody_ack_release_owner.cpp \
+  firmware/src/custody_ack_product_bridge.cpp \
+  firmware/src/custody_ack_verifier.cpp firmware/src/custody_ack.cpp \
+  firmware/src/product_record_store.cpp firmware/src/product_region.cpp \
+  firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
+  firmware/src/product_period_builder.cpp \
+  firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
+  firmware/src/security_v3_ab_preflight.cpp firmware/src/security_v3_format.cpp \
+  firmware/src/tlp_v2_product_secure.cpp firmware/src/security_format.cpp \
+  firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
+  -lcrypto -o "$test_dir/sf5k3m_real_custody_release"
+"$test_dir/sf5k3m_real_custody_release"
+
+"$test_dir/sf5k3e_real_security_v3_readonly"
+"$test_dir/sf5k3d_security_v3_snapshot_candidate"
+"$test_dir/sf5k3c_security_v3_candidate"
+# SF5K2 host-only evidence candidate regression.
+g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k2_gateway_batch_candidate.cpp \
+  firmware/tests/sf5/sf5k2_gateway_batch_candidate.cpp \
+  firmware/tests/sf5/sf5g_custody_record_candidate.cpp \
+  -o "$test_dir/sf5k2_gateway_batch_candidate"
+# SF5K3A: host-only exact-object release progress (never RF/runtime).
+g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3_release_progress_candidate.cpp \
+  firmware/tests/sf5/sf5k3_release_progress_candidate.cpp \
+  -o "$test_dir/sf5k3_release_progress_candidate"
+"$test_dir/sf5k3_release_progress_candidate"
+
+# SF5K3A integration: same progress logic against the ACTUAL flash-backed
+# ObservationStore APIs with durable release, restart and subset ACK tests.
+g++ "${b3_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
+  firmware/tests/sf5/test_sf5k3_observation_store_port.cpp \
+  firmware/tests/sf5/sf5k3_observation_store_port.cpp \
+  firmware/tests/sf5/sf5k3_release_progress_candidate.cpp \
+  firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
+  -o "$test_dir/sf5k3_observation_store_port"
+"$test_dir/sf5k3_observation_store_port"
+"$test_dir/sf5k2_gateway_batch_candidate"
+"$test_dir/sf5k1_batch_ack_candidate"
+
 g++ "${portable_flags[@]}" -Wconversion -Wsign-conversion -Ifirmware/tests/sf5 \
   firmware/tests/sf5/test_sf5_period_builder.cpp \
   firmware/src/product_period_builder.cpp firmware/src/tlp_v2_product_secure.cpp \
@@ -695,3 +897,46 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/tooling/test_tooling_contract.p
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/tooling/test_orun_positions.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/codeql/test_summarize_sarif.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/codeql/test_verify_bundle_install.py
+# SF5K3Q OCQ2/OCQ1/OBS1 product-region isolation.
+bash tools/ci/run_sf5k3q_product_region_host.sh
+
+# SF5K3R: real Gateway HMAC signer + flash store/owner host integration.
+bash tools/ci/run_sf5k3r_real_gateway_ack_chain_host.sh
+
+# SF5K3T: privileged ACK radio source contract and real flash/HMAC host checks.
+bash tools/ci/run_sf5k3t_gateway_ack_radio_host.sh
+
+# SF5K3U: actual main-loop ACK intake source guard + real HMAC/flash owner.
+bash tools/ci/run_sf5k3u_tracker_ack_runtime_host.sh
+
+# SF5K3V: actual OBS1 flash + tracker TX pilot state, fake sealed bytes/Radio.
+# This test does NOT claim AES/CC310 or physical SF11 RF qualification.
+bash tools/ci/run_sf5k3v_tracker_tx_host.sh
+
+# Gateway RF mailbox -> real authorized custody flash/HMAC -> ACK TX mock;
+# production Gateway has no grant-enrollment or OCQ2 activation yet.
+bash tools/ci/run_sf5k3w_gateway_product_runtime_host.sh
+
+# SF5K3X: OCQ2-only Gateway boot gate, immutable flash ownership and
+# revocation-safe eligibility. No physical provisioning or Gateway enablement.
+bash tools/ci/run_sf5k3x_gateway_startup_guard_host.sh
+
+# SF5K3Y: read-only Gateway security grant snapshot with TEST FAKE issuer
+# proof, real OCQ2 boot guard and separate security/product flash owners.
+bash tools/ci/run_sf5k3y_gateway_grant_reader_host.sh
+
+# SF5K3Z: actual OpenSSL Ed25519 issuer signatures on HOST, with the
+# independent exact-revision rollback checkpoint interface (mock anchor).
+bash tools/ci/run_sf5k3z_gateway_issuer_rollback_host.sh
+
+# SF5K3AA: Nordic CC310 Ed25519 adapter, real OpenSSL verifier HOST mock.
+# Actual pinned target SDK verified via separate standalone PlatformIO env.
+bash tools/ci/run_sf5k3aa_ed25519_host.sh
+
+# SF5K3AB: signed append-only enrollment proposal review with mocked
+# independent revision; no writer, no trusted anchor, no RF activation.
+bash tools/ci/run_sf5k3ab_signed_append_preflight_host.sh
+
+# SF5K3AC: host-only signed A/B flash transaction & power-cut model
+# with fake NOR and mock revision anchor; no field firmware writer.
+bash tools/ci/run_sf5k3ac_signed_append_transaction_host.sh

@@ -356,6 +356,196 @@ void checkRecovery(const std::vector<uint8_t>& bytes, unsigned active,
   checkExact(recovered, target, true);
 }
 
+// SF5K3A next gate: ProductRecordStore performs a READ-ONLY exact-object
+// preflight; neither an ACK HMAC nor authority is proven by this comparison.
+void testCustodyCandidatePreflightReadOnly(bool async) {
+  FakeFlash flash;
+  flash.async = async;
+  FixedIncarnation source;
+  osc::ExactObject first{};
+  {
+    ProductRecordStore records(flash, kPages, &source);
+    records.begin(kDevice, kTracker);
+    assert(records.mounted());
+    assert(store(records, 1U).stored);
+    first = protectedFixture(records, 1U);
+
+    // A retained plaintext record is NOT enough: exact protected bytes must
+    // have completed durable cache admission and readback.
+    assert(!records.custodyCandidateMatchesRetainedExact(first));
+    assert(records.submitExactCache(first) ==
+           ProductRecordStore::CacheSubmit::kStarted);
+    assert(!records.custodyCandidateMatchesRetainedExact(first));
+    settleExactCache(records, first, true);
+
+    const auto writes = flash.mutation_calls;
+    const auto image = flash.bytes;
+    assert(records.custodyCandidateMatchesRetainedExact(first));
+    assert(flash.mutation_calls == writes);
+    assert(flash.bytes == image);
+
+    osc::ExactObject different = first;
+    different.object[40] ^= 1U;
+    assert(!records.custodyCandidateMatchesRetainedExact(different));
+    different = first;
+    ++different.identity.sequence;
+    assert(!records.custodyCandidateMatchesRetainedExact(different));
+    different = first;
+    different.record_kind = osf::RecordKind::kEvent;
+    assert(!records.custodyCandidateMatchesRetainedExact(different));
+    different = first;
+    different.object_size = 0U;
+    assert(!records.custodyCandidateMatchesRetainedExact(different));
+
+    // Read faults, an uncertain flash mutation and an in-flight report must
+    // never turn an ACK object into a release-eligible record.
+    flash.fail_read_at = flash.read_calls + 1U;
+    assert(!records.custodyCandidateMatchesRetainedExact(first));
+    flash.fail_read_at = 0U;
+    flash.unreconciled = true;
+    assert(!records.custodyCandidateMatchesRetainedExact(first));
+    flash.unreconciled = false;
+
+    assert(records.submitPeriodic(period(2U)) ==
+           ProductRecordStore::Submit::kAccepted);
+    assert(!records.custodyCandidateMatchesRetainedExact(first));
+    ProductRecordStore::Outcome outcome{};
+    bool taken = false;
+    for (unsigned i = 0U; i < 20000U; ++i) {
+      records.poll();
+      if (records.takeOutcome(outcome)) { taken = true; break; }
+    }
+    assert(taken && outcome.stored);
+    assert(records.custodyCandidateMatchesRetainedExact(first));
+  }
+
+  flash.async = false;
+  {
+    ProductRecordStore recovered(flash, kPages, &source);
+    recovered.begin(kDevice, kTracker);
+    assert(recovered.mounted());
+    assert(recovered.custodyCandidateMatchesRetainedExact(first));
+    assert(flash.bytes.size() == size_t(kPages) * kPage);
+  }
+
+  // A durable logical release makes its cached exact protected object
+  // unreachable even when old control-page bytes still physically exist.
+  {
+    ObservationStore release_owner(flash, kPages, &source);
+    assert(release_owner.begin(kDevice));
+    assert(release_owner.requestRelease(first.identity));
+    for (unsigned i = 0U; i < 1000U && release_owner.busy(); ++i)
+      release_owner.poll();
+    assert(!release_owner.busy());
+    bool committed = false;
+    assert(release_owner.takeReleaseResult(committed) && committed);
+  }
+  {
+    ProductRecordStore released(flash, kPages, &source);
+    released.begin(kDevice, kTracker);
+    assert(released.mounted());
+    assert(!released.custodyCandidateMatchesRetainedExact(first));
+  }
+}
+
+// Enumerate at most four retained exact ciphertext objects without ever
+// interpreting an ACK, changing a record, or scanning the full logical backlog.
+void testCustodySnapshotReadOnly(bool async) {
+  FakeFlash flash;
+  flash.async = async;
+  FixedIncarnation source;
+  osc::ExactObject expected[4]{};
+  {
+    ProductRecordStore product(flash, kPages, &source);
+    product.begin(kDevice, kTracker);
+    assert(product.mounted());
+    for (uint32_t seq = 1U; seq <= 5U; ++seq)
+      assert(store(product, seq).stored);
+
+    osc::ExactObject found[osf::kMaxExactCustodyObjects]{};
+    uint16_t count = 77U;
+    assert(product.snapshotCustodyCandidates(found, count));
+    assert(count == 0U);
+    for (uint32_t seq = 1U; seq <= 4U; ++seq) {
+      expected[seq - 1U] = protectedFixture(product, seq);
+      assert(product.submitExactCache(expected[seq - 1U]) ==
+             ProductRecordStore::CacheSubmit::kStarted);
+      count = 77U;
+      found[0].object_size = 42U;
+      assert(!product.snapshotCustodyCandidates(found, count));
+      assert(count == 77U && found[0].object_size == 42U);
+      settleExactCache(product, expected[seq - 1U], true);
+      const unsigned writes_before = flash.mutation_calls;
+      assert(product.snapshotCustodyCandidates(found, count));
+      assert(count == seq);
+      assert(flash.mutation_calls == writes_before);
+      for (uint32_t i = 0U; i < seq; ++i) {
+        assert(found[i].identity.sequence == expected[i].identity.sequence);
+        assert(found[i].object_size == expected[i].object_size);
+        assert(memcmp(found[i].object, expected[i].object,
+                      expected[i].object_size) == 0);
+      }
+    }
+    // Fifth logical record exists, but the *exact protected cache* is only 4.
+    const osc::ExactObject fifth = protectedFixture(product, 5U);
+    assert(product.submitExactCache(fifth) ==
+           ProductRecordStore::CacheSubmit::kNoCapacity);
+    count = 77U;
+    assert(product.snapshotCustodyCandidates(found, count));
+    assert(count == 4U);
+    flash.fail_read_at = flash.read_calls + 1U;
+    count = 91U;
+    found[0].object_size = 43U;
+    assert(!product.snapshotCustodyCandidates(found, count));
+    assert(count == 91U && found[0].object_size == 43U);
+    flash.fail_read_at = 0U;
+    flash.unreconciled = true;
+    assert(!product.snapshotCustodyCandidates(found, count));
+    assert(count == 91U && found[0].object_size == 43U);
+    flash.unreconciled = false;
+  }
+
+  flash.async = false;
+  {
+    ProductRecordStore reboot(flash, kPages, &source);
+    reboot.begin(kDevice, kTracker);
+    assert(reboot.mounted());
+    const auto before = flash.mutation_calls;
+    osc::ExactObject recovered[osf::kMaxExactCustodyObjects]{};
+    uint16_t count = 0U;
+    assert(reboot.snapshotCustodyCandidates(recovered, count));
+    assert(count == 4U && flash.mutation_calls == before);
+    for (uint16_t i = 0U; i < count; ++i)
+      assert(memcmp(recovered[i].object, expected[i].object,
+                    expected[i].object_size) == 0);
+  }
+
+  // Simulate a previously authorized durable release through the test's
+  // direct ObservationStore fixture; the snapshot may no longer return it.
+  {
+    ObservationStore release_owner(flash, kPages, &source);
+    assert(release_owner.begin(kDevice));
+    assert(release_owner.requestRelease(expected[1].identity));
+    for (unsigned n = 0U; n < 1000U && release_owner.busy(); ++n)
+      release_owner.poll();
+    assert(!release_owner.busy());
+    bool success = false;
+    assert(release_owner.takeReleaseResult(success) && success);
+  }
+  {
+    ProductRecordStore after_release(flash, kPages, &source);
+    after_release.begin(kDevice, kTracker);
+    assert(after_release.mounted());
+    osc::ExactObject remaining[osf::kMaxExactCustodyObjects]{};
+    uint16_t count = 0U;
+    assert(after_release.snapshotCustodyCandidates(remaining, count));
+    assert(count == 3U);
+    assert(remaining[0].identity.sequence == 1U);
+    assert(remaining[1].identity.sequence == 3U);
+    assert(remaining[2].identity.sequence == 4U);
+  }
+}
+
 void testExactObjectCacheAndReboot(bool async) {
   FakeFlash flash;
   flash.async = async;
@@ -720,7 +910,15 @@ void testFillAndResetEverywhere() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  testCustodySnapshotReadOnly(false);
+  testCustodySnapshotReadOnly(true);
+  testCustodyCandidatePreflightReadOnly(false);
+  testCustodyCandidatePreflightReadOnly(true);
+  if (argc == 2 && strcmp(argv[1], "--custody-preflight-only") == 0) {
+    puts("SF5K3A ProductRecordStore read-only preflight: PASS");
+    return 0;
+  }
   testStoreAndRemount(false);
   testStoreAndRemount(true);
   testOwnersAndPrepare();
@@ -737,4 +935,5 @@ int main() {
   }
   testFillAndResetEverywhere();
   puts("SF5F ProductRecordStore checks: PASS");
+  return 0;  // Explicit because SF5K3V imports this main under a test alias.
 }
