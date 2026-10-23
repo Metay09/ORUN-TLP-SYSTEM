@@ -109,6 +109,17 @@ void successAndReboot(bool async) {
   uint8_t first[sizeof(g_last)]{};
   memcpy(first, g_last, sizeof(first));
   const unsigned no_extra_programs = flash.program_calls;
+
+  // SF5L2 rearm: unreleased record -> the SAME cached bytes again, same boot,
+  // no new seal (no counter burn) and no flash write.
+  assert(pilot.sent() && !pilot.blocked());
+  assert(pilot.rearm() && !pilot.sent());
+  assert(!pilot.rearm());  // only from the sent state
+  assert(pilot.update(true) == Pilot::Event::kSent);
+  assert(g_sends == 2U && g_seals == 1U);
+  assert(memcmp(first, g_last, sizeof(first)) == 0);
+  assert(flash.program_calls == no_extra_programs);
+  g_sends = 1U;  // keep the reboot expectations below unchanged
   flash.async = false;  // New boot mounts with synchronous flash recovery.
   ProductRecordStore reboot(flash, kPages, &source);
   reboot.begin(kDevice, kTracker);

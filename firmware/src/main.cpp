@@ -190,6 +190,9 @@ orun_tlp::TrackerProductTxPilot tracker_product_tx(product_records,
 #ifdef ORUN_SF5L0_TRACKER
 // SF5L0 bench image only: USB-started PUBLIC test-key provisioning.
 orun_tlp::Sf5l0BenchTestProvisioning bench_provisioning(security_store);
+// SF5L2: paces re-arming of the one-record pilot to drain the backlog.
+orun_tlp::Sf5l0DrainPacer bench_pacer;
+bool bench_pacer_started = false;
 #endif
 orun_tlp::HistorySecureCrypto history_secure_crypto(security_store);
 orun_tlp::HistoryDeliveryCoordinator history_delivery(history);
@@ -1403,6 +1406,29 @@ void printBenchTracker() {
       product_records.mounted() ? "mounted" : "NOT_MOUNTED");
 }
 
+// "BENCH DRAIN?": pacing state of the backlog drain.
+void printBenchDrain() {
+  const auto& st = bench_pacer.stats();
+  uint32_t retained = 0;
+  uint32_t released = 0;
+  const bool counted = product_records.mounted() &&
+      product_records.store().retainedCount(retained) &&
+      product_records.store().releasedCount(released);
+  Serial.printf(
+      "BENCH DRAIN %s sent=%lu released=%lu ack_timeouts=%lu duty_waits=%lu "
+      "budget_ms=%lu waiting_ack=%s pilot=%s retained=%ld\n",
+      bench_pacer.enabled() ? "ON" : "OFF",
+      static_cast<unsigned long>(st.sent),
+      static_cast<unsigned long>(st.released),
+      static_cast<unsigned long>(st.ack_timeouts),
+      static_cast<unsigned long>(st.duty_waits),
+      static_cast<unsigned long>(bench_pacer.tokensMs()),
+      bench_pacer.awaitingAck() ? "yes" : "no",
+      tracker_product_tx.blocked() ? "BLOCKED"
+          : (tracker_product_tx.sent() ? "SENT" : "ARMED"),
+      counted ? static_cast<long>(retained) : -1L);
+}
+
 void pollBenchTracker() {
   if (!bench_provisioning.poll()) return;
   const auto step = bench_provisioning.step();
@@ -2373,6 +2399,23 @@ void handleRoleCommand() {
     printBenchTracker();
     return;
   }
+  if (isActivityCommand("BENCH DRAIN?", 12)) {
+    role_command_length = 0;
+    printBenchDrain();
+    return;
+  }
+  if (isActivityCommand("BENCH DRAIN ON", 14)) {
+    role_command_length = 0;
+    bench_pacer.setEnabled(true);
+    printBenchDrain();
+    return;
+  }
+  if (isActivityCommand("BENCH DRAIN OFF", 15)) {
+    role_command_length = 0;
+    bench_pacer.setEnabled(false);
+    printBenchDrain();
+    return;
+  }
   if (role_command_length == 28 &&
       memcmp(role_command, "BENCH SETUP ", 12) == 0) {
     uint64_t gateway_id = 0;
@@ -2404,7 +2447,12 @@ void handleRoleCommand() {
   }
   if (isActivityCommand("BENCH GW ERASE PRODUCT CONFIRM", 30)) {
     role_command_length = 0;
-    orun_tlp::sf5l0_gateway::startErase();
+    orun_tlp::sf5l0_gateway::startErase(false);
+    return;
+  }
+  if (isActivityCommand("BENCH GW ERASE HELD CONFIRM", 27)) {
+    role_command_length = 0;
+    orun_tlp::sf5l0_gateway::startErase(true);
     return;
   }
 #endif
@@ -3387,6 +3435,9 @@ void loop() {
   if (custody_result ==
       orun_tlp::CustodyAckReleaseOwner::Service::kDurablyReleased) {
     Serial.println(F("PRODUCT CUSTODY release=DURABLE"));
+#ifdef ORUN_SF5L0_TRACKER
+    bench_pacer.onReleased(orun_tlp::monotonic::nowMs());
+#endif
   } else if (custody_result ==
              orun_tlp::CustodyAckReleaseOwner::Service::kFailed) {
     Serial.println(F("PRODUCT CUSTODY release=FAILED"));
@@ -3606,6 +3657,13 @@ void loop() {
   // One pilot TX per boot, ONLY after a durable exact encrypted cache record.
   // Keep legacy live Position + History replay higher-priority. This image
   // requires deliberate separate selection and is never default firmware.
+#ifdef ORUN_SF5L0_TRACKER
+  // Start the pacer clock before the pilot's first (boot) send is counted.
+  if (!bench_pacer_started) {
+    bench_pacer.begin(orun_tlp::monotonic::nowMs());
+    bench_pacer_started = true;
+  }
+#endif
   const bool pilot_allowed = ble_ready && tracking_enabled &&
       radio_manager.role() == orun_tlp::NodeRole::kTracker &&
       !positions.pending() && !radio_manager.relayForwardingEnabled() &&
@@ -3629,6 +3687,9 @@ void loop() {
       break;
     case orun_tlp::TrackerProductTxPilot::Event::kSent:
       Serial.println(F("PRODUCT PILOT TX=start; custody=unconfirmed"));
+#ifdef ORUN_SF5L0_TRACKER
+      bench_pacer.onSent(orun_tlp::monotonic::nowMs());
+#endif
       break;
     case orun_tlp::TrackerProductTxPilot::Event::kBlocked:
       Serial.println(F("PRODUCT PILOT blocked; retained record preserved"));
@@ -3636,6 +3697,15 @@ void loop() {
     case orun_tlp::TrackerProductTxPilot::Event::kNone:
       break;
   }
+#ifdef ORUN_SF5L0_TRACKER
+  {
+    const uint32_t now = orun_tlp::monotonic::nowMs();
+    // Re-arm only after a TX; the pacer decides next record vs. same-record
+    // retry timing and the product airtime budget.
+    if (tracker_product_tx.sent() && bench_pacer.mayRearm(now))
+      tracker_product_tx.rearm();
+  }
+#endif
 #endif
 
   // Feed only after the cooperative loop has completed all service work. A

@@ -330,13 +330,72 @@ void testForeignCredentialNeverTouched() {
          security_format::kVersionV2);
 }
 
+// SF5L2: pacing decisions only (no RF, no store).
+void testDrainPacer() {
+  Sf5l0DrainPacer pacer;
+  pacer.begin(0U);
+  assert(pacer.mayRearm(0U));
+  pacer.onSent(0U);
+  assert(!pacer.mayRearm(1000U));          // waiting for the ACK
+  pacer.onReleased(4000U);
+  assert(!pacer.mayRearm(6999U) && pacer.mayRearm(7000U));
+  // Missed ACK: same record again only after ack_wait + back-off.
+  pacer.onSent(7000U);
+  assert(!pacer.mayRearm(21999U));
+  assert(!pacer.mayRearm(22000U) && pacer.stats().ack_timeouts == 1U);
+  assert(!pacer.mayRearm(81999U) && pacer.mayRearm(82000U));
+  pacer.setEnabled(false);
+  assert(!pacer.mayRearm(90000U));
+  pacer.setEnabled(true);
+
+  // Duty: drive as fast as allowed for 3 h with instant releases and check
+  // every sliding hour stays within burst + 6 % x 1 h of product airtime.
+  Sf5l0DrainPacer fast;
+  fast.begin(0U);
+  static uint32_t sends[20000];
+  unsigned n = 0U;
+  for (uint32_t t = 0U; t <= 3U * 3600000U; t += 100U) {
+    if (fast.mayRearm(t)) {
+      fast.onSent(t);
+      assert(n < 20000U);
+      sends[n++] = t;
+      fast.onReleased(t);  // ACK at once
+    }
+  }
+  const uint32_t air = fast.config().airtime_ms;
+  const uint64_t bound_ms = uint64_t(fast.config().burst_ms) +
+      uint64_t(3600000U) * fast.config().duty_ppm / 1000000U;
+  unsigned worst = 0U;
+  for (unsigned i = 0U, j = 0U; i < n; ++i) {
+    while (sends[i] - sends[j] >= 3600000U) ++j;
+    if (i - j + 1U > worst) worst = i - j + 1U;
+  }
+  assert(uint64_t(worst) * air <= bound_ms + air);
+  assert(uint64_t(worst) * air <= 360000U);  // below 10 % of an hour
+  // Long-run rate is the duty rate, not the burst.
+  unsigned last_hour = 0U;
+  for (unsigned i = 0U; i < n; ++i)
+    if (sends[i] >= 2U * 3600000U) ++last_hour;
+  assert(uint64_t(last_hour) * air <= uint64_t(3600000U) * 60000U / 1000000U + air);
+  assert(fast.stats().duty_waits > 0U);
+
+  // 32-bit millisecond wrap.
+  Sf5l0DrainPacer wrap;
+  wrap.begin(0xFFFFF000U);
+  assert(wrap.mayRearm(0xFFFFF000U));
+  wrap.onSent(0xFFFFF000U);
+  wrap.onReleased(0xFFFFFF00U);
+  assert(!wrap.mayRearm(0x00000100U) && wrap.mayRearm(0x00000B00U));
+}
+
 }  // namespace
 
 int main() {
   testTrackerProvisioningFromBlank();
   testForeignCredentialNeverTouched();
   testGatewayHandOutOrder();
+  testDrainPacer();
   puts("SF5L0/SF5L1 bench test-key provisioning + Gateway ACK -> Tracker "
-       "verifier + Gateway held-record hand-out: PASS (HOST ONLY)");
+       "verifier + Gateway held-record hand-out + drain pacing: PASS (HOST ONLY)");
   return 0;
 }

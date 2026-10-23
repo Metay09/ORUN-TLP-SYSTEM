@@ -14,6 +14,14 @@ bool TrackerProductTxPilot::storageIdle() const {
          !records_.store().faulted() && !records_.store().busy();
 }
 
+bool TrackerProductTxPilot::rearm() {
+  if (phase_ != Phase::kDone) return false;
+  identity_ = {};
+  sealed_ = {};
+  phase_ = Phase::kSelect;
+  return true;
+}
+
 TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
   if (phase_ == Phase::kDone || phase_ == Phase::kBlocked)
     return Event::kNone;

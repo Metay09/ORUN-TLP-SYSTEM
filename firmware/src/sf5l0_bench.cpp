@@ -236,6 +236,72 @@ const char* sf5l0StepName(Sf5l0BenchTestProvisioning::Step step) {
   return "?";
 }
 
+// ------------------------------------------------------------ drain pace --
+
+namespace {
+// Wrap-safe "a is at or after b" for a 32-bit millisecond clock.
+bool reached(uint32_t now, uint32_t deadline) {
+  return static_cast<int32_t>(now - deadline) >= 0;
+}
+}  // namespace
+
+void Sf5l0DrainPacer::begin(uint32_t now_ms) {
+  stats_ = Stats{};
+  awaiting_ack_ = false;
+  duty_wait_counted_ = false;
+  sent_at_ms_ = now_ms;
+  next_allowed_ms_ = now_ms;
+  last_refill_ms_ = now_ms;
+  tokens_us_ = uint64_t(config_.burst_ms) * 1000U;
+}
+
+void Sf5l0DrainPacer::refill(uint32_t now_ms) {
+  const uint32_t elapsed = now_ms - last_refill_ms_;
+  last_refill_ms_ = now_ms;
+  // elapsed[ms] * duty_ppm / 1e6 -> ms of airtime; kept in microseconds.
+  tokens_us_ += uint64_t(elapsed) * config_.duty_ppm / 1000U;
+  const uint64_t cap = uint64_t(config_.burst_ms) * 1000U;
+  if (tokens_us_ > cap) tokens_us_ = cap;
+}
+
+bool Sf5l0DrainPacer::mayRearm(uint32_t now_ms) {
+  refill(now_ms);
+  if (!enabled_) return false;
+  if (awaiting_ack_) {
+    if (!reached(now_ms, sent_at_ms_ + config_.ack_wait_ms)) return false;
+    // No durable release in time: the same record goes again, later.
+    awaiting_ack_ = false;
+    ++stats_.ack_timeouts;
+    next_allowed_ms_ = now_ms + config_.retry_backoff_ms;
+    return false;
+  }
+  if (!reached(now_ms, next_allowed_ms_)) return false;
+  if (tokens_us_ < uint64_t(config_.airtime_ms) * 1000U) {
+    if (!duty_wait_counted_) {
+      ++stats_.duty_waits;
+      duty_wait_counted_ = true;
+    }
+    return false;
+  }
+  duty_wait_counted_ = false;
+  return true;
+}
+
+void Sf5l0DrainPacer::onSent(uint32_t now_ms) {
+  refill(now_ms);
+  const uint64_t cost = uint64_t(config_.airtime_ms) * 1000U;
+  tokens_us_ = tokens_us_ > cost ? tokens_us_ - cost : 0U;
+  awaiting_ack_ = true;
+  sent_at_ms_ = now_ms;
+  ++stats_.sent;
+}
+
+void Sf5l0DrainPacer::onReleased(uint32_t now_ms) {
+  awaiting_ack_ = false;
+  next_allowed_ms_ = now_ms + config_.gap_after_release_ms;
+  ++stats_.released;
+}
+
 // ---------------------------------------------------------------- Gateway --
 
 bool Sf5l0BenchGrantSource::verifiedForLocalGateway(uint64_t gateway_id) const {

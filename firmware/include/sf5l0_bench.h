@@ -78,6 +78,61 @@ class Sf5l0BenchTestProvisioning final {
 
 const char* sf5l0StepName(Sf5l0BenchTestProvisioning::Step step);
 
+// SF5L2: bench pacing for draining the Tracker backlog with the one-record
+// pilot. Decides only WHEN the pilot may be re-armed; selection, sealing,
+// caching and release stay with their existing owners.
+//  - after a durable release: next record after a short gap;
+//  - no release within ack_wait: same record again after a back-off;
+//  - token bucket on PRODUCT_SECURE airtime (rate duty_ppm, depth burst_ms)
+//    bounds this sender to (burst + duty x 1 h) of airtime in any hour.
+// v1 POSITION / HISTORY_SECURE airtime is NOT counted here.
+class Sf5l0DrainPacer final {
+ public:
+  struct Config {
+    uint32_t gap_after_release_ms = 3000U;
+    uint32_t ack_wait_ms = 15000U;       // longer than the 10 s RX window
+    uint32_t retry_backoff_ms = 60000U;  // after a missed ACK
+    uint32_t airtime_ms = 2300U;         // SF11 / 125 kHz, 100-byte frame
+    uint32_t duty_ppm = 60000U;          // 6 % long-run, product frames only
+    uint32_t burst_ms = 60000U;          // bucket depth
+  };
+  struct Stats {
+    uint32_t sent = 0U;
+    uint32_t released = 0U;
+    uint32_t ack_timeouts = 0U;
+    uint32_t duty_waits = 0U;
+  };
+
+  Sf5l0DrainPacer() : config_(Config()) {}
+  explicit Sf5l0DrainPacer(const Config& config) : config_(config) {}
+
+  void begin(uint32_t now_ms);
+  void setEnabled(bool enabled) { enabled_ = enabled; }
+  bool enabled() const { return enabled_; }
+  // true: the pilot may be re-armed now (caller then calls rearm()).
+  bool mayRearm(uint32_t now_ms);
+  void onSent(uint32_t now_ms);
+  void onReleased(uint32_t now_ms);
+
+  bool awaitingAck() const { return awaiting_ack_; }
+  uint32_t tokensMs() const { return static_cast<uint32_t>(tokens_us_ / 1000U); }
+  const Stats& stats() const { return stats_; }
+  const Config& config() const { return config_; }
+
+ private:
+  void refill(uint32_t now_ms);
+
+  Config config_;
+  Stats stats_{};
+  bool enabled_ = true;
+  bool awaiting_ack_ = false;
+  bool duty_wait_counted_ = false;
+  uint32_t sent_at_ms_ = 0U;
+  uint32_t next_allowed_ms_ = 0U;
+  uint32_t last_refill_ms_ = 0U;
+  uint64_t tokens_us_ = 0U;  // airtime budget in microseconds
+};
+
 // Gateway side: a durable-grant source that DERIVES the scoped custody ACK
 // key from the public test root. Real Gateways must never hold a Tracker
 // root; this exists only because the test root is public by construction.
@@ -135,8 +190,11 @@ void begin(FlashBackend& product_port, RadioManager& radio,
 void service(bool observation_store_mounted);
 // "BENCH?"
 void print();
-// "BENCH GW ERASE PRODUCT CONFIRM": wipe this bench board's product region.
-void startErase();
+// "BENCH GW ERASE PRODUCT CONFIRM": wipe this bench board's product region
+// when it is not a READY custody store. include_held=true ("BENCH GW ERASE
+// HELD CONFIRM") also wipes a READY store: bench-only stand-in for the
+// missing authenticated Edge accept, used once the PC ledger has the records.
+void startErase(bool include_held);
 // "BENCH GW DUMP": print every held record as an EDGE HELD line.
 void dump();
 }  // namespace sf5l0_gateway
