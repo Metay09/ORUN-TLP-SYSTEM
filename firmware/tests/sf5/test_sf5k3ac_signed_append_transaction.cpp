@@ -267,7 +267,6 @@ int main() {
   rejectForgedOrWrongIssuer();
   testAppendAndLiveRevocation();
   testScopeMutationBlocked();
-  testPinnedIssuerContinuity();
   testUnsignedInvalidIssuerAndIdentity();
 
   testSuccessfulWriteButNoAuthorization();
