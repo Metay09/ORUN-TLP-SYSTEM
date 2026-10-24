@@ -37,6 +37,23 @@ void testFraming() {
     assert(r.size() == size && memcmp(r.message(), msg, size) == 0);
     assert(frames == (size + el::kFrameData - 1) / el::kFrameData);
   }
+  // Shared vector with test_sf5l6_ble_edge.py (the PC/phone side).
+  {
+    uint8_t forty[40];
+    for (uint8_t i = 0; i < 40U; ++i) forty[i] = i;
+    el::Fragmenter v;
+    assert(v.load(forty, sizeof(forty), 9));
+    const char* expect[] = {"01010900000102030405060708090A0B0C0D0E0F",
+                            "01000901101112131415161718191A1B1C1D1E1F",
+                            "010209022021222324252627"};
+    for (const char* e : expect) {
+      uint8_t frame[el::kFrameSize];
+      uint8_t len = 0;
+      assert(v.peek(frame, len) && hex(frame, len) == e);
+      v.advance();
+    }
+    assert(!v.pending());
+  }
   el::Fragmenter big;
   assert(!big.load(msg, el::kMaxMessage + 1, 1) && !big.pending());
   assert(!big.load(msg, 0, 1));

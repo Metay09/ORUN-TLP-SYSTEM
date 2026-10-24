@@ -1,6 +1,6 @@
 # SF5L5 — bench Edge hand-off (confirmed delivery, Gateway reclaim)
 
-**Status:** code + host tests. **Physical bench check: pending (owner).**
+**Status:** code + host tests + physical bench check (2026-10-24, owner).
 Bench only for authentication (public test key). The store mechanism is
 production code.
 **Base:** `main@c6bd9b4` (SF5L4 merged).
@@ -81,6 +81,18 @@ The bench Gateway's USB command buffer is 160 bytes (48 elsewhere).
     retried; `--no-accept`.
 - Full host suite PASS. `rak4630` unchanged (362 912 B). Gateway bench
   380 496 B.
+
+## Physical bench check (2026-10-24)
+
+Real RAK4631 pair, Gateway `09A462BD4B275BA5`, PC tool over USB with
+`--bench-test-key`:
+
+- `DUMP` returned the 102 held records; the tool sent an accept for each one
+  after its ledger commit.
+- Pages 0, 1 and 2 were reclaimed automatically (`EDGE RECLAIM page=… OK`).
+- Tool summary: `teslim=104 teslim_red=0 bekleyen_teslim=0` (102 from the
+  dump + 2 new records that arrived during the run).
+- No operator erase was needed, and none of the records were lost.
 
 ## Known limits
 
