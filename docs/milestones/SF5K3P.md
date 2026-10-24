@@ -16,6 +16,8 @@ Based on SF5K3N (separate Gateway ACK signer). The earlier SF5K3O
   asynchronous `FlashBackend::kPending` via `pollPending`.
 - Duplicate exact-object lookup uses full bytes, not a short hash hint.
 - No automatic eviction, overwrite, page reclaim, or Edge handoff yet.
+  (SF5L5 adds authenticated Edge hand-off + page reclaim, and re-ACKs a
+  handed-off duplicate from its durable bytes; see SF5L5.md.)
   Capacity exhaustion returns `kNoCapacity`; **never** fabricates custody.
 - `GatewayLocalCustodyOwner` calls SF5K3N signer only after a positive exact
   flash readback on a committed held record, including reboot-safe duplicate.

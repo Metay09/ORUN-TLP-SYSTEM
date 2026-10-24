@@ -32,6 +32,7 @@ Sf5l0BenchGrantSource* grants = nullptr;
 Guard* guard = nullptr;
 GatewayCustodyAuthorizedIngress* ingress = nullptr;
 GatewayProductCustodyRuntime* runtime = nullptr;
+Sf5l0EdgeHandoff* handoff = nullptr;
 
 uint32_t custody_started = 0;
 uint32_t duplicates = 0;
@@ -182,6 +183,7 @@ void begin(FlashBackend& port, RadioManager& radio_manager,
   ingress = new GatewayCustodyAuthorizedIngress(*custody_owner, *grants,
                                                 gateway_id);
   runtime = new GatewayProductCustodyRuntime(radio_manager, *ingress);
+  handoff = new Sf5l0EdgeHandoff(*custody, gateway_id);
 
   const Guard::State state =
       guard->inspectAndMount(true, observation_store_mounted, gateway_id);
@@ -215,9 +217,32 @@ void dump() {
   Serial.printf("EDGE DUMP END count=%u\n", static_cast<unsigned>(count));
 }
 
+void serviceHandoff() {
+  if (handoff == nullptr || erase_active || guard == nullptr ||
+      guard->state() != Guard::State::kReady)
+    return;
+  const Sf5l0EdgeHandoff::Event e = handoff->service();
+  switch (e.kind) {
+    case Sf5l0EdgeHandoff::Event::Kind::kHandedOff:
+      Serial.printf("EDGE ACCEPT %s page=%u slot=%u state=HANDED_OFF\n",
+                    e.ok ? "OK" : "FAIL", unsigned(e.page), unsigned(e.slot));
+      break;
+    case Sf5l0EdgeHandoff::Event::Kind::kReclaimStarted:
+      Serial.printf("EDGE RECLAIM page=%u started\n", unsigned(e.page));
+      break;
+    case Sf5l0EdgeHandoff::Event::Kind::kReclaimed:
+      Serial.printf("EDGE RECLAIM page=%u %s\n", unsigned(e.page),
+                    e.ok ? "OK" : "FAIL");
+      break;
+    case Sf5l0EdgeHandoff::Event::Kind::kNone:
+      break;
+  }
+}
+
 void service(bool observation_store_mounted) {
   serviceErase();
   if (runtime == nullptr || guard == nullptr) return;
+  serviceHandoff();
   // Hand out a newly committed record once its flash write has settled.
   if (emit_pending && canWalk()) {
     emit_pending = false;
@@ -271,13 +296,39 @@ void print() {
       roleOk() ? "" : " (needs ROLE BASE for continuous RX)");
   Serial.printf(
       "BENCH GATEWAY custody_started=%lu duplicates=%lu denied=%lu ack_tx=%lu "
-      "grants_issued=%lu grants_refused=%lu\n",
+      "grants_issued=%lu grants_refused=%lu handed_off=%lu reclaimed=%lu\n",
       static_cast<unsigned long>(custody_started),
       static_cast<unsigned long>(duplicates),
       static_cast<unsigned long>(denied),
       static_cast<unsigned long>(ack_tx),
       static_cast<unsigned long>(grants ? grants->grantsIssued() : 0U),
-      static_cast<unsigned long>(grants ? grants->grantsRefused() : 0U));
+      static_cast<unsigned long>(grants ? grants->grantsRefused() : 0U),
+      static_cast<unsigned long>(handoff ? handoff->handedOff() : 0U),
+      static_cast<unsigned long>(handoff ? handoff->reclaimed() : 0U));
+}
+
+void edgeAccept(const char* line, size_t length) {
+  if (handoff == nullptr || erase_active || guard == nullptr ||
+      guard->state() != Guard::State::kReady) {
+    Serial.println(F("EDGE ACCEPT BUSY page=? slot=? (store not ready)"));
+    return;
+  }
+  uint16_t page = 0, slot = 0;
+  const auto reply = handoff->accept(line, length, page, slot);
+  const char* word = "REJECTED reason=STORE";
+  switch (reply) {
+    case Sf5l0EdgeHandoff::Reply::kPending: return;  // result follows
+    case Sf5l0EdgeHandoff::Reply::kAlready: word = "OK"; break;
+    case Sf5l0EdgeHandoff::Reply::kUnknown: word = "UNKNOWN"; break;
+    case Sf5l0EdgeHandoff::Reply::kBusy: word = "BUSY"; break;
+    case Sf5l0EdgeHandoff::Reply::kBadMac: word = "REJECTED reason=MAC"; break;
+    case Sf5l0EdgeHandoff::Reply::kMalformed:
+      word = "REJECTED reason=MALFORMED"; break;
+    case Sf5l0EdgeHandoff::Reply::kRejected: break;
+  }
+  Serial.printf("EDGE ACCEPT %s page=%u slot=%u%s\n", word, unsigned(page),
+                unsigned(slot),
+                reply == Sf5l0EdgeHandoff::Reply::kAlready ? " state=ALREADY" : "");
 }
 
 void startErase(bool include_held) {

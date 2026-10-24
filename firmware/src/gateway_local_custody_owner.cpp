@@ -53,7 +53,8 @@ GatewayLocalCustodyOwner::Submit GatewayLocalCustodyOwner::submit(
   if (admission==ProductCustodyStore::Admission::kBusy)
     return Submit::kBusy;
   if (admission!=ProductCustodyStore::Admission::kStarted &&
-      admission!=ProductCustodyStore::Admission::kDuplicateHeld)
+      admission!=ProductCustodyStore::Admission::kDuplicateHeld &&
+      admission!=ProductCustodyStore::Admission::kDuplicateHandedOff)
     return Submit::kRejected;
 
   pending_scope_=scope;
@@ -64,8 +65,11 @@ GatewayLocalCustodyOwner::Submit GatewayLocalCustodyOwner::submit(
     waiting_flash_=true;
     return Submit::kStarted;
   }
-  // Duplicate already-held object: re-ACK is allowed only after independently
-  // rereading the exact durable bytes. NO ACK for handed-off/unknown records.
+  // Duplicate of a durably committed object (still held, or since handed off
+  // to an Edge that durably accepted it): the Tracker's ACK was lost. Re-ACK
+  // only after independently rereading the exact durable bytes; never for an
+  // unknown record. Without this a lost ACK would pin the object in the
+  // Tracker's 4-slot custody cache until ring retention erased it (SF5L5).
   if (!signCommitted(handle)) return Submit::kRejected;
   return Submit::kAckReady;
 }
@@ -74,7 +78,7 @@ bool GatewayLocalCustodyOwner::signCommitted(
     const ProductCustodyStore::Handle& handle) {
   uint8_t found[100]{};
   size_t found_size=0U;
-  if (store_.readConfirmedHeld(handle,found,found_size)!=
+  if (store_.readConfirmedDurable(handle,found,found_size)!=
           ProductCustodyStore::Lookup::kFound ||
       found_size!=pending_size_ ||
       memcmp(found,pending_object_,pending_size_)!=0) {

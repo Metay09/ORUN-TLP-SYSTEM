@@ -985,3 +985,8 @@ python3 firmware/tests/sf5/test_sf5l3_edge_map.py
 # SF5L4: range kit (gateway RSSI per record, arrival delay, range view,
 # bench-only live-first TX order).
 python3 firmware/tests/sf5/test_sf5l4_range_kit.py
+
+# SF5L5: bench Edge accept -> Gateway hand-off marker, page reclaim/reuse,
+# re-ACK of handed-off duplicates; PC tool queue + shared MAC vector.
+bash tools/ci/run_sf5l5_edge_handoff_host.sh
+python3 firmware/tests/sf5/test_sf5l5_edge_handoff.py

@@ -110,6 +110,8 @@ bool ProductCustodyStore::begin() {
   awaiting_=false;
   phase_=Phase::kIdle;
   outcome_ready_=false;
+  maintenance_ready_=false;
+  maintenance_=Maintenance{};
   active_page_=UINT16_MAX;
   active_generation_=0U;
   product_region::Census census{};
@@ -225,7 +227,56 @@ void ProductCustodyStore::finish(bool success) {
 
 void ProductCustodyStore::poll() {
   if (!ready() || !busy()) return;
-  if (flash_.hasUnreconciledMutation()) { finish(false); return; }
+  const bool maintenance = phase_==Phase::kHandoffMark ||
+      phase_==Phase::kHandoffVerify || phase_==Phase::kReclaimErase ||
+      phase_==Phase::kReclaimVerify;
+  if (flash_.hasUnreconciledMutation()) {
+    if (maintenance) finishMaintenance(false); else finish(false);
+    return;
+  }
+  if (maintenance) {
+    FlashOpResult r=FlashOpResult::kFailed;
+    switch (phase_) {
+      case Phase::kHandoffMark: {
+        const uint32_t handed_off=0U;  // NOR: only clears bits
+        r=write(handoff_offset_,&handed_off,4U);
+        if (r==FlashOpResult::kDone) phase_=Phase::kHandoffVerify;
+        break;
+      }
+      case Phase::kHandoffVerify: {
+        fmt::RecordInspection found{};
+        const bool ok=readRecord(pending_handle_.page,pending_handle_.slot,found) &&
+            found.evidence==fmt::RecordEvidence::kHandedOff &&
+            fmt::exactObject(found,pending_object_,pending_size_);
+        finishMaintenance(ok);
+        return;
+      }
+      case Phase::kReclaimErase:
+        if (awaiting_) {
+          r=flash_.pollPending();
+          if (r!=FlashOpResult::kPending) awaiting_=false;
+        } else {
+          r=flash_.erasePage(pending_handle_.page);
+          if (r==FlashOpResult::kPending) awaiting_=true;
+        }
+        if (r==FlashOpResult::kDone) phase_=Phase::kReclaimVerify;
+        break;
+      case Phase::kReclaimVerify: {
+        const bool ok=isErasedPage(pending_handle_.page);
+        if (ok && pending_handle_.page==active_page_) {
+          // The full, fully handed-off newest page: the next admission opens
+          // a fresh page with a HIGHER generation (active_generation_ kept).
+          active_page_=UINT16_MAX;
+          next_slot_=0U;
+        }
+        finishMaintenance(ok);
+        return;
+      }
+      default: return;
+    }
+    if (r==FlashOpResult::kFailed) finishMaintenance(false);
+    return;
+  }
   const uint32_t base=uint32_t(pending_handle_.page)*fmt::kPageSize;
   const uint32_t record=recordOffset(pending_handle_.page,pending_handle_.slot);
   FlashOpResult r=FlashOpResult::kFailed;
@@ -278,6 +329,9 @@ void ProductCustodyStore::poll() {
       return;
     }
     case Phase::kIdle: return;
+    case Phase::kHandoffMark: case Phase::kHandoffVerify:
+    case Phase::kReclaimErase: case Phase::kReclaimVerify:
+      return;  // handled above
   }
   if (r==FlashOpResult::kFailed) finish(false);
 }
@@ -293,6 +347,18 @@ bool ProductCustodyStore::takeCustodyResult(bool& committed,Handle& handle) {
 ProductCustodyStore::Lookup ProductCustodyStore::readConfirmedHeld(
     const Handle& handle,
     uint8_t (&object)[fmt::kMaxObjectSize],size_t& size) const {
+  return readDurable(handle,false,object,size);
+}
+
+ProductCustodyStore::Lookup ProductCustodyStore::readConfirmedDurable(
+    const Handle& handle,
+    uint8_t (&object)[fmt::kMaxObjectSize],size_t& size) const {
+  return readDurable(handle,true,object,size);
+}
+
+ProductCustodyStore::Lookup ProductCustodyStore::readDurable(
+    const Handle& handle,bool allow_handed_off,
+    uint8_t (&object)[fmt::kMaxObjectSize],size_t& size) const {
   if (!ready() || busy() || flash_.hasUnreconciledMutation() ||
       handle.page>=page_count_ ||
       handle.slot>=fmt::kRecordsPerPage || handle.generation==0U)
@@ -305,10 +371,107 @@ ProductCustodyStore::Lookup ProductCustodyStore::readConfirmedHeld(
       header.generation!=handle.generation ||
       (record.evidence!=fmt::RecordEvidence::kHeld &&
        record.evidence!=fmt::RecordEvidence::kHandedOff)) return Lookup::kNotHeld;
-  if (record.evidence!=fmt::RecordEvidence::kHeld) return Lookup::kNotHeld;
+  if (record.evidence!=fmt::RecordEvidence::kHeld && !allow_handed_off)
+    return Lookup::kNotHeld;
   size=record.object_size;
   memcpy(object,record.object,size);
   return Lookup::kFound;
+}
+
+ProductCustodyStore::Handoff ProductCustodyStore::requestHandoff(
+    const Handle& handle,const uint8_t* object,size_t size) {
+  if (!ready() || flash_.hasUnreconciledMutation()) return Handoff::kRejected;
+  if (busy() || outcome_ready_ || maintenance_ready_) return Handoff::kBusy;
+  if (object==nullptr || size==0U || size>fmt::kMaxObjectSize ||
+      handle.page>=page_count_ || handle.slot>=fmt::kRecordsPerPage ||
+      handle.generation==0U)
+    return Handoff::kRejected;
+  fmt::PageInspection header{};
+  fmt::RecordInspection record{};
+  if (!readPage(handle.page,header) || !readRecord(handle.page,handle.slot,record))
+    return Handoff::kRejected;
+  // Bind page generation AND exact bytes: an accept for a reclaimed and
+  // reused slot (or for other bytes) must never mark a different object.
+  if (header.evidence!=fmt::PageEvidence::kActive ||
+      header.generation!=handle.generation ||
+      !fmt::exactObject(record,object,size))
+    return Handoff::kNotFound;
+  if (record.evidence==fmt::RecordEvidence::kHandedOff)
+    return Handoff::kAlreadyHandedOff;
+  if (record.evidence!=fmt::RecordEvidence::kHeld) return Handoff::kNotFound;
+  if (record.next_handoff_slot>1U) return Handoff::kExhausted;
+  handoff_offset_=recordOffset(handle.page,handle.slot) +
+      (record.next_handoff_slot==0U ? fmt::kRecordHandoff0Offset
+                                    : fmt::kRecordHandoff1Offset);
+  pending_handle_=handle;
+  pending_size_=size;
+  memcpy(pending_object_,object,size);
+  phase_=Phase::kHandoffMark;
+  return Handoff::kStarted;
+}
+
+int ProductCustodyStore::reclaimablePage() const {
+  if (!ready() || busy() || flash_.hasUnreconciledMutation()) return -1;
+  for (uint16_t page=0;page<page_count_;++page) {
+    // The page still accepting records is never reclaimed while it has room.
+    if (page==active_page_ && next_slot_<fmt::kRecordsPerPage) continue;
+    fmt::PageInspection header{};
+    if (!readPage(page,header) || header.evidence!=fmt::PageEvidence::kActive)
+      continue;
+    bool all_handed_off=true;
+    for (uint16_t slot=0;slot<fmt::kRecordsPerPage && all_handed_off;++slot) {
+      fmt::RecordInspection record{};
+      all_handed_off=readRecord(page,slot,record) &&
+          record.evidence==fmt::RecordEvidence::kHandedOff;
+    }
+    if (all_handed_off) return page;
+  }
+  return -1;
+}
+
+bool ProductCustodyStore::requestReclaim(uint16_t page) {
+  if (reclaimablePage()<0 || maintenance_ready_ || outcome_ready_) return false;
+  // Re-check this exact page under the same rule (cheap, avoids a stale id).
+  if (page>=page_count_ || (page==active_page_ && next_slot_<fmt::kRecordsPerPage))
+    return false;
+  fmt::PageInspection header{};
+  if (!readPage(page,header) || header.evidence!=fmt::PageEvidence::kActive)
+    return false;
+  for (uint16_t slot=0;slot<fmt::kRecordsPerPage;++slot) {
+    fmt::RecordInspection record{};
+    if (!readRecord(page,slot,record) ||
+        record.evidence!=fmt::RecordEvidence::kHandedOff)
+      return false;
+  }
+  pending_handle_=Handle{};
+  pending_handle_.page=page;
+  pending_handle_.generation=header.generation;
+  awaiting_=false;
+  phase_=Phase::kReclaimErase;
+  return true;
+}
+
+void ProductCustodyStore::finishMaintenance(bool success) {
+  maintenance_.kind = (phase_==Phase::kReclaimErase || phase_==Phase::kReclaimVerify)
+      ? Maintenance::Kind::kReclaim : Maintenance::Kind::kHandoff;
+  maintenance_.success=success;
+  maintenance_.handle=pending_handle_;
+  maintenance_ready_=true;
+  phase_=Phase::kIdle;
+  awaiting_=false;
+  // Any failed or unverifiable program/erase fails closed until reboot. On
+  // reboot a torn marker reads as HELD (retried with the other slot) and a
+  // torn erase refuses to mount (manual bench recovery), never data loss.
+  if (!success || flash_.hasUnreconciledMutation()) faulted_=true;
+  memset(pending_object_,0,sizeof(pending_object_));
+}
+
+bool ProductCustodyStore::takeMaintenanceResult(Maintenance& result) {
+  if (!maintenance_ready_) return false;
+  result=maintenance_;
+  maintenance_ready_=false;
+  maintenance_=Maintenance{};
+  return true;
 }
 
 }  // namespace orun_tlp
