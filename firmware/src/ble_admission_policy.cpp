@@ -56,7 +56,8 @@ BleAdmissionAction BleAdmissionPolicy::update(const BleAdmissionInput& input,
     startFreshWindow(now);
   }
 
-  if (state_ == State::kOpen && monotonic::reached(now, close_at_ms_)) {
+  if (state_ == State::kOpen && !always_available_ &&
+      monotonic::reached(now, close_at_ms_)) {
     state_ = State::kClosing;
     next_action_at_ms_ = now;
   }

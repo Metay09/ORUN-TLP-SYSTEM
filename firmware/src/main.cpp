@@ -453,6 +453,9 @@ void onBleEvent(ble_evt_t* evt) {
     ++ble_disconnect_events;
     taskEXIT_CRITICAL();
   }
+#ifdef ORUN_SF5L0_GATEWAY
+  orun_tlp::sf5l0_gateway::onBleEvent(evt);  // HVC counter only
+#endif
 }
 
 void reverseBleUuid128(const uint8_t source[16], uint8_t destination[16]) {
@@ -3234,6 +3237,14 @@ void setup() {
       Serial.println(F("BLE APP GATT ready"));
     else
       Serial.println(F("BLE APP GATT unavailable"));
+#ifdef ORUN_SF5L0_GATEWAY
+    // SF5L6: Edge hand-off over BLE, and the Gateway-bridge availability
+    // commitment: BLE never closes on this image (AGENTS.md "BLE").
+    Serial.println(orun_tlp::sf5l0_gateway::beginBle()
+                       ? F("BLE EDGE GATT ready")
+                       : F("BLE EDGE GATT unavailable"));
+    ble_admission.setAlwaysAvailable(true);
+#endif
 
     // setName() only sets the GAP Device Name attribute, readable after a
     // client connects -- it does not, by itself, put anything into the
@@ -3389,6 +3400,10 @@ void loop() {
     // advertising after a disconnect.
     pollBleApplicationRuntime(input.connected, connection_handle,
                               input.disconnect_event, ble_now);
+#ifdef ORUN_SF5L0_GATEWAY
+    orun_tlp::sf5l0_gateway::pollBle(input.connected, connection_handle,
+                                     input.disconnect_event, ble_now);
+#endif
     ble_disconnect_events_seen = disconnect_events;
 
     switch (ble_admission.update(input, ble_now)) {

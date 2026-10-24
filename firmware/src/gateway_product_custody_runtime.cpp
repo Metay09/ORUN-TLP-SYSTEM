@@ -39,6 +39,8 @@ GatewayProductCustodyRuntime::update(bool enabled) {
 
   switch (outcome) {
     case GatewayCustodyAuthorizedIngress::Result::kStarted:
+      last_rssi_ = received.rssi_dbm;
+      last_snr_ = received.snr_db;
       return Event::kCustodyStarted;
     case GatewayCustodyAuthorizedIngress::Result::kAckReady:
       // Exact, independently read-back duplicate: one bounded ACK attempt

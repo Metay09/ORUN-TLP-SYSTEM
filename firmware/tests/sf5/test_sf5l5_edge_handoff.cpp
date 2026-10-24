@@ -247,6 +247,7 @@ void testHandoffAndReclaim() {
 
 }  // namespace
 
+#ifndef ORUN_SF5L5_NO_MAIN  // reused by test_sf5l6_ble_edge.cpp
 int main() {
   testMacVector();
   testHandoffAndReclaim();
@@ -255,3 +256,4 @@ int main() {
        "(HOST ONLY)");
   return 0;
 }
+#endif
