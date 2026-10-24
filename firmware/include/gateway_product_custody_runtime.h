@@ -38,9 +38,16 @@ class GatewayProductCustodyRuntime final {
                                 observation_store_mounted, radio_.deviceId()));
   }
 
+  // SF5L6: RSSI/SNR of the frame whose custody most recently STARTED (how
+  // strongly this Gateway heard the Tracker). Diagnostics only; no authority.
+  int16_t lastCustodyRssi() const { return last_rssi_; }
+  int8_t lastCustodySnr() const { return last_snr_; }
+
  private:
   RadioManager& radio_;
   GatewayCustodyAuthorizedIngress& ingress_;
+  int16_t last_rssi_ = 0;
+  int8_t last_snr_ = 0;
 };
 
 }  // namespace orun_tlp

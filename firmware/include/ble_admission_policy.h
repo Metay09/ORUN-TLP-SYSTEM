@@ -64,6 +64,17 @@ class BleAdmissionPolicy {
   // Call every loop tick. Returns the physical action the caller must try.
   BleAdmissionAction update(const BleAdmissionInput& input, uint32_t now);
 
+  // Gateway-bridge availability commitment (AGENTS.md "BLE"): while on, the
+  // no-client window never expires, a pending close is cancelled and
+  // advertising keeps being (re)requested. This is an explicit service
+  // commitment, NOT derived from the legacy BASE role. Tracker presets keep
+  // the bounded ~10 minute window (off).
+  void setAlwaysAvailable(bool on) {
+    always_available_ = on;
+    if (on && state_ == State::kClosing) state_ = State::kOpen;
+  }
+  bool alwaysAvailable() const { return always_available_; }
+
   // Caller observed advertising not running with no client connected after a
   // kClose. Ignored unless a close is pending, so a client that connected
   // meanwhile (update() moved back to open) is never closed.
@@ -84,6 +95,7 @@ class BleAdmissionPolicy {
 
   State state_ = State::kClosed;
   bool connected_ = false;
+  bool always_available_ = false;
   // Meaningful only while kOpen && !connected_. Absolute deadline: the tick
   // at or after which, if still disconnected, close is requested.
   uint32_t close_at_ms_ = 0;
