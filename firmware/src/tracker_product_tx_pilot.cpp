@@ -75,8 +75,15 @@ bool TrackerProductTxPilot::selectCachedFallback(
   return true;
 }
 
+void TrackerProductTxPilot::markIdle() {
+  osf::RecordIdentity next{};
+  idle_ = records_.store().peekNextIdentity(next);
+  idle_next_ = next;
+}
+
 bool TrackerProductTxPilot::rearm() {
   if (phase_ != Phase::kDone) return false;
+  idle_ = false;
   identity_ = {};
   sealed_ = {};
   phase_ = Phase::kSelect;
@@ -107,6 +114,15 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
   if (!eligible || !storageIdle() || !radio_.canSend())
     return Event::kNone;
 
+  if (phase_ == Phase::kSelect && idle_) {
+    osf::RecordIdentity next{};
+    if (records_.store().peekNextIdentity(next) &&
+        next.incarnation == idle_next_.incarnation &&
+        next.sequence == idle_next_.sequence)
+      return Event::kNone;  // no new record since "nothing to send"
+    idle_ = false;
+  }
+
   if (phase_ == Phase::kSelect && live_only_) {
     ObservationStore::Record newest{};
     if (!selectLive(newest)) {
@@ -115,10 +131,12 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
       // alive with the newest cached object; an ACK then frees a slot.
       uint16_t occupied = 0U;
       osf::RecordIdentity fallback{};
-      if (!records_.store().exactObjectCount(occupied) ||
-          occupied < osf::kMaxExactCustodyObjects ||
-          !selectCachedFallback(fallback))
-        return Event::kNone;  // wait for the next new record
+      if (!records_.store().exactObjectCount(occupied)) return Event::kNone;
+      if (occupied < osf::kMaxExactCustodyObjects) {
+        markIdle();           // nothing new to send: wait for the next record
+        return Event::kNone;
+      }
+      if (!selectCachedFallback(fallback)) return Event::kNone;
       identity_ = fallback;
       phase_ = Phase::kReady;
     }
@@ -132,8 +150,10 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
         phase_ = Phase::kBlocked;
         return Event::kBlocked;
       }
-      if (read != ObservationStore::LookupResult::kFound)
+      if (read != ObservationStore::LookupResult::kFound) {
+        if (read == ObservationStore::LookupResult::kNone) markIdle();
         return Event::kNone;
+      }
     }
     if (!record.handle.identity.valid() || record.released ||
         record.release_uncertain || record.release_marker_exhausted ||

@@ -39,13 +39,13 @@ class TrackerProductTxPilot {
   // If the 4-object exact cache is full, the newest already cached exact
   // object is re-sent unchanged instead of blocking. TX order only: ring
   // retention and release ownership are unchanged. Off by default (SF5K3V).
-  void setLiveFirst(bool on) { live_first_ = on; }
+  void setLiveFirst(bool on) { live_first_ = on; idle_ = false; }
   bool liveFirst() const { return live_first_; }
   // SF5L4 range walks: send ONLY the newest record, right after it is
   // stored, so its radio facts belong to the place it was recorded. The
   // backlog stays retained (nothing is released or skipped) and drains
   // when this is switched off. Implies live-first.
-  void setLiveOnly(bool on) { live_only_ = on; }
+  void setLiveOnly(bool on) { live_only_ = on; idle_ = false; }
   bool liveOnly() const { return live_only_; }
   // Identity of the record most recently selected (valid after a send).
   const osf::RecordIdentity& lastIdentity() const { return identity_; }
@@ -68,6 +68,12 @@ class TrackerProductTxPilot {
   osc::ExactObject sealed_{};
   bool live_first_ = false;
   bool live_only_ = false;
+  // "Nothing to send" was decided for this next-record identity. Until a new
+  // record is appended (or the mode changes / rearm) nothing can change that
+  // answer, so the selection does not re-scan the store on every loop pass.
+  bool idle_ = false;
+  osf::RecordIdentity idle_next_{};
+  void markIdle();
 };
 
 }  // namespace orun_tlp

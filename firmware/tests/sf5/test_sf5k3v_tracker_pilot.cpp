@@ -302,18 +302,35 @@ void liveOnly() {
   Pilot idle(later, crypto, radio);
   idle.setLiveOnly(true);
   const unsigned sends = g_sends;
+  later.poll();
+  assert(idle.update(true) == Pilot::Event::kNone);  // decides "nothing new"
+  const unsigned idle_reads = flash.read_calls;
   for (unsigned i = 0; i < 2000U; ++i) {  // newest released: no backlog TX
     later.poll();
     assert(idle.update(true) == Pilot::Event::kNone);
   }
   assert(g_sends == sends && !idle.sent() && !idle.blocked());
+  // Waiting costs no store scans: the answer only changes with a new record.
+  assert(flash.read_calls == idle_reads);
   ObservationStore::Record oldest{};
   assert(later.oldestRetained(oldest) == ObservationStore::LookupResult::kFound &&
          oldest.handle.identity.sequence == 1U && !oldest.released);
-  // Back home: switch to live-first and the backlog drains from the oldest.
+  // A new record ends the wait at once.
+  assert(store(later, 7).stored);
+  assert(sendOne(later, idle).sequence == 7U);
+  // Back home: switch to live-first and the backlog drains from the oldest
+  // (7 is cached and unanswered; live-first resends it first, then 1).
   idle.setLiveOnly(false);
   idle.setLiveFirst(true);
-  assert(sendOne(later, idle).sequence == 1U);
+  assert(sendOne(later, idle).sequence == 7U);
+  osf::RecordIdentity seven = six;
+  seven.sequence = 7U;
+  releaseAndReboot(flash, source, seven);
+  ProductRecordStore home(flash, kPages, &source);
+  home.begin(kDevice, kTracker);
+  Pilot drain(home, crypto, radio);
+  drain.setLiveFirst(true);
+  assert(sendOne(home, drain).sequence == 1U);
 }
 }  // namespace
 
