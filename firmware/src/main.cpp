@@ -263,7 +263,12 @@ constexpr int32_t kM6D2ProbeHalfSpanE7 = 2500;  // ~20-30 m at field latitudes.
 orun_tlp::RoleController role_controller;
 bool automatic_role_resolved = false;
 // Long enough for "APP FENCE V -89.9999999 -179.9999999".
+#ifdef ORUN_SF5L0_GATEWAY
+// SF5L5: "EDGE ACCEPT v1 page= slot= gen=<16 hex> mac=<64 hex>" is ~120 chars.
+char role_command[160]{};
+#else
 char role_command[48]{};
+#endif
 uint8_t role_command_length = 0;
 bool role_command_overflow = false;
 
@@ -2474,6 +2479,13 @@ void handleRoleCommand() {
   if (isActivityCommand("BENCH GW ERASE HELD CONFIRM", 27)) {
     role_command_length = 0;
     orun_tlp::sf5l0_gateway::startErase(true);
+    return;
+  }
+  if (role_command_length > 15 &&
+      memcmp(role_command, "EDGE ACCEPT v1 ", 15) == 0) {
+    const size_t length = role_command_length;
+    role_command_length = 0;
+    orun_tlp::sf5l0_gateway::edgeAccept(role_command, length);
     return;
   }
 #endif

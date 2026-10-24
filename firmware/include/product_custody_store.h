@@ -25,6 +25,19 @@ class ProductCustodyStore final {
     kNoCapacity, kBusy, kRejected
   };
   enum class Lookup : uint8_t { kFound, kNotHeld, kError };
+  // SF5L5: the next owner (Edge) has durably accepted an exact object.
+  enum class Handoff : uint8_t {
+    kStarted,           // marker write in progress; see takeMaintenanceResult
+    kAlreadyHandedOff,  // idempotent repeat of an earlier accept
+    kNotFound,          // no such held record (stale/unknown handle or bytes)
+    kExhausted,         // both marker slots consumed by torn writes: stays held
+    kBusy, kRejected
+  };
+  struct Maintenance {
+    enum class Kind : uint8_t { kNone, kHandoff, kReclaim } kind = Kind::kNone;
+    bool success = false;
+    Handle handle{};  // kHandoff: the record; kReclaim: .page only
+  };
 
   ProductCustodyStore(FlashBackend& flash, uint16_t page_count)
       : flash_(flash), page_count_(page_count) {}
@@ -40,6 +53,27 @@ class ProductCustodyStore final {
       const Handle& handle,
       uint8_t (&object)[custody_store_product_format::kMaxObjectSize],
       size_t& size) const;
+  // The same exact durable bytes, whether still held or already handed off.
+  // A Tracker whose custody ACK was lost retransmits the same object; the
+  // Gateway still durably holds those bytes and may re-ACK them.
+  Lookup readConfirmedDurable(
+      const Handle& handle,
+      uint8_t (&object)[custody_store_product_format::kMaxObjectSize],
+      size_t& size) const;
+
+  // SF5L5 hand-off. The CALLER must first authenticate the next owner's
+  // durable accept and bind it to these exact bytes; the store checks the
+  // bytes again and programs one hand-off marker word (no erase, no rewrite).
+  Handoff requestHandoff(const Handle& handle, const uint8_t* object,
+                         size_t size);
+  // A page whose every record is handed off holds no custody: erase it so
+  // the space can be reused. Never the page still accepting records.
+  // Returns the page index, or -1 if none.
+  int reclaimablePage() const;
+  bool requestReclaim(uint16_t page);
+  bool takeMaintenanceResult(Maintenance& result);
+  bool hasMaintenanceResult() const { return maintenance_ready_; }
+
   bool ready() const { return ready_ && !faulted_; }
   bool faulted() const { return faulted_; }
   bool busy() const { return phase_ != Phase::kIdle; }
@@ -48,8 +82,13 @@ class ProductCustodyStore final {
  private:
   enum class Phase : uint8_t {
     kIdle, kPageBody, kPageCommit, kPageActive,
-    kRecordBody, kRecordCommit, kVerify
+    kRecordBody, kRecordCommit, kVerify,
+    kHandoffMark, kHandoffVerify, kReclaimErase, kReclaimVerify
   };
+  void finishMaintenance(bool success);
+  Lookup readDurable(const Handle& handle, bool allow_handed_off,
+                     uint8_t (&object)[custody_store_product_format::kMaxObjectSize],
+                     size_t& size) const;
   bool scanAtBoot();
   bool isErasedPage(uint16_t page) const;
   bool readPage(uint16_t page,
@@ -81,6 +120,9 @@ class ProductCustodyStore final {
   uint8_t pending_object_[custody_store_product_format::kMaxObjectSize]{};
   uint8_t page_blob_[custody_store_product_format::kPageHeaderSize]{};
   uint8_t record_blob_[custody_store_product_format::kRecordSize]{};
+  uint32_t handoff_offset_ = 0;
+  bool maintenance_ready_ = false;
+  Maintenance maintenance_{};
 };
 
 }  // namespace orun_tlp

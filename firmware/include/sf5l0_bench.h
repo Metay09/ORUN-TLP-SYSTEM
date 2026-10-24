@@ -182,6 +182,56 @@ uint16_t sf5l0ForEachHeld(const FlashBackend& product_port,
 // Gateway bench image composition (src/sf5l0_bench_gateway.cpp, compiled
 // only with ORUN_SF5L0_GATEWAY). Kept out of main.cpp so the default image's
 // source-ownership contracts stay exactly as they are.
+// SF5L5 bench Edge hand-off. The PC tool, after its ledger has durably
+// committed a record (SQLite, synchronous=FULL), sends
+//   EDGE ACCEPT v1 page=<P> slot=<S> gen=<16 hex> mac=<64 hex>
+// mac = HMAC-SHA256(K_edge, M), M = 102 bytes: "ORUN-EDGE-ACCEPT-v1" |
+//        gateway id (8, BE) | page (2, BE) | slot (2, BE) | generation (8, BE)
+//        | SHA-256(object) | zero padding
+// K_edge = HKDF-SHA256(salt = test credential id, ikm = test root, info = 57
+//          bytes: "ORUN-SF5L0-BENCH-EDGE-ACCEPT-v1" | gateway id (8, BE) |
+//          zero padding)  (fixed sizes: the CC310 primitives' only lengths)
+// BENCH ONLY: K_edge comes from the PUBLIC test credential, so this proves
+// the mechanism (exact-object binding, idempotence, reclaim), NOT that the
+// accept came from an enrolled Edge. Production needs an enrolled Edge key.
+class Sf5l0EdgeHandoff final {
+ public:
+  enum class Reply : uint8_t {
+    kPending,      // marker write started; the outcome is a later Event
+    kAlready,      // repeat of an earlier accept (idempotent)
+    kUnknown,      // no such held object here (e.g. reclaimed, other bytes)
+    kBusy,         // store busy; the Edge retries
+    kBadMac, kMalformed, kRejected
+  };
+  struct Event {
+    enum class Kind : uint8_t { kNone, kHandedOff, kReclaimStarted,
+                                kReclaimed } kind = Kind::kNone;
+    bool ok = false;
+    uint16_t page = 0;
+    uint16_t slot = 0;
+  };
+  Sf5l0EdgeHandoff(ProductCustodyStore& store, uint64_t gateway_id)
+      : store_(store), gateway_id_(gateway_id) {}
+  Reply accept(const char* line, size_t length, uint16_t& page,
+               uint16_t& slot);
+  // Loop: drives the store's maintenance and erases fully handed-off pages.
+  Event service();
+  uint32_t handedOff() const { return handed_off_; }
+  uint32_t reclaimed() const { return reclaimed_; }
+
+  static bool mac(uint64_t gateway_id, uint16_t page, uint16_t slot,
+                  uint64_t generation, const uint8_t* object, size_t size,
+                  uint8_t (&out)[32]);
+
+ private:
+  ProductCustodyStore& store_;
+  uint64_t gateway_id_;
+  bool pending_ = false;
+  bool check_reclaim_ = true;  // once at boot, then after each hand-off
+  uint32_t handed_off_ = 0;
+  uint32_t reclaimed_ = 0;
+};
+
 namespace sf5l0_gateway {
 // setup(), before Bluefruit.begin(): census + OCQ2 mount via the startup guard.
 void begin(FlashBackend& product_port, RadioManager& radio,
@@ -190,6 +240,8 @@ void begin(FlashBackend& product_port, RadioManager& radio,
 void service(bool observation_store_mounted);
 // "BENCH?"
 void print();
+// "EDGE ACCEPT v1 ...": one authenticated (bench key) Edge durable accept.
+void edgeAccept(const char* line, size_t length);
 // "BENCH GW ERASE PRODUCT CONFIRM": wipe this bench board's product region
 // when it is not a READY custody store. include_held=true ("BENCH GW ERASE
 // HELD CONFIRM") also wipes a READY store: bench-only stand-in for the

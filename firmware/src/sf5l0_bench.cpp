@@ -409,6 +409,182 @@ uint16_t sf5l0ForEachHeld(const FlashBackend& port,
   return visited;
 }
 
+// ------------------------------------------------------------ Edge accept --
+
+namespace {
+bool hexNibble(char c, uint8_t& v) {
+  if (c >= '0' && c <= '9') { v = uint8_t(c - '0'); return true; }
+  if (c >= 'A' && c <= 'F') { v = uint8_t(c - 'A' + 10); return true; }
+  if (c >= 'a' && c <= 'f') { v = uint8_t(c - 'a' + 10); return true; }
+  return false;
+}
+// "<key>=<decimal>" up to a space/end.
+bool takeDecimal(const char*& p, const char* end, const char* key,
+                 uint32_t limit, uint32_t& out) {
+  const size_t n = strlen(key);
+  if (size_t(end - p) <= n || memcmp(p, key, n) != 0) return false;
+  p += n;
+  uint32_t v = 0; size_t digits = 0;
+  while (p < end && *p >= '0' && *p <= '9') {
+    v = v * 10U + uint32_t(*p - '0');
+    if (v > limit || ++digits > 5U) return false;
+    ++p;
+  }
+  if (digits == 0U || (p < end && *p != ' ')) return false;
+  if (p < end) ++p;
+  out = v;
+  return true;
+}
+bool takeHex(const char*& p, const char* end, const char* key, uint8_t* out,
+             size_t bytes) {
+  const size_t n = strlen(key);
+  if (size_t(end - p) < n + 2U * bytes || memcmp(p, key, n) != 0) return false;
+  p += n;
+  for (size_t i = 0; i < bytes; ++i) {
+    uint8_t hi = 0, lo = 0;
+    if (!hexNibble(p[0], hi) || !hexNibble(p[1], lo)) return false;
+    out[i] = uint8_t((hi << 4U) | lo);
+    p += 2;
+  }
+  if (p < end && *p != ' ') return false;
+  if (p < end) ++p;
+  return true;
+}
+bool sameBytes(const uint8_t* a, const uint8_t* b, size_t n) {
+  uint8_t diff = 0;  // constant time
+  for (size_t i = 0; i < n; ++i) diff = uint8_t(diff | (a[i] ^ b[i]));
+  return diff == 0U;
+}
+}  // namespace
+
+bool Sf5l0EdgeHandoff::mac(uint64_t gateway_id, uint16_t page, uint16_t slot,
+                           uint64_t generation, const uint8_t* object,
+                           size_t size, uint8_t (&out)[32]) {
+  if (object == nullptr || size == 0U) return false;
+  // Fixed sizes on purpose: the CC310 custody primitives accept exactly the
+  // custody-ACK lengths (HKDF info 57 B, HMAC message 102 B). Zero padding
+  // after distinct labels keeps the domains separate without widening them.
+  static const char kKeyInfo[] = "ORUN-SF5L0-BENCH-EDGE-ACCEPT-v1";
+  static const char kLabel[] = "ORUN-EDGE-ACCEPT-v1";
+  static_assert(sizeof(kKeyInfo) - 1U + 8U <= 57U, "info fits");
+  static_assert(sizeof(kLabel) - 1U + 8U + 2U + 2U + 8U + 32U <= 102U,
+                "message fits");
+  uint8_t info[57]{};
+  memcpy(info, kKeyInfo, sizeof(kKeyInfo) - 1U);
+  put64(gateway_id, info + sizeof(kKeyInfo) - 1U);
+  uint8_t salt[16]{};
+  uint8_t root[32]{};
+  uint8_t key[32]{};
+  memcpy(salt, sf5l0_bench::kTestCredentialId, sizeof(salt));
+  memcpy(root, sf5l0_bench::kTestRoot, sizeof(root));
+  bool ok = custody_crypto::hkdfSha256(salt, root, info, sizeof(info), key);
+  wipe(root, sizeof(root));
+  uint8_t message[102]{};
+  size_t n = 0;
+  memcpy(message, kLabel, sizeof(kLabel) - 1U);
+  n += sizeof(kLabel) - 1U;
+  put64(gateway_id, message + n); n += 8U;
+  message[n++] = uint8_t(page >> 8U); message[n++] = uint8_t(page);
+  message[n++] = uint8_t(slot >> 8U); message[n++] = uint8_t(slot);
+  put64(generation, message + n); n += 8U;
+  uint8_t digest[32]{};
+  ok = ok && custody_crypto::sha256(object, size, digest);
+  memcpy(message + n, digest, sizeof(digest));
+  ok = ok && custody_crypto::hmacSha256(key, message, sizeof(message), out);
+  wipe(key, sizeof(key));
+  return ok;
+}
+
+Sf5l0EdgeHandoff::Reply Sf5l0EdgeHandoff::accept(const char* line,
+                                                 size_t length,
+                                                 uint16_t& page,
+                                                 uint16_t& slot) {
+  static const char kPrefix[] = "EDGE ACCEPT v1 ";
+  const size_t prefix = sizeof(kPrefix) - 1U;
+  if (line == nullptr || length <= prefix || memcmp(line, kPrefix, prefix) != 0)
+    return Reply::kMalformed;
+  const char* p = line + prefix;
+  const char* end = line + length;
+  uint32_t page_v = 0, slot_v = 0;
+  uint8_t gen_bytes[8]{};
+  uint8_t claimed[32]{};
+  if (!takeDecimal(p, end, "page=", 0xFFFFU, page_v) ||
+      !takeDecimal(p, end, "slot=", 0xFFFFU, slot_v) ||
+      !takeHex(p, end, "gen=", gen_bytes, sizeof(gen_bytes)) ||
+      !takeHex(p, end, "mac=", claimed, sizeof(claimed)) || p != end)
+    return Reply::kMalformed;
+  page = uint16_t(page_v);
+  slot = uint16_t(slot_v);
+  if (pending_) return Reply::kBusy;
+
+  ProductCustodyStore::Handle handle{};
+  handle.page = page;
+  handle.slot = slot;
+  for (uint8_t b : gen_bytes) handle.generation = (handle.generation << 8U) | b;
+  uint8_t object[custody_store_product_format::kMaxObjectSize]{};
+  size_t size = 0;
+  const auto found = store_.readConfirmedDurable(handle, object, size);
+  if (found == ProductCustodyStore::Lookup::kError)
+    return store_.busy() ? Reply::kBusy : Reply::kRejected;
+  if (found != ProductCustodyStore::Lookup::kFound) return Reply::kUnknown;
+
+  uint8_t expected[32]{};
+  if (!mac(gateway_id_, page, slot, handle.generation, object, size, expected))
+    return Reply::kRejected;
+  const bool authentic = sameBytes(expected, claimed, sizeof(expected));
+  wipe(expected, sizeof(expected));
+  if (!authentic) return Reply::kBadMac;
+
+  switch (store_.requestHandoff(handle, object, size)) {
+    case ProductCustodyStore::Handoff::kStarted:
+      pending_ = true;
+      return Reply::kPending;
+    case ProductCustodyStore::Handoff::kAlreadyHandedOff:
+      return Reply::kAlready;
+    case ProductCustodyStore::Handoff::kNotFound:
+      return Reply::kUnknown;
+    case ProductCustodyStore::Handoff::kBusy:
+      return Reply::kBusy;
+    case ProductCustodyStore::Handoff::kExhausted:
+    case ProductCustodyStore::Handoff::kRejected:
+      break;
+  }
+  return Reply::kRejected;
+}
+
+Sf5l0EdgeHandoff::Event Sf5l0EdgeHandoff::service() {
+  Event event{};
+  store_.poll();
+  ProductCustodyStore::Maintenance done{};
+  if (store_.takeMaintenanceResult(done)) {
+    event.ok = done.success;
+    event.page = done.handle.page;
+    event.slot = done.handle.slot;
+    if (done.kind == ProductCustodyStore::Maintenance::Kind::kHandoff) {
+      pending_ = false;
+      event.kind = Event::Kind::kHandedOff;
+      if (done.success) ++handed_off_;
+    } else {
+      event.kind = Event::Kind::kReclaimed;
+      if (done.success) ++reclaimed_;
+    }
+    check_reclaim_ = done.success;  // more pages may now be reclaimable
+    return event;
+  }
+  if (check_reclaim_ && !pending_ && store_.ready() && !store_.busy() &&
+      !store_.hasOutcome()) {
+    const int page = store_.reclaimablePage();
+    if (page >= 0 && store_.requestReclaim(uint16_t(page))) {
+      event.kind = Event::Kind::kReclaimStarted;
+      event.ok = true;
+      event.page = uint16_t(page);
+      return event;
+    }
+    check_reclaim_ = false;
+  }
+  return event;
+}
+
 }  // namespace orun_tlp
 
 #endif  // ORUN_SF5L0_BENCH_TEST_KEYS

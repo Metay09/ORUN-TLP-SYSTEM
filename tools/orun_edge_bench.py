@@ -29,6 +29,9 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import collections
+import hashlib
+import hmac as hmac_mod
 import datetime as dt
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
@@ -78,6 +81,38 @@ RECEIPTS_SQL = (
     " device_id BLOB NOT NULL, incarnation BLOB NOT NULL, sequence INTEGER NOT NULL,"
     " first_seen_utc INTEGER NOT NULL, gw_rssi INTEGER, gw_snr INTEGER,"
     " PRIMARY KEY (device_id,incarnation,sequence))")
+
+# SF5L5 bench Edge accept: after the ledger has durably committed a held
+# record, tell the Gateway it may hand it off (and later erase its page).
+# Same construction as Sf5l0EdgeHandoff::mac (firmware/src/sf5l0_bench.cpp);
+# PUBLIC test key, so this proves the mechanism, not the Edge's identity.
+ACCEPT_REPLY = re.compile(
+    r"EDGE ACCEPT (?P<word>OK|UNKNOWN|BUSY|REJECTED|FAIL) "
+    r"page=(?P<page>\d+|\?) slot=(?P<slot>\d+|\?)")
+RECLAIM = re.compile(r"EDGE RECLAIM page=(?P<page>\d+) (?P<what>started|OK|FAIL)")
+ACCEPT_TIMEOUT_S = 3.0
+
+
+def edge_accept_mac(gateway: int, page: int, slot: int, generation: int,
+                    obj: bytes) -> bytes:
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    info = (b"ORUN-SF5L0-BENCH-EDGE-ACCEPT-v1" +
+            gateway.to_bytes(8, "big")).ljust(57, b"\0")
+    key = HKDF(hashes.SHA256(), 32, TEST_CREDENTIAL_ID, info).derive(TEST_ROOT)
+    msg = (b"ORUN-EDGE-ACCEPT-v1" + gateway.to_bytes(8, "big") +
+           page.to_bytes(2, "big") + slot.to_bytes(2, "big") +
+           generation.to_bytes(8, "big") +
+           hashlib.sha256(obj).digest()).ljust(102, b"\0")
+    return hmac_mod.new(key, msg, hashlib.sha256).digest()
+
+
+def edge_accept_line(gateway: int, page: int, slot: int, generation: int,
+                     obj: bytes) -> str:
+    mac = edge_accept_mac(gateway, page, slot, generation, obj)
+    return (f"EDGE ACCEPT v1 page={page} slot={slot} gen={generation:016X} "
+            f"mac={mac.hex().upper()}")
+
 
 # Periods during which this tool was attached to a live Gateway. Only inside
 # such a period can "nothing arrived" mean "no radio link" (and not "nobody
@@ -181,7 +216,8 @@ def human(d: dict) -> str:
 
 
 class BenchEdge:
-    def __init__(self, db_path: Path, test_key: bool, clock=time.time):
+    def __init__(self, db_path: Path, test_key: bool, clock=time.time,
+                 accept: bool = True):
         self.ledger_mod = load_ledger_module()
         creds = bench_credentials(self.ledger_mod) if test_key else no_credentials
         self.ledger = self.ledger_mod.VerifiedLocalLedger(db_path, creds)
@@ -196,6 +232,13 @@ class BenchEdge:
         self._session = None
         self.counts = {"STORED": 0, "DUPLICATE": 0, "REJECTED": 0,
                        "CONFLICT": 0, "UNCERTAIN": 0}
+        # Edge accepts are only meaningful for records this ledger verified.
+        self.accept = accept and test_key
+        self._accepts = collections.deque()   # (page, slot, gen) -> line
+        self._queued = set()
+        self._in_flight = None                # (key, line, sent_at)
+        self.handed_off = 0
+        self.accept_rejected = 0
         with sqlite3.connect(str(self.db_path)) as db:
             db.execute(RECEIPTS_SQL)
             db.execute(SESSIONS_SQL)
@@ -226,7 +269,62 @@ class BenchEdge:
                     (rssi, snr, item.device_id, bytes(item.plaintext[4:12]),
                      item.sequence))
 
+    def _queue_accept(self, m, raw: bytes) -> None:
+        key = (int(m["page"]), int(m["slot"]), int(m["gen"], 16))
+        if not self.accept or key in self._queued:
+            return
+        line = edge_accept_line(int(m["gw"], 16), key[0], key[1], key[2], raw)
+        self._queued.add(key)
+        self._accepts.append((key, line))
+
+    def next_accept(self, now: float) -> Optional[str]:
+        """The next EDGE ACCEPT line to write, one in flight at a time."""
+        if self._in_flight is not None:
+            key, line, sent = self._in_flight
+            if now - sent < ACCEPT_TIMEOUT_S:
+                return None
+            self._accepts.appendleft((key, line))   # no reply: send again
+            self._in_flight = None
+        if not self._accepts:
+            return None
+        key, line = self._accepts.popleft()
+        self._in_flight = (key, line, now)
+        return line
+
+    def pending_accepts(self) -> int:
+        return len(self._accepts) + (1 if self._in_flight else 0)
+
+    def _accept_reply(self, r) -> Optional[str]:
+        if self._in_flight is None:
+            return None
+        key, line, _ = self._in_flight
+        if r["page"] == "?" or r["word"] == "BUSY":
+            self._accepts.appendleft((key, line))   # store busy: retry
+            self._in_flight = None
+            return None
+        if (int(r["page"]), int(r["slot"])) != (key[0], key[1]):
+            return None
+        self._in_flight = None
+        self._queued.discard(key)
+        if r["word"] in ("OK", "UNKNOWN"):
+            # UNKNOWN: already reclaimed (or never held) -- nothing to keep.
+            self.handed_off += 1 if r["word"] == "OK" else 0
+            return None
+        self.accept_rejected += 1
+        return (f"UYARI gateway teslimi reddetti page={key[0]} slot={key[1]} "
+                f"({r['word']}); kayıt gateway'de kalır")
+
     def handle_line(self, text: str) -> Optional[str]:
+        reply = ACCEPT_REPLY.search(text)
+        if reply:
+            return self._accept_reply(reply)
+        reclaim = RECLAIM.search(text)
+        if reclaim:
+            if reclaim["what"] == "OK":
+                return f"[gateway] sayfa {reclaim['page']} boşaltıldı (kayıtları teslim edilmişti)"
+            if reclaim["what"] == "FAIL":
+                return f"UYARI gateway sayfa {reclaim['page']} silinemedi"
+            return None
         rx = RX_LINE.search(text)
         if rx:
             self._rx = (int(rx["rssi"]), int(rx["snr"]))
@@ -262,6 +360,9 @@ class BenchEdge:
             return f"{word} gw={m['gw']} page={m['page']} slot={m['slot']}"
         item = self.ledger_mod.open_product_frame(raw, self.creds)
         self._receipt(item, link)
+        if label in ("STORED", "DUPLICATE"):
+            # The ledger commit (synchronous=FULL) has returned: durable here.
+            self._queue_accept(m, raw)
         sig = f" | sinyal {link[0]} dBm SNR {link[1]}" if link else ""
         if item.family != 1:
             return f"{word} tasma={item.device_id.hex().upper()} seq={item.sequence} (EVENT){sig}"
@@ -272,7 +373,9 @@ class BenchEdge:
         c = self.counts
         return (f"ÖZET yeni={c['STORED']} vardı={c['DUPLICATE']} red={c['REJECTED']} "
                 f"çakışma={c['CONFLICT']} belirsiz={c['UNCERTAIN']} "
-                f"toplam_kayıt={self.ledger.record_count()}")
+                f"toplam_kayıt={self.ledger.record_count()}"
+                + (f" teslim={self.handed_off} teslim_red={self.accept_rejected} "
+                   f"bekleyen_teslim={self.pending_accepts()}" if self.accept else ""))
 
 
 def lines_from_file(path: str) -> Iterable[str]:
@@ -287,7 +390,9 @@ def run_port(edge: BenchEdge, port: str, dump: bool) -> None:
         import serial  # pyserial
     except ImportError:
         raise SystemExit("pyserial yok: python3 -m pip install pyserial")
-    with serial.Serial(port, 115200, timeout=1) as ser:
+    # Short read timeout: EDGE ACCEPT replies come within milliseconds and the
+    # next accept is sent as soon as the previous one is answered.
+    with serial.Serial(port, 115200, timeout=0.1) as ser:
         time.sleep(0.5)
         if dump:
             ser.write(b"BENCH GW DUMP\n")
@@ -309,6 +414,9 @@ def run_port(edge: BenchEdge, port: str, dump: bool) -> None:
                         print(out, flush=True)
                     elif text.startswith("EDGE DUMP END"):
                         print(f"[gateway] {text} | {edge.summary()}", flush=True)
+                line = edge.next_accept(time.monotonic())
+                if line:
+                    ser.write((line + "\n").encode("ascii"))
         except KeyboardInterrupt:
             pass
         edge.session_alive()
@@ -481,6 +589,9 @@ def main(argv=None) -> int:
                     help="accept the PUBLIC SF5L0 test credential (bench only)")
     ap.add_argument("--no-dump", action="store_true",
                     help="with --port: do not request BENCH GW DUMP at start")
+    ap.add_argument("--no-accept", action="store_true",
+                    help="with --port: never tell the Gateway it may hand off "
+                         "(records then stay on the Gateway until erased)")
     ap.add_argument("--serve", type=int, metavar="HTTP_PORT",
                     help="also serve the map page and /api/points on this port")
     ap.add_argument("--host", default="127.0.0.1",
@@ -501,7 +612,8 @@ def main(argv=None) -> int:
     if not args.bench_test_key:
         print("UYARI: --bench-test-key yok; hiçbir kayıt açılamaz (hepsi RED olur).",
               file=sys.stderr)
-    edge = BenchEdge(db, args.bench_test_key)
+    edge = BenchEdge(db, args.bench_test_key,
+                     accept=bool(args.port) and not args.no_accept)
     if args.port:
         run_port(edge, args.port, not args.no_dump)
         return 0
