@@ -23,6 +23,14 @@ position reach the PC quickly even while a backlog is queued.
     store is full), release ownership and the ACK/HMAC path are unchanged.
     The exact-object cache count already excludes released and erased
     records, so slots free themselves on ACK and on ring erase.
+- `setLiveOnly(bool)` (default off) and `BENCH DRAIN LIVE`, for range walks:
+  - only the newest record is sent, right after it is stored, so its radio
+    facts belong to the place where it was recorded;
+  - nothing is released or skipped; the backlog waits and drains with
+    `BENCH DRAIN ON`, which returns to live-first;
+  - with four unanswered cached objects (out of range), the newest cached one
+    is re-sent, so returning into range frees a slot instead of stalling.
+  - `BENCH DRAIN?` reports `ON`, `LIVE` or `OFF`.
 - USB lines:
   - `BENCH LINK tx seq=N newest=M LIVE|BACKLOG`
   - `BENCH LINK ack seq=N rssi=.. snr=.. rtt_ms=..`: the ACK as heard by the
@@ -46,6 +54,25 @@ position reach the PC quickly even while a backlog is queued.
 - **Menzil görünümü** (range view): points coloured by gateway RSSI (≥ −105,
   −105…−115, −115…−125, < −125 dBm; grey = no measurement), with a legend,
   the count of measured records and the weakest one.
+- **Kapsama** (coverage grid), the owner's design with the radio caveats:
+  - cells of 3 / 5 / 10 / 20 m, **default 5 m**, remembered per browser;
+  - only good fixes count (≥ 5 satellites and HDOP ≤ 4);
+  - each record is classified by its PC arrival delay:
+    - **live** (≤ 30 s, with gateway RSSI/SNR): sent from about where it was
+      recorded, so it is the only kind that supplies a signal value;
+    - **through** (≤ 180 s): got through, but has no usable signal value;
+    - **cut** (> 180 s): recorded while the link was down.
+    Records with no receipt are not counted.
+  - the cell colour is **Kopuk** when fewer than half its records got
+    through; otherwise it follows the median SNR margin over the SF11 floor
+    (−17.5 dB): ≥ 15 / 8–15 / 3–8 / < 3 dB. The median is used, not the mean,
+    so one outlier cannot move a cell. The popup gives the through-ratio, the
+    margin, the median RSSI and the counts.
+  - Spatial resolution is limited by sample spacing, not by cell size: SF11
+    airtime and the duty budget allow one sample every ~25–40 s (≈ 35–55 m
+    while walking). A 5 m grid fills by stopping, or by walking an area more
+    than once.
+- View switch İz / Menzil / Kapsama (remembered per browser).
 - The tracker card shows the **age of the newest position** against the
   collar's own period, using the PC clock: green / amber / red with "ESKİ".
   The big marker stays the newest **by record time**, never the latest
@@ -61,23 +88,32 @@ position reach the PC quickly even while a backlog is queued.
     the default pilot still blocks;
   - after a release the next newest goes first;
   - with the newest released, the backlog drains oldest-first.
+  `liveOnly`:
+  - newest only;
+  - a full cache re-sends the newest cached object, with no seal or flash
+    write;
+  - after a release the next newest goes;
+  - with the newest released, nothing is sent and the backlog stays retained;
+  - switching to live-first drains from the oldest.
   Built with ASan/UBSan.
 - `test_sf5l4_range_kit.py`: RSSI pairing and clearing; first arrival and
   delay; DUMP does not overwrite; pre-SF5L4 ledger; page wiring; live-first
   enabled only inside `ORUN_SF5L0_TRACKER`; pilot default off.
-- Headless Chromium: range view with 40 records (34 measured), desktop and
-  phone, no page errors.
+- Headless Chromium: range view with 40 records (34 measured); coverage grid
+  of a synthetic walk out of range, rendering green → yellow → orange →
+  Kopuk cells and redrawing for 20 m; desktop and phone, no page errors.
 - Builds: `rak4630` unchanged at 359 584 B (local GCC 13);
-  `rak4630_sf5l0_tracker_bench` 371 496 B; gateway bench and SF5K3V pilot
-  build.
+  `rak4630_sf5l0_tracker_bench` 371 816 B; SF5K3V pilot 365 400 B (the
+  disabled live code; it stays oldest-first); gateway bench builds.
 
 ## Field procedure (owner)
 
 1. Gateway at home on the PC: `--port … --serve 8080 --host <Tailscale IP>`.
-2. Collar: `APP INTERVAL 60` for the walk, `BENCH DRAIN ON`.
-3. Walk out with the phone (map over Tailscale, range view) until points turn
-   red or stop, then walk back. The backlog recorded out of range arrives on
-   return and is marked "geç".
+2. Collar: `APP INTERVAL 60` and `BENCH DRAIN LIVE` for the walk.
+3. Walk out with the phone (map over Tailscale, Kapsama view) and stop for a
+   minute or two at places of interest, until cells turn Kopuk; then walk
+   back. At home, `BENCH DRAIN ON`: the records captured out of range arrive
+   as "geç" and confirm the Kopuk cells.
 4. Optional: a laptop on the collar's USB records `BENCH LINK` lines (the
    ACK's strength on the way back, and timeouts).
 

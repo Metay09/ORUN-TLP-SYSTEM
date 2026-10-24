@@ -1427,7 +1427,8 @@ void printBenchDrain() {
   Serial.printf(
       "BENCH DRAIN %s sent=%lu released=%lu ack_timeouts=%lu duty_waits=%lu "
       "budget_ms=%lu waiting_ack=%s pilot=%s retained=%ld\n",
-      bench_pacer.enabled() ? "ON" : "OFF",
+      !bench_pacer.enabled() ? "OFF"
+          : (tracker_product_tx.liveOnly() ? "LIVE" : "ON"),
       static_cast<unsigned long>(st.sent),
       static_cast<unsigned long>(st.released),
       static_cast<unsigned long>(st.ack_timeouts),
@@ -2416,6 +2417,15 @@ void handleRoleCommand() {
   }
   if (isActivityCommand("BENCH DRAIN ON", 14)) {
     role_command_length = 0;
+    tracker_product_tx.setLiveOnly(false);  // newest first, then backlog
+    bench_pacer.setEnabled(true);
+    printBenchDrain();
+    return;
+  }
+  // SF5L4 range walk: only the newest record, sent right after it is stored.
+  if (isActivityCommand("BENCH DRAIN LIVE", 16)) {
+    role_command_length = 0;
+    tracker_product_tx.setLiveOnly(true);
     bench_pacer.setEnabled(true);
     printBenchDrain();
     return;

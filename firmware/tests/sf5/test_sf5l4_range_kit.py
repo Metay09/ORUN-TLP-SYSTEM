@@ -92,8 +92,10 @@ def tool() -> None:
 
 def page() -> None:
     html = (ROOT / "tools/edge_map/index.html").read_text()
-    for needle in ("Menzil görünümü", "rssiColor", "freshness(", "ESKİ",
-                   "geç geldi", "serverOffset", "data.now"):
+    for needle in ('data-view="range"', 'data-view="grid"', "rssiColor",
+                   "freshness(", "ESKİ", "geç geldi", "serverOffset", "data.now",
+                   "[3, 5, 10, 20]", "let cellM = 5;", "const LIVE_S = 30;",
+                   "SNR_FLOOR = -17.5", "GOOD_FIX", "median("):
         assert needle in html, needle
     assert "innerHTML" not in html.replace("outerHTML", "")
     # The big marker is the newest by RECORD time (sorted by time, then seq).
@@ -108,10 +110,13 @@ def firmware() -> None:
     opened = main.rfind("#ifdef ORUN_SF5L0_TRACKER", 0, at)
     assert opened >= 0 and "#endif" not in main[opened:at]
     for line in ("BENCH LINK tx seq=", "BENCH LINK ack seq=",
-                 "BENCH LINK ack_timeout seq="):
+                 "BENCH LINK ack_timeout seq=", '"BENCH DRAIN LIVE", 16',
+                 "tracker_product_tx.setLiveOnly(true);",
+                 "tracker_product_tx.setLiveOnly(false);"):
         assert line in main, line
     pilot = (ROOT / "firmware/include/tracker_product_tx_pilot.h").read_text()
     assert "bool live_first_ = false;" in pilot  # default stays SF5K3V
+    assert "bool live_only_ = false;" in pilot
 
 
 def main() -> None:

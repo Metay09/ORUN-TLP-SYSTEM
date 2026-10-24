@@ -107,9 +107,26 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
   if (!eligible || !storageIdle() || !radio_.canSend())
     return Event::kNone;
 
+  if (phase_ == Phase::kSelect && live_only_) {
+    ObservationStore::Record newest{};
+    if (!selectLive(newest)) {
+      // Nothing new, or the newest cannot get a cache slot because four
+      // unanswered objects hold them (e.g. out of range). Keep the link
+      // alive with the newest cached object; an ACK then frees a slot.
+      uint16_t occupied = 0U;
+      osf::RecordIdentity fallback{};
+      if (!records_.store().exactObjectCount(occupied) ||
+          occupied < osf::kMaxExactCustodyObjects ||
+          !selectCachedFallback(fallback))
+        return Event::kNone;  // wait for the next new record
+      identity_ = fallback;
+      phase_ = Phase::kReady;
+    }
+  }
+
   if (phase_ == Phase::kSelect) {
     ObservationStore::Record record{};
-    if (!(live_first_ && selectLive(record))) {
+    if (!((live_first_ || live_only_) && selectLive(record))) {
       const auto read = records_.oldestRetained(record);
       if (read == ObservationStore::LookupResult::kReadError) {
         phase_ = Phase::kBlocked;
@@ -144,7 +161,7 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
         // The record stays retained; never evict another custody object.
         // Live-first: keep moving by re-sending an already cached object.
         osf::RecordIdentity fallback{};
-        if (live_first_ && selectCachedFallback(fallback)) {
+        if ((live_first_ || live_only_) && selectCachedFallback(fallback)) {
           identity_ = fallback;
           phase_ = Phase::kReady;
         } else {

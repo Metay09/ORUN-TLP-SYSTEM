@@ -41,6 +41,12 @@ class TrackerProductTxPilot {
   // retention and release ownership are unchanged. Off by default (SF5K3V).
   void setLiveFirst(bool on) { live_first_ = on; }
   bool liveFirst() const { return live_first_; }
+  // SF5L4 range walks: send ONLY the newest record, right after it is
+  // stored, so its radio facts belong to the place it was recorded. The
+  // backlog stays retained (nothing is released or skipped) and drains
+  // when this is switched off. Implies live-first.
+  void setLiveOnly(bool on) { live_only_ = on; }
+  bool liveOnly() const { return live_only_; }
   // Identity of the record most recently selected (valid after a send).
   const osf::RecordIdentity& lastIdentity() const { return identity_; }
 
@@ -61,6 +67,7 @@ class TrackerProductTxPilot {
   osf::RecordIdentity identity_{};
   osc::ExactObject sealed_{};
   bool live_first_ = false;
+  bool live_only_ = false;
 };
 
 }  // namespace orun_tlp

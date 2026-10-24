@@ -259,6 +259,62 @@ void liveFirst() {
   // the cache (3,4,5 + free slot) has room, so 1 is sealed and sent.
   assert(sendOne(later, drain).sequence == 1U);
 }
+// SF5L4 range walk: newest only; the backlog waits, nothing is skipped.
+void liveOnly() {
+  resetFakes();
+  FakeFlash flash;
+  FixedIncarnation source;
+  ProductRecordStore records(flash, kPages, &source);
+  records.begin(kDevice, kTracker);
+  assert(store(records, 1).stored && store(records, 2).stored);
+  orun_tlp::SecurityStore security(flash, flash);
+  orun_tlp::ProductSecureCrypto crypto(security);
+  orun_tlp::RadioManager radio;
+  Pilot pilot(records, crypto, radio);
+  pilot.setLiveOnly(true);
+  assert(sendOne(records, pilot).sequence == 2U);
+  for (uint32_t n = 3U; n <= 5U; ++n) {  // cache: 2,3,4,5 (full)
+    assert(store(records, n).stored);
+    assert(sendOne(records, pilot).sequence == n);
+  }
+  assert(g_seals == 4U);
+  // Out of range: 6 cannot get a slot -> newest cached (5) again, unchanged.
+  assert(store(records, 6).stored);
+  const unsigned programs = flash.program_calls;
+  assert(sendOne(records, pilot).sequence == 5U && g_seals == 4U);
+  assert(flash.program_calls == programs);
+
+  osf::RecordIdentity five{};
+  five.incarnation = records.store().incarnation();
+  five.sequence = 5U;
+  releaseAndReboot(flash, source, five);
+  ProductRecordStore reboot(flash, kPages, &source);
+  reboot.begin(kDevice, kTracker);
+  Pilot walk(reboot, crypto, radio);
+  walk.setLiveOnly(true);
+  assert(sendOne(reboot, walk).sequence == 6U && g_seals == 5U);
+
+  osf::RecordIdentity six = five;
+  six.sequence = 6U;
+  releaseAndReboot(flash, source, six);
+  ProductRecordStore later(flash, kPages, &source);
+  later.begin(kDevice, kTracker);
+  Pilot idle(later, crypto, radio);
+  idle.setLiveOnly(true);
+  const unsigned sends = g_sends;
+  for (unsigned i = 0; i < 2000U; ++i) {  // newest released: no backlog TX
+    later.poll();
+    assert(idle.update(true) == Pilot::Event::kNone);
+  }
+  assert(g_sends == sends && !idle.sent() && !idle.blocked());
+  ObservationStore::Record oldest{};
+  assert(later.oldestRetained(oldest) == ObservationStore::LookupResult::kFound &&
+         oldest.handle.identity.sequence == 1U && !oldest.released);
+  // Back home: switch to live-first and the backlog drains from the oldest.
+  idle.setLiveOnly(false);
+  idle.setLiveFirst(true);
+  assert(sendOne(later, idle).sequence == 1U);
+}
 }  // namespace
 
 int main() {
@@ -266,5 +322,6 @@ int main() {
   successAndReboot(true);
   cacheFailureKeepsRecord();
   liveFirst();
-  puts("SF5K3V exact-cache-before-RF/same-bytes-reboot/fault + SF5L4 live-first host: PASS");
+  liveOnly();
+  puts("SF5K3V exact-cache-before-RF/same-bytes-reboot/fault + SF5L4 live-first/live-only host: PASS");
 }
