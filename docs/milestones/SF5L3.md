@@ -1,7 +1,7 @@
 # SF5L3 — bench map of the verified ledger
 
-**Status:** code + host tests + headless-browser render check. Physical use
-pending. Bench only (SF5L0 images, public test key).
+**Status:** code + host tests + headless-browser render check + **owner
+phone check PASS (2026-10-24)**. Bench only (SF5L0 images, public test key).
 **Base:** `main@efb377d` (SF5L0–L2 merged).
 **Scope:** close the bench chain Tracker → Gateway → PC ledger → **map**.
 Read-only; no firmware change.
@@ -35,3 +35,16 @@ Read-only; no firmware change.
 
 Geofence zones, herd view, alarms, offline tiles, the ORUN app design of
 2026-10-09, server/Coolify hosting, authentication.
+
+## Owner check (2026-10-24, `73ce9ed`)
+
+Tool on `simsek` with `--serve 8080 --host <Tailscale IP>`, page opened on
+the owner's phone over Tailscale: satellite imagery, **278 located records**
+of collar `0E8ADE7E71531AA3` (latest #11501, 7 satellites, HDOP 1.42,
+4155 mV), track, popup, tracker card and latest-records list all live.
+
+Observation: the collar is indoors and stationary, so the GNSS fixes scatter
+in a ~10–15 m cloud and the connecting line draws a star. A stationary-aware
+view (e.g. cluster/heat rather than a line for small moves) belongs to the
+later ORUN app map, not this bench page.
+
