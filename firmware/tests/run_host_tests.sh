@@ -990,3 +990,6 @@ python3 firmware/tests/sf5/test_sf5l4_range_kit.py
 # re-ACK of handed-off duplicates; PC tool queue + shared MAC vector.
 bash tools/ci/run_sf5l5_edge_handoff_host.sh
 python3 firmware/tests/sf5/test_sf5l5_edge_handoff.py
+
+# SF5L6: BLE Edge link framing/messages + bench Gateway BLE session.
+bash tools/ci/run_sf5l6_ble_edge_host.sh
