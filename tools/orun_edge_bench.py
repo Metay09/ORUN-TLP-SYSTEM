@@ -28,6 +28,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import bisect
 import datetime as dt
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
@@ -63,6 +64,32 @@ TEST_KEY_EPOCH = 0x01020304
 LINE = re.compile(
     r"EDGE HELD v1 gw=(?P<gw>[0-9A-F]{16}) page=(?P<page>\d+) slot=(?P<slot>\d+) "
     r"gen=(?P<gen>[0-9A-F]{16}) len=(?P<len>\d+) obj=(?P<obj>[0-9A-F]+)")
+
+# SF5L4: the Gateway's own radio line for the frame it is about to take into
+# custody. Its RSSI/SNR is how strongly the GATEWAY heard the collar.
+RX_LINE = re.compile(
+    r"RX PRODUCT_SECURE queued family=\d+ length=\d+ rssi=(?P<rssi>-?\d+) "
+    r"snr=(?P<snr>-?\d+)")
+CUSTODY_STARTED = "BENCH GW RX record; durable custody write started"
+RX_NOT_NEW = ("BENCH GW RX duplicate already held", "BENCH GW RX denied")
+
+RECEIPTS_SQL = (
+    "CREATE TABLE IF NOT EXISTS edge_receipts ("
+    " device_id BLOB NOT NULL, incarnation BLOB NOT NULL, sequence INTEGER NOT NULL,"
+    " first_seen_utc INTEGER NOT NULL, gw_rssi INTEGER, gw_snr INTEGER,"
+    " PRIMARY KEY (device_id,incarnation,sequence))")
+
+# Periods during which this tool was attached to a live Gateway. Only inside
+# such a period can "nothing arrived" mean "no radio link" (and not "nobody
+# was listening").
+SESSIONS_SQL = (
+    "CREATE TABLE IF NOT EXISTS edge_sessions ("
+    " started_utc INTEGER NOT NULL, alive_utc INTEGER NOT NULL)")
+
+# Link classification of one record, for the coverage view (seconds).
+LIVE_S = 30    # reached the PC this soon after capture: sent from (about) there
+CUT_S = 180    # later than this: queued somewhere, or recorded with no link
+NEAR_S = 150   # a live arrival this close in capture time proves the link was up
 
 SOURCES = {0: "UNKNOWN", 1: "GNSS", 2: "FIXED", 3: "PHONE", 4: "MANUAL"}
 BATTERY = {0: "UNKNOWN", 1: "NORMAL", 2: "LOW", 3: "CRITICAL"}
@@ -154,18 +181,67 @@ def human(d: dict) -> str:
 
 
 class BenchEdge:
-    def __init__(self, db_path: Path, test_key: bool):
+    def __init__(self, db_path: Path, test_key: bool, clock=time.time):
         self.ledger_mod = load_ledger_module()
         creds = bench_credentials(self.ledger_mod) if test_key else no_credentials
         self.ledger = self.ledger_mod.VerifiedLocalLedger(db_path, creds)
         self.creds = creds
+        self.db_path = Path(db_path)
+        self.clock = clock
+        # Radio facts of the frame now being taken into custody: RX line ->
+        # "custody write started" -> EDGE HELD. Anything else drops them, so
+        # a DUMP line never inherits a stranger's signal strength.
+        self._rx = None
+        self._armed = None
+        self._session = None
         self.counts = {"STORED": 0, "DUPLICATE": 0, "REJECTED": 0,
                        "CONFLICT": 0, "UNCERTAIN": 0}
+        with sqlite3.connect(str(self.db_path)) as db:
+            db.execute(RECEIPTS_SQL)
+            db.execute(SESSIONS_SQL)
+
+    def session_alive(self) -> None:
+        """Record that a Gateway is attached and being read right now."""
+        now = int(self.clock())
+        with sqlite3.connect(str(self.db_path)) as db:
+            if self._session is None:
+                self._session = db.execute(
+                    "INSERT INTO edge_sessions VALUES (?,?)", (now, now)).lastrowid
+            else:
+                db.execute("UPDATE edge_sessions SET alive_utc=? WHERE rowid=?",
+                           (now, self._session))
+
+    def _receipt(self, item, link) -> None:
+        rssi, snr = link if link else (None, None)
+        with sqlite3.connect(str(self.db_path)) as db:
+            # First sighting wins: a later DUMP is not a new arrival.
+            db.execute(
+                "INSERT OR IGNORE INTO edge_receipts VALUES (?,?,?,?,?,?)",
+                (item.device_id, bytes(item.plaintext[4:12]), item.sequence,
+                 int(self.clock()), rssi, snr))
+            if link:
+                db.execute(
+                    "UPDATE edge_receipts SET gw_rssi=?, gw_snr=? WHERE "
+                    "device_id=? AND incarnation=? AND sequence=? AND gw_rssi IS NULL",
+                    (rssi, snr, item.device_id, bytes(item.plaintext[4:12]),
+                     item.sequence))
 
     def handle_line(self, text: str) -> Optional[str]:
+        rx = RX_LINE.search(text)
+        if rx:
+            self._rx = (int(rx["rssi"]), int(rx["snr"]))
+            self._armed = None
+            return None
+        if CUSTODY_STARTED in text:
+            self._armed, self._rx = self._rx, None
+            return None
+        if any(t in text for t in RX_NOT_NEW):
+            self._rx = self._armed = None
+            return None
         m = LINE.search(text)
         if not m:
             return None
+        link, self._armed, self._rx = self._armed, None, None
         hex_text = m["obj"]
         if len(hex_text) % 2 or len(hex_text) != 2 * int(m["len"]):
             # Truncated or garbled serial line: never guess, never crash.
@@ -185,9 +261,12 @@ class BenchEdge:
         if label in ("REJECTED", "UNCERTAIN"):
             return f"{word} gw={m['gw']} page={m['page']} slot={m['slot']}"
         item = self.ledger_mod.open_product_frame(raw, self.creds)
+        self._receipt(item, link)
+        sig = f" | sinyal {link[0]} dBm SNR {link[1]}" if link else ""
         if item.family != 1:
-            return f"{word} tasma={item.device_id.hex().upper()} seq={item.sequence} (EVENT)"
-        return f"{word} {human(describe_periodic(item.device_id, item.plaintext))}"
+            return f"{word} tasma={item.device_id.hex().upper()} seq={item.sequence} (EVENT){sig}"
+        first, _, rest = human(describe_periodic(item.device_id, item.plaintext)).partition("\n")
+        return f"{word} {first}{sig}" + (f"\n{rest}" if rest else "")
 
     def summary(self) -> str:
         c = self.counts
@@ -214,9 +293,14 @@ def run_port(edge: BenchEdge, port: str, dump: bool) -> None:
             ser.write(b"BENCH GW DUMP\n")
         print(f"[{port}] dinleniyor; çıkış Ctrl+C", flush=True)
         buf = b""
+        edge.session_alive()
+        beat = time.monotonic()
         try:
             while True:
                 buf += ser.read(512)
+                if time.monotonic() - beat >= 15:
+                    edge.session_alive()
+                    beat = time.monotonic()
                 while b"\n" in buf:
                     raw, buf = buf.split(b"\n", 1)
                     text = raw.decode("utf-8", "replace").rstrip("\r")
@@ -227,6 +311,7 @@ def run_port(edge: BenchEdge, port: str, dump: bool) -> None:
                         print(f"[gateway] {text} | {edge.summary()}", flush=True)
         except KeyboardInterrupt:
             pass
+        edge.session_alive()
     print(edge.summary())
 
 
@@ -252,12 +337,27 @@ def points_from_db(db_path: Path) -> dict:
     uri = "file:" + str(Path(db_path).resolve()) + "?mode=ro"
     try:
         with sqlite3.connect(uri, uri=True, timeout=1.0) as db:
-            rows = db.execute(
-                "SELECT device_id,family,plaintext FROM verified_observations "
-                "ORDER BY device_id,incarnation,sequence").fetchall()
+            has_receipts = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND "
+                "name='edge_receipts'").fetchone() is not None
+            if has_receipts:
+                rows = db.execute(
+                    "SELECT o.device_id,o.family,o.plaintext,r.first_seen_utc,"
+                    "r.gw_rssi,r.gw_snr FROM verified_observations o "
+                    "LEFT JOIN edge_receipts r USING (device_id,incarnation,sequence) "
+                    "ORDER BY o.device_id,o.incarnation,o.sequence").fetchall()
+            else:
+                rows = [r + (None, None, None) for r in db.execute(
+                    "SELECT device_id,family,plaintext FROM verified_observations "
+                    "ORDER BY device_id,incarnation,sequence").fetchall()]
+            sessions = []
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND "
+                          "name='edge_sessions'").fetchone():
+                sessions = db.execute(
+                    "SELECT started_utc,alive_utc FROM edge_sessions").fetchall()
     except sqlite3.OperationalError:
         return {"count": 0, "skipped": 0, "points": []}
-    for device, family, plaintext in rows:
+    for device, family, plaintext, seen, rssi, snr in rows:
         if family != 1:
             continue
         d = describe_periodic(bytes(device), bytes(plaintext))
@@ -268,8 +368,66 @@ def points_from_db(db_path: Path) -> dict:
             "tracker", "sequence", "time", "lat", "lon", "sats", "hdop",
             "fix_age_s", "battery_mv", "battery", "active_s", "covered_s",
             "source")})
-        points[-1]["seq"] = points[-1].pop("sequence")
-    return {"count": len(points), "skipped": skipped, "points": points}
+        pt = points[-1]
+        pt["seq"] = pt.pop("sequence")
+        pt["period_s"] = d["period_s"]
+        pt["rssi"], pt["snr"] = rssi, snr
+        pt["received"] = (dt.datetime.fromtimestamp(seen, tz=dt.timezone.utc)
+                          .isoformat().replace("+00:00", "Z") if seen else None)
+        pt["delay_s"] = None
+        if seen and d["time"]:
+            recorded = dt.datetime.fromisoformat(d["time"].replace("Z", "+00:00"))
+            pt["delay_s"] = max(0, int(seen - recorded.timestamp()))
+    classify_links(points, sessions)
+    return {"count": len(points), "skipped": skipped,
+            "now": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+            "points": points}
+
+
+def _epoch(iso: Optional[str]) -> Optional[float]:
+    if not iso:
+        return None
+    return dt.datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+
+
+def classify_links(points: list, sessions: list) -> None:
+    """Set p["link"] for the coverage view; None means "says nothing".
+
+    live:    gateway RSSI known and at the PC within LIVE_S of capture: the
+             radio facts belong to the place the record was taken.
+    through: captured while this tool was attached to the Gateway and at the
+             PC within CUT_S: the link worked there, no usable signal.
+    cut:     later than CUT_S, captured while this tool was attached to the
+             Gateway, and no record of the same tracker captured within NEAR_S
+             arrived live: there was no radio link at that place.
+    A late record captured while other records were arriving live only waited
+    in the collar's queue; one captured while nothing was listening is
+    unknown. Neither is evidence about coverage.
+    """
+    live_times: dict = {}
+    for p in points:
+        t = _epoch(p["time"])
+        if (t is not None and p["rssi"] is not None and p["delay_s"] is not None
+                and p["delay_s"] <= LIVE_S):
+            live_times.setdefault(p["tracker"], []).append(t)
+    for times in live_times.values():
+        times.sort()
+    for p in points:
+        p["link"] = None
+        t = _epoch(p["time"])
+        if t is None or p["received"] is None or p["delay_s"] is None:
+            continue
+        if p["rssi"] is not None and p["delay_s"] <= LIVE_S:
+            p["link"] = "live"      # RSSI pairing itself needs a listening tool
+        elif not any(a <= t <= b for a, b in sessions):
+            continue                # nobody listened when it was captured
+        elif p["delay_s"] <= CUT_S:
+            p["link"] = "through"
+        else:
+            times = live_times.get(p["tracker"], [])
+            i = bisect.bisect_left(times, t - NEAR_S)
+            if not (i < len(times) and times[i] <= t + NEAR_S):
+                p["link"] = "cut"
 
 
 def make_map_server(db_path: Path, host: str, port: int) -> ThreadingHTTPServer:

@@ -193,6 +193,17 @@ orun_tlp::Sf5l0BenchTestProvisioning bench_provisioning(security_store);
 // SF5L2: paces re-arming of the one-record pilot to drain the backlog.
 orun_tlp::Sf5l0DrainPacer bench_pacer;
 bool bench_pacer_started = false;
+// SF5L4 range kit: one-line link facts per TX / ACK / timeout.
+struct BenchLink {
+  uint32_t seq = 0U;          // record sequence of the last TX
+  uint32_t sent_ms = 0U;      // its TX start
+  uint32_t ack_ms = 0U;       // ACK taken from the radio, before verification
+  uint32_t verify_ms = 0U;    // HMAC + exact-object match (local CPU/flash)
+  int16_t rssi = 0;
+  int8_t snr = 0;
+  bool ack_seen = false;
+  uint32_t timeouts_seen = 0U;
+} bench_link;
 #endif
 orun_tlp::HistorySecureCrypto history_secure_crypto(security_store);
 orun_tlp::HistoryDeliveryCoordinator history_delivery(history);
@@ -1417,7 +1428,8 @@ void printBenchDrain() {
   Serial.printf(
       "BENCH DRAIN %s sent=%lu released=%lu ack_timeouts=%lu duty_waits=%lu "
       "budget_ms=%lu waiting_ack=%s pilot=%s retained=%ld\n",
-      bench_pacer.enabled() ? "ON" : "OFF",
+      !bench_pacer.enabled() ? "OFF"
+          : (tracker_product_tx.liveOnly() ? "LIVE" : "ON"),
       static_cast<unsigned long>(st.sent),
       static_cast<unsigned long>(st.released),
       static_cast<unsigned long>(st.ack_timeouts),
@@ -2406,6 +2418,15 @@ void handleRoleCommand() {
   }
   if (isActivityCommand("BENCH DRAIN ON", 14)) {
     role_command_length = 0;
+    tracker_product_tx.setLiveOnly(false);  // newest first, then backlog
+    bench_pacer.setEnabled(true);
+    printBenchDrain();
+    return;
+  }
+  // SF5L4 range walk: only the newest record, sent right after it is stored.
+  if (isActivityCommand("BENCH DRAIN LIVE", 16)) {
+    role_command_length = 0;
+    tracker_product_tx.setLiveOnly(true);
     bench_pacer.setEnabled(true);
     printBenchDrain();
     return;
@@ -3437,6 +3458,22 @@ void loop() {
     Serial.println(F("PRODUCT CUSTODY release=DURABLE"));
 #ifdef ORUN_SF5L0_TRACKER
     bench_pacer.onReleased(orun_tlp::monotonic::nowMs());
+    if (bench_link.ack_seen) {
+      // ACK strength as heard by the collar. rtt = TX start -> ACK taken
+      // from the radio (includes loop latency); verify/release are local.
+      const uint32_t now = orun_tlp::monotonic::nowMs();
+      Serial.printf("BENCH LINK ack seq=%lu rssi=%d snr=%d rtt_ms=%lu "
+                    "verify_ms=%lu release_ms=%lu\n",
+                    static_cast<unsigned long>(bench_link.seq),
+                    static_cast<int>(bench_link.rssi),
+                    static_cast<int>(bench_link.snr),
+                    static_cast<unsigned long>(bench_link.ack_ms -
+                                               bench_link.sent_ms),
+                    static_cast<unsigned long>(bench_link.verify_ms),
+                    static_cast<unsigned long>(now - bench_link.ack_ms -
+                                               bench_link.verify_ms));
+      bench_link.ack_seen = false;
+    }
 #endif
   } else if (custody_result ==
              orun_tlp::CustodyAckReleaseOwner::Service::kFailed) {
@@ -3468,8 +3505,18 @@ void loop() {
   }
 #endif
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kPositionFlow);
+#ifdef ORUN_SF5L0_TRACKER
+  // SF5L4 bench: a legacy live POSITION TX inside the custody-ACK window
+  // takes the radio away from RX and the Gateway's ACK is lost (measured:
+  // 6 of 29 ACKs). While an ACK is awaited, the live v1 copy is skipped; the
+  // fix itself is stored as always (no record is lost).
+  const bool live_position_allowed =
+      tracking_enabled && !bench_pacer.awaitingAck();
+#else
+  const bool live_position_allowed = tracking_enabled;
+#endif
   const auto event =
-      positions.update(orun_tlp::monotonic::nowMs(), tracking_enabled);
+      positions.update(orun_tlp::monotonic::nowMs(), live_position_allowed);
   if (event == orun_tlp::PositionFlow::Event::kStorageFailure)
     Serial.println(F("STORAGE append failed; no live TX"));
   else if (event == orun_tlp::PositionFlow::Event::kStored)
@@ -3588,9 +3635,21 @@ void loop() {
           product_records.store().ready() && security_store.ready() &&
           security_store.state() == orun_tlp::SecurityState::kProvisioned &&
           !security_store.busy()) {
+#ifdef ORUN_SF5L0_TRACKER
+        const uint32_t bench_ack_taken_ms = orun_tlp::monotonic::nowMs();
+#endif
         const auto submitted = custody_ack_release.submit(ack.payload, ack.size);
-        if (submitted == orun_tlp::CustodyAckReleaseOwner::Submit::kStarted)
+        if (submitted == orun_tlp::CustodyAckReleaseOwner::Submit::kStarted) {
           Serial.println(F("PRODUCT CUSTODY ACK authenticated; release=pending"));
+#ifdef ORUN_SF5L0_TRACKER
+          bench_link.ack_ms = bench_ack_taken_ms;
+          bench_link.verify_ms =
+              orun_tlp::monotonic::nowMs() - bench_ack_taken_ms;
+          bench_link.rssi = ack.rssi_dbm;
+          bench_link.snr = ack.snr_db;
+          bench_link.ack_seen = true;
+#endif
+        }
 #ifdef ORUN_SF5L0_TRACKER
         else
           Serial.printf("BENCH ACK not admitted submit=%u rssi=%d\n",
@@ -3662,6 +3721,8 @@ void loop() {
   if (!bench_pacer_started) {
     bench_pacer.begin(orun_tlp::monotonic::nowMs());
     bench_pacer_started = true;
+    // SF5L4: the newest record first, backlog in the gaps.
+    tracker_product_tx.setLiveFirst(true);
   }
 #endif
   const bool pilot_allowed = ble_ready && tracking_enabled &&
@@ -3689,6 +3750,18 @@ void loop() {
       Serial.println(F("PRODUCT PILOT TX=start; custody=unconfirmed"));
 #ifdef ORUN_SF5L0_TRACKER
       bench_pacer.onSent(orun_tlp::monotonic::nowMs());
+      {
+        bench_link.seq = tracker_product_tx.lastIdentity().sequence;
+        bench_link.sent_ms = orun_tlp::monotonic::nowMs();
+        bench_link.ack_seen = false;
+        orun_tlp::osf::RecordIdentity next{};
+        const bool known = product_records.store().peekNextIdentity(next);
+        const unsigned long newest =
+            known && next.sequence > 0U ? next.sequence - 1UL : 0UL;
+        Serial.printf("BENCH LINK tx seq=%lu newest=%lu %s\n",
+                      static_cast<unsigned long>(bench_link.seq), newest,
+                      known && bench_link.seq == newest ? "LIVE" : "BACKLOG");
+      }
 #endif
       break;
     case orun_tlp::TrackerProductTxPilot::Event::kBlocked:
@@ -3704,6 +3777,11 @@ void loop() {
     // retry timing and the product airtime budget.
     if (tracker_product_tx.sent() && bench_pacer.mayRearm(now))
       tracker_product_tx.rearm();
+    if (bench_pacer.stats().ack_timeouts != bench_link.timeouts_seen) {
+      bench_link.timeouts_seen = bench_pacer.stats().ack_timeouts;
+      Serial.printf("BENCH LINK ack_timeout seq=%lu\n",
+                    static_cast<unsigned long>(bench_link.seq));
+    }
   }
 #endif
 #endif

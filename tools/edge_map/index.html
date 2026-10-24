@@ -66,6 +66,18 @@
   .pop table { border-collapse: collapse; margin-top: 4px; }
   .pop td { padding: 1px 8px 1px 0; } .pop td:first-child { color: var(--muted); }
   .leaflet-control-layers { background: var(--panel); color: var(--text); border: 1px solid var(--line) !important; }
+  .legend { display: none; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin-bottom: 10px; font-size: 12px; }
+  .legend.on { display: block; }
+  .legend .row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+  .legend .meta { margin-top: 4px; }
+  .seg { display: flex; margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { flex: 1; border: 0; border-radius: 0; border-right: 1px solid var(--line); }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: #2a3530; color: var(--accent); }
+  .sizes { display: flex; gap: 6px; margin: 6px 0 4px; }
+  .sizes button { padding: 3px 9px; }
+  .sizes button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .late { color: var(--warn); font-size: 11px; margin-left: 4px; }
   .last-marker { width: 18px; height: 18px; border-radius: 50%; border: 3px solid #fff;
     box-shadow: 0 0 0 6px rgba(242,181,58,.25); }
   @media (max-width: 700px) {
@@ -84,12 +96,18 @@
       <button id="fit" type="button">Tümünü göster</button>
       <button id="follow" type="button" aria-pressed="true">Son konumu izle: açık</button>
     </div>
+    <div class="seg" role="group" aria-label="Görünüm">
+      <button type="button" data-view="track" aria-pressed="true">İz</button>
+      <button type="button" data-view="range" aria-pressed="false">Menzil</button>
+      <button type="button" data-view="grid" aria-pressed="false">Kapsama</button>
+    </div>
   </div>
   <div class="body">
+    <div id="legend" class="legend" aria-label="Sinyal gücü açıklaması"></div>
     <div id="trackers"></div>
     <h3>Son kayıtlar</h3>
     <ul id="recent" class="list"></ul>
-    <div class="note">Zaman, tasmanın kaydı aldığı andır (yerel saat). Kayıtlar gecikmeli gelebilir: tasma, birikmiş kayıtları sırayla gönderir.</div>
+    <div class="note">Zaman, tasmanın kaydı aldığı andır (yerel saat). Büyük işaret her zaman ölçüm zamanı en yeni konumdur; geç gelen eski kayıtlar yalnızca geçmiş izine eklenir. Tasma önce en yeni kaydı gönderir, birikmişler aradaki boşluklarda gelir.</div>
   </div>
 </aside>
 
@@ -124,6 +142,104 @@
   let fittedOnce = false;
   let lastKey = "";
   let lastOk = 0;
+  let lastPoints = [];
+  let view = "track";              // track | range (points by RSSI) | grid (coverage cells)
+  let cellM = 5;                    // coverage cell edge, metres
+  try { const v = localStorage.getItem("orun.view"); if (["track", "range", "grid"].includes(v)) view = v;
+        const c = Number(localStorage.getItem("orun.cell")); if ([3, 5, 10, 20].includes(c)) cellM = c; } catch (_) {}
+  const gridLayer = L.layerGroup().addTo(map);
+  let serverOffset = 0;            // PC clock - phone clock, so ages use the PC
+  let ageChips = [];               // {span, time, period}: refreshed every poll
+  const nowMs = () => Date.now() + serverOffset;
+
+  // Gateway RSSI as heard from the collar (SX1262, SF11/125 kHz).
+  const BANDS = [
+    [-105, "#5fc48a", "Güçlü (−105 dBm ve üstü)"],
+    [-115, "#c9d45a", "İyi (−105 … −115)"],
+    [-125, "#e7a33e", "Zayıf (−115 … −125)"],
+    [-999, "#e2574c", "Sınırda (−125 altı)"],
+  ];
+  const NO_SIGNAL = "#6b7771";
+  // ---- Coverage grid ------------------------------------------------------
+  // The tool classifies every record's link (p.link, see classify_links in
+  // tools/orun_edge_bench.py): "live" (radio facts belong to where it was
+  // recorded), "through" (got through, no usable signal), "cut" (recorded
+  // while the Gateway was being listened to and nothing arrived live around
+  // it) or null: a record that only waited in the collar's queue, or was
+  // recorded while nobody listened, says nothing about coverage.
+  const CUT_S = 180;                // "geç geldi" label only
+  const SNR_FLOOR = -17.5;          // SX1262 demodulation floor at SF11
+  const GOOD_FIX = (p) => p.sats != null && p.sats >= 5 && p.hdop != null && p.hdop <= 4;
+  const CELL_BANDS = [
+    [15, "#5fc48a", "Güçlü (SNR payı ≥ 15 dB)"],
+    [8, "#c9d45a", "İyi (8 … 15 dB)"],
+    [3, "#e7a33e", "Zayıf (3 … 8 dB)"],
+    [-99, "#e2574c", "Sınırda (3 dB altı)"],
+  ];
+  const CUT = "#a23a8c";            // most records here did not get through
+  const median = (xs) => { const a = [...xs].sort((x, y) => x - y); const m = a.length >> 1;
+    return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
+  const classify = (p) => (p.link && GOOD_FIX(p) ? p.link : null);
+  function buildGrid(points) {
+    const usable = points.filter(p => classify(p));
+    if (!usable.length) return [];
+    // Local metric frame anchored at a fixed rounded origin, so cells are stable.
+    const lat0 = Math.round(usable[0].lat * 100) / 100, lon0 = Math.round(usable[0].lon * 100) / 100;
+    const my = 111320, mx = 111320 * Math.cos(lat0 * Math.PI / 180);
+    const cells = new Map();
+    for (const p of usable) {
+      const ix = Math.floor((p.lon - lon0) * mx / cellM), iy = Math.floor((p.lat - lat0) * my / cellM);
+      const key = ix + ":" + iy;
+      let c = cells.get(key);
+      if (!c) { c = { ix, iy, live: 0, through: 0, cut: 0, snr: [], rssi: [] }; cells.set(key, c); }
+      const k = classify(p);
+      c[k]++;
+      if (k === "live") { c.snr.push(p.snr); c.rssi.push(p.rssi); }
+    }
+    return [...cells.values()].map(c => {
+      const n = c.live + c.through + c.cut;
+      const ratio = (c.live + c.through) / n;
+      const margin = c.snr.length ? median(c.snr) - SNR_FLOOR : null;
+      const color = ratio < 0.5 ? CUT
+        : margin == null ? NO_SIGNAL : CELL_BANDS.find(b => margin >= b[0])[1];
+      const bounds = [[lat0 + c.iy * cellM / my, lon0 + c.ix * cellM / mx],
+                      [lat0 + (c.iy + 1) * cellM / my, lon0 + (c.ix + 1) * cellM / mx]];
+      return { ...c, n, ratio, margin, color, bounds };
+    });
+  }
+  function renderGrid(points) {
+    gridLayer.clearLayers();
+    if (view !== "grid") return [];
+    const cells = buildGrid(points);
+    for (const c of cells) {
+      const box = el("div", "pop");
+      box.appendChild(el("b", null, "Kare " + cellM + " m · " + c.n + " kayıt"));
+      const t = el("table");
+      const rows = [
+        ["Anında geçti", Math.round(100 * c.ratio) + "% (" + (c.live + c.through) + "/" + c.n + ")"],
+        ["SNR payı", c.margin != null ? c.margin.toFixed(1) + " dB (ortanca, " + c.snr.length + " ölçüm)" : "ölçüm yok"],
+        ["Sinyal", c.rssi.length ? median(c.rssi).toFixed(0) + " dBm (ortanca)" : "–"],
+      ];
+      for (const [k, v] of rows) { const tr = el("tr"); tr.appendChild(el("td", null, k)); tr.appendChild(el("td", null, v)); t.appendChild(tr); }
+      box.appendChild(t);
+      L.rectangle(c.bounds, { color: c.color, weight: 1, opacity: .9, fillColor: c.color,
+        fillOpacity: Math.min(.85, .35 + .1 * c.n) }).bindPopup(box).addTo(gridLayer);
+    }
+    return cells;
+  }
+
+  const rssiColor = (p) => p.rssi == null ? NO_SIGNAL : BANDS.find(b => p.rssi >= b[0])[1];
+  const isLate = (p) => p.delay_s != null && p.delay_s > CUT_S;
+  const fmtDur = (s) => s < 60 ? s + " sn" : s < 3600 ? Math.round(s / 60) + " dk"
+    : s < 172800 ? (s / 3600).toFixed(1) + " sa" : Math.round(s / 86400) + " gün";
+  // Freshness of the newest position versus the collar's own report period.
+  function freshness(time, period) {
+    if (!time) return ["bad", "zaman yok"];
+    const age = nowMs() - new Date(time).getTime();
+    const p = Math.max(60, period || 60) * 1000;
+    const cls = age <= 2 * p + 120000 ? "ok" : age <= 6 * p ? "warn" : "bad";
+    return [cls, "Son konum " + ago(age) + (cls === "bad" ? " · ESKİ" : "")];
+  }
 
   const fmtTime = (iso) => iso ? new Date(iso).toLocaleString("tr-TR",
     { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "zaman yok";
@@ -150,6 +266,8 @@
       ["Uydu / HDOP", (p.sats ?? "–") + " / " + (p.hdop != null ? p.hdop.toFixed(2) : "–")],
       ["Pil", p.battery_mv != null ? p.battery_mv + " mV " + (p.battery || "") : "–"],
       ["Aktif", p.active_s != null ? p.active_s + " / " + p.covered_s + " sn" : "–"],
+      ["Sinyal", p.rssi != null ? p.rssi + " dBm · SNR " + p.snr + " dB" : "ölçüm yok"],
+      ["Gecikme", p.delay_s != null ? fmtDur(p.delay_s) + (isLate(p) ? " (geç geldi)" : "") : "–"],
     ];
     for (const [k, v] of rows) {
       const tr = el("tr"); tr.appendChild(el("td", null, k)); tr.appendChild(el("td", null, v)); t.appendChild(tr);
@@ -169,8 +287,10 @@
       if (!byTracker.has(p.tracker)) byTracker.set(p.tracker, []);
       byTracker.get(p.tracker).push(p);
     }
+    lastPoints = points;
     const trackersBox = document.getElementById("trackers");
     trackersBox.replaceChildren();
+    ageChips = [];
     const allLatLng = [];
     let newest = null;
     let i = 0;
@@ -186,11 +306,15 @@
         layers.set(id, layer);
       }
       layer.line.setLatLngs(latlngs);
+      layer.line.setStyle({ opacity: view === "track" ? .85 : view === "range" ? .3 : .15 });
       layer.dots.clearLayers();
       list.forEach((p, k) => {
         const age = list.length > 1 ? k / (list.length - 1) : 1;
-        L.circleMarker([p.lat, p.lon], { radius: 4, color: "#0b0f0d", weight: 1,
-          fillColor: color, fillOpacity: .35 + .55 * age }).bindPopup(() => popup(p)).addTo(layer.dots);
+        if (view === "grid") return;
+        const style = view === "range"
+          ? { radius: 6, color: "#0b0f0d", weight: 1, fillColor: rssiColor(p), fillOpacity: .92 }
+          : { radius: 4, color: "#0b0f0d", weight: 1, fillColor: color, fillOpacity: .35 + .55 * age };
+        L.circleMarker([p.lat, p.lon], style).bindPopup(() => popup(p)).addTo(layer.dots);
       });
       const last = list[list.length - 1];
       if (layer.last) layer.last.remove();
@@ -205,7 +329,12 @@
       r1.appendChild(name); r1.appendChild(el("span", "meta", list.length + " kayıt"));
       card.appendChild(r1);
       const chips = el("div", "chips");
-      chips.appendChild(el("span", "chip", "Son: " + fmtTime(last.time)));
+      const [fcls, ftext] = freshness(last.time, last.period_s);
+      const fchip = el("span", "chip " + fcls, ftext);
+      ageChips.push({ span: fchip, time: last.time, period: last.period_s });
+      chips.appendChild(fchip);
+      chips.appendChild(el("span", "chip", fmtTime(last.time)));
+      if (last.rssi != null) chips.appendChild(el("span", "chip", last.rssi + " dBm"));
       if (last.battery_mv != null) chips.appendChild(el("span", "chip " + batteryClass(last), last.battery_mv + " mV"));
       if (last.sats != null) chips.appendChild(el("span", "chip", last.sats + " uydu"));
       card.appendChild(chips);
@@ -224,12 +353,17 @@
     for (const p of sorted) {
       const li = el("li");
       li.appendChild(el("span", "seq", "#" + p.seq));
-      li.appendChild(el("span", "t", fmtTime(p.time)));
-      li.appendChild(el("span", "b", p.battery_mv != null ? p.battery_mv + " mV" : ""));
+      const t = el("span", "t", fmtTime(p.time));
+      if (isLate(p)) t.appendChild(el("span", "late", "geç · " + fmtDur(p.delay_s)));
+      li.appendChild(t);
+      li.appendChild(el("span", "b", view !== "track"
+        ? (p.rssi != null ? p.rssi + " dBm" : "–")
+        : (p.battery_mv != null ? p.battery_mv + " mV" : "")));
       li.addEventListener("click", () => { map.setView([p.lat, p.lon], Math.max(map.getZoom(), 18)); L.popup().setLatLng([p.lat, p.lon]).setContent(popup(p)).openOn(map); });
       recent.appendChild(li);
     }
 
+    renderLegend(points, renderGrid(points));
     if (allLatLng.length && !fittedOnce) {
       map.fitBounds(L.latLngBounds(allLatLng), fitOptions());
       fittedOnce = true;
@@ -241,14 +375,59 @@
     };
   }
 
+  function swatchRow(box, color, label) {
+    const row = el("div", "row"); const sw = el("span", "swatch"); sw.style.background = color;
+    row.appendChild(sw); row.appendChild(document.createTextNode(label)); box.appendChild(row);
+  }
+  function renderLegend(points, cells) {
+    const box = document.getElementById("legend");
+    box.classList.toggle("on", view !== "track");
+    box.replaceChildren();
+    if (view === "track") return;
+    if (view === "grid") {
+      box.appendChild(el("b", null, "Kapsama (kare başına)"));
+      const sizes = el("div", "sizes");
+      for (const m of [3, 5, 10, 20]) {
+        const b = el("button", null, m + " m"); b.type = "button";
+        b.setAttribute("aria-pressed", String(m === cellM));
+        b.addEventListener("click", () => { cellM = m; try { localStorage.setItem("orun.cell", String(m)); } catch (_) {} render(lastPoints); });
+        sizes.appendChild(b);
+      }
+      box.appendChild(sizes);
+      for (const [, color, label] of CELL_BANDS) swatchRow(box, color, label);
+      swatchRow(box, CUT, "Kopuk (kayıtların yarıdan azı anında geçti)");
+      swatchRow(box, NO_SIGNAL, "Geçti, sinyal ölçümü yok");
+      const used = cells.reduce((a, c) => a + c.n, 0);
+      box.appendChild(el("div", "meta", cells.length + " kare · " + used + " kayıt kullanıldı. " +
+        "Sayılmayanlar: zayıf konum (5'ten az uydu / HDOP > 4), kuyrukta bekleyip geç gelenler ve araç çalışmıyorken kaydedilenler."));
+      return;
+    }
+    box.appendChild(el("b", null, "Gateway'in duyduğu sinyal"));
+    for (const [, color, label] of BANDS.concat([[0, NO_SIGNAL, "Ölçüm yok (eski / dökümden gelen kayıt)"]])) {
+      const row = el("div", "row"); const sw = el("span", "swatch"); sw.style.background = color;
+      row.appendChild(sw); row.appendChild(document.createTextNode(label)); box.appendChild(row);
+    }
+    const measured = points.filter(p => p.rssi != null);
+    if (measured.length) {
+      const worst = measured.reduce((a, b) => (b.rssi < a.rssi ? b : a));
+      box.appendChild(el("div", "meta", measured.length + "/" + points.length +
+        " kayıtta ölçüm · en zayıf " + worst.rssi + " dBm (SNR " + worst.snr + ")"));
+    }
+  }
+
   async function refresh() {
     const dot = document.getElementById("dot"), status = document.getElementById("status");
     try {
       const r = await fetch("/api/points", { cache: "no-store" });
       if (!r.ok) throw new Error("HTTP " + r.status);
       const data = await r.json();
+      if (data.now) serverOffset = new Date(data.now).getTime() - Date.now();
       const key = data.count + ":" + data.points.map(p => p.tracker + p.seq).slice(-1)[0];
       if (key !== lastKey) { render(data.points); lastKey = key; }
+      for (const a of ageChips) {
+        const [cls, text] = freshness(a.time, a.period);
+        a.span.className = "chip " + cls; a.span.textContent = text;
+      }
       lastOk = Date.now();
       dot.className = "dot live";
       status.textContent = data.count + " konumlu kayıt · " + (data.skipped ? data.skipped + " konumsuz · " : "") + "güncellendi";
@@ -263,6 +442,15 @@
     ev.currentTarget.setAttribute("aria-pressed", String(follow));
     ev.currentTarget.textContent = "Son konumu izle: " + (follow ? "açık" : "kapalı");
   });
+  const segButtons = document.querySelectorAll(".seg button");
+  const showView = () => segButtons.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
+  segButtons.forEach(b => b.addEventListener("click", () => {
+    view = b.dataset.view;
+    try { localStorage.setItem("orun.view", view); } catch (_) {}
+    showView();
+    render(lastPoints);
+  }));
+  showView();
   map.on("dragstart", () => {
     if (!follow) return;
     follow = false;
