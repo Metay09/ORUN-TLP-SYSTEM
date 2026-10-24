@@ -156,6 +156,26 @@ Observations:
   stationary cluster. A low-quality newest fix should be marked as such.
 
 
+## Finding: collar-side ACK time grows with control records
+
+Owner logs show `rtt_ms` rising ~255 ms per send, from 5.3 s to 8.9 s
+(5.8 → 7.1 s in an earlier run), and dropping back later. Host measurement
+on the real `ProductRecordStore` (FakeFlash read counts per
+`snapshotCustodyCandidates`, which the ACK submit path calls) shows the same
+shape: 127 → 3271 reads, about +100 per send/release cycle, falling back when
+the control page rotates (about every 30 cycles). `findCachedExact` stays
+around 100–142 reads. The same control scans run in the pilot's selection
+and pre-TX checks.
+
+Effect: the over-the-air ACK is not lost (0 timeouts once the v1 TX was
+held), but `rtt_ms` overstates the radio time and the collar's loop spends
+seconds in flash scans per ACK. This matters for power and loop latency in
+production. The bench line now splits it:
+`rtt_ms` (TX start → ACK taken from the radio), `verify_ms` (HMAC + exact
+match) and `release_ms` (durable release). A RAM index for active exact
+objects is the likely fix; it is a separate ObservationStore change, not
+part of this kit.
+
 ## Lessons carried to the ORUN app (owner asked to keep these)
 
 - "Where is it now" is the newest position **by record time**, never the

@@ -197,7 +197,8 @@ bool bench_pacer_started = false;
 struct BenchLink {
   uint32_t seq = 0U;          // record sequence of the last TX
   uint32_t sent_ms = 0U;      // its TX start
-  uint32_t ack_ms = 0U;       // authenticated ACK receipt
+  uint32_t ack_ms = 0U;       // ACK taken from the radio, before verification
+  uint32_t verify_ms = 0U;    // HMAC + exact-object match (local CPU/flash)
   int16_t rssi = 0;
   int8_t snr = 0;
   bool ack_seen = false;
@@ -3458,13 +3459,19 @@ void loop() {
 #ifdef ORUN_SF5L0_TRACKER
     bench_pacer.onReleased(orun_tlp::monotonic::nowMs());
     if (bench_link.ack_seen) {
-      // ACK strength as heard by the collar; rtt = TX start -> ACK receipt.
-      Serial.printf("BENCH LINK ack seq=%lu rssi=%d snr=%d rtt_ms=%lu\n",
+      // ACK strength as heard by the collar. rtt = TX start -> ACK taken
+      // from the radio (includes loop latency); verify/release are local.
+      const uint32_t now = orun_tlp::monotonic::nowMs();
+      Serial.printf("BENCH LINK ack seq=%lu rssi=%d snr=%d rtt_ms=%lu "
+                    "verify_ms=%lu release_ms=%lu\n",
                     static_cast<unsigned long>(bench_link.seq),
                     static_cast<int>(bench_link.rssi),
                     static_cast<int>(bench_link.snr),
                     static_cast<unsigned long>(bench_link.ack_ms -
-                                               bench_link.sent_ms));
+                                               bench_link.sent_ms),
+                    static_cast<unsigned long>(bench_link.verify_ms),
+                    static_cast<unsigned long>(now - bench_link.ack_ms -
+                                               bench_link.verify_ms));
       bench_link.ack_seen = false;
     }
 #endif
@@ -3628,11 +3635,16 @@ void loop() {
           product_records.store().ready() && security_store.ready() &&
           security_store.state() == orun_tlp::SecurityState::kProvisioned &&
           !security_store.busy()) {
+#ifdef ORUN_SF5L0_TRACKER
+        const uint32_t bench_ack_taken_ms = orun_tlp::monotonic::nowMs();
+#endif
         const auto submitted = custody_ack_release.submit(ack.payload, ack.size);
         if (submitted == orun_tlp::CustodyAckReleaseOwner::Submit::kStarted) {
           Serial.println(F("PRODUCT CUSTODY ACK authenticated; release=pending"));
 #ifdef ORUN_SF5L0_TRACKER
-          bench_link.ack_ms = orun_tlp::monotonic::nowMs();
+          bench_link.ack_ms = bench_ack_taken_ms;
+          bench_link.verify_ms =
+              orun_tlp::monotonic::nowMs() - bench_ack_taken_ms;
           bench_link.rssi = ack.rssi_dbm;
           bench_link.snr = ack.snr_db;
           bench_link.ack_seen = true;
