@@ -3498,8 +3498,18 @@ void loop() {
   }
 #endif
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kPositionFlow);
+#ifdef ORUN_SF5L0_TRACKER
+  // SF5L4 bench: a legacy live POSITION TX inside the custody-ACK window
+  // takes the radio away from RX and the Gateway's ACK is lost (measured:
+  // 6 of 29 ACKs). While an ACK is awaited, the live v1 copy is skipped; the
+  // fix itself is stored as always (no record is lost).
+  const bool live_position_allowed =
+      tracking_enabled && !bench_pacer.awaitingAck();
+#else
+  const bool live_position_allowed = tracking_enabled;
+#endif
   const auto event =
-      positions.update(orun_tlp::monotonic::nowMs(), tracking_enabled);
+      positions.update(orun_tlp::monotonic::nowMs(), live_position_allowed);
   if (event == orun_tlp::PositionFlow::Event::kStorageFailure)
     Serial.println(F("STORAGE append failed; no live TX"));
   else if (event == orun_tlp::PositionFlow::Event::kStored)

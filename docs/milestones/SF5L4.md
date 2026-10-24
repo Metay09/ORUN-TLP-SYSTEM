@@ -31,6 +31,10 @@ position reach the PC quickly even while a backlog is queued.
   - with four unanswered cached objects (out of range), the newest cached one
     is re-sent, so returning into range frees a slot instead of stalling.
   - `BENCH DRAIN?` reports `ON`, `LIVE` or `OFF`.
+- No live legacy v1 POSITION TX while a custody ACK is awaited (bench image
+  only). Measured before the fix: 6 of 29 ACKs were lost, each time a v1
+  POSITION TX had started inside the ACK window. The fix is still stored as
+  before; only its live v1 copy is skipped.
 - USB lines:
   - `BENCH LINK tx seq=N newest=M LIVE|BACKLOG`
   - `BENCH LINK ack seq=N rssi=.. snr=.. rtt_ms=..`: the ACK as heard by the
