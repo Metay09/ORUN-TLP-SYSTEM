@@ -9,6 +9,7 @@
 
 #include "custody_ack_primitives.h"
 #include "custody_store_product_format.h"
+#include "edge_link.h"
 #include "product_custody_store.h"
 #include "security_store.h"
 #include "security_v3_format.h"
@@ -515,12 +516,19 @@ Sf5l0EdgeHandoff::Reply Sf5l0EdgeHandoff::accept(const char* line,
     return Reply::kMalformed;
   page = uint16_t(page_v);
   slot = uint16_t(slot_v);
-  if (pending_) return Reply::kBusy;
+  uint64_t generation = 0;
+  for (uint8_t b : gen_bytes) generation = (generation << 8U) | b;
+  return accept(page, slot, generation, claimed);
+}
 
+Sf5l0EdgeHandoff::Reply Sf5l0EdgeHandoff::accept(uint16_t page, uint16_t slot,
+                                                 uint64_t generation,
+                                                 const uint8_t (&claimed)[32]) {
+  if (pending_) return Reply::kBusy;
   ProductCustodyStore::Handle handle{};
   handle.page = page;
   handle.slot = slot;
-  for (uint8_t b : gen_bytes) handle.generation = (handle.generation << 8U) | b;
+  handle.generation = generation;
   uint8_t object[custody_store_product_format::kMaxObjectSize]{};
   size_t size = 0;
   const auto found = store_.readConfirmedDurable(handle, object, size);
@@ -583,6 +591,163 @@ Sf5l0EdgeHandoff::Event Sf5l0EdgeHandoff::service() {
     check_reclaim_ = false;
   }
   return event;
+}
+
+// ------------------------------------------------------- BLE Edge session --
+
+void Sf5l0EdgeLinkSession::begin() {
+  active_ = true;
+  hello_pending_ = true;
+  scan_pending_ = true;
+  dump_end_pending_ = true;
+  cursor_valid_ = false;
+  sent_this_pass_ = 0;
+  accept_pending_ = false;
+  results_n_ = 0;
+}
+
+bool Sf5l0EdgeLinkSession::pushResult(const Result& r) {
+  if (results_n_ >= sizeof(results_) / sizeof(results_[0])) return false;
+  results_[results_n_++] = r;
+  return true;
+}
+
+void Sf5l0EdgeLinkSession::onMessage(const uint8_t* m, size_t n) {
+  if (!active_ || m == nullptr || n == 0U) return;
+  if (m[0] == uint8_t(edge_link::Type::kDump) && n == 1U) {
+    scan_pending_ = true;           // full pass again from the start
+    dump_end_pending_ = true;
+    cursor_valid_ = false;
+    sent_this_pass_ = 0;
+    return;
+  }
+  edge_link::Accept a{};
+  if (!edge_link::decodeAccept(m, n, a)) {
+    (void)pushResult(Result{0, 0, uint8_t(edge_link::AcceptCode::kMalformed),
+                            false});
+    return;
+  }
+  edge_link::AcceptCode code = edge_link::AcceptCode::kRejected;
+  switch (handoff_.accept(a.page, a.slot, a.generation, a.mac)) {
+    case Sf5l0EdgeHandoff::Reply::kPending:
+      accept_pending_ = true;
+      accept_page_ = a.page;
+      accept_slot_ = a.slot;
+      return;  // onAcceptDone() answers
+    case Sf5l0EdgeHandoff::Reply::kAlready: code = edge_link::AcceptCode::kAlready; break;
+    case Sf5l0EdgeHandoff::Reply::kUnknown: code = edge_link::AcceptCode::kUnknown; break;
+    case Sf5l0EdgeHandoff::Reply::kBusy: code = edge_link::AcceptCode::kBusy; break;
+    case Sf5l0EdgeHandoff::Reply::kBadMac: code = edge_link::AcceptCode::kBadMac; break;
+    case Sf5l0EdgeHandoff::Reply::kMalformed: code = edge_link::AcceptCode::kMalformed; break;
+    case Sf5l0EdgeHandoff::Reply::kRejected: break;
+  }
+  (void)pushResult(Result{a.page, a.slot, uint8_t(code), false});
+}
+
+void Sf5l0EdgeLinkSession::onAcceptDone(uint16_t page, uint16_t slot, bool ok) {
+  if (!accept_pending_ || page != accept_page_ || slot != accept_slot_) return;
+  accept_pending_ = false;
+  if (!active_) return;
+  (void)pushResult(Result{page, slot,
+                          uint8_t(ok ? edge_link::AcceptCode::kHandedOff
+                                     : edge_link::AcceptCode::kFailed),
+                          false});
+}
+
+void Sf5l0EdgeLinkSession::onReclaimed(uint16_t page, bool ok) {
+  if (active_) (void)pushResult(Result{page, 0, uint8_t(ok ? 1U : 0U), true});
+}
+
+void Sf5l0EdgeLinkSession::onNewRecord(uint16_t page, uint16_t slot,
+                                       uint64_t generation, bool has_link,
+                                       int16_t rssi, int8_t snr) {
+  link_valid_ = has_link;
+  link_page_ = page;
+  link_slot_ = slot;
+  link_generation_ = generation;
+  link_rssi_ = rssi;
+  link_snr_ = snr;
+  if (active_) scan_pending_ = true;
+}
+
+bool Sf5l0EdgeLinkSession::nextHeld(uint8_t* out, size_t capacity,
+                                    size_t& length) {
+  // First held record strictly after the cursor, in (generation, slot)
+  // order -- the same order sf5l0ForEachHeld visits.
+  struct After : Sf5l0HeldVisitor {
+    bool cursor_valid; uint64_t gen; uint16_t slot;
+    bool found = false;
+    Sf5l0HeldRecord record{};
+    void held(const Sf5l0HeldRecord& r) override {
+      if (found) return;
+      if (cursor_valid && (r.generation < gen ||
+                           (r.generation == gen && r.slot <= slot)))
+        return;
+      record = r;
+      found = true;
+    }
+  } after;
+  after.cursor_valid = cursor_valid_;
+  after.gen = cursor_generation_;
+  after.slot = cursor_slot_;
+  (void)sf5l0ForEachHeld(port_, store_, page_count_, after);
+  if (!after.found) return false;
+  edge_link::Held h{};
+  h.page = after.record.page;
+  h.slot = after.record.slot;
+  h.generation = after.record.generation;
+  h.has_link = link_valid_ && h.page == link_page_ && h.slot == link_slot_ &&
+               h.generation == link_generation_;
+  h.rssi = link_rssi_;
+  h.snr = link_snr_;
+  h.size = after.record.size;
+  h.object = after.record.object;
+  length = edge_link::encodeHeld(h, out, capacity);
+  if (length == 0U) return false;
+  cursor_valid_ = true;
+  cursor_generation_ = h.generation;
+  cursor_slot_ = h.slot;
+  ++sent_this_pass_;
+  return true;
+}
+
+bool Sf5l0EdgeLinkSession::next(uint8_t* out, size_t capacity,
+                                size_t& length) {
+  length = 0;
+  if (!active_ || out == nullptr) return false;
+  if (hello_pending_) {
+    struct Count : Sf5l0HeldVisitor {
+      void held(const Sf5l0HeldRecord&) override {}
+    } count;
+    const uint16_t held = sf5l0ForEachHeld(port_, store_, page_count_, count);
+    length = edge_link::encodeHello(
+        gateway_id_, held,
+        uint16_t(page_count_ * custody_store_product_format::kRecordsPerPage),
+        out, capacity);
+    hello_pending_ = false;
+    return length != 0U;
+  }
+  if (results_n_ != 0U) {   // answers before more records
+    const Result r = results_[0];
+    for (uint8_t i = 1U; i < results_n_; ++i) results_[i - 1U] = results_[i];
+    --results_n_;
+    length = r.reclaim
+        ? edge_link::encodeReclaimed(r.page, r.code != 0U, out, capacity)
+        : edge_link::encodeAcceptResult(r.page, r.slot,
+                                        edge_link::AcceptCode(r.code), out,
+                                        capacity);
+    return length != 0U;
+  }
+  if (scan_pending_ && store_.ready() && !store_.busy()) {
+    if (nextHeld(out, capacity, length)) return true;
+    scan_pending_ = false;  // caught up until the next record arrives
+  }
+  if (!scan_pending_ && dump_end_pending_) {
+    dump_end_pending_ = false;
+    length = edge_link::encodeDumpEnd(sent_this_pass_, out, capacity);
+    return length != 0U;
+  }
+  return false;
 }
 
 }  // namespace orun_tlp

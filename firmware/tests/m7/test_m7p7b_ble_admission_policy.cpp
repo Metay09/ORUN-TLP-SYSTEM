@@ -337,5 +337,32 @@ int main() {
     assert(upd(ev, false, UINT32_MAX - 10 + kNoClientTimeoutMs) == BleAdmissionAction::kClose);
   }
 
-  puts("M7P7B BLE admission policy checks: PASS");
+  // SF5L6: Gateway-bridge availability commitment. Never closes, however
+  // long nobody connects; keeps asking for advertising; a close that was
+  // already pending is cancelled when the commitment is switched on.
+  {
+    BleAdmissionPolicy policy;
+    policy.setAlwaysAvailable(true);
+    policy.begin(0);
+    for (uint32_t t = 0; t < 10U * kNoClientTimeoutMs; t += kNoClientTimeoutMs / 4U)
+      assert(upd(policy, false, t) == BleAdmissionAction::kNone && policy.isOpen());
+    assert(updAdv(policy, false, 10U * kNoClientTimeoutMs, false) ==
+           BleAdmissionAction::kStartAdvertising);
+    assert(upd(policy, true, 11U * kNoClientTimeoutMs) == BleAdmissionAction::kNone);
+    assert(updEvent(policy, false, 12U * kNoClientTimeoutMs) ==
+           BleAdmissionAction::kNone);
+    assert(upd(policy, false, 40U * kNoClientTimeoutMs) == BleAdmissionAction::kNone);
+    assert(policy.isOpen());
+
+    BleAdmissionPolicy late;
+    late.begin(0);
+    assert(upd(late, false, kNoClientTimeoutMs) == BleAdmissionAction::kClose);
+    assert(late.isClosing());
+    late.setAlwaysAvailable(true);
+    assert(late.isOpen());
+    assert(upd(late, false, 5U * kNoClientTimeoutMs) == BleAdmissionAction::kNone);
+    assert(late.isOpen() && late.alwaysAvailable());
+  }
+
+  puts("M7P7B BLE admission policy checks (+SF5L6 always-available): PASS");
 }

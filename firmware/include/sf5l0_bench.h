@@ -4,6 +4,9 @@
 #include <stdint.h>
 
 #include "gateway_product_startup_guard.h"
+#ifdef ORUN_SF5L0_GATEWAY
+#include <ble.h>
+#endif
 #include "security_format.h"
 
 // SF5L0 — BENCH-ONLY single-record round trip with PUBLIC test keys.
@@ -214,6 +217,9 @@ class Sf5l0EdgeHandoff final {
       : store_(store), gateway_id_(gateway_id) {}
   Reply accept(const char* line, size_t length, uint16_t& page,
                uint16_t& slot);
+  // Same rule for an already parsed accept (BLE Edge link).
+  Reply accept(uint16_t page, uint16_t slot, uint64_t generation,
+               const uint8_t (&mac)[32]);
   // Loop: drives the store's maintenance and erases fully handed-off pages.
   Event service();
   uint32_t handedOff() const { return handed_off_; }
@@ -232,6 +238,64 @@ class Sf5l0EdgeHandoff final {
   uint32_t reclaimed_ = 0;
 };
 
+// SF5L6 bench BLE Edge session: the Gateway side of edge_link.h for ONE
+// connected Edge. Pull model, no queue of records: a (generation, slot)
+// cursor walks the records the store holds right now, so the first pass is
+// the full dump, later records stream as they arrive and handed-off records
+// are skipped by construction. Same accept rule and owner as USB.
+class Sf5l0EdgeLinkSession final {
+ public:
+  Sf5l0EdgeLinkSession(const FlashBackend& port, ProductCustodyStore& store,
+                       Sf5l0EdgeHandoff& handoff, uint64_t gateway_id,
+                       uint16_t page_count)
+      : port_(port), store_(store), handoff_(handoff),
+        gateway_id_(gateway_id), page_count_(page_count) {}
+  void begin();                     // new connection: HELLO, then full pass
+  void end() { active_ = false; }
+  bool active() const { return active_; }
+  // A complete Edge -> Gateway logical message.
+  void onMessage(const uint8_t* message, size_t size);
+  // An accept this session submitted has finished (Sf5l0EdgeHandoff event).
+  void onAcceptDone(uint16_t page, uint16_t slot, bool ok);
+  void onReclaimed(uint16_t page, bool ok);
+  // A new record was taken into custody; link facts are that frame's RX.
+  void onNewRecord(uint16_t page, uint16_t slot, uint64_t generation,
+                   bool has_link, int16_t rssi, int8_t snr);
+  // Next logical message to send, if any.
+  bool next(uint8_t* out, size_t capacity, size_t& length);
+  bool acceptPending() const { return accept_pending_; }
+
+ private:
+  struct Result { uint16_t page; uint16_t slot; uint8_t code; bool reclaim; };
+  bool pushResult(const Result& r);
+  bool nextHeld(uint8_t* out, size_t capacity, size_t& length);
+
+  const FlashBackend& port_;
+  ProductCustodyStore& store_;
+  Sf5l0EdgeHandoff& handoff_;
+  uint64_t gateway_id_;
+  uint16_t page_count_;
+  bool active_ = false;
+  bool hello_pending_ = false;
+  bool scan_pending_ = false;   // records may exist after the cursor
+  bool dump_end_pending_ = false;
+  bool cursor_valid_ = false;
+  uint64_t cursor_generation_ = 0;
+  uint16_t cursor_slot_ = 0;
+  uint16_t sent_this_pass_ = 0;
+  bool accept_pending_ = false;
+  uint16_t accept_page_ = 0;
+  uint16_t accept_slot_ = 0;
+  Result results_[6]{};
+  uint8_t results_n_ = 0;
+  bool link_valid_ = false;
+  uint16_t link_page_ = 0;
+  uint16_t link_slot_ = 0;
+  uint64_t link_generation_ = 0;
+  int16_t link_rssi_ = 0;
+  int8_t link_snr_ = 0;
+};
+
 namespace sf5l0_gateway {
 // setup(), before Bluefruit.begin(): census + OCQ2 mount via the startup guard.
 void begin(FlashBackend& product_port, RadioManager& radio,
@@ -242,6 +306,15 @@ void service(bool observation_store_mounted);
 void print();
 // "EDGE ACCEPT v1 ...": one authenticated (bench key) Edge durable accept.
 void edgeAccept(const char* line, size_t length);
+// SF5L6 BLE Edge service (edge_link.h). beginBle(): after Bluefruit.begin(),
+// before advertising starts. onBleEvent(): from the Bluefruit event callback
+// (BLE task: counter only). pollBle(): loop, with the sampled connection.
+#ifdef ORUN_SF5L0_GATEWAY  // device build only (SoftDevice types)
+bool beginBle();
+void onBleEvent(ble_evt_t* evt);
+void pollBle(bool connected, uint16_t connection_handle, bool disconnect_event,
+             uint32_t now);
+#endif
 // "BENCH GW ERASE PRODUCT CONFIRM": wipe this bench board's product region
 // when it is not a READY custody store. include_held=true ("BENCH GW ERASE
 // HELD CONFIRM") also wipes a READY store: bench-only stand-in for the

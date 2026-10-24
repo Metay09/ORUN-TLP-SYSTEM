@@ -87,7 +87,7 @@ RECEIPTS_SQL = (
 # Same construction as Sf5l0EdgeHandoff::mac (firmware/src/sf5l0_bench.cpp);
 # PUBLIC test key, so this proves the mechanism, not the Edge's identity.
 ACCEPT_REPLY = re.compile(
-    r"EDGE ACCEPT (?P<word>OK|UNKNOWN|BUSY|REJECTED|FAIL) "
+    r"EDGE ACCEPT (?P<word>OK|UNKNOWN|BUSY|REJECTED|FAIL)(?: reason=\w+)? "
     r"page=(?P<page>\d+|\?) slot=(?P<slot>\d+|\?)")
 RECLAIM = re.compile(r"EDGE RECLAIM page=(?P<page>\d+) (?P<what>started|OK|FAIL)")
 ACCEPT_TIMEOUT_S = 3.0
@@ -105,6 +105,73 @@ def edge_accept_mac(gateway: int, page: int, slot: int, generation: int,
            generation.to_bytes(8, "big") +
            hashlib.sha256(obj).digest()).ljust(102, b"\0")
     return hmac_mod.new(key, msg, hashlib.sha256).digest()
+
+
+def edge_accept_binary(gateway: int, page: int, slot: int, generation: int,
+                       obj: bytes) -> bytes:
+    """edge_link.h kAccept: type(1) page(2) slot(2) gen(8) mac(32)."""
+    mac = edge_accept_mac(gateway, page, slot, generation, obj)
+    return (bytes([0x82]) + page.to_bytes(2, "big") + slot.to_bytes(2, "big") +
+            generation.to_bytes(8, "big") + mac)
+
+
+# ---- SF5L6 BLE Edge link (firmware/include/edge_link.h) --------------------
+EDGE_SERVICE_UUID = "6f9a1c20-5b3e-4d8a-9e61-2c4b7a0d3e51"
+EDGE_TO_GATEWAY_UUID = "6f9a1c21-5b3e-4d8a-9e61-2c4b7a0d3e51"
+EDGE_TO_EDGE_UUID = "6f9a1c22-5b3e-4d8a-9e61-2c4b7a0d3e51"
+EDGE_FRAME = 20
+EDGE_FRAME_DATA = 16
+EDGE_MAX_MESSAGE = 160
+ACCEPT_WORDS = {0: "OK", 1: "OK", 2: "UNKNOWN", 3: "BUSY", 4: "REJECTED",
+                5: "REJECTED", 6: "REJECTED", 7: "FAIL"}
+
+
+def edge_frames(message: bytes, message_id: int) -> list:
+    """Split one logical message into 20-byte frames (edge_link Fragmenter)."""
+    if not 0 < len(message) <= EDGE_MAX_MESSAGE:
+        raise ValueError("message size")
+    frames, offset, index = [], 0, 0
+    while offset < len(message):
+        chunk = message[offset:offset + EDGE_FRAME_DATA]
+        flags = (1 if index == 0 else 0) | (2 if offset + len(chunk) == len(message) else 0)
+        frames.append(bytes([1, flags, message_id & 0xFF, index]) + chunk)
+        offset += len(chunk)
+        index += 1
+    return frames
+
+
+class EdgeReassembler:
+    """Mirror of edge_link::Reassembler; returns a message when complete."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.active, self.buf, self.mid, self.next_index = False, b"", 0, 0
+
+    def push(self, frame: bytes) -> Optional[bytes]:
+        if (len(frame) <= 4 or len(frame) > EDGE_FRAME or frame[0] != 1 or
+                frame[1] & ~3):
+            self.reset()
+            return None
+        start, end = bool(frame[1] & 1), bool(frame[1] & 2)
+        if start:
+            if frame[3] != 0:
+                self.reset()
+                return None
+            self.active, self.buf, self.mid, self.next_index = True, b"", frame[2], 0
+        elif not self.active or frame[2] != self.mid or frame[3] != self.next_index:
+            self.reset()
+            return None
+        self.buf += frame[4:]
+        self.next_index += 1
+        if len(self.buf) > EDGE_MAX_MESSAGE:
+            self.reset()
+            return None
+        if not end:
+            return None
+        done, self.active = self.buf, False
+        return done
 
 
 def edge_accept_line(gateway: int, page: int, slot: int, generation: int,
@@ -239,6 +306,7 @@ class BenchEdge:
         self._in_flight = None                # (key, line, sent_at)
         self.handed_off = 0
         self.accept_rejected = 0
+        self.gateway_id = None   # from the BLE HELLO
         with sqlite3.connect(str(self.db_path)) as db:
             db.execute(RECEIPTS_SQL)
             db.execute(SESSIONS_SQL)
@@ -269,43 +337,55 @@ class BenchEdge:
                     (rssi, snr, item.device_id, bytes(item.plaintext[4:12]),
                      item.sequence))
 
-    def _queue_accept(self, m, raw: bytes) -> None:
-        key = (int(m["page"]), int(m["slot"]), int(m["gen"], 16))
+    def _queue_accept(self, gateway: int, page: int, slot: int, gen: int,
+                      raw: bytes) -> None:
+        key = (page, slot, gen)
         if not self.accept or key in self._queued:
             return
-        line = edge_accept_line(int(m["gw"], 16), key[0], key[1], key[2], raw)
+        payload = (edge_accept_line(gateway, page, slot, gen, raw),
+                   edge_accept_binary(gateway, page, slot, gen, raw))
         self._queued.add(key)
-        self._accepts.append((key, line))
+        self._accepts.append((key, payload))
 
-    def next_accept(self, now: float) -> Optional[str]:
-        """The next EDGE ACCEPT line to write, one in flight at a time."""
+    def _next(self, now: float):
         if self._in_flight is not None:
-            key, line, sent = self._in_flight
+            key, payload, sent = self._in_flight
             if now - sent < ACCEPT_TIMEOUT_S:
                 return None
-            self._accepts.appendleft((key, line))   # no reply: send again
+            self._accepts.appendleft((key, payload))   # no reply: send again
             self._in_flight = None
         if not self._accepts:
             return None
-        key, line = self._accepts.popleft()
-        self._in_flight = (key, line, now)
-        return line
+        key, payload = self._accepts.popleft()
+        self._in_flight = (key, payload, now)
+        return payload
+
+    def next_accept(self, now: float) -> Optional[str]:
+        """The next EDGE ACCEPT line to write (USB), one in flight at a time."""
+        payload = self._next(now)
+        return payload[0] if payload else None
+
+    def next_accept_binary(self, now: float) -> Optional[bytes]:
+        """The same accept as an edge_link message (BLE)."""
+        payload = self._next(now)
+        return payload[1] if payload else None
 
     def pending_accepts(self) -> int:
         return len(self._accepts) + (1 if self._in_flight else 0)
 
-    def _accept_reply(self, r) -> Optional[str]:
+    def _accept_reply(self, word: str, page, slot) -> Optional[str]:
         if self._in_flight is None:
             return None
-        key, line, _ = self._in_flight
-        if r["page"] == "?" or r["word"] == "BUSY":
-            self._accepts.appendleft((key, line))   # store busy: retry
+        key, payload, _ = self._in_flight
+        if page is None or word == "BUSY":
+            self._accepts.appendleft((key, payload))   # store busy: retry
             self._in_flight = None
             return None
-        if (int(r["page"]), int(r["slot"])) != (key[0], key[1]):
+        if (page, slot) != (key[0], key[1]):
             return None
         self._in_flight = None
         self._queued.discard(key)
+        r = {"word": word}
         if r["word"] in ("OK", "UNKNOWN"):
             # UNKNOWN: already reclaimed (or never held) -- nothing to keep.
             self.handed_off += 1 if r["word"] == "OK" else 0
@@ -317,7 +397,10 @@ class BenchEdge:
     def handle_line(self, text: str) -> Optional[str]:
         reply = ACCEPT_REPLY.search(text)
         if reply:
-            return self._accept_reply(reply)
+            known = reply["page"] != "?"
+            return self._accept_reply(
+                reply["word"], int(reply["page"]) if known else None,
+                int(reply["slot"]) if known else None)
         reclaim = RECLAIM.search(text)
         if reclaim:
             if reclaim["what"] == "OK":
@@ -347,7 +430,13 @@ class BenchEdge:
             return (f"RED   gw={m['gw']} page={m['page']} slot={m['slot']}: "
                     f"satır eksik/bozuk ({len(hex_text)} hex, beklenen "
                     f"{2 * int(m['len'])}); BENCH GW DUMP ile tekrar istenebilir")
-        raw = bytes.fromhex(hex_text)
+        return self._ingest_held(int(m["gw"], 16), int(m["page"]), int(m["slot"]),
+                                 int(m["gen"], 16), bytes.fromhex(hex_text), link)
+
+    def _ingest_held(self, gateway: int, page: int, slot: int, gen: int,
+                     raw: bytes, link) -> str:
+        """One held record from the Gateway (USB line or BLE message)."""
+        m = {"gw": f"{gateway:016X}", "page": page, "slot": slot}
         state = self.ledger.ingest(raw).state
         S = self.ledger_mod.LedgerState
         label = {S.VERIFIED_STORED: "STORED", S.VERIFIED_DUPLICATE: "DUPLICATE",
@@ -362,12 +451,47 @@ class BenchEdge:
         self._receipt(item, link)
         if label in ("STORED", "DUPLICATE"):
             # The ledger commit (synchronous=FULL) has returned: durable here.
-            self._queue_accept(m, raw)
+            self._queue_accept(gateway, page, slot, gen, raw)
         sig = f" | sinyal {link[0]} dBm SNR {link[1]}" if link else ""
         if item.family != 1:
             return f"{word} tasma={item.device_id.hex().upper()} seq={item.sequence} (EVENT){sig}"
         first, _, rest = human(describe_periodic(item.device_id, item.plaintext)).partition("\n")
         return f"{word} {first}{sig}" + (f"\n{rest}" if rest else "")
+
+    def handle_ble(self, msg: bytes) -> Optional[str]:
+        """One complete edge_link message from the Gateway (BLE)."""
+        if not msg:
+            return None
+        t = msg[0]
+        if t == 0x01 and len(msg) == 13:
+            self.gateway_id = int.from_bytes(msg[1:9], "big")
+            held = int.from_bytes(msg[9:11], "big")
+            cap = int.from_bytes(msg[11:13], "big")
+            return f"[gateway BLE] {self.gateway_id:016X} bağlı; tuttuğu kayıt {held}/{cap}"
+        if t == 0x02 and len(msg) >= 18 and len(msg) == 18 + msg[17]:
+            if self.gateway_id is None:
+                return None   # HELLO always comes first; never guess the id
+            page = int.from_bytes(msg[1:3], "big")
+            slot = int.from_bytes(msg[3:5], "big")
+            gen = int.from_bytes(msg[5:13], "big")
+            link = None
+            if msg[13] & 1:
+                link = (int.from_bytes(msg[14:16], "big", signed=True),
+                        int.from_bytes(msg[16:17], "big", signed=True))
+            return self._ingest_held(self.gateway_id, page, slot, gen,
+                                     bytes(msg[18:]), link)
+        if t == 0x03 and len(msg) == 3:
+            return (f"[gateway BLE] DUMP END count={int.from_bytes(msg[1:3], 'big')} "
+                    f"| {self.summary()}")
+        if t == 0x04 and len(msg) == 6:
+            return self._accept_reply(ACCEPT_WORDS.get(msg[5], "REJECTED"),
+                                      int.from_bytes(msg[1:3], "big"),
+                                      int.from_bytes(msg[3:5], "big"))
+        if t == 0x05 and len(msg) == 4:
+            page = int.from_bytes(msg[1:3], "big")
+            return (f"[gateway] sayfa {page} boşaltıldı (kayıtları teslim edilmişti)"
+                    if msg[3] else f"UYARI gateway sayfa {page} silinemedi")
+        return None
 
     def summary(self) -> str:
         c = self.counts
@@ -420,6 +544,85 @@ def run_port(edge: BenchEdge, port: str, dump: bool) -> None:
         except KeyboardInterrupt:
             pass
         edge.session_alive()
+    print(edge.summary())
+
+
+def run_ble(edge: BenchEdge, address: Optional[str]) -> None:
+    """SF5L6: the same Edge work as run_port, over the Gateway's BLE Edge
+    service. The Gateway starts a full pass (HELLO, every held record,
+    DUMP END) on each connection, then streams new records."""
+    try:
+        import asyncio
+        from bleak import BleakClient, BleakScanner
+    except ImportError:
+        raise SystemExit("bleak yok: python3 -m pip install bleak")
+
+    async def find():
+        if address:
+            return address
+        print("[BLE] ORUN gateway aranıyor…", flush=True)
+
+        def match(device, adv):
+            uuids = [u.lower() for u in (adv.service_uuids or [])]
+            return EDGE_SERVICE_UUID in uuids
+        return await BleakScanner.find_device_by_filter(match, timeout=20.0)
+
+    async def session(target):
+        inbox = asyncio.Queue()
+        rx = EdgeReassembler()
+        mid = 0
+
+        def on_frame(_char, data):
+            inbox.put_nowait(bytes(data))
+
+        async with BleakClient(target, timeout=20.0) as client:
+            name = getattr(target, "name", None) or getattr(target, "address", target)
+            print(f"[BLE] bağlandı: {name}", flush=True)
+            await client.start_notify(EDGE_TO_EDGE_UUID, on_frame)
+            edge.session_alive()
+            beat = time.monotonic()
+            while client.is_connected:
+                try:
+                    frames = [await asyncio.wait_for(inbox.get(), 0.1)]
+                    while not inbox.empty():
+                        frames.append(inbox.get_nowait())
+                except asyncio.TimeoutError:
+                    frames = []
+                for frame in frames:
+                    msg = rx.push(frame)
+                    if msg:
+                        out = edge.handle_ble(msg)
+                        if out:
+                            print(out, flush=True)
+                accept = edge.next_accept_binary(time.monotonic())
+                if accept:
+                    mid = (mid + 1) & 0xFF
+                    for frame in edge_frames(accept, mid):
+                        await client.write_gatt_char(EDGE_TO_GATEWAY_UUID, frame,
+                                                     response=True)
+                if time.monotonic() - beat >= 15:
+                    edge.session_alive()
+                    beat = time.monotonic()
+        print("[BLE] bağlantı koptu; yeniden denenecek", flush=True)
+
+    async def forever():
+        while True:
+            target = await find()
+            if target is None:
+                print("[BLE] gateway bulunamadı; 5 sn sonra tekrar", flush=True)
+                await asyncio.sleep(5)
+                continue
+            try:
+                await session(target)
+            except Exception as exc:   # BlueZ/bleak errors: reconnect
+                print(f"[BLE] hata: {exc}; 5 sn sonra tekrar", flush=True)
+            await asyncio.sleep(5)
+
+    try:
+        asyncio.run(forever())
+    except KeyboardInterrupt:
+        pass
+    edge.session_alive()
     print(edge.summary())
 
 
@@ -582,6 +785,10 @@ def main(argv=None) -> int:
     src = ap.add_mutually_exclusive_group()
     src.add_argument("--port", help="Gateway USB serial port (/dev/serial/by-id/...)")
     src.add_argument("--file", help="saved Gateway log, or - for stdin")
+    src.add_argument("--ble", nargs="?", const="", metavar="ADDRESS",
+                     help="Gateway over Bluetooth LE (needs bleak); without "
+                          "ADDRESS the first gateway advertising the ORUN Edge "
+                          "service is used")
     src.add_argument("--list", action="store_true", help="print records already in the ledger")
     ap.add_argument("--db", default=str(Path.home() / "orun-edge-bench.sqlite"),
                     help="ledger SQLite file (default: ~/orun-edge-bench.sqlite)")
@@ -599,7 +806,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     db = Path(os.path.expanduser(args.db))
     server = start_map_server(db, args.host, args.serve) if args.serve else None
-    if server and not (args.port or args.file or args.list):
+    if server and not (args.port or args.file or args.list or args.ble is not None):
         try:
             while True:
                 time.sleep(3600)
@@ -613,12 +820,16 @@ def main(argv=None) -> int:
         print("UYARI: --bench-test-key yok; hiçbir kayıt açılamaz (hepsi RED olur).",
               file=sys.stderr)
     edge = BenchEdge(db, args.bench_test_key,
-                     accept=bool(args.port) and not args.no_accept)
+                     accept=(bool(args.port) or args.ble is not None)
+                     and not args.no_accept)
+    if args.ble is not None:
+        run_ble(edge, args.ble or None)
+        return 0
     if args.port:
         run_port(edge, args.port, not args.no_dump)
         return 0
     if not args.file:
-        ap.error("--port, --file or --list required")
+        ap.error("--port, --ble, --file or --list required")
     for text in lines_from_file(args.file):
         out = edge.handle_line(text)
         if out:

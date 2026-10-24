@@ -16,7 +16,7 @@ echo "[SF5L5] bench Edge accept -> Gateway hand-off + page reclaim"
 "${CXX:-g++}" "${flags[@]}" \
   firmware/tests/sf5/test_sf5l5_edge_handoff.cpp \
   firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
-  firmware/src/sf5l0_bench.cpp \
+  firmware/src/sf5l0_bench.cpp firmware/src/edge_link.cpp \
   firmware/src/custody_ack_verifier.cpp firmware/src/custody_ack.cpp \
   firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
   firmware/src/security_v3_ab_preflight.cpp firmware/src/security_v3_format.cpp \
