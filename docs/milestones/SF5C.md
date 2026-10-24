@@ -457,3 +457,38 @@ physical flash behavior.
 Independent audit is required after the implementation/test head is stable and
 before merge because this slice defines reset/release/persistence behavior that
 later controls data-loss semantics.
+
+## Custody-path scan cost fix (2026-10-24)
+
+**Status:** code + host tests; physical check pending (owner bench).
+
+**Why:** on the SF5L4 owner bench, the collar's custody-ACK verification
+(`verify_ms`) measured 5.4 → 6.4 s and grew ~260 ms per send, while the radio
+round trip stayed at 3.85 s. `snapshotRetainedExact()` and
+`activeControlCount(kExactObject)` ran:
+- one FULL data-page scan (`findRecord`) per exact-object control, and
+- one control-page re-read (`controlIsLatest`) per control.
+
+Both grow with the controls written since the last control-page rotation.
+
+**Change:** the persistent format, mutations and acceptance rules are
+unchanged; only the read order is new.
+- `latestActiveExactControls()`: one control-page pass, same
+  latest-of-key rule.
+- `resolveBackings()`: one data-page pass resolving every identity, with
+  `findRecord()`'s per-identity outcome (duplicates → read error).
+- Scratch buffers are store members, not stack, because these run inside the
+  ACK verification chain (+~1.5 KiB RAM).
+- `crc32Ieee()`: a table-driven CRC-32 (header-only), bit-identical to the
+  bitwise loops. Used by the observation store and the Gateway product
+  custody format, whose scans inspect every record.
+
+**Evidence:**
+- `test_sf5_store_scan_cost.cpp`: 120 cache/release cycles over a 200+
+  record store, through control-page rotation.
+  - The snapshot is exactly the cached-and-unreleased set, sorted, and the
+    count matches.
+  - Reads per call: 269–313, previously 296 → 1069 and growing.
+  - CRC equals the bitwise CRC (incl. the `123456789` check value).
+- Full host suite PASS. `rak4630` 362 912 B flash / 36 076 B RAM (was
+  359 584 / ~34.1 K with local GCC 13).

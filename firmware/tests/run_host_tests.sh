@@ -938,6 +938,10 @@ bash tools/ci/run_sf5k3u_tracker_ack_runtime_host.sh
 # This test does NOT claim AES/CC310 or physical SF11 RF qualification.
 bash tools/ci/run_sf5k3v_tracker_tx_host.sh
 
+# Custody-path store scans: one control pass + one data pass per
+# snapshot/count (no growth per send), table CRC-32 == bitwise CRC-32.
+bash tools/ci/run_sf5_store_scan_cost_host.sh
+
 # Gateway RF mailbox -> real authorized custody flash/HMAC -> ACK TX mock;
 # production Gateway has no grant-enrollment or OCQ2 activation yet.
 bash tools/ci/run_sf5k3w_gateway_product_runtime_host.sh

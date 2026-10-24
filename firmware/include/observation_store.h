@@ -267,6 +267,38 @@ class ObservationStore {
   bool controlCopyFinished() const;
   LookupResult findRecord(const osf::RecordIdentity& identity,
                           Record& out) const;
+  // What the custody paths need to know about a record, without its payload.
+  struct Backing {
+    LookupResult result = LookupResult::kNone;
+    osf::RecordKind kind = osf::RecordKind::kPeriodic;
+    bool released = false;
+    bool release_uncertain = false;
+    bool release_marker_exhausted = false;
+  };
+  // ONE pass over the data pages resolving up to kControlRecordsPerPage
+  // identities, with exactly findRecord()'s per-identity outcome. Replaces
+  // one full data scan per exact-object control (O(controls x records)).
+  // false = a page/record read error; every result is then unusable.
+  bool resolveBackings(const osf::RecordIdentity* identities, uint16_t count,
+                       Backing* out) const;
+  // ONE pass over the active control page: the latest ACTIVE exact-object
+  // controls (same rule as controlIsLatest(), which re-read the whole page
+  // per control: O(slots^2)). Fills exact_scratch_[0..count) in slot order.
+  // false = read error, corrupt or invalid control (callers already fail on
+  // those).
+  bool latestActiveExactControls(uint16_t& count) const;
+  struct ExactControl {
+    uint64_t serial = 0;
+    osf::RecordIdentity identity{};
+    uint16_t slot = 0;
+    osf::ControlEvidence evidence = osf::ControlEvidence::kErased;
+    uint8_t schema = 0;
+  };
+  // Scratch for the custody-path scans; members, not stack, because these
+  // run inside the ACK verification call chain. Single-threaded owner.
+  mutable ExactControl exact_scratch_[osf::kControlRecordsPerPage];
+  mutable osf::RecordIdentity id_scratch_[osf::kControlRecordsPerPage];
+  mutable Backing backing_scratch_[osf::kControlRecordsPerPage];
   bool countByRelease(bool released, uint32_t& count) const;
 
   FlashOpResult programStep(uint32_t offset, const void* data, size_t size);

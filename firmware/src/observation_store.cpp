@@ -1206,12 +1206,78 @@ ObservationStore::ControlLookupResult ObservationStore::findLatestControl(
   return ControlLookupResult::kFound;
 }
 
+bool ObservationStore::latestActiveExactControls(uint16_t& count) const {
+  count = 0U;
+  if (active_control_page_ < 0) return true;
+  uint16_t all = 0U;
+  for (uint16_t slot = 0; slot < osf::kControlRecordsPerPage; ++slot) {
+    osf::ControlInspection control;
+    if (!readControl(static_cast<uint16_t>(active_control_page_), slot,
+                     control))
+      return false;
+    if (control.evidence == osf::ControlEvidence::kErased ||
+        control.evidence == osf::ControlEvidence::kStaged ||
+        control.evidence == osf::ControlEvidence::kPartialCommit)
+      continue;
+    if (control.evidence == osf::ControlEvidence::kCorrupt ||
+        !controlPayloadValid(control))
+      return false;
+    // controlIsLatest() compares against ACTIVE and CLEARED controls of the
+    // same key (an exact object's key is its record identity).
+    if (control.kind != osf::ControlKind::kExactObject ||
+        (control.evidence != osf::ControlEvidence::kActive &&
+         control.evidence != osf::ControlEvidence::kCleared))
+      continue;
+    osc::ExactObject value;
+    if (!osc::decodeExactObject(control.payload, control.payload_size, value))
+      return false;
+    ExactControl& e = exact_scratch_[all++];
+    e.serial = control.serial;
+    e.identity = value.identity;
+    e.slot = slot;
+    e.evidence = control.evidence;
+    e.schema = control.schema;
+  }
+  for (uint16_t i = 0U; i < all; ++i) {
+    if (exact_scratch_[i].evidence != osf::ControlEvidence::kActive) continue;
+    bool latest = true;
+    for (uint16_t j = 0U; j < all && latest; ++j)
+      if (j != i && exact_scratch_[j].serial > exact_scratch_[i].serial &&
+          sameIdentity(exact_scratch_[j].identity, exact_scratch_[i].identity))
+        latest = false;
+    if (latest) exact_scratch_[count++] = exact_scratch_[i];  // count <= i
+  }
+  return true;
+}
+
 uint16_t ObservationStore::activeControlCount(
     osf::ControlKind kind, bool& read_ok) const {
   read_ok = false;
   if (active_control_page_ < 0) {
     read_ok = true;
     return 0U;
+  }
+
+  if (kind == osf::ControlKind::kExactObject) {
+    // An exact object counts while its record is retained and unreleased:
+    // one control-page pass, then ONE data-page pass for all backings.
+    uint16_t m = 0U;
+    if (!latestActiveExactControls(m)) return 0U;
+    uint16_t n = 0U;
+    for (uint16_t i = 0U; i < m; ++i)
+      if (exact_scratch_[i].schema == kControlSchemaActive)
+        id_scratch_[n++] = exact_scratch_[i].identity;
+    if (!resolveBackings(id_scratch_, n, backing_scratch_)) return 0U;
+    uint16_t count = 0U;
+    for (uint16_t i = 0U; i < n; ++i) {
+      if (backing_scratch_[i].result == LookupResult::kReadError) return 0U;
+      if (backing_scratch_[i].result == LookupResult::kNone ||
+          backing_scratch_[i].released)
+        continue;
+      ++count;
+    }
+    read_ok = true;
+    return count;
   }
 
   uint16_t count = 0U;
@@ -1460,45 +1526,38 @@ bool ObservationStore::snapshotRetainedExact(
   osc::ExactObject staged[osf::kMaxExactCustodyObjects]{};
   uint16_t n = 0U;
   if (active_control_page_ >= 0) {
-    for (uint16_t slot = 0U; slot < osf::kControlRecordsPerPage; ++slot) {
-      osf::ControlInspection control{};
-      if (!readControl(static_cast<uint16_t>(active_control_page_), slot,
-                       control)) return false;
-      if (control.evidence == osf::ControlEvidence::kErased ||
-          control.evidence == osf::ControlEvidence::kStaged ||
-          control.evidence == osf::ControlEvidence::kPartialCommit)
-        continue;
-      if (control.evidence == osf::ControlEvidence::kCorrupt ||
-          !controlPayloadValid(control))
-        return false;
-      if (control.kind != osf::ControlKind::kExactObject ||
-          control.evidence != osf::ControlEvidence::kActive)
-        continue;
+    // Pass 1: latest ACTIVE exact-object controls, one control-page pass.
+    uint16_t m = 0U;
+    if (!latestActiveExactControls(m)) return false;
+    for (uint16_t k = 0U; k < m; ++k) id_scratch_[k] = exact_scratch_[k].identity;
 
-      bool read_ok = false;
-      const bool latest = controlIsLatest(slot, control, read_ok);
-      if (!read_ok) return false;
-      if (!latest) continue;
+    // Pass 2: every backing record in ONE data-page scan (previously one
+    // full scan per control: seconds per ACK on a full store).
+    if (!resolveBackings(id_scratch_, m, backing_scratch_)) return false;
 
-      osc::ExactObject candidate{};
-      if (!osc::decodeExactObject(control.payload, control.payload_size,
-                                  candidate)) return false;
-      Record backing{};
-      const LookupResult backing_result =
-          findRecord(candidate.identity, backing);
-      if (backing_result == LookupResult::kReadError) return false;
+    // Pass 3: the same acceptance, in the same control order, as before.
+    for (uint16_t k = 0U; k < m; ++k) {
+      const Backing& backing = backing_scratch_[k];
+      if (backing.result == LookupResult::kReadError) return false;
       // Control bytes may outlive the backing record after durable release
       // and safe data-page retirement; those bytes are NOT pending custody.
-      if (backing_result == LookupResult::kNone || backing.released)
+      if (backing.result == LookupResult::kNone || backing.released)
         continue;
+
+      osf::ControlInspection control{};
+      osc::ExactObject candidate{};
+      if (!readControl(static_cast<uint16_t>(active_control_page_),
+                       exact_scratch_[k].slot, control) ||
+          !osc::decodeExactObject(control.payload, control.payload_size,
+                                  candidate) ||
+          !sameIdentity(candidate.identity, exact_scratch_[k].identity))
+        return false;
       if (backing.kind != candidate.record_kind ||
           backing.release_uncertain || backing.release_marker_exhausted)
         return false;
 
       // controlIsLatest already checked superseding tombstones and stale
-      // journal versions. Avoid a second full flash scan per candidate:
-      // findExactObject() would re-scan the record backing too, increasing
-      // radio-window energy cost without stronger custody authorization.
+      // journal versions; the backing came from the single pass above.
       if (n >= osf::kMaxExactCustodyObjects) return false;
       for (uint16_t j = 0U; j < n; ++j) {
         if (staged[j].identity.incarnation ==
@@ -1756,6 +1815,77 @@ bool ObservationStore::takeControlWriteResult(bool& success) {
   if (!control_write_result_ready_) return false;
   success = control_write_result_success_;
   control_write_result_ready_ = false;
+  return true;
+}
+
+bool ObservationStore::resolveBackings(const osf::RecordIdentity* identities,
+                                       uint16_t count, Backing* out) const {
+  if (count > osf::kControlRecordsPerPage ||
+      (count != 0U && (identities == nullptr || out == nullptr)))
+    return false;
+  for (uint16_t i = 0U; i < count; ++i) out[i] = Backing();
+  if (count == 0U) return true;
+  bool any_valid = false;
+  for (uint16_t i = 0U; i < count; ++i) any_valid |= identities[i].valid();
+  if (!any_valid) return true;  // findRecord: invalid identity -> kNone
+
+  // Same page/record acceptance as findRecord(); keep the two in step.
+  for (uint16_t page = osf::kControlPageCount; page < page_count_; ++page) {
+    osf::PageInspection header;
+    if (!readPage(page, header)) return false;
+    const bool rotation_target =
+        rotation_resuming_ && page == rotation_state_.target_page;
+    if (rotation_target) {
+      if (header.evidence != osf::PageEvidence::kActive ||
+          header.kind != osf::PageKind::kData ||
+          header.device_id != device_id_ ||
+          header.incarnation != incarnation_ ||
+          header.generation != rotation_state_.target_old_generation)
+        continue;
+    } else {
+      if (header.evidence == osf::PageEvidence::kErased ||
+          header.evidence == osf::PageEvidence::kPrepared ||
+          header.evidence == osf::PageEvidence::kStaged ||
+          header.evidence == osf::PageEvidence::kPartialCommit ||
+          header.evidence == osf::PageEvidence::kPartialActivation)
+        continue;
+      if (header.evidence != osf::PageEvidence::kActive ||
+          header.kind != osf::PageKind::kData ||
+          header.device_id != device_id_ ||
+          header.incarnation != incarnation_)
+        return false;
+    }
+
+    for (uint16_t slot = 0; slot < osf::kDataRecordsPerPage; ++slot) {
+      osf::RecordInspection record;
+      if (!readRecord(page, slot, record)) return false;
+      if (record.evidence == osf::RecordEvidence::kCorrupt) return false;
+      if (record.evidence != osf::RecordEvidence::kRetained &&
+          record.evidence != osf::RecordEvidence::kReleased)
+        continue;
+
+      osf::RecordIdentity candidate;
+      candidate.incarnation = record.incarnation;
+      candidate.sequence = record.sequence;
+      for (uint16_t i = 0U; i < count; ++i) {
+        if (!identities[i].valid() || !sameIdentity(candidate, identities[i]))
+          continue;
+        Backing& b = out[i];
+        if (b.result != LookupResult::kNone) {  // seen twice: ambiguous
+          b.result = LookupResult::kReadError;
+          continue;
+        }
+        b.result = LookupResult::kFound;
+        b.kind = record.kind;
+        b.released = record.evidence == osf::RecordEvidence::kReleased;
+        b.release_uncertain = record.release_uncertain;
+        b.release_marker_exhausted =
+            record.evidence == osf::RecordEvidence::kRetained &&
+            record.release_uncertain &&
+            record.next_release_slot == UINT8_MAX;
+      }
+    }
+  }
   return true;
 }
 
