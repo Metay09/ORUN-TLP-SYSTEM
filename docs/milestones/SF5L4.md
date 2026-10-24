@@ -83,6 +83,30 @@ position reach the PC quickly even while a backlog is queued.
 
 Physical results go below once measured.
 
+## Owner bench check (2026-10-24, `5cb953b`)
+
+Collar `0E8ADE7E71531AA3` flashed with the tracker bench image; the Gateway
+image was unchanged. The collar had 1001 retained records.
+- The first TX after boot was the newest record (`seq=12594 … LIVE`), then
+  the backlog continued oldest-first (`11592`, `11593` … `BACKLOG`).
+- `BENCH LINK ack … rssi=-7 snr=9 rtt_ms=6654…6909` with the devices side by
+  side. The RTT (TX ~2.3 s + Gateway durable write + ACK) leaves ~3 s of the
+  10 s RX window.
+- Phone map over Tailscale: newest #12602 shown **51 s** after capture,
+  "Son konum 1 dk önce" in green, −6 dBm.
+
+Observations:
+- `BENCH GW ERASE HELD` was run before the PC had pulled the last ~13
+  records. Two were recovered from the terminal and **6 were lost** (the
+  collar had already released them). The manual erase has no PC
+  confirmation; the real Gateway→Edge hand-off must not delete until the
+  Edge confirms.
+- Backlog drain at the 6 % budget (~94/h) against 60/h production at
+  `APP INTERVAL 60` reduces the backlog by only ~34/h.
+- The newest fix shown had 4 satellites and HDOP 7.2, about 30 m off the
+  stationary cluster. A low-quality newest fix should be marked as such.
+
+
 ## Not in scope
 
 Production scheduler or QoS policy, RF parameter changes, the Gateway-side
