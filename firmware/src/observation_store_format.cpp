@@ -1,5 +1,7 @@
 #include "observation_store_format.h"
 
+#include "crc32_ieee.h"
+
 #include <string.h>
 
 namespace orun_tlp {
@@ -50,13 +52,7 @@ uint16_t slotCountFor(PageKind kind) {
 }  // namespace
 
 uint32_t crc32(const uint8_t* data, size_t size) {
-  uint32_t crc = 0xFFFFFFFFU;
-  for (size_t i = 0; i < size; ++i) {
-    crc ^= data[i];
-    for (unsigned bit = 0; bit < 8U; ++bit)
-      crc = (crc >> 1U) ^ (0xEDB88320U & (0U - (crc & 1U)));
-  }
-  return crc ^ 0xFFFFFFFFU;
+  return crc32Ieee(data, size);
 }
 
 void put16(uint8_t* data, uint16_t value) {

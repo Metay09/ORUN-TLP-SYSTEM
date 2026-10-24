@@ -1,19 +1,14 @@
 #include "custody_store_product_format.h"
 
+#include "crc32_ieee.h"
+
 #include <string.h>
 
 namespace orun_tlp {
 namespace custody_store_product_format {
 namespace {
 uint32_t crc32(const uint8_t* input, size_t size) {
-  uint32_t result = UINT32_C(0xFFFFFFFF);
-  for (size_t i = 0U; i < size; ++i) {
-    result ^= input[i];
-    for (unsigned j = 0U; j < 8U; ++j)
-      result = (result >> 1U) ^
-               (UINT32_C(0xEDB88320) & (0U - (result & 1U)));
-  }
-  return result ^ UINT32_C(0xFFFFFFFF);
+  return crc32Ieee(input, size);  // same value; table-driven (gateway scans)
 }
 void put16(uint8_t* p, uint16_t n) {
   p[0] = static_cast<uint8_t>(n >> 8U);
