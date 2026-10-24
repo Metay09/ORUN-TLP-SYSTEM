@@ -28,6 +28,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import bisect
 import datetime as dt
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
@@ -77,6 +78,18 @@ RECEIPTS_SQL = (
     " device_id BLOB NOT NULL, incarnation BLOB NOT NULL, sequence INTEGER NOT NULL,"
     " first_seen_utc INTEGER NOT NULL, gw_rssi INTEGER, gw_snr INTEGER,"
     " PRIMARY KEY (device_id,incarnation,sequence))")
+
+# Periods during which this tool was attached to a live Gateway. Only inside
+# such a period can "nothing arrived" mean "no radio link" (and not "nobody
+# was listening").
+SESSIONS_SQL = (
+    "CREATE TABLE IF NOT EXISTS edge_sessions ("
+    " started_utc INTEGER NOT NULL, alive_utc INTEGER NOT NULL)")
+
+# Link classification of one record, for the coverage view (seconds).
+LIVE_S = 30    # reached the PC this soon after capture: sent from (about) there
+CUT_S = 180    # later than this: queued somewhere, or recorded with no link
+NEAR_S = 150   # a live arrival this close in capture time proves the link was up
 
 SOURCES = {0: "UNKNOWN", 1: "GNSS", 2: "FIXED", 3: "PHONE", 4: "MANUAL"}
 BATTERY = {0: "UNKNOWN", 1: "NORMAL", 2: "LOW", 3: "CRITICAL"}
@@ -180,10 +193,23 @@ class BenchEdge:
         # a DUMP line never inherits a stranger's signal strength.
         self._rx = None
         self._armed = None
-        with sqlite3.connect(str(self.db_path)) as db:
-            db.execute(RECEIPTS_SQL)
+        self._session = None
         self.counts = {"STORED": 0, "DUPLICATE": 0, "REJECTED": 0,
                        "CONFLICT": 0, "UNCERTAIN": 0}
+        with sqlite3.connect(str(self.db_path)) as db:
+            db.execute(RECEIPTS_SQL)
+            db.execute(SESSIONS_SQL)
+
+    def session_alive(self) -> None:
+        """Record that a Gateway is attached and being read right now."""
+        now = int(self.clock())
+        with sqlite3.connect(str(self.db_path)) as db:
+            if self._session is None:
+                self._session = db.execute(
+                    "INSERT INTO edge_sessions VALUES (?,?)", (now, now)).lastrowid
+            else:
+                db.execute("UPDATE edge_sessions SET alive_utc=? WHERE rowid=?",
+                           (now, self._session))
 
     def _receipt(self, item, link) -> None:
         rssi, snr = link if link else (None, None)
@@ -267,9 +293,14 @@ def run_port(edge: BenchEdge, port: str, dump: bool) -> None:
             ser.write(b"BENCH GW DUMP\n")
         print(f"[{port}] dinleniyor; çıkış Ctrl+C", flush=True)
         buf = b""
+        edge.session_alive()
+        beat = time.monotonic()
         try:
             while True:
                 buf += ser.read(512)
+                if time.monotonic() - beat >= 15:
+                    edge.session_alive()
+                    beat = time.monotonic()
                 while b"\n" in buf:
                     raw, buf = buf.split(b"\n", 1)
                     text = raw.decode("utf-8", "replace").rstrip("\r")
@@ -280,6 +311,7 @@ def run_port(edge: BenchEdge, port: str, dump: bool) -> None:
                         print(f"[gateway] {text} | {edge.summary()}", flush=True)
         except KeyboardInterrupt:
             pass
+        edge.session_alive()
     print(edge.summary())
 
 
@@ -318,6 +350,11 @@ def points_from_db(db_path: Path) -> dict:
                 rows = [r + (None, None, None) for r in db.execute(
                     "SELECT device_id,family,plaintext FROM verified_observations "
                     "ORDER BY device_id,incarnation,sequence").fetchall()]
+            sessions = []
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND "
+                          "name='edge_sessions'").fetchone():
+                sessions = db.execute(
+                    "SELECT started_utc,alive_utc FROM edge_sessions").fetchall()
     except sqlite3.OperationalError:
         return {"count": 0, "skipped": 0, "points": []}
     for device, family, plaintext, seen, rssi, snr in rows:
@@ -341,9 +378,56 @@ def points_from_db(db_path: Path) -> dict:
         if seen and d["time"]:
             recorded = dt.datetime.fromisoformat(d["time"].replace("Z", "+00:00"))
             pt["delay_s"] = max(0, int(seen - recorded.timestamp()))
+    classify_links(points, sessions)
     return {"count": len(points), "skipped": skipped,
             "now": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
             "points": points}
+
+
+def _epoch(iso: Optional[str]) -> Optional[float]:
+    if not iso:
+        return None
+    return dt.datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+
+
+def classify_links(points: list, sessions: list) -> None:
+    """Set p["link"] for the coverage view; None means "says nothing".
+
+    live:    gateway RSSI known and at the PC within LIVE_S of capture: the
+             radio facts belong to the place the record was taken.
+    through: captured while this tool was attached to the Gateway and at the
+             PC within CUT_S: the link worked there, no usable signal.
+    cut:     later than CUT_S, captured while this tool was attached to the
+             Gateway, and no record of the same tracker captured within NEAR_S
+             arrived live: there was no radio link at that place.
+    A late record captured while other records were arriving live only waited
+    in the collar's queue; one captured while nothing was listening is
+    unknown. Neither is evidence about coverage.
+    """
+    live_times: dict = {}
+    for p in points:
+        t = _epoch(p["time"])
+        if (t is not None and p["rssi"] is not None and p["delay_s"] is not None
+                and p["delay_s"] <= LIVE_S):
+            live_times.setdefault(p["tracker"], []).append(t)
+    for times in live_times.values():
+        times.sort()
+    for p in points:
+        p["link"] = None
+        t = _epoch(p["time"])
+        if t is None or p["received"] is None or p["delay_s"] is None:
+            continue
+        if p["rssi"] is not None and p["delay_s"] <= LIVE_S:
+            p["link"] = "live"      # RSSI pairing itself needs a listening tool
+        elif not any(a <= t <= b for a, b in sessions):
+            continue                # nobody listened when it was captured
+        elif p["delay_s"] <= CUT_S:
+            p["link"] = "through"
+        else:
+            times = live_times.get(p["tracker"], [])
+            i = bisect.bisect_left(times, t - NEAR_S)
+            if not (i < len(times) and times[i] <= t + NEAR_S):
+                p["link"] = "cut"
 
 
 def make_map_server(db_path: Path, host: str, port: int) -> ThreadingHTTPServer:

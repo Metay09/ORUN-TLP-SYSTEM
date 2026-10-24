@@ -57,12 +57,21 @@ position reach the PC quickly even while a backlog is queued.
 - **Kapsama** (coverage grid), the owner's design with the radio caveats:
   - cells of 3 / 5 / 10 / 20 m, **default 5 m**, remembered per browser;
   - only good fixes count (≥ 5 satellites and HDOP ≤ 4);
-  - each record is classified by its PC arrival delay:
-    - **live** (≤ 30 s, with gateway RSSI/SNR): sent from about where it was
-      recorded, so it is the only kind that supplies a signal value;
-    - **through** (≤ 180 s): got through, but has no usable signal value;
-    - **cut** (> 180 s): recorded while the link was down.
-    Records with no receipt are not counted.
+  - each record's link is classified **by the tool** (`classify_links`,
+    host-tested), not by the page:
+    - **live**: gateway RSSI/SNR paired and at the PC ≤ 30 s after capture;
+      only these supply a signal value (sent from about where recorded);
+    - **through**: captured while the tool was attached to the Gateway
+      (`edge_sessions`, heartbeat every 15 s) and at the PC ≤ 180 s;
+    - **cut**: captured during such a session, at the PC > 180 s, and no
+      record of the same collar captured within ±150 s arrived live;
+    - otherwise **unknown** and not counted. This covers a record that only
+      waited in the collar's queue while others arrived live, and one
+      captured while nobody listened (e.g. the 20 October backlog).
+    - First owner view (`21ef09d`) painted the 20 October backlog as Kopuk
+      because it used delay alone; fixed here. Conservative edge: the first
+      ~2 records after leaving range sit within ±150 s of the last live one
+      and stay unknown.
   - the cell colour is **Kopuk** when fewer than half its records got
     through; otherwise it follows the median SNR margin over the SF11 floor
     (−17.5 dB): ≥ 15 / 8–15 / 3–8 / < 3 dB. The median is used, not the mean,
@@ -142,6 +151,21 @@ Observations:
 - The newest fix shown had 4 satellites and HDOP 7.2, about 30 m off the
   stationary cluster. A low-quality newest fix should be marked as such.
 
+
+## Lessons carried to the ORUN app (owner asked to keep these)
+
+- "Where is it now" is the newest position **by record time**, never the
+  latest arrival; late records only extend history; show the age of the
+  newest position.
+- Arrival delay is not evidence of no radio link: it can be queue wait or
+  nobody listening. Coverage needs listening-period evidence and live
+  arrivals around the capture time.
+- A radio measurement belongs to where the frame was **sent**; a backlog
+  record's signal says nothing about where it was recorded.
+- Coverage is shown as grid cells (owner: 5 m default) with the median of
+  overlapping measurements and the through-ratio, using only good fixes.
+- Deleting held records must wait for the next hop's confirmation (the
+  manual `ERASE HELD` lost 6 records).
 
 ## Not in scope
 

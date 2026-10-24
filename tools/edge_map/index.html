@@ -161,15 +161,13 @@
   ];
   const NO_SIGNAL = "#6b7771";
   // ---- Coverage grid ------------------------------------------------------
-  // A sample's radio facts belong to WHERE IT WAS SENT. Only a record that
-  // reached the PC within LIVE_S of its capture was sent from (about) where it
-  // was recorded; a backlog record was sent from somewhere else later.
-  // A record that arrived long after capture was recorded WITHOUT a link.
-  // Fixed, period-independent: the collar sends its newest record as soon as
-  // it is stored, so a working link delivers within seconds (one ACK-timeout
-  // retry ~75 s). Longer means it was recorded while the link was down.
-  const LIVE_S = 30;
-  const CUT_S = 180;
+  // The tool classifies every record's link (p.link, see classify_links in
+  // tools/orun_edge_bench.py): "live" (radio facts belong to where it was
+  // recorded), "through" (got through, no usable signal), "cut" (recorded
+  // while the Gateway was being listened to and nothing arrived live around
+  // it) or null: a record that only waited in the collar's queue, or was
+  // recorded while nobody listened, says nothing about coverage.
+  const CUT_S = 180;                // "geç geldi" label only
   const SNR_FLOOR = -17.5;          // SX1262 demodulation floor at SF11
   const GOOD_FIX = (p) => p.sats != null && p.sats >= 5 && p.hdop != null && p.hdop <= 4;
   const CELL_BANDS = [
@@ -181,12 +179,7 @@
   const CUT = "#a23a8c";            // most records here did not get through
   const median = (xs) => { const a = [...xs].sort((x, y) => x - y); const m = a.length >> 1;
     return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
-  function classify(p) {
-    if (!p.received || p.delay_s == null || !GOOD_FIX(p)) return null;    // unknown
-    if (p.rssi != null && p.delay_s <= LIVE_S) return "live";
-    if (p.delay_s > CUT_S) return "cut";
-    return "through";                                                   // got through, no usable signal value
-  }
+  const classify = (p) => (p.link && GOOD_FIX(p) ? p.link : null);
   function buildGrid(points) {
     const usable = points.filter(p => classify(p));
     if (!usable.length) return [];
@@ -406,7 +399,7 @@
       swatchRow(box, NO_SIGNAL, "Geçti, sinyal ölçümü yok");
       const used = cells.reduce((a, c) => a + c.n, 0);
       box.appendChild(el("div", "meta", cells.length + " kare · " + used + " kayıt kullanıldı. " +
-        "Sayılmayanlar: zayıf konum (5'ten az uydu / HDOP > 4) ve sinyal kaydı olmayan eski kayıtlar."));
+        "Sayılmayanlar: zayıf konum (5'ten az uydu / HDOP > 4), kuyrukta bekleyip geç gelenler ve araç çalışmıyorken kaydedilenler."));
       return;
     }
     box.appendChild(el("b", null, "Gateway'in duyduğu sinyal"));

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
+import sqlite3
 import sys
 import tempfile
 
@@ -90,11 +91,64 @@ def tool() -> None:
         assert legacy_view["points"][0]["delay_s"] is None
 
 
+def links() -> None:
+    """Coverage evidence: queue delay is not a missing link."""
+    T = 1_800_000_000
+
+    def pt(i, delay, rssi=None, tracker="A"):
+        iso = dt.datetime.fromtimestamp(T + 60 * i, tz=dt.timezone.utc).isoformat()
+        return {"tracker": tracker, "time": iso.replace("+00:00", "Z"),
+                "received": "x", "delay_s": delay, "rssi": rssi}
+
+    session = [(T - 10, T + 60 * 30)]
+    pts = {
+        "live": pt(0, 5, -90),
+        "queued": pt(1, 3600),          # live record 60 s before it: link was up
+        "through": pt(2, 60),
+        "cut": pt(5, 3600),             # nearest live capture is >150 s away
+        "live2": pt(8, 7, -120),
+        "slow_live": pt(9, 45, -100),   # RSSI known but too late to place
+        "other_tracker": pt(5, 3600, tracker="B"),
+        "unreceived": dict(pt(6, None), received=None),
+    }
+    eb.classify_links(list(pts.values()), session)
+    got = {k: v["link"] for k, v in pts.items()}
+    assert got == {"live": "live", "queued": None, "through": "through",
+                   "cut": "cut", "live2": "live", "slow_live": "through",
+                   "other_tracker": "cut", "unreceived": None}, got
+    # Captured while nobody listened (e.g. the 20 October backlog): unknown.
+    late = [pt(5, 3600)]
+    eb.classify_links(late, [(T + 60 * 10, T + 60 * 30)])
+    assert late[0]["link"] is None
+    eb.classify_links(late, [])
+    assert late[0]["link"] is None
+
+    # The tool records its attachment to a Gateway; the API classifies.
+    frames = l3.track(3)
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "ledger.sqlite"
+        now = [0.0]
+        edge = eb.BenchEdge(db, test_key=True, clock=lambda: now[0])
+        t0 = record_time(frames[0], edge)
+        now[0] = t0 + 60 * 3        # attached only after frame 0/1/2 capture
+        edge.session_alive()
+        for i, f in enumerate(frames):
+            edge.handle_line(held(i, f))
+        now[0] += 15
+        edge.session_alive()
+        view = eb.points_from_db(db)
+        assert [p["link"] for p in view["points"]] == [None, None, None]
+        with sqlite3.connect(str(db)) as c:
+            assert c.execute("SELECT COUNT(*), MIN(started_utc), MAX(alive_utc) "
+                             "FROM edge_sessions").fetchone() == (
+                                 1, int(t0 + 180), int(t0 + 195))
+
+
 def page() -> None:
     html = (ROOT / "tools/edge_map/index.html").read_text()
     for needle in ('data-view="range"', 'data-view="grid"', "rssiColor",
                    "freshness(", "ESKİ", "geç geldi", "serverOffset", "data.now",
-                   "[3, 5, 10, 20]", "let cellM = 5;", "const LIVE_S = 30;",
+                   "[3, 5, 10, 20]", "let cellM = 5;", "p.link && GOOD_FIX(p)",
                    "SNR_FLOOR = -17.5", "GOOD_FIX", "median("):
         assert needle in html, needle
     assert "innerHTML" not in html.replace("outerHTML", "")
@@ -121,10 +175,11 @@ def firmware() -> None:
 
 def main() -> None:
     tool()
+    links()
     page()
     firmware()
     print("SF5L4 range kit: RSSI pairing, arrival/delay, map range view, "
-          "bench-only live-first: PASS (host only)")
+          "coverage link classes, bench-only live-first: PASS (host only)")
 
 
 if __name__ == "__main__":
