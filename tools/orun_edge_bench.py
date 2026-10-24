@@ -87,7 +87,7 @@ RECEIPTS_SQL = (
 # Same construction as Sf5l0EdgeHandoff::mac (firmware/src/sf5l0_bench.cpp);
 # PUBLIC test key, so this proves the mechanism, not the Edge's identity.
 ACCEPT_REPLY = re.compile(
-    r"EDGE ACCEPT (?P<word>OK|UNKNOWN|BUSY|REJECTED|FAIL) "
+    r"EDGE ACCEPT (?P<word>OK|UNKNOWN|BUSY|REJECTED|FAIL)(?: reason=\w+)? "
     r"page=(?P<page>\d+|\?) slot=(?P<slot>\d+|\?)")
 RECLAIM = re.compile(r"EDGE RECLAIM page=(?P<page>\d+) (?P<what>started|OK|FAIL)")
 ACCEPT_TIMEOUT_S = 3.0

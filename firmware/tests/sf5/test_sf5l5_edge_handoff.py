@@ -61,9 +61,16 @@ def main() -> None:
         # REJECTED: reported once, not retried.
         edge.handle_line(held(4, 1, 9, frames[1]))
         assert edge.next_accept(t + 20) is not None
-        warn = edge.handle_line("EDGE ACCEPT REJECTED page=4 slot=1 reason=MAC")
+        # Exactly what the Gateway prints (sf5l0_bench_gateway.cpp edgeAccept).
+        warn = edge.handle_line("EDGE ACCEPT REJECTED reason=MAC page=4 slot=1")
         assert warn and "reddetti" in warn and edge.accept_rejected == 1
         assert edge.next_accept(t + 30) is None
+        for reason in ("MALFORMED", "STORE"):
+            edge.handle_line(held(4, 1, 9, frames[1]))
+            assert edge.next_accept(t + 31) is not None
+            assert "reddetti" in edge.handle_line(
+                f"EDGE ACCEPT REJECTED reason={reason} page=4 slot=1")
+            assert edge.next_accept(t + 40) is None
 
         # A frame the ledger cannot verify is never accepted.
         bad = bytearray(frames[2]); bad[-1] ^= 1
