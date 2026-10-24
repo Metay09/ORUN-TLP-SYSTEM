@@ -34,12 +34,24 @@ class TrackerProductTxPilot {
   bool sent() const { return phase_ == Phase::kDone; }
   bool blocked() const { return phase_ == Phase::kBlocked; }
 
+  // SF5L4 (bench): "live data must not wait behind the backlog". When on,
+  // each selection first tries the NEWEST retained record, then the oldest.
+  // If the 4-object exact cache is full, the newest already cached exact
+  // object is re-sent unchanged instead of blocking. TX order only: ring
+  // retention and release ownership are unchanged. Off by default (SF5K3V).
+  void setLiveFirst(bool on) { live_first_ = on; }
+  bool liveFirst() const { return live_first_; }
+  // Identity of the record most recently selected (valid after a send).
+  const osf::RecordIdentity& lastIdentity() const { return identity_; }
+
  private:
   enum class Phase : uint8_t {
     kSelect, kNeedCache, kWaitingCache, kReady, kDone, kBlocked
   };
 
   bool storageIdle() const;
+  bool selectLive(ObservationStore::Record& record) const;
+  bool selectCachedFallback(osf::RecordIdentity& identity) const;
   bool sameIdentity(const osf::RecordIdentity& other) const;
 
   ProductRecordStore& records_;
@@ -48,6 +60,7 @@ class TrackerProductTxPilot {
   Phase phase_ = Phase::kSelect;
   osf::RecordIdentity identity_{};
   osc::ExactObject sealed_{};
+  bool live_first_ = false;
 };
 
 }  // namespace orun_tlp

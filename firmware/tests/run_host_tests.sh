@@ -981,3 +981,7 @@ python3 firmware/tests/sf5/test_sf5l1_edge_bench.py
 # SF5L3: bench map server over the verified ledger (read-only view,
 # static whitelist, vendored Leaflet, page wiring).
 python3 firmware/tests/sf5/test_sf5l3_edge_map.py
+
+# SF5L4: range kit (gateway RSSI per record, arrival delay, range view,
+# bench-only live-first TX order).
+python3 firmware/tests/sf5/test_sf5l4_range_kit.py

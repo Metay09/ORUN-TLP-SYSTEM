@@ -64,6 +64,20 @@ LINE = re.compile(
     r"EDGE HELD v1 gw=(?P<gw>[0-9A-F]{16}) page=(?P<page>\d+) slot=(?P<slot>\d+) "
     r"gen=(?P<gen>[0-9A-F]{16}) len=(?P<len>\d+) obj=(?P<obj>[0-9A-F]+)")
 
+# SF5L4: the Gateway's own radio line for the frame it is about to take into
+# custody. Its RSSI/SNR is how strongly the GATEWAY heard the collar.
+RX_LINE = re.compile(
+    r"RX PRODUCT_SECURE queued family=\d+ length=\d+ rssi=(?P<rssi>-?\d+) "
+    r"snr=(?P<snr>-?\d+)")
+CUSTODY_STARTED = "BENCH GW RX record; durable custody write started"
+RX_NOT_NEW = ("BENCH GW RX duplicate already held", "BENCH GW RX denied")
+
+RECEIPTS_SQL = (
+    "CREATE TABLE IF NOT EXISTS edge_receipts ("
+    " device_id BLOB NOT NULL, incarnation BLOB NOT NULL, sequence INTEGER NOT NULL,"
+    " first_seen_utc INTEGER NOT NULL, gw_rssi INTEGER, gw_snr INTEGER,"
+    " PRIMARY KEY (device_id,incarnation,sequence))")
+
 SOURCES = {0: "UNKNOWN", 1: "GNSS", 2: "FIXED", 3: "PHONE", 4: "MANUAL"}
 BATTERY = {0: "UNKNOWN", 1: "NORMAL", 2: "LOW", 3: "CRITICAL"}
 
@@ -154,18 +168,54 @@ def human(d: dict) -> str:
 
 
 class BenchEdge:
-    def __init__(self, db_path: Path, test_key: bool):
+    def __init__(self, db_path: Path, test_key: bool, clock=time.time):
         self.ledger_mod = load_ledger_module()
         creds = bench_credentials(self.ledger_mod) if test_key else no_credentials
         self.ledger = self.ledger_mod.VerifiedLocalLedger(db_path, creds)
         self.creds = creds
+        self.db_path = Path(db_path)
+        self.clock = clock
+        # Radio facts of the frame now being taken into custody: RX line ->
+        # "custody write started" -> EDGE HELD. Anything else drops them, so
+        # a DUMP line never inherits a stranger's signal strength.
+        self._rx = None
+        self._armed = None
+        with sqlite3.connect(str(self.db_path)) as db:
+            db.execute(RECEIPTS_SQL)
         self.counts = {"STORED": 0, "DUPLICATE": 0, "REJECTED": 0,
                        "CONFLICT": 0, "UNCERTAIN": 0}
 
+    def _receipt(self, item, link) -> None:
+        rssi, snr = link if link else (None, None)
+        with sqlite3.connect(str(self.db_path)) as db:
+            # First sighting wins: a later DUMP is not a new arrival.
+            db.execute(
+                "INSERT OR IGNORE INTO edge_receipts VALUES (?,?,?,?,?,?)",
+                (item.device_id, bytes(item.plaintext[4:12]), item.sequence,
+                 int(self.clock()), rssi, snr))
+            if link:
+                db.execute(
+                    "UPDATE edge_receipts SET gw_rssi=?, gw_snr=? WHERE "
+                    "device_id=? AND incarnation=? AND sequence=? AND gw_rssi IS NULL",
+                    (rssi, snr, item.device_id, bytes(item.plaintext[4:12]),
+                     item.sequence))
+
     def handle_line(self, text: str) -> Optional[str]:
+        rx = RX_LINE.search(text)
+        if rx:
+            self._rx = (int(rx["rssi"]), int(rx["snr"]))
+            self._armed = None
+            return None
+        if CUSTODY_STARTED in text:
+            self._armed, self._rx = self._rx, None
+            return None
+        if any(t in text for t in RX_NOT_NEW):
+            self._rx = self._armed = None
+            return None
         m = LINE.search(text)
         if not m:
             return None
+        link, self._armed, self._rx = self._armed, None, None
         hex_text = m["obj"]
         if len(hex_text) % 2 or len(hex_text) != 2 * int(m["len"]):
             # Truncated or garbled serial line: never guess, never crash.
@@ -185,9 +235,12 @@ class BenchEdge:
         if label in ("REJECTED", "UNCERTAIN"):
             return f"{word} gw={m['gw']} page={m['page']} slot={m['slot']}"
         item = self.ledger_mod.open_product_frame(raw, self.creds)
+        self._receipt(item, link)
+        sig = f" | sinyal {link[0]} dBm SNR {link[1]}" if link else ""
         if item.family != 1:
-            return f"{word} tasma={item.device_id.hex().upper()} seq={item.sequence} (EVENT)"
-        return f"{word} {human(describe_periodic(item.device_id, item.plaintext))}"
+            return f"{word} tasma={item.device_id.hex().upper()} seq={item.sequence} (EVENT){sig}"
+        first, _, rest = human(describe_periodic(item.device_id, item.plaintext)).partition("\n")
+        return f"{word} {first}{sig}" + (f"\n{rest}" if rest else "")
 
     def summary(self) -> str:
         c = self.counts
@@ -252,12 +305,22 @@ def points_from_db(db_path: Path) -> dict:
     uri = "file:" + str(Path(db_path).resolve()) + "?mode=ro"
     try:
         with sqlite3.connect(uri, uri=True, timeout=1.0) as db:
-            rows = db.execute(
-                "SELECT device_id,family,plaintext FROM verified_observations "
-                "ORDER BY device_id,incarnation,sequence").fetchall()
+            has_receipts = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND "
+                "name='edge_receipts'").fetchone() is not None
+            if has_receipts:
+                rows = db.execute(
+                    "SELECT o.device_id,o.family,o.plaintext,r.first_seen_utc,"
+                    "r.gw_rssi,r.gw_snr FROM verified_observations o "
+                    "LEFT JOIN edge_receipts r USING (device_id,incarnation,sequence) "
+                    "ORDER BY o.device_id,o.incarnation,o.sequence").fetchall()
+            else:
+                rows = [r + (None, None, None) for r in db.execute(
+                    "SELECT device_id,family,plaintext FROM verified_observations "
+                    "ORDER BY device_id,incarnation,sequence").fetchall()]
     except sqlite3.OperationalError:
         return {"count": 0, "skipped": 0, "points": []}
-    for device, family, plaintext in rows:
+    for device, family, plaintext, seen, rssi, snr in rows:
         if family != 1:
             continue
         d = describe_periodic(bytes(device), bytes(plaintext))
@@ -268,8 +331,19 @@ def points_from_db(db_path: Path) -> dict:
             "tracker", "sequence", "time", "lat", "lon", "sats", "hdop",
             "fix_age_s", "battery_mv", "battery", "active_s", "covered_s",
             "source")})
-        points[-1]["seq"] = points[-1].pop("sequence")
-    return {"count": len(points), "skipped": skipped, "points": points}
+        pt = points[-1]
+        pt["seq"] = pt.pop("sequence")
+        pt["period_s"] = d["period_s"]
+        pt["rssi"], pt["snr"] = rssi, snr
+        pt["received"] = (dt.datetime.fromtimestamp(seen, tz=dt.timezone.utc)
+                          .isoformat().replace("+00:00", "Z") if seen else None)
+        pt["delay_s"] = None
+        if seen and d["time"]:
+            recorded = dt.datetime.fromisoformat(d["time"].replace("Z", "+00:00"))
+            pt["delay_s"] = max(0, int(seen - recorded.timestamp()))
+    return {"count": len(points), "skipped": skipped,
+            "now": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+            "points": points}
 
 
 def make_map_server(db_path: Path, host: str, port: int) -> ThreadingHTTPServer:

@@ -166,11 +166,105 @@ void cacheFailureKeepsRecord() {
   assert(reboot.oldestRetained(retained) ==
          ObservationStore::LookupResult::kFound && !retained.released);
 }
+// Drive one live-first selection to a TX; returns the identity sent.
+osf::RecordIdentity sendOne(ProductRecordStore& records, Pilot& pilot) {
+  for (unsigned i = 0; i < 20000U; ++i) {
+    records.poll();
+    const auto event = pilot.update(true);
+    assert(event != Pilot::Event::kBlocked);
+    if (event == Pilot::Event::kSent) {
+      const osf::RecordIdentity sent = pilot.lastIdentity();
+      assert(pilot.rearm());
+      return sent;
+    }
+  }
+  assert(false && "no send");
+  return {};
+}
+// Release one record durably (as an authenticated ACK would), then reboot.
+void releaseAndReboot(FakeFlash& flash, FixedIncarnation& source,
+                      const osf::RecordIdentity& id) {
+  ObservationStore owner(flash, kPages, &source);
+  assert(owner.begin(kDevice));
+  assert(owner.requestRelease(id));
+  for (unsigned n = 0U; n < 1000U && owner.busy(); ++n) owner.poll();
+  bool committed = false;
+  assert(owner.takeReleaseResult(committed) && committed);
+}
+// SF5L4: newest first, backlog afterwards; never blocked by a full cache.
+void liveFirst() {
+  resetFakes();
+  FakeFlash flash;
+  FixedIncarnation source;
+  ProductRecordStore records(flash, kPages, &source);
+  records.begin(kDevice, kTracker);
+  assert(store(records, 1).stored && store(records, 2).stored &&
+         store(records, 3).stored);
+  orun_tlp::SecurityStore security(flash, flash);
+  orun_tlp::ProductSecureCrypto crypto(security);
+  orun_tlp::RadioManager radio;
+  Pilot pilot(records, crypto, radio);
+  pilot.setLiveFirst(true);
+  assert(sendOne(records, pilot).sequence == 3U);  // newest, not oldest
+  uint8_t live[sizeof(g_last)]{};
+  memcpy(live, g_last, sizeof(live));
+  // Unanswered: the SAME live bytes again, no second seal.
+  assert(sendOne(records, pilot).sequence == 3U && g_seals == 1U);
+  assert(memcmp(live, g_last, sizeof(live)) == 0);
+  // A newer record overtakes it immediately.
+  assert(store(records, 4).stored);
+  assert(sendOne(records, pilot).sequence == 4U && g_seals == 2U);
+  assert(sendOne(records, pilot).sequence == 4U);
+  // Fill the cache (records 5, 6 -> 4 cached objects: 3,4,5,6).
+  assert(store(records, 5).stored);
+  assert(sendOne(records, pilot).sequence == 5U);
+  assert(store(records, 6).stored);
+  assert(sendOne(records, pilot).sequence == 6U && g_seals == 4U);
+  // Cache full, newest (7) and oldest (1) uncached: re-send the newest
+  // cached object unchanged instead of blocking; nothing is evicted.
+  assert(store(records, 7).stored);
+  const unsigned programs = flash.program_calls;
+  assert(sendOne(records, pilot).sequence == 6U && g_seals == 4U);
+  assert(flash.program_calls == programs);
+
+  // Default (SF5K3V semantics) still blocks on a full cache.
+  Pilot strict(records, crypto, radio);
+  bool blocked = false;
+  for (unsigned i = 0; i < 1000U && !blocked; ++i) {
+    records.poll();
+    blocked = strict.update(true) == Pilot::Event::kBlocked;
+  }
+  assert(blocked && strict.blocked());
+
+  // The live record is ACKed: a slot frees and the next newest goes first.
+  osf::RecordIdentity six{};
+  six.incarnation = records.store().incarnation();
+  six.sequence = 6U;
+  releaseAndReboot(flash, source, six);
+  ProductRecordStore reboot(flash, kPages, &source);
+  reboot.begin(kDevice, kTracker);
+  assert(reboot.mounted());
+  Pilot next(reboot, crypto, radio);
+  next.setLiveFirst(true);
+  assert(sendOne(reboot, next).sequence == 7U && g_seals == 5U);
+  // Newest released? Then the backlog drains oldest-first as before.
+  osf::RecordIdentity seven = six;
+  seven.sequence = 7U;
+  releaseAndReboot(flash, source, seven);
+  ProductRecordStore later(flash, kPages, &source);
+  later.begin(kDevice, kTracker);
+  Pilot drain(later, crypto, radio);
+  drain.setLiveFirst(true);
+  // Newest retained (7) is released; the oldest retained (1) is next, but
+  // the cache (3,4,5 + free slot) has room, so 1 is sealed and sent.
+  assert(sendOne(later, drain).sequence == 1U);
+}
 }  // namespace
 
 int main() {
   successAndReboot(false);
   successAndReboot(true);
   cacheFailureKeepsRecord();
-  puts("SF5K3V exact-cache-before-RF/same-bytes-reboot/fault host: PASS");
+  liveFirst();
+  puts("SF5K3V exact-cache-before-RF/same-bytes-reboot/fault + SF5L4 live-first host: PASS");
 }

@@ -14,6 +14,67 @@ bool TrackerProductTxPilot::storageIdle() const {
          !records_.store().faulted() && !records_.store().busy();
 }
 
+namespace {
+bool usablePeriodic(const ObservationStore::Record& record) {
+  return record.handle.identity.valid() && !record.released &&
+         !record.release_uncertain && !record.release_marker_exhausted &&
+         record.kind == osf::RecordKind::kPeriodic &&
+         record.schema == osf::kProductSchemaV1 &&
+         record.payload_size == tlp::kPeriodicPlaintextSize;
+}
+}  // namespace
+
+bool TrackerProductTxPilot::selectLive(ObservationStore::Record& record) const {
+  osf::RecordIdentity next{};
+  if (!records_.store().peekNextIdentity(next) || next.sequence <= 1U)
+    return false;
+  osf::RecordIdentity newest{};
+  newest.incarnation = next.incarnation;
+  newest.sequence = next.sequence - 1U;
+  ObservationStore::Record candidate{};
+  if (records_.store().lookup(newest, candidate) !=
+          ObservationStore::LookupResult::kFound ||
+      !usablePeriodic(candidate))
+    return false;
+  // Only take it if it is already cached or a cache slot is free; never
+  // evict another custody object to make room for live data.
+  osc::ExactObject cached{};
+  if (records_.findCachedExact(candidate.handle.identity, cached) !=
+      ObservationStore::ControlLookupResult::kFound) {
+    uint16_t occupied = 0U;
+    if (!records_.store().exactObjectCount(occupied) ||
+        occupied >= osf::kMaxExactCustodyObjects)
+      return false;
+  }
+  record = candidate;
+  return true;
+}
+
+bool TrackerProductTxPilot::selectCachedFallback(
+    osf::RecordIdentity& identity) const {
+  osc::ExactObject objects[osf::kMaxExactCustodyObjects]{};
+  uint16_t count = 0U;
+  if (!records_.snapshotCustodyCandidates(objects, count) || count == 0U)
+    return false;
+  // Newest cached first: it is the closest thing to live data we may send
+  // without sealing (and caching) yet another object.
+  // Incarnations are random, not ordered: prefer this boot's incarnation.
+  const uint64_t current = records_.store().incarnation();
+  osf::RecordIdentity best = objects[0].identity;
+  for (uint16_t i = 1U; i < count && i < osf::kMaxExactCustodyObjects; ++i) {
+    const osf::RecordIdentity& id = objects[i].identity;
+    const bool id_now = id.incarnation == current;
+    const bool best_now = best.incarnation == current;
+    if ((id_now && !best_now) ||
+        (id_now == best_now && id.incarnation == best.incarnation &&
+         id.sequence > best.sequence))
+      best = id;
+  }
+  if (!best.valid()) return false;
+  identity = best;
+  return true;
+}
+
 bool TrackerProductTxPilot::rearm() {
   if (phase_ != Phase::kDone) return false;
   identity_ = {};
@@ -48,13 +109,15 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
 
   if (phase_ == Phase::kSelect) {
     ObservationStore::Record record{};
-    const auto read = records_.oldestRetained(record);
-    if (read == ObservationStore::LookupResult::kReadError) {
-      phase_ = Phase::kBlocked;
-      return Event::kBlocked;
+    if (!(live_first_ && selectLive(record))) {
+      const auto read = records_.oldestRetained(record);
+      if (read == ObservationStore::LookupResult::kReadError) {
+        phase_ = Phase::kBlocked;
+        return Event::kBlocked;
+      }
+      if (read != ObservationStore::LookupResult::kFound)
+        return Event::kNone;
     }
-    if (read != ObservationStore::LookupResult::kFound)
-      return Event::kNone;
     if (!record.handle.identity.valid() || record.released ||
         record.release_uncertain || record.release_marker_exhausted ||
         record.kind != osf::RecordKind::kPeriodic ||
@@ -79,9 +142,16 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
       if (!records_.store().exactObjectCount(occupied) ||
           occupied >= osf::kMaxExactCustodyObjects) {
         // The record stays retained; never evict another custody object.
-        phase_ = Phase::kBlocked;
-        return Event::kBlocked;
-      }
+        // Live-first: keep moving by re-sending an already cached object.
+        osf::RecordIdentity fallback{};
+        if (live_first_ && selectCachedFallback(fallback)) {
+          identity_ = fallback;
+          phase_ = Phase::kReady;
+        } else {
+          phase_ = Phase::kBlocked;
+          return Event::kBlocked;
+        }
+      } else {
       tlp::PeriodicObservationPlaintext plaintext{};
       if (tlp::decodePeriodicPlaintext(
               record.payload, record.payload_size, &plaintext) !=
@@ -116,6 +186,7 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
         sealed_.object[i] = wire[i];
       for (size_t i = 0U; i < sizeof(wire); ++i) wire[i] = 0U;
       phase_ = Phase::kNeedCache;
+      }
     }
   }
 
