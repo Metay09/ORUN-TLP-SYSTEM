@@ -172,9 +172,13 @@ held), but `rtt_ms` overstates the radio time and the collar's loop spends
 seconds in flash scans per ACK. This matters for power and loop latency in
 production. The bench line now splits it:
 `rtt_ms` (TX start → ACK taken from the radio), `verify_ms` (HMAC + exact
-match) and `release_ms` (durable release). A RAM index for active exact
-objects is the likely fix; it is a separate ObservationStore change, not
-part of this kit.
+match) and `release_ms` (durable release). Owner device check (14:24): `rtt_ms` 3843–3851 steady, `verify_ms`
+5367 → 6408 (+~260 ms per ACK).
+
+Fixed separately in PR #161 (`perf/sf5-store-single-scan`, merged into this
+branch for the bench image): one control-page pass, one data-page pass per
+snapshot/count, and a table CRC-32. The pilot also stops re-scanning the
+store on every loop pass while it waits for a new record (LIVE mode idle).
 
 ## Lessons carried to the ORUN app (owner asked to keep these)
 
