@@ -1,0 +1,35 @@
+{
+  "name": "orun-edge-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "ORUN Edge: Android phone as the Gateway's Edge (BLE + USB, phone ledger, confirmed hand-off, map). Bench build.",
+  "scripts": {
+    "map": "node scripts/copy-map.mjs",
+    "dev": "npm run map && vite",
+    "build": "npm run map && tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "android": "npm run build && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor-community/bluetooth-le": "8.3.0",
+    "@capacitor-community/sqlite": "8.1.1",
+    "@capacitor/android": "8.5.3",
+    "@capacitor/core": "8.5.3",
+    "@leeskies/capacitor-usb-serial": "0.2.0",
+    "@noble/ciphers": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3",
+    "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "typescript": "5.9.3",
+    "vite": "8.3.5"
+  }
+}
