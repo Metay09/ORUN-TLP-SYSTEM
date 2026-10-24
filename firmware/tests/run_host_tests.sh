@@ -990,3 +990,8 @@ python3 firmware/tests/sf5/test_sf5l4_range_kit.py
 # re-ACK of handed-off duplicates; PC tool queue + shared MAC vector.
 bash tools/ci/run_sf5l5_edge_handoff_host.sh
 python3 firmware/tests/sf5/test_sf5l5_edge_handoff.py
+
+# SF5L7: phone Edge app core (TypeScript) unit tests, and the same inputs
+# through the Python reference (frames, accept MAC, USB session, map points).
+bash tools/ci/run_sf5l7_edge_app_host.sh
+python3 firmware/tests/sf5/test_sf5l7_edge_app.py

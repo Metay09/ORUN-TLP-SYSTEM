@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ORUN Edge</string>
+    <string name="title_activity_main">ORUN Edge</string>
+    <string name="package_name">tr.orun.edge</string>
+    <string name="custom_url_scheme">tr.orun.edge</string>
+</resources>

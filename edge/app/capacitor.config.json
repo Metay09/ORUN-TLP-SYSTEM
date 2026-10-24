@@ -1,0 +1,9 @@
+{
+  "appId": "tr.orun.edge",
+  "appName": "ORUN Edge",
+  "webDir": "dist",
+  "android": { "allowMixedContent": false },
+  "plugins": {
+    "CapacitorSQLite": { "androidIsEncryption": false }
+  }
+}
