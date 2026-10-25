@@ -89,6 +89,12 @@ so a rejected record would have been resent every 3 s forever.
 - Then: connected, `09A462BD4B275BA5 bağlı; tuttuğu kayıt 429/1056`,
   records verified into the phone ledger (`journal=wal synchronous=2`) and
   handed off one by one (~2 records/s).
+- After a reconnect (04:24): yeni=116, vardı=100 (records the Gateway still
+  held after the drop, already in the phone ledger), teslim=216,
+  bekleyen_teslim=0, red=0; `DUMP END count=212`; the Gateway reclaimed
+  pages 11 and 12 by itself; live records then arrived with the Gateway's RX
+  signal (`-10 dBm SNR 8`, collar next to the Gateway). Confirmed delivery
+  and page reclaim are physically proven over BLE with the phone as Edge.
 
 ## Known limits
 
