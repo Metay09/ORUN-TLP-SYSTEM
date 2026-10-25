@@ -40,7 +40,8 @@ import zlib
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from cryptography.hazmat.primitives.serialization import (Encoding, NoEncryption,
+                                                          PrivateFormat, PublicFormat)
 
 ACK_INFO_LABEL = b"ORUN-TLP-V2-GW-CUSTODY-ACK-v1"   # custody_ack_verifier.cpp
 AEAD_INFO_LABEL = b"ORUN-TLP-V2-AEAD"               # SF5B ROOT_AEAD_V1, D2A
@@ -297,7 +298,9 @@ class CredentialRegistry:
             r = db.execute("SELECT private_key FROM issuer WHERE id=1").fetchone()
             if r is None and create:
                 key = Ed25519PrivateKey.generate()
-                seed = key.private_bytes_raw()
+                # private_bytes(Raw) works on every cryptography release with
+                # Ed25519 (private_bytes_raw() needs >= 40).
+                seed = key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
                 db.execute("INSERT OR IGNORE INTO issuer VALUES (1,?,?,?)",
                            (seed.hex().upper(), issuer_public(key).hex().upper(),
                             int(time.time())))
