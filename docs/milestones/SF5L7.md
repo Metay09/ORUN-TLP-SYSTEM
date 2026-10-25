@@ -80,14 +80,34 @@ so a rejected record would have been resent every 3 s forever.
 - Not possible here: the APK build (no Android SDK / Google Maven in this
   workspace). The owner builds it.
 
+## Physical check (2026-10-25, owner)
+
+- APK built on the owner's PC (JDK 21, SDK 36) and installed.
+- First BLE connect: `Characteristic not found`: Android used the GATT
+  table it had cached for this Gateway with older firmware. Fixed in #165
+  (refresh + rediscover; disconnect a connected-but-unusable link).
+- Then: connected, `09A462BD4B275BA5 bağlı; tuttuğu kayıt 429/1056`,
+  records verified into the phone ledger (`journal=wal synchronous=2`) and
+  handed off one by one (~2 records/s).
+- After a reconnect (04:24): yeni=116, vardı=100 (records the Gateway still
+  held after the drop, already in the phone ledger), teslim=216,
+  bekleyen_teslim=0, red=0; `DUMP END count=212`; the Gateway reclaimed
+  pages 11 and 12 by itself; live records then arrived with the Gateway's RX
+  signal (`-10 dBm SNR 8`, collar next to the Gateway). Confirmed delivery
+  and page reclaim are physically proven over BLE with the phone as Edge.
+
 ## Known limits
 
 - Bench security: the phone opens records with the PUBLIC test
   credential and signs accepts with the public test key. The reference
   ledger is backend-side by design; the phone decrypting is a bench step.
   Step 3 decides Edge credentials.
-- Foreground only: Android may pause the app when the screen is off. A
-  foreground service (keep the link while walking) comes later.
+- Background: while a link is up the app runs a `connectedDevice`
+  foreground service with an ongoing notification (state + counters), so the
+  transfer continues with the screen off. Accepts are sent on every Gateway
+  message (WebView timers are throttled in the background); the 3 s resend
+  timer may run late there. Back button: map → Bağlantı; on Bağlantı the app
+  moves to the background instead of closing.
 - Map tiles need Internet (OpenStreetMap / satellite). Offline tiles later.
 - No phone → backend sync yet (MQTT/HTTPS), next step.
 - The USB plugin is a young third-party package (0.2.0). It wraps the
