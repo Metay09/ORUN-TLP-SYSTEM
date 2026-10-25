@@ -1,7 +1,7 @@
 # SF5L8 — Edge → Backend upload (phone → bench backend), backend map
 
 **Status:** code + host tests (incl. app core ↔ real backend end to end).
-**Phone ↔ server test: pending (owner).** Bench only for authentication
+**Phone ↔ server: physically checked 2026-10-25 (owner).** Bench only for authentication
 (public test key, shared bearer token over Tailscale).
 **Base:** `main` with SF5L7 (#164, #165).
 
@@ -75,6 +75,17 @@ map (`tools/edge_map`) over all uploads: `GET /`, `GET /api/points`; plus
   records), uploads them with `fetch` to the backend running for real, a
   second run sends nothing, and the backend map points equal the phone's
   (live / through / cut / unknown included).
+
+## Physical check (2026-10-25, owner)
+
+- Backend on the owner's PC, bound to its Tailscale address; the phone
+  (APK from #167) over Tailscale.
+- `[sunucu] 488 kayıt gönderildi; sunucuda 488, bekleyen 0`: every record in
+  the phone ledger verified and stored by the backend; new records uploaded
+  within seconds while the Gateway link stayed up (Gateway held 21).
+- The backend map (`http://<tailscale>:8090/`) showed 469 located records
+  (+20 without a fix), the newest position and the 5 m coverage grid.
+- Full chain proven on hardware: Tracker → Gateway → phone → backend → map.
 
 ## Known limits
 

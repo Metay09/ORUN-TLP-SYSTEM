@@ -76,6 +76,9 @@ flash, freeze wire bytes or authorize protected writes.
 For security, provisioning, anti-replay, secure-envelope, user/backend authorization
 or command work, read
 `docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md` before designing or coding.
+For replacing the bench keys on the working Tracker → Gateway → phone →
+backend chain (owner decision: offline read key on the owner's phone), read
+`docs/architecture/ORUN_STEP3_REAL_SECURITY_PLAN.md`.
 
 For delegated gateway-command security work, read
 `docs/architecture/ORUN_TLP_V2_DELEGATED_COMMAND_SECURITY_DIRECTION.md` together
