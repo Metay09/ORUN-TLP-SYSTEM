@@ -7,6 +7,7 @@
 // Protocol: backend/orun_backend_bench.py (POST /v1/edge/batch).
 import { hex } from "./bytes.ts";
 import type { Db, Row } from "./db.ts";
+import type { ReadKey } from "./keys.ts";
 
 export const BATCH = 100;
 export const SESSIONS_MAX = 64;
@@ -14,6 +15,7 @@ const FINAL = new Set(["STORED", "DUPLICATE", "CONFLICT", "REJECTED"]);
 
 export interface HttpReply { status: number; body: unknown; }
 export type Post = (url: string, token: string, body: string) => Promise<HttpReply>;
+export type Get = (url: string, token: string) => Promise<HttpReply>;
 export type Exclusive = <T>(fn: () => Promise<T>) => Promise<T>;
 
 export interface UploadCounts {
@@ -151,4 +153,18 @@ export class Uploader {
     }
     return total;
   }
+}
+
+/** Step 3A / D1: this owner's Tracker read keys from the backend. */
+export async function fetchReadKeys(get: Get, url: string, token: string): Promise<ReadKey[]> {
+  const reply = await get(url.replace(/\/+$/, "") + "/v1/edge/keys", token);
+  if (reply.status === 401) throw new Error("sunucu anahtarı (token) yanlış");
+  if (reply.status !== 200) throw new Error(`sunucu cevabı HTTP ${reply.status}`);
+  const keys = (reply.body as { keys?: unknown })?.keys;
+  if (!Array.isArray(keys)) throw new Error("sunucu cevabı anlaşılamadı");
+  return keys.map((k) => ({
+    device: String((k as Record<string, unknown>).device ?? ""),
+    epoch: Number((k as Record<string, unknown>).epoch),
+    trafficKey: String((k as Record<string, unknown>).traffic_key ?? ""),
+  }));
 }

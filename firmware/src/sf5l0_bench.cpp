@@ -7,6 +7,7 @@
 
 #include <string.h>
 
+#include "crc32_ieee.h"
 #include "custody_ack_primitives.h"
 #include "custody_store_product_format.h"
 #include "edge_link.h"
@@ -92,7 +93,7 @@ bool Sf5l0BenchTestProvisioning::grantFor(const SecurityStore& s,
 
 uint64_t Sf5l0BenchTestProvisioning::firstGrantedGateway(
     const SecurityStore& s) {
-  if (!holdsTestCredential(s) ||
+  if (s.state_ != SecurityState::kProvisioned ||
       activePageVersion(s) != security_v3_format::kVersion)
     return 0U;
   for (size_t i = 0U; i < security_v3_format::kGatewayCount; ++i)
@@ -101,12 +102,51 @@ uint64_t Sf5l0BenchTestProvisioning::firstGrantedGateway(
   return 0U;
 }
 
+bool Sf5l0BenchTestProvisioning::holdsCredential(
+    const SecurityStore& s,
+    const uint8_t (&credential_id)[security_format::kCredentialIdSize],
+    uint32_t key_epoch, const uint8_t (&k_root)[security_format::kKRootSize]) {
+  return s.state_ == SecurityState::kProvisioned &&
+         s.credential_.key_epoch == key_epoch &&
+         memcmp(s.credential_.credential_id, credential_id,
+                security_format::kCredentialIdSize) == 0 &&
+         memcmp(s.credential_.k_root, k_root, security_format::kKRootSize) == 0;
+}
+
+bool Sf5l0BenchTestProvisioning::credentialInfo(
+    const SecurityStore& s,
+    uint8_t (&credential_id)[security_format::kCredentialIdSize],
+    uint32_t& key_epoch) {
+  if (s.state_ != SecurityState::kProvisioned) return false;
+  memcpy(credential_id, s.credential_.credential_id,
+         security_format::kCredentialIdSize);
+  key_epoch = s.credential_.key_epoch;
+  return true;
+}
+
 void Sf5l0BenchTestProvisioning::fail(const char* why) {
   step_ = Step::kFailed;
   reason_ = why;
 }
 
 bool Sf5l0BenchTestProvisioning::start(uint64_t gateway_id) {
+  return begin(gateway_id, sf5l0_bench::kTestCredentialId,
+               sf5l0_bench::kTestKeyEpoch, sf5l0_bench::kTestRoot);
+}
+
+bool Sf5l0BenchTestProvisioning::startWithCredential(
+    uint64_t gateway_id,
+    const uint8_t (&credential_id)[security_format::kCredentialIdSize],
+    uint32_t key_epoch,
+    const uint8_t (&k_root)[security_format::kKRootSize]) {
+  return begin(gateway_id, credential_id, key_epoch, k_root);
+}
+
+bool Sf5l0BenchTestProvisioning::begin(
+    uint64_t gateway_id,
+    const uint8_t (&credential_id)[security_format::kCredentialIdSize],
+    uint32_t key_epoch,
+    const uint8_t (&k_root)[security_format::kKRootSize]) {
   if (step_ != Step::kIdle && step_ != Step::kDone &&
       step_ != Step::kFailed) {
     reason_ = "already running";
@@ -115,6 +155,10 @@ bool Sf5l0BenchTestProvisioning::start(uint64_t gateway_id) {
   reason_ = "";
   if (gateway_id == 0U) {
     fail("gateway id must be nonzero");
+    return false;
+  }
+  if (key_epoch == 0U || key_epoch == 0xFFFFFFFFUL) {
+    fail("invalid key epoch");
     return false;
   }
   if (!security_.ready() || security_.busy()) {
@@ -126,10 +170,9 @@ bool Sf5l0BenchTestProvisioning::start(uint64_t gateway_id) {
   if (security_.state() == SecurityState::kUnprovisioned) {
     uint8_t id[security_format::kCredentialIdSize]{};
     uint8_t root[security_format::kKRootSize]{};
-    memcpy(id, sf5l0_bench::kTestCredentialId, sizeof(id));
-    memcpy(root, sf5l0_bench::kTestRoot, sizeof(root));
-    const bool started =
-        security_.commitCredential(id, sf5l0_bench::kTestKeyEpoch, root);
+    memcpy(id, credential_id, sizeof(id));
+    memcpy(root, k_root, sizeof(root));
+    const bool started = security_.commitCredential(id, key_epoch, root);
     wipe(root, sizeof(root));
     if (!started) {
       fail("credential commit refused");
@@ -142,9 +185,9 @@ bool Sf5l0BenchTestProvisioning::start(uint64_t gateway_id) {
     fail("security store faulted; not touched");
     return false;
   }
-  if (!holdsTestCredential(security_)) {
-    // Never overwrite a real/unknown credential from a bench command.
-    fail("device holds a different credential; not touched");
+  if (!holdsCredential(security_, credential_id, key_epoch, k_root)) {
+    // Never overwrite a different credential from a USB command.
+    fail("device holds a different credential; run the security CLEAN image first");
     return false;
   }
   step_ = activePageVersion(security_) == security_v3_format::kVersion
@@ -237,6 +280,96 @@ const char* sf5l0StepName(Sf5l0BenchTestProvisioning::Step step) {
   return "?";
 }
 
+// ------------------------------------------------------------ 3A lines --
+
+namespace {
+bool hexInto(const char* text, uint8_t* out, size_t bytes) {
+  for (size_t i = 0; i < 2 * bytes; ++i) {
+    const char c = text[i];
+    uint8_t v;
+    if (c >= '0' && c <= '9') v = static_cast<uint8_t>(c - '0');
+    else if (c >= 'A' && c <= 'F') v = static_cast<uint8_t>(c - 'A' + 10);
+    else if (c >= 'a' && c <= 'f') v = static_cast<uint8_t>(c - 'a' + 10);
+    else return false;
+    out[i / 2] = (i % 2) != 0U ? static_cast<uint8_t>(out[i / 2] | v)
+                               : static_cast<uint8_t>(v << 4);
+  }
+  return true;
+}
+uint32_t be32(const uint8_t* p) {
+  return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
+         (uint32_t(p[2]) << 8) | uint32_t(p[3]);
+}
+uint64_t be64(const uint8_t* p) {
+  uint64_t v = 0U;
+  for (size_t i = 0; i < 8U; ++i) v = (v << 8) | p[i];
+  return v;
+}
+// "<prefix>" then space-separated hex fields of the given byte sizes.
+bool splitHex(const char* line, size_t length, const char* prefix,
+              const size_t* sizes, size_t count, uint8_t* out) {
+  const size_t plen = strlen(prefix);
+  size_t want = plen;
+  for (size_t i = 0; i < count; ++i) want += 1U + 2U * sizes[i];
+  if (line == nullptr || length != want || memcmp(line, prefix, plen) != 0)
+    return false;
+  const char* p = line + plen;
+  for (size_t i = 0; i < count; ++i) {
+    if (*p != ' ' || !hexInto(p + 1, out, sizes[i])) return false;
+    p += 1U + 2U * sizes[i];
+    out += sizes[i];
+  }
+  return true;
+}
+}  // namespace
+
+Sf5l0LineResult sf5l0ParseProvisionLine(
+    const char* line, size_t length,
+    uint8_t (&credential_id)[security_format::kCredentialIdSize],
+    uint32_t& key_epoch, uint8_t (&k_root)[security_format::kKRootSize],
+    uint64_t& gateway_id) {
+  static const size_t kSizes[] = {16U, 4U, 32U, 8U, 4U};
+  uint8_t buf[64]{};
+  Sf5l0LineResult r = Sf5l0LineResult::kMalformed;
+  if (splitHex(line, length, "BENCH PROVISION", kSizes, 5U, buf)) {
+    if (crc32Ieee(buf, 60U) != be32(buf + 60)) {
+      r = Sf5l0LineResult::kBadCrc;
+    } else {
+      memcpy(credential_id, buf, sizeof(credential_id));
+      key_epoch = be32(buf + 16);
+      memcpy(k_root, buf + 20, sizeof(k_root));
+      gateway_id = be64(buf + 52);
+      r = Sf5l0LineResult::kOk;
+    }
+  }
+  wipe(buf, sizeof(buf));
+  return r;
+}
+
+Sf5l0LineResult sf5l0ParseGrantLine(const char* line, size_t length,
+                                    uint64_t& tracker_id, uint32_t& key_epoch,
+                                    uint32_t& custody_floor,
+                                    uint32_t& grant_generation,
+                                    uint8_t (&scoped_key)[32]) {
+  static const size_t kSizes[] = {8U, 4U, 4U, 4U, 32U, 4U};
+  uint8_t buf[56]{};
+  Sf5l0LineResult r = Sf5l0LineResult::kMalformed;
+  if (splitHex(line, length, "BENCH GRANT", kSizes, 6U, buf)) {
+    if (crc32Ieee(buf, 52U) != be32(buf + 52)) {
+      r = Sf5l0LineResult::kBadCrc;
+    } else {
+      tracker_id = be64(buf);
+      key_epoch = be32(buf + 8);
+      custody_floor = be32(buf + 12);
+      grant_generation = be32(buf + 16);
+      memcpy(scoped_key, buf + 20, sizeof(scoped_key));
+      r = Sf5l0LineResult::kOk;
+    }
+  }
+  wipe(buf, sizeof(buf));
+  return r;
+}
+
 // ------------------------------------------------------------ drain pace --
 
 namespace {
@@ -309,10 +442,57 @@ bool Sf5l0BenchGrantSource::verifiedForLocalGateway(uint64_t gateway_id) const {
   return gateway_id_ != 0U && gateway_id == gateway_id_;
 }
 
+Sf5l0BenchGrantSource::AddResult Sf5l0BenchGrantSource::addGrant(
+    uint64_t tracker_id, uint32_t key_epoch, uint32_t custody_floor,
+    uint32_t grant_generation, const uint8_t (&scoped_key)[32]) {
+  if (gateway_id_ == 0U || tracker_id == 0U || key_epoch == 0U ||
+      key_epoch == 0xFFFFFFFFUL)
+    return AddResult::kInvalid;
+  RamGrant* slot = nullptr;
+  bool replaced = false;
+  for (auto& g : ram_) {
+    if (g.used && g.scope.tracker_device_id == tracker_id &&
+        g.scope.key_epoch == key_epoch) {
+      slot = &g;
+      replaced = true;
+      break;
+    }
+  }
+  if (slot == nullptr)
+    for (auto& g : ram_)
+      if (!g.used) { slot = &g; break; }
+  if (slot == nullptr) return AddResult::kFull;
+  slot->scope.tracker_device_id = tracker_id;
+  slot->scope.gateway_device_id = gateway_id_;
+  slot->scope.key_epoch = key_epoch;
+  slot->scope.custody_floor = custody_floor;
+  slot->scope.grant_generation = grant_generation;
+  memcpy(slot->key, scoped_key, sizeof(slot->key));
+  slot->used = true;
+  return replaced ? AddResult::kReplaced : AddResult::kAdded;
+}
+
+uint8_t Sf5l0BenchGrantSource::ramGrants() const {
+  uint8_t n = 0U;
+  for (const auto& g : ram_) n = static_cast<uint8_t>(n + (g.used ? 1U : 0U));
+  return n;
+}
+
 bool Sf5l0BenchGrantSource::activeGrant(uint64_t tracker_id,
                                         uint32_t key_epoch,
                                         GatewayCustodyAckScope& scope,
                                         uint8_t (&scoped_key)[32]) {
+  if (gateway_id_ != 0U && tracker_id != 0U) {
+    for (const auto& g : ram_) {
+      if (g.used && g.scope.tracker_device_id == tracker_id &&
+          g.scope.key_epoch == key_epoch) {
+        scope = g.scope;
+        memcpy(scoped_key, g.key, sizeof(g.key));
+        ++grants_issued_;
+        return true;
+      }
+    }
+  }
   if (gateway_id_ == 0U || tracker_id == 0U ||
       key_epoch != sf5l0_bench::kTestKeyEpoch) {
     ++grants_refused_;

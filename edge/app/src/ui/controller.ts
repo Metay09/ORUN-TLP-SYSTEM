@@ -2,11 +2,11 @@
 import { hex64 } from "../core/bytes.ts";
 import type { Db } from "../core/db.ts";
 import { EdgeCore, type Counts } from "../core/edge.ts";
-import { benchCredentials } from "../core/product.ts";
+import { KeyRing } from "../core/keys.ts";
 import type { PointsResult } from "../core/points.ts";
 import { BleLink, UsbLink, type LinkState } from "../platform/transports.ts";
-import { Uploader, type UploadCounts } from "../core/sync.ts";
-import { fetchPost } from "../platform/http.ts";
+import { fetchReadKeys, Uploader, type UploadCounts } from "../core/sync.ts";
+import { fetchGet, fetchPost } from "../platform/http.ts";
 import { KeepAlive } from "../platform/background.ts";
 
 export interface Snapshot {
@@ -38,6 +38,7 @@ export interface ServerState {
 }
 
 const SERVER_KEY = "orun.edge.server";
+const KEYS_EVERY_MS = 10 * 60 * 1000;   // read keys rarely change
 const SYNC_EVERY_MS = 30000;   // and soon after new records arrive
 const SYNC_AFTER_RECORD_MS = 5000;
 
@@ -67,6 +68,9 @@ export class Controller {
     server: { ...loadServer(), busy: false, counts: null, lastOk: null, error: null },
   };
   private uploader: Uploader | null = null;
+  private keyring = new KeyRing();
+  private db: Db | null = null;
+  private keysAt = 0;
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRecords: number | null = null;
 
@@ -96,8 +100,11 @@ export class Controller {
   async start(openDb: () => Promise<Db & { journal?: string; synchronous?: string }>): Promise<void> {
     try {
       const db = await openDb();
-      const core = new EdgeCore(db, { credentials: benchCredentials });
+      this.db = db;
+      const keyring = this.keyring;
+      const core = new EdgeCore(db, { credentials: keyring.lookup });
       await core.init();
+      await keyring.load(db);
       this.core = core;
       const events = {
         log: (line: string) => this.log(line),
@@ -160,12 +167,38 @@ export class Controller {
     void this.sync(true);
   }
 
+  // Step 3A / D1: this owner's Tracker read keys. New keys -> ask the
+  // Gateway for its held records again: those it could not open before
+  // were never accepted, so they are still there.
+  private async refreshKeys(url: string, token: string): Promise<void> {
+    const core = this.core, db = this.db;
+    if (!core || !db) return;
+    const keys = await fetchReadKeys(fetchGet, url, token);
+    const changed = await core.exclusive(() => this.keyring.store(db, keys));
+    this.keysAt = Date.now();
+    if (changed) {
+      this.log(`[sunucu] ${changed} okuma anahtarı alındı (tasma kayıtları artık açılabilir)`);
+      if (this.snap.link === "ble") await this.ble?.redump();
+      if (this.snap.link === "usb") await this.usb?.redump();
+    }
+  }
+
   /** Uploads pending records; manual=true runs even with automatic upload off. */
   async sync(manual: boolean): Promise<void> {
     const sv = this.snap.server;
     if (!this.uploader || sv.busy) return;
     const counts = await this.uploader.counts();
     if (!sv.url || !sv.token || (!manual && !sv.auto)) { this.setServer({ counts }); return; }
+    if (manual || Date.now() - this.keysAt > KEYS_EVERY_MS) {
+      try {
+        await this.refreshKeys(sv.url, sv.token);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.setServer({ error: msg, counts });
+        if (manual) this.log(`[sunucu] okuma anahtarları alınamadı: ${msg}`);
+        return;
+      }
+    }
     if (!manual && counts.pending === 0) { this.setServer({ counts }); return; }
     this.setServer({ busy: true, counts });
     try {

@@ -49,4 +49,11 @@ export const SCHEMA: string[] = [
      utc INTEGER NOT NULL,
      PRIMARY KEY (device_id,incarnation,sequence))`,
   `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+  // Step 3A / D1: read (D2A traffic) keys of the owner's Trackers, from the
+  // backend. Never a root key.
+  `CREATE TABLE IF NOT EXISTS read_keys (
+     device_id TEXT NOT NULL CHECK(length(device_id)=16),
+     key_epoch INTEGER NOT NULL,
+     traffic_key TEXT NOT NULL CHECK(length(traffic_key)=32),
+     PRIMARY KEY (device_id,key_epoch))`,
 ];

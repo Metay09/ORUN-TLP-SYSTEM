@@ -26,3 +26,21 @@ export async function fetchPost(url: string, token: string, body: string): Promi
     clearTimeout(timer);
   }
 }
+
+export async function fetchGet(url: string, token: string): Promise<HttpReply> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("sunucu cevap vermedi (20 sn)")), HTTP_TIMEOUT_MS);
+  });
+  try {
+    const res = await Promise.race([
+      fetch(url, { headers: { Authorization: `Bearer ${token}` } }),
+      timeout,
+    ]);
+    let parsed: unknown = null;
+    try { parsed = await res.json(); } catch { parsed = null; }
+    return { status: res.status, body: parsed };
+  } finally {
+    clearTimeout(timer);
+  }
+}

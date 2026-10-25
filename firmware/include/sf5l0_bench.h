@@ -54,7 +54,16 @@ class Sf5l0BenchTestProvisioning final {
       : security_(security) {}
 
   // false = refused immediately; reason() says why.
-  bool start(uint64_t gateway_id);
+  bool start(uint64_t gateway_id);  // public test credential (bench)
+  // Step 3A: a REAL credential supplied over USB (physical access is the
+  // authorization, ADR M7P6 §11). Committed only on an unprovisioned store;
+  // a store already holding exactly this credential just (re)grants the
+  // Gateway. Any other credential is never overwritten: run the security
+  // CLEAN image first. The caller's buffers are not kept.
+  bool startWithCredential(uint64_t gateway_id,
+                           const uint8_t (&credential_id)[security_format::kCredentialIdSize],
+                           uint32_t key_epoch,
+                           const uint8_t (&k_root)[security_format::kKRootSize]);
   // Advance at most one step. true when step() changed during this call.
   bool poll();
 
@@ -67,11 +76,23 @@ class Sf5l0BenchTestProvisioning final {
   static uint8_t activePageVersion(const SecurityStore& security);
   static bool grantFor(const SecurityStore& security, uint64_t gateway_id,
                        uint32_t& generation, uint32_t& floor);
-  // First granted Gateway ID on a v3 store holding the test credential, or 0.
+  static bool holdsCredential(
+      const SecurityStore& security,
+      const uint8_t (&credential_id)[security_format::kCredentialIdSize],
+      uint32_t key_epoch, const uint8_t (&k_root)[security_format::kKRootSize]);
+  // First granted Gateway ID on a provisioned v3 store (any credential), or 0.
   static uint64_t firstGrantedGateway(const SecurityStore& security);
+  // Public key facts of the active credential (never the root).
+  static bool credentialInfo(const SecurityStore& security,
+                             uint8_t (&credential_id)[security_format::kCredentialIdSize],
+                             uint32_t& key_epoch);
 
  private:
   void fail(const char* why);
+  bool begin(uint64_t gateway_id,
+             const uint8_t (&credential_id)[security_format::kCredentialIdSize],
+             uint32_t key_epoch,
+             const uint8_t (&k_root)[security_format::kKRootSize]);
 
   SecurityStore& security_;
   Step step_ = Step::kIdle;
@@ -80,6 +101,23 @@ class Sf5l0BenchTestProvisioning final {
 };
 
 const char* sf5l0StepName(Sf5l0BenchTestProvisioning::Step step);
+
+// Step 3A USB lines (written by tools/orun_provision.py from the backend
+// registry). Pure parsers, host-tested; CRC-32 over the binary fields is a
+// typo guard, not authentication (USB physical access is the authority).
+enum class Sf5l0LineResult : uint8_t { kOk, kMalformed, kBadCrc };
+// "BENCH PROVISION <cred 32> <epoch 8> <root 64> <gateway 16> <crc 8>"
+Sf5l0LineResult sf5l0ParseProvisionLine(
+    const char* line, size_t length,
+    uint8_t (&credential_id)[security_format::kCredentialIdSize],
+    uint32_t& key_epoch, uint8_t (&k_root)[security_format::kKRootSize],
+    uint64_t& gateway_id);
+// "BENCH GRANT <tracker 16> <epoch 8> <floor 8> <generation 8> <key 64> <crc 8>"
+Sf5l0LineResult sf5l0ParseGrantLine(const char* line, size_t length,
+                                    uint64_t& tracker_id, uint32_t& key_epoch,
+                                    uint32_t& custody_floor,
+                                    uint32_t& grant_generation,
+                                    uint8_t (&scoped_key)[32]);
 
 // SF5L2: bench pacing for draining the Tracker backlog with the one-record
 // pilot. Decides only WHEN the pilot may be re-armed; selection, sealing,
@@ -152,7 +190,25 @@ class Sf5l0BenchGrantSource final : public GatewayDurableGrantSource {
   uint32_t grantsIssued() const { return grants_issued_; }
   uint32_t grantsRefused() const { return grants_refused_; }
 
+  // Step 3A (bench interim until the signed, persistent grant snapshot of
+  // step 3B): a scoped custody ACK key for one (Tracker, epoch), derived by
+  // the backend from that Tracker's real credential and written over USB.
+  // RAM only: gone after a reboot (the Tracker keeps its records until a
+  // Gateway can ACK again). A real grant always wins over the test key.
+  static constexpr uint8_t kRamGrants = 8U;
+  enum class AddResult : uint8_t { kAdded, kReplaced, kFull, kInvalid };
+  AddResult addGrant(uint64_t tracker_id, uint32_t key_epoch,
+                     uint32_t custody_floor, uint32_t grant_generation,
+                     const uint8_t (&scoped_key)[32]);
+  uint8_t ramGrants() const;
+
  private:
+  struct RamGrant {
+    bool used = false;
+    GatewayCustodyAckScope scope{};
+    uint8_t key[32]{};
+  };
+  RamGrant ram_[kRamGrants]{};
   uint64_t gateway_id_ = 0U;
   uint32_t grants_issued_ = 0U;
   uint32_t grants_refused_ = 0U;
@@ -306,6 +362,10 @@ void service(bool observation_store_mounted);
 void print();
 // "EDGE ACCEPT v1 ...": one authenticated (bench key) Edge durable accept.
 void edgeAccept(const char* line, size_t length);
+// Step 3A: "BENCH GRANT <tracker 16 hex> <epoch 8 hex> <floor 8 hex>
+// <generation 8 hex> <key 64 hex> <crc 8 hex>" (crc = CRC-32 of the 52 binary
+// bytes, typo guard). Installs a RAM-only scoped custody ACK key.
+void grantLine(const char* line, size_t length);
 // SF5L6 BLE Edge service (edge_link.h). beginBle(): after Bluefruit.begin(),
 // before advertising starts. onBleEvent(): from the Bluefruit event callback
 // (BLE task: counter only). pollBle(): loop, with the sampled connection.

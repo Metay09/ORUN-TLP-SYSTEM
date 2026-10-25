@@ -18,7 +18,9 @@ It serves the same field map as the PC tool (tools/edge_map) over all
 uploaded records: GET / and GET /api/points.
 
 BENCH ONLY:
-- the only credential is the PUBLIC SF5L0 test credential (--bench-test-key);
+- credentials: the step 3A registry (--registry, real per-Tracker keys) and,
+  for old bench records only, the PUBLIC SF5L0 test credential
+  (--bench-test-key);
 - access is a shared bearer token (--token) over a private network (bind to
   the Tailscale address with --host). Edge identity/authorization is step 3.
 
@@ -43,6 +45,7 @@ from typing import Optional
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import orun_edge_bench as eb  # noqa: E402  (ledger loader, map page, points)
+import orun_credentials as oc  # noqa: E402  (step 3A registry)
 
 MAX_BODY = 256 * 1024
 MAX_RECORDS = 200
@@ -74,9 +77,18 @@ class BadRequest(Exception):
 
 
 class Backend:
-    def __init__(self, db_path: Path, test_key: bool, clock=time.time):
+    def __init__(self, db_path: Path, test_key: bool, clock=time.time,
+                 registry: Optional[oc.CredentialRegistry] = None):
         self.mod = eb.load_ledger_module()
-        self.creds = eb.bench_credentials(self.mod) if test_key else eb.no_credentials
+        self.registry = registry
+        bench = eb.bench_credentials(self.mod) if test_key else eb.no_credentials
+        real = registry.lookup(self.mod) if registry else eb.no_credentials
+
+        def creds(device: bytes, epoch: int):
+            # Step 3A: real credentials first; the public test key only for
+            # old bench records, and only with --bench-test-key.
+            return real(device, epoch) or bench(device, epoch)
+        self.creds = creds
         self.ledger = self.mod.VerifiedLocalLedger(db_path, self.creds)
         self.db_path = Path(db_path)
         self.clock = clock
@@ -182,6 +194,11 @@ class Backend:
 def make_server(backend: Backend, host: str, port: int, token: str) -> ThreadingHTTPServer:
     secret = token.encode()
 
+    def authorized(headers) -> bool:
+        auth = headers.get("Authorization", "")
+        given = auth[7:].encode() if auth.startswith("Bearer ") else b""
+        return hmac.compare_digest(given, secret)
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "ORUN-backend-bench"
 
@@ -205,6 +222,17 @@ def make_server(backend: Backend, host: str, port: int, token: str) -> Threading
             if path == "/api/points":
                 return self._send(200, json.dumps(eb.points_from_db(backend.db_path)).encode(),
                                   "application/json")
+            if path == "/v1/edge/keys":
+                # Owner decision D1: the owner's phone gets the per-epoch read
+                # (D2A traffic) keys of the Trackers, never K_root. Bench: one
+                # owner, the same bearer token as uploads (per-phone enrollment
+                # is step 3C).
+                if not authorized(self.headers):
+                    return self._json(401, {"error": "token"})
+                keys = [{"device": f"{c.device_id:016X}", "epoch": c.key_epoch,
+                         "traffic_key": oc.traffic_key(c).hex().upper()}
+                        for c in (backend.registry.all() if backend.registry else [])]
+                return self._json(200, {"keys": keys})
             if path == "/v1/health":
                 return self._json(200, {"ok": True, "records": backend.ledger.record_count()})
             entry = eb.STATIC_FILES.get(path)
@@ -216,9 +244,7 @@ def make_server(backend: Backend, host: str, port: int, token: str) -> Threading
         def do_POST(self):  # noqa: N802
             if self.path != "/v1/edge/batch":
                 return self._json(404, {"error": "not found"})
-            auth = self.headers.get("Authorization", "")
-            given = auth[7:].encode() if auth.startswith("Bearer ") else b""
-            if not hmac.compare_digest(given, secret):
+            if not authorized(self.headers):
                 return self._json(401, {"error": "token"})
             length = self.headers.get("Content-Length", "")
             if not length.isdigit() or int(length) > MAX_BODY:
@@ -238,6 +264,9 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--db", default=str(Path.home() / "orun-backend-bench.sqlite"),
                     help="backend ledger (default: ~/orun-backend-bench.sqlite)")
+    ap.add_argument("--registry", default=str(Path.home() / "orun-credentials.sqlite"),
+                    help="step 3A credential registry (tools/orun_provision.py); "
+                         "default ~/orun-credentials.sqlite")
     ap.add_argument("--bench-test-key", action="store_true",
                     help="accept the PUBLIC SF5L0 test credential (bench only)")
     ap.add_argument("--token", required=True,
@@ -248,7 +277,8 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     if len(args.token) < 8:
         ap.error("--token: at least 8 characters")
-    backend = Backend(Path(args.db), args.bench_test_key)
+    registry = oc.CredentialRegistry(args.registry)
+    backend = Backend(Path(args.db), args.bench_test_key, registry=registry)
     server = make_server(backend, args.host, args.port, args.token)
     print(f"[sunucu] http://{args.host}:{server.server_address[1]}/  kayıt={backend.ledger.record_count()} "
           f"(çıkış Ctrl+C)", flush=True)

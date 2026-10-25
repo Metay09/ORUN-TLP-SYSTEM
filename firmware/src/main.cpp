@@ -263,8 +263,9 @@ constexpr int32_t kM6D2ProbeHalfSpanE7 = 2500;  // ~20-30 m at field latitudes.
 orun_tlp::RoleController role_controller;
 bool automatic_role_resolved = false;
 // Long enough for "APP FENCE V -89.9999999 -179.9999999".
-#ifdef ORUN_SF5L0_GATEWAY
-// SF5L5: "EDGE ACCEPT v1 page= slot= gen=<16 hex> mac=<64 hex>" is ~120 chars.
+#if defined(ORUN_SF5L0_GATEWAY) || defined(ORUN_SF5L0_TRACKER)
+// SF5L5: "EDGE ACCEPT v1 page= slot= gen=<16 hex> mac=<64 hex>" is ~120 chars;
+// step 3A "BENCH PROVISION ..." / "BENCH GRANT ..." are up to ~150.
 char role_command[160]{};
 #else
 char role_command[48]{};
@@ -1400,6 +1401,28 @@ const char* benchSecurityStateName() {
   return "?";
 }
 
+// "BENCH PROVISION ..." -> start (parser: sf5l0ParseProvisionLine).
+bool parseBenchProvision(const char* line, size_t length) {
+  uint8_t id[orun_tlp::security_format::kCredentialIdSize]{};
+  uint8_t root[orun_tlp::security_format::kKRootSize]{};
+  uint32_t epoch = 0;
+  uint64_t gateway = 0;
+  const auto parsed =
+      orun_tlp::sf5l0ParseProvisionLine(line, length, id, epoch, root, gateway);
+  if (parsed == orun_tlp::Sf5l0LineResult::kBadCrc)
+    Serial.println(F("BENCH PROVISION rejected: crc mismatch (typo?)"));
+  if (parsed == orun_tlp::Sf5l0LineResult::kOk) {
+    if (bench_provisioning.startWithCredential(gateway, id, epoch, root))
+      Serial.printf("BENCH PROVISION started step=%s\n",
+                    orun_tlp::sf5l0StepName(bench_provisioning.step()));
+    else
+      Serial.printf("BENCH PROVISION FAIL reason=%s\n", bench_provisioning.reason());
+  }
+  volatile uint8_t* wr = root;
+  for (size_t i = 0; i < sizeof(root); ++i) wr[i] = 0;
+  return parsed != orun_tlp::Sf5l0LineResult::kMalformed;
+}
+
 // "BENCH?" on the Tracker bench image.
 void printBenchTracker() {
   char self[17];
@@ -1408,6 +1431,24 @@ void printBenchTracker() {
       orun_tlp::Sf5l0BenchTestProvisioning::firstGrantedGateway(security_store);
   char gateway[17];
   printU64HexTo(gateway, granted);
+  // Public facts only: credential id + epoch + the Gateway grant scope the
+  // backend needs to derive the same custody ACK key. Never the root.
+  uint8_t cred[orun_tlp::security_format::kCredentialIdSize]{};
+  uint32_t epoch = 0;
+  char cred_hex[2 * sizeof(cred) + 1] = "none";
+  if (orun_tlp::Sf5l0BenchTestProvisioning::credentialInfo(security_store, cred, epoch))
+    for (size_t i = 0; i < sizeof(cred); ++i)
+      snprintf(cred_hex + 2 * i, 3, "%02X", cred[i]);
+  uint32_t generation = 0, floor = 0;
+  const bool scoped = granted != 0 &&
+      orun_tlp::Sf5l0BenchTestProvisioning::grantFor(security_store, granted,
+                                                     generation, floor);
+  Serial.printf(
+      "BENCH CREDENTIAL credential=%s epoch=%08lX grant_generation=%08lX "
+      "custody_floor=%08lX\n",
+      cred_hex, static_cast<unsigned long>(epoch),
+      static_cast<unsigned long>(scoped ? generation : 0),
+      static_cast<unsigned long>(scoped ? floor : 0));
   Serial.printf(
       "BENCH TRACKER id=%s security=%s test_credential=%s page=v%u "
       "granted_gateway=%s setup=%s%s%s role=%s product_store=%s\n",
@@ -2445,6 +2486,23 @@ void handleRoleCommand() {
     printBenchDrain();
     return;
   }
+  // Step 3A: BENCH PROVISION <credential 32 hex> <epoch 8 hex> <root 64 hex>
+  //   <gateway 16 hex> <crc 8 hex>; crc = CRC-32 of the 60 binary bytes
+  // (typo guard only). Physical USB access is the authorization. The root is
+  // never echoed; the buffer is wiped.
+  if (role_command_length >= 15 &&
+      memcmp(role_command, "BENCH PROVISION", 15) == 0) {
+    bool ok = parseBenchProvision(role_command, role_command_length);
+    volatile char* wipe_p = role_command;
+    for (size_t i = 0; i < sizeof(role_command); ++i) wipe_p[i] = 0;
+    role_command_length = 0;
+    if (!ok) {
+      Serial.println(F("BENCH PROVISION rejected; use BENCH PROVISION <cred 32 hex> "
+                       "<epoch 8 hex> <root 64 hex> <gateway 16 hex> <crc 8 hex>"));
+      return;
+    }
+    return;
+  }
   if (role_command_length == 28 &&
       memcmp(role_command, "BENCH SETUP ", 12) == 0) {
     uint64_t gateway_id = 0;
@@ -2482,6 +2540,14 @@ void handleRoleCommand() {
   if (isActivityCommand("BENCH GW ERASE HELD CONFIRM", 27)) {
     role_command_length = 0;
     orun_tlp::sf5l0_gateway::startErase(true);
+    return;
+  }
+  if (role_command_length > 12 &&
+      memcmp(role_command, "BENCH GRANT ", 12) == 0) {
+    orun_tlp::sf5l0_gateway::grantLine(role_command, role_command_length);
+    volatile char* wipe_p = role_command;
+    for (size_t i = 0; i < sizeof(role_command); ++i) wipe_p[i] = 0;
+    role_command_length = 0;
     return;
   }
   if (role_command_length > 15 &&

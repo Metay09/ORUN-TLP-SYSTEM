@@ -340,7 +340,7 @@ void print() {
       roleOk() ? "" : " (needs ROLE BASE for continuous RX)");
   Serial.printf(
       "BENCH GATEWAY custody_started=%lu duplicates=%lu denied=%lu ack_tx=%lu "
-      "grants_issued=%lu grants_refused=%lu handed_off=%lu reclaimed=%lu\n"
+      "grants_issued=%lu grants_refused=%lu ram_grants=%u handed_off=%lu reclaimed=%lu\n"
       "BENCH GATEWAY edge_ble=%s session=%s out=%lu in=%lu dropped=%lu\n",
       static_cast<unsigned long>(custody_started),
       static_cast<unsigned long>(duplicates),
@@ -348,6 +348,7 @@ void print() {
       static_cast<unsigned long>(ack_tx),
       static_cast<unsigned long>(grants ? grants->grantsIssued() : 0U),
       static_cast<unsigned long>(grants ? grants->grantsRefused() : 0U),
+      static_cast<unsigned>(grants ? grants->ramGrants() : 0U),
       static_cast<unsigned long>(handoff ? handoff->handedOff() : 0U),
       static_cast<unsigned long>(handoff ? handoff->reclaimed() : 0U),
       edge_gatt_ready ? "ready" : "off",
@@ -418,6 +419,33 @@ void edgeAccept(const char* line, size_t length) {
   Serial.printf("EDGE ACCEPT %s page=%u slot=%u%s\n", word, unsigned(page),
                 unsigned(slot),
                 reply == Sf5l0EdgeHandoff::Reply::kAlready ? " state=ALREADY" : "");
+}
+
+void grantLine(const char* line, size_t length) {
+  uint64_t tracker = 0;
+  uint32_t epoch = 0, floor = 0, generation = 0;
+  uint8_t key[32]{};
+  const auto parsed = sf5l0ParseGrantLine(line, length, tracker, epoch, floor,
+                                          generation, key);
+  if (parsed == Sf5l0LineResult::kBadCrc) {
+    Serial.println(F("BENCH GRANT rejected: crc mismatch (typo?)"));
+  } else if (parsed != Sf5l0LineResult::kOk || grants == nullptr) {
+    Serial.println(F("BENCH GRANT rejected; use BENCH GRANT <tracker 16 hex> <epoch 8 hex> "
+                     "<floor 8 hex> <generation 8 hex> <key 64 hex> <crc 8 hex>"));
+  } else {
+    const auto r = grants->addGrant(tracker, epoch, floor, generation, key);
+    char id[17];
+    hex64(id, tracker);
+    const char* word = r == Sf5l0BenchGrantSource::AddResult::kAdded ? "OK added"
+        : r == Sf5l0BenchGrantSource::AddResult::kReplaced ? "OK replaced"
+        : r == Sf5l0BenchGrantSource::AddResult::kFull ? "FAIL full" : "FAIL invalid";
+    Serial.printf("BENCH GRANT %s tracker=%s epoch=%08lX ram_grants=%u/%u\n", word, id,
+                  static_cast<unsigned long>(epoch),
+                  static_cast<unsigned>(grants->ramGrants()),
+                  static_cast<unsigned>(Sf5l0BenchGrantSource::kRamGrants));
+  }
+  volatile uint8_t* wk = key;
+  for (size_t i = 0; i < sizeof(key); ++i) wk[i] = 0;
 }
 
 bool beginBle() {

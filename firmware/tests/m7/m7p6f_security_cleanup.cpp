@@ -1,7 +1,9 @@
 // M7P6F TEST-ONLY SecurityStore cleanup helper.
 //
-// Destructive scope: ONLY the two-page SecurityStore partition
-// 0x0E7000..0x0E9000. Use only on a development unit after M7P6F physical
+// Destructive scope: the two-page SecurityStore partition 0x0E7000..0x0E9000
+// ("CLEAN"), or that plus the 128 KiB product record region
+// 0x0C5000..0x0E5000 ("CLEAN ALL", step 3A re-provisioning: records sealed
+// under the retired credential can never be released afterwards). Use only on a development unit after M7P6F physical
 // sentinel work. It never touches ConfigStore, bonds/InternalFS, History,
 // bootloader/settings, radio/GNSS state, or application flash.
 //
@@ -25,6 +27,7 @@ using namespace orun_tlp::storage_config;
 namespace {
 
 NrfSecurityFlash security_flash;
+NrfProductFlash product_flash;
 bool done = false;
 uint32_t last_report_ms = 0;
 uint32_t last_ready_report_ms = 0;
@@ -62,6 +65,43 @@ bool regionErased() {
   return true;
 }
 
+bool productErased() {
+  constexpr uint32_t kSize = kProductRegionEnd - kProductRegionStart;
+  uint8_t bytes[64];
+  for (uint32_t offset = 0; offset < kSize; offset += sizeof(bytes)) {
+    if (!product_flash.read(offset, bytes, sizeof(bytes))) return false;
+    for (size_t i = 0; i < sizeof(bytes); ++i)
+      if (bytes[i] != 0xFFU) return false;
+  }
+  return true;
+}
+
+void cleanAll() {
+  Serial.println(F("M7P6F SECURITY CLEAN ALL accepted (security + product records)"));
+  Serial.flush();
+  if (!product_flash.begin()) {
+    setReport("M7P6F SECURITY CLEAN ALL FAIL product_flash_begin");
+    return;
+  }
+  for (uint32_t page = 0; page < kFutureSecurityRegionPages; ++page) {
+    if (security_flash.erasePage(page) != FlashOpResult::kDone) {
+      setReport("M7P6F SECURITY CLEAN ALL FAIL erase security");
+      return;
+    }
+  }
+  for (uint32_t page = 0; page < kProductRegionPages; ++page) {
+    if (product_flash.erasePage(page) != FlashOpResult::kDone) {
+      setReport("M7P6F SECURITY CLEAN ALL FAIL erase product");
+      return;
+    }
+  }
+  if (!regionErased() || !productErased()) {
+    setReport("M7P6F SECURITY CLEAN ALL FAIL verify");
+    return;
+  }
+  setReport("M7P6F SECURITY CLEAN ALL PASS security_pages=2 product_pages=32 all_ff=yes");
+}
+
 void cleanSecurityPartition() {
   Serial.println(F("M7P6F SECURITY CLEAN accepted"));
   Serial.flush();
@@ -89,7 +129,7 @@ void setup() {
   while (!Serial && (millis() - wait_started) < 15000U) delay(10);
 
   Serial.println(F("M7P6F SECURITY CLEANUP BOOT"));
-  Serial.println(F("TEST-ONLY: destructively owns ONLY SecurityStore 0xE7000..0xE9000"));
+  Serial.println(F("TEST-ONLY: CLEAN wipes SecurityStore 0xE7000..0xE9000; CLEAN ALL also the product records 0xC5000..0xE5000"));
   Serial.flush();
 
   if (!softDeviceDisabled()) {
@@ -102,7 +142,7 @@ void setup() {
     return;
   }
 
-  Serial.println(F("M7P6F SECURITY CLEAN READY send CLEAN"));
+  Serial.println(F("M7P6F SECURITY CLEAN READY send CLEAN or CLEAN ALL"));
   Serial.flush();
   last_ready_report_ms = millis();
 }
@@ -119,7 +159,7 @@ void loop() {
   }
 
   if (Serial && (millis() - last_ready_report_ms) >= 3000U) {
-    Serial.println(F("M7P6F SECURITY CLEAN READY send CLEAN"));
+    Serial.println(F("M7P6F SECURITY CLEAN READY send CLEAN or CLEAN ALL"));
     Serial.flush();
     last_ready_report_ms = millis();
   }
@@ -132,6 +172,8 @@ void loop() {
       command_buffer[command_length] = '\0';
       if (strcmp(command_buffer, "CLEAN") == 0) {
         cleanSecurityPartition();
+      } else if (strcmp(command_buffer, "CLEAN ALL") == 0) {
+        cleanAll();
       } else if (command_length != 0) {
         Serial.println(F("M7P6F SECURITY CLEAN command rejected; send CLEAN"));
         Serial.flush();

@@ -9,7 +9,11 @@
 import { aesCcmDecrypt, hkdfSha256 } from "./crypto.ts";
 import { ascii, concat, hex, i32, u16, u32, u64 } from "./bytes.ts";
 
-export interface Credential { credentialId: Uint8Array; root: Uint8Array; }
+// Either a full root credential (bench test key; backend side) or, on the
+// owner's phone (owner decision D1), only the per-epoch D2A traffic key.
+export type Credential =
+  | { credentialId: Uint8Array; root: Uint8Array }
+  | { trafficKey: Uint8Array };
 export type CredentialLookup = (device: Uint8Array, epoch: number) => Credential | null;
 
 export const TEST_CREDENTIAL_ID = new Uint8Array(16).map((_, i) => 0xa0 + i);
@@ -111,8 +115,11 @@ export function openProductFrame(raw: Uint8Array, lookup: CredentialLookup): Obs
   if (epoch === 0xffffffff || u64(header, 20) === 0n) throw new Reject("invalid epoch/counter");
   const credential = lookup(device, epoch);
   if (!credential) throw new Reject("unknown device/epoch");
-  const info = concat(ascii("ORUN-TLP-V2-AEAD"), new Uint8Array([1]), header.subarray(16, 20));
-  const key = hkdfSha256(credential.root, credential.credentialId, info, 16);
+  const key = "trafficKey" in credential
+    ? credential.trafficKey
+    : hkdfSha256(credential.root, credential.credentialId,
+                 concat(ascii("ORUN-TLP-V2-AEAD"), new Uint8Array([1]), header.subarray(16, 20)), 16);
+  if (key.length !== 16) throw new Reject("bad key");
   const nonce = concat(header.subarray(16, 20), new Uint8Array([1]), header.subarray(20, 28));
   const plaintext = aesCcmDecrypt(key, nonce, raw.subarray(28), header, 8);
   if (!plaintext) throw new Reject("AEAD authentication failed");

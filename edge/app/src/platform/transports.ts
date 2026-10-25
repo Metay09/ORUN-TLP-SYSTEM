@@ -8,7 +8,7 @@ import { UsbSerial } from "@leeskies/capacitor-usb-serial";
 import type { PluginListenerHandle } from "@capacitor/core";
 import type { EdgeCore } from "../core/edge.ts";
 import {
-  EDGE_SERVICE_UUID, EDGE_TO_EDGE_UUID, EDGE_TO_GATEWAY_UUID, frames, Reassembler,
+  DUMP_MESSAGE, EDGE_SERVICE_UUID, EDGE_TO_EDGE_UUID, EDGE_TO_GATEWAY_UUID, frames, Reassembler,
 } from "../core/edgeLink.ts";
 
 export type LinkState = "idle" | "searching" | "connecting" | "connected" | "waiting";
@@ -156,6 +156,19 @@ export class BleLink {
     }
   }
 
+  /** Ask the Gateway to send every record it holds again (DUMP). */
+  async redump(): Promise<void> {
+    if (!this.connected || !this.deviceId) return;
+    try {
+      this.messageId = (this.messageId + 1) & 0xff;
+      for (const f of frames(DUMP_MESSAGE, this.messageId))
+        await BleClient.write(this.deviceId, EDGE_SERVICE_UUID, EDGE_TO_GATEWAY_UUID,
+                              new DataView(f.buffer, f.byteOffset, f.byteLength));
+    } catch (e) {
+      this.ev.log(`[BLE] yeniden isteme yazılamadı: ${errorText(e)}`);
+    }
+  }
+
   // Sends the next confirmed hand-off, one frame at a time (write with response).
   private async pump(): Promise<void> {
     this.rx.poll(Date.now());
@@ -278,6 +291,11 @@ export class UsbLink {
       });
     }
     if (this.buf.length > 4096) this.buf = "";   // garbage without newlines
+  }
+
+  /** Ask the Gateway to list every record it holds again. */
+  async redump(): Promise<void> {
+    try { await this.writeLine("BENCH GW DUMP"); } catch (e) { this.ev.log(`[USB] yazılamadı: ${errorText(e)}`); }
   }
 
   private async writeLine(line: string): Promise<void> {

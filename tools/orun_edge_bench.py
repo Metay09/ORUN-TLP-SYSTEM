@@ -284,9 +284,18 @@ def human(d: dict) -> str:
 
 class BenchEdge:
     def __init__(self, db_path: Path, test_key: bool, clock=time.time,
-                 accept: bool = True):
+                 accept: bool = True, registry: Optional[Path] = None):
         self.ledger_mod = load_ledger_module()
-        creds = bench_credentials(self.ledger_mod) if test_key else no_credentials
+        bench = bench_credentials(self.ledger_mod) if test_key else no_credentials
+        real = no_credentials
+        if registry is not None and Path(registry).exists():
+            # Step 3A: real per-Tracker credentials from the backend registry.
+            sys.path.insert(0, str(ROOT / "backend"))
+            import orun_credentials as oc
+            real = oc.CredentialRegistry(registry).lookup(self.ledger_mod)
+
+        def creds(device: bytes, epoch: int):
+            return real(device, epoch) or bench(device, epoch)
         self.ledger = self.ledger_mod.VerifiedLocalLedger(db_path, creds)
         self.creds = creds
         self.db_path = Path(db_path)
@@ -794,6 +803,8 @@ def main(argv=None) -> int:
                     help="ledger SQLite file (default: ~/orun-edge-bench.sqlite)")
     ap.add_argument("--bench-test-key", action="store_true",
                     help="accept the PUBLIC SF5L0 test credential (bench only)")
+    ap.add_argument("--registry", default=str(Path.home() / "orun-credentials.sqlite"),
+                    help="step 3A credential registry (real Tracker keys), if present")
     ap.add_argument("--no-dump", action="store_true",
                     help="with --port: do not request BENCH GW DUMP at start")
     ap.add_argument("--no-accept", action="store_true",
@@ -821,7 +832,8 @@ def main(argv=None) -> int:
               file=sys.stderr)
     edge = BenchEdge(db, args.bench_test_key,
                      accept=(bool(args.port) or args.ble is not None)
-                     and not args.no_accept)
+                     and not args.no_accept,
+                     registry=Path(args.registry))
     if args.ble is not None:
         run_ble(edge, args.ble or None)
         return 0
