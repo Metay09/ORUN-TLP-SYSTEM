@@ -5,6 +5,7 @@ import { EdgeCore, type Counts } from "../core/edge.ts";
 import { benchCredentials } from "../core/product.ts";
 import type { PointsResult } from "../core/points.ts";
 import { BleLink, UsbLink, type LinkState } from "../platform/transports.ts";
+import { KeepAlive } from "../platform/background.ts";
 
 export interface Snapshot {
   ready: boolean;
@@ -31,6 +32,7 @@ export class Controller {
   private usb: UsbLink | null = null;
   private listeners = new Set<() => void>();
   private refreshQueued = false;
+  private keepAlive = new KeepAlive((l) => this.log(l));
   snap: Snapshot = {
     ready: false, error: null, link: "none", state: "idle", detail: null,
     counts: { STORED: 0, DUPLICATE: 0, REJECTED: 0, CONFLICT: 0, UNCERTAIN: 0 },
@@ -46,6 +48,19 @@ export class Controller {
   private emit(patch: Partial<Snapshot>): void {
     this.snap = { ...this.snap, ...patch };
     for (const fn of this.listeners) fn();
+    this.background();
+  }
+
+  // While a link is up (or waiting to reconnect) the app keeps running with
+  // the screen off; the notification shows the transfer state.
+  private background(): void {
+    const s = this.snap;
+    if (s.link === "none") { this.keepAlive.off(); return; }
+    const how = s.link === "ble" ? "Bluetooth" : "USB";
+    const body = s.state === "connected"
+      ? `${how}: ${s.counts.STORED} yeni · teslim ${s.handedOff} · bekleyen ${s.pending}`
+      : `${how}: yeniden bağlanmayı bekliyor`;
+    this.keepAlive.on(body);
   }
 
   async start(openDb: () => Promise<Db & { journal?: string; synchronous?: string }>): Promise<void> {

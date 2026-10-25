@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { App as CapApp } from "@capacitor/app";
 import type { Controller } from "./controller.ts";
 
 const STATE_TEXT: Record<string, string> = {
@@ -23,6 +24,16 @@ export function App({ controller }: { controller: Controller }) {
   const [tab, setTab] = useState<"map" | "link">("link");
   const logEnd = useRef<HTMLDivElement>(null);
   const map = useRef<HTMLIFrameElement>(null);
+
+  // Android back: from the map back to Bağlantı; from Bağlantı the app goes
+  // to the background (it keeps the Gateway link while one is up).
+  useEffect(() => {
+    const handle = CapApp.addListener("backButton", () => {
+      if (tab === "map") setTab("link");
+      else void CapApp.minimizeApp();
+    });
+    return () => { void handle.then((h) => h.remove()); };
+  }, [tab]);
 
   useEffect(() => { if (tab === "link") logEnd.current?.scrollIntoView({ block: "end" }); }, [s.log, tab]);
   // New records show on the map at once, not on its next 10 s poll.

@@ -95,7 +95,13 @@ export class BleLink {
         await BleClient.startNotifications(id, EDGE_SERVICE_UUID, EDGE_TO_EDGE_UUID, (v) => {
           const frame = new Uint8Array(v.buffer, v.byteOffset, v.byteLength).slice();
           const msg = this.rx.push(frame, Date.now());
-          if (msg) void this.core.handleMessage(msg).then((out) => { if (out) this.ev.log(out); this.ev.changed(); });
+          // Each Gateway message may queue or settle an accept: send the next
+          // one right away (timers are throttled while the screen is off).
+          if (msg) void this.core.handleMessage(msg).then((out) => {
+            if (out) this.ev.log(out);
+            this.ev.changed();
+            void this.pump();
+          });
         });
       } catch (e) {
         // Connected but unusable: drop the link so the next try starts clean.
@@ -265,7 +271,11 @@ export class UsbLink {
     while ((i = this.buf.indexOf("\n")) >= 0) {
       const line = this.buf.slice(0, i).replace(/\r$/, "");
       this.buf = this.buf.slice(i + 1);
-      void this.core.handleLine(line).then((out) => { if (out) this.ev.log(out); this.ev.changed(); });
+      void this.core.handleLine(line).then((out) => {
+        if (out) this.ev.log(out);
+        this.ev.changed();
+        void this.pump();
+      });
     }
     if (this.buf.length > 4096) this.buf = "";   // garbage without newlines
   }
