@@ -263,6 +263,9 @@ constexpr int32_t kM6D2ProbeHalfSpanE7 = 2500;  // ~20-30 m at field latitudes.
 orun_tlp::RoleController role_controller;
 bool automatic_role_resolved = false;
 // Long enough for "APP FENCE V -89.9999999 -179.9999999".
+#if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT) && !defined(ORUN_SF5L0_GATEWAY)
+#error "Step 3B grant snapshots exist only on the SF5L0 bench Gateway image"
+#endif
 #if defined(ORUN_SF5L0_GATEWAY) || defined(ORUN_SF5L0_TRACKER)
 // SF5L5: "EDGE ACCEPT v1 page= slot= gen=<16 hex> mac=<64 hex>" is ~120 chars;
 // step 3A "BENCH PROVISION ..." / "BENCH GRANT ..." are up to ~150.
@@ -2550,6 +2553,15 @@ void handleRoleCommand() {
     role_command_length = 0;
     return;
   }
+  if (role_command_length >= 11 &&
+      memcmp(role_command, "BENCH OGK1 ", 11) == 0) {
+    // Step 3B: signed grant snapshot upload (DATA lines carry scoped keys).
+    orun_tlp::sf5l0_gateway::ogk1Line(role_command, role_command_length);
+    volatile char* wipe_p = role_command;
+    for (size_t i = 0; i < sizeof(role_command); ++i) wipe_p[i] = 0;
+    role_command_length = 0;
+    return;
+  }
   if (role_command_length > 15 &&
       memcmp(role_command, "EDGE ACCEPT v1 ", 15) == 0) {
     const size_t length = role_command_length;
@@ -3190,6 +3202,11 @@ void setup() {
   // with public vector material. Leaving the production object unopened also
   // makes any accidental probe dependency on real credentials fail closed.
   Serial.println(F("SECURITY physical store skipped by M7P6I probe"));
+#elif defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
+  // Step 3B bench Gateway: the security region holds this Gateway's signed
+  // grant snapshot (OGK1), opened by sf5l0_gateway::begin() below. The
+  // Tracker SecurityStore must never be mounted on the same pages.
+  Serial.println(F("SECURITY region owned by the Gateway grant snapshot (step 3B)"));
 #else
   if (!security_store.begin(device_identity)) {
     Serial.println(F("SECURITY unavailable"));
@@ -3236,6 +3253,7 @@ void setup() {
   // SF5L0 bench Gateway: this board's product region belongs to the OCQ2
   // custody store; the Tracker ObservationStore is deliberately NOT mounted.
   orun_tlp::sf5l0_gateway::begin(storage_flash_gate.productPort(),
+                                 storage_flash_gate.securityCriticalPort(),
                                  radio_manager,
                                  device_identity.legacyUint64(),
                                  product_records.mounted());

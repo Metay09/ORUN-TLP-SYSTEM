@@ -1,7 +1,8 @@
 // SF5L0 bench Gateway composition. Empty unless ORUN_SF5L0_GATEWAY.
 // Wires the EXISTING SF5K3P..X owners (OCQ2 custody store, local custody
 // owner, authorized ingress, startup guard, custody runtime) to the radio,
-// with Sf5l0BenchGrantSource as the only grant source (public test keys).
+// with Sf5l0BenchGrantSource as the grant source (public test keys, step 3A
+// RAM grants) and, with step 3B, the backend-signed OGK1 snapshot first.
 #ifdef ORUN_SF5L0_GATEWAY
 
 #include <Arduino.h>
@@ -20,6 +21,15 @@
 #include "sf5l0_bench.h"
 #include "storage_config.h"
 
+#if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
+#include <Adafruit_nRFCrypto.h>
+
+#include "gateway_ed25519_cc310_verifier.h"
+#include "gateway_grant_snapshot_reader.h"
+#include "orun_step3b_issuer_key.h"  // generated: scripts/step3b_issuer_key.py
+#include "step3b_gateway_enrollment.h"
+#endif
+
 namespace orun_tlp {
 namespace sf5l0_gateway {
 namespace {
@@ -37,6 +47,15 @@ GatewayCustodyAuthorizedIngress* ingress = nullptr;
 GatewayProductCustodyRuntime* runtime = nullptr;
 Sf5l0EdgeHandoff* handoff = nullptr;
 Sf5l0EdgeLinkSession* edge_session = nullptr;
+
+#if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
+// Step 3B: issuer-signed grant snapshot in the Gateway-owned security region.
+GatewayGrantSnapshotReader* signed_grants = nullptr;
+Step3bGrantInstaller* installer = nullptr;
+const char* ogk1_state = "NOT_STARTED";
+uint8_t issuer_prefix[4]{};
+bool installer_reported = false;
+#endif
 
 // ---- SF5L6 BLE Edge GATT (bench Gateway only) ----------------------------
 // Same discipline as M7P7G: the write callback (BLE task) only copies one
@@ -210,14 +229,133 @@ void serviceErase() {
 
 }  // namespace
 
-void begin(FlashBackend& port, RadioManager& radio_manager,
-           uint64_t gateway_id, bool observation_store_mounted) {
+#if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
+namespace {
+const char* readerName(GatewayGrantSnapshotReader::Status s) {
+  switch (s) {
+    case GatewayGrantSnapshotReader::Status::kUnopened: return "UNOPENED";
+    case GatewayGrantSnapshotReader::Status::kWrongOwner: return "WRONG_OWNER";
+    case GatewayGrantSnapshotReader::Status::kUnavailable: return "UNAVAILABLE";
+    case GatewayGrantSnapshotReader::Status::kEmpty: return "EMPTY";
+    case GatewayGrantSnapshotReader::Status::kRejected: return "REJECTED";
+    case GatewayGrantSnapshotReader::Status::kReady: return "READY";
+  }
+  return "?";
+}
+
+void printOgk1() {
+  char gen[17];
+  hex64(gen, signed_grants != nullptr ? signed_grants->activeGeneration() : 0U);
+  const bool denied_now =
+      signed_grants != nullptr &&
+      signed_grants->status() == GatewayGrantSnapshotReader::Status::kReady &&
+      !signed_grants->verifiedForLocalGateway(signed_grants->localGatewayId());
+  Serial.printf("BENCH OGK1 status=%s generation=%s issuer=%02X%02X%02X%02X "
+                "installer=%s signed_acks=%lu\n",
+                denied_now ? "DENIED_UNTIL_REBOOT" : ogk1_state, gen, issuer_prefix[0], issuer_prefix[1],
+                issuer_prefix[2], issuer_prefix[3],
+                installer != nullptr ? Step3bGrantInstaller::stateName(installer->state())
+                                     : "OFF",
+                static_cast<unsigned long>(grants ? grants->signedIssued() : 0U));
+}
+
+// Before Bluefruit.begin(): the security flash backend only opens while the
+// synchronous flash path exists. CC310 is started here; Bluefruit's later
+// nRFCrypto.begin() is then a no-op (the same single lifecycle).
+void beginSigned(FlashBackend& security, uint64_t gateway_id) {
+#if ORUN_STEP3B_ISSUER_PINNED
+  static const uint8_t kIssuer[32] = ORUN_STEP3B_ISSUER_PUBLIC_KEY;
+  memcpy(issuer_prefix, kIssuer, sizeof(issuer_prefix));
+  if (!nRFCrypto.begin()) {
+    ogk1_state = "CRYPTO_INIT_FAIL";
+    return;
+  }
+  static GatewayEd25519Cc310Verifier verifier(kIssuer);
+  signed_grants = new GatewayGrantSnapshotReader(security, verifier);
+  const auto status = signed_grants->begin(gateway_id, true, false);
+  ogk1_state = readerName(status);
+  if (status == GatewayGrantSnapshotReader::Status::kReady)
+    grants->setSigned(signed_grants);
+  installer = new Step3bGrantInstaller(security, verifier, gateway_id);
+#else
+  (void)security;
+  (void)gateway_id;
+  ogk1_state = "NO_ISSUER_KEY";
+#endif
+}
+
+void serviceInstaller() {
+  if (installer == nullptr) return;
+  const auto state = installer->poll();
+  if (installer_reported) return;
+  if (state == Step3bGrantInstaller::State::kDone) {
+    installer_reported = true;
+    char gen[17];
+    hex64(gen, installer->candidateGeneration());
+    Serial.printf("BENCH OGK1 COMMIT PASS generation=%s page=%u; rebooting to use it\n",
+                  gen, static_cast<unsigned>(installer->destinationPage()));
+#if defined(NRF52_SERIES)
+    Serial.flush();
+    delay(200);
+    NVIC_SystemReset();
+#endif
+  } else if (state == Step3bGrantInstaller::State::kFault) {
+    installer_reported = true;
+    Serial.println(F("BENCH OGK1 COMMIT FAIL reason=flash; the old snapshot is "
+                     "denied until reboot (reboot, then check BENCH?)"));
+  }
+}
+}  // namespace
+#endif
+
+void ogk1Line(const char* line, size_t length) {
+#if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
+  if (installer == nullptr || signed_grants == nullptr) {
+    Serial.printf("BENCH OGK1 FAIL reason=%s\n", ogk1_state);
+    return;
+  }
+  const auto reply = installer->handleLine(line, length, *signed_grants);
+  switch (reply) {
+    case Step3bGrantInstaller::Reply::kOk:
+      Serial.printf("BENCH OGK1 OK received=%lu\n",
+                    static_cast<unsigned long>(installer->received()));
+      break;
+    case Step3bGrantInstaller::Reply::kAborted:
+      Serial.println(F("BENCH OGK1 OK aborted"));
+      break;
+    case Step3bGrantInstaller::Reply::kWriteStarted: {
+      char gen[17];
+      hex64(gen, installer->candidateGeneration());
+      Serial.printf("BENCH OGK1 VERIFIED generation=%s; writing page %u\n", gen,
+                    static_cast<unsigned>(installer->destinationPage()));
+      break;
+    }
+    default:
+      Serial.printf("BENCH OGK1 FAIL reason=%s\n",
+                    Step3bGrantInstaller::replyName(reply));
+      break;
+  }
+#else
+  (void)line;
+  (void)length;
+  Serial.println(F("BENCH OGK1 FAIL reason=not_in_this_image"));
+#endif
+}
+
+void begin(FlashBackend& port, FlashBackend& security_port,
+           RadioManager& radio_manager, uint64_t gateway_id,
+           bool observation_store_mounted) {
   if (runtime != nullptr) return;  // once per boot
   product_port = &port;
   radio = &radio_manager;
   custody = new ProductCustodyStore(port, storage_config::kProductRegionPages);
   custody_owner = new GatewayLocalCustodyOwner(*custody);
   grants = new Sf5l0BenchGrantSource(gateway_id);
+#if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
+  beginSigned(security_port, gateway_id);
+#else
+  (void)security_port;
+#endif
   guard = new Guard(port, storage_config::kProductRegionPages, *custody,
                     *grants, gateway_id);
   ingress = new GatewayCustodyAuthorizedIngress(*custody_owner, *grants,
@@ -233,6 +371,9 @@ void begin(FlashBackend& port, RadioManager& radio_manager,
   hex64(id, gateway_id);
   Serial.printf("BENCH GATEWAY id=%s custody_region=%s (PUBLIC TEST KEYS)\n",
                 id, guardName(state));
+#if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
+  printOgk1();
+#endif
   if (state == Guard::State::kForeignRegion ||
       state == Guard::State::kNeedsPreparation)
     Serial.println(F("BENCH GATEWAY region holds other data; send "
@@ -285,6 +426,9 @@ void serviceHandoff() {
 
 void service(bool observation_store_mounted) {
   serviceErase();
+#if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
+  serviceInstaller();
+#endif
   if (runtime == nullptr || guard == nullptr) return;
   serviceHandoff();
   // Hand out a newly committed record once its flash write has settled.
@@ -356,6 +500,9 @@ void print() {
       static_cast<unsigned long>(edge_messages_out),
       static_cast<unsigned long>(edge_messages_in),
       static_cast<unsigned long>(edge_ingress_dropped));
+#if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
+  printOgk1();
+#endif
 }
 
 void onEdgeWrite(uint16_t conn, BLECharacteristic* chr, uint8_t* data,

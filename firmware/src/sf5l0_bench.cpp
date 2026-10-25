@@ -482,6 +482,15 @@ bool Sf5l0BenchGrantSource::activeGrant(uint64_t tracker_id,
                                         uint32_t key_epoch,
                                         GatewayCustodyAckScope& scope,
                                         uint8_t (&scoped_key)[32]) {
+  if (signed_ != nullptr && gateway_id_ != 0U && tracker_id != 0U &&
+      signed_->verifiedForLocalGateway(gateway_id_) &&
+      signed_->activeGrant(tracker_id, key_epoch, scope, scoped_key) &&
+      scope.gateway_device_id == gateway_id_ &&
+      scope.tracker_device_id == tracker_id && scope.key_epoch == key_epoch) {
+    ++grants_issued_;
+    ++signed_issued_;
+    return true;
+  }
   if (gateway_id_ != 0U && tracker_id != 0U) {
     for (const auto& g : ram_) {
       if (g.used && g.scope.tracker_device_id == tracker_id &&
