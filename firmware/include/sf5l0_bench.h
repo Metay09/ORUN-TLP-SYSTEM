@@ -202,6 +202,13 @@ class Sf5l0BenchGrantSource final : public GatewayDurableGrantSource {
                      const uint8_t (&scoped_key)[32]);
   uint8_t ramGrants() const;
 
+  // Step 3B: the verified, signed OGK1 snapshot (GatewayGrantSnapshotReader)
+  // is asked first; then the RAM table; then the public test key.
+  void setSigned(GatewayDurableGrantSource* signed_source) {
+    signed_ = signed_source;
+  }
+  uint32_t signedIssued() const { return signed_issued_; }
+
  private:
   struct RamGrant {
     bool used = false;
@@ -209,6 +216,8 @@ class Sf5l0BenchGrantSource final : public GatewayDurableGrantSource {
     uint8_t key[32]{};
   };
   RamGrant ram_[kRamGrants]{};
+  GatewayDurableGrantSource* signed_ = nullptr;
+  uint32_t signed_issued_ = 0U;
   uint64_t gateway_id_ = 0U;
   uint32_t grants_issued_ = 0U;
   uint32_t grants_refused_ = 0U;
@@ -354,8 +363,12 @@ class Sf5l0EdgeLinkSession final {
 
 namespace sf5l0_gateway {
 // setup(), before Bluefruit.begin(): census + OCQ2 mount via the startup guard.
-void begin(FlashBackend& product_port, RadioManager& radio,
-           uint64_t gateway_id, bool observation_store_mounted);
+// Step 3B: security_port is the Gateway-owned security region (the Tracker
+// SecurityStore is NOT mounted on this image); its signed OGK1 snapshot is
+// verified here, while the synchronous flash path is still available.
+void begin(FlashBackend& product_port, FlashBackend& security_port,
+           RadioManager& radio, uint64_t gateway_id,
+           bool observation_store_mounted);
 // loop(), after RadioManager::update() and only while not transmitting.
 void service(bool observation_store_mounted);
 // "BENCH?"
@@ -366,6 +379,10 @@ void edgeAccept(const char* line, size_t length);
 // <generation 8 hex> <key 64 hex> <crc 8 hex>" (crc = CRC-32 of the 52 binary
 // bytes, typo guard). Installs a RAM-only scoped custody ACK key.
 void grantLine(const char* line, size_t length);
+// Step 3B: "BENCH OGK1 BEGIN | DATA <off> <hex> | COMMIT <crc> | ABORT":
+// upload of a backend-signed grant snapshot (step3b_gateway_enrollment.h).
+// The new snapshot is used after the automatic reboot.
+void ogk1Line(const char* line, size_t length);
 // SF5L6 BLE Edge service (edge_link.h). beginBle(): after Bluefruit.begin(),
 // before advertising starts. onBleEvent(): from the Bluefruit event callback
 // (BLE task: counter only). pollBle(): loop, with the sampled connection.

@@ -2,10 +2,13 @@
 
 #include "gateway_grant_snapshot_reader.h"
 
-// SF5K3AA: target-CRYPTO KAT adapter only. The default firmware deliberately
+// SF5K3AA: target-CRYPTO KAT adapter. The default firmware deliberately
 // has NO issuer trust anchor, Gateway enrollment, or authorized runtime.
-// Compilation without this flag must not expose a live verifier.
-#if defined(ORUN_SF5K3AA_TARGET_CRYPTO_PROBE)
+// Compilation without one of these flags must not expose a live verifier.
+// Step 3B: the bench Gateway image (ORUN_STEP3B_GATEWAY_ENROLLMENT) uses it
+// with the issuer public key pinned at build time.
+#if defined(ORUN_SF5K3AA_TARGET_CRYPTO_PROBE) || \
+    defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
 namespace orun_tlp {
 
 // The caller MUST supply a provisioned, independently trusted immutable

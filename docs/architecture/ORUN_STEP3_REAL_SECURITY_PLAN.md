@@ -52,6 +52,7 @@ on that path still uses **bench** material:
 Each slice removes one bench dependency and is usable on its own.
 
 ### 3A — real tracker credentials (provisioning over USB)
+Implemented and physically checked: `docs/milestones/STEP3A.md`.
 - Backend credential registry: per device `credential_id` (16 B random),
   `key_epoch`, `K_root` (32 B random), owner. Generated on the backend;
   never logged; file readable only by the backend user.
@@ -64,6 +65,8 @@ Each slice removes one bench dependency and is usable on its own.
   key and the phone's bench key no longer open them.
 
 ### 3B — Gateway enrollment (signed custody grants)
+Implemented (bench): `docs/milestones/STEP3B.md` (rollback anchor = the
+installed snapshot; documented deviation from SF5K3Z).
 - Backend issuer key (Ed25519) and its pinned public key in Gateway firmware
   (or written once at Gateway provisioning).
 - Backend builds the Gateway's OGK1 snapshot (its trackers, their scoped

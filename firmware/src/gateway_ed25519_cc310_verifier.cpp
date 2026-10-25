@@ -1,6 +1,7 @@
 #include "gateway_ed25519_cc310_verifier.h"
 
-#if defined(ORUN_SF5K3AA_TARGET_CRYPTO_PROBE)
+#if defined(ORUN_SF5K3AA_TARGET_CRYPTO_PROBE) || \
+    defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
 #include <string.h>
 
 #include <nrf_cc310/include/crys_ec_edw_api.h>
@@ -44,8 +45,10 @@ bool GatewayEd25519Cc310Verifier::verify(
   // pointer. Copy the authenticated payload rather than const_cast the
   // caller's persistent OGK1 buffer. The plaintext contains scoped HMAC
   // keys; wipe BOTH scratch allocations regardless of verifier outcome.
-  uint8_t message[fmt::kPayloadBytes]{};
-  CRYS_ECEDW_TempBuff_t context{};
+  // Static, not on the 8 KiB loop-task stack (step 3B calls this from the
+  // USB command path): loop-owner only, never re-entered, wiped after use.
+  static uint8_t message[fmt::kPayloadBytes];
+  static CRYS_ECEDW_TempBuff_t context;
   memcpy(message, canonical_payload, sizeof(message));
   const CRYSError_t rc = CRYS_ECEDW_Verify(
       signature, fmt::kProofBytes, issuer_public_key_,

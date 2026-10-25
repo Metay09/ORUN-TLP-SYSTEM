@@ -1008,3 +1008,7 @@ python3 firmware/tests/sf5/test_sf5l8_backend_sync.py
 # backend-derived Gateway grant -> real Tracker verifier, phone read keys).
 bash tools/ci/run_step3a_credentials_host.sh
 python3 firmware/tests/sf5/test_step3a_credentials.py
+
+# Step 3B: backend-signed, persistent Gateway grant snapshot (OGK1) over USB:
+# Python builder/signer <-> firmware installer + boot reader, tool, build pin.
+bash tools/ci/run_step3b_gateway_grants_host.sh

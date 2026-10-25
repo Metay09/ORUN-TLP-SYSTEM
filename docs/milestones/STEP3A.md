@@ -92,7 +92,8 @@ authorization (ADR M7P6 §11).
 
 ## Known limits
 
-- Gateway grants are RAM only (3B makes them signed and persistent).
+- Gateway grants are RAM only here; step 3B (`STEP3B.md`) makes them signed
+  and persistent (`orun_provision.py gateway`; `--ram` keeps this path).
 - Edge accept still uses the bench HMAC key; phone → backend still uses the
   shared token (3C).
 - The registry is a plain file on the owner's machine (0600); no key
