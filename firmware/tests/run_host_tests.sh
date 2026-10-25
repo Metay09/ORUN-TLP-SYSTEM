@@ -999,3 +999,7 @@ python3 firmware/tests/sf5/test_sf5l6_ble_edge.py
 # through the Python reference (frames, accept MAC, USB session, map points).
 bash tools/ci/run_sf5l7_edge_app_host.sh
 python3 firmware/tests/sf5/test_sf5l7_edge_app.py
+
+# SF5L8: bench backend (exact sealed records from the Edge, verified ledger,
+# per-record answers, map) + the phone app's upload against it end to end.
+python3 firmware/tests/sf5/test_sf5l8_backend_sync.py
