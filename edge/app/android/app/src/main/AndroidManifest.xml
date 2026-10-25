@@ -68,6 +68,13 @@
         tools:targetApi="s" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" tools:targetApi="s" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+
+    <!-- UX v2: "Bana uzaklığını göster" / "Konumum" on the map. Asked only when
+         the owner taps one of them; never used for BLE scanning (above) and
+         never sent anywhere. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <!-- Foreground service while a Gateway is attached (BLE or USB). -->

@@ -25,7 +25,14 @@ export interface Snapshot {
   storage: string;
   log: string[];
   server: ServerState;
+  pointsVersion: number;     // bumps whenever the ledger may have new points
+  journal: JournalEntry[];   // "Defter": plain-language history, newest last
 }
+
+// One line of the plain-language history (Defter). Technical detail stays in
+// the raw log.
+export type JournalKind = "link" | "records" | "handoff" | "upload" | "keys" | "warn";
+export interface JournalEntry { at: number; kind: JournalKind; text: string; n?: number; }
 
 export interface ServerState {
   url: string;
@@ -52,6 +59,18 @@ function loadServer(): Pick<ServerState, "url" | "token" | "auto"> {
 }
 
 const LOG_MAX = 400;
+const JOURNAL_KEY = "orun.edge.journal";
+const JOURNAL_MAX = 300;
+const COALESCE_MS = 3 * 60 * 1000;
+
+function loadJournal(): JournalEntry[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(JOURNAL_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((e) => e && typeof e.text === "string").slice(-JOURNAL_MAX) : [];
+  } catch {
+    return [];
+  }
+}
 
 export class Controller {
   private core: EdgeCore | null = null;
@@ -66,7 +85,11 @@ export class Controller {
     records: null, handedOff: 0, rejected: 0, pending: 0, gateway: null, gatewayHeld: null,
     storage: "", log: [],
     server: { ...loadServer(), busy: false, counts: null, lastOk: null, error: null },
+    pointsVersion: 0, journal: loadJournal(),
   };
+  private lastStored = 0;
+  private lastHanded = 0;
+  private serverDown = false;
   private uploader: Uploader | null = null;
   private keyring = new KeyRing();
   private db: Db | null = null;
@@ -108,8 +131,14 @@ export class Controller {
       this.core = core;
       const events = {
         log: (line: string) => this.log(line),
-        state: (s: LinkState, detail?: string) =>
-          this.emit({ state: s, detail: detail ?? null, ...(s === "idle" ? { link: "none" as const } : {}) }),
+        state: (s: LinkState, detail?: string) => {
+          const was = this.snap.state;
+          this.emit({ state: s, detail: detail ?? null, ...(s === "idle" ? { link: "none" as const } : {}) });
+          if (s === "connected" && was !== "connected")
+            this.note("link", `İstasyona bağlanıldı (${this.snap.link === "usb" ? "USB" : "Bluetooth"})`);
+          if (was === "connected" && s !== "connected")
+            this.note("link", s === "idle" ? "İstasyon bağlantısı kapatıldı" : "İstasyon bağlantısı koptu · yeniden deneniyor");
+        },
         changed: () => this.refresh(),
       };
       this.ble = new BleLink(core, events);
@@ -126,6 +155,27 @@ export class Controller {
     }
   }
 
+  /** Ledger points for the map/herd views (null until the ledger is open). */
+  async points(): Promise<PointsResult | null> {
+    return this.core ? this.core.points() : null;
+  }
+
+  /** Adds (or, for bursts, updates) one plain-language Defter line. */
+  note(kind: JournalKind, text: string, n?: number): void {
+    const journal = [...this.snap.journal];
+    const last = journal[journal.length - 1];
+    const now = Date.now();
+    if (n !== undefined && last && last.kind === kind && last.n !== undefined && now - last.at < COALESCE_MS) {
+      const total = last.n + n;
+      journal[journal.length - 1] = { at: now, kind, n: total, text: text.replace(/^\d+/, String(total)) };
+    } else {
+      journal.push({ at: now, kind, text, ...(n !== undefined ? { n } : {}) });
+    }
+    const kept = journal.slice(-JOURNAL_MAX);
+    try { localStorage.setItem(JOURNAL_KEY, JSON.stringify(kept)); } catch { /* memory only */ }
+    this.emit({ journal: kept });
+  }
+
   log(line: string): void {
     const stamp = new Date().toLocaleTimeString("tr-TR", { hour12: false });
     const log = [...this.snap.log, ...line.split("\n").map((l) => `${stamp} ${l}`)];
@@ -139,7 +189,13 @@ export class Controller {
     setTimeout(async () => {
       this.refreshQueued = false;
       const c = this.core!;
+      const stored = c.counts.STORED, handed = c.handedOff;
+      if (stored > this.lastStored) this.note("records", `${stored - this.lastStored} yeni kayıt istasyondan alındı`, stored - this.lastStored);
+      if (handed > this.lastHanded) this.note("handoff", `${handed - this.lastHanded} kayıt telefona kalıcı yazıldı · istasyonda yer açıldı`, handed - this.lastHanded);
+      this.lastStored = stored;
+      this.lastHanded = handed;
       this.emit({
+        pointsVersion: this.snap.pointsVersion + 1,
         counts: { ...c.counts }, records: await c.ledger.recordCount(), handedOff: c.handedOff,
         rejected: c.acceptRejected, pending: c.pendingAccepts(),
         gateway: c.gatewayId === null ? this.snap.gateway : hex64(c.gatewayId),
@@ -178,6 +234,7 @@ export class Controller {
     this.keysAt = Date.now();
     if (changed) {
       this.log(`[sunucu] ${changed} okuma anahtarı alındı (tasma kayıtları artık açılabilir)`);
+      this.note("keys", `${changed} tasmanın okuma anahtarı sunucudan alındı`);
       if (this.snap.link === "ble") await this.ble?.redump();
       if (this.snap.link === "usb") await this.usb?.redump();
     }
@@ -216,14 +273,23 @@ export class Controller {
         busy: false, counts: after, error: null,
         lastOk: new Date().toLocaleTimeString("tr-TR", { hour12: false }),
       });
-      if (r.final) this.log(`[sunucu] ${r.final} kayıt gönderildi; sunucuda ${after.uploaded}, bekleyen ${after.pending}`);
+      if (r.final) {
+        this.log(`[sunucu] ${r.final} kayıt gönderildi; sunucuda ${after.uploaded}, bekleyen ${after.pending}`);
+        this.note("upload", `${r.final} kayıt sunucuya gönderildi`, r.final);
+      }
+      this.serverDown = false;
       if (r.uncertain) this.log(`[sunucu] ${r.uncertain} kayıt için sunucu emin değil; tekrar gönderilecek`);
       if (after.conflict || after.rejected)
         this.log(`UYARI sunucu: çakışma ${after.conflict}, red ${after.rejected}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      this.setServer({ busy: false, error: msg, counts: await this.uploader.counts() });
+      const counts2 = await this.uploader.counts();
+      this.setServer({ busy: false, error: msg, counts: counts2 });
       if (manual) this.log(`[sunucu] gönderilemedi: ${msg}`);
+      if (!this.serverDown && counts2.pending) {
+        this.serverDown = true;
+        this.note("warn", `Sunucuya ulaşılamadı · ${counts2.pending} kayıt telefonda saklı, sonra gönderilecek`);
+      }
     }
   }
 
