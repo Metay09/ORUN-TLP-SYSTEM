@@ -88,24 +88,53 @@ export class BleLink {
     this.ev.state("connecting");
     try {
       await BleClient.connect(id, () => { void this.dropped(true); }, { timeout: 20000 });
-      try { await BleClient.requestConnectionPriority(id, ConnectionPriority.CONNECTION_PRIORITY_HIGH); } catch { /* optional */ }
-      this.rx.reset();
+      try {
+        try { await BleClient.requestConnectionPriority(id, ConnectionPriority.CONNECTION_PRIORITY_HIGH); } catch { /* optional */ }
+        await this.ensureEdgeService(id);
+        this.rx.reset();
+        await BleClient.startNotifications(id, EDGE_SERVICE_UUID, EDGE_TO_EDGE_UUID, (v) => {
+          const frame = new Uint8Array(v.buffer, v.byteOffset, v.byteLength).slice();
+          const msg = this.rx.push(frame, Date.now());
+          if (msg) void this.core.handleMessage(msg).then((out) => { if (out) this.ev.log(out); this.ev.changed(); });
+        });
+      } catch (e) {
+        // Connected but unusable: drop the link so the next try starts clean.
+        try { await BleClient.disconnect(id); } catch { /* already gone */ }
+        throw e;
+      }
       this.connected = true;
       await this.core.sessionAlive("ble");
-      await BleClient.startNotifications(id, EDGE_SERVICE_UUID, EDGE_TO_EDGE_UUID, (v) => {
-        const frame = new Uint8Array(v.buffer, v.byteOffset, v.byteLength).slice();
-        const msg = this.rx.push(frame, Date.now());
-        if (msg) void this.core.handleMessage(msg).then((out) => { if (out) this.ev.log(out); this.ev.changed(); });
-      });
       this.ev.state("connected", id);
       this.ev.log(`[BLE] bağlandı: ${id}`);
       this.timers.push(setInterval(() => { void this.pump(); }, POLL_MS));
       this.timers.push(setInterval(() => { void this.core.sessionAlive("ble"); }, ALIVE_MS));
     } catch (e) {
+      if (!this.running) return;
       this.ev.log(`[BLE] bağlanamadı: ${errorText(e)}; ${RETRY_MS / 1000} sn sonra tekrar`);
       this.ev.state("waiting", errorText(e));
       setTimeout(() => { void this.connect(); }, RETRY_MS);
     }
+  }
+
+  // Android keeps the GATT table of a device it saw before (e.g. this Gateway
+  // with older firmware) and may not notice new services. If the ORUN Edge
+  // service is missing, refresh the cache and discover again; if it is still
+  // missing, say what the Gateway does offer.
+  private async ensureEdgeService(id: string): Promise<void> {
+    const services = async () => {
+      try { return await BleClient.getServices(id); } catch { return []; }
+    };
+    const ok = (list: Awaited<ReturnType<typeof services>>) => list.some((s) =>
+      s.uuid.toLowerCase() === EDGE_SERVICE_UUID &&
+      s.characteristics.some((c) => c.uuid.toLowerCase() === EDGE_TO_EDGE_UUID) &&
+      s.characteristics.some((c) => c.uuid.toLowerCase() === EDGE_TO_GATEWAY_UUID));
+    if (ok(await services())) return;
+    this.ev.log("[BLE] telefondaki servis listesi eski; yenileniyor");
+    await BleClient.discoverServices(id);
+    const list = await services();
+    if (ok(list)) return;
+    const seen = list.map((s) => `${s.uuid.slice(0, 8)}(${s.characteristics.map((c) => c.uuid.slice(0, 8)).join(",")})`);
+    throw new Error(`gateway'de ORUN Edge servisi yok; görülen servisler: ${seen.join(" ") || "hiç"}`);
   }
 
   private async dropped(retry: boolean): Promise<void> {
