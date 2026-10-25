@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- RAK4631 WisCore (Adafruit nRF52 core), application USB CDC-ACM -->
+    <usb-device vendor-id="9114" product-id="32809" />
+</resources>

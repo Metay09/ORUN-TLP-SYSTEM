@@ -415,12 +415,21 @@
     }
   }
 
+  // Same JSON from the PC tool (/api/points) or, inside the ORUN Edge phone
+  // app (edge/app), from the phone's own ledger via the parent page.
+  async function loadPoints() {
+    let provider = null;
+    try { if (window.parent !== window) provider = window.parent.orunPoints; } catch (_) {}
+    if (typeof provider === "function") return await provider();
+    const r = await fetch("/api/points", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.json();
+  }
+
   async function refresh() {
     const dot = document.getElementById("dot"), status = document.getElementById("status");
     try {
-      const r = await fetch("/api/points", { cache: "no-store" });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const data = await r.json();
+      const data = await loadPoints();
       if (data.now) serverOffset = new Date(data.now).getTime() - Date.now();
       const key = data.count + ":" + data.points.map(p => p.tracker + p.seq).slice(-1)[0];
       if (key !== lastKey) { render(data.points); lastKey = key; }
@@ -460,6 +469,7 @@
 
   refresh();
   setInterval(refresh, REFRESH_MS);
+  window.orunRefresh = refresh;   // the phone app calls this when new records land
 })();
 </script>
 </body>
