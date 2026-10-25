@@ -1,6 +1,6 @@
 # Step 3A — real Tracker credentials (USB provisioning, backend registry)
 
-**Status:** code + host tests. **Physical check: pending (owner).**
+**Status:** code + host tests + physical check (2026-10-25, owner).
 Plan: `docs/architecture/ORUN_STEP3_REAL_SECURITY_PLAN.md`.
 No wire, packet or flash format changes: frames, ACKs and stores are the
 same; only the keys behind them are real now.
@@ -89,6 +89,26 @@ authorization (ADR M7P6 §11).
   after the keys.
 - Full host suite PASS; `rak4630` unchanged (362 912 B); Tracker bench,
   Gateway bench and cleanup images build.
+
+## Physical check (2026-10-25, owner)
+
+- Collar `0E8ADE7E71531AA3`: cleanup image `CLEAN ALL PASS … all_ff=yes`,
+  Tracker bench image, then `orun_provision.py tracker --create` →
+  epoch 1, Gateway granted (generation 1, floor 0). `BENCH?`:
+  `test_credential=no`, `credential=CC0B33CB…`, `setup=DONE`.
+- Gateway `09A462BD4B275BA5`: `orun_provision.py gateway` →
+  `ram_grants=1`. One frame before the grant was denied (`denied=1`); after
+  it `ack_tx=6`.
+- Collar: `PRODUCT CUSTODY ACK authenticated` → `release=DURABLE`
+  (`BENCH LINK ack … verify_ms=42`): the real Tracker verifier accepted the
+  ACK the Gateway made with the backend-derived key. Held frames show epoch
+  `00000001` in their header.
+- Phone (old app, bench key only) could not open the new records and did not
+  accept them: they stayed on the Gateway. After the update: `[sunucu] 1
+  okuma anahtarı alındı` → the Gateway's held records opened (`YENİ` seq
+  1, 2, 3, 5 …), handed off, and uploaded (`7 kayıt gönderildi; sunucuda
+  552, bekleyen 0`); the backend opened them from the registry.
+- Found: the foreground service needs `WAKE_LOCK` (fixed in the manifest).
 
 ## Known limits
 
