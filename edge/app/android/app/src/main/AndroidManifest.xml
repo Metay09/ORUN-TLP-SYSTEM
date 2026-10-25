@@ -73,6 +73,10 @@
     <!-- Foreground service while a Gateway is attached (BLE or USB). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- The foreground-service plugin holds a wake lock while it runs
+         (without it: "Neither user … nor current process has
+         android.permission.WAKE_LOCK", seen on the owner's phone). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Android 14 requires one of these for a connectedDevice service; this
          one is always granted (BLUETOOTH_CONNECT / USB permission also count). -->

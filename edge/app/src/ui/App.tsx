@@ -130,7 +130,8 @@ export function App({ controller }: { controller: Controller }) {
           </div>
           <p className="foot">
             Telefon, kaydı kendi defterine yazdıktan sonra gateway'e “aldım” der; gateway ancak o zaman yerini boşaltır.
-            Masa testi: herkese açık test anahtarı kullanılır. {s.storage}
+            Tasma kayıtları tasmanın kendi anahtarıyla açılır (okuma anahtarı sunucudan gelir);
+            gateway teslim onayı ve sunucu erişimi hâlâ masa testi anahtarıyla. {s.storage}
           </p>
         </section>
 
