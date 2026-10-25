@@ -255,7 +255,7 @@ def test_tool(tmp: Path) -> None:
     assert other.read_text().strip() == pub.hex().upper()
 
 
-def run_prescript(build: Path, keyfile: Path | None) -> str:
+def run_prescript(build: Path, keyfile: Path | None, allow_missing: bool = False) -> str:
     class Env:
         def __init__(self):
             self.cpppath = []
@@ -269,7 +269,10 @@ def run_prescript(build: Path, keyfile: Path | None) -> str:
 
     env = Env()
     saved = os.environ.get("ORUN_ISSUER_PUBLIC_KEY_FILE")
+    saved_allow = os.environ.pop("ORUN_STEP3B_ALLOW_NO_ISSUER", None)
     os.environ["ORUN_ISSUER_PUBLIC_KEY_FILE"] = str(keyfile or build / "missing.pub")
+    if allow_missing:
+        os.environ["ORUN_STEP3B_ALLOW_NO_ISSUER"] = "1"
     try:
         code = (ROOT / "firmware/scripts/step3b_issuer_key.py").read_text()
         exec(compile(code, "step3b_issuer_key.py", "exec"),
@@ -279,6 +282,9 @@ def run_prescript(build: Path, keyfile: Path | None) -> str:
             del os.environ["ORUN_ISSUER_PUBLIC_KEY_FILE"]
         else:
             os.environ["ORUN_ISSUER_PUBLIC_KEY_FILE"] = saved
+        os.environ.pop("ORUN_STEP3B_ALLOW_NO_ISSUER", None)
+        if saved_allow is not None:
+            os.environ["ORUN_STEP3B_ALLOW_NO_ISSUER"] = saved_allow
     assert env.cpppath == [str(build / "step3b_generated")]
     return (build / "step3b_generated" / "orun_step3b_issuer_key.h").read_text()
 
@@ -287,7 +293,11 @@ def test_prescript(tmp: Path) -> None:
     import contextlib
     import io
     with contextlib.redirect_stdout(io.StringIO()):
-        h = run_prescript(tmp / "b1", None)
+        # A missing key stops the build with the command that creates it...
+        e = expect_error(lambda: run_prescript(tmp / "b0", None), SystemExit)
+        assert "orun_provision.py issuer" in str(e)
+        # ...unless an image without signed grants is asked for explicitly.
+        h = run_prescript(tmp / "b1", None, allow_missing=True)
         assert "#define ORUN_STEP3B_ISSUER_PINNED 0" in h and "PUBLIC_KEY" not in h
         key = tmp / "k.pub"
         key.write_text(oc.issuer_public(ISSUER).hex().upper() + "\n")

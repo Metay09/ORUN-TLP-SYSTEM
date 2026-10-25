@@ -31,7 +31,7 @@ they live.
 ### Build (`firmware/scripts/step3b_issuer_key.py`, Gateway bench env only)
 
 - Pins the issuer **public** key from `~/orun-issuer.pub` (or `$ORUN_ISSUER_PUBLIC_KEY_FILE`). It goes into a generated header.
-- Without that file the image still builds, but it accepts no snapshot (`BENCH?` shows `ogk1 status=NO_ISSUER_KEY`).
+- Without that file the build stops and names the command that creates it (`orun_provision.py issuer`). `ORUN_STEP3B_ALLOW_NO_ISSUER=1` builds an image that accepts no snapshot (`BENCH?` shows `status=NO_ISSUER_KEY`).
 - The key is never taken from USB, BLE or radio.
 
 ### Gateway bench image (`-DORUN_STEP3B_GATEWAY_ENROLLMENT`)
@@ -104,7 +104,7 @@ they live.
   - exact layout and signature, the 32-slot limit and invalid grants, upload line limits;
   - the issuer is created once, generations only grow and respect `at_least`, a retired credential leaves the snapshot;
   - the tool against a scripted Gateway: success with reboot and check, and every refusal sends no OGK1 line;
-  - the build pre-script (pinned / none / invalid);
+  - the build pre-script (pinned / missing stops the build / explicit no-key image / invalid);
   - the source contract: no forbidden class names in `main.cpp`, the flag only in the Gateway bench env, deny before the first mutation.
 - Full host suite PASS.
 - Builds:
