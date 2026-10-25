@@ -72,3 +72,15 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .log .ok { color: var(--ok); }
 .log .bad { color: var(--bad); }
 .foot { color: var(--muted); font-size: 12px; margin: 0; }
+
+.card-title { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
+.server label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+.server input[type="url"], .server input[type="password"] { font: inherit; color: var(--text); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-height: 44px; }
+.server label.check { flex-direction: row; align-items: center; gap: 10px; color: var(--text); }
+.server label.check input { width: 22px; height: 22px; accent-color: var(--accent); }
+.actions.row { grid-template-columns: 1fr 1fr; }
+.detail-line { font-size: 13px; color: var(--muted); margin-top: 10px; }
+.detail-line b { color: var(--text); font-variant-numeric: tabular-nums; }
+.detail-line .warn { color: var(--warn); }
+.detail-line .bad { color: var(--bad); }

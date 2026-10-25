@@ -41,4 +41,12 @@ export const SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS sessions (
      id INTEGER PRIMARY KEY AUTOINCREMENT, started_utc INTEGER NOT NULL,
      alive_utc INTEGER NOT NULL, transport TEXT NOT NULL)`,
+  // SF5L8: what the backend answered for each record (absent = not yet
+  // uploaded). UNCERTAIN / network failure leave no row: sent again later.
+  `CREATE TABLE IF NOT EXISTS uploads (
+     device_id TEXT NOT NULL, incarnation TEXT NOT NULL, sequence INTEGER NOT NULL,
+     state TEXT NOT NULL CHECK(state IN ('STORED','DUPLICATE','CONFLICT','REJECTED')),
+     utc INTEGER NOT NULL,
+     PRIMARY KEY (device_id,incarnation,sequence))`,
+  `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
 ];

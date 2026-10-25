@@ -56,6 +56,9 @@ export class EdgeCore {
     for (const s of SCHEMA) await this.db.execute(s);
   }
 
+  /** Runs fn with exclusive use of the database, after every earlier event. */
+  exclusive<T>(fn: () => Promise<T>): Promise<T> { return this.serial(fn); }
+
   private serial<T>(fn: () => Promise<T>): Promise<T> {
     const next = this.chain.then(fn, fn);
     this.chain = next.catch(() => undefined);
