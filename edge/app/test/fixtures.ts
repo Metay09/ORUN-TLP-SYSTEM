@@ -15,14 +15,17 @@ export function vector(name: string): Uint8Array {
   return fromHex([...m[1].matchAll(/"([0-9a-f]+)"/g)].map((x) => x[1]).join(""));
 }
 
-export function seal(template: Uint8Array, plaintext: Uint8Array, counter: number): Uint8Array {
+export function seal(template: Uint8Array, plaintext: Uint8Array, counter: number,
+                     credentialId: Uint8Array = TEST_CREDENTIAL_ID, root: Uint8Array = TEST_ROOT,
+                     keyEpoch: number = TEST_KEY_EPOCH): Uint8Array {
   const header = template.slice(0, 28);
   const c = new Uint8Array(8);
   new DataView(c.buffer).setBigUint64(0, BigInt(counter));
   header.set(c, 20);
   const epoch = new Uint8Array(4);
-  new DataView(epoch.buffer).setUint32(0, TEST_KEY_EPOCH);
-  const key = hkdfSha256(TEST_ROOT, TEST_CREDENTIAL_ID,
+  new DataView(epoch.buffer).setUint32(0, keyEpoch);
+  header.set(epoch, 16);
+  const key = hkdfSha256(root, credentialId,
                          concat(ascii("ORUN-TLP-V2-AEAD"), new Uint8Array([1]), epoch), 16);
   const nonce = concat(epoch, new Uint8Array([1]), c);
   return concat(header, aesCcmEncrypt(key, nonce, plaintext, header, 8));

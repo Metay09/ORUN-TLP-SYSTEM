@@ -1003,3 +1003,8 @@ python3 firmware/tests/sf5/test_sf5l7_edge_app.py
 # SF5L8: bench backend (exact sealed records from the Edge, verified ledger,
 # per-record answers, map) + the phone app's upload against it end to end.
 python3 firmware/tests/sf5/test_sf5l8_backend_sync.py
+
+# Step 3A: real per-Tracker credentials (USB provisioning, backend registry,
+# backend-derived Gateway grant -> real Tracker verifier, phone read keys).
+bash tools/ci/run_step3a_credentials_host.sh
+python3 firmware/tests/sf5/test_step3a_credentials.py
