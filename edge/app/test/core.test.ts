@@ -247,6 +247,47 @@ test("station held count stays live: HELLO, then announced minus handed off", as
   assert.equal(edge.heldNow(), 0);                                             // last HELLO kept, nothing announced
 });
 
+test("BLE: incomplete DUMP END cannot silently undercount held records", async () => {
+  const now = 1_800_000_000;
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, clock: () => now });
+  await edge.init();
+  const [f0, f1] = track(2);
+  await edge.handleMessage(concat(new Uint8Array([1]), fromHex("09A462BD4B275BA5"), fromHex("00020420")));
+  assert.equal(edge.heldNow(), 2);
+
+  // Two records still on the Gateway, but the phone misses one HELD message.
+  await edge.handleMessage(heldMsg(0, 1, 2n, f0, null));
+  await edge.handleMessage(heldMsg(0, 1, 2n, f0, null)); // duplicate is NOT the second record
+  const warning = await edge.handleMessage(fromHex("030002"));
+  assert.match(warning!, /UYARI: eksik aktarım/);
+  assert.equal(edge.heldNow(), 2); // never claim "1 left" from an incomplete scan
+
+  // A subsequent complete pass restores an exact count.
+  await edge.handleMessage(heldMsg(0, 1, 2n, f0, null));
+  await edge.handleMessage(heldMsg(0, 2, 2n, f1, null));
+  assert.doesNotMatch((await edge.handleMessage(fromHex("030002")))!, /UYARI: eksik aktarım/);
+  assert.equal(edge.heldNow(), 2);
+  edge.nextAcceptMessage(now);
+  await edge.handleMessage(fromHex("040000000100"));
+  assert.equal(edge.heldNow(), 1);
+});
+
+test("USB: incomplete DUMP END count is not treated as exact zero", async () => {
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials });
+  await edge.init();
+  const [f0, f1] = track(2);
+  assert.equal(edge.heldNow(), null);
+  await edge.handleLine(heldLine(GW, 0, 1, 2n, f0));
+  const warning = await edge.handleLine("EDGE DUMP END count=2");
+  assert.match(warning!, /UYARI: eksik\/bozuk aktarım/);
+  assert.equal(edge.heldNow(), 2); // reported count remains a conservative floor
+
+  await edge.handleLine(heldLine(GW, 0, 1, 2n, f0));
+  await edge.handleLine(heldLine(GW, 0, 2, 2n, f1));
+  assert.doesNotMatch((await edge.handleLine("EDGE DUMP END count=2"))!, /UYARI:/);
+  assert.equal(edge.heldNow(), 2);
+});
+
 test("points: live / through / cut / unknown classification", async () => {
   let now = 0;
   const db = await freshDb();
