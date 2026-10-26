@@ -22,19 +22,21 @@ const lineFeature = (ring: Ring): Feature => ({
   type: "Feature", properties: {},
   geometry: { type: "LineString", coordinates: ring },
 });
-const SAT_IMAGERY = satelliteRasterParts("satellite");
-const SAT_STYLE: StyleSpecification = {
-  version: 8,
-  sources: SAT_IMAGERY.sources,
-  layers: [
-    { id: "background", type: "background", paint: { "background-color": "#DCE8D5" } },
-    ...SAT_IMAGERY.layers,
-  ],
-};
+function zoneSatelliteStyle(safeMode: boolean): StyleSpecification {
+  const imagery = satelliteRasterParts("satellite", safeMode);
+  return {
+    version: 8,
+    sources: imagery.sources,
+    layers: [
+      { id: "background", type: "background", paint: { "background-color": "#DCE8D5" } },
+      ...imagery.layers,
+    ],
+  };
+}
 
 
-function ZoneEditor({ zone, all, onCancel, onSave }: {
-  zone: Zone | null; all: Zone[]; onCancel: () => void; onSave: (zone: Zone) => void;
+function ZoneEditor({ zone, all, safeSatellite, onCancel, onSave }: {
+  zone: Zone | null; all: Zone[]; safeSatellite: boolean; onCancel: () => void; onSave: (zone: Zone) => void;
 }) {
   const [name, setName] = useState(zone?.name ?? `Mera ${all.length + 1}`);
   const [active, setActive] = useState(zone?.active ?? true);
@@ -167,7 +169,7 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
     const initial = zone?.ring ?? all[0]?.ring ?? [];
     const center: [number, number] = initial[0] ?? [28.0546, 37.6107];
     const m = new MlMap({
-      container: host.current, style: SAT_STYLE, center, zoom: initial.length ? 15 : 13,
+      container: host.current, style: zoneSatelliteStyle(safeSatellite), center, zoom: initial.length ? 15 : 13,
       maxZoom: 20, attributionControl: { compact: true }, dragRotate: false, touchPitch: false,
       cancelPendingTileRequestsWhileZooming: false,
     });
@@ -367,7 +369,7 @@ export function ZonesScreen() {
   };
 
   if (editing) return <ZoneEditor zone={zones.find((z) => z.id === editId) ?? null} all={zones}
-    onCancel={() => setEditing(false)} onSave={save} />;
+    safeSatellite={m.prefs.satelliteSafe} onCancel={() => setEditing(false)} onSave={save} />;
 
   return (
     <div className="page zones-page">
