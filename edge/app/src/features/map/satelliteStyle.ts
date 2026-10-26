@@ -10,12 +10,30 @@ export const SATELLITE_ATTRIBUTION = "Görüntü © Esri, Maxar, Earthstar Geogr
 export const SATELLITE_FALLBACK_ZOOM = 15;
 export const SATELLITE_DETAIL_ZOOM = 19;
 
-export function satelliteRasterParts(primaryId = "base"): {
+export function satelliteRasterParts(primaryId = "base", safeMode = false): {
   sources: StyleSpecification["sources"];
   layers: StyleSpecification["layers"];
 } {
   const fallbackId = `${primaryId}-fallback`;
   const tiles = [SATELLITE_TILE_URL];
+
+  // ArcGIS can return an *opaque grey JPEG* ("Map data not yet available")
+  // with HTTP 200 when high-detail tiles are absent. The z19 layer then
+  // covers the valid z15 underlay. Safe mode removes that layer entirely
+  // and lets MapLibre overzoom the z15 imagery up to camera zoom 20.
+  // Source maxzoom is never a camera zoom limit; this is only a fallback
+  // for display, not a claim that new satellite detail exists.
+  if (safeMode) {
+    return {
+      sources: {
+        [primaryId]: {
+          type: "raster", tiles, tileSize: 256,
+          maxzoom: SATELLITE_FALLBACK_ZOOM, attribution: SATELLITE_ATTRIBUTION,
+        },
+      },
+      layers: [{ id: primaryId, type: "raster", source: primaryId }],
+    };
+  }
 
   // The fallback *remains a visible layer* even when fine-grained tiles are
   // unavailable. MapLibre automatically enlarges tiles above source maxzoom.
