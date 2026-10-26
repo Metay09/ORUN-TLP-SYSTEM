@@ -7,6 +7,7 @@ import { ArrowCounterClockwise, ArrowClockwise, Check, DownloadSimple, MapTrifol
 import { useBack } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { DemoFlag, Header } from "../../ds/components.tsx";
+import { satelliteRasterParts } from "../map/satelliteStyle.ts";
 import { areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, perimeterM, persistZones, previewAtCentre, simplifyRingToBudget, validateRing, validateSet, zoneStorageWarning, type Point, type Ring, type Zone } from "./geometry.ts";
 import "./zones.css";
 
@@ -21,20 +22,16 @@ const lineFeature = (ring: Ring): Feature => ({
   type: "Feature", properties: {},
   geometry: { type: "LineString", coordinates: ring },
 });
+const SAT_IMAGERY = satelliteRasterParts("satellite");
 const SAT_STYLE: StyleSpecification = {
   version: 8,
-  sources: {
-    satellite: {
-      type: "raster",
-      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-      tileSize: 256, maxzoom: 19, attribution: "© Esri, Maxar, Earthstar Geographics",
-    },
-  },
+  sources: SAT_IMAGERY.sources,
   layers: [
     { id: "background", type: "background", paint: { "background-color": "#DCE8D5" } },
-    { id: "satellite", type: "raster", source: "satellite" },
+    ...SAT_IMAGERY.layers,
   ],
 };
+
 
 function ZoneEditor({ zone, all, onCancel, onSave }: {
   zone: Zone | null; all: Zone[]; onCancel: () => void; onSave: (zone: Zone) => void;
@@ -172,6 +169,7 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
     const m = new MlMap({
       container: host.current, style: SAT_STYLE, center, zoom: initial.length ? 15 : 13,
       maxZoom: 20, attributionControl: { compact: true }, dragRotate: false, touchPitch: false,
+      cancelPendingTileRequestsWhileZooming: false,
     });
     map.current = m;
     // Style readiness is enough: polygon editing works without satellite tile downloads.
