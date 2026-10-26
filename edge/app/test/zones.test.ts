@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, persistZones, ZONE_KEY, perimeterM, previewAtCentre, simplifyRingToBudget, validateRing, validateSet,
+  areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, persistZones, ZONE_KEY, perimeterM, previewAtCentre, simplifyRingToBudget, validateRing, validateSet, zoneStorageWarning,
   type Point, type Zone,
 } from "../src/features/zones/geometry.ts";
 
@@ -116,4 +116,32 @@ test("zones: simplification rejects invalid or insufficient budgets without alte
   assert.ok(unchanged);
   assert.deepEqual(unchanged.ring, square);
   assert.equal(unchanged.areaDeltaPct, 0);
+});
+
+test("zones: old ORUN HTML drafts without active migrate, corrupt drafts cannot be overwritten", () => {
+  const own = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true, value: {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); },
+    },
+  });
+  try {
+    const legacy = [{ id: "old-html", name: "Eski Mera", ring: square }];
+    store.set(ZONE_KEY, JSON.stringify(legacy));
+    assert.equal(zoneStorageWarning(), null);
+    assert.deepEqual(loadZones(), [{ ...legacy[0], active: true }]);
+    persistZones(loadZones());
+    assert.equal(loadZones()[0].active, true);
+
+    store.set(ZONE_KEY, "{bad JSON");
+    assert.match(zoneStorageWarning()!, /üzerine yazılmayacak/);
+    assert.deepEqual(loadZones(), []);
+    assert.throws(() => persistZones([zone(square)]), /üzerlerine yazılmadı/);
+    assert.equal(store.get(ZONE_KEY), "{bad JSON", "broken original must remain untouched");
+  } finally {
+    if (own) Object.defineProperty(globalThis, "localStorage", own);
+    else delete (globalThis as { localStorage?: Storage }).localStorage;
+  }
 });
