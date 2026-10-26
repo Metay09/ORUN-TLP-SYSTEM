@@ -42,3 +42,22 @@ Yeni `edge/app/test/zones.test.ts` testleri: E7 çokgen,
 ve yerel kalıcılık. Kod gönderildikten sonra sahibin makinesinde
 `npm test && npm run build` çalıştırılmalıdır. Daha sonra fiziksel Android
 harita/drag/drop/file-input denemesi yapılmalıdır.
+
+## Crosshair UX parity with the original ORUN-Saha HTML (2026-10-26)
+
+Phone trial feedback: the first React build's plain "+" glyph and large
+fixed bottom form were not equivalent to the reference UI.
+
+- CSS pseudo-element sight is pinned at exactly `left: 50%; top: 50%` of
+  the MapLibre container; the saved vertex uses the same `map.getCenter()`.
+- Camera `move` updates the live cursor's next-edge and closing-edge dashed
+  preview lines, a filled tentative polygon, provisional area/perimeter, and
+  next-segment distance. Draft vertices are not committed until pressing +.
+- Draw controls are a compact bottom bar with central large green + button;
+  undo/redo and input mode flank it. Area/corner/perimeter strip moves to top.
+- Mera name and active flag move to the final save sheet; map remains visible.
+- Editing an existing area starts in tap mode, matching the original prototype.
+- Previewing changes does not write the phone's draft storage or the device.
+
+The visual and touch flows still need a new on-phone smoke test after rebuild;
+the earlier 45-test APK predates this UI revision.
