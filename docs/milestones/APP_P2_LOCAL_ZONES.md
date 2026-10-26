@@ -103,3 +103,35 @@ Bu dalda biriktirilenler (host testi / Android derlemesi YENİ HEAD'de yapılmad
 Vite build başarılıydı; bu yeni revizyon için sonuç **henüz bilinmiyor**.
 Testler geçtiğinde yalnız bir kez `npx cap sync android` + Gradle APK,
 telefonda çizim/kaydetme/harita gösterimi/geri dönüş davranış testi.
+
+## Field map livestock balloon visibility (same deferred APK)
+
+Owner feedback: fixed 46 px normal / 58 px selected balloons hide fine-scale
+GNSS positions, and far-zoom symbols run into each other. The map also
+stopped clustering at zoom >=17.5, even when two collars report identical
+positions.
+
+Changes:
+- Separate, pure `src/features/map/pinLayout.ts` with zoom-responsive visual
+  diameters: about 30 px at zoom 14, 22 px at zoom 18 and 19 px at zoom 20,
+  with selected markers only 4 px larger. At distant zoom they shrink to
+  18 px. Actual tappable surface remains 44 px.
+- CSS variables update continuously during zoom gestures; no repeated marker
+  reconstruction, coordinate snapping, or GNSS change.
+- Compact pixel-space collision grouping continues at ALL zoom levels;
+  bounded grouping deliberately avoids coalescing an entire row/chain of
+  otherwise distinct animals. Count bubbles stay legible and retain the
+  highest-priority status colour.
+- Selected animal remains at its true fix with a clickable `+N` indicator.
+  At close zoom (or identical fixes), a bubble opens a scrollable list of
+  animals instead of zooming forever; users may select one from that list.
+- The phone's own blue position dot is elevated above animal symbols.
+- Names of unselected animals appear only at detailed zoom and when there
+  is screen space; the selected animal's label stays visible.
+- New pure tests cover zoom sizing, separate fixes, unavoidable overlaps,
+  selection, zoom-driven collision and prevention of long-chain coalescing.
+
+**Verification pending:** next combined `npm test && npm run build`, followed
+by a single Android APK field test. Must check at zoom 9/14/18/20, with both
+distinct and identical collar fixes, and check the phone's blue dot at the
+same point as a collar. No APK was built as part of this change.
