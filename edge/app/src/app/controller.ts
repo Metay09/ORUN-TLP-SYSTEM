@@ -102,6 +102,8 @@ export class Controller {
   private keysAt = 0;
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRecords: number | null = null;
+  // Lock before the first await; timer/manual calls must not upload concurrently.
+  private syncing = false;
 
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
@@ -248,54 +250,72 @@ export class Controller {
 
   /** Uploads pending records; manual=true runs even with automatic upload off. */
   async sync(manual: boolean): Promise<void> {
-    const sv = this.snap.server;
-    if (!this.uploader || sv.busy) return;
-    const counts = await this.uploader.counts();
-    if (!sv.url || !sv.token || (!manual && !sv.auto)) { this.setServer({ counts }); return; }
-    if (manual || Date.now() - this.keysAt > KEYS_EVERY_MS) {
+    // Counts, key refresh and HTTP calls all await. Guard the entire sequence,
+    // rather than setting server.busy only after the first two awaits.
+    if (!this.uploader || this.syncing || this.snap.server.busy) return;
+    this.syncing = true;
+    try {
+      const sv = this.snap.server;
+      const counts = await this.uploader.counts();
+      if (!sv.url || !sv.token || (!manual && !sv.auto)) {
+        this.setServer({ counts });
+        return;
+      }
+      this.setServer({ busy: true, counts });
+
+      // Fetching new read keys helps decode future Gateway records. Already
+      // committed, verified phone records do not depend on this request and
+      // must still be uploaded when the key endpoint is temporarily down.
+      let keysError: string | null = null;
+      if (manual || Date.now() - this.keysAt > KEYS_EVERY_MS) {
+        try {
+          await this.refreshKeys(sv.url, sv.token);
+        } catch (e) {
+          keysError = e instanceof Error ? e.message : String(e);
+          if (manual) this.log(`[sunucu] okuma anahtarları alınamadı: ${keysError}; mevcut kayıtlar yine gönderilecek`);
+        }
+      }
+      if (!manual && counts.pending === 0) {
+        this.setServer({ busy: false, counts, error: keysError });
+        return;
+      }
+
       try {
-        await this.refreshKeys(sv.url, sv.token);
+        // Nothing to send: a manual tap still checks address + token.
+        if (counts.pending === 0) {
+          const n = await this.uploader.ping(sv.url, sv.token);
+          this.setServer({ busy: false, counts, error: keysError,
+                           lastOk: new Date().toLocaleTimeString("tr-TR", { hour12: false }) });
+          this.log(`[sunucu] bağlantı tamam; sunucudaki toplam kayıt ${n ?? "?"}`);
+          return;
+        }
+        const r = await this.uploader.drain(sv.url, sv.token);
+        const after = await this.uploader.counts();
+        this.setServer({
+          busy: false, counts: after, error: keysError,
+          lastOk: new Date().toLocaleTimeString("tr-TR", { hour12: false }),
+        });
+        if (r.final) {
+          this.log(`[sunucu] ${r.final} kayıt gönderildi; sunucuda ${after.uploaded}, bekleyen ${after.pending}`);
+          this.note("upload", `${r.final} kayıt sunucuya gönderildi`, r.final);
+        }
+        this.serverDown = false;
+        if (r.uncertain) this.log(`[sunucu] ${r.uncertain} kayıt için sunucu emin değil; tekrar gönderilecek`);
+        if (after.conflict || after.rejected)
+          this.log(`UYARI sunucu: çakışma ${after.conflict}, red ${after.rejected}`);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        this.setServer({ error: msg, counts });
-        if (manual) this.log(`[sunucu] okuma anahtarları alınamadı: ${msg}`);
-        return;
+        const counts2 = await this.uploader.counts();
+        this.setServer({ busy: false, error: msg, counts: counts2 });
+        if (manual) this.log(`[sunucu] gönderilemedi: ${msg}`);
+        if (!this.serverDown && counts2.pending) {
+          this.serverDown = true;
+          this.note("warn", `Sunucuya ulaşılamadı · ${counts2.pending} kayıt telefonda saklı, sonra gönderilecek`);
+        }
       }
-    }
-    if (!manual && counts.pending === 0) { this.setServer({ counts }); return; }
-    this.setServer({ busy: true, counts });
-    try {
-      // Nothing to send: a manual tap still checks address + token.
-      if (counts.pending === 0) {
-        const n = await this.uploader.ping(sv.url, sv.token);
-        this.setServer({ busy: false, counts, error: null,
-                         lastOk: new Date().toLocaleTimeString("tr-TR", { hour12: false }) });
-        this.log(`[sunucu] bağlantı tamam; sunucudaki toplam kayıt ${n ?? "?"}`);
-        return;
-      }
-      const r = await this.uploader.drain(sv.url, sv.token);
-      const after = await this.uploader.counts();
-      this.setServer({
-        busy: false, counts: after, error: null,
-        lastOk: new Date().toLocaleTimeString("tr-TR", { hour12: false }),
-      });
-      if (r.final) {
-        this.log(`[sunucu] ${r.final} kayıt gönderildi; sunucuda ${after.uploaded}, bekleyen ${after.pending}`);
-        this.note("upload", `${r.final} kayıt sunucuya gönderildi`, r.final);
-      }
-      this.serverDown = false;
-      if (r.uncertain) this.log(`[sunucu] ${r.uncertain} kayıt için sunucu emin değil; tekrar gönderilecek`);
-      if (after.conflict || after.rejected)
-        this.log(`UYARI sunucu: çakışma ${after.conflict}, red ${after.rejected}`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const counts2 = await this.uploader.counts();
-      this.setServer({ busy: false, error: msg, counts: counts2 });
-      if (manual) this.log(`[sunucu] gönderilemedi: ${msg}`);
-      if (!this.serverDown && counts2.pending) {
-        this.serverDown = true;
-        this.note("warn", `Sunucuya ulaşılamadı · ${counts2.pending} kayıt telefonda saklı, sonra gönderilecek`);
-      }
+    } finally {
+      this.syncing = false;
+      if (this.snap.server.busy) this.setServer({ busy: false });
     }
   }
 
