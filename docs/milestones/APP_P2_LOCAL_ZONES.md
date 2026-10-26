@@ -61,3 +61,45 @@ fixed bottom form were not equivalent to the reference UI.
 
 The visual and touch flows still need a new on-phone smoke test after rebuild;
 the earlier 45-test APK predates this UI revision.
+
+## Toplu UX düzeltmesi ve açık kalemler (26 Ekim 2026)
+
+Kullanıcı geri bildirimi: her küçük değişiklikte yeni APK oluşturma; önce
+eski Claude prototipini ve ürün kapsamını temel alarak biriktir, sonrasında
+**tek saha derlemesi** yap.
+
+Bu dalda biriktirilenler (host testi / Android derlemesi YENİ HEAD'de yapılmadı):
+
+- Harita merkezinde gerçek nişangâh, canlı kesik kenar/alan önizlemesi,
+  hareketle güncellenen ölçüler ve metre etiketleri, tam ekran sade çizim çubuğu.
+- Yanlışlıkla çıkışta kaydedilmemiş sınırların silinmesi için açık onay.
+- Diğer aktif alanları dikkate alan **kalan toplam köşe kapasitesi**; alana yer
+  kalmadığında bilgilendirme ve çokgenin kesişmesini engelleyerek en fazla %2
+  alan kaybıyla muhafazakâr sadeleştirme (geri al ile iptal).
+- Eski `orun.fences.v1` HTML taslakları `active` alanı yoksa `true` olarak
+  açılabilir; okunamayan eski JSON'un üzerine yeni veri yazılmaz.
+- Ana **Harita** ekranında yerel mera taslakları kesik çizgili gösterilir;
+  katman menüsünden gizlenebilir. Stil değişimi ve Alanlar'dan Harita'ya dönüş
+  sırasında görünürlük/kayıt yenilenir. Kesik çizgi, **tasmaya uygulanmış
+  sınır anlamına gelmez**.
+- Önceden başarısız olan otomatik Android debug APK workflow'u bu PR'dan
+  kaldırıldı: sahadaki APK üretimi inceleme sonunda bir defa yapılacak.
+
+**İkinci aşama / henüz eksik:**
+- Telefon GPS'iyle sınır boyunca yürüyerek kayıt;
+- GeoJSON yanında KML;
+- Kapsama hücreleriyle düşük bağlantı uyarısı;
+- Geçmiş tasma izlerinde 30-gün sanal çit uyarısı simülasyonu;
+- Yer işaretleri (su, tuz, kapı, barınak vb.), çizgili dolgu ve gelişmiş
+  alan adları/etiketleri;
+- Çevrimdışı harita indirme/yönetimi;
+- Taslakları gerçek tasmaya **yetkili gönderim**, dayanıklı teslim/uygulanma
+  kanıtı ve yetki kontrolü; bu iş `APP P2` yerel taslak kapsamında değildir.
+
+**Sonraki tek doğrulama:**
+`cd ~/ORUN-TLP-SYSTEM && git fetch origin feat/app-zones-local-editor`;
+`cd ~/ORUN-UPLOAD-VERIFY && git switch --detach origin/feat/app-zones-local-editor`;
+`cd edge/app && npm test && npm run build`. Önceki HEAD 45/45 ve
+Vite build başarılıydı; bu yeni revizyon için sonuç **henüz bilinmiyor**.
+Testler geçtiğinde yalnız bir kez `npx cap sync android` + Gradle APK,
+telefonda çizim/kaydetme/harita gösterimi/geri dönüş davranış testi.
