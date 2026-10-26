@@ -194,24 +194,51 @@ export function importGeoJSON(content: string): Zone[] {
   return zones;
 }
 
+/** Phone-only, legacy-compatible draft decoder. Refuse to overwrite data
+ * that might be partially corrupt: its raw JSON must remain recoverable. */
+function decodeStoredZones(raw: unknown): Zone[] {
+  if (!Array.isArray(raw) || raw.length > 100) throw new Error("Alan listesi geçersiz.");
+  const zones = raw.map((value: unknown): Zone => {
+    const z = value as Record<string, unknown> | null;
+    if (!z || typeof z !== "object" || Array.isArray(z) ||
+        typeof z.id !== "string" || !z.id ||
+        typeof z.name !== "string" || !z.name.trim() ||
+        (z.active !== undefined && typeof z.active !== "boolean"))
+      throw new Error("Eski alan kaydının bilgileri geçersiz.");
+    return { id: z.id, name: z.name, active: z.active !== false, ring: canonicalRing(z.ring) };
+  });
+  const error = validateSet(zones);
+  if (error) throw new Error(error);
+  return zones;
+}
+
+export function zoneStorageWarning(): string | null {
+  try {
+    const raw = localStorage.getItem(ZONE_KEY);
+    if (raw === null) return null;
+    decodeStoredZones(JSON.parse(raw));
+    return null;
+  } catch {
+    return "Önceki mera kayıtları okunamadı. Güvenlik için üzerine yazılmayacak; eski veriyi silmeyin.";
+  }
+}
+
 /** Browser/Capacitor WebView persistence, independent of demo livestock. */
 export function loadZones(): Zone[] {
   try {
     const raw = localStorage.getItem(ZONE_KEY);
-    if (!raw) return [];
-    const v = JSON.parse(raw) as unknown;
-    if (!Array.isArray(v) || v.length > 100) return [];
-    const arr = v.map((z: unknown) => {
-      const o = z as Record<string, unknown>;
-      if (typeof o?.name !== "string" || !o.name.trim() || typeof o.id !== "string" ||
-          typeof o.active !== "boolean") throw new Error("invalid stored zone");
-      return { id: o.id, name: o.name, active: o.active, ring: canonicalRing(o.ring) };
-    });
-    return validateSet(arr) ? [] : arr;
+    return raw === null ? [] : decodeStoredZones(JSON.parse(raw));
   } catch { return []; }
 }
 export function persistZones(zones: Zone[]): void {
   const error = validateSet(zones);
   if (error) throw new Error(error);
+  // A prior app/prototype might have written records not supported by this
+  // version. Never silently replace them with an empty or partial list.
+  const raw = localStorage.getItem(ZONE_KEY);
+  if (raw !== null) {
+    try { decodeStoredZones(JSON.parse(raw)); }
+    catch { throw new Error("Eski mera kayıtları okunamadı; üzerlerine yazılmadı. Verileri silmeyin."); }
+  }
   localStorage.setItem(ZONE_KEY, JSON.stringify(zones));
 }
