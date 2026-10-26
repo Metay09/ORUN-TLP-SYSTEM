@@ -1,0 +1,70 @@
+/* ORUN Alanlar · based on the mobile controls in ORUN-Saha.html */
+.zones-page { background: var(--paper); }
+.zone-intro { padding: 4px 18px 16px; }
+.zone-intro p { margin: 8px 0 16px; line-height: 1.5; color: var(--mute); font-size: 14px; }
+.zone-intro p b { color: var(--ink); }
+.zone-capacity { display: flex; align-items: center; justify-content: space-between; font-size: 14px; }
+.zone-meter { margin-top: 10px; height: 7px; background: var(--sunk); border-radius: 6px; overflow: hidden; }
+.zone-meter i { display: block; height: 100%; background: var(--brand); border-radius: 6px; }
+.zone-message { margin: 8px 16px; padding: 12px 14px; background: var(--info-b); color: var(--info-t);
+  border-radius: 12px; font-size: 13px; line-height: 1.4; }
+.zone-empty { margin: 20px 16px; display: flex; flex-direction: column; gap: 12px; padding: 24px;
+  border: 1px dashed var(--hair); border-radius: 20px; align-items: center; text-align: center; }
+.zone-empty svg { color: var(--brand-t); }
+.zone-empty h2 { font-size: 18px; margin: 0; }
+.zone-empty p { color: var(--mute); font-size: 14px; margin: 0 0 10px; line-height: 1.5; }
+.zone-card { background: var(--card); margin: 10px 16px; padding: 15px; border-radius: 18px;
+  border: 1px solid var(--hair); }
+.zone-card-head { display: flex; align-items: center; gap: 11px; }
+.zone-color { width: 12px; height: 12px; flex: none; border-radius: 50%; background: #E1BC19; }
+.zone-card-head > div { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.zone-card-head b { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zone-card-head small { margin-top: 3px; color: var(--mute); font-size: 12px; }
+.zone-active { flex: none; font-size: 13px; display: flex; gap: 4px; align-items: center; }
+.zone-active input { width: 18px; height: 18px; accent-color: var(--brand); }
+.zone-card-stats { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px;
+  font-size: 13px; color: var(--mute); border-top: 1px solid var(--hair); padding-top: 13px; margin-top: 13px; }
+.zone-card-actions { display: flex; gap: 8px; margin-top: 13px; }
+.zone-card-actions .btn:first-child { flex: 1; }
+.zone-import-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 16px 0; }
+.zone-import-row .btn { flex: 1; }
+.zone-footer-note { margin: 20px 20px 32px; color: var(--mute); font-size: 12px; line-height: 1.5; }
+.zone-editor { position: absolute; inset: 0; overflow: hidden; background: #DCE8D5; z-index: 2; }
+.zone-map { position: absolute; inset: 0; }
+.zone-top { position: absolute; z-index: 6; left: 10px; right: 10px; top: 10px;
+  display: flex; gap: 10px; align-items: center; padding: 8px; background: var(--card);
+  border-radius: 16px; box-shadow: 0 3px 12px #0003; }
+.zone-round { flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--sunk); }
+.zone-heading { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.zone-heading b { font-size: 15px; }
+.zone-heading span { color: var(--mute); font-size: 11px; }
+.zone-crosshair { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); z-index: 3;
+  font-size: 42px; line-height: 1; font-weight: 300; color: #fff; text-shadow: 0 1px 5px #000; pointer-events: none; }
+.zone-draw-box { position: absolute; z-index: 5; bottom: 10px; left: 10px; right: 10px; max-height: 58%;
+  overflow-y: auto; padding: 12px; background: var(--card); border: 1px solid var(--hair);
+  border-radius: 18px; box-shadow: 0 -2px 14px #0004; }
+.zone-metrics { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px; font-size: 13px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--hair); }
+.zone-metrics b { color: var(--brand-t); }
+.zone-label { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; color: var(--mute); font-size: 12px; }
+.zone-label input { height: 42px; border-radius: 10px; border: 1px solid var(--hair);
+  background: var(--paper); color: var(--ink); padding: 0 10px; font-size: 15px; }
+.zone-check { display: flex; gap: 9px; align-items: center; margin-top: 10px; font-size: 12px; }
+.zone-check input { width: 18px; height: 18px; accent-color: var(--brand); }
+.zone-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.zone-actions .btn { padding: 0 12px; }
+.zone-icon-btn { width: 40px; height: 40px; border: 0; border-radius: 12px; background: var(--sunk);
+  display: grid; place-items: center; }
+.zone-error, .zone-hint { margin: 9px 1px 0; font-size: 12px; line-height: 1.45; }
+.zone-error { color: var(--alarm); }
+.zone-hint { color: var(--mute); }
+.zone-vertex, .zone-midpoint { display: grid; place-items: center; border: 2px solid #fff;
+  box-shadow: 0 2px 6px #0008; touch-action: none; cursor: grab; font: 700 13px/1 system-ui; }
+.zone-vertex { border-radius: 50%; width: 29px; height: 29px; background: #39D990; color: #102A1C; }
+.zone-midpoint { border-radius: 50%; width: 23px; height: 23px; background: #FFD60A; color: #101610; }
+.zone-editor .maplibregl-ctrl-bottom-left, .zone-editor .maplibregl-ctrl-bottom-right { bottom: 0; }
+@media (max-height: 690px) {
+  .zone-draw-box { max-height: 62%; padding: 9px; }
+  .zone-top { padding: 5px; }
+  .zone-metrics { font-size: 12px; }
+}
