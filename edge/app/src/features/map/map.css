@@ -95,7 +95,7 @@
 .cluster.c-alarm > b { border-color: var(--alarm); }
 .pin-choices {
   display: flex; flex-direction: column; max-height: min(250px, 38vh);
-  min-width: 150px; overflow-y: auto; gap: 3px;
+  min-width: 150px; overflow-y: auto; gap: 3px; color: #13241C;
 }
 .pin-choices strong { padding: 4px 5px 7px; font-size: 13px; }
 .pin-choices button {
