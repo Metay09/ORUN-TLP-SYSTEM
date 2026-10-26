@@ -135,3 +135,35 @@ Changes:
 by a single Android APK field test. Must check at zoom 9/14/18/20, with both
 distinct and identical collar fixes, and check the phone's blue dot at the
 same point as a collar. No APK was built as part of this change.
+
+## Zoomed satellite imagery disappearing: source-level fallback (2026-10-26)
+
+Owner reports that the satellite basemap vanishes when zooming close on Android.
+Source inspection: MapLibre camera allows zoom 20; Esri World Imagery raster
+source was maxzoom 19. Reaching 20 alone is NOT a cause (the 19-tile should
+normally overzoom). But at selected locations and high zoom, absent/failed
+raster tiles have no lower-resolution imagery to display. There was only
+one imagery layer in the main map and in the Alanlar editor.
+
+Fix now staged in this PR (not yet validated on-device):
+
+- Shared `features/map/satelliteStyle.ts` makes a two-layer Esri raster style.
+  A z15-limited underlay is always visible and is enlarged by MapLibre.
+  A separate z19 detail raster sits over it where detailed tiles exist.
+  When a high detail tile is absent, its transparent/empty tile space leaves
+  the lower-resolution underlay visible. Same style is used by both screens.
+- `cancelPendingTileRequestsWhileZooming: false` in both map constructors
+  reduces transient blank frames during pinch zoom while newly required
+  imagery tiles download.
+- Camera maxZoom 20 stays unchanged; do not deprive users of close-up
+  polygon editing. The underlying geofence/GNSS locations are unaffected.
+- Separate host tests assert layer order, source zoom caps and same tile source
+  for main-map and editor.
+- This is **not offline satellite caching**. Both layers still need internet;
+  server-side failures across all levels, WebGL canvas failures, or blocked
+  ArcGIS network access require further diagnosis. User's exact failure reason
+  remains unproven without phone capture/logcat at the failing zoom.
+
+Future combined APK smoke test: compare z14/16/18/19/20, pan in multiple
+areas, check while mobile Internet is working, and check no imagery regression
+when map style changes or polygons are being edited.
