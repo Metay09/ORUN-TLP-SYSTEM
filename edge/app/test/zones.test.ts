@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  areaHa, asGeoJSON, canonicalRing, importGeoJSON, perimeterM, validateRing, validateSet,
+  areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, persistZones, ZONE_KEY, perimeterM, validateRing, validateSet,
   type Point, type Zone,
 } from "../src/features/zones/geometry.ts";
 
@@ -55,4 +55,28 @@ test("zones: malformed and unsupported GeoJSON imports fail without partial comm
   assert.throws(() => importGeoJSON(JSON.stringify(missingClose)), /ilk ve son/);
   const tooMany = asGeoJSON(Array.from({ length: 9 }, (_, i) => zone(square, i)));
   assert.throws(() => importGeoJSON(JSON.stringify(tooMany)), /8 alan/);
+});
+
+test("zones: local draft survives reload, failed writes do not report a saved zone", () => {
+  const own = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true, value: {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); },
+    },
+  });
+  try {
+    persistZones([zone(square)]);
+    assert.ok(store.has(ZONE_KEY));
+    assert.deepEqual(loadZones(), [zone(square)]);
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true, value: { setItem: () => { throw new Error("storage full"); }, getItem: () => store.get(ZONE_KEY) },
+    });
+    assert.throws(() => persistZones([zone(square), zone(square, 2)]), /storage full/);
+    assert.equal(loadZones().length, 1);
+  } finally {
+    if (own) Object.defineProperty(globalThis, "localStorage", own);
+    else delete (globalThis as { localStorage?: Storage }).localStorage;
+  }
 });
