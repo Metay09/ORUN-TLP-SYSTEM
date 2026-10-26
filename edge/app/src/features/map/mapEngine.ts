@@ -21,6 +21,7 @@ import { agingLimit, epochMs, periodMs } from "../../app/herd.ts";
 import type { Animal, Observation } from "../../app/model.ts";
 import type { BaseMap, Layers } from "../../app/stores.ts";
 import { toneOfStatus } from "../../ds/components.tsx";
+import type { Zone } from "../zones/geometry.ts";
 
 setWorkerUrl(workerUrl);
 
@@ -132,6 +133,7 @@ export class MapEngine {
   private meMarker: Marker | null = null;
   private ghost: Marker | null = null;
   private data: MapData | null = null;
+  private zones: Zone[] = [];  // local drafts only, never device-effective state
   private layers: Layers | null = null;
   private base: BaseMap = "satellite";
   private tilt = false;
@@ -214,7 +216,7 @@ export class MapEngine {
     if (!m.getSource("dem")) m.addSource("dem", { type: "raster-dem", tiles: [DEM], tileSize: 256, maxzoom: 15, encoding: "terrarium" });
     if (!m.getSource("dem-shade")) m.addSource("dem-shade", { type: "raster-dem", tiles: [DEM], tileSize: 256, maxzoom: 15, encoding: "terrarium" });
     const empty = fc([]);
-    for (const id of ["o-coverage", "o-heat", "o-trail", "o-trail-pts", "o-me"])
+    for (const id of ["o-coverage", "o-heat", "o-trail", "o-trail-pts", "o-me", "o-zones"])
       if (!m.getSource(id)) m.addSource(id, { type: "geojson", data: empty });
     const add = (spec: Parameters<MlMap["addLayer"]>[0]) => { if (!m.getLayer(spec.id)) m.addLayer(spec); };
     add({ id: "o-relief", type: "hillshade", source: "dem-shade", layout: { visibility: "none" },
@@ -229,6 +231,17 @@ export class MapEngine {
         "heatmap-opacity": 0.75,
         "heatmap-color": ["interpolate", ["linear"], ["heatmap-density"], 0, "rgba(0,0,0,0)", 0.15, "rgba(200,241,105,0.45)",
           0.4, "rgba(226,162,28,0.7)", 0.7, "rgba(217,71,47,0.8)", 1, "rgba(150,20,20,0.9)"],
+      } });
+    // Pasture plans are always dashed: do not imply they were applied to collars.
+    add({ id: "o-zones-fill", type: "fill", source: "o-zones",
+      paint: {
+        "fill-color": ["case", ["get", "active"], "#FFD60A", "#B2BEC3"],
+        "fill-opacity": ["case", ["get", "active"], 0.13, 0.035],
+      } });
+    add({ id: "o-zones-line", type: "line", source: "o-zones",
+      paint: {
+        "line-color": ["case", ["get", "active"], "#FFD60A", "#C3CBD1"],
+        "line-width": 2.5, "line-opacity": 0.95, "line-dasharray": [4, 2],
       } });
     add({ id: "o-trail-casing", type: "line", source: "o-trail", filter: ["==", ["get", "gap"], false], layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": "#FFFFFF", "line-width": 6, "line-opacity": ["case", ["get", "past"], 0.85, 0.3] } });
@@ -247,6 +260,7 @@ export class MapEngine {
     this.applyTerrain();
     this.applyVisibility();
     if (this.data) this.pushData(this.data, true);
+    this.pushZones();
   }
 
   private applyVisibility(): void {
@@ -256,6 +270,8 @@ export class MapEngine {
     vis("o-relief", l.relief && this.base !== "street");
     vis("o-coverage", l.coverage);
     vis("o-heat", l.heat);
+    vis("o-zones-fill", l.zones);
+    vis("o-zones-line", l.zones);
     for (const id of ["o-trail-casing", "o-trail", "o-trail-gap", "o-trail-pts"]) vis(id, l.trail);
     vis("o-me", l.me);
     for (const mk of this.pins.values()) mk.getElement().style.display = l.animals ? "" : "none";
@@ -269,6 +285,23 @@ export class MapEngine {
     this.layers = layers;
     if (relabel) { void this.setBase(this.base, layers); return; }
     this.applyVisibility();
+  }
+
+  // ----------------------------------------------------------- local zones --
+  setZones(zones: Zone[]): void {
+    this.zones = zones;
+    this.pushZones();
+  }
+
+  private pushZones(): void {
+    const src = this.map.getSource("o-zones") as GeoJSONSource | undefined;
+    if (!src) return;
+    const features: Feature[] = this.zones.map((z) => ({
+      type: "Feature",
+      properties: { id: z.id, name: z.name, active: z.active, state: "LOCAL_DRAFT" },
+      geometry: { type: "Polygon", coordinates: [[...z.ring, z.ring[0]]] },
+    }));
+    void src.setData(fc(features));
   }
 
   // ---------------------------------------------------------------- data --
