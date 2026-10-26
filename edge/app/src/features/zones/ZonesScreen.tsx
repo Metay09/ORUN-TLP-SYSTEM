@@ -142,6 +142,21 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
       markers.current.push(new Marker({ element: el, anchor: "center" })
         .setLngLat([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]).addTo(m));
     });
+    // Reference HTML shows per-edge metre labels; keep these lightweight
+    // and hide them when the projected segment is too short to read.
+    if (p.length >= 2) {
+      const edgeCount = modeNow.current === "tap" && p.length >= 3 ? p.length : p.length - 1;
+      for (let i = 0; i < edgeCount; i++) {
+        const a = p[i], b = p[(i + 1) % p.length];
+        const ap = m.project(a), bp = m.project(b);
+        if (Math.hypot(ap.x - bp.x, ap.y - bp.y) < 64) continue;
+        const el = document.createElement("span");
+        el.className = "zone-distance-label";
+        el.textContent = metres(perimeterM([a, b]));
+        markers.current.push(new Marker({ element: el, anchor: "center" })
+          .setLngLat([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]).addTo(m));
+      }
+    }
     previewRef.current();
   };
 
@@ -183,6 +198,7 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
       }
     });
     m.on("move", () => previewRef.current());
+    m.on("zoomend", () => renderRef.current());
     m.on("click", (e) => {
       if (modeNow.current !== "tap" || draftNow.current.length >= 64) return;
       changeRef.current([...draftNow.current, [e.lngLat.lng, e.lngLat.lat]]);
