@@ -235,8 +235,8 @@ def describe_periodic(device: bytes, p: bytes) -> dict:
         "incarnation": p[4:12].hex().upper(),
         "sequence": _u(p[12:16]),
         "period_s": _u(p[20:24]),
-        "time": None, "lat": None, "lon": None, "sats": None, "hdop": None,
-        "fix_age_s": None, "battery_mv": None, "battery": None,
+        "time": None, "lat": None, "lon": None, "alt_m": None, "sats": None,
+        "hdop": None, "fix_age_s": None, "battery_mv": None, "battery": None,
         "active_s": None, "covered_s": None, "source": SOURCES.get(p[2], "?"),
     }
     if flags & 1:
@@ -245,6 +245,8 @@ def describe_periodic(device: bytes, p: bytes) -> dict:
     if flags & 2:
         out["lat"] = _i(p[24:28]) / 1e7
         out["lon"] = _i(p[28:32]) / 1e7
+        if flags & 4:   # GNSS height above the WGS84 ellipsoid, metres
+            out["alt_m"] = _i(p[32:36]) / 1000
         if p[2] == 1:
             out["sats"] = p[40]
             out["hdop"] = _u(p[36:38]) / 100
@@ -685,7 +687,7 @@ def points_from_db(db_path: Path) -> dict:
             skipped += 1
             continue
         points.append({k: d[k] for k in (
-            "tracker", "sequence", "time", "lat", "lon", "sats", "hdop",
+            "tracker", "sequence", "time", "lat", "lon", "alt_m", "sats", "hdop",
             "fix_age_s", "battery_mv", "battery", "active_s", "covered_s",
             "source")})
         pt = points[-1]

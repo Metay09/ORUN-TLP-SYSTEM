@@ -13,7 +13,7 @@ export const NEAR_S = 150;  // a live arrival this close in capture time proves 
 
 export interface Point {
   tracker: string; seq: number; time: string | null; lat: number; lon: number;
-  sats: number | null; hdop: number | null; fix_age_s: number | null;
+  alt_m: number | null; sats: number | null; hdop: number | null; fix_age_s: number | null;
   battery_mv: number | null; battery: string | null; active_s: number | null;
   covered_s: number | null; source: string; period_s: number;
   rssi: number | null; snr: number | null; received: string | null;
@@ -64,7 +64,7 @@ export async function buildPoints(db: Db, nowSeconds: number): Promise<PointsRes
     const recorded = epoch(d.time);
     points.push({
       tracker: d.tracker, seq: d.sequence, time: d.time, lat: d.lat, lon: d.lon,
-      sats: d.sats, hdop: d.hdop, fix_age_s: d.fix_age_s, battery_mv: d.battery_mv,
+      alt_m: d.alt_m, sats: d.sats, hdop: d.hdop, fix_age_s: d.fix_age_s, battery_mv: d.battery_mv,
       battery: d.battery, active_s: d.active_s, covered_s: d.covered_s, source: d.source,
       period_s: d.period_s,
       rssi: r.gw_rssi === null || r.gw_rssi === undefined ? null : Number(r.gw_rssi),

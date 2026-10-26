@@ -140,6 +140,7 @@ const BATTERY = ["UNKNOWN", "NORMAL", "LOW", "CRITICAL"];
 export interface Periodic {
   tracker: string; incarnation: string; sequence: number; period_s: number;
   time: string | null; lat: number | null; lon: number | null;
+  alt_m: number | null;   // GNSS height above the WGS84 ellipsoid (not sea level)
   sats: number | null; hdop: number | null; fix_age_s: number | null;
   battery_mv: number | null; battery: string | null;
   active_s: number | null; covered_s: number | null; source: string;
@@ -154,7 +155,7 @@ export function describePeriodic(device: Uint8Array, p: Uint8Array): Periodic {
   const out: Periodic = {
     tracker: hex(device), incarnation: hex(p.subarray(4, 12)),
     sequence: u32(p, 12), period_s: u32(p, 20),
-    time: null, lat: null, lon: null, sats: null, hdop: null, fix_age_s: null,
+    time: null, lat: null, lon: null, alt_m: null, sats: null, hdop: null, fix_age_s: null,
     battery_mv: null, battery: null, active_s: null, covered_s: null,
     source: SOURCES[p[2]] ?? "?",
   };
@@ -162,6 +163,7 @@ export function describePeriodic(device: Uint8Array, p: Uint8Array): Periodic {
   if (flags & 2) {
     out.lat = i32(p, 24) / 1e7;
     out.lon = i32(p, 28) / 1e7;
+    if (flags & 4) out.alt_m = i32(p, 32) / 1000;
     if (p[2] === 1) { out.sats = p[40]; out.hdop = u16(p, 36) / 100; }
     if (flags & 8) out.fix_age_s = u16(p, 38);
   }
