@@ -32,7 +32,7 @@ test("zones: 8 included polygons and 64 effective corners across all fields", ()
   // Five 13-vertex pastures exceed the shared budget with 65 corners.
   const thirteen: Point[] = Array.from({ length: 13 }, (_, i) =>
     [28 + 0.001 * Math.cos(2 * Math.PI * i / 13),
-     37 + 0.001 * Math.sin(2 * Math.PI * i / 13)]);
+     37 + 0.001 * Math.sin(2 * Math.PI * i / 13)] as Point);
   assert.match(validateSet(Array.from({ length: 5 }, (_, i) => zone(thirteen, i)))!, /64 köşe/);
   assert.equal(validateSet([...Array.from({ length: 8 }, (_, i) => zone(square, i)), zone(square, 99, false)]), null);
 });
