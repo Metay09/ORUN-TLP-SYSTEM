@@ -7,7 +7,7 @@ import { ArrowCounterClockwise, ArrowClockwise, Check, DownloadSimple, MapTrifol
 import { useBack } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { DemoFlag, Header } from "../../ds/components.tsx";
-import { areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, perimeterM, persistZones, previewAtCentre, validateRing, validateSet, type Point, type Ring, type Zone } from "./geometry.ts";
+import { areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, perimeterM, persistZones, previewAtCentre, simplifyRingToBudget, validateRing, validateSet, type Point, type Ring, type Zone } from "./geometry.ts";
 import "./zones.css";
 
 function hectares(n: number): string { return n.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -47,6 +47,11 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
   const [mode, setMode] = useState<"cross" | "tap">(zone ? "tap" : "cross");
   const [saveSheet, setSaveSheet] = useState(false);
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
+  const original = useRef(JSON.stringify({
+    ring: zone?.ring ?? [], name: zone?.name ?? `Mera ${all.length + 1}`,
+    active: zone?.active ?? true,
+  }));
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<MlMap | null>(null);
   const markers = useRef<Marker[]>([]);
@@ -62,7 +67,7 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
     setPast((v) => [...v.slice(-59), prev]);
     setFuture([]);
     setDraft(next);
-    setError("");
+    setError(""); setInfo("");
   }, []);
   const changeRef = useRef(changeDraft);
   changeRef.current = changeDraft;
@@ -208,7 +213,13 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { renderRef.current(); }, [draft, all, mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useBack(() => { if (saveSheet) setSaveSheet(false); else onCancel(); });
+  const hasChanges = original.current !== JSON.stringify({ ring: draft, name, active });
+  const exit = () => {
+    if (saveSheet) { setSaveSheet(false); return; }
+    if (hasChanges && !window.confirm("Bu sınırdaki kaydedilmemiş değişiklikler silinsin mi?")) return;
+    onCancel();
+  };
+  useBack(exit);
   const undo = () => {
     if (!past.length) return;
     setFuture((v) => [...v, draft]); setDraft(past[past.length - 1]); setPast(past.slice(0, -1)); setError("");
@@ -220,6 +231,20 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
   const addCross = () => {
     if (!map.current || draft.length >= 64) return;
     const p = map.current.getCenter(); changeDraft([...draft, [p.lng, p.lat]]);
+  };
+  const activeOthers = all.filter((z) => z.id !== zone?.id && z.active);
+  const room = active ? Math.max(0, 64 - activeOthers.reduce((v, z) => v + z.ring.length, 0)) : 64;
+  const countWarn = active && activeOthers.length >= 8 ? "Zaten 8 alan dahil. Kaydederken bu alanı hariç bırak." :
+    active && draft.length > room ? `Tasma kapasitesi: ${draft.length} köşe, bu alan için ${room} yer var.` : "";
+  const canSimplify = draft.length >= 4 && draft.length > room && room >= 3 && !validateRing(draft);
+  const simplify = () => {
+    const result = simplifyRingToBudget(draft, room);
+    if (!result) {
+      setError("Sınırı güvenli şekilde sadeleştiremedim. Köşeleri elle azalt veya alanı hariç bırak.");
+      return;
+    }
+    changeDraft(result.ring);
+    setInfo(`${draft.length} → ${result.ring.length} köşe · alan farkı %${result.areaDeltaPct.toFixed(2)}. Sınırı incele; geri alabilirsin.`);
   };
   const valid = draft.length >= 3 ? validateRing(draft) : "En az 3 köşe gerekli.";
   const save = () => {
@@ -239,16 +264,17 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
     <div className="zone-editor">
       <div ref={host} className="zone-map" />
       <div className="zone-top">
-        <button className="zone-round" onClick={onCancel} aria-label="Vazgeç"><X size={22} /></button>
+        <button className="zone-round" onClick={exit} aria-label="Vazgeç"><X size={22} /></button>
         <div className="zone-heading"><b>{zone ? "Sınırı düzenle" : "Yeni alan"}</b><span>Yalnız bu telefonda taslak</span></div>
         <button className="btn primary small" onClick={() => {
           if (valid) { setError(valid); return; }
+          if (countWarn) { setError(countWarn); return; }
           setError(""); setSaveSheet(true);
         }}><Check size={18} /> Kaydet</button>
       </div>
       <div className="zone-draw-stats" aria-live="off">
         <span>Alan <b ref={areaValue}>{draft.length >= 3 ? hectares(areaHa(draft)) : "—"}</b> ha</span>
-        <span>Köşe <b>{draft.length}</b> / 64</span>
+        <span>Köşe <b>{draft.length}</b> / {room}</span>
         <span>Çevre <b ref={perimeterValue}>{draft.length >= 3 ? metres(perimeterM(draft)) : "—"}</b></span>
       </div>
       {mode === "cross" && <div className="zone-crosshair" aria-label="Harita merkezi nişangâhı" role="img" />}
@@ -266,11 +292,13 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
             <button className="zone-icon-btn" onClick={redo} disabled={!future.length} aria-label="Yinele"><ArrowClockwise size={22} /></button>
           </span>
         </div>
-        <p className={error || (draft.length >= 3 && valid) ? "zone-error" : "zone-hint"}>
-          {error || (draft.length >= 3 ? valid : "") || (mode === "cross"
+        {canSimplify && <button className="zone-simplify" onClick={simplify}>Sadeleştir · {draft.length} → {room} köşe</button>}
+        <p className={error || countWarn || (draft.length >= 3 && valid) ? "zone-error" : "zone-hint"}>
+          {error || countWarn || (draft.length >= 3 ? valid : "") || (mode === "cross"
             ? draft.length ? "Haritayı kaydır, nişangâhı sonraki köşeye getir, + bas" : "Haritayı kaydır, nişangâhı ilk köşeye getir, + bas"
             : "Haritaya dokun veya mevcut köşeleri sürükle")}
           {mode === "cross" && <span ref={nextEdgeValue} className="zone-next-edge" />}
+          {info && <span className="zone-simplify-info">{info}</span>}
         </p>
       </div>
       {saveSheet && (
