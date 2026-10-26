@@ -38,33 +38,73 @@
 .zone-heading { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .zone-heading b { font-size: 15px; }
 .zone-heading span { color: var(--mute); font-size: 11px; }
-.zone-crosshair { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 3;
-  font-size: 42px; line-height: 1; font-weight: 300; color: #fff; text-shadow: 0 1px 5px #000; pointer-events: none; }
-.zone-draw-box { position: absolute; z-index: 5; bottom: 10px; left: 10px; right: 10px; max-height: 58%;
-  overflow-y: auto; padding: 12px; background: var(--card); border: 1px solid var(--hair);
-  border-radius: 18px; box-shadow: 0 -2px 14px #0004; }
-.zone-metrics { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px; font-size: 13px;
-  padding-bottom: 10px; border-bottom: 1px solid var(--hair); }
-.zone-metrics b { color: var(--brand-t); }
-.zone-label { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; color: var(--mute); font-size: 12px; }
-.zone-label input { height: 42px; border-radius: 10px; border: 1px solid var(--hair);
-  background: var(--paper); color: var(--ink); padding: 0 10px; font-size: 15px; }
-.zone-check { display: flex; gap: 9px; align-items: center; margin-top: 10px; font-size: 12px; }
-.zone-check input { width: 18px; height: 18px; accent-color: var(--brand); }
-.zone-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
-.zone-actions .btn { padding: 0 12px; }
-.zone-icon-btn { width: 40px; height: 40px; border: 0; border-radius: 12px; background: var(--sunk);
+/* Drawing layout mirrors ORUN-Saha: measurement strip on top, crosshair
+   exactly at MapLibre's center, a compact three-column bar at the bottom. */
+.zone-draw-stats { position: absolute; z-index: 4; top: 86px; left: 10px; right: 10px;
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; padding: 0;
+  background: rgba(18,26,32,.91); color: #dae2e7; border: 1px solid #384952; border-radius: 11px;
+  box-shadow: 0 2px 8px #0004; }
+.zone-draw-stats span { min-width: 0; padding: 9px 7px; text-align: center; font-size: 12px; }
+.zone-draw-stats span + span { border-left: 1px solid #384952; }
+.zone-draw-stats b { display: inline; margin-left: 3px; font-size: 15px; color: #fff; font-variant-numeric: tabular-nums; }
+.zone-crosshair { position: absolute; left: 50%; top: 50%; width: 0; height: 0;
+  pointer-events: none; z-index: 4; }
+.zone-crosshair::before,.zone-crosshair::after {
+  content: ""; position: absolute; background: #fff; box-shadow: 0 0 3px #000, 0 0 1px #000;
+}
+.zone-crosshair::before { left: -1px; top: -18px; width: 2px; height: 36px; }
+.zone-crosshair::after { left: -18px; top: -1px; width: 36px; height: 2px; }
+.zone-draw-box { position: absolute; z-index: 5; bottom: 10px; left: 9px; right: 9px;
+  padding: 11px 12px 10px; background: var(--card); border: 1px solid var(--hair);
+  border-radius: 16px; box-shadow: 0 -2px 14px #0004; }
+.zone-actions { display: grid; grid-template-columns: 1fr 72px 1fr; align-items: center;
+  gap: 5px; min-height: 64px; }
+.zone-mode-pill { min-height: 42px; display: flex; gap: 7px; align-items: center; justify-self: start;
+  padding: 0 12px; border: 0; background: var(--sunk); border-radius: 22px;
+  font-size: 13px; font-weight: 700; }
+.zone-mode-pill i { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  background: #e6198f; flex: none; }
+.zone-big-add { justify-self: center; display: grid; place-items: center;
+  width: 64px; height: 64px; border-radius: 50%; border: 0;
+  background: #3fcf7f; color: #082b17; box-shadow: 0 3px 12px #3fcf7f70;
+  font: 400 39px/1 system-ui, sans-serif; touch-action: manipulation; }
+.zone-big-add:active { transform: scale(.95); }
+.zone-touch-hint { font-size: 12px; justify-self: center; text-align: center; color: var(--mute); }
+.zone-history { display: flex; gap: 4px; justify-self: end; }
+.zone-icon-btn { width: 38px; height: 42px; border: 0; border-radius: 12px; background: var(--sunk);
   display: grid; place-items: center; }
-.zone-error, .zone-hint { margin: 9px 1px 0; font-size: 12px; line-height: 1.45; }
+.zone-error,.zone-hint { margin: 6px 4px 0; font-size: 12px; line-height: 1.45;
+  text-align: center; }
 .zone-error { color: var(--alarm); }
 .zone-hint { color: var(--mute); }
+.zone-next-edge { display: block; margin-top: 3px; color: var(--brand-t); font-weight: 700; }
 .zone-vertex, .zone-midpoint { display: grid; place-items: center; border: 2px solid #fff;
   box-shadow: 0 2px 6px #0008; touch-action: none; cursor: grab; font: 700 13px/1 system-ui; }
-.zone-vertex { border-radius: 50%; width: 29px; height: 29px; background: #39D990; color: #102A1C; }
-.zone-midpoint { border-radius: 50%; width: 23px; height: 23px; background: #FFD60A; color: #101610; }
+.zone-vertex { border-radius: 50%; width: 27px; height: 27px; background: #e6198f; color: #fff; }
+.zone-midpoint { border-radius: 50%; width: 23px; height: 23px; background: #fff; color: #15232b; }
+.zone-save-scrim { position: absolute; inset: 0; z-index: 20; background: #0008;
+  display: flex; flex-direction: column; justify-content: flex-end; }
+.zone-save-sheet { padding: 16px 18px 20px; background: var(--card); color: var(--ink);
+  border-radius: 20px 20px 0 0; max-height: 85%; overflow-y: auto; }
+.zone-save-title { display: flex; align-items: center; justify-content: space-between; }
+.zone-save-title h2 { font-size: 20px; margin: 0; }
+.zone-save-summary { font-size: 13px; color: var(--mute); }
+.zone-label { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; color: var(--mute); font-size: 12px; }
+.zone-label input { height: 44px; border-radius: 10px; border: 1px solid var(--hair);
+  background: var(--paper); color: var(--ink); padding: 0 10px; font-size: 16px; }
+.zone-check { display: flex; gap: 9px; align-items: center; margin: 13px 0 17px; font-size: 13px; }
+.zone-check input { width: 19px; height: 19px; accent-color: var(--brand); }
+.zone-save-info { font-size: 12px; color: var(--mute); line-height: 1.5; margin: 0 0 12px; }
 .zone-editor .maplibregl-ctrl-bottom-left, .zone-editor .maplibregl-ctrl-bottom-right { bottom: 0; }
 @media (max-height: 690px) {
-  .zone-draw-box { max-height: 62%; padding: 9px; }
   .zone-top { padding: 5px; }
-  .zone-metrics { font-size: 12px; }
+  .zone-draw-stats { top: 76px; }
+  .zone-draw-stats span { padding: 6px 3px; }
+  .zone-draw-box { padding: 8px 10px; }
+}
+@media (max-width: 370px) {
+  .zone-actions { grid-template-columns: 1fr 66px 1fr; }
+  .zone-mode-pill { padding: 0 7px; font-size: 12px; }
+  .zone-icon-btn { width: 33px; }
+  .zone-draw-stats b { font-size: 13px; }
 }
