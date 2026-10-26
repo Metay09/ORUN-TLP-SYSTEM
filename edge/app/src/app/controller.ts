@@ -73,6 +73,7 @@ function loadJournal(): JournalEntry[] {
 }
 
 export class Controller {
+  readonly kind = "real" as const;
   private core: EdgeCore | null = null;
   private ble: BleLink | null = null;
   private usb: UsbLink | null = null;
@@ -148,8 +149,6 @@ export class Controller {
       this.refresh();
       setInterval(() => { void this.sync(false); }, SYNC_EVERY_MS);
       void this.sync(false);
-      // Expose the ledger to the map page (iframe, same origin).
-      (window as unknown as { orunPoints: () => Promise<PointsResult> }).orunPoints = () => core.points();
     } catch (e) {
       this.emit({ error: e instanceof Error ? e.message : String(e) });
     }
