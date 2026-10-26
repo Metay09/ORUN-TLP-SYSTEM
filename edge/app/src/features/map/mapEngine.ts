@@ -296,7 +296,7 @@ export class MapEngine {
   private pushZones(): void {
     const src = this.map.getSource("o-zones") as GeoJSONSource | undefined;
     if (!src) return;
-    const features: Feature[] = this.zones.map((z) => ({
+    const features: Feature[] = this.zones.map((z): Feature => ({
       type: "Feature",
       properties: { id: z.id, name: z.name, active: z.active, state: "LOCAL_DRAFT" },
       geometry: { type: "Polygon", coordinates: [[...z.ring, z.ring[0]]] },
