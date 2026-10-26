@@ -353,7 +353,7 @@ export class MapEngine {
   private syncPins(d: MapData): void {
     const label = this.labelled;
     const positioned = d.herd.filter((a) => a.last);
-    const projected = new Map(positioned.map((a) => [a.id, this.map.project([a.last!.lon, a.last!.lat])]));
+    const projected = new Map(positioned.map((a) => [a.id, this.map.project([a.last!.lon, a.last!.lat])] as const));
     const keep = new Set<string>();
     for (const a of d.herd) {
       if (!a.last) continue;
@@ -410,7 +410,7 @@ export class MapEngine {
     }
 
     const animals = d.herd.filter((a) => a.last);
-    const byId = new Map(animals.map((a) => [a.id, a]));
+    const byId = new Map(animals.map((a) => [a.id, a] as const));
     const groups = groupScreenPins(animals.map((a) => {
       const p = this.map.project([a.last!.lon, a.last!.lat]);
       return { id: a.id, x: p.x, y: p.y, selected: a.id === d.selected };
