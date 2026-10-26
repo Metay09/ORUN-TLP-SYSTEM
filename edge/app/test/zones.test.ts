@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, persistZones, ZONE_KEY, perimeterM, validateRing, validateSet,
+  areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, persistZones, ZONE_KEY, perimeterM, previewAtCentre, validateRing, validateSet,
   type Point, type Zone,
 } from "../src/features/zones/geometry.ts";
 
@@ -79,4 +79,16 @@ test("zones: local draft survives reload, failed writes do not report a saved zo
     if (own) Object.defineProperty(globalThis, "localStorage", own);
     else delete (globalThis as { localStorage?: Storage }).localStorage;
   }
+});
+
+test("zones: centre preview follows the map cursor without changing committed corners", () => {
+  const two: Point[] = [square[0], square[1]];
+  const cursor: Point = [28.056, 37.612];
+  const v = previewAtCentre(two, cursor);
+  assert.deepEqual(v, [square[0], square[1], cursor]);
+  assert.equal(v.length, 3);
+  assert.ok(areaHa(v) > 0);
+  assert.equal(two.length, 2);
+  assert.deepEqual(previewAtCentre(two, null), two);
+  assert.notEqual(previewAtCentre(two, null), two);
 });
