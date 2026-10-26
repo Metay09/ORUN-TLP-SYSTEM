@@ -72,15 +72,19 @@ export class Uploader {
     });
   }
 
-  /** One batch. Throws on network / HTTP / protocol errors (nothing marked). */
-  async runOnce(url: string, token: string): Promise<RunResult> {
+  /** One batch, optionally scanning only older rows in this drain pass.
+   * UNCERTAIN rows remain pending but are not retried ahead of older records
+   * within the same drain. A later drain retries them normally. */
+  private async runBatch(url: string, token: string, beforeRowid: number | null):
+    Promise<{ result: RunResult; nextRowid: number | null }> {
     const edge = await this.edgeId();
     const { rows, sessions, lastSession } = await this.exclusive(async () => {
       const rows = await this.db.query(
-        "SELECT o.device_id,o.incarnation,o.sequence,o.frame,r.first_seen_utc,r.gw_rssi,r.gw_snr,r.gateway " +
+        "SELECT o.rowid AS scan_rowid,o.device_id,o.incarnation,o.sequence,o.frame,r.first_seen_utc,r.gw_rssi,r.gw_snr,r.gateway " +
         "FROM observations o LEFT JOIN receipts r ON r.device_id=o.device_id AND r.incarnation=o.incarnation AND r.sequence=o.sequence " +
         "LEFT JOIN uploads u ON u.device_id=o.device_id AND u.incarnation=o.incarnation AND u.sequence=o.sequence " +
-        "WHERE u.state IS NULL ORDER BY o.rowid DESC LIMIT ?", [BATCH]);
+        "WHERE u.state IS NULL " + (beforeRowid === null ? "" : "AND o.rowid < ? ") +
+        "ORDER BY o.rowid DESC LIMIT ?", beforeRowid === null ? [BATCH] : [beforeRowid, BATCH]);
       // The last sent session keeps growing while attached: resend from it.
       const lastSession = Number((await this.meta("sessions_from")) ?? "1");
       const sessions = await this.db.query(
@@ -90,7 +94,9 @@ export class Uploader {
     });
     const sessionsChanged = await this.exclusive(async () =>
       sessions.length > 0 && JSON.stringify(sessions) !== (await this.meta("sessions_sent")));
-    if (!rows.length && !sessionsChanged) return { sent: 0, final: 0, uncertain: 0 };
+    const nextRowid = rows.length ? Number(rows[rows.length - 1].scan_rowid) : null;
+    if (!rows.length && !sessionsChanged)
+      return { result: { sent: 0, final: 0, uncertain: 0 }, nextRowid: null };
 
     const num = (v: Row[string]) => (v === null || v === undefined ? null : Number(v));
     const body = JSON.stringify({
@@ -127,7 +133,12 @@ export class Uploader {
         await this.setMeta("sessions_sent", JSON.stringify(sessions));
       }
     }));
-    return { sent: rows.length, final, uncertain: rows.length - final };
+    return { result: { sent: rows.length, final, uncertain: rows.length - final }, nextRowid };
+  }
+
+  /** A one-shot upload always starts with the newest pending records. */
+  async runOnce(url: string, token: string): Promise<RunResult> {
+    return (await this.runBatch(url, token, null)).result;
   }
 
   /** An empty batch: checks address and token without sending records. */
@@ -143,13 +154,17 @@ export class Uploader {
     return typeof out.records === "number" ? out.records : null;
   }
 
-  /** Batches until nothing is pending or a batch makes no progress. */
+  /** One newest-to-oldest pass. Each pending record is attempted at most
+   * once per drain, even if the backend returns UNCERTAIN for an entire batch.
+   * Those records stay pending and will be retried on the next sync tick. */
   async drain(url: string, token: string): Promise<RunResult> {
     const total: RunResult = { sent: 0, final: 0, uncertain: 0 };
+    let beforeRowid: number | null = null;
     for (let i = 0; i < 1000; i++) {
-      const r = await this.runOnce(url, token);
+      const { result: r, nextRowid } = await this.runBatch(url, token, beforeRowid);
       total.sent += r.sent; total.final += r.final; total.uncertain += r.uncertain;
-      if (r.sent < BATCH || r.final === 0) break;
+      if (r.sent < BATCH || nextRowid === null) break;
+      beforeRowid = nextRowid;
     }
     return total;
   }
