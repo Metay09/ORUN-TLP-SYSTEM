@@ -24,29 +24,86 @@
 .status-chip.note { background: var(--aging-b); color: var(--aging-t); box-shadow: none; }
 .map-tools { position: absolute; right: 16px; top: calc(80px + var(--safe-t)); display: flex; flex-direction: column; gap: 10px; z-index: 5; }
 
-/* pins (HTML markers) */
-.pin { position: relative; width: 46px; height: 46px; border: 0; padding: 0; background: none; display: grid; place-items: center; cursor: pointer; }
-.pin > svg { position: absolute; inset: 0; width: 100%; height: 100%; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .35)); }
-.pin .fc {
-  position: relative; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: #fff;
-  font-family: var(--display); font-weight: 800; font-size: 13px;
+/* Pins: 44px tap targets, but only 19–30px of visible map is obscured.
+   The CSS variables are updated during MapLibre zoom animations; the real
+   GNSS coordinates always remain at the exact centre of the coloured circle. */
+.pin {
+  --pin-visual: var(--pin-size, 30px);
+  position: relative; width: 44px; height: 44px; padding: 0; border: 0;
+  background: none; display: grid; place-items: center; cursor: pointer;
 }
+.pin > svg {
+  position: absolute; left: 50%; top: 50%;
+  width: var(--pin-visual); height: var(--pin-visual);
+  transform: translate(-50%, -50%);
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .4));
+}
+.pin .fc {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: calc(var(--pin-visual) * .72); height: calc(var(--pin-visual) * .72);
+  border-radius: 50%; display: grid; place-items: center; color: #fff;
+  font-family: var(--display); font-weight: 800;
+  font-size: clamp(9px, calc(var(--pin-visual) * .4), 13px);
+  overflow: hidden;
+}
+.pin .fc svg { width: 70%; height: 70%; }
 .pin .fc.dim { opacity: .55; filter: saturate(.4); }
 .pin .lbl {
-  position: absolute; left: 50%; top: 100%; transform: translateX(-50%); margin-top: 2px; font-size: 11px; font-weight: 700; color: #1A2A22;
-  background: rgba(255, 255, 255, .92); border-radius: 6px; padding: 1px 6px; white-space: nowrap; pointer-events: none;
+  position: absolute; left: 50%; top: calc(50% + var(--pin-visual) * .5);
+  transform: translateX(-50%); margin-top: 3px;
+  font-size: 10px; font-weight: 700; color: #1A2A22;
+  background: rgba(255, 255, 255, .94); border-radius: 6px;
+  padding: 2px 5px; white-space: nowrap; pointer-events: none;
+  box-shadow: 0 1px 3px #0003;
 }
-.pin.selected { width: 58px; height: 58px; }
-.pin.selected .fc { width: 44px; height: 44px; font-size: 16px; }
-.pin.selected > svg { filter: drop-shadow(0 0 0 #fff) drop-shadow(0 4px 10px rgba(0, 0, 0, .45)); }
+.pin.selected { --pin-visual: var(--pin-selected-size, 34px); }
+.pin.selected > svg { filter: drop-shadow(0 1px 4px rgba(0, 0, 0, .55)); }
 .pin.in-cluster { visibility: hidden; }
-.pin .pulse { position: absolute; inset: -6px; border-radius: 50%; border: 3px solid var(--alarm); animation: pulse 1.8s ease-out infinite; pointer-events: none; }
-@keyframes pulse { from { transform: scale(.8); opacity: .9; } to { transform: scale(1.35); opacity: 0; } }
-.cluster {
-  width: 46px; height: 46px; border-radius: 50%; border: 4px solid var(--fresh); background: #fff; color: #13241C; display: grid; place-items: center;
-  font-family: var(--display); font-weight: 800; font-size: 16px; box-shadow: 0 3px 10px rgba(0, 0, 0, .35); cursor: pointer;
+.pin .pulse {
+  position: absolute; left: 50%; top: 50%;
+  width: var(--pin-visual); height: var(--pin-visual);
+  transform: translate(-50%, -50%);
+  border-radius: 50%; border: 2px solid var(--alarm);
+  animation: pin-pulse 1.8s ease-out infinite; pointer-events: none;
 }
-.cluster.c-aging { border-color: var(--aging); } .cluster.c-silent { border-color: var(--silent); } .cluster.c-alarm { border-color: var(--alarm); }
+@keyframes pin-pulse {
+  from { box-shadow: 0 0 0 0 rgba(217,71,47,.5); }
+  to { box-shadow: 0 0 0 10px rgba(217,71,47,0); }
+}
+/* When collars truly share one fix, keep the selected animal plus a +N
+   indicator rather than hiding it behind a generic cluster. */
+.pin-count {
+  position: absolute; right: -3px; top: -3px;
+  min-width: 20px; height: 20px; padding: 0 4px;
+  border-radius: 11px; border: 2px solid #fff;
+  display: grid; place-items: center; background: #163F32; color: #fff;
+  font: 800 10px/1 var(--font); box-shadow: 0 1px 4px #0007;
+}
+.cluster {
+  width: 44px; height: 44px; padding: 0; border: 0; background: transparent;
+  display: grid; place-items: center; cursor: pointer;
+}
+.cluster > b {
+  width: var(--cluster-size, 32px); height: var(--cluster-size, 32px);
+  border: 3px solid var(--fresh); border-radius: 50%;
+  background: #fff; color: #13241C; display: grid; place-items: center;
+  font: 800 clamp(11px, calc(var(--cluster-size) * .43), 15px)/1 var(--display);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
+}
+.cluster.c-aging > b { border-color: var(--aging); }
+.cluster.c-silent > b { border-color: var(--silent); }
+.cluster.c-alarm > b { border-color: var(--alarm); }
+.pin-choices {
+  display: flex; flex-direction: column; max-height: min(250px, 38vh);
+  min-width: 150px; overflow-y: auto; gap: 3px; color: #13241C;
+}
+.pin-choices strong { padding: 4px 5px 7px; font-size: 13px; }
+.pin-choices button {
+  width: 100%; min-height: 40px; border: 0; border-radius: 8px;
+  padding: 7px 10px; background: #F0F4EE; color: #12281C;
+  font-weight: 700; font-size: 13px; text-align: left;
+}
+.pin-choices button:active { background: #DDE9DD; }
 .station-pin {
   width: 38px; height: 38px; border-radius: 12px; background: var(--card); color: var(--mute); display: grid; place-items: center;
   box-shadow: 0 4px 12px rgba(0, 0, 0, .3);
@@ -61,15 +118,21 @@
 }
 .ghost-pin { width: 20px; height: 20px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 2px rgba(0, 0, 0, .35), 0 2px 8px rgba(0, 0, 0, .4); }
 
-/* sheet */
+/* sheet: same design, larger invisible swipe target, no extra toggle.
+   Do NOT put touch-action:none on .sheet: that blocks scrolling its content.
+   Only the grip owns vertical pointer gestures. */
 .sheet {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--card); border-radius: 28px 28px 0 0;
-  box-shadow: var(--sheet-shadow); display: flex; flex-direction: column; transition: height .22s ease; touch-action: none;
+  box-shadow: var(--sheet-shadow); display: flex; flex-direction: column; transition: height .22s ease; touch-action: auto;
 }
 .sheet.dragging { transition: none; }
-.sheet-grip { padding: 10px 0 2px; cursor: grab; touch-action: none; flex: none; }
-.sheet-grip .handle { display: block; width: 40px; height: 5px; border-radius: 3px; background: var(--hair2); margin: 0 auto 8px; }
-.sheet-body { flex: 1; overflow-y: auto; touch-action: pan-y; padding-bottom: 12px; }
+.sheet-grip {
+  min-height: 56px; padding: 8px 0 10px; flex: none; display: flex; flex-direction: column;
+  justify-content: center; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.sheet-grip:active { cursor: grabbing; }
+.sheet-grip .handle { display: block; flex: none; width: 48px; height: 5px; border-radius: 3px; background: var(--hair2); margin: 0 auto 10px; }
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; overscroll-behavior: contain; padding-bottom: 12px; }
 .sum { padding: 0 20px; }
 .sum .disp { font-size: 20px; }
 .att { display: flex; gap: 10px; padding: 12px 20px 8px; overflow-x: auto; scrollbar-width: none; }

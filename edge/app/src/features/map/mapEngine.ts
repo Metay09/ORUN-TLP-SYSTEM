@@ -9,7 +9,7 @@
 //   3D relief — AWS Terrain Tiles (Terrarium DEM), zoom 15
 // Without internet the base is blank but animals, trails and layers still draw.
 import {
-  AttributionControl, GeoJSONSource, LngLatBounds, Map as MlMap, Marker, setWorkerUrl,
+  AttributionControl, GeoJSONSource, LngLatBounds, Map as MlMap, Marker, Popup, setWorkerUrl,
   type StyleSpecification,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -21,12 +21,14 @@ import { agingLimit, epochMs, periodMs } from "../../app/herd.ts";
 import type { Animal, Observation } from "../../app/model.ts";
 import type { BaseMap, Layers } from "../../app/stores.ts";
 import { toneOfStatus } from "../../ds/components.tsx";
+import type { Zone } from "../zones/geometry.ts";
+import { clusterDiameter, groupScreenPins, pinDiameter } from "./pinLayout.ts";
+import { satelliteRasterParts } from "./satelliteStyle.ts";
 
 setWorkerUrl(workerUrl);
 
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services";
 const ATTR = {
-  esri: "Görüntü © Esri, Maxar, Earthstar Geographics",
   topo: "© OpenTopoMap (CC-BY-SA) · © OpenStreetMap katkıcıları",
   ofm: "OpenFreeMap © OpenMapTiles · © OpenStreetMap katkıcıları",
   dem: "Yükselti: AWS Terrain Tiles (Mapzen)",
@@ -58,7 +60,7 @@ export interface EngineOpts {
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const RING = 2 * Math.PI * 23;
-const LABEL_ZOOM = 16.5;
+const LABEL_ZOOM = 18.5;
 const TONE_VAR: Record<string, string> = { fresh: "var(--fresh)", aging: "var(--aging)", silent: "var(--silent)", alarm: "var(--alarm)" };
 const COW = '<svg viewBox="0 0 256 256" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M120,128a16,16,0,1,1-16-16A16,16,0,0,1,120,128Zm32-16a16,16,0,1,0,16,16A16,16,0,0,0,152,112Zm84,20a20,20,0,0,1-20,20H204v15a38,38,0,0,1-22,69H74a38,38,0,0,1-22-69V152H40a20,20,0,0,1-20-20,60,60,0,0,1,36-55V48a12,12,0,0,1,24,0V70h96V48a12,12,0,0,1,24,0V77A60,60,0,0,1,236,132ZM180,198a14,14,0,0,0-14-14H90a14,14,0,0,0,0,28h76A14,14,0,0,0,180,198Z"/></svg>';
 
@@ -105,12 +107,13 @@ function trailFeatures(points: Observation[], color: string, cursor: number | nu
   return out;
 }
 
-function rasterStyle(base: BaseMap, labels: boolean): StyleSpecification {
+function rasterStyle(base: BaseMap, labels: boolean, satelliteSafe: boolean): StyleSpecification {
   const sources: StyleSpecification["sources"] = {};
   const layers: StyleSpecification["layers"] = [{ id: "bg", type: "background", paint: { "background-color": "#DDE3D6" } }];
   if (base === "satellite") {
-    sources.base = { type: "raster", tiles: [`${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`], tileSize: 256, maxzoom: 19, attribution: ATTR.esri };
-    layers.push({ id: "base", type: "raster", source: "base" });
+    const imagery = satelliteRasterParts("base", satelliteSafe);
+    Object.assign(sources, imagery.sources);
+    layers.push(...imagery.layers);
     if (labels) {
       sources.labels = { type: "raster", tiles: [`${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`], tileSize: 256, maxzoom: 19 };
       layers.push({ id: "labels", type: "raster", source: "labels", paint: { "raster-opacity": 0.9 } });
@@ -128,12 +131,15 @@ export class MapEngine {
   readonly map: MlMap;
   private pins = new Map<string, Marker>();
   private clusters: Marker[] = [];
+  private groupPopup: Popup | null = null;
   private stationPins = new Map<string, Marker>();
   private meMarker: Marker | null = null;
   private ghost: Marker | null = null;
   private data: MapData | null = null;
+  private zones: Zone[] = [];  // local drafts only, never device-effective state
   private layers: Layers | null = null;
   private base: BaseMap = "satellite";
+  private satelliteSafe = false;
   private tilt = false;
   private styleKey = "";
   private streetCache: StyleSpecification | null = null;
@@ -148,6 +154,9 @@ export class MapEngine {
       container: el, style: FALLBACK, center: view?.center ?? [28.0546, 37.6107], zoom: view?.zoom ?? 14,
       maxZoom: 20, maxPitch: 75, attributionControl: false, fadeDuration: 150, dragRotate: true, touchPitch: true,
       refreshExpiredTiles: false,
+      // Never cancel just-loaded wider-view tiles while a pinch zoom is
+      // asking for more detailed ones. Avoid transient blank map flashes.
+      cancelPendingTileRequestsWhileZooming: false,
     });
     this.map.addControl(new AttributionControl({ compact: true, customAttribution: ATTR.dem }), "bottom-right");
     // Attribution stays one tap away (the (i) button), not open over the map.
@@ -159,6 +168,16 @@ export class MapEngine {
     this.resizer = new ResizeObserver(() => this.map.resize());
     this.resizer.observe(el);
     this.map.on("style.load", () => this.addOverlays());
+    // Visual glyphs react while the pinch gesture is running; no costly marker
+    // DOM rebuild or geolocation mutation on every animation frame.
+    const resizePins = () => {
+      const z = this.map.getZoom();
+      el.style.setProperty("--pin-size", `${pinDiameter(z)}px`);
+      el.style.setProperty("--pin-selected-size", `${pinDiameter(z, true)}px`);
+      el.style.setProperty("--cluster-size", `${clusterDiameter(z)}px`);
+    };
+    resizePins();
+    this.map.on("zoom", resizePins);
     this.map.on("moveend", () => this.recluster());
     this.map.on("zoomend", () => { this.recluster(); this.opts.onZoom?.(this.map.getZoom()); });
     this.map.on("click", (e) => {
@@ -167,16 +186,17 @@ export class MapEngine {
     });
   }
 
-  destroy(): void { this.resizer.disconnect(); this.map.remove(); }
+  destroy(): void { this.groupPopup?.remove(); this.resizer.disconnect(); this.map.remove(); }
 
   // ------------------------------------------------------------- styling --
-  async setBase(base: BaseMap, layers: Layers): Promise<void> {
-    const key = `${base}|${base === "satellite" && layers.labels}`;
+  async setBase(base: BaseMap, layers: Layers, satelliteSafe = false): Promise<void> {
+    const key = `${base}|${base === "satellite" && layers.labels}|${base === "satellite" && satelliteSafe}`;
     this.base = base;
     this.layers = layers;
+    this.satelliteSafe = satelliteSafe;
     if (key === this.styleKey) { this.applyVisibility(); return; }
     this.styleKey = key;
-    if (base !== "street") { this.map.setStyle(rasterStyle(base, layers.labels), { diff: false }); this.opts.onOffline(false); return; }
+    if (base !== "street") { this.map.setStyle(rasterStyle(base, layers.labels, satelliteSafe), { diff: false }); this.opts.onOffline(false); return; }
     try {
       if (!this.streetCache) {
         const ctl = new AbortController();
@@ -214,7 +234,7 @@ export class MapEngine {
     if (!m.getSource("dem")) m.addSource("dem", { type: "raster-dem", tiles: [DEM], tileSize: 256, maxzoom: 15, encoding: "terrarium" });
     if (!m.getSource("dem-shade")) m.addSource("dem-shade", { type: "raster-dem", tiles: [DEM], tileSize: 256, maxzoom: 15, encoding: "terrarium" });
     const empty = fc([]);
-    for (const id of ["o-coverage", "o-heat", "o-trail", "o-trail-pts", "o-me"])
+    for (const id of ["o-coverage", "o-heat", "o-trail", "o-trail-pts", "o-me", "o-zones"])
       if (!m.getSource(id)) m.addSource(id, { type: "geojson", data: empty });
     const add = (spec: Parameters<MlMap["addLayer"]>[0]) => { if (!m.getLayer(spec.id)) m.addLayer(spec); };
     add({ id: "o-relief", type: "hillshade", source: "dem-shade", layout: { visibility: "none" },
@@ -229,6 +249,17 @@ export class MapEngine {
         "heatmap-opacity": 0.75,
         "heatmap-color": ["interpolate", ["linear"], ["heatmap-density"], 0, "rgba(0,0,0,0)", 0.15, "rgba(200,241,105,0.45)",
           0.4, "rgba(226,162,28,0.7)", 0.7, "rgba(217,71,47,0.8)", 1, "rgba(150,20,20,0.9)"],
+      } });
+    // Pasture plans are always dashed: do not imply they were applied to collars.
+    add({ id: "o-zones-fill", type: "fill", source: "o-zones",
+      paint: {
+        "fill-color": ["case", ["get", "active"], "#FFD60A", "#B2BEC3"],
+        "fill-opacity": ["case", ["get", "active"], 0.13, 0.035],
+      } });
+    add({ id: "o-zones-line", type: "line", source: "o-zones",
+      paint: {
+        "line-color": ["case", ["get", "active"], "#FFD60A", "#C3CBD1"],
+        "line-width": 2.5, "line-opacity": 0.95, "line-dasharray": [4, 2],
       } });
     add({ id: "o-trail-casing", type: "line", source: "o-trail", filter: ["==", ["get", "gap"], false], layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": "#FFFFFF", "line-width": 6, "line-opacity": ["case", ["get", "past"], 0.85, 0.3] } });
@@ -247,6 +278,7 @@ export class MapEngine {
     this.applyTerrain();
     this.applyVisibility();
     if (this.data) this.pushData(this.data, true);
+    this.pushZones();
   }
 
   private applyVisibility(): void {
@@ -256,6 +288,8 @@ export class MapEngine {
     vis("o-relief", l.relief && this.base !== "street");
     vis("o-coverage", l.coverage);
     vis("o-heat", l.heat);
+    vis("o-zones-fill", l.zones);
+    vis("o-zones-line", l.zones);
     for (const id of ["o-trail-casing", "o-trail", "o-trail-gap", "o-trail-pts"]) vis(id, l.trail);
     vis("o-me", l.me);
     for (const mk of this.pins.values()) mk.getElement().style.display = l.animals ? "" : "none";
@@ -267,8 +301,25 @@ export class MapEngine {
   setLayers(layers: Layers): void {
     const relabel = this.base === "satellite" && this.layers?.labels !== layers.labels;
     this.layers = layers;
-    if (relabel) { void this.setBase(this.base, layers); return; }
+    if (relabel) { void this.setBase(this.base, layers, this.satelliteSafe); return; }
     this.applyVisibility();
+  }
+
+  // ----------------------------------------------------------- local zones --
+  setZones(zones: Zone[]): void {
+    this.zones = zones;
+    this.pushZones();
+  }
+
+  private pushZones(): void {
+    const src = this.map.getSource("o-zones") as GeoJSONSource | undefined;
+    if (!src) return;
+    const features: Feature[] = this.zones.map((z): Feature => ({
+      type: "Feature",
+      properties: { id: z.id, name: z.name, active: z.active, state: "LOCAL_DRAFT" },
+      geometry: { type: "Polygon", coordinates: [[...z.ring, z.ring[0]]] },
+    }));
+    void src.setData(fc(features));
   }
 
   // ---------------------------------------------------------------- data --
@@ -307,12 +358,22 @@ export class MapEngine {
 
   private syncPins(d: MapData): void {
     const label = this.labelled;
+    const positioned = d.herd.filter((a) => a.last);
+    const projected = new Map(positioned.map((a) => [a.id, this.map.project([a.last!.lon, a.last!.lat])] as const));
     const keep = new Set<string>();
     for (const a of d.herd) {
       if (!a.last) continue;
       keep.add(a.id);
       let mk = this.pins.get(a.id);
-      const html = pinHtml(a, a.id === d.selected, label);
+      const at = projected.get(a.id)!;
+      // Keep the name visible only if it will not blanket another GPS dot.
+      // The selected animal always retains its caption.
+      const clearForName = label && positioned.every((other) => {
+        if (other.id === a.id) return true;
+        const p = projected.get(other.id)!;
+        return Math.hypot(at.x - p.x, at.y - p.y) >= Math.max(92, 24 + a.name.length * 7);
+      });
+      const html = pinHtml(a, a.id === d.selected, clearForName);
       if (!mk) {
         const el = document.createElement("button");
         el.className = "pin";
@@ -332,40 +393,117 @@ export class MapEngine {
     for (const [id, mk] of this.pins) if (!keep.has(id)) { mk.remove(); this.pins.delete(id); }
   }
 
-  /** Overlapping pins merge into a count bubble until zoomed in. */
+  /**
+   * A tiny marker can still hide another tiny marker when GPS fixes coincide.
+   * Cluster by projected pixel collision even at maximum zoom. A cluster
+   * always shows its true animal count; the user can tap to expand or select.
+   * The map engine NEVER modifies or averages the reported GNSS positions.
+   */
   private recluster(): void {
     const d = this.data;
     for (const c of this.clusters) c.remove();
     this.clusters = [];
     if (!d) return;
     const zoom = this.map.getZoom();
-    if ((zoom >= LABEL_ZOOM) !== this.labelled) { this.labelled = zoom >= LABEL_ZOOM; this.syncPins(d); }
-    const pts = d.herd.filter((a) => a.last).map((a) => ({ a, p: this.map.project([a.last!.lon, a.last!.lat]) }));
-    for (const mk of this.pins.values()) mk.getElement().classList.remove("in-cluster");
-    if (zoom >= 17.5) return;
-    const used = new Set<string>();
-    for (const { a, p } of pts) {
-      if (used.has(a.id) || a.id === d.selected) continue;
-      const group = pts.filter((o) => !used.has(o.a.id) && o.a.id !== d.selected && Math.hypot(o.p.x - p.x, o.p.y - p.y) < 36);
-      if (group.length < 2) continue;
-      for (const g of group) { used.add(g.a.id); this.pins.get(g.a.id)?.getElement().classList.add("in-cluster"); }
-      const worst = group.reduce((w, g) => (g.a.attention > w.attention ? g.a : w), group[0].a);
-      const lat = group.reduce((s, g) => s + g.a.last!.lat, 0) / group.length;
-      const lon = group.reduce((s, g) => s + g.a.last!.lon, 0) / group.length;
+    if ((zoom >= LABEL_ZOOM) !== this.labelled) {
+      this.labelled = zoom >= LABEL_ZOOM;
+      this.syncPins(d);
+    }
+    for (const mk of this.pins.values()) {
+      const el = mk.getElement();
+      el.classList.remove("in-cluster");
+      el.querySelector(".pin-count")?.remove();
+    }
+
+    const animals = d.herd.filter((a) => a.last);
+    const byId = new Map(animals.map((a) => [a.id, a] as const));
+    const groups = groupScreenPins(animals.map((a) => {
+      const p = this.map.project([a.last!.lon, a.last!.lat]);
+      return { id: a.id, x: p.x, y: p.y, selected: a.id === d.selected };
+    }), zoom);
+
+    for (const group of groups) {
+      if (group.ids.length < 2) continue;
+      const members = group.ids.map((id) => byId.get(id)!).filter(Boolean);
+      const middle: [number, number] = [
+        members.reduce((n, a) => n + a.last!.lon, 0) / members.length,
+        members.reduce((n, a) => n + a.last!.lat, 0) / members.length,
+      ];
+      if (group.selectedId) {
+        // Selected marker stays clickable at the real GPS coordinate, with a
+        // +N indicator to avoid hiding the presence of the other animals.
+        const chosen = this.pins.get(group.selectedId)?.getElement();
+        for (const a of members) {
+          if (a.id !== group.selectedId) this.pins.get(a.id)?.getElement().classList.add("in-cluster");
+        }
+        if (chosen) {
+          const badge = document.createElement("span");
+          badge.className = "pin-count";
+          badge.textContent = `+${members.length - 1}`;
+          badge.setAttribute("aria-label", `${members.length - 1} hayvan daha, listeyi aç`);
+          badge.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.showGroupChoices(members, middle);
+          });
+          chosen.appendChild(badge);
+        }
+        continue;
+      }
+      for (const a of members) this.pins.get(a.id)?.getElement().classList.add("in-cluster");
+
+      const worst = members.reduce((w, a) => a.attention > w.attention ? a : w, members[0]);
       const el = document.createElement("button");
       el.className = `cluster c-${toneOfStatus(worst.status)}`;
-      el.innerHTML = `<b>${group.length}</b>`;
-      el.setAttribute("aria-label", `${group.length} hayvan`);
+      el.setAttribute("aria-label", `${members.length} hayvan aynı bölgede; görmek için dokun`);
+      const count = document.createElement("b");
+      count.textContent = String(members.length);
+      el.appendChild(count);
+      el.style.zIndex = "8";
       el.style.display = this.layers?.animals === false ? "none" : "";
-      const members = group.map((g) => g.a.last!);
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        const b = new LngLatBounds();
-        for (const m of members) b.extend([m.lon, m.lat]);
-        this.map.fitBounds(b, { padding: 90, maxZoom: 18.5, duration: 600 });
+        // If pin positions can spread visually, zoom into the group. At fine
+        // zoom (or identical fixes) a list is required; zoom alone cannot
+        // separate collars that really report the same coordinate.
+        const coords = members.map((a) => a.last!);
+        const first = coords[0];
+        const spread = coords.some((p) => Math.abs(p.lon - first.lon) > 0.0000001 ||
+          Math.abs(p.lat - first.lat) > 0.0000001);
+        if (this.map.getZoom() < 18.5 && spread) {
+          const b = new LngLatBounds();
+          for (const p of coords) b.extend([p.lon, p.lat]);
+          this.map.fitBounds(b, { padding: 92, maxZoom: 19.5, duration: 500 });
+        } else {
+          this.showGroupChoices(members, middle);
+        }
       });
-      this.clusters.push(new Marker({ element: el, anchor: "center" }).setLngLat([lon, lat]).addTo(this.map));
+      this.clusters.push(new Marker({ element: el, anchor: "center" }).setLngLat(middle).addTo(this.map));
     }
+  }
+
+  /** Accessible animal picker for collars which remain superimposed at close zoom. */
+  private showGroupChoices(animals: Animal[], at: [number, number]): void {
+    this.groupPopup?.remove();
+    const box = document.createElement("div");
+    box.className = "pin-choices";
+    const title = document.createElement("strong");
+    title.textContent = `${animals.length} hayvan bu konumda`;
+    box.appendChild(title);
+    for (const animal of animals) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = animal.name;
+      button.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.groupPopup?.remove();
+        this.groupPopup = null;
+        this.opts.onSelect(animal.id);
+      });
+      box.appendChild(button);
+    }
+    this.groupPopup = new Popup({
+      offset: 20, maxWidth: "240px", closeButton: true, closeOnClick: true,
+    }).setDOMContent(box).setLngLat(at).addTo(this.map);
   }
 
   private syncStations(list: StationPin[]): void {
@@ -391,6 +529,7 @@ export class MapEngine {
     if (!this.meMarker) {
       const el = document.createElement("div");
       el.className = "me-pin";
+      el.style.zIndex = "30"; // Always reveal the phone location over livestock balloons.
       el.innerHTML = '<span class="cone"></span><span class="dot"></span>';
       this.meMarker = new Marker({ element: el, anchor: "center", rotationAlignment: "map" }).setLngLat([me.lon, me.lat]).addTo(this.map);
     }

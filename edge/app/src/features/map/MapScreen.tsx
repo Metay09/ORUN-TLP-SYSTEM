@@ -21,6 +21,7 @@ import { startPosition, usePosition } from "./position.ts";
 import { Sheet, type Snap } from "./Sheet.tsx";
 import { HerdSearch } from "./HerdSearch.tsx";
 import { stationWords } from "../network/words.ts";
+import { loadZones } from "../zones/geometry.ts";
 
 let savedView: { center: [number, number]; zoom: number } | undefined;
 const RANGES: Range[] = ["today", "h24", "d3", "d7"];
@@ -64,7 +65,10 @@ export function MapScreen({ visible }: { visible: boolean }) {
     return () => { savedView = e.view(); e.destroy(); engine.current = null; };
   }, []);
   useEffect(() => { if (visible) engine.current?.map.resize(); }, [visible]);
-  useEffect(() => { void engine.current?.setBase(m.prefs.base, L); }, [m.prefs.base, L.labels]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The Alanlar editor changes this WebView's localStorage on the same page;
+  // a browser 'storage' event does not fire for that. Refresh on tab entry.
+  useEffect(() => { if (visible) engine.current?.setZones(loadZones()); }, [visible]);
+  useEffect(() => { void engine.current?.setBase(m.prefs.base, L, m.prefs.satelliteSafe); }, [m.prefs.base, L.labels, m.prefs.satelliteSafe]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { engine.current?.setLayers(L); }, [L]);
   useEffect(() => { engine.current?.setTilt(m.prefs.tilt); }, [m.prefs.tilt]);
   useEffect(() => { engine.current?.setPadding(sheetPx); }, [sheetPx]);

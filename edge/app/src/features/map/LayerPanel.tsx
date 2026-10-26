@@ -22,7 +22,12 @@ export function LayerPanel({ onClose }: { onClose: () => void }) {
         ))}
       </div>
       <ToggleRow title={tr.map.tilt} on={p.tilt} onChange={(v) => m.actions.setPrefs({ tilt: v })} />
-      {p.base === "satellite" && <ToggleRow title={tr.map.layer.labels} on={L.labels} onChange={(v) => set("labels", v)} />}
+      {p.base === "satellite" && <>
+        <ToggleRow title="Güvenli uydu görüntüsü"
+          sub="Gri 'Map data not yet available' karoları çıkarsa aç. Daha düşük ayrıntıyı büyütür, yakınlaştırma sınırını azaltmaz."
+          on={p.satelliteSafe} onChange={(v) => m.actions.setPrefs({ satelliteSafe: v })} />
+        <ToggleRow title={tr.map.layer.labels} on={L.labels} onChange={(v) => set("labels", v)} />
+      </>}
       {p.base !== "street" && <ToggleRow title={tr.map.layer.relief} on={L.relief} onChange={(v) => set("relief", v)} />}
 
       <Section title={tr.map.layer.title} />
@@ -30,6 +35,7 @@ export function LayerPanel({ onClose }: { onClose: () => void }) {
       <ToggleRow title={tr.map.layer.trail} sub={tr.map.layerHelp.trail} on={L.trail} onChange={(v) => set("trail", v)} />
       <ToggleRow title={tr.map.layer.heat} sub={tr.map.layerHelp.heat} on={L.heat} onChange={(v) => set("heat", v)} />
       {L.heat && <><div className="heat-ramp" /><div className="legend" style={{ justifyContent: "space-between", paddingTop: 4 }}><span>Az</span><span>Çok</span></div></>}
+      <ToggleRow title={tr.map.layer.zones} sub="Bu telefondaki mera taslakları; tasmaya uygulanmış sınırlar değil" on={L.zones} onChange={(v) => set("zones", v)} />
       <ToggleRow title={tr.map.layer.coverage} sub={tr.map.layerHelp.coverage} on={L.coverage} onChange={(v) => set("coverage", v)} />
       {L.coverage && (
         <div className="legend">

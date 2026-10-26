@@ -124,17 +124,17 @@ export type Theme = "auto" | "light" | "dark";
 export type BaseMap = "satellite" | "terrain" | "street";
 export type Range = "today" | "h24" | "d3" | "d7" | "d30";
 export interface Layers {
-  animals: boolean; trail: boolean; heat: boolean; coverage: boolean;
+  animals: boolean; trail: boolean; heat: boolean; coverage: boolean; zones: boolean;
   stations: boolean; me: boolean; labels: boolean; relief: boolean;
 }
 export interface Prefs {
   theme: Theme; sun: boolean; demo: boolean | null;   // null: not chosen yet
-  base: BaseMap; tilt: boolean; layers: Layers; range: Range;
+  base: BaseMap; tilt: boolean; satelliteSafe: boolean; layers: Layers; range: Range;
 }
 
 export const DEFAULT_PREFS: Prefs = {
-  theme: "auto", sun: false, demo: null, base: "satellite", tilt: false,
-  layers: { animals: true, trail: true, heat: false, coverage: false, stations: true, me: true, labels: true, relief: false },
+  theme: "auto", sun: false, demo: null, base: "satellite", tilt: false, satelliteSafe: false,
+  layers: { animals: true, trail: true, heat: false, coverage: false, zones: true, stations: true, me: true, labels: true, relief: false },
   range: "h24",
 };
 
