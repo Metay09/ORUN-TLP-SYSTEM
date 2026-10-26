@@ -30,6 +30,7 @@ export function LayerPanel({ onClose }: { onClose: () => void }) {
       <ToggleRow title={tr.map.layer.trail} sub={tr.map.layerHelp.trail} on={L.trail} onChange={(v) => set("trail", v)} />
       <ToggleRow title={tr.map.layer.heat} sub={tr.map.layerHelp.heat} on={L.heat} onChange={(v) => set("heat", v)} />
       {L.heat && <><div className="heat-ramp" /><div className="legend" style={{ justifyContent: "space-between", paddingTop: 4 }}><span>Az</span><span>Çok</span></div></>}
+      <ToggleRow title={tr.map.layer.zones} sub="Bu telefondaki mera taslakları; tasmaya uygulanmış sınırlar değil" on={L.zones} onChange={(v) => set("zones", v)} />
       <ToggleRow title={tr.map.layer.coverage} sub={tr.map.layerHelp.coverage} on={L.coverage} onChange={(v) => set("coverage", v)} />
       {L.coverage && (
         <div className="legend">
