@@ -38,3 +38,17 @@ test("satellite: pasture crosshair can use the same no-blank underlay", () => {
   assert.equal(parts.layers[0].maxzoom, undefined);
   assert.equal(parts.layers[1].maxzoom, undefined);
 });
+
+test("satellite: safe mode cannot paint opaque error-text detail tiles over the valid z15 source", () => {
+  for (const id of ["base", "satellite"]) {
+    const parts = satelliteRasterParts(id, true);
+    assert.equal(parts.layers.length, 1);
+    assert.equal(parts.layers[0].id, id);
+    const source = parts.sources[id];
+    assert.equal(source.type, "raster");
+    if (source.type !== "raster") continue;
+    assert.equal(source.maxzoom, SATELLITE_FALLBACK_ZOOM);
+    assert.deepEqual(source.tiles, [SATELLITE_TILE_URL]);
+    assert.equal(source.attribution, SATELLITE_ATTRIBUTION);
+  }
+});
