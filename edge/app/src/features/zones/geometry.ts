@@ -91,6 +91,43 @@ export function validateSet(zones: Zone[]): string | null {
   return null;
 }
 
+/**
+ * Safely reduce a valid polygon to a device's remaining vertex budget.
+ * Never mutates input; rejects candidates that change the measured area by
+ * more than `maxLossPct` or break firmware-compatible topology.
+ * Unlike geometric libraries that blindly simplify, every step is validated.
+ */
+export function simplifyRingToBudget(
+  input: Ring, maxVertices: number, maxLossPct = 2,
+): { ring: Ring; areaDeltaPct: number } | null {
+  if (!Number.isInteger(maxVertices) || maxVertices < 3 || maxVertices > 64 ||
+      !Number.isFinite(maxLossPct) || maxLossPct < 0) return null;
+  const original = canonicalRing(input);
+  if (validateRing(original)) return null;
+  const initialArea = areaHa(original);
+  if (!(initialArea > 0)) return null;
+  let current = original;
+  while (current.length > maxVertices) {
+    let best: Ring | null = null;
+    let bestCost = Infinity;
+    for (let i = 0; i < current.length; i++) {
+      const prev = current[(i - 1 + current.length) % current.length];
+      const mid = current[i];
+      const next = current[(i + 1) % current.length];
+      const candidate = current.filter((_, j) => j !== i);
+      if (validateRing(candidate)) continue;
+      const deltaPct = Math.abs(areaHa(candidate) - initialArea) / initialArea * 100;
+      if (deltaPct > maxLossPct) continue;
+      const excess = lengthM(prev, mid) + lengthM(mid, next) - lengthM(prev, next);
+      const cost = deltaPct * 1000 + excess;
+      if (cost < bestCost) { bestCost = cost; best = candidate; }
+    }
+    if (!best) return null;
+    current = best;
+  }
+  return { ring: current, areaDeltaPct: Math.abs(areaHa(current) - initialArea) / initialArea * 100 };
+}
+
 /** Preview follows the *actual map centre* before committing a new vertex.
  * Never mutates the saved/draft ring. A preview is never a device instruction. */
 export function previewAtCentre(draft: Ring, centre: Point | null): Ring {
