@@ -44,11 +44,15 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
   const [draft, setDraft] = useState<Ring>(() => zone?.ring.map((p) => [...p] as Point) ?? []);
   const [past, setPast] = useState<Ring[]>([]);
   const [future, setFuture] = useState<Ring[]>([]);
-  const [mode, setMode] = useState<"cross" | "tap">("cross");
+  const [mode, setMode] = useState<"cross" | "tap">(zone ? "tap" : "cross");
+  const [saveSheet, setSaveSheet] = useState(false);
   const [error, setError] = useState("");
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<MlMap | null>(null);
   const markers = useRef<Marker[]>([]);
+  const areaValue = useRef<HTMLSpanElement>(null);
+  const perimeterValue = useRef<HTMLSpanElement>(null);
+  const nextEdgeValue = useRef<HTMLSpanElement>(null);
   const draftNow = useRef(draft);
   const modeNow = useRef(mode);
   draftNow.current = draft; modeNow.current = mode;
@@ -63,6 +67,33 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
   const changeRef = useRef(changeDraft);
   changeRef.current = changeDraft;
 
+  // Exactly the source HTML's centre-cross behaviour: the crosshair and the
+  // next-point geometry share map.getCenter(), not a CSS offset or touch point.
+  // Called on camera moves without rebuilding draggable vertex markers.
+  const previewRef = useRef<() => void>(() => undefined);
+  previewRef.current = () => {
+    const m = map.current;
+    if (!m || !m.getSource("zone-preview-edge")) return;
+    const p = draftNow.current;
+    const center = m.getCenter();
+    const cross: Point | null = modeNow.current === "cross" ? [center.lng, center.lat] : null;
+    const outline = cross && p.length >= 2 ? [...p, cross] : p;
+    (m.getSource("zone-preview-area") as GeoJSONSource).setData(
+      featureCollection(cross && p.length >= 2 ? [ringFeature(outline)] : []),
+    );
+    (m.getSource("zone-preview-edge") as GeoJSONSource).setData(
+      featureCollection(cross && p.length ? [lineFeature([p[p.length - 1], cross])] : []),
+    );
+    (m.getSource("zone-preview-close") as GeoJSONSource).setData(
+      featureCollection(cross && p.length >= 2 ? [lineFeature([cross, p[0]])] : []),
+    );
+    if (areaValue.current) areaValue.current.textContent = outline.length >= 3
+      ? hectares(areaHa(outline)) : "—";
+    if (perimeterValue.current) perimeterValue.current.textContent = outline.length >= 3
+      ? metres(perimeterM(outline)) : "—";
+    if (nextEdgeValue.current) nextEdgeValue.current.textContent = cross && p.length
+      ? `Son kenar: ${metres(perimeterM([p[p.length - 1], cross]))}` : "";
+  };
   const renderRef = useRef<() => void>(() => undefined);
   renderRef.current = () => {
     const m = map.current;
@@ -71,7 +102,7 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
     const saved = all.filter((z) => z.id !== zone?.id).map((z) => ringFeature(z.ring));
     (m.getSource("saved") as GeoJSONSource).setData(featureCollection(saved));
     (m.getSource("draft") as GeoJSONSource).setData(
-      featureCollection(p.length >= 3 ? [ringFeature(p)] : p.length >= 2 ? [lineFeature(p)] : []),
+      featureCollection(modeNow.current === "tap" && p.length >= 3 ? [ringFeature(p)] : p.length >= 2 ? [lineFeature(p)] : []),
     );
     for (const marker of markers.current) marker.remove();
     markers.current = [];
@@ -111,6 +142,7 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
       markers.current.push(new Marker({ element: el, anchor: "center" })
         .setLngLat([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]).addTo(m));
     });
+    previewRef.current();
   };
 
   useEffect(() => {
@@ -126,14 +158,23 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
     m.on("style.load", () => {
       m.addSource("saved", { type: "geojson", data: featureCollection([]) });
       m.addSource("draft", { type: "geojson", data: featureCollection([]) });
+      m.addSource("zone-preview-area", { type: "geojson", data: featureCollection([]) });
+      m.addSource("zone-preview-edge", { type: "geojson", data: featureCollection([]) });
+      m.addSource("zone-preview-close", { type: "geojson", data: featureCollection([]) });
       m.addLayer({ id: "zone-saved-fill", type: "fill", source: "saved",
         paint: { "fill-color": "#FFD60A", "fill-opacity": 0.14 } });
       m.addLayer({ id: "zone-saved-line", type: "line", source: "saved",
         paint: { "line-color": "#FFD60A", "line-width": 2 } });
+      m.addLayer({ id: "zone-preview-fill", type: "fill", source: "zone-preview-area",
+        paint: { "fill-color": "#FFD60A", "fill-opacity": 0.15 } });
       m.addLayer({ id: "zone-draft-fill", type: "fill", source: "draft",
-        paint: { "fill-color": "#39D990", "fill-opacity": 0.19 } });
+        paint: { "fill-color": "#FFD60A", "fill-opacity": 0.19 } });
       m.addLayer({ id: "zone-draft-line", type: "line", source: "draft",
-        paint: { "line-color": "#39D990", "line-width": 3 } });
+        paint: { "line-color": "#FFFFFF", "line-width": 3 } });
+      m.addLayer({ id: "zone-preview-next", type: "line", source: "zone-preview-edge",
+        paint: { "line-color": "#FFFFFF", "line-width": 2.5, "line-dasharray": [2.5, 2.5] } });
+      m.addLayer({ id: "zone-preview-close-line", type: "line", source: "zone-preview-close",
+        paint: { "line-color": "#FFFFFF", "line-opacity": 0.55, "line-width": 1.8, "line-dasharray": [2, 3] } });
       renderRef.current();
       if (initial.length >= 3) {
         const xs = initial.map((p) => p[0]), ys = initial.map((p) => p[1]);
@@ -141,6 +182,7 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
           { padding: 55, duration: 0, maxZoom: 17 });
       }
     });
+    m.on("move", () => previewRef.current());
     m.on("click", (e) => {
       if (modeNow.current !== "tap" || draftNow.current.length >= 64) return;
       changeRef.current([...draftNow.current, [e.lngLat.lng, e.lngLat.lat]]);
@@ -148,9 +190,9 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
     return () => { markers.current.forEach((p) => p.remove()); markers.current = []; m.remove(); map.current = null; };
     // Only construct this map once per mounted editor; all/draft are read via refs.
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { renderRef.current(); }, [draft, all]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { renderRef.current(); }, [draft, all, mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useBack(onCancel);
+  useBack(() => { if (saveSheet) setSaveSheet(false); else onCancel(); });
   const undo = () => {
     if (!past.length) return;
     setFuture((v) => [...v, draft]); setDraft(past[past.length - 1]); setPast(past.slice(0, -1)); setError("");
@@ -182,34 +224,59 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
       <div ref={host} className="zone-map" />
       <div className="zone-top">
         <button className="zone-round" onClick={onCancel} aria-label="Vazgeç"><X size={22} /></button>
-        <div className="zone-heading"><b>{zone ? "Sınırı düzenle" : "Yeni mera"}</b><span>Yalnız bu telefonda taslak</span></div>
-        <button className="btn primary small" disabled={Boolean(valid)} onClick={save}><Check size={18} /> Kaydet</button>
+        <div className="zone-heading"><b>{zone ? "Sınırı düzenle" : "Yeni alan"}</b><span>Yalnız bu telefonda taslak</span></div>
+        <button className="btn primary small" onClick={() => {
+          if (valid) { setError(valid); return; }
+          setError(""); setSaveSheet(true);
+        }}><Check size={18} /> Kaydet</button>
       </div>
-      {mode === "cross" && <div className="zone-crosshair" aria-hidden="true">+</div>}
+      <div className="zone-draw-stats" aria-live="off">
+        <span>Alan <b ref={areaValue}>{draft.length >= 3 ? hectares(areaHa(draft)) : "—"}</b> ha</span>
+        <span>Köşe <b>{draft.length}</b> / 64</span>
+        <span>Çevre <b ref={perimeterValue}>{draft.length >= 3 ? metres(perimeterM(draft)) : "—"}</b></span>
+      </div>
+      {mode === "cross" && <div className="zone-crosshair" aria-label="Harita merkezi nişangâhı" role="img" />}
       <div className="zone-draw-box">
-        <div className="zone-metrics">
-          <span><b>{hectares(areaHa(draft))}</b> ha · {hectares(areaHa(draft) * 10)} dekar</span>
-          <span><b>{draft.length}</b> / 64 köşe · {metres(perimeterM(draft))}</span>
-        </div>
-        <label className="zone-label" htmlFor="zone-name">Mera adı
-          <input id="zone-name" value={name} maxLength={40} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <label className="zone-check"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
-          Hazırlanan sınıra dahil et (cihaza göndermez)
-        </label>
         <div className="zone-actions">
-          <button className="btn small" onClick={() => setMode(mode === "cross" ? "tap" : "cross")}>
-            {mode === "cross" ? "Nişangâh" : "Dokunarak"}
+          <button className="zone-mode-pill" onClick={() => setMode(mode === "cross" ? "tap" : "cross")}
+            aria-label="Nokta ekleme biçimini değiştir">
+            <i />{mode === "cross" ? "Nişangâh" : "Dokunarak"}
           </button>
-          {mode === "cross" && <button className="btn signal small" onClick={addCross}><Plus size={18} /> Köşe ekle</button>}
-          <button className="zone-icon-btn" onClick={undo} disabled={!past.length} aria-label="Geri al"><ArrowCounterClockwise size={21} /></button>
-          <button className="zone-icon-btn" onClick={redo} disabled={!future.length} aria-label="Yinele"><ArrowClockwise size={21} /></button>
+          {mode === "cross" ? (
+            <button className="zone-big-add" onClick={addCross} disabled={draft.length >= 64} aria-label="Nişangâhın yerinde köşe ekle">+</button>
+          ) : <span className="zone-touch-hint">Haritaya dokun</span>}
+          <span className="zone-history">
+            <button className="zone-icon-btn" onClick={undo} disabled={!past.length} aria-label="Geri al"><ArrowCounterClockwise size={22} /></button>
+            <button className="zone-icon-btn" onClick={redo} disabled={!future.length} aria-label="Yinele"><ArrowClockwise size={22} /></button>
+          </span>
         </div>
         <p className={error || (draft.length >= 3 && valid) ? "zone-error" : "zone-hint"}>
-          {error || valid || (mode === "cross" ? "Haritayı kaydır, artının altına köşe ekle. Numaralı köşeleri sürükleyebilirsin." :
-            "Haritaya dokunarak köşe ekle. Köşeleri sürükleyebilirsin.")}
+          {error || (draft.length >= 3 ? valid : "") || (mode === "cross"
+            ? draft.length ? "Haritayı kaydır, nişangâhı sonraki köşeye getir, + bas" : "Haritayı kaydır, nişangâhı ilk köşeye getir, + bas"
+            : "Haritaya dokun veya mevcut köşeleri sürükle")}
+          {mode === "cross" && <span ref={nextEdgeValue} className="zone-next-edge" />}
         </p>
       </div>
+      {saveSheet && (
+        <div className="zone-save-scrim" onClick={() => setSaveSheet(false)}>
+          <div className="zone-save-sheet" role="dialog" aria-modal="true" aria-label="Alanı kaydet"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="zone-save-title"><h2>Alanı kaydet</h2>
+              <button className="zone-round" onClick={() => setSaveSheet(false)} aria-label="Kapat"><X size={19}/></button>
+            </div>
+            <p className="zone-save-summary">{hectares(areaHa(draft))} ha · {hectares(areaHa(draft) * 10)} dekar · çevre {metres(perimeterM(draft))} · {draft.length} köşe</p>
+            <label className="zone-label" htmlFor="zone-name">Mera adı
+              <input id="zone-name" autoFocus value={name} maxLength={40} onChange={(e) => setName(e.target.value)} />
+            </label>
+            <label className="zone-check"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
+              Hazırlanan sınır listesine dahil et
+            </label>
+            {error && <p className="zone-error">{error}</p>}
+            <p className="zone-save-info">Bu işlem yalnız telefona taslak kaydeder. Tasmaya komut gönderilmez.</p>
+            <button className="btn primary wide" onClick={save}>Taslağı kaydet</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
