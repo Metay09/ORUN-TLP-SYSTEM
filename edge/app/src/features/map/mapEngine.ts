@@ -107,11 +107,11 @@ function trailFeatures(points: Observation[], color: string, cursor: number | nu
   return out;
 }
 
-function rasterStyle(base: BaseMap, labels: boolean): StyleSpecification {
+function rasterStyle(base: BaseMap, labels: boolean, satelliteSafe: boolean): StyleSpecification {
   const sources: StyleSpecification["sources"] = {};
   const layers: StyleSpecification["layers"] = [{ id: "bg", type: "background", paint: { "background-color": "#DDE3D6" } }];
   if (base === "satellite") {
-    const imagery = satelliteRasterParts("base");
+    const imagery = satelliteRasterParts("base", satelliteSafe);
     Object.assign(sources, imagery.sources);
     layers.push(...imagery.layers);
     if (labels) {
@@ -139,6 +139,7 @@ export class MapEngine {
   private zones: Zone[] = [];  // local drafts only, never device-effective state
   private layers: Layers | null = null;
   private base: BaseMap = "satellite";
+  private satelliteSafe = false;
   private tilt = false;
   private styleKey = "";
   private streetCache: StyleSpecification | null = null;
@@ -188,13 +189,14 @@ export class MapEngine {
   destroy(): void { this.groupPopup?.remove(); this.resizer.disconnect(); this.map.remove(); }
 
   // ------------------------------------------------------------- styling --
-  async setBase(base: BaseMap, layers: Layers): Promise<void> {
-    const key = `${base}|${base === "satellite" && layers.labels}`;
+  async setBase(base: BaseMap, layers: Layers, satelliteSafe = false): Promise<void> {
+    const key = `${base}|${base === "satellite" && layers.labels}|${base === "satellite" && satelliteSafe}`;
     this.base = base;
     this.layers = layers;
+    this.satelliteSafe = satelliteSafe;
     if (key === this.styleKey) { this.applyVisibility(); return; }
     this.styleKey = key;
-    if (base !== "street") { this.map.setStyle(rasterStyle(base, layers.labels), { diff: false }); this.opts.onOffline(false); return; }
+    if (base !== "street") { this.map.setStyle(rasterStyle(base, layers.labels, satelliteSafe), { diff: false }); this.opts.onOffline(false); return; }
     try {
       if (!this.streetCache) {
         const ctl = new AbortController();
@@ -299,7 +301,7 @@ export class MapEngine {
   setLayers(layers: Layers): void {
     const relabel = this.base === "satellite" && this.layers?.labels !== layers.labels;
     this.layers = layers;
-    if (relabel) { void this.setBase(this.base, layers); return; }
+    if (relabel) { void this.setBase(this.base, layers, this.satelliteSafe); return; }
     this.applyVisibility();
   }
 
