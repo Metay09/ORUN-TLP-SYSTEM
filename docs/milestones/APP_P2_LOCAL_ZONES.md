@@ -195,3 +195,31 @@ on-device tile storage. Avoid unlicensed bulk download from Esri/OSM/Google.
 
 Status: GitHub staged, not run on a physical device and not included in the
 already installed APK. Test/app build gate before any future deployment.
+
+## Map bottom-sheet swipe usability (27 October 2026)
+
+Owner explicitly **rejected** an invented open/close button and wanted the
+existing draggable bottom sheet made reliable. No new button or different
+visual card/navigation layout has been added.
+
+Code:
+- `sheetMotion.ts` pure deterministic snap/clamp logic: three existing stops
+  (compact/half/full); intentional >=28px drag always advances at least one
+  available stop in the chosen direction even if closest-height snapping
+  would collapse it back; short >=12px fast flick can advance; long drag may
+  skip stages; tiny taps/accidental motion never toggle panel height.
+- `Sheet.tsx`: captures the active primary pointer on the actual grip
+  container, not a child element; tracks every move in a ref so pointerup
+  cannot read stale React state; ignores unrelated pointers, cancels lost
+  gesture capture safely; reports actual dragging height for map overlays.
+- `map.css`: same visual style, full-width grab region with minimum 56px
+  touch height (even for selected animal when header is absent); the grip
+  owns `touch-action: none`, while the sheet and scrollable body retain
+  native vertical scrolling behavior.
+- `test/sheetMotion.test.ts`: upward/downward one-stop movement, long swipe,
+  fast flick, small tap no-op, short screen layout and invalid gesture guard.
+
+Pending verification: `cd edge/app && npm test && npm run build`, then
+physical Android drag smoke test: compact -> half -> full -> half -> compact;
+release at varying speed; scroll animal list at full height; select an animal
+while header is blank; pinch/drag map with sheet resting; no new APK yet.
