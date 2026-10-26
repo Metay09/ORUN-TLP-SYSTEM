@@ -167,3 +167,31 @@ Fix now staged in this PR (not yet validated on-device):
 Future combined APK smoke test: compare z14/16/18/19/20, pan in multiple
 areas, check while mobile Internet is working, and check no imagery regression
 when map style changes or polygons are being edited.
+
+## Owner field screenshot / issue #181 / staged safe-mode workaround
+
+After APK `4d16d24` was installed the Map screen displayed a grid of
+**grey tiles actually containing the words "Map data not yet available"**.
+The owner's livestock icon and coverage squares remained visible. This proves
+the problem is imagery data, not GNSS or marker rendering. Esri documents that
+tile servers can return a placeholder **image** instead of 404; the z19 raster
+therefore obscures the underlying z15 layer added earlier.
+
+New, not yet built in the Android APK:
+- `satelliteRasterParts("base", true)` uses only a z15-capped source, skipping
+  the z19 opaque placeholder layer completely; MapLibre scales the real z15
+  image for camera zoom 16–20. It deliberately does **not** invent finer data
+  and may still fail if source imagery is unavailable already at z15.
+- In Harita > Katmanlar, "Güvenli uydu görüntüsü" allows user selection,
+  persists with other preferences and uses the same setting in Mera editor.
+  Default remains high-detail mode, retaining full Esri detail where present.
+- Host test checks the layer/source tree for both regular/secure modes.
+
+This is **not** a replacement for legal offline downloads. Separate issue
+#181 scopes package selection (e.g., Aydın/Muğla low-zoom PMTiles), user-drawn
+high-resolution pasture subregions with explicit size estimate, downloaded
+package verification/resumption, provider offline license and persistent
+on-device tile storage. Avoid unlicensed bulk download from Esri/OSM/Google.
+
+Status: GitHub staged, not run on a physical device and not included in the
+already installed APK. Test/app build gate before any future deployment.
