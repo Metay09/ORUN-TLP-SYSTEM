@@ -68,7 +68,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
   // The Alanlar editor changes this WebView's localStorage on the same page;
   // a browser 'storage' event does not fire for that. Refresh on tab entry.
   useEffect(() => { if (visible) engine.current?.setZones(loadZones()); }, [visible]);
-  useEffect(() => { void engine.current?.setBase(m.prefs.base, L); }, [m.prefs.base, L.labels]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void engine.current?.setBase(m.prefs.base, L, m.prefs.satelliteSafe); }, [m.prefs.base, L.labels, m.prefs.satelliteSafe]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { engine.current?.setLayers(L); }, [L]);
   useEffect(() => { engine.current?.setTilt(m.prefs.tilt); }, [m.prefs.tilt]);
   useEffect(() => { engine.current?.setPadding(sheetPx); }, [sheetPx]);
