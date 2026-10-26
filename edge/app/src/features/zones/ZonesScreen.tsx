@@ -172,7 +172,8 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
     const allNext = [...all.filter((x) => x.id !== zone?.id), candidate];
     const issue = validateSet(allNext);
     if (issue) { setError(issue); return; }
-    onSave(candidate);
+    try { onSave(candidate); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
 
   return (
@@ -229,7 +230,11 @@ export function ZonesScreen() {
   const start = (z: Zone | null) => { setEditId(z?.id ?? null); setEditing(true); setMessage(""); };
   const save = (zone: Zone) => {
     const next = editId === null ? [...zones, zone] : zones.map((z) => z.id === editId ? zone : z);
-    if (commit(next)) { setEditing(false); setMessage("Alan telefona taslak olarak kaydedildi; tasmaya gönderilmedi."); }
+    // Throw into the still-visible editor if the phone cannot persist the draft.
+    // Never silently close or claim a saved field when storage failed.
+    persistZones(next);
+    setZones(next); setEditing(false);
+    setMessage("Alan telefona taslak olarak kaydedildi; tasmaya gönderilmedi.");
   };
   const remove = (z: Zone) => {
     if (window.confirm(`${z.name} taslağı bu telefondan silinsin mi? Tasmadaki sınır değişmez.`))
