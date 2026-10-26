@@ -37,35 +37,29 @@ export function clusterDiameter(zoom: number): number {
 export function groupScreenPins(points: readonly ScreenPin[], zoom: number): PinGroup[] {
   if (!points.length) return [];
   const gap = Math.max(pinDiameter(zoom, true), clusterDiameter(zoom)) + 5;
-  const radiusSq = gap * gap;
-  const parent = points.map((_, i) => i);
-  const find = (n: number): number => {
-    while (parent[n] !== n) { parent[n] = parent[parent[n]]; n = parent[n]; }
-    return n;
-  };
-  const union = (a: number, b: number) => {
-    const ra = find(a), rb = find(b);
-    if (ra !== rb) parent[rb] = ra;
-  };
+  const gapSq = gap * gap;
+  const groups: ScreenPin[][] = [];
 
-  // MapLibre screen projection is in CSS px. Distance stays meaningful across
-  // map bearing/pitch and resizes; the grouping changes only on map settles.
-  for (let i = 0; i < points.length; i++) {
-    for (let j = i + 1; j < points.length; j++) {
-      const dx = points[i].x - points[j].x, dy = points[i].y - points[j].y;
-      if (dx * dx + dy * dy < radiusSq) union(i, j);
-    }
+  // Bounded complete-link grouping: avoid the "chain effect" where dozens
+  // of 35px-spaced animals across an entire pasture become one giant cluster.
+  // Every group member stays within the screen-space collision radius of
+  // every other member. Keep the input immutable.
+  for (const point of points) {
+    const group = groups.find((members) => members.every((p) => {
+      const dx = point.x - p.x, dy = point.y - p.y;
+      return dx * dx + dy * dy < gapSq;
+    }));
+    if (group) group.push(point);
+    else groups.push([point]);
   }
-  const groups = new Map<number, ScreenPin[]>();
-  points.forEach((point, i) => {
-    const root = find(i);
-    const arr = groups.get(root);
-    if (arr) arr.push(point); else groups.set(root, [point]);
+  return groups.map((members) => {
+    // A selected animal is never displaced by averaging other GPS fixes.
+    const selected = members.find((p) => p.selected);
+    return {
+      ids: members.map((p) => p.id),
+      x: selected?.x ?? members.reduce((n, p) => n + p.x, 0) / members.length,
+      y: selected?.y ?? members.reduce((n, p) => n + p.y, 0) / members.length,
+      selectedId: selected?.id ?? null,
+    };
   });
-  return [...groups.values()].map((members) => ({
-    ids: members.map((p) => p.id),
-    x: members.reduce((n, p) => n + p.x, 0) / members.length,
-    y: members.reduce((n, p) => n + p.y, 0) / members.length,
-    selectedId: members.find((p) => p.selected)?.id ?? null,
-  }));
 }
