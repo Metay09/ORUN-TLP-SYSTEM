@@ -23,12 +23,12 @@ import type { BaseMap, Layers } from "../../app/stores.ts";
 import { toneOfStatus } from "../../ds/components.tsx";
 import type { Zone } from "../zones/geometry.ts";
 import { clusterDiameter, groupScreenPins, pinDiameter } from "./pinLayout.ts";
+import { satelliteRasterParts } from "./satelliteStyle.ts";
 
 setWorkerUrl(workerUrl);
 
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services";
 const ATTR = {
-  esri: "Görüntü © Esri, Maxar, Earthstar Geographics",
   topo: "© OpenTopoMap (CC-BY-SA) · © OpenStreetMap katkıcıları",
   ofm: "OpenFreeMap © OpenMapTiles · © OpenStreetMap katkıcıları",
   dem: "Yükselti: AWS Terrain Tiles (Mapzen)",
@@ -111,8 +111,9 @@ function rasterStyle(base: BaseMap, labels: boolean): StyleSpecification {
   const sources: StyleSpecification["sources"] = {};
   const layers: StyleSpecification["layers"] = [{ id: "bg", type: "background", paint: { "background-color": "#DDE3D6" } }];
   if (base === "satellite") {
-    sources.base = { type: "raster", tiles: [`${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`], tileSize: 256, maxzoom: 19, attribution: ATTR.esri };
-    layers.push({ id: "base", type: "raster", source: "base" });
+    const imagery = satelliteRasterParts("base");
+    Object.assign(sources, imagery.sources);
+    layers.push(...imagery.layers);
     if (labels) {
       sources.labels = { type: "raster", tiles: [`${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`], tileSize: 256, maxzoom: 19 };
       layers.push({ id: "labels", type: "raster", source: "labels", paint: { "raster-opacity": 0.9 } });
@@ -152,6 +153,9 @@ export class MapEngine {
       container: el, style: FALLBACK, center: view?.center ?? [28.0546, 37.6107], zoom: view?.zoom ?? 14,
       maxZoom: 20, maxPitch: 75, attributionControl: false, fadeDuration: 150, dragRotate: true, touchPitch: true,
       refreshExpiredTiles: false,
+      // Never cancel just-loaded wider-view tiles while a pinch zoom is
+      // asking for more detailed ones. Avoid transient blank map flashes.
+      cancelPendingTileRequestsWhileZooming: false,
     });
     this.map.addControl(new AttributionControl({ compact: true, customAttribution: ATTR.dem }), "bottom-right");
     // Attribution stays one tap away (the (i) button), not open over the map.
