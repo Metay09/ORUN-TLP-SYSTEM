@@ -55,3 +55,12 @@ test("map collision grouping uses current projected zoom, not fixed metre distan
   assert.equal(groupScreenPins(pins, 20).length, 2);
   assert.deepEqual(groupScreenPins([], 20), []);
 });
+
+test("map collision groups stay local instead of swallowing a long row of animals", () => {
+  const pins: ScreenPin[] = [0, 35, 70, 105, 140].map((x, i) => ({
+    id: String(i), x, y: 50,
+  }));
+  const groups = groupScreenPins(pins, 14);
+  assert.deepEqual(groups.map((g) => g.ids), [["0", "1"], ["2", "3"], ["4"]]);
+  assert.equal(groups.reduce((sum, group) => sum + group.ids.length, 0), pins.length);
+});
