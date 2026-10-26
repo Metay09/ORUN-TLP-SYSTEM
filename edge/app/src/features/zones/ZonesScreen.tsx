@@ -7,7 +7,7 @@ import { ArrowCounterClockwise, ArrowClockwise, Check, DownloadSimple, MapTrifol
 import { useBack } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { DemoFlag, Header } from "../../ds/components.tsx";
-import { areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, perimeterM, persistZones, validateRing, validateSet, type Point, type Ring, type Zone } from "./geometry.ts";
+import { areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, perimeterM, persistZones, previewAtCentre, validateRing, validateSet, type Point, type Ring, type Zone } from "./geometry.ts";
 import "./zones.css";
 
 function hectares(n: number): string { return n.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -77,7 +77,7 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
     const p = draftNow.current;
     const center = m.getCenter();
     const cross: Point | null = modeNow.current === "cross" ? [center.lng, center.lat] : null;
-    const outline = cross && p.length >= 2 ? [...p, cross] : p;
+    const outline = previewAtCentre(p, cross);
     (m.getSource("zone-preview-area") as GeoJSONSource).setData(
       featureCollection(cross && p.length >= 2 ? [ringFeature(outline)] : []),
     );
