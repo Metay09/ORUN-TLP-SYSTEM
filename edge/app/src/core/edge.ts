@@ -37,8 +37,13 @@ export class EdgeCore {
   // Gateway reports its count only in HELLO (once per connection); after its
   // first full pass (DUMP END) every held record has been announced, so the
   // count is exactly those announced minus those it confirmed handed off.
-  private heldKeys = new Set<string>();     // "page:slot"
+  private heldKeys = new Set<string>();     // "page:slot": last known survivors
+  // Count distinct HELD announcements independently of ACCEPT/reclaim. A
+  // missing BLE fragment or a broken USB line must not make DUMP END look like
+  // proof that the Gateway has fewer records than it reported.
+  private dumpSeen = new Set<string>();
   private passDone = false;
+  private incompleteFloor = 0;
   private okSinceHello = 0;
   private readonly accept: boolean;
   private readonly clock: () => number;
@@ -106,7 +111,9 @@ export class EdgeCore {
       const held = this.heldNow();
       if (this.lastHello && held !== null) this.lastHello = { ...this.lastHello, held };
       this.heldKeys.clear();
+      this.dumpSeen.clear();
       this.passDone = false;
+      this.incompleteFloor = 0;
       this.okSinceHello = 0;
     });
   }
@@ -143,11 +150,23 @@ export class EdgeCore {
 
   pendingAccepts(): number { return this.queue.length + (this.inFlight ? 1 : 0); }
 
-  /** Records the Gateway still holds now; null until it has told us. */
+  /** Exact after a complete dump; otherwise a conservative known count. */
   heldNow(): number | null {
     if (this.passDone) return this.heldKeys.size;
-    if (!this.lastHello) return null;
-    return Math.max(0, this.lastHello.held - this.okSinceHello);
+    if (!this.lastHello && this.incompleteFloor === 0) return null;
+    return Math.max(this.heldKeys.size, this.incompleteFloor,
+                    this.lastHello ? Math.max(0, this.lastHello.held - this.okSinceHello) : 0);
+  }
+
+  private finishDump(count: number): boolean {
+    // DUMP END claims that count HELD records were announced. Count every
+    // unique announcement, including already accepted/reclaimed records.
+    const complete = Number.isSafeInteger(count) && count >= 0 && this.dumpSeen.size === count;
+    this.passDone = complete;
+    this.incompleteFloor = complete ? 0 :
+      (Number.isSafeInteger(count) && count >= 0 ? Math.max(0, count - this.okSinceHello) : 0);
+    this.dumpSeen.clear();
+    return complete;
   }
 
   private acceptReply(word: string, page: number | null, slot: number | null): string | null {
@@ -186,7 +205,9 @@ export class EdgeCore {
 
   private async ingestHeld(gateway: bigint, page: number, slot: number, gen: bigint,
                            raw: Uint8Array, link: Link): Promise<string> {
-    this.heldKeys.add(`${page}:${slot}`);
+    const place = `${page}:${slot}`;
+    this.heldKeys.add(place);
+    this.dumpSeen.add(place);
     const { state, item } = await this.ledger.ingest(raw);
     this.counts[state]++;
     const word: Record<LedgerState, string> = {
@@ -219,9 +240,12 @@ export class EdgeCore {
           }
           if (e.what === "FAIL") return `UYARI gateway sayfa ${e.page} silinemedi`;
           return null;
-        case "dumpEnd":
-          this.passDone = true;
-          return `[gateway] ${e.text} | ${await this.summary()}`;
+        case "dumpEnd": {
+          const match = /\\bcount=(\\d+)\\b/.exec(e.text);
+          const complete = this.finishDump(match ? Number(match[1]) : NaN);
+          return `[gateway] ${e.text} | ${await this.summary()}` +
+            (complete ? "" : " | UYARI: eksik/bozuk aktarım; sayaç kesin değil, yeniden DUMP gerekli");
+        }
         case "heldBroken":
           this.counts.REJECTED++;
           return `RED   gw=${e.gateway} page=${e.page} slot=${e.slot}: satır eksik/bozuk (${e.got} hex, beklenen ${e.want}); BENCH GW DUMP ile tekrar istenebilir`;
@@ -242,15 +266,19 @@ export class EdgeCore {
           this.gatewayId = m.gateway;
           this.lastHello = { held: m.held, capacity: m.capacity };
           this.heldKeys.clear();
+          this.dumpSeen.clear();
           this.passDone = false;
+          this.incompleteFloor = 0;
           this.okSinceHello = 0;
           return `[gateway BLE] ${hex64(m.gateway)} bağlı; tuttuğu kayıt ${m.held}/${m.capacity}`;
         case "held":
           if (this.gatewayId === null) return null;   // HELLO comes first; never guess
           return this.ingestHeld(this.gatewayId, m.page, m.slot, m.generation, m.object, m.link);
-        case "dumpEnd":
-          this.passDone = true;
-          return `[gateway BLE] DUMP END count=${m.count} | ${await this.summary()}`;
+        case "dumpEnd": {
+          const complete = this.finishDump(m.count);
+          return `[gateway BLE] DUMP END count=${m.count} | ${await this.summary()}` +
+            (complete ? "" : " | UYARI: eksik aktarım; sayaç kesin değil, yeniden DUMP gerekli");
+        }
         case "acceptResult":
           return this.acceptReply(ACCEPT_WORDS[m.code] ?? "REJECTED", m.page, m.slot);
         case "reclaimed":
