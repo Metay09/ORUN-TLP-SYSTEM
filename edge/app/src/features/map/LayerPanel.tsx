@@ -22,7 +22,12 @@ export function LayerPanel({ onClose }: { onClose: () => void }) {
         ))}
       </div>
       <ToggleRow title={tr.map.tilt} on={p.tilt} onChange={(v) => m.actions.setPrefs({ tilt: v })} />
-      {p.base === "satellite" && <ToggleRow title={tr.map.layer.labels} on={L.labels} onChange={(v) => set("labels", v)} />}
+      {p.base === "satellite" && <>
+        <ToggleRow title="Güvenli uydu görüntüsü"
+          sub="Gri 'Map data not yet available' karoları çıkarsa aç. Daha düşük ayrıntıyı büyütür, yakınlaştırma sınırını azaltmaz."
+          on={p.satelliteSafe} onChange={(v) => m.actions.setPrefs({ satelliteSafe: v })} />
+        <ToggleRow title={tr.map.layer.labels} on={L.labels} onChange={(v) => set("labels", v)} />
+      </>}
       {p.base !== "street" && <ToggleRow title={tr.map.layer.relief} on={L.relief} onChange={(v) => set("relief", v)} />}
 
       <Section title={tr.map.layer.title} />
