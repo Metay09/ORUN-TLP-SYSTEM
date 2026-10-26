@@ -122,7 +122,8 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
       maxZoom: 20, attributionControl: true, dragRotate: false, touchPitch: false,
     });
     map.current = m;
-    m.on("load", () => {
+    // Style readiness is enough: polygon editing works without satellite tile downloads.
+    m.on("style.load", () => {
       m.addSource("saved", { type: "geojson", data: featureCollection([]) });
       m.addSource("draft", { type: "geojson", data: featureCollection([]) });
       m.addLayer({ id: "zone-saved-fill", type: "fill", source: "saved",
