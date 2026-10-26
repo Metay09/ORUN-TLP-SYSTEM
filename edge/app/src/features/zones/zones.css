@@ -77,6 +77,9 @@
   text-align: center; }
 .zone-error { color: var(--alarm); }
 .zone-hint { color: var(--mute); }
+.zone-simplify { display: block; margin: 8px auto 0; min-height: 38px; padding: 0 14px; border: 0;
+  border-radius: 11px; background: var(--aging-b); color: var(--aging-t); font: 700 13px/1 var(--font); }
+.zone-simplify-info { display: block; margin-top: 5px; color: var(--brand-t); font-weight: 650; }
 .zone-next-edge { display: block; margin-top: 3px; color: var(--brand-t); font-weight: 700; }
 .zone-vertex, .zone-midpoint { display: grid; place-items: center; border: 2px solid #fff;
   box-shadow: 0 2px 6px #0008; touch-action: none; cursor: grab; font: 700 13px/1 system-ui; }
