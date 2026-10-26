@@ -29,9 +29,9 @@
 .zone-import-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 16px 0; }
 .zone-import-row .btn { flex: 1; }
 .zone-footer-note { margin: 20px 20px 32px; color: var(--mute); font-size: 12px; line-height: 1.5; }
-.zone-editor { position: absolute; inset: 0; overflow: hidden; background: #DCE8D5; z-index: 2; }
+.zone-editor { position: fixed; inset: 0; overflow: hidden; background: #DCE8D5; z-index: 35; }
 .zone-map { position: absolute; inset: 0; }
-.zone-top { position: absolute; z-index: 6; left: 10px; right: 10px; top: 10px;
+.zone-top { position: absolute; z-index: 6; left: 10px; right: 10px; top: calc(var(--safe-t) + 10px);
   display: flex; gap: 10px; align-items: center; padding: 8px; background: var(--card);
   border-radius: 16px; box-shadow: 0 3px 12px #0003; }
 .zone-round { flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--sunk); }
@@ -40,7 +40,7 @@
 .zone-heading span { color: var(--mute); font-size: 11px; }
 /* Drawing layout mirrors ORUN-Saha: measurement strip on top, crosshair
    exactly at MapLibre's center, a compact three-column bar at the bottom. */
-.zone-draw-stats { position: absolute; z-index: 4; top: 86px; left: 10px; right: 10px;
+.zone-draw-stats { position: absolute; z-index: 4; top: calc(var(--safe-t) + 86px); left: 10px; right: 10px;
   display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; padding: 0;
   background: rgba(18,26,32,.91); color: #dae2e7; border: 1px solid #384952; border-radius: 11px;
   box-shadow: 0 2px 8px #0004; }
@@ -54,7 +54,7 @@
 }
 .zone-crosshair::before { left: -1px; top: -18px; width: 2px; height: 36px; }
 .zone-crosshair::after { left: -18px; top: -1px; width: 36px; height: 2px; }
-.zone-draw-box { position: absolute; z-index: 5; bottom: 10px; left: 9px; right: 9px;
+.zone-draw-box { position: absolute; z-index: 5; bottom: calc(var(--safe-b) + 10px); left: 9px; right: 9px;
   padding: 11px 12px 10px; background: var(--card); border: 1px solid var(--hair);
   border-radius: 16px; box-shadow: 0 -2px 14px #0004; }
 .zone-actions { display: grid; grid-template-columns: 1fr 72px 1fr; align-items: center;
@@ -98,7 +98,7 @@
 .zone-editor .maplibregl-ctrl-bottom-left, .zone-editor .maplibregl-ctrl-bottom-right { bottom: 0; }
 @media (max-height: 690px) {
   .zone-top { padding: 5px; }
-  .zone-draw-stats { top: 76px; }
+  .zone-draw-stats { top: calc(var(--safe-t) + 76px); }
   .zone-draw-stats span { padding: 6px 3px; }
   .zone-draw-box { padding: 8px 10px; }
 }
