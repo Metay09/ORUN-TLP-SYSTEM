@@ -271,7 +271,7 @@ export class Controller {
         try {
           await this.refreshKeys(sv.url, sv.token);
         } catch (e) {
-          keysError = e instanceof Error ? e.message : String(e);
+          keysError = `okuma anahtarları alınamadı: ${e instanceof Error ? e.message : String(e)}`;
           if (manual) this.log(`[sunucu] okuma anahtarları alınamadı: ${keysError}; mevcut kayıtlar yine gönderilecek`);
         }
       }
