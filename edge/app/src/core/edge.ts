@@ -241,7 +241,7 @@ export class EdgeCore {
           if (e.what === "FAIL") return `UYARI gateway sayfa ${e.page} silinemedi`;
           return null;
         case "dumpEnd": {
-          const match = /\\bcount=(\\d+)\\b/.exec(e.text);
+          const match = /\bcount=(\d+)\b/.exec(e.text);
           const complete = this.finishDump(match ? Number(match[1]) : NaN);
           return `[gateway] ${e.text} | ${await this.summary()}` +
             (complete ? "" : " | UYARI: eksik/bozuk aktarım; sayaç kesin değil, yeniden DUMP gerekli");
