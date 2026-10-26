@@ -119,7 +119,7 @@ function ZoneEditor({ zone, all, onCancel, onSave }: {
     const center: [number, number] = initial[0] ?? [28.0546, 37.6107];
     const m = new MlMap({
       container: host.current, style: SAT_STYLE, center, zoom: initial.length ? 15 : 13,
-      maxZoom: 20, attributionControl: true, dragRotate: false, touchPitch: false,
+      maxZoom: 20, attributionControl: { compact: true }, dragRotate: false, touchPitch: false,
     });
     map.current = m;
     // Style readiness is enough: polygon editing works without satellite tile downloads.
