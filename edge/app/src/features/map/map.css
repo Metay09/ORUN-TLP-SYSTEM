@@ -118,15 +118,21 @@
 }
 .ghost-pin { width: 20px; height: 20px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 2px rgba(0, 0, 0, .35), 0 2px 8px rgba(0, 0, 0, .4); }
 
-/* sheet */
+/* sheet: same design, larger invisible swipe target, no extra toggle.
+   Do NOT put touch-action:none on .sheet: that blocks scrolling its content.
+   Only the grip owns vertical pointer gestures. */
 .sheet {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--card); border-radius: 28px 28px 0 0;
-  box-shadow: var(--sheet-shadow); display: flex; flex-direction: column; transition: height .22s ease; touch-action: none;
+  box-shadow: var(--sheet-shadow); display: flex; flex-direction: column; transition: height .22s ease; touch-action: auto;
 }
 .sheet.dragging { transition: none; }
-.sheet-grip { padding: 10px 0 2px; cursor: grab; touch-action: none; flex: none; }
-.sheet-grip .handle { display: block; width: 40px; height: 5px; border-radius: 3px; background: var(--hair2); margin: 0 auto 8px; }
-.sheet-body { flex: 1; overflow-y: auto; touch-action: pan-y; padding-bottom: 12px; }
+.sheet-grip {
+  min-height: 56px; padding: 8px 0 10px; flex: none; display: flex; flex-direction: column;
+  justify-content: center; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.sheet-grip:active { cursor: grabbing; }
+.sheet-grip .handle { display: block; flex: none; width: 48px; height: 5px; border-radius: 3px; background: var(--hair2); margin: 0 auto 10px; }
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; overscroll-behavior: contain; padding-bottom: 12px; }
 .sum { padding: 0 20px; }
 .sum .disp { font-size: 20px; }
 .att { display: flex; gap: 10px; padding: 12px 20px 8px; overflow-x: auto; scrollbar-width: none; }
