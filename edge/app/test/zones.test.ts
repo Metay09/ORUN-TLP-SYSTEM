@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, persistZones, ZONE_KEY, perimeterM, previewAtCentre, validateRing, validateSet,
+  areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, persistZones, ZONE_KEY, perimeterM, previewAtCentre, simplifyRingToBudget, validateRing, validateSet,
   type Point, type Zone,
 } from "../src/features/zones/geometry.ts";
 
@@ -91,4 +91,29 @@ test("zones: centre preview follows the map cursor without changing committed co
   assert.equal(two.length, 2);
   assert.deepEqual(previewAtCentre(two, null), two);
   assert.notEqual(previewAtCentre(two, null), two);
+});
+
+test("zones: safely simplifies redundant corners to the remaining collar budget", () => {
+  const subdivided: Point[] = [];
+  for (let i = 0; i < 4; i++) subdivided.push([28 + i * 0.0005, 37]);
+  for (let i = 0; i < 4; i++) subdivided.push([28.002, 37 + i * 0.0005]);
+  for (let i = 0; i < 4; i++) subdivided.push([28.002 - i * 0.0005, 37.002]);
+  for (let i = 0; i < 4; i++) subdivided.push([28, 37.002 - i * 0.0005]);
+  assert.equal(validateRing(subdivided), null);
+  const original = structuredClone(subdivided);
+  const reduced = simplifyRingToBudget(subdivided, 8);
+  assert.ok(reduced);
+  assert.equal(reduced.ring.length, 8);
+  assert.equal(validateRing(reduced.ring), null);
+  assert.ok(reduced.areaDeltaPct <= 2);
+  assert.deepEqual(subdivided, original, "simplify never mutates draft history");
+});
+
+test("zones: simplification rejects invalid or insufficient budgets without altering the original", () => {
+  assert.equal(simplifyRingToBudget(square, 2), null);
+  assert.equal(simplifyRingToBudget([[28,37],[28.002,37.002],[28,37.002],[28.002,37]], 3), null);
+  const unchanged = simplifyRingToBudget(square, 4);
+  assert.ok(unchanged);
+  assert.deepEqual(unchanged.ring, square);
+  assert.equal(unchanged.areaDeltaPct, 0);
 });
