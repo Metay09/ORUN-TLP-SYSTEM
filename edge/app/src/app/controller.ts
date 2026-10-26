@@ -72,6 +72,11 @@ function loadJournal(): JournalEntry[] {
   }
 }
 
+function heldText(held: number | null, capacity: number | null): string | null {
+  if (held === null) return null;
+  return capacity ? `${held}/${capacity}` : `${held}`;
+}
+
 export class Controller {
   readonly kind = "real" as const;
   private core: EdgeCore | null = null;
@@ -198,7 +203,9 @@ export class Controller {
         counts: { ...c.counts }, records: await c.ledger.recordCount(), handedOff: c.handedOff,
         rejected: c.acceptRejected, pending: c.pendingAccepts(),
         gateway: c.gatewayId === null ? this.snap.gateway : hex64(c.gatewayId),
-        gatewayHeld: c.lastHello ? `${c.lastHello.held}/${c.lastHello.capacity}` : this.snap.gatewayHeld,
+        // Live: the HELLO count, then what the Gateway announced minus what it
+        // confirmed handed off (it reports its count only once per connection).
+        gatewayHeld: heldText(c.heldNow(), c.lastHello?.capacity ?? null) ?? this.snap.gatewayHeld,
       });
       // New records: upload soon (newest first), not only on the 30 s tick.
       if (this.snap.records !== this.lastRecords) {

@@ -62,6 +62,15 @@ Supersedes the unmerged UX v2 (#174).
 - Python: SF5L1, SF5L3, SF5L4, SF5L7 (app core = Python reference), SF5L8
   (backend map == phone map).
 
+## Fix after the first phone install (2026-10-26)
+
+- The station's waiting-record count stayed at its connection value: the
+  Gateway reports it only in HELLO. `EdgeCore.heldNow()` now follows it live:
+  the HELLO count minus confirmed hand-offs until the first DUMP END, then
+  exactly the records the Gateway announced minus those handed off or on a
+  reclaimed page; the last value is kept after disconnect. Test in
+  `test/core.test.ts`. No firmware change.
+
 ## Pending on the phone
 
 - Map tiles through Capacitor (satellite, topo, vector, terrain).

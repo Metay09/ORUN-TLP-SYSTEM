@@ -221,6 +221,32 @@ test("BLE: HELLO first, HELD with link, binary ACCEPT, results, reclaim, dump en
   assert.equal(await edge.handleMessage(heldMsg(0, 1, 2n, f0, null)), null);
 });
 
+test("station held count stays live: HELLO, then announced minus handed off", async () => {
+  const now = 1_800_000_000;
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, clock: () => now });
+  await edge.init();
+  const [f0, f1, f2] = track(3);
+  assert.equal(edge.heldNow(), null);                                          // nothing told yet
+  await edge.handleMessage(concat(new Uint8Array([1]), fromHex("09A462BD4B275BA5"), fromHex("00020420")));
+  assert.equal(edge.heldNow(), 2);                                             // HELLO: 2 held
+  await edge.handleMessage(heldMsg(0, 1, 2n, f0, null));
+  edge.nextAcceptMessage(now);
+  await edge.handleMessage(fromHex("040000000100"));                           // handed off
+  assert.equal(edge.heldNow(), 1);                                             // before the pass ends: HELLO - OK
+  await edge.handleMessage(heldMsg(0, 2, 2n, f1, null));
+  await edge.handleMessage(fromHex("030002"));                                 // DUMP END
+  assert.equal(edge.heldNow(), 1);                                             // exact: announced - handed off
+  await edge.handleMessage(heldMsg(1, 0, 3n, f2, [-90, 5]));                   // a new live record
+  assert.equal(edge.heldNow(), 2);
+  edge.nextAcceptMessage(now);
+  await edge.handleMessage(fromHex("040000000200"));                           // page 0 slot 2 handed off
+  assert.equal(edge.heldNow(), 1);
+  await edge.handleMessage(fromHex("05000101"));                               // page 1 reclaimed
+  assert.equal(edge.heldNow(), 0);
+  await edge.sessionEnd();
+  assert.equal(edge.heldNow(), 0);                                             // last HELLO kept, nothing announced
+});
+
 test("points: live / through / cut / unknown classification", async () => {
   let now = 0;
   const db = await freshDb();
