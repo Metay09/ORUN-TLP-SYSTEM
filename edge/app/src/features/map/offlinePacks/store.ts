@@ -128,7 +128,11 @@ export async function installOfflinePack(
   const fileName = packFileName(pack);
   const metaName = fileName + META_SUFFIX;
   const existing = await readMetadata(dir, metaName);
-  if (existing) return existing;
+  if (existing) {
+    if (existing.pack.sha256 !== pack.sha256 || existing.pack.bytes !== pack.bytes)
+      throw new Error("Harita paketi kayıt bilgisi yeni katalogla uyuşmuyor.");
+    return existing;
+  }
 
   const space = checkInstallSpace(pack, await navigator.storage.estimate());
   if (space) throw new Error(space);
@@ -167,12 +171,17 @@ export async function installOfflinePack(
     return install;
   } finally {
     if (!committed) {
+      // A failed metadata write may leave a partial .installed.json. Remove it
+      // as well as the archive; otherwise the next attempt would be blocked.
+      try { await dir.removeEntry(metaName); } catch { /* preserve original error */ }
       try { await dir.removeEntry(fileName); } catch { /* preserve original error */ }
     }
   }
 }
 
 export async function installedPackFile(pack: InstalledPack): Promise<File> {
+  if (pack.fileName !== packFileName(pack.pack))
+    throw new Error("Harita paketi adı doğrulanamadı.");
   const dir = await mapsDir();
   const expected = await readMetadata(dir, pack.fileName + META_SUFFIX);
   if (!expected || expected.pack.sha256 !== pack.pack.sha256)
@@ -181,6 +190,8 @@ export async function installedPackFile(pack: InstalledPack): Promise<File> {
 }
 
 export async function removeOfflinePack(pack: InstalledPack): Promise<void> {
+  if (pack.fileName !== packFileName(pack.pack))
+    throw new Error("Silinecek harita dosyası adı doğrulanamadı.");
   const dir = await mapsDir();
   const metaName = pack.fileName + META_SUFFIX;
   const expected = await readMetadata(dir, metaName);
