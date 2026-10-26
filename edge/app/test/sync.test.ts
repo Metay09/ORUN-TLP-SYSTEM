@@ -90,6 +90,51 @@ test("upload: drain sends batches of 100 until done", async () => {
   assert.equal(openProductFrame(track(1)[0], benchCredentials).family, 1);
 });
 
+test("upload: all-UNCERTAIN newest page does not starve older pending records", async () => {
+  const { core, db } = await phoneWith(BATCH + 30);
+  const attempted: string[] = [];
+  let calls = 0;
+  const up = new Uploader(db, async (_url, _token, body) => {
+    calls++;
+    const records = (JSON.parse(body) as { records: { frame: string }[] }).records;
+    attempted.push(...records.map((r) => r.frame));
+    return { status: 200, body: {
+      results: records.map(() => calls === 1 ? "UNCERTAIN" : "STORED"),
+      sessions_ok: true,
+    } };
+  }, (fn) => core.exclusive(fn));
+
+  const first = await up.drain("http://x", "t");
+  assert.deepEqual(first, { sent: BATCH + 30, final: 30, uncertain: BATCH });
+  assert.equal(calls, 2);                      // skipped stalled front, still sent the older 30
+  assert.equal(new Set(attempted).size, BATCH + 30); // no duplicate in a drain
+  assert.deepEqual(await up.counts(), { uploaded: 30, pending: BATCH, conflict: 0, rejected: 0 });
+
+  const second = await up.drain("http://x", "t");
+  assert.deepEqual(second, { sent: BATCH, final: BATCH, uncertain: 0 });
+  assert.equal((await up.counts()).pending, 0);
+});
+
+test("upload: mixed UNKNOWN answers do not cause retry storms within one drain", async () => {
+  const { core, db } = await phoneWith(BATCH + 17);
+  let calls = 0;
+  const framesSent: string[] = [];
+  const up = new Uploader(db, async (_url, _token, body) => {
+    calls++;
+    const rows = (JSON.parse(body) as { records: { frame: string }[] }).records;
+    framesSent.push(...rows.map((r) => r.frame));
+    return { status: 200, body: {
+      results: rows.map((_r, i) => calls === 1 && i !== 0 ? "UNCERTAIN" : "STORED"),
+      sessions_ok: true,
+    } };
+  }, (fn) => core.exclusive(fn));
+  const result = await up.drain("http://x", "t");
+  assert.deepEqual(result, { sent: BATCH + 17, final: 18, uncertain: BATCH - 1 });
+  assert.equal(calls, 2);
+  assert.equal(framesSent.length, new Set(framesSent).size);
+  assert.equal((await up.counts()).pending, BATCH - 1);
+});
+
 test("ping: empty batch checks address and token", async () => {
   const { core, db } = await phoneWith(1);
   const up = new Uploader(db, async (_u, token, body) => {
