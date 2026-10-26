@@ -158,6 +158,15 @@ export class EdgeCore {
                     this.lastHello ? Math.max(0, this.lastHello.held - this.okSinceHello) : 0);
   }
 
+  /** Start a new requested scan; do not mix earlier live HELD events into its count. */
+  beginDump(): Promise<void> {
+    return this.serial(async () => {
+      this.dumpSeen.clear();
+      this.passDone = false;
+      this.incompleteFloor = 0;
+    });
+  }
+
   private finishDump(count: number): boolean {
     // DUMP END claims that count HELD records were announced. Count every
     // unique announcement, including already accepted/reclaimed records.
