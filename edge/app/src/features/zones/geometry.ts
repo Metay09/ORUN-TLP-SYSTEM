@@ -91,6 +91,12 @@ export function validateSet(zones: Zone[]): string | null {
   return null;
 }
 
+/** Preview follows the *actual map centre* before committing a new vertex.
+ * Never mutates the saved/draft ring. A preview is never a device instruction. */
+export function previewAtCentre(draft: Ring, centre: Point | null): Ring {
+  return centre && draft.length ? [...draft, centre] : [...draft];
+}
+
 export function areaHa(ring: Ring): number {
   if (ring.length < 3) return 0;
   const p = canonicalRing(ring);
