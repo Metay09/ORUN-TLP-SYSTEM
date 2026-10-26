@@ -62,6 +62,26 @@ Supersedes the unmerged UX v2 (#174).
 - Python: SF5L1, SF5L3, SF5L4, SF5L7 (app core = Python reference), SF5L8
   (backend map == phone map).
 
+## Fix after the first phone install (2026-10-26)
+
+- The station's waiting-record count stayed at its connection value: the
+  Gateway reports it only in HELLO. `EdgeCore.heldNow()` now follows it live:
+  the HELLO count minus confirmed hand-offs until the first DUMP END, then
+  exactly the records the Gateway announced minus those handed off or on a
+  reclaimed page; the last value is kept after disconnect. Test in
+  `test/core.test.ts`. No firmware change.
+
+## Station counter regression guard (2026-10-26)
+
+- BLE `DUMP END` and USB `EDGE DUMP END count=N` are checked against distinct
+  announced `page:slot` records, including records already handed off.
+  Missing/broken announcements no longer turn a partial scan into an exact,
+  misleadingly low Gateway count; the app logs that a fresh DUMP is needed.
+- A requested BLE/USB redump starts a fresh announcement census. Live records
+  already handed off do not cause false mismatch warnings on the next pass.
+- Three focused regression tests have been added in `edge/app/test/core.test.ts`.
+  They still require an actual `npm test` and Android check on this PR head.
+
 ## Pending on the phone
 
 - Map tiles through Capacitor (satellite, topo, vector, terrain).

@@ -160,6 +160,7 @@ export class BleLink {
   async redump(): Promise<void> {
     if (!this.connected || !this.deviceId) return;
     try {
+      await this.core.beginDump();
       this.messageId = (this.messageId + 1) & 0xff;
       for (const f of frames(DUMP_MESSAGE, this.messageId))
         await BleClient.write(this.deviceId, EDGE_SERVICE_UUID, EDGE_TO_GATEWAY_UUID,
@@ -250,6 +251,7 @@ export class UsbLink {
       await this.core.sessionAlive("usb");
       this.ev.state("connected", dev.deviceName);
       this.ev.log(`[USB] bağlandı: ${dev.deviceName}; tutulan kayıtlar isteniyor`);
+      await this.core.beginDump();
       await this.writeLine("BENCH GW DUMP");
       this.timers.push(setInterval(() => { void this.pump(); }, POLL_MS));
       this.timers.push(setInterval(() => { void this.core.sessionAlive("usb"); }, ALIVE_MS));
@@ -295,7 +297,11 @@ export class UsbLink {
 
   /** Ask the Gateway to list every record it holds again. */
   async redump(): Promise<void> {
-    try { await this.writeLine("BENCH GW DUMP"); } catch (e) { this.ev.log(`[USB] yazılamadı: ${errorText(e)}`); }
+    if (!this.portId) return;
+    try {
+      await this.core.beginDump();
+      await this.writeLine("BENCH GW DUMP");
+    } catch (e) { this.ev.log(`[USB] yazılamadı: ${errorText(e)}`); }
   }
 
   private async writeLine(line: string): Promise<void> {
