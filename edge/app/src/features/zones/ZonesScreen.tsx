@@ -7,7 +7,7 @@ import { ArrowCounterClockwise, ArrowClockwise, Check, DownloadSimple, MapTrifol
 import { useBack } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { DemoFlag, Header } from "../../ds/components.tsx";
-import { areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, perimeterM, persistZones, previewAtCentre, simplifyRingToBudget, validateRing, validateSet, type Point, type Ring, type Zone } from "./geometry.ts";
+import { areaHa, asGeoJSON, canonicalRing, importGeoJSON, loadZones, perimeterM, persistZones, previewAtCentre, simplifyRingToBudget, validateRing, validateSet, zoneStorageWarning, type Point, type Ring, type Zone } from "./geometry.ts";
 import "./zones.css";
 
 function hectares(n: number): string { return n.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -330,7 +330,7 @@ export function ZonesScreen() {
   const [zones, setZones] = useState<Zone[]>(loadZones);
   const [editId, setEditId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(() => zoneStorageWarning() ?? "");
   const file = useRef<HTMLInputElement>(null);
   const selected = zones.filter((z) => z.active);
   const totalVertices = selected.reduce((n, z) => n + z.ring.length, 0);
