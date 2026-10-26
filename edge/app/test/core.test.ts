@@ -288,6 +288,29 @@ test("USB: incomplete DUMP END count is not treated as exact zero", async () => 
   assert.equal(edge.heldNow(), 2);
 });
 
+test("redump: previously delivered live events do not spoil the next census", async () => {
+  const now = 1_800_000_000;
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, clock: () => now });
+  await edge.init();
+  const [f0, f1] = track(2);
+  await edge.handleMessage(concat(new Uint8Array([1]), fromHex("09A462BD4B275BA5"), fromHex("00010420")));
+  await edge.handleMessage(heldMsg(0, 1, 2n, f0, null));
+  await edge.handleMessage(fromHex("030001")); // complete first pass
+  edge.nextAcceptMessage(now);
+  await edge.handleMessage(fromHex("040000000100"));
+  assert.equal(edge.heldNow(), 0);
+
+  // A fresh record arrives and is handed off before a user-initiated redump.
+  await edge.handleMessage(heldMsg(1, 0, 3n, f1, null));
+  edge.nextAcceptMessage(now);
+  await edge.handleMessage(fromHex("040001000000"));
+  assert.equal(edge.heldNow(), 0);
+
+  await edge.beginDump();
+  assert.doesNotMatch((await edge.handleMessage(fromHex("030000")))!, /UYARI/);
+  assert.equal(edge.heldNow(), 0);
+});
+
 test("points: live / through / cut / unknown classification", async () => {
   let now = 0;
   const db = await freshDb();
