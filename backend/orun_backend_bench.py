@@ -36,6 +36,7 @@ import hmac
 import json
 from pathlib import Path
 import re
+import stat
 import sqlite3
 import sys
 import threading
@@ -269,17 +270,27 @@ def main(argv=None) -> int:
                          "default ~/orun-credentials.sqlite")
     ap.add_argument("--bench-test-key", action="store_true",
                     help="accept the PUBLIC SF5L0 test credential (bench only)")
-    ap.add_argument("--token", required=True,
-                    help="shared bearer token the phone sends (bench access control)")
+    auth = ap.add_mutually_exclusive_group(required=True)
+    auth.add_argument("--token", help="shared bearer token (legacy interactive use; visible in process arguments)")
+    auth.add_argument("--token-file", type=Path, help="owner-only (0600) file containing the same Edge bearer token")
     ap.add_argument("--host", default="127.0.0.1",
                     help="bind address (use the Tailscale address to reach it from the phone)")
     ap.add_argument("--port", type=int, default=8090)
     args = ap.parse_args(argv)
-    if len(args.token) < 8:
-        ap.error("--token: at least 8 characters")
+    token = args.token
+    if args.token_file is not None:
+        try:
+            meta = args.token_file.stat()
+            if not stat.S_ISREG(meta.st_mode) or (stat.S_IMODE(meta.st_mode) & 0o077):
+                ap.error("--token-file must be a private regular file (chmod 600)")
+            token = args.token_file.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError) as exc:
+            ap.error(f"--token-file cannot be read: {type(exc).__name__}")
+    if token is None or len(token) < 8 or "\\n" in token or "\\r" in token:
+        ap.error("--token/--token-file: token must be at least 8 characters, one line")
     registry = oc.CredentialRegistry(args.registry)
     backend = Backend(Path(args.db), args.bench_test_key, registry=registry)
-    server = make_server(backend, args.host, args.port, args.token)
+    server = make_server(backend, args.host, args.port, token)
     print(f"[sunucu] http://{args.host}:{server.server_address[1]}/  kayıt={backend.ledger.record_count()} "
           f"(çıkış Ctrl+C)", flush=True)
     try:
