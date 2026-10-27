@@ -788,6 +788,7 @@ void Sf5l0EdgeLinkSession::begin() {
   active_ = true;
   hello_pending_ = true;
   priority_pending_ = true;
+  priority_sent_since_history_ = false;
   scan_pending_ = true;
   dump_end_pending_ = true;
   cursor_valid_ = false;
@@ -806,6 +807,7 @@ void Sf5l0EdgeLinkSession::onMessage(const uint8_t* m, size_t n) {
   if (!active_ || m == nullptr || n == 0U) return;
   if (m[0] == uint8_t(edge_link::Type::kDump) && n == 1U) {
     priority_pending_ = true;
+    priority_sent_since_history_ = false;
     scan_pending_ = true;           // full pass again from the start
     dump_end_pending_ = true;
     cursor_valid_ = false;
@@ -974,13 +976,28 @@ bool Sf5l0EdgeLinkSession::next(uint8_t* out, size_t capacity,
   // Latest-head lane takes exactly one message per pending event and never
   // moves the history cursor. Normal scan remains oldest first, so neither
   // history nor its custody/ACK semantics can be starved or silently skipped.
-  if (priority_pending_ && store_.ready() && !store_.busy()) {
+  if (priority_pending_ && !priority_sent_since_history_ &&
+      store_.ready() && !store_.busy()) {
     priority_pending_ = false;
-    if (nextPriority(out, capacity, length)) return true;
+    if (nextPriority(out, capacity, length)) {
+      priority_sent_since_history_ = true;
+      return true;
+    }
   }
   if (scan_pending_ && store_.ready() && !store_.busy()) {
-    if (nextHeld(out, capacity, length)) return true;
+    if (nextHeld(out, capacity, length)) {
+      priority_sent_since_history_ = false;
+      return true;
+    }
     scan_pending_ = false;  // caught up until the next record arrives
+  }
+  // If there is no more history, do not withhold a newly arrived preview.
+  if (priority_pending_ && store_.ready() && !store_.busy()) {
+    priority_pending_ = false;
+    if (nextPriority(out, capacity, length)) {
+      priority_sent_since_history_ = true;
+      return true;
+    }
   }
   if (!scan_pending_ && dump_end_pending_) {
     dump_end_pending_ = false;
