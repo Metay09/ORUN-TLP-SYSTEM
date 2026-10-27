@@ -94,32 +94,42 @@ test("free grazing: timed or until turned off", () => {
   assert.equal(grazing({ until: null, forever: true }, 10), true);
 });
 
-test("herd and events: confirmed outside is an alarm unless grazing freely", async () => {
+test("geofence memberships are informative; phone never manufactures an OUTSIDE alarm", async () => {
   const { buildHerd } = await import("../src/app/herd.ts");
   const { deriveEvents } = await import("../src/app/events.ts");
   const NOW = Date.parse("2026-10-25T12:00:00Z");
   const iso = (ms: number) => new Date(ms).toISOString();
   const p = (agoMin: number, lon: number) => ({
-    tracker: "c1", seq: agoMin, time: iso(NOW - agoMin * 60_000), lat: 37.6104, lon, alt_m: 450, sats: 10, hdop: 1, fix_age_s: 0,
-    battery_mv: 4065, battery: "NORMAL", active_s: 30, covered_s: 59, source: "GNSS", period_s: 600, rssi: -90, snr: 6,
+    tracker: "c1", seq: agoMin, time: iso(NOW - agoMin * 60_000),
+    lat: 37.6104, lon, alt_m: 450, sats: 10, hdop: 1, fix_age_s: 0,
+    battery_mv: 4065, battery: "NORMAL", active_s: 30, covered_s: 59,
+    source: "GNSS", period_s: 600, rssi: -90, snr: 6,
     received: iso(NOW), delay_s: 0, link: "live" as const,
   });
-  const pts = [p(40, 28.0545), p(30, 28.0545), p(20, 28.0600), p(10, 28.0601), p(1, 28.0602)];
+  const pts = [p(40, 28.0545), p(30, 28.0545), p(20, 28.0600),
+               p(10, 28.0601), p(1, 28.0602)];
   const fence = compileFence([zone(SQ)]);
   const base = { points: pts, profiles: {}, assetOf: (d: string) => d, now: NOW, fence };
   const [a] = buildHerd(base);
-  assert.equal(a.status, "out");
-  assert.equal(a.outside, true);
-  assert.equal(a.outSince, NOW - 20 * 60_000);
-  const [g] = buildHerd({ ...base, grazing: true });
-  assert.notEqual(g.status, "out");
-  assert.equal(g.grazing, true);
-  const ev = (grazing: boolean) => deriveEvents({
-    herd: [a], now: NOW, fence, grazing, journal: [], coverage: null,
+  assert.notEqual(a.status, "out", "a tracker event is required for this status");
+  assert.equal(a.outside, false);
+  assert.equal(a.outSince, null);
+  assert.equal(a.grazing, false);
+  const events = deriveEvents({
+    herd: [a], now: NOW, fence, grazing: true, journal: [], coverage: null,
     station: { id: null, link: "none", phase: "idle", detail: null, held: null, capacity: null, position: null },
-    server: { configured: false, url: "", token: "", auto: false, busy: false, uploaded: null, pending: null, conflict: 0, rejected: 0, lastOk: null, error: null },
-  }).filter((e) => e.kind === "out");
-  assert.equal(ev(false).length, 1);
-  assert.equal(ev(false)[0].end, null);
-  assert.equal(ev(true).length, 0, "the open period raises nothing while grazing");
+    server: { configured: false, url: "", token: "", auto: false, busy: false, uploaded: null,
+      pending: null, conflict: 0, rejected: 0, lastOk: null, error: null },
+  });
+  assert.equal(events.filter((event) => event.kind === "out").length, 0);
+});
+
+test("GeoJSON polygon holes cannot silently become allowed grazing land", () => {
+  const hole: LonLat[] = [[28.0542, 37.6102], [28.0544, 37.6102],
+    [28.0544, 37.6104], [28.0542, 37.6104]];
+  const coordinates = [[...SQ, SQ[0]], [...hole, hole[0]]];
+  const r = fromGeoJSON(JSON.stringify({ type: "Polygon", coordinates }), 1, () => "x");
+  assert.equal(r.zones.length, 0);
+  assert.match(r.skipped.join(" "), /boşluk/);
+  assert.throws(() => fromGeoJSON("null", 1, () => "x"), /GeoJSON/);
 });
