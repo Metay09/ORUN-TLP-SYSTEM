@@ -55,6 +55,7 @@ export interface Model {
   coverage: Coverage;
   zones: Zone[];
   zoneSet: SetCheck;      // the active set against the collar's limits
+  zoneMigrationWarning: string | null; // pre-merge legacy drafts must not disappear silently
   fence: Fence;           // compiled active, valid zones
   graze: Graze;
   grazing: boolean;       // serbest otlatma on right now
@@ -153,7 +154,8 @@ export function useModel(): Model {
 
   return {
     demo, canLeaveDemo: s.real !== null, now, prefs: p, snap, points, loaded, herd, devices, station, server,
-    events, coverage, zones, zoneSet, fence, graze, grazing: grazingNow, seen, source, actions,
+    events, coverage, zones, zoneSet, zoneMigrationWarning: zoneStore.migrationWarning,
+    fence, graze, grazing: grazingNow, seen, source, actions,
   };
 }
 
