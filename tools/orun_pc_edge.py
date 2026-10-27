@@ -22,6 +22,7 @@ No connection is made to public Internet. Only loopback or Tailscale IPv4.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import asyncio
 import hashlib
 import ipaddress
@@ -103,12 +104,20 @@ class Inbox:
         with self.conn() as db:
             db.executescript(SCHEMA)
 
+    @contextmanager
     def conn(self):
         db = sqlite3.connect(str(self.path), timeout=5)
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute("PRAGMA synchronous=FULL")
-        db.execute("PRAGMA busy_timeout=5000")
-        return db
+        try:
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute("PRAGMA busy_timeout=5000")
+            yield db
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     def ingest(self, raw: bytes, gateway: str | None = None) -> bool:
         # This is a deliberately untrusted *sealed* queue. No AEAD validity
@@ -300,7 +309,10 @@ def ble_forever(inbox: Inbox, address: str | None) -> None:
                     reassembler = EdgeReassembler()
                     gateway = None
                     while client.is_connected:
-                        frame = await asyncio.wait_for(queue.get(), timeout=30)
+                        try:
+                            frame = await asyncio.wait_for(queue.get(), timeout=10)
+                        except asyncio.TimeoutError:
+                            continue  # quiet BLE periods are normal
                         msg = reassembler.push(frame)
                         if msg:
                             gateway = handle_ble_message(msg, inbox, gateway)
