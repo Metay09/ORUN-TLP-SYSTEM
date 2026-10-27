@@ -572,8 +572,8 @@ export class MapEngine {
           if (a.id !== exposed.id) this.pins.get(a.id)?.getElement().classList.add("in-cluster");
         const el = this.pins.get(exposed.id)?.getElement();
         if (el) {
-          const badge = document.createElement("button");
-          badge.type = "button";
+          // The parent pin already is a button. Do not nest another button.
+          const badge = document.createElement("span");
           badge.className = "pin-count";
           badge.textContent = `+${members.length - 1}`;
           badge.setAttribute("aria-label", `${members.length - 1} hayvan daha: seçim listesini aç`);
