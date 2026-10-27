@@ -54,6 +54,44 @@ install_service() {
     echo "Mevcut registry yolunu dogrulayin; sifir anahtar olusturmayin." >&2
     exit 1
   fi
+  # Never select a freshly created, empty backend ledger at installation.
+  # The server itself creates SQLite files, so inspect read-only first.
+  if [[ ! -s "$DB_FILE" ]]; then
+    echo "HATA: Mevcut backend kayit DB dosyasi bulunamadi: $DB_FILE" >&2
+    echo "Gercek ledger yolunu dogrulamadan bos veritabani baslatilmaz." >&2
+    exit 1
+  fi
+  if ! python3 - "$DB_FILE" <<'PY'
+import sqlite3
+import sys
+from pathlib import Path
+from urllib.parse import quote
+path = Path(sys.argv[1]).resolve()
+uri = "file:" + quote(str(path), safe="/") + "?mode=ro"
+try:
+    with sqlite3.connect(uri, uri=True, timeout=2) as db:
+        tables = {row[0] for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        if not {"verified_observations", "verified_conflicts"}.issubset(tables):
+            raise RuntimeError("not an ORUN verified backend ledger")
+        if db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+            raise RuntimeError("SQLite quick_check failed")
+        records = db.execute("SELECT COUNT(*) FROM verified_observations").fetchone()[0]
+        print(f"Mevcut ORUN backend DB: {records} dogrulanmis kayit")
+except (sqlite3.Error, OSError, RuntimeError) as exc:
+    print(f"HATA: Mevcut backend DB dogrulanamadi: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    exit 1
+  fi
+  # Detect an unrelated service before asking for/writing the Edge token.
+  if [[ -e "$UNIT_FILE" ]] &&
+     ! grep -Fqx "ExecStart=/usr/bin/bash $SELF serve" "$UNIT_FILE"; then
+    echo "HATA: Farkli ORUN backend service dosyasi zaten var: $UNIT_FILE" >&2
+    echo "Dosyayi silmeden mevcut yapilandirmayi inceleyin." >&2
+    exit 1
+  fi
   mkdir -p "$UNIT_DIR" "$(dirname "$TOKEN_FILE")"
   chmod 700 "$(dirname "$TOKEN_FILE")"
 
@@ -73,15 +111,6 @@ install_service() {
     unset token
   fi
   chmod 600 "$TOKEN_FILE"
-
-  # Never overwrite an independently managed backend unit; it may have a
-  # different real DB, credentials, token, or port already in production.
-  if [[ -e "$UNIT_FILE" ]] &&
-     ! grep -Fqx "ExecStart=/usr/bin/bash $SELF serve" "$UNIT_FILE"; then
-    echo "HATA: Farkli ORUN backend service dosyasi zaten var: $UNIT_FILE" >&2
-    echo "Dosyayi silmeden mevcut yapilandirmayi inceleyin." >&2
-    exit 1
-  fi
 
   cat > "$UNIT_FILE" <<EOF
 [Unit]
