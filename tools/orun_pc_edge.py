@@ -5,9 +5,11 @@ The PC stores exact protected frames (not plaintext, not K_root) with SQLite
 WAL+FULL. Another worker retries uploads if the backend or network is offline.
 The backend is the only place that decrypts and authenticates Tracker data.
 
-IMPORTANT: This bridge NEVER sends EDGE ACCEPT/reclaim. Backend STORED does
-not yet constitute the Gateway's authenticated custody-release protocol.
-Therefore Gateway-held pages remain held and may fill. Do not erase them.
+The default PC Edge is receive-only and NEVER sends EDGE ACCEPT/reclaim.
+Optional --bench-release-gateway explicitly enables the EXISTING SF5L0
+PUBLIC-TEST-KEY HMAC handoff, but only for a specified bench Gateway and only
+after backend STORED/DUPLICATE. NOT authorization for a provisioned Gateway or
+a production backend signed receipt. Do not deploy this mode on real keys.
 
 Usage:
   python3 tools/orun_pc_edge.py --mode usb --port /dev/serial/by-id/GATEWAY \\
@@ -42,11 +44,12 @@ from urllib.request import (
 
 from orun_edge_bench import (
     EDGE_SERVICE_UUID, EDGE_TO_EDGE_UUID, EdgeReassembler,
+    ACCEPT_REPLY, edge_accept_line,
 )
 
 USB_HELD = re.compile(
-    r"EDGE (?:HELD|PRIORITY) v1 gw=([0-9A-F]{16}) page=\d+ slot=\d+ "
-    r"gen=[0-9A-F]{16} len=(\d+) obj=([0-9A-F]+)(?:\s|$)"
+    r"EDGE (?:HELD|PRIORITY) v1 gw=([0-9A-F]{16}) page=(\d+) slot=(\d+) "
+    r"gen=([0-9A-F]{16}) len=(\d+) obj=([0-9A-F]+)(?:\s|$)"
 )
 EDGE_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 VALID_STATES = {"STORED", "DUPLICATE", "CONFLICT", "REJECTED", "UNCERTAIN"}
@@ -65,6 +68,18 @@ CREATE TABLE IF NOT EXISTS sealed_records (
  last_attempt_utc INTEGER
 );
 CREATE INDEX IF NOT EXISTS sealed_pending ON sealed_records(backend_state,id);
+CREATE TABLE IF NOT EXISTS gateway_holds (
+ gateway TEXT NOT NULL CHECK(length(gateway)=16),
+ page INTEGER NOT NULL,
+ slot INTEGER NOT NULL,
+ generation TEXT NOT NULL CHECK(length(generation)=16),
+ digest BLOB NOT NULL CHECK(length(digest)=32),
+ seen_utc INTEGER NOT NULL,
+ accept_state TEXT,
+ PRIMARY KEY(gateway,page,slot,generation)
+);
+CREATE INDEX IF NOT EXISTS gateway_holds_ready
+ ON gateway_holds(gateway,accept_state,seen_utc);
 """
 
 
@@ -133,6 +148,49 @@ class Inbox:
                 (hashlib.sha256(raw).digest(), raw, gateway, now),
             )
         return True
+
+    def observe_hold(self, gateway: str, page: int, slot: int,
+                     generation: str, raw: bytes) -> None:
+        """Keep Gateway handle tied to exact sealed bytes, not just a slot."""
+        if (not re.fullmatch(r"[0-9A-F]{16}", gateway) or
+                not re.fullmatch(r"[0-9A-F]{16}", generation) or
+                not 0 <= page <= 65535 or not 0 <= slot <= 65535):
+            raise ValueError("invalid gateway custody handle")
+        digest = hashlib.sha256(raw).digest()
+        with self.conn() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO gateway_holds "
+                "(gateway,page,slot,generation,digest,seen_utc) "
+                "VALUES (?,?,?,?,?,?)",
+                (gateway, page, slot, generation, digest, int(time.time())),
+            )
+
+    def ready_hold(self, gateway: str) -> dict | None:
+        """Never produce an ACCEPT for pending, rejected, or conflict frames."""
+        with self.conn() as db:
+            row = db.execute(
+                "SELECT h.gateway,h.page,h.slot,h.generation,h.digest,r.frame "
+                "FROM gateway_holds h JOIN sealed_records r ON h.digest=r.digest "
+                "WHERE h.gateway=? AND h.accept_state IS NULL "
+                "AND r.backend_state IN ('STORED','DUPLICATE') "
+                "ORDER BY h.seen_utc,h.page,h.slot LIMIT 1", (gateway,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {"gateway": row[0], "page": row[1], "slot": row[2],
+                "generation": row[3], "digest": row[4], "frame": bytes(row[5])}
+
+    def record_accept(self, h: dict, state: str) -> None:
+        if state not in ("OK", "UNKNOWN", "REJECTED", "FAIL", "TIMEOUT"):
+            raise ValueError("invalid Gateway accept result")
+        with self.conn() as db:
+            db.execute(
+                "UPDATE gateway_holds SET accept_state=? WHERE "
+                "gateway=? AND page=? AND slot=? AND generation=? "
+                "AND digest=? AND accept_state IS NULL",
+                (state, h["gateway"], h["page"], h["slot"],
+                 h["generation"], h["digest"]),
+            )
 
     def batch(self) -> list[dict]:
         with self.conn() as db:
@@ -241,10 +299,76 @@ def handle_usb_line(line: str, inbox: Inbox) -> bool:
     m = USB_HELD.search(line)
     if not m:
         return False
-    raw = m[3]
-    if len(raw) not in (168, 200) or len(raw) != 2 * int(m[2]):
+    hexdata = m[6]
+    if len(hexdata) not in (168, 200) or len(hexdata) != 2 * int(m[5]):
         return False
-    return inbox.ingest(bytes.fromhex(raw), m[1])
+    raw = bytes.fromhex(hexdata)
+    stored = inbox.ingest(raw, m[1])
+    if stored:
+        inbox.observe_hold(m[1], int(m[2]), int(m[3]), m[4], raw)
+    return stored
+
+
+class BenchUsbRelease:
+    """Opt-in PUBLIC SF5L0 test-key handoff, after backend verification only.
+
+    No release on a network timeout, UNCERTAIN, CONFLICT or REJECTED response.
+    The Gateway must independently authenticate the exact page/slot/gen/MAC.
+    """
+    def __init__(self, inbox: Inbox, gateway: str):
+        if not re.fullmatch(r"[0-9A-F]{16}", gateway):
+            raise ValueError("bench release requires exact uppercase Gateway ID")
+        self.inbox = inbox
+        self.gateway = gateway
+        self.pending = None
+        self.attempts = 0
+        self.last_sent = 0.0
+
+    def observe(self, line: str) -> None:
+        reply = ACCEPT_REPLY.search(line)
+        if not reply or self.pending is None:
+            return
+        if reply["page"] == "?" or reply["slot"] == "?":
+            return
+        if (int(reply["page"]), int(reply["slot"])) != (
+                self.pending["page"], self.pending["slot"]):
+            return
+        word = reply["word"]
+        if word == "BUSY":
+            self.last_sent = 0.0   # retry same exact handle on next loop
+            return
+        self.inbox.record_accept(self.pending, word)
+        print("[bench accept] gateway result:", word,
+              "page=", self.pending["page"], "slot=", self.pending["slot"],
+              flush=True)
+        self.pending = None
+        self.attempts = 0
+
+    def poll(self, serial_port, now: float) -> None:
+        if self.pending is not None:
+            if now - self.last_sent < 3.0:
+                return
+            if self.attempts >= 3:
+                self.inbox.record_accept(self.pending, "TIMEOUT")
+                print("[bench accept] TIMEOUT; no further automatic retry",
+                      flush=True)
+                self.pending = None
+                self.attempts = 0
+                return
+        else:
+            self.pending = self.inbox.ready_hold(self.gateway)
+            if self.pending is None:
+                return
+            self.attempts = 0
+        h = self.pending
+        line = edge_accept_line(
+            int(h["gateway"], 16), h["page"], h["slot"],
+            int(h["generation"], 16), h["frame"])
+        serial_port.write((line + "\n").encode("ascii"))
+        self.last_sent = now
+        self.attempts += 1
+        print("[bench accept] sent", self.attempts,
+              "page=", h["page"], "slot=", h["slot"], flush=True)
 
 
 def handle_ble_message(msg: bytes, inbox: Inbox, gateway: str | None) -> str | None:
@@ -256,7 +380,8 @@ def handle_ble_message(msg: bytes, inbox: Inbox, gateway: str | None) -> str | N
     return gateway
 
 
-def usb_forever(inbox: Inbox, port: str) -> None:
+def usb_forever(inbox: Inbox, port: str,
+                release_gateway: str | None = None) -> None:
     try:
         import serial
     except ImportError as exc:
@@ -265,6 +390,8 @@ def usb_forever(inbox: Inbox, port: str) -> None:
         try:
             with serial.Serial(port, 115200, timeout=0.5) as ser:
                 print("[usb] Gateway connected:", port, flush=True)
+                release = (BenchUsbRelease(inbox, release_gateway)
+                           if release_gateway else None)
                 last_dump = 0.
                 while True:
                     now = time.monotonic()
@@ -272,8 +399,15 @@ def usb_forever(inbox: Inbox, port: str) -> None:
                         ser.write(b"BENCH GW DUMP\n")  # READ-ONLY
                         last_dump = now
                     raw = ser.read_until(b"\n", size=4096)
-                    if raw and handle_usb_line(raw.decode("ascii", "replace"), inbox):
-                        print("[usb] sealed record committed", inbox.counts(), flush=True)
+                    if raw:
+                        text = raw.decode("ascii", "replace").rstrip("\r\n")
+                        if handle_usb_line(text, inbox):
+                            print("[usb] sealed record committed",
+                                  inbox.counts(), flush=True)
+                        if release:
+                            release.observe(text)
+                    if release:
+                        release.poll(ser, time.monotonic())
         except (OSError, serial.SerialException) as exc:
             print("[usb] disconnected; reconnecting:", type(exc).__name__, flush=True)
             time.sleep(5)
@@ -334,22 +468,36 @@ def main() -> None:
     ap.add_argument("--backend-url", required=True)
     ap.add_argument("--token-file", type=Path, required=True)
     ap.add_argument("--edge-id", required=True)
+    ap.add_argument("--bench-release-gateway",
+                    help="EXPLICIT SF5L0 PUBLIC TEST KEY release on USB only; "
+                         "expected 16-hex Gateway ID (NEVER production)")
     args = ap.parse_args()
     if args.mode == "usb" and not args.port:
         ap.error("--port is required for USB mode")
+    if args.bench_release_gateway and args.mode != "usb":
+        ap.error("--bench-release-gateway is USB bench only")
+    if args.bench_release_gateway and not re.fullmatch(
+            r"[0-9A-F]{16}", args.bench_release_gateway):
+        ap.error("--bench-release-gateway needs exact uppercase 16-hex ID")
     # Fail before touching local SQLite when destination/token are wrong.
     checked_backend(args.backend_url)
     read_token(args.token_file.expanduser())
     inbox = Inbox(args.db)
     uploader = Uploader(inbox, args.backend_url, args.token_file.expanduser(), args.edge_id)
     print("[pc-edge] spool:", inbox.path, inbox.counts(), flush=True)
-    print("[pc-edge] no EDGE ACCEPT/reclaim: Gateway retains custody", flush=True)
+    if args.bench_release_gateway:
+        print("[pc-edge] WARNING: PUBLIC TEST-KEY bench release for",
+              args.bench_release_gateway, "NOT real-device authorization",
+              flush=True)
+    else:
+        print("[pc-edge] no EDGE ACCEPT/reclaim: Gateway retains custody",
+              flush=True)
     if args.mode == "upload-only":
         uploader.forever()
     else:
         threading.Thread(target=uploader.forever, daemon=True).start()
         if args.mode == "usb":
-            usb_forever(inbox, args.port)
+            usb_forever(inbox, args.port, args.bench_release_gateway)
         else:
             ble_forever(inbox, args.ble_address)
 
