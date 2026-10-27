@@ -142,10 +142,11 @@ export interface Prefs {
   sat: SatPrefs; zoneFill: ZoneFill;
 }
 
-// Esri has no 18-19 imagery over most of rural Aydın; asking for it returns
-// "Map data not yet available" pictures. 17 is sharp there and is enlarged
-// beyond (settable 14-19 in the layer panel).
-export const DEFAULT_SAT: SatPrefs = { kind: "esri", release: "26334", maxZoom: 17 };
+// Field-verified preference (27 Oct 2026): current Esri at source zoom 18
+// gives the best balance on the owner's pastures. Missing higher-detail tiles
+// can still show provider placeholders: the 14..19 source cap stays adjustable.
+// Existing saved preferences take precedence (including the PR180 safe z15).
+export const DEFAULT_SAT: SatPrefs = { kind: "esri", release: "26334", maxZoom: 18 };
 
 export const DEFAULT_PREFS: Prefs = {
   theme: "auto", sun: false, demo: null, base: "satellite", tilt: false,
