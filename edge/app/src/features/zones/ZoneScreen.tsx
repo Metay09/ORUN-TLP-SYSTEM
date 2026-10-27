@@ -14,6 +14,11 @@ export function ZoneScreen({ id }: { id: string }) {
   const z = m.zones.find((x) => x.id === id);
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(z?.name ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const saveSafe = (next: typeof z) => {
+    try { if (!next) return false; m.actions.saveZone(next); setError(null); return true; }
+    catch (e) { setError(e instanceof Error ? e.message : "Mera kaydedilemedi."); return false; }
+  };
   if (!z) return <Screen title={tr.zones.title} onBack={nav.pop}><p className="sm lead">{tr.zones.empty}</p></Screen>;
 
   const bad = validateRing(z.ring);
@@ -23,6 +28,7 @@ export function ZoneScreen({ id }: { id: string }) {
 
   return (
     <Screen title={z.name} onBack={nav.pop}>
+      {error && <p className="sm t-alarm strong lead" role="alert">{error}</p>}
       <Card>
         <KV k={tr.zones.area}>{fmt.dec(a / 10_000, 2)} ha · {fmt.dec(a / 1000, 1)} dekar</KV>
         <KV k={tr.zones.perimeter}>{fmt.distance(perimeterM(z.ring))}</KV>
@@ -35,14 +41,17 @@ export function ZoneScreen({ id }: { id: string }) {
       </Card>
 
       <Card>
-        <ToggleRow title={tr.zones.active} sub={tr.zones.activeHelp} on={z.active} onChange={(v) => m.actions.saveZone({ ...z, active: v })} />
+        <ToggleRow title={tr.zones.active} sub={tr.zones.activeHelp} on={z.active} onChange={(v) => { saveSafe({ ...z, active: v }); }} />
       </Card>
 
       <div className="stack" style={{ padding: "16px 16px 0" }}>
         <button className="btn primary wide" onClick={() => nav.showZone(z.id)}><MapTrifold size={20} />{tr.zones.showOnMap}</button>
         <button className="btn wide" onClick={() => nav.drawZone(z.id)}><PencilSimple size={20} />{tr.zones.edit}</button>
         <button className="btn wide" onClick={() => { setName(z.name); setRenaming(true); }}>{tr.zones.rename}</button>
-        <button className="btn danger wide" onClick={() => { if (window.confirm(tr.zones.removeConfirm(z.name))) { m.actions.removeZone(z.id); nav.pop(); } }}>
+        <button className="btn danger wide" onClick={() => { if (window.confirm(tr.zones.removeConfirm(z.name))) {
+          try { m.actions.removeZone(z.id); nav.pop(); }
+          catch (e) { setError(e instanceof Error ? e.message : "Mera silinemedi."); }
+        } }}>
           <Trash size={20} />{tr.zones.remove}
         </button>
       </div>
@@ -51,8 +60,8 @@ export function ZoneScreen({ id }: { id: string }) {
         <Dialog title={tr.zones.rename} onClose={() => setRenaming(false)}>
           <div className="stack" style={{ padding: "4px 16px 16px" }}>
             <input className="inp" value={name} maxLength={40} autoFocus aria-label={tr.zones.name} onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) { m.actions.saveZone({ ...z, name }); setRenaming(false); } }} />
-            <button className="btn primary wide" disabled={!name.trim()} onClick={() => { m.actions.saveZone({ ...z, name }); setRenaming(false); }}>{tr.zones.draw.save}</button>
+              onKeyDown={(e) => { if (e.key === "Enter" && name.trim() && saveSafe({ ...z, name })) setRenaming(false); }} />
+            <button className="btn primary wide" disabled={!name.trim()} onClick={() => { if (saveSafe({ ...z, name })) setRenaming(false); }}>{tr.zones.draw.save}</button>
           </div>
         </Dialog>
       )}
