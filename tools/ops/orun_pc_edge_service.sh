@@ -13,22 +13,39 @@ usage() {
   echo "Kullanim:" >&2
   echo "  bash tools/ops/orun_pc_edge_service.sh install usb http://100.x.x.x:8090 pc-adi /dev/serial/by-id/GATEWAY" >&2
   echo "  bash tools/ops/orun_pc_edge_service.sh install ble http://100.x.x.x:8090 pc-adi" >&2
+  echo "  bash tools/ops/orun_pc_edge_service.sh validate usb URL EDGE-ID /dev/serial/by-id/GATEWAY" >&2
   echo "  bash tools/ops/orun_pc_edge_service.sh status|logs" >&2
   exit 2
 }
 
+# Parse arguments without relying on Bash/locale-dependent regex matching.
+# Also provide a read-only validation entrypoint for host regression tests.
+validate_install_args() {
+  if (( $# < 3 || $# > 4 )); then
+    echo "HATA: install icin mod, URL, Edge ID ve USB icin port gerekir." >&2
+    return 2
+  fi
+  python3 - "$1" "$2" "$3" "${4:-}" <<'PY'
+import re
+import sys
+
+mode, url, edge_id, port = sys.argv[1:]
+if mode not in ("usb", "ble"):
+    sys.exit("HATA: Baglanti modu usb veya ble olmali.")
+if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", edge_id, flags=re.ASCII):
+    sys.exit("HATA: Edge ID 1-64 ASCII harf/rakam/._- olabilir.")
+if mode == "usb":
+    if not re.fullmatch(r"/dev/(?:ttyACM[0-9]+|serial/by-id/[A-Za-z0-9_.:-]+)", port,
+                        flags=re.ASCII):
+        sys.exit("HATA: USB portu /dev/serial/by-id/ veya /dev/ttyACM[0-9] olmali.")
+elif port:
+    sys.exit("HATA: BLE modunda USB portu verilmez.")
+PY
+}
+
 install_service() {
   local mode="${1:-}" url="${2:-}" edge_id="${3:-}" port="${4:-}"
-  [[ "$mode" == usb || "$mode" == ble ]] || usage
-  [[ "$edge_id" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || usage
-  if [[ "$mode" == usb ]]; then
-    if [[ ! "$port" =~ ^/dev/(ttyACM[0-9]+|serial/by-id/[A-Za-z0-9_.:-]+)$ ]]; then
-      echo "HATA: Sabit Gateway seri port yolunu verin (/dev/serial/by-id onerilir)." >&2
-      exit 1
-    fi
-  elif [[ -n "$port" ]]; then
-    usage
-  fi
+  validate_install_args "$@" || return 2
   if [[ "$ROOT" == *" "* || "$ROOT" == *"%"* ]]; then
     echo "HATA: Proje yolunda bosluk veya % karakteri var." >&2
     exit 1
@@ -107,6 +124,7 @@ EOF
 
 case "${1:-}" in
   install) shift; install_service "$@" ;;
+  validate) shift; validate_install_args "$@" ;;
   status) systemctl --user status orun-pc-edge.service --no-pager || true ;;
   logs) journalctl --user -u orun-pc-edge.service -n 80 --no-pager ;;
   *) usage ;;
