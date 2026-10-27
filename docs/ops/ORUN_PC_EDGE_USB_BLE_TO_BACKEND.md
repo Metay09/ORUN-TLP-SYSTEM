@@ -65,9 +65,22 @@ PC Edge testinde gerçek tasma/Gateway anahtarı kullanılmaz. Yerel geçici SQL
 Program, yalnızca backend tarafından STORED veya DUPLICATE yanıtı kalıcı kaydedilmiş tam çerçeveler için `EDGE ACCEPT v1` oluşturur. `OK`, `BUSY`, `UNKNOWN`, `REJECTED` ve zaman aşımı ayrı izlenir; aynı custody handle üç denemeden sonra durur. Gateway kendi HMAC doğrulamasını uygular. Bu bir bench protokol uyumluluk denemesidir; imzalı backend yetkisi veya üretimde güvenli tasma teslimi yerine geçmez.
 
 ```sh
-# Önce sadece izole host testi; Gateway'e hiçbir komut gönderilmez:
+# 1) Önce host testleri. Gateway'e hiçbir komut gönderilmez:
+bash -n tools/ops/orun_pc_edge_service.sh
 python3 firmware/tests/sf5/test_orun_pc_edge.py
+
+# 2) Mevcut kurulu USB servisini SF5L0 BENCH moduna geçirir
+#    (hizmet yeniden başlar, dosyalar silinmez):
+bash tools/ops/orun_pc_edge_service.sh bench-release enable 09A462BD4B275BA5
+
+# 3) Beklenen gözlem: [bench accept] sent / gateway result: OK.
+bash tools/ops/orun_pc_edge_service.sh logs
+
+# İstendiği an geri alma. Default receive-only servisine döner:
+bash tools/ops/orun_pc_edge_service.sh bench-release disable
 ```
+
+Bu komut yalnızca `ORUN_SF5L0_BENCH_TEST_KEYS` derlemesi olan USB Gateway ile uyumludur. Gateway'in normal üretim firmware'i aynı PUBLIC TEST KEY teslim onayını **tanımaz**. Sunucunun STORED/DUPLICATE cevabı görülmeden, reddedilen ya da belirsiz kayıtlar için hiçbir ACK gönderilmez. Bench onayı bizzat Gateway tarafından kabul edilmediği sürece kaydın serbest bırakıldığını söylemeyin.
 
 ## Saha doğrulama kapısı
 
