@@ -396,7 +396,10 @@ def usb_forever(inbox: Inbox, port: str,
                 while True:
                     now = time.monotonic()
                     if now - last_dump >= 120:
-                        ser.write(b"BENCH GW DUMP\n")  # READ-ONLY
+                        # Both commands only read Gateway custody state.
+                        # BENCH? also exposes reclaimed-page totals.
+                        ser.write(b"BENCH?\n")
+                        ser.write(b"BENCH GW DUMP\n")
                         last_dump = now
                     raw = ser.read_until(b"\n", size=4096)
                     if raw:
