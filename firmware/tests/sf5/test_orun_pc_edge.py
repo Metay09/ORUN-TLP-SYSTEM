@@ -92,6 +92,89 @@ class PCEdgeTests(unittest.TestCase):
                 self.assertEqual(conn.execute(
                     "SELECT COUNT(*) FROM sealed_records").fetchone()[0], 1)
 
+    def test_bench_accept_requires_successful_backend_and_exact_gateway(self):
+        class FakeSerial:
+            def __init__(self):
+                self.writes = []
+            def write(self, data):
+                self.writes.append(data)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = pc.Inbox(Path(tmp) / "inbox.sqlite")
+            gw = "09A462BD4B275BA5"
+            frame = fixture.track(1)[0]
+            msg = ("EDGE HELD v1 gw=" + gw +
+                   " page=3 slot=2 gen=0000000000000009 len=" +
+                   str(len(frame)) + " obj=" + frame.hex().upper())
+            self.assertTrue(pc.handle_usb_line(msg, inbox))
+            self.assertEqual(inbox.counts()["pending"], 1)
+            serial = FakeSerial()
+            release = pc.BenchUsbRelease(inbox, gw)
+            release.poll(serial, 10.0)
+            self.assertEqual(serial.writes, [])  # pending backend: no ACCEPT
+            inbox.acknowledge(inbox.batch(), ["UNCERTAIN"])
+            release.poll(serial, 14.0)
+            self.assertEqual(serial.writes, [])
+            inbox.acknowledge(inbox.batch(), ["STORED"])
+            pc.BenchUsbRelease(inbox, "AAAAAAAAAAAAAAAA").poll(serial, 18.0)
+            self.assertEqual(serial.writes, [])  # gateway-specific authorization
+            release.poll(serial, 20.0)
+            self.assertEqual(len(serial.writes), 1)
+            expected = pc.edge_accept_line(int(gw, 16), 3, 2, 9, frame)
+            self.assertEqual(serial.writes[0], (expected + "\n").encode("ascii"))
+            release.observe("EDGE ACCEPT OK page=3 slot=2 state=HANDED_OFF")
+            self.assertIsNone(inbox.ready_hold(gw))
+            with inbox.conn() as db:
+                states = db.execute(
+                    "SELECT accept_state FROM gateway_holds").fetchall()
+            self.assertEqual(states, [("OK",)])
+
+    def test_rejected_backend_never_releases(self):
+        class FakeSerial:
+            def __init__(self):
+                self.writes = []
+            def write(self, data):
+                self.writes.append(data)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = pc.Inbox(Path(tmp) / "spool.sqlite")
+            gw = "0123456789ABCDEF"
+            raw = bytes((2, 4, 2)) + bytes(97)
+            line = ("EDGE PRIORITY v1 gw=" + gw +
+                    " page=1 slot=0 gen=0000000000000001 len=100 obj=" +
+                    raw.hex().upper())
+            self.assertTrue(pc.handle_usb_line(line, inbox))
+            inbox.acknowledge(inbox.batch(), ["REJECTED"])
+            fake = FakeSerial()
+            release = pc.BenchUsbRelease(inbox, gw)
+            release.poll(fake, 12.0)
+            self.assertEqual(fake.writes, [])
+
+    def test_bench_accept_timeout_does_not_repeat_forever(self):
+        class FakeSerial:
+            def __init__(self):
+                self.writes = []
+            def write(self, data):
+                self.writes.append(data)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = pc.Inbox(Path(tmp) / "spool.sqlite")
+            gw = "0123456789ABCDEF"
+            frame = fixture.track(1)[0]
+            self.assertTrue(inbox.ingest(frame, gw))
+            inbox.observe_hold(gw, 1, 0, "0000000000000001", frame)
+            inbox.acknowledge(inbox.batch(), ["DUPLICATE"])
+            fake = FakeSerial()
+            release = pc.BenchUsbRelease(inbox, gw)
+            for t in (10.0, 14.0, 18.0, 22.0, 26.0):
+                release.poll(fake, t)
+            self.assertEqual(len(fake.writes), 3)
+            self.assertIsNone(inbox.ready_hold(gw))
+            with inbox.conn() as db:
+                states = db.execute(
+                    "SELECT accept_state FROM gateway_holds").fetchall()
+            self.assertEqual(states, [("TIMEOUT",)])
+
     def test_backend_roundtrip_and_retry(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
