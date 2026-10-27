@@ -5,6 +5,7 @@
 // every phone shares them is later work (step 3C+).
 import type { LatLon } from "./geo.ts";
 import type { AssetProfile, Assignment } from "./model.ts";
+import { NO_GRAZE, type Graze, type Zone, type ZoneBook } from "./zones.ts";
 
 type Fn = () => void;
 
@@ -126,16 +127,33 @@ export type Range = "today" | "h24" | "d3" | "d7" | "d30";
 export interface Layers {
   animals: boolean; trail: boolean; heat: boolean; coverage: boolean;
   stations: boolean; me: boolean; labels: boolean; relief: boolean;
+  zones: boolean; herdTrails: boolean; links: boolean;
+}
+export type ZoneFill = "none" | "light" | "hatch";
+/** Satellite imagery: Esri's current mosaic or one Wayback release. */
+export interface SatPrefs {
+  kind: "esri" | "wayback";
+  release: string;    // Wayback release id
+  maxZoom: number;    // highest tile level asked for; above it tiles are enlarged
 }
 export interface Prefs {
   theme: Theme; sun: boolean; demo: boolean | null;   // null: not chosen yet
   base: BaseMap; tilt: boolean; layers: Layers; range: Range;
+  sat: SatPrefs; zoneFill: ZoneFill;
 }
+
+// Esri has no 18-19 imagery over most of rural Aydın; asking for it returns
+// "Map data not yet available" pictures. 17 is sharp there and is enlarged
+// beyond (settable 14-19 in the layer panel).
+export const DEFAULT_SAT: SatPrefs = { kind: "esri", release: "26334", maxZoom: 17 };
 
 export const DEFAULT_PREFS: Prefs = {
   theme: "auto", sun: false, demo: null, base: "satellite", tilt: false,
-  layers: { animals: true, trail: true, heat: false, coverage: false, stations: true, me: true, labels: true, relief: false },
-  range: "h24",
+  layers: {
+    animals: true, trail: true, heat: false, coverage: false, stations: true, me: true, labels: true, relief: false,
+    zones: true, herdTrails: false, links: false,
+  },
+  range: "h24", sat: DEFAULT_SAT, zoneFill: "light",
 };
 
 export function rangeStart(r: Range, now: number): number {
@@ -146,9 +164,34 @@ export function rangeStart(r: Range, now: number): number {
 
 export const prefs = new Persisted<Prefs>("orun.app.prefs.v1", () => ({ ...DEFAULT_PREFS }),
   (raw) => (raw && typeof raw === "object"
-    ? { ...DEFAULT_PREFS, ...(raw as Partial<Prefs>), layers: { ...DEFAULT_PREFS.layers, ...((raw as Partial<Prefs>).layers ?? {}) } }
+    ? {
+      ...DEFAULT_PREFS, ...(raw as Partial<Prefs>),
+      layers: { ...DEFAULT_PREFS.layers, ...((raw as Partial<Prefs>).layers ?? {}) },
+      sat: { ...DEFAULT_SAT, ...((raw as Partial<Prefs>).sat ?? {}) },
+    }
     : null));
 
 // ------------------------------------------- station positions and acks --
 export const stationPlaces = new Persisted<Record<string, LatLon>>("orun.app.stations.v1", () => ({}));
 export const seenEvents = new Persisted<string[]>("orun.app.seen.v1", () => []);
+
+// ----------------------------------------------------------------- zones --
+/** Alanlar and serbest otlatma, kept on this phone (per data source). */
+export class ZoneStore extends Persisted<ZoneBook> {
+  constructor(key: string | null, seed?: Zone[]) {
+    super(key, () => ({ zones: seed ?? [], graze: { ...NO_GRAZE } }),
+      (raw) => (raw && typeof raw === "object" && Array.isArray((raw as ZoneBook).zones)
+        ? { zones: (raw as ZoneBook).zones, graze: { ...NO_GRAZE, ...((raw as ZoneBook).graze ?? {}) } } : null));
+  }
+  save(z: Zone): void {
+    this.update((b) => {
+      const clean: Zone = { ...z, name: z.name.trim().slice(0, 40) || "Alan", updated: Date.now() };
+      const i = b.zones.findIndex((x) => x.id === z.id);
+      const zones = i >= 0 ? b.zones.map((x, k) => (k === i ? clean : x)) : [...b.zones, clean];
+      return { ...b, zones };
+    });
+  }
+  remove(id: string): void { this.update((b) => ({ ...b, zones: b.zones.filter((z) => z.id !== id) })); }
+  add(list: Zone[]): void { this.update((b) => ({ ...b, zones: [...b.zones, ...list] })); }
+  setGraze(g: Graze): void { this.update((b) => ({ ...b, graze: g })); }
+}

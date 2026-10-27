@@ -5,14 +5,15 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyn
 import type { Point } from "../core/points.ts";
 import type { Snapshot } from "./controller.ts";
 import { coverageCells, type Coverage } from "./coverage.ts";
-import { DEMO_STATION, DEMO_STATION_POS, DemoSource, demoBook } from "./demo.ts";
+import { DEMO_STATION, DEMO_STATION_POS, DemoSource, demoBook, demoZones } from "./demo.ts";
 import { buildDevices } from "./devices.ts";
 import { deriveEvents } from "./events.ts";
 import type { LatLon } from "./geo.ts";
 import { buildHerd } from "./herd.ts";
 import type { Animal, AppEvent, AssetProfile, Device, ServerView, Station } from "./model.ts";
 import { serverOf, stationOf, type EdgeSource } from "./source.ts";
-import { AssetStore, Persisted, prefs, seenEvents, stationPlaces, type Prefs } from "./stores.ts";
+import { AssetStore, Persisted, ZoneStore, prefs, seenEvents, stationPlaces, type Prefs } from "./stores.ts";
+import { NO_GRAZE, checkSet, compileFence, grazing, type Fence, type Graze, type SetCheck, type Zone } from "./zones.ts";
 
 export interface Sources {
   real: EdgeSource | null;          // null when not running on the phone (web preview)
@@ -20,6 +21,8 @@ export interface Sources {
   realAssets: AssetStore;
   demoAssets: AssetStore;
   demoPlaces: Persisted<Record<string, LatLon>>;
+  realZones: ZoneStore;
+  demoZones: ZoneStore;
 }
 
 export function makeSources(real: EdgeSource | null): Sources {
@@ -29,6 +32,8 @@ export function makeSources(real: EdgeSource | null): Sources {
     realAssets: new AssetStore("orun.app.assets.v1"),
     demoAssets: new AssetStore(null, demoBook(now)),
     demoPlaces: new Persisted<Record<string, LatLon>>(null, () => ({ [DEMO_STATION.id]: DEMO_STATION_POS })),
+    realZones: new ZoneStore("orun.app.zones.v1"),
+    demoZones: new ZoneStore(null, demoZones()),
   };
 }
 
@@ -48,6 +53,11 @@ export interface Model {
   server: ServerView;
   events: AppEvent[];
   coverage: Coverage;
+  zones: Zone[];
+  zoneSet: SetCheck;      // the active set against the collar's limits
+  fence: Fence;           // compiled active, valid zones
+  graze: Graze;
+  grazing: boolean;       // serbest otlatma on right now
   seen: Set<string>;
   source: EdgeSource;
   actions: Actions;
@@ -59,6 +69,11 @@ export interface Actions {
   addNote(id: string, device: string | null, text: string): void;
   markStation(pos: LatLon | null): void;
   markSeen(id: string): void;
+  saveZone(z: Zone): void;
+  removeZone(id: string): void;
+  addZones(list: Zone[]): void;
+  /** hours > 0: timed; "forever": until turned off; null: off. */
+  setGraze(hours: number | "forever" | null): void;
 }
 
 function useNow(ms: number): number {
@@ -92,23 +107,30 @@ export function useModel(): Model {
   const source: EdgeSource = demo ? s.demo : s.real!;
   const assets = demo ? s.demoAssets : s.realAssets;
   const places = demo ? s.demoPlaces : stationPlaces;
+  const zoneStore = demo ? s.demoZones : s.realZones;
 
   const snap = useSyncExternalStore((fn) => source.subscribe(fn), () => source.snap);
   const book = useSyncExternalStore(assets.subscribe, () => assets.get());
   const placeMap = useSyncExternalStore(places.subscribe, () => places.get());
   const seenList = useSyncExternalStore(seenEvents.subscribe, () => seenEvents.get());
+  const zoneBook = useSyncExternalStore(zoneStore.subscribe, () => zoneStore.get());
   const { points, loaded } = usePoints(source, snap.pointsVersion);
   const now = useNow(30_000);
 
-  const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now }),
-    [points, book, assets, now]);
+  const zones = zoneBook.zones;
+  const graze = zoneBook.graze ?? NO_GRAZE;
+  const fence = useMemo(() => compileFence(zones), [zones]);
+  const zoneSet = useMemo(() => checkSet(zones), [zones]);
+  const grazingNow = grazing(graze, now) || (graze.until !== null && graze.until > Date.now());
+  const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now, fence, grazing: grazingNow }),
+    [points, book, assets, now, fence, grazingNow]);
   const coverage = useMemo(() => coverageCells(points), [points]);
   // The snapshot changes on every log line; recompute only on what matters.
   const station = useMemo(() => stationOf(snap, placeMap),
     [snap.gateway, snap.gatewayHeld, snap.link, snap.state, snap.detail, placeMap]); // eslint-disable-line react-hooks/exhaustive-deps
   const server = useMemo(() => serverOf(snap), [snap.server]); // eslint-disable-line react-hooks/exhaustive-deps
-  const events = useMemo(() => deriveEvents({ herd, station, server, journal: snap.journal, coverage, now }),
-    [herd, station, server, snap.journal, coverage, now]);
+  const events = useMemo(() => deriveEvents({ herd, station, server, journal: snap.journal, coverage, now, fence, grazing: grazingNow }),
+    [herd, station, server, snap.journal, coverage, now, fence, grazingNow]);
   const devices = useMemo(() => buildDevices(points, herd, now), [points, herd, now]);
   const seen = useMemo(() => new Set(seenList), [seenList]);
 
@@ -122,11 +144,16 @@ export function useModel(): Model {
       places.update((m) => { const next = { ...m }; if (pos) next[id] = pos; else delete next[id]; return next; });
     },
     markSeen: (id) => seenEvents.update((l) => (l.includes(id) ? l : [...l, id].slice(-500))),
-  }), [assets, places, snap.gateway]);
+    saveZone: (z) => zoneStore.save(z),
+    removeZone: (id) => zoneStore.remove(id),
+    addZones: (list) => zoneStore.add(list),
+    setGraze: (h) => zoneStore.setGraze(h === null ? { ...NO_GRAZE } : h === "forever" ? { until: null, forever: true }
+      : { until: Date.now() + h * 3600_000, forever: false }),
+  }), [assets, places, snap.gateway, zoneStore]);
 
   return {
     demo, canLeaveDemo: s.real !== null, now, prefs: p, snap, points, loaded, herd, devices, station, server,
-    events, coverage, seen, source, actions,
+    events, coverage, zones, zoneSet, fence, graze, grazing: grazingNow, seen, source, actions,
   };
 }
 

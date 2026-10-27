@@ -51,7 +51,7 @@ export function NetworkScreen() {
       <Section title={tr.network.station} />
       <Card>
         <Cell lead={<span className={"ic " + (words.dot === "ok" ? "fresh" : words.dot === "wait" ? "aging" : "")}><WifiHigh size={22} /></span>}
-          title={words.text} sub={st.detail && st.phase !== "connected" ? st.detail : st.id ? `${tr.station.id} ${st.id}` : undefined} />
+          title={words.text} sub={st.detail && st.phase !== "connected" ? st.detail : undefined} />
         {st.capacity !== null && (
           <div style={{ padding: "4px 16px 14px" }} className="stack">
             <div className="row" style={{ justifyContent: "space-between" }}><span className="sm">{tr.station.memory}</span><span className="sm strong">{fmt.num(held)} / {fmt.num(st.capacity)}</span></div>
@@ -59,13 +59,13 @@ export function NetworkScreen() {
           </div>
         )}
         <div className="stack" style={{ padding: "4px 16px 14px" }}>
-          {!linkOn ? (
+          {!linkOn && (
             <>
               <button className="btn primary wide" disabled={!s.ready} onClick={() => m.source.connectBle(false)}><Bluetooth size={20} />{tr.station.connectBle}</button>
               <button className="btn wide" disabled={!s.ready} onClick={() => m.source.connectUsb()}><Usb size={20} />{tr.station.connectUsb}</button>
               <button className="btn quiet wide" disabled={!s.ready} onClick={() => m.source.connectBle(true)}>{tr.station.pickOther}</button>
             </>
-          ) : <button className="btn danger wide" onClick={() => m.source.disconnect()}>{tr.station.disconnect}</button>}
+          )}
           <span className="fine">{tr.station.background}</span>
         </div>
         {st.id && (
@@ -79,6 +79,11 @@ export function NetworkScreen() {
               <span className="fine">{marking && !pos.pos ? tr.find.noPhone : tr.station.markHelp}</span>
             </div>
           </>
+        )}
+        {linkOn && (
+          <div style={{ padding: "0 16px 14px" }}>
+            <button className="btn quiet small" style={{ color: "var(--alarm-t)" }} onClick={() => m.source.disconnect()}>{tr.station.disconnect}</button>
+          </div>
         )}
       </Card>
 

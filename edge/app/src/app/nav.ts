@@ -9,12 +9,15 @@ export type Route =
   | { to: "animal"; id: string }
   | { to: "find"; id: string }
   | { to: "device"; id: string }
+  | { to: "zone"; id: string }
   | { to: "settings" };
 
 /** What the map shows when another screen sends the user there. */
 export interface MapFocus {
   selected: string | null;
   window: { from: number; to: number } | null;   // a single day to replay
+  zone: string | null;                             // a zone to frame and highlight
+  draw: { zone: string | null } | null;            // start drawing: a new zone (null) or this one
   key: number;                                     // bump to re-apply
 }
 
@@ -25,6 +28,8 @@ export interface Nav {
   push(r: Route): void;
   pop(): void;
   showOnMap(id: string | null, window?: { from: number; to: number } | null): void;
+  showZone(id: string): void;
+  drawZone(id: string | null): void;
   focus: MapFocus;
 }
 

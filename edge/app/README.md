@@ -47,14 +47,18 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - `npm run dev`: the app in a browser. Without the phone there is no ledger,
   so it always shows the sample herd ("Tanıtım sürüsü").
-- `npm test`: unit tests (core, herd, events, coverage, activity, sample herd)
+- `npm test`: unit tests (core, herd, events, coverage, activity, sample herd,
+  zones = the collar's geofence geometry)
 - `npm run typecheck`
 - `python3 firmware/tests/sf5/test_sf5l7_edge_app.py` (from the repo root):
   the core against the Python reference
 
 ## Map sources
 
-No account or key: Esri World Imagery (satellite, attribution shown),
+No account or key: Esri World Imagery or an Esri Wayback release (satellite,
+attribution shown; asked up to the layer panel's tile limit, default 17, and
+enlarged beyond, because Esri answers missing 18-19 imagery with a "Map data
+not yet available" picture),
 OpenTopoMap (terrain), OpenFreeMap "liberty" (street, vector), AWS Terrain
 Tiles / Terrarium (3D relief). Without internet the base is blank but
 animals, trails and layers still draw. Offline packages come with package 3.
