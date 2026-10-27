@@ -53,6 +53,8 @@ export function ZonesScreen() {
         <button className="btn small primary" onClick={() => nav.drawZone(null)}><Plus size={18} weight="bold" />{tr.zones.add}</button>
       </Header>
       {m.demo && <DemoFlag onPage />}
+      {m.zoneMigrationWarning && <p className="sm t-alarm strong lead" role="alert">{m.zoneMigrationWarning}</p>}
+      {note && <p className="sm t-alarm lead" role="status">{note}</p>}
 
       {!m.zones.length ? (
         <Empty icon={<Polygon size={34} />} title={tr.zones.empty} body={tr.zones.emptyBody}>
@@ -84,7 +86,10 @@ export function ZonesScreen() {
                   sub={bad ? tr.zones.invalid : `${tr.zones.line(fmt.dec(areaM2(z.ring) / 10_000, 2), canonicalE7(z.ring).length, inside)}${z.active ? "" : ` · ${tr.zones.off}`}`}
                   subTone={bad ? "alarm" : undefined} wrapSub
                   trail={<span className="row" style={{ gap: 6 }}>
-                    <span onClick={(e) => e.stopPropagation()}><Toggle on={z.active} label={`${z.name}: ${tr.zones.active}`} onChange={(v) => m.actions.saveZone({ ...z, active: v })} /></span>
+                    <span onClick={(e) => e.stopPropagation()}><Toggle on={z.active} label={`${z.name}: ${tr.zones.active}`} onChange={(v) => {
+                      try { m.actions.saveZone({ ...z, active: v }); setNote(null); }
+                      catch (e) { setNote(e instanceof Error ? e.message : "Alan etkinleştirilemedi."); }
+                    }} /></span>
                     <CaretRight size={18} color="var(--mute)" />
                   </span>}
                   onClick={() => nav.push({ to: "zone", id: z.id })} />
@@ -104,7 +109,6 @@ export function ZonesScreen() {
         <div className="stack">
           <button className="btn wide" onClick={() => file.current?.click()}>{tr.zones.importGeo}</button>
           {m.zones.length > 0 && <button className="btn wide" onClick={() => void exportGeo()}>{tr.zones.exportGeo}</button>}
-          {note && <span className="sm">{note}</span>}
           <input ref={file} type="file" accept=".geojson,.json,application/geo+json,application/json" hidden
             onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void importFile(f); }} />
         </div>
