@@ -5,7 +5,7 @@
 // for walking the fence. Live area, corner budget and the collar's own
 // geometry rules, with "Sadeleştir" when the corners do not fit.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowCounterClockwise, Crosshair, HandTap, MapPin, Plus } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, Crosshair, HandTap, MapPin, Plus } from "@phosphor-icons/react";
 import { fmt, tr } from "../../app/i18n/tr.ts";
 import { useBack } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
@@ -37,11 +37,13 @@ export function DrawZone({ engine, zone, hooks, onDone }: {
   const [name, setName] = useState(zone?.name ?? tr.zones.defaultName(m.zones.length + 1));
   const [note, setNote] = useState<string | null>(null);
   const history = useRef<LonLat[][]>([]);
+  const future = useRef<LonLat[][]>([]);
   const changed = useRef(false);
 
   const setRing = (next: LonLat[]) => {
     history.current.push(ring);
     if (history.current.length > 100) history.current.shift();
+    future.current = [];
     changed.current = true;
     setRingState(next);
   };
@@ -129,8 +131,16 @@ export function DrawZone({ engine, zone, hooks, onDone }: {
           </div>
         )}
         <div className="row">
-          <button className="btn sq" onClick={() => { const prev = history.current.pop(); if (prev) setRingState(prev); }}
+          <button className="btn sq" onClick={() => {
+              const prev = history.current.pop();
+              if (prev) { future.current.push(ring); setRingState(prev); }
+            }}
             disabled={!history.current.length} aria-label={tr.zones.draw.undo}><ArrowCounterClockwise size={22} /></button>
+          <button className="btn sq" onClick={() => {
+              const next = future.current.pop();
+              if (next) { history.current.push(ring); setRingState(next); }
+            }}
+            disabled={!future.current.length} aria-label="Yinele"><ArrowClockwise size={22} /></button>
           {cross ? (
             <button className="btn signal grow" onClick={() => engine && setRing([...ring, engine.centre()])}>
               <Plus size={20} weight="bold" />{tr.zones.draw.add}
