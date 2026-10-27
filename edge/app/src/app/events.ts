@@ -9,6 +9,7 @@ import { fmt, tr } from "./i18n/tr.ts";
 import { agingLimit, batteryOf, epochMs, lostLimit, periodMs } from "./herd.ts";
 import { coverageAt, type Coverage } from "./coverage.ts";
 import type { Animal, AppEvent, EventKind, ServerView, Severity, Station } from "./model.ts";
+import { outsideEpisodes, type Fence } from "./zones.ts";
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -24,6 +25,8 @@ export interface EventInput {
   journal: BookLine[];
   coverage: Coverage | null;
   now: number;
+  fence?: Fence;       // active zones; outside periods become events
+  grazing?: boolean;   // serbest otlatma: the open outside period is not an alert
 }
 
 function ev(kind: EventKind, severity: Severity, a: Animal | null, at: number, end: number | null,
@@ -36,11 +39,22 @@ function ev(kind: EventKind, severity: Severity, a: Animal | null, at: number, e
 
 const arrived = (iso: string | null) => (iso ? Date.parse(iso) : null);
 
-function animalEvents(a: Animal, cov: Coverage | null, now: number): AppEvent[] {
+function animalEvents(a: Animal, cov: Coverage | null, now: number, fence?: Fence, grazing = false): AppEvent[] {
   const out: AppEvent[] = [];
   const from = now - HISTORY_DAYS * DAY;
   const pts = a.points.filter((p) => epochMs(p.time) >= from);
   if (!pts.length) return out;
+
+  // Outside every active zone, confirmed by 2 of the last 3 records; closed
+  // when it is back inside the same way. While grazing freely, the open
+  // period is allowed and raises nothing.
+  if (fence && fence.polys.length)
+    for (const e of outsideEpisodes(pts, fence, (p) => epochMs(p.time))) {
+      if (e.to === null && grazing) continue;
+      out.push(ev("out", "danger", a, e.from, e.to, tr.events.out.title(a.name),
+        e.to === null ? tr.events.out.detail(fmt.since(e.from, now)) : tr.events.out.back(fmt.duration(e.to - e.from)),
+        arrived(pts[e.fromIdx]?.received ?? null)));
+    }
 
   // Silent gaps between records, and the open gap after the newest one.
   for (let i = 1; i < pts.length; i++) {
@@ -111,9 +125,9 @@ function animalEvents(a: Animal, cov: Coverage | null, now: number): AppEvent[] 
   return out;
 }
 
-export function deriveEvents({ herd, station, server, journal, coverage, now }: EventInput): AppEvent[] {
+export function deriveEvents({ herd, station, server, journal, coverage, now, fence, grazing }: EventInput): AppEvent[] {
   const out: AppEvent[] = [];
-  for (const a of herd) out.push(...animalEvents(a, coverage, now));
+  for (const a of herd) out.push(...animalEvents(a, coverage, now, fence, grazing));
 
   // Station and server: live conditions (stable ids so "Gördüm" sticks).
   if (station.held !== null && station.capacity && station.held / station.capacity >= 0.8) {

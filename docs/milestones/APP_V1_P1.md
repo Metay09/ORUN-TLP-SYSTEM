@@ -82,8 +82,49 @@ Supersedes the unmerged UX v2 (#174).
 - Three focused regression tests have been added in `edge/app/test/core.test.ts`.
   They still require an actual `npm test` and Android check on this PR head.
 
+## Map, Alanlar and trails (2026-10-27)
+
+Carried over from the field prototype (`ORUN-Saha.html`), into the current app:
+
+- **Satellite zoom fix.** Esri has no 18-19 imagery over rural Aydın and
+  answers with a "Map data not yet available" picture (HTTP 200, not an
+  error). Tiles are now asked up to a settable limit (default 17, 14-19 in
+  the layer panel) and enlarged beyond. Esri Wayback releases can be chosen.
+  Raster tiles switch without a fade; metre scale; a chip when base tiles
+  keep failing.
+- **Pins.** One size rule by zoom (dot far out, half size, full pin close in),
+  continuous during the zoom; touch target stays 44 px. No CSS drop-shadow
+  filters (hairline edge instead). Alarm and selected pins never join a
+  cluster. Data sources are re-sent only when their content changed.
+- **Alanlar.** `src/app/zones.ts`: E7 validation and inside/boundary/outside
+  identical to `firmware/src/geofence_geometry.cpp` (20 000 random cases
+  compared against the compiled firmware source: 0 differences), 8 areas /
+  64 corners, simplify, GeoJSON in/out. Zones are stored on the phone
+  (`orun.app.zones.v1`), drawn on the map (fill none/light/hatched, names,
+  edge lengths on the selected one), drawn and edited on the map (cross-hair
+  or taps, drag corners, insert at edge middles, undo, phone position as a
+  corner, live ha/dekar/corners/perimeter, the collar's rules, "Sadeleştir").
+- **Phone-side "alan dışında".** The phone compares the records it holds with
+  the active zones, using the policy's false-alarm rule (newest record outside
+  and 2 of the last 3 accepted records outside; poor fixes ignored). This is
+  an interim phone view: zones are **not** written to collars yet (the USB
+  `APP FENCE` writer exists; the app does not drive it), so the collar does
+  not raise OUTSIDE or change cadence. When collar OUTSIDE events reach the
+  phone, they replace this derivation (AGENTS: no second majority layer).
+- **Serbest otlatma** 2 / 6 / 12 h or until turned off: outside periods raise
+  nothing; lost, silent and battery warnings continue. Chip on the map.
+- **Trails.** Whole-herd trails layer, trail points darkening old → new,
+  animal → station link lines coloured by the last record's RSSI.
+- Events: "Bul" and "Haritada göster" on active animal warnings. Ağ:
+  "Bağlantıyı kes" moved to the bottom of the station card.
+- Tests: `test/zones.test.ts`.
+
 ## Pending on the phone
 
-- Map tiles through Capacitor (satellite, topo, vector, terrain).
+- Map tiles through Capacitor (satellite, topo, vector, terrain); whether 17
+  is the right satellite limit over the pasture (lower it if the placeholder
+  text still shows).
+- Zone drawing by finger (drag, cross-hair) and GeoJSON import via the file
+  picker; export copies to the clipboard on Android.
 - Compass heading (`deviceorientationabsolute`) and GNSS height on the device.
 - BLE/USB link, hand-off and upload unchanged; check once with a real Gateway.
