@@ -322,6 +322,8 @@ export interface Imported { zones: Zone[]; skipped: string[]; }
 /** Outer rings of Polygon / MultiPolygon features; holes are not supported by the collar. */
 export function fromGeoJSON(text: string, now: number, newId: () => string): Imported {
   const data = JSON.parse(text) as { type?: string; features?: unknown[]; geometry?: unknown; properties?: Record<string, unknown> };
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("GeoJSON nesnesi geçersiz.");
+  if (data.type === "FeatureCollection" && !Array.isArray(data.features)) throw new Error("GeoJSON features listesi geçersiz.");
   const feats: { geometry?: { type?: string; coordinates?: unknown }; properties?: Record<string, unknown> | null }[] =
     data.type === "FeatureCollection" ? (data.features ?? []) as never
       : data.type === "Feature" ? [data as never] : [{ geometry: data as never, properties: {} }];
@@ -329,12 +331,22 @@ export function fromGeoJSON(text: string, now: number, newId: () => string): Imp
   feats.forEach((f, i) => {
     const g = f.geometry, props = f.properties ?? {};
     const base = String(props.name ?? props.ad ?? props.Name ?? props.title ?? `Alan ${i + 1}`).trim().slice(0, 40) || `Alan ${i + 1}`;
-    const rings: unknown[] = g?.type === "Polygon" ? [(g.coordinates as unknown[])?.[0]]
-      : g?.type === "MultiPolygon" ? (g.coordinates as unknown[][]).map((p) => p[0]) : [];
+    if (g?.type !== "Polygon" && g?.type !== "MultiPolygon") {
+      skipped.push(`${base}: alan (çokgen) değil`); return;
+    }
+    // The firmware cannot represent GeoJSON holes. Silently dropping them
+    // would turn excluded land into allowed pasture. Reject the feature.
+    const polygons = g.type === "Polygon" ? [g.coordinates] : g.coordinates;
+    if (!Array.isArray(polygons) || !polygons.length || polygons.some((p) =>
+      !Array.isArray(p) || !p.length || p.length !== 1)) {
+      skipped.push(`${base}: iç boşluklu veya bozuk çokgen desteklenmiyor`);
+      return;
+    }
+    const rings: unknown[] = polygons.map((p) => (p as unknown[])[0]);
     if (!rings.length) { skipped.push(`${base}: alan (çokgen) değil`); return; }
     rings.forEach((r, k) => {
       const name = rings.length > 1 ? `${base} ${k + 1}` : base;
-      const ring = (Array.isArray(r) ? r : []).filter((c): c is number[] => Array.isArray(c) && c.length >= 2 && c.every((n) => typeof n === "number"))
+      const ring = (Array.isArray(r) ? r : []).filter((c): c is number[] => Array.isArray(c) && c.length === 2 && c.every((n) => typeof n === "number" && Number.isFinite(n)))
         .map((c) => [c[0], c[1]] as LonLat);
       if (ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]) ring.pop();
       const e = validateRing(ring);
