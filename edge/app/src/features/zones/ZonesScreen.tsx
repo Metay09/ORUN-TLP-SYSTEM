@@ -95,22 +95,9 @@ export function ZonesScreen() {
         </>
       )}
 
-      <Section title={tr.zones.graze.title} />
-      <Card pad>
-        <div className="stack">
-          <span className="sm">{m.grazing
-            ? tr.zones.graze.on(m.graze.forever ? tr.zones.graze.forever : tr.zones.graze.untilClock(fmt.clock(m.graze.until!)))
-            : tr.zones.graze.help}</span>
-          {m.grazing ? (
-            <button className="btn wide" onClick={() => m.actions.setGraze(null)}>{tr.zones.graze.stop}</button>
-          ) : (
-            <div className="row" style={{ flexWrap: "wrap" }}>
-              {[2, 6, 12].map((h) => <button key={h} className="btn small grow" onClick={() => m.actions.setGraze(h)}>{tr.zones.graze.hours(h)}</button>)}
-              <button className="btn small grow" onClick={() => { if (window.confirm(tr.zones.graze.confirmForever)) m.actions.setGraze("forever"); }}>{tr.zones.graze.unlimited}</button>
-            </div>
-          )}
-        </div>
-      </Card>
+      {/* "Serbest otlatma" is a tracker-owned setting, not an app-only
+          mute switch. Do not show controls until a signed collar command and
+          durable ACK exist; hiding them prevents a dangerous false promise. */}
 
       <Section title={tr.zones.file} />
       <Card pad>
