@@ -88,8 +88,13 @@ export function DrawZone({ engine, zone, hooks, onDone }: {
       id: zone?.id ?? newZoneId(), name: name.trim() || tr.zones.defaultName(m.zones.length + 1), ring,
       active: zone ? zone.active : m.zoneSet.active.length < FENCE.maxAreas, updated: Date.now(),
     };
-    m.actions.saveZone(z);
-    onDone(z);
+    try {
+      m.actions.saveZone(z);
+      onDone(z);
+    } catch (error) {
+      setNaming(false);
+      setNote(error instanceof Error ? error.message : "Mera kaydedilemedi.");
+    }
   };
 
   const hint = cross
