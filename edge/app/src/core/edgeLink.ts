@@ -67,7 +67,7 @@ export class Reassembler {
 // ---- Messages ------------------------------------------------------------
 export type GatewayMessage =
   | { type: "hello"; gateway: bigint; held: number; capacity: number }
-  | { type: "held"; page: number; slot: number; generation: bigint;
+  | { type: "held" | "heldPreview"; page: number; slot: number; generation: bigint;
       link: { rssi: number; snr: number } | null; object: Uint8Array }
   | { type: "dumpEnd"; count: number }
   | { type: "acceptResult"; page: number; slot: number; code: number }
@@ -81,9 +81,11 @@ export function decodeGatewayMessage(m: Uint8Array): GatewayMessage | null {
         ? { type: "hello", gateway: u64(m, 1), held: u16(m, 9), capacity: u16(m, 11) }
         : null;
     case 0x02:
+    case 0x06: // Optional newest custody preview, excluded from DUMP_END
       if (m.length < 18 || m.length !== 18 + m[17]) return null;
       return {
-        type: "held", page: u16(m, 1), slot: u16(m, 3), generation: u64(m, 5),
+        type: m[0] === 0x06 ? "heldPreview" : "held",
+        page: u16(m, 1), slot: u16(m, 3), generation: u64(m, 5),
         link: m[13] & 1 ? { rssi: i16(m, 14), snr: i8(m, 16) } : null,
         object: m.slice(18),
       };
@@ -137,7 +139,7 @@ export function acceptLine(gateway: bigint, page: number, slot: number,
 }
 
 // ---- USB text lines ------------------------------------------------------
-const HELD_LINE = /EDGE HELD v1 gw=([0-9A-F]{16}) page=(\d+) slot=(\d+) gen=([0-9A-F]{16}) len=(\d+) obj=([0-9A-F]+)/;
+const HELD_LINE = /^EDGE (HELD|PRIORITY) v1 gw=([0-9A-F]{16}) page=(\d+) slot=(\d+) gen=([0-9A-F]{16}) len=(\d+) obj=([0-9A-F]+)$/;
 const RX_LINE = /RX PRODUCT_SECURE queued family=\d+ length=\d+ rssi=(-?\d+) snr=(-?\d+)/;
 // The Gateway prints "EDGE ACCEPT REJECTED reason=MAC page=P slot=S".
 const ACCEPT_REPLY = /EDGE ACCEPT (OK|UNKNOWN|BUSY|REJECTED|FAIL)(?: reason=\w+)? page=(\d+|\?) slot=(\d+|\?)/;
@@ -146,7 +148,7 @@ const CUSTODY_STARTED = "BENCH GW RX record; durable custody write started";
 const RX_NOT_NEW = ["BENCH GW RX duplicate already held", "BENCH GW RX denied"];
 
 export type UsbEvent =
-  | { type: "held"; gateway: bigint; page: number; slot: number; generation: bigint;
+  | { type: "held" | "heldPreview"; gateway: bigint; page: number; slot: number; generation: bigint;
       link: { rssi: number; snr: number } | null; object: Uint8Array }
   | { type: "heldBroken"; gateway: string; page: number; slot: number; got: number; want: number }
   | { type: "acceptReply"; word: string; page: number | null; slot: number | null }
@@ -178,15 +180,16 @@ export class UsbLineParser {
     if (text.startsWith("EDGE DUMP END")) return { type: "dumpEnd", text };
     m = HELD_LINE.exec(text);
     if (!m) return null;
-    const link = this.armed;
+    const link = m[1] === "HELD" ? this.armed : null;
     this.armed = this.rx = null;
-    const obj = m[6], want = 2 * Number(m[5]);
+    const obj = m[7], want = 2 * Number(m[6]);
     if (obj.length % 2 || obj.length !== want)
-      return { type: "heldBroken", gateway: m[1], page: Number(m[2]), slot: Number(m[3]),
+      return { type: "heldBroken", gateway: m[2], page: Number(m[3]), slot: Number(m[4]),
                got: obj.length, want };
     const bytes = new Uint8Array(obj.length / 2);
     for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(obj.slice(2 * i, 2 * i + 2), 16);
-    return { type: "held", gateway: BigInt("0x" + m[1]), page: Number(m[2]), slot: Number(m[3]),
-             generation: BigInt("0x" + m[4]), link, object: bytes };
+    return { type: m[1] === "PRIORITY" ? "heldPreview" : "held",
+             gateway: BigInt("0x" + m[2]), page: Number(m[3]), slot: Number(m[4]),
+             generation: BigInt("0x" + m[5]), link, object: bytes };
   }
 }
