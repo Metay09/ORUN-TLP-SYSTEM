@@ -177,7 +177,6 @@ export const seenEvents = new Persisted<string[]>("orun.app.seen.v1", () => []);
 
 // ----------------------------------------------------------------- zones --
 const LEGACY_ZONE_KEY = "orun.fences.v1"; // HTML prototype and PR #180
-const CURRENT_ZONE_KEY = "orun.app.zones.v1";
 
 interface LegacyMigration { zones: Zone[]; error: string | null; }
 function legacyDrafts(): LegacyMigration {
