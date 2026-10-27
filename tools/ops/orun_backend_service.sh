@@ -74,6 +74,15 @@ install_service() {
   fi
   chmod 600 "$TOKEN_FILE"
 
+  # Never overwrite an independently managed backend unit; it may have a
+  # different real DB, credentials, token, or port already in production.
+  if [[ -e "$UNIT_FILE" ]] &&
+     ! grep -Fqx "ExecStart=/usr/bin/bash $SELF serve" "$UNIT_FILE"; then
+    echo "HATA: Farkli ORUN backend service dosyasi zaten var: $UNIT_FILE" >&2
+    echo "Dosyayi silmeden mevcut yapilandirmayi inceleyin." >&2
+    exit 1
+  fi
+
   cat > "$UNIT_FILE" <<EOF
 [Unit]
 Description=ORUN Backend (bench, private Tailscale listener)
