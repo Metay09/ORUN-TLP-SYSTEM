@@ -9,7 +9,7 @@ export type Tone = "fresh" | "aging" | "silent" | "alarm" | "info" | "brand";
 
 export function toneOfStatus(s: AnimalStatus): Tone {
   switch (s) {
-    case "battery-critical": case "lost": return "alarm";
+    case "battery-critical": case "lost": case "out": return "alarm";
     case "silent": case "waiting": return "silent";
     case "aging": case "battery-low": return "aging";
     default: return "fresh";

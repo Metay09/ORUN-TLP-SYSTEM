@@ -14,9 +14,11 @@ import type { Animal } from "../../app/model.ts";
 import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { rangeStart, type Range } from "../../app/stores.ts";
+import { validateRing } from "../../app/zones.ts";
 import { AnimalRing, Chips, Metric, Strip, toneOfStatus } from "../../ds/components.tsx";
 import { LayerPanel } from "./LayerPanel.tsx";
-import { MapEngine, type MapData } from "./mapEngine.ts";
+import { MapEngine, type LinkLine, type MapData } from "./mapEngine.ts";
+import { DrawZone, type DrawHooks } from "./DrawZone.tsx";
 import { startPosition, usePosition } from "./position.ts";
 import { Sheet, type Snap } from "./Sheet.tsx";
 import { HerdSearch } from "./HerdSearch.tsx";
@@ -42,6 +44,11 @@ export function MapScreen({ visible }: { visible: boolean }) {
   const [win, setWin] = useState<{ from: number; to: number } | null>(null);
   const [cursor, setCursor] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [selZone, setSelZone] = useState<string | null>(null);
+  const [drawing, setDrawing] = useState<{ zone: string | null; key: number } | null>(null);
+  const [tiles, setTiles] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const drawHooks = useRef<DrawHooks | null>(null);
   const fitted = useRef(false);
   const tiltRef = useRef(m.prefs.tilt);
   tiltRef.current = m.prefs.tilt;
@@ -55,8 +62,12 @@ export function MapScreen({ visible }: { visible: boolean }) {
   // ---- engine lifecycle ---------------------------------------------------
   useEffect(() => {
     const e = new MapEngine(el.current!, {
-      onSelect: (id) => { setSelected(id); setCursor(null); setPlaying(false); if (!id) { setWin(null); setSnap("peek"); } },
+      onSelect: (id) => { setSelected(id); setCursor(null); setPlaying(false); setSelZone(null); if (!id) { setWin(null); setSnap("peek"); } },
       onOffline: setOffline,
+      onTiles: setTiles,
+      onDraft: (r) => drawHooks.current?.onDraft(r),
+      onDraftTap: (p) => drawHooks.current?.onTap(p),
+      onCentre: (p) => drawHooks.current?.onCentre(p),
       onZoom: setZoom,
       onView: (bearing, pitch) => setTurned(Math.abs(bearing) > 2 || (pitch > 2 && !tiltRef.current)),
     }, savedView);
@@ -64,14 +75,26 @@ export function MapScreen({ visible }: { visible: boolean }) {
     return () => { savedView = e.view(); e.destroy(); engine.current = null; };
   }, []);
   useEffect(() => { if (visible) engine.current?.map.resize(); }, [visible]);
-  useEffect(() => { void engine.current?.setBase(m.prefs.base, L); }, [m.prefs.base, L.labels]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sat = m.prefs.sat;
+  useEffect(() => { void engine.current?.setBase(m.prefs.base, L, sat); }, [m.prefs.base, L.labels, sat.kind, sat.release, sat.maxZoom]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { engine.current?.setZoneFill(m.prefs.zoneFill); }, [m.prefs.zoneFill]);
+  useEffect(() => { if (!flash) return; const t = setTimeout(() => setFlash(null), 4000); return () => clearTimeout(t); }, [flash]);
   useEffect(() => { engine.current?.setLayers(L); }, [L]);
   useEffect(() => { engine.current?.setTilt(m.prefs.tilt); }, [m.prefs.tilt]);
-  useEffect(() => { engine.current?.setPadding(sheetPx); }, [sheetPx]);
+  useEffect(() => { engine.current?.setPadding(sheetPx, 140, drawing !== null); }, [sheetPx, drawing]);
 
   // ---- data ---------------------------------------------------------------
   const trailPts = useMemo(() => (a ? inRange(a.points, from, to) : []), [a, from, to]);
   const heatPts = useMemo(() => (L.heat ? (a ? [a] : herd).flatMap((x) => inRange(x.points, from, to)) : []), [L.heat, a, herd, from, to]);
+  const zoneViews = useMemo(() => m.zones.map((z) => ({ id: z.id, name: z.name, ring: z.ring, active: z.active, valid: !validateRing(z.ring) })), [m.zones]);
+  const herdTrails = useMemo(() => (L.herdTrails && !a ? herd.filter((x) => x.last).map((x) => ({ id: x.id, color: x.color, points: inRange(x.points, from, to) })) : []),
+    [L.herdTrails, a, herd, from, to]);
+  const links = useMemo<LinkLine[]>(() => {
+    const sp = m.station.position;
+    if (!L.links || !sp) return [];
+    return herd.filter((x) => x.last && x.last.rssi !== null && (x.freshness === "fresh" || x.freshness === "aging"))
+      .map((x) => ({ from: x.last!, to: sp, rssi: x.last!.rssi! }));
+  }, [L.links, herd, m.station.position]);
   const data = useMemo<MapData>(() => {
     return {
       herd, selected,
@@ -82,8 +105,12 @@ export function MapScreen({ visible }: { visible: boolean }) {
       coverage: L.coverage ? m.coverage.cells : [],
       stations: m.station.position && m.station.id ? [{ id: m.station.id, pos: m.station.position, connected: m.station.phase === "connected" }] : [],
       me: pos.pos,
+      zones: zoneViews,
+      selectedZone: selZone,
+      herdTrails,
+      links,
     };
-  }, [herd, selected, a, trailPts, cursor, playing, heatPts, L.coverage, m.coverage, m.station, pos.pos]);
+  }, [herd, selected, a, trailPts, cursor, playing, heatPts, L.coverage, m.coverage, m.station, pos.pos, zoneViews, selZone, herdTrails, links]);
   useEffect(() => { engine.current?.setData(data); }, [data]);
 
   // Switching between the sample herd and the real ledger starts over.
@@ -93,7 +120,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
     firstDemo.current = m.demo;
     fitted.current = false;
     savedView = undefined;
-    setSelected(null); setWin(null); setCursor(null); setPlaying(false); setSnap("peek");
+    setSelected(null); setWin(null); setCursor(null); setPlaying(false); setSnap("peek"); setSelZone(null); setDrawing(null);
   }, [m.demo]);
 
   // First data: frame the herd (or the station).
@@ -112,7 +139,14 @@ export function MapScreen({ visible }: { visible: boolean }) {
     setCursor(nav.focus.window ? nav.focus.window.from : null);
     setPlaying(false);
     setSnap(nav.focus.selected ? "half" : "peek");
-  }, [nav.focus]);
+    setSelZone(nav.focus.draw ? null : nav.focus.zone);
+    setDrawing(nav.focus.draw ? { zone: nav.focus.draw.zone, key: nav.focus.key } : null);
+    if (nav.focus.zone && !nav.focus.draw) {
+      fitted.current = true;
+      const z = m.zones.find((x) => x.id === nav.focus.zone);
+      if (z) engine.current?.fitRing(z.ring);
+    }
+  }, [nav.focus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Selecting an animal brings it into view.
   useEffect(() => {
@@ -152,16 +186,23 @@ export function MapScreen({ visible }: { visible: boolean }) {
   const clear = () => { setSelected(null); setWin(null); setCursor(null); setPlaying(false); setSnap("peek"); };
   useBack(() => setSearch(false), search);
   useBack(() => setPanel(false), panel);
-  useBack(() => { if (selected) clear(); else setSnap("peek"); }, visible && (selected !== null || snap !== "peek"));
+  useBack(() => { if (selected) clear(); else if (selZone) setSelZone(null); else setSnap("peek"); },
+    visible && !drawing && (selected !== null || selZone !== null || snap !== "peek"));
 
   const look = herd.filter(needsLook);
   const lastArrival = m.devices.reduce<number | null>((x, d) => (d.lastArrival !== null && (x === null || d.lastArrival > x) ? d.lastArrival : x), null);
   const st = stationWords(m.station, m.snap, lastArrival);
   const me = pos.pos;
 
+  const drawZone = drawing ? m.zones.find((z) => z.id === drawing.zone) ?? null : null;
+
   return (
     <section className="map-screen" hidden={!visible}>
       <div ref={el} className="map-canvas" />
+      {drawing ? (
+        <DrawZone key={drawing.key} engine={engine.current} zone={drawZone} hooks={drawHooks}
+          onDone={(z) => { setDrawing(null); if (z) { setSelZone(z.id); setFlash(tr.zones.saved(z.name)); } }} />
+      ) : <>
       <div className="map-top">
         <button className="map-search" onClick={() => setSearch(true)}><MagnifyingGlass size={22} />{tr.map.search}</button>
         <button className="me-btn" onClick={() => nav.push({ to: "settings" })} aria-label={tr.common.settings}><UserCircle size={28} /></button>
@@ -172,6 +213,8 @@ export function MapScreen({ visible }: { visible: boolean }) {
         </button>
         {m.demo && <span className="status-chip demo">{tr.app.demoBadge}</span>}
         {offline && <span className="status-chip note">{tr.states.offlineMap}</span>}
+        {tiles && !offline && <span className="status-chip note">{navigator.onLine ? tr.map.tilesTrouble : tr.map.tilesOffline}</span>}
+        {flash && <span className="status-chip">{flash}</span>}
         {L.coverage && zoom < 14 && <span className="status-chip note">{tr.map.zoomForCoverage}</span>}
       </div>
       <div className="map-tools">
@@ -222,7 +265,8 @@ export function MapScreen({ visible }: { visible: boolean }) {
         )}
       </Sheet>
 
-      {panel && <LayerPanel onClose={() => setPanel(false)} />}
+      </>}
+      {panel && !drawing && <LayerPanel onClose={() => setPanel(false)} />}
       {search && <HerdSearch herd={herd} onClose={() => setSearch(false)} onPick={(id) => { setSearch(false); setSelected(id); }} />}
     </section>
   );
@@ -266,6 +310,7 @@ function Selected({ a, me, now, pts, cursor, playing, range, win, onClose, onFin
         <div className="cm">
           <span className="disp ellip">{a.name}</span>
           <span className={`strong t-${tone}`} style={{ fontSize: 15 }}>{a.seen}</span>
+          {a.zone && <span className="cap ellip">{tr.map.inZone(a.zone)}</span>}
         </div>
         <button className="circ" onClick={onClose} aria-label={tr.common.close}><X size={20} /></button>
       </div>

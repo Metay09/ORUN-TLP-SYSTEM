@@ -3,6 +3,10 @@
 /* MapLibre's own CSS sets .maplibregl-map { position: relative }: win over it. */
 .map-screen .map-canvas { position: absolute; inset: 0; z-index: 0; }
 .map-canvas .maplibregl-ctrl-bottom-right { bottom: var(--sheet-h, 120px); transition: bottom .2s; }
+.map-canvas .maplibregl-ctrl-bottom-left { bottom: var(--sheet-h, 120px); transition: bottom .2s; }
+.map-canvas .maplibregl-ctrl-scale {
+  margin: 0 0 8px 12px; background: rgba(255, 255, 255, .8); border-color: #33433A; color: #1A2A22; font-size: 10.5px; font-weight: 700;
+}
 .map-canvas .maplibregl-ctrl-attrib { font-size: 10px; background: rgba(255, 255, 255, .75); }
 .map-canvas .maplibregl-ctrl-attrib.maplibregl-compact { margin: 0 8px 8px 0; }
 
@@ -24,34 +28,83 @@
 .status-chip.note { background: var(--aging-b); color: var(--aging-t); box-shadow: none; }
 .map-tools { position: absolute; right: 16px; top: calc(80px + var(--safe-t)); display: flex; flex-direction: column; gap: 10px; z-index: 5; }
 
-/* pins (HTML markers) */
-.pin { position: relative; width: 46px; height: 46px; border: 0; padding: 0; background: none; display: grid; place-items: center; cursor: pointer; }
-.pin > svg { position: absolute; inset: 0; width: 100%; height: 100%; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .35)); }
+/* pins (HTML markers)
+   The button keeps a 44 px touch target at every zoom; only the inner .vis
+   shrinks with the zoom (--ps, set by the engine once per frame): a dot far
+   out, half size in between, the full pin close in. No CSS filters: they
+   repaint every frame on phones. The selected pin stays full size, an alarm
+   never shrinks below 72 % (and never hides in a cluster). */
+.maplibregl-marker.pin, .maplibregl-marker.cluster, .maplibregl-marker.vtx { will-change: transform; }
+.pin { position: relative; width: 44px; height: 44px; border: 0; padding: 0; background: none; display: grid; place-items: center; cursor: pointer; }
+.pin .vis { position: relative; width: 46px; height: 46px; display: grid; place-items: center; flex: none; transform: scale(var(--ps, 1)); transform-origin: 50% 50%; }
+.pin .vis > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .pin .fc {
   position: relative; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: #fff;
   font-family: var(--display); font-weight: 800; font-size: 13px;
 }
-.pin .fc.dim { opacity: .55; filter: saturate(.4); }
+.pin .fc.dim { opacity: .55; }
+[data-pz="dot"] .pin:not(.selected):not(.alarm) .fc > * { visibility: hidden; }
 .pin .lbl {
   position: absolute; left: 50%; top: 100%; transform: translateX(-50%); margin-top: 2px; font-size: 11px; font-weight: 700; color: #1A2A22;
   background: rgba(255, 255, 255, .92); border-radius: 6px; padding: 1px 6px; white-space: nowrap; pointer-events: none;
 }
-.pin.selected { width: 58px; height: 58px; }
+.pin.selected, .pin.alarm { z-index: 6; }
+.pin.selected .vis { transform: none; }
+.pin.alarm .vis { transform: scale(max(var(--ps, 1), .72)); }
+.pin.selected .vis { width: 58px; height: 58px; border-radius: 50%; box-shadow: 0 0 0 3px #fff, 0 0 0 4.5px rgba(0, 0, 0, .35); }
 .pin.selected .fc { width: 44px; height: 44px; font-size: 16px; }
-.pin.selected > svg { filter: drop-shadow(0 0 0 #fff) drop-shadow(0 4px 10px rgba(0, 0, 0, .45)); }
 .pin.in-cluster { visibility: hidden; }
+/* Keep selected/alarming animal visible when GPS fixes overlap at z20.
+   Count opens the picker without changing or averaging any tracker fix. */
+.pin-count {
+  position: absolute; right: -4px; top: -4px; z-index: 12;
+  min-width: 21px; height: 21px; padding: 0 4px;
+  border-radius: 11px; border: 2px solid #fff;
+  display: grid; place-items: center; background: #163F32; color: #fff;
+  font: 800 10px/1 var(--display); box-shadow: 0 1px 4px #0007;
+}
+.pin-choices {
+  display: flex; flex-direction: column; max-height: min(250px, 38vh);
+  min-width: 150px; overflow-y: auto; gap: 3px; color: #13241C;
+}
+.pin-choices strong { padding: 4px 5px 7px; font-size: 13px; }
+.pin-choices button {
+  width: 100%; min-height: 42px; border: 0; border-radius: 8px;
+  padding: 7px 10px; background: #F0F4EE; color: #12281C;
+  font-weight: 700; font-size: 13px; text-align: left;
+}
+.pin-choices button:active { background: #DDE9DD; }
+
 .pin .pulse { position: absolute; inset: -6px; border-radius: 50%; border: 3px solid var(--alarm); animation: pulse 1.8s ease-out infinite; pointer-events: none; }
 @keyframes pulse { from { transform: scale(.8); opacity: .9; } to { transform: scale(1.35); opacity: 0; } }
-.cluster {
-  width: 46px; height: 46px; border-radius: 50%; border: 4px solid var(--fresh); background: #fff; color: #13241C; display: grid; place-items: center;
-  font-family: var(--display); font-weight: 800; font-size: 16px; box-shadow: 0 3px 10px rgba(0, 0, 0, .35); cursor: pointer;
+.cluster { width: 44px; height: 44px; border: 0; padding: 0; background: none; display: grid; place-items: center; cursor: pointer; }
+.cluster .vis {
+  width: 46px; height: 46px; border-radius: 50%; border: 4px solid var(--fresh); background: #fff; color: #13241C; display: grid; place-items: center; flex: none;
+  font-family: var(--display); font-weight: 800; font-size: 16px; box-shadow: 0 0 0 1.2px rgba(0, 0, 0, .32);
+  transform: scale(max(var(--ps, 1), .7));
 }
-.cluster.c-aging { border-color: var(--aging); } .cluster.c-silent { border-color: var(--silent); } .cluster.c-alarm { border-color: var(--alarm); }
+.cluster.c-aging .vis { border-color: var(--aging); } .cluster.c-silent .vis { border-color: var(--silent); } .cluster.c-alarm .vis { border-color: var(--alarm); }
+
+/* zones */
+.zone-lbl {
+  font-size: 13px; font-weight: 800; color: #fff; pointer-events: none; white-space: nowrap; letter-spacing: .01em;
+  text-shadow: 0 0 3px rgba(0, 0, 0, .9), 0 0 1px #000;
+}
+.zone-lbl.off { color: #E3E9EE; font-weight: 700; }
+.edge-lbl {
+  font-size: 11px; font-weight: 700; color: #fff; pointer-events: none; white-space: nowrap;
+  text-shadow: 0 0 3px rgba(0, 0, 0, .9), 0 0 1px #000;
+}
+.vtx { width: 22px; height: 22px; border-radius: 50%; background: #E6198F; border: 3px solid #fff; box-shadow: 0 0 0 1.2px rgba(0, 0, 0, .45); cursor: grab; touch-action: none; }
+.vtx.first { width: 26px; height: 26px; }
+.vtx::before { content: ""; position: absolute; inset: -12px; border-radius: 50%; }
+.mid { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(0, 0, 0, .45); background: rgba(255, 255, 255, .9); padding: 0; position: relative; }
+.mid::before { content: ""; position: absolute; inset: -14px; border-radius: 50%; }
 .station-pin {
   width: 38px; height: 38px; border-radius: 12px; background: var(--card); color: var(--mute); display: grid; place-items: center;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, .3);
+  box-shadow: 0 0 0 1.2px rgba(0, 0, 0, .32);
 }
-.station-pin.on { color: var(--brand-t); box-shadow: 0 0 0 3px var(--fresh), 0 4px 12px rgba(0, 0, 0, .3); }
+.station-pin.on { color: var(--brand-t); box-shadow: 0 0 0 3px var(--fresh), 0 0 0 4.2px rgba(0, 0, 0, .3); }
 .me-pin { position: relative; width: 22px; height: 22px; pointer-events: none; }
 .me-pin .dot { position: absolute; inset: 3px; border-radius: 50%; background: #2F6FD0; border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .4); }
 .me-pin .cone {
@@ -61,15 +114,17 @@
 }
 .ghost-pin { width: 20px; height: 20px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 2px rgba(0, 0, 0, .35), 0 2px 8px rgba(0, 0, 0, .4); }
 
-/* sheet */
+/* Sheet visual remains unchanged; only the touch target and scrolling are repaired. */
 .sheet {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--card); border-radius: 28px 28px 0 0;
-  box-shadow: var(--sheet-shadow); display: flex; flex-direction: column; transition: height .22s ease; touch-action: none;
+  box-shadow: var(--sheet-shadow); display: flex; flex-direction: column; transition: height .22s ease; touch-action: auto;
 }
 .sheet.dragging { transition: none; }
-.sheet-grip { padding: 10px 0 2px; cursor: grab; touch-action: none; flex: none; }
-.sheet-grip .handle { display: block; width: 40px; height: 5px; border-radius: 3px; background: var(--hair2); margin: 0 auto 8px; }
-.sheet-body { flex: 1; overflow-y: auto; touch-action: pan-y; padding-bottom: 12px; }
+.sheet-grip { min-height: 56px; padding: 8px 0 10px; flex: none; display: flex; flex-direction: column;
+  justify-content: center; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.sheet-grip:active { cursor: grabbing; }
+.sheet-grip .handle { display: block; flex: none; width: 48px; height: 5px; border-radius: 3px; background: var(--hair2); margin: 0 auto 10px; }
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; overscroll-behavior: contain; padding-bottom: 12px; }
 .sum { padding: 0 20px; }
 .sum .disp { font-size: 20px; }
 .att { display: flex; gap: 10px; padding: 12px 20px 8px; overflow-x: auto; scrollbar-width: none; }
@@ -122,3 +177,31 @@
 .bul .btns { padding: 18px 16px calc(24px + var(--safe-b)); margin-top: auto; }
 .bul .btn { background: rgba(255, 255, 255, .1); color: #EAF3EC; }
 .bul .btn.signal { background: var(--signal); color: var(--on-signal); }
+
+/* zone drawing */
+.draw-top {
+  position: absolute; left: 0; right: 0; top: 0; z-index: 12; background: var(--card); box-shadow: var(--soft);
+  padding: calc(8px + var(--safe-t)) 12px 10px; display: flex; flex-direction: column; gap: 6px;
+}
+.draw-top .ttl { font-family: var(--display); font-weight: 800; font-size: 17px; }
+.draw-top .btn { height: 44px; }
+.draw-stats { display: flex; justify-content: center; gap: 14px; font-size: 13px; color: var(--mute); flex-wrap: wrap; }
+.draw-stats b { color: var(--ink); }
+.draw-cross { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; transform: translate(-50%, -50%); z-index: 6; pointer-events: none; }
+.draw-cross i { position: absolute; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .6); }
+.draw-cross i:first-child { left: 22px; top: 0; width: 2px; height: 46px; }
+.draw-cross i:nth-child(2) { top: 22px; left: 0; height: 2px; width: 46px; }
+.draw-cross b { position: absolute; left: 15px; top: 15px; width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .6); }
+.draw-hint { font-size: 13px; color: var(--mute); text-align: center; line-height: 1.35; }
+.draw-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 12; background: var(--card); border-radius: 24px 24px 0 0; box-shadow: var(--sheet-shadow);
+  padding: 12px 16px calc(14px + var(--safe-b)); display: flex; flex-direction: column; gap: 10px; box-sizing: border-box;
+}
+.draw-bar .btn.sq { width: 56px; height: 56px; padding: 0; flex: none; }
+.draw-bar .btn.grow { height: 56px; overflow: hidden; text-overflow: ellipsis; }
+.draw-bar .btn.tall { width: 92px; height: 56px; padding: 0 6px; flex-direction: column; gap: 2px; font-size: 12.5px; flex: none; }
+.draw-fix { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
+.graze-chip { background: var(--info-b, #E3EEFB); color: var(--info-t, #1F4E8C); box-shadow: none; }
+.ev-acts { display: flex; gap: 8px; padding-top: 8px; align-items: center; }
+.ev-acts .btn.small { height: 38px; padding: 0 12px; font-size: 14px; }
+.ev-acts .btn.quiet { padding: 0 6px; }

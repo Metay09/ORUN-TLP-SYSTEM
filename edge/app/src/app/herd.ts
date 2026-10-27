@@ -11,6 +11,7 @@
 import { fmt, tr } from "./i18n/tr.ts";
 import type { Animal, AnimalStatus, AssetProfile, BatteryLevel, Freshness, Observation } from "./model.ts";
 import { blankProfile } from "./stores.ts";
+import { zoneAt, type Fence } from "./zones.ts";
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -82,9 +83,11 @@ export interface HerdInput {
   profiles: Record<string, AssetProfile>;
   assetOf: (device: string, time: number) => string;
   now: number;
+  fence?: Fence;        // active, valid zones (none: no zone checks)
+  grazing?: boolean;    // serbest otlatma on: outside is not an alarm
 }
 
-export function buildHerd({ points, profiles, assetOf, now }: HerdInput): Animal[] {
+export function buildHerd({ points, profiles, assetOf, now, fence }: HerdInput): Animal[] {
   const by = new Map<string, { device: string; list: Observation[] }>();
   for (const p of points) {
     const t = epochMs(p.time);
@@ -118,6 +121,9 @@ export function buildHerd({ points, profiles, assetOf, now }: HerdInput): Animal
     const named = Boolean(profile.name.trim());
     const name = named ? profile.name.trim() : `Tasma ${shortId(device ?? id)}`;
     const lost = lastTime !== null && now - lastTime > lostLimit(periodMs(periodS));
+    // Geofence alarm ownership belongs to the TRACKER, not to the app's
+    // history/position projection. Keep geometric membership informational.
+    const zone = fence && last ? zoneAt(fence, last)?.name ?? null : null;
 
     let status: AnimalStatus;
     if (!last) status = "waiting";
@@ -144,6 +150,7 @@ export function buildHerd({ points, profiles, assetOf, now }: HerdInput): Animal
       freshRatio: freshRatio(lastTime, periodS, now), status, seen, short,
       battery: bat.level, batteryPercent: bat.percent,
       activeShare: freshness === "fresh" ? activeShare(last) : null,
+      zone, outside: false, outSince: null, grazing: false,
       attention: ORDER.length - ORDER.indexOf(status),
     });
   }
