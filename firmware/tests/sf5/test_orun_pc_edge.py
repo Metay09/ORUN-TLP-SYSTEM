@@ -191,6 +191,84 @@ class PCEdgeTests(unittest.TestCase):
                     "SELECT accept_state FROM gateway_holds").fetchall()
             self.assertEqual(states, [("TIMEOUT",)])
 
+    def test_ble_accept_after_backend_commit_three_fragments(self):
+        import asyncio
+        from orun_edge_bench import edge_accept_binary, EdgeReassembler
+
+        class FakeBleClient:
+            def __init__(self):
+                self.writes = []
+            async def write_gatt_char(self, uuid, frame, response):
+                self.writes.append((uuid, bytes(frame), response))
+
+        async def exercise():
+            with tempfile.TemporaryDirectory() as tmp:
+                inbox = pc.Inbox(Path(tmp) / "spool.sqlite")
+                gw = "09A462BD4B275BA5"
+                raw = fixture.track(1)[0]
+                hello = bytes([1]) + bytes.fromhex(gw) + bytes(4)
+                connected = pc.handle_ble_message(hello, inbox, None)
+                self.assertEqual(connected, gw)
+                held = (
+                    bytes([2]) + (5).to_bytes(2, "big") +
+                    (7).to_bytes(2, "big") + (99).to_bytes(8, "big") +
+                    bytes(4) + bytes([len(raw)]) + raw
+                )
+                self.assertEqual(pc.handle_ble_message(held, inbox, gw), gw)
+                fake = FakeBleClient()
+                release = pc.BenchBleRelease(inbox, gw)
+                self.assertEqual(await release.poll_ble(fake, 10, 0), 0)
+                self.assertEqual(fake.writes, [])
+                inbox.acknowledge(inbox.batch(), ["STORED"])
+                self.assertEqual(await release.poll_ble(fake, 12, 0), 1)
+                self.assertEqual(len(fake.writes), 3)
+                self.assertTrue(all(row[0] == pc.EDGE_TO_GATEWAY_UUID and
+                                    row[2] is True and len(row[1]) <= 20
+                                    for row in fake.writes))
+                rx = EdgeReassembler()
+                messages = [rx.push(row[1]) for row in fake.writes]
+                self.assertEqual(
+                    messages[-1],
+                    edge_accept_binary(int(gw, 16), 5, 7, 99, raw))
+                # Wrong page/slot must never acknowledge an in-flight handoff.
+                release.observe_message(
+                    bytes([4]) + (5).to_bytes(2, "big") +
+                    (8).to_bytes(2, "big") + bytes([0]))
+                self.assertIsNotNone(inbox.ready_hold(gw))
+                # code 0 = confirmed Gateway handoff
+                release.observe_message(
+                    bytes([4]) + (5).to_bytes(2, "big") +
+                    (7).to_bytes(2, "big") + bytes([0]))
+                self.assertIsNone(inbox.ready_hold(gw))
+                with inbox.conn() as db:
+                    self.assertEqual(db.execute(
+                        "SELECT accept_state FROM gateway_holds").fetchone(),
+                        ("OK",))
+        asyncio.run(exercise())
+
+    def test_ble_rejected_backend_no_accept(self):
+        import asyncio
+
+        class FakeBleClient:
+            def __init__(self):
+                self.writes = []
+            async def write_gatt_char(self, uuid, frame, response):
+                self.writes.append((uuid, bytes(frame), response))
+
+        async def exercise():
+            with tempfile.TemporaryDirectory() as tmp:
+                inbox = pc.Inbox(Path(tmp) / "spool.sqlite")
+                gw = "0123456789ABCDEF"
+                raw = bytes((2, 4, 2)) + bytes(97)
+                inbox.ingest(raw, gw)
+                inbox.observe_hold(gw, 4, 0, "0000000000000001", raw)
+                inbox.acknowledge(inbox.batch(), ["REJECTED"])
+                fake = FakeBleClient()
+                release = pc.BenchBleRelease(inbox, gw)
+                self.assertEqual(await release.poll_ble(fake, 10, 0), 0)
+                self.assertEqual(fake.writes, [])
+        asyncio.run(exercise())
+
     def test_backend_roundtrip_and_retry(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
