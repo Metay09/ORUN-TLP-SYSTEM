@@ -12,7 +12,7 @@ Gateway --(USB veya BLE)--> PC Edge --(yerel SQLite WAL/FULL)--> Tailscale --> B
 - REJECTED/CONFLICT dosyadan silinmez; yerel karantinada tutulur. UNCERTAIN tekrar denenir.
 - Eski kayıtların açılması güncel pozisyonu geciktirmesin diye her yükleme turuna *en yeni* bekleyen kayıtlardan bir tanesi öne konur; gerisi FIFO'dur.
 - Tailscale IPv4, port 8090, kullanıcı dosyasında 0600 token; HTTP redirect ve proxy devre dışı. **Public IP / port-forward yok.**
-- **KRİTİK:** Gateway'e henüz HMAC EDGE ACCEPT veya authenticated custody release **gönderilmez**. Backend'de STORED cevabı olsa da Gateway custody kayıtları tutulmaya devam eder. Uzun vadede ring dolabilir. Gateway hafızasını temizlemeyin! Üretim için önce güvenli backend receipt → Gateway release/ACK kanıtı tamamlanmalıdır.
+- **Varsayılan:** PC Edge Gateway'e HMAC EDGE ACCEPT veya custody release göndermez; Gateway custody kayıtları tutulur. **Yalnızca USB SF5L0 bench testlerinde** `--bench-release-gateway <16-hex-Gateway-ID>` seçeneğiyle, önce backend STORED/DUPLICATE doğrulanmış şifreli kaydın tam `page/slot/generation/frame` eşleşmesi üzerinden mevcut **PUBLIC TEST KEY** HMAC onayı gönderilebilir. Yanıtlar ve denemeler tutulur; reddedilen ve belirsiz kayıtlar onaylanmaz. Bu üretim yetkilendirmesi değildir; gerçek cihaz üzerinde kullanılmaz. Üretim için ayrı, yetkili backend receipt ve Gateway release protokolü gereklidir.
 - Benzer şekilde USB'deki `BENCH GW DUMP` komutu ve BLE Edge linki **SF5L0 bench protokolüne** göredir. Gerçek provisioned Gateway firmware'inin aynı veri yolunu desteklediği cihazla test edilmeden varsayılmaz.
 
 ## Gereksinimler
@@ -57,6 +57,17 @@ python3 firmware/tests/sf5/test_orun_pc_edge.py
 ```
 
 PC Edge testinde gerçek tasma/Gateway anahtarı kullanılmaz. Yerel geçici SQLite ve **public test vector** kullanılır; sahadaki gerçek DB'lere dokunmaz.
+
+## USB SF5L0 test Gateway: isteğe bağlı teslim onayı
+
+Önce host testleri ve gerçek backend mutabakatı başarılı olmalı. **Mevcut kurulu sistemd servisi aynı kalarak eski, alıcı-only modda çalışır.** CLI üzerinde `--bench-release-gateway 09A462BD4B275BA5` parametresi yazılmadıkça Gateway'e ACCEPT gönderilmez. Bu anahtar herkese açıktır: cihazın production/provisioned olduğunu düşünüyorsanız kesinlikle etkinleştirmeyin. Bu modu açmak için çalışan PC Edge hizmetiyle seri portu eşzamanlı açmayın; servis yapılandırması ayrıca doğrulanmalı.
+
+Program, yalnızca backend tarafından STORED veya DUPLICATE yanıtı kalıcı kaydedilmiş tam çerçeveler için `EDGE ACCEPT v1` oluşturur. `OK`, `BUSY`, `UNKNOWN`, `REJECTED` ve zaman aşımı ayrı izlenir; aynı custody handle üç denemeden sonra durur. Gateway kendi HMAC doğrulamasını uygular. Bu bir bench protokol uyumluluk denemesidir; imzalı backend yetkisi veya üretimde güvenli tasma teslimi yerine geçmez.
+
+```sh
+# Önce sadece izole host testi; Gateway'e hiçbir komut gönderilmez:
+python3 firmware/tests/sf5/test_orun_pc_edge.py
+```
 
 ## Saha doğrulama kapısı
 
