@@ -181,7 +181,9 @@ export class UsbLineParser {
     m = HELD_LINE.exec(text);
     if (!m) return null;
     const link = m[1] === "HELD" ? this.armed : null;
-    this.armed = this.rx = null;
+    // PRIORITY is an out-of-band snapshot; consuming an unrelated pending
+    // live RX pairing here could lose the real next HELD's signal evidence.
+    if (m[1] === "HELD") this.armed = this.rx = null;
     const obj = m[7], want = 2 * Number(m[6]);
     if (obj.length % 2 || obj.length !== want)
       return { type: "heldBroken", gateway: m[2], page: Number(m[3]), slot: Number(m[4]),
