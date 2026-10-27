@@ -167,7 +167,13 @@ export const prefs = new Persisted<Prefs>("orun.app.prefs.v1", () => ({ ...DEFAU
     ? {
       ...DEFAULT_PREFS, ...(raw as Partial<Prefs>),
       layers: { ...DEFAULT_PREFS.layers, ...((raw as Partial<Prefs>).layers ?? {}) },
-      sat: { ...DEFAULT_SAT, ...((raw as Partial<Prefs>).sat ?? {}) },
+      // PR180 persisted the safe-satellite choice as a boolean. Preserve the
+      // owner's z15 underlay preference when moving to Claude's zoom slider.
+      sat: { ...DEFAULT_SAT,
+        ...((raw as Partial<Prefs>).sat ?? {}),
+        ...((raw as Partial<Prefs> & { satelliteSafe?: boolean }).satelliteSafe === true &&
+          !(raw as Partial<Prefs>).sat ? { maxZoom: 15 } : {}),
+      },
     }
     : null));
 
@@ -251,7 +257,7 @@ export class ZoneStore extends Persisted<ZoneBook> {
     })();
     const legacy = key && !existing && !seed ? legacyDrafts() : { zones: [], error: null };
     super(key, () => ({ zones: seed ?? legacy.zones, graze: { ...NO_GRAZE } }),
-      (raw) => (raw && typeof raw === "object" && !Array.isArray(raw) &&
+      (raw) => (!invalidExisting && raw && typeof raw === "object" && !Array.isArray(raw) &&
         Array.isArray((raw as ZoneBook).zones)
         ? { zones: (raw as ZoneBook).zones, graze: { ...NO_GRAZE, ...((raw as ZoneBook).graze ?? {}) } } : null));
     this.storageKey = key;
