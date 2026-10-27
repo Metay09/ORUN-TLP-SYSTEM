@@ -867,14 +867,18 @@ void Sf5l0EdgeLinkSession::onNewRecord(uint16_t page, uint16_t slot,
 bool Sf5l0EdgeLinkSession::nextPriority(uint8_t* out, size_t capacity,
                                        size_t& length) {
   // The gateway cannot decrypt PRODUCT_SECURE timestamps. "Latest" here
-  // means the newest *durably admitted custody record* (generation, slot),
+  // means the newest *durably admitted PERIODIC record* (generation, slot),
   // NOT a fabricated claim about the record's GNSS measurement age.
   // Walking the bounded pages uses the existing read-only store API.
   struct Last : Sf5l0HeldVisitor {
     bool found = false;
     Sf5l0HeldRecord record{};
     void held(const Sf5l0HeldRecord& r) override {
-      record = r;  // sf5l0ForEachHeld walks in oldest -> newest custody order
+      // Prioritize a location-capable PERIODIC frame, not an unrelated EVENT.
+      // Bytes 0..27 are an untrusted outer header until Edge authenticates
+      // the object: use its family only for scheduling, never for acceptance.
+      if (r.size != 100U || r.object[3] != 0x01U) return;
+      record = r;  // sf5l0ForEachHeld walks oldest -> newest
       found = true;
     }
   } last;
