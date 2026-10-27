@@ -54,6 +54,27 @@
 .pin.selected .vis { width: 58px; height: 58px; border-radius: 50%; box-shadow: 0 0 0 3px #fff, 0 0 0 4.5px rgba(0, 0, 0, .35); }
 .pin.selected .fc { width: 44px; height: 44px; font-size: 16px; }
 .pin.in-cluster { visibility: hidden; }
+/* Keep selected/alarming animal visible when GPS fixes overlap at z20.
+   Count opens the picker without changing or averaging any tracker fix. */
+.pin-count {
+  position: absolute; right: -4px; top: -4px; z-index: 12;
+  min-width: 21px; height: 21px; padding: 0 4px;
+  border-radius: 11px; border: 2px solid #fff;
+  display: grid; place-items: center; background: #163F32; color: #fff;
+  font: 800 10px/1 var(--display); box-shadow: 0 1px 4px #0007;
+}
+.pin-choices {
+  display: flex; flex-direction: column; max-height: min(250px, 38vh);
+  min-width: 150px; overflow-y: auto; gap: 3px; color: #13241C;
+}
+.pin-choices strong { padding: 4px 5px 7px; font-size: 13px; }
+.pin-choices button {
+  width: 100%; min-height: 42px; border: 0; border-radius: 8px;
+  padding: 7px 10px; background: #F0F4EE; color: #12281C;
+  font-weight: 700; font-size: 13px; text-align: left;
+}
+.pin-choices button:active { background: #DDE9DD; }
+
 .pin .pulse { position: absolute; inset: -6px; border-radius: 50%; border: 3px solid var(--alarm); animation: pulse 1.8s ease-out infinite; pointer-events: none; }
 @keyframes pulse { from { transform: scale(.8); opacity: .9; } to { transform: scale(1.35); opacity: 0; } }
 .cluster { width: 44px; height: 44px; border: 0; padding: 0; background: none; display: grid; place-items: center; cursor: pointer; }
