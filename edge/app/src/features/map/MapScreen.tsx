@@ -194,8 +194,6 @@ export function MapScreen({ visible }: { visible: boolean }) {
   const st = stationWords(m.station, m.snap, lastArrival);
   const me = pos.pos;
 
-  const graze = m.graze;
-  const grazeUntil = graze.forever ? tr.zones.graze.forever : graze.until ? tr.zones.graze.untilClock(fmt.clock(graze.until)) : "";
   const drawZone = drawing ? m.zones.find((z) => z.id === drawing.zone) ?? null : null;
 
   return (
@@ -214,7 +212,6 @@ export function MapScreen({ visible }: { visible: boolean }) {
           <span className={"dot " + st.dot} /><span className="ellip">{st.short}</span>
         </button>
         {m.demo && <span className="status-chip demo">{tr.app.demoBadge}</span>}
-        {m.grazing && <button className="status-chip graze-chip" onClick={() => nav.setTab("zones")}>{tr.zones.graze.chip(grazeUntil)}</button>}
         {offline && <span className="status-chip note">{tr.states.offlineMap}</span>}
         {tiles && !offline && <span className="status-chip note">{navigator.onLine ? tr.map.tilesTrouble : tr.map.tilesOffline}</span>}
         {flash && <span className="status-chip">{flash}</span>}
@@ -313,7 +310,7 @@ function Selected({ a, me, now, pts, cursor, playing, range, win, onClose, onFin
         <div className="cm">
           <span className="disp ellip">{a.name}</span>
           <span className={`strong t-${tone}`} style={{ fontSize: 15 }}>{a.seen}</span>
-          {(a.grazing || a.zone) && <span className="cap ellip">{a.grazing ? tr.status.grazingOut : tr.map.inZone(a.zone!)}</span>}
+          {a.zone && <span className="cap ellip">{tr.map.inZone(a.zone)}</span>}
         </div>
         <button className="circ" onClick={onClose} aria-label={tr.common.close}><X size={20} /></button>
       </div>
