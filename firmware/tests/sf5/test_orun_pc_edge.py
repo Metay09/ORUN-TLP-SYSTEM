@@ -49,6 +49,22 @@ class PCEdgeTests(unittest.TestCase):
         self.assertNotEqual(invalid.returncode, 0)
         self.assertIn("USB portu", invalid.stderr)
 
+    def test_bench_release_command_validates_gateway_id_without_systemd(self):
+        script = ROOT / "tools" / "ops" / "orun_pc_edge_service.sh"
+        ok = subprocess.run(
+            ["bash", str(script), "bench-release", "validate",
+             "09A462BD4B275BA5"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        for identifier in ("09a462bd4b275ba5", "09A462BD4B275BA",
+                           "09A462BD4B275BA5; touch /tmp/unsafe"):
+            bad = subprocess.run(
+                ["bash", str(script), "bench-release", "validate", identifier],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            self.assertNotEqual(bad.returncode, 0, identifier)
+
     def test_url_and_token_guard(self):
         assert pc.checked_backend("http://100.99.88.77:8090") == "http://100.99.88.77:8090"
         assert pc.checked_backend("http://127.0.0.1:8090") == "http://127.0.0.1:8090"
