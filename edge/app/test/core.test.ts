@@ -311,6 +311,59 @@ test("redump: previously delivered live events do not spoil the next census", as
   assert.equal(edge.heldNow(), 0);
 });
 
+test("BLE latest-head preview arrives first, saves immediately, ACKs securely and does not inflate the dump census", async () => {
+  const now = 1_800_000_000;
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, clock: () => now });
+  await edge.init();
+  const [older, newest] = track(2);
+  const hello = concat(new Uint8Array([1]), fromHex("09A462BD4B275BA5"), fromHex("00020420"));
+  await edge.handleMessage(hello);
+  // A new firmware sends type 0x06 before the chronological 0x02 backlog.
+  const early = heldMsg(0, 2, 2n, newest, null);
+  early[0] = 0x06;
+  assert.match((await edge.handleMessage(early))!, /^YENİ/);
+  assert.equal(await edge.ledger.recordCount(), 1);
+  assert.deepEqual(edge.nextAcceptMessage(now), acceptMessage(GW, 0, 2, 2n, newest));
+  await edge.handleMessage(fromHex("040000000200")); // ACK latest
+  assert.equal(edge.heldNow(), 1);
+  assert.match((await edge.handleMessage(heldMsg(0, 1, 2n, older, null)))!, /^YENİ/);
+  assert.match((await edge.handleMessage(heldMsg(0, 2, 2n, newest, null)))!, /^VARDI/);
+  const end = await edge.handleMessage(fromHex("030002")); // exact chronological census
+  assert.match(end!, /DUMP END count=2/);
+  assert.doesNotMatch(end!, /UYARI: eksik aktarım/);
+  assert.equal(await edge.ledger.recordCount(), 2);
+});
+
+test("USB priority preview preserves chronological DUMP_END and never borrows an RX RSSI", async () => {
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials });
+  await edge.init();
+  const [older, newest] = track(2);
+  const priority = heldLine(GW, 0, 2, 2n, newest).replace("EDGE HELD", "EDGE PRIORITY");
+  await edge.handleLine("RX PRODUCT_SECURE queued family=1 length=100 rssi=-44 snr=11");
+  assert.doesNotMatch((await edge.handleLine(priority))!, /sinyal/);
+  assert.equal(await edge.ledger.recordCount(), 1);
+  assert.match((await edge.handleLine(heldLine(GW, 0, 1, 2n, older)))!, /^YENİ/);
+  assert.match((await edge.handleLine(heldLine(GW, 0, 2, 2n, newest)))!, /^VARDI/);
+  assert.doesNotMatch((await edge.handleLine("EDGE DUMP END count=2"))!, /UYARI:/);
+  assert.equal(await edge.ledger.recordCount(), 2);
+});
+
+test("unknown or corrupted preview is ignored and cannot corrupt ACCEPT or history accounting", async () => {
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials });
+  await edge.init();
+  const [object] = track(1);
+  await edge.handleMessage(concat(new Uint8Array([1]), fromHex("09A462BD4B275BA5"), fromHex("00010420")));
+  const malformed = heldMsg(0, 0, 1n, object, null);
+  malformed[0] = 0x06;
+  malformed[17] = 110;
+  assert.equal(await edge.handleMessage(malformed), null);
+  assert.equal(await edge.ledger.recordCount(), 0);
+  assert.equal(edge.pendingAccepts(), 0);
+  assert.equal(await edge.handleMessage(new Uint8Array([0x7F])), null);
+  assert.match((await edge.handleMessage(heldMsg(0, 0, 1n, object, null)))!, /^YENİ/);
+  assert.doesNotMatch((await edge.handleMessage(fromHex("030001")))!, /UYARI:/);
+});
+
 test("points: live / through / cut / unknown classification", async () => {
   let now = 0;
   const db = await freshDb();
