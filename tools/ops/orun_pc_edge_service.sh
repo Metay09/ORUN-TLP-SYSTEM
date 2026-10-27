@@ -14,6 +14,9 @@ usage() {
   echo "  bash tools/ops/orun_pc_edge_service.sh install usb http://100.x.x.x:8090 pc-adi /dev/serial/by-id/GATEWAY" >&2
   echo "  bash tools/ops/orun_pc_edge_service.sh install ble http://100.x.x.x:8090 pc-adi" >&2
   echo "  bash tools/ops/orun_pc_edge_service.sh validate usb URL EDGE-ID /dev/serial/by-id/GATEWAY" >&2
+  echo "  bash tools/ops/orun_pc_edge_service.sh bench-release validate 16HEX-GATEWAY-ID" >&2
+  echo "  bash tools/ops/orun_pc_edge_service.sh bench-release enable 16HEX-GATEWAY-ID" >&2
+  echo "  bash tools/ops/orun_pc_edge_service.sh bench-release disable" >&2
   echo "  bash tools/ops/orun_pc_edge_service.sh status|logs" >&2
   exit 2
 }
@@ -122,9 +125,91 @@ EOF
   echo "sudo loginctl enable-linger $(id -un)"
 }
 
+# Keep the installed receive-only unit unchanged. An explicit, reversible
+# systemd drop-in enables the SF5L0 PUBLIC-TEST-KEY handoff on USB only.
+# The Gateway validates the actual HMAC; this is not a production receipt.
+validate_bench_gateway() {
+  if (( $# != 1 )); then
+    echo "HATA: 16 hexadecimal gateway kimligi gerekli." >&2
+    return 2
+  fi
+  python3 - "$1" <<'PY'
+import re
+import sys
+if not re.fullmatch(r"[0-9A-F]{16}", sys.argv[1], flags=re.ASCII):
+    sys.exit("HATA: Gateway kimligi tam 16 buyuk hexadecimal karakter olmali.")
+PY
+}
+
+bench_release() {
+  local action="${1:-}"
+  if [[ "$action" == "validate" ]]; then
+    validate_bench_gateway "${@:2}"
+    return
+  fi
+  if [[ "$action" == "enable" ]]; then
+    validate_bench_gateway "${@:2}"
+  elif [[ "$action" == "disable" ]]; then
+    if (( $# != 1 )); then usage; fi
+  else
+    usage
+  fi
+
+  if [[ ! -f "$UNIT_FILE" ]]; then
+    echo "HATA: PC Edge servisi once kurulmus olmali." >&2
+    return 1
+  fi
+  local exec_line
+  exec_line="$(sed -n 's/^ExecStart=//p' "$UNIT_FILE")"
+  if [[ "$exec_line" != "/usr/bin/python3 -u $ROOT/tools/orun_pc_edge.py "* ||
+        "$exec_line" != *" --mode usb "* ||
+        "$exec_line" != *" --token-file $TOKEN_FILE"* ||
+        "$exec_line" != *" --port /dev/"* ||
+        "$exec_line" == *"--bench-release-gateway"* ]]; then
+    echo "HATA: Kurulu USB PC Edge servis komutu beklenen bicimde degil; degistirilmedi." >&2
+    return 1
+  fi
+
+  local dropdir="$UNIT_DIR/orun-pc-edge.service.d"
+  local dropin="$dropdir/10-bench-release.conf"
+  if [[ "$action" == "enable" ]]; then
+    if [[ -e "$dropin" ]]; then
+      echo "HATA: Bench teslim modu zaten ayarlanmis. Yeniden yazilmadi." >&2
+      return 1
+    fi
+    mkdir -p "$dropdir"
+    local staging="$dropdir/.bench-release.$.tmp"
+    cat > "$staging" <<EOF
+[Service]
+ExecStart=
+ExecStart=$exec_line --bench-release-gateway $2
+EOF
+    chmod 600 "$staging"
+    mv -n "$staging" "$dropin"
+    if [[ -e "$staging" ]]; then
+      rm -f "$staging"
+      echo "HATA: Dosya zaten var, uzerine yazilmadi." >&2
+      return 1
+    fi
+    echo "SF5L0 BENCH test anahtari ile teslim onayi etkinlestirildi: $2"
+  else
+    if [[ ! -e "$dropin" ]]; then
+      echo "Bench teslim modu zaten kapali."
+      return
+    fi
+    rm -- "$dropin"
+    echo "Bench teslim modu kaldirildi: yalnizca veri alma."
+  fi
+
+  systemctl --user daemon-reload
+  systemctl --user restart orun-pc-edge.service
+  systemctl --user status orun-pc-edge.service --no-pager -l || true
+}
+
 case "${1:-}" in
   install) shift; install_service "$@" ;;
   validate) shift; validate_install_args "$@" ;;
+  bench-release) shift; bench_release "$@" ;;
   status) systemctl --user status orun-pc-edge.service --no-pager || true ;;
   logs) journalctl --user -u orun-pc-edge.service -n 80 --no-pager ;;
   *) usage ;;
