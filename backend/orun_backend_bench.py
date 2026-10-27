@@ -286,7 +286,7 @@ def main(argv=None) -> int:
             token = args.token_file.read_text(encoding="utf-8").strip()
         except (OSError, UnicodeError) as exc:
             ap.error(f"--token-file cannot be read: {type(exc).__name__}")
-    if token is None or len(token) < 8 or "\\n" in token or "\\r" in token:
+    if token is None or len(token) < 8 or "\n" in token or "\r" in token:
         ap.error("--token/--token-file: token must be at least 8 characters, one line")
     registry = oc.CredentialRegistry(args.registry)
     backend = Backend(Path(args.db), args.bench_test_key, registry=registry)
