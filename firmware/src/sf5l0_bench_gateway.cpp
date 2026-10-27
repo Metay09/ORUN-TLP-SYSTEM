@@ -156,7 +156,12 @@ struct PrintAll : Sf5l0HeldVisitor {
 struct FindLatest : Sf5l0HeldVisitor {
   Sf5l0HeldRecord last{};
   bool found = false;
-  void held(const Sf5l0HeldRecord& r) override { last = r; found = true; }
+  void held(const Sf5l0HeldRecord& r) override {
+    // This is a location priority, not an EVENT priority. Header family is
+    // only a scheduling hint: the Edge still authenticates each full frame.
+    if (r.size != 100U || r.object[3] != 0x01U) return;
+    last = r; found = true;
+  }
 };
 struct PrintNew : Sf5l0HeldVisitor {
   void held(const Sf5l0HeldRecord& r) override {
