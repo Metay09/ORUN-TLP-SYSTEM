@@ -11,7 +11,7 @@
 import { fmt, tr } from "./i18n/tr.ts";
 import type { Animal, AnimalStatus, AssetProfile, BatteryLevel, Freshness, Observation } from "./model.ts";
 import { blankProfile } from "./stores.ts";
-import { outsideEpisodes, zoneAt, type Fence } from "./zones.ts";
+import { zoneAt, type Fence } from "./zones.ts";
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -76,7 +76,7 @@ export function shortId(id: string): string {
   return id.slice(-4).toUpperCase();
 }
 
-const ORDER: AnimalStatus[] = ["out", "battery-critical", "lost", "silent", "aging", "battery-low", "ok", "waiting"];
+const ORDER: AnimalStatus[] = ["battery-critical", "lost", "silent", "aging", "battery-low", "ok", "waiting"];
 
 export interface HerdInput {
   points: Observation[];
@@ -87,7 +87,7 @@ export interface HerdInput {
   grazing?: boolean;    // serbest otlatma on: outside is not an alarm
 }
 
-export function buildHerd({ points, profiles, assetOf, now, fence, grazing = false }: HerdInput): Animal[] {
+export function buildHerd({ points, profiles, assetOf, now, fence }: HerdInput): Animal[] {
   const by = new Map<string, { device: string; list: Observation[] }>();
   for (const p of points) {
     const t = epochMs(p.time);
@@ -121,14 +121,12 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     const named = Boolean(profile.name.trim());
     const name = named ? profile.name.trim() : `Tasma ${shortId(device ?? id)}`;
     const lost = lastTime !== null && now - lastTime > lostLimit(periodMs(periodS));
-    const eps = fence && fence.polys.length ? outsideEpisodes(timed, fence, (p) => epochMs(p.time)) : [];
-    const cur = eps.length && eps[eps.length - 1].to === null ? eps[eps.length - 1] : null;
-    const outside = cur !== null;
+    // Geofence alarm ownership belongs to the TRACKER, not to the app's
+    // history/position projection. Keep geometric membership informational.
     const zone = fence && last ? zoneAt(fence, last)?.name ?? null : null;
 
     let status: AnimalStatus;
     if (!last) status = "waiting";
-    else if (outside && !grazing && !lost) status = "out";
     else if (bat.level === "critical") status = "battery-critical";
     else if (lost) status = "lost";
     else if (freshness === "stale") status = "silent";
@@ -142,7 +140,6 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     else if (lost) { seen = tr.status.lostFor(fmt.since(lastTime, now)); short = tr.status.short.lost; }
     else if (freshness === "fresh" || freshness === "aging") { seen = tr.status.seenAgo(fmt.ago(lastTime, now)); short = fmt.ago(lastTime, now); }
     else { seen = tr.status.silentFor(fmt.since(lastTime, now)); short = tr.status.short.silent(fmt.duration(now - lastTime)); }
-    if (status === "out" && lastTime !== null) { seen = tr.status.outFor(fmt.ago(lastTime, now)); short = tr.status.short.out; }
     // The chip names the problem, not the time, when the battery is the issue.
     if (status === "battery-critical") short = tr.status.batteryCritical;
     else if (status === "battery-low") short = tr.status.batteryLow;
@@ -153,7 +150,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
       freshRatio: freshRatio(lastTime, periodS, now), status, seen, short,
       battery: bat.level, batteryPercent: bat.percent,
       activeShare: freshness === "fresh" ? activeShare(last) : null,
-      zone, outside, outSince: cur ? cur.from : null, grazing: grazing && outside,
+      zone, outside: false, outSince: null, grazing: false,
       attention: ORDER.length - ORDER.indexOf(status),
     });
   }
@@ -189,7 +186,6 @@ export function statusWord(a: Animal, now: number): string {
     case "battery-critical": return "pil bitiyor";
     case "battery-low": return "pil azalıyor";
     case "lost": return "kayıp olabilir";
-    case "out": return "alan dışında";
     case "silent": return a.lastTime ? `${fmt.since(a.lastTime, now)} sessiz` : "sessiz";
     case "aging": return a.lastTime ? fmt.ago(a.lastTime, now) : "";
     default: return "";
