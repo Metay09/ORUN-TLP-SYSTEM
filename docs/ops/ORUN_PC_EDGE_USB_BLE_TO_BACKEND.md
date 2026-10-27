@@ -97,6 +97,24 @@ bash tools/ops/orun_pc_edge_service.sh bench-release disable
 
 Bu komut yalnızca `ORUN_SF5L0_BENCH_TEST_KEYS` derlemesi olan USB Gateway ile uyumludur. Gateway'in normal üretim firmware'i aynı PUBLIC TEST KEY teslim onayını **tanımaz**. Sunucunun STORED/DUPLICATE cevabı görülmeden, reddedilen ya da belirsiz kayıtlar için hiçbir ACK gönderilmez. Bench onayı bizzat Gateway tarafından kabul edilmediği sürece kaydın serbest bırakıldığını söylemeyin.
 
+## BLE teslim onayı (host test aşaması)
+
+USB'de ölçülen `held=0/1056`, `EDGE DUMP END count=0` ve `reclaimed=59` 28 Ekim 2026 itibarıyla **SF5L0 USB Gateway** sahasında teyit edilmiştir. Bunlar BLE test sonucu değildir.
+
+PC Edge BLE alıcısı artık Gateway HELLO'dan kimliği alır; HELD/PREVIEW içindeki `page/slot/generation` ile şifreli kaydı eşleştirir. Backend STORED/DUPLICATE onayı SQLite'a kaydedilmeden SF5L0 ACCEPT göndermez. BLE için `edge_accept_binary` ve `edge_frames` aynı Android/host protokolünü kullanır. Gateway'in 0x04 ACCEPT_RESULT bildirimi, işlemdeki kaydın page/slot eşleşmesiyle işlenir; BUSY yeniden denenir, reddedilen gönderimler serbest bırakılmaz. `--bench-release-gateway` verilmedikçe BLE de alıcı-only kalır.
+
+```sh
+# Canlı sisteme dokunmayan BLE+USB regresyon testi:
+python3 -m py_compile tools/orun_pc_edge.py
+python3 firmware/tests/sf5/test_orun_pc_edge.py
+
+# PC'de BLE çalıştırmak için sürücü kontrolü:
+python3 -c 'import bleak; print("BLEAK: HAZIR")'
+command -v bluetoothctl
+```
+
+**Aynı Gateway için USB servisi açıkken ikinci bağımsız PC Edge BLE servisi başlatmayın.** Önce bluetooth aygıtı ve testler doğrulanmalı, ardından transport kontrollü şekilde değiştirilmelidir. Test anahtarıyla yapılan SF5L0 handoff gerçek üretim kimlik doğrulaması değildir.
+
 ## Saha doğrulama kapısı
 
 1. Backend gerçek bilgisayarında `orun-backend.service` **active**, `GET /v1/health` 200; doğru tokenla `/v1/edge/keys` 200; gerçek DB kayıt sayısı korunmuş.
