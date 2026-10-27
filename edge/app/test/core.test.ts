@@ -332,6 +332,14 @@ test("BLE latest-head preview arrives first, saves immediately, ACKs securely an
   assert.match(end!, /DUMP END count=2/);
   assert.doesNotMatch(end!, /UYARI: eksik aktarım/);
   assert.equal(await edge.ledger.recordCount(), 2);
+  // Archive rows arriving later NEVER roll the animal marker backward.
+  const { buildHerd } = await import("../src/app/herd.ts");
+  const positions = await edge.points();
+  const herd = buildHerd({
+    points: positions.points, profiles: {}, assetOf: (id: string) => id,
+    now: now * 1000,
+  });
+  assert.equal(herd[0].last?.seq, 1001);
 });
 
 test("USB priority preview preserves chronological DUMP_END and never borrows an RX RSSI", async () => {
