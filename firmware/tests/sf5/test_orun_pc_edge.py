@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sqlite3
+import subprocess
 import stat
 import sys
 import tempfile
@@ -28,6 +29,25 @@ class PCEdgeTests(unittest.TestCase):
         path.write_text(TOKEN + "\n", encoding="utf8")
         path.chmod(0o600)
         return path
+
+    def test_installer_accepts_real_rak_usb_by_id(self):
+        script = ROOT / "tools" / "ops" / "orun_pc_edge_service.sh"
+        real_port = ("/dev/serial/by-id/"
+                     "usb-RAKwireless_WisCore_RAK4631_Board_"
+                     "09A462BD4B275BA5-if00")
+        valid = subprocess.run(
+            ["bash", str(script), "validate", "usb",
+             "http://100.114.36.9:8090", "pc-simsek", real_port],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        self.assertEqual(valid.returncode, 0, valid.stderr)
+        invalid = subprocess.run(
+            ["bash", str(script), "validate", "usb",
+             "http://100.114.36.9:8090", "pc-simsek", "/dev/ttyUSB0"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn("USB portu", invalid.stderr)
 
     def test_url_and_token_guard(self):
         assert pc.checked_backend("http://100.99.88.77:8090") == "http://100.99.88.77:8090"
