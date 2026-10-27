@@ -124,7 +124,7 @@ void remember(const Sf5l0HeldRecord& r) {
 
 // One versioned USB line per held record. The object is the exact opaque
 // PRODUCT_SECURE frame; the Gateway never decrypts it.
-void printHeld(const Sf5l0HeldRecord& r) {
+void printHeld(const Sf5l0HeldRecord& r, bool priority = false) {
   static const char kHex[] = "0123456789ABCDEF";
   char object[2U * sizeof(r.object) + 1U];
   for (uint8_t i = 0; i < r.size; ++i) {
@@ -138,7 +138,9 @@ void printHeld(const Sf5l0HeldRecord& r) {
   hex64(gen, r.generation);
   // Serial.printf formats into a 256-byte buffer in the Adafruit core; the
   // 200-char object would be cut. Print the header and the object separately.
-  Serial.printf("EDGE HELD v1 gw=%s page=%u slot=%u gen=%s len=%u obj=",
+  Serial.printf(priority
+                    ? "EDGE PRIORITY v1 gw=%s page=%u slot=%u gen=%s len=%u obj="
+                    : "EDGE HELD v1 gw=%s page=%u slot=%u gen=%s len=%u obj=",
                 gw, static_cast<unsigned>(r.page),
                 static_cast<unsigned>(r.slot), gen,
                 static_cast<unsigned>(r.size));
@@ -148,6 +150,18 @@ void printHeld(const Sf5l0HeldRecord& r) {
 
 struct PrintAll : Sf5l0HeldVisitor {
   void held(const Sf5l0HeldRecord& r) override { printHeld(r); remember(r); }
+};
+// One extra early hint. The archive lines and DUMP END count are unchanged,
+// so older USB clients ignore the hint and still receive every held record.
+struct FindLatest : Sf5l0HeldVisitor {
+  Sf5l0HeldRecord last{};
+  bool found = false;
+  void held(const Sf5l0HeldRecord& r) override {
+    // This is a location priority, not an EVENT priority. Header family is
+    // only a scheduling hint: the Edge still authenticates each full frame.
+    if (r.size != 100U || r.object[3] != 0x01U) return;
+    last = r; found = true;
+  }
 };
 struct PrintNew : Sf5l0HeldVisitor {
   void held(const Sf5l0HeldRecord& r) override {
@@ -394,6 +408,10 @@ void dump() {
     Serial.println(F("EDGE DUMP busy; retry"));
     return;
   }
+  FindLatest latest;
+  (void)sf5l0ForEachHeld(
+      *product_port, *custody, storage_config::kProductRegionPages, latest);
+  if (latest.found) printHeld(latest.last, true);
   PrintAll all;
   const uint16_t count = sf5l0ForEachHeld(
       *product_port, *custody, storage_config::kProductRegionPages, all);

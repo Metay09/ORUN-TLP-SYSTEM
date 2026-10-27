@@ -89,6 +89,10 @@ enum class Type : uint8_t {
   kDumpEnd = 0x03,      // count(2): every record held right now was sent once
   kAcceptResult = 0x04, // page(2) slot(2) code(1)
   kReclaimed = 0x05,    // page(2) ok(1)
+  // Compatible optional preview of the newest custody append. Exactly the
+  // HELD payload, but NOT part of the oldest-first DUMP_END census. Older
+  // phones safely ignore it and still receive every ordinary HELD in order.
+  kHeldPreview = 0x06,
   // Edge -> Gateway
   kDump = 0x81,         // (empty) send every held record again from the start
   kAccept = 0x82,       // page(2) slot(2) gen(8) mac(32)

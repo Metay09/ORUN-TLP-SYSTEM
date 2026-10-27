@@ -787,6 +787,8 @@ Sf5l0EdgeHandoff::Event Sf5l0EdgeHandoff::service() {
 void Sf5l0EdgeLinkSession::begin() {
   active_ = true;
   hello_pending_ = true;
+  priority_pending_ = true;
+  priority_sent_since_history_ = false;
   scan_pending_ = true;
   dump_end_pending_ = true;
   cursor_valid_ = false;
@@ -804,6 +806,8 @@ bool Sf5l0EdgeLinkSession::pushResult(const Result& r) {
 void Sf5l0EdgeLinkSession::onMessage(const uint8_t* m, size_t n) {
   if (!active_ || m == nullptr || n == 0U) return;
   if (m[0] == uint8_t(edge_link::Type::kDump) && n == 1U) {
+    priority_pending_ = true;
+    priority_sent_since_history_ = false;
     scan_pending_ = true;           // full pass again from the start
     dump_end_pending_ = true;
     cursor_valid_ = false;
@@ -856,7 +860,49 @@ void Sf5l0EdgeLinkSession::onNewRecord(uint16_t page, uint16_t slot,
   link_generation_ = generation;
   link_rssi_ = rssi;
   link_snr_ = snr;
-  if (active_) scan_pending_ = true;
+  if (active_) {
+    priority_pending_ = true;
+    scan_pending_ = true;
+  }
+}
+
+bool Sf5l0EdgeLinkSession::nextPriority(uint8_t* out, size_t capacity,
+                                       size_t& length) {
+  // The gateway cannot decrypt PRODUCT_SECURE timestamps. "Latest" here
+  // means the newest *durably admitted PERIODIC record* (generation, slot),
+  // NOT a fabricated claim about the record's GNSS measurement age.
+  // Walking the bounded pages uses the existing read-only store API.
+  struct Last : Sf5l0HeldVisitor {
+    bool found = false;
+    Sf5l0HeldRecord record{};
+    void held(const Sf5l0HeldRecord& r) override {
+      // Prioritize a location-capable PERIODIC frame, not an unrelated EVENT.
+      // Bytes 0..27 are an untrusted outer header until Edge authenticates
+      // the object: use its family only for scheduling, never for acceptance.
+      if (r.size != 100U || r.object[3] != 0x01U) return;
+      record = r;  // sf5l0ForEachHeld walks oldest -> newest
+      found = true;
+    }
+  } last;
+  (void)sf5l0ForEachHeld(port_, store_, page_count_, last);
+  if (!last.found) return false;
+
+  edge_link::Held h{};
+  h.page = last.record.page;
+  h.slot = last.record.slot;
+  h.generation = last.record.generation;
+  h.has_link = link_valid_ && h.page == link_page_ &&
+               h.slot == link_slot_ && h.generation == link_generation_;
+  h.rssi = link_rssi_;
+  h.snr = link_snr_;
+  h.size = last.record.size;
+  h.object = last.record.object;
+  length = edge_link::encodeHeld(h, out, capacity);
+  if (length == 0U) return false;
+  // Same authenticated custody bytes; a separate optional framing type
+  // preserves the DUMP_END census for new and legacy phone clients.
+  out[0] = uint8_t(edge_link::Type::kHeldPreview);
+  return true;
 }
 
 bool Sf5l0EdgeLinkSession::nextHeld(uint8_t* out, size_t capacity,
@@ -927,9 +973,31 @@ bool Sf5l0EdgeLinkSession::next(uint8_t* out, size_t capacity,
                                         capacity);
     return length != 0U;
   }
+  // Latest-head lane takes exactly one message per pending event and never
+  // moves the history cursor. Normal scan remains oldest first, so neither
+  // history nor its custody/ACK semantics can be starved or silently skipped.
+  if (priority_pending_ && !priority_sent_since_history_ &&
+      store_.ready() && !store_.busy()) {
+    priority_pending_ = false;
+    if (nextPriority(out, capacity, length)) {
+      priority_sent_since_history_ = true;
+      return true;
+    }
+  }
   if (scan_pending_ && store_.ready() && !store_.busy()) {
-    if (nextHeld(out, capacity, length)) return true;
+    if (nextHeld(out, capacity, length)) {
+      priority_sent_since_history_ = false;
+      return true;
+    }
     scan_pending_ = false;  // caught up until the next record arrives
+  }
+  // If there is no more history, do not withhold a newly arrived preview.
+  if (priority_pending_ && store_.ready() && !store_.busy()) {
+    priority_pending_ = false;
+    if (nextPriority(out, capacity, length)) {
+      priority_sent_since_history_ = true;
+      return true;
+    }
   }
   if (!scan_pending_ && dump_end_pending_) {
     dump_end_pending_ = false;

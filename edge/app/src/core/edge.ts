@@ -213,10 +213,14 @@ export class EdgeCore {
   }
 
   private async ingestHeld(gateway: bigint, page: number, slot: number, gen: bigint,
-                           raw: Uint8Array, link: Link): Promise<string> {
+                           raw: Uint8Array, link: Link,
+                           preview = false): Promise<string> {
     const place = `${page}:${slot}`;
     this.heldKeys.add(place);
-    this.dumpSeen.add(place);
+    // An optional head preview is delivered outside the archive scan. The
+    // later chronological HELD is still sent for older phone compatibility;
+    // do not count the preview in DUMP END's unique-record census.
+    if (!preview) this.dumpSeen.add(place);
     const { state, item } = await this.ledger.ingest(raw);
     this.counts[state]++;
     const word: Record<LedgerState, string> = {
@@ -259,8 +263,10 @@ export class EdgeCore {
           this.counts.REJECTED++;
           return `RED   gw=${e.gateway} page=${e.page} slot=${e.slot}: satır eksik/bozuk (${e.got} hex, beklenen ${e.want}); BENCH GW DUMP ile tekrar istenebilir`;
         case "held":
+        case "heldPreview":
           this.gatewayId = e.gateway;
-          return this.ingestHeld(e.gateway, e.page, e.slot, e.generation, e.object, e.link);
+          return this.ingestHeld(e.gateway, e.page, e.slot, e.generation, e.object, e.link,
+                                 e.type === "heldPreview");
       }
     });
   }
@@ -281,8 +287,10 @@ export class EdgeCore {
           this.okSinceHello = 0;
           return `[gateway BLE] ${hex64(m.gateway)} bağlı; tuttuğu kayıt ${m.held}/${m.capacity}`;
         case "held":
+        case "heldPreview":
           if (this.gatewayId === null) return null;   // HELLO comes first; never guess
-          return this.ingestHeld(this.gatewayId, m.page, m.slot, m.generation, m.object, m.link);
+          return this.ingestHeld(this.gatewayId, m.page, m.slot, m.generation, m.object, m.link,
+                                 m.type === "heldPreview");
         case "dumpEnd": {
           const complete = this.finishDump(m.count);
           return `[gateway BLE] DUMP END count=${m.count} | ${await this.summary()}` +

@@ -83,21 +83,58 @@ function useNow(ms: number): number {
   return now;
 }
 
+/** Reads the durable phone ledger at most once per 2 s, WITHOUT debounce
+ * starvation during a continuous Gateway dump. A newly received head record
+ * must be able to reach the map while older records are still arriving.
+ *
+ * The previous [src, version] effect cancelled its pending timeout for every
+ * 250-ms burst and could therefore suppress *all* map updates until DUMP END.
+ */
 function usePoints(src: EdgeSource, version: number): { points: Point[]; loaded: boolean } {
-  const [state, setState] = useState<{ src: EdgeSource; points: Point[]; loaded: boolean }>({ src, points: [], loaded: false });
-  const last = useRef(0);
+  const [state, setState] = useState<{ src: EdgeSource; points: Point[]; loaded: boolean }>({
+    src, points: [], loaded: false,
+  });
+  const invalidate = useRef<() => void>(() => {});
+
   useEffect(() => {
-    let cancelled = false;
-    // Bursts of records: at most one ledger read every 2 s.
-    const wait = state.src === src ? Math.max(0, 2000 - (Date.now() - last.current)) : 0;
-    const t = setTimeout(async () => {
-      last.current = Date.now();
-      const r = await src.points().catch(() => null);
-      if (!cancelled) setState({ src, points: r?.points ?? [], loaded: r !== null });
-    }, wait);
-    return () => { cancelled = true; clearTimeout(t); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src, version]);
+    let active = true;
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    let reading = false;
+    let dirty = false;
+    let lastStarted = 0;
+
+    const schedule = () => {
+      if (!active || pending !== null || reading || !dirty) return;
+      // Leading + trailing throttle. Bursts cannot indefinitely reset this
+      // deadline; a second read follows when the ledger changed mid-read.
+      const wait = Math.max(0, 2000 - (Date.now() - lastStarted));
+      pending = setTimeout(async () => {
+        pending = null;
+        if (!active || !dirty) return;
+        dirty = false;
+        reading = true;
+        lastStarted = Date.now();
+        const result = await src.points().catch(() => null);
+        if (active) setState({
+          src, points: result?.points ?? [], loaded: result !== null,
+        });
+        reading = false;
+        schedule();
+      }, wait);
+    };
+    invalidate.current = () => { dirty = true; schedule(); };
+    invalidate.current();
+
+    return () => {
+      active = false;
+      if (pending !== null) clearTimeout(pending);
+      invalidate.current = () => {};
+    };
+  }, [src]);
+
+  // Invalidation is deliberately separate from the effect which owns the
+  // timer: new Gateway packets must not clear/reschedule an earlier read.
+  useEffect(() => { invalidate.current(); }, [src, version]);
   return state.src === src ? state : { points: [], loaded: false };
 }
 
