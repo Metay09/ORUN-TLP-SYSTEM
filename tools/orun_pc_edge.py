@@ -44,8 +44,8 @@ from orun_edge_bench import (
 )
 
 USB_HELD = re.compile(
-    r"EDGE (?:HELD|PRIORITY) v1 gw=([0-9A-F]{16}) page=\\d+ slot=\\d+ "
-    r"gen=[0-9A-F]{16} len=(\\d+) obj=([0-9A-F]+)(?:\\s|$)"
+    r"EDGE (?:HELD|PRIORITY) v1 gw=([0-9A-F]{16}) page=\d+ slot=\d+ "
+    r"gen=[0-9A-F]{16} len=(\d+) obj=([0-9A-F]+)(?:\s|$)"
 )
 EDGE_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 VALID_STATES = {"STORED", "DUPLICATE", "CONFLICT", "REJECTED", "UNCERTAIN"}
@@ -90,7 +90,7 @@ def read_token(file: Path) -> str:
     if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) & 0o077:
         raise ValueError("token file must be owner-only (chmod 600)")
     token = file.read_text(encoding="utf-8").strip()
-    if len(token) < 8 or "\\n" in token or "\\r" in token:
+    if len(token) < 8 or "\n" in token or "\r" in token:
         raise ValueError("token file must contain a single token of 8+ chars")
     return token
 
@@ -113,7 +113,7 @@ class Inbox:
     def ingest(self, raw: bytes, gateway: str | None = None) -> bool:
         # This is a deliberately untrusted *sealed* queue. No AEAD validity
         # is claimed here; only the backend may authenticate and release it.
-        if (len(raw) not in (84, 100) or raw[:3] != b"\\x02\\x04\\x02"
+        if (len(raw) not in (84, 100) or raw[:3] != b"\x02\x04\x02"
                 or (gateway is not None and not re.fullmatch("[0-9A-F]{16}", gateway))):
             return False
         now = int(time.time())
@@ -260,9 +260,9 @@ def usb_forever(inbox: Inbox, port: str) -> None:
                 while True:
                     now = time.monotonic()
                     if now - last_dump >= 120:
-                        ser.write(b"BENCH GW DUMP\\n")  # READ-ONLY
+                        ser.write(b"BENCH GW DUMP\n")  # READ-ONLY
                         last_dump = now
-                    raw = ser.read_until(b"\\n", size=4096)
+                    raw = ser.read_until(b"\n", size=4096)
                     if raw and handle_usb_line(raw.decode("ascii", "replace"), inbox):
                         print("[usb] sealed record committed", inbox.counts(), flush=True)
         except (OSError, serial.SerialException) as exc:
