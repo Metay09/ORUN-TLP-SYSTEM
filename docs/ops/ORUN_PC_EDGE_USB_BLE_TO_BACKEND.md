@@ -69,9 +69,24 @@ Program, yalnızca backend tarafından STORED veya DUPLICATE yanıtı kalıcı k
 bash -n tools/ops/orun_pc_edge_service.sh
 python3 firmware/tests/sf5/test_orun_pc_edge.py
 
-# 2) Mevcut kurulu USB servisini SF5L0 BENCH moduna geçirir
-#    (hizmet yeniden başlar, dosyalar silinmez):
-bash tools/ops/orun_pc_edge_service.sh bench-release enable 09A462BD4B275BA5
+# 2) Gerçek Gateway ID, USB kart seri numarasıyla aynı varsayılmamalıdır.
+#    Bu değer PC Edge veritabanındaki HELD kayıtlarından okunur:
+GATEWAY_ID="$(python3 - <<'PY'
+import sqlite3
+from pathlib import Path
+db = Path.home() / ".local/share/orun/pc-edge-inbox.sqlite"
+with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True) as c:
+    rows = c.execute("SELECT DISTINCT gateway FROM sealed_records "
+                     "WHERE gateway IS NOT NULL").fetchall()
+if len(rows) != 1:
+    raise SystemExit(f"Tek bir Gateway bekleniyor, bulunan: {len(rows)}")
+print(rows[0][0])
+PY
+)"
+
+# 3) Mevcut USB servisini SF5L0 BENCH moduna geçirir
+#    (servis yeniden başlar; veri dosyaları silinmez):
+bash tools/ops/orun_pc_edge_service.sh bench-release enable "$GATEWAY_ID"
 
 # 3) Beklenen gözlem: [bench accept] sent / gateway result: OK.
 bash tools/ops/orun_pc_edge_service.sh logs
