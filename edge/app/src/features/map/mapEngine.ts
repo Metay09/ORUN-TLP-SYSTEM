@@ -16,7 +16,7 @@
 // (a hairline edge instead of a drop shadow) and scale with the zoom through
 // one CSS variable set once per frame; data is re-sent only when it changed.
 import {
-  AttributionControl, GeoJSONSource, LngLatBounds, Map as MlMap, Marker, ScaleControl, setWorkerUrl,
+  AttributionControl, GeoJSONSource, LngLatBounds, Map as MlMap, Marker, Popup, ScaleControl, setWorkerUrl,
   type MapMouseEvent, type StyleSpecification,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -30,6 +30,7 @@ import type { Animal, Observation } from "../../app/model.ts";
 import type { BaseMap, Layers, SatPrefs, ZoneFill } from "../../app/stores.ts";
 import { centroid, edgeM, type LonLat } from "../../app/zones.ts";
 import { toneOfStatus } from "../../ds/components.tsx";
+import { groupScreenPins } from "./pinLayout.ts";
 
 setWorkerUrl(workerUrl);
 
@@ -200,6 +201,7 @@ export class MapEngine {
   readonly map: MlMap;
   private pins = new Map<string, Marker>();
   private clusters: Marker[] = [];
+  private groupPopup: Popup | null = null;
   private stationPins = new Map<string, Marker>();
   private zoneLabels = new Map<string, Marker>();
   private edgeLabels: Marker[] = [];
@@ -274,7 +276,7 @@ export class MapEngine {
     });
   }
 
-  destroy(): void { if (this.frame) cancelAnimationFrame(this.frame); this.resizer.disconnect(); this.map.remove(); }
+  destroy(): void { if (this.frame) cancelAnimationFrame(this.frame); this.groupPopup?.remove(); this.resizer.disconnect(); this.map.remove(); }
 
   private applyScale(): void {
     const z = this.map.getZoom(), s = pinScale(z);
@@ -538,34 +540,101 @@ export class MapEngine {
     this.clusters = [];
     if (!d) return;
     const zoom = this.map.getZoom();
-    for (const mk of this.pins.values()) mk.getElement().classList.remove("in-cluster");
-    if (zoom >= 17.5 || this.draft) return;
-    const near = 34 * pinScale(zoom);
-    const pts = d.herd.filter((a) => a.last && a.id !== d.selected && toneOfStatus(a.status) !== "alarm")
-      .map((a) => ({ a, p: this.map.project([a.last!.lon, a.last!.lat]) }));
-    const used = new Set<string>();
-    for (const { a, p } of pts) {
-      if (used.has(a.id)) continue;
-      const group = pts.filter((o) => !used.has(o.a.id) && Math.hypot(o.p.x - p.x, o.p.y - p.y) < near);
-      if (group.length < 2) continue;
-      for (const g of group) { used.add(g.a.id); this.pins.get(g.a.id)?.getElement().classList.add("in-cluster"); }
-      const worst = group.reduce((w, g) => (g.a.attention > w.attention ? g.a : w), group[0].a);
-      const lat = group.reduce((s, g) => s + g.a.last!.lat, 0) / group.length;
-      const lon = group.reduce((s, g) => s + g.a.last!.lon, 0) / group.length;
-      const el = document.createElement("button");
-      el.className = `cluster c-${toneOfStatus(worst.status)}`;
-      el.innerHTML = `<span class="vis"><b>${group.length}</b></span>`;
-      el.setAttribute("aria-label", `${group.length} hayvan`);
-      el.style.display = this.layers?.animals === false ? "none" : "";
-      const members = group.map((g) => g.a.last!);
-      el.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const b = new LngLatBounds();
-        for (const m of members) b.extend([m.lon, m.lat]);
-        this.map.fitBounds(b, { padding: 90, maxZoom: 18.5, duration: 600 });
-      });
-      this.clusters.push(new Marker({ element: el, anchor: "center" }).setLngLat([lon, lat]).addTo(this.map));
+    for (const mk of this.pins.values()) {
+      const el = mk.getElement();
+      el.classList.remove("in-cluster");
+      el.querySelector(".pin-count")?.remove();
     }
+
+    // This must run even at z20: collars at an identical real GNSS fix
+    // cannot be separated by zooming. Group only projected screen pixels;
+    // never modify the underlying lat/lon values.
+    const animals = d.herd.filter((a) => a.last);
+    const byId = new Map(animals.map((a) => [a.id, a] as const));
+    const groups = groupScreenPins(animals.map((a) => {
+      const p = this.map.project([a.last!.lon, a.last!.lat]);
+      return { id: a.id, x: p.x, y: p.y, selected: a.id === d.selected };
+    }), zoom);
+
+    for (const group of groups) {
+      if (group.ids.length < 2) continue;
+      const members = group.ids.map((id) => byId.get(id)!).filter(Boolean);
+      const mean: [number, number] = [
+        members.reduce((n, a) => n + a.last!.lon, 0) / members.length,
+        members.reduce((n, a) => n + a.last!.lat, 0) / members.length,
+      ];
+      // Keep the selected pin or the most important alarm visibly in front.
+      // The other collars remain individually selectable via the +N picker.
+      const exposed = (group.selectedId && byId.get(group.selectedId)) ??
+        members.find((a) => toneOfStatus(a.status) === "alarm") ?? null;
+      if (exposed) {
+        for (const a of members)
+          if (a.id !== exposed.id) this.pins.get(a.id)?.getElement().classList.add("in-cluster");
+        const el = this.pins.get(exposed.id)?.getElement();
+        if (el) {
+          const badge = document.createElement("button");
+          badge.type = "button";
+          badge.className = "pin-count";
+          badge.textContent = `+${members.length - 1}`;
+          badge.setAttribute("aria-label", `${members.length - 1} hayvan daha: seçim listesini aç`);
+          badge.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            this.showGroupChoices(members, [exposed.last!.lon, exposed.last!.lat]);
+          });
+          el.appendChild(badge);
+        }
+        continue;
+      }
+
+      for (const a of members) this.pins.get(a.id)?.getElement().classList.add("in-cluster");
+      const worst = members.reduce((w, a) => a.attention > w.attention ? a : w, members[0]);
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = `cluster c-${toneOfStatus(worst.status)}`;
+      el.setAttribute("aria-label", `${members.length} hayvan aynı bölgede; seçmek için dokun`);
+      const vis = document.createElement("span");
+      vis.className = "vis";
+      const number = document.createElement("b");
+      number.textContent = String(members.length);
+      vis.appendChild(number);
+      el.appendChild(vis);
+      el.style.display = this.layers?.animals === false ? "none" : "";
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const first = members[0].last!;
+        const spread = members.some((a) => Math.abs(a.last!.lon - first.lon) > 1e-7 ||
+          Math.abs(a.last!.lat - first.lat) > 1e-7);
+        if (zoom < 18.5 && spread) {
+          const bounds = new LngLatBounds();
+          for (const a of members) bounds.extend([a.last!.lon, a.last!.lat]);
+          this.map.fitBounds(bounds, { padding: 90, maxZoom: 19.5, duration: 600 });
+        } else this.showGroupChoices(members, mean);
+      });
+      this.clusters.push(new Marker({ element: el, anchor: "center" }).setLngLat(mean).addTo(this.map));
+    }
+  }
+
+  private showGroupChoices(members: Animal[], at: [number, number]): void {
+    this.groupPopup?.remove();
+    const box = document.createElement("div");
+    box.className = "pin-choices";
+    const title = document.createElement("strong");
+    title.textContent = `${members.length} hayvan bu konumda`;
+    box.appendChild(title);
+    for (const a of members) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = a.name;
+      button.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        this.groupPopup?.remove();
+        this.groupPopup = null;
+        this.opts.onSelect(a.id);
+      });
+      box.appendChild(button);
+    }
+    this.groupPopup = new Popup({ offset: 20, maxWidth: "240px", closeButton: true, closeOnClick: true })
+      .setDOMContent(box).setLngLat(at).addTo(this.map);
   }
 
   /** Zone names at their centre when the zone is wide enough on screen; edge lengths on the selected one. */
