@@ -344,6 +344,7 @@ class Sf5l0EdgeLinkSession final {
   bool active_ = false;
   bool hello_pending_ = false;
   bool priority_pending_ = false;   // one newest custody preview, not DUMP census
+  bool priority_sent_since_history_ = false; // avoid starving the chronological scan
   bool scan_pending_ = false;   // records may exist after the cursor
   bool dump_end_pending_ = false;
   bool cursor_valid_ = false;
