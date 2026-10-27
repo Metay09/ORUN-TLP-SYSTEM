@@ -224,17 +224,50 @@ function legacyDrafts(): LegacyMigration {
  * The old key is retained unchanged for downgrade/backup. */
 export class ZoneStore extends Persisted<ZoneBook> {
   readonly migrationWarning: string | null;
+  private readonly storageKey: string | null;
   constructor(key: string | null, seed?: Zone[]) {
+    let invalidExisting = false;
     const existing = (() => {
-      try { return key ? localStorage.getItem(CURRENT_ZONE_KEY) !== null : false; }
-      catch { return false; }
+      if (!key) return false;
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw === null) return false;
+        const document: unknown = JSON.parse(raw);
+        if (!document || typeof document !== "object" || Array.isArray(document) ||
+            !Array.isArray((document as ZoneBook).zones)) throw new Error("Invalid zone book");
+        const zones = (document as ZoneBook).zones;
+        if (zones.length > 100 || new Set(zones.map((z) => z?.id)).size !== zones.length ||
+            zones.some((z) => !z || typeof z.id !== "string" || !z.id ||
+              typeof z.name !== "string" || !z.name.trim() ||
+              typeof z.active !== "boolean" || !Array.isArray(z.ring) ||
+              z.ring.some((point) => !Array.isArray(point) || point.length !== 2 ||
+                point.some((v) => typeof v !== "number" || !Number.isFinite(v))) ||
+              validateRing(z.ring)) ||
+            !checkSet(zones).ok) throw new Error("Invalid zone geometry");
+        return true;
+      } catch {
+        invalidExisting = true;
+        return true; // never silently replace a corrupt new record from legacy
+      }
     })();
     const legacy = key && !existing && !seed ? legacyDrafts() : { zones: [], error: null };
     super(key, () => ({ zones: seed ?? legacy.zones, graze: { ...NO_GRAZE } }),
       (raw) => (raw && typeof raw === "object" && !Array.isArray(raw) &&
         Array.isArray((raw as ZoneBook).zones)
         ? { zones: (raw as ZoneBook).zones, graze: { ...NO_GRAZE, ...((raw as ZoneBook).graze ?? {}) } } : null));
-    this.migrationWarning = legacy.error;
+    this.storageKey = key;
+    this.migrationWarning = invalidExisting
+      ? "Yeni mera kayıtları bozuk veya desteklenmiyor; orijinal veriler korunuyor, üzerine yazılmayacak."
+      : legacy.error;
+  }
+
+  private commit(book: ZoneBook): void {
+    if (this.migrationWarning) throw new Error(this.migrationWarning);
+    // Persist before reporting any user-visible success: Persisted.set()
+    // intentionally tolerates private/blocked storage for unrelated settings,
+    // but a boundary must never be acknowledged if its write failed.
+    if (this.storageKey) localStorage.setItem(this.storageKey, JSON.stringify(book));
+    this.set(book);
   }
 
   /** Atomically refuse a malformed or over-budget set, including imports.
@@ -252,18 +285,21 @@ export class ZoneStore extends Persisted<ZoneBook> {
     return zones;
   }
   save(z: Zone): void {
-    this.update((b) => {
-      const clean: Zone = { ...z, name: z.name.trim().slice(0, 40) || "Alan", updated: Date.now() };
-      const i = b.zones.findIndex((x) => x.id === z.id);
-      const zones = i >= 0 ? b.zones.map((x, k) => (k === i ? clean : x)) : [...b.zones, clean];
-      return { ...b, zones: this.checked(zones) };
-    });
+    const b = this.get();
+    const clean: Zone = { ...z, name: z.name.trim().slice(0, 40) || "Alan", updated: Date.now() };
+    const i = b.zones.findIndex((x) => x.id === z.id);
+    const zones = i >= 0 ? b.zones.map((x, k) => (k === i ? clean : x)) : [...b.zones, clean];
+    this.commit({ ...b, zones: this.checked(zones) });
   }
-  remove(id: string): void { this.update((b) => ({ ...b, zones: b.zones.filter((z) => z.id !== id) })); }
+  remove(id: string): void {
+    const b = this.get();
+    this.commit({ ...b, zones: b.zones.filter((z) => z.id !== id) });
+  }
   add(list: Zone[]): void {
-    this.update((b) => ({ ...b, zones: this.checked([...b.zones, ...list]) }));
+    const b = this.get();
+    this.commit({ ...b, zones: this.checked([...b.zones, ...list]) });
   }
   // Preserved as storage schema data only. No UI/alarms until secure collar
   // command and ACK protocol for FREE_GRAZE is implemented.
-  setGraze(g: Graze): void { this.update((b) => ({ ...b, graze: g })); }
+  setGraze(g: Graze): void { this.commit({ ...this.get(), graze: g }); }
 }
