@@ -404,6 +404,12 @@ def usb_forever(inbox: Inbox, port: str,
                         if handle_usb_line(text, inbox):
                             print("[usb] sealed record committed",
                                   inbox.counts(), flush=True)
+                        if (text.startswith("EDGE DUMP END count=") or
+                                text.startswith("EDGE RECLAIM page=") or
+                                text.startswith("BENCH GATEWAY id=") or
+                                (text.startswith("BENCH GATEWAY ")
+                                 and ("reclaimed=" in text or "held=" in text))):
+                            print("[gateway]", text, flush=True)
                         if release:
                             release.observe(text)
                     if release:
