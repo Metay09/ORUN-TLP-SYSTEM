@@ -45,6 +45,15 @@ install_service() {
     exit 1
   }
   tailscale_host >/dev/null
+  # A missing credential registry is NOT a blank first-run setup. The
+  # backend would otherwise create an empty key database and reject all
+  # actual Tracker data. Refuse rather than masking a wrong machine/path.
+  if [[ ! -s "$REGISTRY_FILE" ]]; then
+    echo "HATA: Gercek tasma anahtar kaydi bulunamadi: $REGISTRY_FILE" >&2
+    echo "Bu PC gercek ORUN backend makinesi degilse anahtar tasimadan servisi kurmayin." >&2
+    echo "Mevcut registry yolunu dogrulayin; sifir anahtar olusturmayin." >&2
+    exit 1
+  fi
   mkdir -p "$UNIT_DIR" "$(dirname "$TOKEN_FILE")"
   chmod 700 "$(dirname "$TOKEN_FILE")"
 
