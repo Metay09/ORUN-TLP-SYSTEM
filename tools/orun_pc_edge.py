@@ -43,8 +43,9 @@ from urllib.request import (
 )
 
 from orun_edge_bench import (
-    EDGE_SERVICE_UUID, EDGE_TO_EDGE_UUID, EdgeReassembler,
-    ACCEPT_REPLY, edge_accept_line,
+    EDGE_SERVICE_UUID, EDGE_TO_GATEWAY_UUID, EDGE_TO_EDGE_UUID,
+    EdgeReassembler, edge_frames, ACCEPT_REPLY, ACCEPT_WORDS,
+    edge_accept_line, edge_accept_binary,
 )
 
 USB_HELD = re.compile(
@@ -324,51 +325,82 @@ class BenchUsbRelease:
         self.attempts = 0
         self.last_sent = 0.0
 
-    def observe(self, line: str) -> None:
-        reply = ACCEPT_REPLY.search(line)
-        if not reply or self.pending is None:
+    def acknowledge_gateway(self, word: str, page: int, slot: int) -> None:
+        if self.pending is None:
             return
-        if reply["page"] == "?" or reply["slot"] == "?":
+        if (page, slot) != (self.pending["page"], self.pending["slot"]):
             return
-        if (int(reply["page"]), int(reply["slot"])) != (
-                self.pending["page"], self.pending["slot"]):
-            return
-        word = reply["word"]
         if word == "BUSY":
             self.last_sent = 0.0   # retry same exact handle on next loop
             return
         self.inbox.record_accept(self.pending, word)
         print("[bench accept] gateway result:", word,
-              "page=", self.pending["page"], "slot=", self.pending["slot"],
-              flush=True)
+              "page=", page, "slot=", slot, flush=True)
         self.pending = None
         self.attempts = 0
 
-    def poll(self, serial_port, now: float) -> None:
+    def observe(self, line: str) -> None:
+        reply = ACCEPT_REPLY.search(line)
+        if not reply or reply["page"] == "?" or reply["slot"] == "?":
+            return
+        self.acknowledge_gateway(
+            reply["word"], int(reply["page"]), int(reply["slot"]))
+
+    def next_eligible(self, now: float) -> dict | None:
         if self.pending is not None:
             if now - self.last_sent < 3.0:
-                return
+                return None
             if self.attempts >= 3:
                 self.inbox.record_accept(self.pending, "TIMEOUT")
                 print("[bench accept] TIMEOUT; no further automatic retry",
                       flush=True)
                 self.pending = None
                 self.attempts = 0
-                return
+                return None
         else:
             self.pending = self.inbox.ready_hold(self.gateway)
             if self.pending is None:
-                return
+                return None
             self.attempts = 0
         h = self.pending
-        line = edge_accept_line(
-            int(h["gateway"], 16), h["page"], h["slot"],
-            int(h["generation"], 16), h["frame"])
-        serial_port.write((line + "\n").encode("ascii"))
         self.last_sent = now
         self.attempts += 1
         print("[bench accept] sent", self.attempts,
               "page=", h["page"], "slot=", h["slot"], flush=True)
+        return h
+
+    def poll(self, serial_port, now: float) -> None:
+        h = self.next_eligible(now)
+        if h is None:
+            return
+        line = edge_accept_line(
+            int(h["gateway"], 16), h["page"], h["slot"],
+            int(h["generation"], 16), h["frame"])
+        serial_port.write((line + "\n").encode("ascii"))
+
+
+class BenchBleRelease(BenchUsbRelease):
+    """Same acknowledged custody queue over BLE (SF5L6 20-byte GATT frames)."""
+
+    def observe_message(self, msg: bytes) -> None:
+        if len(msg) == 6 and msg[0] == 4:
+            word = ACCEPT_WORDS.get(msg[5], "REJECTED")
+            self.acknowledge_gateway(
+                word, int.from_bytes(msg[1:3], "big"),
+                int.from_bytes(msg[3:5], "big"))
+
+    async def poll_ble(self, client, now: float, message_id: int) -> int:
+        h = self.next_eligible(now)
+        if h is None:
+            return message_id
+        binary = edge_accept_binary(
+            int(h["gateway"], 16), h["page"], h["slot"],
+            int(h["generation"], 16), h["frame"])
+        message_id = (message_id + 1) & 0xFF
+        for frame in edge_frames(binary, message_id):
+            await client.write_gatt_char(
+                EDGE_TO_GATEWAY_UUID, frame, response=True)
+        return message_id
 
 
 def handle_ble_message(msg: bytes, inbox: Inbox, gateway: str | None) -> str | None:
@@ -376,7 +408,12 @@ def handle_ble_message(msg: bytes, inbox: Inbox, gateway: str | None) -> str | N
         return msg[1:9].hex().upper()
     if (gateway and msg and msg[0] in (2, 6) and len(msg) >= 18
             and len(msg) == 18 + msg[17] and msg[17] in (84, 100)):
-        inbox.ingest(bytes(msg[18:]), gateway)
+        raw = bytes(msg[18:])
+        if inbox.ingest(raw, gateway):
+            inbox.observe_hold(
+                gateway, int.from_bytes(msg[1:3], "big"),
+                int.from_bytes(msg[3:5], "big"),
+                msg[5:13].hex().upper(), raw)
     return gateway
 
 
@@ -422,7 +459,8 @@ def usb_forever(inbox: Inbox, port: str,
             time.sleep(5)
 
 
-def ble_forever(inbox: Inbox, address: str | None) -> None:
+def ble_forever(inbox: Inbox, address: str | None,
+                release_gateway: str | None = None) -> None:
     try:
         from bleak import BleakClient, BleakScanner
     except ImportError as exc:
@@ -451,14 +489,27 @@ def ble_forever(inbox: Inbox, address: str | None) -> None:
                     print("[ble] Gateway connected", flush=True)
                     reassembler = EdgeReassembler()
                     gateway = None
+                    release = None
+                    mid = 0
                     while client.is_connected:
                         try:
-                            frame = await asyncio.wait_for(queue.get(), timeout=10)
+                            frame = await asyncio.wait_for(queue.get(), timeout=0.1)
                         except asyncio.TimeoutError:
-                            continue  # quiet BLE periods are normal
-                        msg = reassembler.push(frame)
-                        if msg:
-                            gateway = handle_ble_message(msg, inbox, gateway)
+                            frame = None  # poll backend acknowledgements while idle
+                        if frame:
+                            msg = reassembler.push(frame)
+                            if msg:
+                                gateway = handle_ble_message(msg, inbox, gateway)
+                                if release_gateway and gateway == release_gateway:
+                                    if release is None:
+                                        release = BenchBleRelease(inbox, gateway)
+                                    release.observe_message(msg)
+                                elif release_gateway and gateway != release_gateway:
+                                    print("[ble] Gateway ID mismatch; ACCEPT disabled",
+                                          flush=True)
+                                    release = None
+                        if release:
+                            mid = await release.poll_ble(client, time.monotonic(), mid)
             except (Exception,) as exc:
                 print("[ble] reconnecting after", type(exc).__name__, flush=True)
                 await asyncio.sleep(5)
@@ -478,13 +529,13 @@ def main() -> None:
     ap.add_argument("--token-file", type=Path, required=True)
     ap.add_argument("--edge-id", required=True)
     ap.add_argument("--bench-release-gateway",
-                    help="EXPLICIT SF5L0 PUBLIC TEST KEY release on USB only; "
+                    help="EXPLICIT SF5L0 PUBLIC TEST KEY release on USB/BLE; "
                          "expected 16-hex Gateway ID (NEVER production)")
     args = ap.parse_args()
     if args.mode == "usb" and not args.port:
         ap.error("--port is required for USB mode")
-    if args.bench_release_gateway and args.mode != "usb":
-        ap.error("--bench-release-gateway is USB bench only")
+    if args.bench_release_gateway and args.mode not in ("usb", "ble"):
+        ap.error("--bench-release-gateway requires USB or BLE")
     if args.bench_release_gateway and not re.fullmatch(
             r"[0-9A-F]{16}", args.bench_release_gateway):
         ap.error("--bench-release-gateway needs exact uppercase 16-hex ID")
@@ -508,7 +559,7 @@ def main() -> None:
         if args.mode == "usb":
             usb_forever(inbox, args.port, args.bench_release_gateway)
         else:
-            ble_forever(inbox, args.ble_address)
+            ble_forever(inbox, args.ble_address, args.bench_release_gateway)
 
 
 if __name__ == "__main__":
