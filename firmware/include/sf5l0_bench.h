@@ -334,6 +334,7 @@ class Sf5l0EdgeLinkSession final {
   struct Result { uint16_t page; uint16_t slot; uint8_t code; bool reclaim; };
   bool pushResult(const Result& r);
   bool nextHeld(uint8_t* out, size_t capacity, size_t& length);
+  bool nextPriority(uint8_t* out, size_t capacity, size_t& length);
 
   const FlashBackend& port_;
   ProductCustodyStore& store_;
@@ -342,6 +343,7 @@ class Sf5l0EdgeLinkSession final {
   uint16_t page_count_;
   bool active_ = false;
   bool hello_pending_ = false;
+  bool priority_pending_ = false;   // one newest custody preview, not DUMP census
   bool scan_pending_ = false;   // records may exist after the cursor
   bool dump_end_pending_ = false;
   bool cursor_valid_ = false;
