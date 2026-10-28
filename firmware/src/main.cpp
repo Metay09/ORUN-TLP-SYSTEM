@@ -1491,6 +1491,17 @@ void printBenchDrain() {
       tracker_product_tx.blocked() ? "BLOCKED"
           : (tracker_product_tx.sent() ? "SENT" : "ARMED"),
       counted ? static_cast<long>(retained) : -1L);
+  // Read-only failure attribution; do not rearm, reseal or touch custody.
+  uint16_t exact_count = 0U;
+  const bool exact_counted = product_records.mounted() &&
+      product_records.store().ready() &&
+      product_records.store().exactObjectCount(exact_count);
+  Serial.printf(
+      "BENCH PILOT block_reason=%s selected_seq=%lu exact_cache=%d/%u\n",
+      tracker_product_tx.blockReasonName(),
+      static_cast<unsigned long>(tracker_product_tx.selectedSequence()),
+      exact_counted ? static_cast<int>(exact_count) : -1,
+      static_cast<unsigned>(orun_tlp::osf::kMaxExactCustodyObjects));
 }
 
 void pollBenchTracker() {
