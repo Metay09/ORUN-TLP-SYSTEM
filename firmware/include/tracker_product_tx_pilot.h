@@ -7,7 +7,8 @@
 
 namespace orun_tlp {
 
-// SF5K3V: one-record-per-boot opt-in RF pilot. NOT a production retry scheduler.
+// SF5K3V: exact-cache-before-RF pilot. The outer loop owns LoRa duty/
+// ACK pacing; only read-side failure re-selection uses its own cooldown.
 // The ProductRecordStore alone owns flash; crypto alone owns the TX nonce;
 // RadioManager alone owns SX1262. No ACK/release authority exists here.
 class TrackerProductTxPilot {
@@ -39,12 +40,22 @@ class TrackerProductTxPilot {
   // record. If the previous record was durably released this is the next
   // one; if not, it is the same record and its already cached exact bytes
   // are re-sent unchanged (never re-sealed). The caller owns pacing and
-  // duty-cycle policy. Blocked stays blocked. true = re-armed.
+  // duty-cycle policy. Fatal blocked stays blocked; recoverable errors are
+  // handled by recoverIfSafe() instead. true = re-armed.
   bool rearm();
   bool sent() const { return phase_ == Phase::kDone; }
   bool blocked() const { return phase_ == Phase::kBlocked; }
   BlockReason blockReason() const { return block_reason_; }
   const char* blockReasonName() const;
+  // Retry only read-side/transient selection failures. Integrity, crypto,
+  // unknown flash commit and malformed durable bytes stay fail-closed.
+  bool retryableBlocked() const;
+  // Called by the owning loop, never by a BLE/radio callback. Non-blocking,
+  // wrap-safe timer; performs no flash mutation, nonce burn, or RF send.
+  // A true result merely re-opens selection; update() revalidates everything.
+  bool recoverIfSafe(uint32_t now_ms, bool eligible);
+  uint32_t automaticRecoveries() const { return automatic_recoveries_; }
+  uint32_t retryAttempts() const { return retry_attempts_; }
   // 0 if no record has been selected (e.g. a read error).
   uint32_t selectedSequence() const { return identity_.sequence; }
 
@@ -79,6 +90,10 @@ class TrackerProductTxPilot {
   RadioManager& radio_;
   Phase phase_ = Phase::kSelect;
   BlockReason block_reason_ = BlockReason::kNone;
+  uint32_t retry_after_ms_ = 0U;
+  uint32_t retry_attempts_ = 0U;
+  uint32_t automatic_recoveries_ = 0U;
+  bool retry_scheduled_ = false;
   osf::RecordIdentity identity_{};
   osc::ExactObject sealed_{};
   bool live_first_ = false;
