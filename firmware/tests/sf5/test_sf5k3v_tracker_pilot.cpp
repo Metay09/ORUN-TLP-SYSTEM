@@ -91,6 +91,8 @@ void successAndReboot(bool async) {
 
   assert(pilot.update(false) == Pilot::Event::kNone);
   assert(g_seals == 0U && g_sends == 0U);
+  assert(pilot.blockReason() == Pilot::BlockReason::kNone);
+  assert(strcmp(pilot.blockReasonName(), "NONE") == 0);
   g_radio_ready = false;
   assert(pilot.update(true) == Pilot::Event::kNone);
   assert(g_seals == 0U && g_sends == 0U);
@@ -156,6 +158,10 @@ void cacheFailureKeepsRecord() {
     }
   }
   assert(blocked && g_sends == 0U);
+  assert(pilot.blockReason() == Pilot::BlockReason::kCacheCommitFailed);
+  assert(strcmp(pilot.blockReasonName(), "CACHE_COMMIT_FAILED") == 0);
+  assert(pilot.update(true) == Pilot::Event::kNone);
+  assert(!pilot.rearm());  // blocked remains fail-closed
   // A failed mutation may quarantine this boot's store. Read on reboot,
   // never bypass its fail-closed state just to satisfy the test.
   flash.fail_mutation_at = 0U;
@@ -235,6 +241,10 @@ void liveFirst() {
     blocked = strict.update(true) == Pilot::Event::kBlocked;
   }
   assert(blocked && strict.blocked());
+  assert(strict.blockReason() == Pilot::BlockReason::kExactSlotsFull);
+  assert(strcmp(strict.blockReasonName(), "EXACT_SLOTS_FULL") == 0);
+  assert(strict.selectedSequence() == 1U);
+  assert(!strict.rearm());
 
   // The live record is ACKed: a slot frees and the next newest goes first.
   osf::RecordIdentity six{};

@@ -33,6 +33,13 @@ assert core.index("takeCacheOutcome(outcome)") < core.index(
     "sendProductSecurePacket(exact.object, exact.object_size)")
 assert "custodyCandidateMatchesRetainedExact(exact)" in core
 assert "Phase::kDone;" in core and "Phase::kBlocked;" in core
+# All historical hard-block paths must preserve fail-closed semantics while
+# reporting a reason. No retry, RF, flash mutation or key access is added.
+assert core.count("return block(") == 10
+assert 'block_reason_ = reason;' in core
+assert 'if (phase_ == Phase::kDone || phase_ == Phase::kBlocked)' in core
+assert 'BENCH PILOT block_reason=%s' in app
+assert 'exactObjectCount(exact_count)' in app
 assert "custody_ack_release.submit(ack.payload, ack.size)" in app
 assert "verifier_.verifyFromStore(ack,length,product_,proof)" in release
 assert "requestPrepare(" not in core
