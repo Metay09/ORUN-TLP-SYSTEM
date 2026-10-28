@@ -112,7 +112,7 @@ class PCEdgeTests(unittest.TestCase):
             client = FakeClient()
             await pc.request_ble_dump(client)
             self.assertEqual(client.writes, [
-                (pc.EDGE_TO_GATEWAY_UUID, b"\\x01\\x03\\x01\\x00\\x81", True)
+                (pc.EDGE_TO_GATEWAY_UUID, bytes((1, 3, 1, 0, 0x81)), True)
             ])
             # A replay request must never contain the 0x82 ACCEPT command.
             self.assertEqual(client.writes[0][1][4], 0x81)
