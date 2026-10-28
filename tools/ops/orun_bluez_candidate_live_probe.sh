@@ -34,7 +34,7 @@ trap 'exit 143' TERM HUP
 
 echo "=== PRECHECK ==="
 test -x "$CAND"
-test -f "$REPO/tools/ops/orun_bluez_candidate_ble_probe.py"
+test -f "$HOME/ORUN-BLUEZ-566-HOTFIX/orun_bluez_candidate_ble_probe.py"
 test "$(sha256sum "$CAND" | awk '{print $1}')" = "$HASH"
 test "$(systemctl is-active bluetooth.service)" = active
 test "$(systemctl --user is-active orun-pc-edge.service)" = active
@@ -45,7 +45,7 @@ if systemctl is-active --quiet "$UNIT"; then
   echo "ERROR: a candidate daemon is already running" >&2
   exit 1
 fi
-python3 -m py_compile "$REPO/tools/ops/orun_bluez_candidate_ble_probe.py"
+python3 -m py_compile "$HOME/ORUN-BLUEZ-566-HOTFIX/orun_bluez_candidate_ble_probe.py"
 sudo -v
 
 echo "=== ARM INDEPENDENT 100-SECOND ROLLBACK TIMER ==="
@@ -74,7 +74,7 @@ fi
 
 echo "=== READ-ONLY GATT PROBE ==="
 RC=0
-timeout 45s python3 "$REPO/tools/ops/orun_bluez_candidate_ble_probe.py" || RC=$?
+timeout 45s env ORUN_PC_EDGE_REPO="$REPO" python3 "$HOME/ORUN-BLUEZ-566-HOTFIX/orun_bluez_candidate_ble_probe.py" || RC=$?
 echo "BLE PROBE EXIT CODE: $RC"
 
 echo "=== PATCHED BLUEZ DIAGNOSTICS ==="
