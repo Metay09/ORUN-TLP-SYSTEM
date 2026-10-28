@@ -500,6 +500,22 @@ def ble_forever(inbox: Inbox, address: str | None,
                             msg = reassembler.push(frame)
                             if msg:
                                 gateway = handle_ble_message(msg, inbox, gateway)
+                                if msg[0] == 1 and len(msg) == 13:
+                                    held = int.from_bytes(msg[9:11], "big")
+                                    capacity = int.from_bytes(msg[11:13], "big")
+                                    print("[ble] HELLO", gateway,
+                                          "held=", held, "/", capacity, flush=True)
+                                elif msg[0] in (2, 6) and gateway:
+                                    print("[ble] HELD/PREVIEW stored",
+                                          inbox.counts(), flush=True)
+                                elif msg[0] == 3 and len(msg) == 3:
+                                    print("[ble] DUMP END count=",
+                                          int.from_bytes(msg[1:3], "big"),
+                                          flush=True)
+                                elif msg[0] == 5 and len(msg) == 4:
+                                    print("[ble] RECLAIM page=",
+                                          int.from_bytes(msg[1:3], "big"),
+                                          "ok=", bool(msg[3]), flush=True)
                                 if release_gateway and gateway == release_gateway:
                                     if release is None:
                                         release = BenchBleRelease(inbox, gateway)
