@@ -30,8 +30,56 @@ const char* TrackerProductTxPilot::blockReasonName() const {
 
 TrackerProductTxPilot::Event TrackerProductTxPilot::block(BlockReason reason) {
   block_reason_ = reason;
+  retry_scheduled_ = false;
   phase_ = Phase::kBlocked;
   return Event::kBlocked;
+}
+
+bool TrackerProductTxPilot::retryableBlocked() const {
+  if (phase_ != Phase::kBlocked) return false;
+  switch (block_reason_) {
+    case BlockReason::kRetainedReadError:
+    case BlockReason::kExactLookupReadError:
+    case BlockReason::kExactCountUnavailable:
+    case BlockReason::kExactSlotsFull:
+      return true;
+    // Unknown flash commit, counter/crypto failures and any durable record
+    // mismatch CANNOT be fixed by blindly resealing or skipping the record.
+    default:
+      return false;
+  }
+}
+
+bool TrackerProductTxPilot::recoverIfSafe(uint32_t now_ms, bool eligible) {
+  if (!retryableBlocked()) return false;
+  if (!retry_scheduled_) {
+    // Exponential but bounded backoff: 30, 60, 120, 240, 300 seconds.
+    // All intervals are far below half the 32-bit millis() period.
+    const uint32_t shift = retry_attempts_ < 4U ? retry_attempts_ : 4U;
+    uint32_t wait_ms = 30000U << shift;
+    if (wait_ms > 300000U) wait_ms = 300000U;
+    retry_after_ms_ = now_ms + wait_ms;
+    retry_scheduled_ = true;
+    return false;
+  }
+  if (static_cast<int32_t>(now_ms - retry_after_ms_) < 0)
+    return false;
+  // Do not reset the safety state or consume an AEAD nonce just because
+  // time passed. Store + radio preflight must be satisfied first.
+  if (!eligible || !storageIdle() || !radio_.canSend())
+    return false;
+
+  if (retry_attempts_ != UINT32_MAX) ++retry_attempts_;
+  if (automatic_recoveries_ != UINT32_MAX) ++automatic_recoveries_;
+  // Opening kSelect does NOT mean delivery; any cached durable exact object
+  // is re-used unchanged, and existing custody/ACK owners remain unchanged.
+  phase_ = Phase::kSelect;
+  block_reason_ = BlockReason::kNone;
+  identity_ = {};
+  sealed_ = {};
+  idle_ = false;
+  retry_scheduled_ = false;
+  return true;
 }
 
 bool TrackerProductTxPilot::storageIdle() const {
@@ -289,6 +337,9 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
   if (!radio_.sendProductSecurePacket(exact.object, exact.object_size))
     return Event::kNone;
   phase_ = Phase::kDone;  // TX start, not Gateway receipt or release.
+  // Successful TX breaks a consecutive read-retry chain. Gateway custody
+  // remains unconfirmed; a failed ACK still uses the outer pacer retry.
+  retry_attempts_ = 0U;
   return Event::kSent;
 }
 
