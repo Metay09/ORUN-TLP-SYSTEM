@@ -465,6 +465,19 @@ def ble_hello_expired(started: float, now: float,
     return not hello_received and now - started >= 20.0
 
 
+async def discover_ble_gateway(scanner, address: str | None):
+    """Resolve a fresh BLEDevice; never pass a bare MAC to BleakClient."""
+    if address:
+        return await scanner.find_device_by_address(address, timeout=15)
+
+    def match(dev, adv):
+        return EDGE_SERVICE_UUID in [
+            s.lower() for s in (adv.service_uuids or [])
+        ]
+
+    return await scanner.find_device_by_filter(match, timeout=20)
+
+
 def ble_forever(inbox: Inbox, address: str | None,
                 release_gateway: str | None = None) -> None:
     try:
@@ -475,19 +488,9 @@ def ble_forever(inbox: Inbox, address: str | None,
     async def run():
         while True:
             try:
-                if address:
-                    # Resolve a *fresh BLEDevice* rather than handing a raw MAC
-                    # to BleakClient. A string address triggers an additional
-                    # implicit scan on BlueZ and can race object removal.
-                    device = await BleakScanner.find_device_by_address(
-                        address, timeout=15)
-                else:
-                    def match(dev, adv):
-                        return EDGE_SERVICE_UUID in [
-                            s.lower() for s in (adv.service_uuids or [])
-                        ]
-                    device = await BleakScanner.find_device_by_filter(
-                        match, timeout=20)
+                # Fresh BLEDevice avoids BleakClient's implicit MAC scan,
+                # which can race BlueZ device-object removal.
+                device = await discover_ble_gateway(BleakScanner, address)
                 if device is None:
                     print("[ble] Gateway not discovered; retrying", flush=True)
                     await asyncio.sleep(5)
