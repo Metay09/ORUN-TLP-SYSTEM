@@ -476,7 +476,11 @@ def ble_forever(inbox: Inbox, address: str | None,
         while True:
             try:
                 if address:
-                    device = address
+                    # Resolve a *fresh BLEDevice* rather than handing a raw MAC
+                    # to BleakClient. A string address triggers an additional
+                    # implicit scan on BlueZ and can race object removal.
+                    device = await BleakScanner.find_device_by_address(
+                        address, timeout=15)
                 else:
                     def match(dev, adv):
                         return EDGE_SERVICE_UUID in [
@@ -485,6 +489,7 @@ def ble_forever(inbox: Inbox, address: str | None,
                     device = await BleakScanner.find_device_by_filter(
                         match, timeout=20)
                 if device is None:
+                    print("[ble] Gateway not discovered; retrying", flush=True)
                     await asyncio.sleep(5)
                     continue
                 queue = asyncio.Queue()
