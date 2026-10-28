@@ -144,6 +144,28 @@ void settle(Gateway& gw, Sf5l0EdgeLinkSession& s) {
   }
 }
 
+void testHelloRecoveryWithEmptyCustody() {
+  EraseFlash flash;
+  Gateway gw(flash);
+  Sf5l0EdgeLinkSession s(flash, gw.store, gw.handoff, kGateway, kPages);
+  s.begin();
+  // Simulate a subscription being enabled too late for initial HELLO.
+  assert(pull(s).type == uint8_t(el::Type::kHello));
+  const Sent first_end = pull(s);
+  assert(first_end.type == uint8_t(el::Type::kDumpEnd) &&
+         get16(&first_end.bytes[1]) == 0U);
+  const uint8_t dump[] = {uint8_t(el::Type::kDump)};
+  s.onMessage(dump, sizeof(dump));
+  const Sent hello = pull(s);
+  assert(hello.type == uint8_t(el::Type::kHello));
+  assert(get64(&hello.bytes[1]) == kGateway);
+  assert(get16(&hello.bytes[9]) == 0U);
+  const Sent end = pull(s);
+  assert(end.type == uint8_t(el::Type::kDumpEnd) &&
+         get16(&end.bytes[1]) == 0U);
+  assert(pull(s).type == 0);
+}
+
 void testSession() {
   EraseFlash flash;
   Gateway gw(flash);
@@ -306,6 +328,7 @@ int main() {
   testHandoffAndReclaim();
   testFraming();
   testSession();
+  testHelloRecoveryWithEmptyCustody();
   puts("SF5L6 BLE Edge link: framing/reassembly, HELLO/PREVIEW/HELD/DUMP_END pass, "
        "accept results, reclaim notice, live record with RX link: PASS "
        "(HOST ONLY)");
