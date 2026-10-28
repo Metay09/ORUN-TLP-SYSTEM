@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Read-only SF5L6 BLE notification probe; never sends GATT writes or custody ACKs."""
 import asyncio
+import os
 from pathlib import Path
 import sys
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.environ.get("ORUN_PC_EDGE_REPO", Path(__file__).resolve().parents[2])).resolve()
 sys.path.insert(0, str(ROOT / "tools"))
 from bleak import BleakClient, BleakScanner
 from orun_pc_edge import discover_ble_gateway
