@@ -43,10 +43,14 @@ cleanup_on_exit() {
     echo "=== FAILSAFE: RESTORE DEBIAN BLUETOOTH ==="
     restore_vendor || rc=1
   fi
-  if [ "$TIMER_ARMED" = 1 ] &&
-     sudo systemctl is-active --quiet bluetooth.service &&
+  if sudo systemctl is-active --quiet bluetooth.service &&
      systemctl show bluetooth.service -p ExecStart | grep -Fq "$VENDOR"; then
-    sudo systemctl stop "$TIMER.timer" || true
+    # Safe to remove now-inert recovery objects after vendor has returned.
+    sudo rm -f -- "$RECOVERY_UNIT" "$RECOVER" "$GUARD" || true
+    sudo systemctl daemon-reload || true
+    if [ "$TIMER_ARMED" = 1 ]; then
+      sudo systemctl stop "$TIMER.timer" || true
+    fi
   fi
   service_states
   exit "$rc"
@@ -124,8 +128,8 @@ GUARDCODE
 do_install() {
   sudo -v
   preflight
-  prepare_recovery
   trap cleanup_on_exit EXIT
+  prepare_recovery
   trap 'exit 130' INT
   trap 'exit 143' TERM HUP
 
@@ -133,8 +137,8 @@ do_install() {
   sudo systemd-run --unit="$TIMER" --on-active=120s \
     --timer-property=AccuracySec=1s /usr/bin/bash -c \
     'rm -f /etc/systemd/system/bluetooth.service.d/80-orun-gattfix.conf; systemctl daemon-reload; systemctl reset-failed bluetooth.service; systemctl restart bluetooth.service'
-  sudo systemctl is-active --quiet "$TIMER.timer"
   TIMER_ARMED=1
+  sudo systemctl is-active --quiet "$TIMER.timer"
 
   echo "=== INSTALL PERSISTENT SYSTEMD OVERRIDE ==="
   sudo install -d -o root -g root -m 0755 /etc/systemd/system/bluetooth.service.d
