@@ -459,6 +459,15 @@ def usb_forever(inbox: Inbox, port: str,
             time.sleep(5)
 
 
+async def request_ble_dump(client, message_id: int = 1) -> None:
+    """Request a replay after subscribing to indications; read-only custody operation.
+
+    SF5L6 0x81 DUMP resets the Gateway's scan cursor, not custody/ACK state.
+    """
+    for frame in edge_frames(bytes((0x81,)), message_id):
+        await client.write_gatt_char(EDGE_TO_GATEWAY_UUID, frame, response=True)
+
+
 def ble_hello_expired(started: float, now: float,
                       hello_received: bool) -> bool:
     """A link that never delivers a Gateway HELLO is not a usable Edge session."""
@@ -500,7 +509,8 @@ def ble_forever(inbox: Inbox, address: str | None,
                     queue.put_nowait(bytes(data))
                 async with BleakClient(device, timeout=20) as client:
                     await client.start_notify(EDGE_TO_EDGE_UUID, received)
-                    print("[ble] Gateway connected", flush=True)
+                    await request_ble_dump(client)
+                    print("[ble] Gateway connected; DUMP requested", flush=True)
                     reassembler = EdgeReassembler()
                     gateway = None
                     release = None
