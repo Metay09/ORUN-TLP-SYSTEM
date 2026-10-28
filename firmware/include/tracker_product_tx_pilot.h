@@ -16,6 +16,16 @@ class TrackerProductTxPilot {
     kNone, kCachePending, kCacheDurable, kSent, kBlocked
   };
 
+  // Read-only diagnosis for the permanently blocked bench pilot. Never
+  // changes its custody, RF, encryption, or flash-write decisions.
+  enum class BlockReason : uint8_t {
+    kNone, kCacheCommitFailed, kCacheIdentityMismatch,
+    kRetainedReadError, kRetainedInvalid, kExactLookupReadError,
+    kExactCountUnavailable, kExactSlotsFull, kPlaintextInvalid,
+    kCryptoFailed, kCacheSubmitRejected, kExactProofMismatch,
+    kCachedHeaderInvalid
+  };
+
   TrackerProductTxPilot(ProductRecordStore& records,
                         ProductSecureCrypto& crypto, RadioManager& radio)
       : records_(records), crypto_(crypto), radio_(radio) {}
@@ -33,6 +43,10 @@ class TrackerProductTxPilot {
   bool rearm();
   bool sent() const { return phase_ == Phase::kDone; }
   bool blocked() const { return phase_ == Phase::kBlocked; }
+  BlockReason blockReason() const { return block_reason_; }
+  const char* blockReasonName() const;
+  // 0 if no record has been selected (e.g. a read error).
+  uint32_t selectedSequence() const { return identity_.sequence; }
 
   // SF5L4 (bench): "live data must not wait behind the backlog". When on,
   // each selection first tries the NEWEST retained record, then the oldest.
@@ -64,6 +78,7 @@ class TrackerProductTxPilot {
   ProductSecureCrypto& crypto_;
   RadioManager& radio_;
   Phase phase_ = Phase::kSelect;
+  BlockReason block_reason_ = BlockReason::kNone;
   osf::RecordIdentity identity_{};
   osc::ExactObject sealed_{};
   bool live_first_ = false;
@@ -74,6 +89,7 @@ class TrackerProductTxPilot {
   bool idle_ = false;
   osf::RecordIdentity idle_next_{};
   void markIdle();
+  Event block(BlockReason reason);
 };
 
 }  // namespace orun_tlp
