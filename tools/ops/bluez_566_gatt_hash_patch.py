@@ -66,6 +66,11 @@ def patch(source: str) -> str:
         r"(?m)^([ \t]*)(hash->iov\[hash->i\]\.iov_base = data;)",
         growth + r"\g<1>\g<2>",
         "bounded append")
+    # The cleanup loop must not wrap at 65535; hash.i is size_t now.
+    result = replace(result,
+        r"(static bool db_hash_update\(void \*user_data\)\s*\{\s*struct gatt_db \*db = user_data;\s*struct hash_data hash;\s*)uint16_t i;",
+        r"\g<1>size_t i;",
+        "hash cleanup index width")
     result = replace(result,
         r"hash\.iov = new0\(struct iovec, db->next_handle\);\s*hash\.i = 0;",
         "hash.iov = NULL;\n\thash.i = 0;\n\thash.capacity = 0;\n\thash.failed = false;",
