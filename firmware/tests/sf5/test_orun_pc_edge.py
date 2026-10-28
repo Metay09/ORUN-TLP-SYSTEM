@@ -99,6 +99,26 @@ class PCEdgeTests(unittest.TestCase):
 
         asyncio.run(exercise())
 
+    def test_ble_dump_request_after_notify_is_framed_and_never_accepts(self):
+        import asyncio
+
+        class FakeClient:
+            def __init__(self):
+                self.writes = []
+            async def write_gatt_char(self, uuid, payload, response=False):
+                self.writes.append((uuid, bytes(payload), response))
+
+        async def check():
+            client = FakeClient()
+            await pc.request_ble_dump(client)
+            self.assertEqual(client.writes, [
+                (pc.EDGE_TO_GATEWAY_UUID, b"\\x01\\x03\\x01\\x00\\x81", True)
+            ])
+            # A replay request must never contain the 0x82 ACCEPT command.
+            self.assertEqual(client.writes[0][1][4], 0x81)
+
+        asyncio.run(check())
+
     def test_ble_hello_timeout_requires_missing_handshake(self):
         self.assertFalse(pc.ble_hello_expired(10.0, 29.99, False))
         self.assertTrue(pc.ble_hello_expired(10.0, 30.0, False))
