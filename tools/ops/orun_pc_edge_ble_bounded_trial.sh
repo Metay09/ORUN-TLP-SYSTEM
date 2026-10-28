@@ -51,6 +51,9 @@ restore_usb() {
       echo "USB RESTORE: NEEDS ATTENTION - rollback timer remains armed" >&2
       rc=1
     fi
+  elif [ "$WATCH_ARMED" = 1 ]; then
+    # No unit switch was made; retire the unused watchdog.
+    systemctl --user stop "$WATCH.timer" || true
   fi
   echo "=== FINAL SERVICE STATES ==="
   systemctl is-active bluetooth.service || true
@@ -77,9 +80,9 @@ check_usb_restored
 python3 - "$BASE" "$BENCH" "$PORT" "$URL" "$EDGE" "$TOKEN" <<'PY'
 from pathlib import Path
 import shlex, sys
-base, bench, port, url, edge, token = map(Path, sys.argv[1:3]) if False else (
-    Path(sys.argv[1]), Path(sys.argv[2]), *sys.argv[3:]
-)
+base = Path(sys.argv[1])
+bench = Path(sys.argv[2])
+port, url, edge, token = sys.argv[3:]
 def cmd(p):
     lines=[x[len("ExecStart="):] for x in p.read_text().splitlines()
            if x.startswith("ExecStart=") and x!="ExecStart="]
@@ -150,11 +153,12 @@ trap 'exit 143' TERM HUP
 echo "=== ARM INDEPENDENT 180-SECOND USB RESTORE ==="
 systemd-run --user --unit="$WATCH" --on-active=180s \
   /usr/bin/bash -c \
-  'rm -f "$HOME/.config/systemd/user/orun-pc-edge.service.d/30-orun-ble-readonly-trial.conf"; systemctl --user daemon-reload; systemctl --user restart orun-pc-edge.service'
+  'rm -f /home/msimsek/.config/systemd/user/orun-pc-edge.service.d/30-orun-ble-readonly-trial.conf; systemctl --user daemon-reload; systemctl --user restart orun-pc-edge.service'
 WATCH_ARMED=1
 systemctl --user is-active --quiet "$WATCH.timer"
 
 echo "=== APPLY ONE-SERVICE BLE READ/UPLOAD-ONLY OVERRIDE ==="
+STARTED="$(date '+%Y-%m-%d %H:%M:%S')"
 # No --bench-release-gateway parameter. No release or ACK is possible on BLE.
 cat > "$DROP" <<CFG
 [Service]
@@ -175,8 +179,18 @@ fi
 echo "=== BLE PC EDGE TRIAL WINDOW: 90 SECONDS ==="
 sleep "$TRIAL_SECONDS"
 echo "=== BLE PC EDGE / BACKEND EVIDENCE ==="
-journalctl --user -u "$UNIT" --since "2 minutes ago" --no-pager -o cat |
+LOGS="$(journalctl --user -u "$UNIT" --since "$STARTED" --no-pager -o cat)"
+printf '%s\n' "$LOGS" |
   grep -E '^\[ble\]|^\[backend\]|^\[pc-edge\]' | tail -n 70 || true
+if ! printf '%s\n' "$LOGS" | grep -Fq '[ble] HELLO 09A462BD4B275BA5'; then
+  echo 'BLE SESSION: FAIL (HELLO missing)' >&2
+  exit 1
+fi
+if ! printf '%s\n' "$LOGS" | grep -Fq '[ble] DUMP END count='; then
+  echo 'BLE SESSION: FAIL (DUMP END missing)' >&2
+  exit 1
+fi
+echo 'BLE HELLO/DUMP SESSION: PASS'
 
 echo "=== POST-TRIAL SEALED RECORD COUNTS ==="
 python3 - <<'PY'
