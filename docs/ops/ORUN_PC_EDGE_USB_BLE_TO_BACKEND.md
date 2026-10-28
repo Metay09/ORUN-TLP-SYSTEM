@@ -115,6 +115,32 @@ command -v bluetoothctl
 
 **Aynı Gateway için USB servisi açıkken ikinci bağımsız PC Edge BLE servisi başlatmayın.** Önce bluetooth aygıtı ve testler doğrulanmalı, ardından transport kontrollü şekilde değiştirilmelidir. Test anahtarıyla yapılan SF5L0 handoff gerçek üretim kimlik doğrulaması değildir.
 
+## Gerçek BLE bağlantı doğrulaması ve USB/BLE geçişi
+
+28.10.2026 gerçek BLE saha testi: cihaz \`ORUN-4B275BA5\`, BLE adresi \`C5:DD:01:85:C9:4B\`. Bleak GATT connection \`True\`, SF5L6 HELLO kimliği \`09A462BD4B275BA5\`, \`held=0/1056\`, \`DUMP END count=0\`. **BLE bağlantı/okuma PASS**, BLE'de yeni kayıt alma + backend yükleme + HMAC ACCEPT henüz canlı kayıtla sınanmadı.
+
+Kurulu user-service zaten USB + bench-release modundaysa, aşağıdaki komut aynı \`orun-pc-edge.service\` dosyasına öncelikli \`20-ble-transport.conf\` drop-in ekler. Böylece **aynı anda iki PC Edge uploader çalışmaz**. Backend URL, token, Edge ID ve test Gateway kimliği olduğu gibi korunur. USB cihazı sökmek gerekmez.
+
+\`\`\`sh
+# Geçiş doğrulama ve host regresyon (hizmetleri değiştirmez)
+bash -n tools/ops/orun_pc_edge_service.sh
+python3 -m py_compile tools/ops/orun_pc_edge_transport.py tools/orun_pc_edge.py
+python3 firmware/tests/sf5/test_orun_pc_edge.py
+bash tools/ops/orun_pc_edge_service.sh transport validate ble C5:DD:01:85:C9:4B
+
+# SADECE ONE SERVICE: USB'den BLE'ye geç (PC Edge servisi yeniden başlar)
+bash tools/ops/orun_pc_edge_service.sh transport ble C5:DD:01:85:C9:4B
+journalctl --user -u orun-pc-edge.service --since "2 minutes ago" --no-pager -o cat |
+  grep -E '^\[ble\]|^\[backend\]|^\[bench accept\]' | tail -n 60
+
+# Geri dönüş: BLE drop-in kaldırılır ve önceki USB bench-release çalışır
+bash tools/ops/orun_pc_edge_service.sh transport usb
+\`\`\`
+
+USB bağlantı ve depolama geri kazanımı doğrulanmıştır. BLE modunda önce \`[ble] HELLO ...\` ve \`[ble] DUMP END ...\` arayın. **Yeni Tracker kaydı yoksa BLE üzerinden backend STORED ve ACK başarısı iddia edilemez.** Yeni kayıt geldikten sonra \`[ble] HELD/PREVIEW stored\`, \`[backend] confirmed\`, \`[bench accept] gateway result: OK\` beklenir. Gateway'in \`0x05\` RECLAIM durumu da loglanır.
+
+BLE modunda devredeki anahtar SF5L0 **PUBLIC TEST KEY**'dir; gerçek üretim yetki protokolü ayrıca ele alınmalıdır.
+
 ## Saha doğrulama kapısı
 
 1. Backend gerçek bilgisayarında `orun-backend.service` **active**, `GET /v1/health` 200; doğru tokenla `/v1/edge/keys` 200; gerçek DB kayıt sayısı korunmuş.
