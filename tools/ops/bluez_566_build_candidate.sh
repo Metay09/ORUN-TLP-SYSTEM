@@ -30,6 +30,13 @@ done
 command -v pkg-config >/dev/null || {
   echo "ERROR: pkg-config missing. Install only required build dependencies." >&2; exit 1;
 }
+# BlueZ daemon profile objects still include the system Bluetooth API headers.
+# Fail before bootstrap/configure rather than halfway through a lengthy compile.
+if [[ ! -f /usr/include/bluetooth/bluetooth.h ]]; then
+  echo "ERROR: missing /usr/include/bluetooth/bluetooth.h" >&2
+  echo "On Debian 12: sudo apt-get install --no-install-recommends libbluetooth-dev" >&2
+  exit 1
+fi
 pkg-config --exists glib-2.0 dbus-1 || {
   echo "ERROR: missing build headers: glib-2.0 and/or dbus-1." >&2
   echo "On Debian 12: sudo apt-get install --no-install-recommends pkg-config make libglib2.0-dev libdbus-1-dev" >&2
