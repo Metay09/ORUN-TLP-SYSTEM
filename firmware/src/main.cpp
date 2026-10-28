@@ -2504,6 +2504,24 @@ void handleRoleCommand() {
     printBenchDrain();
     return;
   }
+  // SF5L0 development-only reset. Clear observations and cached exact
+  // bytes, not credentials, keys, counters, history or configuration.
+  // Disallow a concurrent writer or a custody ACK in flight; callers must
+  // first select APP SERVICES NONE and BENCH DRAIN OFF.
+  if (isActivityCommand("BENCH TRACKER ERASE RECORDS CONFIRM", 35)) {
+    role_command_length = 0;
+    if (tracking_enabled || bench_pacer.enabled() ||
+        bench_pacer.awaitingAck() || custody_ack_release.pending() ||
+        !product_records.requestBenchClear()) {
+      Serial.println(F("BENCH TRACKER ERASE rejected: stop tracking "
+                       "(APP SERVICES NONE), stop drain (BENCH DRAIN OFF), "
+                       "wait for pending ACK/flash, and check PRODUCT STORE?"));
+    } else {
+      Serial.println(F("BENCH TRACKER ERASE started: product records only; "
+                       "security/configuration preserved; reboot follows"));
+    }
+    return;
+  }
   // Step 3A: BENCH PROVISION <credential 32 hex> <epoch 8 hex> <root 64 hex>
   //   <gateway 16 hex> <crc 8 hex>; crc = CRC-32 of the 60 binary bytes
   // (typo guard only). Physical USB access is the authorization. The root is
