@@ -14,6 +14,7 @@ VENDOR="/usr/libexec/bluetooth/bluetoothd"
 VHASH="ea290bd384a9930cd4e091c411cab00d56de8cb78ff0a62f45cc170232ab8be8"
 DROP="/etc/systemd/system/bluetooth.service.d/80-orun-gattfix.conf"
 RECOVER="/usr/local/libexec/orun-bluez/restore-vendor.sh"
+GUARD="/usr/local/libexec/orun-bluez/guard-candidate.sh"
 RECOVERY_UNIT="/etc/systemd/system/orun-bluez-automatic-recovery.service"
 TIMER="orun-bluez-install-restore-$(date +%s)-$$"
 SWITCHED=0
@@ -65,6 +66,7 @@ preflight() {
   systemctl show bluetooth.service -p ExecStart | grep -Fq "$VENDOR"
   sudo test ! -e "$DROP"
   sudo test ! -e "$RECOVER"
+  sudo test ! -e "$GUARD"
   sudo test ! -e "$RECOVERY_UNIT"
   test -f "$WORK/orun_bluez_candidate_ble_probe.py"
   test -f "$WORK/orun_pc_edge.py"
@@ -105,6 +107,18 @@ ExecStart=/usr/local/libexec/orun-bluez/restore-vendor.sh
 UNIT
   sudo install -o root -g root -m 0644 "$temp" "$RECOVERY_UNIT"
   rm -f "$temp"
+
+  temp="$(mktemp "$WORK/bluetooth-guard.XXXXXXXX")"
+  cat > "$temp" <<'GUARDCODE'
+#!/usr/bin/env bash
+# Fail closed if Debian BlueZ or our staged candidate changes after install.
+set -euo pipefail
+test "$(dpkg-query -W bluez | awk '{print $2}')" = '5.66-1+deb12u2'
+test "$(sha256sum /usr/libexec/bluetooth/bluetoothd | awk '{print $1}')" =   'ea290bd384a9930cd4e091c411cab00d56de8cb78ff0a62f45cc170232ab8be8'
+test "$(sha256sum /usr/local/libexec/orun-bluez/bluetoothd-5.66-gattfix | awk '{print $1}')" =   '14412d0a913463f516d310c52f06a86ce0f5c6cc2748796733d596ac9bea4e05'
+GUARDCODE
+  sudo install -o root -g root -m 0755 "$temp" "$GUARD"
+  rm -f "$temp"
 }
 
 do_install() {
@@ -131,6 +145,7 @@ do_install() {
 OnFailure=orun-bluez-automatic-recovery.service
 [Service]
 ExecStart=
+ExecStartPre=/usr/local/libexec/orun-bluez/guard-candidate.sh
 ExecStart=/usr/local/libexec/orun-bluez/bluetoothd-5.66-gattfix
 CONF
   sudo install -o root -g root -m 0644 "$temp" "$DROP"
@@ -156,10 +171,15 @@ CONF
   sudo systemctl is-active --quiet bluetooth.service
   systemctl show bluetooth.service -p ExecStart | grep -Fq "$CAND"
 
-  echo 'PERSISTENT INSTALL: PASS'
-  SWITCHED=0
+  echo '=== DISARM INSTALL WATCHDOG AFTER HEALTH CHECK ==='
   sudo systemctl stop "$TIMER.timer"
+  if sudo systemctl is-active --quiet "$TIMER.timer"; then
+    echo 'Rollback watchdog failed to disarm: abort installation' >&2
+    exit 1
+  fi
   TIMER_ARMED=0
+  SWITCHED=0
+  echo 'PERSISTENT INSTALL: PASS'
   trap - EXIT INT TERM HUP
   service_states
   echo 'OnFailure automatic restoration is armed; Debian binary unchanged.'
@@ -172,7 +192,7 @@ do_rollback() {
   sudo grep -Fxq "ExecStart=$CAND" "$DROP"
   echo '=== RESTORE VENDOR AND REMOVE CUSTOM CONFIG ==='
   restore_vendor
-  sudo rm -f -- "$RECOVERY_UNIT" "$RECOVER"
+  sudo rm -f -- "$RECOVERY_UNIT" "$RECOVER" "$GUARD"
   sudo systemctl daemon-reload
   service_states
   echo 'ROLLBACK: PASS'
