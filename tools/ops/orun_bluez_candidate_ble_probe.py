@@ -22,9 +22,15 @@ async def run():
 
     def on_data(_, frame):
         good["frames"] += 1
+        if good["frames"] <= 4:
+            # Log only framing metadata; sealed custody contents remain private.
+            print("FRAME", good["frames"], "size", len(frame),
+                  "header", bytes(frame[:4]).hex().upper(), flush=True)
         msg = reassembler.push(bytes(frame))
         if msg is None:
             return
+        if msg[0] not in (1, 3):
+            print("MESSAGE TYPE:", hex(msg[0]), "length:", len(msg), flush=True)
         if len(msg) == 13 and msg[0] == 1:
             got = msg[1:9].hex().upper()
             good["hello"] = got == GATEWAY
