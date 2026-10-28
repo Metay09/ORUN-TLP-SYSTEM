@@ -93,6 +93,15 @@ echo "=== CONFIGURE ==="
 }
 echo "CONFIGURE: PASS"
 
+echo "=== GENERATE BlueZ built-in plugin header ==="
+make -j2 src/builtin.h >"$WORK/bluez-builtin-header.log" 2>&1 || {
+  echo "BUILTIN HEADER: FAIL (last 60 lines)"
+  tail -n 60 "$WORK/bluez-builtin-header.log"
+  exit 1
+}
+test -s src/builtin.h
+printf "%s\n" "BUILTIN HEADER: PASS"
+
 echo "=== COMPILE bluetoothd (candidate only) ==="
 make -j2 src/bluetoothd >"$WORK/bluez-build.log" 2>&1 || {
   echo "BUILD: FAIL (last 100 lines)"
