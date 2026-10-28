@@ -459,6 +459,12 @@ def usb_forever(inbox: Inbox, port: str,
             time.sleep(5)
 
 
+def ble_hello_expired(started: float, now: float,
+                      hello_received: bool) -> bool:
+    """A link that never delivers a Gateway HELLO is not a usable Edge session."""
+    return not hello_received and now - started >= 20.0
+
+
 def ble_forever(inbox: Inbox, address: str | None,
                 release_gateway: str | None = None) -> None:
     try:
@@ -532,7 +538,8 @@ def ble_forever(inbox: Inbox, address: str | None,
                                     print("[ble] Gateway ID mismatch; ACCEPT disabled",
                                           flush=True)
                                     release = None
-                        if not hello_received and time.monotonic() - started_ble >= 20:
+                        if ble_hello_expired(
+                                started_ble, time.monotonic(), hello_received):
                             raise TimeoutError(
                                 "Gateway HELLO missing after 20s; "
                                 f"received GATT frames={seen_frames}")
