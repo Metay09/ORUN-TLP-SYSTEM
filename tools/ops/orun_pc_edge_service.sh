@@ -17,6 +17,9 @@ usage() {
   echo "  bash tools/ops/orun_pc_edge_service.sh bench-release validate 16HEX-GATEWAY-ID" >&2
   echo "  bash tools/ops/orun_pc_edge_service.sh bench-release enable 16HEX-GATEWAY-ID" >&2
   echo "  bash tools/ops/orun_pc_edge_service.sh bench-release disable" >&2
+  echo "  bash tools/ops/orun_pc_edge_service.sh transport validate ble C5:DD:01:85:C9:4B" >&2
+  echo "  bash tools/ops/orun_pc_edge_service.sh transport ble C5:DD:01:85:C9:4B" >&2
+  echo "  bash tools/ops/orun_pc_edge_service.sh transport usb" >&2
   echo "  bash tools/ops/orun_pc_edge_service.sh status|logs" >&2
   exit 2
 }
@@ -210,6 +213,7 @@ case "${1:-}" in
   install) shift; install_service "$@" ;;
   validate) shift; validate_install_args "$@" ;;
   bench-release) shift; bench_release "$@" ;;
+  transport) shift; python3 "$ROOT/tools/ops/orun_pc_edge_transport.py" "$@" ;;
   status) systemctl --user status orun-pc-edge.service --no-pager || true ;;
   logs) journalctl --user -u orun-pc-edge.service -n 80 --no-pager ;;
   *) usage ;;
