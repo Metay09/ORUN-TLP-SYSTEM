@@ -7,6 +7,7 @@ import sys
 
 ROOT = Path(os.environ.get("ORUN_PC_EDGE_REPO", Path(__file__).resolve().parents[2])).resolve()
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from bleak import BleakClient, BleakScanner
 from orun_pc_edge import discover_ble_gateway, request_ble_dump
 from orun_edge_bench import EDGE_TO_EDGE_UUID, EdgeReassembler
