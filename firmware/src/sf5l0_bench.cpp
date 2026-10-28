@@ -806,6 +806,10 @@ bool Sf5l0EdgeLinkSession::pushResult(const Result& r) {
 void Sf5l0EdgeLinkSession::onMessage(const uint8_t* m, size_t n) {
   if (!active_ || m == nullptr || n == 0U) return;
   if (m[0] == uint8_t(edge_link::Type::kDump) && n == 1U) {
+    // Re-announce Gateway identity on every read-only replay. A central may
+    // finish subscribing after the initial HELLO indication; DUMP must let
+    // it recover without accepting custody or resetting the BLE connection.
+    hello_pending_ = true;
     priority_pending_ = true;
     priority_sent_since_history_ = false;
     scan_pending_ = true;           // full pass again from the start
