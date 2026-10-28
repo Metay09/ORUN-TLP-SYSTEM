@@ -15,11 +15,18 @@ test -f "$ORIGINAL/src/shared/gatt-db.c" || {
 test -s "$PATCHED" || {
   echo "ERROR: v2 candidate source not found: $PATCHED" >&2; exit 1;
 }
-test -x "$ORIGINAL/configure" || {
-  echo "ERROR: release configure script missing/not executable" >&2; exit 1;
+test -f "$ORIGINAL/configure.ac" && test -x "$ORIGINAL/bootstrap" || {
+  echo "ERROR: BlueZ 5.66 configure.ac/bootstrap missing" >&2; exit 1;
 }
 command -v make >/dev/null
 command -v cc >/dev/null
+for tool in aclocal autoheader libtoolize automake autoconf; do
+  command -v "$tool" >/dev/null || {
+    echo "ERROR: missing GNU Autotools command: $tool" >&2
+    echo "On Debian 12: sudo apt-get install --no-install-recommends autoconf automake libtool" >&2
+    exit 1
+  }
+done
 command -v pkg-config >/dev/null || {
   echo "ERROR: pkg-config missing. Install only required build dependencies." >&2; exit 1;
 }
@@ -48,6 +55,17 @@ cp -a "$ORIGINAL/." "$BUILDDIR/"
 cp "$PATCHED" "$BUILDDIR/src/shared/gatt-db.c"
 
 cd "$BUILDDIR"
+echo "=== BOOTSTRAP: generate configure ==="
+./bootstrap >"$WORK/bluez-bootstrap.log" 2>&1 || {
+  echo "BOOTSTRAP: FAIL (last 80 lines)"
+  tail -n 80 "$WORK/bluez-bootstrap.log"
+  exit 1
+}
+test -x "./configure" || {
+  echo "BOOTSTRAP: configure was not generated" >&2; exit 1;
+}
+echo "BOOTSTRAP: PASS"
+
 echo "=== CONFIGURE ==="
 ./configure \
   --prefix=/usr \
