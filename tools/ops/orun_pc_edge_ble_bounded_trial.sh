@@ -20,7 +20,8 @@ DROP_DIR="$USERDIR/orun-pc-edge.service.d"
 BASE="$USERDIR/orun-pc-edge.service"
 BENCH="$DROP_DIR/10-bench-release.conf"
 DROP="$DROP_DIR/30-orun-ble-readonly-trial.conf"
-WATCH="orun-edge-ble-trial-restore-$(date +%s)-$$"
+WATCH="orun-edge-ble-trial-restore-$(date +%s)-$"
+RESTORE_HELPER=""
 CHANGED=0
 WATCH_ARMED=0
 STARTED=""
@@ -55,7 +56,12 @@ restore_usb() {
     if check_usb_restored; then
       echo "USB RESTORE: PASS"
       if [ "$WATCH_ARMED" = 1 ]; then
-        systemctl --user stop "$WATCH.timer" || true
+        if systemctl --user stop "$WATCH.timer"; then
+          rm -f -- "$RESTORE_HELPER"
+        else
+          echo "USB RESTORE: timer stop not confirmed; retaining helper" >&2
+          rc=1
+        fi
       fi
       if [ -n "$SOURCE" ] && [ -d "$SOURCE" ]; then
         rm -rf -- "$SOURCE"
@@ -66,7 +72,9 @@ restore_usb() {
     fi
   elif [ "$WATCH_ARMED" = 1 ]; then
     # No unit switch was made; retire the unused watchdog.
-    systemctl --user stop "$WATCH.timer" || true
+    if systemctl --user stop "$WATCH.timer"; then
+      rm -f -- "$RESTORE_HELPER"
+    fi
   fi
   echo "=== FINAL SERVICE STATES ==="
   systemctl is-active bluetooth.service || true
@@ -174,9 +182,27 @@ trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 
 echo "=== ARM INDEPENDENT ${WATCH_SECONDS}-SECOND USB RESTORE ==="
+# Use a standalone executable instead of bash -c with embedded semicolons:
+# systemd-run's escaped transient ExecStart had emitted parser warnings.
+RESTORE_HELPER="$(mktemp "$WORK/orun-ble-restore.XXXXXXXX")"
+cat > "$RESTORE_HELPER" <<'RESTORE'
+#!/usr/bin/env bash
+set -euo pipefail
+DROP="$HOME/.config/systemd/user/orun-pc-edge.service.d/30-orun-ble-readonly-trial.conf"
+if [ -e "$DROP" ]; then
+  grep -Fq -- "--mode ble --backend-url http://100.114.36.9:8090" "$DROP" || {
+    echo "Unknown BLE override; refusing to remove" >&2
+    exit 1
+  }
+  rm -f -- "$DROP"
+fi
+systemctl --user daemon-reload
+systemctl --user restart orun-pc-edge.service
+systemctl --user is-active --quiet orun-pc-edge.service
+RESTORE
+chmod 0700 "$RESTORE_HELPER"
 systemd-run --user --unit="$WATCH" --on-active="${WATCH_SECONDS}s" \
-  /usr/bin/bash -c \
-  'rm -f /home/msimsek/.config/systemd/user/orun-pc-edge.service.d/30-orun-ble-readonly-trial.conf; systemctl --user daemon-reload; systemctl --user restart orun-pc-edge.service'
+  /usr/bin/bash "$RESTORE_HELPER"
 WATCH_ARMED=1
 systemctl --user is-active --quiet "$WATCH.timer"
 
