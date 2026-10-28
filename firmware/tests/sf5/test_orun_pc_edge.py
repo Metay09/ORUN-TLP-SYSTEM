@@ -65,6 +65,40 @@ class PCEdgeTests(unittest.TestCase):
             )
             self.assertNotEqual(bad.returncode, 0, identifier)
 
+    def test_ble_discovery_uses_ble_device_not_bare_mac(self):
+        import asyncio
+
+        class FakeDevice:
+            address = "C5:DD:01:85:C9:4B"
+
+        class FakeScanner:
+            calls = []
+            @classmethod
+            async def find_device_by_address(cls, address, timeout=0):
+                cls.calls.append(("address", address, timeout))
+                return FakeDevice()
+            @classmethod
+            async def find_device_by_filter(cls, predicate, timeout=0):
+                cls.calls.append(("filter", timeout))
+                class Ad:
+                    service_uuids = [pc.EDGE_SERVICE_UUID.upper()]
+                self.assertTrue(predicate(FakeDevice(), Ad()))
+                return FakeDevice()
+
+        async def exercise():
+            scanner = FakeScanner
+            device = await pc.discover_ble_gateway(
+                scanner, "C5:DD:01:85:C9:4B")
+            self.assertIsInstance(device, FakeDevice)
+            self.assertEqual(scanner.calls[-1],
+                             ("address", "C5:DD:01:85:C9:4B", 15))
+            scanner.calls.clear()
+            device = await pc.discover_ble_gateway(scanner, None)
+            self.assertIsInstance(device, FakeDevice)
+            self.assertEqual(scanner.calls[-1], ("filter", 20))
+
+        asyncio.run(exercise())
+
     def test_ble_hello_timeout_requires_missing_handshake(self):
         self.assertFalse(pc.ble_hello_expired(10.0, 29.99, False))
         self.assertTrue(pc.ble_hello_expired(10.0, 30.0, False))
