@@ -20,6 +20,10 @@ restore() {
     sudo systemctl stop "$UNIT" || true
     sudo systemctl unmask --runtime bluetooth.service || true
     sudo systemctl start bluetooth.service || true
+    if sudo systemctl is-active --quiet bluetooth.service; then
+      # Once stock is confirmed up, our failover timer is no longer needed.
+      sudo systemctl stop "$WATCH.timer" || true
+    fi
   fi
   echo "=== FINAL SERVICE STATES ==="
   systemctl is-active bluetooth.service || true
@@ -49,6 +53,18 @@ fi
 python3 -m py_compile "$HOME/ORUN-BLUEZ-566-HOTFIX/orun_bluez_candidate_ble_probe.py"
 python3 -m py_compile "$HOME/ORUN-BLUEZ-566-HOTFIX/orun_pc_edge.py"
 sudo -v
+
+echo "=== RETIRE OLD COMPLETED-TRIAL ROLLBACK TIMERS ==="
+# Only after proving stock Bluetooth active and no candidate daemon running.
+# Otherwise an old 100-second timer could interrupt this new candidate trial.
+while IFS= read -r old_unit; do
+  case "$old_unit" in
+    orun-bluez-restore-*.timer)
+      echo "RETIRED OLD TIMER: $old_unit"
+      sudo systemctl stop "$old_unit"
+      ;;
+  esac
+done < <(systemctl list-units --type=timer --state=active --plain --no-legend   'orun-bluez-restore-*.timer' | awk '{print $1}')
 
 echo "=== ARM INDEPENDENT 100-SECOND ROLLBACK TIMER ==="
 sudo systemd-run --unit="$WATCH" --on-active=100s \
