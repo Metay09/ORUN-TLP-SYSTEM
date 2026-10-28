@@ -65,6 +65,13 @@ class PCEdgeTests(unittest.TestCase):
             )
             self.assertNotEqual(bad.returncode, 0, identifier)
 
+    def test_ble_hello_timeout_requires_missing_handshake(self):
+        self.assertFalse(pc.ble_hello_expired(10.0, 29.99, False))
+        self.assertTrue(pc.ble_hello_expired(10.0, 30.0, False))
+        self.assertTrue(pc.ble_hello_expired(10.0, 31.0, False))
+        # An otherwise silent but initialized BLE link is normal.
+        self.assertFalse(pc.ble_hello_expired(10.0, 999.0, True))
+
     def test_ble_transport_switch_validation(self):
         script = ROOT / "tools" / "ops" / "orun_pc_edge_service.sh"
         mac = "C5:DD:01:85:C9:4B"
