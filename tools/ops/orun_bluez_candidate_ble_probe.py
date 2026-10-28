@@ -8,7 +8,7 @@ import sys
 ROOT = Path(os.environ.get("ORUN_PC_EDGE_REPO", Path(__file__).resolve().parents[2])).resolve()
 sys.path.insert(0, str(ROOT / "tools"))
 from bleak import BleakClient, BleakScanner
-from orun_pc_edge import discover_ble_gateway
+from orun_pc_edge import discover_ble_gateway, request_ble_dump
 from orun_edge_bench import EDGE_TO_EDGE_UUID, EdgeReassembler
 
 ADDRESS = "C5:DD:01:85:C9:4B"
@@ -41,6 +41,13 @@ async def run():
             async with BleakClient(device, timeout=15) as client:
                 print("CONNECTED:", client.is_connected, flush=True)
                 await client.start_notify(EDGE_TO_EDGE_UUID, on_data)
+                services = client.services
+                rx = services.get_characteristic(EDGE_TO_EDGE_UUID)
+                tx = services.get_characteristic("6f9a1c21-5b3e-4d8a-9e61-2c4b7a0d3e51")
+                print("RX PROPERTIES:", rx.properties if rx else "MISSING", flush=True)
+                print("TX PROPERTIES:", tx.properties if tx else "MISSING", flush=True)
+                await request_ble_dump(client)
+                print("READ-ONLY DUMP REQUEST: SENT", flush=True)
                 try:
                     await asyncio.wait_for(done.wait(), timeout=15)
                 except asyncio.TimeoutError:
