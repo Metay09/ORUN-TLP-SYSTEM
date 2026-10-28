@@ -35,6 +35,7 @@ trap 'exit 143' TERM HUP
 echo "=== PRECHECK ==="
 test -x "$CAND"
 test -f "$HOME/ORUN-BLUEZ-566-HOTFIX/orun_bluez_candidate_ble_probe.py"
+test -f "$HOME/ORUN-BLUEZ-566-HOTFIX/orun_pc_edge.py"
 test "$(sha256sum "$CAND" | awk '{print $1}')" = "$HASH"
 test "$(systemctl is-active bluetooth.service)" = active
 test "$(systemctl --user is-active orun-pc-edge.service)" = active
@@ -46,6 +47,7 @@ if systemctl is-active --quiet "$UNIT"; then
   exit 1
 fi
 python3 -m py_compile "$HOME/ORUN-BLUEZ-566-HOTFIX/orun_bluez_candidate_ble_probe.py"
+python3 -m py_compile "$HOME/ORUN-BLUEZ-566-HOTFIX/orun_pc_edge.py"
 sudo -v
 
 echo "=== ARM INDEPENDENT 100-SECOND ROLLBACK TIMER ==="
