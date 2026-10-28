@@ -8,7 +8,7 @@ umask 077
 
 REPO="$HOME/ORUN-PC-EDGE-VERIFY"
 WORK="$HOME/ORUN-BLUEZ-566-HOTFIX"
-SOURCE="$WORK/ble-pc-edge-transport-trial-src"
+SOURCE=""
 UNIT="orun-pc-edge.service"
 PORT="/dev/serial/by-id/usb-RAKwireless_WisCore_RAK4631_Board_09A462BD4B275BA5-if00"
 MAC="C5:DD:01:85:C9:4B"
@@ -25,8 +25,18 @@ CHANGED=0
 WATCH_ARMED=0
 STARTED=""
 
-# Keep BLE trial short and bounded; watchdog extends past observation window.
-TRIAL_SECONDS=90
+# 90s smoke by default; allow a bounded 25-minute live-record window.
+TRIAL_SECONDS="${ORUN_BLE_TRIAL_SECONDS:-90}"
+case "$TRIAL_SECONDS" in
+  ""|*[!0-9]*) echo 'ORUN_BLE_TRIAL_SECONDS must be an integer' >&2; exit 2 ;;
+esac
+if (( 10#$TRIAL_SECONDS < 30 || 10#$TRIAL_SECONDS > 1800 )); then
+  echo 'ORUN_BLE_TRIAL_SECONDS must be between 30 and 1800' >&2
+  exit 2
+fi
+TRIAL_SECONDS=$((10#$TRIAL_SECONDS))
+WATCH_SECONDS=$((TRIAL_SECONDS + 180))
+BASELINE_ID=""
 
 check_usb_restored() {
   systemctl --user is-active --quiet "$UNIT" &&
@@ -46,6 +56,9 @@ restore_usb() {
       echo "USB RESTORE: PASS"
       if [ "$WATCH_ARMED" = 1 ]; then
         systemctl --user stop "$WATCH.timer" || true
+      fi
+      if [ -n "$SOURCE" ] && [ -d "$SOURCE" ]; then
+        rm -rf -- "$SOURCE"
       fi
     else
       echo "USB RESTORE: NEEDS ATTENTION - rollback timer remains armed" >&2
@@ -99,11 +112,11 @@ assert b==a+["--bench-release-gateway","09A462BD4B275BA5"], (
 print("EXISTING USB SERVICE CONFIG: MATCH")
 PY
 
-# A git archive snapshot guarantees BLE trial imports the same coherent source.
-# The existing user's running repo and installed USB ExecStart are untouched.
-test ! -e "$SOURCE"
+# Each trial needs its own isolated snapshot: never reuse the prior run's files.
+# Existing USB checkout, token and SQLite stay unmodified.
 git -C "$REPO" fetch origin feat/pc-edge-sealed-usb-ble-backend-spool
 REV="$(git -C "$REPO" rev-parse FETCH_HEAD)"
+SOURCE="$(mktemp -d "$WORK/ble-pc-edge-trial.XXXXXXXX")"
 mkdir -p "$SOURCE/tools"
 for path in tools/orun_pc_edge.py tools/orun_edge_bench.py; do
   git -C "$REPO" show "$REV:$path" > "$SOURCE/$path"
@@ -138,6 +151,16 @@ with sqlite3.connect(uri, uri=True) as con:
         "SELECT count(*) FROM sealed_records WHERE backend_state IN ('STORED','DUPLICATE')").fetchone()[0])
 PY
 
+BASELINE_ID="$(python3 - <<'PY'
+from pathlib import Path
+import sqlite3
+db = Path.home()/".local/share/orun/pc-edge-inbox.sqlite"
+with sqlite3.connect(db.resolve().as_uri()+"?mode=ro",uri=True) as con:
+    print(con.execute("SELECT COALESCE(MAX(id),0) FROM sealed_records").fetchone()[0])
+PY
+)"
+echo "BASELINE MAX RECORD ID: $BASELINE_ID"
+
 # Existing timer could inadvertently restart USB during this BLE trial.
 if systemctl --user list-units --type=timer --state=active --plain --no-legend \
   'orun-edge-ble-trial-restore-*.timer' |
@@ -150,8 +173,8 @@ trap restore_usb EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 
-echo "=== ARM INDEPENDENT 180-SECOND USB RESTORE ==="
-systemd-run --user --unit="$WATCH" --on-active=180s \
+echo "=== ARM INDEPENDENT ${WATCH_SECONDS}-SECOND USB RESTORE ==="
+systemd-run --user --unit="$WATCH" --on-active="${WATCH_SECONDS}s" \
   /usr/bin/bash -c \
   'rm -f /home/msimsek/.config/systemd/user/orun-pc-edge.service.d/30-orun-ble-readonly-trial.conf; systemctl --user daemon-reload; systemctl --user restart orun-pc-edge.service'
 WATCH_ARMED=1
@@ -176,21 +199,65 @@ if systemctl --user show "$UNIT" -p ExecStart | grep -Fq -- '--bench-release-gat
   exit 1
 fi
 
-echo "=== BLE PC EDGE TRIAL WINDOW: 90 SECONDS ==="
-sleep "$TRIAL_SECONDS"
+echo "=== BLE PC EDGE OBSERVATION WINDOW: ${TRIAL_SECONDS}s ==="
+ELAPSED=0
+NEW_DELIVERED=0
+while (( ELAPSED < TRIAL_SECONDS )); do
+  STEP=10
+  if (( TRIAL_SECONDS - ELAPSED < STEP )); then
+    STEP=$((TRIAL_SECONDS - ELAPSED))
+  fi
+  sleep "$STEP"
+  ELAPSED=$((ELAPSED + STEP))
+  systemctl --user is-active --quiet "$UNIT" || {
+    echo 'BLE PC Edge service stopped during test' >&2; exit 1;
+  }
+  systemctl --user show "$UNIT" -p ExecStart |
+    grep -Fq -- '--mode ble ' || {
+      echo 'BLE trial ended early / USB restore was triggered' >&2; exit 1;
+    }
+  NEW_DELIVERED="$(python3 - "$BASELINE_ID" <<'PY'
+from pathlib import Path
+import sqlite3, sys
+db = Path.home()/".local/share/orun/pc-edge-inbox.sqlite"
+with sqlite3.connect(db.resolve().as_uri()+"?mode=ro",uri=True) as con:
+    print(con.execute(
+        "SELECT count(*) FROM sealed_records "
+        "WHERE id>? AND backend_state IN ('STORED','DUPLICATE')",
+        (int(sys.argv[1]),)).fetchone()[0])
+PY
+)"
+  if (( NEW_DELIVERED > 0 )); then
+    echo "NEW BACKEND-CONFIRMED SEALED RECORDS: $NEW_DELIVERED"
+    break
+  fi
+  if (( ELAPSED % 60 == 0 )); then
+    echo "BLE OBSERVATION: ${ELAPSED}s elapsed; no newly confirmed record yet"
+  fi
+done
 echo "=== BLE PC EDGE / BACKEND EVIDENCE ==="
 LOGS="$(journalctl --user -u "$UNIT" --since "$STARTED" --no-pager -o cat)"
 printf '%s\n' "$LOGS" |
   grep -E '^\[ble\]|^\[backend\]|^\[pc-edge\]' | tail -n 70 || true
-if ! printf '%s\n' "$LOGS" | grep -Fq '[ble] HELLO 09A462BD4B275BA5'; then
+if [[ "$LOGS" != *'[ble] HELLO 09A462BD4B275BA5'* ]]; then
   echo 'BLE SESSION: FAIL (HELLO missing)' >&2
   exit 1
 fi
-if ! printf '%s\n' "$LOGS" | grep -Fq '[ble] DUMP END count='; then
+if [[ "$LOGS" != *'[ble] DUMP END count='* ]]; then
   echo 'BLE SESSION: FAIL (DUMP END missing)' >&2
   exit 1
 fi
 echo 'BLE HELLO/DUMP SESSION: PASS'
+if (( NEW_DELIVERED > 0 )); then
+  if [[ "$LOGS" != *'[ble] HELD/PREVIEW stored'* ||
+        "$LOGS" != *'[backend] confirmed'* ]]; then
+    echo 'NEW RECORDS CONFIRMED, but BLE or Backend log evidence missing' >&2
+    exit 1
+  fi
+  echo "BLE -> SQLITE -> BACKEND E2E: PASS (${NEW_DELIVERED} new records)"
+else
+  echo 'BLE -> SQLITE -> BACKEND E2E: NOT YET VERIFIED (no newly confirmed record)'
+fi
 
 echo "=== POST-TRIAL SEALED RECORD COUNTS ==="
 python3 - <<'PY'
