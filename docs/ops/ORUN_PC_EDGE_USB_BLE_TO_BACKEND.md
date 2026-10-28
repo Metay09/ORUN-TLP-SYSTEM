@@ -141,6 +141,35 @@ USB bağlantı ve depolama geri kazanımı doğrulanmıştır. BLE modunda önce
 
 BLE modunda devredeki anahtar SF5L0 **PUBLIC TEST KEY**'dir; gerçek üretim yetki protokolü ayrıca ele alınmalıdır.
 
+## BLE BlueZ D-Bus kararsizligi (28 Ekim 2026)
+
+Kullanici sahasinda 13/13 host regresyon PASS iken PC Edge BLE baglanti
+denemeleri `BleakDBusError` / `org.freedesktop.DBus.Error.UnknownObject`
+ve `NoReply` kaydetti; bazi denemelerde `[ble] Gateway connected` gorulmesine
+ragmen `HELLO` gelmedi. USB PC Edge durdurularak bagimsiz BLE istemciyle
+yapilan test de `NoReply` ve 0 GATT cercevesiyle FAIL oldu.
+**Baglanti sorunu sadece PC Edge'e baglanamaz; kesin kok neden henuz
+bilinmiyor.** USB servisi geri baslatildi ve backend `active` kaldi.
+
+BlueZ'un yeniden baslamasi, urunun eslesmesi veya firmware flash islemi
+yapilmadan once sistem servis kayitlari incelenmelidir:
+
+```sh
+systemctl show bluetooth -p ActiveState -p SubState -p MainPID -p NRestarts -p ActiveEnterTimestamp
+journalctl -b -u bluetooth.service --no-pager -n 80
+bluetoothctl show
+bluetoothctl info C5:DD:01:85:C9:4B
+journalctl -b -k --no-pager | grep -Ei 'bluetooth|hci0|btusb|usb.*reset|firmware' | tail -n 50 || true
+```
+
+Bleak 0.20.2 Python'da `BleakClient("MAC")` ilave implicit discovery
+baslatir. PC Edge sabit adres kullanildiginda artik onceden
+`BleakScanner.find_device_by_address()` ile elde edilen `BLEDevice`
+nesnesini kullanir. Bu, tarama+baglanti asamasindaki bazi BlueZ yarislarini
+azaltabilir; **BlueZ hizmetinin calismasini garanti etmez**.
+`HELLO` gelmeyen BLE baglantisi PASS sayilmaz, 20 sn sonunda yeniden denenir.
+Saha BLE aktarim-dogrulama ancak yeni gercek Tracker kaydi ile tamamlanir.
+
 ## Saha doğrulama kapısı
 
 1. Backend gerçek bilgisayarında `orun-backend.service` **active**, `GET /v1/health` 200; doğru tokenla `/v1/edge/keys` 200; gerçek DB kayıt sayısı korunmuş.
