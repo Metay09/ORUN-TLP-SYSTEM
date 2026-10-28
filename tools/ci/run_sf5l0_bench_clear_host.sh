@@ -29,10 +29,20 @@ assert app.count(command) == 1
 begin = app.index('if (isActivityCommand("BENCH DRAIN OFF", 15))')
 end = app.index("#endif", begin)
 scope = app[begin:end]
-for guard in ("!product_records.requestBenchClear()", "tracking_enabled",
+for guard in ("!product_records.requestBenchClear()",
               "bench_pacer.enabled()", "bench_pacer.awaitingAck()",
               "custody_ack_release.pending()"):
     assert guard in scope, guard
+# Scope regression guard: the effective tracking bit is a local variable in
+# loop(), not handleRoleCommand(). An undeclared reference passes naive
+# string-based source checks but fails the real RAK4630 compiler.
+assert "const bool tracking_enabled = serviceRuns(resolveRuntimeConfig().tracking);" in scope
+handler = app.index("void handleRoleCommand()")
+for declaration in (
+    "bool serviceRuns(const orun_tlp::ServiceStatus& status);",
+    "orun_tlp::EffectiveConfig resolveRuntimeConfig();",
+):
+    assert app.index(declaration) < handler, declaration
 assert "#ifdef ORUN_SF5L0_TRACKER" in hdr and "requestBenchClear()" in hdr
 assert "#ifdef ORUN_SF5L0_TRACKER" in store
 assert "requestRegionErase(false)" in store
