@@ -2327,6 +2327,14 @@ void printSf5dBootloaderVersion() {
 }
 #endif
 
+#ifdef ORUN_SF5L0_TRACKER
+// The USB command handler is declared before these loop-level runtime
+// resolution helpers. Query effective tracking state at command time rather
+// than relying on the loop() local tracking_enabled variable.
+bool serviceRuns(const orun_tlp::ServiceStatus& status);
+orun_tlp::EffectiveConfig resolveRuntimeConfig();
+#endif
+
 void handleRoleCommand() {
   if (role_command_overflow) {
     role_command_length = 0;
@@ -2510,6 +2518,7 @@ void handleRoleCommand() {
   // first select APP SERVICES NONE and BENCH DRAIN OFF.
   if (isActivityCommand("BENCH TRACKER ERASE RECORDS CONFIRM", 35)) {
     role_command_length = 0;
+    const bool tracking_enabled = serviceRuns(resolveRuntimeConfig().tracking);
     if (tracking_enabled || bench_pacer.enabled() ||
         bench_pacer.awaitingAck() || custody_ack_release.pending() ||
         !product_records.requestBenchClear()) {
