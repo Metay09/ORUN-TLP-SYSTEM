@@ -491,16 +491,24 @@ def ble_forever(inbox: Inbox, address: str | None,
                     gateway = None
                     release = None
                     mid = 0
+                    started_ble = time.monotonic()
+                    seen_frames = 0
+                    hello_received = False
                     while client.is_connected:
                         try:
                             frame = await asyncio.wait_for(queue.get(), timeout=0.1)
                         except asyncio.TimeoutError:
                             frame = None  # poll backend acknowledgements while idle
                         if frame:
+                            seen_frames += 1
+                            if seen_frames == 1:
+                                print("[ble] first GATT frame received",
+                                      "bytes=", len(frame), flush=True)
                             msg = reassembler.push(frame)
                             if msg:
                                 gateway = handle_ble_message(msg, inbox, gateway)
                                 if msg[0] == 1 and len(msg) == 13:
+                                    hello_received = True
                                     held = int.from_bytes(msg[9:11], "big")
                                     capacity = int.from_bytes(msg[11:13], "big")
                                     print("[ble] HELLO", gateway,
@@ -524,10 +532,18 @@ def ble_forever(inbox: Inbox, address: str | None,
                                     print("[ble] Gateway ID mismatch; ACCEPT disabled",
                                           flush=True)
                                     release = None
+                        if not hello_received and time.monotonic() - started_ble >= 20:
+                            raise TimeoutError(
+                                "Gateway HELLO missing after 20s; "
+                                f"received GATT frames={seen_frames}")
                         if release:
                             mid = await release.poll_ble(client, time.monotonic(), mid)
-            except (Exception,) as exc:
-                print("[ble] reconnecting after", type(exc).__name__, flush=True)
+                    print("[ble] disconnected",
+                          "HELLO=", hello_received,
+                          "GATT frames=", seen_frames, flush=True)
+            except Exception as exc:
+                print("[ble] reconnecting after", type(exc).__name__,
+                      str(exc), flush=True)
                 await asyncio.sleep(5)
 
     asyncio.run(run())
