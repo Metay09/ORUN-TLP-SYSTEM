@@ -254,9 +254,17 @@ void testSession() {
            r.bytes[5] == uint8_t(el::AcceptCode::kUnknown));
   }
 
-  // DUMP: a new full pass shows only what is still held (7).
+  // DUMP must re-announce Gateway identity, even if the initial HELLO
+  // was missed before the central finished enabling indications. Identity
+  // precedes preview/archive; DUMP itself never accepts or erases custody.
   const uint8_t dump[] = {uint8_t(el::Type::kDump)};
   s.onMessage(dump, sizeof(dump));
+  const Sent repeated_hello = pull(s);
+  assert(repeated_hello.type == uint8_t(el::Type::kHello));
+  assert(repeated_hello.bytes.size() == el::kHelloSize);
+  assert(get64(&repeated_hello.bytes[1]) == kGateway);
+  assert(get16(&repeated_hello.bytes[9]) == 7U);
+  // DUMP: a new full pass shows only what is still held (7).
   Sent head = pull(s);
   assert(head.type == uint8_t(el::Type::kHeldPreview));
   unsigned again = 0;
