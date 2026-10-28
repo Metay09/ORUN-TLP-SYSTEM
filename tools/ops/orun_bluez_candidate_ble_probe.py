@@ -16,13 +16,13 @@ ADDRESS = "C5:DD:01:85:C9:4B"
 GATEWAY = "09A462BD4B275BA5"
 
 async def run():
-    rx = EdgeReassembler()
+    reassembler = EdgeReassembler()
     good = {"hello": False, "dump": False, "frames": 0}
     done = asyncio.Event()
 
     def on_data(_, frame):
         good["frames"] += 1
-        msg = rx.push(bytes(frame))
+        msg = reassembler.push(bytes(frame))
         if msg is None:
             return
         if len(msg) == 13 and msg[0] == 1:
@@ -43,9 +43,9 @@ async def run():
                 print("CONNECTED:", client.is_connected, flush=True)
                 await client.start_notify(EDGE_TO_EDGE_UUID, on_data)
                 services = client.services
-                rx = services.get_characteristic(EDGE_TO_EDGE_UUID)
+                rx_characteristic = services.get_characteristic(EDGE_TO_EDGE_UUID)
                 tx = services.get_characteristic("6f9a1c21-5b3e-4d8a-9e61-2c4b7a0d3e51")
-                print("RX PROPERTIES:", rx.properties if rx else "MISSING", flush=True)
+                print("RX PROPERTIES:", rx_characteristic.properties if rx_characteristic else "MISSING", flush=True)
                 print("TX PROPERTIES:", tx.properties if tx else "MISSING", flush=True)
                 await request_ble_dump(client)
                 print("READ-ONLY DUMP REQUEST: SENT", flush=True)
