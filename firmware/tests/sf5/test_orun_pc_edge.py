@@ -65,6 +65,62 @@ class PCEdgeTests(unittest.TestCase):
             )
             self.assertNotEqual(bad.returncode, 0, identifier)
 
+    def test_ble_transport_switch_validation(self):
+        script = ROOT / "tools" / "ops" / "orun_pc_edge_service.sh"
+        mac = "C5:DD:01:85:C9:4B"
+        good = subprocess.run(
+            ["bash", str(script), "transport", "validate", "ble", mac],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        self.assertEqual(good.returncode, 0, good.stderr)
+        for invalid in ("C5:DD:01:85:C9", "C5:DD:01:85:C9:4b",
+                        "C5:DD:01:85:C9:4B; reboot"):
+            bad = subprocess.run(
+                ["bash", str(script), "transport", "validate", "ble", invalid],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            self.assertNotEqual(bad.returncode, 0, invalid)
+
+    def test_ble_transport_keeps_backend_token_and_handoff(self):
+        import importlib.util
+        import shlex
+
+        helper = ROOT / "tools" / "ops" / "orun_pc_edge_transport.py"
+        spec = importlib.util.spec_from_file_location("pc_transport_test", helper)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            drop = root / ".config/systemd/user/orun-pc-edge.service.d"
+            drop.mkdir(parents=True)
+            module.HOME = root
+            module.UNIT = drop.parent / "orun-pc-edge.service"
+            module.BENCH = drop / "10-bench-release.conf"
+            module.UNIT.write_text("[Service]\n")
+            token = root / ".config/orun/pc-edge.token"
+            port = ("/dev/serial/by-id/"
+                    "usb-RAKwireless_WisCore_RAK4631_Board_"
+                    "09A462BD4B275BA5-if00")
+            cmd = (
+                f"/usr/bin/python3 -u {ROOT}/tools/orun_pc_edge.py "
+                f"--mode usb --backend-url http://100.114.36.9:8090 "
+                f"--edge-id pc-simsek --token-file {token} "
+                f"--port {port} --bench-release-gateway 09A462BD4B275BA5"
+            )
+            module.BENCH.write_text("[Service]\nExecStart=\nExecStart=" + cmd + "\n")
+            new = shlex.split(module.build_ble_start("C5:DD:01:85:C9:4B"))
+            self.assertEqual(new[:3], ["/usr/bin/python3", "-u",
+                                       str(ROOT / "tools/orun_pc_edge.py")])
+            self.assertEqual(new[new.index("--mode") + 1], "ble")
+            self.assertNotIn("--port", new)
+            self.assertEqual(new[new.index("--ble-address") + 1],
+                             "C5:DD:01:85:C9:4B")
+            self.assertEqual(new[new.index("--token-file") + 1], str(token))
+            self.assertEqual(new[new.index("--backend-url") + 1],
+                             "http://100.114.36.9:8090")
+            self.assertEqual(new[new.index("--bench-release-gateway") + 1],
+                             "09A462BD4B275BA5")
+
     def test_url_and_token_guard(self):
         assert pc.checked_backend("http://100.99.88.77:8090") == "http://100.99.88.77:8090"
         assert pc.checked_backend("http://127.0.0.1:8090") == "http://127.0.0.1:8090"
