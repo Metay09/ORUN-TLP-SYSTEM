@@ -8,6 +8,32 @@ bool TrackerProductTxPilot::sameIdentity(
          other.sequence == identity_.sequence;
 }
 
+// Diagnostic-only names. No flash access or RF side effects.
+const char* TrackerProductTxPilot::blockReasonName() const {
+  switch (block_reason_) {
+    case BlockReason::kNone: return "NONE";
+    case BlockReason::kCacheCommitFailed: return "CACHE_COMMIT_FAILED";
+    case BlockReason::kCacheIdentityMismatch: return "CACHE_IDENTITY_MISMATCH";
+    case BlockReason::kRetainedReadError: return "RETAINED_READ_ERROR";
+    case BlockReason::kRetainedInvalid: return "RETAINED_INVALID";
+    case BlockReason::kExactLookupReadError: return "EXACT_LOOKUP_READ_ERROR";
+    case BlockReason::kExactCountUnavailable: return "EXACT_COUNT_UNAVAILABLE";
+    case BlockReason::kExactSlotsFull: return "EXACT_SLOTS_FULL";
+    case BlockReason::kPlaintextInvalid: return "PLAINTEXT_INVALID";
+    case BlockReason::kCryptoFailed: return "CRYPTO_FAILED";
+    case BlockReason::kCacheSubmitRejected: return "CACHE_SUBMIT_REJECTED";
+    case BlockReason::kExactProofMismatch: return "EXACT_PROOF_MISMATCH";
+    case BlockReason::kCachedHeaderInvalid: return "CACHED_HEADER_INVALID";
+  }
+  return "UNKNOWN";
+}
+
+TrackerProductTxPilot::Event TrackerProductTxPilot::block(BlockReason reason) {
+  block_reason_ = reason;
+  phase_ = Phase::kBlocked;
+  return Event::kBlocked;
+}
+
 bool TrackerProductTxPilot::storageIdle() const {
   return records_.mounted() && !records_.preparing() &&
          !records_.pending() && records_.store().ready() &&
@@ -101,8 +127,8 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
     if (!records_.takeCacheOutcome(outcome)) return Event::kNone;
     if (!outcome.durable || !sameIdentity(outcome.identity)) {
       sealed_ = {};
-      phase_ = Phase::kBlocked;
-      return Event::kBlocked;
+      return block(!outcome.durable ? BlockReason::kCacheCommitFailed
+                                   : BlockReason::kCacheIdentityMismatch);
     }
     sealed_ = {};
     phase_ = Phase::kReady;
@@ -146,10 +172,8 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
     ObservationStore::Record record{};
     if (!((live_first_ || live_only_) && selectLive(record))) {
       const auto read = records_.oldestRetained(record);
-      if (read == ObservationStore::LookupResult::kReadError) {
-        phase_ = Phase::kBlocked;
-        return Event::kBlocked;
-      }
+      if (read == ObservationStore::LookupResult::kReadError)
+        return block(BlockReason::kRetainedReadError);
       if (read != ObservationStore::LookupResult::kFound) {
         if (read == ObservationStore::LookupResult::kNone) markIdle();
         return Event::kNone;
@@ -160,24 +184,21 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
         record.kind != osf::RecordKind::kPeriodic ||
         record.schema != osf::kProductSchemaV1 ||
         record.payload_size != tlp::kPeriodicPlaintextSize) {
-      phase_ = Phase::kBlocked;
-      return Event::kBlocked;
+      return block(BlockReason::kRetainedInvalid);
     }
 
     identity_ = record.handle.identity;
     osc::ExactObject cached{};
     const auto found = records_.findCachedExact(identity_, cached);
-    if (found == ObservationStore::ControlLookupResult::kReadError) {
-      phase_ = Phase::kBlocked;
-      return Event::kBlocked;
-    }
+    if (found == ObservationStore::ControlLookupResult::kReadError)
+      return block(BlockReason::kExactLookupReadError);
     if (found == ObservationStore::ControlLookupResult::kFound) {
       // A cached exact object wins over fresh encryption, including reboot.
       phase_ = Phase::kReady;
     } else {
       uint16_t occupied = 0U;
-      if (!records_.store().exactObjectCount(occupied) ||
-          occupied >= osf::kMaxExactCustodyObjects) {
+      const bool counted = records_.store().exactObjectCount(occupied);
+      if (!counted || occupied >= osf::kMaxExactCustodyObjects) {
         // The record stays retained; never evict another custody object.
         // Live-first: keep moving by re-sending an already cached object.
         osf::RecordIdentity fallback{};
@@ -185,8 +206,8 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
           identity_ = fallback;
           phase_ = Phase::kReady;
         } else {
-          phase_ = Phase::kBlocked;
-          return Event::kBlocked;
+          return block(counted ? BlockReason::kExactSlotsFull
+                               : BlockReason::kExactCountUnavailable);
         }
       } else {
       tlp::PeriodicObservationPlaintext plaintext{};
@@ -195,8 +216,7 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
               tlp::ProductSecureCodecResult::kOk ||
           plaintext.record_incarnation != identity_.incarnation ||
           plaintext.record_sequence != identity_.sequence) {
-        phase_ = Phase::kBlocked;
-        return Event::kBlocked;
+        return block(BlockReason::kPlaintextInvalid);
       }
 
       sealed_ = {};
@@ -216,8 +236,7 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
       }
       if (result != ProductSecureCryptoResult::kOk) {
         sealed_ = {};
-        phase_ = Phase::kBlocked;
-        return Event::kBlocked;
+        return block(BlockReason::kCryptoFailed);
       }
       for (size_t i = 0U; i < sizeof(wire); ++i)
         sealed_.object[i] = wire[i];
@@ -240,8 +259,9 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
       phase_ = Phase::kReady;
     } else {
       sealed_ = {};
-      phase_ = Phase::kBlocked;
-      return Event::kBlocked;
+      return block(admission == ProductRecordStore::CacheSubmit::kNoCapacity
+                       ? BlockReason::kExactSlotsFull
+                       : BlockReason::kCacheSubmitRejected);
     }
   }
 
@@ -252,8 +272,7 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
           ObservationStore::ControlLookupResult::kFound ||
       !sameIdentity(exact.identity) ||
       !records_.custodyCandidateMatchesRetainedExact(exact)) {
-    phase_ = Phase::kBlocked;
-    return Event::kBlocked;
+    return block(BlockReason::kExactProofMismatch);
   }
   tlp::ProductSecureFrame header{};
   if (tlp::decodeProductSecureFrame(
@@ -264,8 +283,7 @@ TrackerProductTxPilot::Event TrackerProductTxPilot::update(bool eligible) {
       (header.path_flags & tlp::kProductPathFlagCustodyRequested) == 0U) {
     // An older exact object may have been sealed as direct-only. Send it
     // unchanged on the direct pilot path; never enable relay by rewriting AAD.
-    phase_ = Phase::kBlocked;
-    return Event::kBlocked;
+    return block(BlockReason::kCachedHeaderInvalid);
   }
 
   if (!radio_.sendProductSecurePacket(exact.object, exact.object_size))
