@@ -1,6 +1,6 @@
 # ORUN S4C — bağımsız ortak veri Backend süreci (127.0.0.1)
 
-**Durum:** DRAFT / host testi henüz kullanıcı tarafından yürütülmedi.
+**Durum:** HOST TESTLERİ PASS (2026-10-29): kullanıcı Debian `be1e7ef`, **16/16 unittest PASS**, S3C Python↔Node gerçek HTTP E2E PASS. Canlı sisteme kurulum hâlâ YOK.
 **Önceki kanıt:** S4B kullanıcının Debian bilgisayarında **12/12 PASS**
 (`d5ef4d0`), S3C gerçek Python↔Node HTTP **PASS**.
 **Üretim servisi:** Çalışan `orun-backend.service` ve
@@ -52,6 +52,14 @@ S4B 12 regresyonu ve S3C TS↔Python gerçek HTTP de tekrar çalışır.
 
 **Beklenen:** 4 yeni test + 12 önceki = 16 unittest; ardından S3C e2e.
 Bu PR için **PASS iddiası henüz yok**.
+
+## Kullanıcı host doğrulaması (2026-10-29)
+
+- `git fetch origin feat/backend-shared-sync-loopback-runtime` → detached `be1e7ef`.
+- `bash tools/ci/run_shared_sync_backend_runtime_host.sh` → **Ran 16 tests in 7.342s — OK**, son satır `ORUN_S4C_HOST_PASS`.
+- S3C Node TypeScript ↔ Python HTTP E2E **PASS**: owner 3/3 push, viewer 3/3 pull, cross-site isolation, conflicts retained, viewer write rejected, restart persists.
+- Step3C revocation: 401 revoked, separately enrolled phone remains authorized.
+- `127.0.0.1` ve geçici SQLite kullanıldı; ORUN canlı Backend ve PC Edge systemd servisleri ve Tracker değişmedi.
 
 ## Gerçek ürüne geçişi engelleyen sınırlar
 
