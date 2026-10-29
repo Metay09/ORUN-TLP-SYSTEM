@@ -81,6 +81,20 @@ public class OrunIdentityPlugin extends Plugin {
         return (KeyStore.PrivateKeyEntry) candidate;
     }
 
+    private static void proveKeyUsable(KeyStore.PrivateKeyEntry key) throws Exception {
+        // Do not report a key as ready unless this AndroidKeyStore can really
+        // sign and verify Ed25519 with the non-exportable private key.
+        Signature sign = Signature.getInstance("Ed25519");
+        sign.initSign(key.getPrivateKey());
+        sign.update(DOMAIN);
+        byte[] proof = sign.sign();
+        if (proof.length != 64) throw new IllegalStateException("SIGNATURE_SIZE");
+        Signature verify = Signature.getInstance("Ed25519");
+        verify.initVerify(key.getCertificate().getPublicKey());
+        verify.update(DOMAIN);
+        if (!verify.verify(proof)) throw new IllegalStateException("SIGNATURE_VERIFY");
+    }
+
     private static byte[] sha256(byte[] source) throws Exception {
         return MessageDigest.getInstance("SHA-256").digest(source);
     }
@@ -112,6 +126,7 @@ public class OrunIdentityPlugin extends Plugin {
                     out.put("present", false);
                 } else {
                     byte[] raw = rawPublic(key);
+                    proveKeyUsable(key);
                     out.put("present", true);
                     out.put("publicKeyBase64", Base64.encodeToString(raw, Base64.NO_WRAP));
                     out.put("installationId", installationId(raw));
