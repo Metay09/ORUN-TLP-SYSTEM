@@ -256,6 +256,7 @@ class PhoneEnrollmentHTTPTests(unittest.TestCase):
                         json.dumps(sorted(VIEW)),
                         hashlib.sha256(original_token.encode()).digest(),
                         int(time.time()) + 3600))
+        old.chmod(0o600)
         migrated = EdgeEnrollment(old)
         found = migrated.resolve_token(original_token)
         self.assertIsNotNone(found)
