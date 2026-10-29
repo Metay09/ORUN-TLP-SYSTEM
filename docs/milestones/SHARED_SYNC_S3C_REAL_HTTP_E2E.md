@@ -1,6 +1,6 @@
 # ORUN S3C — True Python HTTP / Node TypeScript shared-sync E2E gate
 
-**Status:** DRAFT, owner host run NOT YET EXECUTED.
+**Status:** OWNER LOOPBACK REAL-HTTP HOST PASS (2026-10-29, tested `f43244d`). Physical Android / Tailscale production sync not yet integrated.
 **Depends on:** PR #194 Backend S2 (host 19/19), PR #195 Step3C security
 (host 17/17), PR #196 Android S3A (host 82/82), PR #197 Android S3B
 (host 93/93 + typecheck + Vite build PASS).
@@ -58,6 +58,14 @@ bash tools/ci/run_shared_sync_real_http_e2e.sh
 Requires Python 3 + `cryptography` and Node 22+ with TS stripping, both
 available on the owner's previously verified workstation. No new pip/npm
 dependencies needed.
+
+## Owner real-HTTP result (2026-10-29)
+
+- User Debian checkout `f43244d` invoked `bash tools/ci/run_shared_sync_real_http_e2e.sh`.
+- `SHARED_SYNC_REAL_HTTP_E2E: PASS`: owner staged/uploaded 3/3 zone/group/target resources; authorized second phone mirror pulled 3/3; other site isolated; stale PC edit preserved as conflict; read-only user write denied; client mirror persisted after reopen.
+- `STEP3C_REAL_HTTP_E2E: PASS`: revoked phone token returned 401; second enrolled phone remained authorized.
+- Test bound IPv4 loopback and used temporary SQLite. No running backend, PC Edge or production device modified.
+- The result proves Node/native HTTP interoperability, **not live Android WebView, TLS deployment or user enrollment UX**.
 
 ## Still not production
 
