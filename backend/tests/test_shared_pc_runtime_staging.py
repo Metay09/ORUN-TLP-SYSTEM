@@ -18,7 +18,7 @@ import tempfile
 import unittest
 
 from tools.ci.stage_shared_pc_runtime import stage, StageRefused, SOURCES
-from tools.ci.render_shared_pc_timer import SERVICE as MIRROR_SERVICE, TIMER
+from tools.ci.render_shared_pc_timer import UNIT as MIRROR_SERVICE, TIMER
 from tools.ci.stage_shared_pc_runtime import SERVICE as BACKEND_SERVICE
 
 
