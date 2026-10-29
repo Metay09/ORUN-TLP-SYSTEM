@@ -119,6 +119,42 @@ mobil enrollment tamamlanana kadar bu loopback-only `18781` hizmetine
 uzaktan erişemez. Salt-okunur PC tokenı 30 gün sonra bitecek ve
 **otomatik yenileme hâlâ yok**; kalıcı üretim erişimi için bu kapı kapanmadı.
 
+## İlk gerçek etkinleştirme girişimi — 29 Ekim 2026
+
+Kullanıcı hazır çalışma kopyası `264b411` ile etkinleştirme komutunu
+`b02b672` üzerinde çalıştırdı. Çıktı:
+
+```text
+STAGED_STATE_RETAINED_FOR_REVIEW=YES
+ORUN_SHARED_ACTIVATION_REFUSED=URLError
+```
+
+Bu **PASS değildir**. Etkinleştirme CLI'si eski observation servislerini
+hedeflemeyen kendi üç systemd unitini silerek geri alma yoluna girdi ve
+kalıcı özel state'i korudu. Fakat gerçekten tüm unitlerin temizlendiği
+ve eski PID'lerin değişmediği bu çıktıdan tek başına doğrulanamaz;
+sonraki girişimde fail-closed unit-var mı/port-var mı kontrolleri yapılır.
+
+Teknik olası neden: systemd `Type=simple` servisini `active` yapınca
+Python HTTP listener henüz bind edilmiş olmak zorunda değildir. İlk kod
+`systemctl start` ve `is-active` dönüşünün hemen ardından tek HTTP
+isteği yapıyordu; bunun `URLError` üretmesi mümkündür. Servis başlangıç
+hatası da aynı dış belirtiyi verebilir; stderr/journal görülmeden kesin
+neden söylenemez.
+
+Düzeltme `8ec66da`: sadece `127.0.0.1` HTTP identity GET üzerinde
+12 saniyeye kadar 250ms aralıklı sınırlı bağlantı tekrar denemesi,
+ortam HTTP proxy değişkenlerini devreden çıkarma, HTTP 401/403 gibi gerçek
+yetki reddini **hemen** fail-closed ele alma. Bağlantı kurulamıyorsa
+`SHARED_BACKEND_HTTP_NOT_READY` kodu, ham/ayrıntılı URL hatası yerine
+şifre sızdırmayan sabit tanı döner.
+
+`backend/tests/test_shared_pc_activation_readiness.py` (commit
+`e0d6dae`) gecikmeli port açma, HTTP 401 ve bağlantı yokken güvenli
+hata testlerini ekler. **Yeni kod için kullanıcı host PASS henüz yoktur.**
+Tekrar test ve açık etkinleştirme öncesinde yalnız kendi yeni unitlerinin
+varlığı ile eski servislerin aktifliği gözlenmelidir.
+
 ## Gerçek sistemi etkinleştirmek için ayrı karar
 
 S4E bir **hazırlama** aşamasıdır. Kullanıcının açık onayı,
