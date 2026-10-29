@@ -21,7 +21,7 @@ from tools.orun_shared_pc_mirror import ID, validate_origin
 
 UNIT = "orun-shared-pc-mirror.service"
 TIMER = "orun-shared-pc-mirror.timer"
-SAFE_ARG = re.compile(r"^[A-Za-z0-9_./:+\\[\\]-]+$")
+SAFE_ARG = re.compile(r"^[A-Za-z0-9_./:+-]+$")
 
 
 def _simple(value: str) -> str:
