@@ -154,3 +154,26 @@ test("accepted revision and tombstone are recorded but never mean Tracker applie
   assert.throws(()=>a.queue("zone","z1",zoneBody(zone()),"revive"),/Silinen/);
   assert.equal("applied" in a.get().resources["zone:z1"],false);
 });
+
+test("empty server page cannot skip unseen changes or acknowledge a false cursor",()=>{
+  const e=env();
+  const a=e.make();
+  assert.throws(()=>a.applyPull([],7),/cursor/);
+  assert.equal(a.get().cursor,0);
+  assert.equal(e.data.get(e.key),undefined);
+});
+
+test("same revision compares nested content canonically and rejects actual changes",()=>{
+  const e=env();
+  const a=e.make();
+  const body=zoneBody(zone());
+  a.applyPull([{sequence:1,kind:"zone",id:"z1",revision:1,body,deleted:false}],1);
+  const reordered={ring_e7:body.ring_e7,active:body.active,name:body.name};
+  a.applyPull([{sequence:2,kind:"zone",id:"z1",revision:1,body:reordered,deleted:false}],2);
+  assert.equal(a.get().cursor,2);
+  const different={...reordered,ring_e7:[[376100000,280540000],[376110000,280540000],[376110000,280550000]]};
+  assert.throws(()=>a.applyPull([{sequence:3,kind:"zone",id:"z1",revision:1,
+    body:different,deleted:false}],3),/farklı içerik/);
+  assert.equal(a.get().cursor,2);
+  assert.deepEqual(a.get().resources["zone:z1"].body,body);
+});
