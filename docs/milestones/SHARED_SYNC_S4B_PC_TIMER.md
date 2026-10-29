@@ -1,6 +1,6 @@
 # ORUN S4B — PC Edge ortak veri okuma zamanlayıcısı, güvenli hazırlık
 
-**Durum: DRAFT / HOST TESTS NOT RUN.** Önceki S4A `7a01360` testleri
+**Durum: HOST TESTLERİ PASS (2026-10-29, kullanıcının Debian bilgisayarı, `d5ef4d0`); üretim aktivasyonu hâlâ YOK.** Önceki S4A `7a01360` testleri
 kullanıcının bilgisayarında 8/8 PASS; S3C gerçek HTTP E2E PASS.
 Bu dalda eklenen zamanlayıcı ve özel token dosyası **henüz doğrulanmadı**.
 
@@ -35,6 +35,13 @@ bash tools/ci/run_shared_pc_timer_host.sh
 - S3C Node/TypeScript ↔ Python gerçek HTTP E2E tekrar çalışır.
 - Toplam **12 unittest** bekleniyor. Sonuç kullanıcı host'una bağlı; PASS
   önceden iddia edilmiyor.
+
+## Kullanıcı host doğrulaması (2026-10-29)
+
+- `git fetch origin feat/pc-edge-shared-sync-timer` ve detached checkout `d5ef4d0`.
+- `bash tools/ci/run_shared_pc_timer_host.sh`: **Ran 12 tests in 40.220s — OK**; `ORUN_S4B_HOST_PASS`.
+- S3C gerçek Python HTTP ↔ Node/TypeScript regresyonu ayrıca **PASS**: 3/3 alan/grup/hedef gönderimi ve okunması, saha izolasyonu, revizyon çakışmasında taslağı koruma, read-only yazma reddi, restart, yetki iptali 401.
+- İzole test sırasında **hiçbir canlı systemd servisi, DB, Android veya Tracker değiştirilmedi**; staged timer henüz kurulmadı. Güvenli kurulum için gerçek Step3C yetkilendirmesi ve HTTPS hâlâ eksik.
 
 ## Taslakları üretme (daha sonra, gerçek yetkili PC kaydı hazır olunca)
 
