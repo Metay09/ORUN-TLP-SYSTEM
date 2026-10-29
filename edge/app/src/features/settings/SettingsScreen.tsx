@@ -1,4 +1,5 @@
 // Ayarlar: look (theme, sun mode), the sample herd, data and about.
+import { useEffect, useState } from "react";
 import { CaretRight } from "@phosphor-icons/react";
 import { tr } from "../../app/i18n/tr.ts";
 import { useBack, useNav } from "../../app/nav.ts";
@@ -6,6 +7,7 @@ import { useApp } from "../../app/store.ts";
 import type { Theme } from "../../app/stores.ts";
 import { Card, Cell, KV, Screen, Section, Seg, ToggleRow } from "../../ds/components.tsx";
 import { serverWords } from "../network/words.ts";
+import { inspectIdentity, isAndroidIdentityAvailable, type AndroidIdentity } from "../../platform/orunIdentity.ts";
 
 declare const __APP_VERSION__: string;
 
@@ -14,6 +16,31 @@ export function SettingsScreen() {
   const nav = useNav();
   useBack(() => nav.pop());
   const p = m.prefs;
+  const androidIdentity = isAndroidIdentityAvailable();
+  const [identity, setIdentity] = useState<AndroidIdentity | null>(null);
+  const [identityBusy, setIdentityBusy] = useState(false);
+  const [identityError, setIdentityError] = useState(false);
+  useEffect(() => {
+    if (!androidIdentity) return;
+    let live = true;
+    void inspectIdentity(false)
+      .then((result) => { if (live) setIdentity(result); })
+      .catch(() => { if (live) setIdentityError(true); });
+    return () => { live = false; };
+  }, [androidIdentity]);
+  const prepareIdentity = async () => {
+    if (identityBusy) return;
+    setIdentityBusy(true);
+    setIdentityError(false);
+    try {
+      // Only an explicit button tap can create a non-exportable key.
+      setIdentity(await inspectIdentity(!identity?.present));
+    } catch {
+      setIdentityError(true);
+    } finally {
+      setIdentityBusy(false);
+    }
+  };
   return (
     <Screen title={tr.settings.title} onBack={() => nav.pop()}>
       <Section title={tr.settings.look} />
@@ -34,6 +61,27 @@ export function SettingsScreen() {
           onClick={() => nav.setTab("network")} />
         {!m.demo && <Cell title={tr.settings.phoneRecords(m.snap.records ?? 0)} />}
       </Card>
+
+      {androidIdentity && <>
+        <Section title={tr.settings.identityTitle} />
+        <Card pad>
+          <div className="stack">
+            <span className="fine">{tr.settings.identityHelp}</span>
+            {identityBusy ? <span className="sm" role="status">{tr.settings.identityLoading}</span>
+              : identityError ? <span className="sm t-alarm" role="alert">{tr.settings.identityFailed}</span>
+              : <span className="sm" role="status">{identity?.present
+                ? tr.settings.identityReady : tr.settings.identityMissing}</span>}
+            {identity?.present && <div className="kv">
+              <span className="fine">{tr.settings.identityFingerprint}</span>
+              <code>{identity.fingerprint}</code>
+            </div>}
+            <button className="btn small" type="button" disabled={identityBusy}
+              onClick={() => void prepareIdentity()}>
+              {identity?.present ? tr.settings.identityRefresh : tr.settings.identityCreate}
+            </button>
+          </div>
+        </Card>
+      </>}
 
       <Section title={tr.settings.about} />
       <Card>
