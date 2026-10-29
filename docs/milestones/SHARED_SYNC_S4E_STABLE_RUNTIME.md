@@ -65,6 +65,13 @@ Yalnız `TemporaryDirectory` altında S4E hazırlığı ve yeni
 
 **Bu 2 test henüz çalıştırılmadı, PASS iddiası yok.**
 
+## İlk kullanıcı testi ve düzeltme (2026-10-29)
+
+- Kullanıcı `cd7ae0c` üzerinde S4E testini başlattı: **1 ImportError** ile test yükleme aşamasında durdu; testler çalışmadı.
+- Hata: `backend/tests/test_shared_pc_runtime_staging.py` yanlışlıkla `tools.ci.render_shared_pc_timer.SERVICE` sabitini çağırıyordu. Bu modülde mevcut sabit `UNIT`.
+- Sadece import adı `SERVICE as MIRROR_SERVICE` → `UNIT as MIRROR_SERVICE` olacak şekilde düzeltildi: `21bdebe`.
+- **Düzeltilmiş kod için S4E host PASS kanıtı henüz yok.** Hiçbir çalışan ORUN servisi değiştirilmedi.
+
 ## Gerçek sistemi etkinleştirmek için ayrı karar
 
 S4E bir **hazırlama** aşamasıdır. Kullanıcının açık onayı,
