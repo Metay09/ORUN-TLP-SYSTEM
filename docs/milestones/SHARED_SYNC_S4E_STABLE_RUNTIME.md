@@ -1,6 +1,6 @@
 # ORUN S4E — mevcut gözlem servislerine dokunmadan kararlı ortak veri yan sistemi
 
-**Durum (2026-10-29): DRAFT / S4E kullanıcı host doğrulaması **2/2 PASS** (`968e5a8`, `ORUN_S4E_STAGING_HOST_PASS`). Kurulum ve canlı etkinleştirme YOK.**
+**Durum (2026-10-30): LOCAL PILOT ACTIVE — systemd `orun-shared-sync.service` + `orun-shared-pc-mirror.timer` etkin ve aktif; S4E yeni 5/5 PASS (402edf1). Telefon/uzak PC eşitlemesi henüz yok.**
 
 Önceki kullanıcı kanıtı: S4D gerçek süreç `850c7fc` **PASS**:
 3 örnek mera/grup/hedef kaydı authenticated HTTP ile yazıldı; PC Edge
@@ -82,7 +82,7 @@ Kullanıcının gerçek terminal çıktısı:
 - Üç unit dosyası **yalnız** `units/` altına yazılmış; henüz `~/.config/systemd/user` içine kurulmadı. Yeni sistemd servisleri hâlâ çalışmıyor.
 - Mevcut gözlem servisleri ve canlı DB değiştirilmedi.
 
-## Açık onayla etkinleştirme — kod eklendi, kullanıcı henüz çalıştırmadı
+## Açık onayla etkinleştirme — tasarım ve daha sonra doğrulanan çalıştırma
 
 `tools/ci/activate_shared_pc_runtime.py` yalnız
 `--activate` ile:
@@ -103,8 +103,8 @@ Kullanıcının gerçek terminal çıktısı:
    unit'i devre dışı bırakıp kaldırmaya çalışır; **özel DB/token/manifesti
    silmez**, eski servisleri asla durdurmaz.
 
-Bu kodun kullanıcı host'unda çalıştırıldığına dair **henüz kanıt yok**;
-canlı etkinleştirmeyi başarıyla yapılmış göstermeyin. Kullanıcının açık
+Bu bölümün yazıldığı tarihte ilk başarılı çalıştırma kanıtı yoktu;
+**30 Ekim 2026 itibarıyla üstteki yeni bölümde canlı kullanıcı PASS kanıtı vardır**. Kullanıcının açık
 `--activate` komutu kurulum ve başlatma onayıdır:
 
 ```bash
@@ -155,12 +155,39 @@ hata testlerini ekler. **Yeni kod için kullanıcı host PASS henüz yoktur.**
 Tekrar test ve açık etkinleştirme öncesinde yalnız kendi yeni unitlerinin
 varlığı ile eski servislerin aktifliği gözlenmelidir.
 
-## Gerçek sistemi etkinleştirmek için ayrı karar
+## 30 Ekim 2026 — kalıcı yerel pilot ETKİNLEŞTİ (kullanıcı terminal kanıtı)
 
-S4E bir **hazırlama** aşamasıdır. Kullanıcının açık onayı,
-doğru site/PC kimliği, token yenileme, 127.0.0.1 port çakışması,
-servis yaşam döngüsü ve rollback kontrolü tamamlanmadan canlı
-sisteme kurulum yapılmaz.
+Kullanıcı gerçek kurulumda aşağıdaki sıralamayı tamamladı:
+
+- Önce eski başarısız kurulumdan kalan üç yeni user unit'in `LoadState=not-found` olduğunu doğruladı; mevcut gözlem servisleri aktifti ve PID'leri `303602` (Backend), `299910` (PC Edge) idi.
+- `402edf1` üzerindeki `bash tools/ci/run_shared_pc_runtime_staging_host.sh`: **5/5 PASS (1.616s)**, `ORUN_S4E_STAGING_HOST_PASS`. Gecikmeli HTTP bind, HTTP 401 yetki reddi ve erişilemeyen port testleri dahil.
+- `python3 tools/ci/activate_shared_pc_runtime.py --staged-dir "$HOME/ORUN-SHARED-RUNTIME" --site orun-main --installation pc-main --activate`: **PASS**:
+
+```text
+ORUN_SHARED_SIDECAR_ACTIVATED=YES
+LOOPBACK_BACKEND=127.0.0.1:18781
+PC_MIRROR_READ_ONLY=YES
+MIRROR_TIMER_ENABLED=YES
+ORIGINAL_SERVICE_UNCHANGED=orun-backend.service PID=303602
+ORIGINAL_SERVICE_UNCHANGED=orun-pc-edge.service PID=299910
+TOKEN_EXPIRY=30_DAYS_AFTER_ENROLLMENT;RENEWAL_NOT_IMPLEMENTED
+PHONE_AND_REMOTE_PC_SYNC=NOT_YET_ENABLED
+ORUN_SHARED_ACTIVATION_COMMAND_PASS
+```
+
+- Son `systemctl --user show` çıktısında hem `orun-shared-sync.service` hem de `orun-shared-pc-mirror.timer` için `ActiveState=active`, `UnitFileState=enabled` görüldü.
+- Kaynak kodu sabit snapshot klasöründe; gelişim worktree'sine sonraki `git switch` canlı çalışan dosyaları kendiliğinden değiştirmez.
+- **Bu yerel pilot gerçekten aktiftir; fakat veritabanı ve PC aynası yeni ve boş olabilir.** Başka PC ya da Android telefon için HTTPS/kalıcı kimlik, owner enrolment, Android outbox/UI yoktur. Yerel `18781` portuna Tailscale/telefon doğrudan bağlanamaz. Tracker geofence APPLIED komut zinciri çalıştırılmadı.
+- `pc-main` salt-okunur tokenı kurulumda 29 Ekim 2026 civarında verildi; **30 gün sonra sona erer**, otomatik yenileme mevcut değil. Etkinleşen zamanlayıcının token süresi dolduktan sonra sessizce başarısız olmaması için ürün seviyesinde kimlik yenileme ve görünür servis sağlığı tamamlanmalıdır.
+
+**Bir sonraki ürün işi:** çalışan yerel pilota dokunmadan kimlik yenileme/sağlık sinyali ve telefon Edge için gerçek owner-approved kayıt + HTTPS üzerinde sync entegrasyonu; yeni test merası sahada uygulanmış sayılmamalı.
+
+## Yerel pilot sonrası üretim için kalan kararlar
+
+S4E hazırlığı ve **yerel pilotun açık onayla etkinleştirilmesi tamamlandı**.
+Ancak 30 günlük kimlik yenileme, periyodik başarısız eşitleme görünürlüğü,
+güvenli uzun dönem servis yaşam döngüsü ve rollback belgeleri üretim
+operasyonları için henüz tamamlanmadı.
 
 Gerçek telefon Edge ile ortak mera eşitlemesi ise bundan daha
 ileridir: HTTPS ve sahibi onaylı mobil kayıt/KeyStore, Android
