@@ -7,6 +7,7 @@ import { fmt, tr } from "../../app/i18n/tr.ts";
 import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { FENCE, areaM2, canonicalE7, compileFence, fromGeoJSON, newZoneId, toGeoJSON, validateRing, zoneAt } from "../../app/zones.ts";
+import { zonePlanForDevice } from "../../app/zoneTargets.ts";
 import { Bar, Card, Cell, DemoFlag, Dialog, Empty, Header, Section, Toggle } from "../../ds/components.tsx";
 
 export function ZonesScreen() {
@@ -17,6 +18,7 @@ export function ZonesScreen() {
   const [groupOpen, setGroupOpen] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [groupDevices, setGroupDevices] = useState<string[]>([]);
+  const [exportDevice, setExportDevice] = useState("");
   const saveGroup = () => {
     try {
       if (!groupName.trim() || !groupDevices.length) throw new Error("Bir grup adı ve en az bir tasma seç.");
@@ -156,6 +158,36 @@ export function ZonesScreen() {
         </Dialog>
       )}
 
+      <Section title="USB için tasma planı" />
+      <Card pad>
+        <div className="stack">
+          <span className="fine">Her tasma için tam alan listesi ayrı hazırlanır. Bu dosya yalnız taslaktır; tasmada henüz uygulanmaz.</span>
+          <select className="inp" aria-label="Dosya hazırlanacak tasma"
+            value={exportDevice} onChange={(e) => setExportDevice(e.target.value)}>
+            <option value="">Tasma seç</option>
+            {m.devices.map((d) => <option key={d.id} value={d.id}>{m.herd.find((a) => a.device === d.id)?.name ?? d.short} · {d.short}</option>)}
+          </select>
+          {exportDevice && (() => {
+            const plan = zonePlanForDevice(m.targetBook,m.zones,exportDevice,m.devices.map((d) => d.id));
+            return <>
+              <span className="sm">Bu tasmaya planlanan: {plan.zones.length} alan</span>
+              {plan.errors.map((x) => <span className="sm t-alarm strong" key={x}>{x}</span>)}
+              <button className="btn wide" disabled={!plan.zones.length || !!plan.errors.length || !!m.targetWarning}
+                onClick={() => {
+                  const file = toGeoJSON(plan.zones);
+                  const url = URL.createObjectURL(new Blob([file], { type: "application/geo+json" }));
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "orun-fence-" + exportDevice.replace(/[^A-Za-z0-9_-]/g, "") + ".geojson";
+                  a.click();
+                  setTimeout(() => URL.revokeObjectURL(url),2000);
+                  setNote("Tasma için alan dosyası hazırlandı. Bu işlem tasmaya yükleme değildir.");
+                }}>Bu tasma için GeoJSON hazırla</button>
+            </>;
+          })()}
+          <span className="fine">Dosya, fiziksel Tracker USB bağlantısında tools/orun_fence_usb.py ile uygulanabilir. Yetkili cihaz sonucu doğrulanmadan tamamlandı sayılmaz.</span>
+        </div>
+      </Card>
       <Section title={tr.zones.file} />
       <Card pad>
         <div className="stack">
