@@ -37,6 +37,12 @@
 - Desteklemediği cihazlarda güvenliği gevşeten yazılım anahtar yedeği
   eklenmemiştir; farklı güvenli yedek yol için ayrı güvenlik kararı gerekir.
 
+## İlk kullanıcı host testi (2026-10-29)
+
+- Kullanıcının Debian checkout'u `5b0e88e`: `npm test` **95 test / 94 PASS / 1 FAIL**. Hata: `test/orunIdentity.test.ts` İngilizce test adındaki başarısız doğrulama, `/kimlik|Kimlik|yanıt/` regex'inin Türkçe `kimliği` hata mesajını yakalayamaması.
+- Güvenlik/kimlik oluşturma uygulama kodu değişmeden, kırılgan metin bağımlılığı kaldırıldı: `fa06c87` test `assert.throws(..., Error)` ile bozuk kimliğin gerçekten reddedilmesini denetliyor.
+- Bu düzeltme **henüz kullanıcı makinesinde yeniden test edilmedi**. İlk komut `set -e` ile `npm test`'te durduğu için TypeScript, Android sync ve Gradle derlemesi de **henüz çalıştırılmadı**; APK paylaşımı başlamadı.
+
 ## Testler ve kabul
 
 1. `cd edge/app && npm test && npm run typecheck && npm run build`.
