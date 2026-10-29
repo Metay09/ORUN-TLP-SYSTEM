@@ -81,8 +81,10 @@ type Listener = () => void;
 export class ZoneTargetStore {
   private book: TargetBook = blankTargets();
   private listeners = new Set<Listener>();
+  private readonly key: string | null;
   readonly warning: string | null;
-  constructor(private key: string | null) {
+  constructor(key: string | null) {
+    this.key = key;
     let warning: string | null = null;
     if (key) {
       try {
