@@ -252,10 +252,10 @@ class _NoRedirect(request.HTTPRedirectHandler):
         return None
 
 
-def _pull(origin: str, bearer: str, cursor: int) -> Any:
+def _get_json(origin: str, bearer: str, path: str) -> Any:
     if not isinstance(bearer, str) or not TOKEN.fullmatch(bearer):
         raise MirrorError("SYNC_ENROLLMENT_REQUIRED")
-    url = f"{origin}/api/v1/sync?cursor={cursor}&limit={LIMIT}"
+    url = origin + path
     req = request.Request(url, headers={
         "Authorization": "Bearer " + bearer,
         "Accept": "application/json",
@@ -287,8 +287,21 @@ def _pull(origin: str, bearer: str, cursor: int) -> Any:
         raise MirrorError("SYNC_PROTOCOL_INVALID") from exc
 
 
+def _pull(origin: str, bearer: str, cursor: int) -> Any:
+    return _get_json(origin, bearer, f"/api/v1/sync?cursor={cursor}&limit={LIMIT}")
+
+
 def run_once(mirror: PcSharedMirror, bearer: str) -> dict:
     with mirror._lock():
+        # Token may have been swapped between accounts. Explicitly bind its
+        # server-resolved site and installation to the durable local mirror
+        # before any sync GET or cursor mutation.
+        identity = _get_json(mirror.origin, bearer, "/api/v1/sync/identity")
+        if (not isinstance(identity, dict) or
+                set(identity) != {"site", "installation"} or
+                identity["site"] != mirror.site or
+                identity["installation"] != mirror.installation):
+            raise MirrorError("SYNC_SERVER_IDENTITY_MISMATCH")
         total, more, pages = 0, False, 0
         for i in range(MAX_PAGES):
             previous = mirror.cursor()
