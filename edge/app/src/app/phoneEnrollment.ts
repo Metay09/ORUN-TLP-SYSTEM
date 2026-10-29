@@ -23,6 +23,7 @@ export interface PhoneEnrollmentCredential {
 type Transport = typeof fetch;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const TOKEN = /^[A-Za-z0-9_-]{48,128}$/;
+const APPROVAL = /^[A-Za-z0-9_-]{30,80}$/;
 const IDENT = /^edge-[a-f0-9]{64}$/;
 const FP = /^[0-9A-F]{20}$/;
 const REQUEST = /^[a-f0-9]{32}$/;
@@ -125,7 +126,7 @@ export async function finishPhoneEnrollment(
       pending.fingerprint !== identity.fingerprint ||
       pending.algorithm !== identity.algorithm ||
       !REQUEST.test(pending.requestId) || !CHALLENGE.test(pending.challengeBase64) ||
-      !TOKEN.test(ownerCode))
+      !APPROVAL.test(ownerCode))
     throw new Error("Telefon kayıt isteği veya sahip onayı geçersiz.");
   const signed = await sign(pending.requestId, pending.challengeBase64);
   if (signed.installationId !== identity.installationId ||
