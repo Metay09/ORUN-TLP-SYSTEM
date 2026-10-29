@@ -1,6 +1,6 @@
 # ORUN Alanlar — hedef seçimi ve yerel USB yükleme adayı
 
-Status: **CODE CANDIDATE; host tests/Android/physical USB not yet passed**.
+Status: **HOST VALIDATED 2026-10-29 (73/73 Android-host tests, TypeScript, Vite build, 7/7 Python USB-preparation tests PASS); physical Android + USB NOT YET VALIDATED.**
 Depends on PR #184 unified Android map. Owner decision: **do not implement
 30-day geofence what-if/simulation**. This patch does not implement that feature.
 
@@ -46,6 +46,14 @@ neither authenticated remote apply nor Android direct USB-to-Tracker.
   clearing of an existing physical collar fence. Explicit CLEAR remains a
   separate authorized operation.
 - No hardware validation, browser test or complete app CI is claimed here.
+
+## Host validation evidence (owner Debian, commit `d4cdfde`)
+
+- `npm test`: **73 passed / 0 failed**.
+- `npm run typecheck`: **PASS**.
+- `npm run build`: **PASS** (nonblocking bundle-size warning).
+- `python3 firmware/tests/m6/test_orun_fence_usb.py`: **7 passed / 0 failed**.
+- No claim of physical Android use, direct USB apply, BLE or LoRa mutation.
 
 ## Validation gate
 ```bash
