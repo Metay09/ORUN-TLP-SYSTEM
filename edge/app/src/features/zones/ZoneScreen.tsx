@@ -7,7 +7,7 @@ import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { ERROR_TEXT, areaM2, canonicalE7, compileFence, perimeterM, validateRing, zoneAt } from "../../app/zones.ts";
 import { emptyRule, targetsForZone, type ZoneRule } from "../../app/zoneTargets.ts";
-import { Card, Dialog, KV, Screen, ToggleRow } from "../../ds/components.tsx";
+import { Card, Dialog, KV, Screen, Section, ToggleRow } from "../../ds/components.tsx";
 
 export function ZoneScreen({ id }: { id: string }) {
   const m = useApp();
