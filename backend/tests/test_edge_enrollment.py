@@ -144,15 +144,19 @@ class EnrollmentTests(unittest.TestCase):
         with self.assertRaises(EnrollmentError):
             self.enroll.begin("../../etc/passwd", pub)
 
-    def test_public_registration_rotates_challenge_and_owner_approval(self):
+    def test_unapproved_request_rotates_but_cannot_cancel_owner_approved_request(self):
         private, pub = keypair()
         pending = self.enroll.begin("phone-a", pub)
-        code = self.enroll.approve(pending.request_id, pending.fingerprint, "site-a", "owner", EDITOR)
         fresh = self.enroll.begin("phone-a", pub)
         self.assertNotEqual(pending.challenge, fresh.challenge)
+        code = self.enroll.approve(fresh.request_id, fresh.fingerprint, "site-a", "owner", EDITOR)
+        # An anonymous new begin must not erase an approval the owner already
+        # compared. That would allow an attacker to cancel the enrollment.
         with self.assertRaises(EnrollmentRefused):
-            self.enroll.finish(pending.request_id,"phone-a",pub,
-                               private.sign(signed_challenge(pending,"phone-a",pub)),code)
+            self.enroll.begin("phone-a", pub)
+        proof = private.sign(signed_challenge(fresh, "phone-a", pub))
+        token = self.enroll.finish(fresh.request_id, "phone-a", pub, proof, code)
+        self.assertIsNotNone(self.enroll.resolve_token(token))
         self.assertIsNone(self.enroll.resolve_token(code))
 
 
