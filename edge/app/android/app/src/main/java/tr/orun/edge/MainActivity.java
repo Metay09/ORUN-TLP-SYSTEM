@@ -9,6 +9,7 @@ public class MainActivity extends BridgeActivity {
         // Registration only: does not create a key, start enrollment, or
         // change the normal ORUN Edge observation/upload lifecycle.
         registerPlugin(OrunMobileIdentityPlugin.class);
+        registerPlugin(OrunMobileSessionPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
