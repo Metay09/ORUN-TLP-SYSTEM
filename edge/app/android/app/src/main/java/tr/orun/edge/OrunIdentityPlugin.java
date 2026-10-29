@@ -119,14 +119,25 @@ public class OrunIdentityPlugin extends Plugin {
         // The UI must pass create:true only after an explicit user tap.
         boolean create = Boolean.TRUE.equals(call.getBoolean("create"));
         worker.execute(() -> {
+            // These bounded stage codes contain no device ID, keys, exception
+            // text, or environmental details. A failed read on startup must
+            // NOT be misreported as a device lacking Ed25519 support.
+            String stage = "READ";
             try {
-                KeyStore.PrivateKeyEntry key = entry(create);
+                KeyStore.PrivateKeyEntry key = entry(false);
+                if (key == null && create) {
+                    stage = "CREATE";
+                    key = entry(true);
+                }
                 JSObject out = new JSObject();
                 if (key == null) {
                     out.put("present", false);
                 } else {
+                    stage = "PUBLIC_KEY";
                     byte[] raw = rawPublic(key);
+                    stage = "SIGN_VERIFY";
                     proveKeyUsable(key);
+                    stage = "IDENTITY_FORMAT";
                     out.put("present", true);
                     out.put("publicKeyBase64", Base64.encodeToString(raw, Base64.NO_WRAP));
                     out.put("installationId", installationId(raw));
@@ -134,8 +145,10 @@ public class OrunIdentityPlugin extends Plugin {
                 }
                 call.resolve(out);
             } catch (Exception | LinkageError err) {
-                // Do not include stack trace or provider-specific exception text.
-                call.reject("ANDROID_KEYSTORE_ED25519_UNAVAILABLE");
+                // No exception message, secret, stack trace, or provider name
+                // crosses the bridge. The frontend recognizes these codes.
+                String code = "ORUN_IDENTITY_" + stage + "_FAILED";
+                call.reject(code, code);
             }
         });
     }
