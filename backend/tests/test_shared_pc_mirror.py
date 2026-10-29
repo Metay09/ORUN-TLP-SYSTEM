@@ -157,6 +157,27 @@ class SharedPcMirrorTests(unittest.TestCase):
             pc.apply_page({"changes": [], "cursor": 99, "has_more": False}, 2)
         self.assertEqual(pc.snapshot(), original)
 
+    def test_cli_pulls_once_and_lists_from_cache_without_token(self):
+        import json
+        import subprocess
+        import sys
+        self.publish()
+        root = Path(__file__).resolve().parents[2]
+        common = [sys.executable, "tools/orun_shared_pc_mirror.py", "--db",
+                  str(self.store_path), "--site", "site-A", "--installation",
+                  "pc-edge", "--url", self.origin]
+        env = dict(os.environ, ORUN_SHARED_SYNC_TOKEN=self.tokens["pc"])
+        pulled = subprocess.run(common + ["--once"], cwd=root, env=env,
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(pulled.returncode, 0, pulled.stderr)
+        self.assertEqual(json.loads(pulled.stdout)["received"], 3)
+        self.assertNotIn(self.tokens["pc"], pulled.stdout + pulled.stderr)
+        env.pop("ORUN_SHARED_SYNC_TOKEN", None)
+        local = subprocess.run(common + ["--list"], cwd=root, env=env,
+                               capture_output=True, text=True, timeout=20)
+        self.assertEqual(local.returncode, 0, local.stderr)
+        self.assertEqual(len(json.loads(local.stdout)["resources"]), 3)
+
     def test_local_binding_corruption_and_origin_rejections(self):
         self.make()
         with self.assertRaisesRegex(MirrorError, "SYNC_MIRROR_BOUND_TO_ANOTHER_ACCOUNT"):
