@@ -1,6 +1,6 @@
 # ORUN Alanlar — hedef seçimi ve yerel USB yükleme adayı
 
-Status: **HOST VALIDATED 2026-10-29 (73/73 Android-host tests, TypeScript, Vite build, 7/7 Python USB-preparation tests PASS); physical Android + USB NOT YET VALIDATED.**
+Status: **HOST VALIDATED + DEBUG APK BUILT 2026-10-29 (73/73 Android-host tests, TypeScript, Vite, 7/7 USB-preparation tests, Capacitor sync, Gradle assembleDebug PASS); actual phone install + Tracker USB NOT YET VALIDATED.**
 Depends on PR #184 unified Android map. Owner decision: **do not implement
 30-day geofence what-if/simulation**. This patch does not implement that feature.
 
@@ -54,6 +54,16 @@ neither authenticated remote apply nor Android direct USB-to-Tracker.
 - `npm run build`: **PASS** (nonblocking bundle-size warning).
 - `python3 firmware/tests/m6/test_orun_fence_usb.py`: **7 passed / 0 failed**.
 - No claim of physical Android use, direct USB apply, BLE or LoRa mutation.
+
+## Debug APK qualification (owner Debian, 2026-10-29)
+
+- `npm run android`: **PASS**, Capacitor copy/sync completed.
+- `cd edge/app/android && ./gradlew --no-daemon assembleDebug`: **BUILD SUCCESSFUL**, 248 tasks.
+- APK: `edge/app/android/app/build/outputs/apk/debug/app-debug.apk` (about 16 MB), sha256 `8f04783900aa604280332d70b318aa1d12f0aec436c02864806d7740584587de`.
+- `adb devices -l` returned no connected devices: **installation, upgrade/migration, and Android touch UX NOT tested**.
+- Build reported non-blocking Vite chunk-size warning, Android/Gradle dependency deprecations, and `libsqlcipher.so` debug-symbol stripping warning. No app failure shown.
+- Do **not** uninstall an existing `tr.orun.edge` app to work around debug signing incompatibility; uninstall would delete app-local data.
+
 
 ## Validation gate
 ```bash
