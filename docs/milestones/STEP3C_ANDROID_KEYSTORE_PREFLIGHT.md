@@ -58,6 +58,15 @@
 - Vite chunk-size, Android deprecated APIs, Gradle flatDir/Gradle9 and `libsqlcipher.so` strip warnings were **non-blocking**.
 - **Crucial:** tested commit `e356c5d` predates native Ed25519 KeyMint `PURPOSE_SIGN`-only fix `d518c25`. Successful old build does not validate latest native changes; recompile newer PR head first.
 
+## Güncel APK derlemesi ve indirme kanıtı (2026-10-29)
+
+- Kullanıcı `ed5a7df` branch başını aldı, `AndroidKeyStore` `KeyProperties.PURPOSE_SIGN)` tek amaç düzeltmesini `grep` ile doğruladı ve `PURPOSE_VERIFY` olmadığını kontrol etti.
+- `npm run android`: **PASS** — TypeScript, Vite (4655 modules, built 4.38s), `npx cap sync android` başarılı.
+- `./gradlew --no-daemon assembleDebug`: **BUILD SUCCESSFUL** (248 tasks: 30 executed, 218 up-to-date, 1m04s).
+- APK: `edge/app/android/app/build/outputs/apk/debug/app-debug.apk`, **17 MB**; SHA-256 `67f5f8719d0e6f3f955f7c961cf70bc04c776243c88715b14726a2a1a8b3d2ab`.
+- Geçici APK indirme servisi yalnız bilgisayarın Tailscale adresine bağlandı, Android istemci `GET /ORUN-Step3C-Test.apk` için **HTTP 200** aldı. Ardından bir `ConnectionResetError` oluştu: HTTP 200, **APK'nin eksiksiz indirildiğini veya kurulduğunu kanıtlamaz**. Kullanıcı servisi Ctrl+C ile kapattı. `GET /favicon.ico` 404 zararsız.
+- **Hâlâ test edilmedi:** Telefona üzerine yükleme, Android Keystore'un gerçekten Ed25519 oluşturup imzalaması, tekrar açınca aynı fingerprint'i vermesi, mevcut alan verilerinin korunması. Canlı Backend/PC Edge/Tracker/Gateway değiştirilmedi.
+
 ## Native Ed25519 KeyMint denetimi (2026-10-29)
 
 - Kaynak denetiminde Android KeyMint'in Curve25519/Ed25519 anahtarına **tek yetki** atamasını gerektirdiği fark edildi; önceki `PURPOSE_SIGN | PURPOSE_VERIFY` isteği güvenle oluşturulamayabilirdi.
