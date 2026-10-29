@@ -20,6 +20,34 @@ export function SettingsScreen() {
   const [identity, setIdentity] = useState<AndroidIdentity | null>(null);
   const [identityBusy, setIdentityBusy] = useState(false);
   const [identityError, setIdentityError] = useState<IdentityFault | null>(null);
+  const [cleanupAnswer, setCleanupAnswer] = useState("");
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupError, setCleanupError] = useState<string | null>(null);
+  const [cleanupDone, setCleanupDone] = useState(false);
+  const cleanupCount = m.snap.records ?? 0;
+  const cleanupAllowed = androidIdentity && !m.demo && m.source.kind === "real" &&
+    Boolean(m.source.clearTestObservations);
+  const cleanupIdle = m.snap.ready && m.station.link === "none" &&
+    m.snap.state === "idle" && !m.server.busy;
+  const runCleanup = async () => {
+    if (cleanupBusy || !cleanupAllowed || !cleanupIdle ||
+        cleanupAnswer !== "SİL" || cleanupCount <= 0 ||
+        !m.source.clearTestObservations) return;
+    setCleanupBusy(true);
+    setCleanupDone(false);
+    setCleanupError(null);
+    try {
+      await m.source.clearTestObservations(cleanupCount, cleanupAnswer);
+      setCleanupAnswer("");
+      setCleanupDone(true);
+    } catch (error) {
+      // Safe Turkish message authored by the local cleanup path; no raw
+      // server response, bearer, or private Android exception is surfaced.
+      setCleanupError(error instanceof Error ? error.message : tr.settings.cleanupFailed);
+    } finally {
+      setCleanupBusy(false);
+    }
+  };
   useEffect(() => {
     if (!androidIdentity) return;
     let live = true;
@@ -61,6 +89,31 @@ export function SettingsScreen() {
           onClick={() => nav.setTab("network")} />
         {!m.demo && <Cell title={tr.settings.phoneRecords(m.snap.records ?? 0)} />}
       </Card>
+
+      {cleanupAllowed && <>
+        <Section title={tr.settings.cleanupTitle} />
+        <Card pad>
+          <div className="stack">
+            <span className="fine">{tr.settings.cleanupHelp}</span>
+            <span className="sm strong">{tr.settings.phoneRecords(cleanupCount)}</span>
+            {!cleanupIdle && <span className="sm t-alarm" role="status">{tr.settings.cleanupDisconnect}</span>}
+            <label htmlFor="orun-observation-purge-confirm" className="fine">
+              {tr.settings.cleanupConfirm}
+            </label>
+            <input id="orun-observation-purge-confirm" type="text" autoComplete="off"
+              autoCorrect="off" spellCheck={false} maxLength={3}
+              value={cleanupAnswer} onChange={(event) => { setCleanupAnswer(event.target.value); setCleanupDone(false); }}
+              placeholder="SİL" aria-label={tr.settings.cleanupConfirm} />
+            <button className="btn small" type="button"
+              disabled={cleanupBusy || cleanupCount === 0 || !cleanupIdle || cleanupAnswer !== "SİL"}
+              onClick={() => void runCleanup()}>
+              {cleanupBusy ? tr.settings.cleanupWorking : tr.settings.cleanupButton}
+            </button>
+            {cleanupError && <span role="alert" className="sm t-alarm">{cleanupError}</span>}
+            {cleanupDone && <span role="status" className="sm">{tr.settings.cleanupCompleted}</span>}
+          </div>
+        </Card>
+      </>}
 
       {androidIdentity && <>
         <Section title={tr.settings.identityTitle} />
