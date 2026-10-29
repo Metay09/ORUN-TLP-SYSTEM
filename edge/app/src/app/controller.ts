@@ -8,6 +8,7 @@ import { BleLink, UsbLink, type LinkState } from "../platform/transports.ts";
 import { fetchReadKeys, Uploader, type UploadCounts } from "../core/sync.ts";
 import { fetchGet, fetchPost } from "../platform/http.ts";
 import { KeepAlive } from "../platform/background.ts";
+import { cleanDevelopmentObservations, type ObservationCleanupResult } from "../core/testObservationCleanup.ts";
 
 export interface Snapshot {
   ready: boolean;
@@ -104,6 +105,7 @@ export class Controller {
   private lastRecords: number | null = null;
   // Lock before the first await; timer/manual calls must not upload concurrently.
   private syncing = false;
+  private cleaningTestRecords = false;
 
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
@@ -252,7 +254,7 @@ export class Controller {
   async sync(manual: boolean): Promise<void> {
     // Counts, key refresh and HTTP calls all await. Guard the entire sequence,
     // rather than setting server.busy only after the first two awaits.
-    if (!this.uploader || this.syncing || this.snap.server.busy) return;
+    if (!this.uploader || this.syncing || this.cleaningTestRecords || this.snap.server.busy) return;
     this.syncing = true;
     try {
       const sv = this.snap.server;
@@ -319,14 +321,70 @@ export class Controller {
     }
   }
 
+  /** EXPLICIT development observation cleanup. Not app reset. No secrets,
+   * local pasture drafts, linked assets, or server registration are deleted.
+   * Unsafe during an active Gateway hand-off or Backend upload. */
+  async clearTestObservations(
+    expectedObservations: number, confirmation: string,
+  ): Promise<ObservationCleanupResult> {
+    const core = this.core, db = this.db;
+    if (!core || !db || !this.snap.ready)
+      throw new Error("Yerel kayıt defteri henüz hazır değil.");
+    if (this.cleaningTestRecords || this.syncing || this.snap.server.busy ||
+        this.snap.link !== "none" || this.snap.state !== "idle" ||
+        core.pendingAccepts() !== 0)
+      throw new Error("Önce istasyon bağlantısını kesip gönderimin bitmesini bekleyin.");
+    // Set BEFORE the first await: blocks new sync and link attempts.
+    this.cleaningTestRecords = true;
+    try {
+      const result = await core.exclusive(
+        () => cleanDevelopmentObservations(db, expectedObservations, confirmation));
+      // The journal is transport-derived diagnostic history. Keep notes,
+      // pastures, targets, keys, identity and owner preferences unchanged.
+      try { localStorage.removeItem(JOURNAL_KEY); } catch { /* optional UI cache */ }
+      core.counts.STORED = 0;
+      core.counts.DUPLICATE = 0;
+      core.counts.CONFLICT = 0;
+      core.counts.REJECTED = 0;
+      core.counts.UNCERTAIN = 0;
+      core.handedOff = 0;
+      core.acceptRejected = 0;
+      this.lastStored = 0;
+      this.lastHanded = 0;
+      this.lastRecords = 0;
+      this.serverDown = false;
+      this.emit({
+        records: 0,
+        pointsVersion: this.snap.pointsVersion + 1,
+        counts: { ...core.counts },
+        handedOff: 0,
+        rejected: 0,
+        pending: 0,
+        gatewayHeld: null,
+        gateway: null,
+        journal: [],
+        server: {
+          ...this.snap.server,
+          counts: { uploaded: 0, pending: 0, conflict: 0, rejected: 0 },
+          lastOk: null,
+          error: null,
+        },
+      });
+      this.log("[yerel] Onaylı geliştirme gözlemleri temizlendi; alanlar ve kimlik korunuyor.");
+      return result;
+    } finally {
+      this.cleaningTestRecords = false;
+    }
+  }
+
   async connectBle(pick = false): Promise<void> {
-    if (!this.ble || this.snap.link !== "none") return;
+    if (!this.ble || this.cleaningTestRecords || this.snap.link !== "none") return;
     this.emit({ link: "ble" });
     await this.ble.start(pick);
   }
 
   async connectUsb(): Promise<void> {
-    if (!this.usb || this.snap.link !== "none") return;
+    if (!this.usb || this.cleaningTestRecords || this.snap.link !== "none") return;
     this.emit({ link: "usb" });
     await this.usb.start();
   }
