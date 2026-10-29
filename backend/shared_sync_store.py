@@ -6,6 +6,7 @@ This is not a tracker/geofence mutation path and never publishes APPLIED.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import json
@@ -150,7 +151,8 @@ class SharedStore:
         self.db_path = Path(db_path)
         if not self.db_path.parent.is_dir():
             raise SyncInvalid("database parent does not exist")
-        with self._connect() as db:
+        with self._session() as db:
+            db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS sync_resources(
                     site_id TEXT NOT NULL, kind TEXT NOT NULL, resource_id TEXT NOT NULL,
@@ -164,9 +166,10 @@ class SharedStore:
                     actor_id TEXT NOT NULL, installation_id TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS sync_changes_by_site ON sync_changes(site_id,sequence);
                 CREATE TABLE IF NOT EXISTS sync_results(
-                    site_id TEXT NOT NULL, installation_id TEXT NOT NULL, op_id TEXT NOT NULL,
+                    site_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+                    installation_id TEXT NOT NULL, op_id TEXT NOT NULL,
                     op_hash TEXT NOT NULL, response_json TEXT NOT NULL,
-                    PRIMARY KEY(site_id,installation_id,op_id));
+                    PRIMARY KEY(site_id,actor_id,installation_id,op_id));
             """)
 
     def _connect(self) -> sqlite3.Connection:
@@ -176,12 +179,24 @@ class SharedStore:
         db.row_factory = sqlite3.Row
         return db
 
+    @contextmanager
+    def _session(self):
+        db = self._connect()
+        try:
+            yield db
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
     def mutate(self, actor: Actor, ops: list[dict]) -> list[dict]:
         _identity(actor)
         if not isinstance(ops, list) or not 1 <= len(ops) <= MAX_OPS:
             raise SyncInvalid("1..50 operations required")
         results: list[dict] = []
-        with self._connect() as db:
+        with self._session() as db:
             db.execute("BEGIN IMMEDIATE")
             for op in ops:
                 if not isinstance(op, dict) or set(op) != {
@@ -214,8 +229,8 @@ class SharedStore:
                     continue
                 duplicate = db.execute(
                     "SELECT op_hash,response_json FROM sync_results "
-                    "WHERE site_id=? AND installation_id=? AND op_id=?",
-                    (actor.site_id, actor.installation_id, op_id)).fetchone()
+                    "WHERE site_id=? AND actor_id=? AND installation_id=? AND op_id=?",
+                    (actor.site_id, actor.actor_id, actor.installation_id, op_id)).fetchone()
                 if duplicate:
                     if duplicate["op_hash"] != request_hash:
                         results.append({"op_id": op_id, "status": "REJECTED", "reason": "op_id reuse"})
@@ -250,8 +265,8 @@ class SharedStore:
                          int(action == "DELETE"), sequence))
                     result = {"op_id": op_id, "status": "ACCEPTED",
                               "revision": next_revision, "sequence": sequence}
-                db.execute("INSERT INTO sync_results VALUES(?,?,?,?,?)",
-                           (actor.site_id, actor.installation_id, op_id,
+                db.execute("INSERT INTO sync_results VALUES(?,?,?,?,?,?)",
+                           (actor.site_id, actor.actor_id, actor.installation_id, op_id,
                             request_hash, _encode(result)))
                 results.append(result)
         return results
@@ -266,7 +281,7 @@ class SharedStore:
         if not kinds:
             raise SyncForbidden("no authorized readable resources")
         placeholders = ",".join("?" for _ in kinds)
-        with self._connect() as db:
+        with self._session() as db:
             rows = db.execute(
                 "SELECT sequence,kind,resource_id,revision,body_json,deleted "
                 "FROM sync_changes WHERE site_id=? AND sequence>? "
