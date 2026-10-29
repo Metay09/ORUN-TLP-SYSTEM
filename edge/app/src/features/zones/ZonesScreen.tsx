@@ -7,13 +7,27 @@ import { fmt, tr } from "../../app/i18n/tr.ts";
 import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { FENCE, areaM2, canonicalE7, compileFence, fromGeoJSON, newZoneId, toGeoJSON, validateRing, zoneAt } from "../../app/zones.ts";
-import { Bar, Card, Cell, DemoFlag, Empty, Header, Section, Toggle } from "../../ds/components.tsx";
+import { Bar, Card, Cell, DemoFlag, Dialog, Empty, Header, Section, Toggle } from "../../ds/components.tsx";
 
 export function ZonesScreen() {
   const m = useApp();
   const nav = useNav();
   const file = useRef<HTMLInputElement>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [groupName, setGroupName] = useState("");
+  const [groupDevices, setGroupDevices] = useState<string[]>([]);
+  const saveGroup = () => {
+    try {
+      if (!groupName.trim() || !groupDevices.length) throw new Error("Bir grup adı ve en az bir tasma seç.");
+      m.actions.saveTargetGroup({
+        id: "g" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
+        name: groupName.trim().slice(0, 60), devices: groupDevices,
+      });
+      setGroupOpen(false); setGroupName(""); setGroupDevices([]);
+      setNote("Grup yerel taslak olarak kaydedildi; hiçbir tasmaya komut gönderilmedi.");
+    } catch (e) { setNote(e instanceof Error ? e.message : "Grup kaydedilemedi."); }
+  };
   const set = m.zoneSet;
   const located = m.herd.filter((a) => a.last);
 
@@ -103,6 +117,44 @@ export function ZonesScreen() {
       {/* "Serbest otlatma" is a tracker-owned setting, not an app-only
           mute switch. Do not show controls until a signed collar command and
           durable ACK exist; hiding them prevents a dangerous false promise. */}
+
+      <Section title="Hayvan grupları (yerel taslak)" />
+      <Card pad>
+        <div className="stack">
+          <span className="fine">Gruplar yalnız alan hedeflerini seçmeye yarar. Henüz hiçbir tasmaya gönderilmez.</span>
+          {m.targetWarning && <span className="sm t-alarm strong">{m.targetWarning}</span>}
+          {m.targetBook.groups.map((g) => (
+            <div className="row" key={g.id} style={{ justifyContent: "space-between" }}>
+              <span className="sm">{g.name} · {g.devices.length} tasma</span>
+              <button className="btn small danger" onClick={() => {
+                if (!window.confirm(g.name + " grubu taslaklardan kaldırılsın mı?")) return;
+                try { m.actions.removeTargetGroup(g.id); setNote("Grup kaldırıldı. Tasmadaki durum değişmedi."); }
+                catch (e) { setNote(e instanceof Error ? e.message : "Grup kaldırılamadı."); }
+              }}>Kaldır</button>
+            </div>
+          ))}
+          <button className="btn small" disabled={!m.devices.length || !!m.targetWarning}
+            onClick={() => setGroupOpen(true)}><Plus size={18} /> Yeni grup oluştur</button>
+        </div>
+      </Card>
+      {groupOpen && (
+        <Dialog title="Yeni hayvan grubu" onClose={() => setGroupOpen(false)}>
+          <div className="stack" style={{ padding: "4px 16px 16px" }}>
+            <input className="inp" value={groupName} maxLength={60}
+              onChange={(e) => setGroupName(e.target.value)} placeholder="Grup adı" aria-label="Grup adı" />
+            {m.devices.map((d) => (
+              <label key={d.id} className="sm">
+                <input type="checkbox" checked={groupDevices.includes(d.id)}
+                  onChange={(e) => setGroupDevices((v) => e.target.checked
+                    ? [...v, d.id] : v.filter((id) => id !== d.id))} />
+                {m.herd.find((a) => a.device === d.id)?.name ?? d.short} · {d.short}
+              </label>
+            ))}
+            <button className="btn primary wide" disabled={!groupName.trim() || !groupDevices.length}
+              onClick={saveGroup}>Grup taslağını kaydet</button>
+          </div>
+        </Dialog>
+      )}
 
       <Section title={tr.zones.file} />
       <Card pad>
