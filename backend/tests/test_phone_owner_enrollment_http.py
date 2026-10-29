@@ -167,7 +167,8 @@ class PhoneEnrollmentHTTPTests(unittest.TestCase):
         self.assertEqual(self.finish(key, public, pending, code,
                                      request_id="f" * 32)[0], 403)
         self.assertEqual(self.finish(key, public, pending, code,
-                                     algorithm="Ed25519")[0], 400)
+                                     algorithm="Ed25519",
+                                     signature=b"0" * 64)[0], 400)
         self.assertEqual(self.finish(key, public, pending, code)[0], 200)
 
     def test_ed25519_original_wire_compatibility_and_read_only(self):
