@@ -24,6 +24,12 @@ import sys
 from typing import Any, Iterator
 from urllib import error, parse, request
 
+# Direct `python3 tools/orun_shared_pc_mirror.py` must resolve the backend package
+# without relying on the operator's PYTHONPATH or current directory.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from backend.shared_sync_store import KINDS, SyncInvalid, _payload
 
 ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
