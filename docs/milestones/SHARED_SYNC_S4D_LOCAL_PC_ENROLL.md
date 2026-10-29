@@ -71,6 +71,28 @@ bu sürüm için aşağıdaki kullanıcı PASS kanıtı alınmıştır.
 - İzole `TemporaryDirectory` + SQLite ve test tokenı kullanıldı; mevcut `orun-backend.service`/`orun-pc-edge.service`, kullanıcı telefonundaki veriler, Gateway/Tracker değişmedi.
 - Telefon ekranları ayrıca değerlendirilmiştir: eski görüntüde 3.802 yerel kayıt; sonraki 20:25 Ağ/Harita görüntülerinde **0 kayıt**, **sunucu ayarlanmamış**, canlı Backend bağlantısı doğrulanmamış. Bu ekranlar S4D host testinin gerçek telefonda çalıştığı anlamına gelmez.
 
+## Aynı bilgisayarda çalışan servislerin yanına izole entegrasyon provası
+
+Kullanıcının **canlı servis kaynakları** read-only tanıyla belirlenmiştir:
+`orun-backend.service` → `~/ORUN-PC-EDGE-VERIFY/backend/orun_backend_bench.py` (Tailscale TCP 8090),
+`orun-pc-edge.service` → `~/ORUN-PC-EDGE-VERIFY/tools/orun_pc_edge.py`.
+Yerel PC Edge dosyası mevcut GitHub dalında yok; canlı servisi bu dala körlemesine geçirmek güvenli değildir.
+Canlı PC Edge yalnız `/v1/edge/batch` üzerinden gözlem upload eder, bu **ortak veri** `/api/v1/sync` değildir.
+
+Yeni `tools/ci/run_shared_shadow_on_existing_pc.sh` **yalnız açık çağrıyla**:
+- Her iki canlı systemd servisin aktif PID'lerini okur, değiştirmez.
+- Sahibi 0700 ve dosyaları 0600 olan *yeni geçici* state altında ayrı S4C Backend'i `127.0.0.1` rastgele porta açar.
+- S4D güvenilir yerel CLI ile *sadece geçici* `pc-shadow-test` read-only token üretir; S4A PC mirror CLI gerçek HTTP'den çekip SQLite'ye yazar.
+- Ayrı Backend'i yeniden açıp PC mirror'ın aynı yerel kayıt/kurulum ile ikinci çekmesini dener; canlı systemd PID'lerinin değişmediğini kontrol eder.
+- Bitince sadece bu komutun oluşturduğu benzersiz geçici dizini/tokenı temizler, ayrı HTTP sürecini kapatır. **Mevcut** gözlem veritabanları, servisler, telefon, Gateway, Tracker değiştirilmez.
+- Hiç ortak mera eklenmediği için 0 kaynak normaldir; bu **saha verisinin canlı eşitlendiği kanıtı değildir**. Ayrı backend ile yerel PC client runtime'ının gerçek süreçler olarak konuştuğu ve restart olduğudur.
+
+**Durum: yeni script için henüz kullanıcı tarafından PASS alınmadı.** Komut:
+
+```bash
+bash tools/ci/run_shared_shadow_on_existing_pc.sh
+```
+
 ## Üretim öncesi eksikler
 
 - Gerçek PC Edge'in farklı bilgisayarda olabileceği mimari için HTTPS +
