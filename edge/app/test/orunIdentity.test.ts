@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { validateIdentity } from "../src/platform/orunIdentity.ts";
+import { identityFault, validateIdentity } from "../src/platform/orunIdentity.ts";
 
 test("Android key identity response is validated before any application use", () => {
   assert.deepEqual(validateIdentity({ present: false }), { present: false });
@@ -21,4 +21,25 @@ test("Native identity module exposes no user or Tracker authority just from a pu
   assert.equal(Object.hasOwn(valid,"token"),false);
   assert.equal(Object.hasOwn(valid,"trackerRootKey"),false);
   assert.equal(Object.hasOwn(valid,"applied"),false);
+});
+
+test("Stage errors are safe, distinguish read from create and redact raw values", () => {
+  const cases = [
+    ["ORUN_IDENTITY_READ_FAILED", "READ_FAILED"],
+    ["ORUN_IDENTITY_CREATE_FAILED", "CREATE_FAILED"],
+    ["ORUN_IDENTITY_PUBLIC_KEY_FAILED", "PUBLIC_KEY_FAILED"],
+    ["ORUN_IDENTITY_SIGN_VERIFY_FAILED", "SIGN_VERIFY_FAILED"],
+    ["ORUN_IDENTITY_IDENTITY_FORMAT_FAILED", "IDENTITY_FORMAT_FAILED"],
+  ] as const;
+  for (const [native, mapped] of cases) {
+    assert.equal(identityFault({code:native, message:"secret-not-to-display"}), mapped);
+    assert.equal(identityFault({message:native}), mapped);
+  }
+  assert.equal(identityFault({message:"OrunIdentity plugin is not implemented on android"}),
+    "BRIDGE_UNAVAILABLE");
+  assert.equal(identityFault(new Error("Telefon kimliği doğrulanamadı.")),
+    "RESPONSE_INVALID");
+  assert.equal(identityFault({message:"Bearer example-sensitive-credential"}),
+    "UNKNOWN");
+  assert.equal(identityFault({}),"UNKNOWN");
 });
