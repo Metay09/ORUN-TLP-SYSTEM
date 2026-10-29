@@ -458,7 +458,7 @@ export const tr = {
     identityReady: "Anahtar telefonda hazır; ORUN sunucusunda henüz kayıtlı değil.",
     identityMissing: "Henüz telefon kimliği oluşturulmadı.",
     identityFingerprint: "Açık anahtar izi",
-    identityFailed: "Bu telefonda Ed25519 güvenli anahtarı kullanılamadı. Mevcut veriler etkilenmedi.",
+    identityFailed: "Telefon kimliği kontrolü tamamlanamadı. Mevcut veriler korunuyor. Tanı kodu:",
     about: "Hakkında",
     version: "Sürüm",
     sources: "Harita: Esri World Imagery, OpenTopoMap, OpenFreeMap, © OpenStreetMap katkıcıları. Yükselti: AWS Terrain Tiles (Mapzen).",
