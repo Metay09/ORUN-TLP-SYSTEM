@@ -1,6 +1,6 @@
 # ORUN S4D — yetkili yerel PC Edge kurulum kimliği, gerçek ortak veri
 
-**Durum: DRAFT — host testleri henüz kullanıcı tarafından çalıştırılmadı.**
+**Durum: DRAFT / HOST PASS (2026-10-29, Debian): 20/20 unittest PASS, S3C gerçek HTTP/Node regresyonu PASS. Canlı servise dağıtım YOK.**
 **Önceki kanıt:** S4C `be1e7ef` **16/16 PASS** + gerçek
 Python ↔ Node TypeScript HTTP E2E **PASS** (2026-10-29).
 **Canlı sistem:** `orun-backend.service`, `orun-pc-edge.service`,
@@ -61,7 +61,15 @@ Geçici SQLite + gerçek 127.0.0.1 HTTP sunucu ile:
    gerçek HTTP regresyonu tekrar çalışır.
 
 Beklenen **4 yeni + 16 önceki = 20 unittest**, sonrasında S3C regresyonu;
-bu sürüm için henüz PASS kanıtı yoktur.
+bu sürüm için aşağıdaki kullanıcı PASS kanıtı alınmıştır.
+
+## Kullanıcı doğrulaması — 29 Ekim 2026
+
+- Kullanıcı `feat/shared-sync-local-pc-enrollment` başını `a750427` olarak fetch etti.
+- `bash tools/ci/run_shared_local_pc_enrollment_host.sh`: **20 test / 20 PASS (11.788s)** ve `ORUN_S4D_HOST_PASS`.
+- Gerçek `127.0.0.1` Python↔Node HTTP: owner 3/3 upload, viewer 3/3 pull, cross-site isolation, viewer write rejected, conflict/restart preserved, revoked token 401; diğer token yetkili.
+- İzole `TemporaryDirectory` + SQLite ve test tokenı kullanıldı; mevcut `orun-backend.service`/`orun-pc-edge.service`, kullanıcı telefonundaki veriler, Gateway/Tracker değişmedi.
+- Telefon ekranları ayrıca değerlendirilmiştir: eski görüntüde 3.802 yerel kayıt; sonraki 20:25 Ağ/Harita görüntülerinde **0 kayıt**, **sunucu ayarlanmamış**, canlı Backend bağlantısı doğrulanmamış. Bu ekranlar S4D host testinin gerçek telefonda çalıştığı anlamına gelmez.
 
 ## Üretim öncesi eksikler
 
