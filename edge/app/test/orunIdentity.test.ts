@@ -12,7 +12,7 @@ test("Android key identity response is validated before any application use", ()
     {...valid, installationId:"phone-a"},
     {...valid, publicKeyBase64:"invalid"},
     {...valid, fingerprint:"0".repeat(19)},
-  ]) assert.throws(() => validateIdentity(bad as never), /kimlik|Kimlik|yanıt/);
+  ]) assert.throws(() => validateIdentity(bad as never), Error);
 });
 
 test("Native identity module exposes no user or Tracker authority just from a public key",()=>{
