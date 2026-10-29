@@ -19,6 +19,39 @@
   - `ORUN_FEATURE_AND_STATUS_INVENTORY.md`
   - `ORUN_STEP3_REAL_SECURITY_PLAN.md`
 
+## 29 Ekim 2026 — Sahibin yeni kesinleştirdiği gereksinim ve sıra
+
+**Ortak veri, tek Edge'e/telefona kapanmaz.** Bir telefonun oluşturduğu alan,
+aynı saha/cihazlara erişim yetkisi olan diğer telefon ve bilgisayarlarda, backend
+ulaşılabiliyorsa, otomatik görünür. İnternet yokken yerel kalıcı taslakla
+çalışılır; bağlantı döndüğünde idempotent ve çatışma denetimli eşitleme yapılır.
+Aynı kural hayvan profilleri, gruplar, atamalar, notlar, gözlemler, gerçek
+olaylar, hedef planları ve işlem sonuçları için de geçerlidir.
+Kişisel UI tercihleri, cihaz bağlantıları/çevrimdışı harita dosyaları ve
+güvenlik anahtarları aynı shared-data kategorisinde değildir.
+
+**Alan uygulama USB + BLE + LoRa olmalıdır.** Yakında USB veya BLE ile doğrudan
+Tracker'a; uzakta yetkili Gateway üzerinden LoRa'ya. Relay yalnız paketleri
+iletir. Aynı tasmada tek GeofenceMutationOwner / CAS / durable RESULT korunur.
+Bir alanın başka telefonda görünmesi, ona yetki olması veya Gateway'e teslim
+edilmesi tasmanın o alanı **uyguladığı** anlamına gelmez.
+
+**30 günlük alan simülasyonu iptal edilmiştir.** `§6`'daki eski "Kaydetmeden
+önce" simülasyon satırı ve `§15` paket 2'deki "deneme" artık yapılacak iş
+değildir. Kontrol/test amacıyla farklı simülasyonlar, sahibin ayrıca
+istemesi halinde ayrılır; canlı ürün ekranına "geçmiş 30 gün uyarısı" özelliği
+konulmaz.
+
+**Geliştirme önceliği:** Gerçek cihaz/telefon yetkisi (3C), kanonik sunucu
+paylaşılan veri deposu, Android offline sync, web/PC görünürlüğü; ardından
+yetkili BLE/USB gerçek geofence aktarımı ve güvenli LoRa uzak aktarımı.
+İlgili tek uygulama sözleşmesi:
+`docs/architecture/ORUN_SHARED_DATA_SYNC_AND_GEOFENCE_DELIVERY.md`.
+Eski `§15` paket numaraları tarihsel taslağıdır; güncel bağımlılık/öncelik
+bu satır ve yeni sözleşme ile belirlenir.
+
+---
+
 ## Uygulamanın kuralları
 
 1. **Bitmiş ürün gibi görünür.** Ekranlarda "planlı", "demo", "yol haritası" etiketi olmaz. Bir bilgi o cihazdan henüz gelmiyorsa, o yerde sakin ve doğru bir boş durum yazar. Örnek: "Bu tasma hareket özeti göndermiyor".
@@ -150,7 +183,7 @@ Alt sekmeler: **Harita · Sürü · Alanlar · Olaylar · Ağ**. Sağ üstteki p
 - kapasite çubuğu ve "sadeleştir".
 
 **Kaydetmeden önce (📱):**
-- "Bu sınırla son 30 günde kaç uyarı çıkardı" denemesi.
+- 30 günlük geriye dönük alan uyarısı simülasyonu yapılmaz (sahip kararı).
 - Köşe ölü bölgedeyse kapsama uyarısı.
 
 **Uygulama:**
@@ -342,7 +375,7 @@ Geliştirilebilir olması için:
 | # | Paket | İçerik | Bağımlılık |
 |---|---|---|---|
 | 1 | **İskelet + tasarım sistemi** | 5 sekme, ayarlar, tema/güneş modu, sözlük, durumlar; MapLibre harita, 3B, katmanlar; bugünkü gerçek verilerle Harita/Sürü/Olaylar/Ağ, Bul, iz oynatma, yoğunluk, kapsama | yok (📱) |
-| 2 | **Alanlar (telefonda)** | çizim, doğrulama, deneme, kapsama uyarısı, yer işaretleri | yok (📱) |
+| 2 | **Alanlar (telefonda)** | çizim, doğrulama, çevrimdışı taslak, hedef seçimi, kapsama uyarısı, yer işaretleri; 30 günlük simülasyon yok | yok (📱) |
 | 3 | **İnternetsiz harita** | paketler, indirme yöneticisi | paket üretimi (🖥) |
 | 4 | **3C: telefon kaydı + kurulum** | kod onayı, kapalı zarf, yeni cihaz akışı, istasyon yetkisi otomatik, yardımcı kullanıcılar | 🖥📡 |
 | 5 | **Olay ve kayıp** | tasmanın alan olayları, kayıp, bildirimler | 📡 olay paketi |
