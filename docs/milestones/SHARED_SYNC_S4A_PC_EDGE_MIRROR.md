@@ -1,7 +1,7 @@
 # ORUN S4A — PC Edge için ortak veri salt-okunur SQLite aynası
 
 **Durum:** DRAFT — kaynak kodu ve host test koşucusu eklendi;
-**kullanıcı bilgisayarında henüz PASS kanıtı yok**.
+**kullanıcı Debian host'ta 2026-10-29 tarihinde doğruladı: 8/8 unittest PASS + S3C gerçek HTTP çapraz-dil regresyonu PASS (`7a01360`).**
 **Stack:** PR #194 Backend S2 + #195 Step3C kimlik doğrulama + #197 Android S3B
 + #198 gerçek HTTP E2E.
 **Çalışan sistem:** `orun-pc-edge.service`, `orun-backend.service`,
@@ -55,6 +55,15 @@ geçici Step3C onay/Ed25519, Backend SQLite ve PC SQLite aynasıyla:
 - HTTP redirect, uzak cleartext adres ve geçersiz bench token reddi.
 
 S3C Node/TS gerçek HTTP E2E de regression olarak tekrar çalışır.
+
+## Kullanıcının gerçek test çıktısı (2026-10-29)
+
+- `git fetch origin feat/pc-edge-shared-read-mirror` → detached `7a01360`.
+- `bash tools/ci/run_shared_pc_mirror_host.sh` → **Ran 8 tests in 5.865s — OK**.
+- `SHARED_SYNC_REAL_HTTP_E2E: PASS`: owner 3/3 upload, read-only B 3/3 pull, site isolation, revision conflict, viewer reject, restart.
+- `STEP3C_REAL_HTTP_E2E: PASS`: revoked credential HTTP 401, other credential remains authorized.
+- Final line `ORUN_S4A_HOST_PASS`. No real user site token, running Backend/PC Edge instance, real Android or Tracker changed in this run.
+- Note: user's interactive Bash startup `~/.bashrc` independently had a dangling quote near line 117; new test still ran and passed. Do not alter shell config through product test scripts.
 
 ## Sonrasında
 
