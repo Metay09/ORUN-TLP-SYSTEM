@@ -1,6 +1,6 @@
 # ORUN S3B — Authenticated shared-sync HTTP client (isolated candidate)
 
-**Status:** DRAFT — owner host tests on `fb2d8d1` **93/93 PASS**, `npm run typecheck` **FAILED (one unused test-only T_C variable)**. Fixed by code commit `96ef855`, **revalidation pending**; Vite build not executed after the failure.
+**Status:** HOST VALIDATED (2026-10-29, owner's Debian host, `ba6b125`): `npm test` **93/93 PASS**, `npm run typecheck` PASS and `npm run build` PASS. Real Android–Backend sync **NOT YET INTEGRATED**.
 **Base:** S3A PR #196 + Step 3C preflight PR #195 + S2 backend PR #194.
 **Data:** user-drawn zone/group/target DRAFTS only. No Tracker mutation, no
 geofence APPLIED status and no new OUTSIDE alarm source.
@@ -63,6 +63,14 @@ commands.
 - Owner Debian host at commit `fb2d8d1`: `npm test` **93 tests, 93 PASS, 0 FAIL**, duration 4.332s.
 - Strict `npm run typecheck` failed at `test/sharedSyncClient.test.ts:12` with TS6133 unused `T_C`; no evidence of a domain/runtime test failure.
 - Removed unused test-only constant in `96ef855`. Host rerun of this updated commit and `npm run build` pending. No Android installation or live sync has been performed.
+
+## Owner final validation evidence (2026-10-29)
+
+- Checked out `ba6b125` on `feat/app-shared-sync-http-client`.
+- `npm run typecheck`: PASS (no TypeScript errors).
+- `npm test`: **93 tests / 93 PASS / 0 FAIL**, 5.456s, including 9 new S3B client tests and updated S3A regression tests.
+- `npm run build`: PASS (Vite v8.3.5, 4654 modules, 4.51s); 1,635.38 kB JS chunk size warning **nonblocking**, performance optimization later.
+- Host test uses injected fetch; no real Android installation, live backend auth, production HTTP/Tailscale sync, BLE, USB or LoRa geofence mutation confirmed.
 
 ## Owner test command
 
