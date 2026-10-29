@@ -15,6 +15,8 @@ export interface EdgeSource {
   disconnect(): Promise<void>;
   saveServer(url: string, token: string, auto: boolean): void;
   sync(manual: boolean): Promise<void>;
+  /** Explicit development-only purge of phone observation history; not an app reset. */
+  clearTestObservations?(expected: number, confirmation: string): Promise<{ deletedObservations: number }>;
 }
 
 export function stationOf(s: Snapshot, places: Record<string, LatLon>): Station {
