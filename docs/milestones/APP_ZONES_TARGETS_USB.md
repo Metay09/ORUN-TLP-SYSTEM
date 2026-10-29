@@ -1,6 +1,6 @@
 # ORUN Alanlar — hedef seçimi ve yerel USB yükleme adayı
 
-Status: **HOST VALIDATED + DEBUG APK BUILT 2026-10-29 (73/73 Android-host tests, TypeScript, Vite, 7/7 USB-preparation tests, Capacitor sync, Gradle assembleDebug PASS); actual phone install + Tracker USB NOT YET VALIDATED.**
+Status: **HOST VALIDATED + DEBUG APK BUILT 2026-10-29 (73/73 Android-host tests, TypeScript, Vite, 7/7 USB-preparation tests, Capacitor sync, Gradle assembleDebug PASS); owner phone smoke 5/6 PASS; GeoJSON export unchecked; Tracker USB NOT YET VALIDATED.**
 Depends on PR #184 unified Android map. Owner decision: **do not implement
 30-day geofence what-if/simulation**. This patch does not implement that feature.
 
@@ -64,6 +64,17 @@ neither authenticated remote apply nor Android direct USB-to-Tracker.
 - Build reported non-blocking Vite chunk-size warning, Android/Gradle dependency deprecations, and `libsqlcipher.so` debug-symbol stripping warning. No app failure shown.
 - Do **not** uninstall an existing `tr.orun.edge` app to work around debug signing incompatibility; uninstall would delete app-local data.
 
+
+## Physical Android smoke result (owner report, 2026-10-29)
+
+- **PASS:** Open ORUN and the Alanlar tab.
+- **PASS:** Draw/save polygon on the Android map.
+- **PASS:** Create named group and select collar.
+- **PASS:** Assign existing zone draft to a selected collar or group.
+- **PASS:** Restart app and retain zone, group, and target selection.
+- **NOT CHECKED:** Per-device GeoJSON export/download.
+- **NOT CHECKED:** Actual Tracker USB apply and full-geometry readback.
+- No failed phone check reported. App was installed from a Python HTTP share over Tailscale; no ADB/physical PC cable was required.
 
 ## Validation gate
 ```bash
