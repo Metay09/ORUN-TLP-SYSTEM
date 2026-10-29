@@ -89,12 +89,17 @@ python3 tools/orun_shared_local_pc_enroll.py \
   --token-out "$WORK/secrets/pc-shadow.token" \
   --authorize-local-pc
 
+echo "=== SAHIP YETKILI GERCEK HTTP ORNEK MERA/GRUP/HEDEF ==="
+python3 tools/ci/shared_shadow_data.py --work "$WORK" --port "$PORT" --action seed
+
 echo "=== YETKILI PC EDGE ILK CEKME ==="
 python3 tools/orun_shared_pc_mirror.py \
   --db "$WORK/pc-shadow.sqlite" \
   --site integration-demo --installation pc-shadow-test \
   --url "http://127.0.0.1:$PORT" \
   --token-file "$WORK/secrets/pc-shadow.token" --once
+
+python3 tools/ci/shared_shadow_data.py --work "$WORK" --port "$PORT" --action verify-before
 
 kill "$server_pid"
 wait "$server_pid" 2>/dev/null || true
@@ -108,6 +113,15 @@ python3 tools/orun_shared_pc_mirror.py \
   --url "http://127.0.0.1:$PORT" \
   --token-file "$WORK/secrets/pc-shadow.token" --once
 
+echo "=== SERVER RESTART SONRASI GERCEK DELETE TOMBSTONE ==="
+python3 tools/ci/shared_shadow_data.py --work "$WORK" --port "$PORT" --action delete
+python3 tools/orun_shared_pc_mirror.py \
+  --db "$WORK/pc-shadow.sqlite" \
+  --site integration-demo --installation pc-shadow-test \
+  --url "http://127.0.0.1:$PORT" \
+  --token-file "$WORK/secrets/pc-shadow.token" --once
+python3 tools/ci/shared_shadow_data.py --work "$WORK" --port "$PORT" --action verify-after
+
 echo "=== CANLI SERVISLER DEGISMEDI MI ==="
 for i in "${!services[@]}"; do
   active="$(systemctl --user is-active "${services[$i]}" || true)"
@@ -119,5 +133,6 @@ for i in "${!services[@]}"; do
   echo "KORUNDU=${services[$i]} PID=$after"
 done
 echo "ORUN_S4D_REAL_PC_SHADOW_PASS"
-echo "NOT: Bu izole prova ortak kaynak sayisi 0; uretilen test tokeni ve DB kapanista silinir."
+echo "NOT: Sadece izole gecici state: 3 gercek ortak kaynak + 2 silme tombstone'u dogrulandi."
+echo "NOT: Uretilen test tokeni, ornek mera ve tum test SQLite dosyalari kapanista silinir."
 echo "NOT: Canli sistemde ortak mera senkronizasyonu HENUZ ETKIN DEGIL."
