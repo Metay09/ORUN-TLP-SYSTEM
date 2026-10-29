@@ -7,7 +7,7 @@ import { useApp } from "../../app/store.ts";
 import type { Theme } from "../../app/stores.ts";
 import { Card, Cell, KV, Screen, Section, Seg, ToggleRow } from "../../ds/components.tsx";
 import { serverWords } from "../network/words.ts";
-import { inspectIdentity, isAndroidIdentityAvailable, type AndroidIdentity } from "../../platform/orunIdentity.ts";
+import { identityFault, inspectIdentity, isAndroidIdentityAvailable, type AndroidIdentity, type IdentityFault } from "../../platform/orunIdentity.ts";
 
 declare const __APP_VERSION__: string;
 
@@ -19,24 +19,24 @@ export function SettingsScreen() {
   const androidIdentity = isAndroidIdentityAvailable();
   const [identity, setIdentity] = useState<AndroidIdentity | null>(null);
   const [identityBusy, setIdentityBusy] = useState(false);
-  const [identityError, setIdentityError] = useState(false);
+  const [identityError, setIdentityError] = useState<IdentityFault | null>(null);
   useEffect(() => {
     if (!androidIdentity) return;
     let live = true;
     void inspectIdentity(false)
       .then((result) => { if (live) setIdentity(result); })
-      .catch(() => { if (live) setIdentityError(true); });
+      .catch((error: unknown) => { if (live) setIdentityError(identityFault(error)); });
     return () => { live = false; };
   }, [androidIdentity]);
   const prepareIdentity = async () => {
     if (identityBusy) return;
     setIdentityBusy(true);
-    setIdentityError(false);
+    setIdentityError(null);
     try {
       // Only an explicit button tap can create a non-exportable key.
       setIdentity(await inspectIdentity(!identity?.present));
-    } catch {
-      setIdentityError(true);
+    } catch (error: unknown) {
+      setIdentityError(identityFault(error));
     } finally {
       setIdentityBusy(false);
     }
@@ -68,7 +68,7 @@ export function SettingsScreen() {
           <div className="stack">
             <span className="fine">{tr.settings.identityHelp}</span>
             {identityBusy ? <span className="sm" role="status">{tr.settings.identityLoading}</span>
-              : identityError ? <span className="sm t-alarm" role="alert">{tr.settings.identityFailed}</span>
+              : identityError ? <span className="sm t-alarm" role="alert">{tr.settings.identityFailed} <code>{identityError}</code></span>
               : <span className="sm" role="status">{identity?.present
                 ? tr.settings.identityReady : tr.settings.identityMissing}</span>}
             {identity?.present && <div className="kv">
