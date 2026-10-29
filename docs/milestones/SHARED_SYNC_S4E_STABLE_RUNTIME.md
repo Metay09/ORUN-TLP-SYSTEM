@@ -72,6 +72,53 @@ Yalnız `TemporaryDirectory` altında S4E hazırlığı ve yeni
 - Sadece import adı `SERVICE as MIRROR_SERVICE` → `UNIT as MIRROR_SERVICE` olacak şekilde düzeltildi: `21bdebe`.
 - **Düzeltilmiş kod 968e5a8'de kullanıcı tarafından çalıştırıldı: 2/2 PASS, `ORUN_S4E_STAGING_HOST_PASS`.** Hiçbir çalışan ORUN servisi değiştirilmedi.
 
+## Kalıcı dizin hazırlığı tamamlandı (29 Ekim 2026)
+
+Kullanıcının gerçek terminal çıktısı:
+
+- `python3 tools/ci/stage_shared_pc_runtime.py --dest "$HOME/ORUN-SHARED-RUNTIME" --site orun-main --installation pc-main --port 18781 --approve-local-pc` **PASS**.
+- `ORUN_SHARED_SIDECAR_STAGED=YES`, `STAGED_SOURCE_COMMIT=264b4117a4d9`.
+- Kalıcı dizin `/home/msimsek/ORUN-SHARED-RUNTIME`, sadece `127.0.0.1:18781` aday portu.
+- Üç unit dosyası **yalnız** `units/` altına yazılmış; henüz `~/.config/systemd/user` içine kurulmadı. Yeni sistemd servisleri hâlâ çalışmıyor.
+- Mevcut gözlem servisleri ve canlı DB değiştirilmedi.
+
+## Açık onayla etkinleştirme — kod eklendi, kullanıcı henüz çalıştırmadı
+
+`tools/ci/activate_shared_pc_runtime.py` yalnız
+`--activate` ile:
+
+1. Kalıcı state'in owner-only izinlerini, kaynak SHA-256'larını,
+   site/kurulum kimliklerini (`orun-main`/`pc-main`), yeni portu
+   ve kaynak koddan üretilmiş unit dosyalarının hedef yollarını doğrular.
+2. Mevcut `orun-backend.service`/`orun-pc-edge.service` PID'lerini okur.
+   Aynı isimli yeni user unit zaten varsa yazmayı **reddeder**.
+3. Sadece üç **yeni** user unit dosyasını `O_EXCL` ve `0600` ile
+   yerleştirir; `systemctl --user daemon-reload` yapar (mevcut servisleri
+   durdurmaz/restart etmez).
+4. Ayrı `orun-shared-sync.service`'i çalıştırıp yalnız 127.0.0.1'de
+   PC tokenı ile `/api/v1/sync/identity` doğrular.
+5. Salt-okunur PC mirror oneshot çalıştırır; 180 saniyelik
+   `orun-shared-pc-mirror.timer`'ı etkinleştirir; iki eski PID'yi karşılaştırır.
+6. Herhangi bir adım başarısızsa yalnız bu çağrıda oluşturduğu üç yeni
+   unit'i devre dışı bırakıp kaldırmaya çalışır; **özel DB/token/manifesti
+   silmez**, eski servisleri asla durdurmaz.
+
+Bu kodun kullanıcı host'unda çalıştırıldığına dair **henüz kanıt yok**;
+canlı etkinleştirmeyi başarıyla yapılmış göstermeyin. Kullanıcının açık
+`--activate` komutu kurulum ve başlatma onayıdır:
+
+```bash
+python3 tools/ci/activate_shared_pc_runtime.py \\
+  --staged-dir "$HOME/ORUN-SHARED-RUNTIME" \\
+  --site orun-main --installation pc-main --activate
+```
+
+Etkinleştirme sonraki hedef için **yerel PC pilotudur**: mevcut gözlem
+upload'ı `8090` üzerinde ayrı kalır. Telefon ve başka PC, HTTPS/owner
+mobil enrollment tamamlanana kadar bu loopback-only `18781` hizmetine
+uzaktan erişemez. Salt-okunur PC tokenı 30 gün sonra bitecek ve
+**otomatik yenileme hâlâ yok**; kalıcı üretim erişimi için bu kapı kapanmadı.
+
 ## Gerçek sistemi etkinleştirmek için ayrı karar
 
 S4E bir **hazırlama** aşamasıdır. Kullanıcının açık onayı,
