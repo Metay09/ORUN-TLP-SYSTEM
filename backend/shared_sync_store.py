@@ -16,7 +16,7 @@ import sqlite3
 from typing import FrozenSet
 
 ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
-KINDS = ("zone", "group")
+KINDS = ("zone", "group", "zone_target")
 MAX_OPS = 50
 
 
@@ -138,6 +138,29 @@ def _payload(kind: str, body: object) -> dict:
         # Membership is a local/central selection draft, NOT command authority.
         # Later Device Registry must authorize exact target IDs on apply.
         return {"name": name.strip(), "device_ids": sorted(members)}
+    if kind == "zone_target":
+        if set(body) != {"zone_id", "scope", "device_ids", "group_ids"}:
+            raise SyncInvalid("zone target schema")
+        z = _identifier(body["zone_id"])
+        scope = body["scope"]
+        if scope not in ("all", "selected"):
+            raise SyncInvalid("zone target scope")
+        devices = body["device_ids"]
+        groups = body["group_ids"]
+        if not isinstance(devices, list) or not isinstance(groups, list) or (
+            len(devices) > 512 or len(groups) > 100
+        ):
+            raise SyncInvalid("zone target list")
+        for value in devices + groups:
+            _identifier(value)
+        if len(set(devices)) != len(devices) or len(set(groups)) != len(groups):
+            raise SyncInvalid("duplicate target")
+        if scope == "all" and (devices or groups):
+            raise SyncInvalid("all scope cannot also specify selected targets")
+        # Draft only. Device Registry/Step 3C must resolve each target and
+        # authorize every physical Tracker before a command may be queued.
+        return {"zone_id": z, "scope": scope,
+                "device_ids": sorted(devices), "group_ids": sorted(groups)}
     raise SyncInvalid("unsupported resource kind")
 
 
