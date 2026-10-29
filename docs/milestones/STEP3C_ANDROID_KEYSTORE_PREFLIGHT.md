@@ -51,6 +51,13 @@
 - `npm run android`, Gradle debug APK ve fiziksel telefon testi hakkında bu çıktıda **henüz sonuç yok**.
 - Test başarısı gerçek cihazda Ed25519 KeyStore destek kanıtı değildir.
 
+## Native Ed25519 KeyMint denetimi (2026-10-29)
+
+- Kaynak denetiminde Android KeyMint'in Curve25519/Ed25519 anahtarına **tek yetki** atamasını gerektirdiği fark edildi; önceki `PURPOSE_SIGN | PURPOSE_VERIFY` isteği güvenle oluşturulamayabilirdi.
+- `d518c25` ile `KeyGenParameterSpec` yalnız `PURPOSE_SIGN` talep edecek biçimde güncellendi. İmzanın doğrulanması, ilgili **açık anahtarla** `Signature.verify()` üzerinden hâlâ yapılıyor.
+- Kaynak: Android AOSP `IKeyMintDevice.aidl`, CURVE_25519 anahtarlarının `SIGN`, `ATTEST_KEY`, `AGREE_KEY` arasından yalnız bir amaç taşıyabileceği sözleşmesi.
+- **Yeni commit henüz Gradle veya gerçek telefonda test edilmedi.** Mevcut `95/95` PASS eski kod dalının TS/JS host kapsamını gösterir; native kod derleme veya fiziksel destek kanıtı değildir.
+
 ## Testler ve kabul
 
 1. `cd edge/app && npm test && npm run typecheck && npm run build`.
