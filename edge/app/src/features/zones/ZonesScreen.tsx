@@ -7,13 +7,29 @@ import { fmt, tr } from "../../app/i18n/tr.ts";
 import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { FENCE, areaM2, canonicalE7, compileFence, fromGeoJSON, newZoneId, toGeoJSON, validateRing, zoneAt } from "../../app/zones.ts";
-import { Bar, Card, Cell, DemoFlag, Empty, Header, Section, Toggle } from "../../ds/components.tsx";
+import { zonePlanForDevice } from "../../app/zoneTargets.ts";
+import { Bar, Card, Cell, DemoFlag, Dialog, Empty, Header, Section, Toggle } from "../../ds/components.tsx";
 
 export function ZonesScreen() {
   const m = useApp();
   const nav = useNav();
   const file = useRef<HTMLInputElement>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [groupName, setGroupName] = useState("");
+  const [groupDevices, setGroupDevices] = useState<string[]>([]);
+  const [exportDevice, setExportDevice] = useState("");
+  const saveGroup = () => {
+    try {
+      if (!groupName.trim() || !groupDevices.length) throw new Error("Bir grup adı ve en az bir tasma seç.");
+      m.actions.saveTargetGroup({
+        id: "g" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
+        name: groupName.trim().slice(0, 60), devices: groupDevices,
+      });
+      setGroupOpen(false); setGroupName(""); setGroupDevices([]);
+      setNote("Grup yerel taslak olarak kaydedildi; hiçbir tasmaya komut gönderilmedi.");
+    } catch (e) { setNote(e instanceof Error ? e.message : "Grup kaydedilemedi."); }
+  };
   const set = m.zoneSet;
   const located = m.herd.filter((a) => a.last);
 
@@ -104,6 +120,74 @@ export function ZonesScreen() {
           mute switch. Do not show controls until a signed collar command and
           durable ACK exist; hiding them prevents a dangerous false promise. */}
 
+      <Section title="Hayvan grupları (yerel taslak)" />
+      <Card pad>
+        <div className="stack">
+          <span className="fine">Gruplar yalnız alan hedeflerini seçmeye yarar. Henüz hiçbir tasmaya gönderilmez.</span>
+          {m.targetWarning && <span className="sm t-alarm strong">{m.targetWarning}</span>}
+          {m.targetBook.groups.map((g) => (
+            <div className="row" key={g.id} style={{ justifyContent: "space-between" }}>
+              <span className="sm">{g.name} · {g.devices.length} tasma</span>
+              <button className="btn small danger" onClick={() => {
+                if (!window.confirm(g.name + " grubu taslaklardan kaldırılsın mı?")) return;
+                try { m.actions.removeTargetGroup(g.id); setNote("Grup kaldırıldı. Tasmadaki durum değişmedi."); }
+                catch (e) { setNote(e instanceof Error ? e.message : "Grup kaldırılamadı."); }
+              }}>Kaldır</button>
+            </div>
+          ))}
+          <button className="btn small" disabled={!m.devices.length || !!m.targetWarning}
+            onClick={() => setGroupOpen(true)}><Plus size={18} /> Yeni grup oluştur</button>
+        </div>
+      </Card>
+      {groupOpen && (
+        <Dialog title="Yeni hayvan grubu" onClose={() => setGroupOpen(false)}>
+          <div className="stack" style={{ padding: "4px 16px 16px" }}>
+            <input className="inp" value={groupName} maxLength={60}
+              onChange={(e) => setGroupName(e.target.value)} placeholder="Grup adı" aria-label="Grup adı" />
+            {m.devices.map((d) => (
+              <label key={d.id} className="sm">
+                <input type="checkbox" checked={groupDevices.includes(d.id)}
+                  onChange={(e) => setGroupDevices((v) => e.target.checked
+                    ? [...v, d.id] : v.filter((id) => id !== d.id))} />
+                {m.herd.find((a) => a.device === d.id)?.name ?? d.short} · {d.short}
+              </label>
+            ))}
+            <button className="btn primary wide" disabled={!groupName.trim() || !groupDevices.length}
+              onClick={saveGroup}>Grup taslağını kaydet</button>
+          </div>
+        </Dialog>
+      )}
+
+      <Section title="USB için tasma planı" />
+      <Card pad>
+        <div className="stack">
+          <span className="fine">Her tasma için tam alan listesi ayrı hazırlanır. Bu dosya yalnız taslaktır; tasmada henüz uygulanmaz.</span>
+          <select className="inp" aria-label="Dosya hazırlanacak tasma"
+            value={exportDevice} onChange={(e) => setExportDevice(e.target.value)}>
+            <option value="">Tasma seç</option>
+            {m.devices.map((d) => <option key={d.id} value={d.id}>{m.herd.find((a) => a.device === d.id)?.name ?? d.short} · {d.short}</option>)}
+          </select>
+          {exportDevice && (() => {
+            const plan = zonePlanForDevice(m.targetBook,m.zones,exportDevice,m.devices.map((d) => d.id));
+            return <>
+              <span className="sm">Bu tasmaya planlanan: {plan.zones.length} alan</span>
+              {plan.errors.map((x) => <span className="sm t-alarm strong" key={x}>{x}</span>)}
+              <button className="btn wide" disabled={!plan.zones.length || !!plan.errors.length || !!m.targetWarning}
+                onClick={() => {
+                  const file = toGeoJSON(plan.zones);
+                  const url = URL.createObjectURL(new Blob([file], { type: "application/geo+json" }));
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "orun-fence-" + exportDevice.replace(/[^A-Za-z0-9_-]/g, "") + ".geojson";
+                  a.click();
+                  setTimeout(() => URL.revokeObjectURL(url),2000);
+                  setNote("Tasma için alan dosyası hazırlandı. Bu işlem tasmaya yükleme değildir.");
+                }}>Bu tasma için GeoJSON hazırla</button>
+            </>;
+          })()}
+          <span className="fine">Dosya, fiziksel Tracker USB bağlantısında tools/orun_fence_usb.py ile uygulanabilir. Yetkili cihaz sonucu doğrulanmadan tamamlandı sayılmaz.</span>
+        </div>
+      </Card>
       <Section title={tr.zones.file} />
       <Card pad>
         <div className="stack">

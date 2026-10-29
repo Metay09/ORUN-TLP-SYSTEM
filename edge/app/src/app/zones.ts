@@ -8,10 +8,9 @@
 // same thing on both. Limits come from firmware geofence_format.h /
 // geofence_geometry.h.
 //
-// The phone also decides "alan dışında" from the records it holds, with the
-// collar policy's false-alarm rule (ORUN_GEOFENCE_OPERATIONAL_POLICY §4): a
-// single outside position is never enough; the newest record must be outside
-// and at least 2 of the last 3 accepted records outside.
+// Historical outsideEpisodes is a pure diagnostic helper only. Real tracker
+// geofence OUTSIDE alerts must originate from authenticated device EVENTs;
+// phone records never grant alarm authority.
 import { distanceM, type LatLon } from "./geo.ts";
 
 export const FENCE = { maxAreas: 8, maxTotalVertices: 64, maxPolygonVertices: 64, maxSpanE7: 100_000_000 } as const;
