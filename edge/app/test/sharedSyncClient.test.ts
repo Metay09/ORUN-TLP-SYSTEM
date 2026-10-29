@@ -9,7 +9,7 @@ import type { Zone } from "../src/app/zones.ts";
 
 const RING: Zone["ring"] = [[28.054,37.610],[28.055,37.610],[28.055,37.611],[28.054,37.611]];
 const ZONE: Zone = { id:"z1", name:"Kuzey", ring:RING, active:true, updated:0 };
-const T_A = "A".repeat(64), T_B = "B".repeat(64), T_C = "C".repeat(64);
+const T_A = "A".repeat(64), T_B = "B".repeat(64);
 const auth = (token: string, site="site-a", installation="phone-a"): EnrolledSyncSession =>
   ({ site, installation, accessToken:token });
 const json = (body:unknown,status=200):Response => new Response(JSON.stringify(body),{
