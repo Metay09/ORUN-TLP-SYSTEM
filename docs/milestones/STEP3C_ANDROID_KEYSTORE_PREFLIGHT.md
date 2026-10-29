@@ -43,6 +43,14 @@
 - Güvenlik/kimlik oluşturma uygulama kodu değişmeden, kırılgan metin bağımlılığı kaldırıldı: `fa06c87` test `assert.throws(..., Error)` ile bozuk kimliğin gerçekten reddedilmesini denetliyor.
 - Bu düzeltme **henüz kullanıcı makinesinde yeniden test edilmedi**. İlk komut `set -e` ile `npm test`'te durduğu için TypeScript, Android sync ve Gradle derlemesi de **henüz çalıştırılmadı**; APK paylaşımı başlamadı.
 
+## İkinci kullanıcı doğrulaması (2026-10-29)
+
+- Güncel checkout `e356c5d`, test regex düzeltmesi doğrulandı.
+- `npm test`: **95/95 PASS, 0 FAIL** (4589 ms); önceki 94/95 test engeli kapandı.
+- `npm run typecheck` başlatıldı; paylaşılan log `tsc --noEmit` satırında kesildiği için **PASS henüz kanıtlanmadı**.
+- `npm run android`, Gradle debug APK ve fiziksel telefon testi hakkında bu çıktıda **henüz sonuç yok**.
+- Test başarısı gerçek cihazda Ed25519 KeyStore destek kanıtı değildir.
+
 ## Testler ve kabul
 
 1. `cd edge/app && npm test && npm run typecheck && npm run build`.
