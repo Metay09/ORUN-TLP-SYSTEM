@@ -178,6 +178,28 @@ class SharedPcMirrorTests(unittest.TestCase):
         self.assertEqual(local.returncode, 0, local.stderr)
         self.assertEqual(len(json.loads(local.stdout)["resources"]), 3)
 
+    def test_private_token_file_cli_real_http(self):
+        import json
+        import subprocess
+        import sys
+        self.publish()
+        secret_path = self.dir / "pc-enrolled-token"
+        secret_path.write_text(self.tokens["pc"] + "\n", encoding="ascii")
+        os.chmod(secret_path, 0o600)
+        root = Path(__file__).resolve().parents[2]
+        cmd = [sys.executable, "tools/orun_shared_pc_mirror.py", "--db",
+               str(self.store_path), "--site", "site-A", "--installation",
+               "pc-edge", "--url", self.origin,
+               "--token-file", str(secret_path), "--once"]
+        # A wrong environment bearer must not override the private token file.
+        env = dict(os.environ, ORUN_SHARED_SYNC_TOKEN="BAD_SHARED_BENCH")
+        result = subprocess.run(cmd, cwd=root, env=env,
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["received"], 3)
+        self.assertNotIn(self.tokens["pc"], result.stdout + result.stderr)
+        self.assertEqual(len(self.make().snapshot()["resources"]), 3)
+
     def test_local_binding_corruption_and_origin_rejections(self):
         self.make()
         with self.assertRaisesRegex(MirrorError, "SYNC_MIRROR_BOUND_TO_ANOTHER_ACCOUNT"):
