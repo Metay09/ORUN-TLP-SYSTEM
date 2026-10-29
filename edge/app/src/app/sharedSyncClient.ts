@@ -21,6 +21,7 @@ export type SyncFetch = (url: string, init: RequestInit) => Promise<Response>;
 
 export interface SyncRunResult {
   accepted: number;
+  moreAvailable: boolean;
   conflicts: number;
   rejected: number;
   received: number;
@@ -46,6 +47,7 @@ const ID = /^[A-Za-z0-9._-]{1,128}$/;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_PULL_PAGES = 10;
 const RESPONSE_LIMIT = 512 * 1024;
+const MAX_POST_BODY = 120 * 1024; // backend limit: 128 KiB
 
 /** HTTPS required except exact loopback for a local-host-only test. No
  * Tailscale/HTTP bypass: TLS and enrollment must be reviewed first. */
@@ -102,8 +104,8 @@ function validatedChanges(raw: unknown, previousCursor: number):
   { changes: SyncChange[]; cursor: number; hasMore: boolean } {
   if (!raw || typeof raw !== "object" ||
       !("changes" in raw) || !Array.isArray(raw.changes) ||
-      !("cursor" in raw) || !Number.isSafeInteger(raw.cursor) ||
-      raw.cursor < previousCursor ||
+      !("cursor" in raw) || typeof raw.cursor !== "number" ||
+      !Number.isSafeInteger(raw.cursor) || raw.cursor < previousCursor ||
       !("has_more" in raw) || typeof raw.has_more !== "boolean" ||
       raw.changes.length > 200) {
     throw new SharedSyncError("protocol", "Sunucu değişiklik yanıtı geçersiz.");
@@ -121,11 +123,15 @@ function validatedChanges(raw: unknown, previousCursor: number):
 export class SharedSyncClient {
   private running = false;
   private readonly origin: string;
+  private readonly store: OfflineSyncStore;
+  private readonly session: SyncSessionProvider;
+  private readonly fetcher: SyncFetch;
 
-  constructor(private readonly store: OfflineSyncStore,
-              baseUrl: string,
-              private readonly session: SyncSessionProvider,
-              private readonly fetcher: SyncFetch = fetch) {
+  constructor(store: OfflineSyncStore, baseUrl: string,
+              session: SyncSessionProvider, fetcher: SyncFetch = fetch) {
+    this.store = store;
+    this.session = session;
+    this.fetcher = fetcher;
     this.origin = sharedSyncOrigin(baseUrl);
   }
 
@@ -188,7 +194,18 @@ export class SharedSyncClient {
       validSession(session, this.store);
 
       let accepted = 0, conflicts = 0, rejected = 0, received = 0;
-      const batch = this.store.nextBatch(50);
+      let moreAvailable = false;
+      const batch: SyncOp[] = [];
+      for (const op of this.store.nextBatch(50)) {
+        const proposed = [...batch, op];
+        const size = new TextEncoder().encode(JSON.stringify({ ops: proposed })).length;
+        if (size > MAX_POST_BODY) {
+          if (!batch.length)
+            throw new SharedSyncError("protocol", "Tek işlem sunucu paket sınırını aşıyor.");
+          break;
+        }
+        batch.push(op);
+      }
       if (batch.length) {
         const raw = await this.request("/api/v1/sync/ops", session.accessToken,
           "POST", { ops: batch });
@@ -215,12 +232,13 @@ export class SharedSyncClient {
             "Sunucu değişiklikleri kaydedilemedi; önceki kayıtlar korunuyor.");
         }
         received += result.changes.length;
+        moreAvailable = result.hasMore;
         if (!result.hasMore) break;
       }
 
       const state = this.store.get();
       return {
-        accepted, conflicts, rejected, received, cursor: state.cursor,
+        accepted, conflicts, rejected, received, moreAvailable, cursor: state.cursor,
         pending: state.outbox.length, needsReview: state.problems.length,
       };
     } finally {
