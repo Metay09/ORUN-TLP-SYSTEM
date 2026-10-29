@@ -22,6 +22,10 @@ import subprocess
 import sys
 from urllib import request
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from tools.ci.stage_shared_pc_runtime import SOURCES, SERVICE as BACKEND_UNIT
 from tools.ci.render_shared_pc_timer import UNIT as MIRROR_UNIT, TIMER
 
