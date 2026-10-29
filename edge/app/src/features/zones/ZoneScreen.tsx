@@ -6,6 +6,7 @@ import { fmt, tr } from "../../app/i18n/tr.ts";
 import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { ERROR_TEXT, areaM2, canonicalE7, compileFence, perimeterM, validateRing, zoneAt } from "../../app/zones.ts";
+import { emptyRule, targetsForZone, type ZoneRule } from "../../app/zoneTargets.ts";
 import { Card, Dialog, KV, Screen, ToggleRow } from "../../ds/components.tsx";
 
 export function ZoneScreen({ id }: { id: string }) {
@@ -15,6 +16,12 @@ export function ZoneScreen({ id }: { id: string }) {
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(z?.name ?? "");
   const [error, setError] = useState<string | null>(null);
+  const rule = m.targetBook.rules[id] ?? emptyRule();
+  const targets = targetsForZone(m.targetBook, id, m.devices.map((d) => d.id));
+  const saveTargets = (next: ZoneRule) => {
+    try { m.actions.saveTargetRule(id, next); setError(null); }
+    catch (e) { setError(e instanceof Error ? e.message : "Hedef listesi kaydedilemedi."); }
+  };
   const saveSafe = (next: typeof z) => {
     try { if (!next) return false; m.actions.saveZone(next); setError(null); return true; }
     catch (e) { setError(e instanceof Error ? e.message : "Mera kaydedilemedi."); return false; }
@@ -42,6 +49,44 @@ export function ZoneScreen({ id }: { id: string }) {
 
       <Card>
         <ToggleRow title={tr.zones.active} sub={tr.zones.activeHelp} on={z.active} onChange={(v) => { saveSafe({ ...z, active: v }); }} />
+      </Card>
+
+      <Section title="Hedef cihazlar (yerel taslak)" />
+      <Card pad>
+        <div className="stack">
+          {m.targetWarning && <span className="sm t-alarm strong">{m.targetWarning}</span>}
+          <span className="fine">Bu seçim yalnız telefonda saklanır; tasmaya gönderilmez ve sınırı etkinleştirmez.</span>
+          <label className="sm">
+            <input type="radio" name={"zone-scope-" + id} checked={rule.scope === "selected"}
+              onChange={() => saveTargets({ ...rule, scope: "selected" })} /> Seçili hayvanlar ve gruplar
+          </label>
+          <label className="sm">
+            <input type="radio" name={"zone-scope-" + id} checked={rule.scope === "all"}
+              onChange={() => saveTargets({ scope: "all", devices: [], groups: [] })} /> Tüm bilinen tasmalar (taslak)
+          </label>
+          {rule.scope === "selected" && (
+            <>
+              {m.targetBook.groups.map((g) => (
+                <label className="sm" key={g.id}>
+                  <input type="checkbox" checked={rule.groups.includes(g.id)}
+                    onChange={(e) => saveTargets({ ...rule,
+                      groups: e.target.checked ? [...rule.groups, g.id] : rule.groups.filter((x) => x !== g.id) })} />
+                  Grup: {g.name} ({g.devices.length} tasma)
+                </label>
+              ))}
+              {m.devices.map((d) => (
+                <label className="sm" key={d.id}>
+                  <input type="checkbox" checked={rule.devices.includes(d.id)}
+                    onChange={(e) => saveTargets({ ...rule,
+                      devices: e.target.checked ? [...rule.devices, d.id] : rule.devices.filter((x) => x !== d.id) })} />
+                  {m.herd.find((a) => a.device === d.id)?.name ?? d.short} · {d.short}
+                </label>
+              ))}
+            </>
+          )}
+          <span className="sm strong">Planlanan hedef: {targets.length} tasma</span>
+          <span className="fine">Hedef seçmek teslim veya uygulanma onayı değildir. Gerçek yükleme ayrıca doğrulanmalıdır.</span>
+        </div>
       </Card>
 
       <div className="stack" style={{ padding: "16px 16px 0" }}>
