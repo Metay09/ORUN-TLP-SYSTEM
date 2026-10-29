@@ -51,6 +51,13 @@
 - `npm run android`, Gradle debug APK ve fiziksel telefon testi hakkında bu çıktıda **henüz sonuç yok**.
 - Test başarısı gerçek cihazda Ed25519 KeyStore destek kanıtı değildir.
 
+## Üçüncü kullanıcı doğrulaması (2026-10-29)
+
+- Kullanıcı Debian iş ağacı `e356c5d`: **`npm test` 95/95 PASS**, `npm run typecheck` PASS, `npm run android` PASS (`vite build` 4655 modules, `cap sync android` completed), `./gradlew --no-daemon assembleDebug` **BUILD SUCCESSFUL**, 248 tasks.
+- APK verified non-empty at `edge/app/android/app/build/outputs/apk/debug/app-debug.apk`; no APK installation or physical Keystore sign/read shown in the evidence.
+- Vite chunk-size, Android deprecated APIs, Gradle flatDir/Gradle9 and `libsqlcipher.so` strip warnings were **non-blocking**.
+- **Crucial:** tested commit `e356c5d` predates native Ed25519 KeyMint `PURPOSE_SIGN`-only fix `d518c25`. Successful old build does not validate latest native changes; recompile newer PR head first.
+
 ## Native Ed25519 KeyMint denetimi (2026-10-29)
 
 - Kaynak denetiminde Android KeyMint'in Curve25519/Ed25519 anahtarına **tek yetki** atamasını gerektirdiği fark edildi; önceki `PURPOSE_SIGN | PURPOSE_VERIFY` isteği güvenle oluşturulamayabilirdi.
