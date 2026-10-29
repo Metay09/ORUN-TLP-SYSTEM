@@ -47,11 +47,22 @@ def handler_factory(store: SharedStore, resolve_actor: Callable[[object], Actor 
                 return None
 
         def do_GET(self):  # noqa: N802
-            if urlsplit(self.path).path != "/api/v1/sync":
+            url = urlsplit(self.path)
+            if url.path not in ("/api/v1/sync", "/api/v1/sync/identity"):
                 return self._send(404, {"error": "not_found"})
             actor = self._auth()
             if actor is None:
                 return self._send(401, {"error": "unauthorized"})
+            if url.path == "/api/v1/sync/identity":
+                if url.query or url.fragment:
+                    return self._send(400, {"error": "invalid_query"})
+                # Server-resolved identity only: never trust client headers
+                # identifying site or installation. Allows an independent
+                # PC Edge mirror to prove that its credential matches its
+                # locally bound cache before downloading any private data.
+                return self._send(200, {
+                    "site": actor.site_id, "installation": actor.installation_id
+                })
             try:
                 params = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
                 if set(params) - {"cursor", "limit"} or any(len(v) != 1 for v in params.values()):
