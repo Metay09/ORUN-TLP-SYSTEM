@@ -1,6 +1,6 @@
 # ORUN Step 3C — Edge enrollment security preflight (backend-only)
 
-**Status:** IMPLEMENTATION CANDIDATE — **NO HOST/HARDWARE PASS CLAIM YET**.
+**Status:** IMPLEMENTATION CANDIDATE — **OWNER HOST 17/17 PASS, 2026-10-29, commit `5569bcd`**. Real Android enrollment, production auth and physical Gateway: NOT TESTED.
 Owner-approved 3C direction: `docs/architecture/ORUN_STEP3_REAL_SECURITY_PLAN.md`;
 security policy: `docs/architecture/ADR_M7P6_SECURITY_ARCHITECTURE.md`.
 
@@ -63,6 +63,13 @@ temporary SQLite databases and loopback HTTP in host process.
 
 Success must be reported as **host proof of server-side enrollment boundary**,
 not a production multi-device login or real Android live sync.
+
+## Owner host verification evidence (2026-10-29)
+
+- `bash tools/ci/run_step3c_edge_enrollment_host.sh`: **17 tests, 17 PASS, 0 FAIL**, 5.207s.
+- Python `cryptography` 38.0.4. Checkout HEAD `5569bcd`.
+- The suite covered Ed25519 possession proof, fingerprint mismatch, owner approval and revocation, expiry, replay, isolated installations and HTTP permission checks.
+- This is **host-only preflight**; no running PC Edge, Backend, Android app, installed device, BLE or LoRa was altered.
 
 ## Following milestones
 
