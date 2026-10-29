@@ -94,14 +94,19 @@ süreci, kurulum kimliği, PC mirror GET ve Backend restart kontrolü kanıtland
 Mevcut gözlem servisleri yeniden başlatılmadı; PID'ler
 `303602` (Backend) ve `299910` (PC Edge) değişmedi.
 
-**Güncel güçlendirme — henüz kullanıcıdan PASS alınmadı:** art arda gerçek
+**Güncel güçlendirme — kullanıcı tarafından PASS (2026-10-29, `850c7fc`):** art arda gerçek
 yetkili HTTP `UPSERT` (1 mera + 1 grup + 1 hedef), yetkili PC Edge
 `received: 3`, aynada değişiklik kaydı, Backend yeniden başlatıldıktan
 sonra gerçek HTTP `DELETE` (hedef + mera), PC Edge `received: 2` ve
-aynada **tombstone revizyonu 2** doğrulaması. `tools/ci/shared_shadow_data.py`
+aynada **tombstone revizyonu 2** doğrulaması. Kullanıcı çıktısı: `SHADOW_OWNER_HTTP_3_WRITES_ACCEPTED`,
+`received: 3`, `SHADOW_PC_SHARED_DATA_PASS: zone + group + target / cursor=3`,
+Backend restart ardından `received: 0`,
+`SHADOW_OWNER_HTTP_2_DELETES_ACCEPTED`, `received: 2`,
+`SHADOW_PC_SHARED_DATA_PASS: 2 tombstones + 1 active group / cursor=5`,
+`ORUN_S4D_REAL_PC_SHADOW_PASS`. Canlı PID'ler 303602/299910 korundu.
+`tools/ci/shared_shadow_data.py`
 yalnız `orun-shared-s4d.*` özel geçici dizinlerinde çalışır; gerçek
-sahaya veya canlı Backend'e hiçbir veri yazmaz. Sonucun yeni terminal
-kanıtı bekleniyor.
+sahaya veya canlı Backend'e hiçbir veri yazmaz. Yeni terminal kanıtı alındı; **PASS, ancak izole geçici ortam; canlı veri senkronizasyonu hâlâ devreye alınmadı**.
 
 **Tek komut:**
 
