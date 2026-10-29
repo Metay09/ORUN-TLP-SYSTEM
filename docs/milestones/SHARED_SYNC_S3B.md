@@ -1,6 +1,6 @@
 # ORUN S3B — Authenticated shared-sync HTTP client (isolated candidate)
 
-**Status:** DRAFT / HOST TESTS NOT YET RUN.
+**Status:** DRAFT — owner host tests on `fb2d8d1` **93/93 PASS**, `npm run typecheck` **FAILED (one unused test-only T_C variable)**. Fixed by code commit `96ef855`, **revalidation pending**; Vite build not executed after the failure.
 **Base:** S3A PR #196 + Step 3C preflight PR #195 + S2 backend PR #194.
 **Data:** user-drawn zone/group/target DRAFTS only. No Tracker mutation, no
 geofence APPLIED status and no new OUTSIDE alarm source.
@@ -57,6 +57,12 @@ geofence APPLIED status and no new OUTSIDE alarm source.
 Nothing here starts a server, edits an existing on-device area, changes
 running `orun-backend.service` / `orun-pc-edge.service`, or sends USB/BLE/LoRa
 commands.
+
+## Validation observation (2026-10-29)
+
+- Owner Debian host at commit `fb2d8d1`: `npm test` **93 tests, 93 PASS, 0 FAIL**, duration 4.332s.
+- Strict `npm run typecheck` failed at `test/sharedSyncClient.test.ts:12` with TS6133 unused `T_C`; no evidence of a domain/runtime test failure.
+- Removed unused test-only constant in `96ef855`. Host rerun of this updated commit and `npm run build` pending. No Android installation or live sync has been performed.
 
 ## Owner test command
 
