@@ -35,7 +35,7 @@ import java.util.concurrent.Executors;
 public class OrunIdentityPlugin extends Plugin {
     private static final String ALIAS = "orun.step3c.edge.ed25519.v1";
     private static final byte[] DOMAIN =
-            "ORUN:STEP3C:EDGE-ENROLL:v1\u0000".getBytes(StandardCharsets.UTF_8);
+            "ORUN:STEP3C:EDGE-ENROLL:v1\\0".getBytes(StandardCharsets.US_ASCII);
     // Strict X.509 SubjectPublicKeyInfo DER for Ed25519 (OID 1.3.101.112).
     private static final byte[] ED25519_SPKI_PREFIX = {
             0x30, 0x2a, 0x30, 0x05, 0x06, 0x03,
