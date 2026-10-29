@@ -1,6 +1,6 @@
 # ORUN S2 — Backend ortak alan/grup/hedef-taslağı senkronizasyon çekirdeği
 
-**Durum:** IMPLEMENTATION CANDIDATE, **host tests not yet executed**.
+**Durum:** IMPLEMENTATION CANDIDATE; **owner Debian host tests PASS (19/19, 2026-10-29, commit `e3e3b89`)**. Actual enrolled phones/production backend still NOT integrated.
 **Bağımlılık:** `docs/architecture/ORUN_SHARED_DATA_SYNC_AND_GEOFENCE_DELIVERY.md`.
 **Ön koşul:** Gerçek istemci oturumlarının Step 3C ile ayrı ayrı onaylanması;
 bu PR kimlik doğrulama sistemi kurmaz.
@@ -48,6 +48,13 @@ API S2 (Step 3C auth adapte edildiğinde):
   COMMAND/RESULT ayrı güvenlik aşamasında zorunludur.
 - Kapsamlı fiziki Android offline outbox, schema migration ve per-install
   enrollment bu dilimde **yok**.
+
+## Owner host validation evidence (2026-10-29)
+
+- `bash tools/ci/run_shared_sync_host.sh`: **19 tests, 0 failure** (5.514s).
+- Git SHA under test: `e3e3b89`.
+- Test scope: site isolation, read/write ACL, two-client HTTP pull, revision conflicts, tombstone replay protection, idempotent retry, invalid E7 geometry, zone-target draft, pagination, reopen SQLite.
+- This is NOT multi-phone live synchronization; device enrollment, authenticated routing, Android offline outbox, real production server and Tracker mutation remain unimplemented.
 
 ## Kontrol
 
