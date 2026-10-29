@@ -87,7 +87,23 @@ Yeni `tools/ci/run_shared_shadow_on_existing_pc.sh` **yalnız açık çağrıyla
 - Bitince sadece bu komutun oluşturduğu benzersiz geçici dizini/tokenı temizler, ayrı HTTP sürecini kapatır. **Mevcut** gözlem veritabanları, servisler, telefon, Gateway, Tracker değiştirilmez.
 - Hiç ortak mera eklenmediği için 0 kaynak normaldir; bu **saha verisinin canlı eşitlendiği kanıtı değildir**. Ayrı backend ile yerel PC client runtime'ının gerçek süreçler olarak konuştuğu ve restart olduğudur.
 
-**Durum: yeni script için henüz kullanıcı tarafından PASS alınmadı.** Komut:
+**Canlı-servis yanında S4D gölge deneme PASS (2026-10-29):** kullanıcı `b9fd976`
+üzerinde `ORUN_S4D_REAL_PC_SHADOW_PASS` gördü. Yeni S4D gölge testinin
+**ilk sürümünde ortak kaynak sayısı 0** idi, yalnız gerçek bağımsız HTTP
+süreci, kurulum kimliği, PC mirror GET ve Backend restart kontrolü kanıtlandı.
+Mevcut gözlem servisleri yeniden başlatılmadı; PID'ler
+`303602` (Backend) ve `299910` (PC Edge) değişmedi.
+
+**Güncel güçlendirme — henüz kullanıcıdan PASS alınmadı:** art arda gerçek
+yetkili HTTP `UPSERT` (1 mera + 1 grup + 1 hedef), yetkili PC Edge
+`received: 3`, aynada değişiklik kaydı, Backend yeniden başlatıldıktan
+sonra gerçek HTTP `DELETE` (hedef + mera), PC Edge `received: 2` ve
+aynada **tombstone revizyonu 2** doğrulaması. `tools/ci/shared_shadow_data.py`
+yalnız `orun-shared-s4d.*` özel geçici dizinlerinde çalışır; gerçek
+sahaya veya canlı Backend'e hiçbir veri yazmaz. Sonucun yeni terminal
+kanıtı bekleniyor.
+
+**Tek komut:**
 
 ```bash
 bash tools/ci/run_shared_shadow_on_existing_pc.sh
