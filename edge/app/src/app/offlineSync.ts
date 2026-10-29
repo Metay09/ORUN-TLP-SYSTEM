@@ -59,6 +59,16 @@ const id = (x: string): string => {
 };
 const keyOf = (kind: SyncKind, resourceId: string): string => kind + ":" + resourceId;
 const copy = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
+function stableJson(x: unknown): string {
+  if (Array.isArray(x)) return "[" + x.map(stableJson).join(",") + "]";
+  if (x !== null && typeof x === "object") {
+    return "{" + Object.keys(x).sort().map((k) =>
+      JSON.stringify(k) + ":" + stableJson((x as Record<string, unknown>)[k])).join(",") + "}";
+  }
+  const json = JSON.stringify(x);
+  if (json === undefined) throw new Error("Sunucu kaydı JSON biçiminde değil.");
+  return json;
+}
 const int = (n: unknown): n is number =>
   typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
 const makeState = (site: string, installation: string): SyncState => ({
@@ -260,6 +270,9 @@ export class OfflineSyncStore {
     if (!Array.isArray(changes) || changes.length > 200 ||
         !int(cursor) || cursor < next.cursor)
       throw new Error("Sunucu değişiklik dizisi geçersiz.");
+    // An empty page must never let a server response skip unseen changes.
+    if (!changes.length && cursor !== next.cursor)
+      throw new Error("Boş sunucu sayfası cursor atlayamaz.");
     let last = next.cursor;
     for (const c of changes) {
       if (!c || !int(c.sequence) || c.sequence <= last || c.sequence > cursor ||
@@ -274,12 +287,8 @@ export class OfflineSyncStore {
         next.resources[k] = { revision: c.revision, deleted: c.deleted,
           body: copy(c.body) };
       } else if (c.revision === old.revision &&
-                 (c.deleted !== old.deleted || JSON.stringify(c.body) !== JSON.stringify(old.body))) {
-        // Domain canonicalization for body is a future wire contract; do not
-        // signal an integrity failure merely due to JSON object key order.
-        if (JSON.stringify(c.body, Object.keys(c.body ?? {}).sort()) !==
-            JSON.stringify(old.body, Object.keys(old.body ?? {}).sort()))
-          throw new Error("Aynı revizyonda farklı içerik; cursor korunuyor.");
+                 (c.deleted !== old.deleted || stableJson(c.body) !== stableJson(old.body))) {
+        throw new Error("Aynı revizyonda farklı içerik; cursor korunuyor.");
       }
       last = c.sequence;
     }
