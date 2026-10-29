@@ -321,12 +321,42 @@ def run_once(mirror: PcSharedMirror, bearer: str) -> dict:
                 "more_available": more, "pages": pages}
 
 
+def _load_private_token(path: str) -> str:
+    secret = Path(path)
+    # Never silently fall back to shared bench token or an environment value.
+    if secret.is_symlink() or not secret.is_file():
+        raise MirrorError("SYNC_TOKEN_FILE_INVALID")
+    info = secret.stat()
+    if (not stat.S_ISREG(info.st_mode) or
+            stat.S_IMODE(info.st_mode) & 0o077 or
+            info.st_uid != os.geteuid()):
+        raise MirrorError("SYNC_TOKEN_FILE_PERMISSIONS")
+    try:
+        fd = os.open(secret, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            raw = os.read(fd, 257)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise MirrorError("SYNC_TOKEN_FILE_UNREADABLE") from exc
+    if len(raw) > 256:
+        raise MirrorError("SYNC_TOKEN_FILE_INVALID")
+    try:
+        token = raw.decode("ascii").rstrip("\r\n")
+    except UnicodeError as exc:
+        raise MirrorError("SYNC_TOKEN_FILE_INVALID") from exc
+    if not TOKEN.fullmatch(token):
+        raise MirrorError("SYNC_TOKEN_FILE_INVALID")
+    return token
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="ORUN isolated shared-data PC read mirror")
     parser.add_argument("--db", required=True, help="Dedicated private SQLite mirror file")
     parser.add_argument("--site", required=True)
     parser.add_argument("--installation", required=True)
     parser.add_argument("--url", required=True, help="HTTPS origin; HTTP only for 127.0.0.1")
+    parser.add_argument("--token-file", help="Owner-only (0600) per-installation token, not in arguments or unit files")
     actions = parser.add_mutually_exclusive_group(required=True)
     actions.add_argument("--once", action="store_true",
                          help="One authenticated pull; no daemon or upload")
@@ -336,7 +366,11 @@ def main() -> int:
     try:
         mirror = PcSharedMirror(args.db, args.site, args.installation, args.url)
         if args.once:
-            result = run_once(mirror, os.environ.get("ORUN_SHARED_SYNC_TOKEN", ""))
+            if args.token_file:
+                bearer = _load_private_token(args.token_file)
+            else:
+                bearer = os.environ.get("ORUN_SHARED_SYNC_TOKEN", "")
+            result = run_once(mirror, bearer)
         else:
             result = mirror.snapshot()
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
