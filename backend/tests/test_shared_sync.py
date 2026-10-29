@@ -30,10 +30,10 @@ class SharedSyncTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.path = Path(self.tmp.name) / "shared.sqlite"
         self.store = SharedStore(self.path)
-        scopes = frozenset({"zone:read", "zone:write", "group:read", "group:write"})
+        scopes = frozenset({"zone:read", "zone:write", "group:read", "group:write", "zone_target:read", "zone_target:write"})
         self.a = Actor("site-a", "owner", "phone-a", scopes)
         self.b = Actor("site-a", "owner", "phone-b", scopes)
-        self.web = Actor("site-a", "owner", "web-pc", frozenset({"zone:read", "group:read"}))
+        self.web = Actor("site-a", "owner", "web-pc", frozenset({"zone:read", "group:read", "zone_target:read"}))
         self.other = Actor("site-b", "other", "phone-c", scopes)
 
     def tearDown(self):
@@ -101,6 +101,22 @@ class SharedSyncTests(unittest.TestCase):
             self.assertEqual(self.store.mutate(
                 self.a,[op("bad",body=zone("K",invalid))])[0]["status"],"REJECTED")
         self.assertEqual(self.store.pull(self.a)["changes"],[])
+
+    def test_zone_target_drafts_sync_without_device_mutation(self):
+        draft = {"zone_id": "z1", "scope": "selected",
+                 "device_ids": ["T-001"], "group_ids": ["g-a"]}
+        sent = self.store.mutate(self.a, [
+            op("t1", kind="zone_target", rid="rule-z1", body=draft)
+        ])[0]
+        self.assertEqual(sent["status"], "ACCEPTED")
+        received = self.store.pull(self.b)
+        self.assertEqual(received["changes"][0]["body"]["zone_id"], "z1")
+        self.assertEqual(received["changes"][0]["kind"], "zone_target")
+        self.assertNotIn("applied", sent)
+        bad = {**draft, "scope": "all"}
+        self.assertEqual(self.store.mutate(self.b, [
+            op("t2", kind="zone_target", rid="rule-z1", base=1, body=bad)
+        ])[0]["status"], "REJECTED")
 
     def test_groups_and_pagination(self):
         grp={"name":"Birinci", "device_ids":["TRACKER-A","TRACKER-B"]}
