@@ -61,12 +61,12 @@ public class OrunIdentityPlugin extends Plugin {
             if (Build.VERSION.SDK_INT < 33) {
                 throw new IllegalStateException("UNSUPPORTED_ANDROID_API");
             }
-            // Fail closed if OEM KeyMint/TEE cannot generate Ed25519.
+            // Curve25519 KeyMint keys permit exactly one purpose: SIGN only.\n            // Fail closed if OEM KeyMint/TEE cannot generate Ed25519.
             // No software-only private-key fallback or exporting to preferences.
             KeyPairGenerator gen = KeyPairGenerator.getInstance(
                     "Ed25519", "AndroidKeyStore");
             gen.initialize(new KeyGenParameterSpec.Builder(ALIAS,
-                    KeyProperties.PURPOSE_SIGN | KeyProperties.PURPOSE_VERIFY)
+                    KeyProperties.PURPOSE_SIGN)
                     .setAlgorithmParameterSpec(new ECGenParameterSpec("Ed25519"))
                     .setDigests(KeyProperties.DIGEST_NONE)
                     .build());
