@@ -14,6 +14,7 @@ import type { Animal, AppEvent, AssetProfile, Device, ServerView, Station } from
 import { serverOf, stationOf, type EdgeSource } from "./source.ts";
 import { AssetStore, Persisted, ZoneStore, prefs, seenEvents, stationPlaces, type Prefs } from "./stores.ts";
 import { NO_GRAZE, checkSet, compileFence, grazing, type Fence, type Graze, type SetCheck, type Zone } from "./zones.ts";
+import { ZoneTargetStore, type TargetBook, type ZoneGroup, type ZoneRule } from "./zoneTargets.ts";
 
 export interface Sources {
   real: EdgeSource | null;          // null when not running on the phone (web preview)
@@ -23,6 +24,8 @@ export interface Sources {
   demoPlaces: Persisted<Record<string, LatLon>>;
   realZones: ZoneStore;
   demoZones: ZoneStore;
+  realTargets: ZoneTargetStore;
+  demoTargets: ZoneTargetStore;
 }
 
 export function makeSources(real: EdgeSource | null): Sources {
@@ -34,6 +37,8 @@ export function makeSources(real: EdgeSource | null): Sources {
     demoPlaces: new Persisted<Record<string, LatLon>>(null, () => ({ [DEMO_STATION.id]: DEMO_STATION_POS })),
     realZones: new ZoneStore("orun.app.zones.v1"),
     demoZones: new ZoneStore(null, demoZones()),
+    realTargets: new ZoneTargetStore("orun.app.zoneTargets.v1"),
+    demoTargets: new ZoneTargetStore(null),
   };
 }
 
@@ -56,6 +61,8 @@ export interface Model {
   zones: Zone[];
   zoneSet: SetCheck;      // the active set against the collar's limits
   zoneMigrationWarning: string | null; // pre-merge legacy drafts must not disappear silently
+  targetBook: TargetBook; // local-only intended device/group targets; never an applied state
+  targetWarning: string | null;
   fence: Fence;           // compiled active, valid zones
   graze: Graze;
   grazing: boolean;       // serbest otlatma on right now
@@ -73,6 +80,9 @@ export interface Actions {
   saveZone(z: Zone): void;
   removeZone(id: string): void;
   addZones(list: Zone[]): void;
+  saveTargetRule(zoneId: string, rule: ZoneRule): void;
+  saveTargetGroup(group: ZoneGroup): void;
+  removeTargetGroup(id: string): void;
   /** hours > 0: timed; "forever": until turned off; null: off. */
   setGraze(hours: number | "forever" | null): void;
 }
@@ -109,12 +119,14 @@ export function useModel(): Model {
   const assets = demo ? s.demoAssets : s.realAssets;
   const places = demo ? s.demoPlaces : stationPlaces;
   const zoneStore = demo ? s.demoZones : s.realZones;
+  const targets = demo ? s.demoTargets : s.realTargets;
 
   const snap = useSyncExternalStore((fn) => source.subscribe(fn), () => source.snap);
   const book = useSyncExternalStore(assets.subscribe, () => assets.get());
   const placeMap = useSyncExternalStore(places.subscribe, () => places.get());
   const seenList = useSyncExternalStore(seenEvents.subscribe, () => seenEvents.get());
   const zoneBook = useSyncExternalStore(zoneStore.subscribe, () => zoneStore.get());
+  const targetBook = useSyncExternalStore(targets.subscribe, targets.get);
   const { points, loaded } = usePoints(source, snap.pointsVersion);
   const now = useNow(30_000);
 
@@ -148,13 +160,17 @@ export function useModel(): Model {
     saveZone: (z) => zoneStore.save(z),
     removeZone: (id) => zoneStore.remove(id),
     addZones: (list) => zoneStore.add(list),
+    saveTargetRule: (id, rule) => targets.saveRule(id, rule),
+    saveTargetGroup: (group) => targets.saveGroup(group),
+    removeTargetGroup: (id) => targets.removeGroup(id),
     setGraze: (h) => zoneStore.setGraze(h === null ? { ...NO_GRAZE } : h === "forever" ? { until: null, forever: true }
       : { until: Date.now() + h * 3600_000, forever: false }),
-  }), [assets, places, snap.gateway, zoneStore]);
+  }), [assets, places, snap.gateway, zoneStore, targets]);
 
   return {
     demo, canLeaveDemo: s.real !== null, now, prefs: p, snap, points, loaded, herd, devices, station, server,
     events, coverage, zones, zoneSet, zoneMigrationWarning: zoneStore.migrationWarning,
+    targetBook, targetWarning: targets.warning,
     fence, graze, grazing: grazingNow, seen, source, actions,
   };
 }
