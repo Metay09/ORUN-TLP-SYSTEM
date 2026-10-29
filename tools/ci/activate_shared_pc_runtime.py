@@ -20,7 +20,8 @@ import socket
 import stat
 import subprocess
 import sys
-from urllib import request
+import time
+from urllib import error, request
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -139,18 +140,38 @@ def _exclusive_copy(source: Path, target: Path) -> None:
 
 
 def identity(port: int, token_path: Path, expected_site: str,
-             expected_installation: str) -> None:
-    # Never print the bearer. Use only the isolated loopback service.
+             expected_installation: str, *, wait_seconds: float = 12.0) -> None:
+    """Wait until a Type=simple user service actually binds its HTTP port.
+
+    systemctl start/is-active can return before Python imports, SQLite opens,
+    and the 127.0.0.1 listener is ready. Only transient connection/timeout
+    errors are retried. A real HTTP 401/403 or identity mismatch immediately
+    fails closed. Avoid ambient HTTP proxy variables for loopback.
+    """
     token = token_path.read_text(encoding="ascii").strip()
     req = request.Request(
         f"http://127.0.0.1:{port}/api/v1/sync/identity",
         headers={"Authorization": "Bearer " + token},
     )
-    with request.urlopen(req, timeout=5) as response:
-        actual = json.load(response)
-        if response.status != 200 or actual != {
-                "site": expected_site, "installation": expected_installation}:
-            raise ActivationRefused("BACKEND_IDENTITY_MISMATCH")
+    opener = request.build_opener(request.ProxyHandler({}))
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            with opener.open(req, timeout=2) as response:
+                actual = json.load(response)
+                if response.status != 200 or actual != {
+                        "site": expected_site, "installation": expected_installation}:
+                    raise ActivationRefused("BACKEND_IDENTITY_MISMATCH")
+                return
+        except error.HTTPError as exc:
+            # HTTPError inherits from URLError; an actual denial is NOT
+            # a startup race and must never silently pass or be retried.
+            raise ActivationRefused("SHARED_BACKEND_HTTP_DENIED_" +
+                                    str(exc.code)) from None
+        except (error.URLError, TimeoutError, ConnectionError):
+            if time.monotonic() >= deadline:
+                raise ActivationRefused("SHARED_BACKEND_HTTP_NOT_READY") from None
+            time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
 
 
 def activate(root: Path, site: str, installation: str, approved: bool) -> None:
