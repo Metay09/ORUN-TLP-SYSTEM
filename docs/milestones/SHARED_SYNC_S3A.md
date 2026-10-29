@@ -1,6 +1,6 @@
 # ORUN S3A — Android offline shared-sync core and safe legacy staging
 
-**Status:** CANDIDATE — host tests/Android integration NOT YET PASSED.
+**Status:** HOST VALIDATED 2026-10-29 (owner: 82/82 Android tests, typecheck and Vite build PASS at `2719a25`); real Android sync/login NOT YET INTEGRATED.
 Built above PR #195 Step 3C host preflight and PR #194 SharedStore backend.
 Owner decision: 30-day fence what-if simulation remains OUT OF SCOPE.
 
@@ -37,6 +37,15 @@ under one browser storage key. A write failure is treated as a failed local
 transaction and leaves the old in-memory state, old persisted document and
 original zones unchanged. A repeated HTTP request can be retried with the
 same `op_id` once the authenticated HTTP adapter exists.
+
+## Owner host verification evidence (2026-10-29)
+
+- Commit tested: `2719a25`.
+- `npm ci --no-audit --no-fund`: PASS (176 packages; only a dependency deprecation warning).
+- `npm test`: **82/82 PASS**, including **9/9 new offlineSync tests**.
+- `npm run typecheck`: **PASS**.
+- `npm run build`: **PASS** (non-blocking bundle chunk-size warning).
+- No live network connection, Step 3C phone enrollment, Android runtime write or production DB change was tested or made.
 
 ## Deliberate boundaries
 
