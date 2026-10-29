@@ -26,6 +26,7 @@ if str(ROOT) not in sys.path:
 
 from backend.edge_enrollment import EdgeEnrollment  # noqa: E402
 from backend.shared_sync_http import handler_factory  # noqa: E402
+from backend.phone_enrollment_http import mobile_handler_factory  # noqa: E402
 from backend.shared_sync_store import SharedStore  # noqa: E402
 
 FILES = ("shared_resources.sqlite", "enrolled_edges.sqlite")
@@ -85,14 +86,16 @@ def prepare(state_dir: str | Path, *, reuse_state: bool = False) -> tuple[Shared
 
 
 def start(state_dir: str | Path, bind: str, port: int,
-          *, reuse_state: bool = False) -> None:
+          *, reuse_state: bool = False, phone_enrollment: bool = False) -> None:
     if not CONTROL.fullmatch(bind):
         raise StartupRefused("ONLY_127_0_0_1_BIND_ALLOWED")
     if type(port) is not int or not 0 <= port <= 65535:
         raise StartupRefused("INVALID_PORT")
     store, enrollment = prepare(state_dir, reuse_state=reuse_state)
-    server = ThreadingHTTPServer(("127.0.0.1", port),
-                                 handler_factory(store, enrollment.resolve_headers))
+    # Phone registration stays OFF unless an operator explicitly enables it.
+    handler = (mobile_handler_factory(store, enrollment) if phone_enrollment
+               else handler_factory(store, enrollment.resolve_headers))
+    server = ThreadingHTTPServer(("127.0.0.1", port), handler)
     server.daemon_threads = True
     try:
         host, assigned = server.server_address[:2]
@@ -116,9 +119,12 @@ def main() -> int:
                         help="Loopback port, 0 for an ephemeral host-test port")
     parser.add_argument("--reuse-state", action="store_true",
                         help="Explicitly reopen both existing private SQLite files")
+    parser.add_argument("--enable-phone-enrollment", action="store_true",
+                        help="opt in to untrusted begin/finish; owner approves ONLY locally")
     args = parser.parse_args()
     try:
-        start(args.state_dir, args.bind, args.port, reuse_state=args.reuse_state)
+        start(args.state_dir, args.bind, args.port, reuse_state=args.reuse_state,
+              phone_enrollment=args.enable_phone_enrollment)
         return 0
     except (StartupRefused, OSError, ValueError) as exc:
         reason = str(exc) if isinstance(exc, StartupRefused) else "RUNTIME_ERROR"
