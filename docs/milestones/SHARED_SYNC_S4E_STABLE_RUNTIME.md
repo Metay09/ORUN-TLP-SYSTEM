@@ -1,6 +1,6 @@
 # ORUN S4E — mevcut gözlem servislerine dokunmadan kararlı ortak veri yan sistemi
 
-**Durum (2026-10-29): DRAFT / S4E host kontrolü henüz çalıştırılmadı.**
+**Durum (2026-10-29): DRAFT / S4E kullanıcı host doğrulaması **2/2 PASS** (`968e5a8`, `ORUN_S4E_STAGING_HOST_PASS`). Kurulum ve canlı etkinleştirme YOK.**
 
 Önceki kullanıcı kanıtı: S4D gerçek süreç `850c7fc` **PASS**:
 3 örnek mera/grup/hedef kaydı authenticated HTTP ile yazıldı; PC Edge
@@ -63,14 +63,14 @@ Yalnız `TemporaryDirectory` altında S4E hazırlığı ve yeni
 4. Staged unit içinde token olmaması, var olan 8090 portuna dokunulmaması,
    Backend'e bağımlılık, owner-only state/manifest.
 
-**Bu 2 test henüz çalıştırılmadı, PASS iddiası yok.**
+**Kullanıcı doğrulaması: 2/2 PASS (0.615s), gerçek 127.0.0.1 HTTP, yalnız geçici SQLite; hiçbir kalıcı servis kurulumuna geçilmedi.**
 
 ## İlk kullanıcı testi ve düzeltme (2026-10-29)
 
 - Kullanıcı `cd7ae0c` üzerinde S4E testini başlattı: **1 ImportError** ile test yükleme aşamasında durdu; testler çalışmadı.
 - Hata: `backend/tests/test_shared_pc_runtime_staging.py` yanlışlıkla `tools.ci.render_shared_pc_timer.SERVICE` sabitini çağırıyordu. Bu modülde mevcut sabit `UNIT`.
 - Sadece import adı `SERVICE as MIRROR_SERVICE` → `UNIT as MIRROR_SERVICE` olacak şekilde düzeltildi: `21bdebe`.
-- **Düzeltilmiş kod için S4E host PASS kanıtı henüz yok.** Hiçbir çalışan ORUN servisi değiştirilmedi.
+- **Düzeltilmiş kod 968e5a8'de kullanıcı tarafından çalıştırıldı: 2/2 PASS, `ORUN_S4E_STAGING_HOST_PASS`.** Hiçbir çalışan ORUN servisi değiştirilmedi.
 
 ## Gerçek sistemi etkinleştirmek için ayrı karar
 
