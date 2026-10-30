@@ -31,6 +31,15 @@ if [ -n "${ANDROID_HOME:-}" ]; then
   }
 fi
 
+# Gradle's --offline does NOT prevent the wrapper from downloading Gradle
+# itself. Require the precise existing pinned wrapper distribution too.
+DIST_ROOT="${GRADLE_USER_HOME:-$HOME/.gradle}/wrapper/dists/gradle-8.14.3-all"
+if [ ! -d "$DIST_ROOT" ] || ! find "$DIST_ROOT" -mindepth 2 -maxdepth 2 \
+  -type d -name gradle-8.14.3 -print -quit | grep -q .; then
+  echo "ORUN_ANDROID_NATIVE_COMPILE_NOT_RUN=GRADLE_WRAPPER_NOT_CACHED"
+  exit 3
+fi
+
 echo "=== ORUN ANDROID JAVA-ONLY TASK (NO APK / NO INSTALL) ==="
 cd edge/app/android
 # --offline does not resolve/download new Gradle dependencies. If caches are
