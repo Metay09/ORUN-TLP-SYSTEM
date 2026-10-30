@@ -250,15 +250,19 @@ def activate(live: Path, candidate: Path, units: Path) -> None:
     original = current.read_bytes()
     changed = next_unit(original.decode("utf-8"), old_script, new_script)
 
-    stage.mkdir(mode=0o700)
-    original_path = stage / UNIT_BACKUP
-    updated_path = stage / UNIT_NEXT
-    write_exclusive(original_path, original)
-    write_exclusive(updated_path, changed)
-
-    # Bootstrap happens BEFORE the short service switch. Only this brand-new
-    # account SQLite is written while the old service is online.
+    # Bootstrap happens before downtime; a cancelled password prompt must
+    # not strand a partly created workspace that blocks the next attempt.
     provision_owner(account)
+
+    stage.mkdir(mode=0o700)
+    try:
+        write_exclusive(stage / UNIT_BACKUP, original)
+        write_exclusive(stage / UNIT_NEXT, changed)
+    except BaseException:
+        (stage / UNIT_BACKUP).unlink(missing_ok=True)
+        (stage / UNIT_NEXT).unlink(missing_ok=True)
+        stage.rmdir()
+        raise
 
     timer_stopped = False
     backend_stopped = False
