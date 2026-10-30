@@ -120,10 +120,10 @@ def account_handler_factory(store: SharedStore, enrollment: EdgeEnrollment,
                 })
             except LoginLocked:
                 return self._send(429, {"error": "login_temporarily_restricted"})
-            except (LoginRejected, ValueError, TypeError):
-                return self._send(401, {"error": "invalid_credentials"})
             except (UnicodeDecodeError, json.JSONDecodeError):
                 return self._send(400, {"error": "invalid_request"})
+            except (LoginRejected, ValueError, TypeError):
+                return self._send(401, {"error": "invalid_credentials"})
             except sqlite3.Error:
                 return self._send(503, {"error": "temporarily_unavailable"})
 
