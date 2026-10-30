@@ -186,7 +186,8 @@ test("logout during asynchronous HTTP pull never commits stale account data", as
     changes:[change(1,"zone","z1","Kuzey")],
     cursor:1,has_more:false,
   });
-  await assert.rejects(() => pending, /Hesap değişti/);
+  // Either the HTTP client epoch guard or SQLite mirror must fail closed.
+  await assert.rejects(() => pending, /hesap (?:oturumu )?değişti/i);
   const row = await db.query(
     "SELECT COUNT(*) AS n FROM orun_account_shared_mirror_v1");
   assert.equal(row[0].n,0);
