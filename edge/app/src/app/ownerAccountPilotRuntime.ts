@@ -6,9 +6,47 @@ import {
   OwnerAccountClient, type AccountIdentity,
 } from "./ownerAccountClient.ts";
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
+import {
+  AccountSharedMirror, type SharedMirrorSnapshot, type MirrorPullResult,
+} from "./accountSharedMirror.ts";
 
 let client: OwnerAccountClient | null = null;
 let busy = false;
+let sqliteMirror: AccountSharedMirror | null = null;
+
+/** Registered only by Controller after its existing EdgeCore SQLite is ready.
+ * This is an opt-in hook; no table is created and no sync starts on boot.
+ */
+export function attachPilotAccountSqliteMirror(mirror: AccountSharedMirror): void {
+  sqliteMirror = mirror;
+}
+
+function readyAccountMirror(): { account: OwnerAccountClient; mirror: AccountSharedMirror } {
+  const account = client;
+  const mirror = sqliteMirror;
+  if (!account || !pilotAccountStatus())
+    throw new Error("Önce hesabınla giriş yapmalısın.");
+  if (!mirror)
+    throw new Error("Telefonun SQLite veritabanı henüz hazır değil.");
+  return { account, mirror };
+}
+
+/** No network: reads the already committed canonical draft mirror only. */
+export async function pilotAccountStoredSnapshot(): Promise<SharedMirrorSnapshot> {
+  const { account, mirror } = readyAccountMirror();
+  await mirror.init();
+  return mirror.snapshot(account);
+}
+
+/** Explicit, bounded, read-only authenticated download to durable SQLite.
+ * Never touches original local owner zone editor drafts or sends a command.
+ */
+export async function pilotAccountDownloadShared(): Promise<MirrorPullResult> {
+  const { account, mirror } = readyAccountMirror();
+  await mirror.init();
+  return mirror.pullAvailable(account);
+}
+
 
 export function pilotAccountStatus(): AccountIdentity | null {
   const identity = client?.current ?? null;
