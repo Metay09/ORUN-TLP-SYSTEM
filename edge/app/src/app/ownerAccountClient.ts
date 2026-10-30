@@ -45,6 +45,8 @@ async function json(reply: Response, limit = MAX_BYTES): Promise<Record<string, 
 export class OwnerAccountClient {
   private accessToken: string | null = null;
   private identity: AccountIdentity | null = null;
+  private epoch = 0;
+  get sessionEpoch(): number { return this.epoch; }
   private readonly base: string;
   private readonly fetcher: typeof fetch;
 
@@ -60,6 +62,7 @@ export class OwnerAccountClient {
   /** Called only after an explicit user login action. */
   async signIn(device: ActiveMobileSession, username: string,
                password: string): Promise<AccountIdentity> {
+    const loginEpoch = ++this.epoch;
     this.accessToken = null;
     this.identity = null;
     if (!device?.present || origin(device.origin) !== this.base ||
@@ -87,6 +90,8 @@ export class OwnerAccountClient {
       if (!result.ok)
         throw new Error("Hesap sunucusu girişi tamamlayamadı.");
       const body = await json(result);
+      if (loginEpoch !== this.epoch)
+        throw new Error("Giriş sırasında hesap oturumu değişti.");
       const now = Date.now() / 1000;
       if (body.site !== device.site ||
           body.installation !== device.installation ||
@@ -114,19 +119,26 @@ export class OwnerAccountClient {
       throw new Error("Önce hesabınla giriş yapmalısın.");
     if (!Number.isSafeInteger(cursor) || cursor < 0)
       throw new Error("Eşitleme sıra numarası geçersiz.");
+    const requestEpoch = this.epoch;
+    const token = this.accessToken;
     const reply = await this.fetcher(
       this.base + "/api/v1/sync?cursor=" + cursor, {
-        headers: { Authorization: "Bearer " + this.accessToken,
+        headers: { Authorization: "Bearer " + token,
                    Accept: "application/json" },
         credentials: "omit", redirect: "error", cache: "no-store",
       });
+    if (requestEpoch !== this.epoch)
+      throw new Error("İndirme sırasında hesap oturumu değişti.");
     if (reply.status === 401 || reply.status === 403) {
+      this.epoch++;
       this.accessToken = null;
       this.identity = null;
       throw new Error("Hesap yetkisi sona erdi veya iptal edildi.");
     }
     if (!reply.ok) throw new Error("Ortak veriler şu anda alınamadı.");
     const body = await json(reply, MAX_SYNC_BYTES);
+    if (requestEpoch !== this.epoch)
+      throw new Error("İndirme sırasında hesap oturumu değişti.");
     if (!Array.isArray(body.changes) ||
         typeof body.cursor !== "number" ||
         !Number.isSafeInteger(body.cursor))
@@ -136,6 +148,7 @@ export class OwnerAccountClient {
 
   /** Best-effort server logout, with immediate local memory clearing. */
   async signOut(): Promise<void> {
+    this.epoch++;
     const bearer = this.accessToken;
     this.accessToken = null;
     this.identity = null;
