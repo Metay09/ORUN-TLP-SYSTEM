@@ -8,6 +8,7 @@ import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { FENCE, areaM2, canonicalE7, compileFence, fromGeoJSON, newZoneId, toGeoJSON, validateRing, zoneAt } from "../../app/zones.ts";
 import { zonePlanForDevice } from "../../app/zoneTargets.ts";
+import { SharedZonesSection } from "./SharedZonesSection.tsx";
 import { Bar, Card, Cell, DemoFlag, Dialog, Empty, Header, Section, Toggle } from "../../ds/components.tsx";
 
 export function ZonesScreen() {
@@ -119,6 +120,8 @@ export function ZonesScreen() {
       {/* "Serbest otlatma" is a tracker-owned setting, not an app-only
           mute switch. Do not show controls until a signed collar command and
           durable ACK exist; hiding them prevents a dangerous false promise. */}
+
+      <SharedZonesSection />
 
       <Section title="Hayvan grupları (yerel taslak)" />
       <Card pad>
