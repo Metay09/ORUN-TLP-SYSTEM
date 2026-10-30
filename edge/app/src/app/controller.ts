@@ -8,6 +8,8 @@ import { BleLink, UsbLink, type LinkState } from "../platform/transports.ts";
 import { fetchReadKeys, Uploader, type UploadCounts } from "../core/sync.ts";
 import { fetchGet, fetchPost } from "../platform/http.ts";
 import { KeepAlive } from "../platform/background.ts";
+import { AccountSharedMirror } from "./accountSharedMirror.ts";
+import { attachPilotAccountSqliteMirror } from "./ownerAccountPilotRuntime.ts";
 
 export interface Snapshot {
   ready: boolean;
@@ -137,6 +139,11 @@ export class Controller {
       await core.init();
       await keyring.load(db);
       this.core = core;
+      // The account mirror uses THIS existing SQLite Db. Every SQL operation
+      // is queued behind BLE/USB EdgeCore work. HTTP happens outside the queue.
+      // Registering does NOT create tables, fetch records or activate sync.
+      attachPilotAccountSqliteMirror(new AccountSharedMirror(
+        db, job => core.exclusive(job)));
       const events = {
         log: (line: string) => this.log(line),
         state: (s: LinkState, detail?: string) => {
