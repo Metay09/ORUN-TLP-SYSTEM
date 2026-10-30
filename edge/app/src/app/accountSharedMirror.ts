@@ -78,21 +78,30 @@ export class AccountSharedMirror {
   private busy = false;
   private ready = false;
   private readonly db: Db;
+  private readonly withExclusiveDb: <T>(job: () => Promise<T>) => Promise<T>;
 
-  constructor(db: Db) {
+  /** Integrations with BLE/USB EdgeCore should pass core.exclusive here,
+   * so SQL transactions are serialized but HTTP never blocks incoming frames.
+   * Host-only isolated Db tests can leave this omitted.
+   */
+  constructor(db: Db, exclusiveDb?: <T>(job: () => Promise<T>) => Promise<T>) {
     this.db = db;
+    this.withExclusiveDb = exclusiveDb ?? (job => job());
   }
 
   /** Adds one independent table to the existing DB; no other schema changed. */
   async init(): Promise<void> {
-    await this.db.execute(`CREATE TABLE IF NOT EXISTS ${TABLE} (
-      site_id TEXT NOT NULL,
-      actor_id TEXT NOT NULL,
-      installation_id TEXT NOT NULL,
-      generation INTEGER NOT NULL CHECK(generation>=1),
-      state_json TEXT NOT NULL,
-      PRIMARY KEY(site_id,actor_id,installation_id)
-    )`);
+    if (this.ready) return;
+    await this.withExclusiveDb(async () => {
+      await this.db.execute(`CREATE TABLE IF NOT EXISTS ${TABLE} (
+        site_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        installation_id TEXT NOT NULL,
+        generation INTEGER NOT NULL CHECK(generation>=1),
+        state_json TEXT NOT NULL,
+        PRIMARY KEY(site_id,actor_id,installation_id)
+      )`);
+    });
     this.ready = true;
   }
 
@@ -139,7 +148,8 @@ export class AccountSharedMirror {
    * one user's cached data must never appear under another login. */
   async snapshot(client: OwnerAccountClient): Promise<SharedMirrorSnapshot> {
     const actor = checkedActor(client.current);
-    const mirror = this.decode(actor, await this.read(actor));
+    const stored = await this.withExclusiveDb(() => this.read(actor));
+    const mirror = this.decode(actor, stored);
     if (!sameIdentity(client.current, actor))
       throw new Error("Hesap oturumu değişti; ortak veri gösterilmedi.");
     const state = mirror.get();
@@ -159,7 +169,7 @@ export class AccountSharedMirror {
     this.busy = true;
     try {
       const actor = checkedActor(client.current);
-      const prior = await this.read(actor);
+      const prior = await this.withExclusiveDb(() => this.read(actor));
       const mirror = this.decode(actor, prior);
       const previousCursor = mirror.get().cursor;
       const response = await client.readSharedChanges(previousCursor);
@@ -180,7 +190,7 @@ export class AccountSharedMirror {
       if (jsonBytes(serialized) > MAX_STATE_BYTES)
         throw new Error("Kalıcı ortak veri kapasitesi doldu; imleç korunuyor.");
       if (response.cursor !== previousCursor) {
-        await this.db.transaction(async () => {
+        await this.withExclusiveDb(() => this.db.transaction(async () => {
           const current = await this.read(actor);
           if (current.generation !== prior.generation ||
               current.serialized !== prior.serialized)
@@ -204,8 +214,8 @@ export class AccountSharedMirror {
           // logout rolls back the page rather than persisting old-user data.
           if (!sameIdentity(client.current, actor))
             throw new Error("Hesap oturumu değişti; SQLite işlemi geri alındı.");
-        });
-        const persisted = await this.read(actor);
+        }));
+        const persisted = await this.withExclusiveDb(() => this.read(actor));
         if (persisted.serialized !== serialized)
           throw new Error("Yerel SQLite kaydı doğrulanamadı.");
       }
