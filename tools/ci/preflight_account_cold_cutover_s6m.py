@@ -99,6 +99,19 @@ def _flag(tokens: list[str], name: str) -> str:
 
 
 def verify_installed_units(live: Path, units: Path) -> None:
+    # Metadata-only check for the PC mirror and its secret holder. Never
+    # inspect their bytes or print any token/path in output.
+    for folder in (live / "state" / "pc", live / "state" / "secrets"):
+        try:
+            info = folder.lstat()
+        except OSError:
+            raise ShadowRefused("PRIVATE_MIRROR_STATE_MISSING") from None
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or
+                stat.S_IMODE(info.st_mode) & 0o077):
+            raise ShadowRefused("PRIVATE_MIRROR_STATE_UNSAFE")
+    for item in (live / "state" / "pc" / "shared.sqlite",
+                 live / "state" / "secrets" / "pc-enrollment.token"):
+        _private_unit(item)
     server = _private_unit(units / BACKEND)
     mirror = _private_unit(units / MIRROR)
     timer = _private_unit(units / TIMER)
