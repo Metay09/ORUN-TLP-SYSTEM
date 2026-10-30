@@ -63,9 +63,11 @@ await client.signOut();
 assert.equal(client.current, null);
 assert.equal(signedOut, 1);
 await assert.rejects(() => client.readSharedChanges(), /giriş/);
-await assert.rejects(
-  () => new OwnerAccountClient("http://example.test:8443", stub).signIn(
-    phone, "ownerlogin", "A-Unique-Host-Only-Password"), /HTTPS/);
+// The constructor rejects an insecure origin synchronously. Node's
+// assert.rejects expects a Promise; use assert.throws for this fail-closed check.
+assert.throws(
+  () => new OwnerAccountClient("http://example.test:8443", stub),
+  /HTTPS/);
 const badSite = (async () => new Response(JSON.stringify({
     account_access_token: shortBearer, site:"other-site",
     actor:"owner", username:"ownerlogin",
