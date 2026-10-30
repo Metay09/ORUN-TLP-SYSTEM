@@ -139,11 +139,15 @@ export class OwnerAccountClient {
     this.accessToken = null;
     this.identity = null;
     if (!bearer) return;
-    await this.fetcher(this.base + "/api/v1/account/logout", {
+    const response = await this.fetcher(this.base + "/api/v1/account/logout", {
       method: "POST", headers: {
         Authorization: "Bearer " + bearer,
       },
       credentials: "omit", redirect: "error", cache: "no-store",
     });
+    // Local secret has already been dropped. Do not present server revoke
+    // as confirmed if the endpoint failed or returned an unexpected status.
+    if (response.status !== 200 && response.status !== 401)
+      throw new Error("Yerel çıkış yapıldı, sunucuda iptal doğrulanamadı.");
   }
 }
