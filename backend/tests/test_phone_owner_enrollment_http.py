@@ -239,6 +239,99 @@ class PhoneEnrollmentHTTPTests(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/v1/enroll/begin", {
             "algorithm": "P256-SHA256", "public_key_base64": b64(extra_pub)})[0], 429)
 
+    def test_owner_approved_recovery_preserves_rights_and_revokes_lost_token(self):
+        key, public, initial = self.begin()
+        code = self.registry.approve(initial["request_id"], initial["fingerprint"],
+                                     "orun-main", "owner", VIEW)
+        _, original = self.finish(key, public, initial, code)
+        old_token = original["access_token"]
+        # Simulate Android receipt of bearer followed by Keystore storage
+        # failure. No local secret remains, but the same P-256 key is intact.
+        public_body = {"algorithm": "P256-SHA256",
+                       "public_key_base64": b64(public)}
+        status, pending = self.request(
+            "POST", "/api/v1/enroll/recover/begin", public_body)
+        self.assertEqual(status, 200, pending)
+        self.assertEqual(pending["installation_id"], initial["installation_id"])
+        self.assertNotEqual(pending["request_id"], initial["request_id"])
+        self.assertEqual(self.request(
+            "GET", "/api/v1/sync/identity", token=old_token)[0], 200)
+        proof = Pending(pending["request_id"],
+                        base64.b64decode(pending["challenge_base64"]),
+                        pending["fingerprint"], pending["expires_at"])
+        signature = sign(key, proof, pending["installation_id"], public,
+                         "P256-SHA256")
+        finish_body = {
+            **public_body, "request_id": pending["request_id"],
+            "signature_base64": b64(signature), "owner_code": "z" * 43,
+        }
+        # No owner authorization = no token rotation.
+        self.assertEqual(self.request(
+            "POST", "/api/v1/enroll/recover/finish", finish_body)[0], 403)
+        self.assertEqual(self.request(
+            "GET", "/api/v1/sync/identity", token=old_token)[0], 200)
+        # Recovery cannot accidentally grant write access or change owner.
+        with self.assertRaises(EnrollmentRefused):
+            self.registry.approve(pending["request_id"], pending["fingerprint"],
+                                  "orun-main", "owner", EDIT)
+        with self.assertRaises(EnrollmentRefused):
+            self.registry.approve(pending["request_id"], pending["fingerprint"],
+                                  "orun-main", "different-user", VIEW)
+        recovery_code = self.registry.approve(
+            pending["request_id"], pending["fingerprint"],
+            "orun-main", "owner", VIEW)
+        # A request already approved by owner cannot be replaced.
+        self.assertEqual(self.request(
+            "POST", "/api/v1/enroll/recover/begin", public_body)[0], 403)
+        # The ordinary enroll endpoint never consumes recovery approval.
+        self.assertEqual(self.request(
+            "POST", "/api/v1/enroll/finish",
+            {**finish_body, "owner_code": recovery_code})[0], 403)
+        # A wrong proof also cannot rotate the token.
+        self.assertEqual(self.request(
+            "POST", "/api/v1/enroll/recover/finish",
+            {**finish_body, "signature_base64": b64(b"not a real P256 proof"),
+             "owner_code": recovery_code})[0], 403)
+        self.assertEqual(self.request(
+            "GET", "/api/v1/sync/identity", token=old_token)[0], 200)
+        status, issued = self.request(
+            "POST", "/api/v1/enroll/recover/finish",
+            {**finish_body, "owner_code": recovery_code})
+        self.assertEqual(status, 200, issued)
+        self.assertNotEqual(issued["access_token"], old_token)
+        self.assertEqual(self.request(
+            "GET", "/api/v1/sync/identity", token=old_token)[0], 401)
+        self.assertEqual(self.request(
+            "GET", "/api/v1/sync/identity",
+            token=issued["access_token"])[0], 200)
+        self.assertEqual(self.registry.resolve_token(
+            issued["access_token"]).scopes, VIEW)
+        self.assertEqual(self.request(
+            "POST", "/api/v1/enroll/recover/finish",
+            {**finish_body, "owner_code": recovery_code})[0], 403)
+
+    def test_recovery_rejects_other_key_ed25519_and_revoked_identity(self):
+        key, pub, pending = self.begin()
+        owner = self.registry.approve(pending["request_id"],
+                                      pending["fingerprint"],
+                                      "orun-main", "owner", EDIT)
+        self.assertEqual(self.finish(key, pub, pending, owner)[0], 200)
+        impostor, other_pub = new_key("P256-SHA256")
+        self.assertEqual(self.request(
+            "POST", "/api/v1/enroll/recover/begin", {
+                "algorithm": "P256-SHA256",
+                "public_key_base64": b64(other_pub)})[0], 403)
+        ed_key, ed_pub = new_key("Ed25519")
+        self.assertEqual(self.request(
+            "POST", "/api/v1/enroll/recover/begin", {
+                "algorithm": "Ed25519",
+                "public_key_base64": b64(ed_pub)})[0], 403)
+        self.assertTrue(self.registry.revoke(pending["installation_id"]))
+        self.assertEqual(self.request(
+            "POST", "/api/v1/enroll/recover/begin", {
+                "algorithm": "P256-SHA256",
+                "public_key_base64": b64(pub)})[0], 403)
+
     def test_legacy_ed25519_database_schema_migration_no_token_loss(self):
         old = self.root / "legacy.sqlite"
         with sqlite3.connect(old) as db:
