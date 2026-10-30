@@ -142,7 +142,6 @@ export class OwnerAccountClient {
     await this.fetcher(this.base + "/api/v1/account/logout", {
       method: "POST", headers: {
         Authorization: "Bearer " + bearer,
-        "Content-Length": "0",
       },
       credentials: "omit", redirect: "error", cache: "no-store",
     });
