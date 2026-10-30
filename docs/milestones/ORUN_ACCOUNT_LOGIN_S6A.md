@@ -95,6 +95,49 @@ Yeni host testleri:
 Gerçek Android Java derlemesi daha önce 107 görev ile geçmiştir,
 ancak bu dal Android UI/native cihaz testi değildir.
 
+## S6B — Android pilot hesap giriş ekranı (2026-10-30, TEST BEKLİYOR)
+
+S6A ilk kez **42 Python gerçek HTTP testi, üç TypeScript host testi ve
+Android `tsc --noEmit`** kullanıcının Debian bilgisayarında PASS gözlemlendi
+(`b320f31`). Ardından S6B dalında şu Android entegrasyonu eklendi:
+
+- `edge/app/src/features/settings/AccountLoginPanel.tsx`: yalnız
+  native Android'de Ayarlar altında **Kullanıcı hesabı · pilot**.
+  Şifreyi yalnız kullanıcı açıkça gönderdiğinde kullanır; formda
+  girişi hemen temizler. AndroidKeyStore'dan korunan telefon
+  oturumunu `activeMobileSession` ile okur, hesabı
+  `/api/v1/account/login` üzerinden doğrular, `site/actor`
+  ve 12 saatlik oturum süresini gösterir.
+- `edge/app/src/app/ownerAccountPilotRuntime.ts`: account bearer
+  yalnız çalışan uygulamanın **JS belleğinde**. Ayarlar ekranları
+  arasında gezinirken aynı oturum kullanılır; uygulama kapanırsa
+  token kalıcı depoda yok. Giriş başarısızsa otomatik login yok.
+  Hesaptan çıkışta yerelde bearer hemen atılır, sunucuya
+  best-effort logout gönderilir. Yetki süresi dolunca login
+  durumu canlı olarak sunulmaz.
+- `Sunucudaki ortak veri ilk sayfasını kontrol et`: yalnız
+  `GET /api/v1/sync?cursor=0` ve `changes.length/cursor/has_more`
+  gösterir. Henüz Android SQLite'ye kayıt yazmaz, otomatik
+  eşitlemez ve cihazlara mera uygulamaz.
+- Kullanıcı, cihaz onayı kaldırılırken mevcut pilot hesap
+  oturumundan da çıkartılır. Lokal cihaz yetkisinin kaldırılması
+  tek başına server-side P-256 yetki revoke değildir.
+- `tools/ci/test_owner_account_pilot_runtime.ts`: process-memory
+  oturum, sunucu ilk sayfa, çıkış, account bearer'ın UI sonucunda
+  bulunmaması, uygulama sayfaları arasındaki geçici oturum.
+  S6A test kapısına eklendi.
+
+**S6B sonrası test kapısı:** `bash tools/ci/run_owner_account_login_host.sh`.
+42 önceki Python testleri, **4 TypeScript host testi** ve
+Android TypeScript kontrolü. Yeni S6B için henüz bilgisayarda
+PASS sonucu alınmadı. APK yeniden oluşturulmadı; native Android
+ve canlı sunucu testleri hâlâ yapılmadı.
+
+**Dağıtım yapılmadı:** `orun-shared-sync.service` eski S4E
+snapshot'tan hizmet ediyor. S6A/B hesap endpointleri ve pilot
+telefon enrollment endpointleri mevcut canlı 8443 arkasında
+aktif değil; hiçbir kullanıcı oluşturulmadı.
+
 ## Nihai ürüne kalan engeller
 
 - Güvenli, sürdürülebilir kullanıcı hesabı yönetimi:
@@ -105,8 +148,9 @@ ancak bu dal Android UI/native cihaz testi değildir.
   possession veya eşdeğer bağlayıcı koruma olmadan yakalanan
   hesap tokenının farklı istemciden kullanım riski kalır.
   Bu parça üretim güvenlik onayı değildir.
-- Android ekranında kullanıcı adı/şifre girişi ve cihaz onayı,
-  gerçek native secret depolama/expiry/revoke UX.
+- Android pilot kullanıcı adı/şifre ekranı kodu S6B'de mevcut;
+  cihaz onayı, native depolama, expiry/revoke UX'in gerçek
+  fiziksel uçtan uca doğrulaması ve nihai onboarding eksik.
 - Sunucuda merkezî hayvan/collar/device registry, konum geçmişi
   ve izinlere göre owner hesabına bağlama.
 - Android SQLite offline-first ledger, outbox/retry ve gerçek
