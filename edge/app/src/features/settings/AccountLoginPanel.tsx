@@ -8,10 +8,13 @@ import {
   type MobileSessionMeta,
 } from "../../platform/orunMobileSession.ts";
 import {
-  pilotAccountLogin, pilotAccountLogout, pilotAccountReadShared,
-  pilotAccountStatus,
+  pilotAccountLogin, pilotAccountLogout, pilotAccountStatus,
+  pilotAccountDownloadShared, pilotAccountStoredSnapshot,
 } from "../../app/ownerAccountPilotRuntime.ts";
 import type { AccountIdentity } from "../../app/ownerAccountClient.ts";
+import type {
+  SharedMirrorSnapshot, MirrorPullResult,
+} from "../../app/accountSharedMirror.ts";
 import { Card, KV, Section } from "../../ds/components.tsx";
 
 function userMessage(error: unknown): string {
@@ -28,9 +31,8 @@ export function AccountLoginPanel() {
   const [password, setPassword] = useState("");
   const [account, setAccount] = useState<AccountIdentity | null>(
     () => pilotAccountStatus());
-  const [lastPage, setLastPage] = useState<{
-    received: number; cursor: number; more: boolean;
-  } | null>(null);
+  const [saved, setSaved] = useState<SharedMirrorSnapshot | null>(null);
+  const [lastPull, setLastPull] = useState<MirrorPullResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -71,20 +73,34 @@ export function AccountLoginPanel() {
         "Önce bu telefonu sahibin onayıyla ORUN'a kaydetmelisin.");
       const result = await pilotAccountLogin(native, username, secret);
       setAccount(result);
-      setLastPage(null);
+      setLastPull(null);
+      const stored = await pilotAccountStoredSnapshot();
+      setSaved(stored);
       setNotice(
-        "Hesap doğrulandı. Henüz hayvanlar veya tüm mera kayıtları "
-        + "bu telefona eşitlenmedi.");
+        "Hesap doğrulandı. Önceden indirilmiş ortak veri taslakları "
+        + "gösteriliyor; hayvan ve konum geçmişi henüz eşitlenmedi.");
     });
   }
 
-  async function readOnePage(): Promise<void> {
+  async function downloadDrafts(): Promise<void> {
     await execute(async () => {
-      const page = await pilotAccountReadShared();
+      const result = await pilotAccountDownloadShared();
+      const stored = await pilotAccountStoredSnapshot();
       setAccount(pilotAccountStatus());
-      setLastPage(page);
-      setNotice("Sunucudan ortak veri ilk sayfası kontrol edildi. "
-                + "Bu işlem henüz telefona kayıtları indirmez.");
+      setLastPull(result);
+      setSaved(stored);
+      setNotice(result.more
+        ? "İndirilen sayfalar SQLite'a kaydedildi. Sunucuda daha fazla "
+          + "kayıt var; devam etmek için yeniden indir."
+        : "Sunucudaki mevcut ortak veri taslakları SQLite'a kalıcı kaydedildi. "
+          + "Bunlar tasmalara uygulanmış mera komutları değildir.");
+    });
+  }
+
+  async function showStored(): Promise<void> {
+    await execute(async () => {
+      setSaved(await pilotAccountStoredSnapshot());
+      setNotice("Bu telefonda önceden kalıcı saklanan taslaklar gösteriliyor.");
     });
   }
 
@@ -101,7 +117,8 @@ export function AccountLoginPanel() {
         confirmedOnServer = false;
       }
       setAccount(null);
-      setLastPage(null);
+      setSaved(null);
+      setLastPull(null);
       setNotice(confirmedOnServer
         ? "Hesap oturumu kapatıldı. Telefonun cihaz onayı korunur."
         : "Bu telefondaki hesap oturumu kapatıldı; sunucuda iptal "
@@ -147,17 +164,40 @@ export function AccountLoginPanel() {
                   <KV k="Yetki bitişi">
                     {new Date(account.expiresAt * 1000).toLocaleString("tr-TR")}
                   </KV>
-                  <button className="btn" type="button" disabled={busy}
-                    onClick={readOnePage}>
-                    Sunucudaki ortak veri ilk sayfasını kontrol et
+                  <button className="btn primary" type="button" disabled={busy}
+                    onClick={downloadDrafts}>
+                    {busy ? "İndiriliyor" : "Mera ve grup taslaklarını SQLite'a indir"}
                   </button>
-                  {lastPage && (
+                  <button className="btn" type="button" disabled={busy}
+                    onClick={showStored}>
+                    Telefonda kayıtlı ortak verileri göster
+                  </button>
+                  {lastPull && (
                     <>
-                      <KV k="İlk sayfadaki değişiklik">{lastPage.received}</KV>
-                      <KV k="Daha fazla sayfa">{lastPage.more ? "Var" : "Yok"}</KV>
+                      <KV k="Bu denemede indirilen değişiklik">{lastPull.received}</KV>
+                      <KV k="Kaydedilen son sıra">{lastPull.cursor}</KV>
+                      <KV k="Sunucuda devamı">{lastPull.more ? "Var" : "Yok"}</KV>
+                    </>
+                  )}
+                  {saved && (
+                    <>
+                      <KV k="SQLite mera taslağı">{saved.zones}</KV>
+                      <KV k="SQLite grup taslağı">{saved.groups}</KV>
+                      <KV k="SQLite hedef taslağı">{saved.targets}</KV>
+                      <KV k="Kalıcı kayıt imleci">{saved.cursor}</KV>
+                      {Object.entries(saved.resources)
+                        .filter(([key, item]) =>
+                          key.startsWith("zone:") && !item.deleted &&
+                          typeof item.body?.name === "string")
+                        .slice(0, 5).map(([key, item]) =>
+                          <KV key={key} k="Sunucudan kayıtlı mera">
+                            {String(item.body?.name)}
+                          </KV>)}
                       <p className="fine">
-                        Bu yalnız sunucudan yapılan doğrulama sorgusudur;
-                        telefona kalıcı indirme veya mera uygulama işlemi değildir.
+                        Buradaki kayıtlar sunucudan onaylanmış mera/grup
+                        taslaklarıdır. Yerel mera düzenleyicisinin üzerine
+                        yazılmaz; tasmalara gönderildi veya uygulandı
+                        anlamına gelmez. Tekrar giriş olmadan gösterilmez.
                       </p>
                     </>
                   )}
