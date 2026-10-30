@@ -58,6 +58,11 @@ function sameIdentity(a: AccountIdentity | null, b: AccountIdentity): boolean {
     a.installation === b.installation && a.username === b.username &&
     a.expiresAt === b.expiresAt && a.expiresAt > Date.now() / 1000);
 }
+function sameSession(client: OwnerAccountClient, actor: AccountIdentity,
+                     sessionEpoch: number): boolean {
+  return client.sessionEpoch === sessionEpoch &&
+    sameIdentity(client.current, actor);
+}
 function jsonBytes(value: string): number {
   return new TextEncoder().encode(value).length;
 }
@@ -148,9 +153,10 @@ export class AccountSharedMirror {
    * one user's cached data must never appear under another login. */
   async snapshot(client: OwnerAccountClient): Promise<SharedMirrorSnapshot> {
     const actor = checkedActor(client.current);
+    const sessionEpoch = client.sessionEpoch;
     const stored = await this.withExclusiveDb(() => this.read(actor));
     const mirror = this.decode(actor, stored);
-    if (!sameIdentity(client.current, actor))
+    if (!sameSession(client, actor, sessionEpoch))
       throw new Error("Hesap oturumu değişti; ortak veri gösterilmedi.");
     const state = mirror.get();
     return { site: actor.site, actor: actor.actor,
@@ -169,11 +175,12 @@ export class AccountSharedMirror {
     this.busy = true;
     try {
       const actor = checkedActor(client.current);
+      const sessionEpoch = client.sessionEpoch;
       const prior = await this.withExclusiveDb(() => this.read(actor));
       const mirror = this.decode(actor, prior);
       const previousCursor = mirror.get().cursor;
       const response = await client.readSharedChanges(previousCursor);
-      if (!sameIdentity(client.current, actor))
+      if (!sameSession(client, actor, sessionEpoch))
         throw new Error("Hesap değişti; indirilen veriler kaydedilmedi.");
       if (!Array.isArray(response.changes) ||
           response.changes.length > MAX_PER_PAGE ||
@@ -195,7 +202,7 @@ export class AccountSharedMirror {
           if (current.generation !== prior.generation ||
               current.serialized !== prior.serialized)
             throw new Error("Ortak veri başka işlemde değişti; yeniden dene.");
-          if (!sameIdentity(client.current, actor))
+          if (!sameSession(client, actor, sessionEpoch))
             throw new Error("Hesap oturumu değişti; veriler kaydedilmedi.");
           if (prior.generation === 0) {
             await this.db.run(
@@ -212,7 +219,7 @@ export class AccountSharedMirror {
           // Logout may happen while awaiting the SQLite write. Check again
           // before returning from the transaction callback so a concurrent
           // logout rolls back the page rather than persisting old-user data.
-          if (!sameIdentity(client.current, actor))
+          if (!sameSession(client, actor, sessionEpoch))
             throw new Error("Hesap oturumu değişti; SQLite işlemi geri alındı.");
         }));
         const persisted = await this.withExclusiveDb(() => this.read(actor));
