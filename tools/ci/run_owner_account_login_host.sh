@@ -16,6 +16,7 @@ echo "=== ORUN PHONE AND ACCOUNT TYPESCRIPT HOST TESTS ==="
 node --experimental-strip-types tools/ci/test_phone_enrollment_client.ts
 node --experimental-strip-types tools/ci/test_complete_phone_enrollment.ts
 node --experimental-strip-types tools/ci/test_owner_account_client.ts
+node --experimental-strip-types tools/ci/test_owner_account_pilot_runtime.ts
 if [ -x edge/app/node_modules/.bin/tsc ]; then
   (cd edge/app && npm run typecheck)
   echo "ORUN_ACCOUNT_ANDROID_TYPESCRIPT_TYPECHECK_PASS"
