@@ -14,6 +14,8 @@ export interface PhoneEnrollmentPending {
   requestId: string;
   challengeBase64: string;
   expiresAt: number;
+  /** Recover an already-enrolled P256 phone only with fresh owner approval. */
+  recovery?: true;
 }
 export interface PhoneEnrollmentCredential {
   installation: string;
@@ -84,8 +86,25 @@ export async function beginPhoneEnrollment(
   baseUrl: string, identity: PhonePublicIdentity,
   fetcher: Transport = fetch,
 ): Promise<PhoneEnrollmentPending> {
+  return begin(baseUrl, identity, false, fetcher);
+}
+
+/** Reuse the SAME protected P256 key after a lost Android bearer. */
+export async function beginPhoneRecovery(
+  baseUrl: string, identity: PhonePublicIdentity,
+  fetcher: Transport = fetch,
+): Promise<PhoneEnrollmentPending & { recovery: true }> {
+  const pending = await begin(baseUrl, identity, true, fetcher);
+  return { ...pending, recovery: true };
+}
+
+async function begin(
+  baseUrl: string, identity: PhonePublicIdentity,
+  recovery: boolean, fetcher: Transport,
+): Promise<PhoneEnrollmentPending> {
   validIdentity(identity);
-  const response = await post(origin(baseUrl), "/api/v1/enroll/begin", {
+  const response = await post(origin(baseUrl),
+    recovery ? "/api/v1/enroll/recover/begin" : "/api/v1/enroll/begin", {
     algorithm: identity.algorithm, public_key_base64: identity.publicKeyBase64,
   }, fetcher);
   if (response.installation_id !== identity.installationId ||
@@ -105,6 +124,7 @@ export async function beginPhoneEnrollment(
     requestId: response.request_id,
     challengeBase64: response.challenge_base64,
     expiresAt: response.expires_at,
+    ...(recovery ? { recovery: true as const } : {}),
   };
 }
 
@@ -121,8 +141,29 @@ export async function finishPhoneEnrollment(
   pending: PhoneEnrollmentPending, ownerCode: string,
   sign: SignPhoneChallenge, fetcher: Transport = fetch,
 ): Promise<PhoneEnrollmentCredential> {
+  return finish(baseUrl, identity, pending, ownerCode, sign, false, fetcher);
+}
+
+/** Rotates the old bearer. A failed vault write can be retried with a fresh
+ * owner approval using the same AndroidKeyStore key. No scopes are upgraded.
+ */
+export async function finishPhoneRecovery(
+  baseUrl: string, identity: PhonePublicIdentity,
+  pending: PhoneEnrollmentPending & { recovery: true }, ownerCode: string,
+  sign: SignPhoneChallenge, fetcher: Transport = fetch,
+): Promise<PhoneEnrollmentCredential> {
+  return finish(baseUrl, identity, pending, ownerCode, sign, true, fetcher);
+}
+
+async function finish(
+  baseUrl: string, identity: PhonePublicIdentity,
+  pending: PhoneEnrollmentPending, ownerCode: string,
+  sign: SignPhoneChallenge, recovery: boolean,
+  fetcher: Transport,
+): Promise<PhoneEnrollmentCredential> {
   validIdentity(identity);
-  if (pending.installationId !== identity.installationId ||
+  if ((pending.recovery === true) !== recovery ||
+      pending.installationId !== identity.installationId ||
       pending.fingerprint !== identity.fingerprint ||
       pending.algorithm !== identity.algorithm ||
       !REQUEST.test(pending.requestId) || !CHALLENGE.test(pending.challengeBase64) ||
@@ -134,7 +175,8 @@ export async function finishPhoneEnrollment(
       !BASE64.test(signed.signatureBase64) ||
       signed.signatureBase64.length > 120)
     throw new Error("İmza bu telefonun kimliğiyle uyuşmuyor.");
-  const response = await post(origin(baseUrl), "/api/v1/enroll/finish", {
+  const response = await post(origin(baseUrl),
+    recovery ? "/api/v1/enroll/recover/finish" : "/api/v1/enroll/finish", {
     algorithm: identity.algorithm,
     public_key_base64: identity.publicKeyBase64,
     request_id: pending.requestId,
