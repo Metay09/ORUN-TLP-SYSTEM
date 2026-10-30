@@ -62,6 +62,7 @@ export class OwnerAccountClient {
   /** Called only after an explicit user login action. */
   async signIn(device: ActiveMobileSession, username: string,
                password: string): Promise<AccountIdentity> {
+    const loginEpoch = ++this.epoch;
     this.accessToken = null;
     this.identity = null;
     if (!device?.present || origin(device.origin) !== this.base ||
@@ -89,6 +90,8 @@ export class OwnerAccountClient {
       if (!result.ok)
         throw new Error("Hesap sunucusu girişi tamamlayamadı.");
       const body = await json(result);
+      if (loginEpoch !== this.epoch)
+        throw new Error("Giriş sırasında hesap oturumu değişti.");
       const now = Date.now() / 1000;
       if (body.site !== device.site ||
           body.installation !== device.installation ||
