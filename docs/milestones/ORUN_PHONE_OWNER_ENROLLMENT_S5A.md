@@ -122,6 +122,59 @@ Bu durumda sahibi kontrollü yeniden anahtarlama/oturum yenileme
 akışı olmadan yeniden kaydolmaya çalışmamalı. Bu akış S5C
 güvenlik bloklayıcısıdır.
 
+## S5C — güvenli aynı-anahtar kurtarma ve pilot kayıt ekranı (aday)
+
+**Neden:** Telefon sunucudan ilk bearer'ı aldıktan sonra Android
+Keystore/AES kasası yazma hatası çıkarsa sunucu telefonu kayıtlı sayabilir.
+Eski kod, yeni kayıt isteğini reddediyordu; anahtarı silmek veya aynı
+kullanıcı hesabıymış gibi yeniden oturum açmak çözüm değildir.
+
+- `EdgeEnrollment.begin_recovery / finish_recovery`:
+  zaten kayıtlı **P-256** telefon için aynı AndroidKeyStore özel anahtarla
+  yeni nonce + imza, tekrar **yerel sahip onayı** ve yeni bearer verir.
+  Yalnız kayıtlı **site, actor, izin kümesi** korunur; yükseltilemez.
+  Eski bearer yalnız başarılı kurtarma işleminin tamamında, atomik
+  SQLite güncellemesiyle iptal edilir. Üzerine yazılamayan, iptal edilmiş
+  veya farklı anahtarlı telefon kurtarılamaz. Ed25519 PC tokenları bu
+  yoldan döndürülemez; PC'nin ayrı operatör yaşam döngüsü korunur.
+  Kurtarma nonce'u 15 dk geçerli; onaylı istek anonim tekrar
+  ile sıfırlanamaz; aynı 32 bekleyen kapasitesi geçerli.
+- HTTP yolları yalnız `--enable-phone-enrollment` açıkken:
+  `POST /api/v1/enroll/recover/begin` ve
+  `POST /api/v1/enroll/recover/finish`. Sadece anahtar+onay
+  kanıtı; **asla herkese açık approve endpointi yok**.
+- `beginPhoneRecovery/finishPhoneRecovery` ve
+  `completePhoneRecovery` doğru ayrı URL'leri kullanır.
+  Başarılı backend kimliği doğrulanmadan token kasaya yazılmaz.
+- `PhoneRegistrationPanel.tsx` Ayarlar'a bağlandı.
+  **Sadece Android**; kullanıcı açıkça pilot kaydını açıp
+  `create:true` düğmesine bastığında anahtar oluşturur.
+  Sunucu adresi kullanıcı tarafından girilir.
+  Ekranda yalnız istek ID/parmak izi gösterilir; sahibin
+  tek kullanımlık kodu parola girişidir; kod ve token günlükte
+  veya kalıcı JS depoda tutulmaz. İlk kayıt ve aynı-anahtar
+  kurtarma ayrı düğmelerdir.
+  **Bu genel kullanıcı hesabı login ekranı değildir;
+  gerçek sürü/mera eşitlemesi otomatik başlamaz.**
+- Test: Python HTTP başarılı kurtarma/eski token iptali,
+  yanlış/iptal edilen anahtar, izin yükseltme, onaysız
+  başarısızlık ve yeniden oynatma; Node TypeScript HTTP
+  adres/yetki sınırı, kasaya dönüş ve kimlik eşleşmesi.
+
+**Bu S5C testleri henüz kullanıcının PC'sinde çalıştırılmadı;
+Android `npm run typecheck`, Gradle compile, gerçek cihazda
+P256 imza + AndroidKeyStore AES-GCM okuma/yazma/expiry henüz PASS değil.**
+Sunucu S4E sabit snapshot'a eklenmedi; dört çalışan servis
+ve Tailscale 443/8443 değişmedi. PR taslak olarak kalıyor.
+
+**Kalan bloklayıcılar:** Android yetkinin silinmesi ile sunucu revoke
+ayrı işler; gerçek kalıcı kullanıcı hesabı/oturum açma, sunucu
+yenileme politikası, yeni telefon onayı ve çok telefon yönetimi;
+daha kapsamlı kötüye kullanım hız sınırlaması; gerçek
+`Android HTTP + Keystore` fiziksel doğrulaması;
+offline SQLite ve iki yönlü mera eşitlemesi; kapsamlı
+saha/üretim güvenliği kontrolü.
+
 ## Takip eden ürün işleri (henüz bitmedi)
 
 - Android **native korumalı bearer saklama** için aday kod var; gerçek
