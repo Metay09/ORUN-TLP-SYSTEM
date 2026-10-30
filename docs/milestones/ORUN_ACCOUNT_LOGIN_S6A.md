@@ -122,12 +122,21 @@ Android `tsc --noEmit`** kullanıcının Debian bilgisayarında PASS gözlemlend
 - Kullanıcı, cihaz onayı kaldırılırken mevcut pilot hesap
   oturumundan da çıkartılır. Lokal cihaz yetkisinin kaldırılması
   tek başına server-side P-256 yetki revoke değildir.
+- Oturum kapatmada sunucu `200/401` dışı yanıt verirse veya
+  ağ kesilirse, account bearer yerelde yine atılır; UI
+  sunucuda iptalin doğrulanamadığını söyler. Kullanıcıya
+  server token iptal edildi diye yanlış güven verilmez.
 - `tools/ci/test_owner_account_pilot_runtime.ts`: process-memory
   oturum, sunucu ilk sayfa, çıkış, account bearer'ın UI sonucunda
   bulunmaması, uygulama sayfaları arasındaki geçici oturum.
   S6A test kapısına eklendi.
 
-**S6B sonrası test kapısı:** `bash tools/ci/run_owner_account_login_host.sh`.
+**S6B hızlı Android ekran kontrolü:** `bash tools/ci/run_owner_account_ui_host.sh`.
+Bu kontrol yalnız hesap istemcisinin ve yeni ekran belleği akışının
+Node host testleri ile Android TypeScript `typecheck` yürütür;
+daha önce 42/42 PASS olmuş Python testlerini yeniden çalıştırmaz.
+
+**Tam regresyon kapısı:** `bash tools/ci/run_owner_account_login_host.sh`.
 42 önceki Python testleri, **4 TypeScript host testi** ve
 Android TypeScript kontrolü. Yeni S6B için henüz bilgisayarda
 PASS sonucu alınmadı. APK yeniden oluşturulmadı; native Android
