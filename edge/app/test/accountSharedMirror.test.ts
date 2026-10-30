@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { NodeDb } from "./nodeDb.ts";
+import { EdgeCore } from "../src/core/edge.ts";
 import { AccountSharedMirror } from "../src/app/accountSharedMirror.ts";
 import { OwnerAccountClient } from "../src/app/ownerAccountClient.ts";
 import type { ActiveMobileSession } from "../src/platform/orunMobileSession.ts";
@@ -189,4 +190,47 @@ test("logout during asynchronous HTTP pull never commits stale account data", as
   const row = await db.query(
     "SELECT COUNT(*) AS n FROM orun_account_shared_mirror_v1");
   assert.equal(row[0].n,0);
+});
+
+
+test("same EdgeCore SQLite serialization never blocks BLE/USB while HTTP awaits", async () => {
+  const db = new NodeDb();
+  const core = new EdgeCore(db, { credentials: () => null });
+  await core.init();
+  let lockedOperations = 0;
+  const mirror = new AccountSharedMirror(
+    db, job => {
+      lockedOperations++;
+      return core.exclusive(job);
+    });
+  // Lazy table creation is explicit; EdgeCore observations remain untouched.
+  const before = await db.query(
+    "SELECT name FROM sqlite_master WHERE type='table' "
+    + "AND name='orun_account_shared_mirror_v1'");
+  assert.equal(before.length, 0);
+  await mirror.init();
+  let notifyStarted!: () => void;
+  let releaseResponse!: (page: Page) => void;
+  const started = new Promise<void>(resolve => { notifyStarted = resolve; });
+  const user = await signedIn("site-a", "owner", "a", async _cursor => {
+    notifyStarted();
+    return new Promise<Page>(resolve => { releaseResponse = resolve; });
+  });
+  const waiting = mirror.pullPage(user.client);
+  await started;
+  // A real EdgeCore event using the very same Db MUST finish before any
+  // remote sync response arrives, proving that HTTP did not hold the lock.
+  await core.sessionAlive("USB");
+  const session = await db.query("SELECT transport FROM sessions");
+  assert.equal(session.length, 1);
+  assert.equal(session[0].transport, "USB");
+  releaseResponse({
+    changes: [change(1, "zone", "z1", "Kuzey")],
+    cursor: 1, has_more: false,
+  });
+  assert.equal((await waiting).cursor, 1);
+  assert.equal((await mirror.snapshot(user.client)).zones, 1);
+  const observationCount = await db.query("SELECT count(*) AS n FROM observations");
+  assert.equal(observationCount[0].n, 0);
+  assert.ok(lockedOperations >= 4, "SQL init, read and commit must take EdgeCore lock");
 });
