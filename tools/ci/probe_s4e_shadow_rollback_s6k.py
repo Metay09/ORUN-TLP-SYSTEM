@@ -149,8 +149,9 @@ def probe(live: Path, candidate: Path, *, root: Path = ROOT) -> None:
         script = pinned / "tools" / "orun_shared_sync_loopback.py"
         env = dict(os.environ)
         env.pop("PYTHONPATH", None)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         process = subprocess.Popen(
-            [sys.executable, "-I", "-u", str(script),
+            [sys.executable, "-I", "-B", "-u", str(script),
              "--state-dir", str(work), "--bind", "127.0.0.1",
              "--port", "0", "--reuse-state"],
             cwd=pinned, env=env, stdin=subprocess.DEVNULL,
