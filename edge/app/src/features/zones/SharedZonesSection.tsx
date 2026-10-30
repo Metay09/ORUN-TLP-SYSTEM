@@ -94,7 +94,7 @@ export function SharedZonesSection() {
                       taslağı bulunmuyor.</p>}
                   {shown.list.entries.map((zone) => (
                     <div key={zone.id} className="stack"
-                      style={{ borderTop: "1px solid var(--line)", paddingTop: 10, gap: 3 }}>
+                      style={{ borderTop: "1px solid var(--hair)", paddingTop: 10, gap: 3 }}>
                       <span className="sm strong">{zone.name}</span>
                       <span className="fine">
                         {zone.hectares.toLocaleString("tr-TR",
