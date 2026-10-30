@@ -432,21 +432,49 @@ class EdgeEnrollment:
             db.execute("DELETE FROM edge_pending WHERE request_id=?", (request_id,))
         return new_token
 
-    def resolve_token(self, bearer: str) -> Actor | None:
+    def active_installation(self, installation_id: str,
+                            token_digest: bytes) -> tuple[Actor, str] | None:
+        """Trusted lookup by STORED digest for active accounts. Prevents an
+        account session surviving a phone token rotation or revocation.
+        """
+        if (not isinstance(installation_id, str) or
+                not ID.fullmatch(installation_id) or
+                not isinstance(token_digest, bytes) or len(token_digest) != 32):
+            return None
+        now = int(time.time())
+        with self._session() as db:
+            row = db.execute(
+                "SELECT site_id,actor_id,installation_id,scopes_json,key_algorithm "
+                "FROM edge_installs WHERE installation_id=? AND token_hash=? "
+                "AND revoked_at IS NULL AND expires_at>?",
+                (installation_id, token_digest, now)).fetchone()
+        if not row:
+            return None
+        return (Actor(row["site_id"], row["actor_id"],
+                      row["installation_id"],
+                      frozenset(json.loads(row["scopes_json"]))),
+                row["key_algorithm"])
+
+    def resolve_token_with_algorithm(self, bearer: str) -> tuple[Actor, str] | None:
         if not isinstance(bearer, str) or not 48 <= len(bearer) <= 128:
             return None
-        # No caller-controlled actor/site/permissions enter this path.
         now = int(time.time())
         digest = hashlib.sha256(bearer.encode()).digest()
         with self._session() as db:
             row = db.execute(
-                "SELECT site_id,actor_id,installation_id,scopes_json "
+                "SELECT site_id,actor_id,installation_id,scopes_json,key_algorithm "
                 "FROM edge_installs WHERE token_hash=? AND revoked_at IS NULL "
                 "AND expires_at>?", (digest, now)).fetchone()
         if not row:
             return None
-        return Actor(row["site_id"], row["actor_id"], row["installation_id"],
-                     frozenset(json.loads(row["scopes_json"])))
+        return (Actor(row["site_id"], row["actor_id"],
+                      row["installation_id"],
+                      frozenset(json.loads(row["scopes_json"]))),
+                row["key_algorithm"])
+
+    def resolve_token(self, bearer: str) -> Actor | None:
+        details = self.resolve_token_with_algorithm(bearer)
+        return details[0] if details else None
 
     def resolve_headers(self, headers: object) -> Actor | None:
         auth = headers.get("Authorization", "") if hasattr(headers, "get") else ""
