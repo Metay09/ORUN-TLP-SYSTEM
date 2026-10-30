@@ -7,6 +7,7 @@ import type { Theme } from "../../app/stores.ts";
 import { Card, Cell, KV, Screen, Section, Seg, ToggleRow } from "../../ds/components.tsx";
 import { serverWords } from "../network/words.ts";
 import { PhoneRegistrationPanel } from "./PhoneRegistrationPanel.tsx";
+import { AccountLoginPanel } from "./AccountLoginPanel.tsx";
 
 declare const __APP_VERSION__: string;
 
@@ -37,6 +38,7 @@ export function SettingsScreen() {
       </Card>
 
       <PhoneRegistrationPanel />
+      <AccountLoginPanel />
 
       <Section title={tr.settings.about} />
       <Card>

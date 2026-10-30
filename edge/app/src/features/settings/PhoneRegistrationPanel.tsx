@@ -18,6 +18,7 @@ import {
   storeMobileSession, mobileSessionStatus, clearLocalMobileSession,
   type MobileSessionMeta,
 } from "../../platform/orunMobileSession.ts";
+import { pilotAccountLogout, pilotAccountStatus } from "../../app/ownerAccountPilotRuntime.ts";
 import { Card, KV, Section } from "../../ds/components.tsx";
 
 function readableError(error: unknown): string {
@@ -121,6 +122,15 @@ export function PhoneRegistrationPanel() {
 
   async function signOutLocal() {
     await run(async () => {
+      // Do not leave a pilot account signed in after removing its underlying
+      // device credential. A failed network revoke still clears account bearer
+      // locally; the server token will time out separately if unreachable.
+      if (pilotAccountStatus()) {
+        try { await pilotAccountLogout(); }
+        catch (err: unknown) {
+          if (pilotAccountStatus()) throw err;
+        }
+      }
       await clearLocalMobileSession();
       setSession({ present: false });
       setPending(null);

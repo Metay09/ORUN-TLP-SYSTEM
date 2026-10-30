@@ -27,6 +27,8 @@ if str(ROOT) not in sys.path:
 from backend.edge_enrollment import EdgeEnrollment  # noqa: E402
 from backend.shared_sync_http import handler_factory  # noqa: E402
 from backend.phone_enrollment_http import mobile_handler_factory  # noqa: E402
+from backend.account_login import AccountStore  # noqa: E402
+from backend.account_login_http import account_handler_factory  # noqa: E402
 from backend.shared_sync_store import SharedStore  # noqa: E402
 
 FILES = ("shared_resources.sqlite", "enrolled_edges.sqlite")
@@ -86,15 +88,30 @@ def prepare(state_dir: str | Path, *, reuse_state: bool = False) -> tuple[Shared
 
 
 def start(state_dir: str | Path, bind: str, port: int,
-          *, reuse_state: bool = False, phone_enrollment: bool = False) -> None:
+          *, reuse_state: bool = False, phone_enrollment: bool = False,
+          account_login: bool = False) -> None:
     if not CONTROL.fullmatch(bind):
         raise StartupRefused("ONLY_127_0_0_1_BIND_ALLOWED")
     if type(port) is not int or not 0 <= port <= 65535:
         raise StartupRefused("INVALID_PORT")
     store, enrollment = prepare(state_dir, reuse_state=reuse_state)
-    # Phone registration stays OFF unless an operator explicitly enables it.
-    handler = (mobile_handler_factory(store, enrollment) if phone_enrollment
-               else handler_factory(store, enrollment.resolve_headers))
+    # Account/password access is a separate explicit pilot opt-in. Do NOT
+    # create a default account, adopt an unknown database or unlock sync
+    # merely because a P256 phone is owner-approved.
+    if account_login:
+        account_db = Path(state_dir) / "owner_accounts.sqlite"
+        if (account_db.is_symlink() or not account_db.is_file() or
+                account_db.stat().st_uid != os.geteuid() or
+                stat.S_IMODE(account_db.stat().st_mode) & 0o077):
+            raise StartupRefused("EXPLICIT_PRIVATE_OWNER_ACCOUNT_BOOTSTRAP_REQUIRED")
+        accounts = AccountStore(account_db)
+        handler = account_handler_factory(
+            store, enrollment, accounts,
+            enable_phone_enrollment=phone_enrollment)
+    else:
+        # Preserve exact S4E behavior unless S6A is deliberately requested.
+        handler = (mobile_handler_factory(store, enrollment) if phone_enrollment
+                   else handler_factory(store, enrollment.resolve_headers))
     server = ThreadingHTTPServer(("127.0.0.1", port), handler)
     server.daemon_threads = True
     try:
@@ -121,10 +138,14 @@ def main() -> int:
                         help="Explicitly reopen both existing private SQLite files")
     parser.add_argument("--enable-phone-enrollment", action="store_true",
                         help="opt in to untrusted begin/finish; owner approves ONLY locally")
+    parser.add_argument("--enable-account-login", action="store_true",
+                        help="owner account must already be bootstrapped; "
+                             "gates P256 phone resource sync on password login")
     args = parser.parse_args()
     try:
         start(args.state_dir, args.bind, args.port, reuse_state=args.reuse_state,
-              phone_enrollment=args.enable_phone_enrollment)
+              phone_enrollment=args.enable_phone_enrollment,
+              account_login=args.enable_account_login)
         return 0
     except (StartupRefused, OSError, ValueError) as exc:
         reason = str(exc) if isinstance(exc, StartupRefused) else "RUNTIME_ERROR"
