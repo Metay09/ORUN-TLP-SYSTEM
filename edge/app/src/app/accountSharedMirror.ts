@@ -11,7 +11,7 @@
 // Android backup / at-rest encryption requires review before production use.
 import type { Db } from "../core/db.ts";
 import {
-  OfflineSyncStore, type SyncChange, type SyncResource, type SyncKind,
+  OfflineSyncStore, type SyncChange, type SyncResource,
 } from "./offlineSync.ts";
 import type { OwnerAccountClient, AccountIdentity } from "./ownerAccountClient.ts";
 
