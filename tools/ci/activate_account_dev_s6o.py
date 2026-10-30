@@ -151,14 +151,28 @@ def provision_owner(account_path: Path) -> bool:
         validate_owner(account_path)
         print("ORUN_DEV_OWNER_ACCOUNT=ALREADY_PRESENT", flush=True)
         return False
-    first = getpass.getpass("ORUN sahip parolasi (en az 12 karakter, gizli): ")
-    again = getpass.getpass("Parolayi tekrar gir (gizli): ")
-    if first != again:
-        raise DevInstallError("PASSWORD_CONFIRMATION_MISMATCH")
-    if not 12 <= len(first) <= 128:
-        raise DevInstallError("PASSWORD_LENGTH_MUST_BE_12_TO_128")
-    # AccountStore checks password length; secrets are never printed or
-    # accepted in shell args, environment, process list, or GitHub.
+
+    # This is a development PC, not a signup page. Keep credentials private
+    # while letting the operator correct accidental short or mismatched input
+    # in this SAME invocation, without retrying Git/fetch/systemd commands.
+    print("ORUN hesap kurulumu: 12-128 karakterlik yeni parola gir.", flush=True)
+    print("Karakterler terminalde gorunmez; Ctrl+C ile iptal edebilirsin.",
+          flush=True)
+    while True:
+        first = getpass.getpass("Yeni ORUN sahip parolasi: ")
+        if not 12 <= len(first) <= 128:
+            print("PAROLA KISA/UZUN: En az 12, en fazla 128 karakter olmali. Tekrar dene.",
+                  flush=True)
+            continue
+        again = getpass.getpass("Ayni parolayi ikinci kez gir: ")
+        if first != again:
+            print("PAROLALAR ESLESMEDI: Her iki girisi yeniden yap.",
+                  flush=True)
+            continue
+        break
+
+    # Password is accepted only through hidden terminal input. It is never
+    # copied to argv, environment, systemd, chat or logs.
     try:
         AccountStore(account_path).bootstrap_owner(
             SITE, OWNER_ACTOR, USERNAME, first)
@@ -167,7 +181,6 @@ def provision_owner(account_path: Path) -> bool:
     validate_owner(account_path)
     print("ORUN_DEV_OWNER_ACCOUNT=CREATED", flush=True)
     return True
-
 
 def check_pc_mirror(token_path: Path) -> None:
     # Read the existing private token only inside the PC; never print or
