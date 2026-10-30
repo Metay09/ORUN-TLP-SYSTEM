@@ -50,7 +50,11 @@ def mobile_handler_factory(store: SharedStore, registry: EdgeEnrollment):
     class MobileHandler(Parent):
         def do_POST(self):  # noqa: N802
             target = urlsplit(self.path)
-            if target.path not in ("/api/v1/enroll/begin", "/api/v1/enroll/finish"):
+            fresh_begin = target.path == "/api/v1/enroll/begin"
+            recovery_begin = target.path == "/api/v1/enroll/recover/begin"
+            fresh_finish = target.path == "/api/v1/enroll/finish"
+            recovery_finish = target.path == "/api/v1/enroll/recover/finish"
+            if not any((fresh_begin, recovery_begin, fresh_finish, recovery_finish)):
                 return super().do_POST()
             if target.query or target.fragment:
                 return self._send(404, {"error": "not_found"})
@@ -70,11 +74,14 @@ def mobile_handler_factory(store: SharedStore, registry: EdgeEnrollment):
                 public = _decode(body.get("public_key_base64"), 256)
                 _validated_public_key(public, algorithm)
                 installation = "edge-" + hashlib.sha256(public).hexdigest()
-                if target.path == "/api/v1/enroll/begin":
+                if fresh_begin or recovery_begin:
                     if set(body) != {"algorithm", "public_key_base64"}:
                         raise ValueError("begin schema")
-                    pending = registry.begin(installation, public,
-                                             algorithm=algorithm)
+                    pending = (registry.begin_recovery(installation, public,
+                                                       algorithm=algorithm)
+                               if recovery_begin else
+                               registry.begin(installation, public,
+                                              algorithm=algorithm))
                     return self._send(200, {
                         "installation_id": installation,
                         "request_id": pending.request_id,
@@ -95,9 +102,10 @@ def mobile_handler_factory(store: SharedStore, registry: EdgeEnrollment):
                 signature = _decode(body["signature_base64"], 120)
                 # The owner code is a one-time high-entropy secret approved
                 # locally. Never log it or echo it in an error payload.
-                token = registry.finish(
+                token = ((registry.finish_recovery if recovery_finish else
+                          registry.finish)(
                     req, installation, public, signature, body["owner_code"],
-                    algorithm=algorithm)
+                    algorithm=algorithm))
                 return self._send(200, {
                     "installation_id": installation,
                     "access_token": token, "expires_in_seconds": MAX_SESSION_SECONDS,
