@@ -12,4 +12,5 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
   backend.tests.test_phone_owner_enrollment_http
 echo "=== ORUN PHONE ENROLLMENT TYPESCRIPT CLIENT ==="
 node --experimental-strip-types tools/ci/test_phone_enrollment_client.ts
+node --experimental-strip-types tools/ci/test_complete_phone_enrollment.ts
 echo "ORUN_PHONE_OWNER_ENROLLMENT_HOST_PASS"
