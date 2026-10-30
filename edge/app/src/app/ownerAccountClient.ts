@@ -126,6 +126,7 @@ export class OwnerAccountClient {
         credentials: "omit", redirect: "error", cache: "no-store",
       });
     if (reply.status === 401 || reply.status === 403) {
+      this.epoch++;
       this.accessToken = null;
       this.identity = null;
       throw new Error("Hesap yetkisi sona erdi veya iptal edildi.");
@@ -141,6 +142,7 @@ export class OwnerAccountClient {
 
   /** Best-effort server logout, with immediate local memory clearing. */
   async signOut(): Promise<void> {
+    this.epoch++;
     const bearer = this.accessToken;
     this.accessToken = null;
     this.identity = null;
