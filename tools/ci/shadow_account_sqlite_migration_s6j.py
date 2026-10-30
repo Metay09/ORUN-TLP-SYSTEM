@@ -23,6 +23,13 @@ import subprocess
 import sys
 from urllib.parse import quote
 
+# This entrypoint is also invoked as `python3 tools/ci/<script>.py` from Fish.
+# In that mode sys.path[0] is tools/ci, not the repository root. Use the
+# repository root explicitly before importing the shared staging helper.
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from tools.ci.stage_account_runtime_source_s6i import SOURCES
 
 PINNED_S4E = "264b4117a4d9fdda2b3ed8f328d0e02f17ee52bc"
