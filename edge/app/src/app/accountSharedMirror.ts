@@ -17,7 +17,6 @@ import type { OwnerAccountClient, AccountIdentity } from "./ownerAccountClient.t
 
 const TABLE = "orun_account_shared_mirror_v1";
 const ID = /^[A-Za-z0-9._-]{1,128}$/;
-const KINDS = ["zone", "group", "zone_target"] as const;
 const MAX_PER_PAGE = 200;
 const MAX_PAGES = 5;
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
