@@ -14,8 +14,13 @@ from http.server import ThreadingHTTPServer
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import threading
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -25,7 +30,6 @@ from backend.account_login_http import account_handler_factory
 from backend.edge_enrollment import EdgeEnrollment, signed_challenge
 from backend.shared_sync_store import Actor, SharedStore
 
-ROOT = Path(__file__).resolve().parents[2]
 PASSWORD = "Synthetic-E2E-Host-Only-2026!DoNotReuse"
 RING = [
     [376100000, 280500000], [376100000, 280510000],
