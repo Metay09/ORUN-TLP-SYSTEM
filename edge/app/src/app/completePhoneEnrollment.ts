@@ -5,8 +5,7 @@ import {
   finishPhoneEnrollment, type PhonePublicIdentity,
   type PhoneEnrollmentPending, type SignPhoneChallenge,
 } from "./phoneEnrollment.ts";
-import { storeMobileSession, type MobileSessionInput } from
-  "../platform/orunMobileSession.ts";
+import type { MobileSessionInput } from "../platform/orunMobileSession.ts";
 
 export interface PhoneRegistrationDone {
   installation: string;
@@ -34,8 +33,8 @@ export async function completePhoneEnrollment(
   baseUrl: string, identity: PhonePublicIdentity,
   pending: PhoneEnrollmentPending, ownerCode: string,
   sign: SignPhoneChallenge,
+  save: SavePhoneSession,
   fetcher: typeof fetch = fetch,
-  save: SavePhoneSession = storeMobileSession,
 ): Promise<PhoneRegistrationDone> {
   const origin = httpsOrigin(baseUrl);
   const issued = await finishPhoneEnrollment(
