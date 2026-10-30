@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import {
   beginPhoneEnrollment, finishPhoneEnrollment,
+  beginPhoneRecovery, finishPhoneRecovery,
   type PhonePublicIdentity,
 } from "../../edge/app/src/app/phoneEnrollment.ts";
 
@@ -87,4 +88,31 @@ await assert.rejects(
     pending, "Z".repeat(43), sign, denied),
   /onaylanmadı/,
 );
+// The recovery request is a distinct, explicitly owner-approved protocol.
+const recoverFetch = (async (url: string, init: RequestInit) => {
+  assert.equal(url, "https://example.test:8443/api/v1/enroll/recover/begin");
+  assert.equal(init.method, "POST");
+  return new Response(JSON.stringify(good), {
+    status: 200, headers: { "Content-Type": "application/json" },
+  });
+}) as typeof fetch;
+const recovery = await beginPhoneRecovery(
+  "https://example.test:8443/", identity, recoverFetch);
+assert.equal(recovery.recovery, true);
+await assert.rejects(() => finishPhoneEnrollment(
+  "https://example.test:8443/", identity, recovery, "Z".repeat(43),
+  sign, finishFetch), /geçersiz/);
+const recoverFinishFetch = (async (url: string, init: RequestInit) => {
+  assert.equal(url, "https://example.test:8443/api/v1/enroll/recover/finish");
+  assert.equal(init.method, "POST");
+  return new Response(JSON.stringify({
+    installation_id: identity.installationId,
+    access_token: "u".repeat(64), expires_in_seconds: 3600,
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
+}) as typeof fetch;
+const regained = await finishPhoneRecovery(
+  "https://example.test:8443/", identity, recovery, "Z".repeat(43),
+  sign, recoverFinishFetch);
+assert.equal(regained.accessToken, "u".repeat(64));
+
 console.log("ORUN_PHONE_ENROLLMENT_TS_HOST_PASS");
