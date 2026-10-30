@@ -77,7 +77,11 @@ function canonicalRecordCount(resources: Record<string, SyncResource>): {
 export class AccountSharedMirror {
   private busy = false;
   private ready = false;
-  constructor(private readonly db: Db) {}
+  private readonly db: Db;
+
+  constructor(db: Db) {
+    this.db = db;
+  }
 
   /** Adds one independent table to the existing DB; no other schema changed. */
   async init(): Promise<void> {
