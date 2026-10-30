@@ -45,6 +45,8 @@ async function json(reply: Response, limit = MAX_BYTES): Promise<Record<string, 
 export class OwnerAccountClient {
   private accessToken: string | null = null;
   private identity: AccountIdentity | null = null;
+  private epoch = 0;
+  get sessionEpoch(): number { return this.epoch; }
   private readonly base: string;
   private readonly fetcher: typeof fetch;
 
