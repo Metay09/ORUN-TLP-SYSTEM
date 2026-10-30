@@ -161,6 +161,28 @@ class S6ISourceStageTests(unittest.TestCase):
             process.kill()
             process.communicate(timeout=4)
 
+    def test_account_mode_refuses_to_start_without_explicit_owner_database(self):
+        stage(self.dest)
+        state, _ = self._state()
+        result = subprocess.run(
+            [
+                sys.executable, "-I", "-u",
+                str(self.dest / "runtime" / "tools" /
+                    "orun_shared_sync_loopback.py"),
+                "--state-dir", str(state), "--bind", "127.0.0.1",
+                "--port", "0", "--reuse-state", "--enable-account-login",
+            ],
+            cwd=self.dest / "runtime", capture_output=True, text=True,
+            timeout=7, check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "ORUN_SHARED_START_REFUSED="
+            "EXPLICIT_PRIVATE_OWNER_ACCOUNT_BOOTSTRAP_REQUIRED",
+            result.stderr,
+        )
+        self.assertFalse((state / "owner_accounts.sqlite").exists())
+
     def test_staged_code_starts_in_default_and_explicit_account_modes(self):
         stage(self.dest)
         state, pc_token = self._state()
