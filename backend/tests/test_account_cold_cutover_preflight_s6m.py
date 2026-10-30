@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -115,6 +116,10 @@ class S6MReadOnlyPreflightTests(unittest.TestCase):
         p.write_text(original.replace(" --port 18781 ", " --port 18782 "))
         with self.assertRaisesRegex(ShadowRefused, "BACKEND_UNIT_MISMATCH"):
             self.call()
+        p.write_text(original.replace(
+            " --reuse-state", " --reuse-state --enable-account-login"))
+        with self.assertRaisesRegex(ShadowRefused, "BACKEND_UNIT_MISMATCH"):
+            self.call()
         p.write_text(original)
         with mock.patch(
             "tools.ci.preflight_account_cold_cutover_s6m._systemctl",
@@ -130,10 +135,23 @@ class S6MReadOnlyPreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(ShadowRefused, "OBSERVATION_SERVICE"):
             self.call()
 
+    def test_direct_entrypoint_imports_without_project_pythonpath(self):
+        script = (ROOT / "tools" / "ci" /
+                  "preflight_account_cold_cutover_s6m.py")
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-c",
+             "import runpy; runpy.run_path(" + repr(str(script)) +
+             ", run_name='s6m_import_only')"],
+            cwd=self.live.parent, capture_output=True, text=True,
+            timeout=10, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr[:400])
+        self.assertNotIn("ModuleNotFoundError", result.stderr)
+
     def test_missing_or_world_readable_credential_metadata_rejected(self):
         secret = self.live / "state" / "secrets" / "pc-enrollment.token"
         secret.chmod(0o644)
-        with self.assertRaisesRegex(ShadowRefused, "INSTALLED_UNIT_UNSAFE"):
+        with self.assertRaisesRegex(ShadowRefused, "PRIVATE_FILE_UNSAFE"):
             self.call()
         secret.chmod(0o600)
         secret.unlink()
