@@ -156,7 +156,9 @@ class S6MReadOnlyPreflightTests(unittest.TestCase):
         secret.chmod(0o600)
         secret.unlink()
         secret.symlink_to(self.live / "STAGING_MANIFEST.json")
-        with self.assertRaisesRegex(ShadowRefused, "INSTALLED_UNIT_UNSAFE"):
+        # Symlinks and group/world-readable secrets now share the same
+        # metadata-only refusal path; never open or follow the token file.
+        with self.assertRaisesRegex(ShadowRefused, "PRIVATE_FILE_UNSAFE"):
             self.call()
 
 
