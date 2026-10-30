@@ -53,16 +53,24 @@ def _state(unit: str) -> str:
                         unit.replace("-", "_").replace(".", "_"))
 
 
-def _private_unit(path: Path) -> str:
+def _private_regular_metadata(path: Path) -> None:
+    """Stat-only validation: NEVER read bearer or SQLite file contents."""
     try:
         info = path.lstat()
-        if (not stat.S_ISREG(info.st_mode) or
-                info.st_uid != os.geteuid() or
-                stat.S_IMODE(info.st_mode) & 0o077):
-            raise ShadowRefused("INSTALLED_UNIT_UNSAFE")
+    except OSError:
+        raise ShadowRefused("PRIVATE_FILE_MISSING") from None
+    if (not stat.S_ISREG(info.st_mode) or
+            info.st_uid != os.geteuid() or
+            stat.S_IMODE(info.st_mode) & 0o077):
+        raise ShadowRefused("PRIVATE_FILE_UNSAFE")
+
+
+def _private_unit(path: Path) -> str:
+    _private_regular_metadata(path)
+    try:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
-        raise ShadowRefused("INSTALLED_UNIT_MISSING") from None
+        raise ShadowRefused("INSTALLED_UNIT_READ_FAILED") from None
 
 
 def _loaded_identity(name: str, expected: Path) -> None:
@@ -111,7 +119,7 @@ def verify_installed_units(live: Path, units: Path) -> None:
             raise ShadowRefused("PRIVATE_MIRROR_STATE_UNSAFE")
     for item in (live / "state" / "pc" / "shared.sqlite",
                  live / "state" / "secrets" / "pc-enrollment.token"):
-        _private_unit(item)
+        _private_regular_metadata(item)
     server = _private_unit(units / BACKEND)
     mirror = _private_unit(units / MIRROR)
     timer = _private_unit(units / TIMER)
