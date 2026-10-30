@@ -11,7 +11,14 @@ let client: OwnerAccountClient | null = null;
 let busy = false;
 
 export function pilotAccountStatus(): AccountIdentity | null {
-  return client?.current ?? null;
+  const identity = client?.current ?? null;
+  if (!identity) return null;
+  if (identity.expiresAt <= Date.now() / 1000) {
+    // Expired 12h token is never presented as a live login.
+    client = null;
+    return null;
+  }
+  return identity;
 }
 
 export async function pilotAccountLogin(
