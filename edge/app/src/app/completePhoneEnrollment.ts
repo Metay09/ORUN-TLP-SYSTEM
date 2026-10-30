@@ -2,7 +2,7 @@
 // protected native store. This is an explicit user-triggered candidate flow.
 // Not wired into the currently deployed APK or main application lifecycle.
 import {
-  finishPhoneEnrollment, type PhonePublicIdentity,
+  finishPhoneEnrollment, finishPhoneRecovery, type PhonePublicIdentity,
   type PhoneEnrollmentPending, type SignPhoneChallenge,
 } from "./phoneEnrollment.ts";
 import type { MobileSessionInput } from "../platform/orunMobileSession.ts";
@@ -36,9 +36,32 @@ export async function completePhoneEnrollment(
   save: SavePhoneSession,
   fetcher: typeof fetch = fetch,
 ): Promise<PhoneRegistrationDone> {
+  return complete(baseUrl, identity, pending, ownerCode, sign, save, fetcher, false);
+}
+
+export async function completePhoneRecovery(
+  baseUrl: string, identity: PhonePublicIdentity,
+  pending: PhoneEnrollmentPending & { recovery: true }, ownerCode: string,
+  sign: SignPhoneChallenge,
+  save: SavePhoneSession,
+  fetcher: typeof fetch = fetch,
+): Promise<PhoneRegistrationDone> {
+  return complete(baseUrl, identity, pending, ownerCode, sign, save, fetcher, true);
+}
+
+async function complete(
+  baseUrl: string, identity: PhonePublicIdentity,
+  pending: PhoneEnrollmentPending, ownerCode: string,
+  sign: SignPhoneChallenge, save: SavePhoneSession,
+  fetcher: typeof fetch, recovery: boolean,
+): Promise<PhoneRegistrationDone> {
   const origin = httpsOrigin(baseUrl);
-  const issued = await finishPhoneEnrollment(
-    origin, identity, pending, ownerCode, sign, fetcher);
+  const issued = recovery
+    ? await finishPhoneRecovery(
+      origin, identity, pending as PhoneEnrollmentPending & { recovery: true },
+      ownerCode, sign, fetcher)
+    : await finishPhoneEnrollment(
+      origin, identity, pending, ownerCode, sign, fetcher);
   const response = await fetcher(origin + "/api/v1/sync/identity", {
     headers: { Authorization: "Bearer " + issued.accessToken,
                Accept: "application/json" },
