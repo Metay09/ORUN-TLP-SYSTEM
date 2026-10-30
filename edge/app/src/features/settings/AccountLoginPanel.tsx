@@ -91,15 +91,21 @@ export function AccountLoginPanel() {
   async function signOut(): Promise<void> {
     setPassword("");
     await execute(async () => {
+      let confirmedOnServer = true;
       try {
         await pilotAccountLogout();
-      } finally {
-        // Server sign-out can fail offline, but local bearer is cleared
-        // synchronously before its network request starts.
-        setAccount(null);
-        setLastPage(null);
+      } catch (cause: unknown) {
+        // If the in-memory login still exists, the logout was refused
+        // before discarding it (e.g. concurrent login), so report failure.
+        if (pilotAccountStatus()) throw cause;
+        confirmedOnServer = false;
       }
-      setNotice("Hesap oturumu kapatıldı. Telefonun cihaz onayı korunur.");
+      setAccount(null);
+      setLastPage(null);
+      setNotice(confirmedOnServer
+        ? "Hesap oturumu kapatıldı. Telefonun cihaz onayı korunur."
+        : "Bu telefondaki hesap oturumu kapatıldı; sunucuda iptal "
+          + "doğrulanamadı. Yetki süresi dolana kadar geçerli olabilir.");
     });
   }
 
