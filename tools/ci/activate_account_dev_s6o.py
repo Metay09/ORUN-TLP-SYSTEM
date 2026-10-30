@@ -155,6 +155,8 @@ def provision_owner(account_path: Path) -> bool:
     again = getpass.getpass("Parolayi tekrar gir (gizli): ")
     if first != again:
         raise DevInstallError("PASSWORD_CONFIRMATION_MISMATCH")
+    if not 12 <= len(first) <= 128:
+        raise DevInstallError("PASSWORD_LENGTH_MUST_BE_12_TO_128")
     # AccountStore checks password length; secrets are never printed or
     # accepted in shell args, environment, process list, or GitHub.
     try:
