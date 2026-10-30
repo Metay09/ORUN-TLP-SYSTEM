@@ -1,7 +1,7 @@
 // ORUN S5B: host-only completion/origin/identity boundary regression.
 // Node built-in fetch mocks; no native plugin, live endpoints, or credentials.
 import assert from "node:assert/strict";
-import { completePhoneEnrollment } from
+import { completePhoneEnrollment, completePhoneRecovery } from
   "../../edge/app/src/app/completePhoneEnrollment.ts";
 import type { PhonePublicIdentity, PhoneEnrollmentPending } from
   "../../edge/app/src/app/phoneEnrollment.ts";
@@ -83,5 +83,29 @@ await assert.rejects(() => completePhoneEnrollment(
   "https://example.test:8443", identity, pending, "Z".repeat(43),
   sign, save, badHttp), /kabul etmedi/);
 assert.equal(saved, null);
+
+// Recovery uses a distinct endpoint, replaces the prior bearer only after
+// owner approval, and returns no bearer to the UI.
+const recovery = { ...pending, recovery: true as const };
+const recoveredFetch = (async (url: string, init: RequestInit) => {
+  if (url.endsWith("/api/v1/enroll/recover/finish")) {
+    assert.equal(init.method, "POST");
+    return new Response(JSON.stringify({
+      installation_id: identity.installationId,
+      access_token: "r".repeat(64),
+      expires_in_seconds: 3600,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }
+  assert.equal(url, "https://example.test:8443/api/v1/sync/identity");
+  return new Response(JSON.stringify({
+    site: "orun-main", installation: identity.installationId,
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
+}) as typeof fetch;
+saved = null;
+const regained = await completePhoneRecovery(
+  "https://example.test:8443", identity, recovery, "Z".repeat(43),
+  sign, save, recoveredFetch);
+assert.equal(regained.site, "orun-main");
+assert.equal(saved?.accessToken, "r".repeat(64));
 
 console.log("ORUN_PHONE_SECURE_SESSION_FLOW_TS_HOST_PASS");
