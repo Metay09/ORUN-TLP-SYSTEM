@@ -119,12 +119,16 @@ export class OwnerAccountClient {
       throw new Error("Önce hesabınla giriş yapmalısın.");
     if (!Number.isSafeInteger(cursor) || cursor < 0)
       throw new Error("Eşitleme sıra numarası geçersiz.");
+    const requestEpoch = this.epoch;
+    const token = this.accessToken;
     const reply = await this.fetcher(
       this.base + "/api/v1/sync?cursor=" + cursor, {
-        headers: { Authorization: "Bearer " + this.accessToken,
+        headers: { Authorization: "Bearer " + token,
                    Accept: "application/json" },
         credentials: "omit", redirect: "error", cache: "no-store",
       });
+    if (requestEpoch !== this.epoch)
+      throw new Error("İndirme sırasında hesap oturumu değişti.");
     if (reply.status === 401 || reply.status === 403) {
       this.epoch++;
       this.accessToken = null;
@@ -133,6 +137,8 @@ export class OwnerAccountClient {
     }
     if (!reply.ok) throw new Error("Ortak veriler şu anda alınamadı.");
     const body = await json(reply, MAX_SYNC_BYTES);
+    if (requestEpoch !== this.epoch)
+      throw new Error("İndirme sırasında hesap oturumu değişti.");
     if (!Array.isArray(body.changes) ||
         typeof body.cursor !== "number" ||
         !Number.isSafeInteger(body.cursor))
