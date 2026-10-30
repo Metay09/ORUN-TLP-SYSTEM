@@ -188,7 +188,7 @@ class S6HLegacyPcUnderAccountMode(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(result["results"][0]["status"], "REJECTED")
-        self.assertEqual(len(self.shared.read(
+        self.assertEqual(len(self.shared.pull(
             Actor(SITE, "owner", PC_INSTALLATION, READ), 0)["changes"]), 1)
 
     def test_new_phone_must_log_in_and_pc_still_works_after_logout(self):
