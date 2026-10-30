@@ -83,10 +83,50 @@ uyumluluğu ve TS HTTPS/identity bağlama denetimleri.
 Mevcut servisleri durdurmaz, restart etmez, Tailscale ayarını değiştirmez;
 APK derlemez.
 
+## S5B hazırlığı — cihaz içi korumalı oturum kasası (aynı taslak dal)
+
+- `edge/app/android/app/src/main/java/tr/orun/edge/OrunMobileSessionPlugin.java`:
+  AndroidKeyStore AES-256-GCM, 12-byte rastgele IV, AAD, atomik dosya
+  yazımı, tek thread seri erişimi. Şifreli dosya yalnız Android
+  `getNoBackupFilesDir()` içinde; telefon yedeklerine alınmaz.
+  `putSession` kimlik anahtarı ile kurulum ID eşleşmesini,
+  HTTPS origin/site/token ve 30-gün süre sınırını doğrular.
+  `getSession` varsayılan olarak bearer tokenı JS'ye vermez;
+  token yalnız açık `includeToken:true` çağrısına verilir;
+  bozuk/eski/kopya oturum sessizce kabul edilmez.
+  `clearSession` yalnız yerel oturumu siler, **sunucu yetkisini
+  iptal etmez**; server revoke ayrıca gerekir.
+  `MainActivity` iki native bridge'i kaydeder fakat otomatik
+  kimlik oluşturmaz veya sunucuya kayıt isteği göndermez.
+- `edge/app/src/platform/orunMobileSession.ts`: türlenmiş
+  `storeMobileSession`, `mobileSessionStatus`,
+  `activeMobileSession`, `clearLocalMobileSession`.
+  Hiçbir token `localStorage`/IndexedDB'e yazılmaz.
+- `edge/app/src/app/completePhoneEnrollment.ts`: sunucunun
+  `/api/v1/sync/identity` üzerinden bearer'a bağladığı gerçek
+  `site + installation` değerlerini doğrular, yalnız sonra
+  native AES kasasına yazdırır. İstemciye gizli tokenı geri
+  döndürmez. Android app ekranına henüz bağlanmadı.
+- `tools/ci/test_complete_phone_enrollment.ts`: eşleşmeyen
+  kurulum kimliği, HTTP, yanlış onay, tokenın UI'ye
+  döndürülmemesi ve korumalı depo çağrısı için host sınır testleri.
+  `run_phone_owner_enrollment_host.sh` içine eklendi.
+
+**S5B henüz Android SDK derleme/gerçek cihaz testi geçmedi.**
+Java `OrunMobileSessionPlugin` için gerçek Android compile ve
+Keystore AES depolama/geri-açma/expired testleri gerekir.
+
+**Dikkat:** Kayıt sunucuda başarıyla bitip Android'de token
+saklanamazsa sunucudaki telefon kurulumu onaylanmış kalabilir.
+Bu durumda sahibi kontrollü yeniden anahtarlama/oturum yenileme
+akışı olmadan yeniden kaydolmaya çalışmamalı. Bu akış S5C
+güvenlik bloklayıcısıdır.
+
 ## Takip eden ürün işleri (henüz bitmedi)
 
-- Android **native korumalı bearer saklama**, silme, süresi dolan yetkiyi
-  güvenli yenileme ve cihaz değişikliği/iptal.
+- Android **native korumalı bearer saklama** için aday kod var; gerçek
+  Android fiziksel doğrulama, süresi dolan yetkiyi güvenli yenileme ve
+  cihaz değişikliği/iptal uygulama ekranları hâlâ gerekiyor.
 - Uygulama içinde ilk kurulum, güvenli kullanıcı **hesabı/oturum açma**,
   sahip onayı, yardımcı rolü ve çok-telefon yönetimi.
   Yerel sahip-onay CLI, kalıcı kullanıcı hesabıyla login değildir.
