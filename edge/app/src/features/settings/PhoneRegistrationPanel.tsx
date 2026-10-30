@@ -139,8 +139,14 @@ export function PhoneRegistrationPanel() {
             hesabıyla giriş değildir. Hayvan, mera ve tasma verilerini
             otomatik getirmez. Kayıt sunucuda varsayılan olarak kapalıdır.
           </p>
-          <button className="btn wide" onClick={() => setExpanded(!expanded)}
-            type="button">
+          <button className="btn wide" onClick={() => {
+            if (expanded) {
+              // Never keep the owner code in a hidden form.
+              setOwnerCode("");
+              setPending(null);
+            }
+            setExpanded(!expanded);
+          }} type="button">
             {expanded ? "Kayıt ayrıntılarını gizle" : "Pilot telefon kaydını aç"}
           </button>
         </div>
