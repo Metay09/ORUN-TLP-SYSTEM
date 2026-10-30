@@ -6,6 +6,7 @@ import { useApp } from "../../app/store.ts";
 import type { Theme } from "../../app/stores.ts";
 import { Card, Cell, KV, Screen, Section, Seg, ToggleRow } from "../../ds/components.tsx";
 import { serverWords } from "../network/words.ts";
+import { PhoneRegistrationPanel } from "./PhoneRegistrationPanel.tsx";
 
 declare const __APP_VERSION__: string;
 
@@ -34,6 +35,8 @@ export function SettingsScreen() {
           onClick={() => nav.setTab("network")} />
         {!m.demo && <Cell title={tr.settings.phoneRecords(m.snap.records ?? 0)} />}
       </Card>
+
+      <PhoneRegistrationPanel />
 
       <Section title={tr.settings.about} />
       <Card>
