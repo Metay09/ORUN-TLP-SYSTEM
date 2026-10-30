@@ -234,3 +234,37 @@ test("same EdgeCore SQLite serialization never blocks BLE/USB while HTTP awaits"
   assert.equal(observationCount[0].n, 0);
   assert.ok(lockedOperations >= 4, "SQL init, read and commit must take EdgeCore lock");
 });
+
+
+test("same user re-login within one second cannot commit old HTTP page", async () => {
+  const db = new NodeDb();
+  const mirror = new AccountSharedMirror(db);
+  await mirror.init();
+  let notifyStarted!: () => void;
+  let releasePage!: (value: Page) => void;
+  const started = new Promise<void>(resolve => { notifyStarted = resolve; });
+  const owner = await signedIn("site-a", "owner", "a", async _cursor => {
+    notifyStarted();
+    return new Promise<Page>(resolve => { releasePage = resolve; });
+  });
+  const original = owner.client.current;
+  const beforeEpoch = owner.client.sessionEpoch;
+  const inFlight = mirror.pullPage(owner.client);
+  await started;
+  await owner.client.signOut();
+  await owner.client.signIn(
+    owner.device, "ownerlogin", PASSWORD);
+  assert.equal(owner.client.current?.site, original?.site);
+  assert.equal(owner.client.current?.installation, original?.installation);
+  assert.notEqual(owner.client.sessionEpoch, beforeEpoch);
+  // Even if the identity and expiry happen to match after re-login,
+  // the first HTTP request is bound to a different account session.
+  releasePage({
+    changes: [change(1, "zone", "z1", "STALE")],
+    cursor: 1, has_more: false,
+  });
+  await assert.rejects(() => inFlight, /oturumu değişti/);
+  const state = await mirror.snapshot(owner.client);
+  assert.equal(state.cursor, 0);
+  assert.equal(state.zones, 0);
+});
