@@ -189,6 +189,16 @@ def check_pc_mirror(token_path: Path) -> None:
             raise DevInstallError("PC_IDENTITY_MISMATCH")
     finally:
         connection.close()
+    connection = http.client.HTTPConnection("127.0.0.1", PORT, timeout=3)
+    try:
+        connection.request("GET", "/api/v1/sync?cursor=0",
+                           headers={"Authorization": "Bearer " + token})
+        reply = connection.getresponse()
+        payload = json.loads(reply.read(1024 * 1024))
+        if reply.status != 200 or not isinstance(payload.get("changes"), list):
+            raise DevInstallError("PC_MIRROR_SYNC_NOT_AUTHORIZED")
+    finally:
+        connection.close()
 
 
 def check_account_endpoint() -> None:
