@@ -215,10 +215,14 @@ class AccountStore:
                 len(password) <= 128) else ""
             calculated = _hash_password(supplied, salt)
             good = bool(row and not row["disabled"] and
+                        USERNAME.fullmatch(username) and
                         hmac.compare_digest(row["username"], username) and
                         hmac.compare_digest(calculated, correct))
             if not good:
-                failures = 1 + (int(throttle["failed_count"]) if throttle else 0)
+                prior = (int(throttle["failed_count"]) if throttle and
+                         not (throttle["locked_until"] and
+                              int(throttle["locked_until"]) <= now) else 0)
+                failures = prior + 1
                 locked = now + LOCK_SECONDS if failures >= MAX_LOGIN_FAILURES else 0
                 db.execute(
                     "INSERT INTO account_attempts VALUES(?,?,?,?) "
@@ -250,10 +254,11 @@ class AccountStore:
 
     def resolve_session(self, enrollment: EdgeEnrollment,
                         bearer: str) -> Actor | None:
-        if (not isinstance(bearer, str) or not 48 <= len(bearer) <= 128):
+        if (not isinstance(bearer, str) or not
+                re.fullmatch(r"[A-Za-z0-9_-]{48,128}", bearer)):
             return None
         now = int(time.time())
-        digest = hashlib.sha256(bearer.encode("ascii", errors="ignore")).digest()
+        digest = hashlib.sha256(bearer.encode("ascii")).digest()
         with self._session() as db:
             row = db.execute(
                 "SELECT s.site_id,s.actor_id,s.installation_id,"
@@ -280,7 +285,8 @@ class AccountStore:
                      device.installation_id, frozenset(scopes))
 
     def revoke_session(self, bearer: str) -> bool:
-        if not isinstance(bearer, str) or not 48 <= len(bearer) <= 128:
+        if (not isinstance(bearer, str) or not
+                re.fullmatch(r"[A-Za-z0-9_-]{48,128}", bearer)):
             return False
         with self._session() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -288,5 +294,5 @@ class AccountStore:
                 "UPDATE account_sessions SET revoked_at=? "
                 "WHERE token_hash=? AND revoked_at IS NULL",
                 (int(time.time()),
-                 hashlib.sha256(bearer.encode("ascii", errors="ignore")).digest()))
+                 hashlib.sha256(bearer.encode("ascii")).digest()))
         return changed.rowcount == 1
