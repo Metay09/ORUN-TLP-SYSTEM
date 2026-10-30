@@ -174,7 +174,7 @@ test("logout during asynchronous HTTP pull never commits stale account data", as
   let resolveFetch!: (page: Page) => void;
   let notifyStarted!: () => void;
   const started = new Promise<void>(resolve => { notifyStarted = resolve; });
-  const user = await signedIn("site-a","owner","a", async cursor => {
+  const user = await signedIn("site-a","owner","a", async _cursor => {
     notifyStarted();
     return new Promise<Page>(resolve => { resolveFetch = resolve; });
   });
