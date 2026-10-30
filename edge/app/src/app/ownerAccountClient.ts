@@ -17,6 +17,7 @@ const TOKEN = /^[A-Za-z0-9_-]{48,128}$/;
 const IDENT = /^edge-[0-9a-f]{64}$/;
 const ID = /^[A-Za-z0-9._-]{1,128}$/;
 const MAX_BYTES = 8192;
+const MAX_SYNC_BYTES = 512 * 1024; // shared sync backend page, not login credential response
 
 function origin(raw: string): string {
   let uri: URL;
@@ -29,11 +30,11 @@ function origin(raw: string): string {
   return uri.origin;
 }
 
-async function json(reply: Response): Promise<Record<string, unknown>> {
+async function json(reply: Response, limit = MAX_BYTES): Promise<Record<string, unknown>> {
   if (!reply.headers.get("content-type")?.includes("application/json"))
     throw new Error("Sunucudan beklenmeyen yanıt.");
   const raw = await reply.text();
-  if (raw.length > MAX_BYTES)
+  if (raw.length > limit)
     throw new Error("Sunucu yanıtı çok büyük.");
   const parsed: unknown = JSON.parse(raw);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
@@ -125,7 +126,7 @@ export class OwnerAccountClient {
       throw new Error("Hesap yetkisi sona erdi veya iptal edildi.");
     }
     if (!reply.ok) throw new Error("Ortak veriler şu anda alınamadı.");
-    const body = await json(reply);
+    const body = await json(reply, MAX_SYNC_BYTES);
     if (!Array.isArray(body.changes) ||
         typeof body.cursor !== "number" ||
         !Number.isSafeInteger(body.cursor))
