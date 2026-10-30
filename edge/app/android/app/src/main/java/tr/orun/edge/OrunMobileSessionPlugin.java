@@ -183,10 +183,17 @@ public final class OrunMobileSessionPlugin extends Plugin {
         final String installation = call.getString("installation", "");
         final String site = call.getString("site", "");
         final String token = call.getString("accessToken", "");
-        final Long expiry = call.getLong("expiresAt");
+        // Capacitor JSON commonly parses Unix seconds as Integer (until 2038).
+        // PluginCall.getLong() accepts only Long and would reject valid sessions.
+        final Object expiryValue = call.getData().opt("expiresAt");
         worker.execute(() -> {
             try {
-                if (expiry == null) throw new IllegalArgumentException("EXPIRY_MISSING");
+                if (!(expiryValue instanceof Number) ||
+                        !Double.isFinite(((Number) expiryValue).doubleValue()) ||
+                        Math.floor(((Number) expiryValue).doubleValue()) !=
+                                ((Number) expiryValue).doubleValue())
+                    throw new IllegalArgumentException("EXPIRY_MISSING");
+                long expiry = ((Number) expiryValue).longValue();
                 validate(origin, installation, site, token, expiry);
                 JSONObject session = new JSONObject();
                 session.put("v", 1);
