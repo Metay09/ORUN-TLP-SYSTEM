@@ -195,6 +195,11 @@ export class AccountSharedMirror {
                WHERE site_id=? AND actor_id=? AND installation_id=?`,
               [prior.generation + 1, serialized, ...this.params(actor)]);
           }
+          // Logout may happen while awaiting the SQLite write. Check again
+          // before returning from the transaction callback so a concurrent
+          // logout rolls back the page rather than persisting old-user data.
+          if (!sameIdentity(client.current, actor))
+            throw new Error("Hesap oturumu değişti; SQLite işlemi geri alındı.");
         });
         const persisted = await this.read(actor);
         if (persisted.serialized !== serialized)
