@@ -148,6 +148,13 @@ class EdgeEnrollment:
                 if "key_algorithm" not in fields:
                     db.execute(f"ALTER TABLE {table} ADD COLUMN key_algorithm "
                                "TEXT NOT NULL DEFAULT 'Ed25519'")
+            # Recovery is an explicit, owner-approved key-preserving token
+            # rotation. Legacy pending entries remain normal enrollments.
+            pending_cols = {r[1] for r in db.execute(
+                "PRAGMA table_info(edge_pending)")}
+            if "purpose" not in pending_cols:
+                db.execute("ALTER TABLE edge_pending ADD COLUMN purpose "
+                           "TEXT NOT NULL DEFAULT 'enroll'")
 
     @contextmanager
     def _session(self):
@@ -207,6 +214,48 @@ class EdgeEnrollment:
         return Pending(req, challenge, self.fingerprint(
             public_key, algorithm=algorithm), expires)
 
+    def begin_recovery(self, installation_id: str, public_key: bytes,
+                       *, algorithm: str = "P256-SHA256") -> Pending:
+        """A lost Android bearer can recover only with the same P-256 key
+        AND a separate local owner approval. An existing token stays valid
+        until a new token is issued; Ed25519 PC credentials are excluded.
+        """
+        _id(installation_id)
+        if algorithm != "P256-SHA256":
+            raise EnrollmentRefused("phone recovery requires P256")
+        _validated_public_key(public_key, algorithm)
+        now = int(time.time())
+        req, challenge = secrets.token_hex(16), secrets.token_bytes(32)
+        with self._session() as db:
+            db.execute("BEGIN IMMEDIATE")
+            enrolled = db.execute(
+                "SELECT public_key,key_algorithm,revoked_at FROM edge_installs "
+                "WHERE installation_id=?", (installation_id,)).fetchone()
+            if (enrolled is None or enrolled["revoked_at"] is not None or
+                    enrolled["key_algorithm"] != algorithm or
+                    not hmac.compare_digest(enrolled["public_key"], public_key)):
+                raise EnrollmentRefused("recoverable phone identity not found")
+            db.execute("DELETE FROM edge_pending WHERE expires_at<=?", (now,))
+            old = db.execute(
+                "SELECT owner_code_hash FROM edge_pending WHERE installation_id=?",
+                (installation_id,)).fetchone()
+            if old and old["owner_code_hash"] is not None:
+                raise EnrollmentRefused("owner-approved request cannot be replaced")
+            if not old and db.execute(
+                    "SELECT COUNT(*) FROM edge_pending").fetchone()[0] >= MAX_PENDING_REQUESTS:
+                raise EnrollmentRefused("pending registration capacity reached")
+            db.execute("DELETE FROM edge_pending WHERE installation_id=?",
+                       (installation_id,))
+            db.execute(
+                "INSERT INTO edge_pending "
+                "(request_id,installation_id,public_key,challenge,expires_at,"
+                "key_algorithm,purpose) VALUES (?,?,?,?,?,?,?)",
+                (req, installation_id, public_key, challenge,
+                 now + MAX_PENDING_SECONDS, algorithm, "recover"))
+        return Pending(req, challenge,
+                       self.fingerprint(public_key, algorithm=algorithm),
+                       now + MAX_PENDING_SECONDS)
+
     def approve(self, request_id: str, expected_fingerprint: str,
                 site_id: str, actor_id: str, scopes: FrozenSet[str]) -> str:
         """TRUSTED OWNER OPERATOR ONLY. Returns a fresh one-time secret.
@@ -229,10 +278,22 @@ class EdgeEnrollment:
         now = int(time.time())
         with self._session() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT public_key,expires_at,key_algorithm FROM edge_pending "
-                             "WHERE request_id=?", (request_id,)).fetchone()
+            row = db.execute(
+                "SELECT public_key,expires_at,key_algorithm,installation_id,purpose "
+                "FROM edge_pending WHERE request_id=?", (request_id,)).fetchone()
             if not row or int(row["expires_at"]) <= now:
                 raise EnrollmentRefused("pending request missing or expired")
+            if row["purpose"] == "recover":
+                original = db.execute(
+                    "SELECT site_id,actor_id,scopes_json,revoked_at "
+                    "FROM edge_installs WHERE installation_id=?",
+                    (row["installation_id"],)).fetchone()
+                if (not original or original["revoked_at"] is not None or
+                        original["site_id"] != site_id or
+                        original["actor_id"] != actor_id or
+                        frozenset(json.loads(original["scopes_json"])) != scopes):
+                    raise EnrollmentRefused(
+                        "recovery cannot grant or change phone privileges")
             if not hmac.compare_digest(self.fingerprint(
                     row["public_key"], algorithm=row["key_algorithm"]),
                     expected_fingerprint):
@@ -267,7 +328,8 @@ class EdgeEnrollment:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM edge_pending WHERE request_id=?",
                              (request_id,)).fetchone()
-            if not row or int(row["expires_at"]) <= now or row["site_id"] is None:
+            if (not row or int(row["expires_at"]) <= now or
+                    row["site_id"] is None or row["purpose"] != "enroll"):
                 raise EnrollmentRefused("not approved or expired")
             if (row["installation_id"] != installation_id or
                     row["key_algorithm"] != algorithm or not hmac.compare_digest(
@@ -302,6 +364,73 @@ class EdgeEnrollment:
                         now + MAX_SESSION_SECONDS, algorithm))
             db.execute("DELETE FROM edge_pending WHERE request_id=?", (request_id,))
         return token
+
+    def finish_recovery(self, request_id: str, installation_id: str,
+                        public_key: bytes, signature: bytes, owner_code: str,
+                        *, algorithm: str = "P256-SHA256") -> str:
+        """Owner-approved same-key reissue; replaces only existing phone token.
+
+        This is the safe path when the first token was issued but Android
+        couldn't store it. No owner/scopes change and no automatic login.
+        """
+        if algorithm != "P256-SHA256":
+            raise EnrollmentRefused("phone recovery requires P256")
+        _id(installation_id)
+        _validated_public_key(public_key, algorithm)
+        if (not isinstance(signature, bytes) or
+                not 8 <= len(signature) <= 80 or
+                not isinstance(owner_code, str) or
+                not 30 <= len(owner_code) <= 80 or
+                not isinstance(request_id, str) or
+                not re.fullmatch(r"[0-9a-f]{32}", request_id)):
+            raise EnrollmentRefused("invalid recovery proof")
+        now = int(time.time())
+        with self._session() as db:
+            db.execute("BEGIN IMMEDIATE")
+            pending = db.execute(
+                "SELECT * FROM edge_pending WHERE request_id=?",
+                (request_id,)).fetchone()
+            current = db.execute(
+                "SELECT * FROM edge_installs WHERE installation_id=?",
+                (installation_id,)).fetchone()
+            if (not pending or pending["purpose"] != "recover" or
+                    pending["site_id"] is None or
+                    int(pending["expires_at"]) <= now or
+                    not current or current["revoked_at"] is not None):
+                raise EnrollmentRefused("recovery not approved or expired")
+            if (pending["installation_id"] != installation_id or
+                    pending["key_algorithm"] != algorithm or
+                    current["key_algorithm"] != algorithm or
+                    not hmac.compare_digest(pending["public_key"], public_key) or
+                    not hmac.compare_digest(current["public_key"], public_key) or
+                    current["site_id"] != pending["site_id"] or
+                    current["actor_id"] != pending["actor_id"] or
+                    current["scopes_json"] != pending["scopes_json"] or
+                    not hmac.compare_digest(
+                        pending["owner_code_hash"],
+                        hashlib.sha256(owner_code.encode()).digest())):
+                raise EnrollmentRefused("recovery authority mismatch")
+            proof = signed_challenge(
+                Pending(request_id, pending["challenge"],
+                        self.fingerprint(public_key, algorithm=algorithm),
+                        int(pending["expires_at"])),
+                installation_id, public_key, algorithm=algorithm)
+            try:
+                serialization.load_der_public_key(public_key).verify(
+                    signature, proof, ec.ECDSA(hashes.SHA256()))
+            except (InvalidSignature, ValueError) as exc:
+                raise EnrollmentRefused("phone recovery proof rejected") from exc
+            new_token = secrets.token_urlsafe(48)
+            updated = db.execute(
+                "UPDATE edge_installs SET token_hash=?,expires_at=? "
+                "WHERE installation_id=? AND revoked_at IS NULL "
+                "AND key_algorithm='P256-SHA256'",
+                (hashlib.sha256(new_token.encode()).digest(),
+                 now + MAX_SESSION_SECONDS, installation_id))
+            if updated.rowcount != 1:
+                raise EnrollmentRefused("recovery token rotation refused")
+            db.execute("DELETE FROM edge_pending WHERE request_id=?", (request_id,))
+        return new_token
 
     def resolve_token(self, bearer: str) -> Actor | None:
         if not isinstance(bearer, str) or not 48 <= len(bearer) <= 128:
