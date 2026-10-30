@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -135,6 +137,30 @@ class S6JShadowMigrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ShadowRefused, "PRIVATE_PATH_UNSAFE"):
             rehearse(self.live, self.candidate, source_root=ROOT)
         self.assertFalse((self.candidate / "SHADOW_S6J").exists())
+
+    def test_real_cli_imports_helpers_with_isolated_python_and_foreign_cwd(self):
+        # Mirrors the user's direct Fish command rather than unittest imports.
+        # -I removes the project root from Python's implicit sys.path.
+        originals = {path.name: digest(path)
+                     for path in self.source.glob("*.sqlite")}
+        script = ROOT / "tools" / "ci" / "shadow_account_sqlite_migration_s6j.py"
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", str(script),
+             "--live-root", str(self.live),
+             "--candidate", str(self.candidate)],
+            cwd=self.live.parent,
+            capture_output=True, text=True,
+            timeout=20, check=False,
+        )
+        self.assertEqual(result.returncode, 0,
+                         "isolated CLI invocation must not require PYTHONPATH")
+        self.assertIn("ORUN_S6J_SHADOW_SCHEMA_REHEARSAL_PASS", result.stdout)
+        self.assertNotIn("ModuleNotFoundError", result.stderr)
+        self.assertEqual(
+            originals,
+            {path.name: digest(path) for path in self.source.glob("*.sqlite")})
+        self.assertTrue(
+            (self.candidate / "SHADOW_S6J" / "SHADOW_MANIFEST.json").is_file())
 
     def test_tampered_candidate_is_never_used_for_migration(self):
         candidate_file = (
