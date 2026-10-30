@@ -95,7 +95,7 @@ class S6MReadOnlyPreflightTests(unittest.TestCase):
         output = self.call()
         self.assertEqual(output["S6M_PINNED_UNITS_AND_SHADOW"], "VERIFIED")
         self.assertEqual(output["COLD_CHECKPOINT_READY"],
-                         "NO_ACTIVE_WRITERS_NOT_FROZEN")
+                         "NO_NOT_QUIESCED")
         self.assertEqual(output["LIVE_SERVICE_CHANGE"], "NOT_ATTEMPTED")
         self.assertFalse(any(args[0] not in ("show", "is-active")
                              for args in self.calls))
