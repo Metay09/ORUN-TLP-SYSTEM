@@ -16,6 +16,7 @@ const phone: ActiveMobileSession = {
 let logins = 0;
 let logouts = 0;
 let reads = 0;
+let failLogout = false;
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
   assert.equal(typeof url, "string");
@@ -36,8 +37,11 @@ globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
     logouts++;
     assert.equal((init?.headers as Record<string, string>).Authorization,
                  "Bearer " + "s".repeat(64));
-    return new Response('{"signed_out":true}', {
-      status: 200, headers: { "Content-Type": "application/json" },
+    return new Response(failLogout
+      ? '{"error":"temporarily_unavailable"}'
+      : '{"signed_out":true}', {
+      status: failLogout ? 503 : 200,
+      headers: { "Content-Type": "application/json" },
     });
   }
   assert.equal(target, "https://example.test:8443/api/v1/sync?cursor=0");
@@ -62,6 +66,14 @@ try {
   assert.equal(reads, 1);
   await pilotAccountLogout();
   assert.equal(logouts, 1);
+  assert.equal(pilotAccountStatus(), null);
+  await assert.rejects(() => pilotAccountReadShared(), /giriş/);
+  // Even when the server cannot confirm revocation, a local signout must
+  // discard the account bearer and avoid claiming server-side success.
+  await pilotAccountLogin(
+    phone, "ownerlogin", "A-Unique-Host-Only-Password");
+  failLogout = true;
+  await assert.rejects(() => pilotAccountLogout(), /iptal doğrulanamadı/);
   assert.equal(pilotAccountStatus(), null);
   await assert.rejects(() => pilotAccountReadShared(), /giriş/);
 } finally {
