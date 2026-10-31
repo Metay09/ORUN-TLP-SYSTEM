@@ -177,7 +177,7 @@ export class AccountObservationMirror {
     await this.init();
     const { actor, epoch } = identity(client);
     const rows = await this.exclusive(() => this.db.query(
-      `SELECT device_id,incarnation,sequence,family,plaintext,first_seen_utc,rssi,snr
+      `SELECT device_id,incarnation,sequence,family,plaintext,frame,first_seen_utc,rssi,snr
        FROM ${ROWS} WHERE site=? AND actor=? AND installation=?
        ORDER BY device_id,incarnation,sequence`,
       keys(actor)));
@@ -189,9 +189,15 @@ export class AccountObservationMirror {
       // Revalidate persisted content to avoid silently rendering a corrupted
       // or cross-account SQLite row.
       if (typeof r.device_id !== "string" || typeof r.plaintext !== "string" ||
-          typeof r.incarnation !== "string" ||
+          typeof r.frame !== "string" || typeof r.incarnation !== "string" ||
           typeof r.sequence !== "number") throw new Error("Konum aynası bozuk.");
-      const d = describePeriodic(fromHex(r.device_id), fromHex(r.plaintext));
+      const restored = openProductFrame(fromHex(r.frame), this.lookup);
+      if (hex(restored.deviceId) !== r.device_id ||
+          hex(restored.incarnation) !== r.incarnation ||
+          restored.sequence !== r.sequence ||
+          hex(restored.plaintext) !== r.plaintext)
+        throw new Error("Kalıcı konum kaydı doğrulanamadı.");
+      const d = describePeriodic(restored.deviceId, restored.plaintext);
       if (d.incarnation !== r.incarnation || d.sequence !== r.sequence)
         throw new Error("Konum aynası kimliği uyuşmuyor.");
       if (d.lat === null || d.lon === null) continue;
