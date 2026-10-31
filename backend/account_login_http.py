@@ -12,6 +12,7 @@ from threading import BoundedSemaphore
 from urllib.parse import urlsplit
 
 from .account_login import AccountStore, LoginLocked, LoginRejected
+from .account_observation_relay import AccountObservationRelay, RelayUnavailable
 from .edge_enrollment import EdgeEnrollment
 from .phone_enrollment_http import mobile_handler_factory
 from .shared_sync_store import SharedStore
@@ -21,7 +22,8 @@ MAX_LOGIN_BYTES = 1024
 
 def account_handler_factory(store: SharedStore, enrollment: EdgeEnrollment,
                             accounts: AccountStore,
-                            *, enable_phone_enrollment: bool = False):
+                            *, enable_phone_enrollment: bool = False,
+                            observation_relay: AccountObservationRelay | None = None):
     # No remote enrollment endpoints unless the operator separately opts in.
     if enable_phone_enrollment:
         Parent = mobile_handler_factory(store, enrollment)
@@ -64,8 +66,39 @@ def account_handler_factory(store: SharedStore, enrollment: EdgeEnrollment,
                 return device
             return None
 
+        def _observation(self, method: str, route: str) -> None:
+            # User account bearer, not the unrelated PC/Edge old bearer.
+            bearer = self._bearer(self.headers)
+            principal = accounts.resolve_session(enrollment, bearer) if bearer else None
+            if principal is None or "zone:write" not in principal.scopes:
+                return self._send(401, {"error": "unauthorized"})
+            if observation_relay is None:
+                return self._send(503, {"error": "observation_not_configured"})
+            if self.headers.get("Transfer-Encoding"):
+                return self._send(400, {"error": "invalid_request"})
+            body = b""
+            if method == "POST":
+                size = self.headers.get("Content-Length", "")
+                if (self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                        != "application/json" or
+                        not size.isascii() or not size.isdecimal() or
+                        not 1 <= int(size) <= 256 * 1024):
+                    return self._send(413, {"error": "invalid_body"})
+                body = self.rfile.read(int(size))
+            elif self.headers.get("Content-Length") not in (None, "0"):
+                return self._send(400, {"error": "invalid_body"})
+            try:
+                status, content = observation_relay.forward(method, route, body)
+                return self._send(status, content)
+            except RelayUnavailable:
+                return self._send(503, {"error": "observation_temporarily_unavailable"})
+
         def do_GET(self):  # noqa: N802
             url = urlsplit(self.path)
+            if url.path == "/v1/edge/keys":
+                if url.query or url.fragment:
+                    return self._send(404, {"error": "not_found"})
+                return self._observation("GET", url.path)
             if url.path != "/api/v1/account/me":
                 return super().do_GET()
             if url.query or url.fragment:
@@ -82,6 +115,10 @@ def account_handler_factory(store: SharedStore, enrollment: EdgeEnrollment,
 
         def do_POST(self):  # noqa: N802
             url = urlsplit(self.path)
+            if url.path == "/v1/edge/batch":
+                if url.query or url.fragment:
+                    return self._send(404, {"error": "not_found"})
+                return self._observation("POST", url.path)
             if url.path not in (
                     "/api/v1/account/login", "/api/v1/account/logout"):
                 return super().do_POST()
