@@ -8,7 +8,7 @@ import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { Bar, Card, Cell, DemoFlag, Header, KV, Section } from "../../ds/components.tsx";
 import { startPosition, usePosition } from "../map/position.ts";
-import { serverWords, stationWords } from "./words.ts";
+import { phonePathWords, serverWords, stationWords } from "./words.ts";
 import { pilotAccountStatus } from "../../app/ownerAccountPilotRuntime.ts";
 
 export function NetworkScreen() {
@@ -17,6 +17,7 @@ export function NetworkScreen() {
   const pos = usePosition();
   const st = m.station, sv = m.server, s = m.snap;
   const words = stationWords(st, s);
+  const path = phonePathWords(st, s);
   const hasAccount = Boolean(pilotAccountStatus());
   const sw = serverWords({ ...sv, configured: hasAccount });
   const fresh = m.herd.filter((a) => a.freshness === "fresh").length;
@@ -37,17 +38,34 @@ export function NetworkScreen() {
       <Section title={tr.network.chain} />
       <Card>
         <div className="chain">
-          <Node icon={<CellSignalFull size={22} />} tone={fresh ? "fresh" : ""} title={tr.network.nodes.collars} sub={tr.network.collarsLine(m.devices.length, fresh)} />
-          <span className={"wire " + (st.phase === "connected" ? "ok" : linkOn ? "wait" : "")} />
-          <Node icon={<WifiHigh size={22} />} tone={st.phase === "connected" ? "fresh" : linkOn ? "aging" : ""} title={tr.network.nodes.station}
-            sub={st.phase === "connected" ? tr.network.stationHeld(held) : tr.network.stationOff} />
-          <span className={"wire " + (st.phase === "connected" ? "ok" : "")} />
-          <Node icon={<DeviceMobile size={22} />} tone="fresh" title={tr.network.nodes.phone} sub={tr.network.phoneLine(s.records ?? 0)} />
+          <Node icon={<CellSignalFull size={22} />} tone={fresh ? "fresh" : ""} title={tr.network.nodes.collars}
+            sub={`${tr.network.collarsLine(m.devices.length, fresh)} · telefondaki kayıtlar`} />
+          <span className={"wire " + (path.stationConnected ? "ok" : linkOn ? "wait" : "")} />
+          <Node icon={<WifiHigh size={22} />} tone={path.stationConnected ? "fresh" : linkOn ? "aging" : ""}
+            title={tr.network.nodes.station}
+            sub={path.stationConnected ? tr.network.stationHeld(held) : path.stationText} />
+          <span className={"wire " + (path.stationConnected && s.ready ? "ok" : "")} />
+          <Node icon={<DeviceMobile size={22} />} tone={path.phoneTone} title="Bu telefon" sub={path.phoneText} />
           <span className={"wire " + (sw.tone === "ok" ? "ok" : sw.tone === "none" ? "" : "wait")} />
-          <Node icon={<CloudCheck size={22} />} tone={sw.tone === "ok" ? "fresh" : sw.tone === "none" ? "" : "aging"} title={tr.network.nodes.server}
-            sub={hasAccount ? tr.network.serverLine(sv.pending ?? 0) : tr.network.serverOff} />
+          <Node icon={<CloudCheck size={22} />}
+            tone={sw.tone === "ok" ? "fresh" : sw.tone === "none" ? "" : "aging"}
+            title="Sunucu (telefon)" sub={hasAccount ? sw.text : "Hesaba giriş yapılmadı"} />
         </div>
-        <p className="fine" style={{ padding: "4px 16px 14px", margin: 0 }}>{tr.network.chainHelp}</p>
+        <p className="fine" style={{ padding: "4px 16px 14px", margin: 0 }}>
+          Bu görünüm yalnız bu telefonun bağlantısını ve kendi kayıt defterini gösterir. Bilgisayardaki PC Edge ayrı aktarım yapabilir.
+          {tr.network.chainHelp}
+        </p>
+      </Card>
+
+      <Section title="Bağımsız bilgisayar yolu" />
+      <Card>
+        <Cell lead={<span className="ic"><Usb size={22} /></span>} title="Gateway → PC Edge → Sunucu"
+          sub="Bilgisayar USB ile veri aktarabilir; telefonun istasyona bağlı olması gerekmez." wrapSub />
+        <KV k="PC Edge anlık durumu">Bu telefondan doğrulanamıyor</KV>
+        <p className="fine" style={{ padding: "8px 16px 14px", margin: 0 }}>
+          Bilgisayarın sunucuya gönderdiği kayıtlar, bu telefonun yerel kayıt ve teslim sayaçlarına dahil değildir.
+          Sunucudan tasmaların ortak geçmişini telefona çekme işlevi ayrıca etkinleştirilmelidir.
+        </p>
       </Card>
 
       <Section title={tr.network.station} />
@@ -141,8 +159,10 @@ function ServerCard() {
             ? "Sunucu adresi ve teknik anahtar otomatik yönetilir. Tasma kayıtları hesap oturumuyla güvenli bağlantıdan gönderilir."
             : "Sunucu bağlantısı için yalnız ORUN hesabınla giriş yap. Ayrı adres veya teknik anahtar gerekmiyor."}
         </p>
-        {sv.lastOk && <KV k="Son başarılı aktarım">{sv.lastOk}</KV>}
-        {sv.pending !== null && <KV k="Bekleyen kayıt">{sv.pending}</KV>}
+        {sv.lastOk && <KV k="Son başarılı sunucu erişimi">{sv.lastOk}</KV>}
+        {sv.uploaded !== null && <KV k="Bu telefondan onaylı kayıt">{sv.uploaded}</KV>}
+        {sv.pending !== null && <KV k="Bu telefonda bekleyen kayıt">{sv.pending}</KV>}
+        <p className="fine" style={{ margin: 0 }}>Bunlar yalnız bu telefonun sayaçlarıdır; PC Edge veya başka telefonların toplamı değildir.</p>
         {sv.error && <p role="alert" className="sm t-aging">
           Son aktarım hatası: {sv.error}
         </p>}
