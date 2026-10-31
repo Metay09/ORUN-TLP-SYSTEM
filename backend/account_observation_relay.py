@@ -29,10 +29,18 @@ _MAX_REQUEST = 256 * 1024
 _MAX_RESPONSE = 512 * 1024
 _PATHS = frozenset({("POST", "/v1/edge/batch"),
                     ("GET", "/v1/edge/keys")})
+_OBSERVATIONS = re.compile(r"^/v1/edge/records\\?after=(0|[1-9][0-9]{0,18})$")
+_SITE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 
 class AccountObservationRelay:
-    def __init__(self, upstream: str, token_file: str | Path) -> None:
+    def __init__(self, upstream: str, token_file: str | Path,
+                 *, observation_site: str | None = None) -> None:
+        # Records are site-private; a fixed operator-provided site mapping
+        # must exist before any account can read them.
+        if observation_site is not None and not _SITE.fullmatch(observation_site):
+            raise RelayConfigError("INVALID_OBSERVATION_SITE")
+        self.observation_site = observation_site
         parsed = urlsplit(upstream)
         if (parsed.scheme != "http" or parsed.username or parsed.password or
                 parsed.path not in ("", "/") or parsed.query or
@@ -77,7 +85,9 @@ class AccountObservationRelay:
 
     def forward(self, method: str, path: str,
                 data: bytes = b"") -> tuple[int, dict]:
-        if (method, path) not in _PATHS:
+        records_route = (method == "GET" and self.observation_site is not None
+                         and _OBSERVATIONS.fullmatch(path) is not None)
+        if (method, path) not in _PATHS and not records_route:
             raise RelayUnavailable("UNSUPPORTED_ROUTE")
         if len(data) > _MAX_REQUEST:
             raise RelayUnavailable("REQUEST_TOO_LARGE")
