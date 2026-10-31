@@ -18,6 +18,7 @@ let busy = false;
 let sqliteMirror: AccountSharedMirror | null = null;
 let observationMirror: AccountObservationMirror | null = null;
 let observationsChanged: (() => void) | null = null;
+let observationPrepareKeys: (() => Promise<void>) | null = null;
 
 /** Registered only by Controller after its existing EdgeCore SQLite is ready.
  * This is an opt-in hook; no table is created and no sync starts on boot.
@@ -31,9 +32,11 @@ export function attachPilotAccountSqliteMirror(mirror: AccountSharedMirror): voi
  */
 export function attachPilotAccountObservationMirror(
   mirror: AccountObservationMirror, onChanged: () => void,
+  prepareKeys: () => Promise<void>,
 ): void {
   observationMirror = mirror;
   observationsChanged = onChanged;
+  observationPrepareKeys = prepareKeys;
 }
 
 /** Only active account's verified remote records; logout reveals none. */
@@ -50,8 +53,13 @@ export async function pilotAccountDownloadObservations(): Promise<ObservationMir
   const mirror = observationMirror;
   if (!account || !pilotAccountStatus())
     throw new Error("Önce hesabınla giriş yapmalısın.");
-  if (!mirror)
+  if (!mirror || !observationPrepareKeys)
     throw new Error("Telefonun SQLite defteri henüz hazır değil.");
+  // Keys arrive through the protected account relay. Do not assume the
+  // phone has per-epoch read keys merely because it can sign in.
+  await observationPrepareKeys();
+  if (client !== account || !pilotAccountStatus())
+    throw new Error("Hesap değişti; sunucu konumları alınmadı.");
   const result = await mirror.pullAvailable(account);
   observationsChanged?.();
   return result;
@@ -138,6 +146,7 @@ export async function pilotAccountLogin(
     const next = new OwnerAccountClient(device.origin);
     const user = await next.signIn(device, username, password);
     client = next;
+    observationsChanged?.();
     return user;
   } finally {
     busy = false;
