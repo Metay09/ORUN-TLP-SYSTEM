@@ -230,7 +230,7 @@ def make_server(backend: Backend, host: str, port: int, token: str) -> Threading
                 if not authorized(self.headers):
                     return self._json(401, {"error": "token"})
                 match = re.fullmatch(
-                    r"/v1/edge/records\\?after=(0|[1-9][0-9]{0,18})",
+                    r"/v1/edge/records\?after=(0|[1-9][0-9]{0,18})",
                     self.path)
                 if not match or int(match.group(1)) > MAX_CURSOR:
                     return self._json(400, {"error": "invalid_cursor"})
