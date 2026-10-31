@@ -9,7 +9,11 @@ import { fetchReadKeys, Uploader, type UploadCounts } from "../core/sync.ts";
 import { fetchGet, fetchPost } from "../platform/http.ts";
 import { KeepAlive } from "../platform/background.ts";
 import { AccountSharedMirror } from "./accountSharedMirror.ts";
-import { attachPilotAccountSqliteMirror, pilotAccountUploadTransport } from "./ownerAccountPilotRuntime.ts";
+import { AccountObservationMirror } from "./accountObservationMirror.ts";
+import {
+  attachPilotAccountSqliteMirror, attachPilotAccountObservationMirror,
+  pilotAccountObservationPoints, pilotAccountUploadTransport,
+} from "./ownerAccountPilotRuntime.ts";
 
 export interface Snapshot {
   ready: boolean;
@@ -142,6 +146,10 @@ export class Controller {
       // Registering does NOT create tables, fetch records or activate sync.
       attachPilotAccountSqliteMirror(new AccountSharedMirror(
         db, job => core.exclusive(job)));
+      attachPilotAccountObservationMirror(
+        new AccountObservationMirror(db, keyring.lookup, job => core.exclusive(job)),
+        () => this.emit({ pointsVersion: this.snap.pointsVersion + 1 }),
+      );
       const events = {
         log: (line: string) => this.log(line),
         state: (s: LinkState, detail?: string) => {
@@ -168,7 +176,23 @@ export class Controller {
 
   /** Ledger points for the map/herd views (null until the ledger is open). */
   async points(): Promise<PointsResult | null> {
-    return this.core ? this.core.points() : null;
+    if (!this.core) return null;
+    const local = await this.core.points();
+    // Remote is account-scoped, offline cached and AEAD verified. These rows
+    // did NOT pass through the phone's Gateway ACK or upload queue.
+    // On a corrupt mirror or expired session, keep local observations usable.
+    let remote = [];
+    try {
+      remote = await pilotAccountObservationPoints();
+    } catch {
+      return local;
+    }
+    const key = (p: { tracker: string; incarnation?: string; seq: number }) =>
+      `${p.tracker}:${p.incarnation ?? "UNKNOWN"}:${p.seq}`;
+    const own = new Set(local.points.map(key));
+    const extra = remote.filter(p => !own.has(key(p)));
+    return { ...local, points: [...local.points, ...extra],
+      count: local.count + extra.length };
   }
 
   /** Adds (or, for bursts, updates) one plain-language Defter line. */
