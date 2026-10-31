@@ -43,7 +43,7 @@ export function NetworkScreen() {
           <span className={"wire " + (path.stationConnected ? "ok" : linkOn ? "wait" : "")} />
           <Node icon={<WifiHigh size={22} />} tone={path.stationConnected ? "fresh" : linkOn ? "aging" : ""}
             title={tr.network.nodes.station}
-            sub={path.stationConnected ? tr.network.stationHeld(held) : path.stationText} />
+            sub={path.stationConnected ? (st.held === null ? "İstasyon kuyruğu bilinmiyor" : tr.network.stationHeld(st.held)) : path.stationText} />
           <span className={"wire " + (path.stationConnected && s.ready ? "ok" : "")} />
           <Node icon={<DeviceMobile size={22} />} tone={path.phoneTone} title="Bu telefon" sub={path.phoneText} />
           <span className={"wire " + (sw.tone === "ok" ? "ok" : sw.tone === "none" ? "" : "wait")} />
@@ -52,7 +52,7 @@ export function NetworkScreen() {
             title="Sunucu (telefon)" sub={hasAccount ? sw.text : "Hesaba giriş yapılmadı"} />
         </div>
         <p className="fine" style={{ padding: "4px 16px 14px", margin: 0 }}>
-          Bu görünüm yalnız bu telefonun bağlantısını ve kendi kayıt defterini gösterir. Bilgisayardaki PC Edge ayrı aktarım yapabilir.
+          Bu görünüm yalnız bu telefonun bağlantısını ve kendi kayıt defterini gösterir. Bilgisayardaki PC Edge ayrı aktarım yapabilir.{" "}
           {tr.network.chainHelp}
         </p>
       </Card>
