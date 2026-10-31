@@ -7,6 +7,8 @@ import {
 } from "./ownerAccountClient.ts";
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
+import { AccountObservationMirror, type ObservationMirrorResult } from "./accountObservationMirror.ts";
+import type { Point } from "../core/points.ts";
 import {
   AccountSharedMirror, type SharedMirrorSnapshot, type MirrorPullResult,
 } from "./accountSharedMirror.ts";
@@ -14,12 +16,45 @@ import {
 let client: OwnerAccountClient | null = null;
 let busy = false;
 let sqliteMirror: AccountSharedMirror | null = null;
+let observationMirror: AccountObservationMirror | null = null;
+let observationsChanged: (() => void) | null = null;
 
 /** Registered only by Controller after its existing EdgeCore SQLite is ready.
  * This is an opt-in hook; no table is created and no sync starts on boot.
  */
 export function attachPilotAccountSqliteMirror(mirror: AccountSharedMirror): void {
   sqliteMirror = mirror;
+}
+
+/** Registered by Controller; mirror uses the same serialized SQLite DB but
+ * writes ONLY into the account observation tables, never Gateway ACCEPT.
+ */
+export function attachPilotAccountObservationMirror(
+  mirror: AccountObservationMirror, onChanged: () => void,
+): void {
+  observationMirror = mirror;
+  observationsChanged = onChanged;
+}
+
+/** Only active account's verified remote records; logout reveals none. */
+export async function pilotAccountObservationPoints(): Promise<Point[]> {
+  if (!client || !pilotAccountStatus() || !observationMirror) return [];
+  return observationMirror.points(client);
+}
+
+/** Manual user action, bounded 4x64 records per request. Remote AEAD evidence
+ * is not considered a local phone delivery, even after durable mirror COMMIT.
+ */
+export async function pilotAccountDownloadObservations(): Promise<ObservationMirrorResult> {
+  const account = client;
+  const mirror = observationMirror;
+  if (!account || !pilotAccountStatus())
+    throw new Error("Önce hesabınla giriş yapmalısın.");
+  if (!mirror)
+    throw new Error("Telefonun SQLite defteri henüz hazır değil.");
+  const result = await mirror.pullAvailable(account);
+  observationsChanged?.();
+  return result;
 }
 
 function readyAccountMirror(): { account: OwnerAccountClient; mirror: AccountSharedMirror } {
@@ -80,6 +115,7 @@ export async function pilotPasswordLogin(
     const next = new OwnerAccountClient(ORUN_ACCOUNT_ORIGIN);
     const user = await next.signInWithPassword(username, password);
     client = next;
+    observationsChanged?.();
     return user;
   } finally {
     busy = false;
@@ -132,5 +168,6 @@ export async function pilotAccountLogout(): Promise<void> {
   if (busy) throw new Error("Hesap oturum işlemi devam ediyor.");
   const prior = client;
   client = null;
+  observationsChanged?.();
   if (prior) await prior.signOut();
 }
