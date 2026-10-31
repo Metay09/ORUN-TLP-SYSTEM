@@ -149,6 +149,11 @@ export class Controller {
       attachPilotAccountObservationMirror(
         new AccountObservationMirror(db, keyring.lookup, job => core.exclusive(job)),
         () => this.emit({ pointsVersion: this.snap.pointsVersion + 1 }),
+        async () => {
+          const authenticated = pilotAccountUploadTransport();
+          if (!authenticated) throw new Error("Sunucu için oturum açılmalı.");
+          await this.refreshKeys(authenticated.url, authenticated.token);
+        },
       );
       const events = {
         log: (line: string) => this.log(line),
