@@ -49,11 +49,19 @@ function keys(actor: AccountIdentity): string[] {
 export class AccountObservationMirror {
   private ready = false;
   private busy = false;
+  private readonly db: Db;
+  private readonly lookup: CredentialLookup;
+  private readonly exclusive: <T>(work: () => Promise<T>) => Promise<T>;
+
   constructor(
-    private readonly db: Db,
-    private readonly lookup: CredentialLookup,
-    private readonly exclusive: <T>(work: () => Promise<T>) => Promise<T>,
-  ) {}
+    db: Db,
+    lookup: CredentialLookup,
+    exclusive: <T>(work: () => Promise<T>) => Promise<T>,
+  ) {
+    this.db = db;
+    this.lookup = lookup;
+    this.exclusive = exclusive;
+  }
 
   async init(): Promise<void> {
     if (this.ready) return;
