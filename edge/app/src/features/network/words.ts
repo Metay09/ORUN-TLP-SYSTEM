@@ -23,6 +23,9 @@ export function serverWords(sv: ServerView): { tone: "ok" | "up" | "off" | "none
   if (!sv.configured) return { tone: "none", text: tr.server.notSet };
   if (sv.busy) return { tone: "up", text: tr.server.sending };
   if ((sv.pending ?? 0) > 0) return { tone: sv.error ? "off" : "up", text: tr.server.pending(sv.pending ?? 0, Boolean(sv.error)) };
-  if (sv.pending !== null) return { tone: "ok", text: tr.server.allSent(sv.lastOk ? sv.lastOk.slice(0, 5) : null) };
-  return { tone: "none", text: "" };
+  if (sv.pending !== null && sv.lastOk)
+    return { tone: "ok", text: tr.server.allSent(sv.lastOk.slice(0, 5)) };
+  // Password authentication is not evidence that the observation relay
+  // has actually accepted any upload. Never show a false green connection.
+  return { tone: "up", text: "Sunucu aktarımı henüz doğrulanmadı" };
 }
