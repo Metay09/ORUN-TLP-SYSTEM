@@ -1537,6 +1537,21 @@ void printBenchDrain() {
       tracker_product_tx.blocked() ? "BLOCKED"
           : (tracker_product_tx.sent() ? "SENT" : "ARMED"),
       counted ? static_cast<long>(retained) : -1L);
+  // Read-only failure attribution; do not rearm, reseal or touch custody.
+  uint16_t exact_count = 0U;
+  const bool exact_counted = product_records.mounted() &&
+      product_records.store().ready() &&
+      product_records.store().exactObjectCount(exact_count);
+  Serial.printf(
+      "BENCH PILOT block_reason=%s selected_seq=%lu exact_cache=%d/%u "
+      "retryable=%s attempts=%lu recoveries=%lu\n",
+      tracker_product_tx.blockReasonName(),
+      static_cast<unsigned long>(tracker_product_tx.selectedSequence()),
+      exact_counted ? static_cast<int>(exact_count) : -1,
+      static_cast<unsigned>(orun_tlp::osf::kMaxExactCustodyObjects),
+      tracker_product_tx.retryableBlocked() ? "yes" : "no",
+      static_cast<unsigned long>(tracker_product_tx.retryAttempts()),
+      static_cast<unsigned long>(tracker_product_tx.automaticRecoveries()));
 }
 
 void pollBenchTracker() {
@@ -3901,6 +3916,14 @@ void loop() {
              security_store) != 0
 #endif
       ;
+#ifdef ORUN_SF5L0_TRACKER
+  if (tracker_product_tx.recoverIfSafe(
+          orun_tlp::monotonic::nowMs(), pilot_allowed)) {
+    Serial.printf("BENCH PILOT auto-retry selection attempt=%lu\n",
+                  static_cast<unsigned long>(
+                      tracker_product_tx.automaticRecoveries()));
+  }
+#endif
   switch (tracker_product_tx.update(pilot_allowed)) {
     case orun_tlp::TrackerProductTxPilot::Event::kCachePending:
       Serial.println(F("PRODUCT PILOT exact cache=pending"));
@@ -3927,7 +3950,9 @@ void loop() {
 #endif
       break;
     case orun_tlp::TrackerProductTxPilot::Event::kBlocked:
-      Serial.println(F("PRODUCT PILOT blocked; retained record preserved"));
+      Serial.printf("PRODUCT PILOT blocked reason=%s retryable=%s\n",
+                    tracker_product_tx.blockReasonName(),
+                    tracker_product_tx.retryableBlocked() ? "yes" : "no");
       break;
     case orun_tlp::TrackerProductTxPilot::Event::kNone:
       break;
