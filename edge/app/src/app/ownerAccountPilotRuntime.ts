@@ -49,6 +49,11 @@ export async function pilotAccountDownloadShared(): Promise<MirrorPullResult> {
 }
 
 
+/** Internal-only transport for phone ledger upload through account gateway. */
+export function pilotAccountUploadTransport(): { url: string; token: string } | null {
+  return client?.observationTransport() ?? null;
+}
+
 export function pilotAccountStatus(): AccountIdentity | null {
   const identity = client?.current ?? null;
   if (!identity) return null;
