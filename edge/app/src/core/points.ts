@@ -14,7 +14,8 @@ export const NEAR_S = 150;  // a live arrival this close in capture time proves 
 export interface Point {
   tracker: string; seq: number;
   incarnation?: string;   // logical identity, disambiguates device re-enrollment
-  delivery?: "phone" | "server"; // server rows never imply phone Gateway ACK time: string | null; lat: number; lon: number;
+  delivery?: "phone" | "server"; // server rows never imply phone Gateway ACK
+  time: string | null; lat: number; lon: number;
   alt_m: number | null; sats: number | null; hdop: number | null; fix_age_s: number | null;
   battery_mv: number | null; battery: string | null; active_s: number | null;
   covered_s: number | null; source: string; period_s: number;
