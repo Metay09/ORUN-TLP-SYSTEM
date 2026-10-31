@@ -131,7 +131,10 @@ def start(state_dir: str | Path, bind: str, port: int,
         if host != "127.0.0.1":
             raise StartupRefused("UNEXPECTED_PUBLIC_BIND")
         print(f"ORUN_SHARED_BIND={host}:{assigned}", flush=True)
-        print("ORUN_SHARED_SECURITY=ACCOUNT_PASSWORD_OR_LEGACY_ENROLLED;LOOPBACK_HTTP_ONLY", flush=True)
+        auth_kind = "ACCOUNT_PASSWORD_OR_LEGACY_ENROLLED" if account_login else "LEGACY_ENROLLED_ONLY"
+        print(f"ORUN_SHARED_SECURITY={auth_kind};LOOPBACK_HTTP_ONLY", flush=True)
+        print("ORUN_OBSERVATION_ACCOUNT_RELAY=" +
+              ("ENABLED" if relay is not None else "DISABLED"), flush=True)
         server.serve_forever(poll_interval=0.2)
     finally:
         server.server_close()
