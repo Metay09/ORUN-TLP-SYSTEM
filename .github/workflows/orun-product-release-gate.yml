@@ -1,0 +1,43 @@
+name: ORUN product release gate regression
+
+on:
+  push:
+    branches:
+      - fix/product-cutover-gates-20261031
+  pull_request:
+    paths:
+      - 'tools/ci/orun_product_release_gate.py'
+      - 'firmware/tests/sf5/test_orun_product_release_gate.py'
+      - 'firmware/src/main.cpp'
+      - 'firmware/platformio.ini'
+      - '.github/workflows/orun-product-release-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify fail-closed gate invariants
+        run: python3 firmware/tests/sf5/test_orun_product_release_gate.py -v
+      - name: Confirm current normal image is not accepted as product-ready
+        shell: bash
+        run: |
+          set +e
+          python3 tools/ci/orun_product_release_gate.py --json > "$RUNNER_TEMP/orun-release.json"
+          code=$?
+          set -e
+          test "$code" -eq 2
+          python3 - "$RUNNER_TEMP/orun-release.json" <<'PY'
+          import json,sys
+          report=json.load(open(sys.argv[1],encoding="utf-8"))
+          assert report["release_ready"] is False
+          assert any(x["key"] == "tracker-secure-tx" and not x["ok"]
+                     for x in report["checks"])
+          assert any(x["key"] == "gateway-durable-custody" and not x["ok"]
+                     for x in report["checks"])
+          PY
