@@ -1,14 +1,14 @@
-"""ORUN S6A opt-in account HTTP gate on the existing authenticated SharedStore.
+"""ORUN account HTTP: password-only login without prior phone enrollment.
 
-Only phone registrations approved in EdgeEnrollment + valid password can
-create an account session. PC mirrors keep their pre-existing Ed25519
-read-only bearer. Enrollment alone may inspect /sync/identity but cannot
-read/write the shared resource ledger when account mode is enabled.
+The HTTPS reverse proxy is the deployment security boundary. Legacy P256 phone
+sessions and independent PC Ed25519 mirror credentials remain compatible.
+No unauthenticated shared-data access is permitted.
 """
 from __future__ import annotations
 
 import json
 import sqlite3
+from threading import BoundedSemaphore
 from urllib.parse import urlsplit
 
 from .account_login import AccountStore, LoginLocked, LoginRejected
@@ -28,6 +28,9 @@ def account_handler_factory(store: SharedStore, enrollment: EdgeEnrollment,
     else:
         from .shared_sync_http import handler_factory
         Parent = handler_factory(store, enrollment.resolve_headers)
+
+    # Bound expensive scrypt parallelism on the private HTTPS endpoint.
+    login_slots = BoundedSemaphore(4)
 
     class AccountHandler(Parent):
         @staticmethod
@@ -85,18 +88,21 @@ def account_handler_factory(store: SharedStore, enrollment: EdgeEnrollment,
             if url.query or url.fragment:
                 return self._send(404, {"error": "not_found"})
             bearer = self._bearer(self.headers)
-            if not bearer:
-                return self._send(401, {"error": "unauthorized"})
             if url.path == "/api/v1/account/logout":
+                if not bearer:
+                    return self._send(401, {"error": "unauthorized"})
                 if self.headers.get("Content-Length") not in (None, "0"):
                     return self._send(400, {"error": "invalid_request"})
                 if accounts.resolve_session(enrollment, bearer) is None:
                     return self._send(401, {"error": "unauthorized"})
                 accounts.revoke_session(bearer)
                 return self._send(200, {"signed_out": True})
-            # Account login is available only with an APPROVED P256 device
-            # bearer, never a bench token, PC mirror, anonymous caller or
-            # account-supplied actor/site/permission claim.
+            # A user may sign in with username/password alone on any phone.
+            # An explicitly supplied device bearer is still checked through
+            # the older P256 route for backward compatibility. Never accept
+            # a malformed Authorization header as a password-only fallback.
+            if self.headers.get("Authorization") and not bearer:
+                return self._send(401, {"error": "unauthorized"})
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
             size = self.headers.get("Content-Length", "")
             if (self.headers.get("Transfer-Encoding") or
@@ -109,8 +115,15 @@ def account_handler_factory(store: SharedStore, enrollment: EdgeEnrollment,
                 if (not isinstance(data, dict) or
                         set(data) != {"username", "password"}):
                     return self._send(400, {"error": "invalid_request"})
-                created = accounts.login(
-                    enrollment, bearer, data["username"], data["password"])
+                if not login_slots.acquire(blocking=False):
+                    return self._send(429, {"error": "login_temporarily_restricted"})
+                try:
+                    created = (accounts.login(
+                        enrollment, bearer, data["username"], data["password"])
+                        if bearer else accounts.password_login(
+                            data["username"], data["password"]))
+                finally:
+                    login_slots.release()
                 return self._send(200, {
                     "account_access_token": created.bearer,
                     "site": created.site, "actor": created.actor,
