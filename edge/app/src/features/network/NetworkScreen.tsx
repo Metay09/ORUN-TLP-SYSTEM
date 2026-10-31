@@ -6,9 +6,10 @@ import { coverageSummary } from "../../app/coverage.ts";
 import { fmt, tr } from "../../app/i18n/tr.ts";
 import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
-import { Bar, Card, Cell, DemoFlag, Header, KV, Section, Toggle } from "../../ds/components.tsx";
+import { Bar, Card, Cell, DemoFlag, Header, KV, Section } from "../../ds/components.tsx";
 import { startPosition, usePosition } from "../map/position.ts";
 import { serverWords, stationWords } from "./words.ts";
+import { pilotAccountStatus } from "../../app/ownerAccountPilotRuntime.ts";
 
 export function NetworkScreen() {
   const m = useApp();
@@ -16,7 +17,8 @@ export function NetworkScreen() {
   const pos = usePosition();
   const st = m.station, sv = m.server, s = m.snap;
   const words = stationWords(st, s);
-  const sw = serverWords(sv);
+  const hasAccount = Boolean(pilotAccountStatus());
+  const sw = serverWords({ ...sv, configured: hasAccount });
   const fresh = m.herd.filter((a) => a.freshness === "fresh").length;
   const linkOn = st.link !== "none";
   const cov = coverageSummary(m.coverage.cells);
@@ -43,7 +45,7 @@ export function NetworkScreen() {
           <Node icon={<DeviceMobile size={22} />} tone="fresh" title={tr.network.nodes.phone} sub={tr.network.phoneLine(s.records ?? 0)} />
           <span className={"wire " + (sw.tone === "ok" ? "ok" : sw.tone === "none" ? "" : "wait")} />
           <Node icon={<CloudCheck size={22} />} tone={sw.tone === "ok" ? "fresh" : sw.tone === "none" ? "" : "aging"} title={tr.network.nodes.server}
-            sub={sv.configured ? tr.network.serverLine(sv.pending ?? 0) : tr.network.serverOff} />
+            sub={hasAccount ? tr.network.serverLine(sv.pending ?? 0) : tr.network.serverOff} />
         </div>
         <p className="fine" style={{ padding: "4px 16px 14px", margin: 0 }}>{tr.network.chainHelp}</p>
       </Card>
@@ -127,30 +129,35 @@ function Node({ icon, tone, title, sub }: { icon: ReactNode; tone: string; title
 
 function ServerCard() {
   const m = useApp();
+  const nav = useNav();
   const sv = m.server;
-  const [url, setUrl] = useState(sv.url);
-  const [token, setToken] = useState(sv.token);
-  const [auto, setAuto] = useState(sv.auto);
-  const dirty = url !== sv.url || token !== sv.token || auto !== sv.auto;
-  const words = serverWords(sv);
+  const account = pilotAccountStatus();
   return (
     <Card>
-      <p className="sm" style={{ padding: "14px 16px 4px", margin: 0 }}>{words.text}</p>
-      <div style={{ paddingTop: 10 }}>
-        <label className="lab">{tr.server.address}
-          <input className="inp" type="url" inputMode="url" autoCapitalize="off" autoCorrect="off" disabled={m.demo}
-            placeholder="http://100.114.36.9:8090" value={url} onChange={(e) => setUrl(e.target.value)} />
-        </label>
-        <label className="lab">{tr.server.key}
-          <input className="inp" type="password" autoCapitalize="off" autoCorrect="off" disabled={m.demo} value={token} onChange={(e) => setToken(e.target.value)} />
-        </label>
+      <div className="stack" style={{ padding: 16 }}>
+        <KV k="ORUN hesabı">{account ? account.username : "Giriş yapılmadı"}</KV>
+        <p className="sm" style={{ margin: 0 }}>
+          {account
+            ? "Sunucu adresi ve teknik anahtar otomatik yönetilir. Tasma kayıtları hesap oturumuyla güvenli bağlantıdan gönderilir."
+            : "Sunucu bağlantısı için yalnız ORUN hesabınla giriş yap. Ayrı adres veya teknik anahtar gerekmiyor."}
+        </p>
+        {sv.lastOk && <KV k="Son başarılı aktarım">{sv.lastOk}</KV>}
+        {sv.pending !== null && <KV k="Bekleyen kayıt">{sv.pending}</KV>}
+        {sv.error && <p role="alert" className="sm t-aging">
+          Son aktarım hatası: {sv.error}
+        </p>}
+        {account ? (
+          <button className="btn primary" type="button"
+            disabled={sv.busy || m.demo} onClick={() => void m.source.sync(true)}>
+            {sv.busy ? "Gönderiliyor" : "Şimdi eşitle"}
+          </button>
+        ) : (
+          <button className="btn primary" type="button"
+            onClick={() => nav.push({ to: "settings" })}>
+            Hesabımla giriş yap
+          </button>
+        )}
       </div>
-      <Cell title={tr.server.auto} trail={<Toggle on={auto} onChange={setAuto} label={tr.server.auto} />} />
-      <div className="btns">
-        <button className="btn" disabled={!dirty || m.demo} onClick={() => m.source.saveServer(url, token, auto)}>{tr.common.save}</button>
-        <button className="btn primary" disabled={!sv.configured || sv.busy} onClick={() => m.source.sync(true)}>{sv.busy ? tr.server.sending : tr.server.sendNow}</button>
-      </div>
-      {sv.error && <p className="sm t-aging" style={{ padding: "0 16px 14px", margin: 0 }}>{tr.server.lastError(sv.error)}</p>}
     </Card>
   );
 }
