@@ -4,6 +4,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Point } from "../core/points.ts";
 import type { Snapshot } from "./controller.ts";
+import { pilotAccountStatus } from "./ownerAccountPilotRuntime.ts";
 import { coverageCells, type Coverage } from "./coverage.ts";
 import { DEMO_STATION, DEMO_STATION_POS, DemoSource, demoBook, demoZones } from "./demo.ts";
 import { buildDevices } from "./devices.ts";
@@ -93,8 +94,9 @@ function useNow(ms: number): number {
   return now;
 }
 
-function usePoints(src: EdgeSource, version: number): { points: Point[]; loaded: boolean } {
-  const [state, setState] = useState<{ src: EdgeSource; points: Point[]; loaded: boolean }>({ src, points: [], loaded: false });
+function usePoints(src: EdgeSource, version: number, accountKey: string): { points: Point[]; loaded: boolean } {
+  const [state, setState] = useState<{ src: EdgeSource; accountKey: string; points: Point[]; loaded: boolean }>(
+    { src, accountKey, points: [], loaded: false });
   const last = useRef(0);
   useEffect(() => {
     let cancelled = false;
@@ -103,12 +105,15 @@ function usePoints(src: EdgeSource, version: number): { points: Point[]; loaded:
     const t = setTimeout(async () => {
       last.current = Date.now();
       const r = await src.points().catch(() => null);
-      if (!cancelled) setState({ src, points: r?.points ?? [], loaded: r !== null });
+      if (!cancelled) setState({ src, accountKey, points: r?.points ?? [], loaded: r !== null });
     }, wait);
     return () => { cancelled = true; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src, version]);
-  return state.src === src ? state : { points: [], loaded: false };
+  }, [src, version, accountKey]);
+  // A logout, account switch or expiry must hide cached remote coordinates
+  // synchronously, not one effect tick (or a two-second debounce) later.
+  return state.src === src && state.accountKey === accountKey
+    ? state : { points: [], loaded: false };
 }
 
 export function useModel(): Model {
@@ -127,7 +132,11 @@ export function useModel(): Model {
   const seenList = useSyncExternalStore(seenEvents.subscribe, () => seenEvents.get());
   const zoneBook = useSyncExternalStore(zoneStore.subscribe, () => zoneStore.get());
   const targetBook = useSyncExternalStore(targets.subscribe, targets.get);
-  const { points, loaded } = usePoints(source, snap.pointsVersion);
+  const account = demo ? null : pilotAccountStatus();
+  const accountKey = account
+    ? [account.site, account.actor, account.installation, account.username, account.expiresAt].join(":")
+    : "";
+  const { points, loaded } = usePoints(source, snap.pointsVersion, accountKey);
   const now = useNow(30_000);
 
   const zones = zoneBook.zones;
