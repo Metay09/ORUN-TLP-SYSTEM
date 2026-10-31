@@ -9,7 +9,7 @@ import { fetchReadKeys, Uploader, type UploadCounts } from "../core/sync.ts";
 import { fetchGet, fetchPost } from "../platform/http.ts";
 import { KeepAlive } from "../platform/background.ts";
 import { AccountSharedMirror } from "./accountSharedMirror.ts";
-import { attachPilotAccountSqliteMirror } from "./ownerAccountPilotRuntime.ts";
+import { attachPilotAccountSqliteMirror, pilotAccountUploadTransport } from "./ownerAccountPilotRuntime.ts";
 
 export interface Snapshot {
   ready: boolean;
@@ -52,12 +52,10 @@ const SYNC_EVERY_MS = 30000;   // and soon after new records arrive
 const SYNC_AFTER_RECORD_MS = 5000;
 
 function loadServer(): Pick<ServerState, "url" | "token" | "auto"> {
-  try {
-    const v = JSON.parse(localStorage.getItem(SERVER_KEY) ?? "{}");
-    return { url: String(v.url ?? ""), token: String(v.token ?? ""), auto: v.auto !== false };
-  } catch {
-    return { url: "", token: "", auto: true };
-  }
+  // Old observation bearer was persisted by previous APK versions. It must
+  // not survive into account-only login, nor be used after account logout.
+  try { localStorage.removeItem(SERVER_KEY); } catch { /* storage unavailable */ }
+  return { url: "", token: "", auto: true };
 }
 
 const LOG_MAX = 400;
@@ -263,8 +261,13 @@ export class Controller {
     this.syncing = true;
     try {
       const sv = this.snap.server;
+      // Credentials are account scoped, in memory, and never saved in
+      // localStorage. No independent address/token entry is necessary.
+      const authenticated = pilotAccountUploadTransport();
+      const url = authenticated?.url ?? "";
+      const token = authenticated?.token ?? "";
       const counts = await this.uploader.counts();
-      if (!sv.url || !sv.token || (!manual && !sv.auto)) {
+      if (!url || !token || (!manual && !sv.auto)) {
         this.setServer({ counts });
         return;
       }
@@ -276,7 +279,7 @@ export class Controller {
       let keysError: string | null = null;
       if (manual || Date.now() - this.keysAt > KEYS_EVERY_MS) {
         try {
-          await this.refreshKeys(sv.url, sv.token);
+          await this.refreshKeys(url, token);
         } catch (e) {
           keysError = `okuma anahtarları alınamadı: ${e instanceof Error ? e.message : String(e)}`;
           if (manual) this.log(`[sunucu] okuma anahtarları alınamadı: ${keysError}; mevcut kayıtlar yine gönderilecek`);
@@ -290,13 +293,13 @@ export class Controller {
       try {
         // Nothing to send: a manual tap still checks address + token.
         if (counts.pending === 0) {
-          const n = await this.uploader.ping(sv.url, sv.token);
+          const n = await this.uploader.ping(url, token);
           this.setServer({ busy: false, counts, error: keysError,
                            lastOk: new Date().toLocaleTimeString("tr-TR", { hour12: false }) });
           this.log(`[sunucu] bağlantı tamam; sunucudaki toplam kayıt ${n ?? "?"}`);
           return;
         }
-        const r = await this.uploader.drain(sv.url, sv.token);
+        const r = await this.uploader.drain(url, token);
         const after = await this.uploader.counts();
         this.setServer({
           busy: false, counts: after, error: keysError,
