@@ -188,6 +188,9 @@ def main() -> None:
     for i, (a, b) in enumerate(zip(outputs, ts["outputs"])):
         assert a == b, (i, a, b)
     assert len(ts["outputs"]) == len(outputs)
+    # #177: incomplete USB dumps must warn on both implementations.
+    assert any(line and "UYARI: eksik/bozuk aktarım" in line
+               for line in outputs), outputs
     assert ts["accepts"] == accepts, (accepts, ts["accepts"])
     assert ts["summary"] == summary, (summary, ts["summary"])
     assert ts["skipped"] == points["skipped"]

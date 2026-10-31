@@ -87,7 +87,19 @@ def main() -> None:
         assert warn and "reddetti" in warn and edge.next_accept_binary(30.0) is None
         assert "boşaltıldı" in edge.handle_ble(bytes([0x05, 0, 2, 1]))
         assert "silinemedi" in edge.handle_ble(bytes([0x05, 0, 2, 0]))
-        assert "DUMP END count=2" in edge.handle_ble(bytes([0x03, 0, 2]))
+        complete = edge.handle_ble(bytes([0x03, 0, 2]))
+        assert "DUMP END count=2" in complete and "UYARI:" not in complete
+        # #177 reference parity: a complete BLE pass is exact; an omitted HELD
+        # is not quietly accepted as a smaller Gateway custody count.
+        edge.handle_ble(via_frames(hello))  # new pass; clear earlier HELD IDs
+        edge.handle_ble(via_frames(held_msg(0, 0, 1, track[0])))
+        incomplete = edge.handle_ble(bytes([0x03, 0, 2]))
+        assert "UYARI: eksik aktarım" in incomplete, incomplete
+        edge.handle_ble(via_frames(hello))
+        edge.handle_ble(via_frames(held_msg(0, 0, 1, track[0])))
+        edge.handle_ble(via_frames(held_msg(0, 1, 1, track[1])))
+        full_again = edge.handle_ble(bytes([0x03, 0, 2]))
+        assert "UYARI:" not in full_again, full_again
         # The RX link from HELD is the record's signal, like the USB RX line.
         with sqlite3.connect(str(db)) as c:
             rssi = c.execute("SELECT gw_rssi, gw_snr FROM edge_receipts WHERE gw_rssi IS NOT NULL").fetchall()
