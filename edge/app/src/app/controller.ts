@@ -264,8 +264,11 @@ export class Controller {
       // Credentials are account scoped, in memory, and never saved in
       // localStorage. No independent address/token entry is necessary.
       const authenticated = pilotAccountUploadTransport();
-      const url = authenticated?.url ?? "";
-      const token = authenticated?.token ?? "";
+      // Compatibility for existing in-memory development harnesses. The
+      // new user-facing app never asks for or persists these legacy values;
+      // account credentials always take precedence when present.
+      const url = authenticated?.url ?? sv.url;
+      const token = authenticated?.token ?? sv.token;
       const counts = await this.uploader.counts();
       if (!url || !token || (!manual && !sv.auto)) {
         this.setServer({ counts });
