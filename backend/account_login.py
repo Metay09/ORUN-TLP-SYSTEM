@@ -214,6 +214,7 @@ class AccountStore:
             verifier = row["verifier"] if row else bytes(32)
             calculated = _hash_password(password, salt)
             valid = bool(row and not row["disabled"] and
+                         row["actor_id"] == "owner" and
                          USERNAME.fullmatch(username) and
                          hmac.compare_digest(calculated, verifier))
             if not valid:
@@ -269,7 +270,7 @@ class AccountStore:
                 "AND s.expires_at>?",
                 (hashlib.sha256(bearer.encode("ascii")).digest(), now),
             ).fetchone()
-        if (not row or row["disabled"] or
+        if (not row or row["disabled"] or row["actor_id"] != "owner" or
                 row["password_version"] != row["current_version"]):
             return None
         return Actor(row["site_id"], row["actor_id"],
