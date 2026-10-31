@@ -9,7 +9,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-MODULE = Path(__file__).resolve().parents[2] / "tools" / "ci" / "orun_product_release_gate.py"
+MODULE = Path(__file__).resolve().parents[3] / "tools" / "ci" / "orun_product_release_gate.py"
 spec = importlib.util.spec_from_file_location("orun_product_release_gate", MODULE)
 gate = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = gate
