@@ -60,6 +60,12 @@
 #ifdef ORUN_SF5L0_BENCH_TEST_KEYS
 #include "sf5l0_bench.h"
 #endif
+#ifdef ORUN_STEP3A_REAL_TRACKER_PROVISION
+#ifdef ORUN_SF5L0_BENCH_TEST_KEYS
+#error "Phase 2 real Tracker cannot include public bench keys"
+#endif
+#include "tracker_real_enrollment.h"
+#endif
 #include "power_manager.h"
 #include "radio_manager.h"
 #include "position_flow.h"
@@ -179,6 +185,9 @@ orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort()
 // The only Tracker release owner: grant/HMAC verification precedes flash.
 orun_tlp::CustodyAckReleaseOwner custody_ack_release(security_store,
                                                       product_records);
+#ifdef ORUN_STEP3A_REAL_TRACKER_PROVISION
+orun_tlp::TrackerRealEnrollment real_tracker_enrollment(security_store);
+#endif
 #ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
 // Explicit test-image activation only; the default product runtime still
 // sends the existing TLP v1/History path until Gateway commissioning is ready.
@@ -266,7 +275,8 @@ bool automatic_role_resolved = false;
 #if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT) && !defined(ORUN_SF5L0_GATEWAY)
 #error "Step 3B grant snapshots exist only on the SF5L0 bench Gateway image"
 #endif
-#if defined(ORUN_SF5L0_GATEWAY) || defined(ORUN_SF5L0_TRACKER)
+#if defined(ORUN_SF5L0_GATEWAY) || defined(ORUN_SF5L0_TRACKER) || \
+    defined(ORUN_STEP3A_REAL_TRACKER_PROVISION)
 // SF5L5: "EDGE ACCEPT v1 page= slot= gen=<16 hex> mac=<64 hex>" is ~120 chars;
 // step 3A "BENCH PROVISION ..." / "BENCH GRANT ..." are up to ~150.
 char role_command[160]{};
@@ -1306,6 +1316,52 @@ void printU64HexTo(char (&out)[17], uint64_t value) {
            static_cast<unsigned long>(static_cast<uint32_t>(value)));
 }
 
+// Read-only operator diagnostic: a successful flash/ROLE TRACKER/GNSS FIX
+// must never be confused with an end-to-end custody-capable image.
+// This reports compiled features, NOT an ACK proof or a live link test.
+void printProductPath() {
+  const char* image = "NORMAL";
+  const char* tx = "OFF";
+  const char* gateway = "OFF";
+  const char* store = product_records.mounted() ? "MOUNTED" : "NOT_MOUNTED";
+#if defined(ORUN_SF5L0_GATEWAY)
+  image = "BENCH_GATEWAY";
+  gateway = "BENCH_ONLY";
+  store = "GATEWAY_OCQ2_SEPARATE";
+#elif defined(ORUN_SF5L0_TRACKER)
+  image = "BENCH_TRACKER";
+  tx = "BENCH_PACED";
+#elif defined(ORUN_SF5K3V_TRACKER_TX_PILOT)
+  image = "TX_PILOT";
+  tx = "ONE_PER_BOOT";
+#endif
+  // In the bench Gateway image SecurityStore is intentionally NOT mounted;
+  // the separate signed OGK1 Gateway grant owner controls ACK authority.
+#if defined(ORUN_SF5L0_GATEWAY)
+  const char* security = "GATEWAY_GRANTS_SEPARATE";
+#else
+  const char* security = "UNKNOWN";
+  switch (security_store.state()) {
+    case orun_tlp::SecurityState::kUnprovisioned:
+      security = "UNPROVISIONED"; break;
+    case orun_tlp::SecurityState::kProvisioned:
+      security = "PROVISIONED"; break;
+    case orun_tlp::SecurityState::kForeign:
+      security = "FOREIGN"; break;
+    case orun_tlp::SecurityState::kUnsupported:
+      security = "UNSUPPORTED"; break;
+    case orun_tlp::SecurityState::kFault:
+      security = "FAULT"; break;
+  }
+#endif
+  Serial.printf(
+      "PRODUCT PATH image=%s secure_tx=%s gateway_custody=%s "
+      "product_store=%s security=%s field_ready=NO\n",
+      image, tx, gateway, store, security);
+  // field_ready deliberately remains NO until an independently verified
+  // production image and matching grants/physical evidence exist.
+}
+
 // "PRODUCT STORE?": the product region, the mount decision and the store.
 void printProductStore() {
   const auto& census = product_records.census();
@@ -1372,6 +1428,90 @@ void drainProductStore() {
   }
 }
 
+
+#ifdef ORUN_STEP3A_REAL_TRACKER_PROVISION
+// Exact existing Step 3A tool response format. Credential ID is public
+// metadata; root secret is never printed, and this image has no test key.
+void printRealTrackerEnrollment() {
+  char self[17], gateway_hex[17];
+  printU64HexTo(self, radio_manager.deviceId());
+  const uint64_t gateway =
+      orun_tlp::TrackerRealEnrollment::firstGrantedGateway(security_store);
+  printU64HexTo(gateway_hex, gateway);
+  uint8_t id[orun_tlp::security_format::kCredentialIdSize]{};
+  uint32_t epoch = 0U;
+  char id_hex[33] = "none";
+  if (orun_tlp::TrackerRealEnrollment::credentialInfo(
+          security_store, id, epoch)) {
+    for (size_t i = 0; i < sizeof(id); ++i)
+      snprintf(id_hex + 2U * i, 3, "%02X", id[i]);
+  }
+  uint32_t generation = 0U, floor = 0U;
+  const bool granted = gateway != 0U &&
+      orun_tlp::TrackerRealEnrollment::grantFor(
+          security_store, gateway, generation, floor);
+  Serial.printf(
+      "BENCH CREDENTIAL credential=%s epoch=%08lX "
+      "grant_generation=%08lX custody_floor=%08lX\n",
+      id_hex, static_cast<unsigned long>(epoch),
+      static_cast<unsigned long>(granted ? generation : 0U),
+      static_cast<unsigned long>(granted ? floor : 0U));
+  const char* state = "FAULT";
+  switch (security_store.state()) {
+    case orun_tlp::SecurityState::kUnprovisioned: state = "UNPROVISIONED"; break;
+    case orun_tlp::SecurityState::kProvisioned: state = "PROVISIONED"; break;
+    case orun_tlp::SecurityState::kForeign: state = "FOREIGN"; break;
+    case orun_tlp::SecurityState::kUnsupported: state = "UNSUPPORTED"; break;
+    case orun_tlp::SecurityState::kFault: break;
+  }
+  Serial.printf(
+      "BENCH TRACKER id=%s security=%s test_credential=no page=v%u "
+      "granted_gateway=%s setup=%s role=%s product_store=%s\n",
+      self, state, static_cast<unsigned>(
+          orun_tlp::TrackerRealEnrollment::activePageVersion(security_store)),
+      granted ? gateway_hex : "none",
+      orun_tlp::TrackerRealEnrollment::stepName(real_tracker_enrollment.step()),
+      orun_tlp::roleName(radio_manager.role()),
+      product_records.mounted() ? "mounted" : "NOT_MOUNTED");
+}
+bool handleRealTrackerProvision(const char* line, size_t length) {
+  uint8_t id[orun_tlp::security_format::kCredentialIdSize]{};
+  uint8_t root[orun_tlp::security_format::kKRootSize]{};
+  uint32_t epoch = 0U;
+  uint64_t gateway = 0U;
+  const auto parsed = orun_tlp::parseTrackerRealProvision(
+      line, length, id, epoch, root, gateway);
+  if (parsed == orun_tlp::TrackerRealProvisionParse::kBadCrc) {
+    Serial.println(F("BENCH PROVISION rejected: crc mismatch"));
+  } else if (parsed == orun_tlp::TrackerRealProvisionParse::kMalformed) {
+    Serial.println(F("BENCH PROVISION rejected: invalid format"));
+  } else if (real_tracker_enrollment.start(gateway, id, epoch, root)) {
+    Serial.printf("BENCH PROVISION started step=%s\n",
+                  orun_tlp::TrackerRealEnrollment::stepName(
+                      real_tracker_enrollment.step()));
+  } else {
+    Serial.printf("BENCH PROVISION FAIL reason=%s\n",
+                  real_tracker_enrollment.reason());
+  }
+  volatile uint8_t* p = root;
+  for (size_t i = 0; i < sizeof(root); ++i) p[i] = 0U;
+  return parsed == orun_tlp::TrackerRealProvisionParse::kOk;
+}
+void pollRealTrackerEnrollment() {
+  if (!real_tracker_enrollment.poll()) return;
+  const auto step = real_tracker_enrollment.step();
+  if (step == orun_tlp::TrackerRealEnrollment::Step::kDone) {
+    Serial.println(F("BENCH SETUP PASS"));
+    printRealTrackerEnrollment();
+  } else if (step == orun_tlp::TrackerRealEnrollment::Step::kFailed) {
+    Serial.printf("BENCH SETUP FAIL reason=%s\n",
+                  real_tracker_enrollment.reason());
+  } else {
+    Serial.printf("BENCH SETUP step=%s\n",
+                  orun_tlp::TrackerRealEnrollment::stepName(step));
+  }
+}
+#endif
 #ifdef ORUN_SF5L0_TRACKER
 // Parses exactly 16 hex digits (upper or lower case) into a nonzero ID.
 bool parseBenchHex64(const char* text, uint8_t length, uint64_t& out) {
@@ -1491,6 +1631,21 @@ void printBenchDrain() {
       tracker_product_tx.blocked() ? "BLOCKED"
           : (tracker_product_tx.sent() ? "SENT" : "ARMED"),
       counted ? static_cast<long>(retained) : -1L);
+  // Read-only failure attribution; do not rearm, reseal or touch custody.
+  uint16_t exact_count = 0U;
+  const bool exact_counted = product_records.mounted() &&
+      product_records.store().ready() &&
+      product_records.store().exactObjectCount(exact_count);
+  Serial.printf(
+      "BENCH PILOT block_reason=%s selected_seq=%lu exact_cache=%d/%u "
+      "retryable=%s attempts=%lu recoveries=%lu\n",
+      tracker_product_tx.blockReasonName(),
+      static_cast<unsigned long>(tracker_product_tx.selectedSequence()),
+      exact_counted ? static_cast<int>(exact_count) : -1,
+      static_cast<unsigned>(orun_tlp::osf::kMaxExactCustodyObjects),
+      tracker_product_tx.retryableBlocked() ? "yes" : "no",
+      static_cast<unsigned long>(tracker_product_tx.retryAttempts()),
+      static_cast<unsigned long>(tracker_product_tx.automaticRecoveries()));
 }
 
 void pollBenchTracker() {
@@ -2457,6 +2612,22 @@ void handleRoleCommand() {
     return;
   }
 #endif
+#ifdef ORUN_STEP3A_REAL_TRACKER_PROVISION
+  if (isActivityCommand("BENCH?", 6)) {
+    role_command_length = 0;
+    printRealTrackerEnrollment();
+    return;
+  }
+  if (role_command_length >= 15U &&
+      memcmp(role_command, "BENCH PROVISION", 15U) == 0) {
+    // No root may remain in the global serial command buffer.
+    handleRealTrackerProvision(role_command, role_command_length);
+    volatile char* p = role_command;
+    for (size_t i = 0; i < sizeof(role_command); ++i) p[i] = 0;
+    role_command_length = 0;
+    return;
+  }
+#endif
 #ifdef ORUN_SF5L0_TRACKER
   if (isActivityCommand("BENCH?", 6)) {
     role_command_length = 0;
@@ -2597,6 +2768,11 @@ void handleRoleCommand() {
   if (isActivityCommand("ACTIVITY AXIS?", 14)) {
     role_command_length = 0;
     printActivityPose();
+    return;
+  }
+  if (isActivityCommand("PRODUCT PATH?", 13)) {
+    role_command_length = 0;
+    printProductPath();
     return;
   }
   if (isActivityCommand("PRODUCT STORE?", 14)) {
@@ -3604,6 +3780,9 @@ void loop() {
 #ifdef ORUN_SF3_RUNTIME_QUAL
   pollSf3TestProvisioning();
 #endif
+#ifdef ORUN_STEP3A_REAL_TRACKER_PROVISION
+  pollRealTrackerEnrollment();
+#endif
 #ifdef ORUN_M7P7B_FLASH_PROBE
   // Stepped after config_store.poll() so a just-finished save is consumed on
   // the same tick. Idle/done: no sampling, no critical section, no output.
@@ -3844,12 +4023,25 @@ void loop() {
       !security_store.busy() && product_records.mounted() &&
       product_records.store().ready()
 #ifdef ORUN_SF5L0_TRACKER
-      // Bench: spend the one pilot TX only once a Gateway is durably granted,
-      // so the ACK it triggers can actually be admitted.
+      // Bench: spend the one pilot TX only once a Gateway is durably granted.
       && orun_tlp::Sf5l0BenchTestProvisioning::firstGrantedGateway(
              security_store) != 0
 #endif
+#ifdef ORUN_STEP3A_REAL_TRACKER_PROVISION
+      // A newly committed real credential is not itself RF authorization.
+      // Require the durable V3 Gateway grant, not merely PROVISIONED state.
+      && orun_tlp::TrackerRealEnrollment::firstGrantedGateway(
+             security_store) != 0
+#endif
       ;
+#ifdef ORUN_SF5L0_TRACKER
+  if (tracker_product_tx.recoverIfSafe(
+          orun_tlp::monotonic::nowMs(), pilot_allowed)) {
+    Serial.printf("BENCH PILOT auto-retry selection attempt=%lu\n",
+                  static_cast<unsigned long>(
+                      tracker_product_tx.automaticRecoveries()));
+  }
+#endif
   switch (tracker_product_tx.update(pilot_allowed)) {
     case orun_tlp::TrackerProductTxPilot::Event::kCachePending:
       Serial.println(F("PRODUCT PILOT exact cache=pending"));
@@ -3876,7 +4068,9 @@ void loop() {
 #endif
       break;
     case orun_tlp::TrackerProductTxPilot::Event::kBlocked:
-      Serial.println(F("PRODUCT PILOT blocked; retained record preserved"));
+      Serial.printf("PRODUCT PILOT blocked reason=%s retryable=%s\n",
+                    tracker_product_tx.blockReasonName(),
+                    tracker_product_tx.retryableBlocked() ? "yes" : "no");
       break;
     case orun_tlp::TrackerProductTxPilot::Event::kNone:
       break;

@@ -91,6 +91,8 @@ void successAndReboot(bool async) {
 
   assert(pilot.update(false) == Pilot::Event::kNone);
   assert(g_seals == 0U && g_sends == 0U);
+  assert(pilot.blockReason() == Pilot::BlockReason::kNone);
+  assert(strcmp(pilot.blockReasonName(), "NONE") == 0);
   g_radio_ready = false;
   assert(pilot.update(true) == Pilot::Event::kNone);
   assert(g_seals == 0U && g_sends == 0U);
@@ -156,6 +158,14 @@ void cacheFailureKeepsRecord() {
     }
   }
   assert(blocked && g_sends == 0U);
+  assert(pilot.blockReason() == Pilot::BlockReason::kCacheCommitFailed);
+  assert(strcmp(pilot.blockReasonName(), "CACHE_COMMIT_FAILED") == 0);
+  assert(pilot.update(true) == Pilot::Event::kNone);
+  assert(!pilot.rearm());  // integrity/flash failure remains fail-closed
+  assert(!pilot.retryableBlocked());
+  assert(!pilot.recoverIfSafe(0U, true));
+  assert(!pilot.recoverIfSafe(600000U, true));
+  assert(pilot.blocked() && g_sends == 0U);
   // A failed mutation may quarantine this boot's store. Read on reboot,
   // never bypass its fail-closed state just to satisfy the test.
   flash.fail_mutation_at = 0U;
@@ -235,6 +245,40 @@ void liveFirst() {
     blocked = strict.update(true) == Pilot::Event::kBlocked;
   }
   assert(blocked && strict.blocked());
+  assert(strict.blockReason() == Pilot::BlockReason::kExactSlotsFull);
+  assert(strcmp(strict.blockReasonName(), "EXACT_SLOTS_FULL") == 0);
+  assert(strict.selectedSequence() == 1U);
+  assert(!strict.rearm());
+  assert(strict.retryableBlocked());
+  const unsigned seals_before_recovery = g_seals;
+  const unsigned sends_before_recovery = g_sends;
+  const unsigned writes_before_recovery = flash.program_calls;
+  // Recovery must be timed; no instant spin, nonce burn or packet TX.
+  assert(!strict.recoverIfSafe(1000U, true));
+  assert(!strict.recoverIfSafe(30999U, true));
+  assert(!strict.recoverIfSafe(31000U, false));
+  g_radio_ready = false;
+  assert(!strict.recoverIfSafe(31000U, true));
+  g_radio_ready = true;
+  assert(strict.recoverIfSafe(31000U, true));
+  assert(!strict.blocked() && !strict.retryableBlocked());
+  assert(strict.blockReason() == Pilot::BlockReason::kNone);
+  assert(strict.automaticRecoveries() == 1U);
+  assert(strict.retryAttempts() == 1U);
+  assert(g_seals == seals_before_recovery &&
+         g_sends == sends_before_recovery &&
+         flash.program_calls == writes_before_recovery);
+  // With 4/4 still saturated in non-live-first mode it blocks again, but
+  // it no longer blocks *forever*: second attempt backs off to 60 sec.
+  assert(strict.update(true) == Pilot::Event::kBlocked);
+  assert(strict.blockReason() == Pilot::BlockReason::kExactSlotsFull);
+  assert(!strict.recoverIfSafe(31000U, true));
+  assert(!strict.recoverIfSafe(90999U, true));
+  assert(strict.recoverIfSafe(91000U, true));
+  assert(strict.automaticRecoveries() == 2U);
+  assert(strict.retryAttempts() == 2U);
+  assert(!strict.blocked() && g_seals == seals_before_recovery &&
+         g_sends == sends_before_recovery);
 
   // The live record is ACKed: a slot frees and the next newest goes first.
   osf::RecordIdentity six{};
