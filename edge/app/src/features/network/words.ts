@@ -19,13 +19,37 @@ export function stationWords(st: Station, s: Snapshot, lastArrival: number | nul
   return { dot: "grey", text: tr.station.notConnected, short: tr.station.notConnected };
 }
 
+/** Status for THIS phone only; a remote PC Edge may deliver independently. */
+export function phonePathWords(
+  st: Pick<Station, "link" | "phase">,
+  snap: Pick<Snapshot, "ready" | "records">,
+): { stationConnected: boolean; stationText: string; phoneText: string; phoneTone: "fresh" | "aging" | "" } {
+  const stationConnected = snap.ready && st.link !== "none" && st.phase === "connected";
+  return {
+    stationConnected,
+    stationText: stationConnected ? "Bu telefon istasyona bağlı" : "Bu telefon bağlı değil",
+    phoneText: !snap.ready ? "Yerel defter hazır değil"
+      : snap.records === null ? "Yerel defter açık · sayı bekleniyor"
+      : snap.records === 0 ? "Henüz yerel kayıt yok"
+      : `${fmt.num(snap.records)} yerel kayıt`,
+    phoneTone: !snap.ready ? "" : (snap.records ?? 0) > 0 ? "fresh" : "aging",
+  };
+}
+
+/** The account login and a successful ping do not certify an upload.
+ * These counters belong to the phone ledger, NOT the PC Edge or whole site.
+ */
 export function serverWords(sv: ServerView): { tone: "ok" | "up" | "off" | "none"; text: string } {
   if (!sv.configured) return { tone: "none", text: tr.server.notSet };
   if (sv.busy) return { tone: "up", text: tr.server.sending };
-  if ((sv.pending ?? 0) > 0) return { tone: sv.error ? "off" : "up", text: tr.server.pending(sv.pending ?? 0, Boolean(sv.error)) };
-  if (sv.pending !== null && sv.lastOk)
-    return { tone: "ok", text: tr.server.allSent(sv.lastOk.slice(0, 5)) };
-  // Password authentication is not evidence that the observation relay
-  // has actually accepted any upload. Never show a false green connection.
-  return { tone: "up", text: "Sunucu aktarımı henüz doğrulanmadı" };
+  if (sv.error) return { tone: "off", text: "Bu telefonun sunucu işlemi başarısız" };
+  if (sv.conflict > 0 || sv.rejected > 0)
+    return { tone: "off", text: "Bu telefonda çakışan veya reddedilen kayıt var" };
+  if ((sv.pending ?? 0) > 0)
+    return { tone: "up", text: tr.server.pending(sv.pending ?? 0, false) };
+  if (sv.pending === 0 && sv.lastOk && (sv.uploaded ?? 0) > 0)
+    return { tone: "ok", text: "Bu telefonun kayıtları sunucuda onaylı" };
+  if (sv.pending === 0 && sv.lastOk)
+    return { tone: "up", text: "Sunucu erişimi doğrulandı · kayıt teslimi yok" };
+  return { tone: "up", text: "Bu telefonun sunucu teslimi henüz doğrulanmadı" };
 }
