@@ -9,7 +9,7 @@ import { useApp } from "../../app/store.ts";
 import { Bar, Card, Cell, DemoFlag, Header, KV, Section } from "../../ds/components.tsx";
 import { startPosition, usePosition } from "../map/position.ts";
 import { phonePathWords, serverWords, stationWords } from "./words.ts";
-import { pilotAccountStatus } from "../../app/ownerAccountPilotRuntime.ts";
+import { pilotAccountStatus, pilotAccountDownloadObservations } from "../../app/ownerAccountPilotRuntime.ts";
 
 export function NetworkScreen() {
   const m = useApp();
@@ -26,6 +26,8 @@ export function NetworkScreen() {
   const held = st.held ?? 0;
   // "Şu an istasyonun yanındayım": mark as soon as the phone knows where it is.
   const [marking, setMarking] = useState(false);
+  const [remoteBusy, setRemoteBusy] = useState(false);
+  const [remoteResult, setRemoteResult] = useState<string | null>(null);
   useEffect(() => {
     if (marking && pos.pos) { m.actions.markStation({ lat: pos.pos.lat, lon: pos.pos.lon }); setMarking(false); }
   }, [marking, pos.pos, m.actions]);
@@ -66,6 +68,29 @@ export function NetworkScreen() {
           Bilgisayarın sunucuya gönderdiği kayıtlar, bu telefonun yerel kayıt ve teslim sayaçlarına dahil değildir.
           Sunucudan tasmaların ortak geçmişini telefona çekme işlevi ayrıca etkinleştirilmelidir.
         </p>
+      </Card>
+
+      <Section title="Sunucudan konumları al" />
+      <Card pad>
+        <p className="fine" style={{ margin: 0 }}>
+          Bilgisayardaki PC Edge'in sunucuya aktardığı tasma konumlarını hesap yetkisiyle
+          telefona indirir. Her kayıt yeniden doğrulanır ve çevrimdışı görüntüleme için saklanır.
+          Telefonun istasyona bağlanması gerekmez. Bir işlemde en fazla 256 kayıt alınır.
+        </p>
+        <button className="btn primary wide" disabled={!hasAccount || !s.ready || remoteBusy}
+          onClick={() => {
+            setRemoteBusy(true);
+            setRemoteResult(null);
+            void pilotAccountDownloadObservations().then(
+              r => setRemoteResult(`${r.received} kayıt kontrol edildi · ${r.pages} sayfa · ${r.more ? "Daha eski kayıtlar var, yeniden al" : "Sunucudaki sayfalar tamamlandı"}`),
+              e => setRemoteResult(e instanceof Error ? e.message : String(e)),
+            ).finally(() => setRemoteBusy(false));
+          }}>
+          <CloudCheck size={20} />
+          {remoteBusy ? "Konumlar doğrulanıyor…" : "Sunucudan konumları al"}
+        </button>
+        {!hasAccount && <p className="fine">Önce hesabınla giriş yap.</p>}
+        {remoteResult && <p className="fine" role="status">{remoteResult}</p>}
       </Card>
 
       <Section title={tr.network.station} />
