@@ -1,17 +1,11 @@
-"""ORUN S6A draft: explicit username/password login on an enrolled Android phone.
+"""ORUN account sessions: username/password on any authorized HTTPS client.
 
-THIS IS NOT DEPLOYED, not a public sign-up service, not a user directory API,
-and not a replacement for owner-approval or native Android protected storage.
-
-Trust boundary:
-- The phone must already have an ACTIVE P256 owner-approved installation token.
-- Only a trusted local operator may bootstrap the first account; never via HTTP.
-- Site + actor come from that installation token, NEVER request JSON/headers.
-- Session actor scopes are the intersection of device scopes and account role.
-- A rotated/revoked/expired installation token instantly invalidates its
-  associated account sessions. PC Ed25519 is not eligible for account login.
-- Session bearer alone is still a bearer; future proof-of-possession and
-  production abuse controls remain separate security release gates.
+Account login is NOT tied to Android P256 phone enrollment. Password sessions
+are hashed, expire after 12 hours, and resolve server-side owner permissions.
+The old P256-enrolled login continues to work for already installed APKs.
+No user/site/actor/scopes are trusted from login request metadata.
+PC Ed25519 mirror authorization is independent and unchanged.
+This dev tailnet implementation is not a public-internet abuse audit.
 """
 from __future__ import annotations
 
@@ -138,6 +132,21 @@ class AccountStore:
                     revoked_at INTEGER);
                 CREATE INDEX IF NOT EXISTS account_sessions_installation
                   ON account_sessions(installation_id, revoked_at);
+                CREATE TABLE IF NOT EXISTS account_password_attempts (
+                    username TEXT PRIMARY KEY,
+                    failed_count INTEGER NOT NULL,
+                    locked_until INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS account_password_sessions (
+                    token_hash BLOB PRIMARY KEY,
+                    site_id TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    installation_id TEXT NOT NULL,
+                    password_version INTEGER NOT NULL,
+                    issued_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    revoked_at INTEGER);
+                CREATE INDEX IF NOT EXISTS account_password_sessions_actor
+                  ON account_password_sessions(site_id, actor_id, revoked_at);
             """)
 
     @contextmanager
@@ -177,6 +186,94 @@ class AccountStore:
                 "INSERT INTO account_users "
                 "(site_id,actor_id,username,salt,verifier) VALUES(?,?,?,?,?)",
                 (site, actor, username, salt, verifier))
+
+    def password_login(self, username: str, password: str) -> IssuedAccountSession:
+        """Password-only login; no pairing, fingerprint or phone grant.
+
+        The username must resolve to exactly ONE account across hosted sites.
+        Tailscale private HTTP boundary and HTTPS are deployment requirements.
+        Username-global persistent failed-attempt lockout protects the scrypt
+        work factor from repeated password guessing.
+        """
+        if (not isinstance(username, str) or len(username) > 64 or
+                not isinstance(password, str) or len(password) > 128):
+            raise LoginRejected("invalid credentials")
+        now = int(time.time())
+        with self._session() as db:
+            db.execute("BEGIN IMMEDIATE")
+            throttle = db.execute(
+                "SELECT failed_count, locked_until FROM account_password_attempts "
+                "WHERE username=?", (username,)).fetchone()
+            if throttle and int(throttle["locked_until"]) > now:
+                raise LoginLocked("login temporarily restricted")
+            candidates = db.execute(
+                "SELECT site_id,actor_id,username,salt,verifier,password_version,disabled "
+                "FROM account_users WHERE username=? LIMIT 2", (username,)).fetchall()
+            row = candidates[0] if len(candidates) == 1 else None
+            salt = row["salt"] if row else b"ORUN-LOGIN-DUMMY!"
+            verifier = row["verifier"] if row else bytes(32)
+            calculated = _hash_password(password, salt)
+            valid = bool(row and not row["disabled"] and
+                         USERNAME.fullmatch(username) and
+                         hmac.compare_digest(calculated, verifier))
+            if not valid:
+                prior = (int(throttle["failed_count"]) if throttle and
+                         not (throttle["locked_until"] and
+                              int(throttle["locked_until"]) <= now) else 0)
+                failures = prior + 1
+                locked = now + LOCK_SECONDS if failures >= MAX_LOGIN_FAILURES else 0
+                db.execute(
+                    "INSERT INTO account_password_attempts VALUES(?,?,?) "
+                    "ON CONFLICT(username) DO UPDATE SET "
+                    "failed_count=excluded.failed_count,"
+                    "locked_until=excluded.locked_until",
+                    (username, failures, locked))
+                db.commit()
+                if locked:
+                    raise LoginLocked("login temporarily restricted")
+                raise LoginRejected("invalid credentials")
+            db.execute("DELETE FROM account_password_attempts WHERE username=?",
+                       (username,))
+            site = str(row["site_id"])
+            actor = str(row["actor_id"])
+            # Stable account namespace allows the same local SQLite mirror to
+            # be reused after logout/relogin; it is NOT an authenticator.
+            account_installation = "account-" + hashlib.sha256(
+                (site + "\\0" + actor).encode("utf-8")).hexdigest()
+            token = secrets.token_urlsafe(48)
+            db.execute(
+                "INSERT INTO account_password_sessions "
+                "(token_hash,site_id,actor_id,installation_id,"
+                "password_version,issued_at,expires_at) VALUES(?,?,?,?,?,?,?)",
+                (hashlib.sha256(token.encode("ascii")).digest(), site,
+                 actor, account_installation, int(row["password_version"]),
+                 now, now + SESSION_SECONDS))
+            return IssuedAccountSession(
+                token, site, actor, username, account_installation,
+                now + SESSION_SECONDS)
+
+    def resolve_password_session(self, bearer: str) -> Actor | None:
+        """Resolve user authority from current DB, never from a client claim."""
+        if (not isinstance(bearer, str) or not
+                re.fullmatch(r"[A-Za-z0-9_-]{48,128}", bearer)):
+            return None
+        now = int(time.time())
+        with self._session() as db:
+            row = db.execute(
+                "SELECT s.site_id,s.actor_id,s.installation_id,"
+                "s.password_version,u.disabled,"
+                "u.password_version AS current_version "
+                "FROM account_password_sessions s JOIN account_users u "
+                "ON u.site_id=s.site_id AND u.actor_id=s.actor_id "
+                "WHERE s.token_hash=? AND s.revoked_at IS NULL "
+                "AND s.expires_at>?",
+                (hashlib.sha256(bearer.encode("ascii")).digest(), now),
+            ).fetchone()
+        if (not row or row["disabled"] or
+                row["password_version"] != row["current_version"]):
+            return None
+        return Actor(row["site_id"], row["actor_id"],
+                     row["installation_id"], OWNER_SCOPES)
 
     def login(self, enrollment: EdgeEnrollment, device_bearer: str,
               username: str, password: str) -> IssuedAccountSession:
@@ -254,6 +351,9 @@ class AccountStore:
 
     def resolve_session(self, enrollment: EdgeEnrollment,
                         bearer: str) -> Actor | None:
+        password_actor = self.resolve_password_session(bearer)
+        if password_actor is not None:
+            return password_actor
         if (not isinstance(bearer, str) or not
                 re.fullmatch(r"[A-Za-z0-9_-]{48,128}", bearer)):
             return None
@@ -295,4 +395,9 @@ class AccountStore:
                 "WHERE token_hash=? AND revoked_at IS NULL",
                 (int(time.time()),
                  hashlib.sha256(bearer.encode("ascii")).digest()))
-        return changed.rowcount == 1
+            password_changed = db.execute(
+                "UPDATE account_password_sessions SET revoked_at=? "
+                "WHERE token_hash=? AND revoked_at IS NULL",
+                (int(time.time()),
+                 hashlib.sha256(bearer.encode("ascii")).digest()))
+        return changed.rowcount == 1 or password_changed.rowcount == 1
