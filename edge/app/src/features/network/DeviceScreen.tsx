@@ -45,6 +45,10 @@ export function DeviceScreen({ id }: { id: string }) {
         <KV k={tr.animal.battery}>{d.batteryPercent !== null ? `%${d.batteryPercent}${d.batteryMv ? ` · ${fmt.dec(d.batteryMv / 1000, 2)} V` : ""}` : "—"}</KV>
         <KV k={tr.device.report}>{d.periodS ? fmt.period(d.periodS) : "—"}</KV>
         <KV k={tr.device.records}>{fmt.num(d.records)}</KV>
+        <p className="fine" style={{ padding: "8px 16px 14px", margin: 0 }}>
+          Bu sayılar bu telefonun kayıt defterinden gelir. PC Edge üzerinden Backend'e yapılan teslimin
+          bu tasmaya ait olduğunu doğrulayan sunucu kanıtı henüz bu ekranda bulunmuyor.
+        </p>
       </Card>
       <details className="tech">
         <summary>{tr.common.tech}</summary>
