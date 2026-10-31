@@ -4023,9 +4023,14 @@ void loop() {
       !security_store.busy() && product_records.mounted() &&
       product_records.store().ready()
 #ifdef ORUN_SF5L0_TRACKER
-      // Bench: spend the one pilot TX only once a Gateway is durably granted,
-      // so the ACK it triggers can actually be admitted.
+      // Bench: spend the one pilot TX only once a Gateway is durably granted.
       && orun_tlp::Sf5l0BenchTestProvisioning::firstGrantedGateway(
+             security_store) != 0
+#endif
+#ifdef ORUN_STEP3A_REAL_TRACKER_PROVISION
+      // A newly committed real credential is not itself RF authorization.
+      // Require the durable V3 Gateway grant, not merely PROVISIONED state.
+      && orun_tlp::TrackerRealEnrollment::firstGrantedGateway(
              security_store) != 0
 #endif
       ;
