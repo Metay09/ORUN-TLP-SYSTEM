@@ -251,9 +251,10 @@ class AccountHTTPTests(unittest.TestCase):
         with self.assertRaises(AccountError):
             self.accounts.bootstrap_owner(
                 "orun-main", "hacker", "badowner", "hacker-password-long")
+        # New default: username/password alone works without a phone token.
         self.assertEqual(self.request(
             "POST", "/api/v1/account/login", None,
-            {"username": "ownerlogin", "password": PASSWORD})[0], 401)
+            {"username": "ownerlogin", "password": PASSWORD})[0], 200)
 
     def test_unapproved_identity_cannot_login_and_unrecognized_username_no_leak(self):
         self.accounts.bootstrap_owner(
