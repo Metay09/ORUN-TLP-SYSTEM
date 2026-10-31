@@ -1325,6 +1325,11 @@ void printProductPath() {
   image = "TX_PILOT";
   tx = "ONE_PER_BOOT";
 #endif
+  // In the bench Gateway image SecurityStore is intentionally NOT mounted;
+  // the separate signed OGK1 Gateway grant owner controls ACK authority.
+#if defined(ORUN_SF5L0_GATEWAY)
+  const char* security = "GATEWAY_GRANTS_SEPARATE";
+#else
   const char* security = "UNKNOWN";
   switch (security_store.state()) {
     case orun_tlp::SecurityState::kUnprovisioned:
@@ -1338,6 +1343,7 @@ void printProductPath() {
     case orun_tlp::SecurityState::kFault:
       security = "FAULT"; break;
   }
+#endif
   Serial.printf(
       "PRODUCT PATH image=%s secure_tx=%s gateway_custody=%s "
       "product_store=%s security=%s field_ready=NO\n",
