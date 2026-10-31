@@ -44,6 +44,7 @@ from typing import Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "backend"))  # supports python -m unittest and direct script launch
 sys.path.insert(0, str(ROOT))
 from backend.observation_read_page import (  # noqa: E402
     MAX_CURSOR, ObservationReadUnavailable, read_page,
