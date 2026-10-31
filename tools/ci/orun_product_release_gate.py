@@ -67,9 +67,52 @@ def check_sources(root: Path) -> list[Check]:
         Check("secure-commissioning", commissioning_ready,
               "Yeni cihaz için gerçek credential/grant kurulumu normal image'de yok"
               if not commissioning_ready else "Ürün provisioning bayrağı bulundu; gerçek cihaz kontrolü gerekli"),
-        Check("physical-e2e-evidence", False,
-              "Bu statik denetim iki gerçek cihazda ACK, reset, Edge, Backend ve Android doğrulamasının yerine geçmez"),
     ]
+
+
+def check_physical_evidence(evidence_path: Path | None) -> list[Check]:
+    """Human-reviewable evidence manifest; never auto-assert hardware PASS.
+
+    Exact observed record identity must match at TX, Gateway durable commit,
+    Tracker release, Edge, Backend and Android. All proof links are required.
+    The release reviewer must also inspect the referenced logs; booleans alone
+    are not evidence.
+    """
+    if evidence_path is None:
+        return [Check("physical-e2e-evidence", False,
+                      "Gerçek iki cihazlı ve Android uçtan uca kanıt manifesti yok")]
+    obj = json.loads(evidence_path.read_text(encoding="utf-8"))
+    if not isinstance(obj, dict):
+        return [Check("physical-e2e-evidence", False, "Kanıt JSON nesnesi değil")]
+    identity = obj.get("record_identity")
+    steps = obj.get("steps")
+    faults = obj.get("fault_tests")
+    required = ("tracker_tx", "gateway_durable", "gateway_ack",
+                "tracker_release", "edge_sqlite", "backend_verified",
+                "android_map")
+    required_faults = ("ack_lost_retry", "duplicate", "tracker_reboot",
+                       "gateway_reboot", "offline_edge", "power_cut")
+    valid_ids = all(re.fullmatch(r"[0-9A-Fa-f]{16}", str(obj.get(k, "")))
+                    for k in ("tracker_id", "gateway_id"))
+    valid_firmware = bool(re.fullmatch(r"[0-9a-f]{64}",
+                                      str(obj.get("firmware_sha256", ""))))
+    same_record = isinstance(identity, str) and bool(
+        re.fullmatch(r"[0-9A-Fa-f]{16}:[1-9][0-9]*", identity))
+    valid_steps = isinstance(steps, dict) and all(
+        isinstance(steps.get(k), dict) and
+        steps[k].get("record_identity") == identity and
+        isinstance(steps[k].get("log_sha256"), str) and
+        bool(re.fullmatch(r"[0-9a-f]{64}", steps[k]["log_sha256"]))
+        for k in required)
+    valid_faults = isinstance(faults, dict) and all(
+        isinstance(faults.get(k), str) and
+        bool(re.fullmatch(r"[0-9a-f]{64}", faults[k]))
+        for k in required_faults)
+    ok = valid_ids and valid_firmware and same_record and valid_steps and valid_faults and obj.get("public_test_keys") is False
+    return [Check("physical-e2e-evidence", bool(ok),
+                  "Kimlik/sürüm/eşleşen kayıt/7 halkalı log kanıtı/6 hata testi "
+                  + ("manifestte mevcut; loglar insan tarafından incelenmeli" if ok
+                     else "eksik veya geçersiz"))]
 
 
 def check_tracker_snapshot(snapshot: str) -> list[Check]:
@@ -107,15 +150,18 @@ def main(argv: list[str] | None = None) -> int:
                         default=Path(__file__).resolve().parents[2])
     parser.add_argument("--tracker-snapshot", type=Path,
                         help="Önceden alınmış salt-okunur seri konsol çıktısı; cihaza bağlanmaz")
+    parser.add_argument("--evidence", type=Path,
+                        help="Gerçek donanım + Backend + Android log SHA kanıt manifesti")
     parser.add_argument("--json", action="store_true", help="Makine-okunur sonuç")
     args = parser.parse_args(argv)
 
     try:
         checks = check_sources(args.root)
+        checks += check_physical_evidence(args.evidence)
         if args.tracker_snapshot is not None:
             checks += check_tracker_snapshot(
                 args.tracker_snapshot.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
         print("ORUN PREFLIGHT ERROR:", exc, file=sys.stderr)
         return 3
 
