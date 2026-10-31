@@ -1,6 +1,5 @@
-// ORUN S6B PILOT ONLY: explicit account login on a previously enrolled phone.
-// No claim that herd, history or zone drafts have been synchronized.
-// Account bearer exists only in JS process memory; password is never persisted.
+// ORUN user account: password-only, without phone pairing.
+// Account bearer stays in volatile JS memory; password is never persisted.
 import { useState } from "react";
 import {
   pilotPasswordLogin, pilotAccountLogout, pilotAccountStatus,
@@ -16,7 +15,7 @@ function userMessage(error: unknown): string {
   // Never put raw Android exception details or server responses in the UI.
   if (error instanceof Error && error.message.length <= 180 &&
       !error.message.startsWith("ORUN_")) return error.message;
-  return "Hesap işlemi tamamlanamadı. Telefon kaydını ve sunucuyu kontrol et.";
+  return "Hesap işlemi tamamlanamadı. Sunucu bağlantısını kontrol et.";
 }
 
 export function AccountLoginPanel() {
@@ -49,11 +48,16 @@ export function AccountLoginPanel() {
       const result = await pilotPasswordLogin(username, secret);
       setAccount(result);
       setLastPull(null);
-      const stored = await pilotAccountStoredSnapshot();
-      setSaved(stored);
+      try {
+        setSaved(await pilotAccountStoredSnapshot());
+      } catch {
+        // Account login already succeeded. A local SQLite cache failure must
+        // never turn a valid login into a false authentication error.
+        setSaved(null);
+      }
       setNotice(
-        "Hesap doğrulandı. Önceden indirilmiş ortak veri taslakları "
-        + "gösteriliyor; hayvan ve konum geçmişi henüz eşitlenmedi.");
+        "Hesabına giriş yapıldı. Sunucu bağlantısı otomatik kullanılır. "
+        + "Konum ve sürü verileri henüz otomatik eşitlenmiyor.");
     });
   }
 
@@ -95,7 +99,7 @@ export function AccountLoginPanel() {
       setSaved(null);
       setLastPull(null);
       setNotice(confirmedOnServer
-        ? "Hesap oturumu kapatıldı. Telefonun cihaz onayı korunur."
+        ? "Hesap oturumu kapatıldı."
         : "Bu telefondaki hesap oturumu kapatıldı; sunucuda iptal "
           + "doğrulanamadı. Yetki süresi dolana kadar geçerli olabilir.");
     });
