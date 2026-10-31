@@ -1340,7 +1340,7 @@ void printProductPath() {
   }
   Serial.printf(
       "PRODUCT PATH image=%s secure_tx=%s gateway_custody=%s "
-      "product_store=%s security=%s field_ready=NO\\n",
+      "product_store=%s security=%s field_ready=NO\n",
       image, tx, gateway, store, security);
   // field_ready deliberately remains NO until an independently verified
   // production image and matching grants/physical evidence exist.
