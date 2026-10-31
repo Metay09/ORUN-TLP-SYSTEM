@@ -1,4 +1,4 @@
-// ORUN S6A account-login transport candidate. Not wired into live APK.
+// ORUN account-login transport. Password-only sign-in is the primary path.
 // The approved phone's device bearer comes from native Keystore-backed
 // storage; short-lived account bearer remains ONLY in this JS class instance.
 // No localStorage, IndexedDB, URL, logs, or observation-bench token reuse.
@@ -15,6 +15,7 @@ export interface AccountIdentity {
 const NAME = /^[a-z][a-z0-9._-]{2,63}$/;
 const TOKEN = /^[A-Za-z0-9_-]{48,128}$/;
 const IDENT = /^edge-[0-9a-f]{64}$/;
+const ACCOUNT_INST = /^account-[0-9a-f]{64}$/;
 const ID = /^[A-Za-z0-9._-]{1,128}$/;
 const MAX_BYTES = 8192;
 const MAX_SYNC_BYTES = 512 * 1024; // shared sync backend page, not login credential response
@@ -57,6 +58,58 @@ export class OwnerAccountClient {
 
   get current(): AccountIdentity | null {
     return this.identity ? { ...this.identity } : null;
+  }
+
+  /** Main user flow: any phone, username and password. No P256 enrollment.
+   * TLS required; account bearer stays only in memory, never in localStorage.
+   * A stable server-derived account cache namespace is NOT a phone identity.
+   */
+  async signInWithPassword(username: string, password: string): Promise<AccountIdentity> {
+    const loginEpoch = ++this.epoch;
+    this.accessToken = null;
+    this.identity = null;
+    if (!NAME.test(username) || typeof password !== "string" ||
+        password.length < 12 || password.length > 128)
+      throw new Error("Kullanıcı adı veya parola geçersiz.");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const result = await this.fetcher(this.base + "/api/v1/account/login", {
+        method: "POST", credentials: "omit", redirect: "error",
+        cache: "no-store", signal: controller.signal,
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      if (result.status === 429)
+        throw new Error("Çok fazla başarısız giriş. Bir süre sonra yeniden dene.");
+      if (result.status === 401)
+        throw new Error("Kullanıcı adı veya parola yanlış.");
+      if (!result.ok)
+        throw new Error("Hesap sunucusu girişi tamamlayamadı.");
+      const body = await json(result);
+      if (loginEpoch !== this.epoch)
+        throw new Error("Giriş sırasında hesap oturumu değişti.");
+      const now = Date.now() / 1000;
+      if (typeof body.site !== "string" || !ID.test(body.site) ||
+          typeof body.actor !== "string" || !ID.test(body.actor) ||
+          body.username !== username ||
+          typeof body.installation !== "string" ||
+          !ACCOUNT_INST.test(body.installation) ||
+          typeof body.account_access_token !== "string" ||
+          !TOKEN.test(body.account_access_token) ||
+          typeof body.expires_at !== "number" ||
+          !Number.isSafeInteger(body.expires_at) ||
+          body.expires_at <= now || body.expires_at > now + 12 * 3600 + 600)
+        throw new Error("Sunucudan gelen hesap bilgileri doğrulanamadı.");
+      this.accessToken = body.account_access_token;
+      this.identity = {
+        site: body.site, actor: body.actor, username,
+        installation: body.installation, expiresAt: body.expires_at,
+      };
+      return { ...this.identity };
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   /** Called only after an explicit user login action. */
