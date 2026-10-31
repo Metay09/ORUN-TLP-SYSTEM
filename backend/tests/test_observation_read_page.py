@@ -13,7 +13,7 @@ import unittest
 from backend.observation_read_page import (
     MAX_CURSOR, PAGE_SIZE, ObservationReadUnavailable, read_page,
 )
-from backend.orun_backend_bench import make_server
+from backend.orun_backend_bench import make_server, load_private_token_file
 from backend.account_observation_relay import AccountObservationRelay, RelayUnavailable
 
 
@@ -115,6 +115,42 @@ class CursorReadTests(unittest.TestCase):
         ):
             with self.assertRaises(RelayUnavailable):
                 relay.forward("GET", bad)
+
+
+    def test_private_token_file_accepts_owner_only_file(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            path = Path(t) / "service-token"
+            path.write_text("SYNTHETIC-ONLY-TEST-BEARER-12345\\n", encoding="utf-8")
+            path.chmod(0o600)
+            self.assertEqual(
+                load_private_token_file(path), "SYNTHETIC-ONLY-TEST-BEARER-12345")
+
+    def test_private_token_file_rejects_public_and_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            path = Path(t) / "service-token"
+            path.write_text("SYNTHETIC-ONLY-TEST-BEARER-12345", encoding="utf-8")
+            path.chmod(0o644)
+            with self.assertRaises(ValueError):
+                load_private_token_file(path)
+            path.chmod(0o600)
+            link = Path(t) / "service-token-link"
+            link.symlink_to(path)
+            with self.assertRaises(OSError):
+                load_private_token_file(link)
+
+    def test_private_token_file_rejects_oversize_and_invalid_content(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            path = Path(t) / "service-token"
+            path.write_bytes(b"X" * 4097)
+            path.chmod(0o600)
+            with self.assertRaises(ValueError):
+                load_private_token_file(path)
+            path.write_text("short", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_private_token_file(path)
+            path.write_text("HAS SPACE IN TOKEN 12345", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_private_token_file(path)
 
 
 if __name__ == "__main__":
