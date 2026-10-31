@@ -120,7 +120,7 @@ class CursorReadTests(unittest.TestCase):
     def test_private_token_file_accepts_owner_only_file(self) -> None:
         with tempfile.TemporaryDirectory() as t:
             path = Path(t) / "service-token"
-            path.write_text("SYNTHETIC-ONLY-TEST-BEARER-12345\\n", encoding="utf-8")
+            path.write_text("SYNTHETIC-ONLY-TEST-BEARER-12345\n", encoding="utf-8")
             path.chmod(0o600)
             self.assertEqual(
                 load_private_token_file(path), "SYNTHETIC-ONLY-TEST-BEARER-12345")
