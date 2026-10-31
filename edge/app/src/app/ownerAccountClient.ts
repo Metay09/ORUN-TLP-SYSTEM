@@ -60,6 +60,16 @@ export class OwnerAccountClient {
     return this.identity ? { ...this.identity } : null;
   }
 
+  /** Internal upload credential for the authenticated ORUN HTTPS relay.
+   * The legacy observation Backend bearer never reaches the phone.
+   * Never persist this bearer or display it in a component/log.
+   */
+  observationTransport(): { url: string; token: string } | null {
+    if (!this.accessToken || !this.identity ||
+        this.identity.expiresAt <= Date.now() / 1000) return null;
+    return { url: this.base, token: this.accessToken };
+  }
+
   /** Main user flow: any phone, username and password. No P256 enrollment.
    * TLS required; account bearer stays only in memory, never in localStorage.
    * A stable server-derived account cache namespace is NOT a phone identity.
