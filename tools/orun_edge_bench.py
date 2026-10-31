@@ -318,6 +318,9 @@ class BenchEdge:
         self.handed_off = 0
         self.accept_rejected = 0
         self.gateway_id = None   # from the BLE HELLO
+        # Mirrors Android EdgeCore: a DUMP END count is trustworthy only
+        # when every distinct, complete HELD announcement was seen.
+        self._dump_seen = set()
         with sqlite3.connect(str(self.db_path)) as db:
             db.execute(RECEIPTS_SQL)
             db.execute(SESSIONS_SQL)
@@ -405,7 +408,18 @@ class BenchEdge:
         return (f"UYARI gateway teslimi reddetti page={key[0]} slot={key[1]} "
                 f"({r['word']}); kayıt gateway'de kalır")
 
+    def _dump_end(self, count: Optional[int]) -> bool:
+        complete = count is not None and count >= 0 and len(self._dump_seen) == count
+        self._dump_seen.clear()
+        return complete
+
     def handle_line(self, text: str) -> Optional[str]:
+        if text.startswith("EDGE DUMP END"):
+            match = re.search(r"\bcount=(\d+)\b", text)
+            complete = self._dump_end(int(match.group(1)) if match else None)
+            return (f"[gateway] {text} | {self.summary()}"
+                    + ("" if complete else
+                       " | UYARI: eksik/bozuk aktarım; sayaç kesin değil, yeniden DUMP gerekli"))
         reply = ACCEPT_REPLY.search(text)
         if reply:
             known = reply["page"] != "?"
@@ -447,6 +461,7 @@ class BenchEdge:
     def _ingest_held(self, gateway: int, page: int, slot: int, gen: int,
                      raw: bytes, link) -> str:
         """One held record from the Gateway (USB line or BLE message)."""
+        self._dump_seen.add((page, slot))
         m = {"gw": f"{gateway:016X}", "page": page, "slot": slot}
         state = self.ledger.ingest(raw).state
         S = self.ledger_mod.LedgerState
@@ -476,6 +491,7 @@ class BenchEdge:
         t = msg[0]
         if t == 0x01 and len(msg) == 13:
             self.gateway_id = int.from_bytes(msg[1:9], "big")
+            self._dump_seen.clear()
             held = int.from_bytes(msg[9:11], "big")
             cap = int.from_bytes(msg[11:13], "big")
             return f"[gateway BLE] {self.gateway_id:016X} bağlı; tuttuğu kayıt {held}/{cap}"
@@ -492,8 +508,11 @@ class BenchEdge:
             return self._ingest_held(self.gateway_id, page, slot, gen,
                                      bytes(msg[18:]), link)
         if t == 0x03 and len(msg) == 3:
-            return (f"[gateway BLE] DUMP END count={int.from_bytes(msg[1:3], 'big')} "
-                    f"| {self.summary()}")
+            count = int.from_bytes(msg[1:3], "big")
+            complete = self._dump_end(count)
+            return (f"[gateway BLE] DUMP END count={count} | {self.summary()}"
+                    + ("" if complete else
+                       " | UYARI: eksik aktarım; sayaç kesin değil, yeniden DUMP gerekli"))
         if t == 0x04 and len(msg) == 6:
             return self._accept_reply(ACCEPT_WORDS.get(msg[5], "REJECTED"),
                                       int.from_bytes(msg[1:3], "big"),
@@ -530,6 +549,7 @@ def run_port(edge: BenchEdge, port: str, dump: bool) -> None:
     with serial.Serial(port, 115200, timeout=0.1) as ser:
         time.sleep(0.5)
         if dump:
+            edge._dump_seen.clear()
             ser.write(b"BENCH GW DUMP\n")
         print(f"[{port}] dinleniyor; çıkış Ctrl+C", flush=True)
         buf = b""
@@ -547,8 +567,6 @@ def run_port(edge: BenchEdge, port: str, dump: bool) -> None:
                     out = edge.handle_line(text)
                     if out:
                         print(out, flush=True)
-                    elif text.startswith("EDGE DUMP END"):
-                        print(f"[gateway] {text} | {edge.summary()}", flush=True)
                 line = edge.next_accept(time.monotonic())
                 if line:
                     ser.write((line + "\n").encode("ascii"))
