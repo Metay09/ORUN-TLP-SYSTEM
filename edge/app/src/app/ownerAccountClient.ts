@@ -3,6 +3,7 @@
 // storage; short-lived account bearer remains ONLY in this JS class instance.
 // No localStorage, IndexedDB, URL, logs, or observation-bench token reuse.
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
+import { parseServerObservationPage, type ServerObservationPage } from "./serverObservationRead.ts";
 
 export interface AccountIdentity {
   site: string;
@@ -207,6 +208,44 @@ export class OwnerAccountClient {
         !Number.isSafeInteger(body.cursor))
       throw new Error("Sunucudan geçersiz ortak veri yanıtı.");
     return body;
+  }
+
+  /** Fetch sealed observations from this account's pinned one-site server.
+   * Transport-only: caller must AEAD-verify and commit to a separate
+   * site-scoped SQLite mirror before displaying anything.
+   */
+  async readServerObservations(after = 0): Promise<ServerObservationPage> {
+    if (!this.accessToken || !this.identity ||
+        this.identity.expiresAt <= Date.now() / 1000)
+      throw new Error("Önce hesabınla giriş yapmalısın.");
+    if (!Number.isSafeInteger(after) || after < 0)
+      throw new Error("Sunucu kayıt imleci geçersiz.");
+    const epoch = this.epoch;
+    const token = this.accessToken;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const reply = await this.fetcher(
+        this.base + "/v1/edge/records?after=" + after, {
+          headers: { Authorization: "Bearer " + token,
+                     Accept: "application/json" },
+          credentials: "omit", redirect: "error", cache: "no-store",
+          signal: controller.signal,
+        });
+      if (this.epoch !== epoch)
+        throw new Error("Kayıt indirme sırasında hesap değişti.");
+      if (reply.status === 401 || reply.status === 403)
+        throw new Error("Kayıtları görme yetkisi bulunamadı.");
+      if (!reply.ok)
+        throw new Error("Sunucudaki tasma kayıtları henüz alınamadı.");
+      const parsed = await json(reply, 128 * 1024);
+      if (this.epoch !== epoch || !this.accessToken || !this.identity ||
+          this.identity.expiresAt <= Date.now() / 1000)
+        throw new Error("Kayıt indirme sırasında hesap oturumu sona erdi.");
+      return parseServerObservationPage(parsed, after);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   /** Best-effort server logout, with immediate local memory clearing. */
