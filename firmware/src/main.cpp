@@ -1306,6 +1306,52 @@ void printU64HexTo(char (&out)[17], uint64_t value) {
            static_cast<unsigned long>(static_cast<uint32_t>(value)));
 }
 
+// Read-only operator diagnostic: a successful flash/ROLE TRACKER/GNSS FIX
+// must never be confused with an end-to-end custody-capable image.
+// This reports compiled features, NOT an ACK proof or a live link test.
+void printProductPath() {
+  const char* image = "NORMAL";
+  const char* tx = "OFF";
+  const char* gateway = "OFF";
+  const char* store = product_records.mounted() ? "MOUNTED" : "NOT_MOUNTED";
+#if defined(ORUN_SF5L0_GATEWAY)
+  image = "BENCH_GATEWAY";
+  gateway = "BENCH_ONLY";
+  store = "GATEWAY_OCQ2_SEPARATE";
+#elif defined(ORUN_SF5L0_TRACKER)
+  image = "BENCH_TRACKER";
+  tx = "BENCH_PACED";
+#elif defined(ORUN_SF5K3V_TRACKER_TX_PILOT)
+  image = "TX_PILOT";
+  tx = "ONE_PER_BOOT";
+#endif
+  // In the bench Gateway image SecurityStore is intentionally NOT mounted;
+  // the separate signed OGK1 Gateway grant owner controls ACK authority.
+#if defined(ORUN_SF5L0_GATEWAY)
+  const char* security = "GATEWAY_GRANTS_SEPARATE";
+#else
+  const char* security = "UNKNOWN";
+  switch (security_store.state()) {
+    case orun_tlp::SecurityState::kUnprovisioned:
+      security = "UNPROVISIONED"; break;
+    case orun_tlp::SecurityState::kProvisioned:
+      security = "PROVISIONED"; break;
+    case orun_tlp::SecurityState::kForeign:
+      security = "FOREIGN"; break;
+    case orun_tlp::SecurityState::kUnsupported:
+      security = "UNSUPPORTED"; break;
+    case orun_tlp::SecurityState::kFault:
+      security = "FAULT"; break;
+  }
+#endif
+  Serial.printf(
+      "PRODUCT PATH image=%s secure_tx=%s gateway_custody=%s "
+      "product_store=%s security=%s field_ready=NO\n",
+      image, tx, gateway, store, security);
+  // field_ready deliberately remains NO until an independently verified
+  // production image and matching grants/physical evidence exist.
+}
+
 // "PRODUCT STORE?": the product region, the mount decision and the store.
 void printProductStore() {
   const auto& census = product_records.census();
@@ -2597,6 +2643,11 @@ void handleRoleCommand() {
   if (isActivityCommand("ACTIVITY AXIS?", 14)) {
     role_command_length = 0;
     printActivityPose();
+    return;
+  }
+  if (isActivityCommand("PRODUCT PATH?", 13)) {
+    role_command_length = 0;
+    printProductPath();
     return;
   }
   if (isActivityCommand("PRODUCT STORE?", 14)) {

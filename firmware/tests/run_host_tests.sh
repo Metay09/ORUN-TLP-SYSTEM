@@ -1012,3 +1012,8 @@ python3 firmware/tests/sf5/test_step3a_credentials.py
 # Step 3B: backend-signed, persistent Gateway grant snapshot (OGK1) over USB:
 # Python builder/signer <-> firmware installer + boot reader, tool, build pin.
 bash tools/ci/run_step3b_gateway_grants_host.sh
+
+# Product-release gate regression only. The production release gate itself
+# intentionally returns BLOCKED until normal-image TX/Gateway/security and
+# physical cross-device/Backend/Android proof are complete.
+python3 firmware/tests/sf5/test_orun_product_release_gate.py
