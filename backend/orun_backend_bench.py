@@ -44,6 +44,10 @@ from typing import Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT))
+from backend.observation_read_page import (  # noqa: E402
+    MAX_CURSOR, ObservationReadUnavailable, read_page,
+)
 import orun_edge_bench as eb  # noqa: E402  (ledger loader, map page, points)
 import orun_credentials as oc  # noqa: E402  (step 3A registry)
 
@@ -219,6 +223,22 @@ def make_server(backend: Backend, host: str, port: int, token: str) -> Threading
 
         def do_GET(self):  # noqa: N802
             path = self.path.split("?", 1)[0]
+            if path == "/v1/edge/records":
+                # This endpoint is NOT the legacy public map endpoint.
+                # Only server-verified exact frames, bounded by an insertion
+                # cursor. No plaintext/traffic key or bulk history export.
+                if not authorized(self.headers):
+                    return self._json(401, {"error": "token"})
+                match = re.fullmatch(
+                    r"/v1/edge/records\\?after=(0|[1-9][0-9]{0,18})",
+                    self.path)
+                if not match or int(match.group(1)) > MAX_CURSOR:
+                    return self._json(400, {"error": "invalid_cursor"})
+                try:
+                    page = read_page(backend.db_path, int(match.group(1)))
+                except ObservationReadUnavailable:
+                    return self._json(503, {"error": "observation_read_unavailable"})
+                return self._json(200, page)
             if path == "/api/points":
                 return self._send(200, json.dumps(eb.points_from_db(backend.db_path)).encode(),
                                   "application/json")
