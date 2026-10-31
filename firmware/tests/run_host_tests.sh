@@ -67,6 +67,17 @@ case "${ORUN_HOST_SANITIZERS:-1}" in
     ;;
 esac
 
+# The R2 patch regression reads the pinned SX126x driver from PlatformIO's
+# environment. Fail explicitly if this dependency was not installed; do not
+# silently skip the test or install/mutate packages from the host test runner.
+radio_source="firmware/.pio/libdeps/rak4630/SX126x-Arduino/src/radio/sx126x/radio.cpp"
+if [[ ! -f "$radio_source" && ! -f "$radio_source.orun-original" ]]; then
+  echo "ERROR: SX126x-Arduino dependency missing for full host regression." >&2
+  echo "Install once: (cd firmware && pio pkg install -e rak4630)" >&2
+  echo "Then rerun: bash firmware/tests/run_host_tests.sh" >&2
+  exit 2
+fi
+
 flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror "${sanitizer_flags[@]}"
        "${coverage_flags[@]}" -Ifirmware/tests/m3/stubs -Ifirmware/include)
 portable_flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror
