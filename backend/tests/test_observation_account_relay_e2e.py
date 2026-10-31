@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -137,6 +138,53 @@ class AccountObservationRouteE2ETests(unittest.TestCase):
             wrong_site_server, "GET", "/v1/edge/records?after=0", token)
         self.assertEqual(status, 403, body)
         self.assertEqual(body["error"], "observation_site_not_authorized")
+
+    def test_live_db_readonly_account_relay(self):
+        """Opt-in only: real verified ledger with synthetic local credentials.
+
+        The Backend and account HTTP listeners are both ephemeral loopback.
+        Account/password DB and bearer are disposable; the real ledger is
+        accessed only by the existing sqlite mode=ro observation reader.
+        """
+        live_path = os.environ.get("ORUN_OBSERVATION_READONLY_DB")
+        if not live_path:
+            self.skipTest("ORUN_OBSERVATION_READONLY_DB not explicitly supplied")
+        live_db = Path(live_path).expanduser()
+        self.assertTrue(live_db.is_file(), "Specified read-only ledger missing")
+
+        # Separate from the fake fixture and the already-running Backend.
+        backend = make_server(
+            SimpleNamespace(db_path=live_db), "127.0.0.1", 0,
+            "SYNTHETIC-ACCOUNT-RELAY-TEST-TOKEN",
+        )
+        self.serve(backend)
+        upstream = "http://127.0.0.1:" + str(backend.server_port)
+        relay = AccountObservationRelay(
+            upstream, self.token_file, observation_site="orun-main",
+        )
+        account = self.account_http(relay)
+        path = "/v1/edge/records?after=0"
+        # Account credentials are from a temporary fixture, not the live site.
+        self.assertEqual(self.request(account, "GET", path)[0], 401)
+        access = self.signed_in()
+        status, first = self.request(account, "GET", path, access)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(first["records"]), 64)
+        self.assertEqual(first["cursor"], 64)
+        self.assertTrue(first["has_more"])
+        self.assertTrue(all(
+            isinstance(record["frame"], str)
+            and len(record["frame"]) in (168, 200)
+            for record in first["records"]
+        ))
+        second_status, second = self.request(
+            account, "GET", "/v1/edge/records?after=64", access
+        )
+        self.assertEqual(second_status, 200)
+        self.assertGreater(len(second["records"]), 0)
+        self.assertGreater(second["cursor"], first["cursor"])
+        self.assertNotEqual(first["records"][0]["cursor"],
+                            second["records"][0]["cursor"])
 
     def test_no_operator_site_opt_in_refuses_read(self):
         token = self.signed_in()
