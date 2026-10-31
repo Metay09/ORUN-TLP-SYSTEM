@@ -28,6 +28,9 @@ from backend.edge_enrollment import EdgeEnrollment  # noqa: E402
 from backend.shared_sync_http import handler_factory  # noqa: E402
 from backend.phone_enrollment_http import mobile_handler_factory  # noqa: E402
 from backend.account_login import AccountStore  # noqa: E402
+from backend.account_observation_relay import (  # noqa: E402
+    AccountObservationRelay, RelayConfigError,
+)
 from backend.account_login_http import account_handler_factory  # noqa: E402
 from backend.shared_sync_store import SharedStore  # noqa: E402
 
@@ -89,11 +92,19 @@ def prepare(state_dir: str | Path, *, reuse_state: bool = False) -> tuple[Shared
 
 def start(state_dir: str | Path, bind: str, port: int,
           *, reuse_state: bool = False, phone_enrollment: bool = False,
-          account_login: bool = False) -> None:
+          account_login: bool = False,
+          observation_upstream: str | None = None,
+          observation_token_file: str | None = None) -> None:
     if not CONTROL.fullmatch(bind):
         raise StartupRefused("ONLY_127_0_0_1_BIND_ALLOWED")
     if type(port) is not int or not 0 <= port <= 65535:
         raise StartupRefused("INVALID_PORT")
+    if bool(observation_upstream) != bool(observation_token_file):
+        raise StartupRefused("OBSERVATION_RELAY_REQUIRES_BOTH_PARAMETERS")
+    if observation_upstream and not account_login:
+        raise StartupRefused("OBSERVATION_RELAY_REQUIRES_ACCOUNT")
+    relay = (AccountObservationRelay(observation_upstream, observation_token_file)
+             if observation_upstream and observation_token_file else None)
     store, enrollment = prepare(state_dir, reuse_state=reuse_state)
     # Account/password access is a separate explicit pilot opt-in. Do NOT
     # create a default account, adopt an unknown database or unlock sync
@@ -107,7 +118,8 @@ def start(state_dir: str | Path, bind: str, port: int,
         accounts = AccountStore(account_db)
         handler = account_handler_factory(
             store, enrollment, accounts,
-            enable_phone_enrollment=phone_enrollment)
+            enable_phone_enrollment=phone_enrollment,
+            observation_relay=relay)
     else:
         # Preserve exact S4E behavior unless S6A is deliberately requested.
         handler = (mobile_handler_factory(store, enrollment) if phone_enrollment
@@ -119,7 +131,10 @@ def start(state_dir: str | Path, bind: str, port: int,
         if host != "127.0.0.1":
             raise StartupRefused("UNEXPECTED_PUBLIC_BIND")
         print(f"ORUN_SHARED_BIND={host}:{assigned}", flush=True)
-        print("ORUN_SHARED_SECURITY=STEP3C_ENROLLED_ONLY;LOOPBACK_HTTP_ONLY", flush=True)
+        auth_kind = "ACCOUNT_PASSWORD_OR_LEGACY_ENROLLED" if account_login else "LEGACY_ENROLLED_ONLY"
+        print(f"ORUN_SHARED_SECURITY={auth_kind};LOOPBACK_HTTP_ONLY", flush=True)
+        print("ORUN_OBSERVATION_ACCOUNT_RELAY=" +
+              ("ENABLED" if relay is not None else "DISABLED"), flush=True)
         server.serve_forever(poll_interval=0.2)
     finally:
         server.server_close()
@@ -139,16 +154,23 @@ def main() -> int:
     parser.add_argument("--enable-phone-enrollment", action="store_true",
                         help="opt in to untrusted begin/finish; owner approves ONLY locally")
     parser.add_argument("--enable-account-login", action="store_true",
-                        help="owner account must already be bootstrapped; "
-                             "gates P256 phone resource sync on password login")
+                        help="Enable username/password login; no phone pairing required")
+    parser.add_argument("--observation-upstream",
+                        help="Optional server-side private observation host URL; "
+                             "127.0.0.1 or tailnet IP ONLY")
+    parser.add_argument("--observation-token-file",
+                        help="Required private 0600 service-to-service bearer file "
+                             "when observation relay is enabled")
     args = parser.parse_args()
     try:
         start(args.state_dir, args.bind, args.port, reuse_state=args.reuse_state,
               phone_enrollment=args.enable_phone_enrollment,
-              account_login=args.enable_account_login)
+              account_login=args.enable_account_login,
+              observation_upstream=args.observation_upstream,
+              observation_token_file=args.observation_token_file)
         return 0
-    except (StartupRefused, OSError, ValueError) as exc:
-        reason = str(exc) if isinstance(exc, StartupRefused) else "RUNTIME_ERROR"
+    except (StartupRefused, RelayConfigError, OSError, ValueError) as exc:
+        reason = str(exc) if isinstance(exc, (StartupRefused, RelayConfigError)) else "RUNTIME_ERROR"
         print("ORUN_SHARED_START_REFUSED=" + reason, file=sys.stderr)
         return 2
     except KeyboardInterrupt:

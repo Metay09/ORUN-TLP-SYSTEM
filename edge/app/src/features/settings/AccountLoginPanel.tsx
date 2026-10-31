@@ -1,14 +1,8 @@
-// ORUN S6B PILOT ONLY: explicit account login on a previously enrolled phone.
-// No claim that herd, history or zone drafts have been synchronized.
-// Account bearer exists only in JS process memory; password is never persisted.
-import { useEffect, useState } from "react";
-import { isMobileIdentityAvailable } from "../../platform/orunMobileIdentity.ts";
+// ORUN user account: password-only, without phone pairing.
+// Account bearer stays in volatile JS memory; password is never persisted.
+import { useState } from "react";
 import {
-  activeMobileSession, mobileSessionStatus,
-  type MobileSessionMeta,
-} from "../../platform/orunMobileSession.ts";
-import {
-  pilotAccountLogin, pilotAccountLogout, pilotAccountStatus,
+  pilotPasswordLogin, pilotAccountLogout, pilotAccountStatus,
   pilotAccountDownloadShared, pilotAccountStoredSnapshot,
 } from "../../app/ownerAccountPilotRuntime.ts";
 import type { AccountIdentity } from "../../app/ownerAccountClient.ts";
@@ -21,13 +15,12 @@ function userMessage(error: unknown): string {
   // Never put raw Android exception details or server responses in the UI.
   if (error instanceof Error && error.message.length <= 180 &&
       !error.message.startsWith("ORUN_")) return error.message;
-  return "Hesap işlemi tamamlanamadı. Telefon kaydını ve sunucuyu kontrol et.";
+  return "Hesap işlemi tamamlanamadı. Sunucu bağlantısını kontrol et.";
 }
 
 export function AccountLoginPanel() {
-  const [expanded, setExpanded] = useState(false);
-  const [device, setDevice] = useState<MobileSessionMeta | null>(null);
-  const [username, setUsername] = useState("");
+  const [expanded, setExpanded] = useState(true);
+  const [username, setUsername] = useState("owner");
   const [password, setPassword] = useState("");
   const [account, setAccount] = useState<AccountIdentity | null>(
     () => pilotAccountStatus());
@@ -36,22 +29,6 @@ export function AccountLoginPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-
-  useEffect(() => {
-    if (!expanded || !isMobileIdentityAvailable()) return;
-    let active = true;
-    mobileSessionStatus().then((value) => {
-      if (active) setDevice(value);
-    }).catch(() => {
-      if (active) {
-        setDevice({ present: false });
-        setError("Telefonun korunan yetkisi okunamadı.");
-      }
-    });
-    return () => { active = false; };
-  }, [expanded]);
-
-  if (!isMobileIdentityAvailable()) return null;
 
   async function execute(job: () => Promise<void>): Promise<void> {
     if (busy) return;
@@ -68,17 +45,19 @@ export function AccountLoginPanel() {
     const secret = password;
     setPassword("");
     await execute(async () => {
-      const native = await activeMobileSession();
-      if (!native) throw new Error(
-        "Önce bu telefonu sahibin onayıyla ORUN'a kaydetmelisin.");
-      const result = await pilotAccountLogin(native, username, secret);
+      const result = await pilotPasswordLogin(username, secret);
       setAccount(result);
       setLastPull(null);
-      const stored = await pilotAccountStoredSnapshot();
-      setSaved(stored);
+      try {
+        setSaved(await pilotAccountStoredSnapshot());
+      } catch {
+        // Account login already succeeded. A local SQLite cache failure must
+        // never turn a valid login into a false authentication error.
+        setSaved(null);
+      }
       setNotice(
-        "Hesap doğrulandı. Önceden indirilmiş ortak veri taslakları "
-        + "gösteriliyor; hayvan ve konum geçmişi henüz eşitlenmedi.");
+        "Hesabına giriş yapıldı. Sunucu bağlantısı otomatik kullanılır. "
+        + "Konum ve sürü verileri henüz otomatik eşitlenmiyor.");
     });
   }
 
@@ -120,7 +99,7 @@ export function AccountLoginPanel() {
       setSaved(null);
       setLastPull(null);
       setNotice(confirmedOnServer
-        ? "Hesap oturumu kapatıldı. Telefonun cihaz onayı korunur."
+        ? "Hesap oturumu kapatıldı."
         : "Bu telefondaki hesap oturumu kapatıldı; sunucuda iptal "
           + "doğrulanamadı. Yetki süresi dolana kadar geçerli olabilir.");
     });
@@ -128,14 +107,14 @@ export function AccountLoginPanel() {
 
   return (
     <>
-      <Section title="Kullanıcı hesabı · pilot" />
+      <Section title="Hesabım" />
       <Card>
         <div className="stack" style={{ padding: 16 }}>
           <p className="fine" style={{ margin: 0 }}>
-            Bu ekran, Android'de kayıtlı telefonla gerçek hesap kimliği
-            doğrulama denemesidir. Sürü, konum geçmişi ve tüm meralar
-            henüz otomatik eşitlenmez. Sunucuda hesap hizmeti varsayılan
-            olarak kapalıdır.
+            Kullanıcı adın ve parolanla giriş yap. Yeni telefonda
+            ayrıca telefon kaydı, onay kodu veya anahtar gerekmiyor.
+            HTTPS bağlantısı otomatik kullanılır. Sürü ve konum verileri
+            henüz hesapla otomatik eşitlenmiyor.
           </p>
           <button className="btn wide" type="button" disabled={busy}
             onClick={() => {
@@ -152,11 +131,6 @@ export function AccountLoginPanel() {
           </button>
           {expanded && (
             <>
-              <KV k="Telefon yetkisi">
-                {device === null ? "Kontrol ediliyor"
-                  : device.present ? "Onaylı · " + device.site
-                  : "Önce telefon kaydı gerekli"}
-              </KV>
               {account ? (
                 <>
                   <KV k="Hesap">{account.username}</KV>
@@ -207,7 +181,7 @@ export function AccountLoginPanel() {
               ) : (
                 <form className="stack" autoComplete="off" onSubmit={(e) => {
                   e.preventDefault();
-                  if (!busy && device?.present && username && password)
+                  if (!busy && username && password)
                     void signIn();
                 }}>
                   <label className="lab">ORUN kullanıcı adı
@@ -226,13 +200,11 @@ export function AccountLoginPanel() {
                       onChange={(e) => setPassword(e.target.value)} />
                   </label>
                   <button className="btn primary" type="submit"
-                    disabled={busy || !device?.present ||
-                              username.length < 3 || password.length < 12}>
+                    disabled={busy || username.length < 3 || password.length < 12}>
                     {busy ? "Doğrulanıyor" : "Hesabımla giriş yap"}
                   </button>
                   <p className="fine">
-                    Kullanıcı adı ve parola telefonun veri deposuna yazılmaz.
-                    Oturum yetkisi yalnız uygulama açıkken bellekte tutulur.
+                    Parolan saklanmaz. Oturumun süresi dolunca kullanıcı adın ve parolanla yeniden giriş yaparsın.
                   </p>
                 </form>
               )}

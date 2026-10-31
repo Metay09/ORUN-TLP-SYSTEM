@@ -6,6 +6,7 @@ import {
   OwnerAccountClient, type AccountIdentity,
 } from "./ownerAccountClient.ts";
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
+import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
 import {
   AccountSharedMirror, type SharedMirrorSnapshot, type MirrorPullResult,
 } from "./accountSharedMirror.ts";
@@ -48,6 +49,11 @@ export async function pilotAccountDownloadShared(): Promise<MirrorPullResult> {
 }
 
 
+/** Internal-only transport for phone ledger upload through account gateway. */
+export function pilotAccountUploadTransport(): { url: string; token: string } | null {
+  return client?.observationTransport() ?? null;
+}
+
 export function pilotAccountStatus(): AccountIdentity | null {
   const identity = client?.current ?? null;
   if (!identity) return null;
@@ -57,6 +63,27 @@ export function pilotAccountStatus(): AccountIdentity | null {
     return null;
   }
   return identity;
+}
+
+/** Password-only account login. No phone enrollment, keys, or PINs. */
+export async function pilotPasswordLogin(
+  username: string, password: string,
+): Promise<AccountIdentity> {
+  if (busy) throw new Error("Hesap oturum işlemi zaten devam ediyor.");
+  busy = true;
+  try {
+    if (client) {
+      const old = client;
+      client = null;
+      await old.signOut();
+    }
+    const next = new OwnerAccountClient(ORUN_ACCOUNT_ORIGIN);
+    const user = await next.signInWithPassword(username, password);
+    client = next;
+    return user;
+  } finally {
+    busy = false;
+  }
 }
 
 export async function pilotAccountLogin(
