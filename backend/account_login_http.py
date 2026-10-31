@@ -70,10 +70,17 @@ def account_handler_factory(store: SharedStore, enrollment: EdgeEnrollment,
             # User account bearer, not the unrelated PC/Edge old bearer.
             bearer = self._bearer(self.headers)
             principal = accounts.resolve_session(enrollment, bearer) if bearer else None
-            if principal is None or "zone:write" not in principal.scopes:
+            is_records = method == "GET" and route.startswith("/v1/edge/records?")
+            permission = "zone:read" if is_records else "zone:write"
+            if principal is None or permission not in principal.scopes:
                 return self._send(401, {"error": "unauthorized"})
             if observation_relay is None:
                 return self._send(503, {"error": "observation_not_configured"})
+            if is_records and (
+                observation_relay.observation_site is None or
+                observation_relay.observation_site != principal.site_id
+            ):
+                return self._send(403, {"error": "observation_site_not_authorized"})
             if self.headers.get("Transfer-Encoding"):
                 return self._send(400, {"error": "invalid_request"})
             body = b""
@@ -99,6 +106,12 @@ def account_handler_factory(store: SharedStore, enrollment: EdgeEnrollment,
                 if url.query or url.fragment:
                     return self._send(404, {"error": "not_found"})
                 return self._observation("GET", url.path)
+            if url.path == "/v1/edge/records":
+                # The relay strictly checks an exact numeric insertion
+                # cursor; never accept caller-provided URL or raw SQL.
+                if url.fragment:
+                    return self._send(404, {"error": "not_found"})
+                return self._observation("GET", self.path)
             if url.path != "/api/v1/account/me":
                 return super().do_GET()
             if url.query or url.fragment:
