@@ -243,6 +243,11 @@ def make_server(backend: Backend, host: str, port: int, token: str) -> Threading
                     return self._json(503, {"error": "observation_read_unavailable"})
                 return self._json(200, page)
             if path == "/api/points":
+                # Coordinates and movement history are private account data.
+                # Legacy public map URL must not bypass the private Backend
+                # bearer (the authorized phone uses the account relay).
+                if not authorized(self.headers):
+                    return self._json(401, {"error": "token"})
                 return self._send(200, json.dumps(eb.points_from_db(backend.db_path)).encode(),
                                   "application/json")
             if path == "/v1/edge/keys":
