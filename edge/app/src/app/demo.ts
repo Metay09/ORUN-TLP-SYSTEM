@@ -14,6 +14,7 @@ import type { Snapshot, JournalEntry } from "./controller.ts";
 import type { EdgeSource } from "./source.ts";
 import type { AssetBook } from "./stores.ts";
 import { blankProfile } from "./stores.ts";
+import type { Zone } from "./zones.ts";
 
 const T = 900;                     // report period, s
 const HOUR = 3600_000;
@@ -246,4 +247,17 @@ export class DemoSource implements EdgeSource {
   async disconnect(): Promise<void> { /* sample */ }
   saveServer(): void { /* sample */ }
   async sync(): Promise<void> { /* sample */ }
+}
+
+// Sample pastures: "Ev merası" holds the barn, the slope, the water and the
+// shade; the stony ground the herd visits in the afternoon is outside it, so
+// the sample shows an exit and a return. "Taşlık" is drawn but switched off.
+export function demoZones(): Zone[] {
+  const ring = (pts: [number, number][]) => pts.map(([x, y]) => { const p = toLL(x, y); return [p.lon, p.lat] as [number, number]; });
+  return [
+    { id: "demo-ev", name: "Ev merası", active: true, updated: 0,
+      ring: ring([[-420, 80], [-200, -140], [180, -160], [560, 180], [560, 620], [100, 620], [-420, 420]]) },
+    { id: "demo-taslik", name: "Taşlık", active: false, updated: 0,
+      ring: ring([[-640, -480], [-220, -480], [-220, -80], [-640, -80]]) },
+  ];
 }

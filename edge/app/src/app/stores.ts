@@ -5,6 +5,7 @@
 // every phone shares them is later work (step 3C+).
 import type { LatLon } from "./geo.ts";
 import type { AssetProfile, Assignment } from "./model.ts";
+import { NO_GRAZE, checkSet, validateRing, type Graze, type LonLat, type Zone, type ZoneBook } from "./zones.ts";
 
 type Fn = () => void;
 
@@ -126,16 +127,33 @@ export type Range = "today" | "h24" | "d3" | "d7" | "d30";
 export interface Layers {
   animals: boolean; trail: boolean; heat: boolean; coverage: boolean;
   stations: boolean; me: boolean; labels: boolean; relief: boolean;
+  zones: boolean; herdTrails: boolean; links: boolean;
+}
+export type ZoneFill = "none" | "light" | "hatch";
+/** Satellite imagery: Esri's current mosaic or one Wayback release. */
+export interface SatPrefs {
+  kind: "esri" | "wayback";
+  release: string;    // Wayback release id
+  maxZoom: number;    // highest tile level asked for; above it tiles are enlarged
 }
 export interface Prefs {
   theme: Theme; sun: boolean; demo: boolean | null;   // null: not chosen yet
   base: BaseMap; tilt: boolean; layers: Layers; range: Range;
+  sat: SatPrefs; zoneFill: ZoneFill;
 }
+
+// Esri has no 18-19 imagery over most of rural Aydın; asking for it returns
+// "Map data not yet available" pictures. 17 is sharp there and is enlarged
+// beyond (settable 14-19 in the layer panel).
+export const DEFAULT_SAT: SatPrefs = { kind: "esri", release: "26334", maxZoom: 17 };
 
 export const DEFAULT_PREFS: Prefs = {
   theme: "auto", sun: false, demo: null, base: "satellite", tilt: false,
-  layers: { animals: true, trail: true, heat: false, coverage: false, stations: true, me: true, labels: true, relief: false },
-  range: "h24",
+  layers: {
+    animals: true, trail: true, heat: false, coverage: false, stations: true, me: true, labels: true, relief: false,
+    zones: true, herdTrails: false, links: false,
+  },
+  range: "h24", sat: DEFAULT_SAT, zoneFill: "light",
 };
 
 export function rangeStart(r: Range, now: number): number {
@@ -146,9 +164,147 @@ export function rangeStart(r: Range, now: number): number {
 
 export const prefs = new Persisted<Prefs>("orun.app.prefs.v1", () => ({ ...DEFAULT_PREFS }),
   (raw) => (raw && typeof raw === "object"
-    ? { ...DEFAULT_PREFS, ...(raw as Partial<Prefs>), layers: { ...DEFAULT_PREFS.layers, ...((raw as Partial<Prefs>).layers ?? {}) } }
+    ? {
+      ...DEFAULT_PREFS, ...(raw as Partial<Prefs>),
+      layers: { ...DEFAULT_PREFS.layers, ...((raw as Partial<Prefs>).layers ?? {}) },
+      // PR180 persisted the safe-satellite choice as a boolean. Preserve the
+      // owner's z15 underlay preference when moving to Claude's zoom slider.
+      sat: { ...DEFAULT_SAT,
+        ...((raw as Partial<Prefs>).sat ?? {}),
+        ...((raw as Partial<Prefs> & { satelliteSafe?: boolean }).satelliteSafe === true &&
+          !(raw as Partial<Prefs>).sat ? { maxZoom: 15 } : {}),
+      },
+    }
     : null));
 
 // ------------------------------------------- station positions and acks --
 export const stationPlaces = new Persisted<Record<string, LatLon>>("orun.app.stations.v1", () => ({}));
 export const seenEvents = new Persisted<string[]>("orun.app.seen.v1", () => []);
+
+// ----------------------------------------------------------------- zones --
+const LEGACY_ZONE_KEY = "orun.fences.v1"; // HTML prototype and PR #180
+
+interface LegacyMigration { zones: Zone[]; error: string | null; }
+function legacyDrafts(): LegacyMigration {
+  try {
+    const raw = localStorage.getItem(LEGACY_ZONE_KEY);
+    if (raw === null) return { zones: [], error: null };
+    const value: unknown = JSON.parse(raw);
+    if (!Array.isArray(value) || value.length > 100)
+      throw new Error("Eski mera listesi geçersiz.");
+    const unique = new Set<string>();
+    const zones: Zone[] = value.map((record: unknown) => {
+      if (!record || typeof record !== "object" || Array.isArray(record))
+        throw new Error("Eski mera kaydı geçersiz.");
+      const z = record as Record<string, unknown>;
+      if (typeof z.id !== "string" || !z.id || unique.has(z.id) ||
+          typeof z.name !== "string" || !z.name.trim() ||
+          (z.active !== undefined && typeof z.active !== "boolean") ||
+          !Array.isArray(z.ring) || z.ring.length > 65)
+        throw new Error("Eski meranın kimliği, adı veya köşeleri geçersiz.");
+      unique.add(z.id);
+      const ring = z.ring.map((point: unknown): LonLat => {
+        if (!Array.isArray(point) || point.length !== 2 ||
+            point.some((c: unknown) => typeof c !== "number" || !Number.isFinite(c)) ||
+            point[0] <= -180 || point[0] >= 180 || point[1] <= -90 || point[1] >= 90)
+          throw new Error("Eski mera koordinatları geçersiz.");
+        return [point[0], point[1]];
+      });
+      // Legacy and firmware allow an explicitly repeated closing point.
+      if (ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] &&
+          ring[0][1] === ring[ring.length - 1][1]) ring.pop();
+      if (validateRing(ring)) throw new Error("Eski mera çokgeni geçersiz.");
+      return { id: z.id, name: z.name.trim(), active: z.active !== false, ring, updated: Date.now() };
+    });
+    if (!checkSet(zones).ok) throw new Error("Eski meralar tasma sınırlarını aşıyor.");
+    return { zones, error: null };
+  } catch {
+    // NEVER write to the old key, and never silently overwrite corrupt legacy
+    // drafts with an empty new document.
+    return { zones: [], error: "Eski mera kayıtları güvenle okunamadı. Veri kaybını önlemek için alan değişiklikleri durduruldu; eski uygulama verilerini silmeyin." };
+  }
+}
+
+/** A persisted legacy draft is restored when no new-format record exists.
+ * The old key is retained unchanged for downgrade/backup. */
+export class ZoneStore extends Persisted<ZoneBook> {
+  readonly migrationWarning: string | null;
+  private readonly storageKey: string | null;
+  constructor(key: string | null, seed?: Zone[]) {
+    let invalidExisting = false;
+    const existing = (() => {
+      if (!key) return false;
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw === null) return false;
+        const document: unknown = JSON.parse(raw);
+        if (!document || typeof document !== "object" || Array.isArray(document) ||
+            !Array.isArray((document as ZoneBook).zones)) throw new Error("Invalid zone book");
+        const zones = (document as ZoneBook).zones;
+        if (zones.length > 100 || new Set(zones.map((z) => z?.id)).size !== zones.length ||
+            zones.some((z) => !z || typeof z.id !== "string" || !z.id ||
+              typeof z.name !== "string" || !z.name.trim() ||
+              typeof z.active !== "boolean" || !Array.isArray(z.ring) ||
+              z.ring.some((point) => !Array.isArray(point) || point.length !== 2 ||
+                point.some((v) => typeof v !== "number" || !Number.isFinite(v))) ||
+              validateRing(z.ring)) ||
+            !checkSet(zones).ok) throw new Error("Invalid zone geometry");
+        return true;
+      } catch {
+        invalidExisting = true;
+        return true; // never silently replace a corrupt new record from legacy
+      }
+    })();
+    const legacy = key && !existing && !seed ? legacyDrafts() : { zones: [], error: null };
+    super(key, () => ({ zones: seed ?? legacy.zones, graze: { ...NO_GRAZE } }),
+      (raw) => (!invalidExisting && raw && typeof raw === "object" && !Array.isArray(raw) &&
+        Array.isArray((raw as ZoneBook).zones)
+        ? { zones: (raw as ZoneBook).zones, graze: { ...NO_GRAZE, ...((raw as ZoneBook).graze ?? {}) } } : null));
+    this.storageKey = key;
+    this.migrationWarning = invalidExisting
+      ? "Yeni mera kayıtları bozuk veya desteklenmiyor; orijinal veriler korunuyor, üzerine yazılmayacak."
+      : legacy.error;
+  }
+
+  private commit(book: ZoneBook): void {
+    if (this.migrationWarning) throw new Error(this.migrationWarning);
+    // Persist before reporting any user-visible success: Persisted.set()
+    // intentionally tolerates private/blocked storage for unrelated settings,
+    // but a boundary must never be acknowledged if its write failed.
+    if (this.storageKey) localStorage.setItem(this.storageKey, JSON.stringify(book));
+    this.set(book);
+  }
+
+  /** Atomically refuse a malformed or over-budget set, including imports.
+   * Avoid reporting a saved area for a refused transaction. */
+  private checked(zones: Zone[]): Zone[] {
+    if (this.migrationWarning) throw new Error(this.migrationWarning);
+    if (zones.length > 100 || new Set(zones.map((z) => z.id)).size !== zones.length)
+      throw new Error("Mera kaydında tekrarlanan kimlik veya fazla alan var.");
+    for (const z of zones) {
+      if (!z.id || !z.name.trim() || validateRing(z.ring))
+        throw new Error(`${z.name || "Mera"}: geçersiz alan sınırı.`);
+    }
+    const check = checkSet(zones);
+    if (!check.ok) throw new Error(check.errors.join(" "));
+    return zones;
+  }
+  save(z: Zone): void {
+    const b = this.get();
+    const clean: Zone = { ...z, name: z.name.trim().slice(0, 40) || "Alan", updated: Date.now() };
+    const i = b.zones.findIndex((x) => x.id === z.id);
+    const zones = i >= 0 ? b.zones.map((x, k) => (k === i ? clean : x)) : [...b.zones, clean];
+    this.commit({ ...b, zones: this.checked(zones) });
+  }
+  remove(id: string): void {
+    const b = this.get();
+    this.commit({ ...b, zones: b.zones.filter((z) => z.id !== id) });
+  }
+  add(list: Zone[]): void {
+    const b = this.get();
+    this.commit({ ...b, zones: this.checked([...b.zones, ...list]) });
+  }
+  // Preserved as storage schema data only. No UI/alarms until secure collar
+  // command and ACK protocol for FREE_GRAZE is implemented.
+  setGraze(g: Graze): void { this.commit({ ...this.get(), graze: g }); }
+}

@@ -3,11 +3,17 @@ import { hex64 } from "../core/bytes.ts";
 import type { Db } from "../core/db.ts";
 import { EdgeCore, type Counts } from "../core/edge.ts";
 import { KeyRing } from "../core/keys.ts";
-import type { PointsResult } from "../core/points.ts";
+import type { Point, PointsResult } from "../core/points.ts";
 import { BleLink, UsbLink, type LinkState } from "../platform/transports.ts";
 import { fetchReadKeys, Uploader, type UploadCounts } from "../core/sync.ts";
 import { fetchGet, fetchPost } from "../platform/http.ts";
 import { KeepAlive } from "../platform/background.ts";
+import { AccountSharedMirror } from "./accountSharedMirror.ts";
+import { AccountObservationMirror } from "./accountObservationMirror.ts";
+import {
+  attachPilotAccountSqliteMirror, attachPilotAccountObservationMirror,
+  pilotAccountObservationPoints, pilotAccountUploadTransport,
+} from "./ownerAccountPilotRuntime.ts";
 
 export interface Snapshot {
   ready: boolean;
@@ -50,12 +56,10 @@ const SYNC_EVERY_MS = 30000;   // and soon after new records arrive
 const SYNC_AFTER_RECORD_MS = 5000;
 
 function loadServer(): Pick<ServerState, "url" | "token" | "auto"> {
-  try {
-    const v = JSON.parse(localStorage.getItem(SERVER_KEY) ?? "{}");
-    return { url: String(v.url ?? ""), token: String(v.token ?? ""), auto: v.auto !== false };
-  } catch {
-    return { url: "", token: "", auto: true };
-  }
+  // Old observation bearer was persisted by previous APK versions. It must
+  // not survive into account-only login, nor be used after account logout.
+  try { localStorage.removeItem(SERVER_KEY); } catch { /* storage unavailable */ }
+  return { url: "", token: "", auto: true };
 }
 
 const LOG_MAX = 400;
@@ -97,7 +101,9 @@ export class Controller {
   private lastHanded = 0;
   private serverDown = false;
   private uploader: Uploader | null = null;
-  private keyring = new KeyRing();
+  // Real app must not silently fall back to the PUBLIC bench traffic key.
+  // Bench-only host tests supply benchCredentials explicitly.
+  private keyring = new KeyRing(false);
   private db: Db | null = null;
   private keysAt = 0;
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -137,6 +143,20 @@ export class Controller {
       await core.init();
       await keyring.load(db);
       this.core = core;
+      // The account mirror uses THIS existing SQLite Db. Every SQL operation
+      // is queued behind BLE/USB EdgeCore work. HTTP happens outside the queue.
+      // Registering does NOT create tables, fetch records or activate sync.
+      attachPilotAccountSqliteMirror(new AccountSharedMirror(
+        db, job => core.exclusive(job)));
+      attachPilotAccountObservationMirror(
+        new AccountObservationMirror(db, keyring.lookup, job => core.exclusive(job)),
+        () => this.emit({ pointsVersion: this.snap.pointsVersion + 1 }),
+        async () => {
+          const authenticated = pilotAccountUploadTransport();
+          if (!authenticated) throw new Error("Sunucu için oturum açılmalı.");
+          await this.refreshKeys(authenticated.url, authenticated.token);
+        },
+      );
       const events = {
         log: (line: string) => this.log(line),
         state: (s: LinkState, detail?: string) => {
@@ -163,7 +183,23 @@ export class Controller {
 
   /** Ledger points for the map/herd views (null until the ledger is open). */
   async points(): Promise<PointsResult | null> {
-    return this.core ? this.core.points() : null;
+    if (!this.core) return null;
+    const local = await this.core.points();
+    // Remote is account-scoped, offline cached and AEAD verified. These rows
+    // did NOT pass through the phone's Gateway ACK or upload queue.
+    // On a corrupt mirror or expired session, keep local observations usable.
+    let remote: Point[] = [];
+    try {
+      remote = await pilotAccountObservationPoints();
+    } catch {
+      return local;
+    }
+    const key = (p: { tracker: string; incarnation?: string; seq: number }) =>
+      `${p.tracker}:${p.incarnation ?? "UNKNOWN"}:${p.seq}`;
+    const own = new Set(local.points.map(key));
+    const extra = remote.filter(p => !own.has(key(p)));
+    return { ...local, points: [...local.points, ...extra],
+      count: local.count + extra.length };
   }
 
   /** Adds (or, for bursts, updates) one plain-language Defter line. */
@@ -256,8 +292,16 @@ export class Controller {
     this.syncing = true;
     try {
       const sv = this.snap.server;
+      // Credentials are account scoped, in memory, and never saved in
+      // localStorage. No independent address/token entry is necessary.
+      const authenticated = pilotAccountUploadTransport();
+      // Compatibility for existing in-memory development harnesses. The
+      // new user-facing app never asks for or persists these legacy values;
+      // account credentials always take precedence when present.
+      const url = authenticated?.url ?? sv.url;
+      const token = authenticated?.token ?? sv.token;
       const counts = await this.uploader.counts();
-      if (!sv.url || !sv.token || (!manual && !sv.auto)) {
+      if (!url || !token || (!manual && !sv.auto)) {
         this.setServer({ counts });
         return;
       }
@@ -269,7 +313,7 @@ export class Controller {
       let keysError: string | null = null;
       if (manual || Date.now() - this.keysAt > KEYS_EVERY_MS) {
         try {
-          await this.refreshKeys(sv.url, sv.token);
+          await this.refreshKeys(url, token);
         } catch (e) {
           keysError = `okuma anahtarları alınamadı: ${e instanceof Error ? e.message : String(e)}`;
           if (manual) this.log(`[sunucu] okuma anahtarları alınamadı: ${keysError}; mevcut kayıtlar yine gönderilecek`);
@@ -283,13 +327,13 @@ export class Controller {
       try {
         // Nothing to send: a manual tap still checks address + token.
         if (counts.pending === 0) {
-          const n = await this.uploader.ping(sv.url, sv.token);
+          const n = await this.uploader.ping(url, token);
           this.setServer({ busy: false, counts, error: keysError,
                            lastOk: new Date().toLocaleTimeString("tr-TR", { hour12: false }) });
           this.log(`[sunucu] bağlantı tamam; sunucudaki toplam kayıt ${n ?? "?"}`);
           return;
         }
-        const r = await this.uploader.drain(sv.url, sv.token);
+        const r = await this.uploader.drain(url, token);
         const after = await this.uploader.counts();
         this.setServer({
           busy: false, counts: after, error: keysError,

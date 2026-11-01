@@ -34,9 +34,11 @@ import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 import sys
 import threading
 import time
@@ -44,6 +46,11 @@ from typing import Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "backend"))  # supports python -m unittest and direct script launch
+sys.path.insert(0, str(ROOT))
+from backend.observation_read_page import (  # noqa: E402
+    MAX_CURSOR, ObservationReadUnavailable, read_page,
+)
 import orun_edge_bench as eb  # noqa: E402  (ledger loader, map page, points)
 import orun_credentials as oc  # noqa: E402  (step 3A registry)
 
@@ -219,7 +226,28 @@ def make_server(backend: Backend, host: str, port: int, token: str) -> Threading
 
         def do_GET(self):  # noqa: N802
             path = self.path.split("?", 1)[0]
+            if path == "/v1/edge/records":
+                # This endpoint is NOT the legacy public map endpoint.
+                # Only server-verified exact frames, bounded by an insertion
+                # cursor. No plaintext/traffic key or bulk history export.
+                if not authorized(self.headers):
+                    return self._json(401, {"error": "token"})
+                match = re.fullmatch(
+                    r"/v1/edge/records\?after=(0|[1-9][0-9]{0,18})",
+                    self.path)
+                if not match or int(match.group(1)) > MAX_CURSOR:
+                    return self._json(400, {"error": "invalid_cursor"})
+                try:
+                    page = read_page(backend.db_path, int(match.group(1)))
+                except ObservationReadUnavailable:
+                    return self._json(503, {"error": "observation_read_unavailable"})
+                return self._json(200, page)
             if path == "/api/points":
+                # Coordinates and movement history are private account data.
+                # Legacy public map URL must not bypass the private Backend
+                # bearer (the authorized phone uses the account relay).
+                if not authorized(self.headers):
+                    return self._json(401, {"error": "token"})
                 return self._send(200, json.dumps(eb.points_from_db(backend.db_path)).encode(),
                                   "application/json")
             if path == "/v1/edge/keys":
@@ -260,6 +288,34 @@ def make_server(backend: Backend, host: str, port: int, token: str) -> Threading
     return ThreadingHTTPServer((host, port), Handler)
 
 
+def load_private_token_file(path: str | Path) -> str:
+    """Read a locally owned 0600 service bearer without exposing it in argv.
+
+    No symlinks; fail closed on non-files, other owners, broad permissions,
+    oversized files, or malformed credentials. This does not print the secret.
+    """
+    options = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(Path(path).expanduser(), options)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or
+                info.st_uid != os.geteuid() or
+                stat.S_IMODE(info.st_mode) & 0o077):
+            raise ValueError("TOKEN_FILE_NOT_PRIVATE")
+        raw = os.read(fd, 4097)
+        if len(raw) > 4096:
+            raise ValueError("TOKEN_FILE_TOO_LARGE")
+        try:
+            secret = raw.decode("utf-8").strip()
+        except UnicodeDecodeError as e:
+            raise ValueError("TOKEN_FILE_INVALID") from e
+        if (len(secret) < 8 or any(ord(c) < 33 or ord(c) > 126 for c in secret)):
+            raise ValueError("TOKEN_FILE_INVALID")
+        return secret
+    finally:
+        os.close(fd)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--db", default=str(Path.home() / "orun-backend-bench.sqlite"),
@@ -269,17 +325,27 @@ def main(argv=None) -> int:
                          "default ~/orun-credentials.sqlite")
     ap.add_argument("--bench-test-key", action="store_true",
                     help="accept the PUBLIC SF5L0 test credential (bench only)")
-    ap.add_argument("--token", required=True,
-                    help="shared bearer token the phone sends (bench access control)")
+    auth = ap.add_mutually_exclusive_group(required=True)
+    auth.add_argument("--token",
+                      help="legacy bearer in process arguments (bench only)")
+    auth.add_argument("--token-file",
+                      help="private 0600 bearer file (recommended; not printed or logged)")
     ap.add_argument("--host", default="127.0.0.1",
                     help="bind address (use the Tailscale address to reach it from the phone)")
     ap.add_argument("--port", type=int, default=8090)
     args = ap.parse_args(argv)
-    if len(args.token) < 8:
-        ap.error("--token: at least 8 characters")
+    if args.token_file:
+        try:
+            token = load_private_token_file(args.token_file)
+        except (OSError, ValueError):
+            ap.error("--token-file: private token unreadable or invalid")
+    else:
+        token = args.token
+        if len(token) < 8:
+            ap.error("--token: at least 8 characters")
     registry = oc.CredentialRegistry(args.registry)
     backend = Backend(Path(args.db), args.bench_test_key, registry=registry)
-    server = make_server(backend, args.host, args.port, args.token)
+    server = make_server(backend, args.host, args.port, token)
     print(f"[sunucu] http://{args.host}:{server.server_address[1]}/  kayıt={backend.ledger.record_count()} "
           f"(çıkış Ctrl+C)", flush=True)
     try:

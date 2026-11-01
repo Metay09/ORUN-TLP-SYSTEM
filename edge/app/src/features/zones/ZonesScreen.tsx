@@ -1,18 +1,205 @@
-// Alanlar: the pasture boundaries the collars check by themselves.
-import { Polygon } from "@phosphor-icons/react";
-import { tr } from "../../app/i18n/tr.ts";
+// Alanlar: the pasture boundaries. The list with each zone's size and who is
+// inside, the collar's capacity (8 areas / 64 corners), serbest otlatma, and
+// GeoJSON in and out. Drawing happens on the map.
+import { useRef, useState } from "react";
+import { CaretRight, Plus, Polygon } from "@phosphor-icons/react";
+import { fmt, tr } from "../../app/i18n/tr.ts";
+import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
-import { DemoFlag, Empty, Header } from "../../ds/components.tsx";
+import { FENCE, areaM2, canonicalE7, compileFence, fromGeoJSON, newZoneId, toGeoJSON, validateRing, zoneAt } from "../../app/zones.ts";
+import { zonePlanForDevice } from "../../app/zoneTargets.ts";
+import { SharedZonesSection } from "./SharedZonesSection.tsx";
+import { Bar, Card, Cell, DemoFlag, Dialog, Empty, Header, Section, Toggle } from "../../ds/components.tsx";
 
 export function ZonesScreen() {
   const m = useApp();
+  const nav = useNav();
+  const file = useRef<HTMLInputElement>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [groupName, setGroupName] = useState("");
+  const [groupDevices, setGroupDevices] = useState<string[]>([]);
+  const [exportDevice, setExportDevice] = useState("");
+  const saveGroup = () => {
+    try {
+      if (!groupName.trim() || !groupDevices.length) throw new Error("Bir grup adı ve en az bir tasma seç.");
+      m.actions.saveTargetGroup({
+        id: "g" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
+        name: groupName.trim().slice(0, 60), devices: groupDevices,
+      });
+      setGroupOpen(false); setGroupName(""); setGroupDevices([]);
+      setNote("Grup yerel taslak olarak kaydedildi; hiçbir tasmaya komut gönderilmedi.");
+    } catch (e) { setNote(e instanceof Error ? e.message : "Grup kaydedilemedi."); }
+  };
+  const set = m.zoneSet;
+  const located = m.herd.filter((a) => a.last);
+
+  const insideOf = (id: string) => {
+    if (!located.length) return null;
+    const z = m.zones.find((x) => x.id === id);
+    if (!z || !z.active || validateRing(z.ring)) return null;
+    const f = compileFence([z]);
+    return located.filter((a) => zoneAt(f, a.last!) !== null).length;
+  };
+
+  const importFile = async (f: File) => {
+    try {
+      const r = fromGeoJSON(await f.text(), Date.now(), newZoneId);
+      if (!r.zones.length) throw new Error(r.skipped.join(" · ") || "alan bulunamadı");
+      m.actions.addZones(r.zones);
+      setNote([tr.zones.imported(r.zones.length), r.skipped.length ? tr.zones.skipped(r.skipped.join(" · ")) : ""].filter(Boolean).join(" · "));
+    } catch (e) {
+      setNote(tr.zones.importFailed(e instanceof Error ? e.message : String(e)));
+    }
+  };
+
+  const exportGeo = async () => {
+    const text = toGeoJSON(m.zones);
+    try { await navigator.clipboard.writeText(text); setNote(tr.zones.copied); } catch { /* fall back to a file below */ }
+    try {
+      const url = URL.createObjectURL(new Blob([text], { type: "application/geo+json" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = "orun-alanlar.geojson"; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch { /* clipboard was enough */ }
+  };
+
   return (
     <div className="page">
-      <Header title={tr.zones.title} />
+      <Header title={tr.zones.title}>
+        <button className="btn small primary" onClick={() => nav.drawZone(null)}><Plus size={18} weight="bold" />{tr.zones.add}</button>
+      </Header>
       {m.demo && <DemoFlag onPage />}
-      <Empty icon={<Polygon size={34} />} title={tr.zones.empty} body={tr.zones.emptyBody}>
-        <span className="fine">{tr.zones.rules}</span>
-      </Empty>
+      {m.zoneMigrationWarning && <p className="sm t-alarm strong lead" role="alert">{m.zoneMigrationWarning}</p>}
+      {note && <p className="sm t-alarm lead" role="status">{note}</p>}
+
+      {!m.zones.length ? (
+        <Empty icon={<Polygon size={34} />} title={tr.zones.empty} body={tr.zones.emptyBody}>
+          <button className="btn primary" onClick={() => nav.drawZone(null)}><Plus size={18} weight="bold" />{tr.zones.add}</button>
+          <span className="fine">{tr.zones.rules}</span>
+        </Empty>
+      ) : (
+        <>
+          <Section title={tr.zones.capacity} />
+          <Card pad>
+            <div className="stack">
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <span className="sm strong">{tr.zones.capacityLine(set.active.length, FENCE.maxAreas, set.total, FENCE.maxTotalVertices)}</span>
+              </div>
+              <Bar ratio={set.total / FENCE.maxTotalVertices} tone={set.ok ? (set.total / FENCE.maxTotalVertices >= 0.85 ? "warn" : undefined) : "bad"} />
+              {set.ok ? <span className="fine">{tr.zones.setOk}</span> : set.errors.map((e) => <span key={e} className="sm t-alarm strong">{e}</span>)}
+            </div>
+          </Card>
+
+          <Section title={tr.zones.title} />
+          <Card>
+            {m.zones.map((z) => {
+              const bad = validateRing(z.ring);
+              const inside = insideOf(z.id);
+              return (
+                <Cell key={z.id}
+                  lead={<span className={"ic " + (bad ? "alarm" : z.active ? "aging" : "")}><Polygon size={20} weight={z.active ? "fill" : "regular"} /></span>}
+                  title={z.name}
+                  sub={bad ? tr.zones.invalid : `${tr.zones.line(fmt.dec(areaM2(z.ring) / 10_000, 2), canonicalE7(z.ring).length, inside)}${z.active ? "" : ` · ${tr.zones.off}`}`}
+                  subTone={bad ? "alarm" : undefined} wrapSub
+                  trail={<span className="row" style={{ gap: 6 }}>
+                    <span onClick={(e) => e.stopPropagation()}><Toggle on={z.active} label={`${z.name}: ${tr.zones.active}`} onChange={(v) => {
+                      try { m.actions.saveZone({ ...z, active: v }); setNote(null); }
+                      catch (e) { setNote(e instanceof Error ? e.message : "Alan etkinleştirilemedi."); }
+                    }} /></span>
+                    <CaretRight size={18} color="var(--mute)" />
+                  </span>}
+                  onClick={() => nav.push({ to: "zone", id: z.id })} />
+              );
+            })}
+          </Card>
+          <p className="fine lead">{tr.zones.stored}</p>
+        </>
+      )}
+
+      {/* "Serbest otlatma" is a tracker-owned setting, not an app-only
+          mute switch. Do not show controls until a signed collar command and
+          durable ACK exist; hiding them prevents a dangerous false promise. */}
+
+      <SharedZonesSection />
+
+      <Section title="Hayvan grupları (yerel taslak)" />
+      <Card pad>
+        <div className="stack">
+          <span className="fine">Gruplar yalnız alan hedeflerini seçmeye yarar. Henüz hiçbir tasmaya gönderilmez.</span>
+          {m.targetWarning && <span className="sm t-alarm strong">{m.targetWarning}</span>}
+          {m.targetBook.groups.map((g) => (
+            <div className="row" key={g.id} style={{ justifyContent: "space-between" }}>
+              <span className="sm">{g.name} · {g.devices.length} tasma</span>
+              <button className="btn small danger" onClick={() => {
+                if (!window.confirm(g.name + " grubu taslaklardan kaldırılsın mı?")) return;
+                try { m.actions.removeTargetGroup(g.id); setNote("Grup kaldırıldı. Tasmadaki durum değişmedi."); }
+                catch (e) { setNote(e instanceof Error ? e.message : "Grup kaldırılamadı."); }
+              }}>Kaldır</button>
+            </div>
+          ))}
+          <button className="btn small" disabled={!m.devices.length || !!m.targetWarning}
+            onClick={() => setGroupOpen(true)}><Plus size={18} /> Yeni grup oluştur</button>
+        </div>
+      </Card>
+      {groupOpen && (
+        <Dialog title="Yeni hayvan grubu" onClose={() => setGroupOpen(false)}>
+          <div className="stack" style={{ padding: "4px 16px 16px" }}>
+            <input className="inp" value={groupName} maxLength={60}
+              onChange={(e) => setGroupName(e.target.value)} placeholder="Grup adı" aria-label="Grup adı" />
+            {m.devices.map((d) => (
+              <label key={d.id} className="sm">
+                <input type="checkbox" checked={groupDevices.includes(d.id)}
+                  onChange={(e) => setGroupDevices((v) => e.target.checked
+                    ? [...v, d.id] : v.filter((id) => id !== d.id))} />
+                {m.herd.find((a) => a.device === d.id)?.name ?? d.short} · {d.short}
+              </label>
+            ))}
+            <button className="btn primary wide" disabled={!groupName.trim() || !groupDevices.length}
+              onClick={saveGroup}>Grup taslağını kaydet</button>
+          </div>
+        </Dialog>
+      )}
+
+      <Section title="USB için tasma planı" />
+      <Card pad>
+        <div className="stack">
+          <span className="fine">Her tasma için tam alan listesi ayrı hazırlanır. Bu dosya yalnız taslaktır; tasmada henüz uygulanmaz.</span>
+          <select className="inp" aria-label="Dosya hazırlanacak tasma"
+            value={exportDevice} onChange={(e) => setExportDevice(e.target.value)}>
+            <option value="">Tasma seç</option>
+            {m.devices.map((d) => <option key={d.id} value={d.id}>{m.herd.find((a) => a.device === d.id)?.name ?? d.short} · {d.short}</option>)}
+          </select>
+          {exportDevice && (() => {
+            const plan = zonePlanForDevice(m.targetBook,m.zones,exportDevice,m.devices.map((d) => d.id));
+            return <>
+              <span className="sm">Bu tasmaya planlanan: {plan.zones.length} alan</span>
+              {plan.errors.map((x) => <span className="sm t-alarm strong" key={x}>{x}</span>)}
+              <button className="btn wide" disabled={!plan.zones.length || !!plan.errors.length || !!m.targetWarning}
+                onClick={() => {
+                  const file = toGeoJSON(plan.zones);
+                  const url = URL.createObjectURL(new Blob([file], { type: "application/geo+json" }));
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "orun-fence-" + exportDevice.replace(/[^A-Za-z0-9_-]/g, "") + ".geojson";
+                  a.click();
+                  setTimeout(() => URL.revokeObjectURL(url),2000);
+                  setNote("Tasma için alan dosyası hazırlandı. Bu işlem tasmaya yükleme değildir.");
+                }}>Bu tasma için GeoJSON hazırla</button>
+            </>;
+          })()}
+          <span className="fine">Dosya, fiziksel Tracker USB bağlantısında tools/orun_fence_usb.py ile uygulanabilir. Yetkili cihaz sonucu doğrulanmadan tamamlandı sayılmaz.</span>
+        </div>
+      </Card>
+      <Section title={tr.zones.file} />
+      <Card pad>
+        <div className="stack">
+          <button className="btn wide" onClick={() => file.current?.click()}>{tr.zones.importGeo}</button>
+          {m.zones.length > 0 && <button className="btn wide" onClick={() => void exportGeo()}>{tr.zones.exportGeo}</button>}
+          <input ref={file} type="file" accept=".geojson,.json,application/geo+json,application/json" hidden
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void importFile(f); }} />
+        </div>
+      </Card>
     </div>
   );
 }

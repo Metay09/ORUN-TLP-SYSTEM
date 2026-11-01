@@ -12,7 +12,10 @@ export const CUT_S = 180;   // later than this: queued somewhere, or recorded wi
 export const NEAR_S = 150;  // a live arrival this close in capture time proves the link was up
 
 export interface Point {
-  tracker: string; seq: number; time: string | null; lat: number; lon: number;
+  tracker: string; seq: number;
+  incarnation?: string;   // logical identity, disambiguates device re-enrollment
+  delivery?: "phone" | "server"; // server rows never imply phone Gateway ACK
+  time: string | null; lat: number; lon: number;
   alt_m: number | null; sats: number | null; hdop: number | null; fix_age_s: number | null;
   battery_mv: number | null; battery: string | null; active_s: number | null;
   covered_s: number | null; source: string; period_s: number;
@@ -63,7 +66,8 @@ export async function buildPoints(db: Db, nowSeconds: number): Promise<PointsRes
     const seen = r.first_seen_utc === null ? null : Number(r.first_seen_utc);
     const recorded = epoch(d.time);
     points.push({
-      tracker: d.tracker, seq: d.sequence, time: d.time, lat: d.lat, lon: d.lon,
+      tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence,
+      delivery: "phone", time: d.time, lat: d.lat, lon: d.lon,
       alt_m: d.alt_m, sats: d.sats, hdop: d.hdop, fix_age_s: d.fix_age_s, battery_mv: d.battery_mv,
       battery: d.battery, active_s: d.active_s, covered_s: d.covered_s, source: d.source,
       period_s: d.period_s,

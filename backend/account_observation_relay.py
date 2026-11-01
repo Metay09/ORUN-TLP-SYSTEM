@@ -1,0 +1,133 @@
+"""Account-authorized proxy to the existing PC Edge observation Backend.
+
+No phone ever sees the legacy observation bearer, and users do not configure
+a second server. This relay is available ONLY when an operator supplies an
+existing private 0600 bearer file and a pinned local/tailnet upstream URL.
+No credential is accepted from client input and no URL is client-controlled.
+"""
+from __future__ import annotations
+
+import http.client
+import ipaddress
+import json
+import os
+from pathlib import Path
+import re
+import stat
+from urllib.parse import urlsplit
+
+
+class RelayConfigError(ValueError):
+    pass
+
+
+class RelayUnavailable(RuntimeError):
+    pass
+
+
+_MAX_REQUEST = 256 * 1024
+_MAX_RESPONSE = 512 * 1024
+_PATHS = frozenset({("POST", "/v1/edge/batch"),
+                    ("GET", "/v1/edge/keys")})
+_OBSERVATIONS = re.compile(r"^/v1/edge/records\?after=(0|[1-9][0-9]{0,18})$")
+_SITE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+class AccountObservationRelay:
+    def __init__(self, upstream: str, token_file: str | Path,
+                 *, observation_site: str | None = None,
+                 records_upstream: str | None = None) -> None:
+        # Records are site-private; a fixed operator-provided site mapping
+        # must exist before any account can read them.
+        if observation_site is not None and not _SITE.fullmatch(observation_site):
+            raise RelayConfigError("INVALID_OBSERVATION_SITE")
+        self.observation_site = observation_site
+        address, upstream_port = self._private_endpoint(upstream)
+        if records_upstream is not None and observation_site is None:
+            raise RelayConfigError("READONLY_SIDECAR_REQUIRES_PINNED_SITE")
+        records_address, records_port = (
+            self._private_endpoint(records_upstream)
+            if records_upstream is not None else (address, upstream_port)
+        )
+
+        source = Path(token_file)
+        info = source.lstat()
+        parent = source.parent.lstat()
+        if (not stat.S_ISREG(info.st_mode) or
+                info.st_uid != os.geteuid() or
+                stat.S_IMODE(info.st_mode) & 0o077 or
+                not stat.S_ISDIR(parent.st_mode) or
+                parent.st_uid != os.geteuid() or
+                stat.S_IMODE(parent.st_mode) & 0o077):
+            raise RelayConfigError("OBSERVATION_TOKEN_NOT_PRIVATE")
+        fd = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            current = os.fstat(fd)
+            if (not stat.S_ISREG(current.st_mode) or
+                    current.st_uid != os.geteuid() or
+                    stat.S_IMODE(current.st_mode) & 0o077):
+                raise RelayConfigError("OBSERVATION_TOKEN_CHANGED")
+            secret = os.read(fd, 513)
+        finally:
+            os.close(fd)
+        token = secret.strip()
+        if (len(token) < 8 or len(token) > 512 or
+                not re.fullmatch(rb"[\x21-\x7e]+", token)):
+            raise RelayConfigError("OBSERVATION_TOKEN_INVALID")
+        self.host = str(address)
+        self.port = upstream_port
+        self.records_host = str(records_address)
+        self.records_port = records_port
+        self._token = token.decode("ascii")
+
+    @staticmethod
+    def _private_endpoint(origin: str) -> tuple[ipaddress.IPv4Address, int]:
+        parsed = urlsplit(origin)
+        if (parsed.scheme != "http" or parsed.username or parsed.password or
+                parsed.path not in ("", "/") or parsed.query or
+                parsed.fragment or not parsed.hostname or not parsed.port):
+            raise RelayConfigError("OBSERVATION_UPSTREAM_PRIVATE_HTTP_REQUIRED")
+        try:
+            address = ipaddress.ip_address(parsed.hostname)
+        except ValueError:
+            raise RelayConfigError("OBSERVATION_UPSTREAM_IP_REQUIRED") from None
+        if address.version != 4 or not (
+                address.is_loopback or address in ipaddress.ip_network(
+                    "100.64.0.0/10")):
+            raise RelayConfigError("OBSERVATION_UPSTREAM_NOT_LOCAL_OR_TAILNET")
+        return address, parsed.port
+
+    def forward(self, method: str, path: str,
+                data: bytes = b"") -> tuple[int, dict]:
+        records_route = (method == "GET" and self.observation_site is not None
+                         and _OBSERVATIONS.fullmatch(path) is not None)
+        if (method, path) not in _PATHS and not records_route:
+            raise RelayUnavailable("UNSUPPORTED_ROUTE")
+        if len(data) > _MAX_REQUEST:
+            raise RelayUnavailable("REQUEST_TOO_LARGE")
+        host = self.records_host if records_route else self.host
+        port = self.records_port if records_route else self.port
+        conn = http.client.HTTPConnection(host, port, timeout=10)
+        try:
+            conn.request(
+                method, path, body=data if method == "POST" else None,
+                headers={
+                    "Authorization": "Bearer " + self._token,
+                    "Accept": "application/json",
+                    **({"Content-Type": "application/json"} if method == "POST"
+                       else {}),
+                })
+            reply = conn.getresponse()
+            if reply.getheader("Content-Type", "").split(";", 1)[0].strip() != "application/json":
+                raise RelayUnavailable("NON_JSON_UPSTREAM")
+            raw = reply.read(_MAX_RESPONSE + 1)
+            if len(raw) > _MAX_RESPONSE:
+                raise RelayUnavailable("UPSTREAM_TOO_LARGE")
+            value = json.loads(raw.decode("utf-8"))
+            if not isinstance(value, dict) or not 200 <= reply.status <= 599:
+                raise RelayUnavailable("UPSTREAM_RESPONSE_INVALID")
+            return reply.status, value
+        except (OSError, ValueError, UnicodeError, json.JSONDecodeError) as err:
+            raise RelayUnavailable("OBSERVATION_BACKEND_UNAVAILABLE") from None
+        finally:
+            conn.close()

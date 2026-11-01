@@ -3,7 +3,8 @@
 // the owner's notes.
 import { useState } from "react";
 import {
-  BatteryWarning, Bell, Bluetooth, CheckCircle, CloudArrowUp, CloudCheck, Cow, HardDrives, Key, Note, PersonSimpleWalk, WifiSlash,
+  BatteryWarning, Bell, Bluetooth, CheckCircle, CloudArrowUp, CloudCheck, Cow, HardDrives, Key, NavigationArrow, Note,
+  PersonSimpleWalk, Polygon, WifiSlash,
 } from "@phosphor-icons/react";
 import { isActive } from "../../app/events.ts";
 import { fmt, tr } from "../../app/i18n/tr.ts";
@@ -17,6 +18,7 @@ type Filter = "all" | "alerts" | "animals" | "system";
 function iconOf(e: AppEvent) {
   switch (e.kind) {
     case "silent": case "lost": return <WifiSlash size={20} />;
+    case "out": return <Polygon size={20} />;
     case "battery-low": case "battery-critical": return <BatteryWarning size={20} />;
     case "still": return <PersonSimpleWalk size={20} />;
     case "station-full": return <HardDrives size={20} />;
@@ -32,15 +34,17 @@ function iconOf(e: AppEvent) {
 
 const toneOf = (e: AppEvent) => (e.severity === "danger" ? "alarm" : e.severity === "warn" ? "aging" : e.kind === "note" ? "info" : e.kind === "handoff" || e.kind === "upload" ? "fresh" : "");
 
-export function EventRow({ e, now, seen, onSeen, onOpen }: {
+export function EventRow({ e, now, seen, onSeen, onOpen, onFind, onMap }: {
   e: AppEvent; now: number; seen?: boolean; onSeen?: () => void; onOpen?: () => void;
+  onFind?: () => void; onMap?: () => void;
 }) {
   const active = isActive(e);
   const tone = toneOf(e);
   const meta: string[] = [];
   if (e.alert) {
     const gap = e.kind === "silent" || e.kind === "lost", still = e.kind === "still";
-    if ((gap || still) && active) meta.push(gap ? tr.events.lastFix(fmt.clock(e.at)) : tr.events.started(fmt.clock(e.at)), tr.events.ongoing);
+    if (e.kind === "out") meta.push(active ? tr.events.left(fmt.clock(e.at)) : tr.events.span(fmt.clock(e.at), fmt.clock(e.end!)), active ? tr.events.ongoing : tr.events.backInside);
+    else if ((gap || still) && active) meta.push(gap ? tr.events.lastFix(fmt.clock(e.at)) : tr.events.started(fmt.clock(e.at)), tr.events.ongoing);
     else if ((gap || still) && e.end) meta.push(tr.events.span(fmt.clock(e.at), fmt.clock(e.end)), gap ? tr.events.backAgain : tr.events.movedAgain);
     else {
       meta.push(tr.events.measured(fmt.clock(e.at)));
@@ -55,11 +59,21 @@ export function EventRow({ e, now, seen, onSeen, onOpen }: {
         <span className="ct" style={{ fontSize: 15 }}>{e.title}</span>
         {e.detail && <span className="cs wrap">{e.detail}</span>}
         {meta.length > 0 && <span className="meta">{meta.filter(Boolean).join(" · ")}</span>}
-        {active && onSeen && (
-          <span style={{ paddingTop: 6 }}>
-            <button className="btn small" disabled={seen} onClick={(ev) => { ev.stopPropagation(); onSeen(); }}>
-              {seen ? tr.events.seenDone : tr.events.seen}
-            </button>
+        {active && (onSeen || onFind || onMap) && (
+          <span className="ev-acts">
+            {onFind && (
+              <button className="btn small signal" onClick={(ev) => { ev.stopPropagation(); onFind(); }}>
+                <NavigationArrow size={16} weight="fill" />{tr.animal.find}
+              </button>
+            )}
+            {onMap && (
+              <button className="btn small" onClick={(ev) => { ev.stopPropagation(); onMap(); }}>{tr.events.showOnMap}</button>
+            )}
+            {onSeen && (
+              <button className="btn small quiet" disabled={seen} onClick={(ev) => { ev.stopPropagation(); onSeen(); }}>
+                {seen ? tr.events.seenDone : tr.events.seen}
+              </button>
+            )}
           </span>
         )}
       </span>
@@ -84,6 +98,11 @@ export function EventsScreen() {
     groups[groups.length - 1].items.push(e);
   }
   const open = (e: AppEvent) => (e.asset ? () => nav.push({ to: "animal", id: e.asset! }) : e.kind === "station-full" || e.kind === "server-down" ? () => nav.setTab("network") : undefined);
+  // An animal that has a last position can be shown and found from the warning itself.
+  const located = (e: AppEvent) => (e.asset ? m.herd.find((a) => a.id === e.asset && a.last) : undefined);
+  const find = (e: AppEvent) => (located(e) ? () => nav.push({ to: "find", id: e.asset! }) : undefined);
+  const onMap = (e: AppEvent) => (located(e) ? () => nav.showOnMap(e.asset) : undefined);
+  const grazeUntil = m.graze.forever ? tr.zones.graze.forever : m.graze.until ? tr.zones.graze.untilClock(fmt.clock(m.graze.until)) : "";
 
   return (
     <div className="page">
@@ -94,8 +113,10 @@ export function EventsScreen() {
       ) : (
         <>
           <Section title={tr.events.now} />
+          {m.grazing && <p className="sm lead">{tr.events.grazingNote(grazeUntil)}</p>}
           {active.length ? (
-            <Card>{active.map((e) => <EventRow key={e.id} e={e} now={m.now} seen={m.seen.has(e.id)} onSeen={() => m.actions.markSeen(e.id)} onOpen={open(e)} />)}</Card>
+            <Card>{active.map((e) => <EventRow key={e.id} e={e} now={m.now} seen={m.seen.has(e.id)} onSeen={() => m.actions.markSeen(e.id)} onOpen={open(e)}
+              onFind={find(e)} onMap={onMap(e)} />)}</Card>
           ) : <p className="sm lead">{tr.events.nothingNow}</p>}
           <Chips<Filter> value={filter} onChange={setFilter} options={[
             { value: "all", label: tr.events.filters.all }, { value: "alerts", label: tr.events.filters.alerts },

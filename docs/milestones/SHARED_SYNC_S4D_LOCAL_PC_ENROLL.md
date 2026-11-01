@@ -1,0 +1,131 @@
+# ORUN S4D — yetkili yerel PC Edge kurulum kimliği, gerçek ortak veri
+
+**Durum: DRAFT / HOST PASS (2026-10-29, Debian): 20/20 unittest PASS, S3C gerçek HTTP/Node regresyonu PASS. Canlı servise dağıtım YOK.**
+**Önceki kanıt:** S4C `be1e7ef` **16/16 PASS** + gerçek
+Python ↔ Node TypeScript HTTP E2E **PASS** (2026-10-29).
+**Canlı sistem:** `orun-backend.service`, `orun-pc-edge.service`,
+gerçek Gateway/Tracker, Android APK ve sahip kullanıcı verisi **değişmez**.
+
+## Pratik ürün engeli
+
+S4C iki ayrı SQLite'ye sahip kalıcı HTTP Backend'i ve S4A/B yetkili
+PC kaynak aynasını sağladı. İkisinin gerçekten **ayrı PC kurulum yetkisi**
+ile birleştirilmesi için server operatörünün yerel, açık onaylı kimlik
+üretimi gerekiyordu. Bu dal tam olarak bu küçük boşluğu kapatır.
+
+`tools/orun_shared_local_pc_enroll.py` yalnız Backend PC'sinin **güvenilir
+yerel operator oturumunda**, `--authorize-local-pc` açıkça verilirse
+çalışır. Böylece anonim HTTP üzerinde owner approval kesinlikle açılmaz.
+
+- Sadece **`pc-*`** installation ID'leri. Telefon, Gateway veya Tracker
+  kayıt yolunu etkilemez; kurulum kapsamı **yalnız** `zone:read`,
+  `group:read`, `zone_target:read`. Yazma ya da Tracker komutu yok.
+- Önceden var olan sahibi tarafından korunmuş **0700** S4C state dizini
+  ve **0600** Backend SQLite çifti gerekir. Hiçbir yeni Backend veritabanı
+  açılmaz; canlı gözlem defterine gidilmez.
+- `Ed25519PrivateKey.generate()` ile oturum boyunca tutulan geçici
+  anahtar, gerçek `EdgeEnrollment.begin → approve → finish` ve
+  `signed_challenge` kanıtı üretir. Bu işlem yalnız owner'ın açık
+  local-shell komutuyla yapılabilir. Özel Ed25519 anahtarı ve owner onay
+  kodu diske yazılmaz.
+- Sunucunun ürettiği birim başına **30 günlük** token **yeni,
+  yalnız sahibin erişebildiği 0700 klasördeki** bir **0600** dosyaya
+  atomik olarak değil, doğrudan ve fsync ile yazılır. Var olan token
+  dosyasının üzerine yazılmaz; symlink, yanlış izin, yanlış kullanıcı
+  reddedilir. Token komut argümanında, stdout/stderr veya systemd unit'te
+  görünmez.
+- Token yazımı başarısızsa mümkün olduğunca aynı kurulum hemen iptal
+  edilir. İptal de başarısız olursa manuel güvenlik incelemesi gerekir.
+- Bu pilot yöntem özel anahtarı saklamadığı için başka cihazda tekrar
+  imzalama/kayıt yapma yöntemi değildir. Yetki yenileme/cihaz değiştirme
+  için ayrıca üretim politikası gerekir. **Android Keystore ve gerçek
+  uzaktaki PC kaydı yerine geçmez.**
+
+## Güvenli host testi
+
+```bash
+bash tools/ci/run_shared_local_pc_enrollment_host.sh
+```
+
+Geçici SQLite + gerçek 127.0.0.1 HTTP sunucu ile:
+
+1. Açık `--authorize-local-pc` verilmeden **hiçbir** kayıt/token oluşmaz.
+2. Ayrı Python CLI `pc-01` kurar, 0600 dosyada saklar, gerçek Backend'den
+   kendi site+kurulum kimliğini görür; yazma operasyonu **REJECTED**.
+3. PC Edge aynası gerçek HTTP'den merayı alıp tekrar aynı cursor'dan
+   no-op çalışır; token stdout/stderr'e sızmaz.
+4. `pc-01` iptal edilince 401; bağımsız `pc-02` yetkili kalır.
+5. Telefon/çapraz yol, symlink, var olan dosyanın üzerine yazma ve
+   group-readable token parent klasörü reddedilir.
+6. S4C/S4B/S4A için **16 unittest** ve S3C Node TypeScript ↔ Python
+   gerçek HTTP regresyonu tekrar çalışır.
+
+Beklenen **4 yeni + 16 önceki = 20 unittest**, sonrasında S3C regresyonu;
+bu sürüm için aşağıdaki kullanıcı PASS kanıtı alınmıştır.
+
+## Kullanıcı doğrulaması — 29 Ekim 2026
+
+- Kullanıcı `feat/shared-sync-local-pc-enrollment` başını `a750427` olarak fetch etti.
+- `bash tools/ci/run_shared_local_pc_enrollment_host.sh`: **20 test / 20 PASS (11.788s)** ve `ORUN_S4D_HOST_PASS`.
+- Gerçek `127.0.0.1` Python↔Node HTTP: owner 3/3 upload, viewer 3/3 pull, cross-site isolation, viewer write rejected, conflict/restart preserved, revoked token 401; diğer token yetkili.
+- İzole `TemporaryDirectory` + SQLite ve test tokenı kullanıldı; mevcut `orun-backend.service`/`orun-pc-edge.service`, kullanıcı telefonundaki veriler, Gateway/Tracker değişmedi.
+- Telefon ekranları ayrıca değerlendirilmiştir: eski görüntüde 3.802 yerel kayıt; sonraki 20:25 Ağ/Harita görüntülerinde **0 kayıt**, **sunucu ayarlanmamış**, canlı Backend bağlantısı doğrulanmamış. Bu ekranlar S4D host testinin gerçek telefonda çalıştığı anlamına gelmez.
+
+## Aynı bilgisayarda çalışan servislerin yanına izole entegrasyon provası
+
+Kullanıcının **canlı servis kaynakları** read-only tanıyla belirlenmiştir:
+`orun-backend.service` → `~/ORUN-PC-EDGE-VERIFY/backend/orun_backend_bench.py` (Tailscale TCP 8090),
+`orun-pc-edge.service` → `~/ORUN-PC-EDGE-VERIFY/tools/orun_pc_edge.py`.
+Yerel PC Edge dosyası mevcut GitHub dalında yok; canlı servisi bu dala körlemesine geçirmek güvenli değildir.
+Canlı PC Edge yalnız `/v1/edge/batch` üzerinden gözlem upload eder, bu **ortak veri** `/api/v1/sync` değildir.
+
+Yeni `tools/ci/run_shared_shadow_on_existing_pc.sh` **yalnız açık çağrıyla**:
+- Her iki canlı systemd servisin aktif PID'lerini okur, değiştirmez.
+- Sahibi 0700 ve dosyaları 0600 olan *yeni geçici* state altında ayrı S4C Backend'i `127.0.0.1` rastgele porta açar.
+- S4D güvenilir yerel CLI ile *sadece geçici* `pc-shadow-test` read-only token üretir; S4A PC mirror CLI gerçek HTTP'den çekip SQLite'ye yazar.
+- Ayrı Backend'i yeniden açıp PC mirror'ın aynı yerel kayıt/kurulum ile ikinci çekmesini dener; canlı systemd PID'lerinin değişmediğini kontrol eder.
+- Bitince sadece bu komutun oluşturduğu benzersiz geçici dizini/tokenı temizler, ayrı HTTP sürecini kapatır. **Mevcut** gözlem veritabanları, servisler, telefon, Gateway, Tracker değiştirilmez.
+- Hiç ortak mera eklenmediği için 0 kaynak normaldir; bu **saha verisinin canlı eşitlendiği kanıtı değildir**. Ayrı backend ile yerel PC client runtime'ının gerçek süreçler olarak konuştuğu ve restart olduğudur.
+
+**Canlı-servis yanında S4D gölge deneme PASS (2026-10-29):** kullanıcı `b9fd976`
+üzerinde `ORUN_S4D_REAL_PC_SHADOW_PASS` gördü. Yeni S4D gölge testinin
+**ilk sürümünde ortak kaynak sayısı 0** idi, yalnız gerçek bağımsız HTTP
+süreci, kurulum kimliği, PC mirror GET ve Backend restart kontrolü kanıtlandı.
+Mevcut gözlem servisleri yeniden başlatılmadı; PID'ler
+`303602` (Backend) ve `299910` (PC Edge) değişmedi.
+
+**Güncel güçlendirme — kullanıcı tarafından PASS (2026-10-29, `850c7fc`):** art arda gerçek
+yetkili HTTP `UPSERT` (1 mera + 1 grup + 1 hedef), yetkili PC Edge
+`received: 3`, aynada değişiklik kaydı, Backend yeniden başlatıldıktan
+sonra gerçek HTTP `DELETE` (hedef + mera), PC Edge `received: 2` ve
+aynada **tombstone revizyonu 2** doğrulaması. Kullanıcı çıktısı: `SHADOW_OWNER_HTTP_3_WRITES_ACCEPTED`,
+`received: 3`, `SHADOW_PC_SHARED_DATA_PASS: zone + group + target / cursor=3`,
+Backend restart ardından `received: 0`,
+`SHADOW_OWNER_HTTP_2_DELETES_ACCEPTED`, `received: 2`,
+`SHADOW_PC_SHARED_DATA_PASS: 2 tombstones + 1 active group / cursor=5`,
+`ORUN_S4D_REAL_PC_SHADOW_PASS`. Canlı PID'ler 303602/299910 korundu.
+`tools/ci/shared_shadow_data.py`
+yalnız `orun-shared-s4d.*` özel geçici dizinlerinde çalışır; gerçek
+sahaya veya canlı Backend'e hiçbir veri yazmaz. Yeni terminal kanıtı alındı; **PASS, ancak izole geçici ortam; canlı veri senkronizasyonu hâlâ devreye alınmadı**.
+
+**Tek komut:**
+
+```bash
+bash tools/ci/run_shared_shadow_on_existing_pc.sh
+```
+
+## Üretim öncesi eksikler
+
+- Gerçek PC Edge'in farklı bilgisayarda olabileceği mimari için HTTPS +
+  üretim owner approval/remote enrollment; buradaki **lokal trusted operator
+  bootstrap farklı PC'yi otomatik kaydetmez**.
+- Canonical Backend'i mevcut observation backend'e güvenli şekilde dahil
+  etme veya ayrı servis/HTTPS proxy kurma.
+- Timer (S4B) adayını sahibin onayıyla ayrıca aktifleştirme; canlı PC
+  Edge servisinden bağımsız kalması.
+- Android outbox/UI/Keystore/telefon kaydını gerçek sunucuya bağlama.
+- Sonradan USB/BLE/LoRa command dispatch ve güvenilir Tracker RESULT.
+
+**Kod, Merge ve dağıtım farklı şeylerdir.** Bu PR taslak kalacak;
+işlevlerin birinci gerçek sahaya alınması sahibin izin ve kapsam kararını
+gerektirir.
