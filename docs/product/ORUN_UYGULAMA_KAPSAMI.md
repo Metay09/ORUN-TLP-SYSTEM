@@ -26,9 +26,10 @@ Bu listede olmayan iş v1 değildir; yapılmaz, önerilmez, "ileride lazım olur
 | 0 | Toparlama | main = çalışan sistem, tek dal, bu liste repoda | tamam (#228) |
 | 1 | Otomatik eşitleme | Uygulamayı açınca her tasmanın son konumu kendiliğinden gelir; geçmiş arka planda tamamlanır | tamam (#229) |
 | 1a | Tek sunucu | PC'de üç servis yerine tek `orun-sunucu`; PC Edge aynı adrese yükler | tamam (#230, #231) |
-| 1b | Kalıcı giriş | Kullanıcı adı ya da e-postayla giriş; uygulama kapanıp açılınca oturum açık | bu PR; PC'de `bash tools/orun_guncelle.sh` |
-| 1c | Cihazı hesaba ekle | Tasmayı USB/BLE ile bağla → "Hesabına ekle"; PC aracı yok | — |
-| 1d | Gateway çiftlik anahtarıyla | Gateway bir kez eklenir; yeni tasma için gateway'e dokunulmaz | — |
+| 1b | Kalıcı giriş | Kullanıcı adı ya da e-postayla giriş; uygulama kapanıp açılınca oturum açık | tamam (#232) |
+| 1c | Gateway izni kendiliğinden | Tasma eklenince gateway'in izni köprü (PC Edge) üzerinden kendiliğinden güncellenir; `orun_provision.py gateway` adımı yok | bu PR |
+| 1d | Tasma her çiftlik gateway'ini kabul eder | Yeni gateway eklenince tasmalara dokunulmaz (tasma yazılımı) | — |
+| 1e | Uygulamadan "Cihaz ekle" | Tasma/gateway telefona USB ile bağlanır → "Hesabına ekle"; PC aracı yok | — |
 | 2 | İnternetsiz harita | İnternet yokken uydu ve harita (Aydın–Muğla, mera çevresi yakın zoom) | temel kod var |
 | 3 | USB'den tüm ayarlar | Kabloyla her ayar değişir | rapor aralığı, hizmetler, alanlar var |
 | 4 | BLE'den tüm ayarlar | Aynısı kablosuz, alanlar dahil | yalnız okuma var |
@@ -49,8 +50,10 @@ Rapor aralığı, alan dışı aralığı, alanlar ve hangilerinin açık olduğ
 ### Mimari (sahip kararı 2026-11-01)
 
 Tasma → Gateway (internetli telefon ya da Linux köprüsü) → **tek ORUN sunucusu** → uygulama.
-Cihazlar birbirine değil **hesaba (çiftliğe)** eklenir; gateway ve röle yalnız taşır.
-Gateway tasma listesi/imzalı izin taşımaz, çiftlik anahtarıyla çalışır (1d).
+Cihazlar birbirine değil **hesaba (çiftliğe)** eklenir; tanıştırmayı sunucu kendiliğinden yapar.
+Ortak "çiftlik anahtarı" YOK (güvenlik kararı: ele geçirilen tek gateway bütün tasmaları
+etkilemesin). Onay anahtarı tasma+gateway başına kalır; sunucu her gateway'in imzalı iznini
+hesaplar, köprü (PC Edge / telefon) gateway'e kendiliğinden yükler (1c–1e).
 
 ## v1 sonrası
 

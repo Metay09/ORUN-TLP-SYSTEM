@@ -8,6 +8,7 @@ Servisleri başlatıp durdurmaz; onu tools/orun_guncelle.sh yapar.
 
   python3 tools/orun_pc_gecis.py write-unit RELEASE_DIR UNIT_PATH
   python3 tools/orun_pc_gecis.py describe            # çalışan orun-sunucu ayarları
+  python3 tools/orun_pc_gecis.py pc-edge-dropin RELEASE_DIR DROPIN_PATH
 """
 from __future__ import annotations
 
@@ -193,6 +194,31 @@ def write_unit(release: str, unit_path: str) -> None:
     print(f"TOKEN_FILE={token_file}")
 
 
+PC_EDGE = "orun-pc-edge.service"
+
+
+def pc_edge_dropin(release: str, dropin_path: str) -> None:
+    """PC Edge'i yeni sürüme geçiren drop-in: çalışan programın AYNI komut
+    satırı, yalnız orun_pc_edge.py yolu yeni sürüm klasörünü gösterir."""
+    live = live_argv(PC_EDGE, "orun_pc_edge.py")
+    if live is None:
+        raise GecisHatasi("PC Edge çalışmıyor; güncellenmedi")
+    argv, cwd = live
+    idx = [i for i, a in enumerate(argv) if a.endswith("orun_pc_edge.py")]
+    if len(idx) != 1:
+        raise GecisHatasi("PC Edge komut satırı tanınmadı")
+    new = list(argv)
+    new[idx[0]] = f"{release}/tools/orun_pc_edge.py"
+    # Göreli dosya yolları eski çalışma klasörüne göre kalsın.
+    for i in range(len(new) - 1):
+        if new[i] in ("--db", "--token-file") and not os.path.isabs(new[i + 1]):
+            new[i + 1] = _absolute(new[i + 1], cwd)
+    target = Path(dropin_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("[Service]\nExecStart=\nExecStart=" + shlex.join(new) + "\n")
+    print(f"PC_EDGE_SCRIPT={new[idx[0]]}")
+
+
 def describe() -> None:
     o = options(exec_argv(_show(SUNUCU)))
     print(f"BRIDGE={o['bridge-listen']}")
@@ -206,6 +232,8 @@ def main(argv: list[str]) -> int:
             write_unit(argv[1], argv[2])
         elif argv == ["describe"]:
             describe()
+        elif argv[:1] == ["pc-edge-dropin"] and len(argv) == 3:
+            pc_edge_dropin(argv[1], argv[2])
         else:
             print(__doc__, file=sys.stderr)
             return 2
