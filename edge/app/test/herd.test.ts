@@ -77,7 +77,7 @@ test("herd: newest RECORD per collar, attention first, plain sentences", () => {
   assert.equal(aa.initials, "S");
   assert.equal(aa.seen, "1 dk önce görüldü");
   assert.equal(aa.points.length, 2);
-  assert.equal(dd.name, "Tasma 00DD");
+  assert.equal(dd.name, "ORUN-000000DD");                              // adsız: Bluetooth adı
   assert.equal(dd.status, "waiting");
   assert.equal(herdSummary(herd), "5 hayvan · 3 tanesine bakın");
   assert.equal(herdSummary([aa]), "1 hayvan · hepsi yakın zamanda görüldü");

@@ -8,6 +8,7 @@
 //   aging  <= max(6T, 60 min)
 //   silent  > max(6T, 60 min)   (stale: last position kept, shown grey)
 //   lost    > max(12T, 3 h)     "kayıp olabilir": many reports missed
+import { bleName } from "./deviceNames.ts";
 import { fmt, tr } from "./i18n/tr.ts";
 import type { Animal, AnimalStatus, AssetProfile, BatteryLevel, Freshness, Observation } from "./model.ts";
 import { blankProfile } from "./stores.ts";
@@ -85,9 +86,11 @@ export interface HerdInput {
   now: number;
   fence?: Fence;        // active, valid zones (none: no zone checks)
   grazing?: boolean;    // serbest otlatma on: outside is not an alarm
+  /** 2d: names kept in the account, by device id (upper-case hex). */
+  names?: Record<string, string>;
 }
 
-export function buildHerd({ points, profiles, assetOf, now, fence }: HerdInput): Animal[] {
+export function buildHerd({ points, profiles, assetOf, now, fence, names }: HerdInput): Animal[] {
   const by = new Map<string, { device: string; list: Observation[] }>();
   for (const p of points) {
     const t = epochMs(p.time);
@@ -118,8 +121,10 @@ export function buildHerd({ points, profiles, assetOf, now, fence }: HerdInput):
     }
     const profile = profiles[id] ?? blankProfile(id);
     const device = last?.tracker ?? (profiles[id] ? id : null);
-    const named = Boolean(profile.name.trim());
-    const name = named ? profile.name.trim() : `Tasma ${shortId(device ?? id)}`;
+    // The account's name wins; then the phone's own; else the Bluetooth name.
+    const given = (device && names?.[device.toUpperCase()]) || profile.name.trim();
+    const named = Boolean(given);
+    const name = named ? given : bleName(device ?? id);
     const lost = lastTime !== null && now - lastTime > lostLimit(periodMs(periodS));
     // Geofence alarm ownership belongs to the TRACKER, not to the app's
     // history/position projection. Keep geometric membership informational.

@@ -82,6 +82,7 @@ class GatewayStatus:
             live = seen is not None and now - seen <= LIVE_S
             out.append({"gateway": gw, "via": via if live else None,
                         "held": held, "capacity": capacity,
-                        "last_seen_utc": last, "trackers_24h": trackers})
+                        "last_seen_utc": last, "last_upload_utc": last_upload,
+                        "trackers_24h": trackers})
         out.sort(key=lambda g: -(g["last_seen_utc"] or 0))
         return out

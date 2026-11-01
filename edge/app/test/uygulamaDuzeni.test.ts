@@ -30,7 +30,8 @@ test("yakındaki cihazlar: ORUN-adının son 8 hanesi gateway'i ya da hayvanı b
   const gws = ["09A462BD4B275BA5"];
   const herd = [{ id: "0e8ade7e71531aa3", name: "Sarıkız" }];
   const g = classifyNearby({ deviceId: "a", name: "ORUN-4B275BA5", rssi: -60 }, gws, herd);
-  assert.deepEqual([g.kind, g.label, g.id], ["gateway", "Gateway 5BA5", "09A462BD4B275BA5"]);
+  assert.deepEqual([g.kind, g.label, g.id], ["gateway", "ORUN-4B275BA5", "09A462BD4B275BA5"]);
+  assert.equal(classifyNearby({ deviceId: "a", name: "ORUN-4B275BA5", rssi: -60 }, gws, herd, () => "Tepe").label, "Tepe");
   const t = classifyNearby({ deviceId: "b", name: "ORUN-71531AA3", rssi: -70 }, gws, herd);
   assert.deepEqual([t.kind, t.label], ["tracker", "Sarıkız"]);
   const u = classifyNearby({ deviceId: "c", name: "ORUN-DEADBEEF", rssi: null }, gws, herd);
@@ -79,4 +80,76 @@ test("USB ile bağlı cihaz: gateway ya da tasma", async () => {
   assert.equal(t.kind, "tracker");
   assert.equal(t.kind === "tracker" && t.report.device, "0E8ADE7E71531AA3");
   await assert.rejects(probeUsbDevice(fake([])), /yanıt vermedi/);
+});
+
+import { DeviceNameBook, bleName, cleanName } from "../src/app/deviceNames.ts";
+import { buildHerd } from "../src/app/herd.ts";
+
+test("cihaz adları: hesaptaki ad hayvanın adı, adsız cihaz Bluetooth adıyla görünür", () => {
+  assert.equal(bleName("09a462bd4b275ba5"), "ORUN-4B275BA5");
+  assert.equal(cleanName("  Tepe \u0007  gateway  "), "Tepe gateway");
+  const p = { tracker: "0e8ade7e71531aa3", seq: 1, time: new Date(1_800_000_000_000).toISOString(), lat: 37.6, lon: 28.05,
+              period_s: 900, battery_mv: 4000, active_s: null, covered_s: null } as never;
+  const base = { points: [p], profiles: {}, assetOf: (d: string) => d, now: 1_800_000_060_000 };
+  assert.equal(buildHerd(base)[0].name, "ORUN-71531AA3");
+  const [a] = buildHerd({ ...base, names: { "0E8ADE7E71531AA3": "Sarıkız" } });
+  assert.deepEqual([a.name, a.named], ["Sarıkız", true]);
+});
+
+test("ad defteri: hemen görünür, gönderilemeyen ad sonra gönderilir, hesap adları gelir", async () => {
+  const mem = new Map<string, string>();
+  const store = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); } };
+  const sent: [string, string][] = [];
+  let online = false;
+  let remote: Record<string, string> = { "AABBCCDDEEFF0011": "Ev" };
+  const server = {
+    async deviceNames() { if (!online) throw new Error("offline"); return { ...remote }; },
+    async setDeviceName(d: string, n: string) {
+      if (!online) throw new Error("offline");
+      sent.push([d, n]);
+      if (n) remote[d] = n; else delete remote[d];
+    },
+  };
+  const book = new DeviceNameBook(store);
+  await book.set("09a462bd4b275ba5", "Tepe", server);            // internet yok
+  assert.equal(book.label("09A462BD4B275BA5"), "Tepe");
+  assert.equal(book.label("1122334455667788"), "ORUN-55667788");
+  await assert.rejects(book.refresh(server));
+  assert.equal(new DeviceNameBook(store).name("09A462BD4B275BA5"), "Tepe", "telefonda kaldı");
+  online = true;
+  await book.refresh(server);
+  assert.deepEqual(sent, [["09A462BD4B275BA5", "Tepe"]]);
+  assert.deepEqual(book.snapshot(), { "AABBCCDDEEFF0011": "Ev", "09A462BD4B275BA5": "Tepe" });
+  await book.set("09A462BD4B275BA5", "", server);                 // ad silinir
+  assert.equal(book.label("09A462BD4B275BA5"), "ORUN-4B275BA5");
+  assert.deepEqual(remote, { "AABBCCDDEEFF0011": "Ev" });
+});
+
+import { farmChain } from "../src/features/network/words.ts";
+
+test("kayıt güvende mi: bütün çiftlik zinciri", () => {
+  const now = 1_800_000_000_000;
+  const gw = (via: string | null, upload: number | null) => ({
+    gateway: "09A462BD4B275BA5", via: via as never, held: 2, capacity: 1056,
+    lastSeen: now - 60_000, lastUpload: upload, trackers24h: 2 });
+  const sync = { running: false, error: null, last: { latest: 2, history: 0, more: false, at: now - 60_000 } };
+  const label = (id: string) => "ORUN-" + id.slice(-8);
+  const ok = farmChain({ trackers: 3, fresh: 2, gateways: [gw("pc-usb", now - 120_000)], phoneGateway: null,
+                         signedIn: true, sync, pending: 0, now, label });
+  assert.deepEqual(ok.nodes.map((n) => n.tone), ["fresh", "fresh", "fresh", "fresh"]);
+  assert.deepEqual(ok.wires, ["ok", "ok", "ok"]);
+  assert.equal(ok.nodes[1].sub, "1 bağlı · PC, USB");
+  assert.equal(ok.nodes[2].sub, "son kayıt 2 dk önce");
+  assert.match(ok.nodes[1].detail, /ORUN-4B275BA5: PC'ye USB ile bağlı/);
+
+  const down = farmChain({ trackers: 3, fresh: 0, gateways: [gw(null, now - 3 * 3600_000)], phoneGateway: null,
+                           signedIn: true, sync: { ...sync, error: "sunucu cevabı HTTP 503" }, pending: 3, now, label });
+  assert.deepEqual(down.nodes.map((n) => n.tone), ["aging", "aging", "alarm", "alarm"]);
+  assert.deepEqual(down.wires, ["wait", "wait", "wait"]);
+  assert.equal(down.nodes[2].sub, "ulaşılamıyor");
+
+  const phone = farmChain({ trackers: 1, fresh: 1, gateways: null, phoneGateway: { id: "1122334455667788", link: "ble" },
+                            signedIn: false, sync: { running: false, error: null, last: null }, pending: null, now, label });
+  assert.equal(phone.nodes[1].sub, "1 bağlı · telefon, BLE");
+  assert.deepEqual([phone.nodes[2].sub, phone.nodes[3].sub], ["giriş yok", "giriş yapılmadı"]);
 });

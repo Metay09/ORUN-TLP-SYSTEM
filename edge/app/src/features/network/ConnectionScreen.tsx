@@ -2,16 +2,17 @@
 // kartı (bağlı cihaz ya da "Cihaz seçilmedi"); Bluetooth / USB seçici ve
 // yakındaki ORUN cihazları; çiftliğin diğer gateway'leri (nasıl bağlı, son
 // görülme, bellek, kaç tasma); en altta teknik ayrıntılar.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
-  Bluetooth, CaretRight, CellSignalFull, CloudCheck, MagnifyingGlass, MapPin, Question, Usb, WifiHigh, WifiSlash, X,
+  Bluetooth, CaretRight, CellSignalFull, CloudCheck, DeviceMobile, MagnifyingGlass, MapPin, Question, Usb, WifiHigh, WifiSlash, X,
 } from "@phosphor-icons/react";
 import { probeUsbDevice } from "../../app/addTracker.ts";
+import { bleName } from "../../app/deviceNames.ts";
 import { fmt, tr } from "../../app/i18n/tr.ts";
 import { useNav } from "../../app/nav.ts";
 import type { FarmGateway } from "../../app/ownerAccountClient.ts";
 import {
-  onPilotAccountChange, onPilotObservationSync, pilotAccountStatus, pilotGateways, pilotObservationSyncState,
+  deviceNames, onPilotAccountChange, onPilotObservationSync, pilotAccountStatus, pilotGateways, pilotObservationSyncState,
 } from "../../app/ownerAccountPilotRuntime.ts";
 import { useApp } from "../../app/store.ts";
 import { Bar, Card, Cell, DemoFlag, Dialog, Header, KV, Section, Seg } from "../../ds/components.tsx";
@@ -19,11 +20,18 @@ import { classifyNearby, mergeNearby, scanNearby, stopNearbyScan, type NearbyDev
 import { UsbConsole } from "../../platform/usbConsole.ts";
 import { AddTrackerDialog } from "../herd/AddTrackerDialog.tsx";
 import { startPosition, usePosition } from "../map/position.ts";
-import { gatewayFacts, gatewayLine, serverLine, stationWords } from "./words.ts";
+import { NameDialog } from "./NameDialog.tsx";
+import { farmChain, gatewayFacts, gatewayLine, stationWords, type ChainNode } from "./words.ts";
 
 type Via = "ble" | "usb";
 
-const short = (id: string) => id.slice(-4).toUpperCase();
+const ASKED = "orun.namePrompted.v1";
+function asked(): string[] {
+  try { const v = JSON.parse(localStorage.getItem(ASKED) ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function markAsked(id: string): void {
+  try { localStorage.setItem(ASKED, JSON.stringify([...asked(), id.toUpperCase()].slice(-200))); } catch { /* fine */ }
+}
 
 export function ConnectionScreen() {
   const m = useApp();
@@ -44,6 +52,10 @@ export function ConnectionScreen() {
   const [usbBusy, setUsbBusy] = useState(false);
   const [usbTracker, setUsbTracker] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [naming, setNaming] = useState<string | null>(null);
+  const [node, setNode] = useState<ChainNode["key"] | null>(null);
+  const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
+  const label = (id: string) => names[id.toUpperCase()] ?? bleName(id);
   useEffect(() => onPilotObservationSync(() => setSync(pilotObservationSyncState())), []);
   useEffect(() => onPilotAccountChange(() => setAccount(pilotAccountStatus())), []);
   useEffect(() => {
@@ -70,7 +82,16 @@ export function ConnectionScreen() {
 
   const known = (gateways ?? []).map((g) => g.gateway);
   const trackers = m.herd.filter((a) => a.device).map((a) => ({ id: a.device!, name: a.name }));
-  const views: NearbyView[] = nearby.map((d) => classifyNearby(d, s.gateway ? [...known, s.gateway] : known, trackers));
+  const views: NearbyView[] = nearby.map((d) => classifyNearby(d, s.gateway ? [...known, s.gateway] : known, trackers, label));
+
+  // 2d: adı olmayan bir gateway ilk görüldüğünde ad sorulur (bir kez).
+  const unnamed = [
+    ...(linkOn && st.phase === "connected" && st.id ? [st.id] : []),
+    ...(gateways ?? []).map((g) => g.gateway),
+  ].find((id) => !names[id.toUpperCase()] && !asked().includes(id.toUpperCase()));
+  useEffect(() => {
+    if (!m.demo && account && unnamed && !naming) setNaming(unnamed);
+  }, [unnamed, account, m.demo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pick = (d: NearbyView) => {
     if (d.kind === "tracker") {
@@ -99,31 +120,61 @@ export function ConnectionScreen() {
   }
 
   const others = (gateways ?? []).filter((g) => !(linkOn && s.gateway && g.gateway.toUpperCase() === s.gateway.toUpperCase()));
-  const serverTone = !account || sync.error || sv.error ? "aging" : sync.last ? "fresh" : "";
+  const chain = farmChain({
+    trackers: m.herd.filter((a) => a.last).length,
+    fresh: m.herd.filter((a) => a.freshness === "fresh").length,
+    gateways: account ? gateways : null,
+    phoneGateway: linkOn && st.phase === "connected" && st.id ? { id: st.id, link: st.link as "ble" | "usb" } : null,
+    signedIn: Boolean(account), sync, pending: sv.pending, now: m.now, label,
+  });
+  const picked = chain.nodes.find((n) => n.key === node) ?? null;
+  const ICON = { tasmalar: <CellSignalFull size={22} />, gateway: <WifiHigh size={22} />, sunucu: <CloudCheck size={22} />, telefon: <DeviceMobile size={22} /> };
   return (
     <div className="page">
       <Header title={tr.network.title} />
       {m.demo && <DemoFlag onPage />}
 
+      <Section title={tr.network.chain}
+        info="Kayıt tasmadan gateway'e, oradan sunucuya, sunucudan telefonlara gider. Bir kayıt ancak sonraki halka onu kalıcı yazdıktan sonra öncekinden silinir; bağlantı koparsa kayıt beklediği yerde durur, kaybolmaz. Bir halkaya dokununca ayrıntısı görünür." />
       <Card>
-        <Cell lead={<span className={"ic " + serverTone}><CloudCheck size={22} /></span>}
-          title={tr.network.server} wrapSub
-          sub={serverLine(Boolean(account), sync, sv.pending, sv.error)}
-          trail={!account ? <CaretRight size={18} color="var(--mute)" /> : undefined}
-          onClick={!account ? () => nav.push({ to: "settings" }) : undefined} />
+        <div className="chain">
+          {chain.nodes.map((n, idx) => (
+            <Fragment key={n.key}>
+              {idx > 0 && <span className={"wire " + chain.wires[idx - 1]} />}
+              <button className="node" type="button" aria-pressed={node === n.key}
+                onClick={() => setNode(node === n.key ? null : n.key)}>
+                <span className={"nd ic " + n.tone}>{ICON[n.key]}</span>
+                <b>{n.title}</b>
+                <span>{n.sub}</span>
+              </button>
+            </Fragment>
+          ))}
+        </div>
+        {picked && (
+          <p className="sm chain-detail">
+            {picked.detail}
+            {picked.key === "telefon" && !account && <> · <button className="lnk" onClick={() => nav.push({ to: "settings" })}>Giriş yap</button></>}
+            {picked.key === "tasmalar" && m.herd.length > 0 && <> · <button className="lnk" onClick={() => nav.setTab("herd")}>Sürü</button></>}
+          </p>
+        )}
       </Card>
 
-      <Section title="Bu telefon" />
+      <Section title="Bu telefon" info={tr.station.background} />
       <Card>
         {linkOn ? (
           <div className="stack" style={{ padding: 16 }}>
             <div className="row" style={{ gap: 12 }}>
               <span className={"ic " + (words.dot === "ok" ? "fresh" : "aging")}><WifiHigh size={22} /></span>
               <div className="stack" style={{ gap: 2 }}>
-                <span className="strong">{st.id ? "Gateway " + short(st.id) : "Gateway"}</span>
+                <span className="strong">{st.id ? label(st.id) : "Gateway"}</span>
                 <span className="sm">{st.detail && st.phase !== "connected" ? `${words.text} · ${st.detail}` : words.text}</span>
               </div>
             </div>
+            {st.id && account && !m.demo && (
+              <button className="btn quiet small" style={{ alignSelf: "flex-start" }} onClick={() => setNaming(st.id)}>
+                {names[st.id.toUpperCase()] ? "Adını değiştir" : "Ad ver"}
+              </button>
+            )}
             {st.capacity !== null && (
               <>
                 <div className="row" style={{ justifyContent: "space-between" }}><span className="sm">{tr.station.memory}</span><span className="sm strong">{fmt.num(held)} / {fmt.num(st.capacity)}</span></div>
@@ -199,7 +250,6 @@ export function ConnectionScreen() {
             </>
           )}
           {note && <p className="sm lead" role="status">{note}</p>}
-          <p className="fine lead">{tr.station.background}</p>
         </>
       )}
 
@@ -211,8 +261,10 @@ export function ConnectionScreen() {
           : others.map((g) => (
             <Cell key={g.gateway}
               lead={<span className={"ic " + (g.via ? "fresh" : "")}>{g.via ? <WifiHigh size={20} /> : <WifiSlash size={20} />}</span>}
-              title={"Gateway " + short(g.gateway)} wrapSub
-              sub={<>{gatewayLine(g, m.now)}<br />{gatewayFacts(g)}</>} />
+              title={label(g.gateway)} wrapSub
+              sub={<>{gatewayLine(g, m.now)}<br />{gatewayFacts(g)}</>}
+              trail={<span className="sm" style={{ color: "var(--brand-t)" }}>{names[g.gateway] ? "" : "Ad ver"}<CaretRight size={18} color="var(--mute)" /></span>}
+              onClick={() => setNaming(g.gateway)} />
           ))}
       </Card>
 
@@ -223,6 +275,10 @@ export function ConnectionScreen() {
           onAdd={() => { setUsbTracker(null); setAdding(true); }} />
       )}
       {adding && <AddTrackerDialog onClose={() => setAdding(false)} />}
+      {naming && (
+        <NameDialog device={naming} kind="gateway" current={names[naming.toUpperCase()] ?? null}
+          onClose={() => { markAsked(naming); setNaming(null); }} />
+      )}
     </div>
   );
 }
@@ -233,9 +289,9 @@ function UsbTrackerDialog({ device, onClose, onAdd }: { device: string; onClose:
   const nav = useNav();
   const a = m.herd.find((x) => x.device && x.device.toUpperCase() === device.toUpperCase()) ?? null;
   return (
-    <Dialog title={a ? a.name : tr.device.title(short(device))} onClose={onClose}>
+    <Dialog title={a ? a.name : bleName(device)} onClose={onClose}>
       <div className="stack" style={{ padding: "0 20px 16px" }}>
-        <KV k={tr.animal.device}>{tr.device.title(short(device))}</KV>
+        <KV k="Bluetooth adı">{bleName(device)}</KV>
         {a ? (
           <>
             <KV k="Son görülme">{a.seen}</KV>

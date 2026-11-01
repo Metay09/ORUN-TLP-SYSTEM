@@ -74,7 +74,7 @@ export function ZonesScreen() {
             </div>
           </Card>
 
-          <Section title={tr.zones.title} />
+          <Section title={tr.zones.title} info={tr.zones.stored} />
           <Card>
             {m.zones.map((z) => {
               const bad = validateRing(z.ring);
@@ -96,7 +96,6 @@ export function ZonesScreen() {
               );
             })}
           </Card>
-          <p className="fine lead">{tr.zones.stored}</p>
         </>
       )}
 

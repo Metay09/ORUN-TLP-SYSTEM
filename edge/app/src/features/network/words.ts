@@ -99,3 +99,77 @@ export function gatewayFacts(g: FarmGateway): string {
   parts.push(`${g.trackers24h} tasma (24 sa)`);
   return parts.join(" · ");
 }
+
+export type ChainTone = "fresh" | "aging" | "alarm" | "";
+export interface ChainNode {
+  key: "tasmalar" | "gateway" | "sunucu" | "telefon";
+  title: string; sub: string; tone: ChainTone; detail: string;
+}
+
+const viaShort = (via: FarmGateway["via"]): string =>
+  via === "pc-usb" ? "PC, USB" : via === "pc-ble" ? "PC, BLE"
+    : via === "phone-usb" ? "telefon, USB" : via === "phone-ble" ? "telefon, BLE" : "";
+
+/** "Kayıt güvende mi?" for the whole farm: Tasmalar → Gateway'ler → Sunucu → Bu telefon. */
+export function farmChain(i: {
+  trackers: number; fresh: number;
+  gateways: FarmGateway[] | null;
+  phoneGateway: { id: string; link: "ble" | "usb" } | null;
+  signedIn: boolean; sync: ObservationSyncState; pending: number | null; now: number;
+  label: (id: string) => string;
+}): { nodes: ChainNode[]; wires: ("ok" | "wait" | "")[] } {
+  const known = i.gateways ?? [];
+  const live = known.filter((g) => g.via);
+  if (i.phoneGateway && !live.some((g) => g.gateway.toUpperCase() === i.phoneGateway!.id.toUpperCase()))
+    live.push({ gateway: i.phoneGateway.id.toUpperCase(), via: i.phoneGateway.link === "usb" ? "phone-usb" : "phone-ble",
+                held: null, capacity: null, lastSeen: i.now, lastUpload: null, trackers24h: 0 });
+  const lastUpload = known.reduce<number | null>((m, g) => (g.lastUpload !== null && (m === null || g.lastUpload > m) ? g.lastUpload : m), null);
+  const recentUpload = lastUpload !== null && i.now - lastUpload < 60 * 60_000;
+  const synced = !i.sync.error && i.sync.last !== null && i.now - i.sync.last.at < 5 * 60_000;
+
+  const tasma: ChainNode = {
+    key: "tasmalar", title: "Tasmalar",
+    sub: i.trackers ? `${i.trackers} tasma · ${i.fresh} taze` : "henüz yok",
+    tone: i.fresh ? "fresh" : i.trackers ? "aging" : "",
+    detail: i.trackers
+      ? `${i.trackers} tasmadan ${i.fresh} tanesi rapor aralığı içinde haber verdi.`
+      : "Henüz konumu gelen tasma yok.",
+  };
+  const gw: ChainNode = {
+    key: "gateway", title: "Gateway'ler",
+    sub: live.length ? `${live.length} bağlı · ${[...new Set(live.map((g) => viaShort(g.via)))].join(", ")}`
+      : known.length ? "bağlı değil" : i.signedIn ? "henüz yok" : "giriş yok",
+    tone: live.length ? "fresh" : known.length ? "aging" : "",
+    detail: live.length
+      ? live.map((g) => i.phoneGateway && g.gateway.toUpperCase() === i.phoneGateway.id.toUpperCase()
+          ? `${i.label(g.gateway)}: bu telefona ${i.phoneGateway.link === "usb" ? "USB" : "Bluetooth"} ile bağlı`
+          : `${i.label(g.gateway)}: ${gatewayLine(g, i.now)}`).join(" · ")
+      : known.length ? "Hiçbir gateway şu an bir köprüye (PC ya da telefon) bağlı değil."
+      : "Henüz gateway görülmedi.",
+  };
+  const server: ChainNode = {
+    key: "sunucu", title: "Sunucu",
+    sub: !i.signedIn ? "giriş yok" : i.sync.error ? "ulaşılamıyor"
+      : lastUpload !== null ? `son kayıt ${fmt.ago(lastUpload, i.now)}` : "kayıt yok",
+    tone: !i.signedIn ? "" : i.sync.error ? "alarm" : recentUpload ? "fresh" : "aging",
+    detail: !i.signedIn ? "Sunucuyu görmek için hesaba giriş yap."
+      : i.sync.error ? i.sync.error
+      : lastUpload !== null ? `Sunucuya en son ${fmt.clock(lastUpload)}'de kayıt geldi.` : "Sunucuya henüz kayıt gelmedi.",
+  };
+  const phone: ChainNode = {
+    key: "telefon", title: "Bu telefon",
+    sub: !i.signedIn ? "giriş yapılmadı"
+      : i.sync.last ? `${fmt.clock(i.sync.last.at)}'de eşitlendi` + ((i.pending ?? 0) > 0 ? ` · ${fmt.num(i.pending ?? 0)} bekliyor` : "")
+      : "eşitleme bekleniyor",
+    tone: !i.signedIn || i.sync.error ? "alarm" : synced ? "fresh" : "aging",
+    detail: serverLine(i.signedIn, i.sync, i.pending, null),
+  };
+  return {
+    nodes: [tasma, gw, server, phone],
+    wires: [
+      i.fresh && live.length ? "ok" : i.trackers && known.length ? "wait" : "",
+      recentUpload ? "ok" : lastUpload !== null ? "wait" : "",
+      synced ? "ok" : i.signedIn ? "wait" : "",
+    ],
+  };
+}

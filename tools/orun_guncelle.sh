@@ -57,6 +57,30 @@ check_sunucu() {
   [[ "$code" == "401" ]]
 }
 
+# Sunucu 20 saniyeye kadar ayağa kalkabilir (kayıt defteri açılıyor).
+wait_sunucu() {
+  local i
+  for i in $(seq 1 20); do
+    check_sunucu && return 0
+    sleep 1
+  done
+  return 1
+}
+
+# Eski üç servisten biri yeniden çalışıyorsa sunucunun adresini kapar
+# (2026-11-01: orun-shared-sync 127.0.0.1:18781'i tuttu). İşlerini
+# orun-sunucu yapıyor; durdurulur ve açılışta başlamaması sağlanır.
+eskileri_durdur() {
+  local u
+  for u in "${OLD_UNITS[@]}"; do
+    if systemctl --user is-active --quiet "$u"; then
+      echo "Eski $u çalışıyordu; durduruldu (işini orun-sunucu yapıyor)."
+      systemctl --user stop "$u" || true
+      systemctl --user disable "$u" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
 mkdir -p "$UNIT_DIR"
 
 if systemctl --user cat "$SUNUCU" >/dev/null 2>&1; then
@@ -68,16 +92,21 @@ if systemctl --user cat "$SUNUCU" >/dev/null 2>&1; then
     echo "Sunucu zaten bu sürümde."
   else
     release_dir
+    eskileri_durdur
     cp -p "$UNIT_DIR/$SUNUCU" "$UNIT_DIR/$SUNUCU.bak-$STAMP"
     sed -i "s#$CURRENT#$NEW#g" "$UNIT_DIR/$SUNUCU"
     systemctl --user daemon-reload
     systemctl --user restart "$SUNUCU" || true
-    sleep 3
-    if ! check_sunucu; then
+    if ! wait_sunucu; then
+      echo "--- yeni sürümün son kayıtları ---" >&2
+      journalctl --user -u "$SUNUCU" -n 15 --no-pager >&2 || true
       cp -p "$UNIT_DIR/$SUNUCU.bak-$STAMP" "$UNIT_DIR/$SUNUCU"
       systemctl --user daemon-reload
       systemctl --user restart "$SUNUCU" || true
-      fail "Yeni sürüm kontrolü geçemedi; eski sürüme dönüldü ($CURRENT). Bu çıktıyı Claude'a gönder."
+      if wait_sunucu; then
+        fail "Yeni sürüm kontrolü geçemedi; eski sürüme dönüldü ve eski sürüm çalışıyor ($CURRENT). Bu çıktıyı Claude'a gönder."
+      fi
+      fail "Yeni sürüm açılmadı, eski sürüm de açılmadı! Sunucu kapalı. Bu çıktıyı hemen Claude'a gönder."
     fi
     echo "Tamam: sunucu $SHA sürümünde, $RECORDS kayıt."
   fi
@@ -104,8 +133,7 @@ else
   systemctl --user daemon-reload
   systemctl --user stop "${OLD_UNITS[@]}" || geri_don
   systemctl --user start "$SUNUCU" || geri_don
-  sleep 3
-  check_sunucu || geri_don
+  wait_sunucu || geri_don
   # Başarılı: eskiler açılışta başlamasın (dosyaları duruyor, geri dönülebilir).
   systemctl --user disable "${OLD_UNITS[@]}" 2>/dev/null || true
   systemctl --user enable "$SUNUCU" >/dev/null 2>&1 || true

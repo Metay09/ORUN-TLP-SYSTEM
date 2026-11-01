@@ -12,11 +12,12 @@ const NAME = /^ORUN-([0-9A-F]{8})$/i;
 /** Which known device is this? Gateways from the farm list, trackers from the herd. */
 export function classifyNearby(
   d: NearbyDevice, gateways: string[], trackers: { id: string; name: string }[],
+  label: (id: string) => string = (id) => "ORUN-" + id.slice(-8).toUpperCase(),
 ): NearbyView {
   const m = NAME.exec(d.name);
   const tail = m ? m[1].toUpperCase() : null;
   const gw = tail ? gateways.find((g) => g.toUpperCase().endsWith(tail)) : undefined;
-  if (gw) return { ...d, kind: "gateway", id: gw, label: "Gateway " + gw.slice(-4).toUpperCase() };
+  if (gw) return { ...d, kind: "gateway", id: gw, label: label(gw) };
   const tr = tail ? trackers.find((t) => t.id.toUpperCase().endsWith(tail)) : undefined;
   if (tr) return { ...d, kind: "tracker", id: tr.id, label: tr.name };
   return { ...d, kind: "unknown", id: null, label: d.name || "ORUN cihazı" };

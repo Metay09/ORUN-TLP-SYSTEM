@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 import { CaretRight, MapTrifold, NavigationArrow, NotePencil, PencilSimple, Play } from "@phosphor-icons/react";
 import { batterySeries, dayStart, daySummaries, hourlyActivity } from "../../app/activity.ts";
-import { batteryPercent, epochMs, shortId } from "../../app/herd.ts";
+import { batteryPercent, epochMs } from "../../app/herd.ts";
+import { bleName } from "../../app/deviceNames.ts";
 import { cap, fmt, tr } from "../../app/i18n/tr.ts";
 import type { Animal, AppEvent } from "../../app/model.ts";
 import { useBack, useNav } from "../../app/nav.ts";
@@ -76,25 +77,23 @@ function Today({ a, now }: { a: Animal; now: number }) {
         <KV k="Konum">{fmt.coords(p.lat, p.lon)}</KV>
       </Card>
 
-      <Section title={tr.animal.activity} />
+      <Section title={tr.animal.activity} info={tr.animal.activityStripHelp} />
       <Card pad>
         {hasActivity ? (
           <div className="stack">
             <span className="strong">{today?.activeMs !== null && today?.activeMs !== undefined ? tr.animal.activityToday(fmt.duration(today.activeMs)) : tr.animal.activity}</span>
             <Strip values={hours} tall />
             <div className="strip-axis"><span>{fmt.clock(now - 24 * 3600_000)}</span><span>{fmt.clock(now - 12 * 3600_000)}</span><span>{fmt.clock(now)}</span></div>
-            <span className="fine">{tr.animal.activityStripHelp}</span>
           </div>
         ) : <span className="sm">{tr.animal.activityNone}</span>}
       </Card>
 
       {today && (
         <>
-          <Section title={tr.animal.walked} />
+          <Section title={tr.animal.walked} info={tr.animal.walkedHelp} />
           <Card pad>
             <div className="stack" style={{ gap: 4 }}>
               <span className="disp" style={{ fontSize: 26 }}>{tr.animal.walkedToday(fmt.distance(today.walkedM))}</span>
-              <span className="fine">{tr.animal.walkedHelp}</span>
             </div>
           </Card>
         </>
@@ -170,7 +169,7 @@ function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () =
       <Card>
         {a.device ? (
           <>
-            <KV k={tr.animal.device}>{tr.device.title(shortId(a.device))}</KV>
+            <KV k="Bluetooth adı">{bleName(a.device)}</KV>
             <KV k={tr.device.lastContact}>{dev?.lastTime ? `${fmt.clock(dev.lastTime)} · ${fmt.ago(dev.lastTime, now)}` : "—"}</KV>
             <KV k={tr.device.signal}>{dev && dev.rssi !== null ? tr.device.signalLine(dev.rssi, dev.snr) : tr.device.signalNone}</KV>
             {dev?.link && <KV k="Yol">{tr.device.link[dev.link]}</KV>}

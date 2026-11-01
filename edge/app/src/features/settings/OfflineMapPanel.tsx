@@ -90,7 +90,7 @@ export function OfflineMapPanel() {
   const offers = catalog ? packOffers(installed, catalog) : [];
   return (
     <>
-      <Section title="İnternetsiz harita" />
+      <Section title="İnternetsiz harita" info="Aydın–Muğla haritası (yol, köy, dere) telefona iner. İnternet yokken uydu ve arazi yerine kendiliğinden bu harita gösterilir; sokak haritası her zaman bunu kullanır. Uygulama açıkken iner, Wi-Fi önerilir." />
       <Card>
         <div className="stack" style={{ padding: 16 }}>
           {!supported && <p className="sm">Bu telefonun tarayıcı bileşeni harita dosyasını saklayamıyor. Android System WebView'i güncelle.</p>}
@@ -120,8 +120,6 @@ export function OfflineMapPanel() {
             <p className="sm">Haritayı indirmek için önce hesaba giriş yap.</p>}
           {supported && account && catalog && catalog.length === 0 && installed.length === 0 &&
             <p className="sm">Sunucuda henüz harita paketi yok.</p>}
-          {supported && installed.length > 0 && offers.length === 0 && !progress &&
-            <p className="fine">İnternet yokken uydu ve arazi yerine kendiliğinden bu harita gösterilir. Sokak haritası her zaman bunu kullanır.</p>}
           {notice && <p role="status" className="sm">{notice}</p>}
           {error && <p role="alert" className="sm t-aging">{error}</p>}
         </div>

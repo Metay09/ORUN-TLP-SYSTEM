@@ -1,7 +1,7 @@
 // ORUN Saha components. Every screen builds from these so the app speaks one
 // visual language (scope doc §14).
-import { useEffect, type ReactNode } from "react";
-import { CaretLeft, Cow, X } from "@phosphor-icons/react";
+import { useEffect, useState, type ReactNode } from "react";
+import { CaretLeft, Cow, Info, X } from "@phosphor-icons/react";
 import type { Animal, AnimalStatus, Freshness } from "../app/model.ts";
 import { tr } from "../app/i18n/tr.ts";
 
@@ -77,12 +77,21 @@ export function Card({ children, pad, hero, className }: { children: ReactNode; 
   return <div className={"card" + (pad ? " pad16" : "") + (hero ? " hero" : "") + (className ? ` ${className}` : "")}>{children}</div>;
 }
 
-export function Section({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) {
+/** `info`: a longer explanation, shown only when the (i) next to the title is tapped. */
+export function Section({ title, action, onAction, info }: { title: string; action?: string; onAction?: () => void; info?: string }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="sec">
-      <h2>{title}</h2>
-      {action && onAction && <button className="lnk" onClick={onAction}>{action}</button>}
-    </div>
+    <>
+      <div className="sec">
+        <h2>{title}{info && (
+          <button className="info-btn" type="button" aria-label="Açıklama" aria-expanded={open} onClick={() => setOpen(!open)}>
+            <Info size={15} weight={open ? "fill" : "regular"} />
+          </button>
+        )}</h2>
+        {action && onAction && <button className="lnk" onClick={onAction}>{action}</button>}
+      </div>
+      {info && open && <p className="fine sec-info">{info}</p>}
+    </>
   );
 }
 

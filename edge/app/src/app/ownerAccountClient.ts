@@ -15,6 +15,7 @@ export interface FarmGateway {
   held: number | null;
   capacity: number | null;
   lastSeen: number | null;               // ms
+  lastUpload: number | null;             // ms: newest record from this gateway at the server
   trackers24h: number;
 }
 
@@ -28,12 +29,13 @@ export function parseFarmGateways(body: unknown): FarmGateway[] {
     const r = (g && typeof g === "object" ? g : {}) as Record<string, unknown>;
     if (typeof r.gateway !== "string" || !/^[0-9A-F]{16}$/.test(r.gateway))
       throw new Error("Gateway listesi hatalı.");
-    const seen = int(r.last_seen_utc);
+    const seen = int(r.last_seen_utc), upload = int(r.last_upload_utc);
     return {
       gateway: r.gateway,
       via: typeof r.via === "string" && VIAS.includes(r.via) ? r.via as FarmGateway["via"] : null,
       held: int(r.held), capacity: int(r.capacity),
       lastSeen: seen === null ? null : seen * 1000,
+      lastUpload: upload === null ? null : upload * 1000,
       trackers24h: int(r.trackers_24h) ?? 0,
     };
   });
@@ -258,6 +260,32 @@ export class OwnerAccountClient {
     if (reply.status === 401) throw new Error("Oturumun geçersiz; yeniden giriş yap.");
     if (!reply.ok) throw new Error("Gateway listesi alınamadı.");
     return parseFarmGateways(await json(reply));
+  }
+
+  /** 2d: device names kept in the account. */
+  async deviceNames(): Promise<Record<string, string>> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/names", {
+      headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
+      credentials: "omit", redirect: "error", cache: "no-store",
+    });
+    if (!reply.ok) throw new Error("Cihaz adları alınamadı.");
+    const body = await json(reply);
+    const names = body.names;
+    if (!names || typeof names !== "object" || Array.isArray(names)) throw new Error("Cihaz adları hatalı.");
+    return names as Record<string, string>;
+  }
+
+  async setDeviceName(device: string, name: string): Promise<void> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/name", {
+      method: "POST", credentials: "omit", redirect: "error", cache: "no-store",
+      headers: { Authorization: "Bearer " + this.accessToken,
+                 "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ device, name }),
+    });
+    if (reply.status === 400) throw new Error("Bu ad kullanılamıyor (en fazla 40 harf).");
+    if (!reply.ok) throw new Error("Ad kaydedilemedi.");
   }
 
   /** 2c: this phone is the bridge for a gateway: tell the server how it is. */

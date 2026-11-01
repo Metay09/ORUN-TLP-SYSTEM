@@ -174,14 +174,13 @@ export const tr = {
     notebookEmpty: "Sağlık, doğum, aşı ve tedavi notlarınız burada tarihleriyle durur.",
     notePlaceholder: "Örn. Şap aşısı yapıldı",
     device: "Tasma",
-    deviceLine: (short: string) => `Tasma ${short}`,
     reportEvery: (p: string) => `rapor aralığı ${p}`,
     records: (n: number) => `${num(n)} kayıt telefonda`,
     noDevice: "Bu hayvana tasma atanmamış",
   },
   edit: {
     title: "Hayvan bilgileri",
-    namePlaceholder: (short: string) => `Örn. Sarıkız (tasma ${short})`,
+    namePlaceholder: (ble: string) => `Örn. Sarıkız (şimdi ${ble})`,
     tagPlaceholder: "TR 09 1234 5678",
     breedPlaceholder: "Örn. Simental",
     swatch: "Renk seç",
@@ -373,7 +372,7 @@ export const tr = {
   // ------------------------------------------------------------- network ---
   network: {
     title: "Bağlantı",
-    chain: "Durum",
+    chain: "Kayıt güvende mi?",
     nodes: { collars: "Tasmalar", station: "Gateway", phone: "Telefon", server: "Sunucu" },
     collarsLine: (n: number, fresh: number) => `${n} tasma · ${fresh} taze`,
     stationHeld: (n: number) => (n ? `${num(n)} bekliyor` : "bekleyen yok"),
@@ -421,7 +420,6 @@ export const tr = {
     lastError: (e: string) => `Son deneme: ${e}`,
   },
   device: {
-    title: (short: string) => `Tasma ${short}`,
     services: "Hizmetler",
     service: { location: "Konum takibi", activity: "Hareket özeti", battery: "Pil bildirimi" },
     serviceState: { running: "çalışıyor", silent: "sessiz", off: "göndermiyor" },
