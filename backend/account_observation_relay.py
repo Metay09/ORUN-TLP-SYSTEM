@@ -35,25 +35,20 @@ _SITE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 class AccountObservationRelay:
     def __init__(self, upstream: str, token_file: str | Path,
-                 *, observation_site: str | None = None) -> None:
+                 *, observation_site: str | None = None,
+                 records_upstream: str | None = None) -> None:
         # Records are site-private; a fixed operator-provided site mapping
         # must exist before any account can read them.
         if observation_site is not None and not _SITE.fullmatch(observation_site):
             raise RelayConfigError("INVALID_OBSERVATION_SITE")
         self.observation_site = observation_site
-        parsed = urlsplit(upstream)
-        if (parsed.scheme != "http" or parsed.username or parsed.password or
-                parsed.path not in ("", "/") or parsed.query or
-                parsed.fragment or not parsed.hostname or not parsed.port):
-            raise RelayConfigError("OBSERVATION_UPSTREAM_PRIVATE_HTTP_REQUIRED")
-        try:
-            address = ipaddress.ip_address(parsed.hostname)
-        except ValueError:
-            raise RelayConfigError("OBSERVATION_UPSTREAM_IP_REQUIRED") from None
-        if address.version != 4 or not (
-                address.is_loopback or address in ipaddress.ip_network(
-                    "100.64.0.0/10")):
-            raise RelayConfigError("OBSERVATION_UPSTREAM_NOT_LOCAL_OR_TAILNET")
+        address, upstream_port = self._private_endpoint(upstream)
+        if records_upstream is not None and observation_site is None:
+            raise RelayConfigError("READONLY_SIDECAR_REQUIRES_PINNED_SITE")
+        records_address, records_port = (
+            self._private_endpoint(records_upstream)
+            if records_upstream is not None else (address, upstream_port)
+        )
 
         source = Path(token_file)
         info = source.lstat()
@@ -80,8 +75,27 @@ class AccountObservationRelay:
                 not re.fullmatch(rb"[\x21-\x7e]+", token)):
             raise RelayConfigError("OBSERVATION_TOKEN_INVALID")
         self.host = str(address)
-        self.port = parsed.port
+        self.port = upstream_port
+        self.records_host = str(records_address)
+        self.records_port = records_port
         self._token = token.decode("ascii")
+
+    @staticmethod
+    def _private_endpoint(origin: str) -> tuple[ipaddress.IPv4Address, int]:
+        parsed = urlsplit(origin)
+        if (parsed.scheme != "http" or parsed.username or parsed.password or
+                parsed.path not in ("", "/") or parsed.query or
+                parsed.fragment or not parsed.hostname or not parsed.port):
+            raise RelayConfigError("OBSERVATION_UPSTREAM_PRIVATE_HTTP_REQUIRED")
+        try:
+            address = ipaddress.ip_address(parsed.hostname)
+        except ValueError:
+            raise RelayConfigError("OBSERVATION_UPSTREAM_IP_REQUIRED") from None
+        if address.version != 4 or not (
+                address.is_loopback or address in ipaddress.ip_network(
+                    "100.64.0.0/10")):
+            raise RelayConfigError("OBSERVATION_UPSTREAM_NOT_LOCAL_OR_TAILNET")
+        return address, parsed.port
 
     def forward(self, method: str, path: str,
                 data: bytes = b"") -> tuple[int, dict]:
@@ -91,7 +105,9 @@ class AccountObservationRelay:
             raise RelayUnavailable("UNSUPPORTED_ROUTE")
         if len(data) > _MAX_REQUEST:
             raise RelayUnavailable("REQUEST_TOO_LARGE")
-        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+        host = self.records_host if records_route else self.host
+        port = self.records_port if records_route else self.port
+        conn = http.client.HTTPConnection(host, port, timeout=10)
         try:
             conn.request(
                 method, path, body=data if method == "POST" else None,
