@@ -29,7 +29,7 @@ _MAX_REQUEST = 256 * 1024
 _MAX_RESPONSE = 512 * 1024
 _PATHS = frozenset({("POST", "/v1/edge/batch"),
                     ("GET", "/v1/edge/keys")})
-_OBSERVATIONS = re.compile(r"^/v1/edge/records\?after=(0|[1-9][0-9]{0,18})$")
+_OBSERVATIONS = re.compile(r"^/v1/edge/records\?(?:after=(0|[1-9][0-9]{0,18})|latest=1)$")
 _SITE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 

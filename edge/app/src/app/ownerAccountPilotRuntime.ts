@@ -1,13 +1,14 @@
 // ORUN S6B pilot account runtime: holds account bearer in process memory only.
 // Navigating between app screens does not create another auth session.
 // No localStorage, preferences, SQLite, browser cache or URL credential writes.
-// This runtime does not yet automatically sync herd, zones or device commands.
+// Server positions sync automatically while signed in: newest position of
+// every tracker first, then history from the saved cursor (1. adım).
 import {
   OwnerAccountClient, type AccountIdentity,
 } from "./ownerAccountClient.ts";
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
-import { AccountObservationMirror, type ObservationMirrorResult } from "./accountObservationMirror.ts";
+import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import type { Point } from "../core/points.ts";
 import {
   AccountSharedMirror, type SharedMirrorSnapshot, type MirrorPullResult,
@@ -37,6 +38,8 @@ export function attachPilotAccountObservationMirror(
   observationMirror = mirror;
   observationsChanged = onChanged;
   observationPrepareKeys = prepareKeys;
+  // Signed in before the phone ledger was ready: start the first sync now.
+  if (autoTimer !== null) backgroundSync();
 }
 
 /** Only active account's verified remote records; logout reveals none. */
@@ -45,24 +48,102 @@ export async function pilotAccountObservationPoints(): Promise<Point[]> {
   return observationMirror.points(client);
 }
 
-/** Manual user action, bounded 4x64 records per request. Remote AEAD evidence
- * is not considered a local phone delivery, even after durable mirror COMMIT.
- */
-export async function pilotAccountDownloadObservations(): Promise<ObservationMirrorResult> {
-  const account = client;
-  const mirror = observationMirror;
-  if (!account || !pilotAccountStatus())
-    throw new Error("Önce hesabınla giriş yapmalısın.");
-  if (!mirror || !observationPrepareKeys)
-    throw new Error("Telefonun SQLite defteri henüz hazır değil.");
-  // Keys arrive through the protected account relay. Do not assume the
-  // phone has per-epoch read keys merely because it can sign in.
-  await observationPrepareKeys();
-  if (client !== account || !pilotAccountStatus())
-    throw new Error("Hesap değişti; sunucu konumları alınmadı.");
-  const result = await mirror.pullAvailable(account);
-  observationsChanged?.();
-  return result;
+export interface ObservationSyncResult {
+  /** Trackers whose newest measured position was checked. */
+  latest: number;
+  /** History records verified in this run. */
+  history: number;
+  /** True only if the run stopped early (account change, time limit). */
+  more: boolean;
+  at: number;
+}
+export interface ObservationSyncState {
+  running: boolean;
+  last: ObservationSyncResult | null;
+  error: string | null;
+}
+
+const AUTO_SYNC_MS = 60_000;
+const MAX_ROUNDS = 50;          // 50 x 64 pages x 64 records per run
+let syncRun: Promise<ObservationSyncResult> | null = null;
+let syncState: ObservationSyncState = { running: false, last: null, error: null };
+let autoTimer: ReturnType<typeof setInterval> | null = null;
+let onVisible: (() => void) | null = null;
+const syncListeners = new Set<() => void>();
+
+function setSync(next: Partial<ObservationSyncState>): void {
+  syncState = { ...syncState, ...next };
+  for (const fn of syncListeners) fn();
+}
+export function pilotObservationSyncState(): ObservationSyncState { return syncState; }
+export function onPilotObservationSync(fn: () => void): () => void {
+  syncListeners.add(fn);
+  return () => { syncListeners.delete(fn); };
+}
+
+/** Newest position of every tracker first, then history from the saved
+ * cursor until the server has nothing newer. One run at a time; a second
+ * caller joins the running one. Remote AEAD evidence is never a local
+ * phone delivery, even after durable mirror COMMIT. */
+export function pilotAccountSync(): Promise<ObservationSyncResult> {
+  if (syncRun) return syncRun;
+  const run = (async (): Promise<ObservationSyncResult> => {
+    const account = client;
+    const mirror = observationMirror;
+    if (!account || !pilotAccountStatus())
+      throw new Error("Önce hesabınla giriş yapmalısın.");
+    if (!mirror || !observationPrepareKeys)
+      throw new Error("Telefonun SQLite defteri henüz hazır değil.");
+    // Keys arrive through the protected account relay. Do not assume the
+    // phone has per-epoch read keys merely because it can sign in.
+    await observationPrepareKeys();
+    const same = () => client === account && !!pilotAccountStatus();
+    if (!same()) throw new Error("Hesap değişti; sunucu konumları alınmadı.");
+    const latest = await mirror.pullLatest(account);
+    if (latest.added) observationsChanged?.();
+    let history = 0, more = true;
+    for (let round = 0; round < MAX_ROUNDS && more && same(); round++) {
+      const r = await mirror.pullAvailable(account);
+      history += r.received;
+      more = r.more;
+      if (r.received) observationsChanged?.();
+    }
+    return { latest: latest.received, history, more, at: Date.now() };
+  })();
+  syncRun = run;
+  setSync({ running: true });
+  run.then(
+    last => setSync({ running: false, last, error: null }),
+    e => setSync({ running: false, error: e instanceof Error ? e.message : String(e) }),
+  ).finally(() => { if (syncRun === run) syncRun = null; });
+  return run;
+}
+
+/** Kept for callers of the old manual button. */
+export const pilotAccountDownloadObservations = pilotAccountSync;
+
+function backgroundSync(): void {
+  if (!client || !pilotAccountStatus() || !observationMirror) return;
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+  void pilotAccountSync().catch(() => { /* shown via pilotObservationSyncState */ });
+}
+
+function startAutoSync(): void {
+  stopAutoSync();
+  backgroundSync();
+  autoTimer = setInterval(backgroundSync, AUTO_SYNC_MS);
+  if (typeof document !== "undefined") {
+    onVisible = () => { if (document.visibilityState === "visible") backgroundSync(); };
+    document.addEventListener("visibilitychange", onVisible);
+  }
+}
+
+function stopAutoSync(): void {
+  if (autoTimer !== null) clearInterval(autoTimer);
+  autoTimer = null;
+  if (onVisible && typeof document !== "undefined")
+    document.removeEventListener("visibilitychange", onVisible);
+  onVisible = null;
 }
 
 function readyAccountMirror(): { account: OwnerAccountClient; mirror: AccountSharedMirror } {
@@ -124,6 +205,7 @@ export async function pilotPasswordLogin(
     const user = await next.signInWithPassword(username, password);
     client = next;
     observationsChanged?.();
+    startAutoSync();
     return user;
   } finally {
     busy = false;
@@ -147,6 +229,7 @@ export async function pilotAccountLogin(
     const user = await next.signIn(device, username, password);
     client = next;
     observationsChanged?.();
+    startAutoSync();
     return user;
   } finally {
     busy = false;
@@ -177,6 +260,8 @@ export async function pilotAccountLogout(): Promise<void> {
   if (busy) throw new Error("Hesap oturum işlemi devam ediyor.");
   const prior = client;
   client = null;
+  stopAutoSync();
+  setSync({ running: false, last: null, error: null });
   observationsChanged?.();
   if (prior) await prior.signOut();
 }

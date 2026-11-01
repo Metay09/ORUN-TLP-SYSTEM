@@ -49,7 +49,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "backend"))  # supports python -m unittest and direct script launch
 sys.path.insert(0, str(ROOT))
 from backend.observation_read_page import (  # noqa: E402
-    MAX_CURSOR, ObservationReadUnavailable, read_page,
+    MAX_CURSOR, ObservationReadUnavailable, read_latest, read_page,
 )
 import orun_edge_bench as eb  # noqa: E402  (ledger loader, map page, points)
 import orun_credentials as oc  # noqa: E402  (step 3A registry)
@@ -232,13 +232,15 @@ def make_server(backend: Backend, host: str, port: int, token: str) -> Threading
                 # cursor. No plaintext/traffic key or bulk history export.
                 if not authorized(self.headers):
                     return self._json(401, {"error": "token"})
-                match = re.fullmatch(
+                latest = self.path == "/v1/edge/records?latest=1"
+                match = None if latest else re.fullmatch(
                     r"/v1/edge/records\?after=(0|[1-9][0-9]{0,18})",
                     self.path)
-                if not match or int(match.group(1)) > MAX_CURSOR:
+                if not latest and (not match or int(match.group(1)) > MAX_CURSOR):
                     return self._json(400, {"error": "invalid_cursor"})
                 try:
-                    page = read_page(backend.db_path, int(match.group(1)))
+                    page = (read_latest(backend.db_path) if latest
+                            else read_page(backend.db_path, int(match.group(1))))
                 except ObservationReadUnavailable:
                     return self._json(503, {"error": "observation_read_unavailable"})
                 return self._json(200, page)
