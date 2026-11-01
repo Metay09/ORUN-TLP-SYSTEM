@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -135,6 +136,22 @@ class ReadonlySidecarTests(unittest.TestCase):
         self.assertEqual(relay.host, "127.0.0.1")
         self.assertEqual(relay.port, legacy.server_port)
         self.assertEqual(relay.records_port, self.readonly.server_port)
+
+    def test_live_readonly_ledger_opt_in(self):
+        path = os.environ.get("ORUN_OBSERVATION_READONLY_DB")
+        if not path:
+            self.skipTest("real verified ledger not supplied")
+        source = Path(path).expanduser()
+        self.assertTrue(source.is_file())
+        sidecar = make_readonly_server(source, self.TOKEN)
+        self.serve(sidecar)
+        route = "/v1/edge/records?after=0"
+        self.assertEqual(self.request(sidecar, "GET", route)[0], 401)
+        status, page = self.request(sidecar, "GET", route, self.TOKEN)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(page["records"]), 64)
+        self.assertEqual(page["cursor"], 64)
+        self.assertTrue(page["has_more"])
 
     def test_bad_split_config_is_rejected(self):
         url = "http://127.0.0.1:8090"
