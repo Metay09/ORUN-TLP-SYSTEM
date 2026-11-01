@@ -1,5 +1,19 @@
 # ORUN TLP - Project Instructions
 
+## Current owner plan (2026-11-01) — read first
+
+The only active work list is `docs/product/ORUN_UYGULAMA_KAPSAMI.md`
+(ORUN v1, steps 0–9). Work only on the next unfinished step there.
+
+- One step = one PR, merged to `main` the same day or closed. Never branch
+  from an unmerged branch.
+- Every step ends with a change the owner can see in the app or on a device.
+  Do not open preflight / shadow / rehearsal / readiness-gate steps.
+- Anything not on that list is out of v1 scope: do not build or prepare it.
+- Where older text in this file or in architecture docs implies extra
+  ceremony, the plan above wins; safety rules for flash, RF and keys still
+  apply.
+
 ## Project
 
 ORUN TLP is an open-source low-power field network for tracking, sensing,

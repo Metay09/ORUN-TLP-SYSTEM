@@ -104,6 +104,13 @@ class ProductRecordStore {
       uint16_t& count) const;
 
   bool requestPrepare();
+#ifdef ORUN_SF5L0_TRACKER
+  // Development Tracker ONLY: explicitly discard the entire product
+  // ObservationStore (including the durable exact-object cache).
+  // Never touches SecurityStore, ConfigStore, history or Gateway grants.
+  // Caller must stop tracking and the bench drain; reboot follows success.
+  bool requestBenchClear();
+#endif
   bool preparing() const { return prepare_state_ != PrepareState::kIdle; }
   bool takePrepareResult(bool& success);
 
@@ -137,6 +144,7 @@ class ProductRecordStore {
   void startNext();
   void runMaintenance();
   void finishPending(bool stored, const osf::RecordIdentity& identity);
+  bool requestRegionErase(bool allow_healthy);
   void drivePrepare();
   void endPrepare(bool success);
   CacheSubmit startCache(bool allow_control_maintenance);

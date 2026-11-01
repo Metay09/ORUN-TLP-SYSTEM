@@ -9,6 +9,7 @@ import { fmt, tr } from "./i18n/tr.ts";
 import { agingLimit, batteryOf, epochMs, lostLimit, periodMs } from "./herd.ts";
 import { coverageAt, type Coverage } from "./coverage.ts";
 import type { Animal, AppEvent, EventKind, ServerView, Severity, Station } from "./model.ts";
+import type { Fence } from "./zones.ts";
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -24,6 +25,10 @@ export interface EventInput {
   journal: BookLine[];
   coverage: Coverage | null;
   now: number;
+  // Kept as optional arguments for compatibility with the app model. Neither
+  // may authorize synthesizing a geofence warning from positions.
+  fence?: Fence;
+  grazing?: boolean;
 }
 
 function ev(kind: EventKind, severity: Severity, a: Animal | null, at: number, end: number | null,
@@ -41,6 +46,10 @@ function animalEvents(a: Animal, cov: Coverage | null, now: number): AppEvent[] 
   const from = now - HISTORY_DAYS * DAY;
   const pts = a.points.filter((p) => epochMs(p.time) >= from);
   if (!pts.length) return out;
+
+  // The TRACKER owns confirmed geofence transitions. Never infer a second
+  // OUTSIDE alarm from ordinary POSITION records in the phone. A genuine
+  // signed EVENT can be shown when its transport/parser is implemented.
 
   // Silent gaps between records, and the open gap after the newest one.
   for (let i = 1; i < pts.length; i++) {

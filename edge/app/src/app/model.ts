@@ -17,7 +17,7 @@ export type BatteryLevel = "good" | "low" | "critical" | "unknown";
 export type Severity = "danger" | "warn" | "info" | "ok";
 
 // Ordered for the herd list: what needs a look first (scope §5).
-export type AnimalStatus = "battery-critical" | "lost" | "silent" | "aging" | "battery-low" | "ok" | "waiting";
+export type AnimalStatus = "battery-critical" | "lost" | "out" | "silent" | "aging" | "battery-low" | "ok" | "waiting";
 
 export type Sex = "female" | "male" | "";
 
@@ -57,6 +57,10 @@ export interface Animal {
   battery: BatteryLevel;
   batteryPercent: number | null;
   activeShare: number | null; // last record: share of the period in motion
+  zone: string | null;      // name of the zone holding the last position (null: outside all, or no zones)
+  outside: boolean;         // confirmed outside every active zone (2 of the last 3 records)
+  outSince: number | null;  // when the current outside period began (record time)
+  grazing: boolean;         // serbest otlatma is on: outside is allowed, not an alarm
   attention: number;        // sort key, higher first
 }
 
@@ -112,7 +116,7 @@ export interface ServerView {
 }
 
 export type EventKind =
-  | "silent" | "lost" | "battery-low" | "battery-critical" | "still"
+  | "silent" | "lost" | "out" | "battery-low" | "battery-critical" | "still"
   | "station-full" | "server-down" | "link" | "records" | "handoff" | "upload" | "keys" | "note";
 
 export interface AppEvent {
@@ -129,4 +133,4 @@ export interface AppEvent {
   alert: boolean;          // true: a warning; false: a book (Defter) line
 }
 
-export interface Zone { id: string; name: string; ring: [number, number][]; }
+export type { Zone } from "./zones.ts";

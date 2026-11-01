@@ -17,6 +17,7 @@ import { DeviceScreen } from "./features/network/DeviceScreen.tsx";
 import { NetworkScreen } from "./features/network/NetworkScreen.tsx";
 import { SettingsScreen } from "./features/settings/SettingsScreen.tsx";
 import { ZonesScreen } from "./features/zones/ZonesScreen.tsx";
+import { ZoneScreen } from "./features/zones/ZoneScreen.tsx";
 
 function useTheme(theme: Theme, sun: boolean): void {
   useEffect(() => {
@@ -47,7 +48,7 @@ export function App() {
   useTheme(model.prefs.theme, model.prefs.sun);
   const [tab, setTabState] = useState<Tab>("map");
   const [stack, setStack] = useState<Route[]>([]);
-  const [focus, setFocus] = useState<MapFocus>({ selected: null, window: null, key: 0 });
+  const [focus, setFocus] = useState<MapFocus>({ selected: null, window: null, zone: null, draw: null, key: 0 });
 
   const setTab = useCallback((t: Tab) => { setStack([]); setTabState(t); }, []);
   const push = useCallback((r: Route) => setStack((s) => [...s, r]), []);
@@ -55,9 +56,20 @@ export function App() {
   const showOnMap = useCallback((id: string | null, window: { from: number; to: number } | null = null) => {
     setStack([]);
     setTabState("map");
-    setFocus((f) => ({ selected: id, window, key: f.key + 1 }));
+    setFocus((f) => ({ selected: id, window, zone: null, draw: null, key: f.key + 1 }));
   }, []);
-  const nav = useMemo<Nav>(() => ({ tab, stack, setTab, push, pop, showOnMap, focus }), [tab, stack, setTab, push, pop, showOnMap, focus]);
+  const showZone = useCallback((id: string) => {
+    setStack([]);
+    setTabState("map");
+    setFocus((f) => ({ selected: null, window: null, zone: id, draw: null, key: f.key + 1 }));
+  }, []);
+  const drawZone = useCallback((id: string | null) => {
+    setStack([]);
+    setTabState("map");
+    setFocus((f) => ({ selected: null, window: null, zone: id, draw: { zone: id }, key: f.key + 1 }));
+  }, []);
+  const nav = useMemo<Nav>(() => ({ tab, stack, setTab, push, pop, showOnMap, showZone, drawZone, focus }),
+    [tab, stack, setTab, push, pop, showOnMap, showZone, drawZone, focus]);
 
   // Android back: the top-most open thing first, then back to the map, then
   // to the background (connections keep running there).
@@ -97,6 +109,7 @@ export function App() {
               {r.to === "animal" && <AnimalScreen id={r.id} />}
               {r.to === "device" && <DeviceScreen id={r.id} />}
               {r.to === "find" && <FindScreen id={r.id} />}
+              {r.to === "zone" && <ZoneScreen id={r.id} />}
               {r.to === "settings" && <SettingsScreen />}
             </div>
           ))}

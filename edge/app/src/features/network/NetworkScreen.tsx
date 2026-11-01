@@ -6,9 +6,10 @@ import { coverageSummary } from "../../app/coverage.ts";
 import { fmt, tr } from "../../app/i18n/tr.ts";
 import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
-import { Bar, Card, Cell, DemoFlag, Header, KV, Section, Toggle } from "../../ds/components.tsx";
+import { Bar, Card, Cell, DemoFlag, Header, KV, Section } from "../../ds/components.tsx";
 import { startPosition, usePosition } from "../map/position.ts";
-import { serverWords, stationWords } from "./words.ts";
+import { phonePathWords, serverWords, stationWords } from "./words.ts";
+import { pilotAccountStatus, pilotAccountDownloadObservations } from "../../app/ownerAccountPilotRuntime.ts";
 
 export function NetworkScreen() {
   const m = useApp();
@@ -16,13 +17,17 @@ export function NetworkScreen() {
   const pos = usePosition();
   const st = m.station, sv = m.server, s = m.snap;
   const words = stationWords(st, s);
-  const sw = serverWords(sv);
+  const path = phonePathWords(st, s);
+  const hasAccount = Boolean(pilotAccountStatus());
+  const sw = serverWords({ ...sv, configured: hasAccount });
   const fresh = m.herd.filter((a) => a.freshness === "fresh").length;
   const linkOn = st.link !== "none";
   const cov = coverageSummary(m.coverage.cells);
   const held = st.held ?? 0;
   // "Şu an istasyonun yanındayım": mark as soon as the phone knows where it is.
   const [marking, setMarking] = useState(false);
+  const [remoteBusy, setRemoteBusy] = useState(false);
+  const [remoteResult, setRemoteResult] = useState<string | null>(null);
   useEffect(() => {
     if (marking && pos.pos) { m.actions.markStation({ lat: pos.pos.lat, lon: pos.pos.lon }); setMarking(false); }
   }, [marking, pos.pos, m.actions]);
@@ -35,23 +40,63 @@ export function NetworkScreen() {
       <Section title={tr.network.chain} />
       <Card>
         <div className="chain">
-          <Node icon={<CellSignalFull size={22} />} tone={fresh ? "fresh" : ""} title={tr.network.nodes.collars} sub={tr.network.collarsLine(m.devices.length, fresh)} />
-          <span className={"wire " + (st.phase === "connected" ? "ok" : linkOn ? "wait" : "")} />
-          <Node icon={<WifiHigh size={22} />} tone={st.phase === "connected" ? "fresh" : linkOn ? "aging" : ""} title={tr.network.nodes.station}
-            sub={st.phase === "connected" ? tr.network.stationHeld(held) : tr.network.stationOff} />
-          <span className={"wire " + (st.phase === "connected" ? "ok" : "")} />
-          <Node icon={<DeviceMobile size={22} />} tone="fresh" title={tr.network.nodes.phone} sub={tr.network.phoneLine(s.records ?? 0)} />
+          <Node icon={<CellSignalFull size={22} />} tone={fresh ? "fresh" : ""} title={tr.network.nodes.collars}
+            sub={`${tr.network.collarsLine(m.devices.length, fresh)} · telefondaki kayıtlar`} />
+          <span className={"wire " + (path.stationConnected ? "ok" : linkOn ? "wait" : "")} />
+          <Node icon={<WifiHigh size={22} />} tone={path.stationConnected ? "fresh" : linkOn ? "aging" : ""}
+            title={tr.network.nodes.station}
+            sub={path.stationConnected ? (st.held === null ? "İstasyon kuyruğu bilinmiyor" : tr.network.stationHeld(st.held)) : path.stationText} />
+          <span className={"wire " + (path.stationConnected && s.ready ? "ok" : "")} />
+          <Node icon={<DeviceMobile size={22} />} tone={path.phoneTone} title="Bu telefon" sub={path.phoneText} />
           <span className={"wire " + (sw.tone === "ok" ? "ok" : sw.tone === "none" ? "" : "wait")} />
-          <Node icon={<CloudCheck size={22} />} tone={sw.tone === "ok" ? "fresh" : sw.tone === "none" ? "" : "aging"} title={tr.network.nodes.server}
-            sub={sv.configured ? tr.network.serverLine(sv.pending ?? 0) : tr.network.serverOff} />
+          <Node icon={<CloudCheck size={22} />}
+            tone={sw.tone === "ok" ? "fresh" : sw.tone === "none" ? "" : "aging"}
+            title="Sunucu (telefon)" sub={hasAccount ? sw.text : "Hesaba giriş yapılmadı"} />
         </div>
-        <p className="fine" style={{ padding: "4px 16px 14px", margin: 0 }}>{tr.network.chainHelp}</p>
+        <p className="fine" style={{ padding: "4px 16px 14px", margin: 0 }}>
+          Bu görünüm yalnız bu telefonun bağlantısını ve kendi kayıt defterini gösterir. Bilgisayardaki PC Edge ayrı aktarım yapabilir.{" "}
+          {tr.network.chainHelp}
+        </p>
+      </Card>
+
+      <Section title="Bağımsız bilgisayar yolu" />
+      <Card>
+        <Cell lead={<span className="ic"><Usb size={22} /></span>} title="Gateway → PC Edge → Sunucu"
+          sub="Bilgisayar USB ile veri aktarabilir; telefonun istasyona bağlı olması gerekmez." wrapSub />
+        <KV k="PC Edge anlık durumu">Bu telefondan doğrulanamıyor</KV>
+        <p className="fine" style={{ padding: "8px 16px 14px", margin: 0 }}>
+          Bilgisayarın sunucuya gönderdiği kayıtlar, bu telefonun yerel kayıt ve teslim sayaçlarına dahil değildir.
+          Sunucudan tasmaların ortak geçmişini telefona çekme işlevi ayrıca etkinleştirilmelidir.
+        </p>
+      </Card>
+
+      <Section title="Sunucudan konumları al" />
+      <Card pad>
+        <p className="fine" style={{ margin: 0 }}>
+          Bilgisayardaki PC Edge'in sunucuya aktardığı tasma konumlarını hesap yetkisiyle
+          telefona indirir. Her kayıt yeniden doğrulanır ve çevrimdışı görüntüleme için saklanır.
+          Telefonun istasyona bağlanması gerekmez. Bir işlemde en fazla 256 kayıt alınır.
+        </p>
+        <button className="btn primary wide" disabled={!hasAccount || !s.ready || remoteBusy}
+          onClick={() => {
+            setRemoteBusy(true);
+            setRemoteResult(null);
+            void pilotAccountDownloadObservations().then(
+              r => setRemoteResult(`${r.received} kayıt kontrol edildi · ${r.pages} sayfa · ${r.more ? "Daha eski kayıtlar var, yeniden al" : "Sunucudaki sayfalar tamamlandı"}`),
+              e => setRemoteResult(e instanceof Error ? e.message : String(e)),
+            ).finally(() => setRemoteBusy(false));
+          }}>
+          <CloudCheck size={20} />
+          {remoteBusy ? "Konumlar doğrulanıyor…" : "Sunucudan konumları al"}
+        </button>
+        {!hasAccount && <p className="fine">Önce hesabınla giriş yap.</p>}
+        {remoteResult && <p className="fine" role="status">{remoteResult}</p>}
       </Card>
 
       <Section title={tr.network.station} />
       <Card>
         <Cell lead={<span className={"ic " + (words.dot === "ok" ? "fresh" : words.dot === "wait" ? "aging" : "")}><WifiHigh size={22} /></span>}
-          title={words.text} sub={st.detail && st.phase !== "connected" ? st.detail : st.id ? `${tr.station.id} ${st.id}` : undefined} />
+          title={words.text} sub={st.detail && st.phase !== "connected" ? st.detail : undefined} />
         {st.capacity !== null && (
           <div style={{ padding: "4px 16px 14px" }} className="stack">
             <div className="row" style={{ justifyContent: "space-between" }}><span className="sm">{tr.station.memory}</span><span className="sm strong">{fmt.num(held)} / {fmt.num(st.capacity)}</span></div>
@@ -59,13 +104,13 @@ export function NetworkScreen() {
           </div>
         )}
         <div className="stack" style={{ padding: "4px 16px 14px" }}>
-          {!linkOn ? (
+          {!linkOn && (
             <>
               <button className="btn primary wide" disabled={!s.ready} onClick={() => m.source.connectBle(false)}><Bluetooth size={20} />{tr.station.connectBle}</button>
               <button className="btn wide" disabled={!s.ready} onClick={() => m.source.connectUsb()}><Usb size={20} />{tr.station.connectUsb}</button>
               <button className="btn quiet wide" disabled={!s.ready} onClick={() => m.source.connectBle(true)}>{tr.station.pickOther}</button>
             </>
-          ) : <button className="btn danger wide" onClick={() => m.source.disconnect()}>{tr.station.disconnect}</button>}
+          )}
           <span className="fine">{tr.station.background}</span>
         </div>
         {st.id && (
@@ -79,6 +124,11 @@ export function NetworkScreen() {
               <span className="fine">{marking && !pos.pos ? tr.find.noPhone : tr.station.markHelp}</span>
             </div>
           </>
+        )}
+        {linkOn && (
+          <div style={{ padding: "0 16px 14px" }}>
+            <button className="btn quiet small" style={{ color: "var(--alarm-t)" }} onClick={() => m.source.disconnect()}>{tr.station.disconnect}</button>
+          </div>
         )}
       </Card>
 
@@ -122,30 +172,37 @@ function Node({ icon, tone, title, sub }: { icon: ReactNode; tone: string; title
 
 function ServerCard() {
   const m = useApp();
+  const nav = useNav();
   const sv = m.server;
-  const [url, setUrl] = useState(sv.url);
-  const [token, setToken] = useState(sv.token);
-  const [auto, setAuto] = useState(sv.auto);
-  const dirty = url !== sv.url || token !== sv.token || auto !== sv.auto;
-  const words = serverWords(sv);
+  const account = pilotAccountStatus();
   return (
     <Card>
-      <p className="sm" style={{ padding: "14px 16px 4px", margin: 0 }}>{words.text}</p>
-      <div style={{ paddingTop: 10 }}>
-        <label className="lab">{tr.server.address}
-          <input className="inp" type="url" inputMode="url" autoCapitalize="off" autoCorrect="off" disabled={m.demo}
-            placeholder="http://100.114.36.9:8090" value={url} onChange={(e) => setUrl(e.target.value)} />
-        </label>
-        <label className="lab">{tr.server.key}
-          <input className="inp" type="password" autoCapitalize="off" autoCorrect="off" disabled={m.demo} value={token} onChange={(e) => setToken(e.target.value)} />
-        </label>
+      <div className="stack" style={{ padding: 16 }}>
+        <KV k="ORUN hesabı">{account ? account.username : "Giriş yapılmadı"}</KV>
+        <p className="sm" style={{ margin: 0 }}>
+          {account
+            ? "Sunucu adresi ve teknik anahtar otomatik yönetilir. Tasma kayıtları hesap oturumuyla güvenli bağlantıdan gönderilir."
+            : "Sunucu bağlantısı için yalnız ORUN hesabınla giriş yap. Ayrı adres veya teknik anahtar gerekmiyor."}
+        </p>
+        {sv.lastOk && <KV k="Son başarılı sunucu erişimi">{sv.lastOk}</KV>}
+        {sv.uploaded !== null && <KV k="Bu telefondan onaylı kayıt">{sv.uploaded}</KV>}
+        {sv.pending !== null && <KV k="Bu telefonda bekleyen kayıt">{sv.pending}</KV>}
+        <p className="fine" style={{ margin: 0 }}>Bunlar yalnız bu telefonun sayaçlarıdır; PC Edge veya başka telefonların toplamı değildir.</p>
+        {sv.error && <p role="alert" className="sm t-aging">
+          Son aktarım hatası: {sv.error}
+        </p>}
+        {account ? (
+          <button className="btn primary" type="button"
+            disabled={sv.busy || m.demo} onClick={() => void m.source.sync(true)}>
+            {sv.busy ? "Gönderiliyor" : "Şimdi eşitle"}
+          </button>
+        ) : (
+          <button className="btn primary" type="button"
+            onClick={() => nav.push({ to: "settings" })}>
+            Hesabımla giriş yap
+          </button>
+        )}
       </div>
-      <Cell title={tr.server.auto} trail={<Toggle on={auto} onChange={setAuto} label={tr.server.auto} />} />
-      <div className="btns">
-        <button className="btn" disabled={!dirty || m.demo} onClick={() => m.source.saveServer(url, token, auto)}>{tr.common.save}</button>
-        <button className="btn primary" disabled={!sv.configured || sv.busy} onClick={() => m.source.sync(true)}>{sv.busy ? tr.server.sending : tr.server.sendNow}</button>
-      </div>
-      {sv.error && <p className="sm t-aging" style={{ padding: "0 16px 14px", margin: 0 }}>{tr.server.lastError(sv.error)}</p>}
     </Card>
   );
 }
