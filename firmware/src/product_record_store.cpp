@@ -400,6 +400,22 @@ void ProductRecordStore::runMaintenance() {
 }
 
 bool ProductRecordStore::requestPrepare() {
+  return requestRegionErase(false);
+}
+
+#ifdef ORUN_SF5L0_TRACKER
+bool ProductRecordStore::requestBenchClear() {
+  // Deliberate, bench-image-only wipe of our own healthy observation region.
+  // Never reinterpret foreign, faulted, or unmounted data as test records.
+  if (!mounted_ || owner_ != product_region::Owner::kObservation ||
+      decision_ != product_region::MountDecision::kMount ||
+      !store_.ready() || store_.faulted() || outcome_ready_)
+    return false;
+  return requestRegionErase(true);
+}
+#endif
+
+bool ProductRecordStore::requestRegionErase(bool allow_healthy) {
   // Keep destructive service work out of every owner job and unconsumed
   // cache outcome, including failures that have faulted the mounted store.
   if (preparing() || pending_ || cache_pending_ || cache_outcome_ready_ ||
@@ -409,7 +425,7 @@ bool ProductRecordStore::requestPrepare() {
   const bool leftovers =
       decision_ == product_region::MountDecision::kNeedsPreparation;
   const bool faulted_store = mounted_ && store_.faulted();
-  if (!leftovers && !faulted_store) return false;
+  if (!leftovers && !faulted_store && !allow_healthy) return false;
   if (flash_.hasUnreconciledMutation()) return false;
   mounted_ = false;
   prepare_page_ = 0;

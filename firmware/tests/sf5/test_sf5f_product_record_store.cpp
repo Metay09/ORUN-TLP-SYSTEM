@@ -908,9 +908,86 @@ void testFillAndResetEverywhere() {
   printf("  reset/torn write at %u write points recovered\n", cuts);
 }
 
+
+#ifdef ORUN_SF5L0_TRACKER
+void testBenchClear(bool async) {
+  FakeFlash flash;
+  flash.async = async;
+  FixedIncarnation source;
+  ProductRecordStore records(flash, kPages, &source);
+  records.begin(kDevice, kTracker);
+  assert(records.mounted() && records.store().ready());
+  assert(!records.requestPrepare());  // Production path remains protected.
+
+  assert(records.submitPeriodic(period(1)) ==
+         ProductRecordStore::Submit::kAccepted);
+  assert(!records.requestBenchClear());  // Pending append must be settled.
+  ProductRecordStore::Outcome first{};
+  bool observed = false;
+  for (unsigned i = 0; i < 10000U; ++i) {
+    records.poll();
+    if (records.takeOutcome(first)) { observed = true; break; }
+  }
+  assert(observed && first.stored && first.sequence == 1U);
+
+  const auto exact = protectedFixture(records, 1);
+  assert(records.submitExactCache(exact) ==
+         ProductRecordStore::CacheSubmit::kStarted);
+  assert(!records.requestBenchClear());  // In-flight exact-byte cache.
+  settleExactCache(records, exact, true);
+  checkExact(records, exact, true);
+  assert(!records.requestPrepare());     // Still cannot wipe the normal store.
+
+  flash.unreconciled = true;
+  assert(!records.requestBenchClear());  // Unknown flash outcome fail-closed.
+  flash.unreconciled = false;
+
+  assert(records.requestBenchClear());
+  assert(!records.requestBenchClear());  // Never start a second erase.
+  bool result = false, completed = false;
+  for (unsigned i = 0; i < 20000U; ++i) {
+    records.poll();
+    if (records.takePrepareResult(result)) { completed = true; break; }
+  }
+  assert(completed && result);
+  assert(!records.mounted());
+  for (uint8_t byte : flash.bytes) assert(byte == 0xFFU);
+
+  // On the real Tracker, NrfObservationIncarnationSource generates a fresh
+  // random incarnation at reboot. The fixed host source verifies fresh
+  // sequence/capacity here without making a false RNG claim.
+  flash.async = false;
+  ProductRecordStore fresh(flash, kPages, &source);
+  fresh.begin(kDevice, kTracker);
+  assert(fresh.mounted() && fresh.census().erased == kPages);
+  uint32_t retained = 0;
+  uint16_t cached = 0;
+  assert(fresh.store().retainedCount(retained) && retained == 0U);
+  assert(fresh.store().exactObjectCount(cached) && cached == 0U);
+  assert(store(fresh, 1).sequence == 1U);
+
+  // Foreign product-region formats cannot be erased by this bench API.
+  FakeFlash foreign;
+  const uint8_t foreign_magic[4] = {'X', 'X', 'X', 'X'};
+  memcpy(foreign.bytes.data(), foreign_magic, sizeof(foreign_magic));
+  ProductRecordStore wrong(foreign, kPages, &source);
+  wrong.begin(kDevice, kTracker);
+  assert(!wrong.mounted() && !wrong.requestBenchClear());
+  assert(foreign.erase_calls == 0U);
+}
+#endif
+
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef ORUN_SF5L0_TRACKER
+  if (argc == 2 && strcmp(argv[1], "--bench-clear-only") == 0) {
+    testBenchClear(false);
+    testBenchClear(true);
+    puts("SF5L0 bench-only product clear: PASS");
+    return 0;
+  }
+#endif
   testCustodySnapshotReadOnly(false);
   testCustodySnapshotReadOnly(true);
   testCustodyCandidatePreflightReadOnly(false);

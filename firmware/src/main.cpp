@@ -1491,6 +1491,21 @@ void printBenchDrain() {
       tracker_product_tx.blocked() ? "BLOCKED"
           : (tracker_product_tx.sent() ? "SENT" : "ARMED"),
       counted ? static_cast<long>(retained) : -1L);
+  // Read-only failure attribution; do not rearm, reseal or touch custody.
+  uint16_t exact_count = 0U;
+  const bool exact_counted = product_records.mounted() &&
+      product_records.store().ready() &&
+      product_records.store().exactObjectCount(exact_count);
+  Serial.printf(
+      "BENCH PILOT block_reason=%s selected_seq=%lu exact_cache=%d/%u "
+      "retryable=%s attempts=%lu recoveries=%lu\n",
+      tracker_product_tx.blockReasonName(),
+      static_cast<unsigned long>(tracker_product_tx.selectedSequence()),
+      exact_counted ? static_cast<int>(exact_count) : -1,
+      static_cast<unsigned>(orun_tlp::osf::kMaxExactCustodyObjects),
+      tracker_product_tx.retryableBlocked() ? "yes" : "no",
+      static_cast<unsigned long>(tracker_product_tx.retryAttempts()),
+      static_cast<unsigned long>(tracker_product_tx.automaticRecoveries()));
 }
 
 void pollBenchTracker() {
@@ -2312,6 +2327,14 @@ void printSf5dBootloaderVersion() {
 }
 #endif
 
+#ifdef ORUN_SF5L0_TRACKER
+// The USB command handler is declared before these loop-level runtime
+// resolution helpers. Query effective tracking state at command time rather
+// than relying on the loop() local tracking_enabled variable.
+bool serviceRuns(const orun_tlp::ServiceStatus& status);
+orun_tlp::EffectiveConfig resolveRuntimeConfig();
+#endif
+
 void handleRoleCommand() {
   if (role_command_overflow) {
     role_command_length = 0;
@@ -2487,6 +2510,25 @@ void handleRoleCommand() {
     role_command_length = 0;
     bench_pacer.setEnabled(false);
     printBenchDrain();
+    return;
+  }
+  // SF5L0 development-only reset. Clear observations and cached exact
+  // bytes, not credentials, keys, counters, history or configuration.
+  // Disallow a concurrent writer or a custody ACK in flight; callers must
+  // first select APP SERVICES NONE and BENCH DRAIN OFF.
+  if (isActivityCommand("BENCH TRACKER ERASE RECORDS CONFIRM", 35)) {
+    role_command_length = 0;
+    const bool tracking_enabled = serviceRuns(resolveRuntimeConfig().tracking);
+    if (tracking_enabled || bench_pacer.enabled() ||
+        bench_pacer.awaitingAck() || custody_ack_release.pending() ||
+        !product_records.requestBenchClear()) {
+      Serial.println(F("BENCH TRACKER ERASE rejected: stop tracking "
+                       "(APP SERVICES NONE), stop drain (BENCH DRAIN OFF), "
+                       "wait for pending ACK/flash, and check PRODUCT STORE?"));
+    } else {
+      Serial.println(F("BENCH TRACKER ERASE started: product records only; "
+                       "security/configuration preserved; reboot follows"));
+    }
     return;
   }
   // Step 3A: BENCH PROVISION <credential 32 hex> <epoch 8 hex> <root 64 hex>
@@ -3850,6 +3892,14 @@ void loop() {
              security_store) != 0
 #endif
       ;
+#ifdef ORUN_SF5L0_TRACKER
+  if (tracker_product_tx.recoverIfSafe(
+          orun_tlp::monotonic::nowMs(), pilot_allowed)) {
+    Serial.printf("BENCH PILOT auto-retry selection attempt=%lu\n",
+                  static_cast<unsigned long>(
+                      tracker_product_tx.automaticRecoveries()));
+  }
+#endif
   switch (tracker_product_tx.update(pilot_allowed)) {
     case orun_tlp::TrackerProductTxPilot::Event::kCachePending:
       Serial.println(F("PRODUCT PILOT exact cache=pending"));
@@ -3876,7 +3926,9 @@ void loop() {
 #endif
       break;
     case orun_tlp::TrackerProductTxPilot::Event::kBlocked:
-      Serial.println(F("PRODUCT PILOT blocked; retained record preserved"));
+      Serial.printf("PRODUCT PILOT blocked reason=%s retryable=%s\n",
+                    tracker_product_tx.blockReasonName(),
+                    tracker_product_tx.retryableBlocked() ? "yes" : "no");
       break;
     case orun_tlp::TrackerProductTxPilot::Event::kNone:
       break;
