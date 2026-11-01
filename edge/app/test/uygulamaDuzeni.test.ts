@@ -124,3 +124,32 @@ test("ad defteri: hemen görünür, gönderilemeyen ad sonra gönderilir, hesap 
   assert.equal(book.label("09A462BD4B275BA5"), "ORUN-4B275BA5");
   assert.deepEqual(remote, { "AABBCCDDEEFF0011": "Ev" });
 });
+
+import { farmChain } from "../src/features/network/words.ts";
+
+test("kayıt güvende mi: bütün çiftlik zinciri", () => {
+  const now = 1_800_000_000_000;
+  const gw = (via: string | null, upload: number | null) => ({
+    gateway: "09A462BD4B275BA5", via: via as never, held: 2, capacity: 1056,
+    lastSeen: now - 60_000, lastUpload: upload, trackers24h: 2 });
+  const sync = { running: false, error: null, last: { latest: 2, history: 0, more: false, at: now - 60_000 } };
+  const label = (id: string) => "ORUN-" + id.slice(-8);
+  const ok = farmChain({ trackers: 3, fresh: 2, gateways: [gw("pc-usb", now - 120_000)], phoneGateway: null,
+                         signedIn: true, sync, pending: 0, now, label });
+  assert.deepEqual(ok.nodes.map((n) => n.tone), ["fresh", "fresh", "fresh", "fresh"]);
+  assert.deepEqual(ok.wires, ["ok", "ok", "ok"]);
+  assert.equal(ok.nodes[1].sub, "1 bağlı · PC, USB");
+  assert.equal(ok.nodes[2].sub, "son kayıt 2 dk önce");
+  assert.match(ok.nodes[1].detail, /ORUN-4B275BA5: PC'ye USB ile bağlı/);
+
+  const down = farmChain({ trackers: 3, fresh: 0, gateways: [gw(null, now - 3 * 3600_000)], phoneGateway: null,
+                           signedIn: true, sync: { ...sync, error: "sunucu cevabı HTTP 503" }, pending: 3, now, label });
+  assert.deepEqual(down.nodes.map((n) => n.tone), ["aging", "aging", "alarm", "alarm"]);
+  assert.deepEqual(down.wires, ["wait", "wait", "wait"]);
+  assert.equal(down.nodes[2].sub, "ulaşılamıyor");
+
+  const phone = farmChain({ trackers: 1, fresh: 1, gateways: null, phoneGateway: { id: "1122334455667788", link: "ble" },
+                            signedIn: false, sync: { running: false, error: null, last: null }, pending: null, now, label });
+  assert.equal(phone.nodes[1].sub, "1 bağlı · telefon, BLE");
+  assert.deepEqual([phone.nodes[2].sub, phone.nodes[3].sub], ["giriş yok", "giriş yapılmadı"]);
+});

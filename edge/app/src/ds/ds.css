@@ -180,6 +180,12 @@ button.cell:active { background: var(--sunk); }
 .kv > b { font-weight: var(--w-strong); text-align: right; min-width: 0; overflow-wrap: anywhere; }
 .sec { display: flex; align-items: baseline; justify-content: space-between; padding: 18px 20px 2px; gap: 12px; }
 .sec h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--mute); letter-spacing: .01em; }
+.info-btn { border: 0; background: none; padding: 0 0 0 6px; color: var(--faint); display: inline-flex; vertical-align: -2px; cursor: pointer; }
+.info-btn[aria-expanded="true"] { color: var(--brand-t); }
+.sec-info { margin: 4px 20px 0; padding: 10px 12px; background: var(--sunk); border-radius: 12px; }
+.node { cursor: pointer; border: 0; background: none; padding: 0; font: inherit; color: inherit; }
+.node[aria-pressed="true"] .nd { box-shadow: 0 0 0 2px var(--brand); }
+.chain-detail { margin: 0 16px 14px; padding: 10px 12px; background: var(--sunk); border-radius: 12px; }
 .lnk { border: 0; background: none; padding: 8px 0; min-height: 40px; font-weight: 600; font-size: 14px; color: var(--brand-t); }
 
 /* ------------------------------------------------------------- buttons -- */

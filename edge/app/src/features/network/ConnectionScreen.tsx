@@ -2,9 +2,9 @@
 // kartı (bağlı cihaz ya da "Cihaz seçilmedi"); Bluetooth / USB seçici ve
 // yakındaki ORUN cihazları; çiftliğin diğer gateway'leri (nasıl bağlı, son
 // görülme, bellek, kaç tasma); en altta teknik ayrıntılar.
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
-  Bluetooth, CaretRight, CellSignalFull, CloudCheck, MagnifyingGlass, MapPin, Question, Usb, WifiHigh, WifiSlash, X,
+  Bluetooth, CaretRight, CellSignalFull, CloudCheck, DeviceMobile, MagnifyingGlass, MapPin, Question, Usb, WifiHigh, WifiSlash, X,
 } from "@phosphor-icons/react";
 import { probeUsbDevice } from "../../app/addTracker.ts";
 import { bleName } from "../../app/deviceNames.ts";
@@ -21,7 +21,7 @@ import { UsbConsole } from "../../platform/usbConsole.ts";
 import { AddTrackerDialog } from "../herd/AddTrackerDialog.tsx";
 import { startPosition, usePosition } from "../map/position.ts";
 import { NameDialog } from "./NameDialog.tsx";
-import { gatewayFacts, gatewayLine, serverLine, stationWords } from "./words.ts";
+import { farmChain, gatewayFacts, gatewayLine, stationWords, type ChainNode } from "./words.ts";
 
 type Via = "ble" | "usb";
 
@@ -53,6 +53,7 @@ export function ConnectionScreen() {
   const [usbTracker, setUsbTracker] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [naming, setNaming] = useState<string | null>(null);
+  const [node, setNode] = useState<ChainNode["key"] | null>(null);
   const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
   const label = (id: string) => names[id.toUpperCase()] ?? bleName(id);
   useEffect(() => onPilotObservationSync(() => setSync(pilotObservationSyncState())), []);
@@ -119,21 +120,46 @@ export function ConnectionScreen() {
   }
 
   const others = (gateways ?? []).filter((g) => !(linkOn && s.gateway && g.gateway.toUpperCase() === s.gateway.toUpperCase()));
-  const serverTone = !account || sync.error || sv.error ? "aging" : sync.last ? "fresh" : "";
+  const chain = farmChain({
+    trackers: m.herd.filter((a) => a.last).length,
+    fresh: m.herd.filter((a) => a.freshness === "fresh").length,
+    gateways: account ? gateways : null,
+    phoneGateway: linkOn && st.phase === "connected" && st.id ? { id: st.id, link: st.link as "ble" | "usb" } : null,
+    signedIn: Boolean(account), sync, pending: sv.pending, now: m.now, label,
+  });
+  const picked = chain.nodes.find((n) => n.key === node) ?? null;
+  const ICON = { tasmalar: <CellSignalFull size={22} />, gateway: <WifiHigh size={22} />, sunucu: <CloudCheck size={22} />, telefon: <DeviceMobile size={22} /> };
   return (
     <div className="page">
       <Header title={tr.network.title} />
       {m.demo && <DemoFlag onPage />}
 
+      <Section title={tr.network.chain}
+        info="Kayıt tasmadan gateway'e, oradan sunucuya, sunucudan telefonlara gider. Bir kayıt ancak sonraki halka onu kalıcı yazdıktan sonra öncekinden silinir; bağlantı koparsa kayıt beklediği yerde durur, kaybolmaz. Bir halkaya dokununca ayrıntısı görünür." />
       <Card>
-        <Cell lead={<span className={"ic " + serverTone}><CloudCheck size={22} /></span>}
-          title={tr.network.server} wrapSub
-          sub={serverLine(Boolean(account), sync, sv.pending, sv.error)}
-          trail={!account ? <CaretRight size={18} color="var(--mute)" /> : undefined}
-          onClick={!account ? () => nav.push({ to: "settings" }) : undefined} />
+        <div className="chain">
+          {chain.nodes.map((n, idx) => (
+            <Fragment key={n.key}>
+              {idx > 0 && <span className={"wire " + chain.wires[idx - 1]} />}
+              <button className="node" type="button" aria-pressed={node === n.key}
+                onClick={() => setNode(node === n.key ? null : n.key)}>
+                <span className={"nd ic " + n.tone}>{ICON[n.key]}</span>
+                <b>{n.title}</b>
+                <span>{n.sub}</span>
+              </button>
+            </Fragment>
+          ))}
+        </div>
+        {picked && (
+          <p className="sm chain-detail">
+            {picked.detail}
+            {picked.key === "telefon" && !account && <> · <button className="lnk" onClick={() => nav.push({ to: "settings" })}>Giriş yap</button></>}
+            {picked.key === "tasmalar" && m.herd.length > 0 && <> · <button className="lnk" onClick={() => nav.setTab("herd")}>Sürü</button></>}
+          </p>
+        )}
       </Card>
 
-      <Section title="Bu telefon" />
+      <Section title="Bu telefon" info={tr.station.background} />
       <Card>
         {linkOn ? (
           <div className="stack" style={{ padding: 16 }}>
@@ -224,7 +250,6 @@ export function ConnectionScreen() {
             </>
           )}
           {note && <p className="sm lead" role="status">{note}</p>}
-          <p className="fine lead">{tr.station.background}</p>
         </>
       )}
 

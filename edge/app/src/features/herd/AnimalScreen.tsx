@@ -77,25 +77,23 @@ function Today({ a, now }: { a: Animal; now: number }) {
         <KV k="Konum">{fmt.coords(p.lat, p.lon)}</KV>
       </Card>
 
-      <Section title={tr.animal.activity} />
+      <Section title={tr.animal.activity} info={tr.animal.activityStripHelp} />
       <Card pad>
         {hasActivity ? (
           <div className="stack">
             <span className="strong">{today?.activeMs !== null && today?.activeMs !== undefined ? tr.animal.activityToday(fmt.duration(today.activeMs)) : tr.animal.activity}</span>
             <Strip values={hours} tall />
             <div className="strip-axis"><span>{fmt.clock(now - 24 * 3600_000)}</span><span>{fmt.clock(now - 12 * 3600_000)}</span><span>{fmt.clock(now)}</span></div>
-            <span className="fine">{tr.animal.activityStripHelp}</span>
           </div>
         ) : <span className="sm">{tr.animal.activityNone}</span>}
       </Card>
 
       {today && (
         <>
-          <Section title={tr.animal.walked} />
+          <Section title={tr.animal.walked} info={tr.animal.walkedHelp} />
           <Card pad>
             <div className="stack" style={{ gap: 4 }}>
               <span className="disp" style={{ fontSize: 26 }}>{tr.animal.walkedToday(fmt.distance(today.walkedM))}</span>
-              <span className="fine">{tr.animal.walkedHelp}</span>
             </div>
           </Card>
         </>

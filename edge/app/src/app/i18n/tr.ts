@@ -372,7 +372,7 @@ export const tr = {
   // ------------------------------------------------------------- network ---
   network: {
     title: "Bağlantı",
-    chain: "Durum",
+    chain: "Kayıt güvende mi?",
     nodes: { collars: "Tasmalar", station: "Gateway", phone: "Telefon", server: "Sunucu" },
     collarsLine: (n: number, fresh: number) => `${n} tasma · ${fresh} taze`,
     stationHeld: (n: number) => (n ? `${num(n)} bekliyor` : "bekleyen yok"),

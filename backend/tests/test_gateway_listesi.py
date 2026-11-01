@@ -105,6 +105,8 @@ class GatewayListTests(unittest.TestCase):
         self.assertEqual(rows[GW_PHONE]["via"], "phone-ble")
         self.assertIsNone(rows[GW_OLD]["via"], "durum bildirmeyen gateway bağlı sayılmaz")
         self.assertEqual(rows[GW_OLD]["last_seen_utc"], now - 7200)
+        self.assertEqual(rows[GW_PC]["last_upload_utc"], now - 60)
+        self.assertIsNone(rows[GW_PHONE]["last_upload_utc"])
         # Bildirim yapan gateway çiftliğe de girer (izin paketi için).
         farm = {"%016X" % g for g in self.local.backend.registry.farm_gateways()}
         self.assertTrue({GW_PC, GW_PHONE} <= farm)
