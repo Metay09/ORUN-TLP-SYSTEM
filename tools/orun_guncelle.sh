@@ -83,7 +83,7 @@ else
   done
 
   # Yeni uç gerçekten çalışıyor mu: token dosyası servis satırından okunur, ekrana basılmaz.
-  TOKEN_FILE=$(systemctl --user cat "$READONLY_UNIT" | grep -o -E -- "--token-file[= ][^ ]+" | head -1 | sed -E 's/--token-file[= ]//')
+  TOKEN_FILE=$(systemctl --user cat "$READONLY_UNIT" | grep -o -E -- "--token-file[= ][^ ]+" | head -1 | sed -E 's/--token-file[= ]//' || true)
   TOKEN_FILE=${TOKEN_FILE/#\~/$HOME}
   TOKEN_FILE=${TOKEN_FILE/#%h/$HOME}
   [[ -r "$TOKEN_FILE" ]] || rollback

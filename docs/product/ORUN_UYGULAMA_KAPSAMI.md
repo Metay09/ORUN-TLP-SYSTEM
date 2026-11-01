@@ -23,8 +23,8 @@ Bu listede olmayan iş v1 değildir; yapılmaz, önerilmez, "ileride lazım olur
 
 | # | Adım | Sahibin göreceği | Durum |
 |---|---|---|---|
-| 0 | Toparlama | main = çalışan sistem, tek dal, bu liste repoda | sürüyor |
-| 1 | Otomatik eşitleme | Uygulamayı açınca her tasmanın son konumu kendiliğinden gelir; geçmiş arka planda tamamlanır | — |
+| 0 | Toparlama | main = çalışan sistem, tek dal, bu liste repoda | tamam (#228) |
+| 1 | Otomatik eşitleme | Uygulamayı açınca her tasmanın son konumu kendiliğinden gelir; geçmiş arka planda tamamlanır | tamam; PC'de `bash tools/orun_guncelle.sh` |
 | 2 | İnternetsiz harita | İnternet yokken uydu ve harita (Aydın–Muğla, mera çevresi yakın zoom) | temel kod var |
 | 3 | USB'den tüm ayarlar | Kabloyla her ayar değişir | rapor aralığı, hizmetler, alanlar var |
 | 4 | BLE'den tüm ayarlar | Aynısı kablosuz, alanlar dahil | yalnız okuma var |
