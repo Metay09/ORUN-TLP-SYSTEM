@@ -96,6 +96,7 @@ export function ZonesScreen() {
               );
             })}
           </Card>
+          <p className="sm lead t-aging">Alanlar şimdilik yalnız bu telefonda; tasmaya gönderilmiyor.</p>
         </>
       )}
 
