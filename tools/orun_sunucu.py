@@ -14,6 +14,10 @@ Bugüne kadar ayrı çalışan üç servisin işini tek programda yapar:
   GET /v1/health ve GET /v1/bridge/ogk1 (gateway'in güncel imzalı izin
   paketi); köprü anahtarı (token dosyası) ister.
 
+Köprü ayrıca bağlı olduğu gateway'in durumunu bildirir: POST /v1/bridge/gateway.
+Hesap adresi çiftliğin gateway listesini verir: GET /api/v1/devices/gateways;
+telefon köprü olduğunda POST /api/v1/devices/gateway ile bildirir (2c).
+
 Hesap adresi ayrıca internetsiz harita paketlerini verir (2. adım):
 GET /api/v1/maps/catalog ve GET /api/v1/maps/file/<ad>.pmtiles; hesap
 oturumu ister. Paketleri `tools/orun_harita.sh` hazırlar.
@@ -37,6 +41,7 @@ if str(ROOT) not in sys.path:
 
 from backend.account_login import AccountStore  # noqa: E402
 from backend.account_login_http import account_handler_factory  # noqa: E402
+from backend.gateway_status import BadStatus, GatewayStatus, parse_report  # noqa: E402
 from backend.local_observations import LocalObservations  # noqa: E402
 from backend.map_packs import CATALOG_ROUTE, FILE_ROUTE, MapPacks, default_dir  # noqa: E402
 from backend.orun_backend_bench import (  # noqa: E402
@@ -56,8 +61,19 @@ OGK1_QUERY = re.compile(
     r"/v1/bridge/ogk1\?gateway=([0-9A-F]{16})&active=(0|[1-9][0-9]{0,18})&issuer=([0-9A-F]{8})")
 
 
+def farm_gateway_ids(local: LocalObservations) -> list[str]:
+    registry = local.backend.registry
+    if registry is None:
+        return []
+    try:
+        return ["%016X" % g for g in registry.farm_gateways()]
+    except oc.RegistryError:
+        return []
+
+
 def bridge_handler(local: LocalObservations, token: str):
     expected = token.encode()
+    gateways = GatewayStatus(local.backend.db_path)
 
     class Bridge(BaseHTTPRequestHandler):
         server_version = "ORUN"
@@ -113,16 +129,33 @@ def bridge_handler(local: LocalObservations, token: str):
                                     "lines": oc.ogk1_upload_lines(image)})
 
         def do_POST(self):  # noqa: N802
-            if self.path != "/v1/edge/batch":
+            if self.path not in ("/v1/edge/batch", "/v1/bridge/gateway"):
                 return self._json(404, {"error": "not_found"})
             if not self._authorized():
                 return self._json(401, {"error": "token"})
+            if self.path == "/v1/bridge/gateway":
+                return self._gateway()
             size = self.headers.get("Content-Length", "")
             if (self.headers.get("Transfer-Encoding") or not size.isdecimal()
                     or int(size) > MAX_BODY):
                 return self._json(413, {"error": "size"})
             status, body = local.batch(self.rfile.read(int(size)))
             return self._json(status, body)
+
+        def _gateway(self) -> None:
+            """2c: köprünün bağlı olduğu gateway: kimlik, USB/BLE, bellek."""
+            size = self.headers.get("Content-Length", "")
+            if self.headers.get("Transfer-Encoding") or not size.isdecimal() or not 1 <= int(size) <= 512:
+                return self._json(400, {"error": "invalid_request"})
+            try:
+                gw, via, held, cap = parse_report(json.loads(self.rfile.read(int(size))), "pc")
+                gateways.report(gw, via, held, cap)
+                registry = local.backend.registry
+                if registry is not None:
+                    registry.note_gateway(int(gw, 16))
+            except (BadStatus, ValueError, UnicodeDecodeError, oc.RegistryError):
+                return self._json(400, {"error": "invalid_request"})
+            return self._json(200, {"ok": True})
 
     return Bridge
 
@@ -166,6 +199,51 @@ def with_device_setup(handler: type, accounts: AccountStore, enrollment, local: 
 
 
 CHUNK = 1024 * 1024
+
+
+def with_gateways(handler: type, accounts: AccountStore, enrollment, local: LocalObservations) -> type:
+    """2c: çiftliğin gateway listesi; telefon köprü olduğunda durum bildirimi."""
+    gateways = GatewayStatus(local.backend.db_path)
+
+    class Handler(handler):
+        def _farm_actor(self, scope: str):
+            bearer = self._bearer(self.headers)
+            actor = accounts.resolve_session(enrollment, bearer) if bearer else None
+            if actor is None or scope not in actor.scopes:
+                self._send(401, {"error": "unauthorized"})
+                return None
+            if actor.site_id != local.observation_site:
+                self._send(403, {"error": "site_not_authorized"})
+                return None
+            return actor
+
+        def do_GET(self):  # noqa: N802
+            if self.path != "/api/v1/devices/gateways":
+                return super().do_GET()
+            if self._farm_actor("zone:read") is None:
+                return None
+            return self._send(200, {"gateways": gateways.list(farm_gateway_ids(local))})
+
+        def do_POST(self):  # noqa: N802
+            if self.path != "/api/v1/devices/gateway":
+                return super().do_POST()
+            if self._farm_actor("zone:write") is None:
+                return None
+            size = self.headers.get("Content-Length", "")
+            if (self.headers.get("Transfer-Encoding") or not size.isdecimal() or
+                    not 1 <= int(size) <= 512):
+                return self._send(400, {"error": "invalid_request"})
+            try:
+                gw, via, held, cap = parse_report(json.loads(self.rfile.read(int(size))), "phone")
+                gateways.report(gw, via, held, cap)
+                registry = local.backend.registry
+                if registry is not None:
+                    registry.note_gateway(int(gw, 16))
+            except (BadStatus, ValueError, UnicodeDecodeError, oc.RegistryError):
+                return self._send(400, {"error": "invalid_request"})
+            return self._send(200, {"ok": True})
+
+    return Handler
 
 
 def with_maps(handler: type, accounts: AccountStore, enrollment, maps: MapPacks) -> type:
@@ -221,6 +299,7 @@ def build(state_dir: str | Path, db: str | Path, registry: str | Path, site: str
     handler = account_handler_factory(
         store, enrollment, accounts, observation_relay=local)
     handler = with_device_setup(handler, accounts, enrollment, local)
+    handler = with_gateways(handler, accounts, enrollment, local)
     maps = MapPacks(maps_dir if maps_dir is not None else default_dir())
     return local, with_maps(handler, accounts, enrollment, maps)
 

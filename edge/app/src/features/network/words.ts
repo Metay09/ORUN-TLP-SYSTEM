@@ -3,6 +3,8 @@
 import type { Snapshot } from "../../app/controller.ts";
 import { fmt, tr } from "../../app/i18n/tr.ts";
 import type { ServerView, Station } from "../../app/model.ts";
+import type { FarmGateway } from "../../app/ownerAccountClient.ts";
+import type { ObservationSyncState } from "../../app/ownerAccountPilotRuntime.ts";
 
 /** `lastArrival`: newest record reaching the phone (shown as "· 14:52"). */
 export function stationWords(st: Station, s: Snapshot, lastArrival: number | null = null): { dot: "ok" | "wait" | "grey"; text: string; short: string } {
@@ -27,7 +29,7 @@ export function phonePathWords(
   const stationConnected = snap.ready && st.link !== "none" && st.phase === "connected";
   return {
     stationConnected,
-    stationText: stationConnected ? "Bu telefon istasyona bağlı" : "Bu telefon bağlı değil",
+    stationText: stationConnected ? "Bu telefon gateway'e bağlı" : "Bu telefon bağlı değil",
     phoneText: !snap.ready ? "Yerel defter hazır değil"
       : snap.records === null ? "Yerel defter açık · sayı bekleniyor"
       : snap.records === 0 ? "Henüz yerel kayıt yok"
@@ -52,4 +54,48 @@ export function serverWords(sv: ServerView): { tone: "ok" | "up" | "off" | "none
   if (sv.pending === 0 && sv.lastOk)
     return { tone: "up", text: "Sunucu erişimi doğrulandı · kayıt teslimi yok" };
   return { tone: "up", text: "Bu telefonun sunucu teslimi henüz doğrulanmadı" };
+}
+
+/** Bağlantı sekmesinin rengi: veri bu telefona geliyor mu?
+ * ok: gateway bağlı ya da sunucuyla son 5 dakikada eşitlendi.
+ * bad: ne gateway var ne hesap, ya da son eşitleme hata verdi (internet yok).
+ */
+export function connectionTone(i: {
+  gatewayConnected: boolean; signedIn: boolean; syncError: boolean;
+  lastSyncAt: number | null; now: number;
+}): "ok" | "wait" | "bad" {
+  if (i.gatewayConnected) return "ok";
+  if (!i.signedIn || i.syncError) return "bad";
+  if (i.lastSyncAt !== null && i.now - i.lastSyncAt < 5 * 60_000) return "ok";
+  return "wait";
+}
+
+/** Sunucu satırı: hesap, son eşitleme, gönderilmeyi bekleyen kayıt. */
+export function serverLine(signedIn: boolean, sync: ObservationSyncState,
+                           pending: number | null, sendError: string | null): string {
+  if (!signedIn) return "Hesaba giriş yapılmadı · dokun";
+  const parts: string[] = [];
+  if (sync.running) parts.push("Eşitleniyor…");
+  else if (sync.error) parts.push(sync.error);
+  else if (sync.last) parts.push(`Son eşitleme ${fmt.clock(sync.last.at)} · ${sync.last.latest} tasma`);
+  else parts.push("Eşitleme bekleniyor…");
+  if ((pending ?? 0) > 0) parts.push(`${fmt.num(pending ?? 0)} kayıt gönderilecek`);
+  if (sendError) parts.push("Gönderilemedi: " + sendError);
+  return parts.join(" · ");
+}
+
+/** "PC'ye USB ile bağlı · 2 dk önce" / "Bağlı değil · son 3 sa önce". */
+export function gatewayLine(g: FarmGateway, now: number): string {
+  const how = g.via === "pc-usb" ? "PC'ye USB ile bağlı" : g.via === "pc-ble" ? "PC'ye Bluetooth ile bağlı"
+    : g.via === "phone-usb" ? "Bir telefona USB ile bağlı" : g.via === "phone-ble" ? "Bir telefona Bluetooth ile bağlı"
+    : "Bağlı değil";
+  const seen = g.lastSeen ? `${g.via ? "" : "son "}${fmt.ago(g.lastSeen, now)}` : "hiç görülmedi";
+  return `${how} · ${seen}`;
+}
+
+export function gatewayFacts(g: FarmGateway): string {
+  const parts: string[] = [];
+  if (g.held !== null && g.capacity !== null) parts.push(`Bellek ${fmt.num(g.held)} / ${fmt.num(g.capacity)}`);
+  parts.push(`${g.trackers24h} tasma (24 sa)`);
+  return parts.join(" · ");
 }

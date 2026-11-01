@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import sys
+import sqlite3
 import tempfile
 import threading
 from http.server import ThreadingHTTPServer
@@ -57,6 +58,7 @@ class BridgeRouteAndInstallTests(unittest.TestCase):
         c = self.reg.create(TRK1)
         self.reg.record_grant(TRK1, c.key_epoch, GW, 0, 1)
         backend = Backend(root / "ledger.sqlite", False, registry=self.reg)
+        self.db_path = root / "ledger.sqlite"
         server = ThreadingHTTPServer(("127.0.0.1", 0),
                                      bridge_handler(LocalObservations(backend, "orun-main"), TOKEN))
         server.daemon_threads = True
@@ -116,6 +118,20 @@ class BridgeRouteAndInstallTests(unittest.TestCase):
         self.assertTrue(gw.written[-1].startswith("BENCH OGK1 COMMIT "))
         self.assertIn("EDGE HELD page=1 slot=2", seen)               # kayıtlar beklerken işlendi
         self.assertIsNone(up.status)                                  # gateway yeniden başlıyor
+
+
+    def test_pc_edge_reports_gateway_status(self):
+        """2c: BENCH? satırındaki bellek, Bağlantı ekranı için sunucuya bildirilir."""
+        up = pe.GrantUpdater(self.base, self.token_file, pe.build_opener(pe.ProxyHandler({})))
+        up.observe(f"BENCH GATEWAY id={GW:016X} custody_region=READY custody_ready=yes held=2/1056 role=BASE")
+        db = sqlite3.connect(self.db_path)
+        try:
+            row = db.execute("SELECT via,held,capacity FROM gateway_status WHERE gateway=?",
+                             (f"{GW:016X}",)).fetchone()
+        finally:
+            db.close()
+        self.assertEqual(row, ("pc-usb", 2, 1056))
+        self.assertFalse(up.report_failed)
 
 
 if __name__ == "__main__":

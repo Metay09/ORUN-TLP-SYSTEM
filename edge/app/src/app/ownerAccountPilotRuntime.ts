@@ -4,7 +4,7 @@
 // Server positions sync automatically while signed in: newest position of
 // every tracker first, then history from the saved cursor (1. adım).
 import {
-  OwnerAccountClient, type AccountIdentity,
+  OwnerAccountClient, type AccountIdentity, type FarmGateway,
 } from "./ownerAccountClient.ts";
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
@@ -73,6 +73,26 @@ export function pilotRestoreAccount(): Promise<void> {
 export function pilotDeviceSetupClient(): OwnerAccountClient {
   if (!client || !pilotAccountStatus()) throw new Error("Önce hesabınla giriş yapmalısın.");
   return client;
+}
+
+/** 2c: the farm's gateways, or null when signed out. */
+export async function pilotGateways(): Promise<FarmGateway[] | null> {
+  if (!client || !pilotAccountStatus()) return null;
+  return client.gateways();
+}
+
+let gatewayReport = { key: "", at: 0 };
+/** 2c: while this phone bridges a gateway, tell the server (at most every 2 min). */
+export function pilotReportGateway(gateway: string, transport: "ble" | "usb",
+                                   held: number | null, capacity: number | null): void {
+  if (!client || !pilotAccountStatus() || !/^[0-9A-Fa-f]{16}$/.test(gateway)) return;
+  const key = `${gateway}|${transport}`;
+  const now = Date.now();
+  if (key === gatewayReport.key && now - gatewayReport.at < 120_000) return;
+  gatewayReport = { key, at: now };
+  void client.reportGateway({ gateway: gateway.toUpperCase(), transport, held, capacity }).catch(() => {
+    gatewayReport = { key: "", at: 0 };     // try again on the next change
+  });
 }
 
 /** 2: the signed-in account, for offline map packs; null when signed out. */

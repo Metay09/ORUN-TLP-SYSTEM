@@ -9,6 +9,36 @@ import {
   type ServerLatestObservations, type ServerObservationPage,
 } from "./serverObservationRead.ts";
 
+export interface FarmGateway {
+  gateway: string;                       // 16 hex
+  via: "pc-usb" | "pc-ble" | "phone-usb" | "phone-ble" | null;   // null: şu an bağlı değil
+  held: number | null;
+  capacity: number | null;
+  lastSeen: number | null;               // ms
+  trackers24h: number;
+}
+
+const VIAS = ["pc-usb", "pc-ble", "phone-usb", "phone-ble"];
+const int = (v: unknown): number | null => (Number.isSafeInteger(v) && (v as number) >= 0 ? v as number : null);
+
+export function parseFarmGateways(body: unknown): FarmGateway[] {
+  const list = body && typeof body === "object" ? (body as Record<string, unknown>).gateways : null;
+  if (!Array.isArray(list) || list.length > 256) throw new Error("Gateway listesi hatalı.");
+  return list.map((g: unknown) => {
+    const r = (g && typeof g === "object" ? g : {}) as Record<string, unknown>;
+    if (typeof r.gateway !== "string" || !/^[0-9A-F]{16}$/.test(r.gateway))
+      throw new Error("Gateway listesi hatalı.");
+    const seen = int(r.last_seen_utc);
+    return {
+      gateway: r.gateway,
+      via: typeof r.via === "string" && VIAS.includes(r.via) ? r.via as FarmGateway["via"] : null,
+      held: int(r.held), capacity: int(r.capacity),
+      lastSeen: seen === null ? null : seen * 1000,
+      trackers24h: int(r.trackers_24h) ?? 0,
+    };
+  });
+}
+
 export interface AccountIdentity {
   site: string;
   actor: string;
@@ -216,6 +246,30 @@ export class OwnerAccountClient {
       throw new Error(typeof parsed.message === "string" && parsed.message.length < 200
         ? parsed.message : "Sunucu cihaz eklemeyi tamamlayamadı.");
     return parsed;
+  }
+
+  /** 2c: the farm's gateways (Bağlantı → Diğer gateway'ler). */
+  async gateways(): Promise<FarmGateway[]> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/gateways", {
+      headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
+      credentials: "omit", redirect: "error", cache: "no-store",
+    });
+    if (reply.status === 401) throw new Error("Oturumun geçersiz; yeniden giriş yap.");
+    if (!reply.ok) throw new Error("Gateway listesi alınamadı.");
+    return parseFarmGateways(await json(reply));
+  }
+
+  /** 2c: this phone is the bridge for a gateway: tell the server how it is. */
+  async reportGateway(r: { gateway: string; transport: "ble" | "usb"; held: number | null; capacity: number | null }): Promise<void> {
+    if (!this.accessToken) return;
+    const reply = await this.fetcher(this.base + "/api/v1/devices/gateway", {
+      method: "POST", credentials: "omit", redirect: "error", cache: "no-store",
+      headers: { Authorization: "Bearer " + this.accessToken,
+                 "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(r),
+    });
+    if (!reply.ok) throw new Error("Gateway durumu bildirilemedi.");
   }
 
   /** 2: offline map packs on this server. Download URLs may only point at

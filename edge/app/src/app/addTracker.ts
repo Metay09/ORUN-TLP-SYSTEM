@@ -71,3 +71,29 @@ export async function addTrackerOverUsb(
   const gateways = Array.isArray(done.gateways) ? done.gateways.filter((g) => typeof g === "string") as string[] : [];
   return { device: after.device, gateways, added: typeof done.added === "number" ? done.added : 0 };
 }
+
+/** 2c: USB ile bağlı cihaz ne? Gateway ise köprü bağlantısı, tasma ise kartı açılır. */
+export type UsbDevice = { kind: "gateway"; id: string } | { kind: "tracker"; report: TrackerReport };
+
+export async function probeUsbDevice(con: LineConsole): Promise<UsbDevice> {
+  await con.send("BENCH?");
+  let cred: RegExpMatchArray | null = null;
+  const found = await con.waitFor<{ gateway: string } | { tracker: RegExpMatchArray }>((line) => {
+    const g = line.match(GATEWAY);
+    if (g) return { gateway: g[1] };
+    const c = line.match(CREDENTIAL);
+    if (c) cred = c;
+    const t = line.match(TRACKER);
+    return t && cred ? { tracker: t } : null;
+  }, 6000);
+  if (!found) throw new Error("Cihaz yanıt vermedi. Kabloyu ve cihaz yazılımını kontrol et.");
+  if ("gateway" in found) return { kind: "gateway", id: found.gateway };
+  const t = found.tracker, c = cred as unknown as RegExpMatchArray;
+  return {
+    kind: "tracker",
+    report: {
+      device: t[1], granted: t[2], credential: c[1],
+      epoch: parseInt(c[2], 16), generation: parseInt(c[3], 16), floor: parseInt(c[4], 16),
+    },
+  };
+}

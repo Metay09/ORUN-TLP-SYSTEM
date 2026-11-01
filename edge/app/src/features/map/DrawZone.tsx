@@ -95,7 +95,7 @@ export function DrawZone({ engine, zone, hooks, onDone }: {
       onDone(z);
     } catch (error) {
       setNaming(false);
-      setNote(error instanceof Error ? error.message : "Mera kaydedilemedi.");
+      setNote(error instanceof Error ? error.message : "Alan kaydedilemedi.");
     }
   };
 

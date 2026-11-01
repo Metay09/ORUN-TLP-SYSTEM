@@ -42,8 +42,9 @@ export class BleLink {
 
   constructor(core: EdgeCore, ev: LinkEvents) { this.core = core; this.ev = ev; }
 
-  /** pick=true shows the system device picker even if a Gateway is remembered. */
-  async start(pick = false): Promise<void> {
+  /** pick=true shows the system device picker even if a Gateway is remembered;
+   * `deviceId` connects to one chosen from the Bağlantı scan list. */
+  async start(pick = false, deviceId?: string): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
@@ -51,7 +52,10 @@ export class BleLink {
       if (!(await BleClient.isEnabled())) await BleClient.requestEnable();
       let remembered: string | null = null;
       try { remembered = localStorage.getItem(LAST_BLE); } catch { /* none */ }
-      if (pick || !remembered) {
+      if (deviceId) {
+        this.deviceId = deviceId;
+        try { localStorage.setItem(LAST_BLE, deviceId); } catch { /* fine */ }
+      } else if (pick || !remembered) {
         this.ev.state("searching");
         const device = await BleClient.requestDevice({ services: [EDGE_SERVICE_UUID] });
         this.deviceId = device.deviceId;

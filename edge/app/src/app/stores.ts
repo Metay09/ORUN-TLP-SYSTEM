@@ -192,11 +192,11 @@ function legacyDrafts(): LegacyMigration {
     if (raw === null) return { zones: [], error: null };
     const value: unknown = JSON.parse(raw);
     if (!Array.isArray(value) || value.length > 100)
-      throw new Error("Eski mera listesi geçersiz.");
+      throw new Error("Eski alan listesi geçersiz.");
     const unique = new Set<string>();
     const zones: Zone[] = value.map((record: unknown) => {
       if (!record || typeof record !== "object" || Array.isArray(record))
-        throw new Error("Eski mera kaydı geçersiz.");
+        throw new Error("Eski alan kaydı geçersiz.");
       const z = record as Record<string, unknown>;
       if (typeof z.id !== "string" || !z.id || unique.has(z.id) ||
           typeof z.name !== "string" || !z.name.trim() ||
@@ -208,13 +208,13 @@ function legacyDrafts(): LegacyMigration {
         if (!Array.isArray(point) || point.length !== 2 ||
             point.some((c: unknown) => typeof c !== "number" || !Number.isFinite(c)) ||
             point[0] <= -180 || point[0] >= 180 || point[1] <= -90 || point[1] >= 90)
-          throw new Error("Eski mera koordinatları geçersiz.");
+          throw new Error("Eski alan koordinatları geçersiz.");
         return [point[0], point[1]];
       });
       // Legacy and firmware allow an explicitly repeated closing point.
       if (ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] &&
           ring[0][1] === ring[ring.length - 1][1]) ring.pop();
-      if (validateRing(ring)) throw new Error("Eski mera çokgeni geçersiz.");
+      if (validateRing(ring)) throw new Error("Eski alan çokgeni geçersiz.");
       return { id: z.id, name: z.name.trim(), active: z.active !== false, ring, updated: Date.now() };
     });
     if (!checkSet(zones).ok) throw new Error("Eski meralar tasma sınırlarını aşıyor.");
@@ -222,7 +222,7 @@ function legacyDrafts(): LegacyMigration {
   } catch {
     // NEVER write to the old key, and never silently overwrite corrupt legacy
     // drafts with an empty new document.
-    return { zones: [], error: "Eski mera kayıtları güvenle okunamadı. Veri kaybını önlemek için alan değişiklikleri durduruldu; eski uygulama verilerini silmeyin." };
+    return { zones: [], error: "Eski alan kayıtları güvenle okunamadı. Veri kaybını önlemek için alan değişiklikleri durduruldu; eski uygulama verilerini silmeyin." };
   }
 }
 
@@ -263,7 +263,7 @@ export class ZoneStore extends Persisted<ZoneBook> {
         ? { zones: (raw as ZoneBook).zones, graze: { ...NO_GRAZE, ...((raw as ZoneBook).graze ?? {}) } } : null));
     this.storageKey = key;
     this.migrationWarning = invalidExisting
-      ? "Yeni mera kayıtları bozuk veya desteklenmiyor; orijinal veriler korunuyor, üzerine yazılmayacak."
+      ? "Yeni alan kayıtları bozuk veya desteklenmiyor; orijinal veriler korunuyor, üzerine yazılmayacak."
       : legacy.error;
   }
 
@@ -281,10 +281,10 @@ export class ZoneStore extends Persisted<ZoneBook> {
   private checked(zones: Zone[]): Zone[] {
     if (this.migrationWarning) throw new Error(this.migrationWarning);
     if (zones.length > 100 || new Set(zones.map((z) => z.id)).size !== zones.length)
-      throw new Error("Mera kaydında tekrarlanan kimlik veya fazla alan var.");
+      throw new Error("Alan kaydında tekrarlanan kimlik veya fazla alan var.");
     for (const z of zones) {
       if (!z.id || !z.name.trim() || validateRing(z.ring))
-        throw new Error(`${z.name || "Mera"}: geçersiz alan sınırı.`);
+        throw new Error(`${z.name || "Alan"}: geçersiz alan sınırı.`);
     }
     const check = checkSet(zones);
     if (!check.ok) throw new Error(check.errors.join(" "));
