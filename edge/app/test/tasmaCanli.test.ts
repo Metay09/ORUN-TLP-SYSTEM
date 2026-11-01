@@ -74,7 +74,8 @@ test("USB and Bluetooth give the same status", () => {
   assert.deepEqual(a.interval, { requestedS: 900, effectiveS: 300, stored: true });
   assert.deepEqual(a.battery, { valid: true, mv: 3950, percent: 81, state: "normal", calibrated: false });
   assert.deepEqual(a.fence, { state: "configured", areas: 2, vertices: 9, position: "outside" });
-  assert.deepEqual(a.services, { explicit: true, tracking: "on", trackingWhy: null, relay: "off", receive: false });
+  assert.deepEqual(a.services, { explicit: true, requested: { tracking: true, relay: false, receive: false },
+    tracking: "on", trackingWhy: null, relay: "off", receive: false });
   assert.deepEqual([a.role, a.firmware, a.gnss?.state, a.storage?.count, a.missing], ["tracker", "0.9.3-sf5l0", 11, 672, []]);
 });
 
@@ -99,4 +100,36 @@ test("USB: a family the device refuses is listed as missing", async () => {
   const st = buildStatus(await readRawUsb(con), "usb", 0);
   assert.deepEqual(st.missing, ["storage"]);
   assert.equal(st.interval?.requestedS, 900);
+});
+
+// 4b: ayar satırları ve tasmanın yanıtı.
+import { applySetting, intervalCommand, servicesCommand } from "../src/app/trackerSettings.ts";
+
+function settingConsole(answer: string | null): LineConsole & { sent: string[] } {
+  const out: string[] = [];
+  return {
+    sent: [] as string[],
+    async send(line) { this.sent.push(line); out.push("GNSS fix pending"); if (answer) out.push(answer); },
+    async waitFor(match) { while (out.length) { const r = match(out.shift()!); if (r !== null) return r; } return null; },
+  };
+}
+
+test("setting lines use the firmware's USB spelling and limits", () => {
+  assert.equal(intervalCommand(180), "APP INTERVAL 180");
+  assert.throws(() => intervalCommand(59), /1 dakika/);
+  assert.throws(() => intervalCommand(12 * 24 * 3600 + 1), /12 gün/);
+  assert.throws(() => intervalCommand(90.5), /arasında/);
+  assert.equal(servicesCommand({ tracking: true, relay: false }), "APP SERVICES T");
+  assert.equal(servicesCommand({ tracking: true, relay: true }), "APP SERVICES TR");
+  assert.equal(servicesCommand({ tracking: false, relay: true }), "APP SERVICES R");
+  assert.equal(servicesCommand({ tracking: false, relay: false }), "APP SERVICES NONE");
+});
+
+test("a setting counts only when the tracker says APPLIED or UNCHANGED", async () => {
+  assert.equal(await applySetting(settingConsole("APP SET id=4 code=APPLIED tracking_interval_seconds=300 token=VALID revision=9"), "APP INTERVAL 300"), "applied");
+  assert.equal(await applySetting(settingConsole("APP SET id=5 code=UNCHANGED services=T mode=EXPLICIT token=VALID revision=9"), "APP SERVICES T"), "unchanged");
+  await assert.rejects(applySetting(settingConsole("APP SET id=6 code=INVALID tracking_interval_seconds=180 token=VALID revision=9"), "APP INTERVAL 30"), /kabul etmedi/);
+  await assert.rejects(applySetting(settingConsole("APP SET id=7 code=OUTCOME_UNKNOWN services=T mode=EXPLICIT token=UNAVAILABLE"), "APP SERVICES T"), /belli değil/);
+  await assert.rejects(applySetting(settingConsole("APP BUSY"), "APP SERVICES T"), /meşgul/);
+  await assert.rejects(applySetting(settingConsole(null), "APP SERVICES T"), /yanıt gelmedi/);
 });

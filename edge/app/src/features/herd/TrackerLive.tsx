@@ -10,7 +10,10 @@ import { useApp } from "../../app/store.ts";
 import {
   batteryWord, buildStatus, gnssWord, readRawUsb, svcWord, type TrackerStatus,
 } from "../../app/trackerStatus.ts";
-import { Dialog, KV } from "../../ds/components.tsx";
+import { Dialog, KV, ToggleRow } from "../../ds/components.tsx";
+import {
+  applySetting, INTERVAL_CHOICES, intervalCommand, servicesCommand, type ServiceChoice,
+} from "../../app/trackerSettings.ts";
 import { TrackerBle } from "../../platform/trackerBle.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
 import { useTrackerFences } from "../zones/SendFenceDialog.tsx";
@@ -140,8 +143,83 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
           {isGateway && onBridge && <button className="btn primary" onClick={onBridge}>Köprü olarak bağlan</button>}
         </div>
         {!a && st && !isGateway && !("usb" in target) && <p className="fine" style={{ margin: 0 }}>Bu tasma hesabında yok. Eklemek için USB ile bağla (Sürü → "+").</p>}
-        <p className="fine" style={{ margin: 0 }}>Ayarları değiştirme sonraki güncellemede.</p>
+        {st && !isGateway && st.role !== null && ("usb" in target
+          ? <UsbSettings device={id} status={st} onDone={() => { void read(); }} busy={!!phase} />
+          : <p className="fine" style={{ margin: 0 }}>Ayar değiştirmek için USB ile bağlan; Bluetooth'tan ayar sonraki güncellemede.</p>)}
       </div>
     </Dialog>
+  );
+}
+
+/** 4b: rapor aralığı ve hizmetler, USB ile. Yazılınca kart yeniden okunur. */
+function UsbSettings({ device, status, onDone, busy }: { device: string | null; status: TrackerStatus; onDone: () => void; busy: boolean }) {
+  const current = status.interval?.requestedS ?? null;
+  const req = status.services?.requested ?? null;
+  const [interval, setInterval_] = useState<number | null>(current);
+  const [svc, setSvc] = useState<ServiceChoice>({
+    tracking: req ? req.tracking : status.services?.tracking !== "off",
+    relay: req ? req.relay : status.services?.relay === "on",
+  });
+  const [working, setWorking] = useState("");
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+  const choices = current !== null && !INTERVAL_CHOICES.includes(current) ? [...INTERVAL_CHOICES, current].sort((x, y) => x - y) : INTERVAL_CHOICES;
+  const svcChanged = !req || req.tracking !== svc.tracking || req.relay !== svc.relay;
+  const intervalChanged = interval !== null && interval !== current;
+
+  async function save(): Promise<void> {
+    setError(""); setNote("");
+    let con: UsbConsole | null = null;
+    const done: string[] = [];
+    try {
+      setWorking("USB açılıyor…");
+      con = await UsbConsole.open();
+      const dev = await probeUsbDevice(con);
+      if (dev.kind !== "tracker" || (device && dev.report.device.toUpperCase() !== device.toUpperCase()))
+        throw new Error("USB'deki cihaz değişmiş; kartı kapatıp yeniden bağlan.");
+      if (intervalChanged) {
+        setWorking("Rapor aralığı yazılıyor…");
+        await applySetting(con, intervalCommand(interval!));
+        done.push(`rapor aralığı ${fmt.period(interval!)}`);
+      }
+      if (svcChanged) {
+        setWorking("Hizmetler yazılıyor…");
+        await applySetting(con, servicesCommand(svc));
+        done.push("hizmetler");
+      }
+      setNote(done.length ? `Tasmaya yazıldı: ${done.join(", ")}. Kart yeniden okunuyor.` : "Değişiklik yok.");
+    } catch (e) {
+      setError(errText(e) + (done.length ? ` (Yazılan: ${done.join(", ")}.)` : ""));
+    } finally {
+      if (con) await con.close();
+      setWorking("");
+      if (done.length) onDone();
+    }
+  }
+
+  return (
+    <div className="stack">
+      <span className="sm strong">Ayarlar</span>
+      <div className="card" style={{ margin: 0 }}>
+        <div className="kv">
+          <span>Rapor aralığı</span>
+          <select className="inp" style={{ width: "auto" }} aria-label="Rapor aralığı" value={interval ?? ""}
+            disabled={!!working || busy} onChange={(e) => setInterval_(Number(e.target.value))}>
+            {current === null && <option value="">—</option>}
+            {choices.map((sec) => <option key={sec} value={sec}>{fmt.period(sec)}</option>)}
+          </select>
+        </div>
+        <ToggleRow title="Konum takibi" sub="Kapalıyken tasma GPS'i açmaz, konum göndermez."
+          on={svc.tracking} onChange={(v) => setSvc({ ...svc, tracking: v })} />
+        <ToggleRow title="Aktarma" sub="Başka tasmaların kayıtlarını gateway'e iletir. Açıkken telsiz hep dinler, pil daha çok gider."
+          on={svc.relay} onChange={(v) => setSvc({ ...svc, relay: v })} />
+      </div>
+      {!req && status.services && <p className="fine" style={{ margin: 0 }}>Hizmetler şu an otomatik (donanıma göre). Kaydedersen seçtiğin hizmetler sabitlenir.</p>}
+      <button className="btn primary wide" disabled={!!working || busy || (!intervalChanged && !svcChanged)} onClick={() => { void save(); }}>
+        {working || "Tasmaya yaz"}
+      </button>
+      {note && <p className="sm" role="status" style={{ margin: 0 }}>{note}</p>}
+      {error && <p className="sm t-aging" role="alert" style={{ margin: 0 }}>{error}</p>}
+    </div>
   );
 }
