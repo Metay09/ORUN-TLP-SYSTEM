@@ -126,11 +126,40 @@ def account_handler_factory(store: SharedStore, enrollment: EdgeEnrollment,
             actor = accounts.resolve_session(enrollment, bearer) if bearer else None
             if not actor:
                 return self._send(401, {"error": "unauthorized"})
+            profile = accounts.account_profile(bearer) or {}
             return self._send(200, {
                 "site": actor.site_id, "actor": actor.actor_id,
                 "installation": actor.installation_id,
                 "scopes": sorted(actor.scopes),
+                **profile,
             })
+
+        def _set_email(self, url) -> None:
+            if url.query or url.fragment:
+                return self._send(404, {"error": "not_found"})
+            bearer = self._bearer(self.headers)
+            actor = accounts.resolve_password_session(bearer) if bearer else None
+            if actor is None:
+                return self._send(401, {"error": "unauthorized"})
+            size = self.headers.get("Content-Length", "")
+            if (self.headers.get("Transfer-Encoding") or
+                    self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                    != "application/json" or
+                    not size.isascii() or not size.isdecimal() or
+                    not 1 <= int(size) <= 1024):
+                return self._send(400, {"error": "invalid_request"})
+            try:
+                data = json.loads(self.rfile.read(int(size)).decode("utf-8"))
+                if not isinstance(data, dict) or set(data) != {"email"}:
+                    return self._send(400, {"error": "invalid_request"})
+                email = accounts.set_email(actor.site_id, actor.actor_id, data["email"])
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return self._send(400, {"error": "invalid_request"})
+            except ValueError as exc:
+                return self._send(409 if "already" in str(exc) else 400,
+                                  {"error": "email_in_use" if "already" in str(exc)
+                                   else "invalid_email"})
+            return self._send(200, {"email": email})
 
         def do_POST(self):  # noqa: N802
             url = urlsplit(self.path)
@@ -138,6 +167,8 @@ def account_handler_factory(store: SharedStore, enrollment: EdgeEnrollment,
                 if url.query or url.fragment:
                     return self._send(404, {"error": "not_found"})
                 return self._observation("POST", url.path)
+            if url.path == "/api/v1/account/email":
+                return self._set_email(url)
             if url.path not in (
                     "/api/v1/account/login", "/api/v1/account/logout"):
                 return super().do_POST()
