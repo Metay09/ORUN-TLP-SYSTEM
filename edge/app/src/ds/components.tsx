@@ -189,8 +189,18 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
 
 /** 24 one-hour bars: darker = more movement that hour; empty = no record. */
 export function Strip({ values, tall }: { values: (number | null)[]; tall?: boolean }) {
+  // Tall (the animal card): one bar per hour, longer bar = more movement;
+  // a flat stub = recorded but still, nothing = no record that hour.
+  if (tall) return (
+    <span className="strip tall" aria-hidden="true">
+      {values.map((v, i) => (
+        <i key={i} className={v === null ? "none" : v < 0.05 ? "still" : undefined}
+          style={v === null || v < 0.05 ? undefined : { height: `${Math.round(12 + v * 88)}%` }} />
+      ))}
+    </span>
+  );
   return (
-    <span className={"strip" + (tall ? " tall" : "")} aria-hidden="true">
+    <span className="strip" aria-hidden="true">
       {values.map((v, i) => (
         <i key={i} style={v === null ? undefined : { background: `color-mix(in srgb, var(--fresh) ${Math.round(18 + v * 82)}%, var(--sunk))` }} />
       ))}

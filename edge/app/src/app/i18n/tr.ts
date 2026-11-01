@@ -149,7 +149,7 @@ export const tr = {
     activity: "Hareket",
     activityToday: (d: string) => `Bugün ${d} hareket etti`,
     activityNone: "Bu tasma hareket özeti göndermiyor",
-    activityStripHelp: "Her çizgi bir saat: koyu çizgi, o saatte daha çok hareket demek.",
+    activityStripHelp: "Her çubuk bir saat: çubuk ne kadar uzunsa o saatte o kadar çok hareket etti. Çubuk yoksa o saatte kayıt yok.",
     walked: "Yürüdüğü yol",
     walkedToday: (d: string) => `Bugün yaklaşık ${d}`,
     walkedHelp: "Kayıtlar arası düz çizgiyle hesaplanır; gerçek yol biraz daha uzundur.",

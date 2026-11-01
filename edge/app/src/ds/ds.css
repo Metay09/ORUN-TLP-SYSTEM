@@ -247,8 +247,11 @@ button.cell:active { background: var(--sunk); }
 
 /* ---------------------------------------------------- activity strip --- */
 .strip { display: flex; gap: 1.5px; height: 6px; border-radius: 3px; overflow: hidden; width: 100%; }
-.strip.tall { height: 28px; border-radius: 8px; gap: 2px; }
 .strip i { flex: 1; background: var(--sunk); }
+.strip.tall { height: 56px; gap: 3px; align-items: flex-end; overflow: visible; border-radius: 0; border-bottom: 1px solid var(--hair); }
+.strip.tall i { background: var(--fresh); border-radius: 3px 3px 0 0; min-height: 0; }
+.strip.tall i.still { height: 3px; background: color-mix(in srgb, var(--fresh) 35%, var(--sunk)); }
+.strip.tall i.none { height: 0; }
 .strip-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--faint); padding-top: 4px; }
 
 /* --------------------------------------------------------------- empty -- */

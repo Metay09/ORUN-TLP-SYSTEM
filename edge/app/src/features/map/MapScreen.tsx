@@ -4,7 +4,7 @@
 // bottom sheet.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Compass, CornersOut, Crosshair, CubeFocus, MagnifyingGlass, NavigationArrow, Pause, Play, Stack, UserCircle, X,
+  Compass, CornersOut, Crosshair, CubeFocus, NavigationArrow, Pause, Play, Stack, UserCircle, X,
 } from "@phosphor-icons/react";
 import { hourlyActivity, inRange } from "../../app/activity.ts";
 import { bearingDeg, distanceM, type LatLon } from "../../app/geo.ts";
@@ -22,7 +22,6 @@ import { onOfflineMapsChanged, openOfflineMap } from "./offlinePacks/offlineMap.
 import { DrawZone, type DrawHooks } from "./DrawZone.tsx";
 import { startPosition, usePosition } from "./position.ts";
 import { Sheet, type Snap } from "./Sheet.tsx";
-import { HerdSearch } from "./HerdSearch.tsx";
 import { stationWords } from "../network/words.ts";
 
 let savedView: { center: [number, number]; zoom: number } | undefined;
@@ -38,7 +37,6 @@ export function MapScreen({ visible }: { visible: boolean }) {
   const [snap, setSnap] = useState<Snap>("peek");
   const [sheetPx, setSheetPx] = useState(150);
   const [panel, setPanel] = useState(false);
-  const [search, setSearch] = useState(false);
   const [offline, setOffline] = useState(false);
   const [zoom, setZoom] = useState(14);
   const [turned, setTurned] = useState(false);   // rotated or tilted: show the north button
@@ -197,7 +195,6 @@ export function MapScreen({ visible }: { visible: boolean }) {
   }, [pos.pos]);
 
   const clear = () => { setSelected(null); setWin(null); setCursor(null); setPlaying(false); setSnap("peek"); };
-  useBack(() => setSearch(false), search);
   useBack(() => setPanel(false), panel);
   useBack(() => { if (selected) clear(); else if (selZone) setSelZone(null); else setSnap("peek"); },
     visible && !drawing && (selected !== null || selZone !== null || snap !== "peek"));
@@ -217,7 +214,6 @@ export function MapScreen({ visible }: { visible: boolean }) {
           onDone={(z) => { setDrawing(null); if (z) { setSelZone(z.id); setFlash(tr.zones.saved(z.name)); } }} />
       ) : <>
       <div className="map-top">
-        <button className="map-search" onClick={() => setSearch(true)}><MagnifyingGlass size={22} />{tr.map.search}</button>
         <button className="me-btn" onClick={() => nav.push({ to: "settings" })} aria-label={tr.common.settings}><UserCircle size={28} /></button>
       </div>
       <div className="map-status">
@@ -281,7 +277,6 @@ export function MapScreen({ visible }: { visible: boolean }) {
 
       </>}
       {panel && !drawing && <LayerPanel onClose={() => setPanel(false)} />}
-      {search && <HerdSearch herd={herd} onClose={() => setSearch(false)} onPick={(id) => { setSearch(false); setSelected(id); }} />}
     </section>
   );
 }
