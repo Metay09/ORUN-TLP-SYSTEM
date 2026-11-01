@@ -82,3 +82,51 @@ test("tamper and failed SQLite COMMIT preserve cursor and do not fabricate deliv
   assert.equal(await core.ledger.recordCount(), 0);
   assert.equal(core.nextAcceptMessage(), null);
 });
+
+test("1. adım: newest position arrives first without moving the history cursor; history repeat is accepted", async () => {
+  const { db, mirror } = await setup();
+  // The latest call returns the newest record; history later returns it again.
+  const client = fake("site-a", after => after === 0
+    ? { records: [{ ...row, cursor: 7 }], cursor: 7, has_more: false }
+    : { records: [], cursor: after, has_more: false });
+  (client as unknown as { readServerLatest: () => Promise<unknown> }).readServerLatest =
+    async () => ({ records: [{ ...row, cursor: 7 }] });
+
+  const latest = await mirror.pullLatest(client);
+  assert.deepEqual(latest, { received: 1, added: 1 });
+  assert.equal((await mirror.points(client)).length, 1, "map shows it before any history page");
+  assert.deepEqual(await db.query("SELECT * FROM orun_account_observation_cursors_v1"), [],
+    "history cursor untouched");
+
+  const again = await mirror.pullLatest(client);
+  assert.deepEqual(again, { received: 1, added: 0 }, "repeat is idempotent");
+
+  const history = await mirror.pullAvailable(client);
+  assert.equal(history.received, 1);
+  assert.equal(history.more, false);
+  assert.equal(Number((await db.query("SELECT count(*) AS n FROM orun_account_observation_records_v1"))[0].n), 1);
+});
+
+test("1. adım: one sync round continues past the old 4-page limit", async () => {
+  const { mirror } = await setup();
+  let calls = 0;
+  const client = fake("site-a", after => {
+    calls++;
+    return calls < 10
+      ? { records: [], cursor: after, has_more: true }
+      : { records: [], cursor: after, has_more: false };
+  });
+  // has_more with an empty page is refused by the real parser; this fake only
+  // counts how many pages one automatic round is allowed to request.
+  const r = await mirror.pullAvailable(client);
+  assert.equal(r.pages, 10);
+  assert.equal(r.more, false);
+});
+
+test("1. adım: latest response parser refuses duplicates, wrong family and missing marker", async () => {
+  const { parseServerLatest } = await import("../src/app/serverObservationRead.ts");
+  assert.equal(parseServerLatest({ latest: true, records: [row] }).records.length, 1);
+  assert.throws(() => parseServerLatest({ records: [row] }));
+  assert.throws(() => parseServerLatest({ latest: true, records: [row, { ...row, cursor: 2 }] }));
+  assert.throws(() => parseServerLatest({ latest: true, records: [{ ...row, family: 2, frame: row.frame.slice(0, 168) }] }));
+});

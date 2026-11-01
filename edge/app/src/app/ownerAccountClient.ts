@@ -3,7 +3,10 @@
 // storage; short-lived account bearer remains ONLY in this JS class instance.
 // No localStorage, IndexedDB, URL, logs, or observation-bench token reuse.
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
-import { parseServerObservationPage, type ServerObservationPage } from "./serverObservationRead.ts";
+import {
+  parseServerLatest, parseServerObservationPage,
+  type ServerLatestObservations, type ServerObservationPage,
+} from "./serverObservationRead.ts";
 
 export interface AccountIdentity {
   site: string;
@@ -215,18 +218,28 @@ export class OwnerAccountClient {
    * site-scoped SQLite mirror before displaying anything.
    */
   async readServerObservations(after = 0): Promise<ServerObservationPage> {
+    if (!Number.isSafeInteger(after) || after < 0)
+      throw new Error("Sunucu kayıt imleci geçersiz.");
+    const parsed = await this.readRecords("after=" + after);
+    return parseServerObservationPage(parsed, after);
+  }
+
+  /** Newest measured position of every tracker (same exact protected frames). */
+  async readServerLatest(): Promise<ServerLatestObservations> {
+    return parseServerLatest(await this.readRecords("latest=1"));
+  }
+
+  private async readRecords(query: string): Promise<unknown> {
     if (!this.accessToken || !this.identity ||
         this.identity.expiresAt <= Date.now() / 1000)
       throw new Error("Önce hesabınla giriş yapmalısın.");
-    if (!Number.isSafeInteger(after) || after < 0)
-      throw new Error("Sunucu kayıt imleci geçersiz.");
     const epoch = this.epoch;
     const token = this.accessToken;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20_000);
     try {
       const reply = await this.fetcher(
-        this.base + "/v1/edge/records?after=" + after, {
+        this.base + "/v1/edge/records?" + query, {
           headers: { Authorization: "Bearer " + token,
                      Accept: "application/json" },
           credentials: "omit", redirect: "error", cache: "no-store",
@@ -242,7 +255,7 @@ export class OwnerAccountClient {
       if (this.epoch !== epoch || !this.accessToken || !this.identity ||
           this.identity.expiresAt <= Date.now() / 1000)
         throw new Error("Kayıt indirme sırasında hesap oturumu sona erdi.");
-      return parseServerObservationPage(parsed, after);
+      return parsed;
     } finally {
       clearTimeout(timeout);
     }

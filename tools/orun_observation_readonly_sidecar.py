@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Read-only ORUN observation sidecar for coexistence with the legacy map.
 
-It exposes only authenticated GET /v1/edge/records?after=<cursor>. Unlike
+It exposes only authenticated GET /v1/edge/records?after=<cursor> and
+GET /v1/edge/records?latest=1 (newest measured position per tracker). Unlike
 orun_backend_bench.Backend, this server NEVER creates tables, opens the
 credential registry, accepts uploads, issues keys, or modifies live SQLite.
 
@@ -23,11 +24,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.observation_read_page import (  # noqa: E402
-    MAX_CURSOR, ObservationReadUnavailable, read_page,
+    MAX_CURSOR, ObservationReadUnavailable, read_latest, read_page,
 )
 from backend.orun_backend_bench import load_private_token_file  # noqa: E402
 
 EXACT_RECORDS = re.compile(r"^/v1/edge/records\?after=(0|[1-9][0-9]{0,18})$")
+LATEST_RECORDS = "/v1/edge/records?latest=1"
 
 
 def make_readonly_server(
@@ -67,13 +69,15 @@ def make_readonly_server(
             candidate = auth[7:].encode() if auth.startswith("Bearer ") else b""
             if not hmac.compare_digest(candidate, expected):
                 return self.send_json(401, {"error": "unauthorized"})
-            match = EXACT_RECORDS.fullmatch(self.path)
-            if match is None or int(match.group(1)) > MAX_CURSOR:
+            latest = self.path == LATEST_RECORDS
+            match = None if latest else EXACT_RECORDS.fullmatch(self.path)
+            if not latest and (match is None or int(match.group(1)) > MAX_CURSOR):
                 return self.send_json(400, {"error": "invalid_cursor"})
             if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length") not in (None, "0"):
                 return self.send_json(400, {"error": "invalid_request"})
             try:
-                page = read_page(db_path, int(match.group(1)))
+                page = (read_latest(db_path) if latest
+                        else read_page(db_path, int(match.group(1))))
             except ObservationReadUnavailable:
                 return self.send_json(503, {"error": "ledger_unavailable"})
             return self.send_json(200, page)
