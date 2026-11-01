@@ -152,7 +152,13 @@ def test_end_to_end(tmp: Path) -> str:
         assert out["counts"] == {"uploaded": 130, "pending": 0, "conflict": 0, "rejected": 0}
         server_points = eb.points_from_db(backend.db_path)["points"]
         assert len(server_points) == 130
-        assert server_points == out["phone"], "backend map != phone map"
+        # The phone tags its own points with app-side provenance (delivery
+        # path, ledger incarnation); the backend map has no such fields.
+        # Compare the shared observation fields.
+        app_only = {"delivery", "incarnation"}
+        assert all(p.get("delivery") == "phone" for p in out["phone"]), "phone points must be phone deliveries"
+        phone_points = [{k: v for k, v in p.items() if k not in app_only} for p in out["phone"]]
+        assert server_points == phone_points, "backend map != phone map"
         links_seen = sorted({str(p["link"]) for p in server_points})
         return f"end-to-end 130 records, backend map == phone map, links {links_seen}"
     finally:
