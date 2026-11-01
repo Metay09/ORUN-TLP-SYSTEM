@@ -25,7 +25,8 @@ class GecisTests(unittest.TestCase):
         s = shared_config(exec_argv(SHOW_SHARED))
         self.assertEqual((b["host"], b["port"], b["bench"]), ("100.114.36.9", 8090, False))
         self.assertEqual(s, {"state_dir": "/home/m/ORUN-SHARED-RUNTIME/state/backend",
-                             "site": "orun-main", "port": 18781})
+                             "site": "orun-main", "port": 18781,
+                             "token_file": "/home/m/.orun/backend_token"})
         unit = unit_text("/home/m/ORUN-RELEASES/sunucu-abc1234", "/usr/bin/python3", b, s,
                          "/home/m/.orun/backend_token")
         line = next(x for x in unit.splitlines() if x.startswith("ExecStart="))
@@ -43,6 +44,35 @@ class GecisTests(unittest.TestCase):
             shared_config(["python3", "x.py", "--state-dir", "/s"])   # site/port yok
         with self.assertRaises(Exception):
             exec_argv("{ path=/x ; ignore_errors=no }")
+
+
+
+class CanliAyarTests(unittest.TestCase):
+    """Backend bir sarmalayıcıyla başlatılsa da gerçek komut satırından okunur."""
+
+    def test_cmdline_split_and_token_from_account_service(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        import tools.orun_pc_gecis as g
+
+        self.assertEqual(g.split_cmdline(b"/usr/bin/python3\0x.py\0--db\0a b.sqlite\0"),
+                         ["/usr/bin/python3", "x.py", "--db", "a b.sqlite"])
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            backend = (["/usr/bin/python3", "backend/orun_backend_bench.py", "--db", "ledger.sqlite",
+                        "--host", "100.114.36.9", "--port", "8090"], cwd)          # anahtar yok, yollar göreli
+            shared = (exec_argv(SHOW_SHARED), cwd)
+            unit = cwd / "orun-sunucu.service"
+            with patch.object(g, "_argv", side_effect=[backend, shared]):
+                g.write_unit("/r/sunucu-abc", str(unit))
+            line = next(x for x in unit.read_text().splitlines() if x.startswith("ExecStart="))
+            o = options(shlex.split(line[len("ExecStart="):]))
+            self.assertEqual(o["bridge-token-file"], "/home/m/.orun/backend_token")
+            self.assertEqual(o["db"], str(cwd / "ledger.sqlite"))
+            self.assertEqual(o["bridge-listen"], "100.114.36.9:8090")
+            self.assertTrue(os.path.isabs(o["registry"]))
 
 
 if __name__ == "__main__":

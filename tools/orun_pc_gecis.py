@@ -36,6 +36,56 @@ def exec_argv(show_value: str) -> list[str]:
     return shlex.split(starts[0])
 
 
+def split_cmdline(raw: bytes) -> list[str]:
+    """/proc/<pid>/cmdline (NUL ile ayrılmış) -> argv."""
+    return [p.decode("utf-8", "surrogateescape") for p in raw.split(b"\0") if p]
+
+
+def _children(pid: int) -> list[int]:
+    out = []
+    for stat_file in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = stat_file.read_text().rsplit(")", 1)[1].split()
+            if int(fields[1]) == pid:
+                out.append(int(stat_file.parent.name))
+        except (OSError, ValueError, IndexError):
+            continue
+    return out
+
+
+def live_argv(unit: str, marker: str) -> tuple[list[str], Path] | None:
+    """Çalışan servisin (ya da sarmalayıcının altındaki) GERÇEK python komutu
+    ve çalışma klasörü. Bulunamazsa None."""
+    r = subprocess.run(["systemctl", "--user", "show", "-p", "MainPID", "--value", unit],
+                       capture_output=True, text=True, check=False)
+    try:
+        root = int(r.stdout.strip())
+    except ValueError:
+        return None
+    if root <= 0:
+        return None
+    queue, seen = [root], set()
+    while queue:
+        pid = queue.pop(0)
+        if pid in seen:
+            continue
+        seen.add(pid)
+        try:
+            argv = split_cmdline(Path(f"/proc/{pid}/cmdline").read_bytes())
+            cwd = Path(os.readlink(f"/proc/{pid}/cwd"))
+        except OSError:
+            continue
+        if any(marker in a for a in argv):
+            return argv, cwd
+        queue.extend(_children(pid))
+    return None
+
+
+def _absolute(value: str, cwd: Path) -> str:
+    v = os.path.expanduser(value)
+    return v if os.path.isabs(v) else str(cwd / v)
+
+
 def options(argv: list[str]) -> dict[str, str | bool]:
     out: dict[str, str | bool] = {}
     i = 0
@@ -74,7 +124,9 @@ def shared_config(argv: list[str]) -> dict:
     port = int(o.get("port", 0))
     if not 0 < port < 65536:
         raise GecisHatasi("hesap servisinin sabit portu bulunamadı")
-    return {"state_dir": o["state-dir"], "site": o["observation-site"], "port": port}
+    token = o.get("observation-token-file")
+    return {"state_dir": o["state-dir"], "site": o["observation-site"], "port": port,
+            "token_file": token if isinstance(token, str) else None}
 
 
 def unit_text(release: str, python: str, b: dict, s: dict, token_file: str) -> str:
@@ -97,13 +149,28 @@ def _show(unit: str) -> str:
     return r.stdout
 
 
+def _argv(unit: str, marker: str) -> tuple[list[str], Path]:
+    live = live_argv(unit, marker)
+    if live is not None:
+        return live
+    argv = exec_argv(_show(unit))
+    if not any(marker in a for a in argv):
+        raise GecisHatasi(f"{unit} çalışmıyor ve başlatma satırında {marker} yok; "
+                          f"'systemctl --user cat {unit}' çıktısını gönder")
+    return argv, HOME
+
+
 def write_unit(release: str, unit_path: str) -> None:
-    b_argv, s_argv = exec_argv(_show(BACKEND)), exec_argv(_show(SHARED))
+    b_argv, b_cwd = _argv(BACKEND, "orun_backend_bench")
+    s_argv, s_cwd = _argv(SHARED, "orun_shared_sync_loopback")
     b, s = backend_config(b_argv), shared_config(s_argv)
+    b["db"] = _absolute(b["db"], b_cwd)
+    b["registry"] = _absolute(b["registry"], b_cwd)
+    s["state_dir"] = _absolute(s["state_dir"], s_cwd)
     token_file = b["token_file"]
-    if not token_file:
-        if not isinstance(b["token"], str) or len(b["token"]) < 8:
-            raise GecisHatasi("Backend köprü anahtarı bulunamadı")
+    if isinstance(token_file, str):
+        token_file = _absolute(token_file, b_cwd)
+    elif isinstance(b["token"], str) and len(b["token"]) >= 8:
         # Anahtar zaten servis satırında açıktaydı; 0600 dosyaya taşınır.
         path = HOME / ".config" / "orun" / "bridge_token"
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -111,7 +178,12 @@ def write_unit(release: str, unit_path: str) -> None:
         with os.fdopen(fd, "w") as f:
             f.write(b["token"] + "\n")
         token_file = str(path)
-    python = s_argv[0] if s_argv[0].endswith(("python3", "python")) else "/usr/bin/python3"
+    elif isinstance(s.get("token_file"), str):
+        # Hesap servisi Backend'e bu anahtarla bağlanıyordu: aynı anahtar.
+        token_file = _absolute(s["token_file"], s_cwd)
+    else:
+        raise GecisHatasi("Backend köprü anahtarı bulunamadı")
+    python = b_argv[0] if "python" in os.path.basename(b_argv[0]) else "/usr/bin/python3"
     target = Path(unit_path)
     if target.exists():
         raise GecisHatasi(f"{target} zaten var")
