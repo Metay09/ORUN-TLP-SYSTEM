@@ -24,7 +24,11 @@ Bu listede olmayan iş v1 değildir; yapılmaz, önerilmez, "ileride lazım olur
 | # | Adım | Sahibin göreceği | Durum |
 |---|---|---|---|
 | 0 | Toparlama | main = çalışan sistem, tek dal, bu liste repoda | tamam (#228) |
-| 1 | Otomatik eşitleme | Uygulamayı açınca her tasmanın son konumu kendiliğinden gelir; geçmiş arka planda tamamlanır | tamam; PC'de `bash tools/orun_guncelle.sh` |
+| 1 | Otomatik eşitleme | Uygulamayı açınca her tasmanın son konumu kendiliğinden gelir; geçmiş arka planda tamamlanır | tamam (#229) |
+| 1a | Tek sunucu | PC'de üç servis yerine tek `orun-sunucu`; PC Edge aynı adrese yükler | bu PR; PC'de `bash tools/orun_guncelle.sh` |
+| 1b | Kalıcı giriş | Kullanıcı adı ya da e-postayla giriş; uygulama kapanıp açılınca oturum açık | — |
+| 1c | Cihazı hesaba ekle | Tasmayı USB/BLE ile bağla → "Hesabına ekle"; PC aracı yok | — |
+| 1d | Gateway çiftlik anahtarıyla | Gateway bir kez eklenir; yeni tasma için gateway'e dokunulmaz | — |
 | 2 | İnternetsiz harita | İnternet yokken uydu ve harita (Aydın–Muğla, mera çevresi yakın zoom) | temel kod var |
 | 3 | USB'den tüm ayarlar | Kabloyla her ayar değişir | rapor aralığı, hizmetler, alanlar var |
 | 4 | BLE'den tüm ayarlar | Aynısı kablosuz, alanlar dahil | yalnız okuma var |
@@ -41,6 +45,12 @@ Rapor aralığı, alan dışı aralığı, alanlar ve hangilerinin açık olduğ
 - Üç kapı (USB, BLE, LoRa) cihazdaki **aynı** ayar sahibini kullanır; üç ayrı ayar sistemi yazılmaz.
 - LoRa'dan gelen ayar tasmanın bir sonraki raporunda uygulanır.
 - Telsiz ayarı uzaktan değişip onay gelmezse cihaz eski ayara kendisi döner.
+
+### Mimari (sahip kararı 2026-11-01)
+
+Tasma → Gateway (internetli telefon ya da Linux köprüsü) → **tek ORUN sunucusu** → uygulama.
+Cihazlar birbirine değil **hesaba (çiftliğe)** eklenir; gateway ve röle yalnız taşır.
+Gateway tasma listesi/imzalı izin taşımaz, çiftlik anahtarıyla çalışır (1d).
 
 ## v1 sonrası
 

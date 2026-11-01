@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
-# ORUN: PC'deki iki servisi bu repo sürümüne geçirir, telefon APK'sını üretir
+# ORUN: PC'deki sunucuyu bu repo sürümüne geçirir, telefon APK'sını üretir
 # ve telefona indirmek için kısa süre sunar.
 #
-#   bash tools/orun_guncelle.sh            # servisler + APK + indirme
-#   bash tools/orun_guncelle.sh --no-apk   # yalnız servisler
+#   bash tools/orun_guncelle.sh            # sunucu + APK + indirme
+#   bash tools/orun_guncelle.sh --no-apk   # yalnız sunucu
 #
-# Dokunduğu servisler: orun-observation-readonly, orun-shared-sync.
-# DOKUNMADIĞI: orun-backend, orun-pc-edge, veritabanı, anahtar/token dosyaları.
-# Bir kontrol başarısız olursa servis dosyalarını yedekten geri yükler ve
-# eski sürümle yeniden başlatır.
+# İlk çalıştırmada üç eski servisi (orun-backend, orun-shared-sync,
+# orun-observation-readonly) tek "orun-sunucu" servisine çevirir: aynı
+# veritabanı, aynı kimlik kayıtları, aynı hesap klasörü, aynı adresler.
+# Sonraki çalıştırmalarda yalnız orun-sunucu'yu yeni sürüme geçirir.
+# DOKUNMADIĞI: orun-pc-edge, veritabanı içeriği, anahtar dosyaları.
+# Bir kontrol başarısız olursa eski hale kendisi döner.
 set -euo pipefail
 
-READONLY_UNIT=orun-observation-readonly.service
-BRIDGE_UNIT=orun-shared-sync.service
-READONLY_PORT=${ORUN_READONLY_PORT:-18782}
+OLD_UNITS=(orun-observation-readonly.service orun-shared-sync.service orun-backend.service)
+SUNUCU=orun-sunucu.service
+UNIT_DIR="$HOME/.config/systemd/user"
 SERVE_PORT=${ORUN_APK_PORT:-8099}
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 SHA=$(git -C "$REPO" rev-parse --short=7 HEAD)
 RELEASES="$HOME/ORUN-RELEASES"
-NEW="$RELEASES/observation-$SHA"
+NEW="$RELEASES/sunucu-$SHA"
 STAMP=$(date +%Y%m%d-%H%M%S)
 BUILD_APK=1
 [[ "${1:-}" == "--no-apk" ]] && BUILD_APK=0
@@ -27,81 +29,93 @@ BUILD_APK=1
 say()  { printf '\n== %s\n' "$*"; }
 fail() { printf '\nHATA: %s\n' "$*" >&2; exit 1; }
 
-# --- 1. Şu an çalışan sürüm (servis dosyalarından okunur, tahmin edilmez) ---
-say "Çalışan sürüm bulunuyor"
-OLD=$(systemctl --user cat "$READONLY_UNIT" "$BRIDGE_UNIT" 2>/dev/null \
-      | grep -o -E "(/[^ ]*|~|%h)/ORUN-RELEASES/observation-[0-9a-f]+" | sort -u || true)
-[[ -n "$OLD" ]] || fail "Servis dosyalarında ORUN-RELEASES/observation-… yolu bulunamadı; hiçbir şey değişmedi."
-[[ $(wc -l <<<"$OLD") -eq 1 ]] || fail "İki servis farklı sürümleri gösteriyor:
-$OLD
-Hiçbir şey değişmedi."
-OLD_ABS=${OLD/#\~/$HOME}
-OLD_ABS=${OLD_ABS/#%h/$HOME}
-echo "Şu an: $OLD_ABS"
-echo "Yeni:  $NEW"
-if [[ "$OLD_ABS" == "$NEW" ]]; then
-  echo "Servisler zaten bu sürümde."
-else
-  # --- 2. Yeni sürüm klasörü (yalnız backend/ ve tools/) ---
-  say "Yeni sürüm klasörü hazırlanıyor"
+release_dir() {
   if [[ ! -d "$NEW" ]]; then
     mkdir -p "$NEW.tmp"
     git -C "$REPO" archive HEAD backend tools | tar -x -C "$NEW.tmp"
     mv "$NEW.tmp" "$NEW"
   fi
+}
 
-  # --- 3. Servis dosyalarını yedekle ve yeni yola çevir ---
-  say "Servis dosyaları güncelleniyor (yedekli)"
-  FILES=()
-  for unit in "$READONLY_UNIT" "$BRIDGE_UNIT"; do
-    for f in $(systemctl --user show -p FragmentPath -p DropInPaths --value "$unit"); do
-      [[ -f "$f" ]] && grep -q -F "$OLD" "$f" && FILES+=("$f")
-    done
-  done
-  [[ ${#FILES[@]} -gt 0 ]] || fail "Değiştirilecek servis dosyası bulunamadı; hiçbir şey değişmedi."
-  for f in "${FILES[@]}"; do
-    cp -p "$f" "$f.bak-$STAMP"
-    sed -i "s#$OLD#$NEW#g" "$f"
-    echo "  $f (yedek: $f.bak-$STAMP)"
-  done
+# Çalışan orun-sunucu'nun köprü adresi, hesap portu ve köprü anahtar dosyası.
+check_sunucu() {
+  local info bridge port token_file code
+  info=$(python3 "$REPO/tools/orun_pc_gecis.py" describe) || return 1
+  bridge=$(sed -n 's/^BRIDGE=//p' <<<"$info")
+  port=$(sed -n 's/^ACCOUNT_PORT=//p' <<<"$info")
+  token_file=$(sed -n 's/^TOKEN_FILE=//p' <<<"$info")
+  systemctl --user is-active --quiet "$SUNUCU" || return 1
+  [[ -r "$token_file" ]] || return 1
+  code=$(curl -s -o /tmp/orun-health.json -w '%{http_code}' \
+         -H "Authorization: Bearer $(tr -d '\r\n' < "$token_file")" \
+         "http://$bridge/v1/health" || true)
+  [[ "$code" == "200" ]] || { rm -f /tmp/orun-health.json; return 1; }
+  RECORDS=$(grep -o '"records":[0-9]*' /tmp/orun-health.json | cut -d: -f2)
+  rm -f /tmp/orun-health.json
+  # Hesap adresi ayakta mı (girişsiz istek 401 dönmeli).
+  code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/v1/account/me" || true)
+  [[ "$code" == "401" ]]
+}
 
-  rollback() {
-    printf '\nKontrol başarısız; eski sürüme dönülüyor…\n' >&2
-    for f in "${FILES[@]}"; do cp -p "$f.bak-$STAMP" "$f"; done
+mkdir -p "$UNIT_DIR"
+
+if systemctl --user cat "$SUNUCU" >/dev/null 2>&1; then
+  # --- Güncelleme: orun-sunucu zaten var ---
+  say "orun-sunucu yeni sürüme geçiriliyor"
+  CURRENT=$(grep -o -E "$RELEASES/sunucu-[0-9a-f]+" "$UNIT_DIR/$SUNUCU" | head -1 || true)
+  [[ -n "$CURRENT" ]] || fail "$UNIT_DIR/$SUNUCU içinde sürüm yolu yok; hiçbir şey değişmedi."
+  if [[ "$CURRENT" == "$NEW" ]]; then
+    echo "Sunucu zaten bu sürümde."
+  else
+    release_dir
+    cp -p "$UNIT_DIR/$SUNUCU" "$UNIT_DIR/$SUNUCU.bak-$STAMP"
+    sed -i "s#$CURRENT#$NEW#g" "$UNIT_DIR/$SUNUCU"
     systemctl --user daemon-reload
-    systemctl --user restart "$READONLY_UNIT" "$BRIDGE_UNIT" || true
-    fail "Eski sürüme dönüldü ($OLD_ABS). Bu çıktıyı Claude'a gönder."
+    systemctl --user restart "$SUNUCU" || true
+    sleep 3
+    if ! check_sunucu; then
+      cp -p "$UNIT_DIR/$SUNUCU.bak-$STAMP" "$UNIT_DIR/$SUNUCU"
+      systemctl --user daemon-reload
+      systemctl --user restart "$SUNUCU" || true
+      fail "Yeni sürüm kontrolü geçemedi; eski sürüme dönüldü ($CURRENT). Bu çıktıyı Claude'a gönder."
+    fi
+    echo "Tamam: sunucu $SHA sürümünde, $RECORDS kayıt."
+  fi
+else
+  # --- İlk geçiş: üç servisten tek servise ---
+  say "Üç eski servis tek sunucuya çevriliyor"
+  for u in "${OLD_UNITS[@]}"; do
+    systemctl --user cat "$u" >/dev/null 2>&1 || fail "$u bulunamadı; hiçbir şey değişmedi."
+  done
+  release_dir
+  python3 "$REPO/tools/orun_pc_gecis.py" write-unit "$NEW" "$UNIT_DIR/$SUNUCU" \
+    || fail "Eski servis ayarları okunamadı; hiçbir şey değişmedi."
+  echo "Yazıldı: $UNIT_DIR/$SUNUCU"
+
+  geri_don() {
+    printf '\nKontrol başarısız; eski üç servise dönülüyor…\n' >&2
+    systemctl --user stop "$SUNUCU" 2>/dev/null || true
+    mv -f "$UNIT_DIR/$SUNUCU" "$UNIT_DIR/$SUNUCU.basarisiz-$STAMP"
+    systemctl --user daemon-reload
+    systemctl --user start orun-backend.service orun-observation-readonly.service orun-shared-sync.service || true
+    fail "Eski servislerle devam ediliyor. Bu çıktıyı Claude'a gönder."
   }
 
-  # --- 4. Yeniden başlat ve kontrol et ---
-  say "Servisler yeniden başlatılıyor"
   systemctl --user daemon-reload
-  systemctl --user restart "$READONLY_UNIT" "$BRIDGE_UNIT" || rollback
+  systemctl --user stop "${OLD_UNITS[@]}" || geri_don
+  systemctl --user start "$SUNUCU" || geri_don
   sleep 3
-  for unit in "$READONLY_UNIT" "$BRIDGE_UNIT"; do
-    systemctl --user is-active --quiet "$unit" || rollback
-  done
-
-  # Yeni uç gerçekten çalışıyor mu: token dosyası servis satırından okunur, ekrana basılmaz.
-  TOKEN_FILE=$(systemctl --user cat "$READONLY_UNIT" | grep -o -E -- "--token-file[= ][^ ]+" | head -1 | sed -E 's/--token-file[= ]//' || true)
-  TOKEN_FILE=${TOKEN_FILE/#\~/$HOME}
-  TOKEN_FILE=${TOKEN_FILE/#%h/$HOME}
-  [[ -r "$TOKEN_FILE" ]] || rollback
-  CODE=$(curl -s -o /tmp/orun-latest-check.json -w '%{http_code}' \
-         -H "Authorization: Bearer $(tr -d '\r\n' < "$TOKEN_FILE")" \
-         "http://127.0.0.1:$READONLY_PORT/v1/edge/records?latest=1" || true)
-  if [[ "$CODE" != "200" ]] || ! grep -q '"latest": *true' /tmp/orun-latest-check.json; then
-    rm -f /tmp/orun-latest-check.json; rollback
-  fi
-  N=$(grep -o '"device"' /tmp/orun-latest-check.json | wc -l)
-  rm -f /tmp/orun-latest-check.json
-  echo "Tamam: iki servis çalışıyor, sunucu $N tasmanın son konumunu veriyor."
-  echo "Geri dönmek gerekirse: yedek dosyalar .bak-$STAMP, eski sürüm $OLD_ABS"
+  check_sunucu || geri_don
+  # Başarılı: eskiler açılışta başlamasın (dosyaları duruyor, geri dönülebilir).
+  systemctl --user disable "${OLD_UNITS[@]}" 2>/dev/null || true
+  systemctl --user enable "$SUNUCU" >/dev/null 2>&1 || true
+  echo "Tamam: tek sunucu çalışıyor, $RECORDS kayıt. PC Edge aynı adrese yüklemeye devam ediyor."
+  echo "Eskiye dönmek gerekirse: systemctl --user disable --now $SUNUCU && systemctl --user enable --now ${OLD_UNITS[*]}"
 fi
 
 [[ $BUILD_APK -eq 1 ]] || exit 0
 
-# --- 5. APK ---
+# --- APK ---
 say "Telefon uygulaması (APK) derleniyor"
 cd "$REPO/edge/app"
 npm ci --no-audit --no-fund
@@ -114,7 +128,7 @@ OUT="$APK_DIR/ORUN-$SHA.apk"
 cp -f "$APK" "$OUT"
 echo "APK: $OUT"
 
-# --- 6. Telefona indirme (yalnız Tailscale ağı içinden) ---
+# --- Telefona indirme (yalnız Tailscale ağı içinden) ---
 IP=$(tailscale ip -4 2>/dev/null | head -1 || true)
 if [[ -z "$IP" ]]; then
   echo "Tailscale adresi bulunamadı; APK'yı kendin aktar: $OUT"
