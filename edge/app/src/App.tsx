@@ -1,4 +1,4 @@
-// ORUN app shell: five tabs (Harita · Sürü · Alanlar · Olaylar · Bağlantı), pushed
+// ORUN app shell: five tabs (Harita · Sürü · Alanlar · Olaylar · Cihazlar), pushed
 // screens above them, theme / sun mode, and one predictable Android back key.
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { App as CapApp } from "@capacitor/app";
@@ -20,6 +20,7 @@ import {
 } from "./app/ownerAccountPilotRuntime.ts";
 import { SettingsScreen } from "./features/settings/SettingsScreen.tsx";
 import { ZonesScreen } from "./features/zones/ZonesScreen.tsx";
+import { DeviceScreen } from "./features/devices/DeviceScreen.tsx";
 import { ZoneScreen } from "./features/zones/ZoneScreen.tsx";
 
 function useTheme(theme: Theme, sun: boolean): void {
@@ -86,7 +87,7 @@ export function App() {
   }, [tab, setTab]);
 
   const alerts = activeCount(model.events, model.seen);
-  // Bağlantı sekmesinin rengi: veri geliyor mu (Meshtastic'teki gibi).
+  // Cihazlar sekmesinin rengi: veri geliyor mu (Meshtastic'teki gibi).
   const [link, setLink] = useState(0);
   useEffect(() => {
     const bump = () => setLink((n) => n + 1);
@@ -100,7 +101,7 @@ export function App() {
     lastSyncAt: sync.last?.at ?? null, now: model.now,
   });
   void link;
-  // Telefon bir gateway'e köprüyse sunucuya bildir (Bağlantı → Diğer gateway'ler).
+  // Telefon bir gateway'e köprüyse sunucuya bildir (Cihazlar → Gateway'ler).
   const st = model.station;
   useEffect(() => {
     if (st.link === "none" || st.phase !== "connected" || !st.id) return;
@@ -132,6 +133,7 @@ export function App() {
               {r.to === "animal" && <AnimalScreen id={r.id} />}
               {r.to === "find" && <FindScreen id={r.id} />}
               {r.to === "zone" && <ZoneScreen id={r.id} />}
+              {r.to === "device" && <DeviceScreen id={r.id} />}
               {r.to === "settings" && <SettingsScreen />}
             </div>
           ))}

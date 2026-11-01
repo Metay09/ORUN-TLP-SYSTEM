@@ -56,7 +56,7 @@ export function serverWords(sv: ServerView): { tone: "ok" | "up" | "off" | "none
   return { tone: "up", text: "Bu telefonun sunucu teslimi henüz doğrulanmadı" };
 }
 
-/** Bağlantı sekmesinin rengi: veri bu telefona geliyor mu?
+/** Cihazlar sekmesinin rengi: veri bu telefona geliyor mu?
  * ok: gateway bağlı ya da sunucuyla son 5 dakikada eşitlendi.
  * bad: ne gateway var ne hesap, ya da son eşitleme hata verdi (internet yok).
  */

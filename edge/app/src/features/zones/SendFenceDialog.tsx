@@ -76,7 +76,7 @@ export function SendFenceDialog({ onClose }: { onClose: () => void }) {
         <button className="btn primary wide" disabled={busy || gatewayOnUsb} onClick={() => { void send(); }}>
           <Usb size={20} />{busy ? "Gönderiliyor…" : "USB ile bağlı tasmaya gönder"}
         </button>
-        {gatewayOnUsb && <p className="fine">Önce gateway'in USB bağlantısını kes (Bağlantı sekmesi).</p>}
+        {gatewayOnUsb && <p className="fine">Önce gateway'in USB bağlantısını kes (Cihazlar sekmesi).</p>}
         {busy && progress > 0 && <Bar ratio={progress} />}
         {status && <p className="sm" role="status">{status}</p>}
         {error && <p role="alert" className="sm t-aging">{error}</p>}

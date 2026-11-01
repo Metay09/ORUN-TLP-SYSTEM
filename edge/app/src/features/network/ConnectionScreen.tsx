@@ -1,7 +1,7 @@
-// Bağlantı (Meshtastic düzeni, ORUN'a göre): üstte sunucu satırı; "Bu telefon"
-// kartı (bağlı cihaz ya da "Cihaz seçilmedi"); Bluetooth / USB seçici ve
-// yakındaki ORUN cihazları; çiftliğin diğer gateway'leri (nasıl bağlı, son
-// görülme, bellek, kaç tasma); en altta teknik ayrıntılar.
+// Cihazlar (4b, sahip kararı 2026-11-02; eski adı Bağlantı): üstte "Kayıt
+// güvende mi?" ve "Bu telefon" kartı; Bluetooth / USB seçici ve yakındaki ORUN
+// cihazları; sonra bütün cihazlar türüne göre (Gateway'ler, Tasmalar; ileride
+// Sensörler, Vanalar), her biri kendi ekranına açılır; gruplar; teknik ayrıntılar.
 import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Bluetooth, CaretRight, CellSignalFull, CloudCheck, DeviceMobile, MagnifyingGlass, MapPin, Question, Usb, WifiHigh, WifiSlash, X,
@@ -22,6 +22,11 @@ import { AddTrackerDialog } from "../herd/AddTrackerDialog.tsx";
 import { TrackerLiveDialog, type LiveTarget } from "../herd/TrackerLive.tsx";
 import { startPosition, usePosition } from "../map/position.ts";
 import { NameDialog } from "./NameDialog.tsx";
+import { pendingKeys } from "../../app/deviceSettings.ts";
+import { BulkSettingsDialog } from "../devices/BulkSettings.tsx";
+import { useDeviceSettings } from "../devices/DeviceScreen.tsx";
+import { GroupsSection } from "../devices/GroupsSection.tsx";
+import { useTrackerFences } from "../zones/SendFenceDialog.tsx";
 import { farmChain, gatewayFacts, gatewayLine, stationWords, type ChainNode } from "./words.ts";
 
 type Via = "ble" | "usb";
@@ -55,6 +60,9 @@ export function ConnectionScreen() {
   const [adding, setAdding] = useState(false);
   const [naming, setNaming] = useState<string | null>(null);
   const [node, setNode] = useState<ChainNode["key"] | null>(null);
+  const [bulk, setBulk] = useState(false);
+  const settings = useDeviceSettings();
+  const fencePlans = useTrackerFences();
   const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
   const label = (id: string) => names[id.toUpperCase()] ?? bleName(id);
   useEffect(() => onPilotObservationSync(() => setSync(pilotObservationSyncState())), []);
@@ -94,11 +102,12 @@ export function ConnectionScreen() {
     if (!m.demo && account && unnamed && !naming) setNaming(unnamed);
   }, [unnamed, account, m.demo]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 4a: tasmaya (ya da tanınmayan ORUN cihazına) dokununca canlı kartı açılır;
-  // gateway'e dokununca köprü bağlantısı kurulur.
+  // 4a/4b: bilinen tasmaya dokununca tasmanın ekranı (durum, bağlan, ayarlar);
+  // tanınmayan ORUN cihazına dokununca canlı okuma; gateway'e dokununca köprü.
   const pick = (d: NearbyView) => {
     void stopNearbyScan();
     if (d.kind === "gateway") { void m.source.connectBle(false, d.deviceId); return; }
+    if (d.kind === "tracker" && d.id) { nav.push({ to: "device", id: d.id }); return; }
     setLive({ device: d.id, target: { ble: d.deviceId }, bleId: d.deviceId });
   };
 
@@ -118,6 +127,20 @@ export function ConnectionScreen() {
       setUsbBusy(false);
     }
   }
+
+  // 4b: tasmalar türüne göre; önce sorunlular (bekleyen ayar, eski alan, sessiz, pil düşük).
+  const trackerRows = m.herd.filter((a) => a.device).map((a) => {
+    const id = a.device!, dev = m.devices.find((d) => d.id === id);
+    const waiting = pendingKeys(settings[id.toUpperCase()]).length;
+    const fence = fencePlans.find((f) => f.device.toUpperCase() === id.toUpperCase());
+    const staleFence = fence && (fence.state === "stale" || fence.state === "never");
+    const silent = !dev?.lastTime || m.now - dev.lastTime > 3600_000;
+    const bits = [dev?.lastTime ? fmt.ago(dev.lastTime, m.now) : "hiç haber yok",
+                  dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}` : "",
+                  waiting ? `${waiting} ayar bekliyor` : "", staleFence ? "alanlar gönderilmedi" : ""].filter(Boolean);
+    const low = dev?.batteryPercent !== null && dev?.batteryPercent !== undefined && dev.batteryPercent < 20;
+    return { id, name: a.name, sub: bits.join(" · "), problem: waiting > 0 || !!staleFence || silent || low };
+  }).sort((x, y) => Number(y.problem) - Number(x.problem) || x.name.localeCompare(y.name, "tr"));
 
   const others = (gateways ?? []).filter((g) => !(linkOn && s.gateway && g.gateway.toUpperCase() === s.gateway.toUpperCase()));
   const chain = farmChain({
@@ -253,7 +276,7 @@ export function ConnectionScreen() {
         </>
       )}
 
-      <Section title="Diğer gateway'ler" />
+      <Section title="Gateway'ler" />
       <Card>
         {!account ? <p className="sm" style={{ padding: "14px 16px", margin: 0 }}>Hesaba giriş yapınca çiftliğin gateway'leri burada görünür.</p>
           : gateways === null ? <p className="sm" style={{ padding: "14px 16px", margin: 0 }}>Okunuyor…</p>
@@ -264,9 +287,24 @@ export function ConnectionScreen() {
               title={label(g.gateway)} wrapSub
               sub={<>{gatewayLine(g, m.now)}<br />{gatewayFacts(g)}</>}
               trail={<span className="sm" style={{ color: "var(--brand-t)" }}>{names[g.gateway] ? "" : "Ad ver"}<CaretRight size={18} color="var(--mute)" /></span>}
-              onClick={() => setNaming(g.gateway)} />
+              onClick={() => nav.push({ to: "device", id: g.gateway })} />
           ))}
       </Card>
+
+      <Section title="Tasmalar" action={trackerRows.length ? "Toplu ayar" : undefined} onAction={() => setBulk(true)}
+        info="Her tasmanın ekranında durum, bağlan ve ayarlar. Ayar hesaba kaydedilir, tasmaya bağlanınca sormadan gider. Toplu ayar: hepsine, bir gruba ya da seçtiklerine." />
+      <Card>
+        {trackerRows.length ? trackerRows.map((r) => (
+          <Cell key={r.id}
+            lead={<span className={"ic " + (r.problem ? "aging" : "fresh")}><CellSignalFull size={20} /></span>}
+            title={r.name} wrapSub sub={r.sub} subTone={r.problem ? "aging" : undefined}
+            trail={<CaretRight size={18} color="var(--mute)" />}
+            onClick={() => nav.push({ to: "device", id: r.id })} />
+        )) : <p className="sm" style={{ padding: "14px 16px", margin: 0 }}>Henüz tasma yok. Sürü → "+" ile ekle.</p>}
+      </Card>
+
+      <GroupsSection />
+      {bulk && <BulkSettingsDialog onClose={() => setBulk(false)} />}
 
       <TechDetails />
 

@@ -70,7 +70,7 @@ export function AddTrackerDialog({ onClose }: { onClose: () => void }) {
             Önce hesabınla giriş yap
           </button>
         )}
-        {signedIn && gatewayOnUsb && <p className="fine">Önce gateway'in USB bağlantısını kes (Bağlantı sekmesi).</p>}
+        {signedIn && gatewayOnUsb && <p className="fine">Önce gateway'in USB bağlantısını kes (Cihazlar sekmesi).</p>}
         {status && <p className="sm" role="status">{status}</p>}
         {added && (
           <form className="stack" onSubmit={(e) => {

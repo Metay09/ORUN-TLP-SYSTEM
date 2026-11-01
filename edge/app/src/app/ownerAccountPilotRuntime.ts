@@ -10,6 +10,7 @@ import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
 import { DeviceNameBook } from "./deviceNames.ts";
 import { TrackerFenceBook, type FenceRecord } from "./trackerFences.ts";
+import { DeviceSettingsBook, type SettingValues, type Via as SettingsVia } from "./deviceSettings.ts";
 import { forgetAccount, loadAccount, storeAccount } from "../platform/orunAccountSession.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import type { Point } from "../core/points.ts";
@@ -93,10 +94,25 @@ export function pilotRecordFence(device: string, rec: FenceRecord): Promise<void
   return trackerFences.set(device, rec, client && pilotAccountStatus() ? client : null);
 }
 
+/** 4b: device settings (account, with a copy on the phone). */
+export const deviceSettings = new DeviceSettingsBook(
+  typeof localStorage !== "undefined" ? (() => { try { return localStorage; } catch { return null; } })() : null);
+
+const settingsServer = () => (client && pilotAccountStatus() ? client : null);
+
+export function pilotWantSettings(devices: string[], set: SettingValues): Promise<void> {
+  return deviceSettings.want(devices, set, settingsServer());
+}
+
+export function pilotReportSettings(device: string, values: SettingValues, via: SettingsVia): Promise<void> {
+  return deviceSettings.report(device, values, via, settingsServer());
+}
+
 function refreshNames(): void {
   if (client && pilotAccountStatus()) {
     void deviceNames.refresh(client).catch(() => undefined);
     void trackerFences.refresh(client).catch(() => undefined);
+    void deviceSettings.refresh(client).catch(() => undefined);
   }
 }
 

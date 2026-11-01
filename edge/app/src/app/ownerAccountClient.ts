@@ -5,6 +5,7 @@
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { parseOfflineCatalog, type OfflinePack } from "../features/map/offlinePacks/catalog.ts";
 import type { FenceRecord } from "./trackerFences.ts";
+import type { DeviceSettingsEntry } from "./deviceSettings.ts";
 import {
   parseServerLatest, parseServerObservationPage,
   type ServerLatestObservations, type ServerObservationPage,
@@ -251,7 +252,7 @@ export class OwnerAccountClient {
     return parsed;
   }
 
-  /** 2c: the farm's gateways (Bağlantı → Diğer gateway'ler). */
+  /** 2c: the farm's gateways (Cihazlar → Gateway'ler). */
   async gateways(): Promise<FarmGateway[]> {
     if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
     const reply = await this.fetcher(this.base + "/api/v1/devices/gateways", {
@@ -318,6 +319,50 @@ export class OwnerAccountClient {
       body: JSON.stringify({ device, ...r }),
     });
     if (!reply.ok) throw new Error("Tasmadaki alanlar hesaba kaydedilemedi.");
+  }
+
+  /** 4b: device settings — what the user wants and what each device has. */
+  async deviceSettings(): Promise<Record<string, DeviceSettingsEntry>> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/settings", {
+      headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
+      credentials: "omit", redirect: "error", cache: "no-store",
+    });
+    if (!reply.ok) throw new Error("Cihaz ayarları okunamadı.");
+    const body = await json(reply, 512 * 1024);
+    const all = body.settings && typeof body.settings === "object" ? body.settings as Record<string, Record<string, unknown>> : {};
+    const out: Record<string, DeviceSettingsEntry> = {};
+    for (const [dev, e] of Object.entries(all)) {
+      if (!e || typeof e !== "object") continue;
+      out[dev] = {
+        wanted: (e.wanted ?? {}) as DeviceSettingsEntry["wanted"],
+        wantedAt: typeof e.wanted_utc === "number" ? e.wanted_utc * 1000 : null,
+        reported: (e.reported ?? null) as DeviceSettingsEntry["reported"],
+        reportedAt: typeof e.reported_utc === "number" ? e.reported_utc * 1000 : null,
+        reportedVia: (e.reported_via ?? null) as DeviceSettingsEntry["reportedVia"],
+      };
+    }
+    return out;
+  }
+
+  async wantSettings(devices: string[], set: Record<string, unknown>): Promise<void> {
+    await this.postSettings("/api/v1/devices/settings", { devices, set });
+  }
+
+  async reportSettings(device: string, values: Record<string, unknown>, via: string): Promise<void> {
+    await this.postSettings("/api/v1/devices/settings/reported", { device, values, via });
+  }
+
+  private async postSettings(path: string, body: unknown): Promise<void> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + path, {
+      method: "POST", credentials: "omit", redirect: "error", cache: "no-store",
+      headers: { Authorization: "Bearer " + this.accessToken,
+                 "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (reply.status === 400) throw new Error("Sunucu bu ayarı kabul etmedi.");
+    if (!reply.ok) throw new Error("Ayar hesaba kaydedilemedi.");
   }
 
   /** 2c: this phone is the bridge for a gateway: tell the server how it is. */

@@ -88,7 +88,7 @@ export const fmt = {
 
 export const tr = {
   app: { name: "ORUN", demoBadge: "Tanıtım sürüsü", demoBanner: "Örnek sürü gösteriliyor · gerçek kayıt değil" },
-  tabs: { map: "Harita", herd: "Sürü", zones: "Alanlar", events: "Olaylar", network: "Bağlantı" },
+  tabs: { map: "Harita", herd: "Sürü", zones: "Alanlar", events: "Olaylar", network: "Cihazlar" },
   common: {
     back: "Geri", close: "Kapat", save: "Kaydet", cancel: "Vazgeç", edit: "Düzenle", more: "Tümü",
     on: "Açık", off: "Kapalı", unknown: "bilinmiyor", none: "—", settings: "Ayarlar", ok: "Tamam",
@@ -99,7 +99,7 @@ export const tr = {
     ledgerError: (e: string) => `Telefondaki kayıt defteri açılamadı: ${e}`,
     noAnimals: "Henüz hayvan yok",
     noAnimalsBody: "Tasma ekleyince konumu sunucudan ya da telefona bağlı gateway'den buraya gelir.",
-    connect: "Bağlantı",
+    connect: "Cihazlar",
     tryDemo: "Tanıtım sürüsünü aç",
     offlineMap: "Harita görüntüsü yüklenemedi · hayvanlar yine de çizilir",
   },
@@ -371,7 +371,7 @@ export const tr = {
   },
   // ------------------------------------------------------------- network ---
   network: {
-    title: "Bağlantı",
+    title: "Cihazlar",
     chain: "Kayıt güvende mi?",
     nodes: { collars: "Tasmalar", station: "Gateway", phone: "Telefon", server: "Sunucu" },
     collarsLine: (n: number, fresh: number) => `${n} tasma · ${fresh} taze`,

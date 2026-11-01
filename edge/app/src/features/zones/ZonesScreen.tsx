@@ -7,7 +7,7 @@ import { fmt, tr } from "../../app/i18n/tr.ts";
 import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { FENCE, areaM2, canonicalE7, compileFence, fromGeoJSON, newZoneId, toGeoJSON, validateRing, zoneAt } from "../../app/zones.ts";
-import { Bar, Card, Cell, DemoFlag, Dialog, Empty, Header, Section, Toggle } from "../../ds/components.tsx";
+import { Bar, Card, Cell, DemoFlag, Empty, Header, Section, Toggle } from "../../ds/components.tsx";
 import { needsSending } from "../../app/fencePlan.ts";
 import { targetsForZone } from "../../app/zoneTargets.ts";
 import { SendFenceDialog, useTrackerFences } from "./SendFenceDialog.tsx";
@@ -19,22 +19,9 @@ export function ZonesScreen() {
   const file = useRef<HTMLInputElement>(null);
   const [note, setNote] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [groupOpen, setGroupOpen] = useState(false);
-  const [groupName, setGroupName] = useState("");
-  const [groupDevices, setGroupDevices] = useState<string[]>([]);
   const plans = useTrackerFences();
   const waiting = needsSending(plans);
   const trackers = m.herd.filter((a) => a.device).map((a) => ({ id: a.device!, name: a.name }));
-  const saveGroup = () => {
-    try {
-      if (!groupName.trim() || !groupDevices.length) throw new Error("Bir grup adı ve en az bir hayvan seç.");
-      m.actions.saveTargetGroup({
-        id: "g" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
-        name: groupName.trim().slice(0, 60), devices: groupDevices,
-      });
-      setGroupOpen(false); setGroupName(""); setGroupDevices([]); setNote(null);
-    } catch (e) { setNote(e instanceof Error ? e.message : "Grup kaydedilemedi."); }
-  };
   const set = m.zoneSet;
   const located = m.herd.filter((a) => a.last);
 
@@ -134,40 +121,6 @@ export function ZonesScreen() {
         </>
       )}
 
-      <Section title="Gruplar" info="Gruplar, bir alanı birkaç hayvana birden göndermek için. Alanın 'Hangi tasmalar' ayarında grubu seçersin." />
-      <Card pad>
-        <div className="stack">
-          {m.targetBook.groups.map((g) => (
-            <div className="row" key={g.id} style={{ justifyContent: "space-between" }}>
-              <span className="sm">{g.name} · {g.devices.length} tasma</span>
-              <button className="btn small danger" onClick={() => {
-                if (!window.confirm(g.name + " grubu silinsin mi?")) return;
-                try { m.actions.removeTargetGroup(g.id); setNote(null); }
-                catch (e) { setNote(e instanceof Error ? e.message : "Grup silinemedi."); }
-              }}>Sil</button>
-            </div>
-          ))}
-          <button className="btn small" disabled={!trackers.length || !!m.targetWarning} onClick={() => setGroupOpen(true)}>
-            <Plus size={18} /> Yeni grup
-          </button>
-        </div>
-      </Card>
-      {groupOpen && (
-        <Dialog title="Yeni grup" onClose={() => setGroupOpen(false)}>
-          <div className="stack" style={{ padding: "4px 16px 16px" }}>
-            <input className="inp" value={groupName} maxLength={60}
-              onChange={(e) => setGroupName(e.target.value)} placeholder="Grup adı (ör. Düveler)" aria-label="Grup adı" />
-            {trackers.map((t) => (
-              <label key={t.id} className="sm">
-                <input type="checkbox" checked={groupDevices.includes(t.id)}
-                  onChange={(e) => setGroupDevices((v) => e.target.checked ? [...v, t.id] : v.filter((id) => id !== t.id))} />
-                {" "}{t.name}
-              </label>
-            ))}
-            <button className="btn primary wide" disabled={!groupName.trim() || !groupDevices.length} onClick={saveGroup}>Kaydet</button>
-          </div>
-        </Dialog>
-      )}
       {sending && <SendFenceDialog onClose={() => setSending(false)} />}
 
       <Section title={tr.zones.file} />

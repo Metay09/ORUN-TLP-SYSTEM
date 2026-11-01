@@ -144,6 +144,31 @@ class GatewayListTests(unittest.TestCase):
                     dict(body, zones=[{"id": "z1", "name": "a"}]), dict(body, device="bad")):
             self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/fence", token, bad)[0], 400)
 
+    def test_device_settings_live_in_the_account(self):
+        """4b: istenen ayar ve cihazdan okunan değer hesapta; toplu yazılabilir."""
+        self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/settings")[0], 401)
+        token = self.login()
+        a, b = "0e8ade7e71531aa3", "0E8ADE7E71538B3C"
+        status, out = self.req(self.account, "POST", "/api/v1/devices/settings", token,
+                               {"devices": [a, b], "set": {"interval_s": 900}})
+        self.assertEqual((status, out["devices"]), (200, [a.upper(), b]))
+        self.req(self.account, "POST", "/api/v1/devices/settings", token, {"devices": [b], "set": {"relay": True}})
+        status, _ = self.req(self.account, "POST", "/api/v1/devices/settings/reported", token,
+                             {"device": b, "values": {"interval_s": 180, "tracking": True, "relay": False}, "via": "usb"})
+        self.assertEqual(status, 200)
+        got = self.req(self.account, "GET", "/api/v1/devices/settings", token)[1]["settings"]
+        self.assertEqual(got[a.upper()]["wanted"], {"interval_s": 900})
+        self.assertIsNone(got[a.upper()]["reported"])
+        self.assertEqual(got[b]["wanted"], {"interval_s": 900, "relay": True})
+        self.assertEqual((got[b]["reported"]["interval_s"], got[b]["reported_via"]), (180, "usb"))
+        for bad in ({"devices": [a], "set": {"interval_s": 59}}, {"devices": [a], "set": {"interval_s": True}},
+                    {"devices": [a], "set": {"tracking": 1}}, {"devices": [a], "set": {"colour": "red"}},
+                    {"devices": [a], "set": {}}, {"devices": [], "set": {"relay": True}},
+                    {"devices": ["bad"], "set": {"relay": True}}):
+            self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/settings", token, bad)[0], 400)
+        self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/settings/reported", token,
+                                  {"device": b, "values": {"relay": True}, "via": "wifi"})[0], 400)
+
     def test_old_report_is_not_connected(self):
         clock = [1_000_000.0]
         store = GatewayStatus(self.db, clock=lambda: clock[0])

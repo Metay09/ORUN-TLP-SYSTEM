@@ -44,3 +44,26 @@ export async function applySetting(con: LineConsole, line: string): Promise<"app
   if (code === "UNCHANGED") return "unchanged";
   throw new Error(`Ayar yazılamadı: ${WHY[code] ?? code}.`);
 }
+
+/**
+ * 4b: write what is waiting (wanted ≠ on the device) over USB. `has` is what
+ * the tracker reported just now. Returns the values the tracker accepted.
+ */
+export async function writeWaitingUsb(
+  con: LineConsole, wanted: { interval_s?: number; tracking?: boolean; relay?: boolean },
+  has: { interval_s?: number; tracking?: boolean; relay?: boolean },
+): Promise<{ interval_s?: number; tracking?: boolean; relay?: boolean }> {
+  const done: { interval_s?: number; tracking?: boolean; relay?: boolean } = {};
+  if (wanted.interval_s !== undefined && wanted.interval_s !== has.interval_s) {
+    await applySetting(con, intervalCommand(wanted.interval_s));
+    done.interval_s = wanted.interval_s;
+  }
+  const svcWanted = (wanted.tracking !== undefined && wanted.tracking !== has.tracking) ||
+                    (wanted.relay !== undefined && wanted.relay !== has.relay);
+  if (svcWanted) {
+    const s = { tracking: wanted.tracking ?? has.tracking ?? true, relay: wanted.relay ?? has.relay ?? false };
+    await applySetting(con, servicesCommand(s));
+    done.tracking = s.tracking; done.relay = s.relay;
+  }
+  return done;
+}
