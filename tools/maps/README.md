@@ -32,10 +32,9 @@
   (ODbL Produced Work; atıf haritanın (i) düğmesinde).
 - Protomaps sürümleri yalnız `pmtiles extract` ile bir kez çekilip kendi
   sunucumuzda tutulur (Protomaps'in önerdiği kullanım).
-- **Uydu görüntüsü internetsiz yok (2b):** Esri World Imagery / Wayback
-  çevrimdışı kullanıma yalnız ArcGIS uygulamaları içinde izin veriyor;
-  Google/Bing de izin vermiyor. Lisanslı bir kaynak seçilince
-  `licensed-satellite-raster` türüyle aynı yoldan eklenecek.
+- **Uydu görüntüsü internetsiz yok (2b, sahip kararı: gerek yok):** Esri
+  World Imagery / Wayback çevrimdışı kullanıma yalnız ArcGIS uygulamaları
+  içinde izin veriyor. Uydu yalnız internetle gelir.
 
 ## Testler
 

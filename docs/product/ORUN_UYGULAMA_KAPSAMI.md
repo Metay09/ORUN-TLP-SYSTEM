@@ -31,7 +31,7 @@ Bu listede olmayan iş v1 değildir; yapılmaz, önerilmez, "ileride lazım olur
 | 1d | Tasma çiftliğin bütün gateway'lerine | Tasma eklenirken çiftliğin her gateway'ine (en fazla 4) tek seferde yetkilendirilir; köprüye bağlanan gateway çiftliğe kendiliğinden girer. Sonradan eklenen gateway için tasmada "Cihaz ekle" bir kez daha (6. adımdan sonra LoRa'dan) | tamam (#234) |
 | 1e | Uygulamadan "Cihaz ekle" | Ağ → Cihaz ekle: tasma telefona USB ile bağlanır, tek düğme; PC aracı yok | tamam (#234) |
 | 2 | İnternetsiz harita | Ayarlar → İnternetsiz harita → İndir: Aydın–Muğla haritası (yol, köy, dere, OpenStreetMap, z15 + büyütme) telefona iner; internet yokken uydu yerine kendiliğinden gösterilir, sokak haritası hep bunu kullanır. PC: `tools/orun_harita.sh` | bu PR |
-| 2b | İnternetsiz uydu | Mera çevresi uydu görüntüsü internetsiz | kaynak kararı bekliyor (Esri çevrimdışı saklamaya yalnız ArcGIS içinde izin veriyor) |
+| 2b | İnternetsiz uydu | — | gerek yok (sahip kararı 2026-11-01): uydu yalnız internetle; internetsizde telefondaki harita |
 | 3 | USB'den tüm ayarlar | Kabloyla her ayar değişir | rapor aralığı, hizmetler, alanlar var |
 | 4 | BLE'den tüm ayarlar | Aynısı kablosuz, alanlar dahil | yalnız okuma var |
 | 5 | Alan dışı bildirimi + LOST | İnek alandan çıkınca telefona bildirim; kayıp durumu | tasma alanı kendisi kontrol ediyor |
