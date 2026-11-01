@@ -17,6 +17,9 @@ export interface AccountIdentity {
 }
 
 const NAME = /^[a-z][a-z0-9._-]{2,63}$/;
+const EMAIL = /^[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,190}\.[a-z]{2,24}$/;
+// 1b: server sessions last 180 days and slide forward on use.
+const MAX_SESSION_SECONDS = 200 * 24 * 3600;
 const TOKEN = /^[A-Za-z0-9_-]{48,128}$/;
 const IDENT = /^edge-[0-9a-f]{64}$/;
 const ACCOUNT_INST = /^account-[0-9a-f]{64}$/;
@@ -78,11 +81,13 @@ export class OwnerAccountClient {
    * TLS required; account bearer stays only in memory, never in localStorage.
    * A stable server-derived account cache namespace is NOT a phone identity.
    */
-  async signInWithPassword(username: string, password: string): Promise<AccountIdentity> {
+  async signInWithPassword(login: string, password: string): Promise<AccountIdentity> {
     const loginEpoch = ++this.epoch;
     this.accessToken = null;
     this.identity = null;
-    if (!NAME.test(username) || typeof password !== "string" ||
+    // Kullanıcı adı ya da e-posta.
+    const username = login.includes("@") ? login.trim().toLowerCase() : login.trim();
+    if (!(NAME.test(username) || EMAIL.test(username)) || typeof password !== "string" ||
         password.length < 12 || password.length > 128)
       throw new Error("Kullanıcı adı veya parola geçersiz.");
     const controller = new AbortController();
@@ -106,24 +111,92 @@ export class OwnerAccountClient {
       const now = Date.now() / 1000;
       if (typeof body.site !== "string" || !ID.test(body.site) ||
           typeof body.actor !== "string" || !ID.test(body.actor) ||
-          body.username !== username ||
+          typeof body.username !== "string" || !NAME.test(body.username) ||
+          (!username.includes("@") && body.username !== username) ||
           typeof body.installation !== "string" ||
           !ACCOUNT_INST.test(body.installation) ||
           typeof body.account_access_token !== "string" ||
           !TOKEN.test(body.account_access_token) ||
           typeof body.expires_at !== "number" ||
           !Number.isSafeInteger(body.expires_at) ||
-          body.expires_at <= now || body.expires_at > now + 12 * 3600 + 600)
+          body.expires_at <= now || body.expires_at > now + MAX_SESSION_SECONDS)
         throw new Error("Sunucudan gelen hesap bilgileri doğrulanamadı.");
       this.accessToken = body.account_access_token;
       this.identity = {
-        site: body.site, actor: body.actor, username,
+        site: body.site, actor: body.actor, username: body.username,
         installation: body.installation, expiresAt: body.expires_at,
       };
       return { ...this.identity };
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  /** 1b: bring back a session stored on this phone (no network). */
+  adopt(identity: AccountIdentity, accessToken: string): void {
+    if (!TOKEN.test(accessToken) || !ID.test(identity.site) || !ID.test(identity.actor) ||
+        !ACCOUNT_INST.test(identity.installation) || !NAME.test(identity.username))
+      throw new Error("Saklanan oturum geçersiz.");
+    this.epoch++;
+    this.accessToken = accessToken;
+    this.identity = { ...identity };
+  }
+
+  /** The stored bearer (only for saving it in the phone's protected store). */
+  storableSession(): { identity: AccountIdentity; accessToken: string } | null {
+    return this.accessToken && this.identity
+      ? { identity: { ...this.identity }, accessToken: this.accessToken } : null;
+  }
+
+  /** Ask the server whether the session is still valid; refreshes expiry and
+   * e-mail. Returns "ok", "expired" (server said no) or "offline". */
+  async refresh(): Promise<{ state: "ok" | "expired" | "offline"; email: string | null }> {
+    const token = this.accessToken;
+    if (!token || !this.identity) return { state: "expired", email: null };
+    const epoch = this.epoch;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const reply = await this.fetcher(this.base + "/api/v1/account/me", {
+        headers: { Authorization: "Bearer " + token, Accept: "application/json" },
+        credentials: "omit", redirect: "error", cache: "no-store", signal: controller.signal,
+      });
+      if (epoch !== this.epoch) return { state: "offline", email: null };
+      if (reply.status === 401 || reply.status === 403) {
+        this.accessToken = null;
+        this.identity = null;
+        return { state: "expired", email: null };
+      }
+      if (!reply.ok) return { state: "offline", email: null };
+      const body = await json(reply);
+      const now = Date.now() / 1000;
+      if (typeof body.expires_at === "number" && Number.isSafeInteger(body.expires_at) &&
+          body.expires_at > now && body.expires_at <= now + MAX_SESSION_SECONDS && this.identity)
+        this.identity = { ...this.identity, expiresAt: body.expires_at };
+      return { state: "ok", email: typeof body.email === "string" ? body.email : null };
+    } catch {
+      return { state: "offline", email: null };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  /** Optional login e-mail for this account. */
+  async setEmail(email: string): Promise<string> {
+    const value = email.trim().toLowerCase();
+    if (!EMAIL.test(value)) throw new Error("E-posta adresi geçersiz.");
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/account/email", {
+      method: "POST", credentials: "omit", redirect: "error", cache: "no-store",
+      headers: { Authorization: "Bearer " + this.accessToken,
+                 "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ email: value }),
+    });
+    if (reply.status === 409) throw new Error("Bu e-posta başka bir hesapta kullanılıyor.");
+    if (!reply.ok) throw new Error("E-posta kaydedilemedi.");
+    const body = await json(reply);
+    if (body.email !== value) throw new Error("Sunucu yanıtı beklenmedik.");
+    return value;
   }
 
   /** Called only after an explicit user login action. */

@@ -25,8 +25,8 @@ Bu listede olmayan iş v1 değildir; yapılmaz, önerilmez, "ileride lazım olur
 |---|---|---|---|
 | 0 | Toparlama | main = çalışan sistem, tek dal, bu liste repoda | tamam (#228) |
 | 1 | Otomatik eşitleme | Uygulamayı açınca her tasmanın son konumu kendiliğinden gelir; geçmiş arka planda tamamlanır | tamam (#229) |
-| 1a | Tek sunucu | PC'de üç servis yerine tek `orun-sunucu`; PC Edge aynı adrese yükler | bu PR; PC'de `bash tools/orun_guncelle.sh` |
-| 1b | Kalıcı giriş | Kullanıcı adı ya da e-postayla giriş; uygulama kapanıp açılınca oturum açık | — |
+| 1a | Tek sunucu | PC'de üç servis yerine tek `orun-sunucu`; PC Edge aynı adrese yükler | tamam (#230, #231) |
+| 1b | Kalıcı giriş | Kullanıcı adı ya da e-postayla giriş; uygulama kapanıp açılınca oturum açık | bu PR; PC'de `bash tools/orun_guncelle.sh` |
 | 1c | Cihazı hesaba ekle | Tasmayı USB/BLE ile bağla → "Hesabına ekle"; PC aracı yok | — |
 | 1d | Gateway çiftlik anahtarıyla | Gateway bir kez eklenir; yeni tasma için gateway'e dokunulmaz | — |
 | 2 | İnternetsiz harita | İnternet yokken uydu ve harita (Aydın–Muğla, mera çevresi yakın zoom) | temel kod var |

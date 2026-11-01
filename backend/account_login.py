@@ -34,6 +34,11 @@ OWNER_SCOPES = frozenset({
 MAX_LOGIN_FAILURES = 5
 LOCK_SECONDS = 15 * 60
 SESSION_SECONDS = 12 * 60 * 60
+# 1b: password sessions stay valid for 180 days and slide on use (at most
+# one renewal write per day). Logout or password change ends them.
+PASSWORD_SESSION_SECONDS = 180 * 24 * 60 * 60
+RENEW_AFTER_SECONDS = 24 * 60 * 60
+EMAIL = re.compile(r"^[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,190}\.[a-z]{2,24}$")
 SCRYPT_N = 1 << 15
 SCRYPT_R = 8
 SCRYPT_P = 1
@@ -149,6 +154,13 @@ class AccountStore:
                   ON account_password_sessions(site_id, actor_id, revoked_at);
             """)
 
+        with self._session() as db:
+            cols = {r["name"] for r in db.execute("PRAGMA table_info(account_users)")}
+            if "email" not in cols:
+                db.execute("ALTER TABLE account_users ADD COLUMN email TEXT")
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS account_users_email "
+                       "ON account_users(email) WHERE email IS NOT NULL")
+
     @contextmanager
     def _session(self):
         db = sqlite3.connect(str(self.path), timeout=8)
@@ -206,16 +218,19 @@ class AccountStore:
                 "WHERE username=?", (username,)).fetchone()
             if throttle and int(throttle["locked_until"]) > now:
                 raise LoginLocked("login temporarily restricted")
+            by_email = "@" in username
             candidates = db.execute(
                 "SELECT site_id,actor_id,username,salt,verifier,password_version,disabled "
-                "FROM account_users WHERE username=? LIMIT 2", (username,)).fetchall()
+                "FROM account_users WHERE " + ("email=?" if by_email else "username=?") +
+                " LIMIT 2", (username.lower() if by_email else username,)).fetchall()
             row = candidates[0] if len(candidates) == 1 else None
             salt = row["salt"] if row else b"ORUN-LOGIN-DUMMY!"
             verifier = row["verifier"] if row else bytes(32)
             calculated = _hash_password(password, salt)
             valid = bool(row and not row["disabled"] and
                          row["actor_id"] == "owner" and
-                         USERNAME.fullmatch(username) and
+                         (EMAIL.fullmatch(username.lower()) if by_email
+                          else USERNAME.fullmatch(username)) and
                          hmac.compare_digest(calculated, verifier))
             if not valid:
                 prior = (int(throttle["failed_count"]) if throttle and
@@ -248,10 +263,10 @@ class AccountStore:
                 "password_version,issued_at,expires_at) VALUES(?,?,?,?,?,?,?)",
                 (hashlib.sha256(token.encode("ascii")).digest(), site,
                  actor, account_installation, int(row["password_version"]),
-                 now, now + SESSION_SECONDS))
+                 now, now + PASSWORD_SESSION_SECONDS))
             return IssuedAccountSession(
-                token, site, actor, username, account_installation,
-                now + SESSION_SECONDS)
+                token, site, actor, str(row["username"]), account_installation,
+                now + PASSWORD_SESSION_SECONDS)
 
     def resolve_password_session(self, bearer: str) -> Actor | None:
         """Resolve user authority from current DB, never from a client claim."""
@@ -260,19 +275,24 @@ class AccountStore:
             return None
         now = int(time.time())
         with self._session() as db:
+            digest = hashlib.sha256(bearer.encode("ascii")).digest()
             row = db.execute(
                 "SELECT s.site_id,s.actor_id,s.installation_id,"
-                "s.password_version,u.disabled,"
+                "s.password_version,s.expires_at,u.disabled,"
                 "u.password_version AS current_version "
                 "FROM account_password_sessions s JOIN account_users u "
                 "ON u.site_id=s.site_id AND u.actor_id=s.actor_id "
                 "WHERE s.token_hash=? AND s.revoked_at IS NULL "
                 "AND s.expires_at>?",
-                (hashlib.sha256(bearer.encode("ascii")).digest(), now),
+                (digest, now),
             ).fetchone()
-        if (not row or row["disabled"] or row["actor_id"] != "owner" or
-                row["password_version"] != row["current_version"]):
-            return None
+            if (not row or row["disabled"] or row["actor_id"] != "owner" or
+                    row["password_version"] != row["current_version"]):
+                return None
+            if int(row["expires_at"]) < now + PASSWORD_SESSION_SECONDS - RENEW_AFTER_SECONDS:
+                db.execute("UPDATE account_password_sessions SET expires_at=? "
+                           "WHERE token_hash=? AND revoked_at IS NULL",
+                           (now + PASSWORD_SESSION_SECONDS, digest))
         return Actor(row["site_id"], row["actor_id"],
                      row["installation_id"], OWNER_SCOPES)
 
@@ -384,6 +404,41 @@ class AccountStore:
             return None
         return Actor(device.site_id, device.actor_id,
                      device.installation_id, frozenset(scopes))
+
+    def set_email(self, site: str, actor: str, email: str) -> str:
+        """Optional login e-mail for an existing account (one per account)."""
+        value = email.strip().lower() if isinstance(email, str) else ""
+        if not EMAIL.fullmatch(value):
+            raise AccountError("invalid email")
+        with self._session() as db:
+            db.execute("BEGIN IMMEDIATE")
+            taken = db.execute(
+                "SELECT 1 FROM account_users WHERE email=? AND NOT (site_id=? AND actor_id=?)",
+                (value, site, actor)).fetchone()
+            if taken:
+                raise AccountError("email already used")
+            changed = db.execute(
+                "UPDATE account_users SET email=? WHERE site_id=? AND actor_id=?",
+                (value, site, actor)).rowcount
+            if changed != 1:
+                raise AccountError("unknown account")
+        return value
+
+    def account_profile(self, bearer: str) -> dict | None:
+        """Username, e-mail and current expiry of a password session."""
+        if (not isinstance(bearer, str) or not
+                re.fullmatch(r"[A-Za-z0-9_-]{48,128}", bearer)):
+            return None
+        with self._session() as db:
+            row = db.execute(
+                "SELECT u.username,u.email,s.expires_at FROM account_password_sessions s "
+                "JOIN account_users u ON u.site_id=s.site_id AND u.actor_id=s.actor_id "
+                "WHERE s.token_hash=? AND s.revoked_at IS NULL",
+                (hashlib.sha256(bearer.encode("ascii")).digest(),)).fetchone()
+        if not row:
+            return None
+        return {"username": row["username"], "email": row["email"],
+                "expires_at": int(row["expires_at"])}
 
     def revoke_session(self, bearer: str) -> bool:
         if (not isinstance(bearer, str) or not

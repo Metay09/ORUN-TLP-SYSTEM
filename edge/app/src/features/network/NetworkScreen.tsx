@@ -65,10 +65,9 @@ export function NetworkScreen() {
       <Card>
         <Cell lead={<span className="ic"><Usb size={22} /></span>} title="Gateway → PC Edge → Sunucu"
           sub="Bilgisayar USB ile veri aktarabilir; telefonun istasyona bağlı olması gerekmez." wrapSub />
-        <KV k="PC Edge anlık durumu">Bu telefondan doğrulanamıyor</KV>
         <p className="fine" style={{ padding: "8px 16px 14px", margin: 0 }}>
-          Bilgisayarın sunucuya gönderdiği kayıtlar, bu telefonun yerel kayıt ve teslim sayaçlarına dahil değildir.
-          Sunucudan tasmaların ortak geçmişini telefona çekme işlevi ayrıca etkinleştirilmelidir.
+          Bilgisayarın sunucuya gönderdiği kayıtlar telefona aşağıdaki "Sunucudaki konumlar"
+          ile kendiliğinden gelir; bu telefonun kendi kayıt sayaçlarına eklenmez.
         </p>
       </Card>
 

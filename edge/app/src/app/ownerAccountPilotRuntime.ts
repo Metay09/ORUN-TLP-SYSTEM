@@ -8,6 +8,7 @@ import {
 } from "./ownerAccountClient.ts";
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
+import { forgetAccount, loadAccount, storeAccount } from "../platform/orunAccountSession.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import type { Point } from "../core/points.ts";
 import {
@@ -20,6 +21,61 @@ let sqliteMirror: AccountSharedMirror | null = null;
 let observationMirror: AccountObservationMirror | null = null;
 let observationsChanged: (() => void) | null = null;
 let observationPrepareKeys: (() => Promise<void>) | null = null;
+
+// 1b: account state listeners (login, restore, logout, e-mail).
+const accountListeners = new Set<() => void>();
+let accountEmail: string | null = null;
+let restoring: Promise<void> | null = null;
+function accountChanged(): void { for (const fn of accountListeners) fn(); }
+export function onPilotAccountChange(fn: () => void): () => void {
+  accountListeners.add(fn);
+  return () => { accountListeners.delete(fn); };
+}
+export function pilotAccountEmail(): string | null { return accountEmail; }
+
+async function persist(account: OwnerAccountClient): Promise<void> {
+  const stored = account.storableSession();
+  if (stored) await storeAccount(ORUN_ACCOUNT_ORIGIN, stored.identity, stored.accessToken)
+    .catch(() => { /* login still works for this run */ });
+}
+
+/** 1b: on app start, bring back the login kept on this phone. Works offline;
+ * when the server is reachable it confirms the session (or signs out). */
+export function pilotRestoreAccount(): Promise<void> {
+  if (restoring) return restoring;
+  restoring = (async () => {
+    if (client) return;
+    const stored = await loadAccount(ORUN_ACCOUNT_ORIGIN);
+    if (!stored || client) return;
+    const restored = new OwnerAccountClient(ORUN_ACCOUNT_ORIGIN);
+    restored.adopt(stored.identity, stored.accessToken);
+    client = restored;
+    observationsChanged?.();
+    startAutoSync();
+    accountChanged();
+    const check = await restored.refresh();
+    if (client !== restored) return;
+    if (check.state === "expired") {
+      client = null;
+      stopAutoSync();
+      await forgetAccount();
+      observationsChanged?.();
+    } else if (check.state === "ok") {
+      accountEmail = check.email;
+      await persist(restored);
+    }
+    accountChanged();
+  })().finally(() => { restoring = null; });
+  return restoring;
+}
+
+/** Optional login e-mail. */
+export async function pilotSetEmail(email: string): Promise<string> {
+  if (!client || !pilotAccountStatus()) throw new Error("Önce hesabınla giriş yapmalısın.");
+  accountEmail = await client.setEmail(email);
+  accountChanged();
+  return accountEmail;
+}
 
 /** Registered only by Controller after its existing EdgeCore SQLite is ready.
  * This is an opt-in hook; no table is created and no sync starts on boot.
@@ -40,6 +96,7 @@ export function attachPilotAccountObservationMirror(
   observationPrepareKeys = prepareKeys;
   // Signed in before the phone ledger was ready: start the first sync now.
   if (autoTimer !== null) backgroundSync();
+  void pilotRestoreAccount().catch(() => { /* stays signed out */ });
 }
 
 /** Only active account's verified remote records; logout reveals none. */
@@ -206,6 +263,9 @@ export async function pilotPasswordLogin(
     client = next;
     observationsChanged?.();
     startAutoSync();
+    await persist(next);
+    accountEmail = (await next.refresh()).email;
+    accountChanged();
     return user;
   } finally {
     busy = false;
@@ -260,8 +320,11 @@ export async function pilotAccountLogout(): Promise<void> {
   if (busy) throw new Error("Hesap oturum işlemi devam ediyor.");
   const prior = client;
   client = null;
+  accountEmail = null;
   stopAutoSync();
   setSync({ running: false, last: null, error: null });
+  await forgetAccount();
   observationsChanged?.();
+  accountChanged();
   if (prior) await prior.signOut();
 }
