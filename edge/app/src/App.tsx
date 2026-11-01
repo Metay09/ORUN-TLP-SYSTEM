@@ -1,4 +1,4 @@
-// ORUN app shell: five tabs (Harita · Sürü · Alanlar · Olaylar · Ağ), pushed
+// ORUN app shell: five tabs (Harita · Sürü · Alanlar · Olaylar · Bağlantı), pushed
 // screens above them, theme / sun mode, and one predictable Android back key.
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { App as CapApp } from "@capacitor/app";
@@ -13,8 +13,11 @@ import { AnimalScreen } from "./features/herd/AnimalScreen.tsx";
 import { HerdScreen } from "./features/herd/HerdScreen.tsx";
 import { FindScreen } from "./features/map/FindScreen.tsx";
 import { MapScreen } from "./features/map/MapScreen.tsx";
-import { DeviceScreen } from "./features/network/DeviceScreen.tsx";
-import { NetworkScreen } from "./features/network/NetworkScreen.tsx";
+import { ConnectionScreen } from "./features/network/ConnectionScreen.tsx";
+import { connectionTone } from "./features/network/words.ts";
+import {
+  onPilotAccountChange, onPilotObservationSync, pilotAccountStatus, pilotObservationSyncState,
+} from "./app/ownerAccountPilotRuntime.ts";
 import { SettingsScreen } from "./features/settings/SettingsScreen.tsx";
 import { ZonesScreen } from "./features/zones/ZonesScreen.tsx";
 import { ZoneScreen } from "./features/zones/ZoneScreen.tsx";
@@ -83,6 +86,20 @@ export function App() {
   }, [tab, setTab]);
 
   const alerts = activeCount(model.events, model.seen);
+  // Bağlantı sekmesinin rengi: veri geliyor mu (Meshtastic'teki gibi).
+  const [link, setLink] = useState(0);
+  useEffect(() => {
+    const bump = () => setLink((n) => n + 1);
+    const a = onPilotObservationSync(bump), b = onPilotAccountChange(bump);
+    return () => { a(); b(); };
+  }, []);
+  const sync = pilotObservationSyncState();
+  const tone = connectionTone({
+    gatewayConnected: model.snap.ready && model.station.link !== "none" && model.station.phase === "connected",
+    signedIn: Boolean(pilotAccountStatus()), syncError: Boolean(sync.error),
+    lastSyncAt: sync.last?.at ?? null, now: model.now,
+  });
+  void link;
   const top = stack[stack.length - 1];
 
   return (
@@ -94,12 +111,12 @@ export function App() {
             {tab === "herd" && <HerdScreen />}
             {tab === "zones" && <ZonesScreen />}
             {tab === "events" && <EventsScreen />}
-            {tab === "network" && <NetworkScreen />}
+            {tab === "network" && <ConnectionScreen />}
           </main>
           <nav className="tabbar" role="tablist">
             {TABS.map((t) => (
               <button key={t.tab} className="tab" role="tab" aria-selected={tab === t.tab} onClick={() => setTab(t.tab)}>
-                <span className="pip">{t.icon(tab === t.tab)}{t.tab === "events" && alerts > 0 && <span className="dotn" />}</span>
+                <span className="pip">{t.icon(tab === t.tab)}{t.tab === "events" && alerts > 0 && <span className="dotn" />}{t.tab === "network" && <span className={"dotc " + tone} />}</span>
                 <span>{t.label}</span>
               </button>
             ))}
@@ -107,7 +124,6 @@ export function App() {
           {stack.map((r, i) => (
             <div key={i} hidden={r !== top}>
               {r.to === "animal" && <AnimalScreen id={r.id} />}
-              {r.to === "device" && <DeviceScreen id={r.id} />}
               {r.to === "find" && <FindScreen id={r.id} />}
               {r.to === "zone" && <ZoneScreen id={r.id} />}
               {r.to === "settings" && <SettingsScreen />}

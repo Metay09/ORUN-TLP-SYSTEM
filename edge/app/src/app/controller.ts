@@ -163,9 +163,9 @@ export class Controller {
           const was = this.snap.state;
           this.emit({ state: s, detail: detail ?? null, ...(s === "idle" ? { link: "none" as const } : {}) });
           if (s === "connected" && was !== "connected")
-            this.note("link", `İstasyona bağlanıldı (${this.snap.link === "usb" ? "USB" : "Bluetooth"})`);
+            this.note("link", `Gateway'e bağlanıldı (${this.snap.link === "usb" ? "USB" : "Bluetooth"})`);
           if (was === "connected" && s !== "connected")
-            this.note("link", s === "idle" ? "İstasyon bağlantısı kapatıldı" : "İstasyon bağlantısı koptu · yeniden deneniyor");
+            this.note("link", s === "idle" ? "Gateway bağlantısı kapatıldı" : "Gateway bağlantısı koptu · yeniden deneniyor");
         },
         changed: () => this.refresh(),
       };
@@ -232,8 +232,8 @@ export class Controller {
       this.refreshQueued = false;
       const c = this.core!;
       const stored = c.counts.STORED, handed = c.handedOff;
-      if (stored > this.lastStored) this.note("records", `${stored - this.lastStored} yeni kayıt istasyondan alındı`, stored - this.lastStored);
-      if (handed > this.lastHanded) this.note("handoff", `${handed - this.lastHanded} kayıt telefona kalıcı yazıldı · istasyonda yer açıldı`, handed - this.lastHanded);
+      if (stored > this.lastStored) this.note("records", `${stored - this.lastStored} yeni kayıt gateway'den alındı`, stored - this.lastStored);
+      if (handed > this.lastHanded) this.note("handoff", `${handed - this.lastHanded} kayıt telefona kalıcı yazıldı · gateway'de yer açıldı`, handed - this.lastHanded);
       this.lastStored = stored;
       this.lastHanded = handed;
       this.emit({

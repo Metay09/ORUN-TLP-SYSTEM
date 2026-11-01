@@ -188,9 +188,9 @@ function demoJournal(now: number, points: Point[]): JournalEntry[] {
     const at = day.getTime();
     if (at > now) continue;
     const n = points.filter((p) => { const t = Date.parse(p.time!); return t > at - DAY && t <= at; }).length;
-    j.push({ at, kind: "link", text: "İstasyona bağlanıldı (Bluetooth)" });
-    j.push({ at: at + 40_000, kind: "records", text: `${n} yeni kayıt istasyondan alındı`, n });
-    j.push({ at: at + 55_000, kind: "handoff", text: `${n} kayıt telefona kalıcı yazıldı · istasyonda yer açıldı`, n });
+    j.push({ at, kind: "link", text: "Gateway'e bağlanıldı (Bluetooth)" });
+    j.push({ at: at + 40_000, kind: "records", text: `${n} yeni kayıt gateway'den alındı`, n });
+    j.push({ at: at + 55_000, kind: "handoff", text: `${n} kayıt telefona kalıcı yazıldı · gateway'de yer açıldı`, n });
     j.push({ at: at + 90_000, kind: "upload", text: `${n} kayıt sunucuya gönderildi`, n });
   }
   return j;

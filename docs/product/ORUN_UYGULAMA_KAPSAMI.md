@@ -30,8 +30,9 @@ Bu listede olmayan iş v1 değildir; yapılmaz, önerilmez, "ileride lazım olur
 | 1c | Gateway izni kendiliğinden | Tasma eklenince gateway'in izni köprü (PC Edge) üzerinden kendiliğinden güncellenir; `orun_provision.py gateway` adımı yok | tamam (#233) |
 | 1d | Tasma çiftliğin bütün gateway'lerine | Tasma eklenirken çiftliğin her gateway'ine (en fazla 4) tek seferde yetkilendirilir; köprüye bağlanan gateway çiftliğe kendiliğinden girer. Sonradan eklenen gateway için tasmada "Cihaz ekle" bir kez daha (6. adımdan sonra LoRa'dan) | tamam (#234) |
 | 1e | Uygulamadan "Cihaz ekle" | Ağ → Cihaz ekle: tasma telefona USB ile bağlanır, tek düğme; PC aracı yok | tamam (#234) |
-| 2 | İnternetsiz harita | Ayarlar → İnternetsiz harita → İndir: Aydın–Muğla haritası (yol, köy, dere, OpenStreetMap, z15 + büyütme) telefona iner; internet yokken uydu/arazi yerine kendiliğinden gösterilir (internetsiz arazi/uydu yok, sahip kararı), sokak haritası hep bunu kullanır. PC: `tools/orun_harita.sh` | bu PR |
+| 2 | İnternetsiz harita | Ayarlar → İnternetsiz harita → İndir: Aydın–Muğla haritası (yol, köy, dere, OpenStreetMap, z15 + büyütme) telefona iner; internet yokken uydu/arazi yerine kendiliğinden gösterilir (internetsiz arazi/uydu yok, sahip kararı), sokak haritası hep bunu kullanır. PC: `tools/orun_harita.sh` | tamam (#235) |
 | 2b | İnternetsiz uydu | — | gerek yok (sahip kararı 2026-11-01): uydu yalnız internetle; internetsizde telefondaki harita |
+| 2c | Uygulama düzeni | 5 sekme: Harita · Sürü · Alanlar · Olaylar · Bağlantı (simgesi veri geliyor mu diye yeşil/sarı/kırmızı). Tasma ekleme Sürü'de "+"; tasma bilgisi hayvanın kartında; Bağlantı ekranında durum + gateway'e BLE/USB; eşitleme kendiliğinden; tasmaya gitmeyen taslak bölümler yok; tek ad: Gateway, Alan, Tasma | bu PR |
 | 3 | USB'den tüm ayarlar | Kabloyla her ayar değişir | rapor aralığı, hizmetler, alanlar var |
 | 4 | BLE'den tüm ayarlar | Aynısı kablosuz, alanlar dahil | yalnız okuma var |
 | 5 | Alan dışı bildirimi + LOST | İnek alandan çıkınca telefona bildirim; kayıp durumu | tasma alanı kendisi kontrol ediyor |
@@ -59,3 +60,12 @@ hesaplar, köprü (PC Edge / telefon) gateway'e kendiliğinden yükler (1c–1e)
 ## v1 sonrası
 
 DIY sabit gateway, sensör (nem/sıcaklık, tank), vana/pompa, kişi/araç takibi, mesajlaşma, yardımcı kullanıcılar, hayvan defteri/fotoğraf, PDF rapor, yer işaretleri, uygulama kilidi.
+
+## Uygulama düzeni (sahip kararı 2026-11-01)
+
+Tek bir uygulamayı kopyalamıyoruz; bize uyan parçaları alıyoruz:
+Bağlantı sekmesi ve durum renkli simge (Meshtastic), eşitleme düğmesi yok
+(Tractive, Nofence), tasma ekleme Sürü'de "+" (Nofence), tasmanın bütün
+bilgisi ve ileride ayarları hayvanın kartında (Weenect), alan kaydı = tasmaya
+gönder (Nofence, 3. adım), kapsama haritada ve "buraya gateway koy" önerisi
+(MeshCore, 8. adım), kısa ve tamamen Türkçe Ayarlar.

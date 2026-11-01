@@ -27,7 +27,7 @@ export function phonePathWords(
   const stationConnected = snap.ready && st.link !== "none" && st.phase === "connected";
   return {
     stationConnected,
-    stationText: stationConnected ? "Bu telefon istasyona bağlı" : "Bu telefon bağlı değil",
+    stationText: stationConnected ? "Bu telefon gateway'e bağlı" : "Bu telefon bağlı değil",
     phoneText: !snap.ready ? "Yerel defter hazır değil"
       : snap.records === null ? "Yerel defter açık · sayı bekleniyor"
       : snap.records === 0 ? "Henüz yerel kayıt yok"
@@ -52,4 +52,18 @@ export function serverWords(sv: ServerView): { tone: "ok" | "up" | "off" | "none
   if (sv.pending === 0 && sv.lastOk)
     return { tone: "up", text: "Sunucu erişimi doğrulandı · kayıt teslimi yok" };
   return { tone: "up", text: "Bu telefonun sunucu teslimi henüz doğrulanmadı" };
+}
+
+/** Bağlantı sekmesinin rengi: veri bu telefona geliyor mu?
+ * ok: gateway bağlı ya da sunucuyla son 5 dakikada eşitlendi.
+ * bad: ne gateway var ne hesap, ya da son eşitleme hata verdi (internet yok).
+ */
+export function connectionTone(i: {
+  gatewayConnected: boolean; signedIn: boolean; syncError: boolean;
+  lastSyncAt: number | null; now: number;
+}): "ok" | "wait" | "bad" {
+  if (i.gatewayConnected) return "ok";
+  if (!i.signedIn || i.syncError) return "bad";
+  if (i.lastSyncAt !== null && i.now - i.lastSyncAt < 5 * 60_000) return "ok";
+  return "wait";
 }

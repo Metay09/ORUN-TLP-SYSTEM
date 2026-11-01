@@ -1,11 +1,9 @@
-// Ayarlar: look (theme, sun mode), the sample herd, data and about.
-import { CaretRight } from "@phosphor-icons/react";
+// Ayarlar: hesap, internetsiz harita, görünüm, tanıtım sürüsü ve hakkında.
 import { tr } from "../../app/i18n/tr.ts";
 import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import type { Theme } from "../../app/stores.ts";
 import { Card, Cell, KV, Screen, Section, Seg, ToggleRow } from "../../ds/components.tsx";
-import { pilotAccountStatus } from "../../app/ownerAccountPilotRuntime.ts";
 import { AccountLoginPanel } from "./AccountLoginPanel.tsx";
 import { OfflineMapPanel } from "./OfflineMapPanel.tsx";
 
@@ -16,9 +14,11 @@ export function SettingsScreen() {
   const nav = useNav();
   useBack(() => nav.pop());
   const p = m.prefs;
-  const account = pilotAccountStatus();
   return (
     <Screen title={tr.settings.title} onBack={() => nav.pop()}>
+      <AccountLoginPanel />
+      <OfflineMapPanel />
+
       <Section title={tr.settings.look} />
       <Card>
         <div className="kv"><span>{tr.settings.theme}</span></div>
@@ -33,13 +33,7 @@ export function SettingsScreen() {
         {m.canLeaveDemo
           ? <ToggleRow title={tr.settings.demo} sub={tr.settings.demoHelp} on={m.demo} onChange={(v) => m.actions.setPrefs({ demo: v })} />
           : <Cell title={tr.settings.demo} sub={tr.settings.demoHelp} wrapSub />}
-        <Cell title={tr.network.server} sub={account ? "ORUN hesabı · " + account.username : "Hesap girişi gerekli"} trail={<CaretRight size={18} color="var(--mute)" />}
-          onClick={() => nav.setTab("network")} />
-        {!m.demo && <Cell title={tr.settings.phoneRecords(m.snap.records ?? 0)} />}
       </Card>
-
-      <AccountLoginPanel />
-      <OfflineMapPanel />
 
       <Section title={tr.settings.about} />
       <Card>

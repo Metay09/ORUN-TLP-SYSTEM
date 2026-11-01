@@ -8,7 +8,6 @@ export type Tab = "map" | "herd" | "zones" | "events" | "network";
 export type Route =
   | { to: "animal"; id: string }
   | { to: "find"; id: string }
-  | { to: "device"; id: string }
   | { to: "zone"; id: string }
   | { to: "settings" };
 

@@ -1,4 +1,4 @@
-// Short edits for an animal: identity, a dated note; and the add-collar sheet.
+// Short edits for an animal: identity and a dated note.
 import { useState } from "react";
 import { shortId } from "../../app/herd.ts";
 import { tr } from "../../app/i18n/tr.ts";
@@ -57,17 +57,6 @@ export function AddNote({ a, onClose }: { a: Animal; onClose: () => void }) {
         <button className="btn" onClick={onClose}>{tr.common.cancel}</button>
         <button className="btn primary" disabled={!text.trim()} onClick={() => { m.actions.addNote(a.id, a.device, text); onClose(); }}>{tr.common.save}</button>
       </div>
-    </Dialog>
-  );
-}
-
-export function AddDevice({ onClose }: { onClose: () => void }) {
-  useBack(onClose);
-  return (
-    <Dialog title={tr.add.title} onClose={onClose}>
-      <p style={{ padding: "0 20px", margin: 0 }}>{tr.add.body}</p>
-      <p className="sm" style={{ padding: "12px 20px 0", margin: 0 }}>{tr.add.after}</p>
-      <div className="btns"><button className="btn primary" onClick={onClose}>{tr.common.ok}</button></div>
     </Dialog>
   );
 }

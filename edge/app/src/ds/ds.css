@@ -98,6 +98,14 @@ svg { flex: none; }
   position: absolute; top: 2px; right: 12px; min-width: 9px; height: 9px; border-radius: 5px; background: var(--alarm);
   box-shadow: 0 0 0 2px var(--card);
 }
+/* Bağlantı sekmesi: veri geliyor mu (yeşil), bekleniyor (sarı), gelmiyor (kırmızı). */
+.tab .dotc {
+  position: absolute; bottom: 3px; right: 14px; width: 9px; height: 9px; border-radius: 5px;
+  box-shadow: 0 0 0 2px var(--card); background: var(--silent);
+}
+.tab .dotc.ok { background: var(--fresh); }
+.tab .dotc.wait { background: var(--aging); }
+.tab .dotc.bad { background: var(--alarm); }
 .page { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; padding-bottom: 32px; -webkit-overflow-scrolling: touch; }
 .screen { position: fixed; inset: 0; z-index: 40; background: var(--paper); display: flex; flex-direction: column; animation: screen-in .18s ease-out; }
 .screen > .page { position: relative; flex: 1; inset: auto; }

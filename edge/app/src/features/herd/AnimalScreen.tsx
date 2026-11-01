@@ -145,7 +145,6 @@ function History({ a, now, events }: { a: Animal; now: number; events: AppEvent[
 }
 
 function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () => void; onNote: () => void }) {
-  const nav = useNav();
   const f = tr.animal.fields, p = a.profile;
   const age = ageMonths(p.birth, now);
   const dev = useApp().devices.find((d) => d.id === a.device) ?? null;
@@ -170,11 +169,31 @@ function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () =
       <Section title={tr.animal.device} />
       <Card>
         {a.device ? (
-          <Cell title={tr.animal.deviceLine(shortId(a.device))}
-            sub={[a.periodS ? tr.animal.reportEvery(fmt.period(a.periodS)) : "", dev ? tr.animal.records(dev.records) : ""].filter(Boolean).join(" · ")}
-            trail={<CaretRight size={18} color="var(--mute)" />} onClick={() => nav.push({ to: "device", id: a.device! })} />
+          <>
+            <KV k={tr.animal.device}>{tr.device.title(shortId(a.device))}</KV>
+            <KV k={tr.device.lastContact}>{dev?.lastTime ? `${fmt.clock(dev.lastTime)} · ${fmt.ago(dev.lastTime, now)}` : "—"}</KV>
+            <KV k={tr.device.signal}>{dev && dev.rssi !== null ? tr.device.signalLine(dev.rssi, dev.snr) : tr.device.signalNone}</KV>
+            {dev?.link && <KV k="Yol">{tr.device.link[dev.link]}</KV>}
+            {dev && dev.medianDelayS !== null && <KV k={tr.device.delay}>{dev.medianDelayS < 60 ? `${dev.medianDelayS} sn` : fmt.duration(dev.medianDelayS * 1000)}</KV>}
+            <KV k={tr.animal.battery}>{dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}${dev.batteryMv ? ` · ${fmt.dec(dev.batteryMv / 1000, 2)} V` : ""}` : "—"}</KV>
+            <KV k={tr.device.report}>{a.periodS ? fmt.period(a.periodS) : "—"}</KV>
+            {dev && <KV k={tr.device.records}>{fmt.num(dev.records)}</KV>}
+            {dev && dev.services.length > 0 && (
+              <div className="row" style={{ gap: 6, flexWrap: "wrap", padding: "8px 16px 14px" }}>
+                {dev.services.map((s) => (
+                  <Badge key={s.key} tone={s.state === "running" ? "fresh" : "silent"}>{tr.device.service[s.key]} · {tr.device.serviceState[s.state]}</Badge>
+                ))}
+              </div>
+            )}
+          </>
         ) : <p className="sm" style={{ padding: "14px 16px", margin: 0 }}>{tr.animal.noDevice}</p>}
       </Card>
+      {a.device && (
+        <details className="tech">
+          <summary>{tr.common.tech}</summary>
+          <Card><KV k="Kimlik"><code>{a.device}</code></KV></Card>
+        </details>
+      )}
     </>
   );
 }
