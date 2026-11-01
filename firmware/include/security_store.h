@@ -158,6 +158,10 @@ class SecurityStore {
   // under ORUN_SF5L0_BENCH_TEST_KEYS (two bench images + host test); the
   // default product image has no implementation of this class.
   friend class Sf5l0BenchTestProvisioning;
+  // Opt-in hardware commissioning of a real, per-device root; strictly
+  // scoped to the Phase 2 enrollment image, never to arbitrary app/radio IO.
+  // No root readback API is added.
+  friend class TrackerRealEnrollment;
 
   enum class PolicyAction : uint8_t {
     kGrant, kRevoke, kAdvanceFloor
