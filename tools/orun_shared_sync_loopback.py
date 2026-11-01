@@ -95,7 +95,8 @@ def start(state_dir: str | Path, bind: str, port: int,
           account_login: bool = False,
           observation_upstream: str | None = None,
           observation_token_file: str | None = None,
-          observation_site: str | None = None) -> None:
+          observation_site: str | None = None,
+          observation_records_upstream: str | None = None) -> None:
     if not CONTROL.fullmatch(bind):
         raise StartupRefused("ONLY_127_0_0_1_BIND_ALLOWED")
     if type(port) is not int or not 0 <= port <= 65535:
@@ -106,8 +107,12 @@ def start(state_dir: str | Path, bind: str, port: int,
         raise StartupRefused("OBSERVATION_RELAY_REQUIRES_ACCOUNT")
     if observation_site and not observation_upstream:
         raise StartupRefused("OBSERVATION_SITE_REQUIRES_PRIVATE_UPSTREAM")
+    if observation_records_upstream and (not observation_site or not observation_upstream):
+        raise StartupRefused("READONLY_SIDECAR_REQUIRES_PINNED_SITE")
     relay = (AccountObservationRelay(
-        observation_upstream, observation_token_file, observation_site=observation_site)
+        observation_upstream, observation_token_file,
+        observation_site=observation_site,
+        records_upstream=observation_records_upstream)
         if observation_upstream and observation_token_file else None)
     store, enrollment = prepare(state_dir, reuse_state=reuse_state)
     # Account/password access is a separate explicit pilot opt-in. Do NOT
@@ -168,6 +173,9 @@ def main() -> int:
     parser.add_argument("--observation-site",
                         help="Explicitly bind this one-site observation ledger to "
                              "a matching ORUN account site; without it records read is disabled")
+    parser.add_argument("--observation-records-upstream",
+                        help="Optional independent local read-only observation sidecar "
+                             "for GET records; keys/batch stay on the legacy Backend")
     args = parser.parse_args()
     try:
         start(args.state_dir, args.bind, args.port, reuse_state=args.reuse_state,
@@ -175,7 +183,8 @@ def main() -> int:
               account_login=args.enable_account_login,
               observation_upstream=args.observation_upstream,
               observation_token_file=args.observation_token_file,
-              observation_site=args.observation_site)
+              observation_site=args.observation_site,
+              observation_records_upstream=args.observation_records_upstream)
         return 0
     except (StartupRefused, RelayConfigError, OSError, ValueError) as exc:
         reason = str(exc) if isinstance(exc, (StartupRefused, RelayConfigError)) else "RUNTIME_ERROR"
