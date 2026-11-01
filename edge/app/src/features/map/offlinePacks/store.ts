@@ -148,9 +148,10 @@ export async function installOfflinePack(
   if (response.headers.get("content-encoding") &&
       response.headers.get("content-encoding") !== "identity")
     throw new Error("Harita paketi aktarımı sıkıştırılmamalı.");
-  const declared = response.headers.get("content-length");
-  if (declared && Number(declared) !== pack.bytes)
-    throw new Error("Harita sunucusunun bildirdiği dosya boyutu farklı.");
+  // No Content-Length pre-check: on the phone the download passes through
+  // Android's own HTTP stack, which may report it differently (2026-11-01:
+  // "boyut farklı" on a correct file). The streamed size and SHA-256 below
+  // are the real check; a wrong or short file is never marked installed.
 
   let committed = false;
   const handle = await dir.getFileHandle(fileName, { create: true });
