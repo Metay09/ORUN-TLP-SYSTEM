@@ -18,6 +18,8 @@ Köprü ayrıca bağlı olduğu gateway'in durumunu bildirir: POST /v1/bridge/ga
 Hesap adresi çiftliğin gateway listesini verir: GET /api/v1/devices/gateways;
 cihaz adları: GET /api/v1/devices/names, POST /api/v1/devices/name (2d);
 tasmadaki alanlar: GET /api/v1/devices/fences, POST /api/v1/devices/fence (3a);
+cihaz ayarları: GET /api/v1/devices/settings, POST /api/v1/devices/settings (istenen),
+POST /api/v1/devices/settings/reported (cihazdan okunan) (4b);
 telefon köprü olduğunda POST /api/v1/devices/gateway ile bildirir (2c).
 
 Hesap adresi ayrıca internetsiz harita paketlerini verir (2. adım):
@@ -44,6 +46,7 @@ if str(ROOT) not in sys.path:
 from backend.account_login import AccountStore  # noqa: E402
 from backend.account_login_http import account_handler_factory  # noqa: E402
 from backend.device_names import BadName, DeviceNames  # noqa: E402
+from backend.device_settings import BadSettings, DeviceSettings  # noqa: E402
 from backend.gateway_status import BadStatus, GatewayStatus, parse_report  # noqa: E402
 from backend.local_observations import LocalObservations  # noqa: E402
 from backend.tracker_fences import BadFence, TrackerFences  # noqa: E402
@@ -211,6 +214,7 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
     gateways = GatewayStatus(local.backend.db_path)
     names = DeviceNames(local.backend.db_path)
     fences = TrackerFences(local.backend.db_path)
+    settings = DeviceSettings(local.backend.db_path)
 
     class Handler(handler):
         def _farm_actor(self, scope: str):
@@ -226,7 +230,7 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
 
         def do_GET(self):  # noqa: N802
             if self.path not in ("/api/v1/devices/gateways", "/api/v1/devices/names",
-                                 "/api/v1/devices/fences"):
+                                 "/api/v1/devices/fences", "/api/v1/devices/settings"):
                 return super().do_GET()
             if self._farm_actor("zone:read") is None:
                 return None
@@ -234,16 +238,19 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
                 return self._send(200, {"names": names.all()})
             if self.path == "/api/v1/devices/fences":
                 return self._send(200, {"fences": fences.all()})
+            if self.path == "/api/v1/devices/settings":
+                return self._send(200, {"settings": settings.all()})
             return self._send(200, {"gateways": gateways.list(farm_gateway_ids(local))})
 
         def do_POST(self):  # noqa: N802
             if self.path not in ("/api/v1/devices/gateway", "/api/v1/devices/name",
-                                 "/api/v1/devices/fence"):
+                                 "/api/v1/devices/fence", "/api/v1/devices/settings",
+                                 "/api/v1/devices/settings/reported"):
                 return super().do_POST()
             if self._farm_actor("zone:write") is None:
                 return None
             size = self.headers.get("Content-Length", "")
-            limit = 16384 if self.path == "/api/v1/devices/fence" else 512
+            limit = 16384 if self.path in ("/api/v1/devices/fence", "/api/v1/devices/settings") else 512
             if (self.headers.get("Transfer-Encoding") or not size.isdecimal() or
                     not 1 <= int(size) <= limit):
                 return self._send(400, {"error": "invalid_request"})
@@ -252,6 +259,14 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
                     return self._send(200, fences.record(json.loads(self.rfile.read(int(size)))))
                 except (BadFence, ValueError, UnicodeDecodeError):
                     return self._send(400, {"error": "invalid_fence"})
+            if self.path in ("/api/v1/devices/settings", "/api/v1/devices/settings/reported"):
+                try:
+                    body = json.loads(self.rfile.read(int(size)))
+                    if self.path == "/api/v1/devices/settings":
+                        return self._send(200, settings.want(body))
+                    return self._send(200, settings.report(body))
+                except (BadSettings, ValueError, UnicodeDecodeError):
+                    return self._send(400, {"error": "invalid_settings"})
             if self.path == "/api/v1/devices/name":
                 try:
                     body = json.loads(self.rfile.read(int(size)))

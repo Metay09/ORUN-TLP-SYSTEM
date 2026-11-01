@@ -37,9 +37,15 @@ Bu listede olmayan iş v1 değildir; yapılmaz, önerilmez, "ileride lazım olur
 | 3a | Alanları tasmaya gönder (USB) | Her alanda "Hangi tasmalar": Hepsi ya da Seçerek (gruplar, tek tek hayvanlar); yeni alan önce Hepsi. Alan kaydedilince "Tasmalara şimdi gönder?" sorulur, sonra Alanlar → Tasmaya gönder'den de gönderilir. Tasma USB ile telefona bağlanır; o tasmanın tam alan listesi yazılır, tasma onaylayıp yeniden okununca hesaba kaydedilir. Her tasmanın durumu (güncel / eski / hiç gönderilmedi) Alanlar'da ve hayvanın kartında; tasmadaki alanların adları kartta | tamam (#239) |
 | 3 | USB'den tüm ayarlar | Kabloyla her ayar değişir | rapor aralığı, hizmetler, alanlar var |
 | 4 | BLE'den tüm ayarlar | USB, Bluetooth ve LoRa'da mümkün olan her iş aynı (sahip kararı 2026-11-01). Tasmaya dokununca bağlanır; ayar değiştirmeyi yalnız hesaba girmiş telefon yapar (anahtar tasma eklenirken verilen kökten türetilir, sahada internetsiz çalışır). Tasmanın Bluetooth'u üç yolla açılır: açılışta 10 dk (bugün), her rapordan sonra kısa süre, uzaktan LoRa komutuyla | sırayla: 4a okuma, 4b USB'den ayar, 4c Bluetooth'tan ayar + rapor sonrası açılma (tasma yazılımı), 4d kayıt çekme |
-| 4a | Tasmanın canlı durumu | Tasmaya dokununca (Bağlantı listesi, hayvanın kartı) Bluetooth ya da USB ile bağlanır; aynı kart: pil, rapor aralığı, konum takibi, GPS, alanlar (hesaptaki kayıtla karşılaştırma), aktarma, kayıt hafızası, yazılım. Tanınmayan ORUN cihazı da okunur; gateway çıkarsa "Köprü olarak bağlan" | bu PR |
+| 4a | Tasmanın canlı durumu | Tasmaya dokununca (Bağlantı listesi, hayvanın kartı) Bluetooth ya da USB ile bağlanır; aynı kart: pil, rapor aralığı, konum takibi, GPS, alanlar (hesaptaki kayıtla karşılaştırma), aktarma, kayıt hafızası, yazılım. Tanınmayan ORUN cihazı da okunur; gateway çıkarsa "Köprü olarak bağlan" | tamam (#240) |
+| 4b | Cihazlar ve cihaz ayarları | Bağlantı sekmesi **Cihazlar** olur: üstte bu telefonun bağlantısı ve yakındakiler, altında bütün cihazlar türüne göre (Gateway'ler, Tasmalar; önce sorunlular), gruplar. Her cihazın ekranı: durum, bağlan (Bluetooth/USB), o cihazda olan ayarlar (rapor aralığı, konum takibi, aktarma, alanlar). Ayar hesaba kaydedilir; cihaza bağlanınca bekleyen ayarlar ve alanlar sormadan yazılır (şimdilik USB), her ayarın yanında cihazdaki değer ve "bekliyor / cihazda". Toplu ayar: hepsi / grup / seçerek. Hayvanın kartında tasmanın özeti ve "Tasma ekranı" | bu PR |
+| Y1 | Tek komutla yazılım yükleme | PC'de tek komut: takılı cihazın tasma mı gateway mi olduğunu bulur, doğru yazılımı yükler; kayıtlar ve anahtarlar silinmez, sonunda cihazı kontrol eder | sırada |
+| Y2 | Ürün yazılımı | Masa deneme yazılımı ve içindeki açık deneme anahtarı kalkar; tek tasma, tek gateway yazılımı; gateway deneme anahtarlı kaydı kabul etmez | sırada |
+| 4c | Bluetooth'tan ayar ve alan | 4b ve 3a Bluetooth'tan da (hesaptaki telefon); her rapordan sonra kısa Bluetooth; Bluetooth ile yazılım güncelleme (USB + Bluetooth, sahip kararı); dururken GPS kapalı: son konumdan beri toplam hareket eşiği geçmezse (varsayılan 1 dk, ayarlanabilir) GPS açılmaz, son iyi konum yaşıyla gider; en geç rapor aralığının 2 katı, en az 1 saatte bir yeni konum; alan dışında ya da hareket algılayıcı yoksa her raporda konum | sırada |
+| 4d | Kayıt çekme | Gateway'e ulaşmamış kayıtlar tasmadan USB ya da Bluetooth ile | sırada |
 | 5 | Alan dışı bildirimi + LOST | İnek alandan çıkınca telefona bildirim; kayıp durumu | tasma alanı kendisi kontrol ediyor |
 | 6 | LoRa'dan tüm ayarlar | Aynı komutlar sunucu → PC Edge → gateway → tasma; "sırada → ulaştı → uygulandı" durumu; Bluetooth'u uzaktan açma da bu yoldan. Sınırlar: tasma yalnız rapordan sonra ~10 sn dinler (komut en çok bir rapor aralığı bekler), paket başına 32 bayt (alan listesi ~17 paket), gateway'in sunucuya bağlı olması gerekir | yok |
+| Y3 | Pil | İşlemci gerçekten uyur; pil ölçümü ayarlanır; tasmanın kaç gün gideceği uygulamada | sırada (6'dan sonra) |
 | 7 | Gateway'in gözetimsiz çalışması | Eski telefon dokunulmadan 7/24 çalışır, yeniden başlar, yeniden bağlanır | ön plan servisi var |
 | 8 | Haberleşme sağlığı | Haritada bölge bazlı sinyal ve paket başarısı | temel var |
 | 9 | Güneş paneli katkısı | Pil ekranında şarj durumu ve güneş katkısı | yok |
@@ -59,6 +65,14 @@ Cihazlar birbirine değil **hesaba (çiftliğe)** eklenir; tanıştırmayı sunu
 Ortak "çiftlik anahtarı" YOK (güvenlik kararı: ele geçirilen tek gateway bütün tasmaları
 etkilemesin). Onay anahtarı tasma+gateway başına kalır; sunucu her gateway'in imzalı iznini
 hesaplar, köprü (PC Edge / telefon) gateway'e kendiliğinden yükler (1c–1e).
+
+Uygulama düzeni (sahip kararı 2026-11-02): Harita · Sürü · Alanlar · Olaylar · **Cihazlar**. Ayarlar hayvanın
+değil cihazın ayarıdır; tasma, gateway, ileride sensör ve vana aynı cihaz ekranını kullanır, ekranda yalnız o
+cihazda olan donanım/hizmetin bölümleri görünür. Alanlar yalnız meralardır (sensör/vana gelince "Yerler"e
+dönmez); sabit cihazlar Cihazlar'da ve haritada.
+
+Bitirme sırası (sahip kararı 2026-11-02): 4b → Y1 → Y2 → 4c → 5 → 6 → Y3 → 4d → 7 → 8 → 9.
+Aktarma (relay) v1'de: tepelik arazide gateway'i görmeyen yerler için sahada üç cihazla denenip açılır (8. adımla).
 
 ## v1 sonrası
 

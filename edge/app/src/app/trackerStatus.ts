@@ -17,7 +17,12 @@ export interface TrackerStatus {
   interval: { requestedS: number; effectiveS: number | null; stored: boolean } | null;
   gnss: { state: number; detected: boolean; fixes: number; attempts: number; timeouts: number; lastTtffMs: number } | null;
   battery: { valid: boolean; mv: number; percent: number | null; state: "unknown" | "normal" | "low" | "critical"; calibrated: boolean } | null;
-  services: { explicit: boolean; tracking: SvcState; trackingWhy: string | null; relay: SvcState; receive: boolean } | null;
+  services: {
+    explicit: boolean;
+    /** what was asked for (null in AUTO: the firmware decides from the hardware) */
+    requested: { tracking: boolean; relay: boolean; receive: boolean } | null;
+    tracking: SvcState; trackingWhy: string | null; relay: SvcState; receive: boolean;
+  } | null;
   fence: { state: "unavailable" | "clear" | "configured"; areas: number; vertices: number; position: "unknown" | "inside" | "outside" } | null;
   storage: { ready: boolean; count: number; capacity: number; overwritten: number } | null;
   missing: Family[];               // asked, no answer
@@ -148,7 +153,11 @@ export function buildStatus(raw: Raw, via: Via, at: number): TrackerStatus {
                 attempts: num(t.attempts) ?? 0, timeouts: num(t.timeouts) ?? 0, lastTtffMs: num(t.last_ttff_ms) ?? 0 } : null,
     battery: p ? { valid: p.battery === "MEASURED", mv: num(p.mv) ?? 0, percent: num(p.percent_est),
                    state: (["normal", "low", "critical"].includes(p.state?.toLowerCase() ?? "") ? p.state.toLowerCase() : "unknown") as "unknown" | "normal" | "low" | "critical", calibrated: p.calibrated === "yes" } : null,
-    services: sv ? { explicit: sv.mode === "EXPLICIT", tracking: tracking.state, trackingWhy: tracking.why,
+    services: sv ? { explicit: sv.mode === "EXPLICIT",
+                     requested: sv.mode === "EXPLICIT" && sv.requested && sv.requested !== "-"
+                       ? { tracking: sv.requested.includes("T"), relay: sv.requested.includes("R"), receive: sv.requested.includes("A") }
+                       : null,
+                     tracking: tracking.state, trackingWhy: tracking.why,
                      relay: svc(sv.relay).state, receive: sv.receive === "ON" } : null,
     fence: g ? { state: g.runtime === "configured" ? "configured" : g.resource === "0" ? "unavailable" : "clear",
                  areas: num(g.areas) ?? 0, vertices: num(g.vertices) ?? 0,

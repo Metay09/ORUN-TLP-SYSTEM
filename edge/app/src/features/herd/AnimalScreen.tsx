@@ -1,7 +1,7 @@
 // Hayvan profili: today (position, movement, distance, battery), history by
 // day and its events, and the identity / notebook / collar.
 import { useMemo, useState } from "react";
-import { Bluetooth, CaretRight, MapTrifold, NavigationArrow, NotePencil, PencilSimple, Play, Usb } from "@phosphor-icons/react";
+import { CaretRight, MapTrifold, NavigationArrow, NotePencil, PencilSimple, Play } from "@phosphor-icons/react";
 import { batterySeries, dayStart, daySummaries, hourlyActivity } from "../../app/activity.ts";
 import { batteryPercent, epochMs } from "../../app/herd.ts";
 import { bleName } from "../../app/deviceNames.ts";
@@ -11,9 +11,10 @@ import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { AnimalRing, Badge, Card, Cell, Empty, KV, Screen, Section, Seg, Sparkline, Strip, toneOfStatus } from "../../ds/components.tsx";
 import { EventRow } from "../events/EventsScreen.tsx";
-import { SendFenceDialog, stateLine, useTrackerFences } from "../zones/SendFenceDialog.tsx";
+import { stateLine, useTrackerFences } from "../zones/SendFenceDialog.tsx";
+import { useDeviceSettings } from "../devices/DeviceScreen.tsx";
+import { pendingKeys } from "../../app/deviceSettings.ts";
 import { AddNote, EditAnimal } from "./dialogs.tsx";
-import { TrackerLiveDialog, type LiveTarget } from "./TrackerLive.tsx";
 
 type Part = "today" | "history" | "info";
 
@@ -150,8 +151,9 @@ function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () =
   const age = ageMonths(p.birth, now);
   const dev = useApp().devices.find((d) => d.id === a.device) ?? null;
   const fence = useTrackerFences().find((x) => a.device && x.device.toUpperCase() === a.device.toUpperCase()) ?? null;
-  const [sending, setSending] = useState(false);
-  const [live, setLive] = useState<LiveTarget | null>(null);
+  const nav = useNav();
+  const settings = useDeviceSettings();
+  const waiting = a.device ? pendingKeys(settings[a.device.toUpperCase()]).length : 0;
   return (
     <>
       <Section title={tr.animal.identity} action={tr.common.edit} onAction={onEdit} />
@@ -170,43 +172,21 @@ function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () =
         )) : <p className="sm" style={{ padding: "14px 16px", margin: 0 }}>{tr.animal.notebookEmpty}</p>}
       </Card>
 
-      <Section title={tr.animal.device} info="Bağlan: tasmaya Bluetooth ile bağlanıp canlı durumunu okur (pil, GPS, alanlar, hafıza). Tasmanın Bluetooth'u açıldıktan sonra 10 dakika açık kalır, sonra pil için kapanır; kapalıysa tasmayı kapatıp aç ya da USB ile bağlan." />
+      <Section title={tr.animal.device} />
       <Card>
         {a.device ? (
           <>
             <KV k="Bluetooth adı">{bleName(a.device)}</KV>
-            <div className="btns" style={{ paddingTop: 4, paddingBottom: 4 }}>
-              <button className="btn small" type="button" onClick={() => setLive({ find: a.device! })}><Bluetooth size={18} />Bağlan</button>
-              <button className="btn small" type="button" onClick={() => setLive({ usb: true })}><Usb size={18} />USB ile</button>
-            </div>
             <KV k={tr.device.lastContact}>{dev?.lastTime ? `${fmt.clock(dev.lastTime)} · ${fmt.ago(dev.lastTime, now)}` : "—"}</KV>
-            <KV k={tr.device.signal}>{dev && dev.rssi !== null ? tr.device.signalLine(dev.rssi, dev.snr) : tr.device.signalNone}</KV>
-            {dev?.link && <KV k="Yol">{tr.device.link[dev.link]}</KV>}
-            {dev && dev.medianDelayS !== null && <KV k={tr.device.delay}>{dev.medianDelayS < 60 ? `${dev.medianDelayS} sn` : fmt.duration(dev.medianDelayS * 1000)}</KV>}
             <KV k={tr.animal.battery}>{dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}${dev.batteryMv ? ` · ${fmt.dec(dev.batteryMv / 1000, 2)} V` : ""}` : "—"}</KV>
             <KV k={tr.device.report}>{a.periodS ? fmt.period(a.periodS) : "—"}</KV>
-            {dev && <KV k={tr.device.records}>{fmt.num(dev.records)}</KV>}
             {fence && <KV k="Alanlar">{stateLine(fence)}</KV>}
-            {fence?.record && fence.record.zones.length > 0 && (
-              <KV k="Tasmadaki alanlar">{fence.record.zones.map((z) => z.name).join(", ")}</KV>
-            )}
-            {fence && (fence.state === "stale" || fence.state === "never") && (
-              <div style={{ padding: "4px 16px 12px" }}>
-                <button className="btn small" type="button" onClick={() => setSending(true)}>Tasmaya gönder</button>
-              </div>
-            )}
-            {dev && dev.services.length > 0 && (
-              <div className="row" style={{ gap: 6, flexWrap: "wrap", padding: "8px 16px 14px" }}>
-                {dev.services.map((s) => (
-                  <Badge key={s.key} tone={s.state === "running" ? "fresh" : "silent"}>{tr.device.service[s.key]} · {tr.device.serviceState[s.state]}</Badge>
-                ))}
-              </div>
-            )}
+            <Cell title="Tasma ekranı" sub={waiting ? `${waiting} ayar bekliyor · bağlan, ayarlar` : "Bağlan, ayarlar, alanlar"}
+              subTone={waiting ? "aging" : undefined} trail={<CaretRight size={18} color="var(--mute)" />}
+              onClick={() => nav.push({ to: "device", id: a.device! })} />
           </>
         ) : <p className="sm" style={{ padding: "14px 16px", margin: 0 }}>{tr.animal.noDevice}</p>}
       </Card>
-      {sending && <SendFenceDialog onClose={() => setSending(false)} />}
-      {live && a.device && <TrackerLiveDialog device={a.device} target={live} fromAnimal onClose={() => setLive(null)} />}
       {a.device && (
         <details className="tech">
           <summary>{tr.common.tech}</summary>

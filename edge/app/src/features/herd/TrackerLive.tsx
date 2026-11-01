@@ -11,6 +11,10 @@ import {
   batteryWord, buildStatus, gnssWord, readRawUsb, svcWord, type TrackerStatus,
 } from "../../app/trackerStatus.ts";
 import { Dialog, KV } from "../../ds/components.tsx";
+import { pendingKeys, valuesFromStatus } from "../../app/deviceSettings.ts";
+import { writeFence } from "../../app/fenceUsb.ts";
+import { deviceSettings, pilotRecordFence, pilotReportSettings } from "../../app/ownerAccountPilotRuntime.ts";
+import { writeWaitingUsb } from "../../app/trackerSettings.ts";
 import { TrackerBle } from "../../platform/trackerBle.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
 import { useTrackerFences } from "../zones/SendFenceDialog.tsx";
@@ -35,6 +39,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
   const [status, setStatus] = useState<TrackerStatus | null>(null);
   const [phase, setPhase] = useState("Bağlanıyor…");
   const [error, setError] = useState("");
+  const [synced, setSynced] = useState("");
   const link = useRef<TrackerBle | null>(null);
   const alive = useRef(true);
   useBack(onClose);
@@ -52,7 +57,9 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
     }
     setPhase("Okunuyor…");
     const raw = await link.current.readRaw();
-    if (alive.current) setStatus(buildStatus(raw, "ble", Date.now()));
+    const st = buildStatus(raw, "ble", Date.now());
+    if (alive.current) setStatus(st);
+    if (id && st.role === "tracker") void pilotReportSettings(id, valuesFromStatus(st), "ble").catch(() => undefined);
   }
 
   async function readUsb(): Promise<void> {
@@ -61,11 +68,38 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
       setPhase("USB açılıyor…");
       con = await UsbConsole.open();
       const dev = await probeUsbDevice(con);
-      if (dev.kind === "gateway") throw new Error("USB'deki cihaz bir gateway. Gateway'e Bağlantı → USB'den bağlan.");
+      if (dev.kind === "gateway") throw new Error("USB'deki cihaz bir gateway. Gateway'e Cihazlar → USB'den bağlan.");
       if (alive.current) setId(dev.report.device);
       setPhase("Okunuyor…");
-      const raw = await readRawUsb(con);
-      if (alive.current) setStatus(buildStatus(raw, "usb", Date.now()));
+      const dev_ = dev.report.device.toUpperCase();
+      let st = buildStatus(await readRawUsb(con), "usb", Date.now());
+      if (alive.current) setStatus(st);
+      const has = valuesFromStatus(st);
+      await pilotReportSettings(dev_, has, "usb").catch(() => undefined);
+      // 4b: bekleyenler sormadan yazılır (sahip kararı): önce ayarlar, sonra alanlar.
+      const wrote: string[] = [];
+      const wanted = deviceSettings.get(dev_)?.wanted ?? {};
+      if (st.role === "tracker" && pendingKeys({ wanted, wantedAt: null, reported: has, reportedAt: null, reportedVia: null }).length) {
+        setPhase("Bekleyen ayarlar yazılıyor…");
+        const done = await writeWaitingUsb(con, wanted, has);
+        if (Object.keys(done).length) {
+          await pilotReportSettings(dev_, done, "usb").catch(() => undefined);
+          wrote.push("ayarlar");
+        }
+      }
+      const fplan = fences.find((x) => x.device.toUpperCase() === dev_);
+      if (st.role === "tracker" && fplan && (fplan.state === "stale" || fplan.state === "never") && !fplan.errors.length && fplan.zones.length) {
+        setPhase("Alanlar yazılıyor…");
+        const sum = await writeFence(con, fplan.zones);
+        await pilotRecordFence(dev_, { digest: sum.digest, areas: sum.areas, vertices: sum.vertices,
+          zones: fplan.zones.map((z) => ({ id: z.id, name: z.name })), appliedAt: Date.now() });
+        wrote.push(`alanlar (${sum.areas})`);
+      }
+      if (wrote.length) {
+        setPhase("Yeniden okunuyor…");
+        st = buildStatus(await readRawUsb(con), "usb", Date.now());
+        if (alive.current) { setStatus(st); setSynced(`Tasmaya yazıldı ve tasma onayladı: ${wrote.join(", ")}.`); }
+      }
     } finally {
       if (con) await con.close();
     }
@@ -93,6 +127,8 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
   const st = status;
   const title = a ? a.name : id ? bleName(id) : "ORUN cihazı";
   const isGateway = st?.role === "gateway";
+  const waitingKeys = id && st ? pendingKeys({ ...(deviceSettings.get(id) ?? { wanted: {}, wantedAt: null, reportedAt: null, reportedVia: null }),
+    reported: valuesFromStatus(st) }) : [];
 
   return (
     <Dialog title={title} onClose={onClose}>
@@ -140,8 +176,12 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
           {isGateway && onBridge && <button className="btn primary" onClick={onBridge}>Köprü olarak bağlan</button>}
         </div>
         {!a && st && !isGateway && !("usb" in target) && <p className="fine" style={{ margin: 0 }}>Bu tasma hesabında yok. Eklemek için USB ile bağla (Sürü → "+").</p>}
-        <p className="fine" style={{ margin: 0 }}>Ayarları değiştirme sonraki güncellemede.</p>
+        {synced && <p className="sm" role="status" style={{ margin: 0 }}>{synced}</p>}
+        {st && !isGateway && waitingKeys.length > 0 && !("usb" in target) && (
+          <p className="fine" style={{ margin: 0 }}>{waitingKeys.length} ayar bekliyor. Bluetooth'tan yazma tasma yazılımı güncellenince; şimdilik USB ile bağlan.</p>
+        )}
       </div>
     </Dialog>
   );
 }
+
