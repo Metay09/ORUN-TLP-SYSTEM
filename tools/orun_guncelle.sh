@@ -140,6 +140,14 @@ if systemctl --user cat "$PC_EDGE" >/dev/null 2>&1; then
   fi
 fi
 
+# --- İnternetsiz harita paketi (yalnız hiç yoksa; yenilemek için orun_harita.sh) ---
+MAPS="${XDG_DATA_HOME:-$HOME/.local/share}/orun/maps"
+if ! compgen -G "$MAPS/aydin-mugla-*.pmtiles.json" >/dev/null; then
+  say "İnternetsiz harita paketi hazırlanıyor (ilk kez)"
+  bash "$REPO/tools/orun_harita.sh" \
+    || echo "Harita paketi hazırlanamadı; sonra tekrar dene: bash tools/orun_harita.sh"
+fi
+
 [[ $BUILD_APK -eq 1 ]] || exit 0
 
 # --- APK ---

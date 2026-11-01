@@ -3,6 +3,7 @@
 // storage; short-lived account bearer remains ONLY in this JS class instance.
 // No localStorage, IndexedDB, URL, logs, or observation-bench token reuse.
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
+import { parseOfflineCatalog, type OfflinePack } from "../features/map/offlinePacks/catalog.ts";
 import {
   parseServerLatest, parseServerObservationPage,
   type ServerLatestObservations, type ServerObservationPage,
@@ -215,6 +216,32 @@ export class OwnerAccountClient {
       throw new Error(typeof parsed.message === "string" && parsed.message.length < 200
         ? parsed.message : "Sunucu cihaz eklemeyi tamamlayamadı.");
     return parsed;
+  }
+
+  /** 2: offline map packs on this server. Download URLs may only point at
+   * this server's own pack route. */
+  async mapCatalog(): Promise<OfflinePack[]> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/maps/catalog", {
+      headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
+      credentials: "omit", redirect: "error", cache: "no-store",
+    });
+    if (reply.status === 401) throw new Error("Oturumun geçersiz; yeniden giriş yap.");
+    if (!reply.ok) throw new Error("Sunucudan harita listesi alınamadı.");
+    const body = await json(reply);
+    const packs = Array.isArray(body.packs) ? body.packs.map((p: unknown) => {
+      const url = p && typeof p === "object" ? (p as Record<string, unknown>).url : null;
+      if (typeof url !== "string" || !/^\/api\/v1\/maps\/file\/[A-Za-z0-9._-]+\.pmtiles$/.test(url))
+        throw new Error("Harita paketi adresi bu sunucuya ait değil.");
+      return { ...(p as Record<string, unknown>), url: this.base + url };
+    }) : body.packs;
+    return parseOfflineCatalog({ ...body, packs });
+  }
+
+  /** Authorization for downloading a pack from mapCatalog(); never stored. */
+  mapDownloadHeaders(): Record<string, string> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    return { Authorization: "Bearer " + this.accessToken };
   }
 
   /** Called only after an explicit user login action. */

@@ -14,11 +14,12 @@ from urllib.parse import urlparse
 import re
 
 
-def make_entry(
+def describe(
     path: Path, *, pack_id: str, version: str, title: str,
     kind: str, bounds: list[float], min_zoom: int, max_zoom: int,
-    url: str, attribution: str, license_name: str,
+    attribution: str, license_name: str,
 ) -> dict:
+    """Validated pack description without a download URL (server sidecar)."""
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", pack_id):
         raise ValueError("Invalid pack id")
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,39}", version):
@@ -36,13 +37,6 @@ def make_entry(
         raise ValueError("Invalid zoom range")
     if kind == "protomaps-v4-vector" and max_zoom > 15:
         raise ValueError("Protomaps v4 supports max zoom 15 in ORUN")
-    addr = urlparse(url)
-    if (
-        addr.scheme != "https" or not addr.netloc or
-        addr.username or addr.password or addr.fragment or
-        not addr.path.endswith(".pmtiles")
-    ):
-        raise ValueError("An HTTPS .pmtiles package URL is required")
     if not attribution.strip() or not license_name.strip():
         raise ValueError("Attribution and license required")
 
@@ -61,8 +55,40 @@ def make_entry(
         "id": pack_id, "version": version, "title": title.strip(), "kind": kind,
         "bounds": bounds, "minZoom": min_zoom, "maxZoom": max_zoom,
         "bytes": size, "sha256": digest.hexdigest(),
-        "url": url, "attribution": attribution.strip(), "license": license_name.strip(),
+        "attribution": attribution.strip(), "license": license_name.strip(),
     }
+
+
+def make_entry(
+    path: Path, *, pack_id: str, version: str, title: str,
+    kind: str, bounds: list[float], min_zoom: int, max_zoom: int,
+    url: str, attribution: str, license_name: str,
+) -> dict:
+    addr = urlparse(url)
+    if (
+        addr.scheme != "https" or not addr.netloc or
+        addr.username or addr.password or addr.fragment or
+        not addr.path.endswith(".pmtiles")
+    ):
+        raise ValueError("An HTTPS .pmtiles package URL is required")
+    entry = describe(
+        path, pack_id=pack_id, version=version, title=title, kind=kind,
+        bounds=bounds, min_zoom=min_zoom, max_zoom=max_zoom,
+        attribution=attribution, license_name=license_name)
+    entry["url"] = url
+    return entry
+
+
+def write_sidecar(path: Path, **fields) -> Path:
+    """ORUN server sidecar: <pack>.pmtiles.json next to <id>-<version>.pmtiles."""
+    entry = describe(path, **fields)
+    if path.name != f"{entry['id']}-{entry['version']}.pmtiles":
+        raise ValueError("Pack file must be named <id>-<version>.pmtiles")
+    out = path.with_name(path.name + ".json")
+    tmp = out.with_name(out.name + ".tmp")
+    tmp.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(out)
+    return out
 
 
 def main() -> None:
@@ -75,13 +101,25 @@ def main() -> None:
     p.add_argument("--bounds", required=True, help="west,south,east,north in WGS84; not exact province border")
     p.add_argument("--minzoom", type=int, required=True)
     p.add_argument("--maxzoom", type=int, required=True)
-    p.add_argument("--url", required=True, help="Owner-controlled HTTPS download URL")
+    p.add_argument("--url", help="Owner-controlled HTTPS download URL")
     p.add_argument("--attribution", required=True)
     p.add_argument("--license", required=True)
-    p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--output", type=Path)
+    p.add_argument("--sidecar", action="store_true",
+                   help="write <file>.json for the ORUN server instead of a catalog")
     args = p.parse_args()
+    if not args.sidecar and (not args.url or not args.output):
+        p.error("--url and --output are required without --sidecar")
     try:
         bounds = [float(v) for v in args.bounds.split(",")]
+        if args.sidecar:
+            out = write_sidecar(
+                args.file, pack_id=args.id, version=args.version,
+                title=args.title, kind=args.kind, bounds=bounds,
+                min_zoom=args.minzoom, max_zoom=args.maxzoom,
+                attribution=args.attribution, license_name=args.license)
+            print(f"SIDECAR OK: {out}")
+            return
         entry = make_entry(
             args.file, pack_id=args.id, version=args.version,
             title=args.title, kind=args.kind, bounds=bounds,

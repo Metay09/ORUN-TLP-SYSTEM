@@ -13,6 +13,10 @@ Bugüne kadar ayrı çalışan üç servisin işini tek programda yapar:
   telefon/Linux köprüsü) buraya yükler. Yalnız POST /v1/edge/batch,
   GET /v1/health ve GET /v1/bridge/ogk1 (gateway'in güncel imzalı izin
   paketi); köprü anahtarı (token dosyası) ister.
+
+Hesap adresi ayrıca internetsiz harita paketlerini verir (2. adım):
+GET /api/v1/maps/catalog ve GET /api/v1/maps/file/<ad>.pmtiles; hesap
+oturumu ister. Paketleri `tools/orun_harita.sh` hazırlar.
 """
 from __future__ import annotations
 
@@ -34,6 +38,7 @@ if str(ROOT) not in sys.path:
 from backend.account_login import AccountStore  # noqa: E402
 from backend.account_login_http import account_handler_factory  # noqa: E402
 from backend.local_observations import LocalObservations  # noqa: E402
+from backend.map_packs import CATALOG_ROUTE, FILE_ROUTE, MapPacks, default_dir  # noqa: E402
 from backend.orun_backend_bench import (  # noqa: E402
     Backend, MAX_BODY, load_private_token_file, oc,
 )
@@ -160,8 +165,49 @@ def with_device_setup(handler: type, accounts: AccountStore, enrollment, local: 
     return Handler
 
 
+CHUNK = 1024 * 1024
+
+
+def with_maps(handler: type, accounts: AccountStore, enrollment, maps: MapPacks) -> type:
+    """2: internetsiz harita paketleri; hesap oturumu (zone:read) ister."""
+
+    class Handler(handler):
+        def do_GET(self):  # noqa: N802
+            path = self.path
+            if path != CATALOG_ROUTE and not path.startswith(FILE_ROUTE):
+                return super().do_GET()
+            bearer = self._bearer(self.headers)
+            actor = accounts.resolve_session(enrollment, bearer) if bearer else None
+            if actor is None or "zone:read" not in actor.scopes:
+                return self._send(401, {"error": "unauthorized"})
+            if path == CATALOG_ROUTE:
+                return self._send(200, maps.catalog())
+            target = maps.file(path[len(FILE_ROUTE):])
+            if target is None:
+                return self._send(404, {"error": "not_found"})
+            try:
+                handle = target.open("rb")
+            except OSError:
+                return self._send(404, {"error": "not_found"})
+            with handle:
+                size = os.fstat(handle.fileno()).st_size
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(size))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                try:
+                    while block := handle.read(CHUNK):
+                        self.wfile.write(block)
+                except (BrokenPipeError, ConnectionResetError):
+                    self.close_connection = True
+
+    return Handler
+
+
 def build(state_dir: str | Path, db: str | Path, registry: str | Path, site: str,
-          *, bench_test_key: bool = False) -> tuple[LocalObservations, type]:
+          *, bench_test_key: bool = False,
+          maps_dir: str | Path | None = None) -> tuple[LocalObservations, type]:
     store, enrollment = prepare(state_dir, reuse_state=True)
     account_db = Path(state_dir) / "owner_accounts.sqlite"
     if (account_db.is_symlink() or not account_db.is_file() or
@@ -174,7 +220,9 @@ def build(state_dir: str | Path, db: str | Path, registry: str | Path, site: str
     accounts = AccountStore(account_db)
     handler = account_handler_factory(
         store, enrollment, accounts, observation_relay=local)
-    return local, with_device_setup(handler, accounts, enrollment, local)
+    handler = with_device_setup(handler, accounts, enrollment, local)
+    maps = MapPacks(maps_dir if maps_dir is not None else default_dir())
+    return local, with_maps(handler, accounts, enrollment, maps)
 
 
 def serve(account: tuple[str, int], handler: type,
@@ -213,6 +261,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="gateway köprüsü adresi HOST:PORT (ör. 100.x.y.z:8090)")
     ap.add_argument("--bridge-token-file",
                     help="köprü anahtarı dosyası (0600); --bridge-listen ile zorunlu")
+    ap.add_argument("--maps-dir",
+                    help="internetsiz harita paketleri (varsayılan ~/.local/share/orun/maps)")
     ap.add_argument("--bench-test-key", action="store_true",
                     help="eski masa testi kayıtlarının herkese açık test anahtarını kabul et")
     args = ap.parse_args(argv)
@@ -220,7 +270,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--bridge-listen ve --bridge-token-file birlikte verilmeli")
     try:
         local, handler = build(args.state_dir, args.db, args.registry, args.site,
-                               bench_test_key=args.bench_test_key)
+                               bench_test_key=args.bench_test_key,
+                               maps_dir=args.maps_dir)
         bridge_cls = None
         if args.bridge_token_file:
             bridge_cls = bridge_handler(local, load_private_token_file(args.bridge_token_file))
