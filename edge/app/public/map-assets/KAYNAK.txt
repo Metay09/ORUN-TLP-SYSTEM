@@ -1,0 +1,11 @@
+ORUN internetsiz harita yardımcı dosyaları
+
+Kaynak: https://github.com/protomaps/basemaps-assets (commit 028c18f713baecad011301ff7a69acc39bcc2ae7)
+
+fonts/   Noto Sans Regular / Medium / Italic, PBF glyph aralıkları
+         0-255, 256-511 (Türkçe harfler), 768-1023 (Yunanca), 8192-8447.
+         Lisans: SIL Open Font License 1.1 (fonts/OFL.txt).
+         Bu aralıkların dışındaki harfleri MapLibre telefonda kendisi çizer.
+
+sprites/ light, light@2x (Protomaps v4 simgeleri).
+         tangrams/icons'tan türetilmiştir; MIT lisansı.

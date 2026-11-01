@@ -75,6 +75,11 @@ export function pilotDeviceSetupClient(): OwnerAccountClient {
   return client;
 }
 
+/** 2: the signed-in account, for offline map packs; null when signed out. */
+export function pilotMapClient(): OwnerAccountClient | null {
+  return client && pilotAccountStatus() ? client : null;
+}
+
 /** Optional login e-mail. */
 export async function pilotSetEmail(email: string): Promise<string> {
   if (!client || !pilotAccountStatus()) throw new Error("Önce hesabınla giriş yapmalısın.");

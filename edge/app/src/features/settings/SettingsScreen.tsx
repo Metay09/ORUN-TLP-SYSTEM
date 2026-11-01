@@ -7,6 +7,7 @@ import type { Theme } from "../../app/stores.ts";
 import { Card, Cell, KV, Screen, Section, Seg, ToggleRow } from "../../ds/components.tsx";
 import { pilotAccountStatus } from "../../app/ownerAccountPilotRuntime.ts";
 import { AccountLoginPanel } from "./AccountLoginPanel.tsx";
+import { OfflineMapPanel } from "./OfflineMapPanel.tsx";
 
 declare const __APP_VERSION__: string;
 
@@ -38,6 +39,7 @@ export function SettingsScreen() {
       </Card>
 
       <AccountLoginPanel />
+      <OfflineMapPanel />
 
       <Section title={tr.settings.about} />
       <Card>

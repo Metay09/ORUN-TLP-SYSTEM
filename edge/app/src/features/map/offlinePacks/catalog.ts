@@ -136,3 +136,34 @@ export function checkInstallSpace(pack: OfflinePack, estimate: StorageEstimate |
   const required = Math.ceil(pack.bytes * 1.1) + 32 * 1024 * 1024;
   return remaining >= required ? null : "Harita paketi için yeterli boş alan yok.";
 }
+
+export interface PackOffer {
+  pack: OfflinePack;
+  installed: InstalledPack | null;   // an older version on the phone
+}
+
+/** Server packs the phone does not have yet, or has an older version of. */
+export function packOffers(installed: InstalledPack[], catalog: OfflinePack[]): PackOffer[] {
+  const newest = new Map<string, OfflinePack>();
+  for (const p of catalog) {
+    const known = newest.get(p.id);
+    if (!known || p.version > known.version) newest.set(p.id, p);
+  }
+  const offers: PackOffer[] = [];
+  for (const pack of newest.values()) {
+    const same = installed.filter((i) => i.pack.id === pack.id);
+    if (same.some((i) => i.pack.sha256 === pack.sha256)) continue;
+    offers.push({ pack, installed: same[0] ?? null });
+  }
+  return offers;
+}
+
+/** "20261031" → "31.10.2026"; other version strings stay as they are. */
+export function packDate(version: string): string {
+  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(version);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : version;
+}
+
+export function packSize(bytes: number): string {
+  return `${Math.max(1, Math.round(bytes / (1024 * 1024)))} MB`;
+}

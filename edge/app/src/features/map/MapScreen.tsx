@@ -18,6 +18,7 @@ import { validateRing } from "../../app/zones.ts";
 import { AnimalRing, Chips, Metric, Strip, toneOfStatus } from "../../ds/components.tsx";
 import { LayerPanel } from "./LayerPanel.tsx";
 import { MapEngine, type LinkLine, type MapData } from "./mapEngine.ts";
+import { onOfflineMapsChanged, openOfflineMap } from "./offlinePacks/offlineMap.ts";
 import { DrawZone, type DrawHooks } from "./DrawZone.tsx";
 import { startPosition, usePosition } from "./position.ts";
 import { Sheet, type Snap } from "./Sheet.tsx";
@@ -47,6 +48,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
   const [selZone, setSelZone] = useState<string | null>(null);
   const [drawing, setDrawing] = useState<{ zone: string | null; key: number } | null>(null);
   const [tiles, setTiles] = useState(false);
+  const [phoneMap, setPhoneMap] = useState(false);   // offline pack shown: no internet
   const [flash, setFlash] = useState<string | null>(null);
   const drawHooks = useRef<DrawHooks | null>(null);
   const fitted = useRef(false);
@@ -65,6 +67,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
       onSelect: (id) => { setSelected(id); setCursor(null); setPlaying(false); setSelZone(null); if (!id) { setWin(null); setSnap("peek"); } },
       onOffline: setOffline,
       onTiles: setTiles,
+      onOfflinePack: setPhoneMap,
       onDraft: (r) => drawHooks.current?.onDraft(r),
       onDraftTap: (p) => drawHooks.current?.onTap(p),
       onCentre: (p) => drawHooks.current?.onCentre(p),
@@ -72,7 +75,17 @@ export function MapScreen({ visible }: { visible: boolean }) {
       onView: (bearing, pitch) => setTurned(Math.abs(bearing) > 2 || (pitch > 2 && !tiltRef.current)),
     }, savedView);
     engine.current = e;
-    return () => { savedView = e.view(); e.destroy(); engine.current = null; };
+    // 2: the phone's own map pack, drawn when there is no internet.
+    let live = true;
+    const load = () => {
+      const c = e.map.getCenter();
+      openOfflineMap(c.lng, c.lat)
+        .then((pack) => { if (live) e.setOfflineMap(pack); })
+        .catch(() => { if (live) e.setOfflineMap(null); });
+    };
+    load();
+    const off = onOfflineMapsChanged(load);
+    return () => { live = false; off(); savedView = e.view(); e.destroy(); engine.current = null; };
   }, []);
   useEffect(() => { if (visible) engine.current?.map.resize(); }, [visible]);
   const sat = m.prefs.sat;
@@ -213,7 +226,8 @@ export function MapScreen({ visible }: { visible: boolean }) {
         </button>
         {m.demo && <span className="status-chip demo">{tr.app.demoBadge}</span>}
         {offline && <span className="status-chip note">{tr.states.offlineMap}</span>}
-        {tiles && !offline && <span className="status-chip note">{navigator.onLine ? tr.map.tilesTrouble : tr.map.tilesOffline}</span>}
+        {phoneMap && <span className="status-chip note">{tr.map.phoneMap}</span>}
+        {tiles && !offline && !phoneMap && <span className="status-chip note">{navigator.onLine ? tr.map.tilesTrouble : tr.map.tilesOffline}</span>}
         {flash && <span className="status-chip">{flash}</span>}
         {L.coverage && zoom < 14 && <span className="status-chip note">{tr.map.zoomForCoverage}</span>}
       </div>

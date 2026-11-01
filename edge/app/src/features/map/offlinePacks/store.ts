@@ -122,6 +122,7 @@ export async function streamVerifiedPmtiles(
  */
 export async function installOfflinePack(
   raw: OfflinePack, onProgress?: ProgressHandler, signal?: AbortSignal,
+  headers?: Record<string, string>,
 ): Promise<InstalledPack> {
   const pack = parseOfflinePack(raw);
   const dir = await mapsDir();
@@ -138,7 +139,9 @@ export async function installOfflinePack(
   if (space) throw new Error(space);
   if (signal?.aborted) throw new DOMException("İndirme iptal edildi.", "AbortError");
 
-  const response = await fetch(pack.url, { signal, cache: "no-store" });
+  // Keep the pack out of eviction under storage pressure (best effort).
+  try { await navigator.storage.persist?.(); } catch { /* not fatal */ }
+  const response = await fetch(pack.url, { signal, cache: "no-store", credentials: "omit", headers });
   if (!response.ok || !response.body) throw new Error(`Harita sunucusu cevap vermedi: HTTP ${response.status}`);
   if (!response.url.startsWith("https://"))
     throw new Error("Harita sunucusu güvenli HTTPS yanıtı vermedi.");

@@ -10,6 +10,9 @@
 //   terrain   — OpenTopoMap, zoom 17 (overzoomed beyond)
 //   street    — OpenFreeMap "liberty" vector style
 //   3D relief — AWS Terrain Tiles (Terrarium DEM), zoom 15
+//   offline   — the phone's own Aydın–Muğla pack (OpenStreetMap, z15): drawn
+//               for "street" always, and for satellite/terrain while there is
+//               no internet (offline event, or base tiles keep failing).
 // Without internet the base is blank but animals, trails and layers still draw.
 //
 // Smoothness: raster tiles switch without a fade; pins have no CSS filters
@@ -30,6 +33,7 @@ import type { Animal, Observation } from "../../app/model.ts";
 import type { BaseMap, Layers, SatPrefs, ZoneFill } from "../../app/stores.ts";
 import { centroid, edgeM, type LonLat } from "../../app/zones.ts";
 import { toneOfStatus } from "../../ds/components.tsx";
+import { offlineStyle, type OfflineMap } from "./offlinePacks/offlineStyle.ts";
 import { groupScreenPins } from "./pinLayout.ts";
 
 setWorkerUrl(workerUrl);
@@ -77,6 +81,8 @@ export interface EngineOpts {
   onView?(bearing: number, pitch: number): void;
   /** Base tiles keep failing (true) or load again (false). */
   onTiles?(trouble: boolean): void;
+  /** The phone's offline map is drawn instead of satellite/terrain (no internet). */
+  onOfflinePack?(showing: boolean): void;
   /** Drawing: a vertex was dragged or inserted. */
   onDraft?(ring: LonLat[]): void;
   /** Drawing in tap mode: the map was tapped there. */
@@ -224,6 +230,11 @@ export class MapEngine {
   private tileErrors: number[] = [];
   private tileTrouble = false;
   private pinKey = "";
+  private offline: OfflineMap | null = null;
+  private noNet = typeof navigator !== "undefined" && navigator.onLine === false;
+  private drawnOffline = false;
+  private probe: ReturnType<typeof setInterval> | null = null;
+  private readonly onNet = () => this.setNoNet(!navigator.onLine);
 
   private opts: EngineOpts;
 
@@ -267,16 +278,59 @@ export class MapEngine {
       if (id !== "base" && id !== "labels") return;
       const now = Date.now();
       this.tileErrors = [...this.tileErrors.filter((t) => now - t < 10_000), now];
-      if (this.tileErrors.length >= 4 && !this.tileTrouble) { this.tileTrouble = true; this.opts.onTiles?.(true); }
+      if (this.tileErrors.length >= 4 && !this.tileTrouble) {
+        this.tileTrouble = true;
+        this.opts.onTiles?.(true);
+        if (this.offline && this.base !== "street") this.setNoNet(true);
+      }
     });
     this.map.on("sourcedata", (ev) => {
       const e = ev as unknown as { sourceId?: string; tile?: unknown };
       if (e.sourceId !== "base" || !e.tile || !this.tileTrouble) return;
       if (this.tileErrors.every((t) => Date.now() - t > 10_000)) { this.tileTrouble = false; this.opts.onTiles?.(false); }
     });
+    window.addEventListener("online", this.onNet);
+    window.addEventListener("offline", this.onNet);
   }
 
-  destroy(): void { if (this.frame) cancelAnimationFrame(this.frame); this.groupPopup?.remove(); this.resizer.disconnect(); this.map.remove(); }
+  destroy(): void {
+    if (this.frame) cancelAnimationFrame(this.frame);
+    if (this.probe) clearInterval(this.probe);
+    window.removeEventListener("online", this.onNet);
+    window.removeEventListener("offline", this.onNet);
+    this.groupPopup?.remove(); this.resizer.disconnect(); this.map.remove();
+  }
+
+  // ------------------------------------------------------- offline map --
+  /** The installed offline pack (null: none). */
+  setOfflineMap(m: OfflineMap | null): void {
+    this.offline = m;
+    if (m && this.tileTrouble && !this.noNet) { this.setNoNet(true); return; }
+    void this.restyle();
+  }
+
+  private setNoNet(v: boolean): void {
+    if (v === this.noNet) return;
+    this.noNet = v;
+    if (v && !this.probe) this.probe = setInterval(() => void this.probeNet(), 30_000);
+    if (!v && this.probe) { clearInterval(this.probe); this.probe = null; }
+    void this.restyle();
+  }
+
+  /** While the offline map stands in: is the imagery server reachable again? */
+  private async probeNet(): Promise<void> {
+    if (!this.offline || navigator.onLine === false) return;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 6000);
+    try {
+      const r = await fetch(`${ESRI}/World_Imagery/MapServer/tile/0/0/0`, { cache: "no-store", signal: ctl.signal });
+      if (r.ok) this.setNoNet(false);
+    } catch { /* still no internet */ } finally { clearTimeout(timer); }
+  }
+
+  private restyle(): Promise<void> {
+    return this.layers ? this.setBase(this.base, this.layers) : Promise.resolve();
+  }
 
   private applyScale(): void {
     const z = this.map.getZoom(), s = pinScale(z);
@@ -291,13 +345,22 @@ export class MapEngine {
   async setBase(base: BaseMap, layers: Layers, sat?: SatPrefs): Promise<void> {
     if (sat) this.sat = sat;
     const s = this.sat;
-    const key = `${base}|${base === "satellite" && layers.labels}|${base === "satellite" ? `${s.kind}:${s.release}:${s.maxZoom}` : ""}`;
+    const offline = this.offline && (base === "street" || this.noNet) ? this.offline : null;
+    const key = offline ? `offline|${offline.url}|${base === "street"}`
+      : `${base}|${base === "satellite" && layers.labels}|${base === "satellite" ? `${s.kind}:${s.release}:${s.maxZoom}` : ""}`;
     this.base = base;
     this.layers = layers;
     if (key === this.styleKey) { this.applyVisibility(); return; }
     this.styleKey = key;
     this.tileErrors = [];
     if (this.tileTrouble) { this.tileTrouble = false; this.opts.onTiles?.(false); }
+    this.drawnOffline = !!offline;
+    this.opts.onOfflinePack?.(!!offline && base !== "street");
+    if (offline) {
+      this.map.setStyle(offlineStyle(offline, location.origin), { diff: false });
+      this.opts.onOffline(false);
+      return;
+    }
     if (base !== "street") { this.map.setStyle(rasterStyle(base, layers.labels, s), { diff: false }); this.opts.onOffline(false); return; }
     try {
       if (!this.streetCache) {
@@ -422,7 +485,7 @@ export class MapEngine {
     if (!l || !m.getLayer("o-heat")) return;
     const drawing = this.draft !== null;
     const vis = (id: string, on: boolean) => { if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", on ? "visible" : "none"); };
-    vis("o-relief", l.relief && this.base !== "street");
+    vis("o-relief", l.relief && this.base !== "street" && !this.drawnOffline);
     vis("o-coverage", l.coverage && !drawing);
     vis("o-heat", l.heat && !drawing);
     for (const id of ["o-trail-casing", "o-trail", "o-trail-gap", "o-trail-pts"]) vis(id, l.trail && !drawing);
