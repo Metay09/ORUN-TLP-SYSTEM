@@ -6,6 +6,7 @@ import { KAT_PERIODIC } from "./fixtures.ts";
 import { benchCredentials, openProductFrame } from "../src/core/product.ts";
 import { hex } from "../src/core/bytes.ts";
 import { EdgeCore } from "../src/core/edge.ts";
+import { KeyRing } from "../src/core/keys.ts";
 import { AccountObservationMirror } from "../src/app/accountObservationMirror.ts";
 import type { OwnerAccountClient, AccountIdentity } from "../src/app/ownerAccountClient.ts";
 import type { ServerObservationPage } from "../src/app/serverObservationRead.ts";
@@ -41,6 +42,14 @@ async function setup() {
   const mirror = new AccountObservationMirror(db, benchCredentials, task => core.exclusive(task));
   return { db, core, mirror };
 }
+
+test("production keyring rejects public bench frames without an authorized read key", () => {
+  const secure = new KeyRing(false);
+  assert.throws(() => openProductFrame(frame, secure.lookup));
+  // The test credential remains available ONLY when explicitly requested.
+  const explicitBench = new KeyRing(true);
+  assert.equal(openProductFrame(frame, explicitBench.lookup).sequence, item.sequence);
+});
 
 test("verified server frame stays in account mirror; local ledger and Gateway ACK remain untouched", async () => {
   const { db, core, mirror } = await setup();
