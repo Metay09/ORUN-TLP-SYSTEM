@@ -7,6 +7,7 @@ import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { ERROR_TEXT, areaM2, canonicalE7, compileFence, perimeterM, validateRing, zoneAt } from "../../app/zones.ts";
 import { Card, Dialog, KV, Screen, ToggleRow } from "../../ds/components.tsx";
+import { ZoneTargets } from "./ZoneTargets.tsx";
 
 export function ZoneScreen({ id }: { id: string }) {
   const m = useApp();
@@ -43,6 +44,8 @@ export function ZoneScreen({ id }: { id: string }) {
       <Card>
         <ToggleRow title={tr.zones.active} sub={tr.zones.activeHelp} on={z.active} onChange={(v) => { saveSafe({ ...z, active: v }); }} />
       </Card>
+
+      <ZoneTargets zoneId={z.id} onError={setError} />
 
       <div className="stack" style={{ padding: "16px 16px 0" }}>
         <button className="btn primary wide" onClick={() => nav.showZone(z.id)}><MapTrifold size={20} />{tr.zones.showOnMap}</button>

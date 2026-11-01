@@ -129,6 +129,21 @@ class GatewayListTests(unittest.TestCase):
                     {"device": GW_PC, "name": "a\u0007b"}, {"device": GW_PC}):
             self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/name", token, bad)[0], 400, bad)
 
+    def test_tracker_fences_live_in_the_account(self):
+        """3a: tasmaya yazılan alanların özeti hesapta."""
+        self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/fences")[0], 401)
+        token = self.login()
+        body = {"device": "0e8ade7e71531aa3", "digest": "0123456789abcdef", "areas": 2, "vertices": 9,
+                "zones": [{"id": "z1", "name": "Ev merası"}, {"id": "z2", "name": "Taşlık"}]}
+        status, out = self.req(self.account, "POST", "/api/v1/devices/fence", token, body)
+        self.assertEqual((status, out["device"]), (200, "0E8ADE7E71531AA3"))
+        got = self.req(self.account, "GET", "/api/v1/devices/fences", token)[1]["fences"]["0E8ADE7E71531AA3"]
+        self.assertEqual((got["digest"], got["areas"], got["vertices"], got["zones"][0]["name"]),
+                         ("0123456789abcdef", 2, 9, "Ev merası"))
+        for bad in (dict(body, areas=0), dict(body, areas=9), dict(body, digest="xyz"),
+                    dict(body, zones=[{"id": "z1", "name": "a"}]), dict(body, device="bad")):
+            self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/fence", token, bad)[0], 400)
+
     def test_old_report_is_not_connected(self):
         clock = [1_000_000.0]
         store = GatewayStatus(self.db, clock=lambda: clock[0])
