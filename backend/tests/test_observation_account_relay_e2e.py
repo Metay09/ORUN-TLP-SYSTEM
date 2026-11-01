@@ -138,6 +138,13 @@ class AccountObservationRouteE2ETests(unittest.TestCase):
             wrong_site_server, "GET", "/v1/edge/records?after=0", token)
         self.assertEqual(status, 403, body)
         self.assertEqual(body["error"], "observation_site_not_authorized")
+        # A site mismatch must not expose traffic read keys either.
+        self.assertEqual(self.request(
+            wrong_site_server, "GET", "/v1/edge/keys", token)[0], 403)
+        # Nor may it use this other site's Backend to upload frames.
+        self.assertEqual(self.request(
+            wrong_site_server, "POST", "/v1/edge/batch", token,
+            body={"edge": "test-phone", "records": [], "sessions": []})[0], 403)
 
     def test_live_db_readonly_account_relay(self):
         """Opt-in only: real verified ledger with synthetic local credentials.
