@@ -69,6 +69,12 @@ export function pilotRestoreAccount(): Promise<void> {
   return restoring;
 }
 
+/** 1d/1e: the signed-in account, for adding a device. */
+export function pilotDeviceSetupClient(): OwnerAccountClient {
+  if (!client || !pilotAccountStatus()) throw new Error("Önce hesabınla giriş yapmalısın.");
+  return client;
+}
+
 /** Optional login e-mail. */
 export async function pilotSetEmail(email: string): Promise<string> {
   if (!client || !pilotAccountStatus()) throw new Error("Önce hesabınla giriş yapmalısın.");

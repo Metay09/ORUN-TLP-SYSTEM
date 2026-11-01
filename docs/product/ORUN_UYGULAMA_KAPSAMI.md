@@ -27,9 +27,9 @@ Bu listede olmayan iş v1 değildir; yapılmaz, önerilmez, "ileride lazım olur
 | 1 | Otomatik eşitleme | Uygulamayı açınca her tasmanın son konumu kendiliğinden gelir; geçmiş arka planda tamamlanır | tamam (#229) |
 | 1a | Tek sunucu | PC'de üç servis yerine tek `orun-sunucu`; PC Edge aynı adrese yükler | tamam (#230, #231) |
 | 1b | Kalıcı giriş | Kullanıcı adı ya da e-postayla giriş; uygulama kapanıp açılınca oturum açık | tamam (#232) |
-| 1c | Gateway izni kendiliğinden | Tasma eklenince gateway'in izni köprü (PC Edge) üzerinden kendiliğinden güncellenir; `orun_provision.py gateway` adımı yok | bu PR |
-| 1d | Tasma her çiftlik gateway'ini kabul eder | Yeni gateway eklenince tasmalara dokunulmaz (tasma yazılımı) | — |
-| 1e | Uygulamadan "Cihaz ekle" | Tasma/gateway telefona USB ile bağlanır → "Hesabına ekle"; PC aracı yok | — |
+| 1c | Gateway izni kendiliğinden | Tasma eklenince gateway'in izni köprü (PC Edge) üzerinden kendiliğinden güncellenir; `orun_provision.py gateway` adımı yok | tamam (#233) |
+| 1d | Tasma çiftliğin bütün gateway'lerine | Tasma eklenirken çiftliğin her gateway'ine (en fazla 4) tek seferde yetkilendirilir; köprüye bağlanan gateway çiftliğe kendiliğinden girer. Sonradan eklenen gateway için tasmada "Cihaz ekle" bir kez daha (6. adımdan sonra LoRa'dan) | bu PR |
+| 1e | Uygulamadan "Cihaz ekle" | Ağ → Cihaz ekle: tasma telefona USB ile bağlanır, tek düğme; PC aracı yok | bu PR |
 | 2 | İnternetsiz harita | İnternet yokken uydu ve harita (Aydın–Muğla, mera çevresi yakın zoom) | temel kod var |
 | 3 | USB'den tüm ayarlar | Kabloyla her ayar değişir | rapor aralığı, hizmetler, alanlar var |
 | 4 | BLE'den tüm ayarlar | Aynısı kablosuz, alanlar dahil | yalnız okuma var |

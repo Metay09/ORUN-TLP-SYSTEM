@@ -199,6 +199,24 @@ export class OwnerAccountClient {
     return value;
   }
 
+  /** 1d/1e: POST to an owner-only device setup route. */
+  async devicePost(path: "/api/v1/devices/tracker/prepare" | "/api/v1/devices/tracker/confirm",
+                   body: unknown): Promise<Record<string, unknown>> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + path, {
+      method: "POST", credentials: "omit", redirect: "error", cache: "no-store",
+      headers: { Authorization: "Bearer " + this.accessToken,
+                 "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+    });
+    const parsed = await json(reply).catch(() => ({} as Record<string, unknown>));
+    if (reply.status === 401) throw new Error("Oturumun geçersiz; yeniden giriş yap.");
+    if (!reply.ok)
+      throw new Error(typeof parsed.message === "string" && parsed.message.length < 200
+        ? parsed.message : "Sunucu cihaz eklemeyi tamamlayamadı.");
+    return parsed;
+  }
+
   /** Called only after an explicit user login action. */
   async signIn(device: ActiveMobileSession, username: string,
                password: string): Promise<AccountIdentity> {

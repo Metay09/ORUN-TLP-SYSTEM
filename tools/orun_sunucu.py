@@ -97,6 +97,7 @@ def bridge_handler(local: LocalObservations, token: str):
                     return self._json(503, {"error": "no_issuer"})
                 if oc.issuer_public(issuer)[:4].hex().upper() != issuer_prefix:
                     return self._json(409, {"error": "issuer_mismatch"})
+                registry.note_gateway(gateway)       # köprüye bağlı gateway = çiftlikte
                 pending = registry.pending_snapshot(gateway, active)
             except oc.RegistryError as exc:
                 return self._json(409, {"error": "registry", "detail": str(exc)[:120]})
@@ -121,6 +122,44 @@ def bridge_handler(local: LocalObservations, token: str):
     return Bridge
 
 
+DEVICE_ROUTES = ("/api/v1/devices/tracker/prepare", "/api/v1/devices/tracker/confirm")
+
+
+def with_device_setup(handler: type, accounts: AccountStore, enrollment, local: LocalObservations) -> type:
+    """1d/1e: hesabın sahibi uygulamadan tasma ekler (zone:write yetkisi)."""
+    from backend.device_setup import SetupRefused, confirm_tracker, prepare_tracker
+
+    class Handler(handler):
+        def do_POST(self):  # noqa: N802
+            if self.path not in DEVICE_ROUTES:
+                return super().do_POST()
+            bearer = self._bearer(self.headers)
+            actor = accounts.resolve_session(enrollment, bearer) if bearer else None
+            if actor is None or "zone:write" not in actor.scopes:
+                return self._send(401, {"error": "unauthorized"})
+            if actor.site_id != local.observation_site:
+                return self._send(403, {"error": "site_not_authorized"})
+            size = self.headers.get("Content-Length", "")
+            if (self.headers.get("Transfer-Encoding") or not size.isdecimal() or
+                    not 1 <= int(size) <= 4096 or
+                    self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                    != "application/json"):
+                return self._send(400, {"error": "invalid_request"})
+            registry = local.backend.registry
+            if registry is None:
+                return self._send(503, {"error": "no_registry"})
+            try:
+                body = json.loads(self.rfile.read(int(size)).decode("utf-8"))
+                work = prepare_tracker if self.path.endswith("/prepare") else confirm_tracker
+                return self._send(200, work(registry, body))
+            except SetupRefused as exc:
+                return self._send(409, {"error": exc.code, "message": str(exc)})
+            except (ValueError, UnicodeDecodeError, oc.RegistryError):
+                return self._send(400, {"error": "invalid_request"})
+
+    return Handler
+
+
 def build(state_dir: str | Path, db: str | Path, registry: str | Path, site: str,
           *, bench_test_key: bool = False) -> tuple[LocalObservations, type]:
     store, enrollment = prepare(state_dir, reuse_state=True)
@@ -132,9 +171,10 @@ def build(state_dir: str | Path, db: str | Path, registry: str | Path, site: str
     backend = Backend(Path(db), bench_test_key,
                       registry=oc.CredentialRegistry(str(registry)))
     local = LocalObservations(backend, site)
+    accounts = AccountStore(account_db)
     handler = account_handler_factory(
-        store, enrollment, AccountStore(account_db), observation_relay=local)
-    return local, handler
+        store, enrollment, accounts, observation_relay=local)
+    return local, with_device_setup(handler, accounts, enrollment, local)
 
 
 def serve(account: tuple[str, int], handler: type,

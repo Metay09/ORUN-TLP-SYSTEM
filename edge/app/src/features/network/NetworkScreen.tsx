@@ -9,6 +9,7 @@ import { useApp } from "../../app/store.ts";
 import { Bar, Card, Cell, DemoFlag, Header, KV, Section } from "../../ds/components.tsx";
 import { startPosition, usePosition } from "../map/position.ts";
 import { phonePathWords, serverWords, stationWords } from "./words.ts";
+import { AddDeviceCard } from "./AddDeviceCard.tsx";
 import {
   onPilotObservationSync, pilotAccountStatus, pilotAccountSync, pilotObservationSyncState,
 } from "../../app/ownerAccountPilotRuntime.ts";
@@ -95,6 +96,8 @@ export function NetworkScreen() {
         </button>
         {!hasAccount && <p className="fine">Önce hesabınla giriş yap.</p>}
       </Card>
+
+      <AddDeviceCard stationOnUsb={st.link === "usb"} />
 
       <Section title={tr.network.station} />
       <Card>
