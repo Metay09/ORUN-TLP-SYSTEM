@@ -214,6 +214,12 @@ class CredentialRegistry:
                 " gateway_id TEXT PRIMARY KEY CHECK(length(gateway_id)=16),"
                 " generation INTEGER NOT NULL CHECK(generation>0),"
                 " issued_utc INTEGER NOT NULL)")
+            # 1d: the farm's Gateways. A Gateway becomes a farm member the
+            # first time a farm bridge (PC Edge / phone) reports it.
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS farm_gateways ("
+                " gateway_id TEXT PRIMARY KEY CHECK(length(gateway_id)=16),"
+                " first_seen_utc INTEGER NOT NULL)")
             # C1: which grant set the last snapshot carried, so a bridge can
             # ask "is there anything new for this Gateway?" without a reboot.
             cols = {r[1] for r in db.execute("PRAGMA table_info(gateway_snapshots)")}
@@ -359,6 +365,30 @@ class CredentialRegistry:
         with closing(self._conn()) as db:
             db.execute("UPDATE gateway_snapshots SET content=? WHERE gateway_id=?",
                        (digest, _hex16(gateway_id)))
+
+    # ---- 1d: farm Gateways and adding a Tracker to all of them ----
+
+    def note_gateway(self, gateway_id: int) -> None:
+        if not 0 < gateway_id < 2**64 - 1:
+            raise RegistryError("gateway id")
+        with closing(self._conn()) as db:
+            db.execute("INSERT OR IGNORE INTO farm_gateways VALUES (?,?)",
+                       (_hex16(gateway_id), int(time.time())))
+
+    def farm_gateways(self) -> list[int]:
+        """Known farm Gateways: noted by a bridge, or already granted to."""
+        with closing(self._conn()) as db:
+            rows = db.execute("SELECT gateway_id FROM farm_gateways "
+                              "UNION SELECT gateway_id FROM grants ORDER BY 1").fetchall()
+        return [int(r[0], 16) for r in rows]
+
+    def tracker_grants(self, device_id: int, key_epoch: int) -> dict[int, tuple[int, int]]:
+        """gateway -> (floor, generation) recorded for this Tracker credential."""
+        with closing(self._conn()) as db:
+            rows = db.execute("SELECT gateway_id,custody_floor,grant_generation FROM grants "
+                              "WHERE device_id=? AND key_epoch=?",
+                              (_hex16(device_id), key_epoch)).fetchall()
+        return {int(g, 16): (f, n) for g, f, n in rows}
 
     def pending_snapshot(self, gateway_id: int, active: int) -> Optional[tuple[int, bytes]]:
         """C1: the snapshot a bridge should install on this Gateway now, or None.
