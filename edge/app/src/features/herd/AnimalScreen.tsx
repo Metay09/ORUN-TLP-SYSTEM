@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 import { CaretRight, MapTrifold, NavigationArrow, NotePencil, PencilSimple, Play } from "@phosphor-icons/react";
 import { batterySeries, dayStart, daySummaries, hourlyActivity } from "../../app/activity.ts";
-import { batteryPercent, epochMs, shortId } from "../../app/herd.ts";
+import { batteryPercent, epochMs } from "../../app/herd.ts";
+import { bleName } from "../../app/deviceNames.ts";
 import { cap, fmt, tr } from "../../app/i18n/tr.ts";
 import type { Animal, AppEvent } from "../../app/model.ts";
 import { useBack, useNav } from "../../app/nav.ts";
@@ -170,7 +171,7 @@ function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () =
       <Card>
         {a.device ? (
           <>
-            <KV k={tr.animal.device}>{tr.device.title(shortId(a.device))}</KV>
+            <KV k="Bluetooth adı">{bleName(a.device)}</KV>
             <KV k={tr.device.lastContact}>{dev?.lastTime ? `${fmt.clock(dev.lastTime)} · ${fmt.ago(dev.lastTime, now)}` : "—"}</KV>
             <KV k={tr.device.signal}>{dev && dev.rssi !== null ? tr.device.signalLine(dev.rssi, dev.snr) : tr.device.signalNone}</KV>
             {dev?.link && <KV k="Yol">{tr.device.link[dev.link]}</KV>}

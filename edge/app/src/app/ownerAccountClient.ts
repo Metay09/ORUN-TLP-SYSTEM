@@ -260,6 +260,32 @@ export class OwnerAccountClient {
     return parseFarmGateways(await json(reply));
   }
 
+  /** 2d: device names kept in the account. */
+  async deviceNames(): Promise<Record<string, string>> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/names", {
+      headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
+      credentials: "omit", redirect: "error", cache: "no-store",
+    });
+    if (!reply.ok) throw new Error("Cihaz adları alınamadı.");
+    const body = await json(reply);
+    const names = body.names;
+    if (!names || typeof names !== "object" || Array.isArray(names)) throw new Error("Cihaz adları hatalı.");
+    return names as Record<string, string>;
+  }
+
+  async setDeviceName(device: string, name: string): Promise<void> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/name", {
+      method: "POST", credentials: "omit", redirect: "error", cache: "no-store",
+      headers: { Authorization: "Bearer " + this.accessToken,
+                 "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ device, name }),
+    });
+    if (reply.status === 400) throw new Error("Bu ad kullanılamıyor (en fazla 40 harf).");
+    if (!reply.ok) throw new Error("Ad kaydedilemedi.");
+  }
+
   /** 2c: this phone is the bridge for a gateway: tell the server how it is. */
   async reportGateway(r: { gateway: string; transport: "ble" | "usb"; held: number | null; capacity: number | null }): Promise<void> {
     if (!this.accessToken) return;

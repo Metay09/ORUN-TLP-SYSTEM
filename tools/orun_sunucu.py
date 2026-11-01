@@ -16,6 +16,7 @@ Bugüne kadar ayrı çalışan üç servisin işini tek programda yapar:
 
 Köprü ayrıca bağlı olduğu gateway'in durumunu bildirir: POST /v1/bridge/gateway.
 Hesap adresi çiftliğin gateway listesini verir: GET /api/v1/devices/gateways;
+cihaz adları: GET /api/v1/devices/names, POST /api/v1/devices/name (2d);
 telefon köprü olduğunda POST /api/v1/devices/gateway ile bildirir (2c).
 
 Hesap adresi ayrıca internetsiz harita paketlerini verir (2. adım):
@@ -41,6 +42,7 @@ if str(ROOT) not in sys.path:
 
 from backend.account_login import AccountStore  # noqa: E402
 from backend.account_login_http import account_handler_factory  # noqa: E402
+from backend.device_names import BadName, DeviceNames  # noqa: E402
 from backend.gateway_status import BadStatus, GatewayStatus, parse_report  # noqa: E402
 from backend.local_observations import LocalObservations  # noqa: E402
 from backend.map_packs import CATALOG_ROUTE, FILE_ROUTE, MapPacks, default_dir  # noqa: E402
@@ -202,8 +204,10 @@ CHUNK = 1024 * 1024
 
 
 def with_gateways(handler: type, accounts: AccountStore, enrollment, local: LocalObservations) -> type:
-    """2c: çiftliğin gateway listesi; telefon köprü olduğunda durum bildirimi."""
+    """2c: çiftliğin gateway listesi; telefon köprü olduğunda durum bildirimi.
+    2d: cihaz adları (hesapta)."""
     gateways = GatewayStatus(local.backend.db_path)
+    names = DeviceNames(local.backend.db_path)
 
     class Handler(handler):
         def _farm_actor(self, scope: str):
@@ -218,14 +222,16 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
             return actor
 
         def do_GET(self):  # noqa: N802
-            if self.path != "/api/v1/devices/gateways":
+            if self.path not in ("/api/v1/devices/gateways", "/api/v1/devices/names"):
                 return super().do_GET()
             if self._farm_actor("zone:read") is None:
                 return None
+            if self.path == "/api/v1/devices/names":
+                return self._send(200, {"names": names.all()})
             return self._send(200, {"gateways": gateways.list(farm_gateway_ids(local))})
 
         def do_POST(self):  # noqa: N802
-            if self.path != "/api/v1/devices/gateway":
+            if self.path not in ("/api/v1/devices/gateway", "/api/v1/devices/name"):
                 return super().do_POST()
             if self._farm_actor("zone:write") is None:
                 return None
@@ -233,6 +239,14 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
             if (self.headers.get("Transfer-Encoding") or not size.isdecimal() or
                     not 1 <= int(size) <= 512):
                 return self._send(400, {"error": "invalid_request"})
+            if self.path == "/api/v1/devices/name":
+                try:
+                    body = json.loads(self.rfile.read(int(size)))
+                    dev, text = names.set(body.get("device") if isinstance(body, dict) else None,
+                                          body.get("name") if isinstance(body, dict) else None)
+                except (BadName, ValueError, UnicodeDecodeError):
+                    return self._send(400, {"error": "invalid_name"})
+                return self._send(200, {"device": dev, "name": text})
             try:
                 gw, via, held, cap = parse_report(json.loads(self.rfile.read(int(size))), "phone")
                 gateways.report(gw, via, held, cap)

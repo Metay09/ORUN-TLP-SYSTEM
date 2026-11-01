@@ -1,9 +1,10 @@
 // Short edits for an animal: identity and a dated note.
 import { useState } from "react";
-import { shortId } from "../../app/herd.ts";
+import { bleName } from "../../app/deviceNames.ts";
 import { tr } from "../../app/i18n/tr.ts";
 import type { Animal, Sex } from "../../app/model.ts";
 import { useBack } from "../../app/nav.ts";
+import { pilotSetDeviceName } from "../../app/ownerAccountPilotRuntime.ts";
 import { useApp } from "../../app/store.ts";
 import { SWATCHES } from "../../app/stores.ts";
 import { Dialog, Seg } from "../../ds/components.tsx";
@@ -11,9 +12,16 @@ import { Dialog, Seg } from "../../ds/components.tsx";
 export function EditAnimal({ a, onClose }: { a: Animal; onClose: () => void }) {
   const m = useApp();
   useBack(onClose);
-  const [f, setF] = useState(() => ({ ...a.profile }));
-  const short = shortId(a.device ?? a.id);
-  const save = () => { m.actions.saveAsset(f, a.device); onClose(); };
+  // The shown name may come from the account (another phone named it).
+  const [f, setF] = useState(() => ({ ...a.profile, name: a.named ? a.name : "" }));
+  const short = bleName(a.device ?? a.id);
+  const save = () => {
+    m.actions.saveAsset(f, a.device);
+    // 2d: tasmanın adı = hayvanın adı, hesapta saklanır.
+    if (a.device && !m.demo && f.name.trim() !== (a.named ? a.name : ""))
+      void pilotSetDeviceName(a.device, f.name).catch(() => undefined);
+    onClose();
+  };
   return (
     <Dialog title={tr.edit.title} onClose={onClose}>
       <label className="lab">{tr.animal.fields.name}

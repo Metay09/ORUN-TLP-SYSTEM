@@ -4,7 +4,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Point } from "../core/points.ts";
 import type { Snapshot } from "./controller.ts";
-import { pilotAccountStatus } from "./ownerAccountPilotRuntime.ts";
+import { deviceNames, pilotAccountStatus } from "./ownerAccountPilotRuntime.ts";
 import { coverageCells, type Coverage } from "./coverage.ts";
 import { DEMO_STATION, DEMO_STATION_POS, DemoSource, demoBook, demoZones } from "./demo.ts";
 import { buildDevices } from "./devices.ts";
@@ -180,8 +180,9 @@ export function useModel(): Model {
   const fence = useMemo(() => compileFence(zones), [zones]);
   const zoneSet = useMemo(() => checkSet(zones), [zones]);
   const grazingNow = grazing(graze, now) || (graze.until !== null && graze.until > Date.now());
-  const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now, fence, grazing: grazingNow }),
-    [points, book, assets, now, fence, grazingNow]);
+  const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
+  const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now, fence, grazing: grazingNow, names: demo ? undefined : names }),
+    [points, book, assets, now, fence, grazingNow, names, demo]);
   const coverage = useMemo(() => coverageCells(points), [points]);
   // The snapshot changes on every log line; recompute only on what matters.
   const station = useMemo(() => stationOf(snap, placeMap),

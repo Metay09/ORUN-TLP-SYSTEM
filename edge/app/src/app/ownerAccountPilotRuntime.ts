@@ -8,6 +8,7 @@ import {
 } from "./ownerAccountClient.ts";
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
+import { DeviceNameBook } from "./deviceNames.ts";
 import { forgetAccount, loadAccount, storeAccount } from "../platform/orunAccountSession.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import type { Point } from "../core/points.ts";
@@ -73,6 +74,18 @@ export function pilotRestoreAccount(): Promise<void> {
 export function pilotDeviceSetupClient(): OwnerAccountClient {
   if (!client || !pilotAccountStatus()) throw new Error("Önce hesabınla giriş yapmalısın.");
   return client;
+}
+
+/** 2d: device names (account, with a copy on the phone). */
+export const deviceNames = new DeviceNameBook(
+  typeof localStorage !== "undefined" ? (() => { try { return localStorage; } catch { return null; } })() : null);
+
+export function pilotSetDeviceName(device: string, name: string): Promise<void> {
+  return deviceNames.set(device, name, client && pilotAccountStatus() ? client : null);
+}
+
+function refreshNames(): void {
+  if (client && pilotAccountStatus()) void deviceNames.refresh(client).catch(() => undefined);
 }
 
 /** 2c: the farm's gateways, or null when signed out. */
@@ -219,9 +232,10 @@ function backgroundSync(): void {
 function startAutoSync(): void {
   stopAutoSync();
   backgroundSync();
-  autoTimer = setInterval(backgroundSync, AUTO_SYNC_MS);
+  refreshNames();
+  autoTimer = setInterval(() => { backgroundSync(); refreshNames(); }, AUTO_SYNC_MS);
   if (typeof document !== "undefined") {
-    onVisible = () => { if (document.visibilityState === "visible") backgroundSync(); };
+    onVisible = () => { if (document.visibilityState === "visible") { backgroundSync(); refreshNames(); } };
     document.addEventListener("visibilitychange", onVisible);
   }
 }

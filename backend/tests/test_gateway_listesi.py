@@ -109,6 +109,24 @@ class GatewayListTests(unittest.TestCase):
         farm = {"%016X" % g for g in self.local.backend.registry.farm_gateways()}
         self.assertTrue({GW_PC, GW_PHONE} <= farm)
 
+    def test_device_names_live_in_the_account(self):
+        """2d: ad hesapta; boş ad siler; geçersiz ad reddedilir."""
+        self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/names")[0], 401)
+        token = self.login()
+        ok = self.req(self.account, "POST", "/api/v1/devices/name", token,
+                      {"device": GW_PC.lower(), "name": "  Tepe   gateway "})
+        self.assertEqual(ok, (200, {"device": GW_PC, "name": "Tepe gateway"}))
+        self.req(self.account, "POST", "/api/v1/devices/name", token,
+                 {"device": "0E8ADE7E71531AA3", "name": "Sarıkız"})
+        self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/names", token)[1]["names"],
+                         {GW_PC: "Tepe gateway", "0E8ADE7E71531AA3": "Sarıkız"})
+        self.req(self.account, "POST", "/api/v1/devices/name", token, {"device": GW_PC, "name": ""})
+        self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/names", token)[1]["names"],
+                         {"0E8ADE7E71531AA3": "Sarıkız"})
+        for bad in ({"device": "xyz", "name": "a"}, {"device": GW_PC, "name": "a" * 41},
+                    {"device": GW_PC, "name": "a\u0007b"}, {"device": GW_PC}):
+            self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/name", token, bad)[0], 400, bad)
+
     def test_old_report_is_not_connected(self):
         clock = [1_000_000.0]
         store = GatewayStatus(self.db, clock=lambda: clock[0])
