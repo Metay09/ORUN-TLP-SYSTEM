@@ -15,8 +15,9 @@ import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { rangeStart, type Range } from "../../app/stores.ts";
 import { validateRing } from "../../app/zones.ts";
-import { AnimalRing, Chips, Metric, Strip, toneOfStatus } from "../../ds/components.tsx";
+import { AnimalRing, Chips, Dialog, Metric, Strip, toneOfStatus } from "../../ds/components.tsx";
 import { LayerPanel } from "./LayerPanel.tsx";
+import { SendFenceDialog } from "../zones/SendFenceDialog.tsx";
 import { MapEngine, type LinkLine, type MapData } from "./mapEngine.ts";
 import { onOfflineMapsChanged, openOfflineMap } from "./offlinePacks/offlineMap.ts";
 import { DrawZone, type DrawHooks } from "./DrawZone.tsx";
@@ -47,6 +48,8 @@ export function MapScreen({ visible }: { visible: boolean }) {
   const [drawing, setDrawing] = useState<{ zone: string | null; key: number } | null>(null);
   const [tiles, setTiles] = useState(false);
   const [phoneMap, setPhoneMap] = useState(false);   // offline pack shown: no internet
+  const [askSend, setAskSend] = useState<string | null>(null);   // 3a: "tasmalara gönder?"
+  const [sending, setSending] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const drawHooks = useRef<DrawHooks | null>(null);
   const fitted = useRef(false);
@@ -208,10 +211,32 @@ export function MapScreen({ visible }: { visible: boolean }) {
 
   return (
     <section className="map-screen" hidden={!visible}>
+      {askSend && (
+        <Dialog title="Alan kaydedildi" onClose={() => setAskSend(null)}>
+          <div className="stack" style={{ padding: "0 20px 16px" }}>
+            <p className="sm" style={{ margin: 0 }}>"{askSend}" tasmalara şimdi gönderilsin mi? Tasmayı USB ile telefona bağlaman gerekir. Sonra Alanlar → Tasmaya gönder'den de gönderebilirsin.</p>
+            <div className="btns">
+              <button className="btn" onClick={() => setAskSend(null)}>Sonra</button>
+              <button className="btn primary" onClick={() => { setAskSend(null); setSending(true); }}>Şimdi gönder</button>
+            </div>
+          </div>
+        </Dialog>
+      )}
+      {sending && <SendFenceDialog onClose={() => setSending(false)} />}
       <div ref={el} className="map-canvas" />
       {drawing ? (
         <DrawZone key={drawing.key} engine={engine.current} zone={drawZone} hooks={drawHooks}
-          onDone={(z) => { setDrawing(null); if (z) { setSelZone(z.id); setFlash(tr.zones.saved(z.name)); } }} />
+          onDone={(z) => {
+            setDrawing(null);
+            if (!z) return;
+            setSelZone(z.id); setFlash(tr.zones.saved(z.name));
+            // 3a: yeni alan önce bütün tasmalara (sonra değiştirilebilir); kaydedince sor.
+            if (!m.demo) {
+              try { if (!m.targetBook.rules[z.id]) m.actions.saveTargetRule(z.id, { scope: "all", devices: [], groups: [] }); }
+              catch { /* hedefler okunamıyorsa dokunma */ }
+              setAskSend(z.name);
+            }
+          }} />
       ) : <>
       <div className="map-top">
         <button className="me-btn" onClick={() => nav.push({ to: "settings" })} aria-label={tr.common.settings}><UserCircle size={28} /></button>

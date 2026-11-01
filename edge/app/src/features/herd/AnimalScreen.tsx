@@ -11,6 +11,7 @@ import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { AnimalRing, Badge, Card, Cell, Empty, KV, Screen, Section, Seg, Sparkline, Strip, toneOfStatus } from "../../ds/components.tsx";
 import { EventRow } from "../events/EventsScreen.tsx";
+import { SendFenceDialog, stateLine, useTrackerFences } from "../zones/SendFenceDialog.tsx";
 import { AddNote, EditAnimal } from "./dialogs.tsx";
 
 type Part = "today" | "history" | "info";
@@ -147,6 +148,8 @@ function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () =
   const f = tr.animal.fields, p = a.profile;
   const age = ageMonths(p.birth, now);
   const dev = useApp().devices.find((d) => d.id === a.device) ?? null;
+  const fence = useTrackerFences().find((x) => a.device && x.device.toUpperCase() === a.device.toUpperCase()) ?? null;
+  const [sending, setSending] = useState(false);
   return (
     <>
       <Section title={tr.animal.identity} action={tr.common.edit} onAction={onEdit} />
@@ -177,6 +180,15 @@ function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () =
             <KV k={tr.animal.battery}>{dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}${dev.batteryMv ? ` · ${fmt.dec(dev.batteryMv / 1000, 2)} V` : ""}` : "—"}</KV>
             <KV k={tr.device.report}>{a.periodS ? fmt.period(a.periodS) : "—"}</KV>
             {dev && <KV k={tr.device.records}>{fmt.num(dev.records)}</KV>}
+            {fence && <KV k="Alanlar">{stateLine(fence)}</KV>}
+            {fence?.record && fence.record.zones.length > 0 && (
+              <KV k="Tasmadaki alanlar">{fence.record.zones.map((z) => z.name).join(", ")}</KV>
+            )}
+            {fence && (fence.state === "stale" || fence.state === "never") && (
+              <div style={{ padding: "4px 16px 12px" }}>
+                <button className="btn small" type="button" onClick={() => setSending(true)}>Tasmaya gönder</button>
+              </div>
+            )}
             {dev && dev.services.length > 0 && (
               <div className="row" style={{ gap: 6, flexWrap: "wrap", padding: "8px 16px 14px" }}>
                 {dev.services.map((s) => (
@@ -187,6 +199,7 @@ function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () =
           </>
         ) : <p className="sm" style={{ padding: "14px 16px", margin: 0 }}>{tr.animal.noDevice}</p>}
       </Card>
+      {sending && <SendFenceDialog onClose={() => setSending(false)} />}
       {a.device && (
         <details className="tech">
           <summary>{tr.common.tech}</summary>

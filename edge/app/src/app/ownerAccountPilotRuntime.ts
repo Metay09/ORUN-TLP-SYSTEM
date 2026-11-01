@@ -9,6 +9,7 @@ import {
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
 import { DeviceNameBook } from "./deviceNames.ts";
+import { TrackerFenceBook, type FenceRecord } from "./trackerFences.ts";
 import { forgetAccount, loadAccount, storeAccount } from "../platform/orunAccountSession.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import type { Point } from "../core/points.ts";
@@ -84,8 +85,19 @@ export function pilotSetDeviceName(device: string, name: string): Promise<void> 
   return deviceNames.set(device, name, client && pilotAccountStatus() ? client : null);
 }
 
+/** 3a: which zones each tracker holds. */
+export const trackerFences = new TrackerFenceBook(
+  typeof localStorage !== "undefined" ? (() => { try { return localStorage; } catch { return null; } })() : null);
+
+export function pilotRecordFence(device: string, rec: FenceRecord): Promise<void> {
+  return trackerFences.set(device, rec, client && pilotAccountStatus() ? client : null);
+}
+
 function refreshNames(): void {
-  if (client && pilotAccountStatus()) void deviceNames.refresh(client).catch(() => undefined);
+  if (client && pilotAccountStatus()) {
+    void deviceNames.refresh(client).catch(() => undefined);
+    void trackerFences.refresh(client).catch(() => undefined);
+  }
 }
 
 /** 2c: the farm's gateways, or null when signed out. */

@@ -4,6 +4,7 @@
 // No localStorage, IndexedDB, URL, logs, or observation-bench token reuse.
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { parseOfflineCatalog, type OfflinePack } from "../features/map/offlinePacks/catalog.ts";
+import type { FenceRecord } from "./trackerFences.ts";
 import {
   parseServerLatest, parseServerObservationPage,
   type ServerLatestObservations, type ServerObservationPage,
@@ -286,6 +287,37 @@ export class OwnerAccountClient {
     });
     if (reply.status === 400) throw new Error("Bu ad kullanılamıyor (en fazla 40 harf).");
     if (!reply.ok) throw new Error("Ad kaydedilemedi.");
+  }
+
+  /** 3a: which zones each tracker holds (written over USB and confirmed). */
+  async trackerFences(): Promise<Record<string, FenceRecord>> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/fences", {
+      headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
+      credentials: "omit", redirect: "error", cache: "no-store",
+    });
+    if (!reply.ok) throw new Error("Tasmalardaki alanlar okunamadı.");
+    const body = await json(reply, 512 * 1024);
+    const out: Record<string, FenceRecord> = {};
+    const fences = body.fences && typeof body.fences === "object" ? body.fences as Record<string, Record<string, unknown>> : {};
+    for (const [dev, f] of Object.entries(fences)) {
+      if (!f || typeof f.applied_utc !== "number") continue;
+      out[dev] = { digest: String(f.digest), areas: Number(f.areas), vertices: Number(f.vertices),
+                   zones: Array.isArray(f.zones) ? f.zones as FenceRecord["zones"] : [],
+                   appliedAt: f.applied_utc * 1000 };
+    }
+    return out;
+  }
+
+  async recordFence(device: string, r: Omit<FenceRecord, "appliedAt">): Promise<void> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/fence", {
+      method: "POST", credentials: "omit", redirect: "error", cache: "no-store",
+      headers: { Authorization: "Bearer " + this.accessToken,
+                 "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ device, ...r }),
+    });
+    if (!reply.ok) throw new Error("Tasmadaki alanlar hesaba kaydedilemedi.");
   }
 
   /** 2c: this phone is the bridge for a gateway: tell the server how it is. */
