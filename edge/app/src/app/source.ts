@@ -10,7 +10,7 @@ export interface EdgeSource {
   snap: Snapshot;
   subscribe(fn: () => void): () => void;
   points(): Promise<PointsResult | null>;
-  connectBle(pick?: boolean): Promise<void>;
+  connectBle(pick?: boolean, deviceId?: string): Promise<void>;
   connectUsb(): Promise<void>;
   disconnect(): Promise<void>;
   saveServer(url: string, token: string, auto: boolean): void;

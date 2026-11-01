@@ -363,10 +363,10 @@ export class Controller {
     }
   }
 
-  async connectBle(pick = false): Promise<void> {
+  async connectBle(pick = false, deviceId?: string): Promise<void> {
     if (!this.ble || this.snap.link !== "none") return;
     this.emit({ link: "ble" });
-    await this.ble.start(pick);
+    await this.ble.start(pick, deviceId);
   }
 
   async connectUsb(): Promise<void> {

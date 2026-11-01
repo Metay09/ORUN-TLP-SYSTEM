@@ -20,3 +20,63 @@ test("ekranlarda tek ad: İstasyon değil Gateway, Mera değil Alan", () => {
   assert.doesNotMatch(text, /İstasyon|istasyon/);
   assert.doesNotMatch(text, /"Mera|mera sınır/);
 });
+
+import { probeUsbDevice } from "../src/app/addTracker.ts";
+import { parseFarmGateways } from "../src/app/ownerAccountClient.ts";
+import { gatewayFacts, gatewayLine, serverLine } from "../src/features/network/words.ts";
+import { classifyNearby, mergeNearby } from "../src/platform/bleScan.ts";
+
+test("yakındaki cihazlar: ORUN-adının son 8 hanesi gateway'i ya da hayvanı bulur", () => {
+  const gws = ["09A462BD4B275BA5"];
+  const herd = [{ id: "0e8ade7e71531aa3", name: "Sarıkız" }];
+  const g = classifyNearby({ deviceId: "a", name: "ORUN-4B275BA5", rssi: -60 }, gws, herd);
+  assert.deepEqual([g.kind, g.label, g.id], ["gateway", "Gateway 5BA5", "09A462BD4B275BA5"]);
+  const t = classifyNearby({ deviceId: "b", name: "ORUN-71531AA3", rssi: -70 }, gws, herd);
+  assert.deepEqual([t.kind, t.label], ["tracker", "Sarıkız"]);
+  const u = classifyNearby({ deviceId: "c", name: "ORUN-DEADBEEF", rssi: null }, gws, herd);
+  assert.equal(u.kind, "unknown");
+  let list = mergeNearby([], { deviceId: "a", name: "ORUN-1", rssi: -80 });
+  list = mergeNearby(list, { deviceId: "b", name: "ORUN-2", rssi: -50 });
+  list = mergeNearby(list, { deviceId: "a", name: "ORUN-1", rssi: -40 });
+  assert.deepEqual(list.map((d) => [d.deviceId, d.rssi]), [["a", -40], ["b", -50]]);
+});
+
+test("diğer gateway'ler: sunucu listesi ve satırlar", () => {
+  const now = 1_800_000_000_000;
+  const [pc, old] = parseFarmGateways({ gateways: [
+    { gateway: "09A462BD4B275BA5", via: "pc-usb", held: 2, capacity: 1056, last_seen_utc: now / 1000 - 120, trackers_24h: 3 },
+    { gateway: "AABBCCDDEEFF0011", via: null, held: null, capacity: null, last_seen_utc: now / 1000 - 3 * 3600, trackers_24h: 0 },
+  ] });
+  assert.match(gatewayLine(pc, now), /^PC'ye USB ile bağlı · 2 dk önce/);
+  assert.equal(gatewayFacts(pc), "Bellek 2 / 1.056 · 3 tasma (24 sa)");
+  assert.match(gatewayLine(old, now), /^Bağlı değil · son 3 sa/);
+  assert.equal(gatewayFacts(old), "0 tasma (24 sa)");
+  assert.throws(() => parseFarmGateways({ gateways: [{ gateway: "../x" }] }));
+});
+
+test("sunucu satırı: giriş yok, eşitleniyor, son eşitleme, bekleyen kayıt", () => {
+  const idle = { running: false, last: null, error: null };
+  assert.match(serverLine(false, idle, null, null), /giriş/);
+  assert.equal(serverLine(true, { ...idle, running: true }, null, null), "Eşitleniyor…");
+  const last = { latest: 2, history: 0, more: false, at: Date.UTC(2026, 10, 1, 13, 20) };
+  assert.match(serverLine(true, { ...idle, last }, 5, null), /Son eşitleme .* · 2 tasma · 5 kayıt gönderilecek/);
+});
+
+test("USB ile bağlı cihaz: gateway ya da tasma", async () => {
+  const fake = (lines: string[]) => ({
+    async send() {},
+    async waitFor<T>(match: (l: string) => T | null): Promise<T | null> {
+      for (const l of lines) { const r = match(l); if (r) return r; }
+      return null;
+    },
+  });
+  assert.deepEqual(await probeUsbDevice(fake(["BENCH GATEWAY id=09A462BD4B275BA5 custody_region=READY held=2/1056 role=BASE"])),
+    { kind: "gateway", id: "09A462BD4B275BA5" });
+  const t = await probeUsbDevice(fake([
+    "BENCH CREDENTIAL credential=" + "A".repeat(32) + " epoch=00000001 grant_generation=00000002 custody_floor=00000000",
+    "BENCH TRACKER id=0E8ADE7E71531AA3 role=TRACKER granted_gateway=09A462BD4B275BA5",
+  ]));
+  assert.equal(t.kind, "tracker");
+  assert.equal(t.kind === "tracker" && t.report.device, "0E8ADE7E71531AA3");
+  await assert.rejects(probeUsbDevice(fake([])), /yanıt vermedi/);
+});

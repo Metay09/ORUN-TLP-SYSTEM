@@ -32,9 +32,9 @@ Bu listede olmayan iş v1 değildir; yapılmaz, önerilmez, "ileride lazım olur
 | 1e | Uygulamadan "Cihaz ekle" | Ağ → Cihaz ekle: tasma telefona USB ile bağlanır, tek düğme; PC aracı yok | tamam (#234) |
 | 2 | İnternetsiz harita | Ayarlar → İnternetsiz harita → İndir: Aydın–Muğla haritası (yol, köy, dere, OpenStreetMap, z15 + büyütme) telefona iner; internet yokken uydu/arazi yerine kendiliğinden gösterilir (internetsiz arazi/uydu yok, sahip kararı), sokak haritası hep bunu kullanır. PC: `tools/orun_harita.sh` | tamam (#235) |
 | 2b | İnternetsiz uydu | — | gerek yok (sahip kararı 2026-11-01): uydu yalnız internetle; internetsizde telefondaki harita |
-| 2c | Uygulama düzeni | 5 sekme: Harita · Sürü · Alanlar · Olaylar · Bağlantı (simgesi veri geliyor mu diye yeşil/sarı/kırmızı). Tasma ekleme Sürü'de "+"; tasma bilgisi hayvanın kartında; Bağlantı ekranında durum + gateway'e BLE/USB; eşitleme kendiliğinden; tasmaya gitmeyen taslak bölümler yok; tek ad: Gateway, Alan, Tasma | bu PR |
+| 2c | Uygulama düzeni | 5 sekme: Harita · Sürü · Alanlar · Olaylar · Bağlantı (simgesi veri geliyor mu diye yeşil/sarı/kırmızı). Bağlantı her ORUN cihazı için: üstte sunucu satırı, "Bu telefon" kartı (bağlı cihaz ya da "Cihaz seçilmedi"), Bluetooth'ta yakındaki cihazlar listesi, USB'de gateway → köprü / tasma → kartı; altta diğer gateway'ler (nasıl bağlı, son görülme, bellek, kaç tasma). Tasma ekleme Sürü'de "+"; tasma bilgisi hayvanın kartında; taslak bölümler yok; tek ad: Gateway, Alan, Tasma | bu PR |
 | 3 | USB'den tüm ayarlar | Kabloyla her ayar değişir | rapor aralığı, hizmetler, alanlar var |
-| 4 | BLE'den tüm ayarlar | Aynısı kablosuz, alanlar dahil | yalnız okuma var |
+| 4 | BLE'den tüm ayarlar | Aynısı kablosuz, alanlar dahil | yalnız okuma var · sahip kararı: 2c'den hemen sonra (Bağlantı listesindeki tasmaya dokununca açılır) |
 | 5 | Alan dışı bildirimi + LOST | İnek alandan çıkınca telefona bildirim; kayıp durumu | tasma alanı kendisi kontrol ediyor |
 | 6 | LoRa'dan tüm ayarlar | Uzaktan ayar; "sırada → ulaştı → uygulandı" durumu | yok |
 | 7 | Gateway'in gözetimsiz çalışması | Eski telefon dokunulmadan 7/24 çalışır, yeniden başlar, yeniden bağlanır | ön plan servisi var |

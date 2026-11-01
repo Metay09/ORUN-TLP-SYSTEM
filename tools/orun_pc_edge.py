@@ -421,6 +421,7 @@ GW_ID_LINE = re.compile(r"BENCH GATEWAY id=([0-9A-F]{16}) ")
 OGK1_STATUS_LINE = re.compile(
     r"BENCH OGK1 status=(\w+) generation=([0-9A-F]{16}) issuer=([0-9A-F]{8}) installer=(\w+)")
 OGK1_REPLY_LINE = re.compile(r"BENCH OGK1 (OK|VERIFIED|COMMIT PASS|COMMIT FAIL|FAIL)\b[^\n]*")
+GW_HELD_LINE = re.compile(r"BENCH GATEWAY id=([0-9A-F]{16}) .*\bheld=(\d+)/(\d+)")
 GRANT_CHECK_S = 120
 
 
@@ -438,14 +439,35 @@ class GrantUpdater:
         self.gateway: str | None = None
         self.status: re.Match | None = None
         self.last_check = 0.
+        self.report_failed = False
 
     def observe(self, text: str) -> None:
         m = GW_ID_LINE.search(text)
         if m:
             self.gateway = m[1]
+        m = GW_HELD_LINE.search(text)
+        if m:
+            self.report(m[1], int(m[2]), int(m[3]))
         m = OGK1_STATUS_LINE.search(text)
         if m:
             self.status = m
+
+    def report(self, gateway: str, held: int, capacity: int, transport: str = "usb") -> None:
+        """2c: Bağlantı ekranı için gateway durumu (iki dakikada bir BENCH? ile)."""
+        body = json.dumps({"gateway": gateway, "transport": transport,
+                           "held": held, "capacity": capacity}).encode()
+        req = Request(f"{self.base}/v1/bridge/gateway", data=body, method="POST",
+                      headers={"Authorization": "Bearer " + read_token(self.token_file),
+                               "Content-Type": "application/json"})
+        try:
+            with self.opener.open(req, timeout=5) as res:
+                res.read()
+        except (OSError, ValueError) as exc:
+            if not self.report_failed:
+                print("[gateway] durum bildirilemedi:", type(exc).__name__, flush=True)
+            self.report_failed = True
+            return
+        self.report_failed = False
 
     def due(self, now: float) -> bool:
         st = self.status

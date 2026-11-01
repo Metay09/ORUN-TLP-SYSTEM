@@ -16,7 +16,7 @@ import { MapScreen } from "./features/map/MapScreen.tsx";
 import { ConnectionScreen } from "./features/network/ConnectionScreen.tsx";
 import { connectionTone } from "./features/network/words.ts";
 import {
-  onPilotAccountChange, onPilotObservationSync, pilotAccountStatus, pilotObservationSyncState,
+  onPilotAccountChange, onPilotObservationSync, pilotAccountStatus, pilotObservationSyncState, pilotReportGateway,
 } from "./app/ownerAccountPilotRuntime.ts";
 import { SettingsScreen } from "./features/settings/SettingsScreen.tsx";
 import { ZonesScreen } from "./features/zones/ZonesScreen.tsx";
@@ -100,6 +100,12 @@ export function App() {
     lastSyncAt: sync.last?.at ?? null, now: model.now,
   });
   void link;
+  // Telefon bir gateway'e köprüyse sunucuya bildir (Bağlantı → Diğer gateway'ler).
+  const st = model.station;
+  useEffect(() => {
+    if (st.link === "none" || st.phase !== "connected" || !st.id) return;
+    pilotReportGateway(st.id, st.link, st.held, st.capacity);
+  }, [st.link, st.phase, st.id, st.held, st.capacity]);
   const top = stack[stack.length - 1];
 
   return (
