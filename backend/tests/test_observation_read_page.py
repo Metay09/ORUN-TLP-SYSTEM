@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import tempfile
 from threading import Thread
 import unittest
+from unittest.mock import patch
 
 from backend.observation_read_page import (
     MAX_CURSOR, PAGE_SIZE, ObservationReadUnavailable, read_page,
@@ -96,6 +97,16 @@ class CursorReadTests(unittest.TestCase):
                 code, page = get(route, "Bearer only-test-token")
                 self.assertEqual(code, 200)
                 self.assertEqual([r["sequence"] for r in page["records"]], [1, 2])
+                # The old /api/points endpoint contains plaintext locations.
+                # It must be private too, even if its HTML map remains static.
+                self.assertEqual(get("/api/points", None)[0], 401)
+                self.assertEqual(get("/api/points", "Bearer wrong")[0], 401)
+                with patch("orun_edge_bench.points_from_db",
+                           return_value={"points": [], "count": 0}):
+                    code, public_map = get(
+                        "/api/points", "Bearer only-test-token")
+                self.assertEqual(code, 200)
+                self.assertEqual(public_map["points"], [])
             finally:
                 server.shutdown()
                 server.server_close()
