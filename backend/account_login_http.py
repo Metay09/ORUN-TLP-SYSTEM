@@ -71,7 +71,10 @@ def account_handler_factory(store: SharedStore, enrollment: EdgeEnrollment,
             bearer = self._bearer(self.headers)
             principal = accounts.resolve_session(enrollment, bearer) if bearer else None
             is_records = method == "GET" and route.startswith("/v1/edge/records?")
-            permission = "zone:read" if is_records else "zone:write"
+            is_keys = method == "GET" and route == "/v1/edge/keys"
+            # A key that decrypts device locations is READ authority, never
+            # implied by permission to submit/upload observation batches.
+            permission = "zone:read" if (is_records or is_keys) else "zone:write"
             if principal is None or permission not in principal.scopes:
                 return self._send(401, {"error": "unauthorized"})
             if observation_relay is None:
