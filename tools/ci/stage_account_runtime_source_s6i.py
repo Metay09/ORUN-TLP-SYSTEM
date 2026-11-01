@@ -25,6 +25,7 @@ SOURCES = (
     "backend/phone_enrollment_http.py",
     "backend/account_login.py",
     "backend/account_login_http.py",
+    "backend/account_observation_relay.py",
     "tools/orun_shared_sync_loopback.py",
     "tools/orun_shared_pc_mirror.py",
     "tools/orun_shared_local_pc_enroll.py",

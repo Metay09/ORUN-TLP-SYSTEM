@@ -82,7 +82,7 @@ class LoopbackRuntimeTests(unittest.TestCase):
             self.assertGreater(port, 0)
             second = p.stdout.readline().strip()
             self.assertEqual(second,
-                             "ORUN_SHARED_SECURITY=STEP3C_ENROLLED_ONLY;LOOPBACK_HTTP_ONLY")
+                             "ORUN_SHARED_SECURITY=LEGACY_ENROLLED_ONLY;LOOPBACK_HTTP_ONLY")
         except BaseException:
             p.kill()
             p.communicate(timeout=10)
