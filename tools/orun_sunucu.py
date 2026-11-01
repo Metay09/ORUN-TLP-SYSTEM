@@ -10,8 +10,9 @@ Bugüne kadar ayrı çalışan üç servisin işini tek programda yapar:
 - hesap adresi (zorunlu): uygulamanın bağlandığı yer. HTTPS'i önündeki
   ters vekil sağlar (Tailscale Serve ya da Coolify).
 - köprü adresi (isteğe bağlı): gateway köprüsü (PC Edge ya da ileride
-  telefon/Linux köprüsü) buraya yükler. Yalnız POST /v1/edge/batch ve
-  GET /v1/health; köprü anahtarı (token dosyası) ister.
+  telefon/Linux köprüsü) buraya yükler. Yalnız POST /v1/edge/batch,
+  GET /v1/health ve GET /v1/bridge/ogk1 (gateway'in güncel imzalı izin
+  paketi); köprü anahtarı (token dosyası) ister.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ import argparse
 import hmac
 import json
 import os
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import stat
@@ -43,6 +45,10 @@ def _address(text: str) -> tuple[str, int]:
     if not sep or not host or not port.isdecimal() or not 0 <= int(port) <= 65535:
         raise argparse.ArgumentTypeError("HOST:PORT bekleniyor")
     return host, int(port)
+
+
+OGK1_QUERY = re.compile(
+    r"/v1/bridge/ogk1\?gateway=([0-9A-F]{16})&active=(0|[1-9][0-9]{0,18})&issuer=([0-9A-F]{8})")
 
 
 def bridge_handler(local: LocalObservations, token: str):
@@ -70,12 +76,35 @@ def bridge_handler(local: LocalObservations, token: str):
             return hmac.compare_digest(given, expected)
 
         def do_GET(self):  # noqa: N802
-            if self.path != "/v1/health":
+            match = OGK1_QUERY.fullmatch(self.path)
+            if self.path != "/v1/health" and match is None:
                 return self._json(404, {"error": "not_found"})
             if not self._authorized():
                 return self._json(401, {"error": "token"})
+            if match is not None:
+                return self._ogk1(int(match[1], 16), int(match[2]), match[3])
             return self._json(200, {"ok": True,
                                     "records": local.backend.ledger.record_count()})
+
+        def _ogk1(self, gateway: int, active: int, issuer_prefix: str) -> None:
+            """C1: the signed grant snapshot this bridge should install now."""
+            registry = local.backend.registry
+            if registry is None:
+                return self._json(503, {"error": "no_registry"})
+            try:
+                issuer = registry.issuer()
+                if issuer is None:
+                    return self._json(503, {"error": "no_issuer"})
+                if oc.issuer_public(issuer)[:4].hex().upper() != issuer_prefix:
+                    return self._json(409, {"error": "issuer_mismatch"})
+                pending = registry.pending_snapshot(gateway, active)
+            except oc.RegistryError as exc:
+                return self._json(409, {"error": "registry", "detail": str(exc)[:120]})
+            if pending is None:
+                return self._json(200, {"generation": active, "lines": []})
+            generation, image = pending
+            return self._json(200, {"generation": generation,
+                                    "lines": oc.ogk1_upload_lines(image)})
 
         def do_POST(self):  # noqa: N802
             if self.path != "/v1/edge/batch":

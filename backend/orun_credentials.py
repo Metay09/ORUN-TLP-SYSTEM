@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from dataclasses import dataclass
+import hashlib
 import os
 from pathlib import Path
 import secrets
@@ -155,6 +156,13 @@ def build_ogk1(gateway_id: int, generation: int,
     return image
 
 
+def grants_digest(grants: list[tuple[Credential, int, int]]) -> str:
+    """Identity of a Gateway grant set (no key material)."""
+    text = ";".join(f"{c.device_id:016X}:{c.key_epoch}:{c.credential_id.hex()}:{f}:{g}"
+                    for c, f, g in sorted(grants, key=lambda x: x[0].device_id))
+    return hashlib.sha256(text.encode("ascii")).hexdigest()
+
+
 def ogk1_upload_lines(image: bytes) -> list[str]:
     """USB lines for the Gateway bench image (CRC-32 = typo guard only)."""
     if len(image) != OGK1_STORED:
@@ -206,6 +214,11 @@ class CredentialRegistry:
                 " gateway_id TEXT PRIMARY KEY CHECK(length(gateway_id)=16),"
                 " generation INTEGER NOT NULL CHECK(generation>0),"
                 " issued_utc INTEGER NOT NULL)")
+            # C1: which grant set the last snapshot carried, so a bridge can
+            # ask "is there anything new for this Gateway?" without a reboot.
+            cols = {r[1] for r in db.execute("PRAGMA table_info(gateway_snapshots)")}
+            if "content" not in cols:
+                db.execute("ALTER TABLE gateway_snapshots ADD COLUMN content TEXT")
 
     def _conn(self) -> sqlite3.Connection:
         db = sqlite3.connect(str(self.path), timeout=2.0, isolation_level=None)
@@ -322,7 +335,9 @@ class CredentialRegistry:
                 generation = max(r[0] if r else 0, at_least) + 1
                 if generation >= 2**63:
                     raise RegistryError("snapshot generations exhausted")
-                db.execute("INSERT OR REPLACE INTO gateway_snapshots VALUES (?,?,?)",
+                db.execute("INSERT INTO gateway_snapshots (gateway_id,generation,issued_utc) "
+                           "VALUES (?,?,?) ON CONFLICT(gateway_id) DO UPDATE SET "
+                           "generation=excluded.generation,issued_utc=excluded.issued_utc",
                            (gw, generation, int(time.time())))
                 db.execute("COMMIT")
             except Exception:
@@ -337,4 +352,37 @@ class CredentialRegistry:
             raise RegistryError("no Gateway issuer key yet (run: orun_provision.py issuer)")
         grants = self.grants_for_gateway(gateway_id)
         generation = self.next_snapshot_generation(gateway_id, at_least)
+        self._remember_content(gateway_id, grants_digest(grants))
+        return generation, build_ogk1(gateway_id, generation, grants, issuer)
+
+    def _remember_content(self, gateway_id: int, digest: str) -> None:
+        with closing(self._conn()) as db:
+            db.execute("UPDATE gateway_snapshots SET content=? WHERE gateway_id=?",
+                       (digest, _hex16(gateway_id)))
+
+    def pending_snapshot(self, gateway_id: int, active: int) -> Optional[tuple[int, bytes]]:
+        """C1: the snapshot a bridge should install on this Gateway now, or None.
+
+        A new generation is reserved only when the Gateway's grant set changed;
+        if the last issued snapshot was never installed (Gateway reports an
+        older generation) the same generation is rebuilt (Ed25519 signatures
+        are deterministic, so the bytes are identical).
+        """
+        issuer = self.issuer()
+        if issuer is None:
+            raise RegistryError("no Gateway issuer key yet (run: orun_provision.py issuer)")
+        grants = self.grants_for_gateway(gateway_id)
+        if not grants:
+            return None
+        digest = grants_digest(grants)
+        with closing(self._conn()) as db:
+            row = db.execute("SELECT generation, content FROM gateway_snapshots "
+                             "WHERE gateway_id=?", (_hex16(gateway_id),)).fetchone()
+        if row and row[1] == digest:
+            if active >= row[0]:
+                return None
+            generation = row[0]
+        else:
+            generation = self.next_snapshot_generation(gateway_id, at_least=active)
+            self._remember_content(gateway_id, digest)
         return generation, build_ogk1(gateway_id, generation, grants, issuer)

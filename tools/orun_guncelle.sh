@@ -113,6 +113,33 @@ else
   echo "Eskiye dönmek gerekirse: systemctl --user disable --now $SUNUCU && systemctl --user enable --now ${OLD_UNITS[*]}"
 fi
 
+# --- PC Edge (gateway köprüsü) da aynı sürüme geçer ---
+# Başarısız olursa yalnız PC Edge eski haline döner; sunucu adımı etkilenmez.
+PC_EDGE=orun-pc-edge.service
+DROPIN_DIR="$UNIT_DIR/$PC_EDGE.d"
+DROPIN="$DROPIN_DIR/90-orun-guncelle.conf"
+if systemctl --user cat "$PC_EDGE" >/dev/null 2>&1; then
+  say "PC Edge yeni sürüme geçiriliyor"
+  [[ -f "$DROPIN" ]] && cp -p "$DROPIN" "$DROPIN.bak-$STAMP"
+  if python3 "$REPO/tools/orun_pc_gecis.py" pc-edge-dropin "$NEW" "$DROPIN.new"; then
+    mv -f "$DROPIN.new" "$DROPIN"
+    systemctl --user daemon-reload
+    systemctl --user restart "$PC_EDGE" || true
+    sleep 4
+    if systemctl --user is-active --quiet "$PC_EDGE"; then
+      echo "Tamam: PC Edge $SHA sürümünde (gateway iznini kendiliğinden günceller)."
+    else
+      echo "PC Edge yeni sürümle başlamadı; eski haline dönülüyor." >&2
+      if [[ -f "$DROPIN.bak-$STAMP" ]]; then cp -p "$DROPIN.bak-$STAMP" "$DROPIN"; else rm -f "$DROPIN"; fi
+      systemctl --user daemon-reload
+      systemctl --user restart "$PC_EDGE" || true
+    fi
+  else
+    rm -f "$DROPIN.new"
+    echo "PC Edge güncellenmedi (yukarıdaki nedenle); eskisi çalışmaya devam ediyor."
+  fi
+fi
+
 [[ $BUILD_APK -eq 1 ]] || exit 0
 
 # --- APK ---
@@ -134,6 +161,9 @@ if [[ -z "$IP" ]]; then
   echo "Tailscale adresi bulunamadı; APK'yı kendin aktar: $OUT"
   exit 0
 fi
+for p in $(seq "$SERVE_PORT" $((SERVE_PORT + 9))); do
+  if ! (exec 3<>"/dev/tcp/$IP/$p") 2>/dev/null; then SERVE_PORT=$p; break; fi
+done
 say "Telefondan indir: http://$IP:$SERVE_PORT/ORUN-$SHA.apk"
 echo "İndirme bitince bu pencerede Ctrl+C'ye bas. (Yalnız Tailscale ağına açık; en fazla 15 dakika.)"
 timeout 900 python3 -m http.server "$SERVE_PORT" --bind "$IP" --directory "$APK_DIR" || true

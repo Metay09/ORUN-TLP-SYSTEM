@@ -417,8 +417,114 @@ def handle_ble_message(msg: bytes, inbox: Inbox, gateway: str | None) -> str | N
     return gateway
 
 
+GW_ID_LINE = re.compile(r"BENCH GATEWAY id=([0-9A-F]{16}) ")
+OGK1_STATUS_LINE = re.compile(
+    r"BENCH OGK1 status=(\w+) generation=([0-9A-F]{16}) issuer=([0-9A-F]{8}) installer=(\w+)")
+OGK1_REPLY_LINE = re.compile(r"BENCH OGK1 (OK|VERIFIED|COMMIT PASS|COMMIT FAIL|FAIL)\b[^\n]*")
+GRANT_CHECK_S = 120
+
+
+class GrantUpdater:
+    """C1: keep the Gateway's signed grant snapshot current, with no owner step.
+
+    When the server has a newer snapshot for this Gateway (a tracker was
+    added), install it over the same USB link exactly like
+    orun_provision.py gateway does. The Gateway verifies the issuer
+    signature itself, stores it and reboots; the USB loop then reconnects.
+    """
+
+    def __init__(self, base: str, token_file: Path, opener) -> None:
+        self.base, self.token_file, self.opener = base, token_file, opener
+        self.gateway: str | None = None
+        self.status: re.Match | None = None
+        self.last_check = 0.
+
+    def observe(self, text: str) -> None:
+        m = GW_ID_LINE.search(text)
+        if m:
+            self.gateway = m[1]
+        m = OGK1_STATUS_LINE.search(text)
+        if m:
+            self.status = m
+
+    def due(self, now: float) -> bool:
+        st = self.status
+        return (self.gateway is not None and st is not None and
+                st[1] in ("READY", "EMPTY") and
+                st[4] not in ("WRITING", "DONE", "FAULT") and
+                now - self.last_check >= GRANT_CHECK_S)
+
+    def fetch(self) -> tuple[int, list[str]] | None:
+        st = self.status
+        assert st is not None and self.gateway is not None
+        active = int(st[2], 16)
+        req = Request(
+            f"{self.base}/v1/bridge/ogk1?gateway={self.gateway}&active={active}&issuer={st[3]}",
+            headers={"Authorization": "Bearer " + read_token(self.token_file)})
+        with self.opener.open(req, timeout=15) as res:
+            reply = json.load(res)
+        lines = reply.get("lines") if isinstance(reply, dict) else None
+        if not isinstance(lines, list) or not lines:
+            return None
+        if not all(isinstance(x, str) and x.startswith("BENCH OGK1 ") for x in lines):
+            raise ValueError("invalid OGK1 lines")
+        return int(reply["generation"]), lines
+
+    @staticmethod
+    def _reply(ser, seconds: float, other) -> str | None:
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            raw = ser.read_until(b"\n", size=4096)
+            if not raw:
+                continue
+            text = raw.decode("ascii", "replace").rstrip("\r\n")
+            m = OGK1_REPLY_LINE.search(text)
+            if m:
+                return m[0]
+            other(text)   # records keep flowing while we wait
+        return None
+
+    def install(self, ser, lines: list[str], other) -> bool:
+        for line in lines[:-1]:
+            ser.write((line + "\n").encode("ascii"))
+            r = self._reply(ser, 5.0, other)
+            if not r or not r.startswith("BENCH OGK1 OK"):
+                print("[grant] gateway refused a chunk:", r, flush=True)
+                return False
+        ser.write((lines[-1] + "\n").encode("ascii"))
+        r = self._reply(ser, 10.0, other)
+        if not r or not r.startswith("BENCH OGK1 VERIFIED"):
+            print("[grant] gateway did not verify the snapshot:", r, flush=True)
+            return False
+        r = self._reply(ser, 20.0, other)
+        if not r or not r.startswith("BENCH OGK1 COMMIT PASS"):
+            print("[grant] gateway could not store the snapshot:", r, flush=True)
+            return False
+        return True
+
+    def poll(self, ser, now: float, other) -> None:
+        if not self.due(now):
+            return
+        self.last_check = now
+        try:
+            pending = self.fetch()
+        except (HTTPError, URLError, ValueError, OSError, KeyError, TimeoutError) as exc:
+            err = "HTTP " + str(exc.code) if isinstance(exc, HTTPError) else type(exc).__name__
+            print("[grant] server check failed:", err, flush=True)
+            return
+        if pending is None:
+            return
+        generation, lines = pending
+        print(f"[grant] installing grant snapshot generation {generation} on "
+              f"{self.gateway}", flush=True)
+        if self.install(ser, lines, other):
+            print("[grant] stored; gateway restarts", flush=True)
+            self.status = None
+
+
 def usb_forever(inbox: Inbox, port: str,
-                release_gateway: str | None = None) -> None:
+                release_gateway: str | None = None,
+                grants: GrantUpdater | None = None) -> None:
     try:
         import serial
     except ImportError as exc:
@@ -429,6 +535,23 @@ def usb_forever(inbox: Inbox, port: str,
                 print("[usb] Gateway connected:", port, flush=True)
                 release = (BenchUsbRelease(inbox, release_gateway)
                            if release_gateway else None)
+                if grants:
+                    grants.gateway, grants.status = None, None
+                def process(text: str) -> None:
+                    if handle_usb_line(text, inbox):
+                        print("[usb] sealed record committed",
+                              inbox.counts(), flush=True)
+                    if (text.startswith("EDGE DUMP END count=") or
+                            text.startswith("EDGE RECLAIM page=") or
+                            text.startswith("BENCH GATEWAY id=") or
+                            (text.startswith("BENCH GATEWAY ")
+                             and ("reclaimed=" in text or "held=" in text))):
+                        print("[gateway]", text, flush=True)
+                    if release:
+                        release.observe(text)
+                    if grants:
+                        grants.observe(text)
+
                 last_dump = 0.
                 while True:
                     now = time.monotonic()
@@ -440,20 +563,11 @@ def usb_forever(inbox: Inbox, port: str,
                         last_dump = now
                     raw = ser.read_until(b"\n", size=4096)
                     if raw:
-                        text = raw.decode("ascii", "replace").rstrip("\r\n")
-                        if handle_usb_line(text, inbox):
-                            print("[usb] sealed record committed",
-                                  inbox.counts(), flush=True)
-                        if (text.startswith("EDGE DUMP END count=") or
-                                text.startswith("EDGE RECLAIM page=") or
-                                text.startswith("BENCH GATEWAY id=") or
-                                (text.startswith("BENCH GATEWAY ")
-                                 and ("reclaimed=" in text or "held=" in text))):
-                            print("[gateway]", text, flush=True)
-                        if release:
-                            release.observe(text)
+                        process(raw.decode("ascii", "replace").rstrip("\r\n"))
                     if release:
                         release.poll(ser, time.monotonic())
+                    if grants:
+                        grants.poll(ser, time.monotonic(), process)
         except (OSError, serial.SerialException) as exc:
             print("[usb] disconnected; reconnecting:", type(exc).__name__, flush=True)
             time.sleep(5)
@@ -614,7 +728,8 @@ def main() -> None:
     else:
         threading.Thread(target=uploader.forever, daemon=True).start()
         if args.mode == "usb":
-            usb_forever(inbox, args.port, args.bench_release_gateway)
+            grants = GrantUpdater(uploader.base, uploader.token_file, uploader.opener)
+            usb_forever(inbox, args.port, args.bench_release_gateway, grants)
         else:
             ble_forever(inbox, args.ble_address, args.bench_release_gateway)
 
