@@ -15,10 +15,11 @@ import {
   deviceNames, onPilotAccountChange, onPilotObservationSync, pilotAccountStatus, pilotGateways, pilotObservationSyncState,
 } from "../../app/ownerAccountPilotRuntime.ts";
 import { useApp } from "../../app/store.ts";
-import { Bar, Card, Cell, DemoFlag, Dialog, Header, KV, Section, Seg } from "../../ds/components.tsx";
+import { Bar, Card, Cell, DemoFlag, Header, KV, Section, Seg } from "../../ds/components.tsx";
 import { classifyNearby, mergeNearby, scanNearby, stopNearbyScan, type NearbyDevice, type NearbyView } from "../../platform/bleScan.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
 import { AddTrackerDialog } from "../herd/AddTrackerDialog.tsx";
+import { TrackerLiveDialog, type LiveTarget } from "../herd/TrackerLive.tsx";
 import { startPosition, usePosition } from "../map/position.ts";
 import { NameDialog } from "./NameDialog.tsx";
 import { farmChain, gatewayFacts, gatewayLine, stationWords, type ChainNode } from "./words.ts";
@@ -50,7 +51,7 @@ export function ConnectionScreen() {
   const [scanning, setScanning] = useState(false);
   const [note, setNote] = useState("");
   const [usbBusy, setUsbBusy] = useState(false);
-  const [usbTracker, setUsbTracker] = useState<string | null>(null);
+  const [live, setLive] = useState<{ device: string | null; target: LiveTarget; bleId?: string } | null>(null);
   const [adding, setAdding] = useState(false);
   const [naming, setNaming] = useState<string | null>(null);
   const [node, setNode] = useState<ChainNode["key"] | null>(null);
@@ -93,13 +94,12 @@ export function ConnectionScreen() {
     if (!m.demo && account && unnamed && !naming) setNaming(unnamed);
   }, [unnamed, account, m.demo]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 4a: tasmaya (ya da tanınmayan ORUN cihazına) dokununca canlı kartı açılır;
+  // gateway'e dokununca köprü bağlantısı kurulur.
   const pick = (d: NearbyView) => {
-    if (d.kind === "tracker") {
-      setNote(`${d.label}: tasmaya Bluetooth ile bağlanma bir sonraki güncellemede geliyor. Şimdilik USB kablosuyla bağlanabilirsin.`);
-      return;
-    }
     void stopNearbyScan();
-    void m.source.connectBle(false, d.deviceId);
+    if (d.kind === "gateway") { void m.source.connectBle(false, d.deviceId); return; }
+    setLive({ device: d.id, target: { ble: d.deviceId }, bleId: d.deviceId });
   };
 
   async function usbConnect(): Promise<void> {
@@ -110,7 +110,7 @@ export function ConnectionScreen() {
       const dev = await probeUsbDevice(con);
       await con.close(); con = null;
       if (dev.kind === "gateway") await m.source.connectUsb();
-      else setUsbTracker(dev.report.device);
+      else setLive({ device: dev.report.device, target: { usb: true } });
     } catch (e) {
       setNote(e instanceof Error && e.message.length < 200 ? e.message : "USB ile bağlanılamadı.");
     } finally {
@@ -270,9 +270,10 @@ export function ConnectionScreen() {
 
       <TechDetails />
 
-      {usbTracker && (
-        <UsbTrackerDialog device={usbTracker} onClose={() => setUsbTracker(null)}
-          onAdd={() => { setUsbTracker(null); setAdding(true); }} />
+      {live && (
+        <TrackerLiveDialog device={live.device} target={live.target} onClose={() => setLive(null)}
+          onAdd={() => { setLive(null); setAdding(true); }}
+          onBridge={live.bleId ? () => { const id = live.bleId!; setLive(null); void m.source.connectBle(false, id); } : undefined} />
       )}
       {adding && <AddTrackerDialog onClose={() => setAdding(false)} />}
       {naming && (
@@ -280,32 +281,6 @@ export function ConnectionScreen() {
           onClose={() => { markAsked(naming); setNaming(null); }} />
       )}
     </div>
-  );
-}
-
-/** USB ile bağlanan tasmanın kartı: hangi hayvan, pil, son görülme; hesapta yoksa ekle. */
-function UsbTrackerDialog({ device, onClose, onAdd }: { device: string; onClose: () => void; onAdd: () => void }) {
-  const m = useApp();
-  const nav = useNav();
-  const a = m.herd.find((x) => x.device && x.device.toUpperCase() === device.toUpperCase()) ?? null;
-  return (
-    <Dialog title={a ? a.name : bleName(device)} onClose={onClose}>
-      <div className="stack" style={{ padding: "0 20px 16px" }}>
-        <KV k="Bluetooth adı">{bleName(device)}</KV>
-        {a ? (
-          <>
-            <KV k="Son görülme">{a.seen}</KV>
-            <KV k={tr.animal.battery}>{a.batteryPercent !== null ? `%${a.batteryPercent}` : "—"}</KV>
-            <button className="btn primary wide" onClick={() => { onClose(); nav.push({ to: "animal", id: a.id }); }}>Hayvanın kartını aç</button>
-          </>
-        ) : (
-          <>
-            <p className="sm" style={{ margin: 0 }}>Bu tasma hesabında görünmüyor.</p>
-            <button className="btn primary wide" onClick={onAdd}>Hesabına ekle</button>
-          </>
-        )}
-      </div>
-    </Dialog>
   );
 }
 
