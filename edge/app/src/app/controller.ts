@@ -101,7 +101,9 @@ export class Controller {
   private lastHanded = 0;
   private serverDown = false;
   private uploader: Uploader | null = null;
-  private keyring = new KeyRing();
+  // Real app must not silently fall back to the PUBLIC bench traffic key.
+  // Bench-only host tests supply benchCredentials explicitly.
+  private keyring = new KeyRing(false);
   private db: Db | null = null;
   private keysAt = 0;
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
