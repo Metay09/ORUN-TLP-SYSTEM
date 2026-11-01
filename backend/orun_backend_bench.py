@@ -338,7 +338,7 @@ def main(argv=None) -> int:
         try:
             token = load_private_token_file(args.token_file)
         except (OSError, ValueError):
-            ap.error("--token-file: private token unreadable or invalid")
+            ap.error("--token-file must be a private regular file (chmod 600) with a valid token")
     else:
         token = args.token
         if len(token) < 8:

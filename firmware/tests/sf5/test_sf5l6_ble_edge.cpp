@@ -144,6 +144,28 @@ void settle(Gateway& gw, Sf5l0EdgeLinkSession& s) {
   }
 }
 
+void testHelloRecoveryWithEmptyCustody() {
+  EraseFlash flash;
+  Gateway gw(flash);
+  Sf5l0EdgeLinkSession s(flash, gw.store, gw.handoff, kGateway, kPages);
+  s.begin();
+  // Simulate a subscription being enabled too late for initial HELLO.
+  assert(pull(s).type == uint8_t(el::Type::kHello));
+  const Sent first_end = pull(s);
+  assert(first_end.type == uint8_t(el::Type::kDumpEnd) &&
+         get16(&first_end.bytes[1]) == 0U);
+  const uint8_t dump[] = {uint8_t(el::Type::kDump)};
+  s.onMessage(dump, sizeof(dump));
+  const Sent hello = pull(s);
+  assert(hello.type == uint8_t(el::Type::kHello));
+  assert(get64(&hello.bytes[1]) == kGateway);
+  assert(get16(&hello.bytes[9]) == 0U);
+  const Sent end = pull(s);
+  assert(end.type == uint8_t(el::Type::kDumpEnd) &&
+         get16(&end.bytes[1]) == 0U);
+  assert(pull(s).type == 0);
+}
+
 void testSession() {
   EraseFlash flash;
   Gateway gw(flash);
@@ -162,7 +184,17 @@ void testSession() {
   assert(get64(&hello.bytes[1]) == kGateway && get16(&hello.bytes[9]) == 40U &&
          get16(&hello.bytes[11]) == kPages * fmt::kRecordsPerPage);
 
-  // Full pass: every held record once, oldest first, then DUMP_END.
+  // Latest custody append first, independently of the oldest-first archive.
+  const Sent preview = pull(s);
+  assert(preview.type == uint8_t(el::Type::kHeldPreview));
+  const auto all_held = held(flash, gw.store);
+  const auto& last_held = all_held.back();
+  assert(get16(&preview.bytes[1]) == last_held.page);
+  assert(get16(&preview.bytes[3]) == last_held.slot);
+  assert(get64(&preview.bytes[5]) == last_held.generation);
+  assert(memcmp(&preview.bytes[el::kHeldHeader], last_held.object, 100) == 0);
+
+  // Full pass still has every held record once, oldest first, DUMP END=40.
   std::vector<Sent> sent_held;
   for (;;) {
     Sent m = pull(s);
@@ -244,9 +276,19 @@ void testSession() {
            r.bytes[5] == uint8_t(el::AcceptCode::kUnknown));
   }
 
-  // DUMP: a new full pass shows only what is still held (7).
+  // DUMP must re-announce Gateway identity, even if the initial HELLO
+  // was missed before the central finished enabling indications. Identity
+  // precedes preview/archive; DUMP itself never accepts or erases custody.
   const uint8_t dump[] = {uint8_t(el::Type::kDump)};
   s.onMessage(dump, sizeof(dump));
+  const Sent repeated_hello = pull(s);
+  assert(repeated_hello.type == uint8_t(el::Type::kHello));
+  assert(repeated_hello.bytes.size() == el::kHelloSize);
+  assert(get64(&repeated_hello.bytes[1]) == kGateway);
+  assert(get16(&repeated_hello.bytes[9]) == 7U);
+  // DUMP: a new full pass shows only what is still held (7).
+  Sent head = pull(s);
+  assert(head.type == uint8_t(el::Type::kHeldPreview));
   unsigned again = 0;
   for (Sent m = pull(s); m.type != uint8_t(el::Type::kDumpEnd); m = pull(s)) {
     assert(m.type == uint8_t(el::Type::kHeld));
@@ -262,9 +304,13 @@ void testSession() {
   const auto& newest = h.back();
   s.onNewRecord(newest.page, newest.slot, newest.generation, true, -97, 7);
   Sent m = pull(s);
-  assert(m.type == uint8_t(el::Type::kHeld) &&
+  assert(m.type == uint8_t(el::Type::kHeldPreview) &&
          (m.bytes[13] & el::kHeldFlagLink) != 0U &&
          int16_t(get16(&m.bytes[14])) == -97 && int8_t(m.bytes[16]) == 7 &&
+         memcmp(&m.bytes[el::kHeldHeader], live.object, 100) == 0);
+  // Backward-compatible archive HELD still follows the optional preview.
+  m = pull(s);
+  assert(m.type == uint8_t(el::Type::kHeld) &&
          memcmp(&m.bytes[el::kHeldHeader], live.object, 100) == 0);
   assert(pull(s).type == 0);
 
@@ -282,7 +328,8 @@ int main() {
   testHandoffAndReclaim();
   testFraming();
   testSession();
-  puts("SF5L6 BLE Edge link: framing/reassembly, HELLO/HELD/DUMP_END pass, "
+  testHelloRecoveryWithEmptyCustody();
+  puts("SF5L6 BLE Edge link: framing/reassembly, HELLO/PREVIEW/HELD/DUMP_END pass, "
        "accept results, reclaim notice, live record with RX link: PASS "
        "(HOST ONLY)");
   return 0;
