@@ -121,7 +121,7 @@ export function OfflineMapPanel() {
           {supported && account && catalog && catalog.length === 0 && installed.length === 0 &&
             <p className="sm">Sunucuda henüz harita paketi yok.</p>}
           {supported && installed.length > 0 && offers.length === 0 && !progress &&
-            <p className="fine">İnternet yokken uydu yerine bu harita gösterilir. Sokak haritası her zaman bunu kullanır.</p>}
+            <p className="fine">İnternet yokken uydu ve arazi yerine kendiliğinden bu harita gösterilir. Sokak haritası her zaman bunu kullanır.</p>}
           {notice && <p role="status" className="sm">{notice}</p>}
           {error && <p role="alert" className="sm t-aging">{error}</p>}
         </div>
