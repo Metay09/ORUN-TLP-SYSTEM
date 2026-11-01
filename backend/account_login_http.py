@@ -76,10 +76,13 @@ def account_handler_factory(store: SharedStore, enrollment: EdgeEnrollment,
                 return self._send(401, {"error": "unauthorized"})
             if observation_relay is None:
                 return self._send(503, {"error": "observation_not_configured"})
-            if is_records and (
-                observation_relay.observation_site is None or
-                observation_relay.observation_site != principal.site_id
-            ):
+            # The pinned one-site observation backend must not expose its
+            # traffic keys, accept uploads or return records to another site.
+            # Older test relays without a pin retain legacy keys/batch behavior
+            # but may never grant records/read without an explicit site pin.
+            mapped_site = getattr(observation_relay, "observation_site", None)
+            if ((is_records and mapped_site is None) or
+                    (mapped_site is not None and mapped_site != principal.site_id)):
                 return self._send(403, {"error": "observation_site_not_authorized"})
             if self.headers.get("Transfer-Encoding"):
                 return self._send(400, {"error": "invalid_request"})
