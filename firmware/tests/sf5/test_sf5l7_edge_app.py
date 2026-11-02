@@ -194,7 +194,11 @@ def main() -> None:
     assert ts["accepts"] == accepts, (accepts, ts["accepts"])
     assert ts["summary"] == summary, (summary, ts["summary"])
     assert ts["skipped"] == points["skipped"]
-    assert ts["points"] == points["points"], (points["points"], ts["points"])
+    # The app adds its own fields (record incarnation, delivery path) on top of
+    # the reference; every field the Python reference produces must match.
+    assert len(ts["points"]) == len(points["points"]), (len(ts["points"]), len(points["points"]))
+    shared = [{k: got.get(k) for k in want} for got, want in zip(ts["points"], points["points"])]
+    assert shared == points["points"], (points["points"], shared)
     links = {p["link"] for p in points["points"]}
     assert {"live", "through"} <= links, links
     assert "teslim_red=0" not in summary and "teslim=0 " not in summary, summary
