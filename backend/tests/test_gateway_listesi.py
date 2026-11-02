@@ -169,6 +169,37 @@ class GatewayListTests(unittest.TestCase):
         self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/settings/reported", token,
                                   {"device": b, "values": {"relay": True}, "via": "wifi"})[0], 400)
 
+    def test_device_ops_in_the_account(self):
+        """İşlemler: hedef başına durum; yalnız cihaz onayı 'işlendi' yapar; yenisi eskisinin yerine geçer."""
+        self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/ops")[0], 401)
+        token = self.login()
+        a, b = "0E8ADE7E71531AA3", "0E8ADE7E71538B3C"
+        op1 = {"op": "op-aaaa1", "kind": "fence", "items": [
+            {"device": a, "payload": {"digest": "0123456789abcdef", "areas": 1}},
+            {"device": b.lower(), "payload": {"digest": "fedcba9876543210", "areas": 2}}]}
+        self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/ops", token, op1)[1]["created"], True)
+        self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/ops", token, op1)[1]["created"], False)
+        post = lambda body: self.req(self.account, "POST", "/api/v1/devices/ops/result", token, body)
+        self.assertEqual(post({"op": "op-aaaa1", "device": a, "state": "applied", "via": "usb"})[1]["state"], "applied")
+        # a gateway note never goes back over the device's own answer
+        self.assertEqual(post({"op": "op-aaaa1", "device": a, "state": "gateway", "via": "lora"})[1]["state"], "applied")
+        # "gateway" exists only on the LoRa path
+        self.assertEqual(post({"op": "op-aaaa1", "device": b, "state": "gateway", "via": "usb"})[0], 400)
+        # a newer fence for b replaces the waiting one
+        self.req(self.account, "POST", "/api/v1/devices/ops", token,
+                 {"op": "op-bbbb2", "kind": "fence", "items": [{"device": b, "payload": {"digest": "1111111111111111"}}]})
+        rows = {(r["op"], r["device"]): r for r in self.req(self.account, "GET", "/api/v1/devices/ops", token)[1]["ops"]}
+        self.assertEqual(rows[("op-aaaa1", a)]["state"], "applied")
+        self.assertEqual(rows[("op-aaaa1", a)]["via"], "usb")
+        self.assertEqual(rows[("op-aaaa1", b)]["state"], "superseded")
+        self.assertEqual(rows[("op-bbbb2", b)]["state"], "waiting")
+        for bad in ({"op": "x", "kind": "fence", "items": [{"device": a, "payload": {}}]},
+                    {"op": "op-cccc3", "kind": "valve", "items": [{"device": a, "payload": {}}]},
+                    {"op": "op-cccc3", "kind": "fence", "items": []},
+                    {"op": "op-cccc3", "kind": "fence", "items": [{"device": a, "payload": {}}, {"device": a, "payload": {}}]}):
+            self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/ops", token, bad)[0], 400)
+        self.assertEqual(post({"op": "op-zzzz9", "device": a, "state": "applied", "via": "usb"})[0], 400)
+
     def test_old_report_is_not_connected(self):
         clock = [1_000_000.0]
         store = GatewayStatus(self.db, clock=lambda: clock[0])

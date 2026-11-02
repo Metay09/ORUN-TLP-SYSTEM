@@ -8,6 +8,7 @@ import { useApp } from "../../app/store.ts";
 import { ERROR_TEXT, areaM2, canonicalE7, compileFence, perimeterM, validateRing, zoneAt } from "../../app/zones.ts";
 import { Card, Dialog, KV, Screen, ToggleRow } from "../../ds/components.tsx";
 import { ZoneTargets } from "./ZoneTargets.tsx";
+import { ApplyFenceDialog, toApply, useQueuedFences, useTrackerFences } from "./ApplyFence.tsx";
 
 export function ZoneScreen({ id }: { id: string }) {
   const m = useApp();
@@ -16,6 +17,8 @@ export function ZoneScreen({ id }: { id: string }) {
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(z?.name ?? "");
   const [error, setError] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
+  const changed = toApply(useTrackerFences(), useQueuedFences()).length;
   const saveSafe = (next: typeof z) => {
     try { if (!next) return false; m.actions.saveZone(next); setError(null); return true; }
     catch (e) { setError(e instanceof Error ? e.message : "Alan kaydedilemedi."); return false; }
@@ -46,6 +49,12 @@ export function ZoneScreen({ id }: { id: string }) {
       </Card>
 
       <ZoneTargets zoneId={z.id} onError={setError} />
+      {changed > 0 && (
+        <div className="stack" style={{ padding: "12px 16px 0" }}>
+          <button className="btn primary wide" onClick={() => setApplying(true)}>Tasmalara uygula ({changed} tasma)</button>
+        </div>
+      )}
+      {applying && <ApplyFenceDialog onClose={() => setApplying(false)} />}
 
       <div className="stack" style={{ padding: "16px 16px 0" }}>
         <button className="btn primary wide" onClick={() => nav.showZone(z.id)}><MapTrifold size={20} />{tr.zones.showOnMap}</button>

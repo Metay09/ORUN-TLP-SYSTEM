@@ -12,12 +12,11 @@ import {
 } from "../../app/trackerStatus.ts";
 import { Dialog, KV } from "../../ds/components.tsx";
 import { pendingKeys, valuesFromStatus } from "../../app/deviceSettings.ts";
-import { writeFence } from "../../app/fenceUsb.ts";
-import { deviceSettings, pilotRecordFence, pilotReportSettings } from "../../app/ownerAccountPilotRuntime.ts";
-import { writeWaitingUsb } from "../../app/trackerSettings.ts";
+import { deliverUsb } from "../../app/deliver.ts";
+import { deviceOps, deviceSettings, pilotOpResult, pilotRecordFence, pilotReportSettings } from "../../app/ownerAccountPilotRuntime.ts";
 import { TrackerBle } from "../../platform/trackerBle.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
-import { useTrackerFences } from "../zones/SendFenceDialog.tsx";
+import { useTrackerFences } from "../zones/ApplyFence.tsx";
 
 /** ble: a device from the scan list; find: look for this ID's Bluetooth name; usb: the cable. */
 export type LiveTarget = { ble: string } | { find: string } | { usb: true };
@@ -76,29 +75,22 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
       if (alive.current) setStatus(st);
       const has = valuesFromStatus(st);
       await pilotReportSettings(dev_, has, "usb").catch(() => undefined);
-      // 4b: bekleyenler sormadan yazılır (sahip kararı): önce ayarlar, sonra alanlar.
-      const wrote: string[] = [];
-      const wanted = deviceSettings.get(dev_)?.wanted ?? {};
-      if (st.role === "tracker" && pendingKeys({ wanted, wantedAt: null, reported: has, reportedAt: null, reportedVia: null }).length) {
-        setPhase("Bekleyen ayarlar yazılıyor…");
-        const done = await writeWaitingUsb(con, wanted, has);
-        if (Object.keys(done).length) {
-          await pilotReportSettings(dev_, done, "usb").catch(() => undefined);
-          wrote.push("ayarlar");
-        }
-      }
-      const fplan = fences.find((x) => x.device.toUpperCase() === dev_);
-      if (st.role === "tracker" && fplan && (fplan.state === "stale" || fplan.state === "never") && !fplan.errors.length && fplan.zones.length) {
-        setPhase("Alanlar yazılıyor…");
-        const sum = await writeFence(con, fplan.zones);
-        await pilotRecordFence(dev_, { digest: sum.digest, areas: sum.areas, vertices: sum.vertices,
-          zones: fplan.zones.map((z) => ({ id: z.id, name: z.name })), appliedAt: Date.now() });
-        wrote.push(`alanlar (${sum.areas})`);
-      }
+      // Sıradakiler sormadan işlenir (sahip kararı): önce ayarlar, sonra alanlar.
+      const { wrote, problems } = st.role !== "tracker" ? { wrote: [], problems: [] } : await (async () => {
+        setPhase("Sıradakiler işleniyor…");
+        return deliverUsb(con!, {
+          wanted: deviceSettings.get(dev_)?.wanted ?? {}, has,
+          openSettings: deviceOps.open(dev_, "settings"), openFence: deviceOps.open(dev_, "fence"),
+          reportSettings: (v) => pilotReportSettings(dev_, v, "usb").catch(() => undefined),
+          recordFence: (sum, zones) => pilotRecordFence(dev_, { digest: sum.digest, areas: sum.areas, vertices: sum.vertices, zones, appliedAt: Date.now() }),
+          result: (op, state, note) => pilotOpResult(op, dev_, state, "usb", note).catch(() => undefined),
+        });
+      })();
+      if (problems.length && alive.current) setError(problems.join(" "));
       if (wrote.length) {
         setPhase("Yeniden okunuyor…");
         st = buildStatus(await readRawUsb(con), "usb", Date.now());
-        if (alive.current) { setStatus(st); setSynced(`Tasmaya yazıldı ve tasma onayladı: ${wrote.join(", ")}.`); }
+        if (alive.current) { setStatus(st); setSynced(`Tasmaya işlendi (tasma onayladı): ${wrote.join(", ")}.`); }
       }
     } finally {
       if (con) await con.close();
@@ -178,7 +170,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
         {!a && st && !isGateway && !("usb" in target) && <p className="fine" style={{ margin: 0 }}>Bu tasma hesabında yok. Eklemek için USB ile bağla (Sürü → "+").</p>}
         {synced && <p className="sm" role="status" style={{ margin: 0 }}>{synced}</p>}
         {st && !isGateway && waitingKeys.length > 0 && !("usb" in target) && (
-          <p className="fine" style={{ margin: 0 }}>{waitingKeys.length} ayar bekliyor. Bluetooth'tan yazma tasma yazılımı güncellenince; şimdilik USB ile bağlan.</p>
+          <p className="fine" style={{ margin: 0 }}>{waitingKeys.length} ayar sırada. Bluetooth'tan yazma tasma yazılımı güncellenince; şimdilik USB ile bağlan.</p>
         )}
       </div>
     </Dialog>
