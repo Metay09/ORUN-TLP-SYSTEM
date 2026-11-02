@@ -2,6 +2,7 @@
 // ayarı kalıcı belleğe yazar ve "APP SET" satırıyla sonucu söyler; ayar ancak
 // bu satır APPLIED/UNCHANGED derse yazılmış sayılır.
 import type { LineConsole } from "./addTracker.ts";
+import { DeviceRejected } from "./fenceUsb.ts";
 
 /** Tasmanın kabul ettiği sınırlar (firmware config_mutation.h, gnss_config.h). */
 export const INTERVAL = { minS: 60, maxS: 12 * 24 * 3600 } as const;
@@ -42,6 +43,7 @@ export async function applySetting(con: LineConsole, line: string): Promise<"app
   const code = SET.exec(r)![1];
   if (code === "APPLIED") return "applied";
   if (code === "UNCHANGED") return "unchanged";
+  if (code === "INVALID" || code === "ACCESS_DENIED") throw new DeviceRejected(`Tasma reddetti: ${WHY[code]}.`);
   throw new Error(`Ayar yazılamadı: ${WHY[code] ?? code}.`);
 }
 

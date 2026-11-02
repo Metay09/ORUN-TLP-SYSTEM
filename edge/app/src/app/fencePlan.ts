@@ -31,3 +31,13 @@ export function trackerFencePlans(book: TargetBook, zones: Zone[],
 export function needsSending(plans: TrackerFence[]): TrackerFence[] {
   return plans.filter((p) => p.state === "never" || p.state === "stale");
 }
+
+/**
+ * Trackers whose zones differ from what they hold and are not already queued
+ * with exactly these zones (`queued`: device → digest of its open operation).
+ */
+export function toApply(plans: TrackerFence[], queued: Map<string, string> = new Map(), only?: string): TrackerFence[] {
+  return plans.filter((p) => (p.state === "stale" || p.state === "never") && !p.errors.length && p.zones.length > 0 &&
+    queued.get(p.device.toUpperCase()) !== p.digest &&
+    (!only || p.device.toUpperCase() === only.toUpperCase()));
+}

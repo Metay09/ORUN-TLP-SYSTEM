@@ -17,7 +17,7 @@ import { rangeStart, type Range } from "../../app/stores.ts";
 import { validateRing } from "../../app/zones.ts";
 import { AnimalRing, Chips, Dialog, Metric, Strip, toneOfStatus } from "../../ds/components.tsx";
 import { LayerPanel } from "./LayerPanel.tsx";
-import { SendFenceDialog } from "../zones/SendFenceDialog.tsx";
+import { ApplyFenceDialog } from "../zones/ApplyFence.tsx";
 import { MapEngine, type LinkLine, type MapData } from "./mapEngine.ts";
 import { onOfflineMapsChanged, openOfflineMap } from "./offlinePacks/offlineMap.ts";
 import { DrawZone, type DrawHooks } from "./DrawZone.tsx";
@@ -214,15 +214,15 @@ export function MapScreen({ visible }: { visible: boolean }) {
       {askSend && (
         <Dialog title="Alan kaydedildi" onClose={() => setAskSend(null)}>
           <div className="stack" style={{ padding: "0 20px 16px" }}>
-            <p className="sm" style={{ margin: 0 }}>"{askSend}" tasmalara şimdi gönderilsin mi? Tasmayı USB ile telefona bağlaman gerekir. Sonra Alanlar → Tasmaya gönder'den de gönderebilirsin.</p>
+            <p className="sm" style={{ margin: 0 }}>"{askSend}" tasmalara uygulansın mı? Kaydetmek tasmadaki alanı değiştirmez; uygulayınca tasmaya bağlanınca işlenir. Sonra Alanlar → Tasmalara uygula'dan da yapabilirsin.</p>
             <div className="btns">
               <button className="btn" onClick={() => setAskSend(null)}>Sonra</button>
-              <button className="btn primary" onClick={() => { setAskSend(null); setSending(true); }}>Şimdi gönder</button>
+              <button className="btn primary" onClick={() => { setAskSend(null); setSending(true); }}>Uygula</button>
             </div>
           </div>
         </Dialog>
       )}
-      {sending && <SendFenceDialog onClose={() => setSending(false)} />}
+      {sending && <ApplyFenceDialog onClose={() => setSending(false)} />}
       <div ref={el} className="map-canvas" />
       {drawing ? (
         <DrawZone key={drawing.key} engine={engine.current} zone={drawZone} hooks={drawHooks}

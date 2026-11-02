@@ -11,7 +11,7 @@ import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { AnimalRing, Badge, Card, Cell, Empty, KV, Screen, Section, Seg, Sparkline, Strip, toneOfStatus } from "../../ds/components.tsx";
 import { EventRow } from "../events/EventsScreen.tsx";
-import { stateLine, useTrackerFences } from "../zones/SendFenceDialog.tsx";
+import { stateLine, useTrackerFences } from "../zones/ApplyFence.tsx";
 import { useDeviceSettings } from "../devices/DeviceScreen.tsx";
 import { pendingKeys } from "../../app/deviceSettings.ts";
 import { AddNote, EditAnimal } from "./dialogs.tsx";
@@ -181,7 +181,7 @@ function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () =
             <KV k={tr.animal.battery}>{dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}${dev.batteryMv ? ` · ${fmt.dec(dev.batteryMv / 1000, 2)} V` : ""}` : "—"}</KV>
             <KV k={tr.device.report}>{a.periodS ? fmt.period(a.periodS) : "—"}</KV>
             {fence && <KV k="Alanlar">{stateLine(fence)}</KV>}
-            <Cell title="Tasma ekranı" sub={waiting ? `${waiting} ayar bekliyor · bağlan, ayarlar` : "Bağlan, ayarlar, alanlar"}
+            <Cell title="Tasma ekranı" sub={waiting ? `${waiting} ayar sırada · bağlan, ayarlar` : "Bağlan, ayarlar, alanlar"}
               subTone={waiting ? "aging" : undefined} trail={<CaretRight size={18} color="var(--mute)" />}
               onClick={() => nav.push({ to: "device", id: a.device! })} />
           </>

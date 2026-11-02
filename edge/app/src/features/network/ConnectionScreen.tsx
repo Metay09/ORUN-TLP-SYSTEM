@@ -26,7 +26,9 @@ import { pendingKeys } from "../../app/deviceSettings.ts";
 import { BulkSettingsDialog } from "../devices/BulkSettings.tsx";
 import { useDeviceSettings } from "../devices/DeviceScreen.tsx";
 import { GroupsSection } from "../devices/GroupsSection.tsx";
-import { useTrackerFences } from "../zones/SendFenceDialog.tsx";
+import { OpDialog, useOps } from "../devices/Ops.tsx";
+import { groupLine, groupOps, KIND_WORD } from "../../app/deviceOps.ts";
+import { useTrackerFences } from "../zones/ApplyFence.tsx";
 import { farmChain, gatewayFacts, gatewayLine, stationWords, type ChainNode } from "./words.ts";
 
 type Via = "ble" | "usb";
@@ -63,6 +65,10 @@ export function ConnectionScreen() {
   const [bulk, setBulk] = useState(false);
   const settings = useDeviceSettings();
   const fencePlans = useTrackerFences();
+  const opRows = useOps();
+  const queued = new Set(opRows.filter((r) => r.kind === "fence" && (r.state === "waiting" || r.state === "gateway")).map((r) => r.device));
+  const groups = groupOps(opRows.filter((r) => r.state !== "superseded")).slice(0, 5);
+  const [opOpen, setOpOpen] = useState<string | null>(null);
   const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
   const label = (id: string) => names[id.toUpperCase()] ?? bleName(id);
   useEffect(() => onPilotObservationSync(() => setSync(pilotObservationSyncState())), []);
@@ -137,7 +143,7 @@ export function ConnectionScreen() {
     const silent = !dev?.lastTime || m.now - dev.lastTime > 3600_000;
     const bits = [dev?.lastTime ? fmt.ago(dev.lastTime, m.now) : "hiç haber yok",
                   dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}` : "",
-                  waiting ? `${waiting} ayar bekliyor` : "", staleFence ? "alanlar gönderilmedi" : ""].filter(Boolean);
+                  waiting ? `${waiting} ayar sırada` : "", queued.has(id.toUpperCase()) ? "alanlar sırada" : staleFence ? "alanlar değişti" : ""].filter(Boolean);
     const low = dev?.batteryPercent !== null && dev?.batteryPercent !== undefined && dev.batteryPercent < 20;
     return { id, name: a.name, sub: bits.join(" · "), problem: waiting > 0 || !!staleFence || silent || low };
   }).sort((x, y) => Number(y.problem) - Number(x.problem) || x.name.localeCompare(y.name, "tr"));
@@ -302,6 +308,18 @@ export function ConnectionScreen() {
             onClick={() => nav.push({ to: "device", id: r.id })} />
         )) : <p className="sm" style={{ padding: "14px 16px", margin: 0 }}>Henüz tasma yok. Sürü → "+" ile ekle.</p>}
       </Card>
+
+      {groups.length > 0 && <>
+        <Section title="İşlemler" info="Ayar kayıtları ve 'Tasmalara uygula'. Sıradakiler tasmaya bağlanınca (şimdilik USB) kendiliğinden işlenir; 'Tasmaya işlendi' yalnız tasma onaylayınca yazılır." />
+        <Card>
+          {groups.map((g) => (
+            <Cell key={g.op} title={`${KIND_WORD[g.kind]} · ${fmt.dateTime(g.createdAt)}`} wrapSub sub={groupLine(g)}
+              subTone={g.targets.some((t) => t.state === "rejected") ? "alarm" : g.targets.every((t) => t.state === "applied" || t.state === "same") ? "fresh" : undefined}
+              trail={<CaretRight size={18} color="var(--mute)" />} onClick={() => setOpOpen(g.op)} />
+          ))}
+        </Card>
+      </>}
+      {opOpen && <OpDialog op={opOpen} onClose={() => setOpOpen(null)} />}
 
       <GroupsSection />
       {bulk && <BulkSettingsDialog onClose={() => setBulk(false)} />}

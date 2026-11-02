@@ -6,6 +6,7 @@ import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { parseOfflineCatalog, type OfflinePack } from "../features/map/offlinePacks/catalog.ts";
 import type { FenceRecord } from "./trackerFences.ts";
 import type { DeviceSettingsEntry } from "./deviceSettings.ts";
+import type { OpTarget } from "./deviceOps.ts";
 import {
   parseServerLatest, parseServerObservationPage,
   type ServerLatestObservations, type ServerObservationPage,
@@ -361,8 +362,34 @@ export class OwnerAccountClient {
                  "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(body),
     });
-    if (reply.status === 400) throw new Error("Sunucu bu ayarı kabul etmedi.");
-    if (!reply.ok) throw new Error("Ayar hesaba kaydedilemedi.");
+    if (reply.status === 400) throw new Error("Sunucu bunu kabul etmedi.");
+    if (!reply.ok) throw new Error("Hesaba kaydedilemedi.");
+  }
+
+  /** İşlemler: alan/ayar gönderme kaydı. */
+  async deviceOps(): Promise<OpTarget[]> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/ops", {
+      headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
+      credentials: "omit", redirect: "error", cache: "no-store",
+    });
+    if (!reply.ok) throw new Error("İşlemler okunamadı.");
+    const body = await json(reply, 4 * 1024 * 1024);
+    const rows = Array.isArray(body.ops) ? body.ops as Record<string, unknown>[] : [];
+    return rows.map((r) => ({
+      op: String(r.op), device: String(r.device), kind: r.kind as OpTarget["kind"],
+      payload: r.payload as OpTarget["payload"], state: r.state as OpTarget["state"],
+      createdAt: Number(r.created_utc) * 1000, updatedAt: Number(r.updated_utc) * 1000,
+      via: (r.via ?? null) as OpTarget["via"], note: typeof r.note === "string" ? r.note : null,
+    }));
+  }
+
+  async createOp(op: string, kind: string, items: { device: string; payload: unknown }[]): Promise<void> {
+    await this.postSettings("/api/v1/devices/ops", { op, kind, items });
+  }
+
+  async opResult(op: string, device: string, state: string, via: string, note?: string): Promise<void> {
+    await this.postSettings("/api/v1/devices/ops/result", { op, device, state, via, ...(note ? { note } : {}) });
   }
 
   /** 2c: this phone is the bridge for a gateway: tell the server how it is. */

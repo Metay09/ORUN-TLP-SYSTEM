@@ -2,15 +2,15 @@
 // inside, the collar's capacity (8 areas / 64 corners) and GeoJSON in and
 // out. Drawing happens on the map. Sending to collars comes with step 3/4/6.
 import { useRef, useState } from "react";
-import { CaretRight, Plus, Polygon, Usb } from "@phosphor-icons/react";
+import { CaretRight, Plus, Polygon } from "@phosphor-icons/react";
 import { fmt, tr } from "../../app/i18n/tr.ts";
 import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { FENCE, areaM2, canonicalE7, compileFence, fromGeoJSON, newZoneId, toGeoJSON, validateRing, zoneAt } from "../../app/zones.ts";
 import { Bar, Card, Cell, DemoFlag, Empty, Header, Section, Toggle } from "../../ds/components.tsx";
-import { needsSending } from "../../app/fencePlan.ts";
 import { targetsForZone } from "../../app/zoneTargets.ts";
-import { SendFenceDialog, useTrackerFences } from "./SendFenceDialog.tsx";
+import { ApplyFenceDialog, toApply, useQueuedFences, useTrackerFences } from "./ApplyFence.tsx";
+import { useOps } from "../devices/Ops.tsx";
 import { targetLabel } from "./ZoneTargets.tsx";
 
 export function ZonesScreen() {
@@ -20,7 +20,8 @@ export function ZonesScreen() {
   const [note, setNote] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const plans = useTrackerFences();
-  const waiting = needsSending(plans);
+  const changed = toApply(plans, useQueuedFences());
+  const queued = new Set(useOps().filter((r) => r.kind === "fence" && (r.state === "waiting" || r.state === "gateway")).map((r) => r.device)).size;
   const trackers = m.herd.filter((a) => a.device).map((a) => ({ id: a.device!, name: a.name }));
   const set = m.zoneSet;
   const located = m.herd.filter((a) => a.last);
@@ -105,23 +106,25 @@ export function ZonesScreen() {
             })}
           </Card>
 
-          <Section title="Tasmaya gönder" info="Alanlar tasmaya USB kablosuyla yazılır; tasma onaylayınca hesabına kaydedilir. Her tasmaya yalnız o tasma için seçilen açık alanlar gider. Bluetooth ve uzaktan (LoRa) gönderme sonraki adımlarda." />
+          <Section title="Tasmalara uygula" info="Alanı kaydetmek tasmadaki alanı değiştirmez. Alana dokun → 'Hangi tasmalar'ı seç, sonra Tasmalara uygula: her tasma için bir işlem açılır, tasmaya bağlanınca (şimdilik USB) işlenir; tasma onaylayınca 'Tasmaya işlendi' olur." />
           <Card pad>
             <div className="stack">
-              <span className={"sm strong" + (waiting.length ? " t-aging" : "")}>
-                {waiting.length ? `${waiting.length} tasmada alanlar eksik ya da eski`
+              <span className={"sm strong" + (changed.length ? " t-aging" : "")}>
+                {changed.length ? `${changed.length} tasmanın alanları değişti`
+                  : queued ? `${queued} tasmada alan işlemi sırada`
                   : plans.some((p) => p.state === "current") ? "Bütün tasmalarda alanlar güncel"
                   : "Alanlar için henüz tasma seçilmedi"}
               </span>
-              {waiting.length > 0 && <span className="fine">{waiting.map((p) => p.name).join(", ")}</span>}
+              {changed.length > 0 && <span className="fine">{changed.map((p) => p.name).join(", ")}</span>}
+              {queued > 0 && <span className="fine">{changed.length ? `${queued} tasmada alan işlemi sırada · ` : ""}Tasmaya bağlanınca (şimdilik USB) işlenir; ilerleme Cihazlar → İşlemler'de.</span>}
               {!plans.some((p) => p.state !== "none") && <span className="fine">Alana dokun → "Hangi tasmalar"dan Hepsi'ni ya da hayvanları seç.</span>}
-              <button className="btn primary wide" disabled={!plans.some((p) => p.state !== "none")} onClick={() => setSending(true)}><Usb size={20} />Tasmaya gönder</button>
+              <button className="btn primary wide" disabled={!changed.length} onClick={() => setSending(true)}>Tasmalara uygula</button>
             </div>
           </Card>
         </>
       )}
 
-      {sending && <SendFenceDialog onClose={() => setSending(false)} />}
+      {sending && <ApplyFenceDialog onClose={() => setSending(false)} />}
 
       <Section title={tr.zones.file} />
       <Card pad>

@@ -17,7 +17,9 @@ import { Badge, Card, Cell, Dialog, KV, Screen, Section, Toggle } from "../../ds
 import { TrackerLiveDialog, type LiveTarget } from "../herd/TrackerLive.tsx";
 import { NameDialog } from "../network/NameDialog.tsx";
 import { gatewayFacts, gatewayLine } from "../network/words.ts";
-import { SendFenceDialog, stateLine, useTrackerFences } from "../zones/SendFenceDialog.tsx";
+import { ApplyFenceDialog, stateLine, useQueuedFences, useTrackerFences } from "../zones/ApplyFence.tsx";
+import { OpSteps, opSub, useOps } from "./Ops.tsx";
+import { KIND_WORD } from "../../app/deviceOps.ts";
 
 export function useDeviceSettings() {
   return useSyncExternalStore((fn) => deviceSettings.subscribe(fn), () => deviceSettings.snapshot());
@@ -25,7 +27,7 @@ export function useDeviceSettings() {
 
 export function rowSub(r: SettingRow): string {
   if (r.state === "waiting")
-    return `Bekliyor · cihaza bağlanınca gider${r.onDevice !== null ? ` · cihazda ${r.def.word(r.onDevice)}` : ""}`;
+    return `Sırada · tasmaya bağlanınca işlenir${r.onDevice !== null ? ` · tasmada ${r.def.word(r.onDevice)}` : ""}`;
   if (r.state === "device") return "Cihazda";
   if (r.state === "observed") return "Cihazın kayıtlarına göre";
   return "Cihazdan henüz okunmadı";
@@ -50,6 +52,8 @@ export function DeviceScreen({ id }: { id: string }) {
   const gw = gateways?.find((g) => g.gateway.toUpperCase() === up) ?? null;
   const isGateway = !a && (!!gw || m.station.id?.toUpperCase() === up);
   const fence = fences.find((x) => x.device.toUpperCase() === up) ?? null;
+  const queuedFence = useQueuedFences();
+  const myOps = useOps().filter((r) => r.device === up && r.state !== "superseded").slice(0, 5);
   // Hiç okunmadıysa cihazın kendi kayıtlarından görülen: rapor aralığı, konum takibi.
   const observed = {
     ...(a?.periodS ? { interval_s: a.periodS } : {}),
@@ -112,13 +116,23 @@ export function DeviceScreen({ id }: { id: string }) {
               onClick={() => setEditing(r)} />
           ))}
           <Cell title="Alanlar" wrapSub
-            sub={fence ? stateLine(fence) : "Bu tasmaya gidecek alan yok"}
+            sub={fence ? (queuedFence.has(up) ? "Sırada · tasmaya bağlanınca işlenir" : stateLine(fence)) : "Bu tasmaya gidecek alan yok"}
             subTone={fence && (fence.state === "stale" || fence.state === "never") ? "aging" : undefined}
             trail={<CaretRight size={16} color="var(--mute)" />}
-            onClick={() => (fence && fence.state !== "none" ? setSending(true) : nav.setTab("zones"))} />
+            onClick={() => (fence && (fence.state === "stale" || fence.state === "never") && !queuedFence.has(up) ? setSending(true) : nav.setTab("zones"))} />
           {fence?.record && fence.record.zones.length > 0 && (
             <KV k="Tasmadaki alanlar">{fence.record.zones.map((z) => z.name).join(", ")}</KV>
           )}
+        </Card>
+      </>}
+
+      {!isGateway && myOps.length > 0 && <>
+        <Section title="İşlemler" info="Her ayar kaydı ve 'Tasmalara uygula' bir işlemdir. Sıradakiler tasmaya bağlanınca (şimdilik USB) kendiliğinden işlenir; 'Tasmaya işlendi' yalnız tasma onaylayınca yazılır." />
+        <Card>
+          {myOps.map((t) => (
+            <Cell key={t.op} title={KIND_WORD[t.kind]} wrapSub sub={<>{opSub(t)}<OpSteps t={t} /></>}
+              subTone={t.state === "rejected" ? "alarm" : t.state === "applied" || t.state === "same" ? "fresh" : undefined} />
+          ))}
         </Card>
       </>}
 
@@ -136,7 +150,7 @@ export function DeviceScreen({ id }: { id: string }) {
 
       {editing && <EditSetting device={up} row={editing} onClose={() => setEditing(null)} />}
       {live && <TrackerLiveDialog device={id} target={live} fromAnimal={!!a} onClose={() => setLive(null)} />}
-      {sending && <SendFenceDialog onClose={() => setSending(false)} />}
+      {sending && <ApplyFenceDialog only={id} onClose={() => setSending(false)} />}
       {naming && <NameDialog device={id} kind="gateway" current={names[up] ?? null} onClose={() => setNaming(false)} />}
     </Screen>
   );

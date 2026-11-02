@@ -11,6 +11,7 @@ import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
 import { DeviceNameBook } from "./deviceNames.ts";
 import { TrackerFenceBook, type FenceRecord } from "./trackerFences.ts";
 import { DeviceSettingsBook, type SettingValues, type Via as SettingsVia } from "./deviceSettings.ts";
+import { DeviceOpsBook, type FencePayload, type OpVia } from "./deviceOps.ts";
 import { forgetAccount, loadAccount, storeAccount } from "../platform/orunAccountSession.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import type { Point } from "../core/points.ts";
@@ -100,8 +101,22 @@ export const deviceSettings = new DeviceSettingsBook(
 
 const settingsServer = () => (client && pilotAccountStatus() ? client : null);
 
-export function pilotWantSettings(devices: string[], set: SettingValues): Promise<void> {
-  return deviceSettings.want(devices, set, settingsServer());
+/** İşlemler: alan ve ayar gönderme kaydı (hesapta, telefonda bir kopya). */
+export const deviceOps = new DeviceOpsBook(
+  typeof localStorage !== "undefined" ? (() => { try { return localStorage; } catch { return null; } })() : null);
+
+/** Ayar kaydı = istenen değer + bir işlem (cihaz onaylayınca "işlendi"). */
+export async function pilotWantSettings(devices: string[], set: SettingValues): Promise<void> {
+  await deviceSettings.want(devices, set, settingsServer());
+  await deviceOps.create("settings", devices.map((d) => ({ device: d, payload: { set: set as Record<string, number | boolean> } })), settingsServer());
+}
+
+export function pilotCreateFenceOp(items: { device: string; payload: FencePayload }[]): Promise<string> {
+  return deviceOps.create("fence", items, settingsServer());
+}
+
+export function pilotOpResult(op: string, device: string, state: "applied" | "same" | "rejected", via: OpVia, note?: string): Promise<void> {
+  return deviceOps.result(op, device, state, via, settingsServer(), note);
 }
 
 export function pilotReportSettings(device: string, values: SettingValues, via: SettingsVia): Promise<void> {
@@ -113,6 +128,7 @@ function refreshNames(): void {
     void deviceNames.refresh(client).catch(() => undefined);
     void trackerFences.refresh(client).catch(() => undefined);
     void deviceSettings.refresh(client).catch(() => undefined);
+    void deviceOps.refresh(client).catch(() => undefined);
   }
 }
 

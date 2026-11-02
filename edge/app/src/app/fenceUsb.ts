@@ -13,6 +13,9 @@ const REJECT = /^(APP FENCE REJECTED|APP REJECTED|APP BUSY)/;
 
 export interface FenceSummary { areas: number; vertices: number; digest: string; }
 
+/** The device itself said no (an answer, not a lost line): the operation is "rejected". */
+export class DeviceRejected extends Error {}
+
 /** "376107000" → "37.6107000" (tam sayıyla, yuvarlama hatası yok). */
 export function decimalE7(n: number): string {
   const sign = n < 0 ? "-" : "";
@@ -54,7 +57,8 @@ async function expect<T>(con: LineConsole, match: (l: string) => T | null, ms: n
     if (REJECT.test(line)) { rejected = line; return true as unknown as T; }
     return match(line);
   }, ms);
-  if (rejected) throw new Error("Tasma reddetti: " + rejected);
+  if (rejected && /REJECTED/.test(rejected)) throw new DeviceRejected("Tasma reddetti: " + rejected);
+  if (rejected) throw new Error("Tasma şu an meşgul: " + rejected);
   if (got === null) throw new Error("Tasmadan onay gelmedi; alanların yazıldığını varsayma.");
   return got;
 }
