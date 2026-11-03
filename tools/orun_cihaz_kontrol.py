@@ -3,12 +3,16 @@
 
   python3 tools/orun_cihaz_kontrol.py oku --port P --out once.json
   python3 tools/orun_cihaz_kontrol.py karsilastir once.json sonra.json
+  python3 tools/orun_cihaz_kontrol.py rol --port P tasma|gateway   # boş cihaz (Y2a)
 
 "oku" cihaza yalnız okuma soruları sorar (BENCH?, PRODUCT STORE?, APP DEVICE?);
 hiçbir şey yazmaz, silmez. Anahtarın kendisi hiçbir zaman okunmaz ya da
 yazılmaz: yalnız kimliği (credential id) ve dönemi (epoch) karşılaştırılır.
 "karsilastir" yükleme sonrası cihazın aynı cihaz olduğunu, anahtarının ve
 kayıtlarının yerinde durduğunu doğrular.
+"rol" yalnız kurulmamış (boş) bir cihaza ne olacağını söyler (APP SERVICES T ya
+da A); cihaz kaydeder ve o rolde yeniden başlar. Kurulmuş cihazın rolü
+değişmez.
 """
 from __future__ import annotations
 
@@ -27,6 +31,12 @@ GATEWAY = re.compile(r"BENCH GATEWAY id=([0-9A-F]{16}) custody_region=(\w+)"
 OGK1 = re.compile(r"BENCH OGK1 status=(\w+) generation=([0-9A-F]{16})")
 STORE = re.compile(r"PRODUCT STORE ready=(\w+) faulted=(\w+) inc=(\w+) next_seq=(\d+) retained=(-?\d+)")
 DEVICE = re.compile(r"APP DEVICE id=\d+ fw=(\S+)")
+# Y2a tek yazılım: BENCH? yanıtının ilk satırı.
+ROLE = re.compile(r"BENCH DEVICE id=([0-9A-F]{16}) role=(\w+) security_region=(\S+) gnss=(\w+)")
+ROLE_KIND = {"TRACKER": "tracker", "GATEWAY": "gateway", "UNASSIGNED": "unassigned",
+             "CONFLICT": "conflict"}
+KIND_WORD = {"tracker": "Tasma", "gateway": "Gateway", "unassigned": "Kurulmamış cihaz",
+             "conflict": "Rolü çelişkili cihaz"}
 
 
 def parse(lines: list[str]) -> dict:
@@ -50,6 +60,10 @@ def parse(lines: list[str]) -> dict:
                        next_seq=int(m[4]), retained=int(m[5]))
         elif m := DEVICE.search(line):
             out.update(fw=m[1])
+        elif m := ROLE.search(line):
+            out.update(role=m[2], gnss=m[4])
+            if out["kind"] is None:
+                out.update(kind=ROLE_KIND.get(m[2], m[2].lower()), id=m[1])
     return out
 
 
@@ -74,7 +88,8 @@ def compare(before: dict, after: dict) -> list[tuple[bool, str]]:
     def need(ok: bool, text: str) -> None:
         res.append((bool(ok), text))
 
-    need(after.get("kind") == before.get("kind"), f"Cihaz türü aynı ({after.get('kind')})")
+    need(after.get("kind") == before.get("kind"), f"Cihaz türü aynı ({after.get('kind')})"
+         + ("" if after.get("kind") == before.get("kind") else f" — önce {before.get('kind')}"))
     need(after.get("id") == before.get("id"), f"Cihaz kimliği aynı ({after.get('id')})")
     if before.get("kind") == "tracker":
         need(after.get("credential") == before.get("credential") and after.get("epoch") == before.get("epoch"),
@@ -101,6 +116,37 @@ def compare(before: dict, after: dict) -> list[tuple[bool, str]]:
     if after.get("fw"):
         res.append((True, f"Yazılım: {after['fw']}" + ("" if after.get("fw") != before.get("fw") else " (öncekiyle aynı)")))
     return res
+
+
+def role_command(role: str) -> str:
+    """Boş cihazın rolü: kayıtlı hizmet niyeti (tasma: konum takibi; gateway: alıcı)."""
+    return {"tasma": "APP SERVICES T", "gateway": "APP SERVICES A"}[role]
+
+
+def send_role(port: str, role: str, seconds: float = 8.0) -> list[str]:
+    import serial
+    lines: list[str] = []
+    with serial.Serial(port, 115200, timeout=0.25, write_timeout=2, exclusive=True) as ser:
+        try:
+            ser.rts = False
+            ser.dtr = True
+        except OSError:
+            pass
+        time.sleep(0.8)
+        ser.reset_input_buffer()
+        ser.write((role_command(role) + "\n").encode("ascii"))
+        ser.flush()
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            try:
+                text = ser.readline().decode("utf8", "replace").strip()
+            except Exception:   # cihaz yeniden başladı, port kapandı
+                break
+            if text:
+                lines.append(text)
+            if text.startswith("ROLE restart"):
+                break
+    return lines
 
 
 def read(port: str, seconds: float = 6.0) -> list[str]:
@@ -135,7 +181,37 @@ def main() -> int:
     c = sub.add_parser("karsilastir")
     c.add_argument("once")
     c.add_argument("sonra")
+    r2 = sub.add_parser("rol")
+    r2.add_argument("--port", required=True)
+    r2.add_argument("rol", choices=("tasma", "gateway"))
     a = ap.parse_args()
+    if a.cmd == "rol":
+        info = parse(read(a.port))
+        if info.get("kind") != "unassigned":
+            print(f"DUR: bu cihaz kurulmamış değil ({KIND_WORD.get(info.get('kind'), info.get('kind'))}); "
+                  "rolü değişmez.", file=sys.stderr)
+            return 2
+        gnss = info.get("gnss")
+        if gnss == "yes" and a.rol == "gateway":
+            print("Not: bu cihazda GPS var; çoğunlukla tasmadır.")
+        if gnss == "no" and a.rol == "tasma":
+            print("Not: bu cihazda GPS yok; tasma konum bulamaz.")
+        lines = send_role(a.port, a.rol)
+        if not any(l.startswith("ROLE chosen=") for l in lines):
+            print("DUR: cihaz rolü kaydetmedi:\n  " + "\n  ".join(lines[-5:]), file=sys.stderr)
+            return 2
+        time.sleep(4)
+        for _ in range(15):
+            try:
+                after = parse(read(a.port))
+                if after.get("kind") in ("tracker", "gateway"):
+                    print(f"Tamam: cihaz artık {KIND_WORD[after['kind']].lower()}.")
+                    return 0
+            except Exception:
+                pass
+            time.sleep(2)
+        print("DUR: cihaz yeniden başladıktan sonra okunamadı.", file=sys.stderr)
+        return 2
     if a.cmd == "oku":
         last, best = "", None
         for i in range(a.deneme):
@@ -158,7 +234,7 @@ def main() -> int:
         # Eksik okuma da yazılır; karşılaştırma eksik kalanı SORUN olarak gösterir.
         with open(a.out, "w") as f:
             json.dump(best, f)
-        print(f"Cihaz: {'Tasma' if best['kind'] == 'tracker' else 'Gateway'} {best.get('id')}"
+        print(f"Cihaz: {KIND_WORD.get(best['kind'], best['kind'])} {best.get('id')}"
               + (f" · yazılım {best['fw']}" if best.get("fw") else ""))
         return 0
     with open(a.once) as f:

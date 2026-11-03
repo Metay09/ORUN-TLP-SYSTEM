@@ -22,13 +22,25 @@ const TRACKER = /BENCH TRACKER id=([0-9A-F]{16}) .*granted_gateway=([0-9A-F]{16}
 const CREDENTIAL = /BENCH CREDENTIAL credential=([0-9A-F]{32}|none) epoch=([0-9A-F]{8}) grant_generation=([0-9A-F]{8}) custody_floor=([0-9A-F]{8})/;
 const GATEWAY = /BENCH GATEWAY id=([0-9A-F]{16}) /;
 const SETUP = /BENCH (SETUP PASS|SETUP FAIL[^\n]*|PROVISION (?:FAIL|rejected)[^\n]*)/;
+// Y2a tek yazılım: rolü henüz seçilmemiş (boş) ya da iki rolün verisini birden taşıyan cihaz.
+const NO_ROLE = /BENCH DEVICE id=[0-9A-F]{16} role=(UNASSIGNED|CONFLICT)\b/;
+
+/** Rolü olmayan cihaz için kullanıcıya gösterilen neden. */
+export function noRoleMessage(role: string): string {
+  return role === "CONFLICT"
+    ? "Bu cihazda hem tasma hem gateway verisi var; cihaza bir şey yazılmadı. Destek gerekiyor."
+    : "Bu cihaz henüz kurulmamış: tasma mı gateway mi olacağı seçilmedi.";
+}
 
 /** Ask the device who it is. Gateways are added by their bridge, not here. */
 export async function readTrackerReport(con: LineConsole): Promise<TrackerReport> {
   await con.send("BENCH?");
   let cred: RegExpMatchArray | null = null;
+  let noRole = "";
   const tracker = await con.waitFor((line) => {
     if (GATEWAY.test(line)) return "gateway" as const;
+    const n = line.match(NO_ROLE);
+    if (n) { noRole = n[1]; return "none" as const; }
     const c = line.match(CREDENTIAL);
     if (c) cred = c;
     const t = line.match(TRACKER);
@@ -36,6 +48,7 @@ export async function readTrackerReport(con: LineConsole): Promise<TrackerReport
   }, 6000);
   if (tracker === "gateway")
     throw new Error("Bu bir gateway. Gateway'ler köprüye (PC Edge ya da telefon) bağlanınca çiftliğe kendiliğinden eklenir.");
+  if (tracker === "none") throw new Error(noRoleMessage(noRole));
   if (!tracker || !cred)
     throw new Error("Tasma yanıt vermedi. Kabloyu ve tasma yazılımını kontrol et.");
   const c = cred as RegExpMatchArray;
@@ -78,9 +91,11 @@ export type UsbDevice = { kind: "gateway"; id: string } | { kind: "tracker"; rep
 export async function probeUsbDevice(con: LineConsole): Promise<UsbDevice> {
   await con.send("BENCH?");
   let cred: RegExpMatchArray | null = null;
-  const found = await con.waitFor<{ gateway: string } | { tracker: RegExpMatchArray }>((line) => {
+  const found = await con.waitFor<{ gateway: string } | { tracker: RegExpMatchArray } | { noRole: string }>((line) => {
     const g = line.match(GATEWAY);
     if (g) return { gateway: g[1] };
+    const n = line.match(NO_ROLE);
+    if (n) return { noRole: n[1] };
     const c = line.match(CREDENTIAL);
     if (c) cred = c;
     const t = line.match(TRACKER);
@@ -88,6 +103,7 @@ export async function probeUsbDevice(con: LineConsole): Promise<UsbDevice> {
   }, 6000);
   if (!found) throw new Error("Cihaz yanıt vermedi. Kabloyu ve cihaz yazılımını kontrol et.");
   if ("gateway" in found) return { kind: "gateway", id: found.gateway };
+  if ("noRole" in found) throw new Error(noRoleMessage(found.noRole));
   const t = found.tracker, c = cred as unknown as RegExpMatchArray;
   return {
     kind: "tracker",

@@ -68,7 +68,7 @@ OGK1_REASONS = {
     "busy_reboot_first": "gateway bir önceki yazmayı bitirdi/bozuldu: gateway'i yeniden başlatın",
     "no_issuer_key": "gateway imajında issuer anahtarı yok: ~/orun-issuer.pub ile yeniden derleyip yükleyin",
     "NO_ISSUER_KEY": "gateway imajında issuer anahtarı yok: ~/orun-issuer.pub ile yeniden derleyip yükleyin",
-    "not_in_this_image": "gateway imajı 3B'den eski: rak4630_gateway yüklenmeli (bash tools/orun_cihaz_yukle.sh)",
+    "not_in_this_image": "gateway yazılımı 3B'den eski: güncel ORUN yazılımı yüklenmeli (bash tools/orun_cihaz_yukle.sh)",
 }
 
 

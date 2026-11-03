@@ -1,35 +1,44 @@
-# Y2a — tek tasma, tek gateway yazılımı (deneme anahtarı cihazda yok)
+# Y2a — tek ORUN yazılımı (rol cihazda; deneme anahtarı cihazda kayıt yolu değil)
 
-**Durum:** kod + host testleri. Fiziksel yükleme: sahibin PC'sinde `bash tools/orun_cihaz_yukle.sh`.
-Plan: `docs/product/ORUN_UYGULAMA_KAPSAMI.md` (Y2a, Y2b).
+**Durum:** kod + host testleri + ARM derleme denetimi (clang, aşağıda). Fiziksel yükleme: sahibin PC'sinde `bash tools/orun_cihaz_yukle.sh`.
+Plan: `docs/product/ORUN_UYGULAMA_KAPSAMI.md` (Y2a, Y2a-2, Y2b). Sahip kararı 2026-11-03: tek yazılım, rol kurulumda; boş cihazda kurulumda sor, GPS'e göre öner.
 
 ## Ne değişti
 
 | | Önce | Y2a |
 | --- | --- | --- |
-| Tasma yazılımı | `rak4630_sf5l0_tracker_bench` (deneme anahtarlı) ve `rak4630_phase2_tracker_real_pilot` | yalnız `rak4630_tracker` |
-| Gateway yazılımı | `rak4630_sf5l0_gateway_bench` | `rak4630_gateway` |
-| Tasmaya deneme kimliği (`BENCH SETUP <gateway>`) | yazılabiliyordu | reddedilir; yalnız kendi anahtarı (`orun_provision.py tracker` → `BENCH PROVISION`) |
-| Gateway'in kayıt kabulü | imzalı izin → RAM izni → **deneme anahtarı** | imzalı izin → RAM izni; deneme anahtarlı tasma reddedilir (kayıtları tasmada kalır) |
-| Tasma yazılımında deneme kökü | vardı | yok (host testi nesne dosyasında arar) |
-| Gateway'in teslim onayı (EDGE ACCEPT) anahtarı | deneme kökünden | **değişmedi** — Y2b |
+| Yazılım | `rak4630_sf5l0_tracker_bench`, `rak4630_sf5l0_gateway_bench`, `rak4630_phase2_tracker_real_pilot` | yalnız `rak4630_orun` (her cihaza aynı) |
+| Tasma mı gateway mi | derlemede seçilirdi | açılışta, bölgeleri açmadan önce (`device_storage_role`) |
+| Tasmaya deneme kimliği (`BENCH SETUP <gateway>`) | yazılıyordu | reddedilir; yalnız kendi anahtarı (`BENCH PROVISION`) |
+| Gateway'in kayıt kabulü | imzalı izin → RAM → **deneme anahtarı** | imzalı izin → RAM; deneme anahtarlı tasma reddedilir (kayıtları tasmada kalır) |
+| Teslim onayı (EDGE ACCEPT) anahtarı | deneme kökünden | **değişmedi** — Y2b (deneme kökü yalnız bunun için yazılımda) |
 
-- USB komut adları (`BENCH?`, `BENCH PROVISION`, `BENCH DRAIN …`) araçlar bozulmasın diye aynı kaldı; "BENCH" artık deneme anahtarı demek değil.
-- Eski deneme kimliği olan bir tasma `BENCH?` satırında `test_credential=yes` der (yalnız açık kimlik ve dönemden; kök gerekmez). `tools/orun_cihaz_yukle.sh` böyle bir tasmaya yüklemeden durur.
-- `ORUN_SF5L0_BENCH_TEST_KEYS` yalnız host testlerinde; `main.cpp` bu bayrakla derlenmeyi `#error` ile durdurur.
-- Ayrı faz 2 tasma kaydı (`TrackerRealEnrollment`) kaldırıldı; gerçek anahtar yolu tek: `Sf5l0BenchTestProvisioning::startWithCredential`.
-- Sürüm kapısı (`tools/ci/orun_product_release_gate.py`): yeni `product-images-no-test-key` kontrolü.
+### Rol kararı (açılışta, SoftDevice'tan önce, yalnız okuma)
 
-Flaş düzeni, kayıt biçimleri, telsiz ve uygulama değişmedi: yükleme kayıtları ve anahtarları korur.
+Aynı iki bölge iki rolde farklı biçimde kullanılır: güvenlik bölgesi (tasmada "ORS1" anahtar sayfaları, gateway'de "OGK1" imzalı izin) ve kayıt bölgesi (tasmada ObservationStore, gateway'de OCQ2 emanet deposu).
+
+1. Yazılı olan karar verir: ORS1 ya da tasma kaydı → **TRACKER**; OGK1 ya da emanet sayfası → **GATEWAY**. Her depo diğerinin sayfalarını zaten kendisi reddeder; karar yalnız boş bölgede önem taşır.
+2. İki bölge de boşsa kayıtlı hizmet seçimi: `APP SERVICES A` → gateway; `T`, `R`, `TR`, `NONE` → tasma.
+3. Seçim de yoksa (AUTO) **UNASSIGNED**: hiçbir depo açılmaz, hiçbir şey yazılmaz, konum takibi çalışmaz. `BENCH?` yalnız `BENCH DEVICE … role=UNASSIGNED … gnss=yes|no` der; anahtar taşıyan kurulum satırları reddedilip silinir. Rol seçilince (`APP SERVICES T|A`) cihaz yanıtını verip 3 sn sonra o rolde yeniden başlar.
+4. İki rolün verisi birden → **CONFLICT**: hiçbir depo açılmaz, hiçbir şey yazılmaz.
+
+- Kurulmuş cihaza öbür rolün hizmeti yazılmaz (`APP SET … code=INVALID reason=device_is_…`); rol ayarla sessizce değişmez (AGENTS.md: kaydedilmiş seçim sessizce AUTO'ya düşmez).
+- Gateway rolünde hizmet hep "A" (alıcı, BASE taşıyıcı); BLE hep açık (gateway köprü sözü). Tasma rolünde pilot TX, boşaltma hızı ve bağlantı satırları eskisi gibi.
+- `BENCH?` her rolde `BENCH DEVICE id=… role=… security_region=… gnss=…` satırıyla başlar; eski satırlar (`BENCH TRACKER`, `BENCH GATEWAY`) aynı.
+- PC: `tools/orun_cihaz_yukle.sh` her cihaza `rak4630_orun` yükler (her derlemede `~/orun-issuer.pub` gerekir); kurulmamış cihaza da yükler, çelişkili cihaza yüklemez; deneme anahtarlı tasmaya yüklemeden durur. `tools/orun_cihaz_kontrol.py rol --port P tasma|gateway` yalnız kurulmamış cihaza rol verir (GPS uyarısıyla).
+- Uygulama: kurulmamış ya da çelişkili cihaz USB'de beklemeden açık bir mesajla söylenir. Rol sorusu Y2a-2'de.
+- `ORUN_SF5L0_BENCH_TEST_KEYS` yalnız host testlerinde (`main.cpp` `#error`). Ayrı faz 2 kaydı (`TrackerRealEnrollment`) kaldırıldı; gerçek anahtar yolu tek.
+- Sürüm kapısı: `product-images-no-test-key` (tek yazılım var, hiçbir cihaz yazılımında deneme anahtarı yok).
+
+Flaş düzeni, kayıt biçimleri, telsiz sözcükleri değişmedi: bugünkü tasma ve gateway yükleme sonrası aynı rolde, kayıtları ve anahtarlarıyla açılır.
 
 ## Denendi
 
-- `tools/ci/run_y2a_product_keys_host.sh` (yeni, ASan/UBSan): ürün gibi derlenen kod — gerçek anahtarla kayıt ve gateway izni, deneme anahtarlı tasmanın tanınması ve gateway'in reddi (RAM izni olsa bile), gerçek doğrulayıcıyla ACK; tasma derlemesinde `kTestRoot` ve deneme kurulum girişi yok, gateway derlemesinde deneme kurulum girişi yok.
-- Eski host testleri (deneme anahtarıyla, yalnız host): SF5L0, 3A, 3B, SF5L5, SF5L6, SF5L0 temizleme — PASS.
-- `backend/tests/test_cihaz_yukle.py`, `firmware/tests/sf5/test_orun_product_release_gate.py` — PASS.
-- Cihaz yazılımı bu ortamda derlenemiyor; ilk derleme sahibin PC'sinde.
+- `tools/ci/run_y2a_product_keys_host.sh` (ASan/UBSan): rol kararı (yazılı veri, boş cihazda seçim, çelişki, okunamayan bölge), deneme anahtarsız çalışma zamanı (gerçek anahtar + izin + doğrulayıcı; deneme anahtarlı tasmaya RAM izni olsa bile ret; deneme kurulum girişi nesne dosyasında yok).
+- Eski host testleri: SF5L0, 3A, 3B (kaynak sözleşmesi tek yazılıma göre güncellendi), SF5L5, SF5L6, SF5L0 temizleme — PASS. `backend/tests/test_cihaz_yukle.py`, sürüm kapısı testi, uygulama testleri (180) — PASS.
+- **ARM derleme denetimi** (bu ortamda PlatformIO derlemesi yok): sistem clang 18, `thumbv7em`/Cortex-M4, Adafruit nRF52 1.7.0 + SoftDevice S140 6.1.1 başlıkları, SX126x 2.0.32, SparkFun GNSS 2.2.29 — bütün `src/*.cpp` `rak4630_orun`, `rak4630` ve pilot bayraklarıyla hatasız; ARM nesne dosyalarında çift tanımlı sembol yok; tek yazılımın dışarıdan istediği her sembol eski tasma ya da gateway yazılımında da isteniyordu. Eski yazılımlar aynı denetimden geçti (denetimin doğruluğu). Bağlama ve gerçek boyut sahibin PC'sinde.
 
 ## Sahada sıra
 
-1. Tasma: `bash tools/orun_cihaz_yukle.sh` → tasmayı seç. Sonuç `TAMAM` satırları; yazılım `0.5-<sürüm>`.
-2. Gateway: aynı komut → gateway'i seç (PC Edge yükleme boyunca durur). Ardından tasmanın raporu gateway'e ulaşmalı ve uygulamada görünmeli.
+1. Tasma: `bash tools/orun_cihaz_yukle.sh` → tasmayı seç. `TAMAM` satırları; yazılım `0.5-<sürüm>`; açılışta `ROLE storage=TRACKER`.
+2. Gateway: aynı komut → gateway'i seç (PC Edge yükleme boyunca durur). `ROLE storage=GATEWAY`; ardından tasmanın raporu uygulamada görünmeye devam etmeli.

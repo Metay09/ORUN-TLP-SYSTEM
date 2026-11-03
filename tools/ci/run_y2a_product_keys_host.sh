@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Y2a — the Tracker/Gateway runtime built like the product images: without
-# ORUN_SF5L0_BENCH_TEST_KEYS. Host only; independent OpenSSL crypto port.
+# Y2a — one ORUN firmware (rak4630_orun): the storage role decided at boot, and
+# the Tracker/Gateway runtime built without ORUN_SF5L0_BENCH_TEST_KEYS.
+# Host only; independent OpenSSL crypto port.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 dir="$(mktemp -d "${TMPDIR:-/tmp}/orun-y2a.XXXXXXXX")"
@@ -12,17 +13,22 @@ flags=(-std=gnu++11 -O1 -g -Wall -Wextra -Werror
 if [[ "${ORUN_HOST_SANITIZERS:-1}" == 1 ]]; then
   flags+=(-fsanitize=address,undefined -fno-sanitize-recover=undefined)
 fi
-echo "[Y2a] product build: no public test credential"
-# The Tracker product build must not carry the public test root or the
-# test-credential provisioning entry point.
+echo "[Y2a] storage role: written data first, then the saved intent"
+"${CXX:-g++}" "${flags[@]}" firmware/tests/sf5/test_device_storage_role.cpp \
+  firmware/src/device_storage_role.cpp -o "$dir/role"
+"$dir/role"
+echo "[Y2a] no public test credential path"
+# Without the Gateway code the runtime carries neither the public test root
+# nor the test-credential provisioning entry point.
 "${CXX:-g++}" "${flags[@]}" -c firmware/src/sf5l0_bench.cpp -o "$dir/bench.o"
 if nm -C "$dir/bench.o" | grep -E "kTestRoot|Sf5l0BenchTestProvisioning::start\(unsigned long" ; then
   echo "FAIL: test root or test-key provisioning compiled into the product build" >&2
   exit 1
 fi
-# The Gateway product build differs only in keeping the test root for the
-# Edge accept MAC until Y2b (device headers keep the real Gateway build off
-# the host): compile that combination too, still without the test-key paths.
+# The device firmware also compiles the Gateway code, which keeps the test
+# root for the Edge accept MAC until Y2b (device headers keep the real Gateway
+# build off the host): compile that combination too, still without the
+# test-credential provisioning entry point.
 "${CXX:-g++}" "${flags[@]}" -DORUN_SF5L0_HAS_TEST_ROOT=1 -c firmware/src/sf5l0_bench.cpp -o "$dir/bench_gw.o"
 if nm -C "$dir/bench_gw.o" | grep -E "Sf5l0BenchTestProvisioning::start\(unsigned long" ; then
   echo "FAIL: test-key provisioning compiled into the Gateway product build" >&2

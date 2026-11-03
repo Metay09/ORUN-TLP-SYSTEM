@@ -51,7 +51,15 @@ main = without_ifdef(code(root / "src" / "main.cpp"), "ORUN_SF5L0_GATEWAY")
 assert main.count("orun_tlp::ProductRecordStore product_records(") == 1
 assert re.search(r"product_records\(\s*storage_flash_gate\.productPort\(\)",
                  main), "record store must use the gate's product port"
-assert main.count("productPort()") == 1, "nothing else may touch the region"
+# Y2a: the one firmware decides the storage role at boot with a READ-ONLY
+# census of the region before any store opens it; nothing else touches it.
+role = main.index("void decideBootStorageRole() {")
+role_body = main[role:main.index("\n}\n", role)]
+assert role_body.count("productPort()") == 1 and "takeCensus(" in role_body
+for write in ("program(", "erasePage(", ".begin(device", "requestPrepare"):
+    assert write not in role_body, f"role decision must only read: {write}"
+assert main.count("productPort()") == 2, "nothing else may touch the region"
+assert role < main.index("product_records.begin("), "role decided before mounting"
 
 # Mounted at boot before SoftDevice: the synchronous backend refuses after.
 mount = main.index("product_records.begin(")

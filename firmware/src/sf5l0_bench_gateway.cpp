@@ -1,5 +1,5 @@
-// SF5L0 Gateway composition (product image rak4630_gateway). Empty unless
-// ORUN_SF5L0_GATEWAY. Wires the EXISTING SF5K3P..X owners (OCQ2 custody store,
+// SF5L0 Gateway composition (the one firmware rak4630_orun, used only with
+// Gateway storage: main.cpp gatewayStorage()). Empty unless ORUN_SF5L0_GATEWAY. Wires the EXISTING SF5K3P..X owners (OCQ2 custody store,
 // local custody owner, authorized ingress, startup guard, custody runtime) to
 // the radio, with Sf5l0BenchGrantSource as the grant source: the
 // backend-signed OGK1 snapshot first, then step 3A RAM grants. Y2a: no

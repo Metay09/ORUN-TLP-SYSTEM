@@ -80,6 +80,17 @@ test("USB ile bağlı cihaz: gateway ya da tasma", async () => {
   assert.equal(t.kind, "tracker");
   assert.equal(t.kind === "tracker" && t.report.device, "0E8ADE7E71531AA3");
   await assert.rejects(probeUsbDevice(fake([])), /yanıt vermedi/);
+  // Y2a tek yazılım: her yanıtın başında BENCH DEVICE satırı; kurulmamış cihaz beklemeden söylenir.
+  const t2 = await probeUsbDevice(fake([
+    "BENCH DEVICE id=0E8ADE7E71531AA3 role=TRACKER security_region=ORS1 gnss=yes",
+    "BENCH CREDENTIAL credential=" + "A".repeat(32) + " epoch=00000001 grant_generation=00000002 custody_floor=00000000",
+    "BENCH TRACKER id=0E8ADE7E71531AA3 role=TRACKER granted_gateway=09A462BD4B275BA5",
+  ]));
+  assert.equal(t2.kind, "tracker");
+  await assert.rejects(probeUsbDevice(fake(["BENCH DEVICE id=52E16773141A8887 role=UNASSIGNED security_region=ERASED gnss=yes"])),
+    /henüz kurulmamış/);
+  await assert.rejects(probeUsbDevice(fake(["BENCH DEVICE id=52E16773141A8887 role=CONFLICT security_region=MIXED gnss=no"])),
+    /hem tasma hem gateway/);
 });
 
 import { DeviceNameBook, bleName, cleanName } from "../src/app/deviceNames.ts";

@@ -60,14 +60,11 @@ class ProductCutoverGateTests(unittest.TestCase):
             self.assertFalse(got["secure-commissioning"].ok)
 
     def test_product_images_must_exist_without_test_keys(self):
-        product = NORMAL.split("[env:rak4630_sf5l0_tracker_bench]")[0] + """[env:rak4630_tracker]
+        product = NORMAL.split("[env:rak4630_sf5l0_tracker_bench]")[0] + """[env:rak4630_orun]
 extends = env:rak4630
 build_flags =
     -DORUN_SF5K3V_TRACKER_TX_PILOT
     -DORUN_SF5L0_TRACKER
-[env:rak4630_gateway]
-extends = env:rak4630
-build_flags =
     -DORUN_SF5L0_GATEWAY
 """
         with tempfile.TemporaryDirectory() as p:

@@ -1,6 +1,8 @@
-// Y2a: the Tracker/Gateway runtime built the way the product images build it,
-// i.e. WITHOUT ORUN_SF5L0_BENCH_TEST_KEYS. Host only (OpenSSL crypto port,
-// fake flash). The runner also checks the object file holds no test root.
+// Y2a: the Tracker/Gateway runtime built the way the device firmware builds
+// it, i.e. WITHOUT ORUN_SF5L0_BENCH_TEST_KEYS. Host only (OpenSSL crypto port,
+// fake flash). This configuration leaves out the Gateway-only Edge accept code
+// (the only remaining user of the test root, until Y2b); the runner checks its
+// object file holds no test root.
 //
 // Pins:
 //  - a blank Tracker still gets a REAL credential over USB and its Gateway
@@ -10,7 +12,7 @@
 //  - the Gateway grant source never falls back to the public test key: a
 //    test-epoch frame gets no custody and no ACK, a real one only with a
 //    backend grant, and that ACK is authenticated by the real verifier;
-//  - without the test root (Tracker image) the Edge accept MAC is refused.
+//  - without the test root the Edge accept MAC is refused.
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -34,7 +36,7 @@
 #include "tlp_v2_product_secure.h"
 
 #ifdef ORUN_SF5L0_HAS_TEST_ROOT
-#error "the Tracker product build must not compile the public test root"
+#error "this configuration must not compile the public test root"
 #endif
 
 namespace orun_tlp {

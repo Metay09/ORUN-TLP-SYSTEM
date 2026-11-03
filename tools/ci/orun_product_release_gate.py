@@ -57,20 +57,20 @@ def check_sources(root: Path) -> list[Check]:
     tracker_ready = "ORUN_PRODUCT_TRACKER_DURABLE_TX" in env_flags
     gateway_ready = "ORUN_PRODUCT_GATEWAY_DURABLE_CUSTODY" in env_flags
     commissioning_ready = "ORUN_PRODUCT_SECURE_COMMISSIONING" in env_flags
-    # Y2a: one Tracker and one Gateway image; no device image may compile the
-    # public test credential (host tests only).
+    # Y2a: one firmware for every device (rak4630_orun); no device image may
+    # compile the public test credential (host tests only).
     envs = env_blocks(ini)
     test_key_envs = sorted(n for n, b in envs.items()
                            if "ORUN_SF5L0_BENCH_TEST_KEYS" in macros(b))
-    products = "rak4630_tracker" in envs and "rak4630_gateway" in envs
+    products = "rak4630_orun" in envs
     # A successful source scan cannot prove field RF, flash or the app.
     return [
         Check("normal-image-found", True, "PlatformIO [env:rak4630] mevcut"),
         Check("product-images-no-test-key", products and not test_key_envs,
-              "Tasma ve gateway ürün yazılımı var; hiçbir cihaz yazılımında deneme anahtarı yok"
+              "Tek ORUN yazılımı var; hiçbir cihaz yazılımında deneme anahtarı yok"
               if products and not test_key_envs else
               "Ürün yazılımı eksik ya da deneme anahtarlı cihaz yazılımı var: "
-              + (", ".join(test_key_envs) or "rak4630_tracker/rak4630_gateway yok")),
+              + (", ".join(test_key_envs) or "rak4630_orun yok")),
         Check("no-public-test-key", not bool(env_flags & public_keys),
               "Normal firmware kamuya açık test anahtarlarını etkinleştirmemeli"),
         Check("tracker-secure-tx", tracker_ready and

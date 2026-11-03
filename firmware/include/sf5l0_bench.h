@@ -14,9 +14,9 @@
 // durably releases it. Since SF5L0 it also carries step 3A/3B enrollment,
 // the drain pacer and the Edge hand-off.
 //
-// Y2a (product images rak4630_tracker / rak4630_gateway): the PUBLIC test
-// credential below (the SF3 qualification vector; anybody can derive every key
-// from it) is no longer an enrollment or custody path on a device:
+// Y2a (the one firmware rak4630_orun): the PUBLIC test credential below (the
+// SF3 qualification vector; anybody can derive every key from it) is no
+// longer an enrollment or custody path on a device:
 //   - ORUN_SF5L0_BENCH_TEST_KEYS (host tests only) adds the test-credential
 //     provisioning ("BENCH SETUP") and the Gateway's test-key custody grant;
 //   - without it a Tracker can only get a real credential (BENCH PROVISION)
@@ -25,7 +25,7 @@
 //   - the test credential id/epoch stay as public facts, so a Tracker that
 //     still holds the old test credential can say so (test_credential=yes).
 // Until Y2b the Gateway's Edge accept MAC key is still derived from the test
-// root (ORUN_SF5L0_HAS_TEST_ROOT); the Tracker product image has no root.
+// root (ORUN_SF5L0_HAS_TEST_ROOT, compiled with the Gateway code).
 #if defined(ORUN_SF5L0_BENCH_TEST_KEYS) || defined(ORUN_SF5L0_GATEWAY)
 #define ORUN_SF5L0_HAS_TEST_ROOT 1
 #endif
