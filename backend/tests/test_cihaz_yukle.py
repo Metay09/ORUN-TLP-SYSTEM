@@ -60,6 +60,18 @@ class Kontrol(unittest.TestCase):
         grant = k.parse([l.replace("generation=0000000000000007", "generation=0000000000000000") for l in GATEWAY])
         self.assertFalse(all(ok for ok, _ in k.compare(g, grant)))
 
+    def test_busy_store_after_restart_is_asked_again_not_called_backwards(self):
+        # Yeniden başlatmadan hemen sonra hafıza meşgulken cihaz next_seq=0 yazar.
+        busy = k.parse([l.replace("next_seq=812", "next_seq=0") for l in TRACKER])
+        self.assertFalse(k.complete(busy))
+        self.assertTrue(k.complete(k.parse(TRACKER)))
+        self.assertTrue(k.complete(k.parse(GATEWAY)))
+        res = dict((text.split(" (")[0], ok) for ok, text in k.compare(k.parse(TRACKER), busy))
+        self.assertIn("Kayıt sırası okunamadı", res)
+        self.assertNotIn("Kayıt sırası geri gitmedi", res)
+        lines = [t for _, t in k.compare(k.parse(TRACKER), k.parse(TRACKER))]
+        self.assertIn("Kayıt sırası geri gitmedi (812 → 812)", lines)
+
 
 if __name__ == "__main__":
     unittest.main()
