@@ -39,7 +39,10 @@ def main() -> None:
     src = (ROOT / "firmware/src/sf5l0_bench_gateway.cpp").read_text()
     # Header via printf, object via Serial.write: the core's printf buffer is
     # 256 bytes and a 280-char line would be truncated (found on the bench).
-    assert 'printf("EDGE HELD v1 gw=%s page=%u slot=%u gen=%s len=%u obj=",' in src
+    # One header printf for held and priority (live-first) hand-outs.
+    assert "Serial.printf(priority" in src
+    assert '"EDGE HELD v1 gw=%s page=%u slot=%u gen=%s len=%u obj="' in src
+    assert '"EDGE PRIORITY v1 gw=%s page=%u slot=%u gen=%s len=%u obj="' in src
     assert "Serial.write(reinterpret_cast<const uint8_t*>(object), 2U * r.size);" in src
     assert eb.TEST_CREDENTIAL_ID == bytes(range(0xA0, 0xB0))
     assert eb.TEST_ROOT == bytes(range(32)) and eb.TEST_KEY_EPOCH == 0x01020304
