@@ -202,5 +202,7 @@ for p in $(seq "$SERVE_PORT" $((SERVE_PORT + 9))); do
 done
 say "Telefondan indir: http://$IP:$SERVE_PORT/ORUN-$SHA.apk"
 echo "İndirme bitince bu pencerede Ctrl+C'ye bas. (Yalnız Tailscale ağına açık; en fazla 15 dakika.)"
-timeout 900 python3 -m http.server "$SERVE_PORT" --bind "$IP" --directory "$APK_DIR" || true
+# --foreground: Ctrl+C sunucuya ulaşsın (yoksa timeout onu ayrı süreç grubunda tutar).
+trap 'echo; echo "İndirme sunucusu kapandı."; exit 0' INT
+timeout --foreground 900 python3 -m http.server "$SERVE_PORT" --bind "$IP" --directory "$APK_DIR" || true
 echo "İndirme sunucusu kapandı."
