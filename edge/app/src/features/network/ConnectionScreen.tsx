@@ -6,7 +6,7 @@ import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStor
 import {
   Bluetooth, CaretRight, CellSignalFull, CloudCheck, DeviceMobile, MagnifyingGlass, MapPin, Question, Usb, WifiHigh, WifiSlash, X,
 } from "@phosphor-icons/react";
-import { probeUsbDevice } from "../../app/addTracker.ts";
+import { noRoleMessage, probeUsbDevice, setRoleAndReconnect, type DeviceRole, type GnssHint } from "../../app/addTracker.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { fmt, tr } from "../../app/i18n/tr.ts";
 import { useNav } from "../../app/nav.ts";
@@ -22,6 +22,7 @@ import { AddTrackerDialog } from "../herd/AddTrackerDialog.tsx";
 import { TrackerLiveDialog, type LiveTarget } from "../herd/TrackerLive.tsx";
 import { startPosition, usePosition } from "../map/position.ts";
 import { NameDialog } from "./NameDialog.tsx";
+import { RoleChoice } from "../devices/RoleChoice.tsx";
 import { pendingKeys } from "../../app/deviceSettings.ts";
 import { BulkSettingsDialog } from "../devices/BulkSettings.tsx";
 import { useDeviceSettings } from "../devices/DeviceScreen.tsx";
@@ -58,6 +59,7 @@ export function ConnectionScreen() {
   const [scanning, setScanning] = useState(false);
   const [note, setNote] = useState("");
   const [usbBusy, setUsbBusy] = useState(false);
+  const [noRole, setNoRole] = useState<{ gnss: GnssHint } | null>(null);   // Y2a-2: kurulmamış cihaz
   const [live, setLive] = useState<{ device: string | null; target: LiveTarget; bleId?: string } | null>(null);
   const [adding, setAdding] = useState(false);
   const [naming, setNaming] = useState<string | null>(null);
@@ -117,14 +119,24 @@ export function ConnectionScreen() {
     setLive({ device: d.id, target: { ble: d.deviceId }, bleId: d.deviceId });
   };
 
-  async function usbConnect(): Promise<void> {
+  async function usbConnect(role?: DeviceRole): Promise<void> {
     setUsbBusy(true); setNote("");
     let con: UsbConsole | null = null;
     try {
       con = await UsbConsole.open();
-      const dev = await probeUsbDevice(con);
+      let dev = await probeUsbDevice(con);
+      if (role && dev.kind === "unassigned") {
+        setNote(`Cihaz ${role === "tasma" ? "tasma" : "gateway"} olarak kuruluyor; yeniden başlıyor… (USB izni sorulursa onayla)`);
+        const r = await setRoleAndReconnect(con, role, () => UsbConsole.open());
+        con = r.con; dev = r.device;
+        setNoRole(null);
+        setNote(role === "tasma" ? "Tasma olarak kuruldu; şimdi hesaba ekle." : "Gateway olarak kuruldu; bu telefon köprü olarak bağlanıyor.");
+      }
       await con.close(); con = null;
+      if (dev.kind === "unassigned") { setNoRole({ gnss: dev.gnss }); return; }
+      if (dev.kind === "conflict") { setNote(noRoleMessage("CONFLICT")); return; }
       if (dev.kind === "gateway") await m.source.connectUsb();
+      else if (role === "tasma") setAdding(true);
       else setLive({ device: dev.report.device, target: { usb: true } });
     } catch (e) {
       setNote(e instanceof Error && e.message.length < 200 ? e.message : "USB ile bağlanılamadı.");
@@ -271,9 +283,11 @@ export function ConnectionScreen() {
               <Card pad>
                 <div className="stack">
                   <span className="sm">Tasmayı ya da gateway'i USB (OTG) kablosuyla telefona bağla.</span>
-                  <button className="btn primary wide" disabled={!s.ready || usbBusy} onClick={() => { void usbConnect(); }}>
+                  {!noRole && <button className="btn primary wide" disabled={!s.ready || usbBusy} onClick={() => { void usbConnect(); }}>
                     <Usb size={20} />{usbBusy ? "Cihaz okunuyor…" : "USB ile bağlı cihaza bağlan"}
-                  </button>
+                  </button>}
+                  {noRole && <RoleChoice gnss={noRole.gnss} busy={usbBusy} onPick={(r) => { void usbConnect(r); }}
+                    onCancel={() => setNoRole(null)} />}
                 </div>
               </Card>
             </>

@@ -2,7 +2,7 @@
 // kartı gösterir (aynı soruların aynı yanıtları).
 import { useEffect, useRef, useState } from "react";
 import { ArrowClockwise, Bluetooth, Usb } from "@phosphor-icons/react";
-import { probeUsbDevice } from "../../app/addTracker.ts";
+import { noRoleMessage, probeUsbDevice } from "../../app/addTracker.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { fmt } from "../../app/i18n/tr.ts";
 import { useBack, useNav } from "../../app/nav.ts";
@@ -68,6 +68,8 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
       con = await UsbConsole.open();
       const dev = await probeUsbDevice(con);
       if (dev.kind === "gateway") throw new Error("USB'deki cihaz bir gateway. Gateway'e Cihazlar → USB'den bağlan.");
+      if (dev.kind === "unassigned") throw new Error(noRoleMessage("UNASSIGNED") + " Cihazlar → \"USB ile bağlı cihaza bağlan\"dan kur.");
+      if (dev.kind === "conflict") throw new Error(noRoleMessage("CONFLICT"));
       if (alive.current) setId(dev.report.device);
       setPhase("Okunuyor…");
       const dev_ = dev.report.device.toUpperCase();

@@ -34,6 +34,9 @@ class Kontrol(unittest.TestCase):
         self.assertEqual((g["kind"], g["held"], g["capacity"], g["ogk1_generation"], g["fw"]),
                          ("gateway", 12, 1056, "0000000000000007", "0.5-7b7c540"))
         self.assertNotIn("root", str(t))
+        self.assertFalse(t["test_key"])
+        old = k.parse([l.replace("test_credential=no", "test_credential=yes") for l in TRACKER])
+        self.assertTrue(old["test_key"])
 
     def test_same_device_same_key_same_records_passes(self):
         before = k.parse(TRACKER)
@@ -71,6 +74,22 @@ class Kontrol(unittest.TestCase):
         self.assertNotIn("Kayıt sırası geri gitmedi", res)
         lines = [t for _, t in k.compare(k.parse(TRACKER), k.parse(TRACKER))]
         self.assertIn("Kayıt sırası geri gitmedi (812 → 812)", lines)
+
+    def test_one_firmware_role_line(self):
+        # Y2a: tek yazılım BENCH? yanıtına rol satırıyla başlar.
+        role = "BENCH DEVICE id=0E8ADE7E71531AA3 role=TRACKER security_region=ORS1 gnss=yes"
+        new = k.parse([role] + TRACKER)
+        self.assertEqual((new["kind"], new["role"], new["gnss"]), ("tracker", "TRACKER", "yes"))
+        # Eski masa yazılımından (rol satırı yok) tek yazılıma: tür aynı kalmalı.
+        self.assertTrue(all(ok for ok, _ in k.compare(k.parse(TRACKER), new)))
+        blank = k.parse(["BENCH DEVICE id=52E16773141A8887 role=UNASSIGNED security_region=ERASED gnss=no"])
+        self.assertEqual((blank["kind"], blank["id"]), ("unassigned", "52E16773141A8887"))
+        self.assertTrue(k.complete(blank))
+        # Tasma yüklemeden sonra kurulmamış görünürse SORUN.
+        self.assertFalse(all(ok for ok, _ in k.compare(k.parse(TRACKER),
+                             k.parse(["BENCH DEVICE id=0E8ADE7E71531AA3 role=UNASSIGNED security_region=ORS1 gnss=yes"]))))
+        self.assertEqual(k.role_command("tasma"), "APP SERVICES T")
+        self.assertEqual(k.role_command("gateway"), "APP SERVICES A")
 
 
 if __name__ == "__main__":

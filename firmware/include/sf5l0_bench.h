@@ -9,18 +9,26 @@
 #endif
 #include "security_format.h"
 
-// SF5L0 — BENCH-ONLY single-record round trip with PUBLIC test keys.
+// SF5L0 Tracker/Gateway runtime: one stored record travels Tracker ->
+// Gateway, is durably held there, an HMAC custody ACK returns and the Tracker
+// durably releases it. Since SF5L0 it also carries step 3A/3B enrollment,
+// the drain pacer and the Edge hand-off.
 //
-// Purpose: prove on two real RAK4631 boards that ONE stored PERIODIC record
-// travels Tracker -> Gateway, is durably held by the Gateway, an HMAC custody
-// ACK returns and the Tracker durably releases that record.
-//
-// This is NOT production provisioning. The credential below is public (it is
-// the same fixed vector the SF3 runtime qualification used); anybody can
-// derive every key from it. The production enrollment path (signed OGK1
-// grants, rollback anchor, SF5K3Y..AC) is unchanged and still gated.
-// Compiled only when ORUN_SF5L0_BENCH_TEST_KEYS is defined, i.e. in the two
-// dedicated PlatformIO bench environments and the SF5L0 host test.
+// Y2a (the one firmware rak4630_orun): the PUBLIC test credential below (the
+// SF3 qualification vector; anybody can derive every key from it) is no
+// longer an enrollment or custody path on a device:
+//   - ORUN_SF5L0_BENCH_TEST_KEYS (host tests only) adds the test-credential
+//     provisioning ("BENCH SETUP") and the Gateway's test-key custody grant;
+//   - without it a Tracker can only get a real credential (BENCH PROVISION)
+//     and a Gateway grants custody only from the signed OGK1 snapshot or a
+//     step 3A RAM grant, so a test-key record is refused;
+//   - the test credential id/epoch stay as public facts, so a Tracker that
+//     still holds the old test credential can say so (test_credential=yes).
+// Until Y2b the Gateway's Edge accept MAC key is still derived from the test
+// root (ORUN_SF5L0_HAS_TEST_ROOT, compiled with the Gateway code).
+#if defined(ORUN_SF5L0_BENCH_TEST_KEYS) || defined(ORUN_SF5L0_GATEWAY)
+#define ORUN_SF5L0_HAS_TEST_ROOT 1
+#endif
 
 namespace orun_tlp {
 
@@ -28,8 +36,11 @@ class SecurityStore;
 
 namespace sf5l0_bench {
 
+// Public identifiers of the old test credential (not secret).
 extern const uint8_t kTestCredentialId[security_format::kCredentialIdSize];
+#ifdef ORUN_SF5L0_HAS_TEST_ROOT
 extern const uint8_t kTestRoot[security_format::kKRootSize];
+#endif
 constexpr uint32_t kTestKeyEpoch = 0x01020304U;
 // A freshly migrated v3 SecurityStore starts at floor 0 and the first grant
 // receives generation 1. The Gateway test source assumes exactly that.
@@ -54,7 +65,9 @@ class Sf5l0BenchTestProvisioning final {
       : security_(security) {}
 
   // false = refused immediately; reason() says why.
-  bool start(uint64_t gateway_id);  // public test credential (bench)
+#ifdef ORUN_SF5L0_BENCH_TEST_KEYS
+  bool start(uint64_t gateway_id);  // public test credential (host tests only)
+#endif
   // Step 3A: a REAL credential supplied over USB (physical access is the
   // authorization, ADR M7P6 §11). Committed only on an unprovisioned store;
   // a store already holding exactly this credential just (re)grants the
@@ -71,7 +84,8 @@ class Sf5l0BenchTestProvisioning final {
   const char* reason() const { return reason_; }
   uint64_t gatewayId() const { return gateway_id_; }
 
-  // Read-only status for the BENCH? report.
+  // Read-only status for the BENCH? report. By the public id and epoch of
+  // the old test credential; needs no root.
   static bool holdsTestCredential(const SecurityStore& security);
   static uint8_t activePageVersion(const SecurityStore& security);
   static bool grantFor(const SecurityStore& security, uint64_t gateway_id,
@@ -203,7 +217,9 @@ class Sf5l0BenchGrantSource final : public GatewayDurableGrantSource {
   uint8_t ramGrants() const;
 
   // Step 3B: the verified, signed OGK1 snapshot (GatewayGrantSnapshotReader)
-  // is asked first; then the RAM table; then the public test key.
+  // is asked first; then the RAM table. Only host tests
+  // (ORUN_SF5L0_BENCH_TEST_KEYS) fall back to the public test key; a device
+  // refuses a test-key Tracker (Y2a).
   void setSigned(GatewayDurableGrantSource* signed_source) {
     signed_ = signed_source;
   }

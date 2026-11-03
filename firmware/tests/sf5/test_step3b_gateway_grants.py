@@ -318,15 +318,18 @@ def test_source_contract() -> None:
         assert name not in main, name
     ini = (ROOT / "firmware/platformio.ini").read_text()
     assert ini.count("-DORUN_STEP3B_GATEWAY_ENROLLMENT") == 1
-    gw_env = ini.split("[env:rak4630_sf5l0_gateway_bench]")[1].split("\n[")[0]
+    gw_env = ini.split("[env:rak4630_orun]")[1].split("\n[")[0]
     assert "-DORUN_STEP3B_GATEWAY_ENROLLMENT" in gw_env
     assert "pre:scripts/step3b_issuer_key.py" in gw_env
     assert "-DORUN_SF5L0_GATEWAY" in gw_env
     assert ini.count("-DORUN_SF5K3AA_TARGET_CRYPTO_PROBE=1") == 1
     assert '#error "Step 3B grant snapshots exist only' in main
-    # The Tracker SecurityStore is never mounted on the Gateway's OGK1 pages.
-    sec = main.split("#elif defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)")[1].split("#else")[0]
-    assert "security_store.begin" not in sec
+    # The Tracker SecurityStore is never mounted on the Gateway's OGK1 pages
+    # (Y2a: one firmware, Gateway storage decided at boot).
+    sec = main.split("  if (gatewayStorage()) {\n    // Step 3B Gateway: the security region")[1]
+    sec = sec.split("  } else if (storage_role == orun_tlp::StorageRole::kConflict)")[0]
+    assert "security_store.begin" not in sec and "SECURITY region owned by" in sec
+    assert main.index("decideBootStorageRole();") < main.index("security_store.begin(device_identity)")
     inst = (ROOT / "firmware/src/step3b_gateway_enrollment.cpp").read_text()
     commit = inst.split("Step3bGrantInstaller::commit(")[1].split("Step3bGrantInstaller::poll()")[0]
     assert "erasePage(" not in commit and "program(" not in commit
