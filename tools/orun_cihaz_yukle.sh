@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Y1: USB'deki ORUN cihazına (tasma ya da gateway) tek komutla yazılım yükler.
 #
-#   bash tools/orun_cihaz_yukle.sh                 # tek cihaz takılıysa onu bulur
+#   bash tools/orun_cihaz_yukle.sh                 # tek cihazsa onu, birden çoksa numarayla seçtirir
 #   bash tools/orun_cihaz_yukle.sh --port /dev/serial/by-id/usb-RAKwireless_...-if00
 #   bash tools/orun_cihaz_yukle.sh --evet          # onay sormadan
 #
@@ -44,14 +44,27 @@ python3 -c "import serial" 2>/dev/null || fail "pyserial yok: python3 -m pip ins
 
 # --- 1. Cihazı bul ---
 if [[ -z "$PORT" ]]; then
-  mapfile -t ports < <(ls /dev/serial/by-id/usb-RAKwireless_WisCore_RAK4631_Board_*-if00 2>/dev/null || true)
+  mapfile -t ports < <(ls "${ORUN_BYID_DIR:-/dev/serial/by-id}"/usb-RAKwireless_WisCore_RAK4631_Board_*-if00 2>/dev/null || true)
   if [[ ${#ports[@]} -eq 0 ]]; then fail "USB'de ORUN (RAK4631) cihazı yok. Kabloyu tak, tekrar dene."; fi
   if [[ ${#ports[@]} -gt 1 ]]; then
-    echo "Birden çok cihaz takılı; hangisi olduğunu --port ile söyle:"
-    printf '  %s\n' "${ports[@]}"
-    exit 2
+    # Birden çok cihaz: numaralı liste, numarayla seçilir. PC Edge'in tuttuğu
+    # port gateway'dir; bunu da yanında yazar.
+    edge_pid=$(systemctl --user show -p MainPID --value "$PC_EDGE" 2>/dev/null || echo 0)
+    echo "Birden çok cihaz takılı:"
+    for i in "${!ports[@]}"; do
+      p="${ports[$i]}"; id=${p##*_Board_}; id=${id%-if00}
+      holder=$(fuser "$p" 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+$' | head -1 || true)
+      note=""
+      [[ -n "$holder" && "$holder" == "$edge_pid" ]] && note=" (PC Edge'e bağlı gateway)"
+      printf '  %d) %s%s\n' "$((i + 1))" "$id" "$note"
+    done
+    [[ $YES -eq 0 ]] || fail "--evet ile birden çok cihaz seçilemez; --port ile söyle."
+    read -r -p "Hangisine yüklensin? [1-${#ports[@]}] " pick
+    [[ "$pick" =~ ^[0-9]+$ ]] && (( pick >= 1 && pick <= ${#ports[@]} )) || { echo "Vazgeçildi; cihaza dokunulmadı."; exit 0; }
+    PORT="${ports[$((pick - 1))]}"
+  else
+    PORT="${ports[0]}"
   fi
-  PORT="${ports[0]}"
 fi
 [[ -e "$PORT" ]] || fail "$PORT yok."
 
