@@ -96,7 +96,7 @@ trap 'rm -rf "$TMP"; restart_pc_edge' EXIT
 
 # --- 3. Ne bu cihaz, durumu ne ---
 say "Cihaz okunuyor"
-python3 "$REPO/tools/orun_cihaz_kontrol.py" oku --port "$PORT" --out "$TMP/once.json" \
+python3 "$REPO/tools/orun_cihaz_kontrol.py" oku --port "$PORT" --out "$TMP/once.json" --deneme 3 \
   || fail "Cihaz okunamadı. Kabloyu çıkarıp tak, tekrar dene."
 KIND=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['kind'])" "$TMP/once.json")
 ENV=$(env_for "$KIND") || fail "Bilinmeyen cihaz türü: $KIND"
@@ -110,18 +110,78 @@ if [[ $YES -eq 0 ]]; then
   [[ "$ans" == e || "$ans" == E ]] || { echo "Vazgeçildi; cihaza dokunulmadı."; exit 0; }
 fi
 
+# İlerleme: komut arka planda çalışır, her saniye tek satır güncellenir.
+# Derleme: derlenen dosya sayısı; önceki tam derlemenin sayısı biliniyorsa
+# yüzde. Yükleme: aşama ve süre (USB yüklemesi genelde ~35 sn).
+COUNT_DIR="$HOME/.cache/orun"
+COUNT_FILE="$COUNT_DIR/derle-$ENV.adet"
+mmss() { printf '%d:%02d' $(($1 / 60)) $(($1 % 60)); }
+# [########------------] %40   (tahminse: ~%40)
+bar() {
+  local pct=$1 approx=${2:-} w=20 f
+  (( pct < 0 )) && pct=0; (( pct > 100 )) && pct=100
+  f=$((pct * w / 100))
+  printf '[%s%s] %s%%%d' "$(printf '%*s' "$f" '' | tr ' ' '#')" "$(printf '%*s' $((w - f)) '' | tr ' ' '-')" "$approx" "$pct"
+}
+# İlk derlemede toplam dosya sayısı bilinmez: tahmin kullanılır ("~").
+FIRST_BUILD_GUESS=250
+UPLOAD_GUESS_S=35
+progress_run() {
+  local kind="$1"; shift
+  local step="$TMP/$kind.log" known=0 total n pct el stage rc approx=""
+  : > "$step"
+  [[ -r "$COUNT_FILE" ]] && known=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
+  [[ "$known" =~ ^[0-9]+$ ]] || known=0
+  total=$known
+  if (( total <= 0 )); then total=$FIRST_BUILD_GUESS; approx="~"; fi
+  "$@" > "$step" 2>&1 &
+  local pid=$! start=$SECONDS
+  while kill -0 "$pid" 2>/dev/null; do
+    el=$((SECONDS - start))
+    if [[ "$kind" == derle ]]; then
+      n=$(grep -c '^Compiling ' "$step" || true)
+      pct=$((n * 100 / total)); (( pct > 97 )) && pct=97
+      if grep -q '^Linking ' "$step"; then pct=98; stage="birleştiriliyor"
+      else stage="$n/$approx$total dosya"; fi
+    else
+      pct=$((el * 100 / UPLOAD_GUESS_S)); (( pct > 95 )) && pct=95
+      if grep -q 'Device programmed' "$step"; then pct=100; stage="bitti, cihaz yeniden başlıyor"
+      elif grep -q 'Activating new firmware' "$step"; then pct=97; stage="etkinleştiriliyor"
+      elif grep -q 'Upgrading target' "$step"; then stage="yazılıyor"
+      else (( pct > 10 )) && pct=10; stage="hazırlanıyor"; fi
+      approx="~"
+    fi
+    printf '\r  %s %s · %s          ' "$(bar "$pct" "$approx")" "$stage" "$(mmss "$el")"
+    sleep 1
+  done
+  if wait "$pid"; then rc=0; else rc=$?; fi
+  cat "$step" >> "$LOG"
+  el=$((SECONDS - start))
+  if [[ "$kind" == derle && $rc -eq 0 ]]; then
+    n=$(grep -c '^Compiling ' "$step" || true)
+    # Yalnız tam derlemenin sayısı saklanır (artımlı derleme az dosya derler).
+    if (( n > known && n >= 50 )); then mkdir -p "$COUNT_DIR"; echo "$n" > "$COUNT_FILE"; fi
+    printf '\r  %s derleme bitti · %s          \n' "$(bar 100)" "$(mmss "$el")"
+  elif [[ $rc -eq 0 ]]; then
+    printf '\r  %s yükleme bitti · %s          \n' "$(bar 100)" "$(mmss "$el")"
+  else
+    printf '\n'
+  fi
+  return "$rc"
+}
+
 # --- 4. Derle ---
 say "Derleniyor ($ENV)"
 { echo "=== $(date -Is) $ENV $SHA port=$PORT"; } >> "$LOG"
-if ! "$PIO" run -d "$FW" -e "$ENV" >> "$LOG" 2>&1; then
+if ! progress_run derle "$PIO" run -d "$FW" -e "$ENV"; then
   tail -n 30 "$LOG"
   fail "Derleme başarısız; cihaza hiçbir şey yüklenmedi. Ayrıntı: $LOG"
 fi
-grep -E "^(RAM|Flash):" "$LOG" | tail -2 || true
+grep -E "^(RAM|Flash):" "$TMP/derle.log" | tail -2 || true
 
 # --- 5. Yükle ---
 say "Yükleniyor (USB)"
-if ! "$PIO" run -d "$FW" -e "$ENV" -t upload --upload-port "$PORT" >> "$LOG" 2>&1; then
+if ! progress_run yukle "$PIO" run -d "$FW" -e "$ENV" -t upload --upload-port "$PORT"; then
   tail -n 30 "$LOG"
   fail "Yükleme başarısız. Cihazı çıkarıp takmadan TEKRAR DENEME; bu çıktıyı Claude'a gönder. Ayrıntı: $LOG"
 fi

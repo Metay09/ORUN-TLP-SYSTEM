@@ -52,6 +52,20 @@ def parse(lines: list[str]) -> dict:
     return out
 
 
+def complete(info: dict) -> bool:
+    """Did the device tell everything the comparison needs?
+
+    Right after a restart the tracker's record store may still be busy for a
+    few seconds; it then prints next_seq=0 ("not known yet"), which is not a
+    real sequence. Such a reading is asked again rather than compared.
+    """
+    if not info.get("kind"):
+        return False
+    if info["kind"] == "tracker" and info.get("store_inc") and info.get("next_seq", 0) == 0:
+        return False
+    return True
+
+
 def compare(before: dict, after: dict) -> list[tuple[bool, str]]:
     """(ok, Turkish line) for each thing that must have survived the update."""
     res: list[tuple[bool, str]] = []
@@ -70,7 +84,11 @@ def compare(before: dict, after: dict) -> list[tuple[bool, str]]:
         if before.get("store_inc"):
             need(after.get("store_inc") == before.get("store_inc"), "Kayıt hafızası aynı (silinmedi)")
             need(after.get("store_ready") == "yes" and after.get("store_faulted") == "no", "Kayıt hafızası hazır")
-            need(after.get("next_seq", -1) >= before.get("next_seq", 0), "Kayıt sırası geri gitmedi")
+            b, a_ = before.get("next_seq", 0), after.get("next_seq", 0)
+            if a_ == 0:
+                need(False, f"Kayıt sırası okunamadı (hafıza meşgul; önce {b})")
+            else:
+                need(a_ >= b, f"Kayıt sırası geri gitmedi ({b} → {a_})")
     elif before.get("kind") == "gateway":
         need(after.get("custody_region") == "READY" or after.get("custody_region") == before.get("custody_region"),
              f"Gateway belleği hazır ({after.get('custody_region')})")
@@ -118,23 +136,30 @@ def main() -> int:
     c.add_argument("sonra")
     a = ap.parse_args()
     if a.cmd == "oku":
-        last = ""
+        last, best = "", None
         for i in range(a.deneme):
             try:
                 info = parse(read(a.port))
                 if info.get("kind"):
-                    with open(a.out, "w") as f:
-                        json.dump(info, f)
-                    print(f"Cihaz: {'Tasma' if info['kind'] == 'tracker' else 'Gateway'} {info.get('id')}"
-                          + (f" · yazılım {info['fw']}" if info.get("fw") else ""))
-                    return 0
-                last = "cihaz kendini tanıtmadı"
+                    best = info
+                    if complete(info):
+                        break
+                    last = "kayıt hafızası meşgul"
+                else:
+                    last = "cihaz kendini tanıtmadı"
             except Exception as exc:  # port henüz yok / meşgul
                 last = str(exc)
             if i + 1 < a.deneme:
                 time.sleep(2)
-        print(f"DUR: cihaz okunamadı ({last})", file=sys.stderr)
-        return 2
+        if best is None:
+            print(f"DUR: cihaz okunamadı ({last})", file=sys.stderr)
+            return 2
+        # Eksik okuma da yazılır; karşılaştırma eksik kalanı SORUN olarak gösterir.
+        with open(a.out, "w") as f:
+            json.dump(best, f)
+        print(f"Cihaz: {'Tasma' if best['kind'] == 'tracker' else 'Gateway'} {best.get('id')}"
+              + (f" · yazılım {best['fw']}" if best.get("fw") else ""))
+        return 0
     with open(a.once) as f:
         before = json.load(f)
     with open(a.sonra) as f:
