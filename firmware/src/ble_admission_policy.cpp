@@ -16,6 +16,20 @@ void BleAdmissionPolicy::startFreshWindow(uint32_t now) {
   next_action_at_ms_ = now;
 }
 
+void BleAdmissionPolicy::openFor(uint32_t now, uint32_t duration_ms) {
+  if (duration_ms == 0) return;
+  const uint32_t until = now + duration_ms;
+  if (state_ == State::kOpen) {
+    if (connected_) return;
+    if (monotonic::reached(until, close_at_ms_)) close_at_ms_ = until;
+    return;
+  }
+  state_ = State::kOpen;
+  connected_ = false;
+  close_at_ms_ = until;
+  next_action_at_ms_ = now;  // (re)start advertising right away
+}
+
 void BleAdmissionPolicy::confirmClosed() {
   if (state_ == State::kClosing) state_ = State::kClosed;
 }

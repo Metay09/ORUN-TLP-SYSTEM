@@ -48,9 +48,11 @@ bool validV2Body(const uint8_t* bytes, V2Record& record) {
   return true;
 }
 
+// v4 and v8 share one 68-byte layout; v8 holds ble_window_seconds at 44.
 bool validV4Body(const uint8_t* bytes, TokenizedRecord& record) {
   if (jf::get32(bytes) != kMagic) return false;
-  if (bytes[4] != kV4Version || bytes[5] || bytes[6] || bytes[7])
+  const bool v8 = bytes[4] == kV8Version;
+  if ((bytes[4] != kV4Version && !v8) || bytes[5] || bytes[6] || bytes[7])
     return false;
 
   const uint64_t generation = jf::get64(bytes + 8);
@@ -59,8 +61,10 @@ bool validV4Body(const uint8_t* bytes, TokenizedRecord& record) {
       jf::get16(bytes + 18) != 0)
     return false;
   if (bytes[30] != 0 || bytes[31] != 0) return false;
-  for (uint32_t i = 0; i < kV4ReservedSize; ++i)
-    if (bytes[kV4ReservedOffset + i] != 0) return false;
+  const uint32_t reserved = v8 ? kV8ReservedOffset : kV4ReservedOffset;
+  const uint32_t reserved_size = v8 ? kV8ReservedSize : kV4ReservedSize;
+  for (uint32_t i = 0; i < reserved_size; ++i)
+    if (bytes[reserved + i] != 0) return false;
 
   if (jf::get32(bytes + kV4CrcOffset) != jf::crc32(bytes, kV4CrcOffset))
     return false;
@@ -72,7 +76,9 @@ bool validV4Body(const uint8_t* bytes, TokenizedRecord& record) {
   TokenizedRecord decoded(
       generation,
       Config(jf::get32(bytes + 20), jf::get32(bytes + 24), bytes[28],
-             bytes[29]),
+             bytes[29],
+             v8 ? jf::get16(bytes + kV8BleWindowOffset)
+                : kDefaultBleWindowSeconds),
       StateToken(incarnation, revision));
   record = decoded;
   return true;
@@ -108,7 +114,7 @@ bool unsupportedNewerDiscriminator(const uint8_t* bytes) {
   if (jf::get32(bytes) != kMagic) return false;
   const uint8_t version = bytes[4];
   if (version == kVersion || version == kV2Version || version == kV4Version ||
-      version == 0xFF)
+      version == kV8Version || version == 0xFF)
     return false;
   return bytes[5] == 0 && bytes[6] == 0 && bytes[7] == 0 &&
          (version & 0x03U) == 0;
@@ -250,6 +256,14 @@ void encodeV4(const TokenizedRecord& record, uint8_t* bytes) {
   jf::put32(bytes + kV4CommitOffset, kCommit);
 }
 
+void encodeV8(const TokenizedRecord& record, uint8_t* bytes) {
+  encodeV4(record, bytes);
+  bytes[4] = kV8Version;
+  jf::put16(bytes + kV8BleWindowOffset, record.config.ble_window_seconds);
+  jf::put32(bytes + kV4CrcOffset, jf::crc32(bytes, kV4CrcOffset));
+  jf::put32(bytes + kV4CommitOffset, kCommit);
+}
+
 bool decodeV4Body(const uint8_t* bytes, TokenizedRecord& record) {
   if (bytes == nullptr) return false;
   TokenizedRecord decoded;
@@ -334,8 +348,8 @@ bool inspectPagePrefix(const uint8_t* bytes, size_t size,
     return true;
   }
 
-  // Exact supported v4: same evidence shapes as v2 at the v4 offsets.
-  if (magic_matches && version == kV4Version) {
+  // Exact supported v4/v8: same evidence shapes as v2 at the v4 offsets.
+  if (magic_matches && (version == kV4Version || version == kV8Version)) {
     if (size < kV4PagePrefixSize) {
       inspection.evidence = PageEvidence::kSupportedCorrupt;
       return true;

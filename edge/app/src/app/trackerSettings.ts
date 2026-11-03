@@ -18,6 +18,15 @@ export function servicesCommand(s: ServiceChoice): string {
   return `APP SERVICES ${letters || "NONE"}`;
 }
 
+/** 4c-1a: rapordan sonra Bluetooth (saniye, 0 = kapalı); tasmanın sınırı 300. */
+export const BLE_WINDOW = { maxS: 300 } as const;
+export const BLE_WINDOW_CHOICES = [0, 15, 30, 60, 120, 300];
+export function bleWindowCommand(seconds: number): string {
+  if (!Number.isInteger(seconds) || seconds < 0 || seconds > BLE_WINDOW.maxS)
+    throw new Error("Bluetooth süresi 0 ile 300 saniye arasında olmalı.");
+  return `APP BLE WINDOW ${seconds}`;
+}
+
 export function intervalCommand(seconds: number): string {
   if (!Number.isInteger(seconds) || seconds < INTERVAL.minS || seconds > INTERVAL.maxS)
     throw new Error("Rapor aralığı 1 dakika ile 12 gün arasında olmalı.");
@@ -51,14 +60,17 @@ export async function applySetting(con: LineConsole, line: string): Promise<"app
  * 4b: write what is waiting (wanted ≠ on the device) over USB. `has` is what
  * the tracker reported just now. Returns the values the tracker accepted.
  */
-export async function writeWaitingUsb(
-  con: LineConsole, wanted: { interval_s?: number; tracking?: boolean; relay?: boolean },
-  has: { interval_s?: number; tracking?: boolean; relay?: boolean },
-): Promise<{ interval_s?: number; tracking?: boolean; relay?: boolean }> {
-  const done: { interval_s?: number; tracking?: boolean; relay?: boolean } = {};
+type Values = { interval_s?: number; tracking?: boolean; relay?: boolean; ble_window_s?: number };
+
+export async function writeWaitingUsb(con: LineConsole, wanted: Values, has: Values): Promise<Values> {
+  const done: Values = {};
   if (wanted.interval_s !== undefined && wanted.interval_s !== has.interval_s) {
     await applySetting(con, intervalCommand(wanted.interval_s));
     done.interval_s = wanted.interval_s;
+  }
+  if (wanted.ble_window_s !== undefined && wanted.ble_window_s !== has.ble_window_s) {
+    await applySetting(con, bleWindowCommand(wanted.ble_window_s));
+    done.ble_window_s = wanted.ble_window_s;
   }
   const svcWanted = (wanted.tracking !== undefined && wanted.tracking !== has.tracking) ||
                     (wanted.relay !== undefined && wanted.relay !== has.relay);

@@ -20,7 +20,8 @@ bool sameConfig(const config_format::Config& a,
   return a.tracking_interval_seconds == b.tracking_interval_seconds &&
          a.battery_capacity_mah == b.battery_capacity_mah &&
          a.service_mode == b.service_mode &&
-         a.requested_services == b.requested_services;
+         a.requested_services == b.requested_services &&
+         a.ble_window_seconds == b.ble_window_seconds;
 }
 
 // Service intent rules of schema v4 (a decoded v2 record is always AUTO/0).
@@ -40,6 +41,7 @@ bool validCandidate(const config_format::Config& candidate) {
   return candidate.tracking_interval_seconds > 0 &&
          candidate.tracking_interval_seconds <=
              gnss_config::kMaxTrackingIntervalSeconds &&
+         candidate.ble_window_seconds <= config_format::kMaxBleWindowSeconds &&
          validServiceIntent(candidate);
 }
 
@@ -457,7 +459,7 @@ bool ConfigStore::recover() {
 bool ConfigStore::writeFreshBaseline(
     const config_format::TokenizedRecord& record) {
   uint8_t bytes[config_format::kWriteRecordSize];
-  config_format::encodeV4(record, bytes);
+  config_format::encodeV8(record, bytes);
 
   const uint32_t offset = 0;
   const FlashOpResult body =
@@ -587,7 +589,7 @@ bool ConfigStore::startSave(const config_format::Config& candidate) {
 
   const config_format::TokenizedRecord record(
       pending_generation_, pending_config_, pending_token_);
-  config_format::encodeV4(record, blob_);
+  config_format::encodeV8(record, blob_);
 
   job_ = Job::kErase;
   blob_step_ = BlobStep::kBody;

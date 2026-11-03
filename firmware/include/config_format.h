@@ -78,7 +78,29 @@ static_assert(kV4ReservedOffset + kV4ReservedSize == kV4CrcOffset,
 static_assert(kV4ReservedOffset <= 48 && 52 <= kV4CrcOffset,
               "v4 keeps bytes 48..51 inside the zero reserved room");
 
+// ---- Tokenized v8 (4c-1a, 2026-11-04): v4 plus the Bluetooth window. ----
+// Same physical layout as v4 (68-byte sealed record, CRC at 60, commit at
+// 64, retire word at 68), so the v4 power-cut qualification carries over.
+// Next value of the reserved multiple-of-four version namespace. The first
+// field of the v4 reserved room becomes ble_window_seconds (u16 at 44);
+// bytes 46..59 stay reserved zeros (48..51 keep the v2 discriminator). A v2
+// or v4 record decodes with the default window. v8 firmware reads v2, v4
+// and v8 and writes only v8.
+constexpr uint8_t kV8Version = 8;
+constexpr uint32_t kV8BleWindowOffset = 44;
+constexpr uint32_t kV8ReservedOffset = 46;
+constexpr uint32_t kV8ReservedSize = 14;
+static_assert(kV8ReservedOffset + kV8ReservedSize == kV4CrcOffset,
+              "v8 reserved room ends at the CRC");
+static_assert(kV8ReservedOffset <= 48 && 52 <= kV4CrcOffset,
+              "v8 keeps bytes 48..51 inside the zero reserved room");
+// Seconds the Bluetooth stays open (for a phone to connect) after every
+// report; 0 = off. The boot window and connected sessions are unchanged.
+constexpr uint16_t kDefaultBleWindowSeconds = 30;
+constexpr uint16_t kMaxBleWindowSeconds = 300;
+
 // The schema every save and every fresh baseline writes.
+constexpr uint8_t kWriteVersion = kV8Version;
 constexpr uint32_t kWriteRecordSize = kV4RecordSize;
 constexpr uint32_t kWriteBodyAndCrcSize = kV4BodyAndCrcSize;
 constexpr uint32_t kWriteCommitOffset = kV4CommitOffset;
@@ -104,17 +126,21 @@ struct Config {
   constexpr Config(uint32_t tracking_interval_seconds_value = 0,
                    uint32_t battery_capacity_mah_value = 0,
                    uint8_t service_mode_value = kServiceModeAuto,
-                   uint8_t requested_services_value = 0)
+                   uint8_t requested_services_value = 0,
+                   uint16_t ble_window_seconds_value = kDefaultBleWindowSeconds)
       : tracking_interval_seconds(tracking_interval_seconds_value),
         battery_capacity_mah(battery_capacity_mah_value),
         service_mode(service_mode_value),
-        requested_services(requested_services_value) {}
+        requested_services(requested_services_value),
+        ble_window_seconds(ble_window_seconds_value) {}
 
   uint32_t tracking_interval_seconds;
   uint32_t battery_capacity_mah;
   // v4 only. A decoded v2 record reads as AUTO with no requested services.
   uint8_t service_mode;
   uint8_t requested_services;
+  // v8 only. A decoded v2/v4 record reads as kDefaultBleWindowSeconds.
+  uint16_t ble_window_seconds;
 };
 
 struct StateToken {
@@ -230,6 +256,14 @@ bool decodeV2(const uint8_t* bytes, V2Record& record);
 void encodeV4(const TokenizedRecord& record, uint8_t* bytes);
 bool decodeV4Body(const uint8_t* bytes, TokenizedRecord& record);
 bool decodeV4(const uint8_t* bytes, TokenizedRecord& record);
+
+// ---- Tokenized v8 codec (what ConfigStore writes). ----
+// Same layout and programming order as v4; writes ble_window_seconds at 44.
+// decodeV4Body()/decodeV4() and the page classifier accept both v4 and v8
+// (the evidence names stay kV4*: "68-byte tokenized record"). A v8 value
+// above kMaxBleWindowSeconds decodes; ConfigStore treats it as semantically
+// invalid, like an out-of-range interval.
+void encodeV8(const TokenizedRecord& record, uint8_t* bytes);
 
 // Classifies the owned prefix of one ConfigStore page. At least
 // kV2PagePrefixSize bytes are required; a v4 page needs kV4PagePrefixSize

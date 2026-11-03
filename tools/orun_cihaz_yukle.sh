@@ -154,7 +154,7 @@ progress_run() {
       else (( pct > 10 )) && pct=10; stage="hazırlanıyor"; fi
       approx="~"
     fi
-    printf '\r  %s %s · %s          ' "$(bar "$pct" "$approx")" "$stage" "$(mmss "$el")"
+    printf '\r\033[K  %s %s · %s' "$(bar "$pct" "$approx")" "$stage" "$(mmss "$el")"
     sleep 1
   done
   if wait "$pid"; then rc=0; else rc=$?; fi
@@ -164,9 +164,9 @@ progress_run() {
     n=$(grep -c '^Compiling ' "$step" || true)
     # Yalnız tam derlemenin sayısı saklanır (artımlı derleme az dosya derler).
     if (( n > known && n >= 50 )); then mkdir -p "$COUNT_DIR"; echo "$n" > "$COUNT_FILE"; fi
-    printf '\r  %s derleme bitti · %s          \n' "$(bar 100)" "$(mmss "$el")"
+    printf '\r\033[K  %s derleme bitti · %s\n' "$(bar 100)" "$(mmss "$el")"
   elif [[ $rc -eq 0 ]]; then
-    printf '\r  %s yükleme bitti · %s          \n' "$(bar 100)" "$(mmss "$el")"
+    printf '\r\033[K  %s yükleme bitti · %s\n' "$(bar 100)" "$(mmss "$el")"
   else
     printf '\n'
   fi

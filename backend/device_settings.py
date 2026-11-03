@@ -35,11 +35,17 @@ def _flag(v: object) -> bool:
     return isinstance(v, bool)
 
 
+def _ble_window(v: object) -> bool:
+    # 4c-1a: saniye, 0 = kapalı; tasmanın sınırı (ConfigStore v8).
+    return isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 300
+
+
 # Bütün cihazlar için tek ayar listesi: ad -> doğrulama.
 SETTINGS: dict[str, Callable[[object], bool]] = {
     "interval_s": _interval,   # rapor aralığı (saniye), tasmanın sınırları
     "tracking": _flag,         # konum takibi hizmeti
     "relay": _flag,            # aktarma hizmeti
+    "ble_window_s": _ble_window,  # rapordan sonra Bluetooth (saniye, 0 = kapalı)
 }
 
 

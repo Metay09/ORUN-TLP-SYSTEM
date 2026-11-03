@@ -390,7 +390,7 @@ int main() {
     memset(flash.bytes.data(), 0, kV2PagePrefixSize);
     flash.bytes[0] = 0x4F; flash.bytes[1] = 0x52;
     flash.bytes[2] = 0x43; flash.bytes[3] = 0x31;
-    flash.bytes[4] = 8;  // deployable future namespace (4 is v4 since 2026-10-10)
+    flash.bytes[4] = 12;  // deployable future namespace (4 = v4, 8 = v8 since 2026-11-04)
     // Final classifier word must be non-FF; memset(0) satisfies it.
     DeterministicIncarnation rng;
     ConfigStore store(flash, &rng);

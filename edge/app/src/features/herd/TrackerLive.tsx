@@ -11,7 +11,7 @@ import {
   batteryWord, buildStatus, gnssWord, readRawUsb, svcWord, type TrackerStatus,
 } from "../../app/trackerStatus.ts";
 import { Dialog, KV } from "../../ds/components.tsx";
-import { pendingKeys, valuesFromStatus } from "../../app/deviceSettings.ts";
+import { pendingKeys, valuesFromStatus, bleWindowWord } from "../../app/deviceSettings.ts";
 import { deliverUsb } from "../../app/deliver.ts";
 import { deviceOps, deviceSettings, pilotOpResult, pilotRecordFence, pilotReportSettings } from "../../app/ownerAccountPilotRuntime.ts";
 import { TrackerBle } from "../../platform/trackerBle.ts";
@@ -156,6 +156,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
                 ? "Aynı" : `Farklı (hesapta ${plan.record.areas} alan · ${plan.record.vertices} köşe)`}</KV>
             )}
             {st.services && <KV k="Aktarma">{svcWord(st.services.relay)}</KV>}
+            {!isGateway && typeof st.bleWindowS === "number" && <KV k="Rapordan sonra Bluetooth">{bleWindowWord(st.bleWindowS)}</KV>}
             {st.storage && <KV k="Kayıt hafızası">{`${fmt.num(st.storage.count)} / ${fmt.num(st.storage.capacity)}`}</KV>}
             {st.firmware && <KV k="Yazılım">{st.firmware}</KV>}
             {st.uptimeMs !== null && <KV k="Açık kaldığı süre">{fmt.duration(st.uptimeMs)}</KV>}

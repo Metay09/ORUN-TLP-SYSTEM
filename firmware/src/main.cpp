@@ -945,10 +945,12 @@ void drainApplicationResponse() {
 void startUsbConfigMutation(orun_tlp::ConfigMutationKind kind,
                             uint32_t value, uint8_t service_mode = 0,
                             uint8_t requested_services = 0) {
+  const bool ble_window = kind == orun_tlp::ConfigMutationKind::kSetBleWindow;
   const orun_tlp::ConfigMutationRequest request(
       orun_tlp::ApplicationRequester::kUsb, next_usb_application_request_id,
       orun_tlp::defaultApplicationAccess(orun_tlp::ApplicationRequester::kUsb),
-      kind, value, service_mode, requested_services);
+      kind, ble_window ? 0U : value, service_mode, requested_services,
+      ble_window ? value : 0U);
   const auto result = config_mutations.submit(request);
   if (result == orun_tlp::ConfigMutationSubmitResult::kBusy) {
     Serial.println(F("APP BUSY"));
@@ -1357,6 +1359,19 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
 
   product_period_started_ms = now;
   product_period_baseline = current;
+
+  // 4c-1a: Bluetooth open for a while after each report so a phone can
+  // connect (setting ble_window_seconds, 0 = off). A connected session is
+  // never cut; the boot window and the Gateway's always-on BLE are as before.
+  const uint16_t ble_window_s = config_store.config().ble_window_seconds;
+  if (ble_window_s > 0 && ble_initial_start == BleInitialStart::kOk &&
+      !ble_admission.alwaysAvailable()) {
+    const bool was_closed = !ble_admission.isOpen();
+    ble_admission.openFor(now, static_cast<uint32_t>(ble_window_s) * 1000UL);
+    if (was_closed)
+      Serial.printf("BLE open after report s=%u\n",
+                    static_cast<unsigned>(ble_window_s));
+  }
 }
 
 void printU64HexTo(char (&out)[17], uint64_t value) {

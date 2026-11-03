@@ -411,6 +411,11 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_config_store_v4.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/config_store_v4"
 "$test_dir/config_store_v4"
+g++ "${portable_flags[@]}" -Ifirmware/tests/m7 firmware/tests/m7/test_config_store_v8.cpp \
+  firmware/src/config_store.cpp firmware/src/config_format.cpp \
+  firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/config_store_v8"
+"$test_dir/config_store_v8"
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p5_config_store.cpp \
   firmware/src/config_store.cpp firmware/src/config_format.cpp \
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \

@@ -58,17 +58,28 @@ bool parseUsbApplicationQuery(const char* text, uint8_t length,
 UsbConfigCommandParse parseUsbConfigCommand(const char* text, uint8_t length,
                                             ConfigMutationKind* kind,
                                             uint32_t* value) {
-  static const char kPrefix[] = "APP INTERVAL ";
-  constexpr uint8_t kPrefixLength = sizeof(kPrefix) - 1;
-  if (text == nullptr || kind == nullptr || value == nullptr ||
-      length < kPrefixLength || memcmp(text, kPrefix, kPrefixLength) != 0) {
+  static const char kInterval[] = "APP INTERVAL ";
+  // 4c-1a: seconds Bluetooth stays open after each report (0 = off).
+  static const char kBleWindow[] = "APP BLE WINDOW ";
+  if (text == nullptr || kind == nullptr || value == nullptr)
+    return UsbConfigCommandParse::kNotConfigCommand;
+  ConfigMutationKind parsed_kind = ConfigMutationKind::kSetTrackingInterval;
+  uint8_t prefix_length = 0;
+  if (length >= sizeof(kInterval) - 1 &&
+      memcmp(text, kInterval, sizeof(kInterval) - 1) == 0) {
+    prefix_length = sizeof(kInterval) - 1;
+  } else if (length >= sizeof(kBleWindow) - 1 &&
+             memcmp(text, kBleWindow, sizeof(kBleWindow) - 1) == 0) {
+    prefix_length = sizeof(kBleWindow) - 1;
+    parsed_kind = ConfigMutationKind::kSetBleWindow;
+  } else {
     return UsbConfigCommandParse::kNotConfigCommand;
   }
 
   // Strict unsigned decimal: at least one digit, nothing else, no overflow.
-  if (length == kPrefixLength) return UsbConfigCommandParse::kMalformed;
+  if (length == prefix_length) return UsbConfigCommandParse::kMalformed;
   uint32_t parsed = 0;
-  for (uint8_t index = kPrefixLength; index < length; ++index) {
+  for (uint8_t index = prefix_length; index < length; ++index) {
     const char digit = text[index];
     if (digit < '0' || digit > '9') return UsbConfigCommandParse::kMalformed;
     const uint32_t increment = static_cast<uint32_t>(digit - '0');
@@ -77,7 +88,7 @@ UsbConfigCommandParse parseUsbConfigCommand(const char* text, uint8_t length,
     parsed = parsed * 10U + increment;
   }
 
-  *kind = ConfigMutationKind::kSetTrackingInterval;
+  *kind = parsed_kind;
   *value = parsed;
   return UsbConfigCommandParse::kOk;
 }
@@ -284,6 +295,21 @@ void printUsbConfigMutationResult(const ConfigMutationResult& result) {
     return;
   }
 
+  if (result.kind == ConfigMutationKind::kSetBleWindow) {
+    if (result.token_valid)
+      Serial.printf("APP SET id=%lu code=%s ble_window_seconds=%u "
+                    "token=VALID revision=%lu\n",
+                    static_cast<unsigned long>(result.request_id), code,
+                    static_cast<unsigned>(result.config.ble_window_seconds),
+                    static_cast<unsigned long>(result.token.revision));
+    else
+      Serial.printf("APP SET id=%lu code=%s ble_window_seconds=%u "
+                    "token=UNAVAILABLE\n",
+                    static_cast<unsigned long>(result.request_id), code,
+                    static_cast<unsigned>(result.config.ble_window_seconds));
+    return;
+  }
+
   if (result.token_valid) {
     Serial.printf(
         "APP SET id=%lu code=%s tracking_interval_seconds=%lu "
@@ -325,11 +351,13 @@ void printUsbApplicationResponse(const ApplicationResponse& response) {
       // Preserve M7P7D's established USB GET_CONFIG output.
       Serial.printf(
           "APP RESULT id=%lu code=OK config_backend_ready=%s source=%s "
-          "tracking_interval_seconds=%lu battery_capacity_mah=%lu\n",
+          "tracking_interval_seconds=%lu battery_capacity_mah=%lu "
+          "ble_window_seconds=%u\n",
           static_cast<unsigned long>(response.request_id),
           p.backend_ready != 0 ? "yes" : "no", source,
           static_cast<unsigned long>(p.tracking_interval_seconds),
-          static_cast<unsigned long>(p.battery_capacity_mah));
+          static_cast<unsigned long>(p.battery_capacity_mah),
+          static_cast<unsigned>(p.ble_window_seconds));
       return;
     }
 

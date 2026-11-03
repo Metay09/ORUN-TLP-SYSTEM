@@ -47,10 +47,12 @@ int main() {
   config.payload.config.has_committed_record = 0;
   config.payload.config.tracking_interval_seconds = 180;
   config.payload.config.battery_capacity_mah = 0;
+  config.payload.config.ble_window_seconds = 30;
   printUsbApplicationResponse(config);
   assert(Serial.output ==
          "APP RESULT id=17 code=OK config_backend_ready=yes source=default "
-         "tracking_interval_seconds=180 battery_capacity_mah=0\n");
+         "tracking_interval_seconds=180 battery_capacity_mah=0 "
+         "ble_window_seconds=30\n");
 
   Serial.output.clear();
   ApplicationResponse device;
@@ -179,6 +181,14 @@ int main() {
     assert(value == UINT32_MAX);
     assert(parse_config("APP INTERVAL 0") == UsbConfigCommandParse::kOk);
     assert(value == 0);  // range is the owner's decision, not the parser's
+    // 4c-1a: Bluetooth window after each report.
+    assert(parse_config("APP BLE WINDOW 30") == UsbConfigCommandParse::kOk);
+    assert(kind == ConfigMutationKind::kSetBleWindow && value == 30);
+    assert(parse_config("APP BLE WINDOW 0") == UsbConfigCommandParse::kOk);
+    assert(kind == ConfigMutationKind::kSetBleWindow && value == 0);
+    assert(parse_config("APP BLE WINDOW ") == UsbConfigCommandParse::kMalformed);
+    assert(parse_config("APP BLE WINDOW 3s") == UsbConfigCommandParse::kMalformed);
+    assert(parse_config("APP BLE WINDOW") == UsbConfigCommandParse::kNotConfigCommand);
 
     // Recognized command, unusable argument: never silently reinterpreted.
     value = 77;
@@ -220,6 +230,19 @@ int main() {
 
     // Without a VALID token nothing token-like is printed, and the interval
     // shown is the store's value, not the requested one.
+    ConfigMutationResult window;
+    window.request_id = 42;
+    window.kind = ConfigMutationKind::kSetBleWindow;
+    window.outcome = ConfigMutationOutcome::kApplied;
+    window.token_valid = true;
+    window.token = config_format::StateToken(0x1122334455667788ULL, 3);
+    window.config = config_format::Config(600, 0, 0, 0, 45);
+    Serial.output.clear();
+    printUsbConfigMutationResult(window);
+    assert(Serial.output ==
+           "APP SET id=42 code=APPLIED ble_window_seconds=45 "
+           "token=VALID revision=3\n");
+
     ConfigMutationResult unknown;
     unknown.request_id = 41;
     unknown.outcome = ConfigMutationOutcome::kOutcomeUnknown;

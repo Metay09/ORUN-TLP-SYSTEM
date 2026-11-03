@@ -268,3 +268,38 @@ brown-out, no SoftDevice-async power cut) carry over unchanged.
 - Services in GET_CONFIG/BLE status, profiles, Gateway, sensor/valve or
   location-source intent.
 - Any change to GET_CONFIG bytes, TLP v1 or other partitions.
+
+## 13. Schema v8: Bluetooth window after each report (4c-1a, 2026-11-04)
+
+Owner decision 2026-11-04: the tracker opens Bluetooth for a while after every
+report so a phone can connect, and that time is a setting.
+
+- `version = 8`, the next value of the multiple-of-four namespace. Same
+  physical layout as v4: 68-byte sealed record, CRC at 60, commit at 64,
+  retire word at 68, owned prefix 72 bytes. The section 9 power-cut
+  qualification therefore carries over (section 7).
+- Bytes 44..45: `ble_window_seconds` (u16, big-endian). `0` = off; the
+  configuration owner admits `0..300`, anything above is semantic
+  corruption evidence like an out-of-range interval.
+- Bytes 46..59 stay reserved zeros, so 48..51 keep the v2 discriminator.
+- A decoded v2 or v4 record yields `ble_window_seconds = 30` (default).
+  Nothing is written at boot because the recovered record is older; every
+  save writes v8. Committed v4 and v8 pages share the lineage rule of
+  section 5 (the evidence names stay `kV4*`: "68-byte tokenized record").
+- Going back: firmware that knows only v2/v4 classifies a committed v8 page
+  as `UNSUPPORTED_NEWER` (section 6 behavior: defaults, maintenance, no
+  erase). Flashing v8-aware firmware again recovers the record unchanged.
+- Host tests: `firmware/tests/m7/test_config_store_v8.cpp` (codec layout
+  against v4, defaults, reserved zeros, classifier, store lineage v4 → v8,
+  range, unchanged no-op, 0 = off across reboot). The earlier tests that
+  used 8 as the "future version" now use 12.
+- Surfaces: USB `APP BLE WINDOW <s>` (`APP SET … ble_window_seconds=…`),
+  `APP CONFIG?` appends `ble_window_seconds=`, and the BLE GET_CONFIG
+  response appends it as LE16 at payload 10..11 (10 → 12 bytes, first 10
+  unchanged, one frame). This supersedes the section 12 "no GET_CONFIG byte
+  change" for this field only.
+- Runtime: at the end of every tracker report period, when the window is
+  nonzero and BLE started, `BleAdmissionPolicy::openFor` opens a closed
+  window (advertising starts at once, `BLE open after report s=…`) or extends
+  an open one; a connected client is never cut and the disconnect window is
+  unchanged. Gateway BLE stays always on.

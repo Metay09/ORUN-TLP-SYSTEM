@@ -142,17 +142,18 @@ int main() {
     uint8_t out[bat::kMaxFrameSize];
     uint8_t out_len = 0;
     assert(peekCurrent(transport, out, out_len));
-    assert(out_len == 18);  // 8-byte header + 10-byte GET_CONFIG response.
+    assert(out_len == 20);  // 8-byte header + 12-byte GET_CONFIG response.
     assert(out[0] == 0x01);  // transport version.
     assert(out[1] == 0x81);  // GET_CONFIG response.
     assert(out[2] == (bat::kFlagStart | bat::kFlagEnd));
     assert(out[3] == 0);  // single-frame response starts at fragment 0.
     assert(readLE16(out + 4) == 0x1234);  // echoed peer correlation id.
-    assert(readLE16(out + 6) == 10);      // logical payload length.
+    assert(readLE16(out + 6) == 12);      // logical payload length.
     assert(out[8] == 0x00);               // application status OK.
     assert(out[9] == bat::kConfigFlagBackendReady);  // ready, no stored record.
     assert(readLE32(out + 10) == 180);    // default tracking_interval_seconds.
     assert(readLE32(out + 14) == 0);      // default battery_capacity_mah.
+    assert(readLE16(out + 18) == 30);     // 4c-1a default Bluetooth window.
     assert(flash.program_calls == 0);
     assert(flash.erase_calls == 0);
   }
@@ -175,7 +176,7 @@ int main() {
     uint8_t out[bat::kMaxFrameSize];
     uint8_t out_len = 0;
     assert(peekCurrent(transport, out, out_len));
-    assert(out_len == 18);
+    assert(out_len == 20);
     assert(out[9] ==
            (bat::kConfigFlagBackendReady | bat::kConfigFlagHasCommittedRecord));
     assert(readLE32(out + 10) == 247);

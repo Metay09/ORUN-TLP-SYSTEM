@@ -182,6 +182,9 @@ Before adding M7P7H families:
    headers. Domain owners/composition provide bounded typed snapshots.
 5. Unknown request types remain fail-closed/UNSUPPORTED.
 6. Existing GET_CONFIG UUIDs and wire bytes remain byte-compatible.
+   (4c-1a, 2026-11-04: the GET_CONFIG response grew from 10 to 12 bytes by
+   appending the ConfigStore Bluetooth-after-report window, LE16 seconds; the
+   first 10 bytes are unchanged and it still fits one 20-byte frame.)
 
 Exact C++ type names and new BLE type values are implementation details of
 M7P7H and are not frozen by this architecture document.

@@ -364,5 +364,60 @@ int main() {
     assert(late.isOpen() && late.alwaysAvailable());
   }
 
-  puts("M7P7B BLE admission policy checks (+SF5L6 always-available): PASS");
+  // 4c-1a: a short window after each report (setting, 0 = off).
+  {
+    BleAdmissionPolicy policy;
+    policy.begin(0);
+    assert(upd(policy, false, kNoClientTimeoutMs) == BleAdmissionAction::kClose);
+    policy.confirmClosed();
+    assert(policy.isClosed());
+    // 0 does nothing; a report reopens for exactly the setting.
+    const uint32_t t = kNoClientTimeoutMs + 1000U;
+    policy.openFor(t, 0);
+    assert(policy.isClosed());
+    policy.openFor(t, 30000U);
+    assert(policy.isOpen());
+    // Advertising is (re)started at once, then again only after the retry gap.
+    assert(updAdv(policy, false, t, false) == BleAdmissionAction::kStartAdvertising);
+    assert(updAdv(policy, false, t + 10U, true) == BleAdmissionAction::kNone);
+    assert(upd(policy, false, t + 29999U) == BleAdmissionAction::kNone);
+    assert(upd(policy, false, t + 30000U) == BleAdmissionAction::kClose);
+    policy.confirmClosed();
+
+    // While closing (stop not yet confirmed) a report reopens it.
+    const uint32_t u = t + 120000U;
+    policy.openFor(u, 30000U);
+    assert(upd(policy, false, u + 30000U) == BleAdmissionAction::kClose);
+    assert(policy.isClosing());
+    policy.openFor(u + 30001U, 15000U);
+    assert(policy.isOpen());
+    assert(upd(policy, false, u + 45000U) == BleAdmissionAction::kNone);
+    assert(upd(policy, false, u + 45001U) == BleAdmissionAction::kClose);
+
+    // A longer open window (boot, after a disconnect) is never shortened,
+    // a shorter one is extended.
+    BleAdmissionPolicy boot;
+    boot.begin(0);
+    boot.openFor(1000U, 30000U);
+    assert(upd(boot, false, kNoClientTimeoutMs - 1U) == BleAdmissionAction::kNone);
+    assert(upd(boot, false, kNoClientTimeoutMs) == BleAdmissionAction::kClose);
+    boot.confirmClosed();
+    boot.openFor(kNoClientTimeoutMs + 5U, 15000U);
+    boot.openFor(kNoClientTimeoutMs + 10005U, 15000U);   // next report
+    assert(upd(boot, false, kNoClientTimeoutMs + 25004U) == BleAdmissionAction::kNone);
+    assert(upd(boot, false, kNoClientTimeoutMs + 25005U) == BleAdmissionAction::kClose);
+
+    // A connected session is not touched; its disconnect gives the usual
+    // fresh window.
+    BleAdmissionPolicy session;
+    session.begin(0);
+    assert(upd(session, true, 1000U) == BleAdmissionAction::kNone);
+    session.openFor(2000U, 15000U);
+    assert(session.isConnected());
+    assert(upd(session, false, 5U * kNoClientTimeoutMs) == BleAdmissionAction::kNone);
+    assert(upd(session, false, 6U * kNoClientTimeoutMs) == BleAdmissionAction::kClose);
+  }
+
+  puts("M7P7B BLE admission policy checks (+SF5L6 always-available, "
+       "+4c-1a after-report window): PASS");
 }

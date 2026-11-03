@@ -38,6 +38,8 @@ enum class ConfigMutationKind : uint8_t {
   // service_mode + requested_services (ConfigStore v4). Only combinations
   // this runtime can run are admitted (service_intent.h).
   kSetServiceIntent = 2,
+  // Seconds Bluetooth stays open after each report (ConfigStore v8), 0 = off.
+  kSetBleWindow = 3,
 };
 
 struct ConfigMutationRequest {
@@ -48,14 +50,16 @@ struct ConfigMutationRequest {
       ConfigMutationKind kind_value,
       uint32_t tracking_interval_seconds_value,
       uint8_t service_mode_value = 0,
-      uint8_t requested_services_value = 0)
+      uint8_t requested_services_value = 0,
+      uint32_t ble_window_seconds_value = 0)
       : requester(requester_value),
         request_id(request_id_value),
         access(access_value),
         kind(kind_value),
         tracking_interval_seconds(tracking_interval_seconds_value),
         service_mode(service_mode_value),
-        requested_services(requested_services_value) {}
+        requested_services(requested_services_value),
+        ble_window_seconds(ble_window_seconds_value) {}
 
   ApplicationRequester requester;
   uint32_t request_id;
@@ -66,6 +70,8 @@ struct ConfigMutationRequest {
   // kSetServiceIntent
   uint8_t service_mode;
   uint8_t requested_services;
+  // kSetBleWindow
+  uint32_t ble_window_seconds;
 };
 
 enum class ConfigMutationSubmitResult : uint8_t {
