@@ -28,11 +28,11 @@ done
 say()  { printf '\n== %s\n' "$*"; }
 fail() { printf '\nDUR: %s\n' "$*" >&2; exit 1; }
 
-# Hangi cihaz türüne hangi yazılım (Y2'de ürün yazılımına geçer).
+# Hangi cihaz türüne hangi yazılım (Y2a: tek tasma, tek gateway yazılımı).
 env_for() {
   case "$1" in
-    tracker) echo rak4630_sf5l0_tracker_bench ;;
-    gateway) echo rak4630_sf5l0_gateway_bench ;;
+    tracker) echo rak4630_tracker ;;
+    gateway) echo rak4630_gateway ;;
     *) return 1 ;;
   esac
 }
@@ -100,6 +100,10 @@ python3 "$REPO/tools/orun_cihaz_kontrol.py" oku --port "$PORT" --out "$TMP/once.
   || fail "Cihaz okunamadı. Kabloyu çıkarıp tak, tekrar dene."
 KIND=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['kind'])" "$TMP/once.json")
 ENV=$(env_for "$KIND") || fail "Bilinmeyen cihaz türü: $KIND"
+# Y2a: ürün yazılımında gateway eski deneme anahtarlı tasmanın kaydını almaz.
+if [[ "$KIND" == tracker ]] && python3 -c "import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get('test_key') else 1)" "$TMP/once.json"; then
+  fail "Bu tasma hâlâ herkesin bildiği deneme anahtarını kullanıyor. Yeni yazılımda gateway bu tasmanın kayıtlarını almaz. Önce tasmaya kendi anahtarı verilmeli (tasmadaki kayıtlar silinir). Cihaza dokunulmadı; bu çıktıyı Claude'a gönder."
+fi
 if [[ "$KIND" == gateway && ! -r "$HOME/orun-issuer.pub" ]]; then
   fail "Gateway yazılımı için ~/orun-issuer.pub gerekli (sunucunun imza açık anahtarı)."
 fi

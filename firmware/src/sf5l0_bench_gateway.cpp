@@ -1,8 +1,9 @@
-// SF5L0 bench Gateway composition. Empty unless ORUN_SF5L0_GATEWAY.
-// Wires the EXISTING SF5K3P..X owners (OCQ2 custody store, local custody
-// owner, authorized ingress, startup guard, custody runtime) to the radio,
-// with Sf5l0BenchGrantSource as the grant source (public test keys, step 3A
-// RAM grants) and, with step 3B, the backend-signed OGK1 snapshot first.
+// SF5L0 Gateway composition (product image rak4630_gateway). Empty unless
+// ORUN_SF5L0_GATEWAY. Wires the EXISTING SF5K3P..X owners (OCQ2 custody store,
+// local custody owner, authorized ingress, startup guard, custody runtime) to
+// the radio, with Sf5l0BenchGrantSource as the grant source: the
+// backend-signed OGK1 snapshot first, then step 3A RAM grants. Y2a: no
+// public test-key grant (a test-key Tracker is refused).
 #ifdef ORUN_SF5L0_GATEWAY
 
 #include <Arduino.h>
@@ -383,7 +384,7 @@ void begin(FlashBackend& port, FlashBackend& security_port,
       guard->inspectAndMount(true, observation_store_mounted, gateway_id);
   char id[17];
   hex64(id, gateway_id);
-  Serial.printf("BENCH GATEWAY id=%s custody_region=%s (PUBLIC TEST KEYS)\n",
+  Serial.printf("BENCH GATEWAY id=%s custody_region=%s (signed grants only)\n",
                 id, guardName(state));
 #if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
   printOgk1();
@@ -469,8 +470,8 @@ void service(bool observation_store_mounted) {
       break;
     case Event::kDenied:
       ++denied;
-      Serial.println(F("BENCH GW RX denied (no test grant, or custody store "
-                       "full: see BENCH? held=)"));
+      Serial.println(F("BENCH GW RX denied (no grant for this Tracker, e.g. "
+                       "old test key, or custody store full: see BENCH? held=)"));
       break;
     case Event::kAckTxStarted:
       ++ack_tx;

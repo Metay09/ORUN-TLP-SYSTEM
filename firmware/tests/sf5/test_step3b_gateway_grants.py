@@ -318,7 +318,7 @@ def test_source_contract() -> None:
         assert name not in main, name
     ini = (ROOT / "firmware/platformio.ini").read_text()
     assert ini.count("-DORUN_STEP3B_GATEWAY_ENROLLMENT") == 1
-    gw_env = ini.split("[env:rak4630_sf5l0_gateway_bench]")[1].split("\n[")[0]
+    gw_env = ini.split("[env:rak4630_gateway]")[1].split("\n[")[0]
     assert "-DORUN_STEP3B_GATEWAY_ENROLLMENT" in gw_env
     assert "pre:scripts/step3b_issuer_key.py" in gw_env
     assert "-DORUN_SF5L0_GATEWAY" in gw_env

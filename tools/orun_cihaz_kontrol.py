@@ -18,8 +18,8 @@ import re
 import sys
 import time
 
-TRACKER = re.compile(r"BENCH TRACKER id=([0-9A-F]{16}) .*?granted_gateway=([0-9A-F]{16}|none)"
-                     r".*?product_store=(\w+)")
+TRACKER = re.compile(r"BENCH TRACKER id=([0-9A-F]{16}) .*?test_credential=(yes|no)"
+                     r".*?granted_gateway=([0-9A-F]{16}|none).*?product_store=(\w+)")
 CREDENTIAL = re.compile(r"BENCH CREDENTIAL credential=([0-9A-F]{32}|none) epoch=([0-9A-F]{8}) "
                         r"grant_generation=([0-9A-F]{8}) custody_floor=([0-9A-F]{8})")
 GATEWAY = re.compile(r"BENCH GATEWAY id=([0-9A-F]{16}) custody_region=(\w+)"
@@ -35,7 +35,8 @@ def parse(lines: list[str]) -> dict:
     for line in lines:
         line = line.strip()
         if m := TRACKER.search(line):
-            out.update(kind="tracker", id=m[1], granted=m[2], product_store=m[3])
+            out.update(kind="tracker", id=m[1], test_key=m[2] == "yes", granted=m[3],
+                       product_store=m[4])
         elif m := CREDENTIAL.search(line):
             out.update(credential=m[1], epoch=m[2], grant_generation=m[3], custody_floor=m[4])
         elif m := GATEWAY.search(line):

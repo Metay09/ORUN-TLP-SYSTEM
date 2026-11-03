@@ -1,7 +1,9 @@
-// SF5L0 bench-only round trip with PUBLIC test keys. See sf5l0_bench.h.
-// Empty translation unit unless ORUN_SF5L0_BENCH_TEST_KEYS is defined, so the
-// default product image contains none of this code.
-#ifdef ORUN_SF5L0_BENCH_TEST_KEYS
+// SF5L0 Tracker/Gateway runtime (step 3A/3B enrollment, drain pacer, Edge
+// hand-off). See sf5l0_bench.h for what the public test key may still do.
+// Empty translation unit outside the Tracker/Gateway images and host tests,
+// so the default rak4630 image contains none of this code.
+#if defined(ORUN_SF5L0_BENCH_TEST_KEYS) || defined(ORUN_SF5L0_TRACKER) || \
+    defined(ORUN_SF5L0_GATEWAY)
 
 #include "sf5l0_bench.h"
 
@@ -22,11 +24,13 @@ namespace sf5l0_bench {
 const uint8_t kTestCredentialId[security_format::kCredentialIdSize] = {
     0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7,
     0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF};
+#ifdef ORUN_SF5L0_HAS_TEST_ROOT
 const uint8_t kTestRoot[security_format::kKRootSize] = {
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
     0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
     0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
     0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F};
+#endif
 
 }  // namespace sf5l0_bench
 
@@ -37,23 +41,29 @@ void wipe(void* memory, size_t length) {
   while (length--) *p++ = 0U;
 }
 
+#ifdef ORUN_SF5L0_BENCH_TEST_KEYS
 void put32(uint32_t value, uint8_t* out) {
   out[0] = static_cast<uint8_t>(value >> 24U);
   out[1] = static_cast<uint8_t>(value >> 16U);
   out[2] = static_cast<uint8_t>(value >> 8U);
   out[3] = static_cast<uint8_t>(value);
 }
+#endif
 
+#ifdef ORUN_SF5L0_HAS_TEST_ROOT
 void put64(uint64_t value, uint8_t* out) {
   for (unsigned i = 0U; i < 8U; ++i)
     out[i] = static_cast<uint8_t>(value >> (56U - 8U * i));
 }
+#endif
 
+#ifdef ORUN_SF5L0_BENCH_TEST_KEYS
 // Must stay byte-identical to the Tracker verifier's SF5B §12 HKDF info
 // (custody_ack_verifier.cpp). The SF5L0 host test checks this end to end.
 constexpr char kAckInfoLabel[] = "ORUN-TLP-V2-GW-CUSTODY-ACK-v1";
 constexpr size_t kInfoSize = sizeof(kAckInfoLabel) - 1U + 8U + 4U + 8U + 4U + 4U;
 static_assert(kInfoSize == 57U, "SF5B custody HKDF scope changed");
+#endif
 
 }  // namespace
 
@@ -61,12 +71,12 @@ static_assert(kInfoSize == 57U, "SF5B custody HKDF scope changed");
 
 bool Sf5l0BenchTestProvisioning::holdsTestCredential(
     const SecurityStore& s) {
+  // The backend never issues the test epoch, and the id is unique: the
+  // public pair alone names the test credential (no root needed).
   return s.state_ == SecurityState::kProvisioned &&
          s.credential_.key_epoch == sf5l0_bench::kTestKeyEpoch &&
          memcmp(s.credential_.credential_id, sf5l0_bench::kTestCredentialId,
-                security_format::kCredentialIdSize) == 0 &&
-         memcmp(s.credential_.k_root, sf5l0_bench::kTestRoot,
-                security_format::kKRootSize) == 0;
+                security_format::kCredentialIdSize) == 0;
 }
 
 uint8_t Sf5l0BenchTestProvisioning::activePageVersion(const SecurityStore& s) {
@@ -129,10 +139,12 @@ void Sf5l0BenchTestProvisioning::fail(const char* why) {
   reason_ = why;
 }
 
+#ifdef ORUN_SF5L0_BENCH_TEST_KEYS
 bool Sf5l0BenchTestProvisioning::start(uint64_t gateway_id) {
   return begin(gateway_id, sf5l0_bench::kTestCredentialId,
                sf5l0_bench::kTestKeyEpoch, sf5l0_bench::kTestRoot);
 }
+#endif
 
 bool Sf5l0BenchTestProvisioning::startWithCredential(
     uint64_t gateway_id,
@@ -502,6 +514,13 @@ bool Sf5l0BenchGrantSource::activeGrant(uint64_t tracker_id,
       }
     }
   }
+#ifndef ORUN_SF5L0_BENCH_TEST_KEYS
+  // Y2a: no public test-key grant on a device. A Tracker still holding the
+  // test credential gets no custody (its records stay on the Tracker).
+  (void)scoped_key;
+  ++grants_refused_;
+  return false;
+#else
   if (gateway_id_ == 0U || tracker_id == 0U ||
       key_epoch != sf5l0_bench::kTestKeyEpoch) {
     ++grants_refused_;
@@ -548,6 +567,7 @@ bool Sf5l0BenchGrantSource::activeGrant(uint64_t tracker_id,
   scope = candidate;
   ++grants_issued_;
   return true;
+#endif  // ORUN_SF5L0_BENCH_TEST_KEYS
 }
 
 // ------------------------------------------------------- Gateway hand-out --
@@ -651,6 +671,11 @@ bool Sf5l0EdgeHandoff::mac(uint64_t gateway_id, uint16_t page, uint16_t slot,
                            uint64_t generation, const uint8_t* object,
                            size_t size, uint8_t (&out)[32]) {
   if (object == nullptr || size == 0U) return false;
+#ifndef ORUN_SF5L0_HAS_TEST_ROOT
+  // Tracker product image: no Edge hand-off and no test root.
+  (void)gateway_id; (void)page; (void)slot; (void)generation; (void)out;
+  return false;
+#else
   // Fixed sizes on purpose: the CC310 custody primitives accept exactly the
   // custody-ACK lengths (HKDF info 57 B, HMAC message 102 B). Zero padding
   // after distinct labels keeps the domains separate without widening them.
@@ -683,6 +708,7 @@ bool Sf5l0EdgeHandoff::mac(uint64_t gateway_id, uint16_t page, uint16_t slot,
   ok = ok && custody_crypto::hmacSha256(key, message, sizeof(message), out);
   wipe(key, sizeof(key));
   return ok;
+#endif  // ORUN_SF5L0_HAS_TEST_ROOT
 }
 
 Sf5l0EdgeHandoff::Reply Sf5l0EdgeHandoff::accept(const char* line,
@@ -1013,4 +1039,4 @@ bool Sf5l0EdgeLinkSession::next(uint8_t* out, size_t capacity,
 
 }  // namespace orun_tlp
 
-#endif  // ORUN_SF5L0_BENCH_TEST_KEYS
+#endif  // SF5L0 Tracker/Gateway runtime

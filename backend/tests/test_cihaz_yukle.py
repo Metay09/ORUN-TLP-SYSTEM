@@ -34,6 +34,9 @@ class Kontrol(unittest.TestCase):
         self.assertEqual((g["kind"], g["held"], g["capacity"], g["ogk1_generation"], g["fw"]),
                          ("gateway", 12, 1056, "0000000000000007", "0.5-7b7c540"))
         self.assertNotIn("root", str(t))
+        self.assertFalse(t["test_key"])
+        old = k.parse([l.replace("test_credential=no", "test_credential=yes") for l in TRACKER])
+        self.assertTrue(old["test_key"])
 
     def test_same_device_same_key_same_records_passes(self):
         before = k.parse(TRACKER)

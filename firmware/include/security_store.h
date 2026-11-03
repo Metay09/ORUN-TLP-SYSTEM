@@ -154,14 +154,11 @@ class SecurityStore {
   // Only host regression defines this seam; no production implementation.
   // This is NOT a security/authentication boundary for radio or BLE.
   friend class SecurityV3PolicyTestSeam;
-  // SF5L0 bench-only PUBLIC test-key provisioning. Its definition exists only
-  // under ORUN_SF5L0_BENCH_TEST_KEYS (two bench images + host test); the
-  // default product image has no implementation of this class.
+  // SF5L0 Tracker USB provisioning of a real, per-device credential
+  // (BENCH PROVISION; physical USB access is the authorization). Defined only
+  // in the Tracker image and host tests; the public test credential is a
+  // host-test-only path (Y2a). No root readback API is added.
   friend class Sf5l0BenchTestProvisioning;
-  // Opt-in hardware commissioning of a real, per-device root; strictly
-  // scoped to the Phase 2 enrollment image, never to arbitrary app/radio IO.
-  // No root readback API is added.
-  friend class TrackerRealEnrollment;
 
   enum class PolicyAction : uint8_t {
     kGrant, kRevoke, kAdvanceFloor

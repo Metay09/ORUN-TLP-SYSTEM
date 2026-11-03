@@ -59,6 +59,29 @@ class ProductCutoverGateTests(unittest.TestCase):
             self.assertFalse(got["gateway-durable-custody"].ok)
             self.assertFalse(got["secure-commissioning"].ok)
 
+    def test_product_images_must_exist_without_test_keys(self):
+        product = NORMAL.split("[env:rak4630_sf5l0_tracker_bench]")[0] + """[env:rak4630_tracker]
+extends = env:rak4630
+build_flags =
+    -DORUN_SF5K3V_TRACKER_TX_PILOT
+    -DORUN_SF5L0_TRACKER
+[env:rak4630_gateway]
+extends = env:rak4630
+build_flags =
+    -DORUN_SF5L0_GATEWAY
+"""
+        with tempfile.TemporaryDirectory() as p:
+            root = Path(p)
+            self.repo(root, product)
+            self.assertTrue({c.key: c for c in gate.check_sources(root)}
+                            ["product-images-no-test-key"].ok)
+        with tempfile.TemporaryDirectory() as p:
+            root = Path(p)
+            self.repo(root)   # the old bench images with public test keys
+            got = {c.key: c for c in gate.check_sources(root)}["product-images-no-test-key"]
+            self.assertFalse(got.ok)
+            self.assertIn("rak4630_sf5l0_tracker_bench", got.detail)
+
     def test_public_test_key_in_normal_image_is_rejected(self):
         with tempfile.TemporaryDirectory() as p:
             root = Path(p)
