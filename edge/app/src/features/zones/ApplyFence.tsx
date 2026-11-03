@@ -50,17 +50,24 @@ export function ApplyFenceDialog({ onClose, only }: { onClose: () => void; only?
   const [error, setError] = useState("");
   const [op, setOp] = useState<string | null>(null);
   const [usb, setUsb] = useState(false);
+  const [off, setOff] = useState<Set<string>>(new Set());   // seçilmeyenler (varsayılan: hepsi seçili)
   useBack(() => { if (!busy) onClose(); });
 
   const queued = useQueuedFences();
   const changed = toApply(plans, queued, only);
   const broken = plans.filter((p) => p.errors.length && (!only || p.device.toUpperCase() === only.toUpperCase()));
   const mine = op ? ops.filter((r) => r.op === op) : [];
+  const picked = changed.filter((p) => !off.has(p.device.toUpperCase()));
+  const toggle = (device: string, on: boolean) => setOff((prev) => {
+    const next = new Set(prev); const d = device.toUpperCase();
+    if (on) next.delete(d); else next.add(d);
+    return next;
+  });
 
   async function apply(): Promise<void> {
     setBusy(true); setError("");
     try {
-      const id = await pilotCreateFenceOp(changed.map((p) => ({
+      const id = await pilotCreateFenceOp(picked.map((p) => ({
         device: p.device,
         payload: { digest: p.digest!, areas: p.zones.length, vertices: corners(p),
                    zones: p.zones.map((z) => ({ id: z.id, name: z.name, ring: z.ring })) },
@@ -78,17 +85,27 @@ export function ApplyFenceDialog({ onClose, only }: { onClose: () => void; only?
         {!op ? <>
           <p className="sm" style={{ margin: 0 }}>
             {changed.length
-              ? `${changed.length} tasmanın alanları değişti. Uygulayınca her tasma için bir işlem açılır; tasmaya bağlanınca (şimdilik USB) kendiliğinden işlenir.`
+              ? `${changed.length} tasmanın alanları değişti. Uygulanacakları seç; her tasma için bir işlem açılır, tasmaya bağlanınca (şimdilik USB) kendiliğinden işlenir.`
               : "Bütün tasmalardaki alanlar güncel; uygulanacak bir şey yok."}
           </p>
-          <button className="btn primary wide" disabled={busy || !changed.length} onClick={() => { void apply(); }}>
-            {changed.length ? `Uygula (${changed.length} tasma)` : "Uygula"}
+          <button className="btn primary wide" disabled={busy || !picked.length} onClick={() => { void apply(); }}>
+            {picked.length ? `Uygula (${picked.length} tasma)` : changed.length ? "Tasma seçilmedi" : "Uygula"}
           </button>
+          {changed.length > 1 && (
+            <div className="row" style={{ gap: 8 }}>
+              <button className="btn small" onClick={() => setOff(new Set())}>Hepsini seç</button>
+              <button className="btn small" onClick={() => setOff(new Set(changed.map((p) => p.device.toUpperCase())))}>Hiçbiri</button>
+            </div>
+          )}
           {changed.length > 0 && (
             <div className="card" style={{ margin: 0 }}>
               {changed.map((p) => {
                 const open = queued.has(p.device.toUpperCase());
+                const on = !off.has(p.device.toUpperCase());
                 return <Cell key={p.device} title={p.name} wrapSub
+                  lead={<input type="checkbox" checked={on} aria-label={p.name} onChange={(e) => toggle(p.device, e.target.checked)}
+                    onClick={(e) => e.stopPropagation()} style={{ width: 20, height: 20 }} />}
+                  onClick={() => toggle(p.device, !on)}
                   sub={`${p.zones.map((z) => z.name).join(", ")} · ${p.zones.length} alan · ${corners(p)} köşe${open ? ` · önceki işlem sırada (yerine geçer)` : ""}`} />;
               })}
             </div>
