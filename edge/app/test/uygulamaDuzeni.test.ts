@@ -87,10 +87,10 @@ test("USB ile bağlı cihaz: gateway ya da tasma", async () => {
     "BENCH TRACKER id=0E8ADE7E71531AA3 role=TRACKER granted_gateway=09A462BD4B275BA5",
   ]));
   assert.equal(t2.kind, "tracker");
-  await assert.rejects(probeUsbDevice(fake(["BENCH DEVICE id=52E16773141A8887 role=UNASSIGNED security_region=ERASED gnss=yes"])),
-    /henüz kurulmamış/);
-  await assert.rejects(probeUsbDevice(fake(["BENCH DEVICE id=52E16773141A8887 role=CONFLICT security_region=MIXED gnss=no"])),
-    /hem tasma hem gateway/);
+  assert.deepEqual(await probeUsbDevice(fake(["BENCH DEVICE id=52E16773141A8887 role=UNASSIGNED security_region=ERASED gnss=yes"])),
+    { kind: "unassigned", id: "52E16773141A8887", gnss: "yes" });
+  assert.deepEqual(await probeUsbDevice(fake(["BENCH DEVICE id=52E16773141A8887 role=CONFLICT security_region=MIXED gnss=no"])),
+    { kind: "conflict", id: "52E16773141A8887" });
 });
 
 import { DeviceNameBook, bleName, cleanName } from "../src/app/deviceNames.ts";

@@ -1,8 +1,9 @@
 // Sürü → "+": telefona USB ile bağlı tasmayı hesaba ekler (1d/1e).
 // Tasma çiftliğin bütün gateway'lerine tek seferde yetkilendirilir.
+// Y2a-2: boş (kurulmamış) cihaza önce rolü sorulur; tasma seçilirse kurulum sürer.
 import { useState } from "react";
 import { Plus } from "@phosphor-icons/react";
-import { addTrackerOverUsb, type AddStep } from "../../app/addTracker.ts";
+import { addTrackerOverUsb, NoRoleError, setRoleAndReconnect, type AddStep, type DeviceRole, type GnssHint } from "../../app/addTracker.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { tr } from "../../app/i18n/tr.ts";
 import { useBack, useNav } from "../../app/nav.ts";
@@ -10,6 +11,7 @@ import { deviceNames, pilotAccountStatus, pilotDeviceSetupClient, pilotSetDevice
 import { useApp } from "../../app/store.ts";
 import { Dialog } from "../../ds/components.tsx";
 import { UsbConsole } from "../../platform/usbConsole.ts";
+import { RoleChoice } from "../devices/RoleChoice.tsx";
 
 const STEP_TEXT: Record<AddStep, string> = {
   okunuyor: "Tasma okunuyor…",
@@ -26,17 +28,28 @@ export function AddTrackerDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState("");
   const [added, setAdded] = useState<string | null>(null);   // 2d: then ask its name
   const [name, setName] = useState("");
+  const [noRole, setNoRole] = useState<{ gnss: GnssHint } | null>(null);   // Y2a-2
   const signedIn = Boolean(pilotAccountStatus());
   const gatewayOnUsb = m.station.link === "usb";
   useBack(() => { if (!busy) onClose(); });
 
-  async function add(): Promise<void> {
+  async function add(role?: DeviceRole): Promise<void> {
     setBusy(true);
     setError("");
     setStatus("USB açılıyor…");
     let con: UsbConsole | null = null;
     try {
       con = await UsbConsole.open();
+      if (role) {
+        setStatus(`Cihaz ${role === "tasma" ? "tasma" : "gateway"} olarak kuruluyor; yeniden başlıyor… (USB izni sorulursa onayla)`);
+        const r = await setRoleAndReconnect(con, role, () => UsbConsole.open());
+        con = r.con;
+        setNoRole(null);
+        if (r.device.kind === "gateway") {
+          setStatus("Gateway olarak kuruldu. Köprüye (PC Edge ya da Cihazlar → USB ile bu telefon) bağlanınca çiftliğe kendiliğinden eklenir.");
+          return;
+        }
+      }
       const done = await addTrackerOverUsb(con, pilotDeviceSetupClient(),
         (s, detail) => setStatus(STEP_TEXT[s] + (detail && s === "yazılıyor" ? ` (${detail})` : "")));
       const ble = bleName(done.device);
@@ -47,6 +60,7 @@ export function AddTrackerDialog({ onClose }: { onClose: () => void }) {
       setName(deviceNames.name(done.device) ?? "");
     } catch (e) {
       setStatus("");
+      if (e instanceof NoRoleError && !e.conflict) { setNoRole({ gnss: e.gnss }); return; }
       setError(e instanceof Error && e.message.length < 220 ? e.message : "Tasma eklenemedi.");
     } finally {
       if (con) await con.close();
@@ -61,7 +75,11 @@ export function AddTrackerDialog({ onClose }: { onClose: () => void }) {
           Tasmayı telefona USB (OTG) kablosuyla bağla ve ekle. Tasma çiftliğindeki bütün
           gateway'lerle kendiliğinden çalışır; gateway'lere ayrıca bir şey yapman gerekmez.
         </p>
-        {!added && <button className="btn primary wide" type="button"
+        {noRole && !added && (
+          <RoleChoice gnss={noRole.gnss} busy={busy} onPick={(r) => { void add(r); }}
+            onCancel={() => setNoRole(null)} />
+        )}
+        {!added && !noRole && <button className="btn primary wide" type="button"
           disabled={busy || !signedIn || gatewayOnUsb} onClick={() => { void add(); }}>
           <Plus size={20} />{busy ? "Ekleniyor…" : "USB ile bağlı tasmayı ekle"}
         </button>}

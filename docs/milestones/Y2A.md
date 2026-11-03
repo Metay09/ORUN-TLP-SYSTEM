@@ -26,7 +26,7 @@ Aynı iki bölge iki rolde farklı biçimde kullanılır: güvenlik bölgesi (ta
 - Gateway rolünde hizmet hep "A" (alıcı, BASE taşıyıcı); BLE hep açık (gateway köprü sözü). Tasma rolünde pilot TX, boşaltma hızı ve bağlantı satırları eskisi gibi.
 - `BENCH?` her rolde `BENCH DEVICE id=… role=… security_region=… gnss=…` satırıyla başlar; eski satırlar (`BENCH TRACKER`, `BENCH GATEWAY`) aynı.
 - PC: `tools/orun_cihaz_yukle.sh` her cihaza `rak4630_orun` yükler (her derlemede `~/orun-issuer.pub` gerekir); kurulmamış cihaza da yükler, çelişkili cihaza yüklemez; deneme anahtarlı tasmaya yüklemeden durur. `tools/orun_cihaz_kontrol.py rol --port P tasma|gateway` yalnız kurulmamış cihaza rol verir (GPS uyarısıyla).
-- Uygulama: kurulmamış ya da çelişkili cihaz USB'de beklemeden açık bir mesajla söylenir. Rol sorusu Y2a-2'de.
+- Uygulama (kurulumda rol sorusu): boş cihaz USB'ye takılınca Sürü → "+" ve Cihazlar → "USB ile bağlı cihaza bağlan" "Tasma mı, gateway mi?" diye sorar (`RoleChoice`). GPS takılıysa tasma, yoksa gateway "önerilen". Seçim `APP SERVICES T|A` ile yazılır; cihaz "ROLE chosen" deyip yeniden başlar; uygulama USB'yi yeniden açar (Android izni yeniden sorabilir), cihazın seçilen rolde açıldığını doğrular. Ardından tasma hesaba eklenir (mevcut kurulum), gateway bu telefona köprü olarak bağlanır. Rolü belli cihaz seçimi reddeder ("rolü zaten belli"). Çelişkili cihaz açık bir mesajla söylenir; canlı kart (TrackerLive) kurulmamış cihazı Cihazlar'a yönlendirir.
 - `ORUN_SF5L0_BENCH_TEST_KEYS` yalnız host testlerinde (`main.cpp` `#error`). Ayrı faz 2 kaydı (`TrackerRealEnrollment`) kaldırıldı; gerçek anahtar yolu tek.
 - Sürüm kapısı: `product-images-no-test-key` (tek yazılım var, hiçbir cihaz yazılımında deneme anahtarı yok).
 
@@ -35,10 +35,13 @@ Flaş düzeni, kayıt biçimleri, telsiz sözcükleri değişmedi: bugünkü tas
 ## Denendi
 
 - `tools/ci/run_y2a_product_keys_host.sh` (ASan/UBSan): rol kararı (yazılı veri, boş cihazda seçim, çelişki, okunamayan bölge), deneme anahtarsız çalışma zamanı (gerçek anahtar + izin + doğrulayıcı; deneme anahtarlı tasmaya RAM izni olsa bile ret; deneme kurulum girişi nesne dosyasında yok).
-- Eski host testleri: SF5L0, 3A, 3B (kaynak sözleşmesi tek yazılıma göre güncellendi), SF5L5, SF5L6, SF5L0 temizleme — PASS. `backend/tests/test_cihaz_yukle.py`, sürüm kapısı testi, uygulama testleri (180) — PASS.
+- Eski host testleri: SF5L0, 3A, 3B (kaynak sözleşmesi tek yazılıma göre güncellendi), SF5L5, SF5L6, SF5L0 temizleme — PASS. `backend/tests/test_cihaz_yukle.py`, sürüm kapısı testi — PASS. Uygulama: 185 test (yeni `test/rolSecimi.test.ts`: öneri, rol yazma/ret, yeniden bağlanma ve izin reddi, seçilen rolde açılma doğrulaması), `tsc`, `vite build` — PASS.
 - **ARM derleme denetimi** (bu ortamda PlatformIO derlemesi yok): sistem clang 18, `thumbv7em`/Cortex-M4, Adafruit nRF52 1.7.0 + SoftDevice S140 6.1.1 başlıkları, SX126x 2.0.32, SparkFun GNSS 2.2.29 — bütün `src/*.cpp` `rak4630_orun`, `rak4630` ve pilot bayraklarıyla hatasız; ARM nesne dosyalarında çift tanımlı sembol yok; tek yazılımın dışarıdan istediği her sembol eski tasma ya da gateway yazılımında da isteniyordu. Eski yazılımlar aynı denetimden geçti (denetimin doğruluğu). Bağlama ve gerçek boyut sahibin PC'sinde.
 
 ## Sahada sıra
+
+Telefon: APK yeniden derlenmeli (`bash tools/orun_guncelle.sh`); rol sorusu yalnız boş cihazda görünür.
+
 
 1. Tasma: `bash tools/orun_cihaz_yukle.sh` → tasmayı seç. `TAMAM` satırları; yazılım `0.5-<sürüm>`; açılışta `ROLE storage=TRACKER`.
 2. Gateway: aynı komut → gateway'i seç (PC Edge yükleme boyunca durur). `ROLE storage=GATEWAY`; ardından tasmanın raporu uygulamada görünmeye devam etmeli.
