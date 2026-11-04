@@ -114,6 +114,13 @@ ConfigMutationRequest usbServices(uint32_t id, uint8_t mode,
       ConfigMutationKind::kSetServiceIntent, 0, mode, services);
 }
 
+ConfigMutationRequest usbBleWindow(uint32_t id, uint32_t seconds) {
+  return ConfigMutationRequest(
+      ApplicationRequester::kUsb, id,
+      ApplicationAccessContext(ApplicationAccessChannel::kUsbLocal),
+      ConfigMutationKind::kSetBleWindow, 0, 0, 0, seconds);
+}
+
 struct Completion {
   ConfigMutationResult result;
   uint32_t applied_signals = 0;
@@ -585,7 +592,52 @@ void serviceIntentIsDurableAndOnlyRunnableCombinationsAreAdmitted() {
              cf::kServiceRelayForwarding);
 }
 
+// 4c-1a: the Bluetooth window after each report is one more field of the same
+// owner: bounded, durable across reboot, other fields carried over.
+void bleWindowIsDurableAndBounded() {
+  FakeFlash flash;
+  FixedIncarnation incarnation;
+  ConfigStore store(flash, &incarnation);
+  assert(store.begin());
+  assert(store.config().ble_window_seconds ==
+         config_format::kDefaultBleWindowSeconds);
+  ConfigMutationOwner owner(store);
+
+  const uint32_t baseline_programs = flash.program_calls;   // blank baseline
+  assert(owner.submit(usbBleWindow(1, config_format::kMaxBleWindowSeconds + 1)) ==
+         ConfigMutationSubmitResult::kAccepted);
+  Completion done = finish(store, owner);
+  assert(done.result.outcome == ConfigMutationOutcome::kInvalid);
+  assert(done.result.kind == ConfigMutationKind::kSetBleWindow);
+  assert(flash.program_calls == baseline_programs);
+
+  assert(owner.submit(usbBleWindow(2, 60)) == ConfigMutationSubmitResult::kAccepted);
+  done = finish(store, owner);
+  assert(done.result.outcome == ConfigMutationOutcome::kApplied);
+  assert(done.result.config.ble_window_seconds == 60);
+  assert(done.result.config.tracking_interval_seconds ==
+         gnss_config::kTrackingIntervalSeconds);
+
+  // Same value again: nothing written.
+  const uint32_t programs = flash.program_calls;
+  assert(owner.submit(usbBleWindow(3, 60)) == ConfigMutationSubmitResult::kAccepted);
+  assert(finish(store, owner).result.outcome == ConfigMutationOutcome::kUnchanged);
+  assert(flash.program_calls == programs);
+
+  // 0 = off is a valid choice; the interval change keeps the window.
+  assert(owner.submit(usbBleWindow(4, 0)) == ConfigMutationSubmitResult::kAccepted);
+  assert(finish(store, owner).result.outcome == ConfigMutationOutcome::kApplied);
+  assert(owner.submit(usbInterval(5, 600)) == ConfigMutationSubmitResult::kAccepted);
+  assert(finish(store, owner).result.config.ble_window_seconds == 0);
+
+  ConfigStore rebooted(flash, &incarnation);
+  assert(rebooted.begin());
+  assert(rebooted.config().ble_window_seconds == 0 &&
+         rebooted.config().tracking_interval_seconds == 600);
+}
+
 int main() {
+  bleWindowIsDurableAndBounded();
   appliedChangeIsDurableAndAdvancesTheTokenOnce();
   unchangedValueWritesNothing();
   outOfRangeValuesAreRefusedWithoutWriting();

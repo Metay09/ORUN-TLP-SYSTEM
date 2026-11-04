@@ -147,7 +147,7 @@ int main() {
       uint8_t value;
     };
     const Mutation mutations[] = {
-        {4, 2},     {4, 8},                   // other schema versions
+        {4, 2},     {4, 12},                  // other schema versions
         {5, 1},     {6, 1},   {7, 1},         // reserved after version
         {17, 39},   {16, 1},                  // payload length
         {18, 1},    {19, 1},                  // reserved after length
@@ -271,12 +271,13 @@ int main() {
     assert(!evidenceIsCommitted(PageEvidence::kV4CommittedCorrupt));
   }
 
-  // The next reserved version stays UNSUPPORTED_NEWER for v4 firmware too.
+  // The next reserved version stays UNSUPPORTED_NEWER (8 is v8 since
+  // 2026-11-04, so 12).
   {
     uint8_t page[kV4PagePrefixSize];
     memset(page, 0, sizeof(page));
     put32(page, kMagic);
-    page[4] = 8;
+    page[4] = 12;
     assert(inspect(page).evidence == PageEvidence::kUnsupportedNewer);
   }
 

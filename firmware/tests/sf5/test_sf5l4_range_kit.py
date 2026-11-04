@@ -168,8 +168,9 @@ def firmware() -> None:
                  "tracker_product_tx.setLiveOnly(true);",
                  "tracker_product_tx.setLiveOnly(false);"):
         assert line in main, line
-    # Bench only: no live v1 POSITION TX while a custody ACK is awaited.
-    hold = main.index("tracking_enabled && !bench_pacer.awaitingAck()")
+    # Bench only: no live v1 POSITION TX while a custody ACK is awaited
+    # (Y2a one firmware: only with Tracker storage).
+    hold = main.index("tracking_enabled && !(trackerStorage() && bench_pacer.awaitingAck())")
     opened = main.rfind("#ifdef ORUN_SF5L0_TRACKER", 0, hold)
     assert opened >= 0 and "#endif" not in main[opened:hold]
     assert "positions.update(orun_tlp::monotonic::nowMs(), live_position_allowed)" in main

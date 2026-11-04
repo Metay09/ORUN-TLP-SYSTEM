@@ -1383,7 +1383,7 @@ int main(int argc, char** argv) {
   assert(!application_requests.responsePending());
   assert(Serial.output.find(
              "APP RESULT id=1 code=OK config_backend_ready=yes source=default "
-             "tracking_interval_seconds=180 battery_capacity_mah=0\n") !=
+             "tracking_interval_seconds=180 battery_capacity_mah=0 ble_window_seconds=30\n") !=
          std::string::npos);
   assert(programs == app_query_programs && erases == app_query_erases);
   assert(role_controller.role() == prior_role);
@@ -1400,7 +1400,7 @@ int main(int argc, char** argv) {
   const size_t busy_pos = Serial.output.find("APP BUSY\n");
   const size_t result_pos = Serial.output.find(
       "APP RESULT id=2 code=OK config_backend_ready=yes source=default "
-      "tracking_interval_seconds=180 battery_capacity_mah=0\n");
+      "tracking_interval_seconds=180 battery_capacity_mah=0 ble_window_seconds=30\n");
   assert(busy_pos != std::string::npos);
   assert(result_pos != std::string::npos && busy_pos < result_pos);
   assert(programs == app_query_programs && erases == app_query_erases);
@@ -1446,7 +1446,7 @@ int main(int argc, char** argv) {
   assert(Serial.output.find(
              "APP RESULT id=4294967295 code=OK config_backend_ready=yes "
              "source=default tracking_interval_seconds=180 "
-             "battery_capacity_mah=0\n") != std::string::npos);
+             "battery_capacity_mah=0 ble_window_seconds=30\n") != std::string::npos);
   assert(programs == app_query_programs && erases == app_query_erases);
 
   // BLE? reports runtime readiness, advertising state, connection count,
@@ -1505,6 +1505,35 @@ int main(int argc, char** argv) {
   };
   const uint32_t kWindow = ble_admission_config::kNoClientTimeoutMs;
   const uint32_t kRetry = ble_admission_config::kRetryIntervalMs;
+  // 4c-1a: the cases below pin the boot and disconnect windows, so the
+  // Bluetooth window after each report (default 30 s) is switched off first
+  // through the real USB -> ConfigStore path (0 = off). Reports keep running
+  // during the large clock jumps; with 0 they must never reopen Bluetooth.
+  // The window is switched back on and checked at the end of the main flow.
+  // The save waits for the boot report's radio TX to end (flash never runs
+  // during TX), so the clock moves in 10 ms steps; the boot-window cases
+  // below subtract that time.
+  auto setBleWindow = [&](unsigned seconds) -> uint32_t {
+    char line[32];
+    snprintf(line, sizeof(line), "APP BLE WINDOW %u\n", seconds);
+    char applied[48];
+    snprintf(applied, sizeof(applied), "code=APPLIED ble_window_seconds=%u ",
+             seconds);
+    const uint32_t started = test_now;
+    Serial.output.clear();
+    Serial.queueInput(line);
+    for (int pass = 0; pass < 2000 && !has(Serial.output, "APP SET id=");
+         ++pass) {
+      loop();
+      if (!has(Serial.output, "APP SET id=")) test_now += 10;
+    }
+    assert(has(Serial.output, applied));
+    assert(config_store.config().ble_window_seconds == seconds);
+    assert(!config_mutations.busy());
+    return test_now - started;
+  };
+  const uint32_t boot_write_ms = ble_ok ? setBleWindow(0) : 0;
+  assert(boot_write_ms < 10000);
 
   if (!ble_ok) {
     // Fail-closed boot: many loop ticks later still no admission window, no
@@ -1525,7 +1554,7 @@ int main(int argc, char** argv) {
     // then NOT granted and the original deadline closes BLE. (The main flow
     // asserts the opposite, so it fails if registration/delivery is lost.)
     Bluefruit.event_delivery = false;
-    tick(kWindow - 5000);
+    tick(kWindow - 5000 - boot_write_ms);
     Bluefruit.simulateConnect();
     Bluefruit.simulateDisconnect();  // Entirely between two loop polls.
     assert(Bluefruit.event_cb_calls == 0 && ble_disconnect_events == 0);
@@ -1591,7 +1620,10 @@ int main(int argc, char** argv) {
     assert(BluefruitHvx.conn_handle == Bluefruit.connHandle());
     assert(BluefruitHvx.value_handle == ble_application_response_value_handle);
     assert(BluefruitHvx.type == BLE_GATT_HVX_INDICATION);
-    assert(BluefruitHvx.len == 18);
+    // 8-byte frame header + 12-byte config (4c-1a: Bluetooth window LE16 at
+    // payload 10..11, switched off above); still one fragment.
+    assert(BluefruitHvx.len == 20);
+    assert(BluefruitHvx.data[18] == 0 && BluefruitHvx.data[19] == 0);
     assert(BluefruitHvx.data[0] == 0x01 && BluefruitHvx.data[1] == 0x81);
     assert(BluefruitHvx.data[4] == 0x01 && BluefruitHvx.data[5] == 0x00);
     assert(ble_application_indication_in_flight);
@@ -1852,6 +1884,24 @@ int main(int argc, char** argv) {
     assert(Bluefruit.Advertising.start_calls == starts_done);
     assert(bleQuery() ==
            "BLE ready=yes advertising=no connected=0 policy=closed initial_start=ok\n");
+
+    // --- 4c-1a: window back on (30 s). The next report opens Bluetooth from
+    // closed, advertising starts at once, and with no client it closes again
+    // after the window. ------------------------------------------------------
+    setBleWindow(30);
+    std::string reopened;
+    for (int i = 0; i < 1200 && !has(reopened, "BLE open after report s=30\n"); ++i)
+      reopened += tick(1000);
+    assert(has(reopened, "BLE open after report s=30\n"));
+    reopened += tick(0);
+    assert(has(reopened, "BLE advertising restarted\n"));
+    assert(Bluefruit.Advertising.start_calls == starts_done + 1);
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=yes connected=0 policy=open initial_start=ok\n");
+    assert(!has(tick(28000), "BLE closed"));
+    assert(has(tick(2000), "BLE closed; no client connected within window\n"));
+    assert(bleQuery() ==
+           "BLE ready=yes advertising=no connected=0 policy=closed initial_start=ok\n");
     assert(critical_depth == 0);
     // The Periph/ada_callback path was never used by production.
     assert(Bluefruit.Periph.disconnect_cb == nullptr &&
@@ -1928,7 +1978,9 @@ int main(int argc, char** argv) {
   // loop() must fail here rather than pass through a manual call.
   if (mode == "success") {
     assert(config_store.ready() && !config_store.maintenanceResetRequired());
-    assert(!config_store.hasCommittedRecord());
+    // The BLE flow above stored the Bluetooth window twice (revisions 2, 3).
+    assert(config_store.hasCommittedRecord());
+    assert(config_store.config().ble_window_seconds == 30);
     assert(active_tracking_base_interval_seconds == 180);
     assert(gnss_manager.trackingIntervalMs() == 180000UL);
     const unsigned write_erases = erases;
@@ -1945,7 +1997,7 @@ int main(int argc, char** argv) {
                "CONFIG applied base_s=600 effective_ms=600000\n"));
     assert(has(Serial.output,
                "APP SET id=40 code=APPLIED tracking_interval_seconds=600 "
-               "token=VALID revision=2\n"));
+               "token=VALID revision=4\n"));
     // The runtime adopts the change before the result is reported.
     assert(Serial.output.find("CONFIG applied") <
            Serial.output.find("APP SET id=40"));
@@ -1964,7 +2016,7 @@ int main(int argc, char** argv) {
     loop();
     assert(has(Serial.output,
                "APP SET id=41 code=UNCHANGED tracking_interval_seconds=600 "
-               "token=VALID revision=2\n"));
+               "token=VALID revision=4\n"));
     assert(!has(Serial.output, "CONFIG applied"));
 
     // Below the writer floor: refused, stored value reported back.
@@ -1973,7 +2025,7 @@ int main(int argc, char** argv) {
     loop();
     assert(has(Serial.output,
                "APP SET id=42 code=INVALID tracking_interval_seconds=600 "
-               "token=VALID revision=2\n"));
+               "token=VALID revision=4\n"));
 
     // Unusable arguments never reach the owner and take no request id.
     Serial.output.clear();
@@ -1991,7 +2043,7 @@ int main(int argc, char** argv) {
     loop();
     assert(has(Serial.output,
                "source=stored tracking_interval_seconds=600 "
-               "battery_capacity_mah=0\n"));
+               "battery_capacity_mah=0 ble_window_seconds=30\n"));
   }
 
   // M1 regression: resolved relay intent and actual radio application are

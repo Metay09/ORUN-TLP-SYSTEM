@@ -57,6 +57,14 @@ ConfigMutationSubmitResult ConfigMutationOwner::submit(
       }
       candidate.tracking_interval_seconds = request.tracking_interval_seconds;
       break;
+    case ConfigMutationKind::kSetBleWindow:
+      if (request.ble_window_seconds > config_format::kMaxBleWindowSeconds) {
+        complete(ConfigMutationOutcome::kInvalid);
+        return ConfigMutationSubmitResult::kAccepted;
+      }
+      candidate.ble_window_seconds =
+          static_cast<uint16_t>(request.ble_window_seconds);
+      break;
     case ConfigMutationKind::kSetServiceIntent:
       if (admitServiceIntent(request.service_mode,
                              request.requested_services) !=

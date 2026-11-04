@@ -75,6 +75,12 @@ class BleAdmissionPolicy {
   }
   bool alwaysAvailable() const { return always_available_; }
 
+  // 4c-1a: Bluetooth open for `duration_ms` after a report (owner setting,
+  // ConfigStore v8). Reopens a closed or closing window, or extends an open
+  // no-client window that would close sooner. Never shortens a longer window
+  // and never touches a connected session (its fresh window follows the
+  // disconnect, as before). duration_ms == 0 does nothing.
+  void openFor(uint32_t now, uint32_t duration_ms);
   // Caller observed advertising not running with no client connected after a
   // kClose. Ignored unless a close is pending, so a client that connected
   // meanwhile (update() moved back to open) is never closed.

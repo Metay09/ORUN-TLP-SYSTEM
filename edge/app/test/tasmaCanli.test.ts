@@ -7,7 +7,7 @@ import { buildStatus, decodeBle, keyValues, readRawUsb, serviceStateName, type R
 
 // The lines firmware/src/usb_application_adapter.cpp prints for one state...
 const USB_LINES: Record<Family, string> = {
-  config: "APP RESULT id=1 code=OK config_backend_ready=yes source=stored tracking_interval_seconds=900 battery_capacity_mah=1000",
+  config: "APP RESULT id=1 code=OK config_backend_ready=yes source=stored tracking_interval_seconds=900 battery_capacity_mah=1000 ble_window_seconds=30",
   device: "APP DEVICE id=2 fw=0.9.3-sf5l0 rev=2 uptime_ms_mod32=3600000 reset=0x00000001 watchdog=no role=0 role_mode=AUTO relay_applied=no gnss_presence=1 gnss_health=0 accel_presence=1 accel_health=0 tracking_state=1 tracking_reason=0 relay_state=0 relay_reason=1",
   tracking: "APP TRACKING id=3 requested_s=900 applied_s=900 effective_s=300 cadence=1 gnss_state=11 detected=yes extra_fix=no attempts=40 fresh=38 timeouts=2 invalid=0 last_ttff_ms=22000 config_ready=yes source=stored",
   geofence: "APP GEOFENCE id=4 resource=2 token=1 areas=2 vertices=9 runtime=configured confirmed=yes state=2 confirmation=idle cadence=1",
@@ -20,7 +20,7 @@ const USB_LINES: Record<Family, string> = {
 const le = (n: number, size: number) => Array.from({ length: size }, (_, i) => (n >>> (8 * i)) & 0xff);
 const fw = (t: string) => [...new TextEncoder().encode(t), ...new Array(16 - t.length).fill(0)];
 const BLE: Record<Family, number[]> = {
-  config: [0, 0x03, ...le(900, 4), ...le(1000, 4)],
+  config: [0, 0x03, ...le(900, 4), ...le(1000, 4), ...le(30, 2)],
   device: [0, 2, 0, 0x01, 1, 0, 1, 0, 1, 0, 0, 1, ...le(3600000, 4), ...le(1, 4), ...fw("0.9.3-sf5l0")],
   tracking: [0, 0x07, 1, 11, ...le(900, 4), ...le(900, 4), ...le(300, 4), ...le(40, 4), ...le(38, 4), ...le(2, 4), ...le(0, 4), ...le(22000, 4)],
   geofence: [0, 2, 1, 0x03, 2, ...le(9, 2), 2, 1],
@@ -77,6 +77,11 @@ test("USB and Bluetooth give the same status", () => {
   assert.deepEqual(a.services, { explicit: true, requested: { tracking: true, relay: false, receive: false },
     tracking: "on", trackingWhy: null, relay: "off", receive: false });
   assert.deepEqual([a.role, a.firmware, a.gnss?.state, a.storage?.count, a.missing], ["tracker", "0.9.3-sf5l0", 11, 672, []]);
+  assert.equal(a.bleWindowS, 30);
+  // 4c-1a: older firmware sends 10 config bytes and no window.
+  const old = decodeBle("config", { ...msg("config"), payload: Uint8Array.from(BLE.config.slice(0, 10)) });
+  assert.equal(old.ble_window_seconds, undefined);
+  assert.equal(old.tracking_interval_seconds, "900");
 });
 
 test("service words match the firmware's USB spelling", () => {

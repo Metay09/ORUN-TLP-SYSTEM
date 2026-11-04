@@ -1,5 +1,6 @@
 // ConfigStore with schema v4: read v2 and v4, write v4, persisted service
-// intent. docs/architecture/ORUN_CONFIG_STORE_V4_SERVICE_INTENT.md sections
+// intent. Since 4c-1a the store writes v8, the same 68-byte layout (same
+// evidence names); the v8-only field is tested in test_config_store_v8.cpp. docs/architecture/ORUN_CONFIG_STORE_V4_SERVICE_INTENT.md sections
 // 4, 5 and 8. The v2-era store cases (fault injection, maintenance, lineage)
 // run against the same production class in test_m7p5_config_store.cpp.
 #include <assert.h>
@@ -403,4 +404,5 @@ int main() {
   }
 
   puts("ConfigStore v4 read v2/v4, write v4, service intent checks: PASS");
+  return 0;
 }

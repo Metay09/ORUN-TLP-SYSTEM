@@ -105,6 +105,8 @@ struct ApplicationConfigResponsePayload {
   uint32_t battery_capacity_mah;
   uint8_t backend_ready;
   uint8_t has_committed_record;
+  // 4c-1a: Bluetooth window after each report (ConfigStore v8), 0 = off.
+  uint16_t ble_window_seconds;
 };
 
 struct ApplicationDeviceResponsePayload {

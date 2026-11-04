@@ -164,8 +164,16 @@ class GatewayListTests(unittest.TestCase):
         for bad in ({"devices": [a], "set": {"interval_s": 59}}, {"devices": [a], "set": {"interval_s": True}},
                     {"devices": [a], "set": {"tracking": 1}}, {"devices": [a], "set": {"colour": "red"}},
                     {"devices": [a], "set": {}}, {"devices": [], "set": {"relay": True}},
-                    {"devices": ["bad"], "set": {"relay": True}}):
+                    {"devices": ["bad"], "set": {"relay": True}},
+                    {"devices": [a], "set": {"ble_window_s": 301}}, {"devices": [a], "set": {"ble_window_s": True}},
+                    {"devices": [a], "set": {"ble_window_s": -1}}):
             self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/settings", token, bad)[0], 400)
+        # 4c-1a: Bluetooth after each report, 0 (off) .. 300 s.
+        for ok in (0, 30, 300):
+            self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/settings", token,
+                                      {"devices": [b], "set": {"ble_window_s": ok}})[0], 200)
+        self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/settings/reported", token,
+                                  {"device": b, "values": {"ble_window_s": 30}, "via": "usb"})[0], 200)
         self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/settings/reported", token,
                                   {"device": b, "values": {"relay": True}, "via": "wifi"})[0], 400)
 

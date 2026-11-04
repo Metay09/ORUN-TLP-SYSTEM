@@ -15,6 +15,8 @@ export interface TrackerStatus {
   firmware: string | null;
   uptimeMs: number | null;
   interval: { requestedS: number; effectiveS: number | null; stored: boolean } | null;
+  /** 4c-1a: Bluetooth open after each report (s, 0 = off); null when the firmware does not say. */
+  bleWindowS?: number | null;
   gnss: { state: number; detected: boolean; fixes: number; attempts: number; timeouts: number; lastTtffMs: number } | null;
   battery: { valid: boolean; mv: number; percent: number | null; state: "unknown" | "normal" | "low" | "critical"; calibrated: boolean } | null;
   services: {
@@ -92,7 +94,9 @@ export function decodeBle(family: Family, m: AppMessage): Record<string, string>
   switch (family) {
     case "config":
       return { config_backend_ready: yes(p[1] & 1), source: p[1] & 2 ? "stored" : "default",
-               tracking_interval_seconds: s(le32(p, 2)), battery_capacity_mah: s(le32(p, 6)) };
+               tracking_interval_seconds: s(le32(p, 2)), battery_capacity_mah: s(le32(p, 6)),
+               // 4c-1a: appended; older firmware answers 10 bytes.
+               ...(p.length >= 12 ? { ble_window_seconds: s(le16(p, 10)) } : {}) };
     case "device": {
       const fw = new TextDecoder().decode(p.subarray(20, 36)).replace(/\0.*$/s, "");
       return { fw, rev: s(p[1]), role: s(p[2]), role_mode: p[3] & 1 ? "AUTO" : "OVERRIDE", watchdog: yes(p[3] & 2),
@@ -149,6 +153,7 @@ export function buildStatus(raw: Raw, via: Via, at: number): TrackerStatus {
       requestedS: requested, effectiveS: num(t?.effective_s),
       stored: (t?.source ?? c?.source) === "stored",
     },
+    bleWindowS: num(c?.ble_window_seconds),
     gnss: t ? { state: num(t.gnss_state) ?? 0, detected: t.detected === "yes", fixes: num(t.fresh) ?? 0,
                 attempts: num(t.attempts) ?? 0, timeouts: num(t.timeouts) ?? 0, lastTtffMs: num(t.last_ttff_ms) ?? 0 } : null,
     battery: p ? { valid: p.battery === "MEASURED", mv: num(p.mv) ?? 0, percent: num(p.percent_est),

@@ -45,3 +45,7 @@ Telefon: APK yeniden derlenmeli (`bash tools/orun_guncelle.sh`); rol sorusu yaln
 
 1. Tasma: `bash tools/orun_cihaz_yukle.sh` → tasmayı seç. `TAMAM` satırları; yazılım `0.5-<sürüm>`; açılışta `ROLE storage=TRACKER`.
 2. Gateway: aynı komut → gateway'i seç (PC Edge yükleme boyunca durur). `ROLE storage=GATEWAY`; ardından tasmanın raporu uygulamada görünmeye devam etmeli.
+
+## Sahada sonuç (2026-11-03)
+
+Üç cihaz `0.5-416490d` yüklendi, hepsinde yükleme sonrası kontrol `TAMAM`: gateway (`09A4…5BA5`, held kayıtlar korundu, PC Edge yeniden bağlandı), tasma `0E8A…1AA3` (kimlik, kayıt sırası 3553'ten devam) ve tasma `52E1…8887` (kimlik ve kayıtlar korundu). Roller açılışta bellekten doğru anlaşıldı; hiçbir cihaza rol yeniden sorulmadı. PC Edge günlüğünde iki tasmanın kayıtları gateway üzerinden geldi (`custody_started` arttı, `denied=0`, `handed_off` arttı); uygulamada gateway "2 tasma (24 sa)".

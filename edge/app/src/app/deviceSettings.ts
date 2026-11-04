@@ -5,9 +5,9 @@
 // ayarları gösterir (sensör/vana gelince buraya yeni ayarlar eklenir).
 import { fmt } from "./i18n/tr.ts";
 import type { TrackerStatus } from "./trackerStatus.ts";
-import { INTERVAL, INTERVAL_CHOICES } from "./trackerSettings.ts";
+import { BLE_WINDOW, BLE_WINDOW_CHOICES, INTERVAL, INTERVAL_CHOICES } from "./trackerSettings.ts";
 
-export interface SettingValues { interval_s?: number; tracking?: boolean; relay?: boolean; }
+export interface SettingValues { interval_s?: number; tracking?: boolean; relay?: boolean; ble_window_s?: number; }
 export type SettingKey = keyof SettingValues;
 export type Via = "usb" | "ble" | "lora";
 
@@ -38,10 +38,19 @@ export const SETTINGS: SettingDef[] = [
   { key: "relay", title: "Aktarma", kind: "flag",
     help: "Başka cihazların kayıtlarını gateway'e iletir. Açıkken telsiz hep dinler, pil daha çok gider.",
     word: (v) => (v ? "Açık" : "Kapalı") },
+  { key: "ble_window_s", title: "Rapordan sonra Bluetooth", kind: "choice", choices: BLE_WINDOW_CHOICES,
+    help: "Her rapordan sonra Bluetooth bu kadar açık kalır; telefon bu sürede bağlanabilir, bağlanınca iş bitene kadar açık kalır. Kapalıyken yalnız açılışta 10 dakika açılır. Uzun süre biraz daha pil harcar.",
+    word: (v) => bleWindowWord(v as number) },
 ];
+
+export function bleWindowWord(s: number): string {
+  if (s === 0) return "Kapalı";
+  return s < 60 ? `${s} sn` : `${s / 60} dk`;
+}
 
 export function validValue(key: SettingKey, v: unknown): boolean {
   if (key === "interval_s") return Number.isInteger(v) && (v as number) >= INTERVAL.minS && (v as number) <= INTERVAL.maxS;
+  if (key === "ble_window_s") return Number.isInteger(v) && (v as number) >= 0 && (v as number) <= BLE_WINDOW.maxS;
   return typeof v === "boolean";
 }
 
@@ -65,6 +74,7 @@ export function pendingKeys(e: DeviceSettingsEntry | null | undefined): SettingK
 export function valuesFromStatus(st: TrackerStatus): SettingValues {
   const out: SettingValues = {};
   if (st.interval) out.interval_s = st.interval.requestedS;
+  if (typeof st.bleWindowS === "number") out.ble_window_s = st.bleWindowS;
   if (st.services?.requested) { out.tracking = st.services.requested.tracking; out.relay = st.services.requested.relay; }
   return out;
 }

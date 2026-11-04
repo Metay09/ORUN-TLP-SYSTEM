@@ -317,7 +317,13 @@ void BleApplicationTransport::buildApplicationResponse(
                 response.payload.config.tracking_interval_seconds);
       writeLE32(outbound_.payload + 6,
                 response.payload.config.battery_capacity_mah);
-      outbound_.total_length = 10;
+      // 4c-1a: appended, so older readers that check only the minimum
+      // length keep working.
+      outbound_.payload[10] =
+          static_cast<uint8_t>(response.payload.config.ble_window_seconds);
+      outbound_.payload[11] =
+          static_cast<uint8_t>(response.payload.config.ble_window_seconds >> 8U);
+      outbound_.total_length = 12;
       return;
     }
 

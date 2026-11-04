@@ -90,6 +90,7 @@ ApplicationSubmitResult ApplicationRequestService::submit(
           config.tracking_interval_seconds;
       response_.payload.config.battery_capacity_mah =
           config.battery_capacity_mah;
+      response_.payload.config.ble_window_seconds = config.ble_window_seconds;
       break;
     }
 
