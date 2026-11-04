@@ -177,6 +177,30 @@ class GatewayListTests(unittest.TestCase):
         self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/settings/reported", token,
                                   {"device": b, "values": {"relay": True}, "via": "wifi"})[0], 400)
 
+    def test_bluetooth_write_keys_for_the_account_phones(self):
+        # 4c-1b: shared vector with firmware/tests/m7/test_ble_write.cpp and
+        # edge/app/test/bleYazma.test.ts.
+        from backend import orun_credentials as oc
+        cred = oc.Credential(0x0E8ADE7E71531AA3, bytes(range(0x10, 0x20)), 1,
+                             bytes(range(0x40, 0x60)), False)
+        self.assertEqual(oc.ble_write_key(cred).hex().upper(),
+                         "75BF1BD3052DFA4CD5E9DB9DD084B98DB9622C2FABE44588FB58E02EC0952DD2")
+        self.assertNotEqual(oc.ble_write_key(cred), oc.traffic_key(cred))
+        registry = self.local.backend.registry
+        made = registry.create(0x52E16773141A8887)
+        self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/write-keys")[0], 401)
+        status, body = self.req(self.account, "GET", "/api/v1/devices/write-keys", self.login())
+        self.assertEqual(status, 200)
+        mine = [k for k in body["keys"] if k["device"] == "52E16773141A8887"]
+        self.assertEqual(mine, [{"device": "52E16773141A8887", "epoch": made.key_epoch,
+                                 "write_key": oc.ble_write_key(made).hex().upper()}])
+        self.assertNotIn(made.k_root.hex().upper(), json.dumps(body))
+        # A replaced credential's old epoch is no longer handed out.
+        newer = registry.create(0x52E16773141A8887, replace=True)
+        body = self.req(self.account, "GET", "/api/v1/devices/write-keys", self.login())[1]
+        self.assertEqual([k["epoch"] for k in body["keys"] if k["device"] == "52E16773141A8887"],
+                         [newer.key_epoch])
+
     def test_device_ops_in_the_account(self):
         """İşlemler: hedef başına durum; yalnız cihaz onayı 'işlendi' yapar; yenisi eskisinin yerine geçer."""
         self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/ops")[0], 401)

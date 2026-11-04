@@ -12,15 +12,18 @@ bool accessBelongsToRequester(ApplicationRequester requester,
       return access.channel == ApplicationAccessChannel::kUsbLocal;
     case ApplicationRequester::kBle:
       return access.channel == ApplicationAccessChannel::kBleOpen ||
-             access.channel == ApplicationAccessChannel::kBleEncrypted;
+             access.channel == ApplicationAccessChannel::kBleEncrypted ||
+             access.channel == ApplicationAccessChannel::kBleAuthenticated;
   }
   return false;
 }
 
 // Local USB is physical-access trust, the same level as the existing service
-// commands. BLE needs reviewed authentication and authorization first.
+// commands. Over BLE only an account-authenticated write (4c-1b) may change
+// configuration; an open or merely encrypted link may not.
 bool mayChangeConfiguration(const ApplicationAccessContext& access) {
-  return access.channel == ApplicationAccessChannel::kUsbLocal;
+  return access.channel == ApplicationAccessChannel::kUsbLocal ||
+         access.channel == ApplicationAccessChannel::kBleAuthenticated;
 }
 
 }  // namespace

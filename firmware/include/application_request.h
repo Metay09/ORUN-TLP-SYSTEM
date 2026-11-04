@@ -53,6 +53,10 @@ enum class ApplicationAccessChannel : uint8_t {
   kUsbLocal = 1,
   kBleOpen = 2,
   kBleEncrypted = 3,
+  // 4c-1b: this one BLE write carried a valid account write-key tag over a
+  // fresh Tracker challenge (ble_write_auth.h). Set only by the
+  // composition's write service after verification, never from peer bytes.
+  kBleAuthenticated = 4,
 };
 
 struct ApplicationAccessContext {

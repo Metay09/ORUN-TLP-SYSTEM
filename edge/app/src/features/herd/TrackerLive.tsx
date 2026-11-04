@@ -12,8 +12,9 @@ import {
 } from "../../app/trackerStatus.ts";
 import { Dialog, KV } from "../../ds/components.tsx";
 import { pendingKeys, valuesFromStatus, bleWindowWord } from "../../app/deviceSettings.ts";
-import { deliverUsb } from "../../app/deliver.ts";
-import { deviceOps, deviceSettings, pilotOpResult, pilotRecordFence, pilotReportSettings } from "../../app/ownerAccountPilotRuntime.ts";
+import { bleSettingWriter } from "../../app/bleWrite.ts";
+import { deliverSettings, deliverUsb } from "../../app/deliver.ts";
+import { deviceOps, deviceSettings, pilotOpResult, pilotRecordFence, pilotReportSettings, writeKeys } from "../../app/ownerAccountPilotRuntime.ts";
 import { TrackerBle } from "../../platform/trackerBle.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
 import { useTrackerFences } from "../zones/ApplyFence.tsx";
@@ -21,7 +22,7 @@ import { useTrackerFences } from "../zones/ApplyFence.tsx";
 /** ble: a device from the scan list; find: look for this ID's Bluetooth name; usb: the cable. */
 export type LiveTarget = { ble: string } | { find: string } | { usb: true };
 
-const BT_OFF = "Tasmanın Bluetooth'u kapalı olabilir. Tasma açıldıktan sonra 10 dakika açık kalır, sonra pil için kapanır: tasmayı kapatıp aç ve tekrar dene. Ya da USB ile bağlan.";
+const BT_OFF = "Tasmanın Bluetooth'u kapalı olabilir. Tasma açıldıktan sonra 10 dakika açık kalır, sonra her rapordan sonra kısa süre açılır: biraz bekleyip tekrar dene, ya da tasmayı kapatıp aç. Ya da USB ile bağlan.";
 
 function errText(e: unknown): string {
   return e instanceof Error && e.message.length < 240 ? e.message : "Cihaza bağlanılamadı.";
@@ -55,10 +56,28 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
       link.current = await TrackerBle.open(bleId!);
     }
     setPhase("Okunuyor…");
-    const raw = await link.current.readRaw();
-    const st = buildStatus(raw, "ble", Date.now());
+    const t = link.current;
+    let st = buildStatus(await t.readRaw(), "ble", Date.now());
     if (alive.current) setStatus(st);
-    if (id && st.role === "tracker") void pilotReportSettings(id, valuesFromStatus(st), "ble").catch(() => undefined);
+    if (!id || st.role !== "tracker") return;
+    const dev_ = id.toUpperCase();
+    const has = valuesFromStatus(st);
+    await pilotReportSettings(dev_, has, "ble").catch(() => undefined);
+    // 4c-1b: sıradaki ayarlar Bluetooth'tan da sormadan yazılır (hesaptaki
+    // telefon, tasmanın imzalı onayıyla). Alanlar şimdilik USB ile (4c-2).
+    setPhase("Sıradakiler işleniyor…");
+    const { wrote, problems } = await deliverSettings(bleSettingWriter(t.exchange, writeKeys.get, dev_), {
+      wanted: deviceSettings.get(dev_)?.wanted ?? {}, has,
+      openSettings: deviceOps.open(dev_, "settings"),
+      reportSettings: (v) => pilotReportSettings(dev_, v, "ble").catch(() => undefined),
+      result: (op, state, note) => pilotOpResult(op, dev_, state, "ble", note).catch(() => undefined),
+    });
+    if (problems.length && alive.current) setError(problems.join(" "));
+    if (wrote.length) {
+      setPhase("Yeniden okunuyor…");
+      st = buildStatus(await t.readRaw(), "ble", Date.now());
+      if (alive.current) { setStatus(st); setSynced(`Tasmaya işlendi (tasma onayladı): ${wrote.join(", ")}.`); }
+    }
   }
 
   async function readUsb(): Promise<void> {
@@ -172,8 +191,11 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
         </div>
         {!a && st && !isGateway && !("usb" in target) && <p className="fine" style={{ margin: 0 }}>Bu tasma hesabında yok. Eklemek için USB ile bağla (Sürü → "+").</p>}
         {synced && <p className="sm" role="status" style={{ margin: 0 }}>{synced}</p>}
-        {st && !isGateway && waitingKeys.length > 0 && !("usb" in target) && (
-          <p className="fine" style={{ margin: 0 }}>{waitingKeys.length} ayar sırada. Bluetooth'tan yazma tasma yazılımı güncellenince; şimdilik USB ile bağlan.</p>
+        {st && !isGateway && waitingKeys.length > 0 && !("usb" in target) && id && !writeKeys.has(id) && (
+          <p className="fine" style={{ margin: 0 }}>{waitingKeys.length} ayar sırada. Bluetooth'tan yazmak için bu telefonda tasmanın yazma anahtarı yok: hesaba girip internete bağlanınca kendiliğinden gelir. Şimdilik USB ile bağlan.</p>
+        )}
+        {st && !isGateway && plan && id && deviceOps.open(id, "fence") && !("usb" in target) && (
+          <p className="fine" style={{ margin: 0 }}>Alanlar sırada: alanlar şimdilik USB ile yazılır.</p>
         )}
       </div>
     </Dialog>

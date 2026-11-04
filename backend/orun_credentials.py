@@ -9,6 +9,9 @@ The backend is the only place a Tracker's root key lives after provisioning
   (Tracker, Gateway, epoch, floor, generation) — never K_root;
 - to the owner's phone (owner decision D1): the per-epoch D2A traffic key,
   so the phone can read its own Trackers offline — never K_root.
+- to the account's phones (4c-1b): the per-epoch Bluetooth write key, so a
+  signed-in phone can change a Tracker's settings over Bluetooth offline —
+  never K_root.
 
 Rules: credentials are random (secrets), never logged; a device's epochs
 only grow and are never reused, so (device, epoch) names exactly one
@@ -46,6 +49,7 @@ from cryptography.hazmat.primitives.serialization import (Encoding, NoEncryption
 
 ACK_INFO_LABEL = b"ORUN-TLP-V2-GW-CUSTODY-ACK-v1"   # custody_ack_verifier.cpp
 AEAD_INFO_LABEL = b"ORUN-TLP-V2-AEAD"               # SF5B ROOT_AEAD_V1, D2A
+BLE_WRITE_INFO_LABEL = b"ORUN-BLE-WRITE-KEY-v1"     # 4c-1b, ble_write_auth.h
 TEST_EPOCH = 0x01020304                              # public bench credential
 
 # OGK1 Gateway grant snapshot (gateway_grant_snapshot_reader.h, SF5K3Y).
@@ -94,6 +98,18 @@ def traffic_key(cred: Credential) -> bytes:
     """Per-epoch D2A AEAD key (what the owner's phone gets; never K_root)."""
     info = AEAD_INFO_LABEL + bytes((1,)) + cred.key_epoch.to_bytes(4, "big")
     return HKDF(hashes.SHA256(), 16, cred.credential_id, info).derive(cred.k_root)
+
+
+def ble_write_key(cred: Credential) -> bytes:
+    """4c-1b: per-Tracker Bluetooth write key for the account's phones.
+
+    Same HKDF as firmware ble_write_auth.h (never K_root): the phone MACs a
+    settings write over the Tracker's fresh challenge with it, and checks the
+    Tracker's signed answer.
+    """
+    info = BLE_WRITE_INFO_LABEL + cred.device_id.to_bytes(8, "big") + cred.key_epoch.to_bytes(4, "big")
+    assert len(info) == 33
+    return HKDF(hashes.SHA256(), 32, cred.credential_id, info).derive(cred.k_root)
 
 
 def provision_line(cred: Credential, gateway_id: int) -> str:

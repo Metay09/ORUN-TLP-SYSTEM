@@ -151,6 +151,9 @@ class SecurityStore {
   // The only source owner allowed to use K_root in custody ACK HMAC
   // verification. There is still no public root/key readback API.
   friend class CustodyAckVerifier;
+  // 4c-1b: derives the per-Tracker Bluetooth write key from K_root and
+  // MACs/verifies authenticated BLE writes. No key leaves it.
+  friend class BleWriteAuthenticator;
   // Only host regression defines this seam; no production implementation.
   // This is NOT a security/authentication boundary for radio or BLE.
   friend class SecurityV3PolicyTestSeam;

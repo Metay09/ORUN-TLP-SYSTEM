@@ -48,6 +48,8 @@ bool ApplicationRequestService::accessAllowed(
     case ApplicationAccessChannel::kBleOpen:
     case ApplicationAccessChannel::kBleEncrypted:
       return true;
+    // Write-only: reads keep using the BLE link's own channel.
+    case ApplicationAccessChannel::kBleAuthenticated:
     case ApplicationAccessChannel::kInvalid:
       return false;
   }

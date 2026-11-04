@@ -4,7 +4,7 @@
 import { BleClient } from "@capacitor-community/bluetooth-le";
 import {
   APP_REQUEST_UUID, APP_RESPONSE_UUID, APP_SERVICE_UUID, AppReassembler, QUERY,
-  requestFrame, type AppMessage, type Family,
+  requestFrames, type AppMessage, type Family,
 } from "../app/bleAppFrames.ts";
 import { decodeBle, FAMILIES, type Raw } from "../app/trackerStatus.ts";
 import { stopNearbyScan } from "./bleScan.ts";
@@ -53,20 +53,25 @@ export class TrackerBle {
     return hit;
   }
 
-  private async ask(family: Family): Promise<AppMessage> {
+  /** One request (fragmented if it has data), one answer. */
+  readonly exchange = async (type: number, payload: Uint8Array, waitMs = ANSWER_MS): Promise<AppMessage> => {
     if (this.gone) throw new Error("Bluetooth bağlantısı koptu.");
     this.correlation = (this.correlation + 1) & 0xffff;
     const corr = this.correlation;
     this.rx.reset();
     const answer = new Promise<AppMessage | null>((resolve) => {
-      const timer = setTimeout(() => { this.waiting = null; resolve(null); }, ANSWER_MS);
+      const timer = setTimeout(() => { this.waiting = null; resolve(null); }, waitMs);
       this.waiting = (m) => { if (m.correlation !== corr) return; clearTimeout(timer); this.waiting = null; resolve(m); };
     });
-    const f = requestFrame(QUERY[family], corr);
-    await BleClient.write(this.deviceId, APP_SERVICE_UUID, APP_REQUEST_UUID, new DataView(f.buffer, f.byteOffset, f.byteLength));
+    for (const f of requestFrames(type, corr, payload))
+      await BleClient.write(this.deviceId, APP_SERVICE_UUID, APP_REQUEST_UUID, new DataView(f.buffer, f.byteOffset, f.byteLength));
     const m = await answer;
     if (!m) throw new Error("Cihaz yanıt vermedi.");
     return m;
+  };
+
+  private ask(family: Family): Promise<AppMessage> {
+    return this.exchange(QUERY[family], new Uint8Array(0));
   }
 
   /** Every family the device answers; one that fails is left out. */

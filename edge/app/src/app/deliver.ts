@@ -1,11 +1,12 @@
 // Cihaza bağlanınca sıradakileri sormadan işle (sahip kararı 2026-11-02).
-// Önce ayarlar, sonra alanlar. Bir işlem ancak cihaz onaylayınca "işlendi",
+// Önce ayarlar, sonra alanlar. 4c-1b: ayarlar Bluetooth'tan da; alanlar
+// şimdilik yalnız USB (4c-2). Bir işlem ancak cihaz onaylayınca "işlendi",
 // cihaz "hayır" derse "reddedildi" olur; yanıt gelmezse sırada kalır.
 import type { LineConsole } from "./addTracker.ts";
 import type { OpTarget, OpVia, FencePayload } from "./deviceOps.ts";
 import type { SettingValues } from "./deviceSettings.ts";
 import { DeviceRejected, writeFence, type FenceSummary } from "./fenceUsb.ts";
-import { writeWaitingUsb } from "./trackerSettings.ts";
+import { usbWriter, writeWaiting, type SettingWriter } from "./trackerSettings.ts";
 import type { Zone } from "./zones.ts";
 
 export interface DeliverDeps {
@@ -22,17 +23,22 @@ export interface Delivered { wrote: string[]; problems: string[]; }
 
 const short = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 120);
 
-export async function deliverUsb(con: LineConsole, d: DeliverDeps): Promise<Delivered> {
+/** Ayarlar: istenen ≠ cihazdaki ise yazılır; sıradaki ayar işlemi sonuçlanır (USB ya da Bluetooth). */
+export async function deliverSettings(w: SettingWriter, d: Omit<DeliverDeps, "openFence" | "recordFence">): Promise<Delivered> {
   const out: Delivered = { wrote: [], problems: [] };
-  // Ayarlar: istenen ≠ cihazdaki ise yazılır; sıradaki ayar işlemi sonuçlanır.
   try {
-    const done = await writeWaitingUsb(con, d.wanted, d.has);
+    const done = await writeWaiting(w, d.wanted, d.has);
     if (Object.keys(done).length) { await d.reportSettings(done); out.wrote.push("ayarlar"); }
     if (d.openSettings) await d.result(d.openSettings.op, Object.keys(done).length ? "applied" : "same");
   } catch (e) {
     if (e instanceof DeviceRejected && d.openSettings) await d.result(d.openSettings.op, "rejected", short(e));
     out.problems.push(short(e));
   }
+  return out;
+}
+
+export async function deliverUsb(con: LineConsole, d: DeliverDeps): Promise<Delivered> {
+  const out = await deliverSettings(usbWriter(con), d);
   // Alanlar: yalnız "Tasmalara uygula" ile açılmış işlem gönderilir.
   if (d.openFence) {
     const p = d.openFence.payload as FencePayload;

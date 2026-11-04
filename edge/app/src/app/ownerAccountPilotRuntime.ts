@@ -12,6 +12,7 @@ import { DeviceNameBook } from "./deviceNames.ts";
 import { TrackerFenceBook, type FenceRecord } from "./trackerFences.ts";
 import { DeviceSettingsBook, type SettingValues, type Via as SettingsVia } from "./deviceSettings.ts";
 import { DeviceOpsBook, type FencePayload, type OpVia } from "./deviceOps.ts";
+import { WriteKeyBook } from "./writeKeys.ts";
 import { forgetAccount, loadAccount, storeAccount } from "../platform/orunAccountSession.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import type { Point } from "../core/points.ts";
@@ -62,6 +63,7 @@ export function pilotRestoreAccount(): Promise<void> {
     if (check.state === "expired") {
       client = null;
       stopAutoSync();
+      writeKeys.clear();
       await forgetAccount();
       observationsChanged?.();
     } else if (check.state === "ok") {
@@ -101,6 +103,10 @@ export const deviceSettings = new DeviceSettingsBook(
 
 const settingsServer = () => (client && pilotAccountStatus() ? client : null);
 
+/** 4c-1b: Bluetooth yazma anahtarları (hesaptan; çıkınca silinir). */
+export const writeKeys = new WriteKeyBook(
+  typeof localStorage !== "undefined" ? (() => { try { return localStorage; } catch { return null; } })() : null);
+
 /** İşlemler: alan ve ayar gönderme kaydı (hesapta, telefonda bir kopya). */
 export const deviceOps = new DeviceOpsBook(
   typeof localStorage !== "undefined" ? (() => { try { return localStorage; } catch { return null; } })() : null);
@@ -129,6 +135,7 @@ function refreshNames(): void {
     void trackerFences.refresh(client).catch(() => undefined);
     void deviceSettings.refresh(client).catch(() => undefined);
     void deviceOps.refresh(client).catch(() => undefined);
+    void writeKeys.refresh(client).catch(() => undefined);
   }
 }
 
@@ -412,6 +419,7 @@ export async function pilotAccountLogout(): Promise<void> {
   accountEmail = null;
   stopAutoSync();
   setSync({ running: false, last: null, error: null });
+  writeKeys.clear();
   await forgetAccount();
   observationsChanged?.();
   accountChanged();

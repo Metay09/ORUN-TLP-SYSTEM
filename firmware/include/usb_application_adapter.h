@@ -34,6 +34,8 @@ UsbConfigCommandParse parseUsbConfigCommand(const char* text, uint8_t length,
                                             uint32_t* value);
 
 void printUsbConfigMutationResult(const ConfigMutationResult& result);
+// Outcome word shared by the USB lines and the BLE write log (4c-1b).
+const char* configMutationOutcomeName(ConfigMutationOutcome outcome);
 
 //   APP SERVICES AUTO|NONE|<letters>   T tracking, R relay, A receive
 // Letters each at most once, any order (service_intent.h). Admission of the
