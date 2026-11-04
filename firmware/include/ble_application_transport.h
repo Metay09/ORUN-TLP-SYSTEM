@@ -66,6 +66,9 @@ enum class MessageType : uint8_t {
   kGetStorageStatusRequest = 0x05,
   kGetPowerStatusRequest = 0x06,
   kGetServicesStatusRequest = 0x07,
+  // 4c-1b: authenticated configuration writes (ble_write_auth.h).
+  kGetWriteChallengeRequest = 0x10,
+  kAuthenticatedWriteRequest = 0x11,
 
   kGetConfigResponse = 0x81,
   kGetDeviceStatusResponse = 0x82,
@@ -74,8 +77,29 @@ enum class MessageType : uint8_t {
   kGetStorageStatusResponse = 0x85,
   kGetPowerStatusResponse = 0x86,
   kGetServicesStatusResponse = 0x87,
+  kGetWriteChallengeResponse = 0x90,
+  kAuthenticatedWriteResponse = 0x91,
   kError = 0xFF,
 };
+
+// 4c-1b write messages. Identifiers are big-endian (as in the MAC input),
+// numbers little-endian like the rest of this transport.
+//  challenge response: status 0, device_id BE64, key_epoch LE32, challenge[16]
+//  write request:      op, value LE32, tag[16]
+//  write result:       outcome, op, interval LE32, ble_window LE16,
+//                      service_mode, requested_services, revision LE32, tag[16]
+// The request tag covers the 5 bytes before it, the result tag the 14 bytes
+// before it (ble_write_auth.h). Ops: 1 interval seconds, 2 services
+// (value = service_mode | requested_services << 8), 3 Bluetooth window
+// seconds. outcome = ConfigMutationOutcome.
+constexpr uint16_t kWriteChallengePayloadSize = 29;
+constexpr uint16_t kWriteRequestPayloadSize = 21;
+constexpr uint16_t kWriteRequestBodySize = 5;
+constexpr uint16_t kWriteResultPayloadSize = 30;
+constexpr uint16_t kWriteResultBodySize = 14;
+constexpr uint8_t kWriteOpInterval = 1;
+constexpr uint8_t kWriteOpServices = 2;
+constexpr uint8_t kWriteOpBleWindow = 3;
 
 // GET_CONFIG response flags byte (docs/milestones/M7P7F.md section 5).
 constexpr uint8_t kConfigFlagBackendReady = 0x01;
@@ -125,6 +149,29 @@ constexpr uint32_t advanceSessionGeneration(uint32_t current) {
 // never derived from any peer-controlled byte (frame header, correlation id,
 // message type or payload). See docs/architecture/ORUN_CURRENT_ARCHITECTURE_RULES.md
 // section 17 and docs/milestones/M7P7E.md for why that boundary matters.
+enum class BleWriteAdmission : uint8_t {
+  kPending = 0,      // the answer follows via completeWrite(request_id)
+  kDenied = 1,       // not authenticated (no/expired challenge, bad tag)
+  kBusy = 2,         // another change is being written; ask again
+  kUnsupported = 3,  // this device takes no Bluetooth writes
+};
+
+// 4c-1b: the composition root's authenticated write path. Without one (the
+// default) both write messages answer ERROR/UNSUPPORTED.
+class BleWriteGate {
+ public:
+  virtual ~BleWriteGate() = default;
+  // Fills a kGetWriteChallengeResponse payload, or says why not.
+  virtual bool challenge(uint32_t now, uint8_t* payload, uint16_t& length,
+                         ble_app_transport::ErrorCode& error) = 0;
+  // The exact request payload as received.
+  virtual BleWriteAdmission submitWrite(uint32_t now, uint32_t request_id,
+                                        const uint8_t* payload,
+                                        uint16_t length) = 0;
+  // The BLE session began or ended: any challenge and owed answer are void.
+  virtual void sessionReset() = 0;
+};
+
 class BleApplicationTransport {
  public:
   explicit BleApplicationTransport(ApplicationRequestService& service)
@@ -151,6 +198,15 @@ class BleApplicationTransport {
   void endSession(uint32_t session_generation);
 
   uint32_t currentSessionGeneration() const { return session_generation_; }
+
+  // ---- 4c-1b authenticated writes ----
+  void setWriteGate(BleWriteGate* gate) { write_gate_ = gate; }
+  // While true the peer must wait (stop-and-wait); frames are dropped.
+  bool writePending() const { return write_pending_.active; }
+  // The answer to the pending write; ignored for any other request id or
+  // after the session changed. Returns true when it was queued to send.
+  bool completeWrite(uint32_t request_id, const uint8_t* payload,
+                     uint16_t length);
 
   // ---- Inbound ----
 
@@ -230,6 +286,10 @@ class BleApplicationTransport {
   void buildErrorResponse(uint16_t correlation_id,
                            ble_app_transport::ErrorCode code,
                            uint8_t offending_message_type);
+  void buildRawResponse(uint16_t correlation_id, uint8_t message_type,
+                        const uint8_t* payload, uint16_t length);
+  void dispatchWrite(uint16_t correlation_id, uint8_t message_type,
+                     const uint8_t* payload, uint16_t length);
   uint32_t nextLocalRequestId();
 
   ApplicationRequestService& service_;
@@ -241,6 +301,14 @@ class BleApplicationTransport {
   uint32_t next_local_request_id_ = 1;
   uint32_t session_generation_ = 0;
   bool session_active_ = false;
+  struct PendingWrite {
+    bool active = false;
+    uint16_t correlation_id = 0;
+    uint32_t request_id = 0;
+  };
+  BleWriteGate* write_gate_ = nullptr;
+  PendingWrite write_pending_{};
+  uint32_t write_now_ms_ = 0;  // `now` of the frame that completed a write
 };
 
 }  // namespace orun_tlp

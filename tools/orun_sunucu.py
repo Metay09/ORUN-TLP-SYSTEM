@@ -22,6 +22,8 @@ cihaz ayarları: GET /api/v1/devices/settings, POST /api/v1/devices/settings (is
 POST /api/v1/devices/settings/reported (cihazdan okunan) (4b);
 işlemler (alan/ayar gönderme kaydı): GET /api/v1/devices/ops, POST /api/v1/devices/ops,
 POST /api/v1/devices/ops/result;
+Bluetooth'tan ayar yazma anahtarları (yalnız hesabın telefonlarına, zone:write):
+GET /api/v1/devices/write-keys (4c-1b);
 telefon köprü olduğunda POST /api/v1/devices/gateway ile bildirir (2c).
 
 Hesap adresi ayrıca internetsiz harita paketlerini verir (2. adım):
@@ -233,6 +235,17 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
             return actor
 
         def do_GET(self):  # noqa: N802
+            if self.path == "/api/v1/devices/write-keys":
+                # 4c-1b: Bluetooth write keys are write authority (zone:write),
+                # derived per Tracker and epoch; never a root key.
+                if self._farm_actor("zone:write") is None:
+                    return None
+                registry = local.backend.registry
+                keys = [] if registry is None else [
+                    {"device": f"{c.device_id:016X}", "epoch": c.key_epoch,
+                     "write_key": oc.ble_write_key(c).hex().upper()}
+                    for c in registry.all() if not c.retired]
+                return self._send(200, {"keys": keys})
             if self.path not in ("/api/v1/devices/gateways", "/api/v1/devices/names",
                                  "/api/v1/devices/fences", "/api/v1/devices/settings",
                                  "/api/v1/devices/ops"):

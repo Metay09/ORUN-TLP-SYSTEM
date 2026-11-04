@@ -7,6 +7,7 @@ import { parseOfflineCatalog, type OfflinePack } from "../features/map/offlinePa
 import type { FenceRecord } from "./trackerFences.ts";
 import type { DeviceSettingsEntry } from "./deviceSettings.ts";
 import type { OpTarget } from "./deviceOps.ts";
+import { validWriteKeys, type WriteKey } from "./writeKeys.ts";
 import {
   parseServerLatest, parseServerObservationPage,
   type ServerLatestObservations, type ServerObservationPage,
@@ -344,6 +345,18 @@ export class OwnerAccountClient {
       };
     }
     return out;
+  }
+
+  /** 4c-1b: Bluetooth write keys of the account's tasmas (never a root key). */
+  async writeKeys(): Promise<WriteKey[]> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/write-keys", {
+      headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
+      credentials: "omit", redirect: "error", cache: "no-store",
+    });
+    if (!reply.ok) throw new Error("Yazma anahtarları alınamadı.");
+    const body = await json(reply, 256 * 1024);
+    return validWriteKeys(body.keys);
   }
 
   async wantSettings(devices: string[], set: Record<string, unknown>): Promise<void> {

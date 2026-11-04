@@ -48,6 +48,8 @@ uint32_t BleApplicationTransport::beginSession() {
   // pending response actually belongs to kBle, so a USB-owned response is
   // never touched.
   service_.discardResponse(ApplicationRequester::kBle);
+  write_pending_ = PendingWrite();
+  if (write_gate_ != nullptr) write_gate_->sessionReset();
   session_generation_ =
       ble_app_transport::advanceSessionGeneration(session_generation_);
   session_active_ = true;
@@ -61,6 +63,10 @@ void BleApplicationTransport::endSession(uint32_t session_generation) {
   clearInbound();
   outbound_ = OutboundResponse();
   service_.discardResponse(ApplicationRequester::kBle);
+  // A write already handed to the configuration owner still completes on
+  // the Tracker; only its answer is dropped (the phone re-reads later).
+  write_pending_ = PendingWrite();
+  if (write_gate_ != nullptr) write_gate_->sessionReset();
   session_active_ = false;
 }
 
@@ -91,10 +97,11 @@ void BleApplicationTransport::onFrameReceived(uint32_t session_generation,
   // Stop-and-wait begins at ingress, not only after reassembly. While a prior
   // response awaits indication confirmation, the peer cannot pre-stage a
   // partial next request and complete it immediately after confirmation.
-  if (outbound_.pending) {
+  if (outbound_.pending || write_pending_.active) {
     clearInbound();
     return;
   }
+  write_now_ms_ = now;
 
   // Any validation failure below fails closed: no application/storage side
   // effect, and any in-progress partial reassembly is conservatively
@@ -222,9 +229,19 @@ void BleApplicationTransport::dispatchInbound() {
   const uint16_t correlation_id = inbound_.correlation_id;
   const uint8_t message_type = inbound_.message_type;
   const uint16_t total_length = inbound_.total_length;
+  uint8_t payload[kMaxLogicalPayload]{};
+  memcpy(payload, inbound_.payload, total_length);
   clearInbound();
 
-  if (outbound_.pending) {
+  if (outbound_.pending || write_pending_.active) {
+    return;
+  }
+
+  if (message_type ==
+          static_cast<uint8_t>(MessageType::kGetWriteChallengeRequest) ||
+      message_type ==
+          static_cast<uint8_t>(MessageType::kAuthenticatedWriteRequest)) {
+    dispatchWrite(correlation_id, message_type, payload, total_length);
     return;
   }
 
@@ -291,6 +308,91 @@ void BleApplicationTransport::dispatchInbound() {
   }
 
   buildApplicationResponse(correlation_id, response);
+}
+
+void BleApplicationTransport::dispatchWrite(uint16_t correlation_id,
+                                            uint8_t message_type,
+                                            const uint8_t* payload,
+                                            uint16_t length) {
+  if (write_gate_ == nullptr) {
+    buildErrorResponse(correlation_id,
+                       ble_app_transport::ErrorCode::kUnsupported,
+                       message_type);
+    return;
+  }
+  if (message_type ==
+      static_cast<uint8_t>(MessageType::kGetWriteChallengeRequest)) {
+    // Zero-payload query, like the reads: anything else fails closed.
+    if (length != 0) return;
+    uint8_t out[kMaxLogicalPayload]{};
+    uint16_t out_length = 0;
+    ble_app_transport::ErrorCode error =
+        ble_app_transport::ErrorCode::kUnavailable;
+    if (!write_gate_->challenge(write_now_ms_, out, out_length, error) ||
+        out_length == 0 || out_length > kMaxLogicalPayload) {
+      buildErrorResponse(correlation_id, error, message_type);
+      return;
+    }
+    buildRawResponse(correlation_id,
+                     static_cast<uint8_t>(
+                         MessageType::kGetWriteChallengeResponse),
+                     out, out_length);
+    return;
+  }
+
+  const uint32_t request_id = nextLocalRequestId();
+  switch (write_gate_->submitWrite(write_now_ms_, request_id, payload,
+                                   length)) {
+    case BleWriteAdmission::kPending:
+      write_pending_.active = true;
+      write_pending_.correlation_id = correlation_id;
+      write_pending_.request_id = request_id;
+      return;
+    case BleWriteAdmission::kBusy:
+      buildErrorResponse(correlation_id, ble_app_transport::ErrorCode::kBusy,
+                         message_type);
+      return;
+    case BleWriteAdmission::kUnsupported:
+      buildErrorResponse(correlation_id,
+                         ble_app_transport::ErrorCode::kUnsupported,
+                         message_type);
+      return;
+    case BleWriteAdmission::kDenied:
+    default:
+      buildErrorResponse(correlation_id,
+                         ble_app_transport::ErrorCode::kAccessDenied,
+                         message_type);
+      return;
+  }
+}
+
+bool BleApplicationTransport::completeWrite(uint32_t request_id,
+                                            const uint8_t* payload,
+                                            uint16_t length) {
+  if (!session_active_ || !write_pending_.active ||
+      write_pending_.request_id != request_id || payload == nullptr ||
+      length == 0 || length > kMaxLogicalPayload || outbound_.pending)
+    return false;
+  const uint16_t correlation_id = write_pending_.correlation_id;
+  write_pending_ = PendingWrite();
+  buildRawResponse(correlation_id,
+                   static_cast<uint8_t>(
+                       MessageType::kAuthenticatedWriteResponse),
+                   payload, length);
+  return true;
+}
+
+void BleApplicationTransport::buildRawResponse(uint16_t correlation_id,
+                                               uint8_t message_type,
+                                               const uint8_t* payload,
+                                               uint16_t length) {
+  outbound_ = OutboundResponse();
+  outbound_.pending = true;
+  outbound_.correlation_id = correlation_id;
+  outbound_.message_type = message_type;
+  outbound_.next_fragment_index = 0;
+  memcpy(outbound_.payload, payload, length);
+  outbound_.total_length = length;
 }
 
 void BleApplicationTransport::buildApplicationResponse(

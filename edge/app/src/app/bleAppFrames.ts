@@ -25,6 +25,25 @@ export function requestFrame(type: number, correlation: number): Uint8Array {
   return f;
 }
 
+/** 4c-1b: a request with data, split into 12-byte fragments (at most 4). */
+export function requestFrames(type: number, correlation: number, payload: Uint8Array): Uint8Array[] {
+  if (payload.length > MAX_PAYLOAD) throw new Error("İstek çok uzun.");
+  if (payload.length === 0) return [requestFrame(type, correlation)];
+  const out: Uint8Array[] = [];
+  for (let at = 0, index = 0; at < payload.length; at += MAX_FRAME - HEADER, index++) {
+    const chunk = payload.subarray(at, at + MAX_FRAME - HEADER);
+    const f = new Uint8Array(HEADER + chunk.length);
+    f[0] = VERSION; f[1] = type;
+    f[2] = (index === 0 ? START : 0) | (at + chunk.length >= payload.length ? END : 0);
+    f[3] = index;
+    f[4] = correlation & 0xff; f[5] = (correlation >> 8) & 0xff;
+    f[6] = payload.length & 0xff; f[7] = payload.length >> 8;
+    f.set(chunk, HEADER);
+    out.push(f);
+  }
+  return out;
+}
+
 export interface AppMessage { type: number; correlation: number; payload: Uint8Array; }
 
 /** Collects response fragments; `push` returns a whole message once complete. */

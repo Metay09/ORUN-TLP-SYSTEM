@@ -58,6 +58,8 @@
 #include "tracker_product_tx_pilot.h"
 #endif
 #if defined(ORUN_SF5L0_TRACKER) || defined(ORUN_SF5L0_GATEWAY)
+#include "ble_write_auth.h"
+#include "ble_write_service.h"
 #include "device_storage_role.h"
 #include "product_region.h"
 #include "sf5l0_bench.h"
@@ -197,6 +199,13 @@ orun_tlp::TrackerProductTxPilot tracker_product_tx(product_records,
 #ifdef ORUN_SF5L0_TRACKER
 // Real-credential provisioning over USB (BENCH PROVISION); Y2a: no test key.
 orun_tlp::Sf5l0BenchTestProvisioning bench_provisioning(security_store);
+// 4c-1b: settings over Bluetooth from a phone signed in to the account
+// (per-Tracker write key from the root credential, single-use challenge).
+orun_tlp::NrfBleChallengeSource ble_challenge_source;
+orun_tlp::BleWriteAuthenticator ble_write_auth(security_store,
+                                               ble_challenge_source);
+orun_tlp::BleWriteService ble_write_service(ble_write_auth, config_mutations,
+                                            config_store);
 // SF5L2: paces re-arming of the one-record pilot to drain the backlog.
 orun_tlp::Sf5l0DrainPacer bench_pacer;
 bool bench_pacer_started = false;
@@ -1168,6 +1177,41 @@ void drainConfigMutationResult() {
     return;
   orun_tlp::printUsbConfigMutationResult(result);
 }
+
+#ifdef ORUN_SF5L0_TRACKER
+// 4c-1b: only a provisioned Tracker with a real credential takes Bluetooth
+// writes; the public test credential never does (its key is public).
+bool bleWritable() {
+  return trackerStorage() &&
+         security_store.state() == orun_tlp::SecurityState::kProvisioned &&
+         !orun_tlp::Sf5l0BenchTestProvisioning::holdsTestCredential(
+             security_store);
+}
+
+void drainBleWriteAnswer() {
+  ble_write_service.setPolicy(bleWritable(), storage_role);
+  uint32_t request_id = 0;
+  uint8_t answer[orun_tlp::ble_app_transport::kWriteResultPayloadSize]{};
+  orun_tlp::ConfigMutationResult result;
+  const auto taken = ble_write_service.takeAnswer(request_id, answer, result);
+  if (taken == orun_tlp::BleWriteService::Answer::kNone) return;
+  const bool sent =
+      taken == orun_tlp::BleWriteService::Answer::kReady &&
+      ble_application_transport.completeWrite(request_id, answer,
+                                              sizeof(answer));
+  Serial.printf("BLE WRITE id=%lu op=%u code=%s interval_s=%lu ble_window_s=%u "
+                "services=%u/%u answered=%s\n",
+                static_cast<unsigned long>(request_id),
+                static_cast<unsigned>(answer[1]),
+                orun_tlp::configMutationOutcomeName(result.outcome),
+                static_cast<unsigned long>(
+                    result.config.tracking_interval_seconds),
+                static_cast<unsigned>(result.config.ble_window_seconds),
+                static_cast<unsigned>(result.config.service_mode),
+                static_cast<unsigned>(result.config.requested_services),
+                sent ? "yes" : "no");
+}
+#endif
 
 void printActivityDiagnostic() {
   using State = orun_tlp::ActivityCapture::State;
@@ -3477,6 +3521,10 @@ void setup() {
   if (!security_store.begin(device_identity)) {
     Serial.println(F("SECURITY unavailable"));
   } else {
+#ifdef ORUN_SF5L0_TRACKER
+    // 4c-1b: the Tracker's Bluetooth writes (admission per write: bleWritable).
+    ble_application_transport.setWriteGate(&ble_write_service);
+#endif
     const char* state = "UNKNOWN";
     switch (security_store.state()) {
       case orun_tlp::SecurityState::kUnprovisioned: state = "UNPROVISIONED"; break;
@@ -3880,6 +3928,7 @@ void loop() {
   if (config_mutations.poll()) applyCommittedConfigToRuntime();
   drainConfigMutationResult();
 #ifdef ORUN_SF5L0_TRACKER
+  drainBleWriteAnswer();
   if (storage_role_restart_pending &&
       static_cast<int32_t>(orun_tlp::monotonic::nowMs() -
                            storage_role_restart_at_ms) >= 0) {

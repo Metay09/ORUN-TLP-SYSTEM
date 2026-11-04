@@ -211,9 +211,7 @@ void printUsbFenceRejected(GeofenceStaging::Result reason) {
   Serial.printf("APP FENCE REJECTED reason=%s\n", text);
 }
 
-namespace {
-
-const char* mutationCodeName(ConfigMutationOutcome outcome) {
+const char* configMutationOutcomeName(ConfigMutationOutcome outcome) {
   switch (outcome) {
     case ConfigMutationOutcome::kApplied: return "APPLIED";
     case ConfigMutationOutcome::kUnchanged: return "UNCHANGED";
@@ -226,8 +224,6 @@ const char* mutationCodeName(ConfigMutationOutcome outcome) {
   return "UNAVAILABLE";
 }
 
-}  // namespace
-
 void printUsbGeofenceMutationResult(const GeofenceMutationResult& result) {
   const char* state = "UNAVAILABLE";
   if (result.state == GeofenceResourceState::kClear) state = "CLEAR";
@@ -237,7 +233,7 @@ void printUsbGeofenceMutationResult(const GeofenceMutationResult& result) {
     Serial.printf("APP FENCE id=%lu code=%s state=%s areas=%u vertices=%u "
                   "token=VALID revision=%lu\n",
                   static_cast<unsigned long>(result.request_id),
-                  mutationCodeName(result.outcome), state,
+                  configMutationOutcomeName(result.outcome), state,
                   static_cast<unsigned>(result.area_count),
                   static_cast<unsigned>(result.total_vertex_count),
                   static_cast<unsigned long>(result.token.revision));
@@ -245,7 +241,7 @@ void printUsbGeofenceMutationResult(const GeofenceMutationResult& result) {
     Serial.printf("APP FENCE id=%lu code=%s state=%s areas=%u vertices=%u "
                   "token=UNAVAILABLE\n",
                   static_cast<unsigned long>(result.request_id),
-                  mutationCodeName(result.outcome), state,
+                  configMutationOutcomeName(result.outcome), state,
                   static_cast<unsigned>(result.area_count),
                   static_cast<unsigned>(result.total_vertex_count));
   }

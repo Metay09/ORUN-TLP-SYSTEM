@@ -73,5 +73,47 @@ bool hmacSha256(const uint8_t (&key)[32],const uint8_t* data,
   return rc==CRYS_OK;
 }
 
+bool hkdfSha256Bounded(const uint8_t (&salt)[16],const uint8_t (&root)[32],
+                       const uint8_t* info,size_t length,uint8_t (&key)[32]) {
+  if(info==nullptr || length==0U || length>kMaxBoundedInfo)return false;
+  uint8_t scratch_salt[16]{};
+  uint8_t scratch_root[32]{};
+  uint8_t scratch_info[kMaxBoundedInfo]{};
+  uint8_t derived[32]{};
+  memcpy(scratch_salt,salt,sizeof(scratch_salt));
+  memcpy(scratch_root,root,sizeof(scratch_root));
+  memcpy(scratch_info,info,length);
+  const CRYSError_t rc=CRYS_HKDF_KeyDerivFunc(
+      CRYS_HKDF_HASH_SHA256_mode,
+      scratch_salt,sizeof(scratch_salt),
+      scratch_root,sizeof(scratch_root),
+      scratch_info,static_cast<uint32_t>(length),
+      derived,sizeof(derived),SASI_FALSE);
+  if(rc==CRYS_OK)memcpy(key,derived,sizeof(derived));
+  wipe(scratch_salt,sizeof(scratch_salt));
+  wipe(scratch_root,sizeof(scratch_root));
+  wipe(scratch_info,sizeof(scratch_info));
+  wipe(derived,sizeof(derived));
+  return rc==CRYS_OK;
+}
+
+bool hmacSha256Bounded(const uint8_t (&key)[32],const uint8_t* data,
+                       size_t length,uint8_t (&mac)[32]) {
+  if(data==nullptr || length==0U || length>kMaxBoundedData)return false;
+  uint8_t scratch_key[32]{};
+  uint8_t scratch_data[kMaxBoundedData]{};
+  CRYS_HASH_Result_t result{};
+  memcpy(scratch_key,key,sizeof(scratch_key));
+  memcpy(scratch_data,data,length);
+  const CRYSError_t rc=CRYS_HMAC(
+      CRYS_HASH_SHA256_mode,scratch_key,sizeof(scratch_key),
+      scratch_data,length,result);
+  if(rc==CRYS_OK)memcpy(mac,result,sizeof(mac));
+  wipe(scratch_key,sizeof(scratch_key));
+  wipe(scratch_data,sizeof(scratch_data));
+  wipe(result,sizeof(result));
+  return rc==CRYS_OK;
+}
+
 } // namespace custody_crypto
 } // namespace orun_tlp
