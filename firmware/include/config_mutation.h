@@ -16,10 +16,10 @@ namespace orun_tlp {
 // docs/architecture/ORUN_CONFIG_STATE_TOKEN_CAS_DIRECTION.md section 3.4 and
 // docs/architecture/ORUN_APPLICATION_TRANSPORT_SURFACE.md section 7.
 //
-// This slice admits only the local USB channel, for the tracking interval and
-// the requested-service intent. Authentication, authorization, a
-// caller-supplied precondition token (CAS) and remote transports are later
-// slices that reuse this owner; nothing here is a wire format.
+// Admits local USB and (4c-1b) account-authenticated BLE writes
+// (ble_write_service.h). A caller-supplied precondition token (CAS) and the
+// LoRa transport are later slices that reuse this owner; nothing here is a
+// wire format.
 //
 // Loop-owned and fixed-memory, like the ConfigStore it drives.
 

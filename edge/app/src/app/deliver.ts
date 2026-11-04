@@ -1,10 +1,10 @@
 // Cihaza bağlanınca sıradakileri sormadan işle (sahip kararı 2026-11-02).
-// Önce ayarlar, sonra alanlar. 4c-1b: ayarlar Bluetooth'tan da; alanlar
-// şimdilik yalnız USB (4c-2). Bir işlem ancak cihaz onaylayınca "işlendi",
+// Önce ayarlar, sonra alanlar; USB ve Bluetooth'tan aynı (4c-1b, 4c-2). Bir işlem ancak cihaz onaylayınca "işlendi",
 // cihaz "hayır" derse "reddedildi" olur; yanıt gelmezse sırada kalır.
 import type { LineConsole } from "./addTracker.ts";
 import type { OpTarget, OpVia, FencePayload } from "./deviceOps.ts";
 import type { SettingValues } from "./deviceSettings.ts";
+import { bleSettingWriter, bleWriteFence, type Exchange, type KeyFor } from "./bleWrite.ts";
 import { DeviceRejected, writeFence, type FenceSummary } from "./fenceUsb.ts";
 import { usbWriter, writeWaiting, type SettingWriter } from "./trackerSettings.ts";
 import type { Zone } from "./zones.ts";
@@ -37,14 +37,14 @@ export async function deliverSettings(w: SettingWriter, d: Omit<DeliverDeps, "op
   return out;
 }
 
-export async function deliverUsb(con: LineConsole, d: DeliverDeps): Promise<Delivered> {
-  const out = await deliverSettings(usbWriter(con), d);
-  // Alanlar: yalnız "Tasmalara uygula" ile açılmış işlem gönderilir.
+/** Önce ayarlar, sonra "Tasmalara uygula" ile açılmış alan işlemi; yol ne olursa olsun aynı sıra. */
+export async function deliver(w: SettingWriter, writeZones: (zones: Zone[]) => Promise<FenceSummary>, d: DeliverDeps): Promise<Delivered> {
+  const out = await deliverSettings(w, d);
   if (d.openFence) {
     const p = d.openFence.payload as FencePayload;
     const zones: Zone[] = p.zones.map((z) => ({ id: z.id, name: z.name, ring: z.ring, active: true, updated: 0 }));
     try {
-      const sum = await writeFence(con, zones);
+      const sum = await writeZones(zones);
       await d.recordFence(sum, p.zones.map((z) => ({ id: z.id, name: z.name })));
       await d.result(d.openFence.op, "applied");
       out.wrote.push(`alanlar (${sum.areas})`);
@@ -54,6 +54,15 @@ export async function deliverUsb(con: LineConsole, d: DeliverDeps): Promise<Deli
     }
   }
   return out;
+}
+
+export function deliverUsb(con: LineConsole, d: DeliverDeps): Promise<Delivered> {
+  return deliver(usbWriter(con), (zones) => writeFence(con, zones), d);
+}
+
+/** 4c-2: aynısı Bluetooth'tan (hesaptaki telefon, tasmanın imzalı onayı). */
+export function deliverBle(exchange: Exchange, keyFor: KeyFor, device: string, d: DeliverDeps): Promise<Delivered> {
+  return deliver(bleSettingWriter(exchange, keyFor, device), (zones) => bleWriteFence(exchange, keyFor, device, zones), d);
 }
 
 export const VIA_USB: OpVia = "usb";

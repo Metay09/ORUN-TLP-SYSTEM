@@ -8,10 +8,11 @@ import { concat, fromHex, hex } from "../src/core/bytes.ts";
 import { hmacSha256 } from "../src/core/crypto.ts";
 import { AppReassembler, ERROR_TYPE, requestFrame, requestFrames, type AppMessage } from "../src/app/bleAppFrames.ts";
 import {
-  bleSettingWriter, bleWrite, NoWriteKey, OP, parseChallenge, parseResult, servicesValue, WRITE,
-  WriteRefused, writeRequest, type Exchange,
+  bleSettingWriter, bleWrite, bleWriteFence, NoWriteKey, OP, parseChallenge, parseResult, servicesValue, STAGE,
+  stagedDigest, WRITE, WriteRefused, writeRequest, type Exchange,
 } from "../src/app/bleWrite.ts";
-import { deliverSettings } from "../src/app/deliver.ts";
+import { deliverBle, deliverSettings } from "../src/app/deliver.ts";
+import type { E7, Zone } from "../src/app/zones.ts";
 import { DeviceRejected } from "../src/app/fenceUsb.ts";
 import { writeWaiting } from "../src/app/trackerSettings.ts";
 import { WriteKeyBook } from "../src/app/writeKeys.ts";
@@ -87,7 +88,33 @@ class FakeTracker {
   forge = false;                  // sign the answer with a wrong key
   writes: number[] = [];
 
+  staged: E7[][] | null = null;
+  fence = { state: 1, areas: 0, vertices: 0, revision: 1 };
+  stageSteps = 0;
+
+  private stage(payload: Uint8Array): AppMessage {
+    this.stageSteps++;
+    let r = 0;
+    const action = payload[0];
+    if (action === STAGE.begin) this.staged = [[]];
+    else if (action === STAGE.abort) this.staged = null;
+    else if (!this.staged) r = 1;
+    else if (action === STAGE.nextArea) { if (!this.staged[this.staged.length - 1].length) r = 3; else this.staged.push([]); }
+    else if (action === STAGE.vertices) {
+      const n = payload[1];
+      if (n < 1 || n > 5 || payload.length !== 2 + 8 * n) r = 5;
+      else for (let i = 0; i < n; i++) {
+        const v = new DataView(payload.buffer, payload.byteOffset + 2 + 8 * i, 8);
+        this.staged[this.staged.length - 1].push([v.getInt32(0, true), v.getInt32(4, true)]);
+      }
+    } else r = 5;
+    const areas = this.staged ? this.staged.filter((a) => a.length).length : 0;
+    const vertices = this.staged ? this.staged.reduce((n, a) => n + a.length, 0) : 0;
+    return { type: WRITE.stageAnswer, correlation: 3, payload: Uint8Array.of(r, areas, vertices & 0xff, vertices >> 8) };
+  }
+
   readonly exchange: Exchange = async (type, payload) => {
+    if (type === WRITE.stage) return this.stage(payload);
     if (type === WRITE.challenge) {
       this.challenge = Uint8Array.from({ length: 16 }, (_, i) => (this.next + i) & 0xff);
       this.next += 0x10;
@@ -96,9 +123,22 @@ class FakeTracker {
     assert.equal(type, WRITE.write);
     const ch = this.challenge; this.challenge = null;                    // single use
     if (this.refuse !== null) return { type: ERROR_TYPE, correlation: 2, payload: Uint8Array.of(this.refuse, type) };
-    if (!ch || payload.length !== 21 || hex(sign(this.key, "ORUN-BLE-WRITE-REQ-v1", this.device, this.epoch, ch, payload.subarray(0, 5))) !== hex(payload.subarray(5)))
+    const isFence = payload[0] === OP.fence;
+    const staged = (this.staged ?? []).filter((x) => x.length);
+    const macBody = isFence ? concat(payload.subarray(0, 5), stagedDigest(staged)) : payload.subarray(0, 5);
+    if (!ch || payload.length !== 21 || hex(sign(this.key, "ORUN-BLE-WRITE-REQ-v1", this.device, this.epoch, ch, macBody)) !== hex(payload.subarray(5)))
       return { type: ERROR_TYPE, correlation: 2, payload: Uint8Array.of(3, type) };
     const op = payload[0], v = payload[1] | (payload[2] << 8) | (payload[3] << 16) | (payload[4] << 24);
+    if (isFence) {
+      const vertices = staged.reduce((n, a) => n + a.length, 0);
+      const ok = staged.length > 0 && v === (staged.length | (vertices << 8)) && staged.every((a) => a.length >= 3);
+      this.staged = null;
+      if (ok) this.fence = { state: 2, areas: staged.length, vertices, revision: this.fence.revision + 1 };
+      const f = this.fence;
+      const body = concat(Uint8Array.of(ok ? 0 : 2, op, f.state, f.areas, f.vertices & 0xff, f.vertices >> 8), new Uint8Array(4), le32(f.revision));
+      return { type: WRITE.writeAnswer, correlation: 2,
+        payload: concat(body, sign(this.forge ? fromHex("11".repeat(32)) : this.key, "ORUN-BLE-WRITE-RES-v1", this.device, this.epoch, ch, body)) };
+    }
     this.writes.push(op);
     let outcome = 0;
     const before = { ...this.config };
@@ -197,4 +237,56 @@ test("write keys: from the account, by epoch, gone at sign-out", async () => {
   book.clear();
   assert.equal(book.size, 0);
   assert.equal(new WriteKeyBook(store).size, 0);
+});
+
+// ---- 4c-2: alan listesi --------------------------------------------------
+const SQUARE: E7[] = [[378500000, 281200000], [378500000, 281210000], [378510000, 281210000], [378510000, 281200000]];
+const TRIANGLE: E7[] = [[378520000, 281200000], [378520000, 281210000], [378530000, 281205000]];
+const zone = (id: string, ring: E7[]): Zone => ({ id, name: id, ring: ring.map(([la, lo]) => [lo / 1e7, la / 1e7]), active: true, updated: 0 });
+
+test("4c-2 shared vector: staged-list digest and the commit tag", () => {
+  assert.equal(hex(stagedDigest([SQUARE, TRIANGLE])), "E3D8EEB9E11497E1F05A30003A76EE6DFAC83EC7E89EE742F013358845C06D29");
+  const req = writeRequest(KEY, parseChallenge(challengeMsg()), OP.fence, 2 | (7 << 8), stagedDigest([SQUARE, TRIANGLE]));
+  assert.equal(hex(req), "0402070000" + "704796AD04E2404AAF1B51D30C3CCD54");
+});
+
+test("the area list goes over Bluetooth: staged in pieces, one signed commit", async () => {
+  const t = new FakeTracker();
+  const many: E7[] = Array.from({ length: 12 }, (_, i) => [378500000 + 1000 * Math.round(Math.cos(i / 2) * 50), 281200000 + 1000 * Math.round(Math.sin(i / 2) * 50)]);
+  const sum = await bleWriteFence(t.exchange, keyFor, DEV, [zone("a", SQUARE), zone("b", TRIANGLE), zone("c", many)]);
+  assert.deepEqual([sum.areas, sum.vertices], [3, 19]);
+  assert.deepEqual(t.fence, { state: 2, areas: 3, vertices: 19, revision: 2 });
+  assert.equal(t.stageSteps, 8);   // begin, square, area, triangle, area, 12 points in 3 messages
+  assert.equal(t.staged, null);
+  // The tasma refuses the list (signed INVALID): a rejection; its list stays.
+  await assert.rejects(bleWriteFence(t.exchange, keyFor, DEV, [zone("x", [[378500000, 281200000], [378500000, 281210000]])]), DeviceRejected);
+  assert.deepEqual([t.fence.areas, t.fence.vertices], [3, 19]);
+  // No key: nothing committed, staging aborted.
+  await assert.rejects(bleWriteFence(t.exchange, () => null, DEV, [zone("a", SQUARE)]), NoWriteKey);
+  assert.equal(t.staged, null);
+  assert.deepEqual([t.fence.areas, t.fence.vertices], [3, 19]);
+  // Someone else answers the commit: never "written".
+  t.forge = true;
+  await assert.rejects(bleWriteFence(t.exchange, keyFor, DEV, [zone("a", SQUARE)]), /doğrulanamadı/);
+  t.forge = false;
+  // Too many corners never leaves the phone.
+  const big: E7[] = Array.from({ length: 65 }, (_, i) => [378500000 + i, 281200000 + (i % 2)]);
+  await assert.rejects(bleWriteFence(t.exchange, keyFor, DEV, [zone("big", big)]), /64 köşe/);
+});
+
+test("Bluetooth delivery: settings first, then the open area op, both closed on the tasma's answer", async () => {
+  const t = new FakeTracker();
+  const results: string[] = [], recorded: unknown[] = [];
+  const out = await deliverBle(t.exchange, keyFor, DEV, {
+    wanted: { interval_s: 600 }, has: { interval_s: 180 },
+    openSettings: { op: "s1", payload: {} } as never,
+    openFence: { op: "f1", payload: { zones: [{ id: "a", name: "Mera", ring: zone("a", SQUARE).ring }] } } as never,
+    reportSettings: async () => undefined,
+    recordFence: async (sum, zones) => { recorded.push([sum.areas, sum.vertices, zones]); },
+    result: async (op, state) => { results.push(`${op}:${state}`); },
+  });
+  assert.deepEqual(out, { wrote: ["ayarlar", "alanlar (1)"], problems: [] });
+  assert.deepEqual(results, ["s1:applied", "f1:applied"]);
+  assert.deepEqual(recorded, [[1, 4, [{ id: "a", name: "Mera" }]]]);
+  assert.deepEqual([t.config.interval, t.fence.areas], [600, 1]);
 });

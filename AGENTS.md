@@ -68,8 +68,10 @@ M6D3C physically qualified the normal production image recovering the durable
 CLEAR/CONFIGURED snapshot at boot and supplying only that semantic snapshot to
 the existing M6D2 runtime owner. No production BLE/LoRa geofence writer,
 protected mutation path or secure EVENT transport is enabled by M6D3C. A local
-USB writer (`APP FENCE ...`) now submits REPLACE_SET / CLEAR_SET to the one
-`GeofenceMutationOwner`; BLE/LoRa must reuse that owner once authorized. This is
+USB writer (`APP FENCE ...`) submits REPLACE_SET / CLEAR_SET to the one
+`GeofenceMutationOwner`; since 4c-2 an account-authenticated BLE writer
+(staged list + signed commit, `ble_write_service.h`) submits REPLACE_SET to the
+same owner; LoRa must reuse it once authorized. This is
 not evidence that backend alarms or trustworthy LOST semantics exist. The
 policy refines older conceptual NEAR_FENCE and fixed outside-cadence notes
 without weakening the validated M6C geometry layer.
@@ -306,7 +308,10 @@ configuration must take precedence over hardware-based AUTO suggestions.
 Role-named power and BLE policy descriptions below refer to availability
 commitments, not hardware-capability restrictions. Basic BLE application GATT
 and bounded read-only status have been implemented and scoped physically
-qualified in M7P7G/H; protected BLE writes, complete service authorization
+qualified in M7P7G/H. Account-authenticated BLE writes of settings (4c-1b)
+and the area list (4c-2) go through the same mutation owners (per-Tracker
+write key from the root credential, single-use Tracker challenge, signed
+result; `docs/milestones/4C1B.md`, `4C2.md`); complete service authorization
 and additional service-specific power policies remain separate future gates.
 
 Hardware capabilities should be automatically detected at boot when practical.

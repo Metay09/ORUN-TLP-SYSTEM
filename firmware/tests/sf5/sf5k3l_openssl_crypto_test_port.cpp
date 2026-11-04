@@ -50,6 +50,15 @@ bool hmacSha256(const uint8_t (&key)[32],const uint8_t* data,
   OPENSSL_cleanse(tmp,sizeof(tmp));
   return ok;
 }
+bool sha256Bounded(const uint8_t* data,size_t length,uint8_t (&out)[32]) {
+  if(data==nullptr || length==0U || length>kMaxBoundedHash)return false;
+  uint8_t tmp[SHA256_DIGEST_LENGTH]{};
+  if(SHA256(data,length,tmp)==nullptr)return false;
+  memcpy(out,tmp,sizeof(tmp));
+  OPENSSL_cleanse(tmp,sizeof(tmp));
+  return true;
+}
+
 bool hkdfSha256Bounded(const uint8_t (&salt)[16],const uint8_t (&root)[32],
                        const uint8_t* info,size_t info_len,uint8_t (&out)[32]) {
   if(info==nullptr || info_len==0U || info_len>kMaxBoundedInfo)return false;

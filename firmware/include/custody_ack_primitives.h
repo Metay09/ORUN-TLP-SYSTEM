@@ -22,5 +22,9 @@ bool hkdfSha256Bounded(const uint8_t (&salt)[16], const uint8_t (&root)[32],
                        uint8_t (&key)[32]);
 bool hmacSha256Bounded(const uint8_t (&key)[32], const uint8_t* data,
                        size_t length, uint8_t (&mac)[32]);
+// 4c-2: SHA-256 of a staged area set (at most 1 + 8 + 64 * 8 bytes).
+// Loop-owned only (the CryptoCell port uses one static scratch buffer).
+constexpr size_t kMaxBoundedHash = 600;
+bool sha256Bounded(const uint8_t* data, size_t length, uint8_t (&digest)[32]);
 } // namespace custody_crypto
 } // namespace orun_tlp

@@ -5,14 +5,19 @@
 // soruyla imzalar, tasma cevabını aynı soruyla imzalar. "Tasmaya işlendi"
 // yalnız tasmanın imzalı cevabıyla (firmware ble_write_auth.h ile aynı baytlar).
 import { concat, equal, fromHex, hex } from "../core/bytes.ts";
-import { hmacSha256 } from "../core/crypto.ts";
+import { hmacSha256, sha256 } from "../core/crypto.ts";
 import { ERROR_TYPE, type AppMessage } from "./bleAppFrames.ts";
+import { DeviceRejected, polygonsOf, summary, type FenceSummary } from "./fenceUsb.ts";
 import { outcomeResult, type ServiceChoice, type SettingWriter } from "./trackerSettings.ts";
+import { FENCE, type E7, type Zone } from "./zones.ts";
 
 export const WRITE = {
-  challenge: 0x10, write: 0x11, challengeAnswer: 0x90, writeAnswer: 0x91,
+  challenge: 0x10, write: 0x11, stage: 0x12, challengeAnswer: 0x90, writeAnswer: 0x91, stageAnswer: 0x92,
 } as const;
-export const OP = { interval: 1, services: 2, bleWindow: 3 } as const;
+export const OP = { interval: 1, services: 2, bleWindow: 3, fence: 4 } as const;
+/** 4c-2 alan listesi aşamaları (firmware ble_application_transport.h). */
+export const STAGE = { begin: 1, vertices: 2, nextArea: 3, abort: 4 } as const;
+const STAGE_MAX_POINTS = 5;
 export type Op = typeof OP[keyof typeof OP];
 
 const enc = new TextEncoder();
@@ -42,11 +47,24 @@ function tag(key: Uint8Array, domain: Uint8Array, c: Challenge, body: Uint8Array
   return hmacSha256(key, concat(domain, be64(c.device), be32(c.epoch), c.challenge, body)).slice(0, 16);
 }
 
-/** Write request payload: op, value LE32, tag over those 5 bytes. */
-export function writeRequest(key: Uint8Array, c: Challenge, op: Op, value: number): Uint8Array {
+/**
+ * Write request payload: op, value LE32, tag over those 5 bytes. An area list
+ * commit also MACs the digest of the staged list (`extra`, not sent).
+ */
+export function writeRequest(key: Uint8Array, c: Challenge, op: Op, value: number, extra: Uint8Array = new Uint8Array(0)): Uint8Array {
   if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) throw new Error("Geçersiz değer.");
   const body = concat(Uint8Array.of(op), le32(value));
-  return concat(body, tag(key, REQ, c, body));
+  return concat(body, tag(key, REQ, c, concat(body, extra)));
+}
+
+/** SHA-256 of the list as the tasma stages it: areas, then per area n and n × (lat, lon) BE32. */
+export function stagedDigest(polys: E7[][]): Uint8Array {
+  const parts: number[] = [polys.length];
+  for (const p of polys) {
+    parts.push(p.length);
+    for (const [la, lo] of p) for (const v of [la, lo]) parts.push((v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff);
+  }
+  return sha256(Uint8Array.from(parts));
 }
 
 export interface WriteResult {
@@ -54,14 +72,20 @@ export interface WriteResult {
   serviceMode: number; services: number; revision: number;
 }
 
-/** The tasma's signed answer; throws unless the tasma itself signed it. */
-export function parseResult(key: Uint8Array, c: Challenge, m: AppMessage, op: Op): WriteResult {
+/** The answer bytes, only if the tasma itself signed them. */
+function signedAnswer(key: Uint8Array, c: Challenge, m: AppMessage, op: Op): Uint8Array {
   if (m.type === ERROR_TYPE) throw writeRefused(m.payload[0]);
   const p = m.payload;
   if (m.type !== WRITE.writeAnswer || p.length !== 30) throw new Error("Tasmadan beklenmedik yanıt.");
   if (!equal(tag(key, RES, c, p.subarray(0, 14)), p.subarray(14, 30)))
-    throw new Error("Tasmanın cevabı doğrulanamadı; ayarın yazıldığını varsayma.");
+    throw new Error("Tasmanın cevabı doğrulanamadı; yazıldığını varsayma.");
   if (p[1] !== op) throw new Error("Tasmadan beklenmedik yanıt.");
+  return p;
+}
+
+/** The tasma's signed answer; throws unless the tasma itself signed it. */
+export function parseResult(key: Uint8Array, c: Challenge, m: AppMessage, op: Op): WriteResult {
+  const p = signedAnswer(key, c, m, op);
   return {
     outcome: OUTCOME[p[0]] ?? "UNAVAILABLE", op: p[1], intervalS: getLe32(p, 2), bleWindowS: p[6] | (p[7] << 8),
     serviceMode: p[8], services: p[9], revision: getLe32(p, 10),
@@ -114,4 +138,85 @@ export function bleSettingWriter(exchange: Exchange, keyFor: KeyFor, device: str
     bleWindow: (s) => run(OP.bleWindow, s),
     services: (c) => run(OP.services, servicesValue(c)),
   };
+}
+
+// ---- 4c-2: alan listesi --------------------------------------------------
+
+/** GeofenceResourceState (firmware geofence_store.h). */
+const FENCE_STATE = ["unavailable", "clear", "configured"] as const;
+
+export interface FenceResult {
+  outcome: Outcome; state: typeof FENCE_STATE[number] | "unknown"; areas: number; vertices: number; revision: number;
+}
+
+export function parseFenceResult(key: Uint8Array, c: Challenge, m: AppMessage): FenceResult {
+  const p = signedAnswer(key, c, m, OP.fence);
+  return {
+    outcome: OUTCOME[p[0]] ?? "UNAVAILABLE", state: FENCE_STATE[p[2]] ?? "unknown",
+    areas: p[3], vertices: p[4] | (p[5] << 8), revision: getLe32(p, 10),
+  };
+}
+
+const STAGE_WHY = ["", "liste başlamadı", "en fazla 64 köşe", "boş alan", "en fazla 8 alan", "biçim hatası"];
+
+async function stageStep(exchange: Exchange, payload: Uint8Array, areas: number, vertices: number): Promise<void> {
+  const m = await exchange(WRITE.stage, payload);
+  if (m.type === ERROR_TYPE) throw writeRefused(m.payload[0]);
+  const p = m.payload;
+  if (m.type !== WRITE.stageAnswer || p.length !== 4) throw new Error("Tasmadan beklenmedik yanıt.");
+  if (p[0] !== 0) throw new DeviceRejected(`Tasma alan listesini reddetti: ${STAGE_WHY[p[0]] ?? p[0]}.`);
+  if (p[1] !== areas || (p[2] | (p[3] << 8)) !== vertices) throw new Error("Tasmanın aldığı köşe sayısı tutmuyor.");
+}
+
+function pointsMessage(points: E7[]): Uint8Array {
+  const out = new Uint8Array(2 + 8 * points.length);
+  out[0] = STAGE.vertices; out[1] = points.length;
+  points.forEach(([la, lo], i) => { out.set(le32(la >>> 0), 2 + 8 * i); out.set(le32(lo >>> 0), 6 + 8 * i); });
+  return out;
+}
+
+/**
+ * Writes the whole list (it replaces the tasma's), exactly like USB writeFence:
+ * staged in pieces, then one signed commit over the digest of what was staged.
+ * Success only on the tasma's signed answer.
+ */
+export async function bleWriteFence(exchange: Exchange, keyFor: KeyFor, device: string, zones: Zone[]): Promise<FenceSummary> {
+  const polys = polygonsOf(zones);
+  const sum = summary(polys);
+  if (!sum.areas) throw new Error("Bu tasmaya gidecek alan yok.");
+  if (sum.areas > FENCE.maxAreas || sum.vertices > FENCE.maxTotalVertices)
+    throw new Error(`Tasma en fazla ${FENCE.maxAreas} alan ve ${FENCE.maxTotalVertices} köşe alır.`);
+  let committed = false;
+  try {
+    await stageStep(exchange, Uint8Array.of(STAGE.begin), 0, 0);
+    let total = 0;
+    for (let a = 0; a < polys.length; a++) {
+      if (a) await stageStep(exchange, Uint8Array.of(STAGE.nextArea), a, total);
+      for (let i = 0; i < polys[a].length; i += STAGE_MAX_POINTS) {
+        const chunk = polys[a].slice(i, i + STAGE_MAX_POINTS);
+        total += chunk.length;
+        await stageStep(exchange, pointsMessage(chunk), a + 1, total);
+      }
+    }
+    const c = parseChallenge(await exchange(WRITE.challenge, new Uint8Array(0)));
+    if (c.device !== device.toUpperCase()) throw new Error("Bağlı cihaz beklenen tasma değil.");
+    const key = keyFor(c.device, c.epoch);
+    if (!key) throw new NoWriteKey("Bu telefonda bu tasmanın yazma anahtarı yok. İnternete bağlanınca hesaptan kendiliğinden gelir; şimdilik USB ile yaz.");
+    const request = writeRequest(key, c, OP.fence, sum.areas | (sum.vertices << 8), stagedDigest(polys));
+    committed = true;
+    let answer: AppMessage;
+    try {
+      answer = await exchange(WRITE.write, request, 25_000);
+    } catch {
+      throw new Error("Tasmadan onay gelmedi; alanların yazıldığını varsayma.");
+    }
+    const r = parseFenceResult(key, c, answer);
+    outcomeResult(r.outcome);
+    if (r.state !== "configured" || r.areas !== sum.areas || r.vertices !== sum.vertices)
+      throw new Error(`Tasma alanları kabul ettiğini doğrulamadı (${r.areas} alan, ${r.vertices} köşe).`);
+    return sum;
+  } catch (e) {
+    if (!committed) { try { await exchange(WRITE.stage, Uint8Array.of(STAGE.abort)); } catch { /* gone */ } }
+    throw e;
+  }
 }

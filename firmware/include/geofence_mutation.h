@@ -16,9 +16,9 @@ namespace orun_tlp {
 // vocabulary of ConfigMutationOwner. The geofence keeps its own state token
 // (GeofenceStore); it does not share the ConfigStore token.
 //
-// Admits the local USB channel only (physical-access trust, like the config
-// writer). BLE needs reviewed application authorization and LoRa the
-// protected TLP v2 path first; both will submit to this same owner.
+// Admits local USB (physical-access trust, like the config writer) and, since
+// 4c-2, an account-authenticated BLE list commit (ble_write_service.h). LoRa
+// needs the protected TLP v2 path first and will submit to this same owner.
 enum class GeofenceMutationKind : uint8_t {
   kReplace = 1,
   kClear = 2,

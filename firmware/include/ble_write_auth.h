@@ -34,8 +34,8 @@ constexpr char kResultDomain[] = "ORUN-BLE-WRITE-RES-v1";
 constexpr size_t kLabelSize = sizeof(kKeyInfoLabel) - 1U;  // 21, all three
 static_assert(sizeof(kRequestDomain) - 1U == kLabelSize, "domain size");
 static_assert(sizeof(kResultDomain) - 1U == kLabelSize, "domain size");
-// Longest MACed body (a write result without its tag).
-constexpr size_t kMaxBody = 32;
+// Longest MACed body: a fence commit (op, value, SHA-256 of the staged set).
+constexpr size_t kMaxBody = 40;
 }  // namespace ble_write_auth
 
 // Unpredictable challenge bytes while the SoftDevice owns the RNG.

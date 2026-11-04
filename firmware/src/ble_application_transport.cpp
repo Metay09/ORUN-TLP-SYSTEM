@@ -240,7 +240,8 @@ void BleApplicationTransport::dispatchInbound() {
   if (message_type ==
           static_cast<uint8_t>(MessageType::kGetWriteChallengeRequest) ||
       message_type ==
-          static_cast<uint8_t>(MessageType::kAuthenticatedWriteRequest)) {
+          static_cast<uint8_t>(MessageType::kAuthenticatedWriteRequest) ||
+      message_type == static_cast<uint8_t>(MessageType::kFenceStageRequest)) {
     dispatchWrite(correlation_id, message_type, payload, total_length);
     return;
   }
@@ -318,6 +319,21 @@ void BleApplicationTransport::dispatchWrite(uint16_t correlation_id,
     buildErrorResponse(correlation_id,
                        ble_app_transport::ErrorCode::kUnsupported,
                        message_type);
+    return;
+  }
+  if (message_type == static_cast<uint8_t>(MessageType::kFenceStageRequest)) {
+    uint8_t out[kMaxLogicalPayload]{};
+    uint16_t out_length = 0;
+    ble_app_transport::ErrorCode error =
+        ble_app_transport::ErrorCode::kUnsupported;
+    if (!write_gate_->stageFence(payload, length, out, out_length, error) ||
+        out_length == 0 || out_length > kMaxLogicalPayload) {
+      buildErrorResponse(correlation_id, error, message_type);
+      return;
+    }
+    buildRawResponse(correlation_id,
+                     static_cast<uint8_t>(MessageType::kFenceStageResponse),
+                     out, out_length);
     return;
   }
   if (message_type ==
