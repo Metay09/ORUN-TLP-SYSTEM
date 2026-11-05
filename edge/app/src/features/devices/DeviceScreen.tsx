@@ -108,12 +108,11 @@ export function DeviceScreen({ id }: { id: string }) {
         </>}
       </Card>
 
-      <Section title="Yazılım paketi" info="Telefondaki firmware dosyasının bütünlüğünü denetler. Henüz cihaza yazılım göndermez.">
-        <Card>
-          <Cell title="Yazılım paketini denetle" sub="ORUN .zip dosyası seç · cihazı değiştirmez"
-            trail={<CaretRight size={16} color="var(--mute)" />} onClick={() => setFirmwarePreview(true)} />
-        </Card>
-      </Section>
+      <Section title="Yazılım paketi" info="Firmware paketini incele, USB ön denetimi yap. Gerçek yükleme yalnız özel test derlemesinde etkinleştirilir." />
+      <Card>
+        <Cell title="Yazılım paketini denetle" sub="ORUN .zip dosyası seç · cihazı kontrol et"
+          trail={<CaretRight size={16} color="var(--mute)" />} onClick={() => setFirmwarePreview(true)} />
+      </Card>
 
       {!isGateway && <>
         <Section title="Ayarlar" info="Ayar hesaba kaydedilir; tasmaya bağlanınca (şimdilik USB ile) sormadan yazılır. Tasma yazdığını onaylayınca 'Cihazda' olur. Birden çok tasmaya birden: Cihazlar → Toplu ayar." />
