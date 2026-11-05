@@ -11,6 +11,7 @@ export interface FirmwareEvidence {
   epoch?: string;
   granted?: string;
   grantGeneration?: string;
+  testCredential?: boolean;
   storeInc?: string;
   nextSeq?: number;
   storeReady?: boolean;
@@ -29,11 +30,15 @@ export function parseFirmwareEvidence(lines: string[]): FirmwareEvidence {
       out.id = m[1]; out.kind = m[2] === "TRACKER" ? "tracker" : "gateway";
     } else if ((m = line.match(/^BENCH TRACKER id=([0-9A-F]{16}) .*?granted_gateway=([0-9A-F]{16}|none)\b/))) {
       if (out.id && out.id !== m[1]) throw new Error("Cihaz kimlikleri çelişkili.");
+      if (out.kind && out.kind !== "tracker") throw new Error("Cihaz türleri çelişkili.");
       out.id = m[1]; out.kind = "tracker"; out.granted = m[2];
+      const testKey = line.match(/\btest_credential=(yes|no)\b/);
+      if (testKey) out.testCredential = testKey[1] === "yes";
     } else if ((m = line.match(/^BENCH CREDENTIAL credential=([0-9A-F]{32}|none) epoch=([0-9A-F]{8}) grant_generation=([0-9A-F]{8})/))) {
       out.credential = m[1]; out.epoch = m[2]; out.grantGeneration = m[3];
     } else if ((m = line.match(/^BENCH GATEWAY id=([0-9A-F]{16}) custody_region=(\w+)(?: custody_ready=\w+ held=(-?\d+)\/\d+)?/))) {
       if (out.id && out.id !== m[1]) throw new Error("Cihaz kimlikleri çelişkili.");
+      if (out.kind && out.kind !== "gateway") throw new Error("Cihaz türleri çelişkili.");
       out.id = m[1]; out.kind = "gateway"; out.custodyRegion = m[2];
       if (m[3]) out.held = Number(m[3]);
     } else if ((m = line.match(/^BENCH OGK1 status=\w+ generation=([0-9A-F]{16})/))) {
@@ -46,12 +51,15 @@ export function parseFirmwareEvidence(lines: string[]): FirmwareEvidence {
     }
   }
   if (!out.id || !out.kind || !out.firmware) throw new Error("Cihazın kimliği, türü veya yazılımı okunamadı.");
+  if (out.kind === "tracker" && out.testCredential === true)
+    throw new Error("Bu tasma deneme anahtarı kullanıyor; yükleme ön denetimi reddedildi.");
   if (out.kind === "tracker" && (!out.credential || out.credential === "none" || !out.epoch ||
       !out.granted || !out.grantGeneration || !out.storeInc || out.nextSeq === undefined ||
       out.nextSeq === 0 || !out.storeReady || out.storeFaulted))
     throw new Error("Tasmanın anahtar ve kayıt hafızası güvenilir biçimde okunamadı.");
-  if (out.kind === "gateway" && !out.custodyRegion)
-    throw new Error("Gateway kayıt bölgesi okunamadı.");
+  if (out.kind === "gateway" && (out.custodyRegion !== "READY" || out.held === undefined ||
+      out.held < 0 || !out.ogk1Generation))
+    throw new Error("Gateway belleği, bekleyen kayıt sayısı veya imzalı izin okunamadı.");
   return out as FirmwareEvidence;
 }
 
@@ -81,7 +89,7 @@ export function compareFirmwareEvidence(before: FirmwareEvidence, after: Firmwar
     need(after.nextSeq !== undefined && before.nextSeq !== undefined && after.nextSeq >= before.nextSeq,
       "Kayıt sayacı geri gitti veya okunamadı.");
   } else {
-    need(after.custodyRegion === "READY" || after.custodyRegion === before.custodyRegion,
+    need(after.custodyRegion === "READY",
       "Gateway hafızası hazır değil.");
     if (before.held !== undefined) need(after.held !== undefined && after.held >= before.held,
       "Gateway'in bekleyen kayıt sayısı azaldı.");
