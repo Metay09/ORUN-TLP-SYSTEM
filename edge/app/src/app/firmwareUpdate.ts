@@ -13,6 +13,8 @@ export interface UpdateRecord {
   phase: UpdatePhase;
   bytesAcknowledged: number;
   imageBytes: number;
+  /** True only after the DFU STOP/activate packet was acknowledged and journaled. */
+  activationAcknowledged: boolean;
   updatedAt: number;
   note: string;
   before: FirmwareEvidence;
@@ -78,6 +80,7 @@ export async function updateFirmware(
   const record: UpdateRecord = {
     device, sourceCommit: pkg.sourceCommit, imageSha256: pkg.imageSha256,
     phase: "uncertain", bytesAcknowledged: 0, imageBytes: pkg.image.length,
+    activationAcknowledged: false,
     updatedAt: Date.now(), note: "Bootloader'a geçmeden önce kaydedildi.", before,
   };
   save(store, record, "uncertain", "Giriş başladı; sonraki sonuç doğrulanmadan başarı sayılmaz.");
@@ -88,6 +91,11 @@ export async function updateFirmware(
     link = await ports.enterBootloader(device);
     save(store, record, "transferring", "Firmware paketleri aktarılıyor.");
     await transferDfu(link, pkg, (progress) => {
+      if (progress.stage === "activate") {
+        // STOP ACK confirms transfer completion, not firmware activation.
+        record.activationAcknowledged = true;
+        save(store, record, "transferring", "STOP onaylandı; cihazdan doğrulama bekleniyor.");
+      }
       if (progress.done > record.bytesAcknowledged) {
         record.bytesAcknowledged = progress.done;
         save(store, record, "transferring", "Paket alındı; cihaz doğrulaması bekleniyor.");
@@ -111,6 +119,10 @@ export async function reconcileFirmwareUpdate(
 ): Promise<UpdateRecord> {
   const record = previousFirmwareUpdate(store, id);
   if (!record) throw new Error("Bu cihaz için korunmuş güncelleme kaydı bulunamadı.");
+  // An interrupted transfer can leave the OLD application running with the
+  // same build ID. Never infer success from version/keys when STOP was not ACKed.
+  if (record.activationAcknowledged !== true || record.bytesAcknowledged !== record.imageBytes)
+    throw new Error("Firmware aktarımı tam onaylanmamış; sonuç belirsiz. Otomatik tekrar yok.");
   // A version match alone is insufficient: all key/grant/store invariants must hold.
   let after: FirmwareEvidence;
   try { after = await (ports.readAfterUpdate ?? ports.readApplication)(record.device); }
