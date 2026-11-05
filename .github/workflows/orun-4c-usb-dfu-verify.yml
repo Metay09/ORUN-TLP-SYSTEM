@@ -1,0 +1,43 @@
+name: ORUN 4c phone USB firmware verification
+
+on:
+  push:
+    branches:
+      - feat/4c-phone-usb-dfu-package
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: edge/app/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Check and test firmware package builder
+        run: python3 -m unittest discover -s tools/ci -p test_orun_telefon_paketi.py -v
+      - name: Install locked Android app dependencies
+        working-directory: edge/app
+        run: npm ci --ignore-scripts
+      - name: Run all phone app tests
+        working-directory: edge/app
+        run: npm test
+      - name: Type-check and build the full phone app
+        working-directory: edge/app
+        run: npm run build
+      - name: Synchronize Android Capacitor project
+        working-directory: edge/app
+        run: npx cap sync android
+      - name: Verify native Android debug compilation (no APK publish)
+        working-directory: edge/app/android
+        run: bash ./gradlew :app:assembleDebug --no-daemon --stacktrace
