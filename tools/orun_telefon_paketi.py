@@ -19,8 +19,8 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo, BadZipFile
 
 MAX_ARCHIVE = 2 * 1024 * 1024
-MAX_APP = 900 * 1024
-MAX_DAT = 64 * 1024
+MAX_APP = 0x0C5000 - 0x026000  # application cannot overlap ProductStore at 0x0C5000
+MAX_DAT = 512  # HCI init packet is sent as one frame
 MAX_ENTRIES = 16
 SOURCE_SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
 
