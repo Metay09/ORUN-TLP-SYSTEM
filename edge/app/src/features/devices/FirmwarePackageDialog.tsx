@@ -89,8 +89,9 @@ export function FirmwarePackageDialog({ onClose, device }: { onClose: () => void
     <Dialog title="USB yazılım güncelleme" onClose={close}>
       <div className="stack" style={{ padding: "0 20px 20px" }}>
         <p className="sm" style={{ margin: 0 }}>
-          Bilgisayarda üretilmiş RAK4630 ORUN paketini (.zip) seç. Paket bütünlüğü,
-          hedefi ve mevcut cihaz kimliği aktarım öncesi kontrol edilir.
+          Yalnız cihazı kontrol etmek için ZIP seçmen gerekmez. USB kimliğini,
+          mevcut yazılımı ve kayıt durumunu okuyabilirsin; cihaza hiçbir şey yazılmaz.
+          Firmware güncellemesi için ORUN paketini (.zip) ayrıca seçebilirsin.
           ZIP bütünlüğü yazılımın imzalı olduğunu tek başına kanıtlamaz.
         </p>
         <label className="sm" htmlFor="orun-firmware-file">ORUN yazılım paketi</label>
@@ -106,7 +107,7 @@ export function FirmwarePackageDialog({ onClose, device }: { onClose: () => void
           </div>
         )}
         <div className="btns" style={{ padding: 0 }}>
-          <button type="button" className="btn" disabled={!pkg || working}
+          <button type="button" className="btn" disabled={working}
             onClick={() => { void checkUsb(); }}>USB'deki cihazı kontrol et</button>
         </div>
         {baseline && (
