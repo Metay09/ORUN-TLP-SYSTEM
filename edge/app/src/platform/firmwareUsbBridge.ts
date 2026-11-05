@@ -68,9 +68,9 @@ export async function touchOrunBootloader(id: string): Promise<void> {
     if (info.deviceId !== dev.deviceId || info.serialNumber?.toUpperCase() !== id)
       throw new Error("Açılan USB portu yanlış cihazda.");
     await UsbSerial.setParameters({ portId, baudRate: 1200, dataBits: 8, stopBits: 1, parity: "none" });
-    await UsbSerial.setDTR({ portId, value: true });
+    // Adafruit --touch 1200 opens and closes the port at that baud rate;
+    // the close triggers bootloader entry. Do not pulse DTR separately.
     await sleep(100);
-    await UsbSerial.setDTR({ portId, value: false });
   } finally { await UsbSerial.close({ portId }).catch(() => undefined); }
 }
 
