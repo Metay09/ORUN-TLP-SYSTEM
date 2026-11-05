@@ -138,3 +138,23 @@ test("post-update read waits for reconnect; preflight always uses immediate USB 
   assert.equal(rebootReads, 1);
   assert.equal(sent, 4);
 });
+
+test("old or tampered update journal never authorizes an upload or false success", async () => {
+  const st = storage(), p = ports(evidence("0.5-0123456"));
+  const key = "orun.firmwareUpdate.v1." + id;
+  const legacy = {
+    device: id, sourceCommit: sha, imageSha256: hash,
+    phase: "confirmed", bytesAcknowledged: 3, imageBytes: 3,
+    before: evidence("0.5-old"), updatedAt: Date.now(), note: "legacy",
+  };
+  st.setItem(key, JSON.stringify(legacy));
+  assert.equal(previousFirmwareUpdate(st, id), null);
+  await assert.rejects(updateFirmware(st, p.data, id, pkg), /kaydı bozuk/);
+  assert.equal(p.reads, 0);
+  assert.equal(p.entries, 0);
+  legacy.phase = "verifying";
+  st.setItem(key, JSON.stringify({...legacy, activationAcknowledged: false}));
+  assert.equal(previousFirmwareUpdate(st, id), null);
+  await assert.rejects(updateFirmware(st, p.data, id, pkg), /kaydı bozuk/);
+  assert.equal(p.entries, 0);
+});
