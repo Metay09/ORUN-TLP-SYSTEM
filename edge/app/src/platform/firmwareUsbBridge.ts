@@ -6,7 +6,7 @@ import { readFirmwareEvidence, type FirmwareEvidence } from "../app/firmwareSafe
 import { DfuUsbPort } from "./dfuUsbPort.ts";
 import { UsbConsole } from "./usbConsole.ts";
 
-const VID = 0x239a, APP_PID = 0x8029;
+const VID = 0x239a, APP_PIDS = [0x8029, 0x802a] as const;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const assertId = (id: string) => {
   if (!/^[0-9A-F]{16}$/.test(id)) throw new Error("Geçersiz RAK cihaz kimliği.");
@@ -16,8 +16,9 @@ type SerialInfo = { deviceId: string; vendorId: number; productId: number; seria
 /** A uniquely matched application, including when serial needs USB permission to be exposed. */
 async function exactApplication(id: string): Promise<SerialInfo> {
   assertId(id);
-  await UsbSerial.registerDriver({ vendorId: VID, productId: APP_PID, driverType: "CdcAcmSerialDriver" });
-  const list = (await UsbSerial.listDevices()).devices.filter((d) => d.vendorId === VID && d.productId === APP_PID);
+  for (const productId of APP_PIDS)
+    await UsbSerial.registerDriver({ vendorId: VID, productId, driverType: "CdcAcmSerialDriver" });
+  const list = (await UsbSerial.listDevices()).devices.filter((d) => d.vendorId === VID && APP_PIDS.includes(d.productId as (typeof APP_PIDS)[number]));
   const matches = list.filter((d) => d.serialNumber?.toUpperCase() === id);
   if (matches.length > 1 || (matches.length === 0 && list.length !== 1))
     throw new Error("Uygulama USB portu bulunamadı ya da hedef belirsiz.");
@@ -29,7 +30,7 @@ async function exactApplication(id: string): Promise<SerialInfo> {
     if (!granted) throw new Error("USB izni verilmedi.");
   }
   const refreshed = (await UsbSerial.listDevices()).devices.find((d) => d.deviceId === dev.deviceId);
-  if (!refreshed || refreshed.vendorId !== VID || refreshed.productId !== APP_PID ||
+  if (!refreshed || refreshed.vendorId !== VID || !APP_PIDS.includes(refreshed.productId as (typeof APP_PIDS)[number]) ||
       refreshed.serialNumber?.toUpperCase() !== id)
     throw new Error("USB cihaz kimliği doğrulanamadı.");
   return refreshed;
