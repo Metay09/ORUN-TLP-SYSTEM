@@ -34,3 +34,17 @@ test("gateway needs preserved held count and signed grants", () => {
   const less = parseFirmwareEvidence(lines.map(x=>x.replace("held=7/200","held=6/200")));
   assert.equal(compareFirmwareEvidence(before,less,sha).ok,false);
 });
+
+
+test("refuses test-key tracker and gateway without fully readable custody evidence", () => {
+  assert.throws(
+    () => parseFirmwareEvidence(t.map(x => x.replace("test_credential=no", "test_credential=yes"))),
+    /deneme anahtarı/,
+  );
+  const incomplete = [
+    "BENCH DEVICE id=09A462BD4B275BA5 role=GATEWAY security_region=READY gnss=no",
+    "BENCH GATEWAY id=09A462BD4B275BA5 custody_region=READY",
+    "APP DEVICE id=2 fw=0.5-0123456",
+  ];
+  assert.throws(() => parseFirmwareEvidence(incomplete), /Gateway belleği/);
+});
