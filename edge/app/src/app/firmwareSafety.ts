@@ -71,7 +71,9 @@ export async function readFirmwareEvidence(con: LineConsole): Promise<FirmwareEv
   for (const command of ["BENCH?", "PRODUCT STORE?", "APP DEVICE?"]) {
     await con.send(command);
     // Wait for a short collection window; consumes only what firmware answered.
-    await con.waitFor((line) => { lines.push(line); return null; }, 1100);
+    // Match the existing PC read-only tool's ~2 s collection window per
+    // command. BENCH? may emit several lines while flash stores become ready.
+    await con.waitFor((line) => { lines.push(line); return null; }, 2000);
   }
   return parseFirmwareEvidence(lines);
 }
