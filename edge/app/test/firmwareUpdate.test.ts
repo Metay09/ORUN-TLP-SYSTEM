@@ -89,3 +89,12 @@ test("wrong USB device fails before journal or flash", async () => {
   assert.equal(writes,0);
   assert.equal(previousFirmwareUpdate(st,id),null);
 });
+
+
+test("corrupted persisted record prevents another flash attempt", async () => {
+  const st = storage(), p = ports(evidence("0.5-0123456"));
+  st.setItem("orun.firmwareUpdate.v1." + id, "{not-valid-json");
+  await assert.rejects(updateFirmware(st, p.data, id, pkg), /kaydı bozuk/);
+  assert.equal(p.entries, 0);
+  assert.equal(p.reads, 0);
+});
