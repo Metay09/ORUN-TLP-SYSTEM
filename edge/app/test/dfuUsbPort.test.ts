@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DfuUsbPort } from "../src/platform/dfuUsbPort.ts";
 const id = "52E16773141A8887";
-function fake(serial: string|null = id) {
+function fake(serial: string|null = id, pid = 0x0029) {
   let granted = false, closed = false;
   const history: string[] = [];
   const usb = {
     registerDriver: async (x: unknown) => {history.push("driver:"+JSON.stringify(x));},
     listDevices: async () => ({devices:[{
-      deviceId:"one",vendorId:0x239a,productId:0x0029,driverType:"CdcAcmSerialDriver",deviceName:"RAK",portCount:1,
+      deviceId:"one",vendorId:0x239a,productId:pid,driverType:"CdcAcmSerialDriver",deviceName:"RAK",portCount:1,
       serialNumber:serial,hasPermission:granted,
     }]}),
     requestPermission: async () => {granted=true;return {granted:true};},
@@ -34,4 +34,13 @@ test("opens only matching bootloader and transfers raw bytes (no text corruption
 test("serial mismatch or missing identity fails closed before opening a port",async()=>{
   await assert.rejects(DfuUsbPort.openBootloader(fake("1111111111111111").usb as never,id),/farklı/);
   await assert.rejects(DfuUsbPort.openBootloader(fake(null).usb as never,id),/doğrulanamadı/);
+});
+
+test("alternate RAK bootloader USB PID 0x002A uses identical strict serial checks", async () => {
+  const f = fake(id, 0x002a);
+  const port = await DfuUsbPort.openBootloader(f.usb as never, id);
+  assert.ok(f.history.some((x) => x.includes('"productId":42')));
+  await port.close();
+  assert.equal(f.closed, true);
+  await assert.rejects(DfuUsbPort.openBootloader(fake(null, 0x002a).usb as never, id), /doğrulanamadı/);
 });
