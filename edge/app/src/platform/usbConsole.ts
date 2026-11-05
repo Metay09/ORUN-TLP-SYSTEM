@@ -15,11 +15,13 @@ export class UsbConsole implements LineConsole {
   private listeners: PluginListenerHandle[] = [];
   private decoder = new TextDecoder();
 
-  static async open(): Promise<UsbConsole> {
+  static async open(exactDeviceId?: string): Promise<UsbConsole> {
     const con = new UsbConsole();
     await UsbSerial.registerDriver({ vendorId: RAK_VID, productId: RAK_PID, driverType: "CdcAcmSerialDriver" });
     const { devices } = await UsbSerial.listDevices();
-    const dev = devices.find((d) => d.vendorId === RAK_VID) ?? devices[0];
+    const dev = exactDeviceId
+      ? devices.find((d) => d.deviceId === exactDeviceId && d.vendorId === RAK_VID && d.productId === RAK_PID)
+      : devices.find((d) => d.vendorId === RAK_VID) ?? devices[0];
     if (!dev) throw new Error("USB'de cihaz yok (OTG kablosu takılı mı?)");
     if (!dev.hasPermission) {
       const { granted } = await UsbSerial.requestPermission({ deviceId: dev.deviceId });
