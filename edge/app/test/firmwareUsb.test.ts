@@ -52,3 +52,16 @@ test("any incomplete/mismatched acknowledgement is result-unknown, no retry", as
     (e: unknown) => e instanceof DfuError && e.uncertain === true && /uyuşmadı/.test(e.message));
   assert.equal(packets.length,1);
 });
+
+test("complete mocked HCI ACK sequence sends app-only frames and never treats ACK as post-flash proof", async () => {
+  const frames: Uint8Array[] = [];
+  const progress: string[] = [];
+  const fake = {
+    async write(f: Uint8Array) { frames.push(f); },
+    async read() { return makeAck(frames[frames.length - 1][1] & 7); },
+  };
+  await transferDfu(fake, { image: Uint8Array.of(1,2,3), initPacket: Uint8Array.of(5) } as never,
+    (p) => { progress.push(p.stage); });
+  assert.equal(frames.length, 4);
+  assert.deepEqual(progress, ["init", "erase", "init", "transfer", "activate"]);
+});
