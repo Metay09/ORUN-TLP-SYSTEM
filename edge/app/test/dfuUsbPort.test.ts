@@ -26,7 +26,8 @@ function fake(serial: string|null = id, pid = 0x0029) {
 test("opens only matching bootloader and transfers raw bytes (no text corruption)",async()=>{
   const f=fake();const port=await DfuUsbPort.openBootloader(f.usb as never,id);
   assert.ok(f.history.includes("baud:115200"));
-  assert.deepEqual(f.history.slice(-2),["dtr:false","dtr:true"]);
+  assert.equal(f.history.some((x) => x.startsWith("dtr:")), false,
+    "1200 baud touch sonrası DFU portu DTR ile yeniden başlatılmamalı");
   await port.write(Uint8Array.of(0xc0,0,0xdb,0xff));
   assert.deepEqual(await port.read(200),Uint8Array.of(0xc0,0x10,0,0,0xf0,0xc0));
   await port.close();assert.equal(f.closed,true);
