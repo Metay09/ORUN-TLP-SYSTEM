@@ -161,7 +161,7 @@ export function DeviceScreen({ id }: { id: string }) {
       {live && <TrackerLiveDialog device={id} target={live} fromAnimal={!!a} onClose={() => setLive(null)} />}
       {sending && <ApplyFenceDialog only={id} onClose={() => setSending(false)} />}
       {naming && <NameDialog device={id} kind="gateway" current={names[up] ?? null} onClose={() => setNaming(false)} />}
-      {firmwarePreview && <FirmwarePackageDialog onClose={() => setFirmwarePreview(false)} />}
+      {firmwarePreview && <FirmwarePackageDialog device={up} onClose={() => setFirmwarePreview(false)} />}
     </Screen>
   );
 }
