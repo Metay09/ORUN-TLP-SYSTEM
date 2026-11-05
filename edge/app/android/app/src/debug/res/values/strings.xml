@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Isolated 4c debug install: clearly distinct from production ORUN. -->
-    <string name="app_name">ORUN USB Test</string>
-    <string name="title_activity_main">ORUN USB Test</string>
-    <string name="package_name">tr.orun.edge.usbtest</string>
-    <string name="custom_url_scheme">tr.orun.edge.usbtest</string>
-</resources>
