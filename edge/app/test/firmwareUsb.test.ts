@@ -65,3 +65,9 @@ test("complete mocked HCI ACK sequence sends app-only frames and never treats AC
   assert.equal(frames.length, 4);
   assert.deepEqual(progress, ["init", "erase", "init", "transfer", "activate"]);
 });
+
+test("published Nordic HCI START application packet matches byte-for-byte", () => {
+  const payload = Uint8Array.of(3,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0x0c,0x5d,0,0);
+  assert.equal(Buffer.from(encodeHci(payload,1)).toString("hex"),
+    "c0d14e01e0030000000400000000000000000000000c5d0000c6fcc0");
+});
