@@ -6,7 +6,7 @@ import type { DfuSerial } from "../app/firmwareUsb.ts";
 
 type UsbApi = Pick<UsbSerialPlugin, "registerDriver" | "listDevices" | "requestPermission" | "open" |
   "getPortInfo" | "setParameters" | "setDTR" | "read" | "write" | "close">;
-const VID = 0x239a, BOOT_PID = 0x0029;
+const VID = 0x239a, BOOT_PIDS = [0x0029, 0x002a] as const;
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export class DfuUsbPort implements DfuSerial {
@@ -17,8 +17,9 @@ export class DfuUsbPort implements DfuSerial {
   static async openBootloader(usb: UsbApi, expectedId: string): Promise<DfuUsbPort> {
     if (!/^[0-9A-Fa-f]{16}$/.test(expectedId)) throw new Error("Geçersiz hedef cihaz kimliği.");
     const exact = expectedId.toUpperCase();
-    await usb.registerDriver({ vendorId: VID, productId: BOOT_PID, driverType: "CdcAcmSerialDriver" });
-    let devices = (await usb.listDevices()).devices.filter((d) => d.vendorId === VID && d.productId === BOOT_PID);
+    for (const productId of BOOT_PIDS)
+      await usb.registerDriver({ vendorId: VID, productId, driverType: "CdcAcmSerialDriver" });
+    let devices = (await usb.listDevices()).devices.filter((d) => d.vendorId === VID && BOOT_PIDS.includes(d.productId as (typeof BOOT_PIDS)[number]));
     const matches = devices.filter((d) => d.serialNumber?.toUpperCase() === exact);
     const candidate = matches.length === 1 ? matches[0] : devices.length === 1 ? devices[0] : null;
     if (!candidate) throw new Error("Doğru RAK bootloader'ı tekil olarak seçilemedi.");
