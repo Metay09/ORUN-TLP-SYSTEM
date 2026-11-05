@@ -15,6 +15,7 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/kdf.h>
+#include <openssl/sha.h>
 
 #include "application_request.h"
 #include "ble_application_transport.h"
@@ -23,6 +24,8 @@
 #include "config_mutation.h"
 #include "config_store.h"
 #include "device_identity.h"
+#include "geofence_mutation.h"
+#include "geofence_store.h"
 #include "security_store.h"
 #include "storage_config.h"
 
@@ -35,6 +38,8 @@ constexpr uint64_t kDevice = UINT64_C(0x0E8ADE7E71531AA3);
 constexpr uint32_t kEpoch = 1U;
 constexpr size_t kConfigRegion =
     storage_config::kPageSize * storage_config::kFutureConfigRegionPages;
+constexpr size_t kFenceRegion =
+    storage_config::kPageSize * storage_config::kGeofenceRegionPages;
 
 // Shared vector (credential 10..1F, root 40..5F, challenge C0..CF).
 const char kWriteKey[] =
@@ -74,7 +79,8 @@ class NorFlash : public FlashBackend {
   }
   FlashOpResult erasePage(uint32_t page) override {
     if (page >= pages_) return FlashOpResult::kFailed;
-    memset(bytes.data() + size_t(page) * 4096U, 0xFF, 4096U);
+    memset(bytes.data() + size_t(page) * storage_config::kPageSize, 0xFF,
+           storage_config::kPageSize);
     return FlashOpResult::kDone;
   }
 
@@ -86,6 +92,14 @@ class FixedIncarnation : public ConfigIncarnationSource {
  public:
   bool generate(uint64_t& incarnation) override {
     incarnation = 0x0BADC0FFEE123456ULL;
+    return true;
+  }
+};
+
+class FixedFenceIncarnation : public GeofenceIncarnationSource {
+ public:
+  bool generate(uint64_t& incarnation) override {
+    incarnation = 0x0102030405060708ULL;
     return true;
   }
 };
@@ -154,16 +168,22 @@ struct Tracker {
   SecurityStore security{sec_flash, sec_flash};
   ConfigStore store{cfg_flash, &rng};
   ConfigMutationOwner mutations{store};
+  NorFlash fence_flash{kFenceRegion, storage_config::kGeofenceRegionPages};
+  FixedFenceIncarnation fence_rng;
+  GeofenceStore fences{fence_flash, &fence_rng};
+  GeofenceMutationOwner fence_mutations{fences};
   ApplicationRequestService reads{store};
   CountingChallenges challenges;
   BleWriteAuthenticator auth{security, challenges};
-  BleWriteService service{auth, mutations, store};
+  BleWriteService service{auth, mutations, store, fence_mutations, fences};
   BleApplicationTransport transport{reads};
   uint32_t now = 1000;
   uint16_t corr = 1;
 
   explicit Tracker(bool provision = true) {
     assert(store.begin());
+    assert(fences.begin());
+    for (int i = 0; i < 200 && fences.busy(); ++i) fences.poll();
     assert(security.begin(DeviceIdentity::fromLegacyUint64(kDevice)));
     if (provision) {
       uint8_t id[16], root[32];
@@ -203,12 +223,13 @@ struct Tracker {
   // Loop passes until the transport has a whole response; returns it.
   bool answer(uint8_t& type, std::vector<uint8_t>& payload, int passes = 200) {
     for (int i = 0; i < passes && !transport.outboundFramePending(); ++i) {
+      fences.poll();
+      (void)fence_mutations.poll();
       store.poll();
       (void)mutations.poll();
       uint32_t id = 0;
       uint8_t out[bat::kWriteResultPayloadSize];
-      ConfigMutationResult result;
-      if (service.takeAnswer(id, out, result) == BleWriteService::Answer::kReady)
+      if (service.takeAnswer(id, out) == BleWriteService::Answer::kReady)
         (void)transport.completeWrite(id, out, sizeof(out));
     }
     if (!transport.outboundFramePending()) return false;
@@ -482,8 +503,7 @@ void testDisconnectWhileWriting() {
     (void)t.mutations.poll();
     uint32_t id = 0;
     uint8_t out[bat::kWriteResultPayloadSize];
-    ConfigMutationResult result;
-    last = t.service.takeAnswer(id, out, result);
+    last = t.service.takeAnswer(id, out);
   }
   assert(last == BleWriteService::Answer::kDropped);
   assert(!t.mutations.busy() && t.store.config().tracking_interval_seconds == 300);
@@ -494,6 +514,185 @@ void testDisconnectWhileWriting() {
   assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kApplied));
 }
 
+// ---- 4c-2: the area list over BLE ------------------------------------------
+using Area = std::vector<std::pair<int32_t, int32_t>>;
+// A ~100 m square and a triangle near 37.85 N 28.12 E (shared vector).
+const Area kSquare = {{378500000, 281200000}, {378500000, 281210000},
+                      {378510000, 281210000}, {378510000, 281200000}};
+const Area kTriangle = {{378520000, 281200000}, {378520000, 281210000},
+                        {378530000, 281205000}};
+const char kFenceDigest[] =
+    "E3D8EEB9E11497E1F05A30003A76EE6DFAC83EC7E89EE742F013358845C06D29";
+const char kFenceRequestTag[] = "704796AD04E2404AAF1B51D30C3CCD54";
+
+std::vector<uint8_t> fenceDigest(const std::vector<Area>& areas) {
+  std::vector<uint8_t> canon{static_cast<uint8_t>(areas.size())};
+  for (const Area& a : areas) {
+    canon.push_back(static_cast<uint8_t>(a.size()));
+    for (const auto& p : a)
+      for (int32_t v : {p.first, p.second})
+        for (int i = 3; i >= 0; --i)
+          canon.push_back(static_cast<uint8_t>(static_cast<uint32_t>(v) >> (8 * i)));
+  }
+  uint8_t d[32];
+  SHA256(canon.data(), canon.size(), d);
+  return std::vector<uint8_t>(d, d + 32);
+}
+
+constexpr uint8_t kStage = static_cast<uint8_t>(bat::MessageType::kFenceStageRequest);
+
+std::vector<uint8_t> stage(Tracker& t, std::vector<uint8_t> payload) {
+  t.send(kStage, payload.data(), static_cast<uint16_t>(payload.size()));
+  uint8_t type = 0;
+  std::vector<uint8_t> p;
+  assert(t.answer(type, p));
+  if (type == kError) return {0xFF, p[0]};
+  assert(type == static_cast<uint8_t>(bat::MessageType::kFenceStageResponse) && p.size() == 4);
+  return p;
+}
+
+std::vector<uint8_t> points(const Area& a, size_t from, size_t n) {
+  std::vector<uint8_t> out{bat::kFenceStageVertices, static_cast<uint8_t>(n)};
+  for (size_t i = from; i < from + n; ++i) {
+    uint8_t b[8];
+    putLe32(b, static_cast<uint32_t>(a[i].first));
+    putLe32(b + 4, static_cast<uint32_t>(a[i].second));
+    out.insert(out.end(), b, b + 8);
+  }
+  return out;
+}
+
+void stageAll(Tracker& t, const std::vector<Area>& areas) {
+  assert(stage(t, {bat::kFenceStageBegin})[0] == 0);
+  uint16_t total = 0;
+  for (size_t a = 0; a < areas.size(); ++a) {
+    if (a) assert(stage(t, {bat::kFenceStageNextArea})[0] == 0);
+    for (size_t i = 0; i < areas[a].size(); i += 5) {
+      const size_t n = areas[a].size() - i < 5 ? areas[a].size() - i : 5;
+      const std::vector<uint8_t> r = stage(t, points(areas[a], i, n));
+      total = static_cast<uint16_t>(total + n);
+      assert(r[0] == 0 && r[1] == a + 1 && (r[2] | (r[3] << 8)) == total);
+    }
+  }
+}
+
+// Commits what the phone believes it staged; returns the answer.
+std::vector<uint8_t> commit(Tracker& t, const std::vector<Area>& signed_areas,
+                            uint32_t value, uint8_t& type) {
+  const std::vector<uint8_t> c = t.challenge();
+  std::vector<uint8_t> r(bat::kWriteRequestPayloadSize);
+  r[0] = bat::kWriteOpFence;
+  putLe32(r.data() + 1, value);
+  std::vector<uint8_t> body(r.begin(), r.begin() + 5);
+  const std::vector<uint8_t> d = fenceDigest(signed_areas);
+  body.insert(body.end(), d.begin(), d.end());
+  const std::vector<uint8_t> tg = tag(ble_write_auth::kRequestDomain, c.data(), body.data(), body.size());
+  memcpy(r.data() + 5, tg.data(), 16);
+  t.send(static_cast<uint8_t>(bat::MessageType::kAuthenticatedWriteRequest), r.data(),
+         static_cast<uint16_t>(r.size()));
+  std::vector<uint8_t> p;
+  assert(t.answer(type, p));
+  if (type == kResult) {
+    assert(p.size() == bat::kWriteResultPayloadSize && p[1] == bat::kWriteOpFence);
+    const std::vector<uint8_t> rt = tag(ble_write_auth::kResultDomain, c.data(), p.data(), 14);
+    assert(memcmp(rt.data(), p.data() + 14, 16) == 0);
+  }
+  return p;
+}
+
+constexpr uint32_t counts(uint32_t areas, uint32_t vertices) { return areas | (vertices << 8); }
+
+void testFenceSharedVector() {
+  assert(fenceDigest({kSquare, kTriangle}) == unhex(kFenceDigest));
+  std::vector<uint8_t> body{bat::kWriteOpFence, 0, 0, 0, 0};
+  putLe32(body.data() + 1, counts(2, 7));
+  const std::vector<uint8_t> d = unhex(kFenceDigest);
+  body.insert(body.end(), d.begin(), d.end());
+  const std::vector<uint8_t> c = unhex("C0C1C2C3C4C5C6C7C8C9CACBCCCDCECF");
+  assert(tag(ble_write_auth::kRequestDomain, c.data(), body.data(), body.size()) ==
+         unhex(kFenceRequestTag));
+}
+
+void testFenceOverBle() {
+  Tracker t;
+  uint8_t type = 0;
+  stageAll(t, {kSquare, kTriangle});
+  std::vector<uint8_t> p = t.write(0, 0, type);  // (unknown op 0: signed INVALID)
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kInvalid));
+  assert(t.service.staging().active());           // a settings write leaves the list
+  p = commit(t, {kSquare, kTriangle}, counts(2, 7), type);
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kApplied));
+  assert(p[2] == uint8_t(GeofenceResourceState::kConfigured) && p[3] == 2 &&
+         (p[4] | (p[5] << 8)) == 7 && le32(p.data() + 10) >= 1);
+  assert(t.fences.areaCount() == 2 && t.fences.totalVertexCount() == 7);
+  assert(!t.service.staging().active());
+  // The same list again: UNCHANGED.
+  stageAll(t, {kSquare, kTriangle});
+  p = commit(t, {kSquare, kTriangle}, counts(2, 7), type);
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kUnchanged));
+  // A list other than the staged one is never committed: the digest does
+  // not match, so the tag does not (nothing is written, unsigned refusal).
+  stageAll(t, {kSquare});
+  p = commit(t, {kTriangle}, counts(1, 4), type);
+  assert(type == kError && p[0] == uint8_t(bat::ErrorCode::kAccessDenied));
+  assert(t.fences.areaCount() == 2);
+  // Counts that do not match the staged list: signed INVALID.
+  stageAll(t, {kSquare});
+  p = commit(t, {kSquare}, counts(1, 5), type);
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kInvalid));
+  assert(p[3] == 2 && t.fences.areaCount() == 2);  // still the stored list
+  // Nothing staged: refused.
+  p = commit(t, {kSquare}, counts(1, 4), type);
+  assert(type == kError && p[0] == uint8_t(bat::ErrorCode::kAccessDenied));
+  // An area the store rejects (two points): signed INVALID, list kept.
+  stageAll(t, {{{378500000, 281200000}, {378500000, 281210000}}});
+  p = commit(t, {{{378500000, 281200000}, {378500000, 281210000}}}, counts(1, 2), type);
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kInvalid));
+  assert(t.fences.areaCount() == 2);
+  // One area replaces two.
+  stageAll(t, {kTriangle});
+  p = commit(t, {kTriangle}, counts(1, 3), type);
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kApplied) && p[3] == 1);
+  assert(t.fences.areaCount() == 1 && t.fences.totalVertexCount() == 3);
+}
+
+void testFenceStaging() {
+  Tracker t;
+  std::vector<uint8_t> r = stage(t, points(kSquare, 0, 1));          // no BEGIN
+  assert(r[0] == uint8_t(GeofenceStaging::Result::kNotStaging));
+  assert(stage(t, {bat::kFenceStageBegin})[0] == 0);
+  assert(stage(t, {bat::kFenceStageNextArea})[0] == uint8_t(GeofenceStaging::Result::kEmptyArea));
+  // Malformed: 6 points, wrong length, unknown action, a point out of range.
+  std::vector<uint8_t> six = points(kSquare, 0, 4);
+  six[1] = 6;
+  assert(stage(t, six)[0] == bat::kFenceStageMalformed);
+  std::vector<uint8_t> shorter = points(kSquare, 0, 2);
+  shorter.pop_back();
+  assert(stage(t, shorter)[0] == bat::kFenceStageMalformed);
+  assert(stage(t, {9})[0] == bat::kFenceStageMalformed);
+  std::vector<uint8_t> far = points({{378500000, 281200000}, {900000001, 0}}, 0, 2);
+  r = stage(t, far);
+  assert(r[0] == bat::kFenceStageMalformed && (r[2] | (r[3] << 8)) == 0);  // none staged
+  // 64 points at most, whole messages only.
+  Area many;
+  for (int i = 0; i < 65; ++i) many.push_back({378500000 + i, 281200000});
+  for (int i = 0; i < 60; i += 5) assert(stage(t, points(many, i, 5))[0] == 0);
+  r = stage(t, points(many, 60, 5));
+  assert(r[0] == uint8_t(GeofenceStaging::Result::kFull) && (r[2] | (r[3] << 8)) == 60);
+  r = stage(t, points(many, 60, 4));
+  assert(r[0] == 0 && (r[2] | (r[3] << 8)) == 64);
+  assert(stage(t, {bat::kFenceStageAbort})[0] == 0);
+  assert(!t.service.staging().active());
+  // A reconnect drops the staged list; so does a device that takes no writes.
+  stageAll(t, {kSquare});
+  t.transport.endSession(t.transport.currentSessionGeneration());
+  t.transport.beginSession();
+  assert(!t.service.staging().active());
+  t.service.setPolicy(false, StorageRole::kGateway);
+  r = stage(t, {bat::kFenceStageBegin});
+  assert(r[0] == 0xFF && r[1] == uint8_t(bat::ErrorCode::kAccessDenied));
+}
+
 }  // namespace
 
 int main() {
@@ -502,7 +701,10 @@ int main() {
   testWritesThroughTheTransport();
   testRefusals();
   testDisconnectWhileWriting();
-  puts("4c-1b Bluetooth authenticated writes (vector, single-use challenge, "
-       "transport, refusals, disconnect): PASS");
+  testFenceSharedVector();
+  testFenceOverBle();
+  testFenceStaging();
+  puts("4c-1b/4c-2 Bluetooth authenticated writes (vector, single-use challenge, "
+       "transport, refusals, disconnect, area list): PASS");
   return 0;
 }

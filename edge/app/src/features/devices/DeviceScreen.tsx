@@ -78,7 +78,7 @@ export function DeviceScreen({ id }: { id: string }) {
         </span>
       </div>
 
-      <Section title="Durum" info="Bağlan: Bluetooth ile canlı durumunu okur ve bekleyen ayarlar varsa yazar (Bluetooth'tan yazma tasma yazılımı güncellenince). USB ile: tasmayı OTG kablosuyla bağla; bekleyen ayarlar ve alanlar sormadan yazılır. Tasmanın Bluetooth'u açıldıktan sonra 10 dakika açık kalır, sonra pil için kapanır." />
+      <Section title="Durum" info="Bağlan: Bluetooth ile canlı durumunu okur; bekleyen ayarlar ve alanlar sormadan yazılır (yalnız hesaba girmiş telefon, tasma onaylayınca işlenir). USB ile: tasmayı OTG kablosuyla bağla; aynısı kabloyla. Tasmanın Bluetooth'u açıldıktan sonra 10 dakika, sonra her rapordan sonra ayardaki süre kadar açık kalır." />
       <Card>
         {isGateway ? (
           gw ? <>

@@ -12,8 +12,7 @@ import {
 } from "../../app/trackerStatus.ts";
 import { Dialog, KV } from "../../ds/components.tsx";
 import { pendingKeys, valuesFromStatus, bleWindowWord } from "../../app/deviceSettings.ts";
-import { bleSettingWriter } from "../../app/bleWrite.ts";
-import { deliverSettings, deliverUsb } from "../../app/deliver.ts";
+import { deliverBle, deliverUsb } from "../../app/deliver.ts";
 import { deviceOps, deviceSettings, pilotOpResult, pilotRecordFence, pilotReportSettings, writeKeys } from "../../app/ownerAccountPilotRuntime.ts";
 import { TrackerBle } from "../../platform/trackerBle.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
@@ -63,13 +62,14 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
     const dev_ = id.toUpperCase();
     const has = valuesFromStatus(st);
     await pilotReportSettings(dev_, has, "ble").catch(() => undefined);
-    // 4c-1b: sıradaki ayarlar Bluetooth'tan da sormadan yazılır (hesaptaki
-    // telefon, tasmanın imzalı onayıyla). Alanlar şimdilik USB ile (4c-2).
+    // 4c-1b/4c-2: sıradaki ayarlar ve alanlar Bluetooth'tan da sormadan
+    // yazılır (hesaptaki telefon, tasmanın imzalı onayıyla).
     setPhase("Sıradakiler işleniyor…");
-    const { wrote, problems } = await deliverSettings(bleSettingWriter(t.exchange, writeKeys.get, dev_), {
+    const { wrote, problems } = await deliverBle(t.exchange, writeKeys.get, dev_, {
       wanted: deviceSettings.get(dev_)?.wanted ?? {}, has,
-      openSettings: deviceOps.open(dev_, "settings"),
+      openSettings: deviceOps.open(dev_, "settings"), openFence: deviceOps.open(dev_, "fence"),
       reportSettings: (v) => pilotReportSettings(dev_, v, "ble").catch(() => undefined),
+      recordFence: (sum, zones) => pilotRecordFence(dev_, { digest: sum.digest, areas: sum.areas, vertices: sum.vertices, zones, appliedAt: Date.now() }),
       result: (op, state, note) => pilotOpResult(op, dev_, state, "ble", note).catch(() => undefined),
     });
     if (problems.length && alive.current) setError(problems.join(" "));
@@ -191,11 +191,8 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
         </div>
         {!a && st && !isGateway && !("usb" in target) && <p className="fine" style={{ margin: 0 }}>Bu tasma hesabında yok. Eklemek için USB ile bağla (Sürü → "+").</p>}
         {synced && <p className="sm" role="status" style={{ margin: 0 }}>{synced}</p>}
-        {st && !isGateway && waitingKeys.length > 0 && !("usb" in target) && id && !writeKeys.has(id) && (
-          <p className="fine" style={{ margin: 0 }}>{waitingKeys.length} ayar sırada. Bluetooth'tan yazmak için bu telefonda tasmanın yazma anahtarı yok: hesaba girip internete bağlanınca kendiliğinden gelir. Şimdilik USB ile bağlan.</p>
-        )}
-        {st && !isGateway && plan && id && deviceOps.open(id, "fence") && !("usb" in target) && (
-          <p className="fine" style={{ margin: 0 }}>Alanlar sırada: alanlar şimdilik USB ile yazılır.</p>
+        {st && !isGateway && (waitingKeys.length > 0 || !!deviceOps.open(id ?? "", "fence")) && !("usb" in target) && id && !writeKeys.has(id) && (
+          <p className="fine" style={{ margin: 0 }}>Sırada bekleyen var. Bluetooth'tan yazmak için bu telefonda tasmanın yazma anahtarı yok: hesaba girip internete bağlanınca kendiliğinden gelir. Şimdilik USB ile bağlan.</p>
         )}
       </div>
     </Dialog>

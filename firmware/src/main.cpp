@@ -205,7 +205,8 @@ orun_tlp::NrfBleChallengeSource ble_challenge_source;
 orun_tlp::BleWriteAuthenticator ble_write_auth(security_store,
                                                ble_challenge_source);
 orun_tlp::BleWriteService ble_write_service(ble_write_auth, config_mutations,
-                                            config_store);
+                                            config_store, geofence_mutations,
+                                            geofence_store);
 // SF5L2: paces re-arming of the one-record pilot to drain the backlog.
 orun_tlp::Sf5l0DrainPacer bench_pacer;
 bool bench_pacer_started = false;
@@ -1192,24 +1193,34 @@ void drainBleWriteAnswer() {
   ble_write_service.setPolicy(bleWritable(), storage_role);
   uint32_t request_id = 0;
   uint8_t answer[orun_tlp::ble_app_transport::kWriteResultPayloadSize]{};
-  orun_tlp::ConfigMutationResult result;
-  const auto taken = ble_write_service.takeAnswer(request_id, answer, result);
+  const auto taken = ble_write_service.takeAnswer(request_id, answer);
   if (taken == orun_tlp::BleWriteService::Answer::kNone) return;
   const bool sent =
       taken == orun_tlp::BleWriteService::Answer::kReady &&
       ble_application_transport.completeWrite(request_id, answer,
                                               sizeof(answer));
+  const char* code = orun_tlp::configMutationOutcomeName(
+      static_cast<orun_tlp::ConfigMutationOutcome>(answer[0]));
+  if (answer[1] == orun_tlp::ble_app_transport::kWriteOpFence) {
+    Serial.printf("BLE WRITE id=%lu op=fence code=%s state=%u areas=%u "
+                  "vertices=%u answered=%s\n",
+                  static_cast<unsigned long>(request_id), code,
+                  static_cast<unsigned>(answer[2]),
+                  static_cast<unsigned>(answer[3]),
+                  static_cast<unsigned>(answer[4] | (answer[5] << 8)),
+                  sent ? "yes" : "no");
+    return;
+  }
   Serial.printf("BLE WRITE id=%lu op=%u code=%s interval_s=%lu ble_window_s=%u "
                 "services=%u/%u answered=%s\n",
                 static_cast<unsigned long>(request_id),
-                static_cast<unsigned>(answer[1]),
-                orun_tlp::configMutationOutcomeName(result.outcome),
+                static_cast<unsigned>(answer[1]), code,
                 static_cast<unsigned long>(
-                    result.config.tracking_interval_seconds),
-                static_cast<unsigned>(result.config.ble_window_seconds),
-                static_cast<unsigned>(result.config.service_mode),
-                static_cast<unsigned>(result.config.requested_services),
-                sent ? "yes" : "no");
+                    uint32_t(answer[2]) | (uint32_t(answer[3]) << 8) |
+                    (uint32_t(answer[4]) << 16) | (uint32_t(answer[5]) << 24)),
+                static_cast<unsigned>(answer[6] | (answer[7] << 8)),
+                static_cast<unsigned>(answer[8]),
+                static_cast<unsigned>(answer[9]), sent ? "yes" : "no");
 }
 #endif
 

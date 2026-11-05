@@ -903,7 +903,8 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7f_ble_application_transpor
   firmware/src/journal_format.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m7p7f_ble_application_transport"
 "$test_dir/m7p7f_ble_application_transport"
-# 4c-1b: authenticated Bluetooth writes end to end (OpenSSL crypto port).
+# 4c-1b/4c-2: authenticated Bluetooth writes (settings, area list) end to end
+# (OpenSSL crypto port).
 g++ "${portable_flags[@]}" -Ifirmware/tests/sf5 firmware/tests/m7/test_ble_write.cpp \
   firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
   firmware/src/ble_write_auth.cpp firmware/src/ble_write_service.cpp \
@@ -915,6 +916,9 @@ g++ "${portable_flags[@]}" -Ifirmware/tests/sf5 firmware/tests/m7/test_ble_write
   firmware/src/security_v3_ab_preflight.cpp firmware/src/security_v3_format.cpp \
   firmware/src/security_format.cpp firmware/src/runtime_config.cpp \
   firmware/src/node_role.cpp firmware/src/tlp_position_packet.cpp \
+  firmware/src/geofence_mutation.cpp firmware/src/geofence_staging.cpp \
+  firmware/src/geofence_store.cpp firmware/src/geofence_format.cpp \
+  firmware/src/geofence_geometry.cpp \
   -lcrypto -o "$test_dir/ble_write"
 "$test_dir/ble_write"
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7h_ble_status_transport.cpp \

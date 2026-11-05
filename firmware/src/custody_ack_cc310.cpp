@@ -73,6 +73,19 @@ bool hmacSha256(const uint8_t (&key)[32],const uint8_t* data,
   return rc==CRYS_OK;
 }
 
+bool sha256Bounded(const uint8_t* data,size_t length,uint8_t (&digest)[32]) {
+  if(data==nullptr || length==0U || length>kMaxBoundedHash)return false;
+  // Static, not stack: loop-owned callers only, never a radio callback.
+  static uint8_t scratch[kMaxBoundedHash];
+  CRYS_HASH_Result_t raw{};
+  memcpy(scratch,data,length);
+  const CRYSError_t rc=CRYS_HASH(CRYS_HASH_SHA256_mode,scratch,length,raw);
+  if(rc==CRYS_OK)memcpy(digest,raw,sizeof(digest));
+  wipe(scratch,sizeof(scratch));
+  wipe(raw,sizeof(raw));
+  return rc==CRYS_OK;
+}
+
 bool hkdfSha256Bounded(const uint8_t (&salt)[16],const uint8_t (&root)[32],
                        const uint8_t* info,size_t length,uint8_t (&key)[32]) {
   if(info==nullptr || length==0U || length>kMaxBoundedInfo)return false;

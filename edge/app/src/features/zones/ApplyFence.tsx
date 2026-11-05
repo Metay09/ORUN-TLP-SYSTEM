@@ -50,6 +50,7 @@ export function ApplyFenceDialog({ onClose, only }: { onClose: () => void; only?
   const [error, setError] = useState("");
   const [op, setOp] = useState<string | null>(null);
   const [usb, setUsb] = useState(false);
+  const [ble, setBle] = useState<string | null>(null);
   const [off, setOff] = useState<Set<string>>(new Set());   // seçilmeyenler (varsayılan: hepsi seçili)
   useBack(() => { if (!busy) onClose(); });
 
@@ -116,13 +117,15 @@ export function ApplyFenceDialog({ onClose, only }: { onClose: () => void; only?
           <button className="btn primary wide" onClick={() => setUsb(true)}><Usb size={20} />USB ile bağlı tasmaya işle</button>
           <div className="card" style={{ margin: 0 }}>
             {mine.map((t) => <Cell key={t.device} title={name(t.device)} wrapSub sub={<>{opSub(t)}<OpSteps t={t} /></>}
+              onClick={() => setBle(t.device)}
               subTone={t.state === "applied" || t.state === "same" ? "fresh" : t.state === "rejected" ? "alarm" : undefined} />)}
           </div>
-          <p className="fine" style={{ margin: 0 }}>Tasmayı OTG kablosuyla bağla; sıradaki alanlar ve ayarlar sormadan yazılır. Bir tasma bitince sıradakini bağla.</p>
+          <p className="fine" style={{ margin: 0 }}>Tasmayı OTG kablosuyla bağla ya da listeden bir tasmaya dokunup Bluetooth ile bağlan (tasmanın Bluetooth'u açılıştan sonra 10 dk, sonra her rapordan sonra kısa süre açık); sıradaki alanlar ve ayarlar sormadan yazılır.</p>
         </>}
         {error && <p role="alert" className="sm t-aging" style={{ margin: 0 }}>{error}</p>}
       </div>
       {usb && <TrackerLiveDialog device={null} target={{ usb: true }} onClose={() => setUsb(false)} />}
+      {ble && <TrackerLiveDialog device={ble} target={{ find: ble }} onClose={() => setBle(null)} />}
     </Dialog>
   );
 }

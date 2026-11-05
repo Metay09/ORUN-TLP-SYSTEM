@@ -69,6 +69,8 @@ enum class MessageType : uint8_t {
   // 4c-1b: authenticated configuration writes (ble_write_auth.h).
   kGetWriteChallengeRequest = 0x10,
   kAuthenticatedWriteRequest = 0x11,
+  // 4c-2: area list staging (RAM only; committed by an authenticated write).
+  kFenceStageRequest = 0x12,
 
   kGetConfigResponse = 0x81,
   kGetDeviceStatusResponse = 0x82,
@@ -79,6 +81,7 @@ enum class MessageType : uint8_t {
   kGetServicesStatusResponse = 0x87,
   kGetWriteChallengeResponse = 0x90,
   kAuthenticatedWriteResponse = 0x91,
+  kFenceStageResponse = 0x92,
   kError = 0xFF,
 };
 
@@ -100,6 +103,30 @@ constexpr uint16_t kWriteResultBodySize = 14;
 constexpr uint8_t kWriteOpInterval = 1;
 constexpr uint8_t kWriteOpServices = 2;
 constexpr uint8_t kWriteOpBleWindow = 3;
+
+// 4c-2 area list over BLE. Staging (0x12, no authority: nothing durable
+// changes) collects the whole list in a BLE-only RAM candidate, exactly like
+// USB APP FENCE BEGIN/V/AREA; the authenticated write op 4 then replaces the
+// Tracker's list with it.
+//  stage request:  action, then for kFenceStageVertices: n (1..5) and
+//                  n x (latitude E7 LE32, longitude E7 LE32)
+//  stage answer:   result (GeofenceStaging::Result, 5 = malformed), areas,
+//                  vertices LE16 (what is staged now)
+//  op 4 value:     areas | vertices << 8 (the staged counts). Its MAC body is
+//                  op, value LE32, SHA-256(staged set) (the digest is not
+//                  sent; both sides compute it), with
+//                  staged set = areas, then per area: n, n x (lat BE32,
+//                  lon BE32).
+//  op 4 answer:    outcome, 4, resource state, areas, vertices LE16,
+//                  0 x 4, revision LE32 (+ tag), the stored list after it.
+constexpr uint8_t kWriteOpFence = 4;
+constexpr uint8_t kFenceStageBegin = 1;
+constexpr uint8_t kFenceStageVertices = 2;
+constexpr uint8_t kFenceStageNextArea = 3;
+constexpr uint8_t kFenceStageAbort = 4;
+constexpr uint8_t kFenceStageMaxVertices = 5;
+constexpr uint8_t kFenceStageMalformed = 5;
+constexpr uint16_t kFenceStageAnswerSize = 4;
 
 // GET_CONFIG response flags byte (docs/milestones/M7P7F.md section 5).
 constexpr uint8_t kConfigFlagBackendReady = 0x01;
@@ -168,7 +195,13 @@ class BleWriteGate {
   virtual BleWriteAdmission submitWrite(uint32_t now, uint32_t request_id,
                                         const uint8_t* payload,
                                         uint16_t length) = 0;
-  // The BLE session began or ended: any challenge and owed answer are void.
+  // 4c-2: one staging step; fills a kFenceStageResponse payload, or says
+  // why there is none (no Bluetooth writes on this device).
+  virtual bool stageFence(const uint8_t* payload, uint16_t length,
+                          uint8_t* answer, uint16_t& answer_length,
+                          ble_app_transport::ErrorCode& error) = 0;
+  // The BLE session began or ended: any challenge, staged list and owed
+  // answer are void.
   virtual void sessionReset() = 0;
 };
 

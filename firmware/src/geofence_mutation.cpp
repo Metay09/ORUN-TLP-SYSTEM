@@ -10,13 +10,18 @@ bool accessBelongsToRequester(ApplicationRequester requester,
       return access.channel == ApplicationAccessChannel::kUsbLocal;
     case ApplicationRequester::kBle:
       return access.channel == ApplicationAccessChannel::kBleOpen ||
-             access.channel == ApplicationAccessChannel::kBleEncrypted;
+             access.channel == ApplicationAccessChannel::kBleEncrypted ||
+             access.channel == ApplicationAccessChannel::kBleAuthenticated;
   }
   return false;
 }
 
+// Local USB is physical-access trust; over BLE only an account-authenticated
+// list commit (4c-2, the staged set's digest under the write key) may change
+// the permitted areas.
 bool mayChangeGeofence(const ApplicationAccessContext& access) {
-  return access.channel == ApplicationAccessChannel::kUsbLocal;
+  return access.channel == ApplicationAccessChannel::kUsbLocal ||
+         access.channel == ApplicationAccessChannel::kBleAuthenticated;
 }
 
 }  // namespace
