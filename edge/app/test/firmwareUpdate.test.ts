@@ -98,3 +98,23 @@ test("corrupted persisted record prevents another flash attempt", async () => {
   assert.equal(p.entries, 0);
   assert.equal(p.reads, 0);
 });
+
+test("post-update read waits for reconnect; preflight always uses immediate USB read", async () => {
+  const store = storage();
+  let immediateReads = 0, rebootReads = 0, sent = 0;
+  const link = {
+    async write() { sent++; },
+    async read() { return ack(sent & 7); },
+    async close() {},
+  };
+  const ports: FirmwareUpdatePorts = {
+    async readApplication() { immediateReads++; return evidence("0.5-old"); },
+    async readAfterUpdate() { rebootReads++; return evidence("0.5-0123456", "00000001", 13); },
+    async enterBootloader() { return link; },
+  };
+  const result = await updateFirmware(store, ports, id, pkg);
+  assert.equal(result.phase, "confirmed");
+  assert.equal(immediateReads, 1);
+  assert.equal(rebootReads, 1);
+  assert.equal(sent, 4);
+});
