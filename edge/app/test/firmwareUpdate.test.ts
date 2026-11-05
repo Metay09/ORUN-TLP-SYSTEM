@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { crc16, type DfuSerial } from "../src/app/firmwareUsb.ts";
+import type { DfuSerial } from "../src/app/firmwareUsb.ts";
 import { previousFirmwareUpdate, reconcileFirmwareUpdate, updateFirmware, type FirmwareUpdatePorts } from "../src/app/firmwareUpdate.ts";
 import type { FirmwareEvidence } from "../src/app/firmwareSafety.ts";
 import type { FirmwarePackage } from "../src/app/firmwarePackage.ts";
