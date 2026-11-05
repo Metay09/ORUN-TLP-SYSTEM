@@ -27,7 +27,7 @@ jobs:
         run: python3 -m unittest discover -s tools/ci -p test_orun_telefon_paketi.py -v
       - name: Install locked Android app dependencies
         working-directory: edge/app
-        run: npm ci --ignore-scripts
+        run: npm ci
       - name: Run all phone app tests
         working-directory: edge/app
         run: npm test
