@@ -23,6 +23,8 @@ export interface JournalStorage {
 }
 export interface FirmwareUpdatePorts {
   readApplication(id: string): Promise<FirmwareEvidence>;
+  /** Post-reboot read is allowed to wait for the USB device to re-enumerate. */
+  readAfterUpdate?(id: string): Promise<FirmwareEvidence>;
   enterBootloader(id: string): Promise<DfuSerial & { close(): Promise<void> }>;
 }
 const KEY = "orun.firmwareUpdate.v1";
@@ -105,13 +107,13 @@ export async function updateFirmware(
 
 /** Read-only recovery after a crash, disconnect or app restart. Never reflashes. */
 export async function reconcileFirmwareUpdate(
-  store: JournalStorage, ports: Pick<FirmwareUpdatePorts, "readApplication">, id: string,
+  store: JournalStorage, ports: Pick<FirmwareUpdatePorts, "readApplication" | "readAfterUpdate">, id: string,
 ): Promise<UpdateRecord> {
   const record = previousFirmwareUpdate(store, id);
   if (!record) throw new Error("Bu cihaz için korunmuş güncelleme kaydı bulunamadı.");
   // A version match alone is insufficient: all key/grant/store invariants must hold.
   let after: FirmwareEvidence;
-  try { after = await ports.readApplication(record.device); }
+  try { after = await (ports.readAfterUpdate ?? ports.readApplication)(record.device); }
   catch (err) {
     save(store, record, "uncertain", "Cihaz yeniden okunamadı; sonuç henüz doğrulanmadı.");
     throw err;
