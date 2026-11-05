@@ -48,3 +48,12 @@ test("refuses test-key tracker and gateway without fully readable custody eviden
   ];
   assert.throws(() => parseFirmwareEvidence(incomplete), /Gateway belleği/);
 });
+
+test("fail closed if tracker test-key flag omitted or primary device identity conflicts", () => {
+  assert.throws(() => parseFirmwareEvidence(t.map((line) =>
+    line.replace("test_credential=no ", ""))), /deneme anahtarı/);
+  assert.throws(() => parseFirmwareEvidence([
+    ...t,
+    "BENCH DEVICE id=1111111111111111 role=TRACKER security_region=READY gnss=yes",
+  ]), /kimlikleri çelişkili/);
+});
