@@ -58,9 +58,9 @@ export function encodeHci(payload: Uint8Array, sequence: number): Uint8Array {
 }
 
 export interface HciAck { nextSequence: number; sequence: number; }
-/** Decode and verify one complete escaped HCI ACK packet. */
+/** Decode and verify one complete HCI ACK. Bootloader ACK has 4-byte header, no CRC. */
 export function decodeHciAck(frame: Uint8Array): HciAck {
-  if (frame.length < 8 || frame[0] !== END || frame[frame.length - 1] !== END)
+  if (frame.length < 6 || frame[0] !== END || frame[frame.length - 1] !== END)
     throw new Error("HCI ACK çerçevesi tamamlanmamış.");
   const bytes: number[] = [];
   for (let i = 1; i < frame.length - 1; i++) {
@@ -72,11 +72,12 @@ export function decodeHciAck(frame: Uint8Array): HciAck {
     } else if (b === END) throw new Error("HCI iç içe çerçeve geçersiz.");
     else bytes.push(b);
   }
-  if (bytes.length !== 6 || (bytes[1] & 15) !== TYPE || ((bytes[1] >>> 4) | (bytes[2] << 4)) !== 0 ||
-      ((bytes[0] + bytes[1] + bytes[2] + bytes[3]) & 255) !== 0 ||
-      (bytes[0] & 0xc0) !== 0xc0 ||
-      crc16(Uint8Array.from(bytes.slice(0, 4))) !== (bytes[4] | (bytes[5] << 8)))
-    throw new Error("HCI ACK tip/uzunluk/CRC doğrulanamadı.");
+  // Valid RAK/Adafruit replies: C0 10 00 00 F0 C0, C0 18 00 00 E8 C0.
+  // ACK-only HCI packets have no data integrity flag and no appended CRC.
+  if (bytes.length !== 4 || bytes[1] !== 0 || bytes[2] !== 0 ||
+      (bytes[0] & 0xc7) !== 0 ||
+      ((bytes[0] + bytes[1] + bytes[2] + bytes[3]) & 255) !== 0)
+    throw new Error("HCI ACK tip/uzunluk/başlık sağlama doğrulanamadı.");
   return { nextSequence: (bytes[0] >>> 3) & 7, sequence: bytes[0] & 7 };
 }
 
