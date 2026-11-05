@@ -55,6 +55,7 @@ export function FirmwarePackageDialog({ onClose, device }: { onClose: () => void
     try {
       const result = await updateFirmware(localStorage, {
         readApplication: (id) => readOrunApplication(id),
+        readAfterUpdate: (id) => readAfterOrunUpdate(id),
         enterBootloader: (id) => enterOrunBootloader(id),
       }, device, pkg, setEvent);
       setRecord(result);
