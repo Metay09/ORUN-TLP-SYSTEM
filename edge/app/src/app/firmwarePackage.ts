@@ -4,8 +4,8 @@
 // This module DOES NOT authorize or perform a firmware update.
 
 const MAX_ZIP = 2 * 1024 * 1024;
-const MAX_BIN = 900 * 1024;
-const MAX_DAT = 64 * 1024;
+const MAX_BIN = 0x0c5000 - 0x026000; // audited application/storage boundary
+const MAX_DAT = 512; // HCI init packet uses a single frame
 const MAX_META = 16 * 1024;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 const U16 = (d: DataView, at: number) => d.getUint16(at, true);
