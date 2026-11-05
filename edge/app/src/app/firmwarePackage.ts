@@ -64,7 +64,7 @@ async function filesOfZip(b: Uint8Array): Promise<Record<string, Uint8Array>> {
     if (next > end || nameLen > 64 || extraLen || commentLen || flags & 1 || ![0, 8].includes(method))
       reject("Desteklenmeyen ZIP girdisi.");
     const name = UTF8.decode(b.subarray(at + 46, at + 46 + nameLen));
-    if (!(name in SIZES) || name in files || compressedSize > MAX_ZIP || plainSize > SIZES[name] || plainSize === 0)
+    if (!Object.hasOwn(SIZES, name) || Object.hasOwn(files, name) || compressedSize > MAX_ZIP || plainSize > SIZES[name] || plainSize === 0)
       reject("Pakette beklenmeyen veya fazla büyük dosya var.");
     if (localAt + 30 > cdStart || U32(d, localAt) !== 0x04034b50 ||
         U16(d, localAt + 8) !== method || U16(d, localAt + 6) !== flags ||
