@@ -20,6 +20,7 @@ import { gatewayFacts, gatewayLine } from "../network/words.ts";
 import { ApplyFenceDialog, stateLine, useQueuedFences, useTrackerFences } from "../zones/ApplyFence.tsx";
 import { OpSteps, opSub, useOps } from "./Ops.tsx";
 import { KIND_WORD } from "../../app/deviceOps.ts";
+import { FirmwarePackageDialog } from "./FirmwarePackageDialog.tsx";
 
 export function useDeviceSettings() {
   return useSyncExternalStore((fn) => deviceSettings.subscribe(fn), () => deviceSettings.snapshot());
@@ -44,6 +45,7 @@ export function DeviceScreen({ id }: { id: string }) {
   const [editing, setEditing] = useState<SettingRow | null>(null);
   const [sending, setSending] = useState(false);
   const [naming, setNaming] = useState(false);
+  const [firmwarePreview, setFirmwarePreview] = useState(false);
   useBack(() => nav.pop());
 
   const up = id.toUpperCase();
@@ -106,6 +108,13 @@ export function DeviceScreen({ id }: { id: string }) {
         </>}
       </Card>
 
+      <Section title="Yazılım paketi" info="Telefondaki firmware dosyasının bütünlüğünü denetler. Henüz cihaza yazılım göndermez.">
+        <Card>
+          <Cell title="Yazılım paketini denetle" sub="ORUN .zip dosyası seç · cihazı değiştirmez"
+            trail={<CaretRight size={16} color="var(--mute)" />} onClick={() => setFirmwarePreview(true)} />
+        </Card>
+      </Section>
+
       {!isGateway && <>
         <Section title="Ayarlar" info="Ayar hesaba kaydedilir; tasmaya bağlanınca (şimdilik USB ile) sormadan yazılır. Tasma yazdığını onaylayınca 'Cihazda' olur. Birden çok tasmaya birden: Cihazlar → Toplu ayar." />
         <Card>
@@ -152,6 +161,7 @@ export function DeviceScreen({ id }: { id: string }) {
       {live && <TrackerLiveDialog device={id} target={live} fromAnimal={!!a} onClose={() => setLive(null)} />}
       {sending && <ApplyFenceDialog only={id} onClose={() => setSending(false)} />}
       {naming && <NameDialog device={id} kind="gateway" current={names[up] ?? null} onClose={() => setNaming(false)} />}
+      {firmwarePreview && <FirmwarePackageDialog onClose={() => setFirmwarePreview(false)} />}
     </Screen>
   );
 }
