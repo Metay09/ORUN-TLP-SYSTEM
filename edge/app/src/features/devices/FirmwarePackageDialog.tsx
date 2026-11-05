@@ -1,112 +1,169 @@
-// 4c: kullanıcı telefondaki ORUN paketini seçip doğrulayabilir.
-// Bu ekran sadece dosya bütünlüğünü inceler; USB/DFU yüklemesi yapmaz.
+// 4c: USB firmware update surface. Flashing is EXPERIMENTAL and disabled
+// in production builds; package inspection and read-only reconciliation work
+// regardless of the build flag. No auto-retry after an interrupted update.
 import { useState } from "react";
-import { UsbSerial } from "@leeskies/capacitor-usb-serial";
-import { readFirmwareEvidence, type FirmwareEvidence } from "../../app/firmwareSafety.ts";
-import { UsbConsole } from "../../platform/usbConsole.ts";
 import { inspectFirmwarePackage, type FirmwarePackage } from "../../app/firmwarePackage.ts";
+import { previousFirmwareUpdate, reconcileFirmwareUpdate, updateFirmware, type UpdateEvent, type UpdateRecord } from "../../app/firmwareUpdate.ts";
+import { type FirmwareEvidence } from "../../app/firmwareSafety.ts";
+import { readOrunApplication, readAfterOrunUpdate, enterOrunBootloader } from "../../platform/firmwareUsbBridge.ts";
 import { Dialog, KV } from "../../ds/components.tsx";
+
+const ENABLE_EXPERIMENTAL_USB_FLASH = import.meta.env.VITE_ORUN_USB_FLASH_EXPERIMENTAL === "1";
+const STAGE: Record<string, string> = {
+  init: "Başlatılıyor", erase: "Firmware alanı hazırlanıyor",
+  transfer: "Yazılım aktarılıyor", activate: "Cihaz başlatılıyor",
+};
+const textError = (err: unknown) => err instanceof Error ? err.message : "Güncelleme doğrulanamadı.";
 
 export function FirmwarePackageDialog({ onClose, device }: { onClose: () => void; device: string }) {
   const [pkg, setPkg] = useState<FirmwarePackage | null>(null);
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [checking, setChecking] = useState(false);
+  const [message, setMessage] = useState("");
+  const [working, setWorking] = useState(false);
   const [baseline, setBaseline] = useState<FirmwareEvidence | null>(null);
+  const [approved, setApproved] = useState(false);
+  const [event, setEvent] = useState<UpdateEvent | null>(null);
+  const [record, setRecord] = useState<UpdateRecord | null>(() => previousFirmwareUpdate(localStorage, device));
+  const close = () => { if (!working) onClose(); };
 
   async function inspect(file: File | undefined): Promise<void> {
-    setPkg(null);
-    setBaseline(null);
-    setError("");
+    setPkg(null); setBaseline(null); setApproved(false); setError(""); setMessage("");
     setFileName(file?.name ?? "");
     if (!file) return;
-    setBusy(true);
+    setWorking(true);
     try {
       if (file.size > 2 * 1024 * 1024) throw new Error("Dosya beklenenden büyük.");
-      const parsed = await inspectFirmwarePackage(new Uint8Array(await file.arrayBuffer()));
-      setPkg(parsed);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Yazılım paketi okunamadı.");
-    } finally {
-      setBusy(false);
-    }
+      setPkg(await inspectFirmwarePackage(new Uint8Array(await file.arrayBuffer())));
+    } catch (err) { setError(textError(err)); }
+    finally { setWorking(false); }
   }
 
-  // Read-only baseline: no bootloader reset or flash operation.
   async function checkUsb(): Promise<void> {
-    setChecking(true); setError(""); setBaseline(null);
-    let con: UsbConsole | null = null;
+    setWorking(true); setError(""); setMessage(""); setBaseline(null);
     try {
-      const { devices } = await UsbSerial.listDevices();
-      const rak = devices.filter((d) => d.vendorId === 0x239a && d.productId === 0x8029);
-      const bySerial = rak.filter((d) => d.serialNumber?.toUpperCase() === device.toUpperCase());
-      const target = bySerial.length === 1 ? bySerial[0] : rak.length === 1 ? rak[0] : null;
-      if (!target) throw new Error(rak.length === 0
-        ? "USB'de RAK4630 uygulaması yok. OTG kablosunu kontrol et."
-        : "Birden fazla RAK var, doğru cihaz güvenle seçilemedi. Yalnız hedef cihazı bağla.");
-      con = await UsbConsole.open(target.deviceId);
-      const evidence = await readFirmwareEvidence(con);
-      if (evidence.id !== device.toUpperCase())
-        throw new Error("USB'deki cihazın kimliği seçilen tasma/gateway ile uyuşmuyor. Hiçbir işlem yapılmadı.");
+      const evidence = await readOrunApplication(device);
       setBaseline(evidence);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "USB cihazı okunamadı.");
-    } finally {
-      if (con) await con.close();
-      setChecking(false);
-    }
+      setMessage("USB'deki cihazın kimliği ve hafızası okundu; cihaza yazılmadı.");
+    } catch (err) { setError(textError(err)); }
+    finally { setWorking(false); }
   }
+
+  async function start(): Promise<void> {
+    if (!ENABLE_EXPERIMENTAL_USB_FLASH || !approved || !baseline || !pkg || working) return;
+    setWorking(true); setError(""); setMessage(""); setEvent(null);
+    try {
+      const result = await updateFirmware(localStorage, {
+        readApplication: (id) => readOrunApplication(id),
+        enterBootloader: (id) => enterOrunBootloader(id),
+      }, device, pkg, setEvent);
+      setRecord(result);
+      setMessage("Doğrulandı: yazılım sürümü, cihaz kimliği, anahtar dönemi ve kayıtlar korundu.");
+    } catch (err) {
+      setError(textError(err));
+      setRecord(previousFirmwareUpdate(localStorage, device));
+    } finally { setWorking(false); setApproved(false); }
+  }
+
+  async function reconcile(): Promise<void> {
+    if (working) return;
+    setWorking(true); setError(""); setMessage("");
+    try {
+      const result = await reconcileFirmwareUpdate(localStorage, {
+        readApplication: (id) => readAfterOrunUpdate(id),
+      }, device);
+      setRecord(result);
+      setMessage("Güncelleme yeniden okunarak doğrulandı. Yeni firmware gönderilmedi.");
+    } catch (err) {
+      setError(textError(err));
+      setRecord(previousFirmwareUpdate(localStorage, device));
+    } finally { setWorking(false); }
+  }
+
+  const unresolved = !!record && record.phase !== "confirmed";
+  const progress = event?.progress;
+  const percent = progress?.total ? Math.floor(100 * progress.done / progress.total) : 0;
 
   return (
-    <Dialog title="Yazılım paketini denetle" onClose={onClose}>
+    <Dialog title="USB yazılım güncelleme" onClose={close}>
       <div className="stack" style={{ padding: "0 20px 20px" }}>
         <p className="sm" style={{ margin: 0 }}>
-          Bilgisayarda hazırlanmış ORUN .zip dosyasını seç.
-          Dosyanın RAK4630 için olduğunu ve içindeki uygulama yazılımının SHA-256 değerlerini kontrol eder.
+          Bilgisayarda üretilmiş RAK4630 ORUN paketini (.zip) seç. Paket bütünlüğü,
+          hedefi ve mevcut cihaz kimliği aktarım öncesi kontrol edilir.
+          ZIP bütünlüğü yazılımın imzalı olduğunu tek başına kanıtlamaz.
         </p>
-        <label className="sm" htmlFor="orun-firmware-file">ORUN yazılım paketi (.zip)</label>
-        <input id="orun-firmware-file" className="inp" type="file"
-          accept=".zip,application/zip" disabled={busy}
-          onChange={(e) => { void inspect(e.currentTarget.files?.[0]); }} />
-        {busy && <p role="status" className="sm">Paket doğrulanıyor…</p>}
-        {error && <p role="alert" className="sm t-aging">{error}</p>}
+        <label className="sm" htmlFor="orun-firmware-file">ORUN yazılım paketi</label>
+        <input id="orun-firmware-file" className="inp" type="file" accept=".zip,application/zip"
+          disabled={working} onChange={(e) => { void inspect(e.currentTarget.files?.[0]); }} />
         {pkg && (
           <div className="card">
             <KV k="Dosya">{fileName}</KV>
-            <KV k="Hedef">{pkg.target} / nRF52840</KV>
-            <KV k="Derleme">{pkg.sourceCommit.slice(0, 12)}</KV>
-            <KV k="Yazılım boyutu">{pkg.image.length.toLocaleString("tr-TR")} bayt</KV>
-            <KV k="Başlatma bilgisi">{pkg.initPacket.length.toLocaleString("tr-TR")} bayt</KV>
-            <p role="status" className="sm" style={{ padding: "8px 16px", margin: 0 }}>
-              Paket dosyalarının bütünlüğü doğrulandı. Cihaza yazılım yüklenmedi.
-            </p>
+            <KV k="Hedef">RAK4630 / nRF52840</KV>
+            <KV k="Kaynak sürüm">{pkg.sourceCommit.slice(0, 12)}</KV>
+            <KV k="Uygulama boyutu">{pkg.image.length.toLocaleString("tr-TR")} bayt</KV>
+            <KV k="Paket durumu">CRC32 ve SHA-256 doğrulandı</KV>
           </div>
         )}
         <div className="btns" style={{ padding: 0 }}>
-          <button className="btn" type="button" disabled={!pkg || busy || checking} onClick={() => { void checkUsb(); }}>
-            {checking ? "USB cihazı okunuyor…" : "USB'deki cihazı kontrol et"}
-          </button>
+          <button type="button" className="btn" disabled={!pkg || working}
+            onClick={() => { void checkUsb(); }}>USB'deki cihazı kontrol et</button>
         </div>
         {baseline && (
           <div className="card">
-            <KV k="Cihaz kimliği">{baseline.id}</KV>
-            <KV k="Cihaz türü">{baseline.kind === "tracker" ? "Tasma" : "Gateway"}</KV>
-            <KV k="Cihazdaki yazılım">{baseline.firmware ?? "—"}</KV>
-            <KV k="Kayıt durumu">{baseline.kind === "tracker"
-              ? "Kayıt sırası " + (baseline.nextSeq ?? "?") + " · hafıza hazır"
-              : "Gateway hafızası: " + (baseline.custodyRegion ?? "?")}</KV>
-            <p role="status" className="sm" style={{ padding: "8px 16px", margin: 0 }}>
-              USB cihazının kimliği ve mevcut durumu okundu. Henüz yazılım yüklenmedi.
-            </p>
+            <KV k="USB cihaz kimliği">{baseline.id}</KV>
+            <KV k="Tür">{baseline.kind === "tracker" ? "Tasma" : "Gateway"}</KV>
+            <KV k="Mevcut yazılım">{baseline.firmware ?? "—"}</KV>
+            <KV k="Kayıt hafızası">{baseline.kind === "tracker"
+              ? "Sıra " + (baseline.nextSeq ?? "?") + " · hazır"
+              : baseline.custodyRegion ?? "Bilinmiyor"}</KV>
           </div>
         )}
-        <p className="fine" style={{ margin: 0 }}>
-          Bu işlem cihaz kimliğini, anahtarları veya kayıtları değiştirmez.
-          Gerçek USB yüklemesi ve yükleme sonrası kontrol henüz etkin değil.
-        </p>
+        {record && (
+          <div className="card">
+            <KV k="Son deneme">{record.sourceCommit.slice(0, 12)}</KV>
+            <KV k="Aktarılan">{record.bytesAcknowledged.toLocaleString("tr-TR")} / {record.imageBytes.toLocaleString("tr-TR")} bayt</KV>
+            <KV k="Sonuç">{record.phase === "confirmed" ? "Cihazdan doğrulandı" : "Doğrulanmadı"}</KV>
+            <p className="sm" style={{ padding: "8px 16px", margin: 0 }}>{record.note}</p>
+          </div>
+        )}
+        {unresolved && (
+          <div className="btns" style={{ padding: 0 }}>
+            <button type="button" className="btn" disabled={working} onClick={() => { void reconcile(); }}>
+              Cihazı yeniden denetle (yazılım göndermez)
+            </button>
+          </div>
+        )}
+        {ENABLE_EXPERIMENTAL_USB_FLASH ? (
+          <>
+            <p className="fine" style={{ margin: 0 }}>
+              Deneysel USB aktarımı: yalnız geliştirme cihazında deneyin. Kabloyu veya gücü kesmeyin.
+              Başlamadan önce hedef ve paket yeniden okunur; sonuç okunamazsa tekrar otomatik yükleme yapılmaz.
+            </p>
+            <label className="sm">
+              <input type="checkbox" checked={approved} disabled={working || unresolved}
+                onChange={(e) => setApproved(e.currentTarget.checked)} />
+              Bu cihazda deneysel firmware yüklemesini açıkça onaylıyorum.
+            </label>
+            <div className="btns" style={{ padding: 0 }}>
+              <button className="btn primary" type="button"
+                disabled={working || !approved || !pkg || !baseline || unresolved}
+                onClick={() => { void start(); }}>Firmware'i USB ile yükle</button>
+            </div>
+          </>
+        ) : (
+          <p className="fine" style={{ margin: 0 }}>
+            Bu yapıda USB aktarımı etkin değil. Paket ve USB ön denetimi yapılabilir;
+            gerçek yükleme yalnız doğrulanmış özel test derlemesinde açılır.
+          </p>
+        )}
+        {event && <p role="status" className="sm">
+          {event.progress ? (STAGE[event.progress.stage] ?? event.message) + " · %" + percent : event.message}
+        </p>}
+        {message && <p role="status" className="sm">{message}</p>}
+        {error && <p role="alert" className="sm t-aging">{error}</p>}
+        {working && <p className="sm" role="status">İşlem sürüyor; uygulamayı kapatmayın.</p>}
         <div className="btns" style={{ padding: 0 }}>
-          <button className="btn" type="button" onClick={onClose}>Kapat</button>
+          <button className="btn" type="button" disabled={working} onClick={close}>Kapat</button>
         </div>
       </div>
     </Dialog>
