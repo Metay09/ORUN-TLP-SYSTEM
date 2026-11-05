@@ -17,12 +17,6 @@ android {
         }
     }
     buildTypes {
-        // Isolated debug installation for 4c USB preflight: never overwrite
-        // an owner's existing tr.orun.edge app, ledger or account state.
-        debug {
-            applicationIdSuffix ".usbtest"
-            versionNameSuffix "-usbtest"
-        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
