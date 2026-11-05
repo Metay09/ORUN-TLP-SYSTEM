@@ -63,7 +63,10 @@ export async function updateFirmware(
       !/^[0-9a-f]{40}$/.test(pkg.sourceCommit) ||
       !/^[0-9a-f]{64}$/.test(pkg.imageSha256))
     throw new Error("Hedef cihaz veya firmware paketi doğrulanamadı.");
+  const rawPrevious = store.getItem(key(device));
   const previous = previousFirmwareUpdate(store, device);
+  if (rawPrevious !== null && !previous)
+    throw new Error("Firmware güncelleme kaydı bozuk; yeni yükleme güvenlik nedeniyle engellendi.");
   if (previous && previous.phase !== "confirmed")
     throw new Error("Önceki firmware güncellemesi sonuç-belirsiz. Önce cihazı yeniden denetle; otomatik tekrar yok.");
 
