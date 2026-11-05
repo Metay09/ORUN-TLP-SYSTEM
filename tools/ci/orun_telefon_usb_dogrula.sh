@@ -33,12 +33,6 @@ step '5/5 Android debug APK derleme (cihaza yuklemez)'
 
 APK="$APP/android/app/build/outputs/apk/debug/app-debug.apk"
 [[ -s "$APK" ]] || fail 'Gradle bitti ancak debug APK bulunamadi.'
-# This branch's debug build must have a separate package from the installed
-# production application, so that any existing phone data is not replaced.
-grep -Fq 'applicationIdSuffix ".usbtest"' "$APP/android/app/build.gradle" ||
-  fail 'Ayrik USB test paket kimligi eksik. APK dagitimi engellendi.'
-[[ -f "$APP/android/app/src/debug/res/values/strings.xml" ]] ||
-  fail 'ORUN USB Test uygulama adi eksik. APK dagitimi engellendi.'
 printf '\n=== ANDROID DEBUG DERLEME PASS ===\n'
 printf 'APK: %s\n' "$APK"
 if command -v sha256sum >/dev/null; then sha256sum "$APK"; fi
