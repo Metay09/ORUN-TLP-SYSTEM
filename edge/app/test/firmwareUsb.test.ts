@@ -4,10 +4,8 @@ import { crc16, encodeHci, decodeHciAck, SlipFrames, dfuPlan, transferDfu, DfuEr
 
 const end = 0xc0;
 const makeAck = (seq: number): Uint8Array => {
-  const h0 = seq | (((seq+1) & 7) << 3) | 0xc0;
-  const bytes = Uint8Array.from([h0, 14, 0, (-h0 - 14) & 255]);
-  const crc = crc16(bytes);
-  return Uint8Array.from([end, ...bytes, crc & 255, crc >>> 8, end]);
+  const h0 = ((seq + 1) & 7) << 3;
+  return Uint8Array.from([end, h0, 0, 0, (-h0) & 255, end]);
 };
 
 test("HCI CRC16 matches fixed Adafruit reference and SLIP escapes", () => {
@@ -20,7 +18,8 @@ test("HCI CRC16 matches fixed Adafruit reference and SLIP escapes", () => {
 
 test("correct ACK is validated by header, CRC and expected sequence", () => {
   const ack = makeAck(1);
-  assert.deepEqual(decodeHciAck(ack), { sequence:1, nextSequence:2 });
+  assert.deepEqual(decodeHciAck(ack), { sequence:0, nextSequence:2 });
+  assert.deepEqual([...ack], [0xc0, 0x10, 0, 0, 0xf0, 0xc0]);
   const wrong = ack.slice(); wrong[2] ^= 4;
   assert.throws(() => decodeHciAck(wrong), /doğrulanamadı/);
   assert.throws(() => decodeHciAck(Uint8Array.of(0xc0,0xdb,0,0xc0)), /geçersiz|tamamlanmamış/);
