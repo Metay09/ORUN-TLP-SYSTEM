@@ -5,7 +5,7 @@ import type { UsbSerialPlugin } from "@leeskies/capacitor-usb-serial";
 import type { DfuSerial } from "../app/firmwareUsb.ts";
 
 type UsbApi = Pick<UsbSerialPlugin, "registerDriver" | "listDevices" | "requestPermission" | "open" |
-  "getPortInfo" | "setParameters" | "setDTR" | "read" | "write" | "close">;
+  "getPortInfo" | "setParameters" | "read" | "write" | "close">;
 const VID = 0x239a, BOOT_PIDS = [0x0029, 0x002a] as const;
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -39,9 +39,9 @@ export class DfuUsbPort implements DfuSerial {
       if (info.deviceId !== candidate.deviceId || info.serialNumber?.toUpperCase() !== exact)
         throw new Error("Açılan USB seri portu hedef cihaza ait değil.");
       await usb.setParameters({ portId, baudRate: 115200, dataBits: 8, stopBits: 1, parity: "none" });
-      await usb.setDTR({ portId, value: false });
-      await pause(50);
-      await usb.setDTR({ portId, value: true });
+      // Adafruit nrfutil with --touch 1200 does NOT toggle DTR on its
+      // subsequent 115200 baud bootloader port; doing so can reset the board.
+      await pause(100);
       return new DfuUsbPort(usb, portId);
     } catch (e) { await usb.close({ portId }).catch(() => undefined); throw e; }
   }
