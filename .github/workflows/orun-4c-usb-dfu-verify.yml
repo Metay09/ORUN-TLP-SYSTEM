@@ -1,9 +1,8 @@
 name: ORUN 4c phone USB firmware verification
 
+# Manual only: GitHub-hosted runner is presently failing before starting steps.
+# Avoid failing on every development commit. No APK is distributed.
 on:
-  push:
-    branches:
-      - feat/4c-phone-usb-dfu-package
   workflow_dispatch:
 
 permissions:
