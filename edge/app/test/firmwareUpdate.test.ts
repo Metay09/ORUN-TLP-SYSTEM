@@ -51,6 +51,7 @@ test("journals BEFORE bootloader entry and confirms only after all readback chec
   assert.equal(p.reads, 2); assert.equal(p.entries, 1);
   assert.equal(p.sent, 4); assert.equal(p.closed, 1);
   assert.equal(result.bytesAcknowledged, 3);
+  assert.equal(result.activationAcknowledged, true);
 });
 
 test("malformed ACK remains uncertain; never automatically repeats firmware writes", async () => {
@@ -69,13 +70,32 @@ test("changed key epoch blocks success even when firmware matches", async () => 
   assert.equal(p.closed, 1);
 });
 
-test("after restart read-only reconciliation can confirm but does not reflash", async () => {
-  const st = storage(), first = ports(evidence("0.5-old"), true);
-  await assert.rejects(updateFirmware(st, first.data, id, pkg));
+test("interrupted DFU cannot be confirmed by an unchanged firmware version", async () => {
+  const st = storage(), first = ports(evidence("0.5-0123456"), true);
+  await assert.rejects(updateFirmware(st, first.data, id, pkg), /DFU aktarım sonucu belirsiz/);
+  let readings = 0;
+  const readOnly = { readApplication: async () => { readings++; return evidence("0.5-0123456", "00000001", 20); } };
+  await assert.rejects(reconcileFirmwareUpdate(st, readOnly, id), /aktarım.*tam onaylanmamış/);
+  assert.equal(previousFirmwareUpdate(st, id)?.phase, "uncertain");
+  assert.equal(previousFirmwareUpdate(st, id)?.activationAcknowledged, false);
+  assert.equal(first.entries, 1);
+  assert.equal(readings, 0);
+});
+
+test("after full STOP ACK, a failed reboot read can later reconcile without another flash", async () => {
+  const st = storage(), first = ports(evidence("0.5-0123456"));
+  const flashing: FirmwareUpdatePorts = {
+    ...first.data,
+    async readAfterUpdate() { throw new Error("USB yeniden numaralandırma bekleniyor."); },
+  };
+  await assert.rejects(updateFirmware(st, flashing, id, pkg), /yeniden numaralandırma/);
+  assert.equal(previousFirmwareUpdate(st, id)?.phase, "uncertain");
+  assert.equal(previousFirmwareUpdate(st, id)?.activationAcknowledged, true);
+  assert.equal(previousFirmwareUpdate(st, id)?.bytesAcknowledged, pkg.image.length);
   const readOnly = { readApplication: async () => evidence("0.5-0123456", "00000001", 20) };
   const result = await reconcileFirmwareUpdate(st, readOnly, id);
-  assert.equal(result.phase,"confirmed");
-  assert.equal(first.entries,1);
+  assert.equal(result.phase, "confirmed");
+  assert.equal(first.entries, 1);
 });
 
 test("wrong USB device fails before journal or flash", async () => {
