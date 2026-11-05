@@ -81,9 +81,23 @@ async function filesOfZip(b: Uint8Array): Promise<Record<string, Uint8Array>> {
     if (method === 0) result = raw;
     else {
       try {
-        result = new Uint8Array(await new Response(
-          new Blob([raw.buffer as ArrayBuffer]).stream().pipeThrough(new DecompressionStream("deflate-raw"))
-        ).arrayBuffer());
+        const stream = new Blob([raw.buffer as ArrayBuffer]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+        const reader = stream.getReader();
+        const chunks: Uint8Array[] = [];
+        let length = 0;
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          length += value.length;
+          if (length > plainSize || length > SIZES[name]) {
+            await reader.cancel();
+            reject("Açılan ZIP beklenen boyutu aşıyor.");
+          }
+          chunks.push(value);
+        }
+        result = new Uint8Array(length);
+        let offset = 0;
+        for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
       } catch { reject("Sıkıştırılmış ZIP çözülemedi."); }
     }
     if (result.length !== plainSize || crc32(result) !== crc)
