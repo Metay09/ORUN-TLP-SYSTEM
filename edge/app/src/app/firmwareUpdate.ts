@@ -42,6 +42,12 @@ export function previousFirmwareUpdate(store: JournalStorage, id: string): Updat
     const record = JSON.parse(raw) as UpdateRecord;
     return record.device === name && /^[0-9a-f]{40}$/.test(record.sourceCommit) &&
       /^(uncertain|transferring|verifying|confirmed)$/.test(record.phase) &&
+      Number.isSafeInteger(record.imageBytes) && record.imageBytes > 0 &&
+      Number.isSafeInteger(record.bytesAcknowledged) &&
+      record.bytesAcknowledged >= 0 && record.bytesAcknowledged <= record.imageBytes &&
+      typeof record.activationAcknowledged === "boolean" &&
+      (!(record.phase === "verifying" || record.phase === "confirmed") ||
+        (record.activationAcknowledged && record.bytesAcknowledged === record.imageBytes)) &&
       record.before?.id === name ? record : null;
   } catch { return null; }
 }
