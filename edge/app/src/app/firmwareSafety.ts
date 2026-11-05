@@ -27,7 +27,10 @@ export function parseFirmwareEvidence(lines: string[]): FirmwareEvidence {
   for (const line of lines) {
     let m: RegExpMatchArray | null;
     if ((m = line.match(/^BENCH DEVICE id=([0-9A-F]{16}) role=(TRACKER|GATEWAY)\b/))) {
-      out.id = m[1]; out.kind = m[2] === "TRACKER" ? "tracker" : "gateway";
+      const parsedKind = m[2] === "TRACKER" ? "tracker" : "gateway";
+      if (out.id && out.id !== m[1]) throw new Error("Cihaz kimlikleri çelişkili.");
+      if (out.kind && out.kind !== parsedKind) throw new Error("Cihaz türleri çelişkili.");
+      out.id = m[1]; out.kind = parsedKind;
     } else if ((m = line.match(/^BENCH TRACKER id=([0-9A-F]{16}) .*?granted_gateway=([0-9A-F]{16}|none)\b/))) {
       if (out.id && out.id !== m[1]) throw new Error("Cihaz kimlikleri çelişkili.");
       if (out.kind && out.kind !== "tracker") throw new Error("Cihaz türleri çelişkili.");
@@ -51,7 +54,7 @@ export function parseFirmwareEvidence(lines: string[]): FirmwareEvidence {
     }
   }
   if (!out.id || !out.kind || !out.firmware) throw new Error("Cihazın kimliği, türü veya yazılımı okunamadı.");
-  if (out.kind === "tracker" && out.testCredential === true)
+  if (out.kind === "tracker" && out.testCredential !== false)
     throw new Error("Bu tasma deneme anahtarı kullanıyor; yükleme ön denetimi reddedildi.");
   if (out.kind === "tracker" && (!out.credential || out.credential === "none" || !out.epoch ||
       !out.granted || !out.grantGeneration || !out.storeInc || out.nextSeq === undefined ||
