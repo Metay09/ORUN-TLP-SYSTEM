@@ -26,13 +26,19 @@ step '3/5 Uygulamanin tum Node testleri'
 (cd "$APP" && npm test)
 
 step '4/5 Tam TypeScript + Vite yapisi, Android esitleme'
-(cd "$APP" && npm run android)
+(cd "$APP" && VITE_ORUN_USB_FLASH_EXPERIMENTAL=0 npm run android)
 
 step '5/5 Android debug APK derleme (cihaza yuklemez)'
 (cd "$APP/android" && bash ./gradlew :app:assembleDebug --no-daemon --stacktrace)
 
 APK="$APP/android/app/build/outputs/apk/debug/app-debug.apk"
 [[ -s "$APK" ]] || fail 'Gradle bitti ancak debug APK bulunamadi.'
+# This branch's debug build must have a separate package from the installed
+# production application, so that any existing phone data is not replaced.
+grep -Fq 'applicationIdSuffix ".usbtest"' "$APP/android/app/build.gradle" ||
+  fail 'Ayrik USB test paket kimligi eksik. APK dagitimi engellendi.'
+[[ -f "$APP/android/app/src/debug/res/values/strings.xml" ]] ||
+  fail 'ORUN USB Test uygulama adi eksik. APK dagitimi engellendi.'
 printf '\n=== ANDROID DEBUG DERLEME PASS ===\n'
 printf 'APK: %s\n' "$APK"
 if command -v sha256sum >/dev/null; then sha256sum "$APK"; fi
