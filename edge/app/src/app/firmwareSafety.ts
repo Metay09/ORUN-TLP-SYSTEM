@@ -80,7 +80,9 @@ export function compareFirmwareEvidence(before: FirmwareEvidence, after: Firmwar
   const need = (ok: boolean, reason: string) => { if (!ok) problems.push(reason); };
   need(before.id === after.id, "Cihaz kimliği değişti.");
   need(before.kind === after.kind, "Cihaz türü değişti.");
-  const expectedBuild = sourceCommit.slice(0, 7);\n  need(after.firmware !== null && new RegExp("(?:^|-)" + expectedBuild + "(?:\\\\+)?$").test(after.firmware),\n    "Yeni yazılım sürümü doğrulanamadı.");
+  const expectedBuild = sourceCommit.slice(0, 7);
+  need(after.firmware !== null && new RegExp("(?:^|-)" + expectedBuild + "(?:\\+)?$").test(after.firmware),
+    "Yeni yazılım sürümü doğrulanamadı.");
   if (before.kind === "tracker") {
     need(before.credential === after.credential && before.epoch === after.epoch, "Anahtar kimliği veya dönemi değişti.");
     need(before.granted === after.granted && before.grantGeneration === after.grantGeneration, "Gateway izni değişti.");
