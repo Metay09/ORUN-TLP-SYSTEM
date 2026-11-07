@@ -6,6 +6,7 @@ No flash, erase, reset, provisioning, service stop, or gateway serial access.
 """
 import os
 import re
+import signal
 import sqlite3
 import subprocess
 import threading
@@ -43,7 +44,7 @@ def emit(who, msg):
             " | " + who.ljust(14) + " | " + str(msg))
     with print_lock:
         print(line, flush=True)
-        if logfile is not None:
+        if logfile is not None and not logfile.closed:
             logfile.write(line + "\n")
             logfile.flush()
 
@@ -278,5 +279,9 @@ def main():
         emit("TEST", "Log: " + str(LOG))
         logfile.close()
 
+def on_terminate(signum, frame):
+    raise KeyboardInterrupt
+
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, on_terminate)
     raise SystemExit(main())
