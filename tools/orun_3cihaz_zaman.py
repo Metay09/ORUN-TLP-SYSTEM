@@ -47,23 +47,40 @@ def serial_watch(dev, name):
     try:
         link = serial.Serial(port=None, baudrate=115200, timeout=0.25,
                              write_timeout=2, exclusive=True)
-        link.dtr = False
+        # RAK4631 uses USB CDC; this project's device-check tool explicitly
+        # enables DTR so the firmware's Serial diagnostics are visible.
+        link.dtr = True
         link.rts = False
         link.port = str(path)
         link.open()
         with link:
-            emit(name, 'USB baglandi; sadece tani okumalari')
+            link.dtr = True
+            time.sleep(0.8)
+            emit(name, 'USB baglandi (DTR=ON); sadece tani okumalari')
             link.write(b'BENCH DRAIN?\n')
-            diag = ('BENCH DRAIN', 'BENCH PILOT')
+            link.write(b'APP TRACKING?\n')
+            diag = ('BENCH DRAIN', 'BENCH PILOT', 'APP TRACKING')
             significant = ('BENCH LINK', 'PRODUCT CUSTODY release=',
                            'PRODUCT PILOT blocked', 'PRODUCT PILOT TX=start',
                            'GNSS FIX')
+            next_query = time.monotonic() + 30
+            first_reply = False
+            warned = False
+            started = time.monotonic()
             while not STOP.is_set() and time.monotonic() < END:
+                now = time.monotonic()
+                if now >= next_query:
+                    link.write(b'BENCH DRAIN?\n')
+                    next_query = now + 30
                 raw = link.readline()
                 if not raw:
+                    if not first_reply and not warned and now - started > 8:
+                        emit(name, 'UYARI: 8sn USB seri yaniti yok; DTR veya port denetlenmeli')
+                        warned = True
                     continue
                 line = raw.decode('ascii', 'replace').strip()
                 if line.startswith(diag + significant):
+                    first_reply = True
                     emit(name, line[:320])
             link.write(b'BENCH DRAIN?\n')
             until = time.monotonic() + 3
