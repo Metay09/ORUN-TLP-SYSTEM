@@ -339,14 +339,42 @@ void testDrainPacer() {
   assert(!pacer.mayRearm(1000U));          // waiting for the ACK
   pacer.onReleased(4000U);
   assert(!pacer.mayRearm(6999U) && pacer.mayRearm(7000U));
-  // Missed ACK: same record again only after ack_wait + back-off.
+  // Missed ACK: same record remains pending until ACK wait + bounded,
+  // per-device random retry. There is no time-dependent crypto or flash write.
   pacer.onSent(7000U);
   assert(!pacer.mayRearm(21999U));
   assert(!pacer.mayRearm(22000U) && pacer.stats().ack_timeouts == 1U);
-  assert(!pacer.mayRearm(81999U) && pacer.mayRearm(82000U));
+  assert(!pacer.mayRearm(51999U));
+  uint32_t rearm_at = 0U;
+  for (uint32_t t = 52000U; t <= 112000U; ++t) {
+    if (pacer.mayRearm(t)) {
+      rearm_at = t;
+      break;
+    }
+  }
+  assert(rearm_at >= 52000U && rearm_at <= 112000U);
   pacer.setEnabled(false);
   assert(!pacer.mayRearm(90000U));
   pacer.setEnabled(true);
+
+  // 2026-11-08 real observed pair: both attempted TX in the same second.
+  // Identical boot ticks but different device identities must break the
+  // recurring ~75 s collision; the clock is injected for deterministic tests.
+  Sf5l0DrainPacer a, b;
+  a.begin(1000U, UINT64_C(0x0E8ADE7E71531AA3));
+  b.begin(1000U, UINT64_C(0x52E16773141A8887));
+  a.onSent(1000U);
+  b.onSent(1000U);
+  assert(!a.mayRearm(16000U));
+  assert(!b.mayRearm(16000U));
+  uint32_t ar = 0U, br = 0U;
+  for (uint32_t t = 46000U; t <= 106000U; ++t) {
+    if (ar == 0U && a.mayRearm(t)) ar = t;
+    if (br == 0U && b.mayRearm(t)) br = t;
+  }
+  assert(ar != 0U && br != 0U);
+  const uint32_t separation = ar > br ? ar - br : br - ar;
+  assert(separation > 2300U);  // observed SF11 packet airtime
 
   // Duty: drive as fast as allowed for 3 h with instant releases and check
   // every sliding hour stays within burst + 6 % x 1 h of product airtime.
