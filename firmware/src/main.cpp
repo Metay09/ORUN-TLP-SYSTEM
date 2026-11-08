@@ -997,10 +997,11 @@ void printUsbGeofencePageDiagnostics() {
         same = first_incarnation == rec.token.incarnation ? "yes" : "no";
       }
       Serial.printf(
-          "APP FENCE DIAG record=%c generation=%llu revision=%lu "
+          "APP FENCE DIAG record=%c generation=%08lX%08lX revision=%lu "
           "state=%s areas=%u vertices=%u incarnation_same_as_A=%s\n",
           p == 0 ? 'A' : 'B',
-          static_cast<unsigned long long>(rec.generation),
+          static_cast<unsigned long>(rec.generation >> 32),
+          static_cast<unsigned long>(static_cast<uint32_t>(rec.generation)),
           static_cast<unsigned long>(rec.token.revision),
           rec.snapshot.state == orun_tlp::geofence_format::ResourceState::kClear
               ? "CLEAR" : "CONFIGURED",
