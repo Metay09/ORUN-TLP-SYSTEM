@@ -50,6 +50,8 @@
 #include "geofence_mutation.h"
 #include "geofence_staging.h"
 #include "geofence_store.h"
+#include "journal_format.h"
+#include "storage_config.h"
 #include "node_role.h"
 #include "observation_incarnation_source.h"
 #include "product_record_store.h"
@@ -924,6 +926,91 @@ bool isActivityCommand(const char* text, uint8_t length) {
   for (uint8_t i = 0; i < length; ++i)
     if (role_command[i] != text[i]) return false;
   return true;
+}
+
+// Physical USB diagnostic only: inspect the TWO dedicated geofence pages.
+// Never erase, program, reset a token, or reinterpret UNCERTAIN as CLEAR.
+// This is intentionally independent of the GeofenceStore write-admission path.
+const char* geofencePageEvidenceName(orun_tlp::geofence_format::PageEvidence e) {
+  using E = orun_tlp::geofence_format::PageEvidence;
+  switch (e) {
+    case E::kErased: return "ERASED";
+    case E::kStaged: return "STAGED";
+    case E::kUncommittedOrTorn: return "UNCOMMITTED_OR_TORN";
+    case E::kPartialCommit: return "PARTIAL_COMMIT";
+    case E::kCommittedClear: return "COMMITTED_CLEAR";
+    case E::kCommittedConfigured: return "COMMITTED_CONFIGURED";
+    case E::kCommittedCorrupt: return "COMMITTED_CORRUPT";
+    case E::kUnsupportedNewer: return "UNSUPPORTED_NEWER";
+    case E::kSupportedCorrupt: return "SUPPORTED_CORRUPT";
+  }
+  return "UNKNOWN";
+}
+
+void printUsbGeofencePageDiagnostics() {
+  using namespace orun_tlp::storage_config;
+  if (geofence_store.busy()) {
+    Serial.println(F("APP FENCE DIAG busy=yes"));
+    return;
+  }
+
+  // Keep the 564-byte decoded record OFF the 4 KiB Arduino loop stack.
+  static orun_tlp::geofence_format::PageInspection inspection;
+  uint64_t first_incarnation = 0;
+  bool first_decoded = false;
+  Serial.println(F("APP FENCE DIAG read_only=yes scope=0x0E5000..0x0E6FFF"));
+
+  for (uint32_t p = 0; p < kGeofenceRegionPages; ++p) {
+    const auto* bytes = reinterpret_cast<const uint8_t*>(
+        kGeofenceRegionStart + p * kPageSize);
+    bool all_ff = true;
+    bool tail_ff = true;
+    uint32_t first_non_ff = UINT32_MAX;
+    for (uint32_t i = 0; i < kPageSize; ++i) {
+      if (bytes[i] != 0xFFU) {
+        all_ff = false;
+        if (first_non_ff == UINT32_MAX) first_non_ff = i;
+        if (i >= orun_tlp::geofence_format::kRecordSize) tail_ff = false;
+      }
+    }
+
+    inspection = orun_tlp::geofence_format::PageInspection();
+    const bool ok = orun_tlp::geofence_format::inspectPage(
+        bytes, orun_tlp::geofence_format::kRecordSize, inspection);
+    const uint32_t crc = orun_tlp::journal_format::crc32(bytes, kPageSize);
+    Serial.printf(
+        "APP FENCE DIAG page=%c classified=%s evidence=%s "
+        "all_ff=%s tail_ff=%s crc32=%08lX first_non_ff=%08lX\n",
+        p == 0 ? 'A' : 'B', ok ? "yes" : "no",
+        ok ? geofencePageEvidenceName(inspection.evidence) : "UNCLASSIFIED",
+        all_ff ? "yes" : "no", tail_ff ? "yes" : "no",
+        static_cast<unsigned long>(crc),
+        static_cast<unsigned long>(first_non_ff));
+
+    if (ok && inspection.has_decoded_record) {
+      const auto& rec = inspection.record;
+      const char* same = "unknown";
+      if (p == 0) {
+        first_incarnation = rec.token.incarnation;
+        first_decoded = true;
+      } else if (first_decoded) {
+        same = first_incarnation == rec.token.incarnation ? "yes" : "no";
+      }
+      Serial.printf(
+          "APP FENCE DIAG record=%c generation=%llu revision=%lu "
+          "state=%s areas=%u vertices=%u incarnation_same_as_A=%s\n",
+          p == 0 ? 'A' : 'B',
+          static_cast<unsigned long long>(rec.generation),
+          static_cast<unsigned long>(rec.token.revision),
+          rec.snapshot.state == orun_tlp::geofence_format::ResourceState::kClear
+              ? "CLEAR" : "CONFIGURED",
+          static_cast<unsigned>(rec.snapshot.area_count),
+          static_cast<unsigned>(rec.snapshot.total_vertex_count), same);
+    }
+  }
+  Serial.printf("APP FENCE DIAG maintenance=%s\n",
+      geofence_store.maintenanceResetRequired() ? "yes" : "no");
+  Serial.flush();
 }
 
 void startUsbApplicationQuery(orun_tlp::ApplicationRequestKind kind) {
@@ -2572,6 +2659,11 @@ void handleRoleCommand() {
   if (isActivityCommand("BLE?", 4)) {
     role_command_length = 0;
     printBleDiagnostic();
+    return;
+  }
+  if (isActivityCommand("APP FENCE DIAG?", 15)) {
+    role_command_length = 0;
+    printUsbGeofencePageDiagnostics();
     return;
   }
   orun_tlp::GeoPointE7 fence_vertex;
