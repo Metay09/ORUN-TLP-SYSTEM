@@ -113,6 +113,7 @@ read -r -p "Onayliyorsan ONAR yaz: " answer
 
 echo "=== DIAGNOSTIK KAYNAK VE LORA TESTLERI ==="
 python3 "$FW/tests/m6/test_geofence_readonly_diagnostic_source.py"
+python3 "$FW/tests/m6/test_geofence_141a8887_repair_source.py"
 bash "$ROOT/tools/ci/run_sf5l0_bench_round_trip_host.sh"
 
 do_build_upload "$REPAIR_ENV" "REPAIR" || {
