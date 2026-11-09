@@ -391,7 +391,18 @@ bool reached(uint32_t now, uint32_t deadline) {
 }
 }  // namespace
 
-void Sf5l0DrainPacer::begin(uint32_t now_ms) {
+void Sf5l0DrainPacer::begin(uint32_t now_ms, uint64_t device_id) {
+  // Independent, reproducible per-device retry phases. This is not a CSPRNG
+  // and must never be used for keys, nonces or credential generation.
+  uint32_t seed = static_cast<uint32_t>(device_id) ^
+                  static_cast<uint32_t>(device_id >> 32U) ^
+                  now_ms ^ 0x9E3779B9U;
+  seed ^= seed >> 16U;
+  seed *= 0x7FEB352DU;
+  seed ^= seed >> 15U;
+  seed *= 0x846CA68BU;
+  seed ^= seed >> 16U;
+  random_state_ = seed != 0U ? seed : 0x6D2B79F5U;
   stats_ = Stats{};
   awaiting_ack_ = false;
   duty_wait_counted_ = false;
@@ -399,6 +410,16 @@ void Sf5l0DrainPacer::begin(uint32_t now_ms) {
   next_allowed_ms_ = now_ms;
   last_refill_ms_ = now_ms;
   tokens_us_ = uint64_t(config_.burst_ms) * 1000U;
+}
+
+uint32_t Sf5l0DrainPacer::nextRandom() {
+  // xorshift32: tiny, fast, deterministic on the host, adequate for MAC jitter.
+  uint32_t value = random_state_;
+  value ^= value << 13U;
+  value ^= value >> 17U;
+  value ^= value << 5U;
+  random_state_ = value;
+  return value;
 }
 
 void Sf5l0DrainPacer::refill(uint32_t now_ms) {
@@ -418,7 +439,12 @@ bool Sf5l0DrainPacer::mayRearm(uint32_t now_ms) {
     // No durable release in time: the same record goes again, later.
     awaiting_ack_ = false;
     ++stats_.ack_timeouts;
-    next_allowed_ms_ = now_ms + config_.retry_backoff_ms;
+    // Resample on *every* missed ACK. A fixed 15+60 s cycle can phase-lock
+    // two Trackers indefinitely; randomized backoff breaks that lock.
+    const uint32_t spread = config_.retry_jitter_ms;
+    const uint32_t jitter =
+        spread == 0U ? 0U : nextRandom() % (spread + 1U);
+    next_allowed_ms_ = now_ms + config_.retry_backoff_ms + jitter;
     return false;
   }
   if (!reached(now_ms, next_allowed_ms_)) return false;

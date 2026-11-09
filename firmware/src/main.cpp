@@ -4181,7 +4181,8 @@ void loop() {
 #ifdef ORUN_SF5L0_TRACKER
   // Start the pacer clock before the pilot's first (boot) send is counted.
   if (!bench_pacer_started) {
-    bench_pacer.begin(orun_tlp::monotonic::nowMs());
+    bench_pacer.begin(orun_tlp::monotonic::nowMs(),
+                      radio_manager.deviceId());
     bench_pacer_started = true;
     // SF5L4: the newest record first, backlog in the gaps.
     tracker_product_tx.setLiveFirst(true);

@@ -146,7 +146,8 @@ class Sf5l0DrainPacer final {
   struct Config {
     uint32_t gap_after_release_ms = 3000U;
     uint32_t ack_wait_ms = 15000U;       // longer than the 10 s RX window
-    uint32_t retry_backoff_ms = 60000U;  // after a missed ACK
+    uint32_t retry_backoff_ms = 30000U;  // minimum after a missed ACK
+    uint32_t retry_jitter_ms = 60000U;   // per-Tracker 0..60 s extra delay
     uint32_t airtime_ms = 2300U;         // SF11 / 125 kHz, 100-byte frame
     uint32_t duty_ppm = 60000U;          // 6 % long-run, product frames only
     uint32_t burst_ms = 60000U;          // bucket depth
@@ -161,7 +162,8 @@ class Sf5l0DrainPacer final {
   Sf5l0DrainPacer() : config_(Config()) {}
   explicit Sf5l0DrainPacer(const Config& config) : config_(config) {}
 
-  void begin(uint32_t now_ms);
+  // device_id only seeds non-cryptographic retry timing; not a security key.
+  void begin(uint32_t now_ms, uint64_t device_id = 0U);
   void setEnabled(bool enabled) { enabled_ = enabled; }
   bool enabled() const { return enabled_; }
   // true: the pilot may be re-armed now (caller then calls rearm()).
@@ -176,6 +178,7 @@ class Sf5l0DrainPacer final {
 
  private:
   void refill(uint32_t now_ms);
+  uint32_t nextRandom();
 
   Config config_;
   Stats stats_{};
@@ -185,6 +188,7 @@ class Sf5l0DrainPacer final {
   uint32_t sent_at_ms_ = 0U;
   uint32_t next_allowed_ms_ = 0U;
   uint32_t last_refill_ms_ = 0U;
+  uint32_t random_state_ = 0x6D2B79F5U;
   uint64_t tokens_us_ = 0U;  // airtime budget in microseconds
 };
 
