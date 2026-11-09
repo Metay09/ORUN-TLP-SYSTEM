@@ -5,7 +5,7 @@ import type { PluginListenerHandle } from "@capacitor/core";
 import type { LineConsole } from "../app/addTracker.ts";
 
 const RAK_VID = 0x239a;
-const RAK_PID = 0x8029;
+const RAK_PIDS = [0x8029, 0x802a] as const;
 
 export class UsbConsole implements LineConsole {
   private portId: string | null = null;
@@ -15,11 +15,16 @@ export class UsbConsole implements LineConsole {
   private listeners: PluginListenerHandle[] = [];
   private decoder = new TextDecoder();
 
-  static async open(): Promise<UsbConsole> {
+  static async open(exactDeviceId?: string): Promise<UsbConsole> {
     const con = new UsbConsole();
-    await UsbSerial.registerDriver({ vendorId: RAK_VID, productId: RAK_PID, driverType: "CdcAcmSerialDriver" });
+    for (const productId of RAK_PIDS)
+      await UsbSerial.registerDriver({ vendorId: RAK_VID, productId, driverType: "CdcAcmSerialDriver" });
     const { devices } = await UsbSerial.listDevices();
-    const dev = devices.find((d) => d.vendorId === RAK_VID) ?? devices[0];
+    const isOrun = (d: typeof devices[number]) => d.vendorId === RAK_VID &&
+      RAK_PIDS.includes(d.productId as (typeof RAK_PIDS)[number]);
+    const dev = exactDeviceId
+      ? devices.find((d) => d.deviceId === exactDeviceId && isOrun(d))
+      : devices.find(isOrun);
     if (!dev) throw new Error("USB'de cihaz yok (OTG kablosu takılı mı?)");
     if (!dev.hasPermission) {
       const { granted } = await UsbSerial.requestPermission({ deviceId: dev.deviceId });

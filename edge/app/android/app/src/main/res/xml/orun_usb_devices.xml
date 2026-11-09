@@ -2,4 +2,6 @@
 <resources>
     <!-- RAK4631 WisCore (Adafruit nRF52 core), application USB CDC-ACM -->
     <usb-device vendor-id="9114" product-id="32809" />
+    <!-- Alternate RAK4630 application PID from firmware/rakwireless/boards/rak4630.json -->
+    <usb-device vendor-id="9114" product-id="32810" />
 </resources>

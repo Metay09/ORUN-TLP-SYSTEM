@@ -1,0 +1,160 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { DfuSerial } from "../src/app/firmwareUsb.ts";
+import { previousFirmwareUpdate, reconcileFirmwareUpdate, updateFirmware, type FirmwareUpdatePorts } from "../src/app/firmwareUpdate.ts";
+import type { FirmwareEvidence } from "../src/app/firmwareSafety.ts";
+import type { FirmwarePackage } from "../src/app/firmwarePackage.ts";
+
+const id = "52E16773141A8887";
+const sha = "0123456789abcdef0123456789abcdef01234567";
+const hash = "f".repeat(64);
+function evidence(fw = "0.5-old", epoch = "00000001", nextSeq = 10): FirmwareEvidence {
+  return { id, kind: "tracker", firmware: fw, credential: "A".repeat(32), epoch,
+    granted: "09A462BD4B275BA5", grantGeneration: "00000005", storeInc: "ABC",
+    nextSeq, storeReady: true, storeFaulted: false };
+}
+const pkg = { target: "RAK4630", sourceCommit: sha, imageSha256: hash,
+  image: Uint8Array.of(1,2,3), initPacket: Uint8Array.of(4) } as FirmwarePackage;
+function storage() {
+  const map = new Map<string,string>();
+  return { map, getItem: (k: string) => map.get(k) ?? null,
+    setItem: (k: string, v: string) => { map.set(k,v); } };
+}
+function ack(seq: number): Uint8Array {
+  const h0 = ((seq + 1) & 7) << 3;
+  return Uint8Array.from([0xc0, h0, 0, 0, (-h0) & 255, 0xc0]);
+}
+function ports(after: FirmwareEvidence, bad = false) {
+  let reads = 0, entries = 0, sent = 0, closed = 0;
+  const link: DfuSerial & {close(): Promise<void>} = {
+    async write() { sent++; },
+    async read() { return ack(bad ? 7 : sent & 7); },
+    async close() { closed++; },
+  };
+  const data: FirmwareUpdatePorts = {
+    async readApplication() { reads++; return reads === 1 ? evidence() : after; },
+    async enterBootloader() { entries++; return link; },
+  };
+  return { data, get reads() { return reads; }, get entries() { return entries; },
+    get sent() { return sent; }, get closed() { return closed; } };
+}
+
+test("journals BEFORE bootloader entry and confirms only after all readback checks", async () => {
+  const st = storage(), p = ports(evidence("0.5-0123456", "00000001", 11));
+  const x: FirmwareUpdatePorts = { ...p.data, enterBootloader: async (device) => {
+    assert.equal(device, id);
+    assert.equal(previousFirmwareUpdate(st, id)?.phase, "uncertain");
+    return p.data.enterBootloader(device);
+  }};
+  const result = await updateFirmware(st, x, id, pkg);
+  assert.equal(result.phase, "confirmed");
+  assert.equal(p.reads, 2); assert.equal(p.entries, 1);
+  assert.equal(p.sent, 4); assert.equal(p.closed, 1);
+  assert.equal(result.bytesAcknowledged, 3);
+  assert.equal(result.activationAcknowledged, true);
+});
+
+test("malformed ACK remains uncertain; never automatically repeats firmware writes", async () => {
+  const st = storage(), p = ports(evidence("0.5-0123456"), true);
+  await assert.rejects(updateFirmware(st, p.data, id, pkg), /DFU aktarım sonucu belirsiz/);
+  assert.equal(previousFirmwareUpdate(st, id)?.phase, "uncertain");
+  assert.equal(p.sent, 1);
+  await assert.rejects(updateFirmware(st, p.data, id, pkg), /Önceki firmware/);
+  assert.equal(p.entries, 1);
+});
+
+test("changed key epoch blocks success even when firmware matches", async () => {
+  const st = storage(), p = ports(evidence("0.5-0123456", "00000009", 11));
+  await assert.rejects(updateFirmware(st, p.data, id, pkg), /Anahtar kimliği veya dönemi/);
+  assert.equal(previousFirmwareUpdate(st, id)?.phase, "uncertain");
+  assert.equal(p.closed, 1);
+});
+
+test("interrupted DFU cannot be confirmed by an unchanged firmware version", async () => {
+  const st = storage(), first = ports(evidence("0.5-0123456"), true);
+  await assert.rejects(updateFirmware(st, first.data, id, pkg), /DFU aktarım sonucu belirsiz/);
+  let readings = 0;
+  const readOnly = { readApplication: async () => { readings++; return evidence("0.5-0123456", "00000001", 20); } };
+  await assert.rejects(reconcileFirmwareUpdate(st, readOnly, id), /aktarım.*tam onaylanmamış/);
+  assert.equal(previousFirmwareUpdate(st, id)?.phase, "uncertain");
+  assert.equal(previousFirmwareUpdate(st, id)?.activationAcknowledged, false);
+  assert.equal(first.entries, 1);
+  assert.equal(readings, 0);
+});
+
+test("after full STOP ACK, a failed reboot read can later reconcile without another flash", async () => {
+  const st = storage(), first = ports(evidence("0.5-0123456"));
+  const flashing: FirmwareUpdatePorts = {
+    ...first.data,
+    async readAfterUpdate() { throw new Error("USB yeniden numaralandırma bekleniyor."); },
+  };
+  await assert.rejects(updateFirmware(st, flashing, id, pkg), /yeniden numaralandırma/);
+  assert.equal(previousFirmwareUpdate(st, id)?.phase, "uncertain");
+  assert.equal(previousFirmwareUpdate(st, id)?.activationAcknowledged, true);
+  assert.equal(previousFirmwareUpdate(st, id)?.bytesAcknowledged, pkg.image.length);
+  const readOnly = { readApplication: async () => evidence("0.5-0123456", "00000001", 20) };
+  const result = await reconcileFirmwareUpdate(st, readOnly, id);
+  assert.equal(result.phase, "confirmed");
+  assert.equal(first.entries, 1);
+});
+
+test("wrong USB device fails before journal or flash", async () => {
+  const st = storage();
+  let writes = 0;
+  const p: FirmwareUpdatePorts = {
+    readApplication: async () => ({...evidence(), id:"1111111111111111"}),
+    enterBootloader: async () => { writes++; throw Error("should not enter"); },
+  };
+  await assert.rejects(updateFirmware(st,p,id,pkg), /kimliği/);
+  assert.equal(writes,0);
+  assert.equal(previousFirmwareUpdate(st,id),null);
+});
+
+
+test("corrupted persisted record prevents another flash attempt", async () => {
+  const st = storage(), p = ports(evidence("0.5-0123456"));
+  st.setItem("orun.firmwareUpdate.v1." + id, "{not-valid-json");
+  await assert.rejects(updateFirmware(st, p.data, id, pkg), /kaydı bozuk/);
+  assert.equal(p.entries, 0);
+  assert.equal(p.reads, 0);
+});
+
+test("post-update read waits for reconnect; preflight always uses immediate USB read", async () => {
+  const store = storage();
+  let immediateReads = 0, rebootReads = 0, sent = 0;
+  const link = {
+    async write() { sent++; },
+    async read() { return ack(sent & 7); },
+    async close() {},
+  };
+  const ports: FirmwareUpdatePorts = {
+    async readApplication() { immediateReads++; return evidence("0.5-old"); },
+    async readAfterUpdate() { rebootReads++; return evidence("0.5-0123456", "00000001", 13); },
+    async enterBootloader() { return link; },
+  };
+  const result = await updateFirmware(store, ports, id, pkg);
+  assert.equal(result.phase, "confirmed");
+  assert.equal(immediateReads, 1);
+  assert.equal(rebootReads, 1);
+  assert.equal(sent, 4);
+});
+
+test("old or tampered update journal never authorizes an upload or false success", async () => {
+  const st = storage(), p = ports(evidence("0.5-0123456"));
+  const key = "orun.firmwareUpdate.v1." + id;
+  const legacy = {
+    device: id, sourceCommit: sha, imageSha256: hash,
+    phase: "confirmed", bytesAcknowledged: 3, imageBytes: 3,
+    before: evidence("0.5-old"), updatedAt: Date.now(), note: "legacy",
+  };
+  st.setItem(key, JSON.stringify(legacy));
+  assert.equal(previousFirmwareUpdate(st, id), null);
+  await assert.rejects(updateFirmware(st, p.data, id, pkg), /kaydı bozuk/);
+  assert.equal(p.reads, 0);
+  assert.equal(p.entries, 0);
+  legacy.phase = "verifying";
+  st.setItem(key, JSON.stringify({...legacy, activationAcknowledged: false}));
+  assert.equal(previousFirmwareUpdate(st, id), null);
+  await assert.rejects(updateFirmware(st, p.data, id, pkg), /kaydı bozuk/);
+  assert.equal(p.entries, 0);
+});
