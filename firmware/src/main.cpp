@@ -2662,6 +2662,15 @@ void handleRoleCommand() {
     printBleDiagnostic();
     return;
   }
+  if (isActivityCommand("APP FENCE SERVICE?", 18)) {
+    role_command_length = 0;
+#ifdef ORUN_GEOFENCE_SAFE_REINIT_141A8887
+    Serial.println(F("APP FENCE SERVICE repair=yes target=52E16773141A8887"));
+#else
+    Serial.println(F("APP FENCE SERVICE repair=no"));
+#endif
+    return;
+  }
   if (isActivityCommand("APP FENCE DIAG?", 15)) {
     role_command_length = 0;
     printUsbGeofencePageDiagnostics();
