@@ -3525,6 +3525,104 @@ void decideBootStorageRole() {
 }
 #endif
 
+#ifdef ORUN_GEOFENCE_SAFE_REINIT_141A8887
+// One-time service image, never enabled in normal rak4630_orun.
+// Fail closed unless this exact device has the physically observed
+// A=SUPPORTED_CORRUPT (dirty reserved tail), B=fully erased layout.
+// Erase ONLY page A of the two-page geofence region, before SoftDevice.
+// The ordinary GeofenceStore::begin() then writes a new, committed CLEAR
+// baseline under a fresh incarnation. No credential, config, history,
+// product/custody, bonds, or other flash region is addressed here.
+bool repairGeofence141A8887OnBoot(uint64_t device_id) {
+  using namespace orun_tlp;
+  using namespace storage_config;
+  static_assert(kGeofenceRegionStart == 0x0E5000U, "geofence A address");
+  static_assert(kGeofenceRegionPages == 2U, "geofence A/B partition");
+  static_assert(kPageSize == 4096U, "flash page size");
+  static_assert(kGeofenceRegionEnd == 0x0E7000U, "geofence region end");
+
+  if (device_id != UINT64_C(0x52E16773141A8887)) {
+    Serial.println(F("FENCE REPAIR DENIED: wrong device"));
+    return false;
+  }
+
+  auto& port = storage_flash_gate.geofencePort();
+  if (!port.begin()) {
+    Serial.println(F("FENCE REPAIR DENIED: geofence flash unavailable"));
+    return false;
+  }
+
+  static uint8_t record[geofence_format::kRecordSize]{};
+  static geofence_format::PageInspection inspection;
+  if (!port.read(0, record, sizeof(record)) ||
+      !geofence_format::inspectPage(record, sizeof(record), inspection) ||
+      inspection.evidence != geofence_format::PageEvidence::kSupportedCorrupt ||
+      inspection.has_decoded_record) {
+    Serial.println(F("FENCE REPAIR SKIPPED: A not expected corrupt state"));
+    return false;
+  }
+
+  // B must be erased across the WHOLE page. No existing committed/staged
+  // geofence record may be discarded by this narrow A-only service action.
+  uint8_t chunk[64]{};
+  for (uint32_t offset = kPageSize; offset < 2U * kPageSize;
+       offset += sizeof(chunk)) {
+    if (!port.read(offset, chunk, sizeof(chunk))) {
+      Serial.println(F("FENCE REPAIR DENIED: B read failed"));
+      return false;
+    }
+    for (uint8_t byte : chunk) {
+      if (byte != 0xFFU) {
+        Serial.println(F("FENCE REPAIR DENIED: B is not erased"));
+        return false;
+      }
+    }
+  }
+
+  // Match the actual physical failure signature, not merely a parser
+  // classification: reserved A tail contains out-of-record flash writes.
+  bool dirty_tail = false;
+  for (uint32_t offset = geofence_format::kRecordSize;
+       offset < kPageSize; offset += sizeof(chunk)) {
+    const uint32_t remaining = kPageSize - offset;
+    const size_t size = remaining < sizeof(chunk) ? remaining : sizeof(chunk);
+    if (!port.read(offset, chunk, size)) {
+      Serial.println(F("FENCE REPAIR DENIED: A tail read failed"));
+      return false;
+    }
+    for (size_t i = 0; i < size; ++i)
+      if (chunk[i] != 0xFFU) dirty_tail = true;
+  }
+  if (!dirty_tail) {
+    Serial.println(F("FENCE REPAIR DENIED: A tail unexpectedly clean"));
+    return false;
+  }
+
+  // Sync erase is permitted only at this pre-Bluefruit boot point.
+  // The flash owner enforces this region's bounds and physical layout.
+  if (port.erasePage(0) != FlashOpResult::kDone) {
+    Serial.println(F("FENCE REPAIR FAILED: erase A"));
+    return false;
+  }
+
+  for (uint32_t offset = 0; offset < kPageSize;
+       offset += sizeof(chunk)) {
+    if (!port.read(offset, chunk, sizeof(chunk))) {
+      Serial.println(F("FENCE REPAIR FAILED: verify A read"));
+      return false;
+    }
+    for (uint8_t byte : chunk) {
+      if (byte != 0xFFU) {
+        Serial.println(F("FENCE REPAIR FAILED: verify A not empty"));
+        return false;
+      }
+    }
+  }
+  Serial.println(F("FENCE REPAIR PASS: A erased, B preserved; initialize CLEAR baseline"));
+  return true;
+}
+#endif
+
 void setup() {
   Serial.begin(115200);
   // Start the hardware watchdog before peripheral initialization. It is the
@@ -3572,6 +3670,11 @@ void setup() {
   } else if (config_store.tokenState() != orun_tlp::ConfigTokenState::kValid) {
     Serial.println(F("CONFIG token unavailable; defaults in effect"));
   }
+
+#ifdef ORUN_GEOFENCE_SAFE_REINIT_141A8887
+  // Explicit one-time service build only; normal firmware has no erase hook.
+  repairGeofence141A8887OnBoot(device_identity.legacyUint64());
+#endif
 
   // M6D3C: recover the dedicated geofence resource while SoftDevice is still
   // disabled, then apply only its semantic snapshot to the existing M6D2
