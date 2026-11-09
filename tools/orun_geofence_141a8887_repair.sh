@@ -2,7 +2,7 @@
 # One-time, exact-device, geofence-A-only service repair.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FW="$ROOT/firmware"
 PORT="/dev/serial/by-id/usb-RAKwireless_WisCore_RAK4631_Board_52E16773141A8887-if00"
 REPAIR_ENV=rak4630_orun_fence_repair_141a8887
