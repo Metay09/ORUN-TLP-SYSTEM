@@ -33,12 +33,17 @@ with serial.Serial(port, 115200, timeout=0.25,
     ser.dtr = True
     ser.rts = False
     time.sleep(1)
-    for cmd, prefix, ending in (
-        ("APP FENCE SERVICE?", "APP FENCE SERVICE ", "APP FENCE SERVICE "),
+    queries = [
         ("APP FENCE DIAG?", "APP FENCE DIAG ", "APP FENCE DIAG maintenance="),
         ("APP GEOFENCE?", "APP GEOFENCE id=", "APP GEOFENCE id="),
         ("APP STORAGE?", "APP STORAGE id=", "APP STORAGE id="),
-    ):
+    ]
+    # The old diagnostic image lacks APP FENCE SERVICE?; query it only
+    # after the new service/normal images have been installed.
+    if phase != "before":
+        queries.insert(0, ("APP FENCE SERVICE?",
+                           "APP FENCE SERVICE ", "APP FENCE SERVICE "))
+    for cmd, prefix, ending in queries:
         ser.reset_input_buffer()
         ser.write((cmd + "\n").encode())
         ser.flush()
@@ -63,7 +68,6 @@ s = next((s for s in responses if s.startswith("APP STORAGE id=")), "")
 def require(ok, reason):
     if not ok: raise SystemExit("DUR: " + reason)
 if phase == "before":
-    require("repair=no" in service, "Onarim oncesinde normal teshis image gerekli")
     require("evidence=SUPPORTED_CORRUPT" in a and "all_ff=no" in a and "tail_ff=no" in a, "A beklenen bozuk durumunda degil")
     require("evidence=ERASED" in b and "all_ff=yes" in b and "tail_ff=yes" in b, "B bos degil")
     require("maintenance=yes" in m and "geofence_maintenance=yes" in s, "Bakim kilidi yok")
