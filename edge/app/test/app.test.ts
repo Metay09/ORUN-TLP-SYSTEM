@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Point } from "../src/core/points.ts";
-import { daySummaries, hourlyActivity } from "../src/app/activity.ts";
+import { activityCoverage24h, daySummaries, hourlyActivity } from "../src/app/activity.ts";
 import { classify, coverageAt, coverageCells, coverageSummary } from "../src/app/coverage.ts";
 import { demoBook, demoPoints } from "../src/app/demo.ts";
 import { deriveEvents, isActive } from "../src/app/events.ts";
@@ -132,4 +132,34 @@ test("sample herd: deterministic, stable history, the story's states", () => {
   assert.equal(st["Sarıkız"], "ok");
   assert.ok(a.some((p) => p.link === "cut"), "some records come back from behind the ridge later");
   assert.ok(a.every((p) => p.alt_m !== null && p.time !== null));
+});
+
+test("activity coverage: accelerometer seconds, measured inactivity and unknown time stay separate", () => {
+  const points = [
+    rec("A", 2, { seq: 10, period_s: 60, active_s: 20, covered_s: 50 }),
+    rec("A", 1, { seq: 11, period_s: 60, active_s: 0, covered_s: 60 }),
+    rec("A", 1, { seq: 11, period_s: 60, active_s: 0, covered_s: 60 }), // duplicate delivery
+  ];
+  const s = activityCoverage24h(points, NOW);
+  assert.deepEqual(s, {
+    activeMs: 20_000,
+    inactiveMs: 90_000,
+    unknownMs: 24 * 3600_000 - 110_000,
+    coveredMs: 110_000,
+    reports: 2,
+  });
+});
+
+test("activity coverage: missing, overlapping, malformed and boundary records never imply inactivity", () => {
+  const clean = rec("A", 1, { seq: 4, period_s: 60, active_s: 20, covered_s: 60 });
+  const overlapping = rec("A", 0.5, { seq: 5, period_s: 60, active_s: 60, covered_s: 60 });
+  const boundary = rec("A", 24 * 60 - 0.5, { seq: 1, period_s: 60, active_s: 60, covered_s: 60 });
+  const noEvidence = rec("A", 3, { seq: 2, period_s: 60, active_s: null, covered_s: null });
+  const malformed = rec("A", 4, { seq: 3, period_s: 60, active_s: 65, covered_s: 60 });
+  const s = activityCoverage24h([clean, overlapping, boundary, noEvidence, malformed], NOW);
+  assert.equal(s.activeMs, 20_000);
+  assert.equal(s.inactiveMs, 40_000);
+  assert.equal(s.unknownMs, 24 * 3600_000 - 60_000);
+  assert.equal(s.reports, 1);
+  assert.equal(activityCoverage24h([], NOW).unknownMs, 24 * 3600_000);
 });
