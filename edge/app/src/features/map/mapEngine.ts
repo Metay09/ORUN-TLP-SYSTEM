@@ -634,9 +634,10 @@ export class MapEngine {
         if (el) {
           // The parent pin already is a button. Do not nest another button.
           const badge = document.createElement("span");
-          badge.className = "pin-count";
+          const hiddenAlarms = members.filter((a) => a.id !== exposed.id && toneOfStatus(a.status) === "alarm").length;
+          badge.className = "pin-count" + (hiddenAlarms ? " alarm" : "");
           badge.textContent = `+${members.length - 1}`;
-          badge.setAttribute("aria-label", `${members.length - 1} hayvan daha: seçim listesini aç`);
+          badge.setAttribute("aria-label", `${members.length - 1} hayvan daha${hiddenAlarms ? `, ${hiddenAlarms} kritik uyarı` : ""}: seçim listesini aç`);
           badge.addEventListener("click", (ev) => {
             ev.stopPropagation();
             this.showGroupChoices(members, [exposed.last!.lon, exposed.last!.lat]);
@@ -681,10 +682,10 @@ export class MapEngine {
     const title = document.createElement("strong");
     title.textContent = `${members.length} hayvan bu konumda`;
     box.appendChild(title);
-    for (const a of members) {
+    for (const a of [...members].sort((x, y) => y.attention - x.attention || x.name.localeCompare(y.name, "tr"))) {
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = a.name;
+      button.textContent = a.name + (toneOfStatus(a.status) === "alarm" ? " · Kritik uyarı" : "");
       button.addEventListener("click", (ev) => {
         ev.stopPropagation();
         this.groupPopup?.remove();
