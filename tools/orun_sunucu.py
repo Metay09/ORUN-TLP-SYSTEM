@@ -273,7 +273,8 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
             if self._farm_actor("zone:read") is None:
                 return None
             if self.path == "/api/v1/devices/edge-status":
-                return self._send(200, {"edges": edge_queues.list()})
+                return self._send(200, {"edges": edge_queues.list(),
+                                        "server_confirmed": local.backend.ledger.record_count()})
             if self.path == "/api/v1/devices/names":
                 return self._send(200, {"names": names.all()})
             if self.path == "/api/v1/devices/fences":
