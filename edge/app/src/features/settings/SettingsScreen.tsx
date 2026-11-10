@@ -1,4 +1,4 @@
-// Ayarlar: hesap, internetsiz harita, görünüm ve hakkında.
+// Ayarlar: hesap, tasma ayarları, internetsiz harita, görünüm ve hakkında.
 import { tr } from "../../app/i18n/tr.ts";
 import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
@@ -6,6 +6,7 @@ import type { Theme } from "../../app/stores.ts";
 import { Card, KV, Screen, Section, Seg, ToggleRow } from "../../ds/components.tsx";
 import { AccountLoginPanel } from "./AccountLoginPanel.tsx";
 import { OfflineMapPanel } from "./OfflineMapPanel.tsx";
+import { TrackerSettingsPanel } from "./TrackerSettingsPanel.tsx";
 
 declare const __APP_VERSION__: string;
 
@@ -17,6 +18,7 @@ export function SettingsScreen() {
   return (
     <Screen title={tr.settings.title} onBack={() => nav.pop()}>
       <AccountLoginPanel />
+      <TrackerSettingsPanel />
       <OfflineMapPanel />
 
       <Section title={tr.settings.look} />
