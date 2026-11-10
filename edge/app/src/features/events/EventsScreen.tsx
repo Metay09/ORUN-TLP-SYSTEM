@@ -87,7 +87,9 @@ export function EventsScreen() {
   const m = useApp();
   const nav = useNav();
   const [filter, setFilter] = useState<Filter>("all");
-  const active = m.events.filter(isActive);
+  const importance = { danger: 0, warn: 1, info: 2, ok: 3 };
+  const active = m.events.filter(isActive).sort((a, b) =>
+    importance[a.severity] - importance[b.severity] || b.at - a.at);
   const rest = m.events.filter((e) => !isActive(e)).filter((e) =>
     filter === "all" || (filter === "alerts" && e.alert) || (filter === "animals" && e.asset !== null) ||
     (filter === "system" && e.asset === null));
@@ -112,7 +114,8 @@ export function EventsScreen() {
         <Empty icon={<Bell size={34} />} title={tr.events.empty} body={tr.events.emptyBody} />
       ) : (
         <>
-          <Section title={tr.events.now} />
+          <Section title={`${tr.events.now} · ${active.length} açık`}
+            info="Kritik olaylar önce gelir. 'Gördüm' yalnız okunduğunu işaretler; olay yeni ölçümle normale dönünce kapanır." />
           {m.grazing && <p className="sm lead">{tr.events.grazingNote(grazeUntil)}</p>}
           {active.length ? (
             <Card>{active.map((e) => <EventRow key={e.id} e={e} now={m.now} seen={m.seen.has(e.id)} onSeen={() => m.actions.markSeen(e.id)} onOpen={open(e)}
