@@ -35,7 +35,7 @@ import type { BaseMap, Layers, SatPrefs, ZoneFill } from "../../app/stores.ts";
 import { centroid, edgeM, type LonLat } from "../../app/zones.ts";
 import { toneOfStatus } from "../../ds/components.tsx";
 import { offlineStyle, type OfflineMap } from "./offlinePacks/offlineStyle.ts";
-import { groupScreenPins, pinDiameter } from "./pinLayout.ts";
+import { clusterDiameter, groupScreenPins, pinDiameter } from "./pinLayout.ts";
 
 setWorkerUrl(workerUrl);
 
@@ -332,6 +332,7 @@ export class MapEngine {
     const z = this.map.getZoom(), s = pinScale(z);
     const el = this.map.getContainer();
     el.style.setProperty("--ps", s.toFixed(3));
+    el.style.setProperty("--cs", (clusterDiameter(z) / 46).toFixed(3));
     const size = s < 0.62 ? "dot" : s < 0.9 ? "mid" : "full";
     if (el.dataset.pz !== size) el.dataset.pz = size;
     if ((z >= LABEL_ZOOM) !== this.labelled && this.data) { this.labelled = z >= LABEL_ZOOM; this.syncPins(this.data, true); }
