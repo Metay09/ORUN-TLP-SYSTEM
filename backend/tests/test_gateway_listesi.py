@@ -106,6 +106,9 @@ class GatewayListTests(unittest.TestCase):
         self.assertIsNone(rows[GW_OLD]["via"], "durum bildirmeyen gateway bağlı sayılmaz")
         self.assertEqual(rows[GW_OLD]["last_seen_utc"], now - 7200)
         self.assertEqual(rows[GW_PC]["last_upload_utc"], now - 60)
+        self.assertEqual(rows[GW_PC]["status_seen_utc"], now)
+        self.assertIsNone(rows[GW_OLD]["status_seen_utc"],
+                          "an upload is not a fresh gateway memory sample")
         self.assertIsNone(rows[GW_PHONE]["last_upload_utc"])
         # Bildirim yapan gateway çiftliğe de girer (izin paketi için).
         farm = {"%016X" % g for g in self.local.backend.registry.farm_gateways()}
