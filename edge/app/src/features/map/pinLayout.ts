@@ -16,18 +16,19 @@ export interface PinGroup {
 const clamp = (value: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, value));
 
 /**
- * At ordinary farm zoom (14) the status ring is still readable; at field-scale
- * detail (18+) it shrinks so the actual GPS position and paddock are visible.
- * At country zoom it also shrinks; aggregation handles overlapping animals.
+ * Visual marker diameter, in CSS pixels, used by BOTH the MapLibre marker
+ * scaling and screen-space collision grouping. A distant marker is small;
+ * zooming in gradually enlarges it. The selected marker remains prominent.
+ * Do not change 44px touch target size with this value.
  */
 export function pinDiameter(zoom: number, selected = false): number {
+  if (selected) return 58; // CSS .pin.selected .vis is fixed at 58px
   const z = Number.isFinite(zoom) ? clamp(zoom, 9, 20) : 14;
-  const base = z <= 14 ? 18 + (z - 9) * 2.4 : 30 - (z - 14) * 1.9;
-  return Math.round(clamp(base, 18, 30)) + (selected ? 4 : 0);
+  return Math.round(clamp(18 + (z - 9) * 1.65, 18, 36));
 }
 
 export function clusterDiameter(zoom: number): number {
-  return Math.round(clamp(pinDiameter(zoom) + 2, 24, 32));
+  return Math.round(clamp(pinDiameter(zoom) + 3, 24, 40));
 }
 
 /** Group in projected pixels, not metres or approximate longitude offsets.
@@ -36,8 +37,8 @@ export function clusterDiameter(zoom: number): number {
  */
 export function groupScreenPins(points: readonly ScreenPin[], zoom: number): PinGroup[] {
   if (!points.length) return [];
-  const gap = Math.max(pinDiameter(zoom, true), clusterDiameter(zoom)) + 5;
-  const gapSq = gap * gap;
+  const gap = Math.max(pinDiameter(zoom), clusterDiameter(zoom)) + 8;
+  const selectedGap = Math.max(gap, (pinDiameter(zoom, true) + pinDiameter(zoom)) / 2 + 7);
   const groups: ScreenPin[][] = [];
 
   // Bounded complete-link grouping: avoid the "chain effect" where dozens
@@ -47,7 +48,8 @@ export function groupScreenPins(points: readonly ScreenPin[], zoom: number): Pin
   for (const point of points) {
     const group = groups.find((members) => members.every((p) => {
       const dx = point.x - p.x, dy = point.y - p.y;
-      return dx * dx + dy * dy < gapSq;
+      const radius = point.selected || p.selected ? selectedGap : gap;
+      return dx * dx + dy * dy < radius * radius;
     }));
     if (group) group.push(point);
     else groups.push([point]);
