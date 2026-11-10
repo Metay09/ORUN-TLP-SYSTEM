@@ -141,7 +141,8 @@ export class DeviceOpsBook {
   }
 }
 
-/** Active work stays visible; completed and superseded work stays in history.
+/** Active work stays visible; completed work is collapsed into history.
+ * Superseded rows stay in the durable book but do not crowd this view.
  * Old rejected attempts disappear from the active view once replaced.
  */
 export function operationSections(rows: OpTarget[]): {

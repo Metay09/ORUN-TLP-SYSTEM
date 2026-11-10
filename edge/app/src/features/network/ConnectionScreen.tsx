@@ -48,7 +48,7 @@ export function ConnectionScreen() {
   const m = useApp();
   const nav = useNav();
   const pos = usePosition();
-  const st = m.station, s = m.snap, sv = m.server;
+  const st = m.station, s = m.snap;
   const words = stationWords(st, s);
   const linkOn = st.link !== "none";
   const held = st.held ?? 0;
