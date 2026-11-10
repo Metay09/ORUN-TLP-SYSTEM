@@ -209,7 +209,8 @@ export function ConnectionScreen() {
     localGateway: {
       id: st.id, connected: linkOn && st.phase === "connected",
       held: st.held, capacity: st.capacity,
-      readAt: phoneGatewayReading?.id === st.id?.toUpperCase() ? phoneGatewayReading.at : null,
+      readAt: phoneGatewayReading && phoneGatewayReading.id === st.id?.toUpperCase()
+        ? phoneGatewayReading.at : null,
     },
     edges: edgeQueues,
     serverConfirmed,
