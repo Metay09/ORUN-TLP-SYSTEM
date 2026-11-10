@@ -106,10 +106,15 @@ export function EventRow({ e, now, seen, onSeen, onRestore, onOpen, onFind, onMa
     </>
   );
   return onOpen
-    ? <button className="ev" {...swipeProps} onClick={(ev) => {
-        if (Date.now() < suppressClickUntil.current) { ev.preventDefault(); return; }
-        onOpen();
-      }}>{body}</button>
+    ? <div className="ev" role="button" tabIndex={0} {...swipeProps}
+        onClick={(ev) => {
+          if (Date.now() < suppressClickUntil.current) { ev.preventDefault(); return; }
+          onOpen();
+        }}
+        onKeyDown={(ev) => {
+          if (ev.target !== ev.currentTarget) return;
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onOpen(); }
+        }}>{body}</div>
     : <div className="ev" {...swipeProps}>{body}</div>;
 }
 
@@ -161,16 +166,19 @@ export function EventsScreen() {
                 onOpen={open(e)} onFind={find(e)} onMap={onMap(e)} />)}</Card>
             </details>
           )}
-          <Chips<Filter> value={filter} onChange={setFilter} options={[
-            { value: "all", label: tr.events.filters.all }, { value: "alerts", label: tr.events.filters.alerts },
-            { value: "animals", label: tr.events.filters.animals }, { value: "system", label: tr.events.filters.system },
-          ]} />
-          {groups.map((g) => (
-            <div key={g.label}>
-              <Section title={g.label} />
-              <Card>{g.items.map((e) => <EventRow key={e.id} e={e} now={m.now} onOpen={open(e)} />)}</Card>
-            </div>
-          ))}
+          <details className="tech">
+            <summary>Geçmiş kayıtlar · {rest.length}</summary>
+            <Chips<Filter> value={filter} onChange={setFilter} options={[
+              { value: "all", label: tr.events.filters.all }, { value: "alerts", label: tr.events.filters.alerts },
+              { value: "animals", label: tr.events.filters.animals }, { value: "system", label: tr.events.filters.system },
+            ]} />
+            {groups.map((g) => (
+              <details key={g.label} className="tech">
+                <summary>{g.label} · {g.items.length} kayıt</summary>
+                <Card>{g.items.map((e) => <EventRow key={e.id} e={e} now={m.now} onOpen={open(e)} />)}</Card>
+              </details>
+            ))}
+          </details>
         </>
       )}
     </div>
