@@ -61,6 +61,7 @@ export function ConnectionScreen() {
   const [edgeQueues, setEdgeQueues] = useState<EdgeQueue[] | null>(null);
   const [serverConfirmed, setServerConfirmed] = useState<number | null>(null);
   const [serverReadAt, setServerReadAt] = useState<number | null>(null);
+  const [edgeError, setEdgeError] = useState<string | null>(null);
   const [phoneGatewayReading, setPhoneGatewayReading] = useState<{
     id: string; held: number; capacity: number; at: number;
   } | null>(null);
@@ -83,13 +84,6 @@ export function ConnectionScreen() {
   const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
   const collarReadings = useSyncExternalStore(collarStorageReadings.subscribe, collarStorageReadings.snapshot);
   const label = (id: string) => names[id.toUpperCase()] ?? bleName(id);
-  // Time a Gateway HELLO/count observation when its reported value changes,
-  // not every render (which would make an old reading appear permanently fresh).
-  useEffect(() => {
-    if (st.phase === "connected" && st.id && st.held !== null && st.capacity !== null)
-      setPhoneGatewayReading({ id: st.id.toUpperCase(), held: st.held, capacity: st.capacity, at: Date.now() });
-  }, [st.id, st.phase, st.held, st.capacity]);
-
   useEffect(() => onPilotObservationSync(() => setSync(pilotObservationSyncState())), []);
   useEffect(() => onPilotAccountChange(() => setAccount(pilotAccountStatus())), []);
   useEffect(() => {
@@ -107,8 +101,11 @@ export function ConnectionScreen() {
           setEdgeQueues(q?.edges ?? null);
           setServerConfirmed(q?.serverConfirmed ?? null);
           setServerReadAt(q ? Date.now() : null);
+          setEdgeError(null);
         }
-      }).catch(() => { /* last-known PC values keep their original report time */ });
+      }).catch((e: unknown) => {
+        if (live) setEdgeError(e instanceof Error ? e.message : "PC Edge bilgisi okunamadı.");
+      });
     };
     load();
     const t = setInterval(load, 60_000);
@@ -123,7 +120,15 @@ export function ConnectionScreen() {
     setEdgeQueues(null);
     setServerConfirmed(null);
     setServerReadAt(null);
+    setEdgeError(null);
   }, [accountScope]);
+
+  // Time a Gateway HELLO/count observation when its reported value changes,
+  // not every render (which would make an old reading appear permanently fresh).
+  useEffect(() => {
+    if (st.phase === "connected" && st.id && st.held !== null && st.capacity !== null)
+      setPhoneGatewayReading({ id: st.id.toUpperCase(), held: st.held, capacity: st.capacity, at: Date.now() });
+  }, [st.id, st.phase, st.held, st.capacity, accountScope]);
 
   const scan = useCallback(async () => {
     if (scanning) return;
@@ -241,6 +246,7 @@ export function ConnectionScreen() {
         ))}
       </Card>
       <p className="fine lead">Tasma/Gateway: kayıt sayısı / bellek kapasitesi. PC Edge: sunucuya aktarılmayı bekleyen kayıtlar. Sunucu: doğrulanmış benzersiz kayıtlar. Eski ölçümler canlı değer değildir.</p>
+      {edgeError && account && <p className="sm t-alarm lead" role="status">PC Edge durumu: {edgeError}</p>}
 
       <Section title="Bu telefon" info={tr.station.background} />
       <Card>
