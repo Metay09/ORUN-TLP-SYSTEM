@@ -223,7 +223,11 @@ export function ConnectionScreen() {
             <span className="sm">Bu telefondan sunucu bekleyen</span>
             <span className="sm strong">{sv.pending === null ? "— · sayaç alınmadı" : `${fmt.num(sv.pending)} kayıt`}</span>
           </div>
-          <span className="fine">Gateway rakamı bellekte saklanan son bildirilen kayıt sayısıdır; tamamının aktarım beklediği anlamına gelmez. PC Edge ve tasma kuyrukları henüz bu ekrana bağlanmadı.</span>
+          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+            <span className="sm">Bu telefondan sunucuda onaylanan</span>
+            <span className="sm strong">{sv.uploaded === null ? "— · sayaç alınmadı" : `${fmt.num(sv.uploaded)} kayıt`}</span>
+          </div>
+          <span className="fine">Gateway rakamı bellekte saklanan son bildirilen kayıt sayısıdır; tamamının aktarım beklediği anlamına gelmez. Telefonun onay sayısı çiftliğin toplam sunucu sayısı değildir. PC Edge ve tasma kuyrukları henüz bu ekrana bağlanmadı.</span>
         </div>
       </Card>
 
