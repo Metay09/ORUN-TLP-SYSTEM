@@ -22,6 +22,7 @@ export interface TransferInput {
   localGateway: PhoneGateway;
   edges: readonly EdgeQueue[] | null;
   serverConfirmed: number | null;
+  serverReadAt: number | null;
   label: (id: string) => string;
 }
 const FRESH_MS = 5 * 60_000;
@@ -82,7 +83,8 @@ export function transferStages(i: TransferInput): TransferStage[] {
     ? empty("server-none", "Sunucudaki kayıtlar", "Sunucu sayacı alınamadı; sıfır olduğu anlamına gelmez.")
     : { id: "server-confirmed", title: "Doğrulanmış benzersiz kayıt",
         amount: fmt.num(i.serverConfirmed),
-        detail: "Sunucu toplamı · PC Edge teslim sayısı ile aynı değildir.", stale: false }];
+        detail: "Sunucu toplamı · PC Edge teslim sayısı ile aynı değildir. · " + ago(i.serverReadAt, i.now, "Son sorgu"),
+        stale: old(i.serverReadAt, i.now) }];
   return [
     { id: "tracker", title: "1 · Tasma", entries: trackers },
     { id: "gateway", title: "2 · Gateway", entries: gateways },

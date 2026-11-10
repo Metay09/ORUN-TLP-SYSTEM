@@ -59,6 +59,7 @@ export function ConnectionScreen() {
   const [gateways, setGateways] = useState<FarmGateway[] | null>(null);
   const [edgeQueues, setEdgeQueues] = useState<EdgeQueue[] | null>(null);
   const [serverConfirmed, setServerConfirmed] = useState<number | null>(null);
+  const [serverReadAt, setServerReadAt] = useState<number | null>(null);
   const [nearby, setNearby] = useState<NearbyDevice[]>([]);
   const [scanning, setScanning] = useState(false);
   const [note, setNote] = useState("");
@@ -94,6 +95,7 @@ export function ConnectionScreen() {
         if (live) {
           setEdgeQueues(q?.edges ?? null);
           setServerConfirmed(q?.serverConfirmed ?? null);
+          setServerReadAt(q ? Date.now() : null);
         }
       }).catch(() => { /* last-known PC values keep their original report time */ });
     };
@@ -108,6 +110,7 @@ export function ConnectionScreen() {
     setGateways(null);
     setEdgeQueues(null);
     setServerConfirmed(null);
+    setServerReadAt(null);
   }, [account?.installation]);
 
   const scan = useCallback(async () => {
@@ -191,6 +194,7 @@ export function ConnectionScreen() {
     localGateway: { id: st.id, connected: linkOn && st.phase === "connected", held: st.held, capacity: st.capacity },
     edges: edgeQueues,
     serverConfirmed,
+    serverReadAt,
     label,
   });
   return (

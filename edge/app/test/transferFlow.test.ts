@@ -6,7 +6,7 @@ import { operationSections, type OpTarget } from "../src/app/deviceOps.ts";
 const now = 1_794_310_000_000;
 const base = { now, trackerIds: ["52E16773141A8887"], collars: [],
   gateways: null, localGateway: { id: null, connected: false, held: null, capacity: null },
-  edges: null, serverConfirmed: null, label: (id: string) => id };
+  edges: null, serverConfirmed: null, serverReadAt: now, label: (id: string) => id };
 
 test("old 34 / 1780 history remains visible, and not advertised as LoRa pending", () => {
   const [tracker] = transferStages({ ...base, collars: [
@@ -41,6 +41,9 @@ test("PC Edge pending zero is distinct from absent or stale telemetry", () => {
   assert.equal(entries[2].entries[0].amount, "0 bekliyor");
   assert.equal(entries[2].entries[0].stale, true);
   assert.equal(entries[3].entries[0].amount, "88");
+  assert.equal(entries[3].entries[0].stale, false);
+  const late = transferStages({ ...base, edges: [pc], serverConfirmed: 88, serverReadAt: now - 3600_000 });
+  assert.equal(late[3].entries[0].stale, true);
   const absent = transferStages(base);
   assert.equal(absent[2].entries[0].amount, "—");
   assert.equal(absent[3].entries[0].amount, "—");
