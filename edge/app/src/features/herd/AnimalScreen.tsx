@@ -114,7 +114,7 @@ function Today({ a, now }: { a: Animal; now: number }) {
             <div className="strip-axis"><span>{fmt.clock(now - 24 * 3600_000)}</span><span>{fmt.clock(now - 12 * 3600_000)}</span><span>{fmt.clock(now)}</span></div>
             <span className="fine">Yalnız doğrulanmış sensör ölçümleri sayılır. İlk ya da çakışan rapor dönemi belirsiz bırakılır.</span>
           </div>
-        ) : <span className="sm">{tr.animal.activityNone} · Son 24 saat için güvenilir ölçüm bulunamadı.</span>}
+        ) : <span className="sm">Son 24 saat için görüntülenebilir ivmeölçer özeti bulunamadı. GPS konumsuz kayıtlar bu ekrana henüz dahil edilmiyor.</span>}
       </Card>
 
       {today && (
