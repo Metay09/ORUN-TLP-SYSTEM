@@ -26,8 +26,9 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { Feature, FeatureCollection } from "geojson";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import type { Cell } from "../../app/coverage.ts";
-import type { LatLon } from "../../app/geo.ts";
-import { agingLimit, epochMs, periodMs } from "../../app/herd.ts";
+import { distanceM, type LatLon } from "../../app/geo.ts";
+import { readableTrail } from "./routeGeometry.ts";
+import { epochMs } from "../../app/herd.ts";
 import { fmt } from "../../app/i18n/tr.ts";
 import type { Animal, Observation } from "../../app/model.ts";
 import type { BaseMap, Layers, SatPrefs, ZoneFill } from "../../app/stores.ts";
@@ -138,34 +139,28 @@ const fc = (features: Feature[]): FeatureCollection => ({ type: "FeatureCollecti
 
 function trailFeatures(points: Observation[], color: string, cursor: number | null): Feature[] {
   const out: Feature[] = [];
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1], b = points[i];
-    const ta = epochMs(a.time), tb = epochMs(b.time);
-    out.push({
-      type: "Feature",
-      properties: { color, gap: tb - ta > agingLimit(periodMs(a.period_s)), past: cursor === null || tb <= cursor },
-      geometry: { type: "LineString", coordinates: [[a.lon, a.lat], [b.lon, b.lat]] },
-    });
-  }
+  // The original measurements remain in playback. Display geometry alone is
+  // simplified, with no line drawn across missing evidence or GPS jumps.
+  for (const run of readableTrail(points).runs)
+    for (let i = 1; i < run.length; i++) {
+      const a = run[i - 1], b = run[i];
+      out.push({
+        type: "Feature",
+        properties: { color, past: cursor === null || epochMs(b.time) <= cursor },
+        geometry: { type: "LineString", coordinates: [[a.lon, a.lat], [b.lon, b.lat]] },
+      });
+    }
   return out;
 }
 
-/** Continuous pieces of one animal's trail; long gaps are left out, not bridged. */
+/** Optional herd trails use the same evidence breaks and visual reduction. */
 function herdTrailFeatures(list: MapData["herdTrails"]): Feature[] {
   const out: Feature[] = [];
-  for (const t of list) {
-    let run: [number, number][] = [];
-    const flush = () => { if (run.length > 1) out.push({ type: "Feature", properties: { color: t.color }, geometry: { type: "LineString", coordinates: run } }); run = []; };
-    for (let i = 0; i < t.points.length; i++) {
-      const p = t.points[i];
-      if (i > 0) {
-        const q = t.points[i - 1];
-        if (epochMs(p.time) - epochMs(q.time) > agingLimit(periodMs(q.period_s))) flush();
-      }
-      run.push([p.lon, p.lat]);
-    }
-    flush();
-  }
+  for (const t of list)
+    for (const run of readableTrail(t.points).runs)
+      if (run.length > 1)
+        out.push({ type: "Feature", properties: { color: t.color },
+          geometry: { type: "LineString", coordinates: run.map((p) => [p.lon, p.lat]) } });
   return out;
 }
 
@@ -448,17 +443,14 @@ export class MapEngine {
       paint: { "line-color": ["get", "color"], "line-width": 2, "line-opacity": 0.6 } });
     add({ id: "o-links", type: "line", source: "o-links",
       paint: { "line-color": ["get", "color"], "line-width": 1.6, "line-opacity": 0.75, "line-dasharray": [2, 2] } });
-    add({ id: "o-trail-casing", type: "line", source: "o-trail", filter: ["==", ["get", "gap"], false], layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": "#FFFFFF", "line-width": 6, "line-opacity": ["case", ["get", "past"], 0.85, 0.3] } });
-    add({ id: "o-trail", type: "line", source: "o-trail", filter: ["==", ["get", "gap"], false], layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": ["get", "color"], "line-width": 3.5, "line-opacity": ["case", ["get", "past"], 1, 0.3] } });
-    add({ id: "o-trail-gap", type: "line", source: "o-trail", filter: ["==", ["get", "gap"], true],
-      paint: { "line-color": "#FFFFFF", "line-width": 2.5, "line-dasharray": [1.5, 2], "line-opacity": ["case", ["get", "past"], 0.9, 0.3] } });
-    // Trail points darken from old to new, so direction and time read at a glance.
-    add({ id: "o-trail-pts", type: "circle", source: "o-trail-pts", minzoom: 14,
-      paint: { "circle-radius": 3, "circle-color": ["get", "color"], "circle-stroke-color": "#FFFFFF", "circle-stroke-width": 1.5,
-        "circle-opacity": ["case", ["get", "past"], ["interpolate", ["linear"], ["get", "k"], 0, 0.25, 1, 1], 0.3],
-        "circle-stroke-opacity": ["case", ["get", "past"], ["interpolate", ["linear"], ["get", "k"], 0, 0.35, 1, 1], 0.3] } });
+    add({ id: "o-trail-casing", type: "line", source: "o-trail", layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#FFFFFF", "line-width": 6, "line-opacity": ["case", ["get", "past"], 0.9, 0.22] } });
+    add({ id: "o-trail", type: "line", source: "o-trail", layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": ["get", "color"], "line-width": 3.5, "line-opacity": ["case", ["get", "past"], 1, 0.22] } });
+    // One bordered white dot shows where the visible period starts.
+    // Intermediate GPS fixes are deliberately not marked.
+    add({ id: "o-trail-pts", type: "circle", source: "o-trail-pts", minzoom: 13,
+      paint: { "circle-radius": 6, "circle-color": "#FFFFFF", "circle-stroke-color": ["get", "color"], "circle-stroke-width": 3 } });
     add({ id: "o-me", type: "fill", source: "o-me", paint: { "fill-color": "#2F6FD0", "fill-opacity": 0.14, "fill-outline-color": "#2F6FD0" } });
     add({ id: "o-draft-fill", type: "fill", source: "o-draft", filter: ["==", ["geometry-type"], "Polygon"],
       paint: { "fill-color": "#FFD60A", "fill-opacity": 0.18 } });
@@ -488,7 +480,7 @@ export class MapEngine {
     vis("o-relief", l.relief && this.base !== "street" && !this.drawnOffline);
     vis("o-coverage", l.coverage && !drawing);
     vis("o-heat", l.heat && !drawing);
-    for (const id of ["o-trail-casing", "o-trail", "o-trail-gap", "o-trail-pts"]) vis(id, l.trail && !drawing);
+    for (const id of ["o-trail-casing", "o-trail", "o-trail-pts"]) vis(id, l.trail && !drawing);
     vis("o-herd-trail", l.herdTrails && !drawing);
     vis("o-links", l.links && !drawing);
     for (const id of ["o-zone-fill", "o-zone-casing", "o-zone-line", "o-zone-off"]) vis(id, l.zones || drawing);
@@ -544,11 +536,14 @@ export class MapEngine {
     set("o-trail", trailKey, () => fc(d.trail ? trailFeatures(d.trail.points, d.trail.color, d.cursor) : []));
     set("o-trail-pts", trailKey, () => {
       if (!d.trail) return fc([]);
-      const n = Math.max(1, d.trail.points.length - 1);
-      return fc(d.trail.points.map((p, i) => ({
-        type: "Feature", properties: { color: d.trail!.color, k: i / n, past: d.cursor === null || epochMs(p.time) <= d.cursor },
-        geometry: { type: "Point", coordinates: [p.lon, p.lat] },
-      })));
+      const runs = readableTrail(d.trail.points).runs;
+      const first = runs[0]?.[0], last = runs[runs.length - 1]?.at(-1);
+      // Only the start dot. The selected animal pin already marks the last fix.
+      if (!first || !last || distanceM(first, last) < 15) return fc([]);
+      return fc([{
+        type: "Feature", properties: { color: d.trail.color },
+        geometry: { type: "Point", coordinates: [first.lon, first.lat] },
+      }]);
     });
     set("o-herd", d.herdTrails.map((t) => `${t.id}:${t.color}:${listKey(t.points)}`).join("|"), () => fc(herdTrailFeatures(d.herdTrails)));
     set("o-links", d.links.map((l) => `${l.from.lat},${l.from.lon},${l.to.lat},${l.to.lon},${l.rssi}`).join("|"), () => fc(d.links.map((l) => ({
