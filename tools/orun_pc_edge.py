@@ -250,6 +250,40 @@ class Uploader:
         # Never obey HTTP_PROXY/HTTPS_PROXY, and never follow redirects with
         # a bearer token. The target must stay on the private tailnet.
         self.opener = build_opener(ProxyHandler({}), NoRedirect())
+        self._last_queue_report = 0.0
+        self._queue_report_failed = False
+
+    def report_queue_status(self) -> None:
+        """Best-effort telemetry; never controls custody, uploader ACK or reclaim.
+
+        Counts come from the same durable SQLite Inbox used for actual uploads.
+        A refused/unavailable status endpoint cannot stop or modify delivery.
+        """
+        now = time.monotonic()
+        if now - self._last_queue_report < 120:
+            return
+        self._last_queue_report = now
+        try:
+            counters = self.inbox.counts()
+            body = json.dumps({"edge": self.edge_id, **counters},
+                              separators=(",", ":")).encode()
+            req = Request(
+                self.base + "/v1/bridge/edge-status", data=body, method="POST",
+                headers={"Authorization": "Bearer " + read_token(self.token_file),
+                         "Content-Type": "application/json",
+                         "Accept": "application/json"},
+            )
+            with self.opener.open(req, timeout=5) as res:
+                if res.status != 200:
+                    raise RuntimeError("edge status response")
+                res.read(512)
+            self._queue_report_failed = False
+        except (HTTPError, URLError, ValueError, OSError, RuntimeError,
+                TimeoutError, sqlite3.Error) as exc:
+            if not self._queue_report_failed:
+                print("[pc-edge] queue telemetry unavailable:",
+                      type(exc).__name__, flush=True)
+            self._queue_report_failed = True
 
     def once(self) -> int:
         rows = self.inbox.batch()
@@ -293,6 +327,8 @@ class Uploader:
                 else:
                     err = type(exc).__name__
                 print("[backend] upload pending:", err, flush=True)
+            # This is independent of success/failure of the observation batch.
+            self.report_queue_status()
             time.sleep(SLEEP_S)
 
 
