@@ -57,6 +57,7 @@ export function ConnectionScreen() {
   const [marking, setMarking] = useState(false);
   const [gateways, setGateways] = useState<FarmGateway[] | null>(null);
   const [edgeQueues, setEdgeQueues] = useState<EdgeQueue[] | null>(null);
+  const [serverConfirmed, setServerConfirmed] = useState<number | null>(null);
   const [nearby, setNearby] = useState<NearbyDevice[]>([]);
   const [scanning, setScanning] = useState(false);
   const [note, setNote] = useState("");
@@ -88,8 +89,14 @@ export function ConnectionScreen() {
     const load = () => {
       pilotGateways().then((g) => { if (live) setGateways(g); })
         .catch(() => { if (live) setGateways(null); });
-      pilotEdgeQueues().then((q) => { if (live) setEdgeQueues(q); })
-        .catch(() => { if (live) setEdgeQueues(null); });
+      pilotEdgeQueues().then((q) => {
+        if (live) {
+          setEdgeQueues(q?.edges ?? null);
+          setServerConfirmed(q?.serverConfirmed ?? null);
+        }
+      }).catch(() => {
+        if (live) { setEdgeQueues(null); setServerConfirmed(null); }
+      });
     };
     load();
     const t = setInterval(load, 60_000);
@@ -100,6 +107,7 @@ export function ConnectionScreen() {
     // Do not leak a prior account's collar memory snapshot after sign-out.
     collarStorageReadings.clear();
     setEdgeQueues(null);
+    setServerConfirmed(null);
   }, [account?.installation]);
 
   const scan = useCallback(async () => {
@@ -255,6 +263,10 @@ export function ConnectionScreen() {
           <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
             <span className="sm">PC Edge sorunlu/karantinada</span>
             <span className="sm strong">{pcQuarantined === null ? "— · güncel rapor yok" : `${fmt.num(pcQuarantined)} kayıt`}</span>
+          </div>
+          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+            <span className="sm">Sunucuda doğrulanan benzersiz kayıt</span>
+            <span className="sm strong">{serverConfirmed === null ? "— · henüz bilgi yok" : `${fmt.num(serverConfirmed)} kayıt`}</span>
           </div>
           <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
             <span className="sm">Bu telefondan sunucu bekleyen</span>
