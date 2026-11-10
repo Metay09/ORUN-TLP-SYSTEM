@@ -14,6 +14,7 @@ import type { Animal } from "../../app/model.ts";
 import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { rangeStart, type Range } from "../../app/stores.ts";
+import { readableTrail } from "./routeGeometry.ts";
 import { validateRing } from "../../app/zones.ts";
 import { AnimalRing, Chips, Dialog, Metric, Strip, toneOfStatus } from "../../ds/components.tsx";
 import { LayerPanel } from "./LayerPanel.tsx";
@@ -26,7 +27,8 @@ import { Sheet, type Snap } from "./Sheet.tsx";
 import { stationWords } from "../network/words.ts";
 
 let savedView: { center: [number, number]; zoom: number } | undefined;
-const RANGES: Range[] = ["today", "h24", "d3", "d7"];
+type TrailRange = Range | "recent";
+const RANGES: TrailRange[] = ["recent", "today", "h24", "d3", "d7"];
 
 export function MapScreen({ visible }: { visible: boolean }) {
   const m = useApp();
@@ -35,6 +37,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
   const el = useRef<HTMLDivElement>(null);
   const engine = useRef<MapEngine | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [trailRange, setTrailRange] = useState<TrailRange>("recent");
   const [snap, setSnap] = useState<Snap>("peek");
   const [sheetPx, setSheetPx] = useState(150);
   const [panel, setPanel] = useState(false);
@@ -58,14 +61,16 @@ export function MapScreen({ visible }: { visible: boolean }) {
 
   const herd = m.herd;
   const a = herd.find((x) => x.id === selected) ?? null;
-  const from = win?.from ?? rangeStart(m.prefs.range, m.now);
+  // A selected animal starts with a short, readable route. History and
+  // explicit time choices can still show the full record range.
+  const from = win?.from ?? (a && trailRange === "recent" ? m.now - 2 * 3600_000 : rangeStart(trailRange === "recent" ? m.prefs.range : trailRange, m.now));
   const to = win?.to ?? m.now;
   const L = m.prefs.layers;
 
   // ---- engine lifecycle ---------------------------------------------------
   useEffect(() => {
     const e = new MapEngine(el.current!, {
-      onSelect: (id) => { setSelected(id); setCursor(null); setPlaying(false); setSelZone(null); if (!id) { setWin(null); setSnap("peek"); } },
+      onSelect: (id) => { setSelected(id); setTrailRange("recent"); setCursor(null); setPlaying(false); setSelZone(null); if (!id) { setWin(null); setSnap("peek"); } },
       onOffline: setOffline,
       onTiles: setTiles,
       onOfflinePack: setPhoneMap,
@@ -99,6 +104,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
 
   // ---- data ---------------------------------------------------------------
   const trailPts = useMemo(() => (a ? inRange(a.points, from, to) : []), [a, from, to]);
+  const trailBreaks = useMemo(() => readableTrail(trailPts).breaks, [trailPts]);
   const heatPts = useMemo(() => (L.heat ? (a ? [a] : herd).flatMap((x) => inRange(x.points, from, to)) : []), [L.heat, a, herd, from, to]);
   const zoneViews = useMemo(() => m.zones.map((z) => ({ id: z.id, name: z.name, ring: z.ring, active: z.active, valid: !validateRing(z.ring) })), [m.zones]);
   const herdTrails = useMemo(() => (L.herdTrails && !a ? herd.filter((x) => x.last).map((x) => ({ id: x.id, color: x.color, points: inRange(x.points, from, to) })) : []),
@@ -127,16 +133,6 @@ export function MapScreen({ visible }: { visible: boolean }) {
   }, [herd, selected, a, trailPts, cursor, playing, heatPts, L.coverage, m.coverage, m.station, pos.pos, zoneViews, selZone, herdTrails, links]);
   useEffect(() => { engine.current?.setData(data); }, [data]);
 
-  // Switching between the sample herd and the real ledger starts over.
-  const firstDemo = useRef(m.demo);
-  useEffect(() => {
-    if (firstDemo.current === m.demo) return;
-    firstDemo.current = m.demo;
-    fitted.current = false;
-    savedView = undefined;
-    setSelected(null); setWin(null); setCursor(null); setPlaying(false); setSnap("peek"); setSelZone(null); setDrawing(null);
-  }, [m.demo]);
-
   // First data: frame the herd (or the station).
   useEffect(() => {
     if (fitted.current || savedView) return;
@@ -149,6 +145,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
   useEffect(() => {
     if (!nav.focus.key) return;
     setSelected(nav.focus.selected);
+    setTrailRange("recent");
     setWin(nav.focus.window);
     setCursor(nav.focus.window ? nav.focus.window.from : null);
     setPlaying(false);
@@ -197,7 +194,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
     if (pos.pos && wantCentre.current) { wantCentre.current = false; engine.current?.flyTo(pos.pos, 16); }
   }, [pos.pos]);
 
-  const clear = () => { setSelected(null); setWin(null); setCursor(null); setPlaying(false); setSnap("peek"); };
+  const clear = () => { setSelected(null); setTrailRange("recent"); setWin(null); setCursor(null); setPlaying(false); setSnap("peek"); };
   useBack(() => setPanel(false), panel);
   useBack(() => { if (selected) clear(); else if (selZone) setSelZone(null); else setSnap("peek"); },
     visible && !drawing && (selected !== null || selZone !== null || snap !== "peek"));
@@ -231,11 +228,9 @@ export function MapScreen({ visible }: { visible: boolean }) {
             if (!z) return;
             setSelZone(z.id); setFlash(tr.zones.saved(z.name));
             // 3a: yeni alan önce bütün tasmalara (sonra değiştirilebilir); kaydedince sor.
-            if (!m.demo) {
-              try { if (!m.targetBook.rules[z.id]) m.actions.saveTargetRule(z.id, { scope: "all", devices: [], groups: [] }); }
-              catch { /* hedefler okunamıyorsa dokunma */ }
-              setAskSend(z.name);
-            }
+            try { if (!m.targetBook.rules[z.id]) m.actions.saveTargetRule(z.id, { scope: "all", devices: [], groups: [] }); }
+            catch { /* hedefler okunamıyorsa dokunma */ }
+            setAskSend(z.name);
           }} />
       ) : <>
       <div className="map-top">
@@ -245,11 +240,11 @@ export function MapScreen({ visible }: { visible: boolean }) {
         <button className="status-chip" onClick={() => nav.setTab("network")}>
           <span className={"dot " + st.dot} /><span className="ellip">{st.short}</span>
         </button>
-        {m.demo && <span className="status-chip demo">{tr.app.demoBadge}</span>}
         {offline && <span className="status-chip note">{tr.states.offlineMap}</span>}
         {phoneMap && <span className="status-chip note">{tr.map.phoneMap}</span>}
         {tiles && !offline && !phoneMap && <span className="status-chip note">{navigator.onLine ? tr.map.tilesTrouble : tr.map.tilesOffline}</span>}
         {flash && <span className="status-chip">{flash}</span>}
+        {L.herdTrails && !a && <button className="status-chip note" onClick={() => m.actions.setPrefs({ layers: { ...L, herdTrails: false } })}>Sürü izlerini gizle</button>}
         {L.coverage && zoom < 14 && <span className="status-chip note">{tr.map.zoomForCoverage}</span>}
       </div>
       <div className="map-tools">
@@ -268,7 +263,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
           </div>
         )}>
         {a ? (
-          <Selected a={a} me={me} now={m.now} pts={trailPts} cursor={cursor} playing={playing} range={m.prefs.range} win={win}
+          <Selected a={a} me={me} now={m.now} pts={trailPts} breaks={trailBreaks} cursor={cursor} playing={playing} range={trailRange} win={win}
             onClose={clear} onFind={() => nav.push({ to: "find", id: a.id })} onProfile={() => nav.push({ to: "animal", id: a.id })}
             onCursor={(c) => { setPlaying(false); setCursor(c); }} onPlay={() => {
               if (!trailPts.length) return;
@@ -276,24 +271,23 @@ export function MapScreen({ visible }: { visible: boolean }) {
               if (cursor === null || cursor >= t1) setCursor(epochMs(trailPts[0].time));
               setPlaying((p) => !p);
             }}
-            onRange={(r) => { setWin(null); setCursor(null); setPlaying(false); m.actions.setPrefs({ range: r }); }} />
+            onRange={(r) => { setWin(null); setCursor(null); setPlaying(false); setTrailRange(r); if (r !== "recent") m.actions.setPrefs({ range: r }); }} />
         ) : (
           <>
             {look.length > 0 && (
               <div className="att">
                 {look.slice(0, 6).map((x) => (
-                  <button key={x.id} className={"att-chip " + toneOfStatus(x.status)} onClick={() => setSelected(x.id)}>
+                  <button key={x.id} className={"att-chip " + toneOfStatus(x.status)} onClick={() => { setSelected(x.id); setTrailRange("recent"); }}>
                     <AnimalRing a={x} size={36} />
                     <span className="nm"><b>{x.name}</b><span className={`t-${toneOfStatus(x.status)}`}>{x.short}</span></span>
                   </button>
                 ))}
               </div>
             )}
-            {herd.length ? <HerdRows herd={herd} me={me} now={m.now} onPick={setSelected} /> : (
+            {herd.length ? <HerdRows herd={herd} me={me} now={m.now} onPick={(id) => { setSelected(id); setTrailRange("recent"); }} /> : (
               <div className="stack" style={{ padding: "8px 20px 16px" }}>
                 <span className="sm">{tr.states.noAnimalsBody}</span>
                 <button className="btn primary wide" onClick={() => nav.setTab("network")}>{tr.states.connect}</button>
-                {m.canLeaveDemo && !m.demo && <button className="btn quiet wide" onClick={() => m.actions.setPrefs({ demo: true })}>{tr.states.tryDemo}</button>}
               </div>
             )}
           </>
@@ -324,11 +318,11 @@ export function HerdRows({ herd, me, now, onPick }: { herd: Animal[]; me: LatLon
   );
 }
 
-function Selected({ a, me, now, pts, cursor, playing, range, win, onClose, onFind, onProfile, onCursor, onPlay, onRange }: {
-  a: Animal; me: LatLon | null; now: number; pts: Animal["points"]; cursor: number | null; playing: boolean;
-  range: Range; win: { from: number; to: number } | null;
+function Selected({ a, me, now, pts, breaks, cursor, playing, range, win, onClose, onFind, onProfile, onCursor, onPlay, onRange }: {
+  a: Animal; me: LatLon | null; now: number; pts: Animal["points"]; breaks: number; cursor: number | null; playing: boolean;
+  range: TrailRange; win: { from: number; to: number } | null;
   onClose: () => void; onFind: () => void; onProfile: () => void;
-  onCursor: (c: number) => void; onPlay: () => void; onRange: (r: Range) => void;
+  onCursor: (c: number) => void; onPlay: () => void; onRange: (r: TrailRange) => void;
 }) {
   const tone = toneOfStatus(a.status);
   useEffect(() => { startPosition(); }, []);   // distance needs the phone's position
@@ -358,8 +352,10 @@ function Selected({ a, me, now, pts, cursor, playing, range, win, onClose, onFin
         <button className="btn grow" onClick={onProfile}>{tr.map.profile}</button>
       </div>
       <div className="timebar">
-        {!win && <Chips value={range} onChange={onRange} options={RANGES.map((r) => ({ value: r, label: tr.map.range[r] }))} />}
+        {!win && <Chips<TrailRange> value={range} onChange={onRange} options={RANGES.map((r) => ({ value: r, label: r === "recent" ? "2 saat" : tr.map.range[r] }))} />}
         {win && <span className="sm strong">{fmt.day(win.from, now)}</span>}
+        <span className="fine">{range === "recent" && !win ? "Son 2 saatin konum izi." : "Seçilen dönemin konum izi."} Başlangıç: beyaz nokta · son konum: hayvan işareti.</span>
+        {breaks > 0 && <span className="fine">{breaks} iz kesintisi var; eksik konumların arasına çizgi çekilmedi.</span>}
         {pts.length > 1 ? (
           <>
             <div className="row">

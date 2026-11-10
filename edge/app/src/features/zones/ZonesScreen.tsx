@@ -7,7 +7,7 @@ import { fmt, tr } from "../../app/i18n/tr.ts";
 import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { FENCE, areaM2, canonicalE7, compileFence, fromGeoJSON, newZoneId, toGeoJSON, validateRing, zoneAt } from "../../app/zones.ts";
-import { Bar, Card, Cell, DemoFlag, Empty, Header, Section, Toggle } from "../../ds/components.tsx";
+import { Bar, Card, Cell, Empty, Header, Section, Toggle } from "../../ds/components.tsx";
 import { targetsForZone } from "../../app/zoneTargets.ts";
 import { ApplyFenceDialog, toApply, useQueuedFences, useTrackerFences } from "./ApplyFence.tsx";
 import { useOps } from "../devices/Ops.tsx";
@@ -61,7 +61,6 @@ export function ZonesScreen() {
       <Header title={tr.zones.title}>
         <button className="btn small primary" onClick={() => nav.drawZone(null)}><Plus size={18} weight="bold" />{tr.zones.add}</button>
       </Header>
-      {m.demo && <DemoFlag onPage />}
       {m.zoneMigrationWarning && <p className="sm t-alarm strong lead" role="alert">{m.zoneMigrationWarning}</p>}
       {note && <p className="sm t-alarm lead" role="status">{note}</p>}
 

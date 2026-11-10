@@ -16,7 +16,7 @@ hand-off so the Gateway can free the space, and uploads to the server.
 ```
 src/core/       ledger, product frames, hand-off, upload, read keys (unchanged by the UI)
 src/platform/   Capacitor SQLite, BLE / USB transports, HTTP, foreground service
-src/app/        domain model, data sources (phone ledger | sample herd), derived
+src/app/        domain model, data source (phone ledger), derived
                 herd / devices / events / coverage / activity, stores, nav, i18n/tr.ts
 src/ds/         design system "ORUN Saha": tokens (light / dark / sun) + components
 src/features/   map (MapLibre engine, sheet, layers, Bul), herd, zones, events,
@@ -46,7 +46,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ## Develop
 
 - `npm run dev`: the app in a browser. Without the phone there is no ledger,
-  so it always shows the sample herd ("Tanıtım sürüsü").
+  so every screen shows its empty state. The app never shows sample data.
 - `npm test`: unit tests (core, herd, events, coverage, activity, sample herd,
   zones = the collar's geofence geometry)
 - `npm run typecheck`

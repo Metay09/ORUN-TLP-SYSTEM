@@ -137,7 +137,7 @@ export interface SatPrefs {
   maxZoom: number;    // highest tile level asked for; above it tiles are enlarged
 }
 export interface Prefs {
-  theme: Theme; sun: boolean; demo: boolean | null;   // null: not chosen yet
+  theme: Theme; sun: boolean;
   base: BaseMap; tilt: boolean; layers: Layers; range: Range;
   sat: SatPrefs; zoneFill: ZoneFill;
 }
@@ -149,7 +149,7 @@ export interface Prefs {
 export const DEFAULT_SAT: SatPrefs = { kind: "esri", release: "26334", maxZoom: 18 };
 
 export const DEFAULT_PREFS: Prefs = {
-  theme: "auto", sun: false, demo: null, base: "satellite", tilt: false,
+  theme: "auto", sun: false, base: "satellite", tilt: false,
   layers: {
     animals: true, trail: true, heat: false, coverage: false, stations: true, me: true, labels: true, relief: false,
     zones: true, herdTrails: false, links: false,

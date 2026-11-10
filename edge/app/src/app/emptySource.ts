@@ -1,5 +1,5 @@
-// Development only (npm run dev, "?empty"): a phone with an empty ledger and
-// no station, to check the empty states without a device.
+// Browser preview (npm run dev): a phone with an empty ledger and no station.
+// The app never shows sample data.
 import type { Snapshot } from "./controller.ts";
 import type { EdgeSource } from "./source.ts";
 

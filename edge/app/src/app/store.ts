@@ -1,53 +1,40 @@
 // One hook gives the screens the whole app model: the active data source
-// (phone ledger or sample herd), the owner's profiles and preferences, and
+// (the phone ledger), the owner's profiles and preferences, and
 // everything derived from them. Screens never touch the sources directly.
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Point } from "../core/points.ts";
 import type { Snapshot } from "./controller.ts";
 import { deviceNames, pilotAccountStatus } from "./ownerAccountPilotRuntime.ts";
 import { coverageCells, type Coverage } from "./coverage.ts";
-import { DEMO_STATION, DEMO_STATION_POS, DemoSource, demoBook, demoZones } from "./demo.ts";
 import { buildDevices } from "./devices.ts";
 import { deriveEvents } from "./events.ts";
 import type { LatLon } from "./geo.ts";
 import { buildHerd } from "./herd.ts";
 import type { Animal, AppEvent, AssetProfile, Device, ServerView, Station } from "./model.ts";
 import { serverOf, stationOf, type EdgeSource } from "./source.ts";
-import { AssetStore, Persisted, ZoneStore, prefs, seenEvents, stationPlaces, type Prefs } from "./stores.ts";
+import { AssetStore, ZoneStore, prefs, seenEvents, stationPlaces, type Prefs } from "./stores.ts";
 import { NO_GRAZE, checkSet, compileFence, grazing, type Fence, type Graze, type SetCheck, type Zone } from "./zones.ts";
 import { ZoneTargetStore, type TargetBook, type ZoneGroup, type ZoneRule } from "./zoneTargets.ts";
 
 export interface Sources {
-  real: EdgeSource | null;          // null when not running on the phone (web preview)
-  demo: DemoSource;
+  real: EdgeSource;                 // the phone ledger (an empty one in the web preview)
   realAssets: AssetStore;
-  demoAssets: AssetStore;
-  demoPlaces: Persisted<Record<string, LatLon>>;
   realZones: ZoneStore;
-  demoZones: ZoneStore;
   realTargets: ZoneTargetStore;
-  demoTargets: ZoneTargetStore;
 }
 
-export function makeSources(real: EdgeSource | null): Sources {
-  const now = Date.now();
+export function makeSources(real: EdgeSource): Sources {
   return {
-    real, demo: new DemoSource(),
+    real,
     realAssets: new AssetStore("orun.app.assets.v1"),
-    demoAssets: new AssetStore(null, demoBook(now)),
-    demoPlaces: new Persisted<Record<string, LatLon>>(null, () => ({ [DEMO_STATION.id]: DEMO_STATION_POS })),
     realZones: new ZoneStore("orun.app.zones.v1"),
-    demoZones: new ZoneStore(null, demoZones()),
     realTargets: new ZoneTargetStore("orun.app.zoneTargets.v1"),
-    demoTargets: new ZoneTargetStore(null),
   };
 }
 
 export const SourcesContext = createContext<Sources | null>(null);
 
 export interface Model {
-  demo: boolean;
-  canLeaveDemo: boolean;
   now: number;
   prefs: Prefs;
   snap: Snapshot;
@@ -78,6 +65,7 @@ export interface Actions {
   addNote(id: string, device: string | null, text: string): void;
   markStation(pos: LatLon | null): void;
   markSeen(id: string): void;
+  unmarkSeen(id: string): void;
   saveZone(z: Zone): void;
   removeZone(id: string): void;
   addZones(list: Zone[]): void;
@@ -155,12 +143,11 @@ function usePoints(src: EdgeSource, version: number, accountKey: string): { poin
 export function useModel(): Model {
   const s = useContext(SourcesContext)!;
   const p = useSyncExternalStore(prefs.subscribe, () => prefs.get());
-  const demo = s.real === null || p.demo === true;
-  const source: EdgeSource = demo ? s.demo : s.real!;
-  const assets = demo ? s.demoAssets : s.realAssets;
-  const places = demo ? s.demoPlaces : stationPlaces;
-  const zoneStore = demo ? s.demoZones : s.realZones;
-  const targets = demo ? s.demoTargets : s.realTargets;
+  const source: EdgeSource = s.real;
+  const assets = s.realAssets;
+  const places = stationPlaces;
+  const zoneStore = s.realZones;
+  const targets = s.realTargets;
 
   const snap = useSyncExternalStore((fn) => source.subscribe(fn), () => source.snap);
   const book = useSyncExternalStore(assets.subscribe, () => assets.get());
@@ -168,7 +155,7 @@ export function useModel(): Model {
   const seenList = useSyncExternalStore(seenEvents.subscribe, () => seenEvents.get());
   const zoneBook = useSyncExternalStore(zoneStore.subscribe, () => zoneStore.get());
   const targetBook = useSyncExternalStore(targets.subscribe, targets.get);
-  const account = demo ? null : pilotAccountStatus();
+  const account = pilotAccountStatus();
   const accountKey = account
     ? [account.site, account.actor, account.installation, account.username, account.expiresAt].join(":")
     : "";
@@ -181,8 +168,8 @@ export function useModel(): Model {
   const zoneSet = useMemo(() => checkSet(zones), [zones]);
   const grazingNow = grazing(graze, now) || (graze.until !== null && graze.until > Date.now());
   const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
-  const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now, fence, grazing: grazingNow, names: demo ? undefined : names }),
-    [points, book, assets, now, fence, grazingNow, names, demo]);
+  const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now, fence, grazing: grazingNow, names }),
+    [points, book, assets, now, fence, grazingNow, names]);
   const coverage = useMemo(() => coverageCells(points), [points]);
   // The snapshot changes on every log line; recompute only on what matters.
   const station = useMemo(() => stationOf(snap, placeMap),
@@ -203,6 +190,7 @@ export function useModel(): Model {
       places.update((m) => { const next = { ...m }; if (pos) next[id] = pos; else delete next[id]; return next; });
     },
     markSeen: (id) => seenEvents.update((l) => (l.includes(id) ? l : [...l, id].slice(-500))),
+    unmarkSeen: (id) => seenEvents.update((l) => l.filter((x) => x !== id)),
     saveZone: (z) => zoneStore.save(z),
     removeZone: (id) => zoneStore.remove(id),
     addZones: (list) => zoneStore.add(list),
@@ -214,7 +202,7 @@ export function useModel(): Model {
   }), [assets, places, snap.gateway, zoneStore, targets]);
 
   return {
-    demo, canLeaveDemo: s.real !== null, now, prefs: p, snap, points, loaded, herd, devices, station, server,
+    now, prefs: p, snap, points, loaded, herd, devices, station, server,
     events, coverage, zones, zoneSet, zoneMigrationWarning: zoneStore.migrationWarning,
     targetBook, targetWarning: targets.warning,
     fence, graze, grazing: grazingNow, seen, source, actions,

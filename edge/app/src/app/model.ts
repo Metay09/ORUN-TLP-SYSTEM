@@ -1,5 +1,5 @@
 // ORUN app domain model (scope doc §14). Screens see only these types; where
-// the data came from (phone ledger, sample herd, later the server) is the
+// the data came from (phone ledger, later the server) is the
 // data layer's business. Names follow the architecture documents:
 //   Device (Cihaz) — one ORUN device model, services instead of "types";
 //   Asset (Varlık) — what a device is attached to (an animal today);

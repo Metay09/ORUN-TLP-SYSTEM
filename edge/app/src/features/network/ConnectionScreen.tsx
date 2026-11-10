@@ -15,7 +15,7 @@ import {
   deviceNames, onPilotAccountChange, onPilotObservationSync, pilotAccountStatus, pilotGateways, pilotObservationSyncState,
 } from "../../app/ownerAccountPilotRuntime.ts";
 import { useApp } from "../../app/store.ts";
-import { Bar, Card, Cell, DemoFlag, Header, KV, Section, Seg } from "../../ds/components.tsx";
+import { Bar, Card, Cell, Header, KV, Section, Seg } from "../../ds/components.tsx";
 import { classifyNearby, mergeNearby, scanNearby, stopNearbyScan, type NearbyDevice, type NearbyView } from "../../platform/bleScan.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
 import { AddTrackerDialog } from "../herd/AddTrackerDialog.tsx";
@@ -107,8 +107,8 @@ export function ConnectionScreen() {
     ...(gateways ?? []).map((g) => g.gateway),
   ].find((id) => !names[id.toUpperCase()] && !asked().includes(id.toUpperCase()));
   useEffect(() => {
-    if (!m.demo && account && unnamed && !naming) setNaming(unnamed);
-  }, [unnamed, account, m.demo]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (account && unnamed && !naming) setNaming(unnamed);
+  }, [unnamed, account]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 4a/4b: bilinen tasmaya dokununca tasmanın ekranı (durum, bağlan, ayarlar);
   // tanınmayan ORUN cihazına dokununca canlı okuma; gateway'e dokununca köprü.
@@ -168,12 +168,18 @@ export function ConnectionScreen() {
     phoneGateway: linkOn && st.phase === "connected" && st.id ? { id: st.id, link: st.link as "ble" | "usb" } : null,
     signedIn: Boolean(account), sync, pending: sv.pending, now: m.now, label,
   });
+  // Backlog is not the same as stored memory. Do not invent tracker or PC Edge
+  // counters: this screen currently has no live telemetry for those queues.
+  const reportedGateways = (gateways ?? []).filter((g) => g.held !== null);
+  const gatewayMemory = reportedGateways.length
+    ? reportedGateways.reduce((sum, g) => sum + (g.held ?? 0), 0)
+    : st.phase === "connected" ? st.held : null;
+  const gatewayMemorySources = reportedGateways.length || (st.phase === "connected" && st.held !== null ? 1 : 0);
   const picked = chain.nodes.find((n) => n.key === node) ?? null;
   const ICON = { tasmalar: <CellSignalFull size={22} />, gateway: <WifiHigh size={22} />, sunucu: <CloudCheck size={22} />, telefon: <DeviceMobile size={22} /> };
   return (
     <div className="page">
       <Header title={tr.network.title} />
-      {m.demo && <DemoFlag onPage />}
 
       <Section title={tr.network.chain}
         info="Kayıt tasmadan gateway'e, oradan sunucuya, sunucudan telefonlara gider. Bir kayıt ancak sonraki halka onu kalıcı yazdıktan sonra öncekinden silinir; bağlantı koparsa kayıt beklediği yerde durur, kaybolmaz. Bir halkaya dokununca ayrıntısı görünür." />
@@ -198,6 +204,30 @@ export function ConnectionScreen() {
             {picked.key === "tasmalar" && m.herd.length > 0 && <> · <button className="lnk" onClick={() => nav.setTab("herd")}>Sürü</button></>}
           </p>
         )}
+        <div className="stack" style={{ padding: "8px 16px 16px", gap: 10 }}>
+          <span className="strong">Kayıt ve kuyruk durumu</span>
+          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+            <span className="sm">Tasmalarda bekleyen</span>
+            <span className="sm strong">— · sayaç alınmadı</span>
+          </div>
+          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+            <span className="sm">Gateway belleğinde</span>
+            <span className="sm strong">{gatewayMemory === null ? "— · sayaç alınmadı" : `${fmt.num(gatewayMemory)} kayıt · ${gatewayMemorySources} gateway`}</span>
+          </div>
+          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+            <span className="sm">PC Edge'de sunucu bekleyen</span>
+            <span className="sm strong">— · veri gelmiyor</span>
+          </div>
+          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+            <span className="sm">Bu telefondan sunucu bekleyen</span>
+            <span className="sm strong">{sv.pending === null ? "— · sayaç alınmadı" : `${fmt.num(sv.pending)} kayıt`}</span>
+          </div>
+          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+            <span className="sm">Bu telefondan sunucuda onaylanan</span>
+            <span className="sm strong">{sv.uploaded === null ? "— · sayaç alınmadı" : `${fmt.num(sv.uploaded)} kayıt`}</span>
+          </div>
+          <span className="fine">Gateway rakamı bellekte saklanan son bildirilen kayıt sayısıdır; tamamının aktarım beklediği anlamına gelmez. Telefonun onay sayısı çiftliğin toplam sunucu sayısı değildir. PC Edge ve tasma kuyrukları henüz bu ekrana bağlanmadı.</span>
+        </div>
       </Card>
 
       <Section title="Bu telefon" info={tr.station.background} />
@@ -211,7 +241,7 @@ export function ConnectionScreen() {
                 <span className="sm">{st.detail && st.phase !== "connected" ? `${words.text} · ${st.detail}` : words.text}</span>
               </div>
             </div>
-            {st.id && account && !m.demo && (
+            {st.id && account && (
               <button className="btn quiet small" style={{ alignSelf: "flex-start" }} onClick={() => setNaming(st.id)}>
                 {names[st.id.toUpperCase()] ? "Adını değiştir" : "Ad ver"}
               </button>

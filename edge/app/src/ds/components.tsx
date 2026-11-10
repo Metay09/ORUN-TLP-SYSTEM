@@ -236,6 +236,3 @@ export function Bar({ ratio, tone }: { ratio: number; tone?: "warn" | "bad" }) {
   return <div className="bar"><i className={tone ?? ""} style={{ width: `${Math.round(Math.max(0, Math.min(1, ratio)) * 100)}%` }} /></div>;
 }
 
-export function DemoFlag({ onPage }: { onPage?: boolean }) {
-  return <span className={"demo-flag" + (onPage ? " on-page" : "")}>{tr.app.demoBadge}</span>;
-}

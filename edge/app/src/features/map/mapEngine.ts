@@ -26,15 +26,16 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { Feature, FeatureCollection } from "geojson";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import type { Cell } from "../../app/coverage.ts";
-import type { LatLon } from "../../app/geo.ts";
-import { agingLimit, epochMs, periodMs } from "../../app/herd.ts";
+import { distanceM, type LatLon } from "../../app/geo.ts";
+import { readableTrail } from "./routeGeometry.ts";
+import { epochMs } from "../../app/herd.ts";
 import { fmt } from "../../app/i18n/tr.ts";
 import type { Animal, Observation } from "../../app/model.ts";
 import type { BaseMap, Layers, SatPrefs, ZoneFill } from "../../app/stores.ts";
 import { centroid, edgeM, type LonLat } from "../../app/zones.ts";
 import { toneOfStatus } from "../../ds/components.tsx";
 import { offlineStyle, type OfflineMap } from "./offlinePacks/offlineStyle.ts";
-import { groupScreenPins } from "./pinLayout.ts";
+import { clusterDiameter, groupScreenPins, pinDiameter } from "./pinLayout.ts";
 
 setWorkerUrl(workerUrl);
 
@@ -93,7 +94,7 @@ export interface EngineOpts {
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const RING = 2 * Math.PI * 23;
-const LABEL_ZOOM = 15.5;
+const LABEL_ZOOM = 17;
 const TONE_VAR: Record<string, string> = { fresh: "var(--fresh)", aging: "var(--aging)", silent: "var(--silent)", alarm: "var(--alarm)" };
 const COW = '<svg viewBox="0 0 256 256" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M120,128a16,16,0,1,1-16-16A16,16,0,0,1,120,128Zm32-16a16,16,0,1,0,16,16A16,16,0,0,0,152,112Zm84,20a20,20,0,0,1-20,20H204v15a38,38,0,0,1-22,69H74a38,38,0,0,1-22-69V152H40a20,20,0,0,1-20-20,60,60,0,0,1,36-55V48a12,12,0,0,1,24,0V70h96V48a12,12,0,0,1,24,0V77A60,60,0,0,1,236,132ZM180,198a14,14,0,0,0-14-14H90a14,14,0,0,0,0,28h76A14,14,0,0,0,180,198Z"/></svg>';
 
@@ -102,7 +103,8 @@ const COW = '<svg viewBox="0 0 256 256" width="20" height="20" fill="currentColo
  * dot far out, half size in between, the full pin close in. 1 = full size.
  */
 export function pinScale(zoom: number): number {
-  return Math.max(0.42, Math.min(1, 0.42 + ((zoom - 12) / 4) * 0.58));
+  // The visual circle is 46px before CSS transform; match pinLayout exactly.
+  return pinDiameter(zoom) / 46;
 }
 
 function ringSvg(color: string, ratio: number): string {
@@ -138,34 +140,28 @@ const fc = (features: Feature[]): FeatureCollection => ({ type: "FeatureCollecti
 
 function trailFeatures(points: Observation[], color: string, cursor: number | null): Feature[] {
   const out: Feature[] = [];
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1], b = points[i];
-    const ta = epochMs(a.time), tb = epochMs(b.time);
-    out.push({
-      type: "Feature",
-      properties: { color, gap: tb - ta > agingLimit(periodMs(a.period_s)), past: cursor === null || tb <= cursor },
-      geometry: { type: "LineString", coordinates: [[a.lon, a.lat], [b.lon, b.lat]] },
-    });
-  }
+  // The original measurements remain in playback. Display geometry alone is
+  // simplified, with no line drawn across missing evidence or GPS jumps.
+  for (const run of readableTrail(points).runs)
+    for (let i = 1; i < run.length; i++) {
+      const a = run[i - 1], b = run[i];
+      out.push({
+        type: "Feature",
+        properties: { color, past: cursor === null || epochMs(b.time) <= cursor },
+        geometry: { type: "LineString", coordinates: [[a.lon, a.lat], [b.lon, b.lat]] },
+      });
+    }
   return out;
 }
 
-/** Continuous pieces of one animal's trail; long gaps are left out, not bridged. */
+/** Optional herd trails use the same evidence breaks and visual reduction. */
 function herdTrailFeatures(list: MapData["herdTrails"]): Feature[] {
   const out: Feature[] = [];
-  for (const t of list) {
-    let run: [number, number][] = [];
-    const flush = () => { if (run.length > 1) out.push({ type: "Feature", properties: { color: t.color }, geometry: { type: "LineString", coordinates: run } }); run = []; };
-    for (let i = 0; i < t.points.length; i++) {
-      const p = t.points[i];
-      if (i > 0) {
-        const q = t.points[i - 1];
-        if (epochMs(p.time) - epochMs(q.time) > agingLimit(periodMs(q.period_s))) flush();
-      }
-      run.push([p.lon, p.lat]);
-    }
-    flush();
-  }
+  for (const t of list)
+    for (const run of readableTrail(t.points).runs)
+      if (run.length > 1)
+        out.push({ type: "Feature", properties: { color: t.color },
+          geometry: { type: "LineString", coordinates: run.map((p) => [p.lon, p.lat]) } });
   return out;
 }
 
@@ -336,6 +332,7 @@ export class MapEngine {
     const z = this.map.getZoom(), s = pinScale(z);
     const el = this.map.getContainer();
     el.style.setProperty("--ps", s.toFixed(3));
+    el.style.setProperty("--cs", (clusterDiameter(z) / 46).toFixed(3));
     const size = s < 0.62 ? "dot" : s < 0.9 ? "mid" : "full";
     if (el.dataset.pz !== size) el.dataset.pz = size;
     if ((z >= LABEL_ZOOM) !== this.labelled && this.data) { this.labelled = z >= LABEL_ZOOM; this.syncPins(this.data, true); }
@@ -448,17 +445,14 @@ export class MapEngine {
       paint: { "line-color": ["get", "color"], "line-width": 2, "line-opacity": 0.6 } });
     add({ id: "o-links", type: "line", source: "o-links",
       paint: { "line-color": ["get", "color"], "line-width": 1.6, "line-opacity": 0.75, "line-dasharray": [2, 2] } });
-    add({ id: "o-trail-casing", type: "line", source: "o-trail", filter: ["==", ["get", "gap"], false], layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": "#FFFFFF", "line-width": 6, "line-opacity": ["case", ["get", "past"], 0.85, 0.3] } });
-    add({ id: "o-trail", type: "line", source: "o-trail", filter: ["==", ["get", "gap"], false], layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": ["get", "color"], "line-width": 3.5, "line-opacity": ["case", ["get", "past"], 1, 0.3] } });
-    add({ id: "o-trail-gap", type: "line", source: "o-trail", filter: ["==", ["get", "gap"], true],
-      paint: { "line-color": "#FFFFFF", "line-width": 2.5, "line-dasharray": [1.5, 2], "line-opacity": ["case", ["get", "past"], 0.9, 0.3] } });
-    // Trail points darken from old to new, so direction and time read at a glance.
-    add({ id: "o-trail-pts", type: "circle", source: "o-trail-pts", minzoom: 14,
-      paint: { "circle-radius": 3, "circle-color": ["get", "color"], "circle-stroke-color": "#FFFFFF", "circle-stroke-width": 1.5,
-        "circle-opacity": ["case", ["get", "past"], ["interpolate", ["linear"], ["get", "k"], 0, 0.25, 1, 1], 0.3],
-        "circle-stroke-opacity": ["case", ["get", "past"], ["interpolate", ["linear"], ["get", "k"], 0, 0.35, 1, 1], 0.3] } });
+    add({ id: "o-trail-casing", type: "line", source: "o-trail", layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#FFFFFF", "line-width": 6, "line-opacity": ["case", ["get", "past"], 0.9, 0.22] } });
+    add({ id: "o-trail", type: "line", source: "o-trail", layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": ["get", "color"], "line-width": 3.5, "line-opacity": ["case", ["get", "past"], 1, 0.22] } });
+    // One bordered white dot shows where the visible period starts.
+    // Intermediate GPS fixes are deliberately not marked.
+    add({ id: "o-trail-pts", type: "circle", source: "o-trail-pts", minzoom: 13,
+      paint: { "circle-radius": 6, "circle-color": "#FFFFFF", "circle-stroke-color": ["get", "color"], "circle-stroke-width": 3 } });
     add({ id: "o-me", type: "fill", source: "o-me", paint: { "fill-color": "#2F6FD0", "fill-opacity": 0.14, "fill-outline-color": "#2F6FD0" } });
     add({ id: "o-draft-fill", type: "fill", source: "o-draft", filter: ["==", ["geometry-type"], "Polygon"],
       paint: { "fill-color": "#FFD60A", "fill-opacity": 0.18 } });
@@ -488,7 +482,7 @@ export class MapEngine {
     vis("o-relief", l.relief && this.base !== "street" && !this.drawnOffline);
     vis("o-coverage", l.coverage && !drawing);
     vis("o-heat", l.heat && !drawing);
-    for (const id of ["o-trail-casing", "o-trail", "o-trail-gap", "o-trail-pts"]) vis(id, l.trail && !drawing);
+    for (const id of ["o-trail-casing", "o-trail", "o-trail-pts"]) vis(id, l.trail && !drawing);
     vis("o-herd-trail", l.herdTrails && !drawing);
     vis("o-links", l.links && !drawing);
     for (const id of ["o-zone-fill", "o-zone-casing", "o-zone-line", "o-zone-off"]) vis(id, l.zones || drawing);
@@ -544,11 +538,14 @@ export class MapEngine {
     set("o-trail", trailKey, () => fc(d.trail ? trailFeatures(d.trail.points, d.trail.color, d.cursor) : []));
     set("o-trail-pts", trailKey, () => {
       if (!d.trail) return fc([]);
-      const n = Math.max(1, d.trail.points.length - 1);
-      return fc(d.trail.points.map((p, i) => ({
-        type: "Feature", properties: { color: d.trail!.color, k: i / n, past: d.cursor === null || epochMs(p.time) <= d.cursor },
-        geometry: { type: "Point", coordinates: [p.lon, p.lat] },
-      })));
+      const runs = readableTrail(d.trail.points).runs;
+      const first = runs[0]?.[0], last = runs[runs.length - 1]?.at(-1);
+      // Only the start dot. The selected animal pin already marks the last fix.
+      if (!first || !last || distanceM(first, last) < 15) return fc([]);
+      return fc([{
+        type: "Feature", properties: { color: d.trail.color },
+        geometry: { type: "Point", coordinates: [first.lon, first.lat] },
+      }]);
     });
     set("o-herd", d.herdTrails.map((t) => `${t.id}:${t.color}:${listKey(t.points)}`).join("|"), () => fc(herdTrailFeatures(d.herdTrails)));
     set("o-links", d.links.map((l) => `${l.from.lat},${l.from.lon},${l.to.lat},${l.to.lon},${l.rssi}`).join("|"), () => fc(d.links.map((l) => ({
@@ -637,9 +634,10 @@ export class MapEngine {
         if (el) {
           // The parent pin already is a button. Do not nest another button.
           const badge = document.createElement("span");
-          badge.className = "pin-count";
+          const hiddenAlarms = members.filter((a) => a.id !== exposed.id && toneOfStatus(a.status) === "alarm").length;
+          badge.className = "pin-count" + (hiddenAlarms ? " alarm" : "");
           badge.textContent = `+${members.length - 1}`;
-          badge.setAttribute("aria-label", `${members.length - 1} hayvan daha: seçim listesini aç`);
+          badge.setAttribute("aria-label", `${members.length - 1} hayvan daha${hiddenAlarms ? `, ${hiddenAlarms} kritik uyarı` : ""}: seçim listesini aç`);
           badge.addEventListener("click", (ev) => {
             ev.stopPropagation();
             this.showGroupChoices(members, [exposed.last!.lon, exposed.last!.lat]);
@@ -684,10 +682,10 @@ export class MapEngine {
     const title = document.createElement("strong");
     title.textContent = `${members.length} hayvan bu konumda`;
     box.appendChild(title);
-    for (const a of members) {
+    for (const a of [...members].sort((x, y) => y.attention - x.attention || x.name.localeCompare(y.name, "tr"))) {
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = a.name;
+      button.textContent = a.name + (toneOfStatus(a.status) === "alarm" ? " · Kritik uyarı" : "");
       button.addEventListener("click", (ev) => {
         ev.stopPropagation();
         this.groupPopup?.remove();

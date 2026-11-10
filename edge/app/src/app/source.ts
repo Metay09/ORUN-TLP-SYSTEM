@@ -1,12 +1,12 @@
-// The data layer seam. The real phone ledger (Controller) and the sample herd
-// (DemoSource) both implement EdgeSource; screens never see which one is on.
+// The data layer seam. The phone ledger (Controller) implements EdgeSource;
+// screens only see this interface.
 import type { PointsResult } from "../core/points.ts";
 import type { Snapshot } from "./controller.ts";
 import type { LinkPhase, ServerView, Station } from "./model.ts";
 import type { LatLon } from "./geo.ts";
 
 export interface EdgeSource {
-  readonly kind: "real" | "demo";
+  readonly kind: "real";
   snap: Snapshot;
   subscribe(fn: () => void): () => void;
   points(): Promise<PointsResult | null>;
