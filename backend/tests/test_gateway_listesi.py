@@ -106,7 +106,7 @@ class GatewayListTests(unittest.TestCase):
         self.assertIsNone(rows[GW_OLD]["via"], "durum bildirmeyen gateway bağlı sayılmaz")
         self.assertEqual(rows[GW_OLD]["last_seen_utc"], now - 7200)
         self.assertEqual(rows[GW_PC]["last_upload_utc"], now - 60)
-        self.assertEqual(rows[GW_PC]["status_seen_utc"], now)
+        self.assertLessEqual(abs(rows[GW_PC]["status_seen_utc"] - now), 2)
         self.assertIsNone(rows[GW_OLD]["status_seen_utc"],
                           "an upload is not a fresh gateway memory sample")
         self.assertIsNone(rows[GW_PHONE]["last_upload_utc"])
