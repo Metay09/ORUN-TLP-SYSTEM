@@ -132,6 +132,8 @@ class EdgeQueueUploaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="orun-pc-queue-") as root:
             folder = Path(root)
             inbox = pe.Inbox(folder / "spool.sqlite")
+            # Sealed-shaped record; the PC never treats it as authenticated.
+            self.assertTrue(inbox.ingest(b"\x02\x04\x02" + bytes(81)))
             token = folder / "bridge.token"
             token.write_text(TOKEN, encoding="ascii")
             token.chmod(0o600)
@@ -167,12 +169,12 @@ class EdgeQueueUploaderTests(unittest.TestCase):
                              "http://127.0.0.1:8090/v1/bridge/edge-status")
             body = json.loads(fake.requests[0].data)
             self.assertEqual(body, {
-                "edge": "pc-a", "pending": 0, "delivered": 0, "quarantined": 0,
+                "edge": "pc-a", "pending": 1, "delivered": 0, "quarantined": 0,
             })
             uploader.report_queue_status()  # 120 s throttle
             self.assertEqual(len(fake.requests), 1)
             self.assertEqual(inbox.counts(), {
-                "pending": 0, "delivered": 0, "quarantined": 0,
+                "pending": 1, "delivered": 0, "quarantined": 0,
             })
 
 
