@@ -122,7 +122,7 @@ export function farmChain(i: {
   const live = known.filter((g) => g.via);
   if (i.phoneGateway && !live.some((g) => g.gateway.toUpperCase() === i.phoneGateway!.id.toUpperCase()))
     live.push({ gateway: i.phoneGateway.id.toUpperCase(), via: i.phoneGateway.link === "usb" ? "phone-usb" : "phone-ble",
-                held: null, capacity: null, lastSeen: i.now, lastUpload: null, trackers24h: 0 });
+                held: null, capacity: null, lastSeen: i.now, statusAt: null, lastUpload: null, trackers24h: 0 });
   const lastUpload = known.reduce<number | null>((m, g) => (g.lastUpload !== null && (m === null || g.lastUpload > m) ? g.lastUpload : m), null);
   const recentUpload = lastUpload !== null && i.now - lastUpload < 60 * 60_000;
   const synced = !i.sync.error && i.sync.last !== null && i.now - i.sync.last.at < 5 * 60_000;
