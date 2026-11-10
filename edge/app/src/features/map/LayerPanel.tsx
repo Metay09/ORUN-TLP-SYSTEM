@@ -66,7 +66,7 @@ export function LayerPanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
       <ToggleRow title={tr.map.layer.trail} sub={tr.map.layerHelp.trail} on={L.trail} onChange={(v) => set("trail", v)} />
-      <ToggleRow title={tr.map.layer.herdTrails} sub={tr.map.layerHelp.herdTrails} on={L.herdTrails} onChange={(v) => set("herdTrails", v)} />
+      <ToggleRow title={tr.map.layer.herdTrails} sub="Tüm hayvanların izleri birbiriyle karışabilir. Normal haritada kapalı tut; yalnız incelemek için aç." on={L.herdTrails} onChange={(v) => set("herdTrails", v)} />
       <ToggleRow title={tr.map.layer.heat} sub={tr.map.layerHelp.heat} on={L.heat} onChange={(v) => set("heat", v)} />
       {L.heat && <><div className="heat-ramp" /><div className="legend" style={{ justifyContent: "space-between", paddingTop: 4 }}><span>Az</span><span>Çok</span></div></>}
       <ToggleRow title={tr.map.layer.coverage} sub={tr.map.layerHelp.coverage} on={L.coverage} onChange={(v) => set("coverage", v)} />
