@@ -53,6 +53,7 @@ from backend.device_names import BadName, DeviceNames  # noqa: E402
 from backend.device_settings import BadSettings, DeviceSettings  # noqa: E402
 from backend.device_ops import BadOp, DeviceOps  # noqa: E402
 from backend.gateway_status import BadStatus, GatewayStatus, parse_report  # noqa: E402
+from backend.edge_queue_status import EdgeQueueStatus, BadEdgeQueueStatus, parse_edge_queue_report  # noqa: E402
 from backend.local_observations import LocalObservations  # noqa: E402
 from backend.tracker_fences import BadFence, TrackerFences  # noqa: E402
 from backend.map_packs import CATALOG_ROUTE, FILE_ROUTE, MapPacks, default_dir  # noqa: E402
@@ -86,6 +87,7 @@ def farm_gateway_ids(local: LocalObservations) -> list[str]:
 def bridge_handler(local: LocalObservations, token: str):
     expected = token.encode()
     gateways = GatewayStatus(local.backend.db_path)
+    edge_queues = EdgeQueueStatus(local.backend.db_path)
 
     class Bridge(BaseHTTPRequestHandler):
         server_version = "ORUN"
@@ -141,18 +143,35 @@ def bridge_handler(local: LocalObservations, token: str):
                                     "lines": oc.ogk1_upload_lines(image)})
 
         def do_POST(self):  # noqa: N802
-            if self.path not in ("/v1/edge/batch", "/v1/bridge/gateway"):
+            if self.path not in ("/v1/edge/batch", "/v1/bridge/gateway", "/v1/bridge/edge-status"):
                 return self._json(404, {"error": "not_found"})
             if not self._authorized():
                 return self._json(401, {"error": "token"})
             if self.path == "/v1/bridge/gateway":
                 return self._gateway()
+            if self.path == "/v1/bridge/edge-status":
+                return self._edge_status()
             size = self.headers.get("Content-Length", "")
             if (self.headers.get("Transfer-Encoding") or not size.isdecimal()
                     or int(size) > MAX_BODY):
                 return self._json(413, {"error": "size"})
             status, body = local.batch(self.rfile.read(int(size)))
             return self._json(status, body)
+
+        def _edge_status(self) -> None:
+            """Receive a read-only PC Edge SQLite-count snapshot, no ACK actions."""
+            size = self.headers.get("Content-Length", "")
+            if (self.headers.get("Transfer-Encoding") or not size.isdecimal() or
+                    not 1 <= int(size) <= 512 or
+                    self.headers.get("Content-Type", "").split(";", 1)[0].lower() != "application/json"):
+                return self._json(400, {"error": "invalid_request"})
+            try:
+                edge, pending, delivered, quarantined = parse_edge_queue_report(
+                    json.loads(self.rfile.read(int(size))))
+                edge_queues.report(edge, pending, delivered, quarantined)
+            except (BadEdgeQueueStatus, ValueError, UnicodeDecodeError):
+                return self._json(400, {"error": "invalid_request"})
+            return self._json(200, {"ok": True})
 
         def _gateway(self) -> None:
             """2c: köprünün bağlı olduğu gateway: kimlik, USB/BLE, bellek."""
@@ -217,6 +236,7 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
     """2c: çiftliğin gateway listesi; telefon köprü olduğunda durum bildirimi.
     2d: cihaz adları (hesapta)."""
     gateways = GatewayStatus(local.backend.db_path)
+    edge_queues = EdgeQueueStatus(local.backend.db_path)
     names = DeviceNames(local.backend.db_path)
     fences = TrackerFences(local.backend.db_path)
     settings = DeviceSettings(local.backend.db_path)
@@ -246,12 +266,14 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
                      "write_key": oc.ble_write_key(c).hex().upper()}
                     for c in registry.all() if not c.retired]
                 return self._send(200, {"keys": keys})
-            if self.path not in ("/api/v1/devices/gateways", "/api/v1/devices/names",
+            if self.path not in ("/api/v1/devices/gateways", "/api/v1/devices/edge-status", "/api/v1/devices/names",
                                  "/api/v1/devices/fences", "/api/v1/devices/settings",
                                  "/api/v1/devices/ops"):
                 return super().do_GET()
             if self._farm_actor("zone:read") is None:
                 return None
+            if self.path == "/api/v1/devices/edge-status":
+                return self._send(200, {"edges": edge_queues.list()})
             if self.path == "/api/v1/devices/names":
                 return self._send(200, {"names": names.all()})
             if self.path == "/api/v1/devices/fences":
