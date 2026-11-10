@@ -2,7 +2,7 @@
 // day and its events, and the identity / notebook / collar.
 import { useMemo, useState } from "react";
 import { CaretRight, MapTrifold, NavigationArrow, NotePencil, PencilSimple, Play } from "@phosphor-icons/react";
-import { batterySeries, dayStart, daySummaries, hourlyActivity } from "../../app/activity.ts";
+import { activityCoverage24h, batterySeries, dayStart, daySummaries, hourlyActivity } from "../../app/activity.ts";
 import { batteryPercent, epochMs } from "../../app/herd.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { cap, fmt, tr } from "../../app/i18n/tr.ts";
@@ -64,6 +64,7 @@ export function AnimalScreen({ id }: { id: string }) {
 function Today({ a, now }: { a: Animal; now: number }) {
   const p = a.last;
   const hours = useMemo(() => hourlyActivity(a.points, now), [a.points, now]);
+  const activity = useMemo(() => activityCoverage24h(a.points, now), [a.points, now]);
   const days = useMemo(() => daySummaries(a.points.filter((x) => epochMs(x.time) >= dayStart(now))), [a.points, now]);
   const today = days.find((d) => d.day === dayStart(now)) ?? null;
   const bat = useMemo(() => batterySeries(a.points, now), [a.points, now]);
@@ -80,15 +81,40 @@ function Today({ a, now }: { a: Animal; now: number }) {
         <KV k="Konum">{fmt.coords(p.lat, p.lon)}</KV>
       </Card>
 
-      <Section title={tr.animal.activity} info={tr.animal.activityStripHelp} />
+      <Section title="Günlük hareket özeti"
+        info="İvmeölçerin son 24 saatte bildirdiği geçerli hareket süresi. GPS mesafesi hareket süresi olarak sayılmaz; ölçülmeyen zaman hareketsiz kabul edilmez." />
       <Card pad>
-        {hasActivity ? (
-          <div className="stack">
-            <span className="strong">{today?.activeMs !== null && today?.activeMs !== undefined ? tr.animal.activityToday(fmt.duration(today.activeMs)) : tr.animal.activity}</span>
+        {hasActivity && activity.coveredMs > 0 ? (
+          <div className="stack" style={{ gap: 12 }}>
+            <span className="sm">Son 24 saat · ivmeölçer</span>
+            <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+              <div className="stack" style={{ gap: 4, flex: 1 }}>
+                <span className="strong">{fmt.duration(activity.activeMs)}</span>
+                <span className="fine">Hareketli</span>
+              </div>
+              <div className="stack" style={{ gap: 4, flex: 1 }}>
+                <span className="strong">{fmt.duration(activity.inactiveMs)}</span>
+                <span className="fine">Hareket algılanmadı</span>
+              </div>
+              <div className="stack" style={{ gap: 4, flex: 1 }}>
+                <span className="strong">{fmt.duration(activity.unknownMs)}</span>
+                <span className="fine">Ölçüm yok</span>
+              </div>
+            </div>
+            <div className="row" role="img"
+              aria-label={`Son 24 saat: ${fmt.duration(activity.activeMs)} hareketli, ${fmt.duration(activity.inactiveMs)} hareket algılanmadı, ${fmt.duration(activity.unknownMs)} ölçüm yok.`}
+              style={{ height: 12, borderRadius: 9, overflow: "hidden", gap: 2 }}>
+              {activity.activeMs > 0 && <span style={{ flex: activity.activeMs, background: "var(--fresh)" }} />}
+              {activity.inactiveMs > 0 && <span style={{ flex: activity.inactiveMs, background: "var(--mute)" }} />}
+              {activity.unknownMs > 0 && <span style={{ flex: activity.unknownMs, background: "#E4A23B" }} />}
+            </div>
+            <span className="fine">Yeşil: hareket · Gri: hareket algılanmadı · Turuncu: veri boşluğu</span>
+            <span className="sm">Saatlik hareket</span>
             <Strip values={hours} tall />
             <div className="strip-axis"><span>{fmt.clock(now - 24 * 3600_000)}</span><span>{fmt.clock(now - 12 * 3600_000)}</span><span>{fmt.clock(now)}</span></div>
+            <span className="fine">Yalnız doğrulanmış sensör ölçümleri sayılır. İlk ya da çakışan rapor dönemi belirsiz bırakılır.</span>
           </div>
-        ) : <span className="sm">{tr.animal.activityNone}</span>}
+        ) : <span className="sm">{tr.animal.activityNone} · Son 24 saat için güvenilir ölçüm bulunamadı.</span>}
       </Card>
 
       {today && (
