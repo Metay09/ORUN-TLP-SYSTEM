@@ -33,10 +33,13 @@ export function parseEdgeQueues(body: unknown): EdgeQueue[] {
     if (typeof r.edge !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(r.edge) || seen.has(r.edge))
       throw new Error("PC Edge kimliği hatalı.");
     seen.add(r.edge);
-    for (const key of ["pending", "delivered", "quarantined", "seen_utc"] as const)
+    for (const key of ["pending", "delivered", "quarantined"] as const)
       if (typeof r[key] !== "number" || !Number.isSafeInteger(r[key]) || r[key] < 0 ||
           r[key] > 1_000_000_000)
         throw new Error("PC Edge sayacı hatalı.");
+    if (typeof r.seen_utc !== "number" || !Number.isSafeInteger(r.seen_utc) ||
+        r.seen_utc <= 0 || r.seen_utc > 9_000_000_000)
+      throw new Error("PC Edge zaman damgası hatalı.");
     return {
       edge: r.edge,
       pending: r.pending as number,
