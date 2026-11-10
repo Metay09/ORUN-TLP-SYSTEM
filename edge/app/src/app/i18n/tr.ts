@@ -87,7 +87,7 @@ export const fmt = {
 };
 
 export const tr = {
-  app: { name: "ORUN", demoBadge: "Tanıtım sürüsü", demoBanner: "Örnek sürü gösteriliyor · gerçek kayıt değil" },
+  app: { name: "ORUN" },
   tabs: { map: "Harita", herd: "Sürü", zones: "Alanlar", events: "Olaylar", network: "Cihazlar" },
   common: {
     back: "Geri", close: "Kapat", save: "Kaydet", cancel: "Vazgeç", edit: "Düzenle", more: "Tümü",
@@ -100,7 +100,6 @@ export const tr = {
     noAnimals: "Henüz hayvan yok",
     noAnimalsBody: "Tasma ekleyince konumu sunucudan ya da telefona bağlı gateway'den buraya gelir.",
     connect: "Cihazlar",
-    tryDemo: "Tanıtım sürüsünü aç",
     offlineMap: "Harita görüntüsü yüklenemedi · hayvanlar yine de çizilir",
   },
   // ---------------------------------------------------------------- herd ---
@@ -442,9 +441,6 @@ export const tr = {
     themes: { auto: "Otomatik", light: "Açık", dark: "Koyu" },
     sun: "Güneş modu",
     sunHelp: "Güneş altında okumak için daha koyu yazı ve kalın işaretler.",
-    data: "Tanıtım",
-    demo: "Tanıtım sürüsü",
-    demoHelp: "Cihaz bağlı değilken uygulamayı örnek bir sürüyle gösterir. Gerçek kayıtlarınız etkilenmez; açıkken üstte 'Tanıtım sürüsü' yazar.",
     phoneRecords: (n: number) => `Telefonda ${num(n)} kayıt · hiçbiri silinmez`,
     about: "Hakkında",
     version: "Sürüm",

@@ -1,6 +1,5 @@
-// "Tanıtım sürüsü": a sample herd for showing the app without devices. Built
-// from the same record shape the phone ledger gives (core Point) so every
-// screen runs the real code path; the UI marks it clearly as a sample.
+// Test fixture only: a sample herd in the record shape the phone ledger gives
+// (core Point). The app itself never shows sample data.
 //
 // Deterministic and stateless in time: a record's position is a function of
 // its measurement time, so history stays stable while new records "arrive"
@@ -9,12 +8,9 @@
 // one nearly empty, one cow quiet behind the ridge, one gone far (no news for
 // hours), one whose collar missed fixes one night, one cow still for hours
 // (calving) this morning.
-import type { Point, PointsResult } from "../core/points.ts";
-import type { Snapshot, JournalEntry } from "./controller.ts";
-import type { EdgeSource } from "./source.ts";
-import type { AssetBook } from "./stores.ts";
-import { blankProfile } from "./stores.ts";
-import type { Zone } from "./zones.ts";
+import type { Point } from "../src/core/points.ts";
+import type { AssetBook } from "../src/app/stores.ts";
+import { blankProfile } from "../src/app/stores.ts";
 
 const T = 900;                     // report period, s
 const HOUR = 3600_000;
@@ -179,85 +175,4 @@ export function demoBook(now: number): AssetBook {
     book.assignments.push({ device: c.id, asset: c.id, from: 0 });
   }
   return book;
-}
-
-function demoJournal(now: number, points: Point[]): JournalEntry[] {
-  const j: JournalEntry[] = [];
-  for (let d = 2; d >= 0; d--) {
-    const day = new Date(now - d * DAY); day.setHours(7, 4, 0, 0);
-    const at = day.getTime();
-    if (at > now) continue;
-    const n = points.filter((p) => { const t = Date.parse(p.time!); return t > at - DAY && t <= at; }).length;
-    j.push({ at, kind: "link", text: "Gateway'e bağlanıldı (Bluetooth)" });
-    j.push({ at: at + 40_000, kind: "records", text: `${n} yeni kayıt gateway'den alındı`, n });
-    j.push({ at: at + 55_000, kind: "handoff", text: `${n} kayıt telefona kalıcı yazıldı · gateway'de yer açıldı`, n });
-    j.push({ at: at + 90_000, kind: "upload", text: `${n} kayıt sunucuya gönderildi`, n });
-  }
-  return j;
-}
-
-export class DemoSource implements EdgeSource {
-  readonly kind = "demo" as const;
-  private listeners = new Set<() => void>();
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private anchor = Date.now();
-  snap: Snapshot;
-
-  constructor() {
-    this.snap = this.build(Date.now(), 1);
-  }
-
-  private build(now: number, version: number): Snapshot {
-    const pts = demoPoints(now, this.anchor);
-    return {
-      ready: true, error: null, link: "ble", state: "connected", detail: null,
-      counts: { STORED: 38, DUPLICATE: 2, REJECTED: 0, CONFLICT: 0, UNCERTAIN: 0 },
-      records: pts.length, handedOff: 38, rejected: 0, pending: 0,
-      gateway: DEMO_STATION.id, gatewayHeld: "2/1056", storage: "örnek veri (bellekte)",
-      log: ["örnek sürü: kayıtlar telefonda üretildi, cihaz yok"],
-      server: {
-        url: "https://sunucu.orun.example", token: "örnek", auto: true, busy: false,
-        counts: { uploaded: pts.length - 3, pending: 3, conflict: 0, rejected: 0 },
-        lastOk: new Date(now - 4 * 60_000).toLocaleTimeString("tr-TR", { hour12: false }), error: null,
-      },
-      pointsVersion: version, journal: demoJournal(now, pts),
-    };
-  }
-
-  subscribe(fn: () => void): () => void {
-    this.listeners.add(fn);
-    if (!this.timer) this.timer = setInterval(() => {
-      this.snap = this.build(Date.now(), this.snap.pointsVersion + 1);
-      for (const l of this.listeners) l();
-    }, 60_000);
-    return () => {
-      this.listeners.delete(fn);
-      if (!this.listeners.size && this.timer) { clearInterval(this.timer); this.timer = null; }
-    };
-  }
-
-  async points(): Promise<PointsResult> {
-    const now = Date.now();
-    const points = demoPoints(now, this.anchor);
-    return { count: points.length, skipped: 0, now: iso(now), points };
-  }
-
-  async connectBle(): Promise<void> { /* the sample station is always connected */ }
-  async connectUsb(): Promise<void> { /* sample */ }
-  async disconnect(): Promise<void> { /* sample */ }
-  saveServer(): void { /* sample */ }
-  async sync(): Promise<void> { /* sample */ }
-}
-
-// Sample pastures: "Ev merası" holds the barn, the slope, the water and the
-// shade; the stony ground the herd visits in the afternoon is outside it, so
-// the sample shows an exit and a return. "Taşlık" is drawn but switched off.
-export function demoZones(): Zone[] {
-  const ring = (pts: [number, number][]) => pts.map(([x, y]) => { const p = toLL(x, y); return [p.lon, p.lat] as [number, number]; });
-  return [
-    { id: "demo-ev", name: "Ev merası", active: true, updated: 0,
-      ring: ring([[-420, 80], [-200, -140], [180, -160], [560, 180], [560, 620], [100, 620], [-420, 420]]) },
-    { id: "demo-taslik", name: "Taşlık", active: false, updated: 0,
-      ring: ring([[-640, -480], [-220, -480], [-220, -80], [-640, -80]]) },
-  ];
 }

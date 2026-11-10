@@ -12,7 +12,7 @@ Bu listede olmayan iş v1 değildir; yapılmaz, önerilmez, "ileride lazım olur
 
 ## Uygulama ilkeleri
 
-- Uygulama yalnız gerçekten çalışanı gösterir. "Planlı", "demo" etiketi yok.
+- Uygulama yalnız gerçekten çalışanı gösterir. "Planlı", "demo" etiketi yok. Tanıtım sürüsü 2026-11-10'da kaldırıldı; örnek sürü yalnız testlerde (`edge/app/test/sampleHerd.ts`).
 - Uydurma bilgi yok. Her değerin kaynağı var.
 - "Şimdi nerede" = ölçüm zamanı en yeni kayıt. Bayat konum asla canlı gösterilmez.
 - İnternetsiz çalışır, internet gelince kendiliğinden eşitler. Kullanıcı eşitleme için düğmeye basmak zorunda kalmaz.
@@ -47,7 +47,7 @@ Bu listede olmayan iş v1 değildir; yapılmaz, önerilmez, "ileride lazım olur
 | 4c | Bluetooth'tan ayar ve alan | 4b ve 3a Bluetooth'tan da (hesaptaki telefon); her rapordan sonra kısa Bluetooth; Bluetooth ile yazılım güncelleme (USB + Bluetooth, sahip kararı); dururken GPS kapalı: son konumdan beri toplam hareket eşiği geçmezse (varsayılan 1 dk, ayarlanabilir) GPS açılmaz, son iyi konum yaşıyla gider; en geç rapor aralığının 2 katı, en az 1 saatte bir yeni konum; alan dışında ya da hareket algılayıcı yoksa her raporda konum | parçalar (sahip kararı 2026-11-04): 4c-1a → 4c-1b → 4c-2 → telefondan yazılım güncelleme (önce USB, sonra Bluetooth) → dururken GPS kapalı |
 | 4c-1a | Rapordan sonra Bluetooth | Cihaz ekranında yeni ayar "Rapordan sonra Bluetooth": Kapalı, 15 sn, 30 sn, 1 dk, 2 dk, 5 dk (varsayılan 30 sn). Tasma her rapordan sonra bu kadar süre Bluetooth'tan bağlanılabilir olur; bağlanan telefon çıkınca açılıştaki gibi 10 dk daha açık kalır. Ayar tasmada saklanır (yeniden başlayınca kalır) ve hesaba kaydedilir; bugün USB'den yazılır, Bluetooth'tan 4c-1b'de, LoRa'dan 6'da (sahip kararı: ayara bağlı, üç yoldan aynı) | tamam (#249) |
 | 4c-1b | Bluetooth'tan ayar yazma | Tasmaya Bluetooth'tan bağlanınca sıradaki ayarlar (rapor aralığı, konum takibi/aktarma, rapordan sonra Bluetooth) USB'deki gibi sormadan yazılır; "Tasmaya işlendi" yalnız tasmanın imzalı cevabıyla. Yalnız hesaba girmiş telefon yazar: sunucu her tasma için yazma anahtarı verir (tasmanın kökünden türetilir, kök değil), telefon saklar, sahada internetsiz çalışır, hesaptan çıkınca silinir. Her yazmada tasma yeni, tek kullanımlık bir soru verir; eski yazma tekrar edilemez. Gateway Bluetooth'tan ayar almaz. Sınır: kaybolan bir telefondaki anahtar, tasmanın anahtarı yenilenene kadar geçerli kalır | tamam (#250, `docs/milestones/4C1B.md`) |
-| 4c-2 | Bluetooth'tan alanlar | "Tasmalara uygula" Bluetooth'tan da: tasmaya Bluetooth'tan bağlanınca (hayvan kartı, Cihazlar ya da "Tasmalara uygula" listesinde tasmaya dokununca) sıradaki alan listesi ayarlardan sonra sormadan yazılır; tasma listenin tamamını alır, bir imzalı onayla kaydeder, "Tasmaya işlendi" yalnız o onayla. Yalnız hesaba girmiş telefon (4c-1b ile aynı anahtar) | bu PR (`docs/milestones/4C2.md`) |
+| 4c-2 | Bluetooth'tan alanlar | "Tasmalara uygula" Bluetooth'tan da: tasmaya Bluetooth'tan bağlanınca (hayvan kartı, Cihazlar ya da "Tasmalara uygula" listesinde tasmaya dokununca) sıradaki alan listesi ayarlardan sonra sormadan yazılır; tasma listenin tamamını alır, bir imzalı onayla kaydeder, "Tasmaya işlendi" yalnız o onayla. Yalnız hesaba girmiş telefon (4c-1b ile aynı anahtar) | tamam (#251, `docs/milestones/4C2.md`) |
 | 4d | Kayıt çekme | Gateway'e ulaşmamış kayıtlar tasmadan USB ya da Bluetooth ile | sırada |
 | 5 | Alan dışı bildirimi + LOST | İnek alandan çıkınca telefona bildirim; kayıp durumu | tasma alanı kendisi kontrol ediyor |
 | 6 | LoRa'dan tüm ayarlar | Aynı işlemler sunucu → PC Edge → gateway → tasma; durum Sırada → Gateway'de → Tasmaya işlendi. **Fazladan telsiz trafiği yok** (sahip kararı 2026-11-02): komut tasmanın rapordan sonraki dinleme penceresinde gider, tasmanın onayı bir sonraki normal raporuna eklenir; "Gateway'de" bilgisi köprünün zaten gönderdiğinden gelir; "Tasmaya işlendi" yalnız tasmanın onayıyla, yol ne olursa olsun; Bluetooth'u uzaktan açma da bu yoldan. Sınırlar: tasma yalnız rapordan sonra ~10 sn dinler (komut en çok bir rapor aralığı bekler), paket başına 32 bayt (alan listesi ~17 paket), gateway'in sunucuya bağlı olması gerekir | yok |
@@ -79,6 +79,11 @@ dönmez); sabit cihazlar Cihazlar'da ve haritada.
 
 Bitirme sırası (sahip kararı 2026-11-02; Y2b 2026-11-04'te sahaya çıkmadan önceye alındı): 4b → Y1 → Y2a → 4c → 5 → 6 → Y3 → 4d → 7 → Y2b → 8 → 9.
 Aktarma (relay) v1'de: tepelik arazide gateway'i görmeyen yerler için sahada üç cihazla denenip açılır (8. adımla).
+
+## Sıra dışı düzeltmeler
+
+- #253: tasmaların aynı anda yeniden denemesi cihaz başına gecikmeyle ayrıldı.
+- #256: `APP FENCE DIAG?` — alan belleğinin A/B sayfalarını USB'den yalnız okur. 141A8887'de alan belleği bozulmuştu (9 Kasım), tek seferlik onarımla düzeltildi (#255, birleştirilmedi); **kök neden bilinmiyor**, tekrar ederse bu komutla bakılır.
 
 ## v1 sonrası
 

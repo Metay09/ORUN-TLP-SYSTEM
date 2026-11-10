@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { Point } from "../src/core/points.ts";
 import { daySummaries, hourlyActivity } from "../src/app/activity.ts";
 import { classify, coverageAt, coverageCells, coverageSummary } from "../src/app/coverage.ts";
-import { demoBook, demoPoints } from "../src/app/demo.ts";
+import { demoBook, demoPoints } from "./sampleHerd.ts";
 import { deriveEvents, isActive } from "../src/app/events.ts";
 import { buildHerd } from "../src/app/herd.ts";
 import type { ServerView, Station } from "../src/app/model.ts";

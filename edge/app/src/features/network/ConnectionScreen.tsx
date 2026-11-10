@@ -15,7 +15,7 @@ import {
   deviceNames, onPilotAccountChange, onPilotObservationSync, pilotAccountStatus, pilotGateways, pilotObservationSyncState,
 } from "../../app/ownerAccountPilotRuntime.ts";
 import { useApp } from "../../app/store.ts";
-import { Bar, Card, Cell, DemoFlag, Header, KV, Section, Seg } from "../../ds/components.tsx";
+import { Bar, Card, Cell, Header, KV, Section, Seg } from "../../ds/components.tsx";
 import { classifyNearby, mergeNearby, scanNearby, stopNearbyScan, type NearbyDevice, type NearbyView } from "../../platform/bleScan.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
 import { AddTrackerDialog } from "../herd/AddTrackerDialog.tsx";
@@ -107,8 +107,8 @@ export function ConnectionScreen() {
     ...(gateways ?? []).map((g) => g.gateway),
   ].find((id) => !names[id.toUpperCase()] && !asked().includes(id.toUpperCase()));
   useEffect(() => {
-    if (!m.demo && account && unnamed && !naming) setNaming(unnamed);
-  }, [unnamed, account, m.demo]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (account && unnamed && !naming) setNaming(unnamed);
+  }, [unnamed, account]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 4a/4b: bilinen tasmaya dokununca tasmanın ekranı (durum, bağlan, ayarlar);
   // tanınmayan ORUN cihazına dokununca canlı okuma; gateway'e dokununca köprü.
@@ -173,7 +173,6 @@ export function ConnectionScreen() {
   return (
     <div className="page">
       <Header title={tr.network.title} />
-      {m.demo && <DemoFlag onPage />}
 
       <Section title={tr.network.chain}
         info="Kayıt tasmadan gateway'e, oradan sunucuya, sunucudan telefonlara gider. Bir kayıt ancak sonraki halka onu kalıcı yazdıktan sonra öncekinden silinir; bağlantı koparsa kayıt beklediği yerde durur, kaybolmaz. Bir halkaya dokununca ayrıntısı görünür." />
@@ -211,7 +210,7 @@ export function ConnectionScreen() {
                 <span className="sm">{st.detail && st.phase !== "connected" ? `${words.text} · ${st.detail}` : words.text}</span>
               </div>
             </div>
-            {st.id && account && !m.demo && (
+            {st.id && account && (
               <button className="btn quiet small" style={{ alignSelf: "flex-start" }} onClick={() => setNaming(st.id)}>
                 {names[st.id.toUpperCase()] ? "Adını değiştir" : "Ad ver"}
               </button>

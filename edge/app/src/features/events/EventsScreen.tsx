@@ -11,7 +11,7 @@ import { fmt, tr } from "../../app/i18n/tr.ts";
 import type { AppEvent } from "../../app/model.ts";
 import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
-import { Card, Chips, DemoFlag, Empty, Header, Section } from "../../ds/components.tsx";
+import { Card, Chips, Empty, Header, Section } from "../../ds/components.tsx";
 
 type Filter = "all" | "alerts" | "animals" | "system";
 
@@ -107,7 +107,6 @@ export function EventsScreen() {
   return (
     <div className="page">
       <Header title={tr.events.title} />
-      {m.demo && <DemoFlag onPage />}
       {!m.events.length ? (
         <Empty icon={<Bell size={34} />} title={tr.events.empty} body={tr.events.emptyBody} />
       ) : (

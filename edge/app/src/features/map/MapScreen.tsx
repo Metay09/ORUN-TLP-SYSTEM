@@ -127,16 +127,6 @@ export function MapScreen({ visible }: { visible: boolean }) {
   }, [herd, selected, a, trailPts, cursor, playing, heatPts, L.coverage, m.coverage, m.station, pos.pos, zoneViews, selZone, herdTrails, links]);
   useEffect(() => { engine.current?.setData(data); }, [data]);
 
-  // Switching between the sample herd and the real ledger starts over.
-  const firstDemo = useRef(m.demo);
-  useEffect(() => {
-    if (firstDemo.current === m.demo) return;
-    firstDemo.current = m.demo;
-    fitted.current = false;
-    savedView = undefined;
-    setSelected(null); setWin(null); setCursor(null); setPlaying(false); setSnap("peek"); setSelZone(null); setDrawing(null);
-  }, [m.demo]);
-
   // First data: frame the herd (or the station).
   useEffect(() => {
     if (fitted.current || savedView) return;
@@ -231,11 +221,9 @@ export function MapScreen({ visible }: { visible: boolean }) {
             if (!z) return;
             setSelZone(z.id); setFlash(tr.zones.saved(z.name));
             // 3a: yeni alan önce bütün tasmalara (sonra değiştirilebilir); kaydedince sor.
-            if (!m.demo) {
-              try { if (!m.targetBook.rules[z.id]) m.actions.saveTargetRule(z.id, { scope: "all", devices: [], groups: [] }); }
-              catch { /* hedefler okunamıyorsa dokunma */ }
-              setAskSend(z.name);
-            }
+            try { if (!m.targetBook.rules[z.id]) m.actions.saveTargetRule(z.id, { scope: "all", devices: [], groups: [] }); }
+            catch { /* hedefler okunamıyorsa dokunma */ }
+            setAskSend(z.name);
           }} />
       ) : <>
       <div className="map-top">
@@ -245,7 +233,6 @@ export function MapScreen({ visible }: { visible: boolean }) {
         <button className="status-chip" onClick={() => nav.setTab("network")}>
           <span className={"dot " + st.dot} /><span className="ellip">{st.short}</span>
         </button>
-        {m.demo && <span className="status-chip demo">{tr.app.demoBadge}</span>}
         {offline && <span className="status-chip note">{tr.states.offlineMap}</span>}
         {phoneMap && <span className="status-chip note">{tr.map.phoneMap}</span>}
         {tiles && !offline && !phoneMap && <span className="status-chip note">{navigator.onLine ? tr.map.tilesTrouble : tr.map.tilesOffline}</span>}
@@ -293,7 +280,6 @@ export function MapScreen({ visible }: { visible: boolean }) {
               <div className="stack" style={{ padding: "8px 20px 16px" }}>
                 <span className="sm">{tr.states.noAnimalsBody}</span>
                 <button className="btn primary wide" onClick={() => nav.setTab("network")}>{tr.states.connect}</button>
-                {m.canLeaveDemo && !m.demo && <button className="btn quiet wide" onClick={() => m.actions.setPrefs({ demo: true })}>{tr.states.tryDemo}</button>}
               </div>
             )}
           </>

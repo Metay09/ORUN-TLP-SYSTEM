@@ -18,7 +18,7 @@ export function EditAnimal({ a, onClose }: { a: Animal; onClose: () => void }) {
   const save = () => {
     m.actions.saveAsset(f, a.device);
     // 2d: tasmanın adı = hayvanın adı, hesapta saklanır.
-    if (a.device && !m.demo && f.name.trim() !== (a.named ? a.name : ""))
+    if (a.device && f.name.trim() !== (a.named ? a.name : ""))
       void pilotSetDeviceName(a.device, f.name).catch(() => undefined);
     onClose();
   };

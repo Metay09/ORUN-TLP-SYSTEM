@@ -8,7 +8,7 @@ import { fmt, tr } from "../../app/i18n/tr.ts";
 import type { Animal } from "../../app/model.ts";
 import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
-import { AnimalRing, Card, Chips, DemoFlag, Empty, Header, Strip, toneOfStatus } from "../../ds/components.tsx";
+import { AnimalRing, Card, Chips, Empty, Header, Strip, toneOfStatus } from "../../ds/components.tsx";
 import { AddTrackerDialog } from "./AddTrackerDialog.tsx";
 
 type Filter = "all" | "attention" | "silent" | "battery";
@@ -38,12 +38,10 @@ export function HerdScreen() {
       <Header title={tr.herd.title}>
         <button className="circ brand" onClick={() => setAdding(true)} aria-label={tr.herd.add}><Plus size={22} weight="bold" /></button>
       </Header>
-      {m.demo && <DemoFlag onPage />}
       {herd.length === 0 ? (
         <Empty icon={<Cow size={34} />} title={tr.states.noAnimals} body={tr.states.noAnimalsBody}>
           <button className="btn primary" onClick={() => setAdding(true)}><Plus size={18} weight="bold" />{tr.herd.add}</button>
           <button className="btn" onClick={() => nav.setTab("network")}>{tr.states.connect}</button>
-          {m.canLeaveDemo && !m.demo && <button className="btn quiet" onClick={() => m.actions.setPrefs({ demo: true })}>{tr.states.tryDemo}</button>}
         </Empty>
       ) : (
         <>

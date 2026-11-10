@@ -1,9 +1,9 @@
-// Ayarlar: hesap, internetsiz harita, görünüm, tanıtım sürüsü ve hakkında.
+// Ayarlar: hesap, internetsiz harita, görünüm ve hakkında.
 import { tr } from "../../app/i18n/tr.ts";
 import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import type { Theme } from "../../app/stores.ts";
-import { Card, Cell, KV, Screen, Section, Seg, ToggleRow } from "../../ds/components.tsx";
+import { Card, KV, Screen, Section, Seg, ToggleRow } from "../../ds/components.tsx";
 import { AccountLoginPanel } from "./AccountLoginPanel.tsx";
 import { OfflineMapPanel } from "./OfflineMapPanel.tsx";
 
@@ -26,13 +26,6 @@ export function SettingsScreen() {
           options={(["auto", "light", "dark"] as Theme[]).map((t) => ({ value: t, label: tr.settings.themes[t] }))} />
         <div style={{ height: 8 }} />
         <ToggleRow title={tr.settings.sun} sub={tr.settings.sunHelp} on={p.sun} onChange={(v) => m.actions.setPrefs({ sun: v })} />
-      </Card>
-
-      <Section title={tr.settings.data} />
-      <Card>
-        {m.canLeaveDemo
-          ? <ToggleRow title={tr.settings.demo} sub={tr.settings.demoHelp} on={m.demo} onChange={(v) => m.actions.setPrefs({ demo: v })} />
-          : <Cell title={tr.settings.demo} sub={tr.settings.demoHelp} wrapSub />}
       </Card>
 
       <Section title={tr.settings.about} />
