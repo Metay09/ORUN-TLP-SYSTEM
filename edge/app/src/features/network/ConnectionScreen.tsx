@@ -13,7 +13,7 @@ import { useNav } from "../../app/nav.ts";
 import type { FarmGateway, EdgeQueue } from "../../app/ownerAccountClient.ts";
 import { collarStorageReadings } from "../../app/collarStorageReadings.ts";
 import {
-  deviceNames, onPilotAccountChange, onPilotObservationSync, pilotAccountStatus, pilotGateways, pilotEdgeQueues, pilotObservationSyncState,
+  deviceNames, onPilotAccountChange, pilotAccountStatus, pilotGateways, pilotEdgeQueues,
 } from "../../app/ownerAccountPilotRuntime.ts";
 import { useApp } from "../../app/store.ts";
 import { Bar, Card, Cell, Header, KV, Section, Seg } from "../../ds/components.tsx";
@@ -54,7 +54,6 @@ export function ConnectionScreen() {
   const held = st.held ?? 0;
   const [account, setAccount] = useState(() => pilotAccountStatus());
   const accountScope = account ? [account.site, account.actor, account.installation, account.username].join(":") : null;
-  const [sync, setSync] = useState(pilotObservationSyncState);
   const [via, setVia] = useState<Via>("ble");
   const [marking, setMarking] = useState(false);
   const [gateways, setGateways] = useState<FarmGateway[] | null>(null);
@@ -84,7 +83,6 @@ export function ConnectionScreen() {
   const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
   const collarReadings = useSyncExternalStore(collarStorageReadings.subscribe, collarStorageReadings.snapshot);
   const label = (id: string) => names[id.toUpperCase()] ?? bleName(id);
-  useEffect(() => onPilotObservationSync(() => setSync(pilotObservationSyncState())), []);
   useEffect(() => onPilotAccountChange(() => setAccount(pilotAccountStatus())), []);
   useEffect(() => {
     if (marking && pos.pos) { m.actions.markStation({ lat: pos.pos.lat, lon: pos.pos.lon }); setMarking(false); }
