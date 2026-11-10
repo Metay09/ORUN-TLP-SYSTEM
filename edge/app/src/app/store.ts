@@ -78,6 +78,7 @@ export interface Actions {
   addNote(id: string, device: string | null, text: string): void;
   markStation(pos: LatLon | null): void;
   markSeen(id: string): void;
+  unmarkSeen(id: string): void;
   saveZone(z: Zone): void;
   removeZone(id: string): void;
   addZones(list: Zone[]): void;
@@ -203,6 +204,7 @@ export function useModel(): Model {
       places.update((m) => { const next = { ...m }; if (pos) next[id] = pos; else delete next[id]; return next; });
     },
     markSeen: (id) => seenEvents.update((l) => (l.includes(id) ? l : [...l, id].slice(-500))),
+    unmarkSeen: (id) => seenEvents.update((l) => l.filter((x) => x !== id)),
     saveZone: (z) => zoneStore.save(z),
     removeZone: (id) => zoneStore.remove(id),
     addZones: (list) => zoneStore.add(list),
