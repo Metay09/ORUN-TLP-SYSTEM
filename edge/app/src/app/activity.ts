@@ -31,6 +31,55 @@ export function hourlyActivity(pts: Observation[], end: number): (number | null)
   return act.map((a, i) => (cov[i] ? Math.min(1, a / cov[i]) : null));
 }
 
+
+/**
+ * Confirmed activity coverage over a rolling 24 hours.
+ *
+ * The collar reports active seconds and measured sensor coverage per PERIODIC
+ * record.  GPS distance is deliberately not used to infer activity.
+ * Reject malformed, duplicate and overlapping report periods. A report
+ * straddling the 24-hour boundary is excluded, not proportionally invented.
+ * Unknown time therefore includes missing/late reports and excluded fragments.
+ */
+export interface ActivityCoverage24h {
+  activeMs: number;
+  inactiveMs: number;
+  unknownMs: number;
+  coveredMs: number;
+  reports: number;
+}
+
+export function activityCoverage24h(pts: Observation[], end: number): ActivityCoverage24h {
+  const from = end - DAY;
+  const rows = timed(pts).filter(({ t }) => Number.isFinite(t) && t > from && t <= end)
+    .sort((a, b) => a.t - b.t);
+  const seen = new Set<string>();
+  let activeMs = 0, coveredMs = 0, reports = 0, priorEnd = from;
+  for (const { p, t } of rows) {
+    if (p.active_s === null || p.covered_s === null ||
+        !Number.isSafeInteger(p.active_s) || !Number.isSafeInteger(p.covered_s) ||
+        !Number.isSafeInteger(p.period_s) || p.period_s <= 0 ||
+        p.active_s < 0 || p.active_s > p.covered_s ||
+        p.covered_s <= 0 || p.covered_s > p.period_s) continue;
+    const key = `${p.tracker}:${p.incarnation ?? ""}:${p.seq}:${t}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const periodStart = t - p.period_s * 1000;
+    if (periodStart < from || periodStart < priorEnd) continue;
+    activeMs += p.active_s * 1000;
+    coveredMs += p.covered_s * 1000;
+    priorEnd = t;
+    reports++;
+  }
+  return {
+    activeMs,
+    inactiveMs: coveredMs - activeMs,
+    unknownMs: Math.max(0, DAY - coveredMs),
+    coveredMs,
+    reports,
+  };
+}
+
 export interface DaySummary {
   day: number;              // local midnight, ms
   records: number;
