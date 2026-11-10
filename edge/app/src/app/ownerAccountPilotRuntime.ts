@@ -4,7 +4,7 @@
 // Server positions sync automatically while signed in: newest position of
 // every tracker first, then history from the saved cursor (1. adım).
 import {
-  OwnerAccountClient, type AccountIdentity, type FarmGateway, type EdgeQueue,
+  OwnerAccountClient, type AccountIdentity, type FarmGateway, type EdgeQueueSnapshot,
 } from "./ownerAccountClient.ts";
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
@@ -146,7 +146,7 @@ export async function pilotGateways(): Promise<FarmGateway[] | null> {
 }
 
 /** Read-only, account-authorized PC spool status (not a direct Gateway ACK). */
-export async function pilotEdgeQueues(): Promise<EdgeQueue[] | null> {
+export async function pilotEdgeQueues(): Promise<EdgeQueueSnapshot | null> {
   if (!client || !pilotAccountStatus()) return null;
   return client.edgeQueues();
 }
