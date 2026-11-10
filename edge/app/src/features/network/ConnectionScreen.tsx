@@ -251,7 +251,7 @@ export function ConnectionScreen() {
             <span className="sm strong">{pcDelivered === null ? "— · güncel rapor yok" : `${fmt.num(pcDelivered)} kayıt`}</span>
           </div>
           <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-            <span className="sm">PC Edge reddedilen/çakışan</span>
+            <span className="sm">PC Edge sorunlu/karantinada</span>
             <span className="sm strong">{pcQuarantined === null ? "— · güncel rapor yok" : `${fmt.num(pcQuarantined)} kayıt`}</span>
           </div>
           <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
