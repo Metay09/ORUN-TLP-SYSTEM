@@ -80,7 +80,8 @@
 .cluster .vis {
   width: 46px; height: 46px; border-radius: 50%; border: 4px solid var(--fresh); background: #fff; color: #13241C; display: grid; place-items: center; flex: none;
   font-family: var(--display); font-weight: 800; font-size: 16px; box-shadow: 0 0 0 1.2px rgba(0, 0, 0, .32);
-  transform: scale(max(var(--ps, 1), .7));
+  /* Same visual diameter as the collision geometry in pinLayout.ts. */
+  transform: scale(var(--cs, 1));
 }
 .cluster.c-aging .vis { border-color: var(--aging); } .cluster.c-silent .vis { border-color: var(--silent); } .cluster.c-alarm .vis { border-color: var(--alarm); }
 
