@@ -111,8 +111,10 @@ class EdgeQueueApiTests(unittest.TestCase):
         self.assertEqual(self._req(self.account, "GET", read)[0], 401)
         self.assertEqual(self._req(self.bridge, "POST", write, body=sample)[0], 401)
         self.assertEqual(self._req(self.bridge, "POST", write, "wrong-bearer", sample)[0], 401)
-        self.assertEqual(self._req(self.account, "GET", read, self._login()),
-                         (200, {"edges": []}))
+        initial_status, empty = self._req(self.account, "GET", read, self._login())
+        self.assertEqual(initial_status, 200)
+        self.assertEqual(empty["edges"], [])
+        self.assertEqual(empty["server_confirmed"], 0)
         for invalid in (dict(sample, pending=-1), dict(sample, quarantined=True),
                         dict(sample, edge="invalid/id")):
             self.assertEqual(self._req(self.bridge, "POST", write, TOKEN, invalid)[0], 400)
@@ -120,6 +122,7 @@ class EdgeQueueApiTests(unittest.TestCase):
         token = self._login()
         status, body = self._req(self.account, "GET", read, token)
         self.assertEqual(status, 200)
+        self.assertEqual(body["server_confirmed"], 0)
         self.assertEqual(len(body["edges"]), 1)
         row = body["edges"][0]
         self.assertEqual((row["edge"], row["pending"], row["delivered"], row["quarantined"]),
