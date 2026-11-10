@@ -6,7 +6,7 @@ import type { Point } from "../src/core/points.ts";
 import { activityCoverage24h, daySummaries, hourlyActivity } from "../src/app/activity.ts";
 import { classify, coverageAt, coverageCells, coverageSummary } from "../src/app/coverage.ts";
 import { demoBook, demoPoints } from "../src/app/demo.ts";
-import { deriveEvents, isActive } from "../src/app/events.ts";
+import { activeCount, deriveEvents, isActive } from "../src/app/events.ts";
 import { buildHerd } from "../src/app/herd.ts";
 import type { ServerView, Station } from "../src/app/model.ts";
 
@@ -162,4 +162,16 @@ test("activity coverage: missing, overlapping, malformed and boundary records ne
   assert.equal(s.unknownMs, 24 * 3600_000 - 60_000);
   assert.equal(s.reports, 1);
   assert.equal(activityCoverage24h([], NOW).unknownMs, 24 * 3600_000);
+});
+
+test("Gördüm: still-active incident is removed from attention count, not resolved", () => {
+  const pts = [rec("A", 240, { active_s: 0, covered_s: 900, seq: 1 })];
+  const all = events(pts);
+  const warning = all.find(isActive);
+  assert.ok(warning, "must generate at least one active warning");
+  assert.equal(activeCount(all, new Set()), all.filter(isActive).length);
+  const acknowledged = new Set([warning.id]);
+  assert.equal(activeCount(all, acknowledged), all.filter(isActive).length - 1);
+  assert.ok(isActive(warning), "acknowledgement does not change domain state");
+  assert.equal(activeCount(all, new Set()), all.filter(isActive).length, "restoring makes it visible again");
 });
