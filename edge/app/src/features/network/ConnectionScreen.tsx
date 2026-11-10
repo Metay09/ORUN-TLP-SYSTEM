@@ -268,7 +268,7 @@ export function ConnectionScreen() {
               <summary>Kaynaklara göre sayaçlar ve son ölçüm</summary>
               {edgeQueues?.map((edge) => (
                 <div className="row" key={edge.edge} style={{ justifyContent: "space-between", gap: 8, padding: "8px 16px" }}>
-                  <span className="sm">{edge.edge} · {fmt.ago(edge.lastSeen, m.now)} önce</span>
+                  <span className="sm">{edge.edge} · {fmt.ago(edge.lastSeen, m.now)}</span>
                   <span className="sm strong">
                     {fmt.num(edge.pending)} bekleyen / {fmt.num(edge.delivered)} onaylı / {fmt.num(edge.quarantined)} sorunlu
                     {m.now - edge.lastSeen > 5 * 60_000 ? " · eski ölçüm" : ""}
@@ -277,7 +277,7 @@ export function ConnectionScreen() {
               ))}
               {collarSamples.map((sample) => (
                 <div className="row" key={sample.device} style={{ justifyContent: "space-between", gap: 8, padding: "8px 16px" }}>
-                  <span className="sm">{label(sample.device)} · {sample.via.toUpperCase()} · {fmt.ago(sample.at, m.now)} önce</span>
+                  <span className="sm">{label(sample.device)} · {sample.via.toUpperCase()} · {fmt.ago(sample.at, m.now)}</span>
                   <span className="sm strong">
                     {fmt.num(sample.count)} / {fmt.num(sample.capacity)} bellek
                     {m.now - sample.at > 5 * 60_000 ? " · eski ölçüm" : ""}
