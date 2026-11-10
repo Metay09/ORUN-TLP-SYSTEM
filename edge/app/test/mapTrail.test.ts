@@ -39,3 +39,10 @@ test("map trail: repeated timestamp is not an extra segment", () => {
   assert.equal(s.breaks, 0);
   assert.equal(s.runs[0].length, 2);
 });
+
+test("map trail: a real corner remains visible instead of being straightened", () => {
+  const p = [point(0, 37, 28), point(60, 37.0003, 28), point(120, 37.0003, 28.0003)];
+  const s = readableTrail(p);
+  assert.equal(s.breaks, 0);
+  assert.equal(s.runs[0].length, 3);
+});
