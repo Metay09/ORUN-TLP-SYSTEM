@@ -1,7 +1,7 @@
 // Olaylar: what needs a look now on top, then the whole book by day —
 // warnings with measurement and arrival times, links, hand-offs, uploads and
 // the owner's notes.
-import { useState } from "react";
+import { useRef, useState, type TouchEvent } from "react";
 import {
   BatteryWarning, Bell, Bluetooth, CheckCircle, CloudArrowUp, CloudCheck, Cow, HardDrives, Key, NavigationArrow, Note,
   PersonSimpleWalk, Polygon, WifiSlash,
@@ -34,10 +34,30 @@ function iconOf(e: AppEvent) {
 
 const toneOf = (e: AppEvent) => (e.severity === "danger" ? "alarm" : e.severity === "warn" ? "aging" : e.kind === "note" ? "info" : e.kind === "handoff" || e.kind === "upload" ? "fresh" : "");
 
-export function EventRow({ e, now, seen, onSeen, onOpen, onFind, onMap }: {
-  e: AppEvent; now: number; seen?: boolean; onSeen?: () => void; onOpen?: () => void;
-  onFind?: () => void; onMap?: () => void;
+export function EventRow({ e, now, seen, onSeen, onRestore, onOpen, onFind, onMap }: {
+  e: AppEvent; now: number; seen?: boolean; onSeen?: () => void; onRestore?: () => void;
+  onOpen?: () => void; onFind?: () => void; onMap?: () => void;
 }) {
+  // Only deliberate horizontal swipes acknowledge an alert. Vertical scrolling
+  // must keep working, and a swipe may not accidentally open the animal card.
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const suppressClickUntil = useRef(0);
+  const swipeStart = (ev: TouchEvent<HTMLElement>) => {
+    const t = ev.touches[0];
+    touchStart.current = onSeen && !seen && t ? { x: t.clientX, y: t.clientY } : null;
+  };
+  const swipeEnd = (ev: TouchEvent<HTMLElement>) => {
+    const origin = touchStart.current;
+    touchStart.current = null;
+    const t = ev.changedTouches[0];
+    if (!origin || !t || !onSeen || seen) return;
+    const dx = t.clientX - origin.x, dy = t.clientY - origin.y;
+    if (Math.abs(dx) < 90 || Math.abs(dx) < 1.4 * Math.abs(dy)) return;
+    suppressClickUntil.current = Date.now() + 650;
+    onSeen(); // both left and right swipes = "Gördüm", never "Çözüldü"
+  };
+  const swipeProps = { onTouchStart: swipeStart, onTouchEnd: swipeEnd,
+    onTouchCancel: () => { touchStart.current = null; } };
   const active = isActive(e);
   const tone = toneOf(e);
   const meta: string[] = [];
@@ -59,7 +79,7 @@ export function EventRow({ e, now, seen, onSeen, onOpen, onFind, onMap }: {
         <span className="ct" style={{ fontSize: 15 }}>{e.title}</span>
         {e.detail && <span className="cs wrap">{e.detail}</span>}
         {meta.length > 0 && <span className="meta">{meta.filter(Boolean).join(" · ")}</span>}
-        {active && (onSeen || onFind || onMap) && (
+        {active && (onSeen || onRestore || onFind || onMap) && (
           <span className="ev-acts">
             {onFind && (
               <button className="btn small signal" onClick={(ev) => { ev.stopPropagation(); onFind(); }}>
@@ -70,8 +90,13 @@ export function EventRow({ e, now, seen, onSeen, onOpen, onFind, onMap }: {
               <button className="btn small" onClick={(ev) => { ev.stopPropagation(); onMap(); }}>{tr.events.showOnMap}</button>
             )}
             {onSeen && (
-              <button className="btn small quiet" disabled={seen} onClick={(ev) => { ev.stopPropagation(); onSeen(); }}>
-                {seen ? tr.events.seenDone : tr.events.seen}
+              <button className="btn small quiet" onClick={(ev) => { ev.stopPropagation(); onSeen(); }}>
+                {tr.events.seen}
+              </button>
+            )}
+            {onRestore && (
+              <button className="btn small quiet" onClick={(ev) => { ev.stopPropagation(); onRestore(); }}>
+                Tekrar göster
               </button>
             )}
           </span>
@@ -80,7 +105,12 @@ export function EventRow({ e, now, seen, onSeen, onOpen, onFind, onMap }: {
       {!e.alert && <span className="time">{fmt.clock(e.at)}</span>}
     </>
   );
-  return onOpen ? <button className="ev" onClick={onOpen}>{body}</button> : <div className="ev">{body}</div>;
+  return onOpen
+    ? <button className="ev" {...swipeProps} onClick={(ev) => {
+        if (Date.now() < suppressClickUntil.current) { ev.preventDefault(); return; }
+        onOpen();
+      }}>{body}</button>
+    : <div className="ev" {...swipeProps}>{body}</div>;
 }
 
 export function EventsScreen() {
@@ -90,6 +120,8 @@ export function EventsScreen() {
   const importance = { danger: 0, warn: 1, info: 2, ok: 3 };
   const active = m.events.filter(isActive).sort((a, b) =>
     importance[a.severity] - importance[b.severity] || b.at - a.at);
+  const unread = active.filter((e) => !m.seen.has(e.id));
+  const acknowledged = active.filter((e) => m.seen.has(e.id));
   const rest = m.events.filter((e) => !isActive(e)).filter((e) =>
     filter === "all" || (filter === "alerts" && e.alert) || (filter === "animals" && e.asset !== null) ||
     (filter === "system" && e.asset === null));
@@ -114,13 +146,22 @@ export function EventsScreen() {
         <Empty icon={<Bell size={34} />} title={tr.events.empty} body={tr.events.emptyBody} />
       ) : (
         <>
-          <Section title={`${tr.events.now} · ${active.length} açık`}
-            info="Kritik olaylar önce gelir. 'Gördüm' yalnız okunduğunu işaretler; olay yeni ölçümle normale dönünce kapanır." />
+          <Section title={`${tr.events.now} · ${unread.length} yeni uyarı`}
+            info="Sağa veya sola kaydır ya da Gördüm'e bas: uyarı ana listeden gizlenir, sorun çözülmüş sayılmaz." />
           {m.grazing && <p className="sm lead">{tr.events.grazingNote(grazeUntil)}</p>}
-          {active.length ? (
-            <Card>{active.map((e) => <EventRow key={e.id} e={e} now={m.now} seen={m.seen.has(e.id)} onSeen={() => m.actions.markSeen(e.id)} onOpen={open(e)}
+          {unread.length ? (
+            <Card>{unread.map((e) => <EventRow key={e.id} e={e} now={m.now}
+              onSeen={() => m.actions.markSeen(e.id)} onOpen={open(e)}
               onFind={find(e)} onMap={onMap(e)} />)}</Card>
-          ) : <p className="sm lead">{tr.events.nothingNow}</p>}
+          ) : <p className="sm lead">{acknowledged.length ? "Yeni uyarı yok. Görülen ancak devam eden uyarılar aşağıda." : tr.events.nothingNow}</p>}
+          {acknowledged.length > 0 && (
+            <details className="tech">
+              <summary>Görülen ama devam eden · {acknowledged.length}</summary>
+              <Card>{acknowledged.map((e) => <EventRow key={e.id} e={e} now={m.now}
+                seen onRestore={() => m.actions.unmarkSeen(e.id)}
+                onOpen={open(e)} onFind={find(e)} onMap={onMap(e)} />)}</Card>
+            </details>
+          )}
           <Chips<Filter> value={filter} onChange={setFilter} options={[
             { value: "all", label: tr.events.filters.all }, { value: "alerts", label: tr.events.filters.alerts },
             { value: "animals", label: tr.events.filters.animals }, { value: "system", label: tr.events.filters.system },
