@@ -332,11 +332,11 @@ export function HerdRows({ herd, me, now, onPick }: { herd: Animal[]; me: LatLon
   );
 }
 
-function Selected({ a, me, now, pts, cursor, playing, range, win, onClose, onFind, onProfile, onCursor, onPlay, onRange }: {
-  a: Animal; me: LatLon | null; now: number; pts: Animal["points"]; cursor: number | null; playing: boolean;
-  range: Range; win: { from: number; to: number } | null;
+function Selected({ a, me, now, pts, breaks, cursor, playing, range, win, onClose, onFind, onProfile, onCursor, onPlay, onRange }: {
+  a: Animal; me: LatLon | null; now: number; pts: Animal["points"]; breaks: number; cursor: number | null; playing: boolean;
+  range: TrailRange; win: { from: number; to: number } | null;
   onClose: () => void; onFind: () => void; onProfile: () => void;
-  onCursor: (c: number) => void; onPlay: () => void; onRange: (r: Range) => void;
+  onCursor: (c: number) => void; onPlay: () => void; onRange: (r: TrailRange) => void;
 }) {
   const tone = toneOfStatus(a.status);
   useEffect(() => { startPosition(); }, []);   // distance needs the phone's position
@@ -366,8 +366,10 @@ function Selected({ a, me, now, pts, cursor, playing, range, win, onClose, onFin
         <button className="btn grow" onClick={onProfile}>{tr.map.profile}</button>
       </div>
       <div className="timebar">
-        {!win && <Chips value={range} onChange={onRange} options={RANGES.map((r) => ({ value: r, label: tr.map.range[r] }))} />}
+        {!win && <Chips<TrailRange> value={range} onChange={onRange} options={RANGES.map((r) => ({ value: r, label: r === "recent" ? "2 saat" : tr.map.range[r] }))} />}
         {win && <span className="sm strong">{fmt.day(win.from, now)}</span>}
+        <span className="fine">{range === "recent" && !win ? "Son 2 saatin konum izi." : "Seçilen dönemin konum izi."} Başlangıç: beyaz nokta · son konum: hayvan işareti.</span>
+        {breaks > 0 && <span className="fine">{breaks} iz kesintisi var; eksik konumların arasına çizgi çekilmedi.</span>}
         {pts.length > 1 ? (
           <>
             <div className="row">
