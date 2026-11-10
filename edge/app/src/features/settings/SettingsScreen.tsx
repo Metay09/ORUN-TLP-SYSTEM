@@ -1,10 +1,11 @@
-// Ayarlar: hesap, internetsiz harita, görünüm ve hakkında.
+// Ayarlar: hesap, tasma ayarları, internetsiz harita, görünüm ve hakkında.
 import { tr } from "../../app/i18n/tr.ts";
 import { useApp } from "../../app/store.ts";
 import type { Theme } from "../../app/stores.ts";
 import { Card, Header, KV, Section, Seg, ToggleRow } from "../../ds/components.tsx";
 import { AccountLoginPanel } from "./AccountLoginPanel.tsx";
 import { OfflineMapPanel } from "./OfflineMapPanel.tsx";
+import { TrackerSettingsPanel } from "./TrackerSettingsPanel.tsx";
 
 declare const __APP_VERSION__: string;
 
@@ -15,6 +16,7 @@ export function SettingsScreen() {
     <div className="page">
       <Header title={tr.settings.title} />
       <AccountLoginPanel />
+      <TrackerSettingsPanel />
       <OfflineMapPanel />
 
       <Section title={tr.settings.look} />

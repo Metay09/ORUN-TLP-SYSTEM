@@ -96,6 +96,47 @@ export function settingRows(e: DeviceSettingsEntry | null | undefined, observed:
   });
 }
 
+/** One setting across the whole herd (Ayarlar → Tasma ayarları). */
+export interface FleetRow {
+  def: SettingDef;
+  total: number;
+  values: { value: number | boolean; count: number }[];   // most common first
+  waiting: number;                                         // asked for, not yet on the collar
+  unknown: number;                                         // never read, nothing observed
+}
+
+export function fleetRows(
+  devices: { id: string; observed?: SettingValues }[], entries: Record<string, DeviceSettingsEntry>,
+): FleetRow[] {
+  const perDevice = devices.map((d) => settingRows(entries[d.id.toUpperCase()], d.observed));
+  return SETTINGS.map((def, i) => {
+    const counts = new Map<number | boolean, number>();
+    let waiting = 0, unknown = 0;
+    for (const rows of perDevice) {
+      const r = rows[i];
+      if (r.state === "waiting") waiting++;
+      if (r.value === null) unknown++;
+      else counts.set(r.value, (counts.get(r.value) ?? 0) + 1);
+    }
+    const values = [...counts].map(([value, count]) => ({ value, count })).sort((x, y) => y.count - x.count);
+    return { def, total: devices.length, values, waiting, unknown };
+  });
+}
+
+/** The value every collar shares, or null when they differ / none is known. */
+export const fleetCommon = (r: FleetRow): number | boolean | null =>
+  (r.values.length === 1 && r.unknown === 0 ? r.values[0].value : null);
+
+export function fleetLine(r: FleetRow): { value: string; sub: string; waiting: boolean } {
+  const value = r.values.length === 0 ? "—" : r.values.length === 1 ? r.def.word(r.values[0].value) : "Karışık";
+  const parts: string[] = [];
+  if (r.values.length > 1) parts.push(r.values.map((v) => `${v.count} tasma ${r.def.word(v.value)}`).join(" · "));
+  if (r.waiting) parts.push(`${r.waiting} tasma bekliyor, bağlanınca işlenir`);
+  else if (r.values.length === 1 && r.unknown === 0) parts.push(r.total === 1 ? "Tasmada" : `${r.total} tasmanın hepsinde`);
+  if (r.unknown) parts.push(`${r.unknown} tasmadan henüz okunmadı`);
+  return { value, sub: parts.join(" · "), waiting: r.waiting > 0 };
+}
+
 export interface SettingsServer {
   deviceSettings(): Promise<Record<string, DeviceSettingsEntry>>;
   wantSettings(devices: string[], set: SettingValues): Promise<void>;
