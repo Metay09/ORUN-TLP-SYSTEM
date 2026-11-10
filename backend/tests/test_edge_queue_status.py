@@ -9,6 +9,11 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import orun_pc_edge as pe  # noqa: E402
 
 from backend.account_login import AccountStore
 from backend.edge_queue_status import (
@@ -120,6 +125,55 @@ class EdgeQueueApiTests(unittest.TestCase):
         self.assertEqual((row["edge"], row["pending"], row["delivered"], row["quarantined"]),
                          ("pc-a", 8, 21, 1))
         self.assertGreater(row["seen_utc"], 1_700_000_000)
+
+
+class EdgeQueueUploaderTests(unittest.TestCase):
+    def test_uploader_reports_actual_spool_counts_without_mutating_delivery(self):
+        with tempfile.TemporaryDirectory(prefix="orun-pc-queue-") as root:
+            folder = Path(root)
+            inbox = pe.Inbox(folder / "spool.sqlite")
+            token = folder / "bridge.token"
+            token.write_text(TOKEN, encoding="ascii")
+            token.chmod(0o600)
+
+            class Response:
+                status = 200
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    return False
+
+                def read(self, _size):
+                    return b'{"ok":true}'
+
+            class FakeOpener:
+                requests = []
+
+                def open(self, request, timeout):
+                    self.requests.append(request)
+                    self_timeout = timeout
+                    assert self_timeout == 5
+                    return Response()
+
+            with patch.object(pe, "checked_backend", return_value="http://127.0.0.1:8090"):
+                uploader = pe.Uploader(inbox, "http://127.0.0.1:8090", token, "pc-a")
+            fake = FakeOpener()
+            uploader.opener = fake
+            uploader.report_queue_status()
+            self.assertEqual(len(fake.requests), 1)
+            self.assertEqual(fake.requests[0].get_full_url(),
+                             "http://127.0.0.1:8090/v1/bridge/edge-status")
+            body = json.loads(fake.requests[0].data)
+            self.assertEqual(body, {
+                "edge": "pc-a", "pending": 0, "delivered": 0, "quarantined": 0,
+            })
+            uploader.report_queue_status()  # 120 s throttle
+            self.assertEqual(len(fake.requests), 1)
+            self.assertEqual(inbox.counts(), {
+                "pending": 0, "delivered": 0, "quarantined": 0,
+            })
 
 
 if __name__ == "__main__":
