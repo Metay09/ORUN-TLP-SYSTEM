@@ -198,7 +198,9 @@ export function ConnectionScreen() {
     m.now >= x.at && m.now - x.at <= 5 * 60_000);
   const collarStored = freshCollars.length
     ? freshCollars.reduce((sum, x) => sum + x.count, 0) : null;
-  const reportedGateways = (gateways ?? []).filter((g) => g.held !== null);
+  const reportedGateways = (gateways ?? []).filter((g) =>
+    g.held !== null && g.statusAt !== null && m.now >= g.statusAt &&
+    m.now - g.statusAt <= 5 * 60_000);
   const gatewayMemory = reportedGateways.length
     ? reportedGateways.reduce((sum, g) => sum + (g.held ?? 0), 0)
     : st.phase === "connected" ? st.held : null;
@@ -263,9 +265,18 @@ export function ConnectionScreen() {
             <span className="sm strong">{sv.uploaded === null ? "— · sayaç alınmadı" : `${fmt.num(sv.uploaded)} kayıt`}</span>
           </div>
           <span className="fine">Kayıtlar aşamalar arasında kopyalanmış olabilir; bu sayıları toplayıp benzersiz paket sayısı sayma. Tasma değeri doğrudan APP STORAGE belleğidir, kesin LoRa/ACK kuyruğu değildir. PC Edge değerleri sunucu tarafından onaylanan son defter özetidir. Telefonun onayı çiftlik toplamı değildir.</span>
-          {(edgeQueues !== null || collarSamples.length > 0) && (
+          {(edgeQueues !== null || collarSamples.length > 0 || (gateways ?? []).some((g) => g.held !== null)) && (
             <details className="tech">
               <summary>Kaynaklara göre sayaçlar ve son ölçüm</summary>
+              {(gateways ?? []).filter((g) => g.held !== null).map((gateway) => (
+                <div className="row" key={gateway.gateway} style={{ justifyContent: "space-between", gap: 8, padding: "8px 16px" }}>
+                  <span className="sm">{label(gateway.gateway)} · {gateway.statusAt === null ? "ölçüm zamanı yok" : fmt.ago(gateway.statusAt, m.now)}</span>
+                  <span className="sm strong">
+                    {fmt.num(gateway.held!)} bellek
+                    {gateway.statusAt === null || m.now - gateway.statusAt > 5 * 60_000 ? " · eski ölçüm" : ""}
+                  </span>
+                </div>
+              ))}
               {edgeQueues?.map((edge) => (
                 <div className="row" key={edge.edge} style={{ justifyContent: "space-between", gap: 8, padding: "8px 16px" }}>
                   <span className="sm">{edge.edge} · {fmt.ago(edge.lastSeen, m.now)}</span>
