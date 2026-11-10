@@ -6,7 +6,7 @@ import { App as CapApp } from "@capacitor/app";
 import { Bell, CellTower, Cow, GearSix, MapTrifold } from "@phosphor-icons/react";
 import { activeCount } from "./app/events.ts";
 import { tr } from "./app/i18n/tr.ts";
-import { NavContext, runBack, type MapFocus, type Nav, type Route, type Tab } from "./app/nav.ts";
+import { backFallback, NavContext, runBack, type MapFocus, type Nav, type Route, type Tab } from "./app/nav.ts";
 import { ModelContext, useModel } from "./app/store.ts";
 import type { Theme } from "./app/stores.ts";
 import { EventsScreen } from "./features/events/EventsScreen.tsx";
@@ -81,11 +81,13 @@ export function App() {
   useEffect(() => {
     const h = CapApp.addListener("backButton", () => {
       if (runBack()) return;
-      if (tab !== "map") setTab("map");
+      const action = backFallback(tab, stack.length);
+      if (action === "pop") pop();
+      else if (action === "map") setTab("map");
       else void CapApp.minimizeApp();
     });
     return () => { void h.then((x) => x.remove()); };
-  }, [tab, setTab]);
+  }, [tab, stack.length, pop, setTab]);
 
   const alerts = activeCount(model.events, model.seen);
   // Bağlantı sekmesinin rengi: veri geliyor mu (Meshtastic'teki gibi).
@@ -102,7 +104,7 @@ export function App() {
     lastSyncAt: sync.last?.at ?? null, now: model.now,
   });
   void link;
-  // Telefon bir gateway'e köprüyse sunucuya bildir (Cihazlar → Gateway'ler).
+  // Telefon bir gateway'e köprüyse sunucuya bildir (Bağlantı → Gateway'ler).
   const st = model.station;
   useEffect(() => {
     if (st.link === "none" || st.phase !== "connected" || !st.id) return;

@@ -16,7 +16,7 @@ import { targetLabel } from "./ZoneTargets.tsx";
 export function ZonesScreen() {
   const m = useApp();
   const nav = useNav();
-  useBack(() => nav.pop());
+  useBack(() => nav.pop(), nav.stack[nav.stack.length - 1]?.to === "zones");
   const file = useRef<HTMLInputElement>(null);
   const [note, setNote] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -117,7 +117,7 @@ export function ZonesScreen() {
                   : "Alanlar için henüz tasma seçilmedi"}
               </span>
               {changed.length > 0 && <span className="fine">{changed.map((p) => p.name).join(", ")}</span>}
-              {queued > 0 && <span className="fine">{changed.length ? `${queued} tasmada alan işlemi sırada · ` : ""}Tasmaya bağlanınca (şimdilik USB) işlenir; ilerleme Cihazlar → İşlemler'de.</span>}
+              {queued > 0 && <span className="fine">{changed.length ? `${queued} tasmada alan işlemi sırada · ` : ""}Tasmaya bağlanınca (şimdilik USB) işlenir; ilerleme Bağlantı → İşlemler'de.</span>}
               {!plans.some((p) => p.state !== "none") && <span className="fine">Alana dokun → "Hangi tasmalar"dan Hepsi'ni ya da hayvanları seç.</span>}
               <button className="btn primary wide" disabled={!changed.length} onClick={() => setSending(true)}>Tasmalara uygula</button>
             </div>
