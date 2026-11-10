@@ -2,9 +2,9 @@
 // güvende mi?" ve "Bu telefon" kartı; Bluetooth / USB seçici ve yakındaki ORUN
 // cihazları; sonra bütün cihazlar türüne göre (Gateway'ler, Tasmalar; ileride
 // Sensörler, Vanalar), her biri kendi ekranına açılır; gruplar; teknik ayrıntılar.
-import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
-  Bluetooth, CaretRight, CellSignalFull, CloudCheck, DeviceMobile, MagnifyingGlass, MapPin, Question, Usb, WifiHigh, WifiSlash, X,
+  Bluetooth, CaretRight, CellSignalFull, MagnifyingGlass, MapPin, Question, Usb, WifiHigh, WifiSlash, X,
 } from "@phosphor-icons/react";
 import { noRoleMessage, probeUsbDevice, setRoleAndReconnect, type DeviceRole, type GnssHint } from "../../app/addTracker.ts";
 import { bleName } from "../../app/deviceNames.ts";
@@ -13,7 +13,7 @@ import { useNav } from "../../app/nav.ts";
 import type { FarmGateway, EdgeQueue } from "../../app/ownerAccountClient.ts";
 import { collarStorageReadings } from "../../app/collarStorageReadings.ts";
 import {
-  deviceNames, onPilotAccountChange, onPilotObservationSync, pilotAccountStatus, pilotGateways, pilotEdgeQueues, pilotObservationSyncState,
+  deviceNames, onPilotAccountChange, pilotAccountStatus, pilotGateways, pilotEdgeQueues,
 } from "../../app/ownerAccountPilotRuntime.ts";
 import { useApp } from "../../app/store.ts";
 import { Bar, Card, Cell, Header, KV, Section, Seg } from "../../ds/components.tsx";
@@ -29,9 +29,10 @@ import { BulkSettingsDialog } from "../devices/BulkSettings.tsx";
 import { useDeviceSettings } from "../devices/DeviceScreen.tsx";
 import { GroupsSection } from "../devices/GroupsSection.tsx";
 import { OpDialog, useOps } from "../devices/Ops.tsx";
-import { groupLine, groupOps, KIND_WORD } from "../../app/deviceOps.ts";
+import { groupLine, operationSections, KIND_WORD } from "../../app/deviceOps.ts";
 import { useTrackerFences } from "../zones/ApplyFence.tsx";
-import { farmChain, gatewayFacts, gatewayLine, stationWords, type ChainNode } from "./words.ts";
+import { gatewayFacts, gatewayLine, stationWords } from "./words.ts";
+import { transferStages } from "./transferFlow.ts";
 
 type Via = "ble" | "usb";
 
@@ -47,17 +48,22 @@ export function ConnectionScreen() {
   const m = useApp();
   const nav = useNav();
   const pos = usePosition();
-  const st = m.station, s = m.snap, sv = m.server;
+  const st = m.station, s = m.snap;
   const words = stationWords(st, s);
   const linkOn = st.link !== "none";
   const held = st.held ?? 0;
   const [account, setAccount] = useState(() => pilotAccountStatus());
-  const [sync, setSync] = useState(pilotObservationSyncState);
+  const accountScope = account ? [account.site, account.actor, account.installation, account.username].join(":") : null;
   const [via, setVia] = useState<Via>("ble");
   const [marking, setMarking] = useState(false);
   const [gateways, setGateways] = useState<FarmGateway[] | null>(null);
   const [edgeQueues, setEdgeQueues] = useState<EdgeQueue[] | null>(null);
   const [serverConfirmed, setServerConfirmed] = useState<number | null>(null);
+  const [serverReadAt, setServerReadAt] = useState<number | null>(null);
+  const [edgeError, setEdgeError] = useState<string | null>(null);
+  const [phoneGatewayReading, setPhoneGatewayReading] = useState<{
+    id: string; held: number; capacity: number; at: number;
+  } | null>(null);
   const [nearby, setNearby] = useState<NearbyDevice[]>([]);
   const [scanning, setScanning] = useState(false);
   const [note, setNote] = useState("");
@@ -66,18 +72,17 @@ export function ConnectionScreen() {
   const [live, setLive] = useState<{ device: string | null; target: LiveTarget; bleId?: string } | null>(null);
   const [adding, setAdding] = useState(false);
   const [naming, setNaming] = useState<string | null>(null);
-  const [node, setNode] = useState<ChainNode["key"] | null>(null);
   const [bulk, setBulk] = useState(false);
   const settings = useDeviceSettings();
   const fencePlans = useTrackerFences();
   const opRows = useOps();
   const queued = new Set(opRows.filter((r) => r.kind === "fence" && (r.state === "waiting" || r.state === "gateway")).map((r) => r.device));
-  const groups = groupOps(opRows.filter((r) => r.state !== "superseded")).slice(0, 5);
+  const operations = operationSections(opRows);
+  const groups = operations.active;
   const [opOpen, setOpOpen] = useState<string | null>(null);
   const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
   const collarReadings = useSyncExternalStore(collarStorageReadings.subscribe, collarStorageReadings.snapshot);
   const label = (id: string) => names[id.toUpperCase()] ?? bleName(id);
-  useEffect(() => onPilotObservationSync(() => setSync(pilotObservationSyncState())), []);
   useEffect(() => onPilotAccountChange(() => setAccount(pilotAccountStatus())), []);
   useEffect(() => {
     if (marking && pos.pos) { m.actions.markStation({ lat: pos.pos.lat, lon: pos.pos.lon }); setMarking(false); }
@@ -88,27 +93,40 @@ export function ConnectionScreen() {
     let live = true;
     const load = () => {
       pilotGateways().then((g) => { if (live) setGateways(g); })
-        .catch(() => { if (live) setGateways(null); });
+        .catch(() => { /* keep the last valid reading, with its timestamp */ });
       pilotEdgeQueues().then((q) => {
         if (live) {
           setEdgeQueues(q?.edges ?? null);
           setServerConfirmed(q?.serverConfirmed ?? null);
+          setServerReadAt(q ? Date.now() : null);
+          setEdgeError(null);
         }
-      }).catch(() => {
-        if (live) { setEdgeQueues(null); setServerConfirmed(null); }
+      }).catch((e: unknown) => {
+        if (live) setEdgeError(e instanceof Error ? e.message : "PC Edge bilgisi okunamadı.");
       });
     };
     load();
     const t = setInterval(load, 60_000);
     return () => { live = false; clearInterval(t); };
-  }, [account?.installation]);
+  }, [accountScope]);
   useEffect(() => {
     // A direct BLE/USB observation is local to this phone/account session.
     // Do not leak a prior account's collar memory snapshot after sign-out.
-    collarStorageReadings.clear();
+    collarStorageReadings.setScope(accountScope);
+    setPhoneGatewayReading(null);
+    setGateways(null);
     setEdgeQueues(null);
     setServerConfirmed(null);
-  }, [account?.installation]);
+    setServerReadAt(null);
+    setEdgeError(null);
+  }, [accountScope]);
+
+  // Time a Gateway HELLO/count observation when its reported value changes,
+  // not every render (which would make an old reading appear permanently fresh).
+  useEffect(() => {
+    if (st.phase === "connected" && st.id && st.held !== null && st.capacity !== null)
+      setPhoneGatewayReading({ id: st.id.toUpperCase(), held: st.held, capacity: st.capacity, at: Date.now() });
+  }, [st.id, st.phase, st.held, st.capacity, accountScope]);
 
   const scan = useCallback(async () => {
     if (scanning) return;
@@ -183,134 +201,51 @@ export function ConnectionScreen() {
   }).sort((x, y) => Number(y.problem) - Number(x.problem) || x.name.localeCompare(y.name, "tr"));
 
   const others = (gateways ?? []).filter((g) => !(linkOn && s.gateway && g.gateway.toUpperCase() === s.gateway.toUpperCase()));
-  const chain = farmChain({
-    trackers: m.herd.filter((a) => a.last).length,
-    fresh: m.herd.filter((a) => a.freshness === "fresh").length,
-    gateways: account ? gateways : null,
-    phoneGateway: linkOn && st.phase === "connected" && st.id ? { id: st.id, link: st.link as "ble" | "usb" } : null,
-    signedIn: Boolean(account), sync, pending: sv.pending, now: m.now, label,
+  const flow = transferStages({
+    now: Date.now(),
+    trackerIds: m.herd.filter((a) => a.device).map((a) => a.device!),
+    collars: Object.values(collarReadings),
+    gateways,
+    localGateway: {
+      id: st.id, connected: linkOn && st.phase === "connected",
+      held: st.held, capacity: st.capacity,
+      readAt: phoneGatewayReading && phoneGatewayReading.id === st.id?.toUpperCase()
+        ? phoneGatewayReading.at : null,
+    },
+    edges: edgeQueues,
+    serverConfirmed,
+    serverReadAt,
+    label,
   });
-  // Freshness applies to the PC Edge heartbeat only; last-known values are
-  // still visible per PC when the producer is temporarily offline.
-  const connectedEdges = (edgeQueues ?? []).filter((edge) =>
-    m.now >= edge.lastSeen && m.now - edge.lastSeen <= 5 * 60_000);
-  const pcPending = connectedEdges.length
-    ? connectedEdges.reduce((sum, edge) => sum + edge.pending, 0) : null;
-  const pcDelivered = connectedEdges.length
-    ? connectedEdges.reduce((sum, edge) => sum + edge.delivered, 0) : null;
-  const pcQuarantined = connectedEdges.length
-    ? connectedEdges.reduce((sum, edge) => sum + edge.quarantined, 0) : null;
-  const collarSamples = Object.values(collarReadings).filter((x) =>
-    m.herd.some((a) => a.device?.toUpperCase() === x.device));
-  const freshCollars = collarSamples.filter((x) =>
-    m.now >= x.at && m.now - x.at <= 5 * 60_000);
-  const collarStored = freshCollars.length
-    ? freshCollars.reduce((sum, x) => sum + x.count, 0) : null;
-  const reportedGateways = (gateways ?? []).filter((g) =>
-    g.held !== null && g.statusAt !== null && m.now >= g.statusAt &&
-    m.now - g.statusAt <= 5 * 60_000);
-  const gatewayMemory = reportedGateways.length
-    ? reportedGateways.reduce((sum, g) => sum + (g.held ?? 0), 0)
-    : st.phase === "connected" ? st.held : null;
-  const gatewayMemorySources = reportedGateways.length || (st.phase === "connected" && st.held !== null ? 1 : 0);
-  const picked = chain.nodes.find((n) => n.key === node) ?? null;
-  const ICON = { tasmalar: <CellSignalFull size={22} />, gateway: <WifiHigh size={22} />, sunucu: <CloudCheck size={22} />, telefon: <DeviceMobile size={22} /> };
   return (
     <div className="page">
       <Header title={tr.network.title} />
 
-      <Section title={tr.network.chain}
-        info="Kayıt tasmadan gateway'e, oradan sunucuya, sunucudan telefonlara gider. Bir kayıt ancak sonraki halka onu kalıcı yazdıktan sonra öncekinden silinir; bağlantı koparsa kayıt beklediği yerde durur, kaybolmaz. Bir halkaya dokununca ayrıntısı görünür." />
+      <Section title="Kayıt aktarımı"
+        info="Tasma → Gateway → PC Edge → Sunucu. Her aşamanın sayısı farklı anlama gelir; toplanmaz. Son bilinen ölçüm, eskidiğinde de zamanıyla gösterilir." />
       <Card>
-        <div className="chain">
-          {chain.nodes.map((n, idx) => (
-            <Fragment key={n.key}>
-              {idx > 0 && <span className={"wire " + chain.wires[idx - 1]} />}
-              <button className="node" type="button" aria-pressed={node === n.key}
-                onClick={() => setNode(node === n.key ? null : n.key)}>
-                <span className={"nd ic " + n.tone}>{ICON[n.key]}</span>
-                <b>{n.title}</b>
-                <span>{n.sub}</span>
-              </button>
-            </Fragment>
-          ))}
-        </div>
-        {picked && (
-          <p className="sm chain-detail">
-            {picked.detail}
-            {picked.key === "telefon" && !account && <> · <button className="lnk" onClick={() => nav.setTab("settings")}>Giriş yap</button></>}
-            {picked.key === "tasmalar" && m.herd.length > 0 && <> · <button className="lnk" onClick={() => nav.setTab("herd")}>Sürü</button></>}
-          </p>
-        )}
-        <div className="stack" style={{ padding: "8px 16px 16px", gap: 10 }}>
-          <span className="strong">Kayıt ve kuyruk durumu</span>
-          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-            <span className="sm">Tasma belleği (doğrudan okuma)</span>
-            <span className="sm strong">{collarStored === null ? "— · güncel okuma yok" : `${fmt.num(collarStored)} kayıt · ${freshCollars.length} tasma`}</span>
-          </div>
-          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-            <span className="sm">Gateway belleğinde</span>
-            <span className="sm strong">{gatewayMemory === null ? "— · sayaç alınmadı" : `${fmt.num(gatewayMemory)} kayıt · ${gatewayMemorySources} gateway`}</span>
-          </div>
-          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-            <span className="sm">PC Edge'de sunucu bekleyen</span>
-            <span className="sm strong">{pcPending === null ? "— · güncel rapor yok" : `${fmt.num(pcPending)} kayıt · ${connectedEdges.length} PC`}</span>
-          </div>
-          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-            <span className="sm">PC Edge sunucuda onaylanan</span>
-            <span className="sm strong">{pcDelivered === null ? "— · güncel rapor yok" : `${fmt.num(pcDelivered)} kayıt`}</span>
-          </div>
-          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-            <span className="sm">PC Edge sorunlu/karantinada</span>
-            <span className="sm strong">{pcQuarantined === null ? "— · güncel rapor yok" : `${fmt.num(pcQuarantined)} kayıt`}</span>
-          </div>
-          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-            <span className="sm">Sunucuda doğrulanan benzersiz kayıt</span>
-            <span className="sm strong">{serverConfirmed === null ? "— · henüz bilgi yok" : `${fmt.num(serverConfirmed)} kayıt`}</span>
-          </div>
-          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-            <span className="sm">Bu telefondan sunucu bekleyen</span>
-            <span className="sm strong">{sv.pending === null ? "— · sayaç alınmadı" : `${fmt.num(sv.pending)} kayıt`}</span>
-          </div>
-          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-            <span className="sm">Bu telefondan sunucuda onaylanan</span>
-            <span className="sm strong">{sv.uploaded === null ? "— · sayaç alınmadı" : `${fmt.num(sv.uploaded)} kayıt`}</span>
-          </div>
-          <span className="fine">Kayıtlar aşamalar arasında kopyalanmış olabilir; bu sayıları toplayıp benzersiz paket sayısı sayma. Tasma değeri doğrudan APP STORAGE belleğidir, kesin LoRa/ACK kuyruğu değildir. PC Edge değerleri sunucu tarafından onaylanan son defter özetidir. Telefonun onayı çiftlik toplamı değildir.</span>
-          {(edgeQueues !== null || collarSamples.length > 0 || (gateways ?? []).some((g) => g.held !== null)) && (
-            <details className="tech">
-              <summary>Kaynaklara göre sayaçlar ve son ölçüm</summary>
-              {(gateways ?? []).filter((g) => g.held !== null).map((gateway) => (
-                <div className="row" key={gateway.gateway} style={{ justifyContent: "space-between", gap: 8, padding: "8px 16px" }}>
-                  <span className="sm">{label(gateway.gateway)} · {gateway.statusAt === null ? "ölçüm zamanı yok" : fmt.ago(gateway.statusAt, m.now)}</span>
-                  <span className="sm strong">
-                    {fmt.num(gateway.held!)} bellek
-                    {gateway.statusAt === null || m.now - gateway.statusAt > 5 * 60_000 ? " · eski ölçüm" : ""}
-                  </span>
+        {flow.map((stage, i) => (
+          <div key={stage.id} style={{ padding: "14px 16px", borderBottom: i < flow.length - 1 ? "1px solid var(--line)" : undefined }}>
+            <div className="row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
+              <span className="strong">{stage.title}</span>
+              <span className="fine">{i < 3 ? "↓" : "✓"}</span>
+            </div>
+            <div className="stack" style={{ gap: 10 }}>
+              {stage.entries.map((entry) => (
+                <div key={entry.id} className="row" style={{ alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                  <div className="stack" style={{ gap: 3, flex: 1, minWidth: 0 }}>
+                    <span className="sm strong">{entry.title}</span>
+                    <span className={"fine" + (entry.stale ? " t-aging" : "")}>{entry.detail}</span>
+                  </div>
+                  <span className="strong" style={{ flex: "none", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{entry.amount}</span>
                 </div>
               ))}
-              {edgeQueues?.map((edge) => (
-                <div className="row" key={edge.edge} style={{ justifyContent: "space-between", gap: 8, padding: "8px 16px" }}>
-                  <span className="sm">{edge.edge} · {fmt.ago(edge.lastSeen, m.now)}</span>
-                  <span className="sm strong">
-                    {fmt.num(edge.pending)} bekleyen / {fmt.num(edge.delivered)} onaylı / {fmt.num(edge.quarantined)} sorunlu
-                    {m.now - edge.lastSeen > 5 * 60_000 ? " · eski ölçüm" : ""}
-                  </span>
-                </div>
-              ))}
-              {collarSamples.map((sample) => (
-                <div className="row" key={sample.device} style={{ justifyContent: "space-between", gap: 8, padding: "8px 16px" }}>
-                  <span className="sm">{label(sample.device)} · {sample.via.toUpperCase()} · {fmt.ago(sample.at, m.now)}</span>
-                  <span className="sm strong">
-                    {fmt.num(sample.count)} / {fmt.num(sample.capacity)} bellek
-                    {m.now - sample.at > 5 * 60_000 ? " · eski ölçüm" : ""}
-                  </span>
-                </div>
-              ))}
-            </details>
-          )}
-        </div>
+            </div>
+          </div>
+        ))}
       </Card>
+      <p className="fine lead">Tasma/Gateway: kayıt sayısı / bellek kapasitesi. PC Edge: sunucuya aktarılmayı bekleyen kayıtlar. Sunucu: doğrulanmış benzersiz kayıtlar. Eski ölçümler canlı değer değildir.</p>
+      {edgeError && account && <p className="sm t-alarm lead" role="status">PC Edge durumu: {edgeError}</p>}
 
       <Section title="Bu telefon" info={tr.station.background} />
       <Card>
@@ -436,15 +371,31 @@ export function ConnectionScreen() {
       </Card>
 
       {groups.length > 0 && <>
-        <Section title="İşlemler" info="Ayar kayıtları ve 'Tasmalara uygula'. Sıradakiler tasmaya bağlanınca (şimdilik USB) kendiliğinden işlenir; 'Tasmaya işlendi' yalnız tasma onaylayınca yazılır." />
+        <Section title={`Bekleyen / sorunlu işlemler (${groups.length})`}
+          info="Yalnız açık işlemler ve son denemesi reddedilenler. Tasma onayı olmadan tamamlandı sayılmaz." />
         <Card>
-          {groups.map((g) => (
+          {groups.slice(0, 5).map((g) => (
             <Cell key={g.op} title={`${KIND_WORD[g.kind]} · ${fmt.dateTime(g.createdAt)}`} wrapSub sub={groupLine(g)}
-              subTone={g.targets.some((t) => t.state === "rejected") ? "alarm" : g.targets.every((t) => t.state === "applied" || t.state === "same") ? "fresh" : undefined}
+              subTone={g.targets.some((t) => t.state === "rejected") ? "alarm" : undefined}
               trail={<CaretRight size={18} color="var(--mute)" />} onClick={() => setOpOpen(g.op)} />
           ))}
         </Card>
+        {groups.length > 5 && <details className="tech">
+          <summary>{groups.length - 5} açık işlem daha</summary>
+          <Card>{groups.slice(5).map((g) => (
+            <Cell key={g.op} title={`${KIND_WORD[g.kind]} · ${fmt.dateTime(g.createdAt)}`}
+              sub={groupLine(g)} onClick={() => setOpOpen(g.op)} />
+          ))}</Card>
+        </details>}
       </>}
+      {operations.history.length > 0 && <details className="tech">
+        <summary>İşlem geçmişi ({operations.history.length})</summary>
+        <Card>{operations.history.slice(0, 20).map((g) => (
+          <Cell key={g.op} title={`${KIND_WORD[g.kind]} · ${fmt.dateTime(g.createdAt)}`}
+            sub={groupLine(g)} onClick={() => setOpOpen(g.op)} />
+        ))}</Card>
+        {operations.history.length > 20 && <p className="fine lead">Son 20 işlem gösteriliyor; diğer kayıtlar silinmedi.</p>}
+      </details>}
       {opOpen && <OpDialog op={opOpen} onClose={() => setOpOpen(null)} />}
 
       <GroupsSection />

@@ -73,3 +73,12 @@ test("server unique verified count is separate from PC-delivered acknowledgement
                "old backend without counter must not masquerade as zero");
   assert.throws(() => parseEdgeQueueSnapshot({ ...sample, server_confirmed: -1 }));
 });
+
+test("last-known collar reading survives tab remount in same account but not account switch", () => {
+  collarStorageReadings.setScope("account-1");
+  collarStorageReadings.note("52E16773141A8887", 34, 1780, 1_794_310_000_000, "ble");
+  collarStorageReadings.setScope("account-1");
+  assert.equal(collarStorageReadings.snapshot()["52E16773141A8887"].count, 34);
+  collarStorageReadings.setScope("account-2");
+  assert.equal(Object.keys(collarStorageReadings.snapshot()).length, 0);
+});

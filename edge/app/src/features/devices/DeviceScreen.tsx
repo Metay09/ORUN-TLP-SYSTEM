@@ -19,7 +19,7 @@ import { NameDialog } from "../network/NameDialog.tsx";
 import { gatewayFacts, gatewayLine } from "../network/words.ts";
 import { ApplyFenceDialog, stateLine, useQueuedFences, useTrackerFences } from "../zones/ApplyFence.tsx";
 import { OpSteps, opSub, useOps } from "./Ops.tsx";
-import { KIND_WORD } from "../../app/deviceOps.ts";
+import { KIND_WORD, operationSections } from "../../app/deviceOps.ts";
 
 export function useDeviceSettings() {
   return useSyncExternalStore((fn) => deviceSettings.subscribe(fn), () => deviceSettings.snapshot());
@@ -53,7 +53,7 @@ export function DeviceScreen({ id }: { id: string }) {
   const isGateway = !a && (!!gw || m.station.id?.toUpperCase() === up);
   const fence = fences.find((x) => x.device.toUpperCase() === up) ?? null;
   const queuedFence = useQueuedFences();
-  const myOps = useOps().filter((r) => r.device === up && r.state !== "superseded").slice(0, 5);
+  const myOps = operationSections(useOps().filter((r) => r.device === up));
   // Hiç okunmadıysa cihazın kendi kayıtlarından görülen: rapor aralığı, konum takibi.
   const observed = {
     ...(a?.periodS ? { interval_s: a.periodS } : {}),
@@ -126,15 +126,24 @@ export function DeviceScreen({ id }: { id: string }) {
         </Card>
       </>}
 
-      {!isGateway && myOps.length > 0 && <>
+      {!isGateway && myOps.active.length > 0 && <>
         <Section title="İşlemler" info="Her ayar kaydı ve 'Tasmalara uygula' bir işlemdir. Sıradakiler tasmaya bağlanınca (şimdilik USB) kendiliğinden işlenir; 'Tasmaya işlendi' yalnız tasma onaylayınca yazılır." />
         <Card>
-          {myOps.map((t) => (
+          {myOps.active.slice(0, 5).flatMap((g) => g.targets).map((t) => (
             <Cell key={t.op} title={KIND_WORD[t.kind]} wrapSub sub={<>{opSub(t)}<OpSteps t={t} /></>}
               subTone={t.state === "rejected" ? "alarm" : t.state === "applied" || t.state === "same" ? "fresh" : undefined} />
           ))}
         </Card>
       </>}
+
+      {!isGateway && myOps.history.length > 0 && <details className="tech">
+        <summary>İşlem geçmişi ({myOps.history.length})</summary>
+        <Card>
+          {myOps.history.slice(0, 20).flatMap((g) => g.targets).map((t) => (
+            <Cell key={t.op + t.device} title={KIND_WORD[t.kind]} sub={opSub(t)} />
+          ))}
+        </Card>
+      </details>}
 
       {isGateway && <>
         <Section title="Ad" />

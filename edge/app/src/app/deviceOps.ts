@@ -141,6 +141,28 @@ export class DeviceOpsBook {
   }
 }
 
+/** Active work stays visible; completed work is collapsed into history.
+ * Superseded rows stay in the durable book but do not crowd this view.
+ * Old rejected attempts disappear from the active view once replaced.
+ */
+export function operationSections(rows: OpTarget[]): {
+  active: ReturnType<typeof groupOps>; history: ReturnType<typeof groupOps>;
+} {
+  const groups = groupOps(rows.filter((r) => r.state !== "superseded"));
+  const latest = new Map<string, number>();
+  for (const group of groups) for (const t of group.targets) {
+    const key = t.device + "|" + t.kind;
+    latest.set(key, Math.max(latest.get(key) ?? 0, t.createdAt));
+  }
+  const active: typeof groups = [], history: typeof groups = [];
+  for (const group of groups) {
+    const visible = group.targets.some((t) => OPEN.includes(t.state) ||
+      (t.state === "rejected" && t.createdAt >= (latest.get(t.device + "|" + t.kind) ?? 0)));
+    (visible ? active : history).push(group);
+  }
+  return { active, history };
+}
+
 /** Operations grouped for the list: newest first. */
 export function groupOps(rows: OpTarget[]): { op: string; kind: OpKind; createdAt: number; targets: OpTarget[] }[] {
   const by = new Map<string, { op: string; kind: OpKind; createdAt: number; targets: OpTarget[] }>();
