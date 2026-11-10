@@ -12,6 +12,7 @@ export interface CollarStorageReading {
 
 class CollarStorageReadings {
   private values: Readonly<Record<string, CollarStorageReading>> = {};
+  private accountScope: string | null | undefined = undefined;
   private listeners = new Set<() => void>();
 
   subscribe = (fn: () => void): (() => void) => {
@@ -20,6 +21,13 @@ class CollarStorageReadings {
   };
 
   snapshot = (): Readonly<Record<string, CollarStorageReading>> => this.values;
+
+  /** Keep last reading across tab remounts; clear it only when account changes. */
+  setScope(scope: string | null): void {
+    if (scope === this.accountScope) return;
+    this.accountScope = scope;
+    this.clear();
+  }
 
   note(device: string, count: number, capacity: number, at: number,
        via: "ble" | "usb"): void {
