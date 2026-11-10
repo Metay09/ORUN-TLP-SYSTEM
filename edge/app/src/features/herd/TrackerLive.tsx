@@ -5,6 +5,7 @@ import { ArrowClockwise, Bluetooth, Usb } from "@phosphor-icons/react";
 import { noRoleMessage, probeUsbDevice } from "../../app/addTracker.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { fmt } from "../../app/i18n/tr.ts";
+import { collarStorageReadings } from "../../app/collarStorageReadings.ts";
 import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import {
@@ -43,6 +44,14 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
   const alive = useRef(true);
   useBack(onClose);
 
+  const rememberStorage = (deviceId: string | null, st: TrackerStatus) => {
+    if (alive.current && deviceId && st.role === "tracker" &&
+        st.storage?.ready) {
+      collarStorageReadings.note(deviceId, st.storage.count,
+                                 st.storage.capacity, st.at, st.via);
+    }
+  };
+
   async function readBle(): Promise<void> {
     if (!link.current) {
       let bleId = "ble" in target ? target.ble : null;
@@ -57,7 +66,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
     setPhase("Okunuyor…");
     const t = link.current;
     let st = buildStatus(await t.readRaw(), "ble", Date.now());
-    if (alive.current) setStatus(st);
+    if (alive.current) { setStatus(st); rememberStorage(id, st); }
     if (!id || st.role !== "tracker") return;
     const dev_ = id.toUpperCase();
     const has = valuesFromStatus(st);
@@ -76,7 +85,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
     if (wrote.length) {
       setPhase("Yeniden okunuyor…");
       st = buildStatus(await t.readRaw(), "ble", Date.now());
-      if (alive.current) { setStatus(st); setSynced(`Tasmaya işlendi (tasma onayladı): ${wrote.join(", ")}.`); }
+      if (alive.current) { setStatus(st); rememberStorage(id, st); setSynced(`Tasmaya işlendi (tasma onayladı): ${wrote.join(", ")}.`); }
     }
   }
 
@@ -93,7 +102,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
       setPhase("Okunuyor…");
       const dev_ = dev.report.device.toUpperCase();
       let st = buildStatus(await readRawUsb(con), "usb", Date.now());
-      if (alive.current) setStatus(st);
+      if (alive.current) { setStatus(st); rememberStorage(dev_, st); }
       const has = valuesFromStatus(st);
       await pilotReportSettings(dev_, has, "usb").catch(() => undefined);
       // Sıradakiler sormadan işlenir (sahip kararı): önce ayarlar, sonra alanlar.
@@ -111,7 +120,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
       if (wrote.length) {
         setPhase("Yeniden okunuyor…");
         st = buildStatus(await readRawUsb(con), "usb", Date.now());
-        if (alive.current) { setStatus(st); setSynced(`Tasmaya işlendi (tasma onayladı): ${wrote.join(", ")}.`); }
+        if (alive.current) { setStatus(st); rememberStorage(dev_, st); setSynced(`Tasmaya işlendi (tasma onayladı): ${wrote.join(", ")}.`); }
       }
     } finally {
       if (con) await con.close();

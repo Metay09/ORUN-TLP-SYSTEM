@@ -13,12 +13,66 @@ import {
   type ServerLatestObservations, type ServerObservationPage,
 } from "./serverObservationRead.ts";
 
+export interface EdgeQueue {
+  edge: string;
+  pending: number;      // local SQLite backend_state IS NULL
+  delivered: number;    // locally acknowledged STORED or DUPLICATE
+  quarantined: number;  // conflict or rejected, NOT delivered
+  lastSeen: number;     // server timestamp, ms; can become stale
+}
+
+export function parseEdgeQueues(body: unknown): EdgeQueue[] {
+  const data = body && typeof body === "object" && !Array.isArray(body)
+    ? (body as Record<string, unknown>).edges : null;
+  if (!Array.isArray(data) || data.length > 256) throw new Error("PC Edge sayaçları hatalı.");
+  const seen = new Set<string>();
+  return data.map((value: unknown) => {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new Error("PC Edge sayacı hatalı.");
+    const r = value as Record<string, unknown>;
+    if (typeof r.edge !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(r.edge) || seen.has(r.edge))
+      throw new Error("PC Edge kimliği hatalı.");
+    seen.add(r.edge);
+    for (const key of ["pending", "delivered", "quarantined"] as const) {
+      const value = r[key];
+      if (typeof value !== "number" || !Number.isSafeInteger(value) ||
+          value < 0 || value > 1_000_000_000)
+        throw new Error("PC Edge sayacı hatalı.");
+    }
+    if (typeof r.seen_utc !== "number" || !Number.isSafeInteger(r.seen_utc) ||
+        r.seen_utc <= 0 || r.seen_utc > 9_000_000_000)
+      throw new Error("PC Edge zaman damgası hatalı.");
+    return {
+      edge: r.edge,
+      pending: r.pending as number,
+      delivered: r.delivered as number,
+      quarantined: r.quarantined as number,
+      lastSeen: (r.seen_utc as number) * 1000,
+    };
+  });
+}
+
+export interface EdgeQueueSnapshot {
+  edges: EdgeQueue[];
+  serverConfirmed: number | null; // backend's verified unique record count
+}
+
+export function parseEdgeQueueSnapshot(body: unknown): EdgeQueueSnapshot {
+  const edges = parseEdgeQueues(body);
+  const raw = (body as Record<string, unknown>).server_confirmed;
+  if (raw === undefined || raw === null) return { edges, serverConfirmed: null };
+  if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0)
+    throw new Error("Sunucu kayıt sayısı hatalı.");
+  return { edges, serverConfirmed: raw };
+}
+
 export interface FarmGateway {
   gateway: string;                       // 16 hex
   via: "pc-usb" | "pc-ble" | "phone-usb" | "phone-ble" | null;   // null: şu an bağlı değil
   held: number | null;
   capacity: number | null;
   lastSeen: number | null;               // ms
+  statusAt: number | null;               // ms: timestamp of last memory reading, not last upload
   lastUpload: number | null;             // ms: newest record from this gateway at the server
   trackers24h: number;
 }
@@ -34,11 +88,13 @@ export function parseFarmGateways(body: unknown): FarmGateway[] {
     if (typeof r.gateway !== "string" || !/^[0-9A-F]{16}$/.test(r.gateway))
       throw new Error("Gateway listesi hatalı.");
     const seen = int(r.last_seen_utc), upload = int(r.last_upload_utc);
+    const statusAt = int(r.status_seen_utc);
     return {
       gateway: r.gateway,
       via: typeof r.via === "string" && VIAS.includes(r.via) ? r.via as FarmGateway["via"] : null,
       held: int(r.held), capacity: int(r.capacity),
       lastSeen: seen === null ? null : seen * 1000,
+      statusAt: statusAt === null ? null : statusAt * 1000,
       lastUpload: upload === null ? null : upload * 1000,
       trackers24h: int(r.trackers_24h) ?? 0,
     };
@@ -264,6 +320,20 @@ export class OwnerAccountClient {
     if (reply.status === 401) throw new Error("Oturumun geçersiz; yeniden giriş yap.");
     if (!reply.ok) throw new Error("Gateway listesi alınamadı.");
     return parseFarmGateways(await json(reply));
+  }
+
+  /** PC Edge spool counters from authenticated bridge reports.
+   * This endpoint never contains raw records, keys or device commands.
+   */
+  async edgeQueues(): Promise<EdgeQueueSnapshot> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/edge-status", {
+      headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
+      credentials: "omit", redirect: "error", cache: "no-store",
+    });
+    if (reply.status === 401) throw new Error("Oturumun geçersiz; yeniden giriş yap.");
+    if (!reply.ok) throw new Error("PC Edge sayaçları alınamadı.");
+    return parseEdgeQueueSnapshot(await json(reply, 64 * 1024));
   }
 
   /** 2d: device names kept in the account. */

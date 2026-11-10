@@ -1,0 +1,41 @@
+name: ORUN Edge queue telemetry integration
+
+on:
+  pull_request:
+    paths:
+      - 'backend/edge_queue_status.py'
+      - 'backend/gateway_status.py'
+      - 'backend/tests/test_edge_queue_status.py'
+      - 'backend/tests/test_gateway_listesi.py'
+      - 'edge/app/src/**'
+      - 'edge/app/test/queueTelemetry.test.ts'
+      - 'tools/orun_pc_edge.py'
+      - 'tools/orun_sunucu.py'
+      - 'tools/ci/run_edge_queue_telemetry_host.sh'
+      - '.github/workflows/edge-queue-telemetry.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  edge-queue-host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: edge/app/package-lock.json
+      - name: Install test dependencies
+        run: |
+          python -m pip install --disable-pip-version-check 'cryptography>=41,<47'
+          cd edge/app
+          npm ci --no-audit --no-fund
+      - name: Verify PC queue transport, permissions, app tests and build
+        run: bash tools/ci/run_edge_queue_telemetry_host.sh

@@ -10,9 +10,10 @@ import { noRoleMessage, probeUsbDevice, setRoleAndReconnect, type DeviceRole, ty
 import { bleName } from "../../app/deviceNames.ts";
 import { fmt, tr } from "../../app/i18n/tr.ts";
 import { useNav } from "../../app/nav.ts";
-import type { FarmGateway } from "../../app/ownerAccountClient.ts";
+import type { FarmGateway, EdgeQueue } from "../../app/ownerAccountClient.ts";
+import { collarStorageReadings } from "../../app/collarStorageReadings.ts";
 import {
-  deviceNames, onPilotAccountChange, onPilotObservationSync, pilotAccountStatus, pilotGateways, pilotObservationSyncState,
+  deviceNames, onPilotAccountChange, onPilotObservationSync, pilotAccountStatus, pilotGateways, pilotEdgeQueues, pilotObservationSyncState,
 } from "../../app/ownerAccountPilotRuntime.ts";
 import { useApp } from "../../app/store.ts";
 import { Bar, Card, Cell, Header, KV, Section, Seg } from "../../ds/components.tsx";
@@ -55,6 +56,8 @@ export function ConnectionScreen() {
   const [via, setVia] = useState<Via>("ble");
   const [marking, setMarking] = useState(false);
   const [gateways, setGateways] = useState<FarmGateway[] | null>(null);
+  const [edgeQueues, setEdgeQueues] = useState<EdgeQueue[] | null>(null);
+  const [serverConfirmed, setServerConfirmed] = useState<number | null>(null);
   const [nearby, setNearby] = useState<NearbyDevice[]>([]);
   const [scanning, setScanning] = useState(false);
   const [note, setNote] = useState("");
@@ -72,6 +75,7 @@ export function ConnectionScreen() {
   const groups = groupOps(opRows.filter((r) => r.state !== "superseded")).slice(0, 5);
   const [opOpen, setOpOpen] = useState<string | null>(null);
   const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
+  const collarReadings = useSyncExternalStore(collarStorageReadings.subscribe, collarStorageReadings.snapshot);
   const label = (id: string) => names[id.toUpperCase()] ?? bleName(id);
   useEffect(() => onPilotObservationSync(() => setSync(pilotObservationSyncState())), []);
   useEffect(() => onPilotAccountChange(() => setAccount(pilotAccountStatus())), []);
@@ -82,11 +86,29 @@ export function ConnectionScreen() {
   // Çiftliğin gateway'leri: açılınca ve dakikada bir.
   useEffect(() => {
     let live = true;
-    const load = () => { pilotGateways().then((g) => { if (live) setGateways(g); }).catch(() => undefined); };
+    const load = () => {
+      pilotGateways().then((g) => { if (live) setGateways(g); })
+        .catch(() => { if (live) setGateways(null); });
+      pilotEdgeQueues().then((q) => {
+        if (live) {
+          setEdgeQueues(q?.edges ?? null);
+          setServerConfirmed(q?.serverConfirmed ?? null);
+        }
+      }).catch(() => {
+        if (live) { setEdgeQueues(null); setServerConfirmed(null); }
+      });
+    };
     load();
     const t = setInterval(load, 60_000);
     return () => { live = false; clearInterval(t); };
-  }, [account?.username]);
+  }, [account?.installation]);
+  useEffect(() => {
+    // A direct BLE/USB observation is local to this phone/account session.
+    // Do not leak a prior account's collar memory snapshot after sign-out.
+    collarStorageReadings.clear();
+    setEdgeQueues(null);
+    setServerConfirmed(null);
+  }, [account?.installation]);
 
   const scan = useCallback(async () => {
     if (scanning) return;
@@ -168,9 +190,25 @@ export function ConnectionScreen() {
     phoneGateway: linkOn && st.phase === "connected" && st.id ? { id: st.id, link: st.link as "ble" | "usb" } : null,
     signedIn: Boolean(account), sync, pending: sv.pending, now: m.now, label,
   });
-  // Backlog is not the same as stored memory. Do not invent tracker or PC Edge
-  // counters: this screen currently has no live telemetry for those queues.
-  const reportedGateways = (gateways ?? []).filter((g) => g.held !== null);
+  // Freshness applies to the PC Edge heartbeat only; last-known values are
+  // still visible per PC when the producer is temporarily offline.
+  const connectedEdges = (edgeQueues ?? []).filter((edge) =>
+    m.now >= edge.lastSeen && m.now - edge.lastSeen <= 5 * 60_000);
+  const pcPending = connectedEdges.length
+    ? connectedEdges.reduce((sum, edge) => sum + edge.pending, 0) : null;
+  const pcDelivered = connectedEdges.length
+    ? connectedEdges.reduce((sum, edge) => sum + edge.delivered, 0) : null;
+  const pcQuarantined = connectedEdges.length
+    ? connectedEdges.reduce((sum, edge) => sum + edge.quarantined, 0) : null;
+  const collarSamples = Object.values(collarReadings).filter((x) =>
+    m.herd.some((a) => a.device?.toUpperCase() === x.device));
+  const freshCollars = collarSamples.filter((x) =>
+    m.now >= x.at && m.now - x.at <= 5 * 60_000);
+  const collarStored = freshCollars.length
+    ? freshCollars.reduce((sum, x) => sum + x.count, 0) : null;
+  const reportedGateways = (gateways ?? []).filter((g) =>
+    g.held !== null && g.statusAt !== null && m.now >= g.statusAt &&
+    m.now - g.statusAt <= 5 * 60_000);
   const gatewayMemory = reportedGateways.length
     ? reportedGateways.reduce((sum, g) => sum + (g.held ?? 0), 0)
     : st.phase === "connected" ? st.held : null;
@@ -207,8 +245,8 @@ export function ConnectionScreen() {
         <div className="stack" style={{ padding: "8px 16px 16px", gap: 10 }}>
           <span className="strong">Kayıt ve kuyruk durumu</span>
           <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-            <span className="sm">Tasmalarda bekleyen</span>
-            <span className="sm strong">— · sayaç alınmadı</span>
+            <span className="sm">Tasma belleği (doğrudan okuma)</span>
+            <span className="sm strong">{collarStored === null ? "— · güncel okuma yok" : `${fmt.num(collarStored)} kayıt · ${freshCollars.length} tasma`}</span>
           </div>
           <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
             <span className="sm">Gateway belleğinde</span>
@@ -216,7 +254,19 @@ export function ConnectionScreen() {
           </div>
           <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
             <span className="sm">PC Edge'de sunucu bekleyen</span>
-            <span className="sm strong">— · veri gelmiyor</span>
+            <span className="sm strong">{pcPending === null ? "— · güncel rapor yok" : `${fmt.num(pcPending)} kayıt · ${connectedEdges.length} PC`}</span>
+          </div>
+          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+            <span className="sm">PC Edge sunucuda onaylanan</span>
+            <span className="sm strong">{pcDelivered === null ? "— · güncel rapor yok" : `${fmt.num(pcDelivered)} kayıt`}</span>
+          </div>
+          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+            <span className="sm">PC Edge sorunlu/karantinada</span>
+            <span className="sm strong">{pcQuarantined === null ? "— · güncel rapor yok" : `${fmt.num(pcQuarantined)} kayıt`}</span>
+          </div>
+          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+            <span className="sm">Sunucuda doğrulanan benzersiz kayıt</span>
+            <span className="sm strong">{serverConfirmed === null ? "— · henüz bilgi yok" : `${fmt.num(serverConfirmed)} kayıt`}</span>
           </div>
           <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
             <span className="sm">Bu telefondan sunucu bekleyen</span>
@@ -226,7 +276,39 @@ export function ConnectionScreen() {
             <span className="sm">Bu telefondan sunucuda onaylanan</span>
             <span className="sm strong">{sv.uploaded === null ? "— · sayaç alınmadı" : `${fmt.num(sv.uploaded)} kayıt`}</span>
           </div>
-          <span className="fine">Gateway rakamı bellekte saklanan son bildirilen kayıt sayısıdır; tamamının aktarım beklediği anlamına gelmez. Telefonun onay sayısı çiftliğin toplam sunucu sayısı değildir. PC Edge ve tasma kuyrukları henüz bu ekrana bağlanmadı.</span>
+          <span className="fine">Kayıtlar aşamalar arasında kopyalanmış olabilir; bu sayıları toplayıp benzersiz paket sayısı sayma. Tasma değeri doğrudan APP STORAGE belleğidir, kesin LoRa/ACK kuyruğu değildir. PC Edge değerleri sunucu tarafından onaylanan son defter özetidir. Telefonun onayı çiftlik toplamı değildir.</span>
+          {(edgeQueues !== null || collarSamples.length > 0 || (gateways ?? []).some((g) => g.held !== null)) && (
+            <details className="tech">
+              <summary>Kaynaklara göre sayaçlar ve son ölçüm</summary>
+              {(gateways ?? []).filter((g) => g.held !== null).map((gateway) => (
+                <div className="row" key={gateway.gateway} style={{ justifyContent: "space-between", gap: 8, padding: "8px 16px" }}>
+                  <span className="sm">{label(gateway.gateway)} · {gateway.statusAt === null ? "ölçüm zamanı yok" : fmt.ago(gateway.statusAt, m.now)}</span>
+                  <span className="sm strong">
+                    {fmt.num(gateway.held!)} bellek
+                    {gateway.statusAt === null || m.now - gateway.statusAt > 5 * 60_000 ? " · eski ölçüm" : ""}
+                  </span>
+                </div>
+              ))}
+              {edgeQueues?.map((edge) => (
+                <div className="row" key={edge.edge} style={{ justifyContent: "space-between", gap: 8, padding: "8px 16px" }}>
+                  <span className="sm">{edge.edge} · {fmt.ago(edge.lastSeen, m.now)}</span>
+                  <span className="sm strong">
+                    {fmt.num(edge.pending)} bekleyen / {fmt.num(edge.delivered)} onaylı / {fmt.num(edge.quarantined)} sorunlu
+                    {m.now - edge.lastSeen > 5 * 60_000 ? " · eski ölçüm" : ""}
+                  </span>
+                </div>
+              ))}
+              {collarSamples.map((sample) => (
+                <div className="row" key={sample.device} style={{ justifyContent: "space-between", gap: 8, padding: "8px 16px" }}>
+                  <span className="sm">{label(sample.device)} · {sample.via.toUpperCase()} · {fmt.ago(sample.at, m.now)}</span>
+                  <span className="sm strong">
+                    {fmt.num(sample.count)} / {fmt.num(sample.capacity)} bellek
+                    {m.now - sample.at > 5 * 60_000 ? " · eski ölçüm" : ""}
+                  </span>
+                </div>
+              ))}
+            </details>
+          )}
         </div>
       </Card>
 
