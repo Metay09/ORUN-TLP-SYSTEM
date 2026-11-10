@@ -1,9 +1,8 @@
 // Ayarlar: hesap, internetsiz harita, görünüm ve hakkında.
 import { tr } from "../../app/i18n/tr.ts";
-import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import type { Theme } from "../../app/stores.ts";
-import { Card, KV, Screen, Section, Seg, ToggleRow } from "../../ds/components.tsx";
+import { Card, Header, KV, Section, Seg, ToggleRow } from "../../ds/components.tsx";
 import { AccountLoginPanel } from "./AccountLoginPanel.tsx";
 import { OfflineMapPanel } from "./OfflineMapPanel.tsx";
 
@@ -11,11 +10,10 @@ declare const __APP_VERSION__: string;
 
 export function SettingsScreen() {
   const m = useApp();
-  const nav = useNav();
-  useBack(() => nav.pop());
   const p = m.prefs;
   return (
-    <Screen title={tr.settings.title} onBack={() => nav.pop()}>
+    <div className="page">
+      <Header title={tr.settings.title} />
       <AccountLoginPanel />
       <OfflineMapPanel />
 
@@ -33,6 +31,6 @@ export function SettingsScreen() {
         <KV k={tr.settings.version}>{typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "—"}</KV>
         <p className="fine" style={{ padding: "12px 16px 14px", margin: 0 }}>{tr.settings.sources}</p>
       </Card>
-    </Screen>
+    </div>
   );
 }

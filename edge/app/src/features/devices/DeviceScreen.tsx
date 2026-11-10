@@ -107,7 +107,7 @@ export function DeviceScreen({ id }: { id: string }) {
       </Card>
 
       {!isGateway && <>
-        <Section title="Ayarlar" info="Ayar hesaba kaydedilir; tasmaya bağlanınca (şimdilik USB ile) sormadan yazılır. Tasma yazdığını onaylayınca 'Cihazda' olur. Birden çok tasmaya birden: Cihazlar → Toplu ayar." />
+        <Section title="Ayarlar" info="Ayar hesaba kaydedilir; tasmaya bağlanınca (şimdilik USB ile) sormadan yazılır. Tasma yazdığını onaylayınca 'Cihazda' olur. Birden çok tasmaya birden: Bağlantı → Toplu ayar." />
         <Card>
           {rows.map((r) => (
             <Cell key={r.def.key} title={r.def.title} wrapSub
@@ -119,7 +119,7 @@ export function DeviceScreen({ id }: { id: string }) {
             sub={fence ? (queuedFence.has(up) ? "Sırada · tasmaya bağlanınca işlenir" : stateLine(fence)) : "Bu tasmaya gidecek alan yok"}
             subTone={fence && (fence.state === "stale" || fence.state === "never") ? "aging" : undefined}
             trail={<CaretRight size={16} color="var(--mute)" />}
-            onClick={() => (fence && (fence.state === "stale" || fence.state === "never") && !queuedFence.has(up) ? setSending(true) : nav.setTab("zones"))} />
+            onClick={() => (fence && (fence.state === "stale" || fence.state === "never") && !queuedFence.has(up) ? setSending(true) : nav.push({ to: "zones" }))} />
           {fence?.record && fence.record.zones.length > 0 && (
             <KV k="Tasmadaki alanlar">{fence.record.zones.map((z) => z.name).join(", ")}</KV>
           )}
@@ -156,7 +156,7 @@ export function DeviceScreen({ id }: { id: string }) {
   );
 }
 
-/** One setting for one device (bulk: Cihazlar → Toplu ayar). */
+/** One setting for one device (bulk: Bağlantı → Toplu ayar). */
 function EditSetting({ device, row, onClose }: { device: string; row: SettingRow; onClose: () => void }) {
   const [value, setValue] = useState<number | boolean | null>(row.value);
   const [error, setError] = useState("");

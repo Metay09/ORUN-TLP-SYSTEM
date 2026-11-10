@@ -46,7 +46,7 @@ export function AddTrackerDialog({ onClose }: { onClose: () => void }) {
         con = r.con;
         setNoRole(null);
         if (r.device.kind === "gateway") {
-          setStatus("Gateway olarak kuruldu. Köprüye (PC Edge ya da Cihazlar → USB ile bu telefon) bağlanınca çiftliğe kendiliğinden eklenir.");
+          setStatus("Gateway olarak kuruldu. Köprüye (PC Edge ya da Bağlantı → USB ile bu telefon) bağlanınca çiftliğe kendiliğinden eklenir.");
           return;
         }
       }
@@ -84,11 +84,11 @@ export function AddTrackerDialog({ onClose }: { onClose: () => void }) {
           <Plus size={20} />{busy ? "Ekleniyor…" : "USB ile bağlı tasmayı ekle"}
         </button>}
         {!signedIn && (
-          <button className="btn quiet wide" type="button" onClick={() => { onClose(); nav.push({ to: "settings" }); }}>
+          <button className="btn quiet wide" type="button" onClick={() => { onClose(); nav.setTab("settings"); }}>
             Önce hesabınla giriş yap
           </button>
         )}
-        {signedIn && gatewayOnUsb && <p className="fine">Önce gateway'in USB bağlantısını kes (Cihazlar sekmesi).</p>}
+        {signedIn && gatewayOnUsb && <p className="fine">Önce gateway'in USB bağlantısını kes (Bağlantı sekmesi).</p>}
         {status && <p className="sm" role="status">{status}</p>}
         {added && (
           <form className="stack" onSubmit={(e) => {

@@ -4,13 +4,21 @@
 // the background).
 import { createContext, useContext, useEffect, useRef } from "react";
 
-export type Tab = "map" | "herd" | "zones" | "events" | "network";
+export type Tab = "map" | "herd" | "events" | "network" | "settings";
+
+// The Android back key first gives mounted dialogs a chance through runBack().
+// When none handles it, a pushed route must close before switching tabs.
+export type BackFallback = "pop" | "map" | "minimize";
+export function backFallback(tab: Tab, routeDepth: number): BackFallback {
+  if (routeDepth > 0) return "pop";
+  return tab === "map" ? "minimize" : "map";
+}
 export type Route =
   | { to: "animal"; id: string }
   | { to: "find"; id: string }
   | { to: "zone"; id: string }
   | { to: "device"; id: string }
-  | { to: "settings" };
+  | { to: "zones" };
 
 /** What the map shows when another screen sends the user there. */
 export interface MapFocus {

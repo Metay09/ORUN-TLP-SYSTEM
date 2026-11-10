@@ -4,7 +4,7 @@
 // bottom sheet.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Compass, CornersOut, Crosshair, CubeFocus, NavigationArrow, Pause, Play, Stack, UserCircle, X,
+  Compass, CornersOut, Crosshair, CubeFocus, NavigationArrow, Pause, Play, Polygon, Stack, X,
 } from "@phosphor-icons/react";
 import { hourlyActivity, inRange } from "../../app/activity.ts";
 import { bearingDeg, distanceM, type LatLon } from "../../app/geo.ts";
@@ -195,9 +195,10 @@ export function MapScreen({ visible }: { visible: boolean }) {
   }, [pos.pos]);
 
   const clear = () => { setSelected(null); setTrailRange("recent"); setWin(null); setCursor(null); setPlaying(false); setSnap("peek"); };
-  useBack(() => setPanel(false), panel);
+  // Hidden map controls must not consume Android Back while a pushed screen is open.
+  useBack(() => setPanel(false), visible && nav.stack.length === 0 && panel);
   useBack(() => { if (selected) clear(); else if (selZone) setSelZone(null); else setSnap("peek"); },
-    visible && !drawing && (selected !== null || selZone !== null || snap !== "peek"));
+    visible && nav.stack.length === 0 && !drawing && (selected !== null || selZone !== null || snap !== "peek"));
 
   const look = herd.filter(needsLook);
   const lastArrival = m.devices.reduce<number | null>((x, d) => (d.lastArrival !== null && (x === null || d.lastArrival > x) ? d.lastArrival : x), null);
@@ -234,7 +235,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
           }} />
       ) : <>
       <div className="map-top">
-        <button className="me-btn" onClick={() => nav.push({ to: "settings" })} aria-label={tr.common.settings}><UserCircle size={28} /></button>
+        <button className="me-btn" onClick={() => nav.push({ to: "zones" })} aria-label={tr.zones.title}><Polygon size={24} /><span>{tr.zones.title}</span></button>
       </div>
       <div className="map-status">
         <button className="status-chip" onClick={() => nav.setTab("network")}>
