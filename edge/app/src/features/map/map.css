@@ -62,6 +62,7 @@
   display: grid; place-items: center; background: #163F32; color: #fff;
   font: 800 10px/1 var(--display); box-shadow: 0 1px 4px #0007;
 }
+.pin-count.alarm { background: var(--alarm); color: #fff; }
 .pin-choices {
   display: flex; flex-direction: column; max-height: min(250px, 38vh);
   min-width: 150px; overflow-y: auto; gap: 3px; color: #13241C;
