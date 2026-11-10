@@ -35,7 +35,7 @@ import type { BaseMap, Layers, SatPrefs, ZoneFill } from "../../app/stores.ts";
 import { centroid, edgeM, type LonLat } from "../../app/zones.ts";
 import { toneOfStatus } from "../../ds/components.tsx";
 import { offlineStyle, type OfflineMap } from "./offlinePacks/offlineStyle.ts";
-import { groupScreenPins } from "./pinLayout.ts";
+import { groupScreenPins, pinDiameter } from "./pinLayout.ts";
 
 setWorkerUrl(workerUrl);
 
@@ -94,7 +94,7 @@ export interface EngineOpts {
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const RING = 2 * Math.PI * 23;
-const LABEL_ZOOM = 15.5;
+const LABEL_ZOOM = 17;
 const TONE_VAR: Record<string, string> = { fresh: "var(--fresh)", aging: "var(--aging)", silent: "var(--silent)", alarm: "var(--alarm)" };
 const COW = '<svg viewBox="0 0 256 256" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M120,128a16,16,0,1,1-16-16A16,16,0,0,1,120,128Zm32-16a16,16,0,1,0,16,16A16,16,0,0,0,152,112Zm84,20a20,20,0,0,1-20,20H204v15a38,38,0,0,1-22,69H74a38,38,0,0,1-22-69V152H40a20,20,0,0,1-20-20,60,60,0,0,1,36-55V48a12,12,0,0,1,24,0V70h96V48a12,12,0,0,1,24,0V77A60,60,0,0,1,236,132ZM180,198a14,14,0,0,0-14-14H90a14,14,0,0,0,0,28h76A14,14,0,0,0,180,198Z"/></svg>';
 
@@ -103,7 +103,8 @@ const COW = '<svg viewBox="0 0 256 256" width="20" height="20" fill="currentColo
  * dot far out, half size in between, the full pin close in. 1 = full size.
  */
 export function pinScale(zoom: number): number {
-  return Math.max(0.42, Math.min(1, 0.42 + ((zoom - 12) / 4) * 0.58));
+  // The visual circle is 46px before CSS transform; match pinLayout exactly.
+  return pinDiameter(zoom) / 46;
 }
 
 function ringSvg(color: string, ratio: number): string {
