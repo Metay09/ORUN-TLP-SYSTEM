@@ -314,7 +314,7 @@ export class OwnerAccountClient {
     });
     if (reply.status === 401) throw new Error("Oturumun geçersiz; yeniden giriş yap.");
     if (!reply.ok) throw new Error("PC Edge sayaçları alınamadı.");
-    return parseEdgeQueues(await json(reply));
+    return parseEdgeQueues(await json(reply, 64 * 1024));
   }
 
   /** 2d: device names kept in the account. */
