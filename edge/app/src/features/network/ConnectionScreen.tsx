@@ -53,6 +53,7 @@ export function ConnectionScreen() {
   const linkOn = st.link !== "none";
   const held = st.held ?? 0;
   const [account, setAccount] = useState(() => pilotAccountStatus());
+  const accountScope = account ? [account.site, account.actor, account.installation, account.username].join(":") : null;
   const [sync, setSync] = useState(pilotObservationSyncState);
   const [via, setVia] = useState<Via>("ble");
   const [marking, setMarking] = useState(false);
@@ -60,6 +61,9 @@ export function ConnectionScreen() {
   const [edgeQueues, setEdgeQueues] = useState<EdgeQueue[] | null>(null);
   const [serverConfirmed, setServerConfirmed] = useState<number | null>(null);
   const [serverReadAt, setServerReadAt] = useState<number | null>(null);
+  const [phoneGatewayReading, setPhoneGatewayReading] = useState<{
+    id: string; held: number; capacity: number; at: number;
+  } | null>(null);
   const [nearby, setNearby] = useState<NearbyDevice[]>([]);
   const [scanning, setScanning] = useState(false);
   const [note, setNote] = useState("");
@@ -79,6 +83,13 @@ export function ConnectionScreen() {
   const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
   const collarReadings = useSyncExternalStore(collarStorageReadings.subscribe, collarStorageReadings.snapshot);
   const label = (id: string) => names[id.toUpperCase()] ?? bleName(id);
+  // Time a Gateway HELLO/count observation when its reported value changes,
+  // not every render (which would make an old reading appear permanently fresh).
+  useEffect(() => {
+    if (st.phase === "connected" && st.id && st.held !== null && st.capacity !== null)
+      setPhoneGatewayReading({ id: st.id.toUpperCase(), held: st.held, capacity: st.capacity, at: Date.now() });
+  }, [st.id, st.phase, st.held, st.capacity]);
+
   useEffect(() => onPilotObservationSync(() => setSync(pilotObservationSyncState())), []);
   useEffect(() => onPilotAccountChange(() => setAccount(pilotAccountStatus())), []);
   useEffect(() => {
@@ -102,16 +113,17 @@ export function ConnectionScreen() {
     load();
     const t = setInterval(load, 60_000);
     return () => { live = false; clearInterval(t); };
-  }, [account?.installation]);
+  }, [accountScope]);
   useEffect(() => {
     // A direct BLE/USB observation is local to this phone/account session.
     // Do not leak a prior account's collar memory snapshot after sign-out.
-    collarStorageReadings.setScope(account?.installation ?? null);
+    collarStorageReadings.setScope(accountScope);
+    setPhoneGatewayReading(null);
     setGateways(null);
     setEdgeQueues(null);
     setServerConfirmed(null);
     setServerReadAt(null);
-  }, [account?.installation]);
+  }, [accountScope]);
 
   const scan = useCallback(async () => {
     if (scanning) return;
@@ -187,11 +199,15 @@ export function ConnectionScreen() {
 
   const others = (gateways ?? []).filter((g) => !(linkOn && s.gateway && g.gateway.toUpperCase() === s.gateway.toUpperCase()));
   const flow = transferStages({
-    now: m.now,
+    now: Date.now(),
     trackerIds: m.herd.filter((a) => a.device).map((a) => a.device!),
     collars: Object.values(collarReadings),
     gateways,
-    localGateway: { id: st.id, connected: linkOn && st.phase === "connected", held: st.held, capacity: st.capacity },
+    localGateway: {
+      id: st.id, connected: linkOn && st.phase === "connected",
+      held: st.held, capacity: st.capacity,
+      readAt: phoneGatewayReading?.id === st.id?.toUpperCase() ? phoneGatewayReading.at : null,
+    },
     edges: edgeQueues,
     serverConfirmed,
     serverReadAt,

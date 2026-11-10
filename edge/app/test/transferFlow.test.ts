@@ -5,7 +5,7 @@ import { operationSections, type OpTarget } from "../src/app/deviceOps.ts";
 
 const now = 1_794_310_000_000;
 const base = { now, trackerIds: ["52E16773141A8887"], collars: [],
-  gateways: null, localGateway: { id: null, connected: false, held: null, capacity: null },
+  gateways: null, localGateway: { id: null, connected: false, held: null, capacity: null, readAt: null },
   edges: null, serverConfirmed: null, serverReadAt: now, label: (id: string) => id };
 
 test("old 34 / 1780 history remains visible, and not advertised as LoRa pending", () => {
@@ -28,7 +28,7 @@ test("gateway capacity comes from device, stale readings do not disappear", () =
   assert.match(stage.entries[0].amount, /8 \/ 1[.,]056/);
   // A live phone reading wins without counting the gateway twice.
   const direct = transferStages({ ...base, gateways: [gateway], localGateway: {
-    id: gateway.gateway, connected: true, held: 1, capacity: 1056,
+    id: gateway.gateway, connected: true, held: 1, capacity: 1056, readAt: now,
   } })[1];
   assert.equal(direct.entries.length, 1);
   assert.equal(direct.entries[0].stale, false);

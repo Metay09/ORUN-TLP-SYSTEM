@@ -13,6 +13,7 @@ export interface TransferStage {
 }
 interface PhoneGateway {
   id: string | null; connected: boolean; held: number | null; capacity: number | null;
+  readAt: number | null;
 }
 export interface TransferInput {
   now: number;
@@ -57,7 +58,7 @@ export function transferStages(i: TransferInput): TransferStage[] {
     gws.set(id, {
       gateway: id, via: prev?.via ?? null, held: local.held ?? prev?.held ?? null,
       capacity: local.capacity ?? prev?.capacity ?? null,
-      statusAt: freshRead ? i.now : prev?.statusAt ?? null,
+      statusAt: freshRead && local.readAt !== null ? local.readAt : prev?.statusAt ?? null,
       lastSeen: i.now, lastUpload: prev?.lastUpload ?? null,
       trackers24h: prev?.trackers24h ?? 0,
     });
