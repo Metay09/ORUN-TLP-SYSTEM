@@ -56,6 +56,7 @@ export interface FarmGateway {
   held: number | null;
   capacity: number | null;
   lastSeen: number | null;               // ms
+  statusAt: number | null;               // ms: timestamp of last memory reading, not last upload
   lastUpload: number | null;             // ms: newest record from this gateway at the server
   trackers24h: number;
 }
@@ -71,11 +72,13 @@ export function parseFarmGateways(body: unknown): FarmGateway[] {
     if (typeof r.gateway !== "string" || !/^[0-9A-F]{16}$/.test(r.gateway))
       throw new Error("Gateway listesi hatalı.");
     const seen = int(r.last_seen_utc), upload = int(r.last_upload_utc);
+    const statusAt = int(r.status_seen_utc);
     return {
       gateway: r.gateway,
       via: typeof r.via === "string" && VIAS.includes(r.via) ? r.via as FarmGateway["via"] : null,
       held: int(r.held), capacity: int(r.capacity),
       lastSeen: seen === null ? null : seen * 1000,
+      statusAt: statusAt === null ? null : statusAt * 1000,
       lastUpload: upload === null ? null : upload * 1000,
       trackers24h: int(r.trackers_24h) ?? 0,
     };
