@@ -28,7 +28,7 @@ import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import type { Cell } from "../../app/coverage.ts";
 import { distanceM, type LatLon } from "../../app/geo.ts";
 import { readableTrail } from "./routeGeometry.ts";
-import { agingLimit, epochMs, periodMs } from "../../app/herd.ts";
+import { epochMs } from "../../app/herd.ts";
 import { fmt } from "../../app/i18n/tr.ts";
 import type { Animal, Observation } from "../../app/model.ts";
 import type { BaseMap, Layers, SatPrefs, ZoneFill } from "../../app/stores.ts";
@@ -153,22 +153,14 @@ function trailFeatures(points: Observation[], color: string, cursor: number | nu
   return out;
 }
 
-/** Continuous pieces of one animal's trail; long gaps are left out, not bridged. */
+/** Optional herd trails use the same evidence breaks and visual reduction. */
 function herdTrailFeatures(list: MapData["herdTrails"]): Feature[] {
   const out: Feature[] = [];
-  for (const t of list) {
-    let run: [number, number][] = [];
-    const flush = () => { if (run.length > 1) out.push({ type: "Feature", properties: { color: t.color }, geometry: { type: "LineString", coordinates: run } }); run = []; };
-    for (let i = 0; i < t.points.length; i++) {
-      const p = t.points[i];
-      if (i > 0) {
-        const q = t.points[i - 1];
-        if (epochMs(p.time) - epochMs(q.time) > agingLimit(periodMs(q.period_s))) flush();
-      }
-      run.push([p.lon, p.lat]);
-    }
-    flush();
-  }
+  for (const t of list)
+    for (const run of readableTrail(t.points).runs)
+      if (run.length > 1)
+        out.push({ type: "Feature", properties: { color: t.color },
+          geometry: { type: "LineString", coordinates: run.map((p) => [p.lon, p.lat]) } });
   return out;
 }
 
