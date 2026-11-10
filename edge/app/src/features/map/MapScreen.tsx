@@ -4,7 +4,7 @@
 // bottom sheet.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Compass, CornersOut, Crosshair, CubeFocus, NavigationArrow, Pause, Play, Stack, UserCircle, X,
+  Compass, CornersOut, Crosshair, CubeFocus, NavigationArrow, Pause, Play, Polygon, Stack, X,
 } from "@phosphor-icons/react";
 import { hourlyActivity, inRange } from "../../app/activity.ts";
 import { bearingDeg, distanceM, type LatLon } from "../../app/geo.ts";
@@ -234,7 +234,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
           }} />
       ) : <>
       <div className="map-top">
-        <button className="me-btn" onClick={() => nav.push({ to: "settings" })} aria-label={tr.common.settings}><UserCircle size={28} /></button>
+        <button className="me-btn" onClick={() => nav.push({ to: "zones" })} aria-label={tr.zones.title}><Polygon size={26} /></button>
       </div>
       <div className="map-status">
         <button className="status-chip" onClick={() => nav.setTab("network")}>

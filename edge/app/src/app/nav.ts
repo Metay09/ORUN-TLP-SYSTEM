@@ -4,13 +4,13 @@
 // the background).
 import { createContext, useContext, useEffect, useRef } from "react";
 
-export type Tab = "map" | "herd" | "zones" | "events" | "network";
+export type Tab = "map" | "herd" | "events" | "network" | "settings";
 export type Route =
   | { to: "animal"; id: string }
   | { to: "find"; id: string }
   | { to: "zone"; id: string }
   | { to: "device"; id: string }
-  | { to: "settings" };
+  | { to: "zones" };
 
 /** What the map shows when another screen sends the user there. */
 export interface MapFocus {

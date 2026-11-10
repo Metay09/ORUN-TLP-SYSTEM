@@ -1,8 +1,9 @@
-// ORUN app shell: five tabs (Harita · Sürü · Alanlar · Olaylar · Cihazlar), pushed
+// ORUN app shell: five tabs (Harita · Sürü · Olaylar · Bağlantı · Ayarlar; alanlar
+// haritadan açılır), pushed
 // screens above them, theme / sun mode, and one predictable Android back key.
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { App as CapApp } from "@capacitor/app";
-import { Bell, CellTower, Cow, MapTrifold, Polygon } from "@phosphor-icons/react";
+import { Bell, CellTower, Cow, GearSix, MapTrifold } from "@phosphor-icons/react";
 import { activeCount } from "./app/events.ts";
 import { tr } from "./app/i18n/tr.ts";
 import { NavContext, runBack, type MapFocus, type Nav, type Route, type Tab } from "./app/nav.ts";
@@ -42,9 +43,9 @@ function useTheme(theme: Theme, sun: boolean): void {
 const TABS: { tab: Tab; label: string; icon: (on: boolean) => ReactNode }[] = [
   { tab: "map", label: tr.tabs.map, icon: (on) => <MapTrifold size={24} weight={on ? "fill" : "regular"} /> },
   { tab: "herd", label: tr.tabs.herd, icon: (on) => <Cow size={24} weight={on ? "fill" : "regular"} /> },
-  { tab: "zones", label: tr.tabs.zones, icon: (on) => <Polygon size={24} weight={on ? "fill" : "regular"} /> },
   { tab: "events", label: tr.tabs.events, icon: (on) => <Bell size={24} weight={on ? "fill" : "regular"} /> },
   { tab: "network", label: tr.tabs.network, icon: (on) => <CellTower size={24} weight={on ? "fill" : "regular"} /> },
+  { tab: "settings", label: tr.tabs.settings, icon: (on) => <GearSix size={24} weight={on ? "fill" : "regular"} /> },
 ];
 
 export function App() {
@@ -87,7 +88,7 @@ export function App() {
   }, [tab, setTab]);
 
   const alerts = activeCount(model.events, model.seen);
-  // Cihazlar sekmesinin rengi: veri geliyor mu (Meshtastic'teki gibi).
+  // Bağlantı sekmesinin rengi: veri geliyor mu (Meshtastic'teki gibi).
   const [link, setLink] = useState(0);
   useEffect(() => {
     const bump = () => setLink((n) => n + 1);
@@ -116,9 +117,9 @@ export function App() {
           <main className="stage">
             <MapScreen visible={tab === "map"} />
             {tab === "herd" && <HerdScreen />}
-            {tab === "zones" && <ZonesScreen />}
             {tab === "events" && <EventsScreen />}
             {tab === "network" && <ConnectionScreen />}
+            {tab === "settings" && <SettingsScreen />}
           </main>
           <nav className="tabbar" role="tablist">
             {TABS.map((t) => (
@@ -134,7 +135,7 @@ export function App() {
               {r.to === "find" && <FindScreen id={r.id} />}
               {r.to === "zone" && <ZoneScreen id={r.id} />}
               {r.to === "device" && <DeviceScreen id={r.id} />}
-              {r.to === "settings" && <SettingsScreen />}
+              {r.to === "zones" && <ZonesScreen />}
             </div>
           ))}
           {model.snap.error && <div className="toast">{tr.states.ledgerError(model.snap.error)}</div>}

@@ -72,7 +72,7 @@ Ortak "çiftlik anahtarı" YOK (güvenlik kararı: ele geçirilen tek gateway b�
 etkilemesin). Onay anahtarı tasma+gateway başına kalır; sunucu her gateway'in imzalı iznini
 hesaplar, köprü (PC Edge / telefon) gateway'e kendiliğinden yükler (1c–1e).
 
-Uygulama düzeni (sahip kararı 2026-11-02): Harita · Sürü · Alanlar · Olaylar · **Cihazlar**. Ayarlar hayvanın
+Uygulama düzeni (sahip kararı 2026-11-10, Meshtastic düzeni; 2 Kasım'daki Harita · Sürü · Alanlar · Olaylar · Cihazlar'ın yerine): **Harita · Sürü · Olaylar · Bağlantı · Ayarlar**. Alanlar ayrı sekme değildir, haritadan açılır. Bağlantı: bu telefonun gateway bağlantısı ve yakındaki cihazlar. Ayarlar: uygulama ayarları ve (sıradaki adımda) cihaz seçip kategorilerle cihaz ayarları, en altta tanılama. İlk adım #262: sekme çubuğu, Ayarlar sekmesi, Alanlar haritadaki düğmeden; cihaz listesi ve ayarları şimdilik Bağlantı'da. Ayarlar hayvanın
 değil cihazın ayarıdır; tasma, gateway, ileride sensör ve vana aynı cihaz ekranını kullanır, ekranda yalnız o
 cihazda olan donanım/hizmetin bölümleri görünür. Alanlar yalnız meralardır (sensör/vana gelince "Yerler"e
 dönmez); sabit cihazlar Cihazlar'da ve haritada.

@@ -1,4 +1,4 @@
-// Cihazlar (4b, sahip kararı 2026-11-02; eski adı Bağlantı): üstte "Kayıt
+// Bağlantı sekmesi (sahip kararı 2026-11-10; 2 Kasım'da Cihazlar'dı): üstte "Kayıt
 // güvende mi?" ve "Bu telefon" kartı; Bluetooth / USB seçici ve yakındaki ORUN
 // cihazları; sonra bütün cihazlar türüne göre (Gateway'ler, Tasmalar; ileride
 // Sensörler, Vanalar), her biri kendi ekranına açılır; gruplar; teknik ayrıntılar.
@@ -238,7 +238,7 @@ export function ConnectionScreen() {
         {picked && (
           <p className="sm chain-detail">
             {picked.detail}
-            {picked.key === "telefon" && !account && <> · <button className="lnk" onClick={() => nav.push({ to: "settings" })}>Giriş yap</button></>}
+            {picked.key === "telefon" && !account && <> · <button className="lnk" onClick={() => nav.setTab("settings")}>Giriş yap</button></>}
             {picked.key === "tasmalar" && m.herd.length > 0 && <> · <button className="lnk" onClick={() => nav.setTab("herd")}>Sürü</button></>}
           </p>
         )}

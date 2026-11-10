@@ -119,7 +119,7 @@ export function DeviceScreen({ id }: { id: string }) {
             sub={fence ? (queuedFence.has(up) ? "Sırada · tasmaya bağlanınca işlenir" : stateLine(fence)) : "Bu tasmaya gidecek alan yok"}
             subTone={fence && (fence.state === "stale" || fence.state === "never") ? "aging" : undefined}
             trail={<CaretRight size={16} color="var(--mute)" />}
-            onClick={() => (fence && (fence.state === "stale" || fence.state === "never") && !queuedFence.has(up) ? setSending(true) : nav.setTab("zones"))} />
+            onClick={() => (fence && (fence.state === "stale" || fence.state === "never") && !queuedFence.has(up) ? setSending(true) : nav.push({ to: "zones" }))} />
           {fence?.record && fence.record.zones.length > 0 && (
             <KV k="Tasmadaki alanlar">{fence.record.zones.map((z) => z.name).join(", ")}</KV>
           )}

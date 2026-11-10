@@ -1,10 +1,10 @@
-// Alanlar: the pasture boundaries. The list with each zone's size and who is
+// Alanlar (haritadan açılır): the pasture boundaries. The list with each zone's size and who is
 // inside, the collar's capacity (8 areas / 64 corners) and GeoJSON in and
 // out. Drawing happens on the map. Sending to collars comes with step 3/4/6.
 import { useRef, useState } from "react";
 import { CaretRight, Plus, Polygon } from "@phosphor-icons/react";
 import { fmt, tr } from "../../app/i18n/tr.ts";
-import { useNav } from "../../app/nav.ts";
+import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
 import { FENCE, areaM2, canonicalE7, compileFence, fromGeoJSON, newZoneId, toGeoJSON, validateRing, zoneAt } from "../../app/zones.ts";
 import { Bar, Card, Cell, Empty, Header, Section, Toggle } from "../../ds/components.tsx";
@@ -16,6 +16,7 @@ import { targetLabel } from "./ZoneTargets.tsx";
 export function ZonesScreen() {
   const m = useApp();
   const nav = useNav();
+  useBack(() => nav.pop());
   const file = useRef<HTMLInputElement>(null);
   const [note, setNote] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -57,10 +58,11 @@ export function ZonesScreen() {
   };
 
   return (
-    <div className="page">
-      <Header title={tr.zones.title}>
+    <div className="screen" role="dialog" aria-label={tr.zones.title}>
+      <Header title={tr.zones.title} onBack={() => nav.pop()}>
         <button className="btn small primary" onClick={() => nav.drawZone(null)}><Plus size={18} weight="bold" />{tr.zones.add}</button>
       </Header>
+      <div className="page">
       {m.zoneMigrationWarning && <p className="sm t-alarm strong lead" role="alert">{m.zoneMigrationWarning}</p>}
       {note && <p className="sm t-alarm lead" role="status">{note}</p>}
 
@@ -134,6 +136,7 @@ export function ZonesScreen() {
             onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void importFile(f); }} />
         </div>
       </Card>
+      </div>
     </div>
   );
 }
