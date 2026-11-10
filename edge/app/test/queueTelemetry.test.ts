@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseEdgeQueues, parseFarmGateways } from "../src/app/ownerAccountClient.ts";
+import { parseEdgeQueues, parseEdgeQueueSnapshot, parseFarmGateways } from "../src/app/ownerAccountClient.ts";
 import { collarStorageReadings } from "../src/app/collarStorageReadings.ts";
 
 const sample = {
@@ -62,4 +62,14 @@ test("Gateway: last upload does not make an old memory sample fresh", () => {
   assert.equal(gateway.lastSeen, 1_794_300_000_000);
   assert.equal(gateway.statusAt, 1_794_292_800_000);
   assert.equal(gateway.held, 8);
+});
+
+test("server unique verified count is separate from PC-delivered acknowledgements", () => {
+  const data = { ...sample, server_confirmed: 19 };
+  const result = parseEdgeQueueSnapshot(data);
+  assert.equal(result.serverConfirmed, 19);
+  assert.equal(result.edges[0].delivered, 21);
+  assert.equal(parseEdgeQueueSnapshot(sample).serverConfirmed, null,
+               "old backend without counter must not masquerade as zero");
+  assert.throws(() => parseEdgeQueueSnapshot({ ...sample, server_confirmed: -1 }));
 });
