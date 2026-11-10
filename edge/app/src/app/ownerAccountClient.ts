@@ -52,6 +52,20 @@ export function parseEdgeQueues(body: unknown): EdgeQueue[] {
   });
 }
 
+export interface EdgeQueueSnapshot {
+  edges: EdgeQueue[];
+  serverConfirmed: number | null; // backend's verified unique record count
+}
+
+export function parseEdgeQueueSnapshot(body: unknown): EdgeQueueSnapshot {
+  const edges = parseEdgeQueues(body);
+  const raw = (body as Record<string, unknown>).server_confirmed;
+  if (raw === undefined || raw === null) return { edges, serverConfirmed: null };
+  if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0)
+    throw new Error("Sunucu kayıt sayısı hatalı.");
+  return { edges, serverConfirmed: raw };
+}
+
 export interface FarmGateway {
   gateway: string;                       // 16 hex
   via: "pc-usb" | "pc-ble" | "phone-usb" | "phone-ble" | null;   // null: şu an bağlı değil
@@ -311,7 +325,7 @@ export class OwnerAccountClient {
   /** PC Edge spool counters from authenticated bridge reports.
    * This endpoint never contains raw records, keys or device commands.
    */
-  async edgeQueues(): Promise<EdgeQueue[]> {
+  async edgeQueues(): Promise<EdgeQueueSnapshot> {
     if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
     const reply = await this.fetcher(this.base + "/api/v1/devices/edge-status", {
       headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
@@ -319,7 +333,7 @@ export class OwnerAccountClient {
     });
     if (reply.status === 401) throw new Error("Oturumun geçersiz; yeniden giriş yap.");
     if (!reply.ok) throw new Error("PC Edge sayaçları alınamadı.");
-    return parseEdgeQueues(await json(reply, 64 * 1024));
+    return parseEdgeQueueSnapshot(await json(reply, 64 * 1024));
   }
 
   /** 2d: device names kept in the account. */
