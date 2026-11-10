@@ -260,7 +260,7 @@ class Uploader:
         A refused/unavailable status endpoint cannot stop or modify delivery.
         """
         now = time.monotonic()
-        if now - self._last_queue_report < 120:
+        if self._last_queue_report and now - self._last_queue_report < 120:
             return
         self._last_queue_report = now
         try:
