@@ -142,7 +142,7 @@ test("kayıt güvende mi: bütün çiftlik zinciri", () => {
   const now = 1_800_000_000_000;
   const gw = (via: string | null, upload: number | null) => ({
     gateway: "09A462BD4B275BA5", via: via as never, held: 2, capacity: 1056,
-    lastSeen: now - 60_000, lastUpload: upload, trackers24h: 2 });
+    lastSeen: now - 60_000, statusAt: now - 60_000, lastUpload: upload, trackers24h: 2 });
   const sync = { running: false, error: null, last: { latest: 2, history: 0, more: false, at: now - 60_000 } };
   const label = (id: string) => "ORUN-" + id.slice(-8);
   const ok = farmChain({ trackers: 3, fresh: 2, gateways: [gw("pc-usb", now - 120_000)], phoneGateway: null,
