@@ -1,19 +1,18 @@
-// Olaylar: what needs a look now on top, then the whole book by day —
-// warnings with measurement and arrival times, links, hand-offs, uploads and
-// the owner's notes.
-import { useRef, useState, type TouchEvent } from "react";
+// Olaylar: işlenmiş özet (app/digest.ts). Üstte hayvan başına tek kartla şimdi
+// bakılacaklar, sonra gün gün birleştirilmiş olaylar ve sistem satırları; ham
+// kayıtların tamamı en altta kapalı durur.
+import { useMemo, useRef, type ReactNode, type TouchEvent } from "react";
 import {
   BatteryWarning, Bell, Bluetooth, CheckCircle, CloudArrowUp, CloudCheck, Cow, HardDrives, Key, NavigationArrow, Note,
   PersonSimpleWalk, Polygon, WifiSlash,
 } from "@phosphor-icons/react";
+import { digest, type NowItem } from "../../app/digest.ts";
 import { isActive } from "../../app/events.ts";
 import { fmt, tr } from "../../app/i18n/tr.ts";
 import type { AppEvent } from "../../app/model.ts";
 import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
-import { Card, Chips, Empty, Header, Section } from "../../ds/components.tsx";
-
-type Filter = "all" | "alerts" | "animals" | "system";
+import { AnimalRing, Card, Empty, Header, Section } from "../../ds/components.tsx";
 
 function iconOf(e: AppEvent) {
   switch (e.kind) {
@@ -118,30 +117,54 @@ export function EventRow({ e, now, seen, onSeen, onRestore, onOpen, onFind, onMa
     : <div className="ev" {...swipeProps}>{body}</div>;
 }
 
+function NowCard({ item, seen, onSeen, onRestore, onOpen, lead }: {
+  item: NowItem; seen: boolean; onSeen: () => void; onRestore: () => void; onOpen?: () => void; lead: ReactNode;
+}) {
+  const tone = item.severity === "danger" ? "t-alarm" : "t-aging";
+  const open = () => onOpen?.();
+  return (
+    <div className="ev" role={onOpen ? "button" : undefined} tabIndex={onOpen ? 0 : undefined} onClick={open}
+      onKeyDown={(ev) => { if (ev.target === ev.currentTarget && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); open(); } }}>
+      {lead}
+      <span className="cm">
+        <span className="ct" style={{ fontSize: 16 }}>{item.name}</span>
+        <span className={"cs wrap strong " + tone}>{item.reasons.join(" · ")}</span>
+        {item.advice && <span className="cs wrap">{item.advice}</span>}
+        <span className="ev-acts">
+          <button className="btn small quiet" onClick={(ev) => { ev.stopPropagation(); (seen ? onRestore : onSeen)(); }}>
+            {seen ? tr.events.digest.restore : tr.events.seen}
+          </button>
+        </span>
+      </span>
+    </div>
+  );
+}
+
 export function EventsScreen() {
   const m = useApp();
   const nav = useNav();
-  const [filter, setFilter] = useState<Filter>("all");
-  const importance = { danger: 0, warn: 1, info: 2, ok: 3 };
-  const active = m.events.filter(isActive).sort((a, b) =>
-    importance[a.severity] - importance[b.severity] || b.at - a.at);
-  const unread = active.filter((e) => !m.seen.has(e.id));
-  const acknowledged = active.filter((e) => m.seen.has(e.id));
-  const rest = m.events.filter((e) => !isActive(e)).filter((e) =>
-    filter === "all" || (filter === "alerts" && e.alert) || (filter === "animals" && e.asset !== null) ||
-    (filter === "system" && e.asset === null));
-  const groups: { label: string; items: AppEvent[] }[] = [];
-  for (const e of rest.slice(0, 400)) {
-    const label = fmt.day(e.at, m.now);
-    if (!groups.length || groups[groups.length - 1].label !== label) groups.push({ label, items: [] });
-    groups[groups.length - 1].items.push(e);
-  }
-  const open = (e: AppEvent) => (e.asset ? () => nav.push({ to: "animal", id: e.asset! }) : e.kind === "station-full" || e.kind === "server-down" ? () => nav.setTab("network") : undefined);
-  // An animal that has a last position can be shown and found from the warning itself.
-  const located = (e: AppEvent) => (e.asset ? m.herd.find((a) => a.id === e.asset && a.last) : undefined);
-  const find = (e: AppEvent) => (located(e) ? () => nav.push({ to: "find", id: e.asset! }) : undefined);
-  const onMap = (e: AppEvent) => (located(e) ? () => nav.showOnMap(e.asset) : undefined);
+  const T = tr.events.digest;
+  const d = useMemo(() => digest(m.events, m.herd, m.now), [m.events, m.herd, m.now]);
+  const isSeen = (i: NowItem) => i.ids.every((id) => m.seen.has(id));
+  const fresh = d.now.filter((i) => !isSeen(i)), acknowledged = d.now.filter(isSeen);
+  const animal = (id: string | null) => (id ? m.herd.find((a) => a.id === id) : undefined);
+  // A located animal opens on the map (Bul is there); otherwise its card; system items open Bağlantı.
+  const openOf = (i: NowItem) => {
+    const a = animal(i.asset);
+    if (a) return a.last ? () => nav.showOnMap(a.id) : () => nav.push({ to: "animal", id: a.id });
+    return () => nav.setTab("network");
+  };
+  const leadOf = (i: NowItem) => {
+    const a = animal(i.asset);
+    return a ? <AnimalRing a={a} size={44} /> : <span className={"ic " + (i.severity === "danger" ? "alarm" : "aging")}><HardDrives size={20} /></span>;
+  };
+  const card = (i: NowItem, seen: boolean) => (
+    <NowCard key={i.key} item={i} seen={seen} lead={leadOf(i)} onOpen={openOf(i)}
+      onSeen={() => i.ids.forEach((id) => m.actions.markSeen(id))}
+      onRestore={() => i.ids.forEach((id) => m.actions.unmarkSeen(id))} />
+  );
   const grazeUntil = m.graze.forever ? tr.zones.graze.forever : m.graze.until ? tr.zones.graze.untilClock(fmt.clock(m.graze.until)) : "";
+  const raw = m.events.slice(0, 200);
 
   return (
     <div className="page">
@@ -150,34 +173,38 @@ export function EventsScreen() {
         <Empty icon={<Bell size={34} />} title={tr.events.empty} body={tr.events.emptyBody} />
       ) : (
         <>
-          <Section title={`${tr.events.now} · ${unread.length} yeni uyarı`}
-            info="Sağa veya sola kaydır ya da Gördüm'e bas: uyarı ana listeden gizlenir, sorun çözülmüş sayılmaz." />
+          <Section title={T.now(fresh.length)} />
           {m.grazing && <p className="sm lead">{tr.events.grazingNote(grazeUntil)}</p>}
-          {unread.length ? (
-            <Card>{unread.map((e) => <EventRow key={e.id} e={e} now={m.now}
-              onSeen={() => m.actions.markSeen(e.id)} onOpen={open(e)}
-              onFind={find(e)} onMap={onMap(e)} />)}</Card>
-          ) : <p className="sm lead">{acknowledged.length ? "Yeni uyarı yok. Görülen ancak devam eden uyarılar aşağıda." : tr.events.nothingNow}</p>}
+          {fresh.length ? <Card>{fresh.map((i) => card(i, false))}</Card> : <p className="sm lead">{T.allGood}</p>}
           {acknowledged.length > 0 && (
             <details className="tech">
-              <summary>Görülen ama devam eden · {acknowledged.length}</summary>
-              <Card>{acknowledged.map((e) => <EventRow key={e.id} e={e} now={m.now}
-                seen onRestore={() => m.actions.unmarkSeen(e.id)}
-                onOpen={open(e)} onFind={find(e)} onMap={onMap(e)} />)}</Card>
+              <summary>{T.seenStill(acknowledged.length)}</summary>
+              <Card>{acknowledged.map((i) => card(i, true))}</Card>
             </details>
           )}
+
+          <Section title={T.days} />
+          {d.days.map((day) => (
+            <Card key={day.start} pad>
+              <div className="row"><strong className="grow">{day.label}</strong><span className="sm">{day.headline}</span></div>
+              {day.lines.map((l, k) => (
+                <button key={k} className="digest-line" onClick={() => l.asset && nav.push({ to: "animal", id: l.asset })}>
+                  <span className={"dot " + (l.severity === "danger" ? "alarm" : l.severity === "warn" ? "aging" : "")} />
+                  <span><strong>{l.name}</strong> {l.text}</span>
+                </button>
+              ))}
+              {day.system.length > 0 && (
+                <details className="tech">
+                  <summary>{T.system(day.system.length)}</summary>
+                  {day.system.map((s, k) => <p key={k} className="sm" style={{ margin: "6px 0 0" }}>{fmt.clock(s.last)} · {s.text}</p>)}
+                </details>
+              )}
+            </Card>
+          ))}
+
           <details className="tech">
-            <summary>Geçmiş kayıtlar · {rest.length}</summary>
-            <Chips<Filter> value={filter} onChange={setFilter} options={[
-              { value: "all", label: tr.events.filters.all }, { value: "alerts", label: tr.events.filters.alerts },
-              { value: "animals", label: tr.events.filters.animals }, { value: "system", label: tr.events.filters.system },
-            ]} />
-            {groups.map((g) => (
-              <details key={g.label} className="tech">
-                <summary>{g.label} · {g.items.length} kayıt</summary>
-                <Card>{g.items.map((e) => <EventRow key={e.id} e={e} now={m.now} onOpen={open(e)} />)}</Card>
-              </details>
-            ))}
+            <summary>{T.raw(m.events.length)}</summary>
+            <Card>{raw.map((e) => <EventRow key={e.id} e={e} now={m.now} />)}</Card>
           </details>
         </>
       )}

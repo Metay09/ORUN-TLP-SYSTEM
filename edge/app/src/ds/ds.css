@@ -299,3 +299,8 @@ details.tech > summary::-webkit-details-marker { display: none; }
   position: fixed; left: 16px; right: 16px; bottom: calc(var(--tabbar) + var(--safe-b) + 16px); z-index: 70; padding: 14px 16px;
   border-radius: 16px; background: var(--ink); color: var(--paper); font-size: 14px; box-shadow: var(--lift);
 }
+
+/* Olaylar: gün özetinin satırı */
+.digest-line { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 8px 0 0; border: 0; background: none; text-align: left; font: inherit; color: var(--ink); }
+.digest-line .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--silent); flex: none; transform: translateY(-1px); }
+.digest-line .dot.alarm { background: var(--alarm); } .digest-line .dot.aging { background: var(--aging); }
