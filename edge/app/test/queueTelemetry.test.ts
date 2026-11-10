@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseEdgeQueues } from "../src/app/ownerAccountClient.ts";
+import { parseEdgeQueues, parseFarmGateways } from "../src/app/ownerAccountClient.ts";
 import { collarStorageReadings } from "../src/app/collarStorageReadings.ts";
 
 const sample = {
@@ -51,4 +51,15 @@ test("collar local storage reading is ephemeral, dated and never a pending count
   assert.equal(Object.keys(collarStorageReadings.snapshot()).length, 0);
   assert.ok(notifications >= 2);
   unsubscribe();
+});
+
+test("Gateway: last upload does not make an old memory sample fresh", () => {
+  const [gateway] = parseFarmGateways({ gateways: [{
+    gateway: "09A462BD4B275BA5", via: "pc-usb", held: 8, capacity: 1056,
+    last_seen_utc: 1_794_300_000, last_upload_utc: 1_794_300_000,
+    status_seen_utc: 1_794_292_800, trackers_24h: 2,
+  }] });
+  assert.equal(gateway.lastSeen, 1_794_300_000_000);
+  assert.equal(gateway.statusAt, 1_794_292_800_000);
+  assert.equal(gateway.held, 8);
 });
