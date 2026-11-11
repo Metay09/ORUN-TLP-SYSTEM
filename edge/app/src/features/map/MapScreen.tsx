@@ -310,7 +310,7 @@ export function HerdRows({ herd, me, now, onPick }: { herd: Animal[]; me: LatLon
           <span className="cm">
             <span className="ct">{a.name}</span>
             <span className={`cs strong t-${toneOfStatus(a.status)}`}>{a.seen}</span>
-            {a.points.some((p) => p.active_s !== null) && <span style={{ marginTop: 4 }}><Strip values={hourlyActivity(a.points, now)} /></span>}
+            {a.reports.some((p) => p.active_s !== null) && <span style={{ marginTop: 4 }}><Strip values={hourlyActivity(a.reports, now)} /></span>}
           </span>
           {me && a.last && <span className="cap">{fmt.distance(distanceM(me, a.last))}</span>}
         </button>

@@ -256,7 +256,8 @@ export class AccountObservationMirror {
       if (d.lat === null || d.lon === null) {
         const heard = typeof r.first_seen_utc === "number" ? r.first_seen_utc : null;
         unlocated?.push({ tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence, time: d.time,
-          received: heard ? new Date(heard * 1000).toISOString() : null, gnssFailures: d.gnss_failures ?? null });
+          received: heard ? new Date(heard * 1000).toISOString() : null, gnssFailures: d.gnss_failures ?? null,
+          battery_mv: d.battery_mv, battery: d.battery, active_s: d.active_s, covered_s: d.covered_s, period_s: d.period_s });
         continue;
       }
       const seen = typeof r.first_seen_utc === "number" ? r.first_seen_utc : null;

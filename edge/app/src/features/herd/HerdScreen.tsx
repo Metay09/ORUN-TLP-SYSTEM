@@ -69,14 +69,14 @@ export function HerdScreen() {
 }
 
 function HerdCell({ a, now, onOpen }: { a: Animal; now: number; onOpen: () => void }) {
-  const hasActivity = a.points.some((p) => p.active_s !== null);
+  const hasActivity = a.reports.some((p) => p.active_s !== null);
   return (
     <button className="cell" onClick={onOpen}>
       <AnimalRing a={a} />
       <span className="cm">
         <span className="ct">{a.name}{a.profile.tag && <span className="cap" style={{ fontWeight: 400 }}> {a.profile.tag}</span>}</span>
         <span className={`cs strong t-${toneOfStatus(a.status)}`}>{a.seen}</span>
-        {hasActivity && <span style={{ marginTop: 4 }}><Strip values={hourlyActivity(a.points, now)} /></span>}
+        {hasActivity && <span style={{ marginTop: 4 }}><Strip values={hourlyActivity(a.reports, now)} /></span>}
       </span>
       <span className="stack" style={{ alignItems: "flex-end", gap: 4 }}>
         {a.batteryPercent !== null && <span className={"cap" + (a.battery === "critical" ? " t-alarm strong" : a.battery === "low" ? " t-aging strong" : "")}>%{a.batteryPercent}</span>}

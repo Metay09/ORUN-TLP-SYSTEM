@@ -262,3 +262,25 @@ test("pil ömrü: beklenen (üretici değerleri), ölçülen (günlük düşüş
   assert.equal(new BatteryCapacityBook({ getItem: (k) => store.get(k) ?? null, setItem: () => {} }).get("0E8ADE7E71531AA3"), 3200);
   assert.throws(() => book.set("0E8ADE7E71531AA3", 10));
 });
+
+test("konumsuz rapor da rapordur: pil ve hareket ondan da okunur; saatsiz kayıtta pil gateway'e ulaştığı saatle", () => {
+  const now = Date.UTC(2026, 10, 11, 5, 16);
+  const MIN = 60_000;
+  const points = [{
+    tracker: "0E8ADE7E71531AA3", incarnation: "I", seq: 1, time: new Date(now - 13 * 60 * MIN).toISOString(),
+    lat: 37.6, lon: 28.05, alt_m: null, sats: 4, hdop: 4, fix_age_s: 0, battery_mv: 4050, battery: "NORMAL",
+    active_s: 10, covered_s: 120, source: "GNSS", period_s: 540, rssi: -70, snr: 5, received: null, delay_s: null, link: null,
+  } as unknown as Observation];
+  const unlocated = [
+    { tracker: "0E8ADE7E71531AA3", incarnation: "I", seq: 2, time: new Date(now - 60 * MIN).toISOString(),
+      battery_mv: 4000, battery: "NORMAL", active_s: 30, covered_s: 120, period_s: 120 },
+    { tracker: "0E8ADE7E71531AA3", incarnation: "I", seq: 3, time: null, received: new Date(now - 30 * MIN).toISOString(),
+      gnssFailures: 1, battery_mv: 3990, battery: "NORMAL", active_s: 0, covered_s: 120, period_s: 1920 },
+  ];
+  const [a] = buildHerd({ points, profiles: {}, assetOf: (d) => d, now, unlocated });
+  assert.equal(a.batteryAt, now - 30 * MIN, "pil en yeni rapordan");
+  assert.equal(a.batteryMv, 3990);
+  assert.equal(a.batteryTrail.length, 3);
+  assert.deepEqual(a.reports.map((r) => r.seq), [1, 2], "hareket için saati olan bütün raporlar");
+  assert.equal(a.points.length, 1, "haritada yalnız konumlu kayıt");
+});
