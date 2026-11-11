@@ -64,6 +64,7 @@
 #include "ble_write_auth.h"
 #include "ble_write_service.h"
 #include "lora_command.h"
+#include "lora_command_relay.h"
 #include "device_storage_role.h"
 #include "product_region.h"
 #include "sf5l0_bench.h"
@@ -216,6 +217,14 @@ orun_tlp::BleWriteService ble_write_service(ble_write_auth, config_mutations,
 // 6b: from the radio after a report.
 orun_tlp::LoraCommandService lora_commands(security_store, config_store,
                                            config_mutations);
+// 6b Tracker: a command that came over the radio is answered over the radio.
+bool lora_answer_by_radio = false;
+uint8_t lora_radio_answer[orun_tlp::lora_command::kResultSize]{};
+bool lora_radio_answer_pending = false;
+uint32_t lora_radio_answer_since_ms = 0;
+// 6b Gateway: commands a bridge handed over, waiting for their Tracker.
+orun_tlp::LoraCommandRelay lora_relay;
+uint32_t lora_relay_acks_seen = 0;
 // SF5L2: paces re-arming of the one-record pilot to drain the backlog.
 orun_tlp::Sf5l0DrainPacer bench_pacer;
 bool bench_pacer_started = false;
@@ -1294,6 +1303,8 @@ void submitLoraCommand(const uint8_t* frame, size_t size, const char* via) {
     return;
   }
   const orun_tlp::LoraCommandAdmission a = lora_commands.submit(frame, size);
+  if (a == orun_tlp::LoraCommandAdmission::kPending)
+    lora_answer_by_radio = strcmp(via, "lora") == 0;
   static const char* const kNames[] = {"NOT_FOR_ME", "REJECTED", "BUSY", "PENDING"};
   Serial.printf("APP LORA via=%s admission=%s\n", via, kNames[static_cast<uint8_t>(a) & 3U]);
 }
@@ -1306,12 +1317,88 @@ void drainLoraCommandResult() {
     snprintf(hex + 2 * i, 3, "%02X", static_cast<unsigned>(result[i]));
   const uint32_t interval = (uint32_t(result[32]) << 24) | (uint32_t(result[33]) << 16) |
                             (uint32_t(result[34]) << 8) | result[35];
+  if (lora_answer_by_radio) {
+    memcpy(lora_radio_answer, result, sizeof(result));
+    lora_radio_answer_pending = true;
+    lora_radio_answer_since_ms = orun_tlp::monotonic::nowMs();
+    lora_answer_by_radio = false;
+  }
   Serial.printf("APP LORA RESULT code=%s interval_s=%lu ble_window_s=%u services=%u/%u hex=%s\n",
                 orun_tlp::configMutationOutcomeName(
                     static_cast<orun_tlp::ConfigMutationOutcome>(result[2])),
                 static_cast<unsigned long>(interval),
                 static_cast<unsigned>((result[36] << 8) | result[37]),
                 static_cast<unsigned>(result[38]), static_cast<unsigned>(result[39]), hex);
+}
+
+void printHexLine(const char* head, const uint8_t* bytes, size_t size) {
+  char hex[2 * orun_tlp::lora_command::kMaxCommandSize + 1];
+  for (size_t i = 0; i < size && i < orun_tlp::lora_command::kMaxCommandSize; ++i)
+    snprintf(hex + 2 * i, 3, "%02X", static_cast<unsigned>(bytes[i]));
+  hex[2 * (size < orun_tlp::lora_command::kMaxCommandSize ? size
+                                                           : orun_tlp::lora_command::kMaxCommandSize)] = '\0';
+  Serial.printf("%s%s\n", head, hex);
+}
+
+// 6b Tracker: commands from the radio go to the same service as USB; the
+// signed answer goes back over the radio while the Gateway still listens.
+void serviceLoraTracker() {
+  if (!trackerStorage()) return;
+  orun_tlp::LoraFrameRx rx{};
+  if (radio_manager.takeLoraFrame(&rx)) submitLoraCommand(rx.payload, rx.size, "lora");
+  if (!lora_radio_answer_pending) return;
+  constexpr uint32_t kAnswerGiveUpMs = 8000;
+  if (orun_tlp::monotonic::elapsed(orun_tlp::monotonic::nowMs(), lora_radio_answer_since_ms,
+                                   kAnswerGiveUpMs)) {
+    lora_radio_answer_pending = false;  // the same command comes again; same answer then
+    Serial.println(F("APP LORA RESULT radio=GAVE_UP"));
+    return;
+  }
+  if (radio_manager.canSend() &&
+      radio_manager.sendLoraFrame(lora_radio_answer, sizeof(lora_radio_answer)))
+    lora_radio_answer_pending = false;
+}
+
+// 6b Gateway: hold the bridge's commands; send one after its Tracker's
+// report (after the custody ACK); pass every RESULT to the bridge.
+void serviceLoraRelay() {
+  if (!gatewayStorage()) return;
+  const uint32_t now = orun_tlp::monotonic::nowMs();
+  uint64_t sender = 0;
+  uint32_t heard_at = 0;
+  if (radio_manager.takeHeardSender(sender, heard_at)) {
+    lora_relay.heard(sender, heard_at);
+    lora_relay_acks_seen = radio_manager.eventDiagnostics().custody_ack_tx_attempts;
+  }
+  if (radio_manager.eventDiagnostics().custody_ack_tx_attempts != lora_relay_acks_seen &&
+      !radio_manager.isTransmitting()) {
+    lora_relay_acks_seen = radio_manager.eventDiagnostics().custody_ack_tx_attempts;
+    lora_relay.ackSent(now);
+  }
+  uint64_t dropped = 0;
+  uint32_t dropped_id = 0;
+  while (lora_relay.takeDropped(dropped, dropped_id))
+    Serial.printf("LORA DROPPED target=%08lX%08lX id=%08lX\n",
+                  static_cast<unsigned long>(uint32_t(dropped >> 32)),
+                  static_cast<unsigned long>(uint32_t(dropped)),
+                  static_cast<unsigned long>(dropped_id));
+  if (radio_manager.canSend()) {
+    orun_tlp::LoraCommandRelay::Frame f{};
+    if (lora_relay.due(now, f) && radio_manager.sendLoraFrame(f.bytes, f.size))
+      Serial.printf("LORA SENT target=%08lX%08lX id=%08lX attempt=%u/%u\n",
+                    static_cast<unsigned long>(uint32_t(f.target >> 32)),
+                    static_cast<unsigned long>(uint32_t(f.target)),
+                    static_cast<unsigned long>(f.command_id), static_cast<unsigned>(f.attempt),
+                    static_cast<unsigned>(orun_tlp::LoraCommandRelay::kMaxAttempts));
+  }
+  orun_tlp::LoraFrameRx rx{};
+  if (radio_manager.takeLoraFrame(&rx)) {
+    const bool ours = lora_relay.answered(rx.payload, rx.size);
+    char head[48];
+    snprintf(head, sizeof(head), "LORA RESULT queued=%s rssi=%d hex=", ours ? "yes" : "no",
+             static_cast<int>(rx.rssi_dbm));
+    printHexLine(head, rx.payload, rx.size);
+  }
 }
 
 void drainBleWriteAnswer() {
@@ -2775,8 +2862,11 @@ void handleRoleCommand() {
     // 6a desk test: a server-signed LoRa command pasted over USB goes through
     // exactly the service the radio will feed (tools/orun_lora_komut.py).
     static const char kLoraCmd[] = "APP LORA CMD ";
-    constexpr uint8_t kPrefix = sizeof(kLoraCmd) - 1;
-    if (role_command_length > kPrefix && memcmp(role_command, kLoraCmd, kPrefix) == 0) {
+    static const char kLoraQueue[] = "APP LORA QUEUE ";
+    const bool queue = role_command_length > sizeof(kLoraQueue) - 1 &&
+                       memcmp(role_command, kLoraQueue, sizeof(kLoraQueue) - 1) == 0;
+    const uint8_t kPrefix = queue ? sizeof(kLoraQueue) - 1 : sizeof(kLoraCmd) - 1;
+    if (queue || (role_command_length > kPrefix && memcmp(role_command, kLoraCmd, kPrefix) == 0)) {
       const uint8_t hex_len = static_cast<uint8_t>(role_command_length - kPrefix);
       uint8_t frame[orun_tlp::lora_command::kMaxCommandSize]{};
       bool ok = (hex_len % 2U) == 0U && hex_len / 2U <= sizeof(frame);
@@ -2792,7 +2882,19 @@ void handleRoleCommand() {
         Serial.println(F("APP REJECTED"));
         return;
       }
-      submitLoraCommand(frame, hex_len / 2U, "usb");
+      if (!queue) {
+        submitLoraCommand(frame, hex_len / 2U, "usb");
+        return;
+      }
+      // 6b Gateway: a bridge hands over a signed command for a Tracker.
+      if (!gatewayStorage()) {
+        Serial.println(F("LORA QUEUE refused: not a gateway"));
+        return;
+      }
+      static const char* const kQueued[] = {"ADDED", "REPLACED", "MALFORMED", "FULL"};
+      const auto q = lora_relay.queue(frame, hex_len / 2U);
+      Serial.printf("LORA QUEUED result=%s waiting=%u\n", kQueued[static_cast<uint8_t>(q) & 3U],
+                    static_cast<unsigned>(lora_relay.count()));
       return;
     }
   }
@@ -4327,6 +4429,8 @@ void loop() {
   // custody write has completed and been read back.
   if (gatewayStorage() && !radio_manager.isTransmitting())
     orun_tlp::sf5l0_gateway::service(product_records.mounted());
+  serviceLoraRelay();
+  serviceLoraTracker();
 #endif
 
   // SF3 device runtime executes only after RadioManager has drained callback

@@ -375,6 +375,55 @@ bool RadioManager::takeProductSecureFrame(ProductSecureRxFrame* frame) {
   return true;
 }
 
+bool RadioManager::takeLoraFrame(LoraFrameRx* frame) {
+  if (frame == nullptr || !lora_rx_pending_) return false;
+  *frame = lora_rx_;
+  lora_rx_ = {};
+  lora_rx_pending_ = false;
+  return true;
+}
+
+bool RadioManager::takeHeardSender(uint64_t& device, uint32_t& at_ms) {
+  if (!heard_pending_) return false;
+  heard_pending_ = false;
+  device = heard_sender_;
+  at_ms = heard_at_ms_;
+  return true;
+}
+
+bool RadioManager::sendLoraFrame(const uint8_t* payload, size_t size) {
+  radio_driver::Guard gate;
+  if (!gate) return false;
+  const bool tracker = network_.role() == NodeRole::kTracker;
+  using namespace lora_command;
+  // A Tracker sends only its own RESULT; anyone else only a command frame.
+  const bool shape_ok =
+      payload != nullptr &&
+      (tracker ? (size == kResultSize && payload[0] == kVersion &&
+                  payload[1] == kResultType)
+               : (isCommandFrame(payload, size) && size >= kMinCommandSize &&
+                  size <= kMaxCommandSize));
+  uint64_t owner = 0;
+  if (shape_ok && tracker)
+    for (int i = 0; i < 8; ++i) owner = (owner << 8) | payload[4 + i];
+  if (!canSend() || !shape_ok || (tracker && owner != device_id_)) {
+    ++local_tx_failures_;
+    return false;
+  }
+  uint8_t tx_payload[kMaxCommandSize]{};
+  memcpy(tx_payload, payload, size);
+  startTxOperation();
+  tx_kind_ = TxKind::kLoraFrame;
+  tx_role_epoch_ = role_epoch_;
+  rx_restore_state_ = RxRestoreState::kNone;
+  ++tx_attempts_;
+  Radio.Send(tx_payload, static_cast<uint8_t>(size));
+  tx_started_ms_ = monotonic::nowMs();
+  Serial.printf("TX LORA %s length=%u\n", tracker ? "RESULT" : "COMMAND",
+                static_cast<unsigned>(size));
+  return true;  // Radio start, not receipt.
+}
+
 bool RadioManager::takeCustodyAckFrame(CustodyAckRxFrame* frame) {
   if (frame == nullptr || !custody_ack_rx_pending_ ||
       role_transition_pending_ ||
@@ -846,6 +895,37 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
     return;
   }
 
+  if (size >= 2 && payload[0] == lora_command::kVersion &&
+      (payload[1] == lora_command::kCommandType ||
+       payload[1] == lora_command::kResultType)) {
+    // 6b: untrusted bytes. A Tracker keeps only commands addressed to it
+    // (LoraCommandService checks the signature); other roles keep RESULTs
+    // for their bridge. One mailbox; a second frame waits for the next try.
+    const bool tracker = network_.role() == NodeRole::kTracker;
+    const bool command = payload[1] == lora_command::kCommandType;
+    uint64_t target = 0;
+    if (size >= 12)
+      for (int i = 0; i < 8; ++i) target = (target << 8) | payload[4 + i];
+    const bool wanted =
+        tracker ? (command && size >= lora_command::kMinCommandSize &&
+                   size <= lora_command::kMaxCommandSize && target == device_id_)
+                : (!command && size == lora_command::kResultSize);
+    if (!wanted || lora_rx_pending_) {
+      Serial.printf("RX LORA %s ignored length=%u\n", command ? "COMMAND" : "RESULT",
+                    static_cast<unsigned>(size));
+      return;
+    }
+    lora_rx_.size = size;
+    lora_rx_.rssi_dbm = rssi;
+    lora_rx_.snr_db = snr;
+    memcpy(lora_rx_.payload, payload, size);
+    lora_rx_pending_ = true;
+    Serial.printf("RX LORA %s queued length=%u rssi=%d snr=%d\n",
+                  command ? "COMMAND" : "RESULT", static_cast<unsigned>(size),
+                  static_cast<int>(rssi), static_cast<int>(snr));
+    return;
+  }
+
   if (size >= 2 &&
       payload[0] == tlp::kProductSecureVersion &&
       payload[1] == tlp::kPacketTypeProductSecure) {
@@ -859,6 +939,10 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
                     static_cast<unsigned>(size));
       return;
     }
+    // 6b: someone's report was heard; a Gateway may have a command for it.
+    heard_sender_ = frame.device_id;
+    heard_at_ms_ = monotonic::nowMs();
+    heard_pending_ = true;
     if (product_secure_rx_pending_) {
       ++event_diagnostics_.product_secure_rx_drops;
       Serial.println(F("RX PRODUCT_SECURE drop pending-mailbox"));

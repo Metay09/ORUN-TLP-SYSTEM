@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "custody_ack.h"
+#include "lora_command.h"
 #include "device_identity.h"
 #include "network_service.h"
 #include "radio_listen_policy.h"
@@ -75,6 +76,16 @@ struct CustodyAckRxFrame {
   uint8_t payload[custody_ack::kWireSize]{};
 };
 
+// 6b: one LoRa command (Tracker) or command RESULT (Gateway) as received.
+// UNTRUSTED bytes: the Tracker's LoraCommandService checks the signature;
+// the Gateway only passes a RESULT on to its bridge.
+struct LoraFrameRx {
+  uint16_t size = 0;
+  int16_t rssi_dbm = 0;
+  int8_t snr_db = 0;
+  uint8_t payload[lora_command::kMaxCommandSize]{};
+};
+
 class RadioManager {
  public:
   // Application API is loop-owner-only, including diagnostics/accessors.
@@ -131,6 +142,16 @@ class RadioManager {
   // Tracker-only, exact raw 56-byte ACK from driver callback mailbox.
   // The consumer MUST separately check durable grant and full HMAC.
   bool takeCustodyAckFrame(CustodyAckRxFrame* frame);
+
+  // 6b: LoRa commands. A Tracker takes commands addressed to it; any other
+  // role takes command RESULTs (to pass to its bridge). Loop owner only.
+  bool takeLoraFrame(LoraFrameRx* frame);
+  // A Gateway sends an exact command frame it holds for a bridge; a Tracker
+  // sends its own signed RESULT. Shape-checked only (no authority here).
+  bool sendLoraFrame(const uint8_t* payload, size_t size);
+  // 6b: a PRODUCT_SECURE frame (a Tracker's report) was received from this
+  // device; once per frame. Gateway uses it to send a waiting command.
+  bool takeHeardSender(uint64_t& device, uint32_t& at_ms);
 
   uint64_t deviceId() const;
   uint32_t txAttempts() const { return tx_attempts_; }
@@ -195,6 +216,7 @@ class RadioManager {
     kHistorySecure,
     kProductSecure,
     kCustodyAck,
+    kLoraFrame,
   };
 
   uint64_t device_id_ = 0;
@@ -231,6 +253,11 @@ class RadioManager {
   bool product_secure_rx_pending_ = false;
   CustodyAckRxFrame custody_ack_rx_{};
   bool custody_ack_rx_pending_ = false;
+  LoraFrameRx lora_rx_{};
+  bool lora_rx_pending_ = false;
+  uint64_t heard_sender_ = 0;
+  uint32_t heard_at_ms_ = 0;
+  bool heard_pending_ = false;
   uint32_t bridge_line_number_ = 0;  // per boot; first printed line is 1.
   uint32_t tx_attempts_ = 0, local_tx_failures_ = 0;
   uint32_t tx_timeouts_ = 0;

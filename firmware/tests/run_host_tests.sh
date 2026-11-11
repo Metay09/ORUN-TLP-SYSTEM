@@ -935,6 +935,10 @@ g++ "${portable_flags[@]}" -Ifirmware/tests/sf5 firmware/tests/m7/test_lora_comm
   firmware/src/tlp_position_packet.cpp \
   -lcrypto -o "$test_dir/lora_command"
 "$test_dir/lora_command"
+# 6b: the Gateway's LoRa command mailbox (no authority, exact bytes only).
+g++ "${portable_flags[@]}" firmware/tests/m7/test_lora_command_relay.cpp \
+  firmware/src/lora_command_relay.cpp -o "$test_dir/lora_command_relay"
+"$test_dir/lora_command_relay"
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7h_ble_status_transport.cpp \
   firmware/src/ble_application_transport.cpp firmware/src/application_request.cpp \
   firmware/src/config_store.cpp firmware/src/config_format.cpp \
