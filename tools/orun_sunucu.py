@@ -17,6 +17,7 @@ Bugüne kadar ayrı çalışan üç servisin işini tek programda yapar:
 Köprü ayrıca bağlı olduğu gateway'in durumunu bildirir: POST /v1/bridge/gateway.
 Hesap adresi çiftliğin gateway listesini verir: GET /api/v1/devices/gateways;
 cihaz adları: GET /api/v1/devices/names, POST /api/v1/devices/name (2d);
+pil kapasitesi (mAh, hesapta): GET /api/v1/devices/battery, POST /api/v1/devices/battery (Y3);
 tasmadaki alanlar: GET /api/v1/devices/fences, POST /api/v1/devices/fence (3a);
 cihaz ayarları: GET /api/v1/devices/settings, POST /api/v1/devices/settings (istenen),
 POST /api/v1/devices/settings/reported (cihazdan okunan) (4b);
@@ -49,6 +50,7 @@ if str(ROOT) not in sys.path:
 
 from backend.account_login import AccountStore  # noqa: E402
 from backend.account_login_http import account_handler_factory  # noqa: E402
+from backend.device_battery import BadBattery, DeviceBattery  # noqa: E402
 from backend.device_names import BadName, DeviceNames  # noqa: E402
 from backend.device_settings import BadSettings, DeviceSettings  # noqa: E402
 from backend.device_ops import BadOp, DeviceOps  # noqa: E402
@@ -238,6 +240,7 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
     gateways = GatewayStatus(local.backend.db_path)
     edge_queues = EdgeQueueStatus(local.backend.db_path)
     names = DeviceNames(local.backend.db_path)
+    battery = DeviceBattery(local.backend.db_path)
     fences = TrackerFences(local.backend.db_path)
     settings = DeviceSettings(local.backend.db_path)
     ops = DeviceOps(local.backend.db_path)
@@ -267,7 +270,7 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
                     for c in registry.all() if not c.retired]
                 return self._send(200, {"keys": keys})
             if self.path not in ("/api/v1/devices/gateways", "/api/v1/devices/edge-status", "/api/v1/devices/names",
-                                 "/api/v1/devices/fences", "/api/v1/devices/settings",
+                                 "/api/v1/devices/battery", "/api/v1/devices/fences", "/api/v1/devices/settings",
                                  "/api/v1/devices/ops"):
                 return super().do_GET()
             if self._farm_actor("zone:read") is None:
@@ -277,6 +280,8 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
                                         "server_confirmed": local.backend.ledger.record_count()})
             if self.path == "/api/v1/devices/names":
                 return self._send(200, {"names": names.all()})
+            if self.path == "/api/v1/devices/battery":
+                return self._send(200, {"battery": battery.all()})
             if self.path == "/api/v1/devices/fences":
                 return self._send(200, {"fences": fences.all()})
             if self.path == "/api/v1/devices/settings":
@@ -287,7 +292,7 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
 
         def do_POST(self):  # noqa: N802
             if self.path not in ("/api/v1/devices/gateway", "/api/v1/devices/name",
-                                 "/api/v1/devices/fence", "/api/v1/devices/settings",
+                                 "/api/v1/devices/battery", "/api/v1/devices/fence", "/api/v1/devices/settings",
                                  "/api/v1/devices/settings/reported", "/api/v1/devices/ops",
                                  "/api/v1/devices/ops/result"):
                 return super().do_POST()
@@ -320,6 +325,14 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
                     return self._send(200, settings.report(body))
                 except (BadSettings, ValueError, UnicodeDecodeError):
                     return self._send(400, {"error": "invalid_settings"})
+            if self.path == "/api/v1/devices/battery":
+                try:
+                    body = json.loads(self.rfile.read(int(size)))
+                    dev, mah = battery.set(body.get("device") if isinstance(body, dict) else None,
+                                           body.get("mah") if isinstance(body, dict) else None)
+                except (BadBattery, ValueError, UnicodeDecodeError):
+                    return self._send(400, {"error": "invalid_battery"})
+                return self._send(200, {"device": dev, "mah": mah})
             if self.path == "/api/v1/devices/name":
                 try:
                     body = json.loads(self.rfile.read(int(size)))

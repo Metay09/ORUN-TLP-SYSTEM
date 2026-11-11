@@ -9,6 +9,7 @@ import {
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
 import { DeviceNameBook } from "./deviceNames.ts";
+import { batteryCapacity } from "./batteryLife.ts";
 import { TrackerFenceBook, type FenceRecord } from "./trackerFences.ts";
 import { DeviceSettingsBook, type SettingValues, type Via as SettingsVia } from "./deviceSettings.ts";
 import { DeviceOpsBook, type FencePayload, type OpVia } from "./deviceOps.ts";
@@ -89,6 +90,11 @@ export function pilotSetDeviceName(device: string, name: string): Promise<void> 
   return deviceNames.set(device, name, client && pilotAccountStatus() ? client : null);
 }
 
+/** Y3: battery capacity per tracker, in the account (not on the tracker). */
+export function pilotSetBatteryCapacity(device: string, mAh: number | null): Promise<void> {
+  return batteryCapacity.set(device, mAh, client && pilotAccountStatus() ? client : null);
+}
+
 /** 3a: which zones each tracker holds. */
 export const trackerFences = new TrackerFenceBook(
   typeof localStorage !== "undefined" ? (() => { try { return localStorage; } catch { return null; } })() : null);
@@ -132,6 +138,7 @@ export function pilotReportSettings(device: string, values: SettingValues, via: 
 function refreshNames(): void {
   if (client && pilotAccountStatus()) {
     void deviceNames.refresh(client).catch(() => undefined);
+    void batteryCapacity.refresh(client).catch(() => undefined);
     void trackerFences.refresh(client).catch(() => undefined);
     void deviceSettings.refresh(client).catch(() => undefined);
     void deviceOps.refresh(client).catch(() => undefined);

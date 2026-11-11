@@ -256,11 +256,35 @@ test("pil ömrü: beklenen (üretici değerleri), ölçülen (günlük düşüş
   assert.deepEqual([Math.round(m.mAhPerDay), Math.round(m.daysFull), Math.round(m.daysLeft!)], [50, 16, 6]);
   assert.equal(measuredLife(1000, 0.2, 100), null, "düşmeyen pilde ölçülen yok");
   assert.deepEqual([lifeWord(1.5), lifeWord(13.6), lifeWord(119), lifeWord(900)], ["~36 saat", "~14 gün", "~4 ay", "~2,5 yıl"]);
+});
+
+test("pil kapasitesi hesapta: internetsiz verilen sonra gider, eski telefon kayıtları da gönderilir", async () => {
   const store = new Map<string, string>();
-  const book = new BatteryCapacityBook({ getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); } });
-  book.set("0e8ade7e71531aa3", 3200);
-  assert.equal(new BatteryCapacityBook({ getItem: (k) => store.get(k) ?? null, setItem: () => {} }).get("0E8ADE7E71531AA3"), 3200);
-  assert.throws(() => book.set("0E8ADE7E71531AA3", 10));
+  const io = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
+  // Önceki sürümün yalnız telefonda tuttuğu değer.
+  store.set("orun.batteryMah.v1", JSON.stringify({ "52E16773141A8887": 6000 }));
+  const book = new BatteryCapacityBook(io);
+  assert.equal(book.get("52E16773141A8887"), 6000);
+  await book.set("0e8ade7e71531aa3", 3200);  // internetsiz: telefonda görünür, bekler
+  assert.equal(new BatteryCapacityBook(io).get("0E8ADE7E71531AA3"), 3200);
+  await assert.rejects(book.set("0E8ADE7E71531AA3", 10));
+  const server = new Map<string, number>([["AAAAAAAAAAAAAAAA", 2000]]);
+  const sent: string[] = [];
+  const api = {
+    batteryCapacities: async () => Object.fromEntries(server),
+    setBatteryCapacity: async (d: string, m: number | null) => { sent.push(d); if (m === null) server.delete(d); else server.set(d, m); },
+  };
+  await book.refresh(api);
+  assert.deepEqual(sent.sort(), ["0E8ADE7E71531AA3", "52E16773141A8887"]);
+  assert.deepEqual(book.snapshot(), { AAAAAAAAAAAAAAAA: 2000, "0E8ADE7E71531AA3": 3200, "52E16773141A8887": 6000 });
+  // Başka telefonun verdiği değer bu telefonda da görünür; silme hesaba gider.
+  await book.set("52E16773141A8887", null, api);
+  assert.equal(server.has("52E16773141A8887"), false);
+  // Gönderilemeyen silme, hesapta değer olsa da telefonda silinmiş kalır.
+  const down = { ...api, setBatteryCapacity: async () => { throw new Error("internet yok"); } };
+  await book.set("AAAAAAAAAAAAAAAA", null, down);
+  await book.refresh({ ...down, batteryCapacities: api.batteryCapacities }).catch(() => undefined);
+  assert.equal(book.get("AAAAAAAAAAAAAAAA"), null);
 });
 
 test("konumsuz rapor da rapordur: pil ve hareket ondan da okunur; saatsiz kayıtta pil gateway'e ulaştığı saatle", () => {
