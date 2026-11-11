@@ -12,6 +12,8 @@ bool accessBelongsToRequester(ApplicationRequester requester,
       return access.channel == ApplicationAccessChannel::kBleOpen ||
              access.channel == ApplicationAccessChannel::kBleEncrypted ||
              access.channel == ApplicationAccessChannel::kBleAuthenticated;
+    case ApplicationRequester::kLora:
+      return access.channel == ApplicationAccessChannel::kLoraAuthenticated;
   }
   return false;
 }

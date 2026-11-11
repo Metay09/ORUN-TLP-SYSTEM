@@ -20,6 +20,9 @@ class ConfigStore;
 enum class ApplicationRequester : uint8_t {
   kUsb = 1,
   kBle = 2,
+  // 6 (owner decision 2026-11-11): an account-signed command that arrived
+  // over LoRa through a gateway (lora_command.h).
+  kLora = 3,
 };
 
 enum class ApplicationRequestKind : uint8_t {
@@ -57,6 +60,10 @@ enum class ApplicationAccessChannel : uint8_t {
   // fresh Tracker challenge (ble_write_auth.h). Set only by the
   // composition's write service after verification, never from peer bytes.
   kBleAuthenticated = 4,
+  // 6: this one LoRa command carried a valid account write-key tag bound to
+  // this Tracker's current state token (lora_command.h). Set only by the
+  // LoRa command service after verification, never from peer bytes.
+  kLoraAuthenticated = 5,
 };
 
 struct ApplicationAccessContext {

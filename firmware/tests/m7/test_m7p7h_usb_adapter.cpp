@@ -325,10 +325,11 @@ int main() {
     assert(findSetting("BLE", 3) == nullptr);
     assert(findSetting(nullptr, 0) == nullptr);
     for (const SettingRow& row : kSettingRows) {
-      // Unique ids and names; nothing opens on LoRa before step 6.
+      // Unique ids and names; no radio row, so every row is open on LoRa (6).
       assert(findSetting(static_cast<uint8_t>(row.kind)) == &row);
       assert(findSetting(row.name, strlen(row.name)) == &row);
-      assert(!settingAllowed(row, kSettingDoorLora, StorageRole::kTracker));
+      assert(!row.radio);
+      assert(settingAllowed(row, kSettingDoorLora, StorageRole::kTracker));
       assert(!settingAllowed(row, kSettingDoorUsb, StorageRole::kConflict));
       assert(settingAllowed(row, kSettingDoorUsb, StorageRole::kUnassigned));
     }
@@ -369,7 +370,7 @@ int main() {
     char line[128];
     assert(formatSettingLine(interval, 900, StorageRole::kTracker, line, sizeof(line)) > 0);
     assert(std::string(line) ==
-           "APP SETTING id=1 name=INTERVAL value=900 usb=1 ble=1 lora=0 radio=0");
+           "APP SETTING id=1 name=INTERVAL value=900 usb=1 ble=1 lora=1 radio=0");
     assert(formatSettingLine(interval, 900, StorageRole::kGateway, line, sizeof(line)) > 0);
     assert(std::string(line) ==
            "APP SETTING id=1 name=INTERVAL value=900 usb=0 ble=0 lora=0 radio=0");

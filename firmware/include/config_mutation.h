@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "application_request.h"
@@ -101,6 +102,10 @@ enum class ConfigMutationOutcome : uint8_t {
   // The save attempt was not confirmed. It MAY have committed: re-read the
   // configuration after the store reconciles. Never report this as FAILED.
   kOutcomeUnknown = 6,
+  // 6 (LoRa): the command was signed for an older saved state (replayed, or
+  // overtaken by another change). Nothing written; `token` is the current
+  // state, so the server can sign again against it.
+  kStale = 7,
 };
 
 struct ConfigMutationResult {
@@ -130,6 +135,13 @@ class ConfigMutationOwner {
       : store_(store), state_(State::kIdle), result_() {}
 
   ConfigMutationSubmitResult submit(const ConfigMutationRequest& request);
+
+  // 6 (LoRa): several settings in ONE save, all or none (same requester,
+  // request id and access for every item). With `expected`, only if the
+  // store's state token is still exactly that one; otherwise kStale.
+  static constexpr size_t kMaxBatch = 8;
+  ConfigMutationSubmitResult submitBatch(const ConfigMutationRequest* items, size_t count,
+                                         const config_format::StateToken* expected);
 
   // Call once per loop pass, after ConfigStore::poll(). Returns true exactly
   // once for each durably committed change, in the pass where its result

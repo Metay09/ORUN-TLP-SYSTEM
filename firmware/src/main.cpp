@@ -63,6 +63,7 @@
 #if defined(ORUN_SF5L0_TRACKER) || defined(ORUN_SF5L0_GATEWAY)
 #include "ble_write_auth.h"
 #include "ble_write_service.h"
+#include "lora_command.h"
 #include "device_storage_role.h"
 #include "product_region.h"
 #include "sf5l0_bench.h"
@@ -210,6 +211,11 @@ orun_tlp::BleWriteAuthenticator ble_write_auth(security_store,
 orun_tlp::BleWriteService ble_write_service(ble_write_auth, config_mutations,
                                             config_store, geofence_mutations,
                                             geofence_store);
+// 6: account-signed settings over LoRa (same write key; bound to the saved
+// state token). 6a: fed from USB ("APP LORA CMD <hex>") for the desk test;
+// 6b: from the radio after a report.
+orun_tlp::LoraCommandService lora_commands(security_store, config_store,
+                                           config_mutations);
 // SF5L2: paces re-arming of the one-record pilot to drain the backlog.
 orun_tlp::Sf5l0DrainPacer bench_pacer;
 bool bench_pacer_started = false;
@@ -306,8 +312,9 @@ constexpr uint32_t kStorageRoleRestartDelayMs = 3000;
 #endif
 #if defined(ORUN_SF5L0_GATEWAY) || defined(ORUN_SF5L0_TRACKER)
 // SF5L5: "EDGE ACCEPT v1 page= slot= gen=<16 hex> mac=<64 hex>" is ~120 chars;
-// step 3A "BENCH PROVISION ..." / "BENCH GRANT ..." are up to ~150.
-char role_command[160]{};
+// step 3A "BENCH PROVISION ..." / "BENCH GRANT ..." are up to ~150;
+// 6a "APP LORA CMD <hex>" up to 13 + 2 x 89 = 191.
+char role_command[200]{};
 #else
 char role_command[48]{};
 #endif
@@ -1276,6 +1283,35 @@ bool bleWritable() {
          security_store.state() == orun_tlp::SecurityState::kProvisioned &&
          !orun_tlp::Sf5l0BenchTestProvisioning::holdsTestCredential(
              security_store);
+}
+
+// 6a: one LoRa command frame, as received (hex). The answer is printed by
+// drainLoraCommandResult(); 6b sends the same bytes back over the radio.
+void submitLoraCommand(const uint8_t* frame, size_t size, const char* via) {
+  lora_commands.setRole(storage_role);
+  if (!bleWritable()) {
+    Serial.printf("APP LORA via=%s admission=NOT_WRITABLE\n", via);
+    return;
+  }
+  const orun_tlp::LoraCommandAdmission a = lora_commands.submit(frame, size);
+  static const char* const kNames[] = {"NOT_FOR_ME", "REJECTED", "BUSY", "PENDING"};
+  Serial.printf("APP LORA via=%s admission=%s\n", via, kNames[static_cast<uint8_t>(a) & 3U]);
+}
+
+void drainLoraCommandResult() {
+  uint8_t result[orun_tlp::lora_command::kResultSize]{};
+  if (!lora_commands.takeResult(result)) return;
+  char hex[2 * sizeof(result) + 1];
+  for (size_t i = 0; i < sizeof(result); ++i)
+    snprintf(hex + 2 * i, 3, "%02X", static_cast<unsigned>(result[i]));
+  const uint32_t interval = (uint32_t(result[32]) << 24) | (uint32_t(result[33]) << 16) |
+                            (uint32_t(result[34]) << 8) | result[35];
+  Serial.printf("APP LORA RESULT code=%s interval_s=%lu ble_window_s=%u services=%u/%u hex=%s\n",
+                orun_tlp::configMutationOutcomeName(
+                    static_cast<orun_tlp::ConfigMutationOutcome>(result[2])),
+                static_cast<unsigned long>(interval),
+                static_cast<unsigned>((result[36] << 8) | result[37]),
+                static_cast<unsigned>(result[38]), static_cast<unsigned>(result[39]), hex);
 }
 
 void drainBleWriteAnswer() {
@@ -2734,6 +2770,33 @@ void handleRoleCommand() {
     startUsbConfigMutation(config_command_kind, config_command_value);
     return;
   }
+#ifdef ORUN_SF5L0_TRACKER
+  {
+    // 6a desk test: a server-signed LoRa command pasted over USB goes through
+    // exactly the service the radio will feed (tools/orun_lora_komut.py).
+    static const char kLoraCmd[] = "APP LORA CMD ";
+    constexpr uint8_t kPrefix = sizeof(kLoraCmd) - 1;
+    if (role_command_length > kPrefix && memcmp(role_command, kLoraCmd, kPrefix) == 0) {
+      const uint8_t hex_len = static_cast<uint8_t>(role_command_length - kPrefix);
+      uint8_t frame[orun_tlp::lora_command::kMaxCommandSize]{};
+      bool ok = (hex_len % 2U) == 0U && hex_len / 2U <= sizeof(frame);
+      for (uint8_t i = 0; ok && i < hex_len; ++i) {
+        const char c = role_command[kPrefix + i];
+        const int v = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                      : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+        if (v < 0) ok = false;
+        else frame[i / 2U] = static_cast<uint8_t>((frame[i / 2U] << 4) | v);
+      }
+      role_command_length = 0;
+      if (!ok) {
+        Serial.println(F("APP REJECTED"));
+        return;
+      }
+      submitLoraCommand(frame, hex_len / 2U, "usb");
+      return;
+    }
+  }
+#endif
   if (orun_tlp::isUsbSettingsQuery(role_command, role_command_length)) {
     role_command_length = 0;
 #ifdef ORUN_SF5L0_TRACKER
@@ -4068,6 +4131,7 @@ void loop() {
   drainConfigMutationResult();
 #ifdef ORUN_SF5L0_TRACKER
   drainBleWriteAnswer();
+  drainLoraCommandResult();
   if (storage_role_restart_pending &&
       static_cast<int32_t>(orun_tlp::monotonic::nowMs() -
                            storage_role_restart_at_ms) >= 0) {

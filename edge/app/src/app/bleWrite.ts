@@ -29,7 +29,7 @@ const REQ = enc.encode("ORUN-BLE-WRITE-REQ-v1");
 const RES = enc.encode("ORUN-BLE-WRITE-RES-v1");
 
 /** ConfigMutationOutcome (firmware config_mutation.h), same words as USB. */
-export const OUTCOME = ["APPLIED", "UNCHANGED", "INVALID", "ACCESS_DENIED", "MAINTENANCE", "UNAVAILABLE", "OUTCOME_UNKNOWN"] as const;
+export const OUTCOME = ["APPLIED", "UNCHANGED", "INVALID", "ACCESS_DENIED", "MAINTENANCE", "UNAVAILABLE", "OUTCOME_UNKNOWN", "STALE"] as const;
 export type Outcome = typeof OUTCOME[number];
 
 const be64 = (idHex: string) => fromHex(idHex.toUpperCase().padStart(16, "0"));

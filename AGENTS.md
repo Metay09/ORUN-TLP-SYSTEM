@@ -81,7 +81,11 @@ is one row of `firmware/src/settings_table.cpp` (id = ConfigMutationKind = the
 BLE/LoRa op number, USB name for `APP SET <NAME> <value>`, open doors, roles,
 radio flag). USB, BLE and (step 6) LoRa writers look rows up there and submit
 to the one `ConfigMutationOwner`; never add a per-door setting list. Radio
-settings (frequency, SF, bandwidth, power) are never writable over LoRa. The
+settings (frequency, SF, bandwidth, power) are never writable over LoRa.
+LoRa commands (step 6, owner decision 2026-11-11, `lora_command.h`) are signed
+by the account server with the per-Tracker BLE write key and bound to the
+saved config state token (replay = STALE, no new counter); the gateway only
+carries bytes. The v1 plan does not use the delegated-gateway design. The
 app mirrors the table in `edge/app/src/app/trackerSettings.ts` (`SETTINGS`,
 checked against the firmware file by `test/ayarTablosu.test.ts`).
 
