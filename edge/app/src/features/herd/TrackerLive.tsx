@@ -16,7 +16,8 @@ import {
 import { Dialog, KV } from "../../ds/components.tsx";
 import { pendingKeys, valuesFromStatus, bleWindowWord } from "../../app/deviceSettings.ts";
 import { deliverBle, deliverUsb } from "../../app/deliver.ts";
-import { deviceOps, deviceSettings, pilotOpResult, pilotRecordFence, pilotReportSettings, writeKeys } from "../../app/ownerAccountPilotRuntime.ts";
+import { deviceOps, deviceSettings, pilotNoteRevision, pilotOpResult, pilotRecordFence, pilotReportSettings, writeKeys } from "../../app/ownerAccountPilotRuntime.ts";
+import { tapUsbRevisions } from "../../app/loraRevision.ts";
 import { TrackerBle } from "../../platform/trackerBle.ts";
 import { trackerSession, usbTracker } from "../../app/trackerSession.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
@@ -132,7 +133,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
       // Sıradakiler sormadan işlenir (sahip kararı): önce ayarlar, sonra alanlar.
       const { wrote, problems } = st.role !== "tracker" ? { wrote: [], problems: [] } : await (async () => {
         setPhase("Sıradakiler işleniyor…");
-        return deliverUsb(con!, {
+        return deliverUsb(tapUsbRevisions(con!, dev_, pilotNoteRevision), {
           wanted: deviceSettings.get(dev_)?.wanted ?? {}, has,
           openSettings: deviceOps.open(dev_, "settings"), openFence: await fenceOpFor(dev_, "usb"),
           reportSettings: (v) => pilotReportSettings(dev_, v, "usb").catch(() => undefined),
@@ -161,7 +162,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
       if (dev.kind !== "tracker" || (id && dev.report.device.toUpperCase() !== id.toUpperCase()))
         throw new Error("USB'deki cihaz bu tasma değil.");
       const dev_ = dev.report.device.toUpperCase();
-      const sum = await clearFence(con);
+      const sum = await clearFence(tapUsbRevisions(con, dev_, pilotNoteRevision));
       await pilotRecordFence(dev_, { digest: sum.digest, areas: 0, vertices: 0, zones: [], appliedAt: Date.now() });
       const st = buildStatus(await readRawUsb(con), "usb", Date.now());
       if (alive.current) { setStatus(st); setSynced("Tasmadaki alanlar silindi (tasma onayladı)."); }

@@ -124,6 +124,49 @@ class LoraQueueTest(unittest.TestCase):
         self.assertEqual(self.deliver(), "applied")
         self.assertEqual(self.tracker.cfg[3], 60)
 
+    def test_probe_answer_reports_settings(self):
+        # The probe's STALE answer is signed by the tracker: its settings are recorded.
+        self.ops.create({"op": "op-p1a2", "kind": "settings",
+                         "items": [{"device": DEV_HEX, "payload": {"set": {"tracking": True}}}]})
+        self.q.enqueue("op-p1a2", DEV_HEX, {"set": {"tracking": True}})
+        self.assertEqual(self.deliver(), "resigned")
+        rep = self.settings.all()[DEV_HEX]["reported"]
+        self.assertEqual(rep, {"interval_s": 180, "ble_window_s": 30, "tracking": True, "relay": False})
+
+    def test_revision_after_usb_or_ble_write_skips_the_stale_round(self):
+        self.ops.create({"op": "op-r1a2", "kind": "settings",
+                         "items": [{"device": DEV_HEX, "payload": {"set": {"interval_s": 300}}}]})
+        self.q.enqueue("op-r1a2", DEV_HEX, {"set": {"interval_s": 300}})
+        self.deliver()
+        self.assertEqual(self.deliver(), "applied")
+        # Written over Bluetooth: the phone reports the tracker's new revision.
+        self.tracker.rev += 1
+        ev = {"kind": "revision", "device": DEV_HEX.lower(), "resource": 1, "revision": self.tracker.rev}
+        self.assertEqual(self.q.events({"events": [ev]})["results"], ["revision"])
+        self.assertEqual(self.q.events({"events": [ev]})["results"], ["unchanged"])  # not newer
+        self.ops.create({"op": "op-r2b3", "kind": "settings",
+                         "items": [{"device": DEV_HEX, "payload": {"set": {"interval_s": 600}}}]})
+        self.q.enqueue("op-r2b3", DEV_HEX, {"set": {"interval_s": 600}})
+        self.assertEqual(self.deliver(), "applied")  # one report, no STALE
+        # A waiting command is signed again for the new revision.
+        self.ops.create({"op": "op-r3c4", "kind": "settings",
+                         "items": [{"device": DEV_HEX, "payload": {"set": {"interval_s": 900}}}]})
+        self.q.enqueue("op-r3c4", DEV_HEX, {"set": {"interval_s": 900}})
+        before = self.q.commands()[0]["command_id"]
+        self.tracker.rev += 1
+        ev["revision"] = self.tracker.rev
+        self.q.events({"events": [ev]})
+        self.assertNotEqual(self.q.commands()[0]["command_id"], before)
+        self.assertEqual(self.deliver(), "applied")
+        self.assertEqual(self.tracker.cfg[1], 900)
+        # Unknown incarnation (never answered over LoRa): nothing to update.
+        other = {"kind": "revision", "device": DEV_HEX, "resource": 2, "revision": 5}
+        self.assertEqual(self.q.events({"events": [other]})["results"], ["unchanged"])
+        for bad in ({**other, "resource": 3}, {**other, "revision": 0}, {**other, "revision": True},
+                    {**other, "device": "XYZ"}):
+            with self.assertRaises(BadEvent):
+                self.q.events({"events": [bad]})
+
     def test_changed_meanwhile_and_cancel(self):
         self.ops.create({"op": "op-e5f6", "kind": "settings",
                          "items": [{"device": DEV_HEX, "payload": {"set": {"interval_s": 600}}}]})

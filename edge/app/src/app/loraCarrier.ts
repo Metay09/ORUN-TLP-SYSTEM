@@ -11,7 +11,9 @@
 export interface LoraCommand { device: string; resource?: number; command_id: number; frames: string[]; }
 export type LoraEvent =
   | { kind: "queued" | "sent" | "dropped"; device: string; command_id: number }
-  | { kind: "result"; hex: string };
+  | { kind: "result"; hex: string }
+  /** The phone wrote the tasma over USB/Bluetooth: its state is at this revision now. */
+  | { kind: "revision"; device: string; resource: number; revision: number };
 
 export interface LoraServer {
   loraCommands(): Promise<LoraCommand[]>;

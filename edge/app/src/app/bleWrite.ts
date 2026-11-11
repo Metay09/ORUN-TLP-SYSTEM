@@ -7,6 +7,7 @@
 import { concat, equal, fromHex, hex } from "../core/bytes.ts";
 import { hmacSha256, sha256 } from "../core/crypto.ts";
 import { ERROR_TYPE, type AppMessage } from "./bleAppFrames.ts";
+import { bleRevision } from "./loraRevision.ts";
 import { CLEAR_SUMMARY, DeviceRejected, polygonsOf, summary, type FenceSummary } from "./fenceUsb.ts";
 import { outcomeResult, SETTINGS, type ServiceChoice, type SettingWriter } from "./trackerSettings.ts";
 import { FENCE, type E7, type Zone } from "./zones.ts";
@@ -131,7 +132,9 @@ export async function bleWrite(exchange: Exchange, keyFor: KeyFor, device: strin
   } catch {
     throw new Error("Tasmadan yanıt gelmedi; ayarın yazıldığını varsayma, durumu yeniden oku.");
   }
-  return parseResult(key, c, answer, op);
+  const r = parseResult(key, c, answer, op);
+  bleRevision(c.device, op, r.revision);   // signed by the tasma: the next LoRa command uses it
+  return r;
 }
 
 /** The same settings order as USB, over Bluetooth (trackerSettings.writeWaiting). */
@@ -215,6 +218,7 @@ export async function bleWriteFence(exchange: Exchange, keyFor: KeyFor, device: 
       throw new Error("Tasmadan onay gelmedi; alanların yazıldığını varsayma.");
     }
     const r = parseFenceResult(key, c, answer);
+    bleRevision(c.device, OP.fence, r.revision);
     outcomeResult(r.outcome);
     if (r.state !== "configured" || r.areas !== sum.areas || r.vertices !== sum.vertices)
       throw new Error(`Tasma alanları kabul ettiğini doğrulamadı (${r.areas} alan, ${r.vertices} köşe).`);
@@ -243,6 +247,7 @@ export async function bleClearFence(exchange: Exchange, keyFor: KeyFor, device: 
     throw new Error("Tasmadan onay gelmedi; alanların silindiğini varsayma.");
   }
   const r = parseFenceResult(key, c, answer, OP.fenceClear);
+  bleRevision(c.device, OP.fenceClear, r.revision);
   // A tasma without op 5 answers it like an unknown setting: signed INVALID, nothing removed.
   if (r.outcome === "INVALID")
     throw new DeviceRejected("Tasma Bluetooth'tan alan silmeyi kabul etmedi (yazılımı eskiyse güncelle ya da USB ile sil).");

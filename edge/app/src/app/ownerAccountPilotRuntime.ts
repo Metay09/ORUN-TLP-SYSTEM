@@ -10,7 +10,8 @@ import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
 import { DeviceNameBook } from "./deviceNames.ts";
 import { batteryCapacity } from "./batteryLife.ts";
-import type { LoraServer } from "./loraCarrier.ts";
+import type { LoraEvent, LoraServer } from "./loraCarrier.ts";
+import { onBleRevision, type StoreRevision } from "./loraRevision.ts";
 import { hybridSource, LocalLoraSource } from "./loraLocal.ts";
 import { TrackerFenceBook, type FenceRecord } from "./trackerFences.ts";
 import { DeviceSettingsBook, type SettingValues, type Via as SettingsVia } from "./deviceSettings.ts";
@@ -116,6 +117,32 @@ export function pilotLoraServer(): LoraServer | null {
   return hybridSource(client && pilotAccountStatus() ? client : null, loraLocal);
 }
 
+/**
+ * A USB/Bluetooth write moved a tasma's settings or areas to a new revision:
+ * the account (and this phone's offline signer) sign the next LoRa command
+ * for it, so it goes in one report without a probe. Kept until sent.
+ */
+let revisionsPending: LoraEvent[] = [];
+export function pilotNoteRevision(device: string, r: StoreRevision): void {
+  const d = device.toUpperCase();
+  pilotLoraServer();   // makes the local signer if this phone can sign
+  loraLocal?.noteRevision(d, r.resource, r.revision);
+  revisionsPending = [
+    ...revisionsPending.filter((e) => !(e.kind === "revision" && e.device === d && e.resource === r.resource)),
+    { kind: "revision" as const, device: d, resource: r.resource, revision: r.revision },
+  ].slice(-32);
+  void flushRevisions();
+}
+async function flushRevisions(): Promise<void> {
+  if (!revisionsPending.length || !client || !pilotAccountStatus()) return;
+  const batch = revisionsPending;
+  try {
+    await client.loraEvents(batch);
+    revisionsPending = revisionsPending.filter((e) => !batch.includes(e));
+  } catch { /* offline: sent with the next one or the next refresh */ }
+}
+onBleRevision(pilotNoteRevision);
+
 export function pilotSetBatteryCapacity(device: string, mAh: number | null): Promise<void> {
   return batteryCapacity.set(device, mAh, client && pilotAccountStatus() ? client : null);
 }
@@ -168,6 +195,7 @@ function refreshNames(): void {
     void deviceSettings.refresh(client).catch(() => undefined);
     void deviceOps.refresh(client).catch(() => undefined);
     void writeKeys.refresh(client).catch(() => undefined);
+    void flushRevisions();
   }
 }
 

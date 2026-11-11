@@ -47,6 +47,19 @@ export class LocalLoraSource implements LoraServer {
     try { this.store?.setItem(KEY, JSON.stringify(this.tokens)); } catch { /* memory only */ }
   }
 
+  /**
+   * A USB/Bluetooth write moved the tasma to `revision`: sign the next command
+   * for it (only when the incarnation is already known from a LoRa answer).
+   */
+  noteRevision(device: string, resource: number, revision: number): void {
+    const slot = `${device.toUpperCase()}/${resource}`;
+    const t = this.tokens[slot];
+    if (!t || !(revision > t.rev)) return;
+    this.tokens = { ...this.tokens, [slot]: { inc: t.inc, rev: revision } };
+    try { this.store?.setItem(KEY, JSON.stringify(this.tokens)); } catch { /* memory only */ }
+    this.signed.delete(slot);   // an older signed command would only be answered STALE
+  }
+
   private sign(t: OpTarget): Signed | null {
     const k = this.deps.key(t.device);
     if (!k) return null;
@@ -87,6 +100,7 @@ export class LocalLoraSource implements LoraServer {
   async loraEvents(events: LoraEvent[]): Promise<void> {
     for (const e of events) {
       if (e.kind === "result") { await this.result(e.hex); continue; }
+      if (e.kind === "revision") { this.noteRevision(e.device, e.resource, e.revision); continue; }
       if (e.kind !== "queued") continue;
       for (const s of this.signed.values())
         if (s.device === e.device && s.cid === e.command_id) await this.deps.opResult(s.op, s.device, "gateway");
@@ -101,6 +115,14 @@ export class LocalLoraSource implements LoraServer {
     const r = k ? parseResult(k.key, data) : null;
     if (!r) return;   // not the tasma's word
     this.remember(r);
+    const values = () => {
+      const services = r.serviceMode === 1 ? r.services : 1;
+      return { interval_s: r.interval_s, ble_window_s: r.ble_window_s, tracking: !!(services & 1), relay: !!(services & 2) };
+    };
+    // Signed by the tasma: what it holds now (a probe's STALE answer too).
+    if (r.resource === RESOURCE.settings && r.outcome !== "APPLIED" && r.outcome !== "UNCHANGED" &&
+        (r.token.incarnation || r.token.revision))
+      await this.deps.settingsApplied(device, values());
     const slot = `${device}/${r.resource}`;
     const s = this.signed.get(slot);
     if (!s || s.cid !== r.commandId) return;
@@ -108,9 +130,7 @@ export class LocalLoraSource implements LoraServer {
     if (r.outcome === "APPLIED" || r.outcome === "UNCHANGED") {
       await this.deps.opResult(s.op, device, r.outcome === "APPLIED" ? "applied" : "same");
       if (r.resource === RESOURCE.settings) {
-        const services = r.serviceMode === 1 ? r.services : 1;
-        await this.deps.settingsApplied(device, { interval_s: r.interval_s, ble_window_s: r.ble_window_s,
-                                                  tracking: !!(services & 1), relay: !!(services & 2) });
+        await this.deps.settingsApplied(device, values());
       } else {
         const t = this.deps.ops().find((x) => x.op === s.op && x.device === device);
         if (t) await this.deps.areasApplied(device, t.payload as FencePayload, r);

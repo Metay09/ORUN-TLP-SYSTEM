@@ -41,6 +41,9 @@ function fakeTasma() {
   let inc = 0x0BADC0FFEE123456n, rev = 4, interval = 180;
   return {
     get interval() { return interval; },
+    get revision() { return rev; },
+    /** A USB/Bluetooth write: the settings move to the next revision. */
+    writeOverBle() { rev += 1; return rev; },
     answer(frameHex: string): string {
       const f = fromHex(frameHex);
       const v = new DataView(f.buffer, f.byteOffset);
@@ -82,7 +85,8 @@ test("internetsiz telefon: yoklama, sonra uygulama; işlem tasmanın imzasıyla 
   await src.loraEvents([{ kind: "result", hex: tasma.answer(cmd.frames[0]) }]);
   assert.deepEqual(results, ["gateway", "applied"]);
   assert.equal(tasma.interval, 300);
-  assert.equal(reported[0].interval_s, 300);
+  assert.equal(reported[0].interval_s, 180, "yoklamanın STALE cevabı da tasmadaki ayarları söyler");
+  assert.equal(reported[1].interval_s, 300);
   assert.deepEqual(await src.loraCommands(), []);   // settled
   // A forged answer changes nothing.
   ops[0].state = "waiting";
@@ -91,4 +95,33 @@ test("internetsiz telefon: yoklama, sonra uygulama; işlem tasmanın imzasıyla 
   await src.loraEvents([{ kind: "result", hex: bad }]);
   assert.equal(ops[0].state, "waiting");
   assert.ok(parseResult(k, fromHex(tasma.answer(cmd.frames[0]))));
+});
+
+test("USB/Bluetooth yazımından sonra sürüm bildirilir: sonraki LoRa komutu yoklamasız, tek seferde", async () => {
+  const k = key();
+  const ops: OpTarget[] = [{ op: "op-a", device: DEV, kind: "settings", payload: { set: { interval_s: 300 } },
+    state: "waiting", createdAt: 0, updatedAt: 0, via: null, note: null }];
+  const results: string[] = [];
+  let n = 1;
+  const src = new LocalLoraSource({
+    ops: () => ops, key: () => ({ epoch: 1, key: k }), reported: () => null,
+    opResult: async (op, _d, state) => { results.push(`${op}:${state}`); const t = ops.find((o) => o.op === op); if (t && state !== "gateway") t.state = state; },
+    settingsApplied: async () => {}, areasApplied: async () => {}, random32: () => n++,
+  }, null);
+  const tasma = fakeTasma();
+  let [cmd] = await src.loraCommands();
+  await src.loraEvents([{ kind: "result", hex: tasma.answer(cmd.frames[0]) }]);   // yoklama: durum öğrenildi
+  [cmd] = await src.loraCommands();
+  await src.loraEvents([{ kind: "result", hex: tasma.answer(cmd.frames[0]) }]);
+  assert.deepEqual(results, ["op-a:applied"]);
+  // Telefon tasmaya Bluetooth ile yazdı; tasmanın imzalı cevabındaki sürüm bildirilir.
+  const rev = tasma.writeOverBle();
+  ops.push({ op: "op-b", device: DEV, kind: "settings", payload: { set: { interval_s: 600 } },
+    state: "waiting", createdAt: 1, updatedAt: 1, via: null, note: null });
+  src.noteRevision(DEV, 1, rev);
+  src.noteRevision(DEV, 1, rev - 3);   // eskisi bir şey değiştirmez
+  [cmd] = await src.loraCommands();
+  await src.loraEvents([{ kind: "result", hex: tasma.answer(cmd.frames[0]) }]);
+  assert.deepEqual(results, ["op-a:applied", "op-b:applied"], "STALE turu yok");
+  assert.equal(tasma.interval, 600);
 });
