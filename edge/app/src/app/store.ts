@@ -2,7 +2,7 @@
 // (the phone ledger), the owner's profiles and preferences, and
 // everything derived from them. Screens never touch the sources directly.
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { Point } from "../core/points.ts";
+import type { Point, RecordId } from "../core/points.ts";
 import type { Snapshot } from "./controller.ts";
 import { deviceNames, pilotAccountStatus } from "./ownerAccountPilotRuntime.ts";
 import { coverageCells, type Coverage } from "./coverage.ts";
@@ -39,6 +39,8 @@ export interface Model {
   prefs: Prefs;
   snap: Snapshot;
   points: Point[];
+  /** Records without a position (only for counting sequence gaps). */
+  unlocated: RecordId[];
   loaded: boolean;
   herd: Animal[];
   devices: Device[];
@@ -89,9 +91,9 @@ function useNow(ms: number): number {
  * The previous [src, version] effect cancelled its pending timeout for every
  * 250-ms burst and could therefore suppress *all* map updates until DUMP END.
  */
-function usePoints(src: EdgeSource, version: number, accountKey: string): { points: Point[]; loaded: boolean } {
-  const [state, setState] = useState<{ src: EdgeSource; accountKey: string; points: Point[]; loaded: boolean }>({
-    src, accountKey, points: [], loaded: false,
+function usePoints(src: EdgeSource, version: number, accountKey: string): { points: Point[]; unlocated: RecordId[]; loaded: boolean } {
+  const [state, setState] = useState<{ src: EdgeSource; accountKey: string; points: Point[]; unlocated: RecordId[]; loaded: boolean }>({
+    src, accountKey, points: [], unlocated: [], loaded: false,
   });
   const invalidate = useRef<() => void>(() => {});
 
@@ -115,7 +117,7 @@ function usePoints(src: EdgeSource, version: number, accountKey: string): { poin
         lastStarted = Date.now();
         const result = await src.points().catch(() => null);
         if (active) setState({
-          src, accountKey, points: result?.points ?? [], loaded: result !== null,
+          src, accountKey, points: result?.points ?? [], unlocated: result?.unlocated ?? [], loaded: result !== null,
         });
         reading = false;
         schedule();
@@ -137,7 +139,7 @@ function usePoints(src: EdgeSource, version: number, accountKey: string): { poin
   // A logout, account switch or expiry must hide cached remote coordinates
   // synchronously, not one effect tick (or a two-second throttle) later.
   return state.src === src && state.accountKey === accountKey
-    ? state : { points: [], loaded: false };
+    ? state : { points: [], unlocated: [], loaded: false };
 }
 
 export function useModel(): Model {
@@ -159,7 +161,7 @@ export function useModel(): Model {
   const accountKey = account
     ? [account.site, account.actor, account.installation, account.username, account.expiresAt].join(":")
     : "";
-  const { points, loaded } = usePoints(source, snap.pointsVersion, accountKey);
+  const { points, unlocated, loaded } = usePoints(source, snap.pointsVersion, accountKey);
   const now = useNow(30_000);
 
   const zones = zoneBook.zones;
@@ -202,7 +204,7 @@ export function useModel(): Model {
   }), [assets, places, snap.gateway, zoneStore, targets]);
 
   return {
-    now, prefs: p, snap, points, loaded, herd, devices, station, server,
+    now, prefs: p, snap, points, unlocated, loaded, herd, devices, station, server,
     events, coverage, zones, zoneSet, zoneMigrationWarning: zoneStore.migrationWarning,
     targetBook, targetWarning: targets.warning,
     fence, graze, grazing: grazingNow, seen, source, actions,

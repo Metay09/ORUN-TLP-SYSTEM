@@ -22,7 +22,10 @@ export interface Point {
   rssi: number | null; snr: number | null; received: string | null;
   delay_s: number | null; link: "live" | "through" | "cut" | null;
 }
-export interface PointsResult { count: number; skipped: number; now: string; points: Point[]; }
+/** A record that arrived without a position (no GNSS fix): kept only so that
+ * sequence gaps (records still on the collar) are not miscounted. */
+export interface RecordId { tracker: string; incarnation?: string; seq: number; time: string | null; }
+export interface PointsResult { count: number; skipped: number; now: string; points: Point[]; unlocated?: RecordId[]; }
 
 const epoch = (iso: string | null) => (iso ? Date.parse(iso) / 1000 : null);
 
@@ -59,10 +62,15 @@ export async function buildPoints(db: Db, nowSeconds: number): Promise<PointsRes
     .map((s) => [Number(s.started_utc), Number(s.alive_utc)] as [number, number]);
   const points: Point[] = [];
   let skipped = 0;
+  const unlocated: RecordId[] = [];
   for (const r of rows) {
     if (Number(r.family) !== 1) continue;
     const d = describePeriodic(fromHex(String(r.device_id)), fromHex(String(r.plaintext)));
-    if (d.lat === null || d.lon === null) { skipped++; continue; }
+    if (d.lat === null || d.lon === null) {
+      skipped++;
+      unlocated.push({ tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence, time: d.time });
+      continue;
+    }
     const seen = r.first_seen_utc === null ? null : Number(r.first_seen_utc);
     const recorded = epoch(d.time);
     points.push({
@@ -79,5 +87,5 @@ export async function buildPoints(db: Db, nowSeconds: number): Promise<PointsRes
     });
   }
   classifyLinks(points, sessions);
-  return { count: points.length, skipped, now: new Date(nowSeconds * 1000).toISOString(), points };
+  return { count: points.length, skipped, now: new Date(nowSeconds * 1000).toISOString(), points, unlocated };
 }

@@ -107,7 +107,7 @@ export interface HealthStage {
 }
 export interface HealthInput {
   now: number;
-  trackers: { id: string; lastTime: number | null; periodS: number | null }[];
+  trackers: { id: string; lastTime: number | null; periodS: number | null; missing?: NotArrived }[];
   collars: readonly CollarStorageReading[];
   gateways: readonly FarmGateway[] | null;
   localGateway: { id: string | null; link: "ble" | "usb" | "none"; connected: boolean; held: number | null; capacity: number | null; readAt: number | null };
@@ -135,15 +135,20 @@ export function transferHealth(i: HealthInput): HealthStage[] {
     const fresh = t.lastTime !== null && now - t.lastTime <= limit;
     const r = readings.get(t.id.toUpperCase());
     const parts = [t.lastTime !== null ? `son kaydı ${fmt.ago(t.lastTime, now)}` : "hiç kayıt gelmedi"];
+    const miss = t.missing?.missing ?? 0;
+    if (miss) parts.push(`${fmt.num(miss)} kayıt henüz ulaşmadı${t.missing!.since !== null ? ` (${fmt.ago(t.missing!.since, now)} sonrası)` : ""}`);
     if (r) parts.push(`bellekte ${fmt.num(r.count)} kayıt (${r.via === "usb" ? "USB" : "Bluetooth"} ile ${fmt.ago(r.at, now)} okundu)`);
-    const tone: HealthTone = fresh ? "fresh" : t.lastTime === null ? "" : "aging";
+    const tone: HealthTone = fresh && !miss ? "fresh" : t.lastTime === null ? "" : "aging";
     return { id: t.id, title: i.label(t.id), line: parts.join(" · "), tone };
   }).sort((a, b) => Number(a.tone === "fresh") - Number(b.tone === "fresh") || a.title.localeCompare(b.title, "tr"));
-  const freshN = trackerItems.filter((x) => x.tone === "fresh").length;
+  const freshN = i.trackers.filter((t) => t.lastTime !== null && now - t.lastTime <= Math.max(3 * (t.periodS ?? 900) * 1000, HOUR)).length;
+  const missing = i.trackers.reduce((s, t) => s + (t.missing?.missing ?? 0), 0);
   const tracker: HealthStage = {
     id: "tracker", title: "Tasmalar", items: trackerItems,
-    line: i.trackers.length ? `${freshN}/${i.trackers.length} tasmadan kayıt geliyor` : "Henüz tasma yok",
-    tone: !i.trackers.length ? "" : freshN === i.trackers.length ? "fresh" : freshN ? "aging" : "alarm",
+    line: i.trackers.length
+      ? `${freshN}/${i.trackers.length} tasmadan kayıt geliyor${missing ? ` · ${fmt.num(missing)} kayıt henüz ulaşmadı` : ""}`
+      : "Henüz tasma yok",
+    tone: !i.trackers.length ? "" : freshN === i.trackers.length ? (missing ? "aging" : "fresh") : freshN ? "aging" : "alarm",
   };
 
   // 2 · Gateway'ler: nasıl bağlı, kaç kayıt bekliyor (ne zaman ölçüldü), son gönderim.
@@ -207,4 +212,38 @@ export function transferHealth(i: HealthInput): HealthStage[] {
     tone: !S.signedIn ? "" : S.error ? "alarm" : S.lastSync !== null && now - S.lastSync < 5 * 60_000 ? "fresh" : "aging",
   };
   return [tracker, gateway, edge, server];
+}
+
+/**
+ * Tasmada (ya da yolda) bekleyen kayıtlar, tasmaya bağlanmadan: her kaydın
+ * sıra numarası var; telefona ya da sunucuya ulaşanlar arasındaki boşluklar
+ * henüz ulaşmamış kayıtlardır (canlı kayıt önce gelir, birikmişler sonra).
+ * Yalnız en yeni kimlik dönemi (incarnation) ve son `days` gün; en yeni
+ * kayıttan sonra yapılanlar bilinemez, sayı "en az"dır. Konumsuz kayıtlar da
+ * sayılır (GPS bulamadığı rapor boşluk değildir).
+ */
+export interface NotArrived { missing: number; since: number | null; }
+
+export function notArrived(recs: readonly { incarnation?: string; seq: number; time: string | null }[], now: number, days = 7): NotArrived {
+  const from = now - days * 24 * HOUR;
+  const byInc = new Map<string, { seq: number; t: number }[]>();
+  for (const r of recs) {
+    const t = r.time ? Date.parse(r.time) : NaN;
+    if (!Number.isFinite(t) || t < from || t > now + 10 * 60_000 || !Number.isSafeInteger(r.seq)) continue;
+    const k = r.incarnation ?? "";
+    if (!byInc.has(k)) byInc.set(k, []);
+    byInc.get(k)!.push({ seq: r.seq, t });
+  }
+  let newest: { seq: number; t: number }[] | null = null;
+  for (const list of byInc.values())
+    if (!newest || Math.max(...list.map((x) => x.t)) > Math.max(...newest.map((x) => x.t))) newest = list;
+  if (!newest) return { missing: 0, since: null };
+  const uniq = [...new Map(newest.map((x) => [x.seq, x])).values()].sort((a, b) => a.seq - b.seq);
+  if (uniq.length < 2) return { missing: 0, since: null };
+  let missing = 0, since: number | null = null;
+  for (let k = 1; k < uniq.length; k++) {
+    const gap = uniq[k].seq - uniq[k - 1].seq - 1;
+    if (gap > 0) { missing += gap; if (since === null) since = uniq[k - 1].t; }
+  }
+  return { missing, since };
 }

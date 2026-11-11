@@ -148,3 +148,19 @@ test("aktarım sağlığı: telefon köprü olunca gateway ve köprü satırı t
   assert.match(gw.items[0].line, /^bu telefona Bluetooth ile bağlı · 37 kayıt bekliyor/);
   assert.equal(edge.items[0].title, "Bu telefon");
 });
+
+import { notArrived } from "../src/features/network/transferFlow.ts";
+
+test("henüz ulaşmayan kayıt: sıra numarasındaki boşluklar, en yeni dönem, konumsuz kayıt boşluk değil", () => {
+  const now = Date.UTC(2026, 10, 11, 12);
+  const rec = (seq: number, minAgo: number, incarnation = "B") => ({ seq, incarnation, time: new Date(now - minAgo * 60_000).toISOString() });
+  // 100..110 made; 103..106 still on the collar; 108 had no fix but arrived (unlocated list).
+  const recs = [100, 101, 102, 107, 108, 109, 110].map((s) => rec(s, (110 - s) * 15));
+  const r = notArrived(recs, now);
+  assert.equal(r.missing, 4);
+  assert.equal(r.since, now - 8 * 15 * 60_000, "boşluk 102'den sonra başlıyor");
+  assert.equal(notArrived(recs.filter((x) => x.seq !== 108), now).missing, 5, "konumsuz kayıt gelmezse o da eksik sayılır");
+  // An older incarnation (re-enrolled collar) is not mixed in.
+  assert.equal(notArrived([...recs, rec(5, 3000, "A"), rec(9, 2990, "A")], now).missing, 4);
+  assert.deepEqual(notArrived([rec(1, 5)], now), { missing: 0, since: null });
+});

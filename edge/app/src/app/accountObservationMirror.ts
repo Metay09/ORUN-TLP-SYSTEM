@@ -7,7 +7,7 @@ import { fromHex, hex } from "../core/bytes.ts";
 import {
   describePeriodic, openProductFrame, type CredentialLookup,
 } from "../core/product.ts";
-import type { Point } from "../core/points.ts";
+import type { Point, RecordId } from "../core/points.ts";
 import type { OwnerAccountClient, AccountIdentity } from "./ownerAccountClient.ts";
 import type { ServerObservationPage, ServerObservationRow } from "./serverObservationRead.ts";
 import type { Observation } from "../core/product.ts";
@@ -226,7 +226,7 @@ export class AccountObservationMirror {
   }
 
   /** Offline-safe: never exposes one user's history under another account. */
-  async points(client: OwnerAccountClient): Promise<Point[]> {
+  async points(client: OwnerAccountClient, unlocated?: RecordId[]): Promise<Point[]> {
     await this.init();
     const { actor, epoch } = identity(client);
     const rows = await this.exclusive(() => this.db.query(
@@ -253,7 +253,10 @@ export class AccountObservationMirror {
       const d = describePeriodic(restored.deviceId, restored.plaintext);
       if (d.incarnation !== r.incarnation || d.sequence !== r.sequence)
         throw new Error("Konum aynası kimliği uyuşmuyor.");
-      if (d.lat === null || d.lon === null) continue;
+      if (d.lat === null || d.lon === null) {
+        unlocated?.push({ tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence, time: d.time });
+        continue;
+      }
       const seen = typeof r.first_seen_utc === "number" ? r.first_seen_utc : null;
       const recorded = d.time ? Date.parse(d.time) / 1000 : null;
       result.push({
