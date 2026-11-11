@@ -238,3 +238,27 @@ test("pil: tek düşük okuma şarj ya da düşüş sayılmaz", () => {
   const s = Array.from({ length: 20 }, (_, i) => ({ t: i, p: i === 10 ? 51 : 100 }));
   assert.ok(smoothBattery(s).every((x) => x.p === 100));
 });
+
+import { BatteryCapacityBook, expectedLife, lifeWord, measuredLife, timeOnAirS } from "../src/app/batteryLife.ts";
+
+test("pil ömrü: beklenen (üretici değerleri), ölçülen (günlük düşüş), mAh tasma başına", () => {
+  // 100-byte ORUN frame at SF11/125 kHz/4:5: ~2.2 s on air.
+  assert.ok(Math.abs(timeOnAirS(100) - 2.22) < 0.05, String(timeOnAirS(100)));
+  // 1000 mAh, one report an hour: today's firmware (no sleep) ~2 weeks, with real sleep ~4 months.
+  const awake = expectedLife(1000, 3600, false), sleep = expectedLife(1000, 3600, true);
+  assert.ok(awake.avgMa > 2.3 && awake.avgMa < 2.6, String(awake.avgMa));
+  assert.ok(awake.days > 12 && awake.days < 15, String(awake.days));
+  assert.ok(sleep.days > 100 && sleep.days < 140, String(sleep.days));
+  // Under 60 s the GPS stays on: about 25 mA more.
+  assert.ok(expectedLife(1000, 40, false).avgMa > 27);
+  // Measured: 1000 mAh, -5 %/day → 50 mAh/day, full battery (80 %) 16 days; 50 % left → 6 days.
+  const m = measuredLife(1000, -5, 50)!;
+  assert.deepEqual([Math.round(m.mAhPerDay), Math.round(m.daysFull), Math.round(m.daysLeft!)], [50, 16, 6]);
+  assert.equal(measuredLife(1000, 0.2, 100), null, "düşmeyen pilde ölçülen yok");
+  assert.deepEqual([lifeWord(1.5), lifeWord(13.6), lifeWord(119), lifeWord(900)], ["~36 saat", "~14 gün", "~4 ay", "~2,5 yıl"]);
+  const store = new Map<string, string>();
+  const book = new BatteryCapacityBook({ getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); } });
+  book.set("0e8ade7e71531aa3", 3200);
+  assert.equal(new BatteryCapacityBook({ getItem: (k) => store.get(k) ?? null, setItem: () => {} }).get("0E8ADE7E71531AA3"), 3200);
+  assert.throws(() => book.set("0E8ADE7E71531AA3", 10));
+});

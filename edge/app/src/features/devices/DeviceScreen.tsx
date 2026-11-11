@@ -15,6 +15,7 @@ import {
 import { useApp } from "../../app/store.ts";
 import { Badge, Bar, Card, Cell, Dialog, KV, Screen, Section, Toggle } from "../../ds/components.tsx";
 import { trackerSession } from "../../app/trackerSession.ts";
+import { BatteryLife } from "./BatteryLife.tsx";
 import { startPosition, usePosition } from "../map/position.ts";
 import { TrackerLiveDialog, type LiveTarget } from "../herd/TrackerLive.tsx";
 import { NameDialog } from "../network/NameDialog.tsx";
@@ -184,6 +185,9 @@ export function DeviceScreen({ id, ble }: { id: string; ble?: string }) {
           )}
         </Card>
       </>}
+
+      {!isGateway && <BatteryLife device={up} intervalS={a?.periodS || (typeof all[up]?.reported?.interval_s === "number" ? all[up]!.reported!.interval_s! : null)}
+        points={a?.points ?? []} nowPct={dev?.batteryPercent ?? null} />}
 
       {!isGateway && myOps.active.length > 0 && <>
         <Section title="İşlemler" info="Her ayar kaydı ve 'Tasmalara uygula' bir işlemdir. Sıradakiler tasmaya bağlanınca (şimdilik USB) kendiliğinden işlenir; 'Tasmaya işlendi' yalnız tasma onaylayınca yazılır." />
