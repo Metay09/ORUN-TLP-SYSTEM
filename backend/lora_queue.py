@@ -17,6 +17,11 @@ Komut tasmanın kayıtlı ayar durumuna (state token) bağlıdır. Durum bilinmi
 önce bilerek eski durumla bir "yoklama" komutu gider; tasmanın STALE cevabı
 güncel durumu taşır, gerçek komut ona göre imzalanır. Her cevap durumu
 günceller, bir sonraki komut doğrudan gider.
+
+Telefon tasmaya USB/Bluetooth ile yazınca tasmanın yeni sürüm numarasını
+bildirir (revision olayı): bilinen durum güncellenir, sıradaki komut yeni
+sürüme göre yeniden imzalanır; yoklama ya da STALE turu olmaz. Tasmanın her
+imzalı ayar cevabı (STALE dahil) tasmadaki ayarları da kaydeder.
 """
 from __future__ import annotations
 
@@ -45,7 +50,7 @@ SCHEMA_TOKEN = ("CREATE TABLE IF NOT EXISTS lora_token ("
                 " revision INTEGER NOT NULL, updated_utc INTEGER NOT NULL, PRIMARY KEY (device, resource))")
 ID16 = re.compile(r"[0-9A-F]{16}")
 HEX = re.compile(r"[0-9A-F]+")
-KINDS = ("queued", "sent", "dropped", "result")
+KINDS = ("queued", "sent", "dropped", "result", "revision")
 MAX_EVENTS = 32
 SERVICE_TRACKING, SERVICE_RELAY = 0x01, 0x02
 MODE_EXPLICIT = 1
@@ -199,6 +204,8 @@ class LoraQueue:
             raise BadEvent("kind")
         if e["kind"] == "result":
             return self._result(e.get("hex"))
+        if e["kind"] == "revision":
+            return self._revision(e)
         device = e.get("device")
         cid = e.get("command_id")
         if not isinstance(device, str) or not ID16.fullmatch(device.upper()) or \
@@ -228,6 +235,32 @@ class LoraQueue:
                 pass
         return e["kind"]
 
+    def _revision(self, e: dict) -> str:
+        """The phone wrote the tracker over USB/Bluetooth; it is at this revision now."""
+        device, resource, revision = e.get("device"), e.get("resource"), e.get("revision")
+        if not isinstance(device, str) or not ID16.fullmatch(device.upper()) or \
+                resource not in (lc.RESOURCE_SETTINGS, lc.RESOURCE_AREAS) or isinstance(resource, bool) or \
+                not isinstance(revision, int) or isinstance(revision, bool) or not 0 < revision < 2 ** 32:
+            raise BadEvent("revision")
+        device = device.upper()
+        now = int(self.clock())
+        with closing(sqlite3.connect(self.db_path, timeout=2.0)) as db, db:
+            known = self._token(db, device, resource)
+            if known is None or revision <= known[1]:
+                return "unchanged"  # unknown incarnation (a probe still learns it) or not newer
+            db.execute("UPDATE lora_token SET revision=?, updated_utc=? WHERE device=? AND resource=?",
+                       (revision, now, device, resource))
+            row = db.execute("SELECT content FROM lora_queue WHERE device=? AND resource=?",
+                             (device, resource)).fetchone()
+            if row is not None:
+                signed = self._sign(db, device, resource, json.loads(row[0]))
+                if signed is not None:
+                    cid, frames, probe = signed
+                    db.execute("UPDATE lora_queue SET command_id=?, frames=?, probe=?, state='queued', "
+                               "updated_utc=?, note=? WHERE device=? AND resource=?",
+                               (cid, json.dumps(frames), int(probe), now, "revision", device, resource))
+        return "revision"
+
     def _result(self, text: object) -> str:
         if not isinstance(text, str) or len(text) != 2 * lc.RESULT_SIZE or not HEX.fullmatch(text.upper()):
             raise BadEvent("hex")
@@ -249,6 +282,10 @@ class LoraQueue:
                            (device, r.resource, f"{r.incarnation:016X}", r.revision, now))
             row = db.execute("SELECT op, command_id, content FROM lora_queue WHERE device=? AND resource=?",
                              (device, r.resource)).fetchone()
+        if r.resource == lc.RESOURCE_SETTINGS and r.outcome not in ("APPLIED", "UNCHANGED"):
+            # Signed by the tracker: what it holds now, whatever the command was.
+            self._report(device, r)
+        with closing(sqlite3.connect(self.db_path, timeout=2.0)) as db, db:
             if row is None or row[1] != r.command_id:
                 return "old"  # an earlier command's answer: only the state was useful
             op, _, content = row
@@ -266,7 +303,7 @@ class LoraQueue:
             self.ops.result({"op": op, "device": device, "via": "lora",
                              "state": "applied" if r.outcome == "APPLIED" else "same"})
             if r.resource == lc.RESOURCE_SETTINGS:
-                self.settings.report({"device": device, "values": values_from(r), "via": "lora"})
+                self._report(device, r)
             else:
                 self._record_areas(op, device, r)
             return "applied"
@@ -274,6 +311,14 @@ class LoraQueue:
         self.ops.result({"op": op, "device": device, "via": "lora", "state": "rejected",
                          "note": f"Tasma reddetti: {reason}."})
         return "rejected"
+
+    def _report(self, device: str, r: lc.Result) -> None:
+        if not (r.incarnation or r.revision):
+            return  # the settings store was not readable: nothing to say
+        try:
+            self.settings.report({"device": device, "values": values_from(r), "via": "lora"})
+        except ValueError:
+            pass
 
     def _record_areas(self, op: str, device: str, r: lc.Result) -> None:
         """The tracker holds the operation's areas now: record them like a USB/BLE write."""
