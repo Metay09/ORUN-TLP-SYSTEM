@@ -3,7 +3,7 @@
 // identity / notebook / collar.
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { Bluetooth, CaretRight, CellSignalFull, MapTrifold, NavigationArrow, NotePencil, PencilSimple, Play } from "@phosphor-icons/react";
-import { activityBaseline, activityCoverage24h, batteryOutlook, batterySeries, busiestHour, dayStart, daySummaries, hourlyActivity } from "../../app/activity.ts";
+import { activityBaseline, activityCoverage24h, batteryOutlook, batterySeries, busiestHour, dayStart, daySummaries, hourlyActivity, smoothBattery } from "../../app/activity.ts";
 import { trackerSession } from "../../app/trackerSession.ts";
 import { batteryPercent, epochMs } from "../../app/herd.ts";
 import { bleName } from "../../app/deviceNames.ts";
@@ -72,7 +72,7 @@ function Today({ a, now }: { a: Animal; now: number }) {
   const days = useMemo(() => daySummaries(a.points.filter((x) => epochMs(x.time) >= dayStart(now))), [a.points, now]);
   const today = days.find((d) => d.day === dayStart(now)) ?? null;
   const bat = useMemo(() => batterySeries(a.points, now), [a.points, now]);
-  const pct = useMemo(() => bat.map((b) => ({ t: b.t, p: batteryPercent(b.mv) })).filter((x): x is { t: number; p: number } => x.p !== null), [bat]);
+  const pct = useMemo(() => smoothBattery(bat.map((b) => ({ t: b.t, p: batteryPercent(b.mv) })).filter((x): x is { t: number; p: number } => x.p !== null)), [bat]);
   const outlook = useMemo(() => batteryOutlook(pct, now), [pct, now]);
   const hasActivity = a.points.some((x) => x.active_s !== null);
   const settings = useDeviceSettings();

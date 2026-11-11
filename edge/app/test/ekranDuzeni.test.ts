@@ -212,3 +212,29 @@ test("GPS hiç çalışmayan tasma (kayıt saati yok, GPS hatası): 'GPS çalı�
   assert.equal(a.lastReport, now);
   assert.match(a.seen, /^GPS çalışmıyor · son rapor az önce · son konum/);
 });
+
+import { walkedM, smoothBattery } from "../src/app/activity.ts";
+
+test("yürünen yol: masada duran tasmanın GPS oynaması yol sayılmaz, gerçek yürüyüş sayılır", () => {
+  const t0 = Date.UTC(2026, 10, 11, 0, 0);
+  const at = (k: number, lat: number, lon: number, hdop = 2, active = 30) => ({
+    t: t0 + k * 120_000,
+    p: { lat, lon, hdop, sats: 6, active_s: active, covered_s: 120 } as unknown as Observation,
+  });
+  // 24 h, every 2 min, jitter up to ~20 m around one spot (what the desk collar did).
+  let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5);
+  const still = Array.from({ length: 720 }, (_, k) => at(k, 37.61007 + rnd() * 0.00035, 28.05399 + rnd() * 0.00045));
+  const naive = still.slice(1).reduce((s, x, i) => s + Math.hypot((x.p.lat - still[i].p.lat) * 111_320, (x.p.lon - still[i].p.lon) * 88_200), 0);
+  assert.ok(naive > 8000, "eski hesap kilometreler toplardı");
+  assert.ok(walkedM(still) < 300, `durana yol yazılmaz (${Math.round(walkedM(still))} m)`);
+  // A real walk: 1 km north in 20 min (10 fixes), then still.
+  const walk = Array.from({ length: 11 }, (_, k) => at(k, 37.61 + (k * 100) / 111_320, 28.05));
+  assert.ok(Math.abs(walkedM(walk) - 1000) < 30);
+  // Felt no movement at all (active_s = 0): a jumped fix is not a walk.
+  assert.equal(walkedM([at(0, 37.61, 28.05, 2, 0), at(1, 37.6106, 28.05, 2, 0)]), 0);
+});
+
+test("pil: tek düşük okuma şarj ya da düşüş sayılmaz", () => {
+  const s = Array.from({ length: 20 }, (_, i) => ({ t: i, p: i === 10 ? 51 : 100 }));
+  assert.ok(smoothBattery(s).every((x) => x.p === 100));
+});

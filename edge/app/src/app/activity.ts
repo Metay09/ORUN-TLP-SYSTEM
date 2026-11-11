@@ -2,7 +2,7 @@
 // (the collar's per-period active seconds), straight-line distance between
 // records, per-day history and the battery curve. Pure; no invented classes —
 // grazing/resting/walking appears only once collars report it.
-import { pathLengthM } from "./geo.ts";
+import { distanceM } from "./geo.ts";
 import { epochMs } from "./herd.ts";
 import type { Observation } from "./model.ts";
 
@@ -80,6 +80,52 @@ export function activityCoverage24h(pts: Observation[], end: number): ActivityCo
   };
 }
 
+/**
+ * Yürünen yol, GPS gürültüsü sayılmadan (sahip 2026-11-11: masada kıpırdamadan
+ * duran tasma "bugün ~17 km yürüdü" görünüyordu; iki dakikada bir gelen
+ * konumlar 10–30 m oynuyor ve bu oynamalar toplanıyordu).
+ * - Zayıf konum (hdop > 5 ya da 4'ten az uydu) kullanılmaz.
+ * - Duran hayvanın konumları bir merkez etrafında toplanır; merkezden gürültü
+ *   yarıçapı kadar (max(30 m, hdop × 12 m)) uzaklaşmayan konum yer değiştirme değildir.
+ * - Tek bir uzak konum sıçramadır; ancak ARKA ARKAYA iki konum merkezden
+ *   uzaksa hayvan yer değiştirmiştir ve o yol sayılır.
+ * - İvmeölçer o raporda hiç hareket görmediyse (active_s = 0) konum yer değişimi sayılmaz.
+ * - Saniyede 4 m'den hızlı adım (yansıma) sayılmaz.
+ * Düz çizgilerle ölçülür; gerçek yol biraz daha uzundur ("yaklaşık").
+ */
+export function walkedM(list: { p: Observation; t: number }[]): number {
+  let total = 0;
+  let c: { lat: number; lon: number; n: number } | null = null;    // where the animal stands
+  let pending: { lat: number; lon: number; t: number } | null = null;
+  let prevT = 0;
+  for (const { p, t } of list) {
+    if (!Number.isFinite(t) || (p.hdop !== null && p.hdop > 5) || (p.sats !== null && p.sats < 4)) continue;
+    if (p.active_s === 0 && p.covered_s) { pending = null; continue; }   // felt no movement: not a walk
+    if (!c) { c = { lat: p.lat, lon: p.lon, n: 1 }; prevT = t; continue; }
+    const radius = Math.max(30, (p.hdop ?? 2.5) * 12);
+    if (distanceM(c, p) <= radius) {                                // still standing: refine the centre
+      const n = Math.min(c.n + 1, 10);
+      c = { lat: c.lat + (p.lat - c.lat) / n, lon: c.lon + (p.lon - c.lon) / n, n };
+      pending = null; prevT = t;
+      continue;
+    }
+    if (!pending) { pending = { lat: p.lat, lon: p.lon, t }; continue; }   // one far fix: maybe a jump
+    const a = distanceM(c, pending), b = distanceM(pending, p);
+    const fast = a / Math.max(1, (pending.t - prevT) / 1000) > 4 || b / Math.max(1, (t - pending.t) / 1000) > 4;
+    if (!fast) total += a + b;                                      // two far fixes in a row: it moved
+    c = { lat: p.lat, lon: p.lon, n: 1 }; pending = null; prevT = t;
+  }
+  return total;
+}
+
+/** Battery percentages with single-sample dips removed (rolling median of 5): one bad ADC reading is not a charge or a drain. */
+export function smoothBattery(series: { t: number; p: number }[]): { t: number; p: number }[] {
+  return series.map((x, i) => {
+    const w = series.slice(Math.max(0, i - 2), i + 3).map((y) => y.p).sort((a, b) => a - b);
+    return { t: x.t, p: w[Math.floor(w.length / 2)] };
+  });
+}
+
 export interface DaySummary {
   day: number;              // local midnight, ms
   records: number;
@@ -104,7 +150,7 @@ export function daySummaries(pts: Observation[]): DaySummary[] {
     for (const { p } of list) if (p.active_s !== null && p.covered_s) { active += p.active_s; any = true; }
     out.push({
       day, records: list.length, first: list[0].t, last: list[list.length - 1].t,
-      walkedM: pathLengthM(list.map(({ p, t }) => ({ lat: p.lat, lon: p.lon, t }))),
+      walkedM: walkedM(list),
       activeMs: any ? active * 1000 : null,
       points: list.map((x) => x.p),
     });
