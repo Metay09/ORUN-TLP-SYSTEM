@@ -10,6 +10,7 @@ import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
 import { DeviceNameBook } from "./deviceNames.ts";
 import { batteryCapacity } from "./batteryLife.ts";
+import type { LoraServer } from "./loraCarrier.ts";
 import { TrackerFenceBook, type FenceRecord } from "./trackerFences.ts";
 import { DeviceSettingsBook, type SettingValues, type Via as SettingsVia } from "./deviceSettings.ts";
 import { DeviceOpsBook, type FencePayload, type OpVia } from "./deviceOps.ts";
@@ -91,6 +92,11 @@ export function pilotSetDeviceName(device: string, name: string): Promise<void> 
 }
 
 /** Y3: battery capacity per tracker, in the account (not on the tracker). */
+/** 6c: the account as the LoRa command source while this phone bridges a gateway. */
+export function pilotLoraServer(): LoraServer | null {
+  return client && pilotAccountStatus() ? client : null;
+}
+
 export function pilotSetBatteryCapacity(device: string, mAh: number | null): Promise<void> {
   return batteryCapacity.set(device, mAh, client && pilotAccountStatus() ? client : null);
 }

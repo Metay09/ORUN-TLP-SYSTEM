@@ -393,14 +393,14 @@ export function ConnectionScreen() {
       {edgeError && account && <p className="fine lead" role="status">PC Edge durumu okunamadı: {edgeError}</p>}
 
       <Section title={pendingOps.length ? `Bekleyen işlemler · ${pendingOps.length}` : "Bekleyen işlemler"}
-        info="Hesaba kaydedilen ayar ve alanlar. Tasmaya bağlanınca (USB ya da Bluetooth) sormadan yazılır; 'Tasmaya işlendi' yalnız tasma onaylayınca olur. Satıra dokun, tasmanın ekranı açılır." />
+        info="Hesaba kaydedilen ayar ve alanlar. Ayarlar LoRa'dan tasmanın bir sonraki raporunda gider (gateway üzerinden); ayar ve alanlar tasmaya bağlanınca (USB ya da Bluetooth) da sormadan yazılır. 'Tasmaya işlendi' yalnız tasma onaylayınca olur. Satıra dokun, tasmanın ekranı açılır." />
       {pendingOps.length ? (
         <Card>
           {pendingOps.slice(0, 8).map((t) => (
             <Cell key={t.op + t.device}
               lead={<span className={"ic " + (t.state === "rejected" ? "alarm" : "aging")}>{t.kind === "fence" ? <Polygon size={20} /> : <SlidersHorizontal size={20} />}</span>}
               title={label(t.device)} wrapSub
-              sub={`${opWhat(t)} · ${t.state === "rejected" ? `reddedildi${t.note ? ` (${t.note})` : ""}` : t.state === "gateway" ? "gateway'de, tasmaya gidiyor" : "tasmaya bağlanınca gider"}`}
+              sub={`${opWhat(t)} · ${t.state === "rejected" ? `reddedildi${t.note ? ` (${t.note})` : ""}` : t.state === "gateway" ? "gateway'de, tasmanın raporunu bekliyor" : t.kind === "settings" ? "LoRa'dan ya da bağlanınca gider" : "tasmaya bağlanınca gider"}`}
               subTone={t.state === "rejected" ? "alarm" : undefined}
               trail={<CaretRight size={18} color="var(--mute)" />}
               onClick={() => nav.push({ to: "device", id: t.device })} />

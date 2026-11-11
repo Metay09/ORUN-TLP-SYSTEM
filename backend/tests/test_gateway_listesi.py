@@ -132,6 +132,31 @@ class GatewayListTests(unittest.TestCase):
                     {"device": GW_PC, "name": "a\u0007b"}, {"device": GW_PC}):
             self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/name", token, bad)[0], 400, bad)
 
+    def test_settings_op_goes_over_lora_through_any_bridge(self):
+        """6c: ayar işlemi imzalı LoRa komutu olur; PC köprüsü de telefon da taşır."""
+        dev = 0x52E16773141A8887
+        self.local.backend.registry.create(dev)
+        token = self.login()
+        op = {"op": "op-lora1", "kind": "settings",
+              "items": [{"device": "%016X" % dev, "payload": {"set": {"interval_s": 300}}},
+                        {"device": GW_PC, "payload": {"set": {"relay": True}}}]}
+        self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/ops", token, op)[0], 200)
+        self.assertEqual(self.req(self.bridge, "GET", "/v1/bridge/lora")[0], 401)
+        status, body = self.req(self.bridge, "GET", "/v1/bridge/lora", TOKEN)
+        self.assertEqual(status, 200)
+        (cmd,) = body["commands"]  # the gateway has no key: only the tracker
+        self.assertEqual((cmd["device"], cmd["op"], cmd["probe"]), ("%016X" % dev, "op-lora1", True))
+        self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/lora", token)[1]["commands"], [cmd])
+        ev = {"events": [{"kind": "queued", "device": cmd["device"], "command_id": cmd["command_id"]}]}
+        self.assertEqual(self.req(self.bridge, "POST", "/v1/bridge/lora", TOKEN, ev)[1]["results"], ["queued"])
+        ops = self.req(self.account, "GET", "/api/v1/devices/ops", token)[1]["ops"]
+        self.assertEqual({o["device"]: o["state"] for o in ops if o["op"] == "op-lora1"}["%016X" % dev], "gateway")
+        self.assertEqual(self.req(self.bridge, "POST", "/v1/bridge/lora", TOKEN, {"events": []})[0], 400)
+        # Settled over Bluetooth first: nothing left to carry.
+        done = {"op": "op-lora1", "device": "%016X" % dev, "state": "applied", "via": "ble"}
+        self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/ops/result", token, done)[0], 200)
+        self.assertEqual(self.req(self.bridge, "GET", "/v1/bridge/lora", TOKEN)[1]["commands"], [])
+
     def test_battery_capacity_lives_in_the_account(self):
         """Y3: pil kapasitesi hesapta (tasmaya yazılmaz); None siler."""
         self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/battery")[0], 401)

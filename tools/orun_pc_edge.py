@@ -580,9 +580,109 @@ class GrantUpdater:
             self.status = None
 
 
+LORA_QUEUED_LINE = re.compile(r"LORA QUEUED result=(\w+)")
+LORA_SENT_LINE = re.compile(r"LORA SENT target=([0-9A-F]{16}) id=([0-9A-F]{8}) attempt=(\d+)")
+LORA_DROPPED_LINE = re.compile(r"LORA DROPPED target=([0-9A-F]{16}) id=([0-9A-F]{8})")
+LORA_RESULT_LINE = re.compile(r"LORA RESULT .*\bhex=([0-9A-F]{112})\b")
+LORA_CHECK_S = 20
+LORA_REHAND_S = 600
+
+
+class LoraBridge:
+    """6c: carry the server's signed LoRa commands to the Gateway and back.
+
+    The server signs; the Gateway only holds a command until its Tracker
+    reports, then sends it. This bridge hands the commands over USB
+    ("APP LORA QUEUE <hex>") and tells the server what the Gateway said
+    (queued / sent / dropped / the Tracker's signed RESULT). It decides
+    nothing: the server verifies every RESULT.
+    """
+
+    def __init__(self, base: str, token_file: Path, opener) -> None:
+        self.base, self.token_file, self.opener = base, token_file, opener
+        self.handed: dict[str, tuple[int, float]] = {}
+        self.awaiting: list[tuple[str, int]] = []
+        self.events: list[dict] = []
+        self.last_check = 0.
+        self.failed = False
+
+    def reset(self) -> None:
+        """A (re)connected Gateway holds nothing: hand everything again."""
+        self.handed.clear()
+        self.awaiting.clear()
+
+    def observe(self, text: str) -> None:
+        m = LORA_QUEUED_LINE.search(text)
+        if m and self.awaiting:
+            device, cid = self.awaiting.pop(0)
+            if m[1] in ("ADDED", "REPLACED"):
+                self.events.append({"kind": "queued", "device": device, "command_id": cid})
+            else:
+                print("[lora] gateway refused a command:", m[1], flush=True)
+                self.handed.pop(device, None)
+            return
+        m = LORA_SENT_LINE.search(text)
+        if m:
+            print("[lora]", text, flush=True)
+            self.events.append({"kind": "sent", "device": m[1], "command_id": int(m[2], 16)})
+            return
+        m = LORA_DROPPED_LINE.search(text)
+        if m:
+            print("[lora]", text, flush=True)
+            self.events.append({"kind": "dropped", "device": m[1], "command_id": int(m[2], 16)})
+            self.handed.pop(m[1], None)
+            return
+        m = LORA_RESULT_LINE.search(text)
+        if m:
+            print("[lora] tracker answered", flush=True)
+            self.events.append({"kind": "result", "hex": m[1]})
+
+    def _call(self, method: str, body: dict | None = None):
+        req = Request(f"{self.base}/v1/bridge/lora", method=method,
+                      data=None if body is None else json.dumps(body).encode(),
+                      headers={"Authorization": "Bearer " + read_token(self.token_file),
+                               "Content-Type": "application/json"})
+        with self.opener.open(req, timeout=10) as res:
+            return json.load(res)
+
+    def poll(self, ser, now: float) -> None:
+        try:
+            if self.events:
+                batch, self.events = self.events[:32], self.events[32:]
+                try:
+                    self._call("POST", {"events": batch})
+                except (HTTPError, URLError, OSError, ValueError, TimeoutError):
+                    self.events = batch + self.events  # try again next time
+                    raise
+            if now - self.last_check < LORA_CHECK_S:
+                return
+            self.last_check = now
+            reply = self._call("GET")
+            self.failed = False
+        except (HTTPError, URLError, OSError, ValueError, TimeoutError) as exc:
+            if not self.failed:
+                print("[lora] server unreachable:", type(exc).__name__, flush=True)
+            self.failed = True
+            return
+        commands = reply.get("commands") if isinstance(reply, dict) else None
+        for c in commands if isinstance(commands, list) else []:
+            device, cid, hexs = c.get("device"), c.get("command_id"), c.get("hex")
+            if not (isinstance(device, str) and isinstance(cid, int) and isinstance(hexs, str)
+                    and re.fullmatch(r"[0-9A-F]{108,178}", hexs)):
+                continue
+            prev = self.handed.get(device)
+            if prev and prev[0] == cid and now - prev[1] < LORA_REHAND_S:
+                continue
+            ser.write(f"APP LORA QUEUE {hexs}\n".encode("ascii"))
+            self.awaiting.append((device, cid))
+            self.handed[device] = (cid, now)
+            print(f"[lora] command for {device} handed to the gateway", flush=True)
+
+
 def usb_forever(inbox: Inbox, port: str,
                 release_gateway: str | None = None,
-                grants: GrantUpdater | None = None) -> None:
+                grants: GrantUpdater | None = None,
+                lora: LoraBridge | None = None) -> None:
     try:
         import serial
     except ImportError as exc:
@@ -595,6 +695,8 @@ def usb_forever(inbox: Inbox, port: str,
                            if release_gateway else None)
                 if grants:
                     grants.gateway, grants.status = None, None
+                if lora:
+                    lora.reset()
                 def process(text: str) -> None:
                     if handle_usb_line(text, inbox):
                         print("[usb] sealed record committed",
@@ -609,6 +711,8 @@ def usb_forever(inbox: Inbox, port: str,
                         release.observe(text)
                     if grants:
                         grants.observe(text)
+                    if lora:
+                        lora.observe(text)
 
                 last_dump = 0.
                 while True:
@@ -626,6 +730,8 @@ def usb_forever(inbox: Inbox, port: str,
                         release.poll(ser, time.monotonic())
                     if grants:
                         grants.poll(ser, time.monotonic(), process)
+                    if lora:
+                        lora.poll(ser, time.monotonic())
         except (OSError, serial.SerialException) as exc:
             print("[usb] disconnected; reconnecting:", type(exc).__name__, flush=True)
             time.sleep(5)
@@ -787,7 +893,8 @@ def main() -> None:
         threading.Thread(target=uploader.forever, daemon=True).start()
         if args.mode == "usb":
             grants = GrantUpdater(uploader.base, uploader.token_file, uploader.opener)
-            usb_forever(inbox, args.port, args.bench_release_gateway, grants)
+            lora = LoraBridge(uploader.base, uploader.token_file, uploader.opener)
+            usb_forever(inbox, args.port, args.bench_release_gateway, grants, lora)
         else:
             ble_forever(inbox, args.ble_address, args.bench_release_gateway)
 

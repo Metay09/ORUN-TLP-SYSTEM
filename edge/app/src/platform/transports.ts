@@ -7,6 +7,8 @@ import { BleClient, ConnectionPriority } from "@capacitor-community/bluetooth-le
 import { UsbSerial } from "@leeskies/capacitor-usb-serial";
 import type { PluginListenerHandle } from "@capacitor/core";
 import type { EdgeCore } from "../core/edge.ts";
+import { LoraCarrier } from "../app/loraCarrier.ts";
+import { pilotLoraServer } from "../app/ownerAccountPilotRuntime.ts";
 import {
   DUMP_MESSAGE, EDGE_SERVICE_UUID, EDGE_TO_EDGE_UUID, EDGE_TO_GATEWAY_UUID, frames, Reassembler,
 } from "../core/edgeLink.ts";
@@ -220,6 +222,9 @@ export class UsbLink {
   private core: EdgeCore;
   private ev: LinkEvents;
 
+  // 6c: signed LoRa commands from the account, carried to the gateway.
+  private lora = new LoraCarrier();
+
   constructor(core: EdgeCore, ev: LinkEvents) { this.core = core; this.ev = ev; }
 
   async start(): Promise<void> {
@@ -257,7 +262,11 @@ export class UsbLink {
       this.ev.log(`[USB] bağlandı: ${dev.deviceName}; tutulan kayıtlar isteniyor`);
       await this.core.beginDump();
       await this.writeLine("BENCH GW DUMP");
+      this.lora.reset();
       this.timers.push(setInterval(() => { void this.pump(); }, POLL_MS));
+      this.timers.push(setInterval(() => {
+        void this.lora.poll(pilotLoraServer(), (l) => this.writeLine(l), Date.now());
+      }, 2000));
       this.timers.push(setInterval(() => { void this.core.sessionAlive("usb"); }, ALIVE_MS));
     } catch (e) {
       this.ev.log(`[USB] bağlanamadı: ${errorText(e)}`);
@@ -290,6 +299,7 @@ export class UsbLink {
     while ((i = this.buf.indexOf("\n")) >= 0) {
       const line = this.buf.slice(0, i).replace(/\r$/, "");
       this.buf = this.buf.slice(i + 1);
+      this.lora.observe(line);
       void this.core.handleLine(line).then((out) => {
         if (out) this.ev.log(out);
         this.ev.changed();
