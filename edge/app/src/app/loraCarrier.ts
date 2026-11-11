@@ -3,6 +3,9 @@
 // every answer; the Gateway only holds a command until its Tracker reports.
 // Here: hand the commands over USB ("APP LORA QUEUE <hex>") and tell the
 // server what the Gateway said. Nothing is decided on the phone.
+// The Gateway holds one command per Tracker (a new one replaces the old), so
+// only the oldest waiting command of each Tracker is handed; the next follows
+// once the server has settled it.
 
 /** One command: 1 frame for settings, 1-3 for an area list (resource 2). */
 export interface LoraCommand { device: string; resource?: number; command_id: number; frames: string[]; }
@@ -33,7 +36,7 @@ export const CHECK_MS = 20_000;
 export const REHAND_MS = 600_000;
 
 export class LoraCarrier {
-  private handed = new Map<string, { id: number; at: number }>();   // key: device/resource
+  private handed = new Map<string, { id: number; at: number }>();   // key: device
   private awaiting: { device: string; id: number }[] = [];
   private events: LoraEvent[] = [];
   private lastCheck = -Infinity;
@@ -59,9 +62,7 @@ export class LoraCarrier {
     if ((m = RESULT.exec(line))) this.events.push({ kind: "result", hex: m[1] });
   }
 
-  private forget(device: string): void {
-    for (const k of [...this.handed.keys()]) if (k.startsWith(device + "/")) this.handed.delete(k);
-  }
+  private forget(device: string): void { this.handed.delete(device); }
 
   /** Report what was seen, then (every CHECK_MS) hand new commands over. */
   async poll(server: LoraServer | null, write: (line: string) => Promise<void>, now: number): Promise<void> {
@@ -75,10 +76,13 @@ export class LoraCarrier {
       }
       if (now - this.lastCheck < CHECK_MS) return;
       this.lastCheck = now;
+      const seen = new Set<string>();
       for (const c of await server.loraCommands()) {
         if (typeof c.device !== "string" || !Number.isInteger(c.command_id) || !Array.isArray(c.frames) ||
             c.frames.length < 1 || c.frames.length > 3 || !c.frames.every((f) => FRAME_HEX.test(f))) continue;
-        const key = `${c.device}/${c.resource ?? 1}`;
+        if (seen.has(c.device)) continue;   // one per Tracker: the Gateway would replace the first
+        seen.add(c.device);
+        const key = c.device;
         const prev = this.handed.get(key);
         if (prev && prev.id === c.command_id && now - prev.at < REHAND_MS) continue;
         for (const f of c.frames) {

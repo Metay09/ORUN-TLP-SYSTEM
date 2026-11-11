@@ -603,11 +603,15 @@ class LoraBridge:
     ("APP LORA QUEUE <hex>") and tells the server what the Gateway said
     (queued / sent / dropped / the Tracker's signed RESULT). It decides
     nothing: the server verifies every RESULT.
+
+    The Gateway holds one command per Tracker (a new one replaces the old),
+    so only the oldest waiting command of each Tracker is handed; the next
+    follows once the server has settled it.
     """
 
     def __init__(self, base: str, token_file: Path, opener) -> None:
         self.base, self.token_file, self.opener = base, token_file, opener
-        self.handed: dict[tuple[str, int], tuple[int, float]] = {}
+        self.handed: dict[str, tuple[int, float]] = {}  # device -> (command id, when)
         self.awaiting: list[tuple[str, int]] = []
         self.events: list[dict] = []
         self.last_check = 0.
@@ -626,8 +630,7 @@ class LoraBridge:
                 self.events.append({"kind": "queued", "device": device, "command_id": cid})
             else:
                 print("[lora] gateway refused a command:", m[1], flush=True)
-                for k in [k for k in self.handed if k[0] == device]:
-                    self.handed.pop(k, None)
+                self.handed.pop(device, None)
             return
         m = LORA_SENT_LINE.search(text)
         if m:
@@ -638,8 +641,7 @@ class LoraBridge:
         if m:
             print("[lora]", text, flush=True)
             self.events.append({"kind": "dropped", "device": m[1], "command_id": int(m[2], 16)})
-            for k in [k for k in self.handed if k[0] == m[1]]:
-                self.handed.pop(k, None)
+            self.handed.pop(m[1], None)
             return
         m = LORA_RESULT_LINE.search(text)
         if m:
@@ -674,21 +676,26 @@ class LoraBridge:
             self.failed = True
             return
         commands = reply.get("commands") if isinstance(reply, dict) else None
+        seen: set[str] = set()
         for c in commands if isinstance(commands, list) else []:
+            if not isinstance(c, dict):
+                continue
             device, cid, frames = c.get("device"), c.get("command_id"), c.get("frames")
-            resource = c.get("resource", 1)
             if not (isinstance(device, str) and isinstance(cid, int) and isinstance(frames, list)
                     and 1 <= len(frames) <= 3
                     and all(isinstance(f, str) and re.fullmatch(r"[0-9A-F]{108,510}", f) for f in frames)):
                 continue
-            prev = self.handed.get((device, resource))
+            if device in seen:
+                continue  # one per Tracker: the Gateway would replace the first
+            seen.add(device)
+            prev = self.handed.get(device)
             if prev and prev[0] == cid and now - prev[1] < LORA_REHAND_S:
                 continue
             for f in frames:
                 for line in lora_lines(f):
                     ser.write((line + "\n").encode("ascii"))
                 self.awaiting.append((device, cid))
-            self.handed[(device, resource)] = (cid, now)
+            self.handed[device] = (cid, now)
             print(f"[lora] command for {device} handed to the gateway ({len(frames)} frame)", flush=True)
 
 
