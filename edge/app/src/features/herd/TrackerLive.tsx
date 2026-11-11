@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowClockwise, Bluetooth, LinkBreak, Usb } from "@phosphor-icons/react";
 import { noRoleMessage, probeUsbDevice } from "../../app/addTracker.ts";
 import { clearFence } from "../../app/fenceUsb.ts";
+import { bleClearFence } from "../../app/bleWrite.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { fmt } from "../../app/i18n/tr.ts";
 import { collarStorageReadings } from "../../app/collarStorageReadings.ts";
@@ -20,6 +21,7 @@ import { TrackerBle } from "../../platform/trackerBle.ts";
 import { trackerSession, usbTracker } from "../../app/trackerSession.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
 import { useTrackerFences } from "../zones/ApplyFence.tsx";
+import { stillWanted } from "../../app/fencePlan.ts";
 
 /** ble: a device from the scan list; find: look for this ID's Bluetooth name; usb: the cable. */
 export type LiveTarget = { ble: string } | { find: string } | { usb: true };
@@ -54,6 +56,18 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
     }
   };
 
+  /** The open zone op, only if it is still what the account wants; a stale one is closed, not written. */
+  async function fenceOpFor(dev: string, via: "ble" | "usb") {
+    const op = deviceOps.open(dev, "fence");
+    const plan = fences.find((x) => x.device.toUpperCase() === dev.toUpperCase()) ?? null;
+    const ok = stillWanted(op, plan);
+    if (op && !ok) {
+      await pilotOpResult(op.op, dev, "rejected", via, "Alanlar sonradan değişti; eski liste gönderilmedi").catch(() => undefined);
+      if (alive.current) setError("Sıradaki alan işlemi eskimişti (alanlar sonradan değişti); tasmaya yazılmadı. Gerekirse Alanlar → Tasmalara uygula.");
+    }
+    return ok;
+  }
+
   async function readBle(): Promise<void> {
     if (!link.current || !link.current.alive) {
       link.current = null;
@@ -84,7 +98,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
     setPhase("Sıradakiler işleniyor…");
     const { wrote, problems } = await deliverBle(t.exchange, writeKeys.get, dev_, {
       wanted: deviceSettings.get(dev_)?.wanted ?? {}, has,
-      openSettings: deviceOps.open(dev_, "settings"), openFence: deviceOps.open(dev_, "fence"),
+      openSettings: deviceOps.open(dev_, "settings"), openFence: await fenceOpFor(dev_, "ble"),
       reportSettings: (v) => pilotReportSettings(dev_, v, "ble").catch(() => undefined),
       recordFence: (sum, zones) => pilotRecordFence(dev_, { digest: sum.digest, areas: sum.areas, vertices: sum.vertices, zones, appliedAt: Date.now() }),
       result: (op, state, note) => pilotOpResult(op, dev_, state, "ble", note).catch(() => undefined),
@@ -120,7 +134,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
         setPhase("Sıradakiler işleniyor…");
         return deliverUsb(con!, {
           wanted: deviceSettings.get(dev_)?.wanted ?? {}, has,
-          openSettings: deviceOps.open(dev_, "settings"), openFence: deviceOps.open(dev_, "fence"),
+          openSettings: deviceOps.open(dev_, "settings"), openFence: await fenceOpFor(dev_, "usb"),
           reportSettings: (v) => pilotReportSettings(dev_, v, "usb").catch(() => undefined),
           recordFence: (sum, zones) => pilotRecordFence(dev_, { digest: sum.digest, areas: sum.areas, vertices: sum.vertices, zones, appliedAt: Date.now() }),
           result: (op, state, note) => pilotOpResult(op, dev_, state, "usb", note).catch(() => undefined),
@@ -155,6 +169,24 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
       if (alive.current) setError(errText(e));
     } finally {
       if (con) await con.close();
+      if (alive.current) setPhase("");
+    }
+  }
+
+  /** Same over Bluetooth: the signed "remove all zones" (tasma firmware with op 5). */
+  async function clearBle(): Promise<void> {
+    const t = link.current;
+    if (!t || !id) return;
+    setError(""); setPhase("Tasmadaki alanlar siliniyor…");
+    try {
+      const sum = await bleClearFence(t.exchange, writeKeys.get, id);
+      await pilotRecordFence(id.toUpperCase(), { digest: sum.digest, areas: 0, vertices: 0, zones: [], appliedAt: Date.now() });
+      const st = buildStatus(await t.readRaw(), "ble", Date.now());
+      trackerSession.note(t, st, id);
+      if (alive.current) { setStatus(st); setSynced("Tasmadaki alanlar silindi (tasma onayladı)."); }
+    } catch (e) {
+      if (alive.current) setError(errText(e));
+    } finally {
       if (alive.current) setPhase("");
     }
   }
@@ -241,9 +273,8 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
         {st && !isGateway && st.fence?.state === "configured" && (!plan || plan.zones.length === 0) && (
           <div className="stack" style={{ gap: 6 }}>
             <p className="sm t-aging" style={{ margin: 0 }}>Tasmada {st.fence.areas} alan var ama hesapta bu tasmaya alan yok. Tasma bu alanlara göre içeride/dışarıda karar veriyor.</p>
-            {"usb" in target
-              ? <button className="btn danger" disabled={!!phase} onClick={() => { void clearUsb(); }}>Tasmadaki alanları sil</button>
-              : <p className="fine" style={{ margin: 0 }}>Silmek şimdilik yalnız USB ile: tasmayı kabloyla bağla.</p>}
+            <button className="btn danger" disabled={!!phase || (!("usb" in target) && !session)}
+              onClick={() => { void ("usb" in target ? clearUsb() : clearBle()); }}>Tasmadaki alanları sil</button>
           </div>
         )}
         {st && !isGateway && (waitingKeys.length > 0 || !!deviceOps.open(id ?? "", "fence")) && !("usb" in target) && id && !writeKeys.has(id) && (

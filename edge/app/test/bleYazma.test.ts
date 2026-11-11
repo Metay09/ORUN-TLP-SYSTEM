@@ -8,7 +8,7 @@ import { concat, fromHex, hex } from "../src/core/bytes.ts";
 import { hmacSha256 } from "../src/core/crypto.ts";
 import { AppReassembler, ERROR_TYPE, requestFrame, requestFrames, type AppMessage } from "../src/app/bleAppFrames.ts";
 import {
-  bleSettingWriter, bleWrite, bleWriteFence, NoWriteKey, OP, parseChallenge, parseResult, servicesValue, STAGE,
+  bleClearFence, bleSettingWriter, bleWrite, bleWriteFence, NoWriteKey, OP, parseChallenge, parseResult, servicesValue, STAGE,
   stagedDigest, WRITE, WriteRefused, writeRequest, type Exchange,
 } from "../src/app/bleWrite.ts";
 import { deliverBle, deliverSettings } from "../src/app/deliver.ts";
@@ -91,6 +91,7 @@ class FakeTracker {
   staged: E7[][] | null = null;
   fence = { state: 1, areas: 0, vertices: 0, revision: 1 };
   stageSteps = 0;
+  oldFirmware = false;            // a tasma without op 5 (unknown op: signed INVALID)
 
   private stage(payload: Uint8Array): AppMessage {
     this.stageSteps++;
@@ -138,6 +139,15 @@ class FakeTracker {
       const body = concat(Uint8Array.of(ok ? 0 : 2, op, f.state, f.areas, f.vertices & 0xff, f.vertices >> 8), new Uint8Array(4), le32(f.revision));
       return { type: WRITE.writeAnswer, correlation: 2,
         payload: concat(body, sign(this.forge ? fromHex("11".repeat(32)) : this.key, "ORUN-BLE-WRITE-RES-v1", this.device, this.epoch, ch, body)) };
+    }
+    if (op === OP.fenceClear && !this.oldFirmware) {
+      const ok = v === 0 && !this.staged;
+      this.staged = null;
+      const changed = ok && this.fence.state !== 1;
+      if (changed) this.fence = { state: 1, areas: 0, vertices: 0, revision: this.fence.revision + 1 };
+      const f = this.fence;
+      const body = concat(Uint8Array.of(ok ? (changed ? 0 : 1) : 2, op, f.state, f.areas, f.vertices & 0xff, f.vertices >> 8), new Uint8Array(4), le32(f.revision));
+      return { type: WRITE.writeAnswer, correlation: 2, payload: concat(body, sign(this.key, "ORUN-BLE-WRITE-RES-v1", this.device, this.epoch, ch, body)) };
     }
     this.writes.push(op);
     let outcome = 0;
@@ -289,4 +299,20 @@ test("Bluetooth delivery: settings first, then the open area op, both closed on 
   assert.deepEqual(results, ["s1:applied", "f1:applied"]);
   assert.deepEqual(recorded, [[1, 4, [{ id: "a", name: "Mera" }]]]);
   assert.deepEqual([t.config.interval, t.fence.areas], [600, 1]);
+});
+
+test("alan silme Bluetooth'tan: açık 'hepsini sil' isteği, tasmanın imzalı CLEAR cevabıyla", async () => {
+  const t = new FakeTracker();
+  await bleWriteFence(t.exchange, keyFor, DEV, [zone("a", SQUARE)]);
+  assert.equal(t.fence.areas, 1);
+  const sum = await bleClearFence(t.exchange, keyFor, DEV);
+  assert.deepEqual([sum.areas, sum.vertices, t.fence.state, t.fence.areas], [0, 0, 1, 0]);
+  await bleClearFence(t.exchange, keyFor, DEV);   // again: UNCHANGED is fine
+  // A tasma with older firmware: refused, nothing removed.
+  const old = new FakeTracker();
+  old.oldFirmware = true;
+  await bleWriteFence(old.exchange, keyFor, DEV, [zone("a", SQUARE)]);
+  await assert.rejects(bleClearFence(old.exchange, keyFor, DEV), DeviceRejected);
+  assert.equal(old.fence.areas, 1);
+  await assert.rejects(bleClearFence(t.exchange, () => null, DEV), NoWriteKey);
 });

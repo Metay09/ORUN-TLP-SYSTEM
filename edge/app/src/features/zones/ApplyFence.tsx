@@ -28,7 +28,7 @@ const corners = (p: TrackerFence) => p.zones.reduce((n, z) => n + canonicalE7(z.
 
 export function stateLine(p: TrackerFence): string {
   if (p.state === "none") return "Bu tasmaya gidecek alan yok";
-  if (p.state === "clear") return `Tasmada ${p.record!.areas} alan var, hesapta yok · tasmadan silinecek (USB ile)`;
+  if (p.state === "clear") return `Tasmada ${p.record!.areas} alan var, hesapta yok · tasmadan silinecek`;
   const plan = `${p.zones.length} alan · ${corners(p)} köşe`;
   if (p.state === "current") return `Tasmada güncel · ${fmt.dateTime(p.record!.appliedAt)}`;
   if (p.state === "stale") return `Tasmadaki alanlar eski · yeni: ${plan}`;
@@ -108,7 +108,7 @@ export function ApplyFenceDialog({ onClose, only }: { onClose: () => void; only?
                   lead={<input type="checkbox" checked={on} aria-label={p.name} onChange={(e) => toggle(p.device, e.target.checked)}
                     onClick={(e) => e.stopPropagation()} style={{ width: 20, height: 20 }} />}
                   onClick={() => toggle(p.device, !on)}
-                  sub={`${p.state === "clear" ? `Alanlar silinecek (tasmada ${p.record!.areas} alan var) · yalnız USB ile` : `${p.zones.map((z) => z.name).join(", ")} · ${p.zones.length} alan · ${corners(p)} köşe`}${open ? ` · önceki işlem sırada (yerine geçer)` : ""}`} />;
+                  sub={`${p.state === "clear" ? `Alanlar silinecek (tasmada ${p.record!.areas} alan var)` : `${p.zones.map((z) => z.name).join(", ")} · ${p.zones.length} alan · ${corners(p)} köşe`}${open ? ` · önceki işlem sırada (yerine geçer)` : ""}`} />;
               })}
             </div>
           )}

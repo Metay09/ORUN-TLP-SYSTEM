@@ -656,6 +656,31 @@ void testFenceOverBle() {
   assert(t.fences.areaCount() == 1 && t.fences.totalVertexCount() == 3);
 }
 
+// Owner 2026-11-11: every area removed over Bluetooth (op 5), only explicitly.
+void testFenceClearOverBle() {
+  Tracker t;
+  uint8_t type = 0;
+  stageAll(t, {kSquare, kTriangle});
+  std::vector<uint8_t> p = commit(t, {kSquare, kTriangle}, counts(2, 7), type);
+  assert(type == kResult && t.fences.areaCount() == 2);
+  // A clear while a list is being staged: signed INVALID, nothing removed, staging ended.
+  stageAll(t, {kSquare});
+  p = t.write(bat::kWriteOpFenceClear, 0, type);
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kInvalid) && p[1] == bat::kWriteOpFenceClear);
+  assert(t.fences.areaCount() == 2 && !t.service.staging().active());
+  // A non-zero value: signed INVALID.
+  p = t.write(bat::kWriteOpFenceClear, 1, type);
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kInvalid) && t.fences.areaCount() == 2);
+  // The explicit clear: APPLIED, state CLEAR, 0 areas; the store holds none.
+  p = t.write(bat::kWriteOpFenceClear, 0, type);
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kApplied) && p[1] == bat::kWriteOpFenceClear);
+  assert(p[2] == uint8_t(GeofenceResourceState::kClear) && p[3] == 0 && (p[4] | (p[5] << 8)) == 0);
+  assert(t.fences.areaCount() == 0 && t.fences.resourceState() == GeofenceResourceState::kClear);
+  // Again: UNCHANGED.
+  p = t.write(bat::kWriteOpFenceClear, 0, type);
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kUnchanged));
+}
+
 void testFenceStaging() {
   Tracker t;
   std::vector<uint8_t> r = stage(t, points(kSquare, 0, 1));          // no BEGIN
@@ -703,6 +728,7 @@ int main() {
   testDisconnectWhileWriting();
   testFenceSharedVector();
   testFenceOverBle();
+  testFenceClearOverBle();
   testFenceStaging();
   puts("4c-1b/4c-2 Bluetooth authenticated writes (vector, single-use challenge, "
        "transport, refusals, disconnect, area list): PASS");

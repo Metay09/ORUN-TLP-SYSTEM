@@ -4,7 +4,7 @@
 import type { LineConsole } from "./addTracker.ts";
 import type { OpTarget, OpVia, FencePayload } from "./deviceOps.ts";
 import type { SettingValues } from "./deviceSettings.ts";
-import { bleSettingWriter, bleWriteFence, type Exchange, type KeyFor } from "./bleWrite.ts";
+import { bleClearFence, bleSettingWriter, bleWriteFence, type Exchange, type KeyFor } from "./bleWrite.ts";
 import { clearFence, DeviceRejected, writeFence, type FenceSummary } from "./fenceUsb.ts";
 import { usbWriter, writeWaiting, type SettingWriter } from "./trackerSettings.ts";
 import type { Zone } from "./zones.ts";
@@ -64,9 +64,8 @@ export function deliverUsb(con: LineConsole, d: DeliverDeps): Promise<Delivered>
 /** 4c-2: aynısı Bluetooth'tan (hesaptaki telefon, tasmanın imzalı onayı). */
 export function deliverBle(exchange: Exchange, keyFor: KeyFor, device: string, d: DeliverDeps): Promise<Delivered> {
   return deliver(bleSettingWriter(exchange, keyFor, device), (zones) => {
-    // The collar's Bluetooth writer takes a full list only; removing all zones is USB for now.
-    if (!zones.length) throw new Error("Alanları silmek şimdilik yalnız USB ile: tasmayı kabloyla bağla.");
-    return bleWriteFence(exchange, keyFor, device, zones);
+    // No zones = the explicit "remove all" op (tasma firmware with op 5).
+    return zones.length ? bleWriteFence(exchange, keyFor, device, zones) : bleClearFence(exchange, keyFor, device);
   }, d);
 }
 

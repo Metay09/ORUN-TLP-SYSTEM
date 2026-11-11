@@ -69,7 +69,7 @@ class BleWriteService : public BleWriteGate {
   void configBody(ConfigMutationOutcome outcome, uint8_t op,
                   const config_format::Config& config, bool token_valid,
                   uint32_t revision, Body& body) const;
-  void fenceBody(ConfigMutationOutcome outcome, GeofenceResourceState state,
+  void fenceBody(uint8_t op, ConfigMutationOutcome outcome, GeofenceResourceState state,
                  uint8_t areas, uint16_t vertices, bool token_valid,
                  uint32_t revision, Body& body) const;
   void immediate(uint32_t request_id, const Body& body);

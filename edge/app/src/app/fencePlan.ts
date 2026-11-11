@@ -36,6 +36,16 @@ export function needsSending(plans: TrackerFence[]): TrackerFence[] {
 export const opDigest = (p: TrackerFence): string => p.digest ?? fenceDigest([]);
 
 /**
+ * An open zone operation is delivered only while it still is what the account
+ * wants for this tracker (owner 2026-11-11: an old queued list was written
+ * back over Bluetooth after its zone had been deleted). A stale one: null.
+ */
+export function stillWanted<T extends { payload: unknown }>(op: T | null, plan: TrackerFence | null): T | null {
+  if (!op || !plan) return null;
+  return (op.payload as { digest?: string }).digest === opDigest(plan) ? op : null;
+}
+
+/**
  * Trackers whose zones differ from what they hold and are not already queued
  * with exactly these zones (`queued`: device → digest of its open operation).
  */

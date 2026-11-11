@@ -71,7 +71,7 @@ protected mutation path or secure EVENT transport is enabled by M6D3C. A local
 USB writer (`APP FENCE ...`) submits REPLACE_SET / CLEAR_SET to the one
 `GeofenceMutationOwner`; since 4c-2 an account-authenticated BLE writer
 (staged list + signed commit, `ble_write_service.h`) submits REPLACE_SET to the
-same owner; LoRa must reuse it once authorized. This is
+same owner, and since 2026-11-11 an explicit signed op 5 submits CLEAR_SET; LoRa must reuse it once authorized. This is
 not evidence that backend alarms or trustworthy LOST semantics exist. The
 policy refines older conceptual NEAR_FENCE and fixed outside-cadence notes
 without weakening the validated M6C geometry layer.
