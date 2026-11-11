@@ -23,6 +23,9 @@ void printUsbApplicationResponse(const ApplicationResponse& response);
 // result live in ConfigMutationOwner; this module owns only the text.
 //
 //   APP INTERVAL <seconds>     decimal, no sign, no padding spaces
+//   APP SET <NAME> <value>     any row of the settings table (settings_table.h)
+//                              open on USB: INTERVAL/BLE_WINDOW decimal here,
+//                              SERVICES in letters (parseUsbServicesCommand)
 enum class UsbConfigCommandParse : uint8_t {
   kNotConfigCommand,  // some other command; leave it to the next parser
   kMalformed,         // recognized command with an unusable argument
@@ -34,6 +37,10 @@ UsbConfigCommandParse parseUsbConfigCommand(const char* text, uint8_t length,
                                             uint32_t* value);
 
 void printUsbConfigMutationResult(const ConfigMutationResult& result);
+
+// "APP SETTINGS?": one "APP SETTING ..." line per settings-table row, then
+// "APP SETTINGS END count=<n>" (formatSettingLine, settings_table.h).
+bool isUsbSettingsQuery(const char* text, uint8_t length);
 // Outcome word shared by the USB lines and the BLE write log (4c-1b).
 const char* configMutationOutcomeName(ConfigMutationOutcome outcome);
 

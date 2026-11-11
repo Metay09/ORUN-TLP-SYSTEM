@@ -5,6 +5,33 @@
 import type { LineConsole } from "./addTracker.ts";
 import { DeviceRejected } from "./fenceUsb.ts";
 
+/**
+ * Tek ayar tablosu (firmware settings_table.cpp, sahip kararı 2026-11-11):
+ * her ayarın bir numarası (Bluetooth'ta, ileride LoRa'da işlem numarası) ve
+ * bir adı (USB "APP SET <AD> <değer>") var; hangi rolde geçerli olduğu da
+ * burada. Yeni ayar = firmware tablosuna ve buraya birer satır.
+ */
+export const SETTINGS = {
+  interval: { id: 1, name: "INTERVAL", roles: ["tasma"] },
+  services: { id: 2, name: "SERVICES", roles: ["tasma", "gateway"] },
+  bleWindow: { id: 3, name: "BLE_WINDOW", roles: ["tasma"] },
+} as const;
+export type SettingKey = keyof typeof SETTINGS;
+
+/** One "APP SETTING ..." line of "APP SETTINGS?" (firmware formatSettingLine). */
+export interface DeviceSetting {
+  id: number; name: string; value: number; usb: boolean; ble: boolean; lora: boolean; radio: boolean;
+}
+const SETTING_LINE = /^APP SETTING id=(\d+) name=([A-Z_]+) value=(\d+) usb=([01]) ble=([01]) lora=([01]) radio=([01])$/;
+export function parseSettingLine(line: string): DeviceSetting | null {
+  const m = SETTING_LINE.exec(line.trim());
+  if (!m) return null;
+  return {
+    id: Number(m[1]), name: m[2], value: Number(m[3]),
+    usb: m[4] === "1", ble: m[5] === "1", lora: m[6] === "1", radio: m[7] === "1",
+  };
+}
+
 /** Tasmanın kabul ettiği sınırlar (firmware config_mutation.h, gnss_config.h). */
 export const INTERVAL = { minS: 60, maxS: 12 * 24 * 3600 } as const;
 

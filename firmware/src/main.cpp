@@ -55,6 +55,7 @@
 #include "node_role.h"
 #include "observation_incarnation_source.h"
 #include "product_record_store.h"
+#include "settings_table.h"
 #ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
 #include "product_secure_crypto.h"
 #include "tracker_product_tx_pilot.h"
@@ -2718,7 +2719,39 @@ void handleRoleCommand() {
       Serial.println(F("APP REJECTED"));
       return;
     }
+#ifdef ORUN_SF5L0_TRACKER
+    // Settings table (settings_table.h): a row only for the other role is
+    // refused, never saved (e.g. INTERVAL on a Gateway).
+    const orun_tlp::SettingRow* config_row =
+        orun_tlp::findSetting(static_cast<uint8_t>(config_command_kind));
+    if (config_row == nullptr ||
+        !orun_tlp::settingAllowed(*config_row, orun_tlp::kSettingDoorUsb, storage_role)) {
+      Serial.printf("APP SET id=0 code=INVALID reason=not_for_%s\n",
+                    orun_tlp::storageRoleName(storage_role));
+      return;
+    }
+#endif
     startUsbConfigMutation(config_command_kind, config_command_value);
+    return;
+  }
+  if (orun_tlp::isUsbSettingsQuery(role_command, role_command_length)) {
+    role_command_length = 0;
+#ifdef ORUN_SF5L0_TRACKER
+    const orun_tlp::StorageRole settings_role = storage_role;
+    const char* settings_role_name = orun_tlp::storageRoleName(storage_role);
+#else
+    const orun_tlp::StorageRole settings_role = orun_tlp::StorageRole::kUnassigned;
+    const char* settings_role_name = "NONE";
+#endif
+    char setting_line[128];
+    for (const orun_tlp::SettingRow& row : orun_tlp::kSettingRows) {
+      if (orun_tlp::formatSettingLine(
+              row, orun_tlp::settingValue(row, config_store.config()), settings_role,
+              setting_line, sizeof(setting_line)) > 0)
+        Serial.println(setting_line);
+    }
+    Serial.printf("APP SETTINGS END count=%u role=%s\n",
+                  static_cast<unsigned>(orun_tlp::kSettingCount), settings_role_name);
     return;
   }
   orun_tlp::ApplicationRequestKind application_query_kind;

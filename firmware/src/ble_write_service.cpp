@@ -1,5 +1,7 @@
 #include "ble_write_service.h"
 
+#include "settings_table.h"
+
 #include <string.h>
 
 #include "custody_ack_primitives.h"
@@ -251,32 +253,24 @@ BleWriteAdmission BleWriteService::submitWrite(uint32_t now,
     }
   }
 
-  ConfigMutationKind kind = ConfigMutationKind::kSetTrackingInterval;
-  uint32_t interval = 0, ble_window = 0;
-  uint8_t mode = 0, services = 0;
-  bool invalid = false;
-  switch (op) {
-    case bat::kWriteOpInterval:
-      interval = value;
-      break;
-    case bat::kWriteOpBleWindow:
-      kind = ConfigMutationKind::kSetBleWindow;
-      ble_window = value;
-      break;
-    case bat::kWriteOpServices: {
-      kind = ConfigMutationKind::kSetServiceIntent;
-      mode = static_cast<uint8_t>(value);
-      services = static_cast<uint8_t>(value >> 8);
-      // Y2a: a Tracker keeps its role; an intent for the other role is
-      // refused, never saved (same rule as the USB writer).
-      const StorageRole asked = storageRoleForIntent(mode, services);
-      invalid = (value >> 16) != 0U ||
-                (asked != StorageRole::kUnassigned && asked != role_);
-      break;
-    }
-    default:
-      invalid = true;
-      break;
+  // Every other op is a row of the one settings table (settings_table.h):
+  // the op number is the row's id, the value its wire encoding.
+  const SettingRow* row = findSetting(op);
+  ConfigMutationRequest request(
+      ApplicationRequester::kBle, request_id,
+      ApplicationAccessContext(ApplicationAccessChannel::kBleAuthenticated),
+      ConfigMutationKind::kSetTrackingInterval, 0);
+  bool invalid = row == nullptr || !settingAllowed(*row, kSettingDoorBle, role_) ||
+                 !settingRequest(*row, ApplicationRequester::kBle, request_id,
+                                 ApplicationAccessContext(
+                                     ApplicationAccessChannel::kBleAuthenticated),
+                                 value, &request);
+  if (!invalid && row->kind == ConfigMutationKind::kSetServiceIntent) {
+    // Y2a: a device keeps its role; an intent for the other role is
+    // refused, never saved (same rule as the USB writer).
+    const StorageRole asked =
+        storageRoleForIntent(request.service_mode, request.requested_services);
+    invalid = asked != StorageRole::kUnassigned && asked != role_;
   }
   if (invalid) {
     config_format::StateToken token;
@@ -287,10 +281,6 @@ BleWriteAdmission BleWriteService::submitWrite(uint32_t now,
     return BleWriteAdmission::kPending;
   }
 
-  const ConfigMutationRequest request(
-      ApplicationRequester::kBle, request_id,
-      ApplicationAccessContext(ApplicationAccessChannel::kBleAuthenticated),
-      kind, interval, mode, services, ble_window);
   switch (mutations_.submit(request)) {
     case ConfigMutationSubmitResult::kAccepted:
       owed_ = Owed::kConfig;

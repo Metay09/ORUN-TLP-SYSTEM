@@ -8,13 +8,17 @@ import { concat, equal, fromHex, hex } from "../core/bytes.ts";
 import { hmacSha256, sha256 } from "../core/crypto.ts";
 import { ERROR_TYPE, type AppMessage } from "./bleAppFrames.ts";
 import { CLEAR_SUMMARY, DeviceRejected, polygonsOf, summary, type FenceSummary } from "./fenceUsb.ts";
-import { outcomeResult, type ServiceChoice, type SettingWriter } from "./trackerSettings.ts";
+import { outcomeResult, SETTINGS, type ServiceChoice, type SettingWriter } from "./trackerSettings.ts";
 import { FENCE, type E7, type Zone } from "./zones.ts";
 
 export const WRITE = {
   challenge: 0x10, write: 0x11, stage: 0x12, challengeAnswer: 0x90, writeAnswer: 0x91, stageAnswer: 0x92,
 } as const;
-export const OP = { interval: 1, services: 2, bleWindow: 3, fence: 4, fenceClear: 5 } as const;
+/** Ayar işlemleri tek ayar tablosundan (SETTINGS); alan listesi kendi sahibinde. */
+export const OP = {
+  interval: SETTINGS.interval.id, services: SETTINGS.services.id, bleWindow: SETTINGS.bleWindow.id,
+  fence: 4, fenceClear: 5,
+} as const;
 /** 4c-2 alan listesi aşamaları (firmware ble_application_transport.h). */
 export const STAGE = { begin: 1, vertices: 2, nextArea: 3, abort: 4 } as const;
 const STAGE_MAX_POINTS = 5;

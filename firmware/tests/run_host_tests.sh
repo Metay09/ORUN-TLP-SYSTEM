@@ -649,7 +649,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/config_store.cpp firmware/src/config_format.cpp \
   firmware/src/application_request.cpp \
   firmware/src/application_status_runtime.cpp \
-  firmware/src/usb_application_adapter.cpp \
+  firmware/src/usb_application_adapter.cpp firmware/src/settings_table.cpp \
   firmware/src/config_mutation.cpp firmware/src/service_intent.cpp \
   firmware/src/ble_application_transport.cpp \
   firmware/src/ble_application_handoff.cpp \
@@ -893,7 +893,7 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7h_app_status.cpp \
   firmware/src/tlp_position_packet.cpp -o "$test_dir/m7p7h_app_status"
 "$test_dir/m7p7h_app_status"
 g++ "${flags[@]}" firmware/tests/m7/test_m7p7h_usb_adapter.cpp \
-  firmware/src/usb_application_adapter.cpp firmware/src/service_intent.cpp \
+  firmware/src/usb_application_adapter.cpp firmware/src/settings_table.cpp firmware/src/service_intent.cpp \
   firmware/src/node_role.cpp firmware/src/geofence_staging.cpp \
   -o "$test_dir/m7p7h_usb_adapter"
 "$test_dir/m7p7h_usb_adapter"
@@ -907,7 +907,7 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7f_ble_application_transpor
 # (OpenSSL crypto port).
 g++ "${portable_flags[@]}" -Ifirmware/tests/sf5 firmware/tests/m7/test_ble_write.cpp \
   firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
-  firmware/src/ble_write_auth.cpp firmware/src/ble_write_service.cpp \
+  firmware/src/ble_write_auth.cpp firmware/src/ble_write_service.cpp firmware/src/settings_table.cpp \
   firmware/src/ble_application_transport.cpp firmware/src/application_request.cpp \
   firmware/src/config_mutation.cpp firmware/src/config_store.cpp \
   firmware/src/config_format.cpp firmware/src/journal_format.cpp \
