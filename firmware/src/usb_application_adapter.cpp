@@ -267,6 +267,7 @@ const char* configMutationOutcomeName(ConfigMutationOutcome outcome) {
     case ConfigMutationOutcome::kMaintenance: return "MAINTENANCE";
     case ConfigMutationOutcome::kUnavailable: return "UNAVAILABLE";
     case ConfigMutationOutcome::kOutcomeUnknown: return "OUTCOME_UNKNOWN";
+    case ConfigMutationOutcome::kStale: return "STALE";
   }
   return "UNAVAILABLE";
 }
@@ -304,6 +305,7 @@ void printUsbConfigMutationResult(const ConfigMutationResult& result) {
     case ConfigMutationOutcome::kMaintenance: code = "MAINTENANCE"; break;
     case ConfigMutationOutcome::kUnavailable: code = "UNAVAILABLE"; break;
     case ConfigMutationOutcome::kOutcomeUnknown: code = "OUTCOME_UNKNOWN"; break;
+    case ConfigMutationOutcome::kStale: code = "STALE"; break;
   }
 
   // What is printed is what the store holds now, never the requested value:

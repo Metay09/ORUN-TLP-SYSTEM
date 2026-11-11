@@ -9,12 +9,12 @@ namespace orun_tlp {
 // Value on the wire: settings_table.h.
 const SettingRow kSettingRows[kSettingCount] = {
     {ConfigMutationKind::kSetTrackingInterval, "INTERVAL",
-     kSettingDoorUsb | kSettingDoorBle, kSettingForTracker, false},
+     kSettingDoorUsb | kSettingDoorBle | kSettingDoorLora, kSettingForTracker, false},
     {ConfigMutationKind::kSetServiceIntent, "SERVICES",
-     kSettingDoorUsb | kSettingDoorBle, kSettingForTracker | kSettingForGateway, false},
+     kSettingDoorUsb | kSettingDoorBle | kSettingDoorLora, kSettingForTracker | kSettingForGateway, false},
     // The Gateway's Bluetooth is always on; the window is a Tracker setting.
     {ConfigMutationKind::kSetBleWindow, "BLE_WINDOW",
-     kSettingDoorUsb | kSettingDoorBle, kSettingForTracker, false},
+     kSettingDoorUsb | kSettingDoorBle | kSettingDoorLora, kSettingForTracker, false},
 };
 
 const SettingRow* findSetting(uint8_t id) {

@@ -14,6 +14,8 @@ bool accessBelongsToRequester(ApplicationRequester requester,
       return access.channel == ApplicationAccessChannel::kBleOpen ||
              access.channel == ApplicationAccessChannel::kBleEncrypted ||
              access.channel == ApplicationAccessChannel::kBleAuthenticated;
+    case ApplicationRequester::kLora:
+      return access.channel == ApplicationAccessChannel::kLoraAuthenticated;
   }
   return false;
 }
@@ -23,15 +25,54 @@ bool accessBelongsToRequester(ApplicationRequester requester,
 // configuration; an open or merely encrypted link may not.
 bool mayChangeConfiguration(const ApplicationAccessContext& access) {
   return access.channel == ApplicationAccessChannel::kUsbLocal ||
-         access.channel == ApplicationAccessChannel::kBleAuthenticated;
+         access.channel == ApplicationAccessChannel::kBleAuthenticated ||
+         access.channel == ApplicationAccessChannel::kLoraAuthenticated;
+}
+
+// Applies one request's field(s) to the candidate. False: not admissible.
+bool applyTo(config_format::Config& candidate, const ConfigMutationRequest& request) {
+  switch (request.kind) {
+    case ConfigMutationKind::kSetTrackingInterval:
+      if (request.tracking_interval_seconds <
+          config_mutation_policy::kMinTrackingIntervalSeconds)
+        return false;
+      candidate.tracking_interval_seconds = request.tracking_interval_seconds;
+      return true;
+    case ConfigMutationKind::kSetBleWindow:
+      if (request.ble_window_seconds > config_format::kMaxBleWindowSeconds) return false;
+      candidate.ble_window_seconds = static_cast<uint16_t>(request.ble_window_seconds);
+      return true;
+    case ConfigMutationKind::kSetServiceIntent:
+      if (admitServiceIntent(request.service_mode, request.requested_services) !=
+          ServiceIntentAdmission::kSupported)
+        return false;
+      candidate.service_mode = request.service_mode;
+      candidate.requested_services = request.requested_services;
+      return true;
+  }
+  return false;
 }
 
 }  // namespace
 
 ConfigMutationSubmitResult ConfigMutationOwner::submit(
     const ConfigMutationRequest& request) {
-  if (!accessBelongsToRequester(request.requester, request.access))
+  return submitBatch(&request, 1, nullptr);
+}
+
+ConfigMutationSubmitResult ConfigMutationOwner::submitBatch(
+    const ConfigMutationRequest* items, size_t count,
+    const config_format::StateToken* expected) {
+  if (items == nullptr || count == 0 || count > kMaxBatch)
     return ConfigMutationSubmitResult::kRejected;
+  const ConfigMutationRequest& first = items[0];
+  for (size_t i = 0; i < count; ++i) {
+    // One requester, one request id, one access context for the whole set.
+    if (items[i].requester != first.requester || items[i].request_id != first.request_id ||
+        items[i].access.channel != first.access.channel ||
+        !accessBelongsToRequester(items[i].requester, items[i].access))
+      return ConfigMutationSubmitResult::kRejected;
+  }
 
   // Take the single mutation slot before evaluating anything about the
   // desired state, so two adapters can never both accept the same
@@ -39,48 +80,39 @@ ConfigMutationSubmitResult ConfigMutationOwner::submit(
   if (state_ != State::kIdle) return ConfigMutationSubmitResult::kBusy;
 
   result_ = ConfigMutationResult();
-  result_.requester = request.requester;
-  result_.request_id = request.request_id;
-  result_.kind = request.kind;
+  result_.requester = first.requester;
+  result_.request_id = first.request_id;
+  result_.kind = first.kind;
 
-  if (!mayChangeConfiguration(request.access)) {
+  if (!mayChangeConfiguration(first.access)) {
     complete(ConfigMutationOutcome::kAccessDenied);
     return ConfigMutationSubmitResult::kAccepted;
   }
 
+  // Precondition (LoRa, owner decision 2026-11-11): the command was signed
+  // for exactly this saved state. A replayed or overtaken command finds a
+  // newer token and changes nothing.
+  if (expected != nullptr) {
+    config_format::StateToken current;
+    if (!store_.stateToken(current)) {
+      complete(ConfigMutationOutcome::kMaintenance);
+      return ConfigMutationSubmitResult::kAccepted;
+    }
+    if (current.incarnation != expected->incarnation ||
+        current.revision != expected->revision) {
+      complete(ConfigMutationOutcome::kStale);
+      return ConfigMutationSubmitResult::kAccepted;
+    }
+  }
+
   // Change the requested field(s) of the authoritative record; every other
-  // field is carried over unchanged.
+  // field is carried over unchanged. All of them or none.
   config_format::Config candidate = store_.config();
-  switch (request.kind) {
-    case ConfigMutationKind::kSetTrackingInterval:
-      if (request.tracking_interval_seconds <
-          config_mutation_policy::kMinTrackingIntervalSeconds) {
-        complete(ConfigMutationOutcome::kInvalid);
-        return ConfigMutationSubmitResult::kAccepted;
-      }
-      candidate.tracking_interval_seconds = request.tracking_interval_seconds;
-      break;
-    case ConfigMutationKind::kSetBleWindow:
-      if (request.ble_window_seconds > config_format::kMaxBleWindowSeconds) {
-        complete(ConfigMutationOutcome::kInvalid);
-        return ConfigMutationSubmitResult::kAccepted;
-      }
-      candidate.ble_window_seconds =
-          static_cast<uint16_t>(request.ble_window_seconds);
-      break;
-    case ConfigMutationKind::kSetServiceIntent:
-      if (admitServiceIntent(request.service_mode,
-                             request.requested_services) !=
-          ServiceIntentAdmission::kSupported) {
-        complete(ConfigMutationOutcome::kInvalid);
-        return ConfigMutationSubmitResult::kAccepted;
-      }
-      candidate.service_mode = request.service_mode;
-      candidate.requested_services = request.requested_services;
-      break;
-    default:
+  for (size_t i = 0; i < count; ++i) {
+    if (!applyTo(candidate, items[i])) {
       complete(ConfigMutationOutcome::kInvalid);
       return ConfigMutationSubmitResult::kAccepted;
+    }
   }
 
   switch (store_.admitSave(candidate)) {

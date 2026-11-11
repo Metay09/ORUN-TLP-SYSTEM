@@ -75,6 +75,7 @@ const WHY: Record<string, string> = {
   MAINTENANCE: "tasmanın ayar belleği bakımda",
   UNAVAILABLE: "tasmanın ayar belleği hazır değil",
   OUTCOME_UNKNOWN: "yazılıp yazılmadığı belli değil; durumu yeniden oku",
+  STALE: "tasmadaki ayar bu arada değişmiş; işlem yeni duruma göre tekrar gönderilecek",
 };
 
 export type Written = "applied" | "unchanged";

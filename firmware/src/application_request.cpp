@@ -50,6 +50,7 @@ bool ApplicationRequestService::accessAllowed(
       return true;
     // Write-only: reads keep using the BLE link's own channel.
     case ApplicationAccessChannel::kBleAuthenticated:
+    case ApplicationAccessChannel::kLoraAuthenticated:
     case ApplicationAccessChannel::kInvalid:
       return false;
   }

@@ -12,8 +12,7 @@
 // kararı 2026-11-11: bağlantı kopabilir, kanal habersiz değişebilir); bu
 // tabloya eklendiklerinde radio = true olur ve LoRa kapısı kendiliğinden kapanır.
 //
-// LoRa kapısı (kSettingDoorLora) henüz bir yazıcıya bağlı değil (adım 6);
-// satırlarda bu bit o adımda açılır, şimdiden açık gösterilmez.
+// LoRa kapısı: hesabın imzaladığı komut (lora_command.h, adım 6).
 
 #include <stddef.h>
 #include <stdint.h>

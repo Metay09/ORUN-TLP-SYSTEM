@@ -921,6 +921,20 @@ g++ "${portable_flags[@]}" -Ifirmware/tests/sf5 firmware/tests/m7/test_ble_write
   firmware/src/geofence_geometry.cpp \
   -lcrypto -o "$test_dir/ble_write"
 "$test_dir/ble_write"
+# 6a: account-signed settings over LoRa (one save, replay-safe by state token).
+g++ "${portable_flags[@]}" -Ifirmware/tests/sf5 firmware/tests/m7/test_lora_command.cpp \
+  firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
+  firmware/src/lora_command.cpp firmware/src/settings_table.cpp \
+  firmware/src/application_request.cpp firmware/src/config_mutation.cpp \
+  firmware/src/config_store.cpp firmware/src/config_format.cpp \
+  firmware/src/journal_format.cpp firmware/src/service_intent.cpp \
+  firmware/src/device_storage_role.cpp firmware/src/security_store.cpp \
+  firmware/src/security_v3_page_writer.cpp firmware/src/security_v3_ab_preflight.cpp \
+  firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
+  firmware/src/runtime_config.cpp firmware/src/node_role.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -lcrypto -o "$test_dir/lora_command"
+"$test_dir/lora_command"
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7h_ble_status_transport.cpp \
   firmware/src/ble_application_transport.cpp firmware/src/application_request.cpp \
   firmware/src/config_store.cpp firmware/src/config_format.cpp \
