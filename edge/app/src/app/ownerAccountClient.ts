@@ -362,6 +362,32 @@ export class OwnerAccountClient {
     if (!reply.ok) throw new Error("Ad kaydedilemedi.");
   }
 
+  /** Y3: battery capacity (mAh) per tracker, kept in the account. */
+  async batteryCapacities(): Promise<Record<string, number>> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/battery", {
+      headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
+      credentials: "omit", redirect: "error", cache: "no-store",
+    });
+    if (!reply.ok) throw new Error("Pil kapasiteleri alınamadı.");
+    const body = await json(reply);
+    const battery = body.battery;
+    if (!battery || typeof battery !== "object" || Array.isArray(battery)) throw new Error("Pil kapasiteleri hatalı.");
+    return battery as Record<string, number>;
+  }
+
+  async setBatteryCapacity(device: string, mah: number | null): Promise<void> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/battery", {
+      method: "POST", credentials: "omit", redirect: "error", cache: "no-store",
+      headers: { Authorization: "Bearer " + this.accessToken,
+                 "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ device, mah }),
+    });
+    if (reply.status === 400) throw new Error("Kapasite 50–50000 mAh arasında olmalı.");
+    if (!reply.ok) throw new Error("Pil kapasitesi kaydedilemedi.");
+  }
+
   /** 3a: which zones each tracker holds (written over USB and confirmed). */
   async trackerFences(): Promise<Record<string, FenceRecord>> {
     if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");

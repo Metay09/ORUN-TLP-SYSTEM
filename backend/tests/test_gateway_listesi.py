@@ -132,6 +132,26 @@ class GatewayListTests(unittest.TestCase):
                     {"device": GW_PC, "name": "a\u0007b"}, {"device": GW_PC}):
             self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/name", token, bad)[0], 400, bad)
 
+    def test_battery_capacity_lives_in_the_account(self):
+        """Y3: pil kapasitesi hesapta (tasmaya yazılmaz); None siler."""
+        self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/battery")[0], 401)
+        token = self.login()
+        ok = self.req(self.account, "POST", "/api/v1/devices/battery", token,
+                      {"device": "0e8ade7e71531aa3", "mah": 3200})
+        self.assertEqual(ok, (200, {"device": "0E8ADE7E71531AA3", "mah": 3200}))
+        self.req(self.account, "POST", "/api/v1/devices/battery", token,
+                 {"device": "52E16773141A8887", "mah": 6000})
+        self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/battery", token)[1]["battery"],
+                         {"0E8ADE7E71531AA3": 3200, "52E16773141A8887": 6000})
+        self.req(self.account, "POST", "/api/v1/devices/battery", token,
+                 {"device": "52E16773141A8887", "mah": None})
+        self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/battery", token)[1]["battery"],
+                         {"0E8ADE7E71531AA3": 3200})
+        for bad in ({"device": "xyz", "mah": 1000}, {"device": GW_PC, "mah": 10},
+                    {"device": GW_PC, "mah": 60000}, {"device": GW_PC, "mah": "1000"},
+                    {"device": GW_PC, "mah": True}, {"device": GW_PC, "mah": 12.5}):
+            self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/battery", token, bad)[0], 400, bad)
+
     def test_tracker_fences_live_in_the_account(self):
         """3a: tasmaya yazılan alanların özeti hesapta."""
         self.assertEqual(self.req(self.account, "GET", "/api/v1/devices/fences")[0], 401)

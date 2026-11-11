@@ -3,7 +3,7 @@
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { CaretRight } from "@phosphor-icons/react";
 import { batteryOutlook, smoothBattery } from "../../app/activity.ts";
-import { deviceSettings } from "../../app/ownerAccountPilotRuntime.ts";
+import { deviceSettings, pilotSetBatteryCapacity } from "../../app/ownerAccountPilotRuntime.ts";
 import {
   batteryCapacity, expectedLife, lifeWord, MAH_MAX, MAH_MIN, measuredLife, PUBLISHED, USABLE,
 } from "../../app/batteryLife.ts";
@@ -78,14 +78,14 @@ function CapacityDialog({ device, current, onClose }: { device: string; current:
   const [error, setError] = useState("");
   useBack(onClose);
   const save = (v: number | null) => {
-    try { batteryCapacity.set(device, v); onClose(); }
-    catch (e) { setError(e instanceof Error ? e.message : "Kaydedilemedi."); }
+    pilotSetBatteryCapacity(device, v).then(onClose,
+      (e) => setError(e instanceof Error ? e.message : "Kaydedilemedi."));
   };
   const n = Number(text.trim());
   return (
     <Dialog title="Pil kapasitesi" onClose={onClose}>
       <div className="stack" style={{ padding: "0 20px 16px" }}>
-        <p className="sm" style={{ margin: 0 }}>Tasmadaki pilin etiketindeki değer (mAh). Bu tasma için bu telefonda saklanır.</p>
+        <p className="sm" style={{ margin: 0 }}>Tasmadaki pilin etiketindeki değer (mAh). Hesapta saklanır; bütün telefonlarda aynı görünür. Tasmaya yazılmaz.</p>
         <input className="inp" inputMode="numeric" placeholder="Örn. 3200" value={text} aria-label="Pil kapasitesi (mAh)"
           onChange={(e) => setText(e.target.value.replace(/[^0-9]/g, ""))} />
         <div className="btns" style={{ padding: 0 }}>
