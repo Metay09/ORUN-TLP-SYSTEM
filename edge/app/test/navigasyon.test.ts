@@ -51,6 +51,6 @@ test("kullanıcı yönlendirmelerinde eski Cihazlar adı kalmaz", () => {
   ]) {
     assert.doesNotMatch(read(path), /Cihazlar\s*→/, path);
   }
-  assert.match(read("../src/features/zones/ZonesScreen.tsx"), /Bağlantı → İşlemler/);
-  assert.match(read("../src/features/devices/DeviceScreen.tsx"), /Bağlantı → Toplu ayar/);
+  assert.match(read("../src/features/zones/ZonesScreen.tsx"), /Bağlantı → Bekleyen işlemler/);
+  assert.match(read("../src/features/devices/DeviceScreen.tsx"), /Ayarlar → Tasma ayarları/);
 });

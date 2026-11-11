@@ -21,7 +21,7 @@ export interface NowItem {
   reasons: string[]; advice: string; since: number; ids: string[];
   kind: EventKind;   // the heaviest reason; decides the order and the advice
 }
-export interface DayLine { asset: string | null; name: string; severity: Severity; text: string; at: number; }
+export interface DayLine { asset: string | null; name: string; severity: Severity; text: string; at: number; family: Family; }
 export interface SystemLine { text: string; count: number; last: number; }
 export interface DayDigest { start: number; label: string; headline: string; lines: DayLine[]; system: SystemLine[]; }
 export interface Digest { now: NowItem[]; days: DayDigest[]; }
@@ -85,7 +85,7 @@ function nowItems(events: AppEvent[], herd: Map<string, Animal>, now: number): N
   return out.sort((x, y) => RANK[x.severity] - RANK[y.severity] || ORDER.indexOf(x.kind) - ORDER.indexOf(y.kind) || x.since - y.since);
 }
 
-type Family = "gap" | "still" | "out" | "battery" | "note";
+export type Family = "gap" | "still" | "out" | "battery" | "note";
 const familyOf = (k: EventKind): Family | null =>
   k === "silent" || k === "lost" ? "gap" : k === "still" ? "still" : k === "out" ? "out"
     : k === "battery-low" || k === "battery-critical" ? "battery" : k === "note" ? "note" : null;
@@ -123,7 +123,7 @@ export function digest(events: AppEvent[], herdList: Animal[], now: number, days
     const lines: DayLine[] = [...groups.values()].map(({ family, list }) => ({
       asset: list[0].asset, name: herd.get(list[0].asset!)?.name ?? list[0].title,
       severity: family === "note" ? "info" : list.reduce<Severity>((s, e) => worst(s, e.severity), "ok"),
-      text: mergeLine(family, list), at: Math.min(...list.map((e) => e.at)),
+      text: mergeLine(family, list), at: Math.min(...list.map((e) => e.at)), family,
     })).sort((x, y) => RANK[x.severity] - RANK[y.severity] || x.at - y.at);
     // System book lines: one per kind, with the newest wording.
     const byKind = new Map<EventKind, SystemLine>();

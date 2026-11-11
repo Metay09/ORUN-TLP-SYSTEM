@@ -1,8 +1,11 @@
-// Map type, 3D and layer switches, the period, and the legends.
+import type { ReactNode } from "react";
+import {
+  CellSignalHigh, Cow, Crosshair, Cube, Fire, Footprints, LineSegments, Mountains, Path, Polygon, Tag, WifiHigh,
+} from "@phosphor-icons/react";
 import { tr } from "../../app/i18n/tr.ts";
 import { useApp } from "../../app/store.ts";
 import { DEFAULT_SAT, type BaseMap, type Layers, type Range, type ZoneFill } from "../../app/stores.ts";
-import { Chips, Dialog, Section, ToggleRow } from "../../ds/components.tsx";
+import { Chips, Dialog, Section } from "../../ds/components.tsx";
 
 const BASES: BaseMap[] = ["satellite", "terrain", "street"];
 const RANGES: Range[] = ["today", "h24", "d3", "d7", "d30"];
@@ -15,6 +18,22 @@ const WAYBACK: [string, string][] = [
   ["4905", "2022-06-29"], ["42663", "2022-01-12"], ["48376", "2021-06-09"], ["18289", "2020-07-01"], ["6036", "2019-01-09"],
 ];
 
+type Tile = { key: keyof Layers; label: string; icon: ReactNode };
+const TILES: Tile[] = [
+  { key: "animals", label: tr.map.layer.animals, icon: <Cow size={24} /> },
+  { key: "zones", label: tr.map.layer.zones, icon: <Polygon size={24} /> },
+  { key: "trail", label: tr.map.layer.trail, icon: <Path size={24} /> },
+  { key: "herdTrails", label: "Sürü izleri", icon: <Footprints size={24} /> },
+  { key: "heat", label: tr.map.layer.heat, icon: <Fire size={24} /> },
+  { key: "coverage", label: tr.map.layer.coverage, icon: <CellSignalHigh size={24} /> },
+  { key: "stations", label: tr.map.layer.stations, icon: <WifiHigh size={24} /> },
+  { key: "links", label: "Bağlantı çizgisi", icon: <LineSegments size={24} /> },
+  { key: "me", label: tr.map.layer.me, icon: <Crosshair size={24} /> },
+];
+
+// Harita katmanları (sahip isteği 2026-11-11: düzenle). Üstte harita türü ve
+// görünüm (3B, rölyef), sonra haritada ne görüneceği karo düğmelerle; açık
+// katmanın ayarı ya da lejantı altında; dönem; uydu ayrıntıları kapalı.
 export function LayerPanel({ onClose }: { onClose: () => void }) {
   const m = useApp();
   const p = m.prefs, L = p.layers;
@@ -29,62 +48,70 @@ export function LayerPanel({ onClose }: { onClose: () => void }) {
           </button>
         ))}
       </div>
-      <ToggleRow title={tr.map.tilt} on={p.tilt} onChange={(v) => m.actions.setPrefs({ tilt: v })} />
-      {p.base === "satellite" && <ToggleRow title={tr.map.layer.labels} on={L.labels} onChange={(v) => set("labels", v)} />}
-      {p.base === "satellite" && (
-        <div className="stack" style={{ padding: "6px 16px 10px" }}>
-          <span className="sm strong">{tr.map.sat.title}</span>
-          <Chips value={p.sat.kind} onChange={(kind) => m.actions.setPrefs({ sat: { ...p.sat, kind } })}
-            options={[{ value: "esri", label: tr.map.sat.esri }, { value: "wayback", label: tr.map.sat.wayback }]} />
-          {p.sat.kind === "wayback" && (
-            <label className="row" style={{ justifyContent: "space-between" }}>
-              <span className="sm">{tr.map.sat.release}</span>
-              <select className="inp" style={{ width: "auto" }} value={p.sat.release} onChange={(e) => m.actions.setPrefs({ sat: { ...p.sat, release: e.target.value } })}>
-                {WAYBACK.map(([id, d]) => <option key={id} value={id}>{d}</option>)}
-              </select>
-            </label>
-          )}
-          <label className="stack" style={{ gap: 2 }}>
-            <span className="row" style={{ justifyContent: "space-between" }}><span className="sm">{tr.map.sat.maxZoom}</span><b>{p.sat.maxZoom}</b></span>
-            <input type="range" min={14} max={19} step={1} value={p.sat.maxZoom} style={{ accentColor: "var(--brand)" }}
-              onChange={(e) => m.actions.setPrefs({ sat: { ...p.sat, maxZoom: Number(e.target.value) } })} />
-            <span className="fine">{tr.map.sat.maxZoomHelp(p.sat.maxZoom)}</span>
-            {p.sat.maxZoom !== DEFAULT_SAT.maxZoom && <button className="btn quiet small" style={{ alignSelf: "flex-start" }}
-              onClick={() => m.actions.setPrefs({ sat: { ...p.sat, maxZoom: DEFAULT_SAT.maxZoom } })}>{DEFAULT_SAT.maxZoom}'ye dön</button>}
-          </label>
-        </div>
-      )}
-      {p.base !== "street" && <ToggleRow title={tr.map.layer.relief} on={L.relief} onChange={(v) => set("relief", v)} />}
+      <div className="lay-view">
+        <button className="chip" aria-pressed={p.tilt} onClick={() => m.actions.setPrefs({ tilt: !p.tilt })}><Cube size={18} />3B</button>
+        {p.base !== "street" && <button className="chip" aria-pressed={L.relief} onClick={() => set("relief", !L.relief)}><Mountains size={18} />Rölyef</button>}
+        {p.base === "satellite" && <button className="chip" aria-pressed={L.labels} onClick={() => set("labels", !L.labels)}><Tag size={18} />Yer adları</button>}
+      </div>
 
-      <Section title={tr.map.layer.title} />
-      <ToggleRow title={tr.map.layer.animals} on={L.animals} onChange={(v) => set("animals", v)} />
-      <ToggleRow title={tr.map.layer.zones} sub={tr.map.layerHelp.zones} on={L.zones} onChange={(v) => set("zones", v)} />
+      <Section title="Haritada göster"
+        info={`İz: ${tr.map.layerHelp.trail}. Sürü izleri: bütün hayvanların izi, yalnız incelemek için. Yoğunluk: ${tr.map.layerHelp.heat}. Kapsama: ${tr.map.layerHelp.coverage}. Bağlantı çizgisi: ${tr.map.layerHelp.links}.`} />
+      <div className="lay-grid">
+        {TILES.map((t) => (
+          <button key={t.key} className="lay-tile" aria-pressed={L[t.key]} onClick={() => set(t.key, !L[t.key])}>
+            {t.icon}<span>{t.label}</span>
+          </button>
+        ))}
+      </div>
       {L.zones && (
-        <div className="stack" style={{ padding: "0 16px 8px" }}>
+        <div className="lay-opt">
           <span className="sm">{tr.map.zoneFill.title}</span>
           <Chips value={p.zoneFill} onChange={(zoneFill) => m.actions.setPrefs({ zoneFill })} options={FILLS.map((f) => ({ value: f, label: tr.map.zoneFill[f] }))} />
         </div>
       )}
-      <ToggleRow title={tr.map.layer.trail} sub={tr.map.layerHelp.trail} on={L.trail} onChange={(v) => set("trail", v)} />
-      <ToggleRow title={tr.map.layer.herdTrails} sub="Tüm hayvanların izleri birbiriyle karışabilir. Normal haritada kapalı tut; yalnız incelemek için aç." on={L.herdTrails} onChange={(v) => set("herdTrails", v)} />
-      <ToggleRow title={tr.map.layer.heat} sub={tr.map.layerHelp.heat} on={L.heat} onChange={(v) => set("heat", v)} />
-      {L.heat && <><div className="heat-ramp" /><div className="legend" style={{ justifyContent: "space-between", paddingTop: 4 }}><span>Az</span><span>Çok</span></div></>}
-      <ToggleRow title={tr.map.layer.coverage} sub={tr.map.layerHelp.coverage} on={L.coverage} onChange={(v) => set("coverage", v)} />
+      {L.heat && <div className="lay-opt"><span className="sm">{tr.map.layer.heat}</span><div className="heat-ramp" style={{ margin: 0 }} /><div className="legend" style={{ justifyContent: "space-between", padding: 0 }}><span>Az</span><span>Çok</span></div></div>}
       {L.coverage && (
-        <div className="legend">
-          <span><i style={{ background: "#2E9E5B" }} />{tr.map.coverageLegend.strong}</span>
-          <span><i style={{ background: "#E2A21C" }} />{tr.map.coverageLegend.medium}</span>
-          <span><i style={{ background: "#D9472F" }} />{tr.map.coverageLegend.weak}</span>
-          <span><i style={{ background: "#6B7280" }} />{tr.map.coverageLegend.none}</span>
+        <div className="lay-opt">
+          <span className="sm">{tr.map.layer.coverage}</span>
+          <div className="legend" style={{ padding: 0 }}>
+            <span><i style={{ background: "#2E9E5B" }} />{tr.map.coverageLegend.strong}</span>
+            <span><i style={{ background: "#E2A21C" }} />{tr.map.coverageLegend.medium}</span>
+            <span><i style={{ background: "#D9472F" }} />{tr.map.coverageLegend.weak}</span>
+            <span><i style={{ background: "#6B7280" }} />{tr.map.coverageLegend.none}</span>
+          </div>
         </div>
       )}
-      <ToggleRow title={tr.map.layer.stations} on={L.stations} onChange={(v) => set("stations", v)} />
-      <ToggleRow title={tr.map.layer.links} sub={tr.map.layerHelp.links} on={L.links} onChange={(v) => set("links", v)} />
-      <ToggleRow title={tr.map.layer.me} on={L.me} onChange={(v) => set("me", v)} />
 
-      <Section title={tr.map.range.title} />
+      <Section title={tr.map.range.title} info="İz, yoğunluk ve sürü izleri bu dönemin kayıtlarından çizilir." />
       <Chips value={p.range} onChange={(r) => m.actions.setPrefs({ range: r })} options={RANGES.map((r) => ({ value: r, label: tr.map.range[r] }))} />
-      <p className="fine" style={{ padding: "8px 20px 0" }}>{tr.map.tilesNote}</p>
+
+      {p.base === "satellite" && (
+        <details className="tech">
+          <summary>Uydu görüntüsü ayarları</summary>
+          <div className="stack" style={{ padding: "0 16px 10px" }}>
+            <span className="sm strong">{tr.map.sat.title}</span>
+            <Chips value={p.sat.kind} onChange={(kind) => m.actions.setPrefs({ sat: { ...p.sat, kind } })}
+              options={[{ value: "esri", label: tr.map.sat.esri }, { value: "wayback", label: tr.map.sat.wayback }]} />
+            {p.sat.kind === "wayback" && (
+              <label className="row" style={{ justifyContent: "space-between" }}>
+                <span className="sm">{tr.map.sat.release}</span>
+                <select className="inp" style={{ width: "auto" }} value={p.sat.release} onChange={(e) => m.actions.setPrefs({ sat: { ...p.sat, release: e.target.value } })}>
+                  {WAYBACK.map(([id, d]) => <option key={id} value={id}>{d}</option>)}
+                </select>
+              </label>
+            )}
+            <label className="stack" style={{ gap: 2 }}>
+              <span className="row" style={{ justifyContent: "space-between" }}><span className="sm">{tr.map.sat.maxZoom}</span><b>{p.sat.maxZoom}</b></span>
+              <input type="range" min={14} max={19} step={1} value={p.sat.maxZoom} style={{ accentColor: "var(--brand)" }}
+                onChange={(e) => m.actions.setPrefs({ sat: { ...p.sat, maxZoom: Number(e.target.value) } })} />
+              <span className="fine">{tr.map.sat.maxZoomHelp(p.sat.maxZoom)}</span>
+              {p.sat.maxZoom !== DEFAULT_SAT.maxZoom && <button className="btn quiet small" style={{ alignSelf: "flex-start" }}
+                onClick={() => m.actions.setPrefs({ sat: { ...p.sat, maxZoom: DEFAULT_SAT.maxZoom } })}>{DEFAULT_SAT.maxZoom}'ye dön</button>}
+            </label>
+          </div>
+        </details>
+      )}
+      <p className="fine" style={{ padding: "4px 20px 0" }}>{tr.map.tilesNote}</p>
     </Dialog>
   );
 }

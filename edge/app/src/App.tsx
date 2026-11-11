@@ -136,7 +136,7 @@ export function App() {
               {r.to === "animal" && <AnimalScreen id={r.id} />}
               {r.to === "find" && <FindScreen id={r.id} />}
               {r.to === "zone" && <ZoneScreen id={r.id} />}
-              {r.to === "device" && <DeviceScreen id={r.id} />}
+              {r.to === "device" && <DeviceScreen id={r.id} ble={r.ble} />}
               {r.to === "zones" && <ZonesScreen />}
             </div>
           ))}

@@ -3,7 +3,7 @@ import { hex64 } from "../core/bytes.ts";
 import type { Db } from "../core/db.ts";
 import { EdgeCore, type Counts } from "../core/edge.ts";
 import { KeyRing } from "../core/keys.ts";
-import type { Point, PointsResult } from "../core/points.ts";
+import type { Point, PointsResult, RecordId } from "../core/points.ts";
 import { BleLink, UsbLink, type LinkState } from "../platform/transports.ts";
 import { fetchReadKeys, Uploader, type UploadCounts } from "../core/sync.ts";
 import { fetchGet, fetchPost } from "../platform/http.ts";
@@ -189,8 +189,9 @@ export class Controller {
     // did NOT pass through the phone's Gateway ACK or upload queue.
     // On a corrupt mirror or expired session, keep local observations usable.
     let remote: Point[] = [];
+    const remoteUnlocated: RecordId[] = [];
     try {
-      remote = await pilotAccountObservationPoints();
+      remote = await pilotAccountObservationPoints(remoteUnlocated);
     } catch {
       return local;
     }
@@ -199,7 +200,7 @@ export class Controller {
     const own = new Set(local.points.map(key));
     const extra = remote.filter(p => !own.has(key(p)));
     return { ...local, points: [...local.points, ...extra],
-      count: local.count + extra.length };
+      count: local.count + extra.length, unlocated: [...(local.unlocated ?? []), ...remoteUnlocated] };
   }
 
   /** Adds (or, for bursts, updates) one plain-language Defter line. */

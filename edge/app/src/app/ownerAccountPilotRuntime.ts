@@ -15,7 +15,7 @@ import { DeviceOpsBook, type FencePayload, type OpVia } from "./deviceOps.ts";
 import { WriteKeyBook } from "./writeKeys.ts";
 import { forgetAccount, loadAccount, storeAccount } from "../platform/orunAccountSession.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
-import type { Point } from "../core/points.ts";
+import type { Point, RecordId } from "../core/points.ts";
 import {
   AccountSharedMirror, type SharedMirrorSnapshot, type MirrorPullResult,
 } from "./accountSharedMirror.ts";
@@ -201,9 +201,9 @@ export function attachPilotAccountObservationMirror(
 }
 
 /** Only active account's verified remote records; logout reveals none. */
-export async function pilotAccountObservationPoints(): Promise<Point[]> {
+export async function pilotAccountObservationPoints(unlocated?: RecordId[]): Promise<Point[]> {
   if (!client || !pilotAccountStatus() || !observationMirror) return [];
-  return observationMirror.points(client);
+  return observationMirror.points(client, unlocated);
 }
 
 export interface ObservationSyncResult {

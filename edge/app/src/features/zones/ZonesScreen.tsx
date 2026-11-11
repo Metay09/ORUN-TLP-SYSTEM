@@ -117,7 +117,7 @@ export function ZonesScreen() {
                   : "Alanlar için henüz tasma seçilmedi"}
               </span>
               {changed.length > 0 && <span className="fine">{changed.map((p) => p.name).join(", ")}</span>}
-              {queued > 0 && <span className="fine">{changed.length ? `${queued} tasmada alan işlemi sırada · ` : ""}Tasmaya bağlanınca (şimdilik USB) işlenir; ilerleme Bağlantı → İşlemler'de.</span>}
+              {queued > 0 && <span className="fine">{changed.length ? `${queued} tasmada alan işlemi sırada · ` : ""}Tasmaya bağlanınca (USB ya da Bluetooth) işlenir; ilerleme Bağlantı → Bekleyen işlemler'de.</span>}
               {!plans.some((p) => p.state !== "none") && <span className="fine">Alana dokun → "Hangi tasmalar"dan Hepsi'ni ya da hayvanları seç.</span>}
               <button className="btn primary wide" disabled={!changed.length} onClick={() => setSending(true)}>Tasmalara uygula</button>
             </div>
