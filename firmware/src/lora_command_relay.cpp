@@ -1,4 +1,4 @@
-// 6b: the Gateway's LoRa command mailbox (lora_command_relay.h).
+// 6b/6d: the Gateway's LoRa command mailbox (lora_command_relay.h).
 #include "lora_command_relay.h"
 
 #include <string.h>
@@ -21,29 +21,35 @@ uint32_t be32(const uint8_t* p) {
 LoraCommandRelay::Queued LoraCommandRelay::queue(const uint8_t* frame, size_t size) {
   using namespace lora_command;
   // Shape only: the Gateway cannot (and must not) judge the signature.
-  if (!isCommandFrame(frame, size) || size < kMinCommandSize || size > kMaxCommandSize ||
-      size != kHeaderSize + size_t(frame[32]) * kEntrySize + kTagSize)
-    return Queued::kMalformed;
+  if (!wellFormed(frame, size)) return Queued::kMalformed;
   const uint64_t target = be64(frame + 4);
+  const uint32_t cid = be32(frame + 16);
+  const bool areas = frame[3] == kResourceAreas;
+  const uint8_t part = areas ? frame[32] : 0U;
+  const uint8_t parts = areas ? frame[33] : 1U;
+  Slot* slot = nullptr;
   Slot* free_slot = nullptr;
   for (Slot& s : slots_) {
-    if (s.used && s.frame.target == target) {
-      memcpy(s.frame.bytes, frame, size);
-      s.frame.size = static_cast<uint8_t>(size);
-      s.frame.command_id = be32(frame + 16);
-      s.frame.attempt = 0;
-      return Queued::kReplaced;
-    }
+    if (s.used && s.target == target) slot = &s;
     if (!s.used && free_slot == nullptr) free_slot = &s;
   }
-  if (free_slot == nullptr) return Queued::kFull;
-  free_slot->used = true;
-  memcpy(free_slot->frame.bytes, frame, size);
-  free_slot->frame.size = static_cast<uint8_t>(size);
-  free_slot->frame.target = target;
-  free_slot->frame.command_id = be32(frame + 16);
-  free_slot->frame.attempt = 0;
-  return Queued::kAdded;
+  Queued result = Queued::kAdded;
+  if (slot != nullptr && slot->command_id == cid && slot->parts == parts) {
+    result = Queued::kReplaced;  // another part (or a copy) of the same command
+  } else {
+    if (slot != nullptr) result = Queued::kReplaced;
+    else if (free_slot == nullptr) return Queued::kFull;
+    else slot = free_slot;
+    *slot = Slot();
+    slot->used = true;
+    slot->target = target;
+    slot->command_id = cid;
+    slot->parts = parts;
+  }
+  memcpy(slot->frames[part], frame, size);
+  slot->sizes[part] = static_cast<uint8_t>(size);
+  slot->have = static_cast<uint8_t>(slot->have | (1U << part));
+  return result;
 }
 
 void LoraCommandRelay::heard(uint64_t device, uint32_t now) {
@@ -51,6 +57,7 @@ void LoraCommandRelay::heard(uint64_t device, uint32_t now) {
   heard_at_ = now;
   heard_open_ = true;
   ack_sent_ = false;
+  sent_now_ = 0;
 }
 
 void LoraCommandRelay::ackSent(uint32_t now) {
@@ -60,19 +67,37 @@ void LoraCommandRelay::ackSent(uint32_t now) {
 
 bool LoraCommandRelay::due(uint32_t now, Frame& out) {
   if (!heard_open_) return false;
-  if (monotonic::elapsed(now, heard_at_, kLatestAfterHeardMs)) {
-    heard_open_ = false;  // its window is over: wait for its next report
+  if (sent_now_ == 0) {
+    if (monotonic::elapsed(now, heard_at_, kLatestAfterHeardMs)) {
+      heard_open_ = false;  // its window is over: wait for its next report
+      return false;
+    }
+    if (!ack_sent_ && !monotonic::elapsed(now, heard_at_, kAckGraceMs)) return false;
+  } else if (monotonic::elapsed(now, last_part_at_, kLatestNextPartMs)) {
+    heard_open_ = false;
     return false;
   }
-  if (!ack_sent_ && !monotonic::elapsed(now, heard_at_, kAckGraceMs)) return false;
   for (Slot& s : slots_) {
-    if (!s.used || s.frame.target != heard_ || s.frame.attempt >= kMaxAttempts) continue;
-    heard_open_ = false;  // one try per report
-    ++s.frame.attempt;
-    out = s.frame;
-    return true;
+    if (!s.used || s.target != heard_) continue;
+    if (sent_now_ == 0 && s.attempt >= kMaxAttempts) break;
+    // The next held part not yet sent in this window.
+    for (uint8_t p = 0; p < s.parts; ++p) {
+      if ((sent_now_ & (1U << p)) != 0U || (s.have & (1U << p)) == 0U) continue;
+      if (sent_now_ == 0) ++s.attempt;  // one try per report
+      sent_now_ = static_cast<uint8_t>(sent_now_ | (1U << p));
+      last_part_at_ = now;
+      memcpy(out.bytes, s.frames[p], s.sizes[p]);
+      out.size = s.sizes[p];
+      out.target = s.target;
+      out.command_id = s.command_id;
+      out.attempt = s.attempt;
+      out.part = p;
+      out.parts = s.parts;
+      return true;
+    }
+    break;
   }
-  heard_open_ = false;
+  heard_open_ = false;  // nothing (more) for it in this window
   return false;
 }
 
@@ -84,7 +109,7 @@ bool LoraCommandRelay::answered(const uint8_t* result, size_t size) {
   const uint64_t device = be64(result + 4);
   const uint32_t id = be32(result + 16);
   for (Slot& s : slots_) {
-    if (s.used && s.frame.target == device && s.frame.command_id == id) {
+    if (s.used && s.target == device && s.command_id == id) {
       s.used = false;
       return true;
     }
@@ -95,23 +120,16 @@ bool LoraCommandRelay::answered(const uint8_t* result, size_t size) {
 bool LoraCommandRelay::takeDropped(uint64_t& target, uint32_t& command_id) {
   // A command whose last try went out and whose Tracker has been heard again
   // since (so the answer had its window) without a RESULT is given up.
-  if (!dropped_) {
-    for (Slot& s : slots_) {
-      if (s.used && s.frame.attempt >= kMaxAttempts && heard_open_ &&
-          heard_ == s.frame.target) {
-        s.used = false;
-        dropped_ = true;
-        dropped_target_ = s.frame.target;
-        dropped_id_ = s.frame.command_id;
-        break;
-      }
+  if (!heard_open_ || sent_now_ != 0) return false;
+  for (Slot& s : slots_) {
+    if (s.used && s.attempt >= kMaxAttempts && s.target == heard_) {
+      s.used = false;
+      target = s.target;
+      command_id = s.command_id;
+      return true;
     }
   }
-  if (!dropped_) return false;
-  dropped_ = false;
-  target = dropped_target_;
-  command_id = dropped_id_;
-  return true;
+  return false;
 }
 
 size_t LoraCommandRelay::count() const {

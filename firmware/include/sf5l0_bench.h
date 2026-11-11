@@ -422,6 +422,11 @@ void pollBle(bool connected, uint16_t connection_handle, bool disconnect_event,
 void startErase(bool include_held);
 // "BENCH GW DUMP": print every held record as an EDGE HELD line.
 void dump();
+// 6: LoRa command lines over the Bluetooth Edge link. A phone bridge sends
+// the same "APP LORA ..." lines as USB (handled by `handler`); every "LORA ..."
+// line the Gateway prints is also sent to a connected phone bridge.
+void setLoraLineHandler(bool (*handler)(const char* line, size_t length));
+void edgeLoraLine(const char* line);
 }  // namespace sf5l0_gateway
 
 }  // namespace orun_tlp

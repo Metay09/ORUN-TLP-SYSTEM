@@ -30,7 +30,7 @@ export function useDeviceSettings() {
 
 export function rowSub(r: SettingRow): string {
   if (r.state === "waiting")
-    return `Sırada · tasmaya bağlanınca işlenir${r.onDevice !== null ? ` · tasmada ${r.def.word(r.onDevice)}` : ""}`;
+    return `Sırada · LoRa'dan ya da bağlanınca işlenir${r.onDevice !== null ? ` · tasmada ${r.def.word(r.onDevice)}` : ""}`;
   if (r.state === "device") return "Cihazda";
   if (r.state === "observed") return "Cihazın kayıtlarına göre";
   return "Cihazdan henüz okunmadı";
@@ -177,7 +177,7 @@ export function DeviceScreen({ id, ble }: { id: string; ble?: string }) {
               onClick={() => setEditing(r)} />
           ))}
           <Cell title="Alanlar" wrapSub
-            sub={fence ? (queuedFence.has(up) ? "Sırada · tasmaya bağlanınca işlenir" : stateLine(fence)) : "Bu tasmaya gidecek alan yok"}
+            sub={fence ? (queuedFence.has(up) ? "Sırada · LoRa'dan ya da bağlanınca işlenir" : stateLine(fence)) : "Bu tasmaya gidecek alan yok"}
             subTone={fence && (fence.state === "stale" || fence.state === "never" || fence.state === "clear") ? "aging" : undefined}
             trail={<CaretRight size={16} color="var(--mute)" />}
             onClick={() => (fence && (fence.state === "stale" || fence.state === "never" || fence.state === "clear") && !queuedFence.has(up) ? setSending(true) : nav.push({ to: "zones" }))} />

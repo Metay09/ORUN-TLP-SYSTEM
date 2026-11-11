@@ -45,10 +45,10 @@ class LoraBridgeTest(unittest.TestCase):
         self.token.chmod(0o600)
 
     def test_hands_once_and_reports_what_the_gateway_said(self):
-        opener = FakeOpener([{"device": DEV, "command_id": 7, "hex": HEX}])
+        opener = FakeOpener([{"device": DEV, "resource": 1, "command_id": 7, "frames": [HEX]}])
         lora, ser = pe.LoraBridge("http://x", self.token, opener), FakeSerial()
         lora.poll(ser, 100.0)
-        self.assertEqual(ser.written, [f"APP LORA QUEUE {HEX}\n"])
+        self.assertEqual(ser.written, [f"APP LORA QUEUE {HEX}\n"])  # 108 hex: one line
         lora.poll(ser, 130.0)               # same command: not handed again
         self.assertEqual(len(ser.written), 1)
         lora.observe("LORA QUEUED result=ADDED waiting=1")
@@ -68,10 +68,28 @@ class LoraBridgeTest(unittest.TestCase):
         self.assertEqual(len(ser.written), 3)
 
     def test_ignores_bad_commands(self):
-        opener = FakeOpener([{"device": DEV, "command_id": 1, "hex": "XYZ"}, {"device": DEV}])
+        opener = FakeOpener([{"device": DEV, "command_id": 1, "frames": ["XYZ"]}, {"device": DEV}])
         lora, ser = pe.LoraBridge("http://x", self.token, opener), FakeSerial()
         lora.poll(ser, 100.0)
         self.assertEqual(ser.written, [])
+
+
+    def test_long_frames_go_in_pieces(self):
+        frames = ["AB" * 255, "CD" * 255, "EF" * 85]
+        opener = FakeOpener([{"device": DEV, "resource": 2, "command_id": 9, "frames": frames}])
+        lora, ser = pe.LoraBridge("http://x", self.token, opener), FakeSerial()
+        lora.poll(ser, 100.0)
+        self.assertTrue(all(len(line) <= 160 for line in ser.written))
+        joined, queued = "", []
+        for line in ser.written:
+            text = line.rstrip("\n")
+            if text.startswith("APP LORA + "):
+                joined += text[11:]
+            else:
+                queued.append(joined + text[len("APP LORA QUEUE "):])
+                joined = ""
+        self.assertEqual(queued, frames)
+        self.assertEqual(len(lora.awaiting), 3)
 
 
 if __name__ == "__main__":

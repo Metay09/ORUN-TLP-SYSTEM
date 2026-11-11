@@ -260,7 +260,7 @@ export const tr = {
     capacity: "Tasma kapasitesi",
     capacityLine: (a: number, maxA: number, v: number, maxV: number) => `${a}/${maxA} alan · ${v}/${maxV} köşe`,
     setOk: "Açık alanlar tasmanın kurallarına uygun",
-    stored: "Alanı kaydetmek tasmadaki alanı değiştirmez. Her alanın \"Hangi tasmalar\" ayarı kime gideceğini belirler; \"Tasmalara uygula\" bir işlem açar, tasmaya bağlanınca işlenir.",
+    stored: "Alanı kaydetmek tasmadaki alanı değiştirmez. Her alanın \"Hangi tasmalar\" ayarı kime gideceğini belirler; \"Tasmalara uygula\" bir işlem açar; LoRa'dan tasmanın bir sonraki raporunda ya da tasmaya bağlanınca işlenir.",
     line: (ha: string, n: number, inside: number | null) => `${ha} ha · ${n} köşe${inside !== null ? ` · ${inside} hayvan içinde` : ""}`,
     off: "kapalı",
     invalid: "tasma kabul etmez",

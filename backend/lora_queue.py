@@ -1,8 +1,8 @@
 """6c: LoRa'dan ayar komutları, sunucu tarafı (sahip kararı 2026-11-11).
 
-Uygulamada bir ayar işlemi (device_ops, kind=settings) oluşunca sunucu o
-tasma için imzalı bir LoRa komutu hazırlar (lora_command.build_command,
-tasmanın yazma anahtarıyla) ve kuyruğa koyar. Köprüler (PC Edge, telefon)
+Uygulamada bir ayar ya da alan işlemi (device_ops, kind=settings|fence)
+oluşunca sunucu o tasma için imzalı bir LoRa komutu hazırlar (tasmanın yazma
+anahtarıyla; alan listesi 1-3 çerçeve) ve kuyruğa koyar. Köprüler (PC Edge, telefon)
 kuyruğu alıp gateway'lerine verir; hangi gateway tasmayı duyarsa o gönderir
 (birden çok gateway aynı komutu taşıyabilir, aynı komut ikinci kez aynı
 cevabı alır). Köprü gateway'in söylediklerini geri bildirir:
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from contextlib import closing
 import json
+import math
 from pathlib import Path
 import re
 import secrets
@@ -32,14 +33,16 @@ from typing import Callable, Optional
 from backend import lora_command as lc
 from backend import orun_credentials as oc
 
+# One waiting command per tracker and resource (1 settings, 2 areas).
 SCHEMA_QUEUE = ("CREATE TABLE IF NOT EXISTS lora_queue ("
-                " device TEXT PRIMARY KEY, op TEXT NOT NULL, entries TEXT NOT NULL,"
-                " command_id INTEGER NOT NULL, frame TEXT NOT NULL, probe INTEGER NOT NULL,"
-                " state TEXT NOT NULL, sent INTEGER NOT NULL DEFAULT 0,"
-                " created_utc INTEGER NOT NULL, updated_utc INTEGER NOT NULL, note TEXT)")
+                " device TEXT NOT NULL, resource INTEGER NOT NULL, op TEXT NOT NULL,"
+                " content TEXT NOT NULL, command_id INTEGER NOT NULL, frames TEXT NOT NULL,"
+                " probe INTEGER NOT NULL, state TEXT NOT NULL, sent INTEGER NOT NULL DEFAULT 0,"
+                " created_utc INTEGER NOT NULL, updated_utc INTEGER NOT NULL, note TEXT,"
+                " PRIMARY KEY (device, resource))")
 SCHEMA_TOKEN = ("CREATE TABLE IF NOT EXISTS lora_token ("
-                " device TEXT PRIMARY KEY, incarnation TEXT NOT NULL, revision INTEGER NOT NULL,"
-                " updated_utc INTEGER NOT NULL)")
+                " device TEXT NOT NULL, resource INTEGER NOT NULL, incarnation TEXT NOT NULL,"
+                " revision INTEGER NOT NULL, updated_utc INTEGER NOT NULL, PRIMARY KEY (device, resource))")
 ID16 = re.compile(r"[0-9A-F]{16}")
 HEX = re.compile(r"[0-9A-F]+")
 KINDS = ("queued", "sent", "dropped", "result")
@@ -68,6 +71,28 @@ def entries_for(values: dict, reported: Optional[dict]) -> list[tuple[int, int]]
     return out
 
 
+def _e7(x: float) -> int:
+    # The app's Math.round (half up), so both sides send the same vertices.
+    return math.floor(x * 1e7 + 0.5)
+
+
+def polys_for(payload: dict) -> list[list[tuple[int, int]]]:
+    """Alan işleminin halkaları (lon, lat) -> tasmanın köşeleri (lat_e7, lon_e7)."""
+    zones = payload.get("zones") if isinstance(payload, dict) else None
+    if not isinstance(zones, list):
+        raise ValueError("zones")
+    polys = []
+    for z in zones:
+        ring = z.get("ring") if isinstance(z, dict) else None
+        if not isinstance(ring, list):
+            raise ValueError("ring")
+        v = [(_e7(float(p[1])), _e7(float(p[0]))) for p in ring]
+        if len(v) > 1 and v[0] == v[-1]:
+            v.pop()  # closing duplicate, as the app drops it
+        polys.append(v)
+    return polys
+
+
 def values_from(r: lc.Result) -> dict:
     services = r.requested_services if r.service_mode == MODE_EXPLICIT else SERVICE_TRACKING
     return {"interval_s": r.interval_s, "ble_window_s": r.ble_window_s,
@@ -76,9 +101,9 @@ def values_from(r: lc.Result) -> dict:
 
 class LoraQueue:
     def __init__(self, db_path: str | Path, registry: Callable[[], Optional[oc.CredentialRegistry]],
-                 ops, settings, clock: Callable[[], float] = time.time):
+                 ops, settings, fences=None, clock: Callable[[], float] = time.time):
         self.db_path = str(db_path)
-        self.registry, self.ops, self.settings, self.clock = registry, ops, settings, clock
+        self.registry, self.ops, self.settings, self.fences, self.clock = registry, ops, settings, fences, clock
         with closing(sqlite3.connect(self.db_path, timeout=2.0)) as db, db:
             db.execute(SCHEMA_QUEUE)
             db.execute(SCHEMA_TOKEN)
@@ -93,24 +118,53 @@ class LoraQueue:
         except oc.RegistryError:
             return None
 
-    def _token(self, db, device: str) -> Optional[tuple[int, int]]:
-        row = db.execute("SELECT incarnation, revision FROM lora_token WHERE device=?", (device,)).fetchone()
+    def _token(self, db, device: str, resource: int) -> Optional[tuple[int, int]]:
+        row = db.execute("SELECT incarnation, revision FROM lora_token WHERE device=? AND resource=?",
+                         (device, resource)).fetchone()
         return (int(row[0], 16), row[1]) if row else None
 
-    def _sign(self, db, device: str, entries: list[tuple[int, int]]):
-        """(command_id, frame hex, probe) against the known state, or a probe."""
+    def _sign(self, db, device: str, resource: int, content):
+        """(command_id, [frame hex], probe) against the known state, or a probe."""
         cred = self._cred(device)
         if cred is None:
             return None
-        token = self._token(db, device)
+        token = self._token(db, device, resource)
         cid = secrets.randbits(32)
         inc, rev = token if token else (0, 0)
-        frame = lc.build_command(oc.ble_write_key(cred), cred.device_id, cred.key_epoch, cid, inc, rev, entries)
-        return cid, frame.hex().upper(), token is None
+        key = oc.ble_write_key(cred)
+        if resource == lc.RESOURCE_SETTINGS:
+            frames = [lc.build_command(key, cred.device_id, cred.key_epoch, cid, inc, rev,
+                                       [tuple(e) for e in content])]
+        else:
+            frames = lc.build_area_command(key, cred.device_id, cred.key_epoch, cid, inc, rev,
+                                           [[tuple(v) for v in p] for p in content])
+        return cid, [f.hex().upper() for f in frames], token is None
+
+    def _put(self, op: str, device: str, resource: int, content) -> bool:
+        now = int(self.clock())
+        with closing(sqlite3.connect(self.db_path, timeout=2.0)) as db, db:
+            signed = self._sign(db, device, resource, content)
+            if signed is None:
+                return False  # no key for it (not a tracker of this farm)
+            cid, frames, probe = signed
+            db.execute("INSERT INTO lora_queue VALUES (?,?,?,?,?,?,?,?,0,?,?,NULL) "
+                       "ON CONFLICT(device, resource) DO UPDATE SET op=excluded.op, content=excluded.content, "
+                       "command_id=excluded.command_id, frames=excluded.frames, probe=excluded.probe, "
+                       "state='queued', sent=0, updated_utc=excluded.updated_utc, note=NULL",
+                       (device, resource, op, json.dumps(content), cid, json.dumps(frames), int(probe),
+                        "queued", now, now))
+        return True
 
     # -- from the app's operations ------------------------------------------
-    def enqueue(self, op: str, device: str, payload: dict) -> bool:
-        """A settings operation for a tracker: sign and queue (replaces an older one)."""
+    def enqueue(self, op: str, device: str, payload: dict, kind: str = "settings") -> bool:
+        """A settings or area operation for a tracker: sign and queue (replaces an older one)."""
+        if kind == "fence":
+            try:
+                polys = polys_for(payload)
+                lc.area_set(polys)
+            except (ValueError, TypeError, IndexError):
+                return False
+            return self._put(op, device, lc.RESOURCE_AREAS, polys)
         values = payload.get("set") if isinstance(payload, dict) else None
         if not isinstance(values, dict):
             return False
@@ -118,18 +172,7 @@ class LoraQueue:
         entries = entries_for(values, reported)
         if not entries:
             return False
-        now = int(self.clock())
-        with closing(sqlite3.connect(self.db_path, timeout=2.0)) as db, db:
-            signed = self._sign(db, device, entries)
-            if signed is None:
-                return False  # no key for it (not a tracker of this farm)
-            cid, frame, probe = signed
-            db.execute("INSERT INTO lora_queue VALUES (?,?,?,?,?,?,?,0,?,?,NULL) ON CONFLICT(device) DO UPDATE SET "
-                       "op=excluded.op, entries=excluded.entries, command_id=excluded.command_id, "
-                       "frame=excluded.frame, probe=excluded.probe, state='queued', sent=0, "
-                       "updated_utc=excluded.updated_utc, note=NULL",
-                       (device, op, json.dumps(entries), cid, frame, int(probe), "queued", now, now))
-        return True
+        return self._put(op, device, lc.RESOURCE_SETTINGS, entries)
 
     def cancel(self, op: str, device: str) -> None:
         """The operation was settled another way (USB/Bluetooth) or replaced."""
@@ -139,10 +182,10 @@ class LoraQueue:
     # -- for the bridges -----------------------------------------------------
     def commands(self) -> list[dict]:
         with closing(sqlite3.connect(self.db_path, timeout=2.0)) as db:
-            rows = db.execute("SELECT device, command_id, frame, op, state, probe FROM lora_queue "
+            rows = db.execute("SELECT device, resource, command_id, frames, op, state, probe FROM lora_queue "
                               "ORDER BY created_utc LIMIT 64").fetchall()
-        return [{"device": r[0], "command_id": r[1], "hex": r[2], "op": r[3], "state": r[4],
-                 "probe": bool(r[5])} for r in rows]
+        return [{"device": r[0], "resource": r[1], "command_id": r[2], "frames": json.loads(r[3]),
+                 "op": r[4], "state": r[5], "probe": bool(r[6])} for r in rows]
 
     def events(self, body: object) -> dict:
         if not isinstance(body, dict) or not isinstance(body.get("events"), list) \
@@ -164,18 +207,20 @@ class LoraQueue:
         device = device.upper()
         now = int(self.clock())
         with closing(sqlite3.connect(self.db_path, timeout=2.0)) as db, db:
-            row = db.execute("SELECT op, command_id, probe, state FROM lora_queue WHERE device=?",
-                             (device,)).fetchone()
-            if row is None or row[1] != cid:
+            row = db.execute("SELECT op, resource FROM lora_queue WHERE device=? AND command_id=?",
+                             (device, cid)).fetchone()
+            if row is None:
                 return "unknown"
-            op, _, probe, state = row
+            op, resource = row
             if e["kind"] == "queued":
-                db.execute("UPDATE lora_queue SET state='gateway', updated_utc=? WHERE device=?", (now, device))
+                db.execute("UPDATE lora_queue SET state='gateway', updated_utc=? WHERE device=? AND resource=?",
+                           (now, device, resource))
             elif e["kind"] == "sent":
-                db.execute("UPDATE lora_queue SET sent=sent+1, updated_utc=? WHERE device=?", (now, device))
+                db.execute("UPDATE lora_queue SET sent=sent+1, updated_utc=? WHERE device=? AND resource=?",
+                           (now, device, resource))
             else:
                 db.execute("UPDATE lora_queue SET note='gateway gave up; handed again', updated_utc=? "
-                           "WHERE device=?", (now, device))
+                           "WHERE device=? AND resource=?", (now, device, resource))
         if e["kind"] == "queued":
             try:
                 self.ops.result({"op": op, "device": device, "state": "gateway", "via": "lora"})
@@ -198,31 +243,48 @@ class LoraQueue:
         now = int(self.clock())
         with closing(sqlite3.connect(self.db_path, timeout=2.0)) as db, db:
             if r.incarnation or r.revision:
-                db.execute("INSERT INTO lora_token VALUES (?,?,?,?) ON CONFLICT(device) DO UPDATE SET "
+                db.execute("INSERT INTO lora_token VALUES (?,?,?,?,?) ON CONFLICT(device, resource) DO UPDATE SET "
                            "incarnation=excluded.incarnation, revision=excluded.revision, "
                            "updated_utc=excluded.updated_utc",
-                           (device, f"{r.incarnation:016X}", r.revision, now))
-            row = db.execute("SELECT op, command_id, entries FROM lora_queue WHERE device=?",
-                             (device,)).fetchone()
+                           (device, r.resource, f"{r.incarnation:016X}", r.revision, now))
+            row = db.execute("SELECT op, command_id, content FROM lora_queue WHERE device=? AND resource=?",
+                             (device, r.resource)).fetchone()
             if row is None or row[1] != r.command_id:
                 return "old"  # an earlier command's answer: only the state was useful
-            op, _, entries = row
+            op, _, content = row
             if r.outcome in ("STALE", "MAINTENANCE", "UNAVAILABLE", "OUTCOME_UNKNOWN"):
                 # Sign again against what the tracker has now (a probe if unknown).
-                signed = self._sign(db, device, [tuple(x) for x in json.loads(entries)])
+                signed = self._sign(db, device, r.resource, json.loads(content))
                 if signed is not None:
-                    cid, frame, probe = signed
-                    db.execute("UPDATE lora_queue SET command_id=?, frame=?, probe=?, state='queued', "
-                               "updated_utc=?, note=? WHERE device=?",
-                               (cid, frame, int(probe), now, r.outcome, device))
+                    cid, frames, probe = signed
+                    db.execute("UPDATE lora_queue SET command_id=?, frames=?, probe=?, state='queued', "
+                               "updated_utc=?, note=? WHERE device=? AND resource=?",
+                               (cid, json.dumps(frames), int(probe), now, r.outcome, device, r.resource))
                 return "resigned"
-            db.execute("DELETE FROM lora_queue WHERE device=?", (device,))
+            db.execute("DELETE FROM lora_queue WHERE device=? AND resource=?", (device, r.resource))
         if r.outcome in ("APPLIED", "UNCHANGED"):
             self.ops.result({"op": op, "device": device, "via": "lora",
                              "state": "applied" if r.outcome == "APPLIED" else "same"})
-            self.settings.report({"device": device, "values": values_from(r), "via": "lora"})
+            if r.resource == lc.RESOURCE_SETTINGS:
+                self.settings.report({"device": device, "values": values_from(r), "via": "lora"})
+            else:
+                self._record_areas(op, device, r)
             return "applied"
         reason = "tasma bu değeri kabul etmedi" if r.outcome == "INVALID" else "izin yok"
         self.ops.result({"op": op, "device": device, "via": "lora", "state": "rejected",
                          "note": f"Tasma reddetti: {reason}."})
         return "rejected"
+
+    def _record_areas(self, op: str, device: str, r: lc.Result) -> None:
+        """The tracker holds the operation's areas now: record them like a USB/BLE write."""
+        if self.fences is None:
+            return
+        row = next((o for o in self.ops.recent() if o["op"] == op and o["device"] == device), None)
+        payload = row["payload"] if row else {}
+        zones = [{"id": z.get("id"), "name": z.get("name")} for z in payload.get("zones", [])
+                 if isinstance(z, dict)]
+        try:
+            self.fences.record({"device": device, "digest": payload.get("digest"), "areas": r.areas,
+                                "vertices": r.vertices, "zones": zones})
+        except ValueError:
+            pass

@@ -23,7 +23,8 @@ bool accessBelongsToRequester(ApplicationRequester requester,
 // the permitted areas.
 bool mayChangeGeofence(const ApplicationAccessContext& access) {
   return access.channel == ApplicationAccessChannel::kUsbLocal ||
-         access.channel == ApplicationAccessChannel::kBleAuthenticated;
+         access.channel == ApplicationAccessChannel::kBleAuthenticated ||
+         access.channel == ApplicationAccessChannel::kLoraAuthenticated;
 }
 
 }  // namespace
@@ -32,20 +33,36 @@ ConfigMutationSubmitResult GeofenceMutationOwner::submitReplace(
     ApplicationRequester requester, uint32_t request_id,
     ApplicationAccessContext access, const GeofenceAreaSetView& area_set) {
   return submit(requester, request_id, access, GeofenceMutationKind::kReplace,
-                &area_set);
+                &area_set, nullptr);
+}
+
+ConfigMutationSubmitResult GeofenceMutationOwner::submitReplaceIf(
+    ApplicationRequester requester, uint32_t request_id,
+    ApplicationAccessContext access, const GeofenceAreaSetView& area_set,
+    const geofence_format::StateToken& expected) {
+  return submit(requester, request_id, access, GeofenceMutationKind::kReplace,
+                &area_set, &expected);
+}
+
+ConfigMutationSubmitResult GeofenceMutationOwner::submitClearIf(
+    ApplicationRequester requester, uint32_t request_id,
+    ApplicationAccessContext access, const geofence_format::StateToken& expected) {
+  return submit(requester, request_id, access, GeofenceMutationKind::kClear,
+                nullptr, &expected);
 }
 
 ConfigMutationSubmitResult GeofenceMutationOwner::submitClear(
     ApplicationRequester requester, uint32_t request_id,
     ApplicationAccessContext access) {
   return submit(requester, request_id, access, GeofenceMutationKind::kClear,
-                nullptr);
+                nullptr, nullptr);
 }
 
 ConfigMutationSubmitResult GeofenceMutationOwner::submit(
     ApplicationRequester requester, uint32_t request_id,
     ApplicationAccessContext access, GeofenceMutationKind kind,
-    const GeofenceAreaSetView* area_set) {
+    const GeofenceAreaSetView* area_set,
+    const geofence_format::StateToken* expected) {
   if (!accessBelongsToRequester(requester, access))
     return ConfigMutationSubmitResult::kRejected;
   // Take the single slot before looking at the resource.
@@ -71,6 +88,15 @@ ConfigMutationSubmitResult GeofenceMutationOwner::submit(
       store_.resourceState() == GeofenceResourceState::kUnavailable) {
     complete(ConfigMutationOutcome::kMaintenance);
     return ConfigMutationSubmitResult::kAccepted;
+  }
+  if (expected != nullptr) {
+    // 6d: the command was signed for exactly this saved area set.
+    geofence_format::StateToken current;
+    if (!store_.stateToken(current) || current.incarnation != expected->incarnation ||
+        current.revision != expected->revision) {
+      complete(ConfigMutationOutcome::kStale);
+      return ConfigMutationSubmitResult::kAccepted;
+    }
   }
 
   // The store validates the complete set (every M6C rule) and refuses the

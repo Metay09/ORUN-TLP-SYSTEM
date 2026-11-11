@@ -28,7 +28,7 @@ export function TrackerSettingsPanel() {
   return (
     <>
       <Section title="Tasma ayarları"
-        info="Ayar hesaba kaydedilir ve tasmaya iki yoldan gider: LoRa'dan, tasmanın bir sonraki raporunda gateway üzerinden (internet ya da köprü gerekir); ya da tasmaya USB/Bluetooth ile bağlanınca. Hangisi önce ulaşırsa. Tasma onaylayana kadar 'bekliyor' görünür." />
+        info="Ayar hesaba kaydedilir ve tasmaya iki yoldan gider: LoRa'dan, tasmanın bir sonraki raporunda gateway üzerinden (internetle sunucu; internetsiz gateway'e bağlı bu telefon); ya da tasmaya USB/Bluetooth ile bağlanınca. Hangisi önce ulaşırsa. Tasma onaylayana kadar 'bekliyor' görünür." />
       {!trackers.length ? (
         <Card pad><p className="sm" style={{ margin: 0 }}>Henüz tasma yok. Sürü'de + ile tasma ekleyince ayarları burada görünür.</p></Card>
       ) : (

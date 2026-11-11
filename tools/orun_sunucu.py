@@ -95,7 +95,8 @@ def bridge_handler(local: LocalObservations, token: str):
     gateways = GatewayStatus(local.backend.db_path)
     edge_queues = EdgeQueueStatus(local.backend.db_path)
     lora = LoraQueue(local.backend.db_path, lambda: local.backend.registry,
-                     DeviceOps(local.backend.db_path), DeviceSettings(local.backend.db_path))
+                     DeviceOps(local.backend.db_path), DeviceSettings(local.backend.db_path),
+                     TrackerFences(local.backend.db_path))
 
     class Bridge(BaseHTTPRequestHandler):
         server_version = "ORUN"
@@ -261,7 +262,7 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
     fences = TrackerFences(local.backend.db_path)
     settings = DeviceSettings(local.backend.db_path)
     ops = DeviceOps(local.backend.db_path)
-    lora = LoraQueue(local.backend.db_path, lambda: local.backend.registry, ops, settings)
+    lora = LoraQueue(local.backend.db_path, lambda: local.backend.registry, ops, settings, fences)
 
     class Handler(handler):
         def _farm_actor(self, scope: str):
@@ -343,14 +344,17 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
                     body = json.loads(self.rfile.read(int(size)))
                     if self.path == "/api/v1/devices/ops":
                         reply = ops.create(body)
-                        # 6c: a settings change also goes over LoRa (signed here);
-                        # whichever way reaches the tracker first settles it.
-                        if reply.get("created") and body.get("kind") == "settings":
+                        # 6c/6d: a settings or area change also goes over LoRa (signed
+                        # here); whichever way reaches the tracker first settles it.
+                        if reply.get("created") and body.get("kind") in ("settings", "fence"):
                             for it in body.get("items", []):
-                                lora.enqueue(body["op"], str(it.get("device", "")).upper(), it.get("payload"))
+                                lora.enqueue(body["op"], str(it.get("device", "")).upper(),
+                                             it.get("payload"), body["kind"])
                         return self._send(200, reply)
                     reply = ops.result(body)
-                    if reply.get("state") in ("applied", "same", "rejected") and body.get("via") != "lora":
+                    # Settled (over USB/Bluetooth, or over LoRa by an offline phone):
+                    # nothing left for the server to send.
+                    if reply.get("state") in ("applied", "same", "rejected"):
                         lora.cancel(reply["op"], reply["device"])
                     return self._send(200, reply)
                 except (BadOp, ValueError, UnicodeDecodeError):

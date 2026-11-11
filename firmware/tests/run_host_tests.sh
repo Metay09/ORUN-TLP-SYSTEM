@@ -548,7 +548,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r2/test_patch_radio.py "$test_d
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp \
   "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp \
@@ -562,7 +562,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp 
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/m6/test_m6p1_radio.cpp "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp \
@@ -576,7 +576,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
   "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
@@ -589,7 +589,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
 "$test_dir/r2"
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/sf5/test_sf5j_radio_transport.cpp "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
   firmware/src/radio_driver_gate.cpp firmware/src/rak_device_identity.cpp \
@@ -602,7 +602,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
 # SF5K3K actual radio receiver assertions under explicit test define.
 g++ -DORUN_SF5K3K_ACK_RX_TEST -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/sf5/test_sf5j_radio_transport.cpp "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp \
+  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp \
   firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
@@ -621,7 +621,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/activity_quality.cpp firmware/src/activity_auto_sampler.cpp \
   firmware/src/activity_period_evidence.cpp \
   firmware/src/accelerometer_manager.cpp \
-  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/radio_driver_gate.cpp \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
@@ -924,7 +924,7 @@ g++ "${portable_flags[@]}" -Ifirmware/tests/sf5 firmware/tests/m7/test_ble_write
 # 6a: account-signed settings over LoRa (one save, replay-safe by state token).
 g++ "${portable_flags[@]}" -Ifirmware/tests/sf5 firmware/tests/m7/test_lora_command.cpp \
   firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
-  firmware/src/lora_command.cpp firmware/src/settings_table.cpp \
+  firmware/src/lora_command.cpp firmware/src/lora_command_frame.cpp firmware/src/settings_table.cpp \
   firmware/src/application_request.cpp firmware/src/config_mutation.cpp \
   firmware/src/config_store.cpp firmware/src/config_format.cpp \
   firmware/src/journal_format.cpp firmware/src/service_intent.cpp \
@@ -933,11 +933,14 @@ g++ "${portable_flags[@]}" -Ifirmware/tests/sf5 firmware/tests/m7/test_lora_comm
   firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
   firmware/src/runtime_config.cpp firmware/src/node_role.cpp \
   firmware/src/tlp_position_packet.cpp \
+  firmware/src/geofence_mutation.cpp firmware/src/geofence_store.cpp \
+  firmware/src/geofence_format.cpp firmware/src/geofence_geometry.cpp \
   -lcrypto -o "$test_dir/lora_command"
 "$test_dir/lora_command"
 # 6b: the Gateway's LoRa command mailbox (no authority, exact bytes only).
 g++ "${portable_flags[@]}" firmware/tests/m7/test_lora_command_relay.cpp \
-  firmware/src/lora_command_relay.cpp -o "$test_dir/lora_command_relay"
+  firmware/src/lora_command_relay.cpp firmware/src/lora_command_frame.cpp \
+  -o "$test_dir/lora_command_relay"
 "$test_dir/lora_command_relay"
 g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7h_ble_status_transport.cpp \
   firmware/src/ble_application_transport.cpp firmware/src/application_request.cpp \

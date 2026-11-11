@@ -10,7 +10,8 @@ import type { EdgeCore } from "../core/edge.ts";
 import { LoraCarrier } from "../app/loraCarrier.ts";
 import { pilotLoraServer } from "../app/ownerAccountPilotRuntime.ts";
 import {
-  DUMP_MESSAGE, EDGE_SERVICE_UUID, EDGE_TO_EDGE_UUID, EDGE_TO_GATEWAY_UUID, frames, Reassembler,
+  DUMP_MESSAGE, EDGE_SERVICE_UUID, EDGE_TO_EDGE_UUID, EDGE_TO_GATEWAY_UUID, frames, LORA_LINE_TO_EDGE,
+  LORA_LINE_TO_GATEWAY, Reassembler,
 } from "../core/edgeLink.ts";
 
 export type LinkState = "idle" | "searching" | "connecting" | "connected" | "waiting";
@@ -41,6 +42,9 @@ export class BleLink {
   private messageId = 0;
   private core: EdgeCore;
   private ev: LinkEvents;
+
+  // 6c: signed LoRa commands from the account, carried to the gateway.
+  private lora = new LoraCarrier();
 
   constructor(core: EdgeCore, ev: LinkEvents) { this.core = core; this.ev = ev; }
 
@@ -101,6 +105,10 @@ export class BleLink {
         await BleClient.startNotifications(id, EDGE_SERVICE_UUID, EDGE_TO_EDGE_UUID, (v) => {
           const frame = new Uint8Array(v.buffer, v.byteOffset, v.byteLength).slice();
           const msg = this.rx.push(frame, Date.now());
+          if (msg && msg[0] === LORA_LINE_TO_EDGE) {
+            this.lora.observe(new TextDecoder().decode(msg.subarray(1)));
+            return;
+          }
           // Each Gateway message may queue or settle an accept: send the next
           // one right away (timers are throttled while the screen is off).
           if (msg) void this.core.handleMessage(msg).then((out) => {
@@ -120,6 +128,10 @@ export class BleLink {
       this.ev.log(`[BLE] bağlandı: ${id}`);
       this.timers.push(setInterval(() => { void this.pump(); }, POLL_MS));
       this.timers.push(setInterval(() => { void this.core.sessionAlive("ble"); }, ALIVE_MS));
+      this.lora.reset();
+      this.timers.push(setInterval(() => {
+        void this.lora.poll(pilotLoraServer(), (l) => this.sendLoraLine(l), Date.now());
+      }, 2000));
     } catch (e) {
       if (!this.running) return;
       this.ev.log(`[BLE] bağlanamadı: ${errorText(e)}; ${RETRY_MS / 1000} sn sonra tekrar`);
@@ -173,6 +185,22 @@ export class BleLink {
                               new DataView(f.buffer, f.byteOffset, f.byteLength));
     } catch (e) {
       this.ev.log(`[BLE] yeniden isteme yazılamadı: ${errorText(e)}`);
+    }
+  }
+
+  /** 6c: one "APP LORA ..." line to the Gateway as an Edge message. */
+  private async sendLoraLine(line: string): Promise<void> {
+    if (!this.connected || !this.deviceId) throw new Error("bağlı değil");
+    while (this.writing) await new Promise((r) => setTimeout(r, 20));
+    this.writing = true;
+    try {
+      const msg = new Uint8Array([LORA_LINE_TO_GATEWAY, ...new TextEncoder().encode(line)]);
+      this.messageId = (this.messageId + 1) & 0xff;
+      for (const f of frames(msg, this.messageId))
+        await BleClient.write(this.deviceId, EDGE_SERVICE_UUID, EDGE_TO_GATEWAY_UUID,
+                              new DataView(f.buffer, f.byteOffset, f.byteLength));
+    } finally {
+      this.writing = false;
     }
   }
 

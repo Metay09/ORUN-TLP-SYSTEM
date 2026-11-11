@@ -1,14 +1,14 @@
 // 6c: telefon köprüsü LoRa komutlarını gateway'e verir, gateway'in dediğini bildirir.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CHECK_MS, LoraCarrier, REHAND_MS, type LoraCommand, type LoraEvent } from "../src/app/loraCarrier.ts";
+import { CHECK_MS, LoraCarrier, loraLines, REHAND_MS, type LoraCommand, type LoraEvent } from "../src/app/loraCarrier.ts";
 
 const DEV = "52E16773141A8887";
 const HEX = "AB".repeat(54);
 
 test("komut bir kez verilir; gateway'in dedikleri sunucuya gider", async () => {
   const sent: LoraEvent[][] = [];
-  const commands: LoraCommand[] = [{ device: DEV, command_id: 7, hex: HEX }];
+  const commands: LoraCommand[] = [{ device: DEV, resource: 1, command_id: 7, frames: [HEX] }];
   const server = { loraCommands: async () => commands, loraEvents: async (e: LoraEvent[]) => { sent.push(e); } };
   const lines: string[] = [];
   const write = async (l: string) => { lines.push(l); };
@@ -34,7 +34,7 @@ test("internet yokken olaylar bekler, sonra gider; bozuk komut verilmez", async 
   let online = false;
   const sent: LoraEvent[][] = [];
   const server = {
-    loraCommands: async () => [{ device: DEV, command_id: 1, hex: "XYZ" }] as LoraCommand[],
+    loraCommands: async () => [{ device: DEV, command_id: 1, frames: ["XYZ"] }] as LoraCommand[],
     loraEvents: async (e: LoraEvent[]) => { if (!online) throw new Error("yok"); sent.push(e); },
   };
   const lines: string[] = [];
@@ -45,6 +45,16 @@ test("internet yokken olaylar bekler, sonra gider; bozuk komut verilmez", async 
   online = true;
   await c.poll(server, async (l) => { lines.push(l); }, 1);
   assert.equal(sent[0][0].kind, "dropped");
-  assert.deepEqual(lines, []);
+  assert.equal(lines.length, 0);
   await c.poll(null, async (l) => { lines.push(l); }, 2);   // hesaba girilmemiş: hiçbir şey
+});
+
+test("uzun çerçeve parça parça satırla gider; satırlar kısa kalır", () => {
+  const frame = "AB".repeat(255);
+  const lines = loraLines(frame);
+  assert.ok(lines.every((l) => l.length <= 160));
+  assert.equal(lines.slice(0, -1).every((l) => l.startsWith("APP LORA + ")), true);
+  assert.ok(lines[lines.length - 1].startsWith("APP LORA QUEUE "));
+  assert.equal(lines.map((l) => l.split(" ").pop()).join(""), frame);
+  assert.deepEqual(loraLines("AB".repeat(54)), [`APP LORA QUEUE ${"AB".repeat(54)}`]);
 });

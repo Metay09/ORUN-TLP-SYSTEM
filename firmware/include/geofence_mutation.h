@@ -61,6 +61,17 @@ class GeofenceMutationOwner {
   ConfigMutationSubmitResult submitClear(ApplicationRequester requester,
                                          uint32_t request_id,
                                          ApplicationAccessContext access);
+  // 6d (LoRa): only if the area store's state token is still exactly
+  // `expected`; otherwise the result is kStale and nothing is written.
+  ConfigMutationSubmitResult submitReplaceIf(ApplicationRequester requester,
+                                             uint32_t request_id,
+                                             ApplicationAccessContext access,
+                                             const GeofenceAreaSetView& area_set,
+                                             const geofence_format::StateToken& expected);
+  ConfigMutationSubmitResult submitClearIf(ApplicationRequester requester,
+                                           uint32_t request_id,
+                                           ApplicationAccessContext access,
+                                           const geofence_format::StateToken& expected);
 
   // Call once per loop pass, after GeofenceStore::poll(). Returns true
   // exactly once per durably committed change, in the pass where its result
@@ -79,7 +90,8 @@ class GeofenceMutationOwner {
                                     uint32_t request_id,
                                     ApplicationAccessContext access,
                                     GeofenceMutationKind kind,
-                                    const GeofenceAreaSetView* area_set);
+                                    const GeofenceAreaSetView* area_set,
+                                    const geofence_format::StateToken* expected);
   void complete(ConfigMutationOutcome outcome);
 
   GeofenceStore& store_;

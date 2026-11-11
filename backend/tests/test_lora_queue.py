@@ -10,7 +10,8 @@ from backend import lora_command as lc
 from backend import orun_credentials as oc
 from backend.device_ops import DeviceOps
 from backend.device_settings import DeviceSettings
-from backend.lora_queue import BadEvent, LoraQueue, entries_for
+from backend.lora_queue import BadEvent, LoraQueue, entries_for, polys_for
+from backend.tracker_fences import TrackerFences
 
 DEV = 0x52E16773141A8887
 DEV_HEX = f"{DEV:016X}"
@@ -47,6 +48,35 @@ class FakeTracker:
         return out + hmac.new(self.key, lc.RESULT_DOMAIN + out, hashlib.sha256).digest()[:16]
 
 
+class FakeAreaTracker:
+    """Answers area lists like the firmware: all parts, state token, STALE."""
+
+    def __init__(self, cred):
+        self.key, self.cred = oc.ble_write_key(cred), cred
+        self.inc, self.rev = 0x0102030405060708, 3
+        self.areas, self.vertices = 0, 0
+
+    def answer(self, frames: list[bytes]) -> bytes:
+        s = b""
+        for f in frames:
+            body, tag = f[:-16], f[-16:]
+            assert hmac.compare_digest(hmac.new(self.key, lc.COMMAND_DOMAIN + body, hashlib.sha256).digest()[:16],
+                                       tag)
+            s += body[37:]
+        cid = struct.unpack(">I", frames[0][16:20])[0]
+        inc, rev = struct.unpack(">QI", frames[0][20:32])
+        areas, vertices = frames[0][34], struct.unpack(">H", frames[0][35:37])[0]
+        assert len(s) == 1 + areas + 8 * vertices
+        if (inc, rev) != (self.inc, self.rev):
+            outcome = 7
+        else:
+            self.areas, self.vertices, self.rev, outcome = areas, vertices, self.rev + 1, 0
+        out = struct.pack(">BBBBQIIQIBBH", 2, 8, outcome, 2, self.cred.device_id, self.cred.key_epoch, cid,
+                          self.inc, self.rev, 1 if self.areas else 0, self.areas, self.vertices)
+        out += bytes(40 - len(out))
+        return out + hmac.new(self.key, lc.RESULT_DOMAIN + out, hashlib.sha256).digest()[:16]
+
+
 class LoraQueueTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -55,7 +85,8 @@ class LoraQueueTest(unittest.TestCase):
         self.cred = self.reg.create(DEV)
         db = d / "db.sqlite"
         self.ops, self.settings = DeviceOps(db), DeviceSettings(db)
-        self.q = LoraQueue(db, lambda: self.reg, self.ops, self.settings)
+        self.fences = TrackerFences(db)
+        self.q = LoraQueue(db, lambda: self.reg, self.ops, self.settings, self.fences)
         self.tracker = FakeTracker(self.cred)
 
     def tearDown(self):
@@ -68,7 +99,7 @@ class LoraQueueTest(unittest.TestCase):
         """One report: the bridge hands the queued command, the tracker answers."""
         (cmd,) = self.q.commands()
         self.q.events({"events": [{"kind": "queued", "device": cmd["device"], "command_id": cmd["command_id"]}]})
-        res = self.tracker.answer(bytes.fromhex(cmd["hex"]))
+        res = self.tracker.answer(bytes.fromhex(cmd["frames"][0]))
         return self.q.events({"events": [{"kind": "result", "hex": res.hex().upper()}]})["results"][0]
 
     def test_probe_then_apply(self):
@@ -113,7 +144,7 @@ class LoraQueueTest(unittest.TestCase):
                          "items": [{"device": DEV_HEX, "payload": {"set": {"interval_s": 300}}}]})
         self.q.enqueue("op-f9e8", DEV_HEX, {"set": {"interval_s": 300}})
         cmd = self.q.commands()[0]
-        res = bytearray(self.tracker.answer(bytes.fromhex(cmd["hex"])))
+        res = bytearray(self.tracker.answer(bytes.fromhex(cmd["frames"][0])))
         res[-1] ^= 1
         self.assertEqual(self.q.events({"events": [{"kind": "result", "hex": res.hex().upper()}]})["results"],
                          ["bad_signature"])
@@ -133,7 +164,7 @@ class LoraQueueTest(unittest.TestCase):
         self.q.enqueue("op-1234", DEV_HEX, {"set": {"interval_s": 300}})
         self.deliver()
         cmd = self.q.commands()[0]
-        frame = bytes.fromhex(cmd["hex"])
+        frame = bytes.fromhex(cmd["frames"][0])
         # The tracker says INVALID (e.g. a value it does not take).
         cid = struct.unpack(">I", frame[16:20])[0]
         t = self.tracker
@@ -142,6 +173,33 @@ class LoraQueueTest(unittest.TestCase):
         res = out + hmac.new(t.key, lc.RESULT_DOMAIN + out, hashlib.sha256).digest()[:16]
         self.assertEqual(self.q.events({"events": [{"kind": "result", "hex": res.hex()}]})["results"], ["rejected"])
         self.assertEqual(self.op_state("op-1234")["state"], "rejected")
+
+    def test_areas_over_lora(self):
+        ring = [[28.05, 37.60], [28.05, 37.61], [28.06, 37.60], [28.05, 37.60]]
+        payload = {"digest": "0123456789abcdef", "areas": 1, "vertices": 3,
+                   "zones": [{"id": "z1", "name": "Ev merası", "ring": ring}]}
+        self.ops.create({"op": "op-fz01", "kind": "fence", "items": [{"device": DEV_HEX, "payload": payload}]})
+        self.assertTrue(self.q.enqueue("op-fz01", DEV_HEX, payload, "fence"))
+        area = FakeAreaTracker(self.cred)
+
+        def deliver():
+            cmd = next(c for c in self.q.commands() if c["resource"] == 2)
+            res = area.answer([bytes.fromhex(h) for h in cmd["frames"]])
+            return self.q.events({"events": [{"kind": "result", "hex": res.hex()}]})["results"][0]
+
+        self.assertEqual(deliver(), "resigned")   # probe
+        self.assertEqual(deliver(), "applied")
+        self.assertEqual((area.areas, area.vertices), (1, 3))
+        self.assertEqual(self.op_state("op-fz01")["state"], "applied")
+        rec = self.fences.all()[DEV_HEX]
+        self.assertEqual((rec["digest"], rec["areas"], rec["zones"][0]["name"]), ("0123456789abcdef", 1, "Ev merası"))
+        # Settings and areas wait side by side.
+        self.q.enqueue("op-fz02", DEV_HEX, {"set": {"interval_s": 300}})
+        self.q.enqueue("op-fz02", DEV_HEX, {"digest": "x", "zones": []}, "fence")
+        self.assertEqual(sorted(c["resource"] for c in self.q.commands()), [1, 2])
+        # The app's rounding (half up), closing point dropped.
+        self.assertEqual(polys_for(payload), [[(376000000, 280500000), (376100000, 280500000), (376000000, 280600000)]])
+        self.assertFalse(self.q.enqueue("op-fz03", DEV_HEX, {"zones": [{"ring": [[0, 0]]}] * 9}, "fence"))
 
     def test_entries(self):
         self.assertEqual(entries_for({"interval_s": 300, "ble_window_s": 0}, None), [(1, 300), (3, 0)])

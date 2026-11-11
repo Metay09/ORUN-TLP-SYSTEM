@@ -85,7 +85,11 @@ settings (frequency, SF, bandwidth, power) are never writable over LoRa.
 LoRa commands (step 6, owner decision 2026-11-11, `lora_command.h`) are signed
 by the account server with the per-Tracker BLE write key and bound to the
 saved config state token (replay = STALE, no new counter); the gateway only
-carries bytes. The v1 plan does not use the delegated-gateway design. The
+carries bytes. The v1 plan does not use the delegated-gateway design. Area
+lists (6d) use the same frame family (resource 2, 1-3 parts of up to 255
+bytes, bound to the GeofenceStore token, applied whole through
+GeofenceMutationOwner::submitReplaceIf/submitClearIf). Offline, the owner's
+phone may sign the same commands with the write key it holds. The
 app mirrors the table in `edge/app/src/app/trackerSettings.ts` (`SETTINGS`,
 checked against the firmware file by `test/ayarTablosu.test.ts`).
 

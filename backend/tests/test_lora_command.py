@@ -20,7 +20,21 @@ def key() -> bytes:
     return HKDF(hashes.SHA256(), 32, bytes(range(0x10, 0x20)), info).derive(bytes(range(0x40, 0x60)))
 
 
+VECTOR_AREAS = ("020700020E8ADE7E71531AA3000000010A0B0C0D0102030405060708000000010001010003010316694E0010B81720166AD4A010B8172016694E0010B99DC06673E256DA8890748DFEF81325A81C72")
+
+
 class LoraCommandTest(unittest.TestCase):
+    def test_area_vector(self):
+        frames = lc.build_area_command(key(), DEV, 1, 0x0A0B0C0D, 0x0102030405060708, 1,
+                                       [[(376000000, 280500000), (376100000, 280500000), (376000000, 280600000)]])
+        self.assertEqual([f.hex().upper() for f in frames], [VECTOR_AREAS])
+        big = [[(376000000 + a * 100000 + i, 280500000 + i) for i in range(8)] for a in range(8)]
+        frames = lc.build_area_command(key(), DEV, 1, 1, 0, 0, big)
+        self.assertEqual([len(f) for f in frames], [255, 255, 170])
+        self.assertEqual(len(lc.build_area_command(key(), DEV, 1, 1, 0, 0, [])[0]), 54)
+        with self.assertRaises(ValueError):
+            lc.area_set([[(0, 0)]] * 9)
+
     def test_shared_vector(self):
         cmd = lc.build_command(key(), DEV, 1, 0x01020304, 0x0BADC0FFEE123456, 1, [(1, 900), (3, 60)])
         self.assertEqual(cmd.hex().upper(), VECTOR)

@@ -9,6 +9,10 @@ export const EDGE_SERVICE_UUID = "6f9a1c20-5b3e-4d8a-9e61-2c4b7a0d3e51";
 export const EDGE_TO_GATEWAY_UUID = "6f9a1c21-5b3e-4d8a-9e61-2c4b7a0d3e51";
 export const EDGE_TO_EDGE_UUID = "6f9a1c22-5b3e-4d8a-9e61-2c4b7a0d3e51";
 
+/** 6: LoRa command lines over the Edge link (firmware edge_link.h). */
+export const LORA_LINE_TO_EDGE = 0x07;      // "LORA ..." from the Gateway
+export const LORA_LINE_TO_GATEWAY = 0x83;   // "APP LORA ..." to the Gateway
+
 export const FRAME_SIZE = 20;
 export const FRAME_DATA = 16;
 export const MAX_MESSAGE = 160;
