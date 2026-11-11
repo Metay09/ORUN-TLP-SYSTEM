@@ -8,6 +8,7 @@
 
 #include "Arduino.h"
 #include "application_request.h"
+#include "settings_table.h"
 #include "usb_application_adapter.h"
 
 using namespace orun_tlp;
@@ -270,6 +271,111 @@ int main() {
       printUsbConfigMutationResult(result);
       assert(Serial.output.find(name.text) != std::string::npos);
     }
+  }
+
+  // Tek ayar tablosu (settings_table.h): APP SET <NAME> <value> reaches the
+  // same rows as the old spellings, and "APP SETTINGS?" lists the table.
+  {
+    namespace cf = config_format;
+    ConfigMutationKind kind = ConfigMutationKind::kSetTrackingInterval;
+    uint32_t value = 0;
+    const auto parse_config = [&](const char* text) {
+      return parseUsbConfigCommand(
+          text, static_cast<uint8_t>(strlen(text)), &kind, &value);
+    };
+    assert(parse_config("APP SET INTERVAL 900") == UsbConfigCommandParse::kOk);
+    assert(kind == ConfigMutationKind::kSetTrackingInterval && value == 900);
+    assert(parse_config("APP SET BLE_WINDOW 120") == UsbConfigCommandParse::kOk);
+    assert(kind == ConfigMutationKind::kSetBleWindow && value == 120);
+    assert(parse_config("APP SET INTERVAL 9x") == UsbConfigCommandParse::kMalformed);
+    assert(parse_config("APP SET INTERVAL ") == UsbConfigCommandParse::kMalformed);
+    value = 77;
+    const char* not_config[] = {"APP SET INTERVAL", "APP SET FOO 1", "APP SET interval 900",
+                                "APP SET SERVICES T", "APP SET ", "APP SETTINGS?"};
+    for (const char* text : not_config) {
+      assert(parse_config(text) == UsbConfigCommandParse::kNotConfigCommand);
+      assert(value == 77);
+    }
+
+    uint8_t mode = 0x55, services = 0x66;
+    const auto parse_services = [&](const char* text) {
+      return parseUsbServicesCommand(
+          text, static_cast<uint8_t>(strlen(text)), &mode, &services);
+    };
+    assert(parse_services("APP SET SERVICES T") == UsbConfigCommandParse::kOk);
+    assert(mode == cf::kServiceModeExplicit && services == cf::kServiceTracking);
+    assert(parse_services("APP SET SERVICES AUTO") == UsbConfigCommandParse::kOk);
+    assert(mode == cf::kServiceModeAuto && services == 0);
+    assert(parse_services("APP SET SERVICES X") == UsbConfigCommandParse::kMalformed);
+    assert(parse_services("APP SET INTERVAL 900") == UsbConfigCommandParse::kNotConfigCommand);
+
+    assert(isUsbSettingsQuery("APP SETTINGS?", 13));
+    assert(!isUsbSettingsQuery("APP SETTINGS", 12));
+    assert(!isUsbSettingsQuery(nullptr, 0));
+
+    // The table: ids are the Bluetooth op numbers, names the USB spelling.
+    assert(kSettingCount == 3);
+    assert(findSetting(uint8_t{1}) != nullptr &&
+           findSetting(uint8_t{1})->kind == ConfigMutationKind::kSetTrackingInterval);
+    assert(findSetting(uint8_t{2})->kind == ConfigMutationKind::kSetServiceIntent);
+    assert(findSetting(uint8_t{3})->kind == ConfigMutationKind::kSetBleWindow);
+    assert(findSetting(uint8_t{4}) == nullptr);  // area list: its own owner
+    assert(findSetting(uint8_t{0}) == nullptr);
+    assert(findSetting("BLE_WINDOW", 10) == findSetting(uint8_t{3}));
+    assert(findSetting("BLE", 3) == nullptr);
+    assert(findSetting(nullptr, 0) == nullptr);
+    for (const SettingRow& row : kSettingRows) {
+      // Unique ids and names; nothing opens on LoRa before step 6.
+      assert(findSetting(static_cast<uint8_t>(row.kind)) == &row);
+      assert(findSetting(row.name, strlen(row.name)) == &row);
+      assert(!settingAllowed(row, kSettingDoorLora, StorageRole::kTracker));
+      assert(!settingAllowed(row, kSettingDoorUsb, StorageRole::kConflict));
+      assert(settingAllowed(row, kSettingDoorUsb, StorageRole::kUnassigned));
+    }
+    // A radio row would never open on LoRa, whatever its doors say.
+    const SettingRow radio_row{ConfigMutationKind::kSetTrackingInterval, "RADIO_TEST",
+                               kSettingDoorUsb | kSettingDoorBle | kSettingDoorLora,
+                               kSettingForTracker, true};
+    assert(!settingAllowed(radio_row, kSettingDoorLora, StorageRole::kTracker));
+    assert(settingAllowed(radio_row, kSettingDoorBle, StorageRole::kTracker));
+    // Roles: the interval and the window are Tracker settings.
+    const SettingRow& interval = *findSetting(uint8_t{1});
+    assert(settingAllowed(interval, kSettingDoorBle, StorageRole::kTracker));
+    assert(!settingAllowed(interval, kSettingDoorBle, StorageRole::kGateway));
+    assert(!settingAllowed(*findSetting(uint8_t{3}), kSettingDoorUsb, StorageRole::kGateway));
+    assert(settingAllowed(*findSetting(uint8_t{2}), kSettingDoorBle, StorageRole::kGateway));
+
+    // Value encoding and the one request built from it.
+    const cf::Config config(900, 0, cf::kServiceModeExplicit, cf::kServiceTracking, 45);
+    assert(settingValue(interval, config) == 900);
+    assert(settingValue(*findSetting(uint8_t{3}), config) == 45);
+    assert(settingValue(*findSetting(uint8_t{2}), config) ==
+           (uint32_t{cf::kServiceModeExplicit} | (uint32_t{cf::kServiceTracking} << 8)));
+    ConfigMutationRequest request(ApplicationRequester::kUsb, 0,
+                                  ApplicationAccessContext(ApplicationAccessChannel::kUsbLocal),
+                                  ConfigMutationKind::kSetTrackingInterval, 0);
+    const ApplicationAccessContext usb(ApplicationAccessChannel::kUsbLocal);
+    assert(settingRequest(*findSetting(uint8_t{2}), ApplicationRequester::kUsb, 9, usb,
+                          0x0101U, &request));
+    assert(request.kind == ConfigMutationKind::kSetServiceIntent && request.request_id == 9 &&
+           request.service_mode == 1 && request.requested_services == 1);
+    assert(!settingRequest(*findSetting(uint8_t{2}), ApplicationRequester::kUsb, 9, usb,
+                           0x10000U, &request));
+    assert(settingRequest(*findSetting(uint8_t{3}), ApplicationRequester::kUsb, 10, usb, 60,
+                          &request));
+    assert(request.kind == ConfigMutationKind::kSetBleWindow && request.ble_window_seconds == 60);
+    assert(!settingRequest(interval, ApplicationRequester::kUsb, 1, usb, 1, nullptr));
+
+    char line[128];
+    assert(formatSettingLine(interval, 900, StorageRole::kTracker, line, sizeof(line)) > 0);
+    assert(std::string(line) ==
+           "APP SETTING id=1 name=INTERVAL value=900 usb=1 ble=1 lora=0 radio=0");
+    assert(formatSettingLine(interval, 900, StorageRole::kGateway, line, sizeof(line)) > 0);
+    assert(std::string(line) ==
+           "APP SETTING id=1 name=INTERVAL value=900 usb=0 ble=0 lora=0 radio=0");
+    char tiny[8];
+    assert(formatSettingLine(interval, 900, StorageRole::kTracker, tiny, sizeof(tiny)) == 0);
+    assert(tiny[0] == '\0');
   }
 
   // Requested services: APP SERVICES AUTO|NONE|<letters>, APP SERVICES?.

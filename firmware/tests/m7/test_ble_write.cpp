@@ -718,6 +718,34 @@ void testFenceStaging() {
   assert(r[0] == 0xFF && r[1] == uint8_t(bat::ErrorCode::kAccessDenied));
 }
 
+// Tek ayar tablosu: an op is a settings-table row; a row only for the other
+// role, an unknown op, a bad value all come back as a signed INVALID.
+void testSettingsTableOverBle() {
+  Tracker t;
+  uint8_t type = 0;
+  std::vector<uint8_t> p = t.write(bat::kWriteOpInterval, 900, type);
+  assert(type == kResult && p[0] == 0 && t.store.config().tracking_interval_seconds == 900);
+  p = t.write(9, 1, type);  // no such row
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kInvalid));
+  p = t.write(bat::kWriteOpServices, 0x10000U, type);  // bits above the two bytes
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kInvalid));
+  // Same door, a Gateway: the interval and the window are not its settings.
+  t.service.setPolicy(true, StorageRole::kGateway);
+  p = t.write(bat::kWriteOpInterval, 600, type);
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kInvalid));
+  p = t.write(bat::kWriteOpBleWindow, 30, type);
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kInvalid));
+  assert(t.store.config().tracking_interval_seconds == 900);
+  // ...and a Tracker intent on a Gateway is the other role (Y2a).
+  p = t.write(bat::kWriteOpServices,
+              config_format::kServiceModeExplicit | (config_format::kServiceTracking << 8), type);
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kInvalid));
+  // A conflicted device takes nothing.
+  t.service.setPolicy(true, StorageRole::kConflict);
+  p = t.write(bat::kWriteOpServices, config_format::kServiceModeAuto, type);
+  assert(type == kResult && p[0] == uint8_t(ConfigMutationOutcome::kInvalid));
+}
+
 }  // namespace
 
 int main() {
@@ -730,6 +758,7 @@ int main() {
   testFenceOverBle();
   testFenceClearOverBle();
   testFenceStaging();
+  testSettingsTableOverBle();
   puts("4c-1b/4c-2 Bluetooth authenticated writes (vector, single-use challenge, "
        "transport, refusals, disconnect, area list): PASS");
   return 0;

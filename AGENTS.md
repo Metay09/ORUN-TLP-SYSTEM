@@ -76,6 +76,15 @@ not evidence that backend alarms or trustworthy LOST semantics exist. The
 policy refines older conceptual NEAR_FENCE and fixed outside-cadence notes
 without weakening the validated M6C geometry layer.
 
+Device settings (4c-3, owner decision 2026-11-11): every configuration setting
+is one row of `firmware/src/settings_table.cpp` (id = ConfigMutationKind = the
+BLE/LoRa op number, USB name for `APP SET <NAME> <value>`, open doors, roles,
+radio flag). USB, BLE and (step 6) LoRa writers look rows up there and submit
+to the one `ConfigMutationOwner`; never add a per-door setting list. Radio
+settings (frequency, SF, bandwidth, power) are never writable over LoRa. The
+app mirrors the table in `edge/app/src/app/trackerSettings.ts` (`SETTINGS`,
+checked against the firmware file by `test/ayarTablosu.test.ts`).
+
 For map-authored geofence configuration, BLE/LoRa transport-neutral mutation,
 multiple polygons, non-six-point geometry limits, atomic replacement/removal and
 DEVICE/GROUP/FLEET distribution semantics, read

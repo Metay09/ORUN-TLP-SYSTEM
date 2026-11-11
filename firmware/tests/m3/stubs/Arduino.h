@@ -76,6 +76,7 @@ struct TestSerial {
   std::string input;
   size_t input_index = 0;
   void begin(unsigned) {}
+  void flush() {}
   int available() const { return input_index < input.size(); }
   int read() {
     if (input_index >= input.size()) return -1;

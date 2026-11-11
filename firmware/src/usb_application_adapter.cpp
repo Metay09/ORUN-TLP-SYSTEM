@@ -7,6 +7,7 @@
 
 #include "config_format.h"
 #include "service_intent.h"
+#include "settings_table.h"
 
 namespace orun_tlp {
 namespace {
@@ -55,6 +56,48 @@ bool parseUsbApplicationQuery(const char* text, uint8_t length,
   return false;
 }
 
+namespace {
+
+// "APP SET <NAME> " (settings_table.h): the row it names and where its value
+// starts, or nullptr when the text is not an APP SET of a known row.
+const SettingRow* matchSetCommand(const char* text, uint8_t length,
+                                  uint8_t* value_at) {
+  static const char kSet[] = "APP SET ";
+  constexpr uint8_t kSetLength = sizeof(kSet) - 1;
+  if (text == nullptr || length <= kSetLength || memcmp(text, kSet, kSetLength) != 0)
+    return nullptr;
+  uint8_t end = kSetLength;
+  while (end < length && text[end] != ' ') ++end;
+  if (end >= length) return nullptr;  // no value: not a write
+  const SettingRow* row = findSetting(text + kSetLength, end - kSetLength);
+  if (row == nullptr || (row->doors & kSettingDoorUsb) == 0) return nullptr;
+  *value_at = static_cast<uint8_t>(end + 1);
+  return row;
+}
+
+UsbConfigCommandParse parseDecimal(const char* text, uint8_t from, uint8_t length,
+                                   uint32_t* out) {
+  // Strict unsigned decimal: at least one digit, nothing else, no overflow.
+  if (length == from) return UsbConfigCommandParse::kMalformed;
+  uint32_t parsed = 0;
+  for (uint8_t index = from; index < length; ++index) {
+    const char digit = text[index];
+    if (digit < '0' || digit > '9') return UsbConfigCommandParse::kMalformed;
+    const uint32_t increment = static_cast<uint32_t>(digit - '0');
+    if (parsed > (UINT32_MAX - increment) / 10U)
+      return UsbConfigCommandParse::kMalformed;
+    parsed = parsed * 10U + increment;
+  }
+  *out = parsed;
+  return UsbConfigCommandParse::kOk;
+}
+
+}  // namespace
+
+bool isUsbSettingsQuery(const char* text, uint8_t length) {
+  return equals(text, length, "APP SETTINGS?");
+}
+
 UsbConfigCommandParse parseUsbConfigCommand(const char* text, uint8_t length,
                                             ConfigMutationKind* kind,
                                             uint32_t* value) {
@@ -65,7 +108,15 @@ UsbConfigCommandParse parseUsbConfigCommand(const char* text, uint8_t length,
     return UsbConfigCommandParse::kNotConfigCommand;
   ConfigMutationKind parsed_kind = ConfigMutationKind::kSetTrackingInterval;
   uint8_t prefix_length = 0;
-  if (length >= sizeof(kInterval) - 1 &&
+  uint8_t set_value_at = 0;
+  const SettingRow* set_row = matchSetCommand(text, length, &set_value_at);
+  if (set_row != nullptr) {
+    // SERVICES is spelled in letters: parseUsbServicesCommand owns it.
+    if (set_row->kind == ConfigMutationKind::kSetServiceIntent)
+      return UsbConfigCommandParse::kNotConfigCommand;
+    prefix_length = set_value_at;
+    parsed_kind = set_row->kind;
+  } else if (length >= sizeof(kInterval) - 1 &&
       memcmp(text, kInterval, sizeof(kInterval) - 1) == 0) {
     prefix_length = sizeof(kInterval) - 1;
   } else if (length >= sizeof(kBleWindow) - 1 &&
@@ -76,17 +127,9 @@ UsbConfigCommandParse parseUsbConfigCommand(const char* text, uint8_t length,
     return UsbConfigCommandParse::kNotConfigCommand;
   }
 
-  // Strict unsigned decimal: at least one digit, nothing else, no overflow.
-  if (length == prefix_length) return UsbConfigCommandParse::kMalformed;
   uint32_t parsed = 0;
-  for (uint8_t index = prefix_length; index < length; ++index) {
-    const char digit = text[index];
-    if (digit < '0' || digit > '9') return UsbConfigCommandParse::kMalformed;
-    const uint32_t increment = static_cast<uint32_t>(digit - '0');
-    if (parsed > (UINT32_MAX - increment) / 10U)
-      return UsbConfigCommandParse::kMalformed;
-    parsed = parsed * 10U + increment;
-  }
+  const UsbConfigCommandParse number = parseDecimal(text, prefix_length, length, &parsed);
+  if (number != UsbConfigCommandParse::kOk) return number;
 
   *kind = parsed_kind;
   *value = parsed;
@@ -97,16 +140,20 @@ UsbConfigCommandParse parseUsbServicesCommand(const char* text, uint8_t length,
                                               uint8_t* service_mode,
                                               uint8_t* requested_services) {
   static const char kPrefix[] = "APP SERVICES ";
-  constexpr uint8_t kPrefixLength = sizeof(kPrefix) - 1;
-  if (text == nullptr || service_mode == nullptr ||
-      requested_services == nullptr || length < kPrefixLength ||
-      memcmp(text, kPrefix, kPrefixLength) != 0) {
+  uint8_t prefix_length = sizeof(kPrefix) - 1;
+  if (text == nullptr || service_mode == nullptr || requested_services == nullptr)
+    return UsbConfigCommandParse::kNotConfigCommand;
+  uint8_t set_value_at = 0;
+  const SettingRow* set_row = matchSetCommand(text, length, &set_value_at);
+  if (set_row != nullptr && set_row->kind == ConfigMutationKind::kSetServiceIntent) {
+    prefix_length = set_value_at;  // APP SET SERVICES <letters>
+  } else if (length < prefix_length || memcmp(text, kPrefix, prefix_length) != 0) {
     return UsbConfigCommandParse::kNotConfigCommand;
   }
   uint8_t mode = 0;
   uint8_t services = 0;
-  if (!parseServiceIntent(text + kPrefixLength,
-                          static_cast<size_t>(length - kPrefixLength), &mode,
+  if (!parseServiceIntent(text + prefix_length,
+                          static_cast<size_t>(length - prefix_length), &mode,
                           &services))
     return UsbConfigCommandParse::kMalformed;
   *service_mode = mode;
