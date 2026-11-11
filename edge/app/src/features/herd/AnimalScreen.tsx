@@ -5,6 +5,7 @@ import { useMemo, useState, useSyncExternalStore } from "react";
 import { Bluetooth, CaretRight, CellSignalFull, MapTrifold, NavigationArrow, NotePencil, PencilSimple, Play } from "@phosphor-icons/react";
 import { activityBaseline, activityCoverage24h, batteryOutlook, batterySeries, busiestHour, dayStart, daySummaries, hourlyActivity, smoothBattery } from "../../app/activity.ts";
 import { trackerSession } from "../../app/trackerSession.ts";
+import { BatteryLife } from "../devices/BatteryLife.tsx";
 import { batteryPercent, epochMs } from "../../app/herd.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { cap, fmt, tr } from "../../app/i18n/tr.ts";
@@ -155,7 +156,7 @@ function Today({ a, now }: { a: Animal; now: number }) {
             <div className="act-facts">
               {outlook.change24h !== null && <div><span className="cap">Son 24 saatte</span><b>{outlook.change24h >= 0 ? "+" : "−"}%{Math.abs(Math.round(outlook.change24h))}</b></div>}
               {outlook.charged24h !== null && outlook.charged24h >= 3 && <div><span className="cap">Gündüz şarj</span><b>+%{Math.round(outlook.charged24h)}</b></div>}
-              {outlook.perDay !== null && <div><span className="cap">Gidişat</span><b>{outlook.daysLeft !== null ? `~${Math.round(outlook.daysLeft)} gün yeter` : "Dengede"}</b></div>}
+              {outlook.perDay !== null && <div><span className="cap">Gidişat</span><b>{outlook.perDay < -0.5 ? `günde −%${fmt.dec(-outlook.perDay, 1)}` : "Dengede"}</b></div>}
             </div>
             {pct.length > 1 && <>
               <Sparkline values={pct.map((b) => ({ t: b.t, v: b.p }))} min={0} max={100} tone={batTone} />
@@ -164,6 +165,8 @@ function Today({ a, now }: { a: Animal; now: number }) {
           </div>
         )}
       </Card>
+
+      {a.device && <BatteryLife device={a.device} intervalS={a.periodS || null} points={a.points} nowPct={a.batteryPercent} />}
 
       {a.device && <>
         <Section title={tr.animal.device} />
