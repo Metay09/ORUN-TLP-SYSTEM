@@ -67,6 +67,21 @@ class LoraBridgeTest(unittest.TestCase):
         lora.poll(ser, 300.0)
         self.assertEqual(len(ser.written), 3)
 
+    def test_one_command_per_tracker_at_a_time(self):
+        # The gateway holds one command per tracker: settings and areas must
+        # not replace each other there. The oldest goes; the next follows.
+        other = "0E8A00000000ABCD"
+        opener = FakeOpener([{"device": DEV, "resource": 1, "command_id": 7, "frames": [HEX]},
+                             {"device": DEV, "resource": 2, "command_id": 8, "frames": ["CD" * 54]},
+                             {"device": other, "resource": 2, "command_id": 9, "frames": ["EF" * 54]}])
+        lora, ser = pe.LoraBridge("http://x", self.token, opener), FakeSerial()
+        lora.poll(ser, 100.0)
+        self.assertEqual(ser.written, [f"APP LORA QUEUE {HEX}\n", f"APP LORA QUEUE {'EF' * 54}\n"])
+        opener.commands = opener.commands[1:]   # the settings command was settled
+        lora.poll(ser, 130.0)
+        self.assertEqual(ser.written[-1], f"APP LORA QUEUE {'CD' * 54}\n")
+        self.assertEqual(len(ser.written), 3)
+
     def test_ignores_bad_commands(self):
         opener = FakeOpener([{"device": DEV, "command_id": 1, "frames": ["XYZ"]}, {"device": DEV}])
         lora, ser = pe.LoraBridge("http://x", self.token, opener), FakeSerial()

@@ -58,3 +58,21 @@ test("uzun çerçeve parça parça satırla gider; satırlar kısa kalır", () =
   assert.equal(lines.map((l) => l.split(" ").pop()).join(""), frame);
   assert.deepEqual(loraLines("AB".repeat(54)), [`APP LORA QUEUE ${"AB".repeat(54)}`]);
 });
+
+test("tasma başına bir komut: ayar ile alanlar gateway'de birbirinin yerine geçmez", async () => {
+  const other = "0E8A00000000ABCD";
+  let commands: LoraCommand[] = [
+    { device: DEV, resource: 1, command_id: 7, frames: [HEX] },
+    { device: DEV, resource: 2, command_id: 8, frames: ["CD".repeat(54)] },
+    { device: other, resource: 2, command_id: 9, frames: ["EF".repeat(54)] },
+  ];
+  const server = { loraCommands: async () => commands, loraEvents: async () => {} };
+  const lines: string[] = [];
+  const c = new LoraCarrier();
+  await c.poll(server, async (l) => { lines.push(l); }, 0);
+  assert.deepEqual(lines, [`APP LORA QUEUE ${HEX}`, `APP LORA QUEUE ${"EF".repeat(54)}`]);
+  commands = commands.slice(1);   // ayar komutu sonuçlandı
+  await c.poll(server, async (l) => { lines.push(l); }, CHECK_MS);
+  assert.equal(lines.length, 3);
+  assert.equal(lines[2], `APP LORA QUEUE ${"CD".repeat(54)}`);
+});
