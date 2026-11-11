@@ -63,6 +63,27 @@ async function expect<T>(con: LineConsole, match: (l: string) => T | null, ms: n
   return got;
 }
 
+/** The empty list ("no zones"): what the account records after a clear. */
+export const CLEAR_SUMMARY: FenceSummary = { areas: 0, vertices: 0, digest: fenceDigest([]) };
+
+/**
+ * Remove every zone from the tracker on `con` (owner 2026-11-11: a zone
+ * removed in the app must reach the collar). Explicit command, never inferred
+ * from an empty list; success only with the tracker's CLEAR answer and a
+ * re-read showing no zones.
+ */
+export async function clearFence(con: LineConsole): Promise<FenceSummary> {
+  await con.send("APP FENCE CLEAR");
+  const r = await expect(con, (l) => RESULT.exec(l), 25_000);
+  if (!["APPLIED", "UNCHANGED"].includes(r[1]) || r[2] !== "CLEAR" || Number(r[3]) !== 0)
+    throw new Error("Tasma alanları sildiğini doğrulamadı: " + r[0]);
+  await con.send("APP GEOFENCE?");
+  const st = await expect(con, (l) => STATUS.exec(l), 8000);
+  if (Number(st[1]) !== 0 || st[3] !== "clear")
+    throw new Error("Tasmadan yeniden okunan alanlar silinmemiş görünüyor: " + st[0]);
+  return CLEAR_SUMMARY;
+}
+
 /** Write the whole list to the tracker on `con`, then read it back. */
 export async function writeFence(con: LineConsole, zones: Zone[],
                                  onStep: (done: number, total: number) => void = () => {}): Promise<FenceSummary> {

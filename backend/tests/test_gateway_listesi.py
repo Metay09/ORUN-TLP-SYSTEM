@@ -146,6 +146,13 @@ class GatewayListTests(unittest.TestCase):
         for bad in (dict(body, areas=0), dict(body, areas=9), dict(body, digest="xyz"),
                     dict(body, zones=[{"id": "z1", "name": "a"}]), dict(body, device="bad")):
             self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/fence", token, bad)[0], 400)
+        # Alanlar tasmadan silinince (APP FENCE CLEAR): 0 alan, 0 köşe, boş liste.
+        cleared = dict(body, digest="e3b0c44298fc1c14", areas=0, vertices=0, zones=[])
+        self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/fence", token, cleared)[0], 200)
+        got = self.req(self.account, "GET", "/api/v1/devices/fences", token)[1]["fences"]["0E8ADE7E71531AA3"]
+        self.assertEqual((got["areas"], got["vertices"], got["zones"]), (0, 0, []))
+        self.assertEqual(self.req(self.account, "POST", "/api/v1/devices/fence", token,
+                                  dict(cleared, vertices=3))[0], 400)
 
     def test_device_settings_live_in_the_account(self):
         """4b: istenen ayar ve cihazdan okunan değer hesapta; toplu yazılabilir."""

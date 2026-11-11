@@ -5,7 +5,7 @@ import type { LineConsole } from "./addTracker.ts";
 import type { OpTarget, OpVia, FencePayload } from "./deviceOps.ts";
 import type { SettingValues } from "./deviceSettings.ts";
 import { bleSettingWriter, bleWriteFence, type Exchange, type KeyFor } from "./bleWrite.ts";
-import { DeviceRejected, writeFence, type FenceSummary } from "./fenceUsb.ts";
+import { clearFence, DeviceRejected, writeFence, type FenceSummary } from "./fenceUsb.ts";
 import { usbWriter, writeWaiting, type SettingWriter } from "./trackerSettings.ts";
 import type { Zone } from "./zones.ts";
 
@@ -47,7 +47,7 @@ export async function deliver(w: SettingWriter, writeZones: (zones: Zone[]) => P
       const sum = await writeZones(zones);
       await d.recordFence(sum, p.zones.map((z) => ({ id: z.id, name: z.name })));
       await d.result(d.openFence.op, "applied");
-      out.wrote.push(`alanlar (${sum.areas})`);
+      out.wrote.push(sum.areas ? `alanlar (${sum.areas})` : "alanlar silindi");
     } catch (e) {
       if (e instanceof DeviceRejected) await d.result(d.openFence.op, "rejected", short(e));
       out.problems.push(short(e));
@@ -57,12 +57,17 @@ export async function deliver(w: SettingWriter, writeZones: (zones: Zone[]) => P
 }
 
 export function deliverUsb(con: LineConsole, d: DeliverDeps): Promise<Delivered> {
-  return deliver(usbWriter(con), (zones) => writeFence(con, zones), d);
+  // An operation with no zones is an explicit "remove all zones" (Alanlar → Tasmalara uygula).
+  return deliver(usbWriter(con), (zones) => (zones.length ? writeFence(con, zones) : clearFence(con)), d);
 }
 
 /** 4c-2: aynısı Bluetooth'tan (hesaptaki telefon, tasmanın imzalı onayı). */
 export function deliverBle(exchange: Exchange, keyFor: KeyFor, device: string, d: DeliverDeps): Promise<Delivered> {
-  return deliver(bleSettingWriter(exchange, keyFor, device), (zones) => bleWriteFence(exchange, keyFor, device, zones), d);
+  return deliver(bleSettingWriter(exchange, keyFor, device), (zones) => {
+    // The collar's Bluetooth writer takes a full list only; removing all zones is USB for now.
+    if (!zones.length) throw new Error("Alanları silmek şimdilik yalnız USB ile: tasmayı kabloyla bağla.");
+    return bleWriteFence(exchange, keyFor, device, zones);
+  }, d);
 }
 
 export const VIA_USB: OpVia = "usb";

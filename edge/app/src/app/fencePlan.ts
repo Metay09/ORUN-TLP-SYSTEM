@@ -29,15 +29,19 @@ export function trackerFencePlans(book: TargetBook, zones: Zone[],
 
 /** Trackers whose zones need sending (never sent, or changed since). */
 export function needsSending(plans: TrackerFence[]): TrackerFence[] {
-  return plans.filter((p) => p.state === "never" || p.state === "stale");
+  return plans.filter((p) => p.state === "never" || p.state === "stale" || p.state === "clear");
 }
+
+/** The digest an operation carries: the zones', or the empty list's for a clear. */
+export const opDigest = (p: TrackerFence): string => p.digest ?? fenceDigest([]);
 
 /**
  * Trackers whose zones differ from what they hold and are not already queued
  * with exactly these zones (`queued`: device → digest of its open operation).
  */
 export function toApply(plans: TrackerFence[], queued: Map<string, string> = new Map(), only?: string): TrackerFence[] {
-  return plans.filter((p) => (p.state === "stale" || p.state === "never") && !p.errors.length && p.zones.length > 0 &&
-    queued.get(p.device.toUpperCase()) !== p.digest &&
+  return plans.filter((p) => ((p.state === "stale" || p.state === "never") && !p.errors.length && p.zones.length > 0 ||
+      p.state === "clear") &&
+    queued.get(p.device.toUpperCase()) !== opDigest(p) &&
     (!only || p.device.toUpperCase() === only.toUpperCase()));
 }

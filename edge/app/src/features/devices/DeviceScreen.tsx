@@ -176,9 +176,9 @@ export function DeviceScreen({ id, ble }: { id: string; ble?: string }) {
           ))}
           <Cell title="Alanlar" wrapSub
             sub={fence ? (queuedFence.has(up) ? "Sırada · tasmaya bağlanınca işlenir" : stateLine(fence)) : "Bu tasmaya gidecek alan yok"}
-            subTone={fence && (fence.state === "stale" || fence.state === "never") ? "aging" : undefined}
+            subTone={fence && (fence.state === "stale" || fence.state === "never" || fence.state === "clear") ? "aging" : undefined}
             trail={<CaretRight size={16} color="var(--mute)" />}
-            onClick={() => (fence && (fence.state === "stale" || fence.state === "never") && !queuedFence.has(up) ? setSending(true) : nav.push({ to: "zones" }))} />
+            onClick={() => (fence && (fence.state === "stale" || fence.state === "never" || fence.state === "clear") && !queuedFence.has(up) ? setSending(true) : nav.push({ to: "zones" }))} />
           {fence?.record && fence.record.zones.length > 0 && (
             <KV k="Tasmadaki alanlar">{fence.record.zones.map((z) => z.name).join(", ")}</KV>
           )}

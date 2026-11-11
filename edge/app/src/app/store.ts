@@ -170,8 +170,8 @@ export function useModel(): Model {
   const zoneSet = useMemo(() => checkSet(zones), [zones]);
   const grazingNow = grazing(graze, now) || (graze.until !== null && graze.until > Date.now());
   const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
-  const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now, fence, grazing: grazingNow, names }),
-    [points, book, assets, now, fence, grazingNow, names]);
+  const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now, fence, grazing: grazingNow, names, unlocated }),
+    [points, book, assets, now, fence, grazingNow, names, unlocated]);
   const coverage = useMemo(() => coverageCells(points), [points]);
   // The snapshot changes on every log line; recompute only on what matters.
   const station = useMemo(() => stationOf(snap, placeMap),

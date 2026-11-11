@@ -71,7 +71,17 @@ export function ZonesScreen() {
           <button className="btn primary" onClick={() => nav.drawZone(null)}><Plus size={18} weight="bold" />{tr.zones.add}</button>
           <span className="fine">{tr.zones.rules}</span>
         </Empty>
-      ) : (
+      ) : null}
+      {!m.zones.length && changed.length > 0 && (
+        <Card pad>
+          <div className="stack">
+            <span className="sm strong t-aging">{changed.length} tasmada silinen alanlar hâlâ duruyor</span>
+            <span className="fine">{changed.map((p) => p.name).join(", ")} · Alanı uygulamadan silmek tasmayı değiştirmez; tasmadan silmek için uygula ve tasmayı USB ile bağla.</span>
+            <button className="btn primary wide" onClick={() => setSending(true)}>Tasmalardan sil</button>
+          </div>
+        </Card>
+      )}
+      {!m.zones.length ? null : (
         <>
           <Section title={tr.zones.capacity} />
           <Card pad>

@@ -13,6 +13,7 @@ import { fmt, tr } from "./i18n/tr.ts";
 import type { Animal, AnimalStatus, AssetProfile, BatteryLevel, Freshness, Observation } from "./model.ts";
 import { blankProfile } from "./stores.ts";
 import { zoneAt, type Fence } from "./zones.ts";
+import type { RecordId } from "../core/points.ts";
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -88,9 +89,11 @@ export interface HerdInput {
   grazing?: boolean;    // serbest otlatma on: outside is not an alarm
   /** 2d: names kept in the account, by device id (upper-case hex). */
   names?: Record<string, string>;
+  /** Records without a position: the collar was heard even when GNSS found no fix. */
+  unlocated?: RecordId[];
 }
 
-export function buildHerd({ points, profiles, assetOf, now, fence, names }: HerdInput): Animal[] {
+export function buildHerd({ points, profiles, assetOf, now, fence, names, unlocated = [] }: HerdInput): Animal[] {
   const by = new Map<string, { device: string; list: Observation[] }>();
   for (const p of points) {
     const t = epochMs(p.time);
@@ -98,6 +101,22 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names }: Herd
     let e = by.get(asset);
     if (!e) { e = { device: p.tracker, list: [] }; by.set(asset, e); }
     e.list.push(p);
+  }
+  // Newest record without a position, per asset (the collar was heard).
+  const heardBy = new Map<string, number>(), heardAll = new Map<string, number[]>();
+  const faultBy = new Map<string, boolean>();   // newest record without a position: GNSS failed / no GNSS time
+  for (const r of unlocated) {
+    // A collar whose GNSS never gave time has no record time: when it reached the gateway is when it was heard.
+    const own = epochMs(r.time), t = Number.isFinite(own) ? own : epochMs(r.received ?? null);
+    if (!Number.isFinite(t) || t > now + 10 * MIN) continue;
+    const asset = assetOf(r.tracker, t);
+    if ((heardBy.get(asset) ?? -Infinity) < t) {
+      heardBy.set(asset, t);
+      faultBy.set(asset, !Number.isFinite(own) || (r.gnssFailures ?? 0) > 0);
+    }
+    if (!heardAll.has(asset)) heardAll.set(asset, []);
+    heardAll.get(asset)!.push(t);
+    if (!by.has(asset)) by.set(asset, { device: r.tracker, list: [] });
   }
   // Named animals without records yet still appear (waiting for a first fix).
   for (const id of Object.keys(profiles)) if (!by.has(id)) by.set(id, { device: id, list: [] });
@@ -108,7 +127,14 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names }: Herd
     const last = timed.length ? timed[timed.length - 1] : (list.length ? list[list.length - 1] : null);
     const lastTime = last && Number.isFinite(epochMs(last.time)) ? epochMs(last.time) : null;
     const periodS = last?.period_s ?? 60;
-    const freshness = freshnessOf(lastTime, periodS, now);
+    const unloc = heardBy.get(id) ?? null;
+    const lastReport = unloc !== null && (lastTime === null || unloc > lastTime) ? unloc : lastTime;
+    // Heard recently, but the position is old: GNSS finds no fix (indoors, under cover).
+    const posFresh = freshnessOf(lastTime, periodS, now);
+    const noFix = lastReport !== null && lastReport !== lastTime &&
+      (posFresh === "stale" || posFresh === "none") && freshnessOf(lastReport, periodS, now) !== "stale";
+    const freshness = noFix ? freshnessOf(lastReport, periodS, now) : posFresh;
+    const gpsFault = noFix && (faultBy.get(id) ?? false);
     // Solar collars recharge by day: the level is the worst of the last 24 h
     // (what the night will bring), the percentage is the newest record.
     const bat = batteryOf(last);
@@ -120,38 +146,44 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names }: Herd
       }
     }
     const profile = profiles[id] ?? blankProfile(id);
-    const device = last?.tracker ?? (profiles[id] ? id : null);
+    const device = last?.tracker ?? by.get(id)?.device ?? (profiles[id] ? id : null);
     // The account's name wins; then the phone's own; else the Bluetooth name.
     const given = (device && names?.[device.toUpperCase()]) || profile.name.trim();
     const named = Boolean(given);
     const name = named ? given : bleName(device ?? id);
-    const lost = lastTime !== null && now - lastTime > lostLimit(periodMs(periodS));
+    const heardAt = lastReport ?? lastTime;
+    const lost = heardAt !== null && now - heardAt > lostLimit(periodMs(periodS));
     // Geofence alarm ownership belongs to the TRACKER, not to the app's
     // history/position projection. Keep geometric membership informational.
     const zone = fence && last ? zoneAt(fence, last)?.name ?? null : null;
 
     let status: AnimalStatus;
-    if (!last) status = "waiting";
+    if (!last && !noFix) status = "waiting";
     else if (bat.level === "critical") status = "battery-critical";
     else if (lost) status = "lost";
+    else if (noFix) status = "aging";
     else if (freshness === "stale") status = "silent";
     else if (freshness === "aging") status = "aging";
     else if (bat.level === "low") status = "battery-low";
     else status = "ok";
 
     let seen: string, short: string;
-    if (!last) { seen = tr.status.waiting; short = tr.status.short.waiting; }
+    if (noFix) {
+      seen = (gpsFault ? tr.status.gpsFault : tr.status.noFix)(fmt.ago(lastReport!, now), lastTime !== null ? fmt.ago(lastTime, now) : null);
+      short = tr.status.short.noFix;
+    }
+    else if (!last) { seen = tr.status.waiting; short = tr.status.short.waiting; }
     else if (lastTime === null) { seen = tr.status.noClock; short = "?"; }
-    else if (lost) { seen = tr.status.lostFor(fmt.since(lastTime, now)); short = tr.status.short.lost; }
+    else if (lost) { seen = tr.status.lostFor(fmt.since(heardAt!, now)); short = tr.status.short.lost; }
     else if (freshness === "fresh" || freshness === "aging") { seen = tr.status.seenAgo(fmt.ago(lastTime, now)); short = fmt.ago(lastTime, now); }
-    else { seen = tr.status.silentFor(fmt.since(lastTime, now)); short = tr.status.short.silent(fmt.duration(now - lastTime)); }
+    else { seen = tr.status.silentFor(fmt.since(heardAt!, now)); short = tr.status.short.silent(fmt.duration(now - heardAt!)); }
     // The chip names the problem, not the time, when the battery is the issue.
     if (status === "battery-critical") short = tr.status.batteryCritical;
     else if (status === "battery-low") short = tr.status.batteryLow;
 
     herd.push({
       id, device, profile, name, named, initials: named ? initialsOf(name) : "", color: profile.color,
-      points: timed, last, lastTime, periodS, freshness,
+      points: timed, last, lastTime, lastReport, noFix, gpsFault, heardOnly: (heardAll.get(id) ?? []).sort((x, y) => x - y), periodS, freshness,
       freshRatio: freshRatio(lastTime, periodS, now), status, seen, short,
       battery: bat.level, batteryPercent: bat.percent,
       activeShare: freshness === "fresh" ? activeShare(last) : null,

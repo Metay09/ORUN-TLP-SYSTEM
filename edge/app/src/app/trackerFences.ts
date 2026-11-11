@@ -12,11 +12,12 @@ export interface FenceServer {
   recordFence(device: string, r: Omit<FenceRecord, "appliedAt">): Promise<void>;
 }
 
-export type FenceState = "current" | "stale" | "never" | "none";
+export type FenceState = "current" | "stale" | "never" | "none" | "clear";
 
-/** none: this tracker gets no zones; never: has zones to get but none sent yet. */
+/** none: this tracker gets no zones; never: has zones to get but none sent yet;
+ * clear: it gets no zones but still holds some (removed in the app, not yet on the collar). */
 export function fenceState(rec: FenceRecord | null, planDigest: string | null): FenceState {
-  if (!planDigest) return "none";
+  if (!planDigest) return rec && rec.areas > 0 ? "clear" : "none";
   if (!rec) return "never";
   return rec.digest === planDigest ? "current" : "stale";
 }

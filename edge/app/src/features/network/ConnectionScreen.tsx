@@ -218,7 +218,7 @@ export function ConnectionScreen() {
   const health = transferHealth({
     now: m.now,
     trackers: m.herd.filter((a) => a.device).map((a) => ({
-      id: a.device!, lastTime: m.devices.find((d) => d.id === a.device)?.lastTime ?? null, periodS: a.periodS,
+      id: a.device!, lastTime: a.lastReport ?? a.lastTime, periodS: a.periodS, noFix: a.noFix,
       missing: missingBy.get(a.device!.toUpperCase()),
     })),
     collars: Object.values(collarReadings),
@@ -244,15 +244,16 @@ export function ConnectionScreen() {
     const id = a.device!, dev = m.devices.find((d) => d.id === id);
     const waitingN = pendingKeys(settings[id.toUpperCase()]).length;
     const fence = fencePlans.find((f) => f.device.toUpperCase() === id.toUpperCase());
-    const staleFence = fence && (fence.state === "stale" || fence.state === "never");
-    const silent = !dev?.lastTime || m.now - dev.lastTime > 3600_000;
+    const staleFence = fence && (fence.state === "stale" || fence.state === "never" || fence.state === "clear");
+    const heard = a.lastReport ?? dev?.lastTime ?? null;
+    const silent = !heard || m.now - heard > 3600_000;
     const connected = session?.device === id.toUpperCase() && session.link.alive;
     const bits = [connected ? "Bluetooth ile bağlı" : "",
-                  dev?.lastTime ? fmt.ago(dev.lastTime, m.now) : "hiç haber yok",
+                  heard ? fmt.ago(heard, m.now) : "hiç haber yok", a.gpsFault ? "GPS çalışmıyor" : a.noFix ? "konum bulamıyor" : "",
                   dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}` : "",
                   waitingN ? `${waitingN} ayar sırada` : "", queued.has(id.toUpperCase()) ? "alanlar sırada" : staleFence ? "alanlar değişti" : ""].filter(Boolean);
     const low = dev?.batteryPercent !== null && dev?.batteryPercent !== undefined && dev.batteryPercent < 20;
-    return { id, name: a.name, sub: bits.join(" · "), connected, problem: waitingN > 0 || !!staleFence || silent || low };
+    return { id, name: a.name, sub: bits.join(" · "), connected, problem: waitingN > 0 || !!staleFence || silent || low || a.noFix };
   }).sort((x, y) => Number(y.connected) - Number(x.connected) || Number(y.problem) - Number(x.problem) || x.name.localeCompare(y.name, "tr"));
 
   const gwRows = (() => {

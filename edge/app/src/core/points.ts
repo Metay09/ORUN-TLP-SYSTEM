@@ -24,7 +24,12 @@ export interface Point {
 }
 /** A record that arrived without a position (no GNSS fix): kept only so that
  * sequence gaps (records still on the collar) are not miscounted. */
-export interface RecordId { tracker: string; incarnation?: string; seq: number; time: string | null; }
+export interface RecordId {
+  tracker: string; incarnation?: string; seq: number; time: string | null;
+  /** When it reached the gateway (a collar without GNSS time has no record time). */
+  received?: string | null;
+  gnssFailures?: number | null;
+}
 export interface PointsResult { count: number; skipped: number; now: string; points: Point[]; unlocated?: RecordId[]; }
 
 const epoch = (iso: string | null) => (iso ? Date.parse(iso) / 1000 : null);
@@ -68,7 +73,9 @@ export async function buildPoints(db: Db, nowSeconds: number): Promise<PointsRes
     const d = describePeriodic(fromHex(String(r.device_id)), fromHex(String(r.plaintext)));
     if (d.lat === null || d.lon === null) {
       skipped++;
-      unlocated.push({ tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence, time: d.time });
+      const heard = r.first_seen_utc === null ? null : Number(r.first_seen_utc);
+      unlocated.push({ tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence, time: d.time,
+        received: heard ? isoSeconds(heard) : null, gnssFailures: d.gnss_failures ?? null });
       continue;
     }
     const seen = r.first_seen_utc === null ? null : Number(r.first_seen_utc);

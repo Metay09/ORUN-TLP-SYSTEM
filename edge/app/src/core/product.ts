@@ -144,6 +144,8 @@ export interface Periodic {
   sats: number | null; hdop: number | null; fix_age_s: number | null;
   battery_mv: number | null; battery: string | null;
   active_s: number | null; covered_s: number | null; source: string;
+  /** HEALTH_VALID: GNSS failures in this report period (null: no health in the record). */
+  gnss_failures?: number | null;
 }
 
 export function isoSeconds(epochSeconds: number): string {
@@ -169,6 +171,7 @@ export function describePeriodic(device: Uint8Array, p: Uint8Array): Periodic {
   }
   if (flags & 16) { out.covered_s = u32(p, 44); out.active_s = u32(p, 48); }
   if (flags & 32) { out.battery_mv = u16(p, 56); out.battery = BATTERY[p[3]] ?? "?"; }
+  out.gnss_failures = flags & 64 ? p[60] : null;
   return out;
 }
 

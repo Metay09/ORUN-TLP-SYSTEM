@@ -35,8 +35,11 @@ def clean(body: object) -> tuple[str, str, int, int, list[dict]]:
     if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
         raise BadFence("digest")
     for v, hi in ((areas, 8), (vertices, 64)):
-        if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= hi:
+        if not isinstance(v, int) or isinstance(v, bool) or not 0 <= v <= hi:
             raise BadFence("count")
+    # 0 areas = the tracker's zones were removed (APP FENCE CLEAR); both counts together.
+    if (areas == 0) != (vertices == 0):
+        raise BadFence("count")
     if not isinstance(zones, list) or len(zones) != areas:
         raise BadFence("zones")
     out = []

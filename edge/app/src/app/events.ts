@@ -56,6 +56,8 @@ function animalEvents(a: Animal, cov: Coverage | null, now: number): AppEvent[] 
     const t0 = epochMs(pts[i - 1].time), t1 = epochMs(pts[i].time);
     const T = periodMs(pts[i - 1].period_s), gap = t1 - t0;
     if (gap <= agingLimit(T)) continue;
+    // Reports without a position inside the gap: the collar was heard, GNSS had no fix.
+    if ((a.heardOnly ?? []).some((h) => h > t0 && h < t1)) continue;
     const missed = Math.max(1, Math.round(gap / T) - 1);
     const lost = gap > lostLimit(T);
     out.push(ev(lost ? "lost" : "silent", lost ? "danger" : "warn", a, t0, t1,
@@ -63,10 +65,18 @@ function animalEvents(a: Animal, cov: Coverage | null, now: number): AppEvent[] 
       tr.events.silent.detail(fmt.duration(gap), missed), arrived(pts[i].received)));
   }
   const last = pts[pts.length - 1], tl = epochMs(last.time), T = periodMs(last.period_s);
-  if (now - tl > agingLimit(T)) {
-    const lost = now - tl > lostLimit(T);
-    const missed = Math.max(1, Math.round((now - tl) / T) - 1);
-    let detail = lost ? tr.events.lost.detail(fmt.since(tl, now)) : tr.events.silentNow.detail(fmt.since(tl, now), missed);
+  if (a.noFix && a.lastReport !== null) {
+    // Heard, but without a position: not silent. One open warning, its own id.
+    const words = a.gpsFault ? tr.events.gpsFault : tr.events.noFix;
+    const e = ev("silent", "warn", a, tl, null, words.title(a.name),
+      words.detail(fmt.ago(a.lastReport, now), fmt.since(tl, now)), arrived(last.received));
+    e.id = `${a.gpsFault ? "gpsfault" : "nofix"}:${a.id}:${tl}`;
+    out.push(e);
+  } else if (now - Math.max(tl, a.lastReport ?? tl) > agingLimit(T)) {
+    const heard = Math.max(tl, a.lastReport ?? tl);
+    const lost = now - heard > lostLimit(T);
+    const missed = Math.max(1, Math.round((now - heard) / T) - 1);
+    let detail = lost ? tr.events.lost.detail(fmt.since(heard, now)) : tr.events.silentNow.detail(fmt.since(heard, now), missed);
     const cls = cov ? coverageAt(cov, last.lat, last.lon) : null;
     if (cls === "weak" || cls === "none" || last.link === "cut") detail += ` · ${tr.events.weakHint}`;
     out.push(ev(lost ? "lost" : "silent", lost ? "danger" : "warn", a, tl, null,
