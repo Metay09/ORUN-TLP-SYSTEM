@@ -4,6 +4,7 @@
   python3 tools/orun_cihaz_kontrol.py oku --port P --out once.json
   python3 tools/orun_cihaz_kontrol.py karsilastir once.json sonra.json
   python3 tools/orun_cihaz_kontrol.py rol --port P tasma|gateway   # boş cihaz (Y2a)
+  python3 tools/orun_cihaz_kontrol.py pil --port P [--izle 60]     # pil ölçümü (Pil 1)
 
 "oku" cihaza yalnız okuma soruları sorar (BENCH?, PRODUCT STORE?, APP DEVICE?);
 hiçbir şey yazmaz, silmez. Anahtarın kendisi hiçbir zaman okunmaz ya da
@@ -118,6 +119,64 @@ def compare(before: dict, after: dict) -> list[tuple[bool, str]]:
     return res
 
 
+BATTERY = re.compile(r"BATTERY state=(\w+) percent_est=(\d+) mv=(\d+) raw=(\d+)")
+BATTERY_SOURCE = re.compile(r"BATTERY SOURCE usb=(\w+) quiet=(\w+) loaded=(\d+) calibrations=(\d+) "
+                            r"slow_raw=(\d+) slow_mv=(\d+)")
+BATTERY_PEAK = re.compile(r"BATTERY USB PEAK raw=(\d+) mv=(\d+) slow_raw=(\d+) slow_mv=(\d+)")
+
+
+def parse_battery(lines: list[str]) -> dict:
+    """BATTERY? cevabı (Pil 1): eski yöntem, 40 µs okuma, USB ve USB'deyken en yüksek."""
+    out: dict = {}
+    for line in lines:
+        if m := BATTERY.search(line):
+            out.update(state=m[1], percent=int(m[2]), mv=int(m[3]), raw=int(m[4]))
+        elif m := BATTERY_SOURCE.search(line):
+            out.update(usb=m[1] == "yes", quiet=m[2] == "yes", loaded=int(m[3]),
+                       calibrations=int(m[4]), slow_raw=int(m[5]), slow_mv=int(m[6]))
+        elif m := BATTERY_PEAK.search(line):
+            out.update(peak_mv=int(m[2]), peak_slow_mv=int(m[4]))
+    return out
+
+
+def battery_report(b: dict) -> list[str]:
+    """Türkçe özet. Şarjın sabit voltaj evresinde pil uçları 4,20 V (±%1) olur."""
+    if "mv" not in b:
+        return ["Cihaz pil ölçümünü bildirmedi (yazılımı eski olabilir)."]
+    out = [f"USB: {'takılı' if b.get('usb') else 'yok'}",
+           f"Eski yöntem (3 µs, 1,73): {b['mv']} mV (%{b['percent']})"]
+    if "slow_mv" in b:
+        diff = (b["slow_mv"] - b["mv"]) / b["mv"] * 100 if b["mv"] else 0.0
+        out.append(f"Yeni yöntem (40 µs, 2,5/1,5): {b['slow_mv']} mV (fark {diff:+.1f}%)")
+        out.append(f"Son okuma sakin anda mı: {'evet' if b.get('quiet') else 'hayır'} · "
+                   f"yüklüyken alınan: {b.get('loaded', 0)} · kalibrasyon: {b.get('calibrations', 0)}")
+    if b.get("peak_mv"):
+        out.append(f"USB'deyken en yüksek: eski {b['peak_mv']} mV, yeni {b['peak_slow_mv']} mV "
+                   "(şarj sabit voltajdayken gerçek değer 4200 mV ±42)")
+    return out
+
+
+def read_battery(port: str, seconds: float = 3.0) -> list[str]:
+    import serial
+    lines: list[str] = []
+    with serial.Serial(port, 115200, timeout=0.25, write_timeout=2, exclusive=True) as ser:
+        try:
+            ser.rts = False
+            ser.dtr = True
+        except OSError:
+            pass
+        time.sleep(0.8)
+        ser.reset_input_buffer()
+        ser.write(b"BATTERY?\n")
+        ser.flush()
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            text = ser.readline().decode("utf8", "replace").strip()
+            if text:
+                lines.append(text)
+    return lines
+
+
 def role_command(role: str) -> str:
     """Boş cihazın rolü: kayıtlı hizmet niyeti (tasma: konum takibi; gateway: alıcı)."""
     return {"tasma": "APP SERVICES T", "gateway": "APP SERVICES A"}[role]
@@ -184,7 +243,22 @@ def main() -> int:
     r2 = sub.add_parser("rol")
     r2.add_argument("--port", required=True)
     r2.add_argument("rol", choices=("tasma", "gateway"))
+    r3 = sub.add_parser("pil")
+    r3.add_argument("--port", required=True)
+    r3.add_argument("--izle", type=int, default=0, help="dakika boyunca her dakika bir satır yaz")
     a = ap.parse_args()
+    if a.cmd == "pil":
+        b = parse_battery(read_battery(a.port))
+        print("\n".join(battery_report(b)))
+        for _ in range(a.izle):
+            time.sleep(60)
+            b = parse_battery(read_battery(a.port))
+            if "mv" in b:
+                print(time.strftime("%H:%M"), f"usb={'var' if b.get('usb') else 'yok'}",
+                      f"eski={b['mv']}", f"yeni={b.get('slow_mv')}",
+                      f"en_yuksek_eski={b.get('peak_mv', 0)}", f"en_yuksek_yeni={b.get('peak_slow_mv', 0)}",
+                      flush=True)
+        return 0 if "mv" in b else 2
     if a.cmd == "rol":
         info = parse(read(a.port))
         if info.get("kind") != "unassigned":

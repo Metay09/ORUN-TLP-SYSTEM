@@ -3,6 +3,9 @@
 #include <bluefruit.h>
 #include <math.h>
 #include <string.h>
+#if defined(NRF52_SERIES)
+#include <nrf.h>  // POWER.USBREGSTATUS (Pil 1)
+#endif
 
 #include "accelerometer_manager.h"
 #include "activity_capture.h"
@@ -1102,6 +1105,36 @@ uint32_t runtimeTrackingIntervalMs(uint32_t base_seconds,
 // the battery rule to the interval. Like a config change, the current
 // acquisition is not disturbed; the next due point uses the new interval.
 // Every reading also goes into the periodic battery log line.
+// Pil 1: the battery is read only while nothing draws a burst of current:
+// no radio transmission and no GNSS receiver running (acquiring, or tracking
+// continuously in kIdle). Sleeping or powered-off GNSS is quiet.
+bool batteryQuiet() {
+  if (radio_manager.isTransmitting()) return false;
+  using GS = orun_tlp::GnssManager::State;
+  switch (gnss_manager.state()) {
+    case GS::kPowerOnWait:
+    case GS::kDetecting:
+    case GS::kIdle:
+    case GS::kStarting:
+    case GS::kAcquiring:
+    case GS::kFixAvailable:
+      return false;
+    default:
+      return true;
+  }
+}
+
+// USB supply present (nRF52840 POWER.USBREGSTATUS.VBUSDETECT), as Meshtastic
+// and RNode read it on the RAK4631. Whether the RAK19007 solar input also
+// reaches VBUS is not documented; the bench decides.
+bool usbPowerPresent() {
+#if defined(NRF52_SERIES)
+  return (NRF_POWER->USBREGSTATUS & POWER_USBREGSTATUS_VBUSDETECT_Msk) != 0;
+#else
+  return false;  // host build
+#endif
+}
+
 void handleBatteryReading() {
   const uint32_t mv = battery_monitor.millivolts();
   if (battery_state.update(mv)) {
@@ -2179,6 +2212,22 @@ void printBatteryDiagnostic() {
                 static_cast<unsigned long>(battery_monitor.raw()),
                 static_cast<unsigned long>(age_ms),
                 static_cast<unsigned long>(battery_monitor.readings()));
+  // Pil 1 bench line (kept short: Print::printf has a 256-byte buffer).
+  Serial.printf("BATTERY SOURCE usb=%s quiet=%s loaded=%lu calibrations=%lu "
+                "slow_raw=%lu slow_mv=%lu\n",
+                usbPowerPresent() ? "yes" : "no",
+                battery_monitor.lastQuiet() ? "yes" : "no",
+                static_cast<unsigned long>(battery_monitor.loadedReadings()),
+                static_cast<unsigned long>(battery_monitor.calibrations()),
+                static_cast<unsigned long>(battery_monitor.slowRaw()),
+                static_cast<unsigned long>(battery_monitor.slowMillivolts()));
+  Serial.printf("BATTERY USB PEAK raw=%lu mv=%lu slow_raw=%lu slow_mv=%lu\n",
+                static_cast<unsigned long>(battery_monitor.usbPeakRaw()),
+                static_cast<unsigned long>(orun_tlp::batteryMillivoltsFromRaw(
+                    battery_monitor.usbPeakRaw())),
+                static_cast<unsigned long>(battery_monitor.usbPeakSlowRaw()),
+                static_cast<unsigned long>(orun_tlp::batteryMillivoltsFromSlowRaw(
+                    battery_monitor.usbPeakSlowRaw())));
 }
 
 void printGnssSleepDiagnostic() {
@@ -4086,7 +4135,8 @@ void loop() {
     printActivityAutoDiagnostic();
   }
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kBattery);
-  if (battery_monitor.poll(orun_tlp::monotonic::nowMs())) handleBatteryReading();
+  if (battery_monitor.poll(orun_tlp::monotonic::nowMs(), batteryQuiet(), usbPowerPresent()))
+    handleBatteryReading();
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kUsbCommands);
   serviceLoopHealthReports();
   pollRoleCommands();

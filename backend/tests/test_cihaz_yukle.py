@@ -94,3 +94,18 @@ class Kontrol(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PilOlcumTest(unittest.TestCase):
+    """Pil 1: BATTERY? cevabından Türkçe özet."""
+
+    def test_parse_and_report(self):
+        lines = ["BATTERY state=NORMAL percent_est=86 mv=4060 raw=3203 age_ms=1200 readings=40 calibrated=no",
+                 "BATTERY SOURCE usb=yes quiet=yes loaded=2 calibrations=3 slow_raw=3325 slow_mv=4059",
+                 "BATTERY USB PEAK raw=3310 mv=4195 slow_raw=3440 slow_mv=4199"]
+        b = k.parse_battery(lines)
+        self.assertEqual((b["mv"], b["slow_mv"], b["usb"], b["peak_slow_mv"]), (4060, 4059, True, 4199))
+        text = "\n".join(k.battery_report(b))
+        self.assertIn("USB: takılı", text)
+        self.assertIn("4199", text)
+        self.assertEqual(k.battery_report({}), ["Cihaz pil ölçümünü bildirmedi (yazılımı eski olabilir)."])
