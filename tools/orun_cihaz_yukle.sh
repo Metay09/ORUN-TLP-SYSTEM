@@ -4,6 +4,7 @@
 #   bash tools/orun_cihaz_yukle.sh                 # tek cihazsa onu, birden çoksa numarayla seçtirir
 #   bash tools/orun_cihaz_yukle.sh --port /dev/serial/by-id/usb-RAKwireless_...-if00
 #   bash tools/orun_cihaz_yukle.sh --evet          # onay sormadan
+#   bash tools/orun_cihaz_yukle.sh --derle         # aynı sürüm derlenmiş olsa da yeniden derle
 #
 # Sırası: cihazı tanı (tasma mı gateway mi) → durumunu oku → doğru yazılımı
 # derle → USB'den yükle → aynı cihaz mı, anahtarı ve kayıtları yerinde mi diye
@@ -17,10 +18,12 @@ LOG="$HOME/orun-cihaz-yukle.log"
 PC_EDGE=orun-pc-edge.service
 PORT=""
 YES=0
+FORCE_BUILD=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --port) PORT="$2"; shift 2 ;;
     --evet) YES=1; shift ;;
+    --derle) FORCE_BUILD=1; shift ;;
     *) echo "Bilinmeyen seçenek: $1"; exit 2 ;;
   esac
 done
@@ -174,17 +177,33 @@ progress_run() {
 }
 
 # --- 4. Derle ---
-say "Derleniyor ($ENV)"
-{ echo "=== $(date -Is) $ENV $SHA port=$PORT"; } >> "$LOG"
-if ! progress_run derle "$PIO" run -d "$FW" -e "$ENV"; then
-  tail -n 30 "$LOG"
-  fail "Derleme başarısız; cihaza hiçbir şey yüklenmedi. Ayrıntı: $LOG"
+# Her cihaza aynı yazılım (Y2a): bu git sürümü önceki cihaz için derlendiyse
+# yeniden derlenmez, aynı dosya yüklenir. Değiştirilmiş (commit edilmemiş)
+# dosya varsa hep derlenir.
+BUILD_DIR="$FW/.pio/build/$ENV"
+STAMP_FILE="$BUILD_DIR/orun-derlenen-surum"
+if git -C "$REPO" diff --quiet HEAD -- firmware 2>/dev/null; then BUILD_ID="$SHA"; else BUILD_ID=""; fi
+UPLOAD_ARGS=(-t upload)
+if [[ $FORCE_BUILD -eq 0 && -n "$BUILD_ID" && -f "$STAMP_FILE" && -f "$BUILD_DIR/firmware.zip" \
+      && "$(cat "$STAMP_FILE")" == "$BUILD_ID" ]]; then
+  say "Derleme atlandı: $SHA bu PC'de zaten derlendi (önceki cihaz için)"
+  { echo "=== $(date -Is) $ENV $SHA port=$PORT (derleme atlandı)"; } >> "$LOG"
+  UPLOAD_ARGS=(-t nobuild -t upload)
+else
+  say "Derleniyor ($ENV)"
+  { echo "=== $(date -Is) $ENV $SHA port=$PORT"; } >> "$LOG"
+  rm -f "$STAMP_FILE"
+  if ! progress_run derle "$PIO" run -d "$FW" -e "$ENV"; then
+    tail -n 30 "$LOG"
+    fail "Derleme başarısız; cihaza hiçbir şey yüklenmedi. Ayrıntı: $LOG"
+  fi
+  grep -E "^(RAM|Flash):" "$TMP/derle.log" | tail -2 || true
+  [[ -n "$BUILD_ID" ]] && echo "$BUILD_ID" > "$STAMP_FILE"
 fi
-grep -E "^(RAM|Flash):" "$TMP/derle.log" | tail -2 || true
 
 # --- 5. Yükle ---
 say "Yükleniyor (USB)"
-if ! progress_run yukle "$PIO" run -d "$FW" -e "$ENV" -t upload --upload-port "$PORT"; then
+if ! progress_run yukle "$PIO" run -d "$FW" -e "$ENV" "${UPLOAD_ARGS[@]}" --upload-port "$PORT"; then
   tail -n 30 "$LOG"
   fail "Yükleme başarısız. Cihazı çıkarıp takmadan TEKRAR DENEME; bu çıktıyı Claude'a gönder. Ayrıntı: $LOG"
 fi
