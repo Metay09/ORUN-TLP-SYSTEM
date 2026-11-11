@@ -416,12 +416,18 @@ int batteryCriticalScenario() {
         (uint64_t(mv) * battery_config::kAdcCounts * 1000U + kPerCount / 2) /
         kPerCount);
   };
-  // One minute of loop passes: exactly one new battery reading.
+  // Loop passes until exactly one new battery reading. Pil 1: a reading waits
+  // for a quiet moment (no transmission, no GNSS acquisition), at most
+  // kQuietWaitMaxMs past the minute, so the time per reading varies.
   auto minute = [] {
-    for (int i = 0; i < 60; ++i) {
+    const uint32_t before = battery_monitor.readings();
+    const uint32_t limit_s =
+        (battery_config::kReadingIntervalMs + battery_config::kQuietWaitMaxMs) / 1000U + 2U;
+    for (uint32_t i = 0; i < limit_s && battery_monitor.readings() == before; ++i) {
       test_now += 1000;
       loop();
     }
+    assert(battery_monitor.readings() == before + 1);
   };
   const uint32_t base_ms = config_store.config().tracking_interval_seconds * 1000UL;
   assert(battery_state.state() == BatteryState::kNormal);
