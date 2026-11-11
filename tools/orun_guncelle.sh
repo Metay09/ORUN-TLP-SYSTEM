@@ -187,8 +187,12 @@ npm run android
 APK_DIR="$REPO/edge/app/android/app/build/outputs/apk/debug"
 APK="$APK_DIR/app-debug.apk"
 [[ -f "$APK" ]] || fail "APK oluşmadı."
-OUT="$APK_DIR/ORUN-$SHA.apk"
-cp -f "$APK" "$OUT"
+# İndirme klasörü yalnız ORUN sürümlerini tutar (en yeni 5), sayfada en
+# yeni üstte büyük, eskiler altta tarihleriyle (tools/orun_apk_sayfa.py).
+APK_SITE="$RELEASES/apk"
+python3 "$REPO/tools/orun_apk_sayfa.py" ekle "$APK_SITE" "$APK" "$SHA" \
+  "$(git -C "$REPO" log -1 --format=%s)"
+OUT="$APK_SITE/ORUN-$SHA.apk"
 echo "APK: $OUT"
 
 # --- Telefona indirme (yalnız Tailscale ağı içinden) ---
@@ -200,9 +204,9 @@ fi
 for p in $(seq "$SERVE_PORT" $((SERVE_PORT + 9))); do
   if ! (exec 3<>"/dev/tcp/$IP/$p") 2>/dev/null; then SERVE_PORT=$p; break; fi
 done
-say "Telefondan indir: http://$IP:$SERVE_PORT/ORUN-$SHA.apk"
+say "Telefondan aç: http://$IP:$SERVE_PORT/  (en yeni sürüm en üstte: ORUN $SHA)"
 echo "İndirme bitince bu pencerede Ctrl+C'ye bas. (Yalnız Tailscale ağına açık; en fazla 15 dakika.)"
 # --foreground: Ctrl+C sunucuya ulaşsın (yoksa timeout onu ayrı süreç grubunda tutar).
 trap 'echo; echo "İndirme sunucusu kapandı."; exit 0' INT
-timeout --foreground 900 python3 -m http.server "$SERVE_PORT" --bind "$IP" --directory "$APK_DIR" || true
+timeout --foreground 900 python3 -m http.server "$SERVE_PORT" --bind "$IP" --directory "$APK_SITE" || true
 echo "İndirme sunucusu kapandı."
