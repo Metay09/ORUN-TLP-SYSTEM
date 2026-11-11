@@ -2,13 +2,14 @@
 // ve ölçülen süre yan yana, her birinin neye dayandığı yazar.
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { CaretRight } from "@phosphor-icons/react";
-import { batteryOutlook, batterySeries, smoothBattery } from "../../app/activity.ts";
+import { batteryOutlook, smoothBattery } from "../../app/activity.ts";
+import { deviceSettings } from "../../app/ownerAccountPilotRuntime.ts";
 import {
   batteryCapacity, expectedLife, lifeWord, MAH_MAX, MAH_MIN, measuredLife, PUBLISHED, USABLE,
 } from "../../app/batteryLife.ts";
 import { batteryPercent } from "../../app/herd.ts";
 import { fmt } from "../../app/i18n/tr.ts";
-import type { Observation } from "../../app/model.ts";
+import type { Animal } from "../../app/model.ts";
 import { useBack } from "../../app/nav.ts";
 import { Card, Cell, Dialog, KV, Section } from "../../ds/components.tsx";
 
@@ -19,18 +20,27 @@ const INFO =
   `uyumuyor (taban ~${PUBLISHED.baseAwakeMa} mA); gerçek uyku gelince (Y3) taban ~${PUBLISHED.baseSleepMa * 1000} µA olur. ` +
   `Ölçülen: sahada pilin günlük düşüşünden; USB'deki ya da güneşle dengede olan tasmada ölçülemez. Güneş katkısı katılmaz.`;
 
-export function BatteryLife({ device, intervalS, points, nowPct }: {
-  device: string; intervalS: number | null; points: Observation[]; nowPct: number | null;
+/** The report interval the collar is set to (what it reported, else what was asked), not one record's period. */
+export function useConfiguredInterval(a: Pick<Animal, "device" | "periodS"> | null, device?: string): number | null {
+  const all = useSyncExternalStore((fn) => deviceSettings.subscribe(fn), () => deviceSettings.snapshot());
+  const id = (device ?? a?.device ?? "").toUpperCase();
+  const e = id ? all[id] : undefined;
+  const v = e?.reported?.interval_s ?? e?.wanted?.interval_s;
+  return typeof v === "number" && v > 0 ? v : a?.periodS || null;
+}
+
+export function BatteryLife({ device, intervalS, series, nowPct }: {
+  device: string; intervalS: number | null; series: { t: number; mv: number }[]; nowPct: number | null;
 }) {
   const caps = useSyncExternalStore(batteryCapacity.subscribe, batteryCapacity.snapshot);
   const mAh = caps[device.toUpperCase()] ?? null;
   const [editing, setEditing] = useState(false);
   const now = Date.now();
   const outlook = useMemo(() => {
-    const pct = smoothBattery(batterySeries(points, now).map((b) => ({ t: b.t, p: batteryPercent(b.mv) }))
+    const pct = smoothBattery(series.map((b) => ({ t: b.t, p: batteryPercent(b.mv) }))
       .filter((x): x is { t: number; p: number } => x.p !== null));
     return batteryOutlook(pct, now);
-  }, [points]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [series]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const awake = mAh && intervalS ? expectedLife(mAh, intervalS, false) : null;
   const sleep = mAh && intervalS ? expectedLife(mAh, intervalS, true) : null;

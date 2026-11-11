@@ -105,11 +105,20 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names, unloca
   // Newest record without a position, per asset (the collar was heard).
   const heardBy = new Map<string, number>(), heardAll = new Map<string, number[]>();
   const faultBy = new Map<string, boolean>();   // newest record without a position: GNSS failed / no GNSS time
+  const extraBy = new Map<string, { o: Observation; t: number }[]>();   // records without a position, as reports
   for (const r of unlocated) {
     // A collar whose GNSS never gave time has no record time: when it reached the gateway is when it was heard.
     const own = epochMs(r.time), t = Number.isFinite(own) ? own : epochMs(r.received ?? null);
     if (!Number.isFinite(t) || t > now + 10 * MIN) continue;
     const asset = assetOf(r.tracker, t);
+    const o: Observation = {
+      tracker: r.tracker, incarnation: r.incarnation, seq: r.seq, time: r.time, lat: NaN, lon: NaN, alt_m: null,
+      sats: null, hdop: null, fix_age_s: null, battery_mv: r.battery_mv ?? null, battery: r.battery ?? null,
+      active_s: r.active_s ?? null, covered_s: r.covered_s ?? null, source: "NONE", period_s: r.period_s ?? 0,
+      rssi: null, snr: null, received: r.received ?? null, delay_s: null, link: null,
+    };
+    if (!extraBy.has(asset)) extraBy.set(asset, []);
+    extraBy.get(asset)!.push({ o, t });
     if ((heardBy.get(asset) ?? -Infinity) < t) {
       heardBy.set(asset, t);
       faultBy.set(asset, !Number.isFinite(own) || (r.gnssFailures ?? 0) > 0);
@@ -135,16 +144,25 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names, unloca
       (posFresh === "stale" || posFresh === "none") && freshnessOf(lastReport, periodS, now) !== "stale";
     const freshness = noFix ? freshnessOf(lastReport, periodS, now) : posFresh;
     const gpsFault = noFix && (faultBy.get(id) ?? false);
+    // Every record is a report, with or without a fix: activity from those
+    // with a clock, battery from all (no clock: when it reached the gateway).
+    const extra = extraBy.get(id) ?? [];
+    const reports = [...timed, ...extra.filter((x) => Number.isFinite(epochMs(x.o.time))).map((x) => x.o)]
+      .sort((x, y) => epochMs(x.time) - epochMs(y.time));
+    const withBattery = [...timed.map((o) => ({ o, t: epochMs(o.time) })), ...extra]
+      .filter((x) => x.o.battery_mv !== null && Number.isFinite(x.t)).sort((x, y) => x.t - y.t);
+    const newestBat = withBattery.length ? withBattery[withBattery.length - 1] : null;
     // Solar collars recharge by day: the level is the worst of the last 24 h
     // (what the night will bring), the percentage is the newest record.
-    const bat = batteryOf(last);
-    if (lastTime !== null) {
+    const bat = batteryOf(newestBat?.o ?? last);
+    if (newestBat) {
       const rank = { unknown: 0, good: 1, low: 2, critical: 3 } as const;
-      for (let i = timed.length - 1; i >= 0 && epochMs(timed[i].time) >= lastTime - 24 * HOUR; i--) {
-        const b = batteryOf(timed[i]);
+      for (let i = withBattery.length - 1; i >= 0 && withBattery[i].t >= newestBat.t - 24 * HOUR; i--) {
+        const b = batteryOf(withBattery[i].o);
         if (rank[b.level] > rank[bat.level]) bat.level = b.level;
       }
     }
+    const batteryTrail = withBattery.filter((x) => x.t >= now - 7 * 24 * HOUR).map((x) => ({ t: x.t, mv: x.o.battery_mv! }));
     const profile = profiles[id] ?? blankProfile(id);
     const device = last?.tracker ?? by.get(id)?.device ?? (profiles[id] ? id : null);
     // The account's name wins; then the phone's own; else the Bluetooth name.
@@ -183,7 +201,8 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names, unloca
 
     herd.push({
       id, device, profile, name, named, initials: named ? initialsOf(name) : "", color: profile.color,
-      points: timed, last, lastTime, lastReport, noFix, gpsFault, heardOnly: (heardAll.get(id) ?? []).sort((x, y) => x - y), periodS, freshness,
+      points: timed, reports, batteryTrail, batteryAt: newestBat?.t ?? null, batteryMv: newestBat?.o.battery_mv ?? null,
+      last, lastTime, lastReport, noFix, gpsFault, heardOnly: (heardAll.get(id) ?? []).sort((x, y) => x - y), periodS, freshness,
       freshRatio: freshRatio(lastTime, periodS, now), status, seen, short,
       battery: bat.level, batteryPercent: bat.percent,
       activeShare: freshness === "fresh" ? activeShare(last) : null,

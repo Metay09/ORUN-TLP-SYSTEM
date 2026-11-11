@@ -29,6 +29,9 @@ export interface RecordId {
   /** When it reached the gateway (a collar without GNSS time has no record time). */
   received?: string | null;
   gnssFailures?: number | null;
+  /** What else the record carries (battery, activity): a record without a fix is still a report. */
+  battery_mv?: number | null; battery?: string | null;
+  active_s?: number | null; covered_s?: number | null; period_s?: number;
 }
 export interface PointsResult { count: number; skipped: number; now: string; points: Point[]; unlocated?: RecordId[]; }
 
@@ -75,7 +78,8 @@ export async function buildPoints(db: Db, nowSeconds: number): Promise<PointsRes
       skipped++;
       const heard = r.first_seen_utc === null ? null : Number(r.first_seen_utc);
       unlocated.push({ tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence, time: d.time,
-        received: heard ? isoSeconds(heard) : null, gnssFailures: d.gnss_failures ?? null });
+        received: heard ? isoSeconds(heard) : null, gnssFailures: d.gnss_failures ?? null,
+        battery_mv: d.battery_mv, battery: d.battery, active_s: d.active_s, covered_s: d.covered_s, period_s: d.period_s });
       continue;
     }
     const seen = r.first_seen_utc === null ? null : Number(r.first_seen_utc);

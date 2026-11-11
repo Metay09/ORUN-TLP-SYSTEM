@@ -46,6 +46,13 @@ export interface Animal {
   initials: string;
   color: string;
   points: Observation[];    // located records, oldest first (this asset only)
+  /** Every record with its own time, located or not (activity), oldest first. */
+  reports: Observation[];
+  /** Battery readings of every record, also without a fix or a clock (then: when it reached the gateway), last 7 days. */
+  batteryTrail: { t: number; mv: number }[];
+  /** When the battery shown was measured. */
+  batteryAt: number | null;
+  batteryMv: number | null;
   last: Observation | null; // newest by RECORD time
   lastTime: number | null;  // epoch ms of that record
   /** Newest record of ANY kind (also without a GNSS fix): when the collar was last heard. */

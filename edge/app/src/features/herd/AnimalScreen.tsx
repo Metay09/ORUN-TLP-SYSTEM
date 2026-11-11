@@ -3,9 +3,9 @@
 // identity / notebook / collar.
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { Bluetooth, CaretRight, CellSignalFull, MapTrifold, NavigationArrow, NotePencil, PencilSimple, Play } from "@phosphor-icons/react";
-import { activityBaseline, activityCoverage24h, batteryOutlook, batterySeries, busiestHour, dayStart, daySummaries, hourlyActivity, smoothBattery } from "../../app/activity.ts";
+import { activityBaseline, activityCoverage24h, batteryOutlook, busiestHour, dayStart, daySummaries, hourlyActivity, smoothBattery } from "../../app/activity.ts";
 import { trackerSession } from "../../app/trackerSession.ts";
-import { BatteryLife } from "../devices/BatteryLife.tsx";
+import { BatteryLife, useConfiguredInterval } from "../devices/BatteryLife.tsx";
 import { batteryPercent, epochMs } from "../../app/herd.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { cap, fmt, tr } from "../../app/i18n/tr.ts";
@@ -67,15 +67,17 @@ export function AnimalScreen({ id }: { id: string }) {
 function Today({ a, now }: { a: Animal; now: number }) {
   const nav = useNav();
   const p = a.last;
-  const hours = useMemo(() => hourlyActivity(a.points, now), [a.points, now]);
-  const activity = useMemo(() => activityCoverage24h(a.points, now), [a.points, now]);
-  const base = useMemo(() => activityBaseline(a.points, now), [a.points, now]);
+  // Activity and battery come from every report, also those without a fix.
+  const hours = useMemo(() => hourlyActivity(a.reports, now), [a.reports, now]);
+  const activity = useMemo(() => activityCoverage24h(a.reports, now), [a.reports, now]);
+  const base = useMemo(() => activityBaseline(a.reports, now), [a.reports, now]);
   const days = useMemo(() => daySummaries(a.points.filter((x) => epochMs(x.time) >= dayStart(now))), [a.points, now]);
   const today = days.find((d) => d.day === dayStart(now)) ?? null;
-  const bat = useMemo(() => batterySeries(a.points, now), [a.points, now]);
+  const bat = a.batteryTrail;
   const pct = useMemo(() => smoothBattery(bat.map((b) => ({ t: b.t, p: batteryPercent(b.mv) })).filter((x): x is { t: number; p: number } => x.p !== null)), [bat]);
   const outlook = useMemo(() => batteryOutlook(pct, now), [pct, now]);
-  const hasActivity = a.points.some((x) => x.active_s !== null);
+  const hasActivity = a.reports.some((x) => x.active_s !== null);
+  const interval = useConfiguredInterval(a);
   const settings = useDeviceSettings();
   const session = useSyncExternalStore(trackerSession.subscribe, trackerSession.snapshot);
   if (!p) return <Empty icon={<NavigationArrow size={30} />} title={tr.status.waiting} />;
@@ -149,7 +151,7 @@ function Today({ a, now }: { a: Animal; now: number }) {
                   {a.battery === "critical" ? "Bitmek üzere · bugün şarj et" : a.battery === "low" ? "Azalıyor" : "İyi"}
                 </span>
                 <span className="sm">
-                  {p.battery_mv ? `${fmt.dec(p.battery_mv / 1000, 2)} V · ` : ""}{fmt.ago(t, now)} ölçüldü
+                  {a.batteryMv ? `${fmt.dec(a.batteryMv / 1000, 2)} V · ` : ""}{a.batteryAt !== null ? `${fmt.ago(a.batteryAt, now)} ölçüldü` : ""}
                 </span>
               </div>
             </div>
@@ -166,14 +168,14 @@ function Today({ a, now }: { a: Animal; now: number }) {
         )}
       </Card>
 
-      {a.device && <BatteryLife device={a.device} intervalS={a.periodS || null} points={a.points} nowPct={a.batteryPercent} />}
+      {a.device && <BatteryLife device={a.device} intervalS={interval} series={a.batteryTrail} nowPct={a.batteryPercent} />}
 
       {a.device && <>
         <Section title={tr.animal.device} />
         <Card>
           <Cell lead={<span className={"ic " + (connected ? "fresh" : "brand")}>{connected ? <Bluetooth size={20} /> : <CellSignalFull size={20} />}</span>}
             title={connected ? "Bluetooth ile bağlı" : bleName(a.device)} wrapSub
-            sub={[a.periodS ? `Rapor aralığı ${fmt.period(a.periodS)}` : "", waiting ? `${waiting} ayar sırada` : "Ayarlar, bağlan"].filter(Boolean).join(" · ")}
+            sub={[interval ? `Rapor aralığı ${fmt.period(interval)}` : "", waiting ? `${waiting} ayar sırada` : "Ayarlar, bağlan"].filter(Boolean).join(" · ")}
             subTone={waiting ? "aging" : undefined}
             trail={<CaretRight size={18} color="var(--mute)" />}
             onClick={() => nav.push({ to: "device", id: a.device! })} />
@@ -228,6 +230,7 @@ function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () =
   const nav = useNav();
   const settings = useDeviceSettings();
   const waiting = a.device ? pendingKeys(settings[a.device.toUpperCase()]).length : 0;
+  const interval = useConfiguredInterval(a);
   return (
     <>
       <Section title={tr.animal.identity} action={tr.common.edit} onAction={onEdit} />
@@ -253,7 +256,7 @@ function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () =
             <KV k="Bluetooth adı">{bleName(a.device)}</KV>
             <KV k={tr.device.lastContact}>{dev?.lastTime ? `${fmt.clock(dev.lastTime)} · ${fmt.ago(dev.lastTime, now)}` : "—"}</KV>
             <KV k={tr.animal.battery}>{dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}${dev.batteryMv ? ` · ${fmt.dec(dev.batteryMv / 1000, 2)} V` : ""}` : "—"}</KV>
-            <KV k={tr.device.report}>{a.periodS ? fmt.period(a.periodS) : "—"}</KV>
+            <KV k={tr.device.report}>{interval ? fmt.period(interval) : "—"}</KV>
             {fence && <KV k="Alanlar">{stateLine(fence)}</KV>}
             <Cell title="Tasma ekranı" sub={waiting ? `${waiting} ayar sırada · bağlan, ayarlar` : "Bağlan, ayarlar, alanlar"}
               subTone={waiting ? "aging" : undefined} trail={<CaretRight size={18} color="var(--mute)" />}
