@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowClockwise, Bluetooth, LinkBreak, Usb } from "@phosphor-icons/react";
 import { noRoleMessage, probeUsbDevice } from "../../app/addTracker.ts";
+import { clearFence } from "../../app/fenceUsb.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { fmt } from "../../app/i18n/tr.ts";
 import { collarStorageReadings } from "../../app/collarStorageReadings.ts";
@@ -136,6 +137,28 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
     }
   }
 
+  /** The tracker holds zones the account no longer gives it: remove them (USB only, explicit tap). */
+  async function clearUsb(): Promise<void> {
+    let con: UsbConsole | null = null;
+    setError(""); setPhase("Tasmadaki alanlar siliniyor…");
+    try {
+      con = await UsbConsole.open();
+      const dev = await probeUsbDevice(con);
+      if (dev.kind !== "tracker" || (id && dev.report.device.toUpperCase() !== id.toUpperCase()))
+        throw new Error("USB'deki cihaz bu tasma değil.");
+      const dev_ = dev.report.device.toUpperCase();
+      const sum = await clearFence(con);
+      await pilotRecordFence(dev_, { digest: sum.digest, areas: 0, vertices: 0, zones: [], appliedAt: Date.now() });
+      const st = buildStatus(await readRawUsb(con), "usb", Date.now());
+      if (alive.current) { setStatus(st); setSynced("Tasmadaki alanlar silindi (tasma onayladı)."); }
+    } catch (e) {
+      if (alive.current) setError(errText(e));
+    } finally {
+      if (con) await con.close();
+      if (alive.current) setPhase("");
+    }
+  }
+
   async function read(): Promise<void> {
     setError("");
     try {
@@ -215,6 +238,14 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
         </div>
         {!a && st && !isGateway && !("usb" in target) && <p className="fine" style={{ margin: 0 }}>Bu tasma hesabında yok. Eklemek için USB ile bağla (Sürü → "+").</p>}
         {synced && <p className="sm" role="status" style={{ margin: 0 }}>{synced}</p>}
+        {st && !isGateway && st.fence?.state === "configured" && (!plan || plan.zones.length === 0) && (
+          <div className="stack" style={{ gap: 6 }}>
+            <p className="sm t-aging" style={{ margin: 0 }}>Tasmada {st.fence.areas} alan var ama hesapta bu tasmaya alan yok. Tasma bu alanlara göre içeride/dışarıda karar veriyor.</p>
+            {"usb" in target
+              ? <button className="btn danger" disabled={!!phase} onClick={() => { void clearUsb(); }}>Tasmadaki alanları sil</button>
+              : <p className="fine" style={{ margin: 0 }}>Silmek şimdilik yalnız USB ile: tasmayı kabloyla bağla.</p>}
+          </div>
+        )}
         {st && !isGateway && (waitingKeys.length > 0 || !!deviceOps.open(id ?? "", "fence")) && !("usb" in target) && id && !writeKeys.has(id) && (
           <p className="fine" style={{ margin: 0 }}>Sırada bekleyen var. Bluetooth'tan yazmak için bu telefonda tasmanın yazma anahtarı yok: hesaba girip internete bağlanınca kendiliğinden gelir. Şimdilik USB ile bağlan.</p>
         )}

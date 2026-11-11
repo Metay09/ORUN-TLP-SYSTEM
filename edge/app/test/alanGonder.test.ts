@@ -2,7 +2,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LineConsole } from "../src/app/addTracker.ts";
-import { decimalE7, fenceCommands, fenceDigest, polygonsOf, writeFence } from "../src/app/fenceUsb.ts";
+import { clearFence, CLEAR_SUMMARY, decimalE7, fenceCommands, fenceDigest, polygonsOf, writeFence } from "../src/app/fenceUsb.ts";
+import { deliverUsb } from "../src/app/deliver.ts";
+import { toApply } from "../src/app/fencePlan.ts";
 import { needsSending, trackerFencePlans } from "../src/app/fencePlan.ts";
 import { fenceState, TrackerFenceBook, type FenceRecord, type FenceServer } from "../src/app/trackerFences.ts";
 import type { TargetBook } from "../src/app/zoneTargets.ts";
@@ -26,7 +28,7 @@ class FakeTracker implements LineConsole {
     const staged = () => this.out.push(`APP FENCE STAGING areas=${this.sa} vertices=${this.sv}`);
     if (line === "APP GEOFENCE?") {
       const n = this.opts.reportAreas ?? this.areas;
-      this.out.push("APP NOISE", `APP GEOFENCE id=7 resource=1 token=2 areas=${n} vertices=${this.vertices} runtime=${this.areas ? "configured" : "unconfigured"}`);
+      this.out.push("APP NOISE", `APP GEOFENCE id=7 resource=1 token=2 areas=${n} vertices=${this.vertices} runtime=${this.areas ? "configured" : "clear"}`);
     } else if (line === "APP FENCE BEGIN") { this.sa = 1; this.sv = 0; staged(); }
     else if (line.startsWith("APP FENCE V ")) { if (!this.opts.dropVertex || this.sv !== 2) this.sv += 1; staged(); }
     else if (line === "APP FENCE AREA") { this.sa += 1; staged(); }
@@ -34,6 +36,10 @@ class FakeTracker implements LineConsole {
       this.areas = this.sa; this.vertices = this.sv;
       this.out.push(`APP FENCE id=7 code=APPLIED state=CONFIGURED areas=${this.opts.commitAreas ?? this.areas} vertices=${this.vertices} token=VALID`);
     } else if (line === "APP FENCE ABORT") this.out.push("APP FENCE ABORTED");
+    else if (line === "APP FENCE CLEAR") {
+      this.areas = 0; this.vertices = 0;
+      this.out.push("APP FENCE id=8 code=APPLIED state=CLEAR areas=0 vertices=0 token=VALID revision=3");
+    }
   }
   async waitFor<T>(match: (line: string) => T | null): Promise<T | null> {
     while (this.out.length) { const r = match(this.out.shift()!); if (r) return r; }
@@ -96,10 +102,11 @@ test("limits are checked before anything is sent", async () => {
   assert.deepEqual(t.sent, []);
 });
 
-test("fence state: none, never, current, stale", () => {
+test("fence state: none, never, current, stale, clear", () => {
   const rec: FenceRecord = { digest: "aa", areas: 1, vertices: 4, zones: [], appliedAt: 1 };
   assert.equal(fenceState(null, null), "none");
-  assert.equal(fenceState(rec, null), "none");
+  assert.equal(fenceState(rec, null), "clear", "alan uygulamadan silindi, tasmada duruyor");
+  assert.equal(fenceState({ ...rec, areas: 0, vertices: 0 }, null), "none", "tasmadan da silindi");
   assert.equal(fenceState(null, "aa"), "never");
   assert.equal(fenceState(rec, "aa"), "current");
   assert.equal(fenceState(rec, "bb"), "stale");
@@ -157,4 +164,35 @@ test("each tracker's state comes from its own target zones", () => {
   assert.equal(trackerFencePlans(book, [moved, tri], trackers.slice(0, 2), { [B]: plans[1].record! })[1].state, "stale");
   // A tracker no zone targets gets nothing.
   assert.equal(trackerFencePlans(onlyAll, [square, tri], trackers, {})[2].state, "none");
+});
+
+test("alan silme: uygulamadan silinen alan tasmaya CLEAR olarak gider, yalnız tasma onaylayınca kaydedilir", async () => {
+  const t = new FakeTracker();
+  await writeFence(t, [square]);
+  assert.equal(t.areas, 1);
+  const sum = await clearFence(t);
+  assert.deepEqual(sum, CLEAR_SUMMARY);
+  assert.equal(t.areas, 0);
+  assert.ok(t.sent.includes("APP FENCE CLEAR"));
+
+  // The plan: no zone left for A, but A still holds one → "clear", offered once.
+  const rec: FenceRecord = { digest: fenceDigest(polygonsOf([square])), areas: 1, vertices: 5, zones: [{ id: "kuzey", name: "kuzey" }], appliedAt: 1 };
+  const book: TargetBook = { groups: [], rules: {} };
+  const plans = trackerFencePlans(book, [], [{ device: A, name: "a" }], { [A]: rec });
+  assert.equal(plans[0].state, "clear");
+  assert.equal(toApply(plans).length, 1);
+  assert.equal(toApply(plans, new Map([[A, CLEAR_SUMMARY.digest]])).length, 0, "zaten sırada");
+
+  // Delivery over USB: an operation with no zones clears; the record becomes 0 areas.
+  const u = new FakeTracker();
+  await writeFence(u, [square]);
+  const recorded: number[] = [], results: string[] = [];
+  const out = await deliverUsb(u, {
+    wanted: {}, has: {}, openSettings: null,
+    openFence: { op: "op-1", device: A, kind: "fence", payload: { digest: CLEAR_SUMMARY.digest, areas: 0, vertices: 0, zones: [] },
+                 state: "waiting", createdAt: 1, updatedAt: 1, via: null, note: null },
+    reportSettings: async () => {}, recordFence: async (s) => { recorded.push(s.areas); },
+    result: async (_op, st) => { results.push(st); },
+  });
+  assert.deepEqual([u.areas, recorded, results, out.wrote], [0, [0], ["applied"], ["alanlar silindi"]]);
 });

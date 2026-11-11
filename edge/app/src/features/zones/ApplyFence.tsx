@@ -5,7 +5,7 @@
 // alanı değiştirmez.
 import { useState, useSyncExternalStore } from "react";
 import { Usb } from "@phosphor-icons/react";
-import { toApply, trackerFencePlans, type TrackerFence } from "../../app/fencePlan.ts";
+import { opDigest, toApply, trackerFencePlans, type TrackerFence } from "../../app/fencePlan.ts";
 
 export { toApply };
 import { fmt } from "../../app/i18n/tr.ts";
@@ -28,6 +28,7 @@ const corners = (p: TrackerFence) => p.zones.reduce((n, z) => n + canonicalE7(z.
 
 export function stateLine(p: TrackerFence): string {
   if (p.state === "none") return "Bu tasmaya gidecek alan yok";
+  if (p.state === "clear") return `Tasmada ${p.record!.areas} alan var, hesapta yok · tasmadan silinecek (USB ile)`;
   const plan = `${p.zones.length} alan · ${corners(p)} köşe`;
   if (p.state === "current") return `Tasmada güncel · ${fmt.dateTime(p.record!.appliedAt)}`;
   if (p.state === "stale") return `Tasmadaki alanlar eski · yeni: ${plan}`;
@@ -70,7 +71,7 @@ export function ApplyFenceDialog({ onClose, only }: { onClose: () => void; only?
     try {
       const id = await pilotCreateFenceOp(picked.map((p) => ({
         device: p.device,
-        payload: { digest: p.digest!, areas: p.zones.length, vertices: corners(p),
+        payload: { digest: opDigest(p), areas: p.zones.length, vertices: corners(p),
                    zones: p.zones.map((z) => ({ id: z.id, name: z.name, ring: z.ring })) },
       })));
       setOp(id);
@@ -107,7 +108,7 @@ export function ApplyFenceDialog({ onClose, only }: { onClose: () => void; only?
                   lead={<input type="checkbox" checked={on} aria-label={p.name} onChange={(e) => toggle(p.device, e.target.checked)}
                     onClick={(e) => e.stopPropagation()} style={{ width: 20, height: 20 }} />}
                   onClick={() => toggle(p.device, !on)}
-                  sub={`${p.zones.map((z) => z.name).join(", ")} · ${p.zones.length} alan · ${corners(p)} köşe${open ? ` · önceki işlem sırada (yerine geçer)` : ""}`} />;
+                  sub={`${p.state === "clear" ? `Alanlar silinecek (tasmada ${p.record!.areas} alan var) · yalnız USB ile` : `${p.zones.map((z) => z.name).join(", ")} · ${p.zones.length} alan · ${corners(p)} köşe`}${open ? ` · önceki işlem sırada (yerine geçer)` : ""}`} />;
               })}
             </div>
           )}

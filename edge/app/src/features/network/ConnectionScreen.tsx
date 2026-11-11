@@ -244,7 +244,7 @@ export function ConnectionScreen() {
     const id = a.device!, dev = m.devices.find((d) => d.id === id);
     const waitingN = pendingKeys(settings[id.toUpperCase()]).length;
     const fence = fencePlans.find((f) => f.device.toUpperCase() === id.toUpperCase());
-    const staleFence = fence && (fence.state === "stale" || fence.state === "never");
+    const staleFence = fence && (fence.state === "stale" || fence.state === "never" || fence.state === "clear");
     const heard = a.lastReport ?? dev?.lastTime ?? null;
     const silent = !heard || m.now - heard > 3600_000;
     const connected = session?.device === id.toUpperCase() && session.link.alive;
