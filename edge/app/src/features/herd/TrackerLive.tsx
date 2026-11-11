@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowClockwise, Bluetooth, LinkBreak, Usb } from "@phosphor-icons/react";
 import { noRoleMessage, probeUsbDevice } from "../../app/addTracker.ts";
 import { clearFence } from "../../app/fenceUsb.ts";
+import { bleClearFence } from "../../app/bleWrite.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { fmt } from "../../app/i18n/tr.ts";
 import { collarStorageReadings } from "../../app/collarStorageReadings.ts";
@@ -159,6 +160,24 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
     }
   }
 
+  /** Same over Bluetooth: the signed "remove all zones" (tasma firmware with op 5). */
+  async function clearBle(): Promise<void> {
+    const t = link.current;
+    if (!t || !id) return;
+    setError(""); setPhase("Tasmadaki alanlar siliniyor…");
+    try {
+      const sum = await bleClearFence(t.exchange, writeKeys.get, id);
+      await pilotRecordFence(id.toUpperCase(), { digest: sum.digest, areas: 0, vertices: 0, zones: [], appliedAt: Date.now() });
+      const st = buildStatus(await t.readRaw(), "ble", Date.now());
+      trackerSession.note(t, st, id);
+      if (alive.current) { setStatus(st); setSynced("Tasmadaki alanlar silindi (tasma onayladı)."); }
+    } catch (e) {
+      if (alive.current) setError(errText(e));
+    } finally {
+      if (alive.current) setPhase("");
+    }
+  }
+
   async function read(): Promise<void> {
     setError("");
     try {
@@ -241,9 +260,8 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
         {st && !isGateway && st.fence?.state === "configured" && (!plan || plan.zones.length === 0) && (
           <div className="stack" style={{ gap: 6 }}>
             <p className="sm t-aging" style={{ margin: 0 }}>Tasmada {st.fence.areas} alan var ama hesapta bu tasmaya alan yok. Tasma bu alanlara göre içeride/dışarıda karar veriyor.</p>
-            {"usb" in target
-              ? <button className="btn danger" disabled={!!phase} onClick={() => { void clearUsb(); }}>Tasmadaki alanları sil</button>
-              : <p className="fine" style={{ margin: 0 }}>Silmek şimdilik yalnız USB ile: tasmayı kabloyla bağla.</p>}
+            <button className="btn danger" disabled={!!phase || (!("usb" in target) && !session)}
+              onClick={() => { void ("usb" in target ? clearUsb() : clearBle()); }}>Tasmadaki alanları sil</button>
           </div>
         )}
         {st && !isGateway && (waitingKeys.length > 0 || !!deviceOps.open(id ?? "", "fence")) && !("usb" in target) && id && !writeKeys.has(id) && (

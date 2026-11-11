@@ -7,14 +7,14 @@
 import { concat, equal, fromHex, hex } from "../core/bytes.ts";
 import { hmacSha256, sha256 } from "../core/crypto.ts";
 import { ERROR_TYPE, type AppMessage } from "./bleAppFrames.ts";
-import { DeviceRejected, polygonsOf, summary, type FenceSummary } from "./fenceUsb.ts";
+import { CLEAR_SUMMARY, DeviceRejected, polygonsOf, summary, type FenceSummary } from "./fenceUsb.ts";
 import { outcomeResult, type ServiceChoice, type SettingWriter } from "./trackerSettings.ts";
 import { FENCE, type E7, type Zone } from "./zones.ts";
 
 export const WRITE = {
   challenge: 0x10, write: 0x11, stage: 0x12, challengeAnswer: 0x90, writeAnswer: 0x91, stageAnswer: 0x92,
 } as const;
-export const OP = { interval: 1, services: 2, bleWindow: 3, fence: 4 } as const;
+export const OP = { interval: 1, services: 2, bleWindow: 3, fence: 4, fenceClear: 5 } as const;
 /** 4c-2 alan listesi aşamaları (firmware ble_application_transport.h). */
 export const STAGE = { begin: 1, vertices: 2, nextArea: 3, abort: 4 } as const;
 const STAGE_MAX_POINTS = 5;
@@ -149,8 +149,8 @@ export interface FenceResult {
   outcome: Outcome; state: typeof FENCE_STATE[number] | "unknown"; areas: number; vertices: number; revision: number;
 }
 
-export function parseFenceResult(key: Uint8Array, c: Challenge, m: AppMessage): FenceResult {
-  const p = signedAnswer(key, c, m, OP.fence);
+export function parseFenceResult(key: Uint8Array, c: Challenge, m: AppMessage, op: Op = OP.fence): FenceResult {
+  const p = signedAnswer(key, c, m, op);
   return {
     outcome: OUTCOME[p[0]] ?? "UNAVAILABLE", state: FENCE_STATE[p[2]] ?? "unknown",
     areas: p[3], vertices: p[4] | (p[5] << 8), revision: getLe32(p, 10),
@@ -219,4 +219,30 @@ export async function bleWriteFence(exchange: Exchange, keyFor: KeyFor, device: 
     if (!committed) { try { await exchange(WRITE.stage, Uint8Array.of(STAGE.abort)); } catch { /* gone */ } }
     throw e;
   }
+}
+
+/**
+ * Removes every zone from the tasma (owner 2026-11-11): the explicit op 5,
+ * value 0, nothing staged; same as USB APP FENCE CLEAR. Success only on the
+ * tasma's signed answer saying CLEAR with 0 areas. Needs tasma firmware with
+ * op 5; an older one answers signed INVALID and nothing is removed.
+ */
+export async function bleClearFence(exchange: Exchange, keyFor: KeyFor, device: string): Promise<FenceSummary> {
+  const c = parseChallenge(await exchange(WRITE.challenge, new Uint8Array(0)));
+  if (c.device !== device.toUpperCase()) throw new Error("Bağlı cihaz beklenen tasma değil.");
+  const key = keyFor(c.device, c.epoch);
+  if (!key) throw new NoWriteKey("Bu telefonda bu tasmanın yazma anahtarı yok. İnternete bağlanınca hesaptan kendiliğinden gelir; şimdilik USB ile sil.");
+  let answer: AppMessage;
+  try {
+    answer = await exchange(WRITE.write, writeRequest(key, c, OP.fenceClear, 0), 25_000);
+  } catch {
+    throw new Error("Tasmadan onay gelmedi; alanların silindiğini varsayma.");
+  }
+  const r = parseFenceResult(key, c, answer, OP.fenceClear);
+  // A tasma without op 5 answers it like an unknown setting: signed INVALID, nothing removed.
+  if (r.outcome === "INVALID")
+    throw new DeviceRejected("Tasma Bluetooth'tan alan silmeyi kabul etmedi (yazılımı eskiyse güncelle ya da USB ile sil).");
+  outcomeResult(r.outcome);
+  if (r.state !== "clear" || r.areas !== 0) throw new Error("Tasma alanları sildiğini doğrulamadı.");
+  return CLEAR_SUMMARY;
 }

@@ -120,6 +120,11 @@ constexpr uint8_t kWriteOpBleWindow = 3;
 //  op 4 answer:    outcome, 4, resource state, areas, vertices LE16,
 //                  0 x 4, revision LE32 (+ tag), the stored list after it.
 constexpr uint8_t kWriteOpFence = 4;
+// Owner 2026-11-11: remove every area over Bluetooth, the same CLEAR_SET as
+// USB APP FENCE CLEAR. An explicit op, never inferred from an empty list:
+// value must be 0 and nothing may be staged. MAC body: op, value (no digest).
+// Answer: as op 4's, with op byte 5 (outcome, 5, resource state CLEAR, 0 areas ...).
+constexpr uint8_t kWriteOpFenceClear = 5;
 constexpr uint8_t kFenceStageBegin = 1;
 constexpr uint8_t kFenceStageVertices = 2;
 constexpr uint8_t kFenceStageNextArea = 3;

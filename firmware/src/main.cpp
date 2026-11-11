@@ -1289,10 +1289,12 @@ void drainBleWriteAnswer() {
                                               sizeof(answer));
   const char* code = orun_tlp::configMutationOutcomeName(
       static_cast<orun_tlp::ConfigMutationOutcome>(answer[0]));
-  if (answer[1] == orun_tlp::ble_app_transport::kWriteOpFence) {
-    Serial.printf("BLE WRITE id=%lu op=fence code=%s state=%u areas=%u "
+  if (answer[1] == orun_tlp::ble_app_transport::kWriteOpFence ||
+      answer[1] == orun_tlp::ble_app_transport::kWriteOpFenceClear) {
+    Serial.printf("BLE WRITE id=%lu op=%s code=%s state=%u areas=%u "
                   "vertices=%u answered=%s\n",
-                  static_cast<unsigned long>(request_id), code,
+                  static_cast<unsigned long>(request_id),
+                  answer[1] == orun_tlp::ble_app_transport::kWriteOpFence ? "fence" : "fence-clear", code,
                   static_cast<unsigned>(answer[2]),
                   static_cast<unsigned>(answer[3]),
                   static_cast<unsigned>(answer[4] | (answer[5] << 8)),

@@ -192,7 +192,7 @@ BleWriteAdmission BleWriteService::submitWrite(uint32_t now,
     geofence_format::StateToken token;
     const bool token_valid = fences_.stateToken(token);
     if (areas == 0 || value != (uint32_t(areas) | (uint32_t(vertices) << 8))) {
-      fenceBody(ConfigMutationOutcome::kInvalid, fences_.resourceState(),
+      fenceBody(bat::kWriteOpFence, ConfigMutationOutcome::kInvalid, fences_.resourceState(),
                 fences_.areaCount(), fences_.totalVertexCount(), token_valid,
                 token.revision, refused);
       staging_.abort();  // like USB: a commit ends the candidate either way
@@ -212,6 +212,37 @@ BleWriteAdmission BleWriteService::submitWrite(uint32_t now,
         return BleWriteAdmission::kPending;
       case ConfigMutationSubmitResult::kBusy:
         auth_.reset();  // staging kept: ask a new challenge, commit again
+        return BleWriteAdmission::kBusy;
+      case ConfigMutationSubmitResult::kRejected:
+      default:
+        auth_.reset();
+        return BleWriteAdmission::kUnsupported;
+    }
+  }
+
+  if (op == bat::kWriteOpFenceClear) {
+    // Explicit removal of every area (owner 2026-11-11). A staged list in
+    // progress or a non-zero value is a confused phone: signed INVALID.
+    if (value != 0U || staging_.active()) {
+      geofence_format::StateToken token;
+      const bool token_valid = fences_.stateToken(token);
+      fenceBody(bat::kWriteOpFenceClear, ConfigMutationOutcome::kInvalid, fences_.resourceState(),
+                fences_.areaCount(), fences_.totalVertexCount(), token_valid,
+                token.revision, refused);
+      staging_.abort();
+      immediate(request_id, refused);
+      return BleWriteAdmission::kPending;
+    }
+    switch (fence_mutations_.submitClear(
+        ApplicationRequester::kBle, request_id,
+        ApplicationAccessContext(ApplicationAccessChannel::kBleAuthenticated))) {
+      case ConfigMutationSubmitResult::kAccepted:
+        owed_ = Owed::kFence;
+        owed_request_id_ = request_id;
+        owed_op_ = op;
+        return BleWriteAdmission::kPending;
+      case ConfigMutationSubmitResult::kBusy:
+        auth_.reset();
         return BleWriteAdmission::kBusy;
       case ConfigMutationSubmitResult::kRejected:
       default:
@@ -290,13 +321,13 @@ void BleWriteService::configBody(ConfigMutationOutcome outcome, uint8_t op,
   putLe32(body + 10, token_valid ? revision : 0U);
 }
 
-void BleWriteService::fenceBody(ConfigMutationOutcome outcome,
+void BleWriteService::fenceBody(uint8_t op, ConfigMutationOutcome outcome,
                                 GeofenceResourceState state, uint8_t areas,
                                 uint16_t vertices, bool token_valid,
                                 uint32_t revision, Body& body) const {
   memset(body, 0, sizeof(body));
   body[0] = static_cast<uint8_t>(outcome);
-  body[1] = bat::kWriteOpFence;
+  body[1] = op;  // 4 (list) or 5 (clear): the op the phone asked for
   body[2] = static_cast<uint8_t>(state);
   body[3] = areas;
   putLe16(body + 4, vertices);
@@ -351,7 +382,8 @@ BleWriteService::Answer BleWriteService::takeAnswer(
   } else if (fence_mutations_.takeResult(ApplicationRequester::kBle, fence)) {
     taken = Owed::kFence;
     request_id = fence.request_id;
-    fenceBody(fence.outcome, fence.state, fence.area_count,
+    fenceBody(owed_ == Owed::kFence ? owed_op_ : bat::kWriteOpFence,
+              fence.outcome, fence.state, fence.area_count,
               fence.total_vertex_count, fence.token_valid,
               fence.token.revision, body);
   } else {
