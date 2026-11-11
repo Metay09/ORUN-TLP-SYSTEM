@@ -109,7 +109,9 @@ fi
 if [[ ! -r "$HOME/orun-issuer.pub" ]]; then
   fail "Yazılım için ~/orun-issuer.pub gerekli (sunucunun imza açık anahtarı): python3 tools/orun_provision.py issuer"
 fi
-SHA=$(git -C "$REPO" rev-parse --short=7 HEAD)
+# Yazılımın sürümü = firmware/ klasörünü değiştiren son commit (build_id.py
+# ile aynı): yalnız uygulama/araç değişince sürüm ve derleme aynı kalır.
+SHA=$(git -C "$REPO" log -1 --format=%h --abbrev=7 -- firmware)
 echo "Yüklenecek: $ENV · sürüm $SHA (kayıtlar ve anahtarlar korunur)"
 if [[ $YES -eq 0 ]]; then
   read -r -p "Devam edilsin mi? [e/H] " ans
