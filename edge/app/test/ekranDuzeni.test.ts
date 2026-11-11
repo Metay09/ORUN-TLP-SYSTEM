@@ -164,3 +164,34 @@ test("henüz ulaşmayan kayıt: sıra numarasındaki boşluklar, en yeni dönem,
   assert.equal(notArrived([...recs, rec(5, 3000, "A"), rec(9, 2990, "A")], now).missing, 4);
   assert.deepEqual(notArrived([rec(1, 5)], now), { missing: 0, since: null });
 });
+
+import { buildHerd } from "../src/app/herd.ts";
+import { deriveEvents } from "../src/app/events.ts";
+
+test("konumsuz rapor: tasma 'haber yok' değil 'konum bulamıyor'; aradaki boşluk sessizlik sayılmaz", () => {
+  const now = Date.UTC(2026, 10, 11, 2, 20);
+  const MIN = 60_000;
+  const pt = (minAgo: number, seq: number) => ({
+    tracker: "0E8ADE7E71531AA3", incarnation: "I", seq, time: new Date(now - minAgo * MIN).toISOString(),
+    lat: 37.6, lon: 28.05, alt_m: null, sats: 7, hdop: 1, fix_age_s: 0, battery_mv: 4000, battery: "NORMAL",
+    active_s: null, covered_s: null, source: "GNSS", period_s: 900, rssi: -70, snr: 5, received: null, delay_s: null, link: null,
+  }) as unknown as Observation;
+  const points = [pt(15 * 60, 1), pt(13 * 60, 2)];          // last fix 13 h ago
+  const unlocated = Array.from({ length: 52 }, (_, k) => ({ tracker: "0E8ADE7E71531AA3", incarnation: "I", seq: 3 + k,
+    time: new Date(now - (13 * 60 - 15 * (k + 1)) * MIN).toISOString() }));
+  const [a] = buildHerd({ points, profiles: {}, assetOf: (d) => d, now, unlocated });
+  assert.equal(a.noFix, true);
+  assert.equal(a.status, "aging");
+  assert.match(a.seen, /^Konum bulamıyor · son rapor/);
+  assert.match(a.seen, /· son konum /);
+  const ev = deriveEvents({ herd: [a], station: { id: null, link: "none", phase: "idle", detail: null, held: null, capacity: null, position: null },
+    server: { configured: false, url: "", token: "", auto: true, busy: false, uploaded: null, pending: null, conflict: 0, rejected: 0, lastOk: null, error: null },
+    journal: [], coverage: null, now });
+  const open = ev.filter((e) => e.alert && e.end === null);
+  assert.equal(open.length, 1);
+  assert.ok(open[0].id.startsWith("nofix:"));
+  assert.ok(!ev.some((e) => e.kind === "lost"), "rapor geldiği için kayıp değil");
+  // Without the reports it is silent / lost, as before.
+  const [b] = buildHerd({ points, profiles: {}, assetOf: (d) => d, now });
+  assert.equal(b.status, "lost");
+});

@@ -33,7 +33,7 @@ function reason(e: AppEvent, a: Animal | undefined, now: number): string {
   const since = fmt.since(e.at, now), p = a?.batteryPercent ?? null;
   switch (e.kind) {
     case "lost": return T.reason.lost(since);
-    case "silent": return T.reason.silent(since);
+    case "silent": return e.id.startsWith("nofix:") ? T.reason.noFix(since) : T.reason.silent(since);
     case "out": return T.reason.out(since);
     case "still": return T.reason.still(since);
     case "battery-critical": return T.reason.batteryCritical(p);
@@ -78,7 +78,8 @@ function nowItems(events: AppEvent[], herd: Map<string, Animal>, now: number): N
     out.push({
       key, asset: list[0].asset, name: a?.name ?? list[0].title,
       severity: list.reduce<Severity>((s, e) => worst(s, e.severity), "ok"),
-      reasons: a ? reasons : reasons.slice(0, 1), advice: advice(list[0].kind), kind: list[0].kind,
+      reasons: a ? reasons : reasons.slice(0, 1),
+      advice: list[0].id.startsWith("nofix:") ? T.advice.noFix : advice(list[0].kind), kind: list[0].kind,
       since: Math.min(...list.map((e) => e.at)), ids: list.map((e) => e.id),
     });
   }

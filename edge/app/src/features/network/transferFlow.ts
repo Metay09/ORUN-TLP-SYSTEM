@@ -107,7 +107,7 @@ export interface HealthStage {
 }
 export interface HealthInput {
   now: number;
-  trackers: { id: string; lastTime: number | null; periodS: number | null; missing?: NotArrived }[];
+  trackers: { id: string; lastTime: number | null; periodS: number | null; missing?: NotArrived; noFix?: boolean }[];
   collars: readonly CollarStorageReading[];
   gateways: readonly FarmGateway[] | null;
   localGateway: { id: string | null; link: "ble" | "usb" | "none"; connected: boolean; held: number | null; capacity: number | null; readAt: number | null };
@@ -135,6 +135,7 @@ export function transferHealth(i: HealthInput): HealthStage[] {
     const fresh = t.lastTime !== null && now - t.lastTime <= limit;
     const r = readings.get(t.id.toUpperCase());
     const parts = [t.lastTime !== null ? `son kaydı ${fmt.ago(t.lastTime, now)}` : "hiç kayıt gelmedi"];
+    if (t.noFix) parts.push("GPS konum bulamıyor");
     const miss = t.missing?.missing ?? 0;
     if (miss) parts.push(`${fmt.num(miss)} kayıt henüz ulaşmadı${t.missing!.since !== null ? ` (${fmt.ago(t.missing!.since, now)} sonrası)` : ""}`);
     if (r) parts.push(`bellekte ${fmt.num(r.count)} kayıt (${r.via === "usb" ? "USB" : "Bluetooth"} ile ${fmt.ago(r.at, now)} okundu)`);

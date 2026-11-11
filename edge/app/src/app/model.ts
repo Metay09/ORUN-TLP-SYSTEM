@@ -48,6 +48,12 @@ export interface Animal {
   points: Observation[];    // located records, oldest first (this asset only)
   last: Observation | null; // newest by RECORD time
   lastTime: number | null;  // epoch ms of that record
+  /** Newest record of ANY kind (also without a GNSS fix): when the collar was last heard. */
+  lastReport: number | null;
+  /** The collar reports, but its newest records carry no position (no GNSS fix). */
+  noFix: boolean;
+  /** Times of records without a position, oldest first (gaps they fill are not silence). */
+  heardOnly: number[];
   periodS: number;          // the collar's latest report period
   freshness: Freshness;
   freshRatio: number;       // 1 = just measured .. 0 = stale (the ring)
