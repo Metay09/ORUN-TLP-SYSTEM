@@ -16,7 +16,7 @@ import { pendingKeys, valuesFromStatus, bleWindowWord } from "../../app/deviceSe
 import { deliverBle, deliverUsb } from "../../app/deliver.ts";
 import { deviceOps, deviceSettings, pilotOpResult, pilotRecordFence, pilotReportSettings, writeKeys } from "../../app/ownerAccountPilotRuntime.ts";
 import { TrackerBle } from "../../platform/trackerBle.ts";
-import { trackerSession } from "../../app/trackerSession.ts";
+import { trackerSession, usbTracker } from "../../app/trackerSession.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
 import { useTrackerFences } from "../zones/ApplyFence.tsx";
 
@@ -110,6 +110,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
       setPhase("Okunuyor…");
       const dev_ = dev.report.device.toUpperCase();
       let st = buildStatus(await readRawUsb(con), "usb", Date.now());
+      usbTracker.note(dev_, st.at);
       if (alive.current) { setStatus(st); rememberStorage(dev_, st); }
       const has = valuesFromStatus(st);
       await pilotReportSettings(dev_, has, "usb").catch(() => undefined);

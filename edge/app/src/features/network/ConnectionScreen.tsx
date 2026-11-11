@@ -5,7 +5,7 @@
 // Sayaçların ayrıntısı ve kayıt defteri "Teknik ayrıntılar"da.
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
-  Bluetooth, CaretRight, CellSignalFull, CloudCheck, Cow, DeviceMobile, MagnifyingGlass, Polygon, Question,
+  Bluetooth, CaretDown, CaretRight, CellSignalFull, CloudCheck, Cow, Desktop, MagnifyingGlass, Polygon, Question,
   SlidersHorizontal, Usb, WifiHigh, WifiSlash,
 } from "@phosphor-icons/react";
 import { noRoleMessage, probeUsbDevice, setRoleAndReconnect, type DeviceRole, type GnssHint } from "../../app/addTracker.ts";
@@ -19,7 +19,7 @@ import {
   pilotObservationSyncState,
 } from "../../app/ownerAccountPilotRuntime.ts";
 import { useApp } from "../../app/store.ts";
-import { trackerSession } from "../../app/trackerSession.ts";
+import { trackerSession, usbTracker } from "../../app/trackerSession.ts";
 import { Card, Cell, Header, KV, Section, Seg } from "../../ds/components.tsx";
 import { classifyNearby, mergeNearby, scanNearby, stopNearbyScan, type NearbyDevice, type NearbyView } from "../../platform/bleScan.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
@@ -32,8 +32,8 @@ import { useDeviceSettings } from "../devices/DeviceScreen.tsx";
 import { OpDialog, useOps } from "../devices/Ops.tsx";
 import { groupLine, KIND_WORD, OPEN, operationSections, opWhat } from "../../app/deviceOps.ts";
 import { useTrackerFences } from "../zones/ApplyFence.tsx";
-import { farmChain, gatewayFacts, gatewayLine, stationWords, transferHeadline, type ChainNode } from "./words.ts";
-import { transferStages } from "./transferFlow.ts";
+import { gatewayFacts, gatewayLine, stationWords, transferHeadline } from "./words.ts";
+import { transferHealth, transferStages, type HealthStage } from "./transferFlow.ts";
 
 type Via = "ble" | "usb";
 
@@ -45,9 +45,10 @@ function markAsked(id: string): void {
   try { localStorage.setItem(ASKED, JSON.stringify([...asked(), id.toUpperCase()].slice(-200))); } catch { /* fine */ }
 }
 
-const NODE_ICON: Record<ChainNode["key"], ReactNode> = {
-  tasmalar: <Cow size={22} />, gateway: <WifiHigh size={22} />, sunucu: <CloudCheck size={22} />, telefon: <DeviceMobile size={22} />,
+const STAGE_ICON: Record<HealthStage["id"], ReactNode> = {
+  tracker: <Cow size={22} />, gateway: <WifiHigh size={22} />, edge: <Desktop size={22} />, server: <CloudCheck size={22} />,
 };
+const USB_RECENT_MS = 15 * 60_000;
 
 export function ConnectionScreen() {
   const m = useApp();
@@ -74,7 +75,7 @@ export function ConnectionScreen() {
   const [live, setLive] = useState<{ device: string | null; target: LiveTarget; bleId?: string } | null>(null);
   const [adding, setAdding] = useState(false);
   const [naming, setNaming] = useState<string | null>(null);
-  const [node, setNode] = useState<ChainNode["key"] | null>(null);
+  const [opened, setOpened] = useState<Set<HealthStage["id"]>>(() => new Set(["gateway", "edge"]));
   const [opOpen, setOpOpen] = useState<string | null>(null);
   const settings = useDeviceSettings();
   const fencePlans = useTrackerFences();
@@ -84,6 +85,7 @@ export function ConnectionScreen() {
   const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
   const collarReadings = useSyncExternalStore(collarStorageReadings.subscribe, collarStorageReadings.snapshot);
   const session = useSyncExternalStore(trackerSession.subscribe, trackerSession.snapshot);
+  const usbSeen = useSyncExternalStore(usbTracker.subscribe, usbTracker.snapshot);
   const [, bump] = useState(0);
   const sync = pilotObservationSyncState();
   const label = (id: string) => names[id.toUpperCase()] ?? m.herd.find((a) => a.device?.toUpperCase() === id.toUpperCase())?.name ?? bleName(id);
@@ -192,13 +194,7 @@ export function ConnectionScreen() {
     }
   }
 
-  // ---- aktarım: dört halka ve tek cümle --------------------------------
-  const fresh = m.devices.filter((d) => d.lastTime && m.now - d.lastTime <= 3600_000).length;
-  const chain = farmChain({
-    trackers: trackers.length, fresh, gateways,
-    phoneGateway: linkOn && st.phase === "connected" && st.id ? { id: st.id, link: st.link === "usb" ? "usb" : "ble" } : null,
-    signedIn: Boolean(account), sync, pending: m.server.pending, now: m.now, label,
-  });
+  // ---- aktarım sağlığı: dört halka, kimde kaç kayıt bekliyor, çalışıyor mu ----
   const gwHeld = (() => {
     const by = new Map<string, number>();
     for (const g of gateways ?? []) if (g.held !== null) by.set(g.gateway.toUpperCase(), g.held);
@@ -210,9 +206,21 @@ export function ConnectionScreen() {
   const waiting = known3.length ? known3.reduce((x, y) => x + y, 0) : null;
   const lastUpload = (gateways ?? []).reduce<number | null>((x, g) => (g.lastUpload !== null && (x === null || g.lastUpload > x) ? g.lastUpload : x), null);
   const head = transferHeadline({ signedIn: Boolean(account), sync, waiting, lastUpload, now: m.now });
-  const nodes = chain.nodes.map((n) => n.key === "gateway" && gwHeld ? { ...n, sub: `${fmt.num(gwHeld)} kayıt bekliyor`, tone: "aging" as const }
-    : n.key === "sunucu" && edgePending ? { ...n, detail: `${n.detail} PC Edge'de ${fmt.num(edgePending)} kayıt sunucuya gitmeyi bekliyor.` } : n);
-  const picked = nodes.find((n) => n.key === node) ?? null;
+  const health = transferHealth({
+    now: m.now,
+    trackers: m.herd.filter((a) => a.device).map((a) => ({ id: a.device!, lastTime: m.devices.find((d) => d.id === a.device)?.lastTime ?? null, periodS: a.periodS })),
+    collars: Object.values(collarReadings),
+    gateways,
+    localGateway: {
+      id: st.id, link: st.link, connected: linkOn && st.phase === "connected", held: st.held, capacity: st.capacity,
+      readAt: phoneGatewayReading && phoneGatewayReading.id === st.id?.toUpperCase() ? phoneGatewayReading.at : null,
+    },
+    edges: edgeQueues,
+    phone: { pendingUpload: m.server.pending },
+    server: { signedIn: Boolean(account), running: sync.running, lastSync: sync.last?.at ?? null, error: sync.error },
+    label,
+  });
+  const toggle = (id: HealthStage["id"]) => setOpened((o) => { const n = new Set(o); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   // ---- bekleyen işlemler: tasma başına tek satır --------------------------
   const pendingOps = operations.active.flatMap((g) => g.targets)
@@ -262,11 +270,12 @@ export function ConnectionScreen() {
   });
 
   const sessionOn = !!session && session.link.alive;
+  const usbRecent = usbSeen && m.now - usbSeen.at < USB_RECENT_MS && !(session && session.device === usbSeen.device && session.link.alive) ? usbSeen : null;
   return (
     <div className="page">
       <Header title={tr.network.title} />
 
-      {(linkOn || sessionOn) && <>
+      {(linkOn || sessionOn || usbRecent) && <>
         <Section title="Bağlı" info="Bu telefonun şu an bağlı olduğu cihazlar. Bağlantı ekrandan çıkınca kopmaz; dokununca cihazın ekranı ve ayarları açılır, oradan kesilir." />
         <Card>
           {linkOn && (
@@ -286,6 +295,13 @@ export function ConnectionScreen() {
               trail={<span className="sm row" style={{ gap: 2, color: "var(--brand-t)" }}>Ayarlar<CaretRight size={16} /></span>}
               onClick={() => (session!.device ? nav.push({ to: "device", id: session!.device })
                 : setLive({ device: null, target: { ble: session!.bleId }, bleId: session!.bleId }))} />
+          )}
+          {usbRecent && (
+            <Cell lead={<span className="ic brand"><Usb size={22} /></span>}
+              title={label(usbRecent.device)} wrapSub
+              sub={`Tasma · USB kablosuyla okundu · ${fmt.ago(usbRecent.at, m.now)}`}
+              trail={<span className="sm row" style={{ gap: 2, color: "var(--brand-t)" }}>Ayarlar<CaretRight size={16} /></span>}
+              onClick={() => nav.push({ to: "device", id: usbRecent.device })} />
           )}
         </Card>
       </>}
@@ -337,25 +353,29 @@ export function ConnectionScreen() {
       )}
       {note && <p className="sm lead" role="status">{note}</p>}
 
-      <Section title="Aktarım" info="Kayıt tasmadan gateway'e, oradan köprüyle (PC ya da telefon) sunucuya gider; sunucudan bu telefona eşitlenir. Bir halka kaydı ancak sonraki halka kalıcı yazınca siler. Halkaya dokun, ayrıntısı açılır." />
+      <Section title="Aktarım" info="Kayıt tasmadan gateway'e, oradan köprüyle (PC Edge ya da bu telefon) sunucuya gider. Her sayı son ölçüldüğü zamanla gösterilir; eski ölçüm canlı değer değildir. Tasmadaki sayı bellekteki bütün kayıtlardır (gönderilmişler dahil). Satıra dokun, cihazlar açılır." />
       <Card>
         <div className="xfer-head">
           <span className={"dot " + head.tone} />
           <span className="strong">{head.text}</span>
         </div>
-        <div className="chain">
-          {nodes.map((n, i) => (
-            <span key={n.key} style={{ display: "contents" }}>
-              {i > 0 && <span className={"wire " + (chain.wires[i - 1] ?? "")} />}
-              <button className="node" aria-pressed={node === n.key} onClick={() => setNode(node === n.key ? null : n.key)}>
-                <span className={"nd ic " + n.tone}>{NODE_ICON[n.key]}</span>
-                <b>{n.title}</b>
-                <span>{n.sub}</span>
+        {health.map((stage) => {
+          const open = opened.has(stage.id);
+          const items = open ? stage.items : stage.id === "tracker" ? stage.items.filter((x) => x.tone !== "fresh").slice(0, 3) : [];
+          return (
+            <div key={stage.id} className="hl-stage">
+              <button className="hl-row" onClick={() => toggle(stage.id)} disabled={!stage.items.length}>
+                <span className={"ic " + stage.tone}>{STAGE_ICON[stage.id]}</span>
+                <span className="cm"><span className="ct">{stage.title}</span><span className={"cs wrap" + (stage.tone === "alarm" ? " t-alarm strong" : "")}>{stage.line}</span></span>
+                {stage.items.length > 0 && (open ? <CaretDown size={18} color="var(--mute)" /> : <CaretRight size={18} color="var(--mute)" />)}
               </button>
-            </span>
-          ))}
-        </div>
-        {picked ? <p className="sm chain-detail">{picked.detail}</p> : <div style={{ height: 8 }} />}
+              {items.map((it) => (
+                <div key={it.id} className="hl-item"><i className={"dot " + it.tone} /><span><b>{it.title}</b> · {it.line}</span></div>
+              ))}
+            </div>
+          );
+        })}
+        <div style={{ height: 6 }} />
       </Card>
       {edgeError && account && <p className="fine lead" role="status">PC Edge durumu okunamadı: {edgeError}</p>}
 

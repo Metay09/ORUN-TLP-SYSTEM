@@ -66,3 +66,20 @@ export const trackerSession = {
     await c.link.close();
   },
 };
+
+/**
+ * USB: the cable is read and closed each time (the gateway link and area
+ * sending share the port), so this is the LAST USB reading of a tracker, shown
+ * with its time ("USB ile okundu · 3 dk önce"), never as a live link.
+ */
+export interface UsbSeen { device: string; at: number; }
+let usb: UsbSeen | null = null;
+const usbFns = new Set<() => void>();
+export const usbTracker = {
+  subscribe(fn: () => void): () => void { usbFns.add(fn); return () => { usbFns.delete(fn); }; },
+  snapshot(): UsbSeen | null { return usb; },
+  note(device: string, at = Date.now()): void {
+    usb = { device: device.toUpperCase(), at };
+    for (const f of usbFns) f();
+  },
+};

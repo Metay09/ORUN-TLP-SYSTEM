@@ -107,3 +107,44 @@ test("zaman çizelgesi satırı türünü taşır (simge için)", () => {
   const d = digest([e("silent", NOW - 5 * HOUR, NOW - 3 * HOUR), e("still", NOW - 9 * HOUR, NOW - 6 * HOUR)], herd, NOW);
   assert.deepEqual(d.days[0].lines.map((l) => l.family).sort(), ["gap", "still"]);
 });
+
+import { transferHealth, EDGE_ALIVE_MS } from "../src/features/network/transferFlow.ts";
+
+test("aktarım sağlığı: tasma/gateway bekleyenleri ölçüm zamanıyla, Edge ve sunucu çalışıyor mu", () => {
+  const now = 2_000_000_000_000, MIN = 60_000;
+  const h = transferHealth({
+    now,
+    trackers: [{ id: "0E8ADE7E71531AA3", lastTime: now - 5 * MIN, periodS: 900 }, { id: "52E16773141A8887", lastTime: now - 5 * HOUR, periodS: 900 }],
+    collars: [{ device: "0E8ADE7E71531AA3", count: 120, capacity: 2600, at: now - 2 * HOUR, via: "ble" }],
+    gateways: [{ gateway: "09A462BD4B275BA5", via: "pc-usb", held: 3, capacity: 1056, lastSeen: now - MIN, statusAt: now - 2 * MIN, lastUpload: now - MIN, trackers24h: 2 }],
+    localGateway: { id: null, link: "none", connected: false, held: null, capacity: null, readAt: null },
+    edges: [{ edge: "pc-1", pending: 4, delivered: 900, quarantined: 0, lastSeen: now - 20_000 },
+            { edge: "pc-eski", pending: 7, delivered: 10, quarantined: 1, lastSeen: now - EDGE_ALIVE_MS - 1 }],
+    phone: { pendingUpload: null },
+    server: { signedIn: true, running: false, lastSync: now - MIN, error: null },
+    label: (id) => (id === "0E8ADE7E71531AA3" ? "Sarıkız" : id),
+  });
+  const [tr_, gw, edge, server] = h;
+  assert.equal(tr_.line, "1/2 tasmadan kayıt geliyor");
+  assert.equal(tr_.tone, "aging");
+  assert.match(tr_.items.find((x) => x.title === "Sarıkız")!.line, /bellekte 120 kayıt \(Bluetooth ile 2 sa önce okundu\)/);
+  assert.equal(gw.line, "1/1 bağlı · 3 kayıt bekliyor");
+  assert.match(gw.items[0].line, /PC Edge'e USB ile bağlı · 3 kayıt bekliyor \(2 dk önce ölçüldü\) · son gönderim 1 dk önce/);
+  assert.equal(edge.line, "1/2 çalışıyor");
+  assert.equal(edge.tone, "alarm");
+  assert.match(edge.items.find((x) => x.id === "pc-eski")!.line, /^çalışmıyor/);
+  assert.match(server.line, /^Çalışıyor · son eşitleme/);
+  assert.equal(server.items.length, 0, "sunucunun toplam sayısı yok");
+});
+
+test("aktarım sağlığı: telefon köprü olunca gateway ve köprü satırı telefondan", () => {
+  const now = 2_000_000_000_000;
+  const [, gw, edge] = transferHealth({
+    now, trackers: [], collars: [], gateways: null,
+    localGateway: { id: "09a462bd4b275ba5", link: "ble", connected: true, held: 37, capacity: 2600, readAt: now },
+    edges: null, phone: { pendingUpload: 0 },
+    server: { signedIn: false, running: false, lastSync: null, error: null }, label: (id) => id,
+  });
+  assert.match(gw.items[0].line, /^bu telefona Bluetooth ile bağlı · 37 kayıt bekliyor/);
+  assert.equal(edge.items[0].title, "Bu telefon");
+});
