@@ -117,7 +117,7 @@ export function ZonesScreen() {
             })}
           </Card>
 
-          <Section title="Tasmalara uygula" info="Alanı kaydetmek tasmadaki alanı değiştirmez. Alana dokun → 'Hangi tasmalar'ı seç, sonra Tasmalara uygula: her tasma için bir işlem açılır, tasmaya bağlanınca (şimdilik USB) işlenir; tasma onaylayınca 'Tasmaya işlendi' olur." />
+          <Section title="Tasmalara uygula" info="Alanı kaydetmek tasmadaki alanı değiştirmez. Alana dokun → 'Hangi tasmalar'ı seç, sonra Tasmalara uygula: her tasma için bir işlem açılır; LoRa'dan tasmanın bir sonraki raporunda ya da tasmaya bağlanınca (USB/Bluetooth) işlenir; tasma onaylayınca 'Tasmaya işlendi' olur." />
           <Card pad>
             <div className="stack">
               <span className={"sm strong" + (changed.length ? " t-aging" : "")}>
@@ -127,7 +127,7 @@ export function ZonesScreen() {
                   : "Alanlar için henüz tasma seçilmedi"}
               </span>
               {changed.length > 0 && <span className="fine">{changed.map((p) => p.name).join(", ")}</span>}
-              {queued > 0 && <span className="fine">{changed.length ? `${queued} tasmada alan işlemi sırada · ` : ""}Tasmaya bağlanınca (USB ya da Bluetooth) işlenir; ilerleme Bağlantı → Bekleyen işlemler'de.</span>}
+              {queued > 0 && <span className="fine">{changed.length ? `${queued} tasmada alan işlemi sırada · ` : ""}LoRa'dan bir sonraki raporunda ya da tasmaya bağlanınca işlenir; ilerleme Bağlantı → Bekleyen işlemler'de.</span>}
               {!plans.some((p) => p.state !== "none") && <span className="fine">Alana dokun → "Hangi tasmalar"dan Hepsi'ni ya da hayvanları seç.</span>}
               <button className="btn primary wide" disabled={!changed.length} onClick={() => setSending(true)}>Tasmalara uygula</button>
             </div>

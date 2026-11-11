@@ -216,7 +216,12 @@ orun_tlp::BleWriteService ble_write_service(ble_write_auth, config_mutations,
 // state token). 6a: fed from USB ("APP LORA CMD <hex>") for the desk test;
 // 6b: from the radio after a report.
 orun_tlp::LoraCommandService lora_commands(security_store, config_store,
-                                           config_mutations);
+                                           config_mutations, geofence_store,
+                                           geofence_mutations);
+// 6d: a frame longer than one USB/Bluetooth line comes in pieces:
+// "APP LORA + <hex>" ... then "APP LORA CMD|QUEUE <last hex>".
+uint8_t lora_line_frame[orun_tlp::lora_command::kMaxFrameSize]{};
+size_t lora_line_size = 0;
 // 6b Tracker: a command that came over the radio is answered over the radio.
 bool lora_answer_by_radio = false;
 uint8_t lora_radio_answer[orun_tlp::lora_command::kResultSize]{};
@@ -1305,8 +1310,9 @@ void submitLoraCommand(const uint8_t* frame, size_t size, const char* via) {
   const orun_tlp::LoraCommandAdmission a = lora_commands.submit(frame, size);
   if (a == orun_tlp::LoraCommandAdmission::kPending)
     lora_answer_by_radio = strcmp(via, "lora") == 0;
-  static const char* const kNames[] = {"NOT_FOR_ME", "REJECTED", "BUSY", "PENDING"};
-  Serial.printf("APP LORA via=%s admission=%s\n", via, kNames[static_cast<uint8_t>(a) & 3U]);
+  static const char* const kNames[] = {"NOT_FOR_ME", "REJECTED", "BUSY", "PENDING", "PARTIAL"};
+  const uint8_t index = static_cast<uint8_t>(a);
+  Serial.printf("APP LORA via=%s admission=%s\n", via, index < 5U ? kNames[index] : "?");
 }
 
 void drainLoraCommandResult() {
@@ -1331,14 +1337,70 @@ void drainLoraCommandResult() {
                 static_cast<unsigned>(result[38]), static_cast<unsigned>(result[39]), hex);
 }
 
-void printHexLine(const char* head, const uint8_t* bytes, size_t size) {
-  char hex[2 * orun_tlp::lora_command::kMaxCommandSize + 1];
-  for (size_t i = 0; i < size && i < orun_tlp::lora_command::kMaxCommandSize; ++i)
-    snprintf(hex + 2 * i, 3, "%02X", static_cast<unsigned>(bytes[i]));
-  hex[2 * (size < orun_tlp::lora_command::kMaxCommandSize ? size
-                                                           : orun_tlp::lora_command::kMaxCommandSize)] = '\0';
-  Serial.printf("%s%s\n", head, hex);
+// 6: what the Gateway says about LoRa commands goes to its bridge: USB, and
+// the phone over Bluetooth when it is the bridge (sf5l0_gateway).
+void loraSay(const char* line) {
+  Serial.println(line);
+  if (gatewayStorage()) orun_tlp::sf5l0_gateway::edgeLoraLine(line);
 }
+
+// 6: one LoRa line from a bridge (USB, or the phone over Bluetooth):
+//   APP LORA + <hex>       a piece of a frame longer than one line
+//   APP LORA CMD <hex>     Tracker: a command as if it came over the radio
+//   APP LORA QUEUE <hex>   Gateway: hold this frame for its Tracker
+// True if it was a LoRa line (handled, or refused with a reason).
+bool handleLoraLine(const char* line, size_t length) {
+  static const char kPiece[] = "APP LORA + ";
+  static const char kCmd[] = "APP LORA CMD ";
+  static const char kQueue[] = "APP LORA QUEUE ";
+  const auto starts = [&](const char* p, size_t n) {
+    return length > n && memcmp(line, p, n) == 0;
+  };
+  size_t prefix = 0;
+  enum { kPieceLine, kCmdLine, kQueueLine } kind;
+  if (starts(kPiece, sizeof(kPiece) - 1)) { kind = kPieceLine; prefix = sizeof(kPiece) - 1; }
+  else if (starts(kCmd, sizeof(kCmd) - 1)) { kind = kCmdLine; prefix = sizeof(kCmd) - 1; }
+  else if (starts(kQueue, sizeof(kQueue) - 1)) { kind = kQueueLine; prefix = sizeof(kQueue) - 1; }
+  else return false;
+  const size_t hex_len = length - prefix;
+  bool ok = (hex_len % 2U) == 0U && lora_line_size + hex_len / 2U <= sizeof(lora_line_frame);
+  for (size_t i = 0; ok && i < hex_len; ++i) {
+    const char c = line[prefix + i];
+    const int v = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                  : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+    if (v < 0) ok = false;
+    else {
+      uint8_t& b = lora_line_frame[lora_line_size + i / 2U];
+      b = static_cast<uint8_t>(((i & 1U) ? (b << 4) : 0) | v);
+    }
+  }
+  if (!ok) {
+    lora_line_size = 0;
+    loraSay("LORA REJECTED line");
+    return true;
+  }
+  lora_line_size += hex_len / 2U;
+  if (kind == kPieceLine) return true;  // more follows
+  const size_t size = lora_line_size;
+  lora_line_size = 0;
+  if (kind == kCmdLine) {
+    submitLoraCommand(lora_line_frame, size, "usb");
+    return true;
+  }
+  // 6b Gateway: a bridge hands over a signed frame for a Tracker.
+  if (!gatewayStorage()) {
+    loraSay("LORA QUEUE refused: not a gateway");
+    return true;
+  }
+  static const char* const kQueued[] = {"ADDED", "REPLACED", "MALFORMED", "FULL"};
+  const auto q = lora_relay.queue(lora_line_frame, size);
+  char out[64];
+  snprintf(out, sizeof(out), "LORA QUEUED result=%s waiting=%u",
+           kQueued[static_cast<uint8_t>(q) & 3U], static_cast<unsigned>(lora_relay.count()));
+  loraSay(out);
+  return true;
+}
+
 
 // 6b Tracker: commands from the radio go to the same service as USB; the
 // signed answer goes back over the radio while the Gateway still listens.
@@ -1377,27 +1439,33 @@ void serviceLoraRelay() {
   }
   uint64_t dropped = 0;
   uint32_t dropped_id = 0;
-  while (lora_relay.takeDropped(dropped, dropped_id))
-    Serial.printf("LORA DROPPED target=%08lX%08lX id=%08lX\n",
-                  static_cast<unsigned long>(uint32_t(dropped >> 32)),
-                  static_cast<unsigned long>(uint32_t(dropped)),
-                  static_cast<unsigned long>(dropped_id));
+  char say[160];
+  while (lora_relay.takeDropped(dropped, dropped_id)) {
+    snprintf(say, sizeof(say), "LORA DROPPED target=%08lX%08lX id=%08lX",
+             static_cast<unsigned long>(uint32_t(dropped >> 32)),
+             static_cast<unsigned long>(uint32_t(dropped)), static_cast<unsigned long>(dropped_id));
+    loraSay(say);
+  }
   if (radio_manager.canSend()) {
     orun_tlp::LoraCommandRelay::Frame f{};
-    if (lora_relay.due(now, f) && radio_manager.sendLoraFrame(f.bytes, f.size))
-      Serial.printf("LORA SENT target=%08lX%08lX id=%08lX attempt=%u/%u\n",
-                    static_cast<unsigned long>(uint32_t(f.target >> 32)),
-                    static_cast<unsigned long>(uint32_t(f.target)),
-                    static_cast<unsigned long>(f.command_id), static_cast<unsigned>(f.attempt),
-                    static_cast<unsigned>(orun_tlp::LoraCommandRelay::kMaxAttempts));
+    if (lora_relay.due(now, f) && radio_manager.sendLoraFrame(f.bytes, f.size)) {
+      snprintf(say, sizeof(say), "LORA SENT target=%08lX%08lX id=%08lX attempt=%u/%u part=%u/%u",
+               static_cast<unsigned long>(uint32_t(f.target >> 32)),
+               static_cast<unsigned long>(uint32_t(f.target)),
+               static_cast<unsigned long>(f.command_id), static_cast<unsigned>(f.attempt),
+               static_cast<unsigned>(orun_tlp::LoraCommandRelay::kMaxAttempts),
+               static_cast<unsigned>(f.part + 1U), static_cast<unsigned>(f.parts));
+      loraSay(say);
+    }
   }
   orun_tlp::LoraFrameRx rx{};
   if (radio_manager.takeLoraFrame(&rx)) {
     const bool ours = lora_relay.answered(rx.payload, rx.size);
-    char head[48];
-    snprintf(head, sizeof(head), "LORA RESULT queued=%s rssi=%d hex=", ours ? "yes" : "no",
-             static_cast<int>(rx.rssi_dbm));
-    printHexLine(head, rx.payload, rx.size);
+    int at = snprintf(say, sizeof(say), "LORA RESULT queued=%s rssi=%d hex=", ours ? "yes" : "no",
+                      static_cast<int>(rx.rssi_dbm));
+    for (size_t i = 0; i < rx.size && at + 3 < static_cast<int>(sizeof(say)); ++i)
+      at += snprintf(say + at, sizeof(say) - at, "%02X", static_cast<unsigned>(rx.payload[i]));
+    loraSay(say);
   }
 }
 
@@ -2858,45 +2926,9 @@ void handleRoleCommand() {
     return;
   }
 #ifdef ORUN_SF5L0_TRACKER
-  {
-    // 6a desk test: a server-signed LoRa command pasted over USB goes through
-    // exactly the service the radio will feed (tools/orun_lora_komut.py).
-    static const char kLoraCmd[] = "APP LORA CMD ";
-    static const char kLoraQueue[] = "APP LORA QUEUE ";
-    const bool queue = role_command_length > sizeof(kLoraQueue) - 1 &&
-                       memcmp(role_command, kLoraQueue, sizeof(kLoraQueue) - 1) == 0;
-    const uint8_t kPrefix = queue ? sizeof(kLoraQueue) - 1 : sizeof(kLoraCmd) - 1;
-    if (queue || (role_command_length > kPrefix && memcmp(role_command, kLoraCmd, kPrefix) == 0)) {
-      const uint8_t hex_len = static_cast<uint8_t>(role_command_length - kPrefix);
-      uint8_t frame[orun_tlp::lora_command::kMaxCommandSize]{};
-      bool ok = (hex_len % 2U) == 0U && hex_len / 2U <= sizeof(frame);
-      for (uint8_t i = 0; ok && i < hex_len; ++i) {
-        const char c = role_command[kPrefix + i];
-        const int v = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                      : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
-        if (v < 0) ok = false;
-        else frame[i / 2U] = static_cast<uint8_t>((frame[i / 2U] << 4) | v);
-      }
-      role_command_length = 0;
-      if (!ok) {
-        Serial.println(F("APP REJECTED"));
-        return;
-      }
-      if (!queue) {
-        submitLoraCommand(frame, hex_len / 2U, "usb");
-        return;
-      }
-      // 6b Gateway: a bridge hands over a signed command for a Tracker.
-      if (!gatewayStorage()) {
-        Serial.println(F("LORA QUEUE refused: not a gateway"));
-        return;
-      }
-      static const char* const kQueued[] = {"ADDED", "REPLACED", "MALFORMED", "FULL"};
-      const auto q = lora_relay.queue(frame, hex_len / 2U);
-      Serial.printf("LORA QUEUED result=%s waiting=%u\n", kQueued[static_cast<uint8_t>(q) & 3U],
-                    static_cast<unsigned>(lora_relay.count()));
-      return;
-    }
+  if (handleLoraLine(role_command, role_command_length)) {
+    role_command_length = 0;
+    return;
   }
 #endif
   if (orun_tlp::isUsbSettingsQuery(role_command, role_command_length)) {
@@ -3876,6 +3908,8 @@ void setup() {
                                    radio_manager,
                                    device_identity.legacyUint64(),
                                    product_records.mounted());
+    // 6: a phone bridge sends the same LoRa lines over Bluetooth.
+    orun_tlp::sf5l0_gateway::setLoraLineHandler(&handleLoraLine);
   } else if (trackerStorage()) {
     product_records.begin(device_identity.legacyUint64(),
                           orun_tlp::product_region::Jobs{false, true});

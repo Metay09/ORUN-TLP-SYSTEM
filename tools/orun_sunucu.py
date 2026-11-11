@@ -15,6 +15,9 @@ Bugüne kadar ayrı çalışan üç servisin işini tek programda yapar:
   paketi); köprü anahtarı (token dosyası) ister.
 
 Köprü ayrıca bağlı olduğu gateway'in durumunu bildirir: POST /v1/bridge/gateway.
+LoRa ayar komutları (6c): köprü GET /v1/bridge/lora ile imzalı komutları alır,
+gateway'in söylediklerini POST /v1/bridge/lora ile bildirir; telefon köprüsü
+aynısını hesap adresinden yapar: GET/POST /api/v1/devices/lora (zone:write).
 Hesap adresi çiftliğin gateway listesini verir: GET /api/v1/devices/gateways;
 cihaz adları: GET /api/v1/devices/names, POST /api/v1/devices/name (2d);
 pil kapasitesi (mAh, hesapta): GET /api/v1/devices/battery, POST /api/v1/devices/battery (Y3);
@@ -54,6 +57,7 @@ from backend.device_battery import BadBattery, DeviceBattery  # noqa: E402
 from backend.device_names import BadName, DeviceNames  # noqa: E402
 from backend.device_settings import BadSettings, DeviceSettings  # noqa: E402
 from backend.device_ops import BadOp, DeviceOps  # noqa: E402
+from backend.lora_queue import BadEvent, LoraQueue  # noqa: E402
 from backend.gateway_status import BadStatus, GatewayStatus, parse_report  # noqa: E402
 from backend.edge_queue_status import EdgeQueueStatus, BadEdgeQueueStatus, parse_edge_queue_report  # noqa: E402
 from backend.local_observations import LocalObservations  # noqa: E402
@@ -90,6 +94,9 @@ def bridge_handler(local: LocalObservations, token: str):
     expected = token.encode()
     gateways = GatewayStatus(local.backend.db_path)
     edge_queues = EdgeQueueStatus(local.backend.db_path)
+    lora = LoraQueue(local.backend.db_path, lambda: local.backend.registry,
+                     DeviceOps(local.backend.db_path), DeviceSettings(local.backend.db_path),
+                     TrackerFences(local.backend.db_path))
 
     class Bridge(BaseHTTPRequestHandler):
         server_version = "ORUN"
@@ -114,10 +121,12 @@ def bridge_handler(local: LocalObservations, token: str):
 
         def do_GET(self):  # noqa: N802
             match = OGK1_QUERY.fullmatch(self.path)
-            if self.path != "/v1/health" and match is None:
+            if self.path not in ("/v1/health", "/v1/bridge/lora") and match is None:
                 return self._json(404, {"error": "not_found"})
             if not self._authorized():
                 return self._json(401, {"error": "token"})
+            if self.path == "/v1/bridge/lora":
+                return self._json(200, {"commands": lora.commands()})
             if match is not None:
                 return self._ogk1(int(match[1], 16), int(match[2]), match[3])
             return self._json(200, {"ok": True,
@@ -145,10 +154,19 @@ def bridge_handler(local: LocalObservations, token: str):
                                     "lines": oc.ogk1_upload_lines(image)})
 
         def do_POST(self):  # noqa: N802
-            if self.path not in ("/v1/edge/batch", "/v1/bridge/gateway", "/v1/bridge/edge-status"):
+            if self.path not in ("/v1/edge/batch", "/v1/bridge/gateway", "/v1/bridge/edge-status",
+                                 "/v1/bridge/lora"):
                 return self._json(404, {"error": "not_found"})
             if not self._authorized():
                 return self._json(401, {"error": "token"})
+            if self.path == "/v1/bridge/lora":
+                size = self.headers.get("Content-Length", "")
+                if self.headers.get("Transfer-Encoding") or not size.isdecimal() or not 1 <= int(size) <= 16384:
+                    return self._json(400, {"error": "invalid_request"})
+                try:
+                    return self._json(200, lora.events(json.loads(self.rfile.read(int(size)))))
+                except (BadEvent, ValueError, UnicodeDecodeError):
+                    return self._json(400, {"error": "invalid_event"})
             if self.path == "/v1/bridge/gateway":
                 return self._gateway()
             if self.path == "/v1/bridge/edge-status":
@@ -244,6 +262,7 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
     fences = TrackerFences(local.backend.db_path)
     settings = DeviceSettings(local.backend.db_path)
     ops = DeviceOps(local.backend.db_path)
+    lora = LoraQueue(local.backend.db_path, lambda: local.backend.registry, ops, settings, fences)
 
     class Handler(handler):
         def _farm_actor(self, scope: str):
@@ -271,8 +290,13 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
                 return self._send(200, {"keys": keys})
             if self.path not in ("/api/v1/devices/gateways", "/api/v1/devices/edge-status", "/api/v1/devices/names",
                                  "/api/v1/devices/battery", "/api/v1/devices/fences", "/api/v1/devices/settings",
-                                 "/api/v1/devices/ops"):
+                                 "/api/v1/devices/ops", "/api/v1/devices/lora"):
                 return super().do_GET()
+            if self.path == "/api/v1/devices/lora":
+                # 6c: the phone as a bridge carries the same signed commands.
+                if self._farm_actor("zone:write") is None:
+                    return None
+                return self._send(200, {"commands": lora.commands()})
             if self._farm_actor("zone:read") is None:
                 return None
             if self.path == "/api/v1/devices/edge-status":
@@ -294,13 +318,14 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
             if self.path not in ("/api/v1/devices/gateway", "/api/v1/devices/name",
                                  "/api/v1/devices/battery", "/api/v1/devices/fence", "/api/v1/devices/settings",
                                  "/api/v1/devices/settings/reported", "/api/v1/devices/ops",
-                                 "/api/v1/devices/ops/result"):
+                                 "/api/v1/devices/ops/result", "/api/v1/devices/lora"):
                 return super().do_POST()
             if self._farm_actor("zone:write") is None:
                 return None
             size = self.headers.get("Content-Length", "")
             limit = (262144 if self.path == "/api/v1/devices/ops" else
-                     16384 if self.path in ("/api/v1/devices/fence", "/api/v1/devices/settings") else 512)
+                     16384 if self.path in ("/api/v1/devices/fence", "/api/v1/devices/settings",
+                                            "/api/v1/devices/lora") else 512)
             if (self.headers.get("Transfer-Encoding") or not size.isdecimal() or
                     not 1 <= int(size) <= limit):
                 return self._send(400, {"error": "invalid_request"})
@@ -309,12 +334,29 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
                     return self._send(200, fences.record(json.loads(self.rfile.read(int(size)))))
                 except (BadFence, ValueError, UnicodeDecodeError):
                     return self._send(400, {"error": "invalid_fence"})
+            if self.path == "/api/v1/devices/lora":
+                try:
+                    return self._send(200, lora.events(json.loads(self.rfile.read(int(size)))))
+                except (BadEvent, ValueError, UnicodeDecodeError):
+                    return self._send(400, {"error": "invalid_event"})
             if self.path in ("/api/v1/devices/ops", "/api/v1/devices/ops/result"):
                 try:
                     body = json.loads(self.rfile.read(int(size)))
                     if self.path == "/api/v1/devices/ops":
-                        return self._send(200, ops.create(body))
-                    return self._send(200, ops.result(body))
+                        reply = ops.create(body)
+                        # 6c/6d: a settings or area change also goes over LoRa (signed
+                        # here); whichever way reaches the tracker first settles it.
+                        if reply.get("created") and body.get("kind") in ("settings", "fence"):
+                            for it in body.get("items", []):
+                                lora.enqueue(body["op"], str(it.get("device", "")).upper(),
+                                             it.get("payload"), body["kind"])
+                        return self._send(200, reply)
+                    reply = ops.result(body)
+                    # Settled (over USB/Bluetooth, or over LoRa by an offline phone):
+                    # nothing left for the server to send.
+                    if reply.get("state") in ("applied", "same", "rejected"):
+                        lora.cancel(reply["op"], reply["device"])
+                    return self._send(200, reply)
                 except (BadOp, ValueError, UnicodeDecodeError):
                     return self._send(400, {"error": "invalid_op"})
             if self.path in ("/api/v1/devices/settings", "/api/v1/devices/settings/reported"):

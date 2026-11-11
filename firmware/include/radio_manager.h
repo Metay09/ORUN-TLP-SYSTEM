@@ -83,7 +83,7 @@ struct LoraFrameRx {
   uint16_t size = 0;
   int16_t rssi_dbm = 0;
   int8_t snr_db = 0;
-  uint8_t payload[lora_command::kMaxCommandSize]{};
+  uint8_t payload[lora_command::kMaxFrameSize]{};
 };
 
 class RadioManager {

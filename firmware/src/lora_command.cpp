@@ -1,4 +1,4 @@
-// 6: account-signed settings over LoRa (lora_command.h).
+// 6: account-signed settings and area lists over LoRa (lora_command.h).
 #include "lora_command.h"
 
 #include <string.h>
@@ -34,6 +34,7 @@ uint32_t getBe32(const uint8_t* p) {
   return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
          (static_cast<uint32_t>(p[2]) << 8) | p[3];
 }
+uint16_t getBe16(const uint8_t* p) { return static_cast<uint16_t>((p[0] << 8) | p[1]); }
 void putBe64(uint8_t* p, uint64_t v) {
   for (int i = 7; i >= 0; --i) { p[i] = static_cast<uint8_t>(v); v >>= 8; }
 }
@@ -46,6 +47,7 @@ void putBe16(uint8_t* p, uint16_t v) {
 }
 
 }  // namespace
+
 
 bool LoraCommandService::writeKey(uint8_t (&key)[32]) const {
   // Exactly the Bluetooth write key (ble_write_auth.h): one key per Tracker
@@ -70,11 +72,12 @@ bool LoraCommandService::writeKey(uint8_t (&key)[32]) const {
 
 bool LoraCommandService::tag(const char* domain, const uint8_t* body, size_t len,
                              uint8_t (&out)[kTagSize]) const {
-  constexpr size_t kMaxBody = lora_command::kMaxCommandSize - kTagSize;
+  constexpr size_t kMaxBody = lora_command::kMaxFrameSize - kTagSize;
   if (body == nullptr || len > kMaxBody) return false;
   uint8_t key[32]{};
   if (!writeKey(key)) return false;
-  uint8_t input[kDomainSize + kMaxBody]{};
+  // Loop-owned: kept off the loop stack (frames are up to 255 bytes).
+  static uint8_t input[kDomainSize + kMaxBody];
   memcpy(input, domain, kDomainSize);
   memcpy(input + kDomainSize, body, len);
   uint8_t mac[32]{};
@@ -86,29 +89,54 @@ bool LoraCommandService::tag(const char* domain, const uint8_t* body, size_t len
   return ok;
 }
 
-void LoraCommandService::buildResult(ConfigMutationOutcome outcome, bool token_valid,
-                                     const config_format::StateToken& token,
-                                     const config_format::Config& config,
-                                     uint8_t (&out)[lora_command::kResultSize]) const {
-  memset(out, 0, sizeof(out));
-  out[0] = lora_command::kVersion;
-  out[1] = lora_command::kResultType;
-  out[2] = static_cast<uint8_t>(outcome);
-  out[3] = lora_command::kResourceSettings;
-  putBe64(out + 4, security_.credential_.device_identity);
-  putBe32(out + 12, security_.credential_.key_epoch);
-  putBe32(out + 16, command_id_);
-  if (token_valid) {
-    putBe64(out + 20, token.incarnation);
-    putBe32(out + 28, token.revision);
-  }
-  putBe32(out + 32, config.tracking_interval_seconds);
-  putBe16(out + 36, config.ble_window_seconds);
-  out[38] = config.service_mode;
-  out[39] = config.requested_services;
+void LoraCommandService::sign(uint8_t resource) {
+  result_[0] = lora_command::kVersion;
+  result_[1] = lora_command::kResultType;
+  result_[3] = resource;
+  putBe64(result_ + 4, security_.credential_.device_identity);
+  putBe32(result_ + 12, security_.credential_.key_epoch);
+  putBe32(result_ + 16, command_id_);
   uint8_t t[kTagSize]{};
-  if (tag(lora_command::kResultDomain, out, lora_command::kResultBodySize, t))
-    memcpy(out + lora_command::kResultBodySize, t, kTagSize);
+  if (tag(lora_command::kResultDomain, result_, lora_command::kResultBodySize, t))
+    memcpy(result_ + lora_command::kResultBodySize, t, kTagSize);
+}
+
+void LoraCommandService::buildSettingsResult(ConfigMutationOutcome outcome, bool token_valid,
+                                             const config_format::StateToken& token,
+                                             const config_format::Config& config) {
+  memset(result_, 0, sizeof(result_));
+  result_[2] = static_cast<uint8_t>(outcome);
+  if (token_valid) {
+    putBe64(result_ + 20, token.incarnation);
+    putBe32(result_ + 28, token.revision);
+  }
+  putBe32(result_ + 32, config.tracking_interval_seconds);
+  putBe16(result_ + 36, config.ble_window_seconds);
+  result_[38] = config.service_mode;
+  result_[39] = config.requested_services;
+  sign(lora_command::kResourceSettings);
+}
+
+void LoraCommandService::buildAreasResult(ConfigMutationOutcome outcome) {
+  memset(result_, 0, sizeof(result_));
+  result_[2] = static_cast<uint8_t>(outcome);
+  geofence_format::StateToken token;
+  if (fences_.stateToken(token)) {
+    putBe64(result_ + 20, token.incarnation);
+    putBe32(result_ + 28, token.revision);
+  }
+  const GeofenceResourceState state = fences_.resourceState();
+  result_[32] = state == GeofenceResourceState::kClear        ? 0U
+                : state == GeofenceResourceState::kConfigured ? 1U
+                                                              : 2U;
+  result_[33] = fences_.areaCount();
+  putBe16(result_ + 34, fences_.totalVertexCount());
+  sign(lora_command::kResourceAreas);
+}
+
+void LoraCommandService::remember() {
+  last_valid_ = true;
+  last_command_id_ = command_id_;
 }
 
 LoraCommandAdmission LoraCommandService::submit(const uint8_t* frame, size_t size) {
@@ -118,11 +146,7 @@ LoraCommandAdmission LoraCommandService::submit(const uint8_t* frame, size_t siz
   if (!security_.ready() || security_.state() != SecurityState::kProvisioned ||
       getBe64(frame + 4) != security_.credential_.device_identity)
     return LoraCommandAdmission::kNotForMe;
-  if (size < kMinCommandSize) return LoraCommandAdmission::kRejected;
-  const size_t n = frame[32];
-  if (frame[2] != 0U || frame[3] != kResourceSettings || n == 0U || n > kMaxEntries ||
-      size != kHeaderSize + n * kEntrySize + kTagSize ||
-      getBe32(frame + 12) != security_.credential_.key_epoch)
+  if (!wellFormed(frame, size) || getBe32(frame + 12) != security_.credential_.key_epoch)
     return LoraCommandAdmission::kRejected;
   const size_t body_len = size - kTagSize;
   uint8_t expected[kTagSize]{};
@@ -131,37 +155,29 @@ LoraCommandAdmission LoraCommandService::submit(const uint8_t* frame, size_t siz
   secureZero(expected, sizeof(expected));
   // A forged or damaged frame gets no answer at all (nothing to amplify).
   if (!authentic) return LoraCommandAdmission::kRejected;
-  if (owed_ || immediate_) return LoraCommandAdmission::kBusy;
+  if (owed_ != Owed::kNone || immediate_) return LoraCommandAdmission::kBusy;
 
   const uint32_t command_id = getBe32(frame + 16);
-  // The same signed command again: its answer was lost; send the same one.
-  if (last_valid_ && command_id == last_command_id_ &&
-      constantTimeEqual(last_command_tag_, frame + body_len, kTagSize)) {
+  // The same signed command again (any part): its answer was lost; resend it.
+  if (last_valid_ && command_id == last_command_id_) {
     immediate_ = true;
     return LoraCommandAdmission::kPending;
   }
+  return frame[3] == kResourceSettings ? settings(frame, size, command_id)
+                                       : areas(frame, size, command_id);
+}
 
+LoraCommandAdmission LoraCommandService::settings(const uint8_t* frame, size_t size,
+                                                  uint32_t command_id) {
+  using namespace lora_command;
+  (void)size;
   command_id_ = command_id;
-  memcpy(pending_tag_, frame + body_len, kTagSize);
+  const size_t n = frame[32];
   const ApplicationAccessContext access(ApplicationAccessChannel::kLoraAuthenticated);
-  ConfigMutationRequest items[kMaxEntries] = {
-      ConfigMutationRequest(ApplicationRequester::kLora, command_id, access,
-                            ConfigMutationKind::kSetTrackingInterval, 0),
-      ConfigMutationRequest(ApplicationRequester::kLora, command_id, access,
-                            ConfigMutationKind::kSetTrackingInterval, 0),
-      ConfigMutationRequest(ApplicationRequester::kLora, command_id, access,
-                            ConfigMutationKind::kSetTrackingInterval, 0),
-      ConfigMutationRequest(ApplicationRequester::kLora, command_id, access,
-                            ConfigMutationKind::kSetTrackingInterval, 0),
-      ConfigMutationRequest(ApplicationRequester::kLora, command_id, access,
-                            ConfigMutationKind::kSetTrackingInterval, 0),
-      ConfigMutationRequest(ApplicationRequester::kLora, command_id, access,
-                            ConfigMutationKind::kSetTrackingInterval, 0),
-      ConfigMutationRequest(ApplicationRequester::kLora, command_id, access,
-                            ConfigMutationKind::kSetTrackingInterval, 0),
-      ConfigMutationRequest(ApplicationRequester::kLora, command_id, access,
-                            ConfigMutationKind::kSetTrackingInterval, 0),
-  };
+  const ConfigMutationRequest blank(ApplicationRequester::kLora, command_id, access,
+                                    ConfigMutationKind::kSetTrackingInterval, 0);
+  ConfigMutationRequest items[kMaxEntries] = {blank, blank, blank, blank,
+                                              blank, blank, blank, blank};
   static_assert(kMaxEntries == 8, "items initializer");
   bool invalid = false;
   uint8_t seen = 0;  // each setting at most once per command
@@ -183,23 +199,99 @@ LoraCommandAdmission LoraCommandService::submit(const uint8_t* frame, size_t siz
   if (invalid) {
     config_format::StateToken token;
     const bool token_valid = store_.stateToken(token);
-    buildResult(ConfigMutationOutcome::kInvalid, token_valid, token, store_.config(), result_);
+    buildSettingsResult(ConfigMutationOutcome::kInvalid, token_valid, token, store_.config());
     immediate_ = true;
-    last_valid_ = true;
-    last_command_id_ = command_id;
-    memcpy(last_command_tag_, pending_tag_, kTagSize);
+    remember();
     return LoraCommandAdmission::kPending;
   }
 
   const config_format::StateToken want(getBe64(frame + 20), getBe32(frame + 28));
   switch (mutations_.submitBatch(items, n, &want)) {
     case ConfigMutationSubmitResult::kAccepted:
-      owed_ = true;
+      owed_ = Owed::kSettings;
       return LoraCommandAdmission::kPending;
     case ConfigMutationSubmitResult::kBusy:
       return LoraCommandAdmission::kBusy;
     case ConfigMutationSubmitResult::kRejected:
     default:
+      return LoraCommandAdmission::kRejected;
+  }
+}
+
+LoraCommandAdmission LoraCommandService::areas(const uint8_t* frame, size_t size,
+                                               uint32_t command_id) {
+  using namespace lora_command;
+  const uint8_t part = frame[32], parts = frame[33];
+  const uint64_t inc = getBe64(frame + 20);
+  const uint32_t rev = getBe32(frame + 28);
+  if (!area_active_ || area_command_id_ != command_id) {
+    // A new list starts (any earlier unfinished one is dropped).
+    area_active_ = true;
+    area_command_id_ = command_id;
+    area_parts_ = parts;
+    area_have_ = 0;
+    area_count_ = frame[34];
+    area_vertices_ = getBe16(frame + 35);
+    area_token_incarnation_ = inc;
+    area_token_revision_ = rev;
+  } else if (parts != area_parts_ || frame[34] != area_count_ ||
+             getBe16(frame + 35) != area_vertices_ || inc != area_token_incarnation_ ||
+             rev != area_token_revision_) {
+    return LoraCommandAdmission::kRejected;  // signed parts of one command never disagree
+  }
+  memcpy(area_set_ + size_t(part) * kAreaChunk, frame + kAreaHeaderSize,
+         size - kAreaHeaderSize - kTagSize);
+  area_have_ = static_cast<uint8_t>(area_have_ | (1U << part));
+  if (area_have_ != static_cast<uint8_t>((1U << area_parts_) - 1U))
+    return LoraCommandAdmission::kPartial;
+  return submitAreas();
+}
+
+LoraCommandAdmission LoraCommandService::submitAreas() {
+  using namespace lora_command;
+  command_id_ = area_command_id_;
+  const ApplicationAccessContext access(ApplicationAccessChannel::kLoraAuthenticated);
+  const geofence_format::StateToken want(area_token_incarnation_, area_token_revision_);
+  // S: n_areas, the vertex count of each area, then every vertex.
+  const uint8_t n = area_set_[0];
+  uint16_t sum = 0;
+  bool invalid = role_ != StorageRole::kTracker || n != area_count_;
+  for (uint8_t a = 0; a < n && !invalid; ++a) {
+    const uint8_t count = area_set_[1 + a];
+    invalid = count == 0U || sum + count > geofence_format::kMaximumTotalVertices;
+    if (!invalid) area_polygons_[a] = GeofencePolygonView(area_points_ + sum, count);
+    sum = static_cast<uint16_t>(sum + count);
+  }
+  invalid = invalid || sum != area_vertices_;
+  if (invalid) {
+    area_active_ = false;
+    buildAreasResult(ConfigMutationOutcome::kInvalid);
+    immediate_ = true;
+    remember();
+    return LoraCommandAdmission::kPending;
+  }
+  const uint8_t* v = area_set_ + 1 + n;
+  for (uint16_t i = 0; i < sum; ++i) {
+    area_points_[i] = GeoPointE7(static_cast<int32_t>(getBe32(v + 8U * i)),
+                                 static_cast<int32_t>(getBe32(v + 8U * i + 4U)));
+  }
+  const GeofenceAreaSetView set(area_polygons_, n);
+  const ConfigMutationSubmitResult r =
+      n == 0U ? fence_mutations_.submitClearIf(ApplicationRequester::kLora, command_id_, access, want)
+              : fence_mutations_.submitReplaceIf(ApplicationRequester::kLora, command_id_, access,
+                                                 set, want);
+  switch (r) {
+    case ConfigMutationSubmitResult::kAccepted:
+      area_active_ = false;
+      owed_ = Owed::kAreas;
+      return LoraCommandAdmission::kPending;
+    case ConfigMutationSubmitResult::kBusy:
+      // Kept: the next copy of part 0 completes it again and submits.
+      area_have_ = static_cast<uint8_t>(area_have_ & ~1U);
+      return LoraCommandAdmission::kBusy;
+    case ConfigMutationSubmitResult::kRejected:
+    default:
+      area_active_ = false;
       return LoraCommandAdmission::kRejected;
   }
 }
@@ -210,14 +302,19 @@ bool LoraCommandService::takeResult(uint8_t (&out)[lora_command::kResultSize]) {
     memcpy(out, result_, sizeof(out));
     return true;
   }
-  if (!owed_) return false;
-  ConfigMutationResult done;
-  if (!mutations_.takeResult(ApplicationRequester::kLora, done)) return false;
-  owed_ = false;
-  buildResult(done.outcome, done.token_valid, done.token, done.config, result_);
-  last_valid_ = true;
-  last_command_id_ = command_id_;
-  memcpy(last_command_tag_, pending_tag_, lora_command::kTagSize);
+  if (owed_ == Owed::kSettings) {
+    ConfigMutationResult done;
+    if (!mutations_.takeResult(ApplicationRequester::kLora, done)) return false;
+    buildSettingsResult(done.outcome, done.token_valid, done.token, done.config);
+  } else if (owed_ == Owed::kAreas) {
+    GeofenceMutationResult done;
+    if (!fence_mutations_.takeResult(ApplicationRequester::kLora, done)) return false;
+    buildAreasResult(done.outcome);
+  } else {
+    return false;
+  }
+  owed_ = Owed::kNone;
+  remember();
   memcpy(out, result_, sizeof(out));
   return true;
 }

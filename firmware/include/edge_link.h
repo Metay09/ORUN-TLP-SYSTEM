@@ -93,9 +93,14 @@ enum class Type : uint8_t {
   // HELD payload, but NOT part of the oldest-first DUMP_END census. Older
   // phones safely ignore it and still receive every ordinary HELD in order.
   kHeldPreview = 0x06,
+  // 6 (LoRa commands): one ASCII "LORA ..." line the Gateway also prints on
+  // USB (QUEUED / SENT / DROPPED / RESULT ... hex=), no newline.
+  kLoraLine = 0x07,
   // Edge -> Gateway
   kDump = 0x81,         // (empty) send every held record again from the start
   kAccept = 0x82,       // page(2) slot(2) gen(8) mac(32)
+  // 6: one ASCII "APP LORA ..." line, exactly as over USB, no newline.
+  kLoraCommandLine = 0x83,
 };
 constexpr uint8_t kHeldFlagLink = 0x01;  // rssi/snr are this record's live RX
 

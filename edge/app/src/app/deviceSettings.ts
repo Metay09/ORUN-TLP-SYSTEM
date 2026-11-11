@@ -131,7 +131,7 @@ export function fleetLine(r: FleetRow): { value: string; sub: string; waiting: b
   const value = r.values.length === 0 ? "—" : r.values.length === 1 ? r.def.word(r.values[0].value) : "Karışık";
   const parts: string[] = [];
   if (r.values.length > 1) parts.push(r.values.map((v) => `${v.count} tasma ${r.def.word(v.value)}`).join(" · "));
-  if (r.waiting) parts.push(`${r.waiting} tasma bekliyor, bağlanınca işlenir`);
+  if (r.waiting) parts.push(`${r.waiting} tasma bekliyor (LoRa'dan bir sonraki raporunda ya da bağlanınca)`);
   else if (r.values.length === 1 && r.unknown === 0) parts.push(r.total === 1 ? "Tasmada" : `${r.total} tasmanın hepsinde`);
   if (r.unknown) parts.push(`${r.unknown} tasmadan henüz okunmadı`);
   return { value, sub: parts.join(" · "), waiting: r.waiting > 0 };

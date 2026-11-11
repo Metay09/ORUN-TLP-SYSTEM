@@ -546,6 +546,14 @@ void reverseUuid(const uint8_t (&in)[16], uint8_t (&out)[16]) {
   for (uint8_t i = 0; i < 16; ++i) out[i] = in[15U - i];
 }
 
+// 6: LoRa lines to/from a phone bridge (edge_link kLoraLine / kLoraCommandLine).
+bool (*lora_line_handler)(const char*, size_t) = nullptr;
+constexpr uint8_t kLoraOutSlots = 4;
+uint8_t lora_out[kLoraOutSlots][edge_link::kMaxMessage];
+uint8_t lora_out_size[kLoraOutSlots] = {};
+uint8_t lora_out_head = 0;
+uint8_t lora_out_count = 0;
+
 void endEdgeSession() {
   if (edge_session != nullptr) edge_session->end();
   edge_out.clear();
@@ -556,10 +564,16 @@ void endEdgeSession() {
   edge_ingress_count = 0;
   edge_hvc_seen = edge_hvc_events;
   taskEXIT_CRITICAL();
+  lora_out_count = 0;
 }
 
 void edgeMessage(const uint8_t* message, size_t size) {
   ++edge_messages_in;
+  if (size >= 1 && message[0] == static_cast<uint8_t>(edge_link::Type::kLoraCommandLine)) {
+    if (lora_line_handler != nullptr && size > 1)
+      (void)lora_line_handler(reinterpret_cast<const char*>(message + 1), size - 1);
+    return;
+  }
   if (edge_session != nullptr) edge_session->onMessage(message, size);
 }
 
@@ -694,6 +708,11 @@ void pollBle(bool connected, uint16_t connection_handle, bool disconnect_event,
       edgeMessage(edge_in.message(), edge_in.size());
   }
 
+  if (!edge_out.pending() && lora_out_count != 0U) {
+    (void)edge_out.load(lora_out[lora_out_head], lora_out_size[lora_out_head], ++edge_message_id);
+    lora_out_head = static_cast<uint8_t>((lora_out_head + 1U) % kLoraOutSlots);
+    --lora_out_count;
+  }
   if (!edge_out.pending()) {
     uint8_t message[edge_link::kMaxMessage];
     size_t size = 0;
@@ -727,6 +746,25 @@ void pollBle(bool connected, uint16_t connection_handle, bool disconnect_event,
     endEdgeSession();
     (void)Bluefruit.disconnect(failed);
   }
+}
+
+void setLoraLineHandler(bool (*handler)(const char* line, size_t length)) {
+  lora_line_handler = handler;
+}
+
+void edgeLoraLine(const char* line) {
+  if (line == nullptr || edge_session == nullptr || !edge_session->active()) return;
+  const size_t length = strlen(line);
+  if (length == 0U || length + 1U > edge_link::kMaxMessage) return;
+  if (lora_out_count == kLoraOutSlots) {  // keep the newest
+    lora_out_head = static_cast<uint8_t>((lora_out_head + 1U) % kLoraOutSlots);
+    --lora_out_count;
+  }
+  const uint8_t at = static_cast<uint8_t>((lora_out_head + lora_out_count) % kLoraOutSlots);
+  lora_out[at][0] = static_cast<uint8_t>(edge_link::Type::kLoraLine);
+  memcpy(lora_out[at] + 1, line, length);
+  lora_out_size[at] = static_cast<uint8_t>(length + 1U);
+  ++lora_out_count;
 }
 
 void startErase(bool include_held) {

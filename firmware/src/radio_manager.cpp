@@ -401,8 +401,7 @@ bool RadioManager::sendLoraFrame(const uint8_t* payload, size_t size) {
       payload != nullptr &&
       (tracker ? (size == kResultSize && payload[0] == kVersion &&
                   payload[1] == kResultType)
-               : (isCommandFrame(payload, size) && size >= kMinCommandSize &&
-                  size <= kMaxCommandSize));
+               : wellFormed(payload, size));
   uint64_t owner = 0;
   if (shape_ok && tracker)
     for (int i = 0; i < 8; ++i) owner = (owner << 8) | payload[4 + i];
@@ -410,7 +409,7 @@ bool RadioManager::sendLoraFrame(const uint8_t* payload, size_t size) {
     ++local_tx_failures_;
     return false;
   }
-  uint8_t tx_payload[kMaxCommandSize]{};
+  uint8_t tx_payload[kMaxFrameSize]{};
   memcpy(tx_payload, payload, size);
   startTxOperation();
   tx_kind_ = TxKind::kLoraFrame;
@@ -907,9 +906,13 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
     if (size >= 12)
       for (int i = 0; i < 8; ++i) target = (target << 8) | payload[4 + i];
     const bool wanted =
-        tracker ? (command && size >= lora_command::kMinCommandSize &&
-                   size <= lora_command::kMaxCommandSize && target == device_id_)
+        tracker ? (command && size >= lora_command::kMinFrameSize &&
+                   size <= lora_command::kMaxFrameSize && target == device_id_)
                 : (!command && size == lora_command::kResultSize);
+    // 6d: more parts of an area list may follow back to back; keep listening.
+    if (wanted && tracker && listen_policy_ == RadioListenPolicy::kWindowed &&
+        listen_state_ == RadioListenState::kRxWindowOpen)
+      openListenWindow(monotonic::nowMs());
     if (!wanted || lora_rx_pending_) {
       Serial.printf("RX LORA %s ignored length=%u\n", command ? "COMMAND" : "RESULT",
                     static_cast<unsigned>(size));

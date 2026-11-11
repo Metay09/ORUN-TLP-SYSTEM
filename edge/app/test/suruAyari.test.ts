@@ -23,7 +23,7 @@ test("istenen cihazdakinden farklı: bekliyor sayılır, değer istenen", () => 
   assert.equal(r.waiting, 1);
   const line = fleetLine(r);
   assert.equal(line.value, "30 dk");
-  assert.equal(line.sub, "1 tasma bekliyor, bağlanınca işlenir");
+  assert.equal(line.sub, "1 tasma bekliyor (LoRa'dan bir sonraki raporunda ya da bağlanınca)");
   assert.equal(line.waiting, true);
 });
 

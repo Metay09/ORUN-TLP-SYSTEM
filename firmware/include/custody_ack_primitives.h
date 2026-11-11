@@ -16,7 +16,8 @@ bool hmacSha256(const uint8_t (&key)[32], const uint8_t* data,
 // 4c-1b (Bluetooth write key and tags): the same two primitives for other
 // bounded inputs. The exact-length custody calls above stay as they are.
 constexpr size_t kMaxBoundedInfo = 64;
-constexpr size_t kMaxBoundedData = 128;
+// 6d: a whole LoRa command frame (255) behind its 16-byte domain.
+constexpr size_t kMaxBoundedData = 272;
 bool hkdfSha256Bounded(const uint8_t (&salt)[16], const uint8_t (&root)[32],
                        const uint8_t* info, size_t info_len,
                        uint8_t (&key)[32]);

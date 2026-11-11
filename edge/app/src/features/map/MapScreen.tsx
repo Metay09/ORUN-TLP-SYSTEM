@@ -212,7 +212,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
       {askSend && (
         <Dialog title="Alan kaydedildi" onClose={() => setAskSend(null)}>
           <div className="stack" style={{ padding: "0 20px 16px" }}>
-            <p className="sm" style={{ margin: 0 }}>"{askSend}" tasmalara uygulansın mı? Kaydetmek tasmadaki alanı değiştirmez; uygulayınca tasmaya bağlanınca işlenir. Sonra Alanlar → Tasmalara uygula'dan da yapabilirsin.</p>
+            <p className="sm" style={{ margin: 0 }}>"{askSend}" tasmalara uygulansın mı? Kaydetmek tasmadaki alanı değiştirmez; uygulayınca LoRa'dan ya da tasmaya bağlanınca işlenir. Sonra Alanlar → Tasmalara uygula'dan da yapabilirsin.</p>
             <div className="btns">
               <button className="btn" onClick={() => setAskSend(null)}>Sonra</button>
               <button className="btn primary" onClick={() => { setAskSend(null); setSending(true); }}>Uygula</button>

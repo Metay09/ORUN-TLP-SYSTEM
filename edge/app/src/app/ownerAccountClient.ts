@@ -2,6 +2,7 @@
 // The approved phone's device bearer comes from native Keystore-backed
 // storage; short-lived account bearer remains ONLY in this JS class instance.
 // No localStorage, IndexedDB, URL, logs, or observation-bench token reuse.
+import type { LoraCommand, LoraEvent } from "./loraCarrier.ts";
 import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { parseOfflineCatalog, type OfflinePack } from "../features/map/offlinePacks/catalog.ts";
 import type { FenceRecord } from "./trackerFences.ts";
@@ -386,6 +387,29 @@ export class OwnerAccountClient {
     });
     if (reply.status === 400) throw new Error("Kapasite 50–50000 mAh arasında olmalı.");
     if (!reply.ok) throw new Error("Pil kapasitesi kaydedilemedi.");
+  }
+
+  /** 6c: signed LoRa commands this phone carries when it bridges a gateway. */
+  async loraCommands(): Promise<LoraCommand[]> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/lora", {
+      headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
+      credentials: "omit", redirect: "error", cache: "no-store",
+    });
+    if (!reply.ok) throw new Error("LoRa komutları alınamadı.");
+    const body = await json(reply, 64 * 1024);
+    return Array.isArray(body.commands) ? body.commands as LoraCommand[] : [];
+  }
+
+  async loraEvents(events: LoraEvent[]): Promise<void> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/lora", {
+      method: "POST", credentials: "omit", redirect: "error", cache: "no-store",
+      headers: { Authorization: "Bearer " + this.accessToken,
+                 "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ events }),
+    });
+    if (!reply.ok) throw new Error("LoRa bildirimi gönderilemedi.");
   }
 
   /** 3a: which zones each tracker holds (written over USB and confirmed). */

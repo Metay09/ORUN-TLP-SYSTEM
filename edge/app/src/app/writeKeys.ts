@@ -54,6 +54,18 @@ export class WriteKeyBook {
     return k ? fromHex(k) : null;
   };
 
+  /** 6c: the newest key this phone holds for a tasma (LoRa commands name the epoch). */
+  active(device: string): { epoch: number; key: Uint8Array } | null {
+    const d = device.toUpperCase() + ":";
+    let best: { epoch: number; key: Uint8Array } | null = null;
+    for (const [k, v] of Object.entries(this.keys)) {
+      if (!k.startsWith(d)) continue;
+      const epoch = Number(k.slice(d.length));
+      if (!best || epoch > best.epoch) best = { epoch, key: fromHex(v) };
+    }
+    return best;
+  }
+
   has(device: string): boolean {
     const d = device.toUpperCase() + ":";
     return Object.keys(this.keys).some((k) => k.startsWith(d));

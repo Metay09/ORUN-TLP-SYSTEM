@@ -27,6 +27,31 @@ std::vector<uint8_t> command(uint64_t target, uint32_t id, uint8_t n = 1) {
   return f;
 }
 
+// Area list parts (shape only; contents are not looked at by the Gateway).
+std::vector<std::vector<uint8_t>> areaParts(uint64_t target, uint32_t id, uint8_t areas,
+                                            uint16_t vertices) {
+  const size_t total = lc::areaSetSize(areas, vertices);
+  const size_t parts = (total + lc::kAreaChunk - 1) / lc::kAreaChunk;
+  std::vector<std::vector<uint8_t>> out;
+  for (size_t p = 0; p < parts; ++p) {
+    std::vector<uint8_t> f = {lc::kVersion, lc::kCommandType, 0, lc::kResourceAreas};
+    for (int i = 7; i >= 0; --i) f.push_back(uint8_t(target >> (8 * i)));
+    for (int i = 0; i < 4; ++i) f.push_back(0);
+    for (int i = 3; i >= 0; --i) f.push_back(uint8_t(id >> (8 * i)));
+    for (int i = 0; i < 12; ++i) f.push_back(0);
+    f.push_back(uint8_t(p));
+    f.push_back(uint8_t(parts));
+    f.push_back(areas);
+    f.push_back(uint8_t(vertices >> 8));
+    f.push_back(uint8_t(vertices));
+    const size_t chunk = p + 1 < parts ? lc::kAreaChunk : total - p * lc::kAreaChunk;
+    for (size_t i = 0; i < chunk; ++i) f.push_back(uint8_t(p));
+    for (int i = 0; i < 16; ++i) f.push_back(0xAA);
+    out.push_back(f);
+  }
+  return out;
+}
+
 std::vector<uint8_t> result(uint64_t device, uint32_t id) {
   std::vector<uint8_t> r(lc::kResultSize, 0);
   r[0] = lc::kVersion;
@@ -113,13 +138,51 @@ void testGivesUpAfterMaxAttempts() {
   assert(!relay.due(t, f) && relay.count() == 0);
 }
 
+void testAreaPartsGoBackToBack() {
+  LoraCommandRelay relay;
+  auto parts = areaParts(kA, 9, 8, 64);
+  assert(parts.size() == 3 && parts[0].size() == lc::kMaxFrameSize);
+  // Parts may arrive from the bridge in any order; a copy is harmless.
+  assert(relay.queue(parts[1].data(), parts[1].size()) == LoraCommandRelay::Queued::kAdded);
+  assert(relay.queue(parts[0].data(), parts[0].size()) == LoraCommandRelay::Queued::kReplaced);
+  assert(relay.queue(parts[2].data(), parts[2].size()) == LoraCommandRelay::Queued::kReplaced);
+  assert(relay.queue(parts[2].data(), parts[2].size()) == LoraCommandRelay::Queued::kReplaced);
+  assert(relay.count() == 1);
+  relay.heard(kA, 1000);
+  relay.ackSent(1500);
+  LoraCommandRelay::Frame f{};
+  for (uint8_t p = 0; p < 3; ++p) {
+    assert(relay.due(1500 + p * 4000, f));
+    assert(f.part == p && f.parts == 3 && f.attempt == 1 && f.size == parts[p].size() &&
+           memcmp(f.bytes, parts[p].data(), f.size) == 0);
+  }
+  assert(!relay.due(14000, f));  // all three went in this window
+  // Next report: all three again, attempt 2.
+  relay.heard(kA, 60000);
+  relay.ackSent(60000);
+  assert(relay.due(60000, f) && f.part == 0 && f.attempt == 2);
+  // A newer command for the same Tracker replaces every part.
+  auto clear = areaParts(kA, 10, 0, 0);
+  assert(clear.size() == 1 && clear[0].size() == lc::kMinFrameSize);
+  assert(relay.queue(clear[0].data(), clear[0].size()) == LoraCommandRelay::Queued::kReplaced);
+  relay.heard(kA, 120000);
+  relay.ackSent(120000);
+  assert(relay.due(120000, f) && f.command_id == 10 && f.parts == 1 && f.attempt == 1);
+  assert(!relay.due(120100, f));
+  // A part whose sizes do not add up is refused.
+  auto bad = areaParts(kB, 11, 1, 6);
+  bad[0].pop_back();
+  assert(relay.queue(bad[0].data(), bad[0].size()) == LoraCommandRelay::Queued::kMalformed);
+}
+
 }  // namespace
 
 int main() {
   testWaitsForItsTrackerAndTheAck();
   testReplaceFullMalformed();
   testGivesUpAfterMaxAttempts();
+  testAreaPartsGoBackToBack();
   puts("6b Gateway LoRa command relay (wait for Tracker and ACK, one try per report, "
-       "replace, full, malformed, give up): PASS");
+       "replace, full, malformed, give up, area parts back to back): PASS");
   return 0;
 }

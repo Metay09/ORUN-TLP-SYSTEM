@@ -23,7 +23,7 @@ export function ZoneTargets({ zoneId, onError }: { zoneId: string; onError: (e: 
   const has = Boolean(m.targetBook.rules[zoneId]);
   return (
     <>
-      <Section title="Hangi tasmalar" info="Alan, burada seçilen tasmalara gönderilir: hepsine, seçtiğin gruplara ya da tek tek hayvanlara. Seçtikten sonra 'Tasmalara uygula'; tasmaya bağlanınca işlenir." />
+      <Section title="Hangi tasmalar" info="Alan, burada seçilen tasmalara gönderilir: hepsine, seçtiğin gruplara ya da tek tek hayvanlara. Seçtikten sonra 'Tasmalara uygula'; LoRa'dan ya da tasmaya bağlanınca işlenir." />
       <Card pad>
         <div className="stack">
           {m.targetWarning && <span className="sm t-alarm strong">{m.targetWarning}</span>}

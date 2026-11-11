@@ -10,6 +10,8 @@ import type { ActiveMobileSession } from "../platform/orunMobileSession.ts";
 import { ORUN_ACCOUNT_ORIGIN } from "./orunServiceConfig.ts";
 import { DeviceNameBook } from "./deviceNames.ts";
 import { batteryCapacity } from "./batteryLife.ts";
+import type { LoraServer } from "./loraCarrier.ts";
+import { hybridSource, LocalLoraSource } from "./loraLocal.ts";
 import { TrackerFenceBook, type FenceRecord } from "./trackerFences.ts";
 import { DeviceSettingsBook, type SettingValues, type Via as SettingsVia } from "./deviceSettings.ts";
 import { DeviceOpsBook, type FencePayload, type OpVia } from "./deviceOps.ts";
@@ -91,6 +93,29 @@ export function pilotSetDeviceName(device: string, name: string): Promise<void> 
 }
 
 /** Y3: battery capacity per tracker, in the account (not on the tracker). */
+/**
+ * 6c/6d: LoRa commands while this phone bridges a gateway: the account signs
+ * them online; without internet this phone signs them with the tasmas'
+ * write keys it already holds (loraLocal.ts). Signed out: nothing.
+ */
+let loraLocal: LocalLoraSource | null = null;
+export function pilotLoraServer(): LoraServer | null {
+  if (!writeKeys.size && !(client && pilotAccountStatus())) return null;
+  loraLocal ??= new LocalLoraSource({
+    ops: () => deviceOps.snapshot(),
+    key: (d) => writeKeys.active(d),
+    reported: (d) => (deviceSettings.get(d)?.reported ?? null) as Record<string, unknown> | null,
+    opResult: (op, device, state, note) => deviceOps.result(op, device, state, "lora", settingsServer(), note),
+    settingsApplied: (device, values) => deviceSettings.report(device, values, "lora", settingsServer()),
+    areasApplied: (device, payload, r) => trackerFences.set(device, {
+      digest: payload.digest, areas: r.areas, vertices: r.vertices,
+      zones: (payload.zones ?? []).map((z) => ({ id: z.id, name: z.name })), appliedAt: Date.now(),
+    }, client && pilotAccountStatus() ? client : null),
+    random32: () => crypto.getRandomValues(new Uint32Array(1))[0],
+  }, typeof localStorage !== "undefined" ? (() => { try { return localStorage; } catch { return null; } })() : null);
+  return hybridSource(client && pilotAccountStatus() ? client : null, loraLocal);
+}
+
 export function pilotSetBatteryCapacity(device: string, mAh: number | null): Promise<void> {
   return batteryCapacity.set(device, mAh, client && pilotAccountStatus() ? client : null);
 }
