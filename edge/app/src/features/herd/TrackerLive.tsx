@@ -21,6 +21,7 @@ import { TrackerBle } from "../../platform/trackerBle.ts";
 import { trackerSession, usbTracker } from "../../app/trackerSession.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
 import { useTrackerFences } from "../zones/ApplyFence.tsx";
+import { stillWanted } from "../../app/fencePlan.ts";
 
 /** ble: a device from the scan list; find: look for this ID's Bluetooth name; usb: the cable. */
 export type LiveTarget = { ble: string } | { find: string } | { usb: true };
@@ -55,6 +56,18 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
     }
   };
 
+  /** The open zone op, only if it is still what the account wants; a stale one is closed, not written. */
+  async function fenceOpFor(dev: string, via: "ble" | "usb") {
+    const op = deviceOps.open(dev, "fence");
+    const plan = fences.find((x) => x.device.toUpperCase() === dev.toUpperCase()) ?? null;
+    const ok = stillWanted(op, plan);
+    if (op && !ok) {
+      await pilotOpResult(op.op, dev, "rejected", via, "Alanlar sonradan değişti; eski liste gönderilmedi").catch(() => undefined);
+      if (alive.current) setError("Sıradaki alan işlemi eskimişti (alanlar sonradan değişti); tasmaya yazılmadı. Gerekirse Alanlar → Tasmalara uygula.");
+    }
+    return ok;
+  }
+
   async function readBle(): Promise<void> {
     if (!link.current || !link.current.alive) {
       link.current = null;
@@ -85,7 +98,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
     setPhase("Sıradakiler işleniyor…");
     const { wrote, problems } = await deliverBle(t.exchange, writeKeys.get, dev_, {
       wanted: deviceSettings.get(dev_)?.wanted ?? {}, has,
-      openSettings: deviceOps.open(dev_, "settings"), openFence: deviceOps.open(dev_, "fence"),
+      openSettings: deviceOps.open(dev_, "settings"), openFence: await fenceOpFor(dev_, "ble"),
       reportSettings: (v) => pilotReportSettings(dev_, v, "ble").catch(() => undefined),
       recordFence: (sum, zones) => pilotRecordFence(dev_, { digest: sum.digest, areas: sum.areas, vertices: sum.vertices, zones, appliedAt: Date.now() }),
       result: (op, state, note) => pilotOpResult(op, dev_, state, "ble", note).catch(() => undefined),
@@ -121,7 +134,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
         setPhase("Sıradakiler işleniyor…");
         return deliverUsb(con!, {
           wanted: deviceSettings.get(dev_)?.wanted ?? {}, has,
-          openSettings: deviceOps.open(dev_, "settings"), openFence: deviceOps.open(dev_, "fence"),
+          openSettings: deviceOps.open(dev_, "settings"), openFence: await fenceOpFor(dev_, "usb"),
           reportSettings: (v) => pilotReportSettings(dev_, v, "usb").catch(() => undefined),
           recordFence: (sum, zones) => pilotRecordFence(dev_, { digest: sum.digest, areas: sum.areas, vertices: sum.vertices, zones, appliedAt: Date.now() }),
           result: (op, state, note) => pilotOpResult(op, dev_, state, "usb", note).catch(() => undefined),

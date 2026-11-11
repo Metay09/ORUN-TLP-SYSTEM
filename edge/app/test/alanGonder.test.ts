@@ -196,3 +196,17 @@ test("alan silme: uygulamadan silinen alan tasmaya CLEAR olarak gider, yalnız t
   });
   assert.deepEqual([u.areas, recorded, results, out.wrote], [0, [0], ["applied"], ["alanlar silindi"]]);
 });
+
+import { stillWanted } from "../src/app/fencePlan.ts";
+
+test("sırada kalmış eski alan işlemi, alan sonradan silindiyse tasmaya yazılmaz", () => {
+  const book: TargetBook = { groups: [], rules: { kuzey: { scope: "all", devices: [], groups: [] } } };
+  const withZone = trackerFencePlans(book, [square], [{ device: A, name: "a" }], {})[0];
+  const op = { op: "op-1", payload: { digest: withZone.digest } };
+  assert.equal(stillWanted(op, withZone), op, "hâlâ istenen liste: gider");
+  const rec: FenceRecord = { digest: withZone.digest!, areas: 1, vertices: 5, zones: [], appliedAt: 1 };
+  const afterDelete = trackerFencePlans(book, [], [{ device: A, name: "a" }], { [A]: rec })[0];
+  assert.equal(afterDelete.state, "clear");
+  assert.equal(stillWanted(op, afterDelete), null, "alan silindi: eski liste yazılmaz");
+  assert.ok(stillWanted({ op: "op-2", payload: { digest: CLEAR_SUMMARY.digest } }, afterDelete), "silme işlemi gider");
+});
