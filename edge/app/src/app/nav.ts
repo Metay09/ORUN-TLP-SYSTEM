@@ -17,7 +17,7 @@ export type Route =
   | { to: "animal"; id: string }
   | { to: "find"; id: string }
   | { to: "zone"; id: string }
-  | { to: "device"; id: string }
+  | { to: "device"; id: string; ble?: string }   // ble: connect over Bluetooth on open
   | { to: "zones" };
 
 /** What the map shows when another screen sends the user there. */

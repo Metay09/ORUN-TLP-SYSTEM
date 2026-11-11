@@ -1,4 +1,4 @@
-// Gruplar (4b'den beri Cihazlar sekmesinde): aynı gruplar alan göndermede
+// Gruplar (2026-11-11'den beri Ayarlar'da, tasma ayarlarının altında): aynı gruplar alan göndermede
 // ("Hangi tasmalar") ve toplu ayarda kullanılır.
 import { useState } from "react";
 import { Plus } from "@phosphor-icons/react";

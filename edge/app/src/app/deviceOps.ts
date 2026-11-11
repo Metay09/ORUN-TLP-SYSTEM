@@ -4,6 +4,7 @@
 // satırı, LoRa'da tasmanın onayı). Ara adım için fazladan telsiz trafiği yok:
 // "Gateway'de" yalnız LoRa yolunda, gateway'in zaten gönderdiği bilgiden.
 import type { LonLat } from "./zones.ts";
+import { SETTINGS } from "./deviceSettings.ts";
 
 export type OpKind = "fence" | "settings";
 export type OpState = "waiting" | "gateway" | "applied" | "same" | "rejected" | "superseded";
@@ -180,4 +181,12 @@ export function groupLine(g: { targets: OpTarget[] }): string {
   const open = g.targets.filter((t) => OPEN.includes(t.state)).length;
   const bad = g.targets.filter((t) => t.state === "rejected").length;
   return [`${done}/${n} işlendi`, open ? `${open} sırada` : "", bad ? `${bad} reddedildi` : ""].filter(Boolean).join(" · ");
+}
+
+/** What one operation asks of its device, in words: "Rapor aralığı: 30 dk", "Alanlar". */
+export function opWhat(t: Pick<OpTarget, "kind" | "payload">): string {
+  if (t.kind === "fence") return KIND_WORD.fence;
+  const set = (t.payload as SettingsPayload).set ?? {};
+  const parts = SETTINGS.filter((d) => d.key in set).map((d) => `${d.title}: ${d.word(set[d.key]!)}`);
+  return parts.length ? parts.join(", ") : KIND_WORD.settings;
 }

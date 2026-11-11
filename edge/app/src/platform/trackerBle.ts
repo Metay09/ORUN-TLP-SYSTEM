@@ -20,11 +20,14 @@ export class TrackerBle {
 
   private constructor(deviceId: string) { this.deviceId = deviceId; }
 
-  static async open(deviceId: string): Promise<TrackerBle> {
+  /** True until the device drops the link or close() is called. */
+  get alive(): boolean { return !this.gone; }
+
+  static async open(deviceId: string, onGone?: () => void): Promise<TrackerBle> {
     const t = new TrackerBle(deviceId);
     await BleClient.initialize({ androidNeverForLocation: true });
     await stopNearbyScan();
-    await BleClient.connect(deviceId, () => { t.gone = true; }, { timeout: 15000 });
+    await BleClient.connect(deviceId, () => { t.gone = true; onGone?.(); }, { timeout: 15000 });
     try {
       await BleClient.startNotifications(deviceId, APP_SERVICE_UUID, APP_RESPONSE_UUID, (v) => {
         const m = t.rx.push(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
@@ -85,6 +88,7 @@ export class TrackerBle {
   }
 
   async close(): Promise<void> {
+    this.gone = true;
     this.waiting = null;
     try { await BleClient.stopNotifications(this.deviceId, APP_SERVICE_UUID, APP_RESPONSE_UUID); } catch { /* gone */ }
     try { await BleClient.disconnect(this.deviceId); } catch { /* gone */ }

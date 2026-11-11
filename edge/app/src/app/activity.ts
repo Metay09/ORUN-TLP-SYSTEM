@@ -128,3 +128,69 @@ export function medianDelayS(pts: Observation[]): number | null {
 export function inRange(pts: Observation[], from: number, to = Infinity): Observation[] {
   return pts.filter((p) => { const t = epochMs(p.time); return t >= from && t <= to; });
 }
+
+/**
+ * Hayvanın kendi alışkanlığıyla karşılaştırma (sahip 2026-11-11: hareket
+ * özetini geliştir). Önceki günlerin her biri için aynı 24 saatlik pencere;
+ * en az %75'i ölçülmüş gün sayılır. En az 3 böyle gün yoksa karşılaştırma yok.
+ * Oran = hareketli / ölçülen süre (ölçülmeyen zaman hareketsiz sayılmaz).
+ */
+export interface ActivityBaseline { share: number; usual: number; days: number; change: number; }
+
+export function activityBaseline(pts: Observation[], end: number, back = 7): ActivityBaseline | null {
+  const cur = activityCoverage24h(pts, end);
+  if (cur.coveredMs < 0.75 * DAY) return null;
+  const shares: number[] = [];
+  for (let k = 1; k <= back; k++) {
+    const c = activityCoverage24h(pts, end - k * DAY);
+    if (c.coveredMs >= 0.75 * DAY) shares.push(c.activeMs / c.coveredMs);
+  }
+  if (shares.length < 3) return null;
+  const usual = shares.reduce((a, b) => a + b, 0) / shares.length;
+  const share = cur.activeMs / cur.coveredMs;
+  return { share, usual, days: shares.length, change: usual > 0 ? (share - usual) / usual : 0 };
+}
+
+/** Index of the hour (0..23 in hourlyActivity's window) with the most movement, or null. */
+export function busiestHour(hours: (number | null)[]): number | null {
+  let best: number | null = null;
+  hours.forEach((v, i) => { if (v !== null && v >= 0.05 && (best === null || v > hours[best]!)) best = i; });
+  return best;
+}
+
+/**
+ * Pil gidişatı (sahip 2026-11-11: pili geliştir): son 24 saatin ortalaması ile
+ * iki gün önceki 24 saatin ortalaması (tam gün ortalaması gece-gündüz güneş
+ * salınımını yok eder) ve son 24 saatte gündüz şarjı. Az veriyle eğilim yok.
+ * daysLeft yalnız belirgin düşüşte (günde %0,5'ten fazla) verilir; tahmindir.
+ */
+export interface BatteryOutlook {
+  perDay: number | null;       // % per day; negative = draining
+  daysLeft: number | null;
+  charged24h: number | null;   // largest rise (% points) in the last 24 h
+  change24h: number | null;    // last minus first within the last 24 h
+}
+
+export function batteryOutlook(series: { t: number; p: number }[], now: number): BatteryOutlook {
+  const s = series.filter((x) => Number.isFinite(x.p) && x.t <= now).sort((a, b) => a.t - b.t);
+  // Whole-day means cancel the day/night (solar) swing: today vs two days ago.
+  const mean = (from: number, to: number) => {
+    const w = s.filter((x) => x.t > from && x.t <= to);
+    return w.length >= 4 ? w.reduce((a, x) => a + x.p, 0) / w.length : null;
+  };
+  const m0 = mean(now - DAY, now), m2 = mean(now - 3 * DAY, now - 2 * DAY);
+  const perDay = m0 !== null && m2 !== null && s.filter((x) => x.t > now - 3 * DAY).length >= 10 ? (m0 - m2) / 2 : null;
+  const lastP = s.length ? s[s.length - 1].p : null;
+  const daysLeft = perDay !== null && perDay < -0.5 && lastP !== null ? Math.max(0, lastP / -perDay) : null;
+  const day = s.filter((x) => x.t >= now - DAY);
+  let charged: number | null = null;
+  if (day.length >= 2) {
+    let lo = day[0].p, best = 0;
+    for (const x of day) { lo = Math.min(lo, x.p); best = Math.max(best, x.p - lo); }
+    charged = best;
+  }
+  return {
+    perDay, daysLeft, charged24h: charged,
+    change24h: day.length >= 2 ? day[day.length - 1].p - day[0].p : null,
+  };
+}

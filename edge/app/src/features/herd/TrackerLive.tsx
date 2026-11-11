@@ -1,7 +1,7 @@
 // 4a: tasmaya dokununca canlı bağlanır, durumunu okur. Bluetooth ve USB aynı
 // kartı gösterir (aynı soruların aynı yanıtları).
-import { useEffect, useRef, useState } from "react";
-import { ArrowClockwise, Bluetooth, Usb } from "@phosphor-icons/react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { ArrowClockwise, Bluetooth, LinkBreak, Usb } from "@phosphor-icons/react";
 import { noRoleMessage, probeUsbDevice } from "../../app/addTracker.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { fmt } from "../../app/i18n/tr.ts";
@@ -16,6 +16,7 @@ import { pendingKeys, valuesFromStatus, bleWindowWord } from "../../app/deviceSe
 import { deliverBle, deliverUsb } from "../../app/deliver.ts";
 import { deviceOps, deviceSettings, pilotOpResult, pilotRecordFence, pilotReportSettings, writeKeys } from "../../app/ownerAccountPilotRuntime.ts";
 import { TrackerBle } from "../../platform/trackerBle.ts";
+import { trackerSession } from "../../app/trackerSession.ts";
 import { UsbConsole } from "../../platform/usbConsole.ts";
 import { useTrackerFences } from "../zones/ApplyFence.tsx";
 
@@ -53,19 +54,25 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
   };
 
   async function readBle(): Promise<void> {
-    if (!link.current) {
+    if (!link.current || !link.current.alive) {
+      link.current = null;
       let bleId = "ble" in target ? target.ble : null;
       if ("find" in target) {
-        setPhase("Tasma aranıyor (Bluetooth)…");
-        bleId = await TrackerBle.find(target.find);
+        // Already connected to this tracker: reuse the open link, no new scan.
+        bleId = trackerSession.find(target.find)?.bleId ?? null;
+        if (!bleId) {
+          setPhase("Tasma aranıyor (Bluetooth)…");
+          bleId = await TrackerBle.find(target.find);
+        }
         if (!bleId) throw new Error(BT_OFF);
       }
-      setPhase("Bluetooth ile bağlanıyor…");
-      link.current = await TrackerBle.open(bleId!);
+      if (!trackerSession.find(id, bleId)) setPhase("Bluetooth ile bağlanıyor…");
+      link.current = await trackerSession.open(bleId!, id, TrackerBle.open);
     }
     setPhase("Okunuyor…");
     const t = link.current;
     let st = buildStatus(await t.readRaw(), "ble", Date.now());
+    trackerSession.note(t, st, id);
     if (alive.current) { setStatus(st); rememberStorage(id, st); }
     if (!id || st.role !== "tracker") return;
     const dev_ = id.toUpperCase();
@@ -85,6 +92,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
     if (wrote.length) {
       setPhase("Yeniden okunuyor…");
       st = buildStatus(await t.readRaw(), "ble", Date.now());
+      trackerSession.note(t, st, id);
       if (alive.current) { setStatus(st); rememberStorage(id, st); setSynced(`Tasmaya işlendi (tasma onayladı): ${wrote.join(", ")}.`); }
     }
   }
@@ -133,7 +141,8 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
       if ("usb" in target) await readUsb(); else await readBle();
       setPhase("");
     } catch (e) {
-      if (link.current) { await link.current.close(); link.current = null; }
+      // A dropped link is already gone from the session; a slow answer keeps it open.
+      if (link.current && !link.current.alive) link.current = null;
       if (alive.current) { setPhase(""); setError(errText(e)); }
     }
   }
@@ -141,9 +150,13 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
   useEffect(() => {
     alive.current = true;
     void read();
-    return () => { alive.current = false; void link.current?.close(); link.current = null; };
+    // Closing this card does NOT disconnect (owner 2026-11-11): the Bluetooth
+    // link stays open until "Bağlantıyı kes" or until the tracker goes away.
+    return () => { alive.current = false; link.current = null; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const live = useSyncExternalStore(trackerSession.subscribe, trackerSession.snapshot);
+  const session = !("usb" in target) && live && link.current && live.link === link.current ? live : null;
   const a = id ? m.herd.find((x) => x.device && x.device.toUpperCase() === id.toUpperCase()) ?? null : null;
   const plan = id ? fences.find((x) => x.device.toUpperCase() === id.toUpperCase()) ?? null : null;
   const st = status;
@@ -157,7 +170,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
       <div className="stack" style={{ padding: "0 20px 16px" }}>
         <span className="sm row" style={{ gap: 6 }}>
           {"usb" in target ? <Usb size={16} /> : <Bluetooth size={16} />}
-          {"usb" in target ? "USB" : "Bluetooth"}
+          {"usb" in target ? "USB" : session ? "Bluetooth · bağlı" : "Bluetooth"}
           {st && ` · ${fmt.clock(st.at)}'de okundu`}
           {phase && ` · ${phase}`}
         </span>
@@ -194,6 +207,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
 
         <div className="btns">
           <button className="btn" disabled={!!phase} onClick={() => { void read(); }}><ArrowClockwise size={18} />Yenile</button>
+          {session && <button className="btn danger" onClick={() => { void trackerSession.close(); onClose(); }}><LinkBreak size={18} />Bağlantıyı kes</button>}
           {a && !fromAnimal && <button className="btn primary" onClick={() => { onClose(); nav.push({ to: "animal", id: a.id }); }}>Hayvanın kartı</button>}
           {!a && st && !isGateway && onAdd && "usb" in target && <button className="btn primary" onClick={onAdd}>Hesabına ekle</button>}
           {isGateway && onBridge && <button className="btn primary" onClick={onBridge}>Köprü olarak bağlan</button>}

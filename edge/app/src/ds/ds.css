@@ -304,3 +304,46 @@ details.tech > summary::-webkit-details-marker { display: none; }
 .digest-line { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 8px 0 0; border: 0; background: none; text-align: left; font: inherit; color: var(--ink); }
 .digest-line .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--silent); flex: none; transform: translateY(-1px); }
 .digest-line .dot.alarm { background: var(--alarm); } .digest-line .dot.aging { background: var(--aging); }
+
+/* Bağlantı → Aktarım: tek cümle ve dört halka */
+.xfer-head { display: flex; align-items: flex-start; gap: 10px; padding: 16px 16px 0; font-size: 15px; }
+.xfer-head .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--silent); flex: none; margin-top: 5px; }
+.xfer-head .dot.fresh { background: var(--fresh); } .xfer-head .dot.aging { background: var(--aging); } .xfer-head .dot.alarm { background: var(--alarm); }
+.chain .node .nd.ic { width: 48px; height: 48px; border-radius: 16px; }
+
+/* Olaylar: üst şerit, "Şimdi" kartları ve zaman çizelgesi */
+.ev-banner { display: flex; align-items: center; gap: 14px; margin: 4px 16px 0; padding: 16px; border-radius: 22px; }
+.ev-banner .ic { width: 48px; height: 48px; border-radius: 16px; background: rgba(255, 255, 255, .55); color: inherit; }
+.ev-banner .ct { font-family: var(--display); font-weight: 800; font-size: 20px; letter-spacing: -0.02em; color: inherit; }
+.ev-banner .cs { color: inherit; opacity: .8; }
+.ev-banner.fresh { background: var(--fresh-b); color: var(--fresh-t); }
+.ev-banner.aging { background: var(--aging-b); color: var(--aging-t); }
+.ev-banner.alarm { background: var(--alarm-b); color: var(--alarm-t); }
+.now-list { display: flex; flex-direction: column; gap: 10px; padding: 8px 16px 2px; }
+.now-card { background: var(--card); border-radius: 22px; box-shadow: var(--soft); padding: 14px 14px 10px 16px; border-left: 5px solid var(--aging); cursor: pointer; }
+.now-card.alarm { border-left-color: var(--alarm); }
+.now-reason { font-weight: var(--w-strong); font-size: 15px; }
+.now-acts { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 0 2px; }
+.now-acts .btn { height: 38px; }
+.tl-day { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 14px 20px 0; }
+.tl-day b { font-size: 15px; }
+.tl-day span { font-size: 12.5px; color: var(--mute); text-align: right; }
+.tl-row { display: flex; gap: 12px; align-items: flex-start; width: 100%; padding: 12px 16px; border: 0; background: none; text-align: left; font: inherit; color: var(--ink); }
+.tl-row + .tl-row { box-shadow: inset 0 1px 0 var(--hair); }
+button.tl-row:active { background: var(--sunk); }
+.tl-time { font-size: 13px; color: var(--mute); width: 42px; flex: none; padding-top: 3px; font-variant-numeric: tabular-nums; }
+.tl-ic { width: 28px; height: 28px; border-radius: 10px; display: grid; place-items: center; flex: none; background: var(--sunk); color: var(--mute); }
+.tl-ic.alarm { background: var(--alarm-b); color: var(--alarm-t); } .tl-ic.aging { background: var(--aging-b); color: var(--aging-t); }
+.tl-ic.info { background: var(--info-b); color: var(--info-t); }
+.tl-text { flex: 1; min-width: 0; font-size: 14.5px; line-height: 1.4; padding-top: 3px; }
+
+/* Hayvan kartı: hareket ve pil özetleri */
+.act-facts { display: flex; gap: 8px; flex-wrap: wrap; }
+.act-facts > div { flex: 1 1 0; min-width: 96px; background: var(--sunk); border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.act-facts b { font-size: 16px; }
+.batt { display: inline-flex; align-items: center; position: relative; flex: none; }
+.batt-body { width: 76px; height: 40px; border-radius: 10px; border: 3px solid var(--hair2); padding: 3px; display: flex; }
+.batt-body i { display: block; height: 100%; border-radius: 5px; background: var(--fresh); }
+.batt-cap { width: 5px; height: 14px; border-radius: 0 3px 3px 0; background: var(--hair2); }
+.batt b { position: absolute; left: 0; width: 76px; text-align: center; font-family: var(--display); font-weight: 800; font-size: 17px; color: var(--ink); text-shadow: 0 0 6px var(--card), 0 0 2px var(--card); }
+.batt.aging .batt-body i { background: var(--aging); } .batt.alarm .batt-body i { background: var(--alarm); }

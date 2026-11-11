@@ -173,3 +173,21 @@ export function farmChain(i: {
     ],
   };
 }
+
+/**
+ * Aktarım, tek cümle (sahip 2026-11-11: sayaç listesi anlaşılmıyordu).
+ * `waiting`: bilinen bekleyen kayıtların toplamı (gateway belleği + PC Edge
+ * kuyruğu + bu telefonun gönderemedikleri); bilinmeyen sayı sıfır sayılmaz.
+ */
+export function transferHeadline(i: {
+  signedIn: boolean; sync: ObservationSyncState; waiting: number | null;
+  lastUpload: number | null; now: number;
+}): { text: string; tone: ChainTone } {
+  if (!i.signedIn) return { text: "Hesaba giriş yapılmadı. Kayıtlar tasmada, gateway'de ve telefonda bekler.", tone: "" };
+  if (i.sync.error) return { text: "Sunucuya ulaşılamıyor. Kayıtlar yolda bekler, kaybolmaz.", tone: "alarm" };
+  if (i.waiting) return { text: `${fmt.num(i.waiting)} kayıt sunucuya gitmeyi bekliyor.`, tone: "aging" };
+  if (i.lastUpload !== null && i.now - i.lastUpload < 60 * 60_000)
+    return { text: `Kayıtlar sunucuya ulaşıyor · son kayıt ${fmt.ago(i.lastUpload, i.now)}.`, tone: "fresh" };
+  if (i.lastUpload !== null) return { text: `Sunucuya son kayıt ${fmt.ago(i.lastUpload, i.now)} geldi.`, tone: "aging" };
+  return { text: "Sunucuya henüz kayıt gelmedi.", tone: "" };
+}

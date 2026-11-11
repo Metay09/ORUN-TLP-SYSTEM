@@ -1,10 +1,10 @@
-// Sürü: every animal, what needs a look first; search, filters, today's
-// herd summary from the records.
-import { useMemo, useState } from "react";
+// Sürü: every animal, what needs a look first; search and filters. (The herd
+// "today" averages were dropped 2026-11-11: the animal card says it better.)
+import { useState } from "react";
 import { CaretRight, Cow, MagnifyingGlass, Plus } from "@phosphor-icons/react";
-import { dayStart, daySummaries, hourlyActivity } from "../../app/activity.ts";
+import { hourlyActivity } from "../../app/activity.ts";
 import { herdSummary, matches, needsLook } from "../../app/herd.ts";
-import { fmt, tr } from "../../app/i18n/tr.ts";
+import { tr } from "../../app/i18n/tr.ts";
 import type { Animal } from "../../app/model.ts";
 import { useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
@@ -31,7 +31,6 @@ export function HerdScreen() {
     (filter === "silent" && (a.status === "silent" || a.status === "lost")) ||
     (filter === "battery" && (a.battery === "low" || a.battery === "critical"))));
 
-  const today = useMemo(() => todaySummary(herd, m.now), [herd, m.now]);
 
   return (
     <div className="page">
@@ -50,21 +49,6 @@ export function HerdScreen() {
             <MagnifyingGlass size={20} />
             <input className="inp" type="search" value={q} placeholder={tr.herd.search} aria-label={tr.herd.search} onChange={(e) => setQ(e.target.value)} />
           </div>
-          {today && (
-            <Card pad hero>
-              <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-                <span className="cap strong">{tr.herd.today}</span>
-                <span className="cap">{fmt.clock(today.first)} – {fmt.clock(today.last)}</span>
-              </div>
-              <div className="row" style={{ gap: 22, paddingTop: 12, alignItems: "flex-start" }}>
-                {today.activeMs !== null && (
-                  <div className="stack" style={{ gap: 0 }}><span className="disp" style={{ fontSize: 28 }}>{fmt.duration(today.activeMs)}</span><span className="cap">{tr.herd.avgActive}</span></div>
-                )}
-                <div className="stack" style={{ gap: 0 }}><span className="disp" style={{ fontSize: 28 }}>{fmt.distance(today.walkedM)}</span><span className="cap">{tr.herd.avgWalk}</span></div>
-              </div>
-              <div className="cap" style={{ paddingTop: 10 }}>{tr.herd.located(today.animals)}</div>
-            </Card>
-          )}
           <Chips<Filter> value={filter} onChange={setFilter} options={[
             { value: "all", label: tr.herd.filters.all },
             { value: "attention", label: tr.herd.filters.attention, n: counts.attention },
@@ -100,20 +84,4 @@ function HerdCell({ a, now, onOpen }: { a: Animal; now: number; onOpen: () => vo
       </span>
     </button>
   );
-}
-
-function todaySummary(herd: Animal[], now: number) {
-  const start = dayStart(now);
-  let animals = 0, walked = 0, active = 0, withActive = 0, first = Infinity, last = -Infinity;
-  for (const a of herd) {
-    const d = daySummaries(a.points.filter((p) => Date.parse(p.time ?? "") >= start)).find((x) => x.day === start);
-    if (!d) continue;
-    animals++;
-    walked += d.walkedM;
-    if (d.activeMs !== null) { active += d.activeMs; withActive++; }
-    first = Math.min(first, d.first);
-    last = Math.max(last, d.last);
-  }
-  if (!animals) return null;
-  return { animals, walkedM: walked / animals, activeMs: withActive ? active / withActive : null, first, last };
 }

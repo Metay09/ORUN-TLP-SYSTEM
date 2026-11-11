@@ -1,8 +1,10 @@
-// Hayvan profili: today (position, movement, distance, battery), history by
-// day and its events, and the identity / notebook / collar.
-import { useMemo, useState } from "react";
-import { CaretRight, MapTrifold, NavigationArrow, NotePencil, PencilSimple, Play } from "@phosphor-icons/react";
-import { activityCoverage24h, batterySeries, dayStart, daySummaries, hourlyActivity } from "../../app/activity.ts";
+// Hayvan profili: today (position, movement compared with the animal's own
+// days, battery outlook, the collar), history by day and its events, and the
+// identity / notebook / collar.
+import { useMemo, useState, useSyncExternalStore } from "react";
+import { Bluetooth, CaretRight, CellSignalFull, MapTrifold, NavigationArrow, NotePencil, PencilSimple, Play } from "@phosphor-icons/react";
+import { activityBaseline, activityCoverage24h, batteryOutlook, batterySeries, busiestHour, dayStart, daySummaries, hourlyActivity } from "../../app/activity.ts";
+import { trackerSession } from "../../app/trackerSession.ts";
 import { batteryPercent, epochMs } from "../../app/herd.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { cap, fmt, tr } from "../../app/i18n/tr.ts";
@@ -62,88 +64,131 @@ export function AnimalScreen({ id }: { id: string }) {
 }
 
 function Today({ a, now }: { a: Animal; now: number }) {
+  const nav = useNav();
   const p = a.last;
   const hours = useMemo(() => hourlyActivity(a.points, now), [a.points, now]);
   const activity = useMemo(() => activityCoverage24h(a.points, now), [a.points, now]);
+  const base = useMemo(() => activityBaseline(a.points, now), [a.points, now]);
   const days = useMemo(() => daySummaries(a.points.filter((x) => epochMs(x.time) >= dayStart(now))), [a.points, now]);
   const today = days.find((d) => d.day === dayStart(now)) ?? null;
   const bat = useMemo(() => batterySeries(a.points, now), [a.points, now]);
+  const pct = useMemo(() => bat.map((b) => ({ t: b.t, p: batteryPercent(b.mv) })).filter((x): x is { t: number; p: number } => x.p !== null), [bat]);
+  const outlook = useMemo(() => batteryOutlook(pct, now), [pct, now]);
   const hasActivity = a.points.some((x) => x.active_s !== null);
+  const settings = useDeviceSettings();
+  const session = useSyncExternalStore(trackerSession.subscribe, trackerSession.snapshot);
   if (!p) return <Empty icon={<NavigationArrow size={30} />} title={tr.status.waiting} />;
   const t = epochMs(p.time), r = p.received ? Date.parse(p.received) : null;
+  const busy = busiestHour(hours);
+  const hourAt = (i: number) => fmt.clock(now - 24 * 3600_000 + i * 3600_000);
+  const total = activity.activeMs + activity.inactiveMs + activity.unknownMs || 1;
+  const batTone = a.battery === "critical" ? "alarm" : a.battery === "low" ? "aging" : "fresh";
+  const waiting = a.device ? pendingKeys(settings[a.device.toUpperCase()]).length : 0;
+  const connected = !!a.device && session?.device === a.device.toUpperCase() && session.link.alive;
+
   return (
     <>
       <Section title={tr.animal.lastPosition} />
       <Card>
         <KV k={tr.animal.measured}>{fmt.clock(t)} · {fmt.ago(t, now)}</KV>
-        {r !== null && <KV k={tr.animal.arrived}>{fmt.clock(r)}{p.delay_s !== null && p.delay_s > 60 ? ` · ${tr.animal.delay(fmt.duration(p.delay_s * 1000))}` : ""}</KV>}
+        {r !== null && p.delay_s !== null && p.delay_s > 60 && <KV k={tr.animal.arrived}>{fmt.clock(r)} · {tr.animal.delay(fmt.duration(p.delay_s * 1000))}</KV>}
         <KV k="Kalite">{cap(tr.animal.quality(p.sats, p.hdop))}</KV>
         <KV k="Konum">{fmt.coords(p.lat, p.lon)}</KV>
       </Card>
 
-      <Section title="Günlük hareket özeti"
-        info="İvmeölçerin son 24 saatte bildirdiği geçerli hareket süresi. GPS mesafesi hareket süresi olarak sayılmaz; ölçülmeyen zaman hareketsiz kabul edilmez." />
+      <Section title="Hareket · son 24 saat"
+        info="Tasmanın ivmeölçerinin bildirdiği hareket süresi. GPS mesafesi hareket sayılmaz; ölçülmeyen zaman hareketsiz kabul edilmez. Karşılaştırma, bu hayvanın en az 3 tam ölçülmüş önceki gününe göredir." />
       <Card pad>
         {hasActivity && activity.coveredMs > 0 ? (
           <div className="stack" style={{ gap: 12 }}>
-            <span className="sm">Son 24 saat · ivmeölçer</span>
-            <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-              <div className="stack" style={{ gap: 4, flex: 1 }}>
-                <span className="strong">{fmt.duration(activity.activeMs)}</span>
-                <span className="fine">Hareketli</span>
+            <div className="row" style={{ alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
+              <div className="stack" style={{ gap: 0 }}>
+                <span className="disp" style={{ fontSize: 30 }}>{fmt.duration(activity.activeMs)}</span>
+                <span className="sm">hareketli</span>
               </div>
-              <div className="stack" style={{ gap: 4, flex: 1 }}>
-                <span className="strong">{fmt.duration(activity.inactiveMs)}</span>
-                <span className="fine">Hareket algılanmadı</span>
-              </div>
-              <div className="stack" style={{ gap: 4, flex: 1 }}>
-                <span className="strong">{fmt.duration(activity.unknownMs)}</span>
-                <span className="fine">Ölçüm yok</span>
-              </div>
+              {base && <Badge tone={Math.abs(base.change) < 0.15 ? "fresh" : base.change < 0 ? "aging" : "info"}>
+                {Math.abs(base.change) < 0.15 ? "Her zamanki gibi" : `Her zamankinden %${Math.round(Math.abs(base.change) * 100)} ${base.change < 0 ? "az" : "fazla"}`}
+              </Badge>}
             </div>
             <div className="row" role="img"
-              aria-label={`Son 24 saat: ${fmt.duration(activity.activeMs)} hareketli, ${fmt.duration(activity.inactiveMs)} hareket algılanmadı, ${fmt.duration(activity.unknownMs)} ölçüm yok.`}
-              style={{ height: 12, borderRadius: 9, overflow: "hidden", gap: 2 }}>
-              {activity.activeMs > 0 && <span style={{ flex: activity.activeMs, background: "var(--fresh)" }} />}
-              {activity.inactiveMs > 0 && <span style={{ flex: activity.inactiveMs, background: "var(--mute)" }} />}
-              {activity.unknownMs > 0 && <span style={{ flex: activity.unknownMs, background: "#E4A23B" }} />}
+              aria-label={`Son 24 saat: ${fmt.duration(activity.activeMs)} hareketli, ${fmt.duration(activity.inactiveMs)} durgun, ${fmt.duration(activity.unknownMs)} ölçüm yok.`}
+              style={{ height: 12, borderRadius: 9, overflow: "hidden", gap: 2, alignItems: "stretch" }}>
+              {activity.activeMs > 0 && <span style={{ flex: activity.activeMs / total, background: "var(--fresh)" }} />}
+              {activity.inactiveMs > 0 && <span style={{ flex: activity.inactiveMs / total, background: "var(--silent)" }} />}
+              {activity.unknownMs > 0 && <span style={{ flex: activity.unknownMs / total, background: "repeating-linear-gradient(45deg, var(--aging) 0 3px, transparent 3px 6px)" }} />}
             </div>
-            <span className="fine">Yeşil: hareket · Gri: hareket algılanmadı · Turuncu: veri boşluğu</span>
-            <span className="sm">Saatlik hareket</span>
+            <div className="legend" style={{ padding: 0, gap: 12 }}>
+              <span><i style={{ background: "var(--fresh)" }} />Hareketli</span>
+              <span><i style={{ background: "var(--silent)" }} />Durgun {fmt.duration(activity.inactiveMs)}</span>
+              {activity.unknownMs > 0 && <span><i style={{ background: "var(--aging)" }} />Ölçüm yok {fmt.duration(activity.unknownMs)}</span>}
+            </div>
             <Strip values={hours} tall />
-            <div className="strip-axis"><span>{fmt.clock(now - 24 * 3600_000)}</span><span>{fmt.clock(now - 12 * 3600_000)}</span><span>{fmt.clock(now)}</span></div>
-            <span className="fine">Yalnız doğrulanmış sensör ölçümleri sayılır. İlk ya da çakışan rapor dönemi belirsiz bırakılır.</span>
+            <div className="strip-axis"><span>{hourAt(0)}</span><span>{hourAt(12)}</span><span>şimdi</span></div>
+            <div className="act-facts">
+              {busy !== null && <div><span className="cap">En hareketli saat</span><b>{hourAt(busy)}–{hourAt(busy + 1)}</b></div>}
+              {today && <div><span className="cap">Bugün yürüdüğü</span><b>~{fmt.distance(today.walkedM)}</b></div>}
+            </div>
           </div>
-        ) : <span className="sm">Son 24 saat için görüntülenebilir ivmeölçer özeti bulunamadı. GPS konumsuz kayıtlar bu ekrana henüz dahil edilmiyor.</span>}
+        ) : (
+          <div className="stack">
+            <span className="sm">Bu tasmadan son 24 saat için hareket ölçümü gelmedi.</span>
+            {today && <span className="strong">{tr.animal.walkedToday(fmt.distance(today.walkedM))}</span>}
+          </div>
+        )}
       </Card>
 
-      {today && (
-        <>
-          <Section title={tr.animal.walked} info={tr.animal.walkedHelp} />
-          <Card pad>
-            <div className="stack" style={{ gap: 4 }}>
-              <span className="disp" style={{ fontSize: 26 }}>{tr.animal.walkedToday(fmt.distance(today.walkedM))}</span>
-            </div>
-          </Card>
-        </>
-      )}
-
-      <Section title={tr.animal.battery} />
+      <Section title={tr.animal.battery} info="Yüzde, pil geriliminden hesaplanır. Gidişat, son 24 saatin ortalaması iki gün öncekiyle karşılaştırılarak bulunur (gece-gündüz farkı ortalanır); kalan gün yalnız belirgin düşüşte gösterilir ve tahmindir." />
       <Card pad>
         {a.battery === "unknown" ? <span className="sm">{tr.animal.batteryUnknown}</span> : (
-          <div className="stack">
-            <span className={"strong" + (a.battery === "critical" ? " t-alarm" : a.battery === "low" ? " t-aging" : "")}>
-              {a.battery === "critical" ? tr.animal.batteryCritical : a.battery === "low" ? tr.animal.batteryLow(a.batteryPercent) : tr.animal.batteryGood(a.batteryPercent)}
-            </span>
-            {bat.length > 1 && <>
-              <Sparkline values={bat.map((b) => ({ t: b.t, v: batteryPercent(b.mv) ?? 0 }))} min={0} max={100}
-                tone={a.battery === "critical" ? "alarm" : a.battery === "low" ? "aging" : "fresh"} />
-              <span className="fine">{tr.animal.batteryTrend}</span>
+          <div className="stack" style={{ gap: 12 }}>
+            <div className="row" style={{ gap: 14 }}>
+              <BatteryGauge percent={a.batteryPercent} tone={batTone} />
+              <div className="stack grow" style={{ gap: 2 }}>
+                <span className={"strong t-" + batTone}>
+                  {a.battery === "critical" ? "Bitmek üzere · bugün şarj et" : a.battery === "low" ? "Azalıyor" : "İyi"}
+                </span>
+                <span className="sm">
+                  {p.battery_mv ? `${fmt.dec(p.battery_mv / 1000, 2)} V · ` : ""}{fmt.ago(t, now)} ölçüldü
+                </span>
+              </div>
+            </div>
+            <div className="act-facts">
+              {outlook.change24h !== null && <div><span className="cap">Son 24 saatte</span><b>{outlook.change24h >= 0 ? "+" : "−"}%{Math.abs(Math.round(outlook.change24h))}</b></div>}
+              {outlook.charged24h !== null && outlook.charged24h >= 3 && <div><span className="cap">Gündüz şarj</span><b>+%{Math.round(outlook.charged24h)}</b></div>}
+              {outlook.perDay !== null && <div><span className="cap">Gidişat</span><b>{outlook.daysLeft !== null ? `~${Math.round(outlook.daysLeft)} gün yeter` : "Dengede"}</b></div>}
+            </div>
+            {pct.length > 1 && <>
+              <Sparkline values={pct.map((b) => ({ t: b.t, v: b.p }))} min={0} max={100} tone={batTone} />
+              <div className="strip-axis"><span>{fmt.dateShort(pct[0].t)}</span><span>{tr.animal.batteryTrend}</span><span>şimdi</span></div>
             </>}
           </div>
         )}
       </Card>
+
+      {a.device && <>
+        <Section title={tr.animal.device} />
+        <Card>
+          <Cell lead={<span className={"ic " + (connected ? "fresh" : "brand")}>{connected ? <Bluetooth size={20} /> : <CellSignalFull size={20} />}</span>}
+            title={connected ? "Bluetooth ile bağlı" : bleName(a.device)} wrapSub
+            sub={[a.periodS ? `Rapor aralığı ${fmt.period(a.periodS)}` : "", waiting ? `${waiting} ayar sırada` : "Ayarlar, bağlan"].filter(Boolean).join(" · ")}
+            subTone={waiting ? "aging" : undefined}
+            trail={<CaretRight size={18} color="var(--mute)" />}
+            onClick={() => nav.push({ to: "device", id: a.device! })} />
+        </Card>
+      </>}
     </>
+  );
+}
+
+/** Battery body with fill and the percentage. */
+function BatteryGauge({ percent, tone }: { percent: number | null; tone: string }) {
+  const v = percent ?? 0;
+  return (
+    <span className={"batt " + tone} aria-label={percent !== null ? `Pil %${percent}` : "Pil"}>
+      <span className="batt-body"><i style={{ width: `${Math.max(4, Math.min(100, v))}%` }} /></span>
+      <span className="batt-cap" />
+      <b>{percent !== null ? `%${percent}` : "—"}</b>
+    </span>
   );
 }
 
