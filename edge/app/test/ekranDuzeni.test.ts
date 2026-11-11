@@ -195,3 +195,20 @@ test("konumsuz rapor: tasma 'haber yok' değil 'konum bulamıyor'; aradaki boşl
   const [b] = buildHerd({ points, profiles: {}, assetOf: (d) => d, now });
   assert.equal(b.status, "lost");
 });
+
+test("GPS hiç çalışmayan tasma (kayıt saati yok, GPS hatası): 'GPS çalışmıyor', gateway'e ulaştığı saatle", () => {
+  const now = Date.UTC(2026, 10, 11, 3, 10);
+  const MIN = 60_000;
+  const points = [{
+    tracker: "0E8ADE7E71531AA3", incarnation: "I", seq: 1, time: new Date(now - 13 * 60 * MIN).toISOString(),
+    lat: 37.6, lon: 28.05, alt_m: null, sats: 7, hdop: 1, fix_age_s: 0, battery_mv: 4000, battery: "NORMAL",
+    active_s: null, covered_s: null, source: "GNSS", period_s: 120, rssi: -70, snr: 5, received: null, delay_s: null, link: null,
+  } as unknown as Observation];
+  // Records as the server holds them on 2026-11-11: period_end 0 (no GNSS time), gps failures 1, every ~32 min.
+  const unlocated = [2, 3, 4].map((k) => ({ tracker: "0E8ADE7E71531AA3", incarnation: "I", seq: k, time: null,
+    received: new Date(now - (4 - k) * 32 * MIN).toISOString(), gnssFailures: 1 }));
+  const [a] = buildHerd({ points, profiles: {}, assetOf: (d) => d, now, unlocated });
+  assert.equal(a.gpsFault, true);
+  assert.equal(a.lastReport, now);
+  assert.match(a.seen, /^GPS çalışmıyor · son rapor az önce · son konum/);
+});

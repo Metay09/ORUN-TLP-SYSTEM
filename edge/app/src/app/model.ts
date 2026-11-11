@@ -52,6 +52,8 @@ export interface Animal {
   lastReport: number | null;
   /** The collar reports, but its newest records carry no position (no GNSS fix). */
   noFix: boolean;
+  /** ...and those records say GNSS failed (or the collar has no GNSS time at all). */
+  gpsFault: boolean;
   /** Times of records without a position, oldest first (gaps they fill are not silence). */
   heardOnly: number[];
   periodS: number;          // the collar's latest report period

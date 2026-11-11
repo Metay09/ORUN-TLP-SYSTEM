@@ -67,9 +67,10 @@ function animalEvents(a: Animal, cov: Coverage | null, now: number): AppEvent[] 
   const last = pts[pts.length - 1], tl = epochMs(last.time), T = periodMs(last.period_s);
   if (a.noFix && a.lastReport !== null) {
     // Heard, but without a position: not silent. One open warning, its own id.
-    const e = ev("silent", "warn", a, tl, null, tr.events.noFix.title(a.name),
-      tr.events.noFix.detail(fmt.ago(a.lastReport, now), fmt.since(tl, now)), arrived(last.received));
-    e.id = `nofix:${a.id}:${tl}`;
+    const words = a.gpsFault ? tr.events.gpsFault : tr.events.noFix;
+    const e = ev("silent", "warn", a, tl, null, words.title(a.name),
+      words.detail(fmt.ago(a.lastReport, now), fmt.since(tl, now)), arrived(last.received));
+    e.id = `${a.gpsFault ? "gpsfault" : "nofix"}:${a.id}:${tl}`;
     out.push(e);
   } else if (now - Math.max(tl, a.lastReport ?? tl) > agingLimit(T)) {
     const heard = Math.max(tl, a.lastReport ?? tl);

@@ -104,11 +104,16 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names, unloca
   }
   // Newest record without a position, per asset (the collar was heard).
   const heardBy = new Map<string, number>(), heardAll = new Map<string, number[]>();
+  const faultBy = new Map<string, boolean>();   // newest record without a position: GNSS failed / no GNSS time
   for (const r of unlocated) {
-    const t = epochMs(r.time);
+    // A collar whose GNSS never gave time has no record time: when it reached the gateway is when it was heard.
+    const own = epochMs(r.time), t = Number.isFinite(own) ? own : epochMs(r.received ?? null);
     if (!Number.isFinite(t) || t > now + 10 * MIN) continue;
     const asset = assetOf(r.tracker, t);
-    if ((heardBy.get(asset) ?? -Infinity) < t) heardBy.set(asset, t);
+    if ((heardBy.get(asset) ?? -Infinity) < t) {
+      heardBy.set(asset, t);
+      faultBy.set(asset, !Number.isFinite(own) || (r.gnssFailures ?? 0) > 0);
+    }
     if (!heardAll.has(asset)) heardAll.set(asset, []);
     heardAll.get(asset)!.push(t);
     if (!by.has(asset)) by.set(asset, { device: r.tracker, list: [] });
@@ -129,6 +134,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names, unloca
     const noFix = lastReport !== null && lastReport !== lastTime &&
       (posFresh === "stale" || posFresh === "none") && freshnessOf(lastReport, periodS, now) !== "stale";
     const freshness = noFix ? freshnessOf(lastReport, periodS, now) : posFresh;
+    const gpsFault = noFix && (faultBy.get(id) ?? false);
     // Solar collars recharge by day: the level is the worst of the last 24 h
     // (what the night will bring), the percentage is the newest record.
     const bat = batteryOf(last);
@@ -163,7 +169,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names, unloca
 
     let seen: string, short: string;
     if (noFix) {
-      seen = tr.status.noFix(fmt.ago(lastReport!, now), lastTime !== null ? fmt.ago(lastTime, now) : null);
+      seen = (gpsFault ? tr.status.gpsFault : tr.status.noFix)(fmt.ago(lastReport!, now), lastTime !== null ? fmt.ago(lastTime, now) : null);
       short = tr.status.short.noFix;
     }
     else if (!last) { seen = tr.status.waiting; short = tr.status.short.waiting; }
@@ -177,7 +183,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names, unloca
 
     herd.push({
       id, device, profile, name, named, initials: named ? initialsOf(name) : "", color: profile.color,
-      points: timed, last, lastTime, lastReport, noFix, heardOnly: (heardAll.get(id) ?? []).sort((x, y) => x - y), periodS, freshness,
+      points: timed, last, lastTime, lastReport, noFix, gpsFault, heardOnly: (heardAll.get(id) ?? []).sort((x, y) => x - y), periodS, freshness,
       freshRatio: freshRatio(lastTime, periodS, now), status, seen, short,
       battery: bat.level, batteryPercent: bat.percent,
       activeShare: freshness === "fresh" ? activeShare(last) : null,

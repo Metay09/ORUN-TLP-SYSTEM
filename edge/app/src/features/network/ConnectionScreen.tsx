@@ -249,7 +249,7 @@ export function ConnectionScreen() {
     const silent = !heard || m.now - heard > 3600_000;
     const connected = session?.device === id.toUpperCase() && session.link.alive;
     const bits = [connected ? "Bluetooth ile bağlı" : "",
-                  heard ? fmt.ago(heard, m.now) : "hiç haber yok", a.noFix ? "konum bulamıyor" : "",
+                  heard ? fmt.ago(heard, m.now) : "hiç haber yok", a.gpsFault ? "GPS çalışmıyor" : a.noFix ? "konum bulamıyor" : "",
                   dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}` : "",
                   waitingN ? `${waitingN} ayar sırada` : "", queued.has(id.toUpperCase()) ? "alanlar sırada" : staleFence ? "alanlar değişti" : ""].filter(Boolean);
     const low = dev?.batteryPercent !== null && dev?.batteryPercent !== undefined && dev.batteryPercent < 20;

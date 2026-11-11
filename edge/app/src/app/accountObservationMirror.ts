@@ -254,7 +254,9 @@ export class AccountObservationMirror {
       if (d.incarnation !== r.incarnation || d.sequence !== r.sequence)
         throw new Error("Konum aynası kimliği uyuşmuyor.");
       if (d.lat === null || d.lon === null) {
-        unlocated?.push({ tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence, time: d.time });
+        const heard = typeof r.first_seen_utc === "number" ? r.first_seen_utc : null;
+        unlocated?.push({ tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence, time: d.time,
+          received: heard ? new Date(heard * 1000).toISOString() : null, gnssFailures: d.gnss_failures ?? null });
         continue;
       }
       const seen = typeof r.first_seen_utc === "number" ? r.first_seen_utc : null;

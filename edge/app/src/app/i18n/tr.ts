@@ -106,6 +106,7 @@ export const tr = {
   status: {
     waiting: "İlk konum bekleniyor",
     noClock: "Konum var · saat bilgisi yok",
+    gpsFault: (report: string, pos: string | null) => `GPS çalışmıyor · son rapor ${report}${pos ? ` · son konum ${pos}` : ""}`,
     noFix: (report: string, pos: string | null) => `Konum bulamıyor · son rapor ${report}${pos ? ` · son konum ${pos}` : ""}`,
     seenAgo: (ago: string) => `${cap(ago)} görüldü`,
     silentFor: (since: string) => `${cap(since)} haber yok`,
@@ -347,6 +348,10 @@ export const tr = {
     silent: { title: (n: string) => `${n} sessiz`, detail: (d: string, k: number) => `${d} boyunca konum gelmedi · ${k} rapor kaçtı` },
     silentNow: { title: (n: string) => `${n} sessiz`, detail: (since: string, k: number) => `${cap(since)} konum gelmiyor · ${k} rapor kaçtı` },
     lost: { title: (n: string) => `${n} kayıp olabilir`, detail: (since: string) => `${cap(since)} hiç haber yok · son konumuna bakın` },
+    gpsFault: {
+      title: (n: string) => `${n}: GPS çalışmıyor`,
+      detail: (report: string, since: string) => `Rapor geliyor (son ${report}) ama GPS ${since} konum ve saat bulamıyor; tasma pil için GPS denemesini seyreltiyor`,
+    },
     noFix: {
       title: (n: string) => `${n} konum bulamıyor`,
       detail: (report: string, since: string) => `Rapor geliyor (son ${report}) ama GPS ${since} konum bulamıyor`,
@@ -381,6 +386,7 @@ export const tr = {
         lost: (since: string) => `${since} haber yok`,
         silent: (since: string) => `${since} konum gelmiyor`,
         noFix: (since: string) => `rapor geliyor, ${since} GPS konum bulamıyor`,
+        gpsFault: (since: string) => `rapor geliyor, ${since} GPS çalışmıyor`,
         out: (since: string) => `${since} alan dışında`,
         still: (since: string) => `${since} hareketsiz`,
         batteryCritical: (p: number | null) => (p !== null ? `pil %${p}, bitiyor` : "pil bitiyor"),
@@ -393,6 +399,7 @@ export const tr = {
         still: "Hasta olabilir ya da tasma düşmüş olabilir.",
         silent: "Kapsama dışında olabilir; sıradaki raporu bekle.",
         noFix: "Kapalı yerde ya da GPS anteni kapalıysa olur; açık havaya çıkınca düzelir.",
+        gpsFault: "Yanındaki tasmalar konum buluyorsa bu tasmanın GPS'i arızalı: tasmayı kapatıp aç, GPS anten kablosuna bak.",
         batteryLow: "Birkaç gün içinde şarj et.",
         stationFull: "Telefonu gateway'e bağla; kayıtlar aktarılsın.",
         serverDown: "Kayıtlar telefonda güvende; internet gelince kendiliğinden gider.",
