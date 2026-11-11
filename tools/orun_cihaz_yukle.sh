@@ -179,9 +179,11 @@ progress_run() {
 }
 
 # --- 4. Derle ---
-# Her cihaza aynı yazılım (Y2a): bu git sürümü önceki cihaz için derlendiyse
-# yeniden derlenmez, aynı dosya yüklenir. Değiştirilmiş (commit edilmemiş)
-# dosya varsa hep derlenir.
+# Her cihaza aynı yazılım (Y2a): bu sürüm önceki cihaz için derlendiyse ayrı
+# derleme adımı atlanır; yükleme adımındaki PlatformIO her şeyi güncel bulur
+# ve yalnız yükler. ("-t nobuild" KULLANILMAZ: nRF52'de yükleyiciye .zip
+# yerine .hex verir, 2026-11-11'de "File is not a zip file" ile durdu.)
+# Değiştirilmiş (commit edilmemiş) dosya varsa hep derlenir.
 BUILD_DIR="$FW/.pio/build/$ENV"
 STAMP_FILE="$BUILD_DIR/orun-derlenen-surum"
 if git -C "$REPO" diff --quiet HEAD -- firmware 2>/dev/null; then BUILD_ID="$SHA"; else BUILD_ID=""; fi
@@ -190,7 +192,6 @@ if [[ $FORCE_BUILD -eq 0 && -n "$BUILD_ID" && -f "$STAMP_FILE" && -f "$BUILD_DIR
       && "$(cat "$STAMP_FILE")" == "$BUILD_ID" ]]; then
   say "Derleme atlandı: $SHA bu PC'de zaten derlendi (önceki cihaz için)"
   { echo "=== $(date -Is) $ENV $SHA port=$PORT (derleme atlandı)"; } >> "$LOG"
-  UPLOAD_ARGS=(-t nobuild -t upload)
 else
   say "Derleniyor ($ENV)"
   { echo "=== $(date -Is) $ENV $SHA port=$PORT"; } >> "$LOG"
