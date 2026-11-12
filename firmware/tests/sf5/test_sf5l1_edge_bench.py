@@ -106,7 +106,8 @@ def main() -> None:
         buf = io.StringIO()
         with redirect_stdout(buf):
             assert eb.main(["--bench-test-key", "--file", str(log),
-                            "--db", str(Path(tmp) / "file.sqlite")]) == 0
+                            "--db", str(Path(tmp) / "file.sqlite"),
+                            "--registry", str(Path(tmp) / "no-registry.sqlite")]) == 0
         text = buf.getvalue()
         assert text.count("YENİ") == 1 and text.count("VARDI") == 1, text
         assert "toplam_kayıt=1" in text, text
