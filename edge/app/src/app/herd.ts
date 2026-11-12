@@ -43,14 +43,15 @@ export function freshRatio(ms: number | null, periodS: number, now: number): num
 }
 
 /**
- * Pil 2 (owner 2026-11-12: a full battery reads 100 %). The same table as the
- * firmware (battery_policy.cpp batteryPercentEstimate): the RAK19007 charger
- * holds a full cell between its 4.05 V restart threshold and 4.20 V, so
- * 4050 mV and above is 100 %; below, Meshtastic's LiPo rest-voltage shape
- * (nRF52 variant, 3.40 V empty) stretched to that.
+ * The same table as the firmware (battery_policy.cpp batteryPercentEstimate):
+ * Meshtastic's LiPo rest-voltage table (4190 = 100 %, 4050 = 90 %, nRF52
+ * variant with 3.40 V empty). A FULL battery reads 100 % from the collar's
+ * power state (readingPercent), not from this curve (owner 2026-11-12). With
+ * 4.05 V stretched to 100 % a battery on its own read "100 %" for its first
+ * ~10 % of use (bench 2026-11-12, Hayvan 2).
  */
-const CURVE: [number, number][] = [[3400, 0], [3440, 11], [3480, 22], [3530, 33], [3630, 44],
-  [3720, 56], [3800, 67], [3890, 78], [3990, 89], [4050, 100]];
+const CURVE: [number, number][] = [[3400, 0], [3440, 10], [3480, 20], [3530, 30], [3630, 40],
+  [3720, 50], [3800, 60], [3890, 70], [3990, 80], [4050, 90], [4190, 100]];
 export function batteryPercent(mv: number | null): number | null {
   if (mv === null || mv <= 0) return null;
   if (mv <= CURVE[0][0]) return 0;

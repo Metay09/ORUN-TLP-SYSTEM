@@ -113,11 +113,14 @@ test("distance and direction", () => {
 test("Pil 2: one percent table with the firmware; FULL is 100 %, no battery has none", async () => {
   const { batteryPercent, readingPercent, externallyPowered } = await import("../src/app/herd.ts");
   // Same values as firmware/tests/m3/test_battery_policy.cpp percentEstimate().
-  for (const [mv, p] of [[4200, 100], [4050, 100], [3990, 89], [3400, 0], [3840, 72], [4020, 95], [3500, 26], [3350, 0]])
+  for (const [mv, p] of [[4200, 100], [4190, 100], [4120, 95], [4060, 91], [4050, 90], [3990, 80],
+                         [3400, 0], [3840, 64], [4020, 85], [3500, 24], [3350, 0]])
     assert.equal(batteryPercent(mv), p, `${mv} mV`);
+  // On its own battery a just-unplugged cell no longer reads 100 % for hours.
+  assert.equal(readingPercent({ mv: 4065, power: "BATTERY" }), 91);
   assert.equal(readingPercent({ mv: 4010, power: "FULL" }), 100);
   assert.equal(readingPercent({ mv: 4300, power: "NO_BATTERY" }), null);
-  assert.equal(readingPercent({ mv: 3840, power: null }), 72);
+  assert.equal(readingPercent({ mv: 3840, power: null }), 64);
   assert.equal(externallyPowered({ usb: true, power: "CHARGING" }), true);
   assert.equal(externallyPowered({ usb: false, power: "CHARGING" }), false);   // solar: the battery's own balance
   assert.equal(batteryOf(pt("A", 1, { battery_mv: 3990, power: "FULL", usb: true })).percent, 100);
