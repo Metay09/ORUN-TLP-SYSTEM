@@ -1890,6 +1890,23 @@ void drainProductStore() {
   }
 }
 
+// After a successful area-memory PREPARE the device reboots so the normal
+// begin() writes the empty (CLEAR) baseline before SoftDevice starts.
+void drainGeofencePrepare() {
+  bool prepared = false;
+  if (!geofence_store.takePrepareResult(prepared)) return;
+  Serial.printf("APP FENCE PREPARE result=%s%s\n",
+                prepared ? "PASS" : "FAIL",
+                prepared ? "; rebooting to create the empty baseline" : "");
+#if defined(NRF52_SERIES)
+  if (prepared) {
+    Serial.flush();
+    delay(200);
+    NVIC_SystemReset();
+  }
+#endif
+}
+
 #ifdef ORUN_SF5L0_TRACKER
 // "BENCH DEVICE ...": first line of every BENCH? answer on the one firmware
 // (Y2a). role=TRACKER|GATEWAY|UNASSIGNED|CONFLICT; gnss is the hint for
@@ -2926,6 +2943,20 @@ void handleRoleCommand() {
   if (isActivityCommand("APP FENCE DIAG?", 15)) {
     role_command_length = 0;
     printUsbGeofencePageDiagnostics();
+    return;
+  }
+  // The only whole area-memory erase: only when neither page holds a
+  // committed area record (bytes left by an earlier, larger image), never
+  // over stored areas (GeofenceStore::requestPrepare). USB only.
+  if (isActivityCommand("APP FENCE PREPARE CONFIRM", 25)) {
+    role_command_length = 0;
+    if (geofence_store.requestPrepare()) {
+      Serial.println(F("APP FENCE PREPARE started"));
+    } else {
+      Serial.println(F("APP FENCE PREPARE rejected: only when no committed "
+                       "area record exists"));
+      printUsbGeofencePageDiagnostics();
+    }
     return;
   }
   orun_tlp::GeoPointE7 fence_vertex;
@@ -4294,6 +4325,7 @@ void loop() {
   }
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kProductStore);
   drainProductStore();
+  drainGeofencePrepare();
   // ProductRecordStore::poll() has run before this service. A radio receipt
   // never counts as delivery; only a committed release marker does.
   const auto custody_result = custody_ack_release.service();

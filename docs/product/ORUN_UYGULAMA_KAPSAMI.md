@@ -87,6 +87,7 @@ Aktarma (relay) v1'de: tepelik arazide gateway'i görmeyen yerler için sahada �
 
 - #253: tasmaların aynı anda yeniden denemesi cihaz başına gecikmeyle ayrıldı.
 - #256: `APP FENCE DIAG?` — alan belleğinin A/B sayfalarını USB'den yalnız okur. 141A8887'de alan belleği bozulmuştu (9 Kasım), tek seferlik onarımla düzeltildi (#255, birleştirilmedi); **kök neden bilinmiyor**, tekrar ederse bu komutla bakılır.
+- Alan belleği "bozulması" (2026-11-12 incelemesi): çalışırken oluşan bir bozulma değil. 141A8887 ilk kurulduğu gün (31 Ekim, #224) aynı durumdaydı (`geofence_corrupt=1`, kayıt bölgesi `unknown=32`); A sayfasında tasmanın önceki, daha büyük yazılımının artığı vardı, alan belleği hiç kurulamamıştı. Yazılım yüklemek bu bölgeyi silmez; kayıt bölgesinin `PRODUCT STORE PREPARE CONFIRM` yolu vardı, alan belleğinin yoktu. Düzeltme: `APP FENCE PREPARE CONFIRM` (yalnız USB; yalnız iki sayfada da kayıtlı alan yokken siler, sonra yeniden başlar ve boş alan kaydını kurar) ve PC'de `python3 tools/orun_cihaz_kontrol.py alan --port <port>` (yalnız okur; `--hazirla` onay isteyip hazırlar). Durum: kod + PC testi `firmware/tests/m6/test_geofence_foreign_leftover.cpp` (izin aynen üretilmesi; 90 kesinti senaryosunda deponun kendi yazımı bu duruma ulaşamıyor) **tamam**; ürün derlemesi ve cihazda deneme **bekliyor**. Ham döküm onarımda silindiği için artığın hangi yazılımdan kaldığı **doğrulanamadı**; gateway 09A462BD4B275BA5 aynı izi 10 Ekim'de göstermişti (#96), orada salt okunur bakılabilir.
 
 ## v1 sonrası
 

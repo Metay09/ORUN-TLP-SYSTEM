@@ -6,6 +6,8 @@
   python3 tools/orun_cihaz_kontrol.py rol --port P tasma|gateway   # boş cihaz (Y2a)
   python3 tools/orun_cihaz_kontrol.py pil --port P [--izle 60]     # pil ölçümü (Pil 1)
 
+"alan" alan (geofence) belleğinin iki sayfasını yalnız okur ve durumunu söyler;
+"alan --hazirla" yalnız kayıtlı alan yokken (önceki yazılım artığı) bölgeyi siler.
 "oku" cihaza yalnız okuma soruları sorar (BENCH?, PRODUCT STORE?, APP DEVICE?);
 hiçbir şey yazmaz, silmez. Anahtarın kendisi hiçbir zaman okunmaz ya da
 yazılmaz: yalnız kimliği (credential id) ve dönemi (epoch) karşılaştırılır.
@@ -177,6 +179,68 @@ def read_battery(port: str, seconds: float = 3.0) -> list[str]:
     return lines
 
 
+FENCE_PAGE = re.compile(r"APP FENCE DIAG page=([AB]) classified=\w+ evidence=(\w+) all_ff=(\w+) tail_ff=(\w+)")
+FENCE_COMMITTED = ("COMMITTED_CLEAR", "COMMITTED_CONFIGURED")
+
+
+def parse_fence(lines: list[str]) -> dict:
+    """APP FENCE DIAG? cevabı: iki sayfanın durumu ve bakım kilidi (yalnız okuma)."""
+    out: dict = {}
+    for line in lines:
+        if m := FENCE_PAGE.search(line):
+            out[m[1]] = {"evidence": m[2], "all_ff": m[3] == "yes", "tail_ff": m[4] == "yes"}
+        elif line.startswith("APP FENCE DIAG maintenance="):
+            out["maintenance"] = line.endswith("=yes")
+    return out
+
+
+def fence_verdict(d: dict) -> tuple[str, str]:
+    """(durum, açıklama). durum: hazir | bos | kalinti | bakim | bilinmiyor.
+
+    kalinti = hiçbir sayfada kayıtlı alan yok ama bölge boş değil: cihazdaki
+    önceki (daha büyük) yazılımın artığı. Yalnız bu durumda hazırlanabilir.
+    """
+    a, b = d.get("A"), d.get("B")
+    if not a or not b or "maintenance" not in d:
+        return "bilinmiyor", "Cihaz alan belleği sorusuna cevap vermedi (yazılım eski olabilir)."
+    committed = [p for p in (a, b) if p["evidence"] in FENCE_COMMITTED]
+    if not d["maintenance"]:
+        if committed:
+            return "hazir", "Alan belleği hazır."
+        return "bos", "Alan belleği boş; cihaz yeniden başlayınca kendiliğinden kurulur."
+    if committed or "UNSUPPORTED_NEWER" in (a["evidence"], b["evidence"]):
+        return "bakim", ("Alan belleği kilitli ama içinde kayıtlı alan (ya da daha yeni yazılımın "
+                         "kaydı) var. Silinmez; incelenmesi gerekir.")
+    return "kalinti", ("Alan belleği hiç kurulmamış: bölgede önceki yazılımın artığı var, "
+                       "kayıtlı alan yok. Bu tasmaya alan yazılamaz; hazırlanması gerekir.")
+
+
+def fence_exchange(port: str, command: str, until: str, seconds: float) -> list[str]:
+    import serial
+    lines: list[str] = []
+    with serial.Serial(port, 115200, timeout=0.25, write_timeout=2, exclusive=True) as ser:
+        try:
+            ser.rts = False
+            ser.dtr = True
+        except OSError:
+            pass
+        time.sleep(0.8)
+        ser.reset_input_buffer()
+        ser.write((command + "\n").encode("ascii"))
+        ser.flush()
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            try:
+                text = ser.readline().decode("utf8", "replace").strip()
+            except Exception:   # cihaz yeniden başladı, port kapandı
+                break
+            if text:
+                lines.append(text)
+            if text.startswith(until):
+                break
+    return lines
+
+
 def role_command(role: str) -> str:
     """Boş cihazın rolü: kayıtlı hizmet niyeti (tasma: konum takibi; gateway: alıcı)."""
     return {"tasma": "APP SERVICES T", "gateway": "APP SERVICES A"}[role]
@@ -246,7 +310,46 @@ def main() -> int:
     r3 = sub.add_parser("pil")
     r3.add_argument("--port", required=True)
     r3.add_argument("--izle", type=int, default=0, help="dakika boyunca her dakika bir satır yaz")
+    r4 = sub.add_parser("alan")
+    r4.add_argument("--port", required=True)
+    r4.add_argument("--hazirla", action="store_true",
+                    help="yalnız kayıtlı alan yokken: alan belleğinin iki sayfasını sil")
     a = ap.parse_args()
+    if a.cmd == "alan":
+        lines = fence_exchange(a.port, "APP FENCE DIAG?", "APP FENCE DIAG maintenance=", 8.0)
+        for line in lines:
+            if line.startswith("APP FENCE DIAG"):
+                print("  " + line)
+        state, text = fence_verdict(parse_fence(lines))
+        print(text)
+        if not a.hazirla:
+            return 0 if state in ("hazir", "bos") else 1
+        if state != "kalinti":
+            print("Hazırlama yapılmadı: bu durumda silinecek bir artık yok ya da silmek güvenli değil.")
+            return 0 if state in ("hazir", "bos") else 2
+        print("YALNIZ alan belleğinin iki sayfası (0x0E5000..0x0E6FFF) silinecek.")
+        print("Anahtar, kayıtlar, ayarlar ve gateway izni bu bölgede değildir; dokunulmaz.")
+        print("Geri dönüş: silinen yalnız artık baytlardır; alanlar uygulamadan yeniden gönderilir.")
+        if input("Onaylıyorsan HAZIRLA yaz: ").strip() != "HAZIRLA":
+            print("İptal edildi.")
+            return 0
+        out = fence_exchange(a.port, "APP FENCE PREPARE CONFIRM", "APP FENCE PREPARE result=", 20.0)
+        if not any(l.startswith("APP FENCE PREPARE result=PASS") for l in out):
+            print("DUR: hazırlama tamamlanmadı:\n  " + "\n  ".join(out[-5:]), file=sys.stderr)
+            return 2
+        time.sleep(6)   # cihaz yeniden başlıyor, boş alan kaydını kuruyor
+        for _ in range(10):
+            try:
+                after = fence_exchange(a.port, "APP FENCE DIAG?", "APP FENCE DIAG maintenance=", 8.0)
+                state, text = fence_verdict(parse_fence(after))
+                if state == "hazir":
+                    print("Tamam: alan belleği kuruldu. Alanları uygulamadan gönderebilirsin.")
+                    return 0
+            except Exception:
+                pass
+            time.sleep(2)
+        print("DUR: hazırlamadan sonra alan belleği hazır görünmedi: " + text, file=sys.stderr)
+        return 2
     if a.cmd == "pil":
         b = parse_battery(read_battery(a.port))
         print("\n".join(battery_report(b)))
