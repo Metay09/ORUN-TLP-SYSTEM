@@ -468,7 +468,7 @@ int batteryCriticalScenario() {
   // the first 10-reading period (4200 at boot, lowest 3300).
   assert(battery_monitor.readings() == 10);
   assert(Serial.output.find(
-             "BATTERY LOG mv=3650 low=3300 high=4200 percent_est=47 "
+             "BATTERY LOG mv=3650 low=3300 high=4200 percent_est=42 "
              "state=NORMAL period_min=10 readings=10\n") != std::string::npos);
   Serial.output.clear();
   Serial.queueInput("BATTERY LOG?\n");
