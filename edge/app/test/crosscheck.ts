@@ -1,3 +1,4 @@
+import { TEST_EDGE_KEY } from "./edgeKeyFixture.ts";
 // Cross-check CLI for firmware/tests/sf5/test_sf5l7_edge_app.py.
 // stdin: {"frames": [hex], "macs": [[gw, page, slot, gen, objHex]],
 //         "script": [[t, line] | [t, "@alive"]]}
@@ -24,14 +25,14 @@ const opened = (input.frames as string[]).map((h) => {
   }
 });
 
-const macs = (input.macs as [string, number, number, string, string][]).map(
-  ([gw, page, slot, gen, obj]) => ({
-    mac: hex(acceptMac(BigInt("0x" + gw), page, slot, BigInt("0x" + gen), fromHex(obj))),
-    line: acceptLine(BigInt("0x" + gw), page, slot, BigInt("0x" + gen), fromHex(obj)),
+const macs = (input.macs as [string, number, number, string, string, string][]).map(
+  ([gw, page, slot, gen, obj, key]) => ({
+    mac: hex(acceptMac(BigInt("0x" + gw), page, slot, BigInt("0x" + gen), fromHex(obj), fromHex(key))),
+    line: acceptLine(BigInt("0x" + gw), page, slot, BigInt("0x" + gen), fromHex(obj), fromHex(key)),
   }));
 
 let now = 0;
-const edge = new EdgeCore(new NodeDb(), { credentials: benchCredentials, clock: () => now });
+const edge = new EdgeCore(new NodeDb(), { credentials: benchCredentials, edgeKey: () => TEST_EDGE_KEY, clock: () => now });
 await edge.init();
 const outputs: (string | null)[] = [];
 const accepts: string[] = [];

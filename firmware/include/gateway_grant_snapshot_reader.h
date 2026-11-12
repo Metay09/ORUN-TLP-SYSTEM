@@ -24,6 +24,17 @@ constexpr size_t kProofBytes = 64U;  // Detached authenticity proof, REQUIRED.
 constexpr size_t kCrcOffset = kPayloadBytes + kProofBytes;
 constexpr size_t kCommitOffset = kCrcOffset + 4U;
 constexpr size_t kStoredBytes = kCommitOffset + 4U;
+// Y2b: version 2 appends a gateway-only Edge ACCEPT key to the signed payload.
+// Version 1 remains readable for custody grants, but has no Edge authority.
+constexpr uint8_t kEdgeKeyVersion = 2U;
+constexpr size_t kEdgePayloadBytes = kPayloadBytes + 32U;
+constexpr size_t kEdgeStoredBytes = kStoredBytes + 32U;
+inline size_t payloadBytes(uint8_t version) {
+  return version == kEdgeKeyVersion ? kEdgePayloadBytes : kPayloadBytes;
+}
+inline size_t storedBytes(uint8_t version) {
+  return payloadBytes(version) + kProofBytes + 8U;
+}
 static_assert(kStoredBytes < kPageBytes, "Gateway grant page does not fit");
 
 }  // namespace gateway_grant_format
@@ -36,7 +47,8 @@ static_assert(kStoredBytes < kPageBytes, "Gateway grant page does not fit");
 class GatewayEnrollmentProofVerifier {
  public:
   virtual ~GatewayEnrollmentProofVerifier() = default;
-  virtual bool verify(const uint8_t* canonical_payload, size_t payload_size,
+  virtual bool verify(uint8_t format_version, const uint8_t* canonical_payload,
+                      size_t payload_size,
                       const uint8_t (&proof)[gateway_grant_format::kProofBytes])
                       const = 0;
 };
@@ -78,6 +90,8 @@ class GatewayGrantSnapshotReader final : public GatewayDurableGrantSource {
     return verifiedForLocalGateway(gateway_id_) ? active_generation_ : 0U;
   }
   uint64_t localGatewayId() const { return gateway_id_; }
+  // Only the verified immutable boot snapshot can supply this secret.
+  bool edgeAcceptKey(uint8_t (&key)[32]) const;
 
  private:
   void wipeScratch();
@@ -93,7 +107,7 @@ class GatewayGrantSnapshotReader final : public GatewayDurableGrantSource {
   uint64_t active_generation_ = 0U;
   bool denied_ = false;
   // Sized to one canonical payload/proof/CRC/commit, not to a whole page.
-  uint8_t scratch_[gateway_grant_format::kStoredBytes]{};
+  uint8_t scratch_[gateway_grant_format::kEdgeStoredBytes]{};
 };
 
 }  // namespace orun_tlp

@@ -34,6 +34,7 @@ from contextlib import closing
 from dataclasses import dataclass
 import hashlib
 import os
+import stat
 from pathlib import Path
 import secrets
 import sqlite3
@@ -55,6 +56,7 @@ TEST_EPOCH = 0x01020304                              # public bench credential
 # OGK1 Gateway grant snapshot (gateway_grant_snapshot_reader.h, SF5K3Y).
 OGK1_MAGIC = 0x4F474B31
 OGK1_VERSION = 1
+OGK2_EDGE_KEY_VERSION = 2
 OGK1_SLOTS = 32
 OGK1_HEADER = 32
 OGK1_SLOT = 56
@@ -134,7 +136,7 @@ def grant_line(cred: Credential, gateway_id: int, custody_floor: int,
 
 def build_ogk1(gateway_id: int, generation: int,
                grants: list[tuple[Credential, int, int]],
-               issuer: Ed25519PrivateKey) -> bytes:
+               issuer: Ed25519PrivateKey, edge_key: bytes | None = None) -> bytes:
     """Signed OGK1 snapshot image (the 1896 stored bytes, commit word 0).
 
     grants: (credential, custody_floor, grant_generation) per Tracker; each
@@ -161,14 +163,18 @@ def build_ogk1(gateway_id: int, generation: int,
                   floor.to_bytes(4, "big") + grant_gen.to_bytes(4, "big") +
                   (1).to_bytes(4, "big") + key)
     slots += bytes(OGK1_SLOT * (OGK1_SLOTS - len(seen)))
-    header = (OGK1_MAGIC.to_bytes(4, "big") + bytes((OGK1_VERSION, OGK1_SLOTS, 0, 0)) +
+    header = (OGK1_MAGIC.to_bytes(4, "big") + bytes((OGK2_EDGE_KEY_VERSION if edge_key is not None else OGK1_VERSION, OGK1_SLOTS, 0, 0)) +
               gateway_id.to_bytes(8, "big") + generation.to_bytes(8, "big") +
               OGK1_ISSUER_KEY_NUMBER.to_bytes(4, "big") + bytes(4))
     payload = header + slots
     assert len(payload) == OGK1_PAYLOAD
+    if edge_key is not None:
+        if len(edge_key) != 32 or not any(edge_key) or edge_key == bytes([255]) * 32:
+            raise RegistryError("invalid Edge key")
+        payload += edge_key
     signed = payload + issuer.sign(payload)
     image = signed + (zlib.crc32(signed) & 0xFFFFFFFF).to_bytes(4, "big") + bytes(4)
-    assert len(image) == OGK1_STORED
+    assert len(image) == OGK1_STORED + (32 if edge_key is not None else 0)
     return image
 
 
@@ -181,7 +187,12 @@ def grants_digest(grants: list[tuple[Credential, int, int]]) -> str:
 
 def ogk1_upload_lines(image: bytes) -> list[str]:
     """USB lines for the Gateway bench image (CRC-32 = typo guard only)."""
-    if len(image) != OGK1_STORED:
+    edge_bytes = 32 if len(image) == OGK1_STORED + 32 else 0
+    if (len(image) not in (OGK1_STORED, OGK1_STORED + 32) or
+            image[4] not in (1, 2) or
+            len(image) != OGK1_STORED + (32 if image[4] == 2 else 0) or
+            (edge_bytes and (not any(image[OGK1_PAYLOAD:OGK1_PAYLOAD + 32]) or
+                             image[OGK1_PAYLOAD:OGK1_PAYLOAD + 32] == b"\xff" * 32))):
         raise RegistryError("OGK1 image size")
     lines = ["BENCH OGK1 BEGIN"]
     for off in range(0, len(image), OGK1_DATA_CHUNK):
@@ -236,6 +247,11 @@ class CredentialRegistry:
                 "CREATE TABLE IF NOT EXISTS farm_gateways ("
                 " gateway_id TEXT PRIMARY KEY CHECK(length(gateway_id)=16),"
                 " first_seen_utc INTEGER NOT NULL)")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS gateway_edge_keys ("
+                " gateway_id TEXT PRIMARY KEY CHECK(length(gateway_id)=16),"
+                " secret TEXT NOT NULL UNIQUE CHECK(length(secret)=64),"
+                " created_utc INTEGER NOT NULL)")
             # C1: which grant set the last snapshot carried, so a bridge can
             # ask "is there anything new for this Gateway?" without a reboot.
             cols = {r[1] for r in db.execute("PRAGMA table_info(gateway_snapshots)")}
@@ -367,6 +383,39 @@ class CredentialRegistry:
                 raise
         return generation
 
+    def edge_key(self, gateway_id: int, *, create: bool = False) -> bytes | None:
+        """Y2b: one random Edge ACCEPT secret per farm Gateway; never rotate implicitly.
+
+        Creation is an explicit USB provisioning operation, not a GET side effect.
+        The existing private credential registry owns the secret and its backup.
+        """
+        if not 0 < gateway_id < 2**64 - 1:
+            raise RegistryError("gateway id")
+        meta = self.path.lstat()
+        if not stat.S_ISREG(meta.st_mode) or meta.st_mode & 0o077 or meta.st_uid != os.getuid():
+            raise RegistryError("credential registry must be owner-only regular file")
+        wal = Path(str(self.path) + "-wal")
+        try:
+            wal_meta = wal.lstat()
+        except FileNotFoundError:
+            wal_meta = None
+        if wal_meta is not None and (not stat.S_ISREG(wal_meta.st_mode) or
+                wal_meta.st_mode & 0o077 or wal_meta.st_uid != os.getuid()):
+            raise RegistryError("credential registry WAL must be owner-only regular file")
+        gw = _hex16(gateway_id)
+        with closing(self._conn()) as db:
+            if create:
+                if gateway_id not in self.farm_gateways():
+                    raise RegistryError("unknown farm Gateway")
+                db.execute("INSERT OR IGNORE INTO gateway_edge_keys VALUES (?,?,?)",
+                           (gw, secrets.token_bytes(32).hex().upper(), int(time.time())))
+            row = db.execute("SELECT secret FROM gateway_edge_keys WHERE gateway_id=?", (gw,)).fetchone()
+        return bytes.fromhex(row[0]) if row else None
+
+    def edge_keys(self) -> list[dict]:
+        return [{"gateway": _hex16(g), "key": key.hex().upper()}
+                for g in self.farm_gateways() if (key := self.edge_key(g)) is not None]
+
     def gateway_snapshot(self, gateway_id: int, at_least: int = 0) -> tuple[int, bytes]:
         """(generation, signed OGK1 image) with every active grant of this Gateway."""
         issuer = self.issuer()
@@ -374,8 +423,9 @@ class CredentialRegistry:
             raise RegistryError("no Gateway issuer key yet (run: orun_provision.py issuer)")
         grants = self.grants_for_gateway(gateway_id)
         generation = self.next_snapshot_generation(gateway_id, at_least)
-        self._remember_content(gateway_id, grants_digest(grants))
-        return generation, build_ogk1(gateway_id, generation, grants, issuer)
+        self._remember_content(gateway_id, grants_digest(grants) +
+            (":edge2:" + hashlib.sha256(self.edge_key(gateway_id)).hexdigest() if self.edge_key(gateway_id) else ""))
+        return generation, build_ogk1(gateway_id, generation, grants, issuer, self.edge_key(gateway_id))
 
     def _remember_content(self, gateway_id: int, digest: str) -> None:
         with closing(self._conn()) as db:
@@ -420,7 +470,8 @@ class CredentialRegistry:
         grants = self.grants_for_gateway(gateway_id)
         if not grants:
             return None
-        digest = grants_digest(grants)
+        edge_key = self.edge_key(gateway_id)
+        digest = grants_digest(grants) + (":edge2:" + hashlib.sha256(edge_key).hexdigest() if edge_key else "")
         with closing(self._conn()) as db:
             row = db.execute("SELECT generation, content FROM gateway_snapshots "
                              "WHERE gateway_id=?", (_hex16(gateway_id),)).fetchone()
@@ -431,4 +482,4 @@ class CredentialRegistry:
         else:
             generation = self.next_snapshot_generation(gateway_id, at_least=active)
             self._remember_content(gateway_id, digest)
-        return generation, build_ogk1(gateway_id, generation, grants, issuer)
+        return generation, build_ogk1(gateway_id, generation, grants, issuer, self.edge_key(gateway_id))

@@ -2,8 +2,7 @@
 // include/edge_link.h (BLE, SF5L6) and the USB text lines of SF5L1/SF5L5.
 // Shared vectors: test/core.test.ts.
 import { ascii, be16, be64, concat, hex, hex64, i16, i8, padTo, u16, u64 } from "./bytes.ts";
-import { hkdfSha256, hmacSha256, sha256 } from "./crypto.ts";
-import { TEST_CREDENTIAL_ID, TEST_ROOT } from "./product.ts";
+import { hmacSha256, sha256 } from "./crypto.ts";
 
 export const EDGE_SERVICE_UUID = "6f9a1c20-5b3e-4d8a-9e61-2c4b7a0d3e51";
 export const EDGE_TO_GATEWAY_UUID = "6f9a1c21-5b3e-4d8a-9e61-2c4b7a0d3e51";
@@ -116,13 +115,12 @@ export const DUMP_MESSAGE = new Uint8Array([0x81]);
 
 // ---- Edge accept (SF5L5) -------------------------------------------------
 // HMAC-SHA256(K_edge, M), M = "ORUN-EDGE-ACCEPT-v1" | gw | page | slot | gen |
-// SHA-256(object), zero padded to 102 bytes. K_edge = HKDF(salt = test
-// credential id, ikm = test root, info = "ORUN-SF5L0-BENCH-EDGE-ACCEPT-v1" |
-// gw, zero padded to 57 bytes). BENCH ONLY: public test key.
+// SHA-256(object), zero padded to 102 bytes. K_edge is a random private key
+// provisioned per Gateway; it is never sent over Bluetooth. The authenticated
+// phone obtains it through the account API and keeps it in platform storage.
 export function acceptMac(gateway: bigint, page: number, slot: number,
-                          generation: bigint, object: Uint8Array): Uint8Array {
-  const info = padTo(concat(ascii("ORUN-SF5L0-BENCH-EDGE-ACCEPT-v1"), be64(gateway)), 57);
-  const key = hkdfSha256(TEST_ROOT, TEST_CREDENTIAL_ID, info, 32);
+                          generation: bigint, object: Uint8Array, key: Uint8Array): Uint8Array {
+  if (key.length !== 32 || !key.some(b => b !== 0)) throw new Error("Gateway teslim anahtarı yok.");
   const msg = padTo(concat(ascii("ORUN-EDGE-ACCEPT-v1"), be64(gateway), be16(page),
                            be16(slot), be64(generation), sha256(object)), 102);
   return hmacSha256(key, msg);
@@ -130,16 +128,16 @@ export function acceptMac(gateway: bigint, page: number, slot: number,
 
 /** BLE ACCEPT: type(1) page(2) slot(2) gen(8) mac(32). */
 export function acceptMessage(gateway: bigint, page: number, slot: number,
-                              generation: bigint, object: Uint8Array): Uint8Array {
+                              generation: bigint, object: Uint8Array, key: Uint8Array): Uint8Array {
   return concat(new Uint8Array([0x82]), be16(page), be16(slot), be64(generation),
-                acceptMac(gateway, page, slot, generation, object));
+                acceptMac(gateway, page, slot, generation, object, key));
 }
 
 /** USB: EDGE ACCEPT v1 page=P slot=S gen=<16 hex> mac=<64 hex>. */
 export function acceptLine(gateway: bigint, page: number, slot: number,
-                           generation: bigint, object: Uint8Array): string {
+                           generation: bigint, object: Uint8Array, key: Uint8Array): string {
   return `EDGE ACCEPT v1 page=${page} slot=${slot} gen=${hex64(generation)} ` +
-    `mac=${hex(acceptMac(gateway, page, slot, generation, object))}`;
+    `mac=${hex(acceptMac(gateway, page, slot, generation, object, key))}`;
 }
 
 // ---- USB text lines ------------------------------------------------------

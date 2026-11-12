@@ -36,10 +36,12 @@ void fakeProof(const uint8_t* data, size_t size, uint8_t (&out)[64]) {
 struct FakeVerifier final : GatewayEnrollmentProofVerifier {
   bool trust = true;
   mutable unsigned checked = 0U;
-  bool verify(const uint8_t* payload, size_t size,
+  bool verify(uint8_t version, const uint8_t* payload, size_t size,
               const uint8_t (&proof)[fmt::kProofBytes]) const override {
     ++checked;
-    if (!trust || payload == nullptr || size != fmt::kPayloadBytes)
+    const size_t expected_size = version == fmt::kVersion ? fmt::kPayloadBytes
+        : version == fmt::kEdgeKeyVersion ? fmt::kEdgePayloadBytes : 0U;
+    if (!trust || payload == nullptr || expected_size == 0U || size != expected_size)
       return false;
     uint8_t expected[fmt::kProofBytes]{};
     fakeProof(payload, size, expected);

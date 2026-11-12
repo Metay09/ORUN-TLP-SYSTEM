@@ -20,6 +20,7 @@ interface Pending { key: string; page: number; slot: number; line: string; binar
 
 export interface EdgeOptions {
   credentials: CredentialLookup;
+  edgeKey?: (gateway: string) => Uint8Array | null;
   accept?: boolean;               // send confirmed hand-offs (default true)
   clock?: () => number;           // seconds since epoch
 }
@@ -46,6 +47,8 @@ export class EdgeCore {
   private incompleteFloor = 0;
   private okSinceHello = 0;
   private readonly accept: boolean;
+  private readonly edgeKey: (gateway: string) => Uint8Array | null;
+  acceptKeyMissing = false;
   private readonly clock: () => number;
   private usb = new UsbLineParser();
   private queue: Pending[] = [];
@@ -61,6 +64,7 @@ export class EdgeCore {
     this.db = db;
     this.ledger = new Ledger(db, opts.credentials);
     this.accept = opts.accept ?? true;
+    this.edgeKey = opts.edgeKey ?? (() => null);
     this.clock = opts.clock ?? (() => Date.now() / 1000);
   }
 
@@ -123,15 +127,22 @@ export class EdgeCore {
                       raw: Uint8Array): void {
     const key = `${page}:${slot}:${gen}`;
     if (!this.accept || this.queued.has(key)) return;
+    const secret = this.edgeKey(hex64(gateway));
+    this.acceptKeyMissing = secret === null;
+    if (!secret) return;
     this.queued.add(key);
     this.queue.push({
       key, page, slot,
-      line: acceptLine(gateway, page, slot, gen, raw),
-      binary: acceptMessage(gateway, page, slot, gen, raw),
+      line: acceptLine(gateway, page, slot, gen, raw, secret),
+      binary: acceptMessage(gateway, page, slot, gen, raw, secret),
     });
   }
 
   private next(now: number): Pending | null {
+    if (this.gatewayId === null || !this.edgeKey(hex64(this.gatewayId))) {
+      this.queue = []; this.queued.clear(); this.inFlight = null;
+      return null;
+    }
     if (this.inFlight) {
       if (now - this.inFlight.sent < ACCEPT_TIMEOUT_S) return null;
       this.queue.unshift(this.inFlight);     // no reply: send again

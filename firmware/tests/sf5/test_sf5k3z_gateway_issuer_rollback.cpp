@@ -57,9 +57,11 @@ struct RealEd25519Verifier final : GatewayEnrollmentProofVerifier {
   explicit RealEd25519Verifier(const uint8_t (&key)[32]) {
     memcpy(issuer_key, key, sizeof(issuer_key));
   }
-  bool verify(const uint8_t* data, size_t length,
+  bool verify(uint8_t version, const uint8_t* data, size_t length,
               const uint8_t (&proof)[fmt::kProofBytes]) const override {
-    if (!data || length != fmt::kPayloadBytes) return false;
+    const size_t expected = version == fmt::kVersion ? fmt::kPayloadBytes
+        : version == fmt::kEdgeKeyVersion ? fmt::kEdgePayloadBytes : 0U;
+    if (!data || expected == 0U || length != expected) return false;
     EVP_PKEY* key = EVP_PKEY_new_raw_public_key(
         EVP_PKEY_ED25519, nullptr, issuer_key, sizeof(issuer_key));
     if (!key) return false;

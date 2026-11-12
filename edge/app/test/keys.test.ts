@@ -59,7 +59,11 @@ test("read key opens real-credential records; the bench key does not", async () 
 test("BLE ingest with the key ring: unopenable records are not accepted", async () => {
   const db = new NodeDb();
   const ring = new KeyRing();
-  const core = new EdgeCore(db, { credentials: ring.lookup, clock: () => 1_800_000_000 });
+  // Synthetic fixture only: Tracker read authority and Gateway Edge authority
+  // are separate, and the latter is required before this Edge can ACCEPT.
+  const edgeKey = new Uint8Array(32).fill(0x5A);
+  const core = new EdgeCore(db, { credentials: ring.lookup,
+    edgeKey: () => edgeKey, clock: () => 1_800_000_000 });
   await core.init();
   await core.handleMessage(concat(new Uint8Array([1]), fromHex("09A462BD4B275BA5"), fromHex("00010420")));
   const frame = realFrame(3);

@@ -50,12 +50,10 @@ void put32(uint32_t value, uint8_t* out) {
 }
 #endif
 
-#ifdef ORUN_SF5L0_HAS_TEST_ROOT
 void put64(uint64_t value, uint8_t* out) {
   for (unsigned i = 0U; i < 8U; ++i)
     out[i] = static_cast<uint8_t>(value >> (56U - 8U * i));
 }
-#endif
 
 #ifdef ORUN_SF5L0_BENCH_TEST_KEYS
 // Must stay byte-identical to the Tracker verifier's SF5B §12 HKDF info
@@ -720,6 +718,31 @@ bool Sf5l0EdgeHandoff::mac(uint64_t gateway_id, uint16_t page, uint16_t slot,
   memcpy(root, sf5l0_bench::kTestRoot, sizeof(root));
   bool ok = custody_crypto::hkdfSha256(salt, root, info, sizeof(info), key);
   wipe(root, sizeof(root));
+  ok = ok && macWithKey(key, gateway_id, page, slot, generation, object, size, out);
+  wipe(key, sizeof(key));
+  return ok;
+#endif  // ORUN_SF5L0_HAS_TEST_ROOT
+}
+
+Sf5l0EdgeHandoff::~Sf5l0EdgeHandoff() { clearKey(); }
+void Sf5l0EdgeHandoff::clearKey() {
+  wipe(key_, sizeof(key_));
+  has_key_ = false;
+}
+void Sf5l0EdgeHandoff::setKey(const uint8_t (&key)[32]) {
+  clearKey();
+  uint8_t any = 0U;
+  uint8_t different = 0U;
+  for (uint8_t b : key) { any |= b; different |= uint8_t(b ^ 0xFFU); }
+  if (any == 0U || different == 0U) return;
+  memcpy(key_, key, sizeof(key_));
+  has_key_ = true;
+}
+bool Sf5l0EdgeHandoff::macWithKey(const uint8_t (&key)[32], uint64_t gateway_id,
+    uint16_t page, uint16_t slot, uint64_t generation, const uint8_t* object,
+    size_t size, uint8_t (&out)[32]) {
+  if (object == nullptr || size == 0U) return false;
+  static const char kLabel[] = "ORUN-EDGE-ACCEPT-v1";
   uint8_t message[102]{};
   size_t n = 0;
   memcpy(message, kLabel, sizeof(kLabel) - 1U);
@@ -729,12 +752,10 @@ bool Sf5l0EdgeHandoff::mac(uint64_t gateway_id, uint16_t page, uint16_t slot,
   message[n++] = uint8_t(slot >> 8U); message[n++] = uint8_t(slot);
   put64(generation, message + n); n += 8U;
   uint8_t digest[32]{};
-  ok = ok && custody_crypto::sha256(object, size, digest);
+  bool ok = custody_crypto::sha256(object, size, digest);
   memcpy(message + n, digest, sizeof(digest));
   ok = ok && custody_crypto::hmacSha256(key, message, sizeof(message), out);
-  wipe(key, sizeof(key));
   return ok;
-#endif  // ORUN_SF5L0_HAS_TEST_ROOT
 }
 
 Sf5l0EdgeHandoff::Reply Sf5l0EdgeHandoff::accept(const char* line,
@@ -765,6 +786,7 @@ Sf5l0EdgeHandoff::Reply Sf5l0EdgeHandoff::accept(const char* line,
 Sf5l0EdgeHandoff::Reply Sf5l0EdgeHandoff::accept(uint16_t page, uint16_t slot,
                                                  uint64_t generation,
                                                  const uint8_t (&claimed)[32]) {
+  if (!has_key_) return Reply::kRejected;
   if (pending_) return Reply::kBusy;
   ProductCustodyStore::Handle handle{};
   handle.page = page;
@@ -778,7 +800,7 @@ Sf5l0EdgeHandoff::Reply Sf5l0EdgeHandoff::accept(uint16_t page, uint16_t slot,
   if (found != ProductCustodyStore::Lookup::kFound) return Reply::kUnknown;
 
   uint8_t expected[32]{};
-  if (!mac(gateway_id_, page, slot, handle.generation, object, size, expected))
+  if (!macWithKey(key_, gateway_id_, page, slot, handle.generation, object, size, expected))
     return Reply::kRejected;
   const bool authentic = sameBytes(expected, claimed, sizeof(expected));
   wipe(expected, sizeof(expected));

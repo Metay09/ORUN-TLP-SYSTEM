@@ -60,6 +60,10 @@ public final class OrunMobileSessionPlugin extends Plugin {
     private static final Pattern ACTOR = Pattern.compile("[A-Za-z0-9._-]{1,128}");
     private static final Pattern USERNAME = Pattern.compile("[a-z][a-z0-9._-]{2,63}");
 
+    private static final String EDGE_FILE = "orun-edge-keys.v1.bin";
+    private static final byte[] EDGE_DOMAIN =
+            "ORUN:EDGE:KEYS:AESGCM:v1".getBytes(StandardCharsets.US_ASCII);
+
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
 
     private AtomicFile store() {
@@ -388,6 +392,7 @@ public final class OrunMobileSessionPlugin extends Plugin {
     public void clearAccount(PluginCall call) {
         worker.execute(() -> {
             try {
+                store(EDGE_FILE).delete();
                 AtomicFile file = store(ACCOUNT_FILE);
                 if (file.getBaseFile().exists())
                     file.delete();
@@ -397,6 +402,80 @@ public final class OrunMobileSessionPlugin extends Plugin {
             } catch (Exception | LinkageError ignored) {
                 call.reject("ORUN_ACCOUNT_SESSION_CLEAR_FAILED");
             }
+        });
+    }
+
+    private JSONObject edgeAccount() throws Exception {
+        byte[] plain = decrypt(store(ACCOUNT_FILE), ACCOUNT_DOMAIN);
+        if (plain == null) throw new IllegalStateException("NO_ACCOUNT");
+        try {
+            JSONObject a = new JSONObject(new String(plain, StandardCharsets.UTF_8));
+            long expiry = a.getLong("expiresAt");
+            validateAccount(a.getString("origin"), a.getString("site"), a.getString("actor"),
+                    a.getString("installation"), a.getString("username"), a.getString("accessToken"), expiry);
+            if (expiry <= System.currentTimeMillis() / 1000) throw new IllegalStateException("EXPIRED");
+            return a;
+        } finally { Arrays.fill(plain, (byte) 0); }
+    }
+
+    private static void validateEdgeKeys(org.json.JSONArray keys) throws Exception {
+        if (keys == null || keys.length() > 16) throw new IllegalArgumentException("EDGE_KEYS");
+        java.util.HashSet<String> seen = new java.util.HashSet<>();
+        for (int i = 0; i < keys.length(); i++) {
+            JSONObject k = keys.getJSONObject(i);
+            String gateway = k.getString("gateway"), key = k.getString("key");
+            if (!gateway.matches("[0-9A-F]{16}") || !key.matches("[0-9A-F]{64}") ||
+                    key.matches("0{64}") || key.matches("F{64}") || !seen.add(gateway))
+                throw new IllegalArgumentException("EDGE_KEY");
+        }
+    }
+
+    @PluginMethod
+    public void putEdgeKeys(PluginCall call) {
+        final org.json.JSONArray keys = call.getData().optJSONArray("keys");
+        worker.execute(() -> {
+            try {
+                validateEdgeKeys(keys);
+                JSONObject account = edgeAccount(), data = new JSONObject();
+                for (String k : new String[]{"origin", "site", "actor", "installation"})
+                    data.put(k, account.getString(k));
+                data.put("keys", keys);
+                write(store(EDGE_FILE), EDGE_DOMAIN, data);
+                call.resolve();
+            } catch (Exception | LinkageError ignored) {
+                call.reject("ORUN_EDGE_KEYS_STORE_FAILED");
+            }
+        });
+    }
+
+    @PluginMethod
+    public void getEdgeKeys(PluginCall call) {
+        worker.execute(() -> {
+            byte[] plain = null;
+            try {
+                JSONObject account = edgeAccount();
+                plain = decrypt(store(EDGE_FILE), EDGE_DOMAIN);
+                org.json.JSONArray keys = new org.json.JSONArray();
+                if (plain != null) {
+                    JSONObject data = new JSONObject(new String(plain, StandardCharsets.UTF_8));
+                    for (String k : new String[]{"origin", "site", "actor", "installation"})
+                        if (!account.getString(k).equals(data.getString(k)))
+                            throw new IllegalStateException("FOREIGN_ACCOUNT");
+                    keys = data.getJSONArray("keys");
+                    validateEdgeKeys(keys);
+                }
+                JSObject result = new JSObject(); result.put("keys", keys); call.resolve(result);
+            } catch (Exception | LinkageError ignored) {
+                JSObject result = new JSObject(); result.put("keys", new org.json.JSONArray()); call.resolve(result);
+            } finally { if (plain != null) Arrays.fill(plain, (byte) 0); }
+        });
+    }
+
+    @PluginMethod
+    public void clearEdgeKeys(PluginCall call) {
+        worker.execute(() -> {
+            try { store(EDGE_FILE).delete(); call.resolve(); }
+            catch (Exception | LinkageError ignored) { call.reject("ORUN_EDGE_KEYS_CLEAR_FAILED"); }
         });
     }
 

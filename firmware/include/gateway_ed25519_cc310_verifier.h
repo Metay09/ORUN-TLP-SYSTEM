@@ -20,7 +20,8 @@ class GatewayEd25519Cc310Verifier final
   explicit GatewayEd25519Cc310Verifier(
       const uint8_t (&trusted_issuer_public_key)[32]);
   bool verify(
-      const uint8_t* canonical_payload, size_t payload_size,
+      uint8_t format_version, const uint8_t* canonical_payload,
+      size_t payload_size,
       const uint8_t (&signature)[gateway_grant_format::kProofBytes])
       const override;
 
