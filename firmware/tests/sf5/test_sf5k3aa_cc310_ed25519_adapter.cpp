@@ -12,6 +12,9 @@
 
 using orun_tlp::GatewayEd25519Cc310Verifier;
 using orun_tlp::gateway_grant_format::kPayloadBytes;
+using orun_tlp::gateway_grant_format::kVersion;
+using orun_tlp::gateway_grant_format::kEdgeKeyVersion;
+using orun_tlp::gateway_grant_format::kEdgePayloadBytes;
 
 namespace {
 unsigned g_vendor_calls = 0U;
@@ -65,32 +68,34 @@ int main() {
   for (size_t i = 0; i < sizeof(data); ++i)
     data[i] = static_cast<uint8_t>(i * 17U + 3U);
   GatewayEd25519Cc310Verifier verifier(kPublicKey);
-  assert(verifier.verify(data, sizeof(data), kProof));
+  assert(verifier.verify(kVersion, data, sizeof(data), kProof));
   assert(g_success == 1U);
 
   uint8_t changed_sig[64]{};
   memcpy(changed_sig, kProof, sizeof(changed_sig));
   changed_sig[0] ^= 0x01U;
-  assert(!verifier.verify(data, sizeof(data), changed_sig));
+  assert(!verifier.verify(kVersion, data, sizeof(data), changed_sig));
   data[1823] ^= 0x01U;
-  assert(!verifier.verify(data, sizeof(data), kProof));
+  assert(!verifier.verify(kVersion, data, sizeof(data), kProof));
   data[1823] ^= 0x01U;
 
   uint8_t wrong_public_key[32]{};
   memcpy(wrong_public_key, kPublicKey, sizeof(wrong_public_key));
   wrong_public_key[31] ^= 0x01U;
   GatewayEd25519Cc310Verifier untrusted(wrong_public_key);
-  assert(!untrusted.verify(data, sizeof(data), kProof));
+  assert(!untrusted.verify(kVersion, data, sizeof(data), kProof));
 
   uint8_t zero_key[32]{};
   GatewayEd25519Cc310Verifier rejected_key(zero_key);
   const unsigned before_invalid = g_vendor_calls;
-  assert(!rejected_key.verify(data, sizeof(data), kProof));
-  assert(!verifier.verify(data, sizeof(data) - 1U, kProof));
-  assert(!verifier.verify(nullptr, sizeof(data), kProof));
+  assert(!rejected_key.verify(kVersion, data, sizeof(data), kProof));
+  assert(!verifier.verify(kVersion, data, sizeof(data) - 1U, kProof));
+  assert(!verifier.verify(kVersion, nullptr, sizeof(data), kProof));
+  assert(!verifier.verify(kVersion, data, kEdgePayloadBytes, kProof));
+  assert(!verifier.verify(kEdgeKeyVersion, data, sizeof(data), kProof));
   assert(g_vendor_calls == before_invalid);
 
-  assert(verifier.verify(data, sizeof(data), kProof));
+  assert(verifier.verify(kVersion, data, sizeof(data), kProof));
   assert(g_success == 2U && g_vendor_calls == 5U);
   puts("SF5K3AA CC310 API adapter/Ed25519 positive-tamper tests: PASS (HOST vendor shim)");
   return 0;
