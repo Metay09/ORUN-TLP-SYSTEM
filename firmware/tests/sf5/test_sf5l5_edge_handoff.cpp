@@ -171,6 +171,8 @@ void testHandoffAndReclaim() {
   EraseFlash flash;
   std::string stale_line;
   uint16_t old_page_a = 0U;
+  uint16_t stale_slot = 0U;
+  uint64_t stale_generation = 0U;
   std::vector<osc::ExactObject> sent;
   {
     Gateway gw(flash);
@@ -235,7 +237,11 @@ void testHandoffAndReclaim() {
     for (unsigned i = 0U; i < 33U; ++i) {
       const std::string line = privateAcceptLine(h[i].page, h[i].slot,
           h[i].generation, h[i].object, h[i].size, kGatewayEdgeKey);
-      if (i == 32U) stale_line = line;
+      if (i == 0U) {
+        stale_line = line;
+        stale_slot = h[i].slot;
+        stale_generation = h[i].generation;
+      }
       assert(gw.accept(line) == Sf5l0EdgeHandoff::Reply::kPending);
       // A second accept while the first is in flight is BUSY, not lost.
       assert(gw.accept(line) == Sf5l0EdgeHandoff::Reply::kBusy);
@@ -272,18 +278,17 @@ void testHandoffAndReclaim() {
     }
     const auto h = held(flash, gw.store);
     assert(h.size() == 34U);
-    assert(h.back().page == h.front().page ? true : true);
-    bool reused_a = false;
-    for (const auto& r : h) reused_a |= flash.pageErased(r.page) == false &&
-                                        r.generation > h.front().generation;
-    assert(reused_a);
-    // The old generation must not release a new record that reuses its slot.
+    // Page A was reclaimed and slot 0 must be reused by the four-record spill.
     const auto reused = std::find_if(h.begin(), h.end(), [old_page_a](const Sf5l0HeldRecord& r) {
-      return r.page == old_page_a && r.slot == 32U;
+      return r.page == old_page_a && r.slot == 0U;
     });
-    if (reused != h.end()) {
-      assert(gw.accept(stale_line) == Sf5l0EdgeHandoff::Reply::kUnknown);
-    }
+    assert(reused != h.end() && reused->slot == stale_slot &&
+           reused->generation != stale_generation);
+    const auto old = gw.accept(stale_line);
+    assert(old == Sf5l0EdgeHandoff::Reply::kUnknown ||
+           old == Sf5l0EdgeHandoff::Reply::kBadMac);
+    assert(gw.drain().kind == Sf5l0EdgeHandoff::Event::Kind::kNone);
+    assert(held(flash, gw.store).size() == 34U);
     // Page B is now full: 3 handed off earlier + 30 held -> not reclaimable.
     assert(gw.store.reclaimablePage() < 0);
   }
