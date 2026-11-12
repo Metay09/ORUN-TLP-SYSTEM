@@ -28,11 +28,14 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "edge" / "app"
 sys.path.insert(0, str(ROOT / "tools"))
+from orun_edge_accept import accept_binary, accept_mac, accept_line  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import orun_edge_bench as eb  # noqa: E402
 import test_sf5l3_edge_map as l3  # noqa: E402
 
 GW = 0x09A462BD4B275BA5
+EDGE_KEY = bytes.fromhex("4A772E9813B5C4610C3D96228BE1F057"
+                         "3A7FD1842695BB0E5932A86CD74105CE")
 
 
 def mutated_frames(rng: random.Random) -> list:
@@ -83,6 +86,13 @@ def held(page: int, slot: int, gen: int, raw: bytes) -> str:
 
 def usb_script(rng: random.Random, db: Path):
     """Drive the Python BenchEdge, recording the exact inputs it saw."""
+    # Keep only the frame/session behavior from the old simulator. Its public
+    # test-key MAC is intentionally replaced with this synthetic private-key
+    # fixture, matching the app's current Y2b implementation.
+    eb.edge_accept_line = lambda gw, page, slot, gen, obj: accept_line(
+        EDGE_KEY, gw, page, slot, gen, obj)
+    eb.edge_accept_binary = lambda gw, page, slot, gen, obj: accept_binary(
+        EDGE_KEY, gw, page, slot, gen, obj)
     t = [1_790_000_000.0]
     edge = eb.BenchEdge(db, True, clock=lambda: t[0])
     script, outputs, accepts = [], [], []
@@ -164,7 +174,8 @@ def main() -> None:
     rng = random.Random(0x5F57)
     frames = mutated_frames(rng)
     macs = [[f"{rng.getrandbits(64):016X}", rng.randrange(65536), rng.randrange(65536),
-             f"{rng.getrandbits(64):016X}", rng.randbytes(rng.choice((84, 100))).hex()]
+             f"{rng.getrandbits(64):016X}", rng.randbytes(rng.choice((84, 100))).hex(),
+             bytes(range(1, 33)).hex()]
             for _ in range(200)]
     with tempfile.TemporaryDirectory() as tmp:
         script, outputs, accepts, summary, points = usb_script(rng, Path(tmp) / "e.sqlite")
@@ -179,11 +190,11 @@ def main() -> None:
     accepted = sum(1 for o in py_open if o["ok"])
     assert 200 < accepted < len(frames) - 200, accepted   # both outcomes exercised
 
-    for (gw, page, slot, gen, obj), got in zip(macs, ts["macs"]):
-        want = eb.edge_accept_mac(int(gw, 16), page, slot, int(gen, 16), bytes.fromhex(obj))
+    for (gw, page, slot, gen, obj, key), got in zip(macs, ts["macs"]):
+        want = accept_mac(bytes.fromhex(key), int(gw, 16), page, slot, int(gen, 16), bytes.fromhex(obj))
         assert got["mac"] == want.hex().upper()
-        assert got["line"] == eb.edge_accept_line(int(gw, 16), page, slot, int(gen, 16),
-                                                  bytes.fromhex(obj))
+        assert got["line"] == accept_line(bytes.fromhex(key), int(gw, 16), page, slot,
+                                             int(gen, 16), bytes.fromhex(obj))
 
     for i, (a, b) in enumerate(zip(outputs, ts["outputs"])):
         assert a == b, (i, a, b)

@@ -30,15 +30,16 @@ GatewayEd25519Cc310Verifier::GatewayEd25519Cc310Verifier(
 }
 
 bool GatewayEd25519Cc310Verifier::verify(
-    const uint8_t* canonical_payload, size_t payload_size,
+    uint8_t format_version, const uint8_t* canonical_payload, size_t payload_size,
     const uint8_t (&signature)[gateway_grant_format::kProofBytes]) const {
   namespace fmt = gateway_grant_format;
   static_assert(fmt::kProofBytes == CRYS_ECEDW_SIGNATURE_BYTES,
                 "OGK1 detached signature must remain standard Ed25519");
   static_assert(sizeof(issuer_public_key_) == CRYS_ECEDW_MOD_SIZE_IN_BYTES,
                 "Issuer key must be a raw Ed25519 public key");
-  if (canonical_payload == nullptr ||
-      payload_size != fmt::kPayloadBytes ||
+  const size_t expected = format_version == fmt::kVersion ? fmt::kPayloadBytes
+      : format_version == fmt::kEdgeKeyVersion ? fmt::kEdgePayloadBytes : 0U;
+  if (canonical_payload == nullptr || expected == 0U || payload_size != expected ||
       unsuitableKey(issuer_public_key_)) return false;
 
   // Nordic's pinned CRYS_ECEDW_Verify signature requests a mutable message
@@ -47,12 +48,12 @@ bool GatewayEd25519Cc310Verifier::verify(
   // keys; wipe BOTH scratch allocations regardless of verifier outcome.
   // Static, not on the 8 KiB loop-task stack (step 3B calls this from the
   // USB command path): loop-owner only, never re-entered, wiped after use.
-  static uint8_t message[fmt::kPayloadBytes];
+  static uint8_t message[fmt::kEdgePayloadBytes];
   static CRYS_ECEDW_TempBuff_t context;
-  memcpy(message, canonical_payload, sizeof(message));
+  memcpy(message, canonical_payload, payload_size);
   const CRYSError_t rc = CRYS_ECEDW_Verify(
       signature, fmt::kProofBytes, issuer_public_key_,
-      sizeof(issuer_public_key_), message, sizeof(message), &context);
+      sizeof(issuer_public_key_), message, payload_size, &context);
   secureWipe(message, sizeof(message));
   secureWipe(&context, sizeof(context));
   // CRYS_OK is verification only, never Gateway authorization by itself.

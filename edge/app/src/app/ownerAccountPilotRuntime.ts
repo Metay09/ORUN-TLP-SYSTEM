@@ -1,3 +1,5 @@
+import { EdgeKeyBook } from "./edgeKeys.ts";
+import { edgeKeyVault } from "../platform/orunEdgeKeys.ts";
 // ORUN S6B pilot account runtime: holds account bearer in process memory only.
 // Navigating between app screens does not create another auth session.
 // No localStorage, preferences, SQLite, browser cache or URL credential writes.
@@ -59,6 +61,7 @@ export function pilotRestoreAccount(): Promise<void> {
     const restored = new OwnerAccountClient(ORUN_ACCOUNT_ORIGIN);
     restored.adopt(stored.identity, stored.accessToken);
     client = restored;
+    await edgeKeys.load().catch(() => undefined);
     observationsChanged?.();
     startAutoSync();
     accountChanged();
@@ -68,6 +71,7 @@ export function pilotRestoreAccount(): Promise<void> {
       client = null;
       stopAutoSync();
       writeKeys.clear();
+      edgeKeys.clear();
       await forgetAccount();
       observationsChanged?.();
     } else if (check.state === "ok") {
@@ -162,6 +166,7 @@ export const deviceSettings = new DeviceSettingsBook(
 const settingsServer = () => (client && pilotAccountStatus() ? client : null);
 
 /** 4c-1b: Bluetooth yazma anahtarları (hesaptan; çıkınca silinir). */
+export const edgeKeys = new EdgeKeyBook(edgeKeyVault);
 export const writeKeys = new WriteKeyBook(
   typeof localStorage !== "undefined" ? (() => { try { return localStorage; } catch { return null; } })() : null);
 
@@ -195,6 +200,7 @@ function refreshNames(): void {
     void deviceSettings.refresh(client).catch(() => undefined);
     void deviceOps.refresh(client).catch(() => undefined);
     void writeKeys.refresh(client).catch(() => undefined);
+    void edgeKeys.refresh(client).catch(() => undefined);
     void flushRevisions();
   }
 }
@@ -486,6 +492,7 @@ export async function pilotAccountLogout(): Promise<void> {
   stopAutoSync();
   setSync({ running: false, last: null, error: null });
   writeKeys.clear();
+      edgeKeys.clear();
   await forgetAccount();
   observationsChanged?.();
   accountChanged();

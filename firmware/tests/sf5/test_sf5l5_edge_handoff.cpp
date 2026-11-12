@@ -13,6 +13,7 @@
 //    re-ACKed from the same durable bytes;
 //  - everything survives a Gateway reboot.
 #include <assert.h>
+#include <algorithm>
 #include <stdio.h>
 #include <string.h>
 
@@ -76,6 +77,28 @@ std::string acceptLine(uint16_t page, uint16_t slot, uint64_t gen,
            unsigned(page), unsigned(slot), unsigned(gen >> 32), unsigned(gen));
   return std::string(head) + hex(mac, sizeof(mac));
 }
+const uint8_t kGatewayEdgeKey[32] = {
+    0x4a, 0x77, 0x2e, 0x98, 0x13, 0xb5, 0xc4, 0x61,
+    0x0c, 0x3d, 0x96, 0x22, 0x8b, 0xe1, 0xf0, 0x57,
+    0x3a, 0x7f, 0xd1, 0x84, 0x26, 0x95, 0xbb, 0x0e,
+    0x59, 0x32, 0xa8, 0x6c, 0xd7, 0x41, 0x05, 0xce};
+const uint8_t kOtherGatewayEdgeKey[32] = {
+    0x9a, 0x11, 0x2e, 0xf8, 0x33, 0x75, 0x84, 0x21,
+    0x4c, 0x7d, 0x36, 0xc2, 0x6b, 0x01, 0x10, 0xb7,
+    0x5a, 0x1f, 0xb1, 0xe4, 0x46, 0xf5, 0xdb, 0x6e,
+    0x39, 0x52, 0xc8, 0x0c, 0x97, 0x21, 0x65, 0xae};
+std::string privateAcceptLine(uint16_t page, uint16_t slot, uint64_t gen,
+                              const uint8_t* object, size_t size,
+                              const uint8_t (&key)[32],
+                              uint64_t gateway = kGateway) {
+  uint8_t mac[32]{};
+  assert(Sf5l0EdgeHandoff::macWithKey(key, gateway, page, slot, gen,
+                                      object, size, mac));
+  char head[80];
+  snprintf(head, sizeof(head), "EDGE ACCEPT v1 page=%u slot=%u gen=%016llX mac=",
+           unsigned(page), unsigned(slot), static_cast<unsigned long long>(gen));
+  return std::string(head) + hex(mac, sizeof(mac));
+}
 
 // Same inputs as test_sf5l5_edge_handoff.py (gateway 09A462BD4B275BA5,
 // page 1, slot 2, generation 3, the object below): both implementations must
@@ -103,6 +126,7 @@ struct Gateway {
   explicit Gateway(EraseFlash& f)
       : flash(f), store(f, kPages), owner(store), grants(kGateway),
         ingress(owner, grants, kGateway), handoff(store, kGateway) {
+    handoff.setKey(kGatewayEdgeKey);
     assert(store.begin());
   }
   // Admit one object; true = ACKed (fresh custody or exact re-ACK).
@@ -145,6 +169,8 @@ std::vector<Sf5l0HeldRecord> held(const EraseFlash& flash,
 
 void testHandoffAndReclaim() {
   EraseFlash flash;
+  std::string stale_line;
+  uint16_t old_page_a = 0U;
   std::vector<osc::ExactObject> sent;
   {
     Gateway gw(flash);
@@ -158,6 +184,7 @@ void testHandoffAndReclaim() {
     auto h = held(flash, gw.store);
     assert(h.size() == 36U);
     const uint16_t page_a = h[0].page, page_b = h[35].page;
+    old_page_a = page_a;
     assert(page_a != page_b && h[32].page == page_a);
 
     // Malformed / wrong MAC / wrong generation never mark anything.
@@ -165,22 +192,32 @@ void testHandoffAndReclaim() {
            Sf5l0EdgeHandoff::Reply::kMalformed);
     std::string bad = acceptLine(h[0].page, h[0].slot, h[0].generation,
                                  h[0].object, h[0].size);
-    bad[bad.size() - 1] = bad[bad.size() - 1] == '0' ? '1' : '0';
+    // The public legacy test key and a different Gateway's key fail closed.
     assert(gw.accept(bad) == Sf5l0EdgeHandoff::Reply::kBadMac);
+    assert(gw.accept(privateAcceptLine(h[0].page, h[0].slot, h[0].generation,
+        h[0].object, h[0].size, kOtherGatewayEdgeKey)) ==
+        Sf5l0EdgeHandoff::Reply::kBadMac);
+    assert(gw.accept(privateAcceptLine(h[0].page, h[0].slot, h[0].generation,
+        h[0].object, h[0].size, kGatewayEdgeKey, kGateway + 1U)) ==
+        Sf5l0EdgeHandoff::Reply::kBadMac);
+    std::string altered = privateAcceptLine(h[0].page, h[0].slot,
+        h[0].generation, h[0].object, h[0].size, kGatewayEdgeKey);
+    altered[altered.size() - 1] = altered.back() == '0' ? '1' : '0';
+    assert(gw.accept(altered) == Sf5l0EdgeHandoff::Reply::kBadMac);
     assert(gw.accept(acceptLine(h[0].page, h[0].slot, h[0].generation + 7U,
                                 h[0].object, h[0].size)) ==
            Sf5l0EdgeHandoff::Reply::kUnknown);
     // An accept bound to OTHER bytes for this slot is not authentic.
-    assert(gw.accept(acceptLine(h[0].page, h[0].slot, h[0].generation,
-                                h[1].object, h[1].size)) ==
+    assert(gw.accept(privateAcceptLine(h[0].page, h[0].slot, h[0].generation,
+                                h[1].object, h[1].size, kGatewayEdgeKey)) ==
            Sf5l0EdgeHandoff::Reply::kBadMac);
     assert(held(flash, gw.store).size() == 36U);
 
     // The page still accepting records is never reclaimed, even if all of
     // its records are handed off.
     for (unsigned i = 33U; i < 36U; ++i) {
-      assert(gw.accept(acceptLine(h[i].page, h[i].slot, h[i].generation,
-                                  h[i].object, h[i].size)) ==
+      assert(gw.accept(privateAcceptLine(h[i].page, h[i].slot, h[i].generation,
+                                  h[i].object, h[i].size, kGatewayEdgeKey)) ==
              Sf5l0EdgeHandoff::Reply::kPending);
       const auto e = gw.drain();
       assert(e.kind == Sf5l0EdgeHandoff::Event::Kind::kHandedOff && e.ok);
@@ -196,9 +233,9 @@ void testHandoffAndReclaim() {
 
     // Hand off page A one by one; repeats are idempotent.
     for (unsigned i = 0U; i < 33U; ++i) {
-      const std::string line = acceptLine(h[i].page, h[i].slot,
-                                          h[i].generation, h[i].object,
-                                          h[i].size);
+      const std::string line = privateAcceptLine(h[i].page, h[i].slot,
+          h[i].generation, h[i].object, h[i].size, kGatewayEdgeKey);
+      if (i == 32U) stale_line = line;
       assert(gw.accept(line) == Sf5l0EdgeHandoff::Reply::kPending);
       // A second accept while the first is in flight is BUSY, not lost.
       assert(gw.accept(line) == Sf5l0EdgeHandoff::Reply::kBusy);
@@ -215,7 +252,7 @@ void testHandoffAndReclaim() {
         e = gw.drain();
         assert(e.kind == Sf5l0EdgeHandoff::Event::Kind::kReclaimed && e.ok);
         assert(flash.pageErased(page_a) && flash.erases == 1U);
-        // An accept for a reclaimed record is UNKNOWN, never an error.
+        // A repeated late accept remains UNKNOWN, never targets another slot.
         assert(gw.accept(line) == Sf5l0EdgeHandoff::Reply::kUnknown);
       }
     }
@@ -240,9 +277,42 @@ void testHandoffAndReclaim() {
     for (const auto& r : h) reused_a |= flash.pageErased(r.page) == false &&
                                         r.generation > h.front().generation;
     assert(reused_a);
+    // The old generation must not release a new record that reuses its slot.
+    const auto reused = std::find_if(h.begin(), h.end(), [old_page_a](const Sf5l0HeldRecord& r) {
+      return r.page == old_page_a && r.slot == 32U;
+    });
+    if (reused != h.end()) {
+      assert(gw.accept(stale_line) == Sf5l0EdgeHandoff::Reply::kUnknown);
+    }
     // Page B is now full: 3 handed off earlier + 30 held -> not reclaimable.
     assert(gw.store.reclaimablePage() < 0);
   }
+}
+
+void testOnlyExactRecordMoves() {
+  EraseFlash flash;
+  Gateway gw(flash);
+  for (uint64_t n = 1U; n <= 2U; ++n) {
+    osc::ExactObject object{};
+    makeFrame(object, kTracker, sf5l0_bench::kTestKeyEpoch, n);
+    assert(gw.receive(object));
+  }
+  auto before = held(flash, gw.store);
+  assert(before.size() == 2U);
+  const std::string accept = privateAcceptLine(before[0].page, before[0].slot,
+      before[0].generation, before[0].object, before[0].size, kGatewayEdgeKey);
+  assert(gw.accept(accept) == Sf5l0EdgeHandoff::Reply::kPending);
+  assert(gw.drain().kind == Sf5l0EdgeHandoff::Event::Kind::kHandedOff);
+  assert(gw.accept(accept) == Sf5l0EdgeHandoff::Reply::kAlready);
+  const auto after = held(flash, gw.store);
+  assert(after.size() == 1U && after[0].page == before[1].page &&
+         after[0].slot == before[1].slot &&
+         after[0].generation == before[1].generation);
+  gw.handoff.clearKey();
+  const std::string second = privateAcceptLine(after[0].page, after[0].slot,
+      after[0].generation, after[0].object, after[0].size, kGatewayEdgeKey);
+  assert(gw.accept(second) == Sf5l0EdgeHandoff::Reply::kRejected);
+  assert(held(flash, gw.store).size() == 1U);
 }
 
 }  // namespace
@@ -251,6 +321,7 @@ void testHandoffAndReclaim() {
 int main() {
   testMacVector();
   testHandoffAndReclaim();
+  testOnlyExactRecordMoves();
   puts("SF5L5 Edge hand-off: authentic exact-object accept, idempotent, "
        "page reclaim + reuse, re-ACK of handed-off duplicate, reboot: PASS "
        "(HOST ONLY)");

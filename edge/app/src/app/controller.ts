@@ -12,7 +12,7 @@ import { AccountSharedMirror } from "./accountSharedMirror.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import {
   attachPilotAccountSqliteMirror, attachPilotAccountObservationMirror,
-  pilotAccountObservationPoints, pilotAccountUploadTransport,
+  pilotAccountObservationPoints, pilotAccountUploadTransport, edgeKeys,
 } from "./ownerAccountPilotRuntime.ts";
 
 export interface Snapshot {
@@ -139,7 +139,7 @@ export class Controller {
       const db = await openDb();
       this.db = db;
       const keyring = this.keyring;
-      const core = new EdgeCore(db, { credentials: keyring.lookup });
+      const core = new EdgeCore(db, { credentials: keyring.lookup, edgeKey: edgeKeys.get });
       await core.init();
       await keyring.load(db);
       this.core = core;
@@ -241,6 +241,7 @@ export class Controller {
         pointsVersion: this.snap.pointsVersion + 1,
         counts: { ...c.counts }, records: await c.ledger.recordCount(), handedOff: c.handedOff,
         rejected: c.acceptRejected, pending: c.pendingAccepts(),
+        ...(c.acceptKeyMissing ? { detail: "Teslim anahtarı yok; kayıtlar gateway’de korunuyor." } : {}),
         gateway: c.gatewayId === null ? this.snap.gateway : hex64(c.gatewayId),
         // Live: the HELLO count, then what the Gateway announced minus what it
         // confirmed handed off (it reports its count only once per connection).

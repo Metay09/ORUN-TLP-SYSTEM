@@ -121,10 +121,13 @@ def bridge_handler(local: LocalObservations, token: str):
 
         def do_GET(self):  # noqa: N802
             match = OGK1_QUERY.fullmatch(self.path)
-            if self.path not in ("/v1/health", "/v1/bridge/lora") and match is None:
+            if self.path not in ("/v1/health", "/v1/bridge/lora", "/v1/bridge/edge-keys") and match is None:
                 return self._json(404, {"error": "not_found"})
             if not self._authorized():
                 return self._json(401, {"error": "token"})
+            if self.path == "/v1/bridge/edge-keys":
+                registry = local.backend.registry
+                return self._json(200, {"keys": registry.edge_keys() if registry else []})
             if self.path == "/v1/bridge/lora":
                 return self._json(200, {"commands": lora.commands()})
             if match is not None:
@@ -277,6 +280,11 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
             return actor
 
         def do_GET(self):  # noqa: N802
+            if self.path == "/api/v1/devices/edge-keys":
+                if self._farm_actor("zone:write") is None:
+                    return None
+                registry = local.backend.registry
+                return self._send(200, {"keys": registry.edge_keys() if registry else []})
             if self.path == "/api/v1/devices/write-keys":
                 # 4c-1b: Bluetooth write keys are write authority (zone:write),
                 # derived per Tracker and epoch; never a root key.

@@ -110,7 +110,7 @@ class Step3bGrantInstaller final {
   uint32_t length_ = 0U;
   uint16_t destination_ = UINT16_MAX;
   uint64_t candidate_generation_ = 0U;
-  uint8_t image_[gateway_grant_format::kStoredBytes]{};
+  uint8_t image_[gateway_grant_format::kEdgeStoredBytes]{};
 };
 
 }  // namespace orun_tlp

@@ -6,10 +6,8 @@ WAL+FULL. Another worker retries uploads if the backend or network is offline.
 The backend is the only place that decrypts and authenticates Tracker data.
 
 The default PC Edge is receive-only and NEVER sends EDGE ACCEPT/reclaim.
-Optional --bench-release-gateway explicitly enables the EXISTING SF5L0
-PUBLIC-TEST-KEY HMAC handoff, but only for a specified bench Gateway and only
-after backend STORED/DUPLICATE. NOT authorization for a provisioned Gateway or
-a production backend signed receipt. Do not deploy this mode on real keys.
+Optional --release-gateway enables the per-Gateway private-key HMAC handoff,
+only after backend STORED/DUPLICATE. A missing key leaves custody on Gateway.
 
 Usage:
   python3 tools/orun_pc_edge.py --mode usb --port /dev/serial/by-id/GATEWAY \\
@@ -45,8 +43,9 @@ from urllib.request import (
 from orun_edge_bench import (
     EDGE_SERVICE_UUID, EDGE_TO_GATEWAY_UUID, EDGE_TO_EDGE_UUID,
     EdgeReassembler, edge_frames, ACCEPT_REPLY, ACCEPT_WORDS,
-    edge_accept_line, edge_accept_binary,
 )
+
+from orun_edge_accept import EdgeKeyCache, accept_line, accept_binary
 
 USB_HELD = re.compile(
     r"EDGE (?:HELD|PRIORITY) v1 gw=([0-9A-F]{16}) page=(\d+) slot=(\d+) "
@@ -347,16 +346,18 @@ def handle_usb_line(line: str, inbox: Inbox) -> bool:
 
 
 class BenchUsbRelease:
-    """Opt-in PUBLIC SF5L0 test-key handoff, after backend verification only.
+    """Opt-in per-Gateway private-key handoff, after backend verification only.
 
     No release on a network timeout, UNCERTAIN, CONFLICT or REJECTED response.
     The Gateway must independently authenticate the exact page/slot/gen/MAC.
     """
-    def __init__(self, inbox: Inbox, gateway: str):
+    def __init__(self, inbox: Inbox, gateway: str, key_lookup=None):
         if not re.fullmatch(r"[0-9A-F]{16}", gateway):
             raise ValueError("bench release requires exact uppercase Gateway ID")
         self.inbox = inbox
         self.gateway = gateway
+        self.key_lookup = key_lookup or (lambda _gateway: None)
+        self.missing_reported = False
         self.pending = None
         self.attempts = 0
         self.last_sent = 0.0
@@ -383,6 +384,12 @@ class BenchUsbRelease:
             reply["word"], int(reply["page"]), int(reply["slot"]))
 
     def next_eligible(self, now: float) -> dict | None:
+        if self.key_lookup(self.gateway) is None:
+            if not self.missing_reported:
+                print("[edge accept] anahtar yok; kayıtlar gateway'de korunuyor", flush=True)
+                self.missing_reported = True
+            return None
+        self.missing_reported = False
         if self.pending is not None:
             if now - self.last_sent < 3.0:
                 return None
@@ -409,7 +416,10 @@ class BenchUsbRelease:
         h = self.next_eligible(now)
         if h is None:
             return
-        line = edge_accept_line(
+        key = self.key_lookup(self.gateway)
+        if key is None:
+            return
+        line = accept_line(key,
             int(h["gateway"], 16), h["page"], h["slot"],
             int(h["generation"], 16), h["frame"])
         serial_port.write((line + "\n").encode("ascii"))
@@ -429,7 +439,10 @@ class BenchBleRelease(BenchUsbRelease):
         h = self.next_eligible(now)
         if h is None:
             return message_id
-        binary = edge_accept_binary(
+        key = self.key_lookup(self.gateway)
+        if key is None:
+            return message_id
+        binary = accept_binary(key,
             int(h["gateway"], 16), h["page"], h["slot"],
             int(h["generation"], 16), h["frame"])
         message_id = (message_id + 1) & 0xFF
@@ -702,7 +715,7 @@ class LoraBridge:
 def usb_forever(inbox: Inbox, port: str,
                 release_gateway: str | None = None,
                 grants: GrantUpdater | None = None,
-                lora: LoraBridge | None = None) -> None:
+                lora: LoraBridge | None = None, key_lookup=None) -> None:
     try:
         import serial
     except ImportError as exc:
@@ -711,7 +724,7 @@ def usb_forever(inbox: Inbox, port: str,
         try:
             with serial.Serial(port, 115200, timeout=0.5) as ser:
                 print("[usb] Gateway connected:", port, flush=True)
-                release = (BenchUsbRelease(inbox, release_gateway)
+                release = (BenchUsbRelease(inbox, release_gateway, key_lookup)
                            if release_gateway else None)
                 if grants:
                     grants.gateway, grants.status = None, None
@@ -786,7 +799,7 @@ async def discover_ble_gateway(scanner, address: str | None):
 
 
 def ble_forever(inbox: Inbox, address: str | None,
-                release_gateway: str | None = None) -> None:
+                release_gateway: str | None = None, key_lookup=None) -> None:
     try:
         from bleak import BleakClient, BleakScanner
     except ImportError as exc:
@@ -848,7 +861,7 @@ def ble_forever(inbox: Inbox, address: str | None,
                                           "ok=", bool(msg[3]), flush=True)
                                 if release_gateway and gateway == release_gateway:
                                     if release is None:
-                                        release = BenchBleRelease(inbox, gateway)
+                                        release = BenchBleRelease(inbox, gateway, key_lookup)
                                     release.observe_message(msg)
                                 elif release_gateway and gateway != release_gateway:
                                     print("[ble] Gateway ID mismatch; ACCEPT disabled",
@@ -883,30 +896,39 @@ def main() -> None:
     ap.add_argument("--backend-url", required=True)
     ap.add_argument("--token-file", type=Path, required=True)
     ap.add_argument("--edge-id", required=True)
-    ap.add_argument("--bench-release-gateway",
-                    help="EXPLICIT SF5L0 PUBLIC TEST KEY release on USB/BLE; "
-                         "expected 16-hex Gateway ID (NEVER production)")
+    ap.add_argument("--release-gateway", "--bench-release-gateway", dest="release_gateway",
+                    help="Gateway ID for authenticated Edge ACCEPT; requires its private key")
+    ap.add_argument("--edge-key-cache", type=Path,
+                    default=Path.home() / ".local/share/orun/edge-keys.json")
     args = ap.parse_args()
     if args.mode == "usb" and not args.port:
         ap.error("--port is required for USB mode")
-    if args.bench_release_gateway and args.mode not in ("usb", "ble"):
-        ap.error("--bench-release-gateway requires USB or BLE")
-    if args.bench_release_gateway and not re.fullmatch(
-            r"[0-9A-F]{16}", args.bench_release_gateway):
-        ap.error("--bench-release-gateway needs exact uppercase 16-hex ID")
+    if args.release_gateway and args.mode not in ("usb", "ble"):
+        ap.error("--release-gateway requires USB or BLE")
+    if args.release_gateway and not re.fullmatch(
+            r"[0-9A-F]{16}", args.release_gateway):
+        ap.error("--release-gateway needs exact uppercase 16-hex ID")
     # Fail before touching local SQLite when destination/token are wrong.
     checked_backend(args.backend_url)
     read_token(args.token_file.expanduser())
     inbox = Inbox(args.db)
     uploader = Uploader(inbox, args.backend_url, args.token_file.expanduser(), args.edge_id)
     print("[pc-edge] spool:", inbox.path, inbox.counts(), flush=True)
-    if args.bench_release_gateway:
-        print("[pc-edge] WARNING: PUBLIC TEST-KEY bench release for",
-              args.bench_release_gateway, "NOT real-device authorization",
-              flush=True)
+    if args.release_gateway:
+        print("[pc-edge] private-key Edge ACCEPT for", args.release_gateway, flush=True)
     else:
         print("[pc-edge] no EDGE ACCEPT/reclaim: Gateway retains custody",
               flush=True)
+    keys = EdgeKeyCache(args.edge_key_cache, uploader.base)
+    if args.release_gateway:
+        def refresh_keys():
+            while True:
+                try:
+                    keys.refresh(uploader.opener, read_token(uploader.token_file))
+                except (OSError, ValueError):
+                    print("[edge accept] anahtar sunucusu erişilemiyor; yalnız kayıtlı anahtar kullanılabilir", flush=True)
+                time.sleep(120)
+        threading.Thread(target=refresh_keys, daemon=True).start()
     if args.mode == "upload-only":
         uploader.forever()
     else:
@@ -914,9 +936,9 @@ def main() -> None:
         if args.mode == "usb":
             grants = GrantUpdater(uploader.base, uploader.token_file, uploader.opener)
             lora = LoraBridge(uploader.base, uploader.token_file, uploader.opener)
-            usb_forever(inbox, args.port, args.bench_release_gateway, grants, lora)
+            usb_forever(inbox, args.port, args.release_gateway, grants, lora, keys.get)
         else:
-            ble_forever(inbox, args.ble_address, args.bench_release_gateway)
+            ble_forever(inbox, args.ble_address, args.release_gateway, keys.get)
 
 
 if __name__ == "__main__":

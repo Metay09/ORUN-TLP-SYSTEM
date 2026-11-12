@@ -1,3 +1,4 @@
+import { validEdgeKeys, type EdgeKey } from "./edgeKeys.ts";
 // ORUN account-login transport. Password-only sign-in is the primary path.
 // The approved phone's device bearer comes from native Keystore-backed
 // storage; short-lived account bearer remains ONLY in this JS class instance.
@@ -468,6 +469,16 @@ export class OwnerAccountClient {
   }
 
   /** 4c-1b: Bluetooth write keys of the account's tasmas (never a root key). */
+  async edgeKeys(): Promise<EdgeKey[]> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/devices/edge-keys", {
+      headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
+      credentials: "omit", redirect: "error", cache: "no-store",
+    });
+    if (!reply.ok) throw new Error("Teslim anahtarları alınamadı.");
+    return validEdgeKeys((await json(reply, 8192)).keys);
+  }
+
   async writeKeys(): Promise<WriteKey[]> {
     if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
     const reply = await this.fetcher(this.base + "/api/v1/devices/write-keys", {

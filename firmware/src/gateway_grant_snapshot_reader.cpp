@@ -87,8 +87,11 @@ bool GatewayGrantSnapshotReader::scanPage(
   if (be32(magic) != fmt::kMagic) return false;  // ORS1, torn, unknown.
 
   if (!flash_.read(base, scratch_, sizeof(scratch_))) return false;
+  const size_t payload = fmt::payloadBytes(scratch_[4]);
+  const size_t crc_offset = payload + fmt::kProofBytes;
+  const size_t stored = fmt::storedBytes(scratch_[4]);
   if (be32(scratch_) != fmt::kMagic ||
-      scratch_[4] != fmt::kVersion ||
+      (scratch_[4] != fmt::kVersion && scratch_[4] != fmt::kEdgeKeyVersion) ||
       scratch_[5] != fmt::kGrantSlots ||
       scratch_[6] != 0U || scratch_[7] != 0U ||
       be64(scratch_ + 8U) != gateway_id_ ||
@@ -97,23 +100,25 @@ bool GatewayGrantSnapshotReader::scanPage(
       be32(scratch_ + 24U) == 0U ||
       be32(scratch_ + 24U) == UINT32_MAX ||
       !allZero(scratch_ + 28U, 4U) ||
-      be32(scratch_ + fmt::kCommitOffset) != 0U ||
-      be32(scratch_ + fmt::kCrcOffset) !=
-          observation_store_format::crc32(scratch_, fmt::kCrcOffset) ||
+      be32(scratch_ + crc_offset + 4U) != 0U ||
+      be32(scratch_ + crc_offset) !=
+          observation_store_format::crc32(scratch_, crc_offset) ||
+      (scratch_[4] == fmt::kEdgeKeyVersion &&
+       allZero(scratch_ + fmt::kPayloadBytes, 32U)) ||
       !validateSlots())
     return false;
 
   uint8_t proof[fmt::kProofBytes]{};
-  memcpy(proof, scratch_ + fmt::kPayloadBytes, sizeof(proof));
+  memcpy(proof, scratch_ + payload, sizeof(proof));
   const bool authorized =
-      verifier_.verify(scratch_, fmt::kPayloadBytes, proof);
+      verifier_.verify(scratch_[4], scratch_, payload, proof);
   wipe(proof, sizeof(proof));
   if (!authorized) return false;
 
   // An authenticated prefix is insufficient when the remaining NOR bytes
   // are nonempty, which may indicate an incompatible/torn page.
   uint8_t remainder[64]{};
-  for (uint32_t off = fmt::kStoredBytes; off < fmt::kPageBytes;
+  for (uint32_t off = stored; off < fmt::kPageBytes;
        off += sizeof(remainder)) {
     const size_t n = (fmt::kPageBytes - off) < sizeof(remainder)
                          ? fmt::kPageBytes - off : sizeof(remainder);
@@ -208,6 +213,14 @@ bool GatewayGrantSnapshotReader::activeGrant(
     }
   }
   return false;
+}
+
+bool GatewayGrantSnapshotReader::edgeAcceptKey(uint8_t (&key)[32]) const {
+  wipe(key, sizeof(key));
+  if (!verifiedForLocalGateway(gateway_id_) ||
+      scratch_[4] != fmt::kEdgeKeyVersion) return false;
+  memcpy(key, scratch_ + fmt::kPayloadBytes, sizeof(key));
+  return true;
 }
 
 }  // namespace orun_tlp

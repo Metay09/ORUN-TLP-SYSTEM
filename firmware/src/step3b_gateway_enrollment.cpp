@@ -68,7 +68,7 @@ bool Step3bStagedSnapshotFlash::read(uint32_t offset, void* data,
   uint8_t* out = static_cast<uint8_t*>(data);
   for (size_t i = 0U; i < size; ++i) {
     const uint32_t at = offset + static_cast<uint32_t>(i);
-    out[i] = at < fmt::kStoredBytes ? image_[at] : 0xFFU;
+    out[i] = at < fmt::storedBytes(image_[4]) ? image_[at] : 0xFFU;
   }
   return true;
 }
@@ -154,7 +154,7 @@ Step3bGrantInstaller::Reply Step3bGrantInstaller::handleLine(
       secureWipe(bytes, sizeof(bytes));
       return Reply::kMalformed;
     }
-    if (offset != received_ || count > fmt::kStoredBytes - received_) {
+    if (offset != received_ || count > sizeof(image_) - received_) {
       secureWipe(bytes, sizeof(bytes));
       return Reply::kBadOffset;
     }
@@ -180,8 +180,8 @@ Step3bGrantInstaller::Reply Step3bGrantInstaller::handleLine(
 
 Step3bGrantInstaller::Reply Step3bGrantInstaller::commit(
     uint32_t crc, GatewayGrantSnapshotReader& current) {
-  if (received_ != fmt::kStoredBytes) return Reply::kIncomplete;
-  if (observation_store_format::crc32(image_, fmt::kStoredBytes) != crc)
+  if (received_ < 5U || received_ != fmt::storedBytes(image_[4])) return Reply::kIncomplete;
+  if (observation_store_format::crc32(image_, received_) != crc)
     return Reply::kBadCrc;
   if (be64(image_ + 8U) != gateway_id_) return Reply::kWrongGateway;
 
@@ -254,11 +254,11 @@ Step3bGrantInstaller::State Step3bGrantInstaller::poll() {
   }
   const uint32_t base = uint32_t(destination_) * fmt::kPageBytes;
 
-  if (!waiting_ && phase_ == Phase::kBody && offset_ >= fmt::kCommitOffset) {
+  if (!waiting_ && phase_ == Phase::kBody && offset_ >= (fmt::storedBytes(image_[4]) - 4U)) {
     // Body complete: every byte read back and the commit word still erased
     // before the irreversible commit marker.
-    if (!exactRead(base, image_, fmt::kCommitOffset) ||
-        !erasedFrom(destination_, fmt::kCommitOffset)) {
+    if (!exactRead(base, image_, (fmt::storedBytes(image_[4]) - 4U)) ||
+        !erasedFrom(destination_, (fmt::storedBytes(image_[4]) - 4U))) {
       fault();
       return state_;
     }
@@ -266,7 +266,7 @@ Step3bGrantInstaller::State Step3bGrantInstaller::poll() {
     return state_;
   }
   if (!waiting_ && phase_ == Phase::kBody) {
-    const uint32_t remaining = fmt::kCommitOffset - offset_;
+    const uint32_t remaining = (fmt::storedBytes(image_[4]) - 4U) - offset_;
     length_ = remaining < kChunk ? remaining : kChunk;
     if ((length_ & 3U) != 0U) {
       fault();
@@ -280,7 +280,7 @@ Step3bGrantInstaller::State Step3bGrantInstaller::poll() {
       : phase_ == Phase::kErase ? flash_.erasePage(destination_)
       : phase_ == Phase::kBody
           ? flash_.program(base + offset_, image_ + offset_, length_)
-          : flash_.program(base + fmt::kCommitOffset, commit_word,
+          : flash_.program(base + (fmt::storedBytes(image_[4]) - 4U), commit_word,
                            sizeof(commit_word));
   if (op == FlashOpResult::kPending) {
     waiting_ = true;
@@ -305,8 +305,8 @@ Step3bGrantInstaller::State Step3bGrantInstaller::poll() {
       offset_ += length_;
       return state_;
     case Phase::kCommit:
-      if (!exactRead(base, image_, fmt::kStoredBytes) ||
-          !erasedFrom(destination_, fmt::kStoredBytes)) {
+      if (!exactRead(base, image_, fmt::storedBytes(image_[4])) ||
+          !erasedFrom(destination_, fmt::storedBytes(image_[4]))) {
         fault();
         return state_;
       }

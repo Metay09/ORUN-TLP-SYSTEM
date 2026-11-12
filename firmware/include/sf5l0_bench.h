@@ -24,9 +24,8 @@
 //     step 3A RAM grant, so a test-key record is refused;
 //   - the test credential id/epoch stay as public facts, so a Tracker that
 //     still holds the old test credential can say so (test_credential=yes).
-// Until Y2b the Gateway's Edge accept MAC key is still derived from the test
-// root (ORUN_SF5L0_HAS_TEST_ROOT, compiled with the Gateway code).
-#if defined(ORUN_SF5L0_BENCH_TEST_KEYS) || defined(ORUN_SF5L0_GATEWAY)
+// The test root is compiled only for host fixtures, never for a product Gateway.
+#if defined(ORUN_SF5L0_BENCH_TEST_KEYS)
 #define ORUN_SF5L0_HAS_TEST_ROOT 1
 #endif
 
@@ -300,6 +299,10 @@ class Sf5l0EdgeHandoff final {
   };
   Sf5l0EdgeHandoff(ProductCustodyStore& store, uint64_t gateway_id)
       : store_(store), gateway_id_(gateway_id) {}
+  ~Sf5l0EdgeHandoff();
+  void setKey(const uint8_t (&key)[32]);
+  void clearKey();
+  bool hasKey() const { return has_key_; }
   Reply accept(const char* line, size_t length, uint16_t& page,
                uint16_t& slot);
   // Same rule for an already parsed accept (BLE Edge link).
@@ -313,10 +316,15 @@ class Sf5l0EdgeHandoff final {
   static bool mac(uint64_t gateway_id, uint16_t page, uint16_t slot,
                   uint64_t generation, const uint8_t* object, size_t size,
                   uint8_t (&out)[32]);
+  static bool macWithKey(const uint8_t (&key)[32], uint64_t gateway_id,
+                        uint16_t page, uint16_t slot, uint64_t generation,
+                        const uint8_t* object, size_t size, uint8_t (&out)[32]);
 
  private:
   ProductCustodyStore& store_;
   uint64_t gateway_id_;
+  uint8_t key_[32]{};
+  bool has_key_ = false;
   bool pending_ = false;
   bool check_reclaim_ = true;  // once at boot, then after each hand-off
   uint32_t handed_off_ = 0;

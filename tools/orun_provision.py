@@ -227,7 +227,8 @@ def _ogk1_fail(reply: str) -> ProvisionError:
     return ProvisionError(f"gateway paketi reddetti: {OGK1_REASONS.get(reason, reason)}")
 
 
-def install_gateway_snapshot(link, registry: oc.CredentialRegistry, log=print) -> int:
+def install_gateway_snapshot(link, registry: oc.CredentialRegistry, log=print,
+                             edge_key: bool = False) -> int:
     """Step 3B: sign every recorded grant of this Gateway and install it."""
     gw, st = gateway_report(link)
     if st is None:
@@ -250,6 +251,8 @@ def install_gateway_snapshot(link, registry: oc.CredentialRegistry, log=print) -
     grants = registry.grants_for_gateway(gw)
     if not grants:
         raise ProvisionError(f"gateway {gw:016X} için kayıtlı yetki yok (önce 'tracker' adımı)")
+    if edge_key:
+        registry.edge_key(gw, create=True)
     generation, image = registry.gateway_snapshot(gw, at_least=active)
     lines = oc.ogk1_upload_lines(image)
     for line in lines[:-1]:
@@ -316,6 +319,8 @@ def main(argv=None) -> int:
     t.add_argument("--create", action="store_true", help="create a credential if none")
     g = sub.add_parser("gateway")
     g.add_argument("--port", required=True)
+    g.add_argument("--edge-key", action="store_true",
+                   help="Y2b: explicitly provision the Gateway Edge ACCEPT secret over USB")
     g.add_argument("--ram", action="store_true",
                    help="step 3A RAM-only grants instead of the signed snapshot")
     i = sub.add_parser("issuer")
@@ -331,10 +336,12 @@ def main(argv=None) -> int:
         elif args.cmd == "tracker":
             provision_tracker(Link(args.port), reg, int(args.gateway, 16), args.create)
         elif args.cmd == "gateway":
+            if args.ram and args.edge_key:
+                raise ProvisionError("--edge-key requires a signed durable snapshot")
             if args.ram:
                 grant_gateway(Link(args.port), reg)
             else:
-                install_gateway_snapshot(Link(args.port), reg)
+                install_gateway_snapshot(Link(args.port), reg, edge_key=args.edge_key)
         elif args.cmd == "issuer":
             write_issuer_public(reg, Path(args.public_key_file).expanduser())
         else:

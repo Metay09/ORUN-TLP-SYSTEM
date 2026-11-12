@@ -1,3 +1,4 @@
+import { TEST_EDGE_KEY } from "./edgeKeyFixture.ts";
 // ORUN Edge app core, host only: node --test --experimental-strip-types.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -78,13 +79,13 @@ test("framing: every size round-trips; broken sequences are dropped", () => {
 test("edge accept MAC: shared vector with the firmware (SF5L5)", () => {
   const object = fromHex(
     "02040201030140000E8ADE7E71531AA30102030400000000000000010104070A0D101316191C1F2225282B2E3134373A3D404346494C4F5255585B5E6164676A6D707376797C7F8285888B8E9194979A9DA0A3A6A9ACAFB2B5B8BBBE5051525354555657");
-  assert.equal(hex(acceptMac(GW, 1, 2, 3n, object)),
-               "EE0E6E26790F83C816F6738CF71DF64B900A659F00E65C9DAD8C92B2E486C521");
-  const msg = acceptMessage(GW, 1, 2, 3n, object);
+  assert.equal(hex(acceptMac(GW, 1, 2, 3n, object, TEST_EDGE_KEY)),
+               "CC36CDCF6E21411D5FF5333C63C3702D4A1972A148C066146743232A2BB1A53D");
+  const msg = acceptMessage(GW, 1, 2, 3n, object, TEST_EDGE_KEY);
   assert.equal(msg.length, 45);
   assert.equal(hex(msg.subarray(0, 13)), "8200010002" + "0000000000000003");
-  assert.equal(acceptLine(GW, 1, 2, 3n, object),
-    "EDGE ACCEPT v1 page=1 slot=2 gen=0000000000000003 mac=EE0E6E26790F83C816F6738CF71DF64B900A659F00E65C9DAD8C92B2E486C521");
+  assert.equal(acceptLine(GW, 1, 2, 3n, object, TEST_EDGE_KEY),
+    "EDGE ACCEPT v1 page=1 slot=2 gen=0000000000000003 mac=CC36CDCF6E21411D5FF5333C63C3702D4A1972A148C066146743232A2BB1A53D");
 });
 
 test("product frames: KAT open; tamper, unknown epoch and bad shape rejected", () => {
@@ -143,7 +144,7 @@ function heldLine(gw: bigint, page: number, slot: number, gen: bigint, obj: Uint
 
 test("USB: RX signal pairing, accept after commit, BUSY/timeout retry, OK/REJECTED", async () => {
   let now = 1_800_000_000;
-  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, clock: () => now });
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, edgeKey: () => TEST_EDGE_KEY, clock: () => now });
   await edge.init();
   const [f0, f1, f2] = track(3);
   assert.equal(await edge.handleLine("RX PRODUCT_SECURE queued family=1 length=100 rssi=-91 snr=6"), null);
@@ -156,7 +157,7 @@ test("USB: RX signal pairing, accept after commit, BUSY/timeout retry, OK/REJECT
   assert.doesNotMatch((await edge.handleLine(heldLine(GW, 0, 6, 7n, f1)))!, /sinyal/);
 
   const line = edge.nextAcceptLine(now)!;
-  assert.equal(line, acceptLine(GW, 0, 5, 7n, f0));
+  assert.equal(line, acceptLine(GW, 0, 5, 7n, f0, TEST_EDGE_KEY));
   assert.equal(edge.nextAcceptLine(now + 1), null);              // one in flight
   assert.equal(edge.nextAcceptLine(now + 3), line);              // silence: again
   await edge.handleLine("EDGE ACCEPT BUSY page=? slot=?");
@@ -165,7 +166,7 @@ test("USB: RX signal pairing, accept after commit, BUSY/timeout retry, OK/REJECT
   assert.equal(edge.pendingAccepts(), 2);
   await edge.handleLine("EDGE ACCEPT OK page=0 slot=5");
   assert.equal(edge.handedOff, 1);
-  assert.equal(edge.nextAcceptLine(now + 3), acceptLine(GW, 0, 6, 7n, f1));
+  assert.equal(edge.nextAcceptLine(now + 3), acceptLine(GW, 0, 6, 7n, f1, TEST_EDGE_KEY));
   // Exactly what the Gateway prints (sf5l0_bench_gateway.cpp edgeAccept).
   const warn = await edge.handleLine("EDGE ACCEPT REJECTED reason=MAC page=0 slot=6");
   assert.match(warn!, /^UYARI gateway teslimi reddetti page=0 slot=6/);
@@ -179,7 +180,7 @@ test("USB: RX signal pairing, accept after commit, BUSY/timeout retry, OK/REJECT
   assert.equal(edge.pendingAccepts(), 0);
   // Commit failure: no accept for that record.
   const db = new NodeDb();
-  const e2 = new EdgeCore(db, { credentials: benchCredentials, clock: () => now });
+  const e2 = new EdgeCore(db, { credentials: benchCredentials, edgeKey: () => TEST_EDGE_KEY, clock: () => now });
   await e2.init();
   db.failNextCommit = true;
   assert.match((await e2.handleLine(heldLine(GW, 1, 0, 8n, f2)))!, /^BELİRSİZ/);
@@ -199,7 +200,7 @@ function heldMsg(page: number, slot: number, gen: bigint, obj: Uint8Array,
 
 test("BLE: HELLO first, HELD with link, binary ACCEPT, results, reclaim, dump end", async () => {
   const now = 1_800_000_000;
-  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, clock: () => now });
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, edgeKey: () => TEST_EDGE_KEY, clock: () => now });
   await edge.init();
   const [f0] = track(1);
   assert.equal(await edge.handleMessage(heldMsg(0, 1, 2n, f0, null)), null);  // before HELLO
@@ -208,7 +209,7 @@ test("BLE: HELLO first, HELD with link, binary ACCEPT, results, reclaim, dump en
   const out = await edge.handleMessage(heldMsg(0, 1, 2n, f0, [-97, -3]));
   assert.match(out!, /^YENİ .* \| sinyal -97 dBm SNR -3$/);
   const accept = edge.nextAcceptMessage(now)!;
-  assert.deepEqual(accept, acceptMessage(GW, 0, 1, 2n, f0));
+  assert.deepEqual(accept, acceptMessage(GW, 0, 1, 2n, f0, TEST_EDGE_KEY));
   assert.equal(await edge.handleMessage(fromHex("040000000103")), null);       // BUSY
   assert.deepEqual(edge.nextAcceptMessage(now), accept);
   await edge.handleMessage(fromHex("040000000100"));                          // handed off
@@ -223,7 +224,7 @@ test("BLE: HELLO first, HELD with link, binary ACCEPT, results, reclaim, dump en
 
 test("station held count stays live: HELLO, then announced minus handed off", async () => {
   const now = 1_800_000_000;
-  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, clock: () => now });
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, edgeKey: () => TEST_EDGE_KEY, clock: () => now });
   await edge.init();
   const [f0, f1, f2] = track(3);
   assert.equal(edge.heldNow(), null);                                          // nothing told yet
@@ -249,7 +250,7 @@ test("station held count stays live: HELLO, then announced minus handed off", as
 
 test("BLE: incomplete DUMP END cannot silently undercount held records", async () => {
   const now = 1_800_000_000;
-  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, clock: () => now });
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, edgeKey: () => TEST_EDGE_KEY, clock: () => now });
   await edge.init();
   const [f0, f1] = track(2);
   await edge.handleMessage(concat(new Uint8Array([1]), fromHex("09A462BD4B275BA5"), fromHex("00020420")));
@@ -273,7 +274,7 @@ test("BLE: incomplete DUMP END cannot silently undercount held records", async (
 });
 
 test("USB: incomplete DUMP END count is not treated as exact zero", async () => {
-  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials });
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, edgeKey: () => TEST_EDGE_KEY });
   await edge.init();
   const [f0, f1] = track(2);
   assert.equal(edge.heldNow(), null);
@@ -290,7 +291,7 @@ test("USB: incomplete DUMP END count is not treated as exact zero", async () => 
 
 test("redump: previously delivered live events do not spoil the next census", async () => {
   const now = 1_800_000_000;
-  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, clock: () => now });
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, edgeKey: () => TEST_EDGE_KEY, clock: () => now });
   await edge.init();
   const [f0, f1] = track(2);
   await edge.handleMessage(concat(new Uint8Array([1]), fromHex("09A462BD4B275BA5"), fromHex("00010420")));
@@ -313,7 +314,7 @@ test("redump: previously delivered live events do not spoil the next census", as
 
 test("BLE latest-head preview arrives first, saves immediately, ACKs securely and does not inflate the dump census", async () => {
   const now = 1_800_000_000;
-  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, clock: () => now });
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, edgeKey: () => TEST_EDGE_KEY, clock: () => now });
   await edge.init();
   const [older, newest] = track(2);
   const hello = concat(new Uint8Array([1]), fromHex("09A462BD4B275BA5"), fromHex("00020420"));
@@ -323,7 +324,7 @@ test("BLE latest-head preview arrives first, saves immediately, ACKs securely an
   early[0] = 0x06;
   assert.match((await edge.handleMessage(early))!, /^YENİ/);
   assert.equal(await edge.ledger.recordCount(), 1);
-  assert.deepEqual(edge.nextAcceptMessage(now), acceptMessage(GW, 0, 2, 2n, newest));
+  assert.deepEqual(edge.nextAcceptMessage(now), acceptMessage(GW, 0, 2, 2n, newest, TEST_EDGE_KEY));
   await edge.handleMessage(fromHex("040000000200")); // ACK latest
   assert.equal(edge.heldNow(), 1);
   assert.match((await edge.handleMessage(heldMsg(0, 1, 2n, older, null)))!, /^YENİ/);
@@ -343,7 +344,7 @@ test("BLE latest-head preview arrives first, saves immediately, ACKs securely an
 });
 
 test("USB priority preview preserves chronological DUMP_END and never borrows an RX RSSI", async () => {
-  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials });
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, edgeKey: () => TEST_EDGE_KEY });
   await edge.init();
   const [older, newest] = track(2);
   const priority = heldLine(GW, 0, 2, 2n, newest).replace("EDGE HELD", "EDGE PRIORITY");
@@ -357,7 +358,7 @@ test("USB priority preview preserves chronological DUMP_END and never borrows an
 });
 
 test("unknown or corrupted preview is ignored and cannot corrupt ACCEPT or history accounting", async () => {
-  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials });
+  const edge = new EdgeCore(await freshDb(), { credentials: benchCredentials, edgeKey: () => TEST_EDGE_KEY });
   await edge.init();
   const [object] = track(1);
   await edge.handleMessage(concat(new Uint8Array([1]), fromHex("09A462BD4B275BA5"), fromHex("00010420")));
@@ -375,7 +376,7 @@ test("unknown or corrupted preview is ignored and cannot corrupt ACCEPT or histo
 test("points: live / through / cut / unknown classification", async () => {
   let now = 0;
   const db = await freshDb();
-  const edge = new EdgeCore(db, { credentials: benchCredentials, clock: () => now });
+  const edge = new EdgeCore(db, { credentials: benchCredentials, edgeKey: () => TEST_EDGE_KEY, clock: () => now });
   await edge.init();
   const fs = track(5);
   const t0 = openProductFrame(fs[0], benchCredentials);

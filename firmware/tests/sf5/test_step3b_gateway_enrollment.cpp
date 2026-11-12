@@ -114,7 +114,7 @@ std::vector<uint8_t> imageOf(const Snapshot& s) {
     for (size_t i = 0; i < hex.size(); i += 2U)
       image.push_back(static_cast<uint8_t>(strtoul(hex.substr(i, 2U).c_str(), nullptr, 16)));
   }
-  assert(image.size() == fmt::kStoredBytes);
+  assert(image.size() == fmt::storedBytes(image[4]));
   return image;
 }
 std::vector<std::string> linesOf(const std::vector<uint8_t>& image) {
@@ -137,10 +137,12 @@ struct OpenSslEd25519 final : GatewayEnrollmentProofVerifier {
   uint8_t key[32]{};
   mutable unsigned calls = 0U;
   explicit OpenSslEd25519(const uint8_t (&k)[32]) { memcpy(key, k, sizeof(key)); }
-  bool verify(const uint8_t* data, size_t length,
+  bool verify(uint8_t version, const uint8_t* data, size_t length,
               const uint8_t (&proof)[fmt::kProofBytes]) const override {
     ++calls;
-    if (!data || length != fmt::kPayloadBytes) return false;
+    const size_t expected = version == fmt::kVersion ? fmt::kPayloadBytes
+        : version == fmt::kEdgeKeyVersion ? fmt::kEdgePayloadBytes : 0U;
+    if (!data || expected == 0U || length != expected) return false;
     EVP_PKEY* pk = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr, key, sizeof(key));
     if (!pk) return false;
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
@@ -151,6 +153,16 @@ struct OpenSslEd25519 final : GatewayEnrollmentProofVerifier {
     return ok;
   }
 };
+
+void testVersionBindsPayloadLength() {
+  OpenSslEd25519 verifier(issuer_public);
+  uint8_t proof[fmt::kProofBytes]{};
+  uint8_t v1[fmt::kPayloadBytes]{};
+  uint8_t v2[fmt::kEdgePayloadBytes]{};
+  assert(!verifier.verify(fmt::kVersion, v2, sizeof(v2), proof));
+  assert(!verifier.verify(fmt::kEdgeKeyVersion, v1, sizeof(v1), proof));
+  assert(!verifier.verify(0x7FU, v1, sizeof(v1), proof));
+}
 
 // ---------------------------------------------------------------- fake NOR --
 // 2 x 4 KiB security region. Programming only clears bits and (like the
@@ -324,7 +336,8 @@ void testLines() {
   auto lines = linesOf(image);
   for (size_t i = 1; i + 1 < lines.size(); ++i)
     assert(boot.installer.handleLine(lines[i].data(), lines[i].size(), boot.reader) == Reply::kOk);
-  assert(send("BENCH OGK1 DATA 0768 00000000") == Reply::kBadOffset);
+  // v2 appends a 32-byte Edge key, so exercise the true dynamic image bound.
+  assert(send("BENCH OGK1 DATA 0788 00000000") == Reply::kBadOffset);
   assert(nor.mutations == 0);
 }
 
@@ -511,13 +524,39 @@ void testGrantChain() {
   assert(chain.activeGrant(g.tracker, g.epoch, scope, k2) && memcmp(k2, ram_key, 32) == 0);
 }
 
+void testGatewayEdgeKeyIsSignedAndOptional() {
+  Nor keyed;
+  install(keyed, "edge2", 0U);
+  Boot active(keyed);
+  assert(active.status == RStatus::kReady);
+  uint8_t edge_key[32]{};
+  assert(active.reader.edgeAcceptKey(edge_key));
+  for (size_t i = 0; i < sizeof(edge_key); ++i)
+    assert(edge_key[i] == static_cast<uint8_t>(0xC0U + i));
+  const auto& grant = snaps.at("edge2").grants[0];
+  GatewayCustodyAckScope scope{};
+  uint8_t custody_key[32]{};
+  assert(active.reader.activeGrant(grant.tracker, grant.epoch, scope, custody_key));
+  assert(memcmp(custody_key, grant.key, sizeof(custody_key)) == 0);
+
+  Nor legacy;
+  install(legacy, "g2", 0U);
+  Boot v1(legacy);
+  memset(edge_key, 0xA5, sizeof(edge_key));
+  assert(!v1.reader.edgeAcceptKey(edge_key));
+  uint8_t zero[32]{};
+  assert(memcmp(edge_key, zero, sizeof(edge_key)) == 0);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   assert(argc == 2);
   loadVectors(argv[1]);
+  testVersionBindsPayloadLength();
   for (const char* n : {"g1", "g2", "g3_revoke", "g5", "wrong_gateway", "wrong_issuer"})
     assert(snaps.count(n) && snaps[n].lines.size() == 32U);
+  assert(snaps.count("edge2") && snaps["edge2"].lines.size() == 33U);
   testStagedView();
   testLines();
   testFirstSnapshotThenRotationThenRevocation(false);
@@ -527,6 +566,7 @@ int main(int argc, char** argv) {
   testFlashFaultAndTornPage();
   testUnreconciledMutationFaults();
   testGrantChain();
+  testGatewayEdgeKeyIsSignedAndOptional();
   printf("Step 3B signed Gateway grant snapshot: PASS\n");
   return 0;
 }

@@ -265,6 +265,8 @@ void printOgk1() {
       signed_grants != nullptr &&
       signed_grants->status() == GatewayGrantSnapshotReader::Status::kReady &&
       !signed_grants->verifiedForLocalGateway(signed_grants->localGatewayId());
+  Serial.printf("BENCH EDGE key=%s\n",
+      handoff != nullptr && handoff->hasKey() ? "READY" : "MISSING_RETAINING");
   Serial.printf("BENCH OGK1 status=%s generation=%s issuer=%02X%02X%02X%02X "
                 "installer=%s signed_acks=%lu\n",
                 denied_now ? "DENIED_UNTIL_REBOOT" : ogk1_state, gen, issuer_prefix[0], issuer_prefix[1],
@@ -339,6 +341,7 @@ void ogk1Line(const char* line, size_t length) {
       Serial.println(F("BENCH OGK1 OK aborted"));
       break;
     case Step3bGrantInstaller::Reply::kWriteStarted: {
+      if (handoff != nullptr) handoff->clearKey();
       char gen[17];
       hex64(gen, installer->candidateGeneration());
       Serial.printf("BENCH OGK1 VERIFIED generation=%s; writing page %u\n", gen,
@@ -377,6 +380,13 @@ void begin(FlashBackend& port, FlashBackend& security_port,
                                                 gateway_id);
   runtime = new GatewayProductCustodyRuntime(radio_manager, *ingress);
   handoff = new Sf5l0EdgeHandoff(*custody, gateway_id);
+#if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
+  uint8_t edge_key[32]{};
+  if (signed_grants != nullptr && signed_grants->edgeAcceptKey(edge_key))
+    handoff->setKey(edge_key);
+  volatile uint8_t* secret = edge_key;
+  for (size_t i = 0; i < sizeof(edge_key); ++i) secret[i] = 0;
+#endif
   edge_session = new Sf5l0EdgeLinkSession(
       port, *custody, *handoff, gateway_id, storage_config::kProductRegionPages);
 

@@ -42,6 +42,7 @@ B = oc.Credential(0x1122334455667788, bytes(range(0x80, 0x90)), 3, bytes(range(0
 ISSUER = Ed25519PrivateKey.from_private_bytes(bytes(range(0x20, 0x40)))
 OTHER_ISSUER = Ed25519PrivateKey.from_private_bytes(bytes(range(0x60, 0x80)))
 A_KEY = "91AE7D108998E87565977EA606FE6A13F6493DEAAF5C46C791BB02B6594A0D60"  # step 3A vector
+EDGE_KEY = bytes(range(0xC0, 0xE0))
 
 
 def snapshots() -> dict[str, tuple[int, int, list, Ed25519PrivateKey]]:
@@ -66,6 +67,11 @@ def write_vectors(path: Path) -> None:
             k = oc.custody_ack_key(cred, gw, floor, ggen).hex().upper()
             out.append(f"grant {name} {cred.device_id:016X} {cred.key_epoch:08X} "
                        f"{floor:08X} {ggen:08X} {k}")
+    out.append("snap edge2 0000000000000006")
+    out += oc.ogk1_upload_lines(oc.build_ogk1(
+        GATEWAY, 6, [(A, 0, 1)], ISSUER, EDGE_KEY))
+    out.append(f"grant edge2 {A.device_id:016X} {A.key_epoch:08X} "
+               f"{0:08X} {1:08X} {oc.custody_ack_key(A, GATEWAY, 0, 1).hex().upper()}")
     path.write_text("\n".join(out) + "\n")
 
 
@@ -117,6 +123,18 @@ def test_build() -> None:
     assert lines[-1] == f"BENCH OGK1 COMMIT {zlib.crc32(image):08X}"
     assert b"".join(bytes.fromhex(line.split()[4]) for line in lines[1:-1]) == image
 
+    edge = oc.build_ogk1(GATEWAY, 3, [(A, 0, 1)], ISSUER, EDGE_KEY)
+    assert edge[4] == 2 and len(edge) == oc.OGK1_STORED + 32
+    assert edge[oc.OGK1_PAYLOAD:oc.OGK1_PAYLOAD + 32] == EDGE_KEY
+    signed_size = oc.OGK1_PAYLOAD + 32
+    Ed25519PublicKey.from_public_bytes(oc.issuer_public(ISSUER)).verify(
+        edge[signed_size:signed_size + 64], edge[:signed_size])
+    assert int.from_bytes(edge[signed_size + 64:signed_size + 68], "big") == zlib.crc32(edge[:signed_size + 64])
+    bad_pair = bytearray(edge); bad_pair[4] = oc.OGK1_VERSION
+    expect_error(lambda: oc.ogk1_upload_lines(bytes(bad_pair)), oc.RegistryError)
+    bad_pair = bytearray(image); bad_pair[4] = 2
+    expect_error(lambda: oc.ogk1_upload_lines(bytes(bad_pair)), oc.RegistryError)
+
 
 def test_registry(tmp: Path) -> None:
     reg = oc.CredentialRegistry(tmp / "r.sqlite")
@@ -136,6 +154,14 @@ def test_registry(tmp: Path) -> None:
     assert gen == 10 and int.from_bytes(image[16:24], "big") == 10
     assert image[32:40] == A.device_id.to_bytes(8, "big")
     assert image[56:88] == oc.custody_ack_key(a, GATEWAY, 0, 1)
+    assert reg.edge_key(GATEWAY) is None
+    assert oc.OGK1_VERSION == image[4]
+    reg.edge_key(GATEWAY, create=True)
+    edge_key = reg.edge_key(GATEWAY)
+    assert edge_key is not None and len(edge_key) == 32 and any(edge_key)
+    assert reg.edge_key(GATEWAY, create=True) == edge_key  # never rotates on refresh
+    _, v2 = reg.gateway_snapshot(GATEWAY)
+    assert v2[4] == 2 and v2[oc.OGK1_PAYLOAD:oc.OGK1_PAYLOAD + 32] == edge_key
     # A replaced (retired) credential leaves the next snapshot.
     reg.create(A.device_id, replace=True)
     _, image = reg.gateway_snapshot(GATEWAY)
@@ -179,9 +205,10 @@ class FakeGateway:
                 return ["BENCH OGK1 FAIL reason=bad_crc"]
             if int.from_bytes(self.image[8:16], "big") != GATEWAY:
                 return ["BENCH OGK1 FAIL reason=wrong_gateway"]
+            payload = 1824 + (32 if self.image[4] == 2 else 0)
             try:
                 Ed25519PublicKey.from_public_bytes(self.pub).verify(
-                    self.image[1824:1888], self.image[:1824])
+                    self.image[payload:payload + 64], self.image[:payload])
             except Exception:
                 return ["BENCH OGK1 FAIL reason=not_authentic"]
             gen = int.from_bytes(self.image[16:24], "big")
@@ -230,6 +257,12 @@ def test_tool(tmp: Path) -> None:
     dev2 = FakeGateway(pub, status="READY", generation=41)
     op.install_gateway_snapshot(dev2, reg, quiet)
     assert dev2.generation == 42
+
+    # Y2b is explicit; the updater never creates or rotates a missing key.
+    secure = FakeGateway(pub)
+    op.install_gateway_snapshot(secure, reg, quiet, edge_key=True)
+    assert secure.installed[4] == 2
+    assert secure.installed[oc.OGK1_PAYLOAD:oc.OGK1_PAYLOAD + 32] == reg.edge_key(GATEWAY)
 
     for status, text in (("NO_ISSUER_KEY", "issuer anahtarı yok"),
                          ("REJECTED", "CLEAN"),
