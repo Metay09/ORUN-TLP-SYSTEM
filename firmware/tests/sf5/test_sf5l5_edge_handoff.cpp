@@ -294,6 +294,7 @@ void testHandoffAndReclaim() {
   }
 }
 
+#ifndef ORUN_SF5L5_NO_MAIN
 void testOnlyExactRecordMoves() {
   EraseFlash flash;
   Gateway gw(flash);
@@ -319,6 +320,7 @@ void testOnlyExactRecordMoves() {
   assert(gw.accept(second) == Sf5l0EdgeHandoff::Reply::kRejected);
   assert(held(flash, gw.store).size() == 1U);
 }
+#endif
 
 }  // namespace
 

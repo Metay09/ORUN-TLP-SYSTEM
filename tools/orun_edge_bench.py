@@ -227,6 +227,9 @@ def _i(b: bytes) -> int:
     return int.from_bytes(b, "big", signed=True)
 
 
+POWER = ("UNKNOWN", "BATTERY", "CHARGING", "FULL", "NO_BATTERY")  # = app core/product.ts
+
+
 def describe_periodic(device: bytes, p: bytes) -> dict:
     """Readable fields of a canonical SF5B PERIODIC plaintext (64 bytes)."""
     flags = p[1]
@@ -238,6 +241,7 @@ def describe_periodic(device: bytes, p: bytes) -> dict:
         "time": None, "lat": None, "lon": None, "alt_m": None, "sats": None,
         "hdop": None, "fix_age_s": None, "battery_mv": None, "battery": None,
         "active_s": None, "covered_s": None, "source": SOURCES.get(p[2], "?"),
+        "power": None, "usb": None,
     }
     if flags & 1:
         out["time"] = dt.datetime.fromtimestamp(
@@ -258,6 +262,10 @@ def describe_periodic(device: bytes, p: bytes) -> dict:
     if flags & 32:
         out["battery_mv"] = _u(p[56:58])
         out["battery"] = BATTERY.get(p[3], "?")
+        # Pil 2 (#283): byte 42 bits 2-4 power state, bit 5 USB (wire spec 7.4).
+        power = (p[42] >> 2) & 0x07
+        out["power"] = POWER[power] if 0 < power < len(POWER) else None
+        out["usb"] = bool(p[42] & 0x20) if power else None
     return out
 
 
@@ -707,7 +715,7 @@ def points_from_db(db_path: Path) -> dict:
         points.append({k: d[k] for k in (
             "tracker", "sequence", "time", "lat", "lon", "alt_m", "sats", "hdop",
             "fix_age_s", "battery_mv", "battery", "active_s", "covered_s",
-            "source")})
+            "source", "power", "usb")})
         pt = points[-1]
         pt["seq"] = pt.pop("sequence")
         pt["period_s"] = d["period_s"]
