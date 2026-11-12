@@ -86,6 +86,7 @@ void GeofenceStore::clearRecoveredRuntimeState() {
   maintenance_reset_required_ = false;
   generation_ = 0;
   active_page_ = -1;
+  no_committed_record_ = false;
 }
 
 void GeofenceStore::setUnavailableMaintenance(
@@ -125,6 +126,8 @@ bool GeofenceStore::begin() {
   mutation_success_ = false;
   mutation_unreconciled_ = false;
   recovery_pending_ = false;
+  prepare_result_ready_ = false;
+  prepare_success_ = false;
   clearRecoveredRuntimeState();
 
   if (!flash_.begin()) return false;
@@ -208,6 +211,9 @@ bool GeofenceStore::recover() {
     setUnavailableMaintenance(
         any_corrupt ? GeofenceTokenState::kUncertain
                     : GeofenceTokenState::kUnavailable);
+    // Nothing here was ever authoritative (and nothing is newer-format: that
+    // case returned above), so an explicit service prepare may erase it.
+    no_committed_record_ = true;
     return true;
   }
 
@@ -524,6 +530,83 @@ void GeofenceStore::finishMutation() {
   mutation_success_ = true;
 }
 
+bool GeofenceStore::prepareAllowed() const {
+  return ready_ && !busy() && !mutation_unreconciled_ && !recovery_pending_ &&
+         !mutation_result_ready_ && !prepare_result_ready_ &&
+         no_committed_record_ && maintenance_reset_required_ &&
+         active_page_ < 0 &&
+         resource_state_ == GeofenceResourceState::kUnavailable;
+}
+
+bool GeofenceStore::requestPrepare() {
+  if (!prepareAllowed()) return false;
+  target_page_ = 0;
+  flash_op_awaiting_completion_ = false;
+  job_ = Job::kPrepare;
+  return true;
+}
+
+bool GeofenceStore::takePrepareResult(bool& prepared) {
+  if (!prepare_result_ready_) return false;
+  prepared = prepare_success_;
+  prepare_result_ready_ = false;
+  return true;
+}
+
+bool GeofenceStore::pageErased(uint32_t page) {
+  uint32_t within_page = 0;
+  while (within_page < storage_config::kPageSize) {
+    const uint32_t remaining = storage_config::kPageSize - within_page;
+    const size_t size = remaining < sizeof(scratch_)
+                            ? static_cast<size_t>(remaining)
+                            : sizeof(scratch_);
+    if (!flash_.read(page * storage_config::kPageSize + within_page, scratch_,
+                     size) ||
+        !journal_format::erased(scratch_, size))
+      return false;
+    within_page += static_cast<uint32_t>(size);
+  }
+  return true;
+}
+
+void GeofenceStore::failPrepare() {
+  ++diagnostics_.prepare_failures;
+  prepare_result_ready_ = true;
+  prepare_success_ = false;
+  job_ = Job::kNone;
+  flash_op_awaiting_completion_ = false;
+  // Re-read what is really on flash before anything else is decided.
+  recovery_pending_ = true;
+  if (flash_.hasUnreconciledMutation()) {
+    mutation_unreconciled_ = true;
+    ++diagnostics_.unreconciled_mutation_faults;
+  }
+}
+
+void GeofenceStore::pollPrepare() {
+  const FlashOpResult result = flash_op_awaiting_completion_
+                                   ? flash_.pollPending()
+                                   : flash_.erasePage(target_page_);
+  if (result == FlashOpResult::kPending) {
+    flash_op_awaiting_completion_ = true;
+    return;
+  }
+  flash_op_awaiting_completion_ = false;
+  if (result == FlashOpResult::kFailed || !pageErased(target_page_)) {
+    failPrepare();
+    return;
+  }
+  if (++target_page_ < kPageCount) return;
+
+  ++diagnostics_.prepares;
+  prepare_result_ready_ = true;
+  prepare_success_ = true;
+  job_ = Job::kNone;
+  // Blank region: unavailable without a lockout until the next begin()
+  // writes the baseline.
+  recovery_pending_ = true;
+}
+
 void GeofenceStore::poll() {
   if (!ready_) return;
 
@@ -544,6 +627,11 @@ void GeofenceStore::poll() {
       }
       ++diagnostics_.recovery_reconciliations;
     }
+    return;
+  }
+
+  if (job_ == Job::kPrepare) {
+    pollPrepare();
     return;
   }
 

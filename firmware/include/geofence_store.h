@@ -37,6 +37,8 @@ class GeofenceStore {
     uint32_t maintenance_lockouts = 0;
     uint32_t unreconciled_mutation_faults = 0;
     uint32_t recovery_reconciliations = 0;
+    uint32_t prepares = 0;
+    uint32_t prepare_failures = 0;
   };
 
   explicit GeofenceStore(
@@ -96,10 +98,22 @@ class GeofenceStore {
   // subsequently expose the durable state.
   bool takeMutationResult(bool& success);
 
+  // Service preparation of a region that was never an ORUN geofence store:
+  // bytes left behind by an earlier, larger firmware image make recover()
+  // lock the store (maintenance) before any baseline exists, and no area can
+  // ever be written. Allowed only while NO page holds a committed record and
+  // no page carries a newer format -- there is no owner area set to lose.
+  // Erases both pages and nothing else; the CLEAR baseline is created by the
+  // normal begin() on the next boot (pre-SoftDevice path). Never automatic:
+  // the caller is an explicit, confirmed local service command.
+  bool prepareAllowed() const;
+  bool requestPrepare();
+  bool takePrepareResult(bool& prepared);
+
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
  private:
-  enum class Job : uint8_t { kNone, kErase, kWrite };
+  enum class Job : uint8_t { kNone, kErase, kWrite, kPrepare };
   enum class BlobStep : uint8_t { kBody, kCommit, kVerify };
 
   struct RecoveredPage {
@@ -115,6 +129,9 @@ class GeofenceStore {
   FlashOpResult writeBlob();
   void failMutation();
   void finishMutation();
+  void pollPrepare();
+  void failPrepare();
+  bool pageErased(uint32_t page);
 
   void clearRecoveredRuntimeState();
   void setUnavailableMaintenance(GeofenceTokenState token_state);
@@ -147,6 +164,12 @@ class GeofenceStore {
   bool mutation_success_ = false;
   bool mutation_unreconciled_ = false;
   bool recovery_pending_ = false;
+
+  // Set only by recover(): the region is non-blank, holds no committed
+  // record and no newer-format page.
+  bool no_committed_record_ = false;
+  bool prepare_result_ready_ = false;
+  bool prepare_success_ = false;
 
   uint32_t target_page_ = 0;
   geofence_format::Snapshot pending_snapshot_{};

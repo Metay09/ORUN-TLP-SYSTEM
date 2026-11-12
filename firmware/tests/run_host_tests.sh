@@ -172,6 +172,11 @@ g++ "${portable_flags[@]}" firmware/tests/m6/test_m6d3b_geofence_store.cpp \
   firmware/src/geofence_geometry.cpp firmware/src/journal_format.cpp \
   firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/m6d3b_geofence_store"
+g++ "${portable_flags[@]}" firmware/tests/m6/test_geofence_foreign_leftover.cpp \
+  firmware/src/geofence_store.cpp firmware/src/geofence_format.cpp \
+  firmware/src/geofence_geometry.cpp firmware/src/journal_format.cpp \
+  firmware/src/tlp_position_packet.cpp \
+  -o "$test_dir/geofence_foreign_leftover"
 g++ "${portable_flags[@]}" firmware/tests/m6/test_geofence_writer.cpp \
   firmware/src/geofence_mutation.cpp firmware/src/geofence_staging.cpp \
   firmware/src/geofence_store.cpp firmware/src/geofence_format.cpp \
@@ -192,6 +197,7 @@ g++ "${b3_flags[@]}" firmware/tests/m6/test_m6d3c_geofence_runtime_provider.cpp 
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/m6/test_m6d3c_source_contract.py
 
 "$test_dir/m6d3b_geofence_store"
+"$test_dir/geofence_foreign_leftover"
 "$test_dir/m6d3a_geofence_format"
 
 g++ "${b3_flags[@]}" \
