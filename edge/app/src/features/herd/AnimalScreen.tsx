@@ -6,7 +6,7 @@ import { Bluetooth, CaretRight, CellSignalFull, MapTrifold, NavigationArrow, Not
 import { activityBaseline, activityCoverage24h, batteryOutlook, busiestHour, dayStart, daySummaries, hourlyActivity, smoothBattery } from "../../app/activity.ts";
 import { trackerSession } from "../../app/trackerSession.ts";
 import { BatteryLife, useConfiguredInterval } from "../devices/BatteryLife.tsx";
-import { batteryPercent, epochMs } from "../../app/herd.ts";
+import { epochMs, externallyPowered, readingPercent } from "../../app/herd.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { cap, fmt, tr } from "../../app/i18n/tr.ts";
 import type { Animal, AppEvent } from "../../app/model.ts";
@@ -74,8 +74,13 @@ function Today({ a, now }: { a: Animal; now: number }) {
   const days = useMemo(() => daySummaries(a.points.filter((x) => epochMs(x.time) >= dayStart(now))), [a.points, now]);
   const today = days.find((d) => d.day === dayStart(now)) ?? null;
   const bat = a.batteryTrail;
-  const pct = useMemo(() => smoothBattery(bat.map((b) => ({ t: b.t, p: batteryPercent(b.mv) })).filter((x): x is { t: number; p: number } => x.p !== null)), [bat]);
-  const outlook = useMemo(() => batteryOutlook(pct, now), [pct, now]);
+  // Pil 2: FULL is 100 %; the trend and the days left come only from readings on the
+  // battery itself (not on USB, not without a cell). Older firmware sends no power word.
+  const toPct = (list: typeof bat) => smoothBattery(list.map((b) => ({ t: b.t, p: readingPercent(b) }))
+    .filter((x): x is { t: number; p: number } => x.p !== null));
+  const pct = useMemo(() => toPct(bat), [bat]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const outlook = useMemo(() => batteryOutlook(toPct(bat.filter((b) => !externallyPowered(b))), now), [bat, now]); // eslint-disable-line react-hooks/exhaustive-deps
+  const collarSaysPower = bat.some((b) => b.power !== null && b.power !== undefined);
   const hasActivity = a.reports.some((x) => x.active_s !== null);
   const interval = useConfiguredInterval(a);
   const settings = useDeviceSettings();
@@ -140,24 +145,26 @@ function Today({ a, now }: { a: Animal; now: number }) {
         )}
       </Card>
 
-      <Section title={tr.animal.battery} info="Yüzde, pil geriliminden hesaplanır. Gidişat, son 24 saatin ortalaması iki gün öncekiyle karşılaştırılarak bulunur (gece-gündüz farkı ortalanır); kalan gün yalnız belirgin düşüşte gösterilir ve tahmindir." />
+      <Section title={tr.animal.battery} info="Yüzde, pil geriliminden hesaplanır; şarj devresinin dolu tuttuğu aralık (4,05 V ve üstü) %100'dür. 'Şarj oluyor', 'Dolu' ve 'Pil takılı değil' tasmanın kendi ölçümünden gelir. Gidişat, son 24 saatin ortalaması iki gün öncekiyle karşılaştırılarak bulunur (gece-gündüz farkı ortalanır); USB'deki süreler katılmaz. Kalan gün yalnız belirgin düşüşte gösterilir ve tahmindir." />
       <Card pad>
-        {a.battery === "unknown" ? <span className="sm">{tr.animal.batteryUnknown}</span> : (
+        {a.batteryPower === "NO_BATTERY" ? <span className="sm">Pil takılı değil · USB'den besleniyor.</span>
+          : a.battery === "unknown" ? <span className="sm">{tr.animal.batteryUnknown}</span> : (
           <div className="stack" style={{ gap: 12 }}>
             <div className="row" style={{ gap: 14 }}>
               <BatteryGauge percent={a.batteryPercent} tone={batTone} />
               <div className="stack grow" style={{ gap: 2 }}>
                 <span className={"strong t-" + batTone}>
-                  {a.battery === "critical" ? "Bitmek üzere · bugün şarj et" : a.battery === "low" ? "Azalıyor" : "İyi"}
+                  {a.batteryPower === "CHARGING" ? "Şarj oluyor" : a.batteryPower === "FULL" ? "Dolu"
+                    : a.battery === "critical" ? "Bitmek üzere · bugün şarj et" : a.battery === "low" ? "Azalıyor" : "İyi"}
                 </span>
                 <span className="sm">
-                  {a.batteryMv ? `${fmt.dec(a.batteryMv / 1000, 2)} V · ` : ""}{a.batteryAt !== null ? `${fmt.ago(a.batteryAt, now)} ölçüldü` : ""}
+                  {a.batteryUsb ? "USB'de · " : ""}{a.batteryMv ? `${fmt.dec(a.batteryMv / 1000, 2)} V · ` : ""}{a.batteryAt !== null ? `${fmt.ago(a.batteryAt, now)} ölçüldü` : ""}
                 </span>
               </div>
             </div>
             <div className="act-facts">
               {outlook.change24h !== null && <div><span className="cap">Son 24 saatte</span><b>{outlook.change24h >= 0 ? "+" : "−"}%{Math.abs(Math.round(outlook.change24h))}</b></div>}
-              {outlook.charged24h !== null && outlook.charged24h >= 3 && <div><span className="cap">Gündüz şarj</span><b>+%{Math.round(outlook.charged24h)}</b></div>}
+              {!collarSaysPower && outlook.charged24h !== null && outlook.charged24h >= 3 && <div><span className="cap">Gündüz şarj</span><b>+%{Math.round(outlook.charged24h)}</b></div>}
               {outlook.perDay !== null && <div><span className="cap">Gidişat</span><b>{outlook.perDay < -0.5 ? `günde −%${fmt.dec(-outlook.perDay, 1)}` : "Dengede"}</b></div>}
             </div>
             {pct.length > 1 && <>

@@ -58,17 +58,19 @@ bool BatteryStateTracker::update(uint32_t millivolts) {
 }
 
 uint8_t batteryPercentEstimate(uint32_t mv) {
-  // Typical 1S LiPo open-circuit curve, millivolts at each 5 % step.
+  // Pil 2 (owner 2026-11-12: a full battery reads 100 %). The RAK19007
+  // charger (TP4054) restarts below ~4.05 V and holds the cell between that
+  // and 4.20 V, so 4.05 V and above is what this board calls full. Below, the
+  // shape of Meshtastic's LiPo rest-voltage table (4050 = 90 % there; the
+  // nRF52 variant with 3.40 V as empty), stretched so 4050 = 100 %. The app
+  // uses the same table (edge/app/src/app/herd.ts batteryPercent).
   struct Point {
     uint16_t mv;
     uint8_t percent;
   };
   static const Point kCurve[] = {
-      {3270, 0},  {3610, 5},  {3690, 10}, {3710, 15}, {3730, 20},
-      {3750, 25}, {3770, 30}, {3790, 35}, {3800, 40}, {3820, 45},
-      {3840, 50}, {3850, 55}, {3870, 60}, {3910, 65}, {3950, 70},
-      {3980, 75}, {4020, 80}, {4080, 85}, {4110, 90}, {4150, 95},
-      {4200, 100}};
+      {3400, 0},  {3440, 11}, {3480, 22}, {3530, 33}, {3630, 44},
+      {3720, 56}, {3800, 67}, {3890, 78}, {3990, 89}, {4050, 100}};
   constexpr unsigned kPoints = sizeof(kCurve) / sizeof(kCurve[0]);
   if (mv <= kCurve[0].mv) return 0;
   if (mv >= kCurve[kPoints - 1].mv) return 100;

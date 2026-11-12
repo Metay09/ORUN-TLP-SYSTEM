@@ -67,17 +67,11 @@ inline void analogReference(eAnalogReference mode) { fake_analog_reference = mod
 inline void analogReadResolution(int bits) { fake_analog_resolution = bits; }
 inline uint8_t fake_analog_sample_time_us = 3;
 inline unsigned fake_analog_calibrations = 0;
-inline uint32_t fake_analog_slow_value = 0;  // 0: same as fake_analog_value
 inline void analogSampleTime(uint8_t us) {
   fake_analog_sample_time_us = (us == 5 || us == 10 || us == 15 || us == 20 || us == 40) ? us : 3;
 }
 inline void analogCalibrateOffset() { ++fake_analog_calibrations; }
 inline uint32_t analogRead(uint32_t pin) {
-  if (fake_analog_sample_time_us == 40 && fake_analog_slow_value) {
-    ++fake_analog_reads;
-    fake_analog_last_pin = static_cast<int>(pin);
-    return fake_analog_slow_value;
-  }
   ++fake_analog_reads;
   fake_analog_last_pin = static_cast<int>(pin);
   return fake_analog_value;

@@ -579,15 +579,26 @@ A reset/power gap therefore cannot be reported as complete coverage.
 The LOW/CRITICAL thresholds are **not** frozen by SF5B; they remain
 hardware/battery qualification policy.
 
-`battery_quality`:
+`battery_quality` (byte 42; Pil 2, 2026-11-12: bit-packed):
 
 ```text
-0 UNKNOWN
-1 MEASURED
-2 MODEL_ESTIMATED
+bits 0-1  quality       0 UNKNOWN, 1 MEASURED, 2 MODEL_ESTIMATED
+bits 2-4  power state   0 UNKNOWN, 1 BATTERY, 2 CHARGING, 3 FULL, 4 NO_BATTERY
+bit  5    USB supply present (nRF52840 VBUSDETECT)
+bits 6-7  reserved, 0
 ```
 
-A percentage is not carried in v1 of this schema.
+Firmware before Pil 2 sends power state 0 and no USB bit (byte = 1). A
+reader older than Pil 2 rejects bytes above 2, so readers update first.
+The power state comes from the quiet battery readings
+(firmware/include/power_state.h): the RAK19007 charger tells the MCU nothing.
+FULL means 100 % to the reader whatever `battery_mv` is (the charger holds
+the cell between its 4.05 V restart threshold and 4.20 V). With NO_BATTERY,
+`battery_mv` is the charger's open output, not a cell.
+
+A percentage is not carried in v1 of this schema; readers compute it from
+`battery_mv` with the shared table (firmware battery_policy.cpp,
+app herd.ts): 4050 mV and above = 100 %, 3400 mV = 0 %.
 
 When `BATTERY_VALID=0`, `battery_mv=0`, `battery_state=UNKNOWN` and
 `battery_quality=UNKNOWN`.

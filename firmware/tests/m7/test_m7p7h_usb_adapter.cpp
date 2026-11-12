@@ -491,17 +491,20 @@ int main() {
     ps.battery_age_ms = 4200;
     ps.battery_readings = 17;
     ps.battery_percent = 1;
+    ps.power_state = 2;   // Pil 2: CHARGING
+    ps.usb_power = 1;
     Serial.output.clear();
     printUsbApplicationResponse(power);
     assert(Serial.output ==
            "APP POWER id=12 battery=MEASURED state=CRITICAL percent_est=1 "
-           "mv=3300 raw=2604 age_ms=4200 readings=17 calibrated=no\n");
+           "mv=3300 raw=2604 age_ms=4200 readings=17 calibrated=no "
+           "power=CHARGING usb=yes\n");
     power.payload.power.snapshot = ApplicationPowerSnapshot();
     Serial.output.clear();
     printUsbApplicationResponse(power);
     assert(Serial.output ==
            "APP POWER id=12 battery=NONE state=UNKNOWN percent_est=- mv=0 "
-           "raw=0 age_ms=0 readings=0 calibrated=no\n");
+           "raw=0 age_ms=0 readings=0 calibrated=no power=UNKNOWN usb=no\n");
 
     ConfigMutationResult set;
     set.kind = ConfigMutationKind::kSetServiceIntent;

@@ -127,7 +127,9 @@ ProductSecureCodecResult validatePeriodicPlaintext(
   if (p.location_source > kLocationSourceManual ||
       p.activity_quality > kActivityQualityComplete ||
       p.battery_state > kBatteryStateCritical ||
-      p.battery_quality > kBatteryQualityModelEstimated)
+      (p.battery_quality & kBatteryQualityMask) > kBatteryQualityModelEstimated ||
+      ((p.battery_quality & kBatteryPowerMask) >> kBatteryPowerShift) > kBatteryPowerMax ||
+      (p.battery_quality & kBatteryReservedMask) != 0)
     return R::kBadEnum;
   if (p.record_incarnation == 0 || p.record_sequence == 0)
     return R::kBadIdentity;

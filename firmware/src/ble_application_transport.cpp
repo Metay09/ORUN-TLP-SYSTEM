@@ -554,8 +554,10 @@ void BleApplicationTransport::buildApplicationResponse(
       outbound_.message_type =
           static_cast<uint8_t>(MessageType::kGetPowerStatusResponse);
       outbound_.payload[0] = ble_app_transport::kApplicationStatusOk;
+      // Pil 2: bits 2-4 power state, bit 5 USB (older readers ignore them).
       outbound_.payload[1] = static_cast<uint8_t>(
-          (s.battery_valid ? 0x01U : 0U) | (s.battery_calibrated ? 0x02U : 0U));
+          (s.battery_valid ? 0x01U : 0U) | (s.battery_calibrated ? 0x02U : 0U) |
+          ((s.power_state & 0x07U) << 2) | (s.usb_power ? 0x20U : 0U));
       outbound_.payload[2] = static_cast<uint8_t>(s.battery_state);
       outbound_.payload[3] = s.battery_percent;
       writeLE16(outbound_.payload + 4, s.battery_mv);

@@ -2,7 +2,7 @@
 // by its services, judged from what its records actually carry — not by a
 // "tracker/relay/base" type.
 import { medianDelayS } from "./activity.ts";
-import { batteryOf, batteryPercent, epochMs, freshnessOf, shortId } from "./herd.ts";
+import { batteryOf, epochMs, freshnessOf, shortId } from "./herd.ts";
 import type { Animal, Device, Observation, ServiceState } from "./model.ts";
 
 export function buildDevices(points: Observation[], herd: Animal[], now: number): Device[] {
@@ -34,7 +34,8 @@ export function buildDevices(points: Observation[], herd: Animal[], now: number)
       lastTime: Number.isFinite(lastTime) ? lastTime : null,
       lastArrival: Number.isFinite(lastArrival) ? lastArrival : null,
       rssi: heard?.rssi ?? null, snr: heard?.snr ?? null, link: last?.link ?? null,
-      battery: bat.level, batteryPercent: batteryPercent(last?.battery_mv ?? null), batteryMv: last?.battery_mv ?? null,
+      battery: bat.level, batteryPercent: bat.percent, batteryMv: last?.battery_mv ?? null,
+      batteryPower: last?.power ?? null, batteryUsb: last?.usb ?? null,
       records: list.length, medianDelayS: medianDelayS(list),
     });
   }

@@ -16,6 +16,7 @@
 #include "application_status_runtime.h"
 #include "battery_monitor.h"
 #include "battery_policy.h"
+#include "power_state.h"
 #include "ble_admission_policy.h"
 #include "ble_application_handoff.h"
 #include "ble_application_transport.h"
@@ -125,6 +126,7 @@ uint32_t product_last_gnss_timeouts = 0;
 ProductPeriodBaseline product_period_baseline;
 // Battery voltage on WB_A0, read once a minute. Measurement only for now.
 orun_tlp::BatteryMonitor battery_monitor;
+orun_tlp::PowerStateTracker power_state;
 orun_tlp::BatteryStateTracker battery_state;
 orun_tlp::BatteryLogWindow battery_log;
 // M7P3: FlashMutationGate wraps NrfHistoryFlash unchanged for the
@@ -1136,6 +1138,25 @@ bool usbPowerPresent() {
 }
 
 void handleBatteryReading() {
+  // Pil 2: the power state follows the quiet readings only; a charge end
+  // gives this board's scale (the charger's 4.20 V).
+  if (battery_monitor.lastQuiet()) {
+    const bool changed = power_state.update(orun_tlp::monotonic::nowMs(),
+                                            battery_monitor.millivolts(),
+                                            battery_monitor.usb());
+    uint32_t peak = 0;
+    if (power_state.takeChargeEndPeak(peak)) {
+      battery_monitor.setReference(peak, orun_tlp::power_config::kChargerFloatMv);
+      Serial.printf("BATTERY CHARGE END peak_mv=%lu scale_ppm=%lu\n",
+                    static_cast<unsigned long>(peak),
+                    static_cast<unsigned long>(battery_monitor.scalePpm()));
+    }
+    if (changed)
+      Serial.printf("POWER state=%s usb=%s mv=%lu\n",
+                    orun_tlp::powerStateName(power_state.state()),
+                    battery_monitor.usb() ? "yes" : "no",
+                    static_cast<unsigned long>(battery_monitor.millivolts()));
+  }
   const uint32_t mv = battery_monitor.millivolts();
   if (battery_state.update(mv)) {
     const uint32_t interval_ms = runtimeTrackingIntervalMs(
@@ -1655,6 +1676,8 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
     const uint32_t mv = battery_monitor.millivolts();
     in.battery_mv = static_cast<uint16_t>(mv > UINT16_MAX ? UINT16_MAX : mv);
     in.battery_state = static_cast<uint8_t>(battery_state.state());
+    in.power_state = static_cast<uint8_t>(power_state.state());
+    in.usb_power = battery_monitor.usb();
   }
 
   const ProductPeriodBaseline current = currentProductBaseline();
@@ -2212,22 +2235,17 @@ void printBatteryDiagnostic() {
                 static_cast<unsigned long>(battery_monitor.raw()),
                 static_cast<unsigned long>(age_ms),
                 static_cast<unsigned long>(battery_monitor.readings()));
-  // Pil 1 bench line (kept short: Print::printf has a 256-byte buffer).
-  Serial.printf("BATTERY SOURCE usb=%s quiet=%s loaded=%lu calibrations=%lu "
-                "slow_raw=%lu slow_mv=%lu\n",
+  // Pil 2 bench line (kept short: Print::printf has a 256-byte buffer).
+  Serial.printf("BATTERY SOURCE usb=%s power=%s quiet=%s loaded=%lu "
+                "calibrations=%lu scale_ppm=%lu learned=%s charge_ends=%lu\n",
                 usbPowerPresent() ? "yes" : "no",
+                orun_tlp::powerStateName(power_state.state()),
                 battery_monitor.lastQuiet() ? "yes" : "no",
                 static_cast<unsigned long>(battery_monitor.loadedReadings()),
                 static_cast<unsigned long>(battery_monitor.calibrations()),
-                static_cast<unsigned long>(battery_monitor.slowRaw()),
-                static_cast<unsigned long>(battery_monitor.slowMillivolts()));
-  Serial.printf("BATTERY USB PEAK raw=%lu mv=%lu slow_raw=%lu slow_mv=%lu\n",
-                static_cast<unsigned long>(battery_monitor.usbPeakRaw()),
-                static_cast<unsigned long>(orun_tlp::batteryMillivoltsFromRaw(
-                    battery_monitor.usbPeakRaw())),
-                static_cast<unsigned long>(battery_monitor.usbPeakSlowRaw()),
-                static_cast<unsigned long>(orun_tlp::batteryMillivoltsFromSlowRaw(
-                    battery_monitor.usbPeakSlowRaw())));
+                static_cast<unsigned long>(battery_monitor.scalePpm()),
+                battery_monitor.scaleLearned() ? "yes" : "no",
+                static_cast<unsigned long>(power_state.chargeEnds()));
 }
 
 void printGnssSleepDiagnostic() {
@@ -3424,7 +3442,8 @@ void refreshApplicationStatusSnapshot(uint32_t now_ms) {
       application_status_snapshot);
   orun_tlp::buildApplicationPowerSnapshot(now_ms, battery_monitor,
                                           battery_state.state(),
-                                          application_status_snapshot.power);
+                                          application_status_snapshot.power,
+                                          static_cast<uint8_t>(power_state.state()));
   orun_tlp::buildApplicationServicesSnapshot(
       applied_service_mode, applied_requested_services,
       explicit_services_active,

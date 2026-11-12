@@ -7,7 +7,7 @@ import { deviceSettings, pilotSetBatteryCapacity } from "../../app/ownerAccountP
 import {
   batteryCapacity, expectedLife, lifeWord, MAH_MAX, MAH_MIN, measuredLife, PUBLISHED, USABLE,
 } from "../../app/batteryLife.ts";
-import { batteryPercent } from "../../app/herd.ts";
+import { externallyPowered, readingPercent } from "../../app/herd.ts";
 import { fmt } from "../../app/i18n/tr.ts";
 import type { Animal } from "../../app/model.ts";
 import { useBack } from "../../app/nav.ts";
@@ -30,14 +30,16 @@ export function useConfiguredInterval(a: Pick<Animal, "device" | "periodS"> | nu
 }
 
 export function BatteryLife({ device, intervalS, series, nowPct }: {
-  device: string; intervalS: number | null; series: { t: number; mv: number }[]; nowPct: number | null;
+  device: string; intervalS: number | null;
+  series: { t: number; mv: number; power?: string | null; usb?: boolean | null }[]; nowPct: number | null;
 }) {
   const caps = useSyncExternalStore(batteryCapacity.subscribe, batteryCapacity.snapshot);
   const mAh = caps[device.toUpperCase()] ?? null;
   const [editing, setEditing] = useState(false);
   const now = Date.now();
   const outlook = useMemo(() => {
-    const pct = smoothBattery(series.map((b) => ({ t: b.t, p: batteryPercent(b.mv) }))
+    // Pil 2: the battery's own drain only (not on USB, not without a cell).
+    const pct = smoothBattery(series.filter((b) => !externallyPowered(b)).map((b) => ({ t: b.t, p: readingPercent(b) }))
       .filter((x): x is { t: number; p: number } => x.p !== null));
     return batteryOutlook(pct, now);
   }, [series]); // eslint-disable-line react-hooks/exhaustive-deps

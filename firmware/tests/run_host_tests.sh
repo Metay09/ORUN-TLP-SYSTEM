@@ -231,6 +231,9 @@ g++ "${flags[@]}" firmware/tests/r3/test_r3.cpp "${gnss_sources[@]}" \
 g++ "${flags[@]}" firmware/tests/m3/test_battery_monitor.cpp \
   firmware/src/battery_monitor.cpp -o "$test_dir/battery_monitor"
 "$test_dir/battery_monitor"
+g++ "${portable_flags[@]}" firmware/tests/m3/test_power_state.cpp \
+  firmware/src/power_state.cpp -o "$test_dir/power_state"
+"$test_dir/power_state"
 g++ "${portable_flags[@]}" firmware/tests/m3/test_battery_policy.cpp \
   firmware/src/battery_policy.cpp firmware/src/geofence_runtime_policy.cpp \
   -o "$test_dir/battery_policy"
@@ -658,7 +661,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/security_v3_format.cpp firmware/src/security_format.cpp \
   firmware/src/position_flow.cpp firmware/src/ble_admission_policy.cpp \
   firmware/src/loop_health.cpp firmware/src/loop_health_monitor.cpp \
-  firmware/src/battery_monitor.cpp firmware/src/battery_policy.cpp \
+  firmware/src/battery_monitor.cpp firmware/src/battery_policy.cpp firmware/src/power_state.cpp \
   firmware/src/geofence_mutation.cpp firmware/src/geofence_staging.cpp \
   firmware/src/product_period_builder.cpp firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/product_record_store.cpp firmware/src/product_region.cpp \
@@ -893,7 +896,7 @@ g++ "${portable_flags[@]}" firmware/tests/m7/test_m7p7h_app_status.cpp \
   firmware/src/tlp_position_packet.cpp -o "$test_dir/m7p7h_app_status"
 "$test_dir/m7p7h_app_status"
 g++ "${flags[@]}" firmware/tests/m7/test_m7p7h_usb_adapter.cpp \
-  firmware/src/usb_application_adapter.cpp firmware/src/settings_table.cpp firmware/src/service_intent.cpp \
+  firmware/src/usb_application_adapter.cpp firmware/src/settings_table.cpp firmware/src/service_intent.cpp firmware/src/power_state.cpp \
   firmware/src/node_role.cpp firmware/src/geofence_staging.cpp \
   -o "$test_dir/m7p7h_usb_adapter"
 "$test_dir/m7p7h_usb_adapter"

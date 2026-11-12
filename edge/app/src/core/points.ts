@@ -18,6 +18,8 @@ export interface Point {
   time: string | null; lat: number; lon: number;
   alt_m: number | null; sats: number | null; hdop: number | null; fix_age_s: number | null;
   battery_mv: number | null; battery: string | null; active_s: number | null;
+  /** Pil 2: what the battery does (collar's word) and the USB supply; null: older firmware. */
+  power?: string | null; usb?: boolean | null;
   covered_s: number | null; source: string; period_s: number;
   rssi: number | null; snr: number | null; received: string | null;
   delay_s: number | null; link: "live" | "through" | "cut" | null;
@@ -31,6 +33,7 @@ export interface RecordId {
   gnssFailures?: number | null;
   /** What else the record carries (battery, activity): a record without a fix is still a report. */
   battery_mv?: number | null; battery?: string | null;
+  power?: string | null; usb?: boolean | null;
   active_s?: number | null; covered_s?: number | null; period_s?: number;
 }
 export interface PointsResult { count: number; skipped: number; now: string; points: Point[]; unlocated?: RecordId[]; }
@@ -79,7 +82,8 @@ export async function buildPoints(db: Db, nowSeconds: number): Promise<PointsRes
       const heard = r.first_seen_utc === null ? null : Number(r.first_seen_utc);
       unlocated.push({ tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence, time: d.time,
         received: heard ? isoSeconds(heard) : null, gnssFailures: d.gnss_failures ?? null,
-        battery_mv: d.battery_mv, battery: d.battery, active_s: d.active_s, covered_s: d.covered_s, period_s: d.period_s });
+        battery_mv: d.battery_mv, battery: d.battery, power: d.power ?? null, usb: d.usb ?? null,
+        active_s: d.active_s, covered_s: d.covered_s, period_s: d.period_s });
       continue;
     }
     const seen = r.first_seen_utc === null ? null : Number(r.first_seen_utc);
@@ -88,7 +92,8 @@ export async function buildPoints(db: Db, nowSeconds: number): Promise<PointsRes
       tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence,
       delivery: "phone", time: d.time, lat: d.lat, lon: d.lon,
       alt_m: d.alt_m, sats: d.sats, hdop: d.hdop, fix_age_s: d.fix_age_s, battery_mv: d.battery_mv,
-      battery: d.battery, active_s: d.active_s, covered_s: d.covered_s, source: d.source,
+      battery: d.battery, power: d.power ?? null, usb: d.usb ?? null,
+      active_s: d.active_s, covered_s: d.covered_s, source: d.source,
       period_s: d.period_s,
       rssi: r.gw_rssi === null || r.gw_rssi === undefined ? null : Number(r.gw_rssi),
       snr: r.gw_snr === null || r.gw_snr === undefined ? null : Number(r.gw_snr),

@@ -260,6 +260,12 @@ void periodicRules() {
          R::kBadEnum);
   expect([](PeriodicObservationPlaintext& p) { p.battery_quality = 3; },
          R::kBadEnum);
+  // Pil 2: power state 0-4 in bits 2-4, USB in bit 5; bits 6-7 reserved.
+  expect([](PeriodicObservationPlaintext& p) { p.battery_quality = 1 | (5 << 2); },
+         R::kBadEnum);
+  expect([](PeriodicObservationPlaintext& p) { p.battery_quality = 1 | 0x40; },
+         R::kBadEnum);
+  ok([](PeriodicObservationPlaintext& p) { p.battery_quality = 1 | (3 << 2) | 0x20; });
   expect([](PeriodicObservationPlaintext& p) { p.record_incarnation = 0; },
          R::kBadIdentity);
   expect([](PeriodicObservationPlaintext& p) { p.record_sequence = 0; },
