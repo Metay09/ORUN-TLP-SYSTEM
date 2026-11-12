@@ -126,7 +126,8 @@ std::vector<uint8_t> acceptMessage(uint16_t page, uint16_t slot, uint64_t gen,
   a.page = page;
   a.slot = slot;
   a.generation = gen;
-  assert(Sf5l0EdgeHandoff::mac(kGateway, page, slot, gen, object, size, a.mac));
+  assert(Sf5l0EdgeHandoff::macWithKey(kGatewayEdgeKey, kGateway, page, slot,
+                                     gen, object, size, a.mac));
   if (corrupt) a.mac[0] ^= 1U;
   uint8_t out[el::kAcceptSize];
   assert(el::encodeAccept(a, out, sizeof(out)) == el::kAcceptSize);
