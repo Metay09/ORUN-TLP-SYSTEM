@@ -1,5 +1,14 @@
 # ORUN TLP - Project Instructions
 
+## Test execution policy (owner decision 2026-11-12)
+
+Run tests and builds on the development PC, not GitHub Actions. Do not add,
+restore or trigger GitHub Actions workflows unless the owner explicitly changes
+this decision. This overrides older instructions requiring green GitHub CI.
+Keep all test sources and local runners. Record the tested commit SHA, commands
+and PASS/FAIL results; required physical tests still apply. See
+`.github/README.md` for the local equivalents of the removed workflows.
+
 ## Current owner plan (2026-11-01) — read first
 
 The only active work list is `docs/product/ORUN_UYGULAMA_KAPSAMI.md`
