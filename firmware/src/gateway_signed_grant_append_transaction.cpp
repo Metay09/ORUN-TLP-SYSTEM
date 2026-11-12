@@ -145,7 +145,8 @@ bool GatewaySignedGrantAppendTransaction::verifyPreCommit() const {
 
   uint8_t proof[fmt::kProofBytes]{};
   memcpy(proof, candidate_ + fmt::kPayloadBytes, sizeof(proof));
-  const bool valid = issuer_->verify(candidate_, fmt::kPayloadBytes, proof);
+  const bool valid = issuer_->verify(fmt::kVersion, candidate_,
+                                     fmt::kPayloadBytes, proof);
   secureWipe(proof, sizeof(proof));
   return valid;
 }
