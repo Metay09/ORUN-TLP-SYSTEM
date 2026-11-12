@@ -1140,6 +1140,12 @@ bool usbPowerPresent() {
 void handleBatteryReading() {
   // Pil 2: the power state follows the quiet readings only; a charge end
   // gives this board's scale (the charger's 4.20 V).
+  // A fresh ADC offset calibration can step the reading: compare from here.
+  static uint32_t seen_calibrations = 0;
+  if (battery_monitor.calibrations() != seen_calibrations) {
+    if (seen_calibrations != 0) power_state.rebase();
+    seen_calibrations = battery_monitor.calibrations();
+  }
   if (battery_monitor.lastQuiet()) {
     const bool changed = power_state.update(orun_tlp::monotonic::nowMs(),
                                             battery_monitor.millivolts(),

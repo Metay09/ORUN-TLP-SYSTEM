@@ -54,6 +54,10 @@ class PowerStateTracker {
   // A charge end was just seen: the reading before the drop (the charger's
   // 4.20 V), in the millivolts given to update(). Taken once.
   bool takeChargeEndPeak(uint32_t& millivolts);
+  // The ADC offset was just calibrated: readings before it are not
+  // comparable with the next one (a step of up to ~20 mV). Forget them so a
+  // step is neither a climb nor a charge end; the state itself is kept.
+  void rebase();
   uint32_t chargeEnds() const { return charge_ends_; }
 
  private:

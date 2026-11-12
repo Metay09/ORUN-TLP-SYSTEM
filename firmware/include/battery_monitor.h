@@ -21,7 +21,11 @@ namespace orun_tlp {
 // - A reading waits for a quiet moment (no radio transmission, no GNSS
 //   receiver running, quiet for a second); if none comes it is taken anyway
 //   and counted as loaded.
-// - SAADC offset calibration at boot and hourly (Nordic: after a 10 C change).
+// - SAADC offset calibration at boot and when the chip temperature has moved
+//   10 C since the last one (Nordic's rule). Each calibration can shift the
+//   reading by 10-20 mV at the battery (bench 2026-11-12: hourly calibration
+//   made steps of +6, +9 and +20 mV that read as "charging" and as drain);
+//   calibrations() lets the power state start its rise check afresh.
 namespace battery_config {
 constexpr uint32_t kFullScaleMv = 3000;          // AR_INTERNAL_3_0
 constexpr uint32_t kAdcCounts = 4096;            // 12-bit
@@ -31,7 +35,8 @@ constexpr uint8_t kSampleTimeUs = 40;            // Nordic: up to 800 kOhm
 constexpr uint32_t kReadingIntervalMs = 60000;
 constexpr uint32_t kQuietSettleMs = 1000;        // after the load stops
 constexpr uint32_t kQuietWaitMaxMs = 240000;     // then read anyway (loaded)
-constexpr uint32_t kCalibrationIntervalMs = 3600000;
+constexpr uint32_t kTemperatureCheckMs = 600000;   // look at the chip every 10 min
+constexpr int32_t kRecalibrateDeciC = 100;          // 10 C since the last calibration
 constexpr uint32_t kScaleUnit = 1000000;         // board scale, parts per million
 constexpr uint32_t kScaleMin = 970000;
 constexpr uint32_t kScaleMax = 1030000;
@@ -62,6 +67,8 @@ class BatteryMonitor {
   uint32_t readings() const { return readings_; }
   uint32_t loadedReadings() const { return loaded_readings_; }
   uint32_t calibrations() const { return calibrations_; }
+  // Chip temperature at the last look, tenths of a degree C.
+  int32_t temperatureDeciC() const { return temperature_dc_; }
   bool lastQuiet() const { return last_quiet_; }
   bool usb() const { return usb_; }
 
@@ -78,7 +85,9 @@ class BatteryMonitor {
   uint32_t readings_ = 0;
   uint32_t loaded_readings_ = 0;
   uint32_t calibrations_ = 0;
-  uint32_t calibrated_at_ms_ = 0;
+  int32_t calibrated_dc_ = 0;      // chip temperature at the last calibration
+  int32_t temperature_dc_ = 0;
+  uint32_t temperature_at_ms_ = 0;
   uint32_t quiet_since_ms_ = 0;
   bool quiet_ = false;
   bool last_quiet_ = false;

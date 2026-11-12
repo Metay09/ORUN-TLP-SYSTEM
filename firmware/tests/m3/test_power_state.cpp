@@ -108,6 +108,49 @@ void noiseIsNotAChargeEnd() {
   assert(t.state() == PowerState::kBattery);
 }
 
+void calibrationStepIsNotCharging() {
+  // Bench 2026-11-12, Hayvan 2 on battery: 14:09 4067, then the hourly
+  // offset calibration, 14:14 4087 and level from there.
+  PowerStateTracker without, with;
+  uint32_t now = 0;
+  for (int i = 0; i < 15; ++i, now += kMin) {
+    without.update(now, 4068, false);
+    with.update(now, 4068, false);
+  }
+  with.rebase();   // what the firmware does after a calibration
+  bool charging_without = false, charging_with = false;
+  for (int i = 0; i < 15; ++i, now += kMin) {
+    without.update(now, 4087, false);
+    with.update(now, 4087, false);
+    charging_without |= without.state() == PowerState::kCharging;
+    charging_with |= with.state() == PowerState::kCharging;
+  }
+  assert(charging_without);   // the old false "Şarj oluyor"
+  assert(!charging_with && with.state() == PowerState::kBattery);
+  // A step down after a calibration is not a charge end either.
+  with.rebase();
+  with.update(now, 4060, false);
+  uint32_t peak = 0;
+  assert(!with.takeChargeEndPeak(peak));
+
+  // FULL on USB survives a calibration.
+  PowerStateTracker usb;
+  now = 0;
+  for (int i = 0; i < 20; ++i, now += kMin) usb.update(now, 4110, true);
+  assert(usb.state() == PowerState::kFull);
+  usb.rebase();
+  for (int i = 0; i < 5; ++i, now += kMin) usb.update(now, 4128, true);
+  assert(usb.state() == PowerState::kFull);
+  // Real sun after a calibration is still seen: a sustained climb.
+  PowerStateTracker sun;
+  now = 0;
+  for (int i = 0; i < 15; ++i, now += kMin) sun.update(now, 3900, false);
+  sun.rebase();
+  uint32_t mv = 3900;
+  for (int i = 0; i < 20; ++i, now += kMin, mv += 4) sun.update(now, mv, false);
+  assert(sun.state() == PowerState::kCharging);
+}
+
 }  // namespace
 
 int main() {
@@ -117,6 +160,7 @@ int main() {
   noBattery();
   solarDay();
   noiseIsNotAChargeEnd();
+  calibrationStepIsNotCharging();
   puts("Power state from quiet battery readings: PASS");
   return 0;
 }
