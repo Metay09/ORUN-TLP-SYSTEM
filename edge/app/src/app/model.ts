@@ -49,10 +49,13 @@ export interface Animal {
   /** Every record with its own time, located or not (activity), oldest first. */
   reports: Observation[];
   /** Battery readings of every record, also without a fix or a clock (then: when it reached the gateway), last 7 days. */
-  batteryTrail: { t: number; mv: number }[];
+  batteryTrail: { t: number; mv: number; power?: string | null; usb?: boolean | null }[];
   /** When the battery shown was measured. */
   batteryAt: number | null;
   batteryMv: number | null;
+  /** Pil 2: the newest battery reading's power state and USB (null: older firmware). */
+  batteryPower: string | null;
+  batteryUsb: boolean | null;
   last: Observation | null; // newest by RECORD time
   lastTime: number | null;  // epoch ms of that record
   /** Newest record of ANY kind (also without a GNSS fix): when the collar was last heard. */
@@ -99,6 +102,8 @@ export interface Device {
   battery: BatteryLevel;
   batteryPercent: number | null;
   batteryMv: number | null;
+  batteryPower: string | null;
+  batteryUsb: boolean | null;
   records: number;
   medianDelayS: number | null;
 }

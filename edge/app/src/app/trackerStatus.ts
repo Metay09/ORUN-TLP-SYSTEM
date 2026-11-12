@@ -18,7 +18,9 @@ export interface TrackerStatus {
   /** 4c-1a: Bluetooth open after each report (s, 0 = off); null when the firmware does not say. */
   bleWindowS?: number | null;
   gnss: { state: number; detected: boolean; fixes: number; attempts: number; timeouts: number; lastTtffMs: number } | null;
-  battery: { valid: boolean; mv: number; percent: number | null; state: "unknown" | "normal" | "low" | "critical"; calibrated: boolean } | null;
+  battery: { valid: boolean; mv: number; percent: number | null; state: "unknown" | "normal" | "low" | "critical"; calibrated: boolean;
+             /** Pil 2: what the battery does and the USB supply (null: older firmware). */
+             power?: string | null; usb?: boolean | null } | null;
   services: {
     explicit: boolean;
     /** what was asked for (null in AUTO: the firmware decides from the hardware) */
@@ -80,6 +82,7 @@ export function serviceStateName(state: number, reason: number): string {
             8: "BLOCKED_GNSS_UNAVAILABLE", 3: "BLOCKED_UNSUPPORTED", 2: "BLOCKED_INVALID" } as Record<number, string>)[reason] ?? "BLOCKED";
 }
 const BATTERY = ["UNKNOWN", "NORMAL", "LOW", "CRITICAL"];
+const POWER = ["UNKNOWN", "BATTERY", "CHARGING", "FULL", "NO_BATTERY"];
 
 function servicesLetters(bits: number): string {
   const t = (bits & 1 ? "T" : "") + (bits & 2 ? "R" : "") + (bits & 4 ? "A" : "");
@@ -120,7 +123,9 @@ export function decodeBle(family: Family, m: AppMessage): Record<string, string>
     case "power":
       return { battery: p[1] & 1 ? "MEASURED" : "NONE", state: BATTERY[p[2]] ?? "UNKNOWN",
                percent_est: p[1] & 1 && p[3] <= 100 ? s(p[3]) : "-", mv: s(le16(p, 4)), raw: s(le16(p, 6)),
-               age_ms: s(le32(p, 8)), readings: s(le32(p, 12)), calibrated: yes(p[1] & 2) };
+               age_ms: s(le32(p, 8)), readings: s(le32(p, 12)), calibrated: yes(p[1] & 2),
+               // Pil 2: bits 2-4 power state, bit 5 USB (older firmware: 0).
+               ...((p[1] >> 2) & 7 ? { power: POWER[(p[1] >> 2) & 7] ?? "UNKNOWN", usb: yes(p[1] & 0x20) } : {}) };
     case "services": {
       const explicit = p[1] === 1;
       return { mode: explicit ? "EXPLICIT" : "AUTO", requested: explicit ? servicesLetters(p[2]) : "-",
@@ -157,7 +162,9 @@ export function buildStatus(raw: Raw, via: Via, at: number): TrackerStatus {
     gnss: t ? { state: num(t.gnss_state) ?? 0, detected: t.detected === "yes", fixes: num(t.fresh) ?? 0,
                 attempts: num(t.attempts) ?? 0, timeouts: num(t.timeouts) ?? 0, lastTtffMs: num(t.last_ttff_ms) ?? 0 } : null,
     battery: p ? { valid: p.battery === "MEASURED", mv: num(p.mv) ?? 0, percent: num(p.percent_est),
-                   state: (["normal", "low", "critical"].includes(p.state?.toLowerCase() ?? "") ? p.state.toLowerCase() : "unknown") as "unknown" | "normal" | "low" | "critical", calibrated: p.calibrated === "yes" } : null,
+                   state: (["normal", "low", "critical"].includes(p.state?.toLowerCase() ?? "") ? p.state.toLowerCase() : "unknown") as "unknown" | "normal" | "low" | "critical", calibrated: p.calibrated === "yes",
+                   power: p.power && p.power !== "UNKNOWN" ? p.power : null,
+                   usb: p.usb === undefined ? null : p.usb === "yes" } : null,
     services: sv ? { explicit: sv.mode === "EXPLICIT",
                      requested: sv.mode === "EXPLICIT" && sv.requested && sv.requested !== "-"
                        ? { tracking: sv.requested.includes("T"), relay: sv.requested.includes("R"), receive: sv.requested.includes("A") }

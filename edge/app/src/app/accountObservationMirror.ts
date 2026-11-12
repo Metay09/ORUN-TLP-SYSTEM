@@ -257,7 +257,8 @@ export class AccountObservationMirror {
         const heard = typeof r.first_seen_utc === "number" ? r.first_seen_utc : null;
         unlocated?.push({ tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence, time: d.time,
           received: heard ? new Date(heard * 1000).toISOString() : null, gnssFailures: d.gnss_failures ?? null,
-          battery_mv: d.battery_mv, battery: d.battery, active_s: d.active_s, covered_s: d.covered_s, period_s: d.period_s });
+          battery_mv: d.battery_mv, battery: d.battery, power: d.power ?? null, usb: d.usb ?? null,
+          active_s: d.active_s, covered_s: d.covered_s, period_s: d.period_s });
         continue;
       }
       const seen = typeof r.first_seen_utc === "number" ? r.first_seen_utc : null;
@@ -266,8 +267,8 @@ export class AccountObservationMirror {
         tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence,
         time: d.time, lat: d.lat, lon: d.lon, alt_m: d.alt_m,
         sats: d.sats, hdop: d.hdop, fix_age_s: d.fix_age_s,
-        battery_mv: d.battery_mv, battery: d.battery, active_s: d.active_s,
-        covered_s: d.covered_s, source: d.source, period_s: d.period_s,
+        battery_mv: d.battery_mv, battery: d.battery, power: d.power ?? null, usb: d.usb ?? null,
+        active_s: d.active_s, covered_s: d.covered_s, source: d.source, period_s: d.period_s,
         rssi: typeof r.rssi === "number" ? r.rssi : null,
         snr: typeof r.snr === "number" ? r.snr : null,
         received: seen ? new Date(seen * 1000).toISOString() : null,

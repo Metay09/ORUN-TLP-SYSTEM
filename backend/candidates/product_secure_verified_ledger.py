@@ -63,7 +63,11 @@ def _location(source: int, lat: int, lon: int) -> bool:
 
 
 def _periodic_valid(p: bytes) -> bool:
-    if len(p) != 64 or p[0] != 1 or p[2] > 4 or p[3] > 3 or p[41] > 2 or p[42] > 2:
+    if len(p) != 64 or p[0] != 1 or p[2] > 4 or p[3] > 3 or p[41] > 2:
+        return False
+    # Byte 42 (Pil 2, wire spec 7.4): bits 0-1 quality 0..2, bits 2-4 power
+    # state 0..4, bit 5 USB, bits 6-7 reserved.
+    if (p[42] & 0x03) > 2 or ((p[42] >> 2) & 0x07) > 4 or p[42] & 0xC0:
         return False
     flags, source, battery_state = p[1], p[2], p[3]
     if not _u(p[4:12]) or not _u(p[12:16]):

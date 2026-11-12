@@ -1,5 +1,7 @@
 #include "usb_application_adapter.h"
 
+#include "power_state.h"
+
 #include <Arduino.h>
 
 #include <stdio.h>
@@ -491,7 +493,7 @@ void printUsbApplicationResponse(const ApplicationResponse& response) {
                  static_cast<unsigned>(s.battery_percent));
       Serial.printf(
           "APP POWER id=%lu battery=%s state=%s percent_est=%s mv=%u raw=%u "
-          "age_ms=%lu readings=%lu calibrated=%s\n",
+          "age_ms=%lu readings=%lu calibrated=%s power=%s usb=%s\n",
           static_cast<unsigned long>(response.request_id),
           s.battery_valid ? "MEASURED" : "NONE",
           batteryStateName(s.battery_state), percent,
@@ -499,7 +501,9 @@ void printUsbApplicationResponse(const ApplicationResponse& response) {
           static_cast<unsigned>(s.battery_raw),
           static_cast<unsigned long>(s.battery_age_ms),
           static_cast<unsigned long>(s.battery_readings),
-          s.battery_calibrated ? "yes" : "no");
+          s.battery_calibrated ? "yes" : "no",
+          powerStateName(static_cast<PowerState>(s.power_state)),
+          s.usb_power ? "yes" : "no");
       return;
     }
 

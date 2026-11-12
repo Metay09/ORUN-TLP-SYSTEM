@@ -193,6 +193,8 @@ struct ApplicationPowerSnapshot {
   uint8_t battery_calibrated;
   ApplicationBatteryState battery_state;
   uint8_t battery_percent;   // estimate 0..100, 255 without a reading
+  uint8_t power_state;       // PowerState (power_state.h), Pil 2
+  uint8_t usb_power;         // USB supply present
 };
 
 // Requested service intent next to what runs (ConfigStore v4 section 11).

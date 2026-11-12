@@ -42,15 +42,42 @@ export function freshRatio(ms: number | null, periodS: number, now: number): num
   return Math.max(0, Math.min(1, 1 - (now - ms) / lim));
 }
 
-// Li-ion cell: ~3.50 V empty .. ~4.15 V full under light load (bench collar).
+/**
+ * Pil 2 (owner 2026-11-12: a full battery reads 100 %). The same table as the
+ * firmware (battery_policy.cpp batteryPercentEstimate): the RAK19007 charger
+ * holds a full cell between its 4.05 V restart threshold and 4.20 V, so
+ * 4050 mV and above is 100 %; below, Meshtastic's LiPo rest-voltage shape
+ * (nRF52 variant, 3.40 V empty) stretched to that.
+ */
+const CURVE: [number, number][] = [[3400, 0], [3440, 11], [3480, 22], [3530, 33], [3630, 44],
+  [3720, 56], [3800, 67], [3890, 78], [3990, 89], [4050, 100]];
 export function batteryPercent(mv: number | null): number | null {
   if (mv === null || mv <= 0) return null;
-  return Math.round(Math.min(100, Math.max(0, ((mv - 3500) / 650) * 100)));
+  if (mv <= CURVE[0][0]) return 0;
+  for (let i = 1; i < CURVE.length; i++) {
+    const [hm, hp] = CURVE[i], [lm, lp] = CURVE[i - 1];
+    if (mv <= hm) return lp + Math.floor(((mv - lm) * (hp - lp) + (hm - lm) / 2) / (hm - lm));
+  }
+  return 100;
+}
+
+/** A reading's percent with the collar's own word: FULL is 100 %, no battery has none. */
+export function readingPercent(b: { mv: number | null; power?: string | null }): number | null {
+  if (b.power === "FULL") return 100;
+  if (b.power === "NO_BATTERY") return null;
+  return batteryPercent(b.mv);
+}
+
+/** On an outside supply (USB) or without a cell: says nothing about the battery's own drain. */
+export function externallyPowered(b: { power?: string | null; usb?: boolean | null }): boolean {
+  return b.usb === true || b.power === "NO_BATTERY";
 }
 
 export function batteryOf(p: Observation | null): { level: BatteryLevel; percent: number | null } {
   if (!p || p.battery_mv === null) return { level: "unknown", percent: null };
-  const pct = batteryPercent(p.battery_mv);
+  if (p.power === "NO_BATTERY") return { level: "unknown", percent: null };
+  const pct = readingPercent({ mv: p.battery_mv, power: p.power });
+  if (p.power === "FULL" || p.power === "CHARGING") return { level: "good", percent: pct };
   if (p.battery === "CRITICAL" || (pct !== null && pct <= 5)) return { level: "critical", percent: pct };
   if (p.battery === "LOW" || (pct !== null && pct <= 20)) return { level: "low", percent: pct };
   return { level: "good", percent: pct };
@@ -114,6 +141,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names, unloca
     const o: Observation = {
       tracker: r.tracker, incarnation: r.incarnation, seq: r.seq, time: r.time, lat: NaN, lon: NaN, alt_m: null,
       sats: null, hdop: null, fix_age_s: null, battery_mv: r.battery_mv ?? null, battery: r.battery ?? null,
+      power: r.power ?? null, usb: r.usb ?? null,
       active_s: r.active_s ?? null, covered_s: r.covered_s ?? null, source: "NONE", period_s: r.period_s ?? 0,
       rssi: null, snr: null, received: r.received ?? null, delay_s: null, link: null,
     };
@@ -162,7 +190,8 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names, unloca
         if (rank[b.level] > rank[bat.level]) bat.level = b.level;
       }
     }
-    const batteryTrail = withBattery.filter((x) => x.t >= now - 7 * 24 * HOUR).map((x) => ({ t: x.t, mv: x.o.battery_mv! }));
+    const batteryTrail = withBattery.filter((x) => x.t >= now - 7 * 24 * HOUR)
+      .map((x) => ({ t: x.t, mv: x.o.battery_mv!, power: x.o.power ?? null, usb: x.o.usb ?? null }));
     const profile = profiles[id] ?? blankProfile(id);
     const device = last?.tracker ?? by.get(id)?.device ?? (profiles[id] ? id : null);
     // The account's name wins; then the phone's own; else the Bluetooth name.
@@ -202,6 +231,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names, unloca
     herd.push({
       id, device, profile, name, named, initials: named ? initialsOf(name) : "", color: profile.color,
       points: timed, reports, batteryTrail, batteryAt: newestBat?.t ?? null, batteryMv: newestBat?.o.battery_mv ?? null,
+      batteryPower: newestBat?.o.power ?? null, batteryUsb: newestBat?.o.usb ?? null,
       last, lastTime, lastReport, noFix, gpsFault, heardOnly: (heardAll.get(id) ?? []).sort((x, y) => x - y), periodS, freshness,
       freshRatio: freshRatio(lastTime, periodS, now), status, seen, short,
       battery: bat.level, batteryPercent: bat.percent,

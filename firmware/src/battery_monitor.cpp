@@ -6,28 +6,17 @@
 
 namespace orun_tlp {
 
-namespace {
-uint32_t toMillivolts(uint32_t raw, uint32_t factor_x1000) {
+uint32_t batteryMillivoltsFromRaw(uint32_t raw) {
   using namespace battery_config;
-  const uint64_t numerator = static_cast<uint64_t>(raw) * kFullScaleMv * factor_x1000;
+  const uint64_t numerator = static_cast<uint64_t>(raw) * kFullScaleMv * kDividerX1000;
   const uint64_t denominator = static_cast<uint64_t>(kAdcCounts) * 1000U;
   return static_cast<uint32_t>((numerator + denominator / 2) / denominator);
 }
 
-uint32_t averageRead() {
-  uint32_t sum = 0;
-  for (uint8_t i = 0; i < battery_config::kSamplesPerReading; ++i)
-    sum += static_cast<uint32_t>(analogRead(WB_A0));
-  return (sum + battery_config::kSamplesPerReading / 2) / battery_config::kSamplesPerReading;
-}
-}  // namespace
-
-uint32_t batteryMillivoltsFromRaw(uint32_t raw) {
-  return toMillivolts(raw, battery_config::kDividerCompX1000);
-}
-
-uint32_t batteryMillivoltsFromSlowRaw(uint32_t raw) {
-  return toMillivolts(raw, battery_config::kDividerRatioX1000);
+uint32_t BatteryMonitor::scaled(uint32_t raw) const {
+  const uint64_t mv = batteryMillivoltsFromRaw(raw);
+  return static_cast<uint32_t>((mv * scale_ppm_ + battery_config::kScaleUnit / 2) /
+                               battery_config::kScaleUnit);
 }
 
 void BatteryMonitor::begin(uint32_t now_ms) {
@@ -35,6 +24,7 @@ void BatteryMonitor::begin(uint32_t now_ms) {
   // the ADC, so it is set once here.
   analogReference(AR_INTERNAL_3_0);
   analogReadResolution(12);
+  analogSampleTime(battery_config::kSampleTimeUs);
   quiet_ = true;  // until poll() says otherwise
   quiet_since_ms_ = now_ms;
   calibrate(now_ms);
@@ -47,8 +37,20 @@ void BatteryMonitor::calibrate(uint32_t now_ms) {
   ++calibrations_;
 }
 
+void BatteryMonitor::setReference(uint32_t read_mv, uint32_t reference_mv) {
+  using namespace battery_config;
+  if (read_mv == 0) return;
+  // The scale that would have read `reference_mv`, then halfway there.
+  const uint64_t target = static_cast<uint64_t>(scale_ppm_) * reference_mv / read_mv;
+  uint64_t next = (static_cast<uint64_t>(scale_ppm_) + target) / 2;
+  if (next < kScaleMin) next = kScaleMin;
+  if (next > kScaleMax) next = kScaleMax;
+  scale_ppm_ = static_cast<uint32_t>(next);
+  scale_learned_ = true;
+  if (readings_ != 0) millivolts_ = scaled(raw_);
+}
+
 bool BatteryMonitor::poll(uint32_t now_ms, bool quiet, bool usb) {
-  if (usb && !usb_) usb_peak_raw_ = usb_peak_slow_raw_ = 0;  // a new USB session
   usb_ = usb;
   if (!quiet) {
     quiet_ = false;
@@ -72,20 +74,16 @@ bool BatteryMonitor::poll(uint32_t now_ms, bool quiet, bool usb) {
 }
 
 void BatteryMonitor::read(uint32_t now_ms, bool quiet) {
-  // A few microseconds each; averaging smooths ADC noise, not load sag.
-  raw_ = averageRead();
-  analogSampleTime(battery_config::kSlowSampleTimeUs);
-  slow_raw_ = averageRead();
-  analogSampleTime(3);  // back to the core default (any other value)
-  millivolts_ = batteryMillivoltsFromRaw(raw_);
+  // A few tens of microseconds each; averaging smooths ADC noise, not load sag.
+  uint32_t sum = 0;
+  for (uint8_t i = 0; i < battery_config::kSamplesPerReading; ++i)
+    sum += static_cast<uint32_t>(analogRead(WB_A0));
+  raw_ = (sum + battery_config::kSamplesPerReading / 2) / battery_config::kSamplesPerReading;
+  millivolts_ = scaled(raw_);
   read_at_ms_ = now_ms;
   last_quiet_ = quiet;
   ++readings_;
   if (!quiet) ++loaded_readings_;
-  if (quiet && usb_) {
-    if (raw_ > usb_peak_raw_) usb_peak_raw_ = raw_;
-    if (slow_raw_ > usb_peak_slow_raw_) usb_peak_slow_raw_ = slow_raw_;
-  }
 }
 
 }  // namespace orun_tlp

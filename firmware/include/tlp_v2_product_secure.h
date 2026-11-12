@@ -79,6 +79,14 @@ constexpr uint8_t kBatteryStateCritical = 3U;
 constexpr uint8_t kBatteryQualityUnknown = 0U;
 constexpr uint8_t kBatteryQualityMeasured = 1U;
 constexpr uint8_t kBatteryQualityModelEstimated = 2U;
+// Pil 2 (2026-11-12): byte 42 also carries the power state and the USB
+// supply (section 7.4): bits 0-1 quality, bits 2-4 power state, bit 5 USB.
+constexpr uint8_t kBatteryQualityMask = 0x03U;
+constexpr uint8_t kBatteryPowerShift = 2U;
+constexpr uint8_t kBatteryPowerMask = 0x1CU;
+constexpr uint8_t kBatteryPowerMax = 4U;   // PowerState (power_state.h)
+constexpr uint8_t kBatteryUsbBit = 0x20U;
+constexpr uint8_t kBatteryReservedMask = 0xC0U;
 
 constexpr uint16_t kHealthGnssDegraded = 1U << 0;
 constexpr uint16_t kHealthGnssFault = 1U << 1;

@@ -159,10 +159,11 @@ export function daySummaries(pts: Observation[]): DaySummary[] {
 }
 
 /** Battery voltage over the last `days` days, one value per record. */
-export function batterySeries(pts: Observation[], now: number, days = 7): { t: number; mv: number }[] {
+export function batterySeries(pts: Observation[], now: number, days = 7):
+    { t: number; mv: number; power: string | null; usb: boolean | null }[] {
   const from = now - days * DAY;
   return timed(pts).filter(({ p, t }) => t >= from && p.battery_mv !== null)
-    .map(({ p, t }) => ({ t, mv: p.battery_mv! })).sort((a, b) => a.t - b.t);
+    .map(({ p, t }) => ({ t, mv: p.battery_mv!, power: p.power ?? null, usb: p.usb ?? null })).sort((a, b) => a.t - b.t);
 }
 
 export function medianDelayS(pts: Observation[]): number | null {

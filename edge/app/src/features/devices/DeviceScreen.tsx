@@ -148,7 +148,8 @@ export function DeviceScreen({ id, ble }: { id: string; ble?: string }) {
           </> : <p className="sm" style={{ padding: "14px 16px", margin: 0 }}>Hesaba giriş yapınca gateway'in durumu görünür.</p>
         ) : <>
           <KV k={tr.device.lastContact}>{dev?.lastTime ? `${fmt.clock(dev.lastTime)} · ${fmt.ago(dev.lastTime, m.now)}` : "—"}</KV>
-          <KV k={tr.animal.battery}>{dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}${dev.batteryMv ? ` · ${fmt.dec(dev.batteryMv / 1000, 2)} V` : ""}` : "—"}</KV>
+          <KV k={tr.animal.battery}>{dev?.batteryPower === "NO_BATTERY" ? "Pil takılı değil · USB"
+            : dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}${dev.batteryPower === "CHARGING" ? " · şarj oluyor" : dev.batteryPower === "FULL" ? " · dolu" : ""}${dev.batteryUsb ? " · USB" : ""}${dev.batteryMv ? ` · ${fmt.dec(dev.batteryMv / 1000, 2)} V` : ""}` : "—"}</KV>
           <KV k={tr.device.signal}>{dev && dev.rssi !== null ? tr.device.signalLine(dev.rssi, dev.snr) : tr.device.signalNone}</KV>
           {dev?.link && <KV k="Yol">{tr.device.link[dev.link]}</KV>}
           {dev && dev.medianDelayS !== null && <KV k={tr.device.delay}>{dev.medianDelayS < 60 ? `${dev.medianDelayS} sn` : fmt.duration(dev.medianDelayS * 1000)}</KV>}

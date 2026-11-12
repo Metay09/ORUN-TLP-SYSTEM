@@ -120,39 +120,39 @@ def compare(before: dict, after: dict) -> list[tuple[bool, str]]:
 
 
 BATTERY = re.compile(r"BATTERY state=(\w+) percent_est=(\d+) mv=(\d+) raw=(\d+)")
-BATTERY_SOURCE = re.compile(r"BATTERY SOURCE usb=(\w+) quiet=(\w+) loaded=(\d+) calibrations=(\d+) "
-                            r"slow_raw=(\d+) slow_mv=(\d+)")
-BATTERY_PEAK = re.compile(r"BATTERY USB PEAK raw=(\d+) mv=(\d+) slow_raw=(\d+) slow_mv=(\d+)")
+BATTERY_SOURCE = re.compile(r"BATTERY SOURCE usb=(\w+) power=(\w+) quiet=(\w+) loaded=(\d+) "
+                            r"calibrations=(\d+) scale_ppm=(\d+) learned=(\w+) charge_ends=(\d+)")
+POWER_WORD = {"BATTERY": "pilde", "CHARGING": "şarj oluyor", "FULL": "dolu",
+              "NO_BATTERY": "pil takılı değil", "UNKNOWN": "henüz belli değil"}
 
 
 def parse_battery(lines: list[str]) -> dict:
-    """BATTERY? cevabı (Pil 1): eski yöntem, 40 µs okuma, USB ve USB'deyken en yüksek."""
+    """BATTERY? cevabı (Pil 2): voltaj, USB, pilin durumu ve kartın kendi ölçeği."""
     out: dict = {}
     for line in lines:
         if m := BATTERY.search(line):
             out.update(state=m[1], percent=int(m[2]), mv=int(m[3]), raw=int(m[4]))
         elif m := BATTERY_SOURCE.search(line):
-            out.update(usb=m[1] == "yes", quiet=m[2] == "yes", loaded=int(m[3]),
-                       calibrations=int(m[4]), slow_raw=int(m[5]), slow_mv=int(m[6]))
-        elif m := BATTERY_PEAK.search(line):
-            out.update(peak_mv=int(m[2]), peak_slow_mv=int(m[4]))
+            out.update(usb=m[1] == "yes", power=m[2], quiet=m[3] == "yes", loaded=int(m[4]),
+                       calibrations=int(m[5]), scale_ppm=int(m[6]), learned=m[7] == "yes",
+                       charge_ends=int(m[8]))
     return out
 
 
 def battery_report(b: dict) -> list[str]:
-    """Türkçe özet. Şarjın sabit voltaj evresinde pil uçları 4,20 V (±%1) olur."""
+    """Türkçe özet."""
     if "mv" not in b:
         return ["Cihaz pil ölçümünü bildirmedi (yazılımı eski olabilir)."]
     out = [f"USB: {'takılı' if b.get('usb') else 'yok'}",
-           f"Eski yöntem (3 µs, 1,73): {b['mv']} mV (%{b['percent']})"]
-    if "slow_mv" in b:
-        diff = (b["slow_mv"] - b["mv"]) / b["mv"] * 100 if b["mv"] else 0.0
-        out.append(f"Yeni yöntem (40 µs, 2,5/1,5): {b['slow_mv']} mV (fark {diff:+.1f}%)")
+           f"Pil: {POWER_WORD.get(b.get('power', 'UNKNOWN'), b.get('power'))} · {b['mv']} mV"
+           + ("" if b.get("power") == "NO_BATTERY" else f" (%{100 if b.get('power') == 'FULL' else b['percent']})")]
+    if "scale_ppm" in b:
+        scale = (b["scale_ppm"] - 1_000_000) / 10_000
+        out.append(f"Kartın ölçeği: {scale:+.1f}% " + ("(şarj sonundan öğrenildi)" if b.get("learned")
+                                                      else "(henüz öğrenilmedi; ilk şarj bitince öğrenir)")
+                   + f" · şarj sonu: {b.get('charge_ends', 0)}")
         out.append(f"Son okuma sakin anda mı: {'evet' if b.get('quiet') else 'hayır'} · "
                    f"yüklüyken alınan: {b.get('loaded', 0)} · kalibrasyon: {b.get('calibrations', 0)}")
-    if b.get("peak_mv"):
-        out.append(f"USB'deyken en yüksek: eski {b['peak_mv']} mV, yeni {b['peak_slow_mv']} mV "
-                   "(şarj sabit voltajdayken gerçek değer 4200 mV ±42)")
     return out
 
 
@@ -255,9 +255,8 @@ def main() -> int:
             b = parse_battery(read_battery(a.port))
             if "mv" in b:
                 print(time.strftime("%H:%M"), f"usb={'var' if b.get('usb') else 'yok'}",
-                      f"eski={b['mv']}", f"yeni={b.get('slow_mv')}",
-                      f"en_yuksek_eski={b.get('peak_mv', 0)}", f"en_yuksek_yeni={b.get('peak_slow_mv', 0)}",
-                      flush=True)
+                      f"durum={b.get('power')}", f"mv={b['mv']}", f"olcek_ppm={b.get('scale_ppm')}",
+                      f"sarj_sonu={b.get('charge_ends', 0)}", flush=True)
         return 0 if "mv" in b else 2
     if a.cmd == "rol":
         info = parse(read(a.port))

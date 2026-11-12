@@ -73,7 +73,10 @@ tlp::ProductSecureCodecResult buildPeriodicPlaintext(
     flags |= tlp::kPeriodicBatteryValid;
     p.battery_mv = in.battery_mv;
     p.battery_state = in.battery_state;
-    p.battery_quality = tlp::kBatteryQualityMeasured;
+    const uint8_t power = in.power_state <= tlp::kBatteryPowerMax ? in.power_state : 0U;
+    p.battery_quality = static_cast<uint8_t>(
+        tlp::kBatteryQualityMeasured | (power << tlp::kBatteryPowerShift) |
+        (in.usb_power ? tlp::kBatteryUsbBit : 0U));
   }
 
   if (in.health.valid) {

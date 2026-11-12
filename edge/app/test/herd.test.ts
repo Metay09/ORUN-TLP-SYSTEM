@@ -109,3 +109,41 @@ test("distance and direction", () => {
   assert.equal(fmt.direction(bearingDeg({ lat: 37.6, lon: 28.05 }, { lat: 37.61, lon: 28.06 })), "kuzeydoğu");
   assert.equal(fmt.direction(bearingDeg({ lat: 37.6, lon: 28.05 }, { lat: 37.59, lon: 28.05 })), "güney");
 });
+
+test("Pil 2: one percent table with the firmware; FULL is 100 %, no battery has none", async () => {
+  const { batteryPercent, readingPercent, externallyPowered } = await import("../src/app/herd.ts");
+  // Same values as firmware/tests/m3/test_battery_policy.cpp percentEstimate().
+  for (const [mv, p] of [[4200, 100], [4050, 100], [3990, 89], [3400, 0], [3840, 72], [4020, 95], [3500, 26], [3350, 0]])
+    assert.equal(batteryPercent(mv), p, `${mv} mV`);
+  assert.equal(readingPercent({ mv: 4010, power: "FULL" }), 100);
+  assert.equal(readingPercent({ mv: 4300, power: "NO_BATTERY" }), null);
+  assert.equal(readingPercent({ mv: 3840, power: null }), 72);
+  assert.equal(externallyPowered({ usb: true, power: "CHARGING" }), true);
+  assert.equal(externallyPowered({ usb: false, power: "CHARGING" }), false);   // solar: the battery's own balance
+  assert.equal(batteryOf(pt("A", 1, { battery_mv: 3990, power: "FULL", usb: true })).percent, 100);
+  assert.deepEqual(batteryOf(pt("A", 1, { battery_mv: 4300, power: "NO_BATTERY", usb: true })), { level: "unknown", percent: null });
+  // Charging from low is not an alarm.
+  assert.equal(batteryOf(pt("A", 1, { battery_mv: 3450, battery: "LOW", power: "CHARGING", usb: true })).level, "good");
+});
+
+test("Pil 2: the record's byte 42 carries the power state and USB", async () => {
+  const { describePeriodic, periodicValid } = await import("../src/core/product.ts");
+  const rec = (b42: number) => {
+    const p = new Uint8Array(64);
+    p[0] = 1; p[1] = 32; p[3] = 1;
+    p[11] = 1; p[15] = 1; p[23] = 60; p[38] = 0xff; p[39] = 0xff;
+    p[42] = b42; p[56] = 0x10; p[57] = 0x04;   // 4100 mV
+    return p;
+  };
+  const dev = new Uint8Array(8);
+  assert.ok(periodicValid(rec(1)));
+  assert.ok(periodicValid(rec(1 | 3 << 2 | 0x20)));
+  assert.ok(!periodicValid(rec(1 | 5 << 2)));
+  assert.ok(!periodicValid(rec(1 | 0x40)));
+  const full = describePeriodic(dev, rec(1 | 3 << 2 | 0x20));
+  assert.equal(full.power, "FULL");
+  assert.equal(full.usb, true);
+  const old = describePeriodic(dev, rec(1));
+  assert.equal(old.power, null);
+  assert.equal(old.usb, null);
+});

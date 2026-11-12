@@ -159,6 +159,8 @@ ApplicationStatusSnapshot makeSnapshot() {
 
   s.power.battery_valid = 1;
   s.power.battery_calibrated = 0;
+  s.power.power_state = 3;   // Pil 2: FULL
+  s.power.usb_power = 1;     // flags byte: 0x01 | 3 << 2 | 0x20 = 0x2D
   s.power.battery_state = ApplicationBatteryState::kLow;
   s.power.battery_mv = 3456;        // 0x0D80
   s.power.battery_raw = 2728;       // 0x0AA8
@@ -280,7 +282,7 @@ int main() {
         transact(transport, bat::MessageType::kGetPowerStatusRequest,
                  bat::MessageType::kGetPowerStatusResponse, 0x1005, payload);
     const uint8_t expected[] = {
-        0x00, 0x01, 0x02, 0x04,
+        0x00, 0x2D, 0x02, 0x04,
         0x80, 0x0D, 0xA8, 0x0A,
         0x04, 0x03, 0x02, 0x01,
         0x0D, 0x0C, 0x0B, 0x0A};

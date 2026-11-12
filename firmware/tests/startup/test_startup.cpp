@@ -411,7 +411,7 @@ int productBusyHealthScenario() {
 int batteryCriticalScenario() {
   auto rawFor = [](uint32_t mv) {
     constexpr uint64_t kPerCount = uint64_t(battery_config::kFullScaleMv) *
-                                   battery_config::kDividerCompX1000;
+                                   battery_config::kDividerX1000;
     return static_cast<uint32_t>(
         (uint64_t(mv) * battery_config::kAdcCounts * 1000U + kPerCount / 2) /
         kPerCount);
@@ -468,7 +468,7 @@ int batteryCriticalScenario() {
   // the first 10-reading period (4200 at boot, lowest 3300).
   assert(battery_monitor.readings() == 10);
   assert(Serial.output.find(
-             "BATTERY LOG mv=3650 low=3300 high=4200 percent_est=8 "
+             "BATTERY LOG mv=3650 low=3300 high=4200 percent_est=47 "
              "state=NORMAL period_min=10 readings=10\n") != std::string::npos);
   Serial.output.clear();
   Serial.queueInput("BATTERY LOG?\n");
@@ -730,7 +730,7 @@ int main(int argc, char** argv) {
   lora_result = mode == "lora" ? -1 : 0;
   Bluefruit.Advertising.start_result = !ble_advertising_fails;
   Bluefruit.begin_result = !ble_runtime_fails;
-  fake_analog_value = 3315;  // battery divider at 4.2 V
+  fake_analog_value = 3393;  // battery divider at 4.2 V (1.690)
   setup();
   if (services_scenario) return servicesNoGnssScenario();
   if (product_services_scenario) return productServicesScenario();
@@ -1273,7 +1273,7 @@ int main(int argc, char** argv) {
   Serial.queueInput("BATTERY?\n");
   pollRoleCommands();
   assert(Serial.output.rfind(
-             "BATTERY state=NORMAL percent_est=100 mv=4200 raw=3315 age_ms=",
+             "BATTERY state=NORMAL percent_est=100 mv=4200 raw=3393 age_ms=",
              0) == 0);
   assert(Serial.output.find(" readings=1 calibrated=no\n") !=
          std::string::npos);
@@ -1288,9 +1288,11 @@ int main(int argc, char** argv) {
                                      std::string::npos; ++pass)
     drainApplicationResponse();
   assert(Serial.output.find(
-             " battery=MEASURED state=NORMAL percent_est=100 mv=4200 raw=3315 ") !=
+             " battery=MEASURED state=NORMAL percent_est=100 mv=4200 raw=3393 ") !=
          std::string::npos);
-  assert(Serial.output.find(" readings=1 calibrated=no\n") != std::string::npos);
+  // Pil 2: the boot reading already gives the power state (no USB here).
+  assert(Serial.output.find(" readings=1 calibrated=no power=BATTERY usb=no\n") !=
+         std::string::npos);
   next_usb_application_request_id = power_saved_request_id;
 
   // GNSS backup sleep: off at boot (no hot-start gain measured on the

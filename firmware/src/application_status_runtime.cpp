@@ -265,13 +265,19 @@ void buildApplicationStatusSnapshot(
 void buildApplicationPowerSnapshot(uint32_t now_ms,
                                    const BatteryMonitor& battery,
                                    BatteryState battery_state,
-                                   ApplicationPowerSnapshot& out) {
+                                   ApplicationPowerSnapshot& out,
+                                   uint8_t power_state) {
   out = ApplicationPowerSnapshot();
   out.battery_valid = battery.hasReading() ? 1U : 0U;
-  out.battery_calibrated = 0U;  // RAK reference compensation, not this board
-  out.battery_percent = battery.hasReading()
-                            ? batteryPercentEstimate(battery.millivolts())
-                            : kBatteryPercentUnknown;
+  // Pil 2: this board's scale learned from a charge end (the charger's 4.20 V).
+  out.battery_calibrated = battery.scaleLearned() ? 1U : 0U;
+  out.power_state = power_state;
+  out.usb_power = battery.usb() ? 1U : 0U;
+  // FULL is 100 % whatever the voltage between charger restarts.
+  out.battery_percent = !battery.hasReading()  ? kBatteryPercentUnknown
+                        : power_state == 3U    ? 100U
+                        : power_state == 4U    ? kBatteryPercentUnknown
+                                               : batteryPercentEstimate(battery.millivolts());
   if (battery.hasReading()) {
     out.battery_mv = static_cast<uint16_t>(
         battery.millivolts() > UINT16_MAX ? UINT16_MAX : battery.millivolts());

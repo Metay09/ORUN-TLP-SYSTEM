@@ -42,6 +42,8 @@ struct PeriodicRecordInputs {
   bool battery_valid = false;
   uint16_t battery_mv = 0;
   uint8_t battery_state = tlp::kBatteryStateUnknown;  // BatteryState value
+  uint8_t power_state = 0;                             // PowerState value
+  bool usb_power = false;
   PeriodicHealthInput health;
 };
 

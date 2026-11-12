@@ -237,9 +237,11 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
           <div className="card" style={{ margin: 0 }}>
             {isGateway && <KV k="Cihaz">Gateway</KV>}
             {st.role === "relay" && <KV k="Cihaz">Aktarıcı</KV>}
-            <KV k="Pil">{st.battery ? (st.battery.valid
-              ? `${st.battery.percent !== null ? `%${st.battery.percent} · ` : ""}${fmt.dec(st.battery.mv / 1000, 2)} V${batteryWord[st.battery.state] ? ` · ${batteryWord[st.battery.state]}` : ""}`
-              : "Ölçülmedi") : "—"}</KV>
+            <KV k="Pil">{st.battery ? (!st.battery.valid ? "Ölçülmedi"
+              : st.battery.power === "NO_BATTERY" ? "Pil takılı değil · USB'den besleniyor"
+              : `${st.battery.percent !== null ? `%${st.battery.percent} · ` : ""}${fmt.dec(st.battery.mv / 1000, 2)} V${
+                  st.battery.power === "CHARGING" ? " · şarj oluyor" : st.battery.power === "FULL" ? " · dolu" : ""}${
+                  st.battery.usb ? " · USB" : ""}${batteryWord[st.battery.state] ? ` · ${batteryWord[st.battery.state]}` : ""}`) : "—"}</KV>
             {!isGateway && <KV k="Rapor aralığı">{st.interval ? <>
               {fmt.period(st.interval.requestedS)}{st.interval.stored ? "" : " (varsayılan)"}
               {st.interval.effectiveS !== null && st.interval.effectiveS !== st.interval.requestedS ? ` · şu an ${fmt.period(st.interval.effectiveS)}` : ""}

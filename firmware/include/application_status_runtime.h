@@ -41,7 +41,8 @@ void buildApplicationStatusSnapshot(
 void buildApplicationPowerSnapshot(uint32_t now_ms,
                                    const BatteryMonitor& battery,
                                    BatteryState battery_state,
-                                   ApplicationPowerSnapshot& out);
+                                   ApplicationPowerSnapshot& out,
+                                   uint8_t power_state = 0);
 
 void buildApplicationServicesSnapshot(uint8_t service_mode,
                                       uint8_t requested_services,

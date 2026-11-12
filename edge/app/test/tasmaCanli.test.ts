@@ -72,7 +72,8 @@ test("USB and Bluetooth give the same status", () => {
   const a = buildStatus(usb, "usb", 1), b = buildStatus(ble, "ble", 1);
   assert.deepEqual({ ...b, via: "usb" }, a);
   assert.deepEqual(a.interval, { requestedS: 900, effectiveS: 300, stored: true });
-  assert.deepEqual(a.battery, { valid: true, mv: 3950, percent: 81, state: "normal", calibrated: false });
+  // Older firmware: no power word, no USB bit.
+  assert.deepEqual(a.battery, { valid: true, mv: 3950, percent: 81, state: "normal", calibrated: false, power: null, usb: null });
   assert.deepEqual(a.fence, { state: "configured", areas: 2, vertices: 9, position: "outside" });
   assert.deepEqual(a.services, { explicit: true, requested: { tracking: true, relay: false, receive: false },
     tracking: "on", trackingWhy: null, relay: "off", receive: false });
@@ -137,4 +138,15 @@ test("a setting counts only when the tracker says APPLIED or UNCHANGED", async (
   await assert.rejects(applySetting(settingConsole("APP SET id=7 code=OUTCOME_UNKNOWN services=T mode=EXPLICIT token=UNAVAILABLE"), "APP SERVICES T"), /belli değil/);
   await assert.rejects(applySetting(settingConsole("APP BUSY"), "APP SERVICES T"), /meşgul/);
   await assert.rejects(applySetting(settingConsole(null), "APP SERVICES T"), /yanıt gelmedi/);
+});
+
+test("Pil 2: the power state and USB, the same over USB and Bluetooth", () => {
+  const line = USB_LINES.power + " power=FULL usb=yes";
+  const usb = buildStatus({ power: keyValues(line) }, "usb", 1).battery;
+  const bytes = Uint8Array.from(BLE.power);
+  bytes[1] = bytes[1] | (3 << 2) | 0x20;   // FULL, USB
+  const ble = buildStatus({ power: decodeBle("power", { ...msg("power"), payload: bytes }) }, "ble", 1).battery;
+  assert.deepEqual(usb, ble);
+  assert.equal(usb?.power, "FULL");
+  assert.equal(usb?.usb, true);
 });

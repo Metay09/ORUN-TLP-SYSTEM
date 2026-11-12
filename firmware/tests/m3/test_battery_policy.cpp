@@ -100,15 +100,17 @@ void intervalRule() {
 }
 
 void percentEstimate() {
+  // Pil 2: 4.05 V (the charger's restart threshold) and above is full.
   assert(batteryPercentEstimate(4200) == 100);
   assert(batteryPercentEstimate(4300) == 100);
-  assert(batteryPercentEstimate(3270) == 0);
+  assert(batteryPercentEstimate(4050) == 100);
+  assert(batteryPercentEstimate(3990) == 89);
+  assert(batteryPercentEstimate(3400) == 0);
   assert(batteryPercentEstimate(2900) == 0);
-  assert(batteryPercentEstimate(3840) == 50);
-  assert(batteryPercentEstimate(4020) == 80);
-  assert(batteryPercentEstimate(3995) == 77);  // between 3980/75 and 4020/80
-  assert(batteryPercentEstimate(kLowEnterMv) == 3);
-  assert(batteryPercentEstimate(kCriticalEnterMv) == 1);
+  assert(batteryPercentEstimate(3840) == 72);  // between 3800/67 and 3890/78
+  assert(batteryPercentEstimate(4020) == 95);
+  assert(batteryPercentEstimate(kLowEnterMv) == 26);
+  assert(batteryPercentEstimate(kCriticalEnterMv) == 0);
   uint8_t previous = 0;
   for (uint32_t mv = 3000; mv <= 4400; mv += 5) {
     const uint8_t p = batteryPercentEstimate(mv);

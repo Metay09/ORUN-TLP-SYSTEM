@@ -39,8 +39,10 @@ const okLocation = (source: number, lat: number, lon: number) =>
   lon >= -1800000000 && lon <= 1800000000;
 
 export function periodicValid(p: Uint8Array): boolean {
-  if (p.length !== 64 || p[0] !== 1 || p[2] > 4 || p[3] > 3 || p[41] > 2 || p[42] > 2)
+  if (p.length !== 64 || p[0] !== 1 || p[2] > 4 || p[3] > 3 || p[41] > 2)
     return false;
+  // Byte 42 (Pil 2, wire spec 7.4): quality 0..2, power state 0..4, USB bit, reserved 0.
+  if ((p[42] & 0x03) > 2 || ((p[42] >> 2) & 0x07) > 4 || (p[42] & 0xc0)) return false;
   const flags = p[1], source = p[2], batteryState = p[3];
   if (u64(p, 4) === 0n || u32(p, 12) === 0) return false;
   const end = u32(p, 16), duration = u32(p, 20);
@@ -135,6 +137,9 @@ export function openProductFrame(raw: Uint8Array, lookup: CredentialLookup): Obs
 
 const SOURCES = ["UNKNOWN", "GNSS", "FIXED", "PHONE", "MANUAL"];
 const BATTERY = ["UNKNOWN", "NORMAL", "LOW", "CRITICAL"];
+/** Pil 2: what the battery does, from the collar (firmware power_state.h). */
+export const POWER = ["UNKNOWN", "BATTERY", "CHARGING", "FULL", "NO_BATTERY"] as const;
+export type PowerWord = typeof POWER[number];
 
 /** Readable fields of a canonical PERIODIC plaintext (describe_periodic). */
 export interface Periodic {
@@ -143,6 +148,8 @@ export interface Periodic {
   alt_m: number | null;   // GNSS height above the WGS84 ellipsoid (not sea level)
   sats: number | null; hdop: number | null; fix_age_s: number | null;
   battery_mv: number | null; battery: string | null;
+  /** Pil 2: null from older firmware (power state not sent). */
+  power?: PowerWord | null; usb?: boolean | null;
   active_s: number | null; covered_s: number | null; source: string;
   /** HEALTH_VALID: GNSS failures in this report period (null: no health in the record). */
   gnss_failures?: number | null;
@@ -170,7 +177,12 @@ export function describePeriodic(device: Uint8Array, p: Uint8Array): Periodic {
     if (flags & 8) out.fix_age_s = u16(p, 38);
   }
   if (flags & 16) { out.covered_s = u32(p, 44); out.active_s = u32(p, 48); }
-  if (flags & 32) { out.battery_mv = u16(p, 56); out.battery = BATTERY[p[3]] ?? "?"; }
+  if (flags & 32) {
+    out.battery_mv = u16(p, 56); out.battery = BATTERY[p[3]] ?? "?";
+    const power = (p[42] >> 2) & 0x07;
+    out.power = power ? POWER[power] ?? null : null;
+    out.usb = power ? Boolean(p[42] & 0x20) : null;
+  }
   out.gnss_failures = flags & 64 ? p[60] : null;
   return out;
 }
