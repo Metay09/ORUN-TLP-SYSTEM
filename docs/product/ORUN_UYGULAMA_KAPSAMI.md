@@ -100,3 +100,7 @@ Bağlantı sekmesi ve durum renkli simge (Meshtastic), eşitleme düğmesi yok
 bilgisi ve ileride ayarları hayvanın kartında (Weenect), alan kaydı = tasmaya
 gönder (Nofence, 3. adım), kapsama haritada ve "buraya gateway koy" önerisi
 (MeshCore, 8. adım), kısa ve tamamen Türkçe Ayarlar.
+
+## Sunucu yedeği (2026-11-12)
+
+`python3 tools/orun_yedek.py al` çalışan `orun-sunucu`'nun kayıt defterini, kimlik/anahtar defterini, hesap klasörünü ve köprü anahtarını `~/ORUN-YEDEK/<tarih>/` altına alır (SQLite çevrim içi yedek: sunucu çalışırken ve WAL doluyken tutarlı; klasör 0700, dosyalar 0600; son 14 yedek tutulur). `prova` son yedeği ayrı geçici klasörde açar: dosya özetleri, bütünlük, tablo başına kayıt sayısı, kimlik–izin–anahtar ilişkileri, sonra sunucunun kendi kodu o kopyadan kayıtları ve son konumları okur; canlı veriye dokunmaz. `durum` son yedek başarısız ya da 26 saatten eskiyse hata verir. `zamanlayici --kur` her gece 03:17'de yedek alır. Durum: kod + PC testi (`backend/tests/test_orun_yedek.py`) **tamam**; canlı sunucuda ilk yedek ve prova **bekliyor**. Yedek aynı diskte durur: disk arızasına karşı PC dışına kopya ayrı karar (yedek gizli anahtar içerir).
