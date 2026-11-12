@@ -145,7 +145,7 @@ function Today({ a, now }: { a: Animal; now: number }) {
         )}
       </Card>
 
-      <Section title={tr.animal.battery} info="Yüzde, pil geriliminden hesaplanır; şarj devresinin dolu tuttuğu aralık (4,05 V ve üstü) %100'dür. 'Şarj oluyor', 'Dolu' ve 'Pil takılı değil' tasmanın kendi ölçümünden gelir. Gidişat, son 24 saatin ortalaması iki gün öncekiyle karşılaştırılarak bulunur (gece-gündüz farkı ortalanır); USB'deki süreler katılmaz. Kalan gün yalnız belirgin düşüşte gösterilir ve tahmindir." />
+      <Section title={tr.animal.battery} info="Yüzde, pil geriliminden hesaplanır (4,19 V %100, 4,05 V %90, 3,40 V %0). USB'de şarjı biten pil 'Dolu' ve %100 görünür. 'Şarj oluyor', 'Dolu' ve 'Pil takılı değil' tasmanın kendi ölçümünden gelir. Gidişat, son 24 saatin ortalaması iki gün öncekiyle karşılaştırılarak bulunur (gece-gündüz farkı ortalanır); USB'deki süreler katılmaz. Kalan gün yalnız belirgin düşüşte gösterilir ve tahmindir." />
       <Card pad>
         {a.batteryPower === "NO_BATTERY" ? <span className="sm">Pil takılı değil · USB'den besleniyor.</span>
           : a.battery === "unknown" ? <span className="sm">{tr.animal.batteryUnknown}</span> : (

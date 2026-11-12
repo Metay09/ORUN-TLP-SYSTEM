@@ -58,19 +58,20 @@ bool BatteryStateTracker::update(uint32_t millivolts) {
 }
 
 uint8_t batteryPercentEstimate(uint32_t mv) {
-  // Pil 2 (owner 2026-11-12: a full battery reads 100 %). The RAK19007
-  // charger (TP4054) restarts below ~4.05 V and holds the cell between that
-  // and 4.20 V, so 4.05 V and above is what this board calls full. Below, the
-  // shape of Meshtastic's LiPo rest-voltage table (4050 = 90 % there; the
-  // nRF52 variant with 3.40 V as empty), stretched so 4050 = 100 %. The app
-  // uses the same table (edge/app/src/app/herd.ts batteryPercent).
+  // Meshtastic's LiPo rest-voltage table (4190 = 100 %, 4050 = 90 %; the
+  // nRF52 variant with 3.40 V as empty). Owner 2026-11-12: a FULL battery
+  // reads 100 % -- that comes from the power state (power_state.h), not from
+  // this curve. Bench 2026-11-12 (Hayvan 2, 15 h off USB): with 4.05 V
+  // stretched to 100 % the cell sat at "100 %" from 4.12 V down to 4.06 V and
+  // its first ~10 % of use never showed. The app uses the same table
+  // (edge/app/src/app/herd.ts batteryPercent).
   struct Point {
     uint16_t mv;
     uint8_t percent;
   };
   static const Point kCurve[] = {
-      {3400, 0},  {3440, 11}, {3480, 22}, {3530, 33}, {3630, 44},
-      {3720, 56}, {3800, 67}, {3890, 78}, {3990, 89}, {4050, 100}};
+      {3400, 0},  {3440, 10}, {3480, 20}, {3530, 30}, {3630, 40}, {3720, 50},
+      {3800, 60}, {3890, 70}, {3990, 80}, {4050, 90}, {4190, 100}};
   constexpr unsigned kPoints = sizeof(kCurve) / sizeof(kCurve[0]);
   if (mv <= kCurve[0].mv) return 0;
   if (mv >= kCurve[kPoints - 1].mv) return 100;
