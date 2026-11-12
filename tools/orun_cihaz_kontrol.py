@@ -138,6 +138,8 @@ def parse_battery(lines: list[str]) -> dict:
             out.update(usb=m[1] == "yes", power=m[2], quiet=m[3] == "yes", loaded=int(m[4]),
                        calibrations=int(m[5]), scale_ppm=int(m[6]), learned=m[7] == "yes",
                        charge_ends=int(m[8]))
+        elif m := re.search(r"BATTERY REGULATOR dcdc=(\d+) at_boot=(\d+)", line):
+            out.update(dcdc=int(m[1]), dcdc_at_boot=int(m[2]))
     return out
 
 
@@ -155,6 +157,10 @@ def battery_report(b: dict) -> list[str]:
                    + f" · şarj sonu: {b.get('charge_ends', 0)}")
         out.append(f"Son okuma sakin anda mı: {'evet' if b.get('quiet') else 'hayır'} · "
                    f"yüklüyken alınan: {b.get('loaded', 0)} · kalibrasyon: {b.get('calibrations', 0)}")
+    if "dcdc" in b:
+        word = {3: "açık", 0: "kapalı"}.get(b["dcdc"], f"kısmen ({b['dcdc']})")
+        was = {3: "açıktı", 0: "kapalıydı"}.get(b["dcdc_at_boot"], f"kısmendi ({b['dcdc_at_boot']})")
+        out.append(f"Verimli regülatör (DC/DC): {word} · bu yazılımdan önce açılışta {was}")
     return out
 
 
