@@ -31,9 +31,17 @@ void BatteryMonitor::begin(uint32_t now_ms) {
   read(now_ms, true);
 }
 
+namespace {
+int32_t chipDeciC() {
+  return static_cast<int32_t>(readCPUTemperature() * 10.0f);
+}
+}  // namespace
+
 void BatteryMonitor::calibrate(uint32_t now_ms) {
+  temperature_dc_ = chipDeciC();
+  temperature_at_ms_ = now_ms;
   analogCalibrateOffset();
-  calibrated_at_ms_ = now_ms;
+  calibrated_dc_ = temperature_dc_;
   ++calibrations_;
 }
 
@@ -60,9 +68,15 @@ bool BatteryMonitor::poll(uint32_t now_ms, bool quiet, bool usb) {
   }
   const bool settled = quiet_ && monotonic::elapsed(now_ms, quiet_since_ms_,
                                                     battery_config::kQuietSettleMs);
-  if (settled && monotonic::elapsed(now_ms, calibrated_at_ms_,
-                                    battery_config::kCalibrationIntervalMs))
-    calibrate(now_ms);
+  if (settled && monotonic::elapsed(now_ms, temperature_at_ms_,
+                                    battery_config::kTemperatureCheckMs)) {
+    temperature_dc_ = chipDeciC();
+    temperature_at_ms_ = now_ms;
+    const int32_t moved = temperature_dc_ - calibrated_dc_;
+    if (moved >= battery_config::kRecalibrateDeciC ||
+        -moved >= battery_config::kRecalibrateDeciC)
+      calibrate(now_ms);
+  }
   if (!monotonic::elapsed(now_ms, read_at_ms_, battery_config::kReadingIntervalMs))
     return false;
   if (!settled && !monotonic::elapsed(now_ms, read_at_ms_,

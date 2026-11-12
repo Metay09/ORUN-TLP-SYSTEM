@@ -71,14 +71,42 @@ void quietAndCalibration() {
   assert(m.poll(at + kReadingIntervalMs + kQuietWaitMaxMs, false));
   assert(!m.lastQuiet() && m.loadedReadings() == 1);
 
-  // Hourly offset calibration, only in a quiet moment.
+  // Offset calibration only after a 10 C change (bench 2026-11-12: hourly
+  // calibration stepped the reading by up to 20 mV), in a quiet moment.
   const uint32_t before = m.calibrations();
-  uint32_t now = m.readAtMs() + kCalibrationIntervalMs;
+  uint32_t now = m.readAtMs();
+  for (int h = 0; h < 12; ++h) {             // half a day at the same temperature
+    now += kTemperatureCheckMs;
+    m.poll(now, true);
+    m.poll(now + kQuietSettleMs, true);
+  }
+  assert(m.calibrations() == before);
+  assert(m.temperatureDeciC() == 250);
+  fake_cpu_temperature = 34.5f;              // 9.5 C warmer: not yet
+  now += kTemperatureCheckMs;
+  m.poll(now, true);
+  m.poll(now + kQuietSettleMs, true);
+  assert(m.calibrations() == before && m.temperatureDeciC() == 345);
+  fake_cpu_temperature = 35.25f;             // 10.25 C: due, but the radio is sending
+  now += kTemperatureCheckMs;
   m.poll(now, false);
   assert(m.calibrations() == before);
   m.poll(now + kQuietSettleMs, true);
   m.poll(now + 2 * kQuietSettleMs, true);
   assert(m.calibrations() == before + 1);
+  // The reference moves with it: back down 9 C is not another calibration,
+  // 10 C below the new reference is.
+  fake_cpu_temperature = 26.5f;
+  now += 2 * kTemperatureCheckMs;
+  m.poll(now, true);
+  m.poll(now + kQuietSettleMs, true);
+  assert(m.calibrations() == before + 1);
+  fake_cpu_temperature = 25.0f;
+  now += 2 * kTemperatureCheckMs;
+  m.poll(now, true);
+  m.poll(now + kQuietSettleMs, true);
+  assert(m.calibrations() == before + 2);
+  fake_cpu_temperature = 25.0f;
 }
 
 void boardScale() {

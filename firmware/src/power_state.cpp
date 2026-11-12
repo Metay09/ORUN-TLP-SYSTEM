@@ -40,6 +40,12 @@ uint32_t PowerStateTracker::maxRecent(uint8_t n) const {
   return best;
 }
 
+void PowerStateTracker::rebase() {
+  count_ = 0;
+  head_ = 0;
+  high_ = false;
+}
+
 bool PowerStateTracker::takeChargeEndPeak(uint32_t& millivolts) {
   if (!peak_ready_) return false;
   peak_ready_ = false;

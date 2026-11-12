@@ -71,6 +71,9 @@ inline void analogSampleTime(uint8_t us) {
   fake_analog_sample_time_us = (us == 5 || us == 10 || us == 15 || us == 20 || us == 40) ? us : 3;
 }
 inline void analogCalibrateOffset() { ++fake_analog_calibrations; }
+inline float fake_cpu_temperature = 25.0f;
+inline unsigned fake_cpu_temperature_reads = 0;
+inline float readCPUTemperature() { ++fake_cpu_temperature_reads; return fake_cpu_temperature; }
 inline uint32_t analogRead(uint32_t pin) {
   ++fake_analog_reads;
   fake_analog_last_pin = static_cast<int>(pin);
