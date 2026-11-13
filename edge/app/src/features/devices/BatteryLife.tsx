@@ -2,23 +2,20 @@
 // ve ölçülen süre yan yana, her birinin neye dayandığı yazar.
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { CaretRight } from "@phosphor-icons/react";
-import { batteryOutlook, smoothBattery } from "../../app/activity.ts";
 import { deviceSettings, pilotSetBatteryCapacity } from "../../app/ownerAccountPilotRuntime.ts";
 import {
-  batteryCapacity, expectedLife, lifeWord, MAH_MAX, MAH_MIN, measuredLife, PUBLISHED, USABLE,
+  batteryCapacity, drainRuns, fitDrain, lifeAt, lifeWord, MAH_MAX, MAH_MIN, USABLE, type Reading,
 } from "../../app/batteryLife.ts";
-import { externallyPowered, readingPercent } from "../../app/herd.ts";
 import { fmt } from "../../app/i18n/tr.ts";
 import type { Animal } from "../../app/model.ts";
 import { useBack } from "../../app/nav.ts";
 import { Card, Cell, Dialog, KV, Section } from "../../ds/components.tsx";
 
 const INFO =
-  `Beklenen: pil kapasitesinin %${USABLE * 100}'i, rapor aralığı ve üreticilerin yayımladığı akımlarla hesaplanır ` +
-  `(GPS ${PUBLISHED.gnssMa} mA, her raporda ~${PUBLISHED.gnssOnS} sn; telsiz gönderirken ${PUBLISHED.txMa} mA, ` +
-  `rapordan sonra ${PUBLISHED.rxAfterReportS} sn ${PUBLISHED.rxMa} mA dinleme). Bugünkü tasma yazılımında işlemci ` +
-  `uyumuyor (taban ~${PUBLISHED.baseAwakeMa} mA); gerçek uyku gelince (Y3) taban ~${PUBLISHED.baseSleepMa * 1000} µA olur. ` +
-  `Ölçülen: sahada pilin günlük düşüşünden; USB'deki ya da güneşle dengede olan tasmada ölçülemez. Güneş katkısı katılmaz.`;
+  `Ortalama tüketim = bekleme akımı + rapor başına maliyet × saatteki rapor sayısı. İki sayı bu tasmanın pille ` +
+  `çalışırken ölçülen pil düşüşünden çıkarılır; yeterli ölçüm yoksa başka bir tasmada ölçülen değerler kullanılır ve ` +
+  `"tahmin" yazar. Pil kapasitesinin %${USABLE * 100}'i kullanılabilir sayılır. İki ayrı rapor aralığında en az 6'şar saat ` +
+  `pille çalışınca iki sayı da ölçülmüş olur. Güneş katkısı katılmaz.`;
 
 /** The report interval the collar is set to (what it reported, else what was asked), not one record's period. */
 export function useConfiguredInterval(a: Pick<Animal, "device" | "periodS"> | null, device?: string): number | null {
@@ -31,22 +28,15 @@ export function useConfiguredInterval(a: Pick<Animal, "device" | "periodS"> | nu
 
 export function BatteryLife({ device, intervalS, series, nowPct }: {
   device: string; intervalS: number | null;
-  series: { t: number; mv: number; power?: string | null; usb?: boolean | null }[]; nowPct: number | null;
+  series: Reading[]; nowPct: number | null;
 }) {
   const caps = useSyncExternalStore(batteryCapacity.subscribe, batteryCapacity.snapshot);
   const mAh = caps[device.toUpperCase()] ?? null;
   const [editing, setEditing] = useState(false);
-  const now = Date.now();
-  const outlook = useMemo(() => {
-    // Pil 2: the battery's own drain only (not on USB, not without a cell).
-    const pct = smoothBattery(series.filter((b) => !externallyPowered(b)).map((b) => ({ t: b.t, p: readingPercent(b) }))
-      .filter((x): x is { t: number; p: number } => x.p !== null));
-    return batteryOutlook(pct, now);
-  }, [series]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const awake = mAh && intervalS ? expectedLife(mAh, intervalS, false) : null;
-  const sleep = mAh && intervalS ? expectedLife(mAh, intervalS, true) : null;
-  const measured = mAh ? measuredLife(mAh, outlook.perDay, nowPct) : null;
+  const drain = useMemo(() => fitDrain(mAh ? drainRuns(series, mAh) : []), [series, mAh]);
+  const life = mAh && intervalS ? lifeAt(mAh, intervalS, drain, nowPct) : null;
+  const basis = drain.measured === "both" ? `bu tasmanın ${Math.round(drain.hours)} saatlik ölçümünden`
+    : drain.measured === "one" ? `kısmen ölçüldü (${Math.round(drain.hours)} saat, tek rapor aralığı)` : "tahmin · bu tasmada henüz ölçülmedi";
 
   return (
     <>
@@ -56,17 +46,13 @@ export function BatteryLife({ device, intervalS, series, nowPct }: {
           trail={<span className="sm row" style={{ gap: 4 }}>{mAh ? `${fmt.num(mAh)} mAh` : "Gir"}<CaretRight size={16} color="var(--mute)" /></span>}
           onClick={() => setEditing(true)} />
         {mAh && <>
-          {intervalS ? <>
-            <KV k="Beklenen · bugünkü yazılım">{lifeWord(awake!.days)}</KV>
-            <KV k="Beklenen · gerçek uykuyla">{lifeWord(sleep!.days)}</KV>
-          </> : <KV k="Beklenen">Rapor aralığı bilinmiyor</KV>}
-          <KV k="Ölçülen">{measured
-            ? `${lifeWord(measured.daysFull)} dolu pille${measured.daysLeft !== null ? ` · kalan ${lifeWord(measured.daysLeft)}` : ""}`
-            : "Pil düşmüyor"}</KV>
+          {life ? <>
+            <KV k={`Dolu pille · ${fmt.period(intervalS!)} aralıkla`}>{lifeWord(life.daysFull)}</KV>
+            {life.daysLeft !== null && <KV k="Kalan">{lifeWord(life.daysLeft)}</KV>}
+          </> : <KV k="Dolu pille">Rapor aralığı bilinmiyor</KV>}
           <p className="fine" style={{ padding: "8px 16px 12px", margin: 0 }}>
-            {intervalS ? `Rapor aralığı ${fmt.period(intervalS)} · ortalama ${fmt.dec(awake!.avgMa, 1)} mA bugün, ${fmt.dec(sleep!.avgMa, 2)} mA uykuyla. ` : ""}
-            {measured ? `Ölçülen tüketim günde ~${Math.round(measured.mAhPerDay)} mAh (${fmt.dec(measured.avgMa, 1)} mA).`
-              : "Ölçülen süre, pille çalışan tasmada birkaç gün sonra çıkar (USB'de ya da güneşle dengedeyken çıkmaz)."}
+            {life ? `Ortalama ${fmt.dec(life.avgMa, 2)} mA · ` : ""}
+            {`bekleme ${fmt.dec(drain.baseMa, 2)} mA, rapor başına ${fmt.dec(drain.packetMah, 2)} mAh · ${basis}.`}
           </p>
         </>}
       </Card>

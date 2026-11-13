@@ -56,6 +56,16 @@ export function freshRatio(ms: number | null, periodS: number, now: number): num
  */
 const CURVE: [number, number][] = [[3400, 0], [3440, 10], [3480, 20], [3530, 30], [3630, 40],
   [3720, 50], [3800, 60], [3890, 70], [3990, 80], [4050, 90], [4190, 100]];
+/** The same curve without rounding (battery-life fit: whole percents are too coarse over a few hours). */
+export function batteryPercentExact(mv: number): number {
+  if (mv <= CURVE[0][0]) return 0;
+  for (let i = 1; i < CURVE.length; i++) {
+    const [hm, hp] = CURVE[i], [lm, lp] = CURVE[i - 1];
+    if (mv <= hm) return lp + ((mv - lm) * (hp - lp)) / (hm - lm);
+  }
+  return 100;
+}
+
 export function batteryPercent(mv: number | null): number | null {
   if (mv === null || mv <= 0) return null;
   if (mv <= CURVE[0][0]) return 0;
@@ -196,7 +206,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
       }
     }
     const batteryTrail = withBattery.filter((x) => x.t >= now - 7 * 24 * HOUR)
-      .map((x) => ({ t: x.t, mv: x.o.battery_mv!, power: x.o.power ?? null, usb: x.o.usb ?? null }));
+      .map((x) => ({ t: x.t, mv: x.o.battery_mv!, power: x.o.power ?? null, usb: x.o.usb ?? null, periodS: x.o.period_s || null }));
     const profile = profiles[id] ?? blankProfile(id);
     const device = last?.tracker ?? by.get(id)?.device ?? (profiles[id] ? id : null);
     // The account's name wins; then the phone's own; else the Bluetooth name.

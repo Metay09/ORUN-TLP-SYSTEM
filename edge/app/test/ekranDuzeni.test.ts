@@ -239,22 +239,45 @@ test("pil: tek düşük okuma şarj ya da düşüş sayılmaz", () => {
   assert.ok(smoothBattery(s).every((x) => x.p === 100));
 });
 
-import { BatteryCapacityBook, expectedLife, lifeWord, measuredLife, timeOnAirS } from "../src/app/batteryLife.ts";
+import { BatteryCapacityBook, DRAIN_DEFAULT, drainRuns, fitDrain, lifeAt, lifeWord, type Reading } from "../src/app/batteryLife.ts";
 
-test("pil ömrü: beklenen (üretici değerleri), ölçülen (günlük düşüş), mAh tasma başına", () => {
-  // 100-byte ORUN frame at SF11/125 kHz/4:5: ~2.2 s on air.
-  assert.ok(Math.abs(timeOnAirS(100) - 2.22) < 0.05, String(timeOnAirS(100)));
-  // 1000 mAh, one report an hour: today's firmware (no sleep) ~2 weeks, with real sleep ~4 months.
-  const awake = expectedLife(1000, 3600, false), sleep = expectedLife(1000, 3600, true);
-  assert.ok(awake.avgMa > 2.3 && awake.avgMa < 2.6, String(awake.avgMa));
-  assert.ok(awake.days > 12 && awake.days < 15, String(awake.days));
-  assert.ok(sleep.days > 100 && sleep.days < 140, String(sleep.days));
-  // Under 60 s the GPS stays on: about 25 mA more.
-  assert.ok(expectedLife(1000, 40, false).avgMa > 27);
-  // Measured: 1000 mAh, -5 %/day → 50 mAh/day, full battery (80 %) 16 days; 50 % left → 6 days.
-  const m = measuredLife(1000, -5, 50)!;
-  assert.deepEqual([Math.round(m.mAhPerDay), Math.round(m.daysFull), Math.round(m.daysLeft!)], [50, 16, 6]);
-  assert.equal(measuredLife(1000, 0.2, 100), null, "düşmeyen pilde ölçülen yok");
+// A collar whose battery falls by `base` mA + `packet` mAh per report (450 mAh), from 4040 mV down.
+function discharge(from: number, hours: number, periodS: number, base: number, packet: number, startPct: number): { pts: Reading[]; endPct: number } {
+  const mvOf = (pct: number) => pct >= 90 ? 4050 + (pct - 90) * 14 : pct >= 80 ? 3990 + (pct - 80) * 6 : pct >= 70 ? 3890 + (pct - 70) * 10 : 3800 + (pct - 60) * 9;
+  const pts: Reading[] = []; let pct = startPct;
+  const perStep = ((base * periodS / 3600 + packet) / 450) * 100;
+  for (let t = 0; t <= hours * 3600; t += periodS) { pts.push({ t: from + t * 1000, mv: Math.round(mvOf(pct)), power: "BATTERY", usb: false, periodS }); pct -= perStep; }
+  return { pts, endPct: pct };
+}
+
+test("pil ömrü: bekleme akımı + rapor başına maliyet, tasmanın kendi düşüşünden", () => {
+  const T0 = Date.parse("2026-11-12T00:00:00Z"), H = 3_600_000;
+  // Nothing measured: defaults, said so.
+  const none = fitDrain(drainRuns([], 450));
+  assert.deepEqual([none.measured, none.baseMa, none.packetMah], ["none", DRAIN_DEFAULT.baseMa, DRAIN_DEFAULT.packetMah]);
+  // Two intervals (2 min for 20 h, then 1 h for 48 h): both numbers come out of the collar's own data.
+  const a = discharge(T0, 20, 120, 0.1, 0.14, 89);
+  const b = discharge(T0 + 20 * H + 120_000, 48, 3600, 0.1, 0.14, a.endPct);
+  const both = fitDrain(drainRuns([...a.pts, ...b.pts], 450));
+  assert.equal(both.measured, "both");
+  assert.ok(Math.abs(both.baseMa - 0.1) < 0.04, String(both.baseMa));
+  assert.ok(Math.abs(both.packetMah - 0.14) < 0.015, String(both.packetMah));
+  // One interval only: the packet cost is the default, standby takes the rest; marked partial.
+  const one = fitDrain(drainRuns(b.pts, 450));
+  assert.equal(one.measured, "one");
+  assert.equal(one.packetMah, DRAIN_DEFAULT.packetMah);
+  // USB, FULL and the first hour off the charger are not the battery's own drain; a rising battery measures nothing.
+  const usb = a.pts.map((x) => ({ ...x, usb: true }));
+  assert.equal(drainRuns(usb, 450).length, 0);
+  assert.equal(drainRuns([...a.pts].reverse().map((x, i) => ({ ...x, t: a.pts[i].t })), 450).length, 0);
+  assert.equal(drainRuns(a.pts.slice(0, 20), 450).length, 0, "40 dakika ölçüm sayılmaz");
+  // Life: 450 mAh, 0.1 mA + 0.14 mAh per report. 2 min → 4.3 mA, ~3.5 days; 1 h → 0.24 mA, ~62 days.
+  const d = { baseMa: 0.1, packetMah: 0.14 };
+  assert.ok(Math.abs(lifeAt(450, 120, d).avgMa - 4.3) < 0.01);
+  assert.equal(Math.round(lifeAt(450, 120, d).daysFull * 10), 35);
+  assert.ok(Math.abs(lifeAt(450, 3600, d).daysFull - 62.5) < 0.01);
+  assert.equal(Math.round(lifeAt(450, 3600, d, 70).daysLeft!), 39);   // 70 % now, 20 % kept back
+  assert.ok(lifeAt(450, 40, d).avgMa > 25, "60 sn altında GPS açık kalır");
   assert.deepEqual([lifeWord(1.5), lifeWord(13.6), lifeWord(119), lifeWord(900)], ["~36 saat", "~14 gün", "~4 ay", "~2,5 yıl"]);
 });
 

@@ -1,63 +1,102 @@
-// Pil ömrü (sahip isteği 2026-11-11): iki hesap yan yana, hangisinin neye
-// dayandığı yazar; güneş katkısı katılmaz (9. adım).
-//  - Beklenen: pil kapasitesi (mAh), rapor aralığı ve üreticilerin yayımladığı
-//    akımlardan. Bugünkü tasma yazılımında işlemci gerçekten uyumuyor (Y3);
-//    taban akım ona göre ayrı verilir.
-//  - Ölçülen: sahada pilin günlük düşüşünden (batteryOutlook). Pil düşmüyorsa
-//    (USB'de ya da güneşle dengede) ölçülemez.
-// mAh her tasma için ayrı girilir (sahip seçimi); bu telefonda saklanır.
+// Pil ömrü (sahip isteği 2026-11-11; model 2026-11-13).
+//
+//   ortalama akım = bekleme akımı + rapor başına maliyet × saatteki rapor
+//
+// İki sayı tasmanın kendi pil düşüşünden öğrenilir (fitDrain): pille geçen,
+// rapor aralığı sabit dönemlerde harcanan mAh. İki ayrı aralıkta dönem varsa
+// ikisi de ölçülür; tek aralık varsa biri varsayılandan alınır. Hiç dönem
+// yoksa varsayılanlar kullanılır ve ekranda "tahmin" yazar.
+// Güneş katkısı katılmaz (9. adım). mAh her tasma için ayrı girilir.
+//
+// Eski hesap (üretici akımları, "işlemci uyumuyor: taban 2,2 mA") sahada
+// tutmadı: Hayvan 2, 2 dk aralıkta 9,7 mA yerine ~4,4 mA harcadı (2026-11-13).
+import { batteryPercentExact } from "./herd.ts";
 
-/** Published figures (mA). Each value says where it comes from. */
-export const PUBLISHED = {
-  /** RAK4631 + WisBlock Base, Arduino loop without real sleep: ~2.2 mA measured by RAK forum users. */
-  baseAwakeMa: 2.2,
-  /** RAK4631 on a WisBlock Base in real sleep: ~24 µA measured (RAK forum), plus the accelerometer. */
-  baseSleepMa: 0.03,
-  /** u-blox ZOE-M8Q (RAK12500), continuous mode at 3 V: 25 mA (u-blox product summary). */
-  gnssMa: 25,
-  /** u-blox ZOE-M8 cold start ~26 s; the receiver's rail is cut between reports. */
-  gnssOnS: 30,
-  /** Semtech SX1262 TX at +14 dBm (the ORUN default): 45 mA; RX: 4.6 mA (Semtech). */
-  txMa: 45,
-  rxMa: 4.6,
-  /** ORUN radio_config: listen 10 s after each report. */
-  rxAfterReportS: 10,
+/** Where nothing was measured on this collar. */
+export const DRAIN_DEFAULT = {
+  /** Per report: GPS start + send + 10 s listen. Hayvan 2 (450 mAh), 2-minute reports, 21 h, 2026-11-13. */
+  packetMah: 0.15,
+  /** Between reports. Not measured yet (same bench bounds it to 0.05-0.3 mA); published sleep figure is 0.03. */
+  baseMa: 0.15,
 };
+const BASE_MIN_MA = 0.02, PACKET_MIN_MAH = 0.02;
+/** u-blox ZOE-M8Q continuous: 25 mA. Under 60 s the GNSS stays on (gnss_config kShortIntervalThreshold). */
+const GNSS_ON_MA = 25, SHORT_INTERVAL_S = 60;
 /** A LiPo is not run to 0 %; count 80 % of the label as usable. */
 export const USABLE = 0.8;
-/** Below this interval the GNSS stays on (gnss_config kShortIntervalThreshold). */
-const SHORT_INTERVAL_S = 60;
 
-/** LoRa time on air, seconds (Semtech formula; explicit header, CRC on, LDRO for SF11/12 at 125 kHz). */
-export function timeOnAirS(payloadBytes: number, sf = 11, bwHz = 125_000, cr = 1, preamble = 8): number {
-  const tsym = 2 ** sf / bwHz;
-  const de = sf >= 11 && bwHz <= 125_000 ? 1 : 0;
-  const n = 8 + Math.max(Math.ceil((8 * payloadBytes - 4 * sf + 28 + 16) / (4 * (sf - 2 * de))) * (cr + 4), 0);
-  return (preamble + 4.25) * tsym + n * tsym;
+export interface Reading { t: number; mv: number; power?: string | null; usb?: boolean | null; periodS?: number | null; }
+/** One stretch on the battery alone at one report interval. */
+export interface Run { hours: number; packets: number; mAh: number; periodS: number; }
+export interface Drain {
+  baseMa: number; packetMah: number;
+  /** both: two intervals measured · one: one of the two is the default · none: defaults. */
+  measured: "both" | "one" | "none";
+  hours: number;
 }
 
-export interface Expected { avgMa: number; mAhPerDay: number; days: number; }
+const HOUR_MS = 3_600_000;
+const RUN_MIN_H = 6, RUN_MIN_POINTS = 8, SETTLE_MS = HOUR_MS;   // first hour off the charger: surface charge
+const median = (v: number[]) => { const s = [...v].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
 
-/** Average current and days on a full battery for one report every `intervalS`. */
-export function expectedLife(mAh: number, intervalS: number, sleep: boolean, gnssOnS: number = PUBLISHED.gnssOnS): Expected {
-  const P = PUBLISHED;
-  const base = sleep ? P.baseSleepMa : P.baseAwakeMa;
-  const gnss = intervalS < SHORT_INTERVAL_S ? P.gnssMa : P.gnssMa * Math.min(1, gnssOnS / intervalS);
-  const radio = (P.txMa * timeOnAirS(100) + P.rxMa * P.rxAfterReportS) / intervalS;
-  const avgMa = base + gnss + radio;
+/** Battery-only stretches with a constant report interval, as hours / reports / mAh used. */
+export function drainRuns(series: Reading[], mAh: number): Run[] {
+  const runs: Run[] = [];
+  let cur: Reading[] = [], offSince = 0;
+  const close = () => {
+    const pts = cur; cur = [];
+    if (pts.length < RUN_MIN_POINTS) return;
+    const k = Math.max(1, Math.min(5, Math.floor(pts.length / 3)));
+    const head = pts.slice(0, k), tail = pts.slice(-k);
+    const hours = (median(tail.map((x) => x.t)) - median(head.map((x) => x.t))) / HOUR_MS;
+    const used = ((median(head.map((x) => batteryPercentExact(x.mv))) - median(tail.map((x) => batteryPercentExact(x.mv)))) / 100) * mAh;
+    const periodS = pts[0].periodS!;
+    // A battery that did not fall (solar, unnoticed charging) measures nothing.
+    if (hours >= RUN_MIN_H && used > 0) runs.push({ hours, packets: (hours * 3600) / periodS, mAh: used, periodS });
+  };
+  for (const r of [...series].sort((a, b) => a.t - b.t)) {
+    if (r.usb === true || r.power === "NO_BATTERY" || r.power === "FULL") { close(); offSince = 0; continue; }
+    if (!r.periodS || r.periodS <= 0) continue;
+    if (!offSince) offSince = r.t;
+    if (cur.length && cur[0].periodS !== r.periodS) close();
+    if (r.t - offSince < SETTLE_MS) continue;
+    cur.push(r);
+  }
+  close();
+  return runs;
+}
+
+/** Standby current and per-report cost from the runs (least squares, weighted by length). */
+export function fitDrain(runs: Run[]): Drain {
+  const D = DRAIN_DEFAULT;
+  if (!runs.length) return { baseMa: D.baseMa, packetMah: D.packetMah, measured: "none", hours: 0 };
+  let hh = 0, kk = 0, hk = 0, hm = 0, km = 0, H = 0, K = 0, M = 0;
+  for (const r of runs) {
+    hh += r.hours * r.hours; kk += r.packets * r.packets; hk += r.hours * r.packets;
+    hm += r.hours * r.mAh; km += r.packets * r.mAh; H += r.hours; K += r.packets; M += r.mAh;
+  }
+  const rates = runs.map((r) => r.packets / r.hours);
+  const det = hh * kk - hk * hk;
+  if (Math.max(...rates) >= 2 * Math.min(...rates) && det > 0) {
+    const baseMa = (hm * kk - km * hk) / det, packetMah = (km * hh - hm * hk) / det;
+    if (baseMa >= BASE_MIN_MA && packetMah >= PACKET_MIN_MAH) return { baseMa, packetMah, measured: "both", hours: H };
+  }
+  // One interval (or two that disagree): only the term that dominated the
+  // drain can be read from it; the other stays at its default. Reading the
+  // standby current off 2-minute reports would turn noise into months.
+  if (D.packetMah * K > D.baseMa * H * 1.001)
+    return { baseMa: D.baseMa, packetMah: Math.max(PACKET_MIN_MAH, (M - D.baseMa * H) / K), measured: "one", hours: H };
+  return { baseMa: Math.max(BASE_MIN_MA, (M - D.packetMah * K) / H), packetMah: D.packetMah, measured: "one", hours: H };
+}
+
+export interface Life { avgMa: number; mAhPerDay: number; daysFull: number; daysLeft: number | null; }
+
+/** Average current, days on a full battery and days left at one report every `intervalS`. */
+export function lifeAt(mAh: number, intervalS: number, d: Pick<Drain, "baseMa" | "packetMah">, nowPct: number | null = null): Life {
+  const avgMa = d.baseMa + (d.packetMah * 3600) / intervalS + (intervalS < SHORT_INTERVAL_S ? GNSS_ON_MA : 0);
   const mAhPerDay = avgMa * 24;
-  return { avgMa, mAhPerDay, days: (mAh * USABLE) / mAhPerDay };
-}
-
-export interface Measured { mAhPerDay: number; avgMa: number; daysFull: number; daysLeft: number | null; }
-
-/** From the measured daily drain (% per day, negative = draining). Null when the battery does not drain. */
-export function measuredLife(mAh: number, perDayPct: number | null, nowPct: number | null): Measured | null {
-  if (perDayPct === null || perDayPct > -0.5) return null;
-  const mAhPerDay = (mAh * -perDayPct) / 100;
   return {
-    mAhPerDay, avgMa: mAhPerDay / 24,
-    daysFull: (mAh * USABLE) / mAhPerDay,
+    avgMa, mAhPerDay, daysFull: (mAh * USABLE) / mAhPerDay,
     daysLeft: nowPct !== null ? Math.max(0, ((mAh * nowPct) / 100 - mAh * (1 - USABLE)) / mAhPerDay) : null,
   };
 }
