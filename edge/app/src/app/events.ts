@@ -62,7 +62,9 @@ function animalEvents(a: Animal, cov: Coverage | null, now: number, fence?: Fenc
   // Silent gaps between records, and the open gap after the newest one.
   for (let i = 1; i < pts.length; i++) {
     const t0 = epochMs(pts[i - 1].time), t1 = epochMs(pts[i].time);
-    const T = periodMs(pts[i - 1].period_s), gap = t1 - t0;
+    // The longer of the two intervals: after "2 dk -> 60 dk" the first hourly
+    // report is on time, not an hour of silence (owner's phone, 2026-11-13).
+    const T = Math.max(periodMs(pts[i - 1].period_s), periodMs(pts[i].period_s)), gap = t1 - t0;
     if (gap <= agingLimit(T)) continue;
     // Reports without a position inside the gap: the collar was heard, GNSS had no fix.
     if ((a.heardOnly ?? []).some((h) => h > t0 && h < t1)) continue;
@@ -72,7 +74,7 @@ function animalEvents(a: Animal, cov: Coverage | null, now: number, fence?: Fenc
       lost ? tr.events.lost.title(a.name) : tr.events.silent.title(a.name),
       tr.events.silent.detail(fmt.duration(gap), missed), arrived(pts[i].received)));
   }
-  const last = pts[pts.length - 1], tl = epochMs(last.time), T = periodMs(last.period_s);
+  const last = pts[pts.length - 1], tl = epochMs(last.time), T = periodMs(Math.max(last.period_s, a.periodS || 0));
   if (a.noFix && a.lastReport !== null) {
     // Heard, but without a position: not silent. One open warning, its own id.
     const words = a.gpsFault ? tr.events.gpsFault : tr.events.noFix;

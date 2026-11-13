@@ -34,7 +34,8 @@ export function grazing(g: Graze, now: number): boolean {
   return g.forever || (g.until !== null && g.until > now);
 }
 
-export interface ZoneBook { zones: Zone[]; graze: Graze; }
+/** `changed`: when the set of zones last changed in any way (also a removal), epoch ms. */
+export interface ZoneBook { zones: Zone[]; graze: Graze; changed?: number; }
 
 // ------------------------------------------------------------------ E7 ---
 export type E7 = [number, number];   // [latitude_e7, longitude_e7]
@@ -163,16 +164,19 @@ export function roomFor(zones: Zone[], editingId: string | null, willBeActive: b
 }
 
 /** Compiled active, valid polygons for fast repeated point tests. */
-export interface Fence { polys: { id: string; name: string; v: E7[] }[]; }
+/** `since`: when the checked set last changed (ms). The herd is not judged
+ * against a boundary for the time before it was drawn (outsideEpisodes). */
+export interface Fence { polys: { id: string; name: string; v: E7[] }[]; since?: number; }
 
-export function compileFence(zones: Zone[]): Fence {
+export function compileFence(zones: Zone[], changed = 0): Fence {
   const polys: Fence["polys"] = [];
+  let since = changed;
   for (const z of zones) {
     if (!z.active) continue;
     const v = canonicalE7(z.ring);
-    if (!validateE7(v)) polys.push({ id: z.id, name: z.name, v });
+    if (!validateE7(v)) { polys.push({ id: z.id, name: z.name, v }); since = Math.max(since, z.updated || 0); }
   }
-  return { polys };
+  return since > 0 ? { polys, since } : { polys };
 }
 
 /** The zone holding the point (boundary counts as inside), or null = outside all. */
@@ -195,6 +199,7 @@ export interface Episode { from: number; to: number | null; fromIdx: number; }
  * Confirmed outside periods over a record list (oldest first). State changes
  * need the newest accepted record on the new side and at least 2 of the last
  * 3 accepted records on it; a single stray fix never opens or closes one.
+ * Nothing is reported for the time before the zone set last changed (f.since).
  */
 export function outsideEpisodes(points: Located[], f: Fence, time: (p: Located) => number): Episode[] {
   if (!f.polys.length) return [];
@@ -221,7 +226,13 @@ export function outsideEpisodes(points: Located[], f: Fence, time: (p: Located) 
       state = "in";
     }
   });
-  return out;
+  // A boundary drawn today does not make the animal "15 days outside"
+  // (owner's phone, 2026-11-13): periods that ended before the set last
+  // changed are dropped, a period running across it starts at the change.
+  const since = f.since ?? 0;
+  if (!since) return out;
+  return out.filter((e) => e.to === null || e.to > since)
+    .map((e) => (e.from < since ? { ...e, from: since } : e));
 }
 
 // ------------------------------------------------------------ measure ---

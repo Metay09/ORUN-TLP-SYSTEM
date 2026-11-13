@@ -256,10 +256,10 @@ export function MapScreen({ visible }: { visible: boolean }) {
         {turned && <button className="fab" onClick={() => engine.current?.resetNorth()} aria-label={tr.map.north}><Compass size={24} /></button>}
       </div>
 
-      <Sheet snap={snap} peek={a ? 140 : herd.length ? 150 : 290} half={a ? 0.62 : 0.46} onSnap={setSnap} onHeight={setSheetPx}
+      <Sheet snap={snap} peek={a ? 140 : herd.length || m.starting ? 150 : 290} half={a ? 0.62 : 0.46} onSnap={setSnap} onHeight={setSheetPx}
         header={a ? null : (
           <div className="sum">
-            <div className="disp ellip">{herdSummary(herd)}</div>
+            <div className="disp ellip">{m.starting && !herd.length ? tr.states.starting : herdSummary(herd)}</div>
             {look.length > 0 && <div className="sm ellip">{attentionLine(herd, m.now)}</div>}
           </div>
         )}>
@@ -285,7 +285,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
                 ))}
               </div>
             )}
-            {herd.length ? <HerdRows herd={herd} me={me} now={m.now} onPick={(id) => { setSelected(id); setTrailRange("recent"); }} /> : (
+            {herd.length ? <HerdRows herd={herd} me={me} now={m.now} onPick={(id) => { setSelected(id); setTrailRange("recent"); }} /> : m.starting ? null : (
               <div className="stack" style={{ padding: "8px 20px 16px" }}>
                 <span className="sm">{tr.states.noAnimalsBody}</span>
                 <button className="btn primary wide" onClick={() => nav.setTab("network")}>{tr.states.connect}</button>

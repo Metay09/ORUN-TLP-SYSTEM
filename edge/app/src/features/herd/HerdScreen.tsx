@@ -37,7 +37,9 @@ export function HerdScreen() {
       <Header title={tr.herd.title}>
         <button className="circ brand" onClick={() => setAdding(true)} aria-label={tr.herd.add}><Plus size={22} weight="bold" /></button>
       </Header>
-      {herd.length === 0 ? (
+      {herd.length === 0 && m.starting ? (
+        <Empty icon={<Cow size={34} />} title={tr.states.starting} body="" />
+      ) : herd.length === 0 ? (
         <Empty icon={<Cow size={34} />} title={tr.states.noAnimals} body={tr.states.noAnimalsBody}>
           <button className="btn primary" onClick={() => setAdding(true)}><Plus size={18} weight="bold" />{tr.herd.add}</button>
           <button className="btn" onClick={() => nav.setTab("network")}>{tr.states.connect}</button>
