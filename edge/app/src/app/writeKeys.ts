@@ -29,6 +29,8 @@ export function validWriteKeys(list: unknown): WriteKey[] {
 export class WriteKeyBook {
   private keys: Record<string, string> = {};
   private store: Store | null;
+  // Invalidates asynchronous key downloads started under a previous account.
+  private revision = 0;
 
   constructor(store: Store | null) {
     this.store = store;
@@ -73,8 +75,12 @@ export class WriteKeyBook {
 
   /** Takes the server's list as it is; returns how many keys changed. */
   async refresh(server: WriteKeyServer): Promise<number> {
+    const revision = this.revision;
+    const received = await server.writeKeys();
+    // A different account or sign-out may have cleared the cache meanwhile.
+    if (revision !== this.revision) return 0;
     const next: Record<string, string> = {};
-    for (const k of validWriteKeys((await server.writeKeys()).map((x) => ({ device: x.device, epoch: x.epoch, write_key: x.writeKey }))))
+    for (const k of validWriteKeys(received.map((x) => ({ device: x.device, epoch: x.epoch, write_key: x.writeKey }))))
       next[id(k.device, k.epoch)] = k.writeKey;
     const all = new Set([...Object.keys(next), ...Object.keys(this.keys)]);
     let changed = 0;
@@ -86,6 +92,7 @@ export class WriteKeyBook {
 
   /** Sign-out: no write authority stays on the phone. */
   clear(): void {
+    this.revision++;
     this.keys = {};
     try { this.store?.removeItem(KEY); } catch { /* fine */ }
   }
