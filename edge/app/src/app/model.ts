@@ -49,7 +49,7 @@ export interface Animal {
   /** Every record with its own time, located or not (activity), oldest first. */
   reports: Observation[];
   /** Battery readings of every record, also without a fix or a clock (then: when it reached the gateway), last 7 days. */
-  batteryTrail: { t: number; mv: number; power?: string | null; usb?: boolean | null }[];
+  batteryTrail: { t: number; mv: number; power?: string | null; usb?: boolean | null; periodS?: number | null }[];
   /** When the battery shown was measured. */
   batteryAt: number | null;
   batteryMv: number | null;
