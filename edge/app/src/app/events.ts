@@ -62,7 +62,9 @@ function animalEvents(a: Animal, cov: Coverage | null, now: number, fence?: Fenc
   // Silent gaps between records, and the open gap after the newest one.
   for (let i = 1; i < pts.length; i++) {
     const t0 = epochMs(pts[i - 1].time), t1 = epochMs(pts[i].time);
-    const T = periodMs(pts[i - 1].period_s), gap = t1 - t0;
+    // The longer of the two intervals: after "2 dk -> 60 dk" the first hourly
+    // report is on time, not an hour of silence (owner's phone, 2026-11-13).
+    const T = Math.max(periodMs(pts[i - 1].period_s), periodMs(pts[i].period_s)), gap = t1 - t0;
     if (gap <= agingLimit(T)) continue;
     // Reports without a position inside the gap: the collar was heard, GNSS had no fix.
     if ((a.heardOnly ?? []).some((h) => h > t0 && h < t1)) continue;

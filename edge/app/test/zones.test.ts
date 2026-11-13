@@ -149,6 +149,23 @@ test("outside the zones: status, event, return and serbest otlatma (owner decisi
   assert.equal(closed.length, 1);
   assert.equal(closed[0].end, NOW - 20 * 60_000);
 
+  // A boundary drawn 5 minutes ago (owner's phone 2026-11-13: "15 gündür alan
+  // dışında" right after drawing): outside now, but only since the drawing;
+  // a period that ended before the drawing is not history of this boundary.
+  const drawn = compileFence([zone(SQ, { updated: NOW - 5 * 60_000 })]);
+  const [nw] = buildHerd({ ...base, fence: drawn });
+  assert.equal(nw.outside, true);
+  assert.equal(nw.outSince, NOW - 5 * 60_000);
+  const fresh = deriveEvents({ herd: [nw], now: NOW, fence: drawn, ...rest }).filter((e) => e.kind === "out");
+  assert.deepEqual(fresh.map((e) => [e.at, e.end]), [[NOW - 5 * 60_000, null]]);
+  const [o] = buildHerd({ ...base, points: back, fence: drawn });
+  assert.equal(deriveEvents({ herd: [o], now: NOW, fence: drawn, ...rest }).filter((e) => e.kind === "out").length, 0);
+
+  // Interval changed 10 min -> 60 min: the first hourly report is on time, not silence.
+  const slow = [p(130, 28.0545), p(120, 28.0545), { ...p(60, 28.0545), period_s: 3600 }, { ...p(1, 28.0545), period_s: 3600 }];
+  const [q] = buildHerd({ ...base, points: slow });
+  assert.equal(deriveEvents({ herd: [q], now: NOW, fence, ...rest }).filter((e) => e.kind === "silent" || e.kind === "lost").length, 0);
+
   // Outside and then no news for three reports (period 600 s: 30 min): may be lost.
   const gone = pts.map((x) => ({ ...x, time: iso(Date.parse(x.time) - 40 * 60_000) }));
   const [l] = buildHerd({ ...base, points: gone });
