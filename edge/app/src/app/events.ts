@@ -9,7 +9,7 @@ import { fmt, tr } from "./i18n/tr.ts";
 import { agingLimit, batteryOf, epochMs, lostLimit, periodMs } from "./herd.ts";
 import { coverageAt, type Coverage } from "./coverage.ts";
 import type { Animal, AppEvent, EventKind, ServerView, Severity, Station } from "./model.ts";
-import type { Fence } from "./zones.ts";
+import { outsideEpisodes, type Fence } from "./zones.ts";
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -25,8 +25,8 @@ export interface EventInput {
   journal: BookLine[];
   coverage: Coverage | null;
   now: number;
-  // Kept as optional arguments for compatibility with the app model. Neither
-  // may authorize synthesizing a geofence warning from positions.
+  // Active zones and "serbest otlatma" (owner decision 2026-11-13: in v1 the
+  // app decides outside from positions; under serbest otlatma it is no alarm).
   fence?: Fence;
   grazing?: boolean;
 }
@@ -41,15 +41,23 @@ function ev(kind: EventKind, severity: Severity, a: Animal | null, at: number, e
 
 const arrived = (iso: string | null) => (iso ? Date.parse(iso) : null);
 
-function animalEvents(a: Animal, cov: Coverage | null, now: number): AppEvent[] {
+function animalEvents(a: Animal, cov: Coverage | null, now: number, fence?: Fence, grazing = false): AppEvent[] {
   const out: AppEvent[] = [];
   const from = now - HISTORY_DAYS * DAY;
   const pts = a.points.filter((p) => epochMs(p.time) >= from);
   if (!pts.length) return out;
 
-  // The TRACKER owns confirmed geofence transitions. Never infer a second
-  // OUTSIDE alarm from ordinary POSITION records in the phone. A genuine
-  // signed EVENT can be shown when its transport/parser is implemented.
+  // Outside the active zones: the collar's own rule on the positions held
+  // here (zones.ts outsideEpisodes). Under serbest otlatma an open period is
+  // not a warning; closed periods stay in the day history.
+  if (fence)
+    for (const ep of outsideEpisodes(pts, fence, (p) => epochMs(p.time))) {
+      if (ep.to === null && grazing) continue;
+      const first = pts[ep.fromIdx];
+      out.push(ev("out", "danger", a, ep.from, ep.to, tr.events.out.title(a.name),
+        ep.to === null ? tr.events.out.detail(fmt.since(ep.from, now)) : tr.events.out.back(fmt.duration(ep.to - ep.from)),
+        arrived(first?.received ?? null)));
+    }
 
   // Silent gaps between records, and the open gap after the newest one.
   for (let i = 1; i < pts.length; i++) {
@@ -130,9 +138,9 @@ function animalEvents(a: Animal, cov: Coverage | null, now: number): AppEvent[] 
   return out;
 }
 
-export function deriveEvents({ herd, station, server, journal, coverage, now }: EventInput): AppEvent[] {
+export function deriveEvents({ herd, station, server, journal, coverage, now, fence, grazing }: EventInput): AppEvent[] {
   const out: AppEvent[] = [];
-  for (const a of herd) out.push(...animalEvents(a, coverage, now));
+  for (const a of herd) out.push(...animalEvents(a, coverage, now, fence, grazing));
 
   // Station and server: live conditions (stable ids so "Gördüm" sticks).
   if (station.held !== null && station.capacity && station.held / station.capacity >= 0.8) {
