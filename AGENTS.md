@@ -696,6 +696,17 @@ Current TLP v1 has no approved secure OUTSIDE-event packet, so remote event
 transport remains on the reviewed secure EVENT/v2 path. See
 `docs/architecture/ORUN_GEOFENCE_OPERATIONAL_POLICY.md`.
 
+Interim owner decision (2026-11-13/14, v1 step 5): until the tracker sends the
+secure OUTSIDE EVENT, the owner's phone is notified from ordinary verified
+positions ("alan dışına çıktı / alana döndü", 2-of-3 on the positions held).
+The decision is made in ONE place, the account server
+(`backend/herd_alerts.py`, `GET /api/v1/herd/alerts`), because the Android app
+cannot run reliably in the background; the app's own copy
+(`edge/app/src/app/alerts.ts`) only covers a phone attached to a Gateway
+without Internet. This is a notification aid, not alarm authority: it grants
+nothing to the tracker, changes no tracker state and is replaced by the
+tracker's own EVENT when that path exists. Do not add further rule copies.
+
 Use accepted-location quality filtering and bounded confirmation to avoid false
 alarms. Do not weaken the existing GNSS no-overlap/stale-fix rules.
 

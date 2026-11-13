@@ -21,6 +21,7 @@ aynısını hesap adresinden yapar: GET/POST /api/v1/devices/lora (zone:write).
 Hesap adresi çiftliğin gateway listesini verir: GET /api/v1/devices/gateways;
 cihaz adları: GET /api/v1/devices/names, POST /api/v1/devices/name (2d);
 pil kapasitesi (mAh, hesapta): GET /api/v1/devices/battery, POST /api/v1/devices/battery (Y3);
+sürü uyarıları (karar sunucuda): GET /api/v1/herd/alerts; alanlar hesapta: GET/POST /api/v1/herd/zones;
 tasmadaki alanlar: GET /api/v1/devices/fences, POST /api/v1/devices/fence (3a);
 cihaz ayarları: GET /api/v1/devices/settings, POST /api/v1/devices/settings (istenen),
 POST /api/v1/devices/settings/reported (cihazdan okunan) (4b);
@@ -54,6 +55,7 @@ if str(ROOT) not in sys.path:
 from backend.account_login import AccountStore  # noqa: E402
 from backend.account_login_http import account_handler_factory  # noqa: E402
 from backend.device_battery import BadBattery, DeviceBattery  # noqa: E402
+from backend.herd_alerts import BadZones, HerdAlerts, HerdZones  # noqa: E402
 from backend.device_names import BadName, DeviceNames  # noqa: E402
 from backend.device_settings import BadSettings, DeviceSettings  # noqa: E402
 from backend.device_ops import BadOp, DeviceOps  # noqa: E402
@@ -262,6 +264,8 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
     edge_queues = EdgeQueueStatus(local.backend.db_path)
     names = DeviceNames(local.backend.db_path)
     battery = DeviceBattery(local.backend.db_path)
+    herd_zones = HerdZones(local.backend.db_path)
+    herd_alerts = HerdAlerts(local.backend.db_path, herd_zones)
     fences = TrackerFences(local.backend.db_path)
     settings = DeviceSettings(local.backend.db_path)
     ops = DeviceOps(local.backend.db_path)
@@ -296,6 +300,13 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
                      "write_key": oc.ble_write_key(c).hex().upper()}
                     for c in registry.all() if not c.retired]
                 return self._send(200, {"keys": keys})
+            if self.path in ("/api/v1/herd/alerts", "/api/v1/herd/zones"):
+                # Sürü uyarıları: karar burada verilir, telefon yalnız sorar.
+                if self._farm_actor("zone:read") is None:
+                    return None
+                if self.path == "/api/v1/herd/zones":
+                    return self._send(200, herd_zones.get())
+                return self._send(200, herd_alerts.current(names.all(), settings.all()))
             if self.path not in ("/api/v1/devices/gateways", "/api/v1/devices/edge-status", "/api/v1/devices/names",
                                  "/api/v1/devices/battery", "/api/v1/devices/fences", "/api/v1/devices/settings",
                                  "/api/v1/devices/ops", "/api/v1/devices/lora"):
@@ -323,6 +334,17 @@ def with_gateways(handler: type, accounts: AccountStore, enrollment, local: Loca
             return self._send(200, {"gateways": gateways.list(farm_gateway_ids(local))})
 
         def do_POST(self):  # noqa: N802
+            if self.path == "/api/v1/herd/zones":
+                if self._farm_actor("zone:write") is None:
+                    return None
+                size = self.headers.get("Content-Length", "")
+                if (self.headers.get("Transfer-Encoding") or not size.isdecimal() or
+                        not 1 <= int(size) <= 524288):
+                    return self._send(400, {"error": "invalid_request"})
+                try:
+                    return self._send(200, herd_zones.set(json.loads(self.rfile.read(int(size)))))
+                except (BadZones, ValueError, UnicodeDecodeError):
+                    return self._send(400, {"error": "invalid_zones"})
             if self.path not in ("/api/v1/devices/gateway", "/api/v1/devices/name",
                                  "/api/v1/devices/battery", "/api/v1/devices/fence", "/api/v1/devices/settings",
                                  "/api/v1/devices/settings/reported", "/api/v1/devices/ops",
