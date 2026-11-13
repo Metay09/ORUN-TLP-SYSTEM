@@ -446,6 +446,10 @@ export async function pilotPasswordLogin(
   if (busy) throw new Error("Hesap oturum işlemi zaten devam ediyor.");
   busy = true;
   try {
+    // Drop previous account's signing authority before any network request.
+    // This also invalidates in-flight key refreshes through WriteKeyBook.clear().
+    writeKeys.clear();
+    edgeKeys.clear();
     if (client) {
       const old = client;
       client = null;
@@ -472,6 +476,10 @@ export async function pilotAccountLogin(
   busy = true;
   try {
     // Do not leave an old login active on the server when switching user.
+    // Drop previous account's signing authority before any network request.
+    // This also invalidates in-flight key refreshes through WriteKeyBook.clear().
+    writeKeys.clear();
+    edgeKeys.clear();
     if (client) {
       const old = client;
       client = null;
