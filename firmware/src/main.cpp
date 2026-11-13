@@ -1126,6 +1126,30 @@ bool batteryQuiet() {
   }
 }
 
+// The RAK4631 is wired for the nRF52840's DC/DC converters (both stages:
+// inductors L7/L8 and L10 are fitted on every WisBlock Core module RAK sells),
+// but they only run when software sets DCDCEN/DCDCEN0 (Nordic); the Adafruit
+// core never does, so the chip ran on its linear regulators. Set once at the
+// very start of setup(), before the SoftDevice owns the POWER registers.
+// What the registers held before is kept for "BATTERY?".
+uint8_t dcdc_at_boot = 0xFF;   // bit0 REG1, bit1 REG0; 0xFF = host build
+void enableDcdcRegulators() {
+#if defined(NRF52_SERIES)
+  dcdc_at_boot = static_cast<uint8_t>((NRF_POWER->DCDCEN & 1U) |
+                                      ((NRF_POWER->DCDCEN0 & 1U) << 1));
+  NRF_POWER->DCDCEN = 1;
+  NRF_POWER->DCDCEN0 = 1;
+#endif
+}
+uint8_t dcdcNow() {
+#if defined(NRF52_SERIES)
+  return static_cast<uint8_t>((NRF_POWER->DCDCEN & 1U) |
+                              ((NRF_POWER->DCDCEN0 & 1U) << 1));
+#else
+  return 0xFF;
+#endif
+}
+
 // USB supply present (nRF52840 POWER.USBREGSTATUS.VBUSDETECT), as Meshtastic
 // and RNode read it on the RAK4631. Whether the RAK19007 solar input also
 // reaches VBUS is not documented; the bench decides.
@@ -2269,6 +2293,10 @@ void printBatteryDiagnostic() {
                 static_cast<unsigned long>(battery_monitor.scalePpm()),
                 battery_monitor.scaleLearned() ? "yes" : "no",
                 static_cast<unsigned long>(power_state.chargeEnds()));
+  // bit0 = main stage (REG1), bit1 = high-voltage stage (REG0); 3 = both on.
+  Serial.printf("BATTERY REGULATOR dcdc=%u at_boot=%u\n",
+                static_cast<unsigned>(dcdcNow()),
+                static_cast<unsigned>(dcdc_at_boot));
 }
 
 void printGnssSleepDiagnostic() {
@@ -3863,6 +3891,7 @@ void decideBootStorageRole() {
 #endif
 
 void setup() {
+  enableDcdcRegulators();
   Serial.begin(115200);
   // Start the hardware watchdog before peripheral initialization. It is the
   // final recovery layer if bounded driver recovery itself cannot make progress.
