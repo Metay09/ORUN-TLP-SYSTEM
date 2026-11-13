@@ -34,7 +34,8 @@ export function grazing(g: Graze, now: number): boolean {
   return g.forever || (g.until !== null && g.until > now);
 }
 
-export interface ZoneBook { zones: Zone[]; graze: Graze; }
+/** `changed`: when the set of zones last changed in any way (also a removal), epoch ms. */
+export interface ZoneBook { zones: Zone[]; graze: Graze; changed?: number; }
 
 // ------------------------------------------------------------------ E7 ---
 export type E7 = [number, number];   // [latitude_e7, longitude_e7]
@@ -167,9 +168,9 @@ export function roomFor(zones: Zone[], editingId: string | null, willBeActive: b
  * against a boundary for the time before it was drawn (outsideEpisodes). */
 export interface Fence { polys: { id: string; name: string; v: E7[] }[]; since?: number; }
 
-export function compileFence(zones: Zone[]): Fence {
+export function compileFence(zones: Zone[], changed = 0): Fence {
   const polys: Fence["polys"] = [];
-  let since = 0;
+  let since = changed;
   for (const z of zones) {
     if (!z.active) continue;
     const v = canonicalE7(z.ring);

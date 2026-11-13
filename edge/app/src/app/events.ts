@@ -74,7 +74,7 @@ function animalEvents(a: Animal, cov: Coverage | null, now: number, fence?: Fenc
       lost ? tr.events.lost.title(a.name) : tr.events.silent.title(a.name),
       tr.events.silent.detail(fmt.duration(gap), missed), arrived(pts[i].received)));
   }
-  const last = pts[pts.length - 1], tl = epochMs(last.time), T = periodMs(last.period_s);
+  const last = pts[pts.length - 1], tl = epochMs(last.time), T = periodMs(Math.max(last.period_s, a.periodS || 0));
   if (a.noFix && a.lastReport !== null) {
     // Heard, but without a position: not silent. One open warning, its own id.
     const words = a.gpsFault ? tr.events.gpsFault : tr.events.noFix;

@@ -77,3 +77,11 @@ test("silent that becomes lost is a second notification; memory stays bounded", 
   for (let i = 0; i < 1000; i++) memory = nextAlerts([ev("out", 1, null, { id: `out:A:${i}` })], memory, NOW).memory;
   assert.ok(memory.keys.length <= 400);
 });
+
+test("the 'back inside' title is built from the real 'left the zone' wording", async () => {
+  const { tr } = await import("../src/app/i18n/tr.ts");
+  const leaving = { ...ev("out", 40), title: tr.events.out.title("Sarıkız") };
+  const told = nextAlerts([leaving], ready, NOW);
+  const back = nextAlerts([{ ...leaving, end: NOW - MIN }], told.memory, NOW);
+  assert.equal(back.alerts[0].title, "Sarıkız alana döndü");
+});

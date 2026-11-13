@@ -165,6 +165,18 @@ test("outside the zones: status, event, return and serbest otlatma (owner decisi
   const slow = [p(130, 28.0545), p(120, 28.0545), { ...p(60, 28.0545), period_s: 3600 }, { ...p(1, 28.0545), period_s: 3600 }];
   const [q] = buildHerd({ ...base, points: slow });
   assert.equal(deriveEvents({ herd: [q], now: NOW, fence, ...rest }).filter((e) => e.kind === "silent" || e.kind === "lost").length, 0);
+  // The collar confirmed 60 min but its newest record still says 10 min: 45 minutes without news is not silence.
+  const waiting = [p(65, 28.0545), p(55, 28.0545), p(45, 28.0545)];
+  const [w0] = buildHerd({ ...base, points: waiting });
+  assert.equal(deriveEvents({ herd: [w0], now: NOW, fence, ...rest }).filter((e) => e.kind === "silent").length, 1);
+  const [stale] = buildHerd({ ...base, points: waiting, intervals: { C1: { s: 3600, at: NOW - 600 * 60_000 } } });
+  assert.equal(stale.periodS, 600, "kayıttan eski onay sayılmaz");
+  const [w1] = buildHerd({ ...base, points: waiting, intervals: { C1: { s: 3600, at: NOW - 44 * 60_000 } } });
+  assert.equal(w1.status, "ok");
+  assert.equal(deriveEvents({ herd: [w1], now: NOW, fence, ...rest }).filter((e) => e.kind === "silent" || e.kind === "lost").length, 0);
+  // A zone removed a minute ago: the set changed, so the animal is outside only since then.
+  const [rm] = buildHerd({ ...base, fence: compileFence([zone(SQ)], NOW - 60_000) });
+  assert.equal(rm.outSince, NOW - 60_000);
 
   // Outside and then no news for three reports (period 600 s: 30 min): may be lost.
   const gone = pts.map((x) => ({ ...x, time: iso(Date.parse(x.time) - 40 * 60_000) }));

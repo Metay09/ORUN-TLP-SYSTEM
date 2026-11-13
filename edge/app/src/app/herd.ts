@@ -133,9 +133,11 @@ export interface HerdInput {
   names?: Record<string, string>;
   /** Records without a position: the collar was heard even when GNSS found no fix. */
   unlocated?: RecordId[];
+  /** The report interval each collar confirmed and when (by upper-case device id). */
+  intervals?: Record<string, { s: number; at: number }>;
 }
 
-export function buildHerd({ points, profiles, assetOf, now, fence, grazing = false, names, unlocated = [] }: HerdInput): Animal[] {
+export function buildHerd({ points, profiles, assetOf, now, fence, grazing = false, names, unlocated = [], intervals }: HerdInput): Animal[] {
   const by = new Map<string, { device: string; list: Observation[] }>();
   for (const p of points) {
     const t = epochMs(p.time);
@@ -178,7 +180,14 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     const timed = list.filter((p) => Number.isFinite(epochMs(p.time))).sort((a, b) => epochMs(a.time) - epochMs(b.time));
     const last = timed.length ? timed[timed.length - 1] : (list.length ? list[list.length - 1] : null);
     const lastTime = last && Number.isFinite(epochMs(last.time)) ? epochMs(last.time) : null;
-    const periodS = last?.period_s ?? 60;
+    // The longer of the newest record's interval and the one the collar has
+    // confirmed since: after "2 dk -> 60 dk" the collar is not "silent" for
+    // the hour until its first hourly report (owner's phone, 2026-11-13).
+    const tracker = (last?.tracker ?? by.get(id)?.device ?? "").toUpperCase();
+    // Only a confirmation newer than the newest record counts: an old one
+    // must not slow the silence check of a collar that reports faster now.
+    const set = intervals?.[tracker];
+    const periodS = Math.max(last?.period_s ?? 60, set && set.at > (lastTime ?? 0) ? set.s : 0);
     const unloc = heardBy.get(id) ?? null;
     const lastReport = unloc !== null && (lastTime === null || unloc > lastTime) ? unloc : lastTime;
     // Heard recently, but the position is old: GNSS finds no fix (indoors, under cover).

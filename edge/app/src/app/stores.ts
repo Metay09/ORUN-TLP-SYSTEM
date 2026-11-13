@@ -262,7 +262,8 @@ export class ZoneStore extends Persisted<ZoneBook> {
     super(key, () => ({ zones: seed ?? legacy.zones, graze: { ...NO_GRAZE } }),
       (raw) => (!invalidExisting && raw && typeof raw === "object" && !Array.isArray(raw) &&
         Array.isArray((raw as ZoneBook).zones)
-        ? { zones: (raw as ZoneBook).zones, graze: { ...NO_GRAZE, ...((raw as ZoneBook).graze ?? {}) } } : null));
+        ? { zones: (raw as ZoneBook).zones, graze: { ...NO_GRAZE, ...((raw as ZoneBook).graze ?? {}) },
+            ...(typeof (raw as ZoneBook).changed === "number" ? { changed: (raw as ZoneBook).changed } : {}) } : null));
     this.storageKey = key;
     this.migrationWarning = invalidExisting
       ? "Yeni alan kayıtları bozuk veya desteklenmiyor; orijinal veriler korunuyor, üzerine yazılmayacak."
@@ -297,15 +298,15 @@ export class ZoneStore extends Persisted<ZoneBook> {
     const clean: Zone = { ...z, name: z.name.trim().slice(0, 40) || "Alan", updated: Date.now() };
     const i = b.zones.findIndex((x) => x.id === z.id);
     const zones = i >= 0 ? b.zones.map((x, k) => (k === i ? clean : x)) : [...b.zones, clean];
-    this.commit({ ...b, zones: this.checked(zones) });
+    this.commit({ ...b, zones: this.checked(zones), changed: Date.now() });
   }
   remove(id: string): void {
     const b = this.get();
-    this.commit({ ...b, zones: b.zones.filter((z) => z.id !== id) });
+    this.commit({ ...b, zones: b.zones.filter((z) => z.id !== id), changed: Date.now() });
   }
   add(list: Zone[]): void {
     const b = this.get();
-    this.commit({ ...b, zones: this.checked([...b.zones, ...list]) });
+    this.commit({ ...b, zones: this.checked([...b.zones, ...list]), changed: Date.now() });
   }
   // Preserved as storage schema data only. No UI/alarms until secure collar
   // command and ACK protocol for FREE_GRAZE is implemented.

@@ -4,7 +4,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Point, RecordId } from "../core/points.ts";
 import type { Snapshot } from "./controller.ts";
-import { deviceNames, onPilotObservationSync, pilotAccountStatus, pilotObservationSyncState } from "./ownerAccountPilotRuntime.ts";
+import { deviceNames, deviceSettings, onPilotObservationSync, pilotAccountStatus, pilotObservationSyncState } from "./ownerAccountPilotRuntime.ts";
 import { nextAlerts, watchFresh } from "./alerts.ts";
 import { postAlerts } from "../platform/notify.ts";
 import { coverageCells, type Coverage } from "./coverage.ts";
@@ -168,12 +168,21 @@ export function useModel(): Model {
 
   const zones = zoneBook.zones;
   const graze = zoneBook.graze ?? NO_GRAZE;
-  const fence = useMemo(() => compileFence(zones), [zones]);
+  const fence = useMemo(() => compileFence(zones, zoneBook.changed), [zones, zoneBook.changed]);
   const zoneSet = useMemo(() => checkSet(zones), [zones]);
   const grazingNow = grazing(graze, now) || (graze.until !== null && graze.until > Date.now());
   const names = useSyncExternalStore((fn) => deviceNames.subscribe(fn), () => deviceNames.snapshot());
-  const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now, fence, grazing: grazingNow, names, unlocated }),
-    [points, book, assets, now, fence, grazingNow, names, unlocated]);
+  const settings = useSyncExternalStore((fn) => deviceSettings.subscribe(fn), () => deviceSettings.snapshot());
+  const intervals = useMemo(() => {
+    const out: Record<string, { s: number; at: number }> = {};
+    for (const [id, e] of Object.entries(settings)) {
+      const v = e.reported?.interval_s;
+      if (typeof v === "number" && v > 0 && e.reportedAt) out[id.toUpperCase()] = { s: v, at: e.reportedAt };
+    }
+    return out;
+  }, [settings]);
+  const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now, fence, grazing: grazingNow, names, unlocated, intervals }),
+    [points, book, assets, now, fence, grazingNow, names, unlocated, intervals]);
   const coverage = useMemo(() => coverageCells(points), [points]);
   // The snapshot changes on every log line; recompute only on what matters.
   const station = useMemo(() => stationOf(snap, placeMap),
