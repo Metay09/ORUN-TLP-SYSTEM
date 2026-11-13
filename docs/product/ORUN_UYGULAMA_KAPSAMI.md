@@ -105,3 +105,22 @@ gönder (Nofence, 3. adım), kapsama haritada ve "buraya gateway koy" önerisi
 ## Sunucu yedeği (2026-11-12)
 
 `python3 tools/orun_yedek.py al` çalışan `orun-sunucu`'nun kayıt defterini, kimlik/anahtar defterini, hesap klasörünü ve köprü anahtarını `~/ORUN-YEDEK/<tarih>/` altına alır (SQLite çevrim içi yedek: sunucu çalışırken ve WAL doluyken tutarlı; klasör 0700, dosyalar 0600; son 14 yedek tutulur). `prova` son yedeği ayrı geçici klasörde açar: dosya özetleri, bütünlük, tablo başına kayıt sayısı, kimlik–izin–anahtar ilişkileri, sonra sunucunun kendi kodu o kopyadan kayıtları ve son konumları okur; canlı veriye dokunmaz. `durum` son yedek başarısız ya da 26 saatten eskiyse hata verir. `zamanlayici --kur` her gece 03:17'de yedek alır. Durum: kod + PC testi (`backend/tests/test_orun_yedek.py`) **tamam**; canlı sunucuda ilk yedek ve prova **bekliyor**. Yedek aynı diskte durur: disk arızasına karşı PC dışına kopya ayrı karar (yedek gizli anahtar içerir).
+
+## Telefon bildirimleri (2026-11-13)
+
+Uygulama dört durumda telefona bildirim düşürür: hayvan alandan çıktı, alana
+döndü, haber alınamıyor / kayıp olabilir, tasma pili bitiyor.
+
+- Karar telefondaki kayıtlardan verilir; kayıt sunucudan da, bağlı gateway'den
+  de gelse aynıdır. Dış bildirim hizmeti (Firebase vb.) kullanılmaz.
+- Hesapla giriş yapılmışsa uygulama arka planda kalıcı "ORUN sürüyü izliyor"
+  bildirimiyle çalışır ve sunucuyu dakikada bir okur. Uygulama tamamen
+  kapatılırsa (son uygulamalardan atılırsa) ya da telefonda internet ve
+  gateway yoksa bildirim gelmez.
+- Her olay bir kez bildirilir. Telefonun verisi bayatken (son 5 dakikada
+  sunucu sonuna kadar okunmadıysa ve gateway bağlı değilse) karar verilmez.
+- "Haber alınamıyor" eşiği rapor aralığına bağlıdır: 3 rapor kaçınca (en az
+  30 dk, en çok 24 saat) sessiz, iki katında kayıp; alan dışındayken ilk
+  eşikte kayıp. Serbest otlatma açıkken alan dışı bildirimi yoktur.
+- Sınır: tasma kendi başına olay göndermez; alandan çıkış bir sonraki
+  raporla öğrenilir.

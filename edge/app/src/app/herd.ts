@@ -12,7 +12,7 @@ import { bleName } from "./deviceNames.ts";
 import { fmt, tr } from "./i18n/tr.ts";
 import type { Animal, AnimalStatus, AssetProfile, BatteryLevel, Freshness, Observation } from "./model.ts";
 import { blankProfile } from "./stores.ts";
-import { zoneAt, type Fence } from "./zones.ts";
+import { outsideEpisodes, zoneAt, type Fence } from "./zones.ts";
 import type { RecordId } from "../core/points.ts";
 
 const MIN = 60_000;
@@ -24,8 +24,12 @@ export function periodMs(periodS: number | null | undefined): number {
   return Math.max(30, periodS || 60) * 1000;
 }
 export const freshLimit = (T: number) => Math.max(2 * T, 10 * MIN);
-export const agingLimit = (T: number) => Math.max(6 * T, HOUR);
-export const lostLimit = (T: number) => Math.max(12 * T, 3 * HOUR);
+// Owner decision 2026-11-13: "no news" is counted in reports, because the
+// report interval changes (2 min .. 14 h): three reports in a row missing,
+// but never before 30 minutes and never later than 24 hours. "May be lost"
+// is twice that.
+export const agingLimit = (T: number) => Math.min(Math.max(3 * T, HOUR / 2), 24 * HOUR);
+export const lostLimit = (T: number) => 2 * agingLimit(T);
 
 export function freshnessOf(ms: number | null, periodS: number, now: number): Freshness {
   if (ms === null) return "none";
@@ -106,7 +110,7 @@ export function shortId(id: string): string {
   return id.slice(-4).toUpperCase();
 }
 
-const ORDER: AnimalStatus[] = ["battery-critical", "lost", "silent", "aging", "battery-low", "ok", "waiting"];
+const ORDER: AnimalStatus[] = ["battery-critical", "lost", "out", "silent", "aging", "battery-low", "ok", "waiting"];
 
 export interface HerdInput {
   points: Observation[];
@@ -121,7 +125,7 @@ export interface HerdInput {
   unlocated?: RecordId[];
 }
 
-export function buildHerd({ points, profiles, assetOf, now, fence, names, unlocated = [] }: HerdInput): Animal[] {
+export function buildHerd({ points, profiles, assetOf, now, fence, grazing = false, names, unlocated = [] }: HerdInput): Animal[] {
   const by = new Map<string, { device: string; list: Observation[] }>();
   for (const p of points) {
     const t = epochMs(p.time);
@@ -200,15 +204,24 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names, unloca
     const named = Boolean(given);
     const name = named ? given : bleName(device ?? id);
     const heardAt = lastReport ?? lastTime;
-    const lost = heardAt !== null && now - heardAt > lostLimit(periodMs(periodS));
-    // Geofence alarm ownership belongs to the TRACKER, not to the app's
-    // history/position projection. Keep geometric membership informational.
+    let lost = heardAt !== null && now - heardAt > lostLimit(periodMs(periodS));
+    // Owner decision 2026-11-13 (v1): the app decides "outside" from the
+    // positions it holds and the zones of the account, with the collar's own
+    // rule (the newest record outside and 2 of the last 3). No extra packet
+    // on the air. The collar's signed EVENT replaces this source later.
     const zone = fence && last ? zoneAt(fence, last)?.name ?? null : null;
+    const openOut = fence
+      ? outsideEpisodes(timed, fence, (p) => epochMs(p.time)).find((e) => e.to === null) ?? null
+      : null;
+    const outside = openOut !== null;
+    // Outside the zones and no news for three reports: may be lost already.
+    if (outside && !grazing && heardAt !== null && now - heardAt > agingLimit(periodMs(periodS))) lost = true;
 
     let status: AnimalStatus;
     if (!last && !noFix) status = "waiting";
     else if (bat.level === "critical") status = "battery-critical";
     else if (lost) status = "lost";
+    else if (outside && !grazing) status = "out";
     else if (noFix) status = "aging";
     else if (freshness === "stale") status = "silent";
     else if (freshness === "aging") status = "aging";
@@ -226,6 +239,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names, unloca
     else if (freshness === "fresh" || freshness === "aging") { seen = tr.status.seenAgo(fmt.ago(lastTime, now)); short = fmt.ago(lastTime, now); }
     else { seen = tr.status.silentFor(fmt.since(heardAt!, now)); short = tr.status.short.silent(fmt.duration(now - heardAt!)); }
     // The chip names the problem, not the time, when the battery is the issue.
+    if (status === "out") short = tr.status.short.out;
     if (status === "battery-critical") short = tr.status.batteryCritical;
     else if (status === "battery-low") short = tr.status.batteryLow;
 
@@ -237,7 +251,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, names, unloca
       freshRatio: freshRatio(lastTime, periodS, now), status, seen, short,
       battery: bat.level, batteryPercent: bat.percent,
       activeShare: freshness === "fresh" ? activeShare(last) : null,
-      zone, outside: false, outSince: null, grazing: false,
+      zone, outside, outSince: openOut?.from ?? null, grazing: outside && grazing,
       attention: ORDER.length - ORDER.indexOf(status),
     });
   }

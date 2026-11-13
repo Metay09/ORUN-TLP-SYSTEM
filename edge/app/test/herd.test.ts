@@ -61,7 +61,7 @@ test("herd: newest RECORD per collar, attention first, plain sentences", () => {
   const named: AssetProfile = { ...blankProfile("00000000000000AA"), name: "Sarıkız", tag: "TR 09 1234" };
   const points = [
     pt("00000000000000AA", 3), pt("00000000000000AA", 1),
-    pt("00000000000000BB", 120, { received: iso(NOW) }),             // arrived now, measured 2 h ago
+    pt("00000000000000BB", 60, { received: iso(NOW) }),              // arrived now, measured 1 h ago
     pt("00000000000000CC", 2, { battery: "LOW", battery_mv: 3600 }),
     pt("00000000000000EE", 5 * 60),                                   // 5 h without news: may be lost
   ];
@@ -71,7 +71,7 @@ test("herd: newest RECORD per collar, attention first, plain sentences", () => {
   assert.equal(ee.status, "lost");
   assert.equal(ee.seen, "5 saattir haber yok · kayıp olabilir");
   assert.equal(bb.status, "silent");
-  assert.equal(bb.seen, "2 saattir haber yok");                       // late arrival is not "seen now"
+  assert.equal(bb.seen, "1 saattir haber yok");                       // late arrival is not "seen now"
   assert.equal(cc.battery, "low");
   assert.equal(aa.name, "Sarıkız");
   assert.equal(aa.initials, "S");

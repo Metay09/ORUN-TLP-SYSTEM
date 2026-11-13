@@ -3,6 +3,7 @@
 // "Gördüm" marks. localStorage, wrapped: a private/blocked storage only makes
 // them memory-only, never breaks the app. Moving profiles to the server so
 // every phone shares them is later work (step 3C+).
+import { EMPTY_MEMORY, type AlertMemory } from "./alerts.ts";
 import type { LatLon } from "./geo.ts";
 import type { AssetProfile, Assignment } from "./model.ts";
 import { NO_GRAZE, checkSet, validateRing, type Graze, type LonLat, type Zone, type ZoneBook } from "./zones.ts";
@@ -180,6 +181,7 @@ export const prefs = new Persisted<Prefs>("orun.app.prefs.v1", () => ({ ...DEFAU
 
 // ------------------------------------------- station positions and acks --
 export const stationPlaces = new Persisted<Record<string, LatLon>>("orun.app.stations.v1", () => ({}));
+export const alertMemory = new Persisted<AlertMemory>("orun.app.alerts.v1", () => ({ ...EMPTY_MEMORY }));
 export const seenEvents = new Persisted<string[]>("orun.app.seen.v1", () => []);
 
 // ----------------------------------------------------------------- zones --

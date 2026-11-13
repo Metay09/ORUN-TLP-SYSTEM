@@ -94,7 +94,7 @@ test("free grazing: timed or until turned off", () => {
   assert.equal(grazing({ until: null, forever: true }, 10), true);
 });
 
-test("geofence memberships are informative; phone never manufactures an OUTSIDE alarm", async () => {
+test("outside the zones: status, event, return and serbest otlatma (owner decision 2026-11-13)", async () => {
   const { buildHerd } = await import("../src/app/herd.ts");
   const { deriveEvents } = await import("../src/app/events.ts");
   const NOW = Date.parse("2026-10-25T12:00:00Z");
@@ -110,18 +110,57 @@ test("geofence memberships are informative; phone never manufactures an OUTSIDE 
                p(10, 28.0601), p(1, 28.0602)];
   const fence = compileFence([zone(SQ)]);
   const base = { points: pts, profiles: {}, assetOf: (d: string) => d, now: NOW, fence };
-  const [a] = buildHerd(base);
-  assert.notEqual(a.status, "out", "a tracker event is required for this status");
-  assert.equal(a.outside, false);
-  assert.equal(a.outSince, null);
-  assert.equal(a.grazing, false);
-  const events = deriveEvents({
-    herd: [a], now: NOW, fence, grazing: true, journal: [], coverage: null,
-    station: { id: null, link: "none", phase: "idle", detail: null, held: null, capacity: null, position: null },
+  const rest = { journal: [], coverage: null,
+    station: { id: null, link: "none" as const, phase: "idle" as const, detail: null, held: null, capacity: null, position: null },
     server: { configured: false, url: "", token: "", auto: false, busy: false, uploaded: null,
-      pending: null, conflict: 0, rejected: 0, lastOk: null, error: null },
-  });
-  assert.equal(events.filter((event) => event.kind === "out").length, 0);
+      pending: null, conflict: 0, rejected: 0, lastOk: null, error: null } };
+  // Three records outside, the newest too: outside since the first of them.
+  const [a] = buildHerd(base);
+  assert.equal(a.status, "out");
+  assert.equal(a.outside, true);
+  assert.equal(a.outSince, NOW - 20 * 60_000);
+  assert.equal(a.grazing, false);
+  const out = deriveEvents({ herd: [a], now: NOW, fence, ...rest }).filter((e) => e.kind === "out");
+  assert.equal(out.length, 1);
+  assert.equal(out[0].at, NOW - 20 * 60_000);
+  assert.equal(out[0].end, null);
+  assert.equal(out[0].alert, true);
+
+  // Serbest otlatma: still known to be outside, but neither a status nor a warning.
+  const [g] = buildHerd({ ...base, grazing: true });
+  assert.notEqual(g.status, "out");
+  assert.equal(g.outside, true);
+  assert.equal(g.grazing, true);
+  assert.equal(deriveEvents({ herd: [g], now: NOW, fence, grazing: true, ...rest })
+    .filter((e) => e.kind === "out").length, 0);
+
+  // One stray fix outside is nothing.
+  const [s] = buildHerd({ ...base, points: [p(30, 28.0545), p(20, 28.0600), p(10, 28.0545), p(1, 28.0545)] });
+  assert.equal(s.outside, false);
+  assert.notEqual(s.status, "out");
+
+  // Back inside (two records): the period closes and the animal is fine again.
+  const back = [...pts.map((x) => ({ ...x, time: iso(Date.parse(x.time) - 30 * 60_000) })),
+                p(20, 28.0545), p(10, 28.0545)];
+  const [b] = buildHerd({ ...base, points: back });
+  assert.equal(b.outside, false);
+  assert.notEqual(b.status, "out");
+  const closed = deriveEvents({ herd: [b], now: NOW, fence, ...rest }).filter((e) => e.kind === "out");
+  assert.equal(closed.length, 1);
+  assert.equal(closed[0].end, NOW - 20 * 60_000);
+
+  // Outside and then no news for three reports (period 600 s: 30 min): may be lost.
+  const gone = pts.map((x) => ({ ...x, time: iso(Date.parse(x.time) - 40 * 60_000) }));
+  const [l] = buildHerd({ ...base, points: gone });
+  assert.equal(l.outside, true);
+  assert.equal(l.status, "lost");
+  // The same silence inside the zone is only "no news".
+  const inside = [p(80, 28.0545), p(70, 28.0545), p(60, 28.0545), p(50, 28.0545), p(41, 28.0545)];
+  assert.equal(buildHerd({ ...base, points: inside })[0].status, "silent");
+
+  // No zones defined: never outside.
+  const [n] = buildHerd({ ...base, fence: compileFence([]) });
+  assert.equal(n.outside, false);
 });
 
 test("GeoJSON polygon holes cannot silently become allowed grazing land", () => {
