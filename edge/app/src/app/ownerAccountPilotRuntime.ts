@@ -345,7 +345,7 @@ export function pilotAccountSync(): Promise<ObservationSyncResult> {
   syncRun = run;
   setSync({ running: true });
   run.then(
-    last => setSync({ running: false, last, error: null }),
+    last => { noteBackgroundSync(last.at); setSync({ running: false, last, error: null }); },
     e => setSync({ running: false, error: e instanceof Error ? e.message : String(e) }),
   ).finally(() => { if (syncRun === run) syncRun = null; });
   return run;
@@ -353,6 +353,18 @@ export function pilotAccountSync(): Promise<ObservationSyncResult> {
 
 /** Kept for callers of the old manual button. */
 export const pilotAccountDownloadObservations = pilotAccountSync;
+
+// Evidence, not a promise: when the last sync finished while the app was NOT
+// on screen. The connection screen shows it, so "does it really sync in the
+// background on this phone?" is answered by looking (owner, 2026-11-14).
+const BG_KEY = "orun.app.bgsync.v1";
+function noteBackgroundSync(at: number): void {
+  if (typeof document === "undefined" || document.visibilityState !== "hidden") return;
+  try { localStorage.setItem(BG_KEY, String(at)); } catch { /* evidence only */ }
+}
+export function pilotBackgroundSyncAt(): number | null {
+  try { const v = Number(localStorage.getItem(BG_KEY)); return Number.isFinite(v) && v > 0 ? v : null; } catch { return null; }
+}
 
 // Set while the Android foreground service keeps the app running: the
 // minute-by-minute pull then continues with the screen off.

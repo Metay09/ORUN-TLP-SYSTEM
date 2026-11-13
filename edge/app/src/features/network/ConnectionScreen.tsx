@@ -16,7 +16,7 @@ import type { FarmGateway, EdgeQueue } from "../../app/ownerAccountClient.ts";
 import { collarStorageReadings } from "../../app/collarStorageReadings.ts";
 import {
   deviceNames, onPilotAccountChange, onPilotObservationSync, pilotAccountStatus, pilotEdgeQueues, pilotGateways,
-  pilotObservationSyncState,
+  pilotBackgroundSyncAt, pilotObservationSyncState,
 } from "../../app/ownerAccountPilotRuntime.ts";
 import { useApp } from "../../app/store.ts";
 import { trackerSession, usbTracker } from "../../app/trackerSession.ts";
@@ -229,7 +229,7 @@ export function ConnectionScreen() {
     },
     edges: edgeQueues,
     phone: { pendingUpload: m.server.pending },
-    server: { signedIn: Boolean(account), running: sync.running, lastSync: sync.last?.at ?? null, error: sync.error },
+    server: { signedIn: Boolean(account), running: sync.running, lastSync: sync.last?.at ?? null, error: sync.error, backgroundSync: pilotBackgroundSyncAt() },
     label,
   });
   const toggle = (id: HealthStage["id"]) => setOpened((o) => { const n = new Set(o); if (n.has(id)) n.delete(id); else n.add(id); return n; });

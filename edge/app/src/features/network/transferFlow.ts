@@ -113,7 +113,7 @@ export interface HealthInput {
   localGateway: { id: string | null; link: "ble" | "usb" | "none"; connected: boolean; held: number | null; capacity: number | null; readAt: number | null };
   edges: readonly EdgeQueue[] | null;
   phone: { pendingUpload: number | null };
-  server: { signedIn: boolean; running: boolean; lastSync: number | null; error: string | null };
+  server: { signedIn: boolean; running: boolean; lastSync: number | null; error: string | null; backgroundSync?: number | null };
   label: (id: string) => string;
 }
 
@@ -209,7 +209,9 @@ export function transferHealth(i: HealthInput): HealthStage[] {
   const server: HealthStage = {
     id: "server", title: "Sunucu", items: [],
     line: !S.signedIn ? "Hesaba giriş yapılmadı" : S.error ? `Ulaşılamıyor · ${S.error}`
-      : S.lastSync !== null ? `Çalışıyor · son eşitleme ${fmt.ago(S.lastSync, now)}` : S.running ? "Eşitleniyor…" : "Eşitleme bekleniyor",
+      : S.lastSync !== null ? `Çalışıyor · son eşitleme ${fmt.ago(S.lastSync, now)} · ${
+          S.backgroundSync ? `arka planda en son ${fmt.ago(S.backgroundSync, now)}` : "arka planda henüz eşitlemedi"}`
+      : S.running ? "Eşitleniyor…" : "Eşitleme bekleniyor",
     tone: !S.signedIn ? "" : S.error ? "alarm" : S.lastSync !== null && now - S.lastSync < 5 * 60_000 ? "fresh" : "aging",
   };
   return [tracker, gateway, edge, server];
