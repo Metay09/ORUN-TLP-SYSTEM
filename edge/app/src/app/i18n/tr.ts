@@ -97,6 +97,7 @@ export const tr = {
   states: {
     opening: "Açılıyor…",
     ledgerError: (e: string) => `Telefondaki kayıt defteri açılamadı: ${e}`,
+    starting: "Yükleniyor…",
     noAnimals: "Henüz hayvan yok",
     noAnimalsBody: "Tasma ekleyince konumu sunucudan ya da telefona bağlı gateway'den buraya gelir.",
     connect: "Bağlantı",

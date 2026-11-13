@@ -4,7 +4,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Point, RecordId } from "../core/points.ts";
 import type { Snapshot } from "./controller.ts";
-import { deviceNames, deviceSettings, onPilotObservationSync, pilotAccountStatus, pilotObservationSyncState } from "./ownerAccountPilotRuntime.ts";
+import { deviceNames, deviceSettings, onPilotAccountChange, onPilotObservationSync, pilotAccountSettled, pilotAccountStatus, pilotObservationSyncState } from "./ownerAccountPilotRuntime.ts";
 import { nextAlerts, watchFresh } from "./alerts.ts";
 import { postAlerts } from "../platform/notify.ts";
 import { coverageCells, type Coverage } from "./coverage.ts";
@@ -44,6 +44,8 @@ export interface Model {
   /** Records without a position (only for counting sequence gaps). */
   unlocated: RecordId[];
   loaded: boolean;
+  /** Just opened: the phone ledger or the sign-in is not read yet. An empty herd is not "no animals". */
+  starting: boolean;
   herd: Animal[];
   devices: Device[];
   station: Station;
@@ -93,11 +95,15 @@ function useNow(ms: number): number {
  * The previous [src, version] effect cancelled its pending timeout for every
  * 250-ms burst and could therefore suppress *all* map updates until DUMP END.
  */
-function usePoints(src: EdgeSource, version: number, accountKey: string): { points: Point[]; unlocated: RecordId[]; loaded: boolean } {
-  const [state, setState] = useState<{ src: EdgeSource; accountKey: string; points: Point[]; unlocated: RecordId[]; loaded: boolean }>({
-    src, accountKey, points: [], unlocated: [], loaded: false,
+function usePoints(src: EdgeSource, version: number, accountKey: string): { points: Point[]; unlocated: RecordId[]; loaded: boolean; settled: boolean } {
+  const [state, setState] = useState<{ src: EdgeSource; accountKey: string; points: Point[]; unlocated: RecordId[]; loaded: boolean; version: number }>({
+    src, accountKey, points: [], unlocated: [], loaded: false, version: -1,
   });
   const invalidate = useRef<() => void>(() => {});
+  // The ledger version a read started from: `settled` says the points on
+  // screen include everything the ledger held when it last changed.
+  const wanted = useRef(version);
+  wanted.current = version;
 
   useEffect(() => {
     let active = true;
@@ -117,9 +123,11 @@ function usePoints(src: EdgeSource, version: number, accountKey: string): { poin
         dirty = false;
         reading = true;
         lastStarted = Date.now();
+        const from = wanted.current;
         const result = await src.points().catch(() => null);
         if (active) setState({
           src, accountKey, points: result?.points ?? [], unlocated: result?.unlocated ?? [], loaded: result !== null,
+          version: result !== null ? from : -1,
         });
         reading = false;
         schedule();
@@ -141,7 +149,7 @@ function usePoints(src: EdgeSource, version: number, accountKey: string): { poin
   // A logout, account switch or expiry must hide cached remote coordinates
   // synchronously, not one effect tick (or a two-second throttle) later.
   return state.src === src && state.accountKey === accountKey
-    ? state : { points: [], unlocated: [], loaded: false };
+    ? { ...state, settled: state.version === version } : { points: [], unlocated: [], loaded: false, settled: false };
 }
 
 export function useModel(): Model {
@@ -163,8 +171,10 @@ export function useModel(): Model {
   const accountKey = account
     ? [account.site, account.actor, account.installation, account.username, account.expiresAt].join(":")
     : "";
-  const { points, unlocated, loaded } = usePoints(source, snap.pointsVersion, accountKey);
+  const { points, unlocated, loaded, settled } = usePoints(source, snap.pointsVersion, accountKey);
   const now = useNow(30_000);
+  const accountSettled = useSyncExternalStore(onPilotAccountChange, pilotAccountSettled);
+  const starting = !snap.error && (!snap.ready || !accountSettled || !loaded);
 
   const zones = zoneBook.zones;
   const graze = zoneBook.graze ?? NO_GRAZE;
@@ -195,7 +205,10 @@ export function useModel(): Model {
   const linked = snap.link !== "none" && snap.state === "connected";
   const posting = useRef(false);
   useEffect(() => {
-    if (posting.current || !loaded || !watchFresh(lastSync, linked, Date.now())) return;
+    // `settled`: the sync that just finished wrote new records, but the screen
+    // still holds the old ones for a moment. Deciding then told the owner
+    // "Hayvan 2 sessiz" on opening the app (his phone, 2026-11-14 01:06).
+    if (posting.current || !loaded || !settled || !watchFresh(lastSync, linked, Date.now())) return;
     const before = alertMemory.get();
     const r = nextAlerts(events, before, Date.now());
     if (r.memory === before) return;
@@ -204,7 +217,7 @@ export function useModel(): Model {
     posting.current = true;
     void postAlerts(r.alerts).then((ok) => { if (ok) alertMemory.set(r.memory); }, () => {})
       .finally(() => { posting.current = false; });
-  }, [events, loaded, lastSync, linked]);
+  }, [events, loaded, settled, lastSync, linked]);
   const devices = useMemo(() => buildDevices(points, herd, now), [points, herd, now]);
   const seen = useMemo(() => new Set(seenList), [seenList]);
 
@@ -230,7 +243,7 @@ export function useModel(): Model {
   }), [assets, places, snap.gateway, zoneStore, targets]);
 
   return {
-    now, prefs: p, snap, points, unlocated, loaded, herd, devices, station, server,
+    now, prefs: p, snap, points, unlocated, loaded, starting, herd, devices, station, server,
     events, coverage, zones, zoneSet, zoneMigrationWarning: zoneStore.migrationWarning,
     targetBook, targetWarning: targets.warning,
     fence, graze, grazing: grazingNow, seen, source, actions,

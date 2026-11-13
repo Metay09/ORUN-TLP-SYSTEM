@@ -43,6 +43,10 @@ export function onPilotAccountChange(fn: () => void): () => void {
   return () => { accountListeners.delete(fn); };
 }
 export function pilotAccountEmail(): string | null { return accountEmail; }
+// False until the app knows whether this phone is signed in. Until then an
+// empty herd means "not read yet", not "no animals" (screens say Yükleniyor).
+let accountSettled = false;
+export function pilotAccountSettled(): boolean { return accountSettled; }
 
 async function persist(account: OwnerAccountClient): Promise<void> {
   const stored = account.storableSession();
@@ -64,6 +68,7 @@ export function pilotRestoreAccount(): Promise<void> {
     await edgeKeys.load().catch(() => undefined);
     observationsChanged?.();
     startAutoSync();
+    accountSettled = true;
     accountChanged();
     const check = await restored.refresh();
     if (client !== restored) return;
@@ -79,7 +84,10 @@ export function pilotRestoreAccount(): Promise<void> {
       await persist(restored);
     }
     accountChanged();
-  })().finally(() => { restoring = null; });
+  })().finally(() => {
+    restoring = null;
+    if (!accountSettled) { accountSettled = true; accountChanged(); }   // signed out, or the keystore failed
+  });
   return restoring;
 }
 
