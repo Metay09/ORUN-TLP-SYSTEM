@@ -186,8 +186,15 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     const tracker = (last?.tracker ?? by.get(id)?.device ?? "").toUpperCase();
     // Only a confirmation newer than the newest record counts: an old one
     // must not slow the silence check of a collar that reports faster now.
+    // Outside its own zones the collar reports three times as often
+    // (firmware geofence_runtime_policy: base / 3) and falls back to the base
+    // interval when it is inside again or the zone is removed. A record that
+    // says "20 dk" may therefore be followed by one a full base interval
+    // later: allow 1.25 x base before calling it silence (3 x 0.42 = 1.26).
+    // Seen on the owner's phone 2026-11-14: "Hayvan 2 sessiz · 3 rapor kaçtı".
     const set = intervals?.[tracker];
-    const periodS = Math.max(last?.period_s ?? 60, set && set.at > (lastTime ?? 0) ? set.s : 0);
+    const periodS = Math.max(last?.period_s ?? 60,
+      set ? (set.at > (lastTime ?? 0) ? set.s : Math.ceil(set.s * 0.42)) : 0);
     const unloc = heardBy.get(id) ?? null;
     const lastReport = unloc !== null && (lastTime === null || unloc > lastTime) ? unloc : lastTime;
     // Heard recently, but the position is old: GNSS finds no fix (indoors, under cover).
