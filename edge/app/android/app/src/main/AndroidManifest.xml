@@ -39,8 +39,15 @@
              service, ongoing notification). -->
         <service
             android:name="io.capawesome.capacitorjs.plugins.foregroundservice.AndroidForegroundService"
-            android:foregroundServiceType="connectedDevice"
-            android:exported="false" />
+            android:foregroundServiceType="connectedDevice|specialUse"
+            android:exported="false">
+            <!-- Without a Gateway: the signed-in phone keeps reading the
+                 owner's server to notify about the herd (left the zone,
+                 came back, not heard from, battery critical). -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Livestock tracker monitoring: notifies the owner when an animal leaves its zone or stops reporting" />
+        </service>
         <receiver
             android:name="io.capawesome.capacitorjs.plugins.foregroundservice.NotificationActionBroadcastReceiver"
             android:exported="false" />
@@ -80,6 +87,7 @@
     <!-- Foreground service while a Gateway is attached (BLE or USB). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- The foreground-service plugin holds a wake lock while it runs
          (without it: "Neither user … nor current process has
          android.permission.WAKE_LOCK", seen on the owner's phone). -->

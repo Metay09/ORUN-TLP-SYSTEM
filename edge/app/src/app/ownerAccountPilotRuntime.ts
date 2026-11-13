@@ -346,9 +346,14 @@ export function pilotAccountSync(): Promise<ObservationSyncResult> {
 /** Kept for callers of the old manual button. */
 export const pilotAccountDownloadObservations = pilotAccountSync;
 
+// Set while the Android foreground service keeps the app running: the
+// minute-by-minute pull then continues with the screen off.
+let backgroundWatch = false;
+export function setPilotBackgroundWatch(on: boolean): void { backgroundWatch = on; }
+
 function backgroundSync(): void {
   if (!client || !pilotAccountStatus() || !observationMirror) return;
-  if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+  if (!backgroundWatch && typeof document !== "undefined" && document.visibilityState === "hidden") return;
   void pilotAccountSync().catch(() => { /* shown via pilotObservationSyncState */ });
 }
 

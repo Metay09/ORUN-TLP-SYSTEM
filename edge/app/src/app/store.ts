@@ -4,7 +4,9 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Point, RecordId } from "../core/points.ts";
 import type { Snapshot } from "./controller.ts";
-import { deviceNames, pilotAccountStatus } from "./ownerAccountPilotRuntime.ts";
+import { deviceNames, onPilotObservationSync, pilotAccountStatus, pilotObservationSyncState } from "./ownerAccountPilotRuntime.ts";
+import { nextAlerts, watchFresh } from "./alerts.ts";
+import { postAlerts } from "../platform/notify.ts";
 import { coverageCells, type Coverage } from "./coverage.ts";
 import { buildDevices } from "./devices.ts";
 import { deriveEvents } from "./events.ts";
@@ -12,7 +14,7 @@ import type { LatLon } from "./geo.ts";
 import { buildHerd } from "./herd.ts";
 import type { Animal, AppEvent, AssetProfile, Device, ServerView, Station } from "./model.ts";
 import { serverOf, stationOf, type EdgeSource } from "./source.ts";
-import { AssetStore, ZoneStore, prefs, seenEvents, stationPlaces, type Prefs } from "./stores.ts";
+import { AssetStore, ZoneStore, alertMemory, prefs, seenEvents, stationPlaces, type Prefs } from "./stores.ts";
 import { NO_GRAZE, checkSet, compileFence, grazing, type Fence, type Graze, type SetCheck, type Zone } from "./zones.ts";
 import { ZoneTargetStore, type TargetBook, type ZoneGroup, type ZoneRule } from "./zoneTargets.ts";
 
@@ -179,6 +181,21 @@ export function useModel(): Model {
   const server = useMemo(() => serverOf(snap), [snap.server]); // eslint-disable-line react-hooks/exhaustive-deps
   const events = useMemo(() => deriveEvents({ herd, station, server, journal: snap.journal, coverage, now, fence, grazing: grazingNow }),
     [herd, station, server, snap.journal, coverage, now, fence, grazingNow]);
+  // Phone notifications (alerts.ts): decided only on current data, each once.
+  const lastSync = useSyncExternalStore(onPilotObservationSync, () => pilotObservationSyncState().last);
+  const linked = snap.link !== "none" && snap.state === "connected";
+  const posting = useRef(false);
+  useEffect(() => {
+    if (posting.current || !loaded || !watchFresh(lastSync, linked, Date.now())) return;
+    const before = alertMemory.get();
+    const r = nextAlerts(events, before, Date.now());
+    if (r.memory === before) return;
+    if (!r.alerts.length) { alertMemory.set(r.memory); return; }
+    // Remembered only once Android took them; a refused permission retries later.
+    posting.current = true;
+    void postAlerts(r.alerts).then((ok) => { if (ok) alertMemory.set(r.memory); }, () => {})
+      .finally(() => { posting.current = false; });
+  }, [events, loaded, lastSync, linked]);
   const devices = useMemo(() => buildDevices(points, herd, now), [points, herd, now]);
   const seen = useMemo(() => new Set(seenList), [seenList]);
 

@@ -13,6 +13,7 @@ import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import {
   attachPilotAccountSqliteMirror, attachPilotAccountObservationMirror,
   pilotAccountObservationPoints, pilotAccountUploadTransport, edgeKeys,
+  onPilotAccountChange, pilotAccountStatus, setPilotBackgroundWatch,
 } from "./ownerAccountPilotRuntime.ts";
 
 export interface Snapshot {
@@ -126,7 +127,16 @@ export class Controller {
   // the screen off; the notification shows the transfer state.
   private background(): void {
     const s = this.snap;
-    if (s.link === "none") { this.keepAlive.off(); return; }
+    if (s.link === "none") {
+      // Signed in: keep watching the herd through the server so the four
+      // notifications (app/alerts.ts) also arrive with the app in the background.
+      const watch = pilotAccountStatus() !== null;
+      setPilotBackgroundWatch(watch);
+      if (watch) this.keepAlive.on("Alandan çıkan ya da haber alınamayan olursa bildirir", "watch");
+      else this.keepAlive.off();
+      return;
+    }
+    setPilotBackgroundWatch(pilotAccountStatus() !== null);
     const how = s.link === "ble" ? "Bluetooth" : "USB";
     const body = s.state === "connected"
       ? `${how}: ${s.counts.STORED} yeni · teslim ${s.handedOff} · bekleyen ${s.pending}`
@@ -175,6 +185,8 @@ export class Controller {
       this.uploader = new Uploader(db, fetchPost, (fn) => core.exclusive(fn));
       this.refresh();
       setInterval(() => { void this.sync(false); }, SYNC_EVERY_MS);
+      onPilotAccountChange(() => this.background());   // sign-in/out starts/stops the herd watch
+      this.background();
       void this.sync(false);
     } catch (e) {
       this.emit({ error: e instanceof Error ? e.message : String(e) });
