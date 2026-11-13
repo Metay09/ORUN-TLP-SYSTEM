@@ -124,3 +124,18 @@ döndü, haber alınamıyor / kayıp olabilir, tasma pili bitiyor.
   eşikte kayıp. Serbest otlatma açıkken alan dışı bildirimi yoktur.
 - Sınır: tasma kendi başına olay göndermez; alandan çıkış bir sonraki
   raporla öğrenilir.
+
+### Bildirim kararı sunucuda (2026-11-14)
+
+Telefonda denendi: Android, ekrandan çıkan uygulamanın kodunu dakikalar içinde
+durduruyor; bildirim çubuğundaki servis ayakta kalsa da eşitleme ve bildirim
+çalışmıyor. Bu yüzden:
+
+- Dört bildirimin kararı hesap sunucusunda verilir (`backend/herd_alerts.py`,
+  `GET /api/v1/herd/alerts`). Çizilen alanlar hesaba da yazılır
+  (`GET/POST /api/v1/herd/zones`).
+- Telefonda küçük bir Android servisi dakikada bir sorar ve bildirimi gösterir;
+  uygulama atılsa da, telefon yeniden başlasa da çalışır. (Sıradaki parça.)
+- Sunucuya ulaşılamazsa servis bunu bildirimle söyler.
+- Telefon gateway'e bağlıyken ve internet yokken uygulamanın kendi kuralı
+  (alerts.ts) geçerlidir; uygulama ekrandayken çalışır.
