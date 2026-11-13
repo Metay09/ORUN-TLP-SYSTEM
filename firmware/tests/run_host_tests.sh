@@ -237,6 +237,8 @@ g++ "${flags[@]}" firmware/tests/r3/test_r3.cpp "${gnss_sources[@]}" \
 g++ "${flags[@]}" firmware/tests/m3/test_battery_monitor.cpp \
   firmware/src/battery_monitor.cpp -o "$test_dir/battery_monitor"
 "$test_dir/battery_monitor"
+g++ "${flags[@]}" firmware/tests/m3/test_idle_period.cpp -o "$test_dir/idle_period"
+"$test_dir/idle_period"
 g++ "${portable_flags[@]}" firmware/tests/m3/test_power_state.cpp \
   firmware/src/power_state.cpp -o "$test_dir/power_state"
 "$test_dir/power_state"
