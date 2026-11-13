@@ -78,7 +78,7 @@ const COWS: Cow[] = [
   { id: "0E8ADE7E71531AA3", name: "Sarıkız", tag: "TR 09 4471 2093", breed: "Simental", sex: "female", birth: "2021-03-14", color: "#2E8B57", offset: 0, base: 4020, notes: [[52, "Şap aşısı yapıldı"]] },
   { id: "0E8ADE7E71530B21", name: "Karabaş", tag: "TR 09 4471 2107", breed: "Yerli Kara", sex: "male", birth: "2020-05-02", color: "#B4475C", offset: 170, base: 3600 },
   { id: "0E8ADE7E71537C40", name: "Benekli", tag: "TR 09 4471 2111", breed: "Holştayn", sex: "female", birth: "2022-01-20", color: "#A57A1E", offset: 320, base: 3990,
-    trips: [{ from: 27, back: 25.5, at: [700, 160] }, { from: 2.4, back: null, at: [690, 120] }] },
+    trips: [{ from: 27, back: 25.5, at: [700, 160] }, { from: 1.0, back: null, at: [690, 120] }] },
   { id: "0E8ADE7E7153D901", name: "Duman", tag: "TR 09 4471 2128", breed: "Boz ırk", sex: "female", birth: "2019-04-11", color: "#6D5BD0", offset: 455, base: 3960, trips: [{ from: 5.3, back: null, at: [980, 940] }] },
   { id: "0E8ADE7E71534E12", name: "Akkız", tag: "TR 09 4471 2132", breed: "Simental", sex: "female", birth: "2021-09-08", color: "#3D7EA6", offset: 610, base: 4040, missed: [34, 31.8] },
   { id: "0E8ADE7E715360A7", name: "Yıldız", tag: "TR 09 4471 2146", breed: "Montofon", sex: "female", birth: "2022-06-30", color: "#C2611F", offset: 740, base: 4000 },
@@ -91,7 +91,7 @@ const COWS: Cow[] = [
 ];
 
 // Yıldız: its newest record is ~45 min old (just aging, nothing wrong).
-const LATE: Record<string, number> = { "0E8ADE7E715360A7": 45 * 60_000 };
+const LATE: Record<string, number> = { "0E8ADE7E715360A7": 35 * 60_000 };
 
 const k15 = (t: number) => Math.floor(t / 900_000);
 const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");

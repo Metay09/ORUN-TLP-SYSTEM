@@ -24,8 +24,12 @@ export function periodMs(periodS: number | null | undefined): number {
   return Math.max(30, periodS || 60) * 1000;
 }
 export const freshLimit = (T: number) => Math.max(2 * T, 10 * MIN);
-export const agingLimit = (T: number) => Math.max(6 * T, HOUR);
-export const lostLimit = (T: number) => Math.max(12 * T, 3 * HOUR);
+// Owner decision 2026-11-13: "no news" is counted in reports, because the
+// report interval changes (2 min .. 14 h): three reports in a row missing,
+// but never before 30 minutes and never later than 24 hours. "May be lost"
+// is twice that.
+export const agingLimit = (T: number) => Math.min(Math.max(3 * T, HOUR / 2), 24 * HOUR);
+export const lostLimit = (T: number) => 2 * agingLimit(T);
 
 export function freshnessOf(ms: number | null, periodS: number, now: number): Freshness {
   if (ms === null) return "none";
@@ -200,7 +204,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     const named = Boolean(given);
     const name = named ? given : bleName(device ?? id);
     const heardAt = lastReport ?? lastTime;
-    const lost = heardAt !== null && now - heardAt > lostLimit(periodMs(periodS));
+    let lost = heardAt !== null && now - heardAt > lostLimit(periodMs(periodS));
     // Owner decision 2026-11-13 (v1): the app decides "outside" from the
     // positions it holds and the zones of the account, with the collar's own
     // rule (the newest record outside and 2 of the last 3). No extra packet
@@ -210,6 +214,8 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
       ? outsideEpisodes(timed, fence, (p) => epochMs(p.time)).find((e) => e.to === null) ?? null
       : null;
     const outside = openOut !== null;
+    // Outside the zones and no news for three reports: may be lost already.
+    if (outside && !grazing && heardAt !== null && now - heardAt > agingLimit(periodMs(periodS))) lost = true;
 
     let status: AnimalStatus;
     if (!last && !noFix) status = "waiting";

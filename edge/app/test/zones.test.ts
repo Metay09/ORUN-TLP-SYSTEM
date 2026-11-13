@@ -149,6 +149,15 @@ test("outside the zones: status, event, return and serbest otlatma (owner decisi
   assert.equal(closed.length, 1);
   assert.equal(closed[0].end, NOW - 20 * 60_000);
 
+  // Outside and then no news for three reports (period 600 s: 30 min): may be lost.
+  const gone = pts.map((x) => ({ ...x, time: iso(Date.parse(x.time) - 40 * 60_000) }));
+  const [l] = buildHerd({ ...base, points: gone });
+  assert.equal(l.outside, true);
+  assert.equal(l.status, "lost");
+  // The same silence inside the zone is only "no news".
+  const inside = [p(80, 28.0545), p(70, 28.0545), p(60, 28.0545), p(50, 28.0545), p(41, 28.0545)];
+  assert.equal(buildHerd({ ...base, points: inside })[0].status, "silent");
+
   // No zones defined: never outside.
   const [n] = buildHerd({ ...base, fence: compileFence([]) });
   assert.equal(n.outside, false);

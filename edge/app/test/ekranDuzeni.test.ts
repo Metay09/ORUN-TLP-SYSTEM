@@ -176,7 +176,7 @@ test("konumsuz rapor: tasma 'haber yok' değil 'konum bulamıyor'; aradaki boşl
     lat: 37.6, lon: 28.05, alt_m: null, sats: 7, hdop: 1, fix_age_s: 0, battery_mv: 4000, battery: "NORMAL",
     active_s: null, covered_s: null, source: "GNSS", period_s: 900, rssi: -70, snr: 5, received: null, delay_s: null, link: null,
   }) as unknown as Observation;
-  const points = [pt(15 * 60, 1), pt(13 * 60, 2)];          // last fix 13 h ago
+  const points = [pt(13 * 60 + 30, 1), pt(13 * 60, 2)];     // last fix 13 h ago
   const unlocated = Array.from({ length: 52 }, (_, k) => ({ tracker: "0E8ADE7E71531AA3", incarnation: "I", seq: 3 + k,
     time: new Date(now - (13 * 60 - 15 * (k + 1)) * MIN).toISOString() }));
   const [a] = buildHerd({ points, profiles: {}, assetOf: (d) => d, now, unlocated });

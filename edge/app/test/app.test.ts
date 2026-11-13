@@ -29,14 +29,14 @@ const events = (points: Point[], extra: Partial<Parameters<typeof deriveEvents>[
   deriveEvents({ herd: herdOf(points), station, server, journal: [], coverage: null, now: NOW, ...extra });
 
 test("a gap in measurement time is a resolved silent event; the open gap is active", () => {
-  const pts = [rec("A", 600), rec("A", 585), rec("A", 450), rec("A", 435), rec("A", 200)];
+  const pts = [rec("A", 600), rec("A", 585), rec("A", 525), rec("A", 510), rec("A", 200)];
   const ev = events(pts);
   const silent = ev.filter((e) => e.kind === "silent" || e.kind === "lost");
   assert.equal(silent.length, 3, JSON.stringify(silent.map((e) => [e.kind, e.end])));
   const active = silent.filter(isActive);
   assert.equal(active.length, 1);
-  assert.equal(active[0].kind, "lost");                        // 200 min > max(12T, 3 h)
-  assert.ok(silent.some((e) => e.kind === "silent" && e.end !== null));   // 135 min gap: silent, resolved
+  assert.equal(active[0].kind, "lost");                        // 200 min > 2 x three reports (90 min)
+  assert.ok(silent.some((e) => e.kind === "silent" && e.end !== null));   // 60 min gap (three reports = 45 min): silent, resolved
 });
 
 test("late arrival fills the gap: no event when the records exist in measurement time", () => {
