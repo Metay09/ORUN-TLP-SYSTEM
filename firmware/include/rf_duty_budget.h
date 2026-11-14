@@ -7,7 +7,8 @@ namespace orun_tlp {
 // Candidate aggregate radio airtime gate. Not wired to Radio.Send yet.
 // The 61 one-minute bins deliberately over-count at window boundaries: this
 // protects every rolling 60-minute interval, rather than wall-clock hours.
-// A cold boot waits 60 minutes because prior-hour RF usage is not persisted.
+// DEVELOPMENT ONLY: fresh RAM budget on every boot. This cannot guarantee
+// regulatory compliance across repeated resets; it is not a field-release gate.
 class RfDutyBudget final {
  public:
   enum class Frame : uint8_t {
@@ -15,7 +16,7 @@ class RfDutyBudget final {
     kCustodyAck, kLoraCommandResult, kTest
   };
   enum class Decision : uint8_t {
-    kAllowed, kBootHold, kExhausted, kClockFault, kBadFrame, kBadAirtime
+    kAllowed, kExhausted, kClockFault, kBadFrame, kBadAirtime
   };
 
   static constexpr uint32_t kHourMs = 3600000U;
