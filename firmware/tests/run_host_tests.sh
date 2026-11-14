@@ -1086,3 +1086,5 @@ python3 firmware/tests/sf5/test_orun_product_release_gate.py
 
 # KQ-05: deterministic HOST model only (not active firmware, not a CI gate).
 python3 tools/kq05_receipt_model.py --test
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_backend_batch_receipt.py
+bash tools/ci/run_kq05_backend_receipt_release_host.sh
