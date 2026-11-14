@@ -75,3 +75,26 @@ Mevcut 2/5/60 dakika eski firmware pil denemeleri sürerken **cihazlara flash, �
 - Eski custody ACK duty/driver nedeniyle beklerken, custody Flash yazısı artık tamamlanmışsa yeni LIVE kaydının kabulü engellenmez. Ayrı iki Flash yazısı aynı anda başlatılmaz.
 - sf5l0_bench_gateway yeni LIVE durably stored olayında Edge export taramasını uyandırır, ancak Edge/backend güvenli ürün-alım uyumu, seçmeli makbuz ve tasma Flash release hâlâ tamamlanmamıştır.
 - Host mock-radio testine ACK bütçe engeli altında canlı kayıt kabulü ve yalnız eski ACK'nin radyoya çıkışı eklenmiştir. Sonuçlar PC'de çalıştırılmadan PASS denmeyecek.
+
+## KQ-05C — Backend verified selective receipt / tasma Flash release (14 Kasım)
+
+- Backend gerçek `VerifiedLocalLedger` içindeki **doğrulanmış ve çatışmasız** kayıtları ayrı SQLite okuma oturumunda AEAD doğrulamasından geçirip yalnız istenen kimlikler için en fazla 8 kayıtlık HMAC makbuzu imzalayabiliyor. `backend/candidates/kq05_backend_batch_receipt.py` **host-only**; sunucunun HTTP cevabına henüz entegre edilmedi.
+- Wire **deneysel**: `v2,type=9,flags=0,count,device[8],incarnation[8],key_epoch[4],sequences[N]*4,HMAC16`, 44–72 bayt. Sabit maksimum 8, sıralı/benzersiz/pozitif sequence; **aralık veya otomatik contiguous ACK yok**. Örn. 1,2,4,5 makbuzu 3'ü silmez.
+- Backend-only anahtar: K_root + credential ID'den HKDF-SHA256 ile ayrı `ORUN-KQ05-BATCH-KEY-V1` anahtar alanı. Gateway K_root taşımadığı için kendi başına güvenli **mantıksal kayıt kimliği** makbuzu düzenleyemez. `kq05_backend_receipt.cpp` gerçek `SecurityStore` içinde CC310 bounded HKDF/HMAC ile MAC'i, epoch'u, cihaz kimliğini ve kalıcı incarnation'ı kontrol eder.
+- `Kq05BackendReceiptReleaseOwner` tekil Flash mutation/readback ile yalnız gerçekten makbuzda yazılı retained PERIODIC OBS1 kayıtlarını serbest bırakıyor; dört yuvalı exact-byte ciphertext cache kullanılmıyor. Eski/yanlış MAC ve yabancı incarnation fail-closed. Tekrar (replay) aynı özgün kimliği yeniden serbest bırakamaz; geçmiş tekrarına karşı koruma **yalnız incarnation benzersizliği + idempotent release** varsayımıyla sınırlı. Ürün seviyesinde credential lifecycle / A2D replay sahipliği ayrıca denetlenmeli.
+- `RadioManager` ve `main.cpp` **yalnız ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE** altında 44–72B yapısal makbuzu tasmanın RX mailbox'ına, ardından güvenli release owner'a yönlendirir. Hiçbir packet tek başına release yetkisi değildir.
+- Host regresyonu: Python gerçek Backend SQLite/AES-CCM/HKDF/HMAC + kaynaklarda C++ test fixture (bağımsız Python oracle/gerçek SecurityStore/fake NOR, tam 4/4 cache tıkanma ve eksik 3). **Bu branch'in PC'de test/build çalıştırıldığına dair kayıt hâlâ YOK.**
+- **Eksikler:** Backend makbuzunu yetkili Edge'e otomatik ileten yanıt/queue, Edge→Gateway kontrollü aktarım, Gateway RF downlink/rate/duty/uyku pencere zamanlaması, gerçek RAK/USB/BLE güvenlik ve fiziksel test, 24–48 saat offline kapasite, olay (EVENT) serbest bırakma, #305 RF bütçesi ile bütünleşme. Bu nedenle PR #316 **DRAFT / NO MERGE / NO FLASH**.
+
+### İlk PC doğrulama komutları
+```bash
+bash tools/ci/run_sf5k3v_tracker_tx_host.sh
+bash tools/ci/run_sf5k3w_gateway_product_runtime_host.sh
+python3 firmware/tests/sf5/test_kq05_backend_batch_receipt.py
+bash tools/ci/run_kq05_backend_receipt_release_host.sh
+# Sonra tamamı:
+bash firmware/tests/run_host_tests.sh
+cd firmware && pio run -e rak4630
+```
+
+Eski test kayıtları daha sonra kullanıcı onayıyla kontrollü silinebilir; bu kod hiçbir gerçek cihaz belleğini, veritabanını veya anahtarı silmedi.
