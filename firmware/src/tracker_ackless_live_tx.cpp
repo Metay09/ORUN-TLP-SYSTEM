@@ -71,6 +71,7 @@ TrackerAcklessLiveTx::Event TrackerAcklessLiveTx::update(
   }
 
   last_sent_ = newest;
+  last_live_sent_at_ms_ = now_ms;
   if (sent_count_ != UINT32_MAX) ++sent_count_;
   return Event::kSent;
 }
@@ -122,11 +123,13 @@ TrackerAcklessLiveTx::Event TrackerAcklessLiveTx::updateHistory(
     osf::RecordIdentity id{};
     id.incarnation = history_incarnation_;
     id.sequence = candidate;
-    // The latest LIVE attempt has already been scheduled; don't immediately
-    // retransmit the same identity as HISTORY.
-    if (sameIdentity(id, last_sent_)) {
-      ++history_cursor_;
-      continue;
+    // Avoid an immediate duplicate of fresh LIVE, but never suppress that
+    // identity forever. An unanswered hourly LIVE needs history retry too.
+    if (sameIdentity(id, last_sent_) &&
+        !monotonic::reached(
+            now_ms, last_live_sent_at_ms_ + kHistorySpacingMs)) {
+      next_history_try_ms_ = last_live_sent_at_ms_ + kHistorySpacingMs;
+      return Event::kNone;
     }
     ObservationStore::Record record{};
     const auto lookup = records_.store().lookup(id, record);
