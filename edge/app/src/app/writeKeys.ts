@@ -16,7 +16,8 @@ const MAX_KEYS = 1024;
 const id = (device: string, epoch: number) => `${device.toUpperCase()}:${epoch}`;
 
 export function validWriteKeys(list: unknown): WriteKey[] {
-  if (!Array.isArray(list) || list.length > MAX_KEYS) return [];
+  if (!Array.isArray(list)) return [];
+  if (list.length > MAX_KEYS) throw new Error("Çok fazla tasma yazma anahtarı.");
   const seen = new Set<string>();
   return list.flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
