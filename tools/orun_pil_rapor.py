@@ -127,7 +127,8 @@ def runs(series: list[dict], mah: int) -> list[dict]:
         used = (statistics.median(pct(x["mv"]) for x in head) -
                 statistics.median(pct(x["mv"]) for x in tail)) / 100 * mah
         period = round(statistics.median(x["period"] for x in pts))
-        seqs = [x["seq"] for x in pts if x["inc"] == pts[0]["inc"]]
+        seqs = [x["seq"] for x in series if x["inc"] == pts[0]["inc"]
+                and pts[0]["t"] <= x["t"] <= pts[-1]["t"]]
         expected = (pts[-1]["t"] - pts[0]["t"]) / period + 1
         found.append({
             "start": pts[0]["t"], "end": pts[-1]["t"], "hours": hours, "period": period,
@@ -139,24 +140,35 @@ def runs(series: list[dict], mah: int) -> list[dict]:
             "used": hours >= RUN_MIN_H and used > 0,
         })
 
+    # period_s is the measured length of each report period (main.cpp
+    # finishProductPeriod): it wanders with the GPS fix time (3563, 3601 ...)
+    # and one period now and then runs long (GPS timeout, a missed report).
+    # Such a single odd period is skipped; the run ends only when three
+    # reports in a row agree on another interval (more than 25 % off).
+    odd: list[dict] = []
+    same = lambda a, b: abs(a - b) <= 0.25 * b
     for r in series:
         if r["mv"] is None:
             continue
         if r["usb"] is True or r["power"] in ("NO_BATTERY", "FULL"):
             close()
-            off_since = 0.0
+            odd, off_since = [], 0.0
             continue
         if not r["period"]:
             continue
         if not off_since:
             off_since = r["t"]
-        # period_s is the measured length of each report period (main.cpp
-        # finishProductPeriod), so it wanders by the GPS fix time: 3563, 3601...
-        # A run ends only when the interval itself changes (more than 25 %).
-        if cur and abs(r["period"] - cur[0]["period"]) > 0.25 * cur[0]["period"]:
-            close()
         if r["t"] - off_since < SETTLE_S:
             continue
+        if cur and not same(r["period"], statistics.median(x["period"] for x in cur)):
+            if odd and not same(r["period"], odd[0]["period"]):
+                odd = []
+            odd.append(r)
+            if len(odd) >= 3:
+                close()
+                cur, odd = odd, []
+            continue
+        odd = []
         cur.append(r)
     close()
     return found
