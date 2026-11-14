@@ -252,6 +252,9 @@ def main(argv=None) -> int:
         print("Kayıttaki aralıklar (sn × adet): " + ", ".join(f"{k}×{v}" for k, v in top))
         print(f"Son: {when(last['t'])}  {last['mv']} mV (%{pct(last['mv']):.0f})  {last['power'] or '-'}"
               f"{'  USB' if last['usb'] else ''}  aralık {mins(last['period'])}")
+        if all(r["usb"] is True or r["power"] in ("FULL", "NO_BATTERY") for r in bat[-50:]):
+            print("  USB'den besleniyor (gateway ya da şarjdaki tasma): pil hesabı yok.")
+            continue
         if not mah:
             print("  pil kapasitesi yok: --mah ile verin")
             continue
