@@ -276,6 +276,11 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     else if (lost) { seen = tr.status.lostFor(fmt.since(heardAt!, now)); short = tr.status.short.lost; }
     else if (freshness === "fresh" || freshness === "aging") { seen = tr.status.seenAgo(fmt.ago(lastTime, now)); short = fmt.ago(lastTime, now); }
     else { seen = tr.status.silentFor(fmt.since(heardAt!, now)); short = tr.status.short.silent(fmt.duration(now - heardAt!)); }
+    // Waiting for the server's newest records (opening.ts): the time of the
+    // phone's newest record is not "when it was last seen" yet.
+    if (settling && last && lastTime !== null && !noFix && (status === "ok" || status === "battery-low")) {
+      seen = tr.status.updating; short = tr.status.short.updating;
+    }
     // The chip names the problem, not the time, when the battery is the issue.
     if (status === "out") short = tr.status.short.out;
     if (status === "battery-critical") short = tr.status.batteryCritical;
@@ -286,7 +291,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
       points: timed, reports, batteryTrail, batteryAt: newestBat?.t ?? null, batteryMv: newestBat?.o.battery_mv ?? null,
       batteryPower: newestBat?.o.power ?? null, batteryUsb: newestBat?.o.usb ?? null,
       last, lastTime, lastReport, noFix, gpsFault, heardOnly: (heardAll.get(id) ?? []).sort((x, y) => x - y), periodS, freshness,
-      freshRatio: freshRatio(lastTime, periodS, now), status, seen, short,
+      freshRatio: settling && status === "ok" ? 1 : freshRatio(lastTime, periodS, now), status, seen, short,
       battery: bat.level, batteryPercent: bat.percent,
       activeShare: freshness === "fresh" ? activeShare(last) : null,
       zone, outside, outSince: openOut?.from ?? null, grazing: outside && grazing,

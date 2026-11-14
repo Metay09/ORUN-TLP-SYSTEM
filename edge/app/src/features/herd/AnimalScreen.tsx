@@ -65,6 +65,7 @@ export function AnimalScreen({ id }: { id: string }) {
 }
 
 function Today({ a, now }: { a: Animal; now: number }) {
+  const updating = useApp().settling;
   const nav = useNav();
   const p = a.last;
   // Activity and battery come from every report, also those without a fix.
@@ -98,7 +99,7 @@ function Today({ a, now }: { a: Animal; now: number }) {
     <>
       <Section title={tr.animal.lastPosition} />
       <Card>
-        <KV k={tr.animal.measured}>{fmt.clock(t)} · {fmt.ago(t, now)}</KV>
+        <KV k={tr.animal.measured}>{updating ? tr.status.updating : `${fmt.clock(t)} · ${fmt.ago(t, now)}`}</KV>
         {r !== null && p.delay_s !== null && p.delay_s > 60 && <KV k={tr.animal.arrived}>{fmt.clock(r)} · {tr.animal.delay(fmt.duration(p.delay_s * 1000))}</KV>}
         <KV k="Kalite">{cap(tr.animal.quality(p.sats, p.hdop))}</KV>
         <KV k="Konum">{fmt.coords(p.lat, p.lon)}</KV>
@@ -158,7 +159,8 @@ function Today({ a, now }: { a: Animal; now: number }) {
                     : a.battery === "critical" ? "Bitmek üzere · bugün şarj et" : a.battery === "low" ? "Azalıyor" : "İyi"}
                 </span>
                 <span className="sm">
-                  {a.batteryUsb ? "USB'de · " : ""}{a.batteryMv ? `${fmt.dec(a.batteryMv / 1000, 2)} V · ` : ""}{a.batteryAt !== null ? `${fmt.ago(a.batteryAt, now)} ölçüldü` : ""}
+                  {[a.batteryUsb ? "USB'de" : null, a.batteryMv ? `${fmt.dec(a.batteryMv / 1000, 2)} V` : null,
+                    a.batteryAt !== null && !updating ? `${fmt.ago(a.batteryAt, now)} ölçüldü` : null].filter(Boolean).join(" · ")}
                 </span>
               </div>
             </div>
@@ -232,7 +234,8 @@ function History({ a, now, events }: { a: Animal; now: number; events: AppEvent[
 function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () => void; onNote: () => void }) {
   const f = tr.animal.fields, p = a.profile;
   const age = ageMonths(p.birth, now);
-  const dev = useApp().devices.find((d) => d.id === a.device) ?? null;
+  const app = useApp();
+  const dev = app.devices.find((d) => d.id === a.device) ?? null;
   const fence = useTrackerFences().find((x) => a.device && x.device.toUpperCase() === a.device.toUpperCase()) ?? null;
   const nav = useNav();
   const settings = useDeviceSettings();
@@ -261,7 +264,7 @@ function Info({ a, now, onEdit, onNote }: { a: Animal; now: number; onEdit: () =
         {a.device ? (
           <>
             <KV k="Bluetooth adı">{bleName(a.device)}</KV>
-            <KV k={tr.device.lastContact}>{dev?.lastTime ? `${fmt.clock(dev.lastTime)} · ${fmt.ago(dev.lastTime, now)}` : "—"}</KV>
+            <KV k={tr.device.lastContact}>{app.settling ? tr.status.updating : dev?.lastTime ? `${fmt.clock(dev.lastTime)} · ${fmt.ago(dev.lastTime, now)}` : "—"}</KV>
             <KV k={tr.animal.battery}>{dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}${dev.batteryMv ? ` · ${fmt.dec(dev.batteryMv / 1000, 2)} V` : ""}` : "—"}</KV>
             <KV k={tr.device.report}>{interval ? fmt.period(interval) : "—"}</KV>
             {fence && <KV k="Alanlar">{stateLine(fence)}</KV>}
