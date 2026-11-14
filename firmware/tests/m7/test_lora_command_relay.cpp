@@ -163,12 +163,13 @@ void testDutyRejectedSendsNeverSpendAttempts() {
     assert(!relay.takeDropped(dropped_target, dropped_id));
   }
   assert(relay.count() == 1U);
+  // The most recent report's window is at 540000 ms.
+  assert(relay.markTxStarted(540000U, f));
+  assert(!relay.due(540000U, f)); // one *successful* attempt this report
+  relay.heard(kA, 600000U);
+  relay.ackSent(600000U);
+  assert(relay.due(600000U, f) && f.attempt == 2U);
   assert(relay.markTxStarted(600000U, f));
-  assert(!relay.due(600000U, f)); // one *successful* attempt this report
-  relay.heard(kA, 660000U);
-  relay.ackSent(660000U);
-  assert(relay.due(660000U, f) && f.attempt == 2U);
-  assert(relay.markTxStarted(660000U, f));
 }
 
 void testMultiPartDutyRefusalDoesNotSkipPart() {
