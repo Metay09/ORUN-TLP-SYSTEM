@@ -238,6 +238,33 @@ bool ProductRecordStore::requestAuthenticatedCustodyRelease(
   return true;  // Accepted for flash mutation, NOT a durable delivery fact.
 }
 
+bool ProductRecordStore::requestAuthenticatedBackendReceiptRelease(
+    const osf::RecordIdentity& id) {
+  // Private friend-only authorization: caller is the KQ05 batch HMAC owner.
+  // A bare radio identity cannot reach here. No completed outcome yet.
+  if (!id.valid() || !mounted_ || preparing() || pending_ || outcome_ready_ ||
+      job_ != Job::kNone || cache_pending_ || cache_outcome_ready_ ||
+      release_outcome_ready_ || store_.busy() || !store_.ready() ||
+      store_.faulted() || flash_.hasUnreconciledMutation() ||
+      id.incarnation != store_.incarnation())
+    return false;
+  ObservationStore::Record backing{};
+  if (store_.lookup(id, backing) != ObservationStore::LookupResult::kFound ||
+      !backing.handle.identity.valid() ||
+      backing.handle.identity.incarnation != id.incarnation ||
+      backing.handle.identity.sequence != id.sequence ||
+      backing.released || backing.release_uncertain ||
+      backing.release_marker_exhausted ||
+      backing.kind != osf::RecordKind::kPeriodic ||
+      backing.schema != osf::kProductSchemaV1 ||
+      backing.payload_size != tlp::kPeriodicPlaintextSize)
+    return false;
+  if (!store_.requestRelease(id)) return false;
+  release_identity_ = id;
+  job_ = Job::kCustodyRelease;
+  return true;  // Flash start, NEVER evidence of durable release.
+}
+
 void ProductRecordStore::finishCustodyRelease(bool durable) {
   release_outcome_durable_ = durable;
   release_outcome_ready_ = true;

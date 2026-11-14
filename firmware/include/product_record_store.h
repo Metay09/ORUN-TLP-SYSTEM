@@ -125,11 +125,15 @@ class ProductRecordStore {
 
  private:
   friend class CustodyAckReleaseOwner;
+  friend class Kq05BackendReceiptReleaseOwner;
 
   // Only the HMAC-verifying custody owner may initiate this mutation.
   // It carries one previously authenticated exact object and is checked
   // against the live retained record again before starting any flash work.
   bool requestAuthenticatedCustodyRelease(const osc::ExactObject& expected);
+  // Only a backend-MAC-authenticated logical identity release owner may
+  // request this mutation. No 4-object ciphertext cache prerequisite.
+  bool requestAuthenticatedBackendReceiptRelease(const osf::RecordIdentity& id);
   bool takeCustodyReleaseOutcome(osf::RecordIdentity& identity,
                                  bool& durable);
   void finishCustodyRelease(bool durable);
