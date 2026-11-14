@@ -75,4 +75,112 @@ TrackerAcklessLiveTx::Event TrackerAcklessLiveTx::update(
   return Event::kSent;
 }
 
+
+TrackerAcklessLiveTx::Event TrackerAcklessLiveTx::updateHistory(
+    uint32_t now_ms, bool eligible) {
+  // This is a separate best-effort, noncustody HISTORY path, never a release
+  // authority. A caller must offer LIVE first and enforce its shared RF budget.
+  if (!eligible || !records_.mounted() || records_.preparing() ||
+      records_.pending() || !records_.store().ready() ||
+      records_.store().faulted() || records_.store().busy() ||
+      !radio_.canSend()) return Event::kNone;
+
+  if (!monotonic::reached(now_ms, next_history_try_ms_))
+    return Event::kNone;
+  if (history_paused_) {
+    history_paused_ = false;
+    history_cursor_ = 0U;
+  }
+
+  osf::RecordIdentity next{};
+  if (!records_.store().peekNextIdentity(next) || !next.valid() ||
+      next.sequence <= 1U) return Event::kNone;
+  if (history_cursor_ == 0U || history_incarnation_ != next.incarnation) {
+    ObservationStore::Record oldest{};
+    const auto result = records_.oldestRetained(oldest);
+    if (result == ObservationStore::LookupResult::kReadError) {
+      next_history_try_ms_ = now_ms + kRetryDelayMs;
+      return Event::kReadError;
+    }
+    if (result == ObservationStore::LookupResult::kNone) {
+      history_paused_ = true;
+      next_history_try_ms_ = now_ms + kHistorySweepPauseMs;
+      return Event::kNone;
+    }
+    history_incarnation_ = next.incarnation;
+    history_cursor_ = oldest.handle.identity.sequence;
+  }
+
+  // A bounded scan keeps sparse/released records from monopolizing the loop.
+  for (unsigned scan = 0U; scan < 8U; ++scan) {
+    if (history_cursor_ == 0U || history_cursor_ >= next.sequence) {
+      history_paused_ = true;
+      next_history_try_ms_ = now_ms + kHistorySweepPauseMs;
+      return Event::kNone;
+    }
+    const uint32_t candidate = history_cursor_;
+    osf::RecordIdentity id{};
+    id.incarnation = history_incarnation_;
+    id.sequence = candidate;
+    // The latest LIVE attempt has already been scheduled; don't immediately
+    // retransmit the same identity as HISTORY.
+    if (sameIdentity(id, last_sent_)) {
+      ++history_cursor_;
+      continue;
+    }
+    ObservationStore::Record record{};
+    const auto lookup = records_.store().lookup(id, record);
+    if (lookup == ObservationStore::LookupResult::kReadError) {
+      next_history_try_ms_ = now_ms + kRetryDelayMs;
+      return Event::kReadError;
+    }
+    if (lookup == ObservationStore::LookupResult::kNone || record.released) {
+      ++history_cursor_;
+      continue;
+    }
+    // EVENT is never silently acknowledged. Its secure transport has a
+    // different schema; a later EVENT sender must explicitly own that path.
+    if (!sameIdentity(record.handle.identity, id) ||
+        record.release_uncertain || record.release_marker_exhausted ||
+        record.kind != osf::RecordKind::kPeriodic ||
+        record.schema != osf::kProductSchemaV1 ||
+        record.payload_size != tlp::kPeriodicPlaintextSize) {
+      ++history_cursor_;
+      return Event::kBadRecord;
+    }
+    tlp::PeriodicObservationPlaintext plaintext{};
+    if (tlp::decodePeriodicPlaintext(
+            record.payload, record.payload_size, &plaintext) !=
+            tlp::ProductSecureCodecResult::kOk ||
+        plaintext.record_incarnation != id.incarnation ||
+        plaintext.record_sequence != id.sequence) {
+      ++history_cursor_;
+      return Event::kBadRecord;
+    }
+
+    // Use the same nonce-reserving AEAD and noncustody wire as LIVE. Never
+    // allocate a legacy exact-cache slot or infer an ACK from RF success.
+    uint8_t wire[tlp::kPeriodicFrameSize]{};
+    const auto crypt = crypto_.protectNextPeriodic(0U, plaintext, wire);
+    if (crypt != ProductSecureCryptoResult::kOk) {
+      for (size_t i = 0U; i < sizeof(wire); ++i) wire[i] = 0U;
+      next_history_try_ms_ = now_ms + kRetryDelayMs;
+      return crypt == ProductSecureCryptoResult::kUnavailable
+                 ? Event::kDeferred : Event::kCryptoError;
+    }
+    const bool started = radio_.sendProductSecurePacket(wire, sizeof(wire));
+    for (size_t i = 0U; i < sizeof(wire); ++i) wire[i] = 0U;
+    if (!started) {
+      next_history_try_ms_ = now_ms + kRetryDelayMs;
+      return Event::kDeferred;
+    }
+    last_history_sent_ = id;
+    if (history_sent_count_ != UINT32_MAX) ++history_sent_count_;
+    ++history_cursor_;
+    next_history_try_ms_ = now_ms + kHistorySpacingMs;
+    return Event::kHistorySent;
+  }
+  return Event::kNone;
+}
+
 }  // namespace orun_tlp
