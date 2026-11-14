@@ -7,8 +7,8 @@ namespace orun_tlp {
 // Candidate aggregate radio airtime gate. Not wired to Radio.Send yet.
 // The 61 one-minute bins deliberately over-count at window boundaries: this
 // protects every rolling 60-minute interval, rather than wall-clock hours.
-// DEVELOPMENT ONLY: fresh RAM budget on every boot. This cannot guarantee
-// regulatory compliance across repeated resets; it is not a field-release gate.
+// Project rule: every power-on starts with a full, fresh RAM budget and no
+// start-up wait. This per-boot rule does not track the previous power cycle.
 class RfDutyBudget final {
  public:
   enum class Frame : uint8_t {
