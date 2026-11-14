@@ -19,6 +19,7 @@ import { TrackerFenceBook, type FenceRecord } from "./trackerFences.ts";
 import { DeviceSettingsBook, type SettingValues, type Via as SettingsVia } from "./deviceSettings.ts";
 import { DeviceOpsBook, type FencePayload, type OpVia } from "./deviceOps.ts";
 import { WriteKeyBook } from "./writeKeys.ts";
+import { writeKeyVault, eraseLegacyWriteKeys } from "../platform/orunWriteKeys.ts";
 import { forgetAccount, loadAccount, storeAccount } from "../platform/orunAccountSession.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import type { Point, RecordId } from "../core/points.ts";
@@ -65,6 +66,7 @@ export function pilotRestoreAccount(): Promise<void> {
     const restored = new OwnerAccountClient(ORUN_ACCOUNT_ORIGIN);
     restored.adopt(stored.identity, stored.accessToken);
     client = restored;
+    await writeKeys.load().catch(() => undefined);
     await edgeKeys.load().catch(() => undefined);
     observationsChanged?.();
     startAutoSync();
@@ -75,7 +77,7 @@ export function pilotRestoreAccount(): Promise<void> {
     if (check.state === "expired") {
       client = null;
       stopAutoSync();
-      writeKeys.clear();
+      await writeKeys.clear();
       edgeKeys.clear();
       await forgetAccount();
       observationsChanged?.();
@@ -175,8 +177,8 @@ const settingsServer = () => (client && pilotAccountStatus() ? client : null);
 
 /** 4c-1b: Bluetooth yazma anahtarları (hesaptan; çıkınca silinir). */
 export const edgeKeys = new EdgeKeyBook(edgeKeyVault);
-export const writeKeys = new WriteKeyBook(
-  typeof localStorage !== "undefined" ? (() => { try { return localStorage; } catch { return null; } })() : null);
+eraseLegacyWriteKeys();
+export const writeKeys = new WriteKeyBook(writeKeyVault);
 
 /** İşlemler: alan ve ayar gönderme kaydı (hesapta, telefonda bir kopya). */
 export const deviceOps = new DeviceOpsBook(
@@ -434,6 +436,10 @@ export function pilotAccountStatus(): AccountIdentity | null {
   if (identity.expiresAt <= Date.now() / 1000) {
     // Expired 12h token is never presented as a live login.
     client = null;
+    stopAutoSync();
+    void writeKeys.clear().catch(() => undefined);
+    edgeKeys.clear();
+    void forgetAccount();
     return null;
   }
   return identity;
@@ -448,7 +454,7 @@ export async function pilotPasswordLogin(
   try {
     // Drop previous account's signing authority before any network request.
     // This also invalidates in-flight key refreshes through WriteKeyBook.clear().
-    writeKeys.clear();
+    await writeKeys.clear();
     edgeKeys.clear();
     if (client) {
       const old = client;
@@ -458,9 +464,10 @@ export async function pilotPasswordLogin(
     const next = new OwnerAccountClient(ORUN_ACCOUNT_ORIGIN);
     const user = await next.signInWithPassword(username, password);
     client = next;
+    // Native write-key vault requires the new protected account first.
+    await persist(next);
     observationsChanged?.();
     startAutoSync();
-    await persist(next);
     accountEmail = (await next.refresh()).email;
     accountChanged();
     return user;
@@ -478,7 +485,7 @@ export async function pilotAccountLogin(
     // Do not leave an old login active on the server when switching user.
     // Drop previous account's signing authority before any network request.
     // This also invalidates in-flight key refreshes through WriteKeyBook.clear().
-    writeKeys.clear();
+    await writeKeys.clear();
     edgeKeys.clear();
     if (client) {
       const old = client;
@@ -489,6 +496,8 @@ export async function pilotAccountLogin(
     const next = new OwnerAccountClient(device.origin);
     const user = await next.signIn(device, username, password);
     client = next;
+    // Native write-key vault requires the new protected account first.
+    await persist(next);
     observationsChanged?.();
     startAutoSync();
     return user;
@@ -524,9 +533,10 @@ export async function pilotAccountLogout(): Promise<void> {
   accountEmail = null;
   stopAutoSync();
   setSync({ running: false, last: null, error: null });
-  writeKeys.clear();
-      edgeKeys.clear();
-  await forgetAccount();
+  // Clear native write authority before deleting the protected account session.
+  try { await writeKeys.clear(); }
+  finally { await forgetAccount(); }
+  edgeKeys.clear();
   observationsChanged?.();
   accountChanged();
   if (prior) await prior.signOut();
