@@ -3,6 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "custody_ack.h"
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#include "kq05_backend_receipt.h"
+#endif
 #include "lora_command.h"
 #include "device_identity.h"
 #include "network_service.h"
@@ -76,6 +79,14 @@ struct CustodyAckRxFrame {
   uint8_t payload[custody_ack::kWireSize]{};
 };
 
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+// Untrusted, structurally admitted Backend receipt. NEVER a release token.
+struct Kq05BatchReceiptRxFrame {
+  uint16_t size = 0;
+  uint8_t payload[kq05_receipt::kMaxWireSize]{};
+};
+#endif
+
 // 6b: one LoRa command (Tracker) or command RESULT (Gateway) as received.
 // UNTRUSTED bytes: the Tracker's LoraCommandService checks the signature;
 // the Gateway only passes a RESULT on to its bridge.
@@ -143,6 +154,9 @@ class RadioManager {
   // Tracker-only, exact raw 56-byte ACK from driver callback mailbox.
   // The consumer MUST separately check durable grant and full HMAC.
   bool takeCustodyAckFrame(CustodyAckRxFrame* frame);
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  bool takeKq05BatchReceiptFrame(Kq05BatchReceiptRxFrame* frame);
+#endif
 
   // 6b: LoRa commands. A Tracker takes commands addressed to it; any other
   // role takes command RESULTs (to pass to its bridge). Loop owner only.
@@ -254,6 +268,10 @@ class RadioManager {
   bool product_secure_rx_pending_ = false;
   CustodyAckRxFrame custody_ack_rx_{};
   bool custody_ack_rx_pending_ = false;
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  Kq05BatchReceiptRxFrame kq05_batch_rx_{};
+  bool kq05_batch_rx_pending_ = false;
+#endif
   LoraFrameRx lora_rx_{};
   bool lora_rx_pending_ = false;
   uint64_t heard_sender_ = 0;

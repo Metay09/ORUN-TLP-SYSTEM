@@ -106,6 +106,10 @@ bool RadioManager::begin(SequenceSource& sequences) {
   product_secure_rx_pending_ = false;
   custody_ack_rx_ = {};
   custody_ack_rx_pending_ = false;
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  kq05_batch_rx_ = {};
+  kq05_batch_rx_pending_ = false;
+#endif
   bridge_line_number_ = 0;
   role_transition_pending_ = false;
   accept_rx_events_ = true;
@@ -433,6 +437,19 @@ bool RadioManager::takeCustodyAckFrame(CustodyAckRxFrame* frame) {
   return true;
 }
 
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+bool RadioManager::takeKq05BatchReceiptFrame(
+    Kq05BatchReceiptRxFrame* frame) {
+  if (frame == nullptr || !kq05_batch_rx_pending_ ||
+      role_transition_pending_ ||
+      network_.role() != NodeRole::kTracker) return false;
+  *frame = kq05_batch_rx_;
+  kq05_batch_rx_ = {};
+  kq05_batch_rx_pending_ = false;
+  return true;
+}
+#endif
+
 uint64_t RadioManager::deviceId() const { return device_id_; }
 
 void RadioManager::onTxDone() {
@@ -752,6 +769,10 @@ void RadioManager::applyPendingRole() {
   // No ACK received in an old role may be delivered in the new role.
   custody_ack_rx_ = {};
   custody_ack_rx_pending_ = false;
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  kq05_batch_rx_ = {};
+  kq05_batch_rx_pending_ = false;
+#endif
   ++role_epoch_;
   armed_tx_generation_ = 0;
   radio_driver::setGeneration(0);
@@ -868,6 +889,23 @@ void RadioManager::emitBridgePosition(const NetworkEvent& event) {
 
 void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
                                         int16_t rssi, int8_t snr) {
+
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  if (size >= 2U && payload[0] == kq05_receipt::kVersion &&
+      payload[1] == kq05_receipt::kType) {
+    kq05_receipt::Header parsed{};
+    // Only a structurally valid own-device receipt enters the Tracker
+    // mailbox; SecurityStore HKDF/HMAC and OBS1 checks occur in the loop.
+    if (network_.role() != NodeRole::kTracker ||
+        !kq05_receipt::decode(payload, size, parsed) ||
+        parsed.device_id != device_id_ || kq05_batch_rx_pending_)
+      return;
+    kq05_batch_rx_.size = size;
+    memcpy(kq05_batch_rx_.payload, payload, size);
+    kq05_batch_rx_pending_ = true;
+    return;
+  }
+#endif
 
   if (size >= 2 &&
       payload[0] == custody_ack::kVersion &&

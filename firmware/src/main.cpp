@@ -23,6 +23,9 @@
 #include "config_mutation.h"
 #include "config_store.h"
 #include "custody_ack_release_owner.h"
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#include "kq05_backend_receipt_release_owner.h"
+#endif
 #include "config_incarnation_source.h"
 #ifdef ORUN_M7P7B_FLASH_PROBE
 #include "m7p7b_flash_probe.h"
@@ -201,6 +204,10 @@ orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort()
 // The only Tracker release owner: grant/HMAC verification precedes flash.
 orun_tlp::CustodyAckReleaseOwner custody_ack_release(security_store,
                                                       product_records);
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+orun_tlp::Kq05BackendReceiptReleaseOwner kq05_batch_release(
+    security_store, product_records);
+#endif
 #if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
     !defined(ORUN_SF5K3V_TRACKER_TX_PILOT)
 #error "KQ05 experimental sender requires explicit SF5K3V Tracker pilot image"
@@ -4402,6 +4409,22 @@ void loop() {
              orun_tlp::CustodyAckReleaseOwner::Service::kFailed) {
     Serial.println(F("PRODUCT CUSTODY release=FAILED"));
   }
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  // One release marker at a time, after product_records.poll(), never
+  // concurrently with custody release or a radio TX.
+  if (kq05_batch_release.pending() && !radio_manager.isTransmitting()) {
+    const auto result = kq05_batch_release.service();
+    if (result ==
+        orun_tlp::Kq05BackendReceiptReleaseOwner::Service::kApplied)
+      Serial.println(F("KQ05 BATCH verified and Flash released"));
+    else if (result ==
+             orun_tlp::Kq05BackendReceiptReleaseOwner::Service::kDuplicateOnly)
+      Serial.println(F("KQ05 BATCH duplicate; no Flash write"));
+    else if (result ==
+             orun_tlp::Kq05BackendReceiptReleaseOwner::Service::kFailed)
+      Serial.println(F("KQ05 BATCH release failed; no success claimed"));
+  }
+#endif
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kGeofenceStore);
   if (geofence_mutations.poll()) applyGeofenceMutationToRuntime();
   drainGeofenceMutationResult();
@@ -4556,13 +4579,33 @@ void loop() {
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kRadio);
   radio_manager.update(tracking_enabled && !positions.pending());
 
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  // RF packet is UNTRUSTED until the batch owner checks current credential,
+  // exact incarnation, Backend HMAC, and every retained logical record.
+  if (radio_manager.role() == orun_tlp::NodeRole::kTracker &&
+      !custody_ack_release.pending() && !kq05_batch_release.pending()) {
+    orun_tlp::Kq05BatchReceiptRxFrame batch{};
+    if (radio_manager.takeKq05BatchReceiptFrame(&batch)) {
+      const auto submitted = kq05_batch_release.submit(
+          batch.payload, batch.size);
+      Serial.printf("KQ05 batch receipt submit=%u\\n",
+                    static_cast<unsigned>(submitted));
+      memset(batch.payload, 0, sizeof(batch.payload));
+    }
+  }
+#endif
+
   // SF5K3U: loop-only Tracker ACK intake, after radio callback dispatch and
   // outside the driver gate. The mailbox contains UNTRUSTED wire bytes.
   // Release is strictly delegated to the existing SecurityStore/HMAC and
   // ProductRecordStore owner; absent v3 grant or exact cache fails closed.
   // Preserve a pending second ACK while a previous release awaits flash.
   if (radio_manager.role() == orun_tlp::NodeRole::kTracker &&
-      !custody_ack_release.pending()) {
+      !custody_ack_release.pending()
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+      && !kq05_batch_release.pending()
+#endif
+      ) {
     orun_tlp::CustodyAckRxFrame ack{};
     if (radio_manager.takeCustodyAckFrame(&ack)) {
       if (ble_ready && product_records.mounted() &&
