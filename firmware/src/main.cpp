@@ -4748,9 +4748,26 @@ void loop() {
     case orun_tlp::TrackerAcklessLiveTx::Event::kCryptoError:
       Serial.println(F("KQ05 LIVE crypto error"));
       break;
+    case orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent:
     case orun_tlp::TrackerAcklessLiveTx::Event::kDeferred:
     case orun_tlp::TrackerAcklessLiveTx::Event::kNone:
       break;
+  }
+  // Lower-priority retransmission of retained, still-unconfirmed records.
+  // Never send it ahead of LIVE; the scheduler's legal RF duty gate is
+  // mandatory before the experimental build can be field-activated.
+  const auto history_event = kq05_live_tx.updateHistory(
+      orun_tlp::monotonic::nowMs(), pilot_allowed);
+  if (history_event == orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent) {
+    Serial.printf("KQ05 HISTORY TX started seq=%lu delivery=unconfirmed\\n",
+                  static_cast<unsigned long>(
+                      kq05_live_tx.lastHistorySent().sequence));
+  } else if (history_event ==
+             orun_tlp::TrackerAcklessLiveTx::Event::kReadError) {
+    Serial.println(F("KQ05 HISTORY read error; retained"));
+  } else if (history_event ==
+             orun_tlp::TrackerAcklessLiveTx::Event::kBadRecord) {
+    Serial.println(F("KQ05 HISTORY unsupported/bad retained record"));
   }
 #else
   switch (tracker_product_tx.update(pilot_allowed)) {
