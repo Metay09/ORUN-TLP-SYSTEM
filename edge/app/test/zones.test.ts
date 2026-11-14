@@ -173,7 +173,12 @@ test("outside the zones: status, event, return and serbest otlatma (owner decisi
   // An older confirmation is the base interval: the collar may be on base / 3
   // outside its zones, so silence waits 1.25 x base (3 x 0.42 x 3600 s = 75 min), not 3 x 10 min.
   assert.equal(stale.periodS, 1512);
-  assert.equal(stale.status, "ok");
+  // KQ-03: after 45 minutes the location is no longer fresh (25.2 min
+  // effective period), but the collar is not yet silent (75.6 min limit).
+  assert.equal(stale.freshness, "aging");
+  assert.equal(stale.status, "aging");
+  assert.equal(deriveEvents({ herd: [stale], now: NOW, fence, ...rest })
+    .filter((e) => e.kind === "silent" || e.kind === "lost").length, 0);
   const [late] = buildHerd({ ...base, now: NOW + 35 * 60_000, points: waiting, intervals: { C1: { s: 3600, at: NOW - 600 * 60_000 } } });
   assert.equal(late.status, "silent", "80 dakika sonra sessiz");
   const [w1] = buildHerd({ ...base, points: waiting, intervals: { C1: { s: 3600, at: NOW - 44 * 60_000 } } });
