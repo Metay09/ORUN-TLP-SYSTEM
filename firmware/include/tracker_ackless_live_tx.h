@@ -18,9 +18,13 @@ namespace orun_tlp {
 class TrackerAcklessLiveTx final {
  public:
   enum class Event : uint8_t {
-    kNone, kSent, kDeferred, kBadRecord, kReadError, kCryptoError
+    kNone, kSent, kHistorySent, kDeferred, kBadRecord, kReadError, kCryptoError
   };
   static constexpr uint32_t kRetryDelayMs = 30000U;
+  // Lower priority, explicitly paced historical retransmission. The caller
+  // remains responsible for the shared legal RF airtime budget.
+  static constexpr uint32_t kHistorySpacingMs = 60000U;
+  static constexpr uint32_t kHistorySweepPauseMs = 300000U;
 
   TrackerAcklessLiveTx(ProductRecordStore& records,
                        ProductSecureCrypto& crypto, RadioManager& radio)
@@ -32,9 +36,17 @@ class TrackerAcklessLiveTx final {
   // untransmitted LIVE candidates. Confirmed delivery is a separate owner.
   Event update(uint32_t now_ms, bool eligible);
 
+  // Invoke only AFTER update() so that a fresh LIVE packet always wins.
+  // No ACK or cache slot is consumed; the backend must acknowledge identities.
+  Event updateHistory(uint32_t now_ms, bool eligible);
+
   const osf::RecordIdentity& lastSent() const { return last_sent_; }
   uint32_t sentCount() const { return sent_count_; }
   uint32_t deferredCount() const { return deferred_count_; }
+  const osf::RecordIdentity& lastHistorySent() const {
+    return last_history_sent_;
+  }
+  uint32_t historySentCount() const { return history_sent_count_; }
 
  private:
   static bool sameIdentity(const osf::RecordIdentity& a,
@@ -51,6 +63,12 @@ class TrackerAcklessLiveTx final {
   ProductSecureCrypto& crypto_;
   RadioManager& radio_;
   osf::RecordIdentity last_sent_{};
+  osf::RecordIdentity last_history_sent_{};
+  uint64_t history_incarnation_ = 0U;
+  uint32_t history_cursor_ = 0U;
+  uint32_t next_history_try_ms_ = 0U;
+  uint32_t history_sent_count_ = 0U;
+  bool history_paused_ = false;
   uint32_t next_try_ms_ = 0U;
   uint32_t sent_count_ = 0U;
   uint32_t deferred_count_ = 0U;
