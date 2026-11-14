@@ -167,3 +167,14 @@ test("Pil 2: the record's byte 42 carries the power state and USB", async () => 
   assert.equal(old.power, null);
   assert.equal(old.usb, null);
 });
+
+test("just opened: a little late is not orange until the first sync answers", () => {
+  const pts = [pt("c1", 10, { period_s: 300 })];
+  const [late] = buildHerd({ points: pts, profiles: {}, assetOf: (d) => d, now: NOW });
+  assert.equal(late.status, "aging");
+  const [opening] = buildHerd({ points: pts, profiles: {}, assetOf: (d) => d, now: NOW, settling: true });
+  assert.equal(opening.status, "ok");
+  // Really silent (3 reports, at least 30 min) stays silent.
+  const old = [pt("c1", 45, { period_s: 300 })];
+  assert.equal(buildHerd({ points: old, profiles: {}, assetOf: (d) => d, now: NOW, settling: true })[0].status, "silent");
+});

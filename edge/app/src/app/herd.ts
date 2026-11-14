@@ -140,11 +140,16 @@ export interface HerdInput {
   names?: Record<string, string>;
   /** Records without a position: the collar was heard even when GNSS found no fix. */
   unlocated?: RecordId[];
+  /** Just opened, the first sync of this run has not answered yet: a newer
+   * record is probably on its way, so "a little late" (aging) is not shown
+   * as a problem for that moment (owner's phone 2026-11-14: orange for a
+   * second after every start). Silent, lost, outside and battery still are. */
+  settling?: boolean;
   /** The report interval each collar confirmed and when (by upper-case device id). */
   intervals?: Record<string, { s: number; at: number }>;
 }
 
-export function buildHerd({ points, profiles, assetOf, now, fence, grazing = false, names, unlocated = [], intervals }: HerdInput): Animal[] {
+export function buildHerd({ points, profiles, assetOf, now, fence, grazing = false, names, unlocated = [], intervals, settling = false }: HerdInput): Animal[] {
   const by = new Map<string, { device: string; list: Observation[] }>();
   for (const p of points) {
     const t = epochMs(p.time);
@@ -257,7 +262,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     else if (outside && !grazing) status = "out";
     else if (noFix) status = "aging";
     else if (freshness === "stale") status = "silent";
-    else if (freshness === "aging") status = "aging";
+    else if (freshness === "aging") status = settling ? "ok" : "aging";
     else if (bat.level === "low") status = "battery-low";
     else status = "ok";
 
