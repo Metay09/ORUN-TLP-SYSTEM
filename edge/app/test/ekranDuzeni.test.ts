@@ -281,6 +281,39 @@ test("pil ömrü: bekleme akımı + rapor başına maliyet, tasmanın kendi dü�
   assert.deepEqual([lifeWord(1.5), lifeWord(13.6), lifeWord(119), lifeWord(900)], ["~36 saat", "~14 gün", "~4 ay", "~2,5 yıl"]);
 });
 
+test("pil ömrü: aralık her raporda oynar, tek uzun rapor dönemi bölmez, eski yazılım okuması sayılmaz", () => {
+  const T0 = Date.parse("2026-11-12T00:00:00Z"), H = 3_600_000;
+  // Kayıttaki period_s raporun gerçek süresi: 117-123 sn, arada bir 6 dk (GPS vazgeçti).
+  const a = discharge(T0, 20, 120, 0.5, 0.13, 89);
+  const jitter = a.pts.map((x, i) => ({ ...x, periodS: i % 37 === 5 ? 360 : 117 + (i % 7) }));
+  const runs = drainRuns(jitter, 450);
+  assert.equal(runs.length, 1, "tek 2 dk dönemi");
+  assert.ok(runs[0].hours > 18 && Math.abs(runs[0].periodS - 120) <= 3, JSON.stringify(runs[0]));
+  // Üç rapor üst üste başka aralıktaysa yeni dönem başlar (2 dk → 60 dk, 3563-3601 sn).
+  const b = discharge(T0 + 20 * H + 120_000, 30, 3600, 0.5, 0.13, a.endPct);
+  const hourly = b.pts.map((x, i) => ({ ...x, periodS: 3563 + (i % 5) * 9 }));
+  assert.deepEqual(drainRuns([...jitter, ...hourly], 450).map((r) => Math.round(r.periodS / 60)), [2, 60]);
+  // Güç durumu göndermeyen (12 Kasım öncesi) yazılımın okumaları ölçülmez.
+  assert.equal(drainRuns(a.pts.map((x) => ({ ...x, power: null })), 450).length, 0);
+});
+
+test("pil ömrü: Hayvan 2 ölçümü (14 Kasım) — uymayan dönem dışarıda, 60 dk ~23 gün", () => {
+  const runs = [
+    { hours: 21.2, packets: (21.2 * 3600) / 120, mAh: 92.8, periodS: 120 },   // 2 dk: 4.39 mA
+    { hours: 15.3, packets: (15.3 * 3600) / 300, mAh: 16.4, periodS: 300 },   // 5 dk şarjdan hemen sonra: 1.07 mA
+    { hours: 16.0, packets: (16.0 * 3600) / 3563, mAh: 10.5, periodS: 3563 }, // 60 dk: 0.66 mA
+  ];
+  const d = fitDrain(runs);
+  assert.equal(d.measured, "both");
+  assert.ok(Math.abs(d.baseMa - 0.53) < 0.03, String(d.baseMa));
+  assert.ok(Math.abs(d.packetMah - 0.129) < 0.005, String(d.packetMah));
+  assert.equal(Math.round(lifeAt(450, 3600, d).daysFull), 23);
+  // Hepsi birbirine uyuyorsa hiçbiri atılmaz.
+  const ok = runs.map((r) => ({ ...r, mAh: r.hours * (0.5 + (0.13 * r.packets) / r.hours) }));
+  const all = fitDrain(ok);
+  assert.ok(Math.abs(all.baseMa - 0.5) < 0.01 && Math.abs(all.packetMah - 0.13) < 0.002);
+});
+
 test("pil kapasitesi hesapta: internetsiz verilen sonra gider, eski telefon kayıtları da gönderilir", async () => {
   const store = new Map<string, string>();
   const io = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
