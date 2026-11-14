@@ -43,9 +43,10 @@ final class BridgeLink {
         void after(long ms, Runnable r);
     }
 
+    /** Coverage evidence (the store's sessions table); wall clock is the store's business. */
     interface Sessions {
-        void alive(long nowSec) throws Exception;
-        void end(long nowSec) throws Exception;
+        void alive() throws Exception;
+        void end() throws Exception;
     }
 
     interface Events {
@@ -274,7 +275,7 @@ final class BridgeLink {
 
     private void endSession() {
         if (step == Step.READY) {
-            try { sessions.end(timers.nowMs() / 1000); } catch (Exception ignored) { }
+            try { sessions.end(); } catch (Exception ignored) { }
         }
         core.sessionEnd();
         rx.reset();
@@ -311,7 +312,7 @@ final class BridgeLink {
         long now = timers.nowMs();
         if (!force && now - lastAliveMs < ALIVE_MS) return;
         lastAliveMs = now;
-        try { sessions.alive(now / 1000); } catch (Exception ignored) { }
+        try { sessions.alive(); } catch (Exception ignored) { }
     }
 
     void onFrame(byte[] frame) {

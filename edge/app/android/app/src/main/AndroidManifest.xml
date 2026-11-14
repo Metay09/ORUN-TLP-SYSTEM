@@ -62,6 +62,22 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+        <!-- Gateway köprüsü (v1 adım 7): the phone keeps the chosen Gateway
+             connected and takes its records, also with the app closed or
+             swiped away and after a reboot (GatewayBridgeService.java,
+             BridgeRuntime.java). Stopped only by "Bağlantıyı kes" or sign-out. -->
+        <service
+            android:name=".GatewayBridgeService"
+            android:foregroundServiceType="connectedDevice"
+            android:exported="false" />
+        <receiver
+            android:name=".GatewayBridgeBoot"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <receiver
             android:name="io.capawesome.capacitorjs.plugins.foregroundservice.NotificationActionBroadcastReceiver"
             android:exported="false" />
@@ -111,4 +127,6 @@
     <!-- Android 14 requires one of these for a connectedDevice service; this
          one is always granted (BLUETOOTH_CONNECT / USB permission also count). -->
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!-- The Gateway bridge sends waiting records as soon as Internet returns. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 </manifest>

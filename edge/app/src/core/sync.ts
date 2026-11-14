@@ -23,7 +23,13 @@ export interface UploadCounts {
   pending: number;    // not answered finally yet
   conflict: number;
   rejected: number;
+  /** Of `pending`: taken over from the native bridge, which uploads them
+   * itself (Android). Present only when not zero. */
+  bridged?: number;
 }
+
+/** What this app's own Uploader still has to send. */
+export function ownPending(c: UploadCounts): number { return Math.max(0, c.pending - (c.bridged ?? 0)); }
 
 export interface RunResult { sent: number; final: number; uncertain: number; }
 
@@ -63,11 +69,15 @@ export class Uploader {
       const by = new Map((await this.db.query("SELECT state, count(*) AS n FROM uploads GROUP BY state"))
         .map((r) => [String(r.state), Number(r.n)]));
       const answered = [...by.values()].reduce((a, b) => a + b, 0);
+      const bridged = Number((await this.db.query(
+        "SELECT count(*) AS n FROM bridged b LEFT JOIN uploads u ON u.device_id=b.device_id AND " +
+        "u.incarnation=b.incarnation AND u.sequence=b.sequence WHERE u.state IS NULL"))[0].n);
       return {
         uploaded: (by.get("STORED") ?? 0) + (by.get("DUPLICATE") ?? 0),
         pending: Math.max(0, total - answered),
         conflict: by.get("CONFLICT") ?? 0,
         rejected: by.get("REJECTED") ?? 0,
+        ...(bridged ? { bridged } : {}),
       };
     });
   }
@@ -83,7 +93,9 @@ export class Uploader {
         "SELECT o.rowid AS scan_rowid,o.device_id,o.incarnation,o.sequence,o.frame,r.first_seen_utc,r.gw_rssi,r.gw_snr,r.gateway " +
         "FROM observations o LEFT JOIN receipts r ON r.device_id=o.device_id AND r.incarnation=o.incarnation AND r.sequence=o.sequence " +
         "LEFT JOIN uploads u ON u.device_id=o.device_id AND u.incarnation=o.incarnation AND u.sequence=o.sequence " +
-        "WHERE u.state IS NULL " + (beforeRowid === null ? "" : "AND o.rowid < ? ") +
+        // Taken over from the native bridge, which uploads them itself.
+        "LEFT JOIN bridged b ON b.device_id=o.device_id AND b.incarnation=o.incarnation AND b.sequence=o.sequence " +
+        "WHERE u.state IS NULL AND b.device_id IS NULL " + (beforeRowid === null ? "" : "AND o.rowid < ? ") +
         "ORDER BY o.rowid DESC LIMIT ?", beforeRowid === null ? [BATCH] : [beforeRowid, BATCH]);
       // The last sent session keeps growing while attached: resend from it.
       const lastSession = Number((await this.meta("sessions_from")) ?? "1");

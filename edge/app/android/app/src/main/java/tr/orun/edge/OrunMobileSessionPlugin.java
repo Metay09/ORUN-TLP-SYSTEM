@@ -397,7 +397,9 @@ public final class OrunMobileSessionPlugin extends Plugin {
         byte[] plain = null;
         try {
             JSONObject account = accountForService(ctx);
-            plain = decrypt(vault(ctx, READ_FILE), READ_DOMAIN, READ_MAX_BLOB);
+            synchronized (OrunMobileSessionPlugin.class) {
+                plain = decrypt(vault(ctx, READ_FILE), READ_DOMAIN, READ_MAX_BLOB);
+            }
             if (account == null || plain == null) return out;
             JSONObject data = new JSONObject(new String(plain, StandardCharsets.UTF_8));
             if (!sameAccount(account, data)) return out;
@@ -417,7 +419,7 @@ public final class OrunMobileSessionPlugin extends Plugin {
     }
 
     /** Kept bound to the signed-in account, like the Edge keys. */
-    static void storeReadKeysForService(android.content.Context ctx, org.json.JSONArray keys) throws Exception {
+    static synchronized void storeReadKeysForService(android.content.Context ctx, org.json.JSONArray keys) throws Exception {
         JSONObject account = accountForService(ctx);
         if (account == null || keys == null || keys.length() > MAX_READ_KEYS) throw new IllegalStateException("READ_KEYS");
         JSONObject data = new JSONObject();
@@ -428,7 +430,7 @@ public final class OrunMobileSessionPlugin extends Plugin {
         writeLarge(vault(ctx, READ_FILE), READ_DOMAIN, plain);
     }
 
-    static void clearReadKeysForService(android.content.Context ctx) {
+    static synchronized void clearReadKeysForService(android.content.Context ctx) {
         try { vault(ctx, READ_FILE).delete(); } catch (Exception | LinkageError ignored) { }
     }
 
@@ -551,6 +553,7 @@ public final class OrunMobileSessionPlugin extends Plugin {
             try {
                 store(EDGE_FILE).delete();
                 store(WRITE_FILE).delete();
+                clearReadKeysForService(getContext());
                 AtomicFile file = store(ACCOUNT_FILE);
                 if (file.getBaseFile().exists())
                     file.delete();

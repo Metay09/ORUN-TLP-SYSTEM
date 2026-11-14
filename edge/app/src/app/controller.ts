@@ -4,8 +4,10 @@ import type { Db } from "../core/db.ts";
 import { EdgeCore, type Counts } from "../core/edge.ts";
 import { KeyRing } from "../core/keys.ts";
 import type { Point, PointsResult, RecordId } from "../core/points.ts";
-import { BleLink, UsbLink, type LinkState } from "../platform/transports.ts";
-import { fetchReadKeys, Uploader, type UploadCounts } from "../core/sync.ts";
+import { BleLink, UsbLink, pickGatewayAddress, type LinkState } from "../platform/transports.ts";
+import { fetchReadKeys, ownPending, Uploader, type UploadCounts } from "../core/sync.ts";
+import { nativeGatewayBridge, type BridgeStatus, type GatewayBridgePlugin } from "../platform/gatewayBridge.ts";
+import { NativeBleLink } from "../platform/nativeBleLink.ts";
 import { fetchGet, fetchPost } from "../platform/http.ts";
 import { KeepAlive } from "../platform/background.ts";
 import { startHerdWatch, stopHerdWatch } from "../platform/herdWatch.ts";
@@ -15,7 +17,7 @@ import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import {
   attachPilotAccountSqliteMirror, attachPilotAccountObservationMirror,
   pilotAccountObservationPoints, pilotAccountUploadTransport, edgeKeys,
-  onPilotAccountChange, pilotAccountStatus,
+  onPilotAccountChange, pilotAccountStatus, pilotAccountSettled, pilotLoraServer,
 } from "./ownerAccountPilotRuntime.ts";
 
 export interface Snapshot {
@@ -88,6 +90,14 @@ export class Controller {
   readonly kind = "real" as const;
   private core: EdgeCore | null = null;
   private ble: BleLink | null = null;
+  // Android: the Gateway link lives in the native bridge service (v1 step 7).
+  private native: NativeBleLink | null = null;
+  private bridge: BridgeStatus | null = null;
+  private readonly nativeBridge: GatewayBridgePlugin | null;
+
+  constructor(nativeBridge: GatewayBridgePlugin | null = nativeGatewayBridge) {
+    this.nativeBridge = nativeBridge;
+  }
   private usb: UsbLink | null = null;
   private listeners = new Set<() => void>();
   private refreshQueued = false;
@@ -130,7 +140,8 @@ export class Controller {
   private background(): void {
     const s = this.snap;
     this.herdWatch();
-    if (s.link === "none") { this.keepAlive.off(); return; }
+    // The native bridge keeps itself running and shows its own notification.
+    if (s.link === "none" || (s.link === "ble" && this.native)) { this.keepAlive.off(); return; }
     const how = s.link === "ble" ? "Bluetooth" : "USB";
     const body = s.state === "connected"
       ? `${how}: ${s.counts.STORED} yeni · teslim ${s.handedOff} · bekleyen ${s.pending}`
@@ -186,15 +197,49 @@ export class Controller {
       };
       this.ble = new BleLink(core, events);
       this.usb = new UsbLink(core, events);
+      if (this.nativeBridge) {
+        this.native = new NativeBleLink(this.nativeBridge, db, (fn) => core.exclusive(fn), events, {
+          status: (st) => this.bridgeStatus(st),
+          imported: () => {
+            this.refresh();
+            void this.uploader?.counts().then((counts) => this.setServer({ counts })).catch(() => undefined);
+          },
+        }, pickGatewayAddress, pilotLoraServer);
+      }
       this.emit({ ready: true, storage: `SQLite journal=${db.journal ?? "?"} synchronous=${db.synchronous ?? "?"}` });
       this.uploader = new Uploader(db, fetchPost, (fn) => core.exclusive(fn));
       this.refresh();
       setInterval(() => { void this.sync(false); }, SYNC_EVERY_MS);
-      onPilotAccountChange(() => this.background());   // sign-in/out starts/stops the herd watch
+      onPilotAccountChange(() => { this.background(); this.accountForBridge(); });   // sign-in/out: herd watch, bridge
       this.background();
+      if (this.native) {
+        // A bridge that ran while the app was closed: shown as it is, its
+        // records come over, and it gets the read keys this app holds.
+        void this.native.attach().catch((e) => this.log(`[köprü] okunamadı: ${e instanceof Error ? e.message : String(e)}`));
+        if (keyring.size) void this.native.pushKeys(keyring.entries()).catch(() => undefined);
+      }
       void this.sync(false);
     } catch (e) {
       this.emit({ error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  // ---- native bridge (Android) ------------------------------------------------
+  private bridgeStatus(s: BridgeStatus): void {
+    this.bridge = s;
+    if (s.enabled && this.snap.link === "none") this.emit({ link: "ble" });
+    this.refresh();
+  }
+
+  /** Signed out (or the session expired): the bridge stops and forgets this
+   * account's keys. Signed in: it gets the read keys and reloads the vault. */
+  private accountForBridge(): void {
+    const native = this.native;
+    if (!native || !pilotAccountSettled()) return;
+    if (!pilotAccountStatus()) {
+      if (this.bridge?.enabled) void native.forget();
+    } else {
+      void native.pushKeys(this.keyring.entries()).catch(() => undefined);
     }
   }
 
@@ -249,14 +294,26 @@ export class Controller {
     setTimeout(async () => {
       this.refreshQueued = false;
       const c = this.core!;
-      const stored = c.counts.STORED, handed = c.handedOff;
+      // Bluetooth on Android: the counters are the native bridge's.
+      const b = this.snap.link === "ble" && this.native ? this.bridge : null;
+      const counts = b?.counts ? { ...b.counts } : { ...c.counts };
+      const stored = counts.STORED, handed = b ? b.handedOff ?? 0 : c.handedOff;
+      // The bridge's counters start again when its process does.
+      if (stored < this.lastStored) this.lastStored = stored;
+      if (handed < this.lastHanded) this.lastHanded = handed;
       if (stored > this.lastStored) this.note("records", `${stored - this.lastStored} yeni kayıt gateway'den alındı`, stored - this.lastStored);
       if (handed > this.lastHanded) this.note("handoff", `${handed - this.lastHanded} kayıt telefona kalıcı yazıldı · gateway'de yer açıldı`, handed - this.lastHanded);
       this.lastStored = stored;
       this.lastHanded = handed;
-      this.emit({
+      this.emit(b ? {
         pointsVersion: this.snap.pointsVersion + 1,
-        counts: { ...c.counts }, records: await c.ledger.recordCount(), handedOff: c.handedOff,
+        counts, records: await c.ledger.recordCount(), handedOff: handed,
+        rejected: b.acceptRejected ?? 0, pending: b.pendingAccepts ?? 0,
+        gateway: b.gateway ?? this.snap.gateway,
+        gatewayHeld: heldText(b.held ?? null, b.capacity ?? null) ?? this.snap.gatewayHeld,
+      } : {
+        pointsVersion: this.snap.pointsVersion + 1,
+        counts, records: await c.ledger.recordCount(), handedOff: c.handedOff,
         rejected: c.acceptRejected, pending: c.pendingAccepts(),
         ...(c.acceptKeyMissing ? { detail: "Teslim anahtarı yok; kayıtlar gateway’de korunuyor." } : {}),
         gateway: c.gatewayId === null ? this.snap.gateway : hex64(c.gatewayId),
@@ -298,7 +355,9 @@ export class Controller {
     if (changed) {
       this.log(`[sunucu] ${changed} okuma anahtarı alındı (tasma kayıtları artık açılabilir)`);
       this.note("keys", `${changed} tasmanın okuma anahtarı sunucudan alındı`);
-      if (this.snap.link === "ble") await this.ble?.redump();
+      // The native bridge asks the Gateway again by itself when its keys change.
+      if (this.native) await this.native.pushKeys(this.keyring.entries()).catch(() => undefined);
+      else if (this.snap.link === "ble") await this.ble?.redump();
       if (this.snap.link === "usb") await this.usb?.redump();
     }
   }
@@ -338,14 +397,15 @@ export class Controller {
           if (manual) this.log(`[sunucu] okuma anahtarları alınamadı: ${keysError}; mevcut kayıtlar yine gönderilecek`);
         }
       }
-      if (!manual && counts.pending === 0) {
+      // Rows taken over from the native bridge are its to upload.
+      if (!manual && ownPending(counts) === 0) {
         this.setServer({ busy: false, counts, error: keysError });
         return;
       }
 
       try {
         // Nothing to send: a manual tap still checks address + token.
-        if (counts.pending === 0) {
+        if (ownPending(counts) === 0) {
           const n = await this.uploader.ping(url, token);
           this.setServer({ busy: false, counts, error: keysError,
                            lastOk: new Date().toLocaleTimeString("tr-TR", { hour12: false }) });
@@ -371,9 +431,9 @@ export class Controller {
         const counts2 = await this.uploader.counts();
         this.setServer({ busy: false, error: msg, counts: counts2 });
         if (manual) this.log(`[sunucu] gönderilemedi: ${msg}`);
-        if (!this.serverDown && counts2.pending) {
+        if (!this.serverDown && ownPending(counts2)) {
           this.serverDown = true;
-          this.note("warn", `Sunucuya ulaşılamadı · ${counts2.pending} kayıt telefonda saklı, sonra gönderilecek`);
+          this.note("warn", `Sunucuya ulaşılamadı · ${ownPending(counts2)} kayıt telefonda saklı, sonra gönderilecek`);
         }
       }
     } finally {
@@ -385,6 +445,12 @@ export class Controller {
   async connectBle(pick = false, deviceId?: string): Promise<void> {
     if (!this.ble || this.snap.link !== "none") return;
     this.emit({ link: "ble" });
+    if (this.native) {
+      // Its notification shows while it bridges; ask once (Android 13+).
+      await ensureNotifyPermission().catch(() => false);
+      await this.native.start(pick, deviceId);
+      return;
+    }
     await this.ble.start(pick, deviceId);
   }
 
@@ -395,7 +461,8 @@ export class Controller {
   }
 
   async disconnect(): Promise<void> {
-    if (this.snap.link === "ble") await this.ble?.stop();
+    if (this.snap.link === "ble" && this.native) await this.native.stop();
+    else if (this.snap.link === "ble") await this.ble?.stop();
     if (this.snap.link === "usb") await this.usb?.stop();
     this.emit({ link: "none", state: "idle", detail: null });
     this.refresh();

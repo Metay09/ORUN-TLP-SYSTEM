@@ -19,6 +19,14 @@ export class KeyRing {
 
   get size(): number { return this.keys.size; }
 
+  /** Every read key held (handed to the native Gateway bridge, Android). */
+  entries(): ReadKey[] {
+    return [...this.keys].map(([id, k]) => {
+      const [device, epoch] = id.split(":");
+      return { device, epoch: Number(epoch), trafficKey: hex(k) };
+    });
+  }
+
   /** The lookup the ledger uses; sees later additions. */
   readonly lookup: CredentialLookup = (device, epoch) => {
     const k = this.keys.get(KeyRing.id(hex(device), epoch));

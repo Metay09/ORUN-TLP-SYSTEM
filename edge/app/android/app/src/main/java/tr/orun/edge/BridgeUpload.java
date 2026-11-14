@@ -21,6 +21,11 @@ final class BridgeUpload {
 
     interface Post { Reply post(String body) throws Exception; }
 
+    /** Runs store work where the store lives (the bridge's worker thread). */
+    interface OnDb { <T> T run(java.util.concurrent.Callable<T> work) throws Exception; }
+
+    static final OnDb DIRECT = java.util.concurrent.Callable::call;
+
     static final class Unauthorized extends Exception {
         Unauthorized() { super("ORUN_SESSION_REJECTED"); }
     }
@@ -58,30 +63,35 @@ final class BridgeUpload {
     }
 
     /** One batch; beforeRowid continues a pass. */
-    private static Result batch(BridgeStore store, Post post, Long beforeRowid, long nowSec, Long[] next)
+    private static Result batch(BridgeStore store, Post post, OnDb db, Long beforeRowid, long nowSec, Long[] next)
             throws Exception {
         Result r = new Result();
-        BridgeStore.Batch b = store.nextBatch(beforeRowid);
+        final BridgeStore.Batch b = db.run(() -> store.nextBatch(beforeRowid));
         next[0] = b.nextRowid;
         if (b.rows.isEmpty() && !b.sessionsChanged) return r;
-        Reply reply = post.post(body(store.edgeId(), b));
+        String edge = db.run(store::edgeId);
+        Reply reply = post.post(body(edge, b));          // the network call: never on the store's thread
         if (reply.status == 401) throw new Unauthorized();
         if (reply.status != 200) throw new IllegalStateException("HTTP " + reply.status);
         if (reply.results == null || reply.results.size() != b.rows.size())
             throw new IllegalStateException("unexpected answer");
         r.sent = b.rows.size();
-        r.settled = store.settle(b, reply.results, reply.sessionsOk, nowSec);
+        r.settled = db.run(() -> store.settle(b, reply.results, reply.sessionsOk, nowSec));
         r.uncertain = r.sent - r.settled;
         return r;
     }
 
     /** One newest-to-oldest pass: each pending record is tried at most once. */
     static Result drain(BridgeStore store, Post post, long nowSec) throws Exception {
+        return drain(store, post, DIRECT, nowSec);
+    }
+
+    static Result drain(BridgeStore store, Post post, OnDb db, long nowSec) throws Exception {
         Result total = new Result();
         Long before = null;
         Long[] next = {null};
         for (int i = 0; i < 1000; i++) {
-            Result r = batch(store, post, before, nowSec, next);
+            Result r = batch(store, post, db, before, nowSec, next);
             total.sent += r.sent; total.settled += r.settled; total.uncertain += r.uncertain;
             if (r.sent < BridgeStore.BATCH || next[0] == null) break;
             before = next[0];

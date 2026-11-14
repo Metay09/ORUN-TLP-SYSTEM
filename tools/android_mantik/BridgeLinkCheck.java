@@ -284,8 +284,8 @@ public final class BridgeLinkCheck {
             final int[] readyPeriods = {0}, stored = {0}, lora = {0};
             final List<String> states = new ArrayList<>();
             BridgeLink link = new BridgeLink(radio, clock, core, new BridgeLink.Sessions() {
-                public void alive(long s) throws Exception { store.sessionAlive(s, "ble"); }
-                public void end(long s) throws Exception { store.sessionEnd(s); }
+                public void alive() throws Exception { store.sessionAlive(clock.now / 1000, "ble"); }
+                public void end() throws Exception { store.sessionEnd(clock.now / 1000); }
             }, new BridgeLink.Events() {
                 public void state(String s, String d) { states.add(s); if (s.equals(BridgeLink.READY)) readyPeriods[0]++; }
                 public void changed() { }
