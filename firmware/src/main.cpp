@@ -4588,7 +4588,7 @@ void loop() {
     if (radio_manager.takeKq05BatchReceiptFrame(&batch)) {
       const auto submitted = kq05_batch_release.submit(
           batch.payload, batch.size);
-      Serial.printf("KQ05 batch receipt submit=%u\\n",
+      Serial.printf("KQ05 batch receipt submit=%u\n",
                     static_cast<unsigned>(submitted));
       memset(batch.payload, 0, sizeof(batch.payload));
     }
