@@ -27,6 +27,32 @@ retries, ACKs, unknown TX classes, and 24/48-hour flash retention pressure.
 It deliberately does not modify the firmware; PASS is a **test harness PASS**,
 not evidence of on-device enforcement or legal conformity.
 
+## Native C++ groundwork (not connected to RadioManager)
+
+The draft now also includes `firmware/include/rf_duty_budget.h` and
+`firmware/src/rf_duty_budget.cpp` plus a pure host test. This is a
+conservative 61 x 1-minute bucket accounting component with seven explicitly
+registered packet classes. On every fresh boot it refuses ALL TX for 60 minutes,
+because the previous hour's airtime has no durable authority. The source
+is compiled but **never called** by the live radio paths. The one-hour
+boot hold is a safety fallback, **not an acceptable user experience** for a
+collar that must report soon after restarting.
+
+Run the isolated native C++ test on the PC:
+
+    g++ -std=c++11 -Wall -Wextra -Werror -pedantic \
+      -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+      -Ifirmware/include \
+      firmware/tests/sf5/test_kq04_rf_duty_budget.cpp \
+      firmware/src/rf_duty_budget.cpp -o /tmp/orun-kq04-rf-test
+    /tmp/orun-kq04-rf-test
+
+This verifies the native component in isolation only. The next firmware PR
+must establish a boot-safe persisted budget or acceptable documented cold-start
+policy, plus real SX126x time-on-air and complete send-path routing **before**
+enabling this gate in RadioManager. Do not wire this component directly to live
+TX without resolving that startup behavior.
+
 ## Production implementation gates (separate firmware PR)
 
 1. Enumerate all SX126x Radio.Send call sites, including indirect Gateway
