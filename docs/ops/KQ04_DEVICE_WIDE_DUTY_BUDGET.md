@@ -1,6 +1,6 @@
 # KQ-04 — Device-wide 869.525 MHz radio duty guard (PC gate)
 
-Status: REFERENCE TEST ONLY / NOT WIRED INTO RADIO / NOT FIELD-READY.
+Status: WIRED TO ALL RADIO TX ENTRYPOINTS ON DRAFT PR #305 / LOCAL PC VERIFICATION PENDING / NOT FIELD-READY.
 
 ## Source and limits
 
@@ -27,16 +27,23 @@ retries, ACKs, unknown TX classes, and 24/48-hour flash retention pressure.
 It deliberately does not modify the firmware; PASS is a **test harness PASS**,
 not evidence of on-device enforcement or legal conformity.
 
-## Native C++ groundwork (not connected to RadioManager)
+## Native C++ gate and live RadioManager integration (draft)
 
-The draft now also includes `firmware/include/rf_duty_budget.h` and
-`firmware/src/rf_duty_budget.cpp` plus a pure host test. This is a
-conservative 61 x 1-minute bucket accounting component with seven explicitly
-registered packet classes. **Permanent ORUN project rule:** every boot starts
-with a fresh full 10% radio budget and may transmit immediately, without
-carrying usage from the previous boot. The source is currently **not called**
-by live radio paths. Note that this per-boot policy is not proof of a legal
-rolling-hour limit when a device is repeatedly restarted.
+The draft now includes `firmware/include/rf_duty_budget.h`,
+`firmware/src/rf_duty_budget.cpp` and native host tests. The per-device
+ledger uses 61 conservative minute buckets and counts seven packet classes.
+All seven actual `Radio.Send` call sites in `radio_manager.cpp` and
+`radio_manager_custody_ack.cpp` are now preceded by an airtime reservation.
+LoRa airtime is estimated from the actual configured SF/BW/CR/preamble/CRC
+and frame length (ceil in milliseconds). The gate is shared across role
+changes and Radio.Sleep() wakeups, but each real `RadioManager::begin()`
+starts a fresh budget. The old 6% PRODUCT_SECURE pacer remains a distinct
+additional throughput limiter, not a substitute for this total.
+
+**Permanent ORUN owner decision:** a real cold/warm boot starts with full
+budget immediately. No prior-boot carryover or enforced start-up hold.
+Repeated restarts can exceed a continuous rolling-hour RF constraint;
+neither a PC test nor this implementation proves regulatory conformity.
 
 Run the isolated native C++ test on the PC:
 
@@ -47,20 +54,23 @@ Run the isolated native C++ test on the PC:
       firmware/src/rf_duty_budget.cpp -o /tmp/orun-kq04-rf-test
     /tmp/orun-kq04-rf-test
 
-This verifies the native component in isolation only. Next, determine
-SX126x time-on-air and complete send-path routing. The fresh-budget-on-boot
-policy is the agreed ORUN product behavior, not an optional development mode.
-Any regulatory assessment must still distinguish per-boot budget accounting
-from actual continuous-hour RF exposure.
+The native test checks the airtime estimator and ledger. Additionally, the
+normal PC host suite now compiles `test_sf5j_radio_transport.cpp` against
+the real RadioManager and fake SX126x Radio.Send; it verifies an exhausted
+budget physically blocks the mock Send and does not reset on role transitions.
+The bridge paths are **not yet operator-tested** on the current branch.
+The new limiter can delay one-minute live reports, backlog sends, commands,
+or ACKs when the aggregate quota is exhausted; no scheduler-level priority
+reservation or guaranteed latest-position deadline is implemented here.
 
-## Production implementation gates (separate firmware PR)
+## Remaining acceptance gates before merge or physical rollout
 
-1. Enumerate all SX126x Radio.Send call sites, including indirect Gateway
-   custody ACK and relay paths. Route them through a single owner that
-   reserves estimated air-time before entering TX. No bypass is permitted.
-2. Compute actual frame air-time from modulation config and payload length
-   (including preamble/headers). Count attempted transmissions conservatively,
-   including TX timeout, retransmission and interrupted TX.
+1. **Implemented in draft:** one RadioManager-owned budget for every TX
+   class and a Semtech-equation ceil(ms) airtime estimate. Attempts reserve
+   BEFORE Radio.Send (and retain the reservation on timeouts).
+2. **Implemented in draft:** relay uses a non-consuming due check before
+   airtime admission; Gateway preflights the 56B ACK before consuming its
+   one-shot authenticated ACK. Independently test these denial paths.
 3. Always reset the budget to full on boot, with immediate TX eligibility;
    ignore previous power cycles as an explicit design decision. Test normal
    millis() rollover, time jumps, sleep/wake, role changes and TX errors.
@@ -73,9 +83,10 @@ from actual continuous-hour RF exposure.
    reservations outrank backlog, but backlogged data must have a documented
    bounded opportunity when capacity exists. Duty budget may never be
    borrowed above the legal maximum to satisfy an ACK.
-6. Add native C++ host regression with fake clock and fake Radio.Send,
-   including rolling 1h, reboot, SF11 airtime, packet classes, high backlog,
-   and 24/48-hour outage. Run the firmware build locally on PC.
+6. **Partially implemented; PC output pending:** native C++ host tests and
+   real RadioManager fake-Send exhaustion regression. Run full host suite
+   and `pio run -e rak4630` in a fresh, safe local merge rehearsal.
+   Add missing denial and 24/48h outage coverage before field enablement.
 7. Measure real SX1262 on-air duration, RF power/ERP and antenna setup before
    a field-release claim. Regulatory compliance is not established by source
    inspection or the Python reference test alone.
@@ -93,8 +104,9 @@ from actual continuous-hour RF exposure.
   but does not prove a particular missing record was lost at a particular
   flash rotation.
 
-## Non-goals of this first PR
+## No automatic firmware upload / no current pilot activation
 
-No change to 6% pacer default; no firmware release or flash; no service
-restart; no alteration or deletion of production data. Do not merge this
-reference-only PR as if it solved KQ-04 or issue #221.
+The unchanged 6% pacer default remains. This is source only on a DRAFT PR;
+no physical firmware was flashed, no live service was restarted, and no
+production data was mutated. Do not merge this work as qualified until PC
+test evidence, RF capacity/scheduler review and physical tests are complete.

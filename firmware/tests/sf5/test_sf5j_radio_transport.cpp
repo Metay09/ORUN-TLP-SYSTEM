@@ -100,6 +100,41 @@ void eventSizeAndTransmitAdmission() {
   assert(manager.eventDiagnostics().product_secure_tx_attempts == 1);
 }
 
+void sharedBudgetBlocksRealRadioSendAndRecovers() {
+  RadioManager manager;
+  TestSequence sequence;
+  beginAs(manager, sequence, NodeRole::kTracker);
+  uint8_t periodic[orun_tlp::tlp::kPeriodicFrameSize]{};
+  makeProduct(orun_tlp::tlp::kProductAppFamilyPeriodic,
+              kLocalDevice, periodic, sizeof(periodic));
+
+  // 162 * ceil(2.215936 seconds) = 358,992 ms. The 163rd 100B
+  // PRODUCT_SECURE would exceed the shared device's 360,000ms cap.
+  for (unsigned i = 0; i < 162U; ++i) {
+    assert(manager.sendProductSecurePacket(periodic, sizeof(periodic)));
+    terminal(false);
+    manager.update(false);
+  }
+  assert(manager.rfDutyUsedMs() == 162U * 2216U);
+  const uint32_t before_denial = send_calls;
+  assert(!manager.sendProductSecurePacket(periodic, sizeof(periodic)));
+  assert(send_calls == before_denial);  // No new SX126x Radio.Send.
+  assert(manager.rfDutyDenied() != 0U);
+
+  // Sleep and role changes are not a new device boot: budget persists.
+  manager.setRole(NodeRole::kBase);
+  manager.update(false);
+  manager.setRole(NodeRole::kTracker);
+  manager.update(false);
+  assert(!manager.sendProductSecurePacket(periodic, sizeof(periodic)));
+  assert(send_calls == before_denial);
+
+  // Conservative 61-bin ledger permits another send after elapsed time.
+  test_now += 3660000U;
+  assert(manager.sendProductSecurePacket(periodic, sizeof(periodic)));
+  assert(send_calls == before_denial + 1U);
+}
+
 void rejectMalformedTransmit() {
   RadioManager manager;
   TestSequence sequence;
@@ -194,6 +229,7 @@ int main() {
   receiveProductAndRetainExactBytes();
   eventSizeAndTransmitAdmission();
   rejectMalformedTransmit();
+  sharedBudgetBlocksRealRadioSendAndRecovers();
 #ifdef ORUN_SF5K3K_ACK_RX_TEST
   custodyAckTrackerMailboxAndRoleIsolation();
   puts("SF5K3K Tracker untrusted custody ACK RX mailbox: PASS");
