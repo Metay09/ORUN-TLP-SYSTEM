@@ -61,3 +61,10 @@ Mevcut 2/5/60 dakika eski firmware pil denemeleri sürerken **cihazlara flash, �
 - `test_sf5k3v_tracker_pilot.cpp` kapsamına gerçek ProductRecordStore fake Flash üzerinde dolu **4/4** cache, yeni 5. ve 7. konumun önbellek dışı gönderimi, ret/backoff ve false release olmaması regresyonları eklenir. Fake `ProductSecureCrypto` gerçek AEAD değildir: fiziksel/kriptografik kabul hâlâ ayrı.
 
 **Geçiş siyaseti:** Kullanıcı eski test kayıtlarının temizlenmesini kabul etti; bu gelecekte kontrollü temiz geçişe izin verir ama mevcut cihaz Flash'ını veya backend'i otomatik silme yetkisi değildir. Herhangi bir silmeden önce hangi cihaz ve hangi kayıtların temizleneceği ayrı planlanacak.
+
+## KQ-05B2 — Gateway non-custody staging (henüz entegre radyo çalışma değil)
+
+- `ProductCustodyStore::requestLive()` yalnız custody bit'i **kapalı** PRODUCT_SECURE kabul eder; eski `requestCustody()` hâlâ custody bit'i **açık** olmayanı reddeder. Mevcut OCQ2 kaydı aynı biçimde saklar ve reboottan sonra tekrar okur.
+- `GatewayProductLiveIngress` ilgili cihaz/epoch/Gateway için aktif scoped grant ile açıkça yetki arar, sonra opaque paketi no-eviction OCQ2 Flash'a yazar ve bağımsız readback kontrol eder. Paket bütünlüğünün AEAD çözümü ancak root credential sahibi Backend'de ispatlanabilir; grant yalnızca kaynak-admission filtresidir. Bu noktada **tekil ACK de toplu receipt de gönderilmez** ve teslim teminatı verilmez.
+- Host fake NOR testine `no ACK`, flash readback, tekrar, reboot, geçersiz grant/çerçeve regresyonları eklendi. **Gerçek PC çalıştırma raporu henüz yok**.
+- Deneysel Gateway radio mailbox yönlendirmesi, Edge durably intake ve kriptografik receipt/Tracker Flash release yapılmadan gerçek cihaz/aktif servis kullanımına **açmayın**.

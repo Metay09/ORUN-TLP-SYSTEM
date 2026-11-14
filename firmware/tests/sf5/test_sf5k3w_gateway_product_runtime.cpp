@@ -1,6 +1,7 @@
 // SF5K3W: REAL GatewayCustodyAuthorizedIngress + OCQ2 fake NOR + signer,
 // with a FAKE RadioManager transport. No physical RF, provisioning or CC310.
 #include "gateway_product_custody_runtime.h"
+#include "gateway_product_live_ingress.h"
 
 #define main sf5k3s_existing_fixture_main
 #include "test_sf5k3s_gateway_authorized_ingress.cpp"
@@ -135,12 +136,69 @@ void deniesAndRevokes() {
   assert(runtime.update(true) == Runtime::Event::kNone);
   assert(!ingress.pending() && g_ack_sends == 0);
 }
+void acklessLiveIsDurableButNotAcknowledged() {
+  resetTransport();
+  Nor nor;
+  nor.async = true;
+  ProductCustodyStore store(nor, 2U);
+  assert(store.begin());
+  Grants grants;
+  orun_tlp::GatewayProductLiveIngress ingress(store, grants, kGateway);
+  uint8_t bytes[100]{};
+  frame(bytes, sizeof(bytes), false);
+  assert(ingress.receive(bytes, sizeof(bytes)) ==
+         orun_tlp::GatewayProductLiveIngress::Receive::kStarted);
+  assert(ingress.pending());
+  assert(ingress.receive(bytes, sizeof(bytes)) ==
+         orun_tlp::GatewayProductLiveIngress::Receive::kBusy);
+  bool durable = false;
+  for (unsigned i=0; i<120U && ingress.pending(); ++i) {
+    if (ingress.service() ==
+        orun_tlp::GatewayProductLiveIngress::Service::kDurable)
+      durable = true;
+  }
+  assert(durable && !ingress.pending());
+  assert(g_ack_sends == 0U);  // No ACK for LIVE.
+  assert(ingress.receive(bytes, sizeof(bytes)) ==
+         orun_tlp::GatewayProductLiveIngress::Receive::kDuplicateDurable);
+  const int writes = nor.writes;
+  assert(writes > 0);
+
+  // Cross-reboot idempotent full-object readback, still no radio ACK.
+  ProductCustodyStore reboot(nor, 2U);
+  assert(reboot.begin());
+  orun_tlp::GatewayProductLiveIngress again(reboot, grants, kGateway);
+  assert(again.receive(bytes, sizeof(bytes)) ==
+         orun_tlp::GatewayProductLiveIngress::Receive::kDuplicateDurable);
+  assert(nor.writes == writes && g_ack_sends == 0);
+
+  // Custody-only path stays custody-only; LIVE path rejects those frames.
+  frame(bytes, sizeof(bytes), true);
+  assert(again.receive(bytes, sizeof(bytes)) ==
+         orun_tlp::GatewayProductLiveIngress::Receive::kDenied);
+  frame(bytes, sizeof(bytes), false);
+  grants.enrolled = false;
+  assert(again.receive(bytes, sizeof(bytes)) ==
+         orun_tlp::GatewayProductLiveIngress::Receive::kDenied);
+  assert(nor.writes == writes);
+
+  // No flash mutation on invalid length or malformed frame.
+  grants.enrolled = true;
+  bytes[0] = 0U;
+  assert(again.receive(bytes, sizeof(bytes)) ==
+         orun_tlp::GatewayProductLiveIngress::Receive::kDenied);
+  assert(again.receive(bytes, 99U) ==
+         orun_tlp::GatewayProductLiveIngress::Receive::kDenied);
+  assert(nor.writes == writes);
+}
+
 }  // namespace
 
 int main() {
+  acklessLiveIsDurableButNotAcknowledged();
   acceptsAndRetries(false);
   acceptsAndRetries(true);
   deniesAndRevokes();
-  puts("SF5K3W Gateway real flash/HMAC + radio intake runtime: PASS (host mocked radio)");
+  puts("KQ05 LIVE Gateway fake NOR readback/reboot/deny + SF5K3W custody runtime: PASS (host mocked radio)");
   return 0;
 }

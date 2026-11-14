@@ -45,6 +45,12 @@ class ProductCustodyStore final {
   bool begin();
   Admission requestCustody(const uint8_t* object, size_t size,
                            Handle* duplicate = nullptr);
+  // KQ05: store a separately authorized *unconfirmed* LIVE observation with
+  // custody-request bit OFF. No custody ACK or release authority is conferred.
+  // Caller MUST enforce scoped admission. The object remains subject to an
+  // independently authenticated backend receipt later.
+  Admission requestLive(const uint8_t* object, size_t size,
+                        Handle* duplicate = nullptr);
   void poll();
   bool takeCustodyResult(bool& committed, Handle& handle);
   // A fixed-size output buffer prevents unchecked copying of a 100-byte
@@ -98,6 +104,8 @@ class ProductCustodyStore final {
   bool findDuplicate(const uint8_t* object, size_t size,
                      Admission& result, Handle& handle) const;
   bool shapeValid(const uint8_t* data, size_t size) const;
+  Admission requestObject(const uint8_t* object, size_t size,
+                          Handle* duplicate);
   uint32_t recordOffset(uint16_t page, uint16_t slot) const;
   FlashOpResult write(uint32_t offset, const void* bytes, size_t size);
   void finish(bool success);

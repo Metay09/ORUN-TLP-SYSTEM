@@ -55,7 +55,7 @@ bool ProductCustodyStore::shapeValid(const uint8_t* p, size_t size) const {
   // AEAD verification: Gateway accepts opaque objects subject to a separate
   // enrolled-source/admission policy (not activated by this class).
   if (p[0]!=0x02U || p[1]!=0x04U || p[2]!=0x02U ||
-      p[4]>0x03U || (p[4]&0x02U)==0U || p[5]!=0x01U ||
+      p[4]>0x03U || p[5]!=0x01U ||
       p[7]!=0U || be64(p+8U)==0U || be32(p+16U)==UINT32_MAX ||
       be64(p+20U)==0U || be64(p+20U)==UINT64_MAX)
     return false;
@@ -157,7 +157,21 @@ bool ProductCustodyStore::findDuplicate(const uint8_t* object, size_t size,
 
 ProductCustodyStore::Admission ProductCustodyStore::requestCustody(
     const uint8_t* object, size_t size, Handle* duplicate) {
-  if (!ready() || !shapeValid(object,size) || flash_.hasUnreconciledMutation())
+  if (!shapeValid(object, size) || (object[4U] & 0x02U) == 0U)
+    return Admission::kRejected;
+  return requestObject(object, size, duplicate);
+}
+
+ProductCustodyStore::Admission ProductCustodyStore::requestLive(
+    const uint8_t* object, size_t size, Handle* duplicate) {
+  if (!shapeValid(object, size) || (object[4U] & 0x02U) != 0U)
+    return Admission::kRejected;
+  return requestObject(object, size, duplicate);
+}
+
+ProductCustodyStore::Admission ProductCustodyStore::requestObject(
+    const uint8_t* object, size_t size, Handle* duplicate) {
+  if (!ready() || !shapeValid(object, size) || flash_.hasUnreconciledMutation())
     return Admission::kRejected;
   if (busy() || outcome_ready_) return Admission::kBusy;
   Admission found=Admission::kRejected;
