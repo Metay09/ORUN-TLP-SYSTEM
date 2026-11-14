@@ -312,9 +312,14 @@ export interface ObservationSyncState {
   running: boolean;
   last: ObservationSyncResult | null;
   error: string | null;
+  /** When a sync last wrote every tracker's newest record (before history pages). */
+  latestAt?: number | null;
+  /** When a sync last failed. */
+  errorAt?: number | null;
 }
 
 const AUTO_SYNC_MS = 60_000;
+let snapshotPending = false;
 const MAX_ROUNDS = 50;          // 50 x 64 pages x 64 records per run
 let syncRun: Promise<ObservationSyncResult> | null = null;
 let syncState: ObservationSyncState = { running: false, last: null, error: null };
@@ -347,11 +352,20 @@ export function pilotAccountSync(): Promise<ObservationSyncResult> {
       throw new Error("Telefonun SQLite defteri henüz hazır değil.");
     // Keys arrive through the protected account relay. Do not assume the
     // phone has per-epoch read keys merely because it can sign in.
+    // Back from the background: first what the native herd watch fetched
+    // meanwhile (local, no network), so the screen is not hours behind while
+    // the network sync runs. Inside the run: never concurrent with it.
+    if (snapshotPending) {
+      snapshotPending = false;
+      await ingestWatchSnapshot(account).catch(() => undefined);
+    }
     await observationPrepareKeys();
     const same = () => client === account && !!pilotAccountStatus();
     if (!same()) throw new Error("Hesap değişti; sunucu konumları alınmadı.");
     const latest = await mirror.pullLatest(account);
     if (latest.added) observationsChanged?.();
+    // The screen may stop saying "yenileniyor" now: history can follow later.
+    setSync({ latestAt: Date.now() });
     let history = 0, more = true;
     for (let round = 0; round < MAX_ROUNDS && more && same(); round++) {
       const r = await mirror.pullAvailable(account);
@@ -365,7 +379,7 @@ export function pilotAccountSync(): Promise<ObservationSyncResult> {
   setSync({ running: true });
   run.then(
     last => setSync({ running: false, last, error: null }),
-    e => setSync({ running: false, error: e instanceof Error ? e.message : String(e) }),
+    e => setSync({ running: false, error: e instanceof Error ? e.message : String(e), errorAt: Date.now() }),
   ).finally(() => { if (syncRun === run) syncRun = null; });
   return run;
 }
@@ -452,7 +466,12 @@ function startAutoSync(): void {
   refreshNames();
   autoTimer = setInterval(() => { backgroundSync(); refreshNames(); }, AUTO_SYNC_MS);
   if (typeof document !== "undefined") {
-    onVisible = () => { if (document.visibilityState === "visible") { backgroundSync(); refreshNames(); } };
+    onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      snapshotPending = true;
+      backgroundSync();
+      refreshNames();
+    };
     document.addEventListener("visibilitychange", onVisible);
   }
 }

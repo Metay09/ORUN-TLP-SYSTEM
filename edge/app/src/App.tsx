@@ -23,6 +23,7 @@ import { SettingsScreen } from "./features/settings/SettingsScreen.tsx";
 import { ZonesScreen } from "./features/zones/ZonesScreen.tsx";
 import { DeviceScreen } from "./features/devices/DeviceScreen.tsx";
 import { ZoneScreen } from "./features/zones/ZoneScreen.tsx";
+import { BootSplash } from "./features/boot/BootSplash.tsx";
 
 function useTheme(theme: Theme, sun: boolean): void {
   useEffect(() => {
@@ -141,6 +142,7 @@ export function App() {
             </div>
           ))}
           {model.snap.error && <div className="toast">{tr.states.ledgerError(model.snap.error)}</div>}
+          <BootSplash ready={Boolean(model.snap.error) || (!model.starting && !model.settling)} />
         </div>
       </NavContext.Provider>
     </ModelContext.Provider>

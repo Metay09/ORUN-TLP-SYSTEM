@@ -147,7 +147,7 @@ export function DeviceScreen({ id, ble }: { id: string; ble?: string }) {
             <KV k="Bellek">{gatewayFacts(gw)}</KV>
           </> : <p className="sm" style={{ padding: "14px 16px", margin: 0 }}>Hesaba giriş yapınca gateway'in durumu görünür.</p>
         ) : <>
-          <KV k={tr.device.lastContact}>{dev?.lastTime ? `${fmt.clock(dev.lastTime)} · ${fmt.ago(dev.lastTime, m.now)}` : "—"}</KV>
+          <KV k={tr.device.lastContact}>{m.settling ? tr.status.updating : dev?.lastTime ? `${fmt.clock(dev.lastTime)} · ${fmt.ago(dev.lastTime, m.now)}` : "—"}</KV>
           <KV k={tr.animal.battery}>{dev?.batteryPower === "NO_BATTERY" ? "Pil takılı değil · USB"
             : dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}${dev.batteryPower === "CHARGING" ? " · şarj oluyor" : dev.batteryPower === "FULL" ? " · dolu" : ""}${dev.batteryUsb ? " · USB" : ""}${dev.batteryMv ? ` · ${fmt.dec(dev.batteryMv / 1000, 2)} V` : ""}` : "—"}</KV>
           <KV k={tr.device.signal}>{dev && dev.rssi !== null ? tr.device.signalLine(dev.rssi, dev.snr) : tr.device.signalNone}</KV>

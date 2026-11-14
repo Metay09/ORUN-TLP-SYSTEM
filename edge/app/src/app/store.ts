@@ -6,6 +6,7 @@ import type { Point, RecordId } from "../core/points.ts";
 import type { Snapshot } from "./controller.ts";
 import { deviceNames, deviceSettings, onAccountZones, onPilotAccountChange, onPilotObservationSync, pilotAccountSettled, pilotSetHerdZones, pilotAccountStatus, pilotObservationSyncState } from "./ownerAccountPilotRuntime.ts";
 import { nextAlerts, watchFresh } from "./alerts.ts";
+import { REFRESH_LIMIT_MS, STALE_AFTER_HIDDEN_MS, refreshDone, refreshing } from "./opening.ts";
 import { postAlerts } from "../platform/notify.ts";
 import { coverageCells, type Coverage } from "./coverage.ts";
 import { buildDevices } from "./devices.ts";
@@ -44,6 +45,8 @@ export interface Model {
   /** Records without a position (only for counting sequence gaps). */
   unlocated: RecordId[];
   loaded: boolean;
+  /** Waiting for the server's newest records (opening.ts): times on screen would be old. */
+  settling: boolean;
   /** Just opened: the phone ledger or the sign-in is not read yet. An empty herd is not "no animals". */
   starting: boolean;
   herd: Animal[];
@@ -85,6 +88,15 @@ export interface Actions {
 function useNow(ms: number): number {
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), ms); return () => clearInterval(t); }, [ms]);
+  // Timers are frozen in the background: on coming back the clock would be
+  // up to the whole time away behind, and "2 dk önce" shown for an hour-old
+  // record until the next tick. Catch up at once.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const on = () => { if (document.visibilityState === "visible") setNow(Date.now()); };
+    document.addEventListener("visibilitychange", on);
+    return () => document.removeEventListener("visibilitychange", on);
+  }, []);
   return now;
 }
 
@@ -95,7 +107,8 @@ function useNow(ms: number): number {
  * The previous [src, version] effect cancelled its pending timeout for every
  * 250-ms burst and could therefore suppress *all* map updates until DUMP END.
  */
-function usePoints(src: EdgeSource, version: number, accountKey: string): { points: Point[]; unlocated: RecordId[]; loaded: boolean; settled: boolean } {
+function usePoints(src: EdgeSource, version: number, accountKey: string,
+                   eager: { current: boolean }): { points: Point[]; unlocated: RecordId[]; loaded: boolean; settled: boolean } {
   const [state, setState] = useState<{ src: EdgeSource; accountKey: string; points: Point[]; unlocated: RecordId[]; loaded: boolean; version: number }>({
     src, accountKey, points: [], unlocated: [], loaded: false, version: -1,
   });
@@ -116,7 +129,9 @@ function usePoints(src: EdgeSource, version: number, accountKey: string): { poin
       if (!active || pending !== null || reading || !dirty) return;
       // Leading + trailing throttle. Bursts cannot indefinitely reset this
       // deadline; a second read follows when the ledger changed mid-read.
-      const wait = Math.max(0, 2000 - (Date.now() - lastStarted));
+      // While the screen waits for current data (opening.ts) there is no
+      // Gateway dump to protect against: read at once.
+      const wait = eager.current ? 0 : Math.max(0, 2000 - (Date.now() - lastStarted));
       pending = setTimeout(async () => {
         pending = null;
         if (!active || !dirty) return;
@@ -171,7 +186,8 @@ export function useModel(): Model {
   const accountKey = account
     ? [account.site, account.actor, account.installation, account.username, account.expiresAt].join(":")
     : "";
-  const { points, unlocated, loaded, settled } = usePoints(source, snap.pointsVersion, accountKey);
+  const eager = useRef(true);
+  const { points, unlocated, loaded, settled } = usePoints(source, snap.pointsVersion, accountKey, eager);
   const now = useNow(30_000);
   const accountSettled = useSyncExternalStore(onPilotAccountChange, pilotAccountSettled);
   const starting = !snap.error && (!snap.ready || !accountSettled || !loaded);
@@ -191,18 +207,38 @@ export function useModel(): Model {
     }
     return out;
   }, [settings]);
-  // Until the first sync of this run answers (or 15 s pass, or there is no
-  // account), a record newer than the ones on the phone may be on its way.
+  // opening.ts: from opening (or coming back after a minute in the
+  // background) until the server's newest records are on screen, times shown
+  // would be old ones. Step by step there; the screen says "yenileniyor".
   const syncState = useSyncExternalStore(onPilotObservationSync, pilotObservationSyncState);
-  const [openedAt] = useState(() => Date.now());
-  const [settleTimeout, setSettleTimeout] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setSettleTimeout(true), 15_000); return () => clearTimeout(t); }, []);
-  // Over when the sync has answered AND the screen holds what it wrote: the
-  // ledger is re-read at most every 2 s, so "sync done" alone left a gap in
-  // which the old records were shown as late (owner's phone, 2026-11-14).
-  const synced = (syncState.last?.at ?? 0) >= openedAt;
-  const settling = !settleTimeout && account !== null && syncState.error === null &&
-    !(synced && settled);
+  const [refreshFrom, setRefreshFrom] = useState(() => Date.now());
+  const [clock, setClock] = useState(() => Date.now());
+  const [doneFor, setDoneFor] = useState(0);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    let hiddenAt = 0;
+    const on = () => {
+      if (document.visibilityState === "hidden") hiddenAt = Date.now();
+      else if (hiddenAt && Date.now() - hiddenAt > STALE_AFTER_HIDDEN_MS) setRefreshFrom(Date.now());
+    };
+    document.addEventListener("visibilitychange", on);
+    return () => document.removeEventListener("visibilitychange", on);
+  }, []);
+  // Re-evaluate at the 10-second limit even if nothing else changes.
+  useEffect(() => {
+    setClock(Date.now());
+    const t = setTimeout(() => setClock(Date.now()), REFRESH_LIMIT_MS);
+    return () => clearTimeout(t);
+  }, [refreshFrom]);
+  const opening = {
+    accountSettled, signedIn: account !== null, from: refreshFrom, now: Math.max(clock, now),
+    latestAt: syncState.latestAt ?? null, lastAt: syncState.last?.at ?? null, errorAt: syncState.errorAt ?? null,
+    screenCurrent: settled, doneFor,
+  };
+  const done = refreshDone(opening);
+  useEffect(() => { if (done && doneFor !== refreshFrom) setDoneFor(refreshFrom); }, [done, doneFor, refreshFrom]);
+  const settling = refreshing(opening);
+  eager.current = settling;
   const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now, fence, grazing: grazingNow, names, unlocated, intervals, settling }),
     [points, book, assets, now, fence, grazingNow, names, unlocated, intervals, settling]);
   const coverage = useMemo(() => coverageCells(points), [points]);
@@ -263,7 +299,7 @@ export function useModel(): Model {
   }), [assets, places, snap.gateway, zoneStore, targets]);
 
   return {
-    now, prefs: p, snap, points, unlocated, loaded, starting, herd, devices, station, server,
+    now, prefs: p, snap, points, unlocated, loaded, settling, starting, herd, devices, station, server,
     events, coverage, zones, zoneSet, zoneMigrationWarning: zoneStore.migrationWarning,
     targetBook, targetWarning: targets.warning,
     fence, graze, grazing: grazingNow, seen, source, actions,

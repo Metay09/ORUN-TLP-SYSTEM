@@ -354,3 +354,19 @@ button.tl-row:active { background: var(--sunk); }
 .hl-item b { color: var(--ink); font-weight: var(--w-strong); }
 .hl-item .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--silent); flex: none; transform: translateY(-1px); }
 .hl-item .dot.fresh { background: var(--fresh); } .hl-item .dot.aging { background: var(--aging); } .hl-item .dot.alarm { background: var(--alarm); }
+
+/* Açılış ekranı (features/boot/BootSplash.tsx): Android açılış ekranıyla aynı
+   zemin ve işaret; halkalar hazır olana kadar tekrar eder. */
+.boot { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center;
+  background: var(--paper); transition: opacity .3s ease; }
+.boot.out { opacity: 0; pointer-events: none; }
+.boot-mark { width: 288px; height: 288px; }
+.boot-mark path { fill: var(--brand); }
+.boot-ping { fill: none; stroke: var(--brand); stroke-width: 3; opacity: 0;
+  transform-box: fill-box; transform-origin: center; animation: boot-ping 2s ease-out infinite; }
+.boot-ping.b { animation-delay: 1s; }
+@keyframes boot-ping { 0% { transform: scale(.35); opacity: .7; } 100% { transform: scale(3.2); opacity: 0; } }
+.boot-note { position: absolute; left: 0; right: 0; bottom: calc(18% + var(--safe-b)); margin: 0;
+  text-align: center; color: var(--mute); font-size: 14px; opacity: 0; transition: opacity .4s ease; }
+.boot-note.on { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .boot-ping { animation: none; opacity: .35; transform: scale(1.6); } }

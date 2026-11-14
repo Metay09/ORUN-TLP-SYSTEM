@@ -259,8 +259,9 @@ export function MapScreen({ visible }: { visible: boolean }) {
       <Sheet snap={snap} peek={a ? 140 : herd.length || m.starting ? 150 : 290} half={a ? 0.62 : 0.46} onSnap={setSnap} onHeight={setSheetPx}
         header={a ? null : (
           <div className="sum">
-            <div className="disp ellip">{m.starting && !herd.length ? tr.states.starting : herdSummary(herd)}</div>
-            {look.length > 0 && <div className="sm ellip">{attentionLine(herd, m.now)}</div>}
+            <div className="disp ellip">{m.starting && !herd.length ? tr.states.starting : m.settling ? tr.herd.count(herd.length) : herdSummary(herd)}</div>
+            {m.settling && herd.length > 0 && <div className="sm ellip">{tr.states.updating}</div>}
+            {!m.settling && look.length > 0 && <div className="sm ellip">{attentionLine(herd, m.now)}</div>}
           </div>
         )}>
         {a ? (
