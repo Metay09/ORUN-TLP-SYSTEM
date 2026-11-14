@@ -29,11 +29,9 @@ def rows(n: int) -> tuple[bytes, ...]:
         p = bytearray(opened.plaintext)
         p[12:16] = (101 + i).to_bytes(4, "big")
         p[16:20] = (1700000000 + 60 * i).to_bytes(4, "big")
-        template = bytearray(original)
-        template[4] = 0  # ACKless direct LIVE AAD
-        # reencrypt reads the original, preserves its plaintext, and needs
-        # an explicit plaintext for our different logical observation.
-        frames.append(reencrypt(bytes(template), 3000 + i, bytes(p), flags=0))
+        # Re-seal from a valid original AEAD frame with the direct LIVE flag
+        # authenticated as new AAD. The original itself remains untouched.
+        frames.append(reencrypt(original, 3000 + i, bytes(p), flags=0))
     return tuple(frames)
 
 
