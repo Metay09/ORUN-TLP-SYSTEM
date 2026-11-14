@@ -32,7 +32,6 @@ fi
   firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
   firmware/src/gateway_product_custody_runtime.cpp \
   firmware/src/gateway_product_live_ingress.cpp \
-  firmware/src/gateway_product_live_ingress.cpp \
   firmware/src/gateway_custody_authorized_ingress.cpp \
   firmware/src/gateway_local_custody_owner.cpp \
   firmware/src/gateway_custody_ack_signer.cpp \
