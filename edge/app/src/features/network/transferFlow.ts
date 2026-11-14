@@ -210,7 +210,7 @@ export function transferHealth(i: HealthInput): HealthStage[] {
     id: "server", title: "Sunucu", items: [],
     line: !S.signedIn ? "Hesaba giriş yapılmadı" : S.error ? `Ulaşılamıyor · ${S.error}`
       : S.lastSync !== null ? `Çalışıyor · son eşitleme ${fmt.ago(S.lastSync, now)} · ${
-          S.backgroundSync ? `arka planda en son ${fmt.ago(S.backgroundSync, now)}` : "arka planda henüz eşitlemedi"}`
+          S.backgroundSync ? `izleme servisi en son ${fmt.ago(S.backgroundSync, now)} sordu` : "izleme servisi henüz sormadı"}`
       : S.running ? "Eşitleniyor…" : "Eşitleme bekleniyor",
     tone: !S.signedIn ? "" : S.error ? "alarm" : S.lastSync !== null && now - S.lastSync < 5 * 60_000 ? "fresh" : "aging",
   };

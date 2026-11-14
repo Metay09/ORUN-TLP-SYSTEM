@@ -39,15 +39,29 @@
              service, ongoing notification). -->
         <service
             android:name="io.capawesome.capacitorjs.plugins.foregroundservice.AndroidForegroundService"
-            android:foregroundServiceType="connectedDevice|specialUse"
+            android:foregroundServiceType="connectedDevice"
+            android:exported="false" />
+        <!-- Sürü izleme: asks the owner's account server for herd alerts and
+             shows them, also with the app closed and after a reboot
+             (HerdWatchService.java). No Gateway involved. -->
+        <service
+            android:name=".HerdWatchService"
+            android:foregroundServiceType="specialUse"
             android:exported="false">
-            <!-- Without a Gateway: the signed-in phone keeps reading the
-                 owner's server to notify about the herd (left the zone,
-                 came back, not heard from, battery critical). -->
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Livestock tracker monitoring: notifies the owner when an animal leaves its zone or stops reporting" />
         </service>
+        <!-- exported: delivered by the system; both actions are protected
+             broadcasts that other apps cannot send. -->
+        <receiver
+            android:name=".HerdWatchBoot"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <receiver
             android:name="io.capawesome.capacitorjs.plugins.foregroundservice.NotificationActionBroadcastReceiver"
             android:exported="false" />
@@ -88,6 +102,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- The foreground-service plugin holds a wake lock while it runs
          (without it: "Neither user … nor current process has
          android.permission.WAKE_LOCK", seen on the owner's phone). -->

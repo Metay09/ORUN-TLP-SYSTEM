@@ -8,12 +8,14 @@ import { BleLink, UsbLink, type LinkState } from "../platform/transports.ts";
 import { fetchReadKeys, Uploader, type UploadCounts } from "../core/sync.ts";
 import { fetchGet, fetchPost } from "../platform/http.ts";
 import { KeepAlive } from "../platform/background.ts";
+import { startHerdWatch, stopHerdWatch } from "../platform/herdWatch.ts";
+import { ensureNotifyPermission } from "../platform/notify.ts";
 import { AccountSharedMirror } from "./accountSharedMirror.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import {
   attachPilotAccountSqliteMirror, attachPilotAccountObservationMirror,
   pilotAccountObservationPoints, pilotAccountUploadTransport, edgeKeys,
-  onPilotAccountChange, pilotAccountStatus, setPilotBackgroundWatch,
+  onPilotAccountChange, pilotAccountStatus,
 } from "./ownerAccountPilotRuntime.ts";
 
 export interface Snapshot {
@@ -127,21 +129,24 @@ export class Controller {
   // the screen off; the notification shows the transfer state.
   private background(): void {
     const s = this.snap;
-    if (s.link === "none") {
-      // Signed in: keep watching the herd through the server so the four
-      // notifications (app/alerts.ts) also arrive with the app in the background.
-      const watch = pilotAccountStatus() !== null;
-      setPilotBackgroundWatch(watch);
-      if (watch) this.keepAlive.on("Alandan çıkan ya da haber alınamayan olursa bildirir", "watch");
-      else this.keepAlive.off();
-      return;
-    }
-    setPilotBackgroundWatch(pilotAccountStatus() !== null);
+    this.herdWatch();
+    if (s.link === "none") { this.keepAlive.off(); return; }
     const how = s.link === "ble" ? "Bluetooth" : "USB";
     const body = s.state === "connected"
       ? `${how}: ${s.counts.STORED} yeni · teslim ${s.handedOff} · bekleyen ${s.pending}`
       : `${how}: yeniden bağlanmayı bekliyor`;
     this.keepAlive.on(body);
+  }
+
+  // Signed in: the native service (android HerdWatchService) asks the server
+  // for herd alerts, also with the app closed. Signed out: it stops.
+  private watching: boolean | null = null;
+  private herdWatch(): void {
+    const want = pilotAccountStatus() !== null;
+    if (want === this.watching) return;
+    this.watching = want;
+    if (want) void ensureNotifyPermission().catch(() => false).then(() => startHerdWatch());
+    else void stopHerdWatch();
   }
 
   async start(openDb: () => Promise<Db & { journal?: string; synchronous?: string }>): Promise<void> {

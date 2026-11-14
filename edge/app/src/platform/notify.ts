@@ -30,6 +30,14 @@ function idOf(key: string): number {
   return (h >>> 1) || 1;
 }
 
+/** Ask for the notification permission (the native herd watch needs it too). */
+export async function ensureNotifyPermission(): Promise<boolean> {
+  if (Capacitor.getPlatform() !== "android") return false;
+  const ok = await prepare();
+  if (!ok) ready = null;
+  return ok;
+}
+
 /** True when the alerts were handed to Android (or there is nothing to do here). */
 export async function postAlerts(alerts: Alert[]): Promise<boolean> {
   if (!alerts.length || Capacitor.getPlatform() !== "android") return true;

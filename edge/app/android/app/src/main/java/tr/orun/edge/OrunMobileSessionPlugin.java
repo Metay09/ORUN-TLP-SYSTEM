@@ -177,11 +177,11 @@ public final class OrunMobileSessionPlugin extends Plugin {
     }
 
     /** Decrypted bytes of an encrypted session file, or null if absent. */
-    private byte[] decrypt(AtomicFile file, byte[] domain) throws Exception {
+    private static byte[] decrypt(AtomicFile file, byte[] domain) throws Exception {
         return decrypt(file, domain, MAX_BLOB);
     }
 
-    private byte[] decrypt(AtomicFile file, byte[] domain, int maxBlob) throws Exception {
+    private static byte[] decrypt(AtomicFile file, byte[] domain, int maxBlob) throws Exception {
         if (!file.getBaseFile().exists()) return null;
         byte[] packed = file.readFully();
         if (packed.length < 1 + IV_BYTES + 16 || packed.length > maxBlob ||
@@ -323,6 +323,31 @@ public final class OrunMobileSessionPlugin extends Plugin {
         long now = System.currentTimeMillis() / 1000;
         if (expiry > now + ACCOUNT_MAX_SECONDS)
             throw new IllegalArgumentException("ACCOUNT_EXPIRY_INVALID");
+    }
+
+    /**
+     * For HerdWatchService (no WebView, app possibly closed): the stored
+     * account session, or null. Read-only: never deletes or rewrites the
+     * file, and leaves expiry to the server (a session renews while used).
+     */
+    static JSONObject accountForService(android.content.Context context) {
+        byte[] plain = null;
+        try {
+            plain = decrypt(new AtomicFile(new File(context.getNoBackupFilesDir(), ACCOUNT_FILE)),
+                    ACCOUNT_DOMAIN);
+            if (plain == null) return null;
+            JSONObject json = new JSONObject(new String(plain, StandardCharsets.UTF_8));
+            if (json.getInt("v") != 1) return null;
+            String origin = json.getString("origin"), token = json.getString("accessToken");
+            if (!TOKEN.matcher(token).matches() ||
+                    !origin.startsWith("https://"))
+                return null;
+            return json;
+        } catch (Exception | LinkageError ignored) {
+            return null;
+        } finally {
+            if (plain != null) Arrays.fill(plain, (byte) 0);
+        }
     }
 
     /** 1b: keep the account login across app restarts (AndroidKeyStore AES-GCM). */

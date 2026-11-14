@@ -4,7 +4,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Point, RecordId } from "../core/points.ts";
 import type { Snapshot } from "./controller.ts";
-import { deviceNames, deviceSettings, onPilotAccountChange, onPilotObservationSync, pilotAccountSettled, pilotAccountStatus, pilotObservationSyncState } from "./ownerAccountPilotRuntime.ts";
+import { deviceNames, deviceSettings, onPilotAccountChange, onPilotObservationSync, pilotAccountSettled, pilotSetHerdZones, pilotAccountStatus, pilotObservationSyncState } from "./ownerAccountPilotRuntime.ts";
 import { nextAlerts, watchFresh } from "./alerts.ts";
 import { postAlerts } from "../platform/notify.ts";
 import { coverageCells, type Coverage } from "./coverage.ts";
@@ -203,12 +203,18 @@ export function useModel(): Model {
   // Phone notifications (alerts.ts): decided only on current data, each once.
   const lastSync = useSyncExternalStore(onPilotObservationSync, () => pilotObservationSyncState().last);
   const linked = snap.link !== "none" && snap.state === "connected";
+  // The server decides the alerts for a signed-in phone and needs the zones.
+  useEffect(() => { pilotSetHerdZones(zoneBook); }, [zoneBook]);
   const posting = useRef(false);
   useEffect(() => {
     // `settled`: the sync that just finished wrote new records, but the screen
     // still holds the old ones for a moment. Deciding then told the owner
     // "Hayvan 2 sessiz" on opening the app (his phone, 2026-11-14 01:06).
-    if (posting.current || !loaded || !settled || !watchFresh(lastSync, linked, Date.now())) return;
+    // Signed in and the server reachable: the native herd watch notifies
+    // (the server decides; works with the app closed). This copy only covers
+    // a phone attached to a Gateway that cannot reach the server.
+    if (account && watchFresh(lastSync, false, Date.now())) return;
+    if (posting.current || !loaded || !settled || !linked) return;
     const before = alertMemory.get();
     const r = nextAlerts(events, before, Date.now());
     if (r.memory === before) return;
