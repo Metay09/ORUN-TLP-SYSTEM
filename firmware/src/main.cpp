@@ -4613,7 +4613,7 @@ void loop() {
           kq05_receipt_retry_after_ms = now_ms + 5000U;
         }
       }
-      Serial.printf("KQ05 batch receipt submit=%u\\n",
+      Serial.printf("KQ05 batch receipt submit=%u\n",
                     static_cast<unsigned>(submitted));
       memset(batch.payload, 0, sizeof(batch.payload));
     }
