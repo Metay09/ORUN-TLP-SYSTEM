@@ -240,7 +240,7 @@ test("pil: tek düşük okuma şarj ya da düşüş sayılmaz", () => {
 });
 
 import { fmt } from "../src/app/i18n/tr.ts";
-import { BatteryCapacityBook, DRAIN_DEFAULT, drainBasis, drainRuns, fitDrain, lifeAt, lifeWord, type Reading } from "../src/app/batteryLife.ts";
+import { BatteryCapacityBook, DRAIN_DEFAULT, drainBasis, drainRuns, fitDrain, lifeAt, lifeWord, sinceIntervalChange, type Reading } from "../src/app/batteryLife.ts";
 
 // A collar whose battery falls by `base` mA + `packet` mAh per report (450 mAh), from 4040 mV down.
 function discharge(from: number, hours: number, periodS: number, base: number, packet: number, startPct: number): { pts: Reading[]; endPct: number } {
@@ -315,6 +315,16 @@ test("pil ömrü: Hayvan 2 ölçümü (14 Kasım) — uymayan dönem dışarıda
   const ok = runs.map((r) => ({ ...r, mAh: r.hours * (0.5 + (0.13 * r.packets) / r.hours) }));
   const all = fitDrain(ok);
   assert.ok(Math.abs(all.baseMa - 0.5) < 0.01 && Math.abs(all.packetMah - 0.13) < 0.002);
+});
+
+test("pil gidişatı yalnız bugünkü rapor aralığından: 2 dk günleri 60 dk'ya karışmaz", () => {
+  const T0 = Date.parse("2026-11-12T00:00:00Z"), H = 3_600_000;
+  const two = Array.from({ length: 600 }, (_, i) => ({ t: T0 + i * 120_000, periodS: 117 + (i % 7) }));
+  const hourly = Array.from({ length: 30 }, (_, i) => ({ t: T0 + 20 * H + (i + 1) * H, periodS: i === 10 ? 7200 : 3563 + (i % 5) * 9 }));
+  const kept = sinceIntervalChange([...two, ...hourly]);
+  assert.equal(kept.length, 30, "yalnız 60 dk okumaları (aradaki tek uzun rapor dahil)");
+  assert.equal(sinceIntervalChange(two).length, 600, "aralık değişmediyse hepsi");
+  assert.deepEqual(sinceIntervalChange([{ periodS: null }, { periodS: null }]).length, 2);
 });
 
 test("pil kapasitesi hesapta: internetsiz verilen sonra gider, eski telefon kayıtları da gönderilir", async () => {
