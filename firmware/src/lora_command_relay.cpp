@@ -83,14 +83,15 @@ bool LoraCommandRelay::due(uint32_t now, Frame& out) {
     // The next held part not yet sent in this window.
     for (uint8_t p = 0; p < s.parts; ++p) {
       if ((sent_now_ & (1U << p)) != 0U || (s.have & (1U << p)) == 0U) continue;
-      if (sent_now_ == 0) ++s.attempt;  // one try per report
-      sent_now_ = static_cast<uint8_t>(sent_now_ | (1U << p));
-      last_part_at_ = now;
+      // Peek only. A pre-admission failure (e.g. RF duty cap) must not
+      // consume this report's try, block later parts, or reach give-up.
       memcpy(out.bytes, s.frames[p], s.sizes[p]);
       out.size = s.sizes[p];
       out.target = s.target;
       out.command_id = s.command_id;
-      out.attempt = s.attempt;
+      out.attempt = sent_now_ == 0U
+                        ? static_cast<uint8_t>(s.attempt + 1U)
+                        : s.attempt;
       out.part = p;
       out.parts = s.parts;
       return true;
@@ -98,6 +99,38 @@ bool LoraCommandRelay::due(uint32_t now, Frame& out) {
     break;
   }
   heard_open_ = false;  // nothing (more) for it in this window
+  return false;
+}
+
+bool LoraCommandRelay::markTxStarted(uint32_t now,
+                                      const Frame& transmitted) {
+  if (!heard_open_ || transmitted.target != heard_ ||
+      transmitted.part >= kMaxParts ||
+      transmitted.size > lora_command::kMaxFrameSize)
+    return false;
+  const uint8_t part_bit = static_cast<uint8_t>(1U << transmitted.part);
+  if ((sent_now_ & part_bit) != 0U) return false;
+  for (Slot& s : slots_) {
+    if (!s.used || s.target != transmitted.target ||
+        s.command_id != transmitted.command_id ||
+        s.parts != transmitted.parts ||
+        (s.have & part_bit) == 0U ||
+        s.sizes[transmitted.part] != transmitted.size ||
+        memcmp(s.frames[transmitted.part], transmitted.bytes,
+               transmitted.size) != 0) continue;
+
+    if (sent_now_ == 0U) {
+      if (s.attempt >= kMaxAttempts ||
+          transmitted.attempt != static_cast<uint8_t>(s.attempt + 1U))
+        return false;
+      ++s.attempt;
+    } else if (transmitted.attempt != s.attempt) {
+      return false;
+    }
+    sent_now_ = static_cast<uint8_t>(sent_now_ | part_bit);
+    last_part_at_ = now;
+    return true;
+  }
   return false;
 }
 

@@ -1533,13 +1533,19 @@ void serviceLoraRelay() {
   if (radio_manager.canSend()) {
     orun_tlp::LoraCommandRelay::Frame f{};
     if (lora_relay.due(now, f) && radio_manager.sendLoraFrame(f.bytes, f.size)) {
-      snprintf(say, sizeof(say), "LORA SENT target=%08lX%08lX id=%08lX attempt=%u/%u part=%u/%u",
-               static_cast<unsigned long>(uint32_t(f.target >> 32)),
-               static_cast<unsigned long>(uint32_t(f.target)),
-               static_cast<unsigned long>(f.command_id), static_cast<unsigned>(f.attempt),
-               static_cast<unsigned>(orun_tlp::LoraCommandRelay::kMaxAttempts),
-               static_cast<unsigned>(f.part + 1U), static_cast<unsigned>(f.parts));
-      loraSay(say);
+      // A duty denial does NOT spend a LoRa command attempt; due() only peeks.
+      // Count an attempt after the radio owner actually enters TX.
+      if (!lora_relay.markTxStarted(now, f)) {
+        Serial.println(F("LORA TX started but queue accounting mismatch"));
+      } else {
+        snprintf(say, sizeof(say), "LORA SENT target=%08lX%08lX id=%08lX attempt=%u/%u part=%u/%u",
+                 static_cast<unsigned long>(uint32_t(f.target >> 32)),
+                 static_cast<unsigned long>(uint32_t(f.target)),
+                 static_cast<unsigned long>(f.command_id), static_cast<unsigned>(f.attempt),
+                 static_cast<unsigned>(orun_tlp::LoraCommandRelay::kMaxAttempts),
+                 static_cast<unsigned>(f.part + 1U), static_cast<unsigned>(f.parts));
+        loraSay(say);
+      }
     }
   }
   orun_tlp::LoraFrameRx rx{};
@@ -2264,6 +2270,11 @@ void printRadioDiagnostic() {
                 static_cast<unsigned long>(diagnostics.rx_events_in_window),
                 static_cast<unsigned long>(diagnostics.stale_restores_while_asleep),
                 static_cast<unsigned long>(diagnostics.estimated_rx_ms));
+  Serial.printf("RADIO DUTY used_ms=%lu limit_ms=%lu denied=%lu "
+                "scope=per_device window=conservative_61min\n",
+                static_cast<unsigned long>(radio_manager.rfDutyUsedMs()),
+                static_cast<unsigned long>(orun_tlp::RfDutyBudget::kMaxAirtimeMs),
+                static_cast<unsigned long>(radio_manager.rfDutyDenied()));
 }
 
 void printBatteryDiagnostic() {

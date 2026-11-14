@@ -7,6 +7,7 @@
 #include "device_identity.h"
 #include "network_service.h"
 #include "radio_listen_policy.h"
+#include "rf_duty_budget.h"
 #include "sequence_source.h"
 #include "tlp_v2_history_secure.h"
 #include "tlp_v2_product_secure.h"
@@ -158,6 +159,8 @@ class RadioManager {
   uint32_t txAttempts() const { return tx_attempts_; }
   uint32_t txTimeouts() const { return tx_timeouts_; }
   uint32_t localTxFailures() const { return local_tx_failures_; }
+  uint32_t rfDutyUsedMs();  // Refresh elapsed time without consuming airtime.
+  uint32_t rfDutyDenied() const { return rf_duty_denials_; }
   RadioEventDiagnostics eventDiagnostics() const;
   RadioListenDiagnostics listenDiagnostics() const;
   const RelayDiagnostics& relayDiagnostics() const {
@@ -198,6 +201,9 @@ class RadioManager {
   void markRxStopped(uint32_t now);
   void foldRxAccounting(uint32_t now);
   void startTxOperation(); // Driver gate held; clears old hardware IRQ work.
+  uint32_t rfAirtimeMs(size_t size) const;
+  bool rfMayTransmit(size_t size, RfDutyBudget::Frame family);
+  bool reserveRfTransmit(size_t size, RfDutyBudget::Frame family);
   void applyPendingRole(); // Driver gate held; previous TX terminal.
   void sendTestPacket();
   void scheduleNextTransmission(uint32_t now);
@@ -248,6 +254,9 @@ class RadioManager {
   uint32_t pending_rx_timeouts_ = 0;
   uint32_t pending_rx_errors_ = 0;
   NetworkService network_{};
+  // Role change or Radio.Sleep() cannot reset this per-device budget.
+  RfDutyBudget rf_duty_budget_{};
+  uint32_t rf_duty_denials_ = 0U;
   HistorySecureRxFrame history_secure_rx_{};
   bool history_secure_rx_pending_ = false;
   ProductSecureRxFrame product_secure_rx_{};

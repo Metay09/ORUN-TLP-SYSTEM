@@ -75,6 +75,7 @@ void testWaitsForItsTrackerAndTheAck() {
   assert(!relay.due(10100, f));  // its custody ACK goes first
   relay.ackSent(11000);
   assert(relay.due(11000, f));
+  assert(relay.markTxStarted(11000, f));
   assert(f.target == kA && f.command_id == 7 && f.attempt == 1 && f.size == a.size() &&
          memcmp(f.bytes, a.data(), a.size()) == 0);
   assert(!relay.due(11100, f));  // one try per report
@@ -82,6 +83,7 @@ void testWaitsForItsTrackerAndTheAck() {
   relay.heard(kA, 20000);
   assert(!relay.due(20000 + LoraCommandRelay::kAckGraceMs - 1, f));
   assert(relay.due(20000 + LoraCommandRelay::kAckGraceMs, f) && f.attempt == 2);
+  assert(relay.markTxStarted(20000 + LoraCommandRelay::kAckGraceMs, f));
   relay.heard(kA, 30000);
   assert(!relay.due(30000 + LoraCommandRelay::kLatestAfterHeardMs, f));
   // The answer removes it; an answer for another id does not.
@@ -100,6 +102,7 @@ void testReplaceFullMalformed() {
   relay.ackSent(0);
   LoraCommandRelay::Frame f{};
   assert(relay.due(0, f) && f.command_id == 2 && f.size == a2.size());
+  assert(relay.markTxStarted(0, f));
   for (uint64_t t = 1; t < LoraCommandRelay::kSlots; ++t) {
     const auto c = command(t, 1);
     assert(relay.queue(c.data(), c.size()) == LoraCommandRelay::Queued::kAdded);
@@ -129,6 +132,7 @@ void testGivesUpAfterMaxAttempts() {
     relay.ackSent(t);
     assert(!relay.takeDropped(target, id));
     assert(relay.due(t, f) && f.attempt == i);
+    assert(relay.markTxStarted(t, f));
   }
   // Heard again with no answer to the last try: dropped, and said so once.
   t += 60000;
@@ -136,6 +140,56 @@ void testGivesUpAfterMaxAttempts() {
   assert(relay.takeDropped(target, id) && target == kA && id == 5);
   assert(!relay.takeDropped(target, id));
   assert(!relay.due(t, f) && relay.count() == 0);
+}
+
+void testDutyRejectedSendsNeverSpendAttempts() {
+  LoraCommandRelay relay;
+  const auto bytes = command(kA, 33);
+  assert(relay.queue(bytes.data(), bytes.size()) ==
+         LoraCommandRelay::Queued::kAdded);
+  LoraCommandRelay::Frame f{};
+  uint64_t dropped_target = 0;
+  uint32_t dropped_id = 0;
+
+  // Repeated RF budget denials across more than kMaxAttempts reports.
+  // No packet reaches Radio.Send, so the queue must retain attempt 1.
+  for (uint32_t i = 1; i <= uint32_t(LoraCommandRelay::kMaxAttempts) + 3U; ++i) {
+    const uint32_t now = i * 60000U;
+    relay.heard(kA, now);
+    relay.ackSent(now);
+    assert(relay.due(now, f));
+    assert(f.attempt == 1U && f.command_id == 33U);
+    assert(relay.due(now, f) && f.attempt == 1U);
+    assert(!relay.takeDropped(dropped_target, dropped_id));
+  }
+  assert(relay.count() == 1U);
+  // The most recent report's window is at 540000 ms.
+  assert(relay.markTxStarted(540000U, f));
+  assert(!relay.due(540000U, f)); // one *successful* attempt this report
+  relay.heard(kA, 600000U);
+  relay.ackSent(600000U);
+  assert(relay.due(600000U, f) && f.attempt == 2U);
+  assert(relay.markTxStarted(600000U, f));
+}
+
+void testMultiPartDutyRefusalDoesNotSkipPart() {
+  LoraCommandRelay relay;
+  const auto frames = areaParts(kA, 55, 8, 64);
+  for (const auto& bytes : frames)
+    assert(relay.queue(bytes.data(), bytes.size()) !=
+           LoraCommandRelay::Queued::kMalformed);
+  relay.heard(kA, 1000U);
+  relay.ackSent(1500U);
+  LoraCommandRelay::Frame f{};
+  assert(relay.due(1500U, f) && f.part == 0U && f.attempt == 1U);
+  assert(relay.markTxStarted(1500U, f));
+  assert(relay.due(1600U, f) && f.part == 1U && f.attempt == 1U);
+  // RF quota rejects this part. Do not call markTxStarted.
+  assert(relay.due(1650U, f) && f.part == 1U && f.attempt == 1U);
+  assert(relay.markTxStarted(1650U, f));
+  assert(relay.due(1700U, f) && f.part == 2U && f.attempt == 1U);
+  assert(relay.markTxStarted(1700U, f));
+  assert(!relay.due(1800U, f));
 }
 
 void testAreaPartsGoBackToBack() {
@@ -153,6 +207,7 @@ void testAreaPartsGoBackToBack() {
   LoraCommandRelay::Frame f{};
   for (uint8_t p = 0; p < 3; ++p) {
     assert(relay.due(1500 + p * 4000, f));
+    assert(relay.markTxStarted(1500 + p * 4000, f));
     assert(f.part == p && f.parts == 3 && f.attempt == 1 && f.size == parts[p].size() &&
            memcmp(f.bytes, parts[p].data(), f.size) == 0);
   }
@@ -161,6 +216,7 @@ void testAreaPartsGoBackToBack() {
   relay.heard(kA, 60000);
   relay.ackSent(60000);
   assert(relay.due(60000, f) && f.part == 0 && f.attempt == 2);
+  assert(relay.markTxStarted(60000, f));
   // A newer command for the same Tracker replaces every part.
   auto clear = areaParts(kA, 10, 0, 0);
   assert(clear.size() == 1 && clear[0].size() == lc::kMinFrameSize);
@@ -168,6 +224,7 @@ void testAreaPartsGoBackToBack() {
   relay.heard(kA, 120000);
   relay.ackSent(120000);
   assert(relay.due(120000, f) && f.command_id == 10 && f.parts == 1 && f.attempt == 1);
+  assert(relay.markTxStarted(120000, f));
   assert(!relay.due(120100, f));
   // A part whose sizes do not add up is refused.
   auto bad = areaParts(kB, 11, 1, 6);
@@ -182,7 +239,9 @@ int main() {
   testReplaceFullMalformed();
   testGivesUpAfterMaxAttempts();
   testAreaPartsGoBackToBack();
+  testDutyRejectedSendsNeverSpendAttempts();
+  testMultiPartDutyRefusalDoesNotSkipPart();
   puts("6b Gateway LoRa command relay (wait for Tracker and ACK, one try per report, "
-       "replace, full, malformed, give up, area parts back to back): PASS");
+       "replace, full, malformed, give up, duty-denial retry, area parts): PASS");
   return 0;
 }
