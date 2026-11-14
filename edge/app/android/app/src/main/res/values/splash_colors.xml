@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Açılış ekranı renkleri = uygulamanın açık teması (ds.css --paper, --brand). -->
+<resources>
+    <color name="splash_background">#F4F6F2</color>
+    <color name="splash_mark">#164A35</color>
+</resources>

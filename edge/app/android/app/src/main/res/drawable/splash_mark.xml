@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ORUN açılış işareti: durum çubuğundaki konum iğnesi (ic_stat_orun), 288dp
+     kutunun ortasında. Uygulamanın açılış ekranı (BootSplash.tsx) aynı yer ve
+     boyutta devam eder; geçiş fark edilmez. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="288dp" android:height="288dp"
+    android:viewportWidth="288" android:viewportHeight="288">
+    <group android:translateX="72" android:translateY="72" android:scaleX="6" android:scaleY="6">
+        <path android:fillColor="@color/splash_mark"
+            android:pathData="M12,2C8.13,2 5,5.13 5,9c0,5.25 7,13 7,13s7,-7.75 7,-13c0,-3.87 -3.13,-7 -7,-7zM12,11.5c-1.38,0 -2.5,-1.12 -2.5,-2.5s1.12,-2.5 2.5,-2.5 2.5,1.12 2.5,2.5 -1.12,2.5 -2.5,2.5z"/>
+    </group>
+</vector>
