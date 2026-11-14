@@ -68,6 +68,23 @@ void selective(bool async) {
     assert(release.submit(tampered, sizeof(tampered)) ==
            Batch::Submit::kAuthenticationRejected);
   }
+  // Pending local Flash append must defer, not count as a forged MAC.
+  // Once that unrelated write commits the exact same receipt remains valid.
+  assert(records.submitPeriodic(period()) ==
+         ProductRecordStore::Submit::kAccepted);
+  assert(release.submit(wire, sizeof(wire)) ==
+         Batch::Submit::kStorageUnavailable);
+  bool append_done = false;
+  for (unsigned n = 0U; n < 20000U; ++n) {
+    records.poll();
+    ProductRecordStore::Outcome appended{};
+    if (records.takeOutcome(appended)) {
+      assert(appended.stored);
+      append_done = true;
+      break;
+    }
+  }
+  assert(append_done);
   assert(release.submit(wire, sizeof(wire)) == Batch::Submit::kStarted);
   assert(release.submit(wire, sizeof(wire)) == Batch::Submit::kBusy);
   Batch::Service outcome = Batch::Service::kWaitingFlash;
