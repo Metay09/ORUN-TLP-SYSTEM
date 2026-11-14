@@ -63,6 +63,7 @@ class TrackerAcklessLiveTx final {
   ProductSecureCrypto& crypto_;
   RadioManager& radio_;
   osf::RecordIdentity last_sent_{};
+  uint32_t last_live_sent_at_ms_ = 0U;
   osf::RecordIdentity last_history_sent_{};
   uint64_t history_incarnation_ = 0U;
   uint32_t history_cursor_ = 0U;
