@@ -98,3 +98,17 @@ cd firmware && pio run -e rak4630
 ```
 
 Eski test kayıtları daha sonra kullanıcı onayıyla kontrollü silinebilir; bu kod hiçbir gerçek cihaz belleğini, veritabanını veya anahtarı silmedi.
+
+
+## 14 Kasım — KQ05 ACKLESS + HISTORY / retry uygulama kontrolü (LAB ONLY)
+
+- ACKless LIVE deneysel ve varsayılan kapalıdır. HISTORY `TrackerAcklessLiveTx::updateHistory()` üzerinden son LIVE denemesinden sonra çalışır. 8 kimliklik azami tarama dilimi ve 60 saniyelik geçmiş TX aralığı vardır; 5 dakikalık tam tarama beklemesi tekrar selini önler. **Bunlar yasaya uygun ortak RF token bütçesi değildir.** #305 tüm yayınları kapsayan gerçek RF kotasını sağlamadan sahada açılmaz.
+- KQ05 Tracker RX mailbox artık kalıcı durum kontrolü başarısızken 5 saniye aralıkla, en çok 12 defa denemeye açık kalır; süresi dolunca yeni makbuz talebi gerekir. Kimlik/HMAC retleri hemen düşürülür. Bu **Backend'in 5 dakikalık yeniden makbuz üretimini veya RF downlink'i kurmaz**.
+- PC denetimi: `bash tools/ci/run_kq05_lab_preflight.sh`. Ayrı `rak4630_kq05_lab` derleme hedefi vardır, cihaz flash'ı yapılmaz. KQ05 yeni kodu için PC çıktısı olmadığı sürece PASS yazılmaz.
+
+### Fiziksel kapasite sınırı — ürün engeli
+
+- `storage_config::kProductRegionPages=32`; `osf::kControlPageCount=2`; `osf::kDataRecordsPerPage=42`. Teorik azami PERIODIC veri sayısı `(32-2)*42 = 1260` kayıttır (yaklaşık **21 saat**, 1 dakika/rapor). Kontrol/rotasyon, EVENT ve yıpranma yükleri pratik kullanılabilir süreyi azaltabilir. **24–48 saat çevrimdışı tam veri korunumu bu Flash yerleşimiyle mümkün değildir.**
+- Gateway OCQ2 üst sınırı 32 sayfa x 33 kayıt = 1056 çerçeve. Dört tasma, 1 dk periyotta, Gateway'den Edge'e handoff/reclaim olmadığında azami **4,4 saatlik** doluluk penceresidir.
+- Çözüm için gerçek hafıza envanteri, veri saklama hedefi ve güvenli migration kararı gerekir. Gözetimsiz otomatik silme/overwrite veya varsayımsal 48 saat kapasite beyanı yapılmayacak.
+- HISTORY EVENT veri tipini henüz desteklemez. Backend→Edge queue→Gateway RF→Tracker receipt otomatik dönüşü ve fiziksel failover/replay/RF bütçesi hâlâ **P0 BLOCKER** durumundadır. Bu tamamlanmadan #316 merge/flash yoktur.
