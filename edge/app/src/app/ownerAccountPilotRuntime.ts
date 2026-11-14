@@ -49,10 +49,20 @@ export function pilotAccountEmail(): string | null { return accountEmail; }
 let accountSettled = false;
 export function pilotAccountSettled(): boolean { return accountSettled; }
 
-async function persist(account: OwnerAccountClient): Promise<void> {
+async function persist(account: OwnerAccountClient, requireProtectedSave = false): Promise<void> {
   const stored = account.storableSession();
-  if (stored) await storeAccount(ORUN_ACCOUNT_ORIGIN, stored.identity, stored.accessToken)
-    .catch(() => { /* login still works for this run */ });
+  if (!stored) {
+    if (requireProtectedSave) throw new Error("Yeni hesap oturumu bulunamadı.");
+    return;
+  }
+  if (requireProtectedSave) {
+    // A new account must not become live while the native vault still belongs
+    // to the previous account. Otherwise write keys could be sealed to it.
+    await storeAccount(ORUN_ACCOUNT_ORIGIN, stored.identity, stored.accessToken);
+  } else {
+    await storeAccount(ORUN_ACCOUNT_ORIGIN, stored.identity, stored.accessToken)
+      .catch(() => { /* refresh retry later; the existing protected account remains */ });
+  }
 }
 
 /** 1b: on app start, bring back the login kept on this phone. Works offline;
@@ -465,9 +475,16 @@ export async function pilotPasswordLogin(
     }
     const next = new OwnerAccountClient(ORUN_ACCOUNT_ORIGIN);
     const user = await next.signInWithPassword(username, password);
+    // Do not activate a new account unless the corresponding native vault
+    // identity has been durably replaced. Fail closed on Keystore errors.
+    try {
+      await persist(next, true);
+    } catch {
+      await forgetAccount();
+      await next.signOut().catch(() => undefined);
+      throw new Error("Hesap güvenli saklanamadı; giriş tamamlanmadı.");
+    }
     client = next;
-    // Native write-key vault requires the new protected account first.
-    await persist(next);
     observationsChanged?.();
     startAutoSync();
     accountEmail = (await next.refresh()).email;
@@ -497,9 +514,16 @@ export async function pilotAccountLogin(
     }
     const next = new OwnerAccountClient(device.origin);
     const user = await next.signIn(device, username, password);
+    // Do not activate a new account unless the corresponding native vault
+    // identity has been durably replaced. Fail closed on Keystore errors.
+    try {
+      await persist(next, true);
+    } catch {
+      await forgetAccount();
+      await next.signOut().catch(() => undefined);
+      throw new Error("Hesap güvenli saklanamadı; giriş tamamlanmadı.");
+    }
     client = next;
-    // Native write-key vault requires the new protected account first.
-    await persist(next);
     observationsChanged?.();
     startAutoSync();
     return user;
