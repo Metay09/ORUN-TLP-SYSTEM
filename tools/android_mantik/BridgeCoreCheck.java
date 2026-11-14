@@ -65,15 +65,45 @@ public final class BridgeCoreCheck {
         }
     }
 
+    interface Store { BridgeSpool spool(); long records() throws Exception; long conflicts() throws Exception; void close(); }
+
     public static void main(String[] args) throws Exception {
+        int a = run(args[0], () -> {
+            MemorySpool m = new MemorySpool();
+            return new Store() {
+                public BridgeSpool spool() { return m; }
+                public long records() { return m.rows.size(); }
+                public long conflicts() { return m.conflicts.size(); }
+                public void close() { }
+            };
+        }, "BRIDGE-CORE");
+        // The same scenarios on the phone's real store: SQLite, Android-style binding.
+        java.nio.file.Path dir = Files.createTempDirectory("bridge-store");
+        final int[] n = {0};
+        int b = run(args[0], () -> {
+            PySql sql = new PySql(dir.resolve("s" + (n[0]++) + ".db").toString());
+            BridgeStore st = new BridgeStore(sql);
+            return new Store() {
+                public BridgeSpool spool() { return st; }
+                public long records() throws Exception { return st.counts().records; }
+                public long conflicts() throws Exception { return st.counts().conflictsKept; }
+                public void close() { sql.close(); }
+            };
+        }, "BRIDGE-STORE");
+        if (a + b != 0) System.exit(1);
+    }
+
+    interface Factory { Store make() throws Exception; }
+
+    static int run(String path, Factory factory, String label) throws Exception {
         long epoch = 0;
         byte[] traffic = null, edge = null;
         BridgeCore core = null;
-        MemorySpool spool = null;
+        Store spool = null;
         final long[] now = {0};
         int steps = 0, failed = 0, scenario = -1;
         boolean skipping = false;
-        for (String line : Files.readAllLines(Paths.get(args[0]))) {
+        for (String line : Files.readAllLines(Paths.get(path))) {
             if (line.startsWith("#") || line.isEmpty()) continue;
             String[] f = line.split("\\|", -1);
             if (f[0].equals("key")) {
@@ -85,9 +115,10 @@ public final class BridgeCoreCheck {
                 skipping = false;
                 final boolean withKey = f[2].equals("1");
                 final long ep = epoch; final byte[] tk = traffic, ek = edge;
-                spool = new MemorySpool();
+                if (spool != null) spool.close();
+                spool = factory.make();
                 now[0] = 1_800_000_000L;
-                core = new BridgeCore(spool, (dev, e) -> e == ep ? tk : null, gw -> withKey ? ek : null, () -> now[0]);
+                core = new BridgeCore(spool.spool(), (dev, e) -> e == ep ? tk : null, gw -> withKey ? ek : null, () -> now[0]);
                 continue;
             }
             // step|op|accept|counts|handed|rejected|held|pending|gw|records|conflicts
@@ -96,14 +127,14 @@ public final class BridgeCoreCheck {
             if (op.startsWith("msg:")) core.handleMessage(BridgeWireCheck.hex(op.substring(4)));
             else if (op.startsWith("tick:")) now[0] += Long.parseLong(op.substring(5));
             else core.sessionEnd();
-            byte[] accept = core.nextAcceptMessage(now[0]);
+            byte[] accept = core.nextAcceptMessage(now[0] * 1000);
             Integer held = core.heldNow();
             String got = String.join("|", accept == null ? "-" : BridgeWireCheck.hex(accept),
                     core.counts[0] + "," + core.counts[1] + "," + core.counts[2] + "," + core.counts[3] + "," + core.counts[4],
                     String.valueOf(core.handedOff), String.valueOf(core.acceptRejected),
                     held == null ? "null" : String.valueOf(held), String.valueOf(core.pendingAccepts()),
                     core.gatewayId == null ? "null" : BridgeCore.gatewayHex(core.gatewayId),
-                    String.valueOf(spool.rows.size()), String.valueOf(spool.conflicts.size()));
+                    String.valueOf(spool.records()), String.valueOf(spool.conflicts()));
             String want = String.join("|", Arrays.copyOfRange(f, 2, f.length));
             steps++;
             if (!want.equals(got)) {
@@ -114,7 +145,8 @@ public final class BridgeCoreCheck {
                 skipping = true;
             }
         }
-        System.out.println("BRIDGE-CORE " + (steps - failed) + "/" + steps + (failed == 0 ? " PASS" : " FAIL"));
-        if (failed != 0) System.exit(1);
+        if (spool != null) spool.close();
+        System.out.println(label + " " + (steps - failed) + "/" + steps + (failed == 0 ? " PASS" : " FAIL"));
+        return failed;
     }
 }

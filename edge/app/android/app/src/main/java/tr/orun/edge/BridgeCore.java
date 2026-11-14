@@ -19,7 +19,7 @@ import java.util.Set;
  * produce the same ACCEPT bytes and the same counters at every step.
  */
 final class BridgeCore {
-    static final long ACCEPT_TIMEOUT_S = 3;
+    static final long ACCEPT_TIMEOUT_MS = 3000;
 
     interface EdgeKeys { byte[] edgeKey(String gatewayHex); }
     interface Clock { long seconds(); }
@@ -42,6 +42,8 @@ final class BridgeCore {
     private int helloHeld = -1, helloCapacity;
     private final Set<String> heldKeys = new HashSet<>(), dumpSeen = new HashSet<>();
     private boolean passDone;
+    /** The last DUMP END matched the records announced (false: a message was lost). */
+    boolean lastDumpComplete = true;
     private int incompleteFloor, okSinceHello;
     private final Deque<Pending> queue = new ArrayDeque<>();
     private final Set<String> queued = new HashSet<>();
@@ -107,6 +109,13 @@ final class BridgeCore {
         }
     }
 
+    /** The phone asked the Gateway for every held record again (DUMP). */
+    synchronized void beginDump() {
+        dumpSeen.clear();
+        passDone = false;
+        incompleteFloor = 0;
+    }
+
     static String word(int code) {
         switch (code) {
             case 0: case 1: return "OK";
@@ -118,20 +127,20 @@ final class BridgeCore {
     }
 
     // ---- accept queue --------------------------------------------------------
-    /** The next ACCEPT to write, if any (one in flight at a time). */
-    synchronized byte[] nextAcceptMessage(long now) {
+    /** The next ACCEPT to write, if any (one in flight at a time). nowMs: any monotonic clock. */
+    synchronized byte[] nextAcceptMessage(long nowMs) {
         if (gatewayId == null || edgeKeys.edgeKey(gatewayHex(gatewayId)) == null) {
             queue.clear(); queued.clear(); inFlight = null;
             return null;
         }
         if (inFlight != null) {
-            if (now - inFlight.sent < ACCEPT_TIMEOUT_S) return null;
+            if (nowMs - inFlight.sent < ACCEPT_TIMEOUT_MS) return null;
             queue.addFirst(inFlight);                    // no reply: send again
             inFlight = null;
         }
         Pending p = queue.pollFirst();
         if (p == null) return null;
-        p.sent = now;
+        p.sent = nowMs;
         inFlight = p;
         return p.message;
     }
@@ -166,6 +175,7 @@ final class BridgeCore {
     private boolean finishDump(int count) {
         boolean complete = count >= 0 && dumpSeen.size() == count;
         passDone = complete;
+        lastDumpComplete = complete;
         incompleteFloor = complete ? 0 : Math.max(0, count - okSinceHello);
         dumpSeen.clear();
         return complete;

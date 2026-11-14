@@ -350,6 +350,119 @@ public final class OrunMobileSessionPlugin extends Plugin {
         }
     }
 
+    // ---- for the native bridge (GatewayBridgeService): no WebView ----------
+    private static final String READ_FILE = "orun-read-keys.v1.bin";
+    private static final byte[] READ_DOMAIN =
+            "ORUN:READ:KEYS:AESGCM:v1".getBytes(StandardCharsets.US_ASCII);
+    private static final int MAX_READ_KEYS = 512;
+    private static final int READ_MAX_PLAIN = 65536, READ_MAX_BLOB = READ_MAX_PLAIN + 64;
+
+    private static AtomicFile vault(android.content.Context ctx, String name) {
+        return new AtomicFile(new File(ctx.getNoBackupFilesDir(), name));
+    }
+
+    private static boolean sameAccount(JSONObject account, JSONObject data) throws Exception {
+        for (String k : new String[]{"origin", "site", "actor", "installation"})
+            if (!account.getString(k).equals(data.getString(k))) return false;
+        return true;
+    }
+
+    /** Gateway hex -> 32-byte Edge accept key, of the account on this phone. Empty if none. */
+    static java.util.Map<String, byte[]> edgeKeysForService(android.content.Context ctx) {
+        java.util.Map<String, byte[]> out = new java.util.HashMap<>();
+        byte[] plain = null;
+        try {
+            JSONObject account = accountForService(ctx);
+            plain = decrypt(vault(ctx, EDGE_FILE), EDGE_DOMAIN);
+            if (account == null || plain == null) return out;
+            JSONObject data = new JSONObject(new String(plain, StandardCharsets.UTF_8));
+            if (!sameAccount(account, data)) return out;
+            org.json.JSONArray keys = data.getJSONArray("keys");
+            validateEdgeKeys(keys);
+            for (int i = 0; i < keys.length(); i++) {
+                JSONObject k = keys.getJSONObject(i);
+                out.put(k.getString("gateway"), unhex(k.getString("key")));
+            }
+        } catch (Exception | LinkageError ignored) {
+            out.clear();
+        } finally {
+            if (plain != null) Arrays.fill(plain, (byte) 0);
+        }
+        return out;
+    }
+
+    /** The collars' read (traffic) keys, kept for the native bridge. "DEVICEHEX:epoch" -> 16 bytes. */
+    static java.util.Map<String, byte[]> readKeysForService(android.content.Context ctx) {
+        java.util.Map<String, byte[]> out = new java.util.HashMap<>();
+        byte[] plain = null;
+        try {
+            JSONObject account = accountForService(ctx);
+            plain = decrypt(vault(ctx, READ_FILE), READ_DOMAIN, READ_MAX_BLOB);
+            if (account == null || plain == null) return out;
+            JSONObject data = new JSONObject(new String(plain, StandardCharsets.UTF_8));
+            if (!sameAccount(account, data)) return out;
+            org.json.JSONArray keys = data.getJSONArray("keys");
+            for (int i = 0; i < keys.length() && i < MAX_READ_KEYS; i++) {
+                JSONObject k = keys.getJSONObject(i);
+                String device = k.getString("device").toUpperCase(java.util.Locale.ROOT), key = k.getString("key");
+                if (device.matches("[0-9A-F]{16}") && key.matches("[0-9A-Fa-f]{32}"))
+                    out.put(device + ":" + k.getLong("epoch"), unhex(key));
+            }
+        } catch (Exception | LinkageError ignored) {
+            out.clear();
+        } finally {
+            if (plain != null) Arrays.fill(plain, (byte) 0);
+        }
+        return out;
+    }
+
+    /** Kept bound to the signed-in account, like the Edge keys. */
+    static void storeReadKeysForService(android.content.Context ctx, org.json.JSONArray keys) throws Exception {
+        JSONObject account = accountForService(ctx);
+        if (account == null || keys == null || keys.length() > MAX_READ_KEYS) throw new IllegalStateException("READ_KEYS");
+        JSONObject data = new JSONObject();
+        for (String k : new String[]{"origin", "site", "actor", "installation"}) data.put(k, account.getString(k));
+        data.put("keys", keys);
+        byte[] plain = data.toString().getBytes(StandardCharsets.UTF_8);
+        if (plain.length > READ_MAX_PLAIN) { Arrays.fill(plain, (byte) 0); throw new IllegalArgumentException("READ_KEYS_TOO_BIG"); }
+        writeLarge(vault(ctx, READ_FILE), READ_DOMAIN, plain);
+    }
+
+    static void clearReadKeysForService(android.content.Context ctx) {
+        try { vault(ctx, READ_FILE).delete(); } catch (Exception | LinkageError ignored) { }
+    }
+
+    private static void writeLarge(AtomicFile file, byte[] domain, byte[] plain) throws Exception {
+        try {
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.ENCRYPT_MODE, key(true));
+            cipher.updateAAD(domain);
+            byte[] iv = cipher.getIV();
+            if (iv == null || iv.length != IV_BYTES) throw new IllegalStateException("INVALID_GCM_IV");
+            byte[] encrypted = cipher.doFinal(plain);
+            byte[] packed = new byte[1 + iv.length + encrypted.length];
+            packed[0] = 1;
+            System.arraycopy(iv, 0, packed, 1, iv.length);
+            System.arraycopy(encrypted, 0, packed, 1 + iv.length, encrypted.length);
+            FileOutputStream out = file.startWrite();
+            try {
+                out.write(packed);
+                file.finishWrite(out);
+            } catch (Exception ex) {
+                file.failWrite(out);
+                throw ex;
+            }
+        } finally {
+            Arrays.fill(plain, (byte) 0);
+        }
+    }
+
+    private static byte[] unhex(String s) {
+        byte[] b = new byte[s.length() / 2];
+        for (int i = 0; i < b.length; i++) b[i] = (byte) Integer.parseInt(s.substring(2 * i, 2 * i + 2), 16);
+        return b;
+    }
+
     /** 1b: keep the account login across app restarts (AndroidKeyStore AES-GCM). */
     @PluginMethod
     public void putAccount(PluginCall call) {

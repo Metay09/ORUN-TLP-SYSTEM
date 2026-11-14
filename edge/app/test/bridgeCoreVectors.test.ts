@@ -125,3 +125,19 @@ test("yerel köprü çekirdek senaryoları güncel (BridgeCore.java aynı adıml
   for (const want of [/\|[0-9A-F]{90}\|/, /\|[1-9]\d*,\d+,\d+,\d+,0\|/, /,[1-9]\d*,0\|/, /\|\d+,\d+,[1-9]\d*,/])
     assert.match(text, want);
 });
+
+// Kayıt havuzu: BridgeLinkCheck.java benzetilmiş gateway'e bunları yükler
+// (tek tasma, 300 ardışık kayıt; telefonun gerçek anahtarıyla açılır).
+const POOL = new URL("../../../tools/android_mantik/bridge_pool.txt", import.meta.url);
+
+test("yerel köprü kayıt havuzu güncel (BridgeLinkCheck.java)", () => {
+  const key = hkdfSha256(TEST_ROOT, TEST_CREDENTIAL_ID,
+    concat(ascii("ORUN-TLP-V2-AEAD"), new Uint8Array([1]), new Uint8Array([1, 2, 3, 4])), 16);
+  const frames = track(300);
+  for (const f of frames) assert.ok(openProductFrame(f, () => ({ trafficKey: key })));
+  const text = ["# ORUN yerel köprü kayıt havuzu; test/bridgeCoreVectors.test.ts üretir. Elle değiştirme.",
+    `key|${TEST_KEY_EPOCH}|${hex(key)}|${hex(TEST_EDGE_KEY)}|${GW}`,
+    ...frames.map((f) => `frame|${hex(f)}`)].join("\n") + "\n";
+  if (process.env.ORUN_WRITE_VECTORS === "1") writeFileSync(POOL, text);
+  assert.equal(readFileSync(POOL, "utf8"), text, "bridge_pool.txt eski: ORUN_WRITE_VECTORS=1 npm test");
+});
