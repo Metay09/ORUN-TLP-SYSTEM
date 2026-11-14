@@ -34,8 +34,12 @@ Kq05BackendReceiptReleaseOwner::Submit
 Kq05BackendReceiptReleaseOwner::submit(const uint8_t* frame, size_t length) {
   if (active_) return Submit::kBusy;
   AuthenticatedKq05BackendReceipt proof{};
-  if (verifier_.verify(frame, length, records_, proof) !=
-          Kq05BackendReceiptVerifier::Result::kAuthenticated ||
+  const auto verdict = verifier_.verify(frame, length, records_, proof);
+  // A temporary SecurityStore/flash unavailable state is not a MAC failure.
+  // The radio mailbox retains these bytes for bounded retry.
+  if (verdict == Kq05BackendReceiptVerifier::Result::kUnavailable)
+    return Submit::kStorageUnavailable;
+  if (verdict != Kq05BackendReceiptVerifier::Result::kAuthenticated ||
       !proof.authenticated_) return Submit::kAuthenticationRejected;
 
   // All-or-nothing preflight. An authentic MAC for a missing/foreign record
