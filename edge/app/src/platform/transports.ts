@@ -31,6 +31,21 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** The Gateway to bridge: the one chosen from the scan list, the remembered
+ * one, or (pick / none remembered) the Android device picker. Also asks for
+ * the Bluetooth permissions and to switch Bluetooth on. */
+export async function pickGatewayAddress(pick = false, deviceId?: string): Promise<string> {
+  await BleClient.initialize({ androidNeverForLocation: true });
+  if (!(await BleClient.isEnabled())) await BleClient.requestEnable();
+  let remembered: string | null = null;
+  try { remembered = localStorage.getItem(LAST_BLE); } catch { /* none */ }
+  let id = deviceId ?? null;
+  if (!id && (pick || !remembered)) id = (await BleClient.requestDevice({ services: [EDGE_SERVICE_UUID] })).deviceId;
+  id ??= remembered!;
+  try { localStorage.setItem(LAST_BLE, id); } catch { /* fine */ }
+  return id;
+}
+
 // ---- BLE -------------------------------------------------------------------
 export class BleLink {
   private deviceId: string | null = null;

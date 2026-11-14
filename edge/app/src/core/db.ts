@@ -49,6 +49,12 @@ export const SCHEMA: string[] = [
      utc INTEGER NOT NULL,
      PRIMARY KEY (device_id,incarnation,sequence))`,
   `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+  // v1 step 7: records the phone's native Gateway bridge (Android service)
+  // received and uploads itself; this ledger holds a copy for the map and
+  // must not upload them a second time (core/bridgeImport.ts).
+  `CREATE TABLE IF NOT EXISTS bridged (
+     device_id TEXT NOT NULL, incarnation TEXT NOT NULL, sequence INTEGER NOT NULL,
+     PRIMARY KEY (device_id,incarnation,sequence))`,
   // Step 3A / D1: read (D2A traffic) keys of the owner's Trackers, from the
   // backend. Never a root key.
   `CREATE TABLE IF NOT EXISTS read_keys (
