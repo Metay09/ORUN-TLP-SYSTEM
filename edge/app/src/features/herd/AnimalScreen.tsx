@@ -6,6 +6,7 @@ import { Bluetooth, CaretRight, CellSignalFull, MapTrifold, NavigationArrow, Not
 import { activityBaseline, activityCoverage24h, batteryOutlook, busiestHour, dayStart, daySummaries, hourlyActivity, smoothBattery } from "../../app/activity.ts";
 import { trackerSession } from "../../app/trackerSession.ts";
 import { BatteryLife, useConfiguredInterval } from "../devices/BatteryLife.tsx";
+import { sinceIntervalChange } from "../../app/batteryLife.ts";
 import { epochMs, externallyPowered, readingPercent } from "../../app/herd.ts";
 import { bleName } from "../../app/deviceNames.ts";
 import { cap, fmt, tr } from "../../app/i18n/tr.ts";
@@ -80,7 +81,9 @@ function Today({ a, now }: { a: Animal; now: number }) {
   const toPct = (list: typeof bat) => smoothBattery(list.map((b) => ({ t: b.t, p: readingPercent(b) }))
     .filter((x): x is { t: number; p: number } => x.p !== null));
   const pct = useMemo(() => toPct(bat), [bat]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const outlook = useMemo(() => batteryOutlook(toPct(bat.filter((b) => !externallyPowered(b))), now), [bat, now]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Only the readings at today's report interval: a trend across a change (2 min → 60 min) is neither.
+  const outlook = useMemo(() => batteryOutlook(toPct(sinceIntervalChange([...bat].sort((x, y) => x.t - y.t))
+    .filter((b) => !externallyPowered(b))), now), [bat, now]); // eslint-disable-line react-hooks/exhaustive-deps
   const collarSaysPower = bat.some((b) => b.power !== null && b.power !== undefined);
   const hasActivity = a.reports.some((x) => x.active_s !== null);
   const interval = useConfiguredInterval(a);
@@ -146,7 +149,7 @@ function Today({ a, now }: { a: Animal; now: number }) {
         )}
       </Card>
 
-      <Section title={tr.animal.battery} info="Yüzde, pil geriliminden hesaplanır (4,19 V %100, 4,05 V %90, 3,40 V %0). USB'de şarjı biten pil 'Dolu' ve %100 görünür. 'Şarj oluyor', 'Dolu' ve 'Pil takılı değil' tasmanın kendi ölçümünden gelir. Gidişat, son 24 saatin ortalaması iki gün öncekiyle karşılaştırılarak bulunur (gece-gündüz farkı ortalanır); USB'deki süreler katılmaz. Kalan gün yalnız belirgin düşüşte gösterilir ve tahmindir." />
+      <Section title={tr.animal.battery} info="Yüzde, pil geriliminden hesaplanır (4,19 V %100, 4,05 V %90, 3,40 V %0). USB'de şarjı biten pil 'Dolu' ve %100 görünür. 'Şarj oluyor', 'Dolu' ve 'Pil takılı değil' tasmanın kendi ölçümünden gelir. Gidişat, son 24 saatin ortalaması iki gün öncekiyle karşılaştırılarak bulunur (gece-gündüz farkı ortalanır); USB'deki süreler ve rapor aralığı değişmeden önceki okumalar katılmaz (aralık değişince gidişat birkaç gün görünmez). Kalan gün yalnız belirgin düşüşte gösterilir ve tahmindir." />
       <Card pad>
         {a.batteryPower === "NO_BATTERY" ? <span className="sm">Pil takılı değil · USB'den besleniyor.</span>
           : a.battery === "unknown" ? <span className="sm">{tr.animal.batteryUnknown}</span> : (

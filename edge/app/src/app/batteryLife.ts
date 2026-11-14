@@ -86,6 +86,22 @@ export function drainRuns(series: Reading[], mAh: number): Run[] {
   return runs;
 }
 
+/** The readings since the report interval last changed (same rule as drainRuns: ±25 %,
+ *  one odd period does not count, three in a row do). A trend across an interval change
+ *  mixes two drains: Hayvan 2 on 60 min read "günde −%12" from its 2-minute days. */
+export function sinceIntervalChange<T extends Pick<Reading, "periodS">>(series: T[]): T[] {
+  const withPeriod = series.filter((r) => r.periodS && r.periodS > 0);
+  if (!withPeriod.length) return series;
+  const ref = median(withPeriod.slice(-5).map((r) => r.periodS!));
+  let start = 0, odd = 0;
+  for (let i = series.length - 1; i >= 0; i--) {
+    const p = series[i].periodS;
+    if (!p || p <= 0 || sameInterval(p, ref)) { odd = 0; continue; }
+    if (++odd >= NEW_INTERVAL_POINTS) { start = i + NEW_INTERVAL_POINTS; break; }
+  }
+  return series.slice(start);
+}
+
 /** Standby current and per-report cost from the runs (least squares, weighted by length).
  *  With three or more runs one that disagrees with the others (more than 30 % off the fit) is
  *  left out: of the fits without it, the one resting on the most used mAh is kept. Hayvan 2,
