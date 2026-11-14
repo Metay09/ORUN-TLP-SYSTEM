@@ -37,6 +37,11 @@ export function grazing(g: Graze, now: number): boolean {
 /** `changed`: when the set of zones last changed in any way (also a removal), epoch ms. */
 export interface ZoneBook { zones: Zone[]; graze: Graze; changed?: number; }
 
+/** When a zone book was last edited: the newest of its change stamp and its zones (ms). */
+export function zoneBookStamp(b: { zones: { updated?: number }[]; changed?: number }): number {
+  return Math.max(b.changed ?? 0, ...b.zones.map((z) => z.updated ?? 0), 0);
+}
+
 // ------------------------------------------------------------------ E7 ---
 export type E7 = [number, number];   // [latitude_e7, longitude_e7]
 

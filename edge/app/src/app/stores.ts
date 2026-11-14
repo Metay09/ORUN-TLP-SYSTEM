@@ -311,4 +311,10 @@ export class ZoneStore extends Persisted<ZoneBook> {
   // Preserved as storage schema data only. No UI/alarms until secure collar
   // command and ACK protocol for FREE_GRAZE is implemented.
   setGraze(g: Graze): void { this.commit({ ...this.get(), graze: g }); }
+  /** The account's book replaces this phone's (it was edited later on
+   * another phone, or this phone was reinstalled). Refused if invalid. */
+  adopt(book: ZoneBook): void {
+    const zones = this.checked(book.zones.map((z) => ({ ...z, name: z.name.trim().slice(0, 40) || "Alan" })));
+    this.commit({ zones, graze: { ...NO_GRAZE, ...book.graze }, changed: book.changed ?? 0 });
+  }
 }

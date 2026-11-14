@@ -4,7 +4,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Point, RecordId } from "../core/points.ts";
 import type { Snapshot } from "./controller.ts";
-import { deviceNames, deviceSettings, onPilotAccountChange, onPilotObservationSync, pilotAccountSettled, pilotSetHerdZones, pilotAccountStatus, pilotObservationSyncState } from "./ownerAccountPilotRuntime.ts";
+import { deviceNames, deviceSettings, onAccountZones, onPilotAccountChange, onPilotObservationSync, pilotAccountSettled, pilotSetHerdZones, pilotAccountStatus, pilotObservationSyncState } from "./ownerAccountPilotRuntime.ts";
 import { nextAlerts, watchFresh } from "./alerts.ts";
 import { postAlerts } from "../platform/notify.ts";
 import { coverageCells, type Coverage } from "./coverage.ts";
@@ -211,7 +211,9 @@ export function useModel(): Model {
   // Phone notifications (alerts.ts): decided only on current data, each once.
   const lastSync = useSyncExternalStore(onPilotObservationSync, () => pilotObservationSyncState().last);
   const linked = snap.link !== "none" && snap.state === "connected";
-  // The server decides the alerts for a signed-in phone and needs the zones.
+  // The server decides the alerts for a signed-in phone and needs the zones;
+  // a newer book in the account (another phone, a reinstall) comes back here.
+  useEffect(() => { onAccountZones((b) => { try { zoneStore.adopt(b); } catch { /* invalid: keep ours */ } }); }, [zoneStore]);
   useEffect(() => { pilotSetHerdZones(zoneBook); }, [zoneBook]);
   const posting = useRef(false);
   useEffect(() => {
