@@ -12,8 +12,11 @@ trap 'rm -rf "$OUT"' EXIT
 SRC="$REPO/edge/app/android/app/src/main/java/tr/orun/edge"
 javac -nowarn -d "$OUT" \
   "$SRC/HerdWatchLogic.java" "$SRC/EdgeWire.java" "$SRC/ProductFrame.java" \
+  "$SRC/BridgeSpool.java" "$SRC/BridgeCore.java" "$REPO/tools/android_mantik/BridgeCoreCheck.java" \
   "$REPO/tools/android_mantik/HerdWatchLogicCheck.java" \
   "$REPO/tools/android_mantik/BridgeWireCheck.java"
 java -cp "$OUT" tr.orun.edge.HerdWatchLogicCheck
 # Yerel köprü: Java kopyası, TypeScript aslının ürettiği vektörlerle aynı mı.
 java -cp "$OUT" tr.orun.edge.BridgeWireCheck "$REPO/tools/android_mantik/bridge_vectors.txt"
+# Yerel köprü çekirdeği: uygulamanın gerçek EdgeCore'uyla oynatılmış senaryolarda adım adım aynı mı.
+java -cp "$OUT" tr.orun.edge.BridgeCoreCheck "$REPO/tools/android_mantik/bridge_core_vectors.txt"
