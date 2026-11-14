@@ -480,10 +480,13 @@ void acklessHistoryIsPacedAndNeverReleases() {
          orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent);
   assert(sender.lastHistorySent().sequence == 3U);
   assert(g_sends == sent_before + 3U);
-  // The sweep does not loop immediately and flood the RF channel.
-  assert(sender.updateHistory(121004U, true) ==
+  // After the pacing interval expires, a completed sweep pauses for
+  // five minutes; it cannot spin immediately and flood retransmissions.
+  assert(sender.updateHistory(181004U, true) ==
          orun_tlp::TrackerAcklessLiveTx::Event::kNone);
-  assert(sender.updateHistory(421004U, true) ==
+  assert(sender.updateHistory(181005U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kNone);
+  assert(sender.updateHistory(481005U, true) ==
          orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent);
   assert(sender.lastHistorySent().sequence == 1U);
   assert(sender.historySentCount() == 4U);
