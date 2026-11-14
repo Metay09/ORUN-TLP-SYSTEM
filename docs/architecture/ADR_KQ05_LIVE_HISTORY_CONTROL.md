@@ -68,3 +68,10 @@ Mevcut 2/5/60 dakika eski firmware pil denemeleri sürerken **cihazlara flash, �
 - `GatewayProductLiveIngress` ilgili cihaz/epoch/Gateway için aktif scoped grant ile açıkça yetki arar, sonra opaque paketi no-eviction OCQ2 Flash'a yazar ve bağımsız readback kontrol eder. Paket bütünlüğünün AEAD çözümü ancak root credential sahibi Backend'de ispatlanabilir; grant yalnızca kaynak-admission filtresidir. Bu noktada **tekil ACK de toplu receipt de gönderilmez** ve teslim teminatı verilmez.
 - Host fake NOR testine `no ACK`, flash readback, tekrar, reboot, geçersiz grant/çerçeve regresyonları eklendi. **Gerçek PC çalıştırma raporu henüz yok**.
 - Deneysel Gateway radio mailbox yönlendirmesi, Edge durably intake ve kriptografik receipt/Tracker Flash release yapılmadan gerçek cihaz/aktif servis kullanımına **açmayın**.
+
+## KQ-05B3 — yalnız deneysel Gateway RF yolu
+
+- ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE etkinse noncustody PRODUCT_SECURE RX, scoped GatewayProductLiveIngress üzerinden OCQ2 Flash'a yönlendirilir. Varsayılan firmware yoluna etkisi yoktur.
+- Eski custody ACK duty/driver nedeniyle beklerken, custody Flash yazısı artık tamamlanmışsa yeni LIVE kaydının kabulü engellenmez. Ayrı iki Flash yazısı aynı anda başlatılmaz.
+- sf5l0_bench_gateway yeni LIVE durably stored olayında Edge export taramasını uyandırır, ancak Edge/backend güvenli ürün-alım uyumu, seçmeli makbuz ve tasma Flash release hâlâ tamamlanmamıştır.
+- Host mock-radio testine ACK bütçe engeli altında canlı kayıt kabulü ve yalnız eski ACK'nin radyoya çıkışı eklenmiştir. Sonuçlar PC'de çalıştırılmadan PASS denmeyecek.

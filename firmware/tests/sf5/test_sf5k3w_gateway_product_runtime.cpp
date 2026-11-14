@@ -136,6 +136,40 @@ void deniesAndRevokes() {
   assert(runtime.update(true) == Runtime::Event::kNone);
   assert(!ingress.pending() && g_ack_sends == 0);
 }
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+void blockedCustodyAckDoesNotBlockLive() {
+  resetTransport();
+  Nor nor;
+  nor.async = true;
+  ProductCustodyStore store(nor, 2U);
+  assert(store.begin());
+  GatewayLocalCustodyOwner owner(store);
+  Grants grants;
+  GatewayCustodyAuthorizedIngress custody(owner, grants, kGateway);
+  orun_tlp::GatewayProductLiveIngress live(store, grants, kGateway);
+  orun_tlp::RadioManager radio;
+  Runtime runtime(radio, custody, live);
+
+  queueProduct(100U, true);
+  assert(runtime.update(true) == Runtime::Event::kCustodyStarted);
+  g_tx_available = false;
+  progressUntilReady(runtime, owner, true);
+  assert(g_ack_sends == 0U && custody.pending());
+
+  queueProduct(100U, false);
+  assert(runtime.update(true) == Runtime::Event::kLiveStarted);
+  assert(custody.pending() && g_ack_sends == 0U);
+  bool durable = false;
+  for (unsigned i = 0; i < 120U && !durable; ++i)
+    durable = runtime.update(true) == Runtime::Event::kLiveDurable;
+  assert(durable && g_ack_sends == 0U && custody.pending());
+
+  g_tx_available = true;
+  assert(runtime.update(true) == Runtime::Event::kAckTxStarted);
+  assert(g_ack_sends == 1U);
+}
+#endif
+
 void acklessLiveIsDurableButNotAcknowledged() {
   resetTransport();
   Nor nor;
@@ -196,6 +230,9 @@ void acklessLiveIsDurableButNotAcknowledged() {
 
 int main() {
   acklessLiveIsDurableButNotAcknowledged();
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  blockedCustodyAckDoesNotBlockLive();
+#endif
   acceptsAndRetries(false);
   acceptsAndRetries(true);
   deniesAndRevokes();
