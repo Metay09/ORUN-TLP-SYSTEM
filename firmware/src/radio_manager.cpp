@@ -438,6 +438,20 @@ bool RadioManager::takeCustodyAckFrame(CustodyAckRxFrame* frame) {
 }
 
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+bool RadioManager::peekKq05BatchReceiptFrame(
+    Kq05BatchReceiptRxFrame* frame) const {
+  if (frame == nullptr || !kq05_batch_rx_pending_ ||
+      role_transition_pending_ ||
+      network_.role() != NodeRole::kTracker) return false;
+  *frame = kq05_batch_rx_;
+  return true;
+}
+
+void RadioManager::discardKq05BatchReceiptFrame() {
+  kq05_batch_rx_ = {};
+  kq05_batch_rx_pending_ = false;
+}
+
 bool RadioManager::takeKq05BatchReceiptFrame(
     Kq05BatchReceiptRxFrame* frame) {
   if (frame == nullptr || !kq05_batch_rx_pending_ ||
