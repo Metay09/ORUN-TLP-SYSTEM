@@ -191,8 +191,16 @@ export function useModel(): Model {
     }
     return out;
   }, [settings]);
-  const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now, fence, grazing: grazingNow, names, unlocated, intervals }),
-    [points, book, assets, now, fence, grazingNow, names, unlocated, intervals]);
+  // Until the first sync of this run answers (or 15 s pass, or there is no
+  // account), a record newer than the ones on the phone may be on its way.
+  const syncState = useSyncExternalStore(onPilotObservationSync, pilotObservationSyncState);
+  const [openedAt] = useState(() => Date.now());
+  const [settleTimeout, setSettleTimeout] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setSettleTimeout(true), 15_000); return () => clearTimeout(t); }, []);
+  const settling = !settleTimeout && account !== null &&
+    !((syncState.last?.at ?? 0) >= openedAt) && syncState.error === null;
+  const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now, fence, grazing: grazingNow, names, unlocated, intervals, settling }),
+    [points, book, assets, now, fence, grazingNow, names, unlocated, intervals, settling]);
   const coverage = useMemo(() => coverageCells(points), [points]);
   // The snapshot changes on every log line; recompute only on what matters.
   const station = useMemo(() => stationOf(snap, placeMap),
