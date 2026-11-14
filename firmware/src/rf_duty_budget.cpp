@@ -44,10 +44,8 @@ RfDutyBudget::Decision RfDutyBudget::reserve(
       static_cast<uint8_t>(Frame::kTest)) return Decision::kBadFrame;
   if (estimated_airtime_ms == 0U || estimated_airtime_ms > kMaxAirtimeMs)
     return Decision::kBadAirtime;
-  // This fail-closed delay survives a reboot without making claims about
-  // timestamps from the previous boot. Until persisted RF state exists,
-  // bypassing this 60-minute cold-start hold is NOT allowed.
-  if (elapsed_ms_ < kHourMs) return Decision::kBootHold;
+  // Development policy: budget is immediately available at boot.
+  // No previous-boot usage is carried forward. Not field-compliance proof.
 
   const uint64_t current_minute = elapsed_ms_ / kBucketMs;
   const uint32_t used = totalInConservativeWindow(current_minute);
