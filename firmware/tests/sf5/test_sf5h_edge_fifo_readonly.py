@@ -92,7 +92,7 @@ def test_shape_forgery_and_sequence_guard() -> None:
         # this does not protect against a malicious fully rewritten DB.
         with sqlite3.connect(path) as connection:
             bogus = bytearray(payload)
-            bogus[4] = 0
+            bogus[4] = 4
             wrong = bytes(bogus)
             connection.execute(
                 "UPDATE exact_frames SET ciphertext=?,digest=? "
