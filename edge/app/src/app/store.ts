@@ -197,8 +197,12 @@ export function useModel(): Model {
   const [openedAt] = useState(() => Date.now());
   const [settleTimeout, setSettleTimeout] = useState(false);
   useEffect(() => { const t = setTimeout(() => setSettleTimeout(true), 15_000); return () => clearTimeout(t); }, []);
-  const settling = !settleTimeout && account !== null &&
-    !((syncState.last?.at ?? 0) >= openedAt) && syncState.error === null;
+  // Over when the sync has answered AND the screen holds what it wrote: the
+  // ledger is re-read at most every 2 s, so "sync done" alone left a gap in
+  // which the old records were shown as late (owner's phone, 2026-11-14).
+  const synced = (syncState.last?.at ?? 0) >= openedAt;
+  const settling = !settleTimeout && account !== null && syncState.error === null &&
+    !(synced && settled);
   const herd = useMemo(() => buildHerd({ points, profiles: book.assets, assetOf: assets.resolver(), now, fence, grazing: grazingNow, names, unlocated, intervals, settling }),
     [points, book, assets, now, fence, grazingNow, names, unlocated, intervals, settling]);
   const coverage = useMemo(() => coverageCells(points), [points]);
