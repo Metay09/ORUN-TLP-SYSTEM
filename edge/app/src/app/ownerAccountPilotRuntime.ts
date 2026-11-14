@@ -77,9 +77,11 @@ export function pilotRestoreAccount(): Promise<void> {
     if (check.state === "expired") {
       client = null;
       stopAutoSync();
-      await writeKeys.clear();
+      // Expiry must revoke both in-memory authorities even if native IO fails.
+      const clearingWriteKeys = writeKeys.clear().catch(() => undefined);
       edgeKeys.clear();
       await forgetAccount();
+      await clearingWriteKeys;
       observationsChanged?.();
     } else if (check.state === "ok") {
       accountEmail = check.email;
@@ -533,10 +535,11 @@ export async function pilotAccountLogout(): Promise<void> {
   accountEmail = null;
   stopAutoSync();
   setSync({ running: false, last: null, error: null });
-  // Clear native write authority before deleting the protected account session.
-  try { await writeKeys.clear(); }
-  finally { await forgetAccount(); }
+  // Revoke both RAM authorities immediately, including if native IO fails.
+  const clearingWriteKeys = writeKeys.clear().catch(() => undefined);
   edgeKeys.clear();
+  await forgetAccount();  // also deletes the native tracker-key file
+  await clearingWriteKeys;
   observationsChanged?.();
   accountChanged();
   if (prior) await prior.signOut();
