@@ -4692,7 +4692,7 @@ void loop() {
   // Gateway/receipt security path is NOT implemented yet. Keep opt-in OFF.
   switch (kq05_live_tx.update(orun_tlp::monotonic::nowMs(), pilot_allowed)) {
     case orun_tlp::TrackerAcklessLiveTx::Event::kSent:
-      Serial.printf("KQ05 LIVE TX started seq=%lu delivery=unconfirmed\\n",
+      Serial.printf("KQ05 LIVE TX started seq=%lu delivery=unconfirmed\n",
                     static_cast<unsigned long>(
                         kq05_live_tx.lastSent().sequence));
       break;
