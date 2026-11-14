@@ -1,62 +1,77 @@
-// 4c-1b: hesabın tasmaları için Bluetooth yazma anahtarları. Sunucudan gelir
-// (her tasma ve anahtar dönemi için; tasmanın kök anahtarı değil), telefonda
-// saklanır ki sahada internetsiz de yazılabilsin; hesaptan çıkınca silinir.
-// Sunucu listesi esastır: tasma yeniden eklenince eski dönemin anahtarı gider.
+// ORUN KQ-02B: tracker signing authority stays in RAM and a native encrypted
+// AndroidKeyStore vault. Never persist write keys in WebView localStorage.
 import { fromHex } from "../core/bytes.ts";
 
 export interface WriteKey { device: string; epoch: number; writeKey: string; }
 export interface WriteKeyServer { writeKeys(): Promise<WriteKey[]>; }
+export interface WriteKeyVault {
+  load(): Promise<WriteKey[]>;
+  save(keys: WriteKey[]): Promise<void>;
+  clear(): Promise<void>;
+}
 
-type Store = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-const KEY = "orun.writeKeys.v1";
 const ID16 = /^[0-9A-F]{16}$/;
 const HEX32 = /^[0-9A-F]{64}$/;
-
+const MAX_KEYS = 1024;
 const id = (device: string, epoch: number) => `${device.toUpperCase()}:${epoch}`;
 
 export function validWriteKeys(list: unknown): WriteKey[] {
-  if (!Array.isArray(list)) return [];
-  return list.flatMap((k) => {
-    const r = k as Record<string, unknown>;
-    const device = String(r?.device ?? "").toUpperCase();
-    const epoch = Number(r?.epoch);
-    const writeKey = String(r?.write_key ?? r?.writeKey ?? "").toUpperCase();
-    return ID16.test(device) && Number.isInteger(epoch) && epoch > 0 && epoch < 0xffffffff && HEX32.test(writeKey)
-      ? [{ device, epoch, writeKey }] : [];
+  if (!Array.isArray(list) || list.length > MAX_KEYS) return [];
+  const seen = new Set<string>();
+  return list.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const r = entry as Record<string, unknown>;
+    const device = String(r.device ?? "").toUpperCase();
+    const epoch = Number(r.epoch);
+    const writeKey = String(r.write_key ?? r.writeKey ?? "").toUpperCase();
+    const ident = id(device, epoch);
+    if (!ID16.test(device) || !Number.isInteger(epoch) || epoch <= 0 || epoch >= 0xffffffff ||
+        !HEX32.test(writeKey) || /^0{64}$/.test(writeKey) || /^F{64}$/.test(writeKey) ||
+        seen.has(ident)) return [];
+    seen.add(ident);
+    return [{ device, epoch, writeKey }];
   });
 }
 
 export class WriteKeyBook {
   private keys: Record<string, string> = {};
-  private store: Store | null;
-  // Invalidates asynchronous key downloads started under a previous account.
+  private readonly vault: WriteKeyVault;
   private revision = 0;
+  private request = 0;
+  private pending: Promise<void> = Promise.resolve();
 
-  constructor(store: Store | null) {
-    this.store = store;
-    try {
-      const raw = store?.getItem(KEY);
-      for (const k of validWriteKeys(raw ? JSON.parse(raw) : null)) this.keys[id(k.device, k.epoch)] = k.writeKey;
-    } catch { /* start empty */ }
+  constructor(vault: WriteKeyVault) { this.vault = vault; }
+
+  /** Serializes native reads/writes/clears across account switches. */
+  private serialize<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.pending.then(task, task);
+    this.pending = run.then(() => undefined, () => undefined);
+    return run;
   }
 
-  private save(): void {
-    const list = Object.entries(this.keys).map(([k, writeKey]) => {
-      const [device, epoch] = k.split(":");
-      return { device, epoch: Number(epoch), write_key: writeKey };
+  private replace(keys: WriteKey[]): void {
+    const next: Record<string, string> = {};
+    for (const k of keys) next[id(k.device, k.epoch)] = k.writeKey;
+    this.keys = next;
+  }
+
+  /** On account restore, recover only account-scoped encrypted native keys. */
+  async load(): Promise<void> {
+    const revision = this.revision;
+    await this.serialize(async () => {
+      if (revision !== this.revision) return;
+      const stored = validWriteKeys(await this.vault.load());
+      if (revision === this.revision) this.replace(stored);
     });
-    try { this.store?.setItem(KEY, JSON.stringify(list)); } catch { /* memory only */ }
   }
 
   get size(): number { return Object.keys(this.keys).length; }
 
-  /** The key for exactly this tasma and epoch (what its challenge names). */
   readonly get = (device: string, epoch: number): Uint8Array | null => {
     const k = this.keys[id(device, epoch)];
     return k ? fromHex(k) : null;
   };
 
-  /** 6c: the newest key this phone holds for a tasma (LoRa commands name the epoch). */
   active(device: string): { epoch: number; key: Uint8Array } | null {
     const d = device.toUpperCase() + ":";
     let best: { epoch: number; key: Uint8Array } | null = null;
@@ -73,27 +88,34 @@ export class WriteKeyBook {
     return Object.keys(this.keys).some((k) => k.startsWith(d));
   }
 
-  /** Takes the server's list as it is; returns how many keys changed. */
   async refresh(server: WriteKeyServer): Promise<number> {
     const revision = this.revision;
-    const received = await server.writeKeys();
-    // A different account or sign-out may have cleared the cache meanwhile.
-    if (revision !== this.revision) return 0;
-    const next: Record<string, string> = {};
-    for (const k of validWriteKeys(received.map((x) => ({ device: x.device, epoch: x.epoch, write_key: x.writeKey }))))
-      next[id(k.device, k.epoch)] = k.writeKey;
-    const all = new Set([...Object.keys(next), ...Object.keys(this.keys)]);
-    let changed = 0;
-    for (const k of all) if (next[k] !== this.keys[k]) changed++;
-    this.keys = next;
-    this.save();
-    return changed;
+    const request = ++this.request;
+    const next = validWriteKeys((await server.writeKeys()).map((k) => ({
+      device: k.device, epoch: k.epoch, writeKey: k.writeKey,
+    })));
+    if (revision !== this.revision || request !== this.request) return 0;
+    return this.serialize(async () => {
+      if (revision !== this.revision || request !== this.request) return 0;
+      const before = this.keys;
+      const after: Record<string, string> = {};
+      for (const k of next) after[id(k.device, k.epoch)] = k.writeKey;
+      const all = new Set([...Object.keys(after), ...Object.keys(before)]);
+      let changed = 0;
+      for (const key of all) if (after[key] !== before[key]) changed++;
+      // Fail closed: if encrypted persistence fails, do not activate new authority.
+      await this.vault.save(next);
+      if (revision === this.revision && request === this.request) this.replace(next);
+      return revision === this.revision && request === this.request ? changed : 0;
+    });
   }
 
-  /** Sign-out: no write authority stays on the phone. */
-  clear(): void {
+  /** RAM authority disappears synchronously; the returned promise confirms
+   * durable native deletion before another account can sign in. */
+  clear(): Promise<void> {
     this.revision++;
+    this.request++;
     this.keys = {};
-    try { this.store?.removeItem(KEY); } catch { /* fine */ }
+    return this.serialize(() => this.vault.clear());
   }
 }
