@@ -211,3 +211,17 @@ test("GeoJSON polygon holes cannot silently become allowed grazing land", () => 
   assert.match(r.skipped.join(" "), /boşluk/);
   assert.throws(() => fromGeoJSON("null", 1, () => "x"), /GeoJSON/);
 });
+
+test("a newer zone book in the account wins; an empty reinstalled phone never wipes it", async () => {
+  const { zoneBookStamp } = await import("../src/app/zones.ts");
+  const { ZoneStore } = await import("../src/app/stores.ts");
+  assert.equal(zoneBookStamp({ zones: [] }), 0);
+  assert.equal(zoneBookStamp({ zones: [{ updated: 5 }], changed: 3 }), 5);
+  assert.equal(zoneBookStamp({ zones: [], changed: 9 }), 9);   // all removed later: still newer
+  const store = new ZoneStore(null, []);
+  store.adopt({ zones: [zone(SQ, { updated: 7 })], graze: { until: null, forever: false }, changed: 7 });
+  assert.equal(store.get().zones.length, 1);
+  assert.equal(zoneBookStamp(store.get()), 7);
+  assert.throws(() => store.adopt({ zones: [zone([[0, 0], [1, 1]] as LonLat[])], graze: { until: null, forever: false } }));
+  assert.equal(store.get().zones.length, 1, "geçersiz kitap reddedilir, eldeki kalır");
+});

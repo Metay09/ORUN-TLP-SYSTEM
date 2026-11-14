@@ -379,6 +379,17 @@ export class OwnerAccountClient {
     return battery as Record<string, number>;
   }
 
+  /** The zone book kept in the account (as the last phone sent it). */
+  async herdZones(): Promise<unknown> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/herd/zones", {
+      headers: { Authorization: "Bearer " + this.accessToken, Accept: "application/json" },
+      credentials: "omit", redirect: "error", cache: "no-store",
+    });
+    if (!reply.ok) throw new Error("Hesaptaki alanlar alınamadı.");
+    return json(reply);
+  }
+
   /** The zone book for the server's alert decision (backend/herd_alerts.py). */
   async setHerdZones(doc: unknown): Promise<void> {
     if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");

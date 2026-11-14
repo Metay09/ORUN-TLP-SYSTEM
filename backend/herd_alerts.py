@@ -28,6 +28,7 @@ import json
 import math
 from pathlib import Path
 import sqlite3
+import threading
 import time
 from typing import Callable
 
@@ -337,25 +338,52 @@ def device_alerts(dev: str, name: str, rows: list[dict], polys, since: int, graz
 
 
 class HerdAlerts:
+    """Decoded records are kept between calls and only new ledger rows are
+    read (the ledger is append-only); the rules run on every call because
+    "silent" depends on the time. A phone asks every ~2 minutes."""
+
     def __init__(self, db_path: str | Path, zones: HerdZones, clock: Callable[[], float] = time.time):
         self.db_path = str(db_path)
         self.zones = zones
         self.clock = clock
+        self._lock = threading.Lock()
+        self._by: dict[str, list[dict]] = {}
+        self._last_rowid = 0
 
     def _rows(self, now: int) -> dict[str, list[dict]]:
         path = Path(self.db_path)
-        by: dict[str, list[dict]] = {}
-        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0)) as db:
-            for dev, plain in db.execute(
-                    "SELECT device_id, plaintext FROM verified_observations WHERE family=1 "
-                    "ORDER BY rowid DESC LIMIT ?", (MAX_ROWS,)):
-                r = decode(plain) if isinstance(plain, bytes) and isinstance(dev, bytes) else None
-                if r is None or not now - WINDOW_MS <= r["t"] <= now + 10 * MIN_MS:
-                    continue
-                by.setdefault(dev.hex().upper(), []).append(r)
-        for rows in by.values():
-            rows.sort(key=lambda r: r["t"])
-        return by
+        with self._lock:
+            with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0)) as db:
+                top = db.execute("SELECT max(rowid) FROM verified_observations").fetchone()[0] or 0
+                if top < self._last_rowid:            # ledger replaced (restore): start over
+                    self._by, self._last_rowid = {}, 0
+                if top > self._last_rowid:
+                    fresh = db.execute(
+                        "SELECT rowid, device_id, plaintext FROM verified_observations "
+                        "WHERE family=1 AND rowid>? ORDER BY rowid DESC LIMIT ?",
+                        (self._last_rowid, MAX_ROWS)).fetchall()
+                    touched = set()
+                    for _rowid, dev, plain in fresh:
+                        r = decode(plain) if isinstance(plain, bytes) and isinstance(dev, bytes) else None
+                        if r is None or r["t"] < now - WINDOW_MS:
+                            continue
+                        key = dev.hex().upper()
+                        self._by.setdefault(key, []).append(r)
+                        touched.add(key)
+                    for key in touched:
+                        self._by[key].sort(key=lambda r: r["t"])
+                    self._last_rowid = top
+            out: dict[str, list[dict]] = {}
+            for key, rows in list(self._by.items()):
+                kept = [r for r in rows if now - WINDOW_MS <= r["t"]]
+                if len(kept) != len(rows):
+                    self._by[key] = kept
+                kept = [r for r in kept if r["t"] <= now + 10 * MIN_MS]
+                if kept:
+                    out[key] = kept
+                elif not self._by[key]:
+                    del self._by[key]
+            return out
 
     def current(self, names: dict[str, str], settings: dict[str, dict]) -> dict:
         now = int(self.clock() * 1000)

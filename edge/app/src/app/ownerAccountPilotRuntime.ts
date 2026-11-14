@@ -23,7 +23,7 @@ import { writeKeyVault, eraseLegacyWriteKeys } from "../platform/orunWriteKeys.t
 import { forgetAccount, loadAccount, storeAccount } from "../platform/orunAccountSession.ts";
 import { herdWatchStatus } from "../platform/herdWatch.ts";
 import { parseServerLatest } from "./serverObservationRead.ts";
-import type { ZoneBook } from "./zones.ts";
+import { zoneBookStamp, type ZoneBook } from "./zones.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import type { Point, RecordId } from "../core/points.ts";
 import {
@@ -379,7 +379,14 @@ export const pilotAccountDownloadObservations = pilotAccountSync;
 // sign-in and, after a failed push, with every sync until it is accepted.
 let zonesDoc: string | null = null;
 let zonesPushed: string | null = null;
+let zonesStamp = 0;
+let zonesCheckedFor: OwnerAccountClient | null = null;
+let adoptZones: ((book: ZoneBook) => void) | null = null;
+/** store.ts: how a newer book from the account replaces this phone's. */
+export function onAccountZones(fn: (book: ZoneBook) => void): void { adoptZones = fn; }
+
 export function pilotSetHerdZones(book: ZoneBook): void {
+  zonesStamp = zoneBookStamp(book);
   zonesDoc = JSON.stringify({
     zones: book.zones.map((z) => ({ id: z.id, name: z.name, ring: z.ring, active: z.active, updated: z.updated })),
     graze: { until: book.graze?.until ?? null, forever: book.graze?.forever === true },
@@ -390,8 +397,23 @@ export function pilotSetHerdZones(book: ZoneBook): void {
 async function pushHerdZones(): Promise<void> {
   const account = client, doc = zonesDoc;
   if (!account || !pilotAccountStatus() || doc === null || doc === zonesPushed) return;
-  try { await account.setHerdZones(JSON.parse(doc)); if (client === account) zonesPushed = doc; }
-  catch { /* retried with the next sync */ }
+  try {
+    // Once per sign-in: a newer book in the account wins over this phone's
+    // (edited on another phone; or this phone was reinstalled and is empty,
+    // which must never wipe the zones the server alerts on).
+    if (zonesCheckedFor !== account) {
+      const remote = await account.herdZones() as ZoneBook;
+      if (client !== account) return;
+      zonesCheckedFor = account;
+      if (remote && Array.isArray(remote.zones) && zoneBookStamp(remote) > zonesStamp && adoptZones) {
+        zonesPushed = null;
+        adoptZones(remote);          // -> pilotSetHerdZones -> pushes the same book back (harmless)
+        return;
+      }
+    }
+    await account.setHerdZones(JSON.parse(doc));
+    if (client === account) zonesPushed = doc;
+  } catch { /* retried with the next sync */ }
 }
 
 // ---- native herd watch ----------------------------------------------------
