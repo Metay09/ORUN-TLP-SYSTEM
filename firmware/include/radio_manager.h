@@ -155,6 +155,10 @@ class RadioManager {
   // The consumer MUST separately check durable grant and full HMAC.
   bool takeCustodyAckFrame(CustodyAckRxFrame* frame);
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  // Non-consuming inspection: transient storage/security busy conditions must
+  // not silently discard a valid backend receipt.
+  bool peekKq05BatchReceiptFrame(Kq05BatchReceiptRxFrame* frame) const;
+  void discardKq05BatchReceiptFrame();
   bool takeKq05BatchReceiptFrame(Kq05BatchReceiptRxFrame* frame);
 #endif
 
