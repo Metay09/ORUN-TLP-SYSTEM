@@ -32,11 +32,11 @@ not evidence of on-device enforcement or legal conformity.
 The draft now also includes `firmware/include/rf_duty_budget.h` and
 `firmware/src/rf_duty_budget.cpp` plus a pure host test. This is a
 conservative 61 x 1-minute bucket accounting component with seven explicitly
-registered packet classes. On every fresh boot it refuses ALL TX for 60 minutes,
-because the previous hour's airtime has no durable authority. The source
-is compiled but **never called** by the live radio paths. The one-hour
-boot hold is a safety fallback, **not an acceptable user experience** for a
-collar that must report soon after restarting.
+registered packet classes. For the current **development policy**, each boot
+starts with a fresh full 10% radio budget and may transmit immediately.
+Previous-boot TX is intentionally ignored. The source is compiled but
+**never called** by the live radio paths. This reset behavior does NOT
+guarantee a real rolling-hour legal limit across rapid reboot cycles.
 
 Run the isolated native C++ test on the PC:
 
@@ -47,11 +47,11 @@ Run the isolated native C++ test on the PC:
       firmware/src/rf_duty_budget.cpp -o /tmp/orun-kq04-rf-test
     /tmp/orun-kq04-rf-test
 
-This verifies the native component in isolation only. The next firmware PR
-must establish a boot-safe persisted budget or acceptable documented cold-start
-policy, plus real SX126x time-on-air and complete send-path routing **before**
-enabling this gate in RadioManager. Do not wire this component directly to live
-TX without resolving that startup behavior.
+This verifies the native component in isolation only. Next, determine
+SX126x time-on-air and complete send-path routing. For PC/bench development,
+a clean budget per boot is the agreed behavior. Before field release, verify
+regulatory conformity separately; an operator who repeatedly reboots a device
+could otherwise exceed a real rolling-hour duty limit.
 
 ## Production implementation gates (separate firmware PR)
 
@@ -61,10 +61,11 @@ TX without resolving that startup behavior.
 2. Compute actual frame air-time from modulation config and payload length
    (including preamble/headers). Count attempted transmissions conservatively,
    including TX timeout, retransmission and interrupted TX.
-3. Ensure the aggregate budget cannot be bypassed by reboot/uptime rollover,
-   time jumps, sleep/wake, role changes or TX errors. A RAM-only sliding hour
-   must NOT be described as reboot-safe. Cold-start behavior must fail safely
-   until a durable accounting or conservative cool-down mechanism exists.
+3. DEVELOPMENT: explicitly reset the budget to full on boot as requested.
+   Test normal millis() rollover, time jumps, sleep/wake, role changes and
+   TX errors. Do not describe this development-only behavior as reboot-safe
+   regulatory accounting. Before FIELD RELEASE, separately establish a
+   documented, testable strategy for repeated reboot cycles.
 4. Preserve custody semantics: a delayed Gateway ACK is not proof of delivery,
    and no Tracker record may be released without verified exact-object ACK.
    A duty denial must leave the record durable and eligible for a later retry.
