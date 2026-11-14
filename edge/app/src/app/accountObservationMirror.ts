@@ -9,7 +9,7 @@ import {
 } from "../core/product.ts";
 import type { Point, RecordId } from "../core/points.ts";
 import type { OwnerAccountClient, AccountIdentity } from "./ownerAccountClient.ts";
-import type { ServerObservationPage, ServerObservationRow } from "./serverObservationRead.ts";
+import type { ServerLatestObservations, ServerObservationPage, ServerObservationRow } from "./serverObservationRead.ts";
 import type { Observation } from "../core/product.ts";
 
 const CURSORS = "orun_account_observation_cursors_v1";
@@ -172,6 +172,22 @@ export class AccountObservationMirror {
         return n;
       }));
       return { received: verified.length, added };
+    });
+  }
+
+  /** The same as pullLatest for a reply that is already on the phone (kept
+   * by the native herd watch while the app was closed). Every frame is still
+   * verified with the read key; a file that was tampered with adds nothing. */
+  async ingestLatest(client: OwnerAccountClient, latest: ServerLatestObservations): Promise<{ added: number }> {
+    return this.guarded(async () => {
+      const { actor, epoch } = identity(client);
+      const verified = this.verify(latest.records);
+      const added = await this.exclusive(() => this.db.transaction(async () => {
+        if (!still(client, actor, epoch))
+          throw new Error("Hesap değişti; kayıt yazılmadı.");
+        return this.insert(actor, verified);
+      }));
+      return { added };
     });
   }
 

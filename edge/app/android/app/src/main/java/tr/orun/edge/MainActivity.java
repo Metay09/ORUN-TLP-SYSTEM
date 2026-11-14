@@ -12,6 +12,7 @@ public class MainActivity extends BridgeActivity {
         // change the normal ORUN Edge observation/upload lifecycle.
         registerPlugin(OrunMobileIdentityPlugin.class);
         registerPlugin(OrunMobileSessionPlugin.class);
+        registerPlugin(OrunHerdWatchPlugin.class);
         super.onCreate(savedInstanceState);
         // The whole app (sync, notifications, Gateway link) runs inside the
         // WebView. By default Android lowers the WebView's renderer process

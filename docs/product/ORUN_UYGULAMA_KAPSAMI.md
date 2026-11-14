@@ -134,8 +134,15 @@ durduruyor; bildirim çubuğundaki servis ayakta kalsa da eşitleme ve bildirim
 - Dört bildirimin kararı hesap sunucusunda verilir (`backend/herd_alerts.py`,
   `GET /api/v1/herd/alerts`). Çizilen alanlar hesaba da yazılır
   (`GET/POST /api/v1/herd/zones`).
-- Telefonda küçük bir Android servisi dakikada bir sorar ve bildirimi gösterir;
-  uygulama atılsa da, telefon yeniden başlasa da çalışır. (Sıradaki parça.)
+- Telefonda küçük bir Android servisi (`HerdWatchService.java`) yaklaşık iki
+  dakikada bir sorar ve bildirimi gösterir; uygulama atılsa da, telefon
+  yeniden başlasa da çalışır. Şifre çözmez, defter yazmaz, kural tutmaz;
+  tek kuralı "her uyarı bir kez" (`HerdWatchLogic.java`, PC'de
+  `bash tools/orun_android_mantik_test.sh`).
+- Servis her tasmanın son konumunu da indirip saklar; uygulama açılınca
+  internet beklemeden onu gösterir (kayıtlar yine uygulamada doğrulanır).
+- Telefonda pil ayarı "Kısıtlanmamış" ve Samsung'da "Hiç uyku moduna
+  geçmeyen uygulamalar" listesi gerekir.
 - Sunucuya ulaşılamazsa servis bunu bildirimle söyler.
 - Telefon gateway'e bağlıyken ve internet yokken uygulamanın kendi kuralı
   (alerts.ts) geçerlidir; uygulama ekrandayken çalışır.

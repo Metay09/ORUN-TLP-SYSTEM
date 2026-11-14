@@ -20,6 +20,9 @@ import { DeviceSettingsBook, type SettingValues, type Via as SettingsVia } from 
 import { DeviceOpsBook, type FencePayload, type OpVia } from "./deviceOps.ts";
 import { WriteKeyBook } from "./writeKeys.ts";
 import { forgetAccount, loadAccount, storeAccount } from "../platform/orunAccountSession.ts";
+import { herdWatchStatus } from "../platform/herdWatch.ts";
+import { parseServerLatest } from "./serverObservationRead.ts";
+import type { ZoneBook } from "./zones.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import type { Point, RecordId } from "../core/points.ts";
 import {
@@ -67,6 +70,8 @@ export function pilotRestoreAccount(): Promise<void> {
     client = restored;
     await edgeKeys.load().catch(() => undefined);
     observationsChanged?.();
+    // Keys may be missing or the file stale: then the normal sync fills in.
+    await ingestWatchSnapshot(restored).catch(() => undefined);
     startAutoSync();
     accountSettled = true;
     accountChanged();
@@ -345,7 +350,7 @@ export function pilotAccountSync(): Promise<ObservationSyncResult> {
   syncRun = run;
   setSync({ running: true });
   run.then(
-    last => { noteBackgroundSync(last.at); setSync({ running: false, last, error: null }); },
+    last => setSync({ running: false, last, error: null }),
     e => setSync({ running: false, error: e instanceof Error ? e.message : String(e) }),
   ).finally(() => { if (syncRun === run) syncRun = null; });
   return run;
@@ -354,26 +359,54 @@ export function pilotAccountSync(): Promise<ObservationSyncResult> {
 /** Kept for callers of the old manual button. */
 export const pilotAccountDownloadObservations = pilotAccountSync;
 
-// Evidence, not a promise: when the last sync finished while the app was NOT
-// on screen. The connection screen shows it, so "does it really sync in the
-// background on this phone?" is answered by looking (owner, 2026-11-14).
-const BG_KEY = "orun.app.bgsync.v1";
-function noteBackgroundSync(at: number): void {
-  if (typeof document === "undefined" || document.visibilityState !== "hidden") return;
-  try { localStorage.setItem(BG_KEY, String(at)); } catch { /* evidence only */ }
+// ---- herd zones in the account -------------------------------------------
+// The server decides the herd alerts (backend/herd_alerts.py) and needs the
+// zones drawn on this phone. The newest book is pushed when it changes, on
+// sign-in and, after a failed push, with every sync until it is accepted.
+let zonesDoc: string | null = null;
+let zonesPushed: string | null = null;
+export function pilotSetHerdZones(book: ZoneBook): void {
+  zonesDoc = JSON.stringify({
+    zones: book.zones.map((z) => ({ id: z.id, name: z.name, ring: z.ring, active: z.active, updated: z.updated })),
+    graze: { until: book.graze?.until ?? null, forever: book.graze?.forever === true },
+    changed: book.changed ?? 0,
+  });
+  void pushHerdZones();
 }
-export function pilotBackgroundSyncAt(): number | null {
-  try { const v = Number(localStorage.getItem(BG_KEY)); return Number.isFinite(v) && v > 0 ? v : null; } catch { return null; }
+async function pushHerdZones(): Promise<void> {
+  const account = client, doc = zonesDoc;
+  if (!account || !pilotAccountStatus() || doc === null || doc === zonesPushed) return;
+  try { await account.setHerdZones(JSON.parse(doc)); if (client === account) zonesPushed = doc; }
+  catch { /* retried with the next sync */ }
 }
 
-// Set while the Android foreground service keeps the app running: the
-// minute-by-minute pull then continues with the screen off.
-let backgroundWatch = false;
-export function setPilotBackgroundWatch(on: boolean): void { backgroundWatch = on; }
+// ---- native herd watch ----------------------------------------------------
+// Evidence, not a promise: when the native service last reached the server.
+// The connection screen shows it, so "does it really watch with the app
+// closed on this phone?" is answered by looking (owner, 2026-11-14).
+let watchLastOk: number | null = null;
+export function pilotBackgroundSyncAt(): number | null { return watchLastOk; }
+function refreshWatch(): void {
+  void herdWatchStatus().then((s) => { watchLastOk = s.lastOk; }, () => {});
+}
+
+/** What the native service fetched while the app was closed: on screen before the first sync answers. */
+async function ingestWatchSnapshot(account: OwnerAccountClient): Promise<void> {
+  const mirror = observationMirror, who = pilotAccountStatus();
+  if (!mirror || !who) return;
+  const { latest } = await herdWatchStatus();
+  if (!latest) return;
+  const doc = JSON.parse(latest) as { actor?: unknown; body?: unknown };
+  if (doc.actor !== who.actor || client !== account) return;
+  const r = await mirror.ingestLatest(account, parseServerLatest(doc.body));
+  if (r.added) observationsChanged?.();
+}
 
 function backgroundSync(): void {
+  refreshWatch();
+  void pushHerdZones();
   if (!client || !pilotAccountStatus() || !observationMirror) return;
-  if (!backgroundWatch && typeof document !== "undefined" && document.visibilityState === "hidden") return;
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
   void pilotAccountSync().catch(() => { /* shown via pilotObservationSyncState */ });
 }
 

@@ -378,6 +378,18 @@ export class OwnerAccountClient {
     return battery as Record<string, number>;
   }
 
+  /** The zone book for the server's alert decision (backend/herd_alerts.py). */
+  async setHerdZones(doc: unknown): Promise<void> {
+    if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
+    const reply = await this.fetcher(this.base + "/api/v1/herd/zones", {
+      method: "POST", credentials: "omit", redirect: "error", cache: "no-store",
+      headers: { Authorization: "Bearer " + this.accessToken,
+                 "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(doc),
+    });
+    if (!reply.ok) throw new Error("Alanlar hesaba kaydedilemedi.");
+  }
+
   async setBatteryCapacity(device: string, mah: number | null): Promise<void> {
     if (!this.accessToken) throw new Error("Önce hesabınla giriş yapmalısın.");
     const reply = await this.fetcher(this.base + "/api/v1/devices/battery", {
