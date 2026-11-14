@@ -4736,6 +4736,21 @@ void loop() {
   orun_tlp::LoopHealthMonitor::passCompleted();
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kIdle);
   const uint32_t idle_clock = orun_tlp::LoopHealthMonitor::idleClock();
-  orun_tlp::PowerManager::idle();
+  // Y3: between reports on battery, with everything asleep, wake 5 times a
+  // second instead of 100.
+  orun_tlp::IdleInputs idle_in;
+  idle_in.usb_power = usbPowerPresent();
+  idle_in.radio_awake =
+      radio_manager.isTransmitting() ||
+      radio_manager.listenState() != orun_tlp::RadioListenState::kAsleep;
+  idle_in.gnss_active = !batteryQuiet();
+  idle_in.ble_open = ble_admission.isOpen() ||
+                     ble_admission.isClosing() || ble_admission.alwaysAvailable();
+  idle_in.storage_busy =
+      history.busy() || config_store.busy() || security_store.busy() ||
+      geofence_store.busy() || config_mutations.busy() ||
+      geofence_mutations.busy() || product_records.pending() ||
+      product_records.preparing() || positions.pending();
+  orun_tlp::PowerManager::idle(orun_tlp::idlePeriodMs(idle_in));
   orun_tlp::LoopHealthMonitor::idleReturned(idle_clock);
 }
