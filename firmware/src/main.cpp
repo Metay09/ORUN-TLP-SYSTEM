@@ -2264,6 +2264,11 @@ void printRadioDiagnostic() {
                 static_cast<unsigned long>(diagnostics.rx_events_in_window),
                 static_cast<unsigned long>(diagnostics.stale_restores_while_asleep),
                 static_cast<unsigned long>(diagnostics.estimated_rx_ms));
+  Serial.printf("RADIO DUTY used_ms=%lu limit_ms=%lu denied=%lu "
+                "scope=per_device window=conservative_61min\n",
+                static_cast<unsigned long>(radio_manager.rfDutyUsedMs()),
+                static_cast<unsigned long>(orun_tlp::RfDutyBudget::kMaxAirtimeMs),
+                static_cast<unsigned long>(radio_manager.rfDutyDenied()));
 }
 
 void printBatteryDiagnostic() {

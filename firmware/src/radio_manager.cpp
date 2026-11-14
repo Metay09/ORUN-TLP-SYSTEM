@@ -234,6 +234,12 @@ bool RadioManager::canSend() const {
          rx_restore_state_ == RxRestoreState::kNone;
 }
 
+uint32_t RadioManager::rfDutyUsedMs() {
+  (void)rf_duty_budget_.canReserve(
+      monotonic::nowMs(), 1U, RfDutyBudget::Frame::kTest);
+  return rf_duty_budget_.usedMs();
+}
+
 uint32_t RadioManager::rfAirtimeMs(size_t size) const {
   LoRaAirtimeProfile p{};
   p.spreading_factor = radio_config::kSpreadingFactor;

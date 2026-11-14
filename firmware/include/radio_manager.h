@@ -158,7 +158,7 @@ class RadioManager {
   uint32_t txAttempts() const { return tx_attempts_; }
   uint32_t txTimeouts() const { return tx_timeouts_; }
   uint32_t localTxFailures() const { return local_tx_failures_; }
-  uint32_t rfDutyUsedMs() const { return rf_duty_budget_.usedMs(); }
+  uint32_t rfDutyUsedMs();  // Refresh elapsed time without consuming airtime.
   uint32_t rfDutyDenied() const { return rf_duty_denials_; }
   RadioEventDiagnostics eventDiagnostics() const;
   RadioListenDiagnostics listenDiagnostics() const;

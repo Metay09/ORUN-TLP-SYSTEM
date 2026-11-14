@@ -58,6 +58,10 @@ The native test checks the airtime estimator and ledger. Additionally, the
 normal PC host suite now compiles `test_sf5j_radio_transport.cpp` against
 the real RadioManager and fake SX126x Radio.Send; it verifies an exhausted
 budget physically blocks the mock Send and does not reset on role transitions.
+The `RADIO?` diagnostic emits a separate `RADIO DUTY used_ms=...
+limit_ms=360000 denied=...` line without changing the existing radio
+diagnostic line. A query refreshes elapsed accounting without airtime charge.
+
 The bridge paths are **not yet operator-tested** on the current branch.
 The new limiter can delay one-minute live reports, backlog sends, commands,
 or ACKs when the aggregate quota is exhausted; no scheduler-level priority
