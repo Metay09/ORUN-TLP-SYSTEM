@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Koyu tema (ds.css [data-theme="dark"] --paper, --brand). -->
+<!-- Koyu tema (ds.css data-theme dark: paper ve brand). -->
 <resources>
     <color name="splash_background">#0F1613</color>
     <color name="splash_mark">#C8F169</color>
