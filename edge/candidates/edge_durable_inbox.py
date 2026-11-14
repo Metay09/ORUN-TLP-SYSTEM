@@ -58,7 +58,7 @@ class InjectedFailure(Exception):
 
 
 def admissible_product_frame(data: bytes) -> bool:
-    """Only SF5G's 84B EVENT and 100B PERIODIC custody-requested frames.
+    """84B EVENT and 100B PERIODIC, custody-requested or ACKless LIVE.
 
     Shape checks are NOT AEAD verification or device authorization. RESULT
     and other protected families require explicit separate admission.
@@ -67,7 +67,7 @@ def admissible_product_frame(data: bytes) -> bool:
         return False
     if (data[0], data[1], data[2], data[5], data[7]) != (2, 4, 2, 1, 0):
         return False
-    if data[4] not in (2, 3):
+    if data[4] not in (0, 1, 2, 3):
         return False
     if data[3] != (2 if len(data) == 84 else 1):
         return False

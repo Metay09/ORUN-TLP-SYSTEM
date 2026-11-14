@@ -5,7 +5,7 @@ phone, or tracker. Do not commit live credentials. No authenticated transport,
 account authorization, BackendDurableReceipt, ACK or data deletion exists.
 
 Depends on the audited standard 'cryptography' package (AESCCM/HKDF).
-Only 84/100-byte custody-requested SF5B DEVICE_D2A frames are admitted.
+84/100-byte custody-requested and KQ05 ACKless LIVE DEVICE_D2A frames are admitted.
 """
 from __future__ import annotations
 
@@ -153,7 +153,7 @@ def open_product_frame(raw: bytes, get_credential: CredentialLookup) -> Verified
         raise Reject("unsupported length")
     header = raw[:28]
     if (header[0:3] != bytes((2, 4, 2)) or header[7] != 0 or
-            header[5] != 1 or header[4] not in (2, 3) or
+            header[5] != 1 or header[4] not in (0, 1, 2, 3) or
             (header[3], header[6], len(raw)) not in ((1, 64, 100), (2, 48, 84))):
         raise Reject("invalid protected header")
     device = header[8:16]
