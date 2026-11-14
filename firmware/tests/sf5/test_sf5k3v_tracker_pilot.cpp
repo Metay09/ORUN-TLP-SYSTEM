@@ -474,17 +474,19 @@ void acklessHistoryIsPacedAndNeverReleases() {
   assert(sender.updateHistory(61002U, true) ==
          orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent);
   assert(sender.lastHistorySent().sequence == 2U);
-  // Sequence 3 was already sent as LIVE, so skip it in this sweep.
+  // Once the LIVE spacing has elapsed, even that unconfirmed last LIVE
+  // is eligible for history retry (no receipt has released it).
   assert(sender.updateHistory(121003U, true) ==
-         orun_tlp::TrackerAcklessLiveTx::Event::kNone);
-  assert(g_sends == sent_before + 2U);
+         orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent);
+  assert(sender.lastHistorySent().sequence == 3U);
+  assert(g_sends == sent_before + 3U);
   // The sweep does not loop immediately and flood the RF channel.
   assert(sender.updateHistory(121004U, true) ==
          orun_tlp::TrackerAcklessLiveTx::Event::kNone);
   assert(sender.updateHistory(421004U, true) ==
          orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent);
   assert(sender.lastHistorySent().sequence == 1U);
-  assert(sender.historySentCount() == 3U);
+  assert(sender.historySentCount() == 4U);
   assert(flash.program_calls == flash_before);
   for (uint32_t seq = 1U; seq <= 3U; ++seq) {
     osf::RecordIdentity id{};
@@ -498,9 +500,40 @@ void acklessHistoryIsPacedAndNeverReleases() {
 }
 
 
+
+void acklessSolitaryLiveEventuallyRetries() {
+  resetFakes();
+  FakeFlash flash;
+  FixedIncarnation source;
+  ProductRecordStore records(flash, kPages, &source);
+  records.begin(kDevice, kTracker);
+  assert(records.mounted());
+  assert(store(records, 1U).stored);
+  orun_tlp::SecurityStore security(flash, flash);
+  orun_tlp::ProductSecureCrypto crypto(security);
+  orun_tlp::RadioManager radio;
+  orun_tlp::TrackerAcklessLiveTx sender(records, crypto, radio);
+  assert(sender.update(1000U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kSent);
+  assert(sender.updateHistory(1001U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kNone);
+  assert(sender.updateHistory(60999U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kNone);
+  assert(sender.updateHistory(61000U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent);
+  assert(sender.lastHistorySent().sequence == 1U);
+  assert(g_sends == 2U);
+  ObservationStore::Record kept{};
+  assert(records.store().lookup(sender.lastHistorySent(), kept) ==
+         ObservationStore::LookupResult::kFound);
+  assert(!kept.released);
+}
+
+
 }  // namespace
 
 int main() {
+  acklessSolitaryLiveEventuallyRetries();
   acklessHistoryIsPacedAndNeverReleases();
   acklessLiveBypassesFourSlotCache();
   successAndReboot(false);
