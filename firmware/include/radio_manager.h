@@ -112,6 +112,7 @@ class RadioManager {
   }
   bool canSend() const;
   bool isTransmitting() const { return tx_in_progress_; }
+  RadioListenState listenState() const { return listen_state_; }
   // Compatibility shim for existing host seams. Production PositionFlow maps
   // GNSS values through legacy_position_mapping before transport.
   bool encodePosition(const GnssFix& fix, uint8_t* payload, uint64_t& identity);

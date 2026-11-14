@@ -230,7 +230,8 @@ export class OwnerAccountClient {
   /** 1b: bring back a session stored on this phone (no network). */
   adopt(identity: AccountIdentity, accessToken: string): void {
     if (!TOKEN.test(accessToken) || !ID.test(identity.site) || !ID.test(identity.actor) ||
-        !ACCOUNT_INST.test(identity.installation) || !NAME.test(identity.username))
+        !(ACCOUNT_INST.test(identity.installation) || IDENT.test(identity.installation)) ||
+        !NAME.test(identity.username))
       throw new Error("Saklanan oturum geçersiz.");
     this.epoch++;
     this.accessToken = accessToken;

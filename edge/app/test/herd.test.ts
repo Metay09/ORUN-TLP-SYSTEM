@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Point } from "../src/core/points.ts";
 import { bearingDeg, distanceM } from "../src/app/geo.ts";
-import { batteryOf, buildHerd, freshnessOf, freshRatio, herdSummary, matches } from "../src/app/herd.ts";
+import { batteryOf, buildHerd, freshLimit, freshnessOf, freshRatio, herdSummary, matches } from "../src/app/herd.ts";
 import { fmt } from "../src/app/i18n/tr.ts";
 import { AssetStore, blankProfile } from "../src/app/stores.ts";
 import type { AssetProfile } from "../src/app/model.ts";
@@ -25,11 +25,26 @@ export function pt(tracker: string, agoMin: number, extra: Partial<Point> = {}):
 const herdOf = (points: Point[], profiles: Record<string, AssetProfile> = {}) =>
   buildHerd({ points, profiles, assetOf: (d) => d, now: NOW });
 
-test("freshness follows the collar period, with floors", () => {
-  assert.equal(freshnessOf(NOW - 5 * 60_000, 59, NOW), "fresh");
-  assert.equal(freshnessOf(NOW - 30 * 60_000, 59, NOW), "aging");
+test("freshness follows the collar's actual period, not old 10min/2T floors", () => {
+  const minute = 60_000;
+  // One-minute report: one or two minutes is fresh; three is aging.
+  assert.equal(freshLimit(minute), 2 * minute);
+  assert.equal(freshnessOf(NOW - 2 * minute, 60, NOW), "fresh");
+  assert.equal(freshnessOf(NOW - 2 * minute - 1, 60, NOW), "aging");
+  assert.equal(freshnessOf(NOW - 5 * minute, 59, NOW), "aging");
+  assert.equal(freshnessOf(NOW - 30 * minute, 59, NOW), "aging");
   assert.equal(freshnessOf(NOW - 2 * 3600_000, 59, NOW), "stale");
-  assert.equal(freshnessOf(NOW - 25 * 60_000, 900, NOW), "fresh");   // 15 min period: 2T = 30 min
+
+  // A 15-minute collar is not fresh for an additional 15 minutes.
+  assert.equal(freshLimit(15 * minute), 15 * minute);
+  assert.equal(freshnessOf(NOW - 15 * minute, 900, NOW), "fresh");
+  assert.equal(freshnessOf(NOW - 15 * minute - 1, 900, NOW), "aging");
+  assert.equal(freshnessOf(NOW - 25 * minute, 900, NOW), "aging");
+
+  // A one-hour collar stays fresh for its report period, not two hours.
+  assert.equal(freshLimit(60 * minute), 60 * minute);
+  assert.equal(freshnessOf(NOW - 60 * minute, 3600, NOW), "fresh");
+  assert.equal(freshnessOf(NOW - 60 * minute - 1, 3600, NOW), "aging");
   assert.equal(freshnessOf(null, 59, NOW), "none");
   assert.equal(freshRatio(NOW, 59, NOW), 1);
   assert.equal(freshRatio(NOW - 2 * 3600_000, 59, NOW), 0);
