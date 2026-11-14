@@ -1,14 +1,30 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 namespace orun_tlp {
 
-// Candidate aggregate radio airtime gate. Not wired to Radio.Send yet.
+// Shared per-device RF airtime ledger; callers must gate every physical LoRa TX.
 // The 61 one-minute bins deliberately over-count at window boundaries: this
 // protects every rolling 60-minute interval, rather than wall-clock hours.
 // Project rule: every power-on starts with a full, fresh RAM budget and no
 // start-up wait. This per-boot rule does not track the previous power cycle.
+// Matches the SX126x SetTxConfig semantic LoRa parameters, not driver codes.
+struct LoRaAirtimeProfile {
+  uint8_t spreading_factor = 11U;
+  uint32_t bandwidth_hz = 125000U;
+  uint8_t coding_rate = 1U;  // 1 => 4/5 ... 4 => 4/8
+  uint16_t preamble_symbols = 8U;
+  bool crc_enabled = true;
+  bool explicit_header = true;
+};
+
+// Conservative ceil(ms) based on the Semtech LoRa time-on-air equation.
+// Zero means invalid frame/profile; callers must fail closed.
+uint32_t loraAirtimeMs(size_t payload_bytes,
+                       const LoRaAirtimeProfile& profile);
+
 class RfDutyBudget final {
  public:
   enum class Frame : uint8_t {
@@ -25,6 +41,7 @@ class RfDutyBudget final {
   static constexpr uint8_t kBucketCount = 61U;
 
   void begin(uint32_t now_ms);
+  Decision canReserve(uint32_t now_ms, uint32_t estimated_airtime_ms, Frame frame);
   Decision reserve(uint32_t now_ms, uint32_t estimated_airtime_ms, Frame frame);
   uint32_t usedMs() const;
   bool faulted() const { return clock_fault_; }

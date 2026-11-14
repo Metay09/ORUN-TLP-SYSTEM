@@ -79,6 +79,32 @@ static void testRebootGetsFreshBudget() {
   assert(after.usedMs() == 1U);
 }
 
+static void testLoraAirtimeFromActualSf11Profile() {
+  orun_tlp::LoRaAirtimeProfile profile{};
+  assert(orun_tlp::loraAirtimeMs(100U, profile) == 2216U);
+  assert(orun_tlp::loraAirtimeMs(56U, profile) == 1397U);
+  assert(orun_tlp::loraAirtimeMs(84U, profile) == 1889U);
+  assert(orun_tlp::loraAirtimeMs(0U, profile) == 0U);
+  assert(orun_tlp::loraAirtimeMs(256U, profile) == 0U);
+  profile.bandwidth_hz = 0U;
+  assert(orun_tlp::loraAirtimeMs(100U, profile) == 0U);
+}
+
+static void testPreflightDoesNotConsumeOrReset() {
+  RfDutyBudget b;
+  b.begin(0U);
+  assert(b.canReserve(0U, 300000U, Frame::kCustodyAck) ==
+         Decision::kAllowed);
+  assert(b.usedMs() == 0U);
+  assert(b.reserve(0U, 300000U, Frame::kPosition) == Decision::kAllowed);
+  for (int i = 0; i < 100; ++i)
+    assert(b.canReserve(0U, 60001U, Frame::kCustodyAck) ==
+           Decision::kExhausted);
+  assert(b.usedMs() == 300000U);
+  assert(b.reserve(1U, 60000U, Frame::kTest) == Decision::kAllowed);
+  assert(b.reserve(2U, 1U, Frame::kTest) == Decision::kExhausted);
+}
+
 int main() {
   testColdBootAndSharedLimit();
   testSlidingWindowAndConservativeExpiry();
@@ -86,5 +112,7 @@ int main() {
   testWrappedMillisClock();
   testInvalidArguments();
   testRebootGetsFreshBudget();
+  testLoraAirtimeFromActualSf11Profile();
+  testPreflightDoesNotConsumeOrReset();
   return 0;
 }
