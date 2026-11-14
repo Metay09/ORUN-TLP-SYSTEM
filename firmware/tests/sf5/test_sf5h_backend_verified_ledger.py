@@ -47,11 +47,14 @@ def keys(device: bytes, epoch: int) -> secure.BackendCredential | None:
     return CRED if device == DEVICE and epoch == EPOCH else None
 
 
-def reencrypt(original: bytes, counter: int, plain: bytes | None = None) -> bytes:
+def reencrypt(original: bytes, counter: int, plain: bytes | None = None,
+              flags: int | None = None) -> bytes:
     item = secure.open_product_frame(original, keys)
     assert item.plaintext
     new_header = bytearray(original[:28])
     new_header[20:28] = counter.to_bytes(8, "big")
+    if flags is not None:
+        new_header[4] = flags
     info = b"ORUN-TLP-V2-AEAD" + bytes((1,)) + EPOCH.to_bytes(4, "big")
     key = HKDF(hashes.SHA256(), 16, CRED.credential_id, info).derive(CRED.k_root)
     nonce = EPOCH.to_bytes(4, "big") + bytes((1,)) + counter.to_bytes(8, "big")
@@ -267,8 +270,36 @@ def test_real_edge_http_backend_then_crypto_verify() -> None:
             assert edge_store.retained_count() == 2
 
 
+def test_kq05_ackless_live_backend_edge_crypto() -> None:
+    # Real AES-CCM/HKDF vectors, re-sealed with noncustody AAD flags.
+    base = public_fixture("kPeriodicFrameHex")
+    with tempfile.TemporaryDirectory() as folder:
+        edge_store = edge.EdgeDurableInbox(Path(folder) / "edge.db")
+        ledger = secure.VerifiedLocalLedger(Path(folder) / "verified.db", keys)
+        for i, flags in enumerate((0, 1)):
+            direct = reencrypt(base, 900 + i, flags=flags)
+            assert edge.admissible_product_frame(direct)
+            assert edge_store.put(direct).state == edge.PutState.COMMITTED
+            assert edge_store.put(direct).state == edge.PutState.DUPLICATE
+            opened = secure.open_product_frame(direct, keys)
+            assert opened.sequence == 257
+            expected = (secure.LedgerState.VERIFIED_STORED if i == 0
+                        else secure.LedgerState.VERIFIED_DUPLICATE)
+            assert ledger.ingest(direct).state == expected
+            tamper = bytearray(direct)
+            tamper[-1] ^= 1
+            assert ledger.ingest(bytes(tamper)).state == secure.LedgerState.REJECTED
+            # The AAD path bit is authenticated; toggling it voids AEAD.
+            tamper = bytearray(direct)
+            tamper[4] ^= 2
+            assert ledger.ingest(bytes(tamper)).state == secure.LedgerState.REJECTED
+        assert edge_store.retained_count() == 2
+        assert ledger.record_count() == 1
+
+
 def main() -> None:
     test_golden_vectors()
+    test_kq05_ackless_live_backend_edge_crypto()
     test_tag_header_key_and_semantic_refusal()
     test_ledger_logical_idempotence_and_conflict()
     test_conflict_capacity_fails_closed()

@@ -88,6 +88,22 @@ test("edge accept MAC: shared vector with the firmware (SF5L5)", () => {
     "EDGE ACCEPT v1 page=1 slot=2 gen=0000000000000003 mac=CC36CDCF6E21411D5FF5333C63C3702D4A1972A148C066146743232A2BB1A53D");
 });
 
+test("KQ05: direct LIVE accepted only with authentic AAD and tag", () => {
+  const original = KAT_PERIODIC();
+  const plain = openProductFrame(original, benchCredentials).plaintext;
+  for (const flags of [0, 1]) {
+    const template = original.slice();
+    template[4] = flags;
+    const direct = seal(template, plain, 600 + flags);
+    const opened = openProductFrame(direct, benchCredentials);
+    assert.equal(opened.sequence, 257);
+    const forged = direct.slice(); forged[4] ^= 2;
+    assert.throws(() => openProductFrame(forged, benchCredentials), Reject);
+    const corrupted = direct.slice(); corrupted[99] ^= 1;
+    assert.throws(() => openProductFrame(corrupted, benchCredentials), Reject);
+  }
+});
+
 test("product frames: KAT open; tamper, unknown epoch and bad shape rejected", () => {
   const p = openProductFrame(KAT_PERIODIC(), benchCredentials);
   assert.equal(hex(p.deviceId), "1122334455667788");

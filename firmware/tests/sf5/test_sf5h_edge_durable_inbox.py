@@ -19,13 +19,14 @@ EdgeDurableInbox = module.EdgeDurableInbox
 PutState = module.PutState
 
 
-def frame(length: int, seed: int, *, relay: bool = False) -> bytes:
+def frame(length: int, seed: int, *, relay: bool = False,
+          custody: bool = True) -> bytes:
     data = bytearray((i * 17 + seed) & 0xFF for i in range(length))
     data[0] = 2
     data[1] = 4
     data[2] = 2
     data[3] = 2 if length == 84 else 1
-    data[4] = 3 if relay else 2
+    data[4] = (2 if custody else 0) | (1 if relay else 0)
     data[5] = 1
     data[6] = 48 if length == 84 else 64
     data[7] = 0
@@ -132,8 +133,8 @@ def test_shape_and_database_paths() -> None:
         inbox = EdgeDurableInbox(Path(folder) / "validate.db")
         variants = [b"", b"hello", a[:-1], b + b"0"]
         for index, value in [
-            (0, 3), (1, 8), (2, 1), (3, 1), (4, 0), (4, 1),
-            (4, 4), (5, 3), (6, 66), (7, 1)
+            (0, 3), (1, 8), (2, 1), (3, 1),
+            (4, 4), (4, 255), (5, 3), (6, 66), (7, 1)
         ]:
             changed = bytearray(a)
             changed[index] = value
@@ -147,6 +148,13 @@ def test_shape_and_database_paths() -> None:
         for value in variants:
             assert inbox.put(value).state == PutState.INVALID
         assert inbox.retained_count() == 0
+        # KQ05 direct LIVE: flags 0/1 are valid opaque frames, NOT ACKs.
+        live = frame(100, 35, custody=False)
+        live_relay = frame(84, 44, custody=False, relay=True)
+        assert inbox.put(live).state == PutState.COMMITTED
+        assert inbox.put(live_relay).state == PutState.COMMITTED
+        assert inbox.put(live).state == PutState.DUPLICATE
+        assert EdgeDurableInbox(Path(folder) / "validate.db").retained_count() == 2
         assert inbox.put(a, fault="not-a-fault").state == PutState.INVALID
         for path in ["", ":memory:", "file:memory?cache=shared"]:
             try:
