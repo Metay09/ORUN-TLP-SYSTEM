@@ -4580,15 +4580,40 @@ void loop() {
   radio_manager.update(tracking_enabled && !positions.pending());
 
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
-  // RF packet is UNTRUSTED until the batch owner checks current credential,
-  // exact incarnation, Backend HMAC, and every retained logical record.
+  // The RadioManager keeps one untrusted receipt pending. Do not consume it
+  // for a temporary SecurityStore/OBS1 busy condition: authenticated backend
+  // delivery may take another downlink window. Bound retries so an old receipt
+  // with records no longer retained cannot starve fresh receipts indefinitely.
+  static uint8_t kq05_receipt_transient_tries = 0U;
+  static uint32_t kq05_receipt_retry_after_ms = 0U;
   if (radio_manager.role() == orun_tlp::NodeRole::kTracker &&
       !custody_ack_release.pending() && !kq05_batch_release.pending()) {
     orun_tlp::Kq05BatchReceiptRxFrame batch{};
-    if (radio_manager.takeKq05BatchReceiptFrame(&batch)) {
+    const uint32_t now_ms = orun_tlp::monotonic::nowMs();
+    if (radio_manager.peekKq05BatchReceiptFrame(&batch) &&
+        orun_tlp::monotonic::reached(
+            now_ms, kq05_receipt_retry_after_ms)) {
       const auto submitted = kq05_batch_release.submit(
           batch.payload, batch.size);
-      Serial.printf("KQ05 batch receipt submit=%u\n",
+      const bool temporary =
+          submitted == orun_tlp::Kq05BackendReceiptReleaseOwner::Submit::kBusy ||
+          submitted == orun_tlp::Kq05BackendReceiptReleaseOwner::Submit::kStorageUnavailable;
+      if (!temporary) {
+        radio_manager.discardKq05BatchReceiptFrame();
+        kq05_receipt_transient_tries = 0U;
+        kq05_receipt_retry_after_ms = 0U;
+      } else {
+        ++kq05_receipt_transient_tries;
+        if (kq05_receipt_transient_tries >= 12U) {
+          radio_manager.discardKq05BatchReceiptFrame();
+          kq05_receipt_transient_tries = 0U;
+          kq05_receipt_retry_after_ms = 0U;
+          Serial.println(F("KQ05 receipt deferred too long; request new receipt"));
+        } else {
+          kq05_receipt_retry_after_ms = now_ms + 5000U;
+        }
+      }
+      Serial.printf("KQ05 batch receipt submit=%u\\n",
                     static_cast<unsigned>(submitted));
       memset(batch.payload, 0, sizeof(batch.payload));
     }
