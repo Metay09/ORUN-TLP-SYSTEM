@@ -44,8 +44,8 @@ RfDutyBudget::Decision RfDutyBudget::reserve(
       static_cast<uint8_t>(Frame::kTest)) return Decision::kBadFrame;
   if (estimated_airtime_ms == 0U || estimated_airtime_ms > kMaxAirtimeMs)
     return Decision::kBadAirtime;
-  // Development policy: budget is immediately available at boot.
-  // No previous-boot usage is carried forward. Not field-compliance proof.
+  // Project rule: budget starts full on every boot; no prior-boot
+  // airtime is carried over and no start-up waiting is applied.
 
   const uint64_t current_minute = elapsed_ms_ / kBucketMs;
   const uint32_t used = totalInConservativeWindow(current_minute);
