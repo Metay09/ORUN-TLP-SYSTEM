@@ -445,9 +445,63 @@ void acklessLiveBypassesFourSlotCache() {
   assert(!still_retained.released);
 }
 
+
+void acklessHistoryIsPacedAndNeverReleases() {
+  resetFakes();
+  FakeFlash flash;
+  FixedIncarnation source;
+  ProductRecordStore records(flash, kPages, &source);
+  records.begin(kDevice, kTracker);
+  assert(records.mounted());
+  for (uint32_t seq = 1U; seq <= 3U; ++seq)
+    assert(store(records, seq).stored);
+
+  orun_tlp::SecurityStore security(flash, flash);
+  orun_tlp::ProductSecureCrypto crypto(security);
+  orun_tlp::RadioManager radio;
+  orun_tlp::TrackerAcklessLiveTx sender(records, crypto, radio);
+  assert(sender.update(1000U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kSent);
+  assert(sender.lastSent().sequence == 3U);
+  const unsigned flash_before = flash.program_calls;
+  const unsigned sent_before = g_sends;
+  assert(sender.updateHistory(1001U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent);
+  assert(sender.lastHistorySent().sequence == 1U);
+  assert(g_sends == sent_before + 1U);
+  assert(sender.updateHistory(1002U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kNone);
+  assert(sender.updateHistory(61002U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent);
+  assert(sender.lastHistorySent().sequence == 2U);
+  // Sequence 3 was already sent as LIVE, so skip it in this sweep.
+  assert(sender.updateHistory(121003U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kNone);
+  assert(g_sends == sent_before + 2U);
+  // The sweep does not loop immediately and flood the RF channel.
+  assert(sender.updateHistory(121004U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kNone);
+  assert(sender.updateHistory(421004U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent);
+  assert(sender.lastHistorySent().sequence == 1U);
+  assert(sender.historySentCount() == 3U);
+  assert(flash.program_calls == flash_before);
+  for (uint32_t seq = 1U; seq <= 3U; ++seq) {
+    osf::RecordIdentity id{};
+    id.incarnation = sender.lastSent().incarnation;
+    id.sequence = seq;
+    ObservationStore::Record retained{};
+    assert(records.store().lookup(id, retained) ==
+           ObservationStore::LookupResult::kFound);
+    assert(!retained.released);
+  }
+}
+
+
 }  // namespace
 
 int main() {
+  acklessHistoryIsPacedAndNeverReleases();
   acklessLiveBypassesFourSlotCache();
   successAndReboot(false);
   successAndReboot(true);
