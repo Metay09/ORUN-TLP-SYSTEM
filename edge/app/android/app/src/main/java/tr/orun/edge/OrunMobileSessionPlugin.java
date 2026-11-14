@@ -64,6 +64,12 @@ public final class OrunMobileSessionPlugin extends Plugin {
     private static final byte[] EDGE_DOMAIN =
             "ORUN:EDGE:KEYS:AESGCM:v1".getBytes(StandardCharsets.US_ASCII);
 
+    private static final String WRITE_FILE = "orun-tracker-write-keys.v1.bin";
+    private static final byte[] WRITE_DOMAIN =
+            "ORUN:TRACKER:WRITEKEYS:AESGCM:v1".getBytes(StandardCharsets.US_ASCII);
+    private static final int MAX_WRITE_KEYS = 1024;
+    private static final int MAX_WRITE_BLOB = 196608;
+
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
 
     private AtomicFile store() {
@@ -141,8 +147,12 @@ public final class OrunMobileSessionPlugin extends Plugin {
     }
 
     private void write(AtomicFile file, byte[] domain, JSONObject session) throws Exception {
+        write(file, domain, session, 2048);
+    }
+
+    private void write(AtomicFile file, byte[] domain, JSONObject session, int maxPlain) throws Exception {
         byte[] plain = session.toString().getBytes(StandardCharsets.UTF_8);
-        if (plain.length > 2048) throw new IllegalArgumentException("SESSION_TOO_BIG");
+        if (plain.length > maxPlain) throw new IllegalArgumentException("SESSION_TOO_BIG");
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, key(true));
         cipher.updateAAD(domain);
@@ -168,9 +178,13 @@ public final class OrunMobileSessionPlugin extends Plugin {
 
     /** Decrypted bytes of an encrypted session file, or null if absent. */
     private byte[] decrypt(AtomicFile file, byte[] domain) throws Exception {
+        return decrypt(file, domain, MAX_BLOB);
+    }
+
+    private byte[] decrypt(AtomicFile file, byte[] domain, int maxBlob) throws Exception {
         if (!file.getBaseFile().exists()) return null;
         byte[] packed = file.readFully();
-        if (packed.length < 1 + IV_BYTES + 16 || packed.length > MAX_BLOB ||
+        if (packed.length < 1 + IV_BYTES + 16 || packed.length > maxBlob ||
                 packed[0] != 1)
             throw new IllegalStateException("SESSION_BLOB_INVALID");
         SecretKey secret = key(false);
@@ -298,8 +312,11 @@ public final class OrunMobileSessionPlugin extends Plugin {
                 (uri.getRawPath() != null && !uri.getRawPath().isEmpty()) ||
                 !uri.toString().equals(origin))
             throw new IllegalArgumentException("HTTPS_ORIGIN_REQUIRED");
+        boolean passwordInstallation = ACCOUNT_ID.matcher(installation).matches();
+        boolean phoneInstallation = ID.matcher(installation).matches();
         if (!SITE.matcher(site).matches() || !ACTOR.matcher(actor).matches() ||
-                !ACCOUNT_ID.matcher(installation).matches() ||
+                !(passwordInstallation || phoneInstallation) ||
+                (phoneInstallation && !installation.equals(installedPhoneId())) ||
                 !USERNAME.matcher(username).matches() ||
                 !TOKEN.matcher(token).matches())
             throw new IllegalArgumentException("ACCOUNT_SESSION_INVALID");
@@ -366,6 +383,7 @@ public final class OrunMobileSessionPlugin extends Plugin {
                         json.getString("username"), json.getString("accessToken"), expiry);
                 if (expiry <= System.currentTimeMillis() / 1000) {
                     file.delete();
+                    store(WRITE_FILE).delete();
                     out.put("present", false);
                     call.resolve(out);
                     return;
@@ -378,7 +396,8 @@ public final class OrunMobileSessionPlugin extends Plugin {
                 call.resolve(out);
             } catch (Exception | LinkageError ignored) {
                 // Corrupt or foreign: forget it; the user signs in again.
-                try { file.delete(); } catch (Exception | LinkageError alsoIgnored) { }
+                try { file.delete(); store(WRITE_FILE).delete(); }
+                catch (Exception | LinkageError alsoIgnored) { }
                 JSObject out = new JSObject();
                 out.put("present", false);
                 call.resolve(out);
@@ -393,6 +412,7 @@ public final class OrunMobileSessionPlugin extends Plugin {
         worker.execute(() -> {
             try {
                 store(EDGE_FILE).delete();
+                store(WRITE_FILE).delete();
                 AtomicFile file = store(ACCOUNT_FILE);
                 if (file.getBaseFile().exists())
                     file.delete();
@@ -476,6 +496,86 @@ public final class OrunMobileSessionPlugin extends Plugin {
         worker.execute(() -> {
             try { store(EDGE_FILE).delete(); call.resolve(); }
             catch (Exception | LinkageError ignored) { call.reject("ORUN_EDGE_KEYS_CLEAR_FAILED"); }
+        });
+    }
+
+
+    /** KQ-02B: validate and account-bind Tracker BLE/LoRa signing authority. */
+    private static void validateWriteKeys(org.json.JSONArray keys) throws Exception {
+        if (keys == null || keys.length() > MAX_WRITE_KEYS)
+            throw new IllegalArgumentException("WRITE_KEY_COUNT");
+        java.util.HashSet<String> seen = new java.util.HashSet<>();
+        for (int i = 0; i < keys.length(); i++) {
+            JSONObject k = keys.getJSONObject(i);
+            String device = k.getString("device");
+            String secret = k.getString("writeKey");
+            Object rawEpoch = k.opt("epoch");
+            if (!(rawEpoch instanceof Number))
+                throw new IllegalArgumentException("WRITE_KEY_EPOCH");
+            double n = ((Number) rawEpoch).doubleValue();
+            if (!Double.isFinite(n) || Math.floor(n) != n ||
+                    n <= 0 || n >= 0xffffffffL)
+                throw new IllegalArgumentException("WRITE_KEY_EPOCH");
+            long epoch = ((Number) rawEpoch).longValue();
+            if (!device.matches("[0-9A-F]{16}") ||
+                    !secret.matches("[0-9A-F]{64}") ||
+                    secret.matches("0{64}") || secret.matches("F{64}") ||
+                    !seen.add(device + ":" + epoch))
+                throw new IllegalArgumentException("WRITE_KEY_INVALID");
+        }
+    }
+
+    @PluginMethod
+    public void putWriteKeys(PluginCall call) {
+        final org.json.JSONArray keys = call.getData().optJSONArray("keys");
+        worker.execute(() -> {
+            try {
+                validateWriteKeys(keys);
+                JSONObject account = edgeAccount();
+                JSONObject data = new JSONObject();
+                for (String k : new String[]{"origin", "site", "actor", "installation"})
+                    data.put(k, account.getString(k));
+                data.put("keys", keys);
+                write(store(WRITE_FILE), WRITE_DOMAIN, data, MAX_WRITE_BLOB - 29);
+                call.resolve();
+            } catch (Exception | LinkageError ignored) {
+                call.reject("ORUN_WRITE_KEYS_STORE_FAILED");
+            }
+        });
+    }
+
+    @PluginMethod
+    public void getWriteKeys(PluginCall call) {
+        worker.execute(() -> {
+            byte[] plain = null;
+            try {
+                JSONObject account = edgeAccount();
+                plain = decrypt(store(WRITE_FILE), WRITE_DOMAIN, MAX_WRITE_BLOB);
+                org.json.JSONArray keys = new org.json.JSONArray();
+                if (plain != null) {
+                    JSONObject data = new JSONObject(new String(plain, StandardCharsets.UTF_8));
+                    for (String k : new String[]{"origin", "site", "actor", "installation"})
+                        if (!account.getString(k).equals(data.getString(k)))
+                            throw new IllegalStateException("FOREIGN_ACCOUNT");
+                    keys = data.getJSONArray("keys");
+                    validateWriteKeys(keys);
+                }
+                JSObject out = new JSObject(); out.put("keys", keys); call.resolve(out);
+            } catch (Exception | LinkageError ignored) {
+                call.reject("ORUN_WRITE_KEYS_UNAVAILABLE");
+            } finally {
+                if (plain != null) Arrays.fill(plain, (byte) 0);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void clearWriteKeys(PluginCall call) {
+        worker.execute(() -> {
+            try { store(WRITE_FILE).delete(); call.resolve(); }
+            catch (Exception | LinkageError ignored) {
+                call.reject("ORUN_WRITE_KEYS_CLEAR_FAILED");
+            }
         });
     }
 

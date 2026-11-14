@@ -19,6 +19,7 @@ import { TrackerFenceBook, type FenceRecord } from "./trackerFences.ts";
 import { DeviceSettingsBook, type SettingValues, type Via as SettingsVia } from "./deviceSettings.ts";
 import { DeviceOpsBook, type FencePayload, type OpVia } from "./deviceOps.ts";
 import { WriteKeyBook } from "./writeKeys.ts";
+import { writeKeyVault, eraseLegacyWriteKeys } from "../platform/orunWriteKeys.ts";
 import { forgetAccount, loadAccount, storeAccount } from "../platform/orunAccountSession.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
 import type { Point, RecordId } from "../core/points.ts";
@@ -48,10 +49,20 @@ export function pilotAccountEmail(): string | null { return accountEmail; }
 let accountSettled = false;
 export function pilotAccountSettled(): boolean { return accountSettled; }
 
-async function persist(account: OwnerAccountClient): Promise<void> {
+async function persist(account: OwnerAccountClient, requireProtectedSave = false): Promise<void> {
   const stored = account.storableSession();
-  if (stored) await storeAccount(ORUN_ACCOUNT_ORIGIN, stored.identity, stored.accessToken)
-    .catch(() => { /* login still works for this run */ });
+  if (!stored) {
+    if (requireProtectedSave) throw new Error("Yeni hesap oturumu bulunamadı.");
+    return;
+  }
+  if (requireProtectedSave) {
+    // A new account must not become live while the native vault still belongs
+    // to the previous account. Otherwise write keys could be sealed to it.
+    await storeAccount(ORUN_ACCOUNT_ORIGIN, stored.identity, stored.accessToken);
+  } else {
+    await storeAccount(ORUN_ACCOUNT_ORIGIN, stored.identity, stored.accessToken)
+      .catch(() => { /* refresh retry later; the existing protected account remains */ });
+  }
 }
 
 /** 1b: on app start, bring back the login kept on this phone. Works offline;
@@ -65,6 +76,7 @@ export function pilotRestoreAccount(): Promise<void> {
     const restored = new OwnerAccountClient(ORUN_ACCOUNT_ORIGIN);
     restored.adopt(stored.identity, stored.accessToken);
     client = restored;
+    await writeKeys.load().catch(() => undefined);
     await edgeKeys.load().catch(() => undefined);
     observationsChanged?.();
     startAutoSync();
@@ -75,9 +87,11 @@ export function pilotRestoreAccount(): Promise<void> {
     if (check.state === "expired") {
       client = null;
       stopAutoSync();
-      writeKeys.clear();
+      // Expiry must revoke both in-memory authorities even if native IO fails.
+      const clearingWriteKeys = writeKeys.clear().catch(() => undefined);
       edgeKeys.clear();
       await forgetAccount();
+      await clearingWriteKeys;
       observationsChanged?.();
     } else if (check.state === "ok") {
       accountEmail = check.email;
@@ -175,8 +189,8 @@ const settingsServer = () => (client && pilotAccountStatus() ? client : null);
 
 /** 4c-1b: Bluetooth yazma anahtarları (hesaptan; çıkınca silinir). */
 export const edgeKeys = new EdgeKeyBook(edgeKeyVault);
-export const writeKeys = new WriteKeyBook(
-  typeof localStorage !== "undefined" ? (() => { try { return localStorage; } catch { return null; } })() : null);
+eraseLegacyWriteKeys();
+export const writeKeys = new WriteKeyBook(writeKeyVault);
 
 /** İşlemler: alan ve ayar gönderme kaydı (hesapta, telefonda bir kopya). */
 export const deviceOps = new DeviceOpsBook(
@@ -434,6 +448,10 @@ export function pilotAccountStatus(): AccountIdentity | null {
   if (identity.expiresAt <= Date.now() / 1000) {
     // Expired 12h token is never presented as a live login.
     client = null;
+    stopAutoSync();
+    void writeKeys.clear().catch(() => undefined);
+    edgeKeys.clear();
+    void forgetAccount();
     return null;
   }
   return identity;
@@ -448,7 +466,7 @@ export async function pilotPasswordLogin(
   try {
     // Drop previous account's signing authority before any network request.
     // This also invalidates in-flight key refreshes through WriteKeyBook.clear().
-    writeKeys.clear();
+    await writeKeys.clear();
     edgeKeys.clear();
     if (client) {
       const old = client;
@@ -457,10 +475,18 @@ export async function pilotPasswordLogin(
     }
     const next = new OwnerAccountClient(ORUN_ACCOUNT_ORIGIN);
     const user = await next.signInWithPassword(username, password);
+    // Do not activate a new account unless the corresponding native vault
+    // identity has been durably replaced. Fail closed on Keystore errors.
+    try {
+      await persist(next, true);
+    } catch {
+      await forgetAccount();
+      await next.signOut().catch(() => undefined);
+      throw new Error("Hesap güvenli saklanamadı; giriş tamamlanmadı.");
+    }
     client = next;
     observationsChanged?.();
     startAutoSync();
-    await persist(next);
     accountEmail = (await next.refresh()).email;
     accountChanged();
     return user;
@@ -478,7 +504,7 @@ export async function pilotAccountLogin(
     // Do not leave an old login active on the server when switching user.
     // Drop previous account's signing authority before any network request.
     // This also invalidates in-flight key refreshes through WriteKeyBook.clear().
-    writeKeys.clear();
+    await writeKeys.clear();
     edgeKeys.clear();
     if (client) {
       const old = client;
@@ -488,6 +514,15 @@ export async function pilotAccountLogin(
     }
     const next = new OwnerAccountClient(device.origin);
     const user = await next.signIn(device, username, password);
+    // Do not activate a new account unless the corresponding native vault
+    // identity has been durably replaced. Fail closed on Keystore errors.
+    try {
+      await persist(next, true);
+    } catch {
+      await forgetAccount();
+      await next.signOut().catch(() => undefined);
+      throw new Error("Hesap güvenli saklanamadı; giriş tamamlanmadı.");
+    }
     client = next;
     observationsChanged?.();
     startAutoSync();
@@ -524,9 +559,11 @@ export async function pilotAccountLogout(): Promise<void> {
   accountEmail = null;
   stopAutoSync();
   setSync({ running: false, last: null, error: null });
-  writeKeys.clear();
-      edgeKeys.clear();
-  await forgetAccount();
+  // Revoke both RAM authorities immediately, including if native IO fails.
+  const clearingWriteKeys = writeKeys.clear().catch(() => undefined);
+  edgeKeys.clear();
+  await forgetAccount();  // also deletes the native tracker-key file
+  await clearingWriteKeys;
   observationsChanged?.();
   accountChanged();
   if (prior) await prior.signOut();
