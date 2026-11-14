@@ -63,7 +63,7 @@ static void testInvalidArguments() {
          Decision::kAllowed);
 }
 
-static void testRebootGetsFreshBudgetInDevelopment() {
+static void testRebootGetsFreshBudget() {
   RfDutyBudget before;
   before.begin(0U);
   assert(before.reserve(0U, 360000U, Frame::kPosition) ==
@@ -71,8 +71,7 @@ static void testRebootGetsFreshBudgetInDevelopment() {
   assert(before.reserve(100U, 1U, Frame::kPosition) ==
          Decision::kExhausted);
 
-  // Explicit development policy: reboot forgets prior budget usage.
-  // This must not be mistaken for a rolling-hour regulatory guarantee.
+  // Permanent project policy: a reboot starts a fresh full budget.
   RfDutyBudget after;
   after.begin(0U);
   assert(after.reserve(0U, 1U, Frame::kCustodyAck) ==
@@ -86,6 +85,6 @@ int main() {
   testClockRegressionsFailClosed();
   testWrappedMillisClock();
   testInvalidArguments();
-  testRebootGetsFreshBudgetInDevelopment();
+  testRebootGetsFreshBudget();
   return 0;
 }
