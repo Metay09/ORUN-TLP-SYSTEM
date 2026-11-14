@@ -4759,7 +4759,7 @@ void loop() {
   const auto history_event = kq05_live_tx.updateHistory(
       orun_tlp::monotonic::nowMs(), pilot_allowed);
   if (history_event == orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent) {
-    Serial.printf("KQ05 HISTORY TX started seq=%lu delivery=unconfirmed\\n",
+    Serial.printf("KQ05 HISTORY TX started seq=%lu delivery=unconfirmed\n",
                   static_cast<unsigned long>(
                       kq05_live_tx.lastHistorySent().sequence));
   } else if (history_event ==
