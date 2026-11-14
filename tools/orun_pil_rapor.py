@@ -25,7 +25,6 @@ import sqlite3
 import statistics
 import sys
 
-ROOT = Path(__file__).resolve().parents[1]
 HOUR = 3600.0
 
 # --- uygulamayla aynı sayılar (batteryLife.ts, herd.ts) ---------------------
@@ -127,7 +126,7 @@ def runs(series: list[dict], mah: int) -> list[dict]:
         mv1 = statistics.median(x["mv"] for x in tail)
         used = (statistics.median(pct(x["mv"]) for x in head) -
                 statistics.median(pct(x["mv"]) for x in tail)) / 100 * mah
-        period = pts[0]["period"]
+        period = round(statistics.median(x["period"] for x in pts))
         seqs = [x["seq"] for x in pts if x["inc"] == pts[0]["inc"]]
         expected = (pts[-1]["t"] - pts[0]["t"]) / period + 1
         found.append({
@@ -151,7 +150,10 @@ def runs(series: list[dict], mah: int) -> list[dict]:
             continue
         if not off_since:
             off_since = r["t"]
-        if cur and cur[0]["period"] != r["period"]:
+        # period_s is the measured length of each report period (main.cpp
+        # finishProductPeriod), so it wanders by the GPS fix time: 3563, 3601...
+        # A run ends only when the interval itself changes (more than 25 %).
+        if cur and abs(r["period"] - cur[0]["period"]) > 0.25 * cur[0]["period"]:
             close()
         if r["t"] - off_since < SETTLE_S:
             continue
@@ -193,7 +195,7 @@ def when(t: float) -> str:
 
 
 def mins(s: int) -> str:
-    return f"{s // 60} dk" if s % 60 == 0 else f"{s} sn"
+    return f"{round(s / 60)} dk" if s >= 90 else f"{s} sn"
 
 
 def main(argv=None) -> int:
@@ -231,6 +233,11 @@ def main(argv=None) -> int:
         if not bat:
             continue
         last = bat[-1]
+        hist: dict[int, int] = {}
+        for r in bat:
+            hist[r["period"]] = hist.get(r["period"], 0) + 1
+        top = sorted(hist.items(), key=lambda kv: -kv[1])[:6]
+        print("Kayıttaki aralıklar (sn × adet): " + ", ".join(f"{k}×{v}" for k, v in top))
         print(f"Son: {when(last['t'])}  {last['mv']} mV (%{pct(last['mv']):.0f})  {last['power'] or '-'}"
               f"{'  USB' if last['usb'] else ''}  aralık {mins(last['period'])}")
         if not mah:
