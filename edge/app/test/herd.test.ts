@@ -33,20 +33,20 @@ test("fresh until the next report is due plus its arrival time (owner 2026-11-14
   assert.equal(freshnessOf(NOW - 2 * minute - 1, 60, NOW), "aging");
   assert.equal(freshnessOf(NOW - 30 * minute, 59, NOW), "aging");
   assert.equal(freshnessOf(NOW - 2 * 3600_000, 59, NOW), "stale");
-  // Two and three minutes: also one more report.
+  // Two minutes: one more report; three: two minutes more.
   assert.equal(freshLimit(2 * minute), 4 * minute);
-  assert.equal(freshLimit(3 * minute), 6 * minute);
-  // Five minutes: 8. The record measured 07:16 and the next one arriving
+  assert.equal(freshLimit(3 * minute), 5 * minute);
+  // Five minutes: 7. The record measured 07:16 and the next one arriving
   // 07:22 is not late (owner's phone).
-  assert.equal(freshLimit(5 * minute), 8 * minute);
+  assert.equal(freshLimit(5 * minute), 7 * minute);
   assert.equal(freshnessOf(NOW - 6 * minute, 300, NOW), "fresh");
-  assert.equal(freshnessOf(NOW - 8 * minute - 1, 300, NOW), "aging");
-  // Fifteen minutes and one hour: three minutes of slack, not another period.
-  assert.equal(freshLimit(15 * minute), 18 * minute);
-  assert.equal(freshnessOf(NOW - 18 * minute - 1, 900, NOW), "aging");
-  assert.equal(freshLimit(60 * minute), 63 * minute);
-  assert.equal(freshnessOf(NOW - 63 * minute, 3600, NOW), "fresh");
-  assert.equal(freshnessOf(NOW - 63 * minute - 1, 3600, NOW), "aging");
+  assert.equal(freshnessOf(NOW - 7 * minute - 1, 300, NOW), "aging");
+  // Fifteen minutes and one hour: two minutes of slack, not another period.
+  assert.equal(freshLimit(15 * minute), 17 * minute);
+  assert.equal(freshnessOf(NOW - 17 * minute - 1, 900, NOW), "aging");
+  assert.equal(freshLimit(60 * minute), 62 * minute);
+  assert.equal(freshnessOf(NOW - 62 * minute, 3600, NOW), "fresh");
+  assert.equal(freshnessOf(NOW - 62 * minute - 1, 3600, NOW), "aging");
   assert.equal(freshnessOf(null, 59, NOW), "none");
   assert.equal(freshRatio(NOW, 59, NOW), 1);
   assert.equal(freshRatio(NOW - 2 * 3600_000, 59, NOW), 0);

@@ -4,9 +4,9 @@
 // Freshness is the RECORD time (when the collar measured), never the time the
 // record reached the phone (core/points.ts rules). Thresholds follow the
 // collar's own report period T:
-//   fresh  <= T + min(T, 3 min)  (owner 2026-11-14: the next report plus the
+//   fresh  <= T + min(T, 2 min)  (owner 2026-11-14: the next report plus the
 //                               time to find the fix and reach the phone;
-//                               1 min -> 2, 5 min -> 8, 60 min -> 63)
+//                               1 min -> 2, 5 min -> 7, 60 min -> 62)
 //   aging  <= max(3T, 30 min), capped at 24 h
 //   silent  > agingLimit(T)    (stale: last position kept, shown grey)
 //   lost    > 2 * agingLimit(T), unless outside its allowed zones
@@ -29,8 +29,8 @@ export function periodMs(periodS: number | null | undefined): number {
 // GNSS fix and the trip to the phone. Exactly T made a 5-min collar turn
 // yellow ("bakın") for a minute every cycle (owner's phone, 2026-11-14:
 // 07:16 -> 07:22). The slack is one more report for short intervals and
-// never more than 3 minutes. A visual status, not a notification gate.
-export const freshLimit = (T: number) => T + Math.min(T, 3 * MIN);
+// never more than 2 minutes. A visual status, not a notification gate.
+export const freshLimit = (T: number) => T + Math.min(T, 2 * MIN);
 // Owner decision 2026-11-13: "no news" is counted in reports, because the
 // report interval changes (2 min .. 14 h): three reports in a row missing,
 // but never before 30 minutes and never later than 24 hours. "May be lost"
