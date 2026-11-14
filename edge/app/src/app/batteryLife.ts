@@ -40,6 +40,8 @@ export interface Drain {
   /** both: two intervals measured · one: one of the two is the default · none: defaults. */
   measured: "both" | "one" | "none";
   hours: number;
+  /** The runs the numbers rest on, and the one left out because it disagreed. */
+  runs?: Run[]; left?: Run;
 }
 
 const HOUR_MS = 3_600_000;
@@ -90,13 +92,15 @@ export function drainRuns(series: Reading[], mAh: number): Run[] {
  *  2026-11-14: a 5-minute run right after charging (4113 mV, top of the curve) read 1.07 mA
  *  where 2 min and 60 min put it at 2.1 mA, and pulled the standby current to 0.12 mA. */
 export function fitDrain(runs: Run[]): Drain {
-  const all = fitAll(runs);
+  const all: Drain = { ...fitAll(runs), runs };
   if (runs.length < 3 || all.measured !== "both" || worstMiss(runs, all) <= MISS) return all;
   let best: Drain | null = null, bestMah = 0;
   for (let i = 0; i < runs.length; i++) {
     const rest = runs.filter((_, j) => j !== i), d = fitAll(rest);
     const mah = rest.reduce((s, r) => s + r.mAh, 0);
-    if (d.measured === "both" && worstMiss(rest, d) <= MISS && mah > bestMah) { best = d; bestMah = mah; }
+    if (d.measured === "both" && worstMiss(rest, d) <= MISS && mah > bestMah) {
+      best = { ...d, runs: rest, left: runs[i] }; bestMah = mah;
+    }
   }
   return best ?? all;
 }
@@ -141,6 +145,22 @@ export function lifeAt(mAh: number, intervalS: number, d: Pick<Drain, "baseMa" |
     avgMa, mAhPerDay, daysFull: (mAh * USABLE) / mAhPerDay,
     daysLeft: nowPct !== null ? Math.max(0, ((mAh * nowPct) / 100 - mAh * (1 - USABLE)) / mAhPerDay) : null,
   };
+}
+
+/** What the numbers rest on, for the card: "2 dk 21 saat, 60 dk 16 saat · 5 dk (15 saat) uymadı, sayılmadı". */
+export function drainBasis(d: Drain, period: (s: number) => string): string {
+  if (d.measured === "none" || !d.runs?.length) return "tahmin · bu tasmada henüz ölçülmedi";
+  // The measured period wanders around the setting (3563 s for 60 min): nearest minute, nearest 5 above 10 min.
+  const nominal = (s: number) => { const m = Math.max(1, Math.round(s / 60)); return (m >= 10 ? Math.round(m / 5) * 5 : m) * 60; };
+  const one = (r: Run) => `${period(nominal(r.periodS))} ${Math.round(r.hours)} saat`;
+  const byInterval = new Map<number, Run>();
+  for (const r of d.runs) {   // one line per interval: the hours of all its runs together
+    const k = nominal(r.periodS), had = byInterval.get(k);
+    byInterval.set(k, had ? { ...had, hours: had.hours + r.hours } : r);
+  }
+  const used = [...byInterval.values()].sort((a, b) => a.periodS - b.periodS).map(one).join(", ");
+  const head = d.measured === "both" ? `bu tasmada ölçüldü: ${used}` : `kısmen ölçüldü (${used}, tek rapor aralığı)`;
+  return d.left ? `${head} · ${period(nominal(d.left.periodS))} (${Math.round(d.left.hours)} saat) uymadı, sayılmadı` : head;
 }
 
 /** "~30 saat", "~12 gün", "~5 ay", "~2 yıl". */

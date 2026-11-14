@@ -239,7 +239,8 @@ test("pil: tek düşük okuma şarj ya da düşüş sayılmaz", () => {
   assert.ok(smoothBattery(s).every((x) => x.p === 100));
 });
 
-import { BatteryCapacityBook, DRAIN_DEFAULT, drainRuns, fitDrain, lifeAt, lifeWord, type Reading } from "../src/app/batteryLife.ts";
+import { fmt } from "../src/app/i18n/tr.ts";
+import { BatteryCapacityBook, DRAIN_DEFAULT, drainBasis, drainRuns, fitDrain, lifeAt, lifeWord, type Reading } from "../src/app/batteryLife.ts";
 
 // A collar whose battery falls by `base` mA + `packet` mAh per report (450 mAh), from 4040 mV down.
 function discharge(from: number, hours: number, periodS: number, base: number, packet: number, startPct: number): { pts: Reading[]; endPct: number } {
@@ -308,6 +309,8 @@ test("pil ömrü: Hayvan 2 ölçümü (14 Kasım) — uymayan dönem dışarıda
   assert.ok(Math.abs(d.baseMa - 0.53) < 0.03, String(d.baseMa));
   assert.ok(Math.abs(d.packetMah - 0.129) < 0.005, String(d.packetMah));
   assert.equal(Math.round(lifeAt(450, 3600, d).daysFull), 23);
+  assert.equal(drainBasis(d, fmt.period), "bu tasmada ölçüldü: 2 dk 21 saat, 60 dk 16 saat · 5 dk (15 saat) uymadı, sayılmadı");
+  assert.equal(drainBasis(fitDrain([]), fmt.period), "tahmin · bu tasmada henüz ölçülmedi");
   // Hepsi birbirine uyuyorsa hiçbiri atılmaz.
   const ok = runs.map((r) => ({ ...r, mAh: r.hours * (0.5 + (0.13 * r.packets) / r.hours) }));
   const all = fitDrain(ok);

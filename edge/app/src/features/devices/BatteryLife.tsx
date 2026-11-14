@@ -4,7 +4,7 @@ import { useMemo, useState, useSyncExternalStore } from "react";
 import { CaretRight } from "@phosphor-icons/react";
 import { deviceSettings, pilotSetBatteryCapacity } from "../../app/ownerAccountPilotRuntime.ts";
 import {
-  batteryCapacity, drainRuns, fitDrain, lifeAt, lifeWord, MAH_MAX, MAH_MIN, USABLE, type Reading,
+  batteryCapacity, drainBasis, drainRuns, fitDrain, lifeAt, lifeWord, MAH_MAX, MAH_MIN, USABLE, type Reading,
 } from "../../app/batteryLife.ts";
 import { fmt } from "../../app/i18n/tr.ts";
 import type { Animal } from "../../app/model.ts";
@@ -15,7 +15,7 @@ const INFO =
   `Ortalama tüketim = bekleme akımı + rapor başına maliyet × saatteki rapor sayısı. İki sayı bu tasmanın pille ` +
   `çalışırken ölçülen pil düşüşünden çıkarılır; yeterli ölçüm yoksa başka bir tasmada ölçülen değerler kullanılır ve ` +
   `"tahmin" yazar. Pil kapasitesinin %${USABLE * 100}'i kullanılabilir sayılır. İki ayrı rapor aralığında en az 6'şar saat ` +
-  `pille çalışınca iki sayı da ölçülmüş olur. Güneş katkısı katılmaz.`;
+  `pille çalışınca iki sayı da ölçülmüş olur; diğerlerine uymayan bir dönem (ör. şarjdan hemen sonra) sayılmaz. Güneş katkısı katılmaz.`;
 
 /** The report interval the collar is set to (what it reported, else what was asked), not one record's period. */
 export function useConfiguredInterval(a: Pick<Animal, "device" | "periodS"> | null, device?: string): number | null {
@@ -35,8 +35,7 @@ export function BatteryLife({ device, intervalS, series, nowPct }: {
   const [editing, setEditing] = useState(false);
   const drain = useMemo(() => fitDrain(mAh ? drainRuns(series, mAh) : []), [series, mAh]);
   const life = mAh && intervalS ? lifeAt(mAh, intervalS, drain, nowPct) : null;
-  const basis = drain.measured === "both" ? `bu tasmanın ${Math.round(drain.hours)} saatlik ölçümünden`
-    : drain.measured === "one" ? `kısmen ölçüldü (${Math.round(drain.hours)} saat, tek rapor aralığı)` : "tahmin · bu tasmada henüz ölçülmedi";
+  const basis = drainBasis(drain, fmt.period);
 
   return (
     <>
