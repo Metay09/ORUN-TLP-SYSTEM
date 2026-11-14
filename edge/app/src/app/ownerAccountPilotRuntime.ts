@@ -232,10 +232,25 @@ function refreshNames(): void {
   }
 }
 
-/** 2c: the farm's gateways, or null when signed out. */
+/** 2c: the farm's gateways, or null when signed out. Without Internet the
+ * last list of this account is used: the phone must still recognise its own
+ * gateway in a Bluetooth scan (owner's phone, airplane mode, 2026-11-14:
+ * "Tanınmayan ORUN cihazı"). Each entry keeps its own times. */
+const GATEWAYS_KEY = "orun.app.gateways.v1";
 export async function pilotGateways(): Promise<FarmGateway[] | null> {
-  if (!client || !pilotAccountStatus()) return null;
-  return client.gateways();
+  const who = pilotAccountStatus();
+  if (!client || !who) return null;
+  try {
+    const list = await client.gateways();
+    try { localStorage.setItem(GATEWAYS_KEY, JSON.stringify({ actor: who.actor, list })); } catch { /* memory only */ }
+    return list;
+  } catch (e) {
+    try {
+      const kept = JSON.parse(localStorage.getItem(GATEWAYS_KEY) ?? "null") as { actor?: string; list?: FarmGateway[] } | null;
+      if (kept && kept.actor === who.actor && Array.isArray(kept.list)) return kept.list;
+    } catch { /* nothing kept */ }
+    throw e;
+  }
 }
 
 /** Read-only, account-authorized PC spool status (not a direct Gateway ACK). */
