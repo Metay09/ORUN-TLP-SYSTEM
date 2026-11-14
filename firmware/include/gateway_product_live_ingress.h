@@ -28,6 +28,9 @@ class GatewayProductLiveIngress final {
   Receive receive(const uint8_t* frame, size_t size);
   Service service();
   bool pending() const { return pending_; }
+  bool storageBusy() const {
+    return pending_ || store_.busy() || store_.hasOutcome();
+  }
   uint64_t gatewayId() const { return gateway_id_; }
 
  private:

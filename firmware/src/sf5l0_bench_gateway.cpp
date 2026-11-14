@@ -15,6 +15,9 @@
 #include "gateway_custody_authorized_ingress.h"
 #include "gateway_local_custody_owner.h"
 #include "gateway_product_custody_runtime.h"
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#include "gateway_product_live_ingress.h"
+#endif
 #include "gateway_product_startup_guard.h"
 #include "node_role.h"
 #include "product_custody_store.h"
@@ -46,6 +49,9 @@ Sf5l0BenchGrantSource* grants = nullptr;
 Guard* guard = nullptr;
 GatewayCustodyAuthorizedIngress* ingress = nullptr;
 GatewayProductCustodyRuntime* runtime = nullptr;
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+GatewayProductLiveIngress* live_ingress = nullptr;
+#endif
 Sf5l0EdgeHandoff* handoff = nullptr;
 Sf5l0EdgeLinkSession* edge_session = nullptr;
 
@@ -378,7 +384,12 @@ void begin(FlashBackend& port, FlashBackend& security_port,
                     *grants, gateway_id);
   ingress = new GatewayCustodyAuthorizedIngress(*custody_owner, *grants,
                                                 gateway_id);
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  live_ingress = new GatewayProductLiveIngress(*custody, *grants, gateway_id);
+  runtime = new GatewayProductCustodyRuntime(radio_manager, *ingress, *live_ingress);
+#else
   runtime = new GatewayProductCustodyRuntime(radio_manager, *ingress);
+#endif
   handoff = new Sf5l0EdgeHandoff(*custody, gateway_id);
 #if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
   uint8_t edge_key[32]{};
@@ -470,6 +481,22 @@ void service(bool observation_store_mounted) {
   const Event event = runtime->updateGuarded(
       *guard, roleOk() && !erase_active, observation_store_mounted);
   switch (event) {
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+    case Event::kLiveStarted:
+      Serial.println(F("KQ05 GW LIVE opaque Flash write started"));
+      break;
+    case Event::kLiveDurable:
+      emit_pending = true;
+      Serial.println(F("KQ05 GW LIVE durable opaque; no ACK"));
+      break;
+    case Event::kLiveDuplicate:
+      emit_pending = true;
+      Serial.println(F("KQ05 GW LIVE duplicate durable; no ACK"));
+      break;
+    case Event::kLiveDenied:
+      Serial.println(F("KQ05 GW LIVE denied; no delivery credit"));
+      break;
+#endif
     case Event::kCustodyStarted:
       ++custody_started;
       Serial.println(F("BENCH GW RX record; durable custody write started"));

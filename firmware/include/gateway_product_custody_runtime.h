@@ -3,6 +3,9 @@
 #include <stdint.h>
 
 #include "gateway_custody_authorized_ingress.h"
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#include "gateway_product_live_ingress.h"
+#endif
 #include "gateway_product_startup_guard.h"
 #include "radio_manager.h"
 
@@ -16,11 +19,20 @@ class GatewayProductCustodyRuntime final {
  public:
   enum class Event : uint8_t {
     kNone, kCustodyStarted, kDuplicateHeld, kDenied, kAckTxStarted
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+    , kLiveStarted, kLiveDurable, kLiveDuplicate, kLiveDenied
+#endif
   };
 
   GatewayProductCustodyRuntime(RadioManager& radio,
                                GatewayCustodyAuthorizedIngress& ingress)
       : radio_(radio), ingress_(ingress) {}
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  GatewayProductCustodyRuntime(RadioManager& radio,
+                               GatewayCustodyAuthorizedIngress& ingress,
+                               GatewayProductLiveIngress& live)
+      : radio_(radio), ingress_(ingress), live_(&live) {}
+#endif
 
   // Call after RadioManager::update() in the SAME loop task as grant mutation.
   // enabled must be granted by an authenticated Gateway service owner, NEVER
@@ -46,6 +58,9 @@ class GatewayProductCustodyRuntime final {
  private:
   RadioManager& radio_;
   GatewayCustodyAuthorizedIngress& ingress_;
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  GatewayProductLiveIngress* live_ = nullptr;
+#endif
   int16_t last_rssi_ = 0;
   int8_t last_snr_ = 0;
 };
