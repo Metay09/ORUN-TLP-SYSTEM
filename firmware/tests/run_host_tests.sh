@@ -1083,3 +1083,6 @@ bash tools/ci/run_step3b_gateway_grants_host.sh
 # intentionally returns BLOCKED until normal-image TX/Gateway/security and
 # physical cross-device/Backend/Android proof are complete.
 python3 firmware/tests/sf5/test_orun_product_release_gate.py
+
+# KQ-05: deterministic HOST model only (not active firmware, not a CI gate).
+python3 tools/kq05_receipt_model.py --test
