@@ -111,6 +111,10 @@ g++ "${flags[@]}" firmware/tests/b4/test_b4_network.cpp \
   -o "$test_dir/b4_network"
 "$test_dir/b4_network"
 
+g++ "${portable_flags[@]}" firmware/tests/sf5/test_kq04_rf_duty_budget.cpp \
+  firmware/src/rf_duty_budget.cpp -o "$test_dir/kq04_rf_duty"
+"$test_dir/kq04_rf_duty"
+
 g++ "${portable_flags[@]}" firmware/tests/m6/test_m6p1_radio_policy.cpp \
   firmware/src/radio_listen_policy.cpp -o "$test_dir/m6p1_radio_policy"
 "$test_dir/m6p1_radio_policy"
@@ -557,7 +561,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r2/test_patch_radio.py "$test_d
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp \
   "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/rf_duty_budget.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp \
@@ -571,7 +575,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp 
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/m6/test_m6p1_radio.cpp "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/rf_duty_budget.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp \
@@ -585,7 +589,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
   "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/rf_duty_budget.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
@@ -598,7 +602,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
 "$test_dir/r2"
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/sf5/test_sf5j_radio_transport.cpp "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/rf_duty_budget.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
   firmware/src/radio_driver_gate.cpp firmware/src/rak_device_identity.cpp \
@@ -611,7 +615,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
 # SF5K3K actual radio receiver assertions under explicit test define.
 g++ -DORUN_SF5K3K_ACK_RX_TEST -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/sf5/test_sf5j_radio_transport.cpp "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp \
+  firmware/src/radio_manager.cpp firmware/src/rf_duty_budget.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp \
   firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
@@ -630,7 +634,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/activity_quality.cpp firmware/src/activity_auto_sampler.cpp \
   firmware/src/activity_period_evidence.cpp \
   firmware/src/accelerometer_manager.cpp \
-  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/rf_duty_budget.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/radio_driver_gate.cpp \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \

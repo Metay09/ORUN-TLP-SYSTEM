@@ -25,6 +25,9 @@ bool RadioManager::sendAuthorizedCustodyAck(
   if (!canSend() || device_id_ == 0U ||
       ingress.localGatewayId() != device_id_) return false;
 
+  // Preserve the one-shot ACK when duty airtime is unavailable.
+  if (!rfMayTransmit(custody_ack::kWireSize,
+                     RfDutyBudget::Frame::kCustodyAck)) return false;
   uint8_t ack[custody_ack::kWireSize]{};
   // Final live grant check; may use independent flash resources, so do not
   // hold radio_driver::Guard while calling it.
@@ -45,6 +48,10 @@ bool RadioManager::sendAuthorizedCustodyAck(
     return false;
   }
 
+  if (!reserveRfTransmit(sizeof(ack), RfDutyBudget::Frame::kCustodyAck)) {
+    memset(ack, 0, sizeof(ack));
+    return false;
+  }
   startTxOperation();
   tx_kind_ = TxKind::kCustodyAck;
   tx_role_epoch_ = role_epoch_;
