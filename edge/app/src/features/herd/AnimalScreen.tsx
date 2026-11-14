@@ -175,7 +175,7 @@ function Today({ a, now }: { a: Animal; now: number }) {
         )}
       </Card>
 
-      {a.device && <BatteryLife device={a.device} intervalS={interval} series={a.batteryTrail} nowPct={a.batteryPercent} />}
+      {a.device && a.batteryPower !== "NO_BATTERY" && <BatteryLife device={a.device} intervalS={interval} series={a.batteryTrail} nowPct={a.batteryPercent} />}
 
       {a.device && <>
         <Section title={tr.animal.device} />

@@ -188,7 +188,7 @@ export function DeviceScreen({ id, ble }: { id: string; ble?: string }) {
         </Card>
       </>}
 
-      {!isGateway && <BatteryLife device={up} intervalS={interval} series={a?.batteryTrail ?? []} nowPct={a?.batteryPercent ?? dev?.batteryPercent ?? null} />}
+      {!isGateway && a?.batteryPower !== "NO_BATTERY" && <BatteryLife device={up} intervalS={interval} series={a?.batteryTrail ?? []} nowPct={a?.batteryPercent ?? dev?.batteryPercent ?? null} />}
 
       {!isGateway && myOps.active.length > 0 && <>
         <Section title="İşlemler" info="Her ayar kaydı ve 'Tasmalara uygula' bir işlemdir. Sıradakiler tasmaya bağlanınca (şimdilik USB) kendiliğinden işlenir; 'Tasmaya işlendi' yalnız tasma onaylayınca yazılır." />
