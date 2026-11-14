@@ -312,8 +312,11 @@ public final class OrunMobileSessionPlugin extends Plugin {
                 (uri.getRawPath() != null && !uri.getRawPath().isEmpty()) ||
                 !uri.toString().equals(origin))
             throw new IllegalArgumentException("HTTPS_ORIGIN_REQUIRED");
+        boolean passwordInstallation = ACCOUNT_ID.matcher(installation).matches();
+        boolean phoneInstallation = ID.matcher(installation).matches();
         if (!SITE.matcher(site).matches() || !ACTOR.matcher(actor).matches() ||
-                !ACCOUNT_ID.matcher(installation).matches() ||
+                !(passwordInstallation || phoneInstallation) ||
+                (phoneInstallation && !installation.equals(installedPhoneId())) ||
                 !USERNAME.matcher(username).matches() ||
                 !TOKEN.matcher(token).matches())
             throw new IllegalArgumentException("ACCOUNT_SESSION_INVALID");
