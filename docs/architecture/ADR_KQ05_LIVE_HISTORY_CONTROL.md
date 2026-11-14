@@ -51,3 +51,13 @@ Mock model sınırsız Flash değildir: kapasite dolduğunda açık FLASH_FULL �
 - [ ] #221 ürün kapısı ve #305 bütçe PR entegrasyonu, gerçek donanım/anahtar kabulü.
 
 Mevcut 2/5/60 dakika eski firmware pil denemeleri sürerken **cihazlara flash, çalışan servislere/DB'ye müdahale ve production main merge yok**.
+
+## KQ-05B ilk gerçek firmware kod dilimi (taslak, etkin DEĞİL)
+
+- `TrackerAcklessLiveTx` doğrudan `ProductRecordStore` içindeki en yeni kalıcı PERIODIC kaydı okur, `ProductSecureCrypto` ile yeni nonce ve AEAD korumalı `PRODUCT_SECURE` çerçeve üretir, `RadioManager` üzerinden gönderir. **Eski dört exact-object önbelleğine yazmaz; önceki paketin ACK'sini beklemez.**
+- `path_flags=0` (doğrudan canlı bilgi; **custody talebi değil**); tasmanın kalıcı kaydı serbest bırakılmaz. RF kabul reddinde 30 saniye geri çekilir; bu sürede nonce yakarak tekrar tekrar denemez. Yeni kayıt eski canlı adayı geçer.
+- Mevcut `GatewayCustodyAuthorizedIngress` **custody istemeyen çerçeveyi reddeder**. Gerçek Gateway kalıcı kayıt kabulü, AEAD çözümü, deduplikasyon, seçmeli makbuz ve Flash release/checkpoint henüz yoktur. **Bu yüzden bu gönderim tek başına uçtan uca çalışmaz.**
+- Deneysel yol yalnız `ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE` ile açılır; `ORUN_SF5K3V_TRACKER_TX_PILOT` da gerektirir. Normal `rak4630` imajında kesinlikle kapalıdır. Eski custody pilotu derleme bayrağı kapalıysa aynı kalır.
+- `test_sf5k3v_tracker_pilot.cpp` kapsamına gerçek ProductRecordStore fake Flash üzerinde dolu **4/4** cache, yeni 5. ve 7. konumun önbellek dışı gönderimi, ret/backoff ve false release olmaması regresyonları eklenir. Fake `ProductSecureCrypto` gerçek AEAD değildir: fiziksel/kriptografik kabul hâlâ ayrı.
+
+**Geçiş siyaseti:** Kullanıcı eski test kayıtlarının temizlenmesini kabul etti; bu gelecekte kontrollü temiz geçişe izin verir ama mevcut cihaz Flash'ını veya backend'i otomatik silme yetkisi değildir. Herhangi bir silmeden önce hangi cihaz ve hangi kayıtların temizleneceği ayrı planlanacak.

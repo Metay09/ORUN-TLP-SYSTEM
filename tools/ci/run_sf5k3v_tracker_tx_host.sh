@@ -14,6 +14,7 @@ fi
 "$cxx" "${flags[@]}" \
   firmware/tests/sf5/test_sf5k3v_tracker_pilot.cpp \
   firmware/src/tracker_product_tx_pilot.cpp \
+  firmware/src/tracker_ackless_live_tx.cpp \
   firmware/src/product_record_store.cpp firmware/src/product_region.cpp \
   firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
   firmware/src/observation_store_format.cpp \

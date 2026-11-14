@@ -7,6 +7,7 @@
 
 #include "security_store.h"
 #include "tracker_product_tx_pilot.h"
+#include "tracker_ackless_live_tx.h"
 
 #define main sf5f_original_host_main
 #include "test_sf5f_product_record_store.cpp"
@@ -16,12 +17,14 @@ namespace {
 unsigned g_seals = 0U;
 unsigned g_sends = 0U;
 bool g_radio_ready = true;
+bool g_deny_tx = false;
 uint8_t g_last[orun_tlp::tlp::kPeriodicFrameSize]{};
 size_t g_last_size = 0U;
 void resetFakes() {
   g_seals = 0U;
   g_sends = 0U;
   g_radio_ready = true;
+  g_deny_tx = false;
   g_last_size = 0U;
   memset(g_last, 0, sizeof(g_last));
 }
@@ -51,7 +54,7 @@ ProductSecureCryptoResult ProductSecureCrypto::protectNextPeriodic(
 bool RadioManager::canSend() const { return g_radio_ready; }
 uint64_t RadioManager::deviceId() const { return kDevice; }
 bool RadioManager::sendProductSecurePacket(const uint8_t* object, size_t n) {
-  if (!g_radio_ready || n != sizeof(g_last)) return false;
+  if (!g_radio_ready || g_deny_tx || n != sizeof(g_last)) return false;
   memcpy(g_last, object, n);
   g_last_size = n;
   ++g_sends;
@@ -376,13 +379,80 @@ void liveOnly() {
   drain.setLiveFirst(true);
   assert(sendOne(home, drain).sequence == 1U);
 }
+void acklessLiveBypassesFourSlotCache() {
+  resetFakes();
+  FakeFlash flash;
+  FixedIncarnation source;
+  ProductRecordStore records(flash, kPages, &source);
+  records.begin(kDevice, kTracker);
+  orun_tlp::SecurityStore security(flash, flash);
+  orun_tlp::ProductSecureCrypto crypto(security);
+  orun_tlp::RadioManager radio;
+
+  // Deliberately occupy ALL four legacy custody cache slots using the old
+  // pilot. KQ-05 should still transport the next fresh secure observation.
+  Pilot old_pilot(records, crypto, radio);
+  old_pilot.setLiveOnly(true);
+  for (uint32_t seq = 1U; seq <= 4U; ++seq) {
+    assert(store(records, seq).stored);
+    assert(sendOne(records, old_pilot).sequence == seq);
+  }
+  uint16_t occupied = 0U;
+  assert(records.store().exactObjectCount(occupied) && occupied == 4U);
+  assert(store(records, 5U).stored);
+  const unsigned flash_programs = flash.program_calls;
+
+  orun_tlp::TrackerAcklessLiveTx live(records, crypto, radio);
+  const unsigned sends_before = g_sends;
+  assert(live.update(1000U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kSent);
+  assert(g_sends == sends_before + 1U);
+  assert(live.lastSent().sequence == 5U);
+  assert(flash.program_calls == flash_programs); // no cache flash write
+  assert(records.store().exactObjectCount(occupied) && occupied == 4U);
+
+  orun_tlp::tlp::ProductSecureFrame frame{};
+  assert(orun_tlp::tlp::decodeProductSecureFrame(
+      g_last, g_last_size, &frame) ==
+      orun_tlp::tlp::ProductSecureCodecResult::kOk);
+  assert((frame.path_flags &
+          orun_tlp::tlp::kProductPathFlagCustodyRequested) == 0U);
+
+  assert(live.update(1001U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kNone);
+  assert(g_sends == sends_before + 1U);
+
+  // A denied TX consumes zero delivery credits and is backed off. A later
+  // successful send still uses the newest identity, with no ACK gate.
+  assert(store(records, 6U).stored);
+  g_deny_tx = true;
+  assert(live.update(1100U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kDeferred);
+  const unsigned seal_at_deny = g_seals;
+  for (uint32_t i = 0U; i < 1000U; ++i)
+    assert(live.update(1101U + i, true) ==
+           orun_tlp::TrackerAcklessLiveTx::Event::kNone);
+  assert(g_seals == seal_at_deny);
+  assert(store(records, 7U).stored);
+  g_deny_tx = false;
+  assert(live.update(31100U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kSent);
+  assert(live.lastSent().sequence == 7U);
+  assert(records.store().exactObjectCount(occupied) && occupied == 4U);
+  ObservationStore::Record still_retained{};
+  assert(records.store().lookup(live.lastSent(), still_retained) ==
+         ObservationStore::LookupResult::kFound);
+  assert(!still_retained.released);
+}
+
 }  // namespace
 
 int main() {
+  acklessLiveBypassesFourSlotCache();
   successAndReboot(false);
   successAndReboot(true);
   cacheFailureKeepsRecord();
   liveFirst();
   liveOnly();
-  puts("SF5K3V exact-cache-before-RF/same-bytes-reboot/fault + SF5L4 live-first/live-only host: PASS");
+  puts("KQ05 ACKless secure LIVE 4/4 bypass and RF denial + SF5K3V legacy custody cache: PASS");
 }

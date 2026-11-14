@@ -63,6 +63,9 @@
 #ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
 #include "product_secure_crypto.h"
 #include "tracker_product_tx_pilot.h"
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#include "tracker_ackless_live_tx.h"
+#endif
 #endif
 #if defined(ORUN_SF5L0_TRACKER) || defined(ORUN_SF5L0_GATEWAY)
 #include "ble_write_auth.h"
@@ -198,6 +201,10 @@ orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort()
 // The only Tracker release owner: grant/HMAC verification precedes flash.
 orun_tlp::CustodyAckReleaseOwner custody_ack_release(security_store,
                                                       product_records);
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
+    !defined(ORUN_SF5K3V_TRACKER_TX_PILOT)
+#error "KQ05 experimental sender requires explicit SF5K3V Tracker pilot image"
+#endif
 #ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
 // Explicit test-image activation only; the default product runtime still
 // sends the existing TLP v1/History path until Gateway commissioning is ready.
@@ -205,6 +212,11 @@ orun_tlp::ProductSecureCrypto product_crypto(security_store);
 orun_tlp::TrackerProductTxPilot tracker_product_tx(product_records,
                                                   product_crypto,
                                                   radio_manager);
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+// Isolated experimental cutover; NEVER enabled by normal rak4630 image.
+orun_tlp::TrackerAcklessLiveTx kq05_live_tx(product_records, product_crypto,
+                                            radio_manager);
+#endif
 #endif
 #ifdef ORUN_SF5L0_TRACKER
 // Real-credential provisioning over USB (BENCH PROVISION); Y2a: no test key.
@@ -4675,6 +4687,29 @@ void loop() {
                       tracker_product_tx.automaticRecoveries()));
   }
 #endif
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  // No exact-object cache, no per-record ACK, no release. The receiving
+  // Gateway/receipt security path is NOT implemented yet. Keep opt-in OFF.
+  switch (kq05_live_tx.update(orun_tlp::monotonic::nowMs(), pilot_allowed)) {
+    case orun_tlp::TrackerAcklessLiveTx::Event::kSent:
+      Serial.printf("KQ05 LIVE TX started seq=%lu delivery=unconfirmed\\n",
+                    static_cast<unsigned long>(
+                        kq05_live_tx.lastSent().sequence));
+      break;
+    case orun_tlp::TrackerAcklessLiveTx::Event::kBadRecord:
+      Serial.println(F("KQ05 LIVE invalid stored record"));
+      break;
+    case orun_tlp::TrackerAcklessLiveTx::Event::kReadError:
+      Serial.println(F("KQ05 LIVE store read error"));
+      break;
+    case orun_tlp::TrackerAcklessLiveTx::Event::kCryptoError:
+      Serial.println(F("KQ05 LIVE crypto error"));
+      break;
+    case orun_tlp::TrackerAcklessLiveTx::Event::kDeferred:
+    case orun_tlp::TrackerAcklessLiveTx::Event::kNone:
+      break;
+  }
+#else
   switch (tracker_product_tx.update(pilot_allowed)) {
     case orun_tlp::TrackerProductTxPilot::Event::kCachePending:
       Serial.println(F("PRODUCT PILOT exact cache=pending"));
@@ -4722,6 +4757,7 @@ void loop() {
     }
   }
 #endif
+#endif  // !ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
 #ifdef ORUN_SF5L0_TRACKER
   }  // trackerStorage()
 #endif
