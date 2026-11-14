@@ -14,10 +14,12 @@ import { batteryPercentExact } from "./herd.ts";
 
 /** Where nothing was measured on this collar. */
 export const DRAIN_DEFAULT = {
-  /** Per report: GPS start + send + 10 s listen. Hayvan 2 (450 mAh), 2-minute reports, 21 h, 2026-11-13. */
-  packetMah: 0.15,
-  /** Between reports. Not measured yet (same bench bounds it to 0.05-0.3 mA); published sleep figure is 0.03. */
-  baseMa: 0.15,
+  /** Per report: GPS start + send + 10 s listen. Hayvan 2 (450 mAh, LoRa records): 2 min for 21 h
+   *  = 4.39 mA and 60 min for 16 h = 0.66 mA give 0.13 mAh per report (2026-11-14). */
+  packetMah: 0.13,
+  /** Between reports, the same two runs: 0.53 mA (firmware before #295/#296: no DC/DC, 10 ms loop).
+   *  Was 0.15, a guess; with it the app promised ~50 days at 60 min where the collar measured ~23. */
+  baseMa: 0.5,
 };
 const BASE_MIN_MA = 0.02, PACKET_MIN_MAH = 0.02;
 /** u-blox ZOE-M8Q continuous: 25 mA. Under 60 s the GNSS stays on (gnss_config kShortIntervalThreshold). */
@@ -28,11 +30,18 @@ export const USABLE = 0.8;
 export interface Reading { t: number; mv: number; power?: string | null; usb?: boolean | null; periodS?: number | null; }
 /** One stretch on the battery alone at one report interval. */
 export interface Run { hours: number; packets: number; mAh: number; periodS: number; }
+/** Same report interval: the record's period_s is each period's measured length (firmware
+ *  finishProductPeriod), so it wanders with the GPS fix time (3563, 3601, 119, 122 s). */
+const sameInterval = (a: number, b: number) => Math.abs(a - b) <= 0.25 * b;
+/** A run ends only when this many reports in a row agree on another interval. */
+const NEW_INTERVAL_POINTS = 3;
 export interface Drain {
   baseMa: number; packetMah: number;
   /** both: two intervals measured · one: one of the two is the default · none: defaults. */
   measured: "both" | "one" | "none";
   hours: number;
+  /** The runs the numbers rest on, and the one left out because it disagreed. */
+  runs?: Run[]; left?: Run;
 }
 
 const HOUR_MS = 3_600_000;
@@ -50,24 +59,61 @@ export function drainRuns(series: Reading[], mAh: number): Run[] {
     const head = pts.slice(0, k), tail = pts.slice(-k);
     const hours = (median(tail.map((x) => x.t)) - median(head.map((x) => x.t))) / HOUR_MS;
     const used = ((median(head.map((x) => batteryPercentExact(x.mv))) - median(tail.map((x) => batteryPercentExact(x.mv)))) / 100) * mAh;
-    const periodS = pts[0].periodS!;
+    const periodS = median(pts.map((x) => x.periodS!));
     // A battery that did not fall (solar, unnoticed charging) measures nothing.
     if (hours >= RUN_MIN_H && used > 0) runs.push({ hours, packets: (hours * 3600) / periodS, mAh: used, periodS });
   };
+  let odd: Reading[] = [];
   for (const r of [...series].sort((a, b) => a.t - b.t)) {
-    if (r.usb === true || r.power === "NO_BATTERY" || r.power === "FULL") { close(); offSince = 0; continue; }
+    if (r.usb === true || r.power === "NO_BATTERY" || r.power === "FULL") { close(); odd = []; offSince = 0; continue; }
+    // Firmware without the power state (before Pil 1/2, 2026-11-12) read the battery while the
+    // radio and GPS were working and did not tell charging: jumps of 200-300 mV in minutes.
+    if (r.power == null) { close(); odd = []; offSince = 0; continue; }
     if (!r.periodS || r.periodS <= 0) continue;
     if (!offSince) offSince = r.t;
-    if (cur.length && cur[0].periodS !== r.periodS) close();
     if (r.t - offSince < SETTLE_MS) continue;
+    // One long period now and then (GPS gave up, a report was missed) does not end the run.
+    if (cur.length && !sameInterval(r.periodS, median(cur.map((x) => x.periodS!)))) {
+      if (odd.length && !sameInterval(r.periodS, odd[0].periodS!)) odd = [];
+      odd.push(r);
+      if (odd.length >= NEW_INTERVAL_POINTS) { close(); cur = odd; odd = []; }
+      continue;
+    }
+    odd = [];
     cur.push(r);
   }
   close();
   return runs;
 }
 
-/** Standby current and per-report cost from the runs (least squares, weighted by length). */
+/** Standby current and per-report cost from the runs (least squares, weighted by length).
+ *  With three or more runs one that disagrees with the others (more than 30 % off the fit) is
+ *  left out: of the fits without it, the one resting on the most used mAh is kept. Hayvan 2,
+ *  2026-11-14: a 5-minute run right after charging (4113 mV, top of the curve) read 1.07 mA
+ *  where 2 min and 60 min put it at 2.1 mA, and pulled the standby current to 0.12 mA. */
 export function fitDrain(runs: Run[]): Drain {
+  const all: Drain = { ...fitAll(runs), runs };
+  if (runs.length < 3 || all.measured !== "both" || worstMiss(runs, all) <= MISS) return all;
+  let best: Drain | null = null, bestMah = 0;
+  for (let i = 0; i < runs.length; i++) {
+    const rest = runs.filter((_, j) => j !== i), d = fitAll(rest);
+    const mah = rest.reduce((s, r) => s + r.mAh, 0);
+    if (d.measured === "both" && worstMiss(rest, d) <= MISS && mah > bestMah) {
+      best = { ...d, runs: rest, left: runs[i] }; bestMah = mah;
+    }
+  }
+  return best ?? all;
+}
+
+const MISS = 0.3;
+function worstMiss(runs: Run[], d: Drain): number {
+  return Math.max(...runs.map((r) => {
+    const ma = r.mAh / r.hours, fit = d.baseMa + (d.packetMah * r.packets) / r.hours;
+    return Math.abs(fit - ma) / ma;
+  }));
+}
+
+function fitAll(runs: Run[]): Drain {
   const D = DRAIN_DEFAULT;
   if (!runs.length) return { baseMa: D.baseMa, packetMah: D.packetMah, measured: "none", hours: 0 };
   let hh = 0, kk = 0, hk = 0, hm = 0, km = 0, H = 0, K = 0, M = 0;
@@ -99,6 +145,22 @@ export function lifeAt(mAh: number, intervalS: number, d: Pick<Drain, "baseMa" |
     avgMa, mAhPerDay, daysFull: (mAh * USABLE) / mAhPerDay,
     daysLeft: nowPct !== null ? Math.max(0, ((mAh * nowPct) / 100 - mAh * (1 - USABLE)) / mAhPerDay) : null,
   };
+}
+
+/** What the numbers rest on, for the card: "2 dk 21 saat, 60 dk 16 saat · 5 dk (15 saat) uymadı, sayılmadı". */
+export function drainBasis(d: Drain, period: (s: number) => string): string {
+  if (d.measured === "none" || !d.runs?.length) return "tahmin · bu tasmada henüz ölçülmedi";
+  // The measured period wanders around the setting (3563 s for 60 min): nearest minute, nearest 5 above 10 min.
+  const nominal = (s: number) => { const m = Math.max(1, Math.round(s / 60)); return (m >= 10 ? Math.round(m / 5) * 5 : m) * 60; };
+  const one = (r: Run) => `${period(nominal(r.periodS))} ${Math.round(r.hours)} saat`;
+  const byInterval = new Map<number, Run>();
+  for (const r of d.runs) {   // one line per interval: the hours of all its runs together
+    const k = nominal(r.periodS), had = byInterval.get(k);
+    byInterval.set(k, had ? { ...had, hours: had.hours + r.hours } : r);
+  }
+  const used = [...byInterval.values()].sort((a, b) => a.periodS - b.periodS).map(one).join(", ");
+  const head = d.measured === "both" ? `bu tasmada ölçüldü: ${used}` : `kısmen ölçüldü (${used}, tek rapor aralığı)`;
+  return d.left ? `${head} · ${period(nominal(d.left.periodS))} (${Math.round(d.left.hours)} saat) uymadı, sayılmadı` : head;
 }
 
 /** "~30 saat", "~12 gün", "~5 ay", "~2 yıl". */
