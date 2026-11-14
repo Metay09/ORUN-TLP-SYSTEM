@@ -15,7 +15,7 @@ import { deliverBle, deliverSettings } from "../src/app/deliver.ts";
 import type { E7, Zone } from "../src/app/zones.ts";
 import { DeviceRejected } from "../src/app/fenceUsb.ts";
 import { writeWaiting } from "../src/app/trackerSettings.ts";
-import { WriteKeyBook } from "../src/app/writeKeys.ts";
+import { WriteKeyBook, type WriteKey } from "../src/app/writeKeys.ts";
 
 const DEV = "0E8ADE7E71531AA3";
 const KEY = fromHex("75BF1BD3052DFA4CD5E9DB9DD084B98DB9622C2FABE44588FB58E02EC0952DD2");
@@ -226,9 +226,13 @@ test("delivery over Bluetooth closes the settings op on the tasma's own answer",
 });
 
 test("write keys: from the account, by epoch, gone at sign-out", async () => {
-  const mem = new Map<string, string>();
-  const store = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); }, removeItem: (k: string) => { mem.delete(k); } };
-  const book = new WriteKeyBook(store);
+  let persisted: WriteKey[] = [];
+  const vault = {
+    load: async () => persisted.map((k) => ({ ...k })),
+    save: async (keys: WriteKey[]) => { persisted = keys.map((k) => ({ ...k })); },
+    clear: async () => { persisted = []; },
+  };
+  const book = new WriteKeyBook(vault);
   const server = { writeKeys: async () => [
     { device: DEV, epoch: 1, writeKey: hex(KEY) },
     { device: "bad", epoch: 1, writeKey: hex(KEY) },
@@ -239,14 +243,18 @@ test("write keys: from the account, by epoch, gone at sign-out", async () => {
   assert.deepEqual(book.get(DEV.toLowerCase(), 1), KEY);
   assert.equal(book.get(DEV, 2), null);
   assert.ok(book.has(DEV) && !book.has("52E16773141A8887"));
-  assert.deepEqual(new WriteKeyBook(store).get(DEV, 1), KEY);       // survives a restart (offline field use)
+  const rebooted = new WriteKeyBook(vault);
+  await rebooted.load();
+  assert.deepEqual(rebooted.get(DEV, 1), KEY);       // survives a restart (offline field use)
   assert.equal(await book.refresh(server), 0);
   // The server's list wins: a re-added tasma's old epoch goes away.
   assert.equal(await book.refresh({ writeKeys: async () => [{ device: DEV, epoch: 2, writeKey: "AB".repeat(32) }] }), 2);
   assert.equal(book.get(DEV, 1), null);
-  book.clear();
+  await book.clear();
   assert.equal(book.size, 0);
-  assert.equal(new WriteKeyBook(store).size, 0);
+  const signedOut = new WriteKeyBook(vault);
+  await signedOut.load();
+  assert.equal(signedOut.size, 0);
 });
 
 // ---- 4c-2: alan listesi --------------------------------------------------
