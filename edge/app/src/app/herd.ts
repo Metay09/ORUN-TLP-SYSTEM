@@ -4,10 +4,11 @@
 // Freshness is the RECORD time (when the collar measured), never the time the
 // record reached the phone (core/points.ts rules). Thresholds follow the
 // collar's own report period T:
-//   fresh  <= max(2T, 10 min)
-//   aging  <= max(6T, 60 min)
-//   silent  > max(6T, 60 min)   (stale: last position kept, shown grey)
-//   lost    > max(12T, 3 h)     "kayıp olabilir": many reports missed
+//   fresh  <= max(T, 2 min)    (owner: a 1-min tracker is fresh for 2 min;
+//                               a 15-min tracker for 15 min)
+//   aging  <= max(3T, 30 min), capped at 24 h
+//   silent  > agingLimit(T)    (stale: last position kept, shown grey)
+//   lost    > 2 * agingLimit(T), unless outside its allowed zones
 import { bleName } from "./deviceNames.ts";
 import { fmt, tr } from "./i18n/tr.ts";
 import type { Animal, AnimalStatus, AssetProfile, BatteryLevel, Freshness, Observation } from "./model.ts";
@@ -23,7 +24,9 @@ export const epochMs = (iso: string | null) => (iso ? Date.parse(iso) : NaN);
 export function periodMs(periodS: number | null | undefined): number {
   return Math.max(30, periodS || 60) * 1000;
 }
-export const freshLimit = (T: number) => Math.max(2 * T, 10 * MIN);
+// Keep map freshness close to the collar's promised report cadence.
+// This is a visual status, NOT the server's missing-report notification gate.
+export const freshLimit = (T: number) => Math.max(T, 2 * MIN);
 // Owner decision 2026-11-13: "no news" is counted in reports, because the
 // report interval changes (2 min .. 14 h): three reports in a row missing,
 // but never before 30 minutes and never later than 24 hours. "May be lost"
