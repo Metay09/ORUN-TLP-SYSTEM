@@ -82,7 +82,7 @@ export function LayerPanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      <Section title={tr.map.range.title} info="İz, yoğunluk ve sürü izleri bu dönemin kayıtlarından çizilir." />
+      <Section title={tr.map.range.title} info="Hayvan seçili değilken sürü izleri ve yoğunluk bu dönemden çizilir. Seçili hayvanın günü haritadaki hayvan kartından seçilir." />
       <Chips value={p.range} onChange={(r) => m.actions.setPrefs({ range: r })} options={RANGES.map((r) => ({ value: r, label: tr.map.range[r] }))} />
 
       {p.base === "satellite" && (

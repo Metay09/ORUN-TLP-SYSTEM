@@ -4,7 +4,7 @@
 // bottom sheet.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Compass, CornersOut, Crosshair, CubeFocus, NavigationArrow, Pause, Play, Polygon, Stack, X,
+  CalendarBlank, CaretLeft, CaretRight, Compass, CornersOut, Crosshair, CubeFocus, NavigationArrow, Pause, Play, Polygon, Stack, X,
 } from "@phosphor-icons/react";
 import { hourlyActivity, inRange } from "../../app/activity.ts";
 import { bearingDeg, distanceM, type LatLon } from "../../app/geo.ts";
@@ -13,10 +13,14 @@ import { cap, fmt, tr } from "../../app/i18n/tr.ts";
 import type { Animal } from "../../app/model.ts";
 import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
-import { rangeStart, type Range } from "../../app/stores.ts";
+import { HISTORY_DAYS } from "../../app/events.ts";
+import { rangeStart } from "../../app/stores.ts";
 import { readableTrail } from "./routeGeometry.ts";
+import {
+  addDays, fromIsoDate, isoDate, pickFromWindow, pickWindow, setHours, startOfDay, wholeDay, type TrailPick,
+} from "./trailWindow.ts";
 import { validateRing } from "../../app/zones.ts";
-import { AnimalRing, Chips, Dialog, Metric, Strip, toneOfStatus } from "../../ds/components.tsx";
+import { AnimalRing, Dialog, Metric, Strip, toneOfStatus } from "../../ds/components.tsx";
 import { LayerPanel } from "./LayerPanel.tsx";
 import { ApplyFenceDialog } from "../zones/ApplyFence.tsx";
 import { MapEngine, type LinkLine, type MapData } from "./mapEngine.ts";
@@ -27,8 +31,9 @@ import { Sheet, type Snap } from "./Sheet.tsx";
 import { stationWords } from "../network/words.ts";
 
 let savedView: { center: [number, number]; zoom: number } | undefined;
-type TrailRange = Range | "recent";
-const RANGES: TrailRange[] = ["recent", "today", "h24", "d3", "d7"];
+const RECENT: TrailPick = { kind: "recent" };
+const HOURS = Array.from({ length: 25 }, (_, h) => h);
+const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
 
 export function MapScreen({ visible }: { visible: boolean }) {
   const m = useApp();
@@ -37,14 +42,13 @@ export function MapScreen({ visible }: { visible: boolean }) {
   const el = useRef<HTMLDivElement>(null);
   const engine = useRef<MapEngine | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [trailRange, setTrailRange] = useState<TrailRange>("recent");
+  const [pick, setPick] = useState<TrailPick>(RECENT);
   const [snap, setSnap] = useState<Snap>("peek");
   const [sheetPx, setSheetPx] = useState(150);
   const [panel, setPanel] = useState(false);
   const [offline, setOffline] = useState(false);
   const [zoom, setZoom] = useState(14);
   const [turned, setTurned] = useState(false);   // rotated or tilted: show the north button
-  const [win, setWin] = useState<{ from: number; to: number } | null>(null);
   const [cursor, setCursor] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [selZone, setSelZone] = useState<string | null>(null);
@@ -61,16 +65,18 @@ export function MapScreen({ visible }: { visible: boolean }) {
 
   const herd = m.herd;
   const a = herd.find((x) => x.id === selected) ?? null;
-  // A selected animal starts with a short, readable route. History and
-  // explicit time choices can still show the full record range.
-  const from = win?.from ?? (a && trailRange === "recent" ? m.now - 2 * 3600_000 : rangeStart(trailRange === "recent" ? m.prefs.range : trailRange, m.now));
-  const to = win?.to ?? m.now;
+  // A selected animal starts with the last 2 hours; a day (and hours of it)
+  // can be picked. With no animal selected, herd layers use the layer panel's
+  // period.
+  const shown = a ? pickWindow(pick, m.now) : { from: rangeStart(m.prefs.range, m.now), to: m.now };
+  const from = shown.from, to = shown.to;
+  const pickKey = JSON.stringify(pick);
   const L = m.prefs.layers;
 
   // ---- engine lifecycle ---------------------------------------------------
   useEffect(() => {
     const e = new MapEngine(el.current!, {
-      onSelect: (id) => { setSelected(id); setTrailRange("recent"); setCursor(null); setPlaying(false); setSelZone(null); if (!id) { setWin(null); setSnap("peek"); } },
+      onSelect: (id) => { setSelected(id); setPick(RECENT); setCursor(null); setPlaying(false); setSelZone(null); if (!id) setSnap("peek"); },
       onOffline: setOffline,
       onTiles: setTiles,
       onOfflinePack: setPhoneMap,
@@ -104,7 +110,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
 
   // ---- data ---------------------------------------------------------------
   const trailPts = useMemo(() => (a ? inRange(a.points, from, to) : []), [a, from, to]);
-  const trailBreaks = useMemo(() => readableTrail(trailPts).breaks, [trailPts]);
+  const trailSpikes = useMemo(() => readableTrail(trailPts).spikes, [trailPts]);
   const heatPts = useMemo(() => (L.heat ? (a ? [a] : herd).flatMap((x) => inRange(x.points, from, to)) : []), [L.heat, a, herd, from, to]);
   const zoneViews = useMemo(() => m.zones.map((z) => ({ id: z.id, name: z.name, ring: z.ring, active: z.active, valid: !validateRing(z.ring) })), [m.zones]);
   const herdTrails = useMemo(() => (L.herdTrails && !a ? herd.filter((x) => x.last).map((x) => ({ id: x.id, color: x.color, points: inRange(x.points, from, to) })) : []),
@@ -129,8 +135,9 @@ export function MapScreen({ visible }: { visible: boolean }) {
       selectedZone: selZone,
       herdTrails,
       links,
+      window: { from, to },
     };
-  }, [herd, selected, a, trailPts, cursor, playing, heatPts, L.coverage, m.coverage, m.station, pos.pos, zoneViews, selZone, herdTrails, links]);
+  }, [herd, selected, a, trailPts, cursor, playing, heatPts, L.coverage, m.coverage, m.station, pos.pos, zoneViews, selZone, herdTrails, links, from, to]);
   useEffect(() => { engine.current?.setData(data); }, [data]);
 
   // First data: frame the herd (or the station).
@@ -145,8 +152,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
   useEffect(() => {
     if (!nav.focus.key) return;
     setSelected(nav.focus.selected);
-    setTrailRange("recent");
-    setWin(nav.focus.window);
+    setPick(nav.focus.window ? pickFromWindow(nav.focus.window) : RECENT);
     setCursor(nav.focus.window ? nav.focus.window.from : null);
     setPlaying(false);
     setSnap(nav.focus.selected ? "half" : "peek");
@@ -162,13 +168,13 @@ export function MapScreen({ visible }: { visible: boolean }) {
   // Selecting an animal brings it into view.
   useEffect(() => {
     if (!a?.last) return;
-    if (win) {
-      const pts = inRange(a.points, win.from, win.to);
+    if (pick.kind === "day") {
+      const pts = inRange(a.points, from, to);
       if (pts.length) { engine.current?.fit(pts, 17.5); return; }
     }
     engine.current?.flyTo(a.last);
     if (snap === "peek") setSnap("half");
-  }, [selected, win]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selected, pickKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Playback: ~18 s across the shown period.
   useEffect(() => {
@@ -194,7 +200,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
     if (pos.pos && wantCentre.current) { wantCentre.current = false; engine.current?.flyTo(pos.pos, 16); }
   }, [pos.pos]);
 
-  const clear = () => { setSelected(null); setTrailRange("recent"); setWin(null); setCursor(null); setPlaying(false); setSnap("peek"); };
+  const clear = () => { setSelected(null); setPick(RECENT); setCursor(null); setPlaying(false); setSnap("peek"); };
   // Hidden map controls must not consume Android Back while a pushed screen is open.
   useBack(() => setPanel(false), visible && nav.stack.length === 0 && panel);
   useBack(() => { if (selected) clear(); else if (selZone) setSelZone(null); else setSnap("peek"); },
@@ -265,7 +271,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
           </div>
         )}>
         {a ? (
-          <Selected a={a} me={me} now={m.now} pts={trailPts} breaks={trailBreaks} cursor={cursor} playing={playing} range={trailRange} win={win}
+          <Selected a={a} me={me} now={m.now} pts={trailPts} spikes={trailSpikes} cursor={cursor} playing={playing} pick={pick}
             onClose={clear} onFind={() => nav.push({ to: "find", id: a.id })} onProfile={() => nav.push({ to: "animal", id: a.id })}
             onCursor={(c) => { setPlaying(false); setCursor(c); }} onPlay={() => {
               if (!trailPts.length) return;
@@ -273,20 +279,20 @@ export function MapScreen({ visible }: { visible: boolean }) {
               if (cursor === null || cursor >= t1) setCursor(epochMs(trailPts[0].time));
               setPlaying((p) => !p);
             }}
-            onRange={(r) => { setWin(null); setCursor(null); setPlaying(false); setTrailRange(r); if (r !== "recent") m.actions.setPrefs({ range: r }); }} />
+            onPick={(p) => { setCursor(null); setPlaying(false); setPick(p); }} />
         ) : (
           <>
             {look.length > 0 && (
               <div className="att">
                 {look.slice(0, 6).map((x) => (
-                  <button key={x.id} className={"att-chip " + toneOfStatus(x.status)} onClick={() => { setSelected(x.id); setTrailRange("recent"); }}>
+                  <button key={x.id} className={"att-chip " + toneOfStatus(x.status)} onClick={() => { setSelected(x.id); setPick(RECENT); }}>
                     <AnimalRing a={x} size={36} />
                     <span className="nm"><b>{x.name}</b><span className={`t-${toneOfStatus(x.status)}`}>{x.short}</span></span>
                   </button>
                 ))}
               </div>
             )}
-            {herd.length ? <HerdRows herd={herd} me={me} now={m.now} onPick={(id) => { setSelected(id); setTrailRange("recent"); }} /> : m.starting ? null : (
+            {herd.length ? <HerdRows herd={herd} me={me} now={m.now} onPick={(id) => { setSelected(id); setPick(RECENT); }} /> : m.starting ? null : (
               <div className="stack" style={{ padding: "8px 20px 16px" }}>
                 <span className="sm">{tr.states.noAnimalsBody}</span>
                 <button className="btn primary wide" onClick={() => nav.setTab("network")}>{tr.states.connect}</button>
@@ -320,11 +326,11 @@ export function HerdRows({ herd, me, now, onPick }: { herd: Animal[]; me: LatLon
   );
 }
 
-function Selected({ a, me, now, pts, breaks, cursor, playing, range, win, onClose, onFind, onProfile, onCursor, onPlay, onRange }: {
-  a: Animal; me: LatLon | null; now: number; pts: Animal["points"]; breaks: number; cursor: number | null; playing: boolean;
-  range: TrailRange; win: { from: number; to: number } | null;
+function Selected({ a, me, now, pts, spikes, cursor, playing, pick, onClose, onFind, onProfile, onCursor, onPlay, onPick }: {
+  a: Animal; me: LatLon | null; now: number; pts: Animal["points"]; spikes: number; cursor: number | null; playing: boolean;
+  pick: TrailPick;
   onClose: () => void; onFind: () => void; onProfile: () => void;
-  onCursor: (c: number) => void; onPlay: () => void; onRange: (r: TrailRange) => void;
+  onCursor: (c: number) => void; onPlay: () => void; onPick: (p: TrailPick) => void;
 }) {
   const tone = toneOfStatus(a.status);
   useEffect(() => { startPosition(); }, []);   // distance needs the phone's position
@@ -354,10 +360,9 @@ function Selected({ a, me, now, pts, breaks, cursor, playing, range, win, onClos
         <button className="btn grow" onClick={onProfile}>{tr.map.profile}</button>
       </div>
       <div className="timebar">
-        {!win && <Chips<TrailRange> value={range} onChange={onRange} options={RANGES.map((r) => ({ value: r, label: r === "recent" ? "2 saat" : tr.map.range[r] }))} />}
-        {win && <span className="sm strong">{fmt.day(win.from, now)}</span>}
-        <span className="fine">{range === "recent" && !win ? "Son 2 saatin konum izi." : "Seçilen dönemin konum izi."} Başlangıç: beyaz nokta · son konum: hayvan işareti.</span>
-        {breaks > 0 && <span className="fine">{breaks} iz kesintisi var; eksik konumların arasına çizgi çekilmedi.</span>}
+        <TrailPicker pick={pick} now={now} onPick={onPick} />
+        <span className="fine">Soluk çizgi eski, koyu çizgi yeni; noktalar alınan konumlar. Son konum: hayvan işareti.</span>
+        {spikes > 0 && <span className="fine">{spikes} hatalı GPS sıçraması çizilmedi.</span>}
         {pts.length > 1 ? (
           <>
             <div className="row">
@@ -372,6 +377,52 @@ function Selected({ a, me, now, pts, breaks, cursor, playing, range, win, onClos
         ) : <span className="cap">{tr.map.noTrail}</span>}
       </div>
     </div>
+  );
+}
+
+/** Son 2 saat · Bugün · Dün · a calendar day; then ‹ day › and the hours. */
+function TrailPicker({ pick, now, onPick }: { pick: TrailPick; now: number; onPick: (p: TrailPick) => void }) {
+  const today = startOfDay(now), yday = addDays(today, -1), first = addDays(today, -(HISTORY_DAYS - 1));
+  const which = pick.kind === "recent" ? "recent" : pick.day === today ? "today" : pick.day === yday ? "yday" : "other";
+  const chip = (on: boolean, label: string, p: TrailPick) => (
+    <button className="chip" aria-pressed={on} onClick={() => onPick(p)}>{label}</button>
+  );
+  return (
+    <>
+      <div className="chips" role="group">
+        {chip(which === "recent", "Son 2 saat", RECENT)}
+        {chip(which === "today", "Bugün", wholeDay(today))}
+        {chip(which === "yday", "Dün", wholeDay(yday))}
+        <label className={"chip date-chip" + (which === "other" ? " on" : "")}>
+          <CalendarBlank size={16} />{which === "other" && pick.kind === "day" ? fmt.dateShort(pick.day) : "Tarih"}
+          <input type="date" aria-label="Gün seç" min={isoDate(first)} max={isoDate(today)}
+            value={pick.kind === "day" ? isoDate(pick.day) : ""}
+            onChange={(e) => { const d = fromIsoDate(e.target.value); if (d !== null) onPick(wholeDay(Math.min(today, Math.max(first, d)))); }} />
+        </label>
+      </div>
+      {pick.kind === "day" && (
+        <>
+          <div className="row">
+            <button className="circ" style={{ background: "var(--card)" }} aria-label="Önceki gün" disabled={pick.day <= first}
+              onClick={() => onPick({ ...pick, day: addDays(pick.day, -1) })}><CaretLeft size={18} /></button>
+            <span className="sm strong grow" style={{ textAlign: "center" }}>{fmt.day(pick.day, now)}</span>
+            <button className="circ" style={{ background: "var(--card)" }} aria-label="Sonraki gün" disabled={pick.day >= today}
+              onClick={() => onPick({ ...pick, day: addDays(pick.day, 1) })}><CaretRight size={18} /></button>
+          </div>
+          <div className="row hours">
+            <span className="sm">Saat</span>
+            <select className="inp" aria-label="Başlangıç saati" value={pick.fromH} onChange={(e) => onPick(setHours(pick, Number(e.target.value), pick.toH))}>
+              {HOURS.slice(0, 24).map((h) => <option key={h} value={h}>{hh(h)}</option>)}
+            </select>
+            <span className="sm">–</span>
+            <select className="inp" aria-label="Bitiş saati" value={pick.toH} onChange={(e) => onPick(setHours(pick, pick.fromH, Number(e.target.value)))}>
+              {HOURS.slice(1).map((h) => <option key={h} value={h} disabled={h <= pick.fromH}>{hh(h)}</option>)}
+            </select>
+            {(pick.fromH !== 0 || pick.toH !== 24) && <button className="chip" onClick={() => onPick(setHours(pick, 0, 24))}>Tüm gün</button>}
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
