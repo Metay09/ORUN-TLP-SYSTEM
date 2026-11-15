@@ -214,7 +214,11 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     const posFresh = freshnessOf(lastTime, periodS, now);
     const noFix = lastReport !== null && lastReport !== lastTime &&
       (posFresh === "stale" || posFresh === "none") && freshnessOf(lastReport, periodS, now) !== "stale";
-    const freshness = noFix ? freshnessOf(lastReport, periodS, now) : posFresh;
+    // "Seen" is the newest report, with or without a fix (owner 2026-11-15: the collar
+    // reported 2 min ago without a fix, the card said "10 dk önce görüldü" and turned
+    // orange). The position's own age stays on the position card; a long-missing fix
+    // is noFix above.
+    const freshness = freshnessOf(lastReport ?? lastTime, periodS, now);
     const gpsFault = noFix && (faultBy.get(id) ?? false);
     // Every record is a report, with or without a fix: activity from those
     // with a clock, battery from all (no clock: when it reached the gateway).
@@ -275,7 +279,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     else if (!last) { seen = tr.status.waiting; short = tr.status.short.waiting; }
     else if (lastTime === null) { seen = tr.status.noClock; short = "?"; }
     else if (lost) { seen = tr.status.lostFor(fmt.since(heardAt!, now)); short = tr.status.short.lost; }
-    else if (freshness === "fresh" || freshness === "aging") { seen = tr.status.seenAgo(fmt.ago(lastTime, now)); short = fmt.ago(lastTime, now); }
+    else if (freshness === "fresh" || freshness === "aging") { seen = tr.status.seenAgo(fmt.ago(heardAt!, now)); short = fmt.ago(heardAt!, now); }
     else { seen = tr.status.silentFor(fmt.since(heardAt!, now)); short = tr.status.short.silent(fmt.duration(now - heardAt!)); }
     // Waiting for the server's newest records (opening.ts): the time of the
     // phone's newest record is not "when it was last seen" yet.
@@ -292,7 +296,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
       points: timed, reports, batteryTrail, batteryAt: newestBat?.t ?? null, batteryMv: newestBat?.o.battery_mv ?? null,
       batteryPower: newestBat?.o.power ?? null, batteryUsb: newestBat?.o.usb ?? null,
       last, lastTime, lastReport, noFix, gpsFault, heardOnly: (heardAll.get(id) ?? []).sort((x, y) => x - y), periodS, freshness,
-      freshRatio: settling && status === "ok" ? 1 : freshRatio(lastTime, periodS, now), status, seen, short,
+      freshRatio: settling && status === "ok" ? 1 : freshRatio(heardAt, periodS, now), status, seen, short,
       battery: bat.level, batteryPercent: bat.percent,
       activeShare: freshness === "fresh" ? activeShare(last) : null,
       zone, outside, outSince: openOut?.from ?? null, grazing: outside && grazing,
