@@ -174,6 +174,14 @@ class HerdAlertTests(unittest.TestCase):
         self.add(rec(5, mv=3700))
         self.assertEqual(self.kinds(), [])
 
+    def test_battery_alert_ends_when_the_collar_is_charged(self):
+        # Critical last night, then on USB: no "pil bitiyor" for the next day.
+        self.add(rec(600, mv=3405, word=3), rec(5, mv=4170, power=3, usb=True))
+        self.assertEqual(self.kinds(), [])
+        # Off USB again and the cell itself is low again: a new episode opens.
+        self.add(rec(2, mv=3405, word=3))
+        self.assertEqual(self.kinds(), ["battery"])
+
     def test_zone_book_is_validated(self):
         ok = {"zones": [{"id": "a", "name": " Mera ", "ring": SQ, "active": True, "updated": 5}]}
         self.assertEqual(clean_zones(ok)["zones"][0]["name"], "Mera")
