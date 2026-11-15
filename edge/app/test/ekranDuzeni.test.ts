@@ -189,6 +189,25 @@ test("görüldü = en yeni rapor: konumu 10 dk önce, konumsuz raporu 2 dk önce
   assert.notEqual(b.freshness, "fresh");
 });
 
+test("pil: USB'de şarj olurken ya da şarjdan sonra eski düşük okuma 'bitmek üzere' demez", () => {
+  const now = Date.UTC(2026, 10, 15, 22, 0);
+  const MIN = 60_000;
+  const pt = (minAgo: number, seq: number, mv: number, usb: boolean) => ({
+    tracker: "0E8ADE7E71531AA3", incarnation: "I", seq, time: new Date(now - minAgo * MIN).toISOString(),
+    lat: 37.6, lon: 28.05, alt_m: null, sats: 7, hdop: 1, fix_age_s: 0, battery_mv: mv, battery: mv < 3350 ? "CRITICAL" : "NORMAL",
+    power: usb ? "CHARGING" : "BATTERY", usb,
+    active_s: null, covered_s: null, source: "GNSS", period_s: 600, rssi: -70, snr: 5, received: null, delay_s: null, link: null,
+  }) as unknown as Observation;
+  const empty = pt(240, 1, 2863, false);                       // 20:00, 2,86 V
+  const [onUsb] = buildHerd({ points: [empty, pt(30, 2, 3920, true), pt(5, 3, 4030, true)], profiles: {}, assetOf: (d) => d, now });
+  assert.equal(onUsb.battery, "good", "USB'de şarj oluyor");
+  const [after] = buildHerd({ points: [empty, pt(60, 2, 4150, true), pt(5, 3, 4110, false)], profiles: {}, assetOf: (d) => d, now });
+  assert.equal(after.battery, "good", "şarjdan sonra eski kritik okuma sayılmaz");
+  // Without a charge in between, the worst of the last 24 h still counts (solar night).
+  const [night] = buildHerd({ points: [pt(600, 1, 3300, false), pt(5, 2, 3700, false)], profiles: {}, assetOf: (d) => d, now });
+  assert.equal(night.battery, "critical");
+});
+
 test("konumsuz rapor: tasma 'haber yok' değil 'konum bulamıyor'; aradaki boşluk sessizlik sayılmaz", () => {
   const now = Date.UTC(2026, 10, 11, 2, 20);
   const MIN = 60_000;

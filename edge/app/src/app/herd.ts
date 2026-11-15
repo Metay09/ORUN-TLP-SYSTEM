@@ -231,9 +231,12 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     // Solar collars recharge by day: the level is the worst of the last 24 h
     // (what the night will bring), the percentage is the newest record.
     const bat = batteryOf(newestBat?.o ?? last);
-    if (newestBat) {
+    // A charge on USB ends the story: lows from before it say nothing about the battery now
+    // (owner 2026-11-16: Kutu on USB, charging, still "Bitmek üzere · bugün şarj et").
+    if (newestBat && newestBat.o.usb !== true) {
       const rank = { unknown: 0, good: 1, low: 2, critical: 3 } as const;
       for (let i = withBattery.length - 1; i >= 0 && withBattery[i].t >= newestBat.t - 24 * HOUR; i--) {
+        if (withBattery[i].o.usb === true) break;
         const b = batteryOf(withBattery[i].o);
         if (rank[b.level] > rank[bat.level]) bat.level = b.level;
       }
