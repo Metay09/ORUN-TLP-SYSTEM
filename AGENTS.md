@@ -22,6 +22,13 @@ The only active work list is `docs/product/ORUN_UYGULAMA_KAPSAMI.md`
 - Where older text in this file or in architecture docs implies extra
   ceremony, the plan above wins; safety rules for flash, RF and keys still
   apply.
+- Firmware stays minimal (owner decision 2026-11-15): the device measures and
+  sends raw facts (e.g. battery mV, USB present, temperature) and does only
+  what must work without the app or a network (power-saving on critical
+  battery, flash/RF/key safety). Anything the app or server can compute from
+  the reports — percentages, charge/full states, per-board calibration,
+  battery-life estimates, trends — is built there, not in firmware. Before
+  adding logic to firmware, ask whether the app/server could do it instead.
 
 ## Project
 
