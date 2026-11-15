@@ -127,7 +127,7 @@ test("distance and direction", () => {
   assert.equal(fmt.direction(bearingDeg({ lat: 37.6, lon: 28.05 }, { lat: 37.59, lon: 28.05 })), "güney");
 });
 
-test("Pil 2: one percent table with the firmware; FULL is 100 %, no battery has none", async () => {
+test("Pil: one percent table with the firmware; no percent on USB, FULL never 100 % by itself", async () => {
   const { batteryPercent, readingPercent, externallyPowered } = await import("../src/app/herd.ts");
   // Same values as firmware/tests/m3/test_battery_policy.cpp percentEstimate().
   for (const [mv, p] of [[4200, 100], [4190, 100], [4120, 95], [4060, 91], [4050, 90], [3990, 80],
@@ -135,12 +135,15 @@ test("Pil 2: one percent table with the firmware; FULL is 100 %, no battery has 
     assert.equal(batteryPercent(mv), p, `${mv} mV`);
   // On its own battery a just-unplugged cell no longer reads 100 % for hours.
   assert.equal(readingPercent({ mv: 4065, power: "BATTERY" }), 91);
-  assert.equal(readingPercent({ mv: 4010, power: "FULL" }), 100);
+  // Owner 2026-11-15: unplugged mid-charge the collar said FULL at 4.06 V; show the cell's own %.
+  assert.equal(readingPercent({ mv: 4060, power: "FULL", usb: false }), 91);
+  assert.equal(readingPercent({ mv: 4190, power: "CHARGING", usb: true }), null, "USB: charger voltage");
   assert.equal(readingPercent({ mv: 4300, power: "NO_BATTERY" }), null);
   assert.equal(readingPercent({ mv: 3840, power: null }), 64);
   assert.equal(externallyPowered({ usb: true, power: "CHARGING" }), true);
   assert.equal(externallyPowered({ usb: false, power: "CHARGING" }), false);   // solar: the battery's own balance
-  assert.equal(batteryOf(pt("A", 1, { battery_mv: 3990, power: "FULL", usb: true })).percent, 100);
+  assert.deepEqual(batteryOf(pt("A", 1, { battery_mv: 3990, power: "FULL", usb: true })), { level: "good", percent: null });
+  assert.equal(batteryOf(pt("A", 1, { battery_mv: 4060, power: "FULL", usb: false })).percent, 91);
   assert.deepEqual(batteryOf(pt("A", 1, { battery_mv: 4300, power: "NO_BATTERY", usb: true })), { level: "unknown", percent: null });
   // Charging from low is not an alarm.
   assert.equal(batteryOf(pt("A", 1, { battery_mv: 3450, battery: "LOW", power: "CHARGING", usb: true })).level, "good");

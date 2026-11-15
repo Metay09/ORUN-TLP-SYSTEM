@@ -149,7 +149,7 @@ function Today({ a, now }: { a: Animal; now: number }) {
         )}
       </Card>
 
-      <Section title={tr.animal.battery} info="Yüzde, pil geriliminden hesaplanır (4,19 V %100, 4,05 V %90, 3,40 V %0). USB'de şarjı biten pil 'Dolu' ve %100 görünür. 'Şarj oluyor', 'Dolu' ve 'Pil takılı değil' tasmanın kendi ölçümünden gelir. Gidişat, son 24 saatin ortalaması iki gün öncekiyle karşılaştırılarak bulunur (gece-gündüz farkı ortalanır); USB'deki süreler ve rapor aralığı değişmeden önceki okumalar katılmaz (aralık değişince gidişat birkaç gün görünmez). Kalan gün yalnız belirgin düşüşte gösterilir ve tahmindir." />
+      <Section title={tr.animal.battery} info="Yüzde, pilin kendi geriliminden hesaplanır (4,19 V %100, 4,05 V %90, 3,40 V %0). USB'deyken okunan şarj devresinin gerilimidir; o sırada yüzde gösterilmez, USB çıkınca pilin gerçek yüzdesi görünür. 'Şarj oluyor' ve 'Pil takılı değil' tasmanın kendi ölçümünden gelir. Gidişat, son 24 saatin ortalaması iki gün öncekiyle karşılaştırılarak bulunur (gece-gündüz farkı ortalanır); USB'deki süreler ve rapor aralığı değişmeden önceki okumalar katılmaz (aralık değişince gidişat birkaç gün görünmez). Kalan gün yalnız belirgin düşüşte gösterilir ve tahmindir." />
       <Card pad>
         {a.batteryPower === "NO_BATTERY" ? <span className="sm">Pil takılı değil · USB'den besleniyor.</span>
           : a.battery === "unknown" ? <span className="sm">{tr.animal.batteryUnknown}</span> : (
@@ -158,11 +158,12 @@ function Today({ a, now }: { a: Animal; now: number }) {
               <BatteryGauge percent={a.batteryPercent} tone={batTone} />
               <div className="stack grow" style={{ gap: 2 }}>
                 <span className={"strong t-" + batTone}>
-                  {a.batteryPower === "CHARGING" ? "Şarj oluyor" : a.batteryPower === "FULL" ? "Dolu"
+                  {a.batteryUsb ? (a.batteryPower === "CHARGING" ? "USB'de · şarj oluyor" : "USB'de")
+                    : a.batteryPower === "CHARGING" ? "Şarj oluyor"
                     : a.battery === "critical" ? "Bitmek üzere · bugün şarj et" : a.battery === "low" ? "Azalıyor" : "İyi"}
                 </span>
                 <span className="sm">
-                  {[a.batteryUsb ? "USB'de" : null, a.batteryMv ? `${fmt.dec(a.batteryMv / 1000, 2)} V` : null,
+                  {[a.batteryUsb ? "yüzde USB çıkınca görünür" : null, a.batteryMv && !a.batteryUsb ? `${fmt.dec(a.batteryMv / 1000, 2)} V` : null,
                     a.batteryAt !== null && !updating ? `${fmt.ago(a.batteryAt, now)} ölçüldü` : null].filter(Boolean).join(" · ")}
                 </span>
               </div>

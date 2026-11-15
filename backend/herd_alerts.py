@@ -210,7 +210,7 @@ def battery_level(r: dict) -> str:
     """good / low / critical / unknown (= the app's herd.ts batteryOf)."""
     if r["mv"] is None or r["power"] == "NO_BATTERY":
         return "unknown"
-    if r["power"] in ("FULL", "CHARGING"):
+    if r.get("usb") is True or r["power"] == "CHARGING":   # on USB: charger voltage, no alarm
         return "good"
     pct = battery_percent(r["mv"])
     if r["word"] == 3 or pct <= 5:

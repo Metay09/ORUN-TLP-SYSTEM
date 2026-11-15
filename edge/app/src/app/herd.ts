@@ -83,10 +83,11 @@ export function batteryPercent(mv: number | null): number | null {
   return 100;
 }
 
-/** A reading's percent with the collar's own word: FULL is 100 %, no battery has none. */
-export function readingPercent(b: { mv: number | null; power?: string | null }): number | null {
-  if (b.power === "FULL") return 100;
-  if (b.power === "NO_BATTERY") return null;
+/** A reading's percent (owner 2026-11-15): only the battery's own voltage, never on USB.
+ *  On USB the reading is the charger's voltage, not the cell's; the collar's "FULL" is no
+ *  longer shown either (unplugging mid-charge read as a charge end: 4.06 V shown as 100 %). */
+export function readingPercent(b: { mv: number | null; power?: string | null; usb?: boolean | null }): number | null {
+  if (b.usb === true || b.power === "NO_BATTERY") return null;
   return batteryPercent(b.mv);
 }
 
@@ -98,8 +99,8 @@ export function externallyPowered(b: { power?: string | null; usb?: boolean | nu
 export function batteryOf(p: Observation | null): { level: BatteryLevel; percent: number | null } {
   if (!p || p.battery_mv === null) return { level: "unknown", percent: null };
   if (p.power === "NO_BATTERY") return { level: "unknown", percent: null };
-  const pct = readingPercent({ mv: p.battery_mv, power: p.power });
-  if (p.power === "FULL" || p.power === "CHARGING") return { level: "good", percent: pct };
+  const pct = readingPercent({ mv: p.battery_mv, power: p.power, usb: p.usb });
+  if (p.usb === true || p.power === "CHARGING") return { level: "good", percent: pct };
   if (p.battery === "CRITICAL" || (pct !== null && pct <= 5)) return { level: "critical", percent: pct };
   if (p.battery === "LOW" || (pct !== null && pct <= 20)) return { level: "low", percent: pct };
   return { level: "good", percent: pct };
