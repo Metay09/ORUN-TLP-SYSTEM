@@ -4,7 +4,7 @@
 // bottom sheet.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  CalendarBlank, CaretLeft, CaretRight, Compass, CornersOut, Crosshair, CubeFocus, NavigationArrow, Pause, Play, Polygon, Stack, X,
+  Compass, CornersOut, Crosshair, CubeFocus, NavigationArrow, Pause, Play, Polygon, Stack, X,
 } from "@phosphor-icons/react";
 import { hourlyActivity, inRange } from "../../app/activity.ts";
 import { bearingDeg, distanceM, type LatLon } from "../../app/geo.ts";
@@ -13,12 +13,9 @@ import { cap, fmt, tr } from "../../app/i18n/tr.ts";
 import type { Animal } from "../../app/model.ts";
 import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
-import { HISTORY_DAYS } from "../../app/events.ts";
-import { rangeStart } from "../../app/stores.ts";
 import { readableTrail } from "./routeGeometry.ts";
-import {
-  addDays, fromIsoDate, isoDate, pickFromWindow, pickWindow, setHours, startOfDay, wholeDay, type TrailPick,
-} from "./trailWindow.ts";
+import { pickFromWindow, pickWindow, wholeDay, type TrailPick } from "./trailWindow.ts";
+import { pickLabel, TrailPicker } from "./TrailPicker.tsx";
 import { validateRing } from "../../app/zones.ts";
 import { AnimalRing, Dialog, Metric, Strip, toneOfStatus } from "../../ds/components.tsx";
 import { LayerPanel } from "./LayerPanel.tsx";
@@ -32,8 +29,6 @@ import { stationWords } from "../network/words.ts";
 
 let savedView: { center: [number, number]; zoom: number } | undefined;
 const RECENT: TrailPick = { kind: "recent" };
-const HOURS = Array.from({ length: 25 }, (_, h) => h);
-const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
 
 export function MapScreen({ visible }: { visible: boolean }) {
   const m = useApp();
@@ -43,6 +38,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
   const engine = useRef<MapEngine | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [pick, setPick] = useState<TrailPick>(RECENT);
+  const [herdPick, setHerdPick] = useState<TrailPick>(() => wholeDay(Date.now()));   // no animal selected
   const [snap, setSnap] = useState<Snap>("peek");
   const [sheetPx, setSheetPx] = useState(150);
   const [panel, setPanel] = useState(false);
@@ -66,9 +62,9 @@ export function MapScreen({ visible }: { visible: boolean }) {
   const herd = m.herd;
   const a = herd.find((x) => x.id === selected) ?? null;
   // A selected animal starts with the last 2 hours; a day (and hours of it)
-  // can be picked. With no animal selected, herd layers use the layer panel's
-  // period.
-  const shown = a ? pickWindow(pick, m.now) : { from: rangeStart(m.prefs.range, m.now), to: m.now };
+  // can be picked. With no animal selected, herd trails and density use the
+  // herd's own pick (Katmanlar → Dönem), today by default.
+  const shown = pickWindow(a ? pick : herdPick, m.now);
   const from = shown.from, to = shown.to;
   const pickKey = JSON.stringify(pick);
   const L = m.prefs.layers;
@@ -251,6 +247,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
         {phoneMap && <span className="status-chip note">{tr.map.phoneMap}</span>}
         {tiles && !offline && !phoneMap && <span className="status-chip note">{navigator.onLine ? tr.map.tilesTrouble : tr.map.tilesOffline}</span>}
         {flash && <span className="status-chip">{flash}</span>}
+        {(L.herdTrails || L.heat) && !a && <button className="status-chip note" onClick={() => setPanel(true)}>{pickLabel(herdPick, m.now)}</button>}
         {L.herdTrails && !a && <button className="status-chip note" onClick={() => m.actions.setPrefs({ layers: { ...L, herdTrails: false } })}>Sürü izlerini gizle</button>}
         {L.coverage && zoom < 14 && <span className="status-chip note">{tr.map.zoomForCoverage}</span>}
       </div>
@@ -303,7 +300,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
       </Sheet>
 
       </>}
-      {panel && !drawing && <LayerPanel onClose={() => setPanel(false)} />}
+      {panel && !drawing && <LayerPanel pick={herdPick} onPick={setHerdPick} onClose={() => setPanel(false)} />}
     </section>
   );
 }
@@ -377,52 +374,6 @@ function Selected({ a, me, now, pts, spikes, cursor, playing, pick, onClose, onF
         ) : <span className="cap">{tr.map.noTrail}</span>}
       </div>
     </div>
-  );
-}
-
-/** Son 2 saat · Bugün · Dün · a calendar day; then ‹ day › and the hours. */
-function TrailPicker({ pick, now, onPick }: { pick: TrailPick; now: number; onPick: (p: TrailPick) => void }) {
-  const today = startOfDay(now), yday = addDays(today, -1), first = addDays(today, -(HISTORY_DAYS - 1));
-  const which = pick.kind === "recent" ? "recent" : pick.day === today ? "today" : pick.day === yday ? "yday" : "other";
-  const chip = (on: boolean, label: string, p: TrailPick) => (
-    <button className="chip" aria-pressed={on} onClick={() => onPick(p)}>{label}</button>
-  );
-  return (
-    <>
-      <div className="chips" role="group">
-        {chip(which === "recent", "Son 2 saat", RECENT)}
-        {chip(which === "today", "Bugün", wholeDay(today))}
-        {chip(which === "yday", "Dün", wholeDay(yday))}
-        <label className={"chip date-chip" + (which === "other" ? " on" : "")}>
-          <CalendarBlank size={16} />{which === "other" && pick.kind === "day" ? fmt.dateShort(pick.day) : "Tarih"}
-          <input type="date" aria-label="Gün seç" min={isoDate(first)} max={isoDate(today)}
-            value={pick.kind === "day" ? isoDate(pick.day) : ""}
-            onChange={(e) => { const d = fromIsoDate(e.target.value); if (d !== null) onPick(wholeDay(Math.min(today, Math.max(first, d)))); }} />
-        </label>
-      </div>
-      {pick.kind === "day" && (
-        <>
-          <div className="row">
-            <button className="circ" style={{ background: "var(--card)" }} aria-label="Önceki gün" disabled={pick.day <= first}
-              onClick={() => onPick({ ...pick, day: addDays(pick.day, -1) })}><CaretLeft size={18} /></button>
-            <span className="sm strong grow" style={{ textAlign: "center" }}>{fmt.day(pick.day, now)}</span>
-            <button className="circ" style={{ background: "var(--card)" }} aria-label="Sonraki gün" disabled={pick.day >= today}
-              onClick={() => onPick({ ...pick, day: addDays(pick.day, 1) })}><CaretRight size={18} /></button>
-          </div>
-          <div className="row hours">
-            <span className="sm">Saat</span>
-            <select className="inp" aria-label="Başlangıç saati" value={pick.fromH} onChange={(e) => onPick(setHours(pick, Number(e.target.value), pick.toH))}>
-              {HOURS.slice(0, 24).map((h) => <option key={h} value={h}>{hh(h)}</option>)}
-            </select>
-            <span className="sm">–</span>
-            <select className="inp" aria-label="Bitiş saati" value={pick.toH} onChange={(e) => onPick(setHours(pick, pick.fromH, Number(e.target.value)))}>
-              {HOURS.slice(1).map((h) => <option key={h} value={h} disabled={h <= pick.fromH}>{hh(h)}</option>)}
-            </select>
-            {(pick.fromH !== 0 || pick.toH !== 24) && <button className="chip" onClick={() => onPick(setHours(pick, 0, 24))}>Tüm gün</button>}
-          </div>
-        </>
-      )}
-    </>
   );
 }
 

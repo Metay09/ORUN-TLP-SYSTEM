@@ -124,7 +124,6 @@ export class AssetStore extends Persisted<AssetBook> {
 // ----------------------------------------------------------------- prefs --
 export type Theme = "auto" | "light" | "dark";
 export type BaseMap = "satellite" | "terrain" | "street";
-export type Range = "today" | "h24" | "d3" | "d7" | "d30";
 export interface Layers {
   animals: boolean; trail: boolean; heat: boolean; coverage: boolean;
   stations: boolean; me: boolean; labels: boolean; relief: boolean;
@@ -139,7 +138,7 @@ export interface SatPrefs {
 }
 export interface Prefs {
   theme: Theme; sun: boolean;
-  base: BaseMap; tilt: boolean; layers: Layers; range: Range;
+  base: BaseMap; tilt: boolean; layers: Layers;
   sat: SatPrefs; zoneFill: ZoneFill;
 }
 
@@ -155,14 +154,8 @@ export const DEFAULT_PREFS: Prefs = {
     animals: true, trail: true, heat: false, coverage: false, stations: true, me: true, labels: true, relief: false,
     zones: true, herdTrails: false, links: false,
   },
-  range: "h24", sat: DEFAULT_SAT, zoneFill: "light",
+  sat: DEFAULT_SAT, zoneFill: "light",
 };
-
-export function rangeStart(r: Range, now: number): number {
-  if (r === "today") { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime(); }
-  const h = { h24: 24, d3: 72, d7: 168, d30: 720 }[r];
-  return now - h * 3600_000;
-}
 
 export const prefs = new Persisted<Prefs>("orun.app.prefs.v1", () => ({ ...DEFAULT_PREFS }),
   (raw) => (raw && typeof raw === "object"
