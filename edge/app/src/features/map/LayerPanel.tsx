@@ -4,11 +4,12 @@ import {
 } from "@phosphor-icons/react";
 import { tr } from "../../app/i18n/tr.ts";
 import { useApp } from "../../app/store.ts";
-import { DEFAULT_SAT, type BaseMap, type Layers, type Range, type ZoneFill } from "../../app/stores.ts";
+import { DEFAULT_SAT, type BaseMap, type Layers, type ZoneFill } from "../../app/stores.ts";
+import type { TrailPick } from "./trailWindow.ts";
+import { TrailPicker } from "./TrailPicker.tsx";
 import { Chips, Dialog, Section } from "../../ds/components.tsx";
 
 const BASES: BaseMap[] = ["satellite", "terrain", "street"];
-const RANGES: Range[] = ["today", "h24", "d3", "d7", "d30"];
 const FILLS: ZoneFill[] = ["none", "light", "hatch"];
 // Esri Wayback releases (id: imagery date). Older releases are sometimes
 // sharper over a given pasture than the current mosaic.
@@ -34,7 +35,7 @@ const TILES: Tile[] = [
 // Harita katmanları (sahip isteği 2026-11-11: düzenle). Üstte harita türü ve
 // görünüm (3B, rölyef), sonra haritada ne görüneceği karo düğmelerle; açık
 // katmanın ayarı ya da lejantı altında; dönem; uydu ayrıntıları kapalı.
-export function LayerPanel({ onClose }: { onClose: () => void }) {
+export function LayerPanel({ pick, onPick, onClose }: { pick: TrailPick; onPick: (p: TrailPick) => void; onClose: () => void }) {
   const m = useApp();
   const p = m.prefs, L = p.layers;
   const set = (k: keyof Layers, v: boolean) => m.actions.setPrefs({ layers: { ...L, [k]: v } });
@@ -82,8 +83,8 @@ export function LayerPanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      <Section title={tr.map.range.title} info="İz, yoğunluk ve sürü izleri bu dönemin kayıtlarından çizilir." />
-      <Chips value={p.range} onChange={(r) => m.actions.setPrefs({ range: r })} options={RANGES.map((r) => ({ value: r, label: tr.map.range[r] }))} />
+      <Section title={tr.map.range.title} info="Hayvan seçili değilken sürü izleri ve yoğunluk bu dönemden çizilir. Seçili hayvanın günü haritadaki hayvan kartından seçilir." />
+      <div style={{ padding: "0 16px" }}><TrailPicker pick={pick} now={m.now} onPick={onPick} /></div>
 
       {p.base === "satellite" && (
         <details className="tech">

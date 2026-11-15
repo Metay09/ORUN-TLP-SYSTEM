@@ -20,14 +20,14 @@
 // one CSS variable set once per frame; data is re-sent only when it changed.
 import {
   AttributionControl, GeoJSONSource, LngLatBounds, Map as MlMap, Marker, Popup, ScaleControl, setWorkerUrl,
-  type MapMouseEvent, type StyleSpecification,
+  type ExpressionSpecification, type MapMouseEvent, type StyleSpecification,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Feature, FeatureCollection } from "geojson";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import type { Cell } from "../../app/coverage.ts";
-import { distanceM, type LatLon } from "../../app/geo.ts";
-import { readableTrail } from "./routeGeometry.ts";
+import type { LatLon } from "../../app/geo.ts";
+import { readableTrail, trailAge } from "./routeGeometry.ts";
 import { epochMs } from "../../app/herd.ts";
 import { fmt } from "../../app/i18n/tr.ts";
 import type { Animal, Observation } from "../../app/model.ts";
@@ -69,6 +69,7 @@ export interface MapData {
   zones: ZoneView[];
   selectedZone: string | null;
   herdTrails: { id: string; color: string; points: Observation[] }[];  // every animal, in range
+  window: { from: number; to: number };                        // shown period: trail fading runs across it
   links: LinkLine[];                                           // animal -> station, by signal
 }
 
@@ -138,31 +139,39 @@ function circlePolygon(c: LatLon, radiusM: number): [number, number][] {
 
 const fc = (features: Feature[]): FeatureCollection => ({ type: "FeatureCollection", features });
 
-function trailFeatures(points: Observation[], color: string, cursor: number | null): Feature[] {
+type Win = { from: number; to: number };
+
+/** One solid line, fix to fix; each segment carries its age so old reads faint. */
+function trailFeatures(points: Observation[], color: string, cursor: number | null, win: Win): Feature[] {
   const out: Feature[] = [];
-  // The original measurements remain in playback. Display geometry alone is
-  // simplified, with no line drawn across missing evidence or GPS jumps.
-  for (const run of readableTrail(points).runs)
-    for (let i = 1; i < run.length; i++) {
-      const a = run[i - 1], b = run[i];
-      out.push({
-        type: "Feature",
-        properties: { color, past: cursor === null || epochMs(b.time) <= cursor },
-        geometry: { type: "LineString", coordinates: [[a.lon, a.lat], [b.lon, b.lat]] },
-      });
-    }
+  const line = readableTrail(points).line;
+  for (let i = 1; i < line.length; i++) {
+    const a = line[i - 1], b = line[i], t = epochMs(b.time);
+    out.push({
+      type: "Feature",
+      properties: { color, age: trailAge(t, win.from, win.to), past: cursor === null || t <= cursor },
+      geometry: { type: "LineString", coordinates: [[a.lon, a.lat], [b.lon, b.lat]] },
+    });
+  }
   return out;
 }
 
-/** Optional herd trails use the same evidence breaks and visual reduction. */
-function herdTrailFeatures(list: MapData["herdTrails"]): Feature[] {
-  const out: Feature[] = [];
-  for (const t of list)
-    for (const run of readableTrail(t.points).runs)
-      if (run.length > 1)
-        out.push({ type: "Feature", properties: { color: t.color },
-          geometry: { type: "LineString", coordinates: run.map((p) => [p.lon, p.lat]) } });
-  return out;
+/** A small dot at every fix that was drawn, faded by age like its line. */
+function fixFeatures(points: Observation[], color: string, cursor: number | null, win: Win): Feature[] {
+  return readableTrail(points).fixes.map((p) => {
+    const t = epochMs(p.time);
+    return { type: "Feature" as const,
+      properties: { color, age: trailAge(t, win.from, win.to), past: cursor === null || t <= cursor },
+      geometry: { type: "Point" as const, coordinates: [p.lon, p.lat] } };
+  });
+}
+
+/** Herd trails: same solid, fading lines and dots for every animal. */
+function herdTrailFeatures(list: MapData["herdTrails"], win: Win): Feature[] {
+  return list.flatMap((t) => trailFeatures(t.points, t.color, null, win));
+}
+function herdFixFeatures(list: MapData["herdTrails"], win: Win): Feature[] {
+  return list.flatMap((t) => fixFeatures(t.points, t.color, null, win));
 }
 
 function rasterStyle(base: BaseMap, labels: boolean, sat: SatPrefs): StyleSpecification {
@@ -409,7 +418,7 @@ export class MapEngine {
     if (!m.getSource("dem-shade")) m.addSource("dem-shade", { type: "raster-dem", tiles: [DEM], tileSize: 256, maxzoom: 15, encoding: "terrarium" });
     if (!m.hasImage("hatch")) m.addImage("hatch", hatchImage());
     const empty = fc([]);
-    for (const id of ["o-coverage", "o-heat", "o-zones", "o-herd", "o-links", "o-trail", "o-trail-pts", "o-me", "o-draft", "o-guide"])
+    for (const id of ["o-coverage", "o-heat", "o-zones", "o-herd", "o-herd-pts", "o-links", "o-trail", "o-trail-pts", "o-me", "o-draft", "o-guide"])
       if (!m.getSource(id)) m.addSource(id, { type: "geojson", data: empty });
     const add = (spec: Parameters<MlMap["addLayer"]>[0]) => { if (!m.getLayer(spec.id)) m.addLayer(spec); };
     add({ id: "o-relief", type: "hillshade", source: "dem-shade", layout: { visibility: "none" },
@@ -441,18 +450,27 @@ export class MapEngine {
       layout: { "line-join": "round" },
       paint: { "line-color": ["case", ["get", "sel"], "#FFFFFF", ["==", ["get", "valid"], false], "#FF7A66", "#C9D3DA"],
         "line-width": 2.2, "line-dasharray": [3, 2] } });
+    // Trails fade with age across the shown period: oldest ~0.2, newest 1.
+    // No dashes and no gaps (owner decision 2026-11-16).
+    const AGE = (lo: number, hi: number): ExpressionSpecification => ["interpolate", ["linear"], ["get", "age"], 0, lo, 1, hi];
+    const PLAYED = (lo: number, hi: number): ExpressionSpecification => ["case", ["get", "past"], AGE(lo, hi), 0.12];
+    const DOT_R: ExpressionSpecification = ["interpolate", ["linear"], ["zoom"], 11, 1.4, 15, 2.6, 18, 3.6];
     add({ id: "o-herd-trail", type: "line", source: "o-herd", layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": ["get", "color"], "line-width": 2, "line-opacity": 0.6 } });
+      paint: { "line-color": ["get", "color"], "line-width": 2, "line-opacity": AGE(0.15, 0.85) } });
+    add({ id: "o-herd-pts", type: "circle", source: "o-herd-pts", minzoom: 11,
+      paint: { "circle-radius": DOT_R, "circle-color": ["get", "color"], "circle-opacity": AGE(0.25, 0.95),
+        "circle-stroke-color": "#FFFFFF", "circle-stroke-width": 0.6, "circle-stroke-opacity": AGE(0.2, 0.8) } });
     add({ id: "o-links", type: "line", source: "o-links",
       paint: { "line-color": ["get", "color"], "line-width": 1.6, "line-opacity": 0.75, "line-dasharray": [2, 2] } });
     add({ id: "o-trail-casing", type: "line", source: "o-trail", layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": "#FFFFFF", "line-width": 6, "line-opacity": ["case", ["get", "past"], 0.9, 0.22] } });
+      paint: { "line-color": "#FFFFFF", "line-width": 6, "line-opacity": PLAYED(0.15, 0.85) } });
     add({ id: "o-trail", type: "line", source: "o-trail", layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": ["get", "color"], "line-width": 3.5, "line-opacity": ["case", ["get", "past"], 1, 0.22] } });
-    // One bordered white dot shows where the visible period starts.
-    // Intermediate GPS fixes are deliberately not marked.
-    add({ id: "o-trail-pts", type: "circle", source: "o-trail-pts", minzoom: 13,
-      paint: { "circle-radius": 6, "circle-color": "#FFFFFF", "circle-stroke-color": ["get", "color"], "circle-stroke-width": 3 } });
+      paint: { "line-color": ["get", "color"], "line-width": 3.5, "line-opacity": PLAYED(0.25, 1) } });
+    // A modest dot at every fix, so a lone position is never invisible.
+    add({ id: "o-trail-pts", type: "circle", source: "o-trail-pts", minzoom: 11,
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 2, 15, 3.2, 18, 4.4], "circle-color": ["get", "color"],
+        "circle-opacity": PLAYED(0.3, 1), "circle-stroke-color": "#FFFFFF", "circle-stroke-width": 1,
+        "circle-stroke-opacity": PLAYED(0.25, 0.9) } });
     add({ id: "o-me", type: "fill", source: "o-me", paint: { "fill-color": "#2F6FD0", "fill-opacity": 0.14, "fill-outline-color": "#2F6FD0" } });
     add({ id: "o-draft-fill", type: "fill", source: "o-draft", filter: ["==", ["geometry-type"], "Polygon"],
       paint: { "fill-color": "#FFD60A", "fill-opacity": 0.18 } });
@@ -483,7 +501,7 @@ export class MapEngine {
     vis("o-coverage", l.coverage && !drawing);
     vis("o-heat", l.heat && !drawing);
     for (const id of ["o-trail-casing", "o-trail", "o-trail-pts"]) vis(id, l.trail && !drawing);
-    vis("o-herd-trail", l.herdTrails && !drawing);
+    for (const id of ["o-herd-trail", "o-herd-pts"]) vis(id, l.herdTrails && !drawing);
     vis("o-links", l.links && !drawing);
     for (const id of ["o-zone-fill", "o-zone-casing", "o-zone-line", "o-zone-off"]) vis(id, l.zones || drawing);
     this.paintZoneFill();
@@ -534,20 +552,13 @@ export class MapEngine {
     // Weight so the total stays comparable whether 50 or 50 000 records are shown.
     const w = Math.max(0.015, Math.min(1, 120 / Math.max(1, d.heat.length)));
     set("o-heat", listKey(d.heat), () => fc(d.heat.map((p) => ({ type: "Feature", properties: { w }, geometry: { type: "Point", coordinates: [p.lon, p.lat] } }))));
-    const trailKey = d.trail ? `${d.selected}:${listKey(d.trail.points)}:${d.trail.color}:${d.cursor === null ? "" : Math.floor(d.cursor / 60_000)}` : "none";
-    set("o-trail", trailKey, () => fc(d.trail ? trailFeatures(d.trail.points, d.trail.color, d.cursor) : []));
-    set("o-trail-pts", trailKey, () => {
-      if (!d.trail) return fc([]);
-      const runs = readableTrail(d.trail.points).runs;
-      const first = runs[0]?.[0], last = runs[runs.length - 1]?.at(-1);
-      // Only the start dot. The selected animal pin already marks the last fix.
-      if (!first || !last || distanceM(first, last) < 15) return fc([]);
-      return fc([{
-        type: "Feature", properties: { color: d.trail.color },
-        geometry: { type: "Point", coordinates: [first.lon, first.lat] },
-      }]);
-    });
-    set("o-herd", d.herdTrails.map((t) => `${t.id}:${t.color}:${listKey(t.points)}`).join("|"), () => fc(herdTrailFeatures(d.herdTrails)));
+    const winKey = `${Math.floor(d.window.from / 60_000)}-${Math.floor(d.window.to / 60_000)}`;
+    const trailKey = d.trail ? `${d.selected}:${listKey(d.trail.points)}:${d.trail.color}:${winKey}:${d.cursor === null ? "" : Math.floor(d.cursor / 60_000)}` : "none";
+    set("o-trail", trailKey, () => fc(d.trail ? trailFeatures(d.trail.points, d.trail.color, d.cursor, d.window) : []));
+    set("o-trail-pts", trailKey, () => fc(d.trail ? fixFeatures(d.trail.points, d.trail.color, d.cursor, d.window) : []));
+    const herdKey = `${winKey}|` + d.herdTrails.map((t) => `${t.id}:${t.color}:${listKey(t.points)}`).join("|");
+    set("o-herd", herdKey, () => fc(herdTrailFeatures(d.herdTrails, d.window)));
+    set("o-herd-pts", herdKey, () => fc(herdFixFeatures(d.herdTrails, d.window)));
     set("o-links", d.links.map((l) => `${l.from.lat},${l.from.lon},${l.to.lat},${l.to.lon},${l.rssi}`).join("|"), () => fc(d.links.map((l) => ({
       type: "Feature", properties: { color: l.rssi > -105 ? "#3FCF7F" : l.rssi > -115 ? "#F2B632" : "#FF5C50" },
       geometry: { type: "LineString", coordinates: [[l.from.lon, l.from.lat], [l.to.lon, l.to.lat]] },

@@ -206,9 +206,9 @@ export const tr = {
     layerHelp: {
       heat: "Hayvanların en çok bulunduğu yerler",
       coverage: "5 m karelerde gateway'in duyduğu sinyal",
-      trail: "Seçili hayvanın seçilen dönemdeki izi; boşluklar kesik çizgiyle",
+      trail: "Seçili hayvanın seçilen gündeki izi; soluk kısım eski, koyu kısım yeni",
       zones: "Alan sınırları",
-      herdTrails: "Hayvan seçili değilken bütün sürünün dönemdeki izi",
+      herdTrails: "Hayvan seçili değilken bütün sürünün dönemdeki izi; soluk eski, koyu yeni",
       links: "Hayvandan gateway'e; renk son kaydın sinyalini gösterir",
     },
     zoneFill: { title: "Alan dolgusu", none: "Yok", light: "Hafif", hatch: "Çizgili" },

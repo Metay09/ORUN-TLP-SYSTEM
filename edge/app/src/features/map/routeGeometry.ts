@@ -1,15 +1,20 @@
 // Geometry for map display only. Original observations and timestamps are
 // never modified: storage, distance totals and playback retain real fixes.
-import { distanceM } from "../../app/geo.ts";
-import { agingLimit, epochMs, periodMs } from "../../app/herd.ts";
+//
+// Owner decision 2026-11-16: no dashed or broken trails. Every fix is joined
+// to the next in time with one solid line, so it is always visible where the
+// animal went, well measured or not; GPS jumps are drawn too. Age is shown by
+// fading (old = faint, new = strong), not by gaps.
+import { epochMs } from "../../app/herd.ts";
 import type { Observation } from "../../app/model.ts";
 
-const MAX_PLAUSIBLE_SPEED_MPS = 4; // consistent with geo.pathLengthM
 const DRAW_TOLERANCE_M = 10;        // display tolerance, not GPS accuracy
 
 export interface ReadableTrail {
-  runs: Observation[][];
-  breaks: number;
+  /** Simplified line through the fixes, oldest first. */
+  line: Observation[];
+  /** Every fix that is drawn as a dot, oldest first. */
+  fixes: Observation[];
 }
 
 function valid(p: Observation): boolean {
@@ -47,25 +52,24 @@ function simplify(run: Observation[]): Observation[] {
   return run.filter((_, i) => keep[i] === 1);
 }
 
-/** Repeated fixes are ignored; implausible jumps and stale gaps split lines. */
+/**
+ * One continuous line, oldest to newest, through every fix as it came
+ * (owner decision 2026-11-16: "hepsini normal çiz" — no jump filtering).
+ * Only repeated timestamps are ignored.
+ */
 export function readableTrail(points: Observation[]): ReadableTrail {
   const ordered = [...points].filter(valid).sort((a, b) => epochMs(a.time) - epochMs(b.time));
-  const runs: Observation[][] = [];
-  let run: Observation[] = [], breaks = 0;
-  for (const point of ordered) {
-    const prev = run[run.length - 1];
-    if (prev) {
-      const elapsed = epochMs(point.time) - epochMs(prev.time);
-      if (elapsed <= 0) continue;
-      const speed = distanceM(prev, point) / (elapsed / 1000);
-      if (elapsed > agingLimit(periodMs(prev.period_s)) || speed > MAX_PLAUSIBLE_SPEED_MPS) {
-        runs.push(simplify(run));
-        run = [];
-        breaks++;
-      }
-    }
-    run.push(point);
+  const fixes: Observation[] = [];
+  for (const p of ordered) {
+    const prev = fixes[fixes.length - 1];
+    if (prev && epochMs(p.time) <= epochMs(prev.time)) continue;
+    fixes.push(p);
   }
-  if (run.length) runs.push(simplify(run));
-  return { runs, breaks };
+  return { line: simplify(fixes), fixes };
+}
+
+/** 0 at the start of the shown period (faint), 1 at its end (strong). */
+export function trailAge(timeMs: number, from: number, to: number): number {
+  if (!(to > from)) return 1;
+  return Math.max(0, Math.min(1, (timeMs - from) / (to - from)));
 }

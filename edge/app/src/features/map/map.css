@@ -146,6 +146,14 @@
 .timebar .chips { padding: 0; }
 .timebar .chip { height: 32px; font-size: 13px; padding: 0 12px; background: var(--card); }
 .timebar .chip[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.tpick { display: flex; flex-direction: column; gap: 8px; }
+.tpick .row { gap: 8px; }
+.tpick .chips { padding: 0; }
+.tpick .chip.on { background: var(--ink); color: var(--paper); }
+.tpick .date-chip { position: relative; }
+.tpick .date-chip input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; }
+.tpick .hours select { width: auto; height: 36px; padding: 0 10px; }
+.tpick .circ:disabled { opacity: .35; }
 
 /* layer panel */
 .bases { display: flex; gap: 10px; padding: 4px 16px 8px; }
