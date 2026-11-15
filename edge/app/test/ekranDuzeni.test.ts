@@ -279,6 +279,8 @@ test("pil ömrü: bekleme akımı + rapor başına maliyet, tasmanın kendi dü�
   assert.ok(Math.abs(lifeAt(450, 3600, d).daysFull - 62.5) < 0.01);
   assert.equal(Math.round(lifeAt(450, 3600, d, 70).daysLeft!), 39);   // 70 % now, 20 % kept back
   assert.ok(lifeAt(450, 40, d).avgMa > 25, "60 sn altında GPS açık kalır");
+  assert.ok(lifeAt(450, 60, d).avgMa > 25, "60 sn'de de GPS açık kalır (firmware: aralık <= 60 sn)");
+  assert.ok(lifeAt(450, 61, d).avgMa < 10);
   assert.deepEqual([lifeWord(1.5), lifeWord(13.6), lifeWord(119), lifeWord(900)], ["~36 saat", "~14 gün", "~4 ay", "~2,5 yıl"]);
 });
 
