@@ -318,9 +318,14 @@ def device_alerts(dev: str, name: str, rows: list[dict], polys, since: int, graz
             add("silent", f"silent:{dev}:{heard}", f"{name} sessiz",
                 f"{_since(heard, now).capitalize()} konum gelmiyor · {max(1, round(quiet / T) - 1)} rapor kaçtı")
 
-    # Battery: an episode opens at low/critical and closes after a day back at good.
+    # Battery: an episode opens at low/critical and closes after a day back at
+    # good, or at once when the collar is put on USB (it is being charged; the
+    # app does the same, herd.ts batteryOf).
     start, critical, last_bad = None, False, 0
     for r in rows:
+        if r["mv"] is not None and (r.get("usb") is True or r["power"] == "CHARGING"):
+            start, critical = None, False
+            continue
         level = battery_level(r)
         if level == "unknown":
             continue
