@@ -1,6 +1,6 @@
 // Map display geometry (owner decision 2026-11-16): one solid line through
-// every fix, no dashes or gaps; only a single out-and-back GPS spike is left
-// out. Original observations are never changed.
+// every fix, no dashes, gaps or jump filtering. Original observations are
+// never changed.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Observation } from "../src/app/model.ts";
@@ -21,18 +21,16 @@ test("map trail: a long silence is still joined, not broken or dashed", () => {
   assert.equal(s.line.length, 3);
 });
 
-test("map trail: a single out-and-back GPS spike is left out, originals unchanged", () => {
+test("map trail: a GPS jump is drawn like any other fix", () => {
   const p = [point(0, 37, 28), point(60, 37.02, 28), point(120, 37.0001, 28)];
   const s = readableTrail(p);
-  assert.equal(s.spikes, 1);
-  assert.deepEqual(s.fixes.map((x) => x.seq), [0, 120]);
-  assert.equal(p.length, 3);
+  assert.deepEqual(s.fixes.map((x) => x.seq), [0, 60, 120]);
+  assert.equal(s.line.length, 3);
 });
 
 test("map trail: a real fast move (e.g. a trailer ride) stays in the line", () => {
   const p = [point(0, 37, 28), point(60, 37.0001, 28), point(120, 37.02, 28), point(180, 37.0201, 28)];
   const s = readableTrail(p);
-  assert.equal(s.spikes, 0);
   assert.equal(s.fixes.length, 4);
 });
 

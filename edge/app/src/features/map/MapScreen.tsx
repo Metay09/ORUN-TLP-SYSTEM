@@ -13,7 +13,6 @@ import { cap, fmt, tr } from "../../app/i18n/tr.ts";
 import type { Animal } from "../../app/model.ts";
 import { useBack, useNav } from "../../app/nav.ts";
 import { useApp } from "../../app/store.ts";
-import { readableTrail } from "./routeGeometry.ts";
 import { pickFromWindow, pickWindow, wholeDay, type TrailPick } from "./trailWindow.ts";
 import { pickLabel, TrailPicker } from "./TrailPicker.tsx";
 import { validateRing } from "../../app/zones.ts";
@@ -106,7 +105,6 @@ export function MapScreen({ visible }: { visible: boolean }) {
 
   // ---- data ---------------------------------------------------------------
   const trailPts = useMemo(() => (a ? inRange(a.points, from, to) : []), [a, from, to]);
-  const trailSpikes = useMemo(() => readableTrail(trailPts).spikes, [trailPts]);
   const heatPts = useMemo(() => (L.heat ? (a ? [a] : herd).flatMap((x) => inRange(x.points, from, to)) : []), [L.heat, a, herd, from, to]);
   const zoneViews = useMemo(() => m.zones.map((z) => ({ id: z.id, name: z.name, ring: z.ring, active: z.active, valid: !validateRing(z.ring) })), [m.zones]);
   const herdTrails = useMemo(() => (L.herdTrails && !a ? herd.filter((x) => x.last).map((x) => ({ id: x.id, color: x.color, points: inRange(x.points, from, to) })) : []),
@@ -268,7 +266,7 @@ export function MapScreen({ visible }: { visible: boolean }) {
           </div>
         )}>
         {a ? (
-          <Selected a={a} me={me} now={m.now} pts={trailPts} spikes={trailSpikes} cursor={cursor} playing={playing} pick={pick}
+          <Selected a={a} me={me} now={m.now} pts={trailPts} cursor={cursor} playing={playing} pick={pick}
             onClose={clear} onFind={() => nav.push({ to: "find", id: a.id })} onProfile={() => nav.push({ to: "animal", id: a.id })}
             onCursor={(c) => { setPlaying(false); setCursor(c); }} onPlay={() => {
               if (!trailPts.length) return;
@@ -323,8 +321,8 @@ export function HerdRows({ herd, me, now, onPick }: { herd: Animal[]; me: LatLon
   );
 }
 
-function Selected({ a, me, now, pts, spikes, cursor, playing, pick, onClose, onFind, onProfile, onCursor, onPlay, onPick }: {
-  a: Animal; me: LatLon | null; now: number; pts: Animal["points"]; spikes: number; cursor: number | null; playing: boolean;
+function Selected({ a, me, now, pts, cursor, playing, pick, onClose, onFind, onProfile, onCursor, onPlay, onPick }: {
+  a: Animal; me: LatLon | null; now: number; pts: Animal["points"]; cursor: number | null; playing: boolean;
   pick: TrailPick;
   onClose: () => void; onFind: () => void; onProfile: () => void;
   onCursor: (c: number) => void; onPlay: () => void; onPick: (p: TrailPick) => void;
@@ -359,7 +357,6 @@ function Selected({ a, me, now, pts, spikes, cursor, playing, pick, onClose, onF
       <div className="timebar">
         <TrailPicker pick={pick} now={now} onPick={onPick} />
         <span className="fine">Soluk çizgi eski, koyu çizgi yeni; noktalar alınan konumlar. Son konum: hayvan işareti.</span>
-        {spikes > 0 && <span className="fine">{spikes} hatalı GPS sıçraması çizilmedi.</span>}
         {pts.length > 1 ? (
           <>
             <div className="row">
