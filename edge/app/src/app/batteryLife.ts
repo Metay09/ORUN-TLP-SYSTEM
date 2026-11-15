@@ -22,7 +22,9 @@ export const DRAIN_DEFAULT = {
   baseMa: 0.5,
 };
 const BASE_MIN_MA = 0.02, PACKET_MIN_MAH = 0.02;
-/** u-blox ZOE-M8Q continuous: 25 mA. Under 60 s the GNSS stays on (gnss_config kShortIntervalThreshold). */
+/** u-blox ZOE-M8Q continuous: 25 mA. At 60 s and below the GNSS stays on (gnss_config
+ *  keepTracking: interval <= kShortIntervalThreshold). Kutu at 60 s measured 44.6 mA
+ *  (2026-11-15, 2.4 h, 4025 -> 3816 mV); the app had said 8.3 mA ("~43 saat"). */
 const GNSS_ON_MA = 25, SHORT_INTERVAL_S = 60;
 /** A LiPo is not run to 0 %; count 80 % of the label as usable. */
 export const USABLE = 0.8;
@@ -156,7 +158,7 @@ export interface Life { avgMa: number; mAhPerDay: number; daysFull: number; days
 
 /** Average current, days on a full battery and days left at one report every `intervalS`. */
 export function lifeAt(mAh: number, intervalS: number, d: Pick<Drain, "baseMa" | "packetMah">, nowPct: number | null = null): Life {
-  const avgMa = d.baseMa + (d.packetMah * 3600) / intervalS + (intervalS < SHORT_INTERVAL_S ? GNSS_ON_MA : 0);
+  const avgMa = d.baseMa + (d.packetMah * 3600) / intervalS + (intervalS <= SHORT_INTERVAL_S ? GNSS_ON_MA : 0);
   const mAhPerDay = avgMa * 24;
   return {
     avgMa, mAhPerDay, daysFull: (mAh * USABLE) / mAhPerDay,
