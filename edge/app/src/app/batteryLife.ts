@@ -65,7 +65,8 @@ export function drainRuns(series: Reading[], mAh: number): Run[] {
   };
   let odd: Reading[] = [];
   for (const r of [...series].sort((a, b) => a.t - b.t)) {
-    if (r.usb === true || r.power === "NO_BATTERY" || r.power === "FULL") { close(); odd = []; offSince = 0; continue; }
+    // FULL off USB is the collar mistaking an unplug for a charge end (2026-11-15): still the battery.
+    if (r.usb === true || r.power === "NO_BATTERY" || (r.power === "FULL" && r.usb !== false)) { close(); odd = []; offSince = 0; continue; }
     // Firmware without the power state (before Pil 1/2, 2026-11-12) read the battery while the
     // radio and GPS were working and did not tell charging: jumps of 200-300 mV in minutes.
     if (r.power == null) { close(); odd = []; offSince = 0; continue; }
