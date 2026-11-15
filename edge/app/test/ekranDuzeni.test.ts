@@ -168,6 +168,27 @@ test("henüz ulaşmayan kayıt: sıra numarasındaki boşluklar, en yeni dönem,
 import { buildHerd } from "../src/app/herd.ts";
 import { deriveEvents } from "../src/app/events.ts";
 
+test("görüldü = en yeni rapor: konumu 10 dk önce, konumsuz raporu 2 dk önce gelen tasma 'az önce' ve yeşil", () => {
+  const now = Date.UTC(2026, 10, 15, 10, 20);
+  const MIN = 60_000;
+  const pt = (minAgo: number, seq: number) => ({
+    tracker: "0E8ADE7E71531AA3", incarnation: "I", seq, time: new Date(now - minAgo * MIN).toISOString(),
+    lat: 37.53, lon: 27.78, alt_m: null, sats: 5, hdop: 1, fix_age_s: 0, battery_mv: 4060, battery: "NORMAL",
+    active_s: null, covered_s: null, source: "GNSS", period_s: 300, rssi: -70, snr: 5, received: null, delay_s: null, link: null,
+  }) as unknown as Observation;
+  const unlocated = [{ tracker: "0E8ADE7E71531AA3", incarnation: "I", seq: 3, time: new Date(now - 2 * MIN).toISOString() }];
+  const [a] = buildHerd({ points: [pt(15, 1), pt(10, 2)], profiles: {}, assetOf: (d) => d, now, unlocated });
+  assert.equal(a.noFix, false, "tek kaçan konum GPS arızası değil");
+  assert.equal(a.freshness, "fresh");
+  assert.equal(a.status, "ok");
+  assert.equal(a.seen, "2 dk önce görüldü");
+  assert.ok(a.freshRatio > 0.5);
+  // Without the report the same collar is "10 dk önce" and late.
+  const [b] = buildHerd({ points: [pt(15, 1), pt(10, 2)], profiles: {}, assetOf: (d) => d, now });
+  assert.equal(b.seen, "10 dk önce görüldü");
+  assert.notEqual(b.freshness, "fresh");
+});
+
 test("konumsuz rapor: tasma 'haber yok' değil 'konum bulamıyor'; aradaki boşluk sessizlik sayılmaz", () => {
   const now = Date.UTC(2026, 10, 11, 2, 20);
   const MIN = 60_000;
