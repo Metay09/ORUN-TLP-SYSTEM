@@ -22,10 +22,14 @@ export const DRAIN_DEFAULT = {
   baseMa: 0.5,
 };
 const BASE_MIN_MA = 0.02, PACKET_MIN_MAH = 0.02;
-/** u-blox ZOE-M8Q continuous: 25 mA. At 60 s and below the GNSS stays on (gnss_config
- *  keepTracking: interval <= kShortIntervalThreshold). Kutu at 60 s measured 44.6 mA
- *  (2026-11-15, 2.4 h, 4025 -> 3816 mV); the app had said 8.3 mA ("~43 saat"). */
-const GNSS_ON_MA = 25, SHORT_INTERVAL_S = 60;
+/** At 60 s and below the GNSS stays on (gnss_config keepTracking: interval <=
+ *  kShortIntervalThreshold). Measured on Kutu (450 mAh), 2026-11-15, 60 s: 4034 mV (%87)
+ *  at 14:01 to empty (3148 mV) at 18:11, 4 h 10 min; i.e. ~4.8 h on a full battery. The
+ *  voltage fell steadily to ~3.7 V and then collapsed within 30 min, so this is the cost
+ *  in the app's terms (percent curve, 80 % usable), not a current on a meter. It was 25
+ *  (u-blox datasheet), with which the app said ~11 h. */
+export const GNSS_ON_MA = 65;
+const SHORT_INTERVAL_S = 60;
 /** A LiPo is not run to 0 %; count 80 % of the label as usable. */
 export const USABLE = 0.8;
 

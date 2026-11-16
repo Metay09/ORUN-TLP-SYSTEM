@@ -97,6 +97,9 @@ function FleetEdit({ row, trackers, onClose }: { row: FleetRow; trackers: Tracke
             <Toggle on={value === true} label={def.title} onChange={(v) => setValue(v)} />
           </div>
         )}
+        {def.kind === "choice" && value !== null && def.warn?.(value) && (
+          <p className="sm t-aging" role="note" style={{ margin: 0 }}>{def.warn(value)}</p>
+        )}
         <Seg<"all" | "pick"> value={scope} onChange={setScope}
           options={[{ value: "all", label: `Hepsi (${trackers.length})` }, { value: "pick", label: "Seçerek" }]} />
         {scope === "pick" && (

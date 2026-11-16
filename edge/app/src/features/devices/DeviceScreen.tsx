@@ -266,6 +266,9 @@ function EditSetting({ device, row, onClose }: { device: string; row: SettingRow
             <Toggle on={value === true} label={def.title} onChange={(v) => setValue(v)} />
           </div>
         )}
+        {def.kind === "choice" && value !== null && def.warn?.(value) && (
+          <p className="sm t-aging" role="note" style={{ margin: 0 }}>{def.warn(value)}</p>
+        )}
         <p className="fine" style={{ margin: 0 }}>Kaydedince hesaba yazılır; tasmaya bağlanınca (USB ya da Bluetooth) sormadan gider.</p>
         <div className="btns" style={{ padding: 0 }}>
           <button className="btn" onClick={onClose}>Vazgeç</button>
