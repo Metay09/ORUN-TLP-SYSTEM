@@ -28,11 +28,12 @@ export interface TrackerStatus {
     tracking: SvcState; trackingWhy: string | null; relay: SvcState; receive: boolean;
   } | null;
   fence: { state: "unavailable" | "clear" | "configured"; areas: number; vertices: number; position: "unknown" | "inside" | "outside" } | null;
-  storage: { ready: boolean; count: number; capacity: number; overwritten: number } | null;
+  storage: { source: "product" | "legacy"; ready: boolean; count: number; capacity: number; overwritten: number;
+             pending: number | null; released: number | null } | null;
   missing: Family[];               // asked, no answer
 }
 
-export const FAMILIES: Family[] = ["device", "config", "tracking", "power", "services", "geofence", "storage"];
+export const FAMILIES: Family[] = ["device", "config", "tracking", "power", "services", "geofence", "storage", "product"];
 
 // ---------------------------------------------------------------- USB ---
 /** "APP X k=v k=v" → {k: v}. */
@@ -51,6 +52,7 @@ const USB: Record<Family, { ask: string; answer: RegExp }> = {
   tracking: { ask: "APP TRACKING?", answer: /^APP TRACKING id=/ },
   geofence: { ask: "APP GEOFENCE?", answer: /^APP GEOFENCE id=/ },
   storage: { ask: "APP STORAGE?", answer: /^APP STORAGE id=/ },
+  product: { ask: "APP PRODUCT STORAGE?", answer: /^APP PRODUCT STORAGE id=/ },
   power: { ask: "APP POWER?", answer: /^APP POWER id=/ },
   services: { ask: "APP SERVICES?", answer: /^APP SERVICES mode=/ },
 };
@@ -92,7 +94,7 @@ function servicesLetters(bits: number): string {
 /** One Bluetooth answer → the USB key names. */
 export function decodeBle(family: Family, m: AppMessage): Record<string, string> {
   const p = checkAnswer(m, family);
-  const need = { config: 10, device: 36, tracking: 36, geofence: 9, storage: 40, power: 16, services: 9 }[family];
+  const need = { config: 10, device: 36, tracking: 36, geofence: 9, storage: 40, power: 16, services: 9, product: 20 }[family];
   if (p.length < need) throw new Error("Cihazın yanıtı kısa.");
   switch (family) {
     case "config":
@@ -120,6 +122,10 @@ export function decodeBle(family: Family, m: AppMessage): Record<string, string>
     case "storage":
       return { history_ready: yes(p[1] & 1), busy: yes(p[1] & 2), count: s(le32(p, 4)), capacity: s(le32(p, 8)),
                overwritten: s(le32(p, 12)), append_failures: s(le32(p, 16)) };
+    case "product":
+      return { mounted: yes(p[1] & 1), ready: yes(p[1] & 2), valid: yes(p[1] & 4), busy: yes(p[1] & 8),
+               pending: s(le32(p, 4)), released: s(le32(p, 8)), capacity: s(le32(p, 12)),
+               lost: s(le32(p, 16)) };
     case "power":
       return { battery: p[1] & 1 ? "MEASURED" : "NONE", state: BATTERY[p[2]] ?? "UNKNOWN",
                percent_est: p[1] & 1 && p[3] <= 100 ? s(p[3]) : "-", mv: s(le16(p, 4)), raw: s(le16(p, 6)),
@@ -146,7 +152,16 @@ function svc(v: string | undefined): { state: SvcState; why: string | null } {
 }
 
 export function buildStatus(raw: Raw, via: Via, at: number): TrackerStatus {
-  const d = raw.device, c = raw.config, t = raw.tracking, p = raw.power, sv = raw.services, g = raw.geofence, st = raw.storage;
+  const d = raw.device, c = raw.config, t = raw.tracking, p = raw.power, sv = raw.services, g = raw.geofence, st = raw.storage, ps = raw.product;
+  const productValid = ps?.mounted === "yes" && ps.ready === "yes" && ps.valid === "yes";
+  const retained = productValid ? num(ps?.pending) : null;
+  const released = productValid ? num(ps?.released) : null;
+  const productStorage = ps?.mounted === "yes" ? {
+    source: "product" as const, ready: productValid && retained !== null && released !== null,
+    count: retained !== null && released !== null ? retained + released : 0,
+    capacity: num(ps.capacity) ?? 0, overwritten: num(ps.lost) ?? 0,
+    pending: retained, released,
+  } : null;
   const role = d ? ({ "0": "tracker", "1": "relay", "2": "gateway" } as const)[d.role as "0" | "1" | "2"] ?? null : null;
   const requested = num(t?.requested_s) ?? num(c?.tracking_interval_seconds);
   const tracking = svc(sv?.tracking);
@@ -174,8 +189,14 @@ export function buildStatus(raw: Raw, via: Via, at: number): TrackerStatus {
     fence: g ? { state: g.runtime === "configured" ? "configured" : g.resource === "0" ? "unavailable" : "clear",
                  areas: num(g.areas) ?? 0, vertices: num(g.vertices) ?? 0,
                  position: g.confirmed === "yes" ? (g.state === "1" ? "inside" : g.state === "2" ? "outside" : "unknown") : "unknown" } : null,
-    storage: st ? { ready: st.history_ready === "yes", count: num(st.count) ?? 0, capacity: num(st.capacity) ?? 0,
-                    overwritten: num(st.overwritten) ?? 0 } : null,
+    // A product response is authoritative for this firmware. On an older
+    // firmware with no product query we explicitly label legacy HistoryStore;
+    // never mistake its 728/1056 slots for ObservationStore capacity.
+    storage: productStorage ?? (ps ? null : st ? {
+      source: "legacy" as const, ready: st.history_ready === "yes",
+      count: num(st.count) ?? 0, capacity: num(st.capacity) ?? 0,
+      overwritten: num(st.overwritten) ?? 0, pending: null, released: null,
+    } : null),
     missing: FAMILIES.filter((f) => !raw[f]),
   };
 }
