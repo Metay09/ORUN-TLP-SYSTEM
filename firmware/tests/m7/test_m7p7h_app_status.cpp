@@ -129,6 +129,13 @@ ApplicationStatusSnapshot sampleSnapshot() {
   s.storage.security_ready = 1;
   s.storage.security_exhausted = 0;
   s.storage.security_state = ApplicationSecurityState::kProvisioned;
+  s.product_storage.mounted = 1;
+  s.product_storage.ready = 1;
+  s.product_storage.valid = 1;
+  s.product_storage.retained_count = 25;
+  s.product_storage.released_count = 475;
+  s.product_storage.capacity = 1260;
+  s.product_storage.capacity_lost = 2;
   s.power.battery_valid = 1;
   s.power.battery_state = ApplicationBatteryState::kNormal;
   s.power.battery_mv = 4012;
@@ -210,6 +217,16 @@ int main() {
     assert(storage.payload.storage.snapshot.history_capacity == 728);
     assert(storage.payload.storage.snapshot.security_state ==
            ApplicationSecurityState::kProvisioned);
+
+    const ApplicationResponse product = submitTake(
+        service, ApplicationRequester::kBle, 53,
+        ApplicationRequestKind::kGetProductStorageStatus,
+        ApplicationAccessContext(ApplicationAccessChannel::kBleOpen));
+    assert(product.code == ApplicationResponseCode::kOk);
+    assert(product.payload.product_storage.snapshot.mounted == 1);
+    assert(product.payload.product_storage.snapshot.retained_count == 25);
+    assert(product.payload.product_storage.snapshot.released_count == 475);
+    assert(product.payload.product_storage.snapshot.capacity == 1260);
 
     const ApplicationResponse power = submitTake(
         service, ApplicationRequester::kBle, 51,
