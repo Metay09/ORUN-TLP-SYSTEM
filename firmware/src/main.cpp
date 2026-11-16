@@ -183,6 +183,7 @@ uint32_t next_usb_application_request_id = 1;
 // M7P7H loop-owned snapshot assembly; declared here so the BLE runtime can
 // refresh immediately after atomically taking an ingress frame.
 void refreshApplicationStatusSnapshot(uint32_t now_ms);
+void refreshProductStorageSnapshot();
 // M7P6B: recovery-only composition. SecurityStore never auto-provisions a
 // credential in production firmware -- begin() only recovers whatever
 // already exists (or reports kUnprovisioned on blank flash). A recovered
@@ -767,6 +768,13 @@ void pollBleApplicationRuntime(bool connected, uint16_t connection_handle,
     // callback-produced frame. This avoids idle-loop work and closes the race
     // where a frame could arrive after a pre-poll "pending" sample.
     refreshApplicationStatusSnapshot(now);
+    // Product counts scan flash: read them ONLY for this explicit query,
+    // never for ordinary BLE ingress or on every cooperative loop tick.
+    if (ingress.frame_len >= orun_tlp::ble_app_transport::kHeaderSize &&
+        ingress.frame[1] == static_cast<uint8_t>(
+            orun_tlp::ble_app_transport::MessageType::
+                kGetProductStorageStatusRequest))
+      refreshProductStorageSnapshot();
     ble_application_transport.onFrameReceived(
         ingress.session_generation, ingress.frame, ingress.frame_len, now);
     setBleApplicationIngressAllowed(
@@ -1043,6 +1051,8 @@ void printUsbGeofencePageDiagnostics() {
 
 void startUsbApplicationQuery(orun_tlp::ApplicationRequestKind kind) {
   refreshApplicationStatusSnapshot(orun_tlp::monotonic::nowMs());
+  if (kind == orun_tlp::ApplicationRequestKind::kGetProductStorageStatus)
+    refreshProductStorageSnapshot();
   const orun_tlp::ApplicationRequest request(
       orun_tlp::ApplicationRequester::kUsb,
       next_usb_application_request_id, kind);
@@ -3483,6 +3493,35 @@ orun_tlp::EffectiveConfig resolveRuntimeConfig() {
   // capability discovery; it does not invent an activity requested field.
   return orun_tlp::resolveRequestedConfig(requestedRuntimeConfig(),
                                           currentCapabilitySnapshot());
+}
+
+void refreshProductStorageSnapshot() {
+  auto& p = application_status_snapshot.product_storage;
+  p = orun_tlp::ApplicationProductStorageSnapshot{};
+  p.mounted = product_records.mounted() ? 1U : 0U;
+  if (!p.mounted) return;  // Gateway and unassigned roles are not Trackers.
+
+  const auto& store = product_records.store();
+  p.ready = (store.ready() && !store.faulted()) ? 1U : 0U;
+  p.busy = (product_records.pending() || store.busy() ||
+            product_records.preparing() || radio_manager.isTransmitting())
+               ? 1U : 0U;
+  // 30 data pages x 42 records = 1260 nominal slots. This is a physical
+  // upper bound, not a guarantee that every slot survives corrupt pages.
+  p.capacity = uint32_t(store.dataPageCount()) *
+               orun_tlp::osf::kDataRecordsPerPage;
+  p.capacity_lost = store.diagnostics().capacity_lost_total;
+  if (!p.ready || p.busy) return;
+
+  uint32_t retained = 0U;
+  uint32_t released = 0U;
+  // Both are disjoint physical-record counts; retained is the set still
+  // awaiting authenticated custody, NOT retained minus released.
+  if (!store.retainedCount(retained) || !store.releasedCount(released))
+    return;  // Never turn a read failure into a false zero-pending claim.
+  p.retained_count = retained;
+  p.released_count = released;
+  p.valid = 1U;
 }
 
 void refreshApplicationStatusSnapshot(uint32_t now_ms) {
