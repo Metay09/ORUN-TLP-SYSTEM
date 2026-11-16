@@ -73,3 +73,15 @@ test("Night reading: the last one before dawn, not older than 30 hours", () => {
   assert.equal(chargeOf(rs, at(14, 13)).night?.mv, 3940);
   assert.equal(chargeOf(rs, at(15, 12)).night, null);
 });
+
+test("1 dk aralık: GPS hep açık, dolu pil ~5 saat (Kutu 15.11 ölçümü), seçerken uyarı", async () => {
+  const { DRAIN_DEFAULT, lifeAt, lifeWord } = await import("../src/app/batteryLife.ts");
+  const { SETTINGS } = await import("../src/app/deviceSettings.ts");
+  const h = lifeAt(450, 60, DRAIN_DEFAULT).daysFull * 24;
+  assert.ok(h > 4 && h < 6, `~4,8 saat bekleniyor, hesap ${h.toFixed(1)}`);
+  assert.equal(lifeWord(h / 24), "~5 saat");
+  assert.ok(lifeAt(450, 61, DRAIN_DEFAULT).daysFull * 24 > 30, "61 sn ve üstü GPS kapanır");
+  const interval = SETTINGS.find((d) => d.key === "interval_s")!;
+  assert.match(interval.warn!(60)!, /5 saat/);
+  assert.equal(interval.warn!(120), null);
+});

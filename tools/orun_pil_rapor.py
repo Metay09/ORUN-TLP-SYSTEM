@@ -32,7 +32,7 @@ DEFAULT_BASE_MA, DEFAULT_PACKET_MAH = 0.5, 0.13
 BASE_MIN_MA, PACKET_MIN_MAH = 0.02, 0.02
 RUN_MIN_H, RUN_MIN_POINTS, SETTLE_S = 6, 8, HOUR
 USABLE = 0.8
-GNSS_ON_MA, SHORT_INTERVAL_S = 25, 60
+GNSS_ON_MA, SHORT_INTERVAL_S = 65, 60   # batteryLife.ts: 60 sn Kutu ölçümü (2026-11-15)
 CURVE = [(3400, 0), (3440, 10), (3480, 20), (3530, 30), (3630, 40), (3720, 50),
          (3800, 60), (3890, 70), (3990, 80), (4050, 90), (4190, 100)]
 POWER = ("UNKNOWN", "BATTERY", "CHARGING", "FULL", "NO_BATTERY")
@@ -137,7 +137,8 @@ def runs(series: list[dict], mah: int) -> list[dict]:
             "seq_gap": (max(seqs) - min(seqs) + 1 - len(set(seqs))) if seqs else 0,
             "resets": len({x["inc"] for x in pts}) - 1,
             "nofix": sum(1 for x in pts if not x["fix"]),
-            "used": hours >= RUN_MIN_H and used > 0,
+            # 60 s and below: GPS stays on, a different cost; shown, not fitted.
+            "used": hours >= RUN_MIN_H and used > 0 and period > SHORT_INTERVAL_S,
         })
 
     # period_s is the measured length of each report period (main.cpp
@@ -218,7 +219,7 @@ def fit_all(rs: list[dict]) -> tuple[float, float, str]:
 
 
 def avg_ma(base: float, pkt: float, interval_s: int) -> float:
-    return base + pkt * 3600 / interval_s + (GNSS_ON_MA if interval_s < SHORT_INTERVAL_S else 0)
+    return base + pkt * 3600 / interval_s + (GNSS_ON_MA if interval_s <= SHORT_INTERVAL_S else 0)
 
 
 def days(mah: int, ma: float) -> str:
@@ -276,9 +277,11 @@ def main(argv=None) -> int:
         print("Kayıttaki aralıklar (sn × adet): " + ", ".join(f"{k}×{v}" for k, v in top))
         print(f"Son: {when(last['t'])}  {last['mv']} mV (%{pct(last['mv']):.0f})  {last['power'] or '-'}"
               f"{'  USB' if last['usb'] else ''}  aralık {mins(last['period'])}")
-        if all(r["usb"] is True or r["power"] in ("FULL", "NO_BATTERY") for r in bat[-50:]):
-            print("  USB'den besleniyor (gateway ya da şarjdaki tasma): pil hesabı yok.")
+        if all(r["usb"] is True or r["power"] == "NO_BATTERY" for r in bat):
+            print("  Hep USB'de (gateway ya da pilsiz kart): pil hesabı yok.")
             continue
+        if last["usb"] is True:
+            print("  Şu an USB'de; aşağıdakiler daha önce pille geçen dönemler.")
         if not mah:
             print("  pil kapasitesi yok: --mah ile verin")
             continue
@@ -290,7 +293,8 @@ def main(argv=None) -> int:
               f"{'mAh':>5} {'ort.mA':>6} {'gelen/bekl.':>11} {'boşluk':>6} {'reset':>5} {'konumsuz':>8}")
         for r in rs:
             ma = r["mAh"] / r["hours"] if r["hours"] > 0 else 0
-            mark = "" if r["used"] else "  (sayılmadı: <6 saat ya da düşüş yok)"
+            mark = ("" if r["used"] else "  (GPS hep açık: modele katılmadı)" if r["period"] <= SHORT_INTERVAL_S
+                    else "  (sayılmadı: <6 saat ya da düşüş yok)")
             print(f"  {mins(r['period']):>6} {when(r['start']):>11} {when(r['end']):>11} {r['hours']:5.1f} "
                   f"{r['mv0']:5.0f}→{r['mv1']:<5.0f} {r['mAh']:5.1f} {ma:6.2f} "
                   f"{r['got']:>5}/{r['expected']:<5.0f} {r['seq_gap']:>6} {r['resets']:>5} {r['nofix']:>8}{mark}")

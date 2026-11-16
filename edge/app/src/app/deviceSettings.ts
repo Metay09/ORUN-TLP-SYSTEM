@@ -26,12 +26,17 @@ export interface SettingDef {
   kind: "choice" | "flag";
   choices?: number[];
   word(v: number | boolean): string;
+  /** A warning for this value, shown under the choice (null: none). */
+  warn?(v: number | boolean): string | null;
 }
 
 export const SETTINGS: SettingDef[] = [
   { key: "interval_s", title: "Rapor aralığı", kind: "choice", choices: INTERVAL_CHOICES,
     help: "Cihaz kaç dakikada bir rapor (konum, hareket, pil) gönderir. Kısa aralık daha çok pil harcar.",
-    word: (v) => fmt.period(v as number) },
+    word: (v) => fmt.period(v as number),
+    warn: (v) => (typeof v === "number" && v <= 60
+      ? "1 dakikada GPS hiç kapanmaz: dolu pil yaklaşık 5 saat gider (Kutu'da ölçüldü). Yalnız kısa deneme ya da arama için."
+      : null) },
   { key: "tracking", title: "Konum takibi", kind: "flag",
     help: "Kapalıyken cihaz GPS'i açmaz, konum göndermez.",
     word: (v) => (v ? "Açık" : "Kapalı") },
