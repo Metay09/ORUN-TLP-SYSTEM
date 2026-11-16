@@ -10,6 +10,7 @@
 //   aging  <= max(3T, 30 min), capped at 24 h
 //   silent  > agingLimit(T)    (stale: last position kept, shown grey)
 //   lost    > 2 * agingLimit(T), unless outside its allowed zones
+import { chargeOf } from "./charge.ts";
 import { bleName } from "./deviceNames.ts";
 import { fmt, tr } from "./i18n/tr.ts";
 import type { Animal, AnimalStatus, AssetProfile, BatteryLevel, Freshness, Observation } from "./model.ts";
@@ -243,6 +244,9 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     }
     const batteryTrail = withBattery.filter((x) => x.t >= now - 7 * 24 * HOUR)
       .map((x) => ({ t: x.t, mv: x.o.battery_mv!, power: x.o.power ?? null, usb: x.o.usb ?? null, periodS: x.o.period_s || null }));
+    // In the sun the reading is pushed up by the charge current: show last night's percent.
+    const charge = chargeOf(batteryTrail, now);
+    if (charge.state === "sun-charging" && charge.night) bat.percent = charge.night.percent;
     const profile = profiles[id] ?? blankProfile(id);
     const device = last?.tracker ?? by.get(id)?.device ?? (profiles[id] ? id : null);
     // The account's name wins; then the phone's own; else the Bluetooth name.
@@ -297,7 +301,7 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     herd.push({
       id, device, profile, name, named, initials: named ? initialsOf(name) : "", color: profile.color,
       points: timed, reports, batteryTrail, batteryAt: newestBat?.t ?? null, batteryMv: newestBat?.o.battery_mv ?? null,
-      batteryPower: newestBat?.o.power ?? null, batteryUsb: newestBat?.o.usb ?? null,
+      batteryPower: newestBat?.o.power ?? null, batteryUsb: newestBat?.o.usb ?? null, charge,
       last, lastTime, lastReport, noFix, gpsFault, heardOnly: (heardAll.get(id) ?? []).sort((x, y) => x - y), periodS, freshness,
       freshRatio: settling && status === "ok" ? 1 : freshRatio(heardAt, periodS, now), status, seen, short,
       battery: bat.level, batteryPercent: bat.percent,

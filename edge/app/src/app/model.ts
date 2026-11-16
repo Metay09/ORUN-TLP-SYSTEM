@@ -8,6 +8,7 @@
 //   Station (İstasyon) — the Gateway service the phone talks to;
 //   AppEvent (Olay) — lifecycle: active -> resolved by a newer measurement.
 import type { Point } from "../core/points.ts";
+import type { Charge } from "./charge.ts";
 import type { LatLon } from "./geo.ts";
 
 export type Observation = Point;
@@ -56,6 +57,8 @@ export interface Animal {
   /** Pil 2: the newest battery reading's power state and USB (null: older firmware). */
   batteryPower: string | null;
   batteryUsb: boolean | null;
+  /** Charging / full on USB or by the sun, the last night's reading and the sun's balance (charge.ts). */
+  charge: Charge;
   last: Observation | null; // newest by RECORD time
   lastTime: number | null;  // epoch ms of that record
   /** Newest record of ANY kind (also without a GNSS fix): when the collar was last heard. */

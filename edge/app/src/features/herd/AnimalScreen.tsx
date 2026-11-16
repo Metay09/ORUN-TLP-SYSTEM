@@ -3,6 +3,7 @@
 // identity / notebook / collar.
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { Bluetooth, CaretRight, CellSignalFull, MapTrifold, NavigationArrow, NotePencil, PencilSimple, Play } from "@phosphor-icons/react";
+import { chargeTitle } from "../../app/charge.ts";
 import { activityBaseline, activityCoverage24h, batteryOutlook, busiestHour, dayStart, daySummaries, hourlyActivity, smoothBattery } from "../../app/activity.ts";
 import { trackerSession } from "../../app/trackerSession.ts";
 import { BatteryLife, useConfiguredInterval } from "../devices/BatteryLife.tsx";
@@ -84,7 +85,6 @@ function Today({ a, now }: { a: Animal; now: number }) {
   // Only the readings at today's report interval: a trend across a change (2 min → 60 min) is neither.
   const outlook = useMemo(() => batteryOutlook(toPct(sinceIntervalChange([...bat].sort((x, y) => x.t - y.t))
     .filter((b) => !externallyPowered(b))), now), [bat, now]); // eslint-disable-line react-hooks/exhaustive-deps
-  const collarSaysPower = bat.some((b) => b.power !== null && b.power !== undefined);
   const hasActivity = a.reports.some((x) => x.active_s !== null);
   const interval = useConfiguredInterval(a);
   const settings = useDeviceSettings();
@@ -149,7 +149,7 @@ function Today({ a, now }: { a: Animal; now: number }) {
         )}
       </Card>
 
-      <Section title={tr.animal.battery} info="Yüzde, pilin kendi geriliminden hesaplanır (4,19 V %100, 4,05 V %90, 3,40 V %0). USB'deyken okunan şarj devresinin gerilimidir; o sırada yüzde gösterilmez, USB çıkınca pilin gerçek yüzdesi görünür. 'Şarj oluyor' ve 'Pil takılı değil' tasmanın kendi ölçümünden gelir. Gidişat, son 24 saatin ortalaması iki gün öncekiyle karşılaştırılarak bulunur (gece-gündüz farkı ortalanır); USB'deki süreler ve rapor aralığı değişmeden önceki okumalar katılmaz (aralık değişince gidişat birkaç gün görünmez). Kalan gün yalnız belirgin düşüşte gösterilir ve tahmindir." />
+      <Section title={tr.animal.battery} info="Yüzde, pilin kendi geriliminden hesaplanır (4,19 V %100, 4,05 V %90, 3,40 V %0). USB'deyken okunan şarj devresinin gerilimidir; o sırada yüzde gösterilmez, USB çıkınca pilin gerçek yüzdesi görünür. 'Şarj oluyor' ve 'doldu' uygulama gerilimin gidişinden çıkarır: şarjda gerilim yükselir, pil dolunca şarj devresi durur ve gerilim hemen düşer (rapor aralığı kadar geç görünür). Güneşte şarj olurken okunan gerilim şarj akımıyla yüksektir; o sırada yüzde son gecenin (güneş yokken) okumasından gösterilir. Güneşte 'doldu' için tasmanın USB'de bir kez tam dolmuş olması gerekir (o tasmanın dolu gerilimi öğrenilir). 'Güneş (son gün)': son gece ile önceki gece arasındaki fark, arada güneşle şarj olduysa. 'Pil takılı değil' tasmanın kendi ölçümünden gelir. Gidişat, son 24 saatin ortalaması iki gün öncekiyle karşılaştırılarak bulunur (gece-gündüz farkı ortalanır); USB'deki süreler ve rapor aralığı değişmeden önceki okumalar katılmaz (aralık değişince gidişat birkaç gün görünmez). Kalan gün yalnız belirgin düşüşte gösterilir ve tahmindir." />
       <Card pad>
         {a.batteryPower === "NO_BATTERY" ? <span className="sm">Pil takılı değil · USB'den besleniyor.</span>
           : a.battery === "unknown" ? <span className="sm">{tr.animal.batteryUnknown}</span> : (
@@ -158,19 +158,19 @@ function Today({ a, now }: { a: Animal; now: number }) {
               <BatteryGauge percent={a.batteryPercent} tone={batTone} />
               <div className="stack grow" style={{ gap: 2 }}>
                 <span className={"strong t-" + batTone}>
-                  {a.batteryUsb ? (a.batteryPower === "CHARGING" ? "USB'de · şarj oluyor" : "USB'de")
-                    : a.batteryPower === "CHARGING" ? "Şarj oluyor"
-                    : a.battery === "critical" ? "Bitmek üzere · bugün şarj et" : a.battery === "low" ? "Azalıyor" : "İyi"}
+                  {chargeTitle(a.charge.state) ?? (a.battery === "critical" ? "Bitmek üzere · bugün şarj et" : a.battery === "low" ? "Azalıyor" : "İyi")}
                 </span>
                 <span className="sm">
-                  {[a.batteryUsb ? "yüzde USB çıkınca görünür" : null, a.batteryMv && !a.batteryUsb ? `${fmt.dec(a.batteryMv / 1000, 2)} V` : null,
+                  {[a.batteryUsb ? "yüzde USB çıkınca görünür" : null,
+                    a.charge.state === "sun-charging" && a.charge.night ? `yüzde gece ${fmt.clock(a.charge.night.t)} okumasından` : null,
+                    a.batteryMv && !a.batteryUsb ? `${fmt.dec(a.batteryMv / 1000, 2)} V` : null,
                     a.batteryAt !== null && !updating ? `${fmt.ago(a.batteryAt, now)} ölçüldü` : null].filter(Boolean).join(" · ")}
                 </span>
               </div>
             </div>
             <div className="act-facts">
               {outlook.change24h !== null && <div><span className="cap">Son 24 saatte</span><b>{outlook.change24h >= 0 ? "+" : "−"}%{Math.abs(Math.round(outlook.change24h))}</b></div>}
-              {!collarSaysPower && outlook.charged24h !== null && outlook.charged24h >= 3 && <div><span className="cap">Gündüz şarj</span><b>+%{Math.round(outlook.charged24h)}</b></div>}
+              {a.charge.solar && <div><span className="cap">Güneş (son gün)</span><b>{a.charge.solar.deltaPct >= 0 ? `yetti · +%${a.charge.solar.deltaPct}` : `yetmedi · −%${-a.charge.solar.deltaPct}`}</b></div>}
               {outlook.perDay !== null && <div><span className="cap">Gidişat</span><b>{outlook.perDay < -0.5 ? `günde −%${fmt.dec(-outlook.perDay, 1)}` : "Dengede"}</b></div>}
             </div>
             {pct.length > 1 && <>
