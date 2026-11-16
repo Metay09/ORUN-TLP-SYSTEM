@@ -5,11 +5,48 @@
 #include <string.h>
 #include <stdio.h>
 
-#define main sf5j_prior_main
-#include "test_sf5j_radio_transport.cpp"
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wreturn-type"
+#endif
+#define main sf5f_prior_r2_main
+#include "../r2/test_r2.cpp"
 #undef main
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 namespace {
+
+void makeProduct(uint8_t family, uint64_t source, uint8_t* bytes,
+                 size_t length) {
+  tlp::ProductSecureFrame f{};
+  f.app_family = family;
+  f.path_flags = tlp::kProductPathFlagCustodyRequested;
+  f.ciphertext_len = static_cast<uint8_t>(
+      family == tlp::kProductAppFamilyPeriodic
+          ? tlp::kPeriodicPlaintextSize : tlp::kEventPlaintextSize);
+  f.device_id = source;
+  f.key_epoch = 7U;
+  f.security_counter = 42U;
+  assert(tlp::encodeProductSecureFrame(f, bytes, length) ==
+         tlp::ProductSecureCodecResult::kOk);
+}
+
+void makeAck(uint8_t (&wire)[custody_ack::kWireSize], uint64_t tracker) {
+  memset(wire, 0, sizeof(wire));
+  wire[0] = custody_ack::kVersion;
+  wire[1] = custody_ack::kType;
+  wire[2] = custody_ack::kRelayAllowed;
+  wire[3] = static_cast<uint8_t>(tlp::kPeriodicFrameSize);
+  for (unsigned i = 0U; i < 8U; ++i)
+    wire[4U+i] = static_cast<uint8_t>(tracker >> (56U - i*8U));
+  wire[19] = 1U;  // nonzero gateway
+  wire[23] = 7U;  // epoch
+  wire[31] = 1U;  // grant generation
+  custody_ack::Header header{};
+  assert(custody_ack::decodeHeader(wire, sizeof(wire), header));
+}
 
 void relayForwardProductAndGatewayUnwrap() {
   RadioManager relay;
@@ -143,9 +180,10 @@ void noNestedRelayOrRoleLeak() {
 }  // namespace
 
 int main() {
-  // Preserve existing real radio-owner regressions (PRODUCT/ACK direct RX,
-  // role transitions, malformed frame refusal and TX ownership).
-  sf5j_prior_main();
+  // Preserve all existing R2 RadioManager callback/role/legacy relay tests.
+  // The SF5J direct PRODUCT and single-ACK tests are run separately by
+  // their own existing host runners.
+  sf5f_prior_r2_main();
   relayForwardProductAndGatewayUnwrap();
   relayForwardAckAndTrackerMailbox();
   noNestedRelayOrRoleLeak();
