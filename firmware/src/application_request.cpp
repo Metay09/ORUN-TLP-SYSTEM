@@ -31,6 +31,7 @@ bool ApplicationRequestService::requestKindSupported(
     case ApplicationRequestKind::kGetStorageStatus:
     case ApplicationRequestKind::kGetPowerStatus:
     case ApplicationRequestKind::kGetServicesStatus:
+    case ApplicationRequestKind::kGetProductStorageStatus:
       return true;
   }
   return false;
@@ -130,6 +131,16 @@ ApplicationSubmitResult ApplicationRequestService::submit(
       } else {
         response_.code = ApplicationResponseCode::kOk;
         response_.payload.storage.snapshot = status_snapshot_->storage;
+      }
+      break;
+
+    case ApplicationRequestKind::kGetProductStorageStatus:
+      if (status_snapshot_ == nullptr || status_snapshot_->populated == 0) {
+        response_.code = ApplicationResponseCode::kUnavailable;
+      } else {
+        response_.code = ApplicationResponseCode::kOk;
+        response_.payload.product_storage.snapshot =
+            status_snapshot_->product_storage;
       }
       break;
 
