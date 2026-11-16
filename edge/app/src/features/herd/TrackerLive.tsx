@@ -260,7 +260,7 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
             {st.storage && <KV k={st.storage.source === "product" ? "Kayıt hafızası" : "Eski kayıt hafızası"}>{
               !st.storage.ready ? "Okunamadı" :
               st.storage.source === "product"
-                ? `${fmt.num(st.storage.count)} / ${fmt.num(st.storage.capacity)} · ${fmt.num(st.storage.pending ?? 0)} kayıt gönderim onayı bekliyor`
+                ? `${fmt.num(st.storage.count)} / ${fmt.num(st.storage.capacity)} · ${fmt.num(st.storage.pending ?? 0)} kayıt henüz teslim edilmedi`
                 : `${fmt.num(st.storage.count)} / ${fmt.num(st.storage.capacity)}`
             }</KV>}
             {st.firmware && <KV k="Yazılım">{st.firmware}</KV>}
