@@ -33,6 +33,7 @@ enum class ApplicationRequestKind : uint8_t {
   kGetStorageStatus = 5,
   kGetPowerStatus = 6,
   kGetServicesStatus = 7,
+  kGetProductStorageStatus = 8,
 };
 
 enum class ApplicationResponseCode : uint8_t {
@@ -136,6 +137,10 @@ struct ApplicationStorageResponsePayload {
   ApplicationStorageSnapshot snapshot;
 };
 
+struct ApplicationProductStorageResponsePayload {
+  ApplicationProductStorageSnapshot snapshot;
+};
+
 struct ApplicationPowerResponsePayload {
   ApplicationPowerSnapshot snapshot;
 };
@@ -150,6 +155,7 @@ union ApplicationResponsePayload {
   ApplicationTrackingResponsePayload tracking;
   ApplicationGeofenceResponsePayload geofence;
   ApplicationStorageResponsePayload storage;
+  ApplicationProductStorageResponsePayload product_storage;
   ApplicationPowerResponsePayload power;
   ApplicationServicesResponsePayload services;
   uint8_t raw[48];
