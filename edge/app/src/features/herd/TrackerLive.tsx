@@ -257,7 +257,12 @@ export function TrackerLiveDialog({ device, target, onClose, onAdd, onBridge, fr
             )}
             {st.services && <KV k="Aktarma">{svcWord(st.services.relay)}</KV>}
             {!isGateway && typeof st.bleWindowS === "number" && <KV k="Rapordan sonra Bluetooth">{bleWindowWord(st.bleWindowS)}</KV>}
-            {st.storage && <KV k="Kayıt hafızası">{`${fmt.num(st.storage.count)} / ${fmt.num(st.storage.capacity)}`}</KV>}
+            {st.storage && <KV k={st.storage.source === "product" ? "Kayıt hafızası" : "Eski kayıt hafızası"}>{
+              !st.storage.ready ? "Okunamadı" :
+              st.storage.source === "product"
+                ? `${fmt.num(st.storage.count)} / ${fmt.num(st.storage.capacity)} · ${fmt.num(st.storage.pending ?? 0)} kayıt gönderim onayı bekliyor`
+                : `${fmt.num(st.storage.count)} / ${fmt.num(st.storage.capacity)}`
+            }</KV>}
             {st.firmware && <KV k="Yazılım">{st.firmware}</KV>}
             {st.uptimeMs !== null && <KV k="Açık kaldığı süre">{fmt.duration(st.uptimeMs)}</KV>}
             {st.missing.length > 0 && <p className="fine" style={{ padding: "6px 16px 10px", margin: 0 }}>Yanıt gelmeyen: {st.missing.join(", ")}</p>}
