@@ -3,6 +3,7 @@
 // kaydedilir, cihaza bağlanınca sormadan yazılır; her ayarın yanında cihazdaki
 // değer ve teslim durumu. Gateway'in ayarı yok (adı ve durumu var).
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { chargeTitle } from "../../app/charge.ts";
 import { Bluetooth, CaretRight, LinkBreak, MapPin, Pulse, Usb, X } from "@phosphor-icons/react";
 import { settingRows, type SettingRow } from "../../app/deviceSettings.ts";
 import { bleName } from "../../app/deviceNames.ts";
@@ -149,8 +150,9 @@ export function DeviceScreen({ id, ble }: { id: string; ble?: string }) {
         ) : <>
           <KV k={tr.device.lastContact}>{m.settling ? tr.status.updating : dev?.lastTime ? `${fmt.clock(dev.lastTime)} · ${fmt.ago(dev.lastTime, m.now)}` : "—"}</KV>
           <KV k={tr.animal.battery}>{dev?.batteryPower === "NO_BATTERY" ? "Pil takılı değil · USB"
-            : dev?.batteryUsb ? (dev.batteryPower === "CHARGING" ? "USB'de · şarj oluyor" : "USB'de")
-            : dev && dev.batteryPercent !== null ? `%${dev.batteryPercent}${dev.batteryPower === "CHARGING" ? " · şarj oluyor" : ""}${dev.batteryMv ? ` · ${fmt.dec(dev.batteryMv / 1000, 2)} V` : ""}` : "—"}</KV>
+            : dev?.batteryUsb ? (a ? chargeTitle(a.charge.state) ?? "USB'de" : "USB'de")
+            : dev && dev.batteryPercent !== null ? [`%${a?.batteryPercent ?? dev.batteryPercent}`, a ? chargeTitle(a.charge.state) : null,
+              dev.batteryMv ? `${fmt.dec(dev.batteryMv / 1000, 2)} V` : null].filter(Boolean).join(" · ") : "—"}</KV>
           <KV k={tr.device.signal}>{dev && dev.rssi !== null ? tr.device.signalLine(dev.rssi, dev.snr) : tr.device.signalNone}</KV>
           {dev?.link && <KV k="Yol">{tr.device.link[dev.link]}</KV>}
           {dev && dev.medianDelayS !== null && <KV k={tr.device.delay}>{dev.medianDelayS < 60 ? `${dev.medianDelayS} sn` : fmt.duration(dev.medianDelayS * 1000)}</KV>}
