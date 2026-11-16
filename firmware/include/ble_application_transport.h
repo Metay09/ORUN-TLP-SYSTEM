@@ -66,6 +66,7 @@ enum class MessageType : uint8_t {
   kGetStorageStatusRequest = 0x05,
   kGetPowerStatusRequest = 0x06,
   kGetServicesStatusRequest = 0x07,
+  kGetProductStorageStatusRequest = 0x08,
   // 4c-1b: authenticated configuration writes (ble_write_auth.h).
   kGetWriteChallengeRequest = 0x10,
   kAuthenticatedWriteRequest = 0x11,
@@ -79,6 +80,7 @@ enum class MessageType : uint8_t {
   kGetStorageStatusResponse = 0x85,
   kGetPowerStatusResponse = 0x86,
   kGetServicesStatusResponse = 0x87,
+  kGetProductStorageStatusResponse = 0x88,
   kGetWriteChallengeResponse = 0x90,
   kAuthenticatedWriteResponse = 0x91,
   kFenceStageResponse = 0x92,
