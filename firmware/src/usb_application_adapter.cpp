@@ -47,6 +47,10 @@ bool parseUsbApplicationQuery(const char* text, uint8_t length,
     *kind = ApplicationRequestKind::kGetStorageStatus;
     return true;
   }
+  if (equals(text, length, "APP PRODUCT STORAGE?")) {
+    *kind = ApplicationRequestKind::kGetProductStorageStatus;
+    return true;
+  }
   if (equals(text, length, "APP POWER?")) {
     *kind = ApplicationRequestKind::kGetPowerStatus;
     return true;
@@ -525,6 +529,24 @@ void printUsbApplicationResponse(const ApplicationResponse& response) {
           serviceStateName(s.relay_state, s.relay_reason),
           s.application_receive ? "ON" : "OFF",
           applicationRoleName(s.legacy_role));
+      return;
+    }
+
+    case ApplicationRequestKind::kGetProductStorageStatus: {
+      const ApplicationProductStorageSnapshot& s =
+          response.payload.product_storage.snapshot;
+      Serial.printf(
+          "APP PRODUCT STORAGE id=%lu mounted=%s ready=%s valid=%s busy=%s "
+          "pending=%lu released=%lu capacity=%lu lost=%lu\n",
+          static_cast<unsigned long>(response.request_id),
+          s.mounted ? "yes" : "no",
+          s.ready ? "yes" : "no",
+          s.valid ? "yes" : "no",
+          s.busy ? "yes" : "no",
+          static_cast<unsigned long>(s.retained_count),
+          static_cast<unsigned long>(s.released_count),
+          static_cast<unsigned long>(s.capacity),
+          static_cast<unsigned long>(s.capacity_lost));
       return;
     }
 
