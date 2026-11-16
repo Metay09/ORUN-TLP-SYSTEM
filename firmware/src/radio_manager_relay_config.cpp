@@ -31,6 +31,11 @@ bool RadioManager::setRelayForwardingEnabled(bool enabled) {
   processReceivedEvents();
 
   network_.setRelayForwardingEnabled(enabled);
+#if defined(ORUN_SF5F_V2_RELAY_CANDIDATE)
+  // Service transitions discard only opaque RAM copies. Disabled relays
+  // must never inherit queued ACKs or protected records from an old session.
+  v2_relay_queue_.clear();
+#endif
 
   // Reuse the existing receive epoch to invalidate any delayed callback from
   // the previous network behavior without changing TLP bytes or queue policy.
