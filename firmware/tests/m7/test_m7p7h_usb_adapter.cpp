@@ -30,6 +30,8 @@ int main() {
   assert(parse("APP TRACKING?") == ApplicationRequestKind::kGetTrackingStatus);
   assert(parse("APP GEOFENCE?") == ApplicationRequestKind::kGetGeofenceStatus);
   assert(parse("APP STORAGE?") == ApplicationRequestKind::kGetStorageStatus);
+  assert(parse("APP PRODUCT STORAGE?") ==
+         ApplicationRequestKind::kGetProductStorageStatus);
 
   ApplicationRequestKind untouched = ApplicationRequestKind::kGetDeviceStatus;
   assert(!parseUsbApplicationQuery("ROLE?", 5, &untouched));
@@ -75,6 +77,23 @@ int main() {
   assert(Serial.output.find("uptime_ms_mod32=4294967295") !=
          std::string::npos);
   assert(Serial.output.find("relay_applied=no") != std::string::npos);
+
+  Serial.output.clear();
+  ApplicationResponse product;
+  product.request_id = 17;
+  product.kind = ApplicationRequestKind::kGetProductStorageStatus;
+  product.code = ApplicationResponseCode::kOk;
+  ApplicationProductStorageSnapshot& ps =
+      product.payload.product_storage.snapshot;
+  ps.mounted = ps.ready = ps.valid = 1;
+  ps.retained_count = 25;
+  ps.released_count = 475;
+  ps.capacity = 1260;
+  ps.capacity_lost = 2;
+  printUsbApplicationResponse(product);
+  assert(Serial.output ==
+         "APP PRODUCT STORAGE id=17 mounted=yes ready=yes valid=yes busy=no "
+         "pending=25 released=475 capacity=1260 lost=2\n");
 
   Serial.output.clear();
   ApplicationResponse denied;
