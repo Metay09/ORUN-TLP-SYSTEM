@@ -269,6 +269,9 @@ void BleApplicationTransport::dispatchInbound() {
     case MessageType::kGetServicesStatusRequest:
       kind = ApplicationRequestKind::kGetServicesStatus;
       break;
+    case MessageType::kGetProductStorageStatusRequest:
+      kind = ApplicationRequestKind::kGetProductStorageStatus;
+      break;
     default:
       buildErrorResponse(correlation_id,
                          ble_app_transport::ErrorCode::kUnsupported,
@@ -545,6 +548,27 @@ void BleApplicationTransport::buildApplicationResponse(
       writeLE32(outbound_.payload + 32, s.geofence_recovery_corruptions);
       writeLE32(outbound_.payload + 36, s.security_recovery_corruptions);
       outbound_.total_length = 40;
+      return;
+    }
+
+    case ApplicationRequestKind::kGetProductStorageStatus: {
+      const ApplicationProductStorageSnapshot& s =
+          response.payload.product_storage.snapshot;
+      outbound_.message_type =
+          static_cast<uint8_t>(MessageType::kGetProductStorageStatusResponse);
+      outbound_.payload[0] = ble_app_transport::kApplicationStatusOk;
+      outbound_.payload[1] = static_cast<uint8_t>(
+          (s.mounted ? 0x01U : 0U) |
+          (s.ready ? 0x02U : 0U) |
+          (s.valid ? 0x04U : 0U) |
+          (s.busy ? 0x08U : 0U));
+      outbound_.payload[2] = 0U;
+      outbound_.payload[3] = 0U;
+      writeLE32(outbound_.payload + 4, s.retained_count);
+      writeLE32(outbound_.payload + 8, s.released_count);
+      writeLE32(outbound_.payload + 12, s.capacity);
+      writeLE32(outbound_.payload + 16, s.capacity_lost);
+      outbound_.total_length = 20;
       return;
     }
 
