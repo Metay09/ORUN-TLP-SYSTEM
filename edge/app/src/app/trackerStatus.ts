@@ -197,7 +197,9 @@ export function buildStatus(raw: Raw, via: Via, at: number): TrackerStatus {
       count: num(st.count) ?? 0, capacity: num(st.capacity) ?? 0,
       overwritten: num(st.overwritten) ?? 0, pending: null, released: null,
     } : null),
-    missing: FAMILIES.filter((f) => !raw[f]),
+    // PRODUCT is an additive optional query: old firmware must not show a
+    // misleading "no answer" warning solely for missing this new endpoint.
+    missing: FAMILIES.filter((f) => f !== "product" && !raw[f]),
   };
 }
 
