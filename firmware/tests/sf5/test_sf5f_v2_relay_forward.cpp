@@ -86,7 +86,11 @@ void roundTrip(const uint8_t* inner, size_t length) {
   const auto rejects = [&](size_t n) {
     assert(tlp::decodeV2RelayForward(wire, n, decoded) !=
            tlp::V2RelayCodecStatus::kOk);
-    assert(memcmp(&saved, &decoded, sizeof(saved)) == 0);
+    assert(saved.relay_device_id == decoded.relay_device_id);
+    assert(saved.ingress_rssi_dbm == decoded.ingress_rssi_dbm);
+    assert(saved.ingress_snr_db == decoded.ingress_snr_db);
+    assert(saved.inner_length == decoded.inner_length);
+    assert(memcmp(saved.inner, decoded.inner, sizeof(saved.inner)) == 0);
   };
   rejects(size - 1U);
   wire[2] = 2U; rejects(size); wire[2] = 1U;
@@ -98,11 +102,11 @@ void roundTrip(const uint8_t* inner, size_t length) {
   wire[8] = wire[9] = wire[10] = wire[11] = 0U;
   rejects(size);
 
-  uint8_t too_short[1]{};
+  uint8_t too_short[1]{0xA5U};
   size_t unchanged = 99U;
   assert(!tlp::encodeV2RelayForward(original, too_short,
                                    sizeof(too_short), unchanged));
-  assert(unchanged == 99U);
+  assert(unchanged == 99U && too_short[0] == 0xA5U);
 }
 
 }  // namespace
