@@ -157,6 +157,14 @@ ApplicationStatusSnapshot makeSnapshot() {
   s.storage.security_exhausted = 0;
   s.storage.security_state = ApplicationSecurityState::kProvisioned;
 
+  s.product_storage.mounted = 1;
+  s.product_storage.ready = 1;
+  s.product_storage.valid = 1;
+  s.product_storage.retained_count = 25;
+  s.product_storage.released_count = 475;
+  s.product_storage.capacity = 1260;
+  s.product_storage.capacity_lost = 2;
+
   s.power.battery_valid = 1;
   s.power.battery_calibrated = 0;
   s.power.power_state = 3;   // Pil 2: FULL
@@ -275,6 +283,24 @@ int main() {
     assert(memcmp(payload, expected, sizeof(expected)) == 0);
   }
 
+  // PRODUCT STORAGE (SF5F): separate 20-byte wire response. The frozen
+  // legacy 40-byte STORAGE golden above stays unchanged.
+  {
+    uint8_t payload[bat::kMaxLogicalPayload]{};
+    const uint16_t len =
+        transact(transport, bat::MessageType::kGetProductStorageStatusRequest,
+                 bat::MessageType::kGetProductStorageStatusResponse,
+                 0x1007, payload);
+    const uint8_t expected[] = {
+        0x00, 0x07, 0x00, 0x00,
+        0x19, 0x00, 0x00, 0x00,
+        0xDB, 0x01, 0x00, 0x00,
+        0xEC, 0x04, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00};
+    assert(len == sizeof(expected));
+    assert(memcmp(payload, expected, sizeof(expected)) == 0);
+  }
+
   // POWER (M7P7H addendum): 16 bytes.
   {
     uint8_t payload[bat::kMaxLogicalPayload]{};
@@ -310,6 +336,7 @@ int main() {
            bat::MessageType::kGetTrackingStatusRequest,
            bat::MessageType::kGetGeofenceStatusRequest,
            bat::MessageType::kGetStorageStatusRequest,
+           bat::MessageType::kGetProductStorageStatusRequest,
            bat::MessageType::kGetPowerStatusRequest,
            bat::MessageType::kGetServicesStatusRequest}) {
     uint8_t frame[bat::kMaxFrameSize]{};
