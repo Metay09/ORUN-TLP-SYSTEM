@@ -97,6 +97,18 @@ test("new product memory status never mistakes released entries for pending", ()
   assert.equal(unreadable.storage?.source, "product");
   assert.equal(unreadable.storage?.ready, false);
   assert.equal(unreadable.storage?.pending, null);
+  // Product query did not exist in earlier firmware: preserve the old
+  // HistoryStore display without raising an optional-query warning.
+  const older = buildStatus({ storage: keyValues(USB_LINES.storage) }, "usb", 3);
+  assert.deepEqual(older.missing.filter((f) => f === "product"), []);
+  assert.equal(older.storage?.source, "legacy");
+  // Gateway has an independent custody store; its count must not be
+  // fabricated from the old Tracker history partition.
+  const gateway = buildStatus({
+    storage: keyValues(USB_LINES.storage),
+    product: keyValues("APP PRODUCT STORAGE id=4 mounted=no ready=no valid=no busy=no pending=0 released=0 capacity=0 lost=0"),
+  }, "usb", 4);
+  assert.equal(gateway.storage, null);
 });
 
 test("service words match the firmware's USB spelling", () => {
