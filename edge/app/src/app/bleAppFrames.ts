@@ -10,6 +10,7 @@ const VERSION = 0x01, HEADER = 8, MAX_FRAME = 20, MAX_PAYLOAD = 48, START = 0x01
 /** Request types; the response type is request | 0x80, an error is 0xFF. */
 export const QUERY = {
   config: 0x01, device: 0x02, tracking: 0x03, geofence: 0x04, storage: 0x05, power: 0x06, services: 0x07,
+  product: 0x08,
 } as const;
 export type Family = keyof typeof QUERY;
 export const ERROR_TYPE = 0xff;
