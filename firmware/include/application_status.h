@@ -175,6 +175,22 @@ struct ApplicationStorageSnapshot {
   ApplicationSecurityState security_state;
 };
 
+// SF5F: explicit ObservationStore readout, separate from the frozen legacy
+// STORAGE family. Counts are sampled only for an explicit PRODUCT STORAGE?
+// request; no O(n) flash scan is added to the normal snapshot/loop.
+struct ApplicationProductStorageSnapshot {
+  uint32_t retained_count;
+  uint32_t released_count;
+  uint32_t capacity;
+  uint32_t capacity_lost;
+  uint8_t mounted;
+  uint8_t ready;
+  uint8_t valid;
+  uint8_t busy;
+};
+static_assert(sizeof(ApplicationProductStorageSnapshot) <= 24,
+              "product readout must remain bounded");
+
 // Battery state values match battery_state in
 // ORUN_TLP_V2_PRODUCT_SECURE_WIRE.md 7.4 and BatteryState.
 enum class ApplicationBatteryState : uint8_t {
@@ -219,6 +235,7 @@ struct ApplicationStatusSnapshot {
   ApplicationTrackingSnapshot tracking;
   ApplicationGeofenceSnapshot geofence;
   ApplicationStorageSnapshot storage;
+  ApplicationProductStorageSnapshot product_storage;
   ApplicationPowerSnapshot power;
   ApplicationServicesSnapshot services;
 };
