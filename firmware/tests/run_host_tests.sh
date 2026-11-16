@@ -1079,6 +1079,10 @@ python3 firmware/tests/sf5/test_step3a_credentials.py
 # Python builder/signer <-> firmware installer + boot reader, tool, build pin.
 bash tools/ci/run_step3b_gateway_grants_host.sh
 
+# SF5F: frozen v2 opaque product/ACK relay envelope, host-only codec.
+# Does not enable forwarding or authorize record release.
+bash tools/ci/run_sf5f_relay_host.sh
+
 # Product-release gate regression only. The production release gate itself
 # intentionally returns BLOCKED until normal-image TX/Gateway/security and
 # physical cross-device/Backend/Android proof are complete.
