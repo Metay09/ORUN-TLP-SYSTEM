@@ -16,6 +16,9 @@
 #include "rak_device_identity.h"
 #include "tlp_position_packet.h"
 #include "tlp_relay_forward_packet.h"
+#if defined(ORUN_SF5F_V2_RELAY_CANDIDATE)
+#include "tlp_v2_relay_forward.h"
+#endif
 #include "tlp_test_packet.h"
 
 namespace orun_tlp {
@@ -50,6 +53,10 @@ static_assert(tlp::kHistorySecureMaxPacketSize <= kRadioReceiveLimit,
               "HISTORY_SECURE packet must fit radio event storage");
 static_assert(tlp::kProductSecureMaxFrameSize <= kRadioReceiveLimit,
               "PRODUCT_SECURE packet must fit radio event storage");
+#if defined(ORUN_SF5F_V2_RELAY_CANDIDATE)
+static_assert(tlp::kV2RelayForwardMaxSize <= kRadioReceiveLimit,
+              "V2 relay frame must fit radio event storage");
+#endif
 
 void saturatingIncrement(uint32_t& value) {
   if (value != UINT32_MAX) ++value;
@@ -110,6 +117,9 @@ bool RadioManager::begin(SequenceSource& sequences) {
   role_transition_pending_ = false;
   accept_rx_events_ = true;
   network_.begin(device_id_, NodeRole::kBase);
+#if defined(ORUN_SF5F_V2_RELAY_CANDIDATE)
+  v2_relay_queue_.clear();
+#endif
   event_diagnostics_ = {};
   listen_policy_ = RadioListenPolicy::kContinuous;
   listen_state_ = RadioListenState::kRxContinuous;
@@ -208,7 +218,12 @@ void RadioManager::update(bool allow_test_beacon) {
   if (!serviceWindowDeadline(now)) return;
 
   if (network_.relayForwardingEnabled() && !tx_in_progress_) {
-    sendDueRelay(now);
+#if defined(ORUN_SF5F_V2_RELAY_CANDIDATE)
+    // ACK has first opportunity among this relay's opaque v2 copies.
+    // This is an isolated RF candidate, not a validated RX rendezvous.
+    if (!sendDueV2Relay(now) && !tx_in_progress_)
+#endif
+      sendDueRelay(now);
   }
   if (allow_test_beacon && radio_config::kTestBeaconEnabled && !tx_in_progress_ &&
       monotonic::reached(now, next_tx_at_ms_)) {
@@ -749,6 +764,11 @@ void RadioManager::applyPendingRole() {
   orunRadioQuiesceLocked();
   processReceivedEvents();
   network_.setRole(requested_role_);
+#if defined(ORUN_SF5F_V2_RELAY_CANDIDATE)
+  // Only RAM transit copies are discarded on role change. The original
+  // Tracker's durable exact objects remain the sole release owner.
+  v2_relay_queue_.clear();
+#endif
   // No ACK received in an old role may be delivered in the new role.
   custody_ack_rx_ = {};
   custody_ack_rx_pending_ = false;
@@ -831,6 +851,45 @@ void RadioManager::sendDueRelay(uint32_t now) {
   tx_started_ms_ = monotonic::nowMs();
 }
 
+#if defined(ORUN_SF5F_V2_RELAY_CANDIDATE)
+bool RadioManager::sendDueV2Relay(uint32_t now) {
+  // Candidate TX path is limited to explicitly selected legacy Relay role;
+  // it never turns a Gateway/Base into a relay or mints an ACK.
+  if (!canSend() || network_.role() != NodeRole::kRelay ||
+      !network_.relayForwardingEnabled()) return false;
+  tlp::V2RelayForward selected{};
+  if (!v2_relay_queue_.peekDue(now, selected)) return false;
+  selected.relay_device_id = device_id_;
+  uint8_t wire[tlp::kV2RelayForwardMaxSize]{};
+  size_t length = 0U;
+  if (!tlp::encodeV2RelayForward(selected, wire, sizeof(wire), length)) {
+    // A malformed queued object is a local failure, never custody evidence.
+    ++local_tx_failures_;
+    ++event_diagnostics_.v2_relay_rx_drops;
+    (void)v2_relay_queue_.consume(selected);
+    return false;
+  }
+
+  startTxOperation();
+  tx_kind_ = TxKind::kV2Relay;
+  tx_role_epoch_ = role_epoch_;
+  rx_restore_state_ = RxRestoreState::kNone;
+  ++tx_attempts_;
+  ++event_diagnostics_.v2_relay_tx_attempts;
+  Radio.Send(wire, static_cast<uint8_t>(length));
+  tx_started_ms_ = monotonic::nowMs();
+  // SX126x-Arduino copies the entire frame into its FIFO synchronously.
+  // Consumption means "TX admitted", not RF delivery or custody release.
+  if (!v2_relay_queue_.consume(selected))
+    Serial.println(F("V2 RELAY queue removal failed after TX admission"));
+  Serial.printf("V2 RELAY TX inner_type=%u inner_len=%u wire_len=%u unverified=yes\\n",
+                static_cast<unsigned>(selected.inner[1]),
+                static_cast<unsigned>(selected.inner_length),
+                static_cast<unsigned>(length));
+  return true;
+}
+#endif
+
 void RadioManager::scheduleNextTransmission(uint32_t now) {
   next_tx_at_ms_ = now + radio_config::kTestIntervalMs +
                    deterministicJitter(device_id_, sequence_number_,
@@ -868,6 +927,64 @@ void RadioManager::emitBridgePosition(const NetworkEvent& event) {
 
 void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
                                         int16_t rssi, int8_t snr) {
+
+#if defined(ORUN_SF5F_V2_RELAY_CANDIDATE)
+  // Transport-only one-hop unwrap. The exact sealed inner bytes go through
+  // the SAME product mailbox or untrusted ACK mailbox as direct frames.
+  // Never forward nested wrappers or treat relay metadata as signed proof.
+  if (size >= 2U && payload[0] == tlp::kV2RelayForwardVersion &&
+      payload[1] == tlp::kV2RelayForwardType) {
+    tlp::V2RelayForward envelope{};
+    if (network_.relayForwardingEnabled() ||
+        tlp::decodeV2RelayForward(payload, size, envelope) !=
+            tlp::V2RelayCodecStatus::kOk ||
+        !((network_.role() == NodeRole::kTracker &&
+           envelope.inner[1] == custody_ack::kType) ||
+          (network_.role() == NodeRole::kBase &&
+           envelope.inner[1] == tlp::kPacketTypeProductSecure))) {
+      ++event_diagnostics_.v2_relay_rx_drops;
+      return;
+    }
+    ++event_diagnostics_.v2_relay_rx_queued;
+    // In particular, this does not accept a custody ACK: the existing
+    // Tracker owner still independently verifies its scoped HMAC.
+    handleReceivedPacket(envelope.inner, envelope.inner_length, rssi, snr);
+    return;
+  }
+
+  if (network_.role() == NodeRole::kRelay &&
+      network_.relayForwardingEnabled() && size >= 2U &&
+      payload[0] == tlp::kProductSecureVersion &&
+      (payload[1] == tlp::kPacketTypeProductSecure ||
+       payload[1] == custody_ack::kType)) {
+    // Distinct from the existing v1 POSITION relay queue. No flash writes.
+    // The existing 1.2-4.2 second jitter is ONLY a candidate for host
+    // testing; do not deploy before half-duplex/RX-window qualification.
+    uint32_t sequence_hint = 0U;
+    if (payload[1] == tlp::kPacketTypeProductSecure && size >= 28U)
+      sequence_hint = (uint32_t(payload[24]) << 24U) |
+                      (uint32_t(payload[25]) << 16U) |
+                      (uint32_t(payload[26]) << 8U) | payload[27];
+    else if (payload[1] == custody_ack::kType && size == custody_ack::kWireSize)
+      sequence_hint = (uint32_t(payload[32]) << 24U) |
+                      (uint32_t(payload[33]) << 16U) |
+                      (uint32_t(payload[34]) << 8U) | payload[35];
+    uint64_t sender = 0U;
+    if (size >= 12U)
+      for (unsigned i = 0U; i < 8U; ++i)
+        sender = (sender << 8U) | payload[4U + i];
+    const uint32_t now = monotonic::nowMs();
+    const uint32_t delay =
+        deterministicRelayDelay(sender, sequence_hint, device_id_);
+    const auto outcome = v2_relay_queue_.offer(
+        payload, size, rssi, snr, now + delay);
+    if (outcome == V2RelayForwardQueue::Offer::kQueued)
+      ++event_diagnostics_.v2_relay_rx_queued;
+    else if (outcome != V2RelayForwardQueue::Offer::kDuplicate)
+      ++event_diagnostics_.v2_relay_rx_drops;
+    return;
+  }
+#endif
 
   if (size >= 2 &&
       payload[0] == custody_ack::kVersion &&
