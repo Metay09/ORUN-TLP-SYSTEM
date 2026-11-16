@@ -882,7 +882,7 @@ bool RadioManager::sendDueV2Relay(uint32_t now) {
   // Consumption means "TX admitted", not RF delivery or custody release.
   if (!v2_relay_queue_.consume(selected))
     Serial.println(F("V2 RELAY queue removal failed after TX admission"));
-  Serial.printf("V2 RELAY TX inner_type=%u inner_len=%u wire_len=%u unverified=yes\\n",
+  Serial.printf("V2 RELAY TX inner_type=%u inner_len=%u wire_len=%u unverified=yes\n",
                 static_cast<unsigned>(selected.inner[1]),
                 static_cast<unsigned>(selected.inner_length),
                 static_cast<unsigned>(length));
