@@ -770,10 +770,16 @@ void pollBleApplicationRuntime(bool connected, uint16_t connection_handle,
     refreshApplicationStatusSnapshot(now);
     // Product counts scan flash: read them ONLY for this explicit query,
     // never for ordinary BLE ingress or on every cooperative loop tick.
-    if (ingress.frame_len >= orun_tlp::ble_app_transport::kHeaderSize &&
+    if (ingress.frame_len == orun_tlp::ble_app_transport::kHeaderSize &&
+        ingress.frame[0] == orun_tlp::ble_app_transport::kTransportVersion &&
         ingress.frame[1] == static_cast<uint8_t>(
             orun_tlp::ble_app_transport::MessageType::
-                kGetProductStorageStatusRequest))
+                kGetProductStorageStatusRequest) &&
+        ingress.frame[2] ==
+            (orun_tlp::ble_app_transport::kFlagStart |
+             orun_tlp::ble_app_transport::kFlagEnd) &&
+        ingress.frame[3] == 0U && ingress.frame[6] == 0U &&
+        ingress.frame[7] == 0U)
       refreshProductStorageSnapshot();
     ble_application_transport.onFrameReceived(
         ingress.session_generation, ingress.frame, ingress.frame_len, now);
