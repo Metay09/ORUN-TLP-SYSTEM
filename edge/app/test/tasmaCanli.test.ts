@@ -12,6 +12,7 @@ const USB_LINES: Record<Family, string> = {
   tracking: "APP TRACKING id=3 requested_s=900 applied_s=900 effective_s=300 cadence=1 gnss_state=11 detected=yes extra_fix=no attempts=40 fresh=38 timeouts=2 invalid=0 last_ttff_ms=22000 config_ready=yes source=stored",
   geofence: "APP GEOFENCE id=4 resource=2 token=1 areas=2 vertices=9 runtime=configured confirmed=yes state=2 confirmation=idle cadence=1",
   storage: "APP STORAGE id=5 history_ready=yes busy=no count=672 capacity=1056 overwritten=0 append_failures=0 corrupt=0 metadata_failures=0 config_ready=yes config_maintenance=no config_corrupt=0 geofence_ready=yes geofence_maintenance=no geofence_corrupt=0 security_ready=yes security_state=1 security_exhausted=no security_corrupt=0",
+  product: "APP PRODUCT STORAGE id=8 mounted=yes ready=yes valid=yes busy=no pending=25 released=475 capacity=1260 lost=2",
   power: "APP POWER id=6 battery=MEASURED state=NORMAL percent_est=81 mv=3950 raw=2900 age_ms=1200 readings=50 calibrated=no",
   services: "APP SERVICES mode=EXPLICIT requested=T applied=EXPLICIT tracking=ON relay=OFF receive=OFF legacy_mode=TRACKER",
 };
@@ -25,10 +26,11 @@ const BLE: Record<Family, number[]> = {
   tracking: [0, 0x07, 1, 11, ...le(900, 4), ...le(900, 4), ...le(300, 4), ...le(40, 4), ...le(38, 4), ...le(2, 4), ...le(0, 4), ...le(22000, 4)],
   geofence: [0, 2, 1, 0x03, 2, ...le(9, 2), 2, 1],
   storage: [0, 0x55, 1, 0, ...le(672, 4), ...le(1056, 4), ...le(0, 4), ...le(0, 4), ...new Array(20).fill(0)],
+  product: [0, 0x07, 0, 0, ...le(25, 4), ...le(475, 4), ...le(1260, 4), ...le(2, 4)],
   power: [0, 0x01, 1, 81, ...le(3950, 2), ...le(2900, 2), ...le(1200, 4), ...le(50, 4)],
   services: [0, 1, 0x01, 0x01, 1, 0, 0, 1, 0],
 };
-const TYPE: Record<Family, number> = { config: 1, device: 2, tracking: 3, geofence: 4, storage: 5, power: 6, services: 7 };
+const TYPE: Record<Family, number> = { config: 1, device: 2, tracking: 3, geofence: 4, storage: 5, power: 6, services: 7, product: 8 };
 const msg = (f: Family): AppMessage => ({ type: TYPE[f] | 0x80, correlation: 7, payload: Uint8Array.from(BLE[f]) });
 
 function frames(type: number, corr: number, payload: number[]): Uint8Array[] {
@@ -77,12 +79,24 @@ test("USB and Bluetooth give the same status", () => {
   assert.deepEqual(a.fence, { state: "configured", areas: 2, vertices: 9, position: "outside" });
   assert.deepEqual(a.services, { explicit: true, requested: { tracking: true, relay: false, receive: false },
     tracking: "on", trackingWhy: null, relay: "off", receive: false });
-  assert.deepEqual([a.role, a.firmware, a.gnss?.state, a.storage?.count, a.missing], ["tracker", "0.9.3-sf5l0", 11, 672, []]);
+  assert.deepEqual([a.role, a.firmware, a.gnss?.state, a.storage?.count, a.missing], ["tracker", "0.9.3-sf5l0", 11, 500, []]);
   assert.equal(a.bleWindowS, 30);
+  assert.deepEqual(a.storage, { source: "product", ready: true, count: 500, capacity: 1260,
+    overwritten: 2, pending: 25, released: 475 });
   // 4c-1a: older firmware sends 10 config bytes and no window.
   const old = decodeBle("config", { ...msg("config"), payload: Uint8Array.from(BLE.config.slice(0, 10)) });
   assert.equal(old.ble_window_seconds, undefined);
   assert.equal(old.tracking_interval_seconds, "900");
+});
+
+test("new product memory status never mistakes released entries for pending", () => {
+  const legacy = buildStatus({ storage: keyValues(USB_LINES.storage) }, "usb", 1).storage;
+  assert.deepEqual(legacy, { source: "legacy", ready: true, count: 672, capacity: 1056,
+    overwritten: 0, pending: null, released: null });
+  const unreadable = buildStatus({ product: keyValues("APP PRODUCT STORAGE id=2 mounted=yes ready=yes valid=no busy=no pending=0 released=0 capacity=1260 lost=0") }, "usb", 2);
+  assert.equal(unreadable.storage?.source, "product");
+  assert.equal(unreadable.storage?.ready, false);
+  assert.equal(unreadable.storage?.pending, null);
 });
 
 test("service words match the firmware's USB spelling", () => {
@@ -97,7 +111,7 @@ test("USB: a family the device refuses is listed as missing", async () => {
   const out: string[] = [];
   const con: LineConsole = {
     async send(line) {
-      const f = (Object.keys(USB_LINES) as Family[]).find((k) => ({ config: "APP CONFIG?" } as Record<string, string>)[k] === line
+      const f = (Object.keys(USB_LINES) as Family[]).find((k) => ({ config: "APP CONFIG?", product: "APP PRODUCT STORAGE?" } as Record<string, string>)[k] === line
         || line === `APP ${k.toUpperCase()}?`);
       out.push("GNSS fix pending", f === "storage" ? "APP RESULT id=9 code=UNAVAILABLE" : USB_LINES[f!]);
     },
