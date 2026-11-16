@@ -10,6 +10,9 @@
 #include "sequence_source.h"
 #include "tlp_v2_history_secure.h"
 #include "tlp_v2_product_secure.h"
+#if defined(ORUN_SF5F_V2_RELAY_CANDIDATE)
+#include "v2_relay_forward_queue.h"
+#endif
 
 namespace orun_tlp {
 
@@ -50,6 +53,11 @@ struct RadioEventDiagnostics {
   uint32_t custody_ack_rx_queued = 0;
   uint32_t custody_ack_rx_drops = 0;
   uint32_t custody_ack_tx_attempts = 0;
+#if defined(ORUN_SF5F_V2_RELAY_CANDIDATE)
+  uint32_t v2_relay_rx_queued = 0;
+  uint32_t v2_relay_rx_drops = 0;
+  uint32_t v2_relay_tx_attempts = 0;
+#endif
 };
 
 struct HistorySecureRxFrame {
@@ -208,6 +216,9 @@ class RadioManager {
   // delivery state changes.
   void emitBridgePosition(const NetworkEvent& event);
   void sendDueRelay(uint32_t now);
+#if defined(ORUN_SF5F_V2_RELAY_CANDIDATE)
+  bool sendDueV2Relay(uint32_t now);
+#endif
 
   enum class TxKind : uint8_t {
     kNone,
@@ -218,6 +229,9 @@ class RadioManager {
     kProductSecure,
     kCustodyAck,
     kLoraFrame,
+#if defined(ORUN_SF5F_V2_RELAY_CANDIDATE)
+    kV2Relay,
+#endif
   };
 
   uint64_t device_id_ = 0;
@@ -248,6 +262,9 @@ class RadioManager {
   uint32_t pending_rx_timeouts_ = 0;
   uint32_t pending_rx_errors_ = 0;
   NetworkService network_{};
+#if defined(ORUN_SF5F_V2_RELAY_CANDIDATE)
+  V2RelayForwardQueue v2_relay_queue_{};
+#endif
   HistorySecureRxFrame history_secure_rx_{};
   bool history_secure_rx_pending_ = false;
   ProductSecureRxFrame product_secure_rx_{};
