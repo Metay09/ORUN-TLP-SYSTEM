@@ -54,7 +54,8 @@ ProductSecureCryptoResult ProductSecureCrypto::protectNextPeriodic(
 bool RadioManager::canSend() const { return g_radio_ready; }
 uint64_t RadioManager::deviceId() const { return kDevice; }
 bool RadioManager::sendProductSecurePacket(const uint8_t* object, size_t n) {
-  if (!g_radio_ready || g_deny_tx || n != sizeof(g_last)) return false;
+  if (!g_radio_ready || g_deny_tx ||
+      (n != tlp::kPeriodicFrameSize && n != tlp::kEventFrameSize)) return false;
   memcpy(g_last, object, n);
   g_last_size = n;
   ++g_sends;
