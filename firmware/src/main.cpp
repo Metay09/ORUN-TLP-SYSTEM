@@ -216,10 +216,13 @@ orun_tlp::Kq05BackendReceiptReleaseOwner kq05_batch_release(
 // Explicit test-image activation only; the default product runtime still
 // sends the existing TLP v1/History path until Gateway commissioning is ready.
 orun_tlp::ProductSecureCrypto product_crypto(security_store);
+#ifndef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+// The previous exact-cache/per-record-ACK sender remains in normal ORUN.
+// KQ05 has its own LIVE-first sender; never link both sender machines.
 orun_tlp::TrackerProductTxPilot tracker_product_tx(product_records,
                                                   product_crypto,
                                                   radio_manager);
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#else
 // Isolated experimental cutover; NEVER enabled by normal rak4630 image.
 orun_tlp::TrackerAcklessLiveTx kq05_live_tx(product_records, product_crypto,
                                             radio_manager);
@@ -2066,8 +2069,13 @@ void printBenchTracker() {
       product_records.mounted() ? "mounted" : "NOT_MOUNTED");
 }
 
-// "BENCH DRAIN?": pacing state of the backlog drain.
+// "BENCH DRAIN?": this is legacy-pilot-only in the normal firmware.
+// The KQ05 batch receipt pipeline does not reuse the old per-record ACK pacer.
 void printBenchDrain() {
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  Serial.println(F("KQ05 DRAIN: legacy single-ACK pilot disabled; "
+                   "LIVE/HISTORY uses experimental sender, delivery unconfirmed"));
+#else
   const auto& st = bench_pacer.stats();
   uint32_t retained = 0;
   uint32_t released = 0;
@@ -2103,6 +2111,7 @@ void printBenchDrain() {
       tracker_product_tx.retryableBlocked() ? "yes" : "no",
       static_cast<unsigned long>(tracker_product_tx.retryAttempts()),
       static_cast<unsigned long>(tracker_product_tx.automaticRecoveries()));
+#endif
 }
 
 void pollBenchTracker() {
@@ -3203,23 +3212,35 @@ void handleRoleCommand() {
   }
   if (isActivityCommand("BENCH DRAIN ON", 14)) {
     role_command_length = 0;
+#ifndef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
     tracker_product_tx.setLiveOnly(false);  // newest first, then backlog
     bench_pacer.setEnabled(true);
     printBenchDrain();
+#else
+    Serial.println(F("KQ05 DRAIN ON refused: legacy ACK pilot not in image"));
+#endif
     return;
   }
   // SF5L4 range walk: only the newest record, sent right after it is stored.
   if (isActivityCommand("BENCH DRAIN LIVE", 16)) {
     role_command_length = 0;
+#ifndef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
     tracker_product_tx.setLiveOnly(true);
     bench_pacer.setEnabled(true);
     printBenchDrain();
+#else
+    Serial.println(F("KQ05 DRAIN LIVE refused: experimental LIVE is automatic"));
+#endif
     return;
   }
   if (isActivityCommand("BENCH DRAIN OFF", 15)) {
     role_command_length = 0;
+#ifndef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
     bench_pacer.setEnabled(false);
     printBenchDrain();
+#else
+    Serial.println(F("KQ05 DRAIN OFF refused: use APP SERVICES NONE to stop tracking"));
+#endif
     return;
   }
   // SF5L0 development-only reset. Clear observations and cached exact
@@ -4799,7 +4820,8 @@ void loop() {
   // Y2a: the one firmware runs the Tracker pilot only on Tracker storage.
   if (trackerStorage()) {
 #endif
-#ifdef ORUN_SF5L0_TRACKER
+#if defined(ORUN_SF5L0_TRACKER) && !defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE)
+  // Legacy-pilot-only: KQ05 cannot initialize this per-record ACK pacer.
   // Start the pacer clock before the pilot's first (boot) send is counted.
   if (!bench_pacer_started) {
     bench_pacer.begin(orun_tlp::monotonic::nowMs(),
@@ -4822,7 +4844,7 @@ void loop() {
              security_store) != 0
 #endif
       ;
-#ifdef ORUN_SF5L0_TRACKER
+#if defined(ORUN_SF5L0_TRACKER) && !defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE)
   if (tracker_product_tx.recoverIfSafe(
           orun_tlp::monotonic::nowMs(), pilot_allowed)) {
     Serial.printf("BENCH PILOT auto-retry selection attempt=%lu\n",
