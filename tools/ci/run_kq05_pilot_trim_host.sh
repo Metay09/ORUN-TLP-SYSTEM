@@ -4,6 +4,8 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
+# Fail fast on source preprocessor selection, before all native regressions.
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_pilot_trim_source.py
 # This remains the strict, complete source / native / both-target closure.
 bash tools/ci/run_kq05_single_owner_closure_host.sh
 
