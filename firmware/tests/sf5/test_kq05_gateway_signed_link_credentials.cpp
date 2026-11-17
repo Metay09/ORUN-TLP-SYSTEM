@@ -155,6 +155,12 @@ void testSignedV2ScopeAndDerivation() {
   assert(hmacSha256Bounded(
       master,data,sizeof(kDerive)+8U+sizeof(kEdge)-1U,expected));
   assert(memcmp(expected,derived,32U)==0);
+  const char pinned[] =
+      "cfa987ef239b763e3dc1b05d3f7bd3bda8c675659ab0c1935d386e1e466ba84f";
+  char actual[65]{};
+  for (size_t i=0U; i<32U; ++i)
+    snprintf(actual+2U*i,sizeof(actual)-2U*i,"%02x",unsigned(derived[i]));
+  assert(strcmp(actual,pinned)==0); // shared Edge Python test vector
   assert(memcmp(master,derived,32U)!=0); // purpose-separated key
 
   kr::GatewayRamRelay q(kGateway);
