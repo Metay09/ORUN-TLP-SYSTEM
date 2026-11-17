@@ -19,61 +19,92 @@ TrackerAcklessLiveTx::Event TrackerAcklessLiveTx::update(
   if (!records_.store().peekNextIdentity(next) || !next.valid() ||
       next.sequence <= 1U) return Event::kNone;
 
-  osf::RecordIdentity newest = next;
-  --newest.sequence;
-  if (sameIdentity(newest, last_sent_)) return Event::kNone;
-
-  ObservationStore::Record record{};
-  const auto lookup = records_.store().lookup(newest, record);
-  if (lookup == ObservationStore::LookupResult::kReadError) {
-    defer(now_ms);
-    return Event::kReadError;
-  }
-  if (lookup != ObservationStore::LookupResult::kFound ||
-      !sameIdentity(record.handle.identity, newest) || record.released ||
-      record.release_uncertain || record.release_marker_exhausted ||
-      record.kind != osf::RecordKind::kPeriodic ||
-      record.schema != osf::kProductSchemaV1 ||
-      record.payload_size != tlp::kPeriodicPlaintextSize) {
-    defer(now_ms);
-    return Event::kBadRecord;
+  // EVENT and PERIODIC deliberately use the SAME durable sequence allocator.
+  // The newest record may be an EVENT. Do not treat it as a malformed LIVE
+  // packet or stop later PERIODIC observations from being sent. Keep the scan
+  // bounded per loop: many consecutive events must not monopolize Flash reads.
+  if (live_search_incarnation_ != next.incarnation ||
+      live_search_next_seq_ != next.sequence) {
+    live_search_incarnation_ = next.incarnation;
+    live_search_next_seq_ = next.sequence;
+    live_search_cursor_ = next.sequence - 1U;
   }
 
-  tlp::PeriodicObservationPlaintext plaintext{};
-  if (tlp::decodePeriodicPlaintext(
-          record.payload, record.payload_size, &plaintext) !=
-          tlp::ProductSecureCodecResult::kOk ||
-      plaintext.record_incarnation != newest.incarnation ||
-      plaintext.record_sequence != newest.sequence) {
-    defer(now_ms);
-    return Event::kBadRecord;
-  }
+  for (uint8_t scanned = 0U;
+       scanned < kLiveLookupBudget && live_search_cursor_ != 0U;
+       ++scanned) {
+    osf::RecordIdentity candidate{};
+    candidate.incarnation = next.incarnation;
+    candidate.sequence = live_search_cursor_;
+    ObservationStore::Record record{};
+    const auto lookup = records_.store().lookup(candidate, record);
+    if (lookup == ObservationStore::LookupResult::kReadError) {
+      defer(now_ms);
+      return Event::kReadError;
+    }
+    if (lookup == ObservationStore::LookupResult::kNone) {
+      --live_search_cursor_;
+      continue;
+    }
+    if (!sameIdentity(record.handle.identity, candidate) ||
+        record.release_uncertain || record.release_marker_exhausted) {
+      defer(now_ms);
+      return Event::kBadRecord;
+    }
+    if (record.released || record.kind != osf::RecordKind::kPeriodic) {
+      // The EVENT sender owns EVENT transmission and its receipt semantics.
+      // Skipping an EVENT here never releases or acknowledges it.
+      --live_search_cursor_;
+      continue;
+    }
+    if (record.schema != osf::kProductSchemaV1 ||
+        record.payload_size != tlp::kPeriodicPlaintextSize) {
+      defer(now_ms);
+      return Event::kBadRecord;
+    }
+    if (sameIdentity(candidate, last_sent_)) {
+      // Already offered the latest retained PERIODIC in this boot. HISTORY
+      // can retry it separately; an EVENT append does not re-arm LIVE.
+      live_search_cursor_ = 0U;
+      return Event::kNone;
+    }
 
-  // Direct-only LIVE, not custody requested. The PRODUCT_SECURE AEAD owner
-  // reserves a fresh never-reused TX nonce. It does not mutate record Flash or
-  // allocate one of the four exact custody objects.
-  uint8_t wire[tlp::kPeriodicFrameSize]{};
-  const auto crypto = crypto_.protectNextPeriodic(0U, plaintext, wire);
-  if (crypto != ProductSecureCryptoResult::kOk) {
+    tlp::PeriodicObservationPlaintext plaintext{};
+    if (tlp::decodePeriodicPlaintext(
+            record.payload, record.payload_size, &plaintext) !=
+            tlp::ProductSecureCodecResult::kOk ||
+        plaintext.record_incarnation != candidate.incarnation ||
+        plaintext.record_sequence != candidate.sequence) {
+      defer(now_ms);
+      return Event::kBadRecord;
+    }
+
+    // Direct-only LIVE, not custody requested. A fresh never-reused AEAD TX
+    // nonce is reserved by the crypto owner, with no exact cache slot/ACK.
+    uint8_t wire[tlp::kPeriodicFrameSize]{};
+    const auto crypto = crypto_.protectNextPeriodic(0U, plaintext, wire);
+    if (crypto != ProductSecureCryptoResult::kOk) {
+      for (size_t i = 0U; i < sizeof(wire); ++i) wire[i] = 0U;
+      defer(now_ms);
+      return crypto == ProductSecureCryptoResult::kUnavailable
+                 ? Event::kDeferred : Event::kCryptoError;
+    }
+    const bool started = radio_.sendProductSecurePacket(wire, sizeof(wire));
     for (size_t i = 0U; i < sizeof(wire); ++i) wire[i] = 0U;
-    defer(now_ms);
-    return crypto == ProductSecureCryptoResult::kUnavailable
-               ? Event::kDeferred : Event::kCryptoError;
-  }
+    if (!started) {
+      // Preserve the candidate for retry. Starting a TX is NOT delivery.
+      defer(now_ms);
+      return Event::kDeferred;
+    }
 
-  const bool started = radio_.sendProductSecurePacket(wire, sizeof(wire));
-  for (size_t i = 0U; i < sizeof(wire); ++i) wire[i] = 0U;
-  if (!started) {
-    // A duty denial or driver refusal is NOT a receipt, a TX, or a released
-    // record. Avoid consuming another fresh AEAD nonce on every loop pass.
-    defer(now_ms);
-    return Event::kDeferred;
+    last_sent_ = candidate;
+    last_live_sent_at_ms_ = now_ms;
+    live_search_cursor_ = 0U;
+    if (sent_count_ != UINT32_MAX) ++sent_count_;
+    return Event::kSent;
   }
-
-  last_sent_ = newest;
-  last_live_sent_at_ms_ = now_ms;
-  if (sent_count_ != UINT32_MAX) ++sent_count_;
-  return Event::kSent;
+  // Scan resumes on the next loop without losing latest-first priority.
+  return Event::kNone;
 }
 
 
