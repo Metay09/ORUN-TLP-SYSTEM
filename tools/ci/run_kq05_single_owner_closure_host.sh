@@ -23,12 +23,8 @@ echo "=== UNCHANGED DEFAULT RAK4630 FIRMWARE BUILD ==="
   pio run -e rak4630_orun
 )
 
-if [[ "${ORUN_KQ05_FULL_HOST:-0}" == "1" ]]; then
-  echo "=== FULL LEGACY + PRODUCT HOST REGRESSION ==="
-  bash firmware/tests/run_host_tests.sh
-else
-  echo "NOTE: full host regression not run; ORUN_KQ05_FULL_HOST=1 enables it."
-fi
+echo "=== MANDATORY FULL LEGACY + PRODUCT HOST REGRESSION ==="
+bash firmware/tests/run_host_tests.sh
 
 cat <<'EOF'
 ================================================
