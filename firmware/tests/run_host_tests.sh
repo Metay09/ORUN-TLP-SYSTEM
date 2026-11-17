@@ -1092,4 +1092,5 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_backend_receipt_o
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_receipt_edge_transport.py
 # KQ05 LAB: Edge->Gateway opaque Backend receipt staging, NOT RF delivery.
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_edge_gateway_stage.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_gateway_stage_ack.py
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
