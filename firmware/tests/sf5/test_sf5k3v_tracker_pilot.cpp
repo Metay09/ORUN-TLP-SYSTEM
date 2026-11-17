@@ -504,6 +504,73 @@ void acklessHistoryIsPacedAndNeverReleases() {
 
 
 
+// KQ05 EVENT+PERIODIC share one sequence space. A confirmed geofence EVENT
+// arriving last must not stall fresh LIVE, steal a periodic AEAD slot, or
+// cause any Flash release/ACK. Exercise >8 EVENT tail entries so scanning
+// resumes across scheduler turns with a bounded lookup budget.
+void appendDurableEvent(ProductRecordStore& records) {
+  assert(records.submitEvent(outsideEvent()) ==
+         ProductRecordStore::Submit::kAccepted);
+  bool committed = false;
+  for (unsigned i = 0U; i < 20000U; ++i) {
+    records.poll();
+    ProductRecordStore::Outcome outcome{};
+    if (records.takeOutcome(outcome)) {
+      assert(outcome.stored &&
+             outcome.kind == orun_tlp::osf::RecordKind::kEvent);
+      committed = true;
+      break;
+    }
+  }
+  assert(committed);
+}
+
+void acklessLiveDoesNotStallOnEventTail() {
+  resetFakes();
+  FakeFlash flash;
+  FixedIncarnation source;
+  ProductRecordStore records(flash, kPages, &source);
+  records.begin(kDevice, kTracker);
+  assert(records.mounted());
+  assert(store(records, 1U).stored);
+  for (unsigned i = 0U; i < 9U; ++i) appendDurableEvent(records);
+
+  orun_tlp::SecurityStore security(flash, flash);
+  orun_tlp::ProductSecureCrypto crypto(security);
+  orun_tlp::RadioManager radio;
+  orun_tlp::TrackerAcklessLiveTx sender(records, crypto, radio);
+  const unsigned writes = flash.program_calls;
+  assert(sender.update(1000U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kNone);
+  assert(g_seals == 0U && g_sends == 0U);
+  assert(sender.update(1001U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kSent);
+  assert(sender.lastSent().sequence == 1U);
+  assert(g_seals == 1U && g_sends == 1U);
+  assert(sender.update(1002U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kNone);
+  assert(flash.program_calls == writes);
+
+  // A newer periodic after the EVENT tail must overtake the history, even
+  // if another EVENT is appended afterwards.
+  assert(store(records, 11U).stored);
+  appendDurableEvent(records);
+  const unsigned writes_after = flash.program_calls;
+  assert(sender.update(2000U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kSent);
+  assert(sender.lastSent().sequence == 11U);
+  assert(g_seals == 2U && g_sends == 2U);
+  assert(flash.program_calls == writes_after);
+  osf::RecordIdentity event_id{};
+  event_id.incarnation = sender.lastSent().incarnation;
+  event_id.sequence = 12U;
+  ObservationStore::Record event{};
+  assert(records.store().lookup(event_id, event) ==
+         ObservationStore::LookupResult::kFound);
+  assert(event.kind == orun_tlp::osf::RecordKind::kEvent);
+  assert(!event.released);
+}
+
 void acklessSolitaryLiveEventuallyRetries() {
   resetFakes();
   FakeFlash flash;
@@ -537,6 +604,7 @@ void acklessSolitaryLiveEventuallyRetries() {
 
 int main() {
   acklessSolitaryLiveEventuallyRetries();
+  acklessLiveDoesNotStallOnEventTail();
   acklessHistoryIsPacedAndNeverReleases();
   acklessLiveBypassesFourSlotCache();
   successAndReboot(false);
