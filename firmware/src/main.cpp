@@ -4560,8 +4560,10 @@ void loop() {
       orun_tlp::CustodyAckReleaseOwner::Service::kDurablyReleased) {
     Serial.println(F("PRODUCT CUSTODY release=DURABLE"));
 #ifdef ORUN_SF5L0_TRACKER
-    bench_pacer.onReleased(orun_tlp::monotonic::nowMs());
-    if (bench_link.ack_seen) {
+    // KQ05 EVENT custody receipts are not PERIODIC bench-pacer credits.
+    if (!kq05ProductOnlyTracker())
+      bench_pacer.onReleased(orun_tlp::monotonic::nowMs());
+    if (!kq05ProductOnlyTracker() && bench_link.ack_seen) {
       // ACK strength as heard by the collar. rtt = TX start -> ACK taken
       // from the radio (includes loop latency); verify/release are local.
       const uint32_t now = orun_tlp::monotonic::nowMs();
