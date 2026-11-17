@@ -23,12 +23,12 @@ test -s "$NORMAL" && test -s "$KQ05" || {
 # Compile/link proof, NOT a source substring: all methods defined by the
 # legacy pilot are unreachable and excluded by the linker in KQ05.
 if ! "$NM" -C --defined-only "$NORMAL" |
-    grep -Fq 'orun_tlp::TrackerProductTxPilot::'; then
+    grep -F 'orun_tlp::TrackerProductTxPilot::' >/dev/null; then
   echo "STOP: normal ORUN legacy pilot missing; normal image changed." >&2
   exit 2
 fi
 if "$NM" -C --defined-only "$KQ05" |
-    grep -Fq 'orun_tlp::TrackerProductTxPilot::'; then
+    grep -F 'orun_tlp::TrackerProductTxPilot::' >/dev/null; then
   echo "STOP: KQ05 still links legacy TrackerProductTxPilot methods." >&2
   exit 2
 fi
