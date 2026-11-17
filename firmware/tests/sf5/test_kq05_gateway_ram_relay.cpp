@@ -52,7 +52,8 @@ struct Credentials final : relay::CredentialSource {
 
 size_t signedOffer(uint64_t source_row, uint64_t gateway,
                    uint64_t tracker, uint8_t (&wrapped)[160],
-                   uint8_t sequence=101U, uint8_t count=1U) {
+                   uint8_t sequence=101U, uint8_t count=1U,
+                   uint32_t epoch=7U) {
   assert(count >= 1U && count <= 8U);
   uint8_t raw[123]{};
   const size_t receipt_size = 40U + 4U * count;
@@ -69,7 +70,10 @@ size_t signedOffer(uint64_t source_row, uint64_t gateway,
   receipt[3] = count;
   put64(tracker, receipt + 4U);
   put64(UINT64_C(0x494e4341524e3031), receipt + 12U); // INCARN01
-  receipt[23U] = 7U;
+  receipt[20U] = static_cast<uint8_t>(epoch >> 24U);
+  receipt[21U] = static_cast<uint8_t>(epoch >> 16U);
+  receipt[22U] = static_cast<uint8_t>(epoch >> 8U);
+  receipt[23U] = static_cast<uint8_t>(epoch);
   for (uint8_t i = 0U; i < count; ++i)
     receipt[24U + 4U * i + 3U] = static_cast<uint8_t>(sequence + i);
   for (size_t i = 0U; i < 16U; ++i)
@@ -140,7 +144,7 @@ void testAuthScopeAndNoAck() {
   size = signedOffer(2U, kGateway, kTracker, frame);
   // An otherwise authentic message for the wrong key epoch is NOT
   // authorized by an older OGK1 grant.
-  frame[1U + 19U + 23U] = 8U;
+  size = signedOffer(2U, kGateway, kTracker, frame, 101U, 1U, 8U);
   assert(queue.accept(frame, size, 105U, true, c) ==
          relay::Admission::kDenied);
   size = signedOffer(2U, kGateway, kTracker, frame);
