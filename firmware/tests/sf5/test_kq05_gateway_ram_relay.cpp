@@ -43,8 +43,10 @@ struct Credentials final : relay::CredentialSource {
     memset(key, 0x4b, sizeof(key));
     return true;
   }
-  bool permitsTracker(uint64_t gateway, uint64_t tracker) const override {
-    return allow && gateway == kGateway && tracker == kTracker;
+  bool permitsTracker(uint64_t gateway, uint64_t tracker,
+                      uint32_t epoch) const override {
+    return allow && gateway == kGateway && tracker == kTracker &&
+           epoch == 7U;
   }
 };
 
@@ -136,6 +138,12 @@ void testAuthScopeAndNoAck() {
   assert(queue.accept(frame, size, 104U, true, c) ==
          relay::Admission::kDenied);
   size = signedOffer(2U, kGateway, kTracker, frame);
+  // An otherwise authentic message for the wrong key epoch is NOT
+  // authorized by an older OGK1 grant.
+  frame[1U + 19U + 23U] = 8U;
+  assert(queue.accept(frame, size, 105U, true, c) ==
+         relay::Admission::kDenied);
+  size = signedOffer(2U, kGateway, kTracker, frame);
   c.allow = false;
   assert(queue.accept(frame, size, 105U, true, c) ==
          relay::Admission::kDenied);
@@ -169,6 +177,7 @@ void testPriorityWindowRateAndExpiration() {
   assert(q.pending(150U) == 1U); // selection does NOT imply TX.
   p.custody_ack_pending = true;
   assert(!q.select(150U, p, c, out));
+  assert(out.source_row == 0U && out.length == 0U);
   p.custody_ack_pending = false;
   p.command_pending = true;
   assert(!q.select(150U, p, c, out));
