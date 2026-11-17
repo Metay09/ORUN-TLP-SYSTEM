@@ -12,6 +12,8 @@ git rev-parse HEAD
 git diff --check
 echo "=== KQ05 1/5 TRACKER LIVE/HISTORY ==="
 bash tools/ci/run_sf5k3v_tracker_tx_host.sh
+echo "=== KQ05 CRITICAL EVENT -> EXISTING CUSTODY ACK (PC GATE) ==="
+bash tools/ci/run_kq05_critical_event_tx_host.sh
 echo "=== KQ05 2/5 GATEWAY NONCUSTODY ==="
 bash tools/ci/run_sf5k3w_gateway_product_runtime_host.sh
 echo "=== KQ05 3/5 BACKEND AUTHENTICATED RECEIPT ==="
