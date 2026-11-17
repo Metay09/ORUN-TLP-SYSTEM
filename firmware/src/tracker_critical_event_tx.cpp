@@ -13,7 +13,9 @@ bool TrackerCriticalEventTx::idleStorage() const {
 
 TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
     uint32_t now_ms, bool eligible) {
-  if (phase_ == Phase::kBlocked) return Result::kBlocked;
+  // Report a hard fault only on the transition to blocked; do not flood
+  // the serial console with an error on every cooperative loop iteration.
+  if (phase_ == Phase::kBlocked) return Result::kNone;
 
   // Poll completion is independent of RF duty, just like the existing pilot.
   if (phase_ == Phase::kWaitingCache) {
@@ -41,7 +43,10 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
         record.release_uncertain || record.release_marker_exhausted)
       return block();
     if (record.released) {
+      // Authenticated ACK owner committed release: next critical occurrence
+      // may be sent immediately, without waiting for the old ACK timeout.
       resetSelection();
+      next_attempt_ms_ = now_ms;
       return Result::kNone;
     }
     if (phase_ == Phase::kWaitingAck) {
