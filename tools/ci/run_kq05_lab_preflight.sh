@@ -37,6 +37,8 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_gateway_link_deri
 bash tools/ci/run_kq05_signed_link_credentials_host.sh
 echo "=== KQ05 PYTHON BACKEND->EDGE REAL OFFER -> NATIVE BLE GATEWAY RAM ==="
 bash tools/ci/run_kq05_real_byte_interop_host.sh
+echo "=== KQ05 DURABLE GATEWAY STAGED -> NATIVE RF PRIORITY/WINDOW/BUDGET ==="
+bash tools/ci/run_kq05_durable_stage_rf_policy_host.sh
 echo "=== KQ05 4/5 TRACKER RECEIPT/FLASH ==="
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
 echo "=== KQ05 5/5 ISOLATED RAK4630 LAB BUILD ==="
