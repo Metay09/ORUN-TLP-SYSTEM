@@ -126,6 +126,22 @@ void signedOffer(const uint8_t (&link_key)[32], uint8_t (&frame)[160],
   assert(size==96U);
 }
 
+// A host FAKE used only to exercise the trust-boundary interface. There
+// is deliberately no production TrustedEdgeInstallation implementation.
+struct FakeInstalledEdge final : kr::TrustedEdgeInstallation {
+  bool enrolled = true;
+  const char* id = kEdge;
+  bool readVerifiedInstallation(uint64_t gateway, char (&out)[65])
+      const override {
+    memset(out, 0, sizeof(out));
+    if (!enrolled || gateway != kGateway || id == nullptr) return false;
+    const size_t len = strlen(id);
+    if (len >= sizeof(out)) return false;
+    memcpy(out, id, len + 1U);
+    return true;
+  }
+};
+
 void testSignedV2ScopeAndDerivation() {
   FakeNor nor;
   installFakeSnapshot(nor);
@@ -133,7 +149,8 @@ void testSignedV2ScopeAndDerivation() {
   GatewayGrantSnapshotReader reader(nor,issuer);
   assert(reader.begin(kGateway,true,false)==
          GatewayGrantSnapshotReader::Status::kReady);
-  kr::SignedGrantCredentials auth(reader,kGateway,kEdge);
+  FakeInstalledEdge installed;
+  kr::SignedGrantCredentials auth(reader,kGateway,installed);
   assert(auth.verifiedForGateway(kGateway));
   assert(!auth.verifiedForGateway(kGateway+1U));
   assert(auth.permitsTracker(kGateway,kTracker,7U));
@@ -171,6 +188,16 @@ void testSignedV2ScopeAndDerivation() {
   signedOffer(derived,frame,n,8U);
   assert(q.accept(frame,n,101U,true,auth)==kr::Admission::kDenied);
   assert(q.pending(102U)==1U);
+  installed.enrolled = false; // Independent Edge enrollment revoked.
+  assert(!auth.verifiedForGateway(kGateway));
+  char denied_edge[65]{};
+  uint8_t denied_key[32]{};
+  memset(denied_key, 0x42, sizeof(denied_key));
+  assert(!auth.readGatewayLink(kGateway,denied_edge,denied_key));
+  for (const auto v : denied_key) assert(v == 0U);
+  assert(q.accept(frame,n,102U,true,auth)==kr::Admission::kDenied);
+  assert(q.pending(102U)==0U);
+  installed.enrolled = true;
   reader.denyForCurrentBoot();
   assert(!auth.verifiedForGateway(kGateway));
   assert(!auth.readGatewayLink(kGateway,edge,derived));
@@ -185,7 +212,8 @@ void testBadEnrollmentNeverOpens() {
   GatewayGrantSnapshotReader absent(blank,issuer);
   assert(absent.begin(kGateway,true,false)==
          GatewayGrantSnapshotReader::Status::kEmpty);
-  kr::SignedGrantCredentials bad(absent,kGateway,kEdge);
+  FakeInstalledEdge installed;
+  kr::SignedGrantCredentials bad(absent,kGateway,installed);
   assert(!bad.verifiedForGateway(kGateway));
 
   FakeNor nor;
@@ -193,12 +221,14 @@ void testBadEnrollmentNeverOpens() {
   GatewayGrantSnapshotReader reader(nor,issuer);
   assert(reader.begin(kGateway,true,false)==
          GatewayGrantSnapshotReader::Status::kReady);
-  kr::SignedGrantCredentials bad_name(reader,kGateway,"malformed!");
+  FakeInstalledEdge malformed;
+  malformed.id = "malformed!";
+  kr::SignedGrantCredentials bad_name(reader,kGateway,malformed);
   assert(!bad_name.verifiedForGateway(kGateway));
-  kr::SignedGrantCredentials bad_gateway(reader,kGateway+1U,kEdge);
+  kr::SignedGrantCredentials bad_gateway(reader,kGateway+1U,installed);
   assert(!bad_gateway.verifiedForGateway(kGateway+1U));
   nor.fault=true;
-  kr::SignedGrantCredentials rev(reader,kGateway,kEdge);
+  kr::SignedGrantCredentials rev(reader,kGateway,installed);
   assert(!rev.verifiedForGateway(kGateway));
 }
 } // namespace
