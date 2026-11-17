@@ -134,7 +134,7 @@ void eventCustodyRetryAndRelease() {
   assert(recovered.update(93003U, true) == EventSender::Result::kSent);
   assert(recovered.selectedIdentity().sequence == 3U);
 }
-void noAckNoReleaseAndFullCacheFailsClosed() {
+void noAckNeverReleasesEvent() {
   resetFakes();
   FakeFlash flash;
   FixedIncarnation source;
@@ -159,6 +159,6 @@ void noAckNoReleaseAndFullCacheFailsClosed() {
 
 int main() {
   eventCustodyRetryAndRelease();
-  noAckNoReleaseAndFullCacheFailsClosed();
+  noAckNeverReleasesEvent();
   puts("KQ05 critical EVENT exact-cache / existing custody ACK / LIVE bypass: PASS (PC fake NOR)");
 }
