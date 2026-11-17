@@ -1089,4 +1089,5 @@ python3 tools/kq05_receipt_model.py --test
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_backend_batch_receipt.py
 # KQ05 lab-only: durable Backend receipt outbox (never declares delivery).
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_backend_receipt_outbox.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_receipt_edge_transport.py
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
