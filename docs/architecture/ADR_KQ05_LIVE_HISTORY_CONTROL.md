@@ -183,3 +183,15 @@ Operatör kararı: **tekli CUSTODY_ACK firmware'de kalır**; rutin LIVE için AC
 
 - Gerçek Edge/Gateway credential ve bağlantı yetkisi, USB/BLE kablosuz alma handler'ı, bounded RAM ömrü ve retry, radio-owner TX scheduler, LoRa duty-cycle (#305), tasma RX pencere/zaman hesabı, fiziksel iki cihaz testi ve elektrik tüketimi/power-cut kanıtı.
 - PR #316 DRAFT; NO MERGE / NO FLASH / NO MAIN. Tekli ACK değiştirilmez.
+
+## 17 Kasım — KQ05 Gateway RAM relay çekirdeği (native C++, henüz RF değil)
+
+Gateway ürünü için OCQ2 Flash bölgesinden sayfa ayırmama kararı korunmuştur. Yeni `kq05_gateway_ram_relay.h/.cpp` yalnız `ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE` altında derlenebilen, en fazla **iki adet 72B orijinal Backend makbuzu** tutan kısa ömürlü RAM rölesidir.
+
+- Makbuz `kq05_edge_link_wire::inspectOffer` ile yalnız şekil açısından açılır; ayrıca ayrı **Edge–Gateway** HMAC-SHA256, kayıtlı Edge installation kimliği, Gateway hedefi, cihaz scope'u ve *yerel kalıcı/revocable yetki kaynağının* doğrulanması zorunludur. Python protokolündeki `ORUN-KQ05-EDGE-GATEWAY-OFFER-v1\0 || edge-id || \0 || inner unsigned offer` HMAC hesaplanır. Gateway **Backend–Tracker HMAC'ini üretmez/doğrulamaz**, Tracker K_root'a erişmez.
+- `CredentialSource` şu anda yalnız soyut, güvenilir bir sözleşmedir; **gerçek Gateway enrollment/kalıcı kimlik anahtarı kaynağı henüz uygulanmadı**. Dolayısıyla canlı BLE `edgeMessage()` yolu hâlâ güvenli biçimde reddeder; yeni sınıf otomatik aktive edilmedi.
+- Kayıt başına maksimum 20 saniyelik TTL, aynı kaynak kayıt numarası için birebir dedupe/çakışma reddi, iki slot dolunca `FULL`, yetki kalkınca tüm RAM'i sıfırlama ve rollover-safe zaman hesabı bulunur. **RAM dolması/yeniden başlaması makbuz teslimi değildir**; Edge/Backend kalıcı saklama zorunluluğu devam eder.
+- İleriye dönük `select()` yalnız yetkili Gateway, boş radyo, **tekli CUSTODY_ACK beklemiyor**, komut beklemiyor, canlı trafik beklemiyor, gerçek RF kotası verilmiş, tasmanın alım penceresi açık ve son 3000ms içinde cihaz görülmüşse yalnız *aday* çıkarır. Bu boolean kapılar üst seviyede henüz fiziksel kaynaklarla bağlanmadı; `select()` radyo TX gerçekleştirmez. `markTxStarted()` yalnız gerçek RF gönderimi başlatıldığında deneme aralığı koymak için tasarlandı, teslim onayı değildir.
+- `firmware/tests/sf5/test_kq05_gateway_ram_relay.cpp` ve `tools/ci/run_kq05_gateway_ram_relay_host.sh` native OpenSSL host portu ile gerçek HMAC input sözleşmesini, yanlış cihaz/gateway/key, kapasite, TTL/32-bit wrap, geri alma ve ACK/komut/LIVE/RF bütçesi önceliklerini denemek üzere eklendi. KQ05 preflight ve tam host suite içine konuldu.
+- **Bu yeni commit için operatör PC sonucu henüz alınmadı; PASS ilan edilmez.** Tamamlama kapıları: fiziksel yetki/provisioning, gerçek BLE/USB paket girişine RAM relay bağlantısı, gerçek RF airtime bütçe otoritesi (#305), radio-owner downlink, tasma RX kanıtı, gerçek RAK testleri ve güç/power cut.
+- Ana firmware, gerçek servisler/DB ve bağlı RAK cihazları değiştirilmedi. Tekli ACK kodu korunur, PR #316 DRAFT / NO MERGE / NO FLASH.
