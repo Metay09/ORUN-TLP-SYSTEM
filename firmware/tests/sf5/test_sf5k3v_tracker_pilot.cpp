@@ -619,6 +619,10 @@ void acklessSolitaryLiveEventuallyRetries() {
 
 }  // namespace
 
+// The critical EVENT regression embeds these fake NOR/radio fixtures.
+// Keep one test entrypoint per translation unit without modifying behavior
+// when this original pilot test is compiled on its own.
+#ifndef ORUN_SF5K3V_EMBEDDED_TEST
 int main() {
   acklessSolitaryLiveEventuallyRetries();
   acklessLiveDoesNotStallOnEventTail();
@@ -631,3 +635,4 @@ int main() {
   liveOnly();
   puts("KQ05 ACKless secure LIVE 4/4 bypass and RF denial + SF5K3V legacy custody cache: PASS");
 }
+#endif  // ORUN_SF5K3V_EMBEDDED_TEST
