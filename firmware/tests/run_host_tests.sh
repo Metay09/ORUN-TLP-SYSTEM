@@ -67,16 +67,26 @@ case "${ORUN_HOST_SANITIZERS:-1}" in
     ;;
 esac
 
-# The R2 patch regression reads the pinned SX126x driver from PlatformIO's
-# environment. Fail explicitly if this dependency was not installed; do not
-# silently skip the test or install/mutate packages from the host test runner.
-radio_source="firmware/.pio/libdeps/rak4630/SX126x-Arduino/src/radio/sx126x/radio.cpp"
-if [[ ! -f "$radio_source" && ! -f "$radio_source.orun-original" ]]; then
-  echo "ERROR: SX126x-Arduino dependency missing for full host regression." >&2
-  echo "Install once: (cd firmware && pio pkg install -e rak4630)" >&2
-  echo "Then rerun: bash firmware/tests/run_host_tests.sh" >&2
+# Use a dependency that PlatformIO has ALREADY installed for an audited
+# firmware environment. The KQ05 closure compiles rak4630_orun/kq05_lab, not
+# necessarily the unbuilt rak4630 base env. Never download/modify dependencies
+# here and never skip the pinned R2.1 source-hash guard.
+radio_lib_env=""
+for candidate in rak4630 rak4630_orun rak4630_kq05_lab; do
+  lib="firmware/.pio/libdeps/$candidate/SX126x-Arduino"
+  if [[ -f "$lib/library.json" &&
+        ( -f "$lib/src/radio/sx126x/radio.cpp.orun-original" ||
+          -f "$lib/src/radio/sx126x/radio.cpp" ) ]]; then
+    radio_lib_env="$candidate"
+    break
+  fi
+done
+if [[ -z "$radio_lib_env" ]]; then
+  echo "ERROR: SX126x-Arduino 2.0.32 missing in all audited RAK environments." >&2
+  echo "Install once: (cd firmware && pio pkg install -e rak4630_orun)" >&2
   exit 2
 fi
+echo "R2 patch source environment: $radio_lib_env (pinned version/hash tested)"
 
 flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror "${sanitizer_flags[@]}"
        "${coverage_flags[@]}" -Ifirmware/tests/m3/stubs -Ifirmware/include)
@@ -555,7 +565,7 @@ g++ "${flags[@]}" firmware/tests/m5/test_bridge_frame.cpp \
   firmware/src/bridge_frame.cpp firmware/src/tlp_position_packet.cpp \
   -o "$test_dir/bridge_frame"
 "$test_dir/bridge_frame"
-PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r2/test_patch_radio.py "$test_dir/driver_bridge.cpp"
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r2/test_patch_radio.py "$test_dir/driver_bridge.cpp" "$radio_lib_env"
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp \
   "$test_dir/driver_bridge.cpp" \
