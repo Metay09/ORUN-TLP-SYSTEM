@@ -3779,6 +3779,52 @@ void applyGeofenceCadence(
   }
 }
 
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+void queueKq05OutsideEvent(const orun_tlp::GnssFix& fix) {
+  if (!kq05ProductOnlyTracker()) return;
+  if (kq05_event_count >= kKq05EventQueueCapacity) {
+    if (kq05_event_overflows != UINT32_MAX) ++kq05_event_overflows;
+    // Fail visibly; never overwrite an already confirmed critical occurrence.
+    Serial.println(F("KQ05 EVENT QUEUE FULL; critical occurrence NOT stored"));
+    return;
+  }
+  orun_tlp::tlp::EventPlaintext e{};
+  e.event_type = orun_tlp::tlp::kEventTypeGeofenceOutside;
+  e.lifecycle_state = orun_tlp::tlp::kEventLifecycleActive;
+  e.severity = orun_tlp::tlp::kEventSeverityCritical;
+  e.event_flags = orun_tlp::tlp::kEventLocationValid |
+                  orun_tlp::tlp::kEventLocationAgeValid;
+  e.location_source = orun_tlp::tlp::kLocationSourceGnss;
+  e.latitude_e7 = fix.latitude_e7;
+  e.longitude_e7 = fix.longitude_e7;
+  e.location_age_seconds = 0U;
+  if ((fix.flags & orun_tlp::tlp::kPositionFlagValidUtcTime) != 0U &&
+      fix.utc_epoch_seconds != 0U) {
+    e.event_flags |= orun_tlp::tlp::kEventTransitionTimeValid;
+    e.transition_epoch_seconds = fix.utc_epoch_seconds;
+  }
+  // ProductRecordStore assigns actual incarnation/sequence at Flash append.
+  // occurrence_id=0 resolves to that sequence, not an untrusted wall clock.
+  kq05_event_queue[kq05_event_tail] = e;
+  kq05_event_tail =
+      static_cast<uint8_t>((kq05_event_tail + 1U) % kKq05EventQueueCapacity);
+  ++kq05_event_count;
+  Serial.println(F("KQ05 GEOFENCE outside EVENT queued for durable Flash"));
+}
+
+void serviceKq05OutsideEvents() {
+  if (!kq05ProductOnlyTracker() || kq05_event_count == 0U ||
+      kq05_event_awaiting_durable) return;
+  const auto result =
+      product_records.submitEvent(kq05_event_queue[kq05_event_head]);
+  if (result == orun_tlp::ProductRecordStore::Submit::kAccepted) {
+    kq05_event_awaiting_durable = true;
+    Serial.println(F("KQ05 EVENT Flash append started, not yet durable"));
+  }
+  // kBusy/kNotMounted/kRejected are not durable and do not remove the event.
+}
+#endif
+
 void processGeofenceAcceptedFix(const orun_tlp::GnssFix& fix,
                                 bool ordinary_position_will_follow) {
 #ifdef ORUN_M6D2_GEOFENCE_PROBE
@@ -3858,9 +3904,15 @@ void processGeofenceAcceptedFix(const orun_tlp::GnssFix& fix,
   }
 
   if (update.outside_event_occurrence) {
-    // Local semantic occurrence only. Current TLP v1 has no authorized secure
-    // EVENT packet; do not turn this into an unauthenticated remote alarm.
-    Serial.println(F("GEOFENCE OUTSIDE confirmed (local event occurrence)"));
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+    if (kq05ProductOnlyTracker()) {
+      queueKq05OutsideEvent(fix);
+    } else
+#endif
+    {
+      // The legacy image does not transmit a new secure event.
+      Serial.println(F("GEOFENCE OUTSIDE confirmed (local event occurrence)"));
+    }
   }
 
   if (update.request_additional_observation) {
