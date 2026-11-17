@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """KQ05 PC fixture: true Backend AEAD -> Edge durable inbox -> Gateway SQLite
-durable stage -> authenticated 0x92 STAGED, exported for native radio policy.
+durable stage -> BLE 0x08 carrying authenticated inner 0x92 STAGED,
+exported for native radio policy.
 
 No RAK device, physical LoRa, field keys, production DB or service writes.
 """
@@ -65,7 +66,8 @@ def main() -> None:
                 logical_offer, authorized_gateway_service=True,
                 verified_edge_installation=True)
         assert stored.state == BridgeState.STAGED
-        assert len(stored.response) == 84 and stored.response[0] == 0x92
+        assert (len(stored.response) == 84 and stored.response[0] == 0x08
+                and stored.response[1] == 1 and stored.response[2] == 0x92)
         assert edge_verify_stage_result(
             offer.data, stored.response[1:], permit) == (
                 EdgeStageConfirmation(1, False))
@@ -77,6 +79,8 @@ def main() -> None:
                 logical_offer, authorized_gateway_service=True,
                 verified_edge_installation=True)
         assert recovered.state == BridgeState.STAGED
+        assert (len(recovered.response) == 84 and recovered.response[0] == 0x08
+                and recovered.response[1] == 1 and recovered.response[2] == 0x92)
         assert edge_verify_stage_result(
             offer.data, recovered.response[1:], permit) == (
                 EdgeStageConfirmation(1, True))
