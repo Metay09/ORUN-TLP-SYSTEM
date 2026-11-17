@@ -1097,4 +1097,5 @@ bash tools/ci/run_kq05_edge_link_wire_host.sh
 bash tools/ci/run_kq05_gateway_ram_relay_host.sh
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_gateway_link_derive.py
 bash tools/ci/run_kq05_signed_link_credentials_host.sh
+bash tools/ci/run_kq05_real_byte_interop_host.sh
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
