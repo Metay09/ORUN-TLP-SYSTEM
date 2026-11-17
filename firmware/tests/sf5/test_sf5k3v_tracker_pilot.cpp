@@ -637,4 +637,5 @@ int main() {
   liveFirst();
   liveOnly();
   puts("KQ05 ACKless secure LIVE 4/4 bypass and RF denial + SF5K3V legacy custody cache: PASS");
+  return 0;  // Also required when embedded under the renamed test entrypoint.
 }
