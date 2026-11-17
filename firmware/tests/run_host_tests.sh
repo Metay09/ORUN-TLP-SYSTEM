@@ -566,6 +566,10 @@ g++ "${flags[@]}" firmware/tests/m5/test_bridge_frame.cpp \
   -o "$test_dir/bridge_frame"
 "$test_dir/bridge_frame"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r2/test_patch_radio.py "$test_dir/driver_bridge.cpp" "$radio_lib_env"
+if [[ ! -s "$test_dir/driver_bridge.cpp" ]]; then
+  echo "ERROR: R2 pinned radio patch passed, but driver_bridge.cpp was not generated." >&2
+  exit 2
+fi
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp \
   "$test_dir/driver_bridge.cpp" \
