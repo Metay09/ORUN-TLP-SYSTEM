@@ -14,6 +14,11 @@ echo "=== KQ05 SINGLE-OWNER SOURCE GUARD ==="
 PYTHONDONTWRITEBYTECODE=1 python3 \
   firmware/tests/sf5/test_kq05_single_product_owner_source.py
 
+# Fail fast on missing pinned dependencies, R2 drift or host regression,
+# before running the two relatively expensive RAK4630 firmware builds.
+echo "=== MANDATORY FULL LEGACY + PRODUCT HOST REGRESSION ==="
+bash firmware/tests/run_host_tests.sh
+
 echo "=== KQ05 FULL ISOLATED HOST / PRODUCT FLASH / LAB TARGET ==="
 bash tools/ci/run_kq05_lab_preflight.sh
 
@@ -22,9 +27,6 @@ echo "=== UNCHANGED DEFAULT RAK4630 FIRMWARE BUILD ==="
   cd firmware
   pio run -e rak4630_orun
 )
-
-echo "=== MANDATORY FULL LEGACY + PRODUCT HOST REGRESSION ==="
-bash firmware/tests/run_host_tests.sh
 
 cat <<'EOF'
 ================================================
