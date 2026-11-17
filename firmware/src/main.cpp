@@ -344,6 +344,16 @@ bool storage_role_restart_pending = false;
 uint32_t storage_role_restart_at_ms = 0;
 constexpr uint32_t kStorageRoleRestartDelayMs = 3000;
 #endif
+
+// KQ05 test-image Tracker: one PERIODIC observation owner. In all normal
+// builds, and on a Gateway, the proven legacy paths remain untouched.
+bool kq05ProductOnlyTracker() {
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && defined(ORUN_SF5L0_TRACKER)
+  return trackerStorage();
+#else
+  return false;
+#endif
+}
 // Long enough for "APP FENCE V -89.9999999 -179.9999999".
 #if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT) && !defined(ORUN_SF5L0_GATEWAY)
 #error "Step 3B grant snapshots exist only with the Gateway code (rak4630_orun)"
@@ -1683,14 +1693,14 @@ void openProductPeriod(uint32_t now) {
 
 // One finished report period: a normal accepted fix, or an acquisition that
 // timed out without one.
-void finishProductPeriod(const orun_tlp::GnssFix* fix) {
+bool finishProductPeriod(const orun_tlp::GnssFix* fix) {
   const uint32_t now = orun_tlp::monotonic::nowMs();
   if (!product_period_open) {
     openProductPeriod(now);
-    return;
+    return false;
   }
   const uint32_t elapsed_ms = now - product_period_started_ms;
-  if (elapsed_ms < 1000U) return;
+  if (elapsed_ms < 1000U) return false;
 
   orun_tlp::PeriodicRecordInputs in{};
   in.period_duration_seconds = elapsed_ms / 1000U;
@@ -1799,6 +1809,14 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
       static_cast<unsigned>(record.storage_failure_count),
       static_cast<unsigned>(record.radio_failure_count), store_state);
 
+  // An unsuccessful PRODUCT admission is never grounds to fall back to the
+  // legacy HistoryStore writer. Keep the period open so a later accepted
+  // fix/timeout can retry its accumulated observation; no false success.
+  if (kq05ProductOnlyTracker() &&
+      submit != orun_tlp::ProductRecordStore::Submit::kAccepted) {
+    Serial.println(F("KQ05 PRODUCT only: PERIODIC not accepted; no legacy fallback"));
+    return false;
+  }
   product_period_started_ms = now;
   product_period_baseline = current;
 
@@ -1814,6 +1832,7 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
       Serial.printf("BLE open after report s=%u\n",
                     static_cast<unsigned>(ble_window_s));
   }
+  return submit == orun_tlp::ProductRecordStore::Submit::kAccepted;
 }
 
 void printU64HexTo(char (&out)[17], uint64_t value) {
@@ -4262,6 +4281,13 @@ void loop() {
   const auto effective = resolveRuntimeConfig();
   const bool tracking_enabled = serviceRuns(effective.tracking);
   const bool relay_forwarding_enabled = serviceRuns(effective.relay_forwarding);
+  if (kq05ProductOnlyTracker() && tracking_enabled &&
+      !product_period_open && product_records.mounted() &&
+      product_records.store().ready()) {
+    // Start the first measurement period before the first GNSS fix. Without
+    // this, the initial fix would open a period without recording it.
+    openProductPeriod(orun_tlp::monotonic::nowMs());
+  }
   if (!tracking_enabled && geofence_representative_pending) {
     // Do not retain a location indefinitely while the tracking service is
     // intentionally disabled. It may already have been accepted as geofence
@@ -4468,9 +4494,11 @@ void loop() {
   // 6 of 29 ACKs). While an ACK is awaited, the live v1 copy is skipped; the
   // fix itself is stored as always (no record is lost).
   const bool live_position_allowed =
-      tracking_enabled && !(trackerStorage() && bench_pacer.awaitingAck());
+      tracking_enabled && !kq05ProductOnlyTracker() &&
+      !(trackerStorage() && bench_pacer.awaitingAck());
 #else
-  const bool live_position_allowed = tracking_enabled;
+  const bool live_position_allowed =
+      tracking_enabled && !kq05ProductOnlyTracker();
 #endif
   const auto event =
       positions.update(orun_tlp::monotonic::nowMs(), live_position_allowed);
@@ -4486,6 +4514,13 @@ void loop() {
   // A confirmed transition may choose one of the real burst observations as
   // its immediate logical POSITION. Queue exactly one representative until the
   // existing store-before-send owner can accept it; do not bypass HistoryStore.
+  if (kq05ProductOnlyTracker() && geofence_representative_pending) {
+    // The legacy representative writer would recreate the second record
+    // stream. Until PRODUCT EVENT admission exists, this event remains a
+    // local-only safety indication. Never claim durable event delivery.
+    geofence_representative_pending = false;
+    Serial.println(F("KQ05 GEOFENCE representative PRODUCT EVENT not implemented"));
+  }
   if (tracking_enabled && geofence_representative_pending &&
       positions.prepareForFixStorage()) {
     if (positions.acceptPreviouslyAcceptedFix(
@@ -4509,11 +4544,17 @@ void loop() {
   // normal fixes are consumed only when PositionFlow can accept them. During a
   // bounded confirmation episode, the two extra accepted fixes are local
   // evidence and must not be blocked by an unrelated in-flight History append.
+  const bool product_write_ready =
+      product_records.mounted() && product_records.store().ready() &&
+      !product_records.store().faulted() &&
+      !product_records.pending() && !product_records.store().busy() &&
+      !product_records.preparing();
   const bool normal_fix_storage_ready =
       tracking_enabled &&
       (confirmation_fix_expected ||
        (gnss_manager.hasFreshFixForTransmission() &&
-        positions.prepareForFixStorage()));
+        (kq05ProductOnlyTracker()
+            ? product_write_ready : positions.prepareForFixStorage())));
   if (normal_fix_storage_ready &&
       gnss_manager.takeFreshFixForTransmission(&fix)) {
     // M7P7I observes the exact same already-accepted GNSS value once. Extend
@@ -4544,9 +4585,12 @@ void loop() {
     processGeofenceAcceptedFix(fix, !confirmation_fix_expected);
 
     if (!confirmation_fix_expected) {
-      finishProductPeriod(&fix);
-      const bool accepted =
-          positions.acceptFix(fix, orun_tlp::monotonic::nowMs());
+      const bool accepted_product = finishProductPeriod(&fix);
+      // KQ05 Tracker: PERIODIC owns this GNSS report. Never also append
+      // TLP v1 POSITION to the legacy HistoryStore.
+      const bool accepted = kq05ProductOnlyTracker()
+          ? accepted_product
+          : positions.acceptFix(fix, orun_tlp::monotonic::nowMs());
       if (geofence_slot0_normal_store_expected) {
         geofence_slot0_normal_store_accepted = accepted;
         geofence_slot0_normal_store_expected = false;
@@ -4691,7 +4735,9 @@ void loop() {
   // Current/live POSITION and relay-availability commitments outrank backlog.
   // Blank/unprovisioned devices stay fail-closed and do not emit secure History.
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kStoreForward);
-  if (ble_ready) {
+  if (ble_ready && !kq05ProductOnlyTracker()) {
+    // Suppress legacy HistoryStore replay/receipt only on KQ05 Tracker.
+    // Existing legacy Flash pages remain readable, never erased/migrated.
     const bool history_higher_priority_pending =
         positions.pending() || radio_manager.relayForwardingEnabled();
     const auto sf_event = history_store_forward.update(
