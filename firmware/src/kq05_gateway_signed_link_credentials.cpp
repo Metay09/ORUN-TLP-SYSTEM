@@ -52,21 +52,36 @@ void put64(uint64_t number, uint8_t* out) {
 
 SignedGrantCredentials::SignedGrantCredentials(
     GatewayGrantSnapshotReader& grants, uint64_t gateway_id,
-    const char* trusted_edge_id)
-    : grants_(grants), gateway_id_(gateway_id) {
-  valid_identity_ =
-      gateway_id != 0U && gateway_id != UINT64_MAX &&
-      validId(trusted_edge_id, edge_id_);
+    const TrustedEdgeInstallation& installation)
+    : grants_(grants), gateway_id_(gateway_id),
+      installation_(installation) {}
+
+bool SignedGrantCredentials::enrolledIdentity(
+    char (&installation_id)[65]) const {
+  memset(installation_id, 0, sizeof(installation_id));
+  if (gateway_id_ == 0U || gateway_id_ == UINT64_MAX ||
+      !grants_.verifiedForLocalGateway(gateway_id_))
+    return false;
+  char claimed[65]{};
+  const bool present =
+      installation_.readVerifiedInstallation(gateway_id_, claimed);
+  const bool valid = present && validId(claimed, installation_id);
+  wipe(claimed, sizeof(claimed));
+  if (!valid) wipe(installation_id, sizeof(installation_id));
+  return valid;
 }
 
 bool SignedGrantCredentials::verifiedForGateway(uint64_t gateway_id) const {
-  if (!valid_identity_ || gateway_id != gateway_id_ ||
-      !grants_.verifiedForLocalGateway(gateway_id))
-    return false;
+  if (gateway_id != gateway_id_) return false;
+  char trusted_id[65]{};
+  const bool enrolled = enrolledIdentity(trusted_id);
+  wipe(trusted_id, sizeof(trusted_id));
+  if (!enrolled) return false;
   uint8_t source_key[32]{};
   const bool allowed = grants_.edgeAcceptKey(source_key);
   wipe(source_key, sizeof(source_key));
-  return allowed; // OGK1 v1: valid custody grants but NO Edge authority.
+  return allowed && grants_.verifiedForLocalGateway(gateway_id);
+  // OGK1 v1: valid custody grants but NO Edge authority.
 }
 
 bool SignedGrantCredentials::readGatewayLink(
@@ -76,25 +91,33 @@ bool SignedGrantCredentials::readGatewayLink(
   wipe(link_key, sizeof(link_key));
   if (!verifiedForGateway(gateway_id)) return false;
 
+  char trusted_id[65]{};
+  char confirm_id[65]{};
   uint8_t master[32]{};
   uint8_t data[kMaxDeriveInput]{};
   uint8_t derived[32]{};
   bool success = false;
   do {
-    if (!grants_.edgeAcceptKey(master)) break;
-    const size_t id_size = strlen(edge_id_);
+    if (!enrolledIdentity(trusted_id) ||
+        !grants_.edgeAcceptKey(master)) break;
+    const size_t id_size = strlen(trusted_id);
     memcpy(data, kDeriveDomain, sizeof(kDeriveDomain));
     put64(gateway_id, data + sizeof(kDeriveDomain));
-    memcpy(data + sizeof(kDeriveDomain) + 8U, edge_id_, id_size);
+    memcpy(data + sizeof(kDeriveDomain) + 8U, trusted_id, id_size);
     const size_t n = sizeof(kDeriveDomain) + 8U + id_size;
     if (!custody_crypto::hmacSha256Bounded(master, data, n, derived))
       break;
-    // Signed authority can be revoked while CC310 is running.
-    if (!grants_.verifiedForLocalGateway(gateway_id)) break;
+    // No stale installation ID or revoked signed authority may survive
+    // the CC310 call. A changed/revoked enrollment invalidates the result.
+    if (!grants_.verifiedForLocalGateway(gateway_id) ||
+        !enrolledIdentity(confirm_id) ||
+        strcmp(trusted_id, confirm_id) != 0) break;
     memcpy(link_key, derived, sizeof(derived));
-    memcpy(edge_id, edge_id_, id_size);
+    memcpy(edge_id, trusted_id, id_size);
     success = true;
   } while (false);
+  wipe(trusted_id, sizeof(trusted_id));
+  wipe(confirm_id, sizeof(confirm_id));
   wipe(master, sizeof(master));
   wipe(data, sizeof(data));
   wipe(derived, sizeof(derived));
