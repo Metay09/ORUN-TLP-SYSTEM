@@ -25,6 +25,8 @@ class TrackerAcklessLiveTx final {
   // remains responsible for the shared legal RF airtime budget.
   static constexpr uint32_t kHistorySpacingMs = 60000U;
   static constexpr uint32_t kHistorySweepPauseMs = 300000U;
+  // Flash lookups per scheduler turn; resume across loops for long EVENT runs.
+  static constexpr uint8_t kLiveLookupBudget = 8U;
 
   TrackerAcklessLiveTx(ProductRecordStore& records,
                        ProductSecureCrypto& crypto, RadioManager& radio)
@@ -71,6 +73,10 @@ class TrackerAcklessLiveTx final {
   uint32_t history_sent_count_ = 0U;
   bool history_paused_ = false;
   uint32_t next_try_ms_ = 0U;
+  // Last scanned OBS1 next identity prevents a newer EVENT from masking LIVE.
+  uint64_t live_search_incarnation_ = 0U;
+  uint32_t live_search_next_seq_ = 0U;
+  uint32_t live_search_cursor_ = 0U;
   uint32_t sent_count_ = 0U;
   uint32_t deferred_count_ = 0U;
   bool throttled_ = false;
