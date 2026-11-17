@@ -33,7 +33,7 @@ must('Serial.println(F("KQ05 GEOFENCE representative suppressed; EVENT owns occu
 must("queueKq05OutsideEvent(fix);")
 must("product_records.submitEvent(kq05_event_queue[kq05_event_head])")
 must("if (kq05_event_count > 0U) {")
-must("kq05_event_awaiting_durable = false;")
+assert code.count("kq05_event_awaiting_durable = false;") == 2  # boot + durable-outcome completion
 assert "KQ05 GEOFENCE representative PRODUCT EVENT not implemented" not in code
 
 must('Serial.println(F("KQ05 PRODUCT only: PERIODIC not accepted; no legacy fallback"));')
