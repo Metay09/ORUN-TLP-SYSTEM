@@ -71,7 +71,9 @@ print("R2.1 patch identity, idempotence and fail-closed guards: PASS")
 
 # Compile the actual patched gate/timeout/quiesce functions into the C++
 # interleaving regression, replacing only their hardware-facing operations.
-if len(sys.argv) == 2:
+if len(sys.argv) == 3:
+    # Args: output path and the already-verified audited PIO environment.
+    # Generate the C++ fixture only after SHA/version/patch checks passed.
     def function(name):
         signature = "void " + name + ("(void)\n{" if name == "RadioBgIrqProcess" else "()\n{")
         start = patched.index(signature)
