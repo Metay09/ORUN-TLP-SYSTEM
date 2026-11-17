@@ -4542,6 +4542,11 @@ void loop() {
   }
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kProductStore);
   drainProductStore();
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  // The EVENT must survive a busy PERIODIC append; do not equate admitted
+  // with durable or claim RF/backend delivery.
+  serviceKq05OutsideEvents();
+#endif
   drainGeofencePrepare();
   // ProductRecordStore::poll() has run before this service. A radio receipt
   // never counts as delivery; only a committed release marker does.
@@ -4652,11 +4657,10 @@ void loop() {
   // its immediate logical POSITION. Queue exactly one representative until the
   // existing store-before-send owner can accept it; do not bypass HistoryStore.
   if (kq05ProductOnlyTracker() && geofence_representative_pending) {
-    // The legacy representative writer would recreate the second record
-    // stream. Until PRODUCT EVENT admission exists, this event remains a
-    // local-only safety indication. Never claim durable event delivery.
+    // Do not allocate a second POSITION. True confirmed INSIDE->OUTSIDE
+    // transitions are separately queued for the canonical EVENT append.
     geofence_representative_pending = false;
-    Serial.println(F("KQ05 GEOFENCE representative PRODUCT EVENT not implemented"));
+    Serial.println(F("KQ05 GEOFENCE representative suppressed; EVENT owns occurrence"));
   }
   if (tracking_enabled && geofence_representative_pending &&
       positions.prepareForFixStorage()) {
