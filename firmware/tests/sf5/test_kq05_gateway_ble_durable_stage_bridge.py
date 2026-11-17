@@ -117,6 +117,20 @@ def test_wrong_scope_corruption_and_no_false_staged() -> None:
             verified_edge_installation=True).state == bridge.BridgeState.REFUSED
         assert gateway.scan().items == ()
 
+        # A different, correctly configured Gateway cannot stage an offer
+        # addressed to this Gateway, even with the same Edge installation.
+        foreign_permit = offer.GatewayLinkPermit(
+            permit.edge_id, b"GATEWAY2", permit.key, permit.allowed_devices)
+        foreign_store = staging.GatewayReceiptStage(
+            Path(folder) / "foreign-gateway.sqlite", foreign_permit,
+            capacity=2)
+        foreign = bridge.GatewayBleDurableStageBridge(foreign_store)
+        assert foreign.receive(
+            logical, authorized_gateway_service=True,
+            verified_edge_installation=True) == (
+                bridge.BridgeResult(bridge.BridgeState.REFUSED))
+        assert foreign_store.scan().items == ()
+
         original = receiver.receive(
             logical, authorized_gateway_service=True,
             verified_edge_installation=True)
