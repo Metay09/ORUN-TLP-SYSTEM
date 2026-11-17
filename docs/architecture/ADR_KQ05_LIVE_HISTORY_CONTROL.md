@@ -156,3 +156,30 @@ Operatör kararı: **tekli CUSTODY_ACK firmware'de kalır**; rutin LIVE için AC
 - Deneysel sf5l0_bench_gateway.cpp BLE reassembly handler'ı 0x91'i tanıyıp, gerçek HMAC yetkisi ve nRF Gateway Flash owner bulunmadığından güvenli biçimde REJECT ediyor. **Bu fiziksel BLE aktarımın tamamlandığı anlamına gelmez**; hiçbir STAGED/SENT/ACK/Tracker release/Flash mutation yapılmıyor.
 - firmware/tests/sf5/test_kq05_edge_link_wire.cpp ve tools/ci/run_kq05_edge_link_wire_host.sh mevcut real edge_link::Fragmenter/Reassembler ile 20B BLE fragmentlerine bölme/toplama, minimum/maksimum mesaj, parser malformed ve eski mesaj türü ayrımını sınar. KQ05 preflight ve tüm host tests içine eklendi. Bu değişiklikler için operatör PC ve deneysel firmware derleme sonucu HENÜZ YOK; PASS denemez.
 - Eski tekli CUSTODY_ACK ve LoRa komutları korunur. Devam işi: üretime uygun Edge USB/BLE key enrollment, Gateway nRF kalıcı receipt owner + readback, authentication, Gateway stage response, #305 toplam RF budget, LoRa TX ve Tracker RX. PR #316 DRAFT / NO MERGE / NO FLASH; ana firmware/servisler/cihazlar değiştirilmez.
+
+## 17 Kasım — KQ05 BLE LAB PASS ve Gateway Flash yerleşim engeli
+
+### Operatör PC kabulü (SHA 78819a68a1fe6210af9ab5d2abb3355d332d1d6e)
+
+- KQ05 preflight, gerçek SF5L6 BLE 20B native fragment/reassembly testi ve `pio run -e rak4630_kq05_lab`: **PASS/SUCCESS**. Flash 468.908/815.104 (%57,5), RAM 51.192/248.832 (%20,6). Tekli ACK korunuyor; cihaz flash/yükleme yok. Bu çalıştırmada tüm host regression ayrı çağrılmadı.
+
+### Kritik fiziksel depolama gerçeği (karar kapısı)
+
+- `storage_config.h`: uygulama son sınırı **0x0C5000**; ürün bölgesi **0x0C5000..0x0E5000 (32 x 4096 = 128 KiB)**; bunun hemen üzerinde Geofence, Security, Config, Bond ve History özel sahipli alanları yer alıyor. Ayrı bir boş/rezervsiz Gateway makbuz sayfası yok.
+- `product_region.h`, `product_custody_store.h/.cpp`: Gateway için ürün bölgesinin TAMAMI `ProductCustodyStore` OCQ2'ye ait. Açılış taraması ve en son nesil/aktif sayfa kuralları bütün sayfaları denetliyor; ortadan 1-2 sayfa ayırmak, kapasite/format/sahiplik/kurtarma/migrasyon ve erase güvenliği yeniden tasarlanmadan **güvenli değil**.
+- `FlashMutationGate::productPort()` ürün bölgesinin *fiziksel mutasyon arbitrajı* sahibi; tek başına makbuz için mantıksal tahsis veya OCQ2 ile bağımsız yazma yetkisi vermez. Yeni rastgele writer veya kısmi bölge erase önerilmiyor.
+
+### Önerilen daha basit rota (henüz ürün uygulama kararı değil)
+
+1. Backend ve Edge makbuzları kalıcı tutar; Edge, gerçek tasma doğrulama/işleme kanıtı olmadan makbuzu silmez.
+2. Yetkilendirilmiş Edge→Gateway BLE/USB taşıması Gateway'e yalnız kısa ömürlü, sınırlı RAM offer verir; ACK/komutlar ve yeni LIVE öncelikli kalır; Gateway kendi ek Flash kaydını üretmez. Düşen bağlantıda Edge yeniden dener.
+3. Gateway yalnız Tracker'ın açık RX penceresinde ve doğrulanmış #305 RF-airtime bütçesinde makbuzun **orijinal Backend-signed 44..72B wire** kısmını downlink'e çıkarır. Gateway anahtarı Backend receipt HMAC'i üretmez/doğrulamaz.
+4. Tasma receipt'i kendi SecurityStore credential'ıyla HMAC/scope/epoch/sequence doğrulayarak yalnız seçilen OBS1 kayıtlarını idempotent biçimde bırakır; eski tekli ACK yüksek öncelikli olay/komut işlerinde kalır.
+5. Bu rota seçilirse host-only SQLite Gateway `STAGED` ve 83B dayanıklı saklama onayı **gerçek Gateway firmware'de kullanılmaz**. RAM teklifine asla `STAGED` denmez; gerekiyorsa sadece 'RAM QUEUED/NOT DURABLE' olarak tanımlanır; bu cevap Edge veya Backend'de silme yetkisi oluşturmaz.
+
+**Karar durumu:** Yukarıdaki RAM relay sadeleştirme mühendislik ÖNERİSİ; nRF ürün yolu uygulanmadı. Alternatif kalıcı Gateway makbuz kuyruğu istenirse, OCQ2 içinde formata uyumlu yeni kayıt tipi + geriye uyumlu recovery/migration ve flash cut-test gerektiren ayrı depolama projesidir. Bu iş açık kalır; veri silme veya sahiplik değişikliği yapılmaz.
+
+### Açık saha kapıları
+
+- Gerçek Edge/Gateway credential ve bağlantı yetkisi, USB/BLE kablosuz alma handler'ı, bounded RAM ömrü ve retry, radio-owner TX scheduler, LoRa duty-cycle (#305), tasma RX pencere/zaman hesabı, fiziksel iki cihaz testi ve elektrik tüketimi/power-cut kanıtı.
+- PR #316 DRAFT; NO MERGE / NO FLASH / NO MAIN. Tekli ACK değiştirilmez.
