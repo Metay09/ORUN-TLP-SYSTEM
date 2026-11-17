@@ -148,6 +148,13 @@ def verify_response(registration: EdgeRegistration, request: dict,
         isinstance(registration, EdgeRegistration) and
         type(request) is dict and
         set(request) == {"v", "edge", "after", "limit", "nonce", "mac"} and
+        type(request.get("v")) is int and request["v"] == 1 and
+        type(request.get("after")) is int and
+        0 <= request["after"] <= _CURSOR_MAX and
+        type(request.get("limit")) is int and
+        1 <= request["limit"] <= 8 and
+        type(request.get("nonce")) is str and
+        _NONCE.fullmatch(request["nonce"]) is not None and
         type(response) is dict and
         set(response) == {"v", "edge", "after", "nonce", "cursor", "more", "items", "mac"} and
         response.get("v") == 1 and type(response.get("v")) is int and
@@ -157,6 +164,7 @@ def verify_response(registration: EdgeRegistration, request: dict,
         response.get("nonce") == request.get("nonce") and
         type(response.get("more")) is bool and
         type(response.get("cursor")) is int and
+        0 <= response["cursor"] <= _CURSOR_MAX and
         type(response.get("items")) is list and
         0 <= len(response["items"]) <= request["limit"] and
         _verify(registration.transport_key, _REQ_DOMAIN, request) and
