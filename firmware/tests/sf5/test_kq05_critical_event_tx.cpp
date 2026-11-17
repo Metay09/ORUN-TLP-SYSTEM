@@ -7,9 +7,11 @@
 
 #include "tracker_critical_event_tx.h"
 
-#define main sf5k3v_previous_main
+// Reuse proven fake flash/radio fixtures; the embedded pilot suppresses
+// its own entrypoint but still renames the nested SF5F entrypoint.
+#define ORUN_SF5K3V_EMBEDDED_TEST
 #include "test_sf5k3v_tracker_pilot.cpp"
-#undef main
+#undef ORUN_SF5K3V_EMBEDDED_TEST
 
 namespace orun_tlp {
 ProductSecureCryptoResult ProductSecureCrypto::protectNextEvent(
