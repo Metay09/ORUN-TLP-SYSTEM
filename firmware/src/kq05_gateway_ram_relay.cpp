@@ -18,6 +18,11 @@ constexpr size_t kMaxMacData = sizeof(kMacDomain) + 64U + 1U +
 static_assert(kMaxMacData <= custody_crypto::kMaxBoundedData,
               "KQ05 offer HMAC exceeds CC310 bounded input");
 
+uint32_t be32(const uint8_t* data) {
+  return (uint32_t(data[0]) << 24U) | (uint32_t(data[1]) << 16U) |
+         (uint32_t(data[2]) << 8U) | uint32_t(data[3]);
+}
+
 uint64_t be64(const uint8_t* data) {
   uint64_t value = 0U;
   for (uint8_t index = 0U; index < 8U; ++index)
@@ -128,7 +133,9 @@ Admission GatewayRamRelay::accept(
       be64(offer.gateway) != gateway_id_)
     return Admission::kDenied;
   const uint64_t tracker = be64(offer.receipt + 4U);
-  if (tracker == 0U || !source.permitsTracker(gateway_id_, tracker))
+  const uint32_t key_epoch = be32(offer.receipt + 20U);
+  if (tracker == 0U || key_epoch == UINT32_MAX ||
+      !source.permitsTracker(gateway_id_, tracker, key_epoch))
     return Admission::kDenied;
 
   // Verify the complete Edge offer under a separately enrolled gateway link
@@ -138,7 +145,7 @@ Admission GatewayRamRelay::accept(
   // A credential or scope revocation during a CC310 call is not permission
   // to keep a now-unauthorized receipt in a volatile queue.
   if (!source.verifiedForGateway(gateway_id_) ||
-      !source.permitsTracker(gateway_id_, tracker)) {
+      !source.permitsTracker(gateway_id_, tracker, key_epoch)) {
     reset();
     return Admission::kDenied;
   }
@@ -148,6 +155,7 @@ Admission GatewayRamRelay::accept(
     if (!existing.used || existing.source_row != offer.source_row)
       continue;
     return existing.tracker == tracker &&
+                   existing.key_epoch == key_epoch &&
                    existing.length == offer.receipt_size &&
                    same(existing.wire, offer.receipt, offer.receipt_size)
                ? Admission::kDuplicate : Admission::kDenied;
@@ -157,6 +165,7 @@ Admission GatewayRamRelay::accept(
     if (entry.used) continue;
     entry.source_row = offer.source_row;
     entry.tracker = tracker;
+    entry.key_epoch = key_epoch;
     memcpy(entry.wire, offer.receipt, offer.receipt_size);
     entry.length = static_cast<uint8_t>(offer.receipt_size);
     entry.since_ms = now_ms;
@@ -172,6 +181,7 @@ bool GatewayRamRelay::select(
     uint32_t now_ms, const TxConditions& p,
     const CredentialSource& source, Candidate& output) {
   expire(now_ms);
+  output = {};  // no stale candidate on any failed admission or revocation.
   if (!p.gateway_service_authorized || gateway_id_ == 0U ||
       !source.verifiedForGateway(gateway_id_)) {
     reset();
@@ -187,7 +197,8 @@ bool GatewayRamRelay::select(
   for (size_t i = 0U; i < kCapacity; ++i) {
     const Entry& current = entries_[i];
     if (!current.used || current.tracker != p.heard_tracker ||
-        !source.permitsTracker(gateway_id_, current.tracker) ||
+        !source.permitsTracker(gateway_id_, current.tracker,
+                               current.key_epoch) ||
         (current.attempted &&
          static_cast<uint32_t>(now_ms - current.last_attempt_ms) <
              kMinRetryMs))
