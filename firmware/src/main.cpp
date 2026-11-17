@@ -3954,6 +3954,7 @@ void setup() {
     Serial.println(F("RADIO unavailable; TX/RX disabled; local services continue"));
   }
   radio_manager.setRole(role_controller.role());
+#ifndef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
   if (history.begin(device_identity.legacyUint64())) {
     Serial.printf("STORAGE recovered records=%lu capacity=%lu corrupt=%lu pending=%lu\n",
                   static_cast<unsigned long>(history.count()),
@@ -3965,6 +3966,7 @@ void setup() {
   } else {
     Serial.println(F("STORAGE unavailable; POSITION TX disabled"));
   }
+#endif
   // M7P5: recover durable config before GNSS starts, so the very first
   // acquisition schedule already reflects it. config_store.config() reads
   // the safe 180s/unspecified-battery default on blank flash, a corrupt
@@ -4006,6 +4008,27 @@ void setup() {
 
 #ifdef ORUN_SF5L0_TRACKER
   decideBootStorageRole();
+#endif
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  // In the unified KQ05 image the storage role is not known until the
+  // Config + Security/Product census above. Delay the legacy begin until
+  // after that decision: on Tracker even a blank HistoryStore::begin()
+  // would schedule a legacy first-page Flash write. Never start it.
+  if (kq05ProductOnlyTracker()) {
+    Serial.println(F("KQ05 STORAGE owner=OBS1; legacy HistoryStore NOT MOUNTED"));
+  } else {
+    if (history.begin(device_identity.legacyUint64())) {
+      Serial.printf("STORAGE recovered records=%lu capacity=%lu corrupt=%lu pending=%lu\n",
+                    static_cast<unsigned long>(history.count()),
+                    static_cast<unsigned long>(history.capacity()),
+                    static_cast<unsigned long>(history.diagnostics().recovery_corruptions),
+                    static_cast<unsigned long>(history.backlogCount()));
+    } else if (history.formatResetRequired()) {
+      Serial.println(F("STORAGE v3 development reset required; POSITION TX disabled"));
+    } else {
+      Serial.println(F("STORAGE unavailable; POSITION TX disabled"));
+    }
+  }
 #endif
   // M7P6B: recovery only -- never provisions a credential. See the
   // composition-root comment on security_store above.
