@@ -135,6 +135,13 @@ Admission GatewayRamRelay::accept(
   // key. Merely parsing the embedded Backend MAC is NOT authorization.
   if (!macAuthorized(message, length, source, gateway_id_))
     return Admission::kDenied;
+  // A credential or scope revocation during a CC310 call is not permission
+  // to keep a now-unauthorized receipt in a volatile queue.
+  if (!source.verifiedForGateway(gateway_id_) ||
+      !source.permitsTracker(gateway_id_, tracker)) {
+    reset();
+    return Admission::kDenied;
+  }
 
   for (size_t i = 0U; i < kCapacity; ++i) {
     const Entry& existing = entries_[i];
