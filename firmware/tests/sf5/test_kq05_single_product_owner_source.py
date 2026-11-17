@@ -29,7 +29,13 @@ must("if (!kq05ProductOnlyTracker()) history.poll();")
 must('Serial.println(F("KQ05 STORAGE owner=OBS1; legacy HistoryStore NOT MOUNTED"));')
 assert code.count("history.begin(device_identity.legacyUint64())") == 2
 assert "#ifndef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE" in code
-must('Serial.println(F("KQ05 GEOFENCE representative PRODUCT EVENT not implemented"));')
+must('Serial.println(F("KQ05 GEOFENCE representative suppressed; EVENT owns occurrence"));')
+must("queueKq05OutsideEvent(fix);")
+must("product_records.submitEvent(kq05_event_queue[kq05_event_head])")
+must("if (kq05_event_count > 0U) {")
+must("kq05_event_awaiting_durable = false;")
+assert "KQ05 GEOFENCE representative PRODUCT EVENT not implemented" not in code
+
 must('Serial.println(F("KQ05 PRODUCT only: PERIODIC not accepted; no legacy fallback"));')
 must("!product_period_open && product_records.mounted() &&")
 must("openProductPeriod(orun_tlp::monotonic::nowMs());")
