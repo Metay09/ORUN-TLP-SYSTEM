@@ -172,6 +172,115 @@ void checkStored(const ProductRecordStore& records, uint32_t sequence,
   assert(decoded.latitude_e7 == 376102718 + int32_t(n));
 }
 
+// Clean-slate P0: EVENT and PERIODIC share one durable identity allocator.
+// Tests the real ObservationStore append path on sync/async fake NOR, plus
+// reboot recovery. An EVENT is never a second copy of the periodic fix.
+tlp::EventPlaintext outsideEvent(uint64_t occurrence = 0U) {
+  tlp::EventPlaintext e{};
+  e.event_type = tlp::kEventTypeGeofenceOutside;
+  e.lifecycle_state = tlp::kEventLifecycleActive;
+  e.severity = tlp::kEventSeverityWarning;
+  e.event_flags = tlp::kEventTransitionTimeValid |
+                  tlp::kEventLocationValid |
+                  tlp::kEventLocationAgeValid;
+  e.location_source = tlp::kLocationSourceGnss;
+  e.occurrence_id = occurrence;
+  e.transition_epoch_seconds = 1795000000U;
+  e.latitude_e7 = 376102718;
+  e.longitude_e7 = 280545028;
+  e.location_age_seconds = 0U;
+  return e;
+}
+
+void testEventOneOwner(bool async) {
+  FakeFlash flash;
+  flash.async = async;
+  FixedIncarnation source;
+  {
+    ProductRecordStore records(flash, kPages, &source);
+    records.begin(kDevice, kTracker);
+    assert(records.mounted());
+    auto invalid = outsideEvent();
+    invalid.event_type = 0U;
+    const unsigned mutations = flash.mutation_calls;
+    assert(records.submitEvent(invalid) ==
+           ProductRecordStore::Submit::kRejected);
+    assert(flash.mutation_calls == mutations);
+
+    assert(records.submitEvent(outsideEvent()) ==
+           ProductRecordStore::Submit::kAccepted);
+    assert(records.submitPeriodic(period(99U)) ==
+           ProductRecordStore::Submit::kBusy);
+
+    ProductRecordStore::Outcome outcome{};
+    bool done = false;
+    for (unsigned i = 0; i < 20000U; ++i) {
+      records.poll();
+      if (records.takeOutcome(outcome)) { done = true; break; }
+    }
+    assert(done && outcome.stored && outcome.sequence == 1U);
+    assert(outcome.kind == osf::RecordKind::kEvent);
+
+    osf::RecordIdentity event_id{};
+    event_id.incarnation = records.store().incarnation();
+    event_id.sequence = 1U;
+    ObservationStore::Record record{};
+    assert(records.store().lookup(event_id, record) ==
+           ObservationStore::LookupResult::kFound);
+    assert(record.kind == osf::RecordKind::kEvent);
+    assert(record.schema == osf::kProductSchemaV1);
+    assert(record.payload_size == tlp::kEventPlaintextSize);
+    tlp::EventPlaintext decoded{};
+    assert(tlp::decodeEventPlaintext(record.payload, record.payload_size,
+                                     &decoded) ==
+           tlp::ProductSecureCodecResult::kOk);
+    assert(decoded.record_incarnation == event_id.incarnation);
+    assert(decoded.record_sequence == event_id.sequence);
+    assert(decoded.occurrence_id == 1U);
+    assert(decoded.event_type == tlp::kEventTypeGeofenceOutside);
+
+    const auto periodic = store(records, 2U);
+    assert(periodic.stored && periodic.kind == osf::RecordKind::kPeriodic);
+    assert(periodic.sequence == 2U);
+
+    assert(records.submitEvent(outsideEvent(0xABCDEFU)) ==
+           ProductRecordStore::Submit::kAccepted);
+    done = false;
+    for (unsigned i = 0; i < 20000U; ++i) {
+      records.poll();
+      if (records.takeOutcome(outcome)) { done = true; break; }
+    }
+    assert(done && outcome.stored && outcome.sequence == 3U);
+    assert(outcome.kind == osf::RecordKind::kEvent);
+    event_id.sequence = 3U;
+    assert(records.store().lookup(event_id, record) ==
+           ObservationStore::LookupResult::kFound);
+    assert(tlp::decodeEventPlaintext(record.payload, record.payload_size,
+                                     &decoded) ==
+           tlp::ProductSecureCodecResult::kOk);
+    assert(decoded.occurrence_id == 0xABCDEFU);
+  }
+
+  // Boot recovery must not rewrite data or invent a second record.
+  flash.async = false;
+  const unsigned mutations = flash.mutation_calls;
+  ProductRecordStore recovered(flash, kPages, &source);
+  recovered.begin(kDevice, kTracker);
+  assert(recovered.mounted() && !recovered.store().faulted());
+  assert(flash.mutation_calls == mutations);
+  for (uint32_t seq = 1U; seq <= 3U; ++seq) {
+    osf::RecordIdentity id{};
+    id.incarnation = recovered.store().incarnation();
+    id.sequence = seq;
+    ObservationStore::Record r{};
+    assert(recovered.store().lookup(id, r) ==
+           ObservationStore::LookupResult::kFound);
+    assert(r.kind == (seq == 2U ? osf::RecordKind::kPeriodic
+                               : osf::RecordKind::kEvent));
+    assert(!r.released);
+  }
+}
+
 void testStoreAndRemount(bool async) {
   FakeFlash flash;
   flash.async = async;
@@ -998,6 +1107,8 @@ int main(int argc, char** argv) {
   }
   testStoreAndRemount(false);
   testStoreAndRemount(true);
+  testEventOneOwner(false);
+  testEventOneOwner(true);
   testOwnersAndPrepare();
   testExactObjectCacheAndReboot(false);
   testExactObjectCacheAndReboot(true);
