@@ -46,18 +46,17 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
       // Authenticated ACK owner committed release: next critical occurrence
       // may be sent immediately, without waiting for the old ACK timeout.
       resetSelection();
-      next_attempt_ms_ = now_ms;
       return Result::kNone;
     }
     if (phase_ == Phase::kWaitingAck) {
-      if (!monotonic::reached(now_ms, next_attempt_ms_))
+      if (deadline_armed_ && !monotonic::reached(now_ms, next_attempt_ms_))
         return Result::kNone;
       phase_ = Phase::kReady;  // Resend SAME durable exact ciphertext.
     }
   }
 
   if (!eligible || !radio_.canSend()) return Result::kNone;
-  if (!monotonic::reached(now_ms, next_attempt_ms_))
+  if (deadline_armed_ && !monotonic::reached(now_ms, next_attempt_ms_))
     return Result::kNone;
 
   if (phase_ == Phase::kSelect) {
@@ -131,6 +130,7 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
           return Result::kReadError;
         if (occupied >= osf::kMaxExactCustodyObjects) {
           next_attempt_ms_ = now_ms + kDeferredMs;
+          deadline_armed_ = true;
           return Result::kDeferred;
         }
         ObservationStore::Record record{};
@@ -155,6 +155,7 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
             event, wire);
         if (sealed == ProductSecureCryptoResult::kUnavailable) {
           next_attempt_ms_ = now_ms + kDeferredMs;
+          deadline_armed_ = true;
           return Result::kDeferred;
         }
         if (sealed != ProductSecureCryptoResult::kOk) return block();
@@ -180,6 +181,7 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
         phase_ = Phase::kReady;
       } else if (admission == ProductRecordStore::CacheSubmit::kNoCapacity) {
         next_attempt_ms_ = now_ms + kDeferredMs;
+          deadline_armed_ = true;
         return Result::kDeferred;
       } else {
         return block();  // Unknown Flash/cache evidence: fail closed.
@@ -209,10 +211,12 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
 
   if (!radio_.sendProductSecurePacket(exact.object, exact.object_size)) {
     next_attempt_ms_ = now_ms + kDeferredMs;
+          deadline_armed_ = true;
     return Result::kDeferred;
   }
   phase_ = Phase::kWaitingAck;
   next_attempt_ms_ = now_ms + kRetryMs;
+  deadline_armed_ = true;
   return Result::kSent;  // Started RF, not Gateway or Backend delivery.
 }
 
