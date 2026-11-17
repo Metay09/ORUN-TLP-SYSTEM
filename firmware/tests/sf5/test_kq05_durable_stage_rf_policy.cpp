@@ -30,17 +30,31 @@ bool verifiesDurableStage(const uint8_t* logical_offer, size_t offer_len,
       stage_len != 84U) return false;
   wire::UntrustedOfferView offered{};
   wire::UntrustedStageView proof{};
-  if (!wire::inspectOffer(logical_offer, offer_len, offered) ||
-      !wire::inspectStageResult(stage, stage_len, proof) ||
-      proof.source_row != offered.source_row ||
-      memcmp(proof.gateway, offered.gateway, 8U) != 0)
+  if (!wire::inspectOffer(logical_offer, offer_len, offered)) {
+    fprintf(stderr, "KQ05 STAGED: OFFER_SHAPE rejected size=%zu\\n", offer_len);
     return false;
+  }
+  if (!wire::inspectStageResult(stage, stage_len, proof)) {
+    fprintf(stderr, "KQ05 STAGED: RESPONSE_SHAPE rejected size=%zu\\n", stage_len);
+    return false;
+  }
+  if (proof.source_row != offered.source_row ||
+      memcmp(proof.gateway, offered.gateway, 8U) != 0) {
+    fprintf(stderr, "KQ05 STAGED: GATEWAY_OR_ROW mismatch\\n");
+    return false;
+  }
 
   uint8_t digest[32]{};
   if (!orun_tlp::custody_crypto::sha256(
-          logical_offer + 1U, offer_len - 1U, digest) ||
-      memcmp(proof.offer_sha256, digest, sizeof(digest)) != 0)
+          logical_offer + 1U, offer_len - 1U, digest)) {
+    fprintf(stderr, "KQ05 STAGED: SHA256 unavailable size=%zu\\n",
+            offer_len - 1U);
     return false;
+  }
+  if (memcmp(proof.offer_sha256, digest, sizeof(digest)) != 0) {
+    fprintf(stderr, "KQ05 STAGED: OFFER_DIGEST mismatch\\n");
+    return false;
+  }
   // Domain includes a NUL. Edge ID is followed by a separate NUL.
   uint8_t mac_input[kStageMacInputSize]{};
   memcpy(mac_input, kStageDomain, sizeof(kStageDomain));
@@ -48,9 +62,19 @@ bool verifiesDurableStage(const uint8_t* logical_offer, size_t offer_len,
   memcpy(mac_input + sizeof(kStageDomain) + sizeof(kEdgeId),
          stage + 1U, kUnsignedStageSize);
   uint8_t tag[32]{};
-  return orun_tlp::custody_crypto::hmacSha256Bounded(
-             kPublicDummyLink, mac_input, sizeof(mac_input), tag) &&
-         memcmp(tag, proof.link_mac, sizeof(tag)) == 0;
+  if (!orun_tlp::custody_crypto::hmacSha256Bounded(
+          kPublicDummyLink, mac_input, sizeof(mac_input), tag)) {
+    fprintf(stderr, "KQ05 STAGED: HMAC unavailable input_size=%zu\\n",
+            sizeof(mac_input));
+    return false;
+  }
+  if (memcmp(tag, proof.link_mac, sizeof(tag)) != 0) {
+    fprintf(stderr,
+            "KQ05 STAGED: HMAC mismatch input=%zu domain=%zu edge=%zu\\n",
+            sizeof(mac_input), sizeof(kStageDomain), sizeof(kEdgeId));
+    return false;
+  }
+  return true;
 }
 
 relay::TxConditions eligible() {
