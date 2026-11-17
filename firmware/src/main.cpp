@@ -68,6 +68,7 @@
 #include "tracker_product_tx_pilot.h"
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
 #include "tracker_ackless_live_tx.h"
+#include "tracker_critical_event_tx.h"
 #endif
 #endif
 #if defined(ORUN_SF5L0_TRACKER) || defined(ORUN_SF5L0_GATEWAY)
@@ -226,6 +227,10 @@ orun_tlp::TrackerProductTxPilot tracker_product_tx(product_records,
 // Isolated experimental cutover; NEVER enabled by normal rak4630 image.
 orun_tlp::TrackerAcklessLiveTx kq05_live_tx(product_records, product_crypto,
                                             radio_manager);
+// Critical EVENT reuses the existing authenticated Gateway-custody ACK owner;
+// it does not switch routine PERIODIC traffic back to per-record ACK.
+orun_tlp::TrackerCriticalEventTx kq05_critical_event_tx(
+    product_records, product_crypto, radio_manager);
 #endif
 #endif
 #ifdef ORUN_SF5L0_TRACKER
@@ -4946,8 +4951,23 @@ void loop() {
   }
 #endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
-  // No exact-object cache, no per-record ACK, no release. The receiving
-  // Gateway/receipt security path is NOT implemented yet. Keep opt-in OFF.
+  // Critical EVENT first, using the EXISTING durable Gateway custody ACK.
+  // Waiting for that ACK never gates ordinary LIVE/HISTORY; they remain
+  // direct with no per-record ACK or exact cache.
+  const auto event_tx = kq05_critical_event_tx.update(
+      orun_tlp::monotonic::nowMs(),
+      pilot_allowed && !kq05_batch_release.pending());
+  if (event_tx == orun_tlp::TrackerCriticalEventTx::Result::kSent) {
+    Serial.printf("KQ05 CRITICAL EVENT TX started seq=%lu custody=awaiting-ack\n",
+                  static_cast<unsigned long>(
+                      kq05_critical_event_tx.selectedIdentity().sequence));
+  } else if (event_tx ==
+             orun_tlp::TrackerCriticalEventTx::Result::kBlocked) {
+    Serial.println(F("KQ05 CRITICAL EVENT blocked; retained, no false ACK"));
+  }
+
+  // Ordinary PERIODIC LIVE is authenticated but ACKless; an RF send does not
+  // release the durable Flash record or mint a false Gateway ACK.
   switch (kq05_live_tx.update(orun_tlp::monotonic::nowMs(), pilot_allowed)) {
     case orun_tlp::TrackerAcklessLiveTx::Event::kSent:
       Serial.printf("KQ05 LIVE TX started seq=%lu delivery=unconfirmed\n",
