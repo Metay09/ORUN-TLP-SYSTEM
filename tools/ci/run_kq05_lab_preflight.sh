@@ -24,6 +24,9 @@ echo "=== KQ05 NATIVE BLE WIRE / FAIL-CLOSED INGRESS CONTRACT ==="
 bash tools/ci/run_kq05_edge_link_wire_host.sh
 echo "=== KQ05 GATEWAY NATIVE HMAC RAM RELAY / ACK-FIRST ELIGIBILITY ==="
 bash tools/ci/run_kq05_gateway_ram_relay_host.sh
+echo "=== KQ05 SIGNED OGK1 V2 LINK / EPOCH / EDGE DERIVATION ==="
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_gateway_link_derive.py
+bash tools/ci/run_kq05_signed_link_credentials_host.sh
 echo "=== KQ05 4/5 TRACKER RECEIPT/FLASH ==="
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
 echo "=== KQ05 5/5 ISOLATED RAK4630 LAB BUILD ==="
