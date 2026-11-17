@@ -38,6 +38,19 @@ assert [x[1] for x in syms] == [1696, 1704, 3220], syms
 assert m.bucket("/tmp/project/firmware/src/main.cpp:155") == "ORUN/main.cpp"
 assert m.bucket("/tmp/.pio/libdeps/rak4630_orun/SX126x-Arduino/src/radio/radio.cpp:155") == "LoRa/SX126x library"
 assert m.bucket("??:0") == "Unattributed (no debug path)"
+assert m.bucket(":0") == "Unattributed (no debug path)"  # Actual user's ELF failure.
+assert m.bucket(":0", "SFE_UBLOX_GNSS::processUBXpacket(ubxPacket*)") == "GNSS/SparkFun [symbol]"
+assert m.bucket(":0", "tud_task_ext") == "USB/TinyUSB [symbol]"
+assert m.bucket(":0", "lfs_dir_commit") == "LittleFS/InternalFS [symbol]"
+assert m.bucket(":0", "loop") == "ORUN/main runtime [symbol]"
+assert m.bucket(":0", "orun_tlp::HistoryStore::poll()") == "ORUN/legacy history [symbol]"
+assert m.bucket("??:?", "orun_tlp::ObservationStore::poll()") == "ORUN/product records [symbol]"
+assert m.bucket(":0", "orun_tlp::TrackerAcklessLiveTx::update()") == "ORUN/KQ05 [symbol]"
+assert m.bucket(":0", "orun_tlp::Kq05BackendReceiptVerifier::verify()") == "ORUN/KQ05 [symbol]"
+assert m.bucket(":0", "_GLOBAL__sub_I__Z21decideBootStorageRolev") == "C++ global initialization [symbol]"
+assert m.bucket("/tmp/project/firmware/src/main.cpp:0", "loop") == "ORUN/main.cpp"
+assert m.bucket(":0", "weird_upstream_function()") == "Unknown linked symbol (source unavailable)"
+
 with patch.object(m, "run", return_value="x.cpp:1\ny.cpp:2\nz.cpp:3\n"):
     assert len(m.origins(Path("addr2line"), Path("x.elf"), syms)) == 3
 print("KQ05 read-only ELF size/symbol/source auditor: PASS (synthetic fixtures)")
