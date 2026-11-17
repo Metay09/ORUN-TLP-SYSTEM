@@ -4820,7 +4820,8 @@ void loop() {
   // Y2a: the one firmware runs the Tracker pilot only on Tracker storage.
   if (trackerStorage()) {
 #endif
-#if defined(ORUN_SF5L0_TRACKER) && !defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE)
+#ifdef ORUN_SF5L0_TRACKER
+#ifndef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
   // Legacy-pilot-only: KQ05 cannot initialize this per-record ACK pacer.
   // Start the pacer clock before the pilot's first (boot) send is counted.
   if (!bench_pacer_started) {
@@ -4830,6 +4831,7 @@ void loop() {
     // SF5L4: the newest record first, backlog in the gaps.
     tracker_product_tx.setLiveFirst(true);
   }
+#endif
 #endif
   const bool pilot_allowed = ble_ready && tracking_enabled &&
       radio_manager.role() == orun_tlp::NodeRole::kTracker &&
