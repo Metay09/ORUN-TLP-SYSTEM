@@ -1114,4 +1114,5 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_gateway_link_deri
 bash tools/ci/run_kq05_signed_link_credentials_host.sh
 bash tools/ci/run_kq05_real_byte_interop_host.sh
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_single_product_owner_source.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_flash_audit.py
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
