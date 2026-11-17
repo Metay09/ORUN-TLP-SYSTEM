@@ -20,8 +20,9 @@ class CredentialSource {
   virtual bool readGatewayLink(uint64_t gateway_id,
                                char (&edge_id)[65],
                                uint8_t (&link_key)[32]) const = 0;
-  virtual bool permitsTracker(uint64_t gateway_id,
-                              uint64_t tracker_id) const = 0;
+  // The grant MUST match the exact Backend receipt epoch, not merely ID.
+  virtual bool permitsTracker(uint64_t gateway_id, uint64_t tracker_id,
+                              uint32_t key_epoch) const = 0;
 };
 
 enum class Admission : uint8_t {
@@ -73,6 +74,7 @@ class GatewayRamRelay final {
   struct Entry {
     uint64_t source_row = 0U;
     uint64_t tracker = 0U;
+    uint32_t key_epoch = 0U;
     uint8_t wire[72]{};
     uint8_t length = 0U;
     uint32_t since_ms = 0U;
