@@ -348,7 +348,7 @@ int productServicesScenario() {
     pass();
   assert(product_records.diagnostics().stored == 1U);
   assert(product_records.diagnostics().failed == 0U);
-  assert(Serial.output.find("PRODUCT STORE append seq=1 ") !=
+  assert(Serial.output.find("PRODUCT STORE append kind=PERIODIC seq=1 ") !=
          std::string::npos);
   assert(watchdog_starts == 1U && board_reads == 1U);
 
@@ -1167,7 +1167,7 @@ int main(int argc, char** argv) {
       assert(product_records.diagnostics().stored == 1U);
       assert(product_records.diagnostics().failed == 0U);
       const bool printed =
-          out.find("PRODUCT STORE append seq=1 inc=5F5D5A5B5C5D5E5F "
+          out.find("PRODUCT STORE append kind=PERIODIC seq=1 inc=5F5D5A5B5C5D5E5F "
                    "result=OK") != std::string::npos;
       orun_tlp::ProductRecordStore::Outcome outcome;
       assert(printed || (product_records.takeOutcome(outcome) &&
