@@ -53,6 +53,7 @@ class Item:
 class ReadResult:
     state: ReadState
     items: tuple[Item, ...] = ()
+    has_more: bool = False
 
 
 class BackendReceiptOutbox:
@@ -169,7 +170,27 @@ class BackendReceiptOutbox:
             return PutResult(PutState.UNAVAILABLE)
 
     def oldest(self, limit: int = 8) -> ReadResult:
-        if type(limit) is not int or not 1 <= limit <= 32:
+        return self._scan(after_id=0, limit=limit, allowed=None)
+
+    def page_for_devices(self, allowed_devices: frozenset[bytes],
+                         after_id: int = 0, limit: int = 8) -> ReadResult:
+        """Authorized-only cursor page; never returns a nonmatching device.
+
+        The allowed set comes from Backend's authenticated Edge enrollment,
+        not a query parameter or a caller-supplied untrusted device list.
+        """
+        if (type(allowed_devices) is not frozenset or
+                not 1 <= len(allowed_devices) <= 128 or
+                any(type(d) is not bytes or len(d) != 8 or not any(d)
+                    for d in allowed_devices)):
+            return ReadResult(ReadState.INVALID)
+        return self._scan(after_id=after_id, limit=limit,
+                          allowed=allowed_devices)
+
+    def _scan(self, after_id: int, limit: int,
+              allowed: frozenset[bytes] | None) -> ReadResult:
+        if (type(after_id) is not int or not 0 <= after_id <= 9223372036854775807 or
+                type(limit) is not int or not 1 <= limit <= 32):
             return ReadResult(ReadState.INVALID)
         try:
             with closing(self._conn()) as db:
@@ -180,6 +201,7 @@ class BackendReceiptOutbox:
                 items: list[Item] = []
                 prev = 0
                 count = 0
+                has_more = False
                 for row_id, device, inc, epoch, blob, wire in db.execute(
                     "SELECT id,device,incarnation,epoch,sequences,wire"
                     " FROM kq05_receipt_outbox ORDER BY id ASC"):
@@ -197,10 +219,13 @@ class BackendReceiptOutbox:
                     signed = self._signed(device, inc, epoch, seq)
                     if signed.state != IssueState.SIGNED or not hmac.compare_digest(signed.wire, wire):
                         return ReadResult(ReadState.REFUSED)
-                    if len(items) < limit:
-                        items.append(Item(row_id, wire))
+                    if row_id > after_id and (allowed is None or device in allowed):
+                        if len(items) < limit:
+                            items.append(Item(row_id, wire))
+                        else:
+                            has_more = True
                 db.execute("COMMIT")
                 return ReadResult(ReadState.READY if items else ReadState.EMPTY,
-                                  tuple(items))
+                                  tuple(items), has_more)
         except (sqlite3.Error, OSError, ValueError, struct.error):
             return ReadResult(ReadState.UNAVAILABLE)
