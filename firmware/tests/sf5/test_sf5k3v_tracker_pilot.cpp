@@ -542,6 +542,9 @@ void acklessLiveDoesNotStallOnEventTail() {
   const unsigned writes = flash.program_calls;
   assert(sender.update(1000U, true) ==
          orun_tlp::TrackerAcklessLiveTx::Event::kNone);
+  // Partial LIVE lookup is not a reason to send stale HISTORY first.
+  assert(sender.updateHistory(1000U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kNone);
   assert(g_seals == 0U && g_sends == 0U);
   assert(sender.update(1001U, true) ==
          orun_tlp::TrackerAcklessLiveTx::Event::kSent);
@@ -569,6 +572,19 @@ void acklessLiveDoesNotStallOnEventTail() {
          ObservationStore::LookupResult::kFound);
   assert(event.kind == orun_tlp::osf::RecordKind::kEvent);
   assert(!event.released);
+
+  // If the newest PERIODIC is later released, a still-newer EVENT cannot
+  // cause an OLD periodic to masquerade as the current LIVE position.
+  const osf::RecordIdentity latest_periodic = sender.lastSent();
+  releaseAndReboot(flash, source, latest_periodic);
+  ProductRecordStore recovered(flash, kPages, &source);
+  recovered.begin(kDevice, kTracker);
+  assert(recovered.mounted());
+  orun_tlp::TrackerAcklessLiveTx after(recovered, crypto, radio);
+  const unsigned sent_before = g_sends;
+  assert(after.update(3000U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kNone);
+  assert(g_sends == sent_before);
 }
 
 void acklessSolitaryLiveEventuallyRetries() {
