@@ -4393,7 +4393,9 @@ void loop() {
   // gate's own admission also enforces this regardless of call order.
   if (!radio_manager.isTransmitting()) {
     orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kHistoryStore);
-    history.poll();
+    // KQ05 PRODUCT-only Tracker keeps old HistoryStore pages untouched:
+    // no new legacy append, replay, receipt mutation or compaction resume.
+    if (!kq05ProductOnlyTracker()) history.poll();
     orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kConfigStore);
     config_store.poll();
     orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kSecurityStore);
