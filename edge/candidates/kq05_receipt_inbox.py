@@ -161,7 +161,8 @@ class EdgeReceiptInbox:
             if (type(obj) is not dict or set(obj) != {"id", "wire"} or
                     type(obj["id"]) is not int or
                     not previous < obj["id"] <= _MAX_CURSOR or
-                    type(obj["wire"]) is not str or not _HEX.fullmatch(obj["wire"])):
+                    type(obj["wire"]) is not str or len(obj["wire"]) % 2 != 0 or
+                    not _HEX.fullmatch(obj["wire"])):
                 return StoreState.REFUSED
             wire = bytes.fromhex(obj["wire"])
             if not self._wire_valid(wire):
