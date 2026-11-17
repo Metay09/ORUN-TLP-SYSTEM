@@ -7,10 +7,12 @@ CUSTODY_ACK. No production USB/BLE handler is installed.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from enum import Enum, auto
 from hashlib import sha256
 import hmac
+import sqlite3
 import struct
 
 from kq05_edge_gateway_offer import (
@@ -71,23 +73,21 @@ def gateway_accept_and_reply(
         return ExchangeResult(
             ExchangeState.REFUSED if result.state == StageState.REFUSED
             else ExchangeState.RETRY)
-    # A second independent full-scan is required before emitting an HMAC ACK.
-    readback = stage.scan(limit=32)
-    if readback.state != StageState.STAGED:
-        return ExchangeResult(ExchangeState.RETRY)
-    # Scan's result is paged; read the exact matching row even when >32 staged.
-    with __import__("contextlib").closing(stage._conn()) as db:
-        try:
-            row = db.execute(
-                "SELECT id,source_row,wire,tag FROM kq05_gateway_receipts "
-                "WHERE id=?", (result.local_id,)).fetchone()
-            if (row is None or row[1] != offer.source_row or
-                    not hmac.compare_digest(row[2], offer.wire) or
-                    not hmac.compare_digest(
-                        row[3], stage._seal(offer.source_row, offer.wire))):
-                return ExchangeResult(ExchangeState.RETRY)
-        except Exception:
+    # A second independent, complete, transaction-consistent scan before
+    # granting an Edge-local STAGED acknowledgement; not a Tracker ACK.
+    try:
+        with closing(stage._conn()) as db:
+            db.execute("BEGIN")
+            readback = stage._read_full(db)
+            db.execute("ROLLBACK")
+        if readback.state != StageState.STAGED or not any(
+                x.local_id == result.local_id and
+                x.source_row == offer.source_row and
+                hmac.compare_digest(x.wire, offer.wire)
+                for x in readback.items):
             return ExchangeResult(ExchangeState.RETRY)
+    except (sqlite3.Error, OSError, ValueError, struct.error):
+        return ExchangeResult(ExchangeState.RETRY)
     code = _ALREADY if result.state == StageState.DUPLICATE else _SUCCESS
     unsigned = _FMT.pack(
         _VERSION, _ACK_TYPE, stage.permit.gateway_id,
