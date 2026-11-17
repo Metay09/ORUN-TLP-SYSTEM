@@ -6,6 +6,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 echo "=== KQ05 ONE PERIODIC OWNER / LEGACY DUAL WRITER OFF ==="
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_single_product_owner_source.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_flash_audit.py
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_pilot_trim_source.py
 echo "=== KQ05 SOURCE ID ==="
 git rev-parse HEAD
 git diff --check
