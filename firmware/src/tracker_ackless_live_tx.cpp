@@ -51,11 +51,17 @@ TrackerAcklessLiveTx::Event TrackerAcklessLiveTx::update(
       defer(now_ms);
       return Event::kBadRecord;
     }
-    if (record.released || record.kind != osf::RecordKind::kPeriodic) {
+    if (record.kind != osf::RecordKind::kPeriodic) {
       // The EVENT sender owns EVENT transmission and its receipt semantics.
       // Skipping an EVENT here never releases or acknowledges it.
       --live_search_cursor_;
       continue;
+    }
+    if (record.released) {
+      // Do not resurrect an older PERIODIC as current LIVE just because
+      // the latest PERIODIC has already been durably delivered.
+      live_search_cursor_ = 0U;
+      return Event::kNone;
     }
     if (record.schema != osf::kProductSchemaV1 ||
         record.payload_size != tlp::kPeriodicPlaintextSize) {
@@ -112,6 +118,9 @@ TrackerAcklessLiveTx::Event TrackerAcklessLiveTx::updateHistory(
     uint32_t now_ms, bool eligible) {
   // This is a separate best-effort, noncustody HISTORY path, never a release
   // authority. A caller must offer LIVE first and enforce its shared RF budget.
+  // A bounded LIVE scan may need another scheduler turn to get past an EVENT
+  // tail. Do not spend that turn's RF opportunity on historical retransmits.
+  if (live_search_cursor_ != 0U) return Event::kNone;
   if (!eligible || !records_.mounted() || records_.preparing() ||
       records_.pending() || !records_.store().ready() ||
       records_.store().faulted() || records_.store().busy() ||
