@@ -2,6 +2,9 @@
 # KQ05 draft: PC-only host regressions + isolated lab firmware build.
 # NO RAK flashing, no service/DB mutation and no GitHub CI.
 set -euo pipefail
+
+ echo "=== KQ05 ONE PERIODIC OWNER / LEGACY DUAL WRITER OFF ==="
+ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_single_product_owner_source.py
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 echo "=== KQ05 SOURCE ID ==="
 git rev-parse HEAD
