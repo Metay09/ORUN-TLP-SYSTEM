@@ -1785,7 +1785,7 @@ bool finishProductPeriod(const orun_tlp::GnssFix* fix) {
   }
   const char* store_state = "NOT_MOUNTED";
   if (submit == orun_tlp::ProductRecordStore::Submit::kAccepted)
-    store_state = "ACCEPTED";
+    store_state = kq05ProductOnlyTracker() ? "QUEUED" : "ACCEPTED";
   else if (submit == orun_tlp::ProductRecordStore::Submit::kBusy)
     store_state = "BUSY";
   Serial.printf(
