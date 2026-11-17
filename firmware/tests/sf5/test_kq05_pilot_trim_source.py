@@ -57,7 +57,7 @@ assert "KQ05_TX_CALL" not in normal
 assert "OLD_PILOT_INSTANCE" not in kq05, "KQ05 links old pilot object!"
 assert "OLD_PILOT_CALL" not in kq05, "KQ05 still calls old pilot!"
 assert kq05.count("KQ05_TX_CALL") >= 3, "KQ05 sender missing"
-assert "BENCH DRAIN ON refused: legacy ACK pilot not in image" in MAIN
-assert "BENCH DRAIN LIVE refused: experimental LIVE is automatic" in MAIN
+assert "KQ05 DRAIN ON refused: legacy ACK pilot not in image" in MAIN
+assert "KQ05 DRAIN LIVE refused: experimental LIVE is automatic" in MAIN
 assert "KQ05 DRAIN OFF refused: use APP SERVICES NONE" in MAIN
 print("KQ05 old pilot excluded / normal bench pilot preserved: PASS (preprocessor source only)")
