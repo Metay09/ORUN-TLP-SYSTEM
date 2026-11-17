@@ -221,3 +221,19 @@ Gateway ürünü için OCQ2 Flash bölgesinden sayfa ayırmama kararı korunmuş
 - `SignedGrantCredentials` ctor artık `const char*` kabul etmez; `TrustedEdgeInstallation&` gerektirir. `OGK1 v2` imzalı kayıt ve bağımsız Edge kimliği ikisi de geçerli olmadan KQ05 key türetme yapılamaz. CC310 HMAC hesaplaması öncesi/sonrası kimlik tekrar okunur; değişirse anahtar gönderilmez. İptalde tüm yanıt anahtarları sıfırlanır.
 - Native fake issuer ve fake identity testleri, yanlış kimlik, yanlış gateway, kimlik iptali ve RAM fail-closed senaryolarını kapsayacak şekilde güncellendi. Gerçek üretim `TrustedEdgeInstallation` implementation henüz YOK; BLE 0x91 girişi reddetmeyi sürdürüyor.
 - **Bu yeni HEAD'in PC doğrulama sonucu henüz alınmadı.** `main`, varsayılan ürün firmware, servis/DB, cihazlar ve eski tekli CUSTODY_ACK değiştirilmedi; PR #316 DRAFT / NO MERGE / NO FLASH.
+
+## 17 Kasım — Çift kayıt kök nedenine odaklı tek kaynak düzeltmesi (KQ05 LAB)
+
+**Kök neden:** Aynı normal GNSS fix için `finishProductPeriod(&fix)` ile OBS1 `ProductRecordStore::submitPeriodic()` ve `positions.acceptFix()` ile eski `HistoryStore::append()` ayrı kayıt oluşturuyordu. Sonra hem eski `HistoryStoreForwardRuntime` hem KQ05 `TrackerAcklessLiveTx` farklı biçimlerde aynı dönem verisini yayınlayabiliyordu. Backend product-only dedup bunu düzeltmez: iki farklı kimlik/format için tekillik yeterli değildir.
+
+**Mevcut çözüm kapsamı — yalnız `ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE` + Tracker storage rolü:**
+
+- KQ05 Tracker'da `kq05ProductOnlyTracker()` gerçek rol kararıyla `true` olur. GNSS normal fix'i `finishProductPeriod` ve OBS1'e gider, **aynı fix'e `positions.acceptFix` çağrılmaz**. Test dışındaki firmware'de mevcut yol korunur.
+- Eski `POSITION` canlı TX'i, HistoryStore backlog replay/receipt update'i ve `history.poll()` KQ05 Tracker'da durdurulur. Boot sırasındaki kritik düzeltme: `HistoryStore::begin` artık role kararından SONRA çağrılır ve KQ05 Tracker için hiç çağrılmaz; dolayısıyla boş eski bölgeye otomatik ilk sayfa hazırlığı bile yok. Eski HistoryStore Flash sayfaları **silinmez, migrate edilmez**; eski kayıtların kapalı kaldığı kullanıcıya açıklanmalıdır.
+- KQ05 ilk ürün ölçüm periyodunu GNSS ilk fix'ten önce açar; `ProductRecordStore` hazır değilse normal fix için eski depoya düşmez (fail-closed). Periyot kabul edilmezse yanlış başarı ilan edilmez, periyot başlangıcı ve baseline ilerletilmez.
+- Eski geofence representative fix saklaması KQ05 Tracker'da **kapatıldı** çünkü paralel HistoryStore yazıcısı yeniden çift kayıt üretirdi. Yeni OBS1 **EVENT üretimi ve kalıcı geofence alarmı henüz uygulanmadı**. KQ05 bu nedenle gerçek alan ihlali/alarm kabulü için release-ready değildir; `KQ05 GEOFENCE representative PRODUCT EVENT not implemented` logu çıkar. Kullanıcıya tamamlandı iddiası yapılmaz.
+- `firmware/tests/sf5/test_kq05_single_product_owner_source.py`, KQ05 lab preflight ve full host suite'e eklendi; kaynak bağlama kararı statik kontrol edilir. Gerçek RAK4630 build, host integration/field flash ve normal GNSS→OBS1 sayım testi henüz bu HEAD için YAPILMADI.
+
+**İş kapatma şartları:** 1) PC scriptin hedef derlemesi ve statik kontrolleri PASS; 2) PC native fake flash senaryosunda aynı GNSS ölçümü için bir ürün kaydı, sıfır yeni legacy kayıt ve no-fallback arızası kanıtlanmalı; 3) gerçek cihazda 1-dk/15-dk, reboot, no-fix, geofence, full storage ve power cut testleri; 4) eski geçmiş veri korunması/operatör export-migration kararı; 5) ürün EVENT/alarmlar, authenticated Edge BLE, Gateway RF duty/rx ve Tracker downlink bitirilmeden PR #316 ana dala alınmaz, saha etiketi verilmez.
+
+**İş yönetimi:** Bundan sonra KQ05 için ayrı yeni özellik PR'ları açılmadan mevcut #316 altında tüm kapılar kapatılacaktır. PC PASS yalnızca ilgili SHA'yı doğrular; sözde kalan iş `DONE` diye işaretlenmez. Ana firmware, hizmetler, gerçek cihazlar ve eski ACK unchanged.
