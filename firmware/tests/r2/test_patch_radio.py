@@ -20,14 +20,26 @@ def rejected(call):
 
 
 rejected(lambda: patch.transform("unknown upstream source"))
-library = root / "firmware/.pio/libdeps/rak4630/SX126x-Arduino"
-source_file = library / "src/radio/sx126x/radio.cpp.orun-original"
+# CLI accepts only an audited PIO environment name; never arbitrary paths
+# that could bypass the production pinned source/hash verification.
+allowed_environments = ("rak4630", "rak4630_orun", "rak4630_kq05_lab")
+if len(sys.argv) not in (1, 3):
+    raise SystemExit("usage: test_patch_radio.py [output.cpp audited-pio-env]")
+selected_env = sys.argv[2] if len(sys.argv) == 3 else "rak4630"
+if selected_env not in allowed_environments:
+    raise RuntimeError("R2 requires an audited PlatformIO environment")
+library = root / "firmware/.pio/libdeps" / selected_env / "SX126x-Arduino"
+if json.loads((library / "library.json").read_text())["version"] != "2.0.32":
+    raise RuntimeError("R2 requires pinned SX126x-Arduino 2.0.32")
+target = library / "src/radio/sx126x/radio.cpp"
+original = library / "src/radio/sx126x/radio.cpp.orun-original"
+source_file = original if original.exists() else target
 if not source_file.exists():
-    source_file = library / "src/radio/sx126x/radio.cpp"
-if not source_file.exists():
-    raise RuntimeError("Run pio pkg install first: pinned dependency needed for patch guard tests")
+    raise RuntimeError("R2 original radio driver source unavailable")
 source = source_file.read_text()
-patched = patch.transform(source)
+patched = patch.transform(source)  # SHA-256 pinned, rejects any drift.
+if original.exists() and target.read_text() != patched:
+    raise RuntimeError("R2 installed radio driver differs from verified patch")
 assert "Guard gate(true)" in patched
 assert "IrqFired.exchange(false)" in patched
 assert "TimerSetValue(&TxTimeoutTimer, TxTimeout)" not in patched
