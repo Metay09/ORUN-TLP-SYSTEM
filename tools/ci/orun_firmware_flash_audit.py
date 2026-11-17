@@ -81,10 +81,76 @@ def origins(addr_bin: Path, elf: Path, sym: list[tuple[int, int, str, str]]) -> 
     return found
 
 
-def bucket(origin: str) -> str:
-    path = origin.replace("\\", "/").lower()
-    if re.search(r":\d+(?: \(discriminator \d+\))?$", path):
+def symbol_bucket(symbol: str) -> str:
+    """Fallback when ELF has no DWARF line info. This is NOT file attribution."""
+    x = symbol.lower()
+    if symbol in ("setup", "loop"):
+        return "ORUN/main runtime [symbol]"
+    if "handlerolecommand" in x:
+        return "ORUN/USB and role commands [symbol]"
+    if x.startswith("sfe_ublox_gnss::") or x.startswith("ubx"):
+        return "GNSS/SparkFun [symbol]"
+    if x.startswith(("tud_", "tuh_", "tusb_", "usbd_", "dcd_", "hcd_",
+                     "mscd_", "videod_", "audiod_", "cdc_", "hid_", "msc_")):
+        return "USB/TinyUSB [symbol]"
+    if x.startswith(("lfs_", "littlefs")):
+        return "LittleFS/InternalFS [symbol]"
+    if (x.startswith(("ble", "bluefruit", "adafruit_ble")) or
+            "blegatt" in x or "ble_gap" in x):
+        return "BLE/Bluefruit [symbol]"
+    if x.startswith(("pka", "cc310", "mbedtls_", "nrf_crypto", "nrf_cc310")):
+        return "Crypto libraries [symbol]"
+    if x.startswith(("xqueue", "xsemaphore", "xtask", "vtask", "vport", "pvport",
+                     "xeventgroup", "xtimer", "vlist")):
+        return "RTOS/FreeRTOS [symbol]"
+    if x.startswith(("sx126", "radioevents")):
+        return "LoRa/SX126x [symbol]"
+    if x.startswith("_global__sub_i_"):
+        return "C++ global initialization [symbol]"
+    if x.startswith("orun_tlp::"):
+        if any(s in x for s in ("trackeracklesslivetx", "kq05", "batchreceipt")):
+            return "ORUN/KQ05 [symbol]"
+        if any(s in x for s in ("trackerproducttxpilot", "sf5l0", "drainpacer")):
+            return "ORUN/legacy pilot & bench [symbol]"
+        if any(s in x for s in ("historystore", "historydelivery",
+                                 "historyreceipt", "historysecure", "tlp::history")):
+            return "ORUN/legacy history [symbol]"
+        if any(s in x for s in ("observationstore", "productrecord",
+                                 "productperiod", "observation_store",
+                                 "productsecure", "productcustody")):
+            return "ORUN/product records [symbol]"
+        if "geofence" in x:
+            return "ORUN/geofence [symbol]"
+        if any(s in x for s in ("configstore", "config_format", "configmutation",
+                                 "configincarnation", "runtimeconfig")):
+            return "ORUN/config [symbol]"
+        if any(s in x for s in ("securitystore", "security_v3",
+                                 "security_format", "custodyack", "grant",
+                                 "signed", "ed25519")):
+            return "ORUN/security & authorization [symbol]"
+        if any(s in x for s in ("ble", "applicationtransport", "applicationhandoff")):
+            return "ORUN/BLE app [symbol]"
+        if any(s in x for s in ("gnss", "positionflow", "locationowner")):
+            return "ORUN/location flow [symbol]"
+        if any(s in x for s in ("radiomanager", "networkservice", "lora",
+                                 "relayforward", "bridge_frame", "tlp_position")):
+            return "ORUN/LoRa & bridge [symbol]"
+        if any(s in x for s in ("battery", "power", "accelerometer",
+                                 "activity", "sensor")):
+            return "ORUN/power & sensors [symbol]"
+        return "ORUN/other [symbol]"
+    return "Unknown linked symbol (source unavailable)"
+
+
+def bucket(origin: str, symbol: str = "") -> str:
+    """Prefer actual addr2line paths. If absent, label symbol-name estimates."""
+    path = origin.replace("\\", "/").lower().strip()
+    if re.search(r":(?:\d+|\?)(?: \(discriminator \d+\))?$", path):
         path = path.rsplit(":", 1)[0]
+    # Stripped DWARF often yields ':0', '??:0', '??:?' or an empty string.
+    # Never label all of those 'Other/external ()' as though they were a file.
+    if path in ("", "?", "??", "<unknown>") or path.startswith("??"):
+        return symbol_bucket(symbol) if symbol else "Unattributed (no debug path)"
     if "firmware/src/" in path or path.startswith("src/"):
         tail = path.split("firmware/src/")[-1]
         return "ORUN/" + Path(tail).name
@@ -98,15 +164,13 @@ def bucket(origin: str) -> str:
         return "USB/TinyUSB library"
     if "bluefruit" in path or "blegap" in path or "bled" in path:
         return "BLE/Bluefruit library"
-    if "littlefs" in path or "lfs" in path or "internalfilesystem" in path:
+    if "littlefs" in path or "/lfs" in path or "internalfilesystem" in path:
         return "LittleFS/InternalFS library"
     if "nrfcrypto" in path or "nrf_cc310" in path or "oberon" in path:
         return "Crypto libraries"
     if "frameworkarduino" in path or "cores/nrf5" in path:
         return "Arduino/framework"
-    if path.startswith("??") or path.endswith("??:0"):
-        return "Unattributed (no debug path)"
-    return "Other/external (" + Path(path.split(":")[0]).name + ")"
+    return "Other/external (" + (Path(path.split(":")[0]).name or "unknown") + ")"
 
 
 def analyze(elf: Path, toolbins: dict[str, Path], top: int) -> dict:
@@ -116,7 +180,7 @@ def analyze(elf: Path, toolbins: dict[str, Path], top: int) -> dict:
     groups = defaultdict(int)
     names = defaultdict(int)
     for (_, size, _, name), source in zip(syms, refs):
-        groups[bucket(source)] += size
+        groups[bucket(source, name)] += size
         names[name] += size
     flash = sec[".text"] + sec.get(".ARM.exidx", 0) + sec[".data"]
     print("\n===", elf.parent.name, "===")
@@ -124,7 +188,12 @@ def analyze(elf: Path, toolbins: dict[str, Path], top: int) -> dict:
     print(f"RAM static (.data+.bss): {sec['.data'] + sec['.bss']:,} B | .heap is a reservation, NOT flash")
     accounted = sum(groups.values())
     print(f"Named symbols (estimation, not directly equivalent to Flash): {accounted:,} B / .text {sec['.text']:,} B")
-    print("Largest source buckets of *named symbol* bytes (not removable-size estimates):")
+    missing = sum(ref.strip().lower() in ("", ":0", "??:0", "??:?", "??", "?")
+                  for ref in refs)
+    print(f"Unknown line locations: {missing:,} / {len(refs):,} symbols")
+    if missing:
+        print("WARNING: [symbol] buckets are name-based estimates, not source/object attribution.")
+    print("Largest linked symbol categories (not removable-size estimates):")
     for name, size in sorted(groups.items(), key=lambda x: -x[1])[:max(0, top)]:
         print(f"  {size:>8,} B  {name}")
     print("Largest named symbols:")
@@ -152,7 +221,7 @@ def main() -> int:
         print("\n=== KQ05 LAB minus NORMAL (linked image, NOT isolated KQ05 code size) ===")
         print(f"Flash difference: {lab['flash']-normal['flash']:+,} B")
         print(f"Static RAM difference: {lab['ram_static']-normal['ram_static']:+,} B")
-        print("Source buckets with largest estimated changes (a codegen/optimization diff, NOT removable bytes):")
+        print("Linked symbol categories with largest estimated changes (NOT removable bytes):")
         changes = [(key, lab["groups"].get(key, 0) - normal["groups"].get(key, 0))
                    for key in set(lab["groups"]) | set(normal["groups"])]
         for key, delta in sorted(changes, key=lambda x: -abs(x[1]))[:max(0, args.top)]:
