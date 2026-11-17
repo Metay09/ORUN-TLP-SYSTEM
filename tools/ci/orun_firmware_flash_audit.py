@@ -188,11 +188,15 @@ def analyze(elf: Path, toolbins: dict[str, Path], top: int) -> dict:
     print(f"RAM static (.data+.bss): {sec['.data'] + sec['.bss']:,} B | .heap is a reservation, NOT flash")
     accounted = sum(groups.values())
     print(f"Named symbols (estimation, not directly equivalent to Flash): {accounted:,} B / .text {sec['.text']:,} B")
-    missing = sum(ref.strip().lower() in ("", ":0", "??:0", "??:?", "??", "?")
-                  for ref in refs)
-    print(f"Unknown line locations: {missing:,} / {len(refs):,} symbols")
+    # Some stripped PlatformIO ELFs return ":0" or "??:0" from addr2line.
+    # Detect the outcome through the SAME classifier used to tally groups.
+    # Otherwise the report can misleadingly claim 0 unknown source lines.
+    missing = sum(bucket(ref, name).endswith("[symbol]") or
+                  bucket(ref, name) == "Unknown linked symbol (source unavailable)"
+                  for (_, _, _, name), ref in zip(syms, refs))
+    print(f"Symbols without trustworthy source paths: {missing:,} / {len(refs):,}")
     if missing:
-        print("WARNING: [symbol] buckets are name-based estimates, not source/object attribution.")
+        print("WARNING: symbol categories are name-based heuristics, NOT per-file sizes.")
     print("Largest linked symbol categories (not removable-size estimates):")
     for name, size in sorted(groups.items(), key=lambda x: -x[1])[:max(0, top)]:
         print(f"  {size:>8,} B  {name}")
