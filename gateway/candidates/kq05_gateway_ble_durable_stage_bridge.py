@@ -4,8 +4,8 @@ This is a *reference integration seam*, not RAK firmware or a public endpoint.
 The real firmware still refuses 0x91 Edge offers until trusted installation
 enrollment and a non-overlapping persistent Gateway receipt owner exist.
 
-0x91 wraps the existing authenticated Edge/Gateway offer; 0x92 wraps the
-authenticated STAGED result. Only the existing GatewayReceiptStage SQLite
+0x91 wraps the existing authenticated Edge/Gateway offer; logical BLE 0x08
+wraps the authenticated inner 0x92 STAGED result. Only the existing GatewayReceiptStage SQLite
 transaction + readback may authorize 0x92. Neither status authorizes Tracker
 release, Backend deletion, custody ACK, or RF transmission.
 
@@ -25,7 +25,7 @@ from kq05_gateway_stage_ack import (
 )
 
 _OFFER = 0x91
-_STAGED = 0x92
+_STAGED = 0x08  # SF5L6 BLE envelope; authenticated inner response type remains 0x92
 _MIN_OFFER = 96
 _MAX_OFFER = 124
 _STAGE_BYTES = 84
