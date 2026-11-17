@@ -4016,7 +4016,9 @@ void setup() {
   // would schedule a legacy first-page Flash write. Never start it.
   if (kq05ProductOnlyTracker()) {
     Serial.println(F("KQ05 STORAGE owner=OBS1; legacy HistoryStore NOT MOUNTED"));
-  } else {
+  } else if (storage_role == orun_tlp::StorageRole::kGateway) {
+    // Retain the Gateway's previous initialized legacy support. A blank,
+    // unassigned or conflicting role may not create a History Flash page.
     if (history.begin(device_identity.legacyUint64())) {
       Serial.printf("STORAGE recovered records=%lu capacity=%lu corrupt=%lu pending=%lu\n",
                     static_cast<unsigned long>(history.count()),
@@ -4028,6 +4030,8 @@ void setup() {
     } else {
       Serial.println(F("STORAGE unavailable; POSITION TX disabled"));
     }
+  } else {
+    Serial.println(F("KQ05 STORAGE role unassigned/conflict; legacy Flash untouched"));
   }
 #endif
   // M7P6B: recovery only -- never provisions a credential. See the
