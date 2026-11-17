@@ -3,7 +3,7 @@
 
 Uses the real verified Backend SQLite receipt, durable Edge inbox, exact
 0x91 message bytes, independently committed/read-back Gateway SQLite, exact
-0x92 authenticated STAGED reply and Edge-side verification. No RAK/RF.
+0x08 BLE envelope carrying inner 0x92 authenticated STAGED and Edge-side verification. No RAK/RF.
 """
 from __future__ import annotations
 
@@ -55,7 +55,8 @@ def test_full_cross_owner_roundtrip_and_restart() -> None:
             logical, authorized_gateway_service=True,
             verified_edge_installation=True)
         assert first.state == bridge.BridgeState.STAGED
-        assert len(first.response) == 84 and first.response[0] == 0x92
+        assert (len(first.response) == 84 and first.response[0] == 0x08
+                and first.response[1] == 1 and first.response[2] == 0x92)
         confirmation = ack.edge_verify_stage_result(
             inner, first.response[1:], permit)
         assert confirmation == ack.EdgeStageConfirmation(1, False)
@@ -67,6 +68,8 @@ def test_full_cross_owner_roundtrip_and_restart() -> None:
             logical, authorized_gateway_service=True,
             verified_edge_installation=True)
         assert again.state == bridge.BridgeState.STAGED
+        assert (len(again.response) == 84 and again.response[0] == 0x08
+                and again.response[1] == 1 and again.response[2] == 0x92)
         assert ack.edge_verify_stage_result(
             inner, again.response[1:], permit) == (
                 ack.EdgeStageConfirmation(1, True))
