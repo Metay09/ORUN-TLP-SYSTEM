@@ -2118,7 +2118,11 @@ void pollBenchTracker() {
   if (!bench_provisioning.poll()) return;
   const auto step = bench_provisioning.step();
   if (step == orun_tlp::Sf5l0BenchTestProvisioning::Step::kDone) {
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+    Serial.println(F("BENCH SETUP PASS; KQ05 LIVE sender enabled only when eligible"));
+#else
     Serial.println(F("BENCH SETUP PASS; the pilot sends one stored record now"));
+#endif
     printBenchTracker();
   } else if (step == orun_tlp::Sf5l0BenchTestProvisioning::Step::kFailed) {
     Serial.printf("BENCH SETUP FAIL reason=%s\n", bench_provisioning.reason());
