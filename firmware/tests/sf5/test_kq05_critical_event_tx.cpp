@@ -146,10 +146,13 @@ void noAckNeverReleasesEvent() {
   orun_tlp::ProductSecureCrypto crypto(security);
   orun_tlp::RadioManager radio;
   EventSender sender(records,crypto,radio);
-  assert(sender.update(1U,true) == EventSender::Result::kCachePending);
-  durableCache(records,sender,2U);
-  assert(sender.update(3U,true) == EventSender::Result::kSent);
-  assert(sender.update(60004U,false) == EventSender::Result::kNone);
+  // First scheduling after 2^31 ms of uptime must not be suppressed by
+  // an initially zero (unarmed) deadline.
+  assert(sender.update(0x90000000U,true) ==
+         EventSender::Result::kCachePending);
+  durableCache(records,sender,0x90000002U);
+  assert(sender.update(0x90000003U,true) == EventSender::Result::kSent);
+  assert(sender.update(0x90000004U,false) == EventSender::Result::kNone);
   ObservationStore::Record retained{};
   assert(records.store().lookup(sender.selectedIdentity(),retained) ==
          ObservationStore::LookupResult::kFound);
