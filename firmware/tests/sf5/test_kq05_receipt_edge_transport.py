@@ -88,7 +88,9 @@ def test_auth_scope_tamper_and_fail_closed():
         r1 = transport.new_request(reg, 0, 2, nonce=NONCE_A)
         good = transport.get_page(outbox, {reg.edge_id: reg}, r1)
         forged = copy.deepcopy(good.document)
-        forged["items"][0]["wire"] = forged["items"][0]["wire"][:-2] + "00"
+        first_wire = bytearray.fromhex(forged["items"][0]["wire"])
+        first_wire[-1] ^= 1
+        forged["items"][0]["wire"] = first_wire.hex()
         assert edge.accept_page(r1, forged) == edge_queue.StoreState.INVALID
         assert edge.scan().cursor == 0
         flipped = dict(r1, after=1)
