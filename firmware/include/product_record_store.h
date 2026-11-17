@@ -34,7 +34,7 @@ class CustodyAckReleaseOwner;
 
 class ProductRecordStore {
  public:
-  enum class Submit : uint8_t { kAccepted, kNotMounted, kBusy };
+  enum class Submit : uint8_t { kAccepted, kNotMounted, kBusy, kRejected };
 
   // SF5J2a: Exact protected-byte cache admission for retained observations.
   // kStarted is NOT durable: the caller must wait for takeCacheOutcome().
@@ -51,6 +51,7 @@ class ProductRecordStore {
     uint64_t incarnation = 0;
     uint32_t sequence = 0;
     bool stored = false;
+    osf::RecordKind kind = osf::RecordKind::kPeriodic;
   };
 
   struct Diagnostics {
@@ -74,6 +75,11 @@ class ProductRecordStore {
   void poll();
 
   Submit submitPeriodic(const PeriodicRecordInputs& inputs);
+  // Same single Flash owner/sequence as PERIODIC. The EventPlaintext identity
+  // is overwritten with the identity actually allocated by ObservationStore.
+  // An occurrence_id of 0 requests this new sequence as the occurrence id.
+  // No second EVENT append may be accepted while an owner job is pending.
+  Submit submitEvent(const tlp::EventPlaintext& inputs);
   bool takeOutcome(Outcome& outcome);
 
   // Read-only candidate selectors; no RF and no custody authority.
@@ -167,7 +173,9 @@ class ProductRecordStore {
   uint64_t device_id_ = 0;
 
   bool pending_ = false;
+  osf::RecordKind pending_kind_ = osf::RecordKind::kPeriodic;
   PeriodicRecordInputs pending_inputs_{};
+  tlp::EventPlaintext pending_event_{};
   osf::RecordIdentity pending_identity_{};
   Job job_ = Job::kNone;
   uint8_t maintenance_rounds_ = 0;
