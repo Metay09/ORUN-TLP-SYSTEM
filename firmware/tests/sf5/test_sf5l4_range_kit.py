@@ -168,11 +168,22 @@ def firmware() -> None:
                  "tracker_product_tx.setLiveOnly(true);",
                  "tracker_product_tx.setLiveOnly(false);"):
         assert line in main, line
-    # Bench only: no live v1 POSITION TX while a custody ACK is awaited
-    # (Y2a one firmware: only with Tracker storage).
-    hold = main.index("tracking_enabled && !(trackerStorage() && bench_pacer.awaitingAck())")
+    # Legacy bench (non-KQ05): suppress v1 POSITION TX while awaiting ACK.
+    # KQ05 Tracker must suppress that v1 copy unconditionally, because OBS1
+    # is its only measurement owner. Do NOT weaken this to a string bypass.
+    hold = main.index(
+        "tracking_enabled && !kq05ProductOnlyTracker() &&\n"
+        "      !(trackerStorage() && bench_pacer.awaitingAck());"
+    )
     opened = main.rfind("#ifdef ORUN_SF5L0_TRACKER", 0, hold)
     assert opened >= 0 and "#endif" not in main[opened:hold]
+    assert main.count("!(trackerStorage() && bench_pacer.awaitingAck())") == 1
+    # The non-bench compilation still stops legacy v1 POSITION when KQ05
+    # Tracker owns recording; other builds continue their old path.
+    assert (
+        "const bool live_position_allowed =\n"
+        "      tracking_enabled && !kq05ProductOnlyTracker();"
+    ) in main
     assert "positions.update(orun_tlp::monotonic::nowMs(), live_position_allowed)" in main
     pilot = (ROOT / "firmware/include/tracker_product_tx_pilot.h").read_text()
     assert "bool live_first_ = false;" in pilot  # default stays SF5K3V
