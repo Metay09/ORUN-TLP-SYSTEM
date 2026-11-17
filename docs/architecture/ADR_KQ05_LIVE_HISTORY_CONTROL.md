@@ -112,3 +112,14 @@ Eski test kayıtları daha sonra kullanıcı onayıyla kontrollü silinebilir; b
 - Gateway OCQ2 üst sınırı 32 sayfa x 33 kayıt = 1056 çerçeve. Dört tasma, 1 dk periyotta, Gateway'den Edge'e handoff/reclaim olmadığında azami **4,4 saatlik** doluluk penceresidir.
 - Çözüm için gerçek hafıza envanteri, veri saklama hedefi ve güvenli migration kararı gerekir. Gözetimsiz otomatik silme/overwrite veya varsayımsal 48 saat kapasite beyanı yapılmayacak.
 - HISTORY EVENT veri tipini henüz desteklemez. Backend→Edge queue→Gateway RF→Tracker receipt otomatik dönüşü ve fiziksel failover/replay/RF bütçesi hâlâ **P0 BLOCKER** durumundadır. Bu tamamlanmadan #316 merge/flash yoktur.
+
+## 17 Kasım — KQ05 Backend receipt outbox (ayrı LAB adımı)
+
+Operatör kararı: **tekli CUSTODY_ACK firmware'de kalır**; rutin LIVE için ACKless yol ve Backend makbuzu yalnız açık deneysel rak4630_kq05_lab imajında denenir. Varsayılan rak4630, rak4630_orun, cihazlar, servisler, veritabanları ve ana dal değişmez. PR #316 **DRAFT / NO MERGE / NO FLASH**.
+
+- backend/candidates/kq05_backend_receipt_outbox.py yalnız Backend'de, VerifiedLocalLedger ile aynı SQLite WAL veritabanında sınırlı kq05_receipt_outbox tablosu oluşturur. BEGIN IMMEDIATE rezervasyonu altında gerçek BackendBatchIssuer.issue() çağrısının AEAD/kimlik/çatışma/HMAC kontrolünü ve satır eklemeyi sıralar; bağımsız bağlantıyla satırın birebir okunduğunu doğrular.
+- Aynı cihaz/incarnation/epoch/açık sequence kümesi tekrar eklendiğinde aynı satır döner. Kayıp/çatışmalı kayıt hiç sıraya alınmaz; bozuk outbox satırı veya yeni tespit edilen ledger çatışması, bütün oldest() okumasını REFUSED yapar (limite takılıp sadece temiz prefix döndürmez).
+- Kuyruk dolduğunda FULL döner. Silme, teslim işaretleme, RF gönderme, ACK kabulü, telefon/Edge HTTP endpoint'i, kullanıcı yetkilendirmesi veya üretim credentials yönetimi YOK. oldest() tekrar çağrıldığında aynı makbuzları döndürmesi tasmanın bunları aldığı/uyguladığı anlamına gelmez.
+- firmware/tests/sf5/test_kq05_backend_receipt_outbox.py gerçek test fixture'larıyla kimlik, seçmeli boşluk, kalıcılık, idempotence, sıra sınırı, bozuk MAC ve daha sonra oluşan çatışma korumasını sınamak üzere eklendi. Hem run_kq05_lab_preflight.sh hem tam host regresyonuna dahil edildi.
+- **Yeni commit'in operatör makinesindeki test sonucu henüz alınmadı; PASS denmeyecek.** Ayrı local davranış-smoke koşuldu; bu gerçek Backend AEAD fixture'ının veya target LAB build'in yerine geçmez.
+- **Sonraki kapı:** Yetkili Backend → Edge makbuz taşıma protokolü, kalıcı Edge kuyruk/retry, Edge → Gateway güvenlik, Gateway → Tracker RF downlink/uyku pencere ve #305 airtime bütçesi. Tekli ACK korunarak fiziksel kabul gelmeden firmware yüklenmez.
