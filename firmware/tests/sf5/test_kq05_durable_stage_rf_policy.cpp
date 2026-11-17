@@ -116,9 +116,17 @@ void deniedWhenPriorityOrBudgetUnavailable(
 void testDurableDispatch(const uint8_t* offer, size_t offer_size,
                          const uint8_t* proof, size_t proof_size) {
   assert(offer_size == 96U && proof_size == 84U);
+  // The BLE envelope 0x08 must NOT be confused with the authenticated inner
+  // 0x92 STAGED type. Python and native firmware must agree byte for byte.
+  assert(proof[0] == wire::kStageEnvelopeType);
+  assert(proof[1] == wire::kVersion);
+  assert(proof[2] == wire::kInnerStageType);
   assert(verifiesDurableStage(offer, offer_size, proof, proof_size));
 
   uint8_t tampered[160]{};
+  memcpy(tampered, proof, proof_size);
+  tampered[0] = wire::kInnerStageType;  // Outer/inner confusion is invalid.
+  assert(!verifiesDurableStage(offer, offer_size, tampered, proof_size));
   memcpy(tampered, proof, proof_size);
   tampered[proof_size - 1U] ^= 0x01U;
   assert(!verifiesDurableStage(offer, offer_size, tampered, proof_size));
