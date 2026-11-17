@@ -14,6 +14,8 @@ echo "=== KQ05 3/5 BACKEND AUTHENTICATED RECEIPT ==="
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_backend_batch_receipt.py
 echo "=== KQ05 BACKEND DURABLE RECEIPT OUTBOX ==="
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_backend_receipt_outbox.py
+echo "=== KQ05 AUTHENTICATED BACKEND-EDGE RECEIPT PAGES ==="
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_receipt_edge_transport.py
 echo "=== KQ05 4/5 TRACKER RECEIPT/FLASH ==="
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
 echo "=== KQ05 5/5 ISOLATED RAK4630 LAB BUILD ==="
