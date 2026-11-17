@@ -36,9 +36,35 @@ ProductRecordStore::Submit ProductRecordStore::submitPeriodic(
     return Submit::kBusy;
   }
   pending_inputs_ = inputs;
+  pending_kind_ = osf::RecordKind::kPeriodic;
   pending_identity_ = osf::RecordIdentity();
   pending_ = true;
   maintenance_rounds_ = 0;
+  ++diagnostics_.submitted;
+  return Submit::kAccepted;
+}
+
+ProductRecordStore::Submit ProductRecordStore::submitEvent(
+    const tlp::EventPlaintext& inputs) {
+  if (!mounted_ || !store_.ready() || store_.faulted() || preparing())
+    return Submit::kNotMounted;
+  if (pending_) {
+    ++diagnostics_.dropped_busy;
+    return Submit::kBusy;
+  }
+  // Validation before admission must use a non-zero placeholder identity.
+  // The actual durable incarnation and sequence are assigned at append.
+  tlp::EventPlaintext check = inputs;
+  check.record_incarnation = 1U;
+  check.record_sequence = 1U;
+  if (check.occurrence_id == 0U) check.occurrence_id = 1U;
+  if (tlp::validateEventPlaintext(check) !=
+      tlp::ProductSecureCodecResult::kOk) return Submit::kRejected;
+  pending_kind_ = osf::RecordKind::kEvent;
+  pending_event_ = inputs;
+  pending_identity_ = osf::RecordIdentity();
+  maintenance_rounds_ = 0U;
+  pending_ = true;
   ++diagnostics_.submitted;
   return Submit::kAccepted;
 }
@@ -55,6 +81,7 @@ void ProductRecordStore::finishPending(bool stored,
   outcome_.incarnation = identity.incarnation;
   outcome_.sequence = identity.sequence;
   outcome_.stored = stored;
+  outcome_.kind = pending_kind_;
   outcome_ready_ = true;
   if (stored)
     ++diagnostics_.stored;
@@ -371,21 +398,37 @@ void ProductRecordStore::startNext() {
     runMaintenance();
     return;
   }
-  PeriodicRecordInputs inputs = pending_inputs_;
-  inputs.record_incarnation = identity.incarnation;
-  inputs.record_sequence = identity.sequence;
-  tlp::PeriodicObservationPlaintext record{};
-  uint8_t bytes[tlp::kPeriodicPlaintextSize];
-  if (buildPeriodicPlaintext(inputs, &record) !=
-          tlp::ProductSecureCodecResult::kOk ||
-      tlp::encodePeriodicPlaintext(record, bytes, sizeof(bytes)) !=
-          tlp::ProductSecureCodecResult::kOk) {
-    finishPending(false, identity);
-    return;
+  uint8_t bytes[tlp::kPeriodicPlaintextSize]{};
+  size_t payload_size = tlp::kPeriodicPlaintextSize;
+  if (pending_kind_ == osf::RecordKind::kEvent) {
+    tlp::EventPlaintext event = pending_event_;
+    event.record_incarnation = identity.incarnation;
+    event.record_sequence = identity.sequence;
+    // The first occurrence of this EVENT may use its allocated sequence as
+    // its episode ID. Future lifecycle updates can supply an explicit ID.
+    if (event.occurrence_id == 0U) event.occurrence_id = identity.sequence;
+    payload_size = tlp::kEventPlaintextSize;
+    if (tlp::encodeEventPlaintext(event, bytes, payload_size) !=
+        tlp::ProductSecureCodecResult::kOk) {
+      finishPending(false, identity);
+      return;
+    }
+  } else {
+    PeriodicRecordInputs inputs = pending_inputs_;
+    inputs.record_incarnation = identity.incarnation;
+    inputs.record_sequence = identity.sequence;
+    tlp::PeriodicObservationPlaintext record{};
+    if (buildPeriodicPlaintext(inputs, &record) !=
+            tlp::ProductSecureCodecResult::kOk ||
+        tlp::encodePeriodicPlaintext(record, bytes, payload_size) !=
+            tlp::ProductSecureCodecResult::kOk) {
+      finishPending(false, identity);
+      return;
+    }
   }
   pending_identity_ = identity;
-  switch (store_.requestAppend(osf::RecordKind::kPeriodic,
-                               osf::kProductSchemaV1, bytes, sizeof(bytes))) {
+  switch (store_.requestAppend(pending_kind_,
+                               osf::kProductSchemaV1, bytes, payload_size)) {
     case ObservationStore::AppendResult::kStarted:
       job_ = Job::kAppend;
       return;
