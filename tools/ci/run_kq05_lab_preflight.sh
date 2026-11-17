@@ -24,6 +24,8 @@ echo "=== KQ05 AUTHENTICATED BACKEND-EDGE RECEIPT PAGES ==="
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_receipt_edge_transport.py
 echo "=== KQ05 EDGE-GATEWAY AUTHENTICATED DURABLE STAGE ==="
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_edge_gateway_stage.py
+echo "=== KQ05 REAL LOGICAL BLE 0x91 -> DURABLE GATEWAY -> 0x92 ==="
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_gateway_ble_durable_stage_bridge.py
 echo "=== KQ05 GATEWAY DURABLE STAGE RESULT, NOT TRACKER ACK ==="
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_gateway_stage_ack.py
 echo "=== KQ05 NATIVE BLE WIRE / FAIL-CLOSED INGRESS CONTRACT ==="
