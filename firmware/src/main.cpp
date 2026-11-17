@@ -298,6 +298,17 @@ orun_tlp::GnssFix geofence_episode_fixes[
     orun_tlp::geofence_operational_config::kConfirmationObservationLimit]{};
 bool geofence_representative_pending = false;
 orun_tlp::GnssFix geofence_representative_fix{};
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+// A bounded RAM handoff between confirmed geofence transitions and the ONE
+// persistent ProductRecordStore. A slot is held until Flash confirms append.
+constexpr uint8_t kKq05EventQueueCapacity = 4U;
+orun_tlp::tlp::EventPlaintext kq05_event_queue[kKq05EventQueueCapacity]{};
+uint8_t kq05_event_head = 0U;
+uint8_t kq05_event_tail = 0U;
+uint8_t kq05_event_count = 0U;
+bool kq05_event_awaiting_durable = false;
+uint32_t kq05_event_overflows = 0U;
+#endif
 // Applied base cadence B: set at boot and again by
 // applyCommittedConfigToRuntime() after a durable configuration change.
 // Geofence B/B/3 must derive from this applied B, never from a durable value
@@ -1942,9 +1953,29 @@ void drainProductStore() {
   if (product_records.takeOutcome(outcome)) {
     char incarnation[17];
     printU64HexTo(incarnation, outcome.incarnation);
-    Serial.printf("PRODUCT STORE append seq=%lu inc=%s result=%s\n",
+    Serial.printf("PRODUCT STORE append kind=%s seq=%lu inc=%s result=%s\n",
+                  outcome.kind == orun_tlp::osf::RecordKind::kEvent
+                      ? "EVENT" : "PERIODIC",
                   static_cast<unsigned long>(outcome.sequence), incarnation,
                   outcome.stored ? "OK" : "FAIL");
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+    if (kq05ProductOnlyTracker() &&
+        outcome.kind == orun_tlp::osf::RecordKind::kEvent &&
+        kq05_event_awaiting_durable) {
+      if (outcome.stored) {
+        if (kq05_event_count > 0U) {
+          kq05_event_head =
+              static_cast<uint8_t>((kq05_event_head + 1U) %
+                                   kKq05EventQueueCapacity);
+          --kq05_event_count;
+        }
+        Serial.println(F("KQ05 EVENT append=DURABLE (delivery unconfirmed)"));
+      } else {
+        Serial.println(F("KQ05 EVENT append=FAILED, retained for retry"));
+      }
+      kq05_event_awaiting_durable = false;
+    }
+#endif
   }
   bool prepared = false;
   if (product_records.takePrepareResult(prepared)) {
