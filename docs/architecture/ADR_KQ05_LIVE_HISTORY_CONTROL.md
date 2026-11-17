@@ -141,3 +141,11 @@ Operatör kararı: **tekli CUSTODY_ACK firmware'de kalır**; rutin LIVE için AC
 - firmware/tests/sf5/test_kq05_edge_gateway_stage.py: gerçek Backend → Edge makbuz fixture'ından Gateway staging'e kadar işlem; yanlış Edge/gateway/key/device, tamper, satır çakışması, yeniden başlatma, FULL, Edge ve Gateway SQLite corruption, tekrar ve Backend değişmeden kalma kontrolü. Hem tam host suite hem KQ05 lab preflight çağırır.
 - **Henüz gerçek USB/BLE mesaj tipi, nRF Gateway flash writer, RF TX, alım pencere planlaması, #305 kota, Tracker makbuz alma callback, gerçek cihaz testi YOK.** Gateway'in Edge bağlantı MAC'i Backend'in receipt HMAC'ini doğrulamaz; yalnız Tracker gerçek credential ile yapabilir. Üretim şifresi veya kayıt bırakma yetkisi Gateway'de bulunmaz.
 - Ana firmware, gerçek servis/DB, bağlı cihazlar değişmedi. Tekli CUSTODY_ACK korunur. DRAFT / NO MERGE / NO FLASH. Güncel SHA için operatör PC test sonucu beklenir.
+
+## 17 Kasım — KQ05 Gateway durable-stage result (host LAB)
+
+- Gateway makbuzu bağımsız SQLite COMMIT/readback yaptıktan sonra, aynı Edge-Gateway bağlantı HMAC anahtarıyla Gateway kimliği + kaynak Edge satırı + ilgili teklifin SHA-256 hash'i + durum kodu için 83B sabit yanıt üretebilir (gateway/candidates/kq05_gateway_stage_ack.py).
+- Edge gelen yanıtı yalnız aynı teklife, kurulum kimliğine ve doğru bağlantı anahtarına bağlıysa kabul eder; yeniden başlatma sonrası aynı kayıt için DUPLICATE ayrı imzalanır. Bozuk token, farklı teklif/gateway/edge, dolu veya bozulmuş queue için başarılı yanıt yoktur.
+- Bu olayın adı **Gateway STAGED**; eski tekli CUSTODY_ACK değildir. Backend'e teslim, RF gönderimi, Tracker'ın kayıt bırakması veya Edge/Backend kuyruğundan silme izni sağlamaz. Tasma kayıtları sadece kendi gerçek credential tabanlı Backend toplu makbuz doğrulaması sonrası serbest bırakır.
+- firmware/tests/sf5/test_kq05_gateway_stage_ack.py, KQ05 preflight ve tam host regresyonuna eklendi: HMAC bit-fuzz, yanlış teklif/identity, kalıcı tekrar/reboot, FULL ve corrupt SQLite. Yeni sürüm için operatör PC testleri **henüz çalıştırılmadı**.
+- Kritik sonraki adım: ürün Edge USB/BLE aktarımı, Gateway nRF Flash'a kalıcı yazım, Gateway LoRa TX scheduler (#305 ile paylaşılan airtime) ve Tracker receive path fiziksel pilot. Default firmware/ana dal/cihaz/servis korunur. Tekli ACK varlığını sürdürür; DRAFT / NO MERGE / NO FLASH.
