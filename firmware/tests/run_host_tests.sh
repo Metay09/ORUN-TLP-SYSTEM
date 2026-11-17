@@ -1094,4 +1094,5 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_receipt_edge_tran
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_edge_gateway_stage.py
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_gateway_stage_ack.py
 bash tools/ci/run_kq05_edge_link_wire_host.sh
+bash tools/ci/run_kq05_gateway_ram_relay_host.sh
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
