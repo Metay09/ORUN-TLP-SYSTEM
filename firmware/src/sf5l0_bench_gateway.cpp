@@ -11,6 +11,9 @@
 
 #include "custody_store_product_format.h"
 #include "edge_link.h"
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#include "kq05_edge_link_wire.h"
+#endif
 #include "monotonic_time.h"
 #include "gateway_custody_authorized_ingress.h"
 #include "gateway_local_custody_owner.h"
@@ -606,6 +609,19 @@ void endEdgeSession() {
 
 void edgeMessage(const uint8_t* message, size_t size) {
   ++edge_messages_in;
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+  if (message != nullptr && size != 0U &&
+      message[0] == kq05_edge_link::kOfferEnvelopeType) {
+    // BLE packet reassembled by the real SF5L6 link, but the Gateway's
+    // credential-verified NOR staging owner does not exist yet. Structural
+    // parsing MUST NOT issue STAGED, schedule LoRa, or touch a custody record.
+    kq05_edge_link::UntrustedOfferView untrusted{};
+    Serial.println(kq05_edge_link::inspectOffer(message, size, untrusted)
+        ? F("KQ05 EDGE OFFER refused: durable Gateway owner not installed")
+        : F("KQ05 EDGE OFFER refused: malformed wire"));
+    return;
+  }
+#endif
   if (size >= 1 && message[0] == static_cast<uint8_t>(edge_link::Type::kLoraCommandLine)) {
     if (lora_line_handler != nullptr && size > 1)
       (void)lora_line_handler(reinterpret_cast<const char*>(message + 1), size - 1);
