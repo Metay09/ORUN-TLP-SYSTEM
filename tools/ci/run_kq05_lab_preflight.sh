@@ -18,6 +18,8 @@ echo "=== KQ05 AUTHENTICATED BACKEND-EDGE RECEIPT PAGES ==="
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_receipt_edge_transport.py
 echo "=== KQ05 EDGE-GATEWAY AUTHENTICATED DURABLE STAGE ==="
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_edge_gateway_stage.py
+echo "=== KQ05 GATEWAY DURABLE STAGE RESULT, NOT TRACKER ACK ==="
+PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_gateway_stage_ack.py
 echo "=== KQ05 4/5 TRACKER RECEIPT/FLASH ==="
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
 echo "=== KQ05 5/5 ISOLATED RAK4630 LAB BUILD ==="
