@@ -50,6 +50,7 @@ class TrackerCriticalEventTx final {
     selected_ = {};
     sealed_ = {};
     phase_ = Phase::kSelect;
+    deadline_armed_ = false;
   }
   Result block() {
     sealed_ = {};
@@ -67,5 +68,6 @@ class TrackerCriticalEventTx final {
   uint32_t scan_cursor_ = 0U;
   uint32_t idle_next_ = 0U;
   uint32_t next_attempt_ms_ = 0U;
+  bool deadline_armed_ = false;  // '0' is a valid wrapping millisecond deadline
 };
 }  // namespace orun_tlp
