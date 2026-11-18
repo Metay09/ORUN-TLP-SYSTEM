@@ -23,8 +23,8 @@ def require(condition: bool, explanation: str) -> None:
 def check() -> None:
     require('#ifdef ' + FLAG + '\n#include "kq05_supplemental_28k_census.h"'
             in MAIN, "diagnostic header not gated")
-    require('#if defined(' + FLAG + ') && \\\n'
-            '    !defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE)' in MAIN,
+    require(('#if defined(' + FLAG + ')') in MAIN and
+            '!defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE)' in MAIN,
             "must refuse enablement outside explicit KQ05 test image")
 
     # Extract only the preflight-specific block after the role decision.
