@@ -104,6 +104,7 @@ struct Fixture {
   Source source;
   ProductRecordStore records;
   osc::ExactObject objects[5]{};
+  uint8_t cached_count=0U;
   Kq05TrackerBatchAckVerifier verifier;
 
   Fixture():security(security_flash,security_flash),
@@ -127,8 +128,9 @@ struct Fixture {
     assert(Seam::take(security,accepted) && accepted);
   }
   void cacheUpTo(uint8_t count) {
-    assert(count<=5U);
-    for(uint8_t i=0U;i<count;++i) cache(records,objects[i]);
+    assert(count<=5U && count>=cached_count);
+    for(uint8_t i=cached_count;i<count;++i) cache(records,objects[i]);
+    cached_count=count;
   }
 };
 
