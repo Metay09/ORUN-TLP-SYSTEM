@@ -7,6 +7,37 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+# Independently reproduce the *test-only* V3 credential's HKDF-SHA256
+# using the Python standard library. Never use this fixture as a device key.
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+from pathlib import Path
+import hashlib
+import hmac
+import re
+
+source = Path("firmware/tests/sf5/test_kq05_tracker_batch_security_verify_host.cpp").read_text()
+match = re.search(r'kIndependentScopedKey\[\]\s*=\s*"([0-9a-f]+)"', source)
+assert match is not None, "Tracker HKDF fixture absent"
+expected = match.group(1)
+assert len(expected) == 64, "Scoped key hex must be exactly 64 chars"
+
+credential_id = bytes(range(3, 19))
+root = bytes(range(0x90, 0xB0))
+scope = (
+    b"ORUN-TLP-V2-GW-CUSTODY-ACK-v1"
+    + (0x0102030405060708).to_bytes(8, "big")
+    + (7).to_bytes(4, "big")
+    + (0x2300230023002301).to_bytes(8, "big")
+    + (0).to_bytes(4, "big")
+    + (1).to_bytes(4, "big")
+)
+assert len(scope) == 57, "Unexpected custody HKDF domain"
+prk = hmac.new(credential_id, root, hashlib.sha256).digest()
+derived = hmac.new(prk, scope + b"\\x01", hashlib.sha256).hexdigest()
+assert hmac.compare_digest(derived, expected), "Scoped test key disagrees with independent HKDF-SHA256"
+print("KQ05 independent Python HKDF test-vector oracle: PASS")
+PY
+
 g++ -std=gnu++11 -O1 -g -Wall -Wextra -Werror \
   -Wno-conversion -Wno-sign-conversion \
   -DORUN_KQ05_BATCH_HMAC_HOST_TEST=1 \
