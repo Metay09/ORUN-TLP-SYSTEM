@@ -15,6 +15,7 @@ namespace fmt = orun_tlp::custody_store_product_format;
 using orun_tlp::FlashBackend;
 using orun_tlp::FlashOpResult;
 using orun_tlp::ProductCustodyStore;
+constexpr uint64_t kGatewayIdentity = UINT64_C(0x4757415949443031);
 
 namespace {
 
@@ -226,7 +227,7 @@ void testGatewayExistingOwnerSpillsToPage32() {
   fillPrimaryExactly(product);  // all primary pages are held, unhanded-off
   k::SegmentedFlash joined(product, extra, orun_tlp::kq05_supplemental::Role::kGateway,
                            UINT64_C(0x4757415949443031), true, true);
-  ProductCustodyStore store(joined, k::kTotalPages);
+  ProductCustodyStore store(joined, k::kTotalPages, kGatewayIdentity);
   assert(store.begin() && store.ready());
 
   uint8_t object[100]{};
@@ -248,13 +249,45 @@ void testGatewayExistingOwnerSpillsToPage32() {
   assert(extra.programs >= 5U && extra.erases == 0U);
 
   // Reboot: same exact record remains owned by the supplemental page.
-  ProductCustodyStore restarted(joined, k::kTotalPages);
+  ProductCustodyStore restarted(joined, k::kTotalPages, kGatewayIdentity);
   assert(restarted.begin() && restarted.ready());
   ProductCustodyStore::Handle duplicate{};
   assert(restarted.requestCustody(object, sizeof(object), &duplicate) ==
          ProductCustodyStore::Admission::kDuplicateHeld);
   assert(duplicate.page == 32U && duplicate.generation == 33U);
+  fmt::PageInspection bound{};
+  assert(fmt::inspectPageHeader(extra.bytes, fmt::kPageHeaderSize, bound));
+  assert(bound.evidence == fmt::PageEvidence::kActive);
+  assert(bound.gateway_bound && bound.gateway_id == kGatewayIdentity);
+  // The exact same physical bytes are foreign to a different Gateway.
+  ProductCustodyStore foreign(joined, k::kTotalPages,
+                              kGatewayIdentity + 1U);
+  assert(!foreign.begin() && foreign.faulted());
   assert(product.erases == 0U && extra.erases == 0U);
+}
+
+void testUnboundSupplementalAndMissingGatewayIdRefused() {
+  FakeNor<k::kPrimaryPages> primary;
+  FakeNor<k::kSupplementalPages> extra;
+  // A valid OCQ2/v3 header written by the former 32-page store (or
+  // another operator) must never become a bound supplemental page.
+  extra.gatewayPage(0U);
+  k::SegmentedFlash joined(primary, extra,
+      orun_tlp::kq05_supplemental::Role::kGateway,
+      kGatewayIdentity, true, true);
+  ProductCustodyStore unbound(joined, k::kTotalPages, kGatewayIdentity);
+  assert(!unbound.begin() && unbound.faulted());
+  assert(primary.programs == 0U && extra.programs == 0U);
+  assert(primary.erases == 0U && extra.erases == 0U);
+
+  FakeNor<k::kPrimaryPages> blank_primary;
+  FakeNor<k::kSupplementalPages> blank_extra;
+  k::SegmentedFlash blank_joined(blank_primary, blank_extra,
+      orun_tlp::kq05_supplemental::Role::kGateway,
+      kGatewayIdentity, true, true);
+  ProductCustodyStore missing_id(blank_joined, k::kTotalPages);
+  assert(!missing_id.begin() && missing_id.faulted());
+  assert(blank_primary.programs == 0U && blank_extra.programs == 0U);
 }
 
 void testUnknownLegacyAndForeignBlocked() {
@@ -266,7 +299,7 @@ void testUnknownLegacyAndForeignBlocked() {
   extra.bytes[3U] = 'T';
   k::SegmentedFlash joined(product, extra, orun_tlp::kq05_supplemental::Role::kGateway,
                            UINT64_C(0x4757415949443031), true, true);
-  ProductCustodyStore store(joined, k::kTotalPages);
+  ProductCustodyStore store(joined, k::kTotalPages, kGatewayIdentity);
   assert(!store.begin());
   assert(product.programs == 0U && extra.programs == 0U);
   assert(product.erases == 0U && extra.erases == 0U);
@@ -280,6 +313,7 @@ int main() {
   testMappingAndNoCrossPartitionWrites();
   testPendingAndFailClosed();
   testGatewayExistingOwnerSpillsToPage32();
+  testUnboundSupplementalAndMissingGatewayIdRefused();
   testUnknownLegacyAndForeignBlocked();
   puts("KQ05 128+28KiB noncontiguous segmented NOR + actual OCQ2 page32 append/reboot: PASS (HOST ONLY)");
   puts("NO REAL FLASH, NO LEGACY HISTORY ERASE, NO GATEWAY BATCH ACK, NO DEVICE UPLOAD");
