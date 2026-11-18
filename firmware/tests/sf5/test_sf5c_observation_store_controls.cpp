@@ -213,6 +213,21 @@ static void testExactObjectBoundAndReplacement() {
   assert(group_count == 5U);
   for (uint32_t n = 0U; n < group_count; ++n)
     assert(group[n].identity.sequence == n + 1U);
+  // Reboot/cold-mount must recover exactly the same 5 cached bytes and
+  // never infer release merely because they were previously enumerated.
+  ControlIncarnation reboot_incarnation;
+  ObservationStore cold(flash, 6U, &reboot_incarnation);
+  assert(cold.begin(0x11U) && cold.ready());
+  osc::ExactObject cold_objects[osf::kMaxExactCustodyObjects]{};
+  uint16_t cold_count = 0U;
+  assert(cold.snapshotRetainedExact(cold_objects, cold_count));
+  assert(cold_count == group_count);
+  for (uint32_t n = 0U; n < group_count; ++n) {
+    assert(cold_objects[n].identity.sequence == group[n].identity.sequence);
+    assert(cold_objects[n].object_size == group[n].object_size);
+    assert(memcmp(cold_objects[n].object, group[n].object,
+                  group[n].object_size) == 0);
+  }
   assert(store.requestPutExactObject(sixth) ==
          ObservationStore::ControlWriteResult::kNoCapacity);
 
