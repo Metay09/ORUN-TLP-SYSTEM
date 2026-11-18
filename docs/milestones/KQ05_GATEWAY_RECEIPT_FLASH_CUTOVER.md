@@ -83,3 +83,35 @@ branch. The full `run_kq05_lab_preflight.sh` includes the portable gate.
 Until physical owner steps 1–6 pass, existing firmware must continue to
 refuse KQ05 `0x91` offers in the Gateway entrypoint. No claim of field
 readiness or "8 KiB hardware capacity tested" is permitted.
+
+## Subsequent host-only owner slice (PR stacked on this format)
+
+`Kq05GatewayReceiptJournal` now exercises a bounded **single-copy append
+and read-back owner** using a `FlashBackend` supplied exclusively by
+host tests. It does not connect that backend to the existing History port,
+nor to BLE, HMAC admission, STAGED, RF, release, or the live product image.
+
+- Blank 8 KiB mount is read-only `kEmpty`, not an automatic format.
+  `initializeErased()` is an explicit test-only action and does **no erase**.
+- Append writes offer body, verifies body readback, writes 4-byte commit
+  marker, verifies complete committed offer before `kStored`.
+- Exact duplicates return `kDuplicate` without writing a second entry.
+  Same source row with different bytes returns `kConflict`; caller must
+  independently authenticate source and scope first.
+- Reboot scans both pages; torn slots occupy capacity but never count as
+  committed receipts; unknown/foreign/corrupt headers and committed
+  corrupt records fail closed. No automatic reclaim/erase.
+- At 56 occupied slots, `kFull`; 20 KiB reserved pages are never accessed
+  for writes by this owner.
+- A pending/failed backend write **fails closed**. This slice deliberately
+  does not implement the asynchronous SoftDevice completion state machine
+  required for a physical Gateway runtime.
+
+Dedicated PC-only gate:
+`bash tools/ci/run_kq05_gateway_receipt_journal_host.sh`
+(ASan/UBSan, fake 1->0 NOR, reboot, duplicate, conflict, full, torn body/commit,
+foreign, corrupt, pending and reserved-page checks).
+
+**Explicitly not cleared:** legacy writer shutdown, actual limited physical
+FlashMutationGate port, true Edge authentication, async Flash lifecycle,
+safe reclamation, RF receipt TX, and physical power cut/radio tests.
