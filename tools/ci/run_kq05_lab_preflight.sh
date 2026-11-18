@@ -53,6 +53,8 @@ echo "=== KQ05 28KiB DEVICE ROLE / HISTORY CUTOVER READONLY SOURCE ==="
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/sf5/test_kq05_role_cutover_readonly_source.py
 echo "=== KQ05 GATEWAY DEVICE-BOUND OCQ2/v4 SUPPLEMENTAL STORE ==="
 bash tools/ci/run_kq05_gateway_bound_ocq2_host.sh
+echo "=== KQ05 GATEWAY 1..5 SELECTIVE CUSTODY ACK WIRE, NOT BACKEND RECEIPT ==="
+bash tools/ci/run_kq05_gateway_batch_ack_wire_host.sh
 echo "=== KQ05 4/5 TRACKER RECEIPT/FLASH ==="
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
 echo "=== KQ05 5/5 ISOLATED RAK4630 LAB BUILD ==="
