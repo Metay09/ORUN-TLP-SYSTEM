@@ -34,8 +34,8 @@ version `0x02`, relay flag exactly `0x01`, N=1..5. Wire:
 | 32 | 8 x N | first 8 bytes of SHA-256 of EACH exact retained protected frame; strict lexicographic ascending order |
 | 32+8N | 16 | Truncated HMAC-SHA256 authentication tag (NOT implemented in this PR) |
 
-Total packet lengths: `48, 56, 64, 72, 80, 88`? Correct lengths
-are exactly **56, 64, 72, 80, 88** for N=1..5
+Total packet lengths are exactly **56, 64, 72, 80, 88 bytes**
+for N=1..5
 (32-byte header + 8N + 16-byte MAC). Five legacy single-object
 ACKs take 280 bytes total, versus a prospective 88-byte single
 five-object ACK (about 69% less LoRa payload, BEFORE retries and radio
