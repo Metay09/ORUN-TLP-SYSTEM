@@ -15,7 +15,8 @@ namespace osc = observation_store_control;
 
 class ObservationStore {
  public:
-  static constexpr uint16_t kMaxPages = 32U;
+  // Upper bound only; runtime still passes 32 pages until a guarded cutover.
+  static constexpr uint16_t kMaxPages = 39U;
 
   struct Handle {
     uint16_t page = UINT16_MAX;
