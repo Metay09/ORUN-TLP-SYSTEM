@@ -40,8 +40,9 @@ struct AppendResult {
 inline AppendResult selectAppend(const AppendInput& in) {
   if (in.role != Role::kTracker && in.role != Role::kGateway)
     return {Decision::kBlocked, Region::kNone};
-  if (in.primary == Store::kFault ||
-      in.primary_duplicate == Proof::kDifferent ||
+  if (in.primary == Store::kFault)
+    return {Decision::kFault, Region::kNone};
+  if (in.primary_duplicate == Proof::kDifferent ||
       in.supplemental_duplicate == Proof::kDifferent)
     return {Decision::kConflict, Region::kNone};
   if (in.primary_duplicate == Proof::kUncertain ||
