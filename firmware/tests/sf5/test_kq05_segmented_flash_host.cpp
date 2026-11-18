@@ -159,10 +159,12 @@ void fillPrimaryExactly(FakeNor<k::kPrimaryPages>& product) {
 void testMappingAndNoCrossPartitionWrites() {
   FakeNor<k::kPrimaryPages> product;
   FakeNor<k::kSupplementalPages> extra;
-  k::SegmentedFlash invalid(product, extra, false, true);
+  k::SegmentedFlash invalid(product, extra, orun_tlp::kq05_supplemental::Role::kGateway,
+                           UINT64_C(0x4757415949443031), false, true);
   assert(!invalid.begin());
   assert(product.starts == 0U && extra.starts == 0U);
-  k::SegmentedFlash joined(product, extra, true, true);
+  k::SegmentedFlash joined(product, extra, orun_tlp::kq05_supplemental::Role::kGateway,
+                           UINT64_C(0x4757415949443031), true, true);
   assert(joined.begin());
 
   const uint8_t body[4] = {0U, 1U, 2U, 3U};
@@ -192,7 +194,8 @@ void testMappingAndNoCrossPartitionWrites() {
 void testPendingAndFailClosed() {
   FakeNor<k::kPrimaryPages> product;
   FakeNor<k::kSupplementalPages> extra;
-  k::SegmentedFlash joined(product, extra, true, true);
+  k::SegmentedFlash joined(product, extra, orun_tlp::kq05_supplemental::Role::kGateway,
+                           UINT64_C(0x4757415949443031), true, true);
   assert(joined.begin());
   const uint8_t body[4] = {0x01U, 0x02U, 0x03U, 0x04U};
   extra.async_next = true;
@@ -221,7 +224,8 @@ void testGatewayExistingOwnerSpillsToPage32() {
   FakeNor<k::kPrimaryPages> product;
   FakeNor<k::kSupplementalPages> extra;
   fillPrimaryExactly(product);  // all primary pages are held, unhanded-off
-  k::SegmentedFlash joined(product, extra, true, true);
+  k::SegmentedFlash joined(product, extra, orun_tlp::kq05_supplemental::Role::kGateway,
+                           UINT64_C(0x4757415949443031), true, true);
   ProductCustodyStore store(joined, k::kTotalPages);
   assert(store.begin() && store.ready());
 
@@ -260,7 +264,8 @@ void testUnknownLegacyAndForeignBlocked() {
   extra.bytes[1U] = 'I';
   extra.bytes[2U] = 'S';
   extra.bytes[3U] = 'T';
-  k::SegmentedFlash joined(product, extra, true, true);
+  k::SegmentedFlash joined(product, extra, orun_tlp::kq05_supplemental::Role::kGateway,
+                           UINT64_C(0x4757415949443031), true, true);
   ProductCustodyStore store(joined, k::kTotalPages);
   assert(!store.begin());
   assert(product.programs == 0U && extra.programs == 0U);
