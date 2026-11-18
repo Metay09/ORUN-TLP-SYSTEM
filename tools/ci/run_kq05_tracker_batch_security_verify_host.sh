@@ -33,7 +33,7 @@ scope = (
 )
 assert len(scope) == 57, "Unexpected custody HKDF domain"
 prk = hmac.new(credential_id, root, hashlib.sha256).digest()
-derived = hmac.new(prk, scope + b"\\x01", hashlib.sha256).hexdigest()
+derived = hmac.new(prk, scope + b"\x01", hashlib.sha256).hexdigest()
 assert hmac.compare_digest(derived, expected), "Scoped test key disagrees with independent HKDF-SHA256"
 print("KQ05 independent Python HKDF test-vector oracle: PASS")
 PY
