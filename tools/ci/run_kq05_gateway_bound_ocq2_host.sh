@@ -14,6 +14,14 @@ g++ -std=gnu++17 -O1 -Wall -Wextra -Wpedantic -Werror \
   firmware/tests/sf5/test_kq05_gateway_bound_ocq2_header.cpp \
   -o "$tmp/bound-ocq2-header"
 
+g++ -std=gnu++17 -O1 -Wall -Wextra -Wpedantic -Werror \
+  -fno-omit-frame-pointer -fsanitize=address,undefined \
+  -I firmware/include \
+  firmware/src/custody_store_product_format.cpp \
+  firmware/tests/sf5/test_sf5k3o_custody_product_format.cpp \
+  -o "$tmp/original-ocq2-v3-format"
+
+"$tmp/original-ocq2-v3-format"
 "$tmp/bound-ocq2-header"
 bash tools/ci/run_kq05_supplemental_28k_census_host.sh
 bash tools/ci/run_kq05_segmented_156k_host.sh
