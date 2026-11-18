@@ -51,7 +51,7 @@ class SegmentedFlash final : public FlashBackend {
         bound_(device_role_identity_bound) {}
 
   bool begin() override {
-    if (pending_ != Side::kNone || !exclusive_ || !bound_ ||
+    if (faulted_ || pending_ != Side::kNone || !exclusive_ || !bound_ ||
         product_.hasUnreconciledMutation() ||
         supplemental_.hasUnreconciledMutation()) {
       faulted_ = true;
@@ -64,7 +64,6 @@ class SegmentedFlash final : public FlashBackend {
       faulted_ = true;
       return false;
     }
-    if (faulted_) return false; // failures cannot be cleared by begin()
     ready_ = true;
     return true;
   }
@@ -148,9 +147,15 @@ class SegmentedFlash final : public FlashBackend {
   }
 
   FlashOpResult mutate(Side side, FlashOpResult outcome) {
-    if (outcome == FlashOpResult::kPending) pending_ = side;
-    else if (outcome == FlashOpResult::kFailed ||
-             hasUnreconciledMutation()) faulted_ = true;
+    if (outcome == FlashOpResult::kPending) {
+      pending_ = side;
+      return outcome;
+    }
+    if (outcome == FlashOpResult::kFailed ||
+        hasUnreconciledMutation()) {
+      faulted_ = true;
+      return FlashOpResult::kFailed;
+    }
     return outcome;
   }
 
