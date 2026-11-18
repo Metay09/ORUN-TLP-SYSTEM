@@ -28,6 +28,8 @@ class Kq05GatewayBatchCustodyCrypto final {
  private:
   friend class Kq05GatewayDurableBatchOwner;
   friend class Kq05TrackerBatchReleaseOwner;
+  // Only the internal read-only Tracker verifier may check complete MACs.
+  friend class Kq05TrackerBatchAckVerifier;
 #ifdef ORUN_KQ05_BATCH_HMAC_HOST_TEST
   friend struct Kq05BatchCryptoHostPeer;
 #endif
