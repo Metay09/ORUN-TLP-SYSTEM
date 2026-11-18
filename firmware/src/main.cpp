@@ -78,7 +78,14 @@
 #include "lora_command_relay.h"
 #include "device_storage_role.h"
 #include "product_region.h"
+#ifdef ORUN_KQ05_SUPPLEMENTAL_28K_PREFLIGHT
+#include "kq05_supplemental_28k_census.h"
+#endif
 #include "sf5l0_bench.h"
+#endif
+#if defined(ORUN_KQ05_SUPPLEMENTAL_28K_PREFLIGHT) && \
+    !defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE)
+#error "KQ05 supplemental readonly preflight requires explicit KQ05 test image"
 #endif
 #ifdef ORUN_SF5L0_BENCH_TEST_KEYS
 // Y2a: the public test credential is a host-test-only path. No device image
@@ -4122,6 +4129,64 @@ void setup() {
 #ifdef ORUN_SF5L0_TRACKER
   decideBootStorageRole();
 #endif
+#ifdef ORUN_KQ05_SUPPLEMENTAL_28K_PREFLIGHT
+  // Explicit opt-in diagnostic only; NOT an authorization to mount, erase,
+  // or activate the additional 28 KiB. No legacy History writer can mount
+  // in this opt-in image regardless of whether it is Tracker or Gateway.
+  // KQ05 normal images have no change to their History ownership path.
+  orun_tlp::kq05_supplemental::Role supplemental_role =
+      orun_tlp::kq05_supplemental::Role::kUnassigned;
+  if (storage_role == orun_tlp::StorageRole::kTracker)
+    supplemental_role = orun_tlp::kq05_supplemental::Role::kTracker;
+  else if (storage_role == orun_tlp::StorageRole::kGateway)
+    supplemental_role = orun_tlp::kq05_supplemental::Role::kGateway;
+  else if (storage_role == orun_tlp::StorageRole::kConflict)
+    supplemental_role = orun_tlp::kq05_supplemental::Role::kConflict;
+
+  // begin() here initializes ONLY the synchronous Nordic history Flash
+  // backend; it does NOT call HistoryStore::begin() and never writes NOR.
+  // The scanner reads every byte in all seven pages and refuses foreign,
+  // staged, corrupt or mismatched role/device evidence.
+  orun_tlp::kq05_supplemental::Result supplemental_census{};
+  if (supplemental_role == orun_tlp::kq05_supplemental::Role::kTracker ||
+      supplemental_role == orun_tlp::kq05_supplemental::Role::kGateway) {
+    if (storage_flash_gate.begin()) {
+      supplemental_census = orun_tlp::kq05_supplemental::inspectReadOnly(
+          storage_flash_gate, supplemental_role,
+          device_identity.legacyUint64());
+    } else {
+      supplemental_census.state =
+          orun_tlp::kq05_supplemental::State::kReadFailed;
+    }
+  } else {
+    supplemental_census.state =
+        orun_tlp::kq05_supplemental::State::kBlockedRole;
+  }
+
+  const char* supplemental_state = "UNKNOWN";
+  switch (supplemental_census.state) {
+    case orun_tlp::kq05_supplemental::State::kBlockedRole:
+      supplemental_state = "BLOCKED_ROLE"; break;
+    case orun_tlp::kq05_supplemental::State::kReadFailed:
+      supplemental_state = "READ_FAILED"; break;
+    case orun_tlp::kq05_supplemental::State::kBlank:
+      supplemental_state = "BLANK_CANDIDATE"; break;
+    case orun_tlp::kq05_supplemental::State::kPotentialTracker:
+      supplemental_state = "TRACKER_CANDIDATE"; break;
+    case orun_tlp::kq05_supplemental::State::kGatewayNeedsBinding:
+      supplemental_state = "GATEWAY_NEEDS_BINDING"; break;
+    case orun_tlp::kq05_supplemental::State::kLegacyOrForeign:
+      supplemental_state = "LEGACY_OR_FOREIGN"; break;
+    case orun_tlp::kq05_supplemental::State::kCorruptOrIncomplete:
+      supplemental_state = "CORRUPT_OR_INCOMPLETE"; break;
+  }
+  Serial.printf("KQ05 28K READONLY role=%s evidence=%s erased=%u candidate=%u bad=%u;"
+                " WRITER=DISABLED; NO_MIGRATION\n",
+      orun_tlp::storageRoleName(storage_role), supplemental_state,
+      static_cast<unsigned>(supplemental_census.erased_pages),
+      static_cast<unsigned>(supplemental_census.candidate_pages),
+      static_cast<unsigned>(supplemental_census.first_bad_page));
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
   // In the unified KQ05 image the storage role is not known until the
   // Config + Security/Product census above. Delay the legacy begin until
@@ -4130,8 +4195,14 @@ void setup() {
   if (kq05ProductOnlyTracker()) {
     Serial.println(F("KQ05 STORAGE owner=OBS1; legacy HistoryStore NOT MOUNTED"));
   } else if (storage_role == orun_tlp::StorageRole::kGateway) {
-    // Retain the Gateway's previous initialized legacy support. A blank,
-    // unassigned or conflicting role may not create a History Flash page.
+#ifdef ORUN_KQ05_SUPPLEMENTAL_28K_PREFLIGHT
+    // Critical: the legacy Gateway HistoryStore may not mount in the
+    // diagnostic image that reads the area as prospective supplemental
+    // storage. Do not perform even a blank HistoryStore first-page write.
+    Serial.println(F("KQ05 28K PREFLIGHT: Gateway HistoryStore NOT MOUNTED"));
+#else
+    // Normal KQ05 Gateway behavior is retained; no cutover is enabled.
+    // A blank/unassigned/conflicting role may not create a History page.
     if (history.begin(device_identity.legacyUint64())) {
       Serial.printf("STORAGE recovered records=%lu capacity=%lu corrupt=%lu pending=%lu\n",
                     static_cast<unsigned long>(history.count()),
@@ -4143,6 +4214,7 @@ void setup() {
     } else {
       Serial.println(F("STORAGE unavailable; POSITION TX disabled"));
     }
+#endif
   } else {
     Serial.println(F("KQ05 STORAGE role unassigned/conflict; legacy Flash untouched"));
   }
@@ -4535,7 +4607,12 @@ void loop() {
     orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kHistoryStore);
     // KQ05 PRODUCT-only Tracker keeps old HistoryStore pages untouched:
     // no new legacy append, replay, receipt mutation or compaction resume.
+#ifndef ORUN_KQ05_SUPPLEMENTAL_28K_PREFLIGHT
     if (!kq05ProductOnlyTracker()) history.poll();
+#else
+    // Read-only KQ05 28 KiB preflight: legacy HistoryStore not mounted;
+    // never enter its flash maintenance/replay/poll state machine.
+#endif
     orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kConfigStore);
     config_store.poll();
     orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kSecurityStore);
