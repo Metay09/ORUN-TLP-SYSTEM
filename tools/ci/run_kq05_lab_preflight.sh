@@ -41,6 +41,8 @@ echo "=== KQ05 DURABLE GATEWAY STAGED -> NATIVE RF PRIORITY/WINDOW/BUDGET ==="
 bash tools/ci/run_kq05_durable_stage_rf_policy_host.sh
 echo "=== KQ05 28 KiB ROLE-AWARE SUPPLEMENTAL CENSUS / READ-ONLY ==="
 bash tools/ci/run_kq05_supplemental_28k_census_host.sh
+echo "=== KQ05 OFFLINE 128KiB + 28KiB ROUTING DECISIONS ==="
+bash tools/ci/run_kq05_dual_region_decisions_host.sh
 echo "=== KQ05 4/5 TRACKER RECEIPT/FLASH ==="
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
 echo "=== KQ05 5/5 ISOLATED RAK4630 LAB BUILD ==="
