@@ -194,6 +194,25 @@ void testFailClosedNoOutputOrMutableState() {
   uint8_t wire[ack::kMaxSize]{};
   size_t size=0U;
   assert(Peer::sign(grant,key,frames.views,5U,wire,size));
+  // Independently computed with Python hashlib.sha256 / hmac.sha256,
+  // NOT by invoking the C++ batch signer. The complete wire is frozen.
+  constexpr char kIndependentFiveObjectWire[] =
+      "020a010501020304050607082300230023002301000000070000000c00000005"
+      "10c00ac04eb179fb394e9f26284ab3297ceaf3c8c04c4ffa8009f45162"
+      "19cfedd9d578a614070e0cbf344fa7134e6954a03f77d9bf1c387f";
+  assert(size==88U && sizeof(kIndependentFiveObjectWire)==177U);
+  for (size_t i=0U; i<size; ++i) {
+    const auto nibble=[](char x)->uint8_t {
+      if (x>='0' && x<='9') return static_cast<uint8_t>(x-'0');
+      if (x>='a' && x<='f') return static_cast<uint8_t>(x-'a'+10);
+      assert(false);
+      return 0U;
+    };
+    const uint8_t expected=static_cast<uint8_t>(
+        (nibble(kIndependentFiveObjectWire[2U*i])<<4U) |
+         nibble(kIndependentFiveObjectWire[2U*i+1U]));
+    assert(wire[i]==expected);
+  }
   assert(Peer::verify(wire,size,grant,key,frames.views,5U));
   // A same-size but different exact retained group is NOT authorized.
   Kq05BatchExactView missing[ack::kMaxObjects]{};
