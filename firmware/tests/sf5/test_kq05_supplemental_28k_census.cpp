@@ -82,8 +82,11 @@ void testAllBlankAndCapacity() {
 
 void testRoleBlockedWithoutReading() {
   FakeHistory fake;
-  for (sub::Role r : {sub::Role::kUnassigned, sub::Role::kConflict}) {
-    const sub::Result out = sub::inspectReadOnly(fake, r, kTrackerId);
+  const sub::Role disallowed[2] = {
+      sub::Role::kUnassigned, sub::Role::kConflict};
+  for (size_t i = 0U; i < 2U; ++i) {
+    const sub::Result out = sub::inspectReadOnly(
+        fake, disallowed[i], kTrackerId);
     assert(out.state == sub::State::kBlockedRole);
   }
   assert(sub::inspectReadOnly(fake, sub::Role::kTracker, 0U).state ==
