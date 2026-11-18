@@ -291,4 +291,5 @@ int main() {
   testFailureDuringFlashCannotMakeAck();
   puts("KQ05 actual OCQ2 1..5 durable readback + grant-recheck Gateway batch HMAC: PASS (HOST ONLY)");
   puts("NO REAL RF, NO TRACKER RELEASE, NO DEVICE FLASH, NO LEGACY ERASE");
+  return 0;  // Also valid when included as a renamed fixture main().
 }
