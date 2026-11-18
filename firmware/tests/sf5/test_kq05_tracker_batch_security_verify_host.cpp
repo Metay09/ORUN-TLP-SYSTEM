@@ -60,7 +60,7 @@ using Peer=orun_tlp::Kq05BatchCryptoHostPeer;
 using ProofPeer=orun_tlp::Kq05TrackerBatchVerifyHostPeer;
 
 constexpr char kIndependentScopedKey[] =
-  "b3b50abe4a260946f7a1e13361e742504736f11df4df3b1852e5ae242d5b04f";
+  "b3b50abe4a260946f7a1e13361e742504736f11df4dfd3b1852e5ae242d5b04f";
 
 void fromHex32(uint8_t (&out)[32]) {
   assert(strlen(kIndependentScopedKey)==64U);
