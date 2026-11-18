@@ -186,6 +186,8 @@ void testNoAckUntilEachFlashCommitAndNoMutation() {
          ==BatchResult::kBusy); // unconsumed commit outcome
   bool committed=false;
   assert(f.store.takeCustodyResult(committed,f.handles[0]) && committed);
+  memcpy(f.contents[0],one,sizeof(one));
+  f.sizes[0]=sizeof(one);
   const size_t before=f.flash.writes;
   assert(f.issuer.issue(kTracker,kEpoch,f.handles,1U,out,length)
          ==BatchResult::kReady);
