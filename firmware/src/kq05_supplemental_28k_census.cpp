@@ -39,6 +39,8 @@ Result inspectReadOnly(const FlashBackend& history_port, Role local_role,
   // Inspect 100% of all 7 pages. A completely erased *header* is not
   // evidence of a blank page if a previous writer left data in its body.
   uint8_t chunk[64U]{};
+  bool saw_v3_unbound = false;
+  bool saw_v4_bound = false;
   for (uint32_t p = 0U; p < kPages; ++p) {
     const uint32_t page_base = p * kPageBytes;
     bool erased_page = true;
@@ -87,9 +89,22 @@ Result inspectReadOnly(const FlashBackend& history_port, Role local_role,
         return failure(out, State::kCorruptOrIncomplete,
                        static_cast<uint8_t>(p));
       }
-      // The existing OCQ2 header does NOT identify the physical Gateway.
-      // Even all-valid OCQ2 headers CANNOT authorize an automatic mount
-      // without a separate durable device/role binding.
+      if (header.gateway_bound) {
+        if (header.gateway_id != local_device_id) {
+          return failure(out, State::kLegacyOrForeign,
+                         static_cast<uint8_t>(p));
+        }
+        saw_v4_bound = true;
+      } else {
+        // A v3 OCQ2 header cannot assert Gateway identity. It is never
+        // sufficient to mount a supplemental store or mint an ACK.
+        saw_v3_unbound = true;
+      }
+      if (saw_v3_unbound && saw_v4_bound) {
+        // No silent mixed-format adoption/migration in the old region.
+        return failure(out, State::kLegacyOrForeign,
+                       static_cast<uint8_t>(p));
+      }
     }
     ++out.candidate_pages;
   }
@@ -97,6 +112,8 @@ Result inspectReadOnly(const FlashBackend& history_port, Role local_role,
   if (out.candidate_pages == 0U) out.state = State::kBlank;
   else if (local_role == Role::kTracker)
     out.state = State::kPotentialTracker;
+  else if (saw_v4_bound)
+    out.state = State::kGatewayBoundCandidate;
   else out.state = State::kGatewayNeedsBinding;
   return out;
 }
