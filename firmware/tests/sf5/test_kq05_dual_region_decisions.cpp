@@ -80,7 +80,7 @@ void testNoMutationOnUnavailablePrimaryOrRole() {
   assert(k::selectAppend(v).decision == k::Decision::kBlocked);
   v.role = k::Role::kGateway;
   v.primary = k::Store::kFault;
-  assert(k::selectAppend(v).decision == k::Decision::kConflict);
+  assert(k::selectAppend(v).decision == k::Decision::kFault);
   v.primary = k::Store::kBusy;
   assert(k::selectAppend(v).decision == k::Decision::kBusy);
   v.primary = k::Store::kUnavailable;
