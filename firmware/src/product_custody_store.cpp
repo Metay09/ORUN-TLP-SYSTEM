@@ -115,7 +115,7 @@ bool ProductCustodyStore::begin() {
   active_page_=UINT16_MAX;
   active_generation_=0U;
   product_region::Census census{};
-  if (page_count_==0U || page_count_>32U || !flash_.begin() ||
+  if (page_count_==0U || page_count_>39U || !flash_.begin() ||
       flash_.hasUnreconciledMutation() ||
       !product_region::takeCensus(flash_,page_count_,census) ||
       product_region::mountProductCustodyDecision(census) !=
