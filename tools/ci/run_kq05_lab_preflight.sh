@@ -59,6 +59,8 @@ echo "=== KQ05 REAL FULL SHA256 / SCOPED FIVE-RECORD GATEWAY BATCH HMAC ==="
 bash tools/ci/run_kq05_gateway_batch_ack_hmac_host.sh
 echo "=== KQ05 REAL OCQ2 DURABLE FIVE-RECORD FLASH READBACK / GRANT BATCH ACK ==="
 bash tools/ci/run_kq05_gateway_durable_batch_owner_host.sh
+echo "=== KQ05 TRACKER FIVE DURABLY CACHED EXACT OBJECTS / REBOOT ==="
+bash tools/ci/run_kq05_tracker_five_exact_cache_host.sh
 echo "=== KQ05 4/5 TRACKER RECEIPT/FLASH ==="
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
 echo "=== KQ05 5/5 ISOLATED RAK4630 LAB BUILD ==="
