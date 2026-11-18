@@ -12,6 +12,8 @@ g++ -std=gnu++17 -O1 -Wall -Wextra -Wpedantic -Werror \
   firmware/src/observation_store.cpp \
   firmware/src/observation_store_control.cpp \
   firmware/src/observation_store_format.cpp \
+  firmware/src/custody_store_product_format.cpp \
+  firmware/src/kq05_supplemental_28k_census.cpp \
   firmware/tests/sf5/test_kq05_tracker_segmented_39page_host.cpp \
   -o "$tmp/tracker-segmented-obs1"
 
