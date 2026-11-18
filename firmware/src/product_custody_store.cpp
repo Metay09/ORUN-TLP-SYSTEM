@@ -1,5 +1,6 @@
 #include "product_custody_store.h"
 #include "product_region.h"
+#include "storage_config.h"
 
 #include <string.h>
 
@@ -25,9 +26,17 @@ uint32_t ProductCustodyStore::recordOffset(uint16_t page, uint16_t slot) const {
 bool ProductCustodyStore::readPage(uint16_t page,
                                   fmt::PageInspection& out) const {
   uint8_t data[fmt::kPageHeaderSize]{};
-  return page<page_count_ &&
-         flash_.read(uint32_t(page)*fmt::kPageSize,data,sizeof(data)) &&
-         fmt::inspectPageHeader(data,sizeof(data),out);
+  if (page >= page_count_ ||
+      !flash_.read(uint32_t(page)*fmt::kPageSize,data,sizeof(data)) ||
+      !fmt::inspectPageHeader(data,sizeof(data),out)) return false;
+  // The 128 KiB primary accepts unchanged legacy OCQ2/v3. Pages 32..38
+  // may ONLY be opened with a valid v4 binding to this physical Gateway.
+  // Never adopt existing unbound OCQ2/v3 from an old device/owner.
+  if (page >= storage_config::kProductRegionPages &&
+      out.evidence != fmt::PageEvidence::kErased &&
+      (!out.gateway_bound || out.gateway_id != local_gateway_id_))
+    return false;
+  return true;
 }
 
 bool ProductCustodyStore::readRecord(uint16_t page, uint16_t slot,
@@ -115,7 +124,10 @@ bool ProductCustodyStore::begin() {
   active_page_=UINT16_MAX;
   active_generation_=0U;
   product_region::Census census{};
-  if (page_count_==0U || page_count_>39U || !flash_.begin() ||
+  if (page_count_==0U || page_count_>39U ||
+      (page_count_>storage_config::kProductRegionPages &&
+       (local_gateway_id_==0U || local_gateway_id_==UINT64_MAX)) ||
+      !flash_.begin() ||
       flash_.hasUnreconciledMutation() ||
       !product_region::takeCensus(flash_,page_count_,census) ||
       product_region::mountProductCustodyDecision(census) !=
@@ -198,8 +210,13 @@ ProductCustodyStore::Admission ProductCustodyStore::requestObject(
     pending_handle_.slot=0U;
     pending_handle_.generation=active_generation_+1U;
     new_page_=true;
-    if (!fmt::encodePageHeader(pending_handle_.generation,page_blob_))
-      return Admission::kRejected;
+    const bool supplemental =
+        pending_handle_.page >= storage_config::kProductRegionPages;
+    const bool encoded = supplemental
+        ? fmt::encodeBoundPageHeader(pending_handle_.generation,
+                                     local_gateway_id_, page_blob_)
+        : fmt::encodePageHeader(pending_handle_.generation,page_blob_);
+    if (!encoded) return Admission::kRejected;
     phase_=Phase::kPageBody;
   } else {
     pending_handle_.page=active_page_;
@@ -297,6 +314,17 @@ void ProductCustodyStore::poll() {
   switch (phase_) {
     case Phase::kPageBody:
       r=write(base,page_blob_,fmt::kHeaderCommitOffset);
+      if (r==FlashOpResult::kDone)
+        phase_=pending_handle_.page >= storage_config::kProductRegionPages
+            ? Phase::kPageBinding : Phase::kPageCommit;
+      break;
+    case Phase::kPageBinding:
+      // This 24-byte NOR write is completed BEFORE committing the page.
+      // A crash before commit leaves an unmountable staged header rather
+      // than a falsely owned empty custody page.
+      r=write(base+fmt::kGatewayIdOffset,
+              page_blob_+fmt::kGatewayIdOffset,
+              fmt::kPageHeaderSize-fmt::kGatewayIdOffset);
       if (r==FlashOpResult::kDone) phase_=Phase::kPageCommit;
       break;
     case Phase::kPageCommit: {
