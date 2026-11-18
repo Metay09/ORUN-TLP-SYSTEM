@@ -44,6 +44,32 @@ under ASan/UBSan. The test remains isolated behind the compile-time
 `ORUN_KQ05_SEGMENTED_HOST_TEST` requirement and is also included in the
 KQ05 PC LAB preflight.
 
+### Regression fix after initial user PC failure
+
+The initial host test on commit `8969d9a` failed when the synthetic
+old-History bytes `HIST` in supplemental page 0 were *accepted* by
+`ObservationStore::begin()`. This exposed a genuine takeover risk in
+the **host adapter**, not a failure of the main 128 KiB OBS1 record
+format. The normal ObservationStore recovery deliberately tolerates a
+staged/uncommitted page header with an erased record body because that
+may be an interrupted append. A foreign legacy header with a still
+erased commit field can look staged and be ignored.
+
+The revised **HOST-ONLY** `SegmentedFlash::begin()` now requires an
+explicit local role and device identity and runs the previously
+PC-PASSed 28 KiB read-only page census on the **separate supplemental
+backend** *before* the 39-page virtual store is exposed. Fully blank
+or properly matched OBS1 Tracker pages are admitted for the downstream
+full OBS1 recovery; any unknown/legacy, partial body with erased
+header, foreign Tracker device ID, read failure, corrupt or torn header
+fails closed without Flash writes. The Gateway host test also links
+this census; its OCQ2 records still require an independently proven
+device/role binding (the simulated boolean is NOT production evidence).
+
+This update has **not yet been re-run on the user's PC**; neither
+host test passing in a prior commit demonstrates that the new guard
+has passed until a new run is reported.
+
 ### What this gate does NOT establish
 
 - The target RAK4630 binary can actually fit the 39-page store's RAM/
