@@ -135,6 +135,9 @@ class ProductRecordStore {
  private:
   friend class CustodyAckReleaseOwner;
   friend class Kq05BackendReceiptReleaseOwner;
+  // Only a live SecurityStore-authenticated KQ05 0x0A group release owner
+  // may request independent, durable per-record OBS1 release markers.
+  friend class Kq05TrackerBatchReleaseOwner;
 
   // Only the HMAC-verifying custody owner may initiate this mutation.
   // It carries one previously authenticated exact object and is checked
