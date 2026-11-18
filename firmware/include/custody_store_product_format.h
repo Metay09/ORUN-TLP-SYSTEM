@@ -11,7 +11,8 @@ namespace custody_store_product_format {
 // MUST NOT be treated as an activated Gateway store or ACK authority.
 constexpr uint32_t kPageSize = 4096U;
 constexpr uint32_t kPageMagic = 0x4F435132U; // OCQ2, not legacy OCQ1
-constexpr uint16_t kVersion = 3U;
+constexpr uint16_t kVersion = 3U;  // Existing primary OCQ2/v3.
+constexpr uint16_t kBoundVersion = 4U;  // Device-bound supplemental OCQ2.
 constexpr uint32_t kPageHeaderSize = 64U;
 constexpr uint32_t kRecordSize = 120U;
 constexpr size_t kMaxObjectSize = 100U;
@@ -31,6 +32,13 @@ constexpr uint32_t kRecordHandoff1Offset = 116U;
 constexpr uint32_t kHeaderCrcOffset = 28U;
 constexpr uint32_t kHeaderCommitOffset = 32U;
 constexpr uint32_t kHeaderActiveOffset = 36U;
+// v4 uses the existing 24 reserved bytes, so all seven supplemental
+// pages retain their full 33-object capacity; no separate identity page.
+constexpr uint32_t kGatewayIdOffset = 40U;
+constexpr uint32_t kGatewayIdComplementOffset = 48U;
+constexpr uint32_t kBindingCrcOffset = 56U;
+constexpr uint32_t kBindingMarkerOffset = 60U;
+constexpr uint32_t kBindingMarker = 0x47573442U;  // "GW4B"
 static_assert(kRecordsPerPage == 33U, "SF5K3O page geometry changed");
 static_assert(kPageHeaderSize + kRecordsPerPage * kRecordSize +
                   kIntentAreaSize == kPageSize, "SF5K3O page must fit exactly");
@@ -47,6 +55,8 @@ enum class RecordEvidence : uint8_t {
 struct PageInspection {
   PageEvidence evidence = PageEvidence::kCorrupt;
   uint64_t generation = 0U;
+  bool gateway_bound = false;
+  uint64_t gateway_id = 0U;
 };
 struct RecordInspection {
   RecordEvidence evidence = RecordEvidence::kCorrupt;
@@ -58,6 +68,11 @@ struct RecordInspection {
 
 // Encoding refuses invalid lengths. Caller output is unchanged on rejection.
 bool encodePageHeader(uint64_t generation, uint8_t (&out)[kPageHeaderSize]);
+// Supplemental-only v4: binds the local Gateway identity in the existing
+// reserved 24-byte header tail. CRC guards corruption; it is NOT a MAC and
+// never confers permission to mint a custody ACK.
+bool encodeBoundPageHeader(uint64_t generation, uint64_t gateway_id,
+                           uint8_t (&out)[kPageHeaderSize]);
 bool inspectPageHeader(const uint8_t* bytes, size_t size,
                        PageInspection& inspection);
 bool encodeRecord(const uint8_t* object, size_t size,
