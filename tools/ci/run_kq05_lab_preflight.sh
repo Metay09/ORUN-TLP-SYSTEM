@@ -39,6 +39,8 @@ echo "=== KQ05 PYTHON BACKEND->EDGE REAL OFFER -> NATIVE BLE GATEWAY RAM ==="
 bash tools/ci/run_kq05_real_byte_interop_host.sh
 echo "=== KQ05 DURABLE GATEWAY STAGED -> NATIVE RF PRIORITY/WINDOW/BUDGET ==="
 bash tools/ci/run_kq05_durable_stage_rf_policy_host.sh
+echo "=== KQ05 28 KiB ROLE-AWARE SUPPLEMENTAL CENSUS / READ-ONLY ==="
+bash tools/ci/run_kq05_supplemental_28k_census_host.sh
 echo "=== KQ05 4/5 TRACKER RECEIPT/FLASH ==="
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
 echo "=== KQ05 5/5 ISOLATED RAK4630 LAB BUILD ==="
