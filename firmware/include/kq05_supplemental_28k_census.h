@@ -47,7 +47,8 @@ enum class State : uint8_t {
   kReadFailed,
   kBlank,               // all 28 KiB are physically erased, no mount implied
   kPotentialTracker,    // OBS1 headers structurally valid, store scan pending
-  kGatewayNeedsBinding, // OCQ2 lacks Gateway ID in page header; NOT mountable
+  kGatewayNeedsBinding, // OCQ2/v3 unbound; NOT mountable in 28 KiB
+  kGatewayBoundCandidate, // v4 bound to local Gateway, full recovery pending
   kLegacyOrForeign,     // unknown format, wrong role/device, partial page
   kCorruptOrIncomplete  // torn or malformed header; no automatic repair
 };
@@ -64,8 +65,9 @@ struct Result {
 // assumes that a structurally valid page means trusted contents, or opens
 // either the existing 128 KiB store or this supplemental region.
 // A kPotentialTracker result is NOT authorization to mount ObservationStore.
-// A kGatewayNeedsBinding result MUST NOT permit ProductCustodyStore to mount:
-// OCQ2 page headers alone have no Gateway identity binding.
+// kGatewayNeedsBinding MUST NOT permit a 39-page ProductCustodyStore mount.
+// Only v4, device-bound OCQ2 is a candidate; full durable store recovery
+// remains a separate, mandatory operation. No result authorizes ACK minting.
 Result inspectReadOnly(const FlashBackend& history_port, Role local_role,
                        uint64_t local_device_id);
 
