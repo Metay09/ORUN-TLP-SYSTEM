@@ -178,6 +178,60 @@ void testSharedSoftdeviceMutationSlot() {
   assertOtherPartitionsUnchanged();
 }
 
+void testHistoryTimeoutQuarantineKeepsFlashOwned() {
+  clearRegions();
+  FlashMutationGate gate;
+  k::SegmentedFlash segmented(gate.productPort(), gate,
+      s::Role::kTracker, kTrackerId, true, true);
+  assert(segmented.begin());
+  assert(!gate.hasUnreconciledMutation());
+
+  sd_enabled = true;
+  const uint8_t history_bytes[4] = {0xA1U, 0xB2U, 0xC3U, 0xD4U};
+  const uint8_t product_bytes[4] = {0x01U, 0x02U, 0x03U, 0x04U};
+  assert(segmented.program(k::kPrimaryBytes, history_bytes, 4U) ==
+         FlashOpResult::kPending);
+  assert(write_calls == 1U);
+  assert(!gate.hasUnreconciledMutation());
+
+  // Nordic accepted the operation but its completion event is missing.
+  // A 4s application deadline must NOT free the physical ownership token.
+  fake_now_ms = 4001U;
+  assert(segmented.pollPending() == FlashOpResult::kFailed);
+  assert(gate.diagnostics().timeouts == 1U);
+  assert(gate.hasUnreconciledMutation());
+  assert(!segmented.ready());
+  assert(!segmented.begin());
+  assert(segmented.program(k::kPrimaryBytes + 4U,
+             product_bytes, 4U) == FlashOpResult::kFailed);
+
+  // Even an independent Product client must wait for the actual History
+  // SVC completion event. It may stage, but cannot submit a second SVC.
+  assert(gate.productPort().program(0U, product_bytes, 4U) ==
+         FlashOpResult::kPending);
+  assert(write_calls == 1U);
+  assert(gate.productPort().pollPending() == FlashOpResult::kPending);
+  assert(write_calls == 1U);
+
+  // The late event reconciles physical ownership, NOT application success:
+  // the old segmented store stays permanently faulted and cannot release
+  // any observation/custody record based solely on this event.
+  events.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
+  gate.pumpEvents();
+  assert(!gate.hasUnreconciledMutation());
+  assert(gate.diagnostics().late_completions == 1U);
+  assert(gate.diagnostics().completions_success == 0U);
+  assert(!segmented.ready());
+
+  assert(gate.productPort().pollPending() == FlashOpResult::kPending);
+  assert(write_calls == 2U);
+  events.push_back(NRF_EVT_FLASH_OPERATION_SUCCESS);
+  gate.pumpEvents();
+  assert(gate.productPort().pollPending() == FlashOpResult::kDone);
+  assertOtherPartitionsUnchanged();
+  assert(erase_calls == 0U);
+}
+
 void testLegacyHistoryFailsBeforeAnyWriterIsMounted() {
   clearRegions();
   supplemental[0U] = 'H';
@@ -210,6 +264,7 @@ int main() {
 
   testExclusiveOwnerAndPhysicalBoundaries();
   testSharedSoftdeviceMutationSlot();
+  testHistoryTimeoutQuarantineKeepsFlashOwned();
   testLegacyHistoryFailsBeforeAnyWriterIsMounted();
 
   assert(munmap(primary, k::kPrimaryBytes) == 0);
