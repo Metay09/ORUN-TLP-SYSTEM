@@ -158,10 +158,23 @@ void testActualRootDerivedFiveAndSubsets() {
   assert(ProofPeer::untouched(proof));
 
   f.cacheUpTo(5U);
+  ObservationStore::Record before[5]{};
+  for(uint8_t i=0U;i<5U;++i) {
+    assert(f.records.store().lookup(f.objects[i].identity,before[i])==
+           ObservationStore::LookupResult::kFound);
+    assert(!before[i].released && !before[i].release_uncertain);
+  }
   assert(f.verifier.verifyFromStore(ack_wire,len,f.records,proof)==
          Kq05TrackerBatchVerifyResult::kAuthenticated);
   assert(ProofPeer::authenticated(proof));
   assert(ProofPeer::count(proof)==5U);
+  // Authentication by itself must NEVER mutate a release marker.
+  for(uint8_t i=0U;i<5U;++i) {
+    ObservationStore::Record still{};
+    assert(f.records.store().lookup(f.objects[i].identity,still)==
+           ObservationStore::LookupResult::kFound);
+    assert(!still.released && !still.release_uncertain);
+  }
   // The wire is sorted by digest, not sequence. Exactly these five distinct
   // durable identities must be present, without any inferred range ACK.
   bool seen[5]{};
