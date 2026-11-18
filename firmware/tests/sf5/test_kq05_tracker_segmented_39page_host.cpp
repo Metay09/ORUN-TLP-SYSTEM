@@ -220,6 +220,31 @@ void testWrongOwnerAndLegacyRefuseWithoutWriting() {
   assert(!foreign.begin(kDeviceId) || foreign.faulted());
   assert(extra.programs == 0U && primary.programs == 0U);
   assert(primary.erases == 0U && extra.erases == 0U);
+
+  // A blank header plus stray body bytes is NOT a blank page.
+  Nor body_primary(k::kPrimaryPages);
+  Nor body_extra(k::kSupplementalPages);
+  body_extra.bytes[6U * k::kPageSize + 1024U] = 0U;
+  k::SegmentedFlash body_guard(body_primary, body_extra,
+      orun_tlp::kq05_supplemental::Role::kTracker,
+      kDeviceId, true, true);
+  ObservationStore body_owner(body_guard, k::kTotalPages, &id);
+  assert(!body_owner.begin(kDeviceId));
+  assert(body_primary.programs == 0U && body_extra.programs == 0U);
+
+  // Structurally valid OBS1 from a DIFFERENT Tracker is never adopted.
+  Nor foreign_primary(k::kPrimaryPages);
+  Nor foreign_extra(k::kSupplementalPages);
+  osf::encodePageHeader(osf::PageKind::kData, 1U,
+                        kDeviceId + 1U, kIncarnation,
+                        foreign_extra.bytes.data());
+  k::SegmentedFlash foreign_guard(foreign_primary, foreign_extra,
+      orun_tlp::kq05_supplemental::Role::kTracker,
+      kDeviceId, true, true);
+  ObservationStore foreign_owner(foreign_guard, k::kTotalPages, &id);
+  assert(!foreign_owner.begin(kDeviceId));
+  assert(foreign_primary.programs == 0U && foreign_extra.programs == 0U);
+
   Nor clean_primary(k::kPrimaryPages);
   Nor clean_extra(k::kSupplementalPages);
   k::SegmentedFlash no_legacy_exclusion(
