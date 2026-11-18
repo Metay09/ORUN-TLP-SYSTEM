@@ -271,7 +271,10 @@ void testUnboundSupplementalAndMissingGatewayIdRefused() {
   FakeNor<k::kSupplementalPages> extra;
   // A valid OCQ2/v3 header written by the former 32-page store (or
   // another operator) must never become a bound supplemental page.
-  extra.gatewayPage(0U);
+  uint8_t legacy_header[fmt::kPageHeaderSize]{};
+  assert(fmt::encodePageHeader(1U, legacy_header));
+  memset(legacy_header + fmt::kHeaderActiveOffset, 0U, 4U);
+  memcpy(extra.bytes, legacy_header, sizeof(legacy_header));
   k::SegmentedFlash joined(primary, extra,
       orun_tlp::kq05_supplemental::Role::kGateway,
       kGatewayIdentity, true, true);
