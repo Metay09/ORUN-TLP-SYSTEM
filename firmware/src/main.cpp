@@ -4179,6 +4179,8 @@ void setup() {
       supplemental_state = "TRACKER_CANDIDATE"; break;
     case orun_tlp::kq05_supplemental::State::kGatewayNeedsBinding:
       supplemental_state = "GATEWAY_NEEDS_BINDING"; break;
+    case orun_tlp::kq05_supplemental::State::kGatewayBoundCandidate:
+      supplemental_state = "GATEWAY_BOUND_CANDIDATE"; break;
     case orun_tlp::kq05_supplemental::State::kLegacyOrForeign:
       supplemental_state = "LEGACY_OR_FOREIGN"; break;
     case orun_tlp::kq05_supplemental::State::kCorruptOrIncomplete:
