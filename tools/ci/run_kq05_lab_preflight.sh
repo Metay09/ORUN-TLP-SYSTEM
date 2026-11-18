@@ -65,6 +65,8 @@ echo "=== KQ05 TRACKER REAL SECURITYSTORE V3 1..5 GATEWAY BATCH HMAC ==="
 bash tools/ci/run_kq05_tracker_batch_security_verify_host.sh
 echo "=== KQ05 TRACKER AUTHENTICATED FIVE-RECORD SELECTIVE DURABLE RELEASE ==="
 bash tools/ci/run_kq05_tracker_selective_batch_release_host.sh
+echo "=== KQ05 GATEWAY FIVE DURABLE OCQ2 HANDLE COLLECTOR / EXPLICIT FLUSH ==="
+bash tools/ci/run_kq05_gateway_batch_collector_host.sh
 echo "=== KQ05 4/5 TRACKER RECEIPT/FLASH ==="
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
 echo "=== KQ05 5/5 ISOLATED RAK4630 LAB BUILD ==="
