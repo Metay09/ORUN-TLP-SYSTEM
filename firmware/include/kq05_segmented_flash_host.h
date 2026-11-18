@@ -84,7 +84,7 @@ class SegmentedFlash final : public FlashBackend {
          census.state == kq05_supplemental::State::kPotentialTracker) ||
         (role_ == kq05_supplemental::Role::kGateway &&
          bound_ &&
-         census.state == kq05_supplemental::State::kGatewayNeedsBinding);
+         census.state == kq05_supplemental::State::kGatewayBoundCandidate);
     if (!permitted) {
       faulted_ = true;
       return false;
