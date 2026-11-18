@@ -167,7 +167,7 @@ static void testExactObjectBoundAndReplacement() {
   ObservationStore store(flash, 6U, &incarnation);
   assert(store.begin(0x11U));
   initData(store);
-  for (uint8_t seed = 1U; seed <= 5U; ++seed)
+  for (uint8_t seed = 1U; seed <= 6U; ++seed)
     (void)appendPeriodic(store, seed);
 
   osc::ExactObject first = exact(1U, 10U);
@@ -198,14 +198,22 @@ static void testExactObjectBoundAndReplacement() {
   assert(store.requestPutExactObject(wrong_kind) ==
          ObservationStore::ControlWriteResult::kRejected);
 
-  for (uint32_t seq = 2U; seq <= 4U; ++seq) {
+  for (uint32_t seq = 2U; seq <= 5U; ++seq) {
     osc::ExactObject value = exact(seq, static_cast<uint8_t>(10U + seq));
     assert(store.requestPutExactObject(value) ==
            ObservationStore::ControlWriteResult::kStarted);
     finishControlWrite(store);
   }
-  osc::ExactObject fifth = exact(5U, 30U);
-  assert(store.requestPutExactObject(fifth) ==
+  osc::ExactObject sixth = exact(6U, 30U);
+  // Five exact objects are already durable and visible to the same
+  // snapshot API that the Gateway batch ACK verifier will need.
+  osc::ExactObject group[osf::kMaxExactCustodyObjects]{};
+  uint16_t group_count = 0U;
+  assert(store.snapshotRetainedExact(group, group_count));
+  assert(group_count == 5U);
+  for (uint32_t n = 0U; n < group_count; ++n)
+    assert(group[n].identity.sequence == n + 1U);
+  assert(store.requestPutExactObject(sixth) ==
          ObservationStore::ControlWriteResult::kNoCapacity);
 
   // An unreleased record still owns the exact durable protected bytes.
@@ -226,10 +234,10 @@ static void testExactObjectBoundAndReplacement() {
          ObservationStore::ControlWriteResult::kAlreadySatisfied);
 
   // The released logical record no longer occupies an exact-object cache slot.
-  assert(store.requestPutExactObject(fifth) ==
+  assert(store.requestPutExactObject(sixth) ==
          ObservationStore::ControlWriteResult::kStarted);
   finishControlWrite(store);
-  assert(store.findExactObject(fifth.identity, found) ==
+  assert(store.findExactObject(sixth.identity, found) ==
          ObservationStore::ControlLookupResult::kFound);
   assert(store.requestPutExactObject(conflict) ==
          ObservationStore::ControlWriteResult::kRejected);
