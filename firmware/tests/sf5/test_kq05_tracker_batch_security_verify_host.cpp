@@ -259,9 +259,11 @@ void testTamperAndRevocationDoNotPublishCapability() {
 
 } // namespace
 
+#ifndef ORUN_KQ05_TRACKER_BATCH_RELEASE_HOST_TEST
 int main() {
   testActualRootDerivedFiveAndSubsets();
   testTamperAndRevocationDoNotPublishCapability();
   puts("KQ05 Tracker REAL SecurityStore grant + full five-record Gateway batch MAC: PASS (HOST ONLY)");
   puts("NO TRACKER RELEASE, NO LORA RX/TX, NO DEVICE FLASH, NO LEGACY ERASE");
 }
+#endif  // ORUN_KQ05_TRACKER_BATCH_RELEASE_HOST_TEST
