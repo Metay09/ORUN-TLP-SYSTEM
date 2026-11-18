@@ -261,6 +261,11 @@ void testCrashAfterOneMarkerRequiresNewRemainingSubsetAck() {
 } // namespace
 
 int main() {
+  // Run the inherited real SecurityStore full-digest/HMAC regressions too.
+  // They are intentionally included in this translation unit; do not
+  // suppress -Werror or leave security tests compiled but unused.
+  testActualRootDerivedFiveAndSubsets();
+  testTamperAndRevocationDoNotPublishCapability();
   testFiveExactIndependentDurableMarkers();
   testNoGrantTamperedOrIncompleteGroupNeverStartsFlash();
   testFailureOnSecondMarkerNeverReleasesLaterRecords();
