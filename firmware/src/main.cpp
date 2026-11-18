@@ -87,6 +87,10 @@
     !defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE)
 #error "KQ05 supplemental readonly preflight requires explicit KQ05 test image"
 #endif
+#if defined(ORUN_KQ05_SUPPLEMENTAL_28K_PREFLIGHT) && \
+    (!defined(ORUN_SF5L0_TRACKER) || !defined(ORUN_SF5L0_GATEWAY))
+#error "KQ05 supplemental readonly preflight requires unified Tracker/Gateway image"
+#endif
 #ifdef ORUN_SF5L0_BENCH_TEST_KEYS
 // Y2a: the public test credential is a host-test-only path. No device image
 // may provision it or grant custody with it.
