@@ -7,7 +7,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-g++ -std=gnu++11 -O1 -Wall -Wextra -Wpedantic -Werror \
+g++ -std=gnu++17 -O1 -Wall -Wextra -Wpedantic -Werror \
   -fno-omit-frame-pointer -fsanitize=address,undefined \
   -I firmware/include \
   firmware/src/observation_store_format.cpp \
