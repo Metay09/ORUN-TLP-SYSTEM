@@ -13,6 +13,8 @@ g++ -std=gnu++17 -O1 -Wall -Wextra -Wpedantic -Werror \
   -I firmware/include \
   firmware/src/product_region.cpp \
   firmware/src/custody_store_product_format.cpp \
+  firmware/src/observation_store_format.cpp \
+  firmware/src/kq05_supplemental_28k_census.cpp \
   firmware/src/product_custody_store.cpp \
   firmware/tests/sf5/test_kq05_segmented_flash_host.cpp \
   -o "$tmp/segmented-nor-ocq2"
