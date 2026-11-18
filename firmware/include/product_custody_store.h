@@ -39,8 +39,14 @@ class ProductCustodyStore final {
     Handle handle{};  // kHandoff: the record; kReclaim: .page only
   };
 
-  ProductCustodyStore(FlashBackend& flash, uint16_t page_count)
-      : flash_(flash), page_count_(page_count) {}
+  // A 39-page owner MUST bind supplemental pages to the local physical
+  // Gateway ID. Existing 32-page callers retain v3 and need no new input.
+  // The identity is NOT supplied by LoRa/USB frames: future runtime
+  // composition must obtain it from the board identity provider.
+  ProductCustodyStore(FlashBackend& flash, uint16_t page_count,
+                      uint64_t local_gateway_id = 0U)
+      : flash_(flash), page_count_(page_count),
+        local_gateway_id_(local_gateway_id) {}
 
   bool begin();
   Admission requestCustody(const uint8_t* object, size_t size,
@@ -87,7 +93,7 @@ class ProductCustodyStore final {
 
  private:
   enum class Phase : uint8_t {
-    kIdle, kPageBody, kPageCommit, kPageActive,
+    kIdle, kPageBody, kPageBinding, kPageCommit, kPageActive,
     kRecordBody, kRecordCommit, kVerify,
     kHandoffMark, kHandoffVerify, kReclaimErase, kReclaimVerify
   };
@@ -112,6 +118,7 @@ class ProductCustodyStore final {
 
   FlashBackend& flash_;
   uint16_t page_count_ = 0;
+  const uint64_t local_gateway_id_ = 0U;
   bool ready_ = false;
   bool faulted_ = false;
   bool awaiting_ = false;
