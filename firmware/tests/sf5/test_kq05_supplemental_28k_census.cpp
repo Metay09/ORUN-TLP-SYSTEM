@@ -58,6 +58,12 @@ struct FakeHistory final : FlashBackend {
     assert(cust::encodePageHeader(page + 1U, header));
     memcpy(bytes + page * sub::kPageBytes, header, sizeof(header));
   }
+  void gatewayBoundPage(uint32_t page, uint64_t gateway = kGatewayId) {
+    assert(page < sub::kPages);
+    uint8_t header[cust::kPageHeaderSize]{};
+    assert(cust::encodeBoundPageHeader(page + 1U, gateway, header));
+    memcpy(bytes + page * sub::kPageBytes, header, sizeof(header));
+  }
   void assertNoMutation() const {
     assert(begins == 0U && writes == 0U && erases == 0U);
   }
@@ -134,6 +140,29 @@ void testGatewayCannotMountUnbound() {
   fake.assertNoMutation();
 }
 
+void testGatewayBoundToExactLocalId() {
+  FakeHistory fake;
+  fake.gatewayBoundPage(0U);
+  fake.gatewayBoundPage(5U);
+  const sub::Result correct = sub::inspectReadOnly(
+      fake, sub::Role::kGateway, kGatewayId);
+  assert(correct.state == sub::State::kGatewayBoundCandidate);
+  assert(correct.candidate_pages == 2U && correct.erased_pages == 5U);
+  const sub::Result other = sub::inspectReadOnly(
+      fake, sub::Role::kGateway, kGatewayId + 1U);
+  assert(other.state == sub::State::kLegacyOrForeign);
+  assert(other.first_bad_page == 0U);
+
+  // Mixing previously unbound v3 custody and the new v4 bound pages is
+  // never an implicit migration permission.
+  fake.gatewayPage(6U);
+  const sub::Result mixed = sub::inspectReadOnly(
+      fake, sub::Role::kGateway, kGatewayId);
+  assert(mixed.state == sub::State::kLegacyOrForeign);
+  assert(mixed.first_bad_page == 6U);
+  fake.assertNoMutation();
+}
+
 void testLegacyOrPartialPageRejected() {
   FakeHistory old;
   old.bytes[0] = 'H';
@@ -179,6 +208,7 @@ int main() {
   testRoleBlockedWithoutReading();
   testTrackerOwnsOnlyTrackerData();
   testGatewayCannotMountUnbound();
+  testGatewayBoundToExactLocalId();
   testLegacyOrPartialPageRejected();
   testReadFailureRefusesScan();
   puts("KQ05 28KiB supplemental role-aware read-only census: PASS (HOST ONLY)");
