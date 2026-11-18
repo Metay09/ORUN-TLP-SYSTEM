@@ -13,6 +13,7 @@ CENSUS = (ROOT / "firmware/src/kq05_supplemental_28k_census.cpp").read_text(
     encoding="utf-8"
 )
 FLAG = "ORUN_KQ05_SUPPLEMENTAL_28K_PREFLIGHT"
+PLATFORMIO = (ROOT / "firmware/platformio.ini").read_text(encoding="utf-8")
 
 
 def require(condition: bool, explanation: str) -> None:
@@ -21,6 +22,8 @@ def require(condition: bool, explanation: str) -> None:
 
 
 def check() -> None:
+    require(FLAG not in PLATFORMIO,
+            "read-only preflight must NOT be enabled in a build environment")
     require('#ifdef ' + FLAG + '\n#include "kq05_supplemental_28k_census.h"'
             in MAIN, "diagnostic header not gated")
     require(('#if defined(' + FLAG + ')') in MAIN and
