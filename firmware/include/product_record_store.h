@@ -102,8 +102,11 @@ class ProductRecordStore {
   bool custodyCandidateMatchesRetainedExact(
       const osc::ExactObject& expected) const;
 
-  // Enumerate at most four durably cached exact objects for a future
-  // authenticated 0x05/0x06 custody ACK matcher. Read-only and fail-closed.
+  // Enumerate at most five durably cached exact objects. Existing 0x05
+  // single-object matchers remain unchanged; KQ05 0x0A batch HMAC will
+  // separately bind ALL five full digests before selective Flash release.
+  // This capacity is a bounded cache, NOT a history retention limit.
+  // Read-only and fail-closed.
   // This is NOT a custody/ACK admission or a record release.
   bool snapshotCustodyCandidates(
       osc::ExactObject (&objects)[osf::kMaxExactCustodyObjects],
