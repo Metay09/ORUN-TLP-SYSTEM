@@ -129,6 +129,13 @@ class FlashMutationGate : public FlashBackend {
   FlashOpResult program(uint32_t offset, const void* data, size_t size) override;
   FlashOpResult erasePage(uint32_t page) override;
   FlashOpResult pollPending() override;
+  // The history-facing FlashBackend is also the proposed KQ05 supplemental
+  // physical owner. Do not inherit FlashBackend's always-false default:
+  // an accepted but timed-out Nordic write might still complete later.
+  // This does NOT assert write success or grant a second writer ownership.
+  bool hasUnreconciledMutation() const override {
+    return history_slot_.quarantined;
+  }
   const Diagnostics& diagnostics() const { return history_diagnostics_; }
 
   // Before Bluefruit starts, drains SoftDevice SoC events directly via
