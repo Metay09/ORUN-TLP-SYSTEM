@@ -114,7 +114,9 @@ ObservationStore::Handle append(ObservationStore& store, uint32_t seq) {
 void testObservationAcrossPhysicalGap() {
   Nor primary(k::kPrimaryPages);
   Nor extra(k::kSupplementalPages);
-  k::SegmentedFlash logical(primary, extra, true, true);
+  k::SegmentedFlash logical(primary, extra,
+      orun_tlp::kq05_supplemental::Role::kTracker,
+      kDeviceId, true, true);
   FixedIncarnation identity;
   ObservationStore store(logical, k::kTotalPages, &identity);
   assert(store.begin(kDeviceId) && store.ready() && !store.faulted());
@@ -210,7 +212,9 @@ void testWrongOwnerAndLegacyRefuseWithoutWriting() {
   Nor extra(k::kSupplementalPages);
   extra.bytes[0] = 'H'; extra.bytes[1] = 'I';
   extra.bytes[2] = 'S'; extra.bytes[3] = 'T';
-  k::SegmentedFlash logical(primary, extra, true, true);
+  k::SegmentedFlash logical(primary, extra,
+      orun_tlp::kq05_supplemental::Role::kTracker,
+      kDeviceId, true, true);
   FixedIncarnation id;
   ObservationStore foreign(logical, k::kTotalPages, &id);
   assert(!foreign.begin(kDeviceId) || foreign.faulted());
@@ -219,7 +223,9 @@ void testWrongOwnerAndLegacyRefuseWithoutWriting() {
   Nor clean_primary(k::kPrimaryPages);
   Nor clean_extra(k::kSupplementalPages);
   k::SegmentedFlash no_legacy_exclusion(
-      clean_primary, clean_extra, false, true);
+      clean_primary, clean_extra,
+      orun_tlp::kq05_supplemental::Role::kTracker,
+      kDeviceId, false, true);
   ObservationStore blocked(no_legacy_exclusion, k::kTotalPages, &id);
   assert(!blocked.begin(kDeviceId));
   assert(clean_primary.programs == 0U && clean_extra.programs == 0U);
