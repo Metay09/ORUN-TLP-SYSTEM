@@ -43,6 +43,8 @@ echo "=== KQ05 28 KiB ROLE-AWARE SUPPLEMENTAL CENSUS / READ-ONLY ==="
 bash tools/ci/run_kq05_supplemental_28k_census_host.sh
 echo "=== KQ05 OFFLINE 128KiB + 28KiB ROUTING DECISIONS ==="
 bash tools/ci/run_kq05_dual_region_decisions_host.sh
+echo "=== KQ05 32+7 PHYSICALLY SEPARATE NOR / GATEWAY OCQ2 SPILLOVER ==="
+bash tools/ci/run_kq05_segmented_156k_host.sh
 echo "=== KQ05 4/5 TRACKER RECEIPT/FLASH ==="
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
 echo "=== KQ05 5/5 ISOLATED RAK4630 LAB BUILD ==="
