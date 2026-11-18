@@ -63,7 +63,6 @@ class Kq05GatewayReceiptJournal final {
                  size_t length) const;
   bool inSafeBounds(uint32_t offset, size_t length) const;
   uint32_t slotOffset(uint32_t page, uint32_t slot) const;
-  bool pageAvailable(uint32_t page) const;
   bool findSourceRow(const uint8_t* offer, size_t length,
                      bool& duplicate, bool& conflict) const;
 
