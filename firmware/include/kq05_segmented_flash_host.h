@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "flash_backend.h"
+#include "kq05_supplemental_28k_census.h"
 #include "storage_config.h"
 
 namespace orun_tlp {
@@ -44,9 +45,12 @@ static_assert(storage_config::kProductRegionEnd ==
 class SegmentedFlash final : public FlashBackend {
  public:
   SegmentedFlash(FlashBackend& product, FlashBackend& supplemental,
+                 kq05_supplemental::Role expected_role,
+                 uint64_t local_device_id,
                  bool exclusive_history_owner_stopped,
                  bool device_role_identity_bound)
       : product_(product), supplemental_(supplemental),
+        role_(expected_role), device_id_(local_device_id),
         exclusive_(exclusive_history_owner_stopped),
         bound_(device_role_identity_bound) {}
 
@@ -61,6 +65,27 @@ class SegmentedFlash final : public FlashBackend {
     if (!product_.begin() || !supplemental_.begin() ||
         product_.hasUnreconciledMutation() ||
         supplemental_.hasUnreconciledMutation()) {
+      faulted_ = true;
+      return false;
+    }
+
+    // Unlike a normal single-region ObservationStore recovery, a new
+    // supplemental owner MUST reject uncommitted old History bytes.
+    // The existing OBS1 recovery intentionally tolerates staged headers;
+    // that is unsafe for an unapproved legacy-region takeover.
+    // Read and classify ALL bytes of the 28 KiB region BEFORE exposing
+    // even the first virtual supplemental page to a writer.
+    const kq05_supplemental::Result census =
+        kq05_supplemental::inspectReadOnly(
+            supplemental_, role_, device_id_);
+    const bool permitted =
+        census.state == kq05_supplemental::State::kBlank ||
+        (role_ == kq05_supplemental::Role::kTracker &&
+         census.state == kq05_supplemental::State::kPotentialTracker) ||
+        (role_ == kq05_supplemental::Role::kGateway &&
+         bound_ &&
+         census.state == kq05_supplemental::State::kGatewayNeedsBinding);
+    if (!permitted) {
       faulted_ = true;
       return false;
     }
@@ -161,6 +186,8 @@ class SegmentedFlash final : public FlashBackend {
 
   FlashBackend& product_;
   FlashBackend& supplemental_;
+  const kq05_supplemental::Role role_;
+  const uint64_t device_id_;
   const bool exclusive_;
   const bool bound_;
   bool ready_ = false;
