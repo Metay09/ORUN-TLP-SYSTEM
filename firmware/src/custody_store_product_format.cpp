@@ -47,6 +47,22 @@ bool zeroed(const uint8_t* bytes, size_t len) {
 bool supportedSize(size_t size) {
   return size == kEventSize || size == kPeriodicSize;
 }
+// The header's 32..39 commit/activation words change after first write,
+// so the v4 identity CRC excludes them. It covers fixed header bytes 0..31,
+// the Gateway identity and its bitwise complement at 40..55.
+uint32_t bindingCrc(const uint8_t* bytes) {
+  uint8_t selected[48U]{};
+  memcpy(selected, bytes, 32U);
+  memcpy(selected + 32U, bytes + kGatewayIdOffset, 16U);
+  return crc32(selected, sizeof(selected));
+}
+bool boundIdentityValid(const uint8_t* bytes) {
+  const uint64_t id = get64(bytes + kGatewayIdOffset);
+  return id != 0U && id != UINT64_MAX &&
+         get64(bytes + kGatewayIdComplementOffset) == ~id &&
+         get32(bytes + kBindingMarkerOffset) == kBindingMarker &&
+         get32(bytes + kBindingCrcOffset) == bindingCrc(bytes);
+}
 } // namespace
 
 bool encodePageHeader(uint64_t generation, uint8_t (&out)[kPageHeaderSize]) {
@@ -70,6 +86,22 @@ bool encodePageHeader(uint64_t generation, uint8_t (&out)[kPageHeaderSize]) {
   return true;
 }
 
+bool encodeBoundPageHeader(uint64_t generation, uint64_t gateway_id,
+                           uint8_t (&out)[kPageHeaderSize]) {
+  if (gateway_id == 0U || gateway_id == UINT64_MAX) return false;
+  uint8_t tmp[kPageHeaderSize]{};
+  if (!encodePageHeader(generation, tmp)) return false;
+  put16(tmp + 4U, kBoundVersion);
+  put16(tmp + 6U, static_cast<uint16_t>(~kBoundVersion));
+  put64(tmp + kGatewayIdOffset, gateway_id);
+  put64(tmp + kGatewayIdComplementOffset, ~gateway_id);
+  put32(tmp + kHeaderCrcOffset, crc32(tmp, kHeaderCrcOffset));
+  put32(tmp + kBindingCrcOffset, bindingCrc(tmp));
+  put32(tmp + kBindingMarkerOffset, kBindingMarker);
+  memcpy(out, tmp, sizeof(tmp));
+  return true;
+}
+
 bool inspectPageHeader(const uint8_t* bytes, size_t size,
                        PageInspection& inspection) {
   if (bytes == nullptr || size != kPageHeaderSize) return false;
@@ -81,9 +113,10 @@ bool inspectPageHeader(const uint8_t* bytes, size_t size,
     if (commit == UINT32_MAX) parsed.evidence = PageEvidence::kStaged;
     else if (commit != 0U) parsed.evidence = PageEvidence::kPartialCommit;
     else if (get32(bytes) != kPageMagic) parsed.evidence = PageEvidence::kCorrupt;
-    else if (get16(bytes+4U) != kVersion)
+    else if (get16(bytes+4U) != kVersion &&
+             get16(bytes+4U) != kBoundVersion)
       parsed.evidence = PageEvidence::kUnsupported;
-    else if (get16(bytes+6U) != static_cast<uint16_t>(~kVersion) ||
+    else if (get16(bytes+6U) != static_cast<uint16_t>(~get16(bytes+4U)) ||
              get64(bytes+8U) == 0U || get64(bytes+8U) == UINT64_MAX ||
              get16(bytes+16U) != kPageHeaderSize ||
              get16(bytes+18U) != kRecordSize ||
@@ -92,10 +125,14 @@ bool inspectPageHeader(const uint8_t* bytes, size_t size,
              get16(bytes+24U) != kIntentSlotSize ||
              get16(bytes+26U) != kIntentSlotsPerPage ||
              get32(bytes+kHeaderCrcOffset) != crc32(bytes,kHeaderCrcOffset) ||
-             !erased(bytes+40U,24U))
+             (get16(bytes+4U) == kVersion && !erased(bytes+40U,24U)) ||
+             (get16(bytes+4U) == kBoundVersion && !boundIdentityValid(bytes)))
       parsed.evidence = PageEvidence::kCorrupt;
     else {
       parsed.generation = get64(bytes+8U);
+      parsed.gateway_bound = get16(bytes+4U) == kBoundVersion;
+      if (parsed.gateway_bound)
+        parsed.gateway_id = get64(bytes + kGatewayIdOffset);
       const uint32_t active = get32(bytes+kHeaderActiveOffset);
       if (active == UINT32_MAX) parsed.evidence = PageEvidence::kPrepared;
       else if (active == 0U) parsed.evidence = PageEvidence::kActive;
