@@ -290,6 +290,26 @@ void testUnboundSupplementalAndMissingGatewayIdRefused() {
   assert(blank_primary.programs == 0U && blank_extra.programs == 0U);
 }
 
+void testTornSupplementalPageBindingRefusesReboot() {
+  FakeNor<k::kPrimaryPages> primary;
+  FakeNor<k::kSupplementalPages> extra;
+  uint8_t header[fmt::kPageHeaderSize]{};
+  assert(fmt::encodeBoundPageHeader(1U, kGatewayIdentity, header));
+  // Crash after body and v4 identity write, but BEFORE separate 32-bit
+  // page commit marker. No successful custody record may be inferred.
+  memcpy(extra.bytes, header, fmt::kHeaderCommitOffset);
+  memcpy(extra.bytes + fmt::kGatewayIdOffset,
+         header + fmt::kGatewayIdOffset,
+         fmt::kPageHeaderSize - fmt::kGatewayIdOffset);
+  k::SegmentedFlash joined(primary, extra,
+      orun_tlp::kq05_supplemental::Role::kGateway,
+      kGatewayIdentity, true, true);
+  ProductCustodyStore store(joined, k::kTotalPages, kGatewayIdentity);
+  assert(!store.begin() && store.faulted());
+  assert(primary.programs == 0U && extra.programs == 0U);
+  assert(primary.erases == 0U && extra.erases == 0U);
+}
+
 void testUnknownLegacyAndForeignBlocked() {
   FakeNor<k::kPrimaryPages> product;
   FakeNor<k::kSupplementalPages> extra;
@@ -314,6 +334,7 @@ int main() {
   testPendingAndFailClosed();
   testGatewayExistingOwnerSpillsToPage32();
   testUnboundSupplementalAndMissingGatewayIdRefused();
+  testTornSupplementalPageBindingRefusesReboot();
   testUnknownLegacyAndForeignBlocked();
   puts("KQ05 128+28KiB noncontiguous segmented NOR + actual OCQ2 page32 append/reboot: PASS (HOST ONLY)");
   puts("NO REAL FLASH, NO LEGACY HISTORY ERASE, NO GATEWAY BATCH ACK, NO DEVICE UPLOAD");
