@@ -50,6 +50,12 @@ void testNoLegacyOverlapOrDuplicateIdentity() {
   assert(k::selectAppend(v).decision == k::Decision::kBlocked);
   v.supplemental_duplicate = k::Proof::kExactDurable;
   assert(k::selectAppend(v).decision == k::Decision::kAlreadyPresent);
+  v.legacy_writer_disabled = false;
+  assert(k::selectAppend(v).decision == k::Decision::kBlocked);
+  v.legacy_writer_disabled = true;
+  v.supplemental_identity_bound = false;
+  assert(k::selectAppend(v).decision == k::Decision::kBlocked);
+  v.supplemental_identity_bound = true;
   v.supplemental_duplicate = k::Proof::kAbsent;
   v.primary_duplicate = k::Proof::kExactDurable;
   assert(k::selectAppend(v).decision == k::Decision::kAlreadyPresent);
@@ -84,7 +90,7 @@ void testNoMutationOnUnavailablePrimaryOrRole() {
   v.primary = k::Store::kBusy;
   assert(k::selectAppend(v).decision == k::Decision::kBusy);
   v.primary = k::Store::kUnavailable;
-  assert(k::selectAppend(v).decision == k::Decision::kBusy);
+  assert(k::selectAppend(v).decision == k::Decision::kBlocked);
 }
 
 void testOnlyAuthenticatedExactRelease() {
