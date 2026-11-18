@@ -48,10 +48,17 @@ inline AppendResult selectAppend(const AppendInput& in) {
   if (in.primary_duplicate == Proof::kUncertain ||
       in.supplemental_duplicate == Proof::kUncertain)
     return {Decision::kBlocked, Region::kNone};
+  // Never trust a duplicate from the old History region unless the
+  // exclusive legacy cutover and this device's owner binding are proven.
+  if (in.supplemental_duplicate == Proof::kExactDurable &&
+      (!in.legacy_writer_disabled || !in.supplemental_identity_bound))
+    return {Decision::kBlocked, Region::kNone};
   if (in.primary_duplicate == Proof::kExactDurable ||
       in.supplemental_duplicate == Proof::kExactDurable)
     return {Decision::kAlreadyPresent, Region::kNone};
-  if (in.primary == Store::kUnavailable || in.primary == Store::kBusy)
+  if (in.primary == Store::kUnavailable)
+    return {Decision::kBlocked, Region::kNone};
+  if (in.primary == Store::kBusy)
     return {Decision::kBusy, Region::kNone};
   if (in.primary == Store::kReady)
     return {Decision::kPrimary, Region::kPrimary128K};
