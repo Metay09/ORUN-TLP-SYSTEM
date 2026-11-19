@@ -234,10 +234,13 @@ void periodicHistoryGatewayCustodyNeverGatesLatest() {
   // An urgent EVENT can still claim the reserved fifth exact slot and send
   // with its own priority while earlier HISTORY custody is unconfirmed.
   appendDurableEvent(records);  // EVENT seq9
-  assert(urgent.update(301100U, true) ==
+  // EVENT scan has an eight-record bound; the first turn skips the eight
+  // PERIODIC records, and the next turn discovers the ninth EVENT.
+  assert(urgent.update(301100U, true) == EventSender::Result::kNone);
+  assert(urgent.update(301101U, true) ==
          EventSender::Result::kCachePending);
-  durableCache(records, urgent, 301101U);
-  assert(urgent.update(301102U, true) == EventSender::Result::kSent);
+  durableCache(records, urgent, 301102U);
+  assert(urgent.update(301103U, true) == EventSender::Result::kSent);
   assert(urgent.selectedIdentity().sequence == 9U);
   assert(records.store().exactObjectCount(exact) &&
          exact == osf::kMaxExactCustodyObjects);
