@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Source integration contract: opt-in 0x0A Tracker radio intake never
-breaks default 0x05/0x09 paths or starves live position scheduling.
+"""Source integration contract: 0x0A Tracker intake excludes competing
+Backend 0x09 release in unified image and does not starve LIVE.
 This is not an image/build/real-RF test."""
 from pathlib import Path
 
@@ -37,9 +37,9 @@ assert "tracker_gateway_batch_release.pending()" in main
 assert "!positions.pending()" in main.split(
     "tracker_gateway_batch_release.pending() &&", 1
 )[1].split("tracker_gateway_batch_release.service()", 1)[0]
-assert "!kq05_batch_release.pending()" in main.split(
-    "tracker_gateway_batch_runtime.receive(", 1
-)[0]
+assert "kq05_batch_release.pending()" in main  # older lab only
+assert "pilot_allowed && !tracker_gateway_batch_release.pending()" in main
+assert "pilot_allowed && !kq05_batch_release.pending()" in main
 assert "!tracker_gateway_batch_release.pending()" in main.split(
     "radio_manager.takeCustodyAckFrame(&ack)", 1
 )[0]

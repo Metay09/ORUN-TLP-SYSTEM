@@ -32,6 +32,15 @@ for text in (
     '#endif // !' + flag,
 ):
     assert text in main, text
+# The new Gateway 0x0A image cannot link a second Backend 0x09
+# OBS1 release owner. The original KQ05 LAB still keeps its 0x09 path.
+backend_only = '#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \\\n    !defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF)'
+assert main.count(backend_only) >= 4
+radio_h = (root / "firmware/include/radio_manager.h").read_text()
+radio_src = (root / "firmware/src/radio_manager.cpp").read_text()
+assert radio_h.count(backend_only) == 4
+assert radio_src.count(backend_only) == 4
+assert "Kq05BackendReceiptReleaseOwner kq05_batch_release(" in main
 assert "tracker_gateway_batch_runtime.receive(" in main
 assert "tracker_gateway_batch_release.service()" in main
 assert "radio_manager.takeCustodyAckFrame(&ack)" in main  # legacy source kept

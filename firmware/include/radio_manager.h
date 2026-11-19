@@ -6,7 +6,8 @@
 #ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
 #include "kq05_gateway_batch_custody_ack.h"
 #endif
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
+    !defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF)
 #include "kq05_backend_receipt.h"
 #endif
 #include "lora_command.h"
@@ -100,7 +101,8 @@ struct Kq05GatewayBatchAckRxFrame {
 };
 #endif
 
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
+    !defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF)
 // Untrusted, structurally admitted Backend receipt. NEVER a release token.
 struct Kq05BatchReceiptRxFrame {
   uint16_t size = 0;
@@ -185,7 +187,8 @@ class RadioManager {
   void discardKq05GatewayBatchAckFrame();
   bool takeKq05GatewayBatchAckFrame(Kq05GatewayBatchAckRxFrame* frame);
 #endif
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
+    !defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF)
   // Non-consuming inspection: transient storage/security busy conditions must
   // not silently discard a valid backend receipt.
   bool peekKq05BatchReceiptFrame(Kq05BatchReceiptRxFrame* frame) const;
@@ -307,7 +310,8 @@ class RadioManager {
   Kq05GatewayBatchAckRxFrame kq05_gateway_batch_ack_rx_{};
   bool kq05_gateway_batch_ack_rx_pending_ = false;
 #endif
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
+    !defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF)
   Kq05BatchReceiptRxFrame kq05_batch_rx_{};
   bool kq05_batch_rx_pending_ = false;
 #endif

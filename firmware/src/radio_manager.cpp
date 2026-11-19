@@ -114,7 +114,8 @@ bool RadioManager::begin(SequenceSource& sequences) {
   kq05_gateway_batch_ack_rx_ = {};
   kq05_gateway_batch_ack_rx_pending_ = false;
 #endif
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
+    !defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF)
   kq05_batch_rx_ = {};
   kq05_batch_rx_pending_ = false;
 #endif
@@ -466,7 +467,8 @@ bool RadioManager::takeKq05GatewayBatchAckFrame(
 }
 #endif
 
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
+    !defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF)
 bool RadioManager::peekKq05BatchReceiptFrame(
     Kq05BatchReceiptRxFrame* frame) const {
   if (frame == nullptr || !kq05_batch_rx_pending_ ||
@@ -816,7 +818,8 @@ void RadioManager::applyPendingRole() {
   kq05_gateway_batch_ack_rx_ = {};
   kq05_gateway_batch_ack_rx_pending_ = false;
 #endif
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
+    !defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF)
   kq05_batch_rx_ = {};
   kq05_batch_rx_pending_ = false;
 #endif
@@ -960,7 +963,8 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
     return;
   }
 #endif
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
+    !defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF)
   if (size >= 2U && payload[0] == kq05_receipt::kVersion &&
       payload[1] == kq05_receipt::kType) {
     kq05_receipt::Header parsed{};

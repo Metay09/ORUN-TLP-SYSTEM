@@ -29,7 +29,8 @@
 #include "kq05_tracker_batch_release_owner.h"
 #include "kq05_tracker_batch_radio_runtime.h"
 #endif
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
+    !defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF)
 #include "kq05_backend_receipt_release_owner.h"
 #endif
 #include "config_incarnation_source.h"
@@ -231,7 +232,8 @@ orun_tlp::Kq05TrackerBatchReleaseOwner tracker_gateway_batch_release(
 orun_tlp::Kq05TrackerBatchRadioRuntime tracker_gateway_batch_runtime(
     radio_manager, tracker_gateway_batch_release);
 #endif
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
+    !defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF)
 orun_tlp::Kq05BackendReceiptReleaseOwner kq05_batch_release(
     security_store, product_records);
 #endif
@@ -3333,9 +3335,11 @@ void handleRoleCommand() {
         bench_pacer.awaitingAck() ||
 #ifndef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
         custody_ack_release.pending() ||
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+        kq05_batch_release.pending() ||
+#endif
 #else
         tracker_gateway_batch_release.pending() ||
-        kq05_batch_release.pending() ||
 #endif
         !product_records.requestBenchClear()) {
       Serial.println(F("BENCH TRACKER ERASE rejected: stop tracking "
@@ -4704,14 +4708,12 @@ void loop() {
     Serial.println(F("PRODUCT CUSTODY release=FAILED"));
   }
 #endif // !ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
-  // One release marker at a time, after product_records.poll(), never
-  // concurrently with custody release or a radio TX.
-  if (kq05_batch_release.pending() && !radio_manager.isTransmitting()
-#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
-      && !tracker_gateway_batch_release.pending()
-#endif
-      ) {
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
+    !defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF)
+  // Legacy LAB only: Backend 0x09 may release PERIODIC records. The unified
+  // Gateway 0x0A image does not compile this second OBS1 release authority.
+  // One marker at a time, after product_records.poll().
+  if (kq05_batch_release.pending() && !radio_manager.isTransmitting()) {
     const auto result = kq05_batch_release.service();
     if (result ==
         orun_tlp::Kq05BackendReceiptReleaseOwner::Service::kApplied)
@@ -4725,14 +4727,10 @@ void loop() {
   }
 #endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
-  // After ProductRecordStore::poll(): one durable marker per loop, never
-  // concurrent with 0x05/Backend release or live position admission.
+  // After ProductRecordStore::poll(): one durable marker per loop,
+  // from the ONLY Tracker OBS1 release owner in this unified 0x0A image.
   if (tracker_gateway_batch_release.pending() &&
-      !radio_manager.isTransmitting() && !positions.pending()
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
-      && !kq05_batch_release.pending()
-#endif
-      ) {
+      !radio_manager.isTransmitting() && !positions.pending()) {
     const auto result=tracker_gateway_batch_release.service();
     if (result==orun_tlp::Kq05TrackerBatchReleaseOwner::Service::kReleasedOne)
       Serial.println(F("KQ05 GATEWAY BATCH marker=DURABLE_ONE"));
@@ -4913,7 +4911,8 @@ void loop() {
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kRadio);
   radio_manager.update(tracking_enabled && !positions.pending());
 
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+#if defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE) && \
+    !defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF)
   // The RadioManager keeps one untrusted receipt pending. Do not consume it
   // for a temporary SecurityStore/OBS1 busy condition: authenticated backend
   // delivery may take another downlink window. Bound retries so an old receipt
@@ -4921,14 +4920,8 @@ void loop() {
   static uint8_t kq05_receipt_transient_tries = 0U;
   static uint32_t kq05_receipt_retry_after_ms = 0U;
   if (radio_manager.role() == orun_tlp::NodeRole::kTracker &&
-#ifndef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
       !custody_ack_release.pending() &&
-#endif
-      !kq05_batch_release.pending()
-#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
-      && !tracker_gateway_batch_release.pending()
-#endif
-      ) {
+      !kq05_batch_release.pending()) {
     orun_tlp::Kq05BatchReceiptRxFrame batch{};
     const uint32_t now_ms = orun_tlp::monotonic::nowMs();
     if (radio_manager.peekKq05BatchReceiptFrame(&batch) &&
@@ -4973,9 +4966,6 @@ void loop() {
         security_store.ready() &&
         security_store.state()==orun_tlp::SecurityState::kProvisioned &&
         !security_store.busy()
-#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
-        && !kq05_batch_release.pending()
-#endif
         ;
     const auto outcome=tracker_gateway_batch_runtime.receive(
         allowed,orun_tlp::monotonic::nowMs());
@@ -5139,11 +5129,15 @@ void loop() {
 #endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
   // Critical EVENT first, using the EXISTING durable Gateway custody ACK.
-  // Waiting for that ACK never gates ordinary LIVE/HISTORY; they remain
-  // direct with no per-record ACK or exact cache.
+  // LIVE never waits on either receipt. The combined image has only the
+  // Gateway 0x0A release owner; the older lab preserves Backend 0x09.
   const auto event_tx = kq05_critical_event_tx.update(
       orun_tlp::monotonic::nowMs(),
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+      pilot_allowed && !tracker_gateway_batch_release.pending());
+#else
       pilot_allowed && !kq05_batch_release.pending());
+#endif
   if (event_tx == orun_tlp::TrackerCriticalEventTx::Result::kSent) {
     Serial.printf("KQ05 CRITICAL EVENT TX started seq=%lu custody=awaiting-ack\n",
                   static_cast<unsigned long>(
@@ -5183,7 +5177,6 @@ void loop() {
   const auto history_event = kq05_history_custody_tx.update(
       orun_tlp::monotonic::nowMs(),
       pilot_allowed && !kq05_live_tx.liveSearchPending() &&
-      !kq05_batch_release.pending() &&
       !tracker_gateway_batch_release.pending());
   if (history_event == orun_tlp::TrackerCriticalEventTx::Result::kSent) {
     Serial.printf("KQ05 HISTORY custody TX seq=%lu gateway-ack=pending\n",
