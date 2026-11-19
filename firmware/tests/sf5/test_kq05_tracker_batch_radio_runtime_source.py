@@ -40,7 +40,9 @@ assert "!positions.pending()" in main.split(
 assert "kq05_batch_release.pending()" in main  # older lab only
 assert "pilot_allowed && !tracker_gateway_batch_release.pending()" in main
 assert "pilot_allowed && !kq05_batch_release.pending()" in main
-assert "!tracker_gateway_batch_release.pending()" in main.split(
+# Legacy 0x05 remains in source, but its compilation guard excludes it
+# from the same image as the authenticated 0x0A owner.
+assert "tracker_gateway_batch_release.pending()" in main.split(
     "radio_manager.takeCustodyAckFrame(&ack)", 1
 )[0]
 pilot = main.split("const bool pilot_allowed =", 1)[1].split(";", 1)[0]
@@ -63,4 +65,4 @@ for needle in (
 assert "verifier_.verifyFromStore(frame,length,records_,verified)" in release
 assert "records_.requestAuthenticatedCustodyRelease(exact)" in release
 assert "kq05_gateway_batch_ack::decode(payload,size,header)" in radio
-print("KQ05 0x0A Tracker main loop / 0x05 / 0x09 / LIVE priority source contract: PASS")
+print("KQ05 single 0x0A owner (0x05/0x09 excluded in combined LAB), LIVE priority: PASS (SOURCE)")

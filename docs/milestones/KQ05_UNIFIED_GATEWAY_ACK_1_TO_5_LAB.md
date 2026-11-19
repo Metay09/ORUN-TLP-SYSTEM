@@ -10,7 +10,7 @@ Aynı Gateway custody ACK protokolü **0x0A** hem **tek kaydı (count=1, 56B)** 
 - Deneysel Gateway: tek `Kq05GatewayBatchCollector` + `Kq05GatewayBatchRuntime` + tek `RadioManager::sendAuthorizedKq05GatewayBatchAck`. Eski 0x05 Gateway custody runtime'ı bu derlemede kurulmaz.
 - Deneysel Tracker: tek `Kq05TrackerBatchRadioRuntime` + `Kq05TrackerBatchReleaseOwner`. Eski `CustodyAckReleaseOwner` 0x05 alıcısı, RX / Flash service ve global nesnesi bu imajda **derleme dışında**. Default firmware'de eski 0x05 değişmeden kalır.
 - Tekli ve toplu 0x0A aynı yetkilendirilmiş grant, tam SHA256, kapsamlı HMAC, exact Flash okuma, tek tek dayanıklı OBS1 release-marker yolundan geçer. **56B count=1 bile HMAC/doğrulama olmadan kayıt silmez.**
-- **0x09 Backend-DURABLE makbuzu ayrı bir güvenlik sınırıdır.** Normal HISTORY için ana ürün hedefi Gateway'in OCQ2'ye dayalı yerel custody ACK'sidir; Backend 0x09 makbuzu tasmanın Gateway ACK'si için ön şart değildir.
+- **0x09 Backend-DURABLE makbuzu ayrı bir güvenlik sınırıdır.** Normal HISTORY için Gateway'in OCQ2'ye dayalı yerel custody ACK'si esastır. Birleşik 0x0A LAB imajı ikinci OBS1 release sahibi olan 0x09 alıcısını **derleme dışında** tutar; ayrı KQ05 LAB imajının 0x09 yolu korunur.
 
 ## Uyarlanabilir politika (deneysel)
 
@@ -73,8 +73,13 @@ Yanlış yönde eklenmiş fakat üretim servisine bağlı olmayan adaptive
 Backend 0x09 grup seçicisi bu daldan geri alındı. Var olan bağımsız
 Backend doğrulama ve makbuz kaynakları değiştirilmedi.
 
-Bu yeni dilimin **host regresyonu ve RAK4630 firmware derlemesi henüz PC'de
-PASS edilmedi**. Sonraki komutlar:
+Bu HISTORY dilimi `e7c2b84e50dd5e2e51892c500ae9c79c91810c09`
+üzerinde operatör PC'sinde host/fake-NOR ve iki RAK4630 imaj derlemesinden
+**PASS** aldı: normal LAB Flash **475.652 B**, RAM **51.464 B**;
+birleşik LAB Flash **482.804 B**, RAM **52.012 B**. Delta **+7.152 B
+Flash / +548 B RAM** (ayrı imajların toplam farkıdır, izole ACK maliyeti
+olarak sunulmaz). Bundan **sonraki sadeleştirme commit'i** henüz
+operatör PC'sinde test edilmedi. Sonraki komutlar:
 
 ```bash
 bash tools/ci/run_kq05_one_ack_host.sh
@@ -85,10 +90,47 @@ Gateway→Edge→Backend kalıcı handoff/reclaim, gerçek yetkilendirilmiş
 LoRa alım pencereleri, çoklu tasma fairness, RF bütçe ve güç ölçümleri
 hâlâ saha kapısıdır. NO UPLOAD / NO ERASE / NO MERGE.
 
+## Sadeleştirme kararı — 19 Kasım 2026
+
+**Ürün için tek kalıcı sorumluluk zinciri korunur:** `OBS1` (Tasma)
+→ `ProductCustodyStore / OCQ2` (Gateway)
+→ `Sf5l0EdgeHandoff` (Edge teslimi ve Gateway reclaim)
+→ mevcut PC Edge/Android köprüsü → mevcut Backend verified ledger.
+Yeni bir OCQ2, Bridge SQLite uploader'ı veya Backend deposu yazılmaz.
+
+**Derleme başına tek Tracker kayıt bırakma sahibi:**
+
+| Derleme | Custody / PERIODIC release sahibi |
+| --- | --- |
+| `rak4630_orun` | Eski yetkili `0x05` sahibi (davranış değiştirilmedi) |
+| `rak4630_kq05_lab` | Eski `0x05` ve ayrı Backend `0x09` yetkileri (eski LAB uyumluluğu; fiziksel çıkış değil) |
+| `rak4630_kq05_unified_ack_lab` | **Yalnız Gateway `0x0A`**. Backend `0x09` RX mailbox, servis ve global release nesnesi derleme dışında. |
+
+İlk iki LAB yolu, kullanıcıya yeni bir ürün modu olarak sunulmaz.
+Yeni tekli/toplu `0x0A` için ayrı wire verifier gerekebilir; fakat
+aynı exact Flash, SecurityStore, OCQ2, Edge handoff veya Backend
+implementasyonunun kopyalanması kabul edilmez.
+
+**Birleştirme ENGELİ:** `main@3df6f512` ile KQ05 HEAD zincirleri
+ayrışmıştır. O tarihli GitHub karşılaştırmasında KQ05 deneysel taraf
+`main`'den 397 commit ileride, güncel `main` ise 11 ayrı commit ileridedir.
+Bu sayılar PR #355'in tek başına büyüklüğü **değildir**; PR #355
+kendi tabanına göre 21 dosya içerir. Main'deki Android arka plan
+Gateway köprüsü ve diğer ürün düzeltmeleri KQ05 dalında yer almaz.
+Doğrudan toplu merge yapılmaz: önce mevcut ürün `rak4630_orun`
+için G0 salt okunur cihaz/anahtar/Flash/servis envanteri, sonra
+yalnız gerekli değişiklikleri **mevcut sahipleri genişleterek** tek
+ürün kaynağına taşıma. Host kanıtı, gerçek LoRa kabulü değildir.
+
+Son sadeleştirme kodu, `0x09`yi yok etmez: yalnız birleşik
+`0x0A` imajında yarışan alternatif release yetkisini ve dolaylı
+RX durumunu kaldırır. Diğer KQ05 test senaryoları korunur. Cihaza
+yükleme / erase / servis / DB / `main` değişikliği yapılmadı.
+
 ## Henüz olmayan ürün kabulü
 
 - Gateway'in güvenilir tasma-periyot profiline bağlanması; 60 dk modunda doğru dinleme/ACK penceresi
-- Normal PERIODIC HISTORY custody için ilk gerçek deneysel Tracker gönderici bağlantısı `TrackerCriticalEventTx::Mode::kPeriodicHistory` ile eklendi. Aynı exact encrypted paket Flash'ta saklanır; Gateway kendi kalıcı OCQ2 deliline dayanarak 0x0A üretir; Tracker ancak grant/HMAC/exact-byte kanıtıyla OBS1 release eder. **Yeni HEAD'in test ve RAK derleme doğrulaması henüz alınmadı; saha onayı değildir.**
+- Normal PERIODIC HISTORY custody için `TrackerCriticalEventTx::Mode::kPeriodicHistory` eklendi. OBS1 exact ciphertext saklanır ve `0x0A` kanıtıyla selective release edilir. `e7c2b84` PC PASS; sonraki sadeleştirme HEAD'i bekliyor. Saha onayı yok.
 - 0x09 Backend zinciri ve tek yetkili kayıt serbest bırakma politikası, Edge/Gateway kalıcı veri saklama sınırları
 - Gerçek SX126x 1/2/5 ACK on-air, zayıf bağlantı/duty budget, çoklu Tracker fairness, restart/revocation ve mA ölçümü
 - Kanıtlanmış ürün derlemesi / #221 P0 saha kabulü
