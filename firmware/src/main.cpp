@@ -262,6 +262,14 @@ orun_tlp::TrackerAcklessLiveTx kq05_live_tx(product_records, product_crypto,
 // it does not switch routine PERIODIC traffic back to per-record ACK.
 orun_tlp::TrackerCriticalEventTx kq05_critical_event_tx(
     product_records, product_crypto, radio_manager);
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+// Same audited exact-before-RF custody engine, lower-priority PERIODIC mode.
+// Separate state; the existing 0x0A owner verifies Gateway custody locally.
+// Critical EVENT keeps a reserved exact cache slot.
+orun_tlp::TrackerCriticalEventTx kq05_history_custody_tx(
+    product_records, product_crypto, radio_manager,
+    orun_tlp::TrackerCriticalEventTx::Mode::kPeriodicHistory);
+#endif
 #endif
 #endif
 #ifdef ORUN_SF5L0_TRACKER
@@ -5167,9 +5175,25 @@ void loop() {
     case orun_tlp::TrackerAcklessLiveTx::Event::kNone:
       break;
   }
-  // Lower-priority retransmission of retained, still-unconfirmed records.
-  // Never send it ahead of LIVE; the scheduler's legal RF duty gate is
-  // mandatory before the experimental build can be field-activated.
+  // Lower-priority HISTORY: the unified 0x0A image requests Gateway-local
+  // custody only AFTER exact ciphertext is committed to the Tracker Flash.
+  // Never turn the freshest LIVE into a blocking custody TX. The other
+  // experiment retains its older ACKless/Backend 0x09 HISTORY behavior.
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  const auto history_event = kq05_history_custody_tx.update(
+      orun_tlp::monotonic::nowMs(),
+      pilot_allowed && !kq05_live_tx.liveSearchPending() &&
+      !kq05_batch_release.pending() &&
+      !tracker_gateway_batch_release.pending());
+  if (history_event == orun_tlp::TrackerCriticalEventTx::Result::kSent) {
+    Serial.printf("KQ05 HISTORY custody TX seq=%lu gateway-ack=pending\n",
+                  static_cast<unsigned long>(
+                      kq05_history_custody_tx.selectedIdentity().sequence));
+  } else if (history_event ==
+             orun_tlp::TrackerCriticalEventTx::Result::kBlocked) {
+    Serial.println(F("KQ05 HISTORY exact evidence failure; retained"));
+  }
+#else
   const auto history_event = kq05_live_tx.updateHistory(
       orun_tlp::monotonic::nowMs(), pilot_allowed);
   if (history_event == orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent) {
@@ -5183,6 +5207,7 @@ void loop() {
              orun_tlp::TrackerAcklessLiveTx::Event::kBadRecord) {
     Serial.println(F("KQ05 HISTORY unsupported/bad retained record"));
   }
+#endif
 #else
   switch (tracker_product_tx.update(pilot_allowed)) {
     case orun_tlp::TrackerProductTxPilot::Event::kCachePending:
