@@ -23,6 +23,10 @@
 #include "config_mutation.h"
 #include "config_store.h"
 #include "custody_ack_release_owner.h"
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+#include "kq05_tracker_batch_release_owner.h"
+#include "kq05_tracker_batch_radio_runtime.h"
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
 #include "kq05_backend_receipt_release_owner.h"
 #endif
@@ -216,6 +220,13 @@ orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort()
 // The only Tracker release owner: grant/HMAC verification precedes flash.
 orun_tlp::CustodyAckReleaseOwner custody_ack_release(security_store,
                                                       product_records);
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+// Disabled-by-default pilot: only authenticated 0x0A may request OBS1 markers.
+orun_tlp::Kq05TrackerBatchReleaseOwner tracker_gateway_batch_release(
+    security_store, product_records);
+orun_tlp::Kq05TrackerBatchRadioRuntime tracker_gateway_batch_runtime(
+    radio_manager, tracker_gateway_batch_release);
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
 orun_tlp::Kq05BackendReceiptReleaseOwner kq05_batch_release(
     security_store, product_records);
@@ -4638,7 +4649,15 @@ void loop() {
   drainGeofencePrepare();
   // ProductRecordStore::poll() has run before this service. A radio receipt
   // never counts as delivery; only a committed release marker does.
-  const auto custody_result = custody_ack_release.service();
+  // Never let the single-ACK owner consume a group release marker outcome.
+  const auto custody_result =
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+      tracker_gateway_batch_release.pending()
+          ? orun_tlp::CustodyAckReleaseOwner::Service::kIdle
+          : custody_ack_release.service();
+#else
+      custody_ack_release.service();
+#endif
   if (custody_result ==
       orun_tlp::CustodyAckReleaseOwner::Service::kDurablyReleased) {
     Serial.println(F("PRODUCT CUSTODY release=DURABLE"));
@@ -4670,7 +4689,11 @@ void loop() {
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
   // One release marker at a time, after product_records.poll(), never
   // concurrently with custody release or a radio TX.
-  if (kq05_batch_release.pending() && !radio_manager.isTransmitting()) {
+  if (kq05_batch_release.pending() && !radio_manager.isTransmitting()
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+      && !tracker_gateway_batch_release.pending()
+#endif
+      ) {
     const auto result = kq05_batch_release.service();
     if (result ==
         orun_tlp::Kq05BackendReceiptReleaseOwner::Service::kApplied)
@@ -4681,6 +4704,25 @@ void loop() {
     else if (result ==
              orun_tlp::Kq05BackendReceiptReleaseOwner::Service::kFailed)
       Serial.println(F("KQ05 BATCH release failed; no success claimed"));
+  }
+#endif
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  // After ProductRecordStore::poll(): one durable marker per loop, never
+  // concurrent with 0x05/Backend release or live position admission.
+  if (tracker_gateway_batch_release.pending() &&
+      !radio_manager.isTransmitting() && !positions.pending() &&
+      !custody_ack_release.pending()
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+      && !kq05_batch_release.pending()
+#endif
+      ) {
+    const auto result=tracker_gateway_batch_release.service();
+    if (result==orun_tlp::Kq05TrackerBatchReleaseOwner::Service::kReleasedOne)
+      Serial.println(F("KQ05 GATEWAY BATCH marker=DURABLE_ONE"));
+    else if (result==orun_tlp::Kq05TrackerBatchReleaseOwner::Service::kApplied)
+      Serial.println(F("KQ05 GATEWAY BATCH all markers=DURABLE"));
+    else if (result==orun_tlp::Kq05TrackerBatchReleaseOwner::Service::kFailed)
+      Serial.println(F("KQ05 GATEWAY BATCH release=FAILED; no other release inferred"));
   }
 #endif
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kGeofenceStore);
