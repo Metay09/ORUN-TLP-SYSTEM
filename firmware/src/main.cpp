@@ -235,6 +235,11 @@ orun_tlp::Kq05BackendReceiptReleaseOwner kq05_batch_release(
     !defined(ORUN_SF5K3V_TRACKER_TX_PILOT)
 #error "KQ05 experimental sender requires explicit SF5K3V Tracker pilot image"
 #endif
+#if defined(ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF) && \
+    (!defined(ORUN_SF5K3V_TRACKER_TX_PILOT) || \
+     !defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE))
+#error "KQ05 0x0A batch RX requires explicit LIVE-first Tracker pilot image"
+#endif
 #ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
 // Explicit test-image activation only; the default product runtime still
 // sends the existing TLP v1/History path until Gateway commissioning is ready.
