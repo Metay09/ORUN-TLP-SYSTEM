@@ -12,11 +12,13 @@ radio = (repo / "firmware/src/radio_manager.cpp").read_text()
 config = (repo / "firmware/platformio.ini").read_text()
 
 flag = "ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF"
-assert "-D" + flag not in config, "experimental group RX must be disabled by default"
+assert "-D" + flag not in config.split("[env:rak4630_kq05_unified_ack_lab]",1)[0], "default images must not enable batch"
+assert "-D" + flag in config.split("[env:rak4630_kq05_unified_ack_lab]",1)[1].split("[env:",1)[0], "dedicated lab must opt in"
 assert main.count("Kq05TrackerBatchRadioRuntime tracker_gateway_batch_runtime(") == 1
 assert main.count("Kq05TrackerBatchReleaseOwner tracker_gateway_batch_release(") == 1
 assert main.count("tracker_gateway_batch_runtime.receive(") == 1
 assert main.count("tracker_gateway_batch_release.service()") == 1
+assert "#ifndef " + flag in main, "legacy single owner must be compile-excluded from unified image"
 assert main.count("custody_ack_release.service()") == 1
 assert main.count("custody_ack_release.submit(") == 1
 assert main.count("kq05_batch_release.submit(") == 1

@@ -22,7 +22,9 @@
 #include "ble_application_transport.h"
 #include "config_mutation.h"
 #include "config_store.h"
-#include "custody_ack_release_owner.h"
+#ifndef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+#include "custody_ack_release_owner.h" // Legacy 0x05, excluded from unified pilot
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
 #include "kq05_tracker_batch_release_owner.h"
 #include "kq05_tracker_batch_radio_runtime.h"
@@ -217,9 +219,11 @@ void refreshApplicationStatusSnapshot(uint32_t now_ms);
 // credentials or weakens the existing recovery-only provisioning boundary.
 orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort(),
                                        storage_flash_gate.securityMaintPort());
-// The only Tracker release owner: grant/HMAC verification precedes flash.
+#ifndef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+// Default 0x05 product image: preserve the already-qualified legacy owner.
 orun_tlp::CustodyAckReleaseOwner custody_ack_release(security_store,
                                                       product_records);
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
 // Disabled-by-default pilot: only authenticated 0x0A may request OBS1 markers.
 orun_tlp::Kq05TrackerBatchReleaseOwner tracker_gateway_batch_release(
@@ -3318,7 +3322,13 @@ void handleRoleCommand() {
     role_command_length = 0;
     const bool tracking_enabled = serviceRuns(resolveRuntimeConfig().tracking);
     if (tracking_enabled || bench_pacer.enabled() ||
-        bench_pacer.awaitingAck() || custody_ack_release.pending() ||
+        bench_pacer.awaitingAck() ||
+#ifndef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+        custody_ack_release.pending() ||
+#else
+        tracker_gateway_batch_release.pending() ||
+        kq05_batch_release.pending() ||
+#endif
         !product_records.requestBenchClear()) {
       Serial.println(F("BENCH TRACKER ERASE rejected: stop tracking "
                        "(APP SERVICES NONE), stop drain (BENCH DRAIN OFF), "
@@ -4654,8 +4664,8 @@ void loop() {
   drainGeofencePrepare();
   // ProductRecordStore::poll() has run before this service. A radio receipt
   // never counts as delivery; only a committed release marker does.
-  // The 0x05 owner immediately returns kIdle if it has no pending
-  // marker. Batch RX admission never overlaps an active 0x05 owner.
+#ifndef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  // Legacy-only 0x05 custody release. Unified 0x0A pilot does not link it.
   const auto custody_result = custody_ack_release.service();
   if (custody_result ==
       orun_tlp::CustodyAckReleaseOwner::Service::kDurablyReleased) {
@@ -4685,6 +4695,7 @@ void loop() {
              orun_tlp::CustodyAckReleaseOwner::Service::kFailed) {
     Serial.println(F("PRODUCT CUSTODY release=FAILED"));
   }
+#endif // !ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
   // One release marker at a time, after product_records.poll(), never
   // concurrently with custody release or a radio TX.
@@ -4709,8 +4720,7 @@ void loop() {
   // After ProductRecordStore::poll(): one durable marker per loop, never
   // concurrent with 0x05/Backend release or live position admission.
   if (tracker_gateway_batch_release.pending() &&
-      !radio_manager.isTransmitting() && !positions.pending() &&
-      !custody_ack_release.pending()
+      !radio_manager.isTransmitting() && !positions.pending()
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
       && !kq05_batch_release.pending()
 #endif
@@ -4903,7 +4913,10 @@ void loop() {
   static uint8_t kq05_receipt_transient_tries = 0U;
   static uint32_t kq05_receipt_retry_after_ms = 0U;
   if (radio_manager.role() == orun_tlp::NodeRole::kTracker &&
-      !custody_ack_release.pending() && !kq05_batch_release.pending()
+#ifndef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+      !custody_ack_release.pending() &&
+#endif
+      !kq05_batch_release.pending()
 #ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
       && !tracker_gateway_batch_release.pending()
 #endif
@@ -4948,7 +4961,6 @@ void loop() {
   if (radio_manager.role() == orun_tlp::NodeRole::kTracker) {
     const bool allowed=ble_ready && !positions.pending() &&
         !radio_manager.isTransmitting() &&
-        !custody_ack_release.pending() &&
         product_records.mounted() && product_records.store().ready() &&
         security_store.ready() &&
         security_store.state()==orun_tlp::SecurityState::kProvisioned &&
@@ -4969,6 +4981,7 @@ void loop() {
   }
 #endif
 
+#ifndef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
   // SF5K3U: loop-only Tracker ACK intake, after radio callback dispatch and
   // outside the driver gate. The mailbox contains UNTRUSTED wire bytes.
   // Release is strictly delegated to the existing SecurityStore/HMAC and
@@ -5021,6 +5034,7 @@ void loop() {
       memset(ack.payload, 0, sizeof(ack.payload));
     }
   }
+#endif // !ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
 
 #ifdef ORUN_SF5L0_TRACKER
   if (trackerStorage()) pollBenchTracker();
@@ -5094,7 +5108,10 @@ void loop() {
   const bool pilot_allowed = ble_ready && tracking_enabled &&
       radio_manager.role() == orun_tlp::NodeRole::kTracker &&
       !positions.pending() && !radio_manager.relayForwardingEnabled() &&
-      !custody_ack_release.pending() && security_store.ready() &&
+#ifndef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+      !custody_ack_release.pending() &&
+#endif
+      security_store.ready() &&
       security_store.state() == orun_tlp::SecurityState::kProvisioned &&
       !security_store.busy() && product_records.mounted() &&
       product_records.store().ready()

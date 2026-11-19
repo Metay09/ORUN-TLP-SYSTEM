@@ -11,7 +11,8 @@ platform = (root / "firmware/platformio.ini").read_text()
 radio = (root / "firmware/src/radio_manager_kq05_gateway_batch_ack.cpp").read_text()
 
 flag = "ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF"
-assert "-D" + flag not in platform, "default RAK images must not enable batch"
+assert "-D" + flag not in platform.split("[env:rak4630_kq05_unified_ack_lab]",1)[0], "regular images must not enable batch"
+assert "-D" + flag in platform.split("[env:rak4630_kq05_unified_ack_lab]",1)[1].split("[env:",1)[0], "dedicated lab target must opt in"
 for needle in (
     '#include "kq05_gateway_batch_collector.h"',
     '#include "kq05_gateway_batch_runtime.h"',
