@@ -260,6 +260,7 @@ void testCrashAfterOneMarkerRequiresNewRemainingSubsetAck() {
 
 } // namespace
 
+#ifndef ORUN_KQ05_TRACKER_BATCH_RADIO_RUNTIME_HOST_TEST
 int main() {
   // Run the inherited real SecurityStore full-digest/HMAC regressions too.
   // They are intentionally included in this translation unit; do not
@@ -273,5 +274,6 @@ int main() {
   testCrashAfterOneMarkerRequiresNewRemainingSubsetAck();
   puts("KQ05 Tracker 1..5 REAL V3 HMAC -> selective durable OBS1 marker, failure/reboot: PASS (HOST ONLY)");
   puts("NO LORA TX/RX, NO REAL FLASH, NO WHOLE REGION ERASE, NO DEVICE UPLOAD");
-  return 0;  // Reusable under a renamed main() in a larger PC regression.
+  return 0;
 }
+#endif  // ORUN_KQ05_TRACKER_BATCH_RADIO_RUNTIME_HOST_TEST
