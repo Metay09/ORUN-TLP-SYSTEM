@@ -73,7 +73,7 @@ bool RadioManager::sendAuthorizedKq05GatewayBatchAck(
   }
   Serial.printf(
       "TX KQ05_GATEWAY_BATCH_ACK tracker=%08lX%08lX "
-      "gateway=%08lX%08lX count=%u len=%u outcome=pending\\n",
+      "gateway=%08lX%08lX count=%u len=%u outcome=pending\n",
       static_cast<unsigned long>(uint32_t(parsed.tracker_device_id >> 32)),
       static_cast<unsigned long>(uint32_t(parsed.tracker_device_id)),
       static_cast<unsigned long>(uint32_t(device_id_ >> 32)),
