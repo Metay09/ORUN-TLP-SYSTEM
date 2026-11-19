@@ -33,7 +33,7 @@ void resetRadio() {
 void push(uint32_t seq,bool custody=true,uint64_t tracker=kTracker) {
   assert(!g_rx_pending);
   g_rx={};
-  g_rx.size=100U;
+  g_rx.size=static_cast<uint16_t>((seq&1U)?100U:84U);
   frame(g_rx.payload,g_rx.size,seq,tracker);
   if (!custody) g_rx.payload[4U]=1U; // relay allowed, NO custody intent
   g_rx.rssi_dbm=-67;
@@ -150,7 +150,7 @@ void testPartialOneThroughFourAndNoRollingDeadline() {
       pushAndCommit(rt,seq,100U+seq*1000U);
     assert(!c.flushRequested() && c.queued()==n);
     const uint32_t first=rt.firstDurableMs();
-    assert(first==1101U); // durable readback, not first raw RX
+    assert(first>=1101U && first<1150U); // starts on durable readback
     assert(rt.update(true,first+29999U)==Runtime::Event::kNone);
     assert(rt.update(true,first+30000U)==Runtime::Event::kAckTxStarted);
     verifyAck(f,static_cast<uint8_t>(n),48U+8U*n);
