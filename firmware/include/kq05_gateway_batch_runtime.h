@@ -33,10 +33,12 @@ class Kq05GatewayBatchRuntime final {
   Kq05GatewayBatchRuntime(RadioManager& radio,
                           Kq05GatewayBatchCollector& collector,
                           GatewayProductLiveIngress& live,
-                          uint32_t partial_flush_ms = kDefaultPartialFlushMs)
+                          uint32_t partial_flush_ms = kDefaultPartialFlushMs,
+                          bool expedite_events = true)
       : radio_(radio), collector_(collector), live_(live),
         partial_flush_ms_(partial_flush_ms==0U
-            ? kDefaultPartialFlushMs : partial_flush_ms) {}
+            ? kDefaultPartialFlushMs : partial_flush_ms),
+        expedite_events_(expedite_events) {}
 
   Event update(bool enabled, uint32_t now_ms);
   Event updateGuarded(const GatewayProductStartupGuard& gate,
@@ -60,6 +62,10 @@ class Kq05GatewayBatchRuntime final {
   Kq05GatewayBatchCollector& collector_;
   GatewayProductLiveIngress& live_;
   uint32_t partial_flush_ms_;
+  // EVENT custody gets a one-object 0x0A acknowledgement immediately after
+  // durable OCQ2 commit; 1..5 batching remains available for non-EVENT.
+  bool expedite_events_=true;
+  bool event_write_pending_=false;
   uint32_t first_durable_ms_=0U;
   bool timer_armed_=false;
   int16_t last_rssi_=0;

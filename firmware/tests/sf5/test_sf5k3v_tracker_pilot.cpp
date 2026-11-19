@@ -617,6 +617,61 @@ void acklessSolitaryLiveEventuallyRetries() {
 }
 
 
+// 30 consecutive one-minute LIVE opportunities with NO 0x05/0x09/0x0A
+// receipt and the entire legacy four-object exact custody cache occupied.
+// Five old packets are retained before the first fresh minute; not one old
+// marker may silently release, and the latest 30 positions must still TX.
+void acklessThirtyMinutesNoAckStillSendsFresh() {
+  resetFakes();
+  FakeFlash flash;
+  FixedIncarnation source;
+  ProductRecordStore records(flash, kPages, &source);
+  records.begin(kDevice, kTracker);
+  assert(records.mounted());
+  orun_tlp::SecurityStore security(flash, flash);
+  orun_tlp::ProductSecureCrypto crypto(security);
+  orun_tlp::RadioManager radio;
+
+  Pilot old_pilot(records, crypto, radio);
+  old_pilot.setLiveOnly(true);
+  for (uint32_t seq=1U;seq<=4U;++seq) {
+    assert(store(records,seq).stored);
+    assert(sendOne(records,old_pilot).sequence==seq);
+  }
+  assert(store(records,5U).stored);
+  uint16_t exact=0U;
+  assert(records.store().exactObjectCount(exact) && exact==4U);
+
+  orun_tlp::TrackerAcklessLiveTx live(records, crypto, radio);
+  for (uint32_t minute=1U;minute<=30U;++minute) {
+    const uint32_t sequence=minute+5U; // 6..35, beyond old five
+    const uint32_t now=minute*60000U;
+    assert(store(records,sequence).stored);
+    const unsigned before=g_sends;
+    assert(live.update(now,true)==
+           orun_tlp::TrackerAcklessLiveTx::Event::kSent);
+    assert(live.lastSent().sequence==sequence);
+    assert(g_sends==before+1U); // latest not gated by any old ACK
+    // HISTORY may use spare opportunities but must never release anything
+    // or consume one of the four legacy exact-cache slots.
+    const auto history=live.updateHistory(now+1U,true);
+    assert(history==orun_tlp::TrackerAcklessLiveTx::Event::kNone ||
+           history==orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent);
+    assert(records.store().exactObjectCount(exact) && exact==4U);
+  }
+  assert(live.sentCount()==30U);
+  assert(live.lastSent().sequence==35U);
+  for (uint32_t seq : {1U,4U,5U,6U,35U}) {
+    osf::RecordIdentity id{};
+    id.incarnation=live.lastSent().incarnation;
+    id.sequence=seq;
+    ObservationStore::Record retained{};
+    assert(records.store().lookup(id,retained)==
+           ObservationStore::LookupResult::kFound);
+    assert(!retained.released && !retained.release_uncertain);
+  }
+}
+
 }  // namespace
 
 // The critical EVENT regression embeds these fake NOR/radio fixtures.
@@ -627,6 +682,7 @@ int sf5k3v_pilot_embedded_main() {
 #else
 int main() {
 #endif
+  acklessThirtyMinutesNoAckStillSendsFresh();
   acklessSolitaryLiveEventuallyRetries();
   acklessLiveDoesNotStallOnEventTail();
   acklessHistoryIsPacedAndNeverReleases();

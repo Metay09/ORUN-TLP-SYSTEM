@@ -114,7 +114,7 @@ void testFiveImmediateAndLostAckDuplicate() {
   Collector c(f.store,f.grants,kGateway);
   Live live(f.store,f.grants,kGateway);
   orun_tlp::RadioManager radio;
-  Runtime rt(radio,c,live,120000U);
+  Runtime rt(radio,c,live,120000U,false);
   for(uint32_t n=1U;n<=5U;++n) {
     pushAndCommit(rt,n,n*1000U);
     assert(c.queued()==n);
@@ -145,7 +145,7 @@ void testPartialOneThroughFourAndNoRollingDeadline() {
     Collector c(f.store,f.grants,kGateway);
     Live live(f.store,f.grants,kGateway);
     orun_tlp::RadioManager radio;
-    Runtime rt(radio,c,live,30000U);
+    Runtime rt(radio,c,live,30000U,false);
     for(uint32_t seq=1U;seq<=n;++seq)
       pushAndCommit(rt,seq,100U+seq*1000U);
     assert(!c.flushRequested() && c.queued()==n);
@@ -164,7 +164,7 @@ void testFullGroupCannotBlockIndependentLive() {
   Collector c(f.store,f.grants,kGateway);
   Live live(f.store,f.grants,kGateway);
   orun_tlp::RadioManager radio;
-  Runtime rt(radio,c,live,120000U);
+  Runtime rt(radio,c,live,120000U,false);
   for(uint32_t n=1U;n<=5U;++n)
     pushAndCommit(rt,n,100U*n);
   assert(c.queued()==5U && c.flushRequested());
@@ -197,7 +197,7 @@ void testRevokeDisableForeignTrackerAndWraparound() {
   Collector c(f.store,f.grants,kGateway);
   Live live(f.store,f.grants,kGateway);
   orun_tlp::RadioManager radio;
-  Runtime rt(radio,c,live,30000U);
+  Runtime rt(radio,c,live,30000U,false);
   pushAndCommit(rt,1U,UINT32_MAX-1000U);
   const uint32_t first=rt.firstDurableMs();
   // Simulated NOR can need multiple poll steps. Deadline must wrap correctly
@@ -223,7 +223,7 @@ void testRevokeDisableForeignTrackerAndWraparound() {
   Fixture f2;
   Collector c2(f2.store,f2.grants,kGateway);
   Live live2(f2.store,f2.grants,kGateway);
-  Runtime rt2(radio,c2,live2,120000U);
+  Runtime rt2(radio,c2,live2,120000U,false);
   pushAndCommit(rt2,1U,100U);
   push(2U,true,kTracker+1U);
   assert(rt2.update(true,200U)==Runtime::Event::kCustodyDeferred);
@@ -233,8 +233,47 @@ void testRevokeDisableForeignTrackerAndWraparound() {
 }
 } // namespace
 
+void testCriticalEventImmediateAndLostDownlinkRetry() {
+  resetRadio();
+  Fixture f;
+  Collector c(f.store,f.grants,kGateway);
+  Live live(f.store,f.grants,kGateway);
+  orun_tlp::RadioManager radio;
+  Runtime rt(radio,c,live,120000U); // production candidate: urgent EVENT on
+
+  // In this fixture EVEN sequence has EVENT family (84 bytes). An EVENT
+  // must not sit in the 1..5 group until unrelated traffic arrives.
+  pushAndCommit(rt,2U,1000U);
+  assert(c.queued()==1U && c.flushRequested());
+  assert(rt.update(true,1050U)==Runtime::Event::kAckTxStarted);
+  ack::Header decoded{};
+  assert(ack::decode(g_tx_wire,g_tx_length,decoded));
+  assert(decoded.count==1U && g_tx_length==56U);
+  assert(c.queued()==0U);
+
+  // Simulate lost downlink: Tracker still retains the same exact EVENT
+  // and retransmits it. OCQ2 must dedupe and promptly re-ACK it.
+  const size_t writes=f.flash.writes;
+  push(2U);
+  assert(rt.update(true,1100U)==Runtime::Event::kDuplicate);
+  assert(f.flash.writes==writes);
+  assert(c.queued()==1U && c.flushRequested());
+  assert(rt.update(true,1101U)==Runtime::Event::kAckTxStarted);
+  assert(g_tx_sends==2U && c.queued()==0U && f.flash.writes==writes);
+
+  // A PERIODIC custody candidate is NOT promoted to urgent EVENT:
+  // its partial-group timer remains independent of fresh LIVE traffic.
+  pushAndCommit(rt,1U,2000U);
+  assert(c.queued()==1U && !c.flushRequested());
+  const uint32_t first=rt.firstDurableMs();
+  assert(rt.update(true,first+119999U)==Runtime::Event::kNone);
+  assert(rt.update(true,first+120000U)==Runtime::Event::kAckTxStarted);
+  assert(g_tx_sends==3U);
+}
+
 int main() {
   kq05_durable_gateway_fixture_main();
+  testCriticalEventImmediateAndLostDownlinkRetry();
   testFiveImmediateAndLostAckDuplicate();
   testPartialOneThroughFourAndNoRollingDeadline();
   testFullGroupCannotBlockIndependentLive();
