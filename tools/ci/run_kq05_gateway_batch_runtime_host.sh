@@ -5,6 +5,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+echo "=== KQ05 GATEWAY MAIN LOOP / PRIORITY / RECLAIM CONTRACT ==="
+PYTHONDONTWRITEBYTECODE=1 python3 \
+  firmware/tests/sf5/test_kq05_gateway_batch_runtime_source.py
+
 g++ -std=gnu++11 -O1 -g -Wall -Wextra -Werror \
   -Wno-conversion -Wno-sign-conversion \
   -DORUN_KQ05_BATCH_HMAC_HOST_TEST=1 \
