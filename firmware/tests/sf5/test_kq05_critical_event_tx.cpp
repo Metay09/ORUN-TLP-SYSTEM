@@ -160,10 +160,111 @@ void noAckNeverReleasesEvent() {
          ObservationStore::LookupResult::kFound);
   assert(!retained.released);
 }
+
+void periodicHistoryGatewayCustodyNeverGatesLatest() {
+  resetFakes();
+  FakeFlash flash;
+  FixedIncarnation source;
+  ProductRecordStore records(flash, kPages, &source);
+  records.begin(kDevice, kTracker);
+  assert(records.mounted());
+  for (uint32_t sequence = 1U; sequence <= 8U; ++sequence)
+    assert(store(records, sequence).stored);
+
+  orun_tlp::SecurityStore security(flash, flash);
+  orun_tlp::ProductSecureCrypto crypto(security);
+  orun_tlp::RadioManager radio;
+  EventSender history(records, crypto, radio,
+                       EventSender::Mode::kPeriodicHistory);
+  EventSender urgent(records, crypto, radio);
+  orun_tlp::TrackerAcklessLiveTx live(records, crypto, radio);
+  assert(history.historyMode() && !urgent.historyMode());
+
+  // History cache fills only four exact slots, leaving one for critical
+  // EVENT. Every selected periodic packet is sealed once and Flash-cached
+  // BEFORE its first custody-requested over-the-air attempt.
+  for (uint32_t index = 0U; index < 4U; ++index) {
+    const uint32_t now_ms = 1000U + index * 60005U;
+    assert(history.update(now_ms, true) ==
+           EventSender::Result::kCachePending);
+    assert(g_sends == index && g_seals == index + 1U);
+    durableCache(records, history, now_ms + 1U);
+    assert(history.update(now_ms + 2U, true) ==
+           EventSender::Result::kSent);
+    assert(history.selectedIdentity().sequence == index + 1U);
+    orun_tlp::tlp::ProductSecureFrame decoded{};
+    assert(orun_tlp::tlp::decodeProductSecureFrame(
+        g_last, g_last_size, &decoded) ==
+        orun_tlp::tlp::ProductSecureCodecResult::kOk);
+    assert(decoded.app_family ==
+           orun_tlp::tlp::kProductAppFamilyPeriodic);
+    assert((decoded.path_flags &
+            orun_tlp::tlp::kProductPathFlagCustodyRequested) != 0U);
+  }
+  uint16_t exact = 0U;
+  assert(records.store().exactObjectCount(exact) &&
+         exact == EventSender::kHistoryCacheCeiling);
+  const unsigned flash_after_cache = flash.program_calls;
+
+  // New LIVE seq8 does not consume an exact slot or wait for Gateway ACK.
+  assert(live.update(190000U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kSent);
+  assert(live.lastSent().sequence == 8U);
+  assert(flash.program_calls == flash_after_cache);
+  orun_tlp::tlp::ProductSecureFrame latest{};
+  assert(orun_tlp::tlp::decodeProductSecureFrame(
+      g_last, g_last_size, &latest) ==
+      orun_tlp::tlp::ProductSecureCodecResult::kOk);
+  assert((latest.path_flags &
+          orun_tlp::tlp::kProductPathFlagCustodyRequested) == 0U);
+
+  const unsigned seals_before_retry = g_seals;
+  assert(history.update(241020U, true) ==
+         EventSender::Result::kSent);
+  assert(history.selectedIdentity().sequence == 1U);
+  assert(history.update(241021U, true) == EventSender::Result::kNone);
+  assert(history.update(301030U, true) ==
+         EventSender::Result::kSent);
+  assert(history.selectedIdentity().sequence == 2U);
+  assert(g_seals == seals_before_retry);
+  assert(flash.program_calls == flash_after_cache);
+  assert(records.store().exactObjectCount(exact) &&
+         exact == EventSender::kHistoryCacheCeiling);
+
+  // An urgent EVENT can still claim the reserved fifth exact slot and send
+  // with its own priority while earlier HISTORY custody is unconfirmed.
+  appendDurableEvent(records);  // EVENT seq9
+  assert(urgent.update(301100U, true) ==
+         EventSender::Result::kCachePending);
+  durableCache(records, urgent, 301101U);
+  assert(urgent.update(301102U, true) == EventSender::Result::kSent);
+  assert(urgent.selectedIdentity().sequence == 9U);
+  assert(records.store().exactObjectCount(exact) &&
+         exact == osf::kMaxExactCustodyObjects);
+
+  // 5/5 exact slots occupied and NO ACK from Gateway: LIVE seq10 still
+  // transmits, with NO custody/cache prerequisite and no false release.
+  assert(store(records, 10U).stored);
+  assert(live.update(301200U, true) ==
+         orun_tlp::TrackerAcklessLiveTx::Event::kSent);
+  assert(live.lastSent().sequence == 10U);
+  assert(records.store().exactObjectCount(exact) &&
+         exact == osf::kMaxExactCustodyObjects);
+  for (uint32_t sequence : {1U, 4U, 8U, 9U, 10U}) {
+    osf::RecordIdentity id{};
+    id.incarnation = live.lastSent().incarnation;
+    id.sequence = sequence;
+    ObservationStore::Record item{};
+    assert(records.store().lookup(id, item) ==
+           ObservationStore::LookupResult::kFound);
+    assert(!item.released && !item.release_uncertain);
+  }
+}
 }  // namespace
 
 int main() {
   eventCustodyRetryAndRelease();
   noAckNeverReleasesEvent();
-  puts("KQ05 critical EVENT exact-cache / existing custody ACK / LIVE bypass: PASS (PC fake NOR)");
+  periodicHistoryGatewayCustodyNeverGatesLatest();
+  puts("KQ05 EVENT + PERIODIC HISTORY exact custody / 5-of-5 LIVE bypass: PASS (PC fake NOR)");
 }
