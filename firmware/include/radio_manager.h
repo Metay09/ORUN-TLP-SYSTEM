@@ -3,6 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "custody_ack.h"
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+#include "kq05_gateway_batch_custody_ack.h"
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
 #include "kq05_backend_receipt.h"
 #endif
@@ -18,6 +21,9 @@ namespace orun_tlp {
 
 struct GnssFix;
 class GatewayCustodyAuthorizedIngress;
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+class Kq05GatewayBatchCollector;
+#endif
 
 enum class RadioListenState : uint8_t {
   kRxContinuous,
@@ -53,6 +59,11 @@ struct RadioEventDiagnostics {
   uint32_t custody_ack_rx_queued = 0;
   uint32_t custody_ack_rx_drops = 0;
   uint32_t custody_ack_tx_attempts = 0;
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  uint32_t kq05_gateway_batch_ack_rx_queued = 0;
+  uint32_t kq05_gateway_batch_ack_rx_drops = 0;
+  uint32_t kq05_gateway_batch_ack_tx_attempts = 0;
+#endif
 };
 
 struct HistorySecureRxFrame {
@@ -78,6 +89,16 @@ struct CustodyAckRxFrame {
   int8_t snr_db = 0;
   uint8_t payload[custody_ack::kWireSize]{};
 };
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+// Tracker-only UNTRUSTED canonical v2/type0x0A (56..88B) mailbox.
+// This is NOT HMAC authorization, durable delivery, or an OBS1 release.
+struct Kq05GatewayBatchAckRxFrame {
+  uint16_t size = 0;
+  int16_t rssi_dbm = 0;
+  int8_t snr_db = 0;
+  uint8_t payload[kq05_gateway_batch_ack::kMaxSize]{};
+};
+#endif
 
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
 // Untrusted, structurally admitted Backend receipt. NEVER a release token.
@@ -154,6 +175,16 @@ class RadioManager {
   // Tracker-only, exact raw 56-byte ACK from driver callback mailbox.
   // The consumer MUST separately check durable grant and full HMAC.
   bool takeCustodyAckFrame(CustodyAckRxFrame* frame);
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  // Only the protected Gateway collector can build 0x0A bytes;
+  // RadioManager has no public raw group ACK send API.
+  bool sendAuthorizedKq05GatewayBatchAck(Kq05GatewayBatchCollector& collector);
+  // A temporary OBS1/SecurityStore busy state MUST NOT destroy the
+  // received exact bytes: leave pending and retry in the loop.
+  bool peekKq05GatewayBatchAckFrame(Kq05GatewayBatchAckRxFrame* frame) const;
+  void discardKq05GatewayBatchAckFrame();
+  bool takeKq05GatewayBatchAckFrame(Kq05GatewayBatchAckRxFrame* frame);
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
   // Non-consuming inspection: transient storage/security busy conditions must
   // not silently discard a valid backend receipt.
@@ -272,6 +303,10 @@ class RadioManager {
   bool product_secure_rx_pending_ = false;
   CustodyAckRxFrame custody_ack_rx_{};
   bool custody_ack_rx_pending_ = false;
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  Kq05GatewayBatchAckRxFrame kq05_gateway_batch_ack_rx_{};
+  bool kq05_gateway_batch_ack_rx_pending_ = false;
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
   Kq05BatchReceiptRxFrame kq05_batch_rx_{};
   bool kq05_batch_rx_pending_ = false;
