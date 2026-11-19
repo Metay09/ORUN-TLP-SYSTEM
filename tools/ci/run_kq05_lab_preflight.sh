@@ -71,6 +71,8 @@ echo "=== KQ05 REAL RADIOMANAGER EXPERIMENTAL 0x0A RX / TX COMPILATION ==="
 bash tools/ci/run_kq05_gateway_batch_radio_transport_host.sh
 echo "=== KQ05 TRACKER REAL 0x0A RADIO MAILBOX -> V3 HMAC / OBS1 RELEASE LOOP ==="
 bash tools/ci/run_kq05_tracker_batch_radio_runtime_host.sh
+echo "=== KQ05 GATEWAY 1..5 ACK SCHEDULE / LIVE / RECLAIM ==="
+bash tools/ci/run_kq05_gateway_batch_runtime_host.sh
 echo "=== KQ05 4/5 TRACKER RECEIPT/FLASH ==="
 bash tools/ci/run_kq05_backend_receipt_release_host.sh
 echo "=== KQ05 5/5 ISOLATED RAK4630 LAB BUILD ==="
