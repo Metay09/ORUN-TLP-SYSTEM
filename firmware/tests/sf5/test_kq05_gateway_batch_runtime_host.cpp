@@ -233,6 +233,41 @@ void testRevokeDisableForeignTrackerAndWraparound() {
 }
 } // namespace
 
+// A full five-record ACK group and an indefinitely blocked downlink must
+// never become a five-record RX window. Fresh noncustody PERIODIC packets
+// continue to reach independent durable OCQ2 storage for 30 report cycles.
+void testThirtyLivePacketsWhileAckBlocked() {
+  resetRadio();
+  Fixture f;
+  Collector c(f.store,f.grants,kGateway);
+  Live live(f.store,f.grants,kGateway);
+  orun_tlp::RadioManager radio;
+  Runtime rt(radio,c,live,120000U,false); // force full five-group coverage
+  for (uint32_t seq=1U;seq<=5U;++seq)
+    pushAndCommit(rt,seq,seq*100U);
+  assert(c.queued()==5U && c.flushRequested());
+  g_tx_allowed=false; // No batch ACK can be transmitted, for 30 cycles.
+
+  for (uint32_t cycle=0U;cycle<30U;++cycle) {
+    const uint32_t now=1000U+cycle*60000U;
+    const uint32_t seq=101U+cycle*2U; // odd: PERIODIC 100 B, no custody
+    push(seq,false);
+    assert(rt.update(true,now)==Runtime::Event::kLiveStarted);
+    auto event=Runtime::Event::kNone;
+    for (unsigned poll=0U;poll<50U;++poll) {
+      event=rt.update(true,now+1U+poll);
+      if (event!=Runtime::Event::kNone) break;
+    }
+    assert(event==Runtime::Event::kLiveDurable);
+    assert(c.queued()==5U && c.flushRequested() && g_tx_sends==0U);
+  }
+
+  // The pending ACK is still intact; it resumes only when radio is free.
+  g_tx_allowed=true;
+  assert(rt.update(true,2000000U)==Runtime::Event::kAckTxStarted);
+  assert(c.queued()==0U && g_tx_sends==1U);
+}
+
 void testCriticalEventImmediateAndLostDownlinkRetry() {
   resetRadio();
   Fixture f;
@@ -287,6 +322,7 @@ void testCriticalEventImmediateAndLostDownlinkRetry() {
 
 int main() {
   kq05_durable_gateway_fixture_main();
+  testThirtyLivePacketsWhileAckBlocked();
   testCriticalEventImmediateAndLostDownlinkRetry();
   testFiveImmediateAndLostAckDuplicate();
   testPartialOneThroughFourAndNoRollingDeadline();
