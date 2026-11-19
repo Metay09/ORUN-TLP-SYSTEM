@@ -7,8 +7,8 @@
 
 namespace orun_tlp {
 namespace {
-namespace osf=observation_store_format;
-namespace osc=observation_store_control;
+// Reuse orun_tlp::osf / orun_tlp::osc from observation_store.h.
+// Local anonymous-namespace aliases conflict with them on GCC 7.
 
 void wipe(void* memory, size_t n) {
   volatile uint8_t* p=static_cast<volatile uint8_t*>(memory);
