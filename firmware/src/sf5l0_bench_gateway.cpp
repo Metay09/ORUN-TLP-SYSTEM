@@ -546,10 +546,24 @@ void service(bool observation_store_mounted) {
       ++custody_started;
       Serial.println(F("BENCH GW RX record; durable custody write started"));
       break;
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+    case Event::kCustodyDurable:
+      emit_pending = true;
+      Serial.println(F("KQ05 GW OCQ2 durable; queued for 1..5 batch ACK"));
+      break;
+    case Event::kDuplicate:
+      ++duplicates;
+      Serial.println(F("KQ05 GW duplicate durable; batch ACK pending"));
+      break;
+    case Event::kCustodyDeferred:
+      Serial.println(F("KQ05 GW custody deferred; existing group flush requested, peer retries"));
+      break;
+#else
     case Event::kDuplicateHeld:
       ++duplicates;
       Serial.println(F("BENCH GW RX duplicate already held; ACK deferred"));
       break;
+#endif
     case Event::kDenied:
       ++denied;
       Serial.println(F("BENCH GW RX denied (no grant for this Tracker, e.g. "
@@ -558,7 +572,11 @@ void service(bool observation_store_mounted) {
     case Event::kAckTxStarted:
       ++ack_tx;
       emit_pending = true;
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+      Serial.println(F("KQ05 GW 0x0A batch ACK TX started; Tracker receipt unconfirmed"));
+#else
       Serial.println(F("BENCH GW ACK TX started (after durable custody)"));
+#endif
       break;
     case Event::kNone:
       break;
