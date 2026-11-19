@@ -127,7 +127,8 @@ Kq05GatewayBatchRuntime::update(bool enabled, uint32_t now_ms) {
         // become a 2..5 item ACK, without waiting for a full group or
         // resetting this deadline when another retry arrives.
         syncTimer(now_ms);
-        if (trusted_sparse_single_ack_ && collector_.queued()==1U) {
+        if ((expedite_events_ && is_event) ||
+            (trusted_sparse_single_ack_ && collector_.queued()==1U)) {
           (void)collector_.requestFlush();
         } else if (!retry_timer_armed_) {
           first_retry_ms_=now_ms;
