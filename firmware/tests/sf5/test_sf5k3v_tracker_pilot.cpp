@@ -65,6 +65,10 @@ bool RadioManager::sendProductSecurePacket(const uint8_t* object, size_t n) {
 
 namespace {
 using Pilot = orun_tlp::TrackerProductTxPilot;
+// KQ05 Gateway batch builds reserve five exact custody-object slots.
+// Tests must saturate the actual capacity, not a stale four-slot boundary.
+constexpr uint32_t kExactSlots = osf::kMaxExactCustodyObjects;
+static_assert(kExactSlots == 5U, "KQ05 exact custody capacity changed");
 void driveCache(ProductRecordStore& records, Pilot& pilot) {
   bool ready = false;
   for (unsigned i = 0; i < 10000U; ++i) {
@@ -229,16 +233,21 @@ void liveFirst() {
   assert(store(records, 4).stored);
   assert(sendOne(records, pilot).sequence == 4U && g_seals == 2U);
   assert(sendOne(records, pilot).sequence == 4U);
-  // Fill the cache (records 5, 6 -> 4 cached objects: 3,4,5,6).
-  assert(store(records, 5).stored);
-  assert(sendOne(records, pilot).sequence == 5U);
-  assert(store(records, 6).stored);
-  assert(sendOne(records, pilot).sequence == 6U && g_seals == 4U);
-  // Cache full, newest (7) and oldest (1) uncached: re-send the newest
-  // cached object unchanged instead of blocking; nothing is evicted.
-  assert(store(records, 7).stored);
+  // Fill all five exact slots: 3,4,5,6,7.
+  for (uint32_t seq = 5U; seq <= 7U; ++seq) {
+    assert(store(records, seq).stored);
+    assert(sendOne(records, pilot).sequence == seq);
+  }
+  assert(g_seals == kExactSlots);
+  uint16_t occupied = 0U;
+  assert(records.store().exactObjectCount(occupied) &&
+         occupied == kExactSlots);
+  // A sixth newer candidate (8) cannot use another exact slot.
+  // Resend 7 unchanged, without sealing or evicting.
+  assert(store(records, 8).stored);
   const unsigned programs = flash.program_calls;
-  assert(sendOne(records, pilot).sequence == 6U && g_seals == 4U);
+  assert(sendOne(records, pilot).sequence == 7U &&
+         g_seals == kExactSlots);
   assert(flash.program_calls == programs);
 
   // Default (SF5K3V semantics) still blocks on a full cache.
@@ -272,7 +281,7 @@ void liveFirst() {
   assert(g_seals == seals_before_recovery &&
          g_sends == sends_before_recovery &&
          flash.program_calls == writes_before_recovery);
-  // With 4/4 still saturated in non-live-first mode it blocks again, but
+  // With 5/5 still saturated in non-live-first mode it blocks again, but
   // it no longer blocks *forever*: second attempt backs off to 60 sec.
   assert(strict.update(true) == Pilot::Event::kBlocked);
   assert(strict.blockReason() == Pilot::BlockReason::kExactSlotsFull);
@@ -284,27 +293,28 @@ void liveFirst() {
   assert(!strict.blocked() && g_seals == seals_before_recovery &&
          g_sends == sends_before_recovery);
 
-  // The live record is ACKed: a slot frees and the next newest goes first.
-  osf::RecordIdentity six{};
-  six.incarnation = records.store().incarnation();
-  six.sequence = 6U;
-  releaseAndReboot(flash, source, six);
+  // Releasing verified cached sequence 7 frees a slot for fresh 8.
+  osf::RecordIdentity seven{};
+  seven.incarnation = records.store().incarnation();
+  seven.sequence = 7U;
+  releaseAndReboot(flash, source, seven);
   ProductRecordStore reboot(flash, kPages, &source);
   reboot.begin(kDevice, kTracker);
   assert(reboot.mounted());
   Pilot next(reboot, crypto, radio);
   next.setLiveFirst(true);
-  assert(sendOne(reboot, next).sequence == 7U && g_seals == 5U);
-  // Newest released? Then the backlog drains oldest-first as before.
-  osf::RecordIdentity seven = six;
-  seven.sequence = 7U;
-  releaseAndReboot(flash, source, seven);
+  assert(sendOne(reboot, next).sequence == 8U &&
+         g_seals == kExactSlots + 1U);
+  // When 8 releases, the oldest retained backlog is still eligible.
+  osf::RecordIdentity eight = seven;
+  eight.sequence = 8U;
+  releaseAndReboot(flash, source, eight);
   ProductRecordStore later(flash, kPages, &source);
   later.begin(kDevice, kTracker);
   Pilot drain(later, crypto, radio);
   drain.setLiveFirst(true);
-  // Newest retained (7) is released; the oldest retained (1) is next, but
-  // the cache (3,4,5 + free slot) has room, so 1 is sealed and sent.
+  // Newest retained (8) is released; oldest retained (1) is next.
+  // Existing 3..6 cache objects remain intact and one slot is free.
   assert(sendOne(later, drain).sequence == 1U);
 }
 // SF5L4 range walk: newest only; the backlog waits, nothing is skipped.
@@ -321,30 +331,32 @@ void liveOnly() {
   Pilot pilot(records, crypto, radio);
   pilot.setLiveOnly(true);
   assert(sendOne(records, pilot).sequence == 2U);
-  for (uint32_t n = 3U; n <= 5U; ++n) {  // cache: 2,3,4,5 (full)
+  for (uint32_t n = 3U; n <= 6U; ++n) {  // five slots: 2..6
     assert(store(records, n).stored);
     assert(sendOne(records, pilot).sequence == n);
   }
-  assert(g_seals == 4U);
-  // Out of range: 6 cannot get a slot -> newest cached (5) again, unchanged.
-  assert(store(records, 6).stored);
+  assert(g_seals == kExactSlots);
+  // 7 cannot claim a sixth slot -> resend exact cached 6 unchanged.
+  assert(store(records, 7).stored);
   const unsigned programs = flash.program_calls;
-  assert(sendOne(records, pilot).sequence == 5U && g_seals == 4U);
+  assert(sendOne(records, pilot).sequence == 6U &&
+         g_seals == kExactSlots);
   assert(flash.program_calls == programs);
 
-  osf::RecordIdentity five{};
-  five.incarnation = records.store().incarnation();
-  five.sequence = 5U;
-  releaseAndReboot(flash, source, five);
+  osf::RecordIdentity six{};
+  six.incarnation = records.store().incarnation();
+  six.sequence = 6U;
+  releaseAndReboot(flash, source, six);
   ProductRecordStore reboot(flash, kPages, &source);
   reboot.begin(kDevice, kTracker);
   Pilot walk(reboot, crypto, radio);
   walk.setLiveOnly(true);
-  assert(sendOne(reboot, walk).sequence == 6U && g_seals == 5U);
+  assert(sendOne(reboot, walk).sequence == 7U &&
+         g_seals == kExactSlots + 1U);
 
-  osf::RecordIdentity six = five;
-  six.sequence = 6U;
-  releaseAndReboot(flash, source, six);
+  osf::RecordIdentity seven = six;
+  seven.sequence = 7U;
+  releaseAndReboot(flash, source, seven);
   ProductRecordStore later(flash, kPages, &source);
   later.begin(kDevice, kTracker);
   Pilot idle(later, crypto, radio);
@@ -364,23 +376,22 @@ void liveOnly() {
   assert(later.oldestRetained(oldest) == ObservationStore::LookupResult::kFound &&
          oldest.handle.identity.sequence == 1U && !oldest.released);
   // A new record ends the wait at once.
-  assert(store(later, 7).stored);
-  assert(sendOne(later, idle).sequence == 7U);
-  // Back home: switch to live-first and the backlog drains from the oldest
-  // (7 is cached and unanswered; live-first resends it first, then 1).
+  assert(store(later, 8).stored);
+  assert(sendOne(later, idle).sequence == 8U);
+  // Newest 8 is cached and unanswered; live-first resends it before backlog.
   idle.setLiveOnly(false);
   idle.setLiveFirst(true);
-  assert(sendOne(later, idle).sequence == 7U);
-  osf::RecordIdentity seven = six;
-  seven.sequence = 7U;
-  releaseAndReboot(flash, source, seven);
+  assert(sendOne(later, idle).sequence == 8U);
+  osf::RecordIdentity eight = seven;
+  eight.sequence = 8U;
+  releaseAndReboot(flash, source, eight);
   ProductRecordStore home(flash, kPages, &source);
   home.begin(kDevice, kTracker);
   Pilot drain(home, crypto, radio);
   drain.setLiveFirst(true);
   assert(sendOne(home, drain).sequence == 1U);
 }
-void acklessLiveBypassesFourSlotCache() {
+void acklessLiveBypassesFullExactCache() {
   resetFakes();
   FakeFlash flash;
   FixedIncarnation source;
@@ -390,17 +401,18 @@ void acklessLiveBypassesFourSlotCache() {
   orun_tlp::ProductSecureCrypto crypto(security);
   orun_tlp::RadioManager radio;
 
-  // Deliberately occupy ALL four legacy custody cache slots using the old
-  // pilot. KQ-05 should still transport the next fresh secure observation.
+  // Saturate all five exact custody slots, NOT just four of five.
+  // A fresh LIVE must still transmit without waiting for a Gateway ACK.
   Pilot old_pilot(records, crypto, radio);
   old_pilot.setLiveOnly(true);
-  for (uint32_t seq = 1U; seq <= 4U; ++seq) {
+  for (uint32_t seq = 1U; seq <= kExactSlots; ++seq) {
     assert(store(records, seq).stored);
     assert(sendOne(records, old_pilot).sequence == seq);
   }
   uint16_t occupied = 0U;
-  assert(records.store().exactObjectCount(occupied) && occupied == 4U);
-  assert(store(records, 5U).stored);
+  assert(records.store().exactObjectCount(occupied) &&
+         occupied == kExactSlots);
+  assert(store(records, kExactSlots + 1U).stored);
   const unsigned flash_programs = flash.program_calls;
 
   orun_tlp::TrackerAcklessLiveTx live(records, crypto, radio);
@@ -408,9 +420,10 @@ void acklessLiveBypassesFourSlotCache() {
   assert(live.update(1000U, true) ==
          orun_tlp::TrackerAcklessLiveTx::Event::kSent);
   assert(g_sends == sends_before + 1U);
-  assert(live.lastSent().sequence == 5U);
+  assert(live.lastSent().sequence == kExactSlots + 1U);
   assert(flash.program_calls == flash_programs); // no cache flash write
-  assert(records.store().exactObjectCount(occupied) && occupied == 4U);
+  assert(records.store().exactObjectCount(occupied) &&
+         occupied == kExactSlots);
 
   orun_tlp::tlp::ProductSecureFrame frame{};
   assert(orun_tlp::tlp::decodeProductSecureFrame(
@@ -425,7 +438,7 @@ void acklessLiveBypassesFourSlotCache() {
 
   // A denied TX consumes zero delivery credits and is backed off. A later
   // successful send still uses the newest identity, with no ACK gate.
-  assert(store(records, 6U).stored);
+  assert(store(records, kExactSlots + 2U).stored);
   g_deny_tx = true;
   assert(live.update(1100U, true) ==
          orun_tlp::TrackerAcklessLiveTx::Event::kDeferred);
@@ -434,12 +447,13 @@ void acklessLiveBypassesFourSlotCache() {
     assert(live.update(1101U + i, true) ==
            orun_tlp::TrackerAcklessLiveTx::Event::kNone);
   assert(g_seals == seal_at_deny);
-  assert(store(records, 7U).stored);
+  assert(store(records, kExactSlots + 3U).stored);
   g_deny_tx = false;
   assert(live.update(31100U, true) ==
          orun_tlp::TrackerAcklessLiveTx::Event::kSent);
-  assert(live.lastSent().sequence == 7U);
-  assert(records.store().exactObjectCount(occupied) && occupied == 4U);
+  assert(live.lastSent().sequence == kExactSlots + 3U);
+  assert(records.store().exactObjectCount(occupied) &&
+         occupied == kExactSlots);
   ObservationStore::Record still_retained{};
   assert(records.store().lookup(live.lastSent(), still_retained) ==
          ObservationStore::LookupResult::kFound);
@@ -618,8 +632,8 @@ void acklessSolitaryLiveEventuallyRetries() {
 
 
 // 30 consecutive one-minute LIVE opportunities with NO 0x05/0x09/0x0A
-// receipt and the entire legacy four-object exact custody cache occupied.
-// Five old packets are retained before the first fresh minute; not one old
+// receipt and the entire KQ05 five-object exact custody cache occupied.
+// Six old packets are retained before the first fresh minute; not one old
 // marker may silently release, and the latest 30 positions must still TX.
 void acklessThirtyMinutesNoAckStillSendsFresh() {
   resetFakes();
@@ -634,17 +648,18 @@ void acklessThirtyMinutesNoAckStillSendsFresh() {
 
   Pilot old_pilot(records, crypto, radio);
   old_pilot.setLiveOnly(true);
-  for (uint32_t seq=1U;seq<=4U;++seq) {
+  for (uint32_t seq=1U;seq<=kExactSlots;++seq) {
     assert(store(records,seq).stored);
     assert(sendOne(records,old_pilot).sequence==seq);
   }
-  assert(store(records,5U).stored);
+  assert(store(records,kExactSlots+1U).stored);
   uint16_t exact=0U;
-  assert(records.store().exactObjectCount(exact) && exact==4U);
+  assert(records.store().exactObjectCount(exact) &&
+         exact==kExactSlots);
 
   orun_tlp::TrackerAcklessLiveTx live(records, crypto, radio);
   for (uint32_t minute=1U;minute<=30U;++minute) {
-    const uint32_t sequence=minute+5U; // 6..35, beyond old five
+    const uint32_t sequence=minute+kExactSlots+1U; // 7..36, beyond full cache
     const uint32_t now=minute*60000U;
     assert(store(records,sequence).stored);
     const unsigned before=g_sends;
@@ -653,15 +668,17 @@ void acklessThirtyMinutesNoAckStillSendsFresh() {
     assert(live.lastSent().sequence==sequence);
     assert(g_sends==before+1U); // latest not gated by any old ACK
     // HISTORY may use spare opportunities but must never release anything
-    // or consume one of the four legacy exact-cache slots.
+    // or consume any of the five occupied exact-cache slots.
     const auto history=live.updateHistory(now+1U,true);
     assert(history==orun_tlp::TrackerAcklessLiveTx::Event::kNone ||
            history==orun_tlp::TrackerAcklessLiveTx::Event::kHistorySent);
-    assert(records.store().exactObjectCount(exact) && exact==4U);
+    assert(records.store().exactObjectCount(exact) &&
+           exact==kExactSlots);
   }
   assert(live.sentCount()==30U);
-  assert(live.lastSent().sequence==35U);
-  for (uint32_t seq : {1U,4U,5U,6U,35U}) {
+  assert(live.lastSent().sequence==kExactSlots+31U);
+  for (uint32_t seq : {1U,kExactSlots,kExactSlots+1U,
+                       kExactSlots+2U,kExactSlots+31U}) {
     osf::RecordIdentity id{};
     id.incarnation=live.lastSent().incarnation;
     id.sequence=seq;
@@ -686,12 +703,12 @@ int main() {
   acklessSolitaryLiveEventuallyRetries();
   acklessLiveDoesNotStallOnEventTail();
   acklessHistoryIsPacedAndNeverReleases();
-  acklessLiveBypassesFourSlotCache();
+  acklessLiveBypassesFullExactCache();
   successAndReboot(false);
   successAndReboot(true);
   cacheFailureKeepsRecord();
   liveFirst();
   liveOnly();
-  puts("KQ05 ACKless secure LIVE 4/4 bypass and RF denial + SF5K3V legacy custody cache: PASS");
+  puts("KQ05 ACKless secure LIVE 5/5 bypass and RF denial + SF5K3V legacy custody cache: PASS");
   return 0;  // Also required when embedded under the renamed test entrypoint.
 }
