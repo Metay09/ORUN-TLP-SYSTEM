@@ -479,7 +479,15 @@ void serviceHandoff() {
   if (handoff == nullptr || erase_active || guard == nullptr ||
       guard->state() != Guard::State::kReady)
     return;
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  // Do not reclaim a page containing durably held handles for an
+  // as-yet-unsent authenticated group. Already-started maintenance still
+  // polls and finishes; original firmware keeps default reclaim behavior.
+  const Sf5l0EdgeHandoff::Event e =
+      handoff->service(collector == nullptr || collector->queued()==0U);
+#else
   const Sf5l0EdgeHandoff::Event e = handoff->service();
+#endif
   switch (e.kind) {
     case Sf5l0EdgeHandoff::Event::Kind::kHandedOff:
       Serial.printf("EDGE ACCEPT %s page=%u slot=%u state=HANDED_OFF\n",
