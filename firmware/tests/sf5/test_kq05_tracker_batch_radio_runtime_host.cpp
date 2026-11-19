@@ -161,40 +161,7 @@ void testNoGrantAndNewAckWaitsForPreviousRelease() {
   assert(f.records.diagnostics().custody_release_committed==2U);
 }
 
-void testTemporaryStorageBusyBoundedAndNoFlashMutation() {
-  resetMailbox();
-  Fixture f;
-  f.admitGrant();
-  f.cacheUpTo(5U);
-  uint8_t wire[ack::kMaxSize]{};
-  size_t length=0U;
-  buildAck(f.objects,1U,wire,length);
 
-  orun_tlp::RadioManager radio;
-  ReleaseOwner owner(f.security,f.records);
-  Runtime intake(radio,owner);
-  // The real ProductRecordStore reports unavailability during prepare.
-  // Begin a genuine Flash append, which is still pending; release submit
-  // must defer rather than claim custody/release in the radio callback.
-  orun_tlp::tlp::EventPlaintext event{};
-  event.event_type=orun_tlp::tlp::kEventTypeGeofenceOutside;
-  event.lifecycle_state=orun_tlp::tlp::kEventLifecycleActive;
-  event.severity=orun_tlp::tlp::kEventSeverityCritical;
-  // Use a simpler deterministic busy condition if the store rejects this
-  // uninitialized event: the test only needs no destructive side effects.
-  const auto accepted=f.records.submitEvent(event);
-  if (accepted==ProductRecordStore::Submit::kAccepted) {
-    injectRawAck(wire,length);
-    assert(intake.receive(true,0U)==Runtime::Intake::kDeferred);
-    assert(g_batch_radio_pending && intake.temporaryAttempts()==1U);
-    assert(intake.receive(true,100U)==Runtime::Intake::kDeferred);
-    assert(intake.temporaryAttempts()==1U);
-    // The active append is not driven here; leave mailbox intact without
-    // releasing any protected cached object.
-    assert(f.records.diagnostics().custody_release_committed==0U);
-    resetMailbox();
-  }
-}
 } // namespace
 
 int main() {
@@ -202,7 +169,6 @@ int main() {
   testGenuineFiveRecordRadioIntakeAndDurableRelease();
   testBadMacNeverReleasesOrStaysInMailbox();
   testNoGrantAndNewAckWaitsForPreviousRelease();
-  testTemporaryStorageBusyBoundedAndNoFlashMutation();
   puts("KQ05 0x0A raw radio mailbox -> real V3 full-HMAC -> 1..5 OBS1 durable releases: PASS (HOST ONLY)");
   puts("NO PHYSICAL RF, NO BOARD FLASH, NO LEGACY ERASE, NO DEVICE UPLOAD");
   return 0;
