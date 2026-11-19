@@ -49,6 +49,9 @@ class TrackerAcklessLiveTx final {
     return last_history_sent_;
   }
   uint32_t historySentCount() const { return history_sent_count_; }
+  // A bounded scan past EVENT tail is in progress; HISTORY must not steal
+  // the next RF slot before the latest PERIODIC candidate is determined.
+  bool liveSearchPending() const { return live_search_cursor_ != 0U; }
 
  private:
   static bool sameIdentity(const osf::RecordIdentity& a,
