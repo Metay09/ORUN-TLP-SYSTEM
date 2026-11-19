@@ -4904,7 +4904,11 @@ void loop() {
   static uint8_t kq05_receipt_transient_tries = 0U;
   static uint32_t kq05_receipt_retry_after_ms = 0U;
   if (radio_manager.role() == orun_tlp::NodeRole::kTracker &&
-      !custody_ack_release.pending() && !kq05_batch_release.pending()) {
+      !custody_ack_release.pending() && !kq05_batch_release.pending()
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+      && !tracker_gateway_batch_release.pending()
+#endif
+      ) {
     orun_tlp::Kq05BatchReceiptRxFrame batch{};
     const uint32_t now_ms = orun_tlp::monotonic::nowMs();
     if (radio_manager.peekKq05BatchReceiptFrame(&batch) &&
@@ -4937,6 +4941,35 @@ void loop() {
   }
 #endif
 
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  // Tracker-only 0x0A RX: RadioManager's mailbox is structural/untrusted;
+  // ONLY the real V3 HKDF/HMAC owner can begin individual OBS1 marker writes.
+  // Defer rather than consume while another Flash release is active. This
+  // path does not gate LIVE or issue any RF TX on its own.
+  if (radio_manager.role() == orun_tlp::NodeRole::kTracker) {
+    const bool allowed=ble_ready && !positions.pending() &&
+        !radio_manager.isTransmitting() &&
+        !custody_ack_release.pending() &&
+        product_records.mounted() && product_records.store().ready() &&
+        security_store.ready() &&
+        security_store.state()==orun_tlp::SecurityState::kProvisioned &&
+        !security_store.busy()
+#ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
+        && !kq05_batch_release.pending()
+#endif
+        ;
+    const auto outcome=tracker_gateway_batch_runtime.receive(
+        allowed,orun_tlp::monotonic::nowMs());
+    if (outcome==orun_tlp::Kq05TrackerBatchRadioRuntime::Intake::kStarted)
+      Serial.println(F("KQ05 0x0A authenticated; selective release=pending"));
+    else if (outcome==orun_tlp::Kq05TrackerBatchRadioRuntime::Intake::kRejected)
+      Serial.println(F("KQ05 0x0A rejected: grant/HMAC/exact cache"));
+    else if (outcome==
+             orun_tlp::Kq05TrackerBatchRadioRuntime::Intake::kRetryExpired)
+      Serial.println(F("KQ05 0x0A deferred too long; request fresh subset ACK"));
+  }
+#endif
+
   // SF5K3U: loop-only Tracker ACK intake, after radio callback dispatch and
   // outside the driver gate. The mailbox contains UNTRUSTED wire bytes.
   // Release is strictly delegated to the existing SecurityStore/HMAC and
@@ -4944,6 +4977,9 @@ void loop() {
   // Preserve a pending second ACK while a previous release awaits flash.
   if (radio_manager.role() == orun_tlp::NodeRole::kTracker &&
       !custody_ack_release.pending()
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+      && !tracker_gateway_batch_release.pending()
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
       && !kq05_batch_release.pending()
 #endif
