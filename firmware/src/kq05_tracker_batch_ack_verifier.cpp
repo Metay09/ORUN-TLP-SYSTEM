@@ -11,8 +11,9 @@
 namespace orun_tlp {
 namespace {
 namespace ack = kq05_gateway_batch_ack;
-namespace osc = observation_store_control;
-namespace osf = observation_store_format;
+// osc/osf aliases are already declared at orun_tlp scope by
+// observation_store.h. Do not redeclare them in the anonymous namespace:
+// GCC 7 treats the two visible aliases as ambiguous.
 
 constexpr char kKeyInfo[] = "ORUN-TLP-V2-GW-CUSTODY-ACK-v1";
 constexpr size_t kInfoSize = sizeof(kKeyInfo)-1U + 8U + 4U + 8U + 4U + 4U;
