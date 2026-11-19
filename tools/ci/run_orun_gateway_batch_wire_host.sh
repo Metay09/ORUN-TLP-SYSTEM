@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ORUN main-based integration: canonical 0x0A 1..5 wire only (NO RF/HMAC).
+# ORUN main-based integration: canonical 0x0A wire + scoped HMAC host tests.
+# Host-only; no hardware, custody release, or product runtime activation.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/orun-batch-wire.XXXXXXXX")"
