@@ -26,7 +26,7 @@ class Kq05GatewayBatchCustodyCrypto final {
  public:
   Kq05GatewayBatchCustodyCrypto() = delete;
  private:
-  friend class Kq05GatewayDurableBatchOwner;
+  friend class GatewayLocalCustodyOwner; // existing durable OCQ2 owner
   friend class Kq05TrackerBatchReleaseOwner;
   // Only the internal read-only Tracker verifier may check complete MACs.
   friend class Kq05TrackerBatchAckVerifier;

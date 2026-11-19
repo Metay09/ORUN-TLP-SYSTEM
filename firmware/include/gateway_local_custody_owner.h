@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "gateway_custody_ack_signer.h"
+#include "kq05_gateway_batch_custody_ack.h"
 #include "product_custody_store.h"
 
 namespace orun_tlp {
@@ -30,6 +31,16 @@ class GatewayLocalCustodyOwner final {
   bool ackReady() const { return ack_ready_; }
 
  private:
+  friend class GatewayCustodyAuthorizedIngress;
+  // The EXISTING local custody owner is also the sole Gateway OCQ2 proof
+  // authority for 0x0A; no second flash writer/collector may mint it.
+  // Handles must already name verified, durably held exact objects.
+  // Fail-closed: no caller output modification on failure.
+  bool signDurableBatch(
+      const ProductCustodyStore::Handle* handles, uint8_t count,
+      const GatewayCustodyAckScope& scope, const uint8_t (&scoped_key)[32],
+      uint8_t (&wire)[kq05_gateway_batch_ack::kMaxSize],
+      size_t& written);
   bool signCommitted(const ProductCustodyStore::Handle& handle);
   void clearPending();
 
