@@ -40,6 +40,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 \
   firmware/tests/sf5/test_sf5j_radio_transport.cpp \
   "$tmp/driver_bridge.cpp" \
   firmware/src/radio_manager.cpp \
+  firmware/src/lora_command_frame.cpp \
   firmware/src/custody_ack.cpp \
   firmware/src/kq05_gateway_batch_custody_ack.cpp \
   firmware/src/radio_manager_relay_config.cpp \
