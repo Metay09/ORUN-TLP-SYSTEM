@@ -44,6 +44,6 @@ g++ -std=gnu++11 -O1 -g -Wall -Wextra -Werror \
   firmware/src/tlp_position_packet.cpp \
   -lcrypto -o "$tmp/tracker-batch-radio-runtime"
 
-"$tmp/tracker-batch-selective-release"
+"$tmp/tracker-batch-radio-runtime"
 echo "KQ05 TRACKER RADIO 0x0A -> REAL V3 HMAC -> SELECTIVE OBS1 RELEASE: PC PASS"
 echo "NO PHYSICAL RADIO, NO REAL NOR, NO LEGACY HISTORY ERASE, NO DEVICE UPLOAD"
