@@ -132,9 +132,13 @@ void testFiveImmediateAndLostAckDuplicate() {
   push(1U);
   assert(rt.update(true,6000U)==Runtime::Event::kDuplicate);
   assert(f.flash.writes==writes && c.queued()==1U);
-  // A lost ACK is an urgent retry case, not a fresh 120-second wait.
-  assert(c.flushRequested());
-  assert(rt.update(true,6001U)==Runtime::Event::kAckTxStarted);
+  // A lost ACK is a short retry coalescing window, not a fresh 120s
+  // partial wait. One resend becomes a legitimate one-record 0x0A ACK.
+  assert(!c.flushRequested());
+  assert(rt.update(true,6000U+Runtime::kRetryCoalesceMs-1U)==
+         Runtime::Event::kNone);
+  assert(rt.update(true,6000U+Runtime::kRetryCoalesceMs)==
+         Runtime::Event::kAckTxStarted);
   assert(g_tx_length==56U && g_tx_sends==2U);
   assert(f.flash.writes==writes);
 }
@@ -237,6 +241,33 @@ void testRevokeDisableForeignTrackerAndWraparound() {
 // A full five-record ACK group and an indefinitely blocked downlink must
 // never become a five-record RX window. Fresh noncustody PERIODIC packets
 // continue to reach independent durable OCQ2 storage for 30 report cycles.
+void testLostAckFiveRetryBurstGetsOneReceipt() {
+  resetRadio();
+  Fixture f;
+  Collector c(f.store,f.grants,kGateway);
+  Live live(f.store,f.grants,kGateway);
+  orun_tlp::RadioManager radio;
+  Runtime rt(radio,c,live,120000U,false);
+  for(uint32_t n=1U;n<=5U;++n) pushAndCommit(rt,n,n*100U);
+  assert(rt.update(true,600U)==Runtime::Event::kAckTxStarted);
+  const size_t writes=f.flash.writes;
+
+  // Downlink was lost. Collar still has the exact retained group and
+  // re-offers all five records. No record is stored a second time.
+  for(uint32_t n=1U;n<=5U;++n) {
+    push(n);
+    assert(rt.update(true,1000U+n*100U)==Runtime::Event::kDuplicate);
+    assert(c.queued()==n);
+    assert(f.flash.writes==writes);
+    if (n<5U) assert(!c.flushRequested());
+  }
+  assert(c.flushRequested());
+  assert(rt.update(true,1600U)==Runtime::Event::kAckTxStarted);
+  verifyAck(f,5U,88U);
+  assert(g_tx_sends==2U && c.queued()==0U);
+  assert(f.flash.writes==writes);
+}
+
 void testTrustedSparseProfileUsesSameOneRecordWire() {
   resetRadio();
   Fixture f;
@@ -339,6 +370,7 @@ void testCriticalEventImmediateAndLostDownlinkRetry() {
 
 int main() {
   kq05_durable_gateway_fixture_main();
+  testLostAckFiveRetryBurstGetsOneReceipt();
   testTrustedSparseProfileUsesSameOneRecordWire();
   testThirtyLivePacketsWhileAckBlocked();
   testCriticalEventImmediateAndLostDownlinkRetry();

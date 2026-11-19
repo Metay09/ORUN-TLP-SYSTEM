@@ -11,6 +11,8 @@ void Kq05GatewayBatchRuntime::syncTimer(uint32_t now_ms) {
   if (collector_.queued()==0U) {
     timer_armed_=false;
     first_durable_ms_=0U;
+    retry_timer_armed_=false;
+    first_retry_ms_=0U;
   } else if (!timer_armed_) {
     // Start only once: additional records cannot postpone partial ACK.
     first_durable_ms_=now_ms;
@@ -59,6 +61,9 @@ Kq05GatewayBatchRuntime::update(bool enabled, uint32_t now_ms) {
   syncTimer(now_ms);
   if (timer_armed_ && !collector_.flushRequested() &&
       static_cast<uint32_t>(now_ms-first_durable_ms_) >= partial_flush_ms_)
+    (void)collector_.requestFlush();
+  if (retry_timer_armed_ && !collector_.flushRequested() &&
+      static_cast<uint32_t>(now_ms-first_retry_ms_) >= kRetryCoalesceMs)
     (void)collector_.requestFlush();
 
   // No RX and no downlink on an unverified boot, wrong hardware Gateway ID
@@ -117,11 +122,17 @@ Kq05GatewayBatchRuntime::update(bool enabled, uint32_t now_ms) {
         last_snr_=raw.snr_db;
         return Event::kCustodyStarted;
       case Kq05GatewayBatchCollector::Receive::kReenrolled:
-        // An old exact frame arrived again after the Gateway's previous
-        // downlink. Queue is verified-durable, so sign an immediate 1..5
-        // subset rather than waiting for a new five-record group.
+        // An exact durable record is being retried after a lost downlink.
+        // Give an RF-limited retransmission burst a short opportunity to
+        // become a 2..5 item ACK, without waiting for a full group or
+        // resetting this deadline when another retry arrives.
         syncTimer(now_ms);
-        (void)collector_.requestFlush();
+        if (trusted_sparse_single_ack_ && collector_.queued()==1U) {
+          (void)collector_.requestFlush();
+        } else if (!retry_timer_armed_) {
+          first_retry_ms_=now_ms;
+          retry_timer_armed_=true;
+        }
         return Event::kDuplicate;
       case Kq05GatewayBatchCollector::Receive::kQueued:
       case Kq05GatewayBatchCollector::Receive::kDuplicate:

@@ -29,6 +29,9 @@ class Kq05GatewayBatchRuntime final {
   // ACK timing. FIVE items flush immediately. Must be RF/power qualified
   // against Tracker downlink listen windows before any field activation.
   static constexpr uint32_t kDefaultPartialFlushMs = 120000U;
+  // Provisional retry burst collection window. A lone resent object gets
+  // a 1-object 0x0A; 2..5 resends can share one downlink. RF unqualified.
+  static constexpr uint32_t kRetryCoalesceMs = 30000U;
 
   Kq05GatewayBatchRuntime(RadioManager& radio,
                           Kq05GatewayBatchCollector& collector,
@@ -74,6 +77,8 @@ class Kq05GatewayBatchRuntime final {
   bool event_write_pending_=false;
   uint32_t first_durable_ms_=0U;
   bool timer_armed_=false;
+  uint32_t first_retry_ms_=0U;
+  bool retry_timer_armed_=false;
   int16_t last_rssi_=0;
   int8_t last_snr_=0;
 };
