@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
-# Compile BOTH isolated lab images; no pio upload, physical Flash, or erase.
+# Compile both isolated KQ05 RAK images, compare PlatformIO linker memory
+# reports. Nordic build does NOT guarantee a firmware.bin; ELF / package
+# formats are target-specific, so a missing .bin is not a build failure.
+# No pio upload, no device Flash, erase, or production merge.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../firmware"
 command -v pio >/dev/null || {
   echo "DUR: PlatformIO (pio) bulunamadi."
   exit 1
 }
-# Do not flood the terminal with thousands of compiler progress lines.
-# Preserve complete logs for each build inside a temporary PC file; on
-# failure show diagnostics and stop before comparing nonexistent artifacts.
-log="$(mktemp "${TMPDIR:-/tmp}/orun-kq05-ack-size.XXXXXXXX")"
-trap 'rm -f -- "$log"' EXIT
+command -v python3 >/dev/null || {
+  echo "DUR: python3 bulunamadi."
+  exit 1
+}
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/orun-kq05-ack-size.XXXXXXXX")"
+trap 'rm -rf -- "$tmp"' EXIT
+
 for target in rak4630_kq05_lab rak4630_kq05_unified_ack_lab; do
+  log="$tmp/$target.log"
   echo "=== BUILD $target ==="
   if ! pio run -e "$target" >"$log" 2>&1; then
     echo "DUR: Firmware derlemesi basarisiz: $target"
@@ -20,23 +27,45 @@ for target in rak4630_kq05_lab rak4630_kq05_unified_ack_lab; do
     tail -n 80 "$log"
     exit 1
   fi
-  # PlatformIO memory and status summary, without losing build warnings.
-  grep -E '(^RAM:|^Flash:|\[SUCCESS\]|SUCCESS|warning:)' "$log" | tail -n 25 || true
+  # Show the same authoritative memory figures as PlatformIO's build report.
+  grep -E '(^RAM:|^Flash:|\\[SUCCESS\\]|SUCCESS)' "$log" | tail -n 8 || true
 done
-python3 - <<'PY'
+
+python3 - "$tmp/rak4630_kq05_lab.log" "$tmp/rak4630_kq05_unified_ack_lab.log" <<'PY'
 from pathlib import Path
-one = Path(".pio/build/rak4630_kq05_lab/firmware.bin")
-two = Path(".pio/build/rak4630_kq05_unified_ack_lab/firmware.bin")
-for p in (one, two):
-    if not p.is_file():
-        raise SystemExit("DUR: Eksik firmware image: " + str(p))
-baseline, unified = one.stat().st_size, two.stat().st_size
-if baseline <= 0 or unified <= 0:
-    raise SystemExit("DUR: Bos firmware image")
-print("KQ05 temel LAB image     :", baseline, "bytes")
-print("KQ05 birlesik ACK image :", unified, "bytes")
-print("Toplam flash farki       :", unified-baseline, "bytes",
-      f"({(unified/baseline-1)*100:+.2f}%)")
-print("Not: fark tum opt-in ozellikleri kapsar, yalniz 0x05 refactor kazanci degil.")
-print("Cihaz yukleme / erase YOK.")
+import re
+import sys
+
+MEMORY = re.compile(
+    r"^(RAM|Flash):[^\\n]*used\\s+(\\d+)\\s+bytes\\s+from\\s+(\\d+)\\s+bytes",
+    re.MULTILINE,
+)
+
+def usage(path):
+    path = Path(path)
+    lines = path.read_text(encoding="utf-8", errors="replace")
+    matched = {}
+    for match in MEMORY.finditer(lines):
+        matched[match.group(1)] = (int(match.group(2)), int(match.group(3)))
+    if set(matched) != {"RAM", "Flash"}:
+        raise SystemExit(
+            "DUR: PlatformIO memory ozeti eksik; "
+            f"{path.name}: {list(matched)}"
+        )
+    return matched
+
+baseline, unified = [usage(p) for p in sys.argv[1:]]
+print("=== KQ05 FIRMWARE BELLEK KARSILASTIRMASI ===")
+for kind in ("Flash", "RAM"):
+    old, old_limit = baseline[kind]
+    new, new_limit = unified[kind]
+    if old_limit != new_limit or old_limit == 0:
+        raise SystemExit(f"DUR: {kind} kapasitesi farkli; karsilastirma gecersiz.")
+    delta = new - old
+    print(f"{kind}: temel={old:,} B ({old / old_limit:.1%}), "
+          f"birlesik={new:,} B ({new / old_limit:.1%}), "
+          f"fark={delta:+,} B")
+print("Bu, iki farkli ozellik setine sahip LAB image karsilastirmasidir.")
+print("Tek basina ACK refactor flash kazancini izole etmez.")
+print("Cihaz upload / erase YOK.")
 PY
