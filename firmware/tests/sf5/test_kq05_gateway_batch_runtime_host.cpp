@@ -199,19 +199,23 @@ void testRevokeDisableForeignTrackerAndWraparound() {
   orun_tlp::RadioManager radio;
   Runtime rt(radio,c,live,30000U);
   pushAndCommit(rt,1U,UINT32_MAX-1000U);
-  assert(rt.firstDurableMs()==UINT32_MAX-999U);
-  assert(rt.update(false,29001U)==Runtime::Event::kNone);
+  const uint32_t first=rt.firstDurableMs();
+  // Simulated NOR can need multiple poll steps. Deadline must wrap correctly
+  // regardless of exactly which step committed the first record.
+  assert(static_cast<uint32_t>(first-(UINT32_MAX-1000U))<50U);
+  const uint32_t due=first+30000U;
+  assert(rt.update(false,due)==Runtime::Event::kNone);
   assert(c.flushRequested()); // wrap safe; DISABLED never emits
   assert(c.queued()==1U && g_tx_sends==0U);
   g_device_id=kGateway+1U;
-  assert(rt.update(true,29002U)==Runtime::Event::kNone);
+  assert(rt.update(true,due+1U)==Runtime::Event::kNone);
   assert(g_tx_sends==0U);
   g_device_id=kGateway;
   f.grants.active=false;
-  assert(rt.update(true,29003U)==Runtime::Event::kNone);
+  assert(rt.update(true,due+2U)==Runtime::Event::kNone);
   assert(c.queued()==1U && g_tx_sends==0U);
   f.grants.active=true;
-  assert(rt.update(true,29004U)==Runtime::Event::kAckTxStarted);
+  assert(rt.update(true,due+3U)==Runtime::Event::kAckTxStarted);
   assert(c.queued()==0U && g_tx_sends==1U);
 
   // Different Tracker cannot be signed under the existing group.
