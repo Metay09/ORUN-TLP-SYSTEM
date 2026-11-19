@@ -18,6 +18,13 @@
 #include "gateway_custody_authorized_ingress.h"
 #include "gateway_local_custody_owner.h"
 #include "gateway_product_custody_runtime.h"
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+#if !defined(ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE)
+#error "KQ05 scheduled Gateway batch ACK requires independently durable ACKless LIVE ingress"
+#endif
+#include "kq05_gateway_batch_collector.h"
+#include "kq05_gateway_batch_runtime.h"
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
 #include "gateway_product_live_ingress.h"
 #endif
@@ -42,16 +49,25 @@ namespace sf5l0_gateway {
 namespace {
 
 using Guard = GatewayProductStartupGuard;
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+using Event = Kq05GatewayBatchRuntime::Event;
+#else
 using Event = GatewayProductCustodyRuntime::Event;
+#endif
 
 FlashBackend* product_port = nullptr;
 RadioManager* radio = nullptr;
 ProductCustodyStore* custody = nullptr;
-GatewayLocalCustodyOwner* custody_owner = nullptr;
 Sf5l0BenchGrantSource* grants = nullptr;
 Guard* guard = nullptr;
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+Kq05GatewayBatchCollector* collector = nullptr;
+Kq05GatewayBatchRuntime* batch_runtime = nullptr;
+#else
+GatewayLocalCustodyOwner* custody_owner = nullptr;
 GatewayCustodyAuthorizedIngress* ingress = nullptr;
 GatewayProductCustodyRuntime* runtime = nullptr;
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
 GatewayProductLiveIngress* live_ingress = nullptr;
 #endif
@@ -178,10 +194,17 @@ struct PrintNew : Sf5l0HeldVisitor {
     if (!newer(r)) return;
     printHeld(r);
     remember(r);
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+    if (edge_session != nullptr && batch_runtime != nullptr)
+      edge_session->onNewRecord(r.page, r.slot, r.generation, true,
+                                batch_runtime->lastCustodyRssi(),
+                                batch_runtime->lastCustodySnr());
+#else
     if (edge_session != nullptr && runtime != nullptr)
       edge_session->onNewRecord(r.page, r.slot, r.generation, true,
                                 runtime->lastCustodyRssi(),
                                 runtime->lastCustodySnr());
+#endif
   }
 };
 struct MarkOnly : Sf5l0HeldVisitor {
@@ -372,11 +395,10 @@ void ogk1Line(const char* line, size_t length) {
 void begin(FlashBackend& port, FlashBackend& security_port,
            RadioManager& radio_manager, uint64_t gateway_id,
            bool observation_store_mounted) {
-  if (runtime != nullptr) return;  // once per boot
+  if (guard != nullptr) return;  // once per boot, both runtime variants
   product_port = &port;
   radio = &radio_manager;
   custody = new ProductCustodyStore(port, storage_config::kProductRegionPages);
-  custody_owner = new GatewayLocalCustodyOwner(*custody);
   grants = new Sf5l0BenchGrantSource(gateway_id);
 #if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
   beginSigned(security_port, gateway_id);
@@ -385,6 +407,15 @@ void begin(FlashBackend& port, FlashBackend& security_port,
 #endif
   guard = new Guard(port, storage_config::kProductRegionPages, *custody,
                     *grants, gateway_id);
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  // Mutually exclusive Gateway custody owner: NEVER send type 0x05 alongside
+  // a type 0x0A batch for the same physical OCQ2 store.
+  collector = new Kq05GatewayBatchCollector(*custody, *grants, gateway_id);
+  live_ingress = new GatewayProductLiveIngress(*custody, *grants, gateway_id);
+  batch_runtime = new Kq05GatewayBatchRuntime(
+      radio_manager, *collector, *live_ingress);
+#else
+  custody_owner = new GatewayLocalCustodyOwner(*custody);
   ingress = new GatewayCustodyAuthorizedIngress(*custody_owner, *grants,
                                                 gateway_id);
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
@@ -392,6 +423,7 @@ void begin(FlashBackend& port, FlashBackend& security_port,
   runtime = new GatewayProductCustodyRuntime(radio_manager, *ingress, *live_ingress);
 #else
   runtime = new GatewayProductCustodyRuntime(radio_manager, *ingress);
+#endif
 #endif
   handoff = new Sf5l0EdgeHandoff(*custody, gateway_id);
 #if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
@@ -472,7 +504,11 @@ void service(bool observation_store_mounted) {
 #if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
   serviceInstaller();
 #endif
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  if (batch_runtime == nullptr || guard == nullptr) return;
+#else
   if (runtime == nullptr || guard == nullptr) return;
+#endif
   serviceHandoff();
   // Hand out a newly committed record once its flash write has settled.
   if (emit_pending && canWalk()) {
@@ -481,8 +517,14 @@ void service(bool observation_store_mounted) {
     (void)sf5l0ForEachHeld(*product_port, *custody,
                            storage_config::kProductRegionPages, fresh);
   }
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  const Event event = batch_runtime->updateGuarded(
+      *guard, roleOk() && !erase_active, observation_store_mounted,
+      monotonic::nowMs());
+#else
   const Event event = runtime->updateGuarded(
       *guard, roleOk() && !erase_active, observation_store_mounted);
+#endif
   switch (event) {
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
     case Event::kLiveStarted:
