@@ -132,8 +132,9 @@ void testFiveImmediateAndLostAckDuplicate() {
   push(1U);
   assert(rt.update(true,6000U)==Runtime::Event::kDuplicate);
   assert(f.flash.writes==writes && c.queued()==1U);
-  assert(rt.update(true,6000U+120000U-1U)==Runtime::Event::kNone);
-  assert(rt.update(true,6000U+120000U)==Runtime::Event::kAckTxStarted);
+  // A lost ACK is an urgent retry case, not a fresh 120-second wait.
+  assert(c.flushRequested());
+  assert(rt.update(true,6001U)==Runtime::Event::kAckTxStarted);
   assert(g_tx_length==56U && g_tx_sends==2U);
   assert(f.flash.writes==writes);
 }
@@ -236,6 +237,22 @@ void testRevokeDisableForeignTrackerAndWraparound() {
 // A full five-record ACK group and an indefinitely blocked downlink must
 // never become a five-record RX window. Fresh noncustody PERIODIC packets
 // continue to reach independent durable OCQ2 storage for 30 report cycles.
+void testTrustedSparseProfileUsesSameOneRecordWire() {
+  resetRadio();
+  Fixture f;
+  Collector c(f.store,f.grants,kGateway);
+  Live live(f.store,f.grants,kGateway);
+  orun_tlp::RadioManager radio;
+  // Only a trusted configuration source can select this mode. No incoming
+  // report-period claim or packet bytes may enable it at runtime.
+  Runtime rt(radio,c,live,120000U,true,true);
+  pushAndCommit(rt,1U,1000U); // PERIODIC custody candidate
+  assert(c.queued()==1U && c.flushRequested());
+  assert(rt.update(true,1050U)==Runtime::Event::kAckTxStarted);
+  verifyAck(f,1U,56U); // exactly the same authenticated 0x0A wire
+  assert(c.queued()==0U && g_tx_sends==1U);
+}
+
 void testThirtyLivePacketsWhileAckBlocked() {
   resetRadio();
   Fixture f;
@@ -322,6 +339,7 @@ void testCriticalEventImmediateAndLostDownlinkRetry() {
 
 int main() {
   kq05_durable_gateway_fixture_main();
+  testTrustedSparseProfileUsesSameOneRecordWire();
   testThirtyLivePacketsWhileAckBlocked();
   testCriticalEventImmediateAndLostDownlinkRetry();
   testFiveImmediateAndLostAckDuplicate();

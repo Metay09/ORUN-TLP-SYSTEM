@@ -34,11 +34,13 @@ class Kq05GatewayBatchRuntime final {
                           Kq05GatewayBatchCollector& collector,
                           GatewayProductLiveIngress& live,
                           uint32_t partial_flush_ms = kDefaultPartialFlushMs,
-                          bool expedite_events = true)
+                          bool expedite_events = true,
+                          bool trusted_sparse_single_ack = false)
       : radio_(radio), collector_(collector), live_(live),
         partial_flush_ms_(partial_flush_ms==0U
             ? kDefaultPartialFlushMs : partial_flush_ms),
-        expedite_events_(expedite_events) {}
+        expedite_events_(expedite_events),
+        trusted_sparse_single_ack_(trusted_sparse_single_ack) {}
 
   Event update(bool enabled, uint32_t now_ms);
   Event updateGuarded(const GatewayProductStartupGuard& gate,
@@ -65,6 +67,10 @@ class Kq05GatewayBatchRuntime final {
   // EVENT custody gets a one-object 0x0A acknowledgement immediately after
   // durable OCQ2 commit; 1..5 batching remains available for non-EVENT.
   bool expedite_events_=true;
+  // Only a locally trusted report-profile may enable this; never infer it
+  // from untrusted RX bytes. True means single ACK upon first durable item.
+  // The Gateway composition root does not yet supply a per-Tracker profile.
+  bool trusted_sparse_single_ack_=false;
   bool event_write_pending_=false;
   uint32_t first_durable_ms_=0U;
   bool timer_armed_=false;

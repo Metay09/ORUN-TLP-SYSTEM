@@ -44,7 +44,9 @@ Kq05GatewayBatchRuntime::update(bool enabled, uint32_t now_ms) {
       // A critical EVENT must not wait for five other packets or the
       // provisional two-minute partial-group timeout. Authenticated ACK
       // still waits for this exact record's confirmed durable readback.
-      if (expedite) (void)collector_.requestFlush();
+      if (expedite || (trusted_sparse_single_ack_ &&
+                      collector_.queued()==1U))
+        (void)collector_.requestFlush();
       return Event::kCustodyDurable;
     }
     if (result==Kq05GatewayBatchCollector::Service::kRejected) {
@@ -114,12 +116,18 @@ Kq05GatewayBatchRuntime::update(bool enabled, uint32_t now_ms) {
         last_rssi_=raw.rssi_dbm;
         last_snr_=raw.snr_db;
         return Event::kCustodyStarted;
+      case Kq05GatewayBatchCollector::Receive::kReenrolled:
+        // An old exact frame arrived again after the Gateway's previous
+        // downlink. Queue is verified-durable, so sign an immediate 1..5
+        // subset rather than waiting for a new five-record group.
+        syncTimer(now_ms);
+        (void)collector_.requestFlush();
+        return Event::kDuplicate;
       case Kq05GatewayBatchCollector::Receive::kQueued:
       case Kq05GatewayBatchCollector::Receive::kDuplicate:
         syncTimer(now_ms);
-        // A lost downlink can be recovered from an exact durable duplicate.
-        // Do not force an EVENT to wait through the batch deadline again.
-        if (expedite_events_ && is_event)
+        if ((expedite_events_ && is_event) ||
+            (trusted_sparse_single_ack_ && collector_.queued()==1U))
           (void)collector_.requestFlush();
         return Event::kDuplicate;
       case Kq05GatewayBatchCollector::Receive::kBusy:

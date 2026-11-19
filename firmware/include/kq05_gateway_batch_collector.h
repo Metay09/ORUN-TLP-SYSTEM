@@ -19,7 +19,8 @@ class Kq05GatewayBatchCollector final {
  public:
   enum class Receive : uint8_t {
     kStartedFlash,    // Not durable or eligible for ACK yet
-    kQueued,          // Duplicate or immediately readback-verified handle
+    kQueued,          // Readback-verified handle (fresh completion)
+    kReenrolled,      // Exact durable retransmission after group TX/lost ACK
     kDuplicate,       // Already in this exact group; never count twice
     kBusy,            // Group/Flash work outstanding, retry RX
     kDenied

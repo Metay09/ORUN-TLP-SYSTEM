@@ -127,7 +127,10 @@ Kq05GatewayBatchCollector::Receive Kq05GatewayBatchCollector::receive(
     if (count_==0U) resetGroup();
     return Receive::kDenied;
   }
-  return Receive::kQueued;
+  // A previously stored exact packet was retransmitted because its ACK
+  // may have been lost. It must not need another multi-minute group wait.
+  // Still never claim that the Tracker actually received an ACK.
+  return Receive::kReenrolled;
 }
 
 Kq05GatewayBatchCollector::Service Kq05GatewayBatchCollector::service() {

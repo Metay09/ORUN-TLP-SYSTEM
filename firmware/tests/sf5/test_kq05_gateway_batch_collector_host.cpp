@@ -80,7 +80,7 @@ void testFiveFullAndExplicitPartialGroup() {
     uint8_t bytes[100]{};
     const size_t size=(seq&1U)?100U:84U;
     frame(bytes,size,seq);
-    assert(c.receive(bytes,size)==Collector::Receive::kQueued);
+    assert(c.receive(bytes,size)==Collector::Receive::kReenrolled);
   }
   assert(c.queued()==2U);
   assert(f.flash.writes==before);
