@@ -6,8 +6,23 @@ command -v pio >/dev/null || {
   echo "DUR: PlatformIO (pio) bulunamadi."
   exit 1
 }
-pio run -e rak4630_kq05_lab
-pio run -e rak4630_kq05_unified_ack_lab
+# Do not flood the terminal with thousands of compiler progress lines.
+# Preserve complete logs for each build inside a temporary PC file; on
+# failure show diagnostics and stop before comparing nonexistent artifacts.
+log="$(mktemp "${TMPDIR:-/tmp}/orun-kq05-ack-size.XXXXXXXX")"
+trap 'rm -f -- "$log"' EXIT
+for target in rak4630_kq05_lab rak4630_kq05_unified_ack_lab; do
+  echo "=== BUILD $target ==="
+  if ! pio run -e "$target" >"$log" 2>&1; then
+    echo "DUR: Firmware derlemesi basarisiz: $target"
+    grep -En '(^|[[:space:]])(error:|fatal error:)|Error [0-9]|FAILED' "$log" | tail -n 40 || true
+    echo "=== SON 80 DERLEME SATIRI ==="
+    tail -n 80 "$log"
+    exit 1
+  fi
+  # PlatformIO memory and status summary, without losing build warnings.
+  grep -E '(^RAM:|^Flash:|\[SUCCESS\]|SUCCESS|warning:)' "$log" | tail -n 25 || true
+done
 python3 - <<'PY'
 from pathlib import Path
 one = Path(".pio/build/rak4630_kq05_lab/firmware.bin")
