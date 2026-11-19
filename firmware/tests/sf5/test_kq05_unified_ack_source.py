@@ -46,8 +46,11 @@ assert "tracker_gateway_batch_release.service()" in main
 assert "radio_manager.takeCustodyAckFrame(&ack)" in main  # legacy source kept
 assert "bool expedite_events = true" in head
 assert "bool trusted_sparse_single_ack = false" in head
-assert "kRetryCoalesceMs = 30000U" in head
-assert "kDefaultPartialFlushMs = 120000U" in head
+assert "kRetryCoalesceMs = 3000U" in head
+assert "kDefaultPartialFlushMs = 3000U" in head
+# Fail if radio RX window shrinks beneath this nominal software budget.
+radio_cfg = (root / "firmware/include/radio_config.h").read_text()
+assert "kWindowedRxAfterTxMs = 10000" in radio_cfg
 assert "retry_timer_armed_" in gw and "first_retry_ms_" in gw
 assert "collector_.queued()==1U" in gw
 assert "Receive::kReenrolled" in gw

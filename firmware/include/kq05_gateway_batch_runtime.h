@@ -25,13 +25,15 @@ class Kq05GatewayBatchRuntime final {
     kLiveStarted, kLiveDurable, kLiveDuplicate, kLiveDenied
   };
 
-  // Provisional maximum wait after FIRST durable group item, not per-item
-  // ACK timing. FIVE items flush immediately. Must be RF/power qualified
-  // against Tracker downlink listen windows before any field activation.
-  static constexpr uint32_t kDefaultPartialFlushMs = 120000U;
-  // Provisional retry burst collection window. A lone resent object gets
-  // a 1-object 0x0A; 2..5 resends can share one downlink. RF unqualified.
-  static constexpr uint32_t kRetryCoalesceMs = 30000U;
+  // Tracker currently listens for only 10 seconds AFTER each RF TX.
+  // These are short experimental coalescing windows, starting after the
+  // durable OCQ2 commit (or exact duplicate RX), NOT after the Tracker's
+  // TX completes. Keep ample headroom for MAC, driver duty and ACK airtime.
+  // This bound improves rendezvous but does not guarantee over-air delivery:
+  // actual grant/readback/driver delay and RF airtime need physical proof.
+  // FIVE exact records still flush immediately; sparse single is valid.
+  static constexpr uint32_t kDefaultPartialFlushMs = 3000U;
+  static constexpr uint32_t kRetryCoalesceMs = 3000U;
 
   Kq05GatewayBatchRuntime(RadioManager& radio,
                           Kq05GatewayBatchCollector& collector,

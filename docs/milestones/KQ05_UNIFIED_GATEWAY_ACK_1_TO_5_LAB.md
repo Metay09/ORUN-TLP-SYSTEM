@@ -17,8 +17,8 @@ Aynı Gateway custody ACK protokolü **0x0A** hem **tek kaydı (count=1, 56B)** 
 | Durum | Beklenen 0x0A |
 | --- | --- |
 | Kritik EVENT, Gateway OCQ2 Flash'a kalıcı yazdı | Hemen tekli count=1 flush (önce bekleyen farklı grubu flush et, olayı tekrar iste) |
-| Önceden Gateway'e yazılmış exact kayıt ACK kaybıyla tekrar geldi | 30 saniyelik **geçici** yeniden gönderim toplama penceresi; bir kayıt kalırsa count=1, 2..5 gelirse tek toplu ACK |
-| Normal custody istekleri kısa aralıkta geldi | 5 kalıcı kayıt olunca hemen 1 toplu ACK; 1..4 için ilk kayıt zamanından itibaren geçici en çok 120 saniye |
+| Önceden Gateway'e yazılmış exact kayıt ACK kaybıyla tekrar geldi | Deneysel varsayılan **3 saniye** tekrar toplama penceresi; bir kayıt kalırsa count=1, 2..5 gelirse toplu ACK |
+| Normal custody istekleri kısa aralıkta geldi | 5 kalıcı kayıt olunca hemen 1 toplu ACK; 1..4 için ilk kalıcı kayıt zamanından itibaren varsayılan **3 saniye** |
 | **Güvenilir** seyrek raporlama profili (ör. ≥60 dakika) biliniyor | `trusted_sparse_single_ack=true` seçilirse, ilk kalıcı custody kaydı için hemen count=1 |
 | Yeni PERIODIC LIVE | ACKless, en yeni konum önce; hiçbir 0x0A/0x09, 5'li cache veya geçmiş eksikliği LIVE TX'i kilitlemez |
 | Deneysel PERIODIC HISTORY custody (birleşik LAB hedefi) | OBS1'e aynı exact ciphertext Flash'ta kalıcı tutulduktan sonra Gateway'e custody bit'i açık gider; uygun 0x0A ACK kapsamına alınır; kritik EVENT için bir exact-cache yuvası korunur |
@@ -126,6 +126,27 @@ Son sadeleştirme kodu, `0x09`yi yok etmez: yalnız birleşik
 `0x0A` imajında yarışan alternatif release yetkisini ve dolaylı
 RX durumunu kaldırır. Diğer KQ05 test senaryoları korunur. Cihaza
 yükleme / erase / servis / DB / `main` değişikliği yapılmadı.
+
+### 19 Kasım 2026 — 10 saniyelik dinleme penceresi için zamanlama adayı
+
+Kaynak denetimi: `radio_config::kWindowedRxAfterTxMs = 10000`.
+Önceki birleşik Gateway varsayılanları `partial_flush=120000` ve
+`retry_coalesce=30000` ms idi; tasma 10s RX penceresi ile
+**aynı raporlama sırasında ACK alınmasını desteklemiyordu**.
+Yeni opt-in birleşik LAB varsayılanı ikisi için **3000ms** yapıldı.
+Bu değişiklik yeni protokol veya store oluşturmaz; var olan
+`Kq05GatewayBatchRuntime` zamanlayıcısını düzeltir. Önceden kullanılan
+uzun süreler açıkça parametrelenen sentetik host senaryolarında hâlâ test
+edilir; gerçek product composition yalnız kısa varsayılanı kullanır.
+
+Yeni host testi nominal single 0x0A ACK ve lost-ACK duplicate yeniden
+onayının 3s sınırında request edilmesini, exact OCQ2 kaydının yeniden
+yazılmamasını kanıtlamayı hedefler. **Bu bir alım garantisi değildir**:
+RX penceresi Tracker TX_DONE'dan başlar, Gateway timer ise Flash commit
+sonrasında; RF airtime, geceleme/uyku, TX duty/driver ve iki saat
+senkronizasyonu donanımda ölçülmelidir. `radio_.canSend()` false ise
+ACK ertelenebilir ve kayıtlar güvenle elde tutulur; uygulama sahada
+başarı iddia etmez.
 
 ## Henüz olmayan ürün kabulü
 

@@ -368,8 +368,50 @@ void testCriticalEventImmediateAndLostDownlinkRetry() {
   assert(g_tx_sends==5U && c.queued()==0U);
 }
 
+
+void testDefaultAckCoalescingFitsNominalTrackerRxWindow() {
+  // The actual Tracker opens a 10 s post-TX RX window. Host time here
+  // measures only Gateway software scheduling, never physical airtime.
+  resetRadio();
+  Fixture f;
+  Collector c(f.store,f.grants,kGateway);
+  Live live(f.store,f.grants,kGateway);
+  orun_tlp::RadioManager radio;
+  Runtime rt(radio,c,live);
+  static_assert(Runtime::kDefaultPartialFlushMs < 5000U,
+                "partial ACK timeout needs room inside 10 s Tracker RX");
+  static_assert(Runtime::kRetryCoalesceMs < 5000U,
+                "lost-ACK reoffer needs a bounded second RX rendezvous");
+  assert(rt.partialWaitMs() == Runtime::kDefaultPartialFlushMs);
+
+  // Single, ordinary PERIODIC custody candidate, not an urgent EVENT.
+  pushAndCommit(rt,1U,1000U);
+  const uint32_t first = rt.firstDurableMs();
+  assert(c.queued()==1U && !c.flushRequested() && g_tx_sends==0U);
+  assert(rt.update(true,first+Runtime::kDefaultPartialFlushMs-1U)==
+         Runtime::Event::kNone);
+  assert(rt.update(true,first+Runtime::kDefaultPartialFlushMs)==
+         Runtime::Event::kAckTxStarted);
+  verifyAck(f,1U,56U);
+  const size_t writes=f.flash.writes;
+
+  // If the downlink was lost, an identical cached EXACT reoffer must
+  // get a second single ACK without new Flash writes or a 30/120s wait.
+  const uint32_t retryAt=first+Runtime::kDefaultPartialFlushMs+200U;
+  push(1U);
+  assert(rt.update(true,retryAt)==Runtime::Event::kDuplicate);
+  assert(c.queued()==1U && !c.flushRequested());
+  assert(rt.update(true,retryAt+Runtime::kRetryCoalesceMs-1U)==
+         Runtime::Event::kNone);
+  assert(rt.update(true,retryAt+Runtime::kRetryCoalesceMs)==
+         Runtime::Event::kAckTxStarted);
+  verifyAck(f,1U,56U);
+  assert(g_tx_sends==2U && f.flash.writes==writes);
+}
+
 int main() {
   kq05_durable_gateway_fixture_main();
+  testDefaultAckCoalescingFitsNominalTrackerRxWindow();
   testLostAckFiveRetryBurstGetsOneReceipt();
   testTrustedSparseProfileUsesSameOneRecordWire();
   testThirtyLivePacketsWhileAckBlocked();
