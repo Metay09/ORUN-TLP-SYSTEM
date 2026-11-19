@@ -269,6 +269,20 @@ void testCriticalEventImmediateAndLostDownlinkRetry() {
   assert(rt.update(true,first+119999U)==Runtime::Event::kNone);
   assert(rt.update(true,first+120000U)==Runtime::Event::kAckTxStarted);
   assert(g_tx_sends==3U);
+
+  // A critical EVENT arriving behind a pending PERIODIC group must NOT be
+  // combined with that group. Flush the older group, retry EVENT separately.
+  pushAndCommit(rt,3U,200000U); // unseen PERIODIC candidate
+  assert(c.queued()==1U && !c.flushRequested());
+  push(4U); // unseen EVENT: one-object ACK must not wait behind telemetry
+  assert(rt.update(true,200100U)==Runtime::Event::kCustodyDeferred);
+  assert(c.queued()==1U && c.flushRequested());
+  assert(rt.update(true,200101U)==Runtime::Event::kAckTxStarted);
+  assert(g_tx_sends==4U && c.queued()==0U);
+  pushAndCommit(rt,4U,200102U); // Tracker retries its retained EVENT
+  assert(c.queued()==1U && c.flushRequested());
+  assert(rt.update(true,200110U)==Runtime::Event::kAckTxStarted);
+  assert(g_tx_sends==5U && c.queued()==0U);
 }
 
 int main() {

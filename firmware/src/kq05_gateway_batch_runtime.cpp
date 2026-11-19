@@ -98,6 +98,14 @@ Kq05GatewayBatchRuntime::update(bool enabled, uint32_t now_ms) {
     }
 
     const bool is_event=decoded.app_family==tlp::kProductAppFamilyEvent;
+    // An urgent EVENT must never join a previously queued telemetry group.
+    // Flush that group first; the Tracker retains its exact EVENT and
+    // retries later. This keeps each EVENT's 0x0A ACK at count=1.
+    if (expedite_events_ && is_event && collector_.queued()>0U) {
+      (void)collector_.requestFlush();
+      memset(raw.payload,0,sizeof(raw.payload));
+      return Event::kCustodyDeferred;
+    }
     const auto outcome=collector_.receive(raw.payload,raw.size);
     memset(raw.payload,0,sizeof(raw.payload));
     switch (outcome) {

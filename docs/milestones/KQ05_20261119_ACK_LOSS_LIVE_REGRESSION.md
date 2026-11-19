@@ -13,7 +13,7 @@ Temel: PR #353, commit `62156fee1fee88c9b7899c2f46e3f83d01201a90`.
 
 ## Bu dalın uyguladığı sınırlı düzeltmeler
 
-- Deneysel Gateway 0x0A runtime, bir EVENT'i OCQ2 üzerinde **kalıcı** gördüğü anda `requestFlush()` çağırır. EVENT birikim için beşinci kaydı veya iki dakikalık kısmi timeout'u beklemez. RF downlink'i başlatılmış olması tasmanın ACK aldığı anlamına gelmez.
+- Deneysel Gateway 0x0A runtime, bir EVENT'i OCQ2 üzerinde **kalıcı** gördüğü anda `requestFlush()` çağırır. EVENT birikim için beşinci kaydı veya iki dakikalık kısmi timeout'u beklemez. Önceden kuyrukta PERIODIC custody grubu varsa onu önce gönderime alır, EVENT'i bu grupla karıştırmadan tasmanın yeniden göndermesini bekler. RF downlink'i başlatılmış olması tasmanın ACK aldığı anlamına gelmez.
 - Düşen EVENT downlink'inde aynı exact EVENT tekrar gönderildiğinde Gateway OCQ2 kayıt tekrarı yazmadan hemen yeni 1-kayıt onayı hazırlayabilir.
 - PERIODIC custody için 1..5 grup/timer host davranışı aynen korunur. Normal PERIODIC LIVE/HISTORY custody **istemez**; bu olay-grubu mekanizması **normal geçmişin toplu makbuzu değildir**.
 - Normal geçmişte 0x09 Backend makbuz yolu kalır, fakat Backend -> Edge -> Gateway -> Tracker gerçek haberleşme zinciri tamamlanmadan "uçtan uca güvenilir geçmiş" ilan edilmez.
