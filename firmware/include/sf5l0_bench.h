@@ -309,7 +309,11 @@ class Sf5l0EdgeHandoff final {
   Reply accept(uint16_t page, uint16_t slot, uint64_t generation,
                const uint8_t (&mac)[32]);
   // Loop: drives the store's maintenance and erases fully handed-off pages.
-  Event service();
+  // The ACK batch collector can pin durable OCQ2 handles for up to one
+  // downlink. Complete already-started handoff/reclaim work as usual, but
+  // optionally prohibit starting a NEW reclaim until the batch has been
+  // transmitted or abandoned. Default keeps legacy behavior unchanged.
+  Event service(bool allow_new_reclaim = true);
   uint32_t handedOff() const { return handed_off_; }
   uint32_t reclaimed() const { return reclaimed_; }
 
