@@ -13,6 +13,7 @@ bool TrackerCriticalEventTx::idleStorage() const {
 
 TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
     uint32_t now_ms, bool eligible) {
+  const bool history = historyMode();
   // Report a hard fault only on the transition to blocked; do not flood
   // the serial console with an error on every cooperative loop iteration.
   if (phase_ == Phase::kBlocked) return Result::kNone;
@@ -39,7 +40,8 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
     if (lookup != ObservationStore::LookupResult::kFound ||
         record.handle.identity.incarnation != selected_.incarnation ||
         record.handle.identity.sequence != selected_.sequence ||
-        record.kind != osf::RecordKind::kEvent ||
+        record.kind != (history ? osf::RecordKind::kPeriodic :
+                                   osf::RecordKind::kEvent) ||
         record.release_uncertain || record.release_marker_exhausted)
       return block();
     if (record.released) {
@@ -64,7 +66,7 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
     if (!records_.store().peekNextIdentity(next) || !next.valid())
       return Result::kNone;
     if (scan_cursor_ == 0U || scan_incarnation_ != next.incarnation) {
-      if (scan_incarnation_ == next.incarnation &&
+      if (!history && scan_incarnation_ == next.incarnation &&
           idle_next_ == next.sequence) return Result::kNone;
       ObservationStore::Record oldest{};
       const auto found = records_.oldestRetained(oldest);
@@ -94,11 +96,14 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
       if (record.handle.identity.incarnation != id.incarnation ||
           record.handle.identity.sequence != id.sequence)
         return block();
-      if (record.kind != osf::RecordKind::kEvent || record.released)
+      if (record.kind != (history ? osf::RecordKind::kPeriodic :
+                                    osf::RecordKind::kEvent) ||
+          record.released)
         continue;
       if (record.release_uncertain || record.release_marker_exhausted ||
           record.schema != osf::kProductSchemaV1 ||
-          record.payload_size != tlp::kEventPlaintextSize)
+          record.payload_size != (history ? tlp::kPeriodicPlaintextSize :
+                                           tlp::kEventPlaintextSize))
         return block();
 
       selected_ = id;
@@ -110,6 +115,12 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
       if (scan_cursor_ >= next.sequence) {
         scan_cursor_ = 0U;
         idle_next_ = next.sequence;
+        // Periodic HISTORY may resweep retained exact objects after a
+        // cooldown, including when a Gateway ACK was lost.
+        if (history) {
+          deadline_armed_ = true;
+          next_attempt_ms_ = now_ms + kHistorySpacingMs;
+        }
       }
       return Result::kNone;
     }
@@ -128,43 +139,103 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
         uint16_t occupied = 0U;
         if (!records_.store().exactObjectCount(occupied))
           return Result::kReadError;
-        if (occupied >= osf::kMaxExactCustodyObjects) {
-          next_attempt_ms_ = now_ms + kDeferredMs;
-          deadline_armed_ = true;
-          return Result::kDeferred;
+        // HISTORY never fills the final exact slot: it is reserved for
+        // a critical EVENT. A full/no-ACK history cache cannot gate LIVE.
+        const uint16_t ceiling = history ? kHistoryCacheCeiling :
+                                           osf::kMaxExactCustodyObjects;
+        if (occupied >= ceiling) {
+          if (history) {
+            // No free HISTORY slot. Reuse an existing EXACT cached PERIODIC
+            // object without consuming a nonce or evicting a record.
+            osc::ExactObject cached[osf::kMaxExactCustodyObjects]{};
+            uint16_t count = 0U;
+            if (records_.snapshotCustodyCandidates(cached, count)) {
+              const osc::ExactObject* oldest = nullptr;
+              const uint64_t incarnation = records_.store().incarnation();
+              for (uint16_t i = 0U; i < count; ++i) {
+                if (cached[i].record_kind != osf::RecordKind::kPeriodic ||
+                    cached[i].identity.incarnation != incarnation) continue;
+                if (oldest == nullptr ||
+                    cached[i].identity.sequence < oldest->identity.sequence)
+                  oldest = &cached[i];
+              }
+              if (oldest != nullptr) {
+                selected_ = oldest->identity;
+                phase_ = Phase::kReady;
+              }
+            }
+          }
+          if (phase_ != Phase::kReady) {
+            next_attempt_ms_ = now_ms + kDeferredMs;
+            deadline_armed_ = true;
+            return Result::kDeferred;
+          }
         }
-        ObservationStore::Record record{};
-        if (records_.store().lookup(selected_, record) !=
-                ObservationStore::LookupResult::kFound ||
-            record.kind != osf::RecordKind::kEvent || record.released ||
-            record.release_uncertain ||
-            record.payload_size != tlp::kEventPlaintextSize)
-          return block();
-        tlp::EventPlaintext event{};
-        if (tlp::decodeEventPlaintext(
-                record.payload, record.payload_size, &event) !=
-                tlp::ProductSecureCodecResult::kOk ||
-            event.record_incarnation != selected_.incarnation ||
-            event.record_sequence != selected_.sequence)
-          return block();
+        if (phase_ == Phase::kNeedCache) {
+          ObservationStore::Record record{};
+          if (records_.store().lookup(selected_, record) !=
+                  ObservationStore::LookupResult::kFound ||
+              record.kind != (history ? osf::RecordKind::kPeriodic :
+                                       osf::RecordKind::kEvent) ||
+              record.released || record.release_uncertain ||
+              record.payload_size != (history ? tlp::kPeriodicPlaintextSize :
+                                               tlp::kEventPlaintextSize))
+            return block();
 
-        uint8_t wire[tlp::kEventFrameSize]{};
-        const auto sealed = crypto_.protectNextEvent(
-            tlp::kProductPathFlagRelayAllowed |
-                tlp::kProductPathFlagCustodyRequested,
-            event, wire);
-        if (sealed == ProductSecureCryptoResult::kUnavailable) {
-          next_attempt_ms_ = now_ms + kDeferredMs;
-          deadline_armed_ = true;
-          return Result::kDeferred;
-        }
-        if (sealed != ProductSecureCryptoResult::kOk) return block();
-        sealed_.identity = selected_;
-        sealed_.record_kind = osf::RecordKind::kEvent;
-        sealed_.object_size = static_cast<uint8_t>(sizeof(wire));
-        for (size_t i = 0U; i < sizeof(wire); ++i) {
-          sealed_.object[i] = wire[i];
-          wire[i] = 0U;
+          const uint8_t flags = tlp::kProductPathFlagRelayAllowed |
+                                tlp::kProductPathFlagCustodyRequested;
+          if (history) {
+            tlp::PeriodicObservationPlaintext periodic{};
+            if (tlp::decodePeriodicPlaintext(
+                    record.payload, record.payload_size, &periodic) !=
+                    tlp::ProductSecureCodecResult::kOk ||
+                periodic.record_incarnation != selected_.incarnation ||
+                periodic.record_sequence != selected_.sequence)
+              return block();
+            uint8_t wire[tlp::kPeriodicFrameSize]{};
+            const auto protected_result =
+                crypto_.protectNextPeriodic(flags, periodic, wire);
+            if (protected_result == ProductSecureCryptoResult::kUnavailable) {
+              next_attempt_ms_ = now_ms + kDeferredMs;
+              deadline_armed_ = true;
+              return Result::kDeferred;
+            }
+            if (protected_result != ProductSecureCryptoResult::kOk)
+              return block();
+            sealed_.identity = selected_;
+            sealed_.record_kind = osf::RecordKind::kPeriodic;
+            sealed_.object_size = static_cast<uint8_t>(sizeof(wire));
+            for (size_t i = 0U; i < sizeof(wire); ++i) {
+              sealed_.object[i] = wire[i];
+              wire[i] = 0U;
+            }
+          } else {
+            tlp::EventPlaintext event{};
+            if (tlp::decodeEventPlaintext(
+                    record.payload, record.payload_size, &event) !=
+                    tlp::ProductSecureCodecResult::kOk ||
+                event.record_incarnation != selected_.incarnation ||
+                event.record_sequence != selected_.sequence)
+              return block();
+
+            uint8_t wire[tlp::kEventFrameSize]{};
+            const auto protected_result =
+                crypto_.protectNextEvent(flags, event, wire);
+            if (protected_result == ProductSecureCryptoResult::kUnavailable) {
+              next_attempt_ms_ = now_ms + kDeferredMs;
+              deadline_armed_ = true;
+              return Result::kDeferred;
+            }
+            if (protected_result != ProductSecureCryptoResult::kOk)
+              return block();
+            sealed_.identity = selected_;
+            sealed_.record_kind = osf::RecordKind::kEvent;
+            sealed_.object_size = static_cast<uint8_t>(sizeof(wire));
+            for (size_t i = 0U; i < sizeof(wire); ++i) {
+              sealed_.object[i] = wire[i];
+              wire[i] = 0U;
+            }
+          }
         }
       }
     }
@@ -194,8 +265,10 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
   osc::ExactObject exact{};
   if (records_.findCachedExact(selected_, exact) !=
           ObservationStore::ControlLookupResult::kFound ||
-      exact.record_kind != osf::RecordKind::kEvent ||
-      exact.object_size != tlp::kEventFrameSize ||
+      exact.record_kind != (history ? osf::RecordKind::kPeriodic :
+                                     osf::RecordKind::kEvent) ||
+      exact.object_size != (history ? tlp::kPeriodicFrameSize :
+                                     tlp::kEventFrameSize) ||
       !records_.custodyCandidateMatchesRetainedExact(exact))
     return block();
 
@@ -204,7 +277,8 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
           exact.object, exact.object_size, &header) !=
           tlp::ProductSecureCodecResult::kOk ||
       header.device_id != radio_.deviceId() ||
-      header.app_family != tlp::kProductAppFamilyEvent ||
+      header.app_family != (history ? tlp::kProductAppFamilyPeriodic :
+                                      tlp::kProductAppFamilyEvent) ||
       (header.path_flags & tlp::kProductPathFlagCustodyRequested) == 0U ||
       (header.path_flags & tlp::kProductPathFlagRelayAllowed) == 0U)
     return block();
@@ -214,8 +288,12 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
           deadline_armed_ = true;
     return Result::kDeferred;
   }
-  phase_ = Phase::kWaitingAck;
-  next_attempt_ms_ = now_ms + kRetryMs;
+  // The EVENT owner waits for its one exact ACK before selecting the next
+  // EVENT. Routine HISTORY walks to other retained records while the
+  // Gateway may batch 1..5 exact packets; it never counts TX as release.
+  phase_ = history ? Phase::kSelect : Phase::kWaitingAck;
+  next_attempt_ms_ = now_ms +
+      (history ? kHistorySpacingMs : kRetryMs);
   deadline_armed_ = true;
   return Result::kSent;  // Started RF, not Gateway or Backend delivery.
 }
