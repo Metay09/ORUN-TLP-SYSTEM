@@ -188,9 +188,84 @@ void custodyAckTrackerMailboxAndRoleIsolation() {
 }
 #endif
 
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+void receiveKq05GatewayBatchWithoutClaimingCustody() {
+  namespace batch = orun_tlp::kq05_gateway_batch_ack;
+  RadioManager manager;
+  TestSequence source;
+  beginAs(manager, source, NodeRole::kTracker);
+
+  batch::Header requested{};
+  requested.tracker_device_id=kLocalDevice;
+  requested.gateway_device_id=0x1112131415161718ULL;
+  requested.key_epoch=7U;
+  requested.custody_floor=0U;
+  requested.grant_generation=1U;
+  requested.count=5U;
+  for (uint8_t i=0U;i<5U;++i)
+    requested.refs[i][0]=static_cast<uint8_t>(i+1U);
+  uint8_t tag[batch::kTagSize]{};
+  for (size_t i=0U;i<sizeof(tag);++i)
+    tag[i]=static_cast<uint8_t>(i+9U);
+
+  uint8_t wire[batch::kMaxSize]{};
+  size_t length=0U;
+  assert(batch::encode(requested,tag,wire,sizeof(wire),length));
+  assert(length==88U);
+  uint8_t saved[batch::kMaxSize]{};
+  memcpy(saved,wire,length);
+  rxDone(wire,static_cast<uint16_t>(length),-65,9);
+  memset(wire,0,sizeof(wire));
+  manager.update(false);
+
+  orun_tlp::Kq05GatewayBatchAckRxFrame result{};
+  assert(manager.peekKq05GatewayBatchAckFrame(&result));
+  assert(manager.peekKq05GatewayBatchAckFrame(&result));
+  assert(result.size==length && result.rssi_dbm==-65 && result.snr_db==9);
+  assert(memcmp(result.payload,saved,length)==0);
+  assert(manager.eventDiagnostics().kq05_gateway_batch_ack_rx_queued==1U);
+  // Structural admission is untrusted: test tag bytes do NOT carry
+  // a real HMAC or grant, and this test NEVER releases an OBS1 record.
+  rxDone(saved,static_cast<uint16_t>(length),-60,4);
+  manager.update(false);
+  assert(manager.eventDiagnostics().kq05_gateway_batch_ack_rx_drops==1U);
+  assert(manager.takeKq05GatewayBatchAckFrame(&result));
+  assert(!manager.peekKq05GatewayBatchAckFrame(&result));
+
+  uint8_t mutated[batch::kMaxSize]{};
+  memcpy(mutated,saved,length);
+  mutated[11]^=0x01U; // other Tracker: never enter this mailbox
+  rxDone(mutated,static_cast<uint16_t>(length),-60,4);
+  manager.update(false);
+  memcpy(mutated,saved,length);
+  mutated[2]=0x80U; // noncanonical flags
+  rxDone(mutated,static_cast<uint16_t>(length),-60,4);
+  manager.update(false);
+  rxDone(saved,static_cast<uint16_t>(length-1U),-60,4);
+  manager.update(false);
+  assert(manager.eventDiagnostics().kq05_gateway_batch_ack_rx_drops==4U);
+  assert(!manager.takeKq05GatewayBatchAckFrame(&result));
+
+  rxDone(saved,static_cast<uint16_t>(length),-55,7);
+  manager.update(false);
+  assert(manager.peekKq05GatewayBatchAckFrame(&result));
+  manager.setRole(NodeRole::kBase);
+  manager.update(false);
+  assert(!manager.peekKq05GatewayBatchAckFrame(&result));
+  rxDone(saved,static_cast<uint16_t>(length),-55,7);
+  manager.update(false);
+  assert(!manager.takeKq05GatewayBatchAckFrame(&result));
+  assert(manager.eventDiagnostics().kq05_gateway_batch_ack_rx_drops>=5U);
+}
+#endif
+
 }  // namespace
 
 int main() {
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  receiveKq05GatewayBatchWithoutClaimingCustody();
+  puts("KQ05 0x0A real RadioManager Tracker receive/role/size/identity: PASS (HOST ONLY)");
+#endif
   receiveProductAndRetainExactBytes();
   eventSizeAndTransmitAdmission();
   rejectMalformedTransmit();
