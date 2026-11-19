@@ -50,6 +50,10 @@ static_assert(tlp::kHistorySecureMaxPacketSize <= kRadioReceiveLimit,
               "HISTORY_SECURE packet must fit radio event storage");
 static_assert(tlp::kProductSecureMaxFrameSize <= kRadioReceiveLimit,
               "PRODUCT_SECURE packet must fit radio event storage");
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+static_assert(kq05_gateway_batch_ack::kMaxSize <= kRadioReceiveLimit,
+              "KQ05 0x0A batch ACK must fit SX126x event storage");
+#endif
 
 void saturatingIncrement(uint32_t& value) {
   if (value != UINT32_MAX) ++value;
@@ -106,6 +110,10 @@ bool RadioManager::begin(SequenceSource& sequences) {
   product_secure_rx_pending_ = false;
   custody_ack_rx_ = {};
   custody_ack_rx_pending_ = false;
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  kq05_gateway_batch_ack_rx_ = {};
+  kq05_gateway_batch_ack_rx_pending_ = false;
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
   kq05_batch_rx_ = {};
   kq05_batch_rx_pending_ = false;
@@ -436,6 +444,27 @@ bool RadioManager::takeCustodyAckFrame(CustodyAckRxFrame* frame) {
   custody_ack_rx_pending_ = false;
   return true;
 }
+
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+bool RadioManager::peekKq05GatewayBatchAckFrame(
+    Kq05GatewayBatchAckRxFrame* frame) const {
+  if (frame == nullptr || !kq05_gateway_batch_ack_rx_pending_ ||
+      role_transition_pending_ ||
+      network_.role() != NodeRole::kTracker) return false;
+  *frame = kq05_gateway_batch_ack_rx_;
+  return true;
+}
+void RadioManager::discardKq05GatewayBatchAckFrame() {
+  kq05_gateway_batch_ack_rx_ = {};
+  kq05_gateway_batch_ack_rx_pending_ = false;
+}
+bool RadioManager::takeKq05GatewayBatchAckFrame(
+    Kq05GatewayBatchAckRxFrame* frame) {
+  if (!peekKq05GatewayBatchAckFrame(frame)) return false;
+  discardKq05GatewayBatchAckFrame();
+  return true;
+}
+#endif
 
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
 bool RadioManager::peekKq05BatchReceiptFrame(
@@ -783,6 +812,10 @@ void RadioManager::applyPendingRole() {
   // No ACK received in an old role may be delivered in the new role.
   custody_ack_rx_ = {};
   custody_ack_rx_pending_ = false;
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  kq05_gateway_batch_ack_rx_ = {};
+  kq05_gateway_batch_ack_rx_pending_ = false;
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
   kq05_batch_rx_ = {};
   kq05_batch_rx_pending_ = false;
@@ -904,6 +937,29 @@ void RadioManager::emitBridgePosition(const NetworkEvent& event) {
 void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
                                         int16_t rssi, int8_t snr) {
 
+#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
+  if (size >= 2U &&
+      payload[0] == kq05_gateway_batch_ack::kVersion &&
+      payload[1] == kq05_gateway_batch_ack::kType) {
+    kq05_gateway_batch_ack::Header header{};
+    // Strict structure only; full SHA256/HKDF/HMAC belongs to the
+    // trusted Tracker loop, never this driver callback path.
+    if (network_.role() != NodeRole::kTracker ||
+        !kq05_gateway_batch_ack::decode(payload,size,header) ||
+        header.tracker_device_id != device_id_ ||
+        kq05_gateway_batch_ack_rx_pending_) {
+      ++event_diagnostics_.kq05_gateway_batch_ack_rx_drops;
+      return;
+    }
+    kq05_gateway_batch_ack_rx_.size=size;
+    kq05_gateway_batch_ack_rx_.rssi_dbm=rssi;
+    kq05_gateway_batch_ack_rx_.snr_db=snr;
+    memcpy(kq05_gateway_batch_ack_rx_.payload,payload,size);
+    kq05_gateway_batch_ack_rx_pending_=true;
+    ++event_diagnostics_.kq05_gateway_batch_ack_rx_queued;
+    return;
+  }
+#endif
 #ifdef ORUN_KQ05_EXPERIMENTAL_ACKLESS_LIVE
   if (size >= 2U && payload[0] == kq05_receipt::kVersion &&
       payload[1] == kq05_receipt::kType) {
