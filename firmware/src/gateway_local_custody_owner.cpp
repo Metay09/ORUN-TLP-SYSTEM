@@ -22,6 +22,8 @@ uint32_t be32(const uint8_t* p) {
 GatewayLocalCustodyOwner::~GatewayLocalCustodyOwner() {
   clearPending();
   wipe(signed_ack_,sizeof(signed_ack_));
+  batch_handle_=ProductCustodyStore::Handle{};
+  batch_ready_=false;
 }
 
 void GatewayLocalCustodyOwner::clearPending() {
@@ -30,13 +32,15 @@ void GatewayLocalCustodyOwner::clearPending() {
   pending_scope_=GatewayCustodyAckScope{};
   pending_size_=0U;
   waiting_flash_=false;
+  batch_requested_=false;
 }
 
 GatewayLocalCustodyOwner::Submit GatewayLocalCustodyOwner::submit(
     const uint8_t* exact_object,size_t size,
     const GatewayCustodyAckScope& scope,
-    const uint8_t (&scoped_key)[32]) {
-  if (waiting_flash_ || ack_ready_ || store_.busy() || store_.hasOutcome())
+    const uint8_t (&scoped_key)[32], bool batch_mode) {
+  if (waiting_flash_ || ack_ready_ || batch_ready_ ||
+      store_.busy() || store_.hasOutcome())
     return Submit::kBusy;
   if (!store_.ready() || exact_object==nullptr ||
       (size!=84U && size!=100U) ||
@@ -58,6 +62,7 @@ GatewayLocalCustodyOwner::Submit GatewayLocalCustodyOwner::submit(
     return Submit::kRejected;
 
   pending_scope_=scope;
+  batch_requested_=batch_mode;
   pending_size_=size;
   memcpy(pending_object_,exact_object,size);
   memcpy(pending_key_,scoped_key,sizeof(pending_key_));
@@ -87,6 +92,15 @@ bool GatewayLocalCustodyOwner::signCommitted(
     return false;
   }
   wipe(found,sizeof(found));
+  // This exact durable readback is the ONE shared custody proof. Preserve
+  // the handle instead of generating an unnecessary legacy 0x05 HMAC when
+  // the caller explicitly requested the experimental 0x0A batch path.
+  if (batch_requested_) {
+    clearPending();  // immediately scrubs the scoped secret and ciphertext
+    batch_handle_=handle;
+    batch_ready_=true;
+    return true;
+  }
   uint8_t ack[custody_ack::kWireSize]{};
   const bool signed_ok=GatewayCustodyAckSigner::signAfterDurableAcceptance(
       pending_object_,pending_size_,pending_scope_,pending_key_,ack);
@@ -105,6 +119,15 @@ void GatewayLocalCustodyOwner::service() {
   ProductCustodyStore::Handle handle{};
   if (!store_.takeCustodyResult(committed,handle)) return;
   if (!committed || !signCommitted(handle)) clearPending();
+}
+
+bool GatewayLocalCustodyOwner::takeBatchHandle(
+    ProductCustodyStore::Handle& output) {
+  if (!batch_ready_) return false;
+  output=batch_handle_;
+  batch_handle_=ProductCustodyStore::Handle{};
+  batch_ready_=false;
+  return true;
 }
 
 bool GatewayLocalCustodyOwner::takeAck(

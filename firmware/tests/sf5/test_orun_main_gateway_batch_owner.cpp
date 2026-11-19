@@ -165,8 +165,84 @@ void revocationBetweenReadbackAndPublishFails() {
 }
 }  // namespace
 
+
+void batchReadbackHandleIsSingleOwner(bool async) {
+  // Existing old 0x05 signer/record path must remain unchanged (main's
+  // original SF5K3S fixture runs before these scenarios).
+  Nor nor; nor.async=async;
+  ProductCustodyStore store(nor, 2U);
+  assert(store.begin());
+  GatewayLocalCustodyOwner owner(store);
+  Grants grants;
+  GatewayCustodyAuthorizedIngress ingress(owner,grants,kGateway);
+  uint8_t packet[100]{};
+  frame(packet,sizeof(packet));
+  ProductCustodyStore::Handle held{};
+  GatewayCustodyAckScope signed_scope{};
+  assert(ingress.receive(packet,sizeof(packet),true)==
+         GatewayCustodyAuthorizedIngress::Result::kStarted);
+  assert(!owner.ackReady() && !ingress.batchReady());
+  for(unsigned j=0U;j<100U && !ingress.batchReady();++j)
+    ingress.service();
+  assert(ingress.batchReady() && !owner.ackReady());
+  uint8_t legacy[custody_ack::kWireSize]{};
+  assert(!ingress.takeAuthorizedAck(legacy));
+  assert(ingress.takeAuthorizedBatchHandle(held,signed_scope));
+  assert(!ingress.pending());
+  assert(signed_scope.tracker_device_id==kTracker);
+  uint8_t exact[100]{};
+  size_t size=0U;
+  assert(store.readConfirmedDurable(held,exact,size)==
+         ProductCustodyStore::Lookup::kFound);
+  assert(size==sizeof(packet) && memcmp(packet,exact,size)==0);
+  uint8_t signed_ack[batch::kMaxSize]{};
+  size_t written=0U;
+  assert(ingress.prepareAuthorizedBatchAck(
+      &held,1U,signed_scope,signed_ack,written));
+  assert(written==batch::kHeaderSize+batch::kRefSize+batch::kTagSize);
+  assert(!ingress.batchReady());
+
+  // Duplicate exact ciphertext consumes zero extra Flash space and
+  // re-offers an identical verified handle without another 0x05 ACK.
+  const int before=nor.writes;
+  assert(ingress.receive(packet,sizeof(packet),true)==
+         GatewayCustodyAuthorizedIngress::Result::kAckReady);
+  ProductCustodyStore::Handle again{};
+  GatewayCustodyAckScope repeat{};
+  assert(ingress.takeAuthorizedBatchHandle(again,repeat));
+  assert(again.page==held.page && again.slot==held.slot &&
+         again.generation==held.generation);
+  assert(nor.writes==before);
+}
+
+void batchRevokedHandleNeverEscapes() {
+  Nor nor;
+  ProductCustodyStore store(nor,2U);
+  assert(store.begin());
+  GatewayLocalCustodyOwner owner(store);
+  Grants grants;
+  GatewayCustodyAuthorizedIngress ingress(owner,grants,kGateway);
+  uint8_t packet[100]{};frame(packet,sizeof(packet));
+  assert(ingress.receive(packet,sizeof(packet),true)==
+         GatewayCustodyAuthorizedIngress::Result::kStarted);
+  for(unsigned j=0U;j<100U && !ingress.batchReady();++j)
+    ingress.service();
+  assert(ingress.batchReady());
+  grants.generation=2U; // revocation AFTER Flash commit but before handoff
+  ProductCustodyStore::Handle handle{};
+  handle.page=123U;
+  GatewayCustodyAckScope scope{};
+  scope.grant_generation=999U;
+  assert(!ingress.takeAuthorizedBatchHandle(handle,scope));
+  assert(handle.page==123U && scope.grant_generation==999U);
+  assert(!ingress.pending() && !owner.batchReady());
+}
+
 int main() {
-  original_sf5k3s_fixture_main();  // old 0x05 regression first
+  original_sf5k3s_fixture_main();
+  batchReadbackHandleIsSingleOwner(false);
+  batchReadbackHandleIsSingleOwner(true);
+  batchRevokedHandleNeverEscapes();  // old 0x05 regression first
   validatesAllFiveWidths(false);
   validatesAllFiveWidths(true);
   revocationBetweenReadbackAndPublishFails();

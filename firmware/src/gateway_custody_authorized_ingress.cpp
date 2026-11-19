@@ -37,7 +37,8 @@ void GatewayCustodyAuthorizedIngress::clearPending() {
 
 GatewayCustodyAuthorizedIngress::Result
 GatewayCustodyAuthorizedIngress::receive(const uint8_t* object,
-                                          size_t length) {
+                                          size_t length,
+                                          bool batch_mode) {
   if (pending_ || custody_.waitingFlash() || custody_.ackReady())
     return Result::kBusy;
   if (gateway_id_ == 0U || object == nullptr ||
@@ -63,7 +64,7 @@ GatewayCustodyAuthorizedIngress::receive(const uint8_t* object,
   if (!matches) { wipe(key,sizeof(key)); return Result::kDenied; }
 
   const GatewayLocalCustodyOwner::Submit status =
-      custody_.submit(object,length,scoped,key);
+      custody_.submit(object,length,scoped,key,batch_mode);
   wipe(key,sizeof(key));
   if (status == GatewayLocalCustodyOwner::Submit::kBusy)
     return Result::kBusy;
@@ -78,7 +79,36 @@ GatewayCustodyAuthorizedIngress::receive(const uint8_t* object,
 void GatewayCustodyAuthorizedIngress::service() {
   if (!pending_) return;
   custody_.service();
-  if (!custody_.waitingFlash() && !custody_.ackReady()) clearPending();
+  if (!custody_.waitingFlash() && !custody_.ackReady() &&
+      !custody_.batchReady()) clearPending();
+}
+
+bool GatewayCustodyAuthorizedIngress::batchReady() const {
+  return pending_ && custody_.batchReady();
+}
+
+bool GatewayCustodyAuthorizedIngress::takeAuthorizedBatchHandle(
+    ProductCustodyStore::Handle& handle,
+    GatewayCustodyAckScope& scope) {
+  if (!pending_ || !custody_.batchReady()) return false;
+  // Current identity/epoch/floor/generation must still match what was
+  // accepted BEFORE any durable write. Never return an unapproved handle.
+  GatewayCustodyAckScope current{};
+  uint8_t key[32]{};
+  const bool active=grants_.activeGrant(
+      pending_scope_.tracker_device_id,pending_scope_.key_epoch,current,key);
+  wipe(key,sizeof(key));
+  const bool authorized=active && validScope(current) &&
+      current.gateway_device_id==gateway_id_ &&
+      sameScope(current,pending_scope_);
+  ProductCustodyStore::Handle candidate{};
+  if (!custody_.takeBatchHandle(candidate)) return false;
+  if (authorized) {
+    handle=candidate;
+    scope=current;
+  }
+  clearPending();
+  return authorized;
 }
 
 bool GatewayCustodyAuthorizedIngress::takeAuthorizedAck(

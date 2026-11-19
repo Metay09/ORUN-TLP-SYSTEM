@@ -41,11 +41,20 @@ class GatewayCustodyAuthorizedIngress final {
   GatewayCustodyAuthorizedIngress& operator=(
       const GatewayCustodyAuthorizedIngress&) = delete;
 
-  Result receive(const uint8_t* exact_object, size_t length);
+  // The experimental batch selection NEVER changes legacy 0x05 by default.
+  // Untrusted RX cannot select batch_mode: only the trusted loop does.
+  Result receive(const uint8_t* exact_object, size_t length,
+                 bool batch_mode = false);
   void service();
   // On denial or pending, output stays byte-identical. Revocation between
   // intake and ACK publication suppresses ACK, even if flash committed.
   bool takeAuthorizedAck(uint8_t (&output)[custody_ack::kWireSize]);
+  // Authoritative existing-grant check before a readback-proven Handle
+  // leaves this ingress. Not a custody release or an on-air ACK.
+  // Both outputs stay unchanged on failure.
+  bool takeAuthorizedBatchHandle(ProductCustodyStore::Handle& handle,
+                                 GatewayCustodyAckScope& scope);
+  bool batchReady() const;
 
   // Trusted loop-only staging seam; NOT a radio sender or a new ingress
   // pipeline. Rechecks the CURRENT grant and the Gateway's exact durable
