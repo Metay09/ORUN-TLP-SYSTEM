@@ -14,8 +14,28 @@ flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror
   -Ifirmware/tests/r2/stubs)
 
 echo "=== REAL RADIOMANAGER 0x0A TRACKER RX / ROLE / SIZE TEST ==="
+# The pinned R2 fixture demands exactly TWO positional arguments: the
+# generated driver bridge path AND one audited PlatformIO environment.
+# Prefer KQ05 LAB when present, then the existing ORUN/base installs.
+# The Python auditor independently checks the exact 2.0.32 driver SHA/patch
+# and rejects modified or unknown sources; never bypass that guard.
+radio_env=""
+for candidate in rak4630_kq05_lab rak4630_orun rak4630; do
+  dir="firmware/.pio/libdeps/$candidate/SX126x-Arduino"
+  if [[ -f "$dir/library.json" && \
+        ( -f "$dir/src/radio/sx126x/radio.cpp.orun-original" || \
+          -f "$dir/src/radio/sx126x/radio.cpp" ) ]]; then
+    radio_env="$candidate"
+    break
+  fi
+done
+if [[ -z "$radio_env" ]]; then
+  echo "DUR: Denetlenen SX126x-Arduino 2.0.32 kurulumu bulunamadi (rak4630 / rak4630_orun / rak4630_kq05_lab)."
+  exit 1
+fi
+echo "R2 denetlenen PlatformIO ortami: $radio_env"
 PYTHONDONTWRITEBYTECODE=1 python3 \
-  firmware/tests/r2/test_patch_radio.py "$tmp/driver_bridge.cpp"
+  firmware/tests/r2/test_patch_radio.py "$tmp/driver_bridge.cpp" "$radio_env"
 "$cxx" "${flags[@]}" \
   firmware/tests/sf5/test_sf5j_radio_transport.cpp \
   "$tmp/driver_bridge.cpp" \
