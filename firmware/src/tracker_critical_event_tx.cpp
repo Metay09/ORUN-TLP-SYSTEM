@@ -151,16 +151,25 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
             uint16_t count = 0U;
             if (records_.snapshotCustodyCandidates(cached, count)) {
               const osc::ExactObject* oldest = nullptr;
+              const osc::ExactObject* after_retry = nullptr;
               const uint64_t incarnation = records_.store().incarnation();
               for (uint16_t i = 0U; i < count; ++i) {
                 if (cached[i].record_kind != osf::RecordKind::kPeriodic ||
                     cached[i].identity.incarnation != incarnation) continue;
+                const uint32_t seq = cached[i].identity.sequence;
                 if (oldest == nullptr ||
-                    cached[i].identity.sequence < oldest->identity.sequence)
+                    seq < oldest->identity.sequence)
                   oldest = &cached[i];
+                if (seq > last_history_retry_seq_ &&
+                    (after_retry == nullptr ||
+                     seq < after_retry->identity.sequence))
+                  after_retry = &cached[i];
               }
-              if (oldest != nullptr) {
-                selected_ = oldest->identity;
+              const osc::ExactObject* retry =
+                  after_retry != nullptr ? after_retry : oldest;
+              if (retry != nullptr) {
+                selected_ = retry->identity;
+                last_history_retry_seq_ = selected_.sequence;
                 phase_ = Phase::kReady;
               }
             }
