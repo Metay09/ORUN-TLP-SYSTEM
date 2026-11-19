@@ -28,7 +28,7 @@ for target in rak4630_kq05_lab rak4630_kq05_unified_ack_lab; do
     exit 1
   fi
   # Show the same authoritative memory figures as PlatformIO's build report.
-  grep -E '(^RAM:|^Flash:|\\[SUCCESS\\]|SUCCESS)' "$log" | tail -n 8 || true
+  grep -E '(^RAM:|^Flash:|\[SUCCESS\]|SUCCESS)' "$log" | tail -n 8 || true
 done
 
 python3 - "$tmp/rak4630_kq05_lab.log" "$tmp/rak4630_kq05_unified_ack_lab.log" <<'PY'
@@ -37,7 +37,7 @@ import re
 import sys
 
 MEMORY = re.compile(
-    r"^(RAM|Flash):[^\\n]*used\\s+(\\d+)\\s+bytes\\s+from\\s+(\\d+)\\s+bytes",
+    r"^(RAM|Flash):[^\n]*used\s+(\d+)\s+bytes\s+from\s+(\d+)\s+bytes",
     re.MULTILINE,
 )
 
