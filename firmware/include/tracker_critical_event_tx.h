@@ -77,6 +77,8 @@ class TrackerCriticalEventTx final {
   uint64_t scan_incarnation_ = 0U;
   uint32_t scan_cursor_ = 0U;
   uint32_t idle_next_ = 0U;
+  // RR retry across cached PERIODIC identities; no ACK implies no release.
+  uint32_t last_history_retry_seq_ = 0U;
   uint32_t next_attempt_ms_ = 0U;
   bool deadline_armed_ = false;  // '0' is a valid wrapping millisecond deadline
 };
