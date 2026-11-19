@@ -7,9 +7,10 @@
 
 #include "kq05_tracker_batch_radio_runtime.h"
 
-#define main kq05_tracker_selective_fixture_main
+// Do not rename main via macro: the nested SecurityStore fixture already
+// owns a separate main alias. Include all test bodies and call them below.
+#define ORUN_KQ05_TRACKER_BATCH_RADIO_RUNTIME_HOST_TEST 1
 #include "test_kq05_tracker_selective_batch_release_host.cpp"
-#undef main
 
 namespace {
 orun_tlp::Kq05GatewayBatchAckRxFrame g_batch_radio_mailbox{};
@@ -165,7 +166,15 @@ void testNoGrantAndNewAckWaitsForPreviousRelease() {
 } // namespace
 
 int main() {
-  kq05_tracker_selective_fixture_main();
+  // Run ALL inherited SecurityStore/HMAC, real OBS1 release, revocation
+  // and power-cut regressions. None are bypassed or silenced for -Werror.
+  testActualRootDerivedFiveAndSubsets();
+  testTamperAndRevocationDoNotPublishCapability();
+  testFiveExactIndependentDurableMarkers();
+  testNoGrantTamperedOrIncompleteGroupNeverStartsFlash();
+  testFailureOnSecondMarkerNeverReleasesLaterRecords();
+  testRevocationBetweenMarkersStopsRemaining();
+  testCrashAfterOneMarkerRequiresNewRemainingSubsetAck();
   testGenuineFiveRecordRadioIntakeAndDurableRelease();
   testBadMacNeverReleasesOrStaysInMailbox();
   testNoGrantAndNewAckWaitsForPreviousRelease();
