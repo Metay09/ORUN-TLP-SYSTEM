@@ -33,7 +33,16 @@ bash tools/ci/run_kq05_one_ack_host.sh
 bash tools/ci/compare_kq05_ack_image_sizes.sh
 ```
 
-İlk komut host testlerinin yanında yalnız kaynak/derleme sözleşmesi denetimi yapar. İkinci komut iki **ayrı deneysel** RAK imajını `pio run` ile derler; `.bin` Flash boyutunu ve farkını yazdırır. **Cihaza upload, Flash erase, servis/DB müdahalesi yoktur.** Fark, iki imajın tüm özelliklerinin farkıdır; yalnız 0x05 nesnesini çıkarmanın tek başına kaç bayt kazandırdığını izole etmez. Herhangi bir başarısız test veya derleme = BLOCKED.
+İlk komut kaynak sözleşmesi ve host regresyonlarını çalıştırır. İkinci komut iki **ayrı deneysel** RAK imajını `pio run` ile derler; **PlatformIO RAM/Flash linker raporlarından** kullanım ve farkları gösterir. NRF52 hedefine göre `firmware.bin` oluşması zorunlu değildir ve karşılaştırma buna bağlı değildir. **Cihaza upload, Flash erase, servis/DB müdahalesi yoktur.** Fark, iki imajın tüm özelliklerinin farkıdır; yalnız 0x05 nesnesini çıkarmanın tek başına kaç bayt kazandırdığını izole etmez. Herhangi bir başarısız test veya derleme = BLOCKED.
+
+### 19 Kasım 2026 PC çalıştırma gözlemi (PR #355)
+
+- `run_kq05_one_ack_host.sh`: **PASS** (PC model / sahada RF doğrulaması değil).
+- `pio run -e rak4630_kq05_lab`: **SUCCESS**, Flash **475.012 / 815.104 B** (%58,3), RAM **51.456 / 248.832 B** (%20,7).
+- `pio run -e rak4630_kq05_unified_ack_lab`: **SUCCESS**, Flash **482.812 / 815.104 B** (%59,2), RAM **51.820 / 248.832 B** (%20,8).
+- Birleşik ACK imajı bu iki LAB hedefinin karşılaştırmasında **Flash +7.800 B**, **RAM +364 B** kullanıyor. **Bu aşamada firmware küçülmemiştir.** Farklı deneysel özelliklerin toplu maliyeti olduğundan yalnız ACK kodunun marjinal maliyeti olarak sunulmaz.
+- İki başarılı derlemeden sonraki *eski* betik `firmware.bin` beklediği için `DUR: Eksik firmware image` demiştir; derleme başarısızlığı değildir. Karşılaştırma betiği PlatformIO bellek özetine geçirilmiş olup yeni sürümün PC çalıştırma doğrulaması ayrıca yapılmalıdır.
+
 
 ## Henüz olmayan ürün kabulü
 
