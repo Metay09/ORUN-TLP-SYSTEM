@@ -4649,15 +4649,9 @@ void loop() {
   drainGeofencePrepare();
   // ProductRecordStore::poll() has run before this service. A radio receipt
   // never counts as delivery; only a committed release marker does.
-  // Never let the single-ACK owner consume a group release marker outcome.
-  const auto custody_result =
-#ifdef ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF
-      tracker_gateway_batch_release.pending()
-          ? orun_tlp::CustodyAckReleaseOwner::Service::kIdle
-          : custody_ack_release.service();
-#else
-      custody_ack_release.service();
-#endif
+  // The 0x05 owner immediately returns kIdle if it has no pending
+  // marker. Batch RX admission never overlaps an active 0x05 owner.
+  const auto custody_result = custody_ack_release.service();
   if (custody_result ==
       orun_tlp::CustodyAckReleaseOwner::Service::kDurablyReleased) {
     Serial.println(F("PRODUCT CUSTODY release=DURABLE"));
