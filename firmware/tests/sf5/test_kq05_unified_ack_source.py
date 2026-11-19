@@ -12,6 +12,7 @@ collector = (root / "firmware/src/kq05_gateway_batch_collector.cpp").read_text()
 collector_h = (root / "firmware/include/kq05_gateway_batch_collector.h").read_text()
 ack = (root / "firmware/include/kq05_gateway_batch_custody_ack.h").read_text()
 tracker = (root / "firmware/src/kq05_tracker_batch_radio_runtime.cpp").read_text()
+release_owner = (root / "firmware/src/kq05_tracker_batch_release_owner.cpp").read_text()
 
 flag = "ORUN_KQ05_EXPERIMENTAL_GATEWAY_BATCH_RF"
 name = "[env:rak4630_kq05_unified_ack_lab]"
@@ -46,7 +47,9 @@ assert "kReenrolled" in collector_h
 assert "readConfirmedDurable(handle,actual,n)" in collector
 assert "kMaxObjects = 5U" in ack
 assert "kMaxSize == 88U" in ack
-assert "verify" in tracker and "release_.submit(raw.payload,raw.size)" in tracker
+assert "release_.submit(raw.payload,raw.size)" in tracker, "RF adapter must delegate authenticated release"
+assert "verifier_.verifyFromStore(frame,length,records_,verified)" in release_owner, "release owner must authenticate full batch before mutation"
+assert "records_.requestAuthenticatedCustodyRelease(exact)" in release_owner, "release must use retained exact object"
 assert gw.index("radio_.takeProductSecureFrame(&raw)") < gw.index(
     "radio_.sendAuthorizedKq05GatewayBatchAck(collector_)")
 print("KQ05 one Gateway ACK 0x0A (count 1..5), old 0x05 compile exclusion: PASS (SOURCE ONLY)")
