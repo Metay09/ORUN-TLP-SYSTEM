@@ -823,7 +823,7 @@ Sf5l0EdgeHandoff::Reply Sf5l0EdgeHandoff::accept(uint16_t page, uint16_t slot,
   return Reply::kRejected;
 }
 
-Sf5l0EdgeHandoff::Event Sf5l0EdgeHandoff::service() {
+Sf5l0EdgeHandoff::Event Sf5l0EdgeHandoff::service(bool allow_new_reclaim) {
   Event event{};
   store_.poll();
   ProductCustodyStore::Maintenance done{};
@@ -842,7 +842,7 @@ Sf5l0EdgeHandoff::Event Sf5l0EdgeHandoff::service() {
     check_reclaim_ = done.success;  // more pages may now be reclaimable
     return event;
   }
-  if (check_reclaim_ && !pending_ && store_.ready() && !store_.busy() &&
+  if (allow_new_reclaim && check_reclaim_ && !pending_ && store_.ready() && !store_.busy() &&
       !store_.hasOutcome()) {
     const int page = store_.reclaimablePage();
     if (page >= 0 && store_.requestReclaim(uint16_t(page))) {
