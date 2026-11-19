@@ -62,6 +62,7 @@ class Kq05GatewayBatchCollector final {
   // duplicate durable objects and produce another authenticated ACK.
   bool markTxAdmitted();
 
+  uint64_t localGatewayId() const { return gateway_id_; }
   uint8_t queued() const { return count_; }
   bool pendingFlash() const { return waiting_flash_; }
   bool flushRequested() const { return flush_requested_; }
