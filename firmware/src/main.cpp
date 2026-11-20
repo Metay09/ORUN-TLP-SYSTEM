@@ -4459,7 +4459,11 @@ void loop() {
   }
 #endif
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kPositionFlow);
-#ifdef ORUN_SF5L0_TRACKER
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  // PositionFlow still completes local GNSS/geofence storage. The product
+  // periodic owner alone transmits the collar's measurement.
+  const bool live_position_allowed = tracking_enabled && !trackerStorage();
+#elif defined(ORUN_SF5L0_TRACKER)
   // SF5L4 bench: a legacy live POSITION TX inside the custody-ACK window
   // takes the radio away from RX and the Gateway's ACK is lost (measured:
   // 6 of 29 ACKs). While an ACK is awaited, the live v1 copy is skipped; the
@@ -4659,7 +4663,12 @@ void loop() {
   // Current/live POSITION and relay-availability commitments outrank backlog.
   // Blank/unprovisioned devices stay fail-closed and do not emit secure History.
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kStoreForward);
-  if (ble_ready) {
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  const bool service_legacy_history = ble_ready && !trackerStorage();
+#else
+  const bool service_legacy_history = ble_ready;
+#endif
+  if (service_legacy_history) {
     const bool history_higher_priority_pending =
         positions.pending() || radio_manager.relayForwardingEnabled();
     const auto sf_event = history_store_forward.update(
@@ -4698,8 +4707,9 @@ void loop() {
     bench_pacer.begin(orun_tlp::monotonic::nowMs(),
                       radio_manager.deviceId());
     bench_pacer_started = true;
-    // SF5L4: the newest record first, backlog in the gaps.
+#ifndef ORUN_GATEWAY_BATCH_ACK
     tracker_product_tx.setLiveFirst(true);
+#endif
   }
 #endif
   const bool pilot_allowed = ble_ready && tracking_enabled &&
