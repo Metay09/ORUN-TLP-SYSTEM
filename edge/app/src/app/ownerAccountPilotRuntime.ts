@@ -351,9 +351,10 @@ export function onPilotObservationSync(fn: () => void): () => void {
   return () => { syncListeners.delete(fn); };
 }
 
-/** Live-only automatic sync: latest position + post-cutover reports. Historical
- * account pages are never drained in this run. One run at a time; remote AEAD
- * evidence never becomes a phone-local delivery or custody ACK. */
+/** Live-priority automatic sync: latest report/position first, then a small
+ * resumable history page. History remains automatic but cannot occupy many
+ * consecutive requests ahead of the next live check. Remote AEAD evidence
+ * never becomes phone-local delivery or custody ACK. */
 export function pilotAccountSync(): Promise<ObservationSyncResult> {
   if (syncRun) return syncRun;
   const run = (async (): Promise<ObservationSyncResult> => {
@@ -379,11 +380,13 @@ export function pilotAccountSync(): Promise<ObservationSyncResult> {
     if (latest.added) observationsChanged?.();
     // The screen may stop saying "yenileniyor" now: history can follow later.
     setSync({ latestAt: Date.now() });
-    // 20 Nov 2026 pilot decision: move forward with newly produced reports.
-    // Do not drain old account history during automatic refresh: the backlog
-    // could delay the next live check. Historical rows already stored on the
-    // phone are preserved, and the old history cursor is left untouched.
-    return { latest: latest.received, history: 0, more: false, at: Date.now() };
+    // Keep the automatic history downloader: just ONE bounded page per sync.
+    // Next periodic sync always checks the freshest report FIRST, then resumes
+    // old history from its durable cursor. We never drop or reset old records.
+    // This prevents a large historical backlog from monopolizing syncRun.
+    const page = await mirror.pullAvailable(account, 1);
+    if (page.received) observationsChanged?.();
+    return { latest: latest.received, history: page.received, more: page.more, at: Date.now() };
   })();
   syncRun = run;
   setSync({ running: true });
