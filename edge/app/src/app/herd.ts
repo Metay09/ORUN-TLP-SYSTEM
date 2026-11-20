@@ -161,12 +161,14 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     e.list.push(p);
   }
   // Newest record without a position, per asset (the collar was heard).
-  const heardBy = new Map<string, number>(), heardAll = new Map<string, number[]>();
+  const heardBy = new Map<string, { t: number; record: RecordId }>(), heardAll = new Map<string, number[]>();
   const faultBy = new Map<string, boolean>();   // newest record without a position: GNSS failed / no GNSS time
   const extraBy = new Map<string, { o: Observation; t: number }[]>();   // records without a position, as reports
   for (const r of unlocated) {
     // A collar whose GNSS never gave time has no record time: when it reached the gateway is when it was heard.
-    const own = epochMs(r.time), t = Number.isFinite(own) ? own : epochMs(r.received ?? null);
+    const own = epochMs(r.time);
+    if (r.delivery === "server" && !Number.isFinite(own)) continue;
+    const t = Number.isFinite(own) ? own : epochMs(r.received ?? null);
     if (!Number.isFinite(t) || t > now + 10 * MIN) continue;
     const asset = assetOf(r.tracker, t);
     const o: Observation = {
@@ -178,8 +180,8 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     };
     if (!extraBy.has(asset)) extraBy.set(asset, []);
     extraBy.get(asset)!.push({ o, t });
-    if ((heardBy.get(asset) ?? -Infinity) < t) {
-      heardBy.set(asset, t);
+    if ((heardBy.get(asset)?.t ?? -Infinity) < t) {
+      heardBy.set(asset, { t, record: r });
       faultBy.set(asset, !Number.isFinite(own) || (r.gnssFailures ?? 0) > 0);
     }
     if (!heardAll.has(asset)) heardAll.set(asset, []);
@@ -197,7 +199,11 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     // The longer of the newest record's interval and the one the collar has
     // confirmed since: after "2 dk -> 60 dk" the collar is not "silent" for
     // the hour until its first hourly report (owner's phone, 2026-11-13).
-    const tracker = (last?.tracker ?? by.get(id)?.device ?? "").toUpperCase();
+    const heard = heardBy.get(id);
+    const newest = heard && heard.t > (lastTime ?? -Infinity) ? heard.record : last;
+    const lastReport = heard && heard.t > (lastTime ?? -Infinity) ? heard.t : lastTime;
+    const device = newest?.tracker ?? by.get(id)?.device ?? null;
+    const tracker = (device ?? "").toUpperCase();
     // Only a confirmation newer than the newest record counts: an old one
     // must not slow the silence check of a collar that reports faster now.
     // Outside its own zones the collar reports three times as often
@@ -207,10 +213,8 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     // later: allow 1.25 x base before calling it silence (3 x 0.42 = 1.26).
     // Seen on the owner's phone 2026-11-14: "Hayvan 2 sessiz · 3 rapor kaçtı".
     const set = intervals?.[tracker];
-    const periodS = Math.max(last?.period_s ?? 60,
-      set ? (set.at > (lastTime ?? 0) ? set.s : Math.ceil(set.s * 0.42)) : 0);
-    const unloc = heardBy.get(id) ?? null;
-    const lastReport = unloc !== null && (lastTime === null || unloc > lastTime) ? unloc : lastTime;
+    const periodS = Math.max(newest?.period_s || last?.period_s || 60,
+      set ? (set.at > (lastReport ?? 0) ? set.s : Math.ceil(set.s * 0.42)) : 0);
     // Heard recently, but the position is old: GNSS finds no fix (indoors, under cover).
     const posFresh = freshnessOf(lastTime, periodS, now);
     const noFix = lastReport !== null && lastReport !== lastTime &&
@@ -248,7 +252,6 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
     const charge = chargeOf(batteryTrail, now);
     if (charge.state === "sun-charging" && charge.night) bat.percent = charge.night.percent;
     const profile = profiles[id] ?? blankProfile(id);
-    const device = last?.tracker ?? by.get(id)?.device ?? (profiles[id] ? id : null);
     // The account's name wins; then the phone's own; else the Bluetooth name.
     const given = (device && names?.[device.toUpperCase()]) || profile.name.trim();
     const named = Boolean(given);
