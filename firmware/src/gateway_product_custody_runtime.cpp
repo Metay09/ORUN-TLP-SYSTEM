@@ -85,7 +85,8 @@ GatewayProductCustodyRuntime::update(bool enabled) {
   if (count_ && monotonic::elapsed(now, heard_batch_peer_ms_, 600000U)) count_ = 0;
 
   if (count_ && !ingress_.pending() &&
-      (urgent_ || count_ == kq05_gateway_batch_ack::kMaxObjects ||
+      (urgent_ || (sparse_window_ && monotonic::elapsed(now, heard_batch_peer_ms_, 1000U)) ||
+       count_ >= kq05_gateway_batch_ack::kMaxObjects - 1U ||
        monotonic::elapsed(now, first_handle_ms_, 300000U)) &&
       !monotonic::elapsed(now, heard_batch_peer_ms_, 9000U) &&
       radio_.canSend() && !command_window_reserved_) {
@@ -117,7 +118,11 @@ GatewayProductCustodyRuntime::update(bool enabled) {
   const bool batch = tlp::decodeProductSecureFrame(received.payload, received.size, &header) ==
                      tlp::ProductSecureCodecResult::kOk &&
                      header.device_id == ORUN_BATCH_ACK_TRACKER_ID;
-  if (batch) heard_batch_peer_ms_ = now;
+  if (batch) {
+    sparse_window_ = !seen_peer_ || monotonic::elapsed(now, heard_batch_peer_ms_, 300000U);
+    seen_peer_ = true;
+    heard_batch_peer_ms_ = now;
+  }
   if (batch && !(header.path_flags & tlp::kProductPathFlagCustodyRequested)) {
     if (!live_) return Event::kDenied;
     const auto outcome = live_->receive(received.payload, received.size);

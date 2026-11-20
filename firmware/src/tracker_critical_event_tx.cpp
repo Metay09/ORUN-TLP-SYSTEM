@@ -12,6 +12,71 @@ bool TrackerCriticalEventTx::idleStorage() const {
          !records_.store().faulted() && !records_.store().busy();
 }
 
+namespace {
+bool sameId(const osf::RecordIdentity& a, const osf::RecordIdentity& b) {
+  return a.incarnation == b.incarnation && a.sequence == b.sequence;
+}
+}
+
+bool TrackerCriticalEventTx::awaitingReceipt(const osf::RecordIdentity& id, uint32_t now) const {
+  for (const auto& tx : transmitted_)
+    if (sameId(tx.id, id) && !monotonic::elapsed(now, tx.sent_ms, kReceiptWaitMs)) return true;
+  return false;
+}
+
+void TrackerCriticalEventTx::rememberTransmission(uint32_t now) {
+  for (auto& tx : transmitted_) {
+    if (sameId(tx.id, selected_)) { tx.sent_ms = now; return; }
+  }
+  for (auto& tx : transmitted_) {
+    // Every active entry corresponds to a durable exact slot. A new slot
+    // can reuse tracking space from a completed, expired or reclaimed one.
+    ObservationStore::Record old{};
+    bool reusable = !tx.id.valid() || monotonic::elapsed(now, tx.sent_ms, kReceiptWaitMs);
+    if (!reusable) {
+      const auto found = records_.store().lookup(tx.id, old);
+      reusable = found == ObservationStore::LookupResult::kNone ||
+                 (found == ObservationStore::LookupResult::kFound && old.released);
+    }
+    if (reusable) {
+      tx.id = selected_;
+      tx.sent_ms = now;
+      return;
+    }
+  }
+}
+
+TrackerCriticalEventTx::Result TrackerCriticalEventTx::selectFresh(uint32_t now) {
+  osf::RecordIdentity next{};
+  if (!records_.store().peekNextIdentity(next) || !next.valid()) return Result::kReadError;
+  if (!sameId(next, observed_next_)) {
+    observed_next_ = next;
+    fresh_cursor_ = next.sequence - 1U;
+  }
+  for (unsigned n = 0; n < kScanBudget && fresh_cursor_; ++n) {
+    osf::RecordIdentity id = next;
+    id.sequence = fresh_cursor_;
+    ObservationStore::Record record{};
+    const auto found = records_.store().lookup(id, record);
+    if (found == ObservationStore::LookupResult::kReadError) return Result::kReadError;
+    --fresh_cursor_;
+    if (found == ObservationStore::LookupResult::kNone || record.kind != osf::RecordKind::kPeriodic)
+      continue;
+    fresh_cursor_ = 0;
+    if (!sameId(record.handle.identity, id) || record.release_uncertain ||
+        record.release_marker_exhausted) return block();
+    if (record.released || sameId(last_fresh_, id) || awaitingReceipt(id, now)) break;
+    if (!sameSelected(id) || phase_ == Phase::kSelect) {
+      resetSelection();
+      selected_ = id;
+      phase_ = Phase::kNeedCache;
+    }
+    fresh_ = true;
+    break;
+  }
+  return Result::kNone;
+}
+
 TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
     uint32_t now_ms, bool eligible) {
   const bool history = historyMode();
@@ -30,6 +95,10 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
   }
 
   if (!idleStorage()) return Result::kNone;
+  if (history && eligible) {
+    const auto result = selectFresh(now_ms);
+    if (result != Result::kNone || fresh_cursor_) return result;
+  }
 
   // Gateway custody ACK delivery is verified by CustodyAckReleaseOwner, not
   // this sender. Inspect only the actual durable OBS1 release state.
@@ -99,7 +168,7 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
         return block();
       if (record.kind != (history ? osf::RecordKind::kPeriodic :
                                     osf::RecordKind::kEvent) ||
-          record.released)
+          record.released || (history && awaitingReceipt(id, now_ms)))
         continue;
       if (record.release_uncertain || record.release_marker_exhausted ||
           record.schema != osf::kProductSchemaV1 ||
@@ -107,6 +176,7 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
                                            tlp::kEventPlaintextSize))
         return block();
 
+      fresh_ = false;
       selected_ = id;
       ++scan_cursor_;
       phase_ = Phase::kNeedCache;
@@ -144,6 +214,28 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
         // a critical EVENT. A full/no-ACK history cache cannot gate LIVE.
         const uint16_t ceiling = history ? kHistoryCacheCeiling :
                                            osf::kMaxExactCustodyObjects;
+        if (occupied >= ceiling && fresh_) {
+          // During an extended outage preserve current visibility. The
+          // measurement stays in OBS1 until an exact retry can be admitted.
+          ObservationStore::Record record{};
+          tlp::PeriodicObservationPlaintext plain{};
+          if (records_.store().lookup(selected_, record) != ObservationStore::LookupResult::kFound ||
+              record.released || record.release_uncertain || record.release_marker_exhausted ||
+              tlp::decodePeriodicPlaintext(record.payload, record.payload_size, &plain) !=
+                  tlp::ProductSecureCodecResult::kOk || plain.record_sequence != selected_.sequence ||
+              plain.record_incarnation != selected_.incarnation) return Result::kReadError;
+          uint8_t wire[tlp::kPeriodicFrameSize]{};
+          if (crypto_.protectNextPeriodic(0U, plain, wire) != ProductSecureCryptoResult::kOk ||
+              !radio_.sendProductSecurePacket(wire, sizeof(wire))) {
+            next_attempt_ms_ = now_ms + kDeferredMs;
+            deadline_armed_ = true;
+            return Result::kDeferred;
+          }
+          last_fresh_ = selected_;
+          fresh_ = false;
+          resetSelection();
+          return Result::kSent;
+        }
         if (occupied >= ceiling) {
           if (history) {
             // No free HISTORY slot. Reuse an existing EXACT cached PERIODIC
@@ -156,7 +248,8 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
               const uint64_t incarnation = records_.store().incarnation();
               for (uint16_t i = 0U; i < count; ++i) {
                 if (cached[i].record_kind != osf::RecordKind::kPeriodic ||
-                    cached[i].identity.incarnation != incarnation) continue;
+                    cached[i].identity.incarnation != incarnation ||
+                    awaitingReceipt(cached[i].identity, now_ms)) continue;
                 const uint32_t seq = cached[i].identity.sequence;
                 if (oldest == nullptr ||
                     seq < oldest->identity.sequence)
@@ -262,7 +355,7 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
         phase_ = Phase::kReady;
       } else if (admission == ProductRecordStore::CacheSubmit::kNoCapacity) {
         next_attempt_ms_ = now_ms + kDeferredMs;
-          deadline_armed_ = true;
+        deadline_armed_ = true;
         return Result::kDeferred;
       } else {
         return block();  // Unknown Flash/cache evidence: fail closed.
@@ -295,12 +388,17 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
 
   if (!radio_.sendProductSecurePacket(exact.object, exact.object_size)) {
     next_attempt_ms_ = now_ms + kDeferredMs;
-          deadline_armed_ = true;
+    deadline_armed_ = true;
     return Result::kDeferred;
   }
   // The EVENT owner waits for its one exact ACK before selecting the next
   // EVENT. Routine HISTORY walks to other retained records while the
   // Gateway may batch 1..5 exact packets; it never counts TX as release.
+  if (history) {
+    rememberTransmission(now_ms);
+    if (fresh_) last_fresh_ = selected_;
+    fresh_ = false;
+  }
   phase_ = history ? Phase::kSelect : Phase::kWaitingAck;
   next_attempt_ms_ = now_ms +
       (history ? kHistorySpacingMs : kRetryMs);

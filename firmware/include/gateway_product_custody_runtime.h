@@ -61,6 +61,8 @@ class GatewayProductCustodyRuntime final {
   uint8_t count_ = 0;
   uint32_t first_handle_ms_ = 0;
   uint32_t heard_batch_peer_ms_ = 0;
+  bool seen_peer_ = false;
+  bool sparse_window_ = false;
   GatewayProductLiveIngress* live_ = nullptr;
   bool command_window_reserved_ = false;
   bool urgent_ = false;

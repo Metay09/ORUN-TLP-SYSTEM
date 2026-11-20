@@ -10,7 +10,7 @@ namespace orun_tlp {
 
 // KQ05 opt-in: shared exact-cache-before-RF custody sender: priority EVENT
 // by default, or lower-priority PERIODIC HISTORY with explicit mode.
-// Fresh PERIODIC LIVE remains ACKless and never waits on either owner.
+// The periodic owner selects fresh positions first, then unsent or timed-out backlog.
 // This owner selects the oldest unreleased EVENT, seals it ONCE, commits exact
 // ciphertext to OBS1 BEFORE RF, and retries the identical bytes after timeout.
 // A radio TX, Gateway receipt or ACK RX is never itself a Flash release.
@@ -27,6 +27,7 @@ class TrackerCriticalEventTx final {
   static constexpr uint32_t kDeferredMs = 30000U;
   static constexpr uint8_t kScanBudget = 8U;
   static constexpr uint32_t kHistorySpacingMs = 60000U;
+  static constexpr uint32_t kReceiptWaitMs = 360000U;  // Gateway normally flushes by five minutes.
   // Reserve one exact slot for unexpected critical EVENT arrivals.
   // This is a cache safety reserve, NEVER a LIVE TX window or ACK limit.
   static constexpr uint16_t kHistoryCacheCeiling =
@@ -51,6 +52,19 @@ class TrackerCriticalEventTx final {
     kSelect, kNeedCache, kWaitingCache, kReady, kWaitingAck, kBlocked
   };
   bool idleStorage() const;
+  Result selectFresh(uint32_t now_ms);
+  bool awaitingReceipt(const osf::RecordIdentity& id, uint32_t now_ms) const;
+  void rememberTransmission(uint32_t now_ms);
+
+  struct Transmission {
+    osf::RecordIdentity id{};
+    uint32_t sent_ms = 0;
+  };
+  Transmission transmitted_[osf::kMaxExactCustodyObjects]{};
+  osf::RecordIdentity observed_next_{};
+  osf::RecordIdentity last_fresh_{};
+  uint32_t fresh_cursor_ = 0;
+  bool fresh_ = false;
   bool sameSelected(const osf::RecordIdentity& id) const {
     return selected_.incarnation == id.incarnation &&
            selected_.sequence == id.sequence;

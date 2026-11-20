@@ -25,7 +25,6 @@
 #include "custody_ack_release_owner.h"
 #ifdef ORUN_EXPERIMENTAL_BATCH_ACK
 #include "kq05_tracker_batch_release_owner.h"
-#include "tracker_ackless_live_tx.h"
 #include "tracker_critical_event_tx.h"
 #endif
 #include "config_incarnation_source.h"
@@ -217,7 +216,6 @@ bool custodyReleasePending() {
 // sends the existing TLP v1/History path until Gateway commissioning is ready.
 orun_tlp::ProductSecureCrypto product_crypto(security_store);
 #ifdef ORUN_EXPERIMENTAL_BATCH_ACK
-orun_tlp::TrackerAcklessLiveTx batch_live(product_records, product_crypto, radio_manager);
 orun_tlp::TrackerCriticalEventTx batch_event(product_records, product_crypto, radio_manager);
 orun_tlp::TrackerCriticalEventTx batch_history(product_records, product_crypto, radio_manager,
     orun_tlp::TrackerCriticalEventTx::Mode::kPeriodicHistory);
@@ -4723,10 +4721,7 @@ void loop() {
     const auto event = batch_event.update(now, eligible);
     const bool event_sent = event == orun_tlp::TrackerCriticalEventTx::Result::kSent;
     if (event_sent) bench_pacer.chargeBatchTx(now);
-    const auto live = batch_live.update(now, eligible && !event_sent);
-    if (live == orun_tlp::TrackerAcklessLiveTx::Event::kSent) bench_pacer.chargeBatchTx(now);
-    const auto history = batch_history.update(now, eligible && !event_sent &&
-        live != orun_tlp::TrackerAcklessLiveTx::Event::kSent && !batch_live.liveSearchPending());
+    const auto history = batch_history.update(now, eligible && !event_sent);
     if (history == orun_tlp::TrackerCriticalEventTx::Result::kSent) bench_pacer.chargeBatchTx(now);
   } else {
 #endif

@@ -13,7 +13,7 @@ g++ -std=gnu++11 -O1 -g -Wall -Wextra -Werror \
   -Ifirmware/include -Ifirmware/tests/sf5 \
   firmware/tests/sf5/test_kq05_tracker_selective_batch_release_host.cpp \
   firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
-  firmware/src/tracker_ackless_live_tx.cpp \
+  firmware/src/tracker_critical_event_tx.cpp \
   firmware/src/gateway_product_custody_runtime.cpp \
   firmware/src/gateway_product_live_ingress.cpp \
   firmware/src/lora_command_relay.cpp \

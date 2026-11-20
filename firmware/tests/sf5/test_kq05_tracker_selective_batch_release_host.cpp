@@ -7,7 +7,7 @@
 #include <string.h>
 
 #include "gateway_product_custody_runtime.h"
-#include "tracker_ackless_live_tx.h"
+#include "tracker_critical_event_tx.h"
 #include "gateway_local_custody_owner.h"
 #include "gateway_custody_authorized_ingress.h"
 #include "kq05_tracker_batch_release_owner.h"
@@ -27,11 +27,13 @@ uint8_t receipt[ack::kMaxSize];
 size_t receipt_size;
 unsigned downlinks;
 uint32_t live_sequence;
+unsigned seals;
+const orun_tlp::RadioManager* collar_radio;
 }
 namespace orun_tlp {
 namespace monotonic { uint32_t nowMs() { return simulation_ms; } }
 bool RadioManager::canSend() const { return true; }
-uint64_t RadioManager::deviceId() const { return kGateA; }
+uint64_t RadioManager::deviceId() const { return this == collar_radio ? kDevice : kGateA; }
 bool RadioManager::takeProductSecureFrame(ProductSecureRxFrame* out) {
   if (!uplink.size) return false;
   *out = uplink;
@@ -53,16 +55,22 @@ bool RadioManager::sendProductSecurePacket(const uint8_t* bytes, size_t n) {
 }
 ProductSecureCryptoResult ProductSecureCrypto::protectNextPeriodic(uint8_t flags,
     const tlp::PeriodicObservationPlaintext& value, uint8_t (&out)[tlp::kPeriodicFrameSize]) {
-  assert(flags == 0U);
+  assert(flags == 0 || flags == 3);
+  ++seals;
   osf::RecordIdentity id{};
   id.incarnation = value.record_incarnation;
   id.sequence = value.record_sequence;
   auto object = makeObject(id);
   memcpy(out, object.object, sizeof(out));
   out[4] = flags;
-  out[27] = 99U;
+  out[27] = static_cast<uint8_t>(99U + seals);
   live_sequence = id.sequence;
   return ProductSecureCryptoResult::kOk;
+}
+ProductSecureCryptoResult ProductSecureCrypto::protectNextEvent(uint8_t,
+    const tlp::EventPlaintext&, uint8_t (&)[tlp::kEventFrameSize]) {
+  assert(false);
+  return ProductSecureCryptoResult::kInvalidArgument;
 }
 }
 namespace {
@@ -92,19 +100,21 @@ ReleaseOwner::Service nextDurableOutcome(ReleaseOwner& owner,
   return ReleaseOwner::Service::kFailed;
 }
 
+struct Grant final : GatewayCustodyGrantProvider {
+  bool activeGrant(uint64_t tracker, uint32_t epoch, GatewayCustodyAckScope& scope,
+                   uint8_t (&key)[32]) override {
+    scope = allowedScope();
+    if (scope.tracker_device_id != tracker || scope.key_epoch != epoch) return false;
+    fromHex32(key);
+    return true;
+  }
+};
+
 // Pass bytes signed by the production gateway owner to the production tracker
 // verifier. A hole in the received sequence must survive both delivery and reboot.
 void testGatewayToTrackerWithMissingRecord() {
   using namespace orun_tlp;
-  struct Grant final : GatewayCustodyGrantProvider {
-    bool activeGrant(uint64_t tracker, uint32_t epoch, GatewayCustodyAckScope& scope,
-                     uint8_t (&key)[32]) override {
-      scope = allowedScope();
-      if (scope.tracker_device_id != tracker || scope.key_epoch != epoch) return false;
-      fromHex32(key);
-      return true;
-    }
-  } grant;
+  Grant grant;
 
   Fixture tracker;
   tracker.admitGrant();
@@ -144,9 +154,12 @@ void testGatewayToTrackerWithMissingRecord() {
   // Lose this downlink. The next fresh position must still take the radio.
   for (const auto& object : tracker.objects) assertRetained(tracker.records, object.identity, false);
   ProductSecureCrypto sealer(tracker.security);
-  TrackerAcklessLiveTx live_sender(tracker.records, sealer, radio);
-  assert(live_sender.update(simulation_ms, true) == TrackerAcklessLiveTx::Event::kSent);
-  assert(live_sequence == tracker.objects[4].identity.sequence);
+  const auto overflow = append(tracker.records);
+  RadioManager collar;
+  collar_radio = &collar;
+  TrackerCriticalEventTx periodic(tracker.records, sealer, collar, TrackerCriticalEventTx::Mode::kPeriodicHistory);
+  assert(periodic.update(simulation_ms, true) == TrackerCriticalEventTx::Result::kSent);
+  assert(live_sequence == overflow.sequence);
   assert(step() == GatewayProductCustodyRuntime::Event::kCustodyStarted);
   for (unsigned n = 0; n < 150 && live_ingress.pending(); ++n) step();
   assert(!live_ingress.pending() && downlinks == 1U);
@@ -179,6 +192,140 @@ void testGatewayToTrackerWithMissingRecord() {
   reboot.begin(kDevice, product_region::Jobs{false, true});
   for (unsigned i = 0; i < 5; ++i) assertRetained(reboot, tracker.objects[i].identity, released[i]);
   puts("Gateway durable signed receipt -> Tracker selective release with gap and reboot: PASS");
+}
+
+void testOneTransmissionForFreshAndHistory() {
+  using namespace orun_tlp;
+  Fixture tracker;
+  tracker.admitGrant();
+  RadioManager collar;
+  collar_radio = &collar;
+  ProductSecureCrypto crypto(tracker.security);
+  using Sender = TrackerCriticalEventTx;
+  Sender sender(tracker.records, crypto, collar, Sender::Mode::kPeriodicHistory);
+  const auto waitForTx = [&](uint32_t now) {
+    for (unsigned poll = 0; poll < 2000; ++poll) {
+      tracker.records.poll();
+      if (sender.update(now, true) == Sender::Result::kSent) return;
+    }
+    assert(false && "expected position transmission");
+  };
+
+  // Five measurements already in OBS1. Latest goes first, with a receipt
+  // request on its very first uplink. The history scan may send older IDs.
+  const unsigned before = seals;
+  waitForTx(1000U);
+  assert(live_sequence == 5 && uplink.payload[4] == 3);
+  const auto first = uplink;
+  uplink = {};
+  waitForTx(61000U);
+  assert(live_sequence == 1 && seals == before + 2);
+  uplink = {};
+
+  // Gateway signs the exact frame from the first send. Release #5 now,
+  // before even one history retransmission of that measurement.
+  osc::ExactObject exact{};
+  assert(tracker.records.findCachedExact(tracker.objects[4].identity, exact) ==
+         ObservationStore::ControlLookupResult::kFound);
+  assert(exact.object_size == first.size && !memcmp(exact.object, first.payload, first.size));
+  uint8_t wire[ack::kMaxSize]{};
+  size_t length = 0;
+  buildAck(&exact, 1, wire, length);
+  ReleaseOwner owner(tracker.security, tracker.records);
+  assert(owner.submit(wire, length) == ReleaseOwner::Submit::kStarted);
+  assert(owner.service() == ReleaseOwner::Service::kWaitingFlash);
+  assert(nextDurableOutcome(owner, tracker.records) == ReleaseOwner::Service::kReleasedOne);
+  assert(owner.service() == ReleaseOwner::Service::kApplied);
+  assertRetained(tracker.records, tracker.objects[4].identity, true);
+
+  // Continue to offer the other records. Once they are all in flight there
+  // is no packet merely because the history scanner has wrapped around.
+  for (unsigned i = 2; i <= 4; ++i) {
+    waitForTx(i * 60000U + 1000U);
+    assert(live_sequence == i);
+    uplink = {};
+  }
+  for (uint32_t now = 301000U; now < 421000U; now += 1000U) {
+    tracker.records.poll();
+    assert(sender.update(now, true) != Sender::Result::kSent);
+  }
+  assert(seals == before + 5);
+  // #1 timed out. Retransmission reuses the committed ciphertext and nonce.
+  assert(tracker.records.findCachedExact(tracker.objects[0].identity, exact) ==
+         ObservationStore::ControlLookupResult::kFound);
+  waitForTx(421000U);
+  assert(seals == before + 5 && uplink.size == exact.object_size);
+  assert(!memcmp(uplink.payload, exact.object, uplink.size));
+  uplink = {};
+}
+
+// A fresh report arrives while the previous one awaits its grouped receipt.
+// Exercise the same newest-first sender and Gateway ingress the lab firmware uses.
+void testFirstUplinkIsVisibleAndReceiptable() {
+  using namespace orun_tlp;
+  Fixture tracker;
+  tracker.admitGrant();
+  Grant grant;
+  ProductFlash gw_flash;
+  ProductCustodyStore store(gw_flash, kProductPages);
+  assert(store.begin());
+  GatewayLocalCustodyOwner gateway(store);
+  GatewayCustodyAuthorizedIngress ingress(gateway, grant, kGateA);
+  RadioManager gw_radio, collar;
+  collar_radio = &collar;
+  GatewayProductCustodyRuntime gateway_loop(gw_radio, ingress);
+  ProductSecureCrypto crypto(tracker.security);
+  using Sender = TrackerCriticalEventTx;
+  Sender sender(tracker.records, crypto, collar, Sender::Mode::kPeriodicHistory);
+  using Event = GatewayProductCustodyRuntime::Event;
+  simulation_ms = 10;
+  downlinks = 0;
+  uplink = {};
+  auto receivePosition = [&](uint32_t expected) {
+    for (unsigned n = 0; n < 1000 && !uplink.size; ++n) {
+      tracker.records.poll();
+      sender.update(simulation_ms, true);
+    }
+    assert(uplink.size && uplink.payload[4] == 3 && live_sequence == expected);
+    const auto first = uplink;
+    assert(gateway_loop.update(true) == Event::kCustodyStarted);
+    bool visible = false;
+    for (unsigned n = 0; n < 100 && !visible; ++n)
+      visible = gateway_loop.update(true) == Event::kLiveDurable;
+    assert(visible);
+    ProductCustodyStore::Handle handle{};
+    assert(store.requestCustody(first.payload, first.size, &handle) ==
+           ProductCustodyStore::Admission::kDuplicateHeld);
+    uint8_t saved[custody_store_product_format::kMaxObjectSize]{};
+    size_t size = 0;
+    assert(store.readConfirmedHeld(handle, saved, size) == ProductCustodyStore::Lookup::kFound);
+    assert(size == first.size && !memcmp(saved, first.payload, size));
+  };
+  receivePosition(5);
+  assert(downlinks == 0);
+  simulation_ms += 1001;
+  assert(gateway_loop.update(true) == Event::kAckTxStarted && downlinks == 1);
+  // Drop that receipt. A newly appended fix does not wait for its timeout.
+  const auto newer = append(tracker.records);
+  simulation_ms += 15000;
+  receivePosition(newer.sequence);
+  assert(downlinks == 1);
+  // Next isolated report occurs after an hour. The Gateway can return the
+  // partial group inside this receive window without a repeated position.
+  simulation_ms += 3600000U;
+  const auto latest = append(tracker.records);
+  receivePosition(latest.sequence);
+  simulation_ms += 1001;
+  assert(gateway_loop.update(true) == Event::kAckTxStarted);
+  ReleaseOwner release(tracker.security, tracker.records);
+  assert(release.submit(receipt, receipt_size) == ReleaseOwner::Submit::kStarted);
+  while (release.pending()) {
+    tracker.records.poll();
+    assert(release.service() != ReleaseOwner::Service::kFailed);
+  }
+  assertRetained(tracker.records, latest, true);
+  assertRetained(tracker.records, tracker.objects[4].identity, false);
+  puts("First position immediately available at Gateway; first uplink accepted by Tracker receipt: PASS");
 }
 
 void testFiveExactIndependentDurableMarkers() {
@@ -410,6 +557,8 @@ int main() {
   // They are intentionally included in this translation unit; do not
   // suppress -Werror or leave security tests compiled but unused.
   testGatewayToTrackerWithMissingRecord();
+  testOneTransmissionForFreshAndHistory();
+  testFirstUplinkIsVisibleAndReceiptable();
   testActualRootDerivedFiveAndSubsets();
   testTamperAndRevocationDoNotPublishCapability();
   testFiveExactIndependentDurableMarkers();
