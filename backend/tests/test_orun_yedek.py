@@ -82,6 +82,10 @@ class YedekTests(unittest.TestCase):
         def fingerprint(folder: Path) -> dict:
             return {p.relative_to(folder).as_posix(): (p.stat().st_size, y.sha256(p))
                     for p in folder.rglob("*") if p.is_file()}
+        # Commit fixture WAL pages to the main file before hashing its bytes.
+        # Otherwise SQLite may checkpoint them when an unrelated connection closes.
+        with sqlite3.connect(self.db) as c:
+            self.assertEqual(c.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone(), (0, 0, 0))
         live_before = {p: y.sha256(Path(self.src[p])) for p in ("db", "registry", "token_file")}
         backup_before = fingerprint(backup)
         y.rehearse(backup, log=lambda _line: None)
