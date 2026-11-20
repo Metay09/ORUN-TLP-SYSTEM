@@ -4638,14 +4638,17 @@ void loop() {
   // Same rule as every other store: no product-region flash work while the
   // radio is transmitting. The ACK TX itself starts only after the durable
   // custody write has completed and been read back.
-  if (gatewayStorage() && !radio_manager.isTransmitting())
 #ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+  // Consume the current radio report/RESULT before allocating its downlink window.
+  serviceLoraRelay();
+  if (gatewayStorage() && !radio_manager.isTransmitting())
     orun_tlp::sf5l0_gateway::service(product_records.mounted(),
         lora_relay.windowReserved(orun_tlp::monotonic::nowMs()));
 #else
+  if (gatewayStorage() && !radio_manager.isTransmitting())
     orun_tlp::sf5l0_gateway::service(product_records.mounted());
-#endif
   serviceLoraRelay();
+#endif
   serviceLoraTracker();
 #endif
 

@@ -34,7 +34,12 @@ void GatewayProductCustodyRuntime::collectBatchHandle(uint32_t now) {
   urgent_ |= pending_event_;
   for (unsigned i = 0; i < count_; ++i) {
     if (handles_[i].page == handle.page && handles_[i].slot == handle.slot &&
-        handles_[i].generation == handle.generation) return;
+        handles_[i].generation == handle.generation) {
+      // A lone retained record reoffered in a later receive window can be
+      // acknowledged now rather than forcing another identical retry.
+      if (count_ == 1 && monotonic::elapsed(now, first_handle_ms_, 10000U)) urgent_ = true;
+      return;
+    }
   }
   if (count_ < kq05_gateway_batch_ack::kMaxObjects) handles_[count_++] = handle;
 }
