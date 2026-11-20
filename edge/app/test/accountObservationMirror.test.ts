@@ -127,6 +127,13 @@ test("1. adım: latest response parser refuses duplicates, wrong family and miss
   const { parseServerLatest } = await import("../src/app/serverObservationRead.ts");
   assert.equal(parseServerLatest({ latest: true, records: [row] }).records.length, 1);
   assert.throws(() => parseServerLatest({ records: [row] }));
-  assert.throws(() => parseServerLatest({ latest: true, records: [row, { ...row, cursor: 2 }] }));
+  assert.throws(() => parseServerLatest({ latest: true, records: [row, { ...row, cursor: 2 }] }),
+    "same record cannot be repeated as a separate latest observation");
+  const noFix = { ...row, sequence: row.sequence + 1, cursor: 2 };
+  assert.equal(parseServerLatest({ latest: true, records: [row, noFix] }).records.length, 2,
+    "one GPS position and one more recent no-fix report may coexist");
+  assert.throws(() => parseServerLatest({ latest: true, records: [
+    row, noFix, { ...row, sequence: row.sequence + 2, cursor: 3 },
+  ] }), "at most two latest rows per collar");
   assert.throws(() => parseServerLatest({ latest: true, records: [{ ...row, family: 2, frame: row.frame.slice(0, 168) }] }));
 });
