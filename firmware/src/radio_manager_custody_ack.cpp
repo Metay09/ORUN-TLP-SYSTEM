@@ -64,7 +64,7 @@ bool RadioManager::sendAuthorizedCustodyAck(
   return true;  // Radio start, NOT receipt, custody release, or delivery.
 }
 
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
 bool RadioManager::sendAuthorizedBatchAck(GatewayCustodyAuthorizedIngress& ingress,
                                          const ProductCustodyStore::Handle* handles,
                                          uint8_t count, const GatewayCustodyAckScope& scope) {

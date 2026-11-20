@@ -8,7 +8,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 g++ -std=gnu++11 -O1 -g -Wall -Wextra -Werror \
   -Wno-conversion -Wno-sign-conversion \
-  -DORUN_BATCH_ACK_TRACKER_ID=0x0102030405060708ULL -DORUN_EXPERIMENTAL_BATCH_ACK=1 -DORUN_KQ05_BATCH_HMAC_HOST_TEST=1 \
+  -DORUN_GATEWAY_BATCH_ACK=1 -DORUN_KQ05_BATCH_HMAC_HOST_TEST=1 \
   -DORUN_KQ05_TRACKER_BATCH_VERIFY_HOST_TEST=1 \
   -Ifirmware/include -Ifirmware/tests/sf5 \
   firmware/tests/sf5/test_kq05_tracker_selective_batch_release_host.cpp \

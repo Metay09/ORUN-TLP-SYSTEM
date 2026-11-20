@@ -64,7 +64,7 @@ class LoraCommandRelay {
   bool takeDropped(uint64_t& target, uint32_t& command_id);
 
   size_t count() const;
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
   bool windowReserved(uint32_t now) const;
 #endif
 

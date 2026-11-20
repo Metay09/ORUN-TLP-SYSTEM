@@ -1,4 +1,4 @@
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
 #include "gateway_product_live_ingress.h"
 
 #include <string.h>

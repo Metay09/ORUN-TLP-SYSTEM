@@ -1,4 +1,4 @@
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
 #include "kq05_tracker_batch_release_owner.h"
 
 #include <string.h>

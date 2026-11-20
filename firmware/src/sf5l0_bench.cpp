@@ -430,7 +430,7 @@ void Sf5l0DrainPacer::refill(uint32_t now_ms) {
   if (tokens_us_ > cap) tokens_us_ = cap;
 }
 
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
 bool Sf5l0DrainPacer::hasBatchAirtime(uint32_t now_ms) {
   refill(now_ms);
   // Leave the receive window open after the frame has finished transmitting.

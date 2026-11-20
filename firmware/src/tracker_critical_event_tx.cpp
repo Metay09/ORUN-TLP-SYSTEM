@@ -1,4 +1,4 @@
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
 #include "tracker_critical_event_tx.h"
 
 #include "monotonic_time.h"

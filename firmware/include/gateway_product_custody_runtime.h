@@ -5,8 +5,9 @@
 #include "gateway_custody_authorized_ingress.h"
 #include "gateway_product_startup_guard.h"
 #include "radio_manager.h"
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
 #include "gateway_product_live_ingress.h"
+#include "gateway_grant_snapshot_reader.h"
 #endif
 
 namespace orun_tlp {
@@ -32,7 +33,7 @@ class GatewayProductCustodyRuntime final {
   // disabled/mismatched-identity instances never receive or transmit.
   Event update(bool enabled);
 
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
   void attachLiveIngress(GatewayProductLiveIngress& live) { live_ = &live; }
   uint32_t reservedPages() const;
   void reserveCommandWindow(bool reserved) { command_window_reserved_ = reserved; }
@@ -55,17 +56,20 @@ class GatewayProductCustodyRuntime final {
  private:
   RadioManager& radio_;
   GatewayCustodyAuthorizedIngress& ingress_;
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
-  ProductCustodyStore::Handle handles_[kq05_gateway_batch_ack::kMaxObjects]{};
-  GatewayCustodyAckScope batch_scope_{};
-  uint8_t count_ = 0;
-  uint32_t first_handle_ms_ = 0;
-  uint32_t heard_batch_peer_ms_ = 0;
-  bool seen_peer_ = false;
-  bool sparse_window_ = false;
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  struct PeerBatch {
+    GatewayCustodyAckScope scope{};
+    ProductCustodyStore::Handle handles[kq05_gateway_batch_ack::kMaxObjects]{};
+    uint32_t first_ms = 0;
+    uint32_t heard_ms = 0;
+    uint8_t count = 0;
+    bool sparse = true;
+    bool urgent = false;
+  };
+  PeerBatch peers_[gateway_grant_format::kGrantSlots]{};
+  uint32_t pending_rx_ms_ = 0;
   GatewayProductLiveIngress* live_ = nullptr;
   bool command_window_reserved_ = false;
-  bool urgent_ = false;
   bool pending_event_ = false;
   void collectBatchHandle(uint32_t now);
 #endif

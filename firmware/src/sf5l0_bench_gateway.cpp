@@ -379,7 +379,7 @@ void begin(FlashBackend& port, FlashBackend& security_port,
   ingress = new GatewayCustodyAuthorizedIngress(*custody_owner, *grants,
                                                 gateway_id);
   runtime = new GatewayProductCustodyRuntime(radio_manager, *ingress);
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
   runtime->attachLiveIngress(*new GatewayProductLiveIngress(*custody, *grants, gateway_id));
 #endif
   handoff = new Sf5l0EdgeHandoff(*custody, gateway_id);
@@ -436,7 +436,7 @@ void serviceHandoff() {
   if (handoff == nullptr || erase_active || guard == nullptr ||
       guard->state() != Guard::State::kReady)
     return;
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
   const auto e = handoff->service(runtime ? runtime->reservedPages() : 0);
 #else
   const auto e = handoff->service();
@@ -461,7 +461,7 @@ void serviceHandoff() {
 }
 
 void service(bool observation_store_mounted, bool reserve_command_window) {
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
   if (runtime) runtime->reserveCommandWindow(reserve_command_window);
 #else
   (void)reserve_command_window;

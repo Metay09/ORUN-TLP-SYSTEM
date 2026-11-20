@@ -328,6 +328,64 @@ void testFirstUplinkIsVisibleAndReceiptable() {
   puts("First position immediately available at Gateway; first uplink accepted by Tracker receipt: PASS");
 }
 
+void testInterleavedCollarsReceiveSeparateReceipts() {
+  using namespace orun_tlp;
+  constexpr uint64_t second = kDevice + 1U;
+  struct TwoGrants final : GatewayCustodyGrantProvider {
+    bool activeGrant(uint64_t id, uint32_t epoch, GatewayCustodyAckScope& scope,
+                     uint8_t (&key)[32]) override {
+      scope = allowedScope();
+      if ((id != kDevice && id != second) || epoch != scope.key_epoch) return false;
+      scope.tracker_device_id = id;
+      fromHex32(key);
+      if (id == second) key[0] ^= 1U;
+      return true;
+    }
+  } grants;
+  ProductFlash flash;
+  ProductCustodyStore store(flash, kProductPages);
+  assert(store.begin());
+  GatewayLocalCustodyOwner owner(store);
+  GatewayCustodyAuthorizedIngress ingress(owner, grants, kGateA);
+  RadioManager radio;
+  collar_radio = nullptr;
+  GatewayProductCustodyRuntime runtime(radio, ingress);
+  using Event = GatewayProductCustodyRuntime::Event;
+  const auto offer = [&](uint64_t id, uint32_t counter) {
+    const auto original = makeObject({});
+    tlp::ProductSecureFrame frame{};
+    assert(tlp::decodeProductSecureFrame(original.object, original.object_size, &frame)
+           == tlp::ProductSecureCodecResult::kOk);
+    frame.device_id = id;
+    frame.security_counter = counter;
+    assert(tlp::encodeProductSecureFrame(frame, uplink.payload, sizeof(uplink.payload))
+           == tlp::ProductSecureCodecResult::kOk);
+    uplink.size = original.object_size;
+    return runtime.update(true);
+  };
+  simulation_ms = 1000;
+  downlinks = 0;
+  for (uint64_t id : {kDevice, second}) {
+    assert(offer(id, 42) == Event::kCustodyStarted);
+    bool durable = false;
+    for (unsigned n = 0; n < 150 && !durable; ++n)
+      durable = runtime.update(true) == Event::kLiveDurable;
+    assert(durable);
+  }
+  assert(offer(second + 1, 42) == Event::kDenied);
+  simulation_ms += 1001;
+  bool first_ack = false, second_ack = false;
+  for (unsigned n = 0; n < 2; ++n) {
+    assert(runtime.update(true) == Event::kAckTxStarted);
+    ack::Header header{};
+    assert(ack::decode(receipt, receipt_size, header) && header.count == 1);
+    first_ack |= header.tracker_device_id == kDevice;
+    second_ack |= header.tracker_device_id == second;
+  }
+  assert(first_ack && second_ack && downlinks == 2 && runtime.reservedPages() == 0);
+  puts("Two enrolled collars, same epoch and counter, separate receipts; unknown collar denied: PASS");
+}
+
 void testFiveExactIndependentDurableMarkers() {
   for (uint8_t count=1U;count<=5U;++count) {
     Fixture f;
@@ -559,6 +617,7 @@ int main() {
   testGatewayToTrackerWithMissingRecord();
   testOneTransmissionForFreshAndHistory();
   testFirstUplinkIsVisibleAndReceiptable();
+  testInterleavedCollarsReceiveSeparateReceipts();
   testActualRootDerivedFiveAndSubsets();
   testTamperAndRevocationDoNotPublishCapability();
   testFiveExactIndependentDurableMarkers();

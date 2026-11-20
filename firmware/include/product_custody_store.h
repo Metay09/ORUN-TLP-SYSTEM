@@ -43,7 +43,7 @@ class ProductCustodyStore final {
       : flash_(flash), page_count_(page_count) {}
 
   bool begin();
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
   Admission requestLive(const uint8_t* object, size_t size, Handle* duplicate);
 #endif
   Admission requestCustody(const uint8_t* object, size_t size,

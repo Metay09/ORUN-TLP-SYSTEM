@@ -23,7 +23,7 @@
 #include "config_mutation.h"
 #include "config_store.h"
 #include "custody_ack_release_owner.h"
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
 #include "kq05_tracker_batch_release_owner.h"
 #include "tracker_critical_event_tx.h"
 #endif
@@ -200,22 +200,23 @@ void refreshApplicationStatusSnapshot(uint32_t now_ms);
 orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort(),
                                        storage_flash_gate.securityMaintPort());
 // The only Tracker release owner: grant/HMAC verification precedes flash.
-orun_tlp::CustodyAckReleaseOwner custody_ack_release(security_store,
-                                                      product_records);
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
 orun_tlp::Kq05TrackerBatchReleaseOwner batch_ack_release(security_store, product_records);
+#else
+orun_tlp::CustodyAckReleaseOwner custody_ack_release(security_store, product_records);
 #endif
 bool custodyReleasePending() {
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
-  if (batch_ack_release.pending()) return true;
-#endif
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  return batch_ack_release.pending();
+#else
   return custody_ack_release.pending();
+#endif
 }
 #ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
 // Explicit test-image activation only; the default product runtime still
 // sends the existing TLP v1/History path until Gateway commissioning is ready.
 orun_tlp::ProductSecureCrypto product_crypto(security_store);
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
 orun_tlp::TrackerCriticalEventTx batch_event(product_records, product_crypto, radio_manager);
 orun_tlp::TrackerCriticalEventTx batch_history(product_records, product_crypto, radio_manager,
     orun_tlp::TrackerCriticalEventTx::Mode::kPeriodicHistory);
@@ -4381,7 +4382,7 @@ void loop() {
   drainGeofencePrepare();
   // ProductRecordStore::poll() has run before this service. A radio receipt
   // never counts as delivery; only a committed release marker does.
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
   // Only one release owner can consume a ProductRecordStore outcome.
   if (batch_ack_release.pending()) {
     const auto result = batch_ack_release.service();
@@ -4392,7 +4393,7 @@ void loop() {
 #endif
     }
   }
-#endif
+#else
   const auto custody_result = custody_ack_release.service();
   if (custody_result ==
       orun_tlp::CustodyAckReleaseOwner::Service::kDurablyReleased) {
@@ -4420,6 +4421,7 @@ void loop() {
              orun_tlp::CustodyAckReleaseOwner::Service::kFailed) {
     Serial.println(F("PRODUCT CUSTODY release=FAILED"));
   }
+#endif
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kGeofenceStore);
   if (geofence_mutations.poll()) applyGeofenceMutationToRuntime();
   drainGeofenceMutationResult();
@@ -4587,15 +4589,13 @@ void loop() {
           product_records.store().ready() && security_store.ready() &&
           security_store.state() == orun_tlp::SecurityState::kProvisioned &&
           !security_store.busy()) {
+#ifdef ORUN_GATEWAY_BATCH_ACK
+        if (batch_ack_release.submit(ack.payload, ack.size) ==
+            orun_tlp::Kq05TrackerBatchReleaseOwner::Submit::kStarted)
+          Serial.println(F("PRODUCT BATCH ACK authenticated; release=pending"));
+#else
 #ifdef ORUN_SF5L0_TRACKER
         const uint32_t bench_ack_taken_ms = orun_tlp::monotonic::nowMs();
-#endif
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
-        if (ack.payload[1] == orun_tlp::kq05_gateway_batch_ack::kType) {
-          if (batch_ack_release.submit(ack.payload, ack.size) ==
-              orun_tlp::Kq05TrackerBatchReleaseOwner::Submit::kStarted)
-            Serial.println(F("PRODUCT BATCH ACK authenticated; release=pending"));
-        } else
 #endif
         {
           const auto submitted = custody_ack_release.submit(ack.payload, ack.size);
@@ -4617,6 +4617,7 @@ void loop() {
                         static_cast<int>(ack.rssi_dbm));
 #endif
         }
+#endif
       }
 #ifdef ORUN_SF5L0_TRACKER
       else {
@@ -4636,7 +4637,7 @@ void loop() {
   // Same rule as every other store: no product-region flash work while the
   // radio is transmitting. The ACK TX itself starts only after the durable
   // custody write has completed and been read back.
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
   // Consume the current radio report/RESULT before allocating its downlink window.
   serviceLoraRelay();
   if (gatewayStorage() && !radio_manager.isTransmitting())
@@ -4714,8 +4715,8 @@ void loop() {
              security_store) != 0
 #endif
       ;
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
-  if (radio_manager.deviceId() == ORUN_BATCH_ACK_TRACKER_ID) {
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  {
     const uint32_t now = orun_tlp::monotonic::nowMs();
     const bool eligible = pilot_allowed && bench_pacer.hasBatchAirtime(now);
     const auto event = batch_event.update(now, eligible);
@@ -4723,8 +4724,8 @@ void loop() {
     if (event_sent) bench_pacer.chargeBatchTx(now);
     const auto history = batch_history.update(now, eligible && !event_sent);
     if (history == orun_tlp::TrackerCriticalEventTx::Result::kSent) bench_pacer.chargeBatchTx(now);
-  } else {
-#endif
+  }
+#else
 #ifdef ORUN_SF5L0_TRACKER
   if (tracker_product_tx.recoverIfSafe(
           orun_tlp::monotonic::nowMs(), pilot_allowed)) {
@@ -4780,8 +4781,6 @@ void loop() {
     }
   }
 #endif
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
-  }
 #endif
 #ifdef ORUN_SF5L0_TRACKER
   }  // trackerStorage()

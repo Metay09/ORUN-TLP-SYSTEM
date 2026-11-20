@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "custody_ack.h"
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
 #include "gateway_custody_authorized_ingress.h"
 #endif
 #include "lora_command.h"
@@ -76,7 +76,7 @@ struct CustodyAckRxFrame {
   uint16_t size = 0;
   int16_t rssi_dbm = 0;
   int8_t snr_db = 0;
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
   uint8_t payload[kq05_gateway_batch_ack::kMaxSize]{};
 #else
   uint8_t payload[custody_ack::kWireSize]{};
@@ -146,7 +146,7 @@ class RadioManager {
   // If RF cannot start after consumption, the Tracker must retry the exact
   // object; durable custody deduplication can then issue another ACK.
   bool sendAuthorizedCustodyAck(GatewayCustodyAuthorizedIngress& ingress);
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
   bool sendAuthorizedBatchAck(GatewayCustodyAuthorizedIngress& ingress,
                               const ProductCustodyStore::Handle* handles, uint8_t count,
                               const GatewayCustodyAckScope& scope);

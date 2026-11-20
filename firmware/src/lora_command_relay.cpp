@@ -65,7 +65,7 @@ void LoraCommandRelay::ackSent(uint32_t now) {
   if (heard_open_) ack_sent_ = true;
 }
 
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
 bool LoraCommandRelay::windowReserved(uint32_t now) const {
   if (heard_ == 0 || (sent_now_ ? monotonic::elapsed(now, last_part_at_, kLatestNextPartMs)
                                 : monotonic::elapsed(now, heard_at_, kLatestAfterHeardMs))) return false;

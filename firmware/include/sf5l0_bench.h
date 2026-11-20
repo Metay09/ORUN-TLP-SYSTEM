@@ -167,7 +167,7 @@ class Sf5l0DrainPacer final {
   bool enabled() const { return enabled_; }
   // true: the pilot may be re-armed now (caller then calls rearm()).
   bool mayRearm(uint32_t now_ms);
-#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#ifdef ORUN_GATEWAY_BATCH_ACK
   bool hasBatchAirtime(uint32_t now_ms);
   void chargeBatchTx(uint32_t now_ms);
 #endif
