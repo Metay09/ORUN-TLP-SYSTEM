@@ -1,3 +1,4 @@
+import { freshnessOf } from "../../app/herd.ts";
 // Read-only view: last-known counts keep their age and never become live claims.
 // Tracker history count is NOT the number awaiting LoRa or a verified ACK.
 import { fmt } from "../../app/i18n/tr.ts";
@@ -107,7 +108,7 @@ export interface HealthStage {
 }
 export interface HealthInput {
   now: number;
-  trackers: { id: string; lastTime: number | null; periodS: number | null; missing?: NotArrived; noFix?: boolean }[];
+  trackers: { id: string; lastTime: number | null; periodS: number | null; noFix?: boolean }[];
   collars: readonly CollarStorageReading[];
   gateways: readonly FarmGateway[] | null;
   localGateway: { id: string | null; link: "ble" | "usb" | "none"; connected: boolean; held: number | null; capacity: number | null; readAt: number | null };
@@ -131,25 +132,21 @@ export function transferHealth(i: HealthInput): HealthStage[] {
   // 1 · Tasmalar: kayıt geliyor mu; bellekteki kayıt, son okumasıyla.
   const readings = new Map(i.collars.map((c) => [c.device.toUpperCase(), c]));
   const trackerItems: HealthItem[] = i.trackers.map((t) => {
-    const limit = Math.max(3 * (t.periodS ?? 900) * 1000, HOUR);
-    const fresh = t.lastTime !== null && now - t.lastTime <= limit;
+    const freshness = freshnessOf(t.lastTime, t.periodS ?? 900, now);
     const r = readings.get(t.id.toUpperCase());
     const parts = [t.lastTime !== null ? `son kaydı ${fmt.ago(t.lastTime, now)}` : "hiç kayıt gelmedi"];
     if (t.noFix) parts.push("GPS konum bulamıyor");
-    const miss = t.missing?.missing ?? 0;
-    if (miss) parts.push(`${fmt.num(miss)} kayıt henüz ulaşmadı${t.missing!.since !== null ? ` (${fmt.ago(t.missing!.since, now)} sonrası)` : ""}`);
     if (r) parts.push(`bellekte ${fmt.num(r.count)} kayıt (${r.via === "usb" ? "USB" : "Bluetooth"} ile ${fmt.ago(r.at, now)} okundu)`);
-    const tone: HealthTone = fresh && !miss ? "fresh" : t.lastTime === null ? "" : "aging";
+    const tone: HealthTone = freshness === "fresh" ? "fresh" : t.lastTime === null ? "" : "aging";
     return { id: t.id, title: i.label(t.id), line: parts.join(" · "), tone };
   }).sort((a, b) => Number(a.tone === "fresh") - Number(b.tone === "fresh") || a.title.localeCompare(b.title, "tr"));
-  const freshN = i.trackers.filter((t) => t.lastTime !== null && now - t.lastTime <= Math.max(3 * (t.periodS ?? 900) * 1000, HOUR)).length;
-  const missing = i.trackers.reduce((s, t) => s + (t.missing?.missing ?? 0), 0);
+  const freshN = trackerItems.filter(t => t.tone === "fresh").length;
   const tracker: HealthStage = {
     id: "tracker", title: "Tasmalar", items: trackerItems,
     line: i.trackers.length
-      ? `${freshN}/${i.trackers.length} tasmadan kayıt geliyor${missing ? ` · ${fmt.num(missing)} kayıt henüz ulaşmadı` : ""}`
+      ? `${freshN}/${i.trackers.length} tasmadan kayıt geliyor`
       : "Henüz tasma yok",
-    tone: !i.trackers.length ? "" : freshN === i.trackers.length ? (missing ? "aging" : "fresh") : freshN ? "aging" : "alarm",
+    tone: !i.trackers.length ? "" : freshN === i.trackers.length ? "fresh" : freshN ? "aging" : "alarm",
   };
 
   // 2 · Gateway'ler: nasıl bağlı, kaç kayıt bekliyor (ne zaman ölçüldü), son gönderim.

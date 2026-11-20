@@ -49,7 +49,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "backend"))  # supports python -m unittest and direct script launch
 sys.path.insert(0, str(ROOT))
 from backend.observation_read_page import (  # noqa: E402
-    MAX_CURSOR, ObservationReadUnavailable, read_latest, read_page,
+    LATEST_INDEXES, MAX_CURSOR, ObservationReadUnavailable, read_latest, read_page,
 )
 import orun_edge_bench as eb  # noqa: E402  (ledger loader, map page, points)
 import orun_credentials as oc  # noqa: E402  (step 3A registry)
@@ -101,7 +101,7 @@ class Backend:
         self.clock = clock
         self.lock = threading.Lock()   # one batch at a time, in order
         with sqlite3.connect(str(self.db_path)) as db:
-            for sql in SCHEMA:
+            for sql in (*SCHEMA, *LATEST_INDEXES):
                 db.execute(sql)
 
     @staticmethod

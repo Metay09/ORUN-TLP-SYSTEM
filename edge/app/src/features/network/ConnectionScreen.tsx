@@ -195,17 +195,8 @@ export function ConnectionScreen() {
   }
 
   // ---- aktarım sağlığı: dört halka, kimde kaç kayıt bekliyor, çalışıyor mu ----
-  const gwHeld = (() => {
-    const by = new Map<string, number>();
-    for (const g of gateways ?? []) if (g.held !== null) by.set(g.gateway.toUpperCase(), g.held);
-    if (linkOn && st.id && st.held !== null) by.set(st.id.toUpperCase(), st.held);
-    return by.size ? [...by.values()].reduce((x, y) => x + y, 0) : null;
-  })();
-  const edgePending = edgeQueues ? edgeQueues.reduce((x, e) => x + e.pending, 0) : null;
-  const known3 = [gwHeld, edgePending, m.server.pending].filter((x): x is number => x !== null);
-  const waiting = known3.length ? known3.reduce((x, y) => x + y, 0) : null;
   const lastUpload = (gateways ?? []).reduce<number | null>((x, g) => (g.lastUpload !== null && (x === null || g.lastUpload > x) ? g.lastUpload : x), null);
-  const head = transferHeadline({ signedIn: Boolean(account), sync, waiting, lastUpload, now: m.now });
+  const head = transferHeadline({ signedIn: Boolean(account), sync, waiting: m.server.pending, lastUpload, now: m.now });
   const health = transferHealth({
     now: m.now,
     trackers: m.herd.filter((a) => a.device).map((a) => ({
@@ -236,7 +227,7 @@ export function ConnectionScreen() {
     const fence = fencePlans.find((f) => f.device.toUpperCase() === id.toUpperCase());
     const staleFence = fence && (fence.state === "stale" || fence.state === "never" || fence.state === "clear");
     const heard = a.lastReport ?? dev?.lastTime ?? null;
-    const silent = !heard || m.now - heard > 3600_000;
+    const silent = a.status === "silent" || a.status === "lost" || a.status === "waiting";
     const connected = session?.device === id.toUpperCase() && session.link.alive;
     const bits = [connected ? "Bluetooth ile bağlı" : "",
                   heard ? fmt.ago(heard, m.now) : "hiç haber yok", a.gpsFault ? "GPS çalışmıyor" : a.noFix ? "konum bulamıyor" : "",

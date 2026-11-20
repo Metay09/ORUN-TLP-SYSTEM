@@ -77,7 +77,7 @@ export function serverLine(signedIn: boolean, sync: ObservationSyncState,
   const parts: string[] = [];
   if (sync.running) parts.push("Eşitleniyor…");
   else if (sync.error) parts.push(sync.error);
-  else if (sync.last) parts.push(`Son eşitleme ${fmt.clock(sync.last.at)} · ${sync.last.latest} tasma`);
+  else if (sync.last) parts.push(`Son eşitleme ${fmt.clock(sync.last.at)} · ${sync.last.latest} kayıt`);
   else parts.push("Eşitleme bekleniyor…");
   if ((pending ?? 0) > 0) parts.push(`${fmt.num(pending ?? 0)} kayıt gönderilecek`);
   if (sendError) parts.push("Gönderilemedi: " + sendError);
@@ -154,7 +154,7 @@ export function farmChain(i: {
     tone: !i.signedIn ? "" : i.sync.error ? "alarm" : recentUpload ? "fresh" : "aging",
     detail: !i.signedIn ? "Sunucuyu görmek için hesaba giriş yap."
       : i.sync.error ? i.sync.error
-      : lastUpload !== null ? `Sunucuya en son ${fmt.clock(lastUpload)}'de kayıt geldi.` : "Sunucuya henüz kayıt gelmedi.",
+      : lastUpload !== null ? `Sunucuya en son ${fmt.clock(lastUpload)}'de kayıt geldi.` : "Son yükleme zamanı bilinmiyor.",
   };
   const phone: ChainNode = {
     key: "telefon", title: "Bu telefon",
@@ -176,18 +176,17 @@ export function farmChain(i: {
 
 /**
  * Aktarım, tek cümle (sahip 2026-11-11: sayaç listesi anlaşılmıyordu).
- * `waiting`: bilinen bekleyen kayıtların toplamı (gateway belleği + PC Edge
- * kuyruğu + bu telefonun gönderemedikleri); bilinmeyen sayı sıfır sayılmaz.
+ * waiting counts records in this phone’s own upload queue.
  */
 export function transferHeadline(i: {
   signedIn: boolean; sync: ObservationSyncState; waiting: number | null;
   lastUpload: number | null; now: number;
 }): { text: string; tone: ChainTone } {
   if (!i.signedIn) return { text: "Hesaba giriş yapılmadı. Kayıtlar tasmada, gateway'de ve telefonda bekler.", tone: "" };
-  if (i.sync.error) return { text: "Sunucuya ulaşılamıyor. Kayıtlar yolda bekler, kaybolmaz.", tone: "alarm" };
-  if (i.waiting) return { text: `${fmt.num(i.waiting)} kayıt sunucuya gitmeyi bekliyor.`, tone: "aging" };
+  if (i.sync.error) return { text: "Sunucu eşitlemesi tamamlanamadı.", tone: "alarm" };
+  if (i.waiting) return { text: `${fmt.num(i.waiting)} kayıt bu telefondan gönderilmeyi bekliyor.`, tone: "aging" };
   if (i.lastUpload !== null && i.now - i.lastUpload < 60 * 60_000)
     return { text: `Kayıtlar sunucuya ulaşıyor · son kayıt ${fmt.ago(i.lastUpload, i.now)}.`, tone: "fresh" };
   if (i.lastUpload !== null) return { text: `Sunucuya son kayıt ${fmt.ago(i.lastUpload, i.now)} geldi.`, tone: "aging" };
-  return { text: "Sunucuya henüz kayıt gelmedi.", tone: "" };
+  return { text: "Son yükleme zamanı bilinmiyor.", tone: "" };
 }

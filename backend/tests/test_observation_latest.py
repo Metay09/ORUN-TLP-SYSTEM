@@ -103,6 +103,20 @@ class LatestTests(unittest.TestCase):
         self.assertEqual(by_device[A.hex().upper()], [7])
         self.assertEqual(by_device[B.hex().upper()], [1])
 
+    def test_reboot_at_cutover_and_delayed_previous_incarnation(self) -> None:
+        from datetime import datetime
+        boundary = int(datetime.fromisoformat("2026-11-20T20:41:00+03:00").timestamp())
+        new_inc = bytes.fromhex("0000000000000001")
+        with sqlite3.connect(self.db) as db:
+            db.executemany("INSERT INTO verified_observations VALUES (?,?,?,?,?,?)", [
+                (A, new_inc, 1, 1, periodic(boundary, False), bytes(100)),
+                (A, INC, 99, 1, periodic(boundary - 1), bytes(100)),
+            ])
+        records = read_latest(self.db)["records"]
+        self.assertEqual([(r["incarnation"], r["sequence"]) for r in records
+                          if r["device"] == A.hex().upper()],
+                         [(INC.hex().upper(), 99), (new_inc.hex().upper(), 1)])
+
     def test_no_clock_report_does_not_claim_freshness(self) -> None:
         with sqlite3.connect(self.db) as db:
             db.execute(

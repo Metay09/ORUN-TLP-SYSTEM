@@ -197,3 +197,24 @@ test("just opened: a little late is not orange until the first sync answers", ()
   const old = [pt("c1", 45, { period_s: 300 })];
   assert.equal(buildHerd({ points: old, profiles: {}, assetOf: (d) => d, now: NOW, settling: true })[0].status, "silent");
 });
+
+test("a server history receipt cannot date a clockless report", () => {
+  const [animal] = buildHerd({
+    points: [pt("A", 300)], profiles: {}, assetOf: d => d, now: NOW,
+    unlocated: [{ tracker: "A", incarnation: "NEW", seq: 1, time: null,
+      received: iso(NOW), delivery: "server" }],
+  });
+  assert.equal(animal.lastReport, NOW - 300 * 60_000);
+});
+
+test("reassigned animal uses the new collar's no-fix cadence and keeps its last position", () => {
+  const [animal] = buildHerd({
+    points: [pt("A", 300, { period_s: 60 })], profiles: {}, assetOf: () => "cow", now: NOW,
+    unlocated: [{ tracker: "B", incarnation: "NEW", seq: 1, time: iso(NOW - 15 * 60_000),
+      period_s: 3600, delivery: "server" }],
+  });
+  assert.equal(animal.device, "B");
+  assert.equal(animal.last?.tracker, "A");
+  assert.equal(animal.periodS, 3600);
+  assert.equal(animal.noFix, true);
+});

@@ -315,7 +315,7 @@ export async function pilotAccountObservationPoints(unlocated?: RecordId[]): Pro
 }
 
 export interface ObservationSyncResult {
-  /** Trackers whose newest measured position was checked. */
+  /** Verified records in the latest response (up to two per tracker). */
   latest: number;
   /** History records verified in this run. */
   history: number;
@@ -334,6 +334,8 @@ export interface ObservationSyncState {
 }
 
 const AUTO_SYNC_MS = 60_000;
+let historyPending = false;
+let syncGeneration = 0;
 let snapshotPending = false;
 let syncRun: Promise<ObservationSyncResult> | null = null;
 let syncState: ObservationSyncState = { running: false, last: null, error: null };
@@ -357,6 +359,7 @@ export function onPilotObservationSync(fn: () => void): () => void {
  * never becomes phone-local delivery or custody ACK. */
 export function pilotAccountSync(): Promise<ObservationSyncResult> {
   if (syncRun) return syncRun;
+  const generation = ++syncGeneration;
   const run = (async (): Promise<ObservationSyncResult> => {
     const account = client;
     const mirror = observationMirror;
@@ -379,20 +382,25 @@ export function pilotAccountSync(): Promise<ObservationSyncResult> {
     const latest = await mirror.pullLatest(account);
     if (latest.added) observationsChanged?.();
     // The screen may stop saying "yenileniyor" now: history can follow later.
-    setSync({ latestAt: Date.now() });
-    // Keep the automatic history downloader: just ONE bounded page per sync.
-    // Next periodic sync always checks the freshest report FIRST, then resumes
-    // old history from its durable cursor. We never drop or reset old records.
-    // This prevents a large historical backlog from monopolizing syncRun.
-    const page = await mirror.pullAvailable(account, 1);
-    if (page.received) observationsChanged?.();
-    return { latest: latest.received, history: page.received, more: page.more, at: Date.now() };
+    setSync({ latestAt: Date.now(), error: null });
+    if (historyPending)
+      return { latest: latest.received, history: 0, more: true, at: Date.now() };
+    // The next tick or foreground event can fetch live data during history I/O.
+    historyPending = true;
+    syncRun = null;
+    try {
+      const page = await mirror.pullAvailable(account, 1);
+      if (page.received && same()) observationsChanged?.();
+      return { latest: latest.received, history: page.received, more: page.more, at: Date.now() };
+    } finally {
+      historyPending = false;
+    }
   })();
   syncRun = run;
   setSync({ running: true });
   run.then(
-    last => setSync({ running: false, last, error: null }),
-    e => setSync({ running: false, error: e instanceof Error ? e.message : String(e), errorAt: Date.now() }),
+    last => generation === syncGeneration && setSync({ running: false, last, error: null }),
+    e => generation === syncGeneration && setSync({ running: false, error: e instanceof Error ? e.message : String(e), errorAt: Date.now() }),
   ).finally(() => { if (syncRun === run) syncRun = null; });
   return run;
 }

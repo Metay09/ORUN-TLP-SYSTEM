@@ -82,33 +82,22 @@ def read_page(db_path: str | Path, after: int) -> dict:
     return {"records": records, "cursor": after, "has_more": more}
 
 
-def _measured_utc(plaintext: object) -> int | None:
-    """GNSS measurement time of a PERIODIC plaintext with a valid location.
-
-    SF5B PERIODIC (64 bytes): flags at [1] (bit0 time valid, bit1 location
-    valid), measurement UTC seconds big-endian at [16:20]. Arrival order is
-    NOT measurement order (store-and-forward), so "latest" uses this field.
-    """
-    if not isinstance(plaintext, bytes) or len(plaintext) != 64:
-        return None
-    if plaintext[1] & 0b11 != 0b11:
-        return None
-    t = int.from_bytes(plaintext[16:20], "big")
-    return t if t > 0 else None
+# Four big-endian bytes compare in UTC order. The low flag nibble contains
+# the time (bit 0) and location (bit 1) validity flags.
+_STAMP = "substr(plaintext,17,4)"
+def _periodic_where(nibbles: str) -> str:
+    values = ",".join(f"'{n}'" for n in nibbles)
+    return ("family=1 AND typeof(plaintext)='blob' AND length(plaintext)=64 "
+            f"AND substr(hex(substr(plaintext,2,1)),2,1) IN ({values})")
 
 
-def _report_utc(plaintext: object) -> int | None:
-    """Authenticated PERIODIC report time, even without a GNSS location.
-
-    A no-clock record cannot prove freshness merely because it was delivered
-    recently. It is intentionally excluded from the forward-only live lane.
-    """
-    if not isinstance(plaintext, bytes) or len(plaintext) != 64:
-        return None
-    if not plaintext[1] & 0b01:
-        return None
-    t = int.from_bytes(plaintext[16:20], "big")
-    return t if t > 0 else None
+_LOCATION = _periodic_where("37BF")
+_REPORT = _periodic_where("13579BDF")
+LATEST_INDEXES = tuple(
+    f"CREATE INDEX IF NOT EXISTS latest_{name}_utc ON verified_observations "
+    f"(device_id,{_STAMP}) WHERE {predicate}"
+    for name, predicate in (("location", _LOCATION), ("report", _REPORT))
+)
 
 
 def read_latest(db_path: str | Path) -> dict:
@@ -125,19 +114,27 @@ def read_latest(db_path: str | Path) -> dict:
             db.execute("PRAGMA query_only=ON")
             locations: dict[bytes, tuple[int, int]] = {}
             reports: dict[bytes, tuple[int, int]] = {}
-            for rowid, dev, plaintext in db.execute(
-                    "SELECT rowid, device_id, plaintext FROM verified_observations "
-                    "WHERE family = 1"):
-                if not isinstance(dev, bytes):
-                    continue
-                t_pos = _measured_utc(plaintext)
-                if t_pos is not None and (
-                        dev not in locations or (t_pos, rowid) > locations[dev]):
-                    locations[dev] = (t_pos, rowid)
-                t_report = _report_utc(plaintext)
-                if t_report is not None and t_report >= LIVE_REPORT_CUTOVER_UTC and (
-                        dev not in reports or (t_report, rowid) > reports[dev]):
-                    reports[dev] = (t_report, rowid)
+            db.execute("BEGIN")
+            # Seek past each device using the primary key, then reverse-seek
+            # each measured-time index. Older read-only ledgers also work.
+            dev = b""
+            while True:
+                found = db.execute(
+                    "SELECT device_id FROM verified_observations WHERE device_id>? "
+                    "ORDER BY device_id LIMIT 1", (dev,)).fetchone()
+                if found is None:
+                    break
+                dev = found[0]
+                for predicate, minimum, target in (
+                        (_LOCATION, 1, locations),
+                        (_REPORT, LIVE_REPORT_CUTOVER_UTC, reports)):
+                    row = db.execute(
+                        f"SELECT {_STAMP},rowid FROM verified_observations "
+                        f"WHERE device_id=? AND {predicate} AND {_STAMP}>=? "
+                        f"ORDER BY {_STAMP} DESC,rowid DESC LIMIT 1",
+                        (dev, minimum.to_bytes(4, "big"))).fetchone()
+                    if row:
+                        target[dev] = (int.from_bytes(row[0], "big"), row[1])
 
             # A report timestamp is authoritative for freshness, not arrival
             # order. Keep the last valid location when the latest report has

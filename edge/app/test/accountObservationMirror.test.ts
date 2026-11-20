@@ -137,3 +137,43 @@ test("1. adım: latest response parser refuses duplicates, wrong family and miss
   ] }), "at most two latest rows per collar");
   assert.throws(() => parseServerLatest({ latest: true, records: [{ ...row, family: 2, frame: row.frame.slice(0, 168) }] }));
 });
+
+test("a pending history request allows a live check before the cursor advances", async () => {
+  const { db, mirror } = await setup();
+  const client = fake("site-a", after => ({ records: [], cursor: after, has_more: false }));
+  let signalStarted!: () => void;
+  const started = new Promise<void>(resolve => { signalStarted = resolve; });
+  let finish!: () => void;
+  const release = new Promise<void>(resolve => { finish = resolve; });
+  client.readServerObservations = async () => {
+    signalStarted();
+    await release;
+    return { records: [row], cursor: 1, has_more: true };
+  };
+  client.readServerLatest = async () => ({ records: [row] });
+  const history = mirror.pullAvailable(client, 1);
+  await started;
+  try {
+    assert.equal((await mirror.pullLatest(client)).added, 1);
+    assert.deepEqual(await db.query("SELECT * FROM orun_account_observation_cursors_v1"), []);
+  } finally {
+    finish();
+  }
+  assert.equal((await history).cursor, 1);
+});
+
+test("offline foreground restore verifies the watch snapshot and resumes the saved history cursor", async () => {
+  const { db, core, mirror } = await setup();
+  const client = fake("site-a", () => ({ records: [row], cursor: 1, has_more: true }));
+  await mirror.pullAvailable(client, 1);
+  const reopened = new AccountObservationMirror(db, benchCredentials, task => core.exclusive(task));
+  await reopened.ingestLatest(client, { records: [row] });
+  client.readServerObservations = async () => { throw new Error("offline"); };
+  await assert.rejects(reopened.pullPage(client), /offline/);
+  assert.equal((await reopened.points(client)).length, 1);
+  client.readServerObservations = async after => {
+    assert.equal(after, 1);
+    return { records: [], cursor: after, has_more: false };
+  };
+  assert.equal((await reopened.pullAvailable(client, 1)).more, false);
+});
