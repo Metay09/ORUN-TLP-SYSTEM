@@ -79,6 +79,17 @@ public final class BridgeCoreCheck {
         }, "BRIDGE-CORE");
         // The same scenarios on the phone's real store: SQLite, Android-style binding.
         java.nio.file.Path dir = Files.createTempDirectory("bridge-store");
+        PySql clockDb = new PySql(dir.resolve("watch.db").toString());
+        try {
+            BridgeStore watch = new BridgeStore(clockDb);
+            for (int seconds : new int[]{120, 100, 0, 300}) {
+                String plain = String.format(java.util.Locale.ROOT, "%032d%08X%088d", 0, seconds, 0);
+                clockDb.exec("INSERT INTO observations VALUES (?,?,?,?,?,?,?)", "000000000000000A",
+                        "0000000000000001", seconds + 1, 1, plain, String.format("%0200d", 0), 1);
+            }
+            if (!watch.lastMeasured(200_000L).equals(java.util.Collections.singletonMap("000000000000000A", 120_000L)))
+                throw new AssertionError("History, unknown time and future time must not replace latest report");
+        } finally { clockDb.close(); }
         final int[] n = {0};
         int b = run(args[0], () -> {
             PySql sql = new PySql(dir.resolve("s" + (n[0]++) + ".db").toString());

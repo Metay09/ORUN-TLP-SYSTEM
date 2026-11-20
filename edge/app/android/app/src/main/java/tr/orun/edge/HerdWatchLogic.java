@@ -52,6 +52,17 @@ final class HerdWatchLogic {
         return out;
     }
 
+    /** Only a newer measurement from the same collar contradicts a silence alert.
+     * Arrival of old history or a connection to the Gateway proves no such thing. */
+    static boolean superseded(String key, java.util.Map<String, Long> measured, long now) {
+        String[] fields = key.split(":", -1);
+        if (fields.length != 3 || !(fields[0].equals("silent") || fields[0].equals("lost"))) return false;
+        Long local = measured.get(fields[1].toUpperCase(java.util.Locale.ROOT));
+        if (local == null || local > now) return false;
+        try { return local > Long.parseLong(fields[2]); }
+        catch (NumberFormatException invalid) { return false; }
+    }
+
     /** Stable positive notification id for an alert key. */
     static int idOf(String key) {
         int h = 0x811c9dc5;

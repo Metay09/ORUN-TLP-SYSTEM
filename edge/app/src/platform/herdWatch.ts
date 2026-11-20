@@ -4,12 +4,17 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 
 interface Native {
+  localGateway(input: { site: string; actor: string; usb: boolean; measured: string }): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
   status(): Promise<{ lastOk?: number; line?: string; latest?: string }>;
 }
 const native = registerPlugin<Native>("OrunHerdWatch");
 const android = () => Capacitor.getPlatform() === "android";
+
+export function shareLocalGateway(site: string, actor: string, usb: boolean, measured: string): void {
+  if (android()) void native.localGateway({ site, actor, usb, measured }).catch(() => {});
+}
 
 export async function startHerdWatch(): Promise<boolean> {
   if (!android()) return false;

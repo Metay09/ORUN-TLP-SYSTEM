@@ -34,6 +34,22 @@ public final class OrunHerdWatchPlugin extends Plugin {
         call.resolve();
     }
 
+    /** The foreground USB reader is owned by the WebView. Expire its heartbeat if it stops. */
+    @PluginMethod
+    public void localGateway(PluginCall call) {
+        org.json.JSONObject account = OrunMobileSessionPlugin.accountForService(getContext());
+        if (account != null && account.optString("site").equals(call.getString("site"))
+                && account.optString("actor").equals(call.getString("actor"))) {
+            SharedPreferences.Editor edit = getContext().getSharedPreferences(HerdWatchService.PREFS, 0).edit();
+            edit.putString("localSite", account.optString("site"));
+            edit.putString("localActor", account.optString("actor"));
+            edit.putLong("usbAt", Boolean.TRUE.equals(call.getBoolean("usb")) ? System.currentTimeMillis() : 0);
+            edit.putString("localMeasured", call.getString("measured", "{}"));
+            edit.apply();
+        }
+        call.resolve();
+    }
+
     /** When the service last reached the server, and the snapshot it kept (JSON text) if any. */
     @PluginMethod
     public void status(PluginCall call) {
