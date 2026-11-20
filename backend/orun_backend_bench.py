@@ -101,8 +101,14 @@ class Backend:
         self.clock = clock
         self.lock = threading.Lock()   # one batch at a time, in order
         with sqlite3.connect(str(self.db_path)) as db:
-            for sql in (*SCHEMA, *LATEST_INDEXES):
+            for sql in SCHEMA:
                 db.execute(sql)
+            # Building an index over a field ledger needs an approved writer
+            # window and a verified backup. Only bootstrap an empty ledger.
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM verified_observations LIMIT 1").fetchone() is None:
+                for sql in LATEST_INDEXES:
+                    db.execute(sql)
 
     @staticmethod
     def _int(v, lo: int, hi: int, name: str, optional: bool = False) -> Optional[int]:

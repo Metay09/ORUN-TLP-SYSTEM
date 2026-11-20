@@ -117,6 +117,20 @@ class LatestTests(unittest.TestCase):
                           if r["device"] == A.hex().upper()],
                          [(INC.hex().upper(), 99), (new_inc.hex().upper(), 1)])
 
+    def test_startup_indexes_only_empty_ledgers(self) -> None:
+        from backend.orun_backend_bench import Backend
+        def indexes(path):
+            with sqlite3.connect(path) as db:
+                return {row[0] for row in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'latest_%'")}
+        empty = self.db.with_name("empty.sqlite")
+        Backend(empty, False)
+        self.assertEqual(indexes(empty), {"latest_location_utc", "latest_report_utc"})
+        before = read_latest(self.db)
+        Backend(self.db, False)
+        self.assertEqual(indexes(self.db), set())
+        self.assertEqual(read_latest(self.db), before)
+
     def test_no_clock_report_does_not_claim_freshness(self) -> None:
         with sqlite3.connect(self.db) as db:
             db.execute(
