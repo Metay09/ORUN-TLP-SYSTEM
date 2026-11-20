@@ -335,7 +335,6 @@ export interface ObservationSyncState {
 
 const AUTO_SYNC_MS = 60_000;
 let snapshotPending = false;
-const MAX_ROUNDS = 50;          // 50 x 64 pages x 64 records per run
 let syncRun: Promise<ObservationSyncResult> | null = null;
 let syncState: ObservationSyncState = { running: false, last: null, error: null };
 let autoTimer: ReturnType<typeof setInterval> | null = null;
@@ -352,10 +351,9 @@ export function onPilotObservationSync(fn: () => void): () => void {
   return () => { syncListeners.delete(fn); };
 }
 
-/** Newest position of every tracker first, then history from the saved
- * cursor until the server has nothing newer. One run at a time; a second
- * caller joins the running one. Remote AEAD evidence is never a local
- * phone delivery, even after durable mirror COMMIT. */
+/** Live-only automatic sync: latest position + post-cutover reports. Historical
+ * account pages are never drained in this run. One run at a time; remote AEAD
+ * evidence never becomes a phone-local delivery or custody ACK. */
 export function pilotAccountSync(): Promise<ObservationSyncResult> {
   if (syncRun) return syncRun;
   const run = (async (): Promise<ObservationSyncResult> => {
@@ -381,14 +379,11 @@ export function pilotAccountSync(): Promise<ObservationSyncResult> {
     if (latest.added) observationsChanged?.();
     // The screen may stop saying "yenileniyor" now: history can follow later.
     setSync({ latestAt: Date.now() });
-    let history = 0, more = true;
-    for (let round = 0; round < MAX_ROUNDS && more && same(); round++) {
-      const r = await mirror.pullAvailable(account);
-      history += r.received;
-      more = r.more;
-      if (r.received) observationsChanged?.();
-    }
-    return { latest: latest.received, history, more, at: Date.now() };
+    // 20 Nov 2026 pilot decision: move forward with newly produced reports.
+    // Do not drain old account history during automatic refresh: the backlog
+    // could delay the next live check. Historical rows already stored on the
+    // phone are preserved, and the old history cursor is left untouched.
+    return { latest: latest.received, history: 0, more: false, at: Date.now() };
   })();
   syncRun = run;
   setSync({ running: true });
