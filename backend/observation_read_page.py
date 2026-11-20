@@ -17,6 +17,9 @@ PAGE_SIZE = 64
 MAX_CURSOR = (1 << 63) - 1
 # Upper bound on trackers returned by read_latest (one record each).
 LATEST_MAX = 64
+# Only reports measured after the 20 Nov 2026 pilot cutover are promoted
+# to the live latest-report lane. Historical/no-clock backlogs stay untouched.
+LIVE_REPORT_CUTOVER_UTC = 1795196460  # 2026-11-20 20:41 Europe/Istanbul
 
 _RECORD_COLUMNS = (
     "SELECT o.rowid, o.device_id, o.incarnation, o.sequence, "
@@ -94,29 +97,74 @@ def _measured_utc(plaintext: object) -> int | None:
     return t if t > 0 else None
 
 
+def _report_utc(plaintext: object) -> int | None:
+    """Authenticated PERIODIC report time, even without a GNSS location.
+
+    A no-clock record cannot prove freshness merely because it was delivered
+    recently. It is intentionally excluded from the forward-only live lane.
+    """
+    if not isinstance(plaintext, bytes) or len(plaintext) != 64:
+        return None
+    if not plaintext[1] & 0b01:
+        return None
+    t = int.from_bytes(plaintext[16:20], "big")
+    return t if t > 0 else None
+
+
 def read_latest(db_path: str | Path) -> dict:
-    """For each tracker, the exact protected frame of its newest MEASURED
-    position (not the newest arrival). Same record shape as read_page; the
-    phone verifies AEAD and stores it without moving its history cursor."""
+    """Latest measured POSITION and (only after cutover) latest REPORT.
+
+    A post-cutover report without a GNSS fix proves that a collar was heard,
+    without fabricating a new location. The old last-known position remains
+    available independently. History cursors/custody and old records are not
+    changed; an old report arriving late cannot supersede a newer measurement.
+    At most two records per tracker, and at most LATEST_MAX trackers.
+    """
     try:
         with _open(db_path) as db:
             db.execute("PRAGMA query_only=ON")
-            best: dict[bytes, tuple[int, int]] = {}
+            locations: dict[bytes, tuple[int, int]] = {}
+            reports: dict[bytes, tuple[int, int]] = {}
             for rowid, dev, plaintext in db.execute(
                     "SELECT rowid, device_id, plaintext FROM verified_observations "
                     "WHERE family = 1"):
-                t = _measured_utc(plaintext)
-                if t is None or not isinstance(dev, bytes):
+                if not isinstance(dev, bytes):
                     continue
-                if dev not in best or (t, rowid) > best[dev]:
-                    best[dev] = (t, rowid)
-            winners = sorted(best.items(), key=lambda kv: kv[1][0], reverse=True)[:LATEST_MAX]
+                t_pos = _measured_utc(plaintext)
+                if t_pos is not None and (
+                        dev not in locations or (t_pos, rowid) > locations[dev]):
+                    locations[dev] = (t_pos, rowid)
+                t_report = _report_utc(plaintext)
+                if t_report is not None and t_report >= LIVE_REPORT_CUTOVER_UTC and (
+                        dev not in reports or (t_report, rowid) > reports[dev]):
+                    reports[dev] = (t_report, rowid)
+
+            # A report timestamp is authoritative for freshness, not arrival
+            # order. Keep the last valid location when the latest report has
+            # no location, but never call an old backlog packet live.
+            devices = sorted(
+                locations.keys() | reports.keys(),
+                key=lambda dev: max(locations.get(dev, (0, 0)),
+                                    reports.get(dev, (0, 0)))[0],
+                reverse=True,
+            )[:LATEST_MAX]
             records = []
-            for _dev, (_t, rowid) in winners:
-                row = db.execute(_RECORD_COLUMNS + "WHERE o.rowid = ?", (rowid,)).fetchone()
-                if row is None:
-                    raise ObservationReadUnavailable("BACKEND_LEDGER_CHANGED")
-                records.append(_record(row, 0))
+            for dev in devices:
+                loc = locations.get(dev)
+                report = reports.get(dev)
+                ids: list[int] = []
+                if loc is not None:
+                    ids.append(loc[1])
+                if report is not None and report[1] not in ids and (
+                        loc is None or report > loc):
+                    ids.append(report[1])
+                for rowid in ids:
+                    row = db.execute(
+                        _RECORD_COLUMNS + "WHERE o.rowid = ?", (rowid,)
+                    ).fetchone()
+                    if row is None:
+                        raise ObservationReadUnavailable("BACKEND_LEDGER_CHANGED")
+                    records.append(_record(row, 0))
     except sqlite3.Error as e:
         raise ObservationReadUnavailable("BACKEND_LEDGER_READ_FAILED") from e
     return {"records": records, "latest": True}
