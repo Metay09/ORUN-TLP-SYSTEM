@@ -102,6 +102,22 @@ test("herd: newest RECORD per collar, attention first, plain sentences", () => {
   assert.ok(matches(aa, "sarı") && matches(aa, "1234") && matches(aa, "00aa") && !matches(aa, "kara"));
 });
 
+test("live no-fix report must not look lost just because last GPS position is old", () => {
+  const device = "00000000000000AA";
+  const oldPosition = pt(device, 5 * 60, { seq: 1, received: iso(NOW - 5 * 3600_000) });
+  const reports = [{ tracker: device, incarnation: "INC1", seq: 2,
+    time: iso(NOW - 20_000), received: iso(NOW), gnssFailures: 1, period_s: 60 }];
+  const [animal] = buildHerd({
+    points: [oldPosition], unlocated: reports, profiles: {},
+    assetOf: (d) => d, now: NOW,
+  });
+  assert.equal(animal.lastTime, NOW - 5 * 3600_000, "last valid GPS position stays old");
+  assert.equal(animal.lastReport, NOW - 20_000, "new report is independently fresh");
+  assert.notEqual(animal.status, "lost", "recent verified report prevents false lost warning");
+  assert.equal(animal.noFix, true);
+  assert.match(animal.seen, /konum|GPS/i);
+});
+
 test("battery status is the worst of the last day (solar collars dip at night)", () => {
   const herd = herdOf([pt("A", 600, { battery: "LOW", battery_mv: 3600 }), pt("A", 1)]);
   assert.equal(herd[0].battery, "low");
