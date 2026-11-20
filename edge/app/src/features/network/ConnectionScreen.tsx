@@ -366,7 +366,7 @@ export function ConnectionScreen() {
       )}
       {note && <p className="sm lead" role="status">{note}</p>}
 
-      <Section title="Aktarım" info="Kayıt tasmadan gateway'e, oradan köprüyle (PC Edge ya da bu telefon) sunucuya gider. Her sayı son ölçüldüğü zamanla gösterilir; eski ölçüm canlı değer değildir. 'Henüz ulaşmadı': tasmanın kayıt sıra numaralarındaki boşluklar; o kayıtlar tasmada ya da yolda (gateway, Edge) bekliyor. 'Bellekte': tasmaya bağlanınca okunan bütün kayıtlar (gönderilmişler dahil). Satıra dokun, cihazlar açılır." />
+      <Section title="Aktarım" info="Kayıt tasmadan gateway'e, oradan köprüyle (PC Edge ya da bu telefon) sunucuya gider. Her sayı son ölçüldüğü zamanla gösterilir; eski ölçüm canlı değer değildir. 'Henüz ulaşmadı' sayısı, aynı tasmanın son kayıt döneminde, son 7 günde görülen iki sıra numarası arasındaki boşlukları gösterir. Aradaki kayıtlar geldikçe sayı azalır. Silinmiş kayıtlar da boşluk bırakabilir. 'Bellekte': tasmaya bağlanınca okunan bütün kayıtlar (gönderilmişler dahil). Satıra dokun, cihazlar açılır." />
       <Card>
         <div className="xfer-head">
           <span className={"dot " + head.tone} />
