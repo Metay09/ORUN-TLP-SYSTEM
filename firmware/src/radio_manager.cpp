@@ -871,14 +871,27 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
 
   if (size >= 2 &&
       payload[0] == custody_ack::kVersion &&
-      payload[1] == custody_ack::kType) {
-    custody_ack::Header header{};
+      (payload[1] == custody_ack::kType
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+       || payload[1] == kq05_gateway_batch_ack::kType
+#endif
+      )) {
+    uint64_t target = 0;
+    if (payload[1] == custody_ack::kType) {
+      custody_ack::Header header{};
+      if (custody_ack::decodeHeader(payload, size, header)) target = header.tracker_device_id;
+    }
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+    else {
+      kq05_gateway_batch_ack::Header header{};
+      if (kq05_gateway_batch_ack::decode(payload, size, header)) target = header.tracker_device_id;
+    }
+#endif
     // Even a valid-looking ACK has no authority in BASE/RELAY roles.
     // Relay reverse transport is a separate reviewed feature; do not
     // forward this as if it were a tracker-authenticated receipt.
     if (network_.role() != NodeRole::kTracker ||
-        !custody_ack::decodeHeader(payload, size, header) ||
-        header.tracker_device_id != device_id_ ||
+        target == 0U || target != device_id_ || size > sizeof(custody_ack_rx_.payload) ||
         custody_ack_rx_pending_) {
       ++event_diagnostics_.custody_ack_rx_drops;
       return;

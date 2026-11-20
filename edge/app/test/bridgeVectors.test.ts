@@ -121,6 +121,11 @@ function generate(): string {
   for (const kat of [KAT_PERIODIC(), KAT_EVENT()]) {
     const base = openProductFrame(kat, lookup).plaintext;
     lines.push(["open", String(TEST_KEY_EPOCH), hex(key), hex(kat), opened(kat)].join("|"));
+    const direct = kat.slice();
+    direct[4] = 0;
+    const live = seal(direct, base, 9000 + kat[3]);
+    assert.equal(opened(live), kat[3] === 1 ? opened(kat) : "REJECT");
+    lines.push(["open", String(TEST_KEY_EPOCH), hex(key), hex(live), opened(live)].join("|"));
     for (let i = 0; i < 400; i++) {
       const p = base.slice();
       const n = 1 + Math.floor(r() * 2);

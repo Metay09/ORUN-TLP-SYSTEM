@@ -39,7 +39,7 @@ final class ProductFrame {
             boolean shape = (family == 1 && plainLen == 64 && raw.length == 100) ||
                     (family == 2 && plainLen == 48 && raw.length == 84);
             if (h[0] != 2 || h[1] != 4 || h[2] != 2 || h[7] != 0 || h[5] != 1 ||
-                    (h[4] != 2 && h[4] != 3) || !shape)
+                    (!(family == 1 && h[4] == 0) && h[4] != 2 && h[4] != 3) || !shape)
                 return null;
             byte[] device = Arrays.copyOfRange(h, 8, 16);
             long epoch = u32(h, 16);

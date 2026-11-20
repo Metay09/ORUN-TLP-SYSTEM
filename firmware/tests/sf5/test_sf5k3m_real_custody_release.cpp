@@ -10,9 +10,11 @@
 #include "product_record_store.h"
 #include "tlp_v2_product_secure.h"
 
+#pragma push_macro("main")
+#undef main
 #define main sf5k3j_policy_previous_main
 #include "test_sf5k3j_real_security_v3_policy.cpp"
-#undef main
+#pragma pop_macro("main")
 
 namespace {
 namespace osc=orun_tlp::observation_store_control;

@@ -23,6 +23,11 @@
 #include "config_mutation.h"
 #include "config_store.h"
 #include "custody_ack_release_owner.h"
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+#include "kq05_tracker_batch_release_owner.h"
+#include "tracker_ackless_live_tx.h"
+#include "tracker_critical_event_tx.h"
+#endif
 #include "config_incarnation_source.h"
 #ifdef ORUN_M7P7B_FLASH_PROBE
 #include "m7p7b_flash_probe.h"
@@ -198,10 +203,25 @@ orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort()
 // The only Tracker release owner: grant/HMAC verification precedes flash.
 orun_tlp::CustodyAckReleaseOwner custody_ack_release(security_store,
                                                       product_records);
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+orun_tlp::Kq05TrackerBatchReleaseOwner batch_ack_release(security_store, product_records);
+#endif
+bool custodyReleasePending() {
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+  if (batch_ack_release.pending()) return true;
+#endif
+  return custody_ack_release.pending();
+}
 #ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
 // Explicit test-image activation only; the default product runtime still
 // sends the existing TLP v1/History path until Gateway commissioning is ready.
 orun_tlp::ProductSecureCrypto product_crypto(security_store);
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+orun_tlp::TrackerAcklessLiveTx batch_live(product_records, product_crypto, radio_manager);
+orun_tlp::TrackerCriticalEventTx batch_event(product_records, product_crypto, radio_manager);
+orun_tlp::TrackerCriticalEventTx batch_history(product_records, product_crypto, radio_manager,
+    orun_tlp::TrackerCriticalEventTx::Mode::kPeriodicHistory);
+#endif
 orun_tlp::TrackerProductTxPilot tracker_product_tx(product_records,
                                                   product_crypto,
                                                   radio_manager);
@@ -3192,7 +3212,7 @@ void handleRoleCommand() {
     role_command_length = 0;
     const bool tracking_enabled = serviceRuns(resolveRuntimeConfig().tracking);
     if (tracking_enabled || bench_pacer.enabled() ||
-        bench_pacer.awaitingAck() || custody_ack_release.pending() ||
+        bench_pacer.awaitingAck() || custodyReleasePending() ||
         !product_records.requestBenchClear()) {
       Serial.println(F("BENCH TRACKER ERASE rejected: stop tracking "
                        "(APP SERVICES NONE), stop drain (BENCH DRAIN OFF), "
@@ -4363,6 +4383,18 @@ void loop() {
   drainGeofencePrepare();
   // ProductRecordStore::poll() has run before this service. A radio receipt
   // never counts as delivery; only a committed release marker does.
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+  // Only one release owner can consume a ProductRecordStore outcome.
+  if (batch_ack_release.pending()) {
+    const auto result = batch_ack_release.service();
+    if (result == orun_tlp::Kq05TrackerBatchReleaseOwner::Service::kApplied) {
+      Serial.println(F("PRODUCT BATCH release=DURABLE"));
+#ifdef ORUN_SF5L0_TRACKER
+      bench_pacer.onReleased(orun_tlp::monotonic::nowMs());
+#endif
+    }
+  }
+#endif
   const auto custody_result = custody_ack_release.service();
   if (custody_result ==
       orun_tlp::CustodyAckReleaseOwner::Service::kDurablyReleased) {
@@ -4550,7 +4582,7 @@ void loop() {
   // ProductRecordStore owner; absent v3 grant or exact cache fails closed.
   // Preserve a pending second ACK while a previous release awaits flash.
   if (radio_manager.role() == orun_tlp::NodeRole::kTracker &&
-      !custody_ack_release.pending()) {
+      !custodyReleasePending()) {
     orun_tlp::CustodyAckRxFrame ack{};
     if (radio_manager.takeCustodyAckFrame(&ack)) {
       if (ble_ready && product_records.mounted() &&
@@ -4560,16 +4592,24 @@ void loop() {
 #ifdef ORUN_SF5L0_TRACKER
         const uint32_t bench_ack_taken_ms = orun_tlp::monotonic::nowMs();
 #endif
-        const auto submitted = custody_ack_release.submit(ack.payload, ack.size);
-        if (submitted == orun_tlp::CustodyAckReleaseOwner::Submit::kStarted) {
-          Serial.println(F("PRODUCT CUSTODY ACK authenticated; release=pending"));
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+        if (ack.payload[1] == orun_tlp::kq05_gateway_batch_ack::kType) {
+          if (batch_ack_release.submit(ack.payload, ack.size) ==
+              orun_tlp::Kq05TrackerBatchReleaseOwner::Submit::kStarted)
+            Serial.println(F("PRODUCT BATCH ACK authenticated; release=pending"));
+        } else
+#endif
+        {
+          const auto submitted = custody_ack_release.submit(ack.payload, ack.size);
+          if (submitted == orun_tlp::CustodyAckReleaseOwner::Submit::kStarted) {
+            Serial.println(F("PRODUCT CUSTODY ACK authenticated; release=pending"));
 #ifdef ORUN_SF5L0_TRACKER
-          bench_link.ack_ms = bench_ack_taken_ms;
-          bench_link.verify_ms =
-              orun_tlp::monotonic::nowMs() - bench_ack_taken_ms;
-          bench_link.rssi = ack.rssi_dbm;
-          bench_link.snr = ack.snr_db;
-          bench_link.ack_seen = true;
+            bench_link.ack_ms = bench_ack_taken_ms;
+            bench_link.verify_ms =
+                orun_tlp::monotonic::nowMs() - bench_ack_taken_ms;
+            bench_link.rssi = ack.rssi_dbm;
+            bench_link.snr = ack.snr_db;
+            bench_link.ack_seen = true;
 #endif
         }
 #ifdef ORUN_SF5L0_TRACKER
@@ -4578,6 +4618,7 @@ void loop() {
                         static_cast<unsigned>(submitted),
                         static_cast<int>(ack.rssi_dbm));
 #endif
+        }
       }
 #ifdef ORUN_SF5L0_TRACKER
       else {
@@ -4598,7 +4639,12 @@ void loop() {
   // radio is transmitting. The ACK TX itself starts only after the durable
   // custody write has completed and been read back.
   if (gatewayStorage() && !radio_manager.isTransmitting())
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+    orun_tlp::sf5l0_gateway::service(product_records.mounted(),
+        lora_relay.windowReserved(orun_tlp::monotonic::nowMs()));
+#else
     orun_tlp::sf5l0_gateway::service(product_records.mounted());
+#endif
   serviceLoraRelay();
   serviceLoraTracker();
 #endif
@@ -4657,7 +4703,7 @@ void loop() {
   const bool pilot_allowed = ble_ready && tracking_enabled &&
       radio_manager.role() == orun_tlp::NodeRole::kTracker &&
       !positions.pending() && !radio_manager.relayForwardingEnabled() &&
-      !custody_ack_release.pending() && security_store.ready() &&
+      !custodyReleasePending() && security_store.ready() &&
       security_store.state() == orun_tlp::SecurityState::kProvisioned &&
       !security_store.busy() && product_records.mounted() &&
       product_records.store().ready()
@@ -4667,6 +4713,20 @@ void loop() {
              security_store) != 0
 #endif
       ;
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+  if (radio_manager.deviceId() == ORUN_BATCH_ACK_TRACKER_ID) {
+    const uint32_t now = orun_tlp::monotonic::nowMs();
+    const bool eligible = pilot_allowed && bench_pacer.hasBatchAirtime(now);
+    const auto event = batch_event.update(now, eligible);
+    const bool event_sent = event == orun_tlp::TrackerCriticalEventTx::Result::kSent;
+    if (event_sent) bench_pacer.chargeBatchTx(now);
+    const auto live = batch_live.update(now, eligible && !event_sent);
+    if (live == orun_tlp::TrackerAcklessLiveTx::Event::kSent) bench_pacer.chargeBatchTx(now);
+    const auto history = batch_history.update(now, eligible && !event_sent &&
+        live != orun_tlp::TrackerAcklessLiveTx::Event::kSent && !batch_live.liveSearchPending());
+    if (history == orun_tlp::TrackerCriticalEventTx::Result::kSent) bench_pacer.chargeBatchTx(now);
+  } else {
+#endif
 #ifdef ORUN_SF5L0_TRACKER
   if (tracker_product_tx.recoverIfSafe(
           orun_tlp::monotonic::nowMs(), pilot_allowed)) {
@@ -4720,6 +4780,9 @@ void loop() {
       Serial.printf("BENCH LINK ack_timeout seq=%lu\n",
                     static_cast<unsigned long>(bench_link.seq));
     }
+  }
+#endif
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
   }
 #endif
 #ifdef ORUN_SF5L0_TRACKER

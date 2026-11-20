@@ -17,7 +17,7 @@ guard = src.split("// SF5K3U: loop-only Tracker ACK intake,")[1].split(
     "// SF3 device runtime executes", 1)[0]
 for phrase in (
     "radio_manager.role() == orun_tlp::NodeRole::kTracker",
-    "!custody_ack_release.pending()",
+    "!custodyReleasePending()",
     "radio_manager.takeCustodyAckFrame(&ack)",
     "ble_ready",
     "product_records.mounted()",
@@ -29,6 +29,8 @@ for phrase in (
     "memset(ack.payload, 0, sizeof(ack.payload))",
 ):
     assert phrase in guard, phrase
+assert "return custody_ack_release.pending();" in src
+assert "if (batch_ack_release.pending()) return true;" in src
 assert "CustodyAckReleaseOwner::Service::kDurablyReleased" in src
 assert "product_records.store().requestRelease(" not in src
 assert "sendProductSecurePacket(" not in src

@@ -6,6 +6,7 @@
     defined(ORUN_SF5L0_GATEWAY)
 
 #include "sf5l0_bench.h"
+#include "radio_config.h"
 
 #include <string.h>
 
@@ -429,6 +430,19 @@ void Sf5l0DrainPacer::refill(uint32_t now_ms) {
   if (tokens_us_ > cap) tokens_us_ = cap;
 }
 
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+bool Sf5l0DrainPacer::hasBatchAirtime(uint32_t now_ms) {
+  refill(now_ms);
+  // Leave the receive window open after the frame has finished transmitting.
+  return enabled_ && (!stats_.sent || now_ms - sent_at_ms_ >=
+      config_.airtime_ms + radio_config::kWindowedRxAfterTxMs) &&
+      tokens_us_ >= uint64_t(config_.airtime_ms) * 1000U;
+}
+void Sf5l0DrainPacer::chargeBatchTx(uint32_t now_ms) {
+  onSent(now_ms);
+  awaiting_ack_ = false;
+}
+#endif
 bool Sf5l0DrainPacer::mayRearm(uint32_t now_ms) {
   refill(now_ms);
   if (!enabled_) return false;
@@ -823,7 +837,9 @@ Sf5l0EdgeHandoff::Reply Sf5l0EdgeHandoff::accept(uint16_t page, uint16_t slot,
   return Reply::kRejected;
 }
 
-Sf5l0EdgeHandoff::Event Sf5l0EdgeHandoff::service() {
+Sf5l0EdgeHandoff::Event Sf5l0EdgeHandoff::service(uint32_t reserved_pages) {
+  if (last_reserved_pages_ & ~reserved_pages) check_reclaim_ = true;
+  last_reserved_pages_ = reserved_pages;
   Event event{};
   store_.poll();
   ProductCustodyStore::Maintenance done{};
@@ -844,7 +860,7 @@ Sf5l0EdgeHandoff::Event Sf5l0EdgeHandoff::service() {
   }
   if (check_reclaim_ && !pending_ && store_.ready() && !store_.busy() &&
       !store_.hasOutcome()) {
-    const int page = store_.reclaimablePage();
+    const int page = store_.reclaimablePage(reserved_pages);
     if (page >= 0 && store_.requestReclaim(uint16_t(page))) {
       event.kind = Event::Kind::kReclaimStarted;
       event.ok = true;

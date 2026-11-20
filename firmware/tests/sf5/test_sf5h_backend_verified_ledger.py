@@ -47,10 +47,12 @@ def keys(device: bytes, epoch: int) -> secure.BackendCredential | None:
     return CRED if device == DEVICE and epoch == EPOCH else None
 
 
-def reencrypt(original: bytes, counter: int, plain: bytes | None = None) -> bytes:
+def reencrypt(original: bytes, counter: int, plain: bytes | None = None, *, flags: int | None = None) -> bytes:
     item = secure.open_product_frame(original, keys)
     assert item.plaintext
     new_header = bytearray(original[:28])
+    if flags is not None:
+        new_header[4] = flags
     new_header[20:28] = counter.to_bytes(8, "big")
     info = b"ORUN-TLP-V2-AEAD" + bytes((1,)) + EPOCH.to_bytes(4, "big")
     key = HKDF(hashes.SHA256(), 16, CRED.credential_id, info).derive(CRED.k_root)
@@ -73,6 +75,21 @@ def receiver(path: Path):
         server.server_close()
         thread.join(timeout=3)
         assert not thread.is_alive()
+
+
+def test_direct_live_then_history():
+    history = public_fixture("kPeriodicFrameHex")
+    live = reencrypt(history, 500, flags=0)
+    with tempfile.TemporaryDirectory() as directory:
+        inbox = edge.EdgeDurableInbox(Path(directory) / "edge.db")
+        assert inbox.put(live).state == edge.PutState.COMMITTED
+        ledger = secure.VerifiedLocalLedger(Path(directory) / "verified.db", keys)
+        assert ledger.ingest(live).state == secure.LedgerState.VERIFIED_STORED
+        assert ledger.ingest(history).state == secure.LedgerState.VERIFIED_DUPLICATE
+        tampered = bytearray(live)
+        tampered[-1] ^= 1
+        assert ledger.ingest(bytes(tampered)).state == secure.LedgerState.REJECTED
+        assert ledger.ingest(reencrypt(public_fixture("kEventFrameHex"), 501, flags=0)).state == secure.LedgerState.REJECTED
 
 
 def test_golden_vectors() -> None:
@@ -268,6 +285,7 @@ def test_real_edge_http_backend_then_crypto_verify() -> None:
 
 
 def main() -> None:
+    test_direct_live_then_history()
     test_golden_vectors()
     test_tag_header_key_and_semantic_refusal()
     test_ledger_logical_idempotence_and_conflict()

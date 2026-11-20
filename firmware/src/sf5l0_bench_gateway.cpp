@@ -379,6 +379,9 @@ void begin(FlashBackend& port, FlashBackend& security_port,
   ingress = new GatewayCustodyAuthorizedIngress(*custody_owner, *grants,
                                                 gateway_id);
   runtime = new GatewayProductCustodyRuntime(radio_manager, *ingress);
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+  runtime->attachLiveIngress(*new GatewayProductLiveIngress(*custody, *grants, gateway_id));
+#endif
   handoff = new Sf5l0EdgeHandoff(*custody, gateway_id);
 #if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
   uint8_t edge_key[32]{};
@@ -433,7 +436,11 @@ void serviceHandoff() {
   if (handoff == nullptr || erase_active || guard == nullptr ||
       guard->state() != Guard::State::kReady)
     return;
-  const Sf5l0EdgeHandoff::Event e = handoff->service();
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+  const auto e = handoff->service(runtime ? runtime->reservedPages() : 0);
+#else
+  const auto e = handoff->service();
+#endif
   switch (e.kind) {
     case Sf5l0EdgeHandoff::Event::Kind::kHandedOff:
       Serial.printf("EDGE ACCEPT %s page=%u slot=%u state=HANDED_OFF\n",
@@ -453,7 +460,12 @@ void serviceHandoff() {
   }
 }
 
-void service(bool observation_store_mounted) {
+void service(bool observation_store_mounted, bool reserve_command_window) {
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+  if (runtime) runtime->reserveCommandWindow(reserve_command_window);
+#else
+  (void)reserve_command_window;
+#endif
   serviceErase();
 #if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
   serviceInstaller();
@@ -470,6 +482,9 @@ void service(bool observation_store_mounted) {
   const Event event = runtime->updateGuarded(
       *guard, roleOk() && !erase_active, observation_store_mounted);
   switch (event) {
+    case Event::kLiveDurable:
+      emit_pending = true;
+      break;
     case Event::kCustodyStarted:
       ++custody_started;
       Serial.println(F("BENCH GW RX record; durable custody write started"));

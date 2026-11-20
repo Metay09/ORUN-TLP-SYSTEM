@@ -64,4 +64,25 @@ bool RadioManager::sendAuthorizedCustodyAck(
   return true;  // Radio start, NOT receipt, custody release, or delivery.
 }
 
+#ifdef ORUN_EXPERIMENTAL_BATCH_ACK
+bool RadioManager::sendAuthorizedBatchAck(GatewayCustodyAuthorizedIngress& ingress,
+                                         const ProductCustodyStore::Handle* handles,
+                                         uint8_t count, const GatewayCustodyAckScope& scope) {
+  if (!canSend() || !device_id_ || ingress.localGatewayId() != device_id_) return false;
+  uint8_t wire[kq05_gateway_batch_ack::kMaxSize]{};
+  size_t size = 0;
+  if (!ingress.prepareAuthorizedBatchAck(handles, count, scope, wire, size)) return false;
+  radio_driver::Guard gate;
+  if (!gate || !canSend()) return false;
+  startTxOperation();
+  tx_kind_ = TxKind::kCustodyAck;
+  tx_role_epoch_ = role_epoch_;
+  rx_restore_state_ = RxRestoreState::kNone;
+  ++tx_attempts_;
+  ++event_diagnostics_.custody_ack_tx_attempts;
+  Radio.Send(wire, static_cast<uint8_t>(size));
+  tx_started_ms_ = monotonic::nowMs();
+  return true;
+}
+#endif
 }  // namespace orun_tlp
