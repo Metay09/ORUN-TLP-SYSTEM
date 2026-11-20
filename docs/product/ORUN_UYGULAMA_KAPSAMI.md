@@ -18,6 +18,7 @@ Bu listede olmayan iş v1 değildir; yapılmaz, önerilmez, "ileride lazım olur
 - İnternetsiz çalışır, internet gelince kendiliğinden eşitler. Kullanıcı eşitleme için düğmeye basmak zorunda kalmaz.
 - Sade Türkçe. Teknik ayrıntı yalnız "Teknik ayrıntılar" altında.
 - Tek gateway: sabit/gezer yalnızca kurulum bilgisidir, ayrı mod ya da yazılım değildir.
+- Tasma ve Gateway aynı ürün yazılımını kullanır. Yeni konum LoRa gönderiminde birikmiş geçmişten önce gelir. Geçmişteki açıklar uygulamada görünür ve kayıtlar ulaştıkça kapanır. Gateway bir veya birkaç kaydı aynı onay biçimiyle onaylar. Sürüm geçişinde eski paketlerin taşınması ve eski onay biçimiyle uyumluluk gerekmiyor (sahip kararı, 20 Kasım 2026).
 
 ## v1 sırası
 
