@@ -350,12 +350,15 @@ void testInterleavedCollarsReceiveSeparateReceipts() {
   RadioManager radio;
   collar_radio = nullptr;
   GatewayProductCustodyRuntime runtime(radio, ingress);
+  GatewayProductLiveIngress direct(store, grants, kGateA);
+  runtime.attachLiveIngress(direct);
   using Event = GatewayProductCustodyRuntime::Event;
-  const auto offer = [&](uint64_t id, uint32_t counter) {
+  const auto offer = [&](uint64_t id, uint32_t counter, uint8_t flags = 3U) {
     const auto original = makeObject({});
     tlp::ProductSecureFrame frame{};
     assert(tlp::decodeProductSecureFrame(original.object, original.object_size, &frame)
            == tlp::ProductSecureCodecResult::kOk);
+    frame.path_flags = flags;
     frame.device_id = id;
     frame.security_counter = counter;
     assert(tlp::encodeProductSecureFrame(frame, uplink.payload, sizeof(uplink.payload))
@@ -373,16 +376,22 @@ void testInterleavedCollarsReceiveSeparateReceipts() {
     assert(durable);
   }
   assert(offer(second + 1, 42) == Event::kDenied);
+  // The first collar has filled its exact cache and sends direct. Its
+  // receive window can clear only its own older held packet.
+  simulation_ms += 10;
+  assert(offer(kDevice, 43, 0) == Event::kCustodyStarted);
+  for (unsigned n = 0; n < 150 && direct.pending(); ++n) runtime.update(true);
+  assert(!direct.pending());
+  assert(runtime.update(true) == Event::kAckTxStarted);
+  ack::Header header{};
+  assert(ack::decode(receipt, receipt_size, header) && header.count == 1 &&
+         header.tracker_device_id == kDevice);
+  assert(runtime.reservedPages() != 0);
   simulation_ms += 1001;
-  bool first_ack = false, second_ack = false;
-  for (unsigned n = 0; n < 2; ++n) {
-    assert(runtime.update(true) == Event::kAckTxStarted);
-    ack::Header header{};
-    assert(ack::decode(receipt, receipt_size, header) && header.count == 1);
-    first_ack |= header.tracker_device_id == kDevice;
-    second_ack |= header.tracker_device_id == second;
-  }
-  assert(first_ack && second_ack && downlinks == 2 && runtime.reservedPages() == 0);
+  assert(runtime.update(true) == Event::kAckTxStarted);
+  assert(ack::decode(receipt, receipt_size, header) && header.count == 1 &&
+         header.tracker_device_id == second);
+  assert(downlinks == 2 && runtime.reservedPages() == 0);
   puts("Two enrolled collars, same epoch and counter, separate receipts; unknown collar denied: PASS");
 }
 
