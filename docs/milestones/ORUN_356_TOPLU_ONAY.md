@@ -1,10 +1,12 @@
 # Toplu onayın PC doğrulaması — 20 Kasım 2026
 
-#356 için denenen kod sürümü `26522dea855aec96147441b4083cda422726fd83`. Çalışan cihazlardaki karşılaştırma sürümü `0.5-42a1104`. Deneme, derleme sırasında kimliği seçilen tek tasma ile Gateway arasındaki geçişi kapsıyor.
+#356 için denenen kod sürümü `b1c4618`. Çalışan cihazlardaki karşılaştırma sürümü `0.5-42a1104`. Deneme, derleme sırasında kimliği seçilen tek tasma ile Gateway arasındaki geçişi kapsıyor.
 
 ## Hangi sonuç elde edildi?
 
 - PC benzetiminde Gateway üç ayrı kaydı kalıcı belleğe yazıp geri okudu ve tek imzalı onay üretti. İlk onay kaybedildiğinde tasmanın yeni konumu Gateway'e ulaştı. İkinci onay komutun cevap penceresini bekledi. Tasma, onayda eksik bırakılan kaydı yeniden başlatmadan sonra da tuttu. Bu testte telsiz, canlı konum şifreleme donanımı ve komut cevabı benzetildi. Toplu onayın imzası ve doğrulaması gerçek koddan geçti.
+- Yeni konum için tasma önce şifreli paketi kalıcı belleğe yazıyor. Gateway aynı paketi alıp kalıcı belleğinden doğrulayınca Edge için hazır ediyor ve toplu onaya dahil edebiliyor. Tasma bu ölçümü sırf geçmiş listesine girdi diye ikinci kez göndermiyor. Birleşik PC testinde ilk paket için verilen imzalı onay aynı kaydı kapattı.
+- Onay bekleme süresi altı dakika. Bu süre dolunca tasma sıradaki onaysız kaydı aynı şifreli baytlarla yeniden gönderebiliyor. Yeniden başlatma bu bekleme süresini sıfırlıyor. Dört önbellek yeri dolunca Gateway toplu onayı göndermeye çalışıyor. Tasmanın beşinci yeri kritik olay için ayrılmış durumda. Dört yer doluyken yeni konum gelirse tasma konumu doğrudan gönderiyor ve kayıt bellekte kalıyor. Bu istisnada yer açılınca güvenilir geçmiş aktarımı için ikinci yayın gerekiyor.
 - Doğrudan gönderilen canlı konumun başlığı eski okuyucularda reddediliyordu. Denemedeki Python, TypeScript ve Java okuyucuları bu konumu açıyor. Sunucu aynı ölçümün geçmiş kopyasını da aldığında tek mantıksal kayıt tutuyor. İmzası veya doğrulama etiketi geçersiz çerçeveler reddediliyor.
 - Ürün derlemesi eski tekli onayı kullanıyor. Deneme derlemesi fiziksel cihazlara yüklenmedi.
 
@@ -15,10 +17,10 @@
 | Senaryo | Gönderilen çerçeveler | Toplam yayın süresi |
 |---|---|---:|
 | Var olan tekli onay | 3 ölçüm + 3 × 56 bayt onay | 10,84 sn |
-| Birikmiş geçmiş | 3 ölçüm + 1 × 72 bayt onay | 8,29 sn |
+| Yeni akışta tek onayda toplanan üç konum | 3 ölçüm + 1 × 72 bayt onay | 8,29 sn |
 | Aynı üç ölçüm hem canlı hem geçmiş olarak yollanırsa | 6 ölçüm + 1 × 72 bayt onay | 14,94 sn |
 
-Birikmiş geçmişte onay trafiği azalıyor. Normal bağlantıda her ölçümü ikinci kez yollamak bu kazancı aşabilir. Saha için karar verirken iki yöndeki yayınların tamamı, uyku/dinleme süresi, yeni konum gecikmesi ve kayıp kayıtlar birlikte ölçülmeli.
+8,29 sn hesabı Gateway üç ölçümü tek onaya alabildiğinde geçerli. Seyrek gelen ölçümlerde Gateway tek kayıt için de onay gönderebilir. Saha için karar verirken iki yöndeki yayınların tamamı, uyku/dinleme süresi, yeni konum gecikmesi ve kayıp kayıtlar birlikte ölçülmeli.
 
 ## PC'deki kontroller
 
