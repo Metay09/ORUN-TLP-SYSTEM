@@ -10,7 +10,7 @@ from threading import Thread
 import unittest
 
 from backend.account_observation_relay import AccountObservationRelay, RelayUnavailable
-from backend.observation_read_page import read_latest, read_page
+from backend.observation_read_page import LIVE_REPORT_CUTOVER_UTC, read_latest, read_page
 from tools.orun_observation_readonly_sidecar import make_readonly_server
 
 A = bytes.fromhex("52E16773141A8887")
@@ -66,6 +66,56 @@ class LatestTests(unittest.TestCase):
         # Same record shape as history pages, so the phone stores it the same way.
         page = read_page(self.db, 0)["records"]
         self.assertIn(got["records"][0], page)
+
+    def test_only_post_cutover_reports_can_update_last_heard(self) -> None:
+        def put(seq: int, timestamp: int, located: bool) -> None:
+            with sqlite3.connect(self.db) as db:
+                db.execute(
+                    "INSERT INTO verified_observations VALUES (?,?,?,?,?,?)",
+                    (A, INC, seq, 1, periodic(timestamp, located), bytes([seq]) * 100),
+                )
+                db.execute(
+                    "INSERT INTO edge_receipts VALUES (?,?,?,?,?,?)",
+                    (A, INC, seq, 1800000000 + seq, -90, 8),
+                )
+
+        # A later-arriving OLD no-fix does not become a 'live' observation.
+        put(4, LIVE_REPORT_CUTOVER_UTC - 1, False)
+        by_device = {}
+        for r in read_latest(self.db)["records"]:
+            by_device.setdefault(r["device"], []).append(r["sequence"])
+        self.assertEqual(by_device[A.hex().upper()], [2])
+
+        # A measured post-cutover no-fix is a fresh REPORT, not a new GPS fix.
+        put(5, LIVE_REPORT_CUTOVER_UTC + 120, False)
+        by_device = {}
+        for r in read_latest(self.db)["records"]:
+            by_device.setdefault(r["device"], []).append(r["sequence"])
+        self.assertEqual(by_device[A.hex().upper()], [2, 5])
+        self.assertEqual(by_device[B.hex().upper()], [1])
+
+        # Backlog arriving afterward cannot hide a new valid location.
+        put(6, LIVE_REPORT_CUTOVER_UTC - 400, True)
+        put(7, LIVE_REPORT_CUTOVER_UTC + 180, True)
+        by_device = {}
+        for r in read_latest(self.db)["records"]:
+            by_device.setdefault(r["device"], []).append(r["sequence"])
+        self.assertEqual(by_device[A.hex().upper()], [7])
+        self.assertEqual(by_device[B.hex().upper()], [1])
+
+    def test_no_clock_report_does_not_claim_freshness(self) -> None:
+        with sqlite3.connect(self.db) as db:
+            db.execute(
+                "INSERT INTO verified_observations VALUES (?,?,?,?,?,?)",
+                (A, INC, 9, 1, periodic(0, False), bytes([9]) * 100),
+            )
+            db.execute(
+                "INSERT INTO edge_receipts VALUES (?,?,?,?,?,?)",
+                (A, INC, 9, 1800000009, -88, 7),
+            )
+        a = [r for r in read_latest(self.db)["records"]
+             if r["device"] == A.hex().upper()]
+        self.assertEqual([r["sequence"] for r in a], [2])
 
     def test_http_route_bearer_and_exact_query(self) -> None:
         server = make_readonly_server(self.db, TOKEN)
