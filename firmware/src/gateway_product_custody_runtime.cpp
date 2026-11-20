@@ -138,6 +138,19 @@ GatewayProductCustodyRuntime::update(bool enabled) {
   if (!(header.path_flags & tlp::kProductPathFlagCustodyRequested)) {
     if (!live_) return Event::kDenied;
     const auto outcome = live_->receive(received.payload, received.size);
+    if (outcome == GatewayProductLiveIngress::Receive::kStarted ||
+        outcome == GatewayProductLiveIngress::Receive::kDuplicateDurable) {
+      // A collar with a full exact cache still opens an RX window after a
+      // direct position. Use it to acknowledge its older durable records.
+      for (auto& peer : peers_) {
+        if (peer.count && peer.scope.tracker_device_id == header.device_id &&
+            peer.scope.key_epoch == header.key_epoch) {
+          peer.heard_ms = now;
+          peer.urgent = true;
+          break;
+        }
+      }
+    }
     if (outcome == GatewayProductLiveIngress::Receive::kStarted) {
       last_rssi_ = received.rssi_dbm;
       last_snr_ = received.snr_db;
