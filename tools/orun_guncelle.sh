@@ -216,89 +216,120 @@ eskileri_durdur() {
 
 mkdir -p "$UNIT_DIR"
 
-if systemctl --user cat "$SUNUCU" >/dev/null 2>&1; then
-  # --- Güncelleme: orun-sunucu zaten var ---
-  say "orun-sunucu yeni sürüme geçiriliyor"
-  CURRENT=$(grep -o -E "$RELEASES/sunucu-[0-9a-f]+" "$UNIT_DIR/$SUNUCU" | head -1 || true)
-  [[ -n "$CURRENT" ]] || fail "$UNIT_DIR/$SUNUCU içinde sürüm yolu yok; hiçbir şey değişmedi."
-  if [[ "$CURRENT" == "$NEW" ]]; then
-    echo "Sunucu zaten bu sürümde."
-  else
-    release_dir
-    eskileri_durdur
-    cp -p "$UNIT_DIR/$SUNUCU" "$UNIT_DIR/$SUNUCU.bak-$STAMP"
-    sed -i "s#$CURRENT#$NEW#g" "$UNIT_DIR/$SUNUCU"
-    systemctl --user daemon-reload
-    systemctl --user restart "$SUNUCU" || true
-    if ! wait_sunucu; then
-      echo "--- yeni sürümün son kayıtları ---" >&2
-      journalctl --user -u "$SUNUCU" -n 15 --no-pager >&2 || true
-      cp -p "$UNIT_DIR/$SUNUCU.bak-$STAMP" "$UNIT_DIR/$SUNUCU"
-      systemctl --user daemon-reload
-      systemctl --user restart "$SUNUCU" || true
-      if wait_sunucu; then
-        fail "Yeni sürüm kontrolü geçemedi; eski sürüme dönüldü ve eski sürüm çalışıyor ($CURRENT). Bu çıktıyı Claude'a gönder."
-      fi
-      fail "Yeni sürüm açılmadı, eski sürüm de açılmadı! Sunucu kapalı. Bu çıktıyı hemen Claude'a gönder."
-    fi
-    echo "Tamam: sunucu $SHA sürümünde, $RECORDS kayıt."
-  fi
-else
-  # --- İlk geçiş: üç servisten tek servise ---
-  say "Üç eski servis tek sunucuya çevriliyor"
-  for u in "${OLD_UNITS[@]}"; do
-    systemctl --user cat "$u" >/dev/null 2>&1 || fail "$u bulunamadı; hiçbir şey değişmedi."
-  done
+# Sunucu yalnız değişmişse; eski sürümün kayıt ve yetki kontrolleri önce geçer.
+if [[ "$UPDATE_SERVER" == 1 ]]; then
+  [[ -n "$CURRENT" && -d "$CURRENT" && -f "$UNIT_FILE" ]] ||
+    fail "Tek sunucu kurulumu bulunamadı; otomatik servis göçü yapılmaz."
+  systemctl --user is-active --quiet "$SUNUCU" ||
+    fail "Eski sunucu çalışmıyor; hiçbir şey değiştirilmedi."
+  say "Önce mevcut sunucuyu yedekle ve yeni kodu doğrula"
+  backup_live
   release_dir
-  python3 "$REPO/tools/orun_pc_gecis.py" write-unit "$NEW" "$UNIT_DIR/$SUNUCU" \
-    || fail "Eski servis ayarları okunamadı; hiçbir şey değişmedi."
-  echo "Yazıldı: $UNIT_DIR/$SUNUCU"
 
-  geri_don() {
-    printf '\nKontrol başarısız; eski üç servise dönülüyor…\n' >&2
-    systemctl --user stop "$SUNUCU" 2>/dev/null || true
-    mv -f "$UNIT_DIR/$SUNUCU" "$UNIT_DIR/$SUNUCU.basarisiz-$STAMP"
-    systemctl --user daemon-reload
-    systemctl --user start orun-backend.service orun-observation-readonly.service orun-shared-sync.service || true
-    fail "Eski servislerle devam ediliyor. Bu çıktıyı Claude'a gönder."
+  UNIT_BACKUP="$UNIT_FILE.bak-$STAMP"
+  cp -p "$UNIT_FILE" "$UNIT_BACKUP"
+
+  # Hata, kesinti veya yarıda bırakmada eski unit'i geri yükle.
+  ROLLBACK_PENDING=1
+  restore_server() {
+    local rc=$?
+    trap - EXIT
+    if [[ "$ROLLBACK_PENDING" == 1 ]]; then
+      echo "DUR: Sunucu sürümü geri alınıyor ($CURRENT)." >&2
+      cp -p "$UNIT_BACKUP" "$UNIT_FILE" || true
+      systemctl --user daemon-reload || true
+      systemctl --user restart "$SUNUCU" || true
+      if ! wait_sunucu "$CURRENT" "$BEFORE"; then
+        echo "KRITIK: Eski sunucu da doğrulanamadı. Servis günlüklerini kontrol et." >&2
+      fi
+    fi
+    exit "$rc"
   }
+  trap restore_server EXIT
+
+  python3 - "$UNIT_FILE" "$CURRENT" "$NEW" <<'PY'
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+file, old, new = sys.argv[1:]
+path = Path(file)
+src = path.read_text()
+if src.count(old + "/tools/orun_sunucu.py") != 1:
+    raise SystemExit("DUR: Beklenmeyen servis ExecStart yolu")
+fixed = src.replace(old + "/tools/orun_sunucu.py",
+                    new + "/tools/orun_sunucu.py")
+fd, temp = tempfile.mkstemp(prefix=".orun-unit.", dir=path.parent)
+try:
+    os.fchmod(fd, stat.S_IMODE(path.stat().st_mode))
+    with os.fdopen(fd, "w") as f:
+        f.write(fixed)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temp, path)
+finally:
+    if os.path.exists(temp):
+        os.unlink(temp)
+PY
 
   systemctl --user daemon-reload
-  systemctl --user stop "${OLD_UNITS[@]}" || geri_don
-  systemctl --user start "$SUNUCU" || geri_don
-  wait_sunucu || geri_don
-  # Başarılı: eskiler açılışta başlamasın (dosyaları duruyor, geri dönülebilir).
-  systemctl --user disable "${OLD_UNITS[@]}" 2>/dev/null || true
-  systemctl --user enable "$SUNUCU" >/dev/null 2>&1 || true
-  echo "Tamam: tek sunucu çalışıyor, $RECORDS kayıt. PC Edge aynı adrese yüklemeye devam ediyor."
-  echo "Eskiye dönmek gerekirse: systemctl --user disable --now $SUNUCU && systemctl --user enable --now ${OLD_UNITS[*]}"
+  systemctl --user restart "$SUNUCU"
+  if ! wait_sunucu "$NEW" "$BEFORE"; then
+    fail "Yeni sunucu sağlık kontrolünden geçmedi; geri dönülecek."
+  fi
+  ROLLBACK_PENDING=0
+  trap - EXIT
+  echo "SUNUCU_GUNCELLENDI=$SHA KAYIT_ONCE=$BEFORE KAYIT_SONRA=$RECORDS"
+else
+  echo "SUNUCU_KORUNDU: sürüm veya seçili bileşen değişmedi."
 fi
 
-# --- PC Edge (gateway köprüsü) da aynı sürüme geçer ---
-# Başarısız olursa yalnız PC Edge eski haline döner; sunucu adımı etkilenmez.
-PC_EDGE=orun-pc-edge.service
-DROPIN_DIR="$UNIT_DIR/$PC_EDGE.d"
-DROPIN="$DROPIN_DIR/90-orun-guncelle.conf"
-if systemctl --user cat "$PC_EDGE" >/dev/null 2>&1; then
-  say "PC Edge yeni sürüme geçiriliyor"
-  [[ -f "$DROPIN" ]] && cp -p "$DROPIN" "$DROPIN.bak-$STAMP"
-  if python3 "$REPO/tools/orun_pc_gecis.py" pc-edge-dropin "$NEW" "$DROPIN.new"; then
-    mv -f "$DROPIN.new" "$DROPIN"
+# PC Edge ayrı bileşendir; sunucu-only modu ASLA bu servisi restart etmez.
+if [[ "$UPDATE_EDGE" == 1 ]]; then
+  systemctl --user is-active --quiet "$PC_EDGE" ||
+    fail "PC Edge çalışmıyor; otomatik Edge yükseltmesi reddedildi."
+  release_dir
+  DROPIN_DIR="$UNIT_DIR/$PC_EDGE.d"
+  DROPIN="$DROPIN_DIR/90-orun-guncelle.conf"
+  NEXT="$DROPIN.new-$$"
+  say "Yalnız PC Edge için yeni çalışma yolu hazırla"
+  python3 "$NEW/tools/orun_pc_gecis.py" pc-edge-dropin "$NEW" "$NEXT" ||
+    fail "PC Edge başlatma ayarı üretilemedi."
+  if [[ -f "$DROPIN" ]] && cmp -s "$NEXT" "$DROPIN"; then
+    rm -f "$NEXT"
+    echo "PC_EDGE_KORUNDU: mevcut ayar zaten aynı."
+  else
+    had_dropin=0
+    [[ -f "$DROPIN" ]] && had_dropin=1
+    [[ "$had_dropin" == 0 ]] || cp -p "$DROPIN" "$DROPIN.bak-$STAMP"
+    mv "$NEXT" "$DROPIN"
     systemctl --user daemon-reload
     systemctl --user restart "$PC_EDGE" || true
-    sleep 4
-    if systemctl --user is-active --quiet "$PC_EDGE"; then
-      echo "Tamam: PC Edge $SHA sürümünde (gateway iznini kendiliğinden günceller)."
-    else
-      echo "PC Edge yeni sürümle başlamadı; eski haline dönülüyor." >&2
-      if [[ -f "$DROPIN.bak-$STAMP" ]]; then cp -p "$DROPIN.bak-$STAMP" "$DROPIN"; else rm -f "$DROPIN"; fi
+    edge_ok=0
+    for i in $(seq 1 10); do
+      if systemctl --user is-active --quiet "$PC_EDGE"; then
+        edge_ok=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "$edge_ok" != 1 ]]; then
+      echo "DUR: Edge başlamadı; önceki tanımına dönülüyor." >&2
+      if [[ "$had_dropin" == 1 ]]; then
+        cp -p "$DROPIN.bak-$STAMP" "$DROPIN"
+      else
+        rm -f "$DROPIN"
+      fi
       systemctl --user daemon-reload
       systemctl --user restart "$PC_EDGE" || true
+      fail "PC Edge güncellenemedi; eski ayara dönüldü."
     fi
-  else
-    rm -f "$DROPIN.new"
-    echo "PC Edge güncellenmedi (yukarıdaki nedenle); eskisi çalışmaya devam ediyor."
+    echo "PC_EDGE_GUNCELLENDI=$SHA"
   fi
+else
+  echo "PC_EDGE_KORUNDU: yeniden başlatılmadı."
 fi
 
 # --- İnternetsiz harita paketi (yalnız hiç yoksa; yenilemek için orun_harita.sh) ---
