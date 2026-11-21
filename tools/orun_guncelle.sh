@@ -81,7 +81,8 @@ if [[ -n "$CURRENT" && -d "$CURRENT" ]]; then
   OLD_SHA=$(git -C "$REPO" rev-parse --verify "${CURRENT##*/sunucu-}^{commit}" 2>/dev/null) ||
     { echo "DUR: Kurulu sunucu commit'i bilinmiyor." >&2; exit 2; }
   if [[ "$CURRENT" != "$NEW" ]] && has_change "$OLD_SHA" \
-       backend tools/orun_sunucu.py tools/orun_shared_sync_loopback.py; then
+       backend ":(exclude)backend/tests/**" \
+       tools/orun_sunucu.py tools/orun_shared_sync_loopback.py; then
     UPDATE_SERVER=1
   fi
   # PC Edge farklı bir release altında çalışabilir: sunucu SHA'sına
