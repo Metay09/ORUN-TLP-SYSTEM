@@ -19,6 +19,9 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 RELEASES="$HOME/ORUN-RELEASES"
 STAMP=$(date +%Y%m%d-%H%M%S)
 
+say()  { printf '\\n== %s\\n' "$*"; }
+fail() { printf '\\nHATA: %s\\n' "$*" >&2; exit 1; }
+
 MODE="${1:---auto}"
 [[ $# -le 1 ]] || { echo "HATA: Tek seçenek kullanın." >&2; exit 2; }
 case "$MODE" in
@@ -40,6 +43,14 @@ flock -n 9 || { echo "HATA: Başka bir güncelleme çalışıyor." >&2; exit 2; 
   { echo "DUR: Önce ana main çalışma klasörünü kullanın." >&2; exit 2; }
 [[ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ]] ||
   { echo "DUR: Yerel takipli kod değişiklikleri var." >&2; exit 2; }
+ORIGIN=$(git -C "$REPO" remote get-url origin)
+case "$ORIGIN" in
+  https://github.com/Metay09/ORUN-TLP-SYSTEM|\
+  https://github.com/Metay09/ORUN-TLP-SYSTEM.git|\
+  git@github.com:Metay09/ORUN-TLP-SYSTEM.git|\
+  ssh://git@github.com/Metay09/ORUN-TLP-SYSTEM.git) ;;
+  *) fail "DUR: GitHub origin beklenen ORUN deposu değil." ;;
+esac
 git -C "$REPO" -c http.version=HTTP/1.1 fetch --no-tags origin main
 TARGET=$(git -C "$REPO" rev-parse FETCH_HEAD)
 git -C "$REPO" merge-base --is-ancestor HEAD "$TARGET" ||
@@ -127,9 +138,6 @@ if [[ "$UPDATE_SERVER" == 0 && "$UPDATE_EDGE" == 0 && "$BUILD_APK" == 0 ]]; then
   echo "DEGISIKLIK YOK: Çalışan servisler korunuyor."
   exit 0
 fi
-
-say()  { printf '\n== %s\n' "$*"; }
-fail() { printf '\nHATA: %s\n' "$*" >&2; exit 1; }
 
 release_dir() {
   if [[ -d "$NEW" ]]; then
@@ -421,28 +429,55 @@ if [[ "$UPDATE_EDGE" == 1 ]]; then
     had_dropin=0
     [[ -f "$DROPIN" ]] && had_dropin=1
     [[ "$had_dropin" == 0 ]] || cp -p "$DROPIN" "$DROPIN.bak-$STAMP"
+    EDGE_ROLLBACK=1
+    restore_edge() {
+      local rc=$?
+      trap - EXIT
+      if [[ "$EDGE_ROLLBACK" == 1 ]]; then
+        echo "DUR: PC Edge eski servis ayarına dönüyor." >&2
+        if [[ "$had_dropin" == 1 ]]; then
+          cp -p "$DROPIN.bak-$STAMP" "$DROPIN" || true
+        else
+          rm -f "$DROPIN"
+        fi
+        systemctl --user daemon-reload || true
+        systemctl --user restart "$PC_EDGE" || true
+        systemctl --user is-active "$PC_EDGE" || true
+      fi
+      exit "$rc"
+    }
+    trap restore_edge EXIT
     mv "$NEXT" "$DROPIN"
     systemctl --user daemon-reload
-    systemctl --user restart "$PC_EDGE" || true
+    systemctl --user restart "$PC_EDGE"
     edge_ok=0
     for i in $(seq 1 10); do
-      if systemctl --user is-active --quiet "$PC_EDGE"; then
-        edge_ok=1
-        break
+      if python3 - "$PC_EDGE" "$NEW" <<'PY'
+import subprocess
+import sys
+from pathlib import Path
+unit, release = sys.argv[1:]
+p = subprocess.run(
+    ["systemctl", "--user", "show", unit, "-p", "MainPID", "--value"],
+    capture_output=True, text=True).stdout.strip()
+if not p.isdigit() or int(p) <= 0:
+    raise SystemExit(1)
+args = [v.decode() for v in Path(f"/proc/{p}/cmdline").read_bytes().split(bytes((0,))) if v]
+if release + "/tools/orun_pc_edge.py" not in args:
+    raise SystemExit(1)
+PY
+      then
+        sleep 1
+        if systemctl --user is-active --quiet "$PC_EDGE"; then
+          edge_ok=1
+          break
+        fi
       fi
       sleep 1
     done
-    if [[ "$edge_ok" != 1 ]]; then
-      echo "DUR: Edge başlamadı; önceki tanımına dönülüyor." >&2
-      if [[ "$had_dropin" == 1 ]]; then
-        cp -p "$DROPIN.bak-$STAMP" "$DROPIN"
-      else
-        rm -f "$DROPIN"
-      fi
-      systemctl --user daemon-reload
-      systemctl --user restart "$PC_EDGE" || true
-      fail "PC Edge güncellenemedi; eski ayara dönüldü."
-    fi
+    [[ "$edge_ok" == 1 ]] || fail "PC Edge yeni sürümde sağlıklı değil."
+    EDGE_ROLLBACK=0
+    trap - EXIT
     echo "PC_EDGE_GUNCELLENDI=$SHA"
   fi
 else
