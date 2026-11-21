@@ -49,6 +49,14 @@ class SafeUpdaterTests(unittest.TestCase):
         self.assertIn("backup_live", text)
         self.assertIn("migrate_latest_indexes", text)
 
+    def test_apk_uses_old_tailscale_8899_page(self) -> None:
+        text = SCRIPT.read_text()
+        self.assertIn('PORT="${ORUN_APK_PORT:-8899}"', text)
+        self.assertIn('python3 "$REPO/tools/orun_apk_sayfa.py" sayfa "$APK_SITE"', text)
+        self.assertIn('timeout --foreground 900 python3 -m http.server "$PORT"', text)
+        self.assertIn('[[ "$BUILD_APK" == 1 ]] || exit 0', text)
+        self.assertNotIn('adb install', text)
+
 
 if __name__ == "__main__":
     unittest.main()
