@@ -165,9 +165,9 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
   const faultBy = new Map<string, boolean>();   // newest record without a position: GNSS failed / no GNSS time
   const extraBy = new Map<string, { o: Observation; t: number }[]>();   // records without a position, as reports
   for (const r of unlocated) {
-    // A collar whose GNSS never gave time has no record time: when it reached the gateway is when it was heard.
+    // A report without GNSS time still has a verified gateway-receipt time.
+    // Use it only for "son haberleşme", never as a new position or GNSS time.
     const own = epochMs(r.time);
-    if (r.delivery === "server" && !Number.isFinite(own)) continue;
     const t = Number.isFinite(own) ? own : epochMs(r.received ?? null);
     if (!Number.isFinite(t) || t > now + 10 * MIN) continue;
     const asset = assetOf(r.tracker, t);
