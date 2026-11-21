@@ -71,14 +71,15 @@ final class HerdHistoryStage {
     static synchronized void seed(Context ctx, JSONObject account, long cursor) throws Exception {
         if (cursor < 0 || cursor > Long.MAX_VALUE / 2) throw new IllegalArgumentException("CURSOR");
         JSONObject state = read(ctx);
-        if (state == null || !same(state, account)) state = fresh(account, cursor);
+        boolean created = state == null || !same(state, account);
+        if (created) state = fresh(account, cursor);
         long base = Math.max(state.getLong("base"), cursor);
         JSONArray old = state.getJSONArray("pages"), keep = new JSONArray();
         for (int i = 0; i < old.length(); i++) {
             JSONObject p = old.getJSONObject(i);
             if (p.getJSONObject("body").getLong("cursor") > base) keep.put(p);
         }
-        if (base == state.getLong("base") && keep.length() == old.length()) return;
+        if (!created && base == state.getLong("base") && keep.length() == old.length()) return;
         state.put("base", base);
         state.put("pages", keep);
         write(ctx, state);
