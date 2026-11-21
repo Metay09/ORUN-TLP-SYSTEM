@@ -21,7 +21,9 @@ TOKEN = "SYNTHETIC-LATEST-TEST-BEARER-123456"
 
 def periodic(measured: int, located: bool = True) -> bytes:
     p = bytearray(64)
-    p[1] = 0b11 if located else 0b01
+    # A missing GNSS clock has neither the time-valid nor location-valid bit.
+    # The live ORUN-1 frames (7714..7718) carry flags=0 and utc=0.
+    p[1] = 0 if measured == 0 else (0b11 if located else 0b01)
     p[16:20] = measured.to_bytes(4, "big")
     return bytes(p)
 
