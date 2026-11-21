@@ -30,10 +30,10 @@ class SafeUpdaterTests(unittest.TestCase):
     def test_all_embedded_python_parses(self) -> None:
         source = SCRIPT.read_text()
         blocks = re.findall(
-            r"(?ms)^\s*python3[^\n]*<<'PY'\n(.*?)^PY$",
+            r"(?ms)^\s*(?:if )?python3[^\n]*<<'PY'\n(.*?)^PY$",
             source,
         )
-        self.assertGreaterEqual(len(blocks), 4)
+        self.assertEqual(len(blocks), 5)
         for i, block in enumerate(blocks):
             with self.subTest(block=i):
                 compile(block, f"orun_guncelle.sh:python:{i}", "exec")
