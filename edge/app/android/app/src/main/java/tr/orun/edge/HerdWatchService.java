@@ -263,14 +263,42 @@ public final class HerdWatchService extends Service {
         // Lower priority than alerts and live locations: stage a single page
         // of still-encrypted history for later app-side AEAD verification.
         // The native service NEVER advances the phone's verified SQLite cursor.
+        // Diagnostic metadata only: no credentials, frames, coordinates or
+        // response bodies. Keep errors isolated from critical alerts/latest.
+        p.edit().putLong("historyAttemptAt", System.currentTimeMillis())
+                .putString("historyState", "starting")
+                .remove("historyHttp").remove("historyError").apply();
         try {
             long after = HerdHistoryStage.nextAfter(this, account);
-            if (after >= 0) {
+            p.edit().putLong("historyAfter", after).apply();
+            if (after < 0) {
+                p.edit().putString("historyState", "not_seeded").apply();
+            } else {
                 Reply history = get(origin + "/v1/edge/records?after=" + after, token);
-                if (history.status == 200)
+                p.edit().putInt("historyHttp", history.status).apply();
+                if (history.status != 200) {
+                    p.edit().putString("historyState", "http_error")
+                            .putLong("historyDoneAt", System.currentTimeMillis()).apply();
+                } else {
+                    // Observe the response independently of whether append
+                    // succeeds: 200/empty and 200/rejected are different cases.
+                    int received = new JSONObject(history.body)
+                            .getJSONArray("records").length();
                     HerdHistoryStage.append(this, account, after, history.body);
+                    long tail = HerdHistoryStage.nextAfter(this, account);
+                    p.edit().putInt("historyReceived", received)
+                            .putLong("historyTail", tail)
+                            .putString("historyState", received == 0 ? "empty"
+                                    : tail > after ? "staged" : "not_staged")
+                            .putLong("historyDoneAt", System.currentTimeMillis()).apply();
+                }
             }
-        } catch (Exception ignored) {
+        } catch (Exception failure) {
+            // Only an exception's class is recorded; messages can include
+            // URLs or server internals and must never reach diagnostics.
+            p.edit().putString("historyState", "exception")
+                    .putString("historyError", failure.getClass().getSimpleName())
+                    .putLong("historyDoneAt", System.currentTimeMillis()).apply();
             // Failure must never block critical alerts or the latest snapshot.
         }
     }
