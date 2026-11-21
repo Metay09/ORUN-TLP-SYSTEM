@@ -16,6 +16,9 @@ import java.nio.charset.StandardCharsets;
  * the frames and advance its durable SQLite cursor.
  *
  * Each native watch poll may append one bounded page AFTER alerts/latest.
+ * The cache is a rolling RECENT window: when full, it evicts the oldest
+ * ciphertext page but continues downloading newer ones. The permanent
+ * verified history cursor remains independent and can fill gaps later.
  * Never cache credentials, plaintext, ACKs or live delivery claims.
  */
 final class HerdHistoryStage {
@@ -42,6 +45,7 @@ final class HerdHistoryStage {
         for (String key : new String[]{"origin", "site", "actor", "installation"})
             out.put(key, account.getString(key));
         out.put("base", cursor);
+        out.put("tail", cursor);
         out.put("pages", new JSONArray());
         return out;
     }
@@ -81,6 +85,7 @@ final class HerdHistoryStage {
         }
         if (!created && base == state.getLong("base") && keep.length() == old.length()) return;
         state.put("base", base);
+        state.put("tail", Math.max(state.optLong("tail", state.getLong("base")), base));
         state.put("pages", keep);
         write(ctx, state);
     }
@@ -92,14 +97,14 @@ final class HerdHistoryStage {
         seed(ctx, account, cursor);
     }
 
-    /** The native service continues after its last cached page, not after an unverified server claim. */
+    /** Continue at the newest fetched cursor even after older pages are evicted. */
     static synchronized long nextAfter(Context ctx, JSONObject account) throws Exception {
         JSONObject state = read(ctx);
         if (state == null || !same(state, account)) return -1;
         JSONArray pages = state.getJSONArray("pages");
-        if (pages.length() >= MAX_PAGES) return -1;
-        if (pages.length() == 0) return state.getLong("base");
-        return pages.getJSONObject(pages.length() - 1).getJSONObject("body").getLong("cursor");
+        if (pages.length() > 0)
+            return pages.getJSONObject(pages.length() - 1).getJSONObject("body").getLong("cursor");
+        return Math.max(state.getLong("base"), state.optLong("tail", state.getLong("base")));
     }
 
     /** Returns only staged ciphertext, scoped to the same account and installation. */
@@ -140,15 +145,23 @@ final class HerdHistoryStage {
         JSONObject state = read(ctx);
         if (state == null || !same(state, account)) return;
         JSONArray pages = state.getJSONArray("pages");
-        if (pages.length() >= MAX_PAGES) return;
-        long expected = pages.length() == 0
-                ? state.getLong("base")
-                : pages.getJSONObject(pages.length() - 1).getJSONObject("body").getLong("cursor");
+        long expected = Math.max(state.getLong("base"),
+                state.optLong("tail", state.getLong("base")));
+        if (pages.length() > 0)
+            expected = pages.getJSONObject(pages.length() - 1).getJSONObject("body").getLong("cursor");
         if (expected != after) return; // foreground verified newer records while GET was in flight
         JSONObject staged = new JSONObject();
         staged.put("after", after);
         staged.put("body", page);
         pages.put(staged);
+        state.put("tail", page.getLong("cursor"));
+        // Preserve the newest cached track while keeping strict storage bounds.
+        // Missing earlier history is still retained on the server; do NOT
+        // advance the AEAD-verified SQLite cursor when we evict ciphertext.
+        while (pages.length() > MAX_PAGES ||
+                state.toString().getBytes(StandardCharsets.UTF_8).length > MAX_FILE_BYTES) {
+            pages.remove(0);
+        }
         state.put("pages", pages);
         write(ctx, state);
     }
