@@ -194,6 +194,9 @@ export class AccountObservationMirror {
 
   /** The only durable history cursor: reflects AEAD-verified SQLite commits. */
   async confirmedCursor(client: OwnerAccountClient): Promise<number> {
+    // Unlike pullPage(), this helper is callable before the mirror's first
+    // sync. Ensure the account tables exist before consulting the cursor.
+    await this.init();
     const { actor } = identity(client);
     return this.exclusive(() => this.cursor(actor));
   }
