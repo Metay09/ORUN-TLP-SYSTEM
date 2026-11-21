@@ -20,7 +20,7 @@ bash "$HOME/ORUN-TLP-SYSTEM/tools/orun_guncelle.sh" --apk
 - `--check`: yalnız bileşen planı; servis veya DB değişikliği yok (Git fetch ve güncelleme kilidi dosyası dışında).
 - `--server`: yalnız Backend sunucusu. Önceki `--no-apk` artık sunucu-only alias'ıdır, **PC Edge'i restart etmez**.
 - `--edge`: yalnız PC Edge.
-- `--apk`: yalnız **debug** APK üretir ve kaydeder, telefona yüklemez. Otomatik akışta APK üretimi yok.
+- `--apk`: güncel **debug** APK'yı üretir (aynı sürüm varsa yeniden derlemez), **eski ORUN uygulaması indirme sayfasını** Tailscale IPv4 üzerinden varsayılan `8899` portunda açar. Telefonda `İndir ve kur` seçilir. Paylaşım `Ctrl+C` veya 15 dakika sonunda kapanır. USB/ADB kullanılmaz; otomatik uygulama kurulumu yoktur. `ORUN_APK_PORT` ile port değiştirilebilir. Otomatik akışta APK üretimi yok.
 - `--all`: açıkça istenen sunucu + PC Edge + debug APK. Firmware flashing bu komutun kapsamında değildir.
 
 ## Güvenlik ve geri dönüş
