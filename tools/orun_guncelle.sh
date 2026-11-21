@@ -75,9 +75,35 @@ if [[ -n "$CURRENT" && -d "$CURRENT" ]]; then
        backend tools/orun_sunucu.py tools/orun_shared_sync_loopback.py; then
     UPDATE_SERVER=1
   fi
-  if [[ "$CURRENT" != "$NEW" ]] && has_change "$OLD_SHA" \
-       tools/orun_pc_edge.py tools/orun_edge_bench.py tools/orun_edge_accept.py; then
-    UPDATE_EDGE=1
+  # PC Edge farklı bir release altında çalışabilir: sunucu SHA'sına
+  # bakıp yanlışlıkla Edge restart kararı verme.
+  EDGE_CURRENT=$(python3 - "$PC_EDGE" <<'PY'
+import subprocess
+import sys
+from pathlib import Path
+pid = subprocess.run(
+    ["systemctl", "--user", "show", sys.argv[1], "-p", "MainPID", "--value"],
+    capture_output=True, text=True, check=False).stdout.strip()
+try:
+    argv = [a.decode() for a in Path(f"/proc/{int(pid)}/cmdline").read_bytes().split(bytes((0,))) if a]
+    files = [Path(a) for a in argv if a.endswith("/tools/orun_pc_edge.py")]
+    if len(files) == 1:
+        print(files[0].parents[1])
+except (ValueError, OSError):
+    pass
+PY
+  )
+  if [[ -n "$EDGE_CURRENT" && -d "$EDGE_CURRENT" &&
+        "$EDGE_CURRENT" == "$RELEASES"/sunucu-* ]]; then
+    EDGE_REF="${EDGE_CURRENT##*/sunucu-}"
+    EDGE_SHA=$(git -C "$REPO" rev-parse --verify "${EDGE_REF}^{commit}" 2>/dev/null) ||
+      fail "Kurulu PC Edge commit'i bilinmiyor."
+    if has_change "$EDGE_SHA" tools/orun_pc_edge.py \
+         tools/orun_edge_bench.py tools/orun_edge_accept.py; then
+      UPDATE_EDGE=1
+    fi
+  else
+    echo "UYARI: PC Edge çalışma commit'i okunamadı; otomatik Edge geçişi atlanıyor."
   fi
 else
   [[ "$MODE" == --server || "$MODE" == --no-apk || "$MODE" == --all ]] ||
