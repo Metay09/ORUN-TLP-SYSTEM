@@ -45,6 +45,7 @@ class SafeUpdaterTests(unittest.TestCase):
         self.assertNotIn("orun_cihaz_yukle.sh", text)
         self.assertNotIn("pio run --target upload", text)
         self.assertIn("UPDATE_EDGE=0", text)
+        self.assertIn(":(exclude)backend/tests/**", text)
         self.assertIn("backup_live", text)
         self.assertIn("migrate_latest_indexes", text)
 
