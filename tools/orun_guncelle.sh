@@ -4,7 +4,7 @@
 # bash tools/orun_guncelle.sh --check  # yalnız planı göster, servis değişmez
 # bash tools/orun_guncelle.sh --server # yalnız sunucu; eski --no-apk eşdeğeri
 # bash tools/orun_guncelle.sh --edge   # yalnız PC Edge
-# bash tools/orun_guncelle.sh --apk    # debug APK sadece açık istekle
+# bash tools/orun_guncelle.sh --apk    # debug APK + Tailscale indirme sayfası
 # bash tools/orun_guncelle.sh --all    # bütün PC bileşenleri; firmware hariç
 # Firmware flash veya telefona APK kurulumunu ASLA kendiliğinden yapmaz.
 set -euo pipefail
@@ -474,26 +474,60 @@ fi
 
 APK_SITE="$RELEASES/apk"
 OUT="$APK_SITE/ORUN-$SHA.apk"
-if [[ -f "$OUT" ]]; then
+if [[ -f "$OUT" && -f "$APK_SITE/ORUN-$SHA.json" ]]; then
   echo "APK_ZATEN_VAR=$OUT (yeniden derlenmedi)"
-  exit 0
+else
+  # Başka bir dosyanın yanlışlıkla 'en yeni' gösterilmesine izin verme.
+  [[ ! -e "$OUT" ]] ||
+    fail "APK dosyası var ama sürüm bilgisi eksik: $OUT"
+  say "Güncel main'den debug APK derleniyor (telefona kurulmaz)"
+  APP_TMP=$(mktemp -d "$RELEASES/.orun-android.XXXXXXXX")
+  trap 'rm -rf -- "$APP_TMP"' EXIT
+  git -C "$REPO" archive "$TARGET" edge/app | tar -x -C "$APP_TMP"
+  (
+    cd "$APP_TMP/edge/app"
+    npm ci --no-audit --no-fund
+    npm run android
+    cd android
+    ./gradlew -q assembleDebug
+  )
+  APK="$APP_TMP/edge/app/android/app/build/outputs/apk/debug/app-debug.apk"
+  [[ -s "$APK" ]] || fail "APK üretilemedi"
+  python3 "$REPO/tools/orun_apk_sayfa.py" ekle "$APK_SITE" "$APK" "$SHA" \
+    "$(git -C "$REPO" log -1 --format=%s "$TARGET")"
 fi
 
-say "İsteğe bağlı debug APK derleniyor (telefon kurulumu yapılmaz)"
-APP_TMP=$(mktemp -d "$RELEASES/.orun-android.XXXXXXXX")
-trap 'rm -rf -- "$APP_TMP"' EXIT
-git -C "$REPO" archive "$TARGET" edge/app | tar -x -C "$APP_TMP"
-(
-  cd "$APP_TMP/edge/app"
-  npm ci --no-audit --no-fund
-  npm run android
-  cd android
-  ./gradlew -q assembleDebug
-)
-APK="$APP_TMP/edge/app/android/app/build/outputs/apk/debug/app-debug.apk"
-[[ -f "$APK" ]] || fail "APK üretilemedi"
-python3 "$REPO/tools/orun_apk_sayfa.py" ekle "$APK_SITE" "$APK" "$SHA" \
-  "$(git -C "$REPO" log -1 --format=%s "$TARGET")"
-[[ -f "$OUT" ]] || fail "APK yayımlama klasöründe bulunamadı"
+[[ -s "$OUT" ]] || fail "Güncel APK dosyası bulunamadı: $OUT"
+# Her seferinde aynı eski ORUN uygulaması sayfasını yeniden oluştur:
+# 'EN YENİ / İndir ve kur / Eski sürümler', en fazla 5 APK.
+python3 "$REPO/tools/orun_apk_sayfa.py" sayfa "$APK_SITE"
+[[ -s "$APK_SITE/index.html" ]] || fail "ORUN indirme sayfası oluşmadı"
 echo "APK_DEBUG_HAZIR=$OUT"
-echo "Bu dosya release-imzalı değildir; kurulum kullanıcı onayı gerektirir."
+echo "Mevcut uygulamayı kaldırmadan güncellemeyi deneyin; imza uyuşmazlığında veri silmeyin."
+
+# Eski çalışma şekli: telefon Tailscale ağındayken 8899'dan sayfayı açar.
+# USB/ADB ve telefon cihaz seçimi kullanılmaz.
+PORT="${ORUN_APK_PORT:-8899}"
+if ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]] ||
+   (( 10#$PORT < 1024 || 10#$PORT > 65535 )); then
+  fail "Gecersiz indirme portu: $PORT"
+fi
+IP=$(tailscale ip -4 2>/dev/null | head -n 1 || true)
+[[ -n "$IP" ]] ||
+  fail "Tailscale IPv4 adresi bulunamadı. APK hazır: $OUT"
+
+say "Telefonunda Tailscale açıkken ORUN indirme sayfasını aç:"
+echo "http://$IP:$PORT/"
+echo "En yeni sürüm: ORUN $SHA"
+echo "İndir ve kur düğmesine bas. Bittiğinde bu terminalde Ctrl+C."
+echo "Paylaşım en fazla 15 dakika açık kalır."
+
+set +e
+timeout --foreground 900 python3 -m http.server "$PORT" \
+  --bind "$IP" --directory "$APK_SITE"
+STATUS=$?
+set -e
+case "$STATUS" in
+  0|124|130) echo "APK indirme paylaşımı kapandı." ;;
+  *) fail "8899 indirme sunucusu açılamadı (çıkış kodu: $STATUS). Başka bir uygulama portu kullanıyor olabilir." ;;
+esac
