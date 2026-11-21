@@ -15,7 +15,7 @@
 //               no internet (offline event, or base tiles keep failing).
 // Without internet the base is blank but animals, trails and layers still draw.
 //
-// Smoothness: raster tiles switch without a fade; pins have no CSS filters
+// Smoothness: raster tiles crossfade briefly (180 ms) to avoid square pop-in; pins have no CSS filters
 // (a hairline edge instead of a drop shadow) and scale with the zoom through
 // one CSS variable set once per frame; data is re-sent only when it changed.
 import {
@@ -178,7 +178,7 @@ function herdFixFeatures(list: MapData["herdTrails"], win: Win): Feature[] {
 function rasterStyle(base: BaseMap, labels: boolean, sat: SatPrefs): StyleSpecification {
   const sources: StyleSpecification["sources"] = {};
   const layers: StyleSpecification["layers"] = [{ id: "bg", type: "background", paint: { "background-color": "#DDE3D6" } }];
-  const crisp = { "raster-fade-duration": 0 };
+  const crisp = { "raster-fade-duration": 180 };
   const maxzoom = Math.max(14, Math.min(19, Math.round(sat.maxZoom)));
   if (base === "satellite") {
     const tiles = sat.kind === "wayback" ? [`${WAYBACK}/${encodeURIComponent(sat.release)}/{z}/{y}/{x}`] : [`${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`];
