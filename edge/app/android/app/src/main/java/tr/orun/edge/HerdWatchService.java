@@ -80,6 +80,7 @@ public final class HerdWatchService extends Service {
         AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         if (alarms != null) alarms.cancel(pollIntent(context));
         context.stopService(new Intent(context, HerdWatchService.class));
+        HerdHistoryStage.clear(context); // clear unverified account cache on sign-out
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) { nm.cancel(ID_SERVER); nm.cancel(ID_LOGIN); }
     }
@@ -257,6 +258,20 @@ public final class HerdWatchService extends Service {
             }
         } catch (Exception ignored) {
             // The alerts were handled; the snapshot is a convenience.
+        }
+
+        // Lower priority than alerts and live locations: stage a single page
+        // of still-encrypted history for later app-side AEAD verification.
+        // The native service NEVER advances the phone's verified SQLite cursor.
+        try {
+            long after = HerdHistoryStage.nextAfter(this, account);
+            if (after >= 0) {
+                Reply history = get(origin + "/v1/edge/records?after=" + after, token);
+                if (history.status == 200)
+                    HerdHistoryStage.append(this, account, after, history.body);
+            }
+        } catch (Exception ignored) {
+            // Failure must never block critical alerts or the latest snapshot.
         }
     }
 
