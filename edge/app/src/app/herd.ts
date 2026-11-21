@@ -165,10 +165,14 @@ export function buildHerd({ points, profiles, assetOf, now, fence, grazing = fal
   const faultBy = new Map<string, boolean>();   // newest record without a position: GNSS failed / no GNSS time
   const extraBy = new Map<string, { o: Observation; t: number }[]>();   // records without a position, as reports
   for (const r of unlocated) {
-    // A report without GNSS time still has a verified gateway-receipt time.
-    // Use it only for "son haberleşme", never as a new position or GNSS time.
+    // Server clockless reports can update "son haberleşme" only when the
+    // gateway first heard them after the live-report cutover. Older receipts
+    // stay historical, and this time never becomes a new GPS position.
     const own = epochMs(r.time);
-    const t = Number.isFinite(own) ? own : epochMs(r.received ?? null);
+    const received = epochMs(r.received ?? null);
+    if (r.delivery === "server" && !Number.isFinite(own) &&
+        (!Number.isFinite(received) || received < Date.parse("2026-11-20T17:41:00Z"))) continue;
+    const t = Number.isFinite(own) ? own : received;
     if (!Number.isFinite(t) || t > now + 10 * MIN) continue;
     const asset = assetOf(r.tracker, t);
     const o: Observation = {
