@@ -184,10 +184,12 @@ function rasterStyle(base: BaseMap, labels: boolean, sat: SatPrefs): StyleSpecif
     const tiles = sat.kind === "wayback" ? [`${WAYBACK}/${encodeURIComponent(sat.release)}/{z}/{y}/{x}`] : [`${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`];
     sources.base = { type: "raster", tiles, tileSize: 256, maxzoom, attribution: sat.kind === "wayback" ? ATTR.wayback : ATTR.esri };
     layers.push({ id: "base", type: "raster", source: "base", paint: crisp });
-    if (labels) {
-      sources.labels = { type: "raster", tiles: [`${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`], tileSize: 256, maxzoom };
-      layers.push({ id: "labels", type: "raster", source: "labels", paint: { ...crisp, "raster-opacity": 0.9 } });
-    }
+    // Keep the satellite label layer installed, but hidden until requested.
+    // This avoids tearing down all map overlays when "Yer adları" is toggled.
+    sources.labels = { type: "raster", tiles: [`${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`], tileSize: 256, maxzoom };
+    layers.push({ id: "labels", type: "raster", source: "labels",
+      layout: { visibility: labels ? "visible" : "none" },
+      paint: { ...crisp, "raster-opacity": 0.9 } });
   } else {
     sources.base = { type: "raster", tiles: ["a", "b", "c"].map((s) => `https://${s}.tile.opentopomap.org/{z}/{x}/{y}.png`), tileSize: 256, maxzoom: 17, attribution: ATTR.topo };
     layers.push({ id: "base", type: "raster", source: "base", paint: crisp });
@@ -354,7 +356,7 @@ export class MapEngine {
     const s = this.sat;
     const offline = this.offline && (base === "street" || this.noNet) ? this.offline : null;
     const key = offline ? `offline|${offline.url}|${base === "street"}`
-      : `${base}|${base === "satellite" && layers.labels}|${base === "satellite" ? `${s.kind}:${s.release}:${s.maxZoom}` : ""}`;
+      : `${base}|${base === "satellite" ? `${s.kind}:${s.release}:${s.maxZoom}` : ""}`;
     this.base = base;
     this.layers = layers;
     if (key === this.styleKey) { this.applyVisibility(); return; }
@@ -522,6 +524,7 @@ export class MapEngine {
     if (!l || !m.getLayer("o-heat")) return;
     const drawing = this.draft !== null;
     const vis = (id: string, on: boolean) => { if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", on ? "visible" : "none"); };
+    vis("labels", l.labels && this.base === "satellite" && !this.drawnOffline);
     vis("o-relief", l.relief && this.base !== "street" && !this.drawnOffline);
     vis("o-coverage", l.coverage && !drawing);
     vis("o-heat", l.heat && !drawing);
@@ -540,9 +543,7 @@ export class MapEngine {
   }
 
   setLayers(layers: Layers): void {
-    const relabel = this.base === "satellite" && this.layers?.labels !== layers.labels;
     this.layers = layers;
-    if (relabel) { void this.setBase(this.base, layers); return; }
     this.syncElevation();
     this.applyVisibility();
   }
