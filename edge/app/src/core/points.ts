@@ -27,6 +27,7 @@ export interface Point {
 /** A record that arrived without a position (no GNSS fix): kept only so that
  * sequence gaps (records still on the collar) are not miscounted. */
 export interface RecordId {
+  delivery?: "phone" | "server";
   tracker: string; incarnation?: string; seq: number; time: string | null;
   /** When it reached the gateway (a collar without GNSS time has no record time). */
   received?: string | null;

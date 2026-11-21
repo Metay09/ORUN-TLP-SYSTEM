@@ -18,7 +18,7 @@ export interface ServerObservationPage {
   cursor: number;
   has_more: boolean;
 }
-/** Newest MEASURED position per tracker; never moves the history cursor. */
+/** Latest position plus post-cutover latest report (may have no GNSS fix). Never advances history. */
 export interface ServerLatestObservations {
   records: ServerObservationRow[];
 }
@@ -26,7 +26,7 @@ export interface ServerLatestObservations {
 const HEX16 = /^[0-9A-F]{16}$/;
 const HEX_FRAME = /^[0-9A-F]+$/;
 const PAGE_MAX = 64;
-const LATEST_MAX = 64;
+const LATEST_MAX = 128; // up to one position + one newer report per 64 collars
 
 function integer(n: unknown, min: number, max: number): n is number {
   return typeof n === "number" && Number.isSafeInteger(n) && n >= min && n <= max;
@@ -60,9 +60,16 @@ export function parseServerLatest(body: unknown): ServerLatestObservations {
   if (b.latest !== true || !Array.isArray(b.records) || b.records.length > LATEST_MAX)
     throw new Error("Sunucu son konum yanıtı geçersiz.");
   const records = b.records.map(r => row(r, 1));
-  const devices = new Set(records.map(r => r.device));
-  if (devices.size !== records.length || records.some(r => r.family !== 1))
-    throw new Error("Sunucu son konum yanıtı tutarsız.");
+  const seen = new Set<string>();
+  const byDevice = new Map<string, number>();
+  for (const r of records) {
+    const id = [r.device, r.incarnation, r.sequence].join(":");
+    const count = (byDevice.get(r.device) ?? 0) + 1;
+    if (seen.has(id) || count > 2 || byDevice.size + Number(!byDevice.has(r.device)) > 64 || r.family !== 1)
+      throw new Error("Sunucu son konum yanıtı tutarsız.");
+    seen.add(id);
+    byDevice.set(r.device, count);
+  }
   return { records };
 }
 

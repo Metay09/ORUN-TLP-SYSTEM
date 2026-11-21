@@ -8,6 +8,9 @@ interface Native {
   start(): Promise<void>;
   stop(): Promise<void>;
   status(): Promise<{ lastOk?: number; line?: string; latest?: string }>;
+  historySeed(input: HistoryIdentity & { cursor: number }): Promise<void>;
+  historyAck(input: HistoryIdentity & { cursor: number }): Promise<void>;
+  historyPending(): Promise<{ stage?: string | null }>;
 }
 const native = registerPlugin<Native>("OrunHerdWatch");
 const android = () => Capacitor.getPlatform() === "android";
@@ -24,6 +27,41 @@ export async function startHerdWatch(): Promise<boolean> {
 export async function stopHerdWatch(): Promise<void> {
   if (!android()) return;
   try { await native.stop(); } catch { /* nothing was running */ }
+}
+
+/** The native cache contains UNVERIFIED ciphertext, never a SQLite receipt. */
+export interface HistoryIdentity {
+  site: string;
+  actor: string;
+  installation: string;
+}
+export interface StagedHistoryPage {
+  after: number;
+  body: unknown;
+}
+
+export async function seedNativeHistory(identity: HistoryIdentity, cursor: number): Promise<void> {
+  if (!android()) return;
+  await native.historySeed({ ...identity, cursor });
+}
+
+export async function ackNativeHistory(identity: HistoryIdentity, cursor: number): Promise<void> {
+  if (!android()) return;
+  await native.historyAck({ ...identity, cursor });
+}
+
+export async function pendingNativeHistory(): Promise<StagedHistoryPage[]> {
+  if (!android()) return [];
+  const { stage } = await native.historyPending();
+  if (!stage) return [];
+  const doc: unknown = JSON.parse(stage);
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return [];
+  const pages = (doc as { pages?: unknown }).pages;
+  if (!Array.isArray(pages) || pages.length > 32) return [];
+  return pages.filter((p): p is StagedHistoryPage =>
+    !!p && typeof p === "object" && !Array.isArray(p) &&
+    typeof p.after === "number" && Number.isSafeInteger(p.after) &&
+    p.after >= 0 && "body" in p);
 }
 
 export interface HerdWatchStatus {

@@ -102,6 +102,22 @@ test("herd: newest RECORD per collar, attention first, plain sentences", () => {
   assert.ok(matches(aa, "sarı") && matches(aa, "1234") && matches(aa, "00aa") && !matches(aa, "kara"));
 });
 
+test("live no-fix report must not look lost just because last GPS position is old", () => {
+  const device = "00000000000000AA";
+  const oldPosition = pt(device, 5 * 60, { seq: 1, received: iso(NOW - 5 * 3600_000) });
+  const reports = [{ tracker: device, incarnation: "INC1", seq: 2,
+    time: iso(NOW - 20_000), received: iso(NOW), gnssFailures: 1, period_s: 60 }];
+  const [animal] = buildHerd({
+    points: [oldPosition], unlocated: reports, profiles: {},
+    assetOf: (d) => d, now: NOW,
+  });
+  assert.equal(animal.lastTime, NOW - 5 * 3600_000, "last valid GPS position stays old");
+  assert.equal(animal.lastReport, NOW - 20_000, "new report is independently fresh");
+  assert.notEqual(animal.status, "lost", "recent verified report prevents false lost warning");
+  assert.equal(animal.noFix, true);
+  assert.match(animal.seen, /konum|GPS/i);
+});
+
 test("battery status is the worst of the last day (solar collars dip at night)", () => {
   const herd = herdOf([pt("A", 600, { battery: "LOW", battery_mv: 3600 }), pt("A", 1)]);
   assert.equal(herd[0].battery, "low");
@@ -180,4 +196,25 @@ test("just opened: a little late is not orange until the first sync answers", ()
   // Really silent (3 reports, at least 30 min) stays silent.
   const old = [pt("c1", 45, { period_s: 300 })];
   assert.equal(buildHerd({ points: old, profiles: {}, assetOf: (d) => d, now: NOW, settling: true })[0].status, "silent");
+});
+
+test("a server history receipt cannot date a clockless report", () => {
+  const [animal] = buildHerd({
+    points: [pt("A", 300)], profiles: {}, assetOf: d => d, now: NOW,
+    unlocated: [{ tracker: "A", incarnation: "NEW", seq: 1, time: null,
+      received: iso(NOW), delivery: "server" }],
+  });
+  assert.equal(animal.lastReport, NOW - 300 * 60_000);
+});
+
+test("reassigned animal uses the new collar's no-fix cadence and keeps its last position", () => {
+  const [animal] = buildHerd({
+    points: [pt("A", 300, { period_s: 60 })], profiles: {}, assetOf: () => "cow", now: NOW,
+    unlocated: [{ tracker: "B", incarnation: "NEW", seq: 1, time: iso(NOW - 15 * 60_000),
+      period_s: 3600, delivery: "server" }],
+  });
+  assert.equal(animal.device, "B");
+  assert.equal(animal.last?.tracker, "A");
+  assert.equal(animal.periodS, 3600);
+  assert.equal(animal.noFix, true);
 });

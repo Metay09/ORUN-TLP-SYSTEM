@@ -88,7 +88,7 @@ test("aktarım tek cümle: giriş, hata, bekleyen, son kayıt", () => {
   const now = 2_000_000_000_000;
   assert.match(transferHeadline({ signedIn: false, sync, waiting: 5, lastUpload: null, now }).text, /giriş/);
   assert.equal(transferHeadline({ signedIn: true, sync: { ...sync, error: "x" }, waiting: 0, lastUpload: null, now }).tone, "alarm");
-  assert.equal(transferHeadline({ signedIn: true, sync, waiting: 37, lastUpload: now, now }).text, "37 kayıt sunucuya gitmeyi bekliyor.");
+  assert.equal(transferHeadline({ signedIn: true, sync, waiting: 37, lastUpload: now, now }).text, "37 kayıt bu telefondan gönderilmeyi bekliyor.");
   const ok = transferHeadline({ signedIn: true, sync, waiting: 0, lastUpload: now - 4 * 60_000, now });
   assert.equal(ok.tone, "fresh");
   assert.match(ok.text, /4 dk önce/);

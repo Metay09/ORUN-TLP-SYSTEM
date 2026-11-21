@@ -21,7 +21,9 @@ import { DeviceOpsBook, type FencePayload, type OpVia } from "./deviceOps.ts";
 import { WriteKeyBook } from "./writeKeys.ts";
 import { writeKeyVault, eraseLegacyWriteKeys } from "../platform/orunWriteKeys.ts";
 import { forgetAccount, loadAccount, storeAccount } from "../platform/orunAccountSession.ts";
-import { herdWatchStatus } from "../platform/herdWatch.ts";
+import {
+  herdWatchStatus, seedNativeHistory, pendingNativeHistory, ackNativeHistory,
+} from "../platform/herdWatch.ts";
 import { parseServerLatest } from "./serverObservationRead.ts";
 import { zoneBookStamp, type ZoneBook } from "./zones.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
@@ -315,7 +317,7 @@ export async function pilotAccountObservationPoints(unlocated?: RecordId[]): Pro
 }
 
 export interface ObservationSyncResult {
-  /** Trackers whose newest measured position was checked. */
+  /** Verified records in the latest response (up to two per tracker). */
   latest: number;
   /** History records verified in this run. */
   history: number;
@@ -334,8 +336,9 @@ export interface ObservationSyncState {
 }
 
 const AUTO_SYNC_MS = 60_000;
+let historyPending = false;
+let syncGeneration = 0;
 let snapshotPending = false;
-const MAX_ROUNDS = 50;          // 50 x 64 pages x 64 records per run
 let syncRun: Promise<ObservationSyncResult> | null = null;
 let syncState: ObservationSyncState = { running: false, last: null, error: null };
 let autoTimer: ReturnType<typeof setInterval> | null = null;
@@ -352,12 +355,13 @@ export function onPilotObservationSync(fn: () => void): () => void {
   return () => { syncListeners.delete(fn); };
 }
 
-/** Newest position of every tracker first, then history from the saved
- * cursor until the server has nothing newer. One run at a time; a second
- * caller joins the running one. Remote AEAD evidence is never a local
- * phone delivery, even after durable mirror COMMIT. */
+/** Live-priority automatic sync: latest report/position first, then a small
+ * resumable history page. History remains automatic but cannot occupy many
+ * consecutive requests ahead of the next live check. Remote AEAD evidence
+ * never becomes phone-local delivery or custody ACK. */
 export function pilotAccountSync(): Promise<ObservationSyncResult> {
   if (syncRun) return syncRun;
+  const generation = ++syncGeneration;
   const run = (async (): Promise<ObservationSyncResult> => {
     const account = client;
     const mirror = observationMirror;
@@ -374,27 +378,91 @@ export function pilotAccountSync(): Promise<ObservationSyncResult> {
       snapshotPending = false;
       await ingestWatchSnapshot(account).catch(() => undefined);
     }
-    await observationPrepareKeys();
+    // Read keys from the local keyring even if the refresh endpoint is
+    // temporarily offline. Staged ciphertext still needs AEAD verification.
+    await observationPrepareKeys().catch(() => {});
     const same = () => client === account && !!pilotAccountStatus();
     if (!same()) throw new Error("Hesap değişti; sunucu konumları alınmadı.");
-    const latest = await mirror.pullLatest(account);
-    if (latest.added) observationsChanged?.();
-    // The screen may stop saying "yenileniyor" now: history can follow later.
-    setSync({ latestAt: Date.now() });
-    let history = 0, more = true;
-    for (let round = 0; round < MAX_ROUNDS && more && same(); round++) {
-      const r = await mirror.pullAvailable(account);
-      history += r.received;
-      more = r.more;
-      if (r.received) observationsChanged?.();
+    let latest = { received: 0, added: 0 };
+    let liveError: unknown = null;
+    try {
+      latest = await mirror.pullLatest(account);
+      if (latest.added) observationsChanged?.();
+    } catch (error) {
+      // Internet may disappear before the app is opened. Restore the last
+      // native snapshot and cached history; report offline status afterwards.
+      liveError = error;
+      await ingestWatchSnapshot(account).catch(() => {});
     }
-    return { latest: latest.received, history, more, at: Date.now() };
+    // The native service may cache ciphertext with the screen off. Its cursor
+    // can only be seeded from this AEAD-verified, committed SQLite mirror.
+    const actor = pilotAccountStatus();
+    if (actor) {
+      const confirmed = await mirror.confirmedCursor(account);
+      await seedNativeHistory(actor, confirmed).catch(() => {});
+    }
+    // Do not claim a successful live fetch when only local offline data exists.
+    if (!liveError) setSync({ latestAt: Date.now(), error: null });
+    if (historyPending) {
+      if (liveError) throw liveError;
+      return { latest: latest.received, history: 0, more: true, at: Date.now() };
+    }
+    // The next tick or foreground event can fetch live data during history I/O.
+    historyPending = true;
+    syncRun = null;
+    try {
+      // Verified SQLite history remains contiguous. A rolling native cache
+      // may evict older pages: restore the newest AEAD-verified pages for
+      // offline viewing WITHOUT jumping the permanent history cursor.
+      const cursor = await mirror.confirmedCursor(account);
+      const staged = await pendingNativeHistory().catch(() => []);
+      const contiguous = staged.find(p => p.after === cursor);
+      if (contiguous && actor) {
+        try {
+          const page = await mirror.acceptStagedPage(account, cursor, contiguous.body);
+          if (page) {
+            if (page.received && same()) observationsChanged?.();
+            if (same()) await ackNativeHistory(actor, page.cursor).catch(() => {});
+            if (liveError) throw liveError;
+            return { latest: latest.received, history: page.received, more: page.more, at: Date.now() };
+          }
+        } catch (error) {
+          // A network failure after a successful commit is not a bad cache.
+          if (liveError && error === liveError) throw error;
+          // Invalid staged bytes are never trusted. Fetch the page normally
+          // if the server is online; otherwise retain the offline warning.
+        }
+      }
+      let sparseReceived = 0;
+      for (const recent of staged.filter(p => p.after > cursor).slice(-4).reverse()) {
+        try {
+          const saved = await mirror.ingestSparseStagedPage(account, recent.after, recent.body);
+          if (saved) {
+            sparseReceived += saved.received;
+            if (saved.added && same()) observationsChanged?.();
+          }
+        } catch {
+          // A tampered page cannot advance history or block newer valid pages.
+        }
+        if (!same()) throw new Error("Hesap değişti; geçmiş kaydedilmedi.");
+      }
+      if (liveError) throw liveError;
+      // Always fill holes from the original persisted cursor on the server.
+      // Staged sparse records never act as an ACK or change that cursor.
+      const page = await mirror.pullAvailable(account, 1);
+      if (page.received && same()) observationsChanged?.();
+      if (actor && same()) await seedNativeHistory(actor, page.cursor).catch(() => {});
+      return { latest: latest.received, history: page.received + sparseReceived,
+               more: page.more, at: Date.now() };
+    } finally {
+      historyPending = false;
+    }
   })();
   syncRun = run;
   setSync({ running: true });
   run.then(
-    last => setSync({ running: false, last, error: null }),
-    e => setSync({ running: false, error: e instanceof Error ? e.message : String(e), errorAt: Date.now() }),
+    last => generation === syncGeneration && setSync({ running: false, last, error: null }),
+    e => generation === syncGeneration && setSync({ running: false, error: e instanceof Error ? e.message : String(e), errorAt: Date.now() }),
   ).finally(() => { if (syncRun === run) syncRun = null; });
   return run;
 }
