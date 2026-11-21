@@ -106,41 +106,98 @@ say()  { printf '\n== %s\n' "$*"; }
 fail() { printf '\nHATA: %s\n' "$*" >&2; exit 1; }
 
 release_dir() {
-  if [[ ! -d "$NEW" ]]; then
-    mkdir -p "$NEW.tmp"
-    git -C "$REPO" archive HEAD backend tools | tar -x -C "$NEW.tmp"
-    mv "$NEW.tmp" "$NEW"
+  if [[ -d "$NEW" ]]; then
+    [[ -f "$NEW/tools/orun_sunucu.py" ]] ||
+      fail "Eksik sürüm dizini: $NEW"
+    return 0
   fi
+  local tmp
+  tmp=$(mktemp -d "$RELEASES/.sunucu-hazir.XXXXXXXX")
+  # Başarısız hazırlık hedef sürüm klasörüne dokunmaz.
+  if ! (set -e
+        git -C "$REPO" archive "$TARGET" backend tools | tar -x -C "$tmp"
+        cd "$tmp"
+        python3 -m unittest -q \
+          backend.tests.test_observation_latest \
+          backend.tests.test_orun_yedek
+        python3 -m py_compile tools/orun_sunucu.py \
+          backend/orun_backend_bench.py backend/observation_read_page.py
+       ); then
+    rm -rf -- "$tmp"
+    fail "Yeni sürümün host testleri başarısız; servisler değiştirilmedi."
+  fi
+  mv -- "$tmp" "$NEW"
 }
 
-# Çalışan orun-sunucu'nun köprü adresi, hesap portu ve köprü anahtar dosyası.
+# Sağlık kontrolü: sürüm yolunu doğrula, gözlem sayısını koru,
+# köprü yetkisini ve hesap yetki kapısını sorgula; token'ı argv'ye yazma.
 check_sunucu() {
-  local info bridge port token_file code
-  info=$(python3 "$REPO/tools/orun_pc_gecis.py" describe) || return 1
-  bridge=$(sed -n 's/^BRIDGE=//p' <<<"$info")
-  port=$(sed -n 's/^ACCOUNT_PORT=//p' <<<"$info")
-  token_file=$(sed -n 's/^TOKEN_FILE=//p' <<<"$info")
-  systemctl --user is-active --quiet "$SUNUCU" || return 1
-  [[ -r "$token_file" ]] || return 1
-  code=$(curl -s -o /tmp/orun-health.json -w '%{http_code}' \
-         -H "Authorization: Bearer $(tr -d '\r\n' < "$token_file")" \
-         "http://$bridge/v1/health" || true)
-  [[ "$code" == "200" ]] || { rm -f /tmp/orun-health.json; return 1; }
-  RECORDS=$(grep -o '"records":[0-9]*' /tmp/orun-health.json | cut -d: -f2)
-  rm -f /tmp/orun-health.json
-  # Hesap adresi ayakta mı (girişsiz istek 401 dönmeli).
-  code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/v1/account/me" || true)
-  [[ "$code" == "401" ]]
+  local expected="${1:-$NEW}" minimum="${2:-0}"
+  RECORDS=$(python3 - "$SUNUCU" "$expected" "$minimum" <<'PY'
+import json
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+unit, expected, minimum = sys.argv[1], sys.argv[2], int(sys.argv[3])
+pid = subprocess.check_output(
+    ["systemctl", "--user", "show", unit, "-p", "MainPID", "--value"],
+    text=True).strip()
+if not pid.isdigit() or int(pid) <= 0:
+    raise SystemExit("SUNUCU_PID_YOK")
+argv = [a.decode() for a in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\\0") if a]
+if expected + "/tools/orun_sunucu.py" not in argv:
+    raise SystemExit("SUNUCU_KODU_FARKLI")
+if "--bench-test-key" in argv:
+    raise SystemExit("BENCH_KEY_ETKIN")
+def get(name):
+    return argv[argv.index(name) + 1]
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+token = Path(get("--bridge-token-file")).read_text().strip()
+req = urllib.request.Request(
+    "http://" + get("--bridge-listen") + "/v1/health",
+    headers={"Authorization": "Bearer " + token})
+with opener.open(req, timeout=5) as r:
+    obj = json.load(r)
+count = obj.get("records")
+if obj.get("ok") is not True or type(count) is not int or count < minimum:
+    raise SystemExit("KAYIT_AZALDI_VEYA_SAGLIK_YOK")
+try:
+    opener.open("http://" + get("--listen") + "/api/v1/account/me", timeout=5)
+except urllib.error.HTTPError as e:
+    if e.code != 401:
+        raise SystemExit("HESAP_YETKI_KONTROLU_BASARISIZ")
+else:
+    raise SystemExit("HESAP_KIMLIKSIZ_ACIK")
+print(count)
+PY
+  ) || return 1
+  return 0
 }
 
-# Sunucu 20 saniyeye kadar ayağa kalkabilir (kayıt defteri açılıyor).
 wait_sunucu() {
-  local i
+  local expected="${1:-$NEW}" minimum="${2:-0}" i
   for i in $(seq 1 20); do
-    check_sunucu && return 0
+    check_sunucu "$expected" "$minimum" 2>/dev/null && return 0
     sleep 1
   done
   return 1
+}
+
+backup_live() {
+  local dest
+  # Önce güncel sunucunun çalıştığı ve kayıtlar okunabildiği kanıtlanır.
+  check_sunucu "$CURRENT" 0 || fail "Çalışan sunucu sağlık kontrolünden geçmedi."
+  BEFORE="$RECORDS"
+  dest=$(mktemp -d "$HOME/ORUN-GUNCELLEME-YEDEK.XXXXXXXX")
+  chmod 700 "$dest"
+  python3 "$CURRENT/tools/orun_yedek.py" al --hedef "$dest" --sakla 30 ||
+    fail "Yedek alınamadı; servis değiştirilmedi."
+  python3 "$CURRENT/tools/orun_yedek.py" prova --hedef "$dest" ||
+    fail "Geri dönüş provası başarısız; servis değiştirilmedi."
+  echo "YEDEK_KORUNDU=$dest"
 }
 
 # Eski üç servisten biri yeniden çalışıyorsa sunucunun adresini kapar
