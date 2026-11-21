@@ -223,7 +223,97 @@ backup_live() {
     fail "Yedek alınamadı; servis değiştirilmedi."
   python3 "$CURRENT/tools/orun_yedek.py" prova --hedef "$dest" ||
     fail "Geri dönüş provası başarısız; servis değiştirilmedi."
+  LAST_BACKUP="$dest"
   echo "YEDEK_KORUNDU=$dest"
+}
+
+# Yalnız eksik olan ölçüm indeksleri; önce doğrulanmış yedeğin kopyasında
+# dener. SQL işlemi tek transaction; OBS1/ACK/cursor satırları değişmez.
+migrate_latest_indexes() {
+  python3 - "$NEW" "$LAST_BACKUP" <<'PY'
+import shutil
+import sqlite3
+import sys
+import tempfile
+from contextlib import closing
+from pathlib import Path
+
+release = Path(sys.argv[1]).resolve()
+backup = Path(sys.argv[2]).resolve()
+sys.path.insert(0, str(release))
+from backend.observation_read_page import LATEST_INDEXES, _LOCATION, _REPORT, _STAMP
+
+dbpath = Path.home() / "orun-backend-bench.sqlite"
+# Gerçek DB yolu sabit değildir; süreç argümanı yetkili kaynak.
+import subprocess
+pid = subprocess.check_output(
+    ["systemctl", "--user", "show", "orun-sunucu.service",
+     "-p", "MainPID", "--value"], text=True).strip()
+args = [a.decode() for a in Path(f"/proc/{pid}/cmdline").read_bytes().split(bytes((0,))) if a]
+dbpath = Path(args[args.index("--db") + 1]).resolve(strict=True)
+
+expected = ("latest_location_utc", "latest_report_utc")
+def present(db):
+    return {r[0] for r in db.execute(
+        "SELECT name FROM sqlite_master WHERE type='index'")}
+
+with closing(sqlite3.connect(dbpath.as_uri() + "?mode=ro",
+                             uri=True, timeout=2)) as ro:
+    if all(name in present(ro) for name in expected):
+        print("INDEKSLER_MEVCUT: SQLite yazımı yapılmadı.")
+        raise SystemExit(0)
+
+snapshots = [
+    d / "kayit_defteri.sqlite"
+    for d in backup.iterdir()
+    if d.is_dir() and (d / "LISTE.json").is_file()
+]
+if len(snapshots) != 1 or not snapshots[0].is_file():
+    raise SystemExit("DUR: Doğrulanmış defter yedeği bulunamadı.")
+
+def apply(path):
+    with closing(sqlite3.connect(path.as_uri() + "?mode=rw",
+                                 uri=True, timeout=2)) as db:
+        with db:
+            db.execute("BEGIN IMMEDIATE")
+            before = db.execute(
+                "SELECT COUNT(*) FROM verified_observations"
+            ).fetchone()[0]
+            for ddl in LATEST_INDEXES:
+                db.execute(ddl)
+            for name, where in (
+                ("latest_location_utc", _LOCATION),
+                ("latest_report_utc", _REPORT)
+            ):
+                plan = db.execute(
+                    f"EXPLAIN QUERY PLAN SELECT {_STAMP},rowid "
+                    f"FROM verified_observations WHERE device_id=? "
+                    f"AND {where} AND {_STAMP}>=? "
+                    f"ORDER BY {_STAMP} DESC,rowid DESC LIMIT 1",
+                    (bytes(8), bytes(4))
+                ).fetchall()
+                detail = " ".join(str(r[-1]) for r in plan)
+                if name not in detail or "TEMP B-TREE" in detail:
+                    raise RuntimeError("INDEKS_PLAN_HATALI: " + name)
+            after = db.execute(
+                "SELECT COUNT(*) FROM verified_observations"
+            ).fetchone()[0]
+            if before != after:
+                raise RuntimeError("GOZLEM_SAYISI_DEGISTI")
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro",
+                                 uri=True, timeout=2)) as ro:
+        if not set(expected).issubset(present(ro)):
+            raise RuntimeError("INDEKS_DOGRULAMA_BASARISIZ")
+
+with tempfile.TemporaryDirectory(dir=backup) as td:
+    test = Path(td) / "test.sqlite"
+    shutil.copy2(snapshots[0], test)
+    apply(test)
+    print("INDEKS_PROVA_PASS")
+
+apply(dbpath)
+print("INDEKS_CANLI_PASS")
+PY
 }
 
 # Eski üç servisten biri yeniden çalışıyorsa sunucunun adresini kapar
@@ -251,6 +341,7 @@ if [[ "$UPDATE_SERVER" == 1 ]]; then
   say "Önce mevcut sunucuyu yedekle ve yeni kodu doğrula"
   backup_live
   release_dir
+  migrate_latest_indexes
 
   UNIT_BACKUP="$UNIT_FILE.bak-$STAMP"
   cp -p "$UNIT_FILE" "$UNIT_BACKUP"
