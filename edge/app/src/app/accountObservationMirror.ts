@@ -10,6 +10,7 @@ import {
 import type { Point, RecordId } from "../core/points.ts";
 import type { OwnerAccountClient, AccountIdentity } from "./ownerAccountClient.ts";
 import type { ServerLatestObservations, ServerObservationPage, ServerObservationRow } from "./serverObservationRead.ts";
+import { parseServerObservationPage } from "./serverObservationRead.ts";
 import type { Observation } from "../core/product.ts";
 
 const CURSORS = "orun_account_observation_cursors_v1";
@@ -191,6 +192,87 @@ export class AccountObservationMirror {
     });
   }
 
+  /** The only durable history cursor: reflects AEAD-verified SQLite commits. */
+  async confirmedCursor(client: OwnerAccountClient): Promise<number> {
+    // Unlike pullPage(), this helper is callable before the mirror's first
+    // sync. Ensure the account tables exist before consulting the cursor.
+    await this.init();
+    const { actor } = identity(client);
+    return this.exclusive(() => this.cursor(actor));
+  }
+
+  private async commitPage(client: OwnerAccountClient, actor: AccountIdentity,
+                           epoch: number, previous: number,
+                           page: ServerObservationPage): Promise<{
+    received: number; cursor: number; more: boolean;
+  }> {
+    if (!still(client, actor, epoch))
+      throw new Error("Hesap değişti; konum kaydedilmedi.");
+    const verified = this.verify(page.records);
+
+    if (page.cursor !== previous) {
+      await this.exclusive(() => this.db.transaction(async () => {
+        if (await this.cursor(actor) !== previous)
+          throw new Error("Kayıt imleci başka işlemde değişti.");
+        if (!still(client, actor, epoch))
+          throw new Error("Hesap değişti; kayıt yazılmadı.");
+        await this.insert(actor, verified);
+        await this.db.run(
+          `INSERT INTO ${CURSORS} (site,actor,installation,cursor)
+           VALUES(?,?,?,?)
+           ON CONFLICT(site,actor,installation) DO UPDATE SET cursor=excluded.cursor`,
+          [...keys(actor), page.cursor]);
+        if (!still(client, actor, epoch))
+          throw new Error("Hesap değişti; SQLite yazımı geri alındı.");
+      }));
+      const persisted = await this.exclusive(() => this.cursor(actor));
+      if (persisted !== page.cursor)
+        throw new Error("Sunucu kayıt imleci SQLite'da doğrulanamadı.");
+    }
+    return { received: verified.length, cursor: page.cursor, more: page.has_more };
+  }
+
+  /** Native cache is UNTRUSTED: validate ordering, then AEAD-verify before committing. */
+  async acceptStagedPage(client: OwnerAccountClient, after: number,
+                         raw: unknown): Promise<{
+    received: number; cursor: number; more: boolean;
+  } | null> {
+    return this.guarded("history", async () => {
+      const { actor, epoch } = identity(client);
+      const previous = await this.exclusive(() => this.cursor(actor));
+      if (after !== previous) return null; // stale page or gap; fetch from server
+      const page = parseServerObservationPage(raw, previous);
+      return this.commitPage(client, actor, epoch, previous, page);
+    });
+  }
+
+  /**
+   * A rolling cache may have evicted older pages. These newer frames can
+   * still be independently AEAD-verified and saved for offline viewing,
+   * but MUST NOT move the contiguous server history cursor across gaps.
+   */
+  async ingestSparseStagedPage(client: OwnerAccountClient, after: number,
+                               raw: unknown): Promise<{ received: number; added: number } | null> {
+    return this.guarded("history", async () => {
+      const { actor, epoch } = identity(client);
+      const contiguous = await this.exclusive(() => this.cursor(actor));
+      if (after <= contiguous) return null;
+      const page = parseServerObservationPage(raw, after);
+      if (!still(client, actor, epoch))
+        throw new Error("Hesap değişti; geçici kayıt yazılmadı.");
+      const verified = this.verify(page.records);
+      const added = await this.exclusive(() => this.db.transaction(async () => {
+        if (!still(client, actor, epoch))
+          throw new Error("Hesap değişti; geçici kayıt yazılmadı.");
+        const count = await this.insert(actor, verified);
+        if (!still(client, actor, epoch))
+          throw new Error("Hesap değişti; SQLite işlemi geri alındı.");
+        return count;
+      }));
+      return { received: verified.length, added };
+    });
+  }
+
   async pullPage(client: OwnerAccountClient): Promise<{
     received: number; cursor: number; more: boolean;
   }> {
@@ -198,30 +280,7 @@ export class AccountObservationMirror {
       const { actor, epoch } = identity(client);
       const previous = await this.exclusive(() => this.cursor(actor));
       const page: ServerObservationPage = await client.readServerObservations(previous);
-      if (!still(client, actor, epoch))
-        throw new Error("Hesap değişti; konum kaydedilmedi.");
-      const verified = this.verify(page.records);
-
-      if (page.cursor !== previous) {
-        await this.exclusive(() => this.db.transaction(async () => {
-          if (await this.cursor(actor) !== previous)
-            throw new Error("Kayıt imleci başka işlemde değişti.");
-          if (!still(client, actor, epoch))
-            throw new Error("Hesap değişti; kayıt yazılmadı.");
-          await this.insert(actor, verified);
-          await this.db.run(
-            `INSERT INTO ${CURSORS} (site,actor,installation,cursor)
-             VALUES(?,?,?,?)
-             ON CONFLICT(site,actor,installation) DO UPDATE SET cursor=excluded.cursor`,
-            [...keys(actor), page.cursor]);
-          if (!still(client, actor, epoch))
-            throw new Error("Hesap değişti; SQLite yazımı geri alındı.");
-        }));
-        const persisted = await this.exclusive(() => this.cursor(actor));
-        if (persisted !== page.cursor)
-          throw new Error("Sunucu kayıt imleci SQLite'da doğrulanamadı.");
-      }
-      return { received: verified.length, cursor: page.cursor, more: page.has_more };
+      return this.commitPage(client, actor, epoch, previous, page);
     });
   }
 
