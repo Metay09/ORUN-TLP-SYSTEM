@@ -154,8 +154,12 @@ void makePosition(uint64_t source, uint32_t sequence, uint8_t* bytes) {
   assert(tlp::serializePositionPacket(packet, bytes, tlp::kPositionPacketSize));
 }
 
-void beginAs(RadioManager& manager, TestSequence& sequences, NodeRole role) {
+// Initialize the mock device clock BEFORE RadioManager::begin(). A sudden
+// jump from 0 to UINT32_MAX is not a valid millis() rollover after boot.
+void beginAs(RadioManager& manager, TestSequence& sequences, NodeRole role,
+             uint32_t initial_time_ms = 0U) {
   resetFakeRadio();
+  test_now = initial_time_ms;
   assert(manager.begin(sequences));
   assert(callbacks != nullptr && radio_state == RF_RX_RUNNING && rx_calls == 1);
   manager.setRole(role);
@@ -312,12 +316,11 @@ void roleSwitchDropsStaleRxAndIsolatesPendingTx() {
 void relayUsesSafeMonotonicClockAcrossCoreRollover() {
   RadioManager manager;
   TestSequence sequences;
-  beginAs(manager, sequences, NodeRole::kRelay);
+  beginAs(manager, sequences, NodeRole::kRelay, UINT32_MAX - 100U);
   uint8_t packet[tlp::kPositionPacketSize];
   const uint64_t source = 0x6666;
   const uint32_t sequence = 77;
   makePosition(source, sequence, packet);
-  test_now = UINT32_MAX - 100;
   rxDone(packet, sizeof(packet), -88, 7);
   manager.update(false);
   const uint32_t due = test_now +
@@ -404,8 +407,7 @@ void roleQuiescenceWithDelayedDispatch() {
 void ownerDeadlineAndQueueSaturation() {
   RadioManager manager;
   TestSequence sequences;
-  beginAs(manager, sequences, NodeRole::kTracker);
-  test_now = UINT32_MAX - 100;
+  beginAs(manager, sequences, NodeRole::kTracker, UINT32_MAX - 100U);
   send_cost_ms = 250; // Driver Send/BUSY time precedes watchdog arming.
   sendLocalPosition(manager, 90);
   uint8_t packet[34]; makePosition(0x8888, 90, packet);

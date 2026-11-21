@@ -76,6 +76,7 @@ class NetworkService {
 
   NetworkEvent receive(const uint8_t* payload, size_t size, int16_t rssi_dbm,
                        int8_t snr_db, uint32_t now_ms);
+  bool hasDueForward(uint32_t now_ms) const;
   bool takeDueForward(uint32_t now_ms, tlp::RelayForwardPacket* packet);
   void onForwardTxStarted();
   void onForwardTxResult(bool success);

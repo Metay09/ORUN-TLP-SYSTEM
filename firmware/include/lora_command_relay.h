@@ -54,8 +54,12 @@ class LoraCommandRelay {
   // The custody ACK to the Tracker last heard has gone out.
   void ackSent(uint32_t now);
 
-  // The next frame to send now, if any (call only when the radio can send).
+  // A read-only candidate: does NOT spend a report attempt or mark the part
+  // sent. RadioManager may reject the frame due to RF duty exhaustion.
   bool due(uint32_t now, Frame& out);
+  // Call ONLY after RadioManager confirms that Radio.Send began. False means
+  // an unexpected owner/queue mismatch and must be reported as a fault.
+  bool markTxStarted(uint32_t now, const Frame& transmitted);
 
   // A RESULT came back: true if it answered a queued command (removed).
   bool answered(const uint8_t* result, size_t size);

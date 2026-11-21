@@ -258,9 +258,10 @@ void continuousRolesNeverUseListenSleep() {
 void deadlineWorksAcrossMonotonicWrap() {
   RadioManager manager;
   TestSequence sequences;
-  beginAs(manager, sequences, NodeRole::kTracker);
+  // Start near millis rollover, instead of teleporting the clock after boot.
+  // The RF ledger correctly fails closed on a large ambiguous time jump.
+  beginAs(manager, sequences, NodeRole::kTracker, UINT32_MAX - 1000U);
 
-  test_now = UINT32_MAX - 1000U;
   sendLocalPosition(manager, 20);
   terminal(false);
   manager.update(false);

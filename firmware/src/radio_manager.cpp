@@ -88,6 +88,8 @@ const char* radioListenStateName(RadioListenState state) {
 
 bool RadioManager::begin(SequenceSource& sequences) {
   sequences_ = &sequences;
+  rf_duty_budget_.begin(monotonic::nowMs());
+  rf_duty_denials_ = 0U;
   // Production injects identity from the composition root before any radio
   // startup can fail. Keep this provider fallback for legacy host seams which
   // instantiate RadioManager directly; the byte-order rule lives outside radio.
@@ -232,6 +234,46 @@ bool RadioManager::canSend() const {
          rx_restore_state_ == RxRestoreState::kNone;
 }
 
+uint32_t RadioManager::rfDutyUsedMs() {
+  (void)rf_duty_budget_.canReserve(
+      monotonic::nowMs(), 1U, RfDutyBudget::Frame::kTest);
+  return rf_duty_budget_.usedMs();
+}
+
+uint32_t RadioManager::rfAirtimeMs(size_t size) const {
+  LoRaAirtimeProfile p{};
+  p.spreading_factor = radio_config::kSpreadingFactor;
+  p.bandwidth_hz = uint32_t(radio_config::kBandwidthKhz) * 1000U;
+  p.coding_rate = radio_config::kCodingRate;
+  p.preamble_symbols = radio_config::kPreambleLength;
+  p.crc_enabled = radio_config::kCrcEnabled;
+  p.explicit_header = radio_config::kExplicitHeader;
+  return loraAirtimeMs(size, p);
+}
+
+bool RadioManager::rfMayTransmit(size_t size, RfDutyBudget::Frame family) {
+  const uint32_t airtime_ms = rfAirtimeMs(size);
+  const bool allowed =
+      airtime_ms != 0U &&
+      rf_duty_budget_.canReserve(monotonic::nowMs(), airtime_ms, family) ==
+          RfDutyBudget::Decision::kAllowed;
+  if (!allowed && rf_duty_denials_ != UINT32_MAX) ++rf_duty_denials_;
+  return allowed;
+}
+
+bool RadioManager::reserveRfTransmit(size_t size, RfDutyBudget::Frame family) {
+  const uint32_t airtime_ms = rfAirtimeMs(size);
+  const bool allowed =
+      airtime_ms != 0U &&
+      rf_duty_budget_.reserve(monotonic::nowMs(), airtime_ms, family) ==
+          RfDutyBudget::Decision::kAllowed;
+  if (!allowed) {
+    if (rf_duty_denials_ != UINT32_MAX) ++rf_duty_denials_;
+    ++local_tx_failures_;
+  }
+  return allowed;
+}
+
 bool RadioManager::encodePosition(const GnssFix& fix, uint8_t* payload,
                                   uint64_t& identity) {
   uint32_t sequence;
@@ -259,6 +301,8 @@ bool RadioManager::sendPositionPacket(const uint8_t* payload, const uint32_t* ca
   // this check and Send; stored/backlog packets deliberately omit this gate.
   if (captured_at_ms && monotonic::elapsed(monotonic::nowMs(), *captured_at_ms,
                                           gnss_config::kFreshFixMaxAgeMs)) return false;
+  if (!reserveRfTransmit(tlp::kPositionPacketSize,
+                         RfDutyBudget::Frame::kPosition)) return false;
   startTxOperation();
   tx_kind_ = TxKind::kPosition;
   tx_role_epoch_ = role_epoch_;
@@ -299,6 +343,8 @@ bool RadioManager::sendHistorySecurePacket(const uint8_t* payload,
   }
   memcpy(tx_payload, payload, sizeof(tx_payload));
 
+  if (!reserveRfTransmit(size, RfDutyBudget::Frame::kHistorySecure))
+    return false;
   startTxOperation();
   tx_kind_ = TxKind::kHistorySecure;
   tx_role_epoch_ = role_epoch_;
@@ -348,6 +394,8 @@ bool RadioManager::sendProductSecurePacket(const uint8_t* payload,
 
   uint8_t tx_payload[tlp::kProductSecureMaxFrameSize]{};
   memcpy(tx_payload, payload, size);  // Driver copies to SX1262 FIFO in Send.
+  if (!reserveRfTransmit(size, RfDutyBudget::Frame::kProductSecure))
+    return false;
   startTxOperation();
   tx_kind_ = TxKind::kProductSecure;
   tx_role_epoch_ = role_epoch_;
@@ -411,6 +459,9 @@ bool RadioManager::sendLoraFrame(const uint8_t* payload, size_t size) {
   }
   uint8_t tx_payload[kMaxFrameSize]{};
   memcpy(tx_payload, payload, size);
+  // COMMAND and RESULT share one physical radio budget.
+  if (!reserveRfTransmit(size, RfDutyBudget::Frame::kLoraCommandResult))
+    return false;
   startTxOperation();
   tx_kind_ = TxKind::kLoraFrame;
   tx_role_epoch_ = role_epoch_;
@@ -786,6 +837,10 @@ void RadioManager::sendTestPacket() {
     return;
   }
 
+  if (!reserveRfTransmit(sizeof(payload), RfDutyBudget::Frame::kTest)) {
+    scheduleNextTransmission(monotonic::nowMs());
+    return;
+  }
   startTxOperation();
   tx_kind_ = TxKind::kTest;
   tx_role_epoch_ = role_epoch_;
@@ -800,6 +855,10 @@ void RadioManager::sendTestPacket() {
 }
 
 void RadioManager::sendDueRelay(uint32_t now) {
+  // Duty denial does not consume the queued forwarding object.
+  if (!network_.hasDueForward(now)) return;
+  if (!reserveRfTransmit(tlp::kRelayForwardPacketSize,
+                         RfDutyBudget::Frame::kRelay)) return;
   tlp::RelayForwardPacket envelope{};
   if (!network_.takeDueForward(now, &envelope)) return;
   uint8_t payload[tlp::kRelayForwardPacketSize]{};
