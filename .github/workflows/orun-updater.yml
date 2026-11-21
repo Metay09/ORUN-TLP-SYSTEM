@@ -1,0 +1,21 @@
+name: ORUN Safe Updater
+
+on:
+  pull_request:
+    paths:
+      - "tools/orun_guncelle.sh"
+      - "backend/tests/test_orun_guncelle.py"
+      - ".github/workflows/orun-updater.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safe-updater:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash and embedded Python safety regressions
+        run: python3 -m unittest -q backend.tests.test_orun_guncelle
