@@ -177,3 +177,52 @@ test("offline foreground restore verifies the watch snapshot and resumes the sav
   };
   assert.equal((await reopened.pullAvailable(client, 1)).more, false);
 });
+
+
+test("native staged ciphertext is AEAD-verified and advances only the account history cursor", async () => {
+  const { db, core, mirror } = await setup();
+  const account = fake("stage-a", after => ({ records: [], cursor: after, has_more: false }));
+  assert.equal(await mirror.confirmedCursor(account), 0);
+  const staged = await mirror.acceptStagedPage(account, 0,
+    { records: [row], cursor: 1, has_more: true });
+  assert.deepEqual(staged, { received: 1, cursor: 1, more: true });
+  assert.equal(await mirror.confirmedCursor(account), 1);
+  assert.equal((await mirror.points(account)).length, 1);
+  assert.equal(await core.ledger.recordCount(), 0, "not a Gateway delivery or local ACCEPT");
+  assert.equal(core.nextAcceptMessage(), null);
+  assert.equal((await db.query(
+    "SELECT COUNT(*) AS n FROM orun_account_observation_records_v1"
+  ))[0].n, 1);
+});
+
+test("unverified native stage cannot advance SQLite after tampering or malformed ordering", async () => {
+  const { db, mirror } = await setup();
+  const account = fake("stage-b", after => ({ records: [], cursor: after, has_more: false }));
+  const corrupt = row.frame.slice(0, -2) + (row.frame.endsWith("00") ? "01" : "00");
+  await assert.rejects(mirror.acceptStagedPage(account, 0, {
+    records: [{ ...row, frame: corrupt }], cursor: 1, has_more: false,
+  }));
+  await assert.rejects(mirror.acceptStagedPage(account, 0, {
+    records: [{ ...row, cursor: 2 }], cursor: 1, has_more: false,
+  }));
+  assert.equal(await mirror.confirmedCursor(account), 0);
+  assert.equal((await db.query(
+    "SELECT COUNT(*) AS n FROM orun_account_observation_records_v1"
+  ))[0].n, 0);
+  db.failNextCommit = true;
+  await assert.rejects(mirror.acceptStagedPage(account, 0, {
+    records: [row], cursor: 1, has_more: false,
+  }), /injected/);
+  assert.equal(await mirror.confirmedCursor(account), 0);
+  assert.equal((await mirror.pullPage(account)).cursor, 0, "server fallback remains available");
+});
+
+test("stale native history page is ignored and cannot regress the verified cursor", async () => {
+  const { mirror } = await setup();
+  const account = fake("stage-c", () => ({ records: [row], cursor: 1, has_more: false }));
+  await mirror.pullPage(account);
+  assert.equal(await mirror.confirmedCursor(account), 1);
+  assert.equal(await mirror.acceptStagedPage(account, 0,
+    { records: [row], cursor: 1, has_more: false }), null);
+  assert.equal(await mirror.confirmedCursor(account), 1);
+});
