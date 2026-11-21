@@ -34,6 +34,56 @@ public final class OrunHerdWatchPlugin extends Plugin {
         call.resolve();
     }
 
+    private org.json.JSONObject currentAccount(PluginCall call) {
+        org.json.JSONObject account = OrunMobileSessionPlugin.accountForService(getContext());
+        if (account == null || !account.optString("site").equals(call.getString("site")) ||
+                !account.optString("actor").equals(call.getString("actor")) ||
+                !account.optString("installation").equals(call.getString("installation")))
+            return null;
+        return account;
+    }
+
+    /** A cursor is seeded only after AEAD verification + SQLite commit in JS. */
+    @PluginMethod
+    public void historySeed(PluginCall call) {
+        try {
+            org.json.JSONObject account = currentAccount(call);
+            Long cursor = call.getLong("cursor");
+            if (account == null || cursor == null) throw new IllegalArgumentException("ACCOUNT_OR_CURSOR");
+            HerdHistoryStage.seed(getContext(), account, cursor);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("ORUN_HISTORY_SEED_FAILED");
+        }
+    }
+
+    /** Unverified encrypted frames; the JS mirror must verify before commit. */
+    @PluginMethod
+    public void historyPending(PluginCall call) {
+        try {
+            org.json.JSONObject account = OrunMobileSessionPlugin.accountForService(getContext());
+            JSObject out = new JSObject();
+            out.put("stage", account == null ? null : HerdHistoryStage.pending(getContext(), account));
+            call.resolve(out);
+        } catch (Exception e) {
+            call.reject("ORUN_HISTORY_STAGE_READ_FAILED");
+        }
+    }
+
+    /** Acknowledge ONLY after the app's own verified SQLite commit. Not a radio ACK. */
+    @PluginMethod
+    public void historyAck(PluginCall call) {
+        try {
+            org.json.JSONObject account = currentAccount(call);
+            Long cursor = call.getLong("cursor");
+            if (account == null || cursor == null) throw new IllegalArgumentException("ACCOUNT_OR_CURSOR");
+            HerdHistoryStage.acknowledge(getContext(), account, cursor);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("ORUN_HISTORY_STAGE_ACK_FAILED");
+        }
+    }
+
     /** The foreground USB reader is owned by the WebView. Expire its heartbeat if it stops. */
     @PluginMethod
     public void localGateway(PluginCall call) {
