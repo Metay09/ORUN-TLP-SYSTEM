@@ -243,6 +243,33 @@ export class AccountObservationMirror {
     });
   }
 
+  /**
+   * A rolling cache may have evicted older pages. These newer frames can
+   * still be independently AEAD-verified and saved for offline viewing,
+   * but MUST NOT move the contiguous server history cursor across gaps.
+   */
+  async ingestSparseStagedPage(client: OwnerAccountClient, after: number,
+                               raw: unknown): Promise<{ received: number; added: number } | null> {
+    return this.guarded("history", async () => {
+      const { actor, epoch } = identity(client);
+      const contiguous = await this.exclusive(() => this.cursor(actor));
+      if (after <= contiguous) return null;
+      const page = parseServerObservationPage(raw, after);
+      if (!still(client, actor, epoch))
+        throw new Error("Hesap değişti; geçici kayıt yazılmadı.");
+      const verified = this.verify(page.records);
+      const added = await this.exclusive(() => this.db.transaction(async () => {
+        if (!still(client, actor, epoch))
+          throw new Error("Hesap değişti; geçici kayıt yazılmadı.");
+        const count = await this.insert(actor, verified);
+        if (!still(client, actor, epoch))
+          throw new Error("Hesap değişti; SQLite işlemi geri alındı.");
+        return count;
+      }));
+      return { received: verified.length, added };
+    });
+  }
+
   async pullPage(client: OwnerAccountClient): Promise<{
     received: number; cursor: number; more: boolean;
   }> {
