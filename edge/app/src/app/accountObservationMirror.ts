@@ -10,6 +10,7 @@ import {
 import type { Point, RecordId } from "../core/points.ts";
 import type { OwnerAccountClient, AccountIdentity } from "./ownerAccountClient.ts";
 import type { ServerLatestObservations, ServerObservationPage, ServerObservationRow } from "./serverObservationRead.ts";
+import { parseServerObservationPage } from "./serverObservationRead.ts";
 import type { Observation } from "../core/product.ts";
 
 const CURSORS = "orun_account_observation_cursors_v1";
@@ -191,6 +192,57 @@ export class AccountObservationMirror {
     });
   }
 
+  /** The only durable history cursor: reflects AEAD-verified SQLite commits. */
+  async confirmedCursor(client: OwnerAccountClient): Promise<number> {
+    const { actor } = identity(client);
+    return this.exclusive(() => this.cursor(actor));
+  }
+
+  private async commitPage(client: OwnerAccountClient, actor: AccountIdentity,
+                           epoch: number, previous: number,
+                           page: ServerObservationPage): Promise<{
+    received: number; cursor: number; more: boolean;
+  }> {
+    if (!still(client, actor, epoch))
+      throw new Error("Hesap değişti; konum kaydedilmedi.");
+    const verified = this.verify(page.records);
+
+    if (page.cursor !== previous) {
+      await this.exclusive(() => this.db.transaction(async () => {
+        if (await this.cursor(actor) !== previous)
+          throw new Error("Kayıt imleci başka işlemde değişti.");
+        if (!still(client, actor, epoch))
+          throw new Error("Hesap değişti; kayıt yazılmadı.");
+        await this.insert(actor, verified);
+        await this.db.run(
+          `INSERT INTO ${CURSORS} (site,actor,installation,cursor)
+           VALUES(?,?,?,?)
+           ON CONFLICT(site,actor,installation) DO UPDATE SET cursor=excluded.cursor`,
+          [...keys(actor), page.cursor]);
+        if (!still(client, actor, epoch))
+          throw new Error("Hesap değişti; SQLite yazımı geri alındı.");
+      }));
+      const persisted = await this.exclusive(() => this.cursor(actor));
+      if (persisted !== page.cursor)
+        throw new Error("Sunucu kayıt imleci SQLite'da doğrulanamadı.");
+    }
+    return { received: verified.length, cursor: page.cursor, more: page.has_more };
+  }
+
+  /** Native cache is UNTRUSTED: validate ordering, then AEAD-verify before committing. */
+  async acceptStagedPage(client: OwnerAccountClient, after: number,
+                         raw: unknown): Promise<{
+    received: number; cursor: number; more: boolean;
+  } | null> {
+    return this.guarded("history", async () => {
+      const { actor, epoch } = identity(client);
+      const previous = await this.exclusive(() => this.cursor(actor));
+      if (after !== previous) return null; // stale page or gap; fetch from server
+      const page = parseServerObservationPage(raw, previous);
+      return this.commitPage(client, actor, epoch, previous, page);
+    });
+  }
+
   async pullPage(client: OwnerAccountClient): Promise<{
     received: number; cursor: number; more: boolean;
   }> {
@@ -198,30 +250,7 @@ export class AccountObservationMirror {
       const { actor, epoch } = identity(client);
       const previous = await this.exclusive(() => this.cursor(actor));
       const page: ServerObservationPage = await client.readServerObservations(previous);
-      if (!still(client, actor, epoch))
-        throw new Error("Hesap değişti; konum kaydedilmedi.");
-      const verified = this.verify(page.records);
-
-      if (page.cursor !== previous) {
-        await this.exclusive(() => this.db.transaction(async () => {
-          if (await this.cursor(actor) !== previous)
-            throw new Error("Kayıt imleci başka işlemde değişti.");
-          if (!still(client, actor, epoch))
-            throw new Error("Hesap değişti; kayıt yazılmadı.");
-          await this.insert(actor, verified);
-          await this.db.run(
-            `INSERT INTO ${CURSORS} (site,actor,installation,cursor)
-             VALUES(?,?,?,?)
-             ON CONFLICT(site,actor,installation) DO UPDATE SET cursor=excluded.cursor`,
-            [...keys(actor), page.cursor]);
-          if (!still(client, actor, epoch))
-            throw new Error("Hesap değişti; SQLite yazımı geri alındı.");
-        }));
-        const persisted = await this.exclusive(() => this.cursor(actor));
-        if (persisted !== page.cursor)
-          throw new Error("Sunucu kayıt imleci SQLite'da doğrulanamadı.");
-      }
-      return { received: verified.length, cursor: page.cursor, more: page.has_more };
+      return this.commitPage(client, actor, epoch, previous, page);
     });
   }
 
