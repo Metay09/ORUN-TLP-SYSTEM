@@ -226,3 +226,48 @@ test("stale native history page is ignored and cannot regress the verified curso
     { records: [row], cursor: 1, has_more: false }), null);
   assert.equal(await mirror.confirmedCursor(account), 1);
 });
+
+
+test("rolling native cache restores newest verified frames without falsely skipping old history", async () => {
+  const { db, core, mirror } = await setup();
+  const account = fake("rolling-a", after => {
+    assert.equal(after, 0, "the original backfill cursor must remain at zero");
+    return { records: [row], cursor: 1, has_more: true };
+  });
+  const newer = { ...row, cursor: 130 };
+  const sparse = await mirror.ingestSparseStagedPage(account, 129, {
+    records: [newer], cursor: 130, has_more: true,
+  });
+  assert.deepEqual(sparse, { received: 1, added: 1 });
+  assert.equal(await mirror.confirmedCursor(account), 0, "new recent records are not contiguous history");
+  assert.equal((await mirror.points(account)).length, 1, "newest position is available from SQLite offline");
+  assert.equal(await core.ledger.recordCount(), 0);
+  assert.equal(core.nextAcceptMessage(), null);
+  await mirror.pullPage(account);
+  assert.equal(await mirror.confirmedCursor(account), 1, "the missing history is backfilled from the server");
+  assert.equal(Number((await db.query(
+    "SELECT COUNT(*) AS n FROM orun_account_observation_records_v1"
+  ))[0].n), 1, "identical verified frame is deduplicated");
+});
+
+test("rolling sparse cache rejects forged ciphertext and cannot advance or insert anything", async () => {
+  const { db, mirror } = await setup();
+  const account = fake("rolling-b", after => ({ records: [], cursor: after, has_more: false }));
+  const corrupt = row.frame.slice(0, -2) + (row.frame.endsWith("00") ? "01" : "00");
+  await assert.rejects(mirror.ingestSparseStagedPage(account, 129, {
+    records: [{ ...row, cursor: 130, frame: corrupt }],
+    cursor: 130, has_more: true,
+  }));
+  assert.equal(await mirror.confirmedCursor(account), 0);
+  assert.equal(Number((await db.query(
+    "SELECT COUNT(*) AS n FROM orun_account_observation_records_v1"
+  ))[0].n), 0);
+  db.failNextCommit = true;
+  await assert.rejects(mirror.ingestSparseStagedPage(account, 129, {
+    records: [{ ...row, cursor: 130 }], cursor: 130, has_more: true,
+  }), /injected/);
+  assert.equal(await mirror.confirmedCursor(account), 0);
+  assert.equal(Number((await db.query(
+    "SELECT COUNT(*) AS n FROM orun_account_observation_records_v1"
+  ))[0].n), 0);
+});
