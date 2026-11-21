@@ -21,7 +21,9 @@ import { DeviceOpsBook, type FencePayload, type OpVia } from "./deviceOps.ts";
 import { WriteKeyBook } from "./writeKeys.ts";
 import { writeKeyVault, eraseLegacyWriteKeys } from "../platform/orunWriteKeys.ts";
 import { forgetAccount, loadAccount, storeAccount } from "../platform/orunAccountSession.ts";
-import { herdWatchStatus } from "../platform/herdWatch.ts";
+import {
+  herdWatchStatus, seedNativeHistory, pendingNativeHistory, ackNativeHistory,
+} from "../platform/herdWatch.ts";
 import { parseServerLatest } from "./serverObservationRead.ts";
 import { zoneBookStamp, type ZoneBook } from "./zones.ts";
 import { AccountObservationMirror } from "./accountObservationMirror.ts";
@@ -381,6 +383,13 @@ export function pilotAccountSync(): Promise<ObservationSyncResult> {
     if (!same()) throw new Error("Hesap değişti; sunucu konumları alınmadı.");
     const latest = await mirror.pullLatest(account);
     if (latest.added) observationsChanged?.();
+    // The native service may cache ciphertext with the screen off. Its cursor
+    // can only be seeded from this AEAD-verified, committed SQLite mirror.
+    const actor = pilotAccountStatus();
+    if (actor) {
+      const confirmed = await mirror.confirmedCursor(account);
+      await seedNativeHistory(actor, confirmed).catch(() => {});
+    }
     // The screen may stop saying "yenileniyor" now: history can follow later.
     setSync({ latestAt: Date.now(), error: null });
     if (historyPending)
@@ -389,8 +398,23 @@ export function pilotAccountSync(): Promise<ObservationSyncResult> {
     historyPending = true;
     syncRun = null;
     try {
+      // Reuse a previously downloaded native page when its after cursor
+      // matches the verified SQLite cursor. Never trust the native cache:
+      // acceptStagedPage applies the same parser + AEAD + transaction checks.
+      const cursor = await mirror.confirmedCursor(account);
+      const staged = await pendingNativeHistory().catch(() => []);
+      const pageFromStage = staged.find(p => p.after === cursor);
+      if (pageFromStage && actor) {
+        const page = await mirror.acceptStagedPage(account, cursor, pageFromStage.body);
+        if (page) {
+          if (page.received && same()) observationsChanged?.();
+          if (same()) await ackNativeHistory(actor, page.cursor).catch(() => {});
+          return { latest: latest.received, history: page.received, more: page.more, at: Date.now() };
+        }
+      }
       const page = await mirror.pullAvailable(account, 1);
       if (page.received && same()) observationsChanged?.();
+      if (actor && same()) await seedNativeHistory(actor, page.cursor).catch(() => {});
       return { latest: latest.received, history: page.received, more: page.more, at: Date.now() };
     } finally {
       historyPending = false;
