@@ -78,6 +78,7 @@ final class HerdHistoryStage {
             JSONObject p = old.getJSONObject(i);
             if (p.getJSONObject("body").getLong("cursor") > base) keep.put(p);
         }
+        if (base == state.getLong("base") && keep.length() == old.length()) return;
         state.put("base", base);
         state.put("pages", keep);
         write(ctx, state);
@@ -131,6 +132,10 @@ final class HerdHistoryStage {
         JSONArray rows = page.getJSONArray("records");
         if (rows.length() == 0) return; // already caught up; try again on the next poll
         checkPage(page, after);
+        // A logout or account switch may happen while the HTTP request is
+        // running. Never repopulate another account's cache after sign-out.
+        JSONObject active = OrunMobileSessionPlugin.accountForService(ctx);
+        if (active == null || !same(active, account)) return;
         JSONObject state = read(ctx);
         if (state == null || !same(state, account)) return;
         JSONArray pages = state.getJSONArray("pages");
