@@ -10,17 +10,15 @@
 set -euo pipefail
 umask 077
 
-OLD_UNITS=(orun-observation-readonly.service orun-shared-sync.service orun-backend.service)
 SUNUCU=orun-sunucu.service
 PC_EDGE=orun-pc-edge.service
 UNIT_DIR="$HOME/.config/systemd/user"
-SERVE_PORT=${ORUN_APK_PORT:-8099}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 RELEASES="$HOME/ORUN-RELEASES"
 STAMP=$(date +%Y%m%d-%H%M%S)
 
-say()  { printf '\\n== %s\\n' "$*"; }
-fail() { printf '\\nHATA: %s\\n' "$*" >&2; exit 1; }
+say()  { printf '\n== %s\n' "$*"; }
+fail() { printf '\nHATA: %s\n' "$*" >&2; exit 1; }
 
 MODE="${1:---auto}"
 [[ $# -le 1 ]] || { echo "HATA: Tek seçenek kullanın." >&2; exit 2; }
@@ -251,8 +249,7 @@ backup = Path(sys.argv[2]).resolve()
 sys.path.insert(0, str(release))
 from backend.observation_read_page import LATEST_INDEXES, _LOCATION, _REPORT, _STAMP
 
-dbpath = Path.home() / "orun-backend-bench.sqlite"
-# Gerçek DB yolu sabit değildir; süreç argümanı yetkili kaynak.
+# Gerçek DB yolunu çalışan sunucu sürecinden doğrula.
 import subprocess
 pid = subprocess.check_output(
     ["systemctl", "--user", "show", "orun-sunucu.service",
@@ -322,20 +319,6 @@ with tempfile.TemporaryDirectory(dir=backup) as td:
 apply(dbpath)
 print("INDEKS_CANLI_PASS")
 PY
-}
-
-# Eski üç servisten biri yeniden çalışıyorsa sunucunun adresini kapar
-# (2026-11-01: orun-shared-sync 127.0.0.1:18781'i tuttu). İşlerini
-# orun-sunucu yapıyor; durdurulur ve açılışta başlamaması sağlanır.
-eskileri_durdur() {
-  local u
-  for u in "${OLD_UNITS[@]}"; do
-    if systemctl --user is-active --quiet "$u"; then
-      echo "Eski $u çalışıyordu; durduruldu (işini orun-sunucu yapıyor)."
-      systemctl --user stop "$u" || true
-      systemctl --user disable "$u" >/dev/null 2>&1 || true
-    fi
-  done
 }
 
 mkdir -p "$UNIT_DIR"
