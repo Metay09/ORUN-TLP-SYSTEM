@@ -28,6 +28,7 @@ import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import type { Cell } from "../../app/coverage.ts";
 import type { LatLon } from "../../app/geo.ts";
 import { readableTrail, trailAge } from "./routeGeometry.ts";
+import { elevationMode } from "./elevation.ts";
 import { epochMs } from "../../app/herd.ts";
 import { fmt } from "../../app/i18n/tr.ts";
 import type { Animal, Observation } from "../../app/model.ts";
@@ -389,15 +390,43 @@ export class MapEngine {
 
   setTilt(on: boolean): void {
     this.tilt = on;
-    this.applyTerrain();
+    this.syncElevation();
     this.map.easeTo({ pitch: on ? 62 : 0, duration: 700 });
   }
 
   resetNorth(): void { this.map.easeTo({ bearing: 0, pitch: this.tilt ? 62 : 0, duration: 500 }); }
 
-  private applyTerrain(): void {
-    if (!this.map.getSource("dem")) return;
-    this.map.setTerrain(this.tilt && !this.draft ? { source: "dem", exaggeration: 1.35 } : null);
+  /**
+   * One DEM tile source for both 3B terrain and hillshade.
+   * Lazily create it only when either feature is enabled. Keep it available
+   * after the first use so toggling does not re-fetch the same tiles.
+   * MapLibre may trade rendering quality for this shared-source mode:
+   * verify 3B + hillshade visually before merging this experiment.
+   */
+  private syncElevation(): void {
+    const m = this.map;
+    // A style swap recreates overlays asynchronously; style.load calls us again.
+    if (!m.getLayer("o-coverage")) return;
+    const mode = elevationMode(this.tilt, this.draft !== null,
+      this.layers?.relief === true, this.base, this.drawnOffline);
+    if (mode.needsDEM && !m.getSource("dem")) {
+      m.addSource("dem", { type: "raster-dem", tiles: [DEM], tileSize: 256, maxzoom: 15, encoding: "terrarium" });
+    }
+    if (mode.shade && !m.getLayer("o-relief")) {
+      m.addLayer({ id: "o-relief", type: "hillshade", source: "dem",
+        paint: { "hillshade-exaggeration": 0.45, "hillshade-shadow-color": "#3A4A3F",
+          "hillshade-highlight-color": "#FFFFFF" } }, "o-coverage");
+    }
+    if (m.getLayer("o-relief"))
+      m.setLayoutProperty("o-relief", "visibility", mode.shade ? "visible" : "none");
+
+    const active = m.getTerrain();
+    if (mode.terrain) {
+      if (!active || active.source !== "dem" || active.exaggeration !== 1.35)
+        m.setTerrain({ source: "dem", exaggeration: 1.35 });
+    } else if (active) {
+      m.setTerrain(null);
+    }
   }
 
   setZoneFill(f: ZoneFill): void {
@@ -414,15 +443,11 @@ export class MapEngine {
 
   private addOverlays(): void {
     const m = this.map;
-    if (!m.getSource("dem")) m.addSource("dem", { type: "raster-dem", tiles: [DEM], tileSize: 256, maxzoom: 15, encoding: "terrarium" });
-    if (!m.getSource("dem-shade")) m.addSource("dem-shade", { type: "raster-dem", tiles: [DEM], tileSize: 256, maxzoom: 15, encoding: "terrarium" });
     if (!m.hasImage("hatch")) m.addImage("hatch", hatchImage());
     const empty = fc([]);
     for (const id of ["o-coverage", "o-heat", "o-zones", "o-herd", "o-herd-pts", "o-links", "o-trail", "o-trail-pts", "o-me", "o-draft", "o-guide"])
       if (!m.getSource(id)) m.addSource(id, { type: "geojson", data: empty });
     const add = (spec: Parameters<MlMap["addLayer"]>[0]) => { if (!m.getLayer(spec.id)) m.addLayer(spec); };
-    add({ id: "o-relief", type: "hillshade", source: "dem-shade", layout: { visibility: "none" },
-      paint: { "hillshade-exaggeration": 0.45, "hillshade-shadow-color": "#3A4A3F", "hillshade-highlight-color": "#FFFFFF" } });
     add({ id: "o-coverage", type: "fill", source: "o-coverage", minzoom: 14,
       paint: { "fill-color": ["match", ["get", "cls"], "strong", "#2E9E5B", "medium", "#E2A21C", "weak", "#D9472F", "#6B7280"], "fill-opacity": 0.55 } });
     add({ id: "o-heat", type: "heatmap", source: "o-heat",
@@ -484,7 +509,7 @@ export class MapEngine {
       m.setSky({ "sky-color": "#9CC7EE", "horizon-color": "#E6EEF2", "fog-color": "#E6EEF2",
         "sky-horizon-blend": 0.6, "horizon-fog-blend": 0.5, "fog-ground-blend": 0.4 });
     } catch { /* the sky is decoration */ }
-    this.applyTerrain();
+    this.syncElevation();
     this.applyVisibility();
     this.paintZoneFill();
     this.sent = {};
@@ -518,6 +543,7 @@ export class MapEngine {
     const relabel = this.base === "satellite" && this.layers?.labels !== layers.labels;
     this.layers = layers;
     if (relabel) { void this.setBase(this.base, layers); return; }
+    this.syncElevation();
     this.applyVisibility();
   }
 
@@ -765,7 +791,7 @@ export class MapEngine {
     this.draft = d;
     if (was !== (d !== null)) {
       if (d) this.map.easeTo({ pitch: 0, bearing: 0, duration: 300 });
-      this.applyTerrain();
+      this.syncElevation();
       this.applyVisibility();
       if (this.data) { this.syncPins(this.data); this.recluster(); }
       this.syncZoneLabels();
