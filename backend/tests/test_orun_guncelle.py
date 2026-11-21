@@ -30,7 +30,7 @@ class SafeUpdaterTests(unittest.TestCase):
     def test_all_embedded_python_parses(self) -> None:
         source = SCRIPT.read_text()
         blocks = re.findall(
-            r"(?ms)^\s*(?:if )?python3[^\n]*<<'PY'\n(.*?)^PY$",
+            r"(?m)^[^\n]*python3[^\n]*<<'PY'\n([\s\S]*?)^PY$",
             source,
         )
         self.assertEqual(len(blocks), 5)
