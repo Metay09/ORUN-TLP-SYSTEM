@@ -21,7 +21,9 @@ TOKEN = "SYNTHETIC-LATEST-TEST-BEARER-123456"
 
 def periodic(measured: int, located: bool = True) -> bytes:
     p = bytearray(64)
-    p[1] = 0b11 if located else 0b01
+    # A missing GNSS clock has neither the time-valid nor location-valid bit.
+    # The live ORUN-1 frames (7714..7718) carry flags=0 and utc=0.
+    p[1] = 0 if measured == 0 else (0b11 if located else 0b01)
     p[16:20] = measured.to_bytes(4, "big")
     return bytes(p)
 
@@ -131,7 +133,7 @@ class LatestTests(unittest.TestCase):
         self.assertEqual(indexes(self.db), set())
         self.assertEqual(read_latest(self.db), before)
 
-    def test_no_clock_report_does_not_claim_freshness(self) -> None:
+    def test_clockless_report_restores_gateway_last_heard_without_new_gps(self) -> None:
         with sqlite3.connect(self.db) as db:
             db.execute(
                 "INSERT INTO verified_observations VALUES (?,?,?,?,?,?)",
@@ -143,7 +145,25 @@ class LatestTests(unittest.TestCase):
             )
         a = [r for r in read_latest(self.db)["records"]
              if r["device"] == A.hex().upper()]
+        self.assertEqual([r["sequence"] for r in a], [2, 9])
+        self.assertEqual(a[1]["first_seen_utc"], 1800000009)
+        self.assertEqual(a[0]["sequence"], 2)  # last valid GPS preserved
+
+    def test_old_or_missing_clockless_receipts_do_not_claim_recent_contact(self) -> None:
+        with sqlite3.connect(self.db) as db:
+            db.executemany(
+                "INSERT INTO verified_observations VALUES (?,?,?,?,?,?)",
+                [(A, INC, 10, 1, periodic(0, False), bytes([10]) * 100),
+                 (A, INC, 11, 1, periodic(0, False), bytes([11]) * 100)],
+            )
+            db.execute(
+                "INSERT INTO edge_receipts VALUES (?,?,?,?,?,?)",
+                (A, INC, 10, LIVE_REPORT_CUTOVER_UTC - 1, -88, 7),
+            )
+        a = [r for r in read_latest(self.db)["records"]
+             if r["device"] == A.hex().upper()]
         self.assertEqual([r["sequence"] for r in a], [2])
+
 
     def test_http_route_bearer_and_exact_query(self) -> None:
         server = make_readonly_server(self.db, TOKEN)

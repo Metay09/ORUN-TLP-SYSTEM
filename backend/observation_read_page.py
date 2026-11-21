@@ -17,8 +17,9 @@ PAGE_SIZE = 64
 MAX_CURSOR = (1 << 63) - 1
 # Upper bound on trackers returned by read_latest (one record each).
 LATEST_MAX = 64
-# Only reports measured after the 20 Nov 2026 pilot cutover are promoted
-# to the live latest-report lane. Historical/no-clock backlogs stay untouched.
+# Reports with GNSS time use their measured time; clockless no-fix reports
+# use only a verified Gateway's first receipt after the pilot cutover.
+# Historical receipts retain their original time, never freshened by upload.
 LIVE_REPORT_CUTOVER_UTC = 1795196460  # 2026-11-20 20:41 Europe/Istanbul
 
 _RECORD_COLUMNS = (
@@ -101,12 +102,12 @@ LATEST_INDEXES = tuple(
 
 
 def read_latest(db_path: str | Path) -> dict:
-    """Latest measured POSITION and (only after cutover) latest REPORT.
+    """Latest measured POSITION and latest evidenced REPORT per tracker.
 
-    A post-cutover report without a GNSS fix proves that a collar was heard,
-    without fabricating a new location. The old last-known position remains
-    available independently. History cursors/custody and old records are not
-    changed; an old report arriving late cannot supersede a newer measurement.
+    A clockless no-fix report with post-cutover first_seen_utc proves when the
+    Gateway first heard the collar, NOT when GPS measured a position. The old
+    last-known position remains available independently. History cursors and
+    custody state are unchanged; upload time cannot refresh an old receipt.
     At most two records per tracker, and at most LATEST_MAX trackers.
     """
     try:
@@ -135,6 +136,25 @@ def read_latest(db_path: str | Path) -> dict:
                         (dev, minimum.to_bytes(4, "big"))).fetchone()
                     if row:
                         target[dev] = (int.from_bytes(row[0], "big"), row[1])
+
+                # A clockless no-fix PERIODIC still proves that the gateway heard
+                # the tracker at first_seen_utc. This is receipt time, NOT a GNSS
+                # measurement; never fabricate one or replace the last GPS fix.
+                # The original receipt time is stable across delayed uploads and
+                # duplicate/replayed history. Do not use pre-cutover receipts.
+                clockless = db.execute(
+                    "SELECT r.first_seen_utc,o.rowid "
+                    "FROM verified_observations o "
+                    "JOIN edge_receipts r USING (device_id,incarnation,sequence) "
+                    "WHERE o.device_id=? AND o.family=1 "
+                    "AND typeof(o.plaintext)='blob' AND length(o.plaintext)=64 "
+                    "AND substr(hex(substr(o.plaintext,2,1)),2,1) IN ('0','4','8','C') "
+                    "AND r.first_seen_utc>=? "
+                    "ORDER BY r.first_seen_utc DESC,o.rowid DESC LIMIT 1",
+                    (dev, LIVE_REPORT_CUTOVER_UTC),
+                ).fetchone()
+                if clockless and (dev not in reports or clockless > reports[dev]):
+                    reports[dev] = clockless
 
             # A report timestamp is authoritative for freshness, not arrival
             # order. Keep the last valid location when the latest report has
