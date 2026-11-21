@@ -1,30 +1,106 @@
 #!/usr/bin/env bash
-# ORUN: PC'deki sunucuyu bu repo sürümüne geçirir, telefon APK'sını üretir
-# ve telefona indirmek için kısa süre sunar.
-#
-#   bash tools/orun_guncelle.sh            # sunucu + APK + indirme
-#   bash tools/orun_guncelle.sh --no-apk   # yalnız sunucu
-#
-# İlk çalıştırmada üç eski servisi (orun-backend, orun-shared-sync,
-# orun-observation-readonly) tek "orun-sunucu" servisine çevirir: aynı
-# veritabanı, aynı kimlik kayıtları, aynı hesap klasörü, aynı adresler.
-# Sonraki çalıştırmalarda yalnız orun-sunucu'yu yeni sürüme geçirir.
-# DOKUNMADIĞI: orun-pc-edge, veritabanı içeriği, anahtar dosyaları.
-# Bir kontrol başarısız olursa eski hale kendisi döner.
+# ORUN mevcut güvenli güncelleyici. Varsayılan: yalnız değişen PC bileşenleri.
+# bash tools/orun_guncelle.sh          # sunucu / PC Edge: sadece kod değiştiyse
+# bash tools/orun_guncelle.sh --check  # yalnız planı göster, servis değişmez
+# bash tools/orun_guncelle.sh --server # yalnız sunucu; eski --no-apk eşdeğeri
+# bash tools/orun_guncelle.sh --edge   # yalnız PC Edge
+# bash tools/orun_guncelle.sh --apk    # debug APK sadece açık istekle
+# bash tools/orun_guncelle.sh --all    # bütün PC bileşenleri; firmware hariç
+# Firmware flash veya telefona APK kurulumunu ASLA kendiliğinden yapmaz.
 set -euo pipefail
+umask 077
 
 OLD_UNITS=(orun-observation-readonly.service orun-shared-sync.service orun-backend.service)
 SUNUCU=orun-sunucu.service
+PC_EDGE=orun-pc-edge.service
 UNIT_DIR="$HOME/.config/systemd/user"
 SERVE_PORT=${ORUN_APK_PORT:-8099}
-
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-SHA=$(git -C "$REPO" rev-parse --short=7 HEAD)
 RELEASES="$HOME/ORUN-RELEASES"
-NEW="$RELEASES/sunucu-$SHA"
 STAMP=$(date +%Y%m%d-%H%M%S)
-BUILD_APK=1
-[[ "${1:-}" == "--no-apk" ]] && BUILD_APK=0
+
+MODE="${1:---auto}"
+[[ $# -le 1 ]] || { echo "HATA: Tek seçenek kullanın." >&2; exit 2; }
+case "$MODE" in
+  --auto|--check|--server|--no-apk|--edge|--apk|--all) ;;
+  -h|--help)
+    sed -n '2,9p' "$0"
+    exit 0 ;;
+  *) echo "HATA: Bilinmeyen seçenek: $MODE" >&2; exit 2 ;;
+esac
+
+mkdir -p "$RELEASES"
+# İki aynı güncelleme aynı anda çalışamaz.
+exec 9>"$RELEASES/.orun-guncelle.lock"
+flock -n 9 || { echo "HATA: Başka bir güncelleme çalışıyor." >&2; exit 2; }
+
+# Yalnız GitHub'daki main'i hedefle; yerel worktree'ye ve çalışan servislere
+# fetch sırasında dokunma. Beklenmeyen branch/duruma güvenme.
+[[ "$(git -C "$REPO" branch --show-current)" == "main" ]] ||
+  { echo "DUR: Önce ana main çalışma klasörünü kullanın." >&2; exit 2; }
+[[ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ]] ||
+  { echo "DUR: Yerel takipli kod değişiklikleri var." >&2; exit 2; }
+git -C "$REPO" -c http.version=HTTP/1.1 fetch --no-tags origin main
+TARGET=$(git -C "$REPO" rev-parse FETCH_HEAD)
+git -C "$REPO" merge-base --is-ancestor HEAD "$TARGET" ||
+  { echo "DUR: Yerel main, hedefle fast-forward uyumlu değil." >&2; exit 2; }
+SHA=$(git -C "$REPO" rev-parse --short=7 "$TARGET")
+NEW="$RELEASES/sunucu-$SHA"
+
+UNIT_FILE="$UNIT_DIR/$SUNUCU"
+CURRENT=""
+if [[ -f "$UNIT_FILE" ]]; then
+  CURRENT=$(grep -oE "$RELEASES/sunucu-[0-9a-f]{7,40}" "$UNIT_FILE" | head -1 || true)
+fi
+
+# Kod farkını git üzerinde kontrol et: aynı kod için servis yeniden başlatma.
+has_change() {
+  local before="$1"; shift
+  local code=0
+  git -C "$REPO" diff --quiet "$before" "$TARGET" -- "$@" || code=$?
+  case $code in
+    0) return 1 ;;
+    1) return 0 ;;
+    *) echo "DUR: Git fark kontrolü başarısız." >&2; exit 2 ;;
+  esac
+}
+UPDATE_SERVER=0
+UPDATE_EDGE=0
+BUILD_APK=0
+
+if [[ -n "$CURRENT" && -d "$CURRENT" ]]; then
+  OLD_SHA=$(git -C "$REPO" rev-parse --verify "${CURRENT##*/sunucu-}^{commit}" 2>/dev/null) ||
+    { echo "DUR: Kurulu sunucu commit'i bilinmiyor." >&2; exit 2; }
+  if [[ "$CURRENT" != "$NEW" ]] && has_change "$OLD_SHA" \
+       backend tools/orun_sunucu.py tools/orun_shared_sync_loopback.py; then
+    UPDATE_SERVER=1
+  fi
+  if [[ "$CURRENT" != "$NEW" ]] && has_change "$OLD_SHA" \
+       tools/orun_pc_edge.py tools/orun_edge_bench.py tools/orun_edge_accept.py; then
+    UPDATE_EDGE=1
+  fi
+else
+  [[ "$MODE" == --server || "$MODE" == --no-apk || "$MODE" == --all ]] ||
+    { echo "DUR: Tek sunucu henüz kurulu değil; otomatik geçiş yapılmaz." >&2; exit 2; }
+  UPDATE_SERVER=1
+fi
+
+case "$MODE" in
+  --server|--no-apk) UPDATE_EDGE=0 ;;
+  --edge) UPDATE_SERVER=0; UPDATE_EDGE=1 ;;
+  --apk) UPDATE_SERVER=0; UPDATE_EDGE=0; BUILD_APK=1 ;;
+  --all) UPDATE_SERVER=1; UPDATE_EDGE=1; BUILD_APK=1 ;;
+esac
+[[ "$CURRENT" == "$NEW" ]] && UPDATE_SERVER=0
+[[ "$MODE" != --auto ]] || echo "Otomatik seçim: değişmiş PC modülleri"
+echo "HEDEF=$TARGET"
+echo "SUNUCU=$UPDATE_SERVER PC_EDGE=$UPDATE_EDGE APK=$BUILD_APK"
+echo "Firmware: ASLA otomatik yüklenmez."
+if [[ "$MODE" == --check ]]; then exit 0; fi
+if [[ "$UPDATE_SERVER" == 0 && "$UPDATE_EDGE" == 0 && "$BUILD_APK" == 0 ]]; then
+  echo "DEGISIKLIK YOK: Çalışan servisler korunuyor."
+  exit 0
+fi
 
 say()  { printf '\n== %s\n' "$*"; }
 fail() { printf '\nHATA: %s\n' "$*" >&2; exit 1; }
