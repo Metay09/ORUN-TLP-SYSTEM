@@ -207,6 +207,27 @@ test("a server history receipt cannot date a clockless report", () => {
   assert.equal(animal.lastReport, NOW - 300 * 60_000);
 });
 
+test("post-cutover clockless server report restores Son haberleşme without changing last GPS", () => {
+  const now = Date.parse("2026-11-21T03:10:00Z");
+  const lastPositionAt = now - 5 * 3600_000;
+  const lastHeardAt = now - 20_000;
+  const [animal] = buildHerd({
+    points: [pt("52E16773141A8887", 1, { time: iso(lastPositionAt), received: iso(lastPositionAt) })],
+    profiles: {}, assetOf: d => d, now,
+    unlocated: [{
+      tracker: "52E16773141A8887", incarnation: "NEW", seq: 7718,
+      time: null, received: iso(lastHeardAt), delivery: "server",
+      gnssFailures: 1, battery_mv: 3900, battery: "NORMAL", period_s: 60,
+    }],
+  });
+  assert.equal(animal.lastTime, lastPositionAt, "last GPS is not forged");
+  assert.equal(animal.lastReport, lastHeardAt, "gateway first-seen restores Son haberleşme");
+  assert.equal(animal.noFix, true);
+  assert.equal(animal.gpsFault, true);
+  assert.equal(animal.batteryMv, 3900, "clockless battery is still displayed");
+  assert.match(animal.seen, /GPS|konum/i);
+});
+
 test("reassigned animal uses the new collar's no-fix cadence and keeps its last position", () => {
   const [animal] = buildHerd({
     points: [pt("A", 300, { period_s: 60 })], profiles: {}, assetOf: () => "cow", now: NOW,
