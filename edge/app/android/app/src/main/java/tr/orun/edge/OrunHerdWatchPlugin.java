@@ -43,14 +43,24 @@ public final class OrunHerdWatchPlugin extends Plugin {
         return account;
     }
 
+    // Capacitor's JSON may decode a valid cursor as Integer or Long.
+    private static long cursor(PluginCall call) {
+        Object raw = call.getData().opt("cursor");
+        if (!(raw instanceof Number)) throw new IllegalArgumentException("CURSOR_TYPE");
+        double n = ((Number) raw).doubleValue();
+        if (Double.isNaN(n) || Double.isInfinite(n) || n < 0 ||
+                n > 9007199254740991L || n != Math.rint(n))
+            throw new IllegalArgumentException("CURSOR_RANGE");
+        return (long) n;
+    }
+
     /** A cursor is seeded only after AEAD verification + SQLite commit in JS. */
     @PluginMethod
     public void historySeed(PluginCall call) {
         try {
             org.json.JSONObject account = currentAccount(call);
-            Long cursor = call.getLong("cursor");
-            if (account == null || cursor == null) throw new IllegalArgumentException("ACCOUNT_OR_CURSOR");
-            HerdHistoryStage.seed(getContext(), account, cursor);
+            if (account == null) throw new IllegalArgumentException("ACCOUNT");
+            HerdHistoryStage.seed(getContext(), account, cursor(call));
             call.resolve();
         } catch (Exception e) {
             call.reject("ORUN_HISTORY_SEED_FAILED");
@@ -75,9 +85,8 @@ public final class OrunHerdWatchPlugin extends Plugin {
     public void historyAck(PluginCall call) {
         try {
             org.json.JSONObject account = currentAccount(call);
-            Long cursor = call.getLong("cursor");
-            if (account == null || cursor == null) throw new IllegalArgumentException("ACCOUNT_OR_CURSOR");
-            HerdHistoryStage.acknowledge(getContext(), account, cursor);
+            if (account == null) throw new IllegalArgumentException("ACCOUNT");
+            HerdHistoryStage.acknowledge(getContext(), account, cursor(call));
             call.resolve();
         } catch (Exception e) {
             call.reject("ORUN_HISTORY_STAGE_ACK_FAILED");
