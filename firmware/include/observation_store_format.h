@@ -58,7 +58,11 @@ constexpr uint32_t kCleared = 0U;
 // Initial bounded SF5C control ownership. Two control pages are reserved by the
 // portable format; SF5D chooses the physical address range later.
 constexpr uint16_t kControlPageCount = 2U;
+#ifdef ORUN_GATEWAY_BATCH_ACK
+constexpr uint16_t kMaxExactCustodyObjects = 5U;
+#else
 constexpr uint16_t kMaxExactCustodyObjects = 4U;
+#endif
 constexpr uint16_t kMaxOpenOccurrences = 8U;
 constexpr uint16_t kMaxResultGuards = 8U;
 constexpr uint16_t kStoreStateControls = 1U;

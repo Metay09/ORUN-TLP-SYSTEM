@@ -3,7 +3,7 @@
 // halka, bekleyen işlemler, sonra bütün cihazlar (Gateway'ler, Tasmalar).
 // Bağlanınca cihazın kendi ekranı açılır; bağlantı ekrandan çıkınca kopmaz.
 // Sayaçların ayrıntısı ve kayıt defteri "Teknik ayrıntılar"da.
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   Bluetooth, CaretDown, CaretRight, CellSignalFull, CloudCheck, Cow, Desktop, MagnifyingGlass, Polygon, Question,
   SlidersHorizontal, Usb, WifiHigh, WifiSlash,
@@ -33,7 +33,7 @@ import { OpDialog, useOps } from "../devices/Ops.tsx";
 import { groupLine, KIND_WORD, OPEN, operationSections, opWhat } from "../../app/deviceOps.ts";
 import { useTrackerFences } from "../zones/ApplyFence.tsx";
 import { gatewayFacts, gatewayLine, stationWords, transferHeadline } from "./words.ts";
-import { notArrived, transferHealth, transferStages, type HealthStage } from "./transferFlow.ts";
+import { transferHealth, transferStages, type HealthStage } from "./transferFlow.ts";
 
 type Via = "ble" | "usb";
 
@@ -195,31 +195,12 @@ export function ConnectionScreen() {
   }
 
   // ---- aktarım sağlığı: dört halka, kimde kaç kayıt bekliyor, çalışıyor mu ----
-  const gwHeld = (() => {
-    const by = new Map<string, number>();
-    for (const g of gateways ?? []) if (g.held !== null) by.set(g.gateway.toUpperCase(), g.held);
-    if (linkOn && st.id && st.held !== null) by.set(st.id.toUpperCase(), st.held);
-    return by.size ? [...by.values()].reduce((x, y) => x + y, 0) : null;
-  })();
-  const edgePending = edgeQueues ? edgeQueues.reduce((x, e) => x + e.pending, 0) : null;
-  const known3 = [gwHeld, edgePending, m.server.pending].filter((x): x is number => x !== null);
-  const waiting = known3.length ? known3.reduce((x, y) => x + y, 0) : null;
   const lastUpload = (gateways ?? []).reduce<number | null>((x, g) => (g.lastUpload !== null && (x === null || g.lastUpload > x) ? g.lastUpload : x), null);
-  const head = transferHeadline({ signedIn: Boolean(account), sync, waiting, lastUpload, now: m.now });
-  const missingBy = useMemo(() => {
-    const by = new Map<string, { incarnation?: string; seq: number; time: string | null }[]>();
-    for (const r of [...m.points, ...m.unlocated]) {
-      const k = r.tracker.toUpperCase();
-      if (!by.has(k)) by.set(k, []);
-      by.get(k)!.push(r);
-    }
-    return new Map([...by].map(([k, list]) => [k, notArrived(list, m.now)]));
-  }, [m.points, m.unlocated, m.now]);
+  const head = transferHeadline({ signedIn: Boolean(account), sync, waiting: m.server.pending, lastUpload, now: m.now });
   const health = transferHealth({
     now: m.now,
     trackers: m.herd.filter((a) => a.device).map((a) => ({
       id: a.device!, lastTime: a.lastReport ?? a.lastTime, periodS: a.periodS, noFix: a.noFix,
-      missing: missingBy.get(a.device!.toUpperCase()),
     })),
     collars: Object.values(collarReadings),
     gateways,
@@ -246,7 +227,7 @@ export function ConnectionScreen() {
     const fence = fencePlans.find((f) => f.device.toUpperCase() === id.toUpperCase());
     const staleFence = fence && (fence.state === "stale" || fence.state === "never" || fence.state === "clear");
     const heard = a.lastReport ?? dev?.lastTime ?? null;
-    const silent = !heard || m.now - heard > 3600_000;
+    const silent = a.status === "silent" || a.status === "lost" || a.status === "waiting";
     const connected = session?.device === id.toUpperCase() && session.link.alive;
     const bits = [connected ? "Bluetooth ile bağlı" : "",
                   heard ? fmt.ago(heard, m.now) : "hiç haber yok", a.gpsFault ? "GPS çalışmıyor" : a.noFix ? "konum bulamıyor" : "",
@@ -366,7 +347,7 @@ export function ConnectionScreen() {
       )}
       {note && <p className="sm lead" role="status">{note}</p>}
 
-      <Section title="Aktarım" info="Kayıt tasmadan gateway'e, oradan köprüyle (PC Edge ya da bu telefon) sunucuya gider. Her sayı son ölçüldüğü zamanla gösterilir; eski ölçüm canlı değer değildir. 'Henüz ulaşmadı': tasmanın kayıt sıra numaralarındaki boşluklar; o kayıtlar tasmada ya da yolda (gateway, Edge) bekliyor. 'Bellekte': tasmaya bağlanınca okunan bütün kayıtlar (gönderilmişler dahil). Satıra dokun, cihazlar açılır." />
+      <Section title="Aktarım" info="Kayıt tasmadan gateway'e, oradan köprüyle (PC Edge ya da bu telefon) sunucuya gider. Her sayı son ölçüldüğü zamanla gösterilir; eski ölçüm canlı değer değildir. 'Bellekte': tasmaya bağlanınca okunan bütün kayıtlar (gönderilmişler dahil). Satıra dokun, cihazlar açılır." />
       <Card>
         <div className="xfer-head">
           <span className={"dot " + head.tone} />

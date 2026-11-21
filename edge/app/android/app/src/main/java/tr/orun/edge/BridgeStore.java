@@ -82,6 +82,17 @@ final class BridgeStore extends BridgeSpool {
     /** This database's identity: a new file means the app starts its copy over. */
     String dbId() throws Exception { return meta("db_id"); }
 
+    /** Verified PERIODIC measurement times, matching the server's silence clock.
+     * Canonical plaintext stores zero at bytes 16..19 when UTC is unknown. */
+    java.util.Map<String, Long> lastMeasured(long now) throws Exception {
+        java.util.Map<String, Long> result = new java.util.HashMap<>();
+        String until = String.format(Locale.ROOT, "%08X", now / 1000);
+        for (String[] row : sql.query("SELECT device_id, MAX(substr(plaintext,33,8)) FROM observations " +
+                "WHERE family=1 AND substr(plaintext,33,8) BETWEEN '00000001' AND ? GROUP BY device_id", until))
+            result.put(row[0], Long.parseLong(row[1], 16) * 1000);
+        return result;
+    }
+
     /** This bridge's id at the server (a separate Edge from the app's own USB path). */
     String edgeId() throws Exception { return meta("edge_id"); }
 

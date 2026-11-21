@@ -96,7 +96,7 @@ class ProductRecordStore {
   bool custodyCandidateMatchesRetainedExact(
       const osc::ExactObject& expected) const;
 
-  // Enumerate at most four durably cached exact objects for a future
+  // Enumerate the bounded set of durably cached exact objects for a future
   // authenticated 0x05/0x06 custody ACK matcher. Read-only and fail-closed.
   // This is NOT a custody/ACK admission or a record release.
   bool snapshotCustodyCandidates(
@@ -125,6 +125,7 @@ class ProductRecordStore {
 
  private:
   friend class CustodyAckReleaseOwner;
+  friend class Kq05TrackerBatchReleaseOwner;
 
   // Only the HMAC-verifying custody owner may initiate this mutation.
   // It carries one previously authenticated exact object and is checked

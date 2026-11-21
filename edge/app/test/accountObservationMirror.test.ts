@@ -127,6 +127,147 @@ test("1. adım: latest response parser refuses duplicates, wrong family and miss
   const { parseServerLatest } = await import("../src/app/serverObservationRead.ts");
   assert.equal(parseServerLatest({ latest: true, records: [row] }).records.length, 1);
   assert.throws(() => parseServerLatest({ records: [row] }));
-  assert.throws(() => parseServerLatest({ latest: true, records: [row, { ...row, cursor: 2 }] }));
+  assert.throws(() => parseServerLatest({ latest: true, records: [row, { ...row, cursor: 2 }] }),
+    "same record cannot be repeated as a separate latest observation");
+  const noFix = { ...row, sequence: row.sequence + 1, cursor: 2 };
+  assert.equal(parseServerLatest({ latest: true, records: [row, noFix] }).records.length, 2,
+    "one GPS position and one more recent no-fix report may coexist");
+  assert.throws(() => parseServerLatest({ latest: true, records: [
+    row, noFix, { ...row, sequence: row.sequence + 2, cursor: 3 },
+  ] }), "at most two latest rows per collar");
   assert.throws(() => parseServerLatest({ latest: true, records: [{ ...row, family: 2, frame: row.frame.slice(0, 168) }] }));
+});
+
+test("a pending history request allows a live check before the cursor advances", async () => {
+  const { db, mirror } = await setup();
+  const client = fake("site-a", after => ({ records: [], cursor: after, has_more: false }));
+  let signalStarted!: () => void;
+  const started = new Promise<void>(resolve => { signalStarted = resolve; });
+  let finish!: () => void;
+  const release = new Promise<void>(resolve => { finish = resolve; });
+  client.readServerObservations = async () => {
+    signalStarted();
+    await release;
+    return { records: [row], cursor: 1, has_more: true };
+  };
+  client.readServerLatest = async () => ({ records: [row] });
+  const history = mirror.pullAvailable(client, 1);
+  await started;
+  try {
+    assert.equal((await mirror.pullLatest(client)).added, 1);
+    assert.deepEqual(await db.query("SELECT * FROM orun_account_observation_cursors_v1"), []);
+  } finally {
+    finish();
+  }
+  assert.equal((await history).cursor, 1);
+});
+
+test("offline foreground restore verifies the watch snapshot and resumes the saved history cursor", async () => {
+  const { db, core, mirror } = await setup();
+  const client = fake("site-a", () => ({ records: [row], cursor: 1, has_more: true }));
+  await mirror.pullAvailable(client, 1);
+  const reopened = new AccountObservationMirror(db, benchCredentials, task => core.exclusive(task));
+  await reopened.ingestLatest(client, { records: [row] });
+  client.readServerObservations = async () => { throw new Error("offline"); };
+  await assert.rejects(reopened.pullPage(client), /offline/);
+  assert.equal((await reopened.points(client)).length, 1);
+  client.readServerObservations = async after => {
+    assert.equal(after, 1);
+    return { records: [], cursor: after, has_more: false };
+  };
+  assert.equal((await reopened.pullAvailable(client, 1)).more, false);
+});
+
+
+test("native staged ciphertext is AEAD-verified and advances only the account history cursor", async () => {
+  const { db, core, mirror } = await setup();
+  const account = fake("stage-a", after => ({ records: [], cursor: after, has_more: false }));
+  assert.equal(await mirror.confirmedCursor(account), 0);
+  const staged = await mirror.acceptStagedPage(account, 0,
+    { records: [row], cursor: 1, has_more: true });
+  assert.deepEqual(staged, { received: 1, cursor: 1, more: true });
+  assert.equal(await mirror.confirmedCursor(account), 1);
+  assert.equal((await mirror.points(account)).length, 1);
+  assert.equal(await core.ledger.recordCount(), 0, "not a Gateway delivery or local ACCEPT");
+  assert.equal(core.nextAcceptMessage(), null);
+  assert.equal((await db.query(
+    "SELECT COUNT(*) AS n FROM orun_account_observation_records_v1"
+  ))[0].n, 1);
+});
+
+test("unverified native stage cannot advance SQLite after tampering or malformed ordering", async () => {
+  const { db, mirror } = await setup();
+  const account = fake("stage-b", after => ({ records: [], cursor: after, has_more: false }));
+  const corrupt = row.frame.slice(0, -2) + (row.frame.endsWith("00") ? "01" : "00");
+  await assert.rejects(mirror.acceptStagedPage(account, 0, {
+    records: [{ ...row, frame: corrupt }], cursor: 1, has_more: false,
+  }));
+  await assert.rejects(mirror.acceptStagedPage(account, 0, {
+    records: [{ ...row, cursor: 2 }], cursor: 1, has_more: false,
+  }));
+  assert.equal(await mirror.confirmedCursor(account), 0);
+  assert.equal((await db.query(
+    "SELECT COUNT(*) AS n FROM orun_account_observation_records_v1"
+  ))[0].n, 0);
+  db.failNextCommit = true;
+  await assert.rejects(mirror.acceptStagedPage(account, 0, {
+    records: [row], cursor: 1, has_more: false,
+  }), /injected/);
+  assert.equal(await mirror.confirmedCursor(account), 0);
+  assert.equal((await mirror.pullPage(account)).cursor, 0, "server fallback remains available");
+});
+
+test("stale native history page is ignored and cannot regress the verified cursor", async () => {
+  const { mirror } = await setup();
+  const account = fake("stage-c", () => ({ records: [row], cursor: 1, has_more: false }));
+  await mirror.pullPage(account);
+  assert.equal(await mirror.confirmedCursor(account), 1);
+  assert.equal(await mirror.acceptStagedPage(account, 0,
+    { records: [row], cursor: 1, has_more: false }), null);
+  assert.equal(await mirror.confirmedCursor(account), 1);
+});
+
+
+test("rolling native cache restores newest verified frames without falsely skipping old history", async () => {
+  const { db, core, mirror } = await setup();
+  const account = fake("rolling-a", after => {
+    assert.equal(after, 0, "the original backfill cursor must remain at zero");
+    return { records: [row], cursor: 1, has_more: true };
+  });
+  const newer = { ...row, cursor: 130 };
+  const sparse = await mirror.ingestSparseStagedPage(account, 129, {
+    records: [newer], cursor: 130, has_more: true,
+  });
+  assert.deepEqual(sparse, { received: 1, added: 1 });
+  assert.equal(await mirror.confirmedCursor(account), 0, "new recent records are not contiguous history");
+  assert.equal((await mirror.points(account)).length, 1, "newest position is available from SQLite offline");
+  assert.equal(await core.ledger.recordCount(), 0);
+  assert.equal(core.nextAcceptMessage(), null);
+  await mirror.pullPage(account);
+  assert.equal(await mirror.confirmedCursor(account), 1, "the missing history is backfilled from the server");
+  assert.equal(Number((await db.query(
+    "SELECT COUNT(*) AS n FROM orun_account_observation_records_v1"
+  ))[0].n), 1, "identical verified frame is deduplicated");
+});
+
+test("rolling sparse cache rejects forged ciphertext and cannot advance or insert anything", async () => {
+  const { db, mirror } = await setup();
+  const account = fake("rolling-b", after => ({ records: [], cursor: after, has_more: false }));
+  const corrupt = row.frame.slice(0, -2) + (row.frame.endsWith("00") ? "01" : "00");
+  await assert.rejects(mirror.ingestSparseStagedPage(account, 129, {
+    records: [{ ...row, cursor: 130, frame: corrupt }],
+    cursor: 130, has_more: true,
+  }));
+  assert.equal(await mirror.confirmedCursor(account), 0);
+  assert.equal(Number((await db.query(
+    "SELECT COUNT(*) AS n FROM orun_account_observation_records_v1"
+  ))[0].n), 0);
+  db.failNextCommit = true;
+  await assert.rejects(mirror.ingestSparseStagedPage(account, 129, {
+    records: [{ ...row, cursor: 130 }], cursor: 130, has_more: true,
+  }), /injected/);
+  assert.equal(await mirror.confirmedCursor(account), 0);
+  assert.equal(Number((await db.query(
+    "SELECT COUNT(*) AS n FROM orun_account_observation_records_v1"
+  ))[0].n), 0);
 });

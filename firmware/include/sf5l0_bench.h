@@ -167,6 +167,10 @@ class Sf5l0DrainPacer final {
   bool enabled() const { return enabled_; }
   // true: the pilot may be re-armed now (caller then calls rearm()).
   bool mayRearm(uint32_t now_ms);
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  bool hasBatchAirtime(uint32_t now_ms);
+  void chargeBatchTx(uint32_t now_ms);
+#endif
   void onSent(uint32_t now_ms);
   void onReleased(uint32_t now_ms);
 
@@ -309,7 +313,7 @@ class Sf5l0EdgeHandoff final {
   Reply accept(uint16_t page, uint16_t slot, uint64_t generation,
                const uint8_t (&mac)[32]);
   // Loop: drives the store's maintenance and erases fully handed-off pages.
-  Event service();
+  Event service(uint32_t reserved_pages = 0);
   uint32_t handedOff() const { return handed_off_; }
   uint32_t reclaimed() const { return reclaimed_; }
 
@@ -326,6 +330,7 @@ class Sf5l0EdgeHandoff final {
   uint8_t key_[32]{};
   bool has_key_ = false;
   bool pending_ = false;
+  uint32_t last_reserved_pages_ = 0;
   bool check_reclaim_ = true;  // once at boot, then after each hand-off
   uint32_t handed_off_ = 0;
   uint32_t reclaimed_ = 0;
@@ -401,7 +406,7 @@ void begin(FlashBackend& product_port, FlashBackend& security_port,
            RadioManager& radio, uint64_t gateway_id,
            bool observation_store_mounted);
 // loop(), after RadioManager::update() and only while not transmitting.
-void service(bool observation_store_mounted);
+void service(bool observation_store_mounted, bool reserve_command_window = false);
 // "BENCH?"
 void print();
 // "EDGE ACCEPT v1 ...": one authenticated (bench key) Edge durable accept.

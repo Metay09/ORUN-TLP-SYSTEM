@@ -5,6 +5,10 @@
 #include "gateway_custody_authorized_ingress.h"
 #include "gateway_product_startup_guard.h"
 #include "radio_manager.h"
+#ifdef ORUN_GATEWAY_BATCH_ACK
+#include "gateway_product_live_ingress.h"
+#include "gateway_grant_snapshot_reader.h"
+#endif
 
 namespace orun_tlp {
 
@@ -15,7 +19,7 @@ namespace orun_tlp {
 class GatewayProductCustodyRuntime final {
  public:
   enum class Event : uint8_t {
-    kNone, kCustodyStarted, kDuplicateHeld, kDenied, kAckTxStarted
+    kNone, kCustodyStarted, kDuplicateHeld, kDenied, kAckTxStarted, kLiveDurable
   };
 
   GatewayProductCustodyRuntime(RadioManager& radio,
@@ -28,6 +32,12 @@ class GatewayProductCustodyRuntime final {
   // Pending flash completions still progress when service is disabled;
   // disabled/mismatched-identity instances never receive or transmit.
   Event update(bool enabled);
+
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  void attachLiveIngress(GatewayProductLiveIngress& live) { live_ = &live; }
+  uint32_t reservedPages() const;
+  void reserveCommandWindow(bool reserved) { command_window_reserved_ = reserved; }
+#endif
 
   // Future production composition MUST use the verified boot gate; the
   // boolean overload remains the existing low-level SF5K3W host seam.
@@ -46,6 +56,23 @@ class GatewayProductCustodyRuntime final {
  private:
   RadioManager& radio_;
   GatewayCustodyAuthorizedIngress& ingress_;
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  struct PeerBatch {
+    GatewayCustodyAckScope scope{};
+    ProductCustodyStore::Handle handles[kq05_gateway_batch_ack::kMaxObjects]{};
+    uint32_t first_ms = 0;
+    uint32_t heard_ms = 0;
+    uint8_t count = 0;
+    bool sparse = true;
+    bool urgent = false;
+  };
+  PeerBatch peers_[gateway_grant_format::kGrantSlots]{};
+  uint32_t pending_rx_ms_ = 0;
+  GatewayProductLiveIngress* live_ = nullptr;
+  bool command_window_reserved_ = false;
+  bool pending_event_ = false;
+  void collectBatchHandle(uint32_t now);
+#endif
   int16_t last_rssi_ = 0;
   int8_t last_snr_ = 0;
 };

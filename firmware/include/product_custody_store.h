@@ -43,6 +43,9 @@ class ProductCustodyStore final {
       : flash_(flash), page_count_(page_count) {}
 
   bool begin();
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  Admission requestLive(const uint8_t* object, size_t size, Handle* duplicate);
+#endif
   Admission requestCustody(const uint8_t* object, size_t size,
                            Handle* duplicate = nullptr);
   void poll();
@@ -69,7 +72,7 @@ class ProductCustodyStore final {
   // A page whose every record is handed off holds no custody: erase it so
   // the space can be reused. Never the page still accepting records.
   // Returns the page index, or -1 if none.
-  int reclaimablePage() const;
+  int reclaimablePage(uint32_t reserved_pages = 0) const;
   bool requestReclaim(uint16_t page);
   bool takeMaintenanceResult(Maintenance& result);
   bool hasMaintenanceResult() const { return maintenance_ready_; }
@@ -97,6 +100,7 @@ class ProductCustodyStore final {
       custody_store_product_format::RecordInspection& out) const;
   bool findDuplicate(const uint8_t* object, size_t size,
                      Admission& result, Handle& handle) const;
+  Admission requestObject(const uint8_t* object, size_t size, Handle* duplicate);
   bool shapeValid(const uint8_t* data, size_t size) const;
   uint32_t recordOffset(uint16_t page, uint16_t slot) const;
   FlashOpResult write(uint32_t offset, const void* bytes, size_t size);

@@ -3,6 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "custody_ack.h"
+#ifdef ORUN_GATEWAY_BATCH_ACK
+#include "gateway_custody_authorized_ingress.h"
+#endif
 #include "lora_command.h"
 #include "device_identity.h"
 #include "network_service.h"
@@ -73,7 +76,11 @@ struct CustodyAckRxFrame {
   uint16_t size = 0;
   int16_t rssi_dbm = 0;
   int8_t snr_db = 0;
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  uint8_t payload[kq05_gateway_batch_ack::kMaxSize]{};
+#else
   uint8_t payload[custody_ack::kWireSize]{};
+#endif
 };
 
 // 6b: one LoRa command (Tracker) or command RESULT (Gateway) as received.
@@ -139,6 +146,11 @@ class RadioManager {
   // If RF cannot start after consumption, the Tracker must retry the exact
   // object; durable custody deduplication can then issue another ACK.
   bool sendAuthorizedCustodyAck(GatewayCustodyAuthorizedIngress& ingress);
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  bool sendAuthorizedBatchAck(GatewayCustodyAuthorizedIngress& ingress,
+                              const ProductCustodyStore::Handle* handles, uint8_t count,
+                              const GatewayCustodyAckScope& scope);
+#endif
   bool takeProductSecureFrame(ProductSecureRxFrame* frame);
   // Tracker-only, exact raw 56-byte ACK from driver callback mailbox.
   // The consumer MUST separately check durable grant and full HMAC.

@@ -7,6 +7,7 @@ import type { Snapshot } from "./controller.ts";
 import { deviceNames, deviceSettings, onAccountZones, onPilotAccountChange, onPilotObservationSync, pilotAccountSettled, pilotSetHerdZones, pilotAccountStatus, pilotObservationSyncState } from "./ownerAccountPilotRuntime.ts";
 import { nextAlerts, watchFresh } from "./alerts.ts";
 import { REFRESH_LIMIT_MS, STALE_AFTER_HIDDEN_MS, refreshDone, refreshing } from "./opening.ts";
+import { shareLocalGateway } from "../platform/herdWatch.ts";
 import { postAlerts } from "../platform/notify.ts";
 import { coverageCells, type Coverage } from "./coverage.ts";
 import { buildDevices } from "./devices.ts";
@@ -251,6 +252,22 @@ export function useModel(): Model {
   // Phone notifications (alerts.ts): decided only on current data, each once.
   const lastSync = useSyncExternalStore(onPilotObservationSync, () => pilotObservationSyncState().last);
   const linked = snap.link !== "none" && snap.state === "connected";
+  const measured = useMemo(() => {
+    const latest: Record<string, number> = {};
+    for (const rows of [points, unlocated]) for (const row of rows) {
+      const time = row.time && Date.parse(row.time);
+      if (time && time <= Date.now()) {
+        const id = row.tracker.toUpperCase();
+        latest[id] = Math.max(latest[id] ?? 0, time);
+      }
+    }
+    return JSON.stringify(latest);
+  }, [points, unlocated]);
+  const usbLinked = linked && snap.link === "usb";
+  const usbHeartbeat = usbLinked ? now : 0;
+  useEffect(() => {
+    if (account && loaded) shareLocalGateway(account.site, account.actor, usbLinked, measured);
+  }, [account?.site, account?.actor, loaded, usbLinked, measured, usbHeartbeat]);
   // The server decides the alerts for a signed-in phone and needs the zones;
   // a newer book in the account (another phone, a reinstall) comes back here.
   useEffect(() => { onAccountZones((b) => { try { zoneStore.adopt(b); } catch { /* invalid: keep ours */ } }); }, [zoneStore]);

@@ -109,7 +109,7 @@ export function openProductFrame(raw: Uint8Array, lookup: CredentialLookup): Obs
   const header = raw.subarray(0, 28);
   const shape = `${header[3]},${header[6]},${raw.length}`;
   if (header[0] !== 2 || header[1] !== 4 || header[2] !== 2 || header[7] !== 0 ||
-      header[5] !== 1 || (header[4] !== 2 && header[4] !== 3) ||
+      header[5] !== 1 || (!(header[3] === 1 && header[4] === 0) && header[4] !== 2 && header[4] !== 3) ||
       (shape !== "1,64,100" && shape !== "2,48,84"))
     throw new Reject("invalid protected header");
   const device = header.slice(8, 16);

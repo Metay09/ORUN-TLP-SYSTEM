@@ -10,6 +10,7 @@ import {
 import type { Point, RecordId } from "../core/points.ts";
 import type { OwnerAccountClient, AccountIdentity } from "./ownerAccountClient.ts";
 import type { ServerLatestObservations, ServerObservationPage, ServerObservationRow } from "./serverObservationRead.ts";
+import { parseServerObservationPage } from "./serverObservationRead.ts";
 import type { Observation } from "../core/product.ts";
 
 const CURSORS = "orun_account_observation_cursors_v1";
@@ -52,7 +53,7 @@ function keys(actor: AccountIdentity): string[] {
 
 export class AccountObservationMirror {
   private ready = false;
-  private busy = false;
+  private readonly busy = new Set<"live" | "history">();
   private readonly db: Db;
   private readonly lookup: CredentialLookup;
   private readonly exclusive: <T>(work: () => Promise<T>) => Promise<T>;
@@ -142,14 +143,14 @@ export class AccountObservationMirror {
     return added;
   }
 
-  private async guarded<T>(work: () => Promise<T>): Promise<T> {
-    if (this.busy) throw new Error("Konum indirme zaten sürüyor.");
-    this.busy = true;
+  private async guarded<T>(lane: "live" | "history", work: () => Promise<T>): Promise<T> {
+    if (this.busy.has(lane)) throw new Error("Konum indirme zaten sürüyor.");
+    this.busy.add(lane);
     try {
       await this.init();
       return await work();
     } finally {
-      this.busy = false;
+      this.busy.delete(lane);
     }
   }
 
@@ -157,7 +158,7 @@ export class AccountObservationMirror {
    * verified record; the history cursor does not move, so later history pages
    * still arrive and identical repeats are accepted. */
   async pullLatest(client: OwnerAccountClient): Promise<{ received: number; added: number }> {
-    return this.guarded(async () => {
+    return this.guarded("live", async () => {
       const { actor, epoch } = identity(client);
       const latest = await client.readServerLatest();
       if (!still(client, actor, epoch))
@@ -179,7 +180,7 @@ export class AccountObservationMirror {
    * by the native herd watch while the app was closed). Every frame is still
    * verified with the read key; a file that was tampered with adds nothing. */
   async ingestLatest(client: OwnerAccountClient, latest: ServerLatestObservations): Promise<{ added: number }> {
-    return this.guarded(async () => {
+    return this.guarded("live", async () => {
       const { actor, epoch } = identity(client);
       const verified = this.verify(latest.records);
       const added = await this.exclusive(() => this.db.transaction(async () => {
@@ -191,37 +192,95 @@ export class AccountObservationMirror {
     });
   }
 
+  /** The only durable history cursor: reflects AEAD-verified SQLite commits. */
+  async confirmedCursor(client: OwnerAccountClient): Promise<number> {
+    // Unlike pullPage(), this helper is callable before the mirror's first
+    // sync. Ensure the account tables exist before consulting the cursor.
+    await this.init();
+    const { actor } = identity(client);
+    return this.exclusive(() => this.cursor(actor));
+  }
+
+  private async commitPage(client: OwnerAccountClient, actor: AccountIdentity,
+                           epoch: number, previous: number,
+                           page: ServerObservationPage): Promise<{
+    received: number; cursor: number; more: boolean;
+  }> {
+    if (!still(client, actor, epoch))
+      throw new Error("Hesap değişti; konum kaydedilmedi.");
+    const verified = this.verify(page.records);
+
+    if (page.cursor !== previous) {
+      await this.exclusive(() => this.db.transaction(async () => {
+        if (await this.cursor(actor) !== previous)
+          throw new Error("Kayıt imleci başka işlemde değişti.");
+        if (!still(client, actor, epoch))
+          throw new Error("Hesap değişti; kayıt yazılmadı.");
+        await this.insert(actor, verified);
+        await this.db.run(
+          `INSERT INTO ${CURSORS} (site,actor,installation,cursor)
+           VALUES(?,?,?,?)
+           ON CONFLICT(site,actor,installation) DO UPDATE SET cursor=excluded.cursor`,
+          [...keys(actor), page.cursor]);
+        if (!still(client, actor, epoch))
+          throw new Error("Hesap değişti; SQLite yazımı geri alındı.");
+      }));
+      const persisted = await this.exclusive(() => this.cursor(actor));
+      if (persisted !== page.cursor)
+        throw new Error("Sunucu kayıt imleci SQLite'da doğrulanamadı.");
+    }
+    return { received: verified.length, cursor: page.cursor, more: page.has_more };
+  }
+
+  /** Native cache is UNTRUSTED: validate ordering, then AEAD-verify before committing. */
+  async acceptStagedPage(client: OwnerAccountClient, after: number,
+                         raw: unknown): Promise<{
+    received: number; cursor: number; more: boolean;
+  } | null> {
+    return this.guarded("history", async () => {
+      const { actor, epoch } = identity(client);
+      const previous = await this.exclusive(() => this.cursor(actor));
+      if (after !== previous) return null; // stale page or gap; fetch from server
+      const page = parseServerObservationPage(raw, previous);
+      return this.commitPage(client, actor, epoch, previous, page);
+    });
+  }
+
+  /**
+   * A rolling cache may have evicted older pages. These newer frames can
+   * still be independently AEAD-verified and saved for offline viewing,
+   * but MUST NOT move the contiguous server history cursor across gaps.
+   */
+  async ingestSparseStagedPage(client: OwnerAccountClient, after: number,
+                               raw: unknown): Promise<{ received: number; added: number } | null> {
+    return this.guarded("history", async () => {
+      const { actor, epoch } = identity(client);
+      const contiguous = await this.exclusive(() => this.cursor(actor));
+      if (after <= contiguous) return null;
+      const page = parseServerObservationPage(raw, after);
+      if (!still(client, actor, epoch))
+        throw new Error("Hesap değişti; geçici kayıt yazılmadı.");
+      const verified = this.verify(page.records);
+      const added = await this.exclusive(() => this.db.transaction(async () => {
+        if (!still(client, actor, epoch))
+          throw new Error("Hesap değişti; geçici kayıt yazılmadı.");
+        const count = await this.insert(actor, verified);
+        if (!still(client, actor, epoch))
+          throw new Error("Hesap değişti; SQLite işlemi geri alındı.");
+        return count;
+      }));
+      return { received: verified.length, added };
+    });
+  }
+
   async pullPage(client: OwnerAccountClient): Promise<{
     received: number; cursor: number; more: boolean;
   }> {
-    return this.guarded(async () => {
+    return this.guarded("history", async () => {
       const { actor, epoch } = identity(client);
       const previous = await this.exclusive(() => this.cursor(actor));
       const page: ServerObservationPage = await client.readServerObservations(previous);
-      if (!still(client, actor, epoch))
-        throw new Error("Hesap değişti; konum kaydedilmedi.");
-      const verified = this.verify(page.records);
-
-      if (page.cursor !== previous) {
-        await this.exclusive(() => this.db.transaction(async () => {
-          if (await this.cursor(actor) !== previous)
-            throw new Error("Kayıt imleci başka işlemde değişti.");
-          if (!still(client, actor, epoch))
-            throw new Error("Hesap değişti; kayıt yazılmadı.");
-          await this.insert(actor, verified);
-          await this.db.run(
-            `INSERT INTO ${CURSORS} (site,actor,installation,cursor)
-             VALUES(?,?,?,?)
-             ON CONFLICT(site,actor,installation) DO UPDATE SET cursor=excluded.cursor`,
-            [...keys(actor), page.cursor]);
-          if (!still(client, actor, epoch))
-            throw new Error("Hesap değişti; SQLite yazımı geri alındı.");
-        }));
-        const persisted = await this.exclusive(() => this.cursor(actor));
-        if (persisted !== page.cursor)
-          throw new Error("Sunucu kayıt imleci SQLite'da doğrulanamadı.");
-      }
-      return { received: verified.length, cursor: page.cursor, more: page.has_more };
+      return this.commitPage(client, actor, epoch, previous, page);
     });
   }
 
@@ -271,7 +330,7 @@ export class AccountObservationMirror {
         throw new Error("Konum aynası kimliği uyuşmuyor.");
       if (d.lat === null || d.lon === null) {
         const heard = typeof r.first_seen_utc === "number" ? r.first_seen_utc : null;
-        unlocated?.push({ tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence, time: d.time,
+        unlocated?.push({ delivery: "server", tracker: d.tracker, incarnation: d.incarnation, seq: d.sequence, time: d.time,
           received: heard ? new Date(heard * 1000).toISOString() : null, gnssFailures: d.gnss_failures ?? null,
           battery_mv: d.battery_mv, battery: d.battery, power: d.power ?? null, usb: d.usb ?? null,
           active_s: d.active_s, covered_s: d.covered_s, period_s: d.period_s });

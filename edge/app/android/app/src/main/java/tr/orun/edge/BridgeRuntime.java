@@ -75,6 +75,16 @@ final class BridgeRuntime {
         return instance;
     }
 
+    static synchronized BridgeRuntime running() { return instance; }
+
+    boolean gatewayReady() throws Exception {
+        return onDb(() -> link != null && link.ready());
+    }
+
+    Map<String, Long> lastMeasured(long now) throws Exception {
+        return onDb(() -> store == null ? Collections.emptyMap() : store.lastMeasured(now));
+    }
+
     private final Context ctx;
     final Handler handler;
     private final ExecutorService net = Executors.newSingleThreadExecutor();

@@ -44,6 +44,12 @@ public final class HerdWatchLogicCheck {
         check("notification ids are stable and positive",
                 HerdWatchLogic.idOf("out:A:1") == HerdWatchLogic.idOf("out:A:1") && HerdWatchLogic.idOf("out:A:1") > 0
                         && HerdWatchLogic.idOf("out:A:1") != HerdWatchLogic.idOf("out:A:2"));
+        java.util.Map<String, Long> reports = java.util.Collections.singletonMap("AA", 2000L);
+        check("newer local report supersedes server silence", HerdWatchLogic.superseded("lost:aa:1000", reports, 2100));
+        check("other collar still silent", !HerdWatchLogic.superseded("silent:BB:1000", reports, 2100));
+        check("history does not clear newer silence", !HerdWatchLogic.superseded("silent:AA:2000", reports, 2100));
+        check("future clock and unrelated alarms ignored", !HerdWatchLogic.superseded("lost:AA:1000", reports, 1500)
+                && !HerdWatchLogic.superseded("battery:AA:1000", reports, 2100));
         check("blind time wording", HerdWatchLogic.minutes(31 * 60000L).equals("31 dakikadır")
                 && HerdWatchLogic.minutes(3 * 3600000L).equals("3 saattir"));
 

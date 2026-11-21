@@ -60,7 +60,7 @@ test("sunucu satırı: giriş yok, eşitleniyor, son eşitleme, bekleyen kayıt"
   assert.match(serverLine(false, idle, null, null), /giriş/);
   assert.equal(serverLine(true, { ...idle, running: true }, null, null), "Eşitleniyor…");
   const last = { latest: 2, history: 0, more: false, at: Date.UTC(2026, 10, 1, 13, 20) };
-  assert.match(serverLine(true, { ...idle, last }, 5, null), /Son eşitleme .* · 2 tasma · 5 kayıt gönderilecek/);
+  assert.match(serverLine(true, { ...idle, last }, 5, null), /Son eşitleme .* · 2 kayıt · 5 kayıt gönderilecek/);
 });
 
 test("USB ile bağlı cihaz: gateway ya da tasma", async () => {

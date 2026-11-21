@@ -80,6 +80,7 @@ public final class HerdWatchService extends Service {
         AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         if (alarms != null) alarms.cancel(pollIntent(context));
         context.stopService(new Intent(context, HerdWatchService.class));
+        HerdHistoryStage.clear(context); // clear unverified account cache on sign-out
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) { nm.cancel(ID_SERVER); nm.cancel(ID_LOGIN); }
     }
@@ -164,41 +165,79 @@ public final class HerdWatchService extends Service {
         } catch (Exception unreachable) {
             alerts = null;
         }
+        BridgeRuntime bridge = BridgeRuntime.running();
+        now = System.currentTimeMillis();
+        boolean sameActor = account.optString("site").equals(p.getString("localSite", null))
+                && account.optString("actor").equals(p.getString("localActor", null));
+        long usbAge = now - p.getLong("usbAt", 0);
+        boolean gateway = sameActor && usbAge >= 0 && usbAge < 90_000L;
+        java.util.Map<String, Long> measured = new java.util.HashMap<>();
+        if (sameActor) {
+            JSONObject local = new JSONObject(p.getString("localMeasured", "{}"));
+            for (java.util.Iterator<String> it = local.keys(); it.hasNext();) {
+                String id = it.next();
+                measured.put(id, local.optLong(id));
+            }
+        }
+        if (bridge != null) {
+            try {
+                gateway |= bridge.gatewayReady();
+                for (java.util.Map.Entry<String, Long> e : bridge.lastMeasured(now).entrySet()) {
+                    Long previous = measured.get(e.getKey());
+                    if (previous == null || previous < e.getValue()) measured.put(e.getKey(), e.getValue());
+                }
+            } catch (Exception ignored) { /* use the foreground ledger if the bridge is unavailable */ }
+        }
+        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        JSONArray stored = new JSONArray(p.getString("keys", "[]"));
+        List<String> known = new ArrayList<>();
+        java.util.Set<Integer> obsolete = new java.util.HashSet<>();
+        for (int i = 0; i < stored.length(); i++) {
+            String key = stored.getString(i);
+            known.add(key);
+            if (HerdWatchLogic.superseded(key, measured, now)) obsolete.add(HerdWatchLogic.idOf(key));
+        }
+        if (nm != null && !obsolete.isEmpty()) {
+            for (android.service.notification.StatusBarNotification active : nm.getActiveNotifications())
+                if (obsolete.contains(active.getId())) nm.cancel(active.getId());
+        }
+        if (gateway) {
+            if (nm != null) nm.cancel(ID_SERVER);
+            p.edit().putBoolean("serverTold", false).apply();
+        }
         if (alerts != null && (alerts.status == 401 || alerts.status == 403)) {
             if (!p.getBoolean("loginTold", false)) {
                 show(ID_LOGIN, "ORUN: yeniden giriş yap",
-                        "Oturum kapanmış; giriş yapana kadar sürü izlenemiyor");
+                        "Sunucu oturumu sona erdi. Eşitlemek için yeniden giriş yap.");
                 p.edit().putBoolean("loginTold", true).apply();
             }
-            setLine("Giriş gerekli · sürü izlenemiyor");
+            setLine(gateway ? "Gateway bağlı · sunucuya giriş gerekli" : "Sunucuya giriş gerekli");
             return;
         }
         if (alerts == null || alerts.status != 200) {
             long lastOk = p.getLong("lastOk", 0L), since = p.getLong("failSince", 0L);
             if (since == 0L) { since = now; p.edit().putLong("failSince", now).apply(); }
             long blind = now - (lastOk > 0L ? lastOk : since);
-            if (blind >= UNREACHABLE_MS && !p.getBoolean("serverTold", false)) {
+            if (!gateway && blind >= UNREACHABLE_MS && !p.getBoolean("serverTold", false)) {
                 show(ID_SERVER, "Sunucuya ulaşılamıyor",
-                        HerdWatchLogic.minutes(blind) + " sürü izlenemiyor · internet ya da sunucu kapalı olabilir");
+                        HerdWatchLogic.minutes(blind) + " sunucuyla eşitleme yapılamadı");
                 p.edit().putBoolean("serverTold", true).apply();
             }
-            setLine("Sunucuya ulaşılamıyor · " + (lastOk == 0L ? "henüz bağlanamadı" : "son kontrol " + clock(lastOk)));
+            setLine(gateway ? "Gateway bağlı · sunucuyla eşitleme bekliyor" : "Sunucuya ulaşılamıyor · " + (lastOk == 0L ? "henüz bağlanamadı" : "son kontrol " + clock(lastOk)));
             return;
         }
 
-        // Reached the server: clear the "blind" state.
-        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        // Server connectivity recovered.
         if (nm != null) { nm.cancel(ID_SERVER); nm.cancel(ID_LOGIN); }
         JSONArray list = new JSONObject(alerts.body).getJSONArray("alerts");
         List<HerdWatchLogic.Offer> offers = new ArrayList<>();
         for (int i = 0; i < list.length(); i++) {
             JSONObject a = list.getJSONObject(i);
-            offers.add(new HerdWatchLogic.Offer(a.getString("key"), a.getString("title"),
+            String key = a.getString("key");
+            if (HerdWatchLogic.superseded(key, measured, now)) continue;
+            offers.add(new HerdWatchLogic.Offer(key, a.getString("title"),
                     a.optString("body", ""), a.has("needs") ? a.optString("needs", null) : null));
         }
-        List<String> known = new ArrayList<>();
-        JSONArray stored = new JSONArray(p.getString("keys", "[]"));
-        for (int i = 0; i < stored.length(); i++) known.add(stored.getString(i));
         HerdWatchLogic.Outcome outcome = HerdWatchLogic.decide(offers, p.getBoolean("ready", false), known);
         for (HerdWatchLogic.Offer o : outcome.show) show(HerdWatchLogic.idOf(o.key), o.title, o.body);
         p.edit().putBoolean("ready", true).putString("keys", new JSONArray(outcome.keys).toString())
@@ -219,6 +258,48 @@ public final class HerdWatchService extends Service {
             }
         } catch (Exception ignored) {
             // The alerts were handled; the snapshot is a convenience.
+        }
+
+        // Lower priority than alerts and live locations: stage a single page
+        // of still-encrypted history for later app-side AEAD verification.
+        // The native service NEVER advances the phone's verified SQLite cursor.
+        // Diagnostic metadata only: no credentials, frames, coordinates or
+        // response bodies. Keep errors isolated from critical alerts/latest.
+        p.edit().putLong("historyAttemptAt", System.currentTimeMillis())
+                .putString("historyState", "starting")
+                .remove("historyHttp").remove("historyError").apply();
+        try {
+            long after = HerdHistoryStage.nextAfter(this, account);
+            p.edit().putLong("historyAfter", after).apply();
+            if (after < 0) {
+                p.edit().putString("historyState", "not_seeded").apply();
+            } else {
+                Reply history = get(origin + "/v1/edge/records?after=" + after, token);
+                p.edit().putInt("historyHttp", history.status).apply();
+                if (history.status != 200) {
+                    p.edit().putString("historyState", "http_error")
+                            .putLong("historyDoneAt", System.currentTimeMillis()).apply();
+                } else {
+                    // Observe the response independently of whether append
+                    // succeeds: 200/empty and 200/rejected are different cases.
+                    int received = new JSONObject(history.body)
+                            .getJSONArray("records").length();
+                    HerdHistoryStage.append(this, account, after, history.body);
+                    long tail = HerdHistoryStage.nextAfter(this, account);
+                    p.edit().putInt("historyReceived", received)
+                            .putLong("historyTail", tail)
+                            .putString("historyState", received == 0 ? "empty"
+                                    : tail > after ? "staged" : "not_staged")
+                            .putLong("historyDoneAt", System.currentTimeMillis()).apply();
+                }
+            }
+        } catch (Exception failure) {
+            // Only an exception's class is recorded; messages can include
+            // URLs or server internals and must never reach diagnostics.
+            p.edit().putString("historyState", "exception")
+                    .putString("historyError", failure.getClass().getSimpleName())
+                    .putLong("historyDoneAt", System.currentTimeMillis()).apply();
+            // Failure must never block critical alerts or the latest snapshot.
         }
     }
 
