@@ -204,6 +204,14 @@ NetworkEvent NetworkService::receive(const uint8_t* payload, size_t size,
   return malformedEvent(false);
 }
 
+bool NetworkService::hasDueForward(uint32_t now_ms) const {
+  if (!relay_forwarding_enabled_ || forward_active_) return false;
+  for (const auto& entry : queue_) {
+    if (entry.valid && monotonic::reached(now_ms, entry.due_ms)) return true;
+  }
+  return false;
+}
+
 bool NetworkService::takeDueForward(uint32_t now_ms,
                                     tlp::RelayForwardPacket* packet) {
   if (packet == nullptr || !relay_forwarding_enabled_ || forward_active_)
