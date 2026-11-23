@@ -7,6 +7,10 @@
 
 #include "sf5l0_bench.h"
 #include "radio_config.h"
+#ifdef ORUN_GATEWAY_BATCH_ACK
+#include "gateway_radio_timing.h"
+#include "tlp_v2_product_secure.h"
+#endif
 
 #include <string.h>
 
@@ -409,6 +413,7 @@ void Sf5l0DrainPacer::begin(uint32_t now_ms, uint64_t device_id) {
   next_allowed_ms_ = now_ms;
   last_refill_ms_ = now_ms;
   tokens_us_ = uint64_t(config_.burst_ms) * 1000U;
+  last_batch_airtime_ms_ = config_.airtime_ms;
 }
 
 uint32_t Sf5l0DrainPacer::nextRandom() {
@@ -441,6 +446,36 @@ bool Sf5l0DrainPacer::hasBatchAirtime(uint32_t now_ms) {
 void Sf5l0DrainPacer::chargeBatchTx(uint32_t now_ms) {
   onSent(now_ms);
   awaiting_ack_ = false;
+}
+
+// PRODUCT_SECURE batch pacing: RX gap only.
+// RadioManager owns the single shared RF airtime budget.
+bool Sf5l0DrainPacer::hasBatchAirtime(
+    uint32_t now_ms, uint8_t packet_size) {
+  (void)packet_size;
+  return enabled_ &&
+      (!stats_.sent || now_ms - sent_at_ms_ >=
+          last_batch_airtime_ms_ +
+          radio_config::kWindowedRxAfterTxMs);
+}
+
+bool Sf5l0DrainPacer::hasBacklogAirtime(
+    uint32_t now_ms, uint8_t packet_size,
+    uint32_t ms_until_report) {
+  if (!hasBatchAirtime(now_ms, packet_size)) return false;
+  const uint32_t blocking_ms =
+      (profileAirtimeUs(packet_size) + 1999U) / 1000U +
+      radio_config::kWindowedRxAfterTxMs + 200U;
+  return ms_until_report > blocking_ms;
+}
+
+void Sf5l0DrainPacer::chargeBatchTx(
+    uint32_t now_ms, uint8_t packet_size) {
+  last_batch_airtime_ms_ =
+      (profileAirtimeUs(packet_size) + 1999U) / 1000U;
+  sent_at_ms_ = now_ms;
+  awaiting_ack_ = false;
+  ++stats_.sent;
 }
 #endif
 bool Sf5l0DrainPacer::mayRearm(uint32_t now_ms) {

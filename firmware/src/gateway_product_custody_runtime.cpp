@@ -8,6 +8,14 @@
 namespace orun_tlp {
 
 #ifdef ORUN_GATEWAY_BATCH_ACK
+namespace {
+constexpr uint8_t kMaxAttemptsPerWindow = 1U + kq05_gateway_batch_ack::kMaxObjects;
+// Four one-minute reports can share a receipt before the six-minute retry.
+constexpr uint32_t kMaxGroupWaitMs = 180000U;
+constexpr uint32_t kPartialAckReserveUs = 2000000U;  // one more 5-reference ACK
+constexpr uint32_t kRetrySpacingMs = 500U;
+}  // namespace
+
 uint32_t GatewayProductCustodyRuntime::reservedPages() const {
   uint32_t pages = 0;
   for (const auto& peer : peers_)
@@ -39,12 +47,13 @@ void GatewayProductCustodyRuntime::collectBatchHandle(uint32_t now) {
                        peer.scope.grant_generation != scope.grant_generation ||
                        peer.scope.custody_floor != scope.custody_floor;
   if (changed) peer = PeerBatch{};
-  peer.sparse = changed || monotonic::elapsed(pending_rx_ms_, peer.heard_ms, 300000U);
+  peer.attempts = 0;
   peer.heard_ms = pending_rx_ms_;
   peer.scope = scope;
   if (!peer.count) {
     peer.first_ms = now;
     peer.urgent = false;
+    peer.individual = false;
   }
   peer.urgent |= pending_event_;
   for (unsigned i = 0; i < peer.count; ++i) {
@@ -98,16 +107,48 @@ GatewayProductCustodyRuntime::update(bool enabled) {
   // Drop volatile references if the collar has left. It retains unacknowledged records.
   for (auto& peer : peers_) {
     if (!peer.count) continue;
-    if (monotonic::elapsed(now, peer.heard_ms, 600000U)) peer.count = 0;
-    if (!peer.count || ingress_.pending() || command_window_reserved_ ||
-        monotonic::elapsed(now, peer.heard_ms, 9000U)) continue;
-    const bool due = peer.urgent || peer.count >= kq05_gateway_batch_ack::kMaxObjects - 1U ||
-        (peer.sparse && monotonic::elapsed(now, peer.heard_ms, 1000U)) ||
-        monotonic::elapsed(now, peer.first_ms, 300000U);
-    if (due && radio_.canSend()) {
-      const bool sent = radio_.sendAuthorizedBatchAck(ingress_, peer.handles, peer.count, peer.scope);
-      peer.count = 0;
-      if (sent) return Event::kAckTxStarted;
+    if (monotonic::elapsed(now, peer.heard_ms, 600000U)) {
+      peer.count = 0;  // retire only stale RAM hints; custody is unchanged
+      continue;
+    }
+    const uint8_t count = peer.individual ? 1U : peer.count;
+    const uint8_t size = kq05_gateway_batch_ack::kHeaderSize +
+        count * kq05_gateway_batch_ack::kRefSize + kq05_gateway_batch_ack::kTagSize;
+    if (ingress_.pending() || command_window_reserved_ || !radio_.canSend() ||
+        !ackFitsWindow(now, peer.heard_ms, size) ||
+        peer.attempts >= kMaxAttemptsPerWindow ||
+        (peer.attempts && !monotonic::elapsed(now, peer.last_attempt_ms, kRetrySpacingMs)) ||
+        !radio_.gatewayAirtimeAvailable(size)) continue;
+
+    // Under pressure, accumulate references. A duplicate, an EVENT, a full
+    // group or an aging group can use the reserved credit in this window.
+    const bool due = peer.urgent || peer.count >= 4U ||
+        monotonic::elapsed(now, peer.first_ms, kMaxGroupWaitMs) ||
+        (monotonic::elapsed(now, peer.heard_ms, 1000U) &&
+         radio_.gatewayAirtimeAvailable(size, kPartialAckReserveUs));
+    if (!due) continue;
+    ++peer.attempts;
+    peer.last_attempt_ms = now;
+    const auto result = radio_.sendAuthorizedBatchAck(
+        ingress_, peer.handles, count, peer.scope, peer.heard_ms);
+    if (result == RadioManager::BatchTx::kStarted ||
+        result == RadioManager::BatchTx::kStaleHandle) {
+      // A stale result is possible only for one individually read-back
+      // handle whose page generation or durable record no longer matches.
+      peer.count -= count;
+      if (peer.count) memmove(peer.handles, peer.handles + count,
+                              peer.count * sizeof(peer.handles[0]));
+      if (result == RadioManager::BatchTx::kStaleHandle) continue;
+      peer.attempts = kMaxAttemptsPerWindow;
+      return Event::kAckTxStarted;
+    }
+    if (result == RadioManager::BatchTx::kUnverifiable) {
+      if (peer.individual) {
+        const auto first = peer.handles[0];
+        memmove(peer.handles, peer.handles + 1, (peer.count - 1U) * sizeof(first));
+        peer.handles[peer.count - 1U] = first;
+      }
+      peer.individual = true;
     }
   }
 #endif
@@ -145,7 +186,8 @@ GatewayProductCustodyRuntime::update(bool enabled) {
       for (auto& peer : peers_) {
         if (peer.count && peer.scope.tracker_device_id == header.device_id &&
             peer.scope.key_epoch == header.key_epoch) {
-          peer.heard_ms = now;
+          peer.heard_ms = received.rx_floor_ms;
+          peer.attempts = 0;
           peer.urgent = true;
           break;
         }
@@ -159,7 +201,7 @@ GatewayProductCustodyRuntime::update(bool enabled) {
     return outcome == GatewayProductLiveIngress::Receive::kDuplicateDurable
                ? Event::kLiveDurable : Event::kDenied;
   }
-  pending_rx_ms_ = now;
+  pending_rx_ms_ = received.rx_floor_ms;
   pending_event_ = header.app_family == tlp::kProductAppFamilyEvent;
   const auto outcome = ingress_.receive(received.payload, received.size, true);
 #else

@@ -39,7 +39,8 @@ bool GatewayCustodyAuthorizedIngress::prepareAuthorizedBatchAck(
     const ProductCustodyStore::Handle* handles, uint8_t count,
     const GatewayCustodyAckScope& requested,
     uint8_t (&wire)[kq05_gateway_batch_ack::kMaxSize],
-    size_t& written) {
+    size_t& written, bool* stale_single) {
+  if (stale_single) *stale_single = false;
   if (pending_ || custody_.waitingFlash() || custody_.ackReady() ||
       handles == nullptr || count == 0U ||
       count > kq05_gateway_batch_ack::kMaxObjects ||
@@ -58,7 +59,7 @@ bool GatewayCustodyAuthorizedIngress::prepareAuthorizedBatchAck(
   uint8_t candidate[kq05_gateway_batch_ack::kMaxSize]{};
   size_t candidate_size = 0U;
   const bool durable = custody_.signDurableBatch(
-      handles, count, current, key, candidate, candidate_size);
+      handles, count, current, key, candidate, candidate_size, stale_single);
 
   // Just like the old 0x05 path, grant revocation after durable admission
   // suppresses any outbound acknowledgement. Compare the entire key too:

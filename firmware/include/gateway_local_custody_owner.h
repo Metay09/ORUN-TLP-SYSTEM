@@ -45,7 +45,7 @@ class GatewayLocalCustodyOwner final {
       const ProductCustodyStore::Handle* handles, uint8_t count,
       const GatewayCustodyAckScope& scope, const uint8_t (&scoped_key)[32],
       uint8_t (&wire)[kq05_gateway_batch_ack::kMaxSize],
-      size_t& written);
+      size_t& written, bool* stale_single = nullptr);
   bool signCommitted(const ProductCustodyStore::Handle& handle);
   // Same-loop trusted ingress only; no public ability to obtain raw handles.
   bool takeBatchHandle(ProductCustodyStore::Handle& output);

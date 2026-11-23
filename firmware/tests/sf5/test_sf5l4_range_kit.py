@@ -171,8 +171,11 @@ def firmware() -> None:
     # Bench only: no live v1 POSITION TX while a custody ACK is awaited
     # (Y2a one firmware: only with Tracker storage).
     hold = main.index("tracking_enabled && !(trackerStorage() && bench_pacer.awaitingAck())")
-    opened = main.rfind("#ifdef ORUN_SF5L0_TRACKER", 0, hold)
-    assert opened >= 0 and "#endif" not in main[opened:hold]
+    opened = main.rfind("#ifdef ORUN_GATEWAY_BATCH_ACK", 0, hold)
+    branch = main.rfind("#elif defined(ORUN_SF5L0_TRACKER)", 0, hold)
+    assert 0 <= opened < branch < hold
+    assert "#endif" not in main[opened:hold]
+    assert "#else" not in main[branch:hold]
     assert "positions.update(orun_tlp::monotonic::nowMs(), live_position_allowed)" in main
     pilot = (ROOT / "firmware/include/tracker_product_tx_pilot.h").read_text()
     assert "bool live_first_ = false;" in pilot  # default stays SF5K3V

@@ -544,6 +544,14 @@ void print() {
       static_cast<unsigned long>(edge_messages_out),
       static_cast<unsigned long>(edge_messages_in),
       static_cast<unsigned long>(edge_ingress_dropped));
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  if (radio) {
+    const auto timing = radio->eventDiagnostics();
+    Serial.printf("BENCH GW ACK max_send_call_ms=%lu max_done_age_ms=%lu\n",
+                  static_cast<unsigned long>(timing.batch_ack_max_send_call_ms),
+                  static_cast<unsigned long>(timing.batch_ack_max_done_age_ms));
+  }
+#endif
 #if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
   printOgk1();
 #endif

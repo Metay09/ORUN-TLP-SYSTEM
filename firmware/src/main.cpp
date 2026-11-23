@@ -1551,7 +1551,8 @@ void serviceLoraRelay() {
   }
   if (radio_manager.canSend()) {
     orun_tlp::LoraCommandRelay::Frame f{};
-    if (lora_relay.due(now, f) && radio_manager.sendLoraFrame(f.bytes, f.size)) {
+    const auto fits_budget = [](uint8_t size) { return radio_manager.gatewayAirtimeAvailable(size); };
+    if (lora_relay.due(now, f, fits_budget) && radio_manager.sendLoraFrame(f.bytes, f.size)) {
       snprintf(say, sizeof(say), "LORA SENT target=%08lX%08lX id=%08lX attempt=%u/%u part=%u/%u",
                static_cast<unsigned long>(uint32_t(f.target >> 32)),
                static_cast<unsigned long>(uint32_t(f.target)),
@@ -3987,6 +3988,10 @@ void setup() {
 
 #ifdef ORUN_SF5L0_TRACKER
   decideBootStorageRole();
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  if (gatewayStorage()) radio_manager.enableGatewayBudget();
+  if (trackerStorage()) radio_manager.enableSharedAirtimeBudget();
+#endif
 #endif
   // M7P6B: recovery only -- never provisions a credential. See the
   // composition-root comment on security_store above.
@@ -4728,12 +4733,52 @@ void loop() {
 #ifdef ORUN_GATEWAY_BATCH_ACK
   {
     const uint32_t now = orun_tlp::monotonic::nowMs();
-    const bool eligible = pilot_allowed && bench_pacer.hasBatchAirtime(now);
-    const auto event = batch_event.update(now, eligible);
-    const bool event_sent = event == orun_tlp::TrackerCriticalEventTx::Result::kSent;
-    if (event_sent) bench_pacer.chargeBatchTx(now);
-    const auto history = batch_history.update(now, eligible && !event_sent);
-    if (history == orun_tlp::TrackerCriticalEventTx::Result::kSent) bench_pacer.chargeBatchTx(now);
+    // Conservative next-report estimate based on the current GNSS cadence.
+    // An unknown or overdue period reserves the next live opportunity.
+    uint32_t until_report_ms = 0U;
+    const uint32_t interval_ms = gnss_manager.trackingIntervalMs();
+    if (product_period_open && interval_ms != 0U) {
+      const uint32_t elapsed = now - product_period_started_ms;
+      until_report_ms = interval_ms - (elapsed % interval_ms);
+    }
+
+    const uint8_t event_size =
+        static_cast<uint8_t>(orun_tlp::tlp::kEventFrameSize);
+    const uint8_t periodic_size =
+        static_cast<uint8_t>(orun_tlp::tlp::kPeriodicFrameSize);
+
+    // Critical EVENT retains priority and its own real airtime cost.
+    const bool event_eligible = pilot_allowed &&
+        bench_pacer.hasBatchAirtime(now, event_size) &&
+        radio_manager.sharedAirtimeAvailable(event_size);
+    const auto event = batch_event.update(now, event_eligible);
+    const bool event_sent =
+        event == orun_tlp::TrackerCriticalEventTx::Result::kSent;
+    if (event_sent) bench_pacer.chargeBatchTx(now, event_size);
+
+    // Latest PERIODIC, with or without a GNSS fix, may use the live
+    // reserve. Old backlog needs surplus budget and a safe radio gap.
+    const bool live_eligible = pilot_allowed && !event_sent &&
+        bench_pacer.hasBatchAirtime(now, periodic_size) &&
+        radio_manager.sharedAirtimeAvailable(periodic_size);
+    const uint32_t live_cost_us =
+        orun_tlp::profileAirtimeUs(periodic_size) + 1000U;
+    // 90 us/ms: gercek 95 us/ms yenilemeden daha ihtiyatli.
+    const uint64_t future_credit_us =
+        uint64_t(until_report_ms) * 90U;
+    const uint32_t reserve_us =
+        future_credit_us >= live_cost_us ? 0U :
+        live_cost_us - static_cast<uint32_t>(future_credit_us);
+
+    const bool backlog_eligible = live_eligible &&
+        bench_pacer.hasBacklogAirtime(
+            now, periodic_size, until_report_ms) &&
+        radio_manager.sharedAirtimeAvailable(
+            periodic_size, reserve_us);
+    const auto history =
+        batch_history.update(now, live_eligible, backlog_eligible);
+    if (history == orun_tlp::TrackerCriticalEventTx::Result::kSent)
+      bench_pacer.chargeBatchTx(now, periodic_size);
   }
 #else
 #ifdef ORUN_SF5L0_TRACKER

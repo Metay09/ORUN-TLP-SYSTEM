@@ -63,7 +63,9 @@ class GatewayProductCustodyRuntime final {
     uint32_t first_ms = 0;
     uint32_t heard_ms = 0;
     uint8_t count = 0;
-    bool sparse = true;
+    uint32_t last_attempt_ms = 0;
+    uint8_t attempts = 0;
+    bool individual = false;
     bool urgent = false;
   };
   PeerBatch peers_[gateway_grant_format::kGrantSlots]{};

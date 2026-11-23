@@ -28,17 +28,21 @@ void TrackerCriticalEventTx::rememberTransmission(uint32_t now) {
   for (auto& tx : transmitted_) {
     if (sameId(tx.id, selected_)) { tx.sent_ms = now; return; }
   }
+  // Reuse an empty or timed-out timer before looking up an OBS1 record.
+  // This runs immediately after RF admission; a live slot earlier in the
+  // array must not cause an unnecessary flash scan on each first send.
   for (auto& tx : transmitted_) {
-    // Every active entry corresponds to a durable exact slot. A new slot
-    // can reuse tracking space from a completed, expired or reclaimed one.
-    ObservationStore::Record old{};
-    bool reusable = !tx.id.valid() || monotonic::elapsed(now, tx.sent_ms, kReceiptWaitMs);
-    if (!reusable) {
-      const auto found = records_.store().lookup(tx.id, old);
-      reusable = found == ObservationStore::LookupResult::kNone ||
-                 (found == ObservationStore::LookupResult::kFound && old.released);
+    if (!tx.id.valid() || monotonic::elapsed(now, tx.sent_ms, kReceiptWaitMs)) {
+      tx.id = selected_;
+      tx.sent_ms = now;
+      return;
     }
-    if (reusable) {
+  }
+  for (auto& tx : transmitted_) {
+    ObservationStore::Record old{};
+    const auto found = records_.store().lookup(tx.id, old);
+    if (found == ObservationStore::LookupResult::kNone ||
+        (found == ObservationStore::LookupResult::kFound && old.released)) {
       tx.id = selected_;
       tx.sent_ms = now;
       return;
@@ -78,7 +82,7 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::selectFresh(uint32_t now)
 }
 
 TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
-    uint32_t now_ms, bool eligible) {
+    uint32_t now_ms, bool eligible, bool allow_backlog) {
   const bool history = historyMode();
   // Report a hard fault only on the transition to blocked; do not flood
   // the serial console with an error on every cooperative loop iteration.
@@ -91,7 +95,9 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
     if (!outcome.durable || !sameSelected(outcome.identity)) return block();
     sealed_ = {};  // The committed exact object, not RAM, is RF authority.
     phase_ = Phase::kReady;
-    return Result::kCacheDurable;
+    // An eligible critical EVENT owns this RF opportunity. Yielding here
+    // lets periodic history take the radio between commit and EVENT TX.
+    if (history || !eligible) return Result::kCacheDurable;
   }
 
   if (!idleStorage()) return Result::kNone;
@@ -99,6 +105,11 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
     const auto result = selectFresh(now_ms);
     if (result != Result::kNone || fresh_cursor_) return result;
   }
+
+  // Fresh PERIODIC may spend the live reserve. Retried and older
+  // PERIODIC objects must wait for surplus airtime.
+  if (history && !allow_backlog && !fresh_)
+    return Result::kNone;
 
   // Gateway custody ACK delivery is verified by CustodyAckReleaseOwner, not
   // this sender. Inspect only the actual durable OBS1 release state.

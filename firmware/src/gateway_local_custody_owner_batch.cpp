@@ -16,7 +16,7 @@ bool GatewayLocalCustodyOwner::signDurableBatch(
     const ProductCustodyStore::Handle* handles, uint8_t count,
     const GatewayCustodyAckScope& scope, const uint8_t (&scoped_key)[32],
     uint8_t (&wire)[kq05_gateway_batch_ack::kMaxSize],
-    size_t& written) {
+    size_t& written, bool* stale_single) {
   // Reuse ProductCustodyStore, not a second intake/flash state machine.
   // No signed ACK while its single owner has an incomplete write/outcome.
   if (handles == nullptr || count == 0U ||
@@ -38,8 +38,10 @@ bool GatewayLocalCustodyOwner::signDurableBatch(
     if (!proven) break;
 
     size_t length = 0U;
-    if (store_.readConfirmedDurable(handles[i], exact[i], length) !=
-            ProductCustodyStore::Lookup::kFound ||
+    const auto lookup = store_.readConfirmedDurable(handles[i], exact[i], length);
+    if (stale_single && count == 1 && lookup == ProductCustodyStore::Lookup::kNotHeld)
+      *stale_single = true;
+    if (lookup != ProductCustodyStore::Lookup::kFound ||
         (length != 84U && length != 100U)) {
       proven = false;
       break;

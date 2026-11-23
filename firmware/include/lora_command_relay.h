@@ -55,7 +55,7 @@ class LoraCommandRelay {
   void ackSent(uint32_t now);
 
   // The next frame to send now, if any (call only when the radio can send).
-  bool due(uint32_t now, Frame& out);
+  bool due(uint32_t now, Frame& out, bool (*airtime_available)(uint8_t) = nullptr);
 
   // A RESULT came back: true if it answered a queued command (removed).
   bool answered(const uint8_t* result, size_t size);

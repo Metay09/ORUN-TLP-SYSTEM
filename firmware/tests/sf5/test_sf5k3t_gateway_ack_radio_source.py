@@ -26,7 +26,7 @@ steps = [
     "header.gateway_device_id != device_id_",
     "radio_driver::Guard gate;",
     "if (!gate || !canSend())",
-    "startTxOperation();",
+    "if (!startTxOperation(sizeof(ack)))",
     "tx_kind_ = TxKind::kCustodyAck;",
     "Radio.Send(ack, static_cast<uint8_t>(sizeof(ack)));",
     "memset(ack, 0, sizeof(ack));",

@@ -170,6 +170,10 @@ class Sf5l0DrainPacer final {
 #ifdef ORUN_GATEWAY_BATCH_ACK
   bool hasBatchAirtime(uint32_t now_ms);
   void chargeBatchTx(uint32_t now_ms);
+  bool hasBatchAirtime(uint32_t now_ms, uint8_t packet_size);
+  bool hasBacklogAirtime(uint32_t now_ms, uint8_t packet_size,
+                         uint32_t ms_until_report);
+  void chargeBatchTx(uint32_t now_ms, uint8_t packet_size);
 #endif
   void onSent(uint32_t now_ms);
   void onReleased(uint32_t now_ms);
@@ -193,6 +197,7 @@ class Sf5l0DrainPacer final {
   uint32_t last_refill_ms_ = 0U;
   uint32_t random_state_ = 0x6D2B79F5U;
   uint64_t tokens_us_ = 0U;  // airtime budget in microseconds
+  uint32_t last_batch_airtime_ms_ = 2300U;
 };
 
 // Gateway side: a durable-grant source that DERIVES the scoped custody ACK

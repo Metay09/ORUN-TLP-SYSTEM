@@ -42,7 +42,11 @@ void receiveProductAndRetainExactBytes() {
   uint8_t expected[sizeof(wire)]{};
   memcpy(expected, wire, sizeof(wire));
 
+  test_now = 150;
+  manager.update(false);
+  test_now += 5;
   rxDone(wire, sizeof(wire), -67, 8);
+  test_now += 9000; // queued frame cannot open another 10-second ACK window
   memset(wire, 0, sizeof(wire));  // Driver callback memory is ephemeral.
   manager.update(false);
 
@@ -52,6 +56,7 @@ void receiveProductAndRetainExactBytes() {
   orun_tlp::ProductSecureRxFrame out{};
   assert(manager.takeProductSecureFrame(&out));
   assert(out.size == sizeof(expected));
+  assert(out.rx_floor_ms == 150 && !ackFitsWindow(test_now, out.rx_floor_ms, 56));
   assert(out.rssi_dbm == -67 && out.snr_db == 8);
   assert(memcmp(out.payload, expected, sizeof(expected)) == 0);
   assert(!manager.takeProductSecureFrame(&out));

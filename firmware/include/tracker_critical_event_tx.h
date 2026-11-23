@@ -40,7 +40,8 @@ class TrackerCriticalEventTx final {
 
   // Call AFTER ProductRecordStore::poll() / takeOutcome(), and BEFORE routine
   // LIVE TX. The caller still owns real RF duty and grant/role eligibility.
-  Result update(uint32_t now_ms, bool eligible);
+  Result update(uint32_t now_ms, bool eligible,
+                bool allow_backlog = true);
 
   bool blocked() const { return phase_ == Phase::kBlocked; }
   bool waitingAck() const { return phase_ == Phase::kWaitingAck; }
