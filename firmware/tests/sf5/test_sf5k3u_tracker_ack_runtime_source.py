@@ -29,8 +29,12 @@ for phrase in (
     "memset(ack.payload, 0, sizeof(ack.payload))",
 ):
     assert phrase in guard, phrase
-assert "return custody_ack_release.pending();" in src
-assert "if (batch_ack_release.pending()) return true;" in src
+pending = src.split("bool custodyReleasePending() {", 1)[1].split("}", 1)[0]
+assert pending.strip() == """#ifdef ORUN_GATEWAY_BATCH_ACK
+  return batch_ack_release.pending();
+#else
+  return custody_ack_release.pending();
+#endif"""
 assert "CustodyAckReleaseOwner::Service::kDurablyReleased" in src
 assert "product_records.store().requestRelease(" not in src
 assert "sendProductSecurePacket(" not in src

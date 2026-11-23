@@ -107,13 +107,14 @@ struct Fixture {
   uint8_t cached_count=0U;
   Kq05TrackerBatchAckVerifier verifier;
 
-  Fixture():security(security_flash,security_flash),
+  explicit Fixture(unsigned initial_records = 5):security(security_flash,security_flash),
             records(product_flash,kProductPages,&source),
             verifier(security) {
     provisionV3(security_flash,security);
     records.begin(kDevice,product_region::Jobs{false,true});
     assert(records.mounted());
-    for(uint8_t i=0U;i<5U;++i) {
+    assert(initial_records <= 5U);
+    for(uint8_t i=0U;i<initial_records;++i) {
       const osf::RecordIdentity id=append(records);
       objects[i]=makeObject(id);
       // A different valid security-counter makes each exact digest unique

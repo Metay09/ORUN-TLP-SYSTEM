@@ -74,7 +74,7 @@ bool LoraCommandRelay::windowReserved(uint32_t now) const {
 }
 #endif
 
-bool LoraCommandRelay::due(uint32_t now, Frame& out) {
+bool LoraCommandRelay::due(uint32_t now, Frame& out, bool (*airtime_available)(uint8_t)) {
   if (!heard_open_) return false;
   if (sent_now_ == 0) {
     if (monotonic::elapsed(now, heard_at_, kLatestAfterHeardMs)) {
@@ -92,6 +92,7 @@ bool LoraCommandRelay::due(uint32_t now, Frame& out) {
     // The next held part not yet sent in this window.
     for (uint8_t p = 0; p < s.parts; ++p) {
       if ((sent_now_ & (1U << p)) != 0U || (s.have & (1U << p)) == 0U) continue;
+      if (airtime_available && !airtime_available(s.sizes[p])) return false;
       if (sent_now_ == 0) ++s.attempt;  // one try per report
       sent_now_ = static_cast<uint8_t>(sent_now_ | (1U << p));
       last_part_at_ = now;

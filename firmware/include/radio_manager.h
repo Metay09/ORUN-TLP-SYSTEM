@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "custody_ack.h"
+#include "gateway_radio_timing.h"
+#include "monotonic_time.h"
 #ifdef ORUN_GATEWAY_BATCH_ACK
 #include "gateway_custody_authorized_ingress.h"
 #endif
@@ -53,6 +55,10 @@ struct RadioEventDiagnostics {
   uint32_t custody_ack_rx_queued = 0;
   uint32_t custody_ack_rx_drops = 0;
   uint32_t custody_ack_tx_attempts = 0;
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  uint32_t batch_ack_max_send_call_ms = 0;
+  uint32_t batch_ack_max_done_age_ms = 0;
+#endif
 };
 
 struct HistorySecureRxFrame {
@@ -64,6 +70,7 @@ struct HistorySecureRxFrame {
 
 // Structurally admitted only; no crypto verification or durable custody.
 struct ProductSecureRxFrame {
+  uint32_t rx_floor_ms = 0;
   uint16_t size = 0;
   int16_t rssi_dbm = 0;
   int8_t snr_db = 0;
@@ -118,6 +125,19 @@ class RadioManager {
     return network_.relayForwardingEnabled();
   }
   bool canSend() const;
+  void enableSharedAirtimeBudget() {
+    if (!gateway_budget_enabled_)
+      gateway_budget_.grantTrackerStartupCredit();
+    gateway_budget_enabled_ = true;
+  }
+  void enableGatewayBudget() { gateway_budget_enabled_ = true; }
+  bool sharedAirtimeAvailable(uint8_t size, uint32_t reserve_us = 0) {
+    return gatewayAirtimeAvailable(size, reserve_us);
+  }
+  bool gatewayAirtimeAvailable(uint8_t size, uint32_t reserve_us = 0) {
+    return !gateway_budget_enabled_ ||
+        gateway_budget_.available(monotonic::nowMs(), size, reserve_us);
+  }
   bool isTransmitting() const { return tx_in_progress_; }
   RadioListenState listenState() const { return listen_state_; }
   // Compatibility shim for existing host seams. Production PositionFlow maps
@@ -147,9 +167,10 @@ class RadioManager {
   // object; durable custody deduplication can then issue another ACK.
   bool sendAuthorizedCustodyAck(GatewayCustodyAuthorizedIngress& ingress);
 #ifdef ORUN_GATEWAY_BATCH_ACK
-  bool sendAuthorizedBatchAck(GatewayCustodyAuthorizedIngress& ingress,
+  enum class BatchTx : uint8_t { kStarted, kDeferred, kUnverifiable, kStaleHandle };
+  BatchTx sendAuthorizedBatchAck(GatewayCustodyAuthorizedIngress& ingress,
                               const ProductCustodyStore::Handle* handles, uint8_t count,
-                              const GatewayCustodyAckScope& scope);
+                              const GatewayCustodyAckScope& scope, uint32_t rx_floor_ms);
 #endif
   bool takeProductSecureFrame(ProductSecureRxFrame* frame);
   // Tracker-only, exact raw 56-byte ACK from driver callback mailbox.
@@ -209,12 +230,12 @@ class RadioManager {
   void markRxStarted(uint32_t now);
   void markRxStopped(uint32_t now);
   void foldRxAccounting(uint32_t now);
-  void startTxOperation(); // Driver gate held; clears old hardware IRQ work.
+  bool startTxOperation(uint8_t size, const uint32_t* rx_floor_ms = nullptr); // Driver gate held; clears old hardware IRQ work.
   void applyPendingRole(); // Driver gate held; previous TX terminal.
   void sendTestPacket();
   void scheduleNextTransmission(uint32_t now);
   void handleReceivedPacket(const uint8_t* payload, uint16_t size,
-                            int16_t rssi, int8_t snr);
+                            int16_t rssi, int8_t snr, uint32_t rx_floor_ms);
   // Loop-owned: prints the host bridge line for one accepted application
   // POSITION (protocol/BRIDGE_FRAME_V1.md). Output only; no radio, flash or
   // delivery state changes.
@@ -229,9 +250,18 @@ class RadioManager {
     kHistorySecure,
     kProductSecure,
     kCustodyAck,
+#ifdef ORUN_GATEWAY_BATCH_ACK
+    kBatchAck,
+#endif
     kLoraFrame,
   };
 
+  GatewayAirtimeBudget gateway_budget_{};
+  bool gateway_budget_enabled_ = false;
+#ifdef ORUN_GATEWAY_BATCH_ACK
+  uint32_t batch_ack_rx_floor_ms_ = 0;
+#endif
+  uint32_t last_irq_poll_ms_ = 0;  // protected by the radio driver gate
   uint64_t device_id_ = 0;
   SequenceSource* sequences_ = nullptr;
   uint32_t sequence_number_ = 0;

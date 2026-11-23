@@ -32,6 +32,7 @@ constexpr uint16_t kRadioReceiveLimit = 255;
 constexpr UBaseType_t kRxEventQueueCapacity = 4;
 
 struct RadioRxEvent {
+  uint32_t rx_floor_ms = 0;
   uint32_t role_epoch = 0;
   uint16_t size = 0;
   int16_t rssi = 0;
@@ -161,6 +162,7 @@ bool RadioManager::begin(SequenceSource& sequences) {
   const uint16_t applied_sync_word = Radio.GetSyncWord();
 
   active_radio_manager = this;
+  last_irq_poll_ms_ = monotonic::nowMs();
   Radio.Rx(0);
   const uint32_t now = monotonic::nowMs();
   markRxStarted(now);
@@ -185,7 +187,12 @@ void RadioManager::update(bool allow_test_beacon) {
   radio_driver::Guard gate;
   if (!gate) return; // No driver read or result consumption before cleanup exit.
   // Drain pending DIO work before deciding that a software deadline won.
+  // The previous poll began before this unconsumed IRQ. This conservative
+  // lower bound also covers time spent waiting in the background driver
+  // task. A stalled loop shortens (or forfeits) the ACK opportunity.
+  const uint32_t poll_started = monotonic::nowMs();
   orunRadioDispatchLocked();
+  last_irq_poll_ms_ = poll_started;
   uint32_t now = monotonic::nowMs();
   foldRxAccounting(now);
   if (tx_in_progress_ && pending_tx_result_ == TxResult::kNone &&
@@ -259,7 +266,7 @@ bool RadioManager::sendPositionPacket(const uint8_t* payload, const uint32_t* ca
   // this check and Send; stored/backlog packets deliberately omit this gate.
   if (captured_at_ms && monotonic::elapsed(monotonic::nowMs(), *captured_at_ms,
                                           gnss_config::kFreshFixMaxAgeMs)) return false;
-  startTxOperation();
+  if (!startTxOperation(sizeof(tx_payload))) return false;
   tx_kind_ = TxKind::kPosition;
   tx_role_epoch_ = role_epoch_;
   rx_restore_state_ = RxRestoreState::kNone;
@@ -299,7 +306,7 @@ bool RadioManager::sendHistorySecurePacket(const uint8_t* payload,
   }
   memcpy(tx_payload, payload, sizeof(tx_payload));
 
-  startTxOperation();
+  if (!startTxOperation(sizeof(tx_payload))) return false;
   tx_kind_ = TxKind::kHistorySecure;
   tx_role_epoch_ = role_epoch_;
   rx_restore_state_ = RxRestoreState::kNone;
@@ -348,7 +355,7 @@ bool RadioManager::sendProductSecurePacket(const uint8_t* payload,
 
   uint8_t tx_payload[tlp::kProductSecureMaxFrameSize]{};
   memcpy(tx_payload, payload, size);  // Driver copies to SX1262 FIFO in Send.
-  startTxOperation();
+  if (!startTxOperation(static_cast<uint8_t>(size))) return false;
   tx_kind_ = TxKind::kProductSecure;
   tx_role_epoch_ = role_epoch_;
   rx_restore_state_ = RxRestoreState::kNone;
@@ -411,7 +418,7 @@ bool RadioManager::sendLoraFrame(const uint8_t* payload, size_t size) {
   }
   uint8_t tx_payload[kMaxFrameSize]{};
   memcpy(tx_payload, payload, size);
-  startTxOperation();
+  if (!startTxOperation(static_cast<uint8_t>(size))) return false;
   tx_kind_ = TxKind::kLoraFrame;
   tx_role_epoch_ = role_epoch_;
   rx_restore_state_ = RxRestoreState::kNone;
@@ -496,6 +503,7 @@ void RadioManager::enqueueRxEvent(const uint8_t* payload, uint16_t size,
   taskENTER_CRITICAL();
   event.role_epoch = role_epoch_;
   taskEXIT_CRITICAL();
+  event.rx_floor_ms = last_irq_poll_ms_;
   event.size = size;
   event.rssi = rssi;
   event.snr = snr;
@@ -563,6 +571,13 @@ void RadioManager::processCallbackEvents() {
         ++tx_timeouts_;
         Serial.println(F("TX timeout"));
       }
+#ifdef ORUN_GATEWAY_BATCH_ACK
+      if (succeeded && tx_kind_ == TxKind::kBatchAck) {
+        const uint32_t age = monotonic::nowMs() - batch_ack_rx_floor_ms_;
+        if (age > event_diagnostics_.batch_ack_max_done_age_ms)
+          event_diagnostics_.batch_ack_max_done_age_ms = age;
+      }
+#endif
       // Local TX completion is not application delivery confirmation.
       tx_kind_ = TxKind::kNone;
       tx_in_progress_ = false;
@@ -605,7 +620,7 @@ void RadioManager::processReceivedEvents() {
         listen_state_ == RadioListenState::kRxWindowOpen) {
       saturatingIncrement(listen_diagnostics_.rx_events_in_window);
     }
-    handleReceivedPacket(event.payload, event.size, event.rssi, event.snr);
+    handleReceivedPacket(event.payload, event.size, event.rssi, event.snr, event.rx_floor_ms);
     requestRxRestore();
   }
 }
@@ -724,7 +739,8 @@ bool RadioManager::serviceWindowDeadline(uint32_t now) {
   return false;
 }
 
-void RadioManager::startTxOperation() {
+bool RadioManager::startTxOperation(uint8_t size, const uint32_t* rx_floor_ms) {
+  if (!gatewayAirtimeAvailable(size)) return false;
   // No previous TX can be active here. Stop RX and clear pending hardware
   // IRQs before changing the callback identity; a waiting LORA dispatch then
   // observes only empty registers or the newly armed operation. SX126x-Arduino
@@ -735,10 +751,16 @@ void RadioManager::startTxOperation() {
   }
   markRxStopped(monotonic::nowMs());
   orunRadioQuiesceLocked();
+  if (rx_floor_ms && !ackFitsWindow(monotonic::nowMs(), *rx_floor_ms, size)) {
+    requestRxRestore();
+    return false;
+  }
+  if (gateway_budget_enabled_) gateway_budget_.charge(size);
   if (++tx_generation_ == 0) ++tx_generation_;
   armed_tx_generation_ = tx_generation_;
   radio_driver::setGeneration(tx_generation_);
   tx_in_progress_ = true;
+  return true;
 }
 
 void RadioManager::applyPendingRole() {
@@ -786,7 +808,7 @@ void RadioManager::sendTestPacket() {
     return;
   }
 
-  startTxOperation();
+  if (!startTxOperation(sizeof(payload))) return;
   tx_kind_ = TxKind::kTest;
   tx_role_epoch_ = role_epoch_;
   rx_restore_state_ = RxRestoreState::kNone;
@@ -801,6 +823,7 @@ void RadioManager::sendTestPacket() {
 
 void RadioManager::sendDueRelay(uint32_t now) {
   tlp::RelayForwardPacket envelope{};
+  if (!gatewayAirtimeAvailable(tlp::kRelayForwardPacketSize)) return;
   if (!network_.takeDueForward(now, &envelope)) return;
   uint8_t payload[tlp::kRelayForwardPacketSize]{};
   if (!tlp::serializeRelayForwardPacket(envelope, payload, sizeof(payload))) {
@@ -817,7 +840,10 @@ void RadioManager::sendDueRelay(uint32_t now) {
     Serial.println(F("RELAY TX inner validation failed"));
     return;
   }
-  startTxOperation();
+  if (!startTxOperation(sizeof(payload))) {
+    network_.onForwardTxResult(false);
+    return;
+  }
   tx_kind_ = TxKind::kRelay;
   tx_role_epoch_ = role_epoch_;
   rx_restore_state_ = RxRestoreState::kNone;
@@ -867,7 +893,7 @@ void RadioManager::emitBridgePosition(const NetworkEvent& event) {
 }
 
 void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
-                                        int16_t rssi, int8_t snr) {
+                                        int16_t rssi, int8_t snr, uint32_t rx_floor_ms) {
 
   if (size >= 2 &&
       payload[0] == custody_ack::kVersion &&
@@ -959,6 +985,7 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
       Serial.println(F("RX PRODUCT_SECURE drop pending-mailbox"));
       return;
     }
+    product_secure_rx_.rx_floor_ms = rx_floor_ms;
     product_secure_rx_.size = size;
     product_secure_rx_.rssi_dbm = rssi;
     product_secure_rx_.snr_db = snr;

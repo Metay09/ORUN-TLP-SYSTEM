@@ -26,26 +26,50 @@ orun_tlp::ProductSecureRxFrame uplink;
 uint8_t receipt[ack::kMaxSize];
 size_t receipt_size;
 unsigned downlinks;
+bool radio_busy;
+unsigned prepare_attempts;
+uint32_t prepare_delay_ms;
+unsigned defer_starts;
+int stale_slot = -1;
 uint32_t live_sequence;
 unsigned seals;
+bool sealed_with_fix;
 const orun_tlp::RadioManager* collar_radio;
 }
 namespace orun_tlp {
 namespace monotonic { uint32_t nowMs() { return simulation_ms; } }
-bool RadioManager::canSend() const { return true; }
+bool RadioManager::canSend() const { return !radio_busy; }
 uint64_t RadioManager::deviceId() const { return this == collar_radio ? kDevice : kGateA; }
 bool RadioManager::takeProductSecureFrame(ProductSecureRxFrame* out) {
   if (!uplink.size) return false;
   *out = uplink;
+  out->rx_floor_ms = simulation_ms;
   uplink = {};
   return true;
 }
 bool RadioManager::sendAuthorizedCustodyAck(GatewayCustodyAuthorizedIngress&) { return false; }
-bool RadioManager::sendAuthorizedBatchAck(GatewayCustodyAuthorizedIngress& in,
-    const ProductCustodyStore::Handle* handles, uint8_t n, const GatewayCustodyAckScope& scope) {
-  if (!in.prepareAuthorizedBatchAck(handles, n, scope, receipt, receipt_size)) return false;
+RadioManager::BatchTx RadioManager::sendAuthorizedBatchAck(GatewayCustodyAuthorizedIngress& in,
+    const ProductCustodyStore::Handle* handles, uint8_t n, const GatewayCustodyAckScope& scope,
+    uint32_t heard) {
+  ++prepare_attempts;
+  if (defer_starts) {
+    --defer_starts;
+    return BatchTx::kDeferred;
+  }
+  simulation_ms += prepare_delay_ms;
+  ProductCustodyStore::Handle hints[ack::kMaxObjects]{};
+  for (unsigned i = 0; i < n; ++i) {
+    hints[i] = handles[i];
+    if (hints[i].slot == stale_slot) ++hints[i].generation;
+  }
+  bool stale = false;
+  if (!in.prepareAuthorizedBatchAck(hints, n, scope, receipt, receipt_size, &stale))
+    return stale ? BatchTx::kStaleHandle : BatchTx::kUnverifiable;
+  if (!ackFitsWindow(simulation_ms, heard, receipt_size) ||
+      !gatewayAirtimeAvailable(receipt_size)) return BatchTx::kDeferred;
+  if (gateway_budget_enabled_) gateway_budget_.charge(receipt_size);
   ++downlinks;
-  return true;
+  return BatchTx::kStarted;
 }
 bool RadioManager::sendProductSecurePacket(const uint8_t* bytes, size_t n) {
   assert(!uplink.size && n <= sizeof(uplink.payload));
@@ -57,6 +81,7 @@ ProductSecureCryptoResult ProductSecureCrypto::protectNextPeriodic(uint8_t flags
     const tlp::PeriodicObservationPlaintext& value, uint8_t (&out)[tlp::kPeriodicFrameSize]) {
   assert(flags == 0 || flags == 3);
   ++seals;
+  sealed_with_fix = (value.record_flags & tlp::kPeriodicLocationValid) != 0;
   osf::RecordIdentity id{};
   id.incarnation = value.record_incarnation;
   id.sequence = value.record_sequence;
@@ -67,10 +92,17 @@ ProductSecureCryptoResult ProductSecureCrypto::protectNextPeriodic(uint8_t flags
   live_sequence = id.sequence;
   return ProductSecureCryptoResult::kOk;
 }
-ProductSecureCryptoResult ProductSecureCrypto::protectNextEvent(uint8_t,
-    const tlp::EventPlaintext&, uint8_t (&)[tlp::kEventFrameSize]) {
-  assert(false);
-  return ProductSecureCryptoResult::kInvalidArgument;
+ProductSecureCryptoResult ProductSecureCrypto::protectNextEvent(uint8_t flags,
+    const tlp::EventPlaintext& event, uint8_t (&out)[tlp::kEventFrameSize]) {
+  tlp::ProductSecureFrame frame{};
+  frame.app_family = tlp::kProductAppFamilyEvent;
+  frame.ciphertext_len = tlp::kEventPlaintextSize;
+  frame.path_flags = flags;
+  frame.device_id = kDevice;
+  frame.key_epoch = 7;
+  frame.security_counter = event.record_sequence + 200;
+  assert(tlp::encodeProductSecureFrame(frame, out, sizeof(out)) == tlp::ProductSecureCodecResult::kOk);
+  return ProductSecureCryptoResult::kOk;
 }
 }
 namespace {
@@ -101,10 +133,11 @@ ReleaseOwner::Service nextDurableOutcome(ReleaseOwner& owner,
 }
 
 struct Grant final : GatewayCustodyGrantProvider {
+  bool enabled = true;
   bool activeGrant(uint64_t tracker, uint32_t epoch, GatewayCustodyAckScope& scope,
                    uint8_t (&key)[32]) override {
     scope = allowedScope();
-    if (scope.tracker_device_id != tracker || scope.key_epoch != epoch) return false;
+    if (!enabled || scope.tracker_device_id != tracker || scope.key_epoch != epoch) return false;
     fromHex32(key);
     return true;
   }
@@ -141,11 +174,13 @@ void testGatewayToTrackerWithMissingRecord() {
     step();
     for (unsigned n = 0; n < 150; ++n) step();
   };
+  radio_busy = true;  // unavailable during the first three listen opportunities
   for (unsigned index : delivered) {
     offer(index);
     simulation_ms += 60000U;
   }
   assert(downlinks == 0U && runtime.reservedPages() != 0U);
+  radio_busy = false;
   simulation_ms = 301000U;
   step();  // No TX while the collar sleeps.
   assert(downlinks == 0U);
@@ -163,7 +198,9 @@ void testGatewayToTrackerWithMissingRecord() {
   assert(step() == GatewayProductCustodyRuntime::Event::kCustodyStarted);
   for (unsigned n = 0; n < 150 && live_ingress.pending(); ++n) step();
   assert(!live_ingress.pending() && downlinks == 1U);
+  radio_busy = true;
   for (unsigned index : delivered) offer(index);
+  radio_busy = false;
   simulation_ms += 301000U;
   const auto setting = command(kDevice, 17);
   assert(relay.queue(setting.data(), setting.size()) == LoraCommandRelay::Queued::kAdded);
@@ -171,7 +208,8 @@ void testGatewayToTrackerWithMissingRecord() {
   offer(0);
   simulation_ms += LoraCommandRelay::kAckGraceMs;
   LoraCommandRelay::Frame packet{};
-  assert(relay.due(simulation_ms, packet) && packet.command_id == 17);
+  assert(!relay.due(simulation_ms, packet, [](uint8_t) { return false; }));
+  assert(relay.due(simulation_ms, packet) && packet.command_id == 17 && packet.attempt == 1);
   step();
   assert(downlinks == 1U);
   const auto response = result(kDevice, 17);
@@ -192,6 +230,285 @@ void testGatewayToTrackerWithMissingRecord() {
   reboot.begin(kDevice, product_region::Jobs{false, true});
   for (unsigned i = 0; i < 5; ++i) assertRetained(reboot, tracker.objects[i].identity, released[i]);
   puts("Gateway durable signed receipt -> Tracker selective release with gap and reboot: PASS");
+}
+
+void testOneStaleHandleDoesNotPoisonItsPeer() {
+  using namespace orun_tlp;
+  Fixture tracker;
+  Grant grant;
+  ProductFlash flash;
+  ProductCustodyStore store(flash, kProductPages);
+  assert(store.begin());
+  GatewayLocalCustodyOwner owner(store);
+  GatewayCustodyAuthorizedIngress ingress(owner, grant, kGateA);
+  RadioManager radio;
+  collar_radio = nullptr;
+  GatewayProductCustodyRuntime runtime(radio, ingress);
+  simulation_ms = 40000;
+  downlinks = 0;
+  for (unsigned i = 0; i < 2; ++i) {
+    const auto& obj = tracker.objects[i];
+    assert(radio.sendProductSecurePacket(obj.object, obj.object_size));
+    for (unsigned n = 0; n < 150; ++n) runtime.update(true);
+  }
+  stale_slot = 0;
+  simulation_ms += 1000;
+  for (unsigned i = 0; i < 3; ++i) {
+    runtime.update(true);
+    simulation_ms += 500;
+  }
+  ack::Header header{};
+  assert(downlinks == 1 && ack::decode(receipt, receipt_size, header) && header.count == 1);
+  assert(runtime.reservedPages() == 0);
+  tracker.admitGrant();
+  tracker.cacheUpTo(2);
+  ReleaseOwner release(tracker.security, tracker.records);
+  assert(release.submit(receipt, receipt_size) == ReleaseOwner::Submit::kStarted);
+  while (release.pending()) {
+    tracker.records.poll();
+    assert(release.service() != ReleaseOwner::Service::kFailed);
+  }
+  assertRetained(tracker.records, tracker.objects[0].identity, false);
+  assertRetained(tracker.records, tracker.objects[1].identity, true);
+  stale_slot = -1;
+}
+
+void testLongOutageUsesEveryExactSlot() {
+  using namespace orun_tlp;
+  Fixture tracker;
+  RadioManager radio;
+  collar_radio = &radio;
+  ProductSecureCrypto crypto(tracker.security);
+  using Sender = TrackerCriticalEventTx;
+  Sender periodic(tracker.records, crypto, radio, Sender::Mode::kPeriodicHistory);
+  ProductSecureRxFrame packets[4]{};
+  unsigned attempts[4]{};
+  uint32_t last[4]{};
+  unsigned unique = 0;
+  for (uint32_t now = 1000; now <= 1201000; now += 5000) {
+    for (unsigned poll = 0; poll < 120; ++poll) {
+      tracker.records.poll();
+      if (periodic.update(now, true) != Sender::Result::kSent) continue;
+      assert(uplink.size == 100 && uplink.payload[4] == 3);
+      unsigned slot = 0;
+      while (slot < unique && memcmp(packets[slot].payload, uplink.payload, uplink.size)) ++slot;
+      if (slot == unique) {
+        assert(unique < 4);
+        packets[unique++] = uplink;
+      } else {
+        assert(now - last[slot] >= Sender::kReceiptWaitMs);
+      }
+      last[slot] = now;
+      ++attempts[slot];
+      uplink = {};
+      break;
+    }
+  }
+  assert(unique == 4);
+  for (auto n : attempts) assert(n >= 3 && n <= 4);
+  collar_radio = nullptr;
+}
+
+void testReservedEventSlotAndNoFix() {
+  using namespace orun_tlp;
+  Fixture f;
+  f.cacheUpTo(4);
+  // Seed a committed EVENT with the same OBS1 format used by the producer,
+  // then reopen the product store as on a power cycle.
+  ObservationStore writer(f.product_flash, kProductPages, &f.source);
+  assert(writer.begin(kDevice));
+  osf::RecordIdentity id{};
+  assert(writer.peekNextIdentity(id));
+  tlp::EventPlaintext event{};
+  event.record_incarnation = id.incarnation;
+  event.record_sequence = id.sequence;
+  event.event_type = tlp::kEventTypeGeofenceOutside;
+  event.lifecycle_state = tlp::kEventLifecycleActive;
+  event.severity = tlp::kEventSeverityCritical;
+  event.occurrence_id = 1;
+  uint8_t payload[tlp::kEventPlaintextSize]{};
+  assert(tlp::encodeEventPlaintext(event, payload, sizeof(payload)) == tlp::ProductSecureCodecResult::kOk);
+  assert(writer.requestAppend(osf::RecordKind::kEvent, 1, payload, sizeof(payload)) ==
+         ObservationStore::AppendResult::kStarted);
+  while (writer.busy()) writer.poll();
+  ObservationStore::Handle handle{};
+  bool stored = false;
+  assert(writer.takeAppendResult(stored, handle) && stored);
+
+  ProductRecordStore records(f.product_flash, kProductPages, &f.source);
+  records.begin(kDevice, product_region::Jobs{false, true});
+  auto no_fix = period();
+  no_fix.location = {};
+  assert(records.submitPeriodic(no_fix) == ProductRecordStore::Submit::kAccepted);
+  ProductRecordStore::Outcome outcome{};
+  for (unsigned n = 0; n < 200 && !records.takeOutcome(outcome); ++n) records.poll();
+  assert(outcome.stored);
+  RadioManager radio;
+  collar_radio = &radio;
+  ProductSecureCrypto crypto(f.security);
+  using Sender = TrackerCriticalEventTx;
+  Sender critical(records, crypto, radio), history(records, crypto, radio, Sender::Mode::kPeriodicHistory);
+  for (unsigned n = 0; n < 200 && !uplink.size; ++n) {
+    records.poll();
+    const auto sent = critical.update(1000, true);
+    history.update(1000, sent != Sender::Result::kSent);
+  }
+  assert(uplink.size == 84 && uplink.payload[4] == 3);
+  const auto first = uplink;
+  uplink = {};
+  assert(history.update(15500, true) == Sender::Result::kSent);
+  assert(uplink.size == 100 && uplink.payload[4] == 0 && !sealed_with_fix &&
+         live_sequence == outcome.sequence);
+  uplink = {};
+  assert(critical.update(60999, true) != Sender::Result::kSent);
+  assert(critical.update(61000, true) == Sender::Result::kSent);
+  assert(uplink.size == first.size && !memcmp(uplink.payload, first.payload, first.size));
+  uplink = {};
+  collar_radio = nullptr;
+}
+
+void testFailedWindowsRecover(unsigned count) {
+  using namespace orun_tlp;
+  Fixture tracker;
+  tracker.admitGrant();
+  tracker.cacheUpTo(count);
+  Grant grant;
+  ProductFlash flash;
+  ProductCustodyStore store(flash, kProductPages);
+  assert(store.begin());
+  GatewayLocalCustodyOwner owner(store);
+  GatewayCustodyAuthorizedIngress ingress(owner, grant, kGateA);
+  RadioManager gw;
+  collar_radio = nullptr;
+  GatewayProductCustodyRuntime runtime(gw, ingress);
+  downlinks = prepare_attempts = 0;
+  simulation_ms = 50000;
+  // Four/five consecutive durable admissions while the downlink is busy.
+  radio_busy = true;
+  auto offer = [&](GatewayProductCustodyRuntime& loop, unsigned i) {
+    const auto& object = tracker.objects[i];
+    assert(gw.sendProductSecurePacket(object.object, object.object_size));
+    for (unsigned n = 0; n < 150; ++n) loop.update(true);
+    assert(!uplink.size);
+  };
+  for (unsigned i = 0; i < count; ++i) offer(runtime, i);
+  assert(runtime.reservedPages() && !downlinks && !prepare_attempts);
+  radio_busy = false;
+  // Delay between successful signer admission and start; no loop-rate retries.
+  prepare_delay_ms = 9000;
+  runtime.update(true);
+  assert(prepare_attempts == 1 && !downlinks && runtime.reservedPages());
+  prepare_delay_ms = 0;
+  for (unsigned n = 0; n < 500; ++n) runtime.update(true);
+  assert(prepare_attempts == 1);
+  simulation_ms += 60000;
+  defer_starts = 1;
+  offer(runtime, 0); // duplicate reopens the window without adding a reference
+  assert(!downlinks && prepare_attempts == 2 && runtime.reservedPages());
+  simulation_ms += 499;
+  runtime.update(true);
+  assert(!downlinks);
+  ++simulation_ms;
+  runtime.update(true);
+  ack::Header header{};
+  assert(downlinks == 1 && !runtime.reservedPages());
+  assert(ack::decode(receipt, receipt_size, header) && header.count == count);
+  // Lose this entire ACK and reboot Gateway. Rebuild from the durable object.
+  for (unsigned i = 0; i < count; ++i)
+    assertRetained(tracker.records, tracker.objects[i].identity, false);
+  ProductCustodyStore reopened(flash, kProductPages);
+  assert(reopened.begin());
+  GatewayLocalCustodyOwner next_owner(reopened);
+  GatewayCustodyAuthorizedIngress next_ingress(next_owner, grant, kGateA);
+  GatewayProductCustodyRuntime next(gw, next_ingress);
+  assert(!next.reservedPages());
+  simulation_ms += 60000;
+  offer(next, 0);
+  grant.enabled = false;
+  simulation_ms += 1000;
+  next.update(true);
+  assert(downlinks == 1 && next.reservedPages());
+  for (unsigned n = 0; n < 100; ++n) {
+    simulation_ms += 100;
+    next.update(true);
+  }
+  assert(prepare_attempts <= 9 && downlinks == 1);
+  grant.enabled = true;
+  simulation_ms += 60000;
+  offer(next, 0);
+  assert(downlinks == 2 && ack::decode(receipt, receipt_size, header) && header.count == 1);
+  ReleaseOwner release(tracker.security, tracker.records);
+  assert(release.submit(receipt, receipt_size) == ReleaseOwner::Submit::kStarted);
+  while (release.pending()) {
+    tracker.records.poll();
+    assert(release.service() != ReleaseOwner::Service::kFailed);
+  }
+  for (unsigned i = 0; i < count; ++i)
+    assertRetained(tracker.records, tracker.objects[i].identity, i == 0);
+}
+
+// Clocked two-report trace. Move the RF clock by the actual SF11 airtime;
+// the host models zero flash/crypto execution time, and polls every 100 ms.
+void reportWindowTrace() {
+  using namespace orun_tlp;
+  Fixture tracker(1);
+  tracker.admitGrant();
+  Grant grant;
+  ProductFlash flash;
+  ProductCustodyStore store(flash, kProductPages);
+  assert(store.begin());
+  GatewayLocalCustodyOwner owner(store);
+  GatewayCustodyAuthorizedIngress ingress(owner, grant, kGateA);
+  RadioManager gw, collar;
+  collar_radio = &collar;
+  GatewayProductCustodyRuntime runtime(gw, ingress);
+  ProductSecureCrypto crypto(tracker.security);
+  TrackerCriticalEventTx sender(tracker.records, crypto, collar,
+                                TrackerCriticalEventTx::Mode::kPeriodicHistory);
+  ReleaseOwner release(tracker.security, tracker.records);
+  gw.enableGatewayBudget();
+  unsigned data = 0, singles = 0, groups = 0, released = 0;
+  uint32_t rx_done = 0, ack_done = 0, last_ack_end = 0, newest_first = UINT32_MAX;
+  downlinks = 0;
+  for (uint32_t tick = 30000; tick <= 520000; tick += 100) {
+    simulation_ms = tick;
+    if (tick == 90000) append(tracker.records);
+    if (ack_done && tick >= ack_done) {
+      assert(release.submit(receipt, receipt_size) == ReleaseOwner::Submit::kStarted);
+      while (release.pending()) {
+        tracker.records.poll();
+        if (release.service() == ReleaseOwner::Service::kReleasedOne) ++released;
+      }
+      last_ack_end = ack_done;
+      ack_done = 0;
+    }
+    if (!rx_done && !ack_done) {
+      for (unsigned poll = 0; poll < 128; ++poll) {
+        tracker.records.poll();
+        if (sender.update(tick, true) != TrackerCriticalEventTx::Result::kSent) continue;
+        if (data == 1) newest_first = tick - 90000;
+        ++data;
+        rx_done = tick + 2216;
+        break;
+      }
+    }
+    if (rx_done && tick < rx_done) continue;
+    if (rx_done) { simulation_ms = rx_done; rx_done = 0; }
+    for (unsigned poll = 0; poll < 128 && !ack_done; ++poll) {
+      if (runtime.update(true) != GatewayProductCustodyRuntime::Event::kAckTxStarted) continue;
+      ack::Header h{};
+      assert(ack::decode(receipt, receipt_size, h) && h.count == 1);
+      ++singles;
+      ack_done = simulation_ms + 1397;
+    }
+    if (released == 2) break;
+  }
+  assert(released == 2 && newest_first == 0 && data == 2);
+  printf("TRACE data=%u repeat=%u single=%u group=%u release=%u last_ack_after_second_rx_ms=%lu airtime_us=%lu newest_first_ms=%lu\n",
+         data, data - 2, singles, groups, released,
+         (unsigned long)(last_ack_end - 92216),
+         (unsigned long)(data * 2215936U + singles * 1396736U), (unsigned long)newest_first);
+  collar_radio = nullptr;
 }
 
 void testOneTransmissionForFreshAndHistory() {
@@ -616,6 +933,60 @@ void testCrashAfterOneMarkerRequiresNewRemainingSubsetAck() {
   }
 }
 
+
+void testReservedLivePriorityBeforeBacklog() {
+  using namespace orun_tlp;
+  Fixture tracker;
+  tracker.admitGrant();
+  RadioManager collar;
+  collar_radio = &collar;
+  ProductSecureCrypto crypto(tracker.security);
+  using Sender = TrackerCriticalEventTx;
+  Sender sender(tracker.records, crypto, collar,
+                Sender::Mode::kPeriodicHistory);
+
+  auto pollUntilSent = [&](uint32_t now, bool allow_old) {
+    simulation_ms = now;
+    for (unsigned i = 0; i < 2000; ++i) {
+      tracker.records.poll();
+      const auto result = sender.update(now, true, allow_old);
+      assert(result != Sender::Result::kBlocked);
+      assert(result != Sender::Result::kReadError);
+      if (result == Sender::Result::kSent) return true;
+    }
+    return false;
+  };
+
+  uplink = {};
+  assert(pollUntilSent(1000U, false));
+  assert(live_sequence == 5U);
+  assert(uplink.size == tlp::kPeriodicFrameSize);
+  assert(uplink.payload[4] == 3U);
+  uplink = {};
+
+  // Old history must not consume the reserved live opportunity.
+  assert(!pollUntilSent(61000U, false));
+  assert(!uplink.size);
+
+  // A new report must bypass the waiting older records.
+  const auto latest = append(tracker.records);
+  assert(pollUntilSent(62000U, false));
+  assert(live_sequence == latest.sequence);
+  assert(uplink.payload[4] == 3U);
+  uplink = {};
+
+  assert(!pollUntilSent(123000U, false));
+  assert(!uplink.size);
+
+  // Surplus budget restores normal history transmission.
+  assert(pollUntilSent(124000U, true));
+  assert(live_sequence == 1U);
+  uplink = {};
+
+  puts("LIVE PRIORITY: fresh before old, reserved budget, "
+       "backlog resumes: PASS");
+}
+
 } // namespace
 
 #ifndef ORUN_KQ05_TRACKER_BATCH_RADIO_RUNTIME_HOST_TEST
@@ -623,8 +994,16 @@ int main() {
   // Run the inherited real SecurityStore full-digest/HMAC regressions too.
   // They are intentionally included in this translation unit; do not
   // suppress -Werror or leave security tests compiled but unused.
+  testOneStaleHandleDoesNotPoisonItsPeer();
+  testLongOutageUsesEveryExactSlot();
+  testReservedEventSlotAndNoFix();
+  testFailedWindowsRecover(4);
+  testFailedWindowsRecover(5);
+  reportWindowTrace();
+  downlinks = simulation_ms = 0;
   testGatewayToTrackerWithMissingRecord();
   testOneTransmissionForFreshAndHistory();
+  testReservedLivePriorityBeforeBacklog();
   testFirstUplinkIsVisibleAndReceiptable();
   testInterleavedCollarsReceiveSeparateReceipts();
   testActualRootDerivedFiveAndSubsets();

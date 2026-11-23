@@ -17,7 +17,7 @@ assert app.index("history_store_forward.update(") < app.index(
 assert app.index("product_records.poll();") < app.index(
     "tracker_product_tx.update(pilot_allowed)")
 for name in [
-    "!positions.pending()", "!custody_ack_release.pending()",
+    "!positions.pending()", "!custodyReleasePending()",
     "SecurityState::kProvisioned", "!security_store.busy()",
     "radio_manager.role() == orun_tlp::NodeRole::kTracker",
 ]:

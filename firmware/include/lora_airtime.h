@@ -4,7 +4,12 @@
 
 namespace orun_tlp {
 
-constexpr uint32_t estimateLoraAirtimeUs(uint8_t payload_bytes,
+#if __cplusplus >= 201402L
+constexpr
+#else
+inline
+#endif
+uint32_t estimateLoraAirtimeUs(uint8_t payload_bytes,
                                          uint8_t spreading_factor,
                                          uint16_t bandwidth_khz,
                                          uint8_t coding_rate_index,

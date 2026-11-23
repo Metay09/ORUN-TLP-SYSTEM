@@ -34,6 +34,7 @@ uint8_t last_tx[255]{};
 uint8_t last_tx_size = 0;
 uint32_t test_now = 0;
 uint32_t send_cost_ms = 0;
+uint32_t standby_cost_ms = 0;
 bool pending_rx = false;
 bool rx_arrives_before_standby = false;
 uint8_t pending_packet[34]{};
@@ -64,6 +65,7 @@ void sleepRadio() {
 void standbyRadio() {
   driverEntry();
   ++standby_calls;
+  test_now += standby_cost_ms;
   if (rx_arrives_before_standby) {
     // A final old-session packet arrives after owner dispatch, before stop.
     pending_rx = true;
@@ -121,7 +123,7 @@ void resetFakeRadio() {
   last_tx_size = 0;
   memset(last_tx, 0, sizeof(last_tx));
   test_now = 0;
-  send_cost_ms = 0;
+  send_cost_ms = standby_cost_ms = 0;
   pending_rx = false;
   rx_arrives_before_standby = false;
   IrqFired = false;

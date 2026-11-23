@@ -66,7 +66,7 @@ class GatewayCustodyAuthorizedIngress final {
       const ProductCustodyStore::Handle* handles, uint8_t count,
       const GatewayCustodyAckScope& requested,
       uint8_t (&wire)[kq05_gateway_batch_ack::kMaxSize],
-      size_t& written);
+      size_t& written, bool* stale_single = nullptr);
   bool pending() const { return pending_; }
   // Identity bound at construction to the trusted Gateway custody owner.
   uint64_t localGatewayId() const { return gateway_id_; }
