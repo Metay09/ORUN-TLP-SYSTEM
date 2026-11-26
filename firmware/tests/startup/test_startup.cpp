@@ -577,9 +577,179 @@ int geofenceUsbScenario() {
   return 0;
 }
 
+
+#ifdef ORUN_REPORT_CADENCE_HOST_TEST
+int orun301Scenario(bool with_fix, uint32_t interval) {
+  using Fake = SFE_UBLOX_GNSS;
+
+  auto pass = [](uint32_t step = 10U) {
+    test_now += step;
+    if (radio_manager.isTransmitting()) {
+      radio_driver::Guard gate;
+      assert(gate);
+      callbacks->TxDone();
+    }
+    loop();
+  };
+
+  auto settleRecords = [&](uint32_t count) {
+    for (unsigned i = 0;
+         i < 300U &&
+         product_records.diagnostics().stored < count;
+         ++i)
+      pass();
+
+    assert(product_records.diagnostics().stored == count);
+    assert(product_records.diagnostics().failed == 0U);
+  };
+
+  auto verify = [&](uint32_t sequence, bool fix) {
+    osf::RecordIdentity id{};
+    id.incarnation = product_records.store().incarnation();
+    id.sequence = sequence;
+
+    ObservationStore::Record row{};
+
+    assert(product_records.store().lookup(id, row) ==
+           ObservationStore::LookupResult::kFound);
+
+    assert(!row.released);
+
+    tlp::PeriodicObservationPlaintext decoded{};
+
+    assert(tlp::decodePeriodicPlaintext(
+        row.payload, row.payload_size, &decoded) ==
+        tlp::ProductSecureCodecResult::kOk);
+
+    assert(decoded.record_sequence == sequence);
+    assert(decoded.period_duration_seconds != 0U);
+
+    assert(bool(decoded.record_flags &
+                tlp::kPeriodicLocationValid) == fix);
+
+    if (fix) {
+      assert(decoded.latitude_e7 == 410000001);
+      assert(decoded.longitude_e7 == 290000001);
+    } else {
+      assert(decoded.latitude_e7 == 0);
+      assert(decoded.longitude_e7 == 0);
+    }
+  };
+
+  assert(product_records.mounted());
+  assert(explicit_services_active);
+  assert(requestedRuntimeConfig().tracking_enabled);
+  assert(gnss_manager.trackingIntervalMs() == interval);
+
+  pass();
+
+  assert(product_period_open);
+
+  const uint32_t opened = product_period_started_ms;
+
+  if (with_fix) {
+    for (unsigned i = 0;
+         i < 200U &&
+         gnss_manager.state() != GnssManager::State::kAcquiring;
+         ++i)
+      pass(100U);
+
+    assert(gnss_manager.state() ==
+           GnssManager::State::kAcquiring);
+
+    for (uint32_t tow : {1000U, 2000U}) {
+      Fake::pending.push_back([tow] {
+        UBX_NAV_PVT_data_t pvt{};
+        pvt.iTOW = tow;
+        pvt.flags.bits.gnssFixOK = true;
+        pvt.fixType = 3;
+        pvt.lat = 410000001;
+        pvt.lon = 290000001;
+        pvt.numSV = 8;
+        Fake::current_pvt = pvt;
+        Fake::itow_fresh = true;
+        Fake::pvt(&pvt);
+        UBX_NAV_DOP_data_t dop{tow, 100};
+        Fake::dop(&dop);
+      });
+      pass();
+    }
+
+    settleRecords(1U);
+    verify(1U, true);
+
+    assert(test_now - opened < interval);
+
+    printf("ORUN-301 LOOP FIRST FIX elapsed_ms=%lu interval=%lu PASS\n",
+           (unsigned long)(test_now - opened),
+           (unsigned long)interval);
+  } else {
+    // Remain without GNSS data. No acquisition timeout
+    // callback is required for the periodic report.
+    while (test_now - opened + 100U < interval)
+      pass(100U);
+
+    assert(product_records.diagnostics().submitted == 0U);
+
+    pass(interval - (test_now - opened));
+
+    settleRecords(1U);
+    verify(1U, false);
+
+    assert(!gnss_manager.detected());
+
+    printf("ORUN-301 LOOP GNSS ABSENT interval=%lu PASS\n",
+           (unsigned long)interval);
+  }
+
+  // No new GNSS fix. The next report must still be durable.
+  const uint32_t anchor = product_period_started_ms;
+
+  while (test_now - anchor + 100U < interval)
+    pass(100U);
+
+  assert(product_records.diagnostics().submitted == 1U);
+
+  pass(interval - (test_now - anchor));
+
+  settleRecords(2U);
+  verify(2U, false);
+
+  // Tracking OFF must stop report production.
+  Serial.output.clear();
+  Serial.queueInput("APP SERVICES NONE\n");
+
+  for (unsigned i = 0;
+       i < 100U && requestedRuntimeConfig().tracking_enabled;
+       ++i)
+    pass();
+
+  assert(!requestedRuntimeConfig().tracking_enabled);
+
+  pass();
+
+  assert(!product_period_open);
+  assert(!product_report_fix_pending);
+
+  pass(interval + 1000U);
+
+  assert(product_records.diagnostics().submitted == 2U);
+
+  puts("ORUN-301 LOOP NEXT REPORT AND TRACKING OFF PASS");
+  return 0;
+}
+#endif
+
 int main(int argc, char** argv) {
   assert(argc == 2);
   const std::string mode = argv[1];
+  const bool report_scenario =
+      mode.find("orun301_") == 0U;
+  const bool report_fix =
+      mode.find("fix") != std::string::npos;
+  const uint32_t report_interval =
+      mode.find("900") != std::string::npos
+          ? 900U : 60U;
   // "advfail"/"blefail" keep the radio healthy and instead fail BLE:
   // Advertising.start() returning false / Bluefruit.begin() returning false.
   const bool ble_advertising_fails = mode == "advfail";
@@ -598,7 +768,7 @@ int main(int argc, char** argv) {
   const bool product_busy_scenario = mode == "product_busy_health";
   const bool battery_scenario = mode == "battery_critical";
   const bool geofence_usb_scenario = mode == "geofence_usb";
-  const bool success = mode == "success" || ble_advertising_fails || ble_runtime_fails ||
+  const bool success = report_scenario || mode == "success" || ble_advertising_fails || ble_runtime_fails ||
                        no_event_control || geofence_scenario ||
                        persisted_geofence_scenario || uncertain_geofence_scenario ||
                        history_erase_i2c_scenario || services_scenario ||
@@ -688,22 +858,27 @@ int main(int argc, char** argv) {
 
   // services_no_gnss: one committed v4 record with EXPLICIT tracking, and a
   // GNSS module that never answers.
-  if (services_scenario || product_services_scenario) {
-    const uint8_t services = services_scenario
+  if (services_scenario || product_services_scenario ||
+      report_scenario) {
+    const uint8_t services =
+        (services_scenario || report_scenario)
                                  ? config_format::kServiceTracking
                                  : mode == "product_services_relay"
                                        ? config_format::kServiceRelayForwarding
                                        : 0U;
     config_format::TokenizedRecord record(
         1,
-        config_format::Config(gnss_config::kTrackingIntervalSeconds, 0,
+        config_format::Config(
+            report_scenario ? report_interval :
+                gnss_config::kTrackingIntervalSeconds, 0,
                               config_format::kServiceModeExplicit,
                               services),
         config_format::StateToken(0x0102030405060708ULL, 1));
     uint8_t encoded[config_format::kWriteRecordSize]{};
     config_format::encodeV4(record, encoded);
     memcpy(config_region, encoded, sizeof(encoded));
-    SFE_UBLOX_GNSS::present = !services_scenario;
+    SFE_UBLOX_GNSS::present =
+        report_scenario ? report_fix : !services_scenario;
   }
 
   // Seed page 0 through the real journal/backend, including a committed fix.
@@ -732,6 +907,10 @@ int main(int argc, char** argv) {
   Bluefruit.begin_result = !ble_runtime_fails;
   fake_analog_value = 3393;  // battery divider at 4.2 V (1.690)
   setup();
+#ifdef ORUN_REPORT_CADENCE_HOST_TEST
+  if (report_scenario)
+    return orun301Scenario(report_fix, report_interval * 1000U);
+#endif
   if (services_scenario) return servicesNoGnssScenario();
   if (product_services_scenario) return productServicesScenario();
   if (product_busy_scenario) return productBusyHealthScenario();

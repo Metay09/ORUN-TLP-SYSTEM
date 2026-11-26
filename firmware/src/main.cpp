@@ -12,6 +12,10 @@
 #include "activity_auto_sampler.h"
 #include "activity_period_evidence.h"
 #include "product_period_builder.h"
+#include "product_report_timing.h"
+#if defined(ORUN_REPORT_CADENCE_HOST_TEST) && !defined(__linux__)
+#error "Report cadence test seam is host-only"
+#endif
 #include "application_request.h"
 #include "application_status_runtime.h"
 #include "battery_monitor.h"
@@ -128,6 +132,10 @@ uint32_t product_period_started_ms = 0;
 uint32_t product_preview_sequence = 0;
 uint32_t product_last_gnss_timeouts = 0;
 ProductPeriodBaseline product_period_baseline;
+#if defined(ORUN_GATEWAY_BATCH_ACK) || defined(ORUN_REPORT_CADENCE_HOST_TEST)
+bool product_report_fix_pending = false;
+orun_tlp::GnssFix product_report_fix{};
+#endif
 // Battery voltage on WB_A0, read once a minute. Measurement only for now.
 orun_tlp::BatteryMonitor battery_monitor;
 orun_tlp::PowerStateTracker power_state;
@@ -1744,7 +1752,11 @@ void finishProductPeriod(const orun_tlp::GnssFix* fix) {
   // period until the reboot that re-probes it.
   if (accelerometer_manager.detected() && accelerometer_manager.faulted())
     in.health.flags |= orun_tlp::tlp::kHealthSensorFault;
-  if (in.health.gnss_failures != 0)
+  if (in.health.gnss_failures != 0
+#if defined(ORUN_GATEWAY_BATCH_ACK) || defined(ORUN_REPORT_CADENCE_HOST_TEST)
+      || !gnss_manager.detected()
+#endif
+      )
     in.health.flags |= orun_tlp::tlp::kHealthGnssDegraded;
   if (in.health.sensor_failures != 0)
     in.health.flags |= orun_tlp::tlp::kHealthSensorDegraded;
@@ -4507,6 +4519,25 @@ void loop() {
   }
 
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kFixHandling);
+#if defined(ORUN_GATEWAY_BATCH_ACK) || defined(ORUN_REPORT_CADENCE_HOST_TEST)
+  const bool product_reporting =
+      orun_tlp::productReportingEnabled(
+#ifdef ORUN_REPORT_CADENCE_HOST_TEST
+          product_records.mounted(),
+#else
+          trackerStorage(),
+#endif
+          requestedRuntimeConfig());
+
+  if (product_reporting && !product_period_open) {
+    openProductPeriod(orun_tlp::monotonic::nowMs());
+  } else if (!product_reporting && product_period_open) {
+    product_period_open = false;
+    product_report_fix_pending = false;
+    activity_auto_sampler.setReportOwned(false);
+  }
+#endif
+
   orun_tlp::GnssFix fix{};
   const bool confirmation_fix_expected =
       geofence_confirmation.confirmationActive();
@@ -4519,7 +4550,12 @@ void loop() {
       tracking_enabled &&
       (confirmation_fix_expected ||
        (gnss_manager.hasFreshFixForTransmission() &&
-        positions.prepareForFixStorage()));
+#if defined(ORUN_GATEWAY_BATCH_ACK) || defined(ORUN_REPORT_CADENCE_HOST_TEST)
+        (product_reporting || positions.prepareForFixStorage())
+#else
+        positions.prepareForFixStorage()
+#endif
+        ));
   if (normal_fix_storage_ready &&
       gnss_manager.takeFreshFixForTransmission(&fix)) {
     // M7P7I observes the exact same already-accepted GNSS value once. Extend
@@ -4550,9 +4586,20 @@ void loop() {
     processGeofenceAcceptedFix(fix, !confirmation_fix_expected);
 
     if (!confirmation_fix_expected) {
+#if defined(ORUN_GATEWAY_BATCH_ACK) || defined(ORUN_REPORT_CADENCE_HOST_TEST)
+      if (product_reporting) {
+        product_report_fix = fix;
+        product_report_fix_pending = true;
+      }
+      const bool legacy_ready =
+          !product_reporting || positions.prepareForFixStorage();
+      const bool accepted = legacy_ready &&
+          positions.acceptFix(fix, orun_tlp::monotonic::nowMs());
+#else
       finishProductPeriod(&fix);
       const bool accepted =
           positions.acceptFix(fix, orun_tlp::monotonic::nowMs());
+#endif
       if (geofence_slot0_normal_store_expected) {
         geofence_slot0_normal_store_accepted = accepted;
         geofence_slot0_normal_store_expected = false;
@@ -4562,8 +4609,28 @@ void loop() {
     }
   }
 
-  // A normal acquisition that timed out still ends a report period (SF5: one
-  // PERIODIC per effective period, LOCATION_VALID=0 when there is no fix).
+#if defined(ORUN_GATEWAY_BATCH_ACK) || defined(ORUN_REPORT_CADENCE_HOST_TEST)
+  // A report does not depend on GNSS detection, timeout or recovery.
+  // A newly accepted normal fix can close the current period immediately.
+  // A pending store write delays the report rather than dropping it.
+  {
+    const uint32_t now = orun_tlp::monotonic::nowMs();
+
+    if (product_reporting && !product_records.pending() &&
+        orun_tlp::productReportDue(
+            product_period_open, product_period_started_ms, now,
+            gnss_manager.trackingIntervalMs(),
+            product_report_fix_pending)) {
+
+      finishProductPeriod(product_report_fix_pending
+                              ? &product_report_fix : nullptr);
+      product_report_fix_pending = false;
+    }
+
+    product_last_gnss_timeouts =
+        gnss_manager.diagnostics().acquisition_timeouts;
+  }
+#else
   {
     const uint32_t timeouts = gnss_manager.diagnostics().acquisition_timeouts;
     if (timeouts != product_last_gnss_timeouts) {
@@ -4572,6 +4639,7 @@ void loop() {
         finishProductPeriod(nullptr);
     }
   }
+#endif
 
   // If the acquisition owner crossed a recovery/timeout boundary while M6D2
   // still expected an extra observation, abort immediately rather than carry
@@ -4717,9 +4785,14 @@ void loop() {
 #endif
   }
 #endif
-  const bool pilot_allowed = ble_ready && tracking_enabled &&
+  const bool pilot_allowed = ble_ready &&
+#ifdef ORUN_GATEWAY_BATCH_ACK
+      product_reporting &&
+#else
+      tracking_enabled && !positions.pending() &&
+#endif
       radio_manager.role() == orun_tlp::NodeRole::kTracker &&
-      !positions.pending() && !radio_manager.relayForwardingEnabled() &&
+      !radio_manager.relayForwardingEnabled() &&
       !custodyReleasePending() && security_store.ready() &&
       security_store.state() == orun_tlp::SecurityState::kProvisioned &&
       !security_store.busy() && product_records.mounted() &&
@@ -4735,12 +4808,11 @@ void loop() {
     const uint32_t now = orun_tlp::monotonic::nowMs();
     // Conservative next-report estimate based on the current GNSS cadence.
     // An unknown or overdue period reserves the next live opportunity.
-    uint32_t until_report_ms = 0U;
-    const uint32_t interval_ms = gnss_manager.trackingIntervalMs();
-    if (product_period_open && interval_ms != 0U) {
-      const uint32_t elapsed = now - product_period_started_ms;
-      until_report_ms = interval_ms - (elapsed % interval_ms);
-    }
+    const uint32_t until_report_ms =
+        orun_tlp::productReportRemainingMs(
+            product_period_open, product_period_started_ms, now,
+            gnss_manager.trackingIntervalMs(),
+            product_report_fix_pending);
 
     const uint8_t event_size =
         static_cast<uint8_t>(orun_tlp::tlp::kEventFrameSize);
