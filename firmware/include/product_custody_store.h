@@ -70,10 +70,10 @@ class ProductCustodyStore final {
   Handoff requestHandoff(const Handle& handle, const uint8_t* object,
                          size_t size);
   // A page whose every record is handed off holds no custody: erase it so
-  // the space can be reused. Never the page still accepting records.
+  // the space can be reused. Retain the newest generation as a reboot witness.
   // Returns the page index, or -1 if none.
   int reclaimablePage(uint32_t reserved_pages = 0) const;
-  bool requestReclaim(uint16_t page);
+  bool requestReclaim(uint16_t page, uint32_t reserved_pages = 0);
   bool takeMaintenanceResult(Maintenance& result);
   bool hasMaintenanceResult() const { return maintenance_ready_; }
 
@@ -93,7 +93,15 @@ class ProductCustodyStore final {
                      uint8_t (&object)[custody_store_product_format::kMaxObjectSize],
                      size_t& size) const;
   bool scanAtBoot();
+  bool canReclaim(uint16_t page, uint32_t reserved_pages,
+                  custody_store_product_format::PageInspection& header) const;
+  // A failed read is distinct from successfully reading non-erased bytes.
+  bool erasedRange(uint32_t offset, uint32_t end, bool& erased) const;
   bool isErasedPage(uint16_t page) const;
+  bool isolatedPage(uint16_t page) const {
+    return (isolated_pages_ & (uint32_t(1) << page)) != 0U;
+  }
+  bool validObject(const custody_store_product_format::RecordInspection& record) const;
   bool readPage(uint16_t page,
       custody_store_product_format::PageInspection& out) const;
   bool readRecord(uint16_t page, uint16_t slot,
@@ -108,6 +116,8 @@ class ProductCustodyStore final {
 
   FlashBackend& flash_;
   uint16_t page_count_ = 0;
+  // Reconstructed at mount. No writer, ACK or erase may target these pages.
+  uint32_t isolated_pages_ = 0;
   bool ready_ = false;
   bool faulted_ = false;
   bool awaiting_ = false;

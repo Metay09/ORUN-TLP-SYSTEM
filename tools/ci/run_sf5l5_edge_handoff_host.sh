@@ -27,5 +27,6 @@ echo "[SF5L5] bench Edge accept -> Gateway hand-off + page reclaim"
   firmware/src/gateway_custody_authorized_ingress.cpp \
   firmware/src/custody_store_product_format.cpp \
   firmware/src/product_custody_store.cpp firmware/src/product_region.cpp \
+  firmware/src/device_storage_role.cpp firmware/src/gateway_product_startup_guard.cpp \
   -lcrypto -o "$dir/sf5l5"
 "$dir/sf5l5"

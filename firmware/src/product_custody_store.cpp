@@ -38,14 +38,28 @@ bool ProductCustodyStore::readRecord(uint16_t page, uint16_t slot,
          fmt::inspectRecord(data,sizeof(data),out);
 }
 
-bool ProductCustodyStore::isErasedPage(uint16_t page) const {
+bool ProductCustodyStore::erasedRange(uint32_t offset, uint32_t end,
+                                      bool& erased) const {
+  erased = true;
   uint8_t bytes[fmt::kPageHeaderSize];
-  for (uint32_t off=0;off<fmt::kPageSize;off+=sizeof(bytes)) {
-    if (!flash_.read(uint32_t(page)*fmt::kPageSize+off,bytes,sizeof(bytes)))
-      return false;
-    for (uint8_t b:bytes) if (b!=0xFFU) return false;
+  while (offset < end) {
+    const size_t size = end - offset < sizeof(bytes) ? end - offset : sizeof(bytes);
+    if (!flash_.read(offset, bytes, size)) return false;
+    for (size_t i = 0; i < size; ++i) {
+      if (bytes[i] != 0xFFU) {
+        erased = false;
+        return true;
+      }
+    }
+    offset += size;
   }
   return true;
+}
+
+bool ProductCustodyStore::isErasedPage(uint16_t page) const {
+  const uint32_t base = uint32_t(page) * fmt::kPageSize;
+  bool erased;
+  return erasedRange(base, base + fmt::kPageSize, erased) && erased;
 }
 
 bool ProductCustodyStore::shapeValid(const uint8_t* p, size_t size) const {
@@ -67,44 +81,60 @@ bool ProductCustodyStore::shapeValid(const uint8_t* p, size_t size) const {
   return p[3]==0x02U && p[6]==48U;
 }
 
+bool ProductCustodyStore::validObject(const fmt::RecordInspection& record) const {
+  return (record.evidence == fmt::RecordEvidence::kHeld ||
+          record.evidence == fmt::RecordEvidence::kHandedOff) &&
+         shapeValid(record.object, record.object_size);
+}
+
 bool ProductCustodyStore::scanAtBoot() {
-  uint64_t maximum_generation=0;
-  uint16_t latest_page=UINT16_MAX;
-  uint16_t latest_free=fmt::kRecordsPerPage;
-  for (uint16_t page=0;page<page_count_;++page) {
+  uint64_t generations[32]{};
+  bool needs_active_witness = false;
+  isolated_pages_ = 0;
+  for (uint16_t page = 0; page < page_count_; ++page) {
+    const uint32_t base = uint32_t(page) * fmt::kPageSize;
+    uint8_t raw[fmt::kPageHeaderSize];
     fmt::PageInspection header{};
-    if (!readPage(page,header)) return false;
-    if (header.evidence==fmt::PageEvidence::kErased) {
-      if (!isErasedPage(page)) return false;
+    if (!flash_.read(base, raw, sizeof(raw)) ||
+        !fmt::inspectPageHeader(raw, sizeof(raw), header)) return false;
+
+    if (header.evidence != fmt::PageEvidence::kActive) {
+      bool empty_tail;
+      if (!erasedRange(base + sizeof(raw), base + fmt::kPageSize, empty_tail))
+        return false;
+      if (empty_tail && header.evidence == fmt::PageEvidence::kErased) continue;
+
+      // A recognisable interrupted OCQ2 allocation contained no records yet.
+      // A torn erase can also destroy that identity. In that case serve only
+      // if another independently validated active v3 page witnesses ownership.
+      // Neither case is evidence that this page may be erased or programmed.
+      if (!(empty_tail && fmt::interruptedPageOpen(raw, header))) {
+        if (!fmt::possibleTornErase(raw)) return false;
+        needs_active_witness = true;
+      }
+      isolated_pages_ |= uint32_t(1) << page;
       continue;
     }
-    if (header.evidence!=fmt::PageEvidence::kActive) return false;
-    if (header.generation==0U || header.generation==UINT64_MAX)
-      return false;
-    uint16_t first_empty=fmt::kRecordsPerPage;
-    for (uint16_t slot=0;slot<fmt::kRecordsPerPage;++slot) {
+
+    for (uint16_t previous = 0; previous < page; ++previous)
+      if (generations[previous] == header.generation) return false;
+    generations[page] = header.generation;
+
+    uint16_t next = 0;
+    for (uint16_t slot = 0; slot < fmt::kRecordsPerPage; ++slot) {
       fmt::RecordInspection record{};
-      if (!readRecord(page,slot,record)) return false;
-      if (record.evidence==fmt::RecordEvidence::kErased) {
-        if (first_empty==fmt::kRecordsPerPage) first_empty=slot;
-      } else {
-        if (first_empty!=fmt::kRecordsPerPage ||
-            (record.evidence!=fmt::RecordEvidence::kHeld &&
-             record.evidence!=fmt::RecordEvidence::kHandedOff) ||
-            !shapeValid(record.object,record.object_size))
-          return false;
-      }
+      if (!readRecord(page, slot, record)) return false;
+      // Every programmed slot is spent. Durable reads validate the record
+      // independently; neither holes nor uncertain words are reusable here.
+      if (record.evidence != fmt::RecordEvidence::kErased) next = slot + 1U;
     }
-    if (header.generation>maximum_generation) {
-      maximum_generation=header.generation;
-      latest_page=page;
-      latest_free=first_empty;
-    } else if (header.generation==maximum_generation) return false;
+    if (header.generation > active_generation_) {
+      active_generation_ = header.generation;
+      active_page_ = page;
+      next_slot_ = next;
+    }
   }
-  active_generation_=maximum_generation;
-  active_page_=latest_page;
-  next_slot_=latest_free;
-  return true;
+  return !needs_active_witness || active_page_ != UINT16_MAX;
 }
 
 bool ProductCustodyStore::begin() {
@@ -135,6 +165,7 @@ bool ProductCustodyStore::findDuplicate(const uint8_t* object, size_t size,
   // Return false on any read/parse failure; never turn an uncertain duplicate
   // into permission to write a second object or to mint an ACK.
   for (uint16_t page=0;page<page_count_;++page) {
+    if (isolatedPage(page)) continue;
     fmt::PageInspection header{};
     if (!readPage(page,header)) return false;
     if (header.evidence==fmt::PageEvidence::kErased) continue;
@@ -142,9 +173,7 @@ bool ProductCustodyStore::findDuplicate(const uint8_t* object, size_t size,
     for (uint16_t slot=0;slot<fmt::kRecordsPerPage;++slot) {
       fmt::RecordInspection record{};
       if (!readRecord(page,slot,record)) return false;
-      if (record.evidence==fmt::RecordEvidence::kErased) continue;
-      if (record.evidence!=fmt::RecordEvidence::kHeld &&
-          record.evidence!=fmt::RecordEvidence::kHandedOff) return false;
+      if (!validObject(record)) continue;
       if (!fmt::exactObject(record,object,size)) continue;
       result=record.evidence==fmt::RecordEvidence::kHeld ?
              Admission::kDuplicateHeld : Admission::kDuplicateHandedOff;
@@ -186,6 +215,7 @@ ProductCustodyStore::Admission ProductCustodyStore::requestObject(
     if (active_generation_==UINT64_MAX-1U) return Admission::kNoCapacity;
     uint16_t erased_page=UINT16_MAX;
     for (uint16_t page=0;page<page_count_;++page) {
+      if (isolatedPage(page)) continue;
       fmt::PageInspection header{};
       if (!readPage(page,header)) { faulted_=true; return Admission::kRejected; }
       if (header.evidence==fmt::PageEvidence::kErased) {
@@ -278,12 +308,6 @@ void ProductCustodyStore::poll() {
         break;
       case Phase::kReclaimVerify: {
         const bool ok=isErasedPage(pending_handle_.page);
-        if (ok && pending_handle_.page==active_page_) {
-          // The full, fully handed-off newest page: the next admission opens
-          // a fresh page with a HIGHER generation (active_generation_ kept).
-          active_page_=UINT16_MAX;
-          next_slot_=0U;
-        }
         finishMaintenance(ok);
         return;
       }
@@ -378,14 +402,14 @@ ProductCustodyStore::Lookup ProductCustodyStore::readDurable(
       handle.page>=page_count_ ||
       handle.slot>=fmt::kRecordsPerPage || handle.generation==0U)
     return Lookup::kError;
+  if (isolatedPage(handle.page)) return Lookup::kNotHeld;
   fmt::PageInspection header{};
   fmt::RecordInspection record{};
   if (!readPage(handle.page,header) || !readRecord(handle.page,handle.slot,record))
     return Lookup::kError;
   if (header.evidence!=fmt::PageEvidence::kActive ||
       header.generation!=handle.generation ||
-      (record.evidence!=fmt::RecordEvidence::kHeld &&
-       record.evidence!=fmt::RecordEvidence::kHandedOff)) return Lookup::kNotHeld;
+      !validObject(record)) return Lookup::kNotHeld;
   if (record.evidence!=fmt::RecordEvidence::kHeld && !allow_handed_off)
     return Lookup::kNotHeld;
   size=record.object_size;
@@ -401,6 +425,7 @@ ProductCustodyStore::Handoff ProductCustodyStore::requestHandoff(
       handle.page>=page_count_ || handle.slot>=fmt::kRecordsPerPage ||
       handle.generation==0U)
     return Handoff::kRejected;
+  if (isolatedPage(handle.page)) return Handoff::kNotFound;
   fmt::PageInspection header{};
   fmt::RecordInspection record{};
   if (!readPage(handle.page,header) || !readRecord(handle.page,handle.slot,record))
@@ -409,7 +434,7 @@ ProductCustodyStore::Handoff ProductCustodyStore::requestHandoff(
   // reused slot (or for other bytes) must never mark a different object.
   if (header.evidence!=fmt::PageEvidence::kActive ||
       header.generation!=handle.generation ||
-      !fmt::exactObject(record,object,size))
+      !validObject(record) || !fmt::exactObject(record,object,size))
     return Handoff::kNotFound;
   if (record.evidence==fmt::RecordEvidence::kHandedOff)
     return Handoff::kAlreadyHandedOff;
@@ -425,43 +450,40 @@ ProductCustodyStore::Handoff ProductCustodyStore::requestHandoff(
   return Handoff::kStarted;
 }
 
+bool ProductCustodyStore::canReclaim(uint16_t page, uint32_t reserved_pages,
+                                    fmt::PageInspection& header) const {
+  // Keep the newest header: it witnesses OCQ2 ownership through a torn erase
+  // and prevents reusing a generation after power loss. A new committed page
+  // makes its predecessor eligible.
+  if (page >= page_count_ || page == active_page_ || isolatedPage(page) ||
+      (reserved_pages & (uint32_t(1) << page))) return false;
+  if (!readPage(page, header) || header.evidence != fmt::PageEvidence::kActive)
+    return false;
+  for (uint16_t slot = 0; slot < fmt::kRecordsPerPage; ++slot) {
+    fmt::RecordInspection record{};
+    if (!readRecord(page, slot, record) ||
+        record.evidence != fmt::RecordEvidence::kHandedOff || !validObject(record))
+      return false;
+  }
+  return true;
+}
+
 int ProductCustodyStore::reclaimablePage(uint32_t reserved_pages) const {
   if (!ready() || busy() || flash_.hasUnreconciledMutation()) return -1;
-  for (uint16_t page=0;page<page_count_;++page) {
-    if (page < 32U && (reserved_pages & (uint32_t(1) << page))) continue;
-    // The page still accepting records is never reclaimed while it has room.
-    if (page==active_page_ && next_slot_<fmt::kRecordsPerPage) continue;
-    fmt::PageInspection header{};
-    if (!readPage(page,header) || header.evidence!=fmt::PageEvidence::kActive)
-      continue;
-    bool all_handed_off=true;
-    for (uint16_t slot=0;slot<fmt::kRecordsPerPage && all_handed_off;++slot) {
-      fmt::RecordInspection record{};
-      all_handed_off=readRecord(page,slot,record) &&
-          record.evidence==fmt::RecordEvidence::kHandedOff;
-    }
-    if (all_handed_off) return page;
-  }
+  fmt::PageInspection header{};
+  for (uint16_t page = 0; page < page_count_; ++page)
+    if (canReclaim(page, reserved_pages, header)) return page;
   return -1;
 }
 
-bool ProductCustodyStore::requestReclaim(uint16_t page) {
-  if (reclaimablePage()<0 || maintenance_ready_ || outcome_ready_) return false;
-  // Re-check this exact page under the same rule (cheap, avoids a stale id).
-  if (page>=page_count_ || (page==active_page_ && next_slot_<fmt::kRecordsPerPage))
-    return false;
+bool ProductCustodyStore::requestReclaim(uint16_t page, uint32_t reserved_pages) {
   fmt::PageInspection header{};
-  if (!readPage(page,header) || header.evidence!=fmt::PageEvidence::kActive)
+  if (!ready() || busy() || outcome_ready_ || maintenance_ready_ ||
+      flash_.hasUnreconciledMutation() || !canReclaim(page, reserved_pages, header))
     return false;
-  for (uint16_t slot=0;slot<fmt::kRecordsPerPage;++slot) {
-    fmt::RecordInspection record{};
-    if (!readRecord(page,slot,record) ||
-        record.evidence!=fmt::RecordEvidence::kHandedOff)
-      return false;
-  }
-  pending_handle_=Handle{};
-  pending_handle_.page=page;
-  pending_handle_.generation=header.generation;
+  pending_handle_ = Handle{};
+  pending_handle_.page = page;
+  pending_handle_.generation = header.generation;
   awaiting_=false;
   phase_=Phase::kReclaimErase;
   return true;
@@ -476,8 +498,8 @@ void ProductCustodyStore::finishMaintenance(bool success) {
   phase_=Phase::kIdle;
   awaiting_=false;
   // Any failed or unverifiable program/erase fails closed until reboot. On
-  // reboot a torn marker reads as HELD (retried with the other slot) and a
-  // torn erase refuses to mount (manual bench recovery), never data loss.
+  // reboot a torn marker reads as HELD (retried with the other slot) and an
+  // incompletely erased page is isolated when ownership is established.
   if (!success || flash_.hasUnreconciledMutation()) faulted_=true;
   memset(pending_object_,0,sizeof(pending_object_));
 }

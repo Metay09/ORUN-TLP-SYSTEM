@@ -106,6 +106,46 @@ bool inspectPageHeader(const uint8_t* bytes, size_t size,
   return true;
 }
 
+bool interruptedPageOpen(const uint8_t (&header)[kPageHeaderSize],
+                         const PageInspection& parsed) {
+  if (parsed.evidence == PageEvidence::kPrepared ||
+      parsed.evidence == PageEvidence::kPartialActivation) return true;
+  if (parsed.evidence != PageEvidence::kStaged &&
+      parsed.evidence != PageEvidence::kPartialCommit) return false;
+  const uint64_t gen = get64(header + 8U);
+  // The generation word can still be erased after the complete identity
+  // was written. No later field may have been programmed in this case.
+  if (gen == UINT64_MAX)
+    return get32(header) == kPageMagic && get16(header + 4U) == kVersion &&
+           get16(header + 6U) == static_cast<uint16_t>(~kVersion) &&
+           erased(header + 8U, kPageHeaderSize - 8U);
+  uint8_t expected[kPageHeaderSize];
+  if (!encodePageHeader(gen, expected) ||
+      memcmp(header, expected, 8U) != 0 ||
+      !erased(header + kHeaderActiveOffset, kPageHeaderSize - kHeaderActiveOffset))
+    return false;
+  // The body is written before the commit word. A partial body may retain
+  // some erased bits in place of programmed zeros; a started commit needs
+  // the complete body, including its CRC.
+  for (size_t i = 0; i < kHeaderCommitOffset; ++i) {
+    if ((header[i] & expected[i]) != expected[i]) return false;
+  }
+  return parsed.evidence == PageEvidence::kStaged ||
+         memcmp(header, expected, kHeaderCommitOffset) == 0;
+}
+
+bool possibleTornErase(const uint8_t (&header)[kPageHeaderSize]) {
+  // Erasing can only set bits. An intact foreign magic/version pair cannot
+  // be adopted via this check (foreign OCQ1/OBS1 also fail the census).
+  uint8_t identity[8];
+  put32(identity, kPageMagic);
+  put16(identity + 4U, kVersion);
+  put16(identity + 6U, static_cast<uint16_t>(~kVersion));
+  for (size_t i = 0; i < sizeof(identity); ++i)
+    if ((header[i] & identity[i]) != identity[i]) return false;
+  return true;
+}
+
 bool encodeRecord(const uint8_t* object, size_t size,
                   uint8_t (&out)[kRecordSize]) {
   if (object == nullptr || !supportedSize(size)) return false;

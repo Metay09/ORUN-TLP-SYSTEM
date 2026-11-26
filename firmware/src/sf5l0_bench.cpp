@@ -896,7 +896,7 @@ Sf5l0EdgeHandoff::Event Sf5l0EdgeHandoff::service(uint32_t reserved_pages) {
   if (check_reclaim_ && !pending_ && store_.ready() && !store_.busy() &&
       !store_.hasOutcome()) {
     const int page = store_.reclaimablePage(reserved_pages);
-    if (page >= 0 && store_.requestReclaim(uint16_t(page))) {
+    if (page >= 0 && store_.requestReclaim(uint16_t(page), reserved_pages)) {
       event.kind = Event::Kind::kReclaimStarted;
       event.ok = true;
       event.page = uint16_t(page);

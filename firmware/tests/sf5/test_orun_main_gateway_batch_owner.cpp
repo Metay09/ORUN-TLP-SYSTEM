@@ -131,6 +131,48 @@ void validatesAllFiveWidths(bool async) {
   }
 }
 
+void batchAfterInterruptedAppend() {
+  Nor flash;
+  Grants grants;
+  uint8_t object[100]{};
+  frame(object, sizeof(object));
+  Handle good{};
+  {
+    ProductCustodyStore store(flash, 2U);
+    assert(store.begin());
+    GatewayLocalCustodyOwner owner(store);
+    Ingress ingress(owner, grants, kGateway);
+    durableSingle(ingress, owner, store, object, sizeof(object), good);
+    uint8_t next[100];
+    memcpy(next, object, sizeof(next));
+    put64(next + 20U, 12345U);
+    assert(store.requestCustody(next, sizeof(next)) == ProductCustodyStore::Admission::kStarted);
+    store.poll();  // body programmed, commit word still erased
+  }
+  ProductCustodyStore store(flash, 2U);
+  assert(store.begin());
+  GatewayLocalCustodyOwner owner(store);
+  Ingress ingress(owner, grants, kGateway);
+  GatewayCustodyAckScope scope{};
+  uint8_t key[32]{}, wire[batch::kMaxSize]{};
+  size_t length = 0;
+  assert(grants.activeGrant(kTracker, 7U, scope, key));
+  assert(ingress.prepareAuthorizedBatchAck(&good, 1, scope, wire, length));
+  Kq05BatchExactView view{};
+  view.bytes = object;
+  view.size = sizeof(object);
+  assert(Kq05BatchCryptoHostPeer::verify(wire, length, scope, key, &view, 1));
+  Handle mixed[2] = {good, good};
+  ++mixed[1].slot;
+  preservesOutputOnFailure(ingress, mixed, 2, scope);
+  mixed[1] = good;
+  ++mixed[1].generation;
+  preservesOutputOnFailure(ingress, mixed, 2, scope);
+  grants.enrolled = false;
+  preservesOutputOnFailure(ingress, &good, 1, scope);
+  puts("ORUN-103 recovered batch: exact signature, torn/stale member and revoked grant rejected PASS");
+}
+
 struct RotatingGrants final : GatewayCustodyGrantProvider {
   Grants backing{};
   unsigned calls = 0U;
@@ -243,6 +285,7 @@ int main() {
   batchReadbackHandleIsSingleOwner(false);
   batchReadbackHandleIsSingleOwner(true);
   batchRevokedHandleNeverEscapes();  // old 0x05 regression first
+  batchAfterInterruptedAppend();
   validatesAllFiveWidths(false);
   validatesAllFiveWidths(true);
   revocationBetweenReadbackAndPublishFails();

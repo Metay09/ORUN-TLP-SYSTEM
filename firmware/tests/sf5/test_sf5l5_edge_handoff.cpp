@@ -12,6 +12,8 @@
 //  - a Tracker retransmission of a handed-off (not yet reclaimed) object is
 //    re-ACKed from the same durable bytes;
 //  - everything survives a Gateway reboot.
+#include "device_storage_role.h"
+
 #include <assert.h>
 #include <algorithm>
 #include <stdio.h>
@@ -123,11 +125,11 @@ struct Gateway {
   Sf5l0BenchGrantSource grants;
   GatewayCustodyAuthorizedIngress ingress;
   Sf5l0EdgeHandoff handoff;
-  explicit Gateway(EraseFlash& f)
+  explicit Gateway(EraseFlash& f, bool mount = true)
       : flash(f), store(f, kPages), owner(store), grants(kGateway),
         ingress(owner, grants, kGateway), handoff(store, kGateway) {
     handoff.setKey(kGatewayEdgeKey);
-    assert(store.begin());
+    if (mount) assert(store.begin());
   }
   // Admit one object; true = ACKed (fresh custody or exact re-ACK).
   bool receive(const osc::ExactObject& object,
@@ -295,6 +297,92 @@ void testHandoffAndReclaim() {
 }
 
 #ifndef ORUN_SF5L5_NO_MAIN
+struct CutFlash : EraseFlash {
+  bool cut_program = false;
+  bool cut_erase = false;
+  FlashOpResult program(uint32_t o, const void* src, size_t n) override {
+    if (!cut_program) return EraseFlash::program(o, src, n);
+    cut_program = false;
+    // First half of the 108-byte record body actually reached the medium.
+    assert(n == fmt::kRecordCommitOffset);
+    memcpy(bytes.data() + o, src, n / 2U);
+    return FlashOpResult::kFailed;
+  }
+  FlashOpResult erasePage(uint32_t page) override {
+    if (!cut_erase) return EraseFlash::erasePage(page);
+    cut_erase = false;
+    assert(page == 0U);
+    memset(bytes.data(), 0xFF, fmt::kPageSize / 2U);
+    return FlashOpResult::kFailed;
+  }
+};
+
+void transferHeld(Gateway& gw, const Sf5l0HeldRecord& r) {
+  const auto accept = privateAcceptLine(r.page, r.slot, r.generation,
+                                       r.object, r.size, kGatewayEdgeKey);
+  assert(gw.accept(accept) == Sf5l0EdgeHandoff::Reply::kPending);
+  const auto e = gw.drain();
+  assert(e.kind == Sf5l0EdgeHandoff::Event::Kind::kHandedOff && e.ok);
+}
+
+void productRecovery(bool erase) {
+  CutFlash flash;
+  osc::ExactObject kept{}, next{};
+  const unsigned count = erase ? fmt::kRecordsPerPage + 1U : 1U;
+  makeFrame(next, kTracker, sf5l0_bench::kTestKeyEpoch, count + 1U);
+  {
+    Gateway before(flash);
+    for (unsigned i = 1; i <= count; ++i) {
+      makeFrame(kept, kTracker, sf5l0_bench::kTestKeyEpoch, i);
+      assert(before.receive(kept));
+    }
+    if (erase) {
+      const auto records = held(flash, before.store);
+      assert(records.size() == count);
+      for (unsigned i = 0; i + 1 < count; ++i) transferHeld(before, records[i]);
+      assert(before.handoff.service(1U).kind == Sf5l0EdgeHandoff::Event::Kind::kNone);
+      flash.cut_erase = true;
+      assert(before.drain().kind == Sf5l0EdgeHandoff::Event::Kind::kReclaimStarted);
+      const auto cut = before.drain();
+      assert(cut.kind == Sf5l0EdgeHandoff::Event::Kind::kReclaimed && !cut.ok);
+    } else {
+      flash.cut_program = true;
+      assert(!before.receive(next));
+      assert(!before.owner.ackReady());
+    }
+  }
+  const auto snapshot = flash.bytes;
+  Gateway reboot(flash, false);
+  StorageRoleInput role{};
+  const uint8_t ogk[] = {'O','G','K','1'}, empty[] = {255,255,255,255};
+  role.security = classifySecurityPageHeads(ogk, empty);
+  role.security_readable = true;
+  role.product_readable = product_region::takeCensus(flash, kPages, role.product);
+  assert(decideStorageRole(role) == StorageRole::kGateway);
+  GatewayProductStartupGuard gate(flash, kPages, reboot.store, reboot.grants, kGateway);
+  assert(gate.inspectAndMount(true, false, kGateway) == GatewayProductStartupGuard::State::kReady);
+  assert(gate.mayServe(true, false, kGateway));
+  const auto survivors = held(flash, reboot.store);
+  assert(survivors.size() == 1U);
+  const auto& r = survivors.front();
+  assert(r.size == kept.object_size && memcmp(r.object, kept.object, r.size) == 0);
+  GatewayCustodyAuthorizedIngress::Result first{};
+  assert(reboot.receive(kept, &first));
+  assert(first == GatewayCustodyAuthorizedIngress::Result::kAckReady);
+  assert(flash.bytes == snapshot);
+  transferHeld(reboot, r);
+  assert(reboot.receive(next, &first));
+  assert(first == GatewayCustodyAuthorizedIngress::Result::kStarted);
+  Gateway again(flash);
+  const auto pending = held(flash, again.store);
+  assert(pending.size() == 1U && pending[0].size == next.object_size);
+  assert(memcmp(pending[0].object, next.object, next.object_size) == 0);
+  assert(again.receive(kept, &first) && first == GatewayCustodyAuthorizedIngress::Result::kAckReady);
+  assert(flash.erases == 0U);
+  printf("ORUN-103 %s: role + startup guard + authorized exact re-ACK + Edge MAC handoff + new admission + reboot PASS\n",
+         erase ? "torn erase" : "torn append");
+}
+
 void testOnlyExactRecordMoves() {
   EraseFlash flash;
   Gateway gw(flash);
@@ -329,6 +417,8 @@ int main() {
   testMacVector();
   testHandoffAndReclaim();
   testOnlyExactRecordMoves();
+  productRecovery(false);
+  productRecovery(true);
   puts("SF5L5 Edge hand-off: authentic exact-object accept, idempotent, "
        "page reclaim + reuse, re-ACK of handed-off duplicate, reboot: PASS "
        "(HOST ONLY)");

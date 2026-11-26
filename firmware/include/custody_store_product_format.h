@@ -60,6 +60,11 @@ struct RecordInspection {
 bool encodePageHeader(uint64_t generation, uint8_t (&out)[kPageHeaderSize]);
 bool inspectPageHeader(const uint8_t* bytes, size_t size,
                        PageInspection& inspection);
+// Recognition for quarantine only; neither result validates a record or
+// grants permission to erase. The caller separately verifies page ownership.
+bool interruptedPageOpen(const uint8_t (&header)[kPageHeaderSize],
+                         const PageInspection& parsed);
+bool possibleTornErase(const uint8_t (&header)[kPageHeaderSize]);
 bool encodeRecord(const uint8_t* object, size_t size,
                   uint8_t (&out)[kRecordSize]);
 bool inspectRecord(const uint8_t* bytes, size_t size,

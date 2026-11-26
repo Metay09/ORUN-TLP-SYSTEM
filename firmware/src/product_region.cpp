@@ -106,7 +106,7 @@ MountDecision mountProductCustodyDecision(const Census& census) {
     return MountDecision::kForeignStore;
   if (census.product_custody == 0U && census.unknown != 0U)
     return MountDecision::kNeedsPreparation;
-  // Any unknown companion to OCQ2 is then rejected by the strict store scan.
+  // The store must classify each companion before it can serve any page.
   return MountDecision::kMount;
 }
 

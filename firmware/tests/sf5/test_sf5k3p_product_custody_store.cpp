@@ -114,7 +114,12 @@ void cuts() {
    uint8_t o[100]{};size_t n=0;
    assert(s.readConfirmedHeld(h,o,n)==ProductCustodyStore::Lookup::kError);
    ProductCustodyStore reboot(nor,2);
-   assert(!reboot.begin());
+   assert(reboot.begin());
+   assert(reboot.readConfirmedDurable(h,o,n)!=ProductCustodyStore::Lookup::kFound);
+   // Only a fresh committed copy may acknowledge the interrupted object.
+   assert(reboot.requestCustody(p,100)==A::kStarted);
+   settle(reboot);
+   assert(reboot.takeCustodyResult(ok,h) && ok);
  }
 }
 void rebootAtEveryCommitBoundary() {
@@ -126,16 +131,14 @@ void rebootAtEveryCommitBoundary() {
   for(int i=0;i<cut;++i)s.poll();
   assert(nor.writes==cut);
   ProductCustodyStore reboot(nor,2);
-  const bool recovered=reboot.begin();
-  if(cut==1 || cut==2 || cut==4) assert(!recovered);
-  else if(cut==3) {
-   assert(recovered); // complete empty active page, no custody record yet
+  assert(reboot.begin());
+  if(cut<5) {
+   // Incomplete allocations are isolated, incomplete slots are spent.
    assert(reboot.requestCustody(p,100)==A::kStarted);
    settle(reboot);
    bool done=false;ProductCustodyStore::Handle handle{};
    assert(reboot.takeCustodyResult(done,handle) && done);
   } else {
-   assert(recovered);
    ProductCustodyStore::Handle handle{};
    assert(reboot.requestCustody(p,100,&handle)==A::kDuplicateHeld);
   }
@@ -176,7 +179,14 @@ void invalidAndCorrupt() {
  assert(s.takeCustodyResult(ok,h)&&ok);
  nor.bytes[fmt::kPageHeaderSize+20]^=0x01;
  ProductCustodyStore reboot(nor,2);
- assert(!reboot.begin());
+ assert(reboot.begin());
+ uint8_t read[100]{};size_t size=0;
+ assert(reboot.readConfirmedDurable(h,read,size)==ProductCustodyStore::Lookup::kNotHeld);
+ assert(reboot.requestHandoff(h,p,sizeof(p))==ProductCustodyStore::Handoff::kNotFound);
+ assert(!reboot.requestReclaim(h.page));
+ assert(reboot.requestCustody(p,sizeof(p))==A::kStarted);
+ settle(reboot); ProductCustodyStore::Handle fresh{};
+ assert(reboot.takeCustodyResult(ok,fresh) && ok && fresh.slot!=h.slot);
 }
 void foreignLayoutAndUnknownRefused() {
   for (uint32_t magic : {UINT32_C(0x4F435131), UINT32_C(0x4F425331)}) {
@@ -209,7 +219,147 @@ void foreignLayoutAndUnknownRefused() {
     assert(!reboot.begin() && reboot.faulted());
   }
 }
+// ORUN-103: cut the next append on the same page, or erase the first half
+// of a handed-off page while a different page contains a confirmed HELD.
+struct HalfEraseNor : Nor {
+  uint32_t unreadable = UINT32_MAX;
+  bool read(uint32_t offset, void* dst, size_t n) const override {
+    return offset != unreadable && Nor::read(offset, dst, n);
+  }
+  FlashOpResult erasePage(uint32_t page) override {
+    assert(page == 0U);
+    memset(bytes.data(), 0xFF, fmt::kPageSize / 2U);
+    return FlashOpResult::kFailed;
+  }
+};
+
+void recoverPreviousHeld(bool cut_erase) {
+  HalfEraseNor nor;
+  ProductCustodyStore store(nor, 2);
+  assert(store.begin());
+  uint8_t object[100]{};
+  ProductCustodyStore::Handle kept{};
+  const unsigned count = cut_erase ? fmt::kRecordsPerPage + 1U : 1U;
+  for (unsigned i = 0; i < count; ++i) {
+    frame(object, sizeof(object), i + 1U);
+    assert(store.requestCustody(object, sizeof(object)) == A::kStarted);
+    settle(store);
+    bool ok = false;
+    assert(store.takeCustodyResult(ok, kept) && ok);
+    if (i + 1U < count) {
+      assert(store.requestHandoff(kept, object, sizeof(object)) ==
+             ProductCustodyStore::Handoff::kStarted);
+      settle(store);
+      ProductCustodyStore::Maintenance m{};
+      assert(store.takeMaintenanceResult(m) && m.success);
+      if (i + 1U == fmt::kRecordsPerPage) assert(!store.requestReclaim(0));
+    }
+  }
+
+  uint8_t next[100]{};
+  frame(next, sizeof(next), count + 1U);
+  if (cut_erase) {
+    assert(!store.requestReclaim(0, 1U));
+    assert(store.reclaimablePage(1U) < 0);  // pending ACK protects page 0
+    assert(store.reclaimablePage() == 0 && store.requestReclaim(0));
+  } else {
+    nor.fail_write = nor.writes + 1;
+    nor.partial = true;
+    assert(store.requestCustody(next, sizeof(next)) == A::kStarted);
+  }
+  settle(store);
+  const auto damaged = nor.bytes;
+  // Interrupt recovery during the active-page record scan, then reboot again.
+  nor.unreadable = kept.page * fmt::kPageSize + fmt::kPageHeaderSize;
+  ProductCustodyStore interrupted(nor, 2);
+  assert(!interrupted.begin() && !interrupted.ready() && nor.bytes == damaged);
+  nor.unreadable = UINT32_MAX;
+  ProductCustodyStore reboot(nor, 2);
+  assert(reboot.begin());
+  assert(nor.bytes == damaged);  // mounting does not repair flash by writing
+  uint8_t read[100]{};
+  size_t size = 0;
+  assert(reboot.readConfirmedHeld(kept, read, size) == ProductCustodyStore::Lookup::kFound);
+  assert(size == sizeof(object) && memcmp(read, object, size) == 0);
+  ProductCustodyStore::Handle dup{};
+  assert(reboot.requestCustody(object, size, &dup) == A::kDuplicateHeld);
+  assert(dup.generation == kept.generation && dup.slot == kept.slot && dup.page == kept.page);
+  assert(!reboot.requestReclaim(0));
+  if (!cut_erase) {
+    auto torn = kept;
+    ++torn.slot;
+    assert(reboot.readConfirmedDurable(torn, read, size) != ProductCustodyStore::Lookup::kFound);
+    assert(reboot.requestHandoff(torn, next, sizeof(next)) == ProductCustodyStore::Handoff::kNotFound);
+  }
+  assert(reboot.requestCustody(next, sizeof(next)) == A::kStarted);
+  settle(reboot);
+  bool ok = false;
+  ProductCustodyStore::Handle fresh{};
+  assert(reboot.takeCustodyResult(ok, fresh) && ok);
+  assert(fresh.page == kept.page && fresh.slot == (cut_erase ? 1U : 2U));
+  ProductCustodyStore again(nor, 2);
+  assert(again.begin() && again.requestCustody(next, sizeof(next)) == A::kDuplicateHeld);
+  printf("ORUN-103 %s: mount, original exact HELD, duplicate, safe append and reboot PASS\n",
+         cut_erase ? "interrupted erase" : "interrupted append");
+}
+
+void incompleteIdentityAndDuplicateGeneration() {
+  Nor flash;
+  uint8_t header[fmt::kPageHeaderSize];
+  assert(fmt::encodePageHeader(1U, header));
+  memcpy(flash.bytes.data(), header, 8U);  // OCQ2 and version pair only
+  ProductCustodyStore store(flash, 2);
+  assert(store.begin() && flash.writes == 0);
+  uint8_t object[100]{};
+  frame(object, sizeof(object));
+  assert(store.requestCustody(object, sizeof(object)) == A::kStarted);
+  settle(store);
+  ProductCustodyStore::Handle h{};
+  bool committed = false;
+  assert(store.takeCustodyResult(committed, h) && committed && h.page == 1);
+  memcpy(flash.bytes.data(), flash.bytes.data() + fmt::kPageSize, sizeof(header));
+  const auto snapshot = flash.bytes;
+  assert(!store.begin() && flash.bytes == snapshot);
+}
+
+void cutsDuringHandoff() {
+  for (unsigned cuts = 1; cuts <= 2; ++cuts) {
+    Nor nor;
+    ProductCustodyStore store(nor, 2);
+    assert(store.begin());
+    uint8_t object[100]{}, read[100]{};
+    frame(object, sizeof(object));
+    assert(store.requestCustody(object, sizeof(object)) == A::kStarted);
+    settle(store);
+    bool ok = false;
+    ProductCustodyStore::Handle handle{};
+    assert(store.takeCustodyResult(ok, handle) && ok);
+    for (unsigned cut = 0; cut < cuts; ++cut) {
+      nor.partial = true;
+      nor.fail_write = nor.writes + 1;
+      assert(store.requestHandoff(handle, object, sizeof(object)) == ProductCustodyStore::Handoff::kStarted);
+      settle(store);
+      assert(store.begin()); // reset: torn marker cannot mean Edge acceptance
+      size_t size = 0;
+      assert(store.readConfirmedHeld(handle, read, size) == ProductCustodyStore::Lookup::kFound);
+      assert(size == sizeof(object) && !memcmp(object, read, size));
+    }
+    if (cuts == 2) {
+      assert(store.requestHandoff(handle, object, sizeof(object)) == ProductCustodyStore::Handoff::kExhausted);
+    } else {
+      assert(store.requestHandoff(handle, object, sizeof(object)) == ProductCustodyStore::Handoff::kStarted);
+      settle(store);
+      ProductCustodyStore::Maintenance done{};
+      assert(store.takeMaintenanceResult(done) && done.success);
+      assert(store.begin());
+      assert(store.requestCustody(object, sizeof(object)) == A::kDuplicateHandedOff);
+    }
+  }
+}
+
 int main() {
+ recoverPreviousHeld(false); recoverPreviousHeld(true); cutsDuringHandoff();
+ incompleteIdentityAndDuplicateGeneration();
  foreignLayoutAndUnknownRefused();
  normalAndReset();asyncNoEarlySuccess();cuts();invalidAndCorrupt();noEvictionOnFull();unreconciledNoAdmit();rebootAtEveryCommitBoundary();
  puts("SF5K3P PRODUCT_SECURE real FlashBackend custody store / sync async reboot cuts: PASS");
