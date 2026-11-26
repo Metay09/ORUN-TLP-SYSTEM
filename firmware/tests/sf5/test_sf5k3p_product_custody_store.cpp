@@ -357,7 +357,148 @@ void cutsDuringHandoff() {
   }
 }
 
+
+struct ReclaimNor final : Nor {
+  unsigned erases = 0;
+
+  FlashOpResult erasePage(uint32_t page) override {
+    if (page >= 2U)
+      return FlashOpResult::kFailed;
+
+    memset(bytes.data() + page * fmt::kPageSize,
+           0xFF, fmt::kPageSize);
+
+    ++erases;
+    return FlashOpResult::kDone;
+  }
+};
+
+void reclaimInterruptedSlot(
+    int cut, bool uncertain, bool corrupt) {
+
+  ReclaimNor flash;
+
+  {
+    ProductCustodyStore first(flash, 2);
+    assert(first.begin());
+
+    uint8_t object[100]{};
+    frame(object, sizeof(object), 1U);
+
+    flash.fail_write = cut == 0 ? -1 : cut;
+    flash.partial = true;
+
+    assert(first.requestCustody(
+        object, sizeof(object)) == A::kStarted);
+
+    settle(first);
+
+    bool ok = false;
+    ProductCustodyStore::Handle h{};
+
+    assert(first.takeCustodyResult(ok, h));
+    assert(ok == (cut == 0));
+  }
+
+  if (uncertain) {
+    flash.bytes[fmt::kPageHeaderSize +
+                fmt::kRecordHandoff0Offset] = 0xFEU;
+  }
+
+  if (corrupt) {
+    flash.bytes[fmt::kPageHeaderSize + 40U] ^= 1U;
+  }
+
+  ProductCustodyStore store(flash, 2);
+  assert(store.begin());
+
+  for (unsigned i = 2;
+       i <= 2U * fmt::kRecordsPerPage; ++i) {
+
+    uint8_t object[100]{};
+    frame(object, sizeof(object), i);
+
+    assert(store.requestCustody(
+        object, sizeof(object)) == A::kStarted);
+
+    settle(store);
+
+    bool ok = false;
+    ProductCustodyStore::Handle h{};
+
+    assert(store.takeCustodyResult(ok, h) && ok);
+
+    assert(store.requestHandoff(
+        h, object, sizeof(object)) ==
+        ProductCustodyStore::Handoff::kStarted);
+
+    settle(store);
+
+    ProductCustodyStore::Maintenance m{};
+    assert(store.takeMaintenanceResult(m));
+    assert(m.success);
+  }
+
+  ProductCustodyStore reboot(flash, 2);
+  assert(reboot.begin());
+
+  // Pending ACK protects page 0.
+  assert(reboot.reclaimablePage(1U) < 0);
+  assert(!reboot.requestReclaim(0, 1U));
+
+  const bool allowed =
+      cut != 0 && !uncertain && !corrupt;
+
+  if (allowed) {
+    assert(reboot.reclaimablePage() == 0);
+    assert(reboot.requestReclaim(0));
+
+    settle(reboot);
+
+    ProductCustodyStore::Maintenance m{};
+    assert(reboot.takeMaintenanceResult(m));
+    assert(m.success);
+    assert(flash.erases == 1U);
+
+    uint8_t next[100]{};
+    frame(next, sizeof(next), 999U);
+
+    assert(reboot.requestCustody(
+        next, sizeof(next)) == A::kStarted);
+
+    settle(reboot);
+
+    bool ok = false;
+    ProductCustodyStore::Handle h{};
+
+    assert(reboot.takeCustodyResult(ok, h) && ok);
+    assert(h.page == 0U && h.generation == 3U);
+
+    ProductCustodyStore again(flash, 2);
+    assert(again.begin());
+
+    assert(again.requestCustody(
+        next, sizeof(next)) == A::kDuplicateHeld);
+
+  } else {
+    assert(reboot.reclaimablePage() < 0);
+    assert(!reboot.requestReclaim(0));
+    assert(flash.erases == 0U);
+  }
+
+  printf(
+      "ORUN-103 F02 cut=%d uncertain=%d corrupt=%d "
+      "reclaim=%d PASS\n",
+      cut, int(uncertain), int(corrupt), int(allowed));
+}
+
 int main() {
+ reclaimInterruptedSlot(4, false, false);
+ reclaimInterruptedSlot(5, false, false);
+ reclaimInterruptedSlot(4, true, false);
+ reclaimInterruptedSlot(0, false, true);
+ reclaimInterruptedSlot(0, false, false);
+
  recoverPreviousHeld(false); recoverPreviousHeld(true); cutsDuringHandoff();
  incompleteIdentityAndDuplicateGeneration();
  foreignLayoutAndUnknownRefused();

@@ -460,10 +460,27 @@ bool ProductCustodyStore::canReclaim(uint16_t page, uint32_t reserved_pages,
   if (!readPage(page, header) || header.evidence != fmt::PageEvidence::kActive)
     return false;
   for (uint16_t slot = 0; slot < fmt::kRecordsPerPage; ++slot) {
+    uint8_t raw[fmt::kRecordSize]{};
     fmt::RecordInspection record{};
-    if (!readRecord(page, slot, record) ||
-        record.evidence != fmt::RecordEvidence::kHandedOff || !validObject(record))
+    if (!flash_.read(recordOffset(page, slot), raw, sizeof(raw)) ||
+        !fmt::inspectRecord(raw, sizeof(raw), record))
       return false;
+
+    if (record.evidence == fmt::RecordEvidence::kHandedOff &&
+        validObject(record))
+      continue;
+
+    // Under the NOR power-cut model, an incomplete commit
+    // cannot have granted durable custody. Any evidence of
+    // a handoff attempt makes the slot ambiguous.
+    if (record.evidence != fmt::RecordEvidence::kStaged &&
+        record.evidence != fmt::RecordEvidence::kPartialCommit)
+      return false;
+
+    for (size_t i = fmt::kRecordHandoff0Offset;
+         i < sizeof(raw); ++i) {
+      if (raw[i] != 0xFFU) return false;
+    }
   }
   return true;
 }
