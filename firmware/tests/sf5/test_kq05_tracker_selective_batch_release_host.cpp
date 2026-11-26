@@ -67,7 +67,9 @@ RadioManager::BatchTx RadioManager::sendAuthorizedBatchAck(GatewayCustodyAuthori
     return stale ? BatchTx::kStaleHandle : BatchTx::kUnverifiable;
   if (!ackFitsWindow(simulation_ms, heard, receipt_size) ||
       !gatewayAirtimeAvailable(receipt_size)) return BatchTx::kDeferred;
-  if (gateway_budget_enabled_) gateway_budget_.charge(receipt_size);
+  if (!rf_budget_.reserve(simulation_ms, receipt_size))
+    return BatchTx::kDeferred;
+  rf_budget_.finish(simulation_ms);
   ++downlinks;
   return BatchTx::kStarted;
 }

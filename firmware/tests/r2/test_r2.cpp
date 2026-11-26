@@ -319,7 +319,10 @@ void relayUsesSafeMonotonicClockAcrossCoreRollover() {
   const uint64_t source = 0x6666;
   const uint32_t sequence = 77;
   makePosition(source, sequence, packet);
+  test_now = 0x7FFFFFFFU;
+  assert(manager.gatewayAirtimeAvailable(34U));
   test_now = UINT32_MAX - 100;
+  assert(manager.gatewayAirtimeAvailable(34U));
   rxDone(packet, sizeof(packet), -88, 7);
   manager.update(false);
   const uint32_t due = test_now +
@@ -407,7 +410,10 @@ void ownerDeadlineAndQueueSaturation() {
   RadioManager manager;
   TestSequence sequences;
   beginAs(manager, sequences, NodeRole::kTracker);
+  test_now = 0x7FFFFFFFU;
+  assert(manager.gatewayAirtimeAvailable(34U));
   test_now = UINT32_MAX - 100;
+  assert(manager.gatewayAirtimeAvailable(34U));
   send_cost_ms = 250; // Driver Send/BUSY time precedes watchdog arming.
   sendLocalPosition(manager, 90);
   uint8_t packet[34]; makePosition(0x8888, 90, packet);
@@ -506,40 +512,43 @@ void portableDeviceIdDiagnostics() {
            " sequence=4294967295 type=TEST RSSI=-123 dBm SNR=-17 dB\n");
   }
 
-  beginAs(manager, sequences, NodeRole::kTracker);
-  sendLocalPosition(manager, UINT32_MAX);
+  RadioManager boot_radio_1;
+  beginAs(boot_radio_1, sequences, NodeRole::kTracker);
+  sendLocalPosition(boot_radio_1, UINT32_MAX);
   assert(Serial.output.find("TX POSITION source=0102030405060708 sequence=4294967295 lat=410000000 lon=290000000 sats=9\n") != std::string::npos);
 
   constexpr uint64_t source = 0x89ABCDEF01234567ULL;
   uint8_t bytes[tlp::kPositionPacketSize];
   makePosition(source, 40, bytes);
-  beginAs(manager, sequences, NodeRole::kRelay);
+  RadioManager boot_radio_2;
+  beginAs(boot_radio_2, sequences, NodeRole::kRelay);
   rxDone(bytes, sizeof(bytes), -101, -8);
-  manager.update(false);
+  boot_radio_2.update(false);
   rxDone(bytes, sizeof(bytes), -101, -8);
-  manager.update(false);
+  boot_radio_2.update(false);
   assert(Serial.output.find("RELAY RX source=89ABCDEF01234567 seq=40 rssi=-101 snr=-8\n") != std::string::npos);
   assert(Serial.output.find("RELAY QUEUE source=89ABCDEF01234567 seq=40 delay=") != std::string::npos);
   assert(Serial.output.find("RELAY DUP source=89ABCDEF01234567 seq=40\n") != std::string::npos);
   for (uint32_t seq = 41; seq <= 44; ++seq) {
     makePosition(source, seq, bytes);
     rxDone(bytes, sizeof(bytes), -101, -8);
-    manager.update(false);
+    boot_radio_2.update(false);
   }
   assert(Serial.output.find("RELAY DROP queue-full source=89ABCDEF01234567 seq=44\n") != std::string::npos);
   test_now = relay_config::kMaximumDelayMs;
-  manager.update(false);
+  boot_radio_2.update(false);
   assert(Serial.output.find("RELAY TX source=89ABCDEF01234567 seq=40\n") != std::string::npos);
   // Forwarding is not application reception: a relay prints no bridge line.
   assert(Serial.output.find("BRIDGE ") == std::string::npos);
 
-  beginAs(manager, sequences, NodeRole::kBase);
+  RadioManager boot_radio_3;
+  beginAs(boot_radio_3, sequences, NodeRole::kBase);
   test_now = 4242;
   makePosition(source, 40, bytes);
   rxDone(bytes, sizeof(bytes), -82, 6);
-  manager.update(false);
+  boot_radio_3.update(false);
   rxDone(bytes, sizeof(bytes), -83, 5);
-  manager.update(false);
+  boot_radio_3.update(false);
   assert(Serial.output.find("BASE RX NEW source=89ABCDEF01234567 seq=40 path=DIRECT rssi=-82 snr=6\n") != std::string::npos);
   assert(Serial.output.find("BASE RX DUP source=89ABCDEF01234567 seq=40 path=DIRECT rssi=-83 snr=5\n") != std::string::npos);
   tlp::RelayForwardPacket envelope{};
@@ -550,7 +559,7 @@ void portableDeviceIdDiagnostics() {
   uint8_t forwarded[tlp::kRelayForwardPacketSize];
   assert(tlp::serializeRelayForwardPacket(envelope, forwarded, sizeof(forwarded)));
   rxDone(forwarded, sizeof(forwarded), -82, 6);
-  manager.update(false);
+  boot_radio_3.update(false);
   assert(Serial.output.find("BASE RX NEW source=89ABCDEF01234567 seq=41 path=RELAY relay=FEDCBA9876543210 ingress_rssi=-110 ingress_snr=-9 rssi=-82 snr=6\n") != std::string::npos);
 
   // Host bridge line (protocol/BRIDGE_FRAME_V1.md): exactly one per accepted
@@ -576,9 +585,10 @@ void portableDeviceIdDiagnostics() {
   assert(countOf(Serial.output, "BRIDGE ") == 3);
   assert(countOf(Serial.output, "BASE RX ") == 3);
 
-  beginAs(manager, sequences, NodeRole::kTracker);
+  RadioManager boot_radio_4;
+  beginAs(boot_radio_4, sequences, NodeRole::kTracker);
   rxDone(bytes, sizeof(bytes), -82, 6);
-  manager.update(false);
+  boot_radio_4.update(false);
   assert(Serial.output.find("RX POSITION source=89ABCDEF01234567 seq=40 ignored role=TRACKER\n") != std::string::npos);
   // A node that ignores the POSITION has nothing to bridge.
   assert(Serial.output.find("BRIDGE ") == std::string::npos);
@@ -638,4 +648,5 @@ int main() {
   ownerDeadlineAndQueueSaturation();
   cancelledRoleRequestRetainsActiveForward();
   puts("R2 radio ownership, recovery and rollover checks: PASS");
+  return 0;
 }

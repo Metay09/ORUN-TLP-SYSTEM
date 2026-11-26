@@ -4761,20 +4761,11 @@ void loop() {
     const bool live_eligible = pilot_allowed && !event_sent &&
         bench_pacer.hasBatchAirtime(now, periodic_size) &&
         radio_manager.sharedAirtimeAvailable(periodic_size);
-    const uint32_t live_cost_us =
-        orun_tlp::profileAirtimeUs(periodic_size) + 1000U;
-    // 90 us/ms: gercek 95 us/ms yenilemeden daha ihtiyatli.
-    const uint64_t future_credit_us =
-        uint64_t(until_report_ms) * 90U;
-    const uint32_t reserve_us =
-        future_credit_us >= live_cost_us ? 0U :
-        live_cost_us - static_cast<uint32_t>(future_credit_us);
-
     const bool backlog_eligible = live_eligible &&
         bench_pacer.hasBacklogAirtime(
             now, periodic_size, until_report_ms) &&
-        radio_manager.sharedAirtimeAvailable(
-            periodic_size, reserve_us);
+        radio_manager.sharedAirtimeAvailableBeforeLive(
+            periodic_size, until_report_ms, periodic_size);
     const auto history =
         batch_history.update(now, live_eligible, backlog_eligible);
     if (history == orun_tlp::TrackerCriticalEventTx::Result::kSent)

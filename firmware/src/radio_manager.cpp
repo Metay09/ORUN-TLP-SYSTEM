@@ -165,6 +165,7 @@ bool RadioManager::begin(SequenceSource& sequences) {
   last_irq_poll_ms_ = monotonic::nowMs();
   Radio.Rx(0);
   const uint32_t now = monotonic::nowMs();
+  rf_budget_.observe(now);
   markRxStarted(now);
   next_tx_at_ms_ = now +
                    deterministicJitter(device_id_, 0,
@@ -194,6 +195,7 @@ void RadioManager::update(bool allow_test_beacon) {
   orunRadioDispatchLocked();
   last_irq_poll_ms_ = poll_started;
   uint32_t now = monotonic::nowMs();
+  rf_budget_.observe(now);
   foldRxAccounting(now);
   if (tx_in_progress_ && pending_tx_result_ == TxResult::kNone &&
       monotonic::elapsed(now, tx_started_ms_, radio_config::kTxTimeoutMs))
@@ -582,6 +584,7 @@ void RadioManager::processCallbackEvents() {
       tx_kind_ = TxKind::kNone;
       tx_in_progress_ = false;
       const uint32_t now = monotonic::nowMs();
+      rf_budget_.finish(now);
       scheduleNextTransmission(now);
       const RadioListenPolicy desired = desiredListenPolicy();
       listen_policy_ = desired;
@@ -755,7 +758,10 @@ bool RadioManager::startTxOperation(uint8_t size, const uint32_t* rx_floor_ms) {
     requestRxRestore();
     return false;
   }
-  if (gateway_budget_enabled_) gateway_budget_.charge(size);
+  if (!rf_budget_.reserve(monotonic::nowMs(), size)) {
+    requestRxRestore();
+    return false;
+  }
   if (++tx_generation_ == 0) ++tx_generation_;
   armed_tx_generation_ = tx_generation_;
   radio_driver::setGeneration(tx_generation_);
@@ -813,12 +819,12 @@ void RadioManager::sendTestPacket() {
   tx_role_epoch_ = role_epoch_;
   rx_restore_state_ = RxRestoreState::kNone;
   ++tx_attempts_;
+  Radio.Send(payload, sizeof(payload));
+  tx_started_ms_ = monotonic::nowMs();
   Serial.printf("TX source=%08lX%08lX sequence=%lu type=TEST\n",
                 static_cast<unsigned long>(uint32_t(packet.source_device_id >> 32)),
                 static_cast<unsigned long>(uint32_t(packet.source_device_id)),
                 static_cast<unsigned long>(packet.sequence_number));
-  Radio.Send(payload, sizeof(payload));
-  tx_started_ms_ = monotonic::nowMs();
 }
 
 void RadioManager::sendDueRelay(uint32_t now) {
@@ -849,12 +855,12 @@ void RadioManager::sendDueRelay(uint32_t now) {
   rx_restore_state_ = RxRestoreState::kNone;
   ++tx_attempts_;
   network_.onForwardTxStarted();
+  Radio.Send(payload, sizeof(payload));
+  tx_started_ms_ = monotonic::nowMs();
   Serial.printf("RELAY TX source=%08lX%08lX seq=%lu\n",
                 static_cast<unsigned long>(uint32_t(original.source_device_id >> 32)),
                 static_cast<unsigned long>(uint32_t(original.source_device_id)),
                 static_cast<unsigned long>(original.sequence_number));
-  Radio.Send(payload, sizeof(payload));
-  tx_started_ms_ = monotonic::nowMs();
 }
 
 void RadioManager::scheduleNextTransmission(uint32_t now) {

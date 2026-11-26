@@ -101,6 +101,9 @@ struct LoraFrameRx {
 };
 
 class RadioManager {
+#ifdef ORUN_KQ05_BATCH_HMAC_HOST_TEST
+  friend struct RadioBudgetHostProbe;
+#endif
  public:
   // Application API is loop-owner-only, including diagnostics/accessors.
   // Dependency callbacks publish handoff state while holding the driver gate.
@@ -125,18 +128,29 @@ class RadioManager {
     return network_.relayForwardingEnabled();
   }
   bool canSend() const;
-  void enableSharedAirtimeBudget() {
-    if (!gateway_budget_enabled_)
-      gateway_budget_.grantTrackerStartupCredit();
-    gateway_budget_enabled_ = true;
-  }
-  void enableGatewayBudget() { gateway_budget_enabled_ = true; }
-  bool sharedAirtimeAvailable(uint8_t size, uint32_t reserve_us = 0) {
+  // Compatibility entry points; the ledger is always active.
+  void enableSharedAirtimeBudget() {}
+  void enableGatewayBudget() {}
+
+  bool sharedAirtimeAvailable(
+      uint8_t size, uint32_t reserve_us = 0) {
     return gatewayAirtimeAvailable(size, reserve_us);
   }
-  bool gatewayAirtimeAvailable(uint8_t size, uint32_t reserve_us = 0) {
-    return !gateway_budget_enabled_ ||
-        gateway_budget_.available(monotonic::nowMs(), size, reserve_us);
+
+  bool gatewayAirtimeAvailable(
+      uint8_t size, uint32_t reserve_us = 0) {
+    return rf_budget_.available(
+        monotonic::nowMs(), size, reserve_us);
+  }
+
+  bool sharedAirtimeAvailableBeforeLive(
+      uint8_t size, uint32_t wait_ms, uint8_t live_size) {
+    return rf_budget_.availableBeforeLive(
+        monotonic::nowMs(), size, wait_ms, live_size);
+  }
+
+  uint32_t rfAirtimeUsedMs() const {
+    return rf_budget_.usedMs();
   }
   bool isTransmitting() const { return tx_in_progress_; }
   RadioListenState listenState() const { return listen_state_; }
@@ -256,8 +270,7 @@ class RadioManager {
     kLoraFrame,
   };
 
-  GatewayAirtimeBudget gateway_budget_{};
-  bool gateway_budget_enabled_ = false;
+  RfDutyBudget rf_budget_{};
 #ifdef ORUN_GATEWAY_BATCH_ACK
   uint32_t batch_ack_rx_floor_ms_ = 0;
 #endif
