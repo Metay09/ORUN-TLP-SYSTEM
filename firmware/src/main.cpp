@@ -4808,11 +4808,16 @@ void loop() {
     const uint32_t now = orun_tlp::monotonic::nowMs();
     // Conservative next-report estimate based on the current GNSS cadence.
     // An unknown or overdue period reserves the next live opportunity.
-    const uint32_t until_report_ms =
+    const uint32_t periodic_remaining =
         orun_tlp::productReportRemainingMs(
             product_period_open, product_period_started_ms, now,
             gnss_manager.trackingIntervalMs(),
             product_report_fix_pending);
+
+    const uint32_t until_report_ms =
+        orun_tlp::productBacklogWindowMs(
+            periodic_remaining,
+            gnss_manager.msUntilPossibleFreshFix(now));
 
     const uint8_t event_size =
         static_cast<uint8_t>(orun_tlp::tlp::kEventFrameSize);

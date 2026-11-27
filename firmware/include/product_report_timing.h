@@ -23,6 +23,14 @@ inline uint32_t productReportRemainingMs(
   return elapsed >= interval ? 0U : interval - elapsed;
 }
 
+// Backlog must leave room for either source of a new report.
+inline uint32_t productBacklogWindowMs(
+    uint32_t periodic_remaining,
+    uint32_t gnss_remaining) {
+  return periodic_remaining < gnss_remaining
+      ? periodic_remaining : gnss_remaining;
+}
+
 inline bool productReportDue(
     bool open, uint32_t started, uint32_t now,
     uint32_t interval, bool fix_pending) {

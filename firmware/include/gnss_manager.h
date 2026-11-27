@@ -60,6 +60,10 @@ class GnssManager {
   bool setTrackingIntervalMsAndReanchor(uint32_t interval_ms);
   uint32_t trackingIntervalMs() const { return tracking_interval_ms_; }
 
+  // Read-only conservative deadline for protecting fresh reports.
+  // Zero means a fresh observation may become available at any time.
+  uint32_t msUntilPossibleFreshFix(uint32_t now) const;
+
   // M6D2: request exactly one additional fresh fix from the SAME acquisition
   // session after the current accepted fix has been consumed. No new attempt,
   // generation, power cycle or boundary epoch is created. The existing 120 s

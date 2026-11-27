@@ -118,6 +118,13 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
     const auto lookup = records_.store().lookup(selected_, record);
     if (lookup == ObservationStore::LookupResult::kReadError)
       return Result::kReadError;
+    // Normal FIFO rotation can retire a selected observation.
+    // Missing is not delivered, and is not a permanent sender fault.
+    if (lookup == ObservationStore::LookupResult::kNone) {
+      resetSelection();
+      scan_cursor_ = 0U;
+      return Result::kNone;
+    }
     if (lookup != ObservationStore::LookupResult::kFound ||
         record.handle.identity.incarnation != selected_.incarnation ||
         record.handle.identity.sequence != selected_.sequence ||
@@ -201,7 +208,7 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
         // cooldown, including when a Gateway ACK was lost.
         if (history) {
           deadline_armed_ = true;
-          next_attempt_ms_ = now_ms + kHistorySpacingMs;
+          next_attempt_ms_ = now_ms + kHistoryRescanMs;
         }
       }
       return Result::kNone;
@@ -209,6 +216,24 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
   }
 
   if (phase_ == Phase::kNeedCache) {
+    // A previously selected candidate may have been capacity-retired
+    // while sealing, waiting for flash, or waiting for radio admission.
+    ObservationStore::Record backing{};
+    const auto backing_status =
+        records_.store().lookup(selected_, backing);
+    if (backing_status == ObservationStore::LookupResult::kReadError)
+      return Result::kReadError;
+    if (backing_status == ObservationStore::LookupResult::kNone ||
+        backing.released) {
+      resetSelection();
+      scan_cursor_ = 0U;
+      return Result::kNone;
+    }
+    if (backing.release_uncertain ||
+        backing.release_marker_exhausted ||
+        !sameId(backing.handle.identity, selected_))
+      return block();
+
     if (sealed_.object_size == 0U) {
       osc::ExactObject cached{};
       const auto existing = records_.findCachedExact(selected_, cached);

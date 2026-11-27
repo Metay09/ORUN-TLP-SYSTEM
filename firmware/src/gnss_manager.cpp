@@ -248,6 +248,40 @@ void GnssManager::clearCandidates() {
   has_latest_hdop_ = false;
 }
 
+uint32_t GnssManager::msUntilPossibleFreshFix(
+    uint32_t now) const {
+  if (fresh_fix_ready_) return 0U;
+
+  uint32_t deadline = 0U;
+
+  switch (state_) {
+    case State::kIdle:
+    case State::kSleeping:
+      deadline = next_due_at_ms_;
+      break;
+
+    case State::kNotPresent:
+      if (redetect_interval_ms_ == 0U)
+        return UINT32_MAX;
+
+      deadline = state_changed_at_ms_ + redetect_interval_ms_;
+      break;
+
+    case State::kDetectionBackoff:
+      deadline = state_changed_at_ms_ +
+          gnss_config::kDetectionRetryBackoffMs *
+          detection_attempts_;
+      break;
+
+    default:
+      // Active acquisition, startup, fix handling or recovery.
+      return 0U;
+  }
+
+  return monotonic::reached(now, deadline)
+      ? 0U : deadline - now;
+}
+
 void GnssManager::startAcquisition(uint32_t now) {
   ++session_generation_;
   if (state_ == State::kSleeping) {

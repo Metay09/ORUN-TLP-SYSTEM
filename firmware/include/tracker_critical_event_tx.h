@@ -26,7 +26,12 @@ class TrackerCriticalEventTx final {
   static constexpr uint32_t kRetryMs = 60000U;
   static constexpr uint32_t kDeferredMs = 30000U;
   static constexpr uint8_t kScanBudget = 8U;
-  static constexpr uint32_t kHistorySpacingMs = 60000U;
+  // Physical TX spacing and RX protection belong to the
+  // composition pacer and RadioManager, not this record selector.
+  static constexpr uint32_t kHistorySpacingMs = 1000U;
+
+  // Avoid continuous full-history scans when no work exists.
+  static constexpr uint32_t kHistoryRescanMs = 60000U;
   static constexpr uint32_t kReceiptWaitMs = 360000U;  // Gateway normally flushes by five minutes.
   // Reserve one exact slot for unexpected critical EVENT arrivals.
   // This is a cache safety reserve, NEVER a LIVE TX window or ACK limit.
@@ -71,6 +76,7 @@ class TrackerCriticalEventTx final {
            selected_.sequence == id.sequence;
   }
   void resetSelection() {
+    fresh_ = false;
     selected_ = {};
     sealed_ = {};
     phase_ = Phase::kSelect;

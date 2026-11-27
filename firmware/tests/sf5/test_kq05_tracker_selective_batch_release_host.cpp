@@ -989,6 +989,487 @@ void testReservedLivePriorityBeforeBacklog() {
        "backlog resumes: PASS");
 }
 
+
+void testOrun302Cadence(uint32_t interval) {
+  using namespace orun_tlp;
+
+  Fixture tracker(3);
+  tracker.admitGrant();
+
+  RadioManager collar;
+  collar_radio = &collar;
+
+  ProductSecureCrypto crypto(tracker.security);
+
+  using Sender = TrackerCriticalEventTx;
+
+  Sender sender(
+      tracker.records, crypto, collar,
+      Sender::Mode::kPeriodicHistory);
+
+  ReleaseOwner release(tracker.security, tracker.records);
+
+  RfDutyBudget budget;
+
+  const uint8_t size = tlp::kPeriodicFrameSize;
+
+  const uint32_t cost = RfDutyBudget::costMs(size);
+
+  const uint32_t gap =
+      cost + radio_config::kWindowedRxAfterTxMs;
+
+  const uint32_t start = 1000U;
+
+  uint32_t next_live = start;
+  uint32_t newest = 0U;
+  uint32_t last_tx = 0U;
+
+  unsigned live_count = 0U;
+  unsigned history_count = 0U;
+  unsigned generated = 0U;
+
+  bool seen[8]{};
+
+  uplink = {};
+  radio_busy = false;
+
+  for (uint32_t now = start;
+       now < start + 4U * interval;
+       now += 1000U) {
+
+    simulation_ms = now;
+
+    if (now == next_live) {
+      newest = append(tracker.records).sequence;
+      ++generated;
+      next_live += interval;
+    }
+
+    const uint32_t remaining = next_live - now;
+
+    const bool eligible =
+        (last_tx == 0U || now - last_tx >= gap) &&
+        budget.available(now, size);
+
+    const bool allow_old =
+        eligible && remaining > gap + 200U &&
+        budget.availableBeforeLive(now, size,
+                                   remaining, size);
+
+    for (unsigned poll = 0; poll < 2000U; ++poll) {
+      tracker.records.poll();
+
+      const auto result =
+          sender.update(now, eligible, allow_old);
+
+      assert(result != Sender::Result::kBlocked);
+      assert(result != Sender::Result::kReadError);
+
+      if (result != Sender::Result::kSent)
+        continue;
+
+      assert(eligible);
+
+      assert(uplink.size == size);
+      assert(uplink.payload[4] == 3U);
+
+      assert(budget.reserve(now, size));
+      budget.finish(now + cost);
+
+      if (last_tx != 0U)
+        assert(now - last_tx >= gap);
+
+      last_tx = now;
+
+      const auto id = sender.selectedIdentity();
+
+      assert(id.valid() && id.sequence <= 7U);
+      assert(!seen[id.sequence]);
+
+      seen[id.sequence] = true;
+
+      if (id.sequence == newest) {
+        // No fresh report waits behind old records.
+        assert(now == next_live - interval);
+        ++live_count;
+      } else {
+        assert(id.sequence <= 3U);
+        assert(allow_old);
+        ++history_count;
+      }
+
+      osc::ExactObject exact{};
+
+      assert(tracker.records.findCachedExact(id, exact) ==
+             ObservationStore::ControlLookupResult::kFound);
+
+      assert(exact.object_size == uplink.size);
+
+      assert(!memcmp(exact.object, uplink.payload,
+                     uplink.size));
+
+      uint8_t wire[ack::kMaxSize]{};
+      size_t length = 0U;
+
+      buildAck(&exact, 1U, wire, length);
+
+      assert(release.submit(wire, length) ==
+             ReleaseOwner::Submit::kStarted);
+
+      assert(release.service() ==
+             ReleaseOwner::Service::kWaitingFlash);
+
+      assert(nextDurableOutcome(
+                 release, tracker.records) ==
+             ReleaseOwner::Service::kReleasedOne);
+
+      assert(release.service() ==
+             ReleaseOwner::Service::kApplied);
+
+      assertRetained(tracker.records, id, true);
+
+      uplink = {};
+      break;
+    }
+
+    if (generated == 4U &&
+        live_count == 4U &&
+        history_count == 3U)
+      break;
+  }
+
+  assert(generated == 4U);
+  assert(live_count == 4U);
+  assert(history_count == 3U);
+
+  printf("ORUN-302 interval=%lu live=%u history=%u "
+         "authenticated releases=7 PASS\n",
+         (unsigned long)interval,
+         live_count, history_count);
+
+  collar_radio = nullptr;
+}
+
+
+void testOrun302FifoRetirement(bool cache_ready) {
+  using namespace orun_tlp;
+
+  Fixture tracker(1);
+  tracker.admitGrant();
+
+  RadioManager collar;
+  collar_radio = &collar;
+
+  ProductSecureCrypto crypto(tracker.security);
+
+  using Sender = TrackerCriticalEventTx;
+
+  Sender sender(tracker.records, crypto, collar,
+                Sender::Mode::kPeriodicHistory);
+
+  uplink = {};
+  radio_busy = !cache_ready;
+
+  const auto retired = tracker.objects[0].identity;
+
+  if (cache_ready) {
+    bool durable = false;
+
+    for (unsigned i = 0; i < 2000U; ++i) {
+      tracker.records.poll();
+
+      const auto result = sender.update(1000U, true);
+
+      assert(result != Sender::Result::kBlocked);
+      assert(result != Sender::Result::kReadError);
+      assert(result != Sender::Result::kSent);
+
+      if (result == Sender::Result::kCacheDurable) {
+        durable = true;
+        break;
+      }
+    }
+
+    assert(durable);
+  } else {
+    sender.update(1000U, true);
+  }
+
+  assert(sender.selectedIdentity().sequence ==
+         retired.sequence);
+
+  // Fill the actual 32-page product region and rotate it.
+  constexpr uint32_t capacity =
+      (kProductPages - osf::kControlPageCount) *
+      osf::kDataRecordsPerPage;
+
+  static_assert(capacity == 1260U, "Product geometry changed");
+
+  osf::RecordIdentity latest{};
+
+  for (uint32_t sequence = 2U;
+       sequence <= capacity + 1U;
+       ++sequence) {
+    latest = append(tracker.records);
+    assert(latest.sequence == sequence);
+  }
+
+  ObservationStore::Record missing{};
+
+  assert(tracker.records.store().lookup(retired, missing) ==
+         ObservationStore::LookupResult::kNone);
+
+  assert(tracker.records.store().diagnostics()
+             .capacity_lost_total == 42U);
+
+  assert(tracker.records.diagnostics()
+             .custody_release_committed == 0U);
+
+  // A retired candidate is not a corrupt record or a delivered record.
+  if (cache_ready) {
+    const auto result =
+        sender.update(2000U, false, true);
+
+    assert(result != Sender::Result::kBlocked);
+    assert(!sender.blocked());
+  }
+
+  radio_busy = false;
+
+  bool sent = false;
+
+  for (unsigned i = 0; i < 2000U; ++i) {
+    tracker.records.poll();
+
+    const auto result =
+        sender.update(3000U, true, true);
+
+    assert(result != Sender::Result::kBlocked);
+    assert(result != Sender::Result::kReadError);
+
+    if (result == Sender::Result::kSent) {
+      sent = true;
+      break;
+    }
+  }
+
+  assert(sent);
+  assert(live_sequence == latest.sequence);
+
+  assert(tracker.records.diagnostics()
+             .custody_release_committed == 0U);
+
+  assertRetained(tracker.records, latest, false);
+
+  uplink = {};
+  collar_radio = nullptr;
+
+  printf("ORUN-302 FIFO capacity=1260 lost=42 "
+         "newest=1261 cache_ready=%u PASS\n",
+         unsigned(cache_ready));
+}
+
+
+void testOrun302LostAckCadence(uint32_t interval) {
+  using namespace orun_tlp;
+
+  Fixture tracker(3);
+  tracker.admitGrant();
+
+  RadioManager collar;
+  collar_radio = &collar;
+
+  ProductSecureCrypto crypto(tracker.security);
+
+  using Sender = TrackerCriticalEventTx;
+
+  Sender sender(tracker.records, crypto, collar,
+                Sender::Mode::kPeriodicHistory);
+
+  RfDutyBudget budget;
+
+  const uint8_t size = tlp::kPeriodicFrameSize;
+  const uint32_t cost = RfDutyBudget::costMs(size);
+
+  const uint32_t gap =
+      cost + radio_config::kWindowedRxAfterTxMs;
+
+  uint32_t last_tx = 0U;
+  unsigned live = 0U;
+  unsigned custody = 0U;
+  unsigned without_custody = 0U;
+
+  osc::ExactObject first_exact{};
+
+  uplink = {};
+  radio_busy = false;
+
+  auto transmit = [&](uint32_t now, bool allow_old) {
+    simulation_ms = now;
+
+    assert(last_tx == 0U || now - last_tx >= gap);
+    assert(budget.available(now, size));
+
+    bool sent = false;
+
+    for (unsigned i = 0; i < 2000U; ++i) {
+      tracker.records.poll();
+
+      const auto result =
+          sender.update(now, true, allow_old);
+
+      assert(result != Sender::Result::kBlocked);
+      assert(result != Sender::Result::kReadError);
+
+      if (result == Sender::Result::kSent) {
+        sent = true;
+        break;
+      }
+    }
+
+    assert(sent);
+    assert(uplink.size == size);
+
+    assert(budget.reserve(now, size));
+    budget.finish(now + cost);
+
+    last_tx = now;
+  };
+
+  // Twelve fresh reports without a single received ACK.
+  // Backlog admission is deliberately closed except for
+  // the exact-retry opportunity below.
+  for (uint32_t i = 0U; i < 12U; ++i) {
+    const uint32_t now = 1000U + i * interval;
+
+    const auto newest = append(tracker.records);
+
+    transmit(now, false);
+
+    assert(live_sequence == newest.sequence);
+
+    ++live;
+
+    if (i < Sender::kHistoryCacheCeiling) {
+      assert(uplink.payload[4] == 3U);
+
+      ++custody;
+
+      if (i == 0U) {
+        assert(tracker.records.findCachedExact(
+                   newest, first_exact) ==
+               ObservationStore::ControlLookupResult::kFound);
+      }
+    } else {
+      // Full exact cache must not stop current visibility.
+      // No custody promise is made for this uplink.
+      assert(uplink.payload[4] == 0U);
+
+      ++without_custody;
+    }
+
+    assertRetained(tracker.records, newest, false);
+
+    assert(tracker.records.diagnostics()
+               .custody_release_committed == 0U);
+
+    uplink = {};
+
+    if (i == 6U) {
+      // Allow a history retry after the first exact
+      // object's receipt wait has expired.
+      const uint32_t retry_at = now + 15000U;
+
+      assert(retry_at - 1000U >= Sender::kReceiptWaitMs);
+
+      const unsigned before = seals;
+
+      transmit(retry_at, true);
+
+      assert(seals == before);
+
+      assert(uplink.payload[4] == 3U);
+
+      osc::ExactObject retry{};
+
+      assert(tracker.records.findCachedExact(
+                 sender.selectedIdentity(), retry) ==
+             ObservationStore::ControlLookupResult::kFound);
+
+      assert(retry.object_size == uplink.size);
+
+      assert(!memcmp(retry.object, uplink.payload,
+                     uplink.size));
+
+      assertRetained(
+          tracker.records, retry.identity, false);
+
+      uplink = {};
+    }
+  }
+
+  assert(live == 12U);
+  assert(custody == 4U);
+  assert(without_custody == 8U);
+
+  uint16_t occupied = 0U;
+
+  assert(tracker.records.store().exactObjectCount(occupied));
+  assert(occupied == 4U);
+
+  assert(tracker.records.diagnostics()
+             .custody_release_committed == 0U);
+
+  // One authenticated receipt finally arrives.
+  uint8_t wire[ack::kMaxSize]{};
+  size_t length = 0U;
+
+  buildAck(&first_exact, 1U, wire, length);
+
+  ReleaseOwner release(
+      tracker.security, tracker.records);
+
+  assert(release.submit(wire, length) ==
+         ReleaseOwner::Submit::kStarted);
+
+  assert(release.service() ==
+         ReleaseOwner::Service::kWaitingFlash);
+
+  assert(nextDurableOutcome(
+             release, tracker.records) ==
+         ReleaseOwner::Service::kReleasedOne);
+
+  assert(release.service() ==
+         ReleaseOwner::Service::kApplied);
+
+  assertRetained(
+      tracker.records, first_exact.identity, true);
+
+  assert(tracker.records.store().exactObjectCount(occupied));
+  assert(occupied == 3U);
+
+  // New live record can request custody again.
+  const auto recovered = append(tracker.records);
+
+  transmit(1000U + 12U * interval, false);
+
+  assert(live_sequence == recovered.sequence);
+  assert(uplink.payload[4] == 3U);
+
+  assertRetained(tracker.records, recovered, false);
+
+  assert(tracker.records.diagnostics()
+             .custody_release_committed == 1U);
+
+  uplink = {};
+  collar_radio = nullptr;
+
+  printf("ORUN-302 LOST ACK interval=%lu "
+         "live=12 custody=4 no-custody=8 "
+         "exact-retry=PASS recovery=PASS\n",
+         (unsigned long)interval);
+}
+
 } // namespace
 
 #ifndef ORUN_KQ05_TRACKER_BATCH_RADIO_RUNTIME_HOST_TEST
@@ -1006,6 +1487,12 @@ int main() {
   testGatewayToTrackerWithMissingRecord();
   testOneTransmissionForFreshAndHistory();
   testReservedLivePriorityBeforeBacklog();
+  testOrun302Cadence(60000U);
+  testOrun302Cadence(900000U);
+  testOrun302FifoRetirement(false);
+  testOrun302FifoRetirement(true);
+  testOrun302LostAckCadence(60000U);
+  testOrun302LostAckCadence(900000U);
   testFirstUplinkIsVisibleAndReceiptable();
   testInterleavedCollarsReceiveSeparateReceipts();
   testActualRootDerivedFiveAndSubsets();

@@ -657,6 +657,9 @@ int orun301Scenario(bool with_fix, uint32_t interval) {
     assert(gnss_manager.state() ==
            GnssManager::State::kAcquiring);
 
+    assert(gnss_manager.msUntilPossibleFreshFix(
+               test_now) == 0U);
+
     for (uint32_t tow : {1000U, 2000U}) {
       Fake::pending.push_back([tow] {
         UBX_NAV_PVT_data_t pvt{};
@@ -680,6 +683,55 @@ int orun301Scenario(bool with_fix, uint32_t interval) {
 
     assert(test_now - opened < interval);
 
+    // The real GNSS owner, not the PERIODIC anchor,
+    // supplies the earliest next acquisition deadline.
+    assert(gnss_manager.state() == GnssManager::State::kIdle ||
+           gnss_manager.state() == GnssManager::State::kSleeping);
+
+    const uint32_t gnss_remaining =
+        gnss_manager.msUntilPossibleFreshFix(test_now);
+
+    assert(gnss_remaining > 0U);
+    assert(gnss_remaining <= interval);
+
+    const uint32_t due = test_now + gnss_remaining;
+
+    assert(gnss_manager.msUntilPossibleFreshFix(due - 1U) == 1U);
+    assert(gnss_manager.msUntilPossibleFreshFix(due) == 0U);
+    assert(gnss_manager.msUntilPossibleFreshFix(due + 1U) == 0U);
+    assert(gnss_manager.msUntilPossibleFreshFix(due + 1000U) == 0U);
+
+    const uint32_t blocking_ms =
+        RfDutyBudget::costMs(tlp::kPeriodicFrameSize) +
+        radio_config::kWindowedRxAfterTxMs + 200U;
+
+    // Deliberately offset the report anchor by one second.
+    // Period-only prediction would admit old history here.
+    const uint32_t probe = due - blocking_ms;
+    const uint32_t shifted_anchor = due - interval + 1000U;
+
+    const uint32_t report_remaining =
+        productReportRemainingMs(
+            true, shifted_anchor, probe, interval);
+
+    assert(report_remaining == blocking_ms + 1000U);
+
+    const uint32_t guarded =
+        productBacklogWindowMs(
+            report_remaining,
+            gnss_manager.msUntilPossibleFreshFix(probe));
+
+    assert(guarded == blocking_ms);
+    assert(!(guarded > blocking_ms));
+
+    assert(productBacklogWindowMs(interval, 0U) == 0U);
+    assert(productBacklogWindowMs(0U, interval) == 0U);
+
+    printf("ORUN-302 GNSS PHASE interval=%lu guard=%lu PASS\n",
+           (unsigned long)interval,
+           (unsigned long)guarded);
+
+
     printf("ORUN-301 LOOP FIRST FIX elapsed_ms=%lu interval=%lu PASS\n",
            (unsigned long)(test_now - opened),
            (unsigned long)interval);
@@ -697,6 +749,20 @@ int orun301Scenario(bool with_fix, uint32_t interval) {
     verify(1U, false);
 
     assert(!gnss_manager.detected());
+
+    // An absent receiver must not permanently stop history.
+    assert(gnss_manager.state() ==
+           GnssManager::State::kNotPresent);
+
+    const uint32_t retry_remaining =
+        gnss_manager.msUntilPossibleFreshFix(test_now);
+
+    assert(retry_remaining > 0U);
+
+    assert(productBacklogWindowMs(interval, retry_remaining)
+           > 0U);
+
+    puts("ORUN-302 GNSS ABSENT BACKLOG WINDOW PASS");
 
     printf("ORUN-301 LOOP GNSS ABSENT interval=%lu PASS\n",
            (unsigned long)interval);
