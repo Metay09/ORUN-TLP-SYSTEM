@@ -37,6 +37,17 @@ bool sealed_with_fix;
 const orun_tlp::RadioManager* collar_radio;
 }
 namespace orun_tlp {
+
+struct RadioBudgetHostProbe {
+  static void consume(
+      RadioManager& radio,
+      uint32_t now, uint8_t size) {
+    assert(radio.rf_budget_.reserve(now, size));
+    radio.rf_budget_.finish(
+        now + RfDutyBudget::costMs(size));
+  }
+};
+
 namespace monotonic { uint32_t nowMs() { return simulation_ms; } }
 bool RadioManager::canSend() const { return !radio_busy; }
 uint64_t RadioManager::deviceId() const { return this == collar_radio ? kDevice : kGateA; }
@@ -1470,6 +1481,190 @@ void testOrun302LostAckCadence(uint32_t interval) {
          (unsigned long)interval);
 }
 
+
+void testOrun303BudgetPressure(uint8_t count) {
+  using namespace orun_tlp;
+
+  assert(count >= 2U && count <= 5U);
+
+  Fixture tracker;
+  tracker.admitGrant();
+  tracker.cacheUpTo(count);
+
+  Grant grant;
+
+  ProductFlash flash;
+  ProductCustodyStore store(flash, kProductPages);
+
+  assert(store.begin());
+
+  GatewayLocalCustodyOwner owner(store);
+
+  GatewayCustodyAuthorizedIngress ingress(
+      owner, grant, kGateA);
+
+  RadioManager gateway;
+
+  GatewayProductCustodyRuntime runtime(
+      gateway, ingress);
+
+  collar_radio = nullptr;
+  uplink = {};
+  downlinks = 0U;
+  prepare_attempts = 0U;
+  prepare_delay_ms = 0U;
+  defer_starts = 0U;
+  stale_slot = -1;
+  radio_busy = false;
+
+  // Consume most of the actual rolling RF ledger.
+  // 161 x 2217 ms = 356937 ms.
+  // Remaining credit = 3063 ms.
+  for (uint32_t i = 0U; i < 161U; ++i) {
+    simulation_ms = 1000U + i * 3000U;
+
+    RadioBudgetHostProbe::consume(
+        gateway, simulation_ms, 100U);
+  }
+
+  const uint32_t first = 500000U;
+
+  simulation_ms = first;
+
+  assert(gateway.rfAirtimeUsedMs() ==
+         161U * RfDutyBudget::costMs(100U));
+
+  assert(gateway.gatewayAirtimeAvailable(56U));
+
+  // An individual ACK fits physically, but sending it
+  // would spend the reserve for a later group.
+  assert(!gateway.gatewayAirtimeAvailable(
+      56U, 2000000U));
+
+  const uint8_t group_size =
+      ack::kHeaderSize +
+      count * ack::kRefSize +
+      ack::kTagSize;
+
+  assert(gateway.gatewayAirtimeAvailable(group_size));
+
+  auto offer = [&](unsigned index) {
+    const auto& object = tracker.objects[index];
+
+    assert(gateway.sendProductSecurePacket(
+        object.object, object.object_size));
+
+    for (unsigned i = 0U; i < 200U; ++i)
+      runtime.update(true);
+
+    assert(!uplink.size);
+  };
+
+  // Real durable Gateway admission. One report per minute.
+  for (unsigned i = 0U; i < count; ++i) {
+    simulation_ms = first + i * 60000U;
+
+    // For the five-reference case, the radio remains
+    // unavailable at the four-reference threshold.
+    radio_busy = count == 5U && i >= 3U;
+
+    offer(i);
+
+    if (i < 3U) {
+      assert(downlinks == 0U);
+
+      simulation_ms += 1001U;
+
+      runtime.update(true);
+
+      assert(downlinks == 0U);
+      assert(runtime.reservedPages() != 0U);
+    }
+  }
+
+  if (count < 4U) {
+    radio_busy = false;
+
+    // The group is now old enough, but the previous
+    // collar RX window is closed.
+    simulation_ms = first + 180001U;
+
+    for (unsigned i = 0; i < 100U; ++i)
+      runtime.update(true);
+
+    assert(downlinks == 0U);
+
+    // A byte-identical retry opens a new RX opportunity.
+    // It must not add a duplicate ACK reference.
+    offer(0U);
+  }
+
+  if (count == 5U) {
+    assert(downlinks == 0U);
+    radio_busy = false;
+  }
+
+  for (unsigned i = 0U;
+       i < 200U && !downlinks; ++i)
+    runtime.update(true);
+
+  assert(downlinks == 1U);
+
+  ack::Header header{};
+
+  assert(ack::decode(
+      receipt, receipt_size, header));
+
+  assert(header.count == count);
+  assert(header.tracker_device_id == kDevice);
+  assert(receipt_size == group_size);
+
+  assert(runtime.reservedPages() == 0U);
+
+  assert(gateway.rfAirtimeUsedMs() ==
+         161U * RfDutyBudget::costMs(100U) +
+         RfDutyBudget::costMs(group_size));
+
+  assert(gateway.rfAirtimeUsedMs() <=
+         RfDutyBudget::kMaxMs);
+
+  // Verify the real HMAC on the Tracker and commit
+  // each independent durable release marker.
+  ReleaseOwner release(
+      tracker.security, tracker.records);
+
+  assert(release.submit(receipt, receipt_size) ==
+         ReleaseOwner::Submit::kStarted);
+
+  for (unsigned i = 0U; i < count; ++i) {
+    assert(release.service() ==
+           ReleaseOwner::Service::kWaitingFlash);
+
+    assert(nextDurableOutcome(
+               release, tracker.records) ==
+           ReleaseOwner::Service::kReleasedOne);
+  }
+
+  assert(release.service() ==
+         ReleaseOwner::Service::kApplied);
+
+  for (unsigned i = 0U; i < 5U; ++i)
+    assertRetained(
+        tracker.records,
+        tracker.objects[i].identity,
+        i < count);
+
+  printf("ORUN-303 RF PRESSURE count=%u "
+         "ack=%lu bytes released=%u "
+         "budget=%lu PASS\n",
+         unsigned(count),
+         (unsigned long)receipt_size,
+         unsigned(count),
+         (unsigned long)gateway.rfAirtimeUsedMs());
+
+  uplink = {};
+}
+
 } // namespace
 
 #ifndef ORUN_KQ05_TRACKER_BATCH_RADIO_RUNTIME_HOST_TEST
@@ -1502,6 +1697,8 @@ int main() {
   testFailureOnSecondMarkerNeverReleasesLaterRecords();
   testRevocationBetweenMarkersStopsRemaining();
   testCrashAfterOneMarkerRequiresNewRemainingSubsetAck();
+  for (uint8_t count = 2U; count <= 5U; ++count)
+    testOrun303BudgetPressure(count);
   puts("KQ05 Tracker 1..5 REAL V3 HMAC -> selective durable OBS1 marker, failure/reboot: PASS (HOST ONLY)");
   puts("NO LORA TX/RX, NO REAL FLASH, NO WHOLE REGION ERASE, NO DEVICE UPLOAD");
   return 0;
