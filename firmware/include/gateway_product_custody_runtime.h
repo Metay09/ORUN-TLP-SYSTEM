@@ -69,6 +69,12 @@ class GatewayProductCustodyRuntime final {
     bool urgent = false;
   };
   PeerBatch peers_[gateway_grant_format::kGrantSlots]{};
+
+  static_assert(gateway_grant_format::kGrantSlots <= UINT8_MAX,
+                "ACK cursor cannot address every peer");
+
+  // Volatile scheduling hint only. Never custody authority.
+  uint8_t next_ack_peer_ = 0U;
   uint32_t pending_rx_ms_ = 0;
   GatewayProductLiveIngress* live_ = nullptr;
   bool command_window_reserved_ = false;

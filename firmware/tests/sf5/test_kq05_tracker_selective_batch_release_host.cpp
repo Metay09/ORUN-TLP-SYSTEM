@@ -1665,6 +1665,259 @@ void testOrun303BudgetPressure(uint8_t count) {
   uplink = {};
 }
 
+
+void testOrun304Fairness(unsigned peers, bool shared_window) {
+  using namespace orun_tlp;
+
+  constexpr unsigned slots =
+      gateway_grant_format::kGrantSlots;
+
+  static_assert(slots == 32U, "Grant capacity changed");
+
+  assert(peers == 4U || peers == slots);
+
+  struct MultiGrants final : GatewayCustodyGrantProvider {
+    unsigned count = 0U;
+
+    bool activeGrant(
+        uint64_t id,
+        uint32_t epoch,
+        GatewayCustodyAckScope& scope,
+        uint8_t (&key)[32]) override {
+
+      scope = allowedScope();
+
+      if (id < kDevice ||
+          id - kDevice >= count ||
+          epoch != scope.key_epoch)
+        return false;
+
+      scope.tracker_device_id = id;
+
+      fromHex32(key);
+
+      key[0] ^= static_cast<uint8_t>(id - kDevice);
+
+      return true;
+    }
+  } grants;
+
+  grants.count = peers;
+
+  ProductFlash flash;
+
+  ProductCustodyStore store(flash, kProductPages);
+
+  assert(store.begin());
+
+  GatewayLocalCustodyOwner owner(store);
+
+  GatewayCustodyAuthorizedIngress ingress(
+      owner, grants, kGateA);
+
+  RadioManager gateway;
+
+  GatewayProductCustodyRuntime runtime(
+      gateway, ingress);
+
+  unsigned received[slots]{};
+
+  collar_radio = nullptr;
+  uplink = {};
+  downlinks = 0U;
+  prepare_attempts = 0U;
+  prepare_delay_ms = 0U;
+  defer_starts = 0U;
+  stale_slot = -1;
+  radio_busy = false;
+
+  simulation_ms = 1000U;
+
+  auto offer = [&](unsigned index) {
+    const auto object = makeObject({});
+
+    tlp::ProductSecureFrame frame{};
+
+    assert(tlp::decodeProductSecureFrame(
+        object.object,
+        object.object_size,
+        &frame) ==
+        tlp::ProductSecureCodecResult::kOk);
+
+    frame.device_id = kDevice + index;
+    frame.security_counter = 42U;
+    frame.path_flags = 3U;
+
+    assert(tlp::encodeProductSecureFrame(
+        frame,
+        uplink.payload,
+        sizeof(uplink.payload)) ==
+        tlp::ProductSecureCodecResult::kOk);
+
+    uplink.size = object.object_size;
+
+    using Event = GatewayProductCustodyRuntime::Event;
+
+    const auto event = runtime.update(true);
+
+    assert(event == Event::kCustodyStarted ||
+           event == Event::kDuplicateHeld);
+
+    for (unsigned i = 0; i < 200U; ++i)
+      runtime.update(true);
+
+    assert(!uplink.size);
+    assert(!ingress.pending());
+  };
+
+  auto acknowledge = [&]() {
+    const unsigned before = downlinks;
+
+    radio_busy = false;
+
+    for (unsigned i = 0U;
+         i < 200U && downlinks == before;
+         ++i)
+      runtime.update(true);
+
+    assert(downlinks == before + 1U);
+
+    ack::Header header{};
+
+    assert(ack::decode(
+        receipt, receipt_size, header));
+
+    assert(header.count == 1U);
+    assert(header.gateway_device_id == kGateA);
+
+    assert(header.tracker_device_id >= kDevice);
+
+    const uint64_t index =
+        header.tracker_device_id - kDevice;
+
+    assert(index < peers);
+
+    ++received[index];
+
+    // The next RF opportunity is controlled by
+    // the workload, not by the number of loop polls.
+    radio_busy = true;
+
+    return static_cast<unsigned>(index);
+  };
+
+  if (shared_window) {
+    // Abstract overlapping eligibility: every collar
+    // is durable and eligible, but only one ACK
+    // opportunity is available per round.
+    //
+    // This deliberately does NOT simulate simultaneous
+    // physical LoRa receptions or RF collisions.
+
+    const unsigned rounds = 2U * peers;
+
+    for (unsigned round = 0;
+         round < rounds;
+         ++round) {
+
+      simulation_ms = 1000U + round * 60000U;
+
+      radio_busy = true;
+
+      // Same durable exact objects are retried:
+      // assume the previous receipt was lost.
+      for (unsigned i = 0U; i < peers; ++i)
+        offer(i);
+
+      simulation_ms += 1001U;
+
+      acknowledge();
+
+      // Every continuously eligible peer must receive
+      // one opportunity within each complete sweep.
+      if ((round + 1U) % peers == 0U) {
+        const unsigned expected = (round + 1U) / peers;
+
+        for (unsigned i = 0U; i < peers; ++i)
+          assert(received[i] == expected);
+      }
+
+      // No further transmission opportunity this round.
+      simulation_ms += 10000U;
+
+      const unsigned before = downlinks;
+
+      radio_busy = false;
+
+      for (unsigned i = 0U; i < 10U; ++i)
+        runtime.update(true);
+
+      assert(downlinks == before);
+    }
+
+    assert(downlinks == rounds);
+
+  } else {
+
+    // Separate RX opportunities, no contention.
+    for (unsigned round = 0; round < 2U; ++round) {
+      for (unsigned i = 0U; i < peers; ++i) {
+
+        radio_busy = true;
+
+        offer(i);
+
+        simulation_ms += 1001U;
+
+        assert(acknowledge() == i);
+
+        simulation_ms += 15000U;
+      }
+    }
+
+    assert(downlinks == 2U * peers);
+  }
+
+  unsigned served = 0U;
+  unsigned minimum = UINT32_MAX;
+  unsigned maximum = 0U;
+
+  for (unsigned i = 0U; i < peers; ++i) {
+
+    const unsigned n = received[i];
+
+    if (n) ++served;
+    if (n < minimum) minimum = n;
+    if (n > maximum) maximum = n;
+
+    printf("ORUN-304 PEER mode=%s peers=%u "
+           "index=%u ack=%u\n",
+           shared_window ? "shared" : "separate",
+           peers, i, n);
+  }
+
+  assert(gateway.rfAirtimeUsedMs() <=
+         RfDutyBudget::kMaxMs);
+
+  // Both isolated and contended opportunities
+  // must satisfy the same per-peer acceptance.
+  assert(served == peers);
+  assert(minimum == 2U);
+  assert(maximum == 2U);
+
+  printf("ORUN-304 FAIRNESS mode=%s peers=%u "
+         "served=%u min=%u max=%u total=%u "
+         "result=%s\n",
+         shared_window ? "shared" : "separate",
+         peers, served, minimum, maximum, downlinks,
+         served != peers ? "STARVATION" :
+         maximum - minimum > 1U ? "IMBALANCED" :
+         "FAIR");
+
+  uplink = {};
+  radio_busy = false;
+}
+
 } // namespace
 
 #ifndef ORUN_KQ05_TRACKER_BATCH_RADIO_RUNTIME_HOST_TEST
@@ -1699,6 +1952,11 @@ int main() {
   testCrashAfterOneMarkerRequiresNewRemainingSubsetAck();
   for (uint8_t count = 2U; count <= 5U; ++count)
     testOrun303BudgetPressure(count);
+
+  testOrun304Fairness(4U, false);
+  testOrun304Fairness(32U, false);
+  testOrun304Fairness(4U, true);
+  testOrun304Fairness(32U, true);
   puts("KQ05 Tracker 1..5 REAL V3 HMAC -> selective durable OBS1 marker, failure/reboot: PASS (HOST ONLY)");
   puts("NO LORA TX/RX, NO REAL FLASH, NO WHOLE REGION ERASE, NO DEVICE UPLOAD");
   return 0;

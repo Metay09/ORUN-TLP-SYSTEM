@@ -104,8 +104,20 @@ GatewayProductCustodyRuntime::update(bool enabled) {
     collectBatchHandle(now);
     return Event::kLiveDurable;  // The Edge may take its own copy immediately.
   }
-  // Drop volatile references if the collar has left. It retains unacknowledged records.
-  for (auto& peer : peers_) {
+  // Drop volatile references if the collar has left.
+  // Start each bounded sweep after the previous ACK attempt.
+  // Busy, sleeping and ineligible peers do not consume a turn.
+  const unsigned start = next_ack_peer_;
+
+  for (unsigned offset = 0U;
+       offset < gateway_grant_format::kGrantSlots;
+       ++offset) {
+
+    const unsigned index =
+        (start + offset) % gateway_grant_format::kGrantSlots;
+
+    auto& peer = peers_[index];
+
     if (!peer.count) continue;
     if (monotonic::elapsed(now, peer.heard_ms, 600000U)) {
       peer.count = 0;  // retire only stale RAM hints; custody is unchanged
@@ -127,6 +139,13 @@ GatewayProductCustodyRuntime::update(bool enabled) {
         (monotonic::elapsed(now, peer.heard_ms, 1000U) &&
          radio_.gatewayAirtimeAvailable(size, kPartialAckReserveUs));
     if (!due) continue;
+
+    // Rotate on an actual attempt, not on an eligibility
+    // check. A deferred or unverifiable peer must not
+    // monopolize subsequent scheduling opportunities.
+    next_ack_peer_ = static_cast<uint8_t>(
+        (index + 1U) % gateway_grant_format::kGrantSlots);
+
     ++peer.attempts;
     peer.last_attempt_ms = now;
     const auto result = radio_.sendAuthorizedBatchAck(
