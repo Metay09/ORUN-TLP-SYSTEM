@@ -1,10 +1,10 @@
-// SF5K3K: ACTUAL SecurityStore durable-grant scope, untrusted 0x05
+// SF5K3K: ACTUAL SecurityStore durable-grant scope, untrusted 0x0A
 // codec and protected-frame shape. No MAC, RF authorizer or release path.
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
-#include "custody_ack.h"
+#include "kq05_gateway_batch_custody_ack.h"
 #include "tlp_v2_product_secure.h"
 
 // Reuse the real SecurityStore/NOR fixture, not a second divergent model.
@@ -14,7 +14,7 @@
 #undef main
 
 namespace {
-namespace ca = orun_tlp::custody_ack;
+namespace ca = orun_tlp::kq05_gateway_batch_ack;
 namespace tlp = orun_tlp::tlp;
 
 void put32(uint8_t* o, uint32_t x) {
@@ -26,14 +26,14 @@ void put64(uint8_t* o, uint64_t x) {
     o[i] = static_cast<uint8_t>(x >> (56U-8U*i));
 }
 
-void mkWire(uint8_t (&wire)[ca::kWireSize], uint64_t gateway,
+void mkWire(uint8_t (&wire)[ca::kMinSize], uint64_t gateway,
             uint32_t generation, uint32_t floor = 0U,
-            uint8_t object_len = 100U) {
+            uint8_t count = 1U) {
   memset(wire, 0U, sizeof(wire));
   wire[0] = ca::kVersion;
   wire[1] = ca::kType;
   wire[2] = ca::kRelayAllowed;
-  wire[3] = object_len;
+  wire[3] = count;
   put64(wire+4U, kDevice);
   put64(wire+12U, gateway);
   put32(wire+20U, 7U);
@@ -44,31 +44,50 @@ void mkWire(uint8_t (&wire)[ca::kWireSize], uint64_t gateway,
 }
 
 void testExactHeaderAndObjectShape() {
-  uint8_t wire[ca::kWireSize]{};
+  uint8_t wire[ca::kMinSize]{};
   mkWire(wire,kGateA,1U);
   ca::Header header{};
-  assert(ca::decodeHeader(wire,sizeof(wire),header));
+  assert(ca::decode(wire,sizeof(wire),header));
   assert(header.tracker_device_id==kDevice);
   assert(header.gateway_device_id==kGateA);
   assert(header.key_epoch==7U && header.custody_floor==0U &&
-         header.grant_generation==1U && header.object_len==100U &&
-         header.relay_allowed);
+         header.grant_generation==1U && header.count==1U);
   ca::Header sentinel{};
   sentinel.gateway_device_id=0xABCDEFU;
   for (unsigned i=0U;i<56U;++i) {
     // No structural parser may treat an arbitrary untrusted byte as proof
     // of authenticity. Reserved/type/length fields MUST be rejected.
-    uint8_t altered[ca::kWireSize]{};
+    uint8_t altered[ca::kMinSize]{};
     memcpy(altered,wire,sizeof(wire));
     if (i==0U || i==1U || i==2U || i==3U) {
       altered[i] = (i==2U ? 0x80U : 0xFFU);
-      assert(!ca::decodeHeader(altered,sizeof(altered),sentinel));
+      assert(!ca::decode(altered,sizeof(altered),sentinel));
       assert(sentinel.gateway_device_id==0xABCDEFU);
     }
   }
-  assert(!ca::decodeHeader(wire,55U,sentinel));
-  assert(!ca::decodeHeader(wire,57U,sentinel));
-  assert(!ca::decodeHeader(nullptr,56U,sentinel));
+  assert(!ca::decode(wire,55U,sentinel));
+  assert(!ca::decode(wire,57U,sentinel));
+  assert(!ca::decode(nullptr,56U,sentinel));
+
+  // The original 0x05 format must never authenticate or parse.
+  uint8_t retired[ca::kMinSize]{};
+
+  memcpy(retired, wire, sizeof(retired));
+
+  retired[1] = 0x05U;
+  retired[3] = 100U;
+
+  assert(!ca::decode(
+      retired, sizeof(retired), sentinel));
+
+  assert(sentinel.gateway_device_id == 0xABCDEFU);
+
+  // The new single-object ACK remains valid.
+  assert(ca::decode(wire, sizeof(wire), header));
+  assert(header.count == 1U);
+
+  puts("ORUN-305 OLD WIRE REJECTED CURRENT WIRE ACCEPTED PASS");
+
 
   uint8_t protected_frame[tlp::kPeriodicFrameSize]{};
   tlp::ProductSecureFrame frame{};
@@ -81,16 +100,28 @@ void testExactHeaderAndObjectShape() {
   assert(tlp::encodeProductSecureFrame(
       frame,protected_frame,sizeof(protected_frame))==
       tlp::ProductSecureCodecResult::kOk);
-  assert(ca::matchesProtectedShape(header,protected_frame,
+  assert(tlp::matchesCustodyObjectShape(
+      header.tracker_device_id,
+      header.key_epoch,
+      protected_frame,
                                     sizeof(protected_frame)));
-  assert(!ca::matchesProtectedShape(header,protected_frame,
+  assert(!tlp::matchesCustodyObjectShape(
+      header.tracker_device_id,
+      header.key_epoch,
+      protected_frame,
                                      sizeof(protected_frame)-1U));
   header.key_epoch=8U;
-  assert(!ca::matchesProtectedShape(header,protected_frame,
+  assert(!tlp::matchesCustodyObjectShape(
+      header.tracker_device_id,
+      header.key_epoch,
+      protected_frame,
                                      sizeof(protected_frame)));
   header.key_epoch=7U;
   protected_frame[4]=0U;  // no custody requested
-  assert(!ca::matchesProtectedShape(header,protected_frame,
+  assert(!tlp::matchesCustodyObjectShape(
+      header.tracker_device_id,
+      header.key_epoch,
+      protected_frame,
                                      sizeof(protected_frame)));
   // None of the structural matches is a cryptographic acceptance.
 }
@@ -99,10 +130,10 @@ void testActualStoreScopeGrantRevokeFloor() {
   Flash flash;
   SecurityStore store(flash,flash);
   provisionV3(flash,store);
-  uint8_t wire[ca::kWireSize]{};
+  uint8_t wire[ca::kMinSize]{};
   mkWire(wire,kGateA,1U);
   ca::Header ack{};
-  assert(ca::decodeHeader(wire,sizeof(wire),ack));
+  assert(ca::decode(wire,sizeof(wire),ack));
   const auto scoped=[&]() {
     return store.custodyAckScopeMatches(
         ack.tracker_device_id,ack.gateway_device_id,ack.key_epoch,

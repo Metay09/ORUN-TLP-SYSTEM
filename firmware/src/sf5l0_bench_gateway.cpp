@@ -4,6 +4,10 @@
 // the radio, with Sf5l0BenchGrantSource as the grant source: the
 // backend-signed OGK1 snapshot first, then step 3A RAM grants. Y2a: no
 // public test-key grant (a test-key Tracker is refused).
+#if defined(ORUN_SF5L0_GATEWAY) && !defined(ORUN_GATEWAY_BATCH_ACK)
+#error "Gateway custody requires the current 0x0A ACK protocol"
+#endif
+
 #ifdef ORUN_SF5L0_GATEWAY
 
 #include <Arduino.h>
@@ -460,12 +464,7 @@ void serviceHandoff() {
   }
 }
 
-void service(bool observation_store_mounted, bool reserve_command_window) {
-#ifdef ORUN_GATEWAY_BATCH_ACK
-  if (runtime) runtime->reserveCommandWindow(reserve_command_window);
-#else
-  (void)reserve_command_window;
-#endif
+void service(bool observation_store_mounted) {
   serviceErase();
 #if defined(ORUN_STEP3B_GATEWAY_ENROLLMENT)
   serviceInstaller();

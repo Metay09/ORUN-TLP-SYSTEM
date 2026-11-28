@@ -5,17 +5,29 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "gateway_custody_ack_signer.h"
+#include "kq05_gateway_batch_custody_crypto.h"
 #include "custody_ack_primitives.h"
 
 namespace orun_tlp {
-struct GatewayCustodyAckSignerTestPeer {
+struct Kq05BatchCryptoHostPeer {
   static bool sign(const uint8_t* object, size_t object_len,
                    const GatewayCustodyAckScope& scope,
                    const uint8_t (&key)[32],
-                   uint8_t (&output)[custody_ack::kWireSize]) {
-    return GatewayCustodyAckSigner::signAfterDurableAcceptance(
-        object, object_len, scope, key, output);
+                   uint8_t (&output)[56]) {
+    Kq05BatchExactView view{};
+    view.bytes = object;
+    view.size = object_len;
+
+    uint8_t candidate[kq05_gateway_batch_ack::kMaxSize]{};
+    size_t written = 0U;
+
+    if (!Kq05GatewayBatchCustodyCrypto::signAfterDurableReadback(
+            scope, key, &view, 1U, candidate, written))
+      return false;
+
+    assert(written == sizeof(output));
+    memcpy(output, candidate, written);
+    return true;
   }
 };
 }  // namespace orun_tlp
@@ -23,14 +35,10 @@ struct GatewayCustodyAckSignerTestPeer {
 namespace {
 using namespace orun_tlp;
 
-constexpr char kExpectedAck[] =
-    "02050164010203040506070823002300230023010000000700000000"
-    "0000000192453945bd2224e144572044decab3402105011f5844a453";
+constexpr char kExpectedAck[] = "020a01010102030405060708230023002300230100000007000000000000000192453945bd2224e1cb275990b721fe660c8f0e2cde31e463";
 constexpr char kExpectedSha[] =
     "92453945bd2224e1e9d462cb964b6fdc1e2018bafbe765cd4ac9ebbfc57aef00";
-constexpr char kExpectedEventAck[] =
-    "02050154010203040506070823002300230023010000000700000000"
-    "00000001bf62c359077620ad82210adadc9b12c72f6467542172aaa8";
+constexpr char kExpectedEventAck[] = "020a010101020304050607082300230023002301000000070000000000000001bf62c359077620ad26e33c6886603ff37d5f4056df058254";
 constexpr char kScopeKey[] =
     "b3b50abe4a260946f7a1e13361e742504736f11df4dfd3b1852e5ae242d5b04f";
 
@@ -86,14 +94,14 @@ void testAll() {
   uint8_t out[56]{};
   GatewayCustodyAckScope scope=testScope();
   auto sign=[&]() {
-    return GatewayCustodyAckSignerTestPeer::sign(
+    return Kq05BatchCryptoHostPeer::sign(
         object,sizeof(object),scope,key,out);
   };
   assert(sign());
   assert(memcmp(expected_ack,out,sizeof(out))==0);
-  custody_ack::Header header{};
-  assert(custody_ack::decodeHeader(out,sizeof(out),header));
-  assert(header.relay_allowed && header.object_len==sizeof(object));
+  kq05_gateway_batch_ack::Header header{};
+  assert(kq05_gateway_batch_ack::decode(out,sizeof(out),header));
+  assert(header.count == 1U);
 
   // Byte-for-byte idempotence; duplicate durable object re-ACK can reuse tag.
   uint8_t original[56]{};
@@ -103,7 +111,7 @@ void testAll() {
   // Any rejected input MUST leave the entire caller output unchanged.
   auto rejected=[&](const uint8_t* obj,size_t n) {
     memset(out,0xA5U,sizeof(out));
-    assert(!GatewayCustodyAckSignerTestPeer::sign(obj,n,scope,key,out));
+    assert(!Kq05BatchCryptoHostPeer::sign(obj,n,scope,key,out));
     for (uint8_t b:out) assert(b==0xA5U);
   };
   rejected(nullptr,sizeof(object));
@@ -147,10 +155,10 @@ void testAll() {
   key[0]^=0x40U;  // restore the original oracle key
   uint8_t expected_event_ack[56]{};
   fromHex(kExpectedEventAck,expected_event_ack);
-  assert(GatewayCustodyAckSignerTestPeer::sign(
+  assert(Kq05BatchCryptoHostPeer::sign(
       event,sizeof(event),scope,key,out));
   assert(memcmp(out,expected_event_ack,sizeof(out))==0);
-  assert(out[3U]==84U && out[2U]==custody_ack::kRelayAllowed);
+  assert(out[3U]==1U && out[2U]==kq05_gateway_batch_ack::kRelayAllowed);
 
   puts("SF5K3N private Gateway custody ACK signer / 2 frozen oracles / fail-closed: PASS");
 }

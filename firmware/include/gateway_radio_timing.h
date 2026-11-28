@@ -14,6 +14,8 @@ inline uint32_t profileAirtimeUs(uint8_t size) {
 // Margin for tick quantization, FIFO upload, PA ramp and scheduling after
 // the final check. Verify this allowance at the antenna on the target.
 constexpr uint32_t kAckTurnaroundGuardMs = 200U;
+// First command start must precede this age of the tracker report.
+constexpr uint32_t kCommandFirstStartLimitMs = 7000U;
 inline bool ackFitsWindow(uint32_t now, uint32_t heard, uint8_t size) {
   const uint32_t air_ms = (profileAirtimeUs(size) + 999U) / 1000U;
   return now - heard < radio_config::kWindowedRxAfterTxMs - air_ms - kAckTurnaroundGuardMs;

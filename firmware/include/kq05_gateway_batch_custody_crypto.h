@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "gateway_custody_ack_signer.h"
+#include "gateway_custody_ack_scope.h"
 #include "kq05_gateway_batch_custody_ack.h"
 
 namespace orun_tlp {

@@ -18,6 +18,7 @@
 #include <stdint.h>
 
 #include "lora_command.h"
+#include "gateway_radio_timing.h"
 
 namespace orun_tlp {
 
@@ -31,8 +32,9 @@ class LoraCommandRelay {
   static constexpr uint32_t kAckGraceMs = 2500;
   // ...but start no later than this after its report (it listens ~10 s; each
   // part it receives keeps it listening a while longer).
-  static constexpr uint32_t kLatestAfterHeardMs = 7000;
-  static constexpr uint32_t kLatestNextPartMs = 20000;
+  static constexpr uint32_t kLatestAfterHeardMs = kCommandFirstStartLimitMs;
+  static constexpr uint32_t kLatestNextPartMs =
+      radio_config::kWindowedRxAfterTxMs;
 
   enum class Queued : uint8_t { kAdded, kReplaced, kMalformed, kFull };
 
@@ -44,6 +46,7 @@ class LoraCommandRelay {
     uint8_t attempt;  // 1-based, of kMaxAttempts
     uint8_t part;     // 0-based
     uint8_t parts;
+    uint32_t rx_floor_ms;
   };
 
   // One frame of a command (all parts of an area list come as separate frames).
@@ -53,9 +56,15 @@ class LoraCommandRelay {
   void heard(uint64_t device, uint32_t now);
   // The custody ACK to the Tracker last heard has gone out.
   void ackSent(uint32_t now);
+  void ackSentFor(uint64_t device, uint32_t rx_floor_ms);
+  void onTxResult(uint64_t target, uint32_t command_id,
+                  uint8_t part, bool succeeded);
 
-  // The next frame to send now, if any (call only when the radio can send).
-  bool due(uint32_t now, Frame& out, bool (*airtime_available)(uint8_t) = nullptr);
+  // Production admission: charge an attempt and mark a part
+  // sent only after the radio accepts the actual TX start.
+  bool trySend(uint32_t now, Frame& out,
+               bool (*airtime_available)(uint8_t),
+               bool (*start_tx)(const Frame&));
 
   // A RESULT came back: true if it answered a queued command (removed).
   bool answered(const uint8_t* result, size_t size);
@@ -64,9 +73,6 @@ class LoraCommandRelay {
   bool takeDropped(uint64_t& target, uint32_t& command_id);
 
   size_t count() const;
-#ifdef ORUN_GATEWAY_BATCH_ACK
-  bool windowReserved(uint32_t now) const;
-#endif
 
  private:
   struct Slot {
@@ -85,7 +91,12 @@ class LoraCommandRelay {
   bool heard_open_ = false;
   bool ack_sent_ = false;
   uint8_t sent_now_ = 0;      // parts already sent in this window
-  uint32_t last_part_at_ = 0;
+  // Earliest possible completion of the previous admitted TX.
+  // A successfully received part opens another RX window.
+  uint32_t last_part_rx_floor_ms_ = 0;
+  uint32_t active_command_id_ = 0;
+  uint8_t active_part_ = 0;
+  bool awaiting_terminal_ = false;
 };
 
 }  // namespace orun_tlp

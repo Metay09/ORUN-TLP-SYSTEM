@@ -30,7 +30,6 @@ namespace orun_tlp {
 //
 // Nothing is sealed or sent here; TLP v1 POSITION and HistoryStore stay the
 // live path until the SF5F RF step.
-class CustodyAckReleaseOwner;
 
 class ProductRecordStore {
  public:
@@ -124,7 +123,6 @@ class ProductRecordStore {
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
  private:
-  friend class CustodyAckReleaseOwner;
   friend class Kq05TrackerBatchReleaseOwner;
 
   // Only the HMAC-verifying custody owner may initiate this mutation.

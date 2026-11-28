@@ -21,25 +21,27 @@ uint32_t be32(const uint8_t* p) {
 
 GatewayLocalCustodyOwner::~GatewayLocalCustodyOwner() {
   clearPending();
-  wipe(signed_ack_,sizeof(signed_ack_));
   batch_handle_=ProductCustodyStore::Handle{};
   batch_ready_=false;
 }
 
 void GatewayLocalCustodyOwner::clearPending() {
-  wipe(pending_key_,sizeof(pending_key_));
+
   wipe(pending_object_,sizeof(pending_object_));
-  pending_scope_=GatewayCustodyAckScope{};
   pending_size_=0U;
   waiting_flash_=false;
-  batch_requested_=false;
 }
 
 GatewayLocalCustodyOwner::Submit GatewayLocalCustodyOwner::submit(
     const uint8_t* exact_object,size_t size,
     const GatewayCustodyAckScope& scope,
     const uint8_t (&scoped_key)[32], bool batch_mode) {
-  if (waiting_flash_ || ack_ready_ || batch_ready_ ||
+  // Product admission is exclusively 0x0A, including one object.
+  // Reject any obsolete mode before touching durable storage.
+  if (!batch_mode) return Submit::kRejected;
+  (void)scoped_key;
+
+  if (waiting_flash_ || batch_ready_ ||
       store_.busy() || store_.hasOutcome())
     return Submit::kBusy;
   if (!store_.ready() || exact_object==nullptr ||
@@ -61,11 +63,9 @@ GatewayLocalCustodyOwner::Submit GatewayLocalCustodyOwner::submit(
       admission!=ProductCustodyStore::Admission::kDuplicateHandedOff)
     return Submit::kRejected;
 
-  pending_scope_=scope;
-  batch_requested_=batch_mode;
+
   pending_size_=size;
   memcpy(pending_object_,exact_object,size);
-  memcpy(pending_key_,scoped_key,sizeof(pending_key_));
   if (admission==ProductCustodyStore::Admission::kStarted) {
     waiting_flash_=true;
     return Submit::kStarted;
@@ -75,11 +75,11 @@ GatewayLocalCustodyOwner::Submit GatewayLocalCustodyOwner::submit(
   // only after independently rereading the exact durable bytes; never for an
   // unknown record. Without this a lost ACK would pin the object in the
   // Tracker's 4-slot custody cache until ring retention erased it (SF5L5).
-  if (!signCommitted(handle)) return Submit::kRejected;
+  if (!confirmCommitted(handle)) return Submit::kRejected;
   return Submit::kAckReady;
 }
 
-bool GatewayLocalCustodyOwner::signCommitted(
+bool GatewayLocalCustodyOwner::confirmCommitted(
     const ProductCustodyStore::Handle& handle) {
   uint8_t found[100]{};
   size_t found_size=0U;
@@ -92,23 +92,10 @@ bool GatewayLocalCustodyOwner::signCommitted(
     return false;
   }
   wipe(found,sizeof(found));
-  // This exact durable readback is the ONE shared custody proof. Preserve
-  // the handle instead of generating an unnecessary legacy 0x05 HMAC when
-  // the caller explicitly requested the experimental 0x0A batch path.
-  if (batch_requested_) {
-    clearPending();  // immediately scrubs the scoped secret and ciphertext
-    batch_handle_=handle;
-    batch_ready_=true;
-    return true;
-  }
-  uint8_t ack[custody_ack::kWireSize]{};
-  const bool signed_ok=GatewayCustodyAckSigner::signAfterDurableAcceptance(
-      pending_object_,pending_size_,pending_scope_,pending_key_,ack);
+  // One exact durable proof, one product ACK protocol.
   clearPending();
-  if (!signed_ok) { wipe(ack,sizeof(ack)); return false; }
-  memcpy(signed_ack_,ack,sizeof(ack));
-  wipe(ack,sizeof(ack));
-  ack_ready_=true;
+  batch_handle_=handle;
+  batch_ready_=true;
   return true;
 }
 
@@ -118,7 +105,7 @@ void GatewayLocalCustodyOwner::service() {
   bool committed=false;
   ProductCustodyStore::Handle handle{};
   if (!store_.takeCustodyResult(committed,handle)) return;
-  if (!committed || !signCommitted(handle)) clearPending();
+  if (!committed || !confirmCommitted(handle)) clearPending();
 }
 
 bool GatewayLocalCustodyOwner::takeBatchHandle(
@@ -127,15 +114,6 @@ bool GatewayLocalCustodyOwner::takeBatchHandle(
   output=batch_handle_;
   batch_handle_=ProductCustodyStore::Handle{};
   batch_ready_=false;
-  return true;
-}
-
-bool GatewayLocalCustodyOwner::takeAck(
-    uint8_t (&output)[custody_ack::kWireSize]) {
-  if (!ack_ready_) return false;
-  memcpy(output,signed_ack_,sizeof(signed_ack_));
-  wipe(signed_ack_,sizeof(signed_ack_));
-  ack_ready_=false;
   return true;
 }
 

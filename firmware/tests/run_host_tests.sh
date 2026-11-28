@@ -559,7 +559,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r2/test_patch_radio.py "$test_d
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp \
   "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp \
@@ -573,7 +573,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/b4/test_b4_radio.cpp 
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/m6/test_m6p1_radio.cpp "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp \
@@ -587,7 +587,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
 
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
   "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
@@ -600,7 +600,7 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" firmware/tests/r2/test_r2.cpp \
 "$test_dir/r2"
 g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/sf5/test_sf5j_radio_transport.cpp "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
   firmware/src/radio_driver_gate.cpp firmware/src/rak_device_identity.cpp \
@@ -611,9 +611,9 @@ g++ -Ifirmware/tests/r2/stubs "${flags[@]}" \
   -o "$test_dir/sf5j1_radio_transport"
 # Reuse SAME SF5J1 radio fake and build, but run the newly added
 # SF5K3K actual radio receiver assertions under explicit test define.
-g++ -DORUN_SF5K3K_ACK_RX_TEST -Ifirmware/tests/r2/stubs "${flags[@]}" \
+g++ -DORUN_SF5K3K_ACK_RX_TEST -DORUN_GATEWAY_BATCH_ACK=1 -Ifirmware/tests/r2/stubs "${flags[@]}" \
   firmware/tests/sf5/test_sf5j_radio_transport.cpp "$test_dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp \
+  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/kq05_gateway_batch_custody_ack.cpp \
   firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \
@@ -632,7 +632,7 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/activity_quality.cpp firmware/src/activity_auto_sampler.cpp \
   firmware/src/activity_period_evidence.cpp \
   firmware/src/accelerometer_manager.cpp \
-  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/radio_driver_gate.cpp \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
@@ -651,7 +651,6 @@ g++ -Ifirmware/tests/startup/stubs -Ifirmware/tests/r2/stubs \
   firmware/src/history_receipt_admission.cpp \
   firmware/src/history_delivery_coordinator.cpp \
   firmware/tests/startup/stubs/history_secure_crypto_stub.cpp \
-  firmware/tests/startup/stubs/custody_ack_release_owner_stub.cpp \
   firmware/src/journal_format.cpp firmware/src/nrf_history_flash.cpp \
   firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
   firmware/src/nrf_geofence_flash.cpp \
@@ -805,7 +804,7 @@ g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
 # Explicitly NO HMAC acceptance, radio runtime authority, or release.
 g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
   firmware/tests/sf5/test_sf5k3k_custody_ack_scope.cpp \
-  firmware/src/security_store.cpp firmware/src/custody_ack.cpp \
+  firmware/src/security_store.cpp firmware/src/kq05_gateway_batch_custody_ack.cpp \
   firmware/src/security_v3_page_writer.cpp \
   firmware/src/security_v3_ab_preflight.cpp \
   firmware/src/security_v3_format.cpp \
@@ -818,10 +817,19 @@ g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion -Ifirmware/tests/sf5 \
 # SF5K3L production verifier source against independently implemented
 # host OpenSSL SHA256/HKDF/HMAC; no ProductRecordStore release.
 g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion \
-  -DORUN_SF5K3L_HOST_TEST -Ifirmware/tests/sf5 \
+  -DORUN_GATEWAY_BATCH_ACK=1 -DORUN_KQ05_TRACKER_BATCH_VERIFY_HOST_TEST=1 -Ifirmware/tests/sf5 \
   firmware/tests/sf5/test_sf5k3l_custody_ack_crypto.cpp \
   firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
-  firmware/src/custody_ack_verifier.cpp firmware/src/custody_ack.cpp \
+  firmware/src/kq05_tracker_batch_release_owner.cpp \
+  firmware/src/kq05_tracker_batch_ack_verifier.cpp \
+  firmware/src/kq05_gateway_batch_custody_crypto.cpp \
+  firmware/src/kq05_gateway_batch_custody_ack.cpp \
+  firmware/src/product_record_store.cpp \
+  firmware/src/product_region.cpp \
+  firmware/src/observation_store.cpp \
+  firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
+  firmware/src/product_period_builder.cpp \
   firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
   firmware/src/security_v3_ab_preflight.cpp firmware/src/security_v3_format.cpp \
   firmware/src/tlp_v2_product_secure.cpp firmware/src/security_format.cpp \
@@ -833,11 +841,13 @@ g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion \
 # exclusive release marker, complete flash and reboot; no radio cutover.
 g++ "${b3_flags[@]}" -Wno-conversion -Wno-sign-conversion \
   -Ifirmware/tests/sf5 \
+  -DORUN_GATEWAY_BATCH_ACK=1 \
   firmware/tests/sf5/test_sf5k3m_real_custody_release.cpp \
   firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
-  firmware/src/custody_ack_release_owner.cpp \
-  firmware/src/custody_ack_product_bridge.cpp \
-  firmware/src/custody_ack_verifier.cpp firmware/src/custody_ack.cpp \
+  firmware/src/kq05_tracker_batch_release_owner.cpp \
+  firmware/src/kq05_tracker_batch_ack_verifier.cpp \
+  firmware/src/kq05_gateway_batch_custody_crypto.cpp \
+  firmware/src/kq05_gateway_batch_custody_ack.cpp \
   firmware/src/product_record_store.cpp firmware/src/product_region.cpp \
   firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
   firmware/src/observation_store_format.cpp \
@@ -1083,3 +1093,9 @@ bash tools/ci/run_step3b_gateway_grants_host.sh
 # intentionally returns BLOCKED until normal-image TX/Gateway/security and
 # physical cross-device/Backend/Android proof are complete.
 python3 firmware/tests/sf5/test_orun_product_release_gate.py
+
+# ORUN product acceptance (host only).
+bash tools/ci/run_orun_301_report_host.sh "$test_dir/orun301"
+bash tools/ci/run_orun_gateway_batch_wire_host.sh
+bash tools/ci/run_orun_gateway_batch_owner_host.sh
+bash tools/ci/run_kq05_tracker_selective_batch_release_host.sh

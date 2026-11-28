@@ -3,8 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "custody_ack.h"
-#include "gateway_custody_ack_signer.h"
+#include "gateway_custody_ack_scope.h"
 #include "kq05_gateway_batch_custody_ack.h"
 #include "product_custody_store.h"
 
@@ -41,14 +40,10 @@ class GatewayCustodyAuthorizedIngress final {
   GatewayCustodyAuthorizedIngress& operator=(
       const GatewayCustodyAuthorizedIngress&) = delete;
 
-  // The experimental batch selection NEVER changes legacy 0x05 by default.
-  // Untrusted RX cannot select batch_mode: only the trusted loop does.
+  // Only current 0x0A custody is supported.
   Result receive(const uint8_t* exact_object, size_t length,
-                 bool batch_mode = false);
+                 bool batch_mode = true);
   void service();
-  // On denial or pending, output stays byte-identical. Revocation between
-  // intake and ACK publication suppresses ACK, even if flash committed.
-  bool takeAuthorizedAck(uint8_t (&output)[custody_ack::kWireSize]);
   // Authoritative existing-grant check before a readback-proven Handle
   // leaves this ingress. Not a custody release or an on-air ACK.
   // Both outputs stay unchanged on failure.

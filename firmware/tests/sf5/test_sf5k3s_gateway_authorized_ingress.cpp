@@ -15,12 +15,8 @@ constexpr uint64_t kTracker = UINT64_C(0x0102030405060708);
 constexpr uint64_t kGateway = UINT64_C(0x2300230023002301);
 constexpr char kKey[] = "b3b50abe4a260946f7a1e13361e742504736f11df4dfd3b1852e5ae242d5b04f";
 uint8_t nibble(char c);
-constexpr char kExpectedPeriodic[] =
- "02050164010203040506070823002300230023010000000700000000"
- "0000000192453945bd2224e144572044decab3402105011f5844a453";
-constexpr char kExpectedEvent[] =
- "02050154010203040506070823002300230023010000000700000000"
- "00000001bf62c359077620ad82210adadc9b12c72f6467542172aaa8";
+constexpr char kExpectedPeriodic[] = "020a01010102030405060708230023002300230100000007000000000000000192453945bd2224e1cb275990b721fe660c8f0e2cde31e463";
+constexpr char kExpectedEvent[] = "020a010101020304050607082300230023002301000000070000000000000001bf62c359077620ad26e33c6886603ff37d5f4056df058254";
 
 struct Nor : FlashBackend {
   std::array<uint8_t,fmt::kPageSize*2U> data{};
@@ -96,29 +92,82 @@ void checkExpected(const uint8_t (&ack)[56],size_t size) {
     assert(ack[i]==uint8_t((nibble(hex[2U*i])<<4)|nibble(hex[2U*i+1U])));
 }
 
-void accepted(size_t size,bool async) {
-  Nor nor;nor.async=async;
-  ProductCustodyStore store(nor,2U);assert(store.begin());
-  GatewayLocalCustodyOwner owner(store);Grants grant;
-  GatewayCustodyAuthorizedIngress ingress(owner,grant,kGateway);
-  uint8_t bytes[100]{};frame(bytes,size);
-  uint8_t ack[56]{};
-  assert(ingress.receive(bytes,size)==GatewayCustodyAuthorizedIngress::Result::kStarted);
+void accepted(size_t size, bool async) {
+  Nor nor;
+  nor.async = async;
+
+  ProductCustodyStore store(nor, 2U);
+  assert(store.begin());
+
+  GatewayLocalCustodyOwner owner(store);
+  Grants grant;
+
+  GatewayCustodyAuthorizedIngress ingress(
+      owner, grant, kGateway);
+
+  using Result = GatewayCustodyAuthorizedIngress::Result;
+
+  uint8_t bytes[100]{};
+  frame(bytes, size);
+
+  ProductCustodyStore::Handle handle{};
+  GatewayCustodyAckScope scope{};
+
+  assert(ingress.receive(bytes, size, true) ==
+         Result::kStarted);
+
   assert(ingress.pending());
-  assert(!ingress.takeAuthorizedAck(ack));
-  assert(ingress.receive(bytes,size)==GatewayCustodyAuthorizedIngress::Result::kBusy);
-  for(unsigned i=0;i<100U&&ingress.pending()&&!owner.ackReady();i++){
+  assert(!ingress.takeAuthorizedBatchHandle(handle, scope));
+
+  assert(ingress.receive(bytes, size, true) ==
+         Result::kBusy);
+
+  for (unsigned i = 0; i < 100U &&
+       !ingress.batchReady(); ++i) {
     ingress.service();
-    if(owner.waitingFlash())assert(!owner.ackReady());
+
+    if (owner.waitingFlash())
+      assert(!ingress.batchReady());
   }
-  assert(owner.ackReady());
-  assert(ingress.takeAuthorizedAck(ack));checkExpected(ack,size);
+
+  assert(ingress.batchReady());
+  assert(ingress.takeAuthorizedBatchHandle(handle, scope));
   assert(!ingress.pending());
-  const int writes=nor.writes;
-  assert(ingress.receive(bytes,size)==GatewayCustodyAuthorizedIngress::Result::kAckReady);
-  memset(ack,0,sizeof(ack));
-  assert(ingress.takeAuthorizedAck(ack));checkExpected(ack,size);
-  assert(nor.writes==writes);
+
+  uint8_t wire[kq05_gateway_batch_ack::kMaxSize]{};
+  uint8_t ack[56]{};
+  size_t length = 0U;
+
+  assert(ingress.prepareAuthorizedBatchAck(
+      &handle, 1U, scope, wire, length));
+
+  assert(length == sizeof(ack));
+  memcpy(ack, wire, length);
+  checkExpected(ack, size);
+
+  const int writes = nor.writes;
+
+  assert(ingress.receive(bytes, size, true) ==
+         Result::kAckReady);
+
+  ProductCustodyStore::Handle duplicate{};
+
+  assert(ingress.takeAuthorizedBatchHandle(duplicate, scope));
+
+  assert(duplicate.page == handle.page);
+  assert(duplicate.slot == handle.slot);
+  assert(duplicate.generation == handle.generation);
+
+  memset(wire, 0, sizeof(wire));
+
+  assert(ingress.prepareAuthorizedBatchAck(
+      &duplicate, 1U, scope, wire, length));
+
+  assert(length == sizeof(ack));
+  memcpy(ack, wire, length);
+  checkExpected(ack, size);
+
+  assert(nor.writes == writes);
 }
 
 void deniedBeforeFlash() {
@@ -127,60 +176,104 @@ void deniedBeforeFlash() {
   GatewayCustodyAuthorizedIngress ingress(owner,grant,kGateway);
   uint8_t bytes[100]{};frame(bytes,sizeof(bytes));
   grant.enrolled=false;
-  assert(ingress.receive(bytes,sizeof(bytes))==GatewayCustodyAuthorizedIngress::Result::kDenied);
+  assert(ingress.receive(bytes,sizeof(bytes),true)==GatewayCustodyAuthorizedIngress::Result::kDenied);
   grant.enrolled=true;grant.wrong_gateway=true;
-  assert(ingress.receive(bytes,sizeof(bytes))==GatewayCustodyAuthorizedIngress::Result::kDenied);
+  assert(ingress.receive(bytes,sizeof(bytes),true)==GatewayCustodyAuthorizedIngress::Result::kDenied);
   grant.wrong_gateway=false;grant.wrong_tracker=true;
-  assert(ingress.receive(bytes,sizeof(bytes))==GatewayCustodyAuthorizedIngress::Result::kDenied);
+  assert(ingress.receive(bytes,sizeof(bytes),true)==GatewayCustodyAuthorizedIngress::Result::kDenied);
   grant.wrong_tracker=false;grant.wrong_epoch=true;
-  assert(ingress.receive(bytes,sizeof(bytes))==GatewayCustodyAuthorizedIngress::Result::kDenied);
+  assert(ingress.receive(bytes,sizeof(bytes),true)==GatewayCustodyAuthorizedIngress::Result::kDenied);
   grant.wrong_epoch=false;grant.generation=0U;
-  assert(ingress.receive(bytes,sizeof(bytes))==GatewayCustodyAuthorizedIngress::Result::kDenied);
+  assert(ingress.receive(bytes,sizeof(bytes),true)==GatewayCustodyAuthorizedIngress::Result::kDenied);
   grant.generation=1U;grant.floor=UINT32_MAX;
-  assert(ingress.receive(bytes,sizeof(bytes))==GatewayCustodyAuthorizedIngress::Result::kDenied);
+  assert(ingress.receive(bytes,sizeof(bytes),true)==GatewayCustodyAuthorizedIngress::Result::kDenied);
   grant.floor=0U;
   frame(bytes,sizeof(bytes),false);
-  assert(ingress.receive(bytes,sizeof(bytes))==GatewayCustodyAuthorizedIngress::Result::kDenied);
+  assert(ingress.receive(bytes,sizeof(bytes),true)==GatewayCustodyAuthorizedIngress::Result::kDenied);
   frame(bytes,sizeof(bytes));
-  assert(ingress.receive(bytes,83U)==GatewayCustodyAuthorizedIngress::Result::kDenied);
+  assert(ingress.receive(bytes,83U,true)==GatewayCustodyAuthorizedIngress::Result::kDenied);
   bytes[0]=1U;
- assert(ingress.receive(bytes,sizeof(bytes))==GatewayCustodyAuthorizedIngress::Result::kDenied);
+ assert(ingress.receive(bytes,sizeof(bytes),true)==GatewayCustodyAuthorizedIngress::Result::kDenied);
   assert(nor.writes==0);
 }
 
 void revokedAfterDurability() {
-  Nor nor;nor.async=true;
-  ProductCustodyStore store(nor,2U);assert(store.begin());
-  GatewayLocalCustodyOwner owner(store);Grants grant;
-  GatewayCustodyAuthorizedIngress ingress(owner,grant,kGateway);
-  uint8_t bytes[84]{};frame(bytes,sizeof(bytes));
-  uint8_t out[56];memset(out,0x5A,sizeof(out));
-  assert(ingress.receive(bytes,sizeof(bytes))==GatewayCustodyAuthorizedIngress::Result::kStarted);
-  for(unsigned i=0;i<100U&&!owner.ackReady();++i)ingress.service();
-  assert(owner.ackReady());
-  grant.generation=2U; // Authoritative grant changed after durable commit.
-  assert(!ingress.takeAuthorizedAck(out));
-  for(auto b:out)assert(b==0x5AU);
+  Nor nor;
+  nor.async = true;
+
+  ProductCustodyStore store(nor, 2U);
+  assert(store.begin());
+
+  GatewayLocalCustodyOwner owner(store);
+  Grants grant;
+
+  GatewayCustodyAuthorizedIngress ingress(
+      owner, grant, kGateway);
+
+  uint8_t bytes[84]{};
+  frame(bytes, sizeof(bytes));
+
+  assert(ingress.receive(bytes, sizeof(bytes), true) ==
+         GatewayCustodyAuthorizedIngress::Result::kStarted);
+
+  for (unsigned i = 0;
+       i < 100U && !ingress.batchReady(); ++i)
+    ingress.service();
+
+  assert(ingress.batchReady());
+
+  ProductCustodyStore::Handle handle{};
+  GatewayCustodyAckScope scope{};
+
+  handle.page = 123U;
+  scope.grant_generation = 999U;
+
+  grant.generation = 2U;
+
+  assert(!ingress.takeAuthorizedBatchHandle(handle, scope));
+
+  assert(handle.page == 123U);
+  assert(scope.grant_generation == 999U);
   assert(!ingress.pending());
+
+  assert(!owner.batchReady());
 }
 
 void failedFlashNoAck() {
-  Nor nor;nor.fail=5;
-  ProductCustodyStore store(nor,2U);assert(store.begin());
-  GatewayLocalCustodyOwner owner(store);Grants grant;
-  GatewayCustodyAuthorizedIngress ingress(owner,grant,kGateway);
-  uint8_t bytes[84]{};frame(bytes,sizeof(bytes));
-  uint8_t out[56]{};
-  assert(ingress.receive(bytes,sizeof(bytes))==GatewayCustodyAuthorizedIngress::Result::kStarted);
-  for(unsigned i=0;i<100U&&ingress.pending();++i)ingress.service();
-  assert(!ingress.pending()&&!owner.ackReady());
-  assert(!ingress.takeAuthorizedAck(out));
+  Nor nor;
+  nor.fail = 5;
+
+  ProductCustodyStore store(nor, 2U);
+  assert(store.begin());
+
+  GatewayLocalCustodyOwner owner(store);
+  Grants grant;
+
+  GatewayCustodyAuthorizedIngress ingress(
+      owner, grant, kGateway);
+
+  uint8_t bytes[84]{};
+  frame(bytes, sizeof(bytes));
+
+  assert(ingress.receive(bytes, sizeof(bytes), true) ==
+         GatewayCustodyAuthorizedIngress::Result::kStarted);
+
+  for (unsigned i = 0; i < 100U && ingress.pending(); ++i)
+    ingress.service();
+
+  assert(!ingress.pending());
+  assert(!owner.batchReady());
+
+  ProductCustodyStore::Handle handle{};
+  GatewayCustodyAckScope scope{};
+
+  assert(!ingress.takeAuthorizedBatchHandle(handle, scope));
 }
 
 int main() {
   accepted(100U,false);accepted(84U,false);
   accepted(100U,true);accepted(84U,true);
   deniedBeforeFlash();revokedAfterDurability();failedFlashNoAck();
-  puts("SF5K3S Gateway scoped admission + flash + revocation: PASS (host only)");
+  puts("ORUN-305 0x0A independent HMAC vectors + admission + flash + revocation: PASS (host only)");
   return 0;  // The Gateway runtime host test imports this fixture as a helper.
 }

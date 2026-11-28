@@ -27,19 +27,34 @@ using orun_tlp::Kq05BatchCryptoHostPeer;
 using Handle = ProductCustodyStore::Handle;
 using Ingress = GatewayCustodyAuthorizedIngress;
 
-void durableSingle(Ingress& ingress, GatewayLocalCustodyOwner& owner,
-                   ProductCustodyStore& store, uint8_t* object,
-                   size_t size, Handle& handle) {
-  assert(ingress.receive(object, size) == Ingress::Result::kStarted);
-  for (unsigned n = 0U; n < 150U && !owner.ackReady(); ++n)
+void durableSingle(Ingress& ingress,
+                   GatewayLocalCustodyOwner& owner,
+                   ProductCustodyStore& store,
+                   uint8_t* object, size_t size,
+                   Handle& handle) {
+
+  assert(ingress.receive(object, size, true) ==
+         Ingress::Result::kStarted);
+
+  for (unsigned n = 0U;
+       n < 150U && !ingress.batchReady(); ++n)
     ingress.service();
-  assert(owner.ackReady());
-  uint8_t old_ack[custody_ack::kWireSize]{};
-  assert(ingress.takeAuthorizedAck(old_ack));
+
+  assert(!owner.waitingFlash());
+
+  GatewayCustodyAckScope scope{};
+
+  assert(ingress.takeAuthorizedBatchHandle(handle, scope));
   assert(!ingress.pending());
-  // Existing single custody path allocated and read back this exact object.
-  assert(store.requestCustody(object, size, &handle) ==
+
+  Handle duplicate{};
+
+  assert(store.requestCustody(object, size, &duplicate) ==
          ProductCustodyStore::Admission::kDuplicateHeld);
+
+  assert(duplicate.page == handle.page);
+  assert(duplicate.slot == handle.slot);
+  assert(duplicate.generation == handle.generation);
 }
 
 void preservesOutputOnFailure(Ingress& ingress, const Handle* handles,
@@ -124,7 +139,7 @@ void validatesAllFiveWidths(bool async) {
       uint8_t extra[100]{};
       frame(extra, sizeof(extra));
       put64(extra + 20U, 1234U);
-      assert(ingress.receive(extra, sizeof(extra)) ==
+      assert(ingress.receive(extra, sizeof(extra), true) ==
              Ingress::Result::kStarted);
       preservesOutputOnFailure(ingress, handles, count, trusted);
     }
@@ -209,8 +224,7 @@ void revocationBetweenReadbackAndPublishFails() {
 
 
 void batchReadbackHandleIsSingleOwner(bool async) {
-  // Existing old 0x05 signer/record path must remain unchanged (main's
-  // original SF5K3S fixture runs before these scenarios).
+  // Verify the single durable owner with the current 0x0A protocol.
   Nor nor; nor.async=async;
   ProductCustodyStore store(nor, 2U);
   assert(store.begin());
@@ -223,12 +237,10 @@ void batchReadbackHandleIsSingleOwner(bool async) {
   GatewayCustodyAckScope signed_scope{};
   assert(ingress.receive(packet,sizeof(packet),true)==
          GatewayCustodyAuthorizedIngress::Result::kStarted);
-  assert(!owner.ackReady() && !ingress.batchReady());
+  assert(!owner.batchReady() && !ingress.batchReady());
   for(unsigned j=0U;j<100U && !ingress.batchReady();++j)
     ingress.service();
-  assert(ingress.batchReady() && !owner.ackReady());
-  uint8_t legacy[custody_ack::kWireSize]{};
-  assert(!ingress.takeAuthorizedAck(legacy));
+  assert(ingress.batchReady() && owner.batchReady());
   assert(ingress.takeAuthorizedBatchHandle(held,signed_scope));
   assert(!ingress.pending());
   assert(signed_scope.tracker_device_id==kTracker);
@@ -284,7 +296,7 @@ int main() {
   original_sf5k3s_fixture_main();
   batchReadbackHandleIsSingleOwner(false);
   batchReadbackHandleIsSingleOwner(true);
-  batchRevokedHandleNeverEscapes();  // old 0x05 regression first
+  batchRevokedHandleNeverEscapes();
   batchAfterInterruptedAppend();
   validatesAllFiveWidths(false);
   validatesAllFiveWidths(true);

@@ -95,11 +95,11 @@ void dedupeAndQueue() {
   assert(relay.queuedCount() == relay_config::kForwardQueueSize);
 
   tlp::RelayForwardPacket outgoing{};
-  assert(relay.takeDueForward(1000 + relay_config::kMaximumDelayMs, &outgoing));
+  assert(relay.peekDueForward(1000 + relay_config::kMaximumDelayMs, &outgoing));
   relay.onForwardTxStarted();
-  assert(!relay.takeDueForward(1000 + relay_config::kMaximumDelayMs, &outgoing));
+  assert(!relay.peekDueForward(1000 + relay_config::kMaximumDelayMs, &outgoing));
   relay.onForwardTxResult(true);
-  assert(relay.takeDueForward(1005 + relay_config::kMaximumDelayMs, &outgoing));
+  assert(relay.peekDueForward(1005 + relay_config::kMaximumDelayMs, &outgoing));
   relay.onForwardTxStarted();
   relay.onForwardTxResult(false);
   assert(relay.relayDiagnostics().forwards_attempted == 2 &&
@@ -144,7 +144,7 @@ void relayDuplicateInvariant() {
 
   tlp::RelayForwardPacket outgoing{};
   const uint32_t due = 1000 + queued.relay_delay_ms;
-  assert(relay.takeDueForward(due, &outgoing));
+  assert(relay.peekDueForward(due, &outgoing));
   tlp::PositionPacket forwarded_position{};
   tlp::RelayForwardPacket decoded{};
   uint8_t outgoing_bytes[tlp::kRelayForwardPacketSize];
@@ -220,8 +220,8 @@ void timingRoleNestedAndAirtime() {
   auto event = service.receive(direct, sizeof(direct), -99, 1, now);
   const uint32_t due = now + event.relay_delay_ms;
   tlp::RelayForwardPacket outgoing{};
-  assert(!service.takeDueForward(due - 1, &outgoing));
-  assert(service.takeDueForward(due, &outgoing));
+  assert(!service.peekDueForward(due - 1, &outgoing));
+  assert(service.peekDueForward(due, &outgoing));
 
   uint8_t relayed[tlp::kRelayForwardPacketSize];
   assert(tlp::serializeRelayForwardPacket(outgoing, relayed, sizeof(relayed)));
@@ -246,7 +246,82 @@ void timingRoleNestedAndAirtime() {
   assert(service.baseDiagnostics().new_application_packets == 0);
 }
 
+void relayAdmissionRetention() {
+  NetworkService relay;
+  relay.begin(0x12345678ULL, NodeRole::kRelay);
+
+  uint8_t original[tlp::kPositionPacketSize]{};
+  makePosition(0x1111U, 42U, original);
+
+  const auto event = relay.receive(
+      original, sizeof(original), -95, 4, 1000U);
+
+  assert(event.kind == NetworkEventKind::kRelayQueued);
+
+  const uint32_t due = 1000U + event.relay_delay_ms;
+
+  tlp::RelayForwardPacket packet{};
+  assert(!relay.peekDueForward(due - 1U, &packet));
+
+  // Six denied starts cannot consume the packet,
+  // charge attempts or create fake terminal failures.
+  for (unsigned i = 0U; i < 6U; ++i) {
+    assert(relay.peekDueForward(due + i, &packet));
+
+    assert(memcmp(packet.original_packet, original,
+                  sizeof(original)) == 0);
+
+    assert(packet.ingress_rssi_dbm == -95);
+    assert(packet.ingress_snr_db == 4);
+    assert(relay.queuedCount() == 1U);
+
+    relay.onForwardTxResult(false);
+
+    assert(relay.relayDiagnostics().forwards_attempted == 0U);
+    assert(relay.relayDiagnostics().forward_failures == 0U);
+  }
+
+  assert(relay.peekDueForward(due + 6U, &packet));
+
+  relay.onForwardTxStarted();
+
+  assert(relay.queuedCount() == 0U);
+  assert(relay.relayDiagnostics().forwards_attempted == 1U);
+
+  relay.onForwardTxStarted();
+
+  assert(relay.relayDiagnostics().forwards_attempted == 1U);
+  assert(!relay.peekDueForward(due + 7U, &packet));
+
+  relay.onForwardTxResult(true);
+  relay.onForwardTxResult(true);
+
+  assert(relay.relayDiagnostics().forwards_completed == 1U);
+
+  puts("ORUN-305 RELAY six_denials=0_attempts exact_retained=1 accepted=1 PASS");
+
+  // A genuine malformed local candidate is discarded,
+  // rather than permanently blocking later work.
+  makePosition(0x1111U, 43U, original);
+
+  assert(relay.receive(
+      original, sizeof(original), -90, 3, due + 100U).kind ==
+      NetworkEventKind::kRelayQueued);
+
+  assert(relay.peekDueForward(
+      due + 100U + relay_config::kMaximumDelayMs, &packet));
+
+  relay.discardInvalidForward();
+
+  assert(relay.queuedCount() == 0U);
+  assert(relay.relayDiagnostics().forwards_attempted == 1U);
+  assert(relay.relayDiagnostics().forward_failures == 1U);
+
+  puts("ORUN-305 RELAY invalid_candidate bounded_discard PASS");
+}
+
 int main() {
+  relayAdmissionRetention();
   envelopeCodecAndValidation();
   dedupeAndQueue();
   relayDuplicateInvariant();

@@ -260,8 +260,29 @@ void deadlineWorksAcrossMonotonicWrap() {
   TestSequence sequences;
   beginAs(manager, sequences, NodeRole::kTracker);
 
+  // Observe elapsed uptime in unambiguous increments.
+  // The shared RF ledger must fail closed on a >= 2^31 ms gap.
+  for (unsigned i = 0U; i < 3U; ++i) {
+    test_now += (1UL << 30);
+    manager.update(false);
+  }
+
   test_now = UINT32_MAX - 1000U;
+  manager.update(false);
+
+  assert(manager.rfAirtimeUsedMs() == 0U);
+
+  const uint32_t sleeps_before = sleep_calls;
+
+  assert(manager.listenDiagnostics().listen_state ==
+         RadioListenState::kAsleep);
+
   sendLocalPosition(manager, 20);
+
+  const uint32_t charged =
+      RfDutyBudget::costMs(tlp::kPositionPacketSize);
+
+  assert(manager.rfAirtimeUsedMs() == charged);
   terminal(false);
   manager.update(false);
   assert(manager.listenDiagnostics().listen_state ==
@@ -271,11 +292,21 @@ void deadlineWorksAcrossMonotonicWrap() {
       (UINT32_MAX - 1000U) + radio_config::kWindowedRxAfterTxMs;
   test_now = wrapped_deadline - 1U;
   manager.update(false);
-  assert(sleep_calls == 0);
+  assert(sleep_calls == sleeps_before);
   test_now = wrapped_deadline;
   manager.update(false);
-  assert(sleep_calls == 1);
+  assert(sleep_calls == sleeps_before + 1U);
   assert(manager.listenDiagnostics().listen_state == RadioListenState::kAsleep);
+
+  // Crossing uint32 wrap must not refund recent RF usage.
+  assert(manager.rfAirtimeUsedMs() == charged);
+
+  test_now += 3663000U;
+  manager.update(false);
+
+  assert(manager.rfAirtimeUsedMs() == 0U);
+
+  puts("ORUN-305 M6P1 CLOCK WRAP RX AND RF RETENTION PASS");
 }
 
 void rxEstimateTracksWindowTime() {
@@ -308,7 +339,26 @@ void rxEstimateSaturatesAcrossLongContinuousRun() {
 
 }  // namespace
 
+void ambiguousRfClockFailsClosed() {
+  RfDutyBudget budget;
+
+  assert(budget.observe(0U));
+
+  assert(!budget.available(
+      0x80000000UL, tlp::kPositionPacketSize));
+
+  assert(budget.faulted());
+
+  assert(!budget.reserve(
+      0x80000001UL, tlp::kPositionPacketSize));
+
+  assert(budget.usedMs() == 0U);
+
+  puts("ORUN-305 AMBIGUOUS RF CLOCK FAIL-CLOSED PASS");
+}
+
 int main() {
+  ambiguousRfClockFailsClosed();
   trackerTxDoneOpensBoundedWindow();
   trackerTxTimeoutAlsoOpensWindow();
   rxActivityDoesNotExtendWindow();

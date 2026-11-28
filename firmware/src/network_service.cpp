@@ -77,6 +77,7 @@ void NetworkService::resetRelayState() {
 void NetworkService::clearQueue() {
   for (auto& entry : queue_) entry.valid = false;
   queued_count_ = 0;
+  selected_forward_ = relay_config::kForwardQueueSize;
 }
 
 NetworkEvent NetworkService::malformedEvent(bool relay_envelope) {
@@ -204,34 +205,78 @@ NetworkEvent NetworkService::receive(const uint8_t* payload, size_t size,
   return malformedEvent(false);
 }
 
-bool NetworkService::takeDueForward(uint32_t now_ms,
-                                    tlp::RelayForwardPacket* packet) {
-  if (packet == nullptr || !relay_forwarding_enabled_ || forward_active_)
+bool NetworkService::peekDueForward(
+    uint32_t now_ms, tlp::RelayForwardPacket* packet) {
+  selected_forward_ = relay_config::kForwardQueueSize;
+
+  if (packet == nullptr ||
+      !relay_forwarding_enabled_ || forward_active_)
     return false;
-  for (auto& entry : queue_) {
-    if (!entry.valid || !monotonic::reached(now_ms, entry.due_ms)) continue;
+
+  for (uint8_t i = 0U;
+       i < relay_config::kForwardQueueSize; ++i) {
+    const auto& entry = queue_[i];
+
+    if (!entry.valid ||
+        !monotonic::reached(now_ms, entry.due_ms))
+      continue;
+
     packet->relay_device_id = local_device_id_;
     packet->hop_count = tlp::kRelayHopCount;
     packet->original_length = tlp::kPositionPacketSize;
     packet->ingress_rssi_dbm = entry.ingress_rssi_dbm;
     packet->ingress_snr_db = entry.ingress_snr_db;
-    memcpy(packet->original_packet, entry.packet, tlp::kPositionPacketSize);
-    entry.valid = false;
-    --queued_count_;
+
+    memcpy(packet->original_packet, entry.packet,
+           tlp::kPositionPacketSize);
+
+    selected_forward_ = i;
+
+    // No queue mutation and no attempt charged here.
     return true;
   }
+
   return false;
 }
 
+void NetworkService::discardInvalidForward() {
+  if (forward_active_ ||
+      selected_forward_ >= relay_config::kForwardQueueSize ||
+      !queue_[selected_forward_].valid)
+    return;
+
+  queue_[selected_forward_].valid = false;
+  --queued_count_;
+
+  selected_forward_ = relay_config::kForwardQueueSize;
+  ++relay_diagnostics_.forward_failures;
+}
+
 void NetworkService::onForwardTxStarted() {
+  if (forward_active_ ||
+      selected_forward_ >= relay_config::kForwardQueueSize ||
+      !queue_[selected_forward_].valid)
+    return;
+
+  // Only the loop owner may commit a physically admitted TX.
+  queue_[selected_forward_].valid = false;
+  --queued_count_;
+
+  selected_forward_ = relay_config::kForwardQueueSize;
   forward_active_ = true;
+
   ++relay_diagnostics_.forwards_attempted;
 }
 
 void NetworkService::onForwardTxResult(bool success) {
+  if (!forward_active_) return;
+
   forward_active_ = false;
-  if (success) ++relay_diagnostics_.forwards_completed;
-  else ++relay_diagnostics_.forward_failures;
+
+  if (success)
+    ++relay_diagnostics_.forwards_completed;
+  else
+    ++relay_diagnostics_.forward_failures;
 }
 
 }  // namespace orun_tlp

@@ -6,43 +6,30 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "custody_ack_verifier.h"
 #include "custody_ack_primitives.h"
-#include "tlp_v2_product_secure.h"
+#include "kq05_tracker_batch_ack_verifier.h"
 
-#define main sf5k3j_policy_previous_main
-#include "test_sf5k3j_real_security_v3_policy.cpp"
+#define main sf5k3m_previous_main
+#include "test_sf5k3m_real_custody_release.cpp"
 #undef main
 
 namespace orun_tlp {
-struct CustodyAckVerifierHostPeer {
-  static CustodyAckVerifyResult check(CustodyAckVerifier& verifier,
-      const uint8_t* ack,size_t length,
-      const observation_store_control::ExactObject* cached,
-      uint16_t count,AuthenticatedCustodyAck& result) {
-    uint16_t selected=UINT16_MAX;
-    const auto verdict=verifier.verifyCandidates(
-        ack,length,cached,count,result,selected);
-    if (verdict==CustodyAckVerifyResult::kAuthenticated)
-      assert(selected<count);
-    return verdict;
+struct Kq05TrackerBatchVerifyHostPeer {
+  static uint32_t sequence(
+      const AuthenticatedKq05TrackerBatchAck& proof) {
+    return proof.identities_[0].sequence;
   }
-  static observation_store_format::RecordIdentity identity(
-      const AuthenticatedCustodyAck& proof) {
-    return proof.identity_;
-  }
-  static void seed(AuthenticatedCustodyAck& proof) {
-    proof.identity_.incarnation=UINT64_C(0x123456789);
-    proof.identity_.sequence=99U;
+
+  static void seed(AuthenticatedKq05TrackerBatchAck& proof) {
+    proof.identities_[0].sequence = 99U;
+    proof.verified_ = false;
   }
 };
 }
 
 namespace {
-namespace tlp=orun_tlp::tlp;
-namespace osc=orun_tlp::observation_store_control;
-using Verdict=orun_tlp::CustodyAckVerifyResult;
-using Peer=orun_tlp::CustodyAckVerifierHostPeer;
+using Verdict = Kq05TrackerBatchVerifyResult;
+using Peer = Kq05TrackerBatchVerifyHostPeer;
 
 bool hex(const char* input,uint8_t* out,size_t size) {
   const auto nibble=[](char c)->int {
@@ -59,39 +46,18 @@ bool hex(const char* input,uint8_t* out,size_t size) {
   return input[2U*size]=='\0';
 }
 
-constexpr char kOracleAck[] =
-  "02050164010203040506070823002300230023010000000700000000"
-  "0000000192453945bd2224e144572044decab3402105011f5844a453";
+constexpr char kOracleAck[] = "020a01010102030405060708230023002300230100000007000000000000000192453945bd2224e1cb275990b721fe660c8f0e2cde31e463";
 constexpr char kOracleDigest[] =
   "92453945bd2224e1e9d462cb964b6fdc1e2018bafbe765cd4ac9ebbfc57aef00";
 constexpr char kOracleKey[] =
   "b3b50abe4a260946f7a1e13361e742504736f11df4dfd3b1852e5ae242d5b04f";
 
-void makeObject(osc::ExactObject& object) {
-  tlp::ProductSecureFrame p{};
-  p.app_family=tlp::kProductAppFamilyPeriodic;
-  p.path_flags=3U;
-  p.security_profile=tlp::kProductSecurityProfileRootAeadV1;
-  p.ciphertext_len=tlp::kPeriodicPlaintextSize;
-  p.device_id=kDevice;
-  p.key_epoch=7U;
-  p.security_counter=42U;
-  for(size_t i=0;i<tlp::kPeriodicPlaintextSize;++i)
-    p.ciphertext[i]=static_cast<uint8_t>(i*5U+7U);
-  for(size_t i=0;i<tlp::kProductSecureTagSize;++i)
-    p.tag[i]=static_cast<uint8_t>(0xA0U+i);
-  object.identity.incarnation=100U;
-  object.identity.sequence=8U;
-  object.record_kind=orun_tlp::observation_store_format::RecordKind::kPeriodic;
-  object.object_size=tlp::kPeriodicFrameSize;
-  assert(tlp::encodeProductSecureFrame(p,object.object,sizeof(object.object))==
-         tlp::ProductSecureCodecResult::kOk);
-}
-
 void testIndependentCryptoOracle() {
   uint8_t frame[tlp::kPeriodicFrameSize]{};
-  osc::ExactObject obj{};
-  makeObject(obj);
+  osf::RecordIdentity id{};
+  id.incarnation = 100U;
+  id.sequence = 8U;
+  osc::ExactObject obj = makeObject(id);
   memcpy(frame,obj.object,sizeof(frame));
   uint8_t digest[32]{};
   uint8_t expected_digest[32]{};
@@ -117,85 +83,149 @@ void testIndependentCryptoOracle() {
       credential_.credential_id,credential_.k_root,
       info,sizeof(info),key));
   assert(memcmp(key,expected_key,sizeof(key))==0);
-  uint8_t input[102]{};
-  const char domain[]="ORUN-TLP-V2-CUSTODY-ACK-MAC-v1";
+  const char domain[]="ORUN-KQ05-GW-BATCH-ACK-V1";
+  uint8_t input[sizeof(domain)-1U+40U+32U]{};
   memcpy(input,domain,sizeof(domain)-1U);
   memcpy(input+sizeof(domain)-1U,wire,40U);
   memcpy(input+sizeof(domain)-1U+40U,digest,32U);
   uint8_t mac[32]{};
-  assert(orun_tlp::custody_crypto::hmacSha256(key,input,sizeof(input),mac));
+  assert(orun_tlp::custody_crypto::hmacSha256Bounded(key,input,sizeof(input),mac));
   assert(memcmp(mac,wire+40U,16U)==0);
 }
 
 void testRealStoreAndMac() {
   Flash flash;
-  SecurityStore s(flash,flash);
-  provisionV3(flash,s);
-  CustodyAckVerifier verifier(s);
+  SecurityStore security(flash, flash);
+  provisionV3(flash, security);
+
+  ProductFlash product_flash;
+  Source source;
+  ProductRecordStore records(
+      product_flash, kProductPages, &source);
+
+  records.begin(kDevice, product_region::Jobs{false,true});
+  assert(records.mounted());
+
+  const auto id = append(records);
+  auto exact = makeObject(id);
+  cache(records, exact);
+
+  Kq05TrackerBatchAckVerifier verifier(security);
+
   uint8_t ack[56]{};
-  assert(hex(kOracleAck,ack,sizeof(ack)));
-  osc::ExactObject cached[4]{};
-  makeObject(cached[0]);
-  AuthenticatedCustodyAck proof{};
+  assert(hex(kOracleAck, ack, sizeof(ack)));
+
+  AuthenticatedKq05TrackerBatchAck proof{};
   Peer::seed(proof);
-  assert(Peer::check(verifier,ack,sizeof(ack),cached,1U,proof)==
-         Verdict::kNoDurableGrant);
-  assert(Peer::identity(proof).sequence==99U); // no output on failure
 
-  assert(Seam::grant(s,0U,kGateA));
-  assert(Peer::check(verifier,ack,sizeof(ack),cached,1U,proof)==
-         Verdict::kNoDurableGrant);
-  settle(s);
-  assert(Peer::check(verifier,ack,sizeof(ack),cached,1U,proof)==
-         Verdict::kNoDurableGrant); // unread policy success
-  bool applied=false;
-  assert(Seam::take(s,applied)&&applied);
-  assert(Peer::check(verifier,ack,sizeof(ack),cached,1U,proof)==
-         Verdict::kAuthenticated);
-  assert(Peer::identity(proof).incarnation==100U &&
-         Peer::identity(proof).sequence==8U);
+  auto verify = [&]() {
+    return verifier.verifyFromStore(
+        ack, sizeof(ack), records, proof);
+  };
 
-  // Complete output remains opaque and may not itself release a record.
-  osc::ExactObject alternative=cached[0];
-  alternative.identity.sequence=9U;
-  cached[1]=alternative;
-  assert(Peer::check(verifier,ack,sizeof(ack),cached,2U,proof)==
-         Verdict::kNoUniqueObject); // even a valid MAC + 64-bit hint
-  assert(Peer::identity(proof).sequence==8U);
-  cached[1]=osc::ExactObject{};
-  cached[0].object[99U]^=1U;
-  assert(Peer::check(verifier,ack,sizeof(ack),cached,1U,proof)!=
-         Verdict::kAuthenticated);
-  cached[0].object[99U]^=1U;
+  assert(verify() == Verdict::kNoDurableGrant);
+  assert(Peer::sequence(proof) == 99U);
 
-  for(size_t i=0U;i<sizeof(ack);++i) {
-    uint8_t corrupted[56]{};
-    memcpy(corrupted,ack,sizeof(corrupted));
-    corrupted[i]^=1U;
-    assert(Peer::check(verifier,corrupted,sizeof(corrupted),
-                       cached,1U,proof)!=Verdict::kAuthenticated);
+  assert(Seam::grant(security, 0U, kGateA));
+  assert(verify() == Verdict::kNoDurableGrant);
+
+  settle(security);
+  assert(verify() == Verdict::kNoDurableGrant);
+
+  bool applied = false;
+  assert(Seam::take(security, applied) && applied);
+
+  assert(verify() == Verdict::kAuthenticated);
+  assert(Peer::sequence(proof) == id.sequence);
+  assertRetained(records, id, false);
+
+  // Even a correct MAC must not authenticate an
+  // ambiguous exact object belonging to two records.
+  {
+    ProductFlash ambiguous_flash;
+    Source ambiguous_source;
+    ProductRecordStore ambiguous(
+        ambiguous_flash, kProductPages,
+        &ambiguous_source);
+
+    ambiguous.begin(
+        kDevice, product_region::Jobs{false,true});
+
+    assert(ambiguous.mounted());
+
+    const auto first = append(ambiguous);
+    const auto second = append(ambiguous);
+
+    cache(ambiguous, makeObject(first));
+    cache(ambiguous, makeObject(second));
+
+    assert(verifier.verifyFromStore(
+        ack, sizeof(ack), ambiguous, proof) ==
+        Verdict::kNoUniqueObject);
+
+    assert(Peer::sequence(proof) == id.sequence);
+    assertRetained(ambiguous, first, false);
+    assertRetained(ambiguous, second, false);
   }
-  assert(Peer::identity(proof).sequence==8U);
 
-  assert(Seam::revoke(s,0U,kGateA));
-  assert(Peer::check(verifier,ack,sizeof(ack),cached,1U,proof)==
-         Verdict::kNoDurableGrant);
-  settle(s);
-  assert(Seam::take(s,applied)&&applied);
-  assert(Peer::check(verifier,ack,sizeof(ack),cached,1U,proof)==
-         Verdict::kNoDurableGrant);
-  assert(Seam::grant(s,1U,kGateA));
-  settle(s);
-  assert(Seam::take(s,applied)&&applied);
-  assert(Peer::check(verifier,ack,sizeof(ack),cached,1U,proof)==
-         Verdict::kNoDurableGrant); // old generation, even valid old MAC
+  // A different retained ciphertext cannot satisfy
+  // the original ACK, despite having the same scope.
+  {
+    ProductFlash altered_flash;
+    Source altered_source;
+    ProductRecordStore altered(
+        altered_flash, kProductPages, &altered_source);
 
-  SecurityStore reboot(flash,flash);
-  assert(reboot.begin(DeviceIdentity::fromLegacyUint64(kDevice)));
+    altered.begin(
+        kDevice, product_region::Jobs{false,true});
+
+    assert(altered.mounted());
+
+    auto object = makeObject(append(altered));
+    object.object[99U] ^= 1U;
+
+    cache(altered, object);
+
+    assert(verifier.verifyFromStore(
+        ack, sizeof(ack), altered, proof) !=
+        Verdict::kAuthenticated);
+  }
+
+  // Reject every single-byte mutation of the wire.
+  for (size_t i = 0; i < sizeof(ack); ++i) {
+    ack[i] ^= 1U;
+    assert(verify() != Verdict::kAuthenticated);
+    ack[i] ^= 1U;
+  }
+
+  assert(Peer::sequence(proof) == id.sequence);
+
+  assert(Seam::revoke(security, 0U, kGateA));
+  assert(verify() == Verdict::kNoDurableGrant);
+
+  settle(security);
+  assert(Seam::take(security, applied) && applied);
+  assert(verify() == Verdict::kNoDurableGrant);
+
+  assert(Seam::grant(security, 1U, kGateA));
+  settle(security);
+  assert(Seam::take(security, applied) && applied);
+
+  assert(verify() == Verdict::kNoDurableGrant);
+
+  SecurityStore reboot(flash, flash);
+  assert(reboot.begin(
+      DeviceIdentity::fromLegacyUint64(kDevice)));
+
   settle(reboot);
-  CustodyAckVerifier restarted(reboot);
-  assert(Peer::check(restarted,ack,sizeof(ack),cached,1U,proof)==
-         Verdict::kNoDurableGrant);
+
+  Kq05TrackerBatchAckVerifier restarted(reboot);
+
+  assert(restarted.verifyFromStore(
+      ack, sizeof(ack), records, proof) ==
+      Verdict::kNoDurableGrant);
+
+  assertRetained(records, id, false);
 }
 } // namespace
 

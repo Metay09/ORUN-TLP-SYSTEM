@@ -8,88 +8,99 @@
 
 using namespace orun_tlp;
 
+constexpr uint8_t live = tlp::kPeriodicFrameSize;
+constexpr uint8_t event = tlp::kEventFrameSize;
+
+static bool backlogAllowed(Sf5l0DrainPacer& pacer, RfDutyBudget& budget,
+                           uint32_t now, uint32_t until_live) {
+  return pacer.hasBatchAirtime(now, live) &&
+         budget.available(now, live) &&
+         pacer.hasBacklogAirtime(now, live, until_live) &&
+         budget.availableBeforeLive(now, live, until_live, live);
+}
+
 int main() {
-  const uint8_t live_size =
-      static_cast<uint8_t>(tlp::kPeriodicFrameSize);
-  const uint8_t event_size =
-      static_cast<uint8_t>(tlp::kEventFrameSize);
+  static_assert(live == 100U, "Periodic frame changed");
+  static_assert(event == 84U, "Event frame changed");
+  const uint32_t cost = RfDutyBudget::costMs(live);
+  const uint32_t gap = cost + radio_config::kWindowedRxAfterTxMs;
+  assert(profileAirtimeUs(event) < profileAirtimeUs(live));
 
-  static_assert(tlp::kPeriodicFrameSize == 100U,
-                "Periodic frame changed");
-  static_assert(tlp::kEventFrameSize == 84U,
-                "Event frame changed");
+  Sf5l0DrainPacer pacer;
+  RfDutyBudget budget;
+  pacer.begin(0U);
 
-  assert(profileAirtimeUs(event_size) <
-         profileAirtimeUs(live_size));
+  // The pacer owns RX spacing, the ledger owns airtime credit.
+  assert(!backlogAllowed(pacer, budget, 0U, 0U));
+  assert(!backlogAllowed(pacer, budget, 0U, 10000U));
+  assert(!backlogAllowed(pacer, budget, 0U, gap + 200U));
+  assert(backlogAllowed(pacer, budget, 0U, gap + 201U));
+  assert(backlogAllowed(pacer, budget, 0U, 20000U));
+  assert(backlogAllowed(pacer, budget, 0U, 60000U));
+  assert(backlogAllowed(pacer, budget, 0U, 900000U));
 
-  // Tight budget: enough for one initial live packet,
-  // but not for an old packet plus an imminent live report.
-  Sf5l0DrainPacer::Config cfg;
-  cfg.burst_ms = 2300U;
-  cfg.duty_ppm = 60000U;
+  assert(budget.reserve(0U, live));
+  pacer.chargeBatchTx(0U, live);
+  assert(!budget.available(cost - 1U, live));
+  budget.finish(cost);
+  assert(!pacer.hasBatchAirtime(10000U, live));
+  assert(!pacer.hasBatchAirtime(gap - 1U, live));
+  assert(pacer.hasBatchAirtime(gap, live));
+  assert(backlogAllowed(pacer, budget, 60000U, 18000U));
 
-  Sf5l0DrainPacer one_minute(cfg);
-  one_minute.begin(0U);
+  // Consume the real rolling-hour credit until only one live fits.
+  RfDutyBudget tight;
+  Sf5l0DrainPacer idle;
+  idle.begin(0U);
+  for (uint32_t i = 0U; i < 161U; ++i) {
+    assert(tight.reserve(i * cost, live));
+    tight.finish((i + 1U) * cost);
+  }
+  const uint32_t now = 400000U;
+  assert(tight.available(now, live));
+  assert(tight.usedMs() == 161U * cost);
+  assert(!backlogAllowed(idle, tight, now, 20000U));
+  assert(!backlogAllowed(idle, tight, now, 60000U));
+  assert(!backlogAllowed(idle, tight, now, 900000U));
+  // Live itself remains admissible.
+  assert(tight.reserve(now, live));
+  tight.finish(now + cost);
+  assert(!tight.available(now + cost, live));
+  // Credit expires with real elapsed time, not a second token bucket.
+  assert(backlogAllowed(idle, tight, 3663000U, 60000U));
 
-  assert(one_minute.hasBatchAirtime(0U, live_size));
+  RfDutyBudget forecast;
+  for (uint32_t i = 0U; i < 161U; ++i) {
+    assert(forecast.reserve(i * cost, live));
+    forecast.finish((i + 1U) * cost);
+  }
+  // First retained minute expires before the next live report.
+  // A TX beginning just before the minute boundary extends retention
+  // beyond that boundary. The first full minute alone is insufficient.
+  assert(!backlogAllowed(idle, forecast, 3600000U, 60000U));
+  assert(backlogAllowed(idle, forecast, 3603000U, 60000U));
 
-  // Fresh report imminent: backlog must not transmit.
-  assert(!one_minute.hasBacklogAirtime(
-      0U, live_size, 0U));
-  assert(!one_minute.hasBacklogAirtime(
-      0U, live_size, 10000U));
-  assert(!one_minute.hasBacklogAirtime(
-      0U, live_size, 20000U));
-
-  // With 60 seconds until the next report,
-  // refill can restore the live packet allowance.
-  assert(one_minute.hasBacklogAirtime(
-      0U, live_size, 60000U));
-
-  // Charge a real-size packet and respect RX time.
-  one_minute.chargeBatchTx(0U, live_size);
-  assert(!one_minute.hasBatchAirtime(
-      1000U, live_size));
-  assert(!one_minute.hasBatchAirtime(
-      11000U, live_size));
-
-  assert(one_minute.hasBatchAirtime(
-      60000U, live_size));
-  assert(!one_minute.hasBacklogAirtime(
-      60000U, live_size, 18000U));
-
-  // 15-minute cadence should allow surplus backlog
-  // when the current budget is sufficient.
-  Sf5l0DrainPacer fifteen_minutes(cfg);
-  fifteen_minutes.begin(0U);
-  assert(fifteen_minutes.hasBacklogAirtime(
-      0U, live_size, 900000U));
-  assert(!fifteen_minutes.hasBacklogAirtime(
-      0U, live_size, 0U));
-
-  // Critical EVENT uses its actual shorter airtime.
-  Sf5l0DrainPacer critical(cfg);
+  RfDutyBudget critical_budget;
+  Sf5l0DrainPacer critical;
   critical.begin(0U);
-  assert(critical.hasBatchAirtime(0U, event_size));
-  critical.chargeBatchTx(0U, event_size);
-  assert(!critical.hasBatchAirtime(
-      1000U, live_size));
+  assert(critical.hasBatchAirtime(0U, event));
+  assert(critical_budget.reserve(0U, event));
+  critical.chargeBatchTx(0U, event);
+  critical_budget.finish(RfDutyBudget::costMs(event));
+  assert(!critical.hasBatchAirtime(1000U, live));
+  assert(critical_budget.usedMs() == RfDutyBudget::costMs(event));
 
-  // Millisecond counter wrap.
-  Sf5l0DrainPacer rollover(cfg);
+  RfDutyBudget wrap_budget;
+  Sf5l0DrainPacer wrap;
   const uint32_t start = 0xFFFFFF00U;
-  rollover.begin(start);
-  rollover.chargeBatchTx(start, live_size);
-  assert(rollover.hasBatchAirtime(
-      start + 60000U, live_size));
+  wrap.begin(start);
+  assert(wrap_budget.reserve(start, live));
+  wrap.chargeBatchTx(start, live);
+  wrap_budget.finish(start + cost);
+  assert(!wrap.hasBatchAirtime(start + gap - 1U, live));
+  assert(backlogAllowed(wrap, wrap_budget, start + 60000U, 60000U));
 
-  printf("LIVE RESERVE: PASS\n");
-  printf("Periodic 100B airtime: %lu us\n",
-         static_cast<unsigned long>(
-             profileAirtimeUs(live_size)));
-  printf("Critical 84B airtime: %lu us\n",
-         static_cast<unsigned long>(
-             profileAirtimeUs(event_size)));
-  puts("60s / 900s / low budget / RX / critical / wrap: PASS");
+  puts("ORUN-305 LIVE RESERVE real pacer + shared RF ledger: PASS");
+  puts("60s / 900s / low budget / RX deadline / expiry / EVENT / wrap: PASS");
   return 0;
 }

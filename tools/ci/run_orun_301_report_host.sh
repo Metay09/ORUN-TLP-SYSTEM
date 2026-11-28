@@ -23,7 +23,7 @@ g++ -DORUN_REPORT_CADENCE_HOST_TEST=1 -Ifirmware/tests/startup/stubs -Ifirmware/
   firmware/src/activity_quality.cpp firmware/src/activity_auto_sampler.cpp \
   firmware/src/activity_period_evidence.cpp \
   firmware/src/accelerometer_manager.cpp \
-  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/custody_ack.cpp firmware/src/radio_manager_relay_config.cpp \
+  firmware/src/radio_manager.cpp firmware/src/lora_command_frame.cpp firmware/src/radio_manager_relay_config.cpp \
   firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/radio_driver_gate.cpp \
   firmware/src/rak_device_identity.cpp firmware/src/legacy_position_mapping.cpp \
@@ -42,7 +42,6 @@ g++ -DORUN_REPORT_CADENCE_HOST_TEST=1 -Ifirmware/tests/startup/stubs -Ifirmware/
   firmware/src/history_receipt_admission.cpp \
   firmware/src/history_delivery_coordinator.cpp \
   firmware/tests/startup/stubs/history_secure_crypto_stub.cpp \
-  firmware/tests/startup/stubs/custody_ack_release_owner_stub.cpp \
   firmware/src/journal_format.cpp firmware/src/nrf_history_flash.cpp \
   firmware/src/nrf_config_flash.cpp firmware/src/nrf_security_flash.cpp \
   firmware/src/nrf_geofence_flash.cpp \

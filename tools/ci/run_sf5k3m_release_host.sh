@@ -7,6 +7,24 @@ cd "$(dirname "$0")/../.."
 dir="$(mktemp -d "${TMPDIR:-/tmp}/orun-sf5k3m.XXXXXXXX")"
 trap 'rm -rf -- "$dir"' EXIT
 cxx="${CXX:-g++}"
+
+case "${ORUN_ACK_TEST_PROFILE:-product}" in
+  product)
+    ack_profile_flags=(-DORUN_GATEWAY_BATCH_ACK=1)
+    ;;
+  standard)
+    ack_profile_flags=(-DORUN_TRACKER_BATCH_ACK=1)
+    ;;
+  pilot)
+    ack_profile_flags=(-DORUN_TRACKER_BATCH_ACK=1
+                       -DORUN_SF5K3V_TRACKER_TX_PILOT)
+    ;;
+  *)
+    echo "Unknown ACK test profile" >&2
+    exit 2
+    ;;
+esac
+
 flags=(-std=gnu++11 -O1 -g -Wall -Wextra -Werror
        -Wno-conversion -Wno-sign-conversion
        -Ifirmware/include -Ifirmware/tests/sf5)
@@ -14,12 +32,13 @@ if [[ "${ORUN_HOST_SANITIZERS:-1}" == 1 ]]; then
   flags+=(-fsanitize=address,undefined -fno-sanitize-recover=undefined)
 fi
 echo "[SF5K3M] real scoped ACK HMAC -> ProductRecordStore durable release/reboot/cuts"
-"$cxx" "${flags[@]}" \
+"$cxx" "${flags[@]}" "${ack_profile_flags[@]}" \
   firmware/tests/sf5/test_sf5k3m_real_custody_release.cpp \
   firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
-  firmware/src/custody_ack_release_owner.cpp \
-  firmware/src/custody_ack_product_bridge.cpp \
-  firmware/src/custody_ack_verifier.cpp firmware/src/custody_ack.cpp \
+  firmware/src/kq05_tracker_batch_release_owner.cpp \
+  firmware/src/kq05_tracker_batch_ack_verifier.cpp \
+  firmware/src/kq05_gateway_batch_custody_crypto.cpp \
+  firmware/src/kq05_gateway_batch_custody_ack.cpp \
   firmware/src/product_record_store.cpp firmware/src/product_region.cpp \
   firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
   firmware/src/observation_store_format.cpp \

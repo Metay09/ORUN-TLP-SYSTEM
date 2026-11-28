@@ -40,6 +40,14 @@ LoraCommandRelay::Queued LoraCommandRelay::queue(const uint8_t* frame, size_t si
     if (slot != nullptr) result = Queued::kReplaced;
     else if (free_slot == nullptr) return Queued::kFull;
     else slot = free_slot;
+    // Replacement cannot inherit the old TX window.
+    if (slot->used && target == heard_ && sent_now_) {
+      heard_open_ = false;
+      sent_now_ = 0;
+      awaiting_terminal_ = false;
+      last_part_rx_floor_ms_ = 0;
+    }
+
     *slot = Slot();
     slot->used = true;
     slot->target = target;
@@ -58,6 +66,8 @@ void LoraCommandRelay::heard(uint64_t device, uint32_t now) {
   heard_open_ = true;
   ack_sent_ = false;
   sent_now_ = 0;
+  awaiting_terminal_ = false;
+  last_part_rx_floor_ms_ = 0;
 }
 
 void LoraCommandRelay::ackSent(uint32_t now) {
@@ -65,44 +75,89 @@ void LoraCommandRelay::ackSent(uint32_t now) {
   if (heard_open_) ack_sent_ = true;
 }
 
-#ifdef ORUN_GATEWAY_BATCH_ACK
-bool LoraCommandRelay::windowReserved(uint32_t now) const {
-  if (heard_ == 0 || (sent_now_ ? monotonic::elapsed(now, last_part_at_, kLatestNextPartMs)
-                                : monotonic::elapsed(now, heard_at_, kLatestAfterHeardMs))) return false;
-  for (const Slot& slot : slots_) if (slot.used && slot.target == heard_) return true;
-  return false;
-}
-#endif
 
-bool LoraCommandRelay::due(uint32_t now, Frame& out, bool (*airtime_available)(uint8_t)) {
-  if (!heard_open_) return false;
+void LoraCommandRelay::ackSentFor(
+    uint64_t device, uint32_t rx_floor_ms) {
+  if (heard_open_ && device == heard_ &&
+      rx_floor_ms == heard_at_)
+    ack_sent_ = true;
+}
+
+void LoraCommandRelay::onTxResult(
+    uint64_t target, uint32_t command_id,
+    uint8_t part, bool succeeded) {
+  if (!awaiting_terminal_ ||
+      target != heard_ ||
+      command_id != active_command_id_ ||
+      part != active_part_)
+    return;
+
+  awaiting_terminal_ = false;
+
+  // Timeout cannot establish a new RX window.
+  if (!succeeded) heard_open_ = false;
+}
+
+bool LoraCommandRelay::trySend(
+    uint32_t now, Frame& out,
+    bool (*airtime_available)(uint8_t),
+    bool (*start_tx)(const Frame&)) {
+  if (!start_tx || !heard_open_ ||
+      awaiting_terminal_) return false;
   if (sent_now_ == 0) {
     if (monotonic::elapsed(now, heard_at_, kLatestAfterHeardMs)) {
       heard_open_ = false;  // its window is over: wait for its next report
       return false;
     }
     if (!ack_sent_ && !monotonic::elapsed(now, heard_at_, kAckGraceMs)) return false;
-  } else if (monotonic::elapsed(now, last_part_at_, kLatestNextPartMs)) {
-    heard_open_ = false;
-    return false;
+  } else {
+    if (!monotonic::reached(
+            now, last_part_rx_floor_ms_)) return false;
+
+    if (monotonic::elapsed(
+            now, last_part_rx_floor_ms_,
+            kLatestNextPartMs)) {
+      heard_open_ = false;
+      return false;
+    }
   }
   for (Slot& s : slots_) {
     if (!s.used || s.target != heard_) continue;
     if (sent_now_ == 0 && s.attempt >= kMaxAttempts) break;
     // The next held part not yet sent in this window.
     for (uint8_t p = 0; p < s.parts; ++p) {
-      if ((sent_now_ & (1U << p)) != 0U || (s.have & (1U << p)) == 0U) continue;
-      if (airtime_available && !airtime_available(s.sizes[p])) return false;
-      if (sent_now_ == 0) ++s.attempt;  // one try per report
-      sent_now_ = static_cast<uint8_t>(sent_now_ | (1U << p));
-      last_part_at_ = now;
+      if ((sent_now_ & (1U << p)) != 0U) continue;
+
+      // Never skip a missing earlier part.
+      if ((s.have & (1U << p)) == 0U) return false;
+      const uint32_t floor =
+          sent_now_ ? last_part_rx_floor_ms_ : heard_at_;
+
+      if (!ackFitsWindow(now, floor, s.sizes[p]))
+        return false;
+
+      if (airtime_available &&
+          !airtime_available(s.sizes[p])) return false;
       memcpy(out.bytes, s.frames[p], s.sizes[p]);
       out.size = s.sizes[p];
       out.target = s.target;
       out.command_id = s.command_id;
-      out.attempt = s.attempt;
+      out.attempt = static_cast<uint8_t>(
+          s.attempt + (sent_now_ == 0 ? 1U : 0U));
       out.part = p;
       out.parts = s.parts;
+      out.rx_floor_ms = floor;
+
+      // A failed admission must leave all command state intact.
+      if (!start_tx(out)) return false;
+
+      if (sent_now_ == 0) ++s.attempt;
+      sent_now_ = static_cast<uint8_t>(sent_now_ | (1U << p));
+      active_command_id_ = s.command_id;
+      active_part_ = p;
+      awaiting_terminal_ = true;
+      last_part_rx_floor_ms_ =
+          now + profileAirtimeUs(out.size) / 1000U;
       return true;
     }
     break;
@@ -120,6 +175,11 @@ bool LoraCommandRelay::answered(const uint8_t* result, size_t size) {
   const uint32_t id = be32(result + 16);
   for (Slot& s : slots_) {
     if (s.used && s.target == device && s.command_id == id) {
+      if (device == heard_) {
+        heard_open_ = false;
+        sent_now_ = 0;
+        awaiting_terminal_ = false;
+      }
       s.used = false;
       return true;
     }

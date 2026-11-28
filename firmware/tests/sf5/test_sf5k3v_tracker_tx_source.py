@@ -6,7 +6,7 @@ root = Path(__file__).resolve().parents[3]
 app = (root / "firmware/src/main.cpp").read_text()
 core = (root / "firmware/src/tracker_product_tx_pilot.cpp").read_text()
 cfg = (root / "firmware/platformio.ini").read_text()
-release = (root / "firmware/src/custody_ack_release_owner.cpp").read_text()
+release = (root / "firmware/src/kq05_tracker_batch_release_owner.cpp").read_text()
 assert cfg.count("[env:rak4630_sf5k3v_tracker_tx_pilot]") == 1
 assert "default_envs = rak4630" in cfg
 assert cfg.count("-DORUN_SF5K3V_TRACKER_TX_PILOT") == 1
@@ -49,8 +49,8 @@ assert 'case BlockReason::kRetainedReadError:' in core
 assert 'case BlockReason::kCacheCommitFailed:' in core
 assert 'phase_ = Phase::kSelect;' in core
 assert 'requestPrepare(' not in core
-assert "custody_ack_release.submit(ack.payload, ack.size)" in app
-assert "verifier_.verifyFromStore(ack,length,product_,proof)" in release
+assert "batch_ack_release.submit(ack.payload, ack.size)" in app
+assert "verifier_.verifyFromStore(frame,length,records_,verified)" in release
 assert "requestPrepare(" not in core
 assert "requestRelease(" not in core
 print("SF5K3V pilot safety source checks: PASS (source only)")

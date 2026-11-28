@@ -1,9 +1,9 @@
-#ifdef ORUN_GATEWAY_BATCH_ACK
+#if defined(ORUN_GATEWAY_BATCH_ACK) || defined(ORUN_TRACKER_BATCH_ACK)
 #include "kq05_tracker_batch_ack_verifier.h"
 
 #include <string.h>
 
-#include "custody_ack.h"
+#include "tlp_v2_product_secure.h"
 #include "custody_ack_primitives.h"
 #include "kq05_gateway_batch_custody_crypto.h"
 #include "product_record_store.h"
@@ -57,13 +57,9 @@ bool eligibleObject(const ack::Header& batch,
       object.object_size == 0U ||
       (object.record_kind != osf::RecordKind::kPeriodic &&
        object.record_kind != osf::RecordKind::kEvent)) return false;
-  custody_ack::Header scope{};
-  scope.tracker_device_id=batch.tracker_device_id;
-  scope.gateway_device_id=batch.gateway_device_id;
-  scope.key_epoch=batch.key_epoch;
-  scope.object_len=object.object_size;
-  return custody_ack::matchesProtectedShape(
-      scope,object.object,object.object_size);
+  return tlp::matchesCustodyObjectShape(
+      batch.tracker_device_id, batch.key_epoch,
+      object.object, object.object_size);
 }
 } // namespace
 

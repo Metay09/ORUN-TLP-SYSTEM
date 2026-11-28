@@ -23,8 +23,7 @@
 #error "this test must be built like the product images (no test keys)"
 #endif
 
-#include "custody_ack.h"
-#include "custody_ack_verifier.h"
+#include "current_ack_test_fixture.h"
 #include "custody_store_product_format.h"
 #include "gateway_custody_authorized_ingress.h"
 #include "gateway_local_custody_owner.h"
@@ -39,21 +38,9 @@
 #error "this configuration must not compile the public test root"
 #endif
 
-namespace orun_tlp {
-struct CustodyAckVerifierHostPeer {
-  static CustodyAckVerifyResult check(
-      CustodyAckVerifier& verifier, const uint8_t* ack, size_t length,
-      const observation_store_control::ExactObject* cached, uint16_t count) {
-    AuthenticatedCustodyAck result{};
-    uint16_t selected = UINT16_MAX;
-    return verifier.verifyCandidates(ack, length, cached, count, result,
-                                     selected);
-  }
-};
-}  // namespace orun_tlp
 
 using namespace orun_tlp;
-using Peer = orun_tlp::CustodyAckVerifierHostPeer;
+using Peer = orun_tlp::current_ack_test::Peer;
 using Step = Sf5l0BenchTestProvisioning::Step;
 namespace osc = orun_tlp::observation_store_control;
 namespace fmt = orun_tlp::custody_store_product_format;
@@ -149,18 +136,18 @@ void makeFrame(osc::ExactObject& object, uint64_t tracker, uint32_t epoch,
 }
 
 bool ackWith(Sf5l0BenchGrantSource& grants, const osc::ExactObject& object,
-             uint8_t (&ack)[custody_ack::kWireSize]) {
+             uint8_t (&ack)[kq05_gateway_batch_ack::kMinSize]) {
   ProductFlash flash;
   ProductCustodyStore store(flash, 2U);
   assert(store.begin());
   GatewayLocalCustodyOwner owner(store);
   GatewayCustodyAuthorizedIngress ingress(owner, grants, kGateway);
-  if (ingress.receive(object.object, object.object_size) !=
+  if (ingress.receive(object.object, object.object_size, true) !=
       GatewayCustodyAuthorizedIngress::Result::kStarted)
     return false;
-  for (unsigned i = 0U; i < 200U && ingress.pending() && !owner.ackReady(); ++i)
+  for (unsigned i = 0U; i < 200U && ingress.pending() && !owner.batchReady(); ++i)
     ingress.service();
-  return ingress.takeAuthorizedAck(ack);
+  return current_ack_test::takeSingle(ingress, ack);
 }
 
 void testRealCredentialStillProvisions() {
@@ -182,7 +169,7 @@ void testRealCredentialStillProvisions() {
   // the real Tracker verifier authenticates that ACK.
   osc::ExactObject object{};
   makeFrame(object, kTracker, 1U, 42U);
-  uint8_t ack[custody_ack::kWireSize]{};
+  uint8_t ack[kq05_gateway_batch_ack::kMinSize]{};
   Sf5l0BenchGrantSource bare(kGateway);
   assert(!ackWith(bare, object, ack));
   uint64_t tracker = 0U;
@@ -195,9 +182,9 @@ void testRealCredentialStillProvisions() {
          Sf5l0BenchGrantSource::AddResult::kAdded);
   assert(ackWith(grants, object, ack));
   for (unsigned i = 0U; i < 3000U && s.busy(); ++i) s.poll();
-  CustodyAckVerifier verifier(s);
+  Kq05TrackerBatchAckVerifier verifier(s);
   assert(Peer::check(verifier, ack, sizeof(ack), &object, 1U) ==
-         CustodyAckVerifyResult::kAuthenticated);
+         Kq05TrackerBatchVerifyResult::kAuthenticated);
 }
 
 void testTestKeyTrackerIsRefused() {
@@ -219,7 +206,7 @@ void testTestKeyTrackerIsRefused() {
   // even with unrelated RAM grants present.
   osc::ExactObject old{};
   makeFrame(old, kTracker, sf5l0_bench::kTestKeyEpoch, 7U);
-  uint8_t ack[custody_ack::kWireSize]{};
+  uint8_t ack[kq05_gateway_batch_ack::kMinSize]{};
   Sf5l0BenchGrantSource bare(kGateway);
   assert(!ackWith(bare, old, ack));
   assert(bare.grantsRefused() >= 1U && bare.grantsIssued() == 0U);

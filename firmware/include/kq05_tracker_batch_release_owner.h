@@ -41,6 +41,15 @@ class Kq05TrackerBatchReleaseOwner final {
   // kApplied only after all requested identities were durably released.
   Service service();
 
+  // Loop-owner completion notification: exactly once per fully
+  // applied group; never on a partial marker, busy or failure.
+  template <class Notify>
+  Service serviceAndNotify(Notify notify) {
+    const auto result = service();
+    if (result == Service::kApplied) notify();
+    return result;
+  }
+
   bool pending() const { return active_; }
   uint8_t releasedCount() const { return released_; }
 

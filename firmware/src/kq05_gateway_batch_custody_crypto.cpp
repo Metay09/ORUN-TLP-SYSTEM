@@ -2,7 +2,6 @@
 
 #include <string.h>
 
-#include "custody_ack.h"
 #include "custody_ack_primitives.h"
 #include "tlp_v2_product_secure.h"
 
@@ -53,13 +52,9 @@ bool collectSortedDigests(
       count == 0U || count > ack::kMaxObjects) return false;
 
   for (uint8_t i = 0U; i < count; ++i) {
-    custody_ack::Header shape{};
-    shape.tracker_device_id = scope.tracker_device_id;
-    shape.gateway_device_id = scope.gateway_device_id;
-    shape.key_epoch = scope.key_epoch;
-    shape.object_len = static_cast<uint8_t>(objects[i].size);
-    if (!custody_ack::matchesProtectedShape(
-            shape, objects[i].bytes, objects[i].size) ||
+    if (!tlp::matchesCustodyObjectShape(
+            scope.tracker_device_id, scope.key_epoch,
+            objects[i].bytes, objects[i].size) ||
         !custody_crypto::sha256(
             objects[i].bytes, objects[i].size, digests[i].full))
       return false;

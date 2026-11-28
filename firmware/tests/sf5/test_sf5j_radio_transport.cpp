@@ -126,13 +126,13 @@ void ackBe64(uint8_t* b, uint64_t v) {
     b[i]=static_cast<uint8_t>(v>>(56U-8U*i));
 }
 
-void makeAck(uint8_t (&wire)[orun_tlp::custody_ack::kWireSize],
+void makeAck(uint8_t (&wire)[orun_tlp::kq05_gateway_batch_ack::kMinSize],
              uint64_t tracker) {
   memset(wire,0U,sizeof(wire));
   wire[0]=0x02U;
-  wire[1]=0x05U;
+  wire[1]=0x0AU;
   wire[2]=0x01U;
-  wire[3]=100U;
+  wire[3]=1U;
   ackBe64(wire+4U,tracker);
   ackBe64(wire+12U,0x1112131415161718ULL);
   ackBe32(wire+20U,7U);
@@ -145,7 +145,7 @@ void custodyAckTrackerMailboxAndRoleIsolation() {
   RadioManager manager;
   TestSequence seq;
   beginAs(manager,seq,NodeRole::kTracker);
-  uint8_t ack[orun_tlp::custody_ack::kWireSize]{};
+  uint8_t ack[orun_tlp::kq05_gateway_batch_ack::kMinSize]{};
   makeAck(ack,kLocalDevice);
   uint8_t saved[sizeof(ack)]{};
   memcpy(saved,ack,sizeof(ack));
@@ -190,6 +190,35 @@ void custodyAckTrackerMailboxAndRoleIsolation() {
   manager.update(false);
   assert(!manager.takeCustodyAckFrame(&result));
   assert(manager.eventDiagnostics().custody_ack_rx_drops>=4U);
+
+  // A retired 0x05 packet cannot reach the release mailbox.
+  manager.setRole(NodeRole::kTracker);
+  manager.update(false);
+  manager.update(false);
+
+  memcpy(invalid, saved, sizeof(saved));
+  invalid[1] = 0x05U;
+  invalid[3] = 100U;
+
+  const uint32_t queued =
+      manager.eventDiagnostics().custody_ack_rx_queued;
+
+  rxDone(invalid, sizeof(invalid), -70, 3);
+  manager.update(false);
+
+  assert(!manager.takeCustodyAckFrame(&result));
+
+  assert(manager.eventDiagnostics().custody_ack_rx_queued ==
+         queued);
+
+  // The current single-object ACK still reaches the mailbox.
+  rxDone(saved, sizeof(saved), -70, 3);
+  manager.update(false);
+
+  assert(manager.takeCustodyAckFrame(&result));
+  assert(result.payload[1] == 0x0AU);
+
+  puts("ORUN-305 RETIRED ACK RX=0 CURRENT ACK RX=1 PASS");
 }
 #endif
 

@@ -25,12 +25,10 @@ echo "[3B] signed Gateway grant snapshot (Python-built, firmware-installed)"
   firmware/src/gateway_grant_snapshot_reader.cpp \
   firmware/src/observation_store_format.cpp \
   firmware/src/sf5l0_bench.cpp firmware/src/edge_link.cpp \
-  firmware/src/custody_ack_verifier.cpp firmware/src/custody_ack.cpp \
   firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
   firmware/src/security_v3_ab_preflight.cpp firmware/src/security_v3_format.cpp \
   firmware/src/security_format.cpp firmware/src/journal_format.cpp \
   firmware/src/tlp_position_packet.cpp firmware/src/tlp_v2_product_secure.cpp \
-  firmware/src/gateway_custody_ack_signer.cpp \
   firmware/src/gateway_local_custody_owner.cpp \
   firmware/src/gateway_custody_authorized_ingress.cpp \
   firmware/src/custody_store_product_format.cpp \

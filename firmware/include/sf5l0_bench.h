@@ -411,7 +411,7 @@ void begin(FlashBackend& product_port, FlashBackend& security_port,
            RadioManager& radio, uint64_t gateway_id,
            bool observation_store_mounted);
 // loop(), after RadioManager::update() and only while not transmitting.
-void service(bool observation_store_mounted, bool reserve_command_window = false);
+void service(bool observation_store_mounted);
 // "BENCH?"
 void print();
 // "EDGE ACCEPT v1 ...": one authenticated (bench key) Edge durable accept.

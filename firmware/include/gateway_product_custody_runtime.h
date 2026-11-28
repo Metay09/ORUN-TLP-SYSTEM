@@ -36,7 +36,6 @@ class GatewayProductCustodyRuntime final {
 #ifdef ORUN_GATEWAY_BATCH_ACK
   void attachLiveIngress(GatewayProductLiveIngress& live) { live_ = &live; }
   uint32_t reservedPages() const;
-  void reserveCommandWindow(bool reserved) { command_window_reserved_ = reserved; }
 #endif
 
   // Future production composition MUST use the verified boot gate; the
@@ -77,7 +76,6 @@ class GatewayProductCustodyRuntime final {
   uint8_t next_ack_peer_ = 0U;
   uint32_t pending_rx_ms_ = 0;
   GatewayProductLiveIngress* live_ = nullptr;
-  bool command_window_reserved_ = false;
   bool pending_event_ = false;
   void collectBatchHandle(uint32_t now);
 #endif

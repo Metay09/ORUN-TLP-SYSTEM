@@ -5,11 +5,11 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 work="$(mktemp -d /tmp/orun-sf5k3n.XXXXXX)"
 trap 'rm -rf "$work"' EXIT
-"${CXX:-g++}" -std=c++17 -O1 -g -Wall -Wextra -Werror -DORUN_SF5K3N_HOST_TEST \
+"${CXX:-g++}" -std=c++17 -O1 -g -Wall -Wextra -Werror -DORUN_KQ05_BATCH_HMAC_HOST_TEST=1 \
  -I firmware/include \
  firmware/src/tlp_v2_product_secure.cpp \
- firmware/src/custody_ack.cpp \
- firmware/src/gateway_custody_ack_signer.cpp \
+ firmware/src/kq05_gateway_batch_custody_ack.cpp \
+ firmware/src/kq05_gateway_batch_custody_crypto.cpp \
  firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
  firmware/tests/sf5/test_sf5k3n_gateway_ack_signer.cpp \
  -lssl -lcrypto -o "$work/test_sf5k3n"

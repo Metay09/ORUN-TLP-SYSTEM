@@ -2,7 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "custody_ack.h"
+#include "kq05_gateway_batch_custody_ack.h"
 #include "gateway_radio_timing.h"
 #include "monotonic_time.h"
 #ifdef ORUN_GATEWAY_BATCH_ACK
@@ -83,11 +83,7 @@ struct CustodyAckRxFrame {
   uint16_t size = 0;
   int16_t rssi_dbm = 0;
   int8_t snr_db = 0;
-#ifdef ORUN_GATEWAY_BATCH_ACK
   uint8_t payload[kq05_gateway_batch_ack::kMaxSize]{};
-#else
-  uint8_t payload[custody_ack::kWireSize]{};
-#endif
 };
 
 // 6b: one LoRa command (Tracker) or command RESULT (Gateway) as received.
@@ -98,6 +94,17 @@ struct LoraFrameRx {
   int16_t rssi_dbm = 0;
   int8_t snr_db = 0;
   uint8_t payload[lora_command::kMaxFrameSize]{};
+};
+
+// Local TX terminal, not remote delivery confirmation.
+struct DownlinkTxResult {
+  enum class Kind : uint8_t { kNone, kCommand, kAck };
+  Kind kind = Kind::kNone;
+  uint64_t target = 0;
+  uint32_t command_id = 0;
+  uint32_t rx_floor_ms = 0;
+  uint8_t part = 0;
+  bool succeeded = false;
 };
 
 class RadioManager {
@@ -174,12 +181,6 @@ class RadioManager {
   // The caller must cache that exact object durably before first custody TX.
   // No production caller is enabled until that owner is integrated.
   bool sendProductSecurePacket(const uint8_t* payload, size_t size);
-  // SF5K3T candidate: no raw ACK TX API; consume only the privileged
-  // durability-checked, still-authorized ACK from the Gateway ingress.
-  // No automatic Gateway service activation. Loop owner only.
-  // If RF cannot start after consumption, the Tracker must retry the exact
-  // object; durable custody deduplication can then issue another ACK.
-  bool sendAuthorizedCustodyAck(GatewayCustodyAuthorizedIngress& ingress);
 #ifdef ORUN_GATEWAY_BATCH_ACK
   enum class BatchTx : uint8_t { kStarted, kDeferred, kUnverifiable, kStaleHandle };
   BatchTx sendAuthorizedBatchAck(GatewayCustodyAuthorizedIngress& ingress,
@@ -187,7 +188,7 @@ class RadioManager {
                               const GatewayCustodyAckScope& scope, uint32_t rx_floor_ms);
 #endif
   bool takeProductSecureFrame(ProductSecureRxFrame* frame);
-  // Tracker-only, exact raw 56-byte ACK from driver callback mailbox.
+  // Tracker-only, exact raw 0x0A ACK (56..88 bytes).
   // The consumer MUST separately check durable grant and full HMAC.
   bool takeCustodyAckFrame(CustodyAckRxFrame* frame);
 
@@ -196,10 +197,14 @@ class RadioManager {
   bool takeLoraFrame(LoraFrameRx* frame);
   // A Gateway sends an exact command frame it holds for a bridge; a Tracker
   // sends its own signed RESULT. Shape-checked only (no authority here).
-  bool sendLoraFrame(const uint8_t* payload, size_t size);
+  bool sendLoraFrame(const uint8_t* payload, size_t size,
+                     const uint32_t* rx_floor_ms = nullptr);
   // 6b: a PRODUCT_SECURE frame (a Tracker's report) was received from this
   // device; once per frame. Gateway uses it to send a waiting command.
   bool takeHeardSender(uint64_t& device, uint32_t& at_ms);
+  // Consume once before another Gateway ACK/command can start.
+  // Other TX kinds do not overwrite this terminal or depend on its consumption.
+  bool takeDownlinkTxResult(DownlinkTxResult& result);
 
   uint64_t deviceId() const;
   uint32_t txAttempts() const { return tx_attempts_; }
@@ -244,7 +249,9 @@ class RadioManager {
   void markRxStarted(uint32_t now);
   void markRxStopped(uint32_t now);
   void foldRxAccounting(uint32_t now);
-  bool startTxOperation(uint8_t size, const uint32_t* rx_floor_ms = nullptr); // Driver gate held; clears old hardware IRQ work.
+  // Driver gate held; clears old hardware IRQ work.
+  bool startTxOperation(uint8_t size, const uint32_t* rx_floor_ms = nullptr,
+                        uint32_t rx_start_limit_ms = radio_config::kWindowedRxAfterTxMs);
   void applyPendingRole(); // Driver gate held; previous TX terminal.
   void sendTestPacket();
   void scheduleNextTransmission(uint32_t now);
@@ -263,7 +270,6 @@ class RadioManager {
     kRelay,
     kHistorySecure,
     kProductSecure,
-    kCustodyAck,
 #ifdef ORUN_GATEWAY_BATCH_ACK
     kBatchAck,
 #endif
@@ -314,6 +320,8 @@ class RadioManager {
   uint64_t heard_sender_ = 0;
   uint32_t heard_at_ms_ = 0;
   bool heard_pending_ = false;
+  DownlinkTxResult downlink_result_{};
+  bool downlink_result_pending_ = false;
   uint32_t bridge_line_number_ = 0;  // per boot; first printed line is 1.
   uint32_t tx_attempts_ = 0, local_tx_failures_ = 0;
   uint32_t tx_timeouts_ = 0;

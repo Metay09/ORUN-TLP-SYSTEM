@@ -14,7 +14,7 @@ namespace orun_tlp {
 // This owner selects the oldest unreleased EVENT, seals it ONCE, commits exact
 // ciphertext to OBS1 BEFORE RF, and retries the identical bytes after timeout.
 // A radio TX, Gateway receipt or ACK RX is never itself a Flash release.
-// Existing CustodyAckReleaseOwner alone verifies grant/HMAC and commits release.
+// Existing Kq05TrackerBatchReleaseOwner alone verifies grant/HMAC and commits release.
 class TrackerCriticalEventTx final {
  public:
   enum class Mode : uint8_t { kCriticalEvent, kPeriodicHistory };

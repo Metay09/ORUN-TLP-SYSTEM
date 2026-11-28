@@ -1,3 +1,4 @@
+#ifdef ORUN_GATEWAY_BATCH_ACK
 #include "gateway_product_custody_runtime.h"
 
 #include <string.h>
@@ -126,7 +127,7 @@ GatewayProductCustodyRuntime::update(bool enabled) {
     const uint8_t count = peer.individual ? 1U : peer.count;
     const uint8_t size = kq05_gateway_batch_ack::kHeaderSize +
         count * kq05_gateway_batch_ack::kRefSize + kq05_gateway_batch_ack::kTagSize;
-    if (ingress_.pending() || command_window_reserved_ || !radio_.canSend() ||
+    if (ingress_.pending() || !radio_.canSend() ||
         !ackFitsWindow(now, peer.heard_ms, size) ||
         peer.attempts >= kMaxAttemptsPerWindow ||
         (peer.attempts && !monotonic::elapsed(now, peer.last_attempt_ms, kRetrySpacingMs)) ||
@@ -177,12 +178,7 @@ GatewayProductCustodyRuntime::update(bool enabled) {
   // revocation on this loop owner. RadioManager rechecks the grant itself
   // before its privileged ACK TX attempt.
   if (ingress_.pending()) {
-#ifdef ORUN_GATEWAY_BATCH_ACK
     return Event::kNone;
-#else
-    return radio_.canSend() && radio_.sendAuthorizedCustodyAck(ingress_)
-               ? Event::kAckTxStarted : Event::kNone;
-#endif
   }
 
   ProductSecureRxFrame received{};
@@ -223,8 +219,6 @@ GatewayProductCustodyRuntime::update(bool enabled) {
   pending_rx_ms_ = received.rx_floor_ms;
   pending_event_ = header.app_family == tlp::kProductAppFamilyEvent;
   const auto outcome = ingress_.receive(received.payload, received.size, true);
-#else
-  const auto outcome = ingress_.receive(received.payload, received.size);
 #endif
   memset(received.payload, 0, sizeof(received.payload));
 
@@ -234,18 +228,8 @@ GatewayProductCustodyRuntime::update(bool enabled) {
       last_snr_ = received.snr_db;
       return Event::kCustodyStarted;
     case GatewayCustodyAuthorizedIngress::Result::kAckReady:
-#ifdef ORUN_GATEWAY_BATCH_ACK
       collectBatchHandle(now);
       return Event::kDuplicateHeld;
-#else
-      // Exact, independently read-back duplicate: one bounded ACK attempt
-      // is eligible, but never if radio is busy. A failed TX does not imply
-      // a delivery; the Tracker may retransmit the same durable object.
-      if (radio_.canSend() &&
-          radio_.sendAuthorizedCustodyAck(ingress_))
-        return Event::kAckTxStarted;
-      return Event::kDuplicateHeld;
-#endif
     case GatewayCustodyAuthorizedIngress::Result::kDenied:
       return Event::kDenied;
     case GatewayCustodyAuthorizedIngress::Result::kBusy:
@@ -257,3 +241,5 @@ GatewayProductCustodyRuntime::update(bool enabled) {
 }
 
 }  // namespace orun_tlp
+
+#endif

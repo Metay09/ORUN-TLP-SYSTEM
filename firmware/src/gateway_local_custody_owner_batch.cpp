@@ -21,7 +21,7 @@ bool GatewayLocalCustodyOwner::signDurableBatch(
   // No signed ACK while its single owner has an incomplete write/outcome.
   if (handles == nullptr || count == 0U ||
       count > kq05_gateway_batch_ack::kMaxObjects ||
-      waiting_flash_ || ack_ready_ || !store_.ready() ||
+      waiting_flash_ || !store_.ready() ||
       store_.busy() || store_.hasOutcome()) return false;
 
   uint8_t exact[kq05_gateway_batch_ack::kMaxObjects]

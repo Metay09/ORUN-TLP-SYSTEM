@@ -163,7 +163,7 @@ def firmware() -> None:
     assert main.count("setLiveFirst(") == 1
     opened = main.rfind("#ifdef ORUN_SF5L0_TRACKER", 0, at)
     assert opened >= 0 and "#endif" not in main[opened:at]
-    for line in ("BENCH LINK tx seq=", "BENCH LINK ack seq=",
+    for line in ("BENCH LINK tx seq=", "PRODUCT BATCH release=DURABLE",
                  "BENCH LINK ack_timeout seq=", '"BENCH DRAIN LIVE", 16',
                  "tracker_product_tx.setLiveOnly(true);",
                  "tracker_product_tx.setLiveOnly(false);"):
@@ -177,6 +177,23 @@ def firmware() -> None:
     assert "#endif" not in main[opened:hold]
     assert "#else" not in main[branch:hold]
     assert "positions.update(orun_tlp::monotonic::nowMs(), live_position_allowed)" in main
+    # Current 0x0A product path: only a durable release
+    # result may notify the existing bench pacer.
+    api = (ROOT / "firmware/include/kq05_tracker_batch_release_owner.h").read_text()
+    assert "if (result == Service::kApplied) notify();" in api
+    release = main.index("batch_ack_release.serviceAndNotify([]() {")
+    logged = main.index("PRODUCT BATCH release=DURABLE", release)
+    paced = main.index("bench_pacer.onReleased(", logged)
+    end = main.index("});", paced)
+    assert release < logged < paced < end
+
+    # The current product must not send a legacy POSITION
+    # copy from Tracker storage while using secure reports.
+    assert "tracking_enabled && !trackerStorage()" in main
+
+    # Do not attribute an entire batch to one sequence.
+    assert "BENCH LINK ack seq=" not in main
+
     pilot = (ROOT / "firmware/include/tracker_product_tx_pilot.h").read_text()
     assert "bool live_first_ = false;" in pilot  # default stays SF5K3V
     assert "bool live_only_ = false;" in pilot

@@ -39,7 +39,7 @@ GatewayCustodyAuthorizedIngress::Result
 GatewayCustodyAuthorizedIngress::receive(const uint8_t* object,
                                           size_t length,
                                           bool batch_mode) {
-  if (pending_ || custody_.waitingFlash() || custody_.ackReady())
+  if (pending_ || custody_.waitingFlash())
     return Result::kBusy;
   if (gateway_id_ == 0U || object == nullptr ||
       (length != tlp::kEventFrameSize &&
@@ -79,7 +79,7 @@ GatewayCustodyAuthorizedIngress::receive(const uint8_t* object,
 void GatewayCustodyAuthorizedIngress::service() {
   if (!pending_) return;
   custody_.service();
-  if (!custody_.waitingFlash() && !custody_.ackReady() &&
+  if (!custody_.waitingFlash() &&
       !custody_.batchReady()) clearPending();
 }
 
@@ -109,35 +109,6 @@ bool GatewayCustodyAuthorizedIngress::takeAuthorizedBatchHandle(
   }
   clearPending();
   return authorized;
-}
-
-bool GatewayCustodyAuthorizedIngress::takeAuthorizedAck(
-    uint8_t (&output)[custody_ack::kWireSize]) {
-  if (!pending_) return false;
-  uint8_t candidate[custody_ack::kWireSize]{};
-  if (!custody_.takeAck(candidate)) return false;
-
-  // Recheck durable enrollment immediately before giving the frame to a
-  // trusted RF sender. This is NOT a credential-provisioning implementation.
-  GatewayCustodyAckScope latest{};
-  uint8_t key[32]{};
-  const bool active=grants_.activeGrant(
-      pending_scope_.tracker_device_id,pending_scope_.key_epoch,latest,key);
-  wipe(key,sizeof(key));
-  custody_ack::Header header{};
-  const bool accepted = active && validScope(latest) &&
-      sameScope(latest,pending_scope_) &&
-      custody_ack::decodeHeader(candidate,sizeof(candidate),header) &&
-      header.relay_allowed &&
-      header.tracker_device_id == latest.tracker_device_id &&
-      header.gateway_device_id == latest.gateway_device_id &&
-      header.key_epoch == latest.key_epoch &&
-      header.custody_floor == latest.custody_floor &&
-      header.grant_generation == latest.grant_generation;
-  if (accepted) memcpy(output,candidate,sizeof(candidate));
-  wipe(candidate,sizeof(candidate));
-  clearPending();
-  return accepted;
 }
 
 }  // namespace orun_tlp

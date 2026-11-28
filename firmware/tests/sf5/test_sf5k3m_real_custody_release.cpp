@@ -6,7 +6,7 @@
 #include <string.h>
 #include <vector>
 
-#include "custody_ack_release_owner.h"
+#include "kq05_tracker_batch_release_owner.h"
 #include "product_record_store.h"
 #include "tlp_v2_product_secure.h"
 
@@ -19,13 +19,11 @@
 namespace {
 namespace osc=orun_tlp::observation_store_control;
 namespace tlp=orun_tlp::tlp;
-using Owner=orun_tlp::CustodyAckReleaseOwner;
+using Owner=orun_tlp::Kq05TrackerBatchReleaseOwner;
 
 constexpr uint16_t kProductPages=32U;
 constexpr uint32_t kPage=4096U;
-const char kValidAck[] =
-  "02050164010203040506070823002300230023010000000700000000"
-  "0000000192453945bd2224e144572044decab3402105011f5844a453";
+const char kValidAck[] = "020a01010102030405060708230023002300230100000007000000000000000192453945bd2224e1cb275990b721fe660c8f0e2cde31e463";
 
 uint8_t nibble(char c) {
   if(c>='0'&&c<='9')return static_cast<uint8_t>(c-'0');
@@ -192,12 +190,13 @@ void testRelease(bool async,bool fail_marker) {
   for(unsigned n=0;n<20000U;++n){
     records.poll();
     result=owner.service();
-    if(result!=Owner::Service::kWaitingFlash)break;
+    if(result==Owner::Service::kApplied ||
+       result==Owner::Service::kFailed)break;
   }
   assert(!owner.pending());
   assert(owner.service()==Owner::Service::kIdle);
   assert(result==(fail_marker?Owner::Service::kFailed:
-                             Owner::Service::kDurablyReleased));
+                             Owner::Service::kApplied));
   assertRetained(records,id,!fail_marker);
 
   Source reboot_source;
@@ -226,6 +225,6 @@ int main(){
   testRelease(true,false);
   testRelease(false,true);
   testRelease(true,true);
-  puts("SF5K3M real HMAC ACK -> ProductRecordStore durable release/reset/cuts: PASS");
+  puts("ORUN-305 current 0x0A single ACK -> ProductRecordStore durable release/reset/cuts: PASS");
   return 0;
 }

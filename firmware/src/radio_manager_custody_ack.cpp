@@ -10,69 +10,13 @@
 
 namespace orun_tlp {
 
-// SF5K3T: privileged, single-loop-owner ACK radio transport. The trusted
-// Gateway ingress performs durable exact-object readback, HMAC and a final
-// grant recheck before yielding its one-shot ACK. This caller never accepts
-// an arbitrary 56-byte radio frame from an untrusted application component.
-// Serialize all grant changes, ingress calls and TX admission on the loop
-// owner. No RX callback may mutate a grant or initiate this transmission.
-// A denied/failed TX start consumes this one-shot ACK, not durable custody.
-bool RadioManager::sendAuthorizedCustodyAck(
-    GatewayCustodyAuthorizedIngress& ingress) {
-  // Do not consume an authorized ACK while radio is knowingly unavailable.
-  // Mobile Gateway operation is explicitly provisioned, not inferred from
-  // the legacy BASE, RELAY or TRACKER role.
-  if (!canSend() || device_id_ == 0U ||
-      ingress.localGatewayId() != device_id_) return false;
-
-  uint8_t ack[custody_ack::kWireSize]{};
-  // Final live grant check; may use independent flash resources, so do not
-  // hold radio_driver::Guard while calling it.
-  if (!ingress.takeAuthorizedAck(ack)) return false;
-  custody_ack::Header header{};
-  if (!custody_ack::decodeHeader(ack, sizeof(ack), header) ||
-      !header.relay_allowed ||
-      header.gateway_device_id != device_id_) {
-    memset(ack, 0, sizeof(ack));
-    ++local_tx_failures_;
-    return false;
-  }
-
-  radio_driver::Guard gate;
-  if (!gate || !canSend()) {
-    memset(ack, 0, sizeof(ack));
-    ++local_tx_failures_;
-    return false;
-  }
-
-  if (!startTxOperation(sizeof(ack))) {
-    memset(ack, 0, sizeof(ack));
-    return false;
-  }
-  tx_kind_ = TxKind::kCustodyAck;
-  tx_role_epoch_ = role_epoch_;
-  rx_restore_state_ = RxRestoreState::kNone;
-  ++tx_attempts_;
-  ++event_diagnostics_.custody_ack_tx_attempts;
-  // The pinned SX126x-Arduino driver copies bytes synchronously to its FIFO.
-  Radio.Send(ack, static_cast<uint8_t>(sizeof(ack)));
-  tx_started_ms_ = monotonic::nowMs();
-  memset(ack, 0, sizeof(ack));
-  Serial.printf(
-      "TX CUSTODY_ACK tracker=%08lX%08lX gateway=%08lX%08lX len=56 outcome=pending\n",
-      static_cast<unsigned long>(uint32_t(header.tracker_device_id >> 32)),
-      static_cast<unsigned long>(uint32_t(header.tracker_device_id)),
-      static_cast<unsigned long>(uint32_t(device_id_ >> 32)),
-      static_cast<unsigned long>(uint32_t(device_id_)));
-  return true;  // Radio start, NOT receipt, custody release, or delivery.
-}
-
 #ifdef ORUN_GATEWAY_BATCH_ACK
 RadioManager::BatchTx RadioManager::sendAuthorizedBatchAck(
     GatewayCustodyAuthorizedIngress& ingress,
     const ProductCustodyStore::Handle* handles, uint8_t count,
     const GatewayCustodyAckScope& scope, uint32_t rx_floor_ms) {
   if (!canSend() || !device_id_ || ingress.localGatewayId() != device_id_) return BatchTx::kDeferred;
+  if (downlink_result_pending_) return BatchTx::kDeferred;
   uint8_t wire[kq05_gateway_batch_ack::kMaxSize]{};
   size_t size = 0;
   bool stale_single = false;
@@ -80,9 +24,15 @@ RadioManager::BatchTx RadioManager::sendAuthorizedBatchAck(
     return stale_single ? BatchTx::kStaleHandle : BatchTx::kUnverifiable;
   radio_driver::Guard gate;
   if (!gate || !canSend()) return BatchTx::kDeferred;
+  if (downlink_result_pending_) return BatchTx::kDeferred;
   if (!startTxOperation(static_cast<uint8_t>(size), &rx_floor_ms)) return BatchTx::kDeferred;
   tx_kind_ = TxKind::kBatchAck;
   batch_ack_rx_floor_ms_ = rx_floor_ms;
+
+  downlink_result_ = {};
+  downlink_result_.kind = DownlinkTxResult::Kind::kAck;
+  downlink_result_.target = scope.tracker_device_id;
+  downlink_result_.rx_floor_ms = rx_floor_ms;
   tx_role_epoch_ = role_epoch_;
   rx_restore_state_ = RxRestoreState::kNone;
   ++tx_attempts_;

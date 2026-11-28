@@ -84,18 +84,18 @@ struct RealCredential {
 
 // Gateway: receive one exact frame with this grant source, return its ACK.
 bool ackWith(Sf5l0BenchGrantSource& grants, const osc::ExactObject& object,
-             uint8_t (&ack)[custody_ack::kWireSize]) {
+             uint8_t (&ack)[kq05_gateway_batch_ack::kMinSize]) {
   ProductFlash flash;
   ProductCustodyStore store(flash, 2U);
   assert(store.begin());
   GatewayLocalCustodyOwner owner(store);
   GatewayCustodyAuthorizedIngress ingress(owner, grants, kGateway);
-  if (ingress.receive(object.object, object.object_size) !=
+  if (ingress.receive(object.object, object.object_size, true) !=
       GatewayCustodyAuthorizedIngress::Result::kStarted)
     return false;
-  for (unsigned i = 0U; i < 200U && ingress.pending() && !owner.ackReady(); ++i)
+  for (unsigned i = 0U; i < 200U && ingress.pending() && !owner.batchReady(); ++i)
     ingress.service();
-  return ingress.takeAuthorizedAck(ack);
+  return current_ack_test::takeSingle(ingress, ack);
 }
 
 void testRealCredentialEndToEnd() {
@@ -134,7 +134,7 @@ void testRealCredentialEndToEnd() {
   // Gateway: no grant for this epoch -> no custody, no ACK.
   osc::ExactObject object{};
   makeFrame(object, kTracker, c.epoch, 42U);
-  uint8_t ack[custody_ack::kWireSize]{};
+  uint8_t ack[kq05_gateway_batch_ack::kMinSize]{};
   Sf5l0BenchGrantSource bare(kGateway);
   assert(!ackWith(bare, object, ack));
 
@@ -153,9 +153,9 @@ void testRealCredentialEndToEnd() {
   assert(grants.ramGrants() == 1U);
   assert(ackWith(grants, object, ack));
   for (unsigned i = 0U; i < 3000U && s.busy(); ++i) s.poll();
-  CustodyAckVerifier verifier(s);
+  Kq05TrackerBatchAckVerifier verifier(s);
   assert(Peer::check(verifier, ack, sizeof(ack), &object, 1U) ==
-         CustodyAckVerifyResult::kAuthenticated);
+         Kq05TrackerBatchVerifyResult::kAuthenticated);
 
   // A wrong key never authenticates.
   uint8_t wrong[32]{};
@@ -164,19 +164,19 @@ void testRealCredentialEndToEnd() {
   Sf5l0BenchGrantSource bad(kGateway);
   assert(bad.addGrant(tracker, epoch, gfloor, ggen, wrong) ==
          Sf5l0BenchGrantSource::AddResult::kAdded);
-  uint8_t bad_ack[custody_ack::kWireSize]{};
+  uint8_t bad_ack[kq05_gateway_batch_ack::kMinSize]{};
   assert(ackWith(bad, object, bad_ack));
   assert(Peer::check(verifier, bad_ack, sizeof(bad_ack), &object, 1U) !=
-         CustodyAckVerifyResult::kAuthenticated);
+         Kq05TrackerBatchVerifyResult::kAuthenticated);
 
   // The test-key path is unchanged for old test-epoch frames (but this
   // Tracker, now on a real credential, does not accept test-key ACKs).
   osc::ExactObject old{};
   makeFrame(old, kTracker, sf5l0_bench::kTestKeyEpoch, 7U);
-  uint8_t old_ack[custody_ack::kWireSize]{};
+  uint8_t old_ack[kq05_gateway_batch_ack::kMinSize]{};
   assert(ackWith(grants, old, old_ack));
   assert(Peer::check(verifier, old_ack, sizeof(old_ack), &old, 1U) !=
-         CustodyAckVerifyResult::kAuthenticated);
+         Kq05TrackerBatchVerifyResult::kAuthenticated);
 
   // Table limits.
   Sf5l0BenchGrantSource full(kGateway);

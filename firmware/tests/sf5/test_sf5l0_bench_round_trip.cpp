@@ -11,8 +11,7 @@
 
 #include <array>
 
-#include "custody_ack.h"
-#include "custody_ack_verifier.h"
+#include "current_ack_test_fixture.h"
 #include "custody_store_product_format.h"
 #include "gateway_custody_authorized_ingress.h"
 #include "gateway_local_custody_owner.h"
@@ -23,21 +22,9 @@
 #include "sf5l0_bench.h"
 #include "tlp_v2_product_secure.h"
 
-namespace orun_tlp {
-struct CustodyAckVerifierHostPeer {
-  static CustodyAckVerifyResult check(
-      CustodyAckVerifier& verifier, const uint8_t* ack, size_t length,
-      const observation_store_control::ExactObject* cached, uint16_t count) {
-    AuthenticatedCustodyAck result{};
-    uint16_t selected = UINT16_MAX;
-    return verifier.verifyCandidates(ack, length, cached, count, result,
-                                     selected);
-  }
-};
-}  // namespace orun_tlp
 
 using namespace orun_tlp;
-using Peer = orun_tlp::CustodyAckVerifierHostPeer;
+using Peer = orun_tlp::current_ack_test::Peer;
 using Step = Sf5l0BenchTestProvisioning::Step;
 namespace osc = orun_tlp::observation_store_control;
 namespace fmt = orun_tlp::custody_store_product_format;
@@ -138,7 +125,7 @@ void makeFrame(osc::ExactObject& object, uint64_t tracker, uint32_t epoch,
 
 // Gateway side: receive one exact frame, hold it durably, return its ACK.
 bool gatewayAck(uint64_t gateway_id, const osc::ExactObject& object,
-                bool async, uint8_t (&ack)[custody_ack::kWireSize]) {
+                bool async, uint8_t (&ack)[kq05_gateway_batch_ack::kMinSize]) {
   ProductFlash flash;
   flash.async = async;
   ProductCustodyStore store(flash, 2U);
@@ -148,16 +135,16 @@ bool gatewayAck(uint64_t gateway_id, const osc::ExactObject& object,
   assert(grants.verifiedForLocalGateway(gateway_id));
   assert(!grants.verifiedForLocalGateway(gateway_id ^ 1U));
   GatewayCustodyAuthorizedIngress ingress(owner, grants, gateway_id);
-  const auto started = ingress.receive(object.object, object.object_size);
+  const auto started = ingress.receive(object.object, object.object_size, true);
   if (started == GatewayCustodyAuthorizedIngress::Result::kDenied)
     return false;
   assert(started == GatewayCustodyAuthorizedIngress::Result::kStarted);
   for (unsigned i = 0U; i < 200U && ingress.pending(); ++i) {
     ingress.service();
-    // takeAuthorizedAck consumes the pending state; call once ready.
-    if (owner.ackReady()) break;
+    // Take the verified handle only after durable readback.
+    if (owner.batchReady()) break;
   }
-  const bool acked = ingress.takeAuthorizedAck(ack);
+  const bool acked = current_ack_test::takeSingle(ingress, ack);
   if (acked) {
     // SF5L1: the Gateway can hand out exactly what it durably holds.
     struct Collect : Sf5l0HeldVisitor {
@@ -185,12 +172,12 @@ void testGatewayHandOutOrder() {
     for (uint64_t counter = 1U; counter <= 3U; ++counter) {
       osc::ExactObject object{};
       makeFrame(object, kTracker, sf5l0_bench::kTestKeyEpoch, counter);
-      assert(ingress.receive(object.object, object.object_size) ==
+      assert(ingress.receive(object.object, object.object_size, true) ==
              GatewayCustodyAuthorizedIngress::Result::kStarted);
-      for (unsigned i = 0U; i < 200U && !owner.ackReady(); ++i)
+      for (unsigned i = 0U; i < 200U && !owner.batchReady(); ++i)
         ingress.service();
-      uint8_t ack[custody_ack::kWireSize]{};
-      assert(ingress.takeAuthorizedAck(ack));
+      uint8_t ack[kq05_gateway_batch_ack::kMinSize]{};
+      assert(current_ack_test::takeSingle(ingress, ack));
     }
   }
   ProductCustodyStore rebooted(flash, 2U);
@@ -264,43 +251,43 @@ void testTrackerProvisioningFromBlank() {
   osc::ExactObject object{};
   makeFrame(object, kTracker, sf5l0_bench::kTestKeyEpoch, 42U);
   for (int async = 0; async <= 1; ++async) {
-    uint8_t ack[custody_ack::kWireSize]{};
+    uint8_t ack[kq05_gateway_batch_ack::kMinSize]{};
     assert(gatewayAck(kGateway, object, async != 0, ack));
-    custody_ack::Header header{};
-    assert(custody_ack::decodeHeader(ack, sizeof(ack), header));
-    assert(header.relay_allowed && header.tracker_device_id == kTracker &&
+    kq05_gateway_batch_ack::Header header{};
+    assert(kq05_gateway_batch_ack::decode(ack, sizeof(ack), header));
+    assert(header.count == 1U && header.tracker_device_id == kTracker &&
            header.gateway_device_id == kGateway &&
            header.key_epoch == sf5l0_bench::kTestKeyEpoch &&
            header.custody_floor == 0U && header.grant_generation == 1U);
-    CustodyAckVerifier verifier(rebooted);
+    Kq05TrackerBatchAckVerifier verifier(rebooted);
     assert(Peer::check(verifier, ack, sizeof(ack), &object, 1U) ==
-           CustodyAckVerifyResult::kAuthenticated);
+           Kq05TrackerBatchVerifyResult::kAuthenticated);
 
     // Tampered object or ACK never authenticates.
     osc::ExactObject other = object;
     other.object[60] ^= 1U;
     assert(Peer::check(verifier, ack, sizeof(ack), &other, 1U) !=
-           CustodyAckVerifyResult::kAuthenticated);
+           Kq05TrackerBatchVerifyResult::kAuthenticated);
     for (size_t i = 0U; i < sizeof(ack); ++i) {
-      uint8_t bad[custody_ack::kWireSize]{};
+      uint8_t bad[kq05_gateway_batch_ack::kMinSize]{};
       memcpy(bad, ack, sizeof(bad));
       bad[i] ^= 1U;
       assert(Peer::check(verifier, bad, sizeof(bad), &object, 1U) !=
-             CustodyAckVerifyResult::kAuthenticated);
+             Kq05TrackerBatchVerifyResult::kAuthenticated);
     }
   }
 
   // A Gateway the Tracker never granted signs an ACK the Tracker refuses.
-  uint8_t stranger[custody_ack::kWireSize]{};
+  uint8_t stranger[kq05_gateway_batch_ack::kMinSize]{};
   assert(gatewayAck(kOtherGateway, object, false, stranger));
-  CustodyAckVerifier verifier(rebooted);
+  Kq05TrackerBatchAckVerifier verifier(rebooted);
   assert(Peer::check(verifier, stranger, sizeof(stranger), &object, 1U) ==
-         CustodyAckVerifyResult::kNoDurableGrant);
+         Kq05TrackerBatchVerifyResult::kNoDurableGrant);
 
   // Wrong key epoch: the Gateway test source refuses to grant at all.
   osc::ExactObject wrong_epoch{};
   makeFrame(wrong_epoch, kTracker, sf5l0_bench::kTestKeyEpoch + 1U, 43U);
-  uint8_t none[custody_ack::kWireSize]{};
+  uint8_t none[kq05_gateway_batch_ack::kMinSize]{};
   assert(!gatewayAck(kGateway, wrong_epoch, false, none));
 }
 

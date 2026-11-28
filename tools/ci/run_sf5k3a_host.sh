@@ -144,10 +144,10 @@ echo "[SF5K3J] real SecurityStore v3 Gateway policy journal/revoke/cuts"
   -o "$build_dir/v3-policy"
 "$build_dir/v3-policy"
 
-echo "[SF5K3K] 0x05 untrusted ACK shape + actual SecurityStore scope"
+echo "[SF5K3K] 0x0A untrusted ACK shape + actual SecurityStore scope"
 "$cxx" "${flags[@]}" -Wno-conversion -Wno-sign-conversion \
   firmware/tests/sf5/test_sf5k3k_custody_ack_scope.cpp \
-  firmware/src/security_store.cpp firmware/src/custody_ack.cpp \
+  firmware/src/security_store.cpp firmware/src/kq05_gateway_batch_custody_ack.cpp \
   firmware/src/security_v3_page_writer.cpp \
   firmware/src/security_v3_ab_preflight.cpp \
   firmware/src/security_v3_format.cpp \
@@ -159,10 +159,19 @@ echo "[SF5K3K] 0x05 untrusted ACK shape + actual SecurityStore scope"
 
 echo "[SF5K3L] actual SecurityStore v3 HMAC ACK oracle (test-only OpenSSL)"
 "$cxx" "${flags[@]}" -Wno-conversion -Wno-sign-conversion \
-  -DORUN_SF5K3L_HOST_TEST \
+  -DORUN_GATEWAY_BATCH_ACK=1 -DORUN_KQ05_TRACKER_BATCH_VERIFY_HOST_TEST=1 \
   firmware/tests/sf5/test_sf5k3l_custody_ack_crypto.cpp \
   firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
-  firmware/src/custody_ack_verifier.cpp firmware/src/custody_ack.cpp \
+  firmware/src/kq05_tracker_batch_release_owner.cpp \
+  firmware/src/kq05_tracker_batch_ack_verifier.cpp \
+  firmware/src/kq05_gateway_batch_custody_crypto.cpp \
+  firmware/src/kq05_gateway_batch_custody_ack.cpp \
+  firmware/src/product_record_store.cpp \
+  firmware/src/product_region.cpp \
+  firmware/src/observation_store.cpp \
+  firmware/src/observation_store_control.cpp \
+  firmware/src/observation_store_format.cpp \
+  firmware/src/product_period_builder.cpp \
   firmware/src/security_store.cpp firmware/src/security_v3_page_writer.cpp \
   firmware/src/security_v3_ab_preflight.cpp firmware/src/security_v3_format.cpp \
   firmware/src/tlp_v2_product_secure.cpp firmware/src/security_format.cpp \
@@ -172,11 +181,13 @@ echo "[SF5K3L] actual SecurityStore v3 HMAC ACK oracle (test-only OpenSSL)"
 
 echo "[SF5K3M] actual signed ACK -> flash release -> reboot/cuts"
 "$cxx" "${flags[@]}" -Wno-conversion -Wno-sign-conversion \
+  -DORUN_GATEWAY_BATCH_ACK=1 \
   firmware/tests/sf5/test_sf5k3m_real_custody_release.cpp \
   firmware/tests/sf5/sf5k3l_openssl_crypto_test_port.cpp \
-  firmware/src/custody_ack_release_owner.cpp \
-  firmware/src/custody_ack_product_bridge.cpp \
-  firmware/src/custody_ack_verifier.cpp firmware/src/custody_ack.cpp \
+  firmware/src/kq05_tracker_batch_release_owner.cpp \
+  firmware/src/kq05_tracker_batch_ack_verifier.cpp \
+  firmware/src/kq05_gateway_batch_custody_crypto.cpp \
+  firmware/src/kq05_gateway_batch_custody_ack.cpp \
   firmware/src/product_record_store.cpp firmware/src/product_region.cpp \
   firmware/src/observation_store.cpp firmware/src/observation_store_control.cpp \
   firmware/src/observation_store_format.cpp \

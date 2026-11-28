@@ -6,6 +6,24 @@ cd "$(dirname "$0")/../.."
 dir="$(mktemp -d "${TMPDIR:-/tmp}/orun-sf5k3k.XXXXXXXX")"
 trap 'rm -rf -- "$dir"' EXIT
 cxx="${CXX:-g++}"
+
+case "${ORUN_ACK_TEST_PROFILE:-product}" in
+  product)
+    ack_profile_flags=(-DORUN_GATEWAY_BATCH_ACK=1)
+    ;;
+  standard)
+    ack_profile_flags=(-DORUN_TRACKER_BATCH_ACK=1)
+    ;;
+  pilot)
+    ack_profile_flags=(-DORUN_TRACKER_BATCH_ACK=1
+                       -DORUN_SF5K3V_TRACKER_TX_PILOT)
+    ;;
+  *)
+    echo "Unknown ACK test profile" >&2
+    exit 2
+    ;;
+esac
+
 flags=(-std=gnu++11 -O1 -g -Wall -Wextra -Werror
        -Wno-conversion -Wno-sign-conversion
        -Ifirmware/include -Ifirmware/tests/sf5)
@@ -17,10 +35,10 @@ if [[ "${ORUN_HOST_SANITIZERS:-1}" == 1 ]]; then
   radio_flags+=(-fsanitize=address,undefined -fno-sanitize-recover=undefined)
 fi
 
-echo "[SF5K3K] actual SecurityStore persisted Gateway scope + 0x05 wire"
+echo "[SF5K3K] actual SecurityStore persisted Gateway scope + 0x0A wire"
 "$cxx" "${flags[@]}" \
   firmware/tests/sf5/test_sf5k3k_custody_ack_scope.cpp \
-  firmware/src/security_store.cpp firmware/src/custody_ack.cpp \
+  firmware/src/security_store.cpp firmware/src/kq05_gateway_batch_custody_ack.cpp \
   firmware/src/security_v3_page_writer.cpp \
   firmware/src/security_v3_ab_preflight.cpp \
   firmware/src/security_v3_format.cpp \
@@ -32,9 +50,9 @@ echo "[SF5K3K] actual SecurityStore persisted Gateway scope + 0x05 wire"
 
 echo "[SF5K3K] actual RadioManager Tracker ACK RX (no HMAC/release)"
 PYTHONDONTWRITEBYTECODE=1 python3 firmware/tests/r2/test_patch_radio.py "$dir/driver_bridge.cpp"
-"$cxx" "${radio_flags[@]}" -DORUN_SF5K3K_ACK_RX_TEST \
+"$cxx" "${radio_flags[@]}" -DORUN_SF5K3K_ACK_RX_TEST "${ack_profile_flags[@]}" \
   firmware/tests/sf5/test_sf5j_radio_transport.cpp "$dir/driver_bridge.cpp" \
-  firmware/src/radio_manager.cpp firmware/src/custody_ack.cpp \
+  firmware/src/radio_manager.cpp firmware/src/kq05_gateway_batch_custody_ack.cpp firmware/src/lora_command_frame.cpp \
   firmware/src/radio_manager_relay_config.cpp \
   firmware/src/tlp_v2_product_secure.cpp firmware/src/bridge_frame.cpp \
   firmware/src/radio_listen_policy.cpp firmware/src/network_service.cpp \

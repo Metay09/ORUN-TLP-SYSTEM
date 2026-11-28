@@ -134,14 +134,14 @@ struct Gateway {
   // Admit one object; true = ACKed (fresh custody or exact re-ACK).
   bool receive(const osc::ExactObject& object,
                GatewayCustodyAuthorizedIngress::Result* first = nullptr) {
-    const auto r = ingress.receive(object.object, object.object_size);
+    const auto r = ingress.receive(object.object, object.object_size, true);
     if (first) *first = r;
     if (r == GatewayCustodyAuthorizedIngress::Result::kDenied ||
         r == GatewayCustodyAuthorizedIngress::Result::kBusy)
       return false;
-    for (unsigned i = 0U; i < 200U && !owner.ackReady(); ++i) ingress.service();
-    uint8_t ack[custody_ack::kWireSize]{};
-    return ingress.takeAuthorizedAck(ack);
+    for (unsigned i = 0U; i < 200U && !owner.batchReady(); ++i) ingress.service();
+    uint8_t ack[kq05_gateway_batch_ack::kMinSize]{};
+    return current_ack_test::takeSingle(ingress, ack);
   }
   Sf5l0EdgeHandoff::Event drain() {
     Sf5l0EdgeHandoff::Event last{};
@@ -348,7 +348,7 @@ void productRecovery(bool erase) {
     } else {
       flash.cut_program = true;
       assert(!before.receive(next));
-      assert(!before.owner.ackReady());
+      assert(!before.owner.batchReady());
     }
   }
   const auto snapshot = flash.bytes;

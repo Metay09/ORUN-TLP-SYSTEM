@@ -242,6 +242,28 @@ ProductSecureCodecResult decodeProductSecureFrame(const uint8_t* input,
                                                   size_t input_size,
                                                   ProductSecureFrame* frame);
 
+// Structural custody eligibility only.
+// No authentication, durable proof or release authority.
+inline bool matchesCustodyObjectShape(
+    uint64_t tracker_id, uint32_t key_epoch,
+    const uint8_t* object, size_t size) {
+
+  if (object == nullptr ||
+      (size != kEventFrameSize &&
+       size != kPeriodicFrameSize))
+    return false;
+
+  ProductSecureFrame frame{};
+
+  return decodeProductSecureFrame(
+             object, size, &frame) ==
+             ProductSecureCodecResult::kOk &&
+         frame.device_id == tracker_id &&
+         frame.key_epoch == key_epoch &&
+         (frame.path_flags &
+          kProductPathFlagCustodyRequested) != 0U;
+}
+
 // AEAD inputs for profile 0x01: AAD is exactly header bytes 0..27; the nonce
 // is key_epoch_be32 || 0x01 (D2A) || security_counter_be64.
 ProductSecureCodecResult encodeProductSecureAad(

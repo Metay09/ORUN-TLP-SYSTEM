@@ -27,7 +27,9 @@ constexpr bool kCrcEnabled = true;
 constexpr bool kExplicitHeader = true;
 constexpr bool kIqInverted = false;
 constexpr uint16_t kPrivateSyncWord = 0x1424;
-constexpr uint32_t kTxTimeoutMs = 5000;
+// SF11 / BW125 maximum 255-byte frame requires
+// 5001.216 ms on air. Allow bounded completion margin.
+constexpr uint32_t kTxTimeoutMs = 6000;
 
 // M6P2: owner-selected bounded post-TX listen window for nodes without an
 // availability commitment. 10 s is the current development default to leave

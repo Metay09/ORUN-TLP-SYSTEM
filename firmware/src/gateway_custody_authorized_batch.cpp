@@ -41,7 +41,7 @@ bool GatewayCustodyAuthorizedIngress::prepareAuthorizedBatchAck(
     uint8_t (&wire)[kq05_gateway_batch_ack::kMaxSize],
     size_t& written, bool* stale_single) {
   if (stale_single) *stale_single = false;
-  if (pending_ || custody_.waitingFlash() || custody_.ackReady() ||
+  if (pending_ || custody_.waitingFlash() ||
       handles == nullptr || count == 0U ||
       count > kq05_gateway_batch_ack::kMaxObjects ||
       !validScope(requested, gateway_id_)) return false;

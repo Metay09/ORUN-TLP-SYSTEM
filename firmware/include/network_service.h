@@ -76,7 +76,9 @@ class NetworkService {
 
   NetworkEvent receive(const uint8_t* payload, size_t size, int16_t rssi_dbm,
                        int8_t snr_db, uint32_t now_ms);
-  bool takeDueForward(uint32_t now_ms, tlp::RelayForwardPacket* packet);
+  // Selection does not consume queued work.
+  bool peekDueForward(uint32_t now_ms, tlp::RelayForwardPacket* packet);
+  void discardInvalidForward();
   void onForwardTxStarted();
   void onForwardTxResult(bool success);
   uint8_t queuedCount() const { return queued_count_; }
@@ -105,6 +107,7 @@ class NetworkService {
   PacketDedupeCache<relay_config::kBaseDedupeSize> base_dedupe_{};
   QueueEntry queue_[relay_config::kForwardQueueSize]{};
   uint8_t queued_count_ = 0;
+  uint8_t selected_forward_ = relay_config::kForwardQueueSize;
   bool forward_active_ = false;
   RelayDiagnostics relay_diagnostics_{};
   BaseDiagnostics base_diagnostics_{};

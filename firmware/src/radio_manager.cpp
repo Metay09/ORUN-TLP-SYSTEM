@@ -101,6 +101,8 @@ bool RadioManager::begin(SequenceSource& sequences) {
   tx_in_progress_ = false;
   tx_kind_ = TxKind::kNone;
   tx_generation_ = armed_tx_generation_ = pending_tx_generation_ = 0;
+  downlink_result_ = {};
+  downlink_result_pending_ = false;
   history_secure_rx_ = {};
   history_secure_rx_pending_ = false;
   product_secure_rx_ = {};
@@ -392,6 +394,15 @@ bool RadioManager::takeLoraFrame(LoraFrameRx* frame) {
   return true;
 }
 
+bool RadioManager::takeDownlinkTxResult(
+    DownlinkTxResult& result) {
+  if (!downlink_result_pending_) return false;
+  result = downlink_result_;
+  downlink_result_pending_ = false;
+  downlink_result_ = {};
+  return true;
+}
+
 bool RadioManager::takeHeardSender(uint64_t& device, uint32_t& at_ms) {
   if (!heard_pending_) return false;
   heard_pending_ = false;
@@ -400,7 +411,9 @@ bool RadioManager::takeHeardSender(uint64_t& device, uint32_t& at_ms) {
   return true;
 }
 
-bool RadioManager::sendLoraFrame(const uint8_t* payload, size_t size) {
+bool RadioManager::sendLoraFrame(
+    const uint8_t* payload, size_t size,
+    const uint32_t* rx_floor_ms) {
   radio_driver::Guard gate;
   if (!gate) return false;
   const bool tracker = network_.role() == NodeRole::kTracker;
@@ -418,10 +431,37 @@ bool RadioManager::sendLoraFrame(const uint8_t* payload, size_t size) {
     ++local_tx_failures_;
     return false;
   }
+  // Do not overwrite an unread Gateway downlink terminal.
+  if (!tracker && downlink_result_pending_) return false;
+  const bool first_command = !tracker &&
+      (payload[3] != kResourceAreas || payload[32] == 0U);
+  const uint32_t start_limit = first_command
+      ? kCommandFirstStartLimitMs : radio_config::kWindowedRxAfterTxMs;
   uint8_t tx_payload[kMaxFrameSize]{};
   memcpy(tx_payload, payload, size);
-  if (!startTxOperation(static_cast<uint8_t>(size))) return false;
+  if (!startTxOperation(
+          static_cast<uint8_t>(size),
+          rx_floor_ms, start_limit)) return false;
   tx_kind_ = TxKind::kLoraFrame;
+
+  if (!tracker) {
+    downlink_result_ = {};
+    downlink_result_.kind = DownlinkTxResult::Kind::kCommand;
+
+    for (unsigned i = 0; i < 8U; ++i)
+      downlink_result_.target =
+          (downlink_result_.target << 8) | payload[4U + i];
+
+    for (unsigned i = 0; i < 4U; ++i)
+      downlink_result_.command_id =
+          (downlink_result_.command_id << 8) | payload[16U + i];
+
+    downlink_result_.part =
+        payload[3] == kResourceAreas ? payload[32] : 0U;
+
+    if (rx_floor_ms)
+      downlink_result_.rx_floor_ms = *rx_floor_ms;
+  }
   tx_role_epoch_ = role_epoch_;
   rx_restore_state_ = RxRestoreState::kNone;
   ++tx_attempts_;
@@ -580,6 +620,19 @@ void RadioManager::processCallbackEvents() {
           event_diagnostics_.batch_ack_max_done_age_ms = age;
       }
 #endif
+      // Publish only after driver-generation validation.
+      if ((tx_kind_ == TxKind::kLoraFrame &&
+           network_.role() != NodeRole::kTracker)
+      #ifdef ORUN_GATEWAY_BATCH_ACK
+          || tx_kind_ == TxKind::kBatchAck
+      #endif
+          ) {
+        downlink_result_.succeeded =
+            succeeded && tx_role_epoch_ == role_epoch_ &&
+            !role_transition_pending_;
+        downlink_result_pending_ = true;
+      }
+
       // Local TX completion is not application delivery confirmation.
       tx_kind_ = TxKind::kNone;
       tx_in_progress_ = false;
@@ -742,7 +795,8 @@ bool RadioManager::serviceWindowDeadline(uint32_t now) {
   return false;
 }
 
-bool RadioManager::startTxOperation(uint8_t size, const uint32_t* rx_floor_ms) {
+bool RadioManager::startTxOperation(uint8_t size, const uint32_t* rx_floor_ms,
+                                    uint32_t rx_start_limit_ms) {
   if (!gatewayAirtimeAvailable(size)) return false;
   // No previous TX can be active here. Stop RX and clear pending hardware
   // IRQs before changing the callback identity; a waiting LORA dispatch then
@@ -754,11 +808,14 @@ bool RadioManager::startTxOperation(uint8_t size, const uint32_t* rx_floor_ms) {
   }
   markRxStopped(monotonic::nowMs());
   orunRadioQuiesceLocked();
-  if (rx_floor_ms && !ackFitsWindow(monotonic::nowMs(), *rx_floor_ms, size)) {
+  const uint32_t admission_now = monotonic::nowMs();
+  if (rx_floor_ms &&
+      (admission_now - *rx_floor_ms >= rx_start_limit_ms ||
+       !ackFitsWindow(admission_now, *rx_floor_ms, size))) {
     requestRxRestore();
     return false;
   }
-  if (!rf_budget_.reserve(monotonic::nowMs(), size)) {
+  if (!rf_budget_.reserve(admission_now, size)) {
     requestRxRestore();
     return false;
   }
@@ -830,10 +887,10 @@ void RadioManager::sendTestPacket() {
 void RadioManager::sendDueRelay(uint32_t now) {
   tlp::RelayForwardPacket envelope{};
   if (!gatewayAirtimeAvailable(tlp::kRelayForwardPacketSize)) return;
-  if (!network_.takeDueForward(now, &envelope)) return;
+  if (!network_.peekDueForward(now, &envelope)) return;
   uint8_t payload[tlp::kRelayForwardPacketSize]{};
   if (!tlp::serializeRelayForwardPacket(envelope, payload, sizeof(payload))) {
-    network_.onForwardTxResult(false);
+    network_.discardInvalidForward();
     ++local_tx_failures_;
     Serial.println(F("RELAY TX encode failed"));
     return;
@@ -841,15 +898,13 @@ void RadioManager::sendDueRelay(uint32_t now) {
   tlp::PositionPacket original{};
   if (!tlp::deserializePositionPacket(envelope.original_packet,
                                       envelope.original_length, &original)) {
-    network_.onForwardTxResult(false);
+    network_.discardInvalidForward();
     ++local_tx_failures_;
     Serial.println(F("RELAY TX inner validation failed"));
     return;
   }
-  if (!startTxOperation(sizeof(payload))) {
-    network_.onForwardTxResult(false);
-    return;
-  }
+  // A denied physical admission retains the exact queued packet.
+  if (!startTxOperation(sizeof(payload))) return;
   tx_kind_ = TxKind::kRelay;
   tx_role_epoch_ = role_epoch_;
   rx_restore_state_ = RxRestoreState::kNone;
@@ -901,19 +956,13 @@ void RadioManager::emitBridgePosition(const NetworkEvent& event) {
 void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
                                         int16_t rssi, int8_t snr, uint32_t rx_floor_ms) {
 
+#if defined(ORUN_GATEWAY_BATCH_ACK) || defined(ORUN_TRACKER_BATCH_ACK)
   if (size >= 2 &&
-      payload[0] == custody_ack::kVersion &&
-#ifdef ORUN_GATEWAY_BATCH_ACK
+      payload[0] == kq05_gateway_batch_ack::kVersion &&
       payload[1] == kq05_gateway_batch_ack::kType) {
     kq05_gateway_batch_ack::Header header{};
     const uint64_t target = kq05_gateway_batch_ack::decode(payload, size, header)
                                 ? header.tracker_device_id : 0U;
-#else
-      payload[1] == custody_ack::kType) {
-    custody_ack::Header header{};
-    const uint64_t target = custody_ack::decodeHeader(payload, size, header)
-                                ? header.tracker_device_id : 0U;
-#endif
     // Even a valid-looking ACK has no authority in BASE/RELAY roles.
     // Relay reverse transport is a separate reviewed feature; do not
     // forward this as if it were a tracker-authenticated receipt.
@@ -933,6 +982,8 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
     // ID appears to match a provisioned slot.
     return;
   }
+
+#endif
 
   if (size >= 2 && payload[0] == lora_command::kVersion &&
       (payload[1] == lora_command::kCommandType ||
@@ -984,7 +1035,7 @@ void RadioManager::handleReceivedPacket(const uint8_t* payload, uint16_t size,
     }
     // 6b: someone's report was heard; a Gateway may have a command for it.
     heard_sender_ = frame.device_id;
-    heard_at_ms_ = monotonic::nowMs();
+    heard_at_ms_ = rx_floor_ms;
     heard_pending_ = true;
     if (product_secure_rx_pending_) {
       ++event_diagnostics_.product_secure_rx_drops;

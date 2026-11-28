@@ -111,7 +111,7 @@ TrackerCriticalEventTx::Result TrackerCriticalEventTx::update(
   if (history && !allow_backlog && !fresh_)
     return Result::kNone;
 
-  // Gateway custody ACK delivery is verified by CustodyAckReleaseOwner, not
+  // Gateway custody ACK delivery is verified by Kq05TrackerBatchReleaseOwner, not
   // this sender. Inspect only the actual durable OBS1 release state.
   if (phase_ == Phase::kWaitingAck || phase_ == Phase::kReady) {
     ObservationStore::Record record{};

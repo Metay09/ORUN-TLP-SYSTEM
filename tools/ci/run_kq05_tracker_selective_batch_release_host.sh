@@ -6,7 +6,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-g++ -std=gnu++11 -O1 -g -Wall -Wextra -Werror \
+sanitizers=()
+if [[ "${ORUN_HOST_SANITIZERS:-1}" == 1 ]]; then
+  sanitizers=(-fsanitize=address,undefined -fno-sanitize-recover=undefined)
+fi
+"${CXX:-g++}" -std=gnu++11 -O1 -g -Wall -Wextra -Werror "${sanitizers[@]}" \
   -Wno-conversion -Wno-sign-conversion \
   -DORUN_GATEWAY_BATCH_ACK=1 -DORUN_KQ05_BATCH_HMAC_HOST_TEST=1 \
   -DORUN_KQ05_TRACKER_BATCH_VERIFY_HOST_TEST=1 \
@@ -22,16 +26,12 @@ g++ -std=gnu++11 -O1 -g -Wall -Wextra -Werror \
   firmware/src/gateway_local_custody_owner_batch.cpp \
   firmware/src/gateway_custody_authorized_ingress.cpp \
   firmware/src/gateway_custody_authorized_batch.cpp \
-  firmware/src/gateway_custody_ack_signer.cpp \
   firmware/src/product_custody_store.cpp \
   firmware/src/custody_store_product_format.cpp \
   firmware/src/kq05_tracker_batch_release_owner.cpp \
   firmware/src/kq05_tracker_batch_ack_verifier.cpp \
   firmware/src/kq05_gateway_batch_custody_crypto.cpp \
   firmware/src/kq05_gateway_batch_custody_ack.cpp \
-  firmware/src/custody_ack_release_owner.cpp \
-  firmware/src/custody_ack_product_bridge.cpp \
-  firmware/src/custody_ack_verifier.cpp firmware/src/custody_ack.cpp \
   firmware/src/product_record_store.cpp firmware/src/product_region.cpp \
   firmware/src/observation_store.cpp \
   firmware/src/observation_store_control.cpp \

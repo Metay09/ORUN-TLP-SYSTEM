@@ -58,7 +58,6 @@ bool RadioManager::takeProductSecureFrame(ProductSecureRxFrame* out) {
   uplink = {};
   return true;
 }
-bool RadioManager::sendAuthorizedCustodyAck(GatewayCustodyAuthorizedIngress&) { return false; }
 RadioManager::BatchTx RadioManager::sendAuthorizedBatchAck(GatewayCustodyAuthorizedIngress& in,
     const ProductCustodyStore::Handle* handles, uint8_t n, const GatewayCustodyAckScope& scope,
     uint32_t heard) {
@@ -178,7 +177,6 @@ void testGatewayToTrackerWithMissingRecord() {
   runtime.attachLiveIngress(live_ingress);
   LoraCommandRelay relay;
   auto step = [&]() {
-    runtime.reserveCommandWindow(relay.windowReserved(simulation_ms));
     return runtime.update(true);
   };
   auto offer = [&](unsigned index) {
@@ -218,13 +216,30 @@ void testGatewayToTrackerWithMissingRecord() {
   const auto setting = command(kDevice, 17);
   assert(relay.queue(setting.data(), setting.size()) == LoraCommandRelay::Queued::kAdded);
   relay.heard(kDevice, simulation_ms);
+  radio_busy = true;
   offer(0);
+  radio_busy = false;
   simulation_ms += LoraCommandRelay::kAckGraceMs;
   LoraCommandRelay::Frame packet{};
-  assert(!relay.due(simulation_ms, packet, [](uint8_t) { return false; }));
-  assert(relay.due(simulation_ms, packet) && packet.command_id == 17 && packet.attempt == 1);
+  const auto accepted =
+      [](const LoraCommandRelay::Frame&) {
+        radio_busy = true;
+        return true;
+      };
+
+  assert(!relay.trySend(
+      simulation_ms, packet,
+      [](uint8_t) { return false; }, accepted));
+
+  assert(relay.trySend(
+      simulation_ms, packet, nullptr, accepted) &&
+      packet.command_id == 17 && packet.attempt == 1);
   step();
   assert(downlinks == 1U);
+  relay.onTxResult(packet.target, packet.command_id,
+                   packet.part, true);
+  radio_busy = false;
+
   const auto response = result(kDevice, 17);
   assert(relay.answered(response.data(), response.size()));
   step();
@@ -723,6 +738,50 @@ void testInterleavedCollarsReceiveSeparateReceipts() {
          header.tracker_device_id == second);
   assert(downlinks == 2 && runtime.reservedPages() == 0);
   puts("Two enrolled collars, same epoch and counter, separate receipts; unknown collar denied: PASS");
+}
+
+void testBatchCompletionNotification() {
+  using Service = ReleaseOwner::Service;
+  for (bool revoke : {false, true}) {
+    Fixture f;
+    f.admitGrant();
+    f.cacheUpTo(5U);
+    uint8_t wire[ack::kMaxSize]{};
+    size_t length = 0U;
+    buildAck(f.objects, 5U, wire, length);
+    ReleaseOwner owner(f.security, f.records);
+    unsigned notifications = 0U;
+    const auto notify = [&]() { ++notifications; };
+    assert(owner.serviceAndNotify(notify) == Service::kIdle);
+    assert(owner.submit(wire,length) == ReleaseOwner::Submit::kStarted);
+    unsigned markers = 0U;
+    for (unsigned i=0; i<150000U && owner.pending(); ++i) {
+      f.records.poll();
+      const auto result = owner.serviceAndNotify(notify);
+      if (result == Service::kReleasedOne) {
+        ++markers;
+        assert(notifications == 0U);
+        if (revoke && markers == 1U) {
+          assert(Seam::revoke(f.security,0U,kGateA));
+          settle(f.security);
+          bool revoked=false;
+          assert(Seam::take(f.security,revoked) && revoked);
+        }
+      } else if (result == Service::kApplied) {
+        assert(!revoke && markers == 5U && notifications == 1U);
+      } else if (result == Service::kFailed) {
+        assert(revoke && markers == 1U && notifications == 0U);
+      } else {
+        assert(notifications == 0U);
+      }
+    }
+    assert(!owner.pending());
+    assert(markers == (revoke ? 1U : 5U));
+    assert(notifications == (revoke ? 0U : 1U));
+    assert(owner.serviceAndNotify(notify) == Service::kIdle);
+    assert(notifications == (revoke ? 0U : 1U));
+  }
+  puts("ORUN-305 durable batch notification: once on applied, never on partial/revoked PASS");
 }
 
 void testFiveExactIndependentDurableMarkers() {
@@ -1666,7 +1725,8 @@ void testOrun303BudgetPressure(uint8_t count) {
 }
 
 
-void testOrun304Fairness(unsigned peers, bool shared_window) {
+void testOrun304Fairness(unsigned peers, bool shared_window,
+                         bool mixed_commands = false) {
   using namespace orun_tlp;
 
   constexpr unsigned slots =
@@ -1722,6 +1782,18 @@ void testOrun304Fairness(unsigned peers, bool shared_window) {
 
   unsigned received[slots]{};
 
+  LoraCommandRelay command_relay;
+  const auto pending_command =
+      command(kDevice + peers - 1U, 305U);
+
+  if (mixed_commands)
+    assert(command_relay.queue(
+        pending_command.data(), pending_command.size()) ==
+        LoraCommandRelay::Queued::kAdded);
+
+  unsigned last_offer = 0U;
+  unsigned rejected_opportunities = 0U;
+
   collar_radio = nullptr;
   uplink = {};
   downlinks = 0U;
@@ -1734,6 +1806,10 @@ void testOrun304Fairness(unsigned peers, bool shared_window) {
   simulation_ms = 1000U;
 
   auto offer = [&](unsigned index) {
+    last_offer = index;
+
+    if (mixed_commands)
+      command_relay.heard(kDevice + index, simulation_ms);
     const auto object = makeObject({});
 
     tlp::ProductSecureFrame frame{};
@@ -1774,6 +1850,21 @@ void testOrun304Fairness(unsigned peers, bool shared_window) {
     const unsigned before = downlinks;
 
     radio_busy = false;
+
+    if (mixed_commands && last_offer == peers - 1U) {
+      LoraCommandRelay::Frame f{};
+
+      assert(!command_relay.trySend(
+          simulation_ms, f,
+          [](uint8_t) { return false; },
+          [](const LoraCommandRelay::Frame&) {
+            assert(false && "Denied command reached TX");
+            return false;
+          }));
+
+      assert(command_relay.count() == 1U);
+      ++rejected_opportunities;
+    }
 
     for (unsigned i = 0U;
          i < 200U && downlinks == before;
@@ -1829,7 +1920,7 @@ void testOrun304Fairness(unsigned peers, bool shared_window) {
       for (unsigned i = 0U; i < peers; ++i)
         offer(i);
 
-      simulation_ms += 1001U;
+      simulation_ms += mixed_commands ? 2501U : 1001U;
 
       acknowledge();
 
@@ -1867,7 +1958,7 @@ void testOrun304Fairness(unsigned peers, bool shared_window) {
 
         offer(i);
 
-        simulation_ms += 1001U;
+        simulation_ms += mixed_commands ? 2501U : 1001U;
 
         assert(acknowledge() == i);
 
@@ -1905,6 +1996,17 @@ void testOrun304Fairness(unsigned peers, bool shared_window) {
   assert(minimum == 2U);
   assert(maximum == 2U);
 
+  if (mixed_commands) {
+    assert(rejected_opportunities > 0U);
+    assert(command_relay.count() == 1U);
+
+    printf("ORUN-305 MIXED FAIRNESS mode=%s peers=%u "
+           "served=%u min=%u max=%u denied_commands=%u PASS\n",
+           shared_window ? "shared" : "separate",
+           peers, served, minimum, maximum,
+           rejected_opportunities);
+  }
+
   printf("ORUN-304 FAIRNESS mode=%s peers=%u "
          "served=%u min=%u max=%u total=%u "
          "result=%s\n",
@@ -1916,6 +2018,200 @@ void testOrun304Fairness(unsigned peers, bool shared_window) {
 
   uplink = {};
   radio_busy = false;
+}
+
+
+void testOrun305RejectedCommandAdmission() {
+  using namespace orun_tlp;
+
+  LoraCommandRelay relay;
+
+  const auto setting = command(kDevice, 305U);
+
+  assert(relay.queue(setting.data(), setting.size()) ==
+         LoraCommandRelay::Queued::kAdded);
+
+  LoraCommandRelay::Frame candidate{};
+
+  uint64_t dropped_target = 0U;
+  uint32_t dropped_id = 0U;
+
+  const auto budget_ok = [](uint8_t) { return true; };
+  const auto budget_denied = [](uint8_t) { return false; };
+
+  const auto tx_denied =
+      [](const LoraCommandRelay::Frame&) { return false; };
+
+  const auto tx_accepted =
+      [](const LoraCommandRelay::Frame&) { return true; };
+
+  // Six reports, but not one actual TX admission.
+  for (unsigned i = 0U;
+       i < LoraCommandRelay::kMaxAttempts;
+       ++i) {
+
+    const uint32_t now = 1000U + i * 60000U;
+
+    relay.heard(kDevice, now);
+
+    assert(!relay.takeDropped(
+        dropped_target, dropped_id));
+
+    assert(!relay.trySend(
+        now + LoraCommandRelay::kAckGraceMs,
+        candidate, budget_denied, tx_accepted));
+
+    assert(!relay.trySend(
+        now + LoraCommandRelay::kAckGraceMs,
+        candidate, budget_ok, tx_denied));
+
+    assert(candidate.attempt == 1U);
+    assert(candidate.part == 0U);
+
+    assert(relay.count() == 1U);
+
+    assert(!relay.takeDropped(
+        dropped_target, dropped_id));
+  }
+
+  puts("ORUN-305 SIX DENIALS attempts=0 queued=1 PASS");
+
+  // Actual TX starts now consume the six available tries.
+  for (unsigned i = 0U;
+       i < LoraCommandRelay::kMaxAttempts;
+       ++i) {
+
+    const uint32_t now = 400000U + i * 60000U;
+
+    relay.heard(kDevice, now);
+
+    assert(!relay.takeDropped(
+        dropped_target, dropped_id));
+
+    assert(relay.trySend(
+        now + LoraCommandRelay::kAckGraceMs,
+        candidate, budget_ok, tx_accepted));
+
+    assert(candidate.attempt == i + 1U);
+    assert(candidate.command_id == 305U);
+
+    assert(!relay.trySend(
+        now + LoraCommandRelay::kAckGraceMs + 100U,
+        candidate, budget_ok, tx_accepted));
+  }
+
+  relay.heard(kDevice, 800000U);
+
+  assert(relay.takeDropped(
+      dropped_target, dropped_id));
+
+  assert(dropped_target == kDevice);
+  assert(dropped_id == 305U);
+  assert(relay.count() == 0U);
+
+  puts("ORUN-305 SIX ACCEPTED STARTS attempts=6 drop=1 PASS");
+}
+
+void testOrun305MultipartAdmission() {
+  using namespace orun_tlp;
+  using namespace lora_command;
+
+  LoraCommandRelay relay;
+
+  // Shape-only Gateway fixture: one area, 26 vertices,
+  // 210 bytes of area data split into two frames.
+  const auto original = command(kDevice, 306U);
+
+  uint8_t parts[2][kMaxFrameSize]{};
+
+  const size_t sizes[2] = {
+      kMaxFrameSize,
+      kAreaHeaderSize + 8U + kTagSize
+  };
+
+  for (uint8_t i = 0U; i < 2U; ++i) {
+    memcpy(parts[i], original.data(), 32U);
+
+    parts[i][3] = kResourceAreas;
+    parts[i][32] = i;
+    parts[i][33] = 2U;
+    parts[i][34] = 1U;
+    parts[i][35] = 0U;
+    parts[i][36] = 26U;
+
+    assert(wellFormed(parts[i], sizes[i]));
+
+    assert(relay.queue(parts[i], sizes[i]) ==
+           (i == 0U
+                ? LoraCommandRelay::Queued::kAdded
+                : LoraCommandRelay::Queued::kReplaced));
+  }
+
+  LoraCommandRelay::Frame candidate{};
+
+  const auto budget_ok = [](uint8_t) { return true; };
+
+  const auto tx_denied =
+      [](const LoraCommandRelay::Frame&) { return false; };
+
+  const auto tx_accepted =
+      [](const LoraCommandRelay::Frame&) { return true; };
+
+  relay.heard(kDevice, 1000U);
+
+  assert(!relay.trySend(
+      3500U, candidate, budget_ok, tx_denied));
+
+  assert(candidate.part == 0U);
+  assert(candidate.attempt == 1U);
+
+  assert(relay.trySend(
+      3501U, candidate, budget_ok, tx_accepted));
+
+  assert(candidate.part == 0U);
+  assert(candidate.attempt == 1U);
+  assert(candidate.size == 255U);
+
+  // No part may advance before the matching successful terminal.
+  assert(!relay.trySend(
+      9000U, candidate, budget_ok,
+      [](const LoraCommandRelay::Frame&) {
+        assert(false && "TX attempted before terminal");
+        return false;
+      }));
+  assert(candidate.part == 0U);
+  relay.onTxResult(candidate.target, candidate.command_id,
+                   candidate.part, true);
+
+  // Second part rejected after the first TX completes.
+  assert(!relay.trySend(
+      9000U, candidate, budget_ok, tx_denied));
+  assert(!memcmp(candidate.bytes, parts[1], sizes[1]));
+
+  assert(candidate.part == 1U);
+  assert(candidate.attempt == 1U);
+
+  // Retry must return exactly the same second part.
+  assert(relay.trySend(
+      9100U, candidate, budget_ok, tx_accepted));
+
+  assert(candidate.part == 1U);
+  assert(candidate.attempt == 1U);
+  assert(candidate.size == sizes[1]);
+
+  assert(!memcmp(
+      candidate.bytes, parts[1], sizes[1]));
+
+  assert(!relay.trySend(
+      9200U, candidate, budget_ok, tx_accepted));
+  relay.onTxResult(candidate.target, candidate.command_id,
+                   candidate.part, true);
+  assert(!relay.trySend(
+      12000U, candidate, budget_ok, tx_accepted));
+
+  assert(relay.count() == 1U);
+
+  puts("ORUN-305 MULTIPART rejected_part_retained=1 attempts=1 PASS");
 }
 
 } // namespace
@@ -1945,6 +2241,7 @@ int main() {
   testInterleavedCollarsReceiveSeparateReceipts();
   testActualRootDerivedFiveAndSubsets();
   testTamperAndRevocationDoNotPublishCapability();
+  testBatchCompletionNotification();
   testFiveExactIndependentDurableMarkers();
   testNoGrantTamperedOrIncompleteGroupNeverStartsFlash();
   testFailureOnSecondMarkerNeverReleasesLaterRecords();
@@ -1957,6 +2254,14 @@ int main() {
   testOrun304Fairness(32U, false);
   testOrun304Fairness(4U, true);
   testOrun304Fairness(32U, true);
+
+  testOrun304Fairness(4U, false, true);
+  testOrun304Fairness(32U, false, true);
+  testOrun304Fairness(4U, true, true);
+  testOrun304Fairness(32U, true, true);
+
+  testOrun305RejectedCommandAdmission();
+  testOrun305MultipartAdmission();
   puts("KQ05 Tracker 1..5 REAL V3 HMAC -> selective durable OBS1 marker, failure/reboot: PASS (HOST ONLY)");
   puts("NO LORA TX/RX, NO REAL FLASH, NO WHOLE REGION ERASE, NO DEVICE UPLOAD");
   return 0;

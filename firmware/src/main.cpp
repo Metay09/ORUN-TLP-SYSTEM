@@ -26,9 +26,10 @@
 #include "ble_application_transport.h"
 #include "config_mutation.h"
 #include "config_store.h"
-#include "custody_ack_release_owner.h"
-#ifdef ORUN_GATEWAY_BATCH_ACK
+#if defined(ORUN_GATEWAY_BATCH_ACK) || defined(ORUN_TRACKER_BATCH_ACK)
 #include "kq05_tracker_batch_release_owner.h"
+#endif
+#ifdef ORUN_GATEWAY_BATCH_ACK
 #include "tracker_critical_event_tx.h"
 #endif
 #include "config_incarnation_source.h"
@@ -208,16 +209,14 @@ void refreshApplicationStatusSnapshot(uint32_t now_ms);
 orun_tlp::SecurityStore security_store(storage_flash_gate.securityCriticalPort(),
                                        storage_flash_gate.securityMaintPort());
 // The only Tracker release owner: grant/HMAC verification precedes flash.
-#ifdef ORUN_GATEWAY_BATCH_ACK
+#if defined(ORUN_GATEWAY_BATCH_ACK) || defined(ORUN_TRACKER_BATCH_ACK)
 orun_tlp::Kq05TrackerBatchReleaseOwner batch_ack_release(security_store, product_records);
-#else
-orun_tlp::CustodyAckReleaseOwner custody_ack_release(security_store, product_records);
 #endif
 bool custodyReleasePending() {
-#ifdef ORUN_GATEWAY_BATCH_ACK
+#if defined(ORUN_GATEWAY_BATCH_ACK) || defined(ORUN_TRACKER_BATCH_ACK)
   return batch_ack_release.pending();
 #else
-  return custody_ack_release.pending();
+  return false;
 #endif
 }
 #ifdef ORUN_SF5K3V_TRACKER_TX_PILOT
@@ -261,7 +260,6 @@ bool lora_radio_answer_pending = false;
 uint32_t lora_radio_answer_since_ms = 0;
 // 6b Gateway: commands a bridge handed over, waiting for their Tracker.
 orun_tlp::LoraCommandRelay lora_relay;
-uint32_t lora_relay_acks_seen = 0;
 // SF5L2: paces re-arming of the one-record pilot to drain the backlog.
 orun_tlp::Sf5l0DrainPacer bench_pacer;
 bool bench_pacer_started = false;
@@ -1537,39 +1535,30 @@ void serviceLoraTracker() {
 void serviceLoraRelay() {
   if (!gatewayStorage()) return;
   const uint32_t now = orun_tlp::monotonic::nowMs();
+  orun_tlp::DownlinkTxResult tx_result{};
+  const bool terminal =
+      radio_manager.takeDownlinkTxResult(tx_result);
+  using Kind = orun_tlp::DownlinkTxResult::Kind;
+
+  if (terminal && tx_result.kind == Kind::kCommand)
+    lora_relay.onTxResult(
+        tx_result.target, tx_result.command_id,
+        tx_result.part, tx_result.succeeded);
+
   uint64_t sender = 0;
   uint32_t heard_at = 0;
-  if (radio_manager.takeHeardSender(sender, heard_at)) {
+
+  if (radio_manager.takeHeardSender(sender, heard_at))
     lora_relay.heard(sender, heard_at);
-    lora_relay_acks_seen = radio_manager.eventDiagnostics().custody_ack_tx_attempts;
-  }
-  if (radio_manager.eventDiagnostics().custody_ack_tx_attempts != lora_relay_acks_seen &&
-      !radio_manager.isTransmitting()) {
-    lora_relay_acks_seen = radio_manager.eventDiagnostics().custody_ack_tx_attempts;
-    lora_relay.ackSent(now);
-  }
+
+  if (terminal && tx_result.kind == Kind::kAck &&
+      tx_result.succeeded)
+    lora_relay.ackSentFor(
+        tx_result.target, tx_result.rx_floor_ms);
+
   uint64_t dropped = 0;
   uint32_t dropped_id = 0;
   char say[160];
-  while (lora_relay.takeDropped(dropped, dropped_id)) {
-    snprintf(say, sizeof(say), "LORA DROPPED target=%08lX%08lX id=%08lX",
-             static_cast<unsigned long>(uint32_t(dropped >> 32)),
-             static_cast<unsigned long>(uint32_t(dropped)), static_cast<unsigned long>(dropped_id));
-    loraSay(say);
-  }
-  if (radio_manager.canSend()) {
-    orun_tlp::LoraCommandRelay::Frame f{};
-    const auto fits_budget = [](uint8_t size) { return radio_manager.gatewayAirtimeAvailable(size); };
-    if (lora_relay.due(now, f, fits_budget) && radio_manager.sendLoraFrame(f.bytes, f.size)) {
-      snprintf(say, sizeof(say), "LORA SENT target=%08lX%08lX id=%08lX attempt=%u/%u part=%u/%u",
-               static_cast<unsigned long>(uint32_t(f.target >> 32)),
-               static_cast<unsigned long>(uint32_t(f.target)),
-               static_cast<unsigned long>(f.command_id), static_cast<unsigned>(f.attempt),
-               static_cast<unsigned>(orun_tlp::LoraCommandRelay::kMaxAttempts),
-               static_cast<unsigned>(f.part + 1U), static_cast<unsigned>(f.parts));
-      loraSay(say);
-    }
-  }
   orun_tlp::LoraFrameRx rx{};
   if (radio_manager.takeLoraFrame(&rx)) {
     const bool ours = lora_relay.answered(rx.payload, rx.size);
@@ -1579,6 +1568,33 @@ void serviceLoraRelay() {
       at += snprintf(say + at, sizeof(say) - at, "%02X", static_cast<unsigned>(rx.payload[i]));
     loraSay(say);
   }
+
+  while (lora_relay.takeDropped(dropped, dropped_id)) {
+    snprintf(say, sizeof(say), "LORA DROPPED target=%08lX%08lX id=%08lX",
+             static_cast<unsigned long>(uint32_t(dropped >> 32)),
+             static_cast<unsigned long>(uint32_t(dropped)), static_cast<unsigned long>(dropped_id));
+    loraSay(say);
+  }
+  if (radio_manager.canSend()) {
+    orun_tlp::LoraCommandRelay::Frame f{};
+    const auto fits_budget = [](uint8_t size) { return radio_manager.gatewayAirtimeAvailable(size); };
+    const auto start_tx =
+        [](const orun_tlp::LoraCommandRelay::Frame& frame) {
+          return radio_manager.sendLoraFrame(
+              frame.bytes, frame.size, &frame.rx_floor_ms);
+        };
+
+    if (lora_relay.trySend(now, f, fits_budget, start_tx)) {
+      snprintf(say, sizeof(say), "LORA SENT target=%08lX%08lX id=%08lX attempt=%u/%u part=%u/%u",
+               static_cast<unsigned long>(uint32_t(f.target >> 32)),
+               static_cast<unsigned long>(uint32_t(f.target)),
+               static_cast<unsigned long>(f.command_id), static_cast<unsigned>(f.attempt),
+               static_cast<unsigned>(orun_tlp::LoraCommandRelay::kMaxAttempts),
+               static_cast<unsigned>(f.part + 1U), static_cast<unsigned>(f.parts));
+      loraSay(say);
+    }
+  }
+
 }
 
 void drainBleWriteAnswer() {
@@ -4399,44 +4415,15 @@ void loop() {
   drainGeofencePrepare();
   // ProductRecordStore::poll() has run before this service. A radio receipt
   // never counts as delivery; only a committed release marker does.
-#ifdef ORUN_GATEWAY_BATCH_ACK
+#if defined(ORUN_GATEWAY_BATCH_ACK) || defined(ORUN_TRACKER_BATCH_ACK)
   // Only one release owner can consume a ProductRecordStore outcome.
   if (batch_ack_release.pending()) {
-    const auto result = batch_ack_release.service();
-    if (result == orun_tlp::Kq05TrackerBatchReleaseOwner::Service::kApplied) {
+    batch_ack_release.serviceAndNotify([]() {
       Serial.println(F("PRODUCT BATCH release=DURABLE"));
 #ifdef ORUN_SF5L0_TRACKER
       bench_pacer.onReleased(orun_tlp::monotonic::nowMs());
 #endif
-    }
-  }
-#else
-  const auto custody_result = custody_ack_release.service();
-  if (custody_result ==
-      orun_tlp::CustodyAckReleaseOwner::Service::kDurablyReleased) {
-    Serial.println(F("PRODUCT CUSTODY release=DURABLE"));
-#ifdef ORUN_SF5L0_TRACKER
-    bench_pacer.onReleased(orun_tlp::monotonic::nowMs());
-    if (bench_link.ack_seen) {
-      // ACK strength as heard by the collar. rtt = TX start -> ACK taken
-      // from the radio (includes loop latency); verify/release are local.
-      const uint32_t now = orun_tlp::monotonic::nowMs();
-      Serial.printf("BENCH LINK ack seq=%lu rssi=%d snr=%d rtt_ms=%lu "
-                    "verify_ms=%lu release_ms=%lu\n",
-                    static_cast<unsigned long>(bench_link.seq),
-                    static_cast<int>(bench_link.rssi),
-                    static_cast<int>(bench_link.snr),
-                    static_cast<unsigned long>(bench_link.ack_ms -
-                                               bench_link.sent_ms),
-                    static_cast<unsigned long>(bench_link.verify_ms),
-                    static_cast<unsigned long>(now - bench_link.ack_ms -
-                                               bench_link.verify_ms));
-      bench_link.ack_seen = false;
-    }
-#endif
-  } else if (custody_result ==
-             orun_tlp::CustodyAckReleaseOwner::Service::kFailed) {
-    Serial.println(F("PRODUCT CUSTODY release=FAILED"));
+    });
   }
 #endif
   orun_tlp::LoopHealthMonitor::enter(orun_tlp::LoopStage::kGeofenceStore);
@@ -4666,34 +4653,10 @@ void loop() {
           product_records.store().ready() && security_store.ready() &&
           security_store.state() == orun_tlp::SecurityState::kProvisioned &&
           !security_store.busy()) {
-#ifdef ORUN_GATEWAY_BATCH_ACK
+#if defined(ORUN_GATEWAY_BATCH_ACK) || defined(ORUN_TRACKER_BATCH_ACK)
         if (batch_ack_release.submit(ack.payload, ack.size) ==
             orun_tlp::Kq05TrackerBatchReleaseOwner::Submit::kStarted)
           Serial.println(F("PRODUCT BATCH ACK authenticated; release=pending"));
-#else
-#ifdef ORUN_SF5L0_TRACKER
-        const uint32_t bench_ack_taken_ms = orun_tlp::monotonic::nowMs();
-#endif
-        {
-          const auto submitted = custody_ack_release.submit(ack.payload, ack.size);
-          if (submitted == orun_tlp::CustodyAckReleaseOwner::Submit::kStarted) {
-            Serial.println(F("PRODUCT CUSTODY ACK authenticated; release=pending"));
-#ifdef ORUN_SF5L0_TRACKER
-            bench_link.ack_ms = bench_ack_taken_ms;
-            bench_link.verify_ms =
-                orun_tlp::monotonic::nowMs() - bench_ack_taken_ms;
-            bench_link.rssi = ack.rssi_dbm;
-            bench_link.snr = ack.snr_db;
-            bench_link.ack_seen = true;
-#endif
-        }
-#ifdef ORUN_SF5L0_TRACKER
-        else
-          Serial.printf("BENCH ACK not admitted submit=%u rssi=%d\n",
-                        static_cast<unsigned>(submitted),
-                        static_cast<int>(ack.rssi_dbm));
-#endif
-        }
 #endif
       }
 #ifdef ORUN_SF5L0_TRACKER
@@ -4718,8 +4681,8 @@ void loop() {
   // Consume the current radio report/RESULT before allocating its downlink window.
   serviceLoraRelay();
   if (gatewayStorage() && !radio_manager.isTransmitting())
-    orun_tlp::sf5l0_gateway::service(product_records.mounted(),
-        lora_relay.windowReserved(orun_tlp::monotonic::nowMs()));
+    // A command that did not start cannot block other ACKs.
+    orun_tlp::sf5l0_gateway::service(product_records.mounted());
 #else
   if (gatewayStorage() && !radio_manager.isTransmitting())
     orun_tlp::sf5l0_gateway::service(product_records.mounted());
